@@ -25,6 +25,10 @@ die() {
   printf '\033[31mx\033[0m %s\n' "$*" >&2
   exit 1
 }
+# Every privileged step goes through this. Printing a tick for a command that
+# failed is worse than failing: it leaves a half-installed machine looking
+# like a working one.
+run() { "$@" || die "failed: $*"; }
 step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 # ------------------------------------------------------------------ detection
@@ -80,7 +84,7 @@ uninstall() {
     ok "session GPU pin removed"
   fi
 
-  if [[ -f $HYPR_CONF ]] && grep -qF "$MARK_BEGIN" "$HYPR_CONF"; then
+  if [[ -f $HYPR_CONF ]] && grep -qF -- "$MARK_BEGIN" "$HYPR_CONF"; then
     sed -i "/$MARK_BEGIN/,/$MARK_END/d" "$HYPR_CONF"
     ok "Hyprland env overrides removed"
   fi
@@ -122,19 +126,25 @@ command -v powerprofilesctl >/dev/null 2>&1 ||
 
 step "Installing"
 
-sudo install -Dm755 "$HERE/bin/thinkpad-power" /usr/local/bin/thinkpad-power
+# Authenticate once, here, so a fingerprint that times out fails the install
+# outright instead of silently skipping the step it was asked for.
+info "administrator access is needed from here on"
+sudo -v || die "could not authenticate — nothing was changed"
+
+run sudo install -Dm755 "$HERE/bin/thinkpad-power" /usr/local/bin/thinkpad-power
 ok "/usr/local/bin/thinkpad-power"
 
-printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee /etc/thinkpad-power.conf >/dev/null
+printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee /etc/thinkpad-power.conf >/dev/null ||
+  die "failed writing /etc/thinkpad-power.conf"
 ok "/etc/thinkpad-power.conf"
 
-sudo install -Dm644 "$HERE/systemd/thinkpad-power.service" \
+run sudo install -Dm644 "$HERE/systemd/thinkpad-power.service" \
   /etc/systemd/system/thinkpad-power.service
-sudo install -Dm644 "$HERE/udev/99-thinkpad-power.rules" \
+run sudo install -Dm644 "$HERE/udev/99-thinkpad-power.rules" \
   /etc/udev/rules.d/99-thinkpad-power.rules
-sudo systemctl daemon-reload
+run sudo systemctl daemon-reload
 sudo systemctl enable thinkpad-power.service >/dev/null 2>&1
-sudo udevadm control --reload-rules
+run sudo udevadm control --reload-rules
 ok "systemd unit + udev rule (fires on plug/unplug, boot and resume)"
 
 # ------------------------------------------------------------------ supergfx
@@ -176,7 +186,7 @@ fi
 ok "$UWSM_ENV"
 
 if [[ -f $HYPR_CONF ]]; then
-  grep -qF "$MARK_BEGIN" "$HYPR_CONF" && sed -i "/$MARK_BEGIN/,/$MARK_END/d" "$HYPR_CONF"
+  grep -qF -- "$MARK_BEGIN" "$HYPR_CONF" && sed -i "/$MARK_BEGIN/,/$MARK_END/d" "$HYPR_CONF"
   cat >>"$HYPR_CONF" <<LUA
 $MARK_BEGIN
 -- Omarchy points video decode and GLX at the NVIDIA whenever one is present.
