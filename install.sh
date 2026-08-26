@@ -193,7 +193,7 @@ step "Session configuration"
 mkdir -p "$(dirname -- "$UWSM_ENV")"
 touch "$UWSM_ENV"
 grep -q "$ENV_MARK" "$UWSM_ENV" && sed -i "/$ENV_MARK/d" "$UWSM_ENV"
-sed -i '/AQ_DRM_DEVICES/d;/^_tp_card=/d;/^unset _tp_card$/d' "$UWSM_ENV"
+sed -i '/AQ_DRM_DEVICES/d;/^_tp_card=/d;/^_tp_egl=/d;/^unset _tp_/d;/__EGL_VENDOR_LIBRARY_FILENAMES/d;/VK_LOADER_DRIVERS_DISABLE/d;/^  export __EGL/d;/^fi$/d;/^if \[ -n /d' "$UWSM_ENV"
 
 # Only pin if the symlink really exists. A pin that cannot be resolved is the
 # one failure mode of this whole tool that costs a login, so it is checked
@@ -206,6 +206,23 @@ $ENV_MARK contain a colon: AQ_DRM_DEVICES splits on it.
 if [ -e /dev/dri/$IGPU_LINK_NAME ] && grep -qx connected /sys/class/drm/\$(basename \$(readlink -f /dev/dri/$IGPU_LINK_NAME))-*/status 2>/dev/null; then
   export AQ_DRM_DEVICES=/dev/dri/$IGPU_LINK_NAME
 fi
+
+$ENV_MARK Pinning the compositor's DRM device is not enough on its own: it
+$ENV_MARK decides which card draws the screen, not which driver the graphics
+$ENV_MARK libraries load. GLVND loads every EGL vendor it finds, and the
+$ENV_MARK Vulkan loader every ICD, so libEGL_nvidia and nvidia_icd get pulled
+$ENV_MARK into the compositor and into ordinary GTK apps, and those open
+$ENV_MARK /dev/nvidia0 and hold the card awake with nothing drawn on it.
+$ENV_MARK
+$ENV_MARK Built from what is on disk rather than hardcoded, and only exported
+$ENV_MARK when non-NVIDIA vendors were actually found: an empty or bogus list
+$ENV_MARK breaks EGL for everything.
+_tp_egl=\$(ls /usr/share/glvnd/egl_vendor.d/*.json 2>/dev/null | grep -v nvidia | paste -sd:)
+if [ -n "\$_tp_egl" ]; then
+  export __EGL_VENDOR_LIBRARY_FILENAMES="\$_tp_egl"
+fi
+unset _tp_egl
+export VK_LOADER_DRIVERS_DISABLE='*nvidia*'
 ENV
   ok "$UWSM_ENV (pins the compositor to /dev/dri/$IGPU_LINK_NAME)"
 else

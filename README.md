@@ -21,6 +21,12 @@ park the card, but only while nothing holds it open, and on a stock Omarchy
 install three things do:
 
 - **Hyprland** enumerates every DRM device and opens the discrete one.
+- **GLVND** loads every EGL vendor it finds, so `libEGL_nvidia` ends up inside
+  the compositor itself — pinning the DRM device does not prevent this, because
+  it decides which card draws the screen, not which driver the libraries load.
+- **The Vulkan loader** loads every ICD it finds, so any GTK4 app (GTK renders
+  with Vulkan) opens `/dev/nvidia0`, `/dev/nvidiactl` and `/dev/nvidia-modeset`
+  just by starting.
 - **Omarchy's `nvidia.lua`** sets `LIBVA_DRIVER_NAME=nvidia` and
   `__GLX_VENDOR_LIBRARY_NAME=nvidia` whenever an NVIDIA is present, so ordinary
   apps — a browser playing video, a GTK app — reach for the discrete card too.
@@ -45,6 +51,8 @@ switch frequently does not stick. The installer stands it down.
 | `/etc/udev/rules.d/99-thinkpad-power.rules` | mains plug/unplug | triggers the above |
 | `/etc/udev/rules.d/98-thinkpad-power-igpu.rules` | `/dev/dri/igpu` symlink | a stable, colon-free name for the iGPU |
 | `~/.config/uwsm/env-hyprland` | `AQ_DRM_DEVICES=/dev/dri/igpu` | pins the compositor to the iGPU |
+| `~/.config/uwsm/env-hyprland` | `__EGL_VENDOR_LIBRARY_FILENAMES` | hides the NVIDIA EGL vendor from the session |
+| `~/.config/uwsm/env-hyprland` | `VK_LOADER_DRIVERS_DISABLE=*nvidia*` | hides the NVIDIA Vulkan ICD from the session |
 | `~/.config/hypr/hyprland.lua` | `LIBVA_DRIVER_NAME=iHD`, `__GLX_VENDOR_LIBRARY_NAME=mesa` | stops apps reaching for the dGPU |
 | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | overrides the GPU menu entry | live toggle instead of a reboot |
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
@@ -55,13 +63,17 @@ because powering that off would black out the screen.
 ## Using it
 
 ```bash
-thinkpad-power status      # power source, whether the card is on the bus,
-                               # what holds it, current profile, live draw
-prime-run <program>            # run something on the discrete GPU
+thinkpad-power status          # power source, card on the bus, what holds it,
+                               # current profile, live draw
+thinkpad-power run <program>   # run one program on the discrete GPU
 ```
 
-Steam: put `prime-run %command%` in a game's launch options. NVENC and CUDA
-work the same way — the card wakes when a context opens.
+Use `thinkpad-power run`, not `prime-run`. The session hides NVIDIA's EGL
+vendor and Vulkan ICD so nothing reaches for the card by accident, and
+`prime-run` does not know to put those back; `thinkpad-power run` restores them
+for that one process and adds the usual offload hints.
+
+Steam: put `thinkpad-power run %command%` in a game's launch options.
 
 **Super+Space → Discrete GPU** toggles it by hand. That lasts until the next
 plug or unplug, when the automatic policy applies again.

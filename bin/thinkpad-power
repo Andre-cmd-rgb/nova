@@ -163,6 +163,19 @@ status)
     printf 'dGPU draw    : %s\n' "$(nvidia-smi --query-gpu=power.draw,pstate --format=csv,noheader 2>/dev/null)"
   fi
   ;;
+run)
+  # Run one program on the discrete GPU. The session hides the NVIDIA EGL
+  # vendor and Vulkan ICD so nothing reaches for the card by accident; this
+  # puts them back for this process only, and adds the usual offload hints.
+  shift
+  (($# > 0)) || die "usage: thinkpad-power run <program> [args...]"
+  gpu_present || die "the discrete GPU is off the bus. Plug in, or: sudo thinkpad-power gpu-on"
+  exec env -u __EGL_VENDOR_LIBRARY_FILENAMES -u VK_LOADER_DRIVERS_DISABLE \
+    __NV_PRIME_RENDER_OFFLOAD=1 \
+    __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    __VK_LAYER_NV_optimus=NVIDIA_only \
+    "$@"
+  ;;
 switch)
   # Interactive, and what the Omarchy menu entry runs. Omarchy's own
   # omarchy-toggle-hybrid-gpu drives supergfxd and reboots to change mode; this
@@ -194,6 +207,7 @@ usage: thinkpad-power <command>
 
   status        power source, whether the dGPU is on the bus, what holds it
   switch        turn the dGPU on or off, interactively (the menu entry)
+  run <cmd>     run one program on the dGPU (Steam: thinkpad-power run %command%)
 
   auto          apply the policy for the current power source
   ac            force the AC policy: dGPU on, performance
