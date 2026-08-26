@@ -249,7 +249,11 @@ Panel {
     running: !mobile.opened
     repeat: true
     triggeredOnStart: true
-    onTriggered: mobile.backgroundStats ? mobile.refreshDetails() : mobile.refresh()
+    // hwPresent is false until the first reply lands, so the poll that decides
+    // whether to draw the widget at all is always the cheap one: no ping to
+    // wait on before the glyph appears, and none at all on a machine with no
+    // modem.
+    onTriggered: (mobile.backgroundStats && mobile.hwPresent) ? mobile.refreshDetails() : mobile.refresh()
   }
 
   Timer {
