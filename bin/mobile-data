@@ -434,7 +434,8 @@ cmd_info() {
   printf 'next_reset=%s\n' "$PERIOD_NEXT"
 
   # Byte counters and an interface-bound ping cost real time — the ping alone
-  # can burn its full 1 s timeout — so only the open panel asks for them.
+  # can burn its full 1 s timeout — so the widget asks for them only while it
+  # is showing the panel or keeping its stats window warm.
   if [[ ${1:-} == --verbose && -n $IFACE ]]; then
     if [[ -r $NET_DIR/$IFACE/statistics/rx_bytes ]]; then
       printf 'rx_bytes=%s\n' "$(<"$NET_DIR/$IFACE/statistics/rx_bytes")"

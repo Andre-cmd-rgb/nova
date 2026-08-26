@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 — 2026-08-26
+
+- Latency is now the median of the window rather than its mean. One slow sample
+  used to drag the average for five ticks, so the number appeared to settle
+  downwards over the following seven seconds instead of being right at once.
+- Throughput and latency are sampled while the panel is closed too, so it opens
+  on numbers that are already there.
+- New `backgroundStats` setting (default on) to turn that off: it costs about
+  1.5 MB a day in echo traffic and wakes the radio on the poll cadence.
+- The latency window is dropped when the link goes down, so a reconnect never
+  shows a number measured before the outage.
+
 ## 1.0.0 — 2026-08-26
 
 First public release, renamed from the personal `andre.mobile` plugin.

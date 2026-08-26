@@ -103,11 +103,14 @@ autoconnect straight around a plain disconnect.
 Widget settings live on the bar entry in `~/.config/omarchy/shell.json`:
 
 ```json
-{ "id": "andrecmdrgb.mobile-data", "interval": 10 }
+{ "id": "andrecmdrgb.mobile-data", "interval": 10, "backgroundStats": true }
 ```
 
 - `interval` — seconds between background polls while the panel is closed
   (default `10`, minimum `2`). An open panel always refreshes every 1.5 s.
+- `backgroundStats` — keep throughput and latency sampling while the panel is
+  closed (default `true`), so it opens on real numbers. See below for what it
+  costs; set it to `false` to sample only while the panel is open.
 
 Everything else lives in `~/.config/omarchy-mobile-data/config`, one
 `key=value` per line. The file is parsed, never sourced, so nothing in it can
@@ -147,12 +150,26 @@ updated under `flock`.
 It counts every byte the modem's interface moves, which is what your operator
 bills. It is not a substitute for your operator's own figure.
 
-## Privacy
+## Latency sampling, and what it costs
 
-While the panel is open it sends one ICMP echo per 1.5 s to `1.1.1.1`, bound to
-the modem's interface, to measure latency on that link specifically. Nothing is
-sent anywhere while the panel is closed, and the plugin makes no other network
-requests.
+Latency is one ICMP echo to `1.1.1.1`, bound to the modem's interface — the
+default route is normally Wi-Fi, and an unbound ping would measure the wrong
+link entirely. It is sent every 1.5 s while the panel is open, and once per
+poll (10 s by default) while it is closed, only ever while the modem is
+connected. The plugin makes no other network requests.
+
+The figure shown is the median of the last five samples, not the mean. A mobile
+link throws the occasional very slow round trip — a retransmit at low signal, a
+radio coming out of a power-saving state — and under a mean a single 900 ms
+sample drags the number for the next five ticks, which reads as latency slowly
+settling when it is really one outlier passing through. The median absorbs it.
+
+Background sampling is what lets the panel open on numbers that are already
+there instead of an empty window filling in front of you. It is not free: an
+echo and its reply are about 170 bytes, so at the default 10 s poll it costs
+roughly 1.5 MB a day — around 45 MB a month — and it wakes the modem's radio on
+that cadence, which a laptop on battery will notice. Set `backgroundStats` to
+`false` to sample only while the panel is open.
 
 ## Troubleshooting
 

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "andrecmdrgb.mobile-data",
   "name": "Mobile Data",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Andre-cmd-rgb",
   "license": "MIT",
   "description": "Compact NetworkManager-based mobile broadband indicator: signal glyph in the bar, small stats panel.",
@@ -19,7 +19,8 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "interval": 10
+      "interval": 10,
+      "backgroundStats": true
     },
     "schema": [
       {
@@ -30,6 +31,12 @@
         "max": 300,
         "step": 1,
         "defaultValue": 10
+      },
+      {
+        "key": "backgroundStats",
+        "type": "boolean",
+        "label": "Keep stats warm while the panel is closed",
+        "defaultValue": true
       }
     ]
   }

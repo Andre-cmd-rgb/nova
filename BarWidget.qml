@@ -29,6 +29,14 @@ Panel {
     return isFinite(seconds) && seconds > 0 ? Math.max(2, Math.round(seconds)) : 10
   }
 
+  // Keep sampling throughput and latency while the panel is closed, so opening
+  // it shows numbers that are already there rather than an empty window filling
+  // up in front of you. One echo per poll, and only while connected.
+  readonly property bool backgroundStats: {
+    var value = setting("backgroundStats", true)
+    return value !== false && value !== "false" && value !== 0 && value !== "0"
+  }
+
   property var info: ({})
   readonly property string wwanState: info.state || "absent"
   readonly property bool hwPresent: info.hw === "yes"
@@ -117,6 +125,14 @@ Panel {
     var tx = parseFloat(next.tx_bytes)
     var haveCounters = isFinite(rx) && isFinite(tx)
 
+    // Nothing to measure without a link, and a window carried across an outage
+    // would open the panel on a latency from before it.
+    if ((next.state || "") !== "connected") {
+      resetStats()
+      prevIface = iface
+      return
+    }
+
     if (!haveCounters || iface !== prevIface || prevAt === 0) {
       // First sample after open, or the modem moved interface — a delta
       // against the old counters would manufacture a spike.
@@ -141,15 +157,19 @@ Panel {
     while (samples.length > 5) samples.shift()
     pings = samples
 
-    var total = 0
-    var count = 0
+    // Median, not mean. One slow sample — a retransmit at low signal, a
+    // radio waking up — would otherwise drag the average for the next five
+    // ticks, which reads as latency slowly settling rather than as a single
+    // outlier passing through the window.
+    var seen = []
     for (var j = 0; j < samples.length; j++) {
-      if (typeof samples[j] === "number") {
-        total += samples[j]
-        count++
-      }
+      if (typeof samples[j] === "number") seen.push(samples[j])
     }
-    ping = count > 0 ? total / count : -1
+    seen.sort(function (a, b) { return a - b })
+    var mid = seen.length / 2
+    ping = seen.length === 0 ? -1
+      : seen.length % 2 === 1 ? seen[(seen.length - 1) / 2]
+      : (seen[mid - 1] + seen[mid]) / 2
   }
 
   function resetStats() {
@@ -186,7 +206,7 @@ Panel {
     actionProc.running = true
   }
 
-  onOpenedChanged: if (!opened) resetStats()
+  onOpenedChanged: if (!opened && !backgroundStats) resetStats()
 
   visible: hwPresent
   implicitWidth: hwPresent ? button.implicitWidth : 0
@@ -202,7 +222,8 @@ Panel {
   }
 
   // The verbose feed adds byte counters and an interface-bound ping; the ping
-  // can burn its full 1 s timeout, so only the open panel pays for it.
+  // can burn its full 1 s timeout, so it is asked for only when someone is
+  // watching: an open panel, or backgroundStats keeping the window warm.
   Process {
     id: detailsProc
     command: [mobile.helper, "info", "--verbose"]
@@ -221,12 +242,14 @@ Panel {
   }
 
   // Background poll for the bar glyph; the open panel has its own cadence.
+  // With backgroundStats on this takes the verbose feed as well, so the
+  // window is already full by the time the panel opens.
   Timer {
     interval: mobile.pollInterval * 1000
     running: !mobile.opened
     repeat: true
     triggeredOnStart: true
-    onTriggered: mobile.refresh()
+    onTriggered: mobile.backgroundStats ? mobile.refreshDetails() : mobile.refresh()
   }
 
   Timer {
