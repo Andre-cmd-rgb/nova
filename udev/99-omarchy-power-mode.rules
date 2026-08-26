@@ -1,0 +1,4 @@
+# Re-apply the power policy whenever the mains adapter is plugged or unplugged.
+# The service reads the current state itself, so one rule covers both edges.
+# --no-block because a udev rule must not wait on anything.
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", RUN+="/usr/bin/systemctl --no-block start omarchy-power-mode.service"

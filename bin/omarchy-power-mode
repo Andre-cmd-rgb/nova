@@ -1,0 +1,169 @@
+#!/bin/bash
+#
+# omarchy-power-mode — AC/battery power policy for a hybrid-graphics laptop.
+#
+#   battery : the discrete GPU is unloaded and taken off the PCI bus, and the
+#             power profile drops to power-saver.
+#   AC      : the card is rescanned back and the profile goes to performance.
+#
+# The point is the dGPU. On a laptop whose panel hangs off the iGPU, the
+# discrete card renders nothing on the desktop and still bills several watts
+# just for being bound — an RTX A2000 idles at ~6 W, a large share of the draw
+# on a 74 Wh battery. Removing it from the bus is the only way to reach zero:
+# runtime power management cannot park a card while a compositor holds it open.
+#
+# Run by udev on a power-supply change, once at boot, and again after resume.
+# Root; no user session required.
+
+set -uo pipefail
+
+CONFIG=/etc/omarchy-power-mode.conf
+NVIDIA_PCI=""
+NVIDIA_MODULES=(nvidia_drm nvidia_modeset nvidia_uvm nvidia)
+
+[[ -r $CONFIG ]] && . "$CONFIG"
+
+log() { printf 'omarchy-power-mode: %s\n' "$*"; }
+
+# Cached sysfs ids, never lspci: reading PCI config space resumes a
+# runtime-suspended GPU, which is the opposite of the job.
+detect_nvidia() {
+  local dev vendor class
+  for dev in /sys/bus/pci/devices/*/; do
+    [[ -r ${dev}vendor && -r ${dev}class ]] || continue
+    vendor=$(<"${dev}vendor")
+    class=$(<"${dev}class")
+    [[ $vendor == 0x10de ]] || continue
+    case $class in
+    0x030000 | 0x030200) basename "$dev"; return 0 ;;
+    esac
+  done
+  return 1
+}
+
+[[ -n $NVIDIA_PCI ]] || NVIDIA_PCI=$(detect_nvidia) || true
+
+on_ac() {
+  local supply
+  for supply in /sys/class/power_supply/*/; do
+    [[ -r ${supply}type && -r ${supply}online ]] || continue
+    [[ $(<"${supply}type") == Mains ]] || continue
+    [[ $(<"${supply}online") == 1 ]] && return 0
+  done
+  return 1
+}
+
+gpu_present() { [[ -n $NVIDIA_PCI && -e /sys/bus/pci/devices/$NVIDIA_PCI ]]; }
+
+# Anything holding the device blocks the unload, and forcing past that would
+# take the GPU out from under a running program.
+gpu_users() {
+  local node held=""
+  for node in /dev/nvidia*; do
+    [[ -e $node ]] || continue
+    held+=" $(fuser "$node" 2>/dev/null)"
+  done
+  printf '%s' "$(tr -s ' ' <<<"$held")"
+}
+
+gpu_off() {
+  [[ -n $NVIDIA_PCI ]] || { log "no discrete GPU found"; return 0; }
+  gpu_present || { log "dGPU already off the bus"; return 0; }
+
+  local users
+  users=$(gpu_users)
+  if [[ -n ${users// /} ]]; then
+    log "dGPU is in use by PIDs:$users — leaving it powered"
+    return 1
+  fi
+
+  systemctl stop nvidia-powerd 2>/dev/null
+
+  local module
+  for module in "${NVIDIA_MODULES[@]}"; do
+    lsmod | grep -q "^$module " && modprobe -r "$module" 2>/dev/null
+  done
+  for module in "${NVIDIA_MODULES[@]}"; do
+    if lsmod | grep -q "^$module "; then
+      log "$module would not unload — leaving the dGPU powered"
+      return 1
+    fi
+  done
+
+  if echo 1 >"/sys/bus/pci/devices/$NVIDIA_PCI/remove" 2>/dev/null; then
+    log "dGPU removed from the PCI bus"
+  else
+    log "could not remove $NVIDIA_PCI from the bus"
+    return 1
+  fi
+}
+
+gpu_on() {
+  [[ -n $NVIDIA_PCI ]] || { log "no discrete GPU configured"; return 0; }
+  if ! gpu_present; then
+    echo 1 >/sys/bus/pci/rescan 2>/dev/null
+    local waited=0
+    while ! gpu_present && ((waited < 8)); do
+      sleep 1
+      waited=$((waited + 1))
+    done
+  fi
+  gpu_present || { log "dGPU did not come back on rescan"; return 1; }
+
+  # Load the driver now rather than on first use, so prime-run is instant.
+  # Runtime PM still parks the card whenever nothing is rendering on it.
+  modprobe nvidia 2>/dev/null
+  echo auto >"/sys/bus/pci/devices/$NVIDIA_PCI/power/control" 2>/dev/null
+  systemctl start nvidia-powerd 2>/dev/null
+  log "dGPU back on the bus"
+}
+
+profile() {
+  command -v powerprofilesctl >/dev/null 2>&1 || return 0
+  powerprofilesctl set "$1" 2>/dev/null && log "power profile: $1"
+}
+
+# Small and reversible. The codec sleeping is the only one with a perceptible
+# cost: a faint click when audio starts after silence.
+extras() {
+  case $1 in
+  battery) echo 1 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null ;;
+  ac) echo 0 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null ;;
+  esac
+  return 0
+}
+
+case "${1:-auto}" in
+battery)
+  gpu_off
+  profile power-saver
+  extras battery
+  ;;
+ac)
+  gpu_on
+  profile performance
+  extras ac
+  ;;
+auto)
+  if on_ac; then "$0" ac; else "$0" battery; fi
+  ;;
+gpu-on) gpu_on ;;
+gpu-off) gpu_off ;;
+gpu-toggle)
+  if gpu_present; then gpu_off; else gpu_on; fi
+  ;;
+status)
+  printf 'power source : %s\n' "$(on_ac && echo AC || echo battery)"
+  printf 'dGPU address : %s\n' "${NVIDIA_PCI:-none found}"
+  printf 'dGPU on bus  : %s\n' "$(gpu_present && echo yes || echo no)"
+  printf 'dGPU held by : %s\n' "$(gpu_users)"
+  printf 'power profile: %s\n' "$(powerprofilesctl get 2>/dev/null)"
+  if gpu_present && command -v nvidia-smi >/dev/null 2>&1; then
+    printf 'dGPU draw    : %s\n' "$(nvidia-smi --query-gpu=power.draw,pstate --format=csv,noheader 2>/dev/null)"
+  fi
+  ;;
+*)
+  echo "usage: omarchy-power-mode [auto|ac|battery|gpu-on|gpu-off|gpu-toggle|status]" >&2
+  exit 1
+  ;;
+esac
