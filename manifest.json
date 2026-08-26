@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "andrecmdrgb.mobile-data",
   "name": "Mobile Data",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "author": "Andre-cmd-rgb",
   "license": "MIT",
   "description": "Compact NetworkManager-based mobile broadband indicator: signal glyph in the bar, small stats panel.",

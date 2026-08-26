@@ -759,6 +759,24 @@ cmd_setup() {
   echo "Done. Autoconnect is on and the route metric is $metric."
 }
 
+# Which NetworkManager profile this plugin drives. Without this the only way
+# to move it off the profile `setup` happened to create was editing the config
+# file by hand, which is not a setting if you cannot set it.
+cmd_profile() {
+  local name=${1:-} type
+  if [[ -z $name ]]; then
+    printf '%s\n' "$(nm_profile)"
+    return 0
+  fi
+  require_nmcli
+  nm_has_profile "$name" || die "no connection named '$name'"
+  type=$(nm -t -f connection.type connection show "$name" 2>/dev/null |
+    sed -n 's/^connection\.type://p' | head -n1)
+  [[ $type == gsm ]] || die "'$name' is a ${type:-non-gsm} connection, not a mobile one"
+  set_cfg PROFILE "$name" || die "could not write $CONFIG"
+  echo "Now driving the '$name' profile."
+}
+
 cmd_apn() {
   require_nmcli
   local apn=${1:-} profile
@@ -804,6 +822,7 @@ Usage:
   mobile-data enable | disable   aliases for on and off
   mobile-data reset              power-cycle a modem that refuses to connect
   mobile-data setup [APN]        create or refresh the NetworkManager profile
+  mobile-data profile [name]     show or choose the NetworkManager profile
   mobile-data apn <APN>          change the APN on the profile
   mobile-data reset-day <1-31>   billing day for the usage counter
   mobile-data version            print the plugin version
@@ -832,6 +851,7 @@ off | disable) cmd_off ;;
 toggle) cmd_toggle ;;
 reset) cmd_reset ;;
 setup) cmd_setup "${1:-}" ;;
+profile) cmd_profile "${1:-}" ;;
 apn) cmd_apn "${1:-}" ;;
 reset-day) cmd_reset_day "${1:-}" ;;
 version | --version | -V) cmd_version ;;

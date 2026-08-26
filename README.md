@@ -118,10 +118,28 @@ execute:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `PROFILE` | first `gsm` profile found | NetworkManager profile to drive |
+| `PROFILE` | first `gsm` profile found | NetworkManager profile to drive (`mobile-data profile <name>`) |
 | `RESET_DAY` | `1` | day of the month the usage counter renews |
 | `ROUTE_METRIC` | `700` | metric written by `mobile-data setup` |
 | `ON_TIMEOUT` | `90` | seconds `on` may spend bringing the modem up |
+
+## More than one mobile profile
+
+If NetworkManager has several `gsm` profiles — one you made yourself and one
+`mobile-data setup` created, say — decide which is yours and point the plugin
+at it:
+
+```bash
+mobile-data profile very          # drive this one
+mobile-data setup internet.it     # and give it the right APN
+```
+
+Leave only that one on autoconnect, or NetworkManager will pick whichever it
+used last and the two will trade the connection between them:
+
+```bash
+nmcli connection modify <the-other-one> connection.autoconnect no
+```
 
 ## CLI
 
@@ -132,6 +150,7 @@ mobile-data on | off | toggle  radio and connection control
 mobile-data enable | disable   aliases for on and off
 mobile-data reset              power-cycle a modem that refuses to connect
 mobile-data setup [APN]        create or refresh the NetworkManager profile
+mobile-data profile [name]     show or choose the NetworkManager profile
 mobile-data apn <APN>          change the APN on the profile
 mobile-data reset-day <1-31>   billing day for the usage counter
 mobile-data version            print the plugin version

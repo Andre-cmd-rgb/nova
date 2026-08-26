@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.0 — 2026-08-26
+
+- `mobile-data profile [name]` shows or chooses the NetworkManager profile the
+  plugin drives, checking that it exists and is a mobile connection. Moving off
+  the profile `setup` happened to create previously meant editing the config
+  file by hand, which is not a setting if you cannot set it.
+
 ## 1.3.0 — 2026-08-26
 
 - A modem that has not come back yet is reported as `starting`, not `absent`.
