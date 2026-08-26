@@ -1,0 +1,404 @@
+import QtQuick
+import Quickshell.Io
+import qs.Commons
+import qs.Ui
+
+// Compact mobile-broadband widget: one signal glyph in the bar, and a narrow
+// panel holding an on/off switch and read-only stats. APN, billing day and
+// profile setup live on the `mobile-data` CLI so the panel stays a single
+// column of numbers.
+//
+// The id is deliberately not `root`: PanelHero's own root is called `root`,
+// and components declared for its `trailingControl` are instantiated inside
+// it. A distinct id removes any question about which one wins.
+Panel {
+  id: mobile
+  moduleName: "andrecmdrgb.mobile-data"
+  ipcTarget: "andrecmdrgb.mobile-data"
+
+  // Absolute path to the sibling CLI, resolved from this file's own location
+  // so nothing has to be symlinked onto PATH and the plugin keeps working if
+  // the directory is renamed. Decoded, because resolvedUrl percent-encodes
+  // anything unusual in the path.
+  readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/mobile-data")).replace(/^file:\/\//, ""))
+
+  // Seconds between background polls. Declared in the manifest so the settings
+  // panel can offer it; the fallback here is what an entry without the key gets.
+  readonly property int pollInterval: {
+    var seconds = Number(setting("interval", 10))
+    return isFinite(seconds) && seconds > 0 ? Math.max(2, Math.round(seconds)) : 10
+  }
+
+  property var info: ({})
+  readonly property string wwanState: info.state || "absent"
+  readonly property bool hwPresent: info.hw === "yes"
+  readonly property bool hasProfile: (info.profile || "") !== ""
+  readonly property bool managed: info.managed !== "no"
+  readonly property bool connected: wwanState === "connected"
+  readonly property bool live: connected || wwanState === "connecting"
+  readonly property bool busy: actionProc.running
+  readonly property string icon: info.icon || "󰢿"
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property color dim: Qt.darker(barForeground, 1.4)
+
+  // The switch throws on click and shows where we are heading while the CLI
+  // call is still in flight, rather than sitting on the stale value.
+  property bool desired: false
+  readonly property bool switchChecked: busy ? desired : live
+
+  // Throughput is the delta between successive --verbose samples; ping keeps a
+  // short rolling average so the number does not jitter every 1.5 s.
+  property real prevRx: 0
+  property real prevTx: 0
+  property real prevAt: 0
+  property string prevIface: ""
+  property real downRate: 0
+  property real upRate: 0
+  property var pings: []
+  property real ping: -1
+  readonly property bool hasStats: info.rx_bytes !== undefined
+
+  readonly property string metaText: {
+    switch (wwanState) {
+    case "connected": return (info.operator || "Connected") + (info.tech ? " · " + info.tech : "")
+    case "connecting": return "Connecting…"
+    case "disconnected": return (info.operator || "Registered") + " — not connected"
+    case "searching": return "Searching for network"
+    case "nosim": return "No SIM"
+    case "locked": return "SIM locked — PIN required"
+    case "disabled": return "Mobile data off"
+    case "noprofile": return "No connection profile"
+    case "absent": return "No modem"
+    default: return "Modem starting…"
+    }
+  }
+
+  // One line, and only when something actually needs doing.
+  readonly property string hintText: {
+    if (!hasProfile) return "No profile yet — run:  mobile-data setup <APN>"
+    if (!managed) return "NetworkManager is not managing the modem."
+    return ""
+  }
+
+  readonly property string usedText: formatBytes(parseFloat(info.used_bytes || "0"))
+
+  readonly property string resetText: {
+    if (!info.next_reset) return "—"
+    var d = new Date(info.next_reset + "T00:00:00")
+    if (isNaN(d.getTime())) return "—"
+    return Qt.formatDate(d, "MMM d")
+  }
+
+  function refresh() {
+    if (!statusProc.running) statusProc.running = true
+  }
+
+  function refreshDetails() {
+    if (!detailsProc.running) detailsProc.running = true
+  }
+
+  function updateInfo(raw) {
+    var next = {}
+    var lines = String(raw || "").split("\n")
+    for (var i = 0; i < lines.length; i++) {
+      var eq = lines[i].indexOf("=")
+      if (eq > 0) next[lines[i].slice(0, eq)] = lines[i].slice(eq + 1)
+    }
+    // A transient empty read must not blink the widget out of the bar.
+    if (Object.keys(next).length === 0) return
+    updateRates(next)
+    info = next
+  }
+
+  function updateRates(next) {
+    var iface = next.iface || ""
+    var now = Date.now() / 1000
+    var rx = parseFloat(next.rx_bytes)
+    var tx = parseFloat(next.tx_bytes)
+    var haveCounters = isFinite(rx) && isFinite(tx)
+
+    if (!haveCounters || iface !== prevIface || prevAt === 0) {
+      // First sample after open, or the modem moved interface — a delta
+      // against the old counters would manufacture a spike.
+      downRate = 0
+      upRate = 0
+    } else {
+      var dt = now - prevAt
+      if (dt > 0) {
+        downRate = Math.max(0, (rx - prevRx) / dt)
+        upRate = Math.max(0, (tx - prevTx) / dt)
+      }
+    }
+    prevIface = iface
+    prevRx = haveCounters ? rx : 0
+    prevTx = haveCounters ? tx : 0
+    prevAt = haveCounters ? now : 0
+
+    if (next.ping_ms === undefined) return
+    var v = parseFloat(next.ping_ms)
+    var samples = pings.slice()
+    samples.push(isFinite(v) && v >= 0 ? v : null)
+    while (samples.length > 5) samples.shift()
+    pings = samples
+
+    var total = 0
+    var count = 0
+    for (var j = 0; j < samples.length; j++) {
+      if (typeof samples[j] === "number") {
+        total += samples[j]
+        count++
+      }
+    }
+    ping = count > 0 ? total / count : -1
+  }
+
+  function resetStats() {
+    prevAt = 0
+    prevIface = ""
+    downRate = 0
+    upRate = 0
+    pings = []
+    ping = -1
+  }
+
+  function formatBytes(bytes) {
+    var n = Number(bytes)
+    if (!isFinite(n) || n < 0) n = 0
+    if (n < 1024) return Math.round(n) + " B"
+    if (n < 1048576) return (n / 1024).toFixed(1) + " KB"
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB"
+    return (n / 1073741824).toFixed(2) + " GB"
+  }
+
+  function formatRate(bytesPerSec) {
+    return formatBytes(bytesPerSec) + "/s"
+  }
+
+  function formatPing() {
+    if (pings.length === 0) return "--"
+    if (ping < 0) return "timeout"
+    return ping.toFixed(ping < 10 ? 1 : 0) + " ms"
+  }
+
+  function toggleData() {
+    if (busy || !hasProfile) return
+    desired = !live
+    actionProc.running = true
+  }
+
+  onOpenedChanged: if (!opened) resetStats()
+
+  visible: hwPresent
+  implicitWidth: hwPresent ? button.implicitWidth : 0
+  implicitHeight: hwPresent ? button.implicitHeight : 0
+
+  Process {
+    id: statusProc
+    command: [mobile.helper, "info"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: mobile.updateInfo(text)
+    }
+  }
+
+  // The verbose feed adds byte counters and an interface-bound ping; the ping
+  // can burn its full 1 s timeout, so only the open panel pays for it.
+  Process {
+    id: detailsProc
+    command: [mobile.helper, "info", "--verbose"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: mobile.updateInfo(text)
+    }
+  }
+
+  // Turning the radio back on re-enumerates the modem, so this can take
+  // fifteen seconds or so; `busy` holds the switch in place meanwhile.
+  Process {
+    id: actionProc
+    command: [mobile.helper, "toggle"]
+    onExited: mobile.opened ? mobile.refreshDetails() : mobile.refresh()
+  }
+
+  // Background poll for the bar glyph; the open panel has its own cadence.
+  Timer {
+    interval: mobile.pollInterval * 1000
+    running: !mobile.opened
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: mobile.refresh()
+  }
+
+  Timer {
+    interval: 1500
+    running: mobile.opened
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: mobile.refreshDetails()
+  }
+
+  BarIconButton {
+    id: button
+    anchors.fill: parent
+    bar: mobile.bar
+    text: mobile.icon
+    // Powered but not carrying traffic reads as a dimmed glyph, matching the
+    // disconnected Wi-Fi arc next door.
+    opacity: mobile.connected ? 1 : 0.5
+    slotSize: Style.bar.statusSlot
+    tooltipText: ""
+    onPressed: function (b) {
+      if (b === Qt.RightButton) mobile.toggleData()
+      else if (b === Qt.MiddleButton) mobile.refresh()
+      else mobile.toggle()
+    }
+  }
+
+  KeyboardPanel {
+    id: panel
+    anchorItem: button
+    owner: mobile
+    bar: mobile.bar
+    open: mobile.opened && mobile.hwPresent
+    focusTarget: keys
+    contentWidth: panel.fittedContentWidth(Style.space(250))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+
+    PanelKeyCatcher {
+      id: keys
+      anchors.fill: parent
+      onCloseRequested: mobile.close()
+      onTabRequested: function (direction) {
+        mobile.switchPanel(direction)
+      }
+      onTextKey: function (t) {
+        if (t === "t" || t === "T") mobile.toggleData()
+      }
+
+      Column {
+        id: column
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        spacing: Style.space(12)
+
+        PanelHero {
+          title: "Mobile Data"
+          meta: mobile.metaText
+          foreground: mobile.barForeground
+          fontFamily: mobile.fontFamily
+          iconOpacity: mobile.connected ? 1.0 : 0.5
+
+          iconComponent: Component {
+            Text {
+              text: mobile.icon
+              color: mobile.barForeground
+              font.family: mobile.fontFamily
+              font.pixelSize: Style.font.display
+            }
+          }
+
+          trailingControl: Component {
+            ToggleSwitch {
+              visible: mobile.hasProfile
+              checked: mobile.switchChecked
+              busy: mobile.busy
+              foreground: mobile.barForeground
+              onToggled: mobile.toggleData()
+            }
+          }
+        }
+
+        Column {
+          visible: mobile.connected
+          width: parent.width
+          spacing: Style.spacing.labelGap
+
+          Stat {
+            width: parent.width
+            label: "Signal"
+            value: (mobile.info.signal || "0") + "%"
+          }
+          Stat {
+            width: parent.width
+            label: "Ping"
+            value: mobile.formatPing()
+          }
+          Stat {
+            width: parent.width
+            label: "Down"
+            value: mobile.hasStats ? mobile.formatRate(mobile.downRate) : "--"
+          }
+          Stat {
+            width: parent.width
+            label: "Up"
+            value: mobile.hasStats ? mobile.formatRate(mobile.upRate) : "--"
+          }
+        }
+
+        PanelSeparator {
+          foreground: mobile.barForeground
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.spacing.labelGap
+
+          Stat {
+            width: parent.width
+            label: "Used"
+            value: mobile.usedText
+          }
+          Stat {
+            width: parent.width
+            label: "Resets"
+            value: mobile.resetText
+          }
+        }
+
+        Text {
+          visible: mobile.hintText !== ""
+          width: parent.width
+          wrapMode: Text.WordWrap
+          text: mobile.hintText
+          color: mobile.dim
+          font.family: mobile.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+      }
+    }
+  }
+
+  // Label left, value right, one line. Deliberately not a two-column grid:
+  // a single column stays legible at 250 px and needs no width arithmetic.
+  component Stat: Item {
+    id: stat
+
+    property string label: ""
+    property string value: ""
+    property color valueColor: mobile.barForeground
+
+    implicitHeight: Math.max(statLabel.implicitHeight, statValue.implicitHeight)
+
+    Text {
+      id: statLabel
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      text: stat.label
+      color: mobile.barForeground
+      opacity: 0.6
+      font.family: mobile.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+
+    Text {
+      id: statValue
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      text: stat.value
+      color: stat.valueColor
+      font.family: mobile.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+  }
+}

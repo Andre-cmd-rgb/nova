@@ -1,0 +1,635 @@
+#!/bin/bash
+#
+# mobile-data — mobile broadband control and status for the
+# andrecmdrgb.mobile-data Omarchy bar widget.
+#
+# NetworkManager only. Omarchy 4.0 runs NetworkManager and retires
+# systemd-networkd (install/hardware/network.sh), so the bearer is an ordinary
+# `gsm` connection profile. NetworkManager's shipped polkit policy sets
+# allow_active=yes for both network-control and settings.modify.system, so
+# every command here runs as your normal user — no root, no polkit rule, no
+# systemd unit.
+
+set -uo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mobile-data"
+CONFIG="$CONFIG_DIR/config"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-mobile-data"
+METER="$STATE_DIR/meter"
+MODEM_CACHE="$STATE_DIR/modem"
+
+# Paths used by andre.mobile 2.x, read once so an upgrade keeps the billing
+# period and the configured profile instead of silently starting over.
+LEGACY_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/mobile.conf"
+LEGACY_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-mobile"
+
+# Testing seam; there is no reason to set this in normal use.
+NET_DIR="${OMARCHY_MOBILE_NET_DIR:-/sys/class/net}"
+
+DUMP="" IDX=""
+STATE=absent HW=no MANAGED=no PROFILE_NAME=""
+OPERATOR="" TECH="" SIGNAL=0 IFACE="" IPADDR=""
+USED_BYTES=0 PERIOD_START="" PERIOD_NEXT=""
+
+die() {
+  printf 'mobile-data: %s\n' "$*" >&2
+  exit 1
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# nmcli translates device states — an Italian desktop reports "connesso" — and
+# every comparison below is against the English word, so the tools whose output
+# is parsed are pinned to the C locale. The script's own locale is deliberately
+# left alone: printf's \U escapes need a UTF-8 charset to emit the bar glyphs,
+# and under LC_ALL=C they would print as a literal backslash sequence.
+nm() { LC_ALL=C nmcli "$@"; }
+mm() { LC_ALL=C mmcli "$@"; }
+rf() { LC_ALL=C rfkill "$@"; }
+
+# ------------------------------------------------------------------- config
+# Parsed, never sourced: this file is user-editable and must not be able to
+# execute anything.
+
+get_cfg() {
+  local key=$1 def=${2:-} value=""
+  if [[ -r $CONFIG ]]; then
+    # Keys are literals from this script, never user input, so building the
+    # match out of one is safe.
+    value=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
+      tail -n1 | tr -d '\r')
+    value=${value%"${value##*[![:space:]]}"}
+  fi
+  printf '%s' "${value:-$def}"
+}
+
+set_cfg() {
+  local key=$1 value=$2 tmp
+  mkdir -p -- "$CONFIG_DIR" || return 1
+  if [[ ! -f $CONFIG ]]; then
+    (
+      umask 077
+      : >"$CONFIG"
+    ) || return 1
+  fi
+  tmp=$(mktemp -- "$CONFIG.XXXXXX") || return 1
+  # awk rather than sed: the value is data, and a sed replacement would read an
+  # APN containing & or \1 as a back-reference and rewrite it.
+  if ! awk -v key="$key" -v value="$value" '
+    BEGIN { pattern = "^[[:space:]]*" key "[[:space:]]*=" }
+    $0 ~ pattern { if (!seen++) print key "=" value; next }
+    { print }
+    END { if (!seen) print key "=" value }
+  ' "$CONFIG" >"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  # Copy rather than move so the file keeps its own ownership and mode.
+  cat -- "$tmp" >"$CONFIG"
+  rm -f -- "$tmp"
+}
+
+# Carry 2.x state forward on first run. Copies rather than moves, so rolling
+# back to the old plugin finds everything where it left it.
+migrate_legacy_state() {
+  if [[ ! -e $CONFIG && -r $LEGACY_CONFIG ]]; then
+    mkdir -p -- "$CONFIG_DIR" 2>/dev/null &&
+      (
+        umask 077
+        cat -- "$LEGACY_CONFIG" >"$CONFIG"
+      ) 2>/dev/null
+  fi
+  if [[ ! -d $STATE_DIR && -d $LEGACY_STATE_DIR ]]; then
+    mkdir -p -- "$STATE_DIR" 2>/dev/null || return 0
+    local file
+    for file in meter modem; do
+      [[ -r $LEGACY_STATE_DIR/$file ]] &&
+        cat -- "$LEGACY_STATE_DIR/$file" >"$STATE_DIR/$file" 2>/dev/null
+    done
+  fi
+  return 0
+}
+
+# -------------------------------------------------------------------- modem
+
+# One `mmcli -m N -K` in the common case: the index is cached, and only a
+# cache miss costs the extra `mmcli -L`.
+load_dump() {
+  local cached="" index
+  DUMP="" IDX=""
+  have mmcli || return 1
+
+  [[ -r $MODEM_CACHE ]] && cached=$(<"$MODEM_CACHE")
+  if [[ $cached =~ ^[0-9]+$ ]]; then
+    DUMP=$(mm -m "$cached" -K 2>/dev/null) && {
+      IDX=$cached
+      return 0
+    }
+  fi
+
+  index=$(mm -L 2>/dev/null | sed -n 's|.*/Modem/\([0-9][0-9]*\).*|\1|p' | head -n1)
+  [[ -n $index ]] || return 1
+  DUMP=$(mm -m "$index" -K 2>/dev/null) || return 1
+  IDX=$index
+  mkdir -p -- "$STATE_DIR" && printf '%s' "$index" >"$MODEM_CACHE"
+  return 0
+}
+
+# Pull one key out of an `mmcli -K` dump. Splitting on the first colon only,
+# so values that contain colons (IPv6) survive intact.
+kv() {
+  awk -v want="$1" '
+    { key = $0; sub(/[[:space:]]*:.*$/, "", key) }
+    key == want { value = $0; sub(/^[^:]*:[[:space:]]*/, "", value); print value; exit }
+  ' <<<"$DUMP"
+}
+
+# Values of a repeated `foo.value[N]` list, one per line.
+kv_list() {
+  awk -v prefix="$1" '
+    index($0, prefix) == 1 && $0 ~ /^[^:]*\.value\[[0-9]+\]/ {
+      value = $0; sub(/^[^:]*:[[:space:]]*/, "", value); print value
+    }
+  ' <<<"$DUMP"
+}
+
+# The honest label is the highest generation the modem reports. On 5G NSA
+# (EN-DC) the list is {lte, 5gnr} — reading only the first entry prints LTE
+# while you are actually on 5G.
+tech_label() {
+  local rank=0 label="" tech r l
+  while IFS= read -r tech; do
+    [[ -n $tech && $tech != "--" ]] || continue
+    case ${tech,,} in
+    5gnr) r=5 l="5G" ;;
+    lte) r=4 l="LTE" ;;
+    lte-cat-m | lte-nb-iot) r=4 l="LTE-M" ;;
+    hspa-plus) r=3 l="H+" ;;
+    hspa | hsdpa | hsupa | umts) r=3 l="3G" ;;
+    edge | gprs | gsm) r=2 l="2G" ;;
+    *) r=1 l="${tech^^}" ;;
+    esac
+    if ((r > rank)); then
+      rank=$r
+      label=$l
+    fi
+  done < <(kv_list "modem.generic.access-technologies")
+  printf '%s' "$label"
+}
+
+signal_icon() {
+  case $STATE in
+  absent | disabled | locked | searching | nosim | noprofile)
+    printf '\U000F08BF'
+    ;;
+  *)
+    if ((SIGNAL >= 67)); then
+      printf '\U000F08BE'
+    elif ((SIGNAL >= 34)); then
+      printf '\U000F08BD'
+    elif ((SIGNAL > 0)); then
+      printf '\U000F08BC'
+    else
+      printf '\U000F08BF'
+    fi
+    ;;
+  esac
+}
+
+# A soft-blocked radio is a deliberate "off", not a missing modem — and while
+# blocked the modem usually vanishes from mmcli entirely, so this is checked
+# before anything else and the rfkill entry itself proves the hardware.
+radio_blocked() {
+  have rfkill || return 1
+  [[ $(rf -n -o TYPE,SOFT list wwan 2>/dev/null | awk 'NR == 1 { print $2 }') == blocked ]]
+}
+
+radio_present() {
+  have rfkill || return 1
+  [[ -n $(rf -n -o TYPE list wwan 2>/dev/null) ]]
+}
+
+# ----------------------------------------------------------- NetworkManager
+
+# `nmcli -t` escapes the field separator and the escape character itself inside
+# a value, so a connection named "Work: SIM" comes back as "Work\: SIM".
+nm_unescape() {
+  sed 's/\\\(.\)/\1/g'
+}
+
+# TYPE first so the connection name — the only field that can contain a colon
+# — is everything after the first one.
+nm_profile() {
+  local configured
+  configured=$(get_cfg PROFILE)
+  if [[ -n $configured ]]; then
+    printf '%s' "$configured"
+    return 0
+  fi
+  have nmcli || return 0
+  nm -t -f TYPE,NAME connection show 2>/dev/null |
+    sed -n 's/^gsm://p' | head -n1 | nm_unescape
+}
+
+nm_has_profile() {
+  local name=$1 existing
+  while IFS= read -r existing; do
+    [[ $existing == "$name" ]] && return 0
+  done < <(nm -t -f NAME connection show 2>/dev/null | nm_unescape)
+  return 1
+}
+
+nm_gsm_device_state() {
+  have nmcli || return 0
+  nm -t -f TYPE,DEVICE,STATE device status 2>/dev/null |
+    awk -F: '$1 == "gsm" { print $3; exit }'
+}
+
+# ------------------------------------------------------------------- meter
+
+# NetworkManager does not accumulate usage and the kernel counters reset with
+# the interface, so the billing-period total is kept here: add the delta since
+# the last sample, and treat a counter that went backwards (or a new
+# interface) as a fresh start rather than a negative delta.
+
+days_in_month() { date -d "$1-$2-01 +1 month -1 day" +%d; }
+
+clamp_day() {
+  local year=$1 month=$2 day=$3 last
+  last=$(days_in_month "$year" "$month")
+  ((10#$day > 10#$last)) && day=$last
+  printf '%d' "$((10#$day))"
+}
+
+# Sets PERIOD_START and PERIOD_NEXT from the configured renewal day.
+period_bounds() {
+  local reset_day year month day start
+  reset_day=$(get_cfg RESET_DAY 1)
+  [[ $reset_day =~ ^[0-9]+$ ]] && ((10#$reset_day >= 1 && 10#$reset_day <= 31)) || reset_day=1
+
+  year=$(date +%Y)
+  month=$(date +%m)
+  day=$(clamp_day "$year" "$month" "$reset_day")
+  start=$(printf '%04d-%02d-%02d' "$((10#$year))" "$((10#$month))" "$day")
+
+  # Zero-padded ISO dates, so a plain lexical comparison is also chronological.
+  if [[ $(date +%F) < $start ]]; then
+    read -r year month <<<"$(date -d "$year-$month-01 -1 month" '+%Y %m')"
+    day=$(clamp_day "$year" "$month" "$reset_day")
+    start=$(printf '%04d-%02d-%02d' "$((10#$year))" "$((10#$month))" "$day")
+  fi
+  PERIOD_START=$start
+
+  read -r year month <<<"$(date -d "${start%-*}-01 +1 month" '+%Y %m')"
+  day=$(clamp_day "$year" "$month" "$reset_day")
+  PERIOD_NEXT=$(printf '%04d-%02d-%02d' "$((10#$year))" "$((10#$month))" "$day")
+}
+
+meter_update() {
+  period_bounds
+  mkdir -p -- "$STATE_DIR" 2>/dev/null
+
+  local current=0 rx=0 tx=0
+  if [[ -n $IFACE && -r $NET_DIR/$IFACE/statistics/rx_bytes ]]; then
+    rx=$(<"$NET_DIR/$IFACE/statistics/rx_bytes")
+    tx=$(<"$NET_DIR/$IFACE/statistics/tx_bytes")
+    [[ $rx =~ ^[0-9]+$ ]] || rx=0
+    [[ $tx =~ ^[0-9]+$ ]] || tx=0
+    current=$((rx + tx))
+  fi
+
+  # Serialise against the other poll cadence; a lost sample is better than a
+  # torn read-modify-write. Losing the lock just means skipping this update.
+  exec {lock}>"$STATE_DIR/.lock" 2>/dev/null || {
+    USED_BYTES=0
+    return 0
+  }
+  flock -w 2 "$lock" 2>/dev/null || {
+    exec {lock}>&-
+    USED_BYTES=0
+    return 0
+  }
+
+  local period="" used=0 last=0 last_iface=""
+  if [[ -r $METER ]]; then
+    period=$(sed -n 's/^period=//p' "$METER" | head -n1)
+    used=$(sed -n 's/^used=//p' "$METER" | head -n1)
+    last=$(sed -n 's/^last=//p' "$METER" | head -n1)
+    last_iface=$(sed -n 's/^iface=//p' "$METER" | head -n1)
+  fi
+  [[ $used =~ ^[0-9]+$ ]] || used=0
+  [[ $last =~ ^[0-9]+$ ]] || last=0
+
+  # A new period starts the total at zero and rebaselines against the counter
+  # as it stands right now — whatever it already held belongs to last period.
+  if [[ $period != "$PERIOD_START" ]]; then
+    used=0
+    if [[ -n $IFACE ]]; then
+      last=$current
+      last_iface=$IFACE
+    fi
+  fi
+
+  # With no interface the modem is simply gone. Carry the old baseline
+  # forward untouched: rebaselining to zero here would make the next sample
+  # after it returns look like the whole lifetime counter is new traffic.
+  local delta=0
+  if [[ -n $IFACE ]]; then
+    if [[ $IFACE != "$last_iface" || $current -lt $last ]]; then
+      delta=$current
+    else
+      delta=$((current - last))
+    fi
+    used=$((used + delta))
+    last=$current
+    last_iface=$IFACE
+  fi
+
+  if printf 'period=%s\nused=%s\nlast=%s\niface=%s\n' \
+    "$PERIOD_START" "$used" "$last" "$last_iface" >"$METER.tmp" 2>/dev/null; then
+    mv -f -- "$METER.tmp" "$METER" 2>/dev/null || rm -f -- "$METER.tmp"
+  fi
+
+  exec {lock}>&-
+  USED_BYTES=$used
+}
+
+# ------------------------------------------------------------------- status
+
+read_state() {
+  STATE=absent HW=no MANAGED=no
+  OPERATOR="" TECH="" SIGNAL=0 IFACE="" IPADDR=""
+
+  PROFILE_NAME=$(nm_profile)
+
+  local device_state
+  device_state=$(nm_gsm_device_state)
+  [[ -n $device_state && $device_state != unmanaged ]] && MANAGED=yes
+
+  if radio_present; then HW=yes; fi
+
+  if radio_blocked; then
+    STATE=disabled
+    HW=yes
+    return 0
+  fi
+
+  load_dump || return 0
+  HW=yes
+
+  OPERATOR=$(kv modem.3gpp.operator-name)
+  TECH=$(tech_label)
+  SIGNAL=$(kv modem.generic.signal-quality.value)
+  [[ $SIGNAL =~ ^[0-9]+$ ]] || SIGNAL=0
+
+  IFACE=$(kv_list "modem.generic.ports" |
+    awk '/\(net\)$/ { sub(/ \(net\)$/, ""); print; exit }')
+
+  local modem_state sim
+  modem_state=$(kv modem.generic.state)
+  sim=$(kv modem.generic.sim)
+
+  case $modem_state in
+  locked) STATE=locked ;;
+  disabled | disabling | failed) STATE=disabled ;;
+  initializing | enabling) STATE=starting ;;
+  searching) STATE=searching ;;
+  connecting) STATE=connecting ;;
+  connected) STATE=connected ;;
+  registered | enabled | disconnecting) STATE=disconnected ;;
+  *) STATE=starting ;;
+  esac
+
+  # An empty slot reports the path "/".
+  if [[ -z $sim || $sim == "/" ]] && [[ $STATE != disabled ]]; then
+    STATE=nosim
+  fi
+
+  # Nothing to connect with — say so rather than offering a dead switch.
+  if [[ -z $PROFILE_NAME && $STATE == disconnected ]]; then
+    STATE=noprofile
+  fi
+
+  if [[ -n $IFACE ]]; then
+    IPADDR=$(LC_ALL=C ip -4 -o addr show dev "$IFACE" 2>/dev/null |
+      awk '{ for (i = 1; i <= NF; i++) if ($i == "inet") { split($(i + 1), a, "/"); print a[1]; exit } }')
+  fi
+}
+
+cmd_info() {
+  read_state
+  meter_update
+
+  printf 'hw=%s\n' "$HW"
+  printf 'state=%s\n' "$STATE"
+  printf 'managed=%s\n' "$MANAGED"
+  printf 'profile=%s\n' "$PROFILE_NAME"
+  printf 'operator=%s\n' "$OPERATOR"
+  printf 'tech=%s\n' "$TECH"
+  printf 'signal=%s\n' "$SIGNAL"
+  printf 'iface=%s\n' "$IFACE"
+  printf 'ip=%s\n' "$IPADDR"
+  printf 'icon=%s\n' "$(signal_icon)"
+  printf 'used_bytes=%s\n' "$USED_BYTES"
+  printf 'next_reset=%s\n' "$PERIOD_NEXT"
+
+  # Byte counters and an interface-bound ping cost real time — the ping alone
+  # can burn its full 1 s timeout — so only the open panel asks for them.
+  if [[ ${1:-} == --verbose && -n $IFACE ]]; then
+    if [[ -r $NET_DIR/$IFACE/statistics/rx_bytes ]]; then
+      printf 'rx_bytes=%s\n' "$(<"$NET_DIR/$IFACE/statistics/rx_bytes")"
+      printf 'tx_bytes=%s\n' "$(<"$NET_DIR/$IFACE/statistics/tx_bytes")"
+    fi
+    # Bound to the modem's interface: the default route is normally Wi-Fi, and
+    # an unbound ping would measure the wrong link entirely.
+    if [[ $STATE == connected ]] && have ping; then
+      printf 'ping_ms=%s\n' "$(LC_ALL=C ping -n -c 1 -W 1 -I "$IFACE" 1.1.1.1 2>/dev/null |
+        awk -F'time[=<]' '/time[=<]/ { split($2, parts, " "); print parts[1]; exit }')"
+    fi
+  fi
+}
+
+cmd_status() {
+  read_state
+  case $STATE in
+  absent) echo "No WWAN modem detected." ;;
+  disabled) echo "Mobile data: off" ;;
+  nosim) echo "No SIM." ;;
+  locked) echo "SIM locked — PIN required." ;;
+  noprofile) echo "No gsm connection profile — run: mobile-data setup <APN>" ;;
+  searching) echo "Searching for a network…" ;;
+  connecting) echo "Connecting…" ;;
+  disconnected) echo "Registered on ${OPERATOR:-unknown}, not connected." ;;
+  connected) echo "Connected to ${OPERATOR:-unknown} on ${TECH:-?} at ${SIGNAL}% (${IPADDR:-no address})." ;;
+  *) echo "Modem starting…" ;;
+  esac
+}
+
+# ------------------------------------------------------------------ control
+
+require_nmcli() {
+  have nmcli ||
+    die "nmcli not found — this plugin needs NetworkManager"
+}
+
+# The modem re-enumerates when the radio comes back, so wait for the gsm
+# device to reappear before asking NetworkManager to activate anything.
+wait_for_device() {
+  local deadline=$((SECONDS + 25)) state
+  while ((SECONDS < deadline)); do
+    state=$(nm_gsm_device_state)
+    case $state in
+    connected | disconnected | connecting) return 0 ;;
+    esac
+    sleep 1
+  done
+  return 1
+}
+
+cmd_on() {
+  require_nmcli
+  local profile
+  profile=$(nm_profile)
+  [[ -n $profile ]] || die "no gsm connection profile — run: mobile-data setup <APN>"
+
+  nm radio wwan on >/dev/null 2>&1
+  wait_for_device || die "the modem did not come back within 25s"
+
+  [[ $(nm_gsm_device_state) == connected ]] && return 0
+  nm connection up "$profile" >/dev/null || die "could not bring up '$profile'"
+}
+
+# `nmcli radio wwan off` is the honest off switch: it soft-blocks the radio, so
+# NetworkManager will not autoconnect around it the way it does after a plain
+# `connection down`.
+cmd_off() {
+  require_nmcli
+  nm radio wwan off >/dev/null || die "could not turn the radio off"
+}
+
+cmd_toggle() {
+  read_state
+  case $STATE in
+  connected | connecting) cmd_off ;;
+  *) cmd_on ;;
+  esac
+}
+
+# -------------------------------------------------------------------- setup
+
+cmd_setup() {
+  require_nmcli
+  local apn=${1:-} profile metric
+  profile=$(get_cfg PROFILE mobile)
+  metric=$(get_cfg ROUTE_METRIC 700)
+  [[ $metric =~ ^[0-9]+$ ]] || metric=700
+
+  if nm_has_profile "$profile"; then
+    echo "Refreshing the existing '$profile' profile."
+  else
+    echo "Creating the '$profile' profile."
+    nm connection add type gsm ifname '*' con-name "$profile" \
+      connection.autoconnect yes >/dev/null ||
+      die "could not create the '$profile' profile"
+  fi
+
+  # Above the Wi-Fi metric so mobile data only carries traffic when nothing
+  # better has a default route. Omarchy's Wi-Fi sits at 600.
+  nm connection modify "$profile" \
+    connection.autoconnect yes \
+    ipv4.route-metric "$metric" \
+    ipv6.route-metric "$metric" >/dev/null ||
+    die "could not configure '$profile'"
+
+  if [[ -n $apn ]]; then
+    nm connection modify "$profile" gsm.auto-config no gsm.apn "$apn" >/dev/null ||
+      die "could not set the APN"
+    echo "APN: $apn"
+  else
+    nm connection modify "$profile" gsm.auto-config yes >/dev/null ||
+      die "could not enable APN auto-configuration"
+    echo "APN: auto-detected from the SIM"
+  fi
+
+  set_cfg PROFILE "$profile" || die "could not write $CONFIG"
+  echo "Done. Autoconnect is on and the route metric is $metric."
+}
+
+cmd_apn() {
+  require_nmcli
+  local apn=${1:-} profile
+  [[ -n $apn ]] || die "usage: mobile-data apn <APN>"
+  profile=$(nm_profile)
+  [[ -n $profile ]] || die "no gsm connection profile — run: mobile-data setup <APN>"
+  nm connection modify "$profile" gsm.auto-config no gsm.apn "$apn" >/dev/null ||
+    die "could not set the APN"
+  echo "APN set to $apn on '$profile'."
+}
+
+cmd_reset_day() {
+  local day=${1:-}
+  [[ -n $day ]] || die "usage: mobile-data reset-day <1-31>"
+  [[ $day =~ ^[0-9]+$ ]] && ((10#$day >= 1 && 10#$day <= 31)) ||
+    die "the renewal day must be 1-31"
+  set_cfg RESET_DAY "$((10#$day))" || die "could not write $CONFIG"
+  period_bounds
+  echo "Usage counter renews on day $((10#$day)) — next reset $PERIOD_NEXT."
+}
+
+# Read from the manifest next to this script, so there is one version to bump.
+# BASH_SOURCE, not $0: the CLI is normally reached through a symlink on PATH.
+cmd_version() {
+  local self plugin_dir version=""
+  self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || self=""
+  plugin_dir=${self%/bin/*}
+  if [[ -n $plugin_dir && -r $plugin_dir/manifest.json ]]; then
+    version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      "$plugin_dir/manifest.json" | head -n1)
+  fi
+  printf 'mobile-data %s\n' "${version:-unknown}"
+}
+
+usage() {
+  cat <<'USAGE'
+mobile-data — mobile broadband status and control for the Omarchy bar widget.
+
+Usage:
+  mobile-data info [--verbose]   key=value status block for the widget
+  mobile-data status             one human-readable line
+  mobile-data on | off | toggle  radio and connection control
+  mobile-data setup [APN]        create or refresh the NetworkManager profile
+  mobile-data apn <APN>          change the APN on the profile
+  mobile-data reset-day <1-31>   billing day for the usage counter
+  mobile-data version            print the plugin version
+
+Config file (key=value per line):
+  ~/.config/omarchy-mobile-data/config
+    PROFILE=mobile        NetworkManager gsm profile to drive
+    RESET_DAY=1           day of month the usage counter renews
+    ROUTE_METRIC=700      route metric written by `setup`
+USAGE
+}
+
+# --------------------------------------------------------------------- main
+
+migrate_legacy_state
+
+command=${1:-info}
+(($# > 0)) && shift
+
+case $command in
+info) cmd_info "${1:-}" ;;
+status) cmd_status ;;
+on) cmd_on ;;
+off) cmd_off ;;
+toggle) cmd_toggle ;;
+setup) cmd_setup "${1:-}" ;;
+apn) cmd_apn "${1:-}" ;;
+reset-day) cmd_reset_day "${1:-}" ;;
+version | --version | -V) cmd_version ;;
+-h | --help | help) usage ;;
+*)
+  usage >&2
+  die "unknown command: $command"
+  ;;
+esac
