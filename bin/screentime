@@ -31,14 +31,20 @@ have() { command -v "$1" >/dev/null 2>&1; }
 # Parsed, never sourced: this file is user-editable and must not be able to
 # execute anything.
 
+# A key that is present but empty means empty, not unset: clearing IGNORE has
+# to be able to beat its default rather than fall back to it.
 get_cfg() {
   local key=$1 def=${2:-} value=""
-  if [[ -r $CONFIG ]]; then
+  # The key is always a literal from this script, never user input, so
+  # building the match out of one is safe.
+  if [[ -r $CONFIG ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$CONFIG" 2>/dev/null; then
     value=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
       tail -n1 | tr -d '\r')
     value=${value%"${value##*[![:space:]]}"}
+    printf '%s' "$value"
+    return 0
   fi
-  printf '%s' "${value:-$def}"
+  printf '%s' "$def"
 }
 
 set_cfg() {
@@ -79,7 +85,9 @@ setting_default() {
   FLUSH_INTERVAL) printf '60' ;;
   RETENTION_DAYS) printf '90' ;;
   DAILY_GOAL) printf '0' ;;
-  IGNORE) printf '' ;;
+  # The shell's own surfaces are not an application you spend time in: the
+  # Omarchy menu and this plugin's own window are both org.quickshell.
+  IGNORE) printf 'org.quickshell' ;;
   *) return 1 ;;
   esac
 }
@@ -105,7 +113,7 @@ day_file() { printf '%s/%s.tsv' "$DAYS_DIR" "$1"; }
 
 is_ignored() {
   local app=${1,,} list item
-  list=$(get_cfg IGNORE)
+  list=$(get_cfg IGNORE "$(setting_default IGNORE)")
   [[ -n $list ]] || return 1
   while IFS= read -r item; do
     item=${item// /}
@@ -395,7 +403,7 @@ cmd_ignore() {
     echo "$app is already ignored."
     return 0
   }
-  list=$(get_cfg IGNORE)
+  list=$(get_cfg IGNORE "$(setting_default IGNORE)")
   set_cfg IGNORE "${list:+$list,}$app" || die "could not write $CONFIG"
   echo "Ignoring $app. Time already recorded for it is kept; run: screentime forget $app"
 }
@@ -403,7 +411,7 @@ cmd_ignore() {
 cmd_unignore() {
   local app=${1:-} list kept="" item
   [[ -n $app ]] || die "usage: screentime unignore <app-id>"
-  list=$(get_cfg IGNORE)
+  list=$(get_cfg IGNORE "$(setting_default IGNORE)")
   while IFS= read -r item; do
     item=${item// /}
     [[ -n $item ]] || continue

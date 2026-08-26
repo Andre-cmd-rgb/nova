@@ -9,3 +9,4 @@ First release.
   week, and the applications behind them.
 - Optional single-glyph bar indicator.
 - `screentime` CLI owns settings, history, and the reports.
+- The shell's own windows (`org.quickshell`) are ignored by default.

@@ -120,7 +120,7 @@ In `~/.config/omarchy-screentime/config`, or via `screentime set`:
 | `FLUSH_INTERVAL` | `60` | seconds between writes to disk |
 | `RETENTION_DAYS` | `90` | days of history to keep (`0` keeps everything) |
 | `DAILY_GOAL` | `0` | daily limit in minutes; today's total turns red past it |
-| `IGNORE` | — | comma-separated app ids never to record |
+| `IGNORE` | `org.quickshell` | comma-separated app ids never to record |
 
 ```bash
 screentime set DAILY_GOAL 300
@@ -129,6 +129,10 @@ screentime ignore org.keepassxc.KeePassXC
 
 An ignored app is not recorded at all, rather than hidden after the fact. Use
 `screentime forget <app-id>` to drop what was recorded before you ignored it.
+
+`org.quickshell` is ignored out of the box: the Omarchy menu and this plugin's
+own window are shell surfaces, not applications you spend time in. Setting
+`IGNORE` yourself replaces that default — include it if you still want it.
 
 ## Where the data lives
 
