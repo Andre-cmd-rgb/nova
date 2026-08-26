@@ -75,6 +75,8 @@ uninstall() {
   step "Removing thinkpad-power"
   sudo rm -f /usr/local/bin/thinkpad-power
   sudo rm -f /etc/systemd/system/thinkpad-power.service
+  sudo systemctl disable --now thinkpad-power-gpu.timer >/dev/null 2>&1
+  sudo rm -f /etc/systemd/system/thinkpad-power-gpu.service /etc/systemd/system/thinkpad-power-gpu.timer
   sudo rm -f /etc/udev/rules.d/99-thinkpad-power.rules
   sudo rm -f /etc/udev/rules.d/98-thinkpad-power-igpu.rules
   sudo rm -f /etc/thinkpad-power.conf
@@ -146,10 +148,15 @@ run sudo install -Dm644 "$HERE/systemd/thinkpad-power.service" \
   /etc/systemd/system/thinkpad-power.service
 run sudo install -Dm644 "$HERE/udev/99-thinkpad-power.rules" \
   /etc/udev/rules.d/99-thinkpad-power.rules
+run sudo install -Dm644 "$HERE/systemd/thinkpad-power-gpu.service" \
+  /etc/systemd/system/thinkpad-power-gpu.service
+run sudo install -Dm644 "$HERE/systemd/thinkpad-power-gpu.timer" \
+  /etc/systemd/system/thinkpad-power-gpu.timer
 run sudo systemctl daemon-reload
 sudo systemctl enable thinkpad-power.service >/dev/null 2>&1
+sudo systemctl enable --now thinkpad-power-gpu.timer >/dev/null 2>&1
 run sudo udevadm control --reload-rules
-ok "systemd unit + udev rule (fires on plug/unplug, boot and resume)"
+ok "systemd units + udev rule (plug/unplug, boot, resume, and a 2 min retry)"
 
 # A stable, colon-free name for the integrated card. AQ_DRM_DEVICES splits its
 # value on ":", so a /dev/dri/by-path/pci-0000:00:02.0-card path is torn into
@@ -191,6 +198,8 @@ sudo rm -f /etc/supergfxd.conf
 # --------------------------------------------------------------- user config
 
 step "Session configuration"
+
+OLD_BATTERY_PROFILE=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/powerprofiles/battery" 2>/dev/null)
 
 mkdir -p "$(dirname -- "$UWSM_ENV")"
 touch "$UWSM_ENV"
@@ -263,6 +272,22 @@ hl.env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
 $MARK_END
 LUA
   ok "$HYPR_CONF (video decode and GLX pointed at the iGPU)"
+fi
+
+# Omarchy already switches the power profile on AC and battery and remembers
+# what you chose for each; two things doing it meant the last writer won. Tell
+# Omarchy what to remember instead of overriding it every plug event.
+if command -v omarchy-powerprofiles-set >/dev/null 2>&1; then
+  pp_state="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/powerprofiles"
+  mkdir -p "$pp_state"
+  if [[ $(cat "$pp_state/battery" 2>/dev/null) != power-saver ]]; then
+    printf 'power-saver\n' >"$pp_state/battery"
+    ok "Omarchy will use power-saver on battery (was: ${OLD_BATTERY_PROFILE:-unset})"
+  else
+    info "Omarchy already uses power-saver on battery"
+  fi
+  [[ -s $pp_state/ac ]] || printf 'performance\n' >"$pp_state/ac"
+  omarchy-powerprofiles-set autodetect >/dev/null 2>&1
 fi
 
 if [[ -f $MENU_FILE ]]; then

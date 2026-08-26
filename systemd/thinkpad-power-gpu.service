@@ -1,0 +1,7 @@
+[Unit]
+Description=Put the discrete GPU where the current power source wants it
+Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/thinkpad-power gpu-auto

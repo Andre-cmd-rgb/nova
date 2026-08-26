@@ -4,8 +4,11 @@ Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
 # Ordered after the sleep targets so the same unit re-applies the policy on
 # resume: the machine may have been unplugged while it was asleep, and the
 # GPU comes back on the bus regardless of how it went to sleep.
-After=power-profiles-daemon.service suspend.target hibernate.target
-Wants=power-profiles-daemon.service
+# Deliberately NOT ordered against power-profiles-daemon: PPD is itself
+# After=multi-user.target, so an After= on it closes a cycle
+# (multi-user -> thinkpad-power -> PPD -> multi-user) that systemd breaks by
+# dropping PPD's own start job. Profiles are Omarchy's business anyway.
+After=suspend.target hibernate.target
 
 [Service]
 Type=oneshot

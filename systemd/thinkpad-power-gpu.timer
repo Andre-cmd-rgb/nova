@@ -1,0 +1,16 @@
+[Unit]
+Description=Retry the discrete GPU power policy
+Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
+
+# Unplugging while something still has the GPU open leaves it powered: the
+# policy declines rather than pulling the card out from under a running
+# program, and a plug event is a single edge that never comes again. This
+# retries until the card is where the power source says it should be — which
+# is also what catches the gap between logging out and logging back in.
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

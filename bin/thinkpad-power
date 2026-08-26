@@ -119,10 +119,10 @@ gpu_on() {
   log "dGPU back on the bus"
 }
 
-profile() {
-  command -v powerprofilesctl >/dev/null 2>&1 || return 0
-  powerprofilesctl set "$1" 2>/dev/null && log "power profile: $1"
-}
+# Power profiles are left to Omarchy, which already switches them on AC and
+# battery and remembers what you picked for each
+# (omarchy-powerprofiles-set, ~/.local/state/omarchy/powerprofiles/). Setting
+# them here too meant both ran on every plug event and the last writer won.
 
 # Small and reversible. The codec sleeping is the only one with a perceptible
 # cost: a faint click when audio starts after silence.
@@ -137,13 +137,16 @@ extras() {
 case "${1:-auto}" in
 battery)
   gpu_off
-  profile power-saver
   extras battery
   ;;
 ac)
   gpu_on
-  profile performance
   extras ac
+  ;;
+gpu-auto)
+  # The GPU half alone. This is what the retry timer runs, so a manually
+  # chosen power profile is never overwritten behind your back.
+  if on_ac; then gpu_on; else gpu_off; fi
   ;;
 auto)
   if on_ac; then "$0" ac; else "$0" battery; fi
@@ -206,6 +209,7 @@ switch)
 usage: thinkpad-power <command>
 
   status        power source, whether the dGPU is on the bus, what holds it
+  gpu-auto      put the dGPU where the current power source wants it
   switch        turn the dGPU on or off, interactively (the menu entry)
   run <cmd>     run one program on the dGPU (Steam: thinkpad-power run %command%)
 
