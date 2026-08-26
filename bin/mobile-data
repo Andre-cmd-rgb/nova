@@ -17,6 +17,9 @@ CONFIG="$CONFIG_DIR/config"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-mobile-data"
 METER="$STATE_DIR/meter"
 MODEM_CACHE="$STATE_DIR/modem"
+# Written the first time a modem answers. Its presence is what separates a
+# machine whose modem has not come back yet from one that never had one.
+MODEM_SEEN="$STATE_DIR/seen"
 
 # Paths used by andre.mobile 2.x, read once so an upgrade keeps the billing
 # period and the configured profile instead of silently starting over.
@@ -141,6 +144,12 @@ load_dump() {
   DUMP=$(mm -m "$index" -K 2>/dev/null) || return 1
   IDX=$index
   mkdir -p -- "$STATE_DIR" && printf '%s' "$index" >"$MODEM_CACHE"
+  return 0
+}
+
+mark_modem_seen() {
+  [[ -e $MODEM_SEEN ]] && return 0
+  mkdir -p -- "$STATE_DIR" 2>/dev/null && : >"$MODEM_SEEN" 2>/dev/null
   return 0
 }
 
@@ -400,14 +409,19 @@ meter_update() {
 # ------------------------------------------------------------------- status
 
 read_state() {
-  STATE=absent HW=no MANAGED=no
+  STATE=absent HW=no MANAGED=unknown
   OPERATOR="" TECH="" SIGNAL=0 IFACE="" IPADDR=""
 
   PROFILE_NAME=$(nm_profile)
 
+  # Only a device NetworkManager can see but refuses to drive is a problem
+  # worth reporting. While the modem is away there is no device at all, and
+  # calling that "unmanaged" turns a normal thirty seconds into an alarm.
   local device_state
   device_state=$(nm_gsm_device_state)
-  [[ -n $device_state && $device_state != unmanaged ]] && MANAGED=yes
+  if [[ -n $device_state ]]; then
+    if [[ ${device_state%% *} == unmanaged ]]; then MANAGED=no; else MANAGED=yes; fi
+  fi
 
   if radio_present; then HW=yes; fi
 
@@ -417,8 +431,18 @@ read_state() {
     return 0
   fi
 
-  load_dump || return 0
+  # No modem on a machine that has had one is a modem on its way back, not a
+  # missing one. These M.2 modems do not survive a suspend: the MHI driver
+  # logs "failed to resume device", starts its own recovery, and the module
+  # re-enumerates about half a minute later, at which point NetworkManager
+  # autoconnects on its own. Reporting that as "No modem" next to an unlit
+  # switch is what makes people flip a switch that was never off.
+  if ! load_dump; then
+    [[ -e $MODEM_SEEN ]] && STATE=starting
+    return 0
+  fi
   HW=yes
+  mark_modem_seen
 
   OPERATOR=$(kv modem.3gpp.operator-name)
   TECH=$(tech_label)
@@ -505,6 +529,7 @@ cmd_status() {
   nosim) echo "No SIM." ;;
   locked) echo "SIM locked — PIN required." ;;
   noprofile) echo "No gsm connection profile — run: mobile-data setup <APN>" ;;
+  starting) echo "Modem starting — it comes back about half a minute after sleep." ;;
   searching) echo "Searching for a network…" ;;
   connecting) echo "Connecting…" ;;
   disconnected) echo "Registered on ${OPERATOR:-unknown}, not connected." ;;
@@ -578,6 +603,18 @@ cmd_on() {
   fi
 
   [[ $(nm_gsm_device_state) == connected ]] && return 0
+
+  # NetworkManager autoconnects the instant the modem appears — after a
+  # suspend it is usually already mid-activation by the time anyone asks. Our
+  # own `connection up` would be a second activation request, which tears the
+  # first one down and starts the clock again, so let an attempt in flight
+  # finish before deciding anything.
+  local device_state
+  device_state=$(nm_gsm_device_state)
+  if [[ ${device_state%% *} == connecting ]]; then
+    wait_for_state "connected disconnected" $((deadline - SECONDS)) || true
+    [[ $(nm_gsm_device_state) == connected ]] && return 0
+  fi
 
   # NetworkManager calls the device disconnected as soon as it exists, while
   # the modem behind it may still be enabling or searching. Activating then is

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.3.0 — 2026-08-26
+
+- A modem that has not come back yet is reported as `starting`, not `absent`.
+  These M.2 modems do not survive a suspend — the MHI driver re-enumerates the
+  module about thirty seconds after resume — and showing "No modem" beside an
+  unlit switch for that half minute is what made mobile data look switched off
+  when it never was.
+- The switch reads as pending while that happens, so there is nothing to flip,
+  and the widget polls every two seconds until the modem is back instead of
+  leaving a stale glyph for up to ten.
+- `on` waits for an activation NetworkManager has already started rather than
+  raising a second one. A toggle during the resume window used to cancel
+  NetworkManager's own attempt and start the clock again.
+- No NetworkManager device at all is no longer reported as "NetworkManager is
+  not managing the modem" — during the resume window there is simply no device
+  yet, and only a device NM sees and refuses to drive is worth a warning.
+
 ## 1.2.0 — 2026-08-26
 
 - `off` disconnects the device and clears the modem's bearers before blocking

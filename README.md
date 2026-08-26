@@ -186,6 +186,26 @@ device and ModemManager sees no modem. Check with `mobile-data status` and
 usually a leftover `systemd-networkd` or a `NetworkManager.conf` `unmanaged-devices`
 rule.
 
+**Mobile data looks off after waking from sleep.** It is not off, and you do
+not need to turn it back on — give it about half a minute.
+
+These M.2 modems do not survive a suspend. On resume the kernel logs
+
+```
+mhi-pci-generic 0000:08:00.0: failed to resume device: -22
+mhi-pci-generic 0000:08:00.0: device recovery started
+```
+
+and the driver recovers by re-enumerating the module, which takes roughly
+thirty seconds. NetworkManager then autoconnects on its own. The widget shows
+this as a pending switch and "Modem starting…" rather than as "No modem", and
+polls every two seconds until it is back. Flipping the switch during that
+window does not speed anything up — and used to make it slower, by starting a
+second activation that cancelled the one NetworkManager had already begun.
+
+If it is still not back after a minute, `mobile-data status` will say what the
+modem is doing.
+
 **Turning it on takes a while.** Coming back from `off` means a firmware boot
 and a fresh network registration; half a minute is ordinary. `on` gives the
 whole sequence 90 seconds (`ON_TIMEOUT`), waits for the modem to reach the

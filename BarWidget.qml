@@ -43,7 +43,12 @@ Panel {
   readonly property bool hasProfile: (info.profile || "") !== ""
   readonly property bool managed: info.managed !== "no"
   readonly property bool connected: wwanState === "connected"
-  readonly property bool live: connected || wwanState === "connecting"
+  // The radio is on and something is under way: the modem is booting after a
+  // suspend, or a connection is being set up. Mobile data is not off, and a
+  // switch sitting in the off position says it is — which is what makes
+  // people flip it.
+  readonly property bool pending: wwanState === "starting" || wwanState === "connecting"
+  readonly property bool live: connected || pending
   readonly property bool busy: actionProc.running
   readonly property string icon: info.icon || "󰢿"
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -92,6 +97,7 @@ Panel {
     if (lastError !== "") return lastError
     if (!hasProfile) return "No profile yet — run:  mobile-data setup <APN>"
     if (!managed) return "NetworkManager is not managing the modem."
+    if (wwanState === "starting") return "The modem restarts itself after sleep — give it half a minute."
     return ""
   }
 
@@ -273,8 +279,11 @@ Panel {
   // Background poll for the bar glyph; the open panel has its own cadence.
   // With backgroundStats on this takes the verbose feed as well, so the
   // window is already full by the time the panel opens.
+  // While something is settling, watch it closely: the half minute a modem
+  // takes to come back after a suspend should not also cost ten seconds of
+  // stale glyph at the end of it.
   Timer {
-    interval: mobile.pollInterval * 1000
+    interval: (mobile.pending ? 2 : mobile.pollInterval) * 1000
     running: !mobile.opened
     repeat: true
     triggeredOnStart: true
@@ -358,7 +367,7 @@ Panel {
             ToggleSwitch {
               visible: mobile.hasProfile
               checked: mobile.switchChecked
-              busy: mobile.busy
+              busy: mobile.busy || mobile.pending
               foreground: mobile.barForeground
               onToggled: mobile.toggleData()
             }
