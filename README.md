@@ -63,7 +63,9 @@ Disabling the *plugin* (`omarchy plugin disable`) stops everything.
 ## Using it
 
 Open it from the Omarchy menu, from the bar indicator, or with `screentime
-open`. Inside the window:
+open` (`screentime open --week` lands on the weekly view; a summon payload of
+`{"range":"week"}` does the same from a menu entry or a keybinding). Inside the
+window:
 
 | Key | Does |
 |---|---|
@@ -74,12 +76,22 @@ open`. Inside the window:
 
 Hovering a bar names the hour or the day and what it holds.
 
-The window opens as an ordinary floating window. If your Hyprland setup tiles
-it, float it with a rule:
+The window is an ordinary toplevel, so Hyprland tiles it by default. Omarchy
+configures Hyprland in Lua — add this to the bottom of
+`~/.config/hypr/hyprland.lua` to have it arrive floating, centred, and opaque:
 
+```lua
+o.window({ class = "^org\\.quickshell$", title = "^Screen Time$" }, {
+  float = true,
+  center = true,
+  size = { 620, 720 },
+  -- A chart read through the window behind it is not a chart.
+  tag = "-default-opacity",
+  opacity = "1 1",
+})
 ```
-windowrule = float, title:^(Screen Time)$
-```
+
+Then `hyprctl reload`.
 
 ## What counts as time
 
