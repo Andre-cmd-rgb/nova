@@ -442,8 +442,10 @@ cmd_forget() {
 # --------------------------------------------------------------- shell glue
 
 cmd_open() {
+  local payload='{}'
+  [[ ${1:-} == --week ]] && payload='{"range":"week"}'
   have omarchy-shell || die "omarchy-shell not found"
-  omarchy-shell shell summon "$PLUGIN_ID" '{}' >/dev/null ||
+  omarchy-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null ||
     die "could not open the panel — is the plugin enabled?"
 }
 
@@ -538,7 +540,7 @@ Usage:
   screentime week [days]         a day-by-day breakdown (default 7)
   screentime top [n]             today's busiest apps
   screentime json [--days n]     everything the panel draws
-  screentime open                open the Screen Time window
+  screentime open [--week]       open the Screen Time window
 
   screentime config [key]        show settings
   screentime set <key> <value>   change one
@@ -568,7 +570,7 @@ today) cmd_today "$@" ;;
 week) cmd_week "$@" ;;
 top) cmd_top "$@" ;;
 json) cmd_json "$@" ;;
-open) cmd_open ;;
+open) cmd_open "$@" ;;
 config) cmd_config "$@" ;;
 set) cmd_set "$@" ;;
 ignore) cmd_ignore "$@" ;;

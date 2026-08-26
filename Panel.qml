@@ -40,6 +40,17 @@ Item {
 
   function open(payloadJson) {
     closingFromHost = false
+    // `{"range":"week"}` opens straight into the weekly view, so a menu entry
+    // or a script can point at either one.
+    if (payloadJson) {
+      try {
+        var payload = JSON.parse(String(payloadJson))
+        if (payload && (payload.range === "week" || payload.range === "today"))
+          range = payload.range
+      } catch (e) {
+        // An unparseable payload just means the default view.
+      }
+    }
     window.visible = true
     refresh()
     Qt.callLater(function () { keys.forceActiveFocus() })
