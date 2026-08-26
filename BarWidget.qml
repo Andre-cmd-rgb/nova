@@ -48,6 +48,12 @@ Panel {
   readonly property string icon: info.icon || "󰢿"
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color dim: Qt.darker(barForeground, 1.4)
+  readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Color.urgent
+
+  // Why the last toggle failed, straight from the CLI. Cleared when one
+  // succeeds, and when the link comes up by any other route.
+  property string lastError: ""
+  property string actionStderr: ""
 
   // The switch throws on click and shows where we are heading while the CLI
   // call is still in flight, rather than sitting on the stale value.
@@ -83,6 +89,7 @@ Panel {
 
   // One line, and only when something actually needs doing.
   readonly property string hintText: {
+    if (lastError !== "") return lastError
     if (!hasProfile) return "No profile yet — run:  mobile-data setup <APN>"
     if (!managed) return "NetworkManager is not managing the modem."
     return ""
@@ -202,9 +209,21 @@ Panel {
 
   function toggleData() {
     if (busy || !hasProfile) return
+    lastError = ""
+    actionStderr = ""
     desired = !live
     actionProc.running = true
   }
+
+  // "mobile-data: the SIM is locked and needs its PIN" -> the part worth
+  // reading. Multi-line output keeps only its first line; the panel has room
+  // for a sentence, not a paragraph.
+  function firstLine(text) {
+    var line = String(text || "").split("\n")[0].trim()
+    return line.replace(/^mobile-data:\s*/, "")
+  }
+
+  onConnectedChanged: if (connected) lastError = ""
 
   onOpenedChanged: if (!opened && !backgroundStats) resetStats()
 
@@ -238,7 +257,17 @@ Panel {
   Process {
     id: actionProc
     command: [mobile.helper, "toggle"]
-    onExited: mobile.opened ? mobile.refreshDetails() : mobile.refresh()
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: mobile.actionStderr = text
+    }
+    // The CLI explains its refusals — no SIM, not registered yet, the modem
+    // wants a power cycle. Dropping that on the floor left the switch flicking
+    // back with no reason given anywhere but a terminal.
+    onExited: function (code) {
+      mobile.lastError = code === 0 ? "" : mobile.firstLine(mobile.actionStderr)
+      mobile.opened ? mobile.refreshDetails() : mobile.refresh()
+    }
   }
 
   // Background poll for the bar glyph; the open panel has its own cadence.
@@ -388,7 +417,7 @@ Panel {
           width: parent.width
           wrapMode: Text.WordWrap
           text: mobile.hintText
-          color: mobile.dim
+          color: mobile.lastError !== "" ? mobile.urgent : mobile.dim
           font.family: mobile.fontFamily
           font.pixelSize: Style.font.bodySmall
         }

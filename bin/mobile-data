@@ -89,6 +89,15 @@ set_cfg() {
   rm -f -- "$tmp"
 }
 
+# A positive integer from the config file, falling back to the default when the
+# key is missing or holds something that is not one.
+cfg_number() {
+  local value
+  value=$(get_cfg "$1" "$2")
+  [[ $value =~ ^[0-9]+$ ]] && ((10#$value > 0)) || value=$2
+  printf '%s' "$((10#$value))"
+}
+
 # Carry 2.x state forward on first run. Copies rather than moves, so rolling
 # back to the old plugin finds everything where it left it.
 migrate_legacy_state() {
@@ -140,7 +149,11 @@ load_dump() {
 kv() {
   awk -v want="$1" '
     { key = $0; sub(/[[:space:]]*:.*$/, "", key) }
-    key == want { value = $0; sub(/^[^:]*:[[:space:]]*/, "", value); print value; exit }
+    key == want {
+      value = $0; sub(/^[^:]*:[[:space:]]*/, "", value)
+      print value == "--" ? "" : value
+      exit
+    }
   ' <<<"$DUMP"
 }
 
@@ -209,6 +222,30 @@ radio_present() {
   [[ -n $(rf -n -o TYPE list wwan 2>/dev/null) ]]
 }
 
+# A physical switch, and no amount of waiting or retrying will talk it round.
+radio_hard_blocked() {
+  have rfkill || return 1
+  [[ $(rf -n -o TYPE,HARD list wwan 2>/dev/null | awk 'NR == 1 { print $2 }') == blocked ]]
+}
+
+# Drop any bearer the modem is still holding. An MBIM modem answers the next
+# connect with "Busy" while a session from the last one is open, which is
+# exactly what blocking the radio under a live connection leaves behind.
+modem_disconnect() {
+  have mmcli || return 0
+  load_dump || return 0
+  mm -m "$IDX" --simple-disconnect >/dev/null 2>&1
+  return 0
+}
+
+# NetworkManager reduces every activation failure to "Unknown error"; the
+# reason the modem actually gave is in ModemManager's journal. Best effort —
+# the journal is not readable for every user.
+last_modem_error() {
+  journalctl -b -u ModemManager --since "-30s" --no-pager 2>/dev/null |
+    sed -n 's/.*connection attempt #[0-9]* failed: //p' | tail -n1
+}
+
 # ----------------------------------------------------------- NetworkManager
 
 # `nmcli -t` escapes the field separator and the escape character itself inside
@@ -237,6 +274,12 @@ nm_has_profile() {
     [[ $existing == "$name" ]] && return 0
   done < <(nm -t -f NAME connection show 2>/dev/null | nm_unescape)
   return 1
+}
+
+nm_gsm_device_name() {
+  have nmcli || return 0
+  nm -t -f TYPE,DEVICE device status 2>/dev/null |
+    awk -F: '$1 == "gsm" { print $2; exit }'
 }
 
 nm_gsm_device_state() {
@@ -396,7 +439,11 @@ read_state() {
   searching) STATE=searching ;;
   connecting) STATE=connecting ;;
   connected) STATE=connected ;;
-  registered | enabled | disconnecting) STATE=disconnected ;;
+  registered | disconnecting) STATE=disconnected ;;
+  # Powered and idle is not the same as registered: the modem has a radio on
+  # but no network yet, and calling that "registered, not connected" reads as
+  # a working link that simply is not carrying traffic.
+  enabled) STATE=searching ;;
   *) STATE=starting ;;
   esac
 
@@ -473,39 +520,158 @@ require_nmcli() {
     die "nmcli not found — this plugin needs NetworkManager"
 }
 
-# The modem re-enumerates when the radio comes back, so wait for the gsm
-# device to reappear before asking NetworkManager to activate anything.
-wait_for_device() {
-  local deadline=$((SECONDS + 25)) state
-  while ((SECONDS < deadline)); do
-    state=$(nm_gsm_device_state)
-    case $state in
-    connected | disconnected | connecting) return 0 ;;
-    esac
+# NetworkManager can call the device "disconnected" while the modem behind it
+# is still enabling, searching for a network, or registering. Activating then
+# is a guaranteed refusal, so wait for the modem's own state as well.
+wait_for_modem() {
+  local timeout=$1 deadline state
+  have mmcli || return 0
+  deadline=$((SECONDS + timeout))
+  while :; do
+    if load_dump; then
+      state=$(kv modem.generic.state)
+      case $state in
+      registered | connected | connecting) return 0 ;;
+      esac
+    fi
+    ((SECONDS < deadline)) || return 1
     sleep 1
   done
-  return 1
+}
+
+# Wait for the gsm device to reach one of the listed states. nmcli spells
+# transient states out in full — "connecting (getting IP configuration)" — so
+# only the first word is compared.
+wait_for_state() {
+  local wanted=" $1 " timeout=$2 deadline state
+  deadline=$((SECONDS + timeout))
+  while :; do
+    state=$(nm_gsm_device_state)
+    [[ $wanted == *" ${state%% *} "* ]] && return 0
+    ((SECONDS < deadline)) || return 1
+    sleep 1
+  done
 }
 
 cmd_on() {
   require_nmcli
-  local profile
+  local profile timeout deadline left reason=""
   profile=$(nm_profile)
   [[ -n $profile ]] || die "no gsm connection profile — run: mobile-data setup <APN>"
 
+  radio_hard_blocked && die "the WWAN radio is off at the hardware switch"
+
+  # One budget for the whole command, not per step. `nmcli connection up` blocks
+  # for its own 90 s before reporting failure, so retries that each waited that
+  # long would leave a bar toggle spinning for minutes.
+  timeout=$(cfg_number ON_TIMEOUT 90)
+  deadline=$((SECONDS + timeout))
+
   nm radio wwan on >/dev/null 2>&1
-  wait_for_device || die "the modem did not come back within 25s"
+
+  # On most laptops the WWAN rfkill switch cuts power to the module, so coming
+  # back means a firmware boot and a fresh network registration. Half a minute
+  # is ordinary; the old 25 s ceiling gave up while the modem was on its way.
+  if ! wait_for_state "connected disconnected connecting" $((deadline - SECONDS)); then
+    read_state
+    die "the modem did not become available within ${timeout}s (state: $STATE)"
+  fi
 
   [[ $(nm_gsm_device_state) == connected ]] && return 0
-  nm connection up "$profile" >/dev/null || die "could not bring up '$profile'"
+
+  # NetworkManager calls the device disconnected as soon as it exists, while
+  # the modem behind it may still be enabling or searching. Activating then is
+  # a refusal every time, so wait for the modem to reach the network first.
+  wait_for_modem $((deadline - SECONDS)) || true
+
+  while :; do
+    left=$((deadline - SECONDS))
+    # Always give an attempt a fair run rather than a token one.
+    ((left < 20)) && left=20
+    nm --wait "$left" connection up "$profile" >/dev/null 2>&1 && return 0
+    reason=$(last_modem_error)
+    ((SECONDS < deadline)) || break
+    # The usual reason for a refusal is a session the modem is still holding
+    # from last time. Drop it and ask again with whatever budget is left.
+    modem_disconnect
+    sleep 3
+  done
+
+  # Say what the modem was actually doing. NetworkManager reports every one of
+  # these as "Unknown error", and most of them are conditions no retry fixes.
+  read_state
+  case $STATE in
+  nosim) die "there is no SIM in the slot" ;;
+  locked) die "the SIM is locked and needs its PIN" ;;
+  esac
+
+  local registration
+  registration=$(kv modem.3gpp.registration-state)
+  case $registration in
+  idle | searching)
+    die "the modem is not registered on a network yet (signal ${SIGNAL}%)"
+    ;;
+  denied)
+    die "the network refused to register this SIM for data"
+    ;;
+  esac
+
+  case $reason in
+  Busy | RadioPowerOff)
+    die "the modem refused the connection ($reason); it needs a power cycle: mobile-data reset"
+    ;;
+  esac
+  die "could not bring up '$profile'${reason:+ ($reason)}"
 }
 
 # `nmcli radio wwan off` is the honest off switch: it soft-blocks the radio, so
 # NetworkManager will not autoconnect around it the way it does after a plain
 # `connection down`.
+#
+# The session is torn down first. Cutting the radio out from under a live
+# bearer leaves that session open inside the modem, and every connect after
+# that comes back "Busy" until the module is power-cycled — which is a toggle
+# that turns off and then will not turn back on.
 cmd_off() {
   require_nmcli
+  local device
+  device=$(nm_gsm_device_name)
+  if [[ -n $device ]]; then
+    nm device disconnect "$device" >/dev/null 2>&1
+    wait_for_state "disconnected unavailable unmanaged" 15
+  fi
+  modem_disconnect
   nm radio wwan off >/dev/null || die "could not turn the radio off"
+}
+
+# The escape hatch for a modem that has wedged anyway. Neither dropping its
+# bearers nor a ModemManager reset clears an MBIM session the firmware still
+# believes in; cutting the radio power-cycles the module, which does.
+cmd_reset() {
+  require_nmcli
+  local deadline
+  echo "Powering the modem down…"
+  modem_disconnect
+  nm radio wwan off >/dev/null || die "could not turn the radio off"
+
+  # Give the module its moment with the radio down. Some leave the bus and
+  # come back with a new index; this ThinkPad's stays enumerated throughout,
+  # so this waits for either and settles for a short pause otherwise.
+  deadline=$((SECONDS + 15))
+  while ((SECONDS < deadline)); do
+    have mmcli || break
+    [[ -z $(mm -L 2>/dev/null | sed -n 's|.*/Modem/[0-9].*|found|p') ]] && break
+    load_dump || break
+    case $(kv modem.generic.state) in
+    disabled | disabling | failed | "") break ;;
+    esac
+    sleep 1
+  done
+  rm -f "$MODEM_CACHE"
+
+  echo "Powering it back up…"
+  cmd_on
+  echo "Connected."
 }
 
 cmd_toggle() {
@@ -598,6 +764,8 @@ Usage:
   mobile-data info [--verbose]   key=value status block for the widget
   mobile-data status             one human-readable line
   mobile-data on | off | toggle  radio and connection control
+  mobile-data enable | disable   aliases for on and off
+  mobile-data reset              power-cycle a modem that refuses to connect
   mobile-data setup [APN]        create or refresh the NetworkManager profile
   mobile-data apn <APN>          change the APN on the profile
   mobile-data reset-day <1-31>   billing day for the usage counter
@@ -608,6 +776,7 @@ Config file (key=value per line):
     PROFILE=mobile        NetworkManager gsm profile to drive
     RESET_DAY=1           day of month the usage counter renews
     ROUTE_METRIC=700      route metric written by `setup`
+    ON_TIMEOUT=90         seconds `on` may spend bringing the modem up
 USAGE
 }
 
@@ -621,16 +790,14 @@ command=${1:-info}
 case $command in
 info) cmd_info "${1:-}" ;;
 status) cmd_status ;;
-on) cmd_on ;;
-off) cmd_off ;;
+on | enable) cmd_on ;;
+off | disable) cmd_off ;;
 toggle) cmd_toggle ;;
+reset) cmd_reset ;;
 setup) cmd_setup "${1:-}" ;;
 apn) cmd_apn "${1:-}" ;;
 reset-day) cmd_reset_day "${1:-}" ;;
 version | --version | -V) cmd_version ;;
 -h | --help | help) usage ;;
-*)
-  usage >&2
-  die "unknown command: $command"
-  ;;
+*) die "unknown command: $command — try: mobile-data --help" ;;
 esac

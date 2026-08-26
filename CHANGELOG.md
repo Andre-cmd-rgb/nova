@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.2.0 — 2026-08-26
+
+- `off` disconnects the device and clears the modem's bearers before blocking
+  the radio. Cutting the radio out from under a live session leaves that
+  session open inside the modem, and every connect afterwards answers `Busy` —
+  a toggle that turns off and then will not turn back on.
+- `on` gives the whole sequence one budget (`ON_TIMEOUT`, 90 s) instead of
+  giving up after 25 s, waits for the modem to register before asking
+  NetworkManager to activate anything, and retries within the budget after
+  dropping any session the modem is still holding.
+- Failures say what the modem was doing — no SIM, SIM locked, not registered
+  yet, the network refused — instead of NetworkManager's "Unknown error", and
+  the panel shows that line in the urgent colour instead of the switch quietly
+  flicking back.
+- New `mobile-data reset` to power-cycle a wedged modem, and `enable`/`disable`
+  as aliases for `on`/`off`.
+- A modem that is `enabled` but has not found a network is no longer reported
+  as "registered".
+- mmcli writes `--` where it has no value; `info` now reports those as empty
+  instead of passing `operator=--` to the widget.
+
 ## 1.1.0 — 2026-08-26
 
 - Latency is now the median of the window rather than its mean. One slow sample

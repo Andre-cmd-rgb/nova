@@ -121,6 +121,7 @@ execute:
 | `PROFILE` | first `gsm` profile found | NetworkManager profile to drive |
 | `RESET_DAY` | `1` | day of the month the usage counter renews |
 | `ROUTE_METRIC` | `700` | metric written by `mobile-data setup` |
+| `ON_TIMEOUT` | `90` | seconds `on` may spend bringing the modem up |
 
 ## CLI
 
@@ -128,6 +129,8 @@ execute:
 mobile-data info [--verbose]   key=value status block for the widget
 mobile-data status             one human-readable line
 mobile-data on | off | toggle  radio and connection control
+mobile-data enable | disable   aliases for on and off
+mobile-data reset              power-cycle a modem that refuses to connect
 mobile-data setup [APN]        create or refresh the NetworkManager profile
 mobile-data apn <APN>          change the APN on the profile
 mobile-data reset-day <1-31>   billing day for the usage counter
@@ -183,9 +186,32 @@ device and ModemManager sees no modem. Check with `mobile-data status` and
 usually a leftover `systemd-networkd` or a `NetworkManager.conf` `unmanaged-devices`
 rule.
 
-**The switch turns itself back off.** The modem re-enumerates when the radio
-comes back and can take fifteen seconds or so; the switch stays busy until
-NetworkManager reports the device again, then gives up after 25 s.
+**Turning it on takes a while.** Coming back from `off` means a firmware boot
+and a fresh network registration; half a minute is ordinary. `on` gives the
+whole sequence 90 seconds (`ON_TIMEOUT`), waits for the modem to reach the
+network before asking NetworkManager to activate anything, and retries inside
+that budget. Whatever it ends up saying is shown in the panel, in the bar's
+urgent colour, rather than the switch flicking back with no explanation.
+
+**"the modem refused the connection (Busy)".** An MBIM modem answers every
+connect with `Busy` while a data session from the last connection is still open
+inside its firmware, which is what cutting the radio out from under a live
+connection used to leave behind. `mobile-data off` now disconnects and clears
+the modem's bearers before blocking the radio, so this should not happen; if a
+modem is wedged already, `mobile-data reset` power-cycles it.
+
+If even that does not clear it — a scan or registration also coming back `Busy`
+is the sign — the firmware needs a harder reset than any of this reaches:
+
+```bash
+sudo systemctl restart ModemManager
+# still stuck? rebind the driver (use your own PCI address from `mmcli -m any`)
+echo 0000:08:00.0 | sudo tee /sys/bus/pci/drivers/mhi-pci-generic/unbind
+echo 0000:08:00.0 | sudo tee /sys/bus/pci/drivers/mhi-pci-generic/bind
+```
+
+A reboot always works. Some Qualcomm M.2 modems stay powered across the WWAN
+rfkill switch, so "turn it off and on again" genuinely cannot reach them.
 
 **Nothing changed after editing the plugin.** `omarchy-shell shell rescanPlugins`.
 
