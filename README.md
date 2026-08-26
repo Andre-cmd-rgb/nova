@@ -1,4 +1,4 @@
-# omarchy-power
+# thinkpad-power
 
 AC/battery power management for a hybrid-graphics Omarchy laptop. One command
 sets it up; unplugging then takes the discrete GPU off the PCI bus and drops to
@@ -38,11 +38,11 @@ switch frequently does not stick. The installer stands it down.
 
 | Where | What | Why |
 |---|---|---|
-| `/usr/local/bin/omarchy-power-mode` | the policy script | run by udev, boot, and resume |
-| `/usr/local/bin/omarchy-gpu-switch` | manual toggle | what the menu entry runs |
-| `/etc/omarchy-power-mode.conf` | the detected GPU address | so it can be found once removed |
-| `/etc/systemd/system/omarchy-power-mode.service` | oneshot | applies the policy |
-| `/etc/udev/rules.d/99-omarchy-power-mode.rules` | mains plug/unplug | triggers the above |
+| `/usr/local/bin/thinkpad-power` | the policy script | run by udev, boot, and resume |
+| `/usr/local/bin/thinkpad-power` | manual toggle | what the menu entry runs |
+| `/etc/thinkpad-power.conf` | the detected GPU address | so it can be found once removed |
+| `/etc/systemd/system/thinkpad-power.service` | oneshot | applies the policy |
+| `/etc/udev/rules.d/99-thinkpad-power.rules` | mains plug/unplug | triggers the above |
 | `~/.config/uwsm/env-hyprland` | `AQ_DRM_DEVICES` | pins the compositor to the iGPU |
 | `~/.config/hypr/hyprland.lua` | `LIBVA_DRIVER_NAME=iHD`, `__GLX_VENDOR_LIBRARY_NAME=mesa` | stops apps reaching for the dGPU |
 | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | overrides the GPU menu entry | live toggle instead of a reboot |
@@ -54,7 +54,7 @@ because powering that off would black out the screen.
 ## Using it
 
 ```bash
-omarchy-power-mode status      # power source, whether the card is on the bus,
+thinkpad-power status      # power source, whether the card is on the bus,
                                # what holds it, current profile, live draw
 prime-run <program>            # run something on the discrete GPU
 ```

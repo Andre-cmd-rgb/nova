@@ -14,9 +14,9 @@ CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
 UWSM_ENV="$CONFIG_HOME/uwsm/env-hyprland"
 HYPR_CONF="$CONFIG_HOME/hypr/hyprland.lua"
 MENU_FILE="$CONFIG_HOME/omarchy/extensions/omarchy-menu.jsonc"
-MARK_BEGIN="-- >>> omarchy-power >>>"
-MARK_END="-- <<< omarchy-power <<<"
-ENV_MARK="# omarchy-power"
+MARK_BEGIN="-- >>> thinkpad-power >>>"
+MARK_END="-- <<< thinkpad-power <<<"
+ENV_MARK="# thinkpad-power"
 
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 info() { printf '  \033[2m·\033[0m %s\n' "$*"; }
@@ -65,11 +65,11 @@ detect_display_card() {
 # --------------------------------------------------------------------- remove
 
 uninstall() {
-  step "Removing omarchy-power"
-  sudo rm -f /usr/local/bin/omarchy-power-mode /usr/local/bin/omarchy-gpu-switch
-  sudo rm -f /etc/systemd/system/omarchy-power-mode.service
-  sudo rm -f /etc/udev/rules.d/99-omarchy-power-mode.rules
-  sudo rm -f /etc/omarchy-power-mode.conf
+  step "Removing thinkpad-power"
+  sudo rm -f /usr/local/bin/thinkpad-power
+  sudo rm -f /etc/systemd/system/thinkpad-power.service
+  sudo rm -f /etc/udev/rules.d/99-thinkpad-power.rules
+  sudo rm -f /etc/thinkpad-power.conf
   sudo systemctl daemon-reload
   sudo udevadm control --reload-rules
   ok "root files removed"
@@ -122,19 +122,18 @@ command -v powerprofilesctl >/dev/null 2>&1 ||
 
 step "Installing"
 
-sudo install -Dm755 "$HERE/bin/omarchy-power-mode" /usr/local/bin/omarchy-power-mode
-sudo install -Dm755 "$HERE/bin/omarchy-gpu-switch" /usr/local/bin/omarchy-gpu-switch
-ok "/usr/local/bin/omarchy-power-mode, omarchy-gpu-switch"
+sudo install -Dm755 "$HERE/bin/thinkpad-power" /usr/local/bin/thinkpad-power
+ok "/usr/local/bin/thinkpad-power"
 
-printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee /etc/omarchy-power-mode.conf >/dev/null
-ok "/etc/omarchy-power-mode.conf"
+printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee /etc/thinkpad-power.conf >/dev/null
+ok "/etc/thinkpad-power.conf"
 
-sudo install -Dm644 "$HERE/systemd/omarchy-power-mode.service" \
-  /etc/systemd/system/omarchy-power-mode.service
-sudo install -Dm644 "$HERE/udev/99-omarchy-power-mode.rules" \
-  /etc/udev/rules.d/99-omarchy-power-mode.rules
+sudo install -Dm644 "$HERE/systemd/thinkpad-power.service" \
+  /etc/systemd/system/thinkpad-power.service
+sudo install -Dm644 "$HERE/udev/99-thinkpad-power.rules" \
+  /etc/udev/rules.d/99-thinkpad-power.rules
 sudo systemctl daemon-reload
-sudo systemctl enable omarchy-power-mode.service >/dev/null 2>&1
+sudo systemctl enable thinkpad-power.service >/dev/null 2>&1
 sudo udevadm control --reload-rules
 ok "systemd unit + udev rule (fires on plug/unplug, boot and resume)"
 
@@ -195,7 +194,7 @@ fi
 if [[ -f $MENU_FILE ]]; then
   grep -q '"trigger.hardware.hybrid-gpu"' "$MENU_FILE" &&
     sed -i '/"trigger.hardware.hybrid-gpu"/d' "$MENU_FILE"
-  entry='  "trigger.hardware.hybrid-gpu": {"label":"Discrete GPU","when":"true","action":"omarchy-launch-floating-terminal-with-presentation omarchy-gpu-switch"},'
+  entry='  "trigger.hardware.hybrid-gpu": {"label":"Discrete GPU","when":"true","action":"omarchy-launch-floating-terminal-with-presentation thinkpad-power switch"},'
   tmp=$(mktemp)
   awk -v entry="$entry" '
     { lines[NR] = $0 }
@@ -213,9 +212,9 @@ fi
 # ---------------------------------------------------------------------- apply
 
 step "Applying now"
-sudo /usr/local/bin/omarchy-power-mode auto
+sudo /usr/local/bin/thinkpad-power auto
 echo
-/usr/local/bin/omarchy-power-mode status
+/usr/local/bin/thinkpad-power status
 
 cat <<'NEXT'
 
@@ -225,7 +224,7 @@ The compositor only reads its GPU list at startup, so until you do, Hyprland
 still holds the discrete card open and it cannot be powered off. After the
 next login:
 
-  omarchy-power-mode status     what is on, what holds the GPU
+  thinkpad-power status     what is on, what holds the GPU
   prime-run <program>           run something on the discrete GPU
   Super+Space -> Discrete GPU   toggle it by hand, no reboot
 

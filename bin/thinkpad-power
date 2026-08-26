@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# omarchy-power-mode — AC/battery power policy for a hybrid-graphics laptop.
+# thinkpad-power — AC/battery power policy for a hybrid-graphics laptop.
 #
 #   battery : the discrete GPU is unloaded and taken off the PCI bus, and the
 #             power profile drops to power-saver.
@@ -17,13 +17,13 @@
 
 set -uo pipefail
 
-CONFIG=/etc/omarchy-power-mode.conf
+CONFIG=/etc/thinkpad-power.conf
 NVIDIA_PCI=""
 NVIDIA_MODULES=(nvidia_drm nvidia_modeset nvidia_uvm nvidia)
 
 [[ -r $CONFIG ]] && . "$CONFIG"
 
-log() { printf 'omarchy-power-mode: %s\n' "$*"; }
+log() { printf 'thinkpad-power: %s\n' "$*"; }
 
 # Cached sysfs ids, never lspci: reading PCI config space resumes a
 # runtime-suspended GPU, which is the opposite of the job.
@@ -63,7 +63,8 @@ gpu_users() {
     [[ -e $node ]] || continue
     held+=" $(fuser "$node" 2>/dev/null)"
   done
-  printf '%s' "$(tr -s ' ' <<<"$held")"
+  # One PID can hold several of the nodes; report each of them once.
+  printf '%s' "$(tr ' ' '\n' <<<"$held" | grep -E '^[0-9]+$' | sort -un | tr '\n' ' ')"
 }
 
 gpu_off() {
@@ -162,8 +163,48 @@ status)
     printf 'dGPU draw    : %s\n' "$(nvidia-smi --query-gpu=power.draw,pstate --format=csv,noheader 2>/dev/null)"
   fi
   ;;
+switch)
+  # Interactive, and what the Omarchy menu entry runs. Omarchy's own
+  # omarchy-toggle-hybrid-gpu drives supergfxd and reboots to change mode; this
+  # takes the card off the bus instead, which needs neither.
+  "$0" status
+  echo
+  if gpu_present; then
+    users=$(gpu_users)
+    if [[ -n ${users// /} ]]; then
+      echo "The GPU is in use right now (PIDs:$users)."
+      echo "Close whatever is using it first — switching it off underneath a"
+      echo "running program would take the GPU out from under it."
+      exit 1
+    fi
+    gum confirm "Turn the discrete GPU OFF? (saves about 6 W)" || exit 0
+    sudo "$0" gpu-off
+  else
+    gum confirm "Turn the discrete GPU ON?" || exit 0
+    sudo "$0" gpu-on
+  fi
+  echo
+  "$0" status
+  echo
+  echo "Plugging in or unplugging re-applies the automatic policy."
+  ;;
 *)
-  echo "usage: omarchy-power-mode [auto|ac|battery|gpu-on|gpu-off|gpu-toggle|status]" >&2
+  cat >&2 <<'USAGE'
+usage: thinkpad-power <command>
+
+  status        power source, whether the dGPU is on the bus, what holds it
+  switch        turn the dGPU on or off, interactively (the menu entry)
+
+  auto          apply the policy for the current power source
+  ac            force the AC policy: dGPU on, performance
+  battery       force the battery policy: dGPU off, power-saver
+  gpu-on        put the dGPU back on the PCI bus
+  gpu-off       take it off
+  gpu-toggle    whichever it is not
+
+Run by udev on plug/unplug, at boot, and after resume. The gpu-* and
+ac/battery/auto commands need root; status and switch do not.
+USAGE
   exit 1
   ;;
 esac

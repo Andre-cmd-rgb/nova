@@ -1,6 +1,6 @@
 [Unit]
 Description=Apply the AC/battery power policy
-Documentation=https://github.com/Andre-cmd-rgb/omarchy-power
+Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
 # Ordered after the sleep targets so the same unit re-applies the policy on
 # resume: the machine may have been unplugged while it was asleep, and the
 # GPU comes back on the bus regardless of how it went to sleep.
@@ -9,7 +9,7 @@ Wants=power-profiles-daemon.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/omarchy-power-mode auto
+ExecStart=/usr/local/bin/thinkpad-power auto
 
 [Install]
 WantedBy=multi-user.target suspend.target hibernate.target
