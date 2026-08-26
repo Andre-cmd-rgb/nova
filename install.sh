@@ -17,6 +17,7 @@ MENU_FILE="$CONFIG_HOME/omarchy/extensions/omarchy-menu.jsonc"
 MARK_BEGIN="-- >>> thinkpad-power >>>"
 MARK_END="-- <<< thinkpad-power <<<"
 ENV_MARK="# thinkpad-power"
+IGPU_LINK_NAME="igpu"
 
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 info() { printf '  \033[2m·\033[0m %s\n' "$*"; }
@@ -73,13 +74,14 @@ uninstall() {
   sudo rm -f /usr/local/bin/thinkpad-power
   sudo rm -f /etc/systemd/system/thinkpad-power.service
   sudo rm -f /etc/udev/rules.d/99-thinkpad-power.rules
+  sudo rm -f /etc/udev/rules.d/98-thinkpad-power-igpu.rules
   sudo rm -f /etc/thinkpad-power.conf
   sudo systemctl daemon-reload
   sudo udevadm control --reload-rules
   ok "root files removed"
 
   if [[ -f $UWSM_ENV ]] && grep -q "$ENV_MARK" "$UWSM_ENV"; then
-    sed -i "/$ENV_MARK/,+1d" "$UWSM_ENV"
+    sed -i "/$ENV_MARK/d;/AQ_DRM_DEVICES/d" "$UWSM_ENV"
     [[ -s $UWSM_ENV ]] || rm -f "$UWSM_ENV"
     ok "session GPU pin removed"
   fi
@@ -147,6 +149,20 @@ sudo systemctl enable thinkpad-power.service >/dev/null 2>&1
 run sudo udevadm control --reload-rules
 ok "systemd unit + udev rule (fires on plug/unplug, boot and resume)"
 
+# A stable, colon-free name for the integrated card. AQ_DRM_DEVICES splits its
+# value on ":", so a /dev/dri/by-path/pci-0000:00:02.0-card path is torn into
+# three nonexistent paths, aquamarine matches none of them, and the compositor
+# exits with "Found no gpus to use" — which costs you the login screen. Card
+# numbering is not stable either, hence a symlink rather than /dev/dri/cardN.
+# This is the arrangement the Hyprland wiki recommends for exactly this.
+printf 'KERNEL=="card*", KERNELS=="%s", SUBSYSTEM=="drm", SUBSYSTEMS=="pci", SYMLINK+="dri/%s"\n' \
+  "$DISPLAY_PCI" "$IGPU_LINK_NAME" |
+  sudo tee "/etc/udev/rules.d/98-thinkpad-power-igpu.rules" >/dev/null ||
+  die "failed writing the iGPU symlink rule"
+run sudo udevadm control --reload
+run sudo udevadm trigger --subsystem-match=drm
+ok "/dev/dri/$IGPU_LINK_NAME -> the integrated card"
+
 # ------------------------------------------------------------------ supergfx
 
 step "Standing down supergfxd"
@@ -176,14 +192,26 @@ step "Session configuration"
 
 mkdir -p "$(dirname -- "$UWSM_ENV")"
 touch "$UWSM_ENV"
-if grep -q "$ENV_MARK" "$UWSM_ENV"; then
-  sed -i "/$ENV_MARK/,+1d" "$UWSM_ENV"
+grep -q "$ENV_MARK" "$UWSM_ENV" && sed -i "/$ENV_MARK/d" "$UWSM_ENV"
+sed -i '/AQ_DRM_DEVICES/d;/^_tp_card=/d;/^unset _tp_card$/d' "$UWSM_ENV"
+
+# Only pin if the symlink really exists. A pin that cannot be resolved is the
+# one failure mode of this whole tool that costs a login, so it is checked
+# here, and checked again at every login by the guard written below.
+if [[ -e /dev/dri/$IGPU_LINK_NAME ]]; then
+  cat >>"$UWSM_ENV" <<ENV
+$ENV_MARK keep the compositor on the integrated GPU, so nothing holds the
+$ENV_MARK discrete card open and it can be powered off. The value must not
+$ENV_MARK contain a colon: AQ_DRM_DEVICES splits on it.
+if [ -e /dev/dri/$IGPU_LINK_NAME ] && grep -qx connected /sys/class/drm/\$(basename \$(readlink -f /dev/dri/$IGPU_LINK_NAME))-*/status 2>/dev/null; then
+  export AQ_DRM_DEVICES=/dev/dri/$IGPU_LINK_NAME
 fi
-{
-  printf '%s — keep the compositor on the integrated GPU so nothing pins the\n' "$ENV_MARK"
-  printf 'export AQ_DRM_DEVICES=%s\n' "$DISPLAY_CARD"
-} >>"$UWSM_ENV"
-ok "$UWSM_ENV"
+ENV
+  ok "$UWSM_ENV (pins the compositor to /dev/dri/$IGPU_LINK_NAME)"
+else
+  warn "/dev/dri/$IGPU_LINK_NAME did not appear — skipping the compositor pin."
+  warn "The dGPU will keep being held open; re-run once the symlink exists."
+fi
 
 if [[ -f $HYPR_CONF ]]; then
   grep -qF -- "$MARK_BEGIN" "$HYPR_CONF" && sed -i "/$MARK_BEGIN/,/$MARK_END/d" "$HYPR_CONF"

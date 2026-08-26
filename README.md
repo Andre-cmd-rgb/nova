@@ -43,7 +43,8 @@ switch frequently does not stick. The installer stands it down.
 | `/etc/thinkpad-power.conf` | the detected GPU address | so it can be found once removed |
 | `/etc/systemd/system/thinkpad-power.service` | oneshot | applies the policy |
 | `/etc/udev/rules.d/99-thinkpad-power.rules` | mains plug/unplug | triggers the above |
-| `~/.config/uwsm/env-hyprland` | `AQ_DRM_DEVICES` | pins the compositor to the iGPU |
+| `/etc/udev/rules.d/98-thinkpad-power-igpu.rules` | `/dev/dri/igpu` symlink | a stable, colon-free name for the iGPU |
+| `~/.config/uwsm/env-hyprland` | `AQ_DRM_DEVICES=/dev/dri/igpu` | pins the compositor to the iGPU |
 | `~/.config/hypr/hyprland.lua` | `LIBVA_DRIVER_NAME=iHD`, `__GLX_VENDOR_LIBRARY_NAME=mesa` | stops apps reaching for the dGPU |
 | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | overrides the GPU menu entry | live toggle instead of a reboot |
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
@@ -67,6 +68,29 @@ plug or unplug, when the automatic policy applies again.
 
 The card will not be powered off while a program is using it; the tool says
 which PIDs are holding it rather than pulling the GPU out from under them.
+
+## Why a symlink, and why it matters
+
+`AQ_DRM_DEVICES` takes a `:`-separated list, so **the value cannot contain a
+colon** — which rules out `/dev/dri/by-path/pci-0000:00:02.0-card`, since PCI
+addresses are full of them. Aquamarine splits such a path into fragments,
+matches none of them against the cards udev enumerated, reports "Found no gpus
+to use", and the compositor exits before you have a session. Card numbering
+(`/dev/dri/cardN`) is not stable across boots either.
+
+So the installer adds the udev rule the Hyprland wiki recommends for this, giving
+a stable colon-free `/dev/dri/igpu`, checks that the symlink actually appeared
+before writing the pin, and the pin itself is guarded at every login:
+
+```sh
+if [ -e /dev/dri/igpu ] && grep -qx connected /sys/class/drm/$(basename $(readlink -f /dev/dri/igpu))-*/status; then
+  export AQ_DRM_DEVICES=/dev/dri/igpu
+fi
+```
+
+If the card is missing, or is not the one driving a connected screen, nothing
+is set and the session starts normally on both GPUs. The worst case is that the
+discrete card keeps being held open — never that you cannot log in.
 
 ## After installing
 
