@@ -80,6 +80,8 @@ uninstall() {
   sudo rm -f /etc/udev/rules.d/99-thinkpad-power.rules
   sudo rm -f /etc/udev/rules.d/98-thinkpad-power-igpu.rules
   sudo rm -f /etc/thinkpad-power.conf
+  sudo systemctl enable --now nvidia-persistenced >/dev/null 2>&1 &&
+    ok "nvidia-persistenced re-enabled"
   sudo systemctl daemon-reload
   sudo udevadm control --reload-rules
   ok "root files removed"
@@ -174,7 +176,22 @@ ok "/dev/dri/$IGPU_LINK_NAME -> the integrated card"
 
 # ------------------------------------------------------------------ supergfx
 
-step "Standing down supergfxd"
+step "Standing down what holds the GPU open"
+
+# nvidia-persistenced exists to keep the driver resident so it never unloads.
+# On a laptop whose dGPU renders nothing that is precisely backwards: it holds
+# /dev/nvidia0 from boot and blocks every attempt to take the card off the bus.
+# CUDA does not need it; it is for headless compute nodes.
+if systemctl list-unit-files nvidia-persistenced.service >/dev/null 2>&1; then
+  if systemctl is-enabled --quiet nvidia-persistenced 2>/dev/null ||
+    systemctl is-active --quiet nvidia-persistenced 2>/dev/null; then
+    sudo systemctl disable --now nvidia-persistenced >/dev/null 2>&1 &&
+      ok "nvidia-persistenced stopped and disabled (it pins the driver in memory)"
+  else
+    info "nvidia-persistenced already down"
+  fi
+fi
+
 
 if systemctl list-unit-files supergfxd.service >/dev/null 2>&1; then
   sudo systemctl disable --now supergfxd >/dev/null 2>&1

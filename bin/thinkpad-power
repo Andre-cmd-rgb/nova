@@ -55,8 +55,32 @@ on_ac() {
 
 gpu_present() { [[ -n $NVIDIA_PCI && -e /sys/bus/pci/devices/$NVIDIA_PCI ]]; }
 
+# NVIDIA's own daemons exist to hold the driver open — persistenced literally
+# so it never unloads — so they are stopped before anyone is counted as a
+# holder. They are ours to manage; a user's program is not.
+NVIDIA_SERVICES=(nvidia-powerd nvidia-persistenced)
+
+stop_nvidia_services() {
+  local unit
+  for unit in "${NVIDIA_SERVICES[@]}"; do
+    systemctl is-active --quiet "$unit" 2>/dev/null || continue
+    systemctl stop "$unit" 2>/dev/null && log "stopped $unit"
+  done
+}
+
+# Only Dynamic Boost comes back. persistenced is left down by design: it
+# exists to keep the driver resident, which is the thing we are trying not to
+# do, and CUDA works without it.
+start_nvidia_services() {
+  systemctl start nvidia-powerd 2>/dev/null
+  return 0
+}
+
 # Anything holding the device blocks the unload, and forcing past that would
 # take the GPU out from under a running program.
+#
+# fuser only reports processes the caller may see, so an unprivileged run
+# misses root's. `status` says so rather than printing a reassuring blank.
 gpu_users() {
   local node held=""
   for node in /dev/nvidia*; do
@@ -67,18 +91,29 @@ gpu_users() {
   printf '%s' "$(tr ' ' '\n' <<<"$held" | grep -E '^[0-9]+$' | sort -un | tr '\n' ' ')"
 }
 
+# "40094 (btop)" reads better than "40094" when the answer is "close that".
+gpu_users_named() {
+  local pid out=""
+  for pid in $(gpu_users); do
+    out+=" $pid ($(cat "/proc/$pid/comm" 2>/dev/null || echo '?'))"
+  done
+  printf '%s' "${out# }"
+}
+
 gpu_off() {
   [[ -n $NVIDIA_PCI ]] || { log "no discrete GPU found"; return 0; }
   gpu_present || { log "dGPU already off the bus"; return 0; }
 
+  # Before counting holders, not after: otherwise the daemons we control are
+  # themselves the reason we decide the card is busy.
+  stop_nvidia_services
+
   local users
   users=$(gpu_users)
   if [[ -n ${users// /} ]]; then
-    log "dGPU is in use by PIDs:$users — leaving it powered"
+    log "dGPU is in use by:$(gpu_users_named) — leaving it powered"
     return 1
   fi
-
-  systemctl stop nvidia-powerd 2>/dev/null
 
   local module
   for module in "${NVIDIA_MODULES[@]}"; do
@@ -115,7 +150,7 @@ gpu_on() {
   # Runtime PM still parks the card whenever nothing is rendering on it.
   modprobe nvidia 2>/dev/null
   echo auto >"/sys/bus/pci/devices/$NVIDIA_PCI/power/control" 2>/dev/null
-  systemctl start nvidia-powerd 2>/dev/null
+  start_nvidia_services
   log "dGPU back on the bus"
 }
 
@@ -160,7 +195,11 @@ status)
   printf 'power source : %s\n' "$(on_ac && echo AC || echo battery)"
   printf 'dGPU address : %s\n' "${NVIDIA_PCI:-none found}"
   printf 'dGPU on bus  : %s\n' "$(gpu_present && echo yes || echo no)"
-  printf 'dGPU held by : %s\n' "$(gpu_users)"
+  printf 'dGPU held by : %s\n' "$(gpu_users_named)"
+  if [[ $EUID -ne 0 ]]; then
+    printf '               (unprivileged: root-owned holders are not listed —\n'
+    printf '                sudo thinkpad-power status for the full picture)\n'
+  fi
   printf 'power profile: %s\n' "$(powerprofilesctl get 2>/dev/null)"
   if gpu_present && command -v nvidia-smi >/dev/null 2>&1; then
     printf 'dGPU draw    : %s\n' "$(nvidia-smi --query-gpu=power.draw,pstate --format=csv,noheader 2>/dev/null)"
