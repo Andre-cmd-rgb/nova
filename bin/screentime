@@ -1,0 +1,575 @@
+#!/bin/bash
+#
+# screentime — usage tracking for the andrecmdrgb.screentime Omarchy plugin.
+#
+# The shell-side service watches which window has focus and how long you have
+# been idle, and hands this script the seconds it has counted. Everything else
+# — storage, aggregation, settings — lives here, so the numbers can be read,
+# corrected, or thrown away from a terminal without touching the shell.
+#
+# Nothing here needs root, and no window titles are ever stored: only the
+# application id, the hour it was used in, and a count of seconds.
+
+set -uo pipefail
+
+PLUGIN_ID="andrecmdrgb.screentime"
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-screentime"
+CONFIG="$CONFIG_DIR/config"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-screentime"
+DAYS_DIR="$STATE_DIR/days"
+MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/extensions/omarchy-menu.jsonc"
+
+die() {
+  printf 'screentime: %s\n' "$*" >&2
+  exit 1
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ------------------------------------------------------------------- config
+# Parsed, never sourced: this file is user-editable and must not be able to
+# execute anything.
+
+get_cfg() {
+  local key=$1 def=${2:-} value=""
+  if [[ -r $CONFIG ]]; then
+    value=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
+      tail -n1 | tr -d '\r')
+    value=${value%"${value##*[![:space:]]}"}
+  fi
+  printf '%s' "${value:-$def}"
+}
+
+set_cfg() {
+  local key=$1 value=$2 tmp
+  mkdir -p -- "$CONFIG_DIR" || return 1
+  [[ -f $CONFIG ]] || (
+    umask 077
+    : >"$CONFIG"
+  ) || return 1
+  tmp=$(mktemp -- "$CONFIG.XXXXXX") || return 1
+  # awk rather than sed: the value is data, and a sed replacement would read a
+  # & or a \1 in it as a back-reference.
+  if ! awk -v key="$key" -v value="$value" '
+    BEGIN { pattern = "^[[:space:]]*" key "[[:space:]]*=" }
+    $0 ~ pattern { if (!seen++) print key "=" value; next }
+    { print }
+    END { if (!seen) print key "=" value }
+  ' "$CONFIG" >"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  cat -- "$tmp" >"$CONFIG"
+  rm -f -- "$tmp"
+}
+
+cfg_number() {
+  local value
+  value=$(get_cfg "$1" "$2")
+  [[ $value =~ ^[0-9]+$ ]] || value=$2
+  printf '%s' "$((10#$value))"
+}
+
+# Settings this script recognises. Anything else is refused rather than
+# written and silently ignored later.
+setting_default() {
+  case $1 in
+  IDLE_TIMEOUT) printf '180' ;;
+  FLUSH_INTERVAL) printf '60' ;;
+  RETENTION_DAYS) printf '90' ;;
+  DAILY_GOAL) printf '0' ;;
+  IGNORE) printf '' ;;
+  *) return 1 ;;
+  esac
+}
+
+setting_help() {
+  case $1 in
+  IDLE_TIMEOUT) printf 'seconds without input before time stops counting' ;;
+  FLUSH_INTERVAL) printf 'seconds between writes to disk' ;;
+  RETENTION_DAYS) printf 'days of history to keep (0 keeps everything)' ;;
+  DAILY_GOAL) printf 'daily limit in minutes, drawn on the chart (0 = none)' ;;
+  IGNORE) printf 'comma-separated app ids never to record' ;;
+  esac
+}
+
+# --------------------------------------------------------------------- data
+#
+# One file per day, three tab-separated columns: app id, hour of day, seconds.
+# Small enough (a few hundred lines) to rewrite whole on every flush, which
+# keeps the merge trivial and the file always complete.
+
+today_date() { date +%F; }
+day_file() { printf '%s/%s.tsv' "$DAYS_DIR" "$1"; }
+
+is_ignored() {
+  local app=${1,,} list item
+  list=$(get_cfg IGNORE)
+  [[ -n $list ]] || return 1
+  while IFS= read -r item; do
+    item=${item// /}
+    [[ -n $item && ${item,,} == "$app" ]] && return 0
+  done < <(tr ',' '\n' <<<"$list")
+  return 1
+}
+
+# app=seconds pairs from the service. Seconds may be negative: when the idle
+# monitor fires, the service takes back the timeout it had already counted.
+cmd_record() {
+  (($# > 0)) || return 0
+  local day hour file lock deltas="" pair app secs
+  day=$(today_date)
+  hour=$((10#$(date +%H)))
+  file=$(day_file "$day")
+
+  for pair in "$@"; do
+    app=${pair%%=*}
+    secs=${pair#*=}
+    [[ -n $app && $app != "$pair" ]] || continue
+    [[ $secs =~ ^-?[0-9]+$ ]] || continue
+    app=${app//[$'\t\n']/ }
+    is_ignored "$app" && continue
+    deltas+="$app"$'\t'"$hour"$'\t'"$secs"$'\n'
+  done
+  [[ -n $deltas ]] || return 0
+
+  mkdir -p -- "$DAYS_DIR" 2>/dev/null || return 0
+
+  # A new day's first write is the natural moment to drop old history.
+  [[ -e $file ]] || prune_history
+
+  exec {lock}>"$STATE_DIR/.lock" 2>/dev/null || return 0
+  flock -w 5 "$lock" 2>/dev/null || {
+    exec {lock}>&-
+    return 0
+  }
+
+  {
+    [[ -r $file ]] && cat -- "$file"
+    printf '%s' "$deltas"
+  } | awk -F'\t' -v OFS='\t' '
+      NF == 3 { total[$1 SUBSEP $2] += $3 }
+      END {
+        for (key in total) {
+          if (total[key] < 1) continue
+          split(key, part, SUBSEP)
+          print part[1], part[2], total[key]
+        }
+      }
+    ' | sort >"$file.tmp" 2>/dev/null && mv -f -- "$file.tmp" "$file"
+  rm -f -- "$file.tmp"
+
+  exec {lock}>&-
+}
+
+prune_history() {
+  local keep cutoff name
+  keep=$(cfg_number RETENTION_DAYS 90)
+  ((keep > 0)) || return 0
+  cutoff=$(date -d "-$keep day" +%F) || return 0
+  [[ -d $DAYS_DIR ]] || return 0
+  for name in "$DAYS_DIR"/*.tsv; do
+    [[ -e $name ]] || continue
+    local base=${name##*/}
+    base=${base%.tsv}
+    [[ $base =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
+    [[ $base < $cutoff ]] && rm -f -- "$name"
+  done
+  return 0
+}
+
+# Seconds across the given day files.
+sum_seconds() {
+  cat -- "$@" 2>/dev/null | awk -F'\t' 'NF == 3 { s += $3 } END { print s + 0 }'
+}
+
+# id, display name, seconds — busiest first.
+apps_tsv() {
+  cat -- "$@" 2>/dev/null | awk -F'\t' -v OFS='\t' '
+    # "org.gnome.Nautilus" -> "Nautilus", "google-chrome" -> "Google Chrome".
+    function pretty(id,   n, parts, base, words, i, out, word) {
+      n = split(id, parts, ".")
+      base = parts[n]
+      gsub(/[-_]+/, " ", base)
+      n = split(base, words, " ")
+      out = ""
+      for (i = 1; i <= n; i++) {
+        word = words[i]
+        if (word == "") continue
+        out = out (out == "" ? "" : " ") toupper(substr(word, 1, 1)) substr(word, 2)
+      }
+      return out == "" ? id : out
+    }
+    NF == 3 { total[$1] += $3 }
+    END { for (app in total) print app, pretty(app), total[app] }
+  ' | sort -t$'\t' -k3,3nr
+}
+
+# 24 comma-separated hourly totals for one day file.
+hours_csv() {
+  cat -- "$1" 2>/dev/null | awk -F'\t' '
+    NF == 3 { hour[$2 + 0] += $3 }
+    END {
+      out = ""
+      for (i = 0; i < 24; i++) out = out (i ? "," : "") (hour[i] + 0)
+      print out
+    }
+  '
+}
+
+# date, weekday label, seconds — oldest first, ending today.
+days_tsv() {
+  local span=$1 index date
+  for ((index = span - 1; index >= 0; index--)); do
+    date=$(date -d "-$index day" +%F) || continue
+    printf '%s\t%s\t%s\n' "$date" "$(date -d "$date" +%a)" "$(sum_seconds "$(day_file "$date")")"
+  done
+}
+
+files_for_span() {
+  local span=$1 index date
+  for ((index = span - 1; index >= 0; index--)); do
+    date=$(date -d "-$index day" +%F) || continue
+    printf '%s\n' "$(day_file "$date")"
+  done
+}
+
+# ------------------------------------------------------------------ reports
+
+format_duration() {
+  local total=${1:-0} hours minutes
+  ((total < 0)) && total=0
+  hours=$((total / 3600))
+  minutes=$(((total % 3600) / 60))
+  if ((hours > 0)); then
+    printf '%dh %dm' "$hours" "$minutes"
+  elif ((minutes > 0)); then
+    printf '%dm' "$minutes"
+  else
+    printf '%ds' "$total"
+  fi
+}
+
+format_short() {
+  local total=${1:-0} hours minutes
+  ((total < 0)) && total=0
+  hours=$((total / 3600))
+  minutes=$(((total % 3600) / 60))
+  if ((hours > 0)); then
+    printf '%dh%02dm' "$hours" "$minutes"
+  else
+    printf '%dm' "$minutes"
+  fi
+}
+
+cmd_today() {
+  local file total
+  file=$(day_file "$(today_date)")
+  total=$(sum_seconds "$file")
+
+  if [[ ${1:-} == --short ]]; then
+    format_short "$total"
+    echo
+    return 0
+  fi
+
+  printf 'Today: %s\n' "$(format_duration "$total")"
+  ((total > 0)) || return 0
+  while IFS=$'\t' read -r _ name seconds; do
+    printf '  %-24s %s\n' "$name" "$(format_duration "$seconds")"
+  done < <(apps_tsv "$file" | head -n 10)
+}
+
+cmd_week() {
+  local span=${1:-7} total
+  [[ $span =~ ^[0-9]+$ ]] && ((span > 0)) || span=7
+  mapfile -t files < <(files_for_span "$span")
+  total=$(sum_seconds "${files[@]}")
+
+  printf 'Last %d days: %s (%s/day)\n' "$span" "$(format_duration "$total")" \
+    "$(format_duration $((total / span)))"
+  while IFS=$'\t' read -r date label seconds; do
+    printf '  %s %s  %s\n' "$label" "$date" "$(format_duration "$seconds")"
+  done < <(days_tsv "$span")
+  echo
+  while IFS=$'\t' read -r _ name seconds; do
+    printf '  %-24s %s\n' "$name" "$(format_duration "$seconds")"
+  done < <(apps_tsv "${files[@]}" | head -n 10)
+}
+
+cmd_top() {
+  local count=${1:-10} file
+  [[ $count =~ ^[0-9]+$ ]] && ((count > 0)) || count=10
+  file=$(day_file "$(today_date)")
+  while IFS=$'\t' read -r _ name seconds; do
+    printf '%-24s %s\n' "$name" "$(format_duration "$seconds")"
+  done < <(apps_tsv "$file" | head -n "$count")
+}
+
+# Everything the panel draws, in one call.
+cmd_json() {
+  have jq || die "jq is required for json output"
+  local span=7 today file
+  while (($# > 0)); do
+    case $1 in
+    --days)
+      shift
+      [[ ${1:-} =~ ^[0-9]+$ ]] && ((10#$1 > 0)) && span=$((10#$1))
+      ;;
+    esac
+    shift
+  done
+
+  today=$(today_date)
+  file=$(day_file "$today")
+  mapfile -t files < <(files_for_span "$span")
+
+  jq -n \
+    --arg today "$today" \
+    --arg todayApps "$(apps_tsv "$file")" \
+    --arg rangeApps "$(apps_tsv "${files[@]}")" \
+    --arg days "$(days_tsv "$span")" \
+    --argjson todaySeconds "$(sum_seconds "$file")" \
+    --argjson rangeSeconds "$(sum_seconds "${files[@]}")" \
+    --argjson hours "[$(hours_csv "$file")]" \
+    --argjson goalMinutes "$(cfg_number DAILY_GOAL 0)" \
+    --argjson rangeDays "$span" '
+      def rows:
+        split("\n")
+        | map(select(length > 0) | split("\t"))
+        | map({ id: .[0], name: .[1], seconds: (.[2] | tonumber) });
+      {
+        today: $today,
+        todaySeconds: $todaySeconds,
+        hours: $hours,
+        goalMinutes: $goalMinutes,
+        rangeDays: $rangeDays,
+        rangeSeconds: $rangeSeconds,
+        todayApps: ($todayApps | rows),
+        rangeApps: ($rangeApps | rows),
+        days: ($days
+          | split("\n")
+          | map(select(length > 0) | split("\t"))
+          | map({ date: .[0], label: .[1], seconds: (.[2] | tonumber) }))
+      }
+    '
+}
+
+# ----------------------------------------------------------------- settings
+
+cmd_config() {
+  local key value default
+  if (($# > 0)); then
+    key=${1^^}
+    default=$(setting_default "$key") || die "unknown setting: $1"
+    printf '%s\n' "$(get_cfg "$key" "$default")"
+    return 0
+  fi
+  for key in IDLE_TIMEOUT FLUSH_INTERVAL RETENTION_DAYS DAILY_GOAL IGNORE; do
+    default=$(setting_default "$key")
+    value=$(get_cfg "$key" "$default")
+    printf '%-16s %-8s  %s\n' "$key" "$value" "$(setting_help "$key")"
+  done
+}
+
+cmd_set() {
+  local key=${1:-} value=${2:-}
+  [[ -n $key ]] || die "usage: screentime set <key> <value>"
+  key=${key^^}
+  setting_default "$key" >/dev/null || die "unknown setting: $key"
+  case $key in
+  IDLE_TIMEOUT | FLUSH_INTERVAL | RETENTION_DAYS | DAILY_GOAL)
+    [[ $value =~ ^[0-9]+$ ]] || die "$key must be a whole number"
+    value=$((10#$value))
+    ;;
+  esac
+  set_cfg "$key" "$value" || die "could not write $CONFIG"
+  printf '%s=%s\n' "$key" "$value"
+}
+
+cmd_ignore() {
+  local app=${1:-} list
+  [[ -n $app ]] || die "usage: screentime ignore <app-id>"
+  is_ignored "$app" && {
+    echo "$app is already ignored."
+    return 0
+  }
+  list=$(get_cfg IGNORE)
+  set_cfg IGNORE "${list:+$list,}$app" || die "could not write $CONFIG"
+  echo "Ignoring $app. Time already recorded for it is kept; run: screentime forget $app"
+}
+
+cmd_unignore() {
+  local app=${1:-} list kept="" item
+  [[ -n $app ]] || die "usage: screentime unignore <app-id>"
+  list=$(get_cfg IGNORE)
+  while IFS= read -r item; do
+    item=${item// /}
+    [[ -n $item ]] || continue
+    [[ ${item,,} == "${app,,}" ]] && continue
+    kept+="${kept:+,}$item"
+  done < <(tr ',' '\n' <<<"$list")
+  set_cfg IGNORE "$kept" || die "could not write $CONFIG"
+  echo "No longer ignoring $app."
+}
+
+# Remove one app from the stored history entirely.
+cmd_forget() {
+  local app=${1:-} file lock
+  [[ -n $app ]] || die "usage: screentime forget <app-id>"
+  [[ -d $DAYS_DIR ]] || return 0
+  exec {lock}>"$STATE_DIR/.lock" 2>/dev/null
+  flock -w 5 "$lock" 2>/dev/null
+  for file in "$DAYS_DIR"/*.tsv; do
+    [[ -e $file ]] || continue
+    awk -F'\t' -v app="$app" '$1 != app' "$file" >"$file.tmp" &&
+      mv -f -- "$file.tmp" "$file"
+    rm -f -- "$file.tmp"
+  done
+  exec {lock}>&-
+  echo "Forgot every record for $app."
+}
+
+# --------------------------------------------------------------- shell glue
+
+cmd_open() {
+  have omarchy-shell || die "omarchy-shell not found"
+  omarchy-shell shell summon "$PLUGIN_ID" '{}' >/dev/null ||
+    die "could not open the panel — is the plugin enabled?"
+}
+
+cmd_indicator() {
+  local state=${1:-status}
+  have omarchy || die "the omarchy CLI is required"
+  case $state in
+  on | off)
+    omarchy bar set "$PLUGIN_ID" indicator "$([[ $state == on ]] && echo true || echo false)" --json >/dev/null ||
+      die "could not update the bar entry — is the plugin enabled?"
+    echo "Bar indicator $state."
+    ;;
+  status)
+    if omarchy bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
+      echo "The plugin is in the bar layout."
+    else
+      echo "The plugin is not in the bar layout."
+    fi
+    ;;
+  *) die "usage: screentime indicator on|off" ;;
+  esac
+}
+
+MENU_ENTRY='  "screentime": {"icon":"󰥔","label":"Screen Time","aliases":["screen-time","usage"],"action":"omarchy-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
+
+cmd_menu() {
+  local action=${1:-install} tmp
+  case $action in
+  install)
+    mkdir -p -- "$(dirname -- "$MENU_FILE")" || die "could not create the extensions directory"
+    if [[ ! -f $MENU_FILE ]]; then
+      printf '{\n%s\n}\n' "$MENU_ENTRY" >"$MENU_FILE" ||
+        die "could not write $MENU_FILE"
+      echo "Added Screen Time to the Omarchy menu."
+      return 0
+    fi
+    if grep -q '^[[:space:]]*"screentime"[[:space:]]*:' "$MENU_FILE"; then
+      echo "Screen Time is already in the Omarchy menu."
+      return 0
+    fi
+    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
+    # Insert before the final closing brace, so the comment block the file
+    # ships with stays where it is.
+    awk -v entry="$MENU_ENTRY" '
+      { lines[NR] = $0 }
+      END {
+        last = 0
+        for (i = NR; i >= 1; i--) if (lines[i] ~ /^[[:space:]]*}[[:space:]]*$/) { last = i; break }
+        for (i = 1; i <= NR; i++) {
+          if (i == last) print entry
+          print lines[i]
+        }
+        if (last == 0) print entry
+      }
+    ' "$MENU_FILE" >"$tmp" || {
+      rm -f -- "$tmp"
+      die "could not write $MENU_FILE"
+    }
+    cat -- "$tmp" >"$MENU_FILE"
+    rm -f -- "$tmp"
+    echo "Added Screen Time to the Omarchy menu (Super+Space)."
+    ;;
+  remove)
+    [[ -f $MENU_FILE ]] || return 0
+    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
+    grep -v '^[[:space:]]*"screentime"[[:space:]]*:' "$MENU_FILE" >"$tmp"
+    cat -- "$tmp" >"$MENU_FILE"
+    rm -f -- "$tmp"
+    echo "Removed Screen Time from the Omarchy menu."
+    ;;
+  *) die "usage: screentime menu install|remove" ;;
+  esac
+}
+
+cmd_version() {
+  local self plugin_dir version=""
+  self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || self=""
+  plugin_dir=${self%/bin/*}
+  if [[ -n $plugin_dir && -r $plugin_dir/manifest.json ]]; then
+    version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      "$plugin_dir/manifest.json" | head -n1)
+  fi
+  printf 'screentime %s\n' "${version:-unknown}"
+}
+
+usage() {
+  cat <<'USAGE'
+screentime — where your time on this machine goes.
+
+Usage:
+  screentime today [--short]     today's total and its busiest apps
+  screentime week [days]         a day-by-day breakdown (default 7)
+  screentime top [n]             today's busiest apps
+  screentime json [--days n]     everything the panel draws
+  screentime open                open the Screen Time window
+
+  screentime config [key]        show settings
+  screentime set <key> <value>   change one
+  screentime ignore <app-id>     never record an app again
+  screentime unignore <app-id>   undo that
+  screentime forget <app-id>     delete an app's history
+
+  screentime menu install|remove   add or remove the Super+Space entry
+  screentime indicator on|off      show or hide the bar indicator
+  screentime record <app>=<secs>   used by the shell service
+  screentime version
+
+Settings live in ~/.config/omarchy-screentime/config, history in
+~/.local/state/omarchy-screentime/days/. Only app ids and second counts are
+stored — never window titles.
+USAGE
+}
+
+# --------------------------------------------------------------------- main
+
+command=${1:-today}
+(($# > 0)) && shift
+
+case $command in
+record) cmd_record "$@" ;;
+today) cmd_today "$@" ;;
+week) cmd_week "$@" ;;
+top) cmd_top "$@" ;;
+json) cmd_json "$@" ;;
+open) cmd_open ;;
+config) cmd_config "$@" ;;
+set) cmd_set "$@" ;;
+ignore) cmd_ignore "$@" ;;
+unignore) cmd_unignore "$@" ;;
+forget) cmd_forget "$@" ;;
+prune) prune_history ;;
+menu) cmd_menu "$@" ;;
+indicator) cmd_indicator "$@" ;;
+version | --version | -V) cmd_version ;;
+-h | --help | help) usage ;;
+*) die "unknown command: $command — try: screentime --help" ;;
+esac
