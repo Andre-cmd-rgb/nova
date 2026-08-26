@@ -17,6 +17,8 @@ MENU_FILE="$CONFIG_HOME/omarchy/extensions/omarchy-menu.jsonc"
 MARK_BEGIN="-- >>> thinkpad-power >>>"
 MARK_END="-- <<< thinkpad-power <<<"
 ENV_MARK="# thinkpad-power"
+ENV_BEGIN="# >>> thinkpad-power >>>"
+ENV_END="# <<< thinkpad-power <<<"
 IGPU_LINK_NAME="igpu"
 
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -81,7 +83,7 @@ uninstall() {
   ok "root files removed"
 
   if [[ -f $UWSM_ENV ]] && grep -q "$ENV_MARK" "$UWSM_ENV"; then
-    sed -i "/$ENV_MARK/d;/AQ_DRM_DEVICES/d" "$UWSM_ENV"
+    sed -i "/$ENV_BEGIN/,/$ENV_END/d;/$ENV_MARK/d;/AQ_DRM_DEVICES/d" "$UWSM_ENV"
     [[ -s $UWSM_ENV ]] || rm -f "$UWSM_ENV"
     ok "session GPU pin removed"
   fi
@@ -192,14 +194,24 @@ step "Session configuration"
 
 mkdir -p "$(dirname -- "$UWSM_ENV")"
 touch "$UWSM_ENV"
-grep -q "$ENV_MARK" "$UWSM_ENV" && sed -i "/$ENV_MARK/d" "$UWSM_ENV"
-sed -i '/AQ_DRM_DEVICES/d;/^_tp_card=/d;/^_tp_egl=/d;/^unset _tp_/d;/__EGL_VENDOR_LIBRARY_FILENAMES/d;/VK_LOADER_DRIVERS_DISABLE/d;/^  export __EGL/d;/^fi$/d;/^if \[ -n /d' "$UWSM_ENV"
+# Remove the whole managed block as a unit, markers included. Anything else
+# in this file is the user's and is left alone.
+sed -i "/$ENV_BEGIN/,/$ENV_END/d" "$UWSM_ENV"
+# Blocks written before the markers existed had no reliable end; drop their
+# remains rather than leave half an if-statement behind.
+sed -i "/$ENV_MARK/d;/AQ_DRM_DEVICES/d;/_tp_egl/d;/_tp_card/d;/__EGL_VENDOR_LIBRARY_FILENAMES/d;/VK_LOADER_DRIVERS_DISABLE/d" "$UWSM_ENV"
+sed -i '/^if \[ -e \/dev\/dri\//,/^fi$/d;/^if \[ -n "\$_tp_egl" \]/,/^fi$/d' "$UWSM_ENV"
+if ! sh -n "$UWSM_ENV" 2>/dev/null; then
+  warn "$UWSM_ENV had unparseable leftovers; starting it fresh"
+  : >"$UWSM_ENV"
+fi
 
 # Only pin if the symlink really exists. A pin that cannot be resolved is the
 # one failure mode of this whole tool that costs a login, so it is checked
 # here, and checked again at every login by the guard written below.
 if [[ -e /dev/dri/$IGPU_LINK_NAME ]]; then
   cat >>"$UWSM_ENV" <<ENV
+$ENV_BEGIN
 $ENV_MARK keep the compositor on the integrated GPU, so nothing holds the
 $ENV_MARK discrete card open and it can be powered off. The value must not
 $ENV_MARK contain a colon: AQ_DRM_DEVICES splits on it.
@@ -223,8 +235,15 @@ if [ -n "\$_tp_egl" ]; then
 fi
 unset _tp_egl
 export VK_LOADER_DRIVERS_DISABLE='*nvidia*'
+$ENV_END
 ENV
-  ok "$UWSM_ENV (pins the compositor to /dev/dri/$IGPU_LINK_NAME)"
+  if sh -n "$UWSM_ENV" 2>/dev/null; then
+    ok "$UWSM_ENV (pins the compositor to /dev/dri/$IGPU_LINK_NAME)"
+  else
+    sed -i "/$ENV_BEGIN/,/$ENV_END/d" "$UWSM_ENV"
+    die "$UWSM_ENV would not parse as shell; the block was removed and nothing
+   was changed. Please report this — a file that cannot be sourced costs a login."
+  fi
 else
   warn "/dev/dri/$IGPU_LINK_NAME did not appear — skipping the compositor pin."
   warn "The dGPU will keep being held open; re-run once the symlink exists."
