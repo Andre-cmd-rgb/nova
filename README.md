@@ -317,7 +317,13 @@ nothing on success, so follow it with `mobile-data sms list`. If the message is
 in the archive but no toast appeared, the notification server is the thing to
 look at, not this.
 
-**Nothing changed after editing the plugin.** `omarchy-shell shell rescanPlugins`.
+**Nothing changed after editing the plugin.** `omarchy-shell shell rescanPlugins`
+picks up the CLI and the manifest. It does not pick up the QML: the reload runs
+and reports nothing wrong, but the bar widget comes back from Qt's cached
+compilation of the file as it was, so a widget change appears to do nothing at
+all. `omarchy-restart-shell` is what loads new QML — the bar blinks for a
+second. Not `omarchy-refresh-shell`, which resets `shell.json` to Omarchy's
+defaults and takes your bar layout with it.
 
 ## Uninstall
 

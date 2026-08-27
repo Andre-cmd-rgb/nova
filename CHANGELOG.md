@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.5.1 — 2026-08-27
+
+- The meter's lock no longer silences the rest of the run. `exec {fd}>file
+  2>/dev/null` applies that redirection to the shell itself, not just to the
+  open, so every command after the first `info` poll had its stderr thrown
+  away. Nothing printed to it, which is why it never showed.
+- The README claimed `rescanPlugins` was enough after editing the plugin. It
+  is enough for the CLI and the manifest; QML comes back from Qt's cached
+  compilation, and only `omarchy-restart-shell` loads a changed widget.
+
 ## 1.5.0 — 2026-08-27
 
 - Text messages the SIM receives are announced as desktop notifications. The

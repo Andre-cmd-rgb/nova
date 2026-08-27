@@ -355,7 +355,11 @@ meter_update() {
 
   # Serialise against the other poll cadence; a lost sample is better than a
   # torn read-modify-write. Losing the lock just means skipping this update.
-  exec {lock}>"$STATE_DIR/.lock" 2>/dev/null || {
+  #
+  # Braces around the exec: a redirection on a bare exec is applied to the
+  # shell itself, so `exec {lock}>… 2>/dev/null` would silence stderr for the
+  # rest of the run rather than just for the open.
+  { exec {lock}>"$STATE_DIR/.lock"; } 2>/dev/null || {
     USED_BYTES=0
     return 0
   }
