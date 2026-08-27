@@ -139,13 +139,41 @@ in `/run`, so only the devices this tool actually changed are put back, rather
 than forcing the whole bus to `on` and overriding choices the drivers made at
 boot.
 
-PCIe ASPM is **opt-in**, because forcing L0s/L1 on every link can upset a
-device that is merely ASPM-tolerant and the symptom is a hang:
+Three further knobs are **opt-in**, in `/etc/thinkpad-power.conf`:
 
 ```sh
-# /etc/thinkpad-power.conf
+PL1_ON_BAT=30                # sustained CPU power limit on battery, in watts
 ASPM_ON_BAT=powersave        # or powersupersave, which adds the L1 substates
+NMI_WATCHDOG_ON_BAT=off      # disable the lockup detector on battery
 ```
+
+**`PL1_ON_BAT` is the one that changes anything under load.** Firmware here
+leaves the sustained limit at the AC figure on battery — 109 W on the machine
+this was written for, against a 45 W part — so a busy browser is free to empty
+the battery as fast as the cooling allows. Capping it is safe in the way
+undervolting is not: the worst case is a slower CPU, not an unstable one. The
+firmware may put the value back, since DPTF drives the same registers, so
+check with `thinkpad-power status -v` after setting it.
+
+`ASPM_ON_BAT` is off by default because forcing L0s/L1 on every link can upset
+a device that is merely ASPM-tolerant, and the symptom is a hang.
+`NMI_WATCHDOG_ON_BAT` saves very little and costs you the hard-lockup
+detector.
+
+### On undervolting
+
+There isn't one here, and it is not an oversight. Undervolting an 11th-gen
+mobile part goes through the overclocking mailbox at MSR `0x150`, which Intel
+gated in microcode after Plundervolt (CVE-2019-11157) and which vendor
+firmware locks on business laptops. The AC/DC loadline trick is not a way
+around that lock — it is a *different command to the same mailbox*, behind the
+same lock bit, so where undervolting is locked, loadline writes are too.
+
+It is also an undervolt by another name: lowering the AC loadline lowers the
+voltage the regulator supplies per amp of load current. When it is too
+aggressive the machine does not warn you, it faults under load — and on this
+hardware that arrives as a hard lock-up or a machine check. `PL1_ON_BAT`
+reaches for the same goal from the safe side.
 
 ## What to expect
 

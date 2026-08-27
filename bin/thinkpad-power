@@ -429,6 +429,48 @@ nmi_watchdog() {
   return 0
 }
 
+# The sustained CPU power limit. On this machine the firmware leaves PL1 at
+# 109 W and PL2 at 135 W on battery — the AC figures, never lowered — so any
+# burst of load is free to empty the battery at the rate the cooling allows.
+# Capping it is the one tunable here that changes anything under load, and it
+# is safe in the way undervolting is not: the worst case is a slower CPU, not
+# an unstable one. Off unless PL1_ON_BAT is set, in whole watts:
+#
+#   PL1_ON_BAT=30
+#
+# Firmware may put it back — DPTF also drives these registers — so check with
+# `thinkpad-power status -v` after setting it.
+PL1_ON_BAT=${PL1_ON_BAT:-}
+RAPL=/sys/class/powercap/intel-rapl:0
+RAPL_PL1=$RAPL/constraint_0_power_limit_uw
+RAPL_STATE=/run/thinkpad-power.rapl
+
+power_limit() {
+  [[ -n $PL1_ON_BAT && -w $RAPL_PL1 ]] || return 0
+  if [[ ! $PL1_ON_BAT =~ ^[0-9]+$ ]] || ((PL1_ON_BAT < 5)); then
+    log "PL1_ON_BAT=$PL1_ON_BAT is not a sane wattage; ignoring"
+    return 0
+  fi
+  case $1 in
+  battery)
+    [[ -e $RAPL_STATE ]] || cat "$RAPL_PL1" >"$RAPL_STATE" 2>/dev/null
+    echo $((PL1_ON_BAT * 1000000)) >"$RAPL_PL1" 2>/dev/null
+    ;;
+  ac)
+    [[ -r $RAPL_STATE ]] || return 0
+    cat "$RAPL_STATE" >"$RAPL_PL1" 2>/dev/null
+    rm -f "$RAPL_STATE"
+    ;;
+  esac
+  return 0
+}
+
+pl1_now() {
+  local uw
+  uw=$(cat "$RAPL_PL1" 2>/dev/null) || { printf 'unavailable'; return 0; }
+  printf '%s W' "$((uw / 1000000))"
+}
+
 # The codec sleeping is the only one with a perceptible cost: a faint click
 # when audio starts after silence.
 extras() {
@@ -438,12 +480,14 @@ extras() {
     runtime_pm_battery
     aspm battery
     nmi_watchdog battery
+    power_limit battery
     ;;
   ac)
     echo 0 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null
     runtime_pm_ac
     aspm ac
     nmi_watchdog ac
+    power_limit ac
     ;;
   esac
   return 0
@@ -531,6 +575,7 @@ status)
     fi
     row 'runtime pm' "$(runtime_pm_summary)"
     row 'pcie aspm' "$(aspm_policy)"
+    row 'cpu pl1' "$(pl1_now)"
     [[ $EUID -ne 0 ]] &&
       row '' '(not root: root-owned holders are missing from "held by")'
   fi
