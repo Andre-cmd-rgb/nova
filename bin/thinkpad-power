@@ -33,13 +33,24 @@ log() { printf '%s\n' "$*"; }
 note() { [[ -n ${QUIET:-} ]] || log "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
+# gum makes this pretty where it exists; a plain read works everywhere else.
+confirm() {
+  local reply
+  if command -v gum >/dev/null 2>&1; then
+    gum confirm "$1"
+  else
+    read -rp "$1 [y/N] " reply
+    [[ $reply == [yY]* ]]
+  fi
+}
+
 usage() {
   cat <<'USAGE'
 thinkpad-power — AC/battery power policy for a hybrid-graphics laptop
 
 usage: thinkpad-power <command> [args]
 
-  status              power source, discrete GPU state, active tunables
+  status [-v]         power source and discrete GPU; -v adds diagnostics
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
 
@@ -479,33 +490,51 @@ gpu-toggle)
 status)
   # Read-only and side-effect free. Notably it does not call nvidia-smi: that
   # wakes the card out of P8 to answer, which is the opposite of the job.
+  #
+  # Three lines by default. The rest is diagnostic — useful when something is
+  # wrong, noise when you only wanted to know whether the card is on — so it
+  # lives behind -v.
   row() { printf '  %-14s %s\n' "$1" "$2"; }
+  verbose=''
+  [[ ${2:-} == -v || ${2:-} == --verbose ]] && verbose=1
+
+  profile=$(powerprofilesctl get 2>/dev/null)
   echo
-  row 'power source' "$(on_ac && echo AC || echo battery)"
-  row 'power profile' "$(powerprofilesctl get 2>/dev/null || echo unknown)"
-  on_ac || row draw \
-    "$(awk '{printf "%.2f W", $1/1000000}' /sys/class/power_supply/BAT0/power_now 2>/dev/null || echo unknown)"
-  echo
+  row 'power source' \
+    "$(on_ac && echo AC || echo battery)${profile:+ ($profile)}"
+
+  functions=$(gpu_slot_functions | tr '\n' ' ' | sed 's/ $//')
   if [[ -z $NVIDIA_PCI ]]; then
     row 'discrete GPU' 'none found'
   else
-    row 'discrete GPU' "$(gpu_present && echo 'on the bus' || echo 'off the bus')"
-    # Only worth a line when there is something there. With the card off, a
-    # function still listed is the orphan that used to hang this machine, so
-    # it earns the row precisely when it is alarming.
-    functions=$(gpu_slot_functions | tr '\n' ' ' | sed 's/ $//')
-    [[ -n $functions ]] && row functions "$functions"
-    row 'driver load' "$([[ -e $MODPROBE_BLOCK ]] && echo blocked || echo allowed)"
-    gpu_present && row 'held by' "$(gpu_users_named)"
+    row 'discrete GPU' "$(gpu_present && echo on || echo off)"
+    # Only the rows there is something to act on. A held card is why an unplug
+    # declines; with the card off, a function still listed is the orphan that
+    # used to hang this machine.
+    held=$(gpu_users_named)
+    if gpu_present; then
+      [[ $held != nothing ]] && row 'held by' "$held"
+    else
+      [[ -n $functions ]] && row 'left on bus' "$functions"
+    fi
   fi
-  echo
-  row 'runtime pm' "$(runtime_pm_summary)"
-  row 'pcie aspm' "$(aspm_policy)"
-  echo
-  if [[ $EUID -ne 0 ]] && gpu_present; then
-    echo '  run with sudo to include root-owned processes in "held by"'
+
+  on_ac || row draw \
+    "$(awk '{printf "%.2f W", $1/1000000}' /sys/class/power_supply/BAT0/power_now 2>/dev/null || echo unknown)"
+
+  if [[ -n $verbose ]]; then
     echo
+    if [[ -n $NVIDIA_PCI ]]; then
+      row address "$NVIDIA_PCI"
+      row functions "${functions:-none on the bus}"
+      row 'driver load' "$([[ -e $MODPROBE_BLOCK ]] && echo blocked || echo allowed)"
+    fi
+    row 'runtime pm' "$(runtime_pm_summary)"
+    row 'pcie aspm' "$(aspm_policy)"
+    [[ $EUID -ne 0 ]] &&
+      row '' '(not root: root-owned holders are missing from "held by")'
   fi
+  echo
   ;;
 run)
   # Run one program on the discrete GPU. The session hides the NVIDIA EGL
@@ -521,28 +550,31 @@ run)
     "$@"
   ;;
 switch)
-  # Interactive, and what the Omarchy menu entry runs. Omarchy's own
-  # omarchy-toggle-hybrid-gpu drives supergfxd and reboots to change mode; this
-  # takes the card off the bus instead, which needs neither.
-  "$0" status
+  # What the Omarchy menu entry runs, in a floating terminal. Whoever opened
+  # it wants one thing — the card on, or off — so this says what it is, asks,
+  # and says what it now is. Detail lives behind `status -v`.
   if gpu_present; then
-    users=$(gpu_users)
-    if [[ -n ${users// /} ]]; then
-      echo "  in use by $(gpu_users_named)"
-      echo "  close those first — switching the card off underneath a running"
-      echo "  program would take the GPU out from under it"
-      echo
+    held=$(gpu_users_named)
+    if [[ $held != nothing ]]; then
+      printf '\n  The discrete GPU is in use by %s.\n' "$held"
+      printf '  Close it first — switching off underneath a running program\n'
+      printf '  would take the GPU out from under it.\n\n'
       exit 1
     fi
-    gum confirm 'Turn the discrete GPU off?' || exit 0
-    sudo "$0" gpu-off
+    confirm 'The discrete GPU is on. Turn it off?' || exit 0
+    out=$(sudo "$0" gpu-off 2>&1) ||
+      { printf '%s\n' "$out" >&2; die 'could not turn the discrete GPU off'; }
+    printf '\n  The discrete GPU is now off.\n\n'
   else
-    gum confirm 'Turn the discrete GPU on?' || exit 0
-    sudo "$0" gpu-on
+    confirm 'The discrete GPU is off. Turn it on?' || exit 0
+    out=$(sudo "$0" gpu-on 2>&1) ||
+      { printf '%s\n' "$out" >&2; die 'could not turn the discrete GPU on'; }
+    printf '\n  The discrete GPU is now on.\n'
+    # Worth saying only when it is about to be undone: on battery the retry
+    # timer applies the policy again within two minutes.
+    on_ac || printf '  On battery it will be switched off again within 2 min.\n'
+    echo
   fi
-  "$0" status
-  echo '  plugging in or unplugging re-applies the automatic policy'
-  echo
   ;;
 -h | --help | -V | --version)
   [[ $cmd == -V || $cmd == --version ]] && { echo "thinkpad-power $VERSION"; exit 0; }

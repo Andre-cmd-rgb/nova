@@ -67,7 +67,7 @@ because powering that off would black out the screen.
 ```
 thinkpad-power <command> [args]
 
-  status              power source, discrete GPU state, active tunables
+  status [-v]         power source and discrete GPU; -v adds diagnostics
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
 
@@ -82,16 +82,27 @@ thinkpad-power <command> [args]
 root. `status` is side-effect free — in particular it does not call
 `nvidia-smi`, which would wake the card out of P8 just to answer.
 
+`status` answers the question you asked in three lines; `-v` adds the
+diagnostics. Rows that have nothing to say are left out — `held by` appears
+only when something is actually holding the card, and `left on bus` only if a
+PCI function of it somehow survived being removed.
+
 ```
 $ thinkpad-power status
 
-  power source   battery
-  power profile  power-saver
-  draw           13.51 W
+  power source   battery (power-saver)
+  discrete GPU   off
+  draw           12.94 W
 
-  discrete GPU   off the bus
+$ thinkpad-power status -v
+
+  power source   battery (power-saver)
+  discrete GPU   off
+  draw           12.94 W
+
+  address        0000:01:00.0
+  functions      none on the bus
   driver load    blocked
-
   runtime pm     8 devices set to auto
   pcie aspm      default
 ```
@@ -103,11 +114,20 @@ for that one process and adds the usual offload hints.
 
 Steam: put `thinkpad-power run %command%` in a game's launch options.
 
-**Super+Space → Discrete GPU** toggles it by hand. That lasts until the next
-plug or unplug, when the automatic policy applies again.
+**Super+Space → Discrete GPU** toggles it by hand, and says only what it did:
 
-The card will not be powered off while a program is using it; the tool says
-which PIDs are holding it rather than pulling the GPU out from under them.
+```
+  The discrete GPU is on. Turn it off? [y/N]
+
+  The discrete GPU is now off.
+```
+
+That lasts until the next plug or unplug, when the automatic policy applies
+again — and turning the card *on* while on battery says so, because the retry
+timer will switch it back off within two minutes.
+
+The card will not be powered off while a program is using it; the tool names
+what is holding it rather than pulling the GPU out from under it.
 
 ## Tunables
 
