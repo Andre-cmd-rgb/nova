@@ -262,6 +262,19 @@ If a login ever fails to bring the screen back, switch to a TTY with
 `Ctrl+Alt+F2` and run `rm ~/.config/uwsm/env-hyprland`, which undoes the GPU
 pin, then log in again.
 
+## Tests
+
+```bash
+./test/roundtrip.sh
+```
+
+No root and no sysfs: it extracts the library half of the script, points the
+tunables at temporary files and drives each battery -> AC round trip, checking
+that the firmware's value is saved and restored and that a nonsense wattage is
+refused rather than written to a register that governs package power. The
+runtime-PM state file was silently truncated on every battery run for a while,
+so AC had nothing to put back; that is the class of bug this catches.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
