@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.5.0 — 2026-08-27
+
+- Text messages the SIM receives are announced as desktop notifications. The
+  widget runs the new `mobile-data sms poll` on its own slow cadence — never
+  faster than ten seconds, whether the panel is open or shut — and that command
+  files each message in `~/.local/state/omarchy-mobile-data/inbox`, notifies,
+  and then deletes it from the modem. A backlog of more than three gets one
+  line instead of a toast each.
+- Deleting is the point, not a side effect: the modem's store holds a couple of
+  dozen messages and the network stops delivering once it is full. So the
+  archive is written before the delete, never after, and a delete that fails
+  leaves the message to be retried rather than announced a second time.
+- `mobile-data sms list | show <id> | clear` read and empty that archive, and
+  `SMS_KEEP` (200) sets how much of it is kept.
+- New `smsNotifications` widget setting, on by default.
+- A message is bytes from a network and is treated as such. mmcli escapes the
+  text, and it stays escaped all the way into the archive — so a newline can
+  never split one message into two lines of the file. Control characters are
+  stripped before it reaches a terminal, `&` and `<` are escaped before it
+  reaches a notification body Omarchy renders as StyledText, and the sender is
+  held to the characters a GSM sender ID can contain.
+
 ## 1.4.0 — 2026-08-26
 
 - `mobile-data profile [name]` shows or chooses the NetworkManager profile the

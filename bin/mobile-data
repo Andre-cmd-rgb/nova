@@ -20,6 +20,9 @@ MODEM_CACHE="$STATE_DIR/modem"
 # Written the first time a modem answers. Its presence is what separates a
 # machine whose modem has not come back yet from one that never had one.
 MODEM_SEEN="$STATE_DIR/seen"
+# Text messages, once they are off the modem and safely somewhere else.
+INBOX="$STATE_DIR/inbox"
+SMS_LOCK="$STATE_DIR/.sms.lock"
 
 # Paths used by andre.mobile 2.x, read once so an upgrade keeps the billing
 # period and the configured profile instead of silently starting over.
@@ -719,6 +722,298 @@ cmd_toggle() {
   esac
 }
 
+# ---------------------------------------------------------------------- sms
+#
+# ModemManager leaves a received message in the modem's own storage, and that
+# storage is small — a couple of dozen slots on a SIM. Once it is full the
+# network stops delivering, so `sms poll` is the whole lifecycle in one
+# command: read what has arrived, file it in an archive of our own, say so,
+# and only then delete it from the modem. Filed before deleted, always — the
+# copy on the SIM is the only other one there is.
+
+# Toasts in one pass. More than this is a backlog — a shell that has not run
+# since yesterday, a SIM out of a drawer — and one popup per message would
+# bury the screen; a backlog gets a single line instead.
+SMS_BURST=3
+
+# mmcli prints message text through GLib's g_strescape: C escapes for the
+# usual control characters, three-digit octal for every byte outside printable
+# ASCII. So a message arrives on one line whatever it contains, and is kept
+# that way — which is what makes one archived message one line, and what stops
+# a message with a newline in it from becoming two.
+sms_unescape() {
+  local text=$1
+  # A raw \001 cannot occur in escaped text — it would itself have been
+  # escaped — so it stands in for an escaped backslash while the octal runs
+  # are rewritten into the \0NNN form printf understands. Without that step
+  # the digits after a literal backslash would be read as part of one.
+  text=${text//\\\\/$'\001'}
+  text=${text//\\\"/\"}
+  text=$(sed 's/\\\([0-7][0-7][0-7]\)/\\0\1/g' <<<"$text")
+  text=${text//$'\001'/\\\\}
+  printf '%b' "$text"
+}
+
+# A message is bytes from a network and every one of them is someone else's
+# choice. An ESC that reaches a terminal is a control sequence, not a
+# character. Tab and newline are text and stay.
+sms_printable() {
+  LC_ALL=C tr -d '\000-\010\013-\037\177'
+}
+
+# The sender is network-supplied too. It goes in a notification headline,
+# where a leading dash would be read as an option, and into a text item that
+# auto-detects markup. A GSM alphanumeric sender is letters and digits, so
+# nothing real is lost by holding it to that.
+sms_sender() {
+  local sender
+  sender=$(sms_unescape "$1" | LC_ALL=C tr -d '\000-\037\177<>&' | sed 's/^-*//')
+  printf '%s' "${sender:-Unknown}"
+}
+
+# Today is a time, anything older is a date: a message from this morning and
+# one from last month want different halves of the same stamp.
+sms_when() {
+  local stamp
+  stamp=$(date -d "$1" +%s 2>/dev/null)
+  [[ $stamp =~ ^-?[0-9]+$ ]] || {
+    printf '%s' "?"
+    return 0
+  }
+  if [[ $(date -d "@$stamp" +%F) == $(date +%F) ]]; then
+    date -d "@$stamp" +%H:%M
+  else
+    date -d "@$stamp" '+%b %-d'
+  fi
+}
+
+sms_stamp() {
+  local stamp
+  stamp=$(date -d "$1" +%s 2>/dev/null)
+  [[ $stamp =~ ^-?[0-9]+$ ]] || {
+    printf '%s' "$1"
+    return 0
+  }
+  date -d "@$stamp" '+%F %H:%M'
+}
+
+# id, a hash of the message for the duplicate check, when it was sent, who
+# sent it, and the text exactly as mmcli escaped it — tab-separated, oldest
+# line first. Only the last field can hold anything unusual, and it is still
+# escaped, so it can contain neither a tab nor a newline.
+sms_hash() {
+  printf '%s\t%s\t%s' "$1" "$2" "$3" | md5sum | cut -d' ' -f1
+}
+
+sms_is_archived() {
+  [[ -r $INBOX ]] || return 1
+  # The hash is hex from md5sum, so it carries nothing awk would reinterpret.
+  awk -F'\t' -v hash="$1" '$2 == hash { found = 1; exit } END { exit !found }' "$INBOX"
+}
+
+sms_archive() {
+  local hash=$1 date=$2 number=$3 text=$4 id keep count
+  keep=$(cfg_number SMS_KEEP 200)
+  mkdir -p -- "$STATE_DIR" 2>/dev/null || return 1
+  if [[ ! -f $INBOX ]]; then
+    (
+      umask 077
+      : >"$INBOX"
+    ) || return 1
+  fi
+
+  # END sees the last record, and runs on an empty file too.
+  id=$(awk -F'\t' 'END { print ($1 ~ /^[0-9]+$/) ? $1 + 1 : 1 }' "$INBOX")
+  printf '%s\t%s\t%s\t%s\t%s\n' "$id" "$hash" "$date" "$number" "$text" >>"$INBOX" || return 1
+
+  # Keep the tail. The archive is also the duplicate check, so it is never
+  # trimmed to nothing: a message still sitting on the modem whose line had
+  # been dropped would be announced all over again.
+  count=$(wc -l <"$INBOX")
+  if [[ $count =~ ^[0-9]+$ ]] && ((count > keep)); then
+    tail -n "$keep" "$INBOX" >"$INBOX.tmp" 2>/dev/null &&
+      mv -f -- "$INBOX.tmp" "$INBOX" 2>/dev/null || rm -f -- "$INBOX.tmp"
+  fi
+  return 0
+}
+
+# Omarchy renders a notification body as StyledText, so an unescaped & or <
+# in a message loses characters or swallows the rest of the line.
+#
+# omarchy-notification-send hands the server typed D-Bus arguments instead of
+# going through notify-send's argv parsing, which is the surface that would
+# read a message beginning with `--hint=` as options. notify-send is the
+# fallback for a desktop that is not Omarchy's.
+sms_notify() {
+  local headline=$1 body=$2
+  # The backslashes are load-bearing: since bash 5.2 an unquoted & in the
+  # replacement half of a substitution stands for the text that matched, so
+  # ${body//</&lt;} would turn < into <lt; rather than into &lt;.
+  body=${body//&/\&amp;}
+  body=${body//</\&lt;}
+  body=${body//>/\&gt;}
+  if have omarchy-notification-send; then
+    omarchy-notification-send --app-name "Mobile Data" -u normal \
+      -g "$(printf '\U000F0361')" "$headline" "$body" >/dev/null 2>&1
+  elif have notify-send; then
+    notify-send -a "Mobile Data" -u normal -- "$headline" "$body" >/dev/null 2>&1
+  fi
+  return 0
+}
+
+# Who a backlog is from, for the one line it gets instead of a toast each.
+# Repeats collapse — five from the same operator is one name.
+sms_senders_line() {
+  local sender out="" seen=""
+  for sender in "$@"; do
+    [[ $seen == *"|$sender|"* ]] && continue
+    seen="$seen|$sender|"
+    out="${out:+$out, }$sender"
+  done
+  ((${#out} > 60)) && out="${out:0:59}…"
+  printf '%s' "$out"
+}
+
+cmd_sms_poll() {
+  have mmcli || die "mmcli not found — this plugin needs ModemManager"
+  mkdir -p -- "$STATE_DIR" 2>/dev/null
+
+  # One pump at a time. The widget polls on its own cadence, a modem holding a
+  # backlog can leave a run still going when the next tick arrives, and two
+  # runs reading the same message would announce it twice. Losing the race
+  # just means waiting for the next tick.
+  local lock
+  # Braces around the exec, not a bare `exec ... 2>/dev/null`: a redirection on
+  # a bare exec is applied to the shell itself, and would silence stderr for
+  # the rest of the run.
+  { exec {lock}>"$SMS_LOCK"; } 2>/dev/null || return 0
+  flock -n "$lock" 2>/dev/null || {
+    exec {lock}>&-
+    return 0
+  }
+
+  local -a senders=() bodies=()
+  local paths path pdu state number text date hash body count i
+
+  # No modem is nothing to read: the store is inside it, and while the radio
+  # is blocked it is not there at all.
+  if load_dump; then
+    paths=$(mm -m "$IDX" --messaging-list-sms 2>/dev/null |
+      sed -n 's|^[[:space:]]*\(/org/freedesktop/ModemManager1/SMS/[0-9][0-9]*\).*|\1|p')
+
+    while IFS= read -r path; do
+      [[ -n $path ]] || continue
+      # kv reads whatever is in DUMP, so this replaces the modem's dump with
+      # the message's. Nothing below wants the modem's again.
+      DUMP=$(mm -s "$path" -K 2>/dev/null) || continue
+
+      pdu=$(kv sms.properties.pdu-type)
+      state=$(kv sms.properties.state)
+      # Received, and whole: a multipart message still missing parts reads as
+      # `receiving`, and MM assembles it before it says otherwise. A draft or
+      # something sent from this modem is not ours to announce or to delete.
+      [[ $pdu == deliver && $state == received ]] || continue
+
+      number=$(kv sms.content.number)
+      text=$(kv sms.content.text)
+      date=$(kv sms.properties.timestamp)
+      # Not every network stamps a message. Ours is worse than the sender's
+      # but better than a blank column.
+      [[ -n $date ]] || date=$(date +%FT%T%:z)
+
+      hash=$(sms_hash "$date" "$number" "$text")
+      if ! sms_is_archived "$hash"; then
+        # Filed first, and the delete skipped entirely if filing failed: until
+        # this line is written the modem holds the only copy there is.
+        sms_archive "$hash" "$date" "$number" "$text" || continue
+        body=$(sms_unescape "$text" | sms_printable)
+        senders+=("$(sms_sender "$number")")
+        # A data-only message — a WAP push, an operator configuration SMS —
+        # has nothing to show, but the fact that it arrived is still worth a
+        # line rather than an empty toast.
+        bodies+=("${body:-(no text)}")
+      fi
+
+      # Off the modem now that it is somewhere safer. A store nobody empties
+      # fills up, and a full store is a phone that has stopped receiving.
+      mm -m "$IDX" --messaging-delete-sms="$path" >/dev/null 2>&1
+    done <<<"$paths"
+  fi
+
+  exec {lock}>&-
+
+  count=${#senders[@]}
+  ((count > 0)) || return 0
+  if ((count > SMS_BURST)); then
+    sms_notify "$count new messages" "$(sms_senders_line "${senders[@]}")"
+  else
+    for ((i = 0; i < count; i++)); do
+      sms_notify "${senders[i]}" "${bodies[i]}"
+    done
+  fi
+  return 0
+}
+
+cmd_sms_list() {
+  [[ -s $INBOX ]] || {
+    echo "No messages."
+    return 0
+  }
+
+  local width room id hash date number text
+  width=$(tput cols 2>/dev/null)
+  [[ $width =~ ^[0-9]+$ ]] && ((width > 48)) || width=80
+  room=$((width - 31))
+
+  # Newest first: the one worth reading is the one that just arrived.
+  while IFS=$'\t' read -r id hash date number text; do
+    text=$(sms_unescape "$text" | sms_printable | tr '\n\t' '  ')
+    ((${#text} > room)) && text="${text:0:room - 1}…"
+    printf '%4s  %-14.14s %-7s %s\n' \
+      "$id" "$(sms_sender "$number")" "$(sms_when "$date")" "$text"
+  done < <(tac -- "$INBOX")
+}
+
+cmd_sms_show() {
+  local want=${1:-} id hash date number text
+  [[ $want =~ ^[0-9]+$ ]] || die "usage: mobile-data sms show <id>"
+  [[ -s $INBOX ]] || die "there are no messages"
+
+  while IFS=$'\t' read -r id hash date number text; do
+    [[ $id == "$want" ]] || continue
+    printf 'From: %s\n' "$(sms_sender "$number")"
+    printf 'Date: %s\n\n' "$(sms_stamp "$date")"
+    printf '%s\n' "$(sms_unescape "$text" | sms_printable)"
+    return 0
+  done <"$INBOX"
+  die "no message with id $want — try: mobile-data sms list"
+}
+
+cmd_sms_clear() {
+  # The archive, and only the archive. Whatever is still on the modem is a
+  # message this has never seen, and not ours to throw away.
+  local lock=""
+  mkdir -p -- "$STATE_DIR" 2>/dev/null
+  if { exec {lock}>"$SMS_LOCK"; } 2>/dev/null; then
+    flock -w 5 "$lock" 2>/dev/null
+  fi
+  rm -f -- "$INBOX"
+  [[ -n $lock ]] && exec {lock}>&-
+  echo "Cleared the message archive."
+}
+
+cmd_sms() {
+  local sub=${1:-list}
+  (($# > 0)) && shift
+  case $sub in
+  list | ls) cmd_sms_list ;;
+  show | read) cmd_sms_show "${1:-}" ;;
+  poll | fetch) cmd_sms_poll ;;
+  clear) cmd_sms_clear ;;
+  *) die "unknown sms command: $sub — try: mobile-data sms list|show|poll|clear" ;;
+  esac
+}
+
 # -------------------------------------------------------------------- setup
 
 cmd_setup() {
@@ -827,12 +1122,23 @@ Usage:
   mobile-data reset-day <1-31>   billing day for the usage counter
   mobile-data version            print the plugin version
 
+Text messages:
+  mobile-data sms list           messages received, newest first
+  mobile-data sms show <id>      one message in full
+  mobile-data sms poll           file and announce what has arrived
+  mobile-data sms clear          empty the local archive
+
+`poll` is what the widget runs: every message it finds is written to the
+archive and announced, then deleted from the modem so its small store cannot
+fill up and stop the network delivering.
+
 Config file (key=value per line):
   ~/.config/omarchy-mobile-data/config
     PROFILE=mobile        NetworkManager gsm profile to drive
     RESET_DAY=1           day of month the usage counter renews
     ROUTE_METRIC=700      route metric written by `setup`
     ON_TIMEOUT=90         seconds `on` may spend bringing the modem up
+    SMS_KEEP=200          messages kept in the archive
 USAGE
 }
 
@@ -854,6 +1160,7 @@ setup) cmd_setup "${1:-}" ;;
 profile) cmd_profile "${1:-}" ;;
 apn) cmd_apn "${1:-}" ;;
 reset-day) cmd_reset_day "${1:-}" ;;
+sms) cmd_sms "$@" ;;
 version | --version | -V) cmd_version ;;
 -h | --help | help) usage ;;
 *) die "unknown command: $command — try: mobile-data --help" ;;

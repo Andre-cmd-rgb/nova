@@ -2,7 +2,8 @@
 
 A compact mobile-broadband (WWAN) widget for the [Omarchy](https://omarchy.org)
 shell bar: one signal glyph next to the Wi-Fi arc, and a narrow panel with an
-on/off switch, live throughput, and a billing-period data counter.
+on/off switch, live throughput, and a billing-period data counter. Text
+messages the SIM receives arrive as desktop notifications.
 
 Everything runs as your normal user through NetworkManager — no root, no polkit
 rule, no systemd unit, no daemon of its own.
@@ -28,7 +29,7 @@ rule, no systemd unit, no daemon of its own.
 |---|---|
 | Omarchy 4.0 or newer | the plugin host (`omarchy-shell`) and its `Ui` components |
 | NetworkManager (`nmcli`) | owns the `gsm` connection profile that carries the data |
-| ModemManager (`mmcli`) | operator, technology, signal quality, SIM and modem state |
+| ModemManager (`mmcli`) | operator, technology, signal quality, SIM and modem state, text messages |
 | `rfkill`, `iproute2`, `iputils` | radio state, interface address, the panel's ping |
 
 All four ship with a standard Omarchy install. The glyphs come from the Nerd
@@ -111,6 +112,8 @@ Widget settings live on the bar entry in `~/.config/omarchy/shell.json`:
 - `backgroundStats` — keep throughput and latency sampling while the panel is
   closed (default `true`), so it opens on real numbers. See below for what it
   costs; set it to `false` to sample only while the panel is open.
+- `smsNotifications` — announce incoming text messages (default `true`). See
+  [Text messages](#text-messages).
 
 Everything else lives in `~/.config/omarchy-mobile-data/config`, one
 `key=value` per line. The file is parsed, never sourced, so nothing in it can
@@ -122,6 +125,7 @@ execute:
 | `RESET_DAY` | `1` | day of the month the usage counter renews |
 | `ROUTE_METRIC` | `700` | metric written by `mobile-data setup` |
 | `ON_TIMEOUT` | `90` | seconds `on` may spend bringing the modem up |
+| `SMS_KEEP` | `200` | messages kept in the local archive |
 
 ## More than one mobile profile
 
@@ -154,10 +158,63 @@ mobile-data profile [name]     show or choose the NetworkManager profile
 mobile-data apn <APN>          change the APN on the profile
 mobile-data reset-day <1-31>   billing day for the usage counter
 mobile-data version            print the plugin version
+
+mobile-data sms list           messages received, newest first
+mobile-data sms show <id>      one message in full
+mobile-data sms poll           file and announce what has arrived
+mobile-data sms clear          empty the local archive
 ```
 
 `info` is the widget's data feed; `--verbose` adds byte counters and a
 latency sample and is only used while the panel is open.
+
+## Text messages
+
+A SIM that carries data carries text messages too, and they arrive as ordinary
+desktop notifications:
+
+```
+╭──────────────────────────────╮
+│ 󰍡  VERY                      │
+│ Hai 1,2 GB residui fino al   │
+│ 31/08. Ricarica su very.it   │
+╰──────────────────────────────╯
+```
+
+The widget runs `mobile-data sms poll` on its own slow cadence — the poll
+interval, never faster than ten seconds — and that command is the whole
+lifecycle of a message: read what the modem is holding, write it to an archive
+under `~/.local/state/omarchy-mobile-data/inbox`, notify, and only then delete
+it from the modem. A message is filed before it is deleted, always, and a
+delete that fails just leaves it to be picked up next time rather than
+announced twice.
+
+```bash
+mobile-data sms list        # newest first
+mobile-data sms show 12     # one message in full
+mobile-data sms clear       # empty the archive
+```
+
+**Why it deletes them.** The modem's own store is small — a couple of dozen
+slots on a SIM — and a full store is a phone that has stopped receiving: the
+network holds new messages back until there is room. Something has to empty
+it, so this does, which is why the archive is written first. If you move the
+SIM to a phone afterwards, the messages are not on it; they are in the archive
+here. The newest `SMS_KEEP` (200) are kept.
+
+**It only hears what the radio hears.** Messages arrive at the modem, so
+nothing is delivered while mobile data is off — `off` blocks the radio. They
+are not lost: the network holds them and delivers when the radio comes back,
+within whatever validity period your operator uses.
+
+Nothing is read while `omarchy-shell` is not running either, because the widget
+is what runs the poll — the plugin still has no daemon. Messages simply sit on
+the modem until it starts, and are announced then; a batch of more than three
+gets one line rather than three toasts. To pick them up without the shell,
+run `mobile-data sms poll` from a systemd user timer.
+
+Sending is not part of this. `mmcli --messaging-create-sms` is there if you
+want it.
 
 ## How the data counter works
 
@@ -252,6 +309,14 @@ echo 0000:08:00.0 | sudo tee /sys/bus/pci/drivers/mhi-pci-generic/bind
 A reboot always works. Some Qualcomm M.2 modems stay powered across the WWAN
 rfkill switch, so "turn it off and on again" genuinely cannot reach them.
 
+**No notification for a message you know arrived.** The modem only stores
+messages while its radio is on, and only the running shell reads them out.
+Check that mobile data is on, that `Notify on incoming text messages` is still
+ticked for the widget, and then `mobile-data sms poll` by hand — it prints
+nothing on success, so follow it with `mobile-data sms list`. If the message is
+in the archive but no toast appeared, the notification server is the thing to
+look at, not this.
+
 **Nothing changed after editing the plugin.** `omarchy-shell shell rescanPlugins`.
 
 ## Uninstall
@@ -261,6 +326,9 @@ omarchy plugin remove andrecmdrgb.mobile-data
 rm -f ~/.local/bin/mobile-data
 rm -rf ~/.config/omarchy-mobile-data ~/.local/state/omarchy-mobile-data
 ```
+
+That second path holds the message archive, and it is the only copy — read
+anything you want to keep before removing it.
 
 The NetworkManager profile is yours and is left alone. Remove it too with
 `nmcli connection delete mobile` if you want it gone.

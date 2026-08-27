@@ -37,6 +37,15 @@ Panel {
     return value !== false && value !== "false" && value !== 0 && value !== "0"
   }
 
+  // Text messages sit in the modem's own storage until something reads them
+  // out. `sms poll` is that something — it files what has arrived, says so,
+  // and clears it off the modem — and this widget is what runs it, because the
+  // plugin has no daemon and nothing else would.
+  readonly property bool smsNotifications: {
+    var value = setting("smsNotifications", true)
+    return value !== false && value !== "false" && value !== 0 && value !== "0"
+  }
+
   property var info: ({})
   readonly property string wwanState: info.state || "absent"
   readonly property bool hwPresent: info.hw === "yes"
@@ -274,6 +283,28 @@ Panel {
       mobile.lastError = code === 0 ? "" : mobile.firstLine(mobile.actionStderr)
       mobile.opened ? mobile.refreshDetails() : mobile.refresh()
     }
+  }
+
+  Process {
+    id: smsProc
+    command: [mobile.helper, "sms", "poll"]
+  }
+
+  // Its own cadence, and deliberately a slow one. The status poll drops to two
+  // seconds while a modem is coming back and the open panel refreshes every
+  // 1.5 s; neither is a rate at which to read a message store, and a text
+  // message is worth a few seconds' delay and nothing more. Runs whether the
+  // panel is open or shut — the notification is the point, not the panel.
+  Timer {
+    interval: Math.max(mobile.pollInterval, 10) * 1000
+    // Not while the radio is blocked: messages arrive at the modem, so with
+    // mobile data off there is nothing to find and no reason to keep looking.
+    running: mobile.smsNotifications && mobile.hwPresent && mobile.wwanState !== "disabled"
+    repeat: true
+    // So a message that arrived while the shell was down is announced when it
+    // comes back up, rather than a poll interval later.
+    triggeredOnStart: true
+    onTriggered: if (!smsProc.running) smsProc.running = true
   }
 
   // Background poll for the bar glyph; the open panel has its own cadence.
