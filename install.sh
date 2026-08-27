@@ -51,6 +51,17 @@ detect_nvidia() {
   return 1
 }
 
+# Once this tool has done its job the card is off the PCI bus and there is
+# nothing in sysfs to find, so a re-install would conclude the machine has no
+# discrete GPU and refuse. A previous run recorded the address for exactly
+# this reason; trust it when the bus comes up empty.
+recorded_nvidia() {
+  local recorded
+  recorded=$(sed -n 's/^NVIDIA_PCI=//p' /etc/thinkpad-power.conf 2>/dev/null)
+  [[ -n $recorded ]] || return 1
+  printf '%s\n' "$recorded"
+}
+
 # The card that actually drives a connected panel. Pinning the compositor to
 # anything else is how you end up at a black screen.
 detect_display_card() {
@@ -80,6 +91,11 @@ uninstall() {
   sudo rm -f /etc/udev/rules.d/99-thinkpad-power.rules
   sudo rm -f /etc/udev/rules.d/98-thinkpad-power-igpu.rules
   sudo rm -f /etc/thinkpad-power.conf
+  # The card may be off the bus right now, with the driver barred from
+  # loading. Leaving it that way with the tool gone would strand it.
+  sudo rm -f /run/modprobe.d/thinkpad-power-nvidia.conf
+  echo 1 | sudo tee /sys/bus/pci/rescan >/dev/null 2>&1 &&
+    ok "PCI bus rescanned"
   sudo systemctl enable --now nvidia-persistenced >/dev/null 2>&1 &&
     ok "nvidia-persistenced re-enabled"
   sudo systemctl daemon-reload
@@ -113,8 +129,15 @@ uninstall() {
 
 step "Checking this machine"
 
-NVIDIA_PCI=$(detect_nvidia) || die "no discrete NVIDIA GPU found — this tool has nothing to do here"
-ok "discrete GPU at $NVIDIA_PCI"
+if NVIDIA_PCI=$(detect_nvidia); then
+  ok "discrete GPU at $NVIDIA_PCI"
+elif NVIDIA_PCI=$(recorded_nvidia); then
+  ok "discrete GPU at $NVIDIA_PCI (off the bus, from /etc/thinkpad-power.conf)"
+else
+  die "no discrete NVIDIA GPU found — this tool has nothing to do here.
+   If the card is deliberately off the bus, put it back first:
+   sudo /usr/local/bin/thinkpad-power gpu-on"
+fi
 
 DISPLAY_PCI=$(detect_display_card) || die "could not work out which card drives the panel"
 if [[ $DISPLAY_PCI == "$NVIDIA_PCI" ]]; then
@@ -199,7 +222,8 @@ if systemctl list-unit-files supergfxd.service >/dev/null 2>&1; then
 fi
 # Its Integrated-mode leftovers run on every resume and fight this setup.
 for leftover in /usr/lib/systemd/system-sleep/force-igpu \
-  /etc/systemd/system/supergfxd.service.d/delay-start.conf; do
+  /etc/systemd/system/supergfxd.service.d/delay-start.conf \
+  /etc/modprobe.d/supergfxd.conf; do
   if [[ -e $leftover ]]; then
     sudo rm -f "$leftover"
     ok "removed $leftover"
@@ -282,8 +306,8 @@ $MARK_BEGIN
 -- Omarchy points video decode and GLX at the NVIDIA whenever one is present.
 -- That is what makes ordinary apps open the discrete card and hold it awake,
 -- and it breaks decoding outright once the card is off the bus. The desktop
--- runs on the iGPU here, so send them there; prime-run still overrides both
--- per-process for anything that genuinely wants the dGPU.
+-- runs on the iGPU here, so send them there; "thinkpad-power run" overrides
+-- both per-process for anything that genuinely wants the dGPU.
 hl.env("LIBVA_DRIVER_NAME", "iHD")
 hl.env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
 $MARK_END
@@ -340,8 +364,8 @@ The compositor only reads its GPU list at startup, so until you do, Hyprland
 still holds the discrete card open and it cannot be powered off. After the
 next login:
 
-  thinkpad-power status     what is on, what holds the GPU
-  prime-run <program>           run something on the discrete GPU
+  thinkpad-power status         what is on, what holds the GPU
+  thinkpad-power run <program>  run something on the discrete GPU
   Super+Space -> Discrete GPU   toggle it by hand, no reboot
 
 If the screen ever fails to come back after a login, switch to a TTY with

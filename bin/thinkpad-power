@@ -23,7 +23,49 @@ NVIDIA_MODULES=(nvidia_drm nvidia_modeset nvidia_uvm nvidia)
 
 [[ -r $CONFIG ]] && . "$CONFIG"
 
-log() { printf 'thinkpad-power: %s\n' "$*"; }
+VERSION=1.0.0
+
+# systemd already stamps the unit name on every line, so the messages carry no
+# prefix of their own. `note` is for the things that happened not to need
+# doing: the retry timer fires every two minutes and a no-op is not news, so
+# the timer unit sets QUIET=1 and manual runs stay talkative.
+log() { printf '%s\n' "$*"; }
+note() { [[ -n ${QUIET:-} ]] || log "$*"; }
+die() { printf 'error: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'USAGE'
+thinkpad-power — AC/battery power policy for a hybrid-graphics laptop
+
+usage: thinkpad-power <command> [args]
+
+  status              power source, discrete GPU state, active tunables
+  switch              turn the discrete GPU on or off, interactively
+  run <cmd> [args]    run one program on the discrete GPU
+
+  auto                apply the policy for the current power source
+  ac, battery         force one side of the policy
+  gpu-auto            the GPU half of the policy only
+  gpu-on, gpu-off     put the discrete GPU on or off the PCI bus
+  gpu-toggle          whichever it is not
+
+  -h, --help          this message
+  -V, --version       print the version
+
+status, switch and run need no privileges; every other command requires root.
+The policy is applied on plug and unplug, at boot, after resume, and by a
+retry timer every two minutes.
+USAGE
+}
+
+# Two units can fire at once, and did: at 11:35:09 the udev unplug rule
+# removed the card while the 2 min retry timer was 81 ms behind it in the same
+# removal, and the loser's cleanup lifted the modprobe block the winner had
+# just installed — card off the bus, driver free to load, which is the state
+# that panics. Serialise everything that changes state. The flag is exported
+# so the nested `auto -> ac|battery` call does not deadlock on a lock it is
+# already holding.
+LOCK=/run/thinkpad-power.lock
 
 # Cached sysfs ids, never lspci: reading PCI config space resumes a
 # runtime-suspended GPU, which is the opposite of the job.
@@ -54,6 +96,74 @@ on_ac() {
 }
 
 gpu_present() { [[ -n $NVIDIA_PCI && -e /sys/bus/pci/devices/$NVIDIA_PCI ]]; }
+
+# The card is a multifunction PCI device: 01:00.0 is the GPU and 01:00.1 is
+# the HDA controller that would carry audio over HDMI/DP. `remove` takes one
+# function, so removing the GPU alone leaves the audio controller sitting on a
+# bus whose power is about to go away, still bound to snd_hda_intel and still
+# registered as ALSA card0. Its registers then read back as 0xffffffff, and
+# the next time snd_hda_intel touches them the machine dies with
+# "Timeout: Not all CPUs entered broadcast exception handler" — an MCE, not
+# something a compositor can survive. On battery this script also sets
+# power_save=1, which has that driver suspend and resume the controller on its
+# own, so the fault needs no help from the user: it arrives while the desktop
+# sits idle.
+gpu_slot_functions() {
+  local dev
+  [[ -n $NVIDIA_PCI ]] || return 0
+  for dev in "/sys/bus/pci/devices/${NVIDIA_PCI%.*}."*; do
+    [[ -e $dev ]] && basename "$dev"
+  done
+  return 0
+}
+
+# Highest function first, so function 0 — and with it the card's power — is
+# the last thing to go. Every other function is still alive and answering
+# while its driver is torn down, which is the whole point of the ordering.
+remove_gpu_functions() {
+  local fn
+  for fn in $(gpu_slot_functions | sort -r); do
+    echo 1 >"/sys/bus/pci/devices/$fn/remove" 2>/dev/null
+    # A function that vanished under us is not a failure — another run may be
+    # doing the same job. Success is the postcondition, not the write.
+    [[ -e /sys/bus/pci/devices/$fn ]] && log "could not remove $fn from the bus"
+  done
+  [[ -z $(gpu_slot_functions) ]]
+}
+
+# kmod reads /run/modprobe.d, and /run is a tmpfs, so a block can never
+# survive into a boot where the card is back on the bus.
+MODPROBE_BLOCK=/run/modprobe.d/thinkpad-power-nvidia.conf
+
+# nvidia-modprobe is setuid root and exists to load the driver on demand, so
+# any process that opens one of the /dev/nvidia* nodes gets the module back —
+# and those nodes outlive the unload. btop does it every couple of seconds
+# through NVML. Loading the driver while the card is off the bus is the other
+# way to reach that same machine check, thirteen seconds after unplugging.
+# Take the nodes away and refuse the load outright. Refusing is its own step
+# because it has to happen before the modules are unloaded, while dropping the
+# nodes has to happen after — and an unload that fails has to undo only the
+# first of the two.
+block_nvidia_autoload() {
+  local module
+  mkdir -p /run/modprobe.d
+  : >"$MODPROBE_BLOCK"
+  for module in "${NVIDIA_MODULES[@]}"; do
+    printf 'install %s /bin/false\n' "$module" >>"$MODPROBE_BLOCK"
+  done
+  return 0
+}
+
+unblock_nvidia_autoload() { rm -f "$MODPROBE_BLOCK"; }
+
+# For the paths that give up. A run that fails must never lift a block that
+# another run installed correctly: with the card off the bus, the block is the
+# only thing standing between nvidia-modprobe and a machine check.
+unblock_if_gpu_present() { gpu_present && unblock_nvidia_autoload; return 0; }
+
+# Every node the driver leaves behind — nvidia0, nvidiactl, nvidia-modeset,
+# the uvm pair, and nvidia-caps, which is a directory, hence -r.
+drop_nvidia_nodes() { rm -rf /dev/nvidia*; return 0; }
 
 # NVIDIA's own daemons exist to hold the driver open — persistenced literally
 # so it never unloads — so they are stopped before anyone is counted as a
@@ -97,12 +207,25 @@ gpu_users_named() {
   for pid in $(gpu_users); do
     out+=" $pid ($(cat "/proc/$pid/comm" 2>/dev/null || echo '?'))"
   done
-  printf '%s' "${out# }"
+  printf '%s' "${out:-nothing}"
 }
 
 gpu_off() {
-  [[ -n $NVIDIA_PCI ]] || { log "no discrete GPU found"; return 0; }
-  gpu_present || { log "dGPU already off the bus"; return 0; }
+  [[ -n $NVIDIA_PCI ]] || { note "no discrete GPU found"; return 0; }
+
+  if ! gpu_present; then
+    # Not just an early return: a version of this script removed function 0
+    # and left the rest behind, and a rescan can half-fail the same way. If
+    # anything from the card is still on the bus, it is the dangerous half.
+    if [[ -n $(gpu_slot_functions) ]]; then
+      log "removing PCI functions left behind:$(gpu_slot_functions | tr '\n' ' ')"
+      remove_gpu_functions || return 1
+    fi
+    block_nvidia_autoload
+    drop_nvidia_nodes
+    note "dGPU already off the bus"
+    return 0
+  fi
 
   # Before counting holders, not after: otherwise the daemons we control are
   # themselves the reason we decide the card is busy.
@@ -111,9 +234,13 @@ gpu_off() {
   local users
   users=$(gpu_users)
   if [[ -n ${users// /} ]]; then
-    log "dGPU is in use by:$(gpu_users_named) — leaving it powered"
+    log "dGPU in use by $(gpu_users_named); leaving it powered"
     return 1
   fi
+
+  # Bar the door before the modules come out, not after: nvidia-modprobe only
+  # needs the gap between the two to put the driver straight back.
+  block_nvidia_autoload
 
   local module
   for module in "${NVIDIA_MODULES[@]}"; do
@@ -122,36 +249,41 @@ gpu_off() {
   for module in "${NVIDIA_MODULES[@]}"; do
     if lsmod | grep -q "^$module "; then
       log "$module would not unload — leaving the dGPU powered"
+      unblock_if_gpu_present
       return 1
     fi
   done
 
-  if echo 1 >"/sys/bus/pci/devices/$NVIDIA_PCI/remove" 2>/dev/null; then
-    log "dGPU removed from the PCI bus"
-  else
-    log "could not remove $NVIDIA_PCI from the bus"
-    return 1
-  fi
+  remove_gpu_functions || { unblock_if_gpu_present; return 1; }
+  drop_nvidia_nodes
+  log "dGPU removed from the PCI bus"
 }
 
 gpu_on() {
-  [[ -n $NVIDIA_PCI ]] || { log "no discrete GPU configured"; return 0; }
+  [[ -n $NVIDIA_PCI ]] || { note "no discrete GPU configured"; return 0; }
+  # Before the rescan, not after: the rescan itself makes udev try the driver.
+  unblock_nvidia_autoload
+
+  local rescanned=0
   if ! gpu_present; then
+    rescanned=1
     echo 1 >/sys/bus/pci/rescan 2>/dev/null
     local waited=0
     while ! gpu_present && ((waited < 8)); do
       sleep 1
       waited=$((waited + 1))
     done
+    gpu_present || { log "dGPU did not come back on rescan"; return 1; }
   fi
-  gpu_present || { log "dGPU did not come back on rescan"; return 1; }
 
-  # Load the driver now rather than on first use, so prime-run is instant.
-  # Runtime PM still parks the card whenever nothing is rendering on it.
+  # Load the driver now rather than on first use, so the first offload is
+  # instant. Runtime PM still parks the card whenever nothing renders on it.
   modprobe nvidia 2>/dev/null
   echo auto >"/sys/bus/pci/devices/$NVIDIA_PCI/power/control" 2>/dev/null
   start_nvidia_services
-  log "dGPU back on the bus"
+
+  ((rescanned)) && log "dGPU back on the bus" || note "dGPU already on the bus"
+  return 0
 }
 
 # Power profiles are left to Omarchy, which already switches them on AC and
@@ -159,17 +291,170 @@ gpu_on() {
 # (omarchy-powerprofiles-set, ~/.local/state/omarchy/powerprofiles/). Setting
 # them here too meant both ran on every plug event and the last writer won.
 
-# Small and reversible. The codec sleeping is the only one with a perceptible
-# cost: a faint click when audio starts after silence.
-extras() {
+# ------------------------------------------------------------------ tunables
+#
+# Small, reversible, and worth a watt or so between them — an order of
+# magnitude less than the GPU above. Measure before believing any of it: on
+# this machine the dominant terms are the 3840x2400 panel and whatever the
+# browser is doing, not the kernel's opinion about PCI links.
+
+# Devices whose runtime PM belongs to their own driver: i915 parks the iGPU by
+# itself, and the discrete card is gpu_off/gpu_on's business.
+runtime_pm_skip() {
+  [[ $1 == 0000:00:02.0 ]] && return 0
+  [[ -n $NVIDIA_PCI && $1 == "${NVIDIA_PCI%.*}."* ]] && return 0
+  return 1
+}
+
+# powertop's "Runtime PM for PCI Device", applied to the devices still pinned
+# awake and recorded so AC can put back exactly the ones we changed — forcing
+# the whole bus to `on` would override choices the drivers made at boot. /run
+# is a tmpfs, so a boot always starts from the kernel's own idea.
+#
+# This sets policy, not outcome: `auto` only permits a suspend, and a driver
+# with work to do stays active anyway. On this machine the NVMe and the AX210
+# both sit at `auto`/`active`, so the honest reading of the status line is
+# "allowed to suspend", not "suspended".
+RUNTIME_PM_STATE=/run/thinkpad-power.runtime-pm
+
+runtime_pm_battery() {
+  local dev addr
+  # Appended to, never truncated: the file is the list of devices this tool
+  # switched and has not yet put back. Truncating it on each battery run — as
+  # this did — meant the second run recorded nothing, because the first had
+  # already moved everything off `on`, and AC then had nothing to restore.
+  touch "$RUNTIME_PM_STATE"
+  for dev in /sys/bus/pci/devices/*/; do
+    addr=$(basename "$dev")
+    runtime_pm_skip "$addr" && continue
+    [[ -w ${dev}power/control ]] || continue
+    [[ $(<"${dev}power/control") == on ]] || continue
+    if echo auto >"${dev}power/control" 2>/dev/null; then
+      grep -qxF "$addr" "$RUNTIME_PM_STATE" 2>/dev/null ||
+        printf '%s\n' "$addr" >>"$RUNTIME_PM_STATE"
+    fi
+  done
+  return 0
+}
+
+# `grep -c` on an empty file prints 0 and *exits 1*, so the obvious
+# `$(grep -c ... || echo 0)` yields "0\n0" and the arithmetic that consumed it
+# died with a syntax error in the middle of `status`. Count deliberately.
+runtime_pm_summary() {
+  local n=0
+  [[ -r $RUNTIME_PM_STATE ]] && n=$(grep -c . "$RUNTIME_PM_STATE" 2>/dev/null)
+  [[ $n =~ ^[0-9]+$ ]] || n=0
+  ((n > 0)) && printf '%s devices set to auto' "$n" || printf 'kernel defaults'
+}
+
+# The policy file lists every choice with the live one in brackets.
+aspm_policy() {
+  local live
+  live=$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$ASPM_POLICY" 2>/dev/null)
+  printf '%s' "${live:-unavailable}"
+}
+
+runtime_pm_ac() {
+  local addr
+  [[ -r $RUNTIME_PM_STATE ]] || return 0
+  while read -r addr; do
+    [[ -w /sys/bus/pci/devices/$addr/power/control ]] &&
+      echo on >"/sys/bus/pci/devices/$addr/power/control" 2>/dev/null
+  done <"$RUNTIME_PM_STATE"
+  rm -f "$RUNTIME_PM_STATE"
+  return 0
+}
+
+# The one knob here with a real failure mode. Forcing L0s/L1 on every link can
+# upset an NVMe or a wireless card that is merely tolerant of ASPM, and the
+# symptom is a hang — the last thing this machine needs. Off unless
+# ASPM_ON_BAT is set in /etc/thinkpad-power.conf. `powersave` is the sane
+# value; `powersupersave` adds the L1 substates, and more risk with them.
+ASPM_ON_BAT=${ASPM_ON_BAT:-}
+ASPM_POLICY=/sys/module/pcie_aspm/parameters/policy
+ASPM_STATE=/run/thinkpad-power.aspm
+
+aspm() {
+  [[ -n $ASPM_ON_BAT && -w $ASPM_POLICY ]] || return 0
   case $1 in
-  battery) echo 1 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null ;;
-  ac) echo 0 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null ;;
+  battery)
+    # The policy file lists every choice with the live one in brackets.
+    [[ -e $ASPM_STATE ]] ||
+      sed -n 's/.*\[\(.*\)\].*/\1/p' "$ASPM_POLICY" >"$ASPM_STATE"
+    echo "$ASPM_ON_BAT" >"$ASPM_POLICY" 2>/dev/null
+    ;;
+  ac)
+    [[ -r $ASPM_STATE ]] || return 0
+    echo "$(<"$ASPM_STATE")" >"$ASPM_POLICY" 2>/dev/null
+    rm -f "$ASPM_STATE"
+    ;;
   esac
   return 0
 }
 
-case "${1:-auto}" in
+# The other knob powertop flags here, and the other one left off by default.
+# The NMI watchdog runs a per-CPU performance counter purely to detect hard
+# lockups. Turning it off is standard practice and saves very little; on a
+# machine with this one's history of hard lockups the diagnostic is worth more
+# than the milliwatts. Set NMI_WATCHDOG_ON_BAT=off in /etc/thinkpad-power.conf
+# to disagree.
+NMI_WATCHDOG_ON_BAT=${NMI_WATCHDOG_ON_BAT:-}
+NMI_WATCHDOG=/proc/sys/kernel/nmi_watchdog
+NMI_STATE=/run/thinkpad-power.nmi
+
+nmi_watchdog() {
+  [[ $NMI_WATCHDOG_ON_BAT == off && -w $NMI_WATCHDOG ]] || return 0
+  case $1 in
+  battery)
+    [[ -e $NMI_STATE ]] || cat "$NMI_WATCHDOG" >"$NMI_STATE"
+    echo 0 >"$NMI_WATCHDOG" 2>/dev/null
+    ;;
+  ac)
+    [[ -r $NMI_STATE ]] || return 0
+    cat "$NMI_STATE" >"$NMI_WATCHDOG" 2>/dev/null
+    rm -f "$NMI_STATE"
+    ;;
+  esac
+  return 0
+}
+
+# The codec sleeping is the only one with a perceptible cost: a faint click
+# when audio starts after silence.
+extras() {
+  case $1 in
+  battery)
+    echo 1 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null
+    runtime_pm_battery
+    aspm battery
+    nmi_watchdog battery
+    ;;
+  ac)
+    echo 0 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null
+    runtime_pm_ac
+    aspm ac
+    nmi_watchdog ac
+    ;;
+  esac
+  return 0
+}
+
+cmd=${1:-auto}
+
+# Everything that changes state needs root, and only one such run at a time —
+# the udev plug rule and the retry timer otherwise land on the same work.
+# Refuse up front rather than letting a dozen sysfs writes fail one at a time.
+case $cmd in
+status | switch | run | -h | --help | -V | --version) ;;
+*)
+  [[ $EUID -eq 0 ]] || die "$cmd requires root — try: sudo thinkpad-power $cmd"
+  if [[ -z ${THINKPAD_POWER_LOCKED:-} ]]; then
+    export THINKPAD_POWER_LOCKED=1
+    exec flock -w 60 "$LOCK" "$0" "$@"
+  fi
+  ;;
+esac
+
+case $cmd in
 battery)
   gpu_off
   extras battery
@@ -192,17 +477,34 @@ gpu-toggle)
   if gpu_present; then gpu_off; else gpu_on; fi
   ;;
 status)
-  printf 'power source : %s\n' "$(on_ac && echo AC || echo battery)"
-  printf 'dGPU address : %s\n' "${NVIDIA_PCI:-none found}"
-  printf 'dGPU on bus  : %s\n' "$(gpu_present && echo yes || echo no)"
-  printf 'dGPU held by : %s\n' "$(gpu_users_named)"
-  if [[ $EUID -ne 0 ]]; then
-    printf '               (unprivileged: root-owned holders are not listed —\n'
-    printf '                sudo thinkpad-power status for the full picture)\n'
+  # Read-only and side-effect free. Notably it does not call nvidia-smi: that
+  # wakes the card out of P8 to answer, which is the opposite of the job.
+  row() { printf '  %-14s %s\n' "$1" "$2"; }
+  echo
+  row 'power source' "$(on_ac && echo AC || echo battery)"
+  row 'power profile' "$(powerprofilesctl get 2>/dev/null || echo unknown)"
+  on_ac || row draw \
+    "$(awk '{printf "%.2f W", $1/1000000}' /sys/class/power_supply/BAT0/power_now 2>/dev/null || echo unknown)"
+  echo
+  if [[ -z $NVIDIA_PCI ]]; then
+    row 'discrete GPU' 'none found'
+  else
+    row 'discrete GPU' "$(gpu_present && echo 'on the bus' || echo 'off the bus')"
+    # Only worth a line when there is something there. With the card off, a
+    # function still listed is the orphan that used to hang this machine, so
+    # it earns the row precisely when it is alarming.
+    functions=$(gpu_slot_functions | tr '\n' ' ' | sed 's/ $//')
+    [[ -n $functions ]] && row functions "$functions"
+    row 'driver load' "$([[ -e $MODPROBE_BLOCK ]] && echo blocked || echo allowed)"
+    gpu_present && row 'held by' "$(gpu_users_named)"
   fi
-  printf 'power profile: %s\n' "$(powerprofilesctl get 2>/dev/null)"
-  if gpu_present && command -v nvidia-smi >/dev/null 2>&1; then
-    printf 'dGPU draw    : %s\n' "$(nvidia-smi --query-gpu=power.draw,pstate --format=csv,noheader 2>/dev/null)"
+  echo
+  row 'runtime pm' "$(runtime_pm_summary)"
+  row 'pcie aspm' "$(aspm_policy)"
+  echo
+  if [[ $EUID -ne 0 ]] && gpu_present; then
+    echo '  run with sudo to include root-owned processes in "held by"'
+    echo
   fi
   ;;
 run)
@@ -210,7 +512,7 @@ run)
   # vendor and Vulkan ICD so nothing reaches for the card by accident; this
   # puts them back for this process only, and adds the usual offload hints.
   shift
-  (($# > 0)) || die "usage: thinkpad-power run <program> [args...]"
+  (($# > 0)) || die 'run needs a program: thinkpad-power run <program> [args...]'
   gpu_present || die "the discrete GPU is off the bus. Plug in, or: sudo thinkpad-power gpu-on"
   exec env -u __EGL_VENDOR_LIBRARY_FILENAMES -u VK_LOADER_DRIVERS_DISABLE \
     __NV_PRIME_RENDER_OFFLOAD=1 \
@@ -223,45 +525,33 @@ switch)
   # omarchy-toggle-hybrid-gpu drives supergfxd and reboots to change mode; this
   # takes the card off the bus instead, which needs neither.
   "$0" status
-  echo
   if gpu_present; then
     users=$(gpu_users)
     if [[ -n ${users// /} ]]; then
-      echo "The GPU is in use right now (PIDs:$users)."
-      echo "Close whatever is using it first — switching it off underneath a"
-      echo "running program would take the GPU out from under it."
+      echo "  in use by $(gpu_users_named)"
+      echo "  close those first — switching the card off underneath a running"
+      echo "  program would take the GPU out from under it"
+      echo
       exit 1
     fi
-    gum confirm "Turn the discrete GPU OFF? (saves about 6 W)" || exit 0
+    gum confirm 'Turn the discrete GPU off?' || exit 0
     sudo "$0" gpu-off
   else
-    gum confirm "Turn the discrete GPU ON?" || exit 0
+    gum confirm 'Turn the discrete GPU on?' || exit 0
     sudo "$0" gpu-on
   fi
-  echo
   "$0" status
+  echo '  plugging in or unplugging re-applies the automatic policy'
   echo
-  echo "Plugging in or unplugging re-applies the automatic policy."
+  ;;
+-h | --help | -V | --version)
+  [[ $cmd == -V || $cmd == --version ]] && { echo "thinkpad-power $VERSION"; exit 0; }
+  usage
+  exit 0
   ;;
 *)
-  cat >&2 <<'USAGE'
-usage: thinkpad-power <command>
-
-  status        power source, whether the dGPU is on the bus, what holds it
-  gpu-auto      put the dGPU where the current power source wants it
-  switch        turn the dGPU on or off, interactively (the menu entry)
-  run <cmd>     run one program on the dGPU (Steam: thinkpad-power run %command%)
-
-  auto          apply the policy for the current power source
-  ac            force the AC policy: dGPU on, performance
-  battery       force the battery policy: dGPU off, power-saver
-  gpu-on        put the dGPU back on the PCI bus
-  gpu-off       take it off
-  gpu-toggle    whichever it is not
-
-Run by udev on plug/unplug, at boot, and after resume. The gpu-* and
-ac/battery/auto commands need root; status and switch do not.
-USAGE
+  printf 'error: unknown command: %s\n\n' "$cmd" >&2
+  usage >&2
   exit 1
   ;;
 esac

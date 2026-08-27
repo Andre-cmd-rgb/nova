@@ -55,6 +55,8 @@ switch frequently does not stick. The installer stands it down.
 | `~/.config/uwsm/env-hyprland` | `VK_LOADER_DRIVERS_DISABLE=*nvidia*` | hides the NVIDIA Vulkan ICD from the session |
 | `~/.config/hypr/hyprland.lua` | `LIBVA_DRIVER_NAME=iHD`, `__GLX_VENDOR_LIBRARY_NAME=mesa` | stops apps reaching for the dGPU |
 | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | overrides the GPU menu entry | live toggle instead of a reboot |
+| `/etc/systemd/system/thinkpad-power-gpu.{service,timer}` | retry every 2 min | a plug event is one edge that never repeats |
+| `/run/modprobe.d/thinkpad-power-nvidia.conf` | blocks the nvidia modules | while the card is off the bus, only then |
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
 
 It refuses to install if the connected panel is driven by the NVIDIA card,
@@ -62,10 +64,36 @@ because powering that off would black out the screen.
 
 ## Using it
 
-```bash
-thinkpad-power status          # power source, card on the bus, what holds it,
-                               # current profile, live draw
-thinkpad-power run <program>   # run one program on the discrete GPU
+```
+thinkpad-power <command> [args]
+
+  status              power source, discrete GPU state, active tunables
+  switch              turn the discrete GPU on or off, interactively
+  run <cmd> [args]    run one program on the discrete GPU
+
+  auto                apply the policy for the current power source
+  ac, battery         force one side of the policy
+  gpu-auto            the GPU half of the policy only
+  gpu-on, gpu-off     put the discrete GPU on or off the PCI bus
+  gpu-toggle          whichever it is not
+```
+
+`status`, `switch` and `run` need no privileges; everything else requires
+root. `status` is side-effect free — in particular it does not call
+`nvidia-smi`, which would wake the card out of P8 just to answer.
+
+```
+$ thinkpad-power status
+
+  power source   battery
+  power profile  power-saver
+  draw           13.51 W
+
+  discrete GPU   off the bus
+  driver load    blocked
+
+  runtime pm     8 devices set to auto
+  pcie aspm      default
 ```
 
 Use `thinkpad-power run`, not `prime-run`. The session hides NVIDIA's EGL
@@ -80,6 +108,45 @@ plug or unplug, when the automatic policy applies again.
 
 The card will not be powered off while a program is using it; the tool says
 which PIDs are holding it rather than pulling the GPU out from under them.
+
+## Tunables
+
+Beyond the GPU, the battery policy sets runtime power management to `auto` on
+PCI devices whose drivers left them pinned at `on`, and lets the HDA codec
+sleep between sounds. Note that `auto` grants permission to suspend; whether a
+device takes it is up to its driver, and a busy one will stay awake. Both are reverted on AC — the runtime PM changes are recorded
+in `/run`, so only the devices this tool actually changed are put back, rather
+than forcing the whole bus to `on` and overriding choices the drivers made at
+boot.
+
+PCIe ASPM is **opt-in**, because forcing L0s/L1 on every link can upset a
+device that is merely ASPM-tolerant and the symptom is a hang:
+
+```sh
+# /etc/thinkpad-power.conf
+ASPM_ON_BAT=powersave        # or powersupersave, which adds the L1 substates
+```
+
+## What to expect
+
+Numbers depend entirely on the machine, the panel and what is running, so
+treat the following as one worked example rather than a promise. On the
+ThinkPad P1 Gen 4i this was built for — RTX A2000, 3840x2400 panel — with the
+screen at 30% and a light desktop:
+
+| | draw |
+|---|---|
+| discrete GPU bound and idle | ~26 W |
+| discrete GPU off the bus | ~20 W |
+
+The card is worth about 6 W of that, which on a 74 Wh battery is roughly the
+difference between 2.3 and 3.0 hours. The tunables are worth a fraction of a
+watt between them.
+
+They are also not where the remaining watts are. On that machine the panel and
+the browser dominate, and a connected 5G modem costs more than every kernel
+knob in this tool put together. `powertop` will tell you which of those applies
+to yours; this tool deliberately does not guess.
 
 ## Why a symlink, and why it matters
 
