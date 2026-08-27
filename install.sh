@@ -165,9 +165,24 @@ sudo -v || die "could not authenticate — nothing was changed"
 run sudo install -Dm755 "$HERE/bin/thinkpad-power" /usr/local/bin/thinkpad-power
 ok "/usr/local/bin/thinkpad-power"
 
-printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee /etc/thinkpad-power.conf >/dev/null ||
+# Only the NVIDIA_PCI line is ours. Everything else in this file is the
+# user's — PL1_ON_BAT, ASPM_ON_BAT, NMI_WATCHDOG_ON_BAT — and truncating it
+# on every install silently ate their settings.
+if [[ -f /etc/thinkpad-power.conf ]]; then
+  sudo sed -i '/^NVIDIA_PCI=/d' /etc/thinkpad-power.conf
+else
+  sudo tee /etc/thinkpad-power.conf >/dev/null <<'CONF'
+# thinkpad-power. Sourced by the policy script as shell; keep it parseable.
+#
+# Optional, all off unless set:
+#   PL1_ON_BAT=30              sustained CPU power limit on battery, in watts
+#   ASPM_ON_BAT=powersave      PCIe link power management
+#   NMI_WATCHDOG_ON_BAT=off    disable the hard-lockup detector on battery
+CONF
+fi
+printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee -a /etc/thinkpad-power.conf >/dev/null ||
   die "failed writing /etc/thinkpad-power.conf"
-ok "/etc/thinkpad-power.conf"
+ok "/etc/thinkpad-power.conf (NVIDIA_PCI only; other settings preserved)"
 
 run sudo install -Dm644 "$HERE/systemd/thinkpad-power.service" \
   /etc/systemd/system/thinkpad-power.service
