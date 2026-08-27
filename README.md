@@ -68,6 +68,7 @@ because powering that off would black out the screen.
 thinkpad-power <command> [args]
 
   status [-v]         power source and discrete GPU; -v adds diagnostics
+  doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
 
@@ -164,6 +165,27 @@ confirming rather than assuming.
 a device that is merely ASPM-tolerant, and the symptom is a hang.
 `NMI_WATCHDOG_ON_BAT` saves very little and costs you the hard-lockup
 detector.
+
+### Finding the rest of the watts
+
+`sudo thinkpad-power doctor` reads the platform controller's latency-tolerance
+table, the package C-state residency, whether the panel is self-refreshing,
+and which PCI devices never sleep. The LTR table is the useful part: an IP
+block advertising a short latency tolerance forbids the platform from entering
+its deep package states, and the table names it.
+
+On the machine this was written for the answer was undramatic. xHCI advertises
+500 µs — that is the Bluetooth mouse. The audio controller advertises 364 µs,
+but only while something is playing; it is suspended otherwise. Panel Self
+Refresh was already enabled (PSR1; the panel does not support PSR2 or Panel
+Replay, so there is nothing further to switch on). Hardware video decode was
+already working. Package C2 sat above half the time not through
+misconfiguration but because a wireless mouse, a connected 5G modem, an NVMe
+and a Wi-Fi card were all in use.
+
+That is the usual shape of this exercise: the large win is the discrete GPU,
+the second is the power limit under load, and the rest is a catalogue of
+things that are awake because you are using them.
 
 ### On undervolting
 

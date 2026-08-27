@@ -51,6 +51,7 @@ thinkpad-power — AC/battery power policy for a hybrid-graphics laptop
 usage: thinkpad-power <command> [args]
 
   status [-v]         power source and discrete GPU; -v adds diagnostics
+  doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
 
@@ -519,6 +520,10 @@ cmd=${1:-auto}
 # Refuse up front rather than letting a dozen sysfs writes fail one at a time.
 case $cmd in
 status | switch | run | -h | --help | -V | --version) ;;
+doctor)
+  # Read-only, but debugfs is root-only.
+  [[ $EUID -eq 0 ]] || die 'doctor needs root — try: sudo thinkpad-power doctor'
+  ;;
 *)
   [[ $EUID -eq 0 ]] || die "$cmd requires root — try: sudo thinkpad-power $cmd"
   if [[ -z ${THINKPAD_POWER_LOCKED:-} ]]; then
@@ -598,6 +603,58 @@ status)
     [[ $EUID -ne 0 ]] &&
       row '' '(not root: root-owned holders are missing from "held by")'
   fi
+  echo
+  ;;
+doctor)
+  # Read-only. The things that decide how much power this machine draws, in
+  # one place: what is holding the package out of its deep C-states, whether
+  # the panel is self-refreshing, and which devices never sleep.
+  #
+  # LTR is the useful one. An IP block advertising a short latency tolerance
+  # forbids the platform from going deep, and the table names the culprit —
+  # on this machine xHCI at 500 us, which is the wireless mouse, and the audio
+  # controller at 364 us whenever something is playing. Both are things being
+  # used, not misconfiguration, which is the answer more often than not.
+  pmc=/sys/kernel/debug/pmc_core
+  mountpoint -q /sys/kernel/debug || mount -t debugfs none /sys/kernel/debug 2>/dev/null
+
+  echo
+  echo '  latency tolerance — anything with a non-zero figure holds the'
+  echo '  package out of its deeper states while it is awake'
+  if [[ -r $pmc/ltr_show ]]; then
+    awk '$0 !~ /Snoop\(ns\): 0[[:space:]]+LTR_IGNORE/ && /Snoop/ {
+           for (i = 1; i <= NF; i++) if ($i == "PMC0:" || $i ~ /^PMC[0-9]:/) name = $i
+           printf "    %-34s %s ns\n", $2, $(NF-1)
+         }' "$pmc/ltr_show" 2>/dev/null | grep -v ' 0 ns$' || echo '    (none)'
+  else
+    echo '    no pmc_core debugfs (is intel_pmc_core loaded?)'
+  fi
+
+  echo
+  echo '  package c-state residency since boot'
+  if [[ -r $pmc/package_cstate_show ]]; then
+    awk -F: '/Package C/ { n = $1; sub(/^ +| +$/, "", n); v = $2 + 0; t += v; k[n] = v }
+             END { for (n in k) printf "    %-12s %5.1f%%\n", n, 100 * k[n] / t }' \
+      "$pmc/package_cstate_show" | sort
+    echo '    (C2 high means the cores idle but something in the uncore does not)'
+  fi
+
+  echo
+  echo '  panel self refresh'
+  for f in /sys/kernel/debug/dri/*/i915_edp_psr_status; do
+    [[ -r $f ]] || continue
+    grep -hE "^(Sink support|PSR mode)" "$f" | sed 's/^/    /'
+    break
+  done
+
+  echo
+  echo '  devices that never sleep'
+  for dev in /sys/bus/pci/devices/*/; do
+    [[ $(cat "$dev/power/runtime_status" 2>/dev/null) == active ]] || continue
+    addr=$(basename "$dev")
+    printf '    %-14s %s\n' "$addr" \
+      "$(lspci -s "${addr#0000:}" 2>/dev/null | cut -d" " -f2- | cut -c1-52)"
+  done
   echo
   ;;
 run)
