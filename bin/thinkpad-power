@@ -622,10 +622,18 @@ doctor)
   echo '  latency tolerance — anything with a non-zero figure holds the'
   echo '  package out of its deeper states while it is awake'
   if [[ -r $pmc/ltr_show ]]; then
-    awk '$0 !~ /Snoop\(ns\): 0[[:space:]]+LTR_IGNORE/ && /Snoop/ {
-           for (i = 1; i <= NF; i++) if ($i == "PMC0:" || $i ~ /^PMC[0-9]:/) name = $i
-           printf "    %-34s %s ns\n", $2, $(NF-1)
-         }' "$pmc/ltr_show" 2>/dev/null | grep -v ' 0 ns$' || echo '    (none)'
+    # Find the value by its label, not by position: the fields after it
+    # differ per row, and counting from the end lands on LTR_IGNORE.
+    # "Non-Snoop(ns):" is a distinct field, so an exact match is unambiguous.
+    awk '/Snoop\(ns\)/ {
+           snoop = ""; nonsnoop = ""
+           for (i = 1; i <= NF; i++) {
+             if ($i == "Snoop(ns):")     snoop    = $(i + 1)
+             if ($i == "Non-Snoop(ns):") nonsnoop = $(i + 1)
+           }
+           if (snoop + 0 > 0 || nonsnoop + 0 > 0)
+             printf "    %-28s snoop %s ns\n", $2, snoop
+         }' "$pmc/ltr_show" 2>/dev/null
   else
     echo '    no pmc_core debugfs (is intel_pmc_core loaded?)'
   fi
