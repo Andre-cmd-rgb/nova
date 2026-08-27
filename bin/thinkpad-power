@@ -443,9 +443,19 @@ nmi_watchdog() {
 PL1_ON_BAT=${PL1_ON_BAT:-}
 RAPL=/sys/class/powercap/intel-rapl:0
 RAPL_PL1=$RAPL/constraint_0_power_limit_uw
+RAPL_WINDOW=$RAPL/constraint_0_time_window_us
 RAPL_STATE=/run/thinkpad-power.rapl
 
+# PL1 is an average over a time window, and the firmware here sets that window
+# to 56 seconds — so a burst lasting most of a minute is not capped at all,
+# which is most of what a browser does. Measured: 16 threads of load pushed
+# the draw past 31 W and still climbing at t+20s with PL1 already at 30 W.
+# Setting the limit without shortening the window is half a knob, so this sets
+# both, and restores both.
+PL1_WINDOW_ON_BAT=10
+
 power_limit() {
+  local limit window
   [[ -n $PL1_ON_BAT && -w $RAPL_PL1 ]] || return 0
   if [[ ! $PL1_ON_BAT =~ ^[0-9]+$ ]] || ((PL1_ON_BAT < 5)); then
     log "PL1_ON_BAT=$PL1_ON_BAT is not a sane wattage; ignoring"
@@ -453,12 +463,18 @@ power_limit() {
   fi
   case $1 in
   battery)
-    [[ -e $RAPL_STATE ]] || cat "$RAPL_PL1" >"$RAPL_STATE" 2>/dev/null
+    if [[ ! -e $RAPL_STATE ]]; then
+      printf '%s %s\n' "$(cat "$RAPL_PL1" 2>/dev/null)" \
+        "$(cat "$RAPL_WINDOW" 2>/dev/null)" >"$RAPL_STATE"
+    fi
     echo $((PL1_ON_BAT * 1000000)) >"$RAPL_PL1" 2>/dev/null
+    echo $((PL1_WINDOW_ON_BAT * 1000000)) >"$RAPL_WINDOW" 2>/dev/null
     ;;
   ac)
     [[ -r $RAPL_STATE ]] || return 0
-    cat "$RAPL_STATE" >"$RAPL_PL1" 2>/dev/null
+    read -r limit window <"$RAPL_STATE"
+    [[ -n ${limit:-} ]] && echo "$limit" >"$RAPL_PL1" 2>/dev/null
+    [[ -n ${window:-} ]] && echo "$window" >"$RAPL_WINDOW" 2>/dev/null
     rm -f "$RAPL_STATE"
     ;;
   esac
@@ -466,9 +482,12 @@ power_limit() {
 }
 
 pl1_now() {
-  local uw
+  local uw window
   uw=$(cat "$RAPL_PL1" 2>/dev/null) || { printf 'unavailable'; return 0; }
+  window=$(cat "$RAPL_WINDOW" 2>/dev/null)
   printf '%s W' "$((uw / 1000000))"
+  [[ -n $window ]] && printf ' over %ss' "$((window / 1000000))"
+  return 0
 }
 
 # The codec sleeping is the only one with a perceptible cost: a faint click
