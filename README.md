@@ -89,6 +89,10 @@ The boot they were measured against, at 32 s from the power button:
 | kernel + initramfs | ~5.7 s | |
 | userspace to `graphical.target` | 6.02 s | 4.1 s of it TPM provisioning |
 
+Boot *colours* are deliberately not here — Limine and Plymouth drift from the
+Omarchy theme, and fixing that is an Omarchy patch rather than power
+management. It lives in `omarchy-boot-theme`.
+
 Masking the TPM units takes a known 4.1 s off the userspace figure. What
 emptying the initramfs is worth is **not yet measured** — the reasoning is that
 the loader stage is dominated by reading a UKI carrying 109 MB of firmware it
@@ -99,6 +103,21 @@ it.
 the answer arrives on its own. They come from the loader's own
 `LoaderTime*USec` efivars rather than `systemd-analyze`, whose split is skewed
 here by a printk clock that starts at ~6.7 s.
+
+## Installing
+
+```
+./install.sh                           the GPU and power policy
+./install.sh --boot-path               also trim the initramfs and TPM units
+./install.sh --hibernate               lid sleeps to RAM, then hibernates
+./install.sh --hibernate-after=90min   the same, with a different delay
+./install.sh --uninstall               put everything back
+```
+
+The two opt-in flags combine, and re-running is idempotent. Both are opt-in for
+the same reason: everything in the base install is reversible from a running
+session, and those two are not — one changes what boots, the other changes what
+happens at power-on.
 
 ## Using it
 
@@ -111,6 +130,7 @@ thinkpad-power <command> [args]
   run <cmd> [args]    run one program on the discrete GPU
 
   auto                apply the policy for the current power source
+  post-hibernate      rescan the bus, then apply the policy (resume hook)
   ac, battery         force one side of the policy
   gpu-auto            the GPU half of the policy only
   gpu-on, gpu-off     put the discrete GPU on or off the PCI bus
@@ -341,6 +361,17 @@ the browser dominate, and a connected 5G modem costs more than every kernel
 knob in this tool put together. `powertop` will tell you which of those applies
 to yours; this tool deliberately does not guess.
 
+Asleep, measured over a 63 minute suspend on the same machine:
+
+| | |
+|---|---|
+| S3, awake-time subtracted | **1.26 W** |
+| a full 74.5 Wh battery at that rate | ~59 h |
+| hibernated | RTC only — days to weeks |
+
+Which is the whole argument for `--hibernate`: two hours of instant-wake S3
+costs about 2.5 Wh, and everything after that costs nothing.
+
 ## Why a symlink, and why it matters
 
 `AQ_DRM_DEVICES` takes a `:`-separated list, so **the value cannot contain a
@@ -379,12 +410,27 @@ pin, then log in again.
 ./test/roundtrip.sh
 ```
 
-No root and no sysfs: it extracts the library half of the script, points the
-tunables at temporary files and drives each battery -> AC round trip, checking
-that the firmware's value is saved and restored and that a nonsense wattage is
-refused rather than written to a register that governs package power. The
-runtime-PM state file was silently truncated on every battery run for a while,
-so AC had nothing to put back; that is the class of bug this catches.
+33 checks, no root and no sysfs: it extracts the library half of the script,
+points the tunables at temporary files and drives each battery -> AC round trip,
+checking that the firmware's value is saved and restored and that a nonsense
+wattage is refused rather than written to a register that governs package power.
+The runtime-PM state file was silently truncated on every battery run for a
+while, so AC had nothing to put back; that is the class of bug this catches.
+
+It also covers the things that are not tunables but are just as easy to get
+silently wrong:
+
+- **`doctor`'s boot figures**, against fixture efivars — including a
+  half-recorded pair, a garbage value and a backwards one. An `awk` program in
+  `doctor` once printed a label and no number for two commits because the only
+  run during development hit the root guard, so anything with `awk` in it is
+  driven against real input here.
+- **The Omarchy menu override**, an `awk` program editing a JSONC file the
+  compositor parses at startup. The result is parsed after both adding and
+  removing the entry, because a malformed one costs the menu.
+- **`--hibernate-after` parsing**, because a value that does not parse leaves a
+  machine that suspends and never hibernates, which looks exactly like the
+  feature silently not working.
 
 ## License
 
