@@ -113,3 +113,25 @@ cosmetic — and the original is at `/boot/limine.conf.omarchy-limine-theme.bak`
 ```
 ./test/limine.sh
 ```
+
+21 checks against a fixture `limine.conf`, never against `/boot`. Beyond the
+happy path they cover the two bugs this shipped with, so neither comes back:
+
+- **Placement.** A global option after the first `/` entry belongs to that
+  entry, not to the file, and would silently do nothing. There is an assertion
+  that the block sits above the first entry.
+- **Root's environment.** `omarchy-theme-dir` composes its answer from `$HOME`
+  and `$OMARCHY_PATH`, so the boot hook — which runs as root — resolved every
+  theme to `/themes/<slug>` and failed on a path that never existed. The suite
+  runs the tool with `HOME=/root OMARCHY_PATH=` and checks both that it works
+  and that an unknown slug is still refused there.
+- **Refusals**, since the failure mode is a machine that does not boot: a
+  `limine.conf` with no entries, an unknown theme, and any rewrite that changed
+  the entry count are all left untouched rather than half-written.
+
+## Status
+
+Installed and applied on the machine this was written for. Both hooks are in
+place and the Limine one has been seen to fire — a rebuild prints
+`✓ Limine themed from "white"` where it used to print
+`x no colors.toml in /themes/white`.
