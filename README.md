@@ -58,16 +58,26 @@ switch frequently does not stick. The installer stands it down.
 | `/etc/systemd/system/thinkpad-power-gpu.{service,timer}` | retry every 2 min | a plug event is one edge that never repeats |
 | `/run/modprobe.d/thinkpad-power-nvidia.conf` | blocks the nvidia modules | while the card is off the bus, only then |
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
-| `/etc/mkinitcpio.conf.d/nvidia.conf` | emptied, original kept alongside | the driver dragged 109 MB of GSP firmware into every initramfs |
-| `systemd-tpm2-setup{,-early}` | masked, only with no LUKS and no pcrlock | 4.1 s per boot provisioning a key nothing reads |
+| `/etc/mkinitcpio.conf.d/nvidia.conf` | **`--boot-path` only.** emptied, original kept alongside | the driver dragged 109 MB of GSP firmware into every initramfs |
+| `systemd-tpm2-setup{,-early}` | **`--boot-path` only.** masked, and only with no LUKS and no pcrlock | 4.1 s per boot provisioning a key nothing reads |
 
 It refuses to install if the connected panel is driven by the NVIDIA card,
 because powering that off would black out the screen.
 
-The last two are boot-path changes, so they take effect at the next boot and
-the installer rebuilds the initramfs for you. `--uninstall` puts both back and
-rebuilds again. The boot they were measured against, at 32 s from the power
-button:
+The last two are **opt-in**, and off unless you ask for them:
+
+```
+./install.sh --boot-path
+```
+
+Everything else in the table is reversible from a running session. These two
+are not — they change what boots, which is a different kind of risk from a
+power tunable, so they are opt-in for the same reason `ASPM_ON_BAT` is. They
+take effect at the next boot, and the installer rebuilds the initramfs for you.
+`--uninstall` puts both back and rebuilds again, whether or not the run that
+removes them passed the flag.
+
+The boot they were measured against, at 32 s from the power button:
 
 | stage | before | |
 |---|---|---|
