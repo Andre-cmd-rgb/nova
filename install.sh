@@ -93,12 +93,13 @@ fi
 # 90-limine-enroll-config so the file is final before it is hashed.
 if [[ -d $BOOT_HOOK_DIR ]]; then
   sed -e "s|@USER_STATE@|${OMARCHY_STATE:-$HOME/.local/state/omarchy}|" \
+    -e "s|@USER_HOME@|$HOME|" \
     -e "s|@THEME_CMD@|$BIN/omarchy-limine-theme|" \
     "$HERE/hooks/50-omarchy-boot-theme" |
     sudo tee "$BOOT_HOOK_DIR/50-omarchy-boot-theme" >/dev/null &&
     sudo chmod 755 "$BOOT_HOOK_DIR/50-omarchy-boot-theme" ||
     die 'could not install the limine boot hook'
-  grep -q '@USER_STATE@\|@THEME_CMD@' "$BOOT_HOOK_DIR/50-omarchy-boot-theme" 2>/dev/null &&
+  grep -q '@USER_STATE@\|@USER_HOME@\|@THEME_CMD@' "$BOOT_HOOK_DIR/50-omarchy-boot-theme" 2>/dev/null &&
     die "placeholders left in $BOOT_HOOK_DIR/50-omarchy-boot-theme"
   ok "limine boot hook installed (survives kernel updates)"
 else

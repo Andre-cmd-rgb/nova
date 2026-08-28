@@ -31,9 +31,23 @@ ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 STATE=${OMARCHY_STATE:-$HOME/.local/state/omarchy}
 theme=${1:-$(cat "$STATE/current/theme.name" 2>/dev/null)}
 [[ -n $theme ]] || die 'could not work out the current theme'
-dir=$(omarchy-theme-dir "$theme")
+# omarchy-theme-dir builds its answer out of $HOME and $OMARCHY_PATH. Run as
+# root from a boot hook, $HOME is /root and $OMARCHY_PATH is unset, so it
+# happily returns "/themes/white" and the whole thing fails on a file that was
+# never going to be there. Ask it, then check the answer, then look properly.
+THEMES=${OMARCHY_PATH:-/usr/share/omarchy}/themes
+USER_THEMES=$HOME/.config/omarchy/themes
+
+dir=$(omarchy-theme-dir "$theme" 2>/dev/null)
+if [[ ! -r $dir/colors.toml ]]; then
+  for candidate in "$USER_THEMES/$theme" "$THEMES/$theme"; do
+    [[ -r $candidate/colors.toml ]] || continue
+    dir=$candidate
+    break
+  done
+fi
 colors=$dir/colors.toml
-[[ -r $colors ]] || die "no colors.toml in $dir (is \"$theme\" a theme slug?)"
+[[ -r $colors ]] || die "no colors.toml for \"$theme\" (looked in $USER_THEMES and $THEMES)"
 
 # colors.toml is `key = "#rrggbb"`. Take the first match for the key, strip the
 # quotes and the leading '#': Limine wants bare RRGGBB everywhere.

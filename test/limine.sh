@@ -82,5 +82,19 @@ chk "backs up the original"          "$(diff -q "$T/orig.conf" "$T/limine.conf.o
 run tokyo-night
 chk "backup is not overwritten"      "$(diff -q "$T/orig.conf" "$T/limine.conf.omarchy-limine-theme.bak" >/dev/null && echo same)" "same"
 
+# The boot hook runs as root, where $HOME is /root and $OMARCHY_PATH is unset.
+# omarchy-theme-dir then returns "/themes/<slug>" and the tool failed on a path
+# that never existed. This is that environment, exactly.
+fixture
+HOME=/root OMARCHY_PATH= LIMINE_CONF=$T/limine.conf "$TOOL" white >"$T/out" 2>&1
+chk "works with root's environment" "$?" "0"
+chk "and still finds the colours"   "$(sed -n 's/^term_background: //p' "$T/limine.conf")" "00ffffff"
+
+# A slug that exists nowhere must still be refused, not resolved to something.
+fixture
+HOME=/root OMARCHY_PATH= LIMINE_CONF=$T/limine.conf "$TOOL" nope >"$T/out" 2>&1
+chk "still refuses an unknown slug" "$?" "1"
+chk "and names both search paths"   "$(grep -c 'looked in' "$T/out")" "1"
+
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi
