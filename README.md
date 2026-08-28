@@ -60,7 +60,6 @@ switch frequently does not stick. The installer stands it down.
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
 | `/etc/mkinitcpio.conf.d/nvidia.conf` | **`--boot-path` only.** emptied, original kept alongside | the driver dragged 109 MB of GSP firmware into every initramfs |
 | `systemd-tpm2-setup{,-early}` | **`--boot-path` only.** masked, and only with no LUKS and no pcrlock | 4.1 s per boot provisioning a key nothing reads |
-| `/etc/udev/rules.d/97-thinkpad-power-fpwake.rules` | **`FINGERPRINT_WAKE=on` only.** marks the fingerprint reader wake-capable | stops it re-enumerating on resume; costs sleep power |
 
 It refuses to install if the connected panel is driven by the NVIDIA card,
 because powering that off would black out the screen.
@@ -177,21 +176,14 @@ Two separate things happen to it across S3:
 **It loses power and re-enumerates.** The lock screen starts its PAM
 fingerprint session before that finishes and gets `device was disconnected`,
 so it retries — four times in 900 ms here before the fourth caught a live
-device. `FINGERPRINT_WAKE=on` marks the reader wake-capable, which asks the
-platform to keep its port powered through suspend so there is nothing to
-re-enumerate. It is off by default: a powered USB port in suspend is the
-opposite of what the rest of this tool is for, and whether the platform
-honours it is hardware-specific. Test it live before committing to it:
+device.
 
-```
-echo enabled | sudo tee /sys/bus/usb/devices/3-9/power/wakeup
-```
-
-then suspend, resume, and check whether the retries are gone:
-
-```
-journalctl -b0 | grep -c "cannot retrieve authentication info"
-```
+Marking the reader wake-capable, so its port stays powered, was tried and is
+**ruled out**. It works, in the narrow sense: the retries dropped from 4 to 1.
+It also left the reader in a state fprintd refuses —
+`Ignoring device due to initialization error: unsupported firmware version` —
+so fingerprint unlock did not work at all on resume. Trading a working unlock
+for 0.9 s is not a trade worth making, so there is no knob for it.
 
 **It fails to match.** This is the larger half and no kernel knob touches it.
 Enrolling one finger means a slightly-off placement fails; the measured resume

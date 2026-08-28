@@ -63,25 +63,6 @@ recorded_nvidia() {
   printf '%s\n' "$recorded"
 }
 
-# The USB fingerprint reader, by vendor id. libfprint drives these from user
-# space through libusb, so there is no kernel driver to look for and no class
-# code that separates them from any other vendor-specific interface — the
-# vendor id is what is left. Synaptics, Goodix, Validity, AuthenTec, Elan.
-detect_fingerprint() {
-  local dev vid
-  for dev in /sys/bus/usb/devices/*-*/; do
-    [[ -r ${dev}idVendor && -r ${dev}idProduct ]] || continue
-    vid=$(<"${dev}idVendor")
-    case $vid in
-    06cb | 27c6 | 138a | 08ff | 1c7a) ;;
-    *) continue ;;
-    esac
-    printf '%s:%s' "$vid" "$(<"${dev}idProduct")"
-    return 0
-  done
-  return 1
-}
-
 # The card that actually drives a connected panel. Pinning the compositor to
 # anything else is how you end up at a black screen.
 detect_display_card() {
@@ -110,7 +91,6 @@ uninstall() {
   sudo rm -f /etc/systemd/system/thinkpad-power-gpu.service /etc/systemd/system/thinkpad-power-gpu.timer
   sudo rm -f /etc/udev/rules.d/99-thinkpad-power.rules
   sudo rm -f /etc/udev/rules.d/98-thinkpad-power-igpu.rules
-  sudo rm -f /etc/udev/rules.d/97-thinkpad-power-fpwake.rules
   sudo rm -f /etc/thinkpad-power.conf
   # The card may be off the bus right now, with the driver barred from
   # loading. Leaving it that way with the tool gone would strand it.
@@ -234,9 +214,6 @@ else
 #   PL1_ON_BAT=30              sustained CPU power limit on battery, in watts
 #   ASPM_ON_BAT=powersave      PCIe link power management
 #   NMI_WATCHDOG_ON_BAT=off    disable the hard-lockup detector on battery
-#   FINGERPRINT_WAKE=on        keep the fingerprint reader powered in suspend
-#                              so it does not re-enumerate on resume. Costs
-#                              sleep power; see the README before turning it on.
 CONF
 fi
 printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee -a /etc/thinkpad-power.conf >/dev/null ||
@@ -413,51 +390,12 @@ fi
 
 # ----------------------------------------------------------------------- wake
 
-step "Wake"
-
-# The fingerprint reader loses power in S3 and re-enumerates on resume, and the
-# lock screen's PAM session starts before that finishes. Measured here: four
-# "Authentication service cannot retrieve authentication info" retries in
-# 900 ms before the fourth caught a live device. Marking the reader wake-capable
-# asks the platform to keep its port powered, so there is nothing to
-# re-enumerate.
-#
-# Off by default, because a powered USB port in suspend is the opposite of what
-# the rest of this tool is for, and because whether the platform honours it at
-# all is hardware-specific. Set FINGERPRINT_WAKE=on and re-run to try it.
-FPWAKE_RULE=/etc/udev/rules.d/97-thinkpad-power-fpwake.rules
-FPWAKE=$(sed -n 's/^FINGERPRINT_WAKE=//p' /etc/thinkpad-power.conf 2>/dev/null |
-  tr -d '"'\''' | tail -1)
-
-if [[ ${FPWAKE:-off} == on ]]; then
-  if FP_IDS=$(detect_fingerprint); then
-    sed -e "s/@VID@/${FP_IDS%%:*}/" -e "s/@PID@/${FP_IDS##*:}/" \
-      "$HERE/udev/97-thinkpad-power-fpwake.rules" |
-      sudo tee "$FPWAKE_RULE" >/dev/null
-    grep -q "@VID@" "$FPWAKE_RULE" 2>/dev/null &&
-      die "could not fill in the ids in $FPWAKE_RULE"
-    run sudo udevadm control --reload-rules
-    # udev only re-runs on enumeration, and the reader is already enumerated.
-    # Set it now so the next suspend is the test, not the one after a reboot.
-    for dev in /sys/bus/usb/devices/*-*/; do
-      [[ -r ${dev}idVendor ]] || continue
-      [[ "$(<"${dev}idVendor"):$(<"${dev}idProduct")" == "$FP_IDS" ]] || continue
-      echo enabled | sudo tee "${dev}power/wakeup" >/dev/null 2>&1
-      ok "fingerprint reader $FP_IDS set wake-capable ($(<"${dev}power/wakeup"))"
-      break
-    done
-    info "this costs sleep power — compare a suspend before deciding to keep it"
-  else
-    warn "FINGERPRINT_WAKE=on but no fingerprint reader found; rule not written"
-  fi
-elif [[ -f $FPWAKE_RULE ]]; then
-  sudo rm -f "$FPWAKE_RULE"
-  run sudo udevadm control --reload-rules
-  ok "fingerprint wake rule removed (FINGERPRINT_WAKE is not on)"
-else
-  info "fingerprint wake off. FINGERPRINT_WAKE=on in /etc/thinkpad-power.conf"
-  info "keeps the reader powered in suspend, at a cost in sleep power"
-fi
+# There is no fingerprint knob here any more, and fact 25 in CLAUDE.md is why:
+# marking the reader wake-capable was measured, over a 63 min suspend, to leave
+# it in a state fprintd rejects outright — "Ignoring device due to
+# initialization error: unsupported firmware version" — so fingerprint unlock
+# did not work at all on resume. It did cut the PAM retries from 4 to 1, which
+# is the wrong trade at any price.
 
 # --------------------------------------------------------------- user config
 
