@@ -1,0 +1,14 @@
+# Written by thinkpad-power's install.sh when FINGERPRINT_WAKE=on. The vendor
+# and product ids are filled in from the reader found on this machine.
+#
+# The fingerprint reader loses power in S3 and re-enumerates on resume. The
+# lock screen starts its PAM fingerprint session before that finishes, gets
+# "device was disconnected", and retries — four times in 900 ms on this
+# machine before the fourth one caught a live device. Marking the reader as
+# wake-capable asks the platform to keep its port powered through suspend, so
+# there is nothing to re-enumerate.
+#
+# This costs sleep power: a powered USB port is the opposite of what the rest
+# of this tool is for. It is a knob, not a default. Turn it off by setting
+# FINGERPRINT_WAKE=off in /etc/thinkpad-power.conf and re-running install.sh.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="@VID@", ATTR{idProduct}=="@PID@", ATTR{power/wakeup}="enabled"

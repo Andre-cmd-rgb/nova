@@ -60,6 +60,7 @@ switch frequently does not stick. The installer stands it down.
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
 | `/etc/mkinitcpio.conf.d/nvidia.conf` | **`--boot-path` only.** emptied, original kept alongside | the driver dragged 109 MB of GSP firmware into every initramfs |
 | `systemd-tpm2-setup{,-early}` | **`--boot-path` only.** masked, and only with no LUKS and no pcrlock | 4.1 s per boot provisioning a key nothing reads |
+| `/etc/udev/rules.d/97-thinkpad-power-fpwake.rules` | **`FINGERPRINT_WAKE=on` only.** marks the fingerprint reader wake-capable | stops it re-enumerating on resume; costs sleep power |
 
 It refuses to install if the connected panel is driven by the NVIDIA card,
 because powering that off would black out the screen.
@@ -164,6 +165,48 @@ timer will switch it back off within two minutes.
 
 The card will not be powered off while a program is using it; the tool names
 what is holding it rather than pulling the GPU out from under it.
+
+## Wake
+
+Wake on this machine is not slow where it looks slow. Low-level resume to
+`PM: suspend exit` is **188 ms**, and the lock screen is prompting **1.04 s**
+after that. What is felt as five seconds is the fingerprint reader.
+
+Two separate things happen to it across S3:
+
+**It loses power and re-enumerates.** The lock screen starts its PAM
+fingerprint session before that finishes and gets `device was disconnected`,
+so it retries — four times in 900 ms here before the fourth caught a live
+device. `FINGERPRINT_WAKE=on` marks the reader wake-capable, which asks the
+platform to keep its port powered through suspend so there is nothing to
+re-enumerate. It is off by default: a powered USB port in suspend is the
+opposite of what the rest of this tool is for, and whether the platform
+honours it is hardware-specific. Test it live before committing to it:
+
+```
+echo enabled | sudo tee /sys/bus/usb/devices/3-9/power/wakeup
+```
+
+then suspend, resume, and check whether the retries are gone:
+
+```
+journalctl -b0 | grep -c "cannot retrieve authentication info"
+```
+
+**It fails to match.** This is the larger half and no kernel knob touches it.
+Enrolling one finger means a slightly-off placement fails; the measured resume
+above spent 4.7 s waiting for a finger and then failed twice before the third
+attempt authenticated, at 8.0 s. More enrolled fingers is the fix:
+
+```
+fprintd-enroll -f left-index-finger
+fprintd-enroll -f right-thumb
+```
+
+Two other devices resume badly and are worth knowing about, though neither
+gates the unlock: the 5G modem fails with `-22` and does a full recovery
+cycle, and the Thunderbolt xHCI controller reinitialises, which makes usb1 and
+usb2 report `root hub lost power or was reset`.
 
 ## Tunables
 
