@@ -1,0 +1,74 @@
+#!/bin/bash
+#
+# Put the boot menu and the boot splash on the current Omarchy theme.
+#
+#   omarchy-boot-theme [theme-slug]     both (default: the current theme)
+#   omarchy-boot-theme --limine  [slug] boot menu only, no initramfs rebuild
+#   omarchy-boot-theme --plymouth [slug] splash + login screen only
+#
+# Omarchy themes everything from the login screen inwards, but nothing it
+# ships touches Limine, and it only re-themes Plymouth when you pick an unlock
+# screen by hand. So the first two things you see when the machine starts stay
+# on whatever they were last set to, while everything else follows the theme.
+#
+# Plymouth is the slow half: omarchy-plymouth-set rebuilds the initramfs, which
+# takes about a minute. --limine skips it.
+
+set -uo pipefail
+
+die() {
+  printf '\033[31mx\033[0m %s\n' "$*" >&2
+  exit 1
+}
+step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
+
+DO_LIMINE=1
+DO_PLYMOUTH=1
+theme=
+
+for arg in "$@"; do
+  case $arg in
+  --limine) DO_PLYMOUTH=0 ;;
+  --plymouth) DO_LIMINE=0 ;;
+  -h | --help)
+    sed -n '3,8p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    exit 0
+    ;;
+  -*) die "unknown option: $arg (try --help)" ;;
+  *) theme=$arg ;;
+  esac
+done
+
+# The theme-set hook is handed the slug; a manual run reads it from the state
+# file. omarchy-theme-current is the wrong source here — it prints the pretty
+# name ("White"), and omarchy-theme-dir wants the slug ("white").
+STATE=${OMARCHY_STATE:-$HOME/.local/state/omarchy}
+[[ -n $theme ]] || theme=$(cat "$STATE/current/theme.name" 2>/dev/null)
+[[ -n $theme ]] || die 'could not work out the current theme'
+
+dir=$(omarchy-theme-dir "$theme")
+[[ -r $dir/colors.toml ]] || die "no colors.toml in $dir (is \"$theme\" a theme slug?)"
+
+printf '\033[1mTheming the boot path from "%s"\033[0m\n' "$theme"
+
+if ((DO_LIMINE)); then
+  step "Boot menu (Limine)"
+  command -v omarchy-limine-theme >/dev/null 2>&1 ||
+    die 'omarchy-limine-theme is not on PATH'
+  sudo -E "$(command -v omarchy-limine-theme)" "$theme" || die 'Limine theming failed'
+fi
+
+if ((DO_PLYMOUTH)); then
+  step "Splash and login screen (Plymouth, SDDM)"
+  # omarchy-plymouth-set refuses a symlinked logo, so say so rather than
+  # letting it fail three steps in with a less obvious message.
+  [[ -f $dir/unlock.png ]] ||
+    die "$theme has no unlock.png, so there is no logo for the splash"
+  [[ -L $dir/unlock.png ]] &&
+    die "$theme's unlock.png is a symlink, which omarchy-plymouth-set rejects"
+  printf '  \033[2m·\033[0m rebuilding the initramfs, this takes about a minute...\n'
+  omarchy-plymouth-set-by-theme "$theme" || die 'Plymouth theming failed'
+  printf '  \033[32m✓\033[0m splash and login screen themed\n'
+fi
+
+printf '\n\033[1mDone.\033[0m Both are only visible at boot, so the next restart shows them.\n'

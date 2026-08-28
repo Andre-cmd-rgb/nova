@@ -1,0 +1,113 @@
+#!/bin/bash
+#
+# Theme the Limine boot menu from an Omarchy theme's colors.toml.
+#
+#   omarchy-limine-theme [theme-name]     default: the current theme
+#
+# Omarchy themes everything from the login screen inwards, but the boot menu
+# is not its territory: limine-entry-tool owns the /entry blocks in
+# limine.conf and leaves the global options alone. Those globals are where the
+# colours live, so this writes them, between markers, above the first entry.
+#
+# limine.conf decides whether this machine boots, so: back up first, only ever
+# touch the marked block, and refuse to install a result that lost an entry.
+
+set -uo pipefail
+
+CONF=${LIMINE_CONF:-/boot/limine.conf}
+BEGIN='# >>> omarchy-limine-theme >>>'
+END='# <<< omarchy-limine-theme <<<'
+
+die() {
+  printf '\033[31mx\033[0m %s\n' "$*" >&2
+  exit 1
+}
+ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+
+# omarchy-theme-dir takes the slug; omarchy-theme-current prints the pretty
+# name ("White", not "white"), which resolves to a directory that does not
+# exist. The theme-set hook is handed the slug in $1, and the state file holds
+# it for a manual run.
+STATE=${OMARCHY_STATE:-$HOME/.local/state/omarchy}
+theme=${1:-$(cat "$STATE/current/theme.name" 2>/dev/null)}
+[[ -n $theme ]] || die 'could not work out the current theme'
+dir=$(omarchy-theme-dir "$theme")
+colors=$dir/colors.toml
+[[ -r $colors ]] || die "no colors.toml in $dir (is \"$theme\" a theme slug?)"
+
+# colors.toml is `key = "#rrggbb"`. Take the first match for the key, strip the
+# quotes and the leading '#': Limine wants bare RRGGBB everywhere.
+val() {
+  local v
+  v=$(awk -F= -v k="$1" '
+    { key = $1; gsub(/^[ \t]+|[ \t]+$/, "", key) }
+    key == k { gsub(/[" \t]/, "", $2); print $2; exit }
+  ' "$colors")
+  v=${v#\#}
+  [[ $v =~ ^[0-9a-fA-F]{6}$ ]] || return 1
+  printf '%s' "$v"
+}
+
+# A theme that is missing one of these is a theme this cannot colour, and a
+# half-coloured boot menu is worse than an unthemed one.
+bg=$(val background) || die "no usable 'background' in $colors"
+fg=$(val foreground) || die "no usable 'foreground' in $colors"
+accent=$(val accent) || accent=$fg
+
+# The eight palette slots Limine names, in its order: black, red, green,
+# brown, blue, magenta, cyan, gray. Omarchy has no brown or gray, so yellow
+# and muted stand in for them.
+pal() {
+  local out= key v
+  for key in "$@"; do
+    v=$(val "$key") || return 1
+    out+="${out:+;}$v"
+  done
+  printf '%s' "$out"
+}
+palette=$(pal darker_background red green yellow blue magenta cyan muted) || palette=
+bright=$(pal muted bright_red bright_green bright_yellow bright_blue \
+  bright_magenta bright_cyan foreground) || bright=
+
+block=$(
+  printf '%s\n' "$BEGIN"
+  printf '# Written by omarchy-limine-theme from the "%s" theme. Edits are lost\n' "$theme"
+  printf '# on the next run; change the theme instead.\n'
+  printf 'term_background: 00%s\n' "$bg"
+  printf 'term_foreground: %s\n' "$fg"
+  printf 'backdrop: %s\n' "$bg"
+  printf 'interface_branding_colour: %s\n' "$accent"
+  [[ -n $palette ]] && printf 'term_palette: %s\n' "$palette"
+  [[ -n $bright ]] && printf 'term_palette_bright: %s\n' "$bright"
+  printf '%s\n' "$END"
+)
+
+[[ -r $CONF ]] || die "cannot read $CONF (run with sudo)"
+
+before=$(grep -c '^/' "$CONF")
+((before > 0)) || die "$CONF has no menu entries — refusing to touch it"
+
+tmp=$(mktemp) || die 'mktemp failed'
+trap 'rm -f "$tmp"' EXIT
+
+# Drop any previous block, then put the new one above the first entry. Global
+# options must precede the first '/' line or they belong to that entry instead.
+awk -v begin="$BEGIN" -v end="$END" -v block="$block" '
+  $0 == begin { skip = 1; next }
+  $0 == end   { skip = 0; next }
+  skip        { next }
+  !done && /^\// { print block; done = 1 }
+  { print }
+  END { if (!done) print block }
+' "$CONF" >"$tmp" || die 'rewrite failed'
+
+after=$(grep -c '^/' "$tmp")
+[[ $before == "$after" ]] ||
+  die "rewrite changed the entry count ($before -> $after) — not installing it"
+grep -q "^$BEGIN\$" "$tmp" || die 'the themed block did not land — not installing it'
+
+backup=$CONF.omarchy-limine-theme.bak
+[[ -f $backup ]] || cp -a "$CONF" "$backup"
+cat "$tmp" >"$CONF" || die "could not write $CONF"
+
+ok "Limine themed from \"$theme\" (bg #$bg, fg #$fg, accent #$accent)"
