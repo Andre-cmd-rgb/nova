@@ -57,5 +57,31 @@ for bad in 2 abc -5 ''; do
   chk "pl1 refuses '$bad'"         "$(cat "$RAPL_PL1")"    "109000000"
 done
 
+# doctor's boot figures. An awk program printed a label and no number for two
+# commits because the only run during development hit the root guard, so
+# anything with awk in it gets driven against real input here. efivarfs puts
+# four attribute bytes in front of the value, which is the part that is easy
+# to be off by one on.
+EFIVARS=$T/efivars; mkdir -p "$EFIVARS"
+efivar() { printf '\x07\x00\x00\x00%s' "$2" >"$EFIVARS/$1-8be4df61-93ca-11d2-aa0d-00e098032b8c"; }
+
+efivar LoaderTimeInitUSec 11496098
+efivar LoaderTimeExecUSec 20604018
+chk "boot firmware figure"  "$(boot_timing | sed -n 1p)" "    firmware (POST)         11.50 s"
+chk "boot loader figure"    "$(boot_timing | sed -n 2p)" "    boot loader              9.11 s"
+
+# Nothing to print is a legitimate answer, and must not be a blank number.
+rm -f "$EFIVARS"/LoaderTimeExecUSec-*
+chk "boot half-recorded"    "$(boot_timing; echo "rc=$?")" "rc=1"
+rm -f "$EFIVARS"/LoaderTime*
+chk "boot unrecorded"       "$(boot_timing; echo "rc=$?")" "rc=1"
+
+# Firmware can write anything into an efivar; a garbage value must not reach awk.
+efivar LoaderTimeInitUSec 11496098
+efivar LoaderTimeExecUSec 'not-a-number'
+chk "boot rejects garbage"  "$(boot_timing; echo "rc=$?")" "rc=1"
+efivar LoaderTimeExecUSec 900
+chk "boot rejects backwards" "$(boot_timing; echo "rc=$?")" "rc=1"
+
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi

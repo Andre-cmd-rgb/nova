@@ -102,6 +102,25 @@ uninstall() {
   sudo udevadm control --reload-rules
   ok "root files removed"
 
+  # Put the boot path back. Both of these change what boots, so restore them
+  # before the rebuild rather than leaving a half-reverted machine.
+  local rebuild=0
+  if [[ -f /etc/mkinitcpio.conf.d/nvidia.conf.thinkpad-power-orig ]]; then
+    sudo mv -f /etc/mkinitcpio.conf.d/nvidia.conf.thinkpad-power-orig \
+      /etc/mkinitcpio.conf.d/nvidia.conf
+    rebuild=1
+    ok "NVIDIA early-load restored"
+  fi
+  if systemctl is-enabled systemd-tpm2-setup.service 2>/dev/null | grep -q masked; then
+    sudo systemctl unmask systemd-tpm2-setup.service systemd-tpm2-setup-early.service
+    ok "TPM provisioning unmasked"
+  fi
+  if ((rebuild)) && command -v limine-mkinitcpio >/dev/null 2>&1; then
+    printf '  \033[2m·\033[0m rebuilding the initramfs, this takes a minute...\n'
+    sudo limine-mkinitcpio && ok "initramfs rebuilt" ||
+      warn "initramfs rebuild failed; run: sudo limine-mkinitcpio"
+  fi
+
   if [[ -f $UWSM_ENV ]] && grep -q "$ENV_MARK" "$UWSM_ENV"; then
     sed -i "/$ENV_BEGIN/,/$ENV_END/d;/$ENV_MARK/d;/AQ_DRM_DEVICES/d" "$UWSM_ENV"
     [[ -s $UWSM_ENV ]] || rm -f "$UWSM_ENV"
@@ -250,6 +269,93 @@ if pacman -Q supergfxctl >/dev/null 2>&1; then
     warn "could not uninstall supergfxctl; it is disabled, which is enough"
 fi
 sudo rm -f /etc/supergfxd.conf
+
+
+# ------------------------------------------------------------------ boot path
+
+step "Trimming the boot path"
+
+# The boot loader reads the whole UKI off vfat before the kernel starts, so
+# every megabyte in the initramfs is paid for at every boot. Measured here:
+# 9.1 s in Limine against 11.5 s of firmware POST.
+#
+# mkinitcpio pulls in the firmware a module *declares*, and nvidia.ko declares
+# four GSP blobs that live in a 109 MB directory. Omarchy writes
+# mkinitcpio.conf.d/nvidia.conf to early-load the driver, which is correct on a
+# machine whose displays hang off the NVIDIA. Here the panel is on the iGPU and
+# this tool takes the card off the bus outright, so the driver is loaded early,
+# at maximum cost, for a device that renders nothing.
+#
+# The `kms` hook stays, and still early-loads i915 for Plymouth. Omarchy's hook
+# file drops `kms` only when nvidia_drm is in MODULES and no other GPU is
+# present, so emptying this file leaves kms in place rather than removing it.
+NVIDIA_INITCPIO=/etc/mkinitcpio.conf.d/nvidia.conf
+NVIDIA_INITCPIO_BAK=$NVIDIA_INITCPIO.thinkpad-power-orig
+REBUILD_INITRAMFS=0
+
+# mkinitcpio sources *.conf from that directory, so the backup must not end in
+# .conf or it would be sourced too and put the MODULES line straight back.
+if [[ -f $NVIDIA_INITCPIO ]] && grep -q '^MODULES+=(nvidia' "$NVIDIA_INITCPIO"; then
+  [[ -f $NVIDIA_INITCPIO_BAK ]] ||
+    run sudo cp -a "$NVIDIA_INITCPIO" "$NVIDIA_INITCPIO_BAK"
+  sudo tee "$NVIDIA_INITCPIO" >/dev/null <<'NVCONF'
+# Emptied by thinkpad-power.
+#
+# Omarchy writes MODULES+=(nvidia nvidia_modeset nvidia_uvm nvidia_drm) here so
+# the driver is loaded from the initramfs. That is right when the NVIDIA drives
+# a display. On this machine the panel is on the iGPU and the card is taken off
+# the PCI bus on battery, so the only effect was size: nvidia.ko declares four
+# GSP firmware blobs, and mkinitcpio pulls the 109 MB directory holding them
+# into every initramfs, which the boot loader reads off vfat at every boot.
+#
+# Nothing is lost. The driver still loads from the root filesystem when the
+# card comes back on AC, and /etc/modprobe.d/nvidia.conf still applies
+# nvidia_drm modeset=1 when it does.
+#
+# ./install.sh --uninstall puts the original back from nvidia.conf.thinkpad-power-orig.
+NVCONF
+  # A heredoc cannot go through run(), and a half-written file here is a file
+  # mkinitcpio sources at the next rebuild. Check it landed.
+  grep -q '^MODULES+=(nvidia' "$NVIDIA_INITCPIO" &&
+    die "could not empty $NVIDIA_INITCPIO"
+  REBUILD_INITRAMFS=1
+  ok "NVIDIA driver and its 109 MB of GSP firmware dropped from the initramfs"
+elif [[ -f $NVIDIA_INITCPIO_BAK ]]; then
+  info "initramfs already trimmed"
+else
+  info "no NVIDIA early-load to remove"
+fi
+
+# systemd-tpm2-setup{,-early} sit on the critical chain: sysinit.target waits
+# for them, and they cost 4.1 s of a 6.0 s userspace here. They exist to
+# provision the SRK for TPM-bound disk unlock. With no LUKS volume and no
+# pcrlock policy there is nothing to unlock, so that is 4.1 s per boot for a
+# key nothing consults. Masked, not disabled: both are static units, so
+# `disable` is a no-op on them.
+if [[ $(lsblk -o FSTYPE -n 2>/dev/null | grep -c crypto_LUKS) -eq 0 ]] &&
+  [[ ! -d /var/lib/systemd/pcrlock.d ]]; then
+  if systemctl is-enabled systemd-tpm2-setup.service 2>/dev/null | grep -q masked; then
+    info "TPM setup units already masked"
+  else
+    run sudo systemctl mask systemd-tpm2-setup.service systemd-tpm2-setup-early.service
+    ok "TPM provisioning masked (no LUKS volume, no pcrlock policy: nothing uses it)"
+  fi
+elif [[ -d /var/lib/systemd/pcrlock.d ]]; then
+  info "TPM provisioning left alone — a pcrlock policy is in place"
+else
+  info "TPM provisioning left alone — there is an encrypted volume to unlock"
+fi
+
+if ((REBUILD_INITRAMFS)); then
+  if command -v limine-mkinitcpio >/dev/null 2>&1; then
+    info "rebuilding the initramfs, this takes a minute..."
+    run sudo limine-mkinitcpio
+    ok "initramfs rebuilt"
+  else
+    warn "limine-mkinitcpio missing; run your own initramfs rebuild or the
+    change will not take effect"
+  fi
+fi
 
 # --------------------------------------------------------------- user config
 

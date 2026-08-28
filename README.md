@@ -58,9 +58,34 @@ switch frequently does not stick. The installer stands it down.
 | `/etc/systemd/system/thinkpad-power-gpu.{service,timer}` | retry every 2 min | a plug event is one edge that never repeats |
 | `/run/modprobe.d/thinkpad-power-nvidia.conf` | blocks the nvidia modules | while the card is off the bus, only then |
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
+| `/etc/mkinitcpio.conf.d/nvidia.conf` | emptied, original kept alongside | the driver dragged 109 MB of GSP firmware into every initramfs |
+| `systemd-tpm2-setup{,-early}` | masked, only with no LUKS and no pcrlock | 4.1 s per boot provisioning a key nothing reads |
 
 It refuses to install if the connected panel is driven by the NVIDIA card,
 because powering that off would black out the screen.
+
+The last two are boot-path changes, so they take effect at the next boot and
+the installer rebuilds the initramfs for you. `--uninstall` puts both back and
+rebuilds again. The boot they were measured against, at 32 s from the power
+button:
+
+| stage | before | |
+|---|---|---|
+| firmware POST | 11.50 s | BIOS setup only, nothing here touches it |
+| boot loader | 9.11 s | reads the whole UKI off vfat; follows its size |
+| kernel + initramfs | ~5.7 s | |
+| userspace to `graphical.target` | 6.02 s | 4.1 s of it TPM provisioning |
+
+Masking the TPM units takes a known 4.1 s off the userspace figure. What
+emptying the initramfs is worth is **not yet measured** — the reasoning is that
+the loader stage is dominated by reading a UKI carrying 109 MB of firmware it
+never uses, but that is an inference from size, and only the next boot settles
+it.
+
+`sudo thinkpad-power doctor` prints the first two figures after each boot, so
+the answer arrives on its own. They come from the loader's own
+`LoaderTime*USec` efivars rather than `systemd-analyze`, whose split is skewed
+here by a printk clock that starts at ~6.7 s.
 
 ## Using it
 

@@ -482,6 +482,40 @@ power_limit() {
   return 0
 }
 
+EFIVARS=/sys/firmware/efi/efivars
+
+# The boot loader records when it started and when it handed off, in
+# microseconds since power-on. Both are plain ASCII decimal after the four
+# attribute bytes every efivarfs file carries.
+efi_usec() {
+  local f
+  for f in "$EFIVARS"/"$1"-*; do
+    [[ -r $f ]] || continue
+    tail -c +5 "$f" | tr -d '\0'
+    return 0
+  done
+  return 1
+}
+
+# The honest boot figures. `systemd-analyze` derives its own split from the
+# kernel's printk clock, which starts at ~6.7 s on this machine, so its
+# firmware and loader numbers do not add up to what a stopwatch sees. These
+# two come straight from the loader and do.
+#
+# Firmware can write anything into an efivar, so nothing is printed unless
+# both values are digits and the handoff is after the start.
+boot_timing() {
+  local i e
+  i=$(efi_usec LoaderTimeInitUSec) || return 1
+  e=$(efi_usec LoaderTimeExecUSec) || return 1
+  [[ $i =~ ^[0-9]+$ && $e =~ ^[0-9]+$ ]] || return 1
+  ((e > i)) || return 1
+  awk -v i="$i" -v e="$e" 'BEGIN {
+    printf "    %-22s %6.2f s\n", "firmware (POST)", i / 1000000
+    printf "    %-22s %6.2f s\n", "boot loader", (e - i) / 1000000
+  }'
+}
+
 pl1_now() {
   local uw window
   uw=$(cat "$RAPL_PL1" 2>/dev/null) || { printf 'unavailable'; return 0; }
@@ -663,6 +697,19 @@ doctor)
     printf '    %-14s %s\n' "$addr" \
       "$(lspci -s "${addr#0000:}" 2>/dev/null | cut -d" " -f2- | cut -c1-52)"
   done
+
+  # Not a power figure, but the same discipline: the loader number is what the
+  # initramfs size costs, because the whole UKI is read off vfat before the
+  # kernel starts. It is the one boot figure this tool can change.
+  echo
+  echo '  last boot, to the kernel handoff'
+  if boot_timing; then
+    esp=$(df -h --output=used,size /boot 2>/dev/null | tail -1 | tr -s ' ' | sed 's/^ //')
+    [[ -n $esp ]] && printf '    %-22s %s\n' 'esp used' "${esp/ / of }"
+    echo '    (firmware is BIOS setup only; the loader figure follows the UKI size)'
+  else
+    echo '    no loader timing recorded (LoaderTime*USec unset or unreadable)'
+  fi
   echo
   ;;
 run)
