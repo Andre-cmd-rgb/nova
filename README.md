@@ -60,6 +60,9 @@ switch frequently does not stick. The installer stands it down.
 | supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
 | `/etc/mkinitcpio.conf.d/nvidia.conf` | **`--boot-path` only.** emptied, original kept alongside | the driver dragged 109 MB of GSP firmware into every initramfs |
 | `systemd-tpm2-setup{,-early}` | **`--boot-path` only.** masked, and only with no LUKS and no pcrlock | 4.1 s per boot provisioning a key nothing reads |
+| `/etc/systemd/sleep.conf.d/10-thinkpad-power.conf` | **`--hibernate` only.** `HibernateDelaySec`, `HibernateOnACPower=no` | S3 to RAM, then to disk, then no power |
+| `/etc/systemd/logind.conf.d/10-thinkpad-power-lid.conf` | **`--hibernate` only.** lid and suspend key | the sleep nobody chooses explicitly |
+| `/usr/lib/systemd/system-sleep/thinkpad-power-resume` | **`--hibernate` only.** rescans the bus after a hibernate | firmware re-enumerates the card; the restored image does not know |
 
 It refuses to install if the connected panel is driven by the NVIDIA card,
 because powering that off would black out the screen.
@@ -164,6 +167,44 @@ timer will switch it back off within two minutes.
 
 The card will not be powered off while a program is using it; the tool names
 what is holding it rather than pulling the GPU out from under it.
+
+## Sleep
+
+S3 on this machine costs **1.26 W**, measured over a 63 minute suspend. A full
+74.5 Wh battery is therefore gone in about **59 hours**. A closed lid does not
+survive a long weekend.
+
+What a MacBook does is two things, not one: sleep to RAM, and then after a few
+hours write RAM to disk and cut power entirely. systemd calls that
+`suspend-then-hibernate`, and every prerequisite was already on this machine —
+Omarchy's `omarchy-hibernation-setup` had laid down the swapfile, `resume=` and
+`resume_offset` long ago. The only thing missing was anything asking for it.
+
+```
+./install.sh --hibernate                  RAM for 2 h, then disk
+./install.sh --hibernate-after=90min      a different delay
+```
+
+| | |
+|---|---|
+| first 2 h | S3 at 1.26 W — instant wake, costs ~2.5 Wh |
+| after that | hibernated: RTC only, days to weeks |
+| on AC | plain suspend; `HibernateOnACPower=no`, against systemd's default of yes |
+
+Opt-in, like `--boot-path`, and for a related reason: a hibernate that fails to
+resume drops you at a fresh boot with the session gone. `--uninstall` puts the
+lid back to plain suspend.
+
+**Resuming from hibernate is a full power cycle, so it costs a whole boot** —
+which is why the boot-path work comes first. It is also why the discrete card
+needs handling: firmware enumerates it again on the way up, but the restored
+image was taken with it off the bus, so the kernel has no record of it, never
+touches it, and it sits in D0 drawing what this tool exists to save. Nothing
+would report that — `thinkpad-power auto` sees no device and says "already off
+the bus". The resume hook rescans first, so the policy has something to remove.
+It fires only on the hibernate half, keyed on `SYSTEMD_SLEEP_ACTION`: on an
+ordinary S3 resume the card is correctly absent and a rescan would bring it
+back only to take it away again, on every resume.
 
 ## Wake
 

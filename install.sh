@@ -4,6 +4,8 @@
 #
 #   ./install.sh              install (or re-install, idempotently)
 #   ./install.sh --boot-path  also trim the boot path (opt-in, see README)
+#   ./install.sh --hibernate  lid sleeps to RAM, then hibernates (opt-in)
+#   ./install.sh --hibernate-after=90min   the same, with a different delay
 #   ./install.sh --uninstall  put everything back, boot path included
 #
 # Run it as your normal user; it calls sudo for the parts that need root.
@@ -103,6 +105,16 @@ uninstall() {
   sudo udevadm control --reload-rules
   ok "root files removed"
 
+  sudo rm -f /etc/systemd/sleep.conf.d/10-thinkpad-power.conf
+  sudo rm -f /etc/systemd/logind.conf.d/10-thinkpad-power-lid.conf
+  sudo rm -f /usr/lib/systemd/system-sleep/thinkpad-power-resume
+  sudo systemctl reload systemd-logind >/dev/null 2>&1
+  ok "sleep policy reverted (lid goes back to plain suspend)"
+  if [[ -f $MENU_FILE ]] && grep -q '"system.suspend"' "$MENU_FILE"; then
+    sed -i '/"system.suspend"/d' "$MENU_FILE"
+    ok "menu Suspend entry restored to Omarchy's own"
+  fi
+
   # Put the boot path back. Both of these change what boots, so restore them
   # before the rebuild rather than leaving a half-reverted machine.
   local rebuild=0
@@ -147,13 +159,29 @@ uninstall() {
 # of this tool that changes what boots, and the rest is worth having without
 # it. --uninstall reverts it whether or not this run asked for it.
 BOOT_PATH=0
+HIBERNATE=0
+HIBERNATE_DELAY=2h
+HIBERNATE_DELAY_HOURS=2
 DO_UNINSTALL=0
 for arg in "$@"; do
   case $arg in
   --uninstall) DO_UNINSTALL=1 ;;
   --boot-path) BOOT_PATH=1 ;;
+  --hibernate) HIBERNATE=1 ;;
+  --hibernate-after=*)
+    HIBERNATE=1
+    HIBERNATE_DELAY=${arg#*=}
+    [[ $HIBERNATE_DELAY =~ ^[0-9]+(h|min|m|s)$ ]] ||
+      die "--hibernate-after wants something like 2h, 90min or 30m, not '$HIBERNATE_DELAY'"
+    HIBERNATE_DELAY_HOURS=$(awk -v d="$HIBERNATE_DELAY" 'BEGIN{
+      n = d + 0
+      if (d ~ /h$/)   print n
+      else if (d ~ /(min|m)$/) printf "%.4f", n / 60
+      else            printf "%.5f", n / 3600
+    }')
+    ;;
   -h | --help)
-    sed -n '3,9p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,2\} \?//'
+    sed -n '3,11p' "${BASH_SOURCE[0]}" | sed 's/^#\{1,2\} \?//'
     exit 0
     ;;
   *) die "unknown option: $arg (try --help)" ;;
@@ -396,6 +424,99 @@ fi
 # initialization error: unsupported firmware version" — so fingerprint unlock
 # did not work at all on resume. It did cut the PAM retries from 4 to 1, which
 # is the wrong trade at any price.
+
+# ---------------------------------------------------------------------- sleep
+
+step "Sleep"
+
+# Measured here: S3 costs 1.26 W, so a full battery is gone in about 59 h. What
+# a MacBook actually does is two things — sleep to RAM, then after a few hours
+# write RAM to disk and cut power. systemd calls that suspend-then-hibernate.
+#
+# Everything it needs was already in place on this machine (Omarchy sets up the
+# swapfile, resume= and resume_offset); what was missing is anything asking for
+# it. The lid was going to plain suspend and staying there until flat.
+SLEEP_CONF=/etc/systemd/sleep.conf.d/10-thinkpad-power.conf
+LOGIND_CONF=/etc/systemd/logind.conf.d/10-thinkpad-power-lid.conf
+SLEEP_HOOK=/usr/lib/systemd/system-sleep/thinkpad-power-resume
+
+if ((HIBERNATE == 0)); then
+  if [[ -f $SLEEP_CONF ]]; then
+    info "suspend-then-hibernate already set up — ./install.sh --uninstall reverts it"
+  else
+    info "lid still goes to plain suspend. ./install.sh --hibernate makes it"
+    info "suspend-then-hibernate: RAM for ${HIBERNATE_DELAY:-2h}, then disk, then no power"
+  fi
+else
+  # Refuse rather than write a config that cannot work. A machine that suspends
+  # and then fails to hibernate stays in S3 and drains, which looks like the
+  # feature silently not working.
+  hibernate_ready=1
+  swapon --show=NAME --noheadings 2>/dev/null | grep -q . ||
+    { warn "no swap is active; hibernation has nowhere to write"; hibernate_ready=0; }
+  grep -q 'resume=' /proc/cmdline ||
+    { warn "no resume= on the kernel command line; run omarchy-hibernation-setup"; hibernate_ready=0; }
+  [[ -f /sys/power/image_size ]] ||
+    { warn "this kernel has no hibernation support"; hibernate_ready=0; }
+
+  if ((hibernate_ready)); then
+    run sudo mkdir -p /etc/systemd/sleep.conf.d /etc/systemd/logind.conf.d
+    sudo tee "$SLEEP_CONF" >/dev/null <<SLEEPCONF
+# thinkpad-power. Sleep to RAM first, then hibernate and cut power.
+[Sleep]
+# How long to hold in S3 before writing the image out. At the 1.26 W measured
+# on this machine that window costs about $(awk -v h="${HIBERNATE_DELAY_HOURS:-2}" 'BEGIN{printf "%.1f", 1.26*h}') Wh; after it, draw is
+# the RTC and nothing else.
+HibernateDelaySec=${HIBERNATE_DELAY:-2h}
+
+# On mains there is nothing to save and a resume costs a full POST, so plugged
+# in this stays an ordinary suspend. systemd's default here is yes, which would
+# hibernate a machine sitting on a charger.
+HibernateOnACPower=no
+SLEEPCONF
+    grep -q '^HibernateDelaySec=' "$SLEEP_CONF" 2>/dev/null ||
+      die "could not write $SLEEP_CONF"
+    ok "sleep.conf.d: hibernate after ${HIBERNATE_DELAY:-2h} on battery, never on AC"
+
+    sudo tee "$LOGIND_CONF" >/dev/null <<'LOGINDCONF'
+# thinkpad-power. Closing the lid is the one sleep the user does not choose
+# explicitly, so it is the one that has to do the right thing on its own.
+[Login]
+HandleLidSwitch=suspend-then-hibernate
+HandleSuspendKey=suspend-then-hibernate
+LOGINDCONF
+    grep -q 'suspend-then-hibernate' "$LOGIND_CONF" 2>/dev/null ||
+      die "could not write $LOGIND_CONF"
+    ok "logind: lid close and the suspend key use it too"
+
+    run sudo install -Dm755 "$HERE/systemd/thinkpad-power-resume" "$SLEEP_HOOK"
+    ok "resume hook (puts the discrete card back on the bus after a hibernate)"
+
+    run sudo systemctl daemon-reload
+    sudo systemctl reload systemd-logind >/dev/null 2>&1 ||
+      warn "could not reload systemd-logind; the lid setting applies at next login"
+
+    # Omarchy's menu calls systemctl suspend directly, which bypasses the lid
+    # policy entirely. Same override mechanism as the GPU entry above.
+    if [[ -f $MENU_FILE ]] && ! grep -q '"system.suspend"' "$MENU_FILE"; then
+      tmp=$(mktemp)
+      awk '
+        /^\}/ && !done {
+          print "  \"system.suspend\": {\"icon\":\"󰒲\",\"label\":\"Suspend\",\"action\":\"systemctl suspend-then-hibernate\"},"
+          done = 1
+        }
+        { print }
+      ' "$MENU_FILE" >"$tmp" && cat "$tmp" >"$MENU_FILE"
+      rm -f "$tmp"
+      grep -q '"system.suspend"' "$MENU_FILE" &&
+        ok "menu Suspend entry now uses suspend-then-hibernate too"
+    else
+      info "menu Suspend entry already overridden"
+    fi
+  else
+    warn "suspend-then-hibernate not configured; fix the above and re-run"
+  fi
+fi
 
 # --------------------------------------------------------------- user config
 

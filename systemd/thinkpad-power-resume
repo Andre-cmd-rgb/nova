@@ -1,0 +1,25 @@
+#!/bin/sh
+# Installed at /usr/lib/systemd/system-sleep/. Runs for every sleep operation;
+# acts on exactly one.
+#
+# A hibernate is a full power cycle. Firmware enumerates the discrete card
+# again on the way back up, but the image being restored was taken with the
+# card off the bus, so the restored kernel has no record of it and will never
+# touch it. It sits in D0, drawing what this tool exists to save, and nothing
+# reports it: `thinkpad-power auto` sees no device and says "already off the
+# bus". `post-hibernate` rescans first, so the policy has something to remove.
+#
+# $2 is the operation that was requested and SYSTEMD_SLEEP_ACTION is the one
+# actually being performed — they differ for suspend-then-hibernate, where the
+# machine may have woken from either half. Only the hibernate half power-cycles,
+# so only that half needs this. "suspend-after-failed-hibernate" means the
+# hibernate did not happen, so it is deliberately not matched here.
+#
+# systemd freezes user.slice while these run, so this must not talk to any user
+# service and must not block: thinkpad-power takes a bounded flock and returns.
+
+[ "$1" = post ] || exit 0
+[ "$SYSTEMD_SLEEP_ACTION" = hibernate ] || exit 0
+
+[ -x /usr/local/bin/thinkpad-power ] || exit 0
+/usr/local/bin/thinkpad-power post-hibernate || exit 0

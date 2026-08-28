@@ -56,6 +56,7 @@ usage: thinkpad-power <command> [args]
   run <cmd> [args]    run one program on the discrete GPU
 
   auto                apply the policy for the current power source
+  post-hibernate      rescan the bus, then apply the policy (resume hook)
   ac, battery         force one side of the policy
   gpu-auto            the GPU half of the policy only
   gpu-on, gpu-off     put the discrete GPU on or off the PCI bus
@@ -582,6 +583,30 @@ gpu-auto)
   if on_ac; then gpu_on; else gpu_off; fi
   ;;
 auto)
+  if on_ac; then "$0" ac; else "$0" battery; fi
+  ;;
+post-hibernate)
+  # A hibernate is a full power cycle, so firmware enumerated the discrete card
+  # again on the way back up — but the restored image was taken with it off the
+  # bus, so the kernel has no record of it, will never touch it, and it sits in
+  # D0 drawing exactly what this tool exists to save. Nothing else notices:
+  # `gpu_off` sees no device and reports "already off the bus", which is how
+  # this would have been silent.
+  #
+  # Rescanning puts it back in the kernel's list so the policy can remove it
+  # properly. The modprobe block lives in /run, which is tmpfs and therefore
+  # part of the hibernation image, so it is still in force here — the rescan
+  # cannot pull the driver in, which is the hazard fact 10 is about.
+  #
+  # Only after a hibernate. On an ordinary S3 resume the card is correctly
+  # absent, and rescanning would bring it back only to take it away again, on
+  # every single resume.
+  if ! gpu_present; then
+    note 'rescanning the PCI bus after hibernate'
+    echo 1 >/sys/bus/pci/rescan 2>/dev/null ||
+      log 'warning: PCI rescan failed; the discrete card may be left powered'
+    command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=5 >/dev/null 2>&1
+  fi
   if on_ac; then "$0" ac; else "$0" battery; fi
   ;;
 gpu-on) gpu_on ;;
