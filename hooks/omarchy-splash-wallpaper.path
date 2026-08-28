@@ -1,0 +1,14 @@
+[Unit]
+Description=Watch the Omarchy wallpaper and re-theme the boot splash
+Documentation=https://github.com/omarchy-plugins/omarchy-boot-theme
+
+[Path]
+# The directory, not the symlink inside it. `omarchy-theme-bg-set` swaps the
+# background with `ln -nsf`, and an inotify watch on a symlink follows it to
+# its target — so watching current/background would report changes to the
+# image file and miss every change of which image it is.
+PathChanged=@USER_STATE@/current
+Unit=omarchy-splash-wallpaper.service
+
+[Install]
+WantedBy=paths.target

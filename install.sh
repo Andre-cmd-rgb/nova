@@ -2,9 +2,9 @@
 #
 # Install omarchy-boot-theme.
 #
-#   ./install.sh              install, and hook it to theme changes
+#   ./install.sh              install, and hook it to theme and wallpaper changes
 #   ./install.sh --no-hook    install the commands only
-#   ./install.sh --uninstall  remove both, and restore limine.conf
+#   ./install.sh --uninstall  remove everything, and restore limine.conf
 #
 # Run as your normal user. The commands themselves call sudo when they run.
 
@@ -12,8 +12,14 @@ set -uo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BIN=${XDG_BIN_HOME:-$HOME/.local/bin}
+# The two halves that run as root live here instead. A boot hook and a systemd
+# unit both invoke them as root, and root executing a file its owner can
+# rewrite hands root to anything running as that user.
+SBIN=/usr/local/bin
 HOOK_DIR=$HOME/.config/omarchy/hooks/theme-set.d
 BOOT_HOOK_DIR=/etc/boot/hooks/post.d
+UNIT_DIR=/etc/systemd/system
+STATE=${OMARCHY_STATE:-$HOME/.local/state/omarchy}
 
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 info() { printf '  \033[2m·\033[0m %s\n' "$*"; }
@@ -40,10 +46,37 @@ done
 
 if ((UNINSTALL)); then
   step "Removing omarchy-boot-theme"
+  sudo systemctl disable --now omarchy-splash-wallpaper.path 2>/dev/null
+  sudo rm -f "$UNIT_DIR/omarchy-splash-wallpaper.path" \
+    "$UNIT_DIR/omarchy-splash-wallpaper.service" \
+    "$UNIT_DIR/plymouth-quit.service.d/omarchy-boot-theme.conf"
+  sudo rmdir "$UNIT_DIR/plymouth-quit.service.d" 2>/dev/null
+  sudo systemctl daemon-reload
   rm -f "$BIN/omarchy-boot-theme" "$BIN/omarchy-limine-theme"
+  sudo rm -f "$SBIN/omarchy-limine-theme" "$SBIN/omarchy-splash-wallpaper"
   rm -f "$HOOK_DIR/omarchy-boot-theme"
   sudo rm -f "$BOOT_HOOK_DIR/50-omarchy-boot-theme"
-  ok "commands and hooks removed"
+  sudo rm -rf /var/lib/omarchy-boot-theme
+  ok "commands, hooks and units removed"
+
+  # The splash edits outlive the tool that made them, and nothing else knows
+  # what they were. Take the block back out and drop the wallpaper, so what is
+  # left is Omarchy's own theme with its own logo waiting for a rebuild.
+  PLY=/usr/share/plymouth/themes/omarchy
+  # mktemp, not /tmp/name.$$: a predictable path in a world-writable directory
+  # is a file anyone on the machine can have pointed somewhere else first.
+  tmp=$(mktemp) || die 'mktemp failed'
+  trap 'rm -f "$tmp"' EXIT
+  if sudo test -f "$PLY/omarchy.script"; then
+    sudo awk '
+      /^# >>> omarchy-boot-theme >>>$/ { skip = 1; next }
+      /^# <<< omarchy-boot-theme <<<$/ { skip = 0; next }
+      !skip { print }
+    ' "$PLY/omarchy.script" >"$tmp" &&
+      sudo cp "$tmp" "$PLY/omarchy.script" &&
+      ok "splash block removed from omarchy.script"
+  fi
+  sudo rm -f "$PLY/background.png" /usr/share/sddm/themes/omarchy/background.png
   # The themed block in limine.conf outlives the tool that wrote it, and
   # nothing else knows how to remove it.
   if sudo test -f /boot/limine.conf.omarchy-limine-theme.bak; then
@@ -52,39 +85,89 @@ if ((UNINSTALL)); then
   else
     info "no limine.conf backup found; the themed block is still in place"
   fi
-  printf '\nDone. The Plymouth theme is unchanged — pick another with\n'
-  printf 'Super+Space -> Style -> Unlock, or omarchy-plymouth-reset.\n'
+  cat <<'NEXT'
+
+Done. The splash still has the wallpaper on it — that lives in the initramfs,
+and putting Omarchy's own back means a rebuild:
+
+  omarchy-plymouth-set-by-theme "$(cat ~/.local/state/omarchy/current/theme.name)"
+NEXT
   exit 0
 fi
 
 step "Checking"
 command -v omarchy-theme-dir >/dev/null 2>&1 || die 'this is not an Omarchy system'
 command -v magick >/dev/null 2>&1 ||
-  warn 'ImageMagick is missing; omarchy-plymouth-set needs it (omarchy pkg add imagemagick)'
+  die 'ImageMagick is missing, and the wallpaper has to be rendered (omarchy pkg add imagemagick)'
 [[ -r /boot/limine.conf ]] || sudo test -r /boot/limine.conf ||
   warn '/boot/limine.conf not found; is this machine on Limine?'
+[[ -r $STATE/current/background ]] ||
+  warn "no current background at $STATE/current/background; the splash will keep Omarchy's logo"
 ok "Omarchy present"
 
 step "Installing"
 mkdir -p "$BIN" || die "could not create $BIN"
-for cmd in omarchy-boot-theme omarchy-limine-theme; do
-  install -m 755 "$HERE/bin/$cmd" "$BIN/$cmd" || die "could not install $cmd"
-  ok "$BIN/$cmd"
+install -m 755 "$HERE/bin/omarchy-boot-theme" "$BIN/omarchy-boot-theme" ||
+  die 'could not install omarchy-boot-theme'
+ok "$BIN/omarchy-boot-theme"
+
+# Earlier versions of this installed the root-run half into ~/.local/bin. Take
+# it back out, so there is no stale copy on PATH ahead of the real one.
+if [[ -e $BIN/omarchy-limine-theme ]]; then
+  rm -f "$BIN/omarchy-limine-theme" &&
+    info "removed the old $BIN/omarchy-limine-theme (it moved to $SBIN)"
+fi
+
+for cmd in omarchy-limine-theme omarchy-splash-wallpaper; do
+  sudo install -o root -g root -m 755 "$HERE/bin/$cmd" "$SBIN/$cmd" ||
+    die "could not install $cmd"
+  ok "$SBIN/$cmd (root-owned)"
 done
+
 case ":$PATH:" in
 *":$BIN:"*) ;;
 *) warn "$BIN is not on your PATH" ;;
 esac
+
+# Not part of --no-hook: this is not a trigger, it is the boot looking right.
+# A plain "plymouth quit" blanks the screen, and SDDM only starts afterwards, so
+# the splash disappears seconds before the login screen paints. The drop-in
+# leaves the last frame up across the handoff; the file itself has the reasoning.
+if systemctl cat plymouth-quit.service >/dev/null 2>&1; then
+  sudo install -d -m 755 "$UNIT_DIR/plymouth-quit.service.d" &&
+    sudo install -m 644 "$HERE/hooks/plymouth-quit-retain-splash.conf" \
+      "$UNIT_DIR/plymouth-quit.service.d/omarchy-boot-theme.conf" &&
+    sudo systemctl daemon-reload &&
+    ok 'splash now holds until the login screen paints' ||
+    warn 'could not install the plymouth-quit drop-in'
+else
+  info 'no plymouth-quit.service here, skipping the splash handoff'
+fi
 
 if ((HOOK)); then
   mkdir -p "$HOOK_DIR" || die "could not create $HOOK_DIR"
   install -m 755 "$HERE/hooks/omarchy-boot-theme" "$HOOK_DIR/omarchy-boot-theme" ||
     die 'could not install the hook'
   ok "theme-set hook installed"
-  info "every theme change now opens a terminal and rebuilds the initramfs"
-  info "drop --plymouth work with: $HOOK_DIR/omarchy-boot-theme"
+
+  # Nothing in Omarchy runs a hook when the wallpaper changes — omarchy-theme-bg-set
+  # just relinks current/background and tells the shell. So watch the directory.
+  sed -e "s|@USER_STATE@|$STATE|" "$HERE/hooks/omarchy-splash-wallpaper.path" |
+    sudo tee "$UNIT_DIR/omarchy-splash-wallpaper.path" >/dev/null || die 'could not install the path unit'
+  sed -e "s|@USER_HOME@|$HOME|" -e "s|@SPLASH_CMD@|$SBIN/omarchy-splash-wallpaper|" \
+    "$HERE/hooks/omarchy-splash-wallpaper.service" |
+    sudo tee "$UNIT_DIR/omarchy-splash-wallpaper.service" >/dev/null || die 'could not install the service unit'
+  for unit in omarchy-splash-wallpaper.path omarchy-splash-wallpaper.service; do
+    sudo grep -q '@USER_STATE@\|@USER_HOME@\|@SPLASH_CMD@' "$UNIT_DIR/$unit" &&
+      die "placeholders left in $UNIT_DIR/$unit"
+  done
+  sudo systemctl daemon-reload &&
+    sudo systemctl enable --now omarchy-splash-wallpaper.path >/dev/null 2>&1 &&
+    ok "wallpaper watch enabled" ||
+    warn 'could not enable omarchy-splash-wallpaper.path'
+  info "a theme change rebuilds the initramfs twice, a wallpaper change once"
 else
-  info "hook skipped (--no-hook); run omarchy-boot-theme by hand"
+  info "hooks skipped (--no-hook); run omarchy-boot-theme by hand"
 fi
 
 # Anything that regenerates limine.conf rewrites the block this tool writes, so
@@ -92,14 +175,14 @@ fi
 # /etc/boot/hooks/post.d/* after every such regeneration; sort before
 # 90-limine-enroll-config so the file is final before it is hashed.
 if [[ -d $BOOT_HOOK_DIR ]]; then
-  sed -e "s|@USER_STATE@|${OMARCHY_STATE:-$HOME/.local/state/omarchy}|" \
+  sed -e "s|@USER_STATE@|$STATE|" \
     -e "s|@USER_HOME@|$HOME|" \
-    -e "s|@THEME_CMD@|$BIN/omarchy-limine-theme|" \
+    -e "s|@THEME_CMD@|$SBIN/omarchy-limine-theme|" \
     "$HERE/hooks/50-omarchy-boot-theme" |
     sudo tee "$BOOT_HOOK_DIR/50-omarchy-boot-theme" >/dev/null &&
     sudo chmod 755 "$BOOT_HOOK_DIR/50-omarchy-boot-theme" ||
     die 'could not install the limine boot hook'
-  grep -q '@USER_STATE@\|@USER_HOME@\|@THEME_CMD@' "$BOOT_HOOK_DIR/50-omarchy-boot-theme" 2>/dev/null &&
+  sudo grep -q '@USER_STATE@\|@USER_HOME@\|@THEME_CMD@' "$BOOT_HOOK_DIR/50-omarchy-boot-theme" &&
     die "placeholders left in $BOOT_HOOK_DIR/50-omarchy-boot-theme"
   ok "limine boot hook installed (survives kernel updates)"
 else
@@ -113,7 +196,8 @@ Apply it to the current theme now:
   omarchy-boot-theme
 
 That asks for your password, re-colours the Limine menu, and rebuilds the
-initramfs with a themed splash. Both only show at boot, so restart to see them.
+initramfs with the current wallpaper behind the splash. Both only show at boot,
+so restart to see them.
 
 If the boot menu ever looks wrong, the original is at
 /boot/limine.conf.omarchy-limine-theme.bak.

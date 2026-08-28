@@ -2,19 +2,26 @@
 #
 # Put the boot menu and the boot splash on the current Omarchy theme.
 #
-#   omarchy-boot-theme [theme-slug]     both (default: the current theme)
-#   omarchy-boot-theme --limine  [slug] boot menu only, no initramfs rebuild
-#   omarchy-boot-theme --plymouth [slug] splash + login screen only
+#   omarchy-boot-theme [theme-slug]      everything (default: the current theme)
+#   omarchy-boot-theme --limine  [slug]  boot menu only, no initramfs rebuild
+#   omarchy-boot-theme --plymouth [slug] splash and login screen only
+#   omarchy-boot-theme --wallpaper       splash wallpaper only, one rebuild
 #
-# Omarchy themes everything from the login screen inwards, but nothing it
-# ships touches Limine, and it only re-themes Plymouth when you pick an unlock
-# screen by hand. So the first two things you see when the machine starts stay
-# on whatever they were last set to, while everything else follows the theme.
+# Omarchy themes everything from the login screen inwards. It does not theme
+# the boot menu at all — it ships its own Tokyo Night colours in limine.conf
+# and leaves them there on every theme — and it paints the splash a flat colour
+# with the theme's logo on it rather than the wallpaper you picked.
 #
-# Plymouth is the slow half: omarchy-plymouth-set rebuilds the initramfs, which
-# takes about a minute. --limine skips it.
+# Plymouth is the slow half: it lives in the initramfs, so touching it costs a
+# rebuild of about a minute. --limine skips it; --wallpaper does the wallpaper
+# alone, which is one rebuild rather than the two a full run needs.
 
 set -uo pipefail
+
+# The root-run halves live in /usr/local/bin, not ~/.local/bin. A boot hook and
+# a systemd unit both run them as root, and root executing a file the user can
+# rewrite is root for anything running as that user.
+SBIN=/usr/local/bin
 
 die() {
   printf '\033[31mx\033[0m %s\n' "$*" >&2
@@ -24,14 +31,16 @@ step() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 
 DO_LIMINE=1
 DO_PLYMOUTH=1
+DO_WALLPAPER=1
 theme=
 
 for arg in "$@"; do
   case $arg in
-  --limine) DO_PLYMOUTH=0 ;;
+  --limine) DO_PLYMOUTH=0 DO_WALLPAPER=0 ;;
   --plymouth) DO_LIMINE=0 ;;
+  --wallpaper) DO_LIMINE=0 DO_PLYMOUTH=0 ;;
   -h | --help)
-    sed -n '3,8p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    sed -n '3,9p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
     exit 0
     ;;
   -*) die "unknown option: $arg (try --help)" ;;
@@ -51,11 +60,25 @@ dir=$(omarchy-theme-dir "$theme")
 
 printf '\033[1mTheming the boot path from "%s"\033[0m\n' "$theme"
 
+# The wallpaper watch watches current/, and theme.name lives in current/ — so a
+# theme change trips it at the same moment this is running, and Omarchy's
+# omarchy-plymouth-set is not under our lock. Stop the watch for the duration
+# and put it back afterwards; the wallpaper step at the end of this run is what
+# the watch would have done anyway.
+WATCH=omarchy-splash-wallpaper.path
+watch_paused=0
+resume_watch() { ((watch_paused)) && sudo systemctl start "$WATCH" >/dev/null 2>&1; }
+if ((DO_PLYMOUTH || DO_WALLPAPER)) &&
+  systemctl is-active --quiet "$WATCH" 2>/dev/null; then
+  sudo systemctl stop "$WATCH" >/dev/null 2>&1 && watch_paused=1
+  trap resume_watch EXIT
+fi
+
 # Plymouth first. omarchy-plymouth-set rebuilds the initramfs, and that run of
 # limine-mkinitcpio regenerates limine.conf — so colouring the menu before it
 # would be writing into a file that is about to be rewritten.
 if ((DO_PLYMOUTH)); then
-  step "Splash and login screen (Plymouth, SDDM)"
+  step "Splash colours and assets (Plymouth, SDDM)"
   # omarchy-plymouth-set refuses a symlinked logo, so say so rather than
   # letting it fail three steps in with a less obvious message.
   [[ -f $dir/unlock.png ]] ||
@@ -64,14 +87,26 @@ if ((DO_PLYMOUTH)); then
     die "$theme's unlock.png is a symlink, which omarchy-plymouth-set rejects"
   printf '  \033[2m·\033[0m rebuilding the initramfs, this takes about a minute...\n'
   omarchy-plymouth-set-by-theme "$theme" || die 'Plymouth theming failed'
-  printf '  \033[32m✓\033[0m splash and login screen themed\n'
+  printf '  \033[32m✓\033[0m splash colours and assets themed\n'
+fi
+
+# After Plymouth, always: omarchy-plymouth-set rewrites omarchy.script and
+# Main.qml from Omarchy's defaults, which removes the wallpaper and puts the
+# logo back. This is also what fixes the login screen's colours, so it runs
+# even when only the wallpaper is wanted.
+if ((DO_WALLPAPER)); then
+  step "Splash wallpaper"
+  [[ -x $SBIN/omarchy-splash-wallpaper ]] ||
+    die "$SBIN/omarchy-splash-wallpaper is missing — re-run install.sh"
+  sudo "$SBIN/omarchy-splash-wallpaper" --theme "$theme" --home "$HOME" ||
+    die 'splash wallpaper failed'
 fi
 
 if ((DO_LIMINE)); then
   step "Boot menu (Limine)"
-  command -v omarchy-limine-theme >/dev/null 2>&1 ||
-    die 'omarchy-limine-theme is not on PATH'
-  sudo -E "$(command -v omarchy-limine-theme)" "$theme" || die 'Limine theming failed'
+  [[ -x $SBIN/omarchy-limine-theme ]] ||
+    die "$SBIN/omarchy-limine-theme is missing — re-run install.sh"
+  sudo -E "$SBIN/omarchy-limine-theme" "$theme" || die 'Limine theming failed'
 fi
 
 printf '\n\033[1mDone.\033[0m Both are only visible at boot, so the next restart shows them.\n'

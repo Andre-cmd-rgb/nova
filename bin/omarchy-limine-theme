@@ -4,19 +4,37 @@
 #
 #   omarchy-limine-theme [theme-name]     default: the current theme
 #
-# Omarchy themes everything from the login screen inwards, but the boot menu
-# is not its territory: limine-entry-tool owns the /entry blocks in
-# limine.conf and leaves the global options alone. Those globals are where the
-# colours live, so this writes them, between markers, above the first entry.
+# Omarchy ships its own limine.conf (default/limine/limine.conf) with the
+# Tokyo Night palette written into the global options, and a migration installs
+# it to the ESP. limine-entry-tool then owns the /entry blocks below it and
+# leaves those globals alone — so the boot menu is permanently Tokyo Night, on
+# every theme.
+#
+# Limine takes the *first* definition of a duplicated global key and ignores
+# the rest, so it is not enough to add our own colours further down the file:
+# they parse, and then lose. Every global colour option above the first entry
+# is commented out, and ours written in one block, so there is exactly one live
+# definition of each.
 #
 # limine.conf decides whether this machine boots, so: back up first, only ever
-# touch the marked block, and refuse to install a result that lost an entry.
+# touch the marked block and the lines we comment, and refuse to install a
+# result that lost an entry.
 
 set -uo pipefail
 
 CONF=${LIMINE_CONF:-/boot/limine.conf}
 BEGIN='# >>> omarchy-limine-theme >>>'
 END='# <<< omarchy-limine-theme <<<'
+# Prefixed onto a colour option we are superseding, rather than deleting it:
+# the line stays readable, the original value stays recoverable, and a second
+# run no longer matches it as live.
+DISABLED='#omarchy-limine-theme:superseded# '
+
+# Every global option that decides a colour. Both spellings of each -colour-
+# option, because Limine accepts either and Omarchy's own file uses the
+# American one — a key-by-key match that missed the alias would leave a live
+# duplicate above ours, which is the whole bug.
+MANAGED='term_background|term_background_bright|term_foreground|term_foreground_bright|backdrop|term_palette|term_palette_bright|interface_branding_colour|interface_branding_color|interface_help_colour|interface_help_color|interface_help_colour_bright|interface_help_color_bright'
 
 die() {
   printf '\033[31mx\033[0m %s\n' "$*" >&2
@@ -67,6 +85,8 @@ val() {
 bg=$(val background) || die "no usable 'background' in $colors"
 fg=$(val foreground) || die "no usable 'foreground' in $colors"
 accent=$(val accent) || accent=$fg
+bg_bright=$(val darker_background) || bg_bright=$bg
+fg_bright=$(val bright_foreground) || fg_bright=$fg
 
 # The eight palette slots Limine names, in its order: black, red, green,
 # brown, blue, magenta, cyan, gray. Omarchy has no brown or gray, so yellow
@@ -83,14 +103,24 @@ palette=$(pal darker_background red green yellow blue magenta cyan muted) || pal
 bright=$(pal muted bright_red bright_green bright_yellow bright_blue \
   bright_magenta bright_cyan foreground) || bright=
 
+# Every colour Omarchy's own file sets is set again here. Commenting one out
+# without replacing it would not leave it unthemed, it would leave it on
+# Limine's built-in default — green help text on a white menu.
 block=$(
   printf '%s\n' "$BEGIN"
   printf '# Written by omarchy-limine-theme from the "%s" theme. Edits are lost\n' "$theme"
   printf '# on the next run; change the theme instead.\n'
-  printf 'term_background: 00%s\n' "$bg"
+  # Six digits, not eight. term_background is TTRRGGBB where TT is
+  # transparency, and Omarchy's working file writes six — so six, rather than
+  # guessing which end of TT means opaque.
+  printf 'term_background: %s\n' "$bg"
+  printf 'term_background_bright: %s\n' "$bg_bright"
   printf 'term_foreground: %s\n' "$fg"
+  printf 'term_foreground_bright: %s\n' "$fg_bright"
   printf 'backdrop: %s\n' "$bg"
   printf 'interface_branding_colour: %s\n' "$accent"
+  printf 'interface_help_colour: %s\n' "$accent"
+  printf 'interface_help_colour_bright: %s\n' "$accent"
   [[ -n $palette ]] && printf 'term_palette: %s\n' "$palette"
   [[ -n $bright ]] && printf 'term_palette_bright: %s\n' "$bright"
   printf '%s\n' "$END"
@@ -104,13 +134,17 @@ before=$(grep -c '^/' "$CONF")
 tmp=$(mktemp) || die 'mktemp failed'
 trap 'rm -f "$tmp"' EXIT
 
-# Drop any previous block, then put the new one above the first entry. Global
-# options must precede the first '/' line or they belong to that entry instead.
-awk -v begin="$BEGIN" -v end="$END" -v block="$block" '
+# Drop any previous block, comment out every colour option that would win
+# against ours, then put the new one above the first entry. Both the
+# commenting and the insert stop at the first '/': past that point an option
+# belongs to an entry, and neither superseding nor adding one is our business.
+awk -v begin="$BEGIN" -v end="$END" -v block="$block" \
+  -v keys="$MANAGED" -v tag="$DISABLED" '
   $0 == begin { skip = 1; next }
   $0 == end   { skip = 0; next }
   skip        { next }
   !done && /^\// { print block; done = 1 }
+  !done && $0 ~ "^[ \t]*(" keys ")[ \t]*:" { print tag $0; next }
   { print }
   END { if (!done) print block }
 ' "$CONF" >"$tmp" || die 'rewrite failed'
@@ -120,8 +154,33 @@ after=$(grep -c '^/' "$tmp")
   die "rewrite changed the entry count ($before -> $after) — not installing it"
 grep -q "^$BEGIN\$" "$tmp" || die 'the themed block did not land — not installing it'
 
+# The bug this file exists to fix was a second, losing definition of colours
+# that were already set above. So prove there is exactly one live definition of
+# each option in the globals, rather than trusting the awk to have done it.
+# Grouped, not one key per line: interface_branding_color and
+# interface_branding_colour are two spellings of one option, and one of each
+# would pass a per-key count while still leaving Limine a duplicate to
+# arbitrate.
+OPTIONS=(
+  term_background term_background_bright
+  term_foreground term_foreground_bright
+  backdrop term_palette term_palette_bright
+  'interface_branding_colour|interface_branding_color'
+  'interface_help_colour|interface_help_color'
+  'interface_help_colour_bright|interface_help_color_bright'
+)
+globals=$(awk '/^\// { exit } { print }' "$tmp")
+for option in "${OPTIONS[@]}"; do
+  n=$(printf '%s\n' "$globals" | grep -cE "^[[:blank:]]*($option)[[:blank:]]*:")
+  ((n <= 1)) ||
+    die "$option is still defined $n times in the globals — not installing it"
+done
+
 backup=$CONF.omarchy-limine-theme.bak
 [[ -f $backup ]] || cp -a "$CONF" "$backup"
 cat "$tmp" >"$CONF" || die "could not write $CONF"
 
+superseded=$(grep -c "^$DISABLED" "$CONF")
 ok "Limine themed from \"$theme\" (bg #$bg, fg #$fg, accent #$accent)"
+((superseded == 0)) ||
+  printf '  \033[2m·\033[0m superseded %s colour option(s) that were set above it\n' "$superseded"
