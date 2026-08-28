@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# limine-entry-tool boot hook, installed at /etc/boot/hooks/post.d/.
+#
+# Anything that regenerates limine.conf — a kernel update, mkinitcpio, a
+# snapshot sync — rewrites the file this tool colours. Re-apply the colours
+# there and then, so the boot menu does not quietly revert to Limine's defaults
+# the next time a kernel lands.
+#
+# The number matters. 90-limine-enroll-config enrolls a BLAKE2B hash of
+# limine.conf into the Limine binary, and under Secure Boot a mismatch is a
+# panic. Sorting before it means the file is final before it is hashed.
+#
+# Runs as root, so it cannot read $HOME: the owning user's state path is
+# written in at install time.
+
+STATE=@USER_STATE@
+THEME_CMD=@THEME_CMD@
+
+[[ -x $THEME_CMD ]] || exit 0
+theme=$(cat "$STATE/current/theme.name" 2>/dev/null) || exit 0
+[[ -n $theme ]] || exit 0
+
+# Never fail a kernel update over a boot menu colour. The tool refuses rather
+# than half-writes, so the worst case here is an unthemed menu.
+"$THEME_CMD" "$theme" || echo "omarchy-boot-theme: could not re-theme limine.conf" >&2
+exit 0

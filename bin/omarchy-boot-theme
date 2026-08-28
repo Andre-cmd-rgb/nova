@@ -51,13 +51,9 @@ dir=$(omarchy-theme-dir "$theme")
 
 printf '\033[1mTheming the boot path from "%s"\033[0m\n' "$theme"
 
-if ((DO_LIMINE)); then
-  step "Boot menu (Limine)"
-  command -v omarchy-limine-theme >/dev/null 2>&1 ||
-    die 'omarchy-limine-theme is not on PATH'
-  sudo -E "$(command -v omarchy-limine-theme)" "$theme" || die 'Limine theming failed'
-fi
-
+# Plymouth first. omarchy-plymouth-set rebuilds the initramfs, and that run of
+# limine-mkinitcpio regenerates limine.conf — so colouring the menu before it
+# would be writing into a file that is about to be rewritten.
 if ((DO_PLYMOUTH)); then
   step "Splash and login screen (Plymouth, SDDM)"
   # omarchy-plymouth-set refuses a symlinked logo, so say so rather than
@@ -69,6 +65,13 @@ if ((DO_PLYMOUTH)); then
   printf '  \033[2m·\033[0m rebuilding the initramfs, this takes about a minute...\n'
   omarchy-plymouth-set-by-theme "$theme" || die 'Plymouth theming failed'
   printf '  \033[32m✓\033[0m splash and login screen themed\n'
+fi
+
+if ((DO_LIMINE)); then
+  step "Boot menu (Limine)"
+  command -v omarchy-limine-theme >/dev/null 2>&1 ||
+    die 'omarchy-limine-theme is not on PATH'
+  sudo -E "$(command -v omarchy-limine-theme)" "$theme" || die 'Limine theming failed'
 fi
 
 printf '\n\033[1mDone.\033[0m Both are only visible at boot, so the next restart shows them.\n'

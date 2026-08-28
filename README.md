@@ -60,6 +60,7 @@ Neither half changes anything you can see right now. Restart to see them.
 | `/usr/share/plymouth/themes/omarchy/` | background, logo and asset colours (via `omarchy-plymouth-set`) |
 | `/usr/share/sddm/themes/omarchy/` | the same colours and logo, so boot and login agree |
 | `~/.config/omarchy/hooks/theme-set.d/` | the hook that re-runs this on a theme change |
+| `/etc/boot/hooks/post.d/50-omarchy-boot-theme` | re-applies the menu colours whenever `limine.conf` is regenerated |
 
 The Plymouth and SDDM halves are entirely Omarchy's own
 `omarchy-plymouth-set-by-theme`; this only calls it at the right moment. The
@@ -69,6 +70,25 @@ Colours come from the theme's `colors.toml`: `background` and `foreground` for
 the terminal and backdrop, `accent` for the branding, and the six ANSI colours
 for `term_palette`. A theme missing `background` or `foreground` is refused
 rather than half-applied.
+
+## Why two hooks
+
+The `theme-set` hook covers you changing the theme. The Limine one covers
+everything that rewrites `limine.conf` behind your back — a kernel update,
+`mkinitcpio`, a snapshot sync — any of which would otherwise drop the colour
+block and quietly revert the boot menu. `limine-entry-tool` runs
+`/etc/boot/hooks/post.d/*` after each such regeneration.
+
+The number in `50-omarchy-boot-theme` is deliberate. `90-limine-enroll-config`
+enrols a BLAKE2B hash of `limine.conf` into the Limine binary, and **under
+Secure Boot a mismatch is a panic**. Sorting before it means the file is final
+before it is hashed. Nothing enrols by default (`ENABLE_ENROLL_LIMINE_CONFIG`
+is `no`), so this costs nothing today — it is what stops the tool becoming a
+boot failure the day someone turns Secure Boot on.
+
+For the same reason `omarchy-boot-theme` does Plymouth *first*: that half
+rebuilds the initramfs, and that run regenerates `limine.conf`. Colouring the
+menu first would be writing into a file about to be rewritten.
 
 ## Safety
 

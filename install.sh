@@ -13,6 +13,7 @@ set -uo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 BIN=${XDG_BIN_HOME:-$HOME/.local/bin}
 HOOK_DIR=$HOME/.config/omarchy/hooks/theme-set.d
+BOOT_HOOK_DIR=/etc/boot/hooks/post.d
 
 ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 info() { printf '  \033[2m·\033[0m %s\n' "$*"; }
@@ -41,7 +42,8 @@ if ((UNINSTALL)); then
   step "Removing omarchy-boot-theme"
   rm -f "$BIN/omarchy-boot-theme" "$BIN/omarchy-limine-theme"
   rm -f "$HOOK_DIR/omarchy-boot-theme"
-  ok "commands and hook removed"
+  sudo rm -f "$BOOT_HOOK_DIR/50-omarchy-boot-theme"
+  ok "commands and hooks removed"
   # The themed block in limine.conf outlives the tool that wrote it, and
   # nothing else knows how to remove it.
   if sudo test -f /boot/limine.conf.omarchy-limine-theme.bak; then
@@ -83,6 +85,24 @@ if ((HOOK)); then
   info "drop --plymouth work with: $HOOK_DIR/omarchy-boot-theme"
 else
   info "hook skipped (--no-hook); run omarchy-boot-theme by hand"
+fi
+
+# Anything that regenerates limine.conf rewrites the block this tool writes, so
+# a kernel update would quietly revert the boot menu. limine-entry-tool runs
+# /etc/boot/hooks/post.d/* after every such regeneration; sort before
+# 90-limine-enroll-config so the file is final before it is hashed.
+if [[ -d $BOOT_HOOK_DIR ]]; then
+  sed -e "s|@USER_STATE@|${OMARCHY_STATE:-$HOME/.local/state/omarchy}|" \
+    -e "s|@THEME_CMD@|$BIN/omarchy-limine-theme|" \
+    "$HERE/hooks/50-omarchy-boot-theme" |
+    sudo tee "$BOOT_HOOK_DIR/50-omarchy-boot-theme" >/dev/null &&
+    sudo chmod 755 "$BOOT_HOOK_DIR/50-omarchy-boot-theme" ||
+    die 'could not install the limine boot hook'
+  grep -q '@USER_STATE@\|@THEME_CMD@' "$BOOT_HOOK_DIR/50-omarchy-boot-theme" 2>/dev/null &&
+    die "placeholders left in $BOOT_HOOK_DIR/50-omarchy-boot-theme"
+  ok "limine boot hook installed (survives kernel updates)"
+else
+  warn "$BOOT_HOOK_DIR does not exist; the boot menu will revert on kernel updates"
 fi
 
 cat <<'NEXT'
