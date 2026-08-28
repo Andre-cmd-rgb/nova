@@ -250,15 +250,22 @@ Item {
           width: parent.width
           implicitHeight: Style.space(160)
 
-          readonly property var values: root.weekly
-            ? root.days.map(function (day) { return Number(day.seconds || 0) })
-            : root.hours.map(function (value) { return Number(value || 0) })
-          readonly property int columns: values.length
-          readonly property real peak: {
-            var max = 1
-            for (var i = 0; i < values.length; i++) max = Math.max(max, values[i])
-            return max
+          // The columns and the scale they are drawn against come out of one
+          // binding, deliberately. Held apart, they are two bindings over the
+          // same data with no guaranteed order between them: the moment the
+          // first reading arrives, a column can be re-evaluated against the
+          // scale of the empty chart it replaces — a bar hundreds of times the
+          // height of the chart, over the header and out of the window, until
+          // the scale catches up a frame later.
+          readonly property var chart: {
+            var values = root.weekly
+              ? root.days.map(function (day) { return Number(day.seconds || 0) })
+              : root.hours.map(function (value) { return Number(value || 0) })
+            var peak = 1
+            for (var i = 0; i < values.length; i++) peak = Math.max(peak, values[i])
+            return { values: values, peak: peak }
           }
+          readonly property int columns: chart.values.length
           readonly property real gap: root.weekly ? Style.space(10) : Style.space(3)
           readonly property real columnWidth: columns > 0
             ? Math.max(1, (width - gap * (columns - 1)) / columns)
@@ -281,7 +288,7 @@ Item {
             visible: chartArea.hoveredIndex >= 0 && chartArea.hoveredIndex < chartArea.columns
             text: visible
               ? chartArea.columnLabel(chartArea.hoveredIndex) + " · "
-                + root.formatDuration(chartArea.values[chartArea.hoveredIndex])
+                + root.formatDuration(chartArea.chart.values[chartArea.hoveredIndex])
               : ""
             color: Color.foreground
             opacity: 0.7
@@ -304,7 +311,11 @@ Item {
               delegate: Item {
                 id: column
                 required property int index
-                readonly property real value: chartArea.values[index] || 0
+                readonly property real value: chartArea.chart.values[index] || 0
+                // A share of the track, never more than all of it.
+                readonly property real fill: value > 0
+                  ? Math.min(1, value / chartArea.chart.peak)
+                  : 0
                 readonly property bool isNow: root.weekly
                   ? index === chartArea.columns - 1
                   : index === new Date().getHours()
@@ -325,8 +336,8 @@ Item {
                   anchors.left: parent.left
                   anchors.right: parent.right
                   anchors.bottom: parent.bottom
-                  height: column.value > 0
-                    ? Math.max(Style.space(2), parent.height * (column.value / chartArea.peak))
+                  height: column.fill > 0
+                    ? Math.min(parent.height, Math.max(Style.space(2), parent.height * column.fill))
                     : 0
                   radius: Style.cornerRadius > 0 ? Style.space(3) : 0
                   color: column.isNow ? Color.accent : Color.foreground
