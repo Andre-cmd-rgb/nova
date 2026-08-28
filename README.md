@@ -103,6 +103,35 @@ every trip to the kettle would bill three minutes to whatever was on screen.
 An idle inhibitor counts as being here: a full-screen video keeps counting,
 because watching it is time spent at the machine.
 
+## What the apps are called
+
+A window only tells the shell its application id — `org.gnome.Nautilus`,
+`steam_app_387990`, `xdg-desktop-portal-gtk` — so the id is looked up before
+anything is shown:
+
+| Id | Shown as | From |
+|---|---|---|
+| `org.gnome.Nautilus` | Files | its desktop entry |
+| `google-chrome` | Google Chrome | its desktop entry |
+| `steam_app_387990` | Scrap Mechanic | Steam's own manifest for the game |
+| `chrome-youtube.com__-Default` | YouTube | the desktop entry of the web app it opens, or failing that its domain |
+| `xdg-desktop-portal-gtk` | System Dialog | a built-in rule — this is every file chooser and screen-share prompt |
+| anything unknown | `Foo Bar` from `foo-bar` | a guess at the id |
+
+`screentime names` lists every id in your history next to the name it is shown
+under. When one of them is wrong or unhelpful, pin your own:
+
+```bash
+screentime names
+screentime name hyperwriter-shot "Hyperwriter (screenshot)"
+screentime name hyperwriter-shot --reset      # back to the detected name
+```
+
+Pinned names live in `~/.config/omarchy-screentime/names` as
+`app-id=Display Name`, one per line, and are yours to edit directly. They
+rename what you see; the history is still keyed by the app id, so pinning,
+renaming and resetting never touch the numbers.
+
 ## CLI
 
 ```
@@ -114,6 +143,8 @@ screentime open                open the window
 
 screentime config [key]        show settings
 screentime set <key> <value>   change one
+screentime names               every app id and the name it is shown under
+screentime name <id> [name]    show that name, or pin your own
 screentime ignore <app-id>     never record an app again
 screentime unignore <app-id>   undo that
 screentime forget <app-id>     delete an app's history
@@ -133,6 +164,9 @@ In `~/.config/omarchy-screentime/config`, or via `screentime set`:
 | `RETENTION_DAYS` | `90` | days of history to keep (`0` keeps everything) |
 | `DAILY_GOAL` | `0` | daily limit in minutes; today's total turns red past it |
 | `IGNORE` | `org.quickshell` | comma-separated app ids never to record |
+
+Display names are not settings — they live in their own file, see
+[What the apps are called](#what-the-apps-are-called).
 
 ```bash
 screentime set DAILY_GOAL 300
@@ -157,6 +191,10 @@ rm -rf ~/.local/state/omarchy-screentime      # forget everything
 ```
 
 Files older than `RETENTION_DAYS` are dropped on the first write of each day.
+
+`~/.local/state/omarchy-screentime/names.tsv` sits beside them: resolved
+display names, cached so the panel does not re-read every desktop entry on the
+machine each time it refreshes. Deleting it costs nothing.
 
 ## Uninstall
 

@@ -102,6 +102,334 @@ setting_help() {
   esac
 }
 
+# -------------------------------------------------------------------- names
+#
+# A window manager reports application ids, not names: "org.gnome.Nautilus",
+# "steam_app_387990", "xdg-desktop-portal-gtk", "chrome-app.hey.com__-Default".
+# None of those are what anyone calls the application, so every id is looked
+# up in the desktop entries the machine already ships, in Steam's own
+# manifests, and in a couple of rules for the ids no desktop entry describes.
+# Anything still wrong can be pinned by hand:
+#
+#   screentime name steam_app_387990 "Scrap Mechanic"
+#
+# Resolved names are cached: the lookup reads every desktop entry on the
+# machine, and the panel asks for these names on every refresh.
+
+NAMES_FILE="$CONFIG_DIR/names"
+NAME_CACHE="$STATE_DIR/names.tsv"
+
+# Names pinned by hand, one `app-id=Display Name` per line. Parsed like the
+# settings file, but the key is an app id rather than a literal from this
+# script, so the match is a string comparison and never a pattern.
+override_name() {
+  [[ -r $NAMES_FILE ]] || return 1
+  # The id travels through the environment rather than -v, because awk expands
+  # escape sequences in a -v assignment and this is data.
+  st_want="${1,,}" awk '
+    BEGIN { want = ENVIRON["st_want"] }
+    function trim(value) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); return value }
+    {
+      line = trim($0)
+      if (line == "" || substr(line, 1, 1) == "#") next
+      at = index(line, "=")
+      if (at == 0) next
+      if (tolower(trim(substr(line, 1, at - 1))) != want) next
+      value = trim(substr(line, at + 1))
+      if (value != "") name = value
+    }
+    END { if (name == "") exit 1; print name }
+  ' "$NAMES_FILE"
+}
+
+set_name() {
+  local id=$1 value=$2 tmp
+  mkdir -p -- "$CONFIG_DIR" || return 1
+  [[ -f $NAMES_FILE ]] || (
+    umask 077
+    : >"$NAMES_FILE"
+  ) || return 1
+  tmp=$(mktemp -- "$NAMES_FILE.XXXXXX") || return 1
+  # Through the environment for the same reason: a display name is whatever
+  # was typed, and a \ in it has to reach the file intact.
+  if ! st_want="${id,,}" st_entry="$id=$value" st_keep="${value:+1}" awk '
+    BEGIN { want = ENVIRON["st_want"]; entry = ENVIRON["st_entry"]; keep = ENVIRON["st_keep"] }
+    function trim(value) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); return value }
+    function id_of(line,   at) {
+      line = trim(line)
+      if (line == "" || substr(line, 1, 1) == "#") return ""
+      at = index(line, "=")
+      return at == 0 ? "" : tolower(trim(substr(line, 1, at - 1)))
+    }
+    id_of($0) == want { if (keep != "" && !seen++) print entry; next }
+    { print }
+    END { if (keep != "" && !seen) print entry }
+  ' "$NAMES_FILE" >"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  cat -- "$tmp" >"$NAMES_FILE"
+  rm -f -- "$tmp"
+}
+
+# key -> name, built on the first cache miss. "id:" is the entry's own file
+# name, "wm:" its StartupWMClass, "url:" the web app it opens, "game:" the
+# Steam game it launches.
+declare -A DESKTOP_INDEX=()
+DESKTOP_INDEX_LOADED=0
+
+applications_dirs() {
+  local dir
+  while IFS= read -r dir; do
+    [[ -n $dir && -d $dir/applications ]] && printf '%s\n' "$dir/applications"
+  done < <(tr ':' '\n' \
+    <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}")
+}
+
+# One pass over every desktop entry on the machine. Only the [Desktop Entry]
+# group is read: the action groups below it carry their own Name= lines, and
+# "New Window" is not an application.
+desktop_entries() {
+  local -a dirs=()
+  mapfile -t dirs < <(applications_dirs)
+  ((${#dirs[@]})) || return 0
+  find "${dirs[@]}" -maxdepth 3 -name '*.desktop' -type f -print0 2>/dev/null |
+    xargs -0 -r awk -v OFS='\t' '
+      BEGIN { quote = sprintf("%c", 39) }
+      function trim(value) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", value); return value }
+      # Entries written on another platform arrive with CRLF line endings.
+      { sub(/\r$/, "") }
+      function flush() {
+        if (base == "" || name == "") return
+        print "id:" tolower(base), name
+        if (wm != "") print "wm:" tolower(wm), name
+        if (url != "") print "url:" url, name
+        if (game != "") print "game:" game, name
+      }
+      FNR == 1 {
+        flush()
+        base = FILENAME
+        sub(/.*\//, "", base)
+        sub(/\.desktop$/, "", base)
+        name = ""; wm = ""; url = ""; game = ""; entry = 0
+      }
+      /^[[:space:]]*\[/ { entry = ($0 ~ /^[[:space:]]*\[Desktop Entry\][[:space:]]*$/); next }
+      !entry { next }
+      # Localised names are "Name[de]=" and never match this.
+      /^[[:space:]]*Name[[:space:]]*=/ {
+        if (name == "") name = trim(substr($0, index($0, "=") + 1))
+        next
+      }
+      /^[[:space:]]*StartupWMClass[[:space:]]*=/ {
+        if (wm == "") wm = trim(substr($0, index($0, "=") + 1))
+        next
+      }
+      /^[[:space:]]*Exec[[:space:]]*=/ {
+        if (match($0, /steam:\/\/rungameid\/[0-9]+/)) {
+          game = substr($0, RSTART, RLENGTH)
+          sub(/.*\//, "", game)
+        }
+        if (match($0, /https?:\/\/[^[:space:]"]+/)) {
+          url = substr($0, RSTART, RLENGTH)
+          gsub(quote, "", url)
+          sub(/^https?:\/\//, "", url)
+          sub(/\/+$/, "", url)
+          url = tolower(url)
+        }
+        next
+      }
+      END { flush() }
+    '
+}
+
+load_desktop_index() {
+  ((DESKTOP_INDEX_LOADED)) && return 0
+  DESKTOP_INDEX_LOADED=1
+  local key value
+  while IFS=$'\t' read -r key value; do
+    [[ -n $key && -n $value ]] || continue
+    # ~/.local/share wins over /usr/share, as it does everywhere else in XDG.
+    [[ -n ${DESKTOP_INDEX[$key]:-} ]] || DESKTOP_INDEX[$key]=$value
+  done < <(desktop_entries)
+}
+
+# Steam knows the name of every game it has installed; the window manager only
+# ever sees the app id.
+steam_name() {
+  local game=$1 root dir manifest name
+  local -a dirs=()
+  for root in "$HOME/.steam/steam" "$HOME/.steam/root" \
+    "${XDG_DATA_HOME:-$HOME/.local/share}/Steam" "$HOME/.local/share/Steam"; do
+    [[ -d $root/steamapps ]] || continue
+    dirs+=("$root/steamapps")
+    # A game on a second drive lives in a library listed here.
+    [[ -r $root/steamapps/libraryfolders.vdf ]] || continue
+    while IFS= read -r dir; do
+      [[ -n $dir && -d $dir/steamapps ]] && dirs+=("$dir/steamapps")
+    done < <(sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)".*/\1/p' \
+      "$root/steamapps/libraryfolders.vdf")
+  done
+  for dir in "${dirs[@]}"; do
+    manifest="$dir/appmanifest_$game.acf"
+    [[ -r $manifest ]] || continue
+    name=$(sed -n 's/^[[:space:]]*"name"[[:space:]]*"\(.*\)".*/\1/p' "$manifest" | head -n1)
+    [[ -n $name ]] && {
+      printf '%s' "$name"
+      return 0
+    }
+  done
+  return 1
+}
+
+# Chrome names a web app window after the url it opens, with every slash
+# turned into an underscore and the profile appended:
+# "chrome-app.hey.com__-Default" is https://app.hey.com/ in the default
+# profile. Prints the "host/path" that identifies it.
+web_key() {
+  local id=$1 rest
+  case ${id,,} in
+  chrome-*.* | chromium-*.* | brave-*.* | vivaldi-*.* | msedge-*.* | edge-*.*) rest=${id#*-} ;;
+  *) return 1 ;;
+  esac
+  case ${rest,,} in
+  *-default | *-guest* | *-system* | *-profile*) rest=${rest%-*} ;;
+  esac
+  [[ $rest == *.* ]] || return 1
+  printf '%s' "$(sed 's/_\{1,\}/\//g; s/\/\{1,\}$//' <<<"${rest,,}")"
+}
+
+# No desktop entry claims this url, so the domain has to answer for it: the
+# label before the public one is the closest thing to a name it carries.
+web_name() {
+  local host=${1%%/*}
+  local -a labels=()
+  IFS='.' read -ra labels <<<"$host"
+  ((${#labels[@]})) || return 1
+  local label=${labels[-1]}
+  ((${#labels[@]} > 1)) && label=${labels[-2]}
+  [[ -n $label ]] || return 1
+  printf '%s' "${label^}"
+}
+
+# Ids that describe a piece of the desktop rather than an application. The
+# portals are the ones that really turn up: every file chooser, screen-share
+# prompt and screenshot dialog is one of their windows, and their own desktop
+# entry calls itself "Portal".
+alias_name() {
+  case ${1,,} in
+  xdg-desktop-portal | xdg-desktop-portal-*) printf 'System Dialog' ;;
+  org.quickshell | org.quickshell.*) printf 'Omarchy Shell' ;;
+  polkit-* | *.polkit-* | gcr-prompter) printf 'Authentication' ;;
+  *) return 1 ;;
+  esac
+}
+
+# Nothing recognised the id: "org.gnome.Boxes" -> "Boxes", "google-chrome" ->
+# "Google Chrome". Right often enough to be worth trying, wrong often enough
+# to be worth `screentime name`.
+guess_name() {
+  local id=$1 base word out=""
+  local -a words=()
+  base=${id##*.}
+  base=${base//[-_]/ }
+  read -ra words <<<"$base"
+  for word in "${words[@]}"; do out+="${out:+ }${word^}"; done
+  printf '%s' "${out:-$id}"
+}
+
+# The name one app id is shown under. Most specific source first: what you
+# said it is, then what the desktop says it is, then a guess.
+display_name() {
+  local id=$1 name="" key game leaf
+  name=$(override_name "$id") && {
+    printf '%s' "$name"
+    return 0
+  }
+  name=$(alias_name "$id") && {
+    printf '%s' "$name"
+    return 0
+  }
+  load_desktop_index
+  if [[ ${id,,} =~ ^steam_app_([0-9]+)$ ]]; then
+    game=${BASH_REMATCH[1]}
+    name=$(steam_name "$game") || name=${DESKTOP_INDEX[game:$game]:-}
+  fi
+  [[ -n $name ]] || name=${DESKTOP_INDEX[id:${id,,}]:-}
+  [[ -n $name ]] || name=${DESKTOP_INDEX[wm:${id,,}]:-}
+  # A reverse-dns id often has a plainer entry behind it:
+  # "org.pulseaudio.pavucontrol" is pavucontrol.desktop, which calls itself
+  # "PulseAudio Volume Control".
+  if [[ -z $name && $id == *.* ]]; then
+    leaf=${id##*.}
+    name=${DESKTOP_INDEX[id:${leaf,,}]:-}
+    [[ -n $name ]] || name=${DESKTOP_INDEX[wm:${leaf,,}]:-}
+  fi
+  if [[ -z $name ]] && key=$(web_key "$id"); then
+    name=${DESKTOP_INDEX[url:$key]:-}
+    [[ -n $name ]] || name=$(web_name "$key")
+  fi
+  [[ -n $name ]] || name=$(guess_name "$id")
+  # An entry that names itself in lower case ("hyperwriter") sits oddly in a
+  # column of proper names.
+  [[ $name == "${name,,}" ]] && name=${name^}
+  printf '%s' "$name"
+}
+
+names_cache_stale() {
+  [[ -r $NAME_CACHE ]] || return 0
+  # A name pinned by hand has to beat one already resolved. The config
+  # directory's own timestamp is checked too, because that is what moves when
+  # the names file is created or deleted rather than edited.
+  [[ -f $NAMES_FILE && $NAMES_FILE -nt $NAME_CACHE ]] && return 0
+  [[ -d $CONFIG_DIR && $CONFIG_DIR -nt $NAME_CACHE ]] && return 0
+  # A newer copy of this script may resolve an id differently than the copy
+  # that filled the cache, so a plugin update reprices every name.
+  [[ ${BASH_SOURCE[0]} -nt $NAME_CACHE ]] && return 0
+  # A week is soon enough to notice an application that was renamed or removed.
+  [[ -n $(find "$NAME_CACHE" -mtime +7 -print -quit 2>/dev/null) ]] && return 0
+  return 1
+}
+
+# app id + seconds rows on stdin: make sure every id in them has a name in the
+# cache. Written whole and moved into place, so a panel reading it at the same
+# moment sees either the old file or the new one.
+ensure_names() {
+  local -A names=()
+  local -a ids=() missing=()
+  local id name tmp
+  mapfile -t ids < <(cut -f1 | sort -u)
+  ((${#ids[@]})) || return 0
+  mkdir -p -- "$STATE_DIR" 2>/dev/null || return 0
+  if ! names_cache_stale; then
+    while IFS=$'\t' read -r id name; do
+      [[ -n $id ]] && names[$id]=$name
+    done <"$NAME_CACHE"
+  fi
+  for id in "${ids[@]}"; do
+    [[ -n $id ]] || continue
+    [[ -n ${names[$id]:-} ]] || missing+=("$id")
+  done
+  ((${#missing[@]})) || return 0
+  for id in "${missing[@]}"; do names[$id]=$(display_name "$id"); done
+  tmp=$(mktemp -- "$NAME_CACHE.XXXXXX" 2>/dev/null) || return 0
+  for id in "${!names[@]}"; do printf '%s\t%s\n' "$id" "${names[$id]}"; done |
+    sort >"$tmp" && mv -f -- "$tmp" "$NAME_CACHE"
+  rm -f -- "$tmp"
+}
+
+# app id + seconds in, app id + name + seconds out.
+annotate_names() {
+  local rows cache=$NAME_CACHE
+  rows=$(cat)
+  [[ -n $rows ]] || return 0
+  ensure_names <<<"$rows"
+  [[ -r $cache ]] || cache=/dev/null
+  awk -F'\t' -v OFS='\t' '
+    NR == FNR { name[$1] = $2; next }
+    NF >= 2 { print $1, (($1 in name) && name[$1] != "" ? name[$1] : $1), $2 }
+  ' "$cache" <(printf '%s\n' "$rows")
+}
+
 # --------------------------------------------------------------------- data
 #
 # One file per day, three tab-separated columns: app id, hour of day, seconds.
@@ -195,23 +523,9 @@ sum_seconds() {
 # id, display name, seconds — busiest first.
 apps_tsv() {
   cat -- "$@" 2>/dev/null | awk -F'\t' -v OFS='\t' '
-    # "org.gnome.Nautilus" -> "Nautilus", "google-chrome" -> "Google Chrome".
-    function pretty(id,   n, parts, base, words, i, out, word) {
-      n = split(id, parts, ".")
-      base = parts[n]
-      gsub(/[-_]+/, " ", base)
-      n = split(base, words, " ")
-      out = ""
-      for (i = 1; i <= n; i++) {
-        word = words[i]
-        if (word == "") continue
-        out = out (out == "" ? "" : " ") toupper(substr(word, 1, 1)) substr(word, 2)
-      }
-      return out == "" ? id : out
-    }
     NF == 3 { total[$1] += $3 }
-    END { for (app in total) print app, pretty(app), total[app] }
-  ' | sort -t$'\t' -k3,3nr
+    END { for (app in total) print app, total[app] }
+  ' | annotate_names | sort -t$'\t' -k3,3nr
 }
 
 # 24 comma-separated hourly totals for one day file.
@@ -422,6 +736,33 @@ cmd_unignore() {
   echo "No longer ignoring $app."
 }
 
+# Every app id in the history and the name it is shown under — the list to
+# look at before pinning one of them.
+cmd_names() {
+  local id name seconds found=0
+  while IFS=$'\t' read -r id name seconds; do
+    printf '%-34s %-22s %s\n' "$id" "$name" "$(format_duration "$seconds")"
+    found=1
+  done < <(apps_tsv "$DAYS_DIR"/*.tsv)
+  ((found)) || echo "Nothing recorded yet."
+}
+
+cmd_name() {
+  local id=${1:-} value=${2:-}
+  [[ -n $id ]] || die "usage: screentime name <app-id> [<display name>|--reset]"
+  if (($# < 2)); then
+    printf '%s\n' "$(display_name "$id")"
+    return 0
+  fi
+  if [[ -z $value || $value == --reset ]]; then
+    set_name "$id" "" || die "could not write $NAMES_FILE"
+    printf '%s goes back to its detected name (%s).\n' "$id" "$(display_name "$id")"
+    return 0
+  fi
+  set_name "$id" "$value" || die "could not write $NAMES_FILE"
+  printf '%s is now shown as %s.\n' "$id" "$value"
+}
+
 # Remove one app from the stored history entirely.
 cmd_forget() {
   local app=${1:-} file lock
@@ -544,6 +885,8 @@ Usage:
 
   screentime config [key]        show settings
   screentime set <key> <value>   change one
+  screentime names               every app id and the name it is shown under
+  screentime name <id> [name]    show that name, or pin your own
   screentime ignore <app-id>     never record an app again
   screentime unignore <app-id>   undo that
   screentime forget <app-id>     delete an app's history
@@ -553,7 +896,8 @@ Usage:
   screentime record <app>=<secs>   used by the shell service
   screentime version
 
-Settings live in ~/.config/omarchy-screentime/config, history in
+Settings live in ~/.config/omarchy-screentime/config, pinned names in
+~/.config/omarchy-screentime/names, history in
 ~/.local/state/omarchy-screentime/days/. Only app ids and second counts are
 stored — never window titles.
 USAGE
@@ -573,6 +917,8 @@ json) cmd_json "$@" ;;
 open) cmd_open "$@" ;;
 config) cmd_config "$@" ;;
 set) cmd_set "$@" ;;
+names) cmd_names "$@" ;;
+name) cmd_name "$@" ;;
 ignore) cmd_ignore "$@" ;;
 unignore) cmd_unignore "$@" ;;
 forget) cmd_forget "$@" ;;

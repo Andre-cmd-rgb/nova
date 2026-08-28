@@ -10,3 +10,7 @@ First release.
 - Optional single-glyph bar indicator.
 - `screentime` CLI owns settings, history, and the reports.
 - The shell's own windows (`org.quickshell`) are ignored by default.
+- Applications are shown by name rather than by window id, resolved from the
+  desktop entries on the machine, from Steam's manifests for `steam_app_*`
+  games, and from the domain of a Chrome web app. `screentime names` lists
+  what each id resolved to and `screentime name` pins a different one.
