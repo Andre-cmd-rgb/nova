@@ -653,63 +653,42 @@ cmd_import() {
   prune_history
 }
 
-# -------------------------------------------------------------------- series
+# --------------------------------------------------------------------- hours
 #
-# The shape of one discharge run, for the chart. Watts come from the charge
-# lost across each interval rather than from power_now, for the same reason
-# the estimate does: the instantaneous reading is far noisier than the thing
-# it is measuring, and averaging it afterwards is not the same as measuring
-# the energy in the first place.
+# Today, hour by hour: how long each hour ran on battery and what it drew.
+# Hours spent plugged in, asleep or switched off read as empty rather than as
+# zero watts, which is the difference between "cost nothing" and "wasn't on".
 #
-# Bucketed to a fixed number of columns so a four-hour run and a forty-minute
-# one draw the same chart, and the JSON stays a few kilobytes either way.
-series_tsv() {
-  local start=$1 end=$2 buckets
-  # Five minutes a column, between 12 and 120 of them. A fixed column count
-  # draws quantisation rather than power on a short run: history seeded from
-  # UPower carries whole-percent charge readings, and one percent of this pack
-  # is 0.75 Wh — more than a minute-wide column holds at any sane draw, so
-  # narrow columns alternate between zero and double instead of showing a
-  # trend. Five minutes is wider than one step at every draw worth charting.
-  buckets=$(awk -v s="$start" -v e="$end" -v want="${3:-0}" 'BEGIN {
-    if (want > 0) { print want; exit }
-    n = int((e - s) / 300)
-    if (n < 12) n = 12
-    if (n > 120) n = 120
-    print n
-  }')
-  rows_for_span 90 | awk -F'\t' -v OFS='\t' -v s="$start" -v e="$end" \
-    -v n="$buckets" -v gap="$(cfg_number GAP_SECONDS 300)" '
-    BEGIN { width = (e - s) / n; if (width <= 0) width = 1 }
-    $1 + 0 < s || $1 + 0 > e { have = 0; next }
-    $2 != "D" { have = 0; next }
-    {
-      ts = $1 + 0; en = $4 + 0; pct = $3 + 0
+# Columns: hour awake_seconds uWh watts
+hours_tsv() {
+  awk -F'\t' -v gap="$(cfg_number GAP_SECONDS 300)" '
+    NF == 6 && $2 == "D" {
+      ts = $1 + 0; e = $4 + 0
       if (have) {
         dt = ts - pt
-        de = pe - en
+        de = pe - e
         if (de < 0) de = 0
+        # Attributed to the hour the interval ended in. An interval that
+        # straddles the hour is at most one sample wide, so splitting it would
+        # buy a second of accuracy for a good deal of arithmetic.
         if (dt > 0 && dt <= gap) {
-          b = int((ts - s) / width)
-          if (b >= n) b = n - 1
-          secs[b] += dt
-          drop[b] += de
-          last[b] = pct
-          seen[b] = 1
+          h = int(strftime("%H", ts))
+          secs[h] += dt
+          drop[h] += de
         }
       }
-      have = 1; pt = ts; pe = en
+      have = 1; pt = ts; pe = e
+      next
     }
+    { have = 0 }
     END {
-      for (i = 0; i < n; i++) {
-        if (!seen[i]) continue
+      for (i = 0; i < 24; i++)
         # Parenthesised: a bare > inside a print argument list is an output
         # redirection to awk, not a comparison.
-        printf "%d\t%.2f\t%d\n", s + (i + 0.5) * width,
-          (secs[i] > 0 ? drop[i] / secs[i] * 3600 / 1000000 : 0), last[i]
-      }
+        printf "%d\t%d\t%d\t%.2f\n", i, secs[i] + 0, drop[i] + 0,
+          (secs[i] > 0 ? drop[i] / secs[i] * 3600 / 1000000 : 0)
     }
-  '
+  ' "$(day_file "$(date +%F)")" 2>/dev/null
 }
 
 # ------------------------------------------------------------------ reports
@@ -820,7 +799,7 @@ cmd_health() {
 # what the window shows and what the CLI prints can never disagree.
 cmd_json() {
   have jq || die "jq is required for json output"
-  local span=14 runs=12 snap latest start end sessions
+  local span=14 runs=12 snap sessions
   while (($# > 0)); do
     case $1 in
     --days)
@@ -838,24 +817,11 @@ cmd_json() {
   snap=$(now_tsv)
   sessions=$(sessions_tsv 90 | awk -F'\t' -v min="$(cfg_number MIN_SESSION 600)" '$6 >= min')
 
-  # The run the chart draws: the one in progress, or failing that the last one
-  # that finished. The run in progress is taken before the MIN_SESSION filter,
-  # so a run that has only just started still draws itself rather than showing
-  # yesterday's chart under today's numbers.
-  latest=$(sessions_tsv 7 | awk -F'\t' '$11 == 1' | tail -n1)
-  [[ -n $latest ]] || latest=$(tail -n1 <<<"$sessions")
-  start=0
-  end=0
-  if [[ -n $latest ]]; then
-    start=$(cut -f1 <<<"$latest")
-    end=$(cut -f2 <<<"$latest")
-  fi
-
   jq -n \
     --arg now "$snap" \
     --arg sessions "$sessions" \
     --arg days "$(days_tsv "$span")" \
-    --arg series "$([[ -n $latest ]] && series_tsv "$start" "$end")" \
+    --arg hours "$(hours_tsv)" \
     --argjson rangeDays "$span" \
     --argjson maxRuns "$runs" '
       def num: if . == null or . == "" then 0 else tonumber end;
@@ -912,10 +878,11 @@ cmd_json() {
             wh:    ((.[3] | num) / 1000000),
             watts: (.[4] | num)
           })),
-          series: ($series | lines | map({
-            t:       (.[0] | num),
-            watts:   (.[1] | num),
-            percent: (.[2] | num)
+          hours: ($hours | lines | map({
+            hour:  (.[0] | num),
+            awake: (.[1] | num),
+            wh:    ((.[2] | num) / 1000000),
+            watts: (.[3] | num)
           }))
         }
     '

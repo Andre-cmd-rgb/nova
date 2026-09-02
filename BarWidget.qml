@@ -56,6 +56,14 @@ Panel {
   }
   readonly property bool low: discharging && percent > 0 && percent <= warnPercent
 
+  // A Panel is a bare Item: it has no implicit size of its own, and the bar
+  // lays widgets out by implicitWidth. Without these the slot is zero wide
+  // and the widget is placed, loaded, and invisible — with no error anywhere
+  // to say so. Nothing to show before the first reading lands, either.
+  visible: present
+  implicitWidth: present ? button.implicitWidth : 0
+  implicitHeight: present ? button.implicitHeight : 0
+
   // ---- readout ------------------------------------------------------------
   //
   // The stored value is the label the settings panel shows, so what is in

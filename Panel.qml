@@ -25,10 +25,10 @@ Item {
 
   property bool closingFromHost: false
   property var data: ({})
-  property string range: "run"
+  property string range: "today"
 
   readonly property bool weekly: range === "week"
-  readonly property var series: data.series || []
+  readonly property var hours: data.hours || []
   readonly property var days: data.days || []
   readonly property var sessions: data.sessions || []
   readonly property var typical: data.typical || ({})
@@ -50,7 +50,7 @@ Item {
     if (payloadJson) {
       try {
         var payload = JSON.parse(String(payloadJson))
-        if (payload && (payload.range === "week" || payload.range === "run"))
+        if (payload && (payload.range === "week" || payload.range === "today"))
           range = payload.range
       } catch (e) {
         // An unparseable payload just means the default view.
@@ -178,11 +178,11 @@ Item {
         case Qt.Key_Left:
         case Qt.Key_Right:
         case Qt.Key_Tab:
-          root.range = root.weekly ? "run" : "week"
+          root.range = root.weekly ? "today" : "week"
           event.accepted = true
           break
-        case Qt.Key_S:
-          root.range = "run"
+        case Qt.Key_T:
+          root.range = "today"
           event.accepted = true
           break
         case Qt.Key_W:
@@ -247,7 +247,7 @@ Item {
             anchors.top: parent.top
             value: root.range
             options: [
-              { label: "This run", value: "run" },
+              { label: "Today", value: "today" },
               { label: "Week", value: "week" }
             ]
             foreground: Color.foreground
@@ -262,9 +262,9 @@ Item {
 
         // ---- chart ----------------------------------------------------
         //
-        // One component for both ranges: the draw across the latest run, or
-        // one bar per day of the week. Every column shares a scale taken from
-        // the tallest, so the shape is readable on a quiet day too.
+        // One component for both ranges: 24 hours of today, or one bar per
+        // day of the week. Every column shares a scale taken from the
+        // tallest, so the shape is readable on a quiet day too.
         Item {
           id: chartArea
           width: parent.width
@@ -278,7 +278,7 @@ Item {
           // height of the chart, over the header and out of the window, until
           // the scale catches up a frame later.
           readonly property var chart: {
-            var rows = root.weekly ? root.days : root.series
+            var rows = root.weekly ? root.days : root.hours
             var values = []
             for (var i = 0; i < rows.length; i++)
               values.push(Number((root.weekly ? rows[i].watts : rows[i].watts) || 0))
@@ -287,7 +287,7 @@ Item {
             return { values: values, peak: peak, rows: rows }
           }
           readonly property int columns: chart.values.length
-          readonly property real gap: root.weekly ? Style.space(10) : Style.space(2)
+          readonly property real gap: root.weekly ? Style.space(10) : Style.space(3)
           readonly property real columnWidth: columns > 0
             ? Math.max(1, (width - gap * (columns - 1)) / columns)
             : 0
@@ -296,10 +296,11 @@ Item {
           function columnLabel(index) {
             var row = chart.rows[index]
             if (!row) return ""
-            if (root.weekly)
-              return row.label + " " + String(row.date).slice(5)
-              + "  ·  " + root.formatDuration(row.awake) + " on battery"
-            return root.clockOf(row.t) + "  ·  " + Math.round(row.percent) + "%"
+            var when = root.weekly
+              ? row.label + " " + String(row.date).slice(5)
+              : (row.hour < 10 ? "0" : "") + row.hour + ":00"
+            if (Number(row.awake || 0) <= 0) return when + "  ·  not on battery"
+            return when + "  ·  " + root.formatDuration(row.awake) + " on battery"
           }
 
           // One readout for the whole chart rather than a popup per column:
@@ -308,10 +309,12 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             visible: chartArea.hoveredIndex >= 0 && chartArea.hoveredIndex < chartArea.columns
-            text: visible
-              ? chartArea.columnLabel(chartArea.hoveredIndex) + "  ·  "
-                + root.formatWatts(chartArea.chart.values[chartArea.hoveredIndex])
-              : ""
+            text: {
+              if (!visible) return ""
+              var label = chartArea.columnLabel(chartArea.hoveredIndex)
+              var value = chartArea.chart.values[chartArea.hoveredIndex]
+              return value > 0 ? label + "  ·  " + root.formatWatts(value) : label
+            }
             color: Color.foreground
             opacity: 0.7
             font.family: Style.font.family
@@ -349,13 +352,16 @@ Item {
                 readonly property real fill: value > 0
                   ? Math.min(1, value / chartArea.chart.peak)
                   : 0
-                readonly property bool isNow: index === chartArea.columns - 1
+                readonly property bool isNow: root.weekly
+                  ? index === chartArea.columns - 1
+                  : index === new Date().getHours()
 
                 width: chartArea.columnWidth
                 height: chartRow.height
 
                 // The track keeps every column present at full height, so an
-                // idle day reads as an idle day and not as a gap.
+                // hour spent plugged in reads as an empty hour and not as a
+                // gap in the chart.
                 Rectangle {
                   anchors.fill: parent
                   radius: Style.cornerRadius > 0 ? Style.space(3) : 0
@@ -404,14 +410,13 @@ Item {
                 required property int index
                 width: chartArea.columnWidth
                 horizontalAlignment: Text.AlignHCenter
-                // Weekday initials, or a clock mark every so often — one
-                // label per column is a ruler, not an axis.
+                // Weekday initials, or the quarter-day marks — 24 numbers in
+                // a row is a ruler, not an axis.
                 text: {
                   var row = chartArea.chart.rows[index]
                   if (!row) return ""
                   if (root.weekly) return String(row.label).slice(0, 1)
-                  var every = Math.max(1, Math.round(chartArea.columns / 6))
-                  return index % every === 0 ? root.clockOf(row.t) : ""
+                  return index % 6 === 0 ? String(row.hour) : ""
                 }
                 elide: Text.ElideRight
                 color: Color.foreground
@@ -430,7 +435,7 @@ Item {
             wrapMode: Text.WordWrap
             text: root.weekly
               ? "No time on battery in the last week."
-              : "Nothing to draw yet — the chart fills in once this machine has run on battery for a few minutes."
+              : "Nothing on battery today yet — the chart fills in as soon as this machine is unplugged."
             color: Color.foreground
             opacity: 0.5
             font.family: Style.font.family
@@ -583,7 +588,7 @@ Item {
         anchors.bottom: parent.bottom
         anchors.margins: Style.space(18)
         horizontalAlignment: Text.AlignHCenter
-        text: "S this run · W week · R refresh · Esc close"
+        text: "T today · W week · R refresh · Esc close"
         color: Color.foreground
         opacity: 0.35
         font.family: Style.font.family
