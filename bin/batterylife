@@ -1000,7 +1000,13 @@ cmd_takeover() {
   have omarchy || die "the omarchy CLI is required"
   case $action in
   on)
-    omarchy bar put "$PLUGIN_ID" --after omarchy.power >/dev/null 2>&1 ||
+    # `move` first, `put` second. They are not interchangeable: `put` places a
+    # widget the way enabling it does but deliberately leaves one that is
+    # already on the bar where it is — so on the common path, where the plugin
+    # has just been enabled and is therefore already somewhere, `put` alone is
+    # a no-op and the widget never reaches the slot.
+    omarchy bar move "$PLUGIN_ID" --after omarchy.power >/dev/null 2>&1 ||
+      omarchy bar put "$PLUGIN_ID" --after omarchy.power >/dev/null 2>&1 ||
       omarchy bar put "$PLUGIN_ID" --section right >/dev/null 2>&1 ||
       die "could not place the widget — is the plugin enabled?"
     omarchy plugin disable omarchy.power >/dev/null 2>&1 ||

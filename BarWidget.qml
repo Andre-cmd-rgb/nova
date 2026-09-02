@@ -199,15 +199,19 @@ Panel {
 
   // ---- bar ----------------------------------------------------------------
 
-  BarIconButton {
+  // WidgetButton rather than BarIconButton: the icon button sets
+  // labelVisible false and paints a glyph in a fixed square slot, so the
+  // readout beside the glyph would never be drawn. `vertical` is read off the
+  // button, which takes it from the bar — Panel does not carry one.
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: battery.bar
-    text: battery.barText === "" || battery.vertical
+    text: battery.barText === "" || button.vertical
       ? battery.icon
       : battery.icon + " " + battery.barText
-    color: battery.low ? battery.urgent : battery.barForeground
-    slotSize: Style.bar.statusSlot
+    foreground: battery.low ? battery.urgent : battery.barForeground
+    fontSize: Style.font.bodySmall
     tooltipText: battery.present
       ? Math.round(battery.percent) + "%  ·  " + battery.metaText
         + (battery.estimate !== "" ? "  ·  " + battery.estimate
