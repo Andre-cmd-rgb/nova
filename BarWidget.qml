@@ -31,15 +31,21 @@ Panel {
   // Injected by omarchy-shell: this plugin's own sampler.
   property var service: null
 
-  property var data: ({})
-  readonly property var now: data.now || ({})
-  readonly property var run: data.run || null
-  readonly property var typical: data.typical || ({})
-  readonly property bool present: data.present === true
+  // Named `info`, not `data`, and `chargeState`, not `state`: both of those
+  // are properties QQuickItem already has. `data` is its *default* property —
+  // the one an item's children are assigned to — so shadowing it with a var
+  // silently stops every child below from being added to the item. The widget
+  // then loads without an error, reserves a slot the width of an empty label,
+  // and paints nothing at all.
+  property var info: ({})
+  readonly property var now: info.now || ({})
+  readonly property var run: info.run || null
+  readonly property var typical: info.typical || ({})
+  readonly property bool present: info.present === true
 
-  readonly property string state: String(now.state || "U")
-  readonly property bool discharging: state === "D"
-  readonly property bool charging: state === "C"
+  readonly property string chargeState: String(now.state || "U")
+  readonly property bool discharging: chargeState === "D"
+  readonly property bool charging: chargeState === "C"
   readonly property real percent: Number(now.percent || 0)
   readonly property real fraction: Math.max(0, Math.min(1, percent / 100))
   readonly property real watts: Number(now.rateWatts || 0)
@@ -123,12 +129,12 @@ Panel {
     var full = ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
     var chg = ["󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅"]
     var index = Math.max(0, Math.min(9, Math.floor(fraction * 10)))
-    if (state === "F") return "󰂅"
+    if (chargeState === "F") return "󰂅"
     return charging ? chg[index] : full[index]
   }
 
   readonly property string stateWord: {
-    switch (state) {
+    switch (chargeState) {
     case "D": return "On battery"
     case "C": return "Charging"
     case "F": return "Fully charged"
@@ -169,7 +175,7 @@ Panel {
       onStreamFinished: {
         try {
           var parsed = JSON.parse(String(text))
-          if (parsed && typeof parsed === "object") battery.data = parsed
+          if (parsed && typeof parsed === "object") battery.info = parsed
         } catch (e) {
           // A truncated read is not worth blanking the widget over.
         }

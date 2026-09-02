@@ -24,16 +24,18 @@ Item {
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/batterylife")).replace(/^file:\/\//, ""))
 
   property bool closingFromHost: false
-  property var data: ({})
+  // Named `info` rather than `data`: `data` is QQuickItem's default property,
+  // the one children are assigned to, and shadowing it drops them silently.
+  property var info: ({})
   property string range: "today"
 
   readonly property bool weekly: range === "week"
-  readonly property var hours: data.hours || []
-  readonly property var days: data.days || []
-  readonly property var sessions: data.sessions || []
-  readonly property var typical: data.typical || ({})
-  readonly property var now: data.now || ({})
-  readonly property var run: data.run || null
+  readonly property var hours: info.hours || []
+  readonly property var days: info.days || []
+  readonly property var sessions: info.sessions || []
+  readonly property var typical: info.typical || ({})
+  readonly property var now: info.now || ({})
+  readonly property var run: info.run || null
 
   readonly property int typicalSeconds: Number(typical.seconds || 0)
   readonly property real typicalWatts: Number(typical.watts || 0)
@@ -106,7 +108,7 @@ Item {
       onStreamFinished: {
         try {
           var parsed = JSON.parse(String(text))
-          if (parsed && typeof parsed === "object") root.data = parsed
+          if (parsed && typeof parsed === "object") root.info = parsed
         } catch (e) {
           // A truncated read is not worth blanking the window over.
         }
