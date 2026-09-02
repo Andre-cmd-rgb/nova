@@ -105,6 +105,9 @@ setting_default() {
   MIN_SESSION) printf '600' ;;
   # How far back "typical" looks when projecting a full charge.
   TYPICAL_DAYS) printf '14' ;;
+  # Half-life of the weighting behind the live estimate: how quickly it
+  # follows a change in what the machine is doing.
+  RESPONSE_SECONDS) printf '60' ;;
   *) return 1 ;;
   esac
 }
@@ -117,6 +120,7 @@ setting_help() {
   GAP_SECONDS) printf 'a quiet stretch longer than this counts as suspended' ;;
   MIN_SESSION) printf 'ignore discharge runs shorter than this many seconds' ;;
   TYPICAL_DAYS) printf 'days averaged into the full-charge projection' ;;
+  RESPONSE_SECONDS) printf 'how fast the live estimate follows a change in load' ;;
   esac
 }
 
@@ -399,10 +403,16 @@ sessions_tsv() {
 # the coffee machine should not carry the same weight as a four-hour flight.
 #
 # Prints: avg_watts full_charge_seconds runs_counted awake_seconds
+# Two minutes of runtime is enough to contribute to an average, even though
+# it is not enough to be worth listing as a run of its own — so the projection
+# has something to say within minutes of a fresh start rather than after the
+# first ten-minute unplug.
+TYPICAL_MIN=120
+
 typical_rate() {
   local span min
   span=$(cfg_number TYPICAL_DAYS 14)
-  min=$(cfg_number MIN_SESSION 600)
+  min=$TYPICAL_MIN
   sessions_tsv "$span" | awk -F'\t' -v min="$min" '
     $6 >= min { awake += $6; drop += $7; if ($9 > full) full = $9 }
     END {
@@ -448,40 +458,54 @@ day_totals() {
 
 # ------------------------------------------------------------------- current
 #
-# The rate used for "time left" is measured, not instantaneous. power_now
-# swings by ten watts between two consecutive reads of the same idle desktop,
-# and an estimate built on it swings with it — which is the whole reason the
-# stock remaining-time readout is not worth watching.
+# The rate behind "time left" is measured, not instantaneous. power_now swings
+# by ten watts between two consecutive reads of the same idle desktop, and an
+# estimate built on it swings with it — which is the whole reason the stock
+# remaining-time readout is not worth watching.
+#
+# But it does have to follow the machine. Writing in a terminal and watching a
+# video are twenty watts apart here, and an average over the last quarter hour
+# says neither. So every interval is weighted by its age, halving every
+# RESPONSE_SECONDS: the last minute decides the number, the ten before it damp
+# the noise, and anything older is arithmetically irrelevant without needing a
+# cutoff to say so.
 #
 # Preference order, most specific first:
-#   1. the charge actually lost over the last RECENT_WINDOW seconds
+#   1. the weighted rate over recent discharging intervals
 #   2. the pooled rate from recent discharge runs
 #   3. power_now, when there is no history at all yet
-RECENT_WINDOW=900
+RECENT_WINDOW=1800
 
-# Average watts over the last RECENT_WINDOW seconds of discharging, or 0.
+# Age-weighted watts over recent discharging intervals, or 0.
 recent_watts() {
-  local now
-  now=$(date +%s)
-  # Two days of rows is plenty to find the last quarter hour in, and bounds
-  # the read on a machine that has been on battery for a week.
-  rows_for_span 2 | awk -F'\t' -v now="$now" -v window="$RECENT_WINDOW" -v gap="$(cfg_number GAP_SECONDS 300)" '
+  rows_for_span 2 | awk -v now="$(date +%s)" -v window="$RECENT_WINDOW" \
+    -v half="$(cfg_number RESPONSE_SECONDS 60)" -v gap="$(cfg_number GAP_SECONDS 300)" '
+    BEGIN { ln2 = 0.6931471805599453 }
     $2 == "D" && $1 >= now - window {
       ts = $1 + 0; e = $4 + 0
       if (have) {
         dt = ts - pt
         de = pe - e
         if (de < 0) de = 0
-        if (dt > 0 && dt <= gap) { secs += dt; drop += de }
+        if (dt > 0 && dt <= gap) {
+          # Weighted at the middle of the interval, since that is when the
+          # energy it accounts for was actually spent.
+          age = now - (ts + pt) / 2
+          if (age < 0) age = 0
+          w = exp(-ln2 * age / half)
+          wd += w * de
+          wt += w * dt
+        }
       }
       have = 1; pt = ts; pe = e
       next
     }
     { have = 0 }
     END {
-      # Under two samples apart it is one reading, not a rate.
-      if (secs < 120 || drop <= 0) { print "0.00"; exit }
-      printf "%.2f", drop / secs * 3600 / 1000000
+      # Weighted seconds, not wall seconds: one interval half a lifetime old
+      # is not enough to call a rate.
+      if (wt < 30 || wd <= 0) { print "0.00"; exit }
+      printf "%.2f\n", wd / wt * 3600 / 1000000
     }
   '
 }
@@ -535,6 +559,10 @@ now_tsv() {
   printf 'typicalWatts\t%s\n' "$typ_w"
   printf 'typicalSeconds\t%s\n' "$typ_full"
   printf 'typicalRuns\t%s\n' "$runs"
+  # What a full charge would give at the rate in force right now — the number
+  # that answers "how long if I keep doing this".
+  printf 'atRateSeconds\t%s\n' "$(awk -v f="$full" -v r="$rate" \
+    'BEGIN { printf "%d", (r > 0) ? f / 1000000 / r * 3600 : 0 }')"
   printf 'timeLeft\t%s\n' "$left"
   printf 'timeToFull\t%s\n' "$tofull"
   printf 'cycles\t%s\n' "$(cycles)"
@@ -881,7 +909,8 @@ cmd_json() {
             rateWatts:   ($n.rateWatts | num),
             energyWh:    (($n.energy | num) / 1000000),
             fullWh:      (($n.full | num) / 1000000),
-            timeLeft:    ($n.timeLeft | num),
+            timeLeft:      ($n.timeLeft | num),
+            atRateSeconds: ($n.atRateSeconds | num),
             timeToFull:  ($n.timeToFull | num)
           },
           run: (if $n.runAwake == null then null else {
@@ -926,7 +955,8 @@ cmd_config() {
     printf '%s\n' "$(get_cfg "$key" "$default")"
     return 0
   fi
-  for key in SAMPLE_INTERVAL AC_INTERVAL RETENTION_DAYS GAP_SECONDS MIN_SESSION TYPICAL_DAYS; do
+  for key in SAMPLE_INTERVAL AC_INTERVAL RETENTION_DAYS GAP_SECONDS MIN_SESSION \
+    TYPICAL_DAYS RESPONSE_SECONDS; do
     default=$(setting_default "$key")
     value=$(get_cfg "$key" "$default")
     printf '%-16s %-8s  %s\n' "$key" "$value" "$(setting_help "$key")"

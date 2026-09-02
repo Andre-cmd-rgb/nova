@@ -55,6 +55,39 @@ Panel {
   readonly property real watts: Number(now.rateWatts || 0)
   readonly property int timeLeft: Number(now.timeLeft || 0)
   readonly property int timeToFull: Number(now.timeToFull || 0)
+  // What a full charge gives at the rate in force right now, rather than a
+  // pooled average — writing in a terminal and watching a video are twenty
+  // watts apart on this machine, and one number for both says neither.
+  readonly property int atRate: Number(now.atRateSeconds || 0)
+
+  property var profiles: []
+  property string activeProfile: ""
+
+  function profileIcon(name) {
+    if (name === "power-saver") return "󰌪"
+    if (name === "balanced") return "󰊚"
+    if (name === "performance") return "󰓅"
+    return "󰂄"
+  }
+
+  function profileLabel(name) {
+    var text = String(name || "")
+    if (text === "power-saver") return "Saver"
+    return text.charAt(0).toUpperCase() + text.slice(1)
+  }
+
+  function setProfile(name) {
+    // The stock power widget keys the remembered profile on the power source,
+    // so this has to pass the same one or the two disagree about what was
+    // chosen for battery and what was chosen for AC.
+    profileProc.command = ["omarchy-powerprofiles-set",
+      battery.discharging ? "battery" : "ac", String(name)]
+    if (!profileProc.running) profileProc.running = true
+  }
+
+  function loadProfiles() {
+    if (!profilesProc.running) profilesProc.running = true
+  }
 
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color dim: Qt.darker(barForeground, 1.4)
@@ -170,7 +203,10 @@ Panel {
   function sampleThenRefresh() {
     if (service && typeof service.sample === "function") service.sample()
     refreshTimer.restart()
+    loadProfiles()
   }
+
+  Component.onCompleted: loadProfiles()
 
   function openHistory() {
     if (!openProc.running) openProc.running = true
@@ -193,6 +229,33 @@ Panel {
   }
 
   Process { id: openProc; command: [battery.helper, "open"] }
+
+  Process {
+    id: profilesProc
+    command: ["omarchy-powerprofiles-list", "--active-state"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var names = []
+        var active = ""
+        var lines = String(text).split("\n")
+        for (var i = 0; i < lines.length; i++) {
+          var parts = lines[i].split("\t")
+          if (!parts[0]) continue
+          names.push(parts[0])
+          if (parts[1] === "1") active = parts[0]
+        }
+        if (names.length === 0) return
+        battery.profiles = names
+        battery.activeProfile = active
+      }
+    }
+  }
+
+  Process {
+    id: profileProc
+    onExited: battery.loadProfiles()
+  }
   Process { id: setReadoutProc; onExited: battery.refresh() }
 
   Timer {
@@ -291,7 +354,10 @@ Panel {
     bar: battery.bar
     open: battery.opened
     focusTarget: keys
-    contentWidth: panel.fittedContentWidth(Style.space(260))
+    // Wide enough for three named profile buttons in one row. Naming them
+    // beats three bare glyphs someone has to hover to identify, and wrapping
+    // them onto two rows for the sake of a narrower panel is not cleaner.
+    contentWidth: panel.fittedContentWidth(Style.space(320))
     contentHeight: panel.fittedContentHeight(column.implicitHeight)
 
     PanelKeyCatcher {
@@ -309,8 +375,12 @@ Panel {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        spacing: Style.space(12)
+        spacing: Style.space(14)
 
+        // Two numbers and a way to change the profile. Everything else this
+        // plugin knows — what the run has cost, what it averaged, how many
+        // runs are behind the projection — belongs in the window, not in a
+        // panel someone opened to glance at the battery.
         PanelHero {
           title: battery.present ? Math.round(battery.percent) + "%" : "No battery"
           meta: battery.metaText
@@ -327,11 +397,8 @@ Panel {
           }
         }
 
-        // What is left, by the measured rate rather than the instantaneous
-        // one. The label says which way it is going so the number never has
-        // to be read twice.
         Column {
-          visible: battery.present && battery.estimate !== ""
+          visible: battery.present
           width: parent.width
           spacing: Style.spacing.labelGap
 
@@ -341,64 +408,50 @@ Panel {
             value: battery.estimate
             valueColor: battery.low ? battery.urgent : battery.barForeground
           }
-        }
 
-        PanelSeparator {
-          visible: battery.run !== null
-          foreground: battery.barForeground
-        }
-
-        // The run in progress. Runtime counts time awake, so a machine that
-        // spent the night suspended does not come back claiming fourteen
-        // hours of battery life.
-        Column {
-          visible: battery.run !== null
-          width: parent.width
-          spacing: Style.spacing.labelGap
-
+          // Not the pooled average: at this rate, right now. It moves when
+          // the machine's load moves, which is the point.
           Stat {
             width: parent.width
-            label: "This run"
-            value: battery.run ? battery.formatDuration(battery.run.awake) : ""
-          }
-          Stat {
-            width: parent.width
-            label: "Used"
-            value: battery.run
-              ? Number(battery.run.wh).toFixed(1) + " Wh from "
-                + Math.round(battery.run.startPct) + "%"
-              : ""
-          }
-          Stat {
-            width: parent.width
-            label: "Average"
-            value: battery.run ? battery.formatWatts(battery.run.watts) : ""
-          }
-        }
-
-        PanelSeparator {
-          foreground: battery.barForeground
-        }
-
-        // The answer to the question the widget exists for: at the rate this
-        // machine has actually been used lately, what does a full charge buy.
-        Column {
-          width: parent.width
-          spacing: Style.spacing.labelGap
-
-          Stat {
-            width: parent.width
+            visible: !battery.charging && battery.atRate > 0
             label: "Full charge"
-            value: Number(battery.typical.seconds || 0) > 0
-              ? battery.formatDuration(battery.typical.seconds)
-              : "not enough history"
+            value: battery.formatDuration(battery.atRate)
           }
-          Stat {
-            width: parent.width
-            visible: Number(battery.typical.seconds || 0) > 0
-            label: "Measured over"
-            value: Number(battery.typical.runs || 0) + " runs at "
-              + battery.formatWatts(battery.typical.watts)
+        }
+
+        PanelSeparator {
+          visible: battery.profiles.length > 0
+          foreground: battery.barForeground
+        }
+
+        Row {
+          id: profileRow
+          visible: battery.profiles.length > 0
+          width: parent.width
+          spacing: Style.space(6)
+
+          readonly property real cellWidth: battery.profiles.length > 0
+            ? (width - spacing * (battery.profiles.length - 1)) / battery.profiles.length
+            : 0
+
+          Repeater {
+            model: battery.profiles
+
+            Button {
+              required property var modelData
+              width: profileRow.cellWidth
+              iconText: battery.profileIcon(String(modelData))
+              iconSize: Style.font.body
+              text: battery.profileLabel(modelData)
+              fontSize: Style.font.caption
+              foreground: battery.barForeground
+              fontFamily: battery.fontFamily
+              horizontalPadding: Style.spacing.controlPaddingX
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+              bordered: true
+              active: battery.activeProfile === modelData
+              onClicked: battery.setProfile(modelData)
+            }
           }
         }
 
