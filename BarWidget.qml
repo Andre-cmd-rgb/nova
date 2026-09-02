@@ -17,9 +17,13 @@ Panel {
   id: battery
   moduleName: "andrecmdrgb.batterylife"
 
-  // No ipcTarget: this plugin also ships a `panel` kind, and the shell
-  // summons that one by plugin id. Two IpcHandlers on one target is one too
-  // many, and the popup here has a button rather than a remote control.
+  // A target of its own, not the plugin id: the shell summons the `panel`
+  // kind — the history window — by plugin id, and two IpcHandlers on one
+  // target means one of them is quietly ignored. This one opens the popup,
+  // so a keybind can reach it:
+  //
+  //   omarchy-shell andrecmdrgb.batterylife.bar toggle
+  ipcTarget: "andrecmdrgb.batterylife.bar"
 
   // Absolute path to the sibling CLI, resolved from this file's own location
   // so nothing has to be symlinked onto PATH and the plugin keeps working if
@@ -363,7 +367,7 @@ Panel {
 
         PanelActionButton {
           anchors.horizontalCenter: parent.horizontalCenter
-          iconText: "󰄽"
+          iconText: "󰋚"
           tooltipText: "Battery history  (H)"
           foreground: battery.barForeground
           fontFamily: battery.fontFamily

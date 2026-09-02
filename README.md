@@ -52,6 +52,13 @@ recent draw rather than the instantaneous rate, so it does not jump around.
   and watts → nothing)
 - **Middle click** — straight to the history window
 
+The popup has an IPC target of its own, so a keybind can reach it without
+going through the bar:
+
+```sh
+omarchy-shell andrecmdrgb.batterylife.bar toggle
+```
+
 To take the stock power widget's slot:
 
 ```sh
@@ -67,15 +74,30 @@ Power profiles remain on the Omarchy menu under Super+Space.
 
 `batterylife open`, the bar widget, or Super+Space → Battery Life.
 
-- **This run** — the draw across the latest discharge run, five minutes to a
-  column. Hover any column for the time, the charge and the watts.
+- **Today** — 24 columns, the average draw for each hour that ran on battery.
+  An hour spent plugged in, asleep or switched off is drawn empty rather than
+  as zero watts: those are different facts. Hover a column for the hour, how
+  long of it ran on battery, and what it drew.
 - **Week** — one column per day, the average draw for the time that day spent
   on battery.
 - **Discharge runs** — every run long enough to mean something: when it
   started, the charge it spanned, how long it ran, what it averaged, and what
   that implies for a full battery.
 
-`S` this run · `W` week · `R` refresh · `Esc` close.
+`T` today · `W` week · `R` refresh · `Esc` close.
+
+The window is a floating one. Hyprland tiles it by default, so it wants a
+rule of its own — the same one Screen Time uses:
+
+```lua
+o.window({ class = "^org\\.quickshell$", title = "^Battery Life$" }, {
+  float = true,
+  center = true,
+  size = { 620, 720 },
+  tag = "-default-opacity",
+  opacity = "1 1",
+})
+```
 
 ## Starting with real numbers
 

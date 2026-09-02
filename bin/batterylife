@@ -251,13 +251,39 @@ append_row() {
   exec {lock}>&-
 }
 
+# Two readings a few seconds apart are one reading. The panel asks for a
+# fresh sample when it opens, the resume check can ask at the same moment,
+# and a row pair that close together contributes runtime with no measurable
+# charge between them — which drags every average down for as long as it is
+# kept. A change of power source is never suppressed: that is the row the
+# session boundary is drawn from.
+SAMPLE_FLOOR=15
+
+too_soon() {
+  local file last_ts last_state
+  file=$(day_file "$(date +%F)")
+  [[ -r $file ]] || return 1
+  IFS=$'\t' read -r last_ts last_state _ < <(tail -n1 -- "$file") || return 1
+  [[ $last_ts =~ ^[0-9]+$ ]] || return 1
+  [[ $last_state == "$1" ]] || return 1
+  (($(date +%s) - last_ts < SAMPLE_FLOOR))
+}
+
 cmd_sample() {
   find_battery || return 0
-  local now full design pct state power ts day row
+  local now full design pct state power ts day row print=0 force=0 arg
+  for arg in "$@"; do
+    case $arg in
+    --print) print=1 ;;
+    --force) force=1 ;;
+    esac
+  done
+
   read -r now full design < <(battery_energy) || return 0
   pct=$(battery_pct) || pct=0
   state=$(battery_state)
   power=$(battery_power) || power=0
+  ((force)) || ! too_soon "$state" || return 0
   ts=$(date +%s)
   day=$(date -d "@$ts" +%F)
 
@@ -266,7 +292,7 @@ cmd_sample() {
 
   # `sample --print` gives the caller the row it just wrote, so the shell can
   # record and refresh in one exec rather than two.
-  [[ ${1:-} == --print ]] && printf '%s\n' "$row"
+  ((print)) && printf '%s\n' "$row"
   return 0
 }
 
@@ -1071,7 +1097,7 @@ Usage:
   batterylife menu install|remove    add or remove the Super+Space entry
   batterylife takeover on|off        swap with the stock power widget
   batterylife indicator on|off       show or hide the bar entry
-  batterylife sample                 record one reading (used by the shell)
+  batterylife sample [--force]       record one reading (used by the shell)
   batterylife version
 
 Runtime is measured, not predicted: every figure comes from charge the
