@@ -46,6 +46,9 @@ side. Integrating the draw would lose the lot.
 
 A battery glyph and, by default, the time left — measured from your own
 recent draw rather than the instantaneous rate, so it does not jump around.
+The glyph is drawn at the bar's icon size and the readout at its label size,
+so it sits level with the status glyphs on one side and the text widgets on
+the other.
 
 - **Left click** — the panel: time left, this run, and what a full charge buys
 - **Right click** — cycle the readout (time left → percent → watts → percent
@@ -66,8 +69,16 @@ batterylife takeover on     # put this one where omarchy.power was
 batterylife takeover off    # give it back
 ```
 
-`takeover on` places this widget immediately after the stock one and then
+`takeover on` moves this widget immediately after the stock one and then
 disables the stock one, which leaves this widget exactly where that one was.
+`takeover off` re-enables the stock widget and puts it back beside this one —
+`omarchy plugin enable` alone would drop it in the centre, since the stock
+power widget declares no section of its own.
+
+Both are safe to run twice. There is no command that takes a widget off the
+bar without disabling its plugin, so `takeover off` leaves this one in place;
+disabling the plugin would also stop it recording.
+
 Power profiles remain on the Omarchy menu under Super+Space.
 
 ## The window
