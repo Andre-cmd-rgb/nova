@@ -12,4 +12,10 @@ First release.
   shows. Takes the stock power widget's slot with `batterylife takeover on`.
 - `batterylife import` seeds the history from UPower's own log, so a fresh
   install has a week of real runs rather than an empty chart.
+- Time left follows the machine: intervals are weighted by age, halving every
+  `RESPONSE_SECONDS`, so a terminal and a video read differently within a
+  minute of each other.
+- Charging is measured the same way as discharging — time-to-full comes from
+  the charge going in, and the watts shown are the fill rate.
 - `batterylife` CLI owns storage, settings and the reports.
+- `bash test/roundtrip.sh` — 45 checks against a fake battery.

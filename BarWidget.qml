@@ -52,7 +52,10 @@ Panel {
   readonly property bool charging: chargeState === "C"
   readonly property real percent: Number(now.percent || 0)
   readonly property real fraction: Math.max(0, Math.min(1, percent / 100))
-  readonly property real watts: Number(now.rateWatts || 0)
+  // displayWatts, not rateWatts: the CLI keeps the drain estimate and the
+  // number to show apart, so a charging battery is never labelled with the
+  // average of the discharge runs behind it.
+  readonly property real watts: Number(now.displayWatts || 0)
   readonly property int timeLeft: Number(now.timeLeft || 0)
   readonly property int timeToFull: Number(now.timeToFull || 0)
   // What a full charge gives at the rate in force right now, rather than a
@@ -168,11 +171,14 @@ Panel {
 
   readonly property string icon: {
     if (!present) return "󰂑"
-    var full = ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
+    var level = ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "󰂁", "󰂂", "󰁹"]
     var chg = ["󰢜", "󰂆", "󰂇", "󰂈", "󰢝", "󰂉", "󰢞", "󰂊", "󰂋", "󰂅"]
     var index = Math.max(0, Math.min(9, Math.floor(fraction * 10)))
     if (chargeState === "F") return "󰂅"
-    return charging ? chg[index] : full[index]
+    // "Not charging" is plugged in but taking nothing — a charge threshold
+    // holding it, usually. The bolt would say current is flowing, so it gets
+    // the plain level glyph, which is what the stock widget does too.
+    return charging ? chg[index] : level[index]
   }
 
   readonly property string stateWord: {
@@ -395,6 +401,21 @@ Panel {
               font.pixelSize: Style.font.display
             }
           }
+
+          // Top right, level with the charge: the way out of a small panel
+          // belongs in its corner, not at the end of a column of numbers.
+          trailingControl: Component {
+            PanelActionButton {
+              iconText: "󰋚"
+              tooltipText: "Battery history  (H)"
+              foreground: battery.barForeground
+              fontFamily: battery.fontFamily
+              onClicked: {
+                battery.openHistory()
+                battery.close()
+              }
+            }
+          }
         }
 
         Column {
@@ -452,18 +473,6 @@ Panel {
               active: battery.activeProfile === modelData
               onClicked: battery.setProfile(modelData)
             }
-          }
-        }
-
-        PanelActionButton {
-          anchors.horizontalCenter: parent.horizontalCenter
-          iconText: "󰋚"
-          tooltipText: "Battery history  (H)"
-          foreground: battery.barForeground
-          fontFamily: battery.fontFamily
-          onClicked: {
-            battery.openHistory()
-            battery.close()
           }
         }
       }

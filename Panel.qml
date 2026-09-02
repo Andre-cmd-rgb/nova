@@ -38,8 +38,9 @@ Item {
   readonly property var run: info.run || null
 
   readonly property int atRate: Number(now.atRateSeconds || 0)
-  readonly property real nowWatts: Number(now.rateWatts || 0)
+  readonly property real nowWatts: Number(now.displayWatts || 0)
   readonly property bool onBattery: String(now.state || "") === "D"
+  readonly property bool charging: String(now.state || "") === "C"
   readonly property int typicalSeconds: Number(typical.seconds || 0)
   readonly property real typicalWatts: Number(typical.watts || 0)
   readonly property int typicalRuns: Number(typical.runs || 0)
@@ -168,7 +169,11 @@ Item {
     if (atRate <= 0 && !haveHistory)
       return "nothing recorded yet — this fills in once the machine runs on battery"
     var parts = []
-    if (atRate > 0) parts.push("at " + formatWatts(nowWatts) + (onBattery ? " right now" : ""))
+    // While charging there is no drain to quote, so the live figure describes
+    // the fill instead of pretending to describe a battery that is not
+    // draining.
+    if (charging && nowWatts > 0) parts.push("charging at " + formatWatts(nowWatts))
+    else if (atRate > 0) parts.push("at " + formatWatts(nowWatts) + (onBattery ? " right now" : ""))
     if (haveHistory) parts.push(formatDuration(typicalSeconds) + " typical")
     return parts.join("  ·  ")
   }

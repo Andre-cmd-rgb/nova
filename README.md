@@ -193,6 +193,32 @@ Charge, draw and capacity. Nothing about what the machine was doing at the
 time, and nothing that leaves the machine. `batterylife forget all` deletes
 the lot.
 
+## Charging
+
+The same machinery runs in both directions. Time-to-full is measured from the
+charge actually going in, not from the instantaneous reading, and the watts on
+screen are the fill rate — never the average of the discharge runs behind it,
+which is a number about a different thing entirely.
+
+While charging there is no drain to project from, so the full-charge figure
+steps aside rather than quoting a stale one. "Not charging" — plugged in but
+taking nothing, which is what a charge threshold looks like — gets the plain
+level glyph rather than a bolt, because no current is flowing.
+
+## Tests
+
+```sh
+bash test/roundtrip.sh
+```
+
+45 checks against a fake battery and a written history, in a temporary tree —
+the real machine is never touched. That is what makes the awkward cases
+testable: a battery cannot be asked to be at 3% and charging on demand, and a
+suspend cannot be arranged to order. Covered: energy- and charge-reporting
+batteries, device batteries being skipped, the sampling floor, run detection
+across a suspend and across a charge, the charging path, retention, settings
+validation, and an empty history still producing valid JSON.
+
 ## Requirements
 
 Omarchy shell, `jq`, and `busctl` (systemd) for the optional import. The

@@ -13,6 +13,14 @@
 
 set -uo pipefail
 
+# Numbers and ordering are data here, not presentation. A locale with a comma
+# for a decimal point makes awk print "25,45", which is not a number to jq and
+# takes the whole panel down with it; a locale with its own collation order
+# changes what `sort` and `<` mean for the date-named history files. Neither
+# is left to the environment. LC_ALL is deliberately not set: nothing here
+# formats text for a person in a way a locale should not be allowed to touch.
+export LC_NUMERIC=C LC_COLLATE=C
+
 PLUGIN_ID="andrecmdrgb.batterylife"
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-batterylife"
@@ -320,12 +328,24 @@ prune_history() {
 
 # Day files covering the last n days, oldest first, ending today. Missing
 # days are skipped rather than named: every reader here cats the list.
+# Day files covering the last n days, oldest first, ending today.
+#
+# Taken from the directory rather than generated a day at a time: a date
+# per day is a fork per day, and asking for ninety days of history was
+# ninety processes before a single row had been read. The names are ISO
+# dates, the glob sorts them, and LC_COLLATE=C makes the string compare
+# mean what it looks like it means.
 files_for_span() {
-  local span=$1 index date file
-  for ((index = span - 1; index >= 0; index--)); do
-    date=$(date -d "-$index day" +%F) || continue
-    file=$(day_file "$date")
-    [[ -e $file ]] && printf '%s\n' "$file"
+  local span=$1 cutoff name base
+  cutoff=$(date -d "-$((span - 1)) day" +%F) || return 0
+  [[ -d $DAYS_DIR ]] || return 0
+  for name in "$DAYS_DIR"/*.tsv; do
+    [[ -e $name ]] || continue
+    base=${name##*/}
+    base=${base%.tsv}
+    [[ $base =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
+    [[ $base < $cutoff ]] && continue
+    printf '%s\n' "$name"
   done
 }
 
@@ -395,6 +415,20 @@ sessions_tsv() {
   '
 }
 
+# Session detection walks every row in the history, and one `json` asks for
+# it three times — for the projection, for the run in progress, and for the
+# list. It is the same answer each time, so it is computed once.
+SESSIONS_CACHE=""
+SESSIONS_CACHED=0
+
+sessions_cached() {
+  if ((!SESSIONS_CACHED)); then
+    SESSIONS_CACHE=$(sessions_tsv 90)
+    SESSIONS_CACHED=1
+  fi
+  printf '%s\n' "$SESSIONS_CACHE"
+}
+
 # The projection everything else quotes: pool the recent runs, divide the
 # energy they actually used by the time they were actually awake, and ask how
 # long a full battery lasts at that rate.
@@ -410,50 +444,68 @@ sessions_tsv() {
 TYPICAL_MIN=120
 
 typical_rate() {
-  local span min
+  local span cutoff
   span=$(cfg_number TYPICAL_DAYS 14)
-  min=$TYPICAL_MIN
-  sessions_tsv "$span" | awk -F'\t' -v min="$min" '
-    $6 >= min { awake += $6; drop += $7; if ($9 > full) full = $9 }
+  cutoff=$(( $(date +%s) - span * 86400 ))
+  sessions_cached | awk -F'\t' -v min="$TYPICAL_MIN" -v cutoff="$cutoff" '
+    $2 + 0 < cutoff { next }
+    $6 + 0 >= min {
+      awake += $6
+      drop += $7
+      runs++
+      if ($9 + 0 > full) full = $9
+    }
     END {
       if (awake <= 0 || drop <= 0 || full <= 0) { print "0 0 0 0"; exit }
       rate = drop / awake                       # uWh per second
-      printf "%.2f %d %d %d\n", rate * 3600 / 1000000, full / rate, NR, awake
+      # runs, not NR: NR counts every run read, including the ones the cutoff
+      # and the minimum have just excluded.
+      printf "%.2f %d %d %d\n", rate * 3600 / 1000000, full / rate, runs, awake
     }
   '
 }
 
-# date, weekday, awake seconds on battery, uWh used, avg watts — oldest first.
+# date, weekday, awake seconds on battery, uWh used, avg watts — oldest
+# first, one row per day in the span whether or not it saw any battery.
+#
+# One pass over the rows, not one per day: this runs on every panel refresh,
+# and three forks per day of history was most of what that cost.
 days_tsv() {
-  local span=$1 gap index date
-  gap=$(cfg_number GAP_SECONDS 300)
-  for ((index = span - 1; index >= 0; index--)); do
-    date=$(date -d "-$index day" +%F) || continue
-    printf '%s\t%s\t%s\n' "$date" "$(date -d "$date" +%a)" \
-      "$(day_totals "$(day_file "$date")" "$gap")"
-  done
-}
-
-# awake_seconds<TAB>uWh<TAB>avg_watts for one day file.
-day_totals() {
-  awk -F'\t' -v OFS='\t' -v gap="$2" '
+  local span=$1
+  rows_for_span "$span" | awk -F'\t' -v span="$span" -v now="$(date +%s)" \
+    -v gap="$(cfg_number GAP_SECONDS 300)" '
+    BEGIN {
+      # The day walk is anchored at local noon and stepped by whole days.
+      # Stepping back from "now" would skip or repeat a day across a
+      # daylight-saving change — twice a year, silently.
+      noon = mktime(strftime("%Y %m %d", now) " 12 00 00")
+    }
     NF == 6 && $2 == "D" {
       ts = $1 + 0; e = $4 + 0
       if (have) {
         dt = ts - pt
         de = pe - e
         if (de < 0) de = 0
-        if (dt > 0 && dt <= gap) { awake += dt; drop += de }
+        if (dt > 0 && dt <= gap) {
+          d = strftime("%Y-%m-%d", ts)
+          secs[d] += dt
+          drop[d] += de
+        }
       }
       have = 1; pt = ts; pe = e
       next
     }
     { have = 0 }
     END {
-      watts = awake > 0 ? drop / awake * 3600 / 1000000 : 0
-      printf "%d\t%d\t%.2f", awake, drop, watts
+      for (i = span - 1; i >= 0; i--) {
+        t = noon - i * 86400
+        d = strftime("%Y-%m-%d", t)
+        printf "%s\t%s\t%d\t%d\t%.2f\n", d, strftime("%a", t),
+          secs[d] + 0, drop[d] + 0,
+          (secs[d] > 0 ? drop[d] / secs[d] * 3600 / 1000000 : 0)
+      }
     }
-  ' "$1" 2>/dev/null || printf '0\t0\t0.00'
+  '
 }
 
 # ------------------------------------------------------------------- current
@@ -465,60 +517,72 @@ day_totals() {
 #
 # But it does have to follow the machine. Writing in a terminal and watching a
 # video are twenty watts apart here, and an average over the last quarter hour
-# says neither. So every interval is weighted by its age, halving every
+# describes neither. So every interval is weighted by its age, halving every
 # RESPONSE_SECONDS: the last minute decides the number, the ten before it damp
 # the noise, and anything older is arithmetically irrelevant without needing a
 # cutoff to say so.
-#
-# Preference order, most specific first:
-#   1. the weighted rate over recent discharging intervals
-#   2. the pooled rate from recent discharge runs
-#   3. power_now, when there is no history at all yet
 RECENT_WINDOW=1800
 
-# Age-weighted watts over recent discharging intervals, or 0.
-recent_watts() {
+# "0", "0.00" and "" all mean no rate. Everything that produces one prints a
+# fixed two-decimal number, so this needs no arithmetic and no fork.
+is_positive() { [[ -n ${1:-} && $1 != 0 && $1 != 0.0 && $1 != 0.00 ]]; }
+
+# Age-weighted watts over recent intervals, drain and fill, from one walk.
+# Charging moves energy the other way; the magnitude is the rate either way,
+# so both are accumulated in the same pass rather than in two.
+#
+# Prints: drain_watts fill_watts
+recent_rates() {
   rows_for_span 2 | awk -v now="$(date +%s)" -v window="$RECENT_WINDOW" \
-    -v half="$(cfg_number RESPONSE_SECONDS 60)" -v gap="$(cfg_number GAP_SECONDS 300)" '
+    -v half="$(cfg_number RESPONSE_SECONDS 60)" \
+    -v gap="$(cfg_number GAP_SECONDS 300)" '
     BEGIN { ln2 = 0.6931471805599453 }
-    $2 == "D" && $1 >= now - window {
+    function rate(wd, wt) {
+      # Weighted seconds, not wall seconds: one interval half a lifetime old
+      # is not enough to call a rate.
+      return (wt < 30 || wd <= 0) ? 0 : wd / wt * 3600 / 1000000
+    }
+    ($2 == "D" || $2 == "C") && $1 >= now - window {
       ts = $1 + 0; e = $4 + 0
-      if (have) {
+      if (have == $2) {
         dt = ts - pt
-        de = pe - e
+        de = ($2 == "C") ? e - pe : pe - e
         if (de < 0) de = 0
         if (dt > 0 && dt <= gap) {
           # Weighted at the middle of the interval, since that is when the
-          # energy it accounts for was actually spent.
+          # energy it accounts for was actually moved.
           age = now - (ts + pt) / 2
           if (age < 0) age = 0
           w = exp(-ln2 * age / half)
-          wd += w * de
-          wt += w * dt
+          if ($2 == "C") { cd += w * de; ct += w * dt }
+          else           { dd += w * de; dt_ += w * dt }
         }
       }
-      have = 1; pt = ts; pe = e
+      # Keyed on the state, so a row either side of a plug event never pairs
+      # up into an interval that spans both.
+      have = $2; pt = ts; pe = e
       next
     }
-    { have = 0 }
-    END {
-      # Weighted seconds, not wall seconds: one interval half a lifetime old
-      # is not enough to call a rate.
-      if (wt < 30 || wd <= 0) { print "0.00"; exit }
-      printf "%.2f\n", wd / wt * 3600 / 1000000
-    }
+    { have = "" }
+    END { printf "%.2f %.2f\n", rate(dd, dt_), rate(cd, ct) }
   '
 }
 
 # The current discharge run, or nothing. Same columns as sessions_tsv.
 current_session() {
-  sessions_tsv 7 | awk -F'\t' '$11 == 1' | tail -n1
+  sessions_cached | awk -F'\t' '$11 == 1' | tail -n1
 }
 
-# key<TAB>value lines describing right now. One place to do the arithmetic,
-# so `status`, `json` and the panel can never disagree about what a watt is.
+# key<TAB>value lines describing right now. One place to do the arithmetic, so
+# `status`, `json` and the panel can never disagree about what a watt is.
+#
+# Keys that have no honest answer are simply absent rather than zero: there is
+# no time-to-full for a battery that is not charging, and no projection at all
+# until something has been measured. Every reader treats a missing key as
+# "unknown" and says so.
 now_tsv() {
-  local energy full design pct state power recent typ_w typ_full runs rate left tofull sess
+  local energy full design pct state power recent charge_rate rate
+  local typ_w typ_full runs sess
 
   if ! find_battery; then
     printf 'present\t0\n'
@@ -528,23 +592,14 @@ now_tsv() {
   pct=$(battery_pct) || pct=0
   state=$(battery_state)
   power=$(battery_power) || power=0
-  recent=$(recent_watts)
+
+  read -r recent charge_rate < <(recent_rates)
   read -r typ_w typ_full runs _ < <(typical_rate)
 
-  # Watts to quote for the live readout, and the rate the estimate divides by.
+  # What the drain estimate divides by: what has just been measured, or
+  # failing that what recent runs averaged.
   rate=$recent
-  awk -v r="$rate" 'BEGIN { exit !(r + 0 > 0) }' || rate=$typ_w
-  awk -v r="$rate" 'BEGIN { exit !(r + 0 > 0) }' || rate=$(awk -v p="$power" 'BEGIN { printf "%.2f", p / 1000000 }')
-
-  left=0
-  tofull=0
-  if [[ $state == D ]]; then
-    left=$(awk -v e="$energy" -v r="$rate" \
-      'BEGIN { printf "%d", (r > 0) ? e / 1000000 / r * 3600 : 0 }')
-  elif [[ $state == C && $power -gt 0 ]] 2>/dev/null; then
-    tofull=$(awk -v e="$energy" -v f="$full" -v p="$power" \
-      'BEGIN { printf "%d", (p > 0 && f > e) ? (f - e) / p * 3600 : 0 }')
-  fi
+  is_positive "$rate" || rate=$typ_w
 
   printf 'present\t1\n'
   printf 'state\t%s\n' "$state"
@@ -553,33 +608,57 @@ now_tsv() {
   printf 'full\t%s\n' "$full"
   printf 'design\t%s\n' "$design"
   printf 'power\t%s\n' "$power"
-  printf 'watts\t%s\n' "$(awk -v p="$power" 'BEGIN { printf "%.2f", p / 1000000 }')"
   printf 'recentWatts\t%s\n' "$recent"
-  printf 'rateWatts\t%s\n' "$rate"
   printf 'typicalWatts\t%s\n' "$typ_w"
   printf 'typicalSeconds\t%s\n' "$typ_full"
   printf 'typicalRuns\t%s\n' "$runs"
-  # What a full charge would give at the rate in force right now — the number
-  # that answers "how long if I keep doing this".
-  printf 'atRateSeconds\t%s\n' "$(awk -v f="$full" -v r="$rate" \
-    'BEGIN { printf "%d", (r > 0) ? f / 1000000 / r * 3600 : 0 }')"
-  printf 'timeLeft\t%s\n' "$left"
-  printf 'timeToFull\t%s\n' "$tofull"
   printf 'cycles\t%s\n' "$(cycles)"
 
+  # Everything derived in one pass. A process per number is most of what a
+  # panel refresh used to cost.
+  awk -v e="$energy" -v f="$full" -v p="$power" -v st="$state" \
+    -v rate="$rate" -v crate="$charge_rate" '
+    BEGIN {
+      watts = p / 1000000
+      # The instantaneous reading stands in only while nothing has been
+      # measured yet: on the first sample there is no interval to weigh.
+      if (rate + 0 <= 0 && st == "D") rate = watts
+      if (crate + 0 <= 0 && st == "C") crate = watts
+
+      printf "watts\t%.2f\n", watts
+      printf "rateWatts\t%.2f\n", rate
+      printf "chargeWatts\t%.2f\n", crate
+      # What to put in front of a person: the measured drain while draining,
+      # the measured fill while filling, and the instantaneous reading
+      # otherwise — never a discharge average quoted at a charging battery.
+      printf "displayWatts\t%.2f\n",
+        (st == "D") ? rate : ((st == "C") ? crate : watts)
+
+      if (st == "D" && rate > 0)
+        printf "timeLeft\t%d\n", e / 1000000 / rate * 3600
+      if (st == "C" && crate > 0 && f > e)
+        printf "timeToFull\t%d\n", (f - e) / 1000000 / crate * 3600
+      # What a full charge would give at the drain rate in force right now.
+      # Absent while charging with no drain history: how long this battery
+      # lasts is not something a charging curve can answer.
+      if (f > 0 && rate > 0 && st != "C")
+        printf "atRateSeconds\t%d\n", f / 1000000 / rate * 3600
+    }
+  '
+
   sess=$(current_session)
-  if [[ -n $sess ]]; then
-    printf 'runStart\t%s\n' "$(cut -f1 <<<"$sess")"
-    printf 'runStartPct\t%s\n' "$(cut -f3 <<<"$sess")"
-    printf 'runWall\t%s\n' "$(cut -f5 <<<"$sess")"
-    printf 'runAwake\t%s\n' "$(cut -f6 <<<"$sess")"
-    printf 'runEnergy\t%s\n' "$(cut -f7 <<<"$sess")"
-    printf 'runWatts\t%s\n' "$(awk -F'\t' \
-      '{ printf "%.2f", ($6 > 0) ? $7 / $6 * 3600 / 1000000 : 0 }' <<<"$sess")"
-  fi
+  [[ -n $sess ]] || return 0
+  awk -F'\t' '{
+    printf "runStart\t%d\n", $1
+    printf "runStartPct\t%d\n", $3
+    printf "runWall\t%d\n", $5
+    printf "runAwake\t%d\n", $6
+    printf "runEnergy\t%d\n", $7
+    printf "runWatts\t%.2f\n", ($6 > 0) ? $7 / $6 * 3600 / 1000000 : 0
+  }' <<<"$sess"
 }
 
-# One key out of now_tsv.
+# One key out of now_tsv, or the empty string when it had nothing to say.
 now_value() { awk -F'\t' -v key="$1" '$1 == key { print $2; exit }' <<<"$2"; }
 
 # -------------------------------------------------------------------- import
@@ -874,7 +953,7 @@ cmd_json() {
   done
 
   snap=$(now_tsv)
-  sessions=$(sessions_tsv 90 | awk -F'\t' -v min="$(cfg_number MIN_SESSION 600)" '$6 >= min')
+  sessions=$(sessions_cached | awk -F'\t' -v min="$(cfg_number MIN_SESSION 600)" '$6 >= min')
 
   jq -n \
     --arg now "$snap" \
@@ -907,7 +986,9 @@ cmd_json() {
           now: {
             state:       ($n.state // "U"),
             percent:     ($n.percent | num),
-            watts:       ($n.watts | num),
+            watts:        ($n.watts | num),
+            displayWatts: ($n.displayWatts | num),
+            chargeWatts:  ($n.chargeWatts | num),
             recentWatts: ($n.recentWatts | num),
             rateWatts:   ($n.rateWatts | num),
             energyWh:    (($n.energy | num) / 1000000),
