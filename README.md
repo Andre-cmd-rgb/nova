@@ -211,7 +211,7 @@ level glyph rather than a bolt, because no current is flowing.
 bash test/roundtrip.sh
 ```
 
-45 checks against a fake battery and a written history, in a temporary tree —
+49 checks against a fake battery and a written history, in a temporary tree —
 the real machine is never touched. That is what makes the awkward cases
 testable: a battery cannot be asked to be at 3% and charging on demand, and a
 suspend cannot be arranged to order. Covered: energy- and charge-reporting

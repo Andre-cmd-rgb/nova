@@ -858,7 +858,9 @@ cmd_status() {
 
   state=$(now_value state "$snap")
   pct=$(now_value percent "$snap")
-  watts=$(now_value rateWatts "$snap")
+  # displayWatts, not rateWatts: while charging the drain rate describes
+  # nothing that is happening.
+  watts=$(now_value displayWatts "$snap")
   left=$(now_value timeLeft "$snap")
   tofull=$(now_value timeToFull "$snap")
 
@@ -890,8 +892,9 @@ cmd_status() {
   typ_w=$(now_value typicalWatts "$snap")
   runs=$(now_value typicalRuns "$snap")
   if [[ ${typ_s:-0} -gt 0 ]]; then
-    printf 'Typical charge   %s at %s W  (%s runs)\n' \
-      "$(format_duration "$typ_s")" "$typ_w" "$runs"
+    printf 'Typical charge   %s at %s W  (%s %s)\n' \
+      "$(format_duration "$typ_s")" "$typ_w" "$runs" \
+      "$([[ $runs == 1 ]] && echo run || echo runs)"
   else
     printf 'Typical charge   not enough history yet\n'
   fi

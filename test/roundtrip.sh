@@ -144,6 +144,7 @@ ok "20 Wh accounted for" "20" "$(jq -r '.wh | round' <<<"$run0")"
 ok "which is 20 W" "20" "$($CLI json | jq -r '.sessions[0].watts | round')"
 ok "a full charge is 74.48/20 hours" "3h 43m" \
   "$($CLI sessions | awk 'NR==2 { print $(NF-1), $NF }')"
+contains "one run is spelled as one run" "(1 run)" "$($CLI status)"
 
 echo "== a suspend in the middle =="
 # Same energy, same start and end, but two hours of nothing between.
@@ -180,6 +181,10 @@ contains "there is a time to full" "true" \
 ok "the fill rate is measured, not the drain average" "54" \
   "$(jq -r '.chargeWatts | round' <<<"$now")"
 ok "and that is what gets shown" "54" "$(jq -r '.displayWatts | round' <<<"$now")"
+
+contains "status quotes the fill rate, not the drain average" "54.00 W" "$($CLI status)"
+contains "status says what it is doing" "Charging" "$($CLI status)"
+contains "no projection from charging alone" "not enough history yet" "$($CLI status)"
 
 echo "== plugged in and full =="
 battery Full 74480000 0

@@ -18,4 +18,4 @@ First release.
 - Charging is measured the same way as discharging — time-to-full comes from
   the charge going in, and the watts shown are the fill rate.
 - `batterylife` CLI owns storage, settings and the reports.
-- `bash test/roundtrip.sh` — 45 checks against a fake battery.
+- `bash test/roundtrip.sh` — 49 checks against a fake battery.
