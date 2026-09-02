@@ -20,6 +20,8 @@ CONFIG="$CONFIG_DIR/config"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-batterylife"
 DAYS_DIR="$STATE_DIR/days"
 MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/extensions/omarchy-menu.jsonc"
+SHELL_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+STOCK_POWER="omarchy.power"
 
 # Overridable so the test harness can point the whole script at a fixture
 # directory instead of the real battery.
@@ -985,31 +987,54 @@ cmd_indicator() {
   esac
 }
 
+# Is this widget in the bar layout at all? Read rather than asked for: the
+# bar CLI can place and move widgets but has no way to report one.
+bar_has() {
+  [[ -r $SHELL_JSON ]] && grep -qF "\"$1\"" "$SHELL_JSON"
+}
+
 # Take over the slot the stock power widget occupies, and hand it back.
-# `omarchy bar put --after` places this one immediately behind it, and
-# disabling the stock widget then leaves this one exactly where it was.
 cmd_takeover() {
   local action=${1:-on}
   have omarchy || die "the omarchy CLI is required"
   case $action in
   on)
-    # `move` first, `put` second. They are not interchangeable: `put` places a
-    # widget the way enabling it does but deliberately leaves one that is
-    # already on the bar where it is — so on the common path, where the plugin
-    # has just been enabled and is therefore already somewhere, `put` alone is
-    # a no-op and the widget never reaches the slot.
-    omarchy bar move "$PLUGIN_ID" --after omarchy.power >/dev/null 2>&1 ||
-      omarchy bar put "$PLUGIN_ID" --after omarchy.power >/dev/null 2>&1 ||
+    # On the bar at all, first: `put` places a widget that is missing and
+    # deliberately leaves one that is already there where it is.
+    bar_has "$PLUGIN_ID" ||
       omarchy bar put "$PLUGIN_ID" --section right >/dev/null 2>&1 ||
       die "could not place the widget — is the plugin enabled?"
-    omarchy plugin disable omarchy.power >/dev/null 2>&1 ||
+
+    if ! bar_has "$STOCK_POWER"; then
+      echo "Battery Life is on the bar; the stock power widget is already off it."
+      return 0
+    fi
+
+    # Anchored to the stock widget only while the bar actually carries it.
+    # `move --after` an id the bar does not have takes this widget off the
+    # bar rather than leaving it where it was, which is how running this
+    # twice used to end with no battery widget at all.
+    omarchy bar move "$PLUGIN_ID" --after "$STOCK_POWER" >/dev/null 2>&1 ||
+      die "could not move the widget into the power widget's slot"
+    omarchy plugin disable "$STOCK_POWER" >/dev/null 2>&1 ||
       echo "Note: the stock power widget could not be disabled; both are on the bar." >&2
     echo "Battery Life has the power widget's slot."
     ;;
   off)
-    omarchy plugin enable omarchy.power >/dev/null 2>&1 ||
+    omarchy plugin enable "$STOCK_POWER" >/dev/null 2>&1 ||
       die "could not restore the stock power widget"
+    # `plugin enable` puts a widget in the section its manifest names, and the
+    # stock power widget names none — so it comes back in the centre rather
+    # than where it was. Put it back beside this one.
+    if bar_has "$PLUGIN_ID"; then
+      omarchy bar move "$STOCK_POWER" --after "$PLUGIN_ID" >/dev/null 2>&1
+    else
+      omarchy bar move "$STOCK_POWER" --section right >/dev/null 2>&1
+    fi
     echo "Restored the stock power widget."
+    echo "Battery Life is still on the bar beside it. Taking a widget off the bar"
+    echo "means disabling the plugin, which also stops it recording:"
+    echo "  omarchy plugin disable $PLUGIN_ID"
     ;;
   *) die "usage: batterylife takeover on|off" ;;
   esac

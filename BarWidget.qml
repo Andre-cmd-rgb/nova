@@ -66,6 +66,11 @@ Panel {
   }
   readonly property bool low: discharging && percent > 0 && percent <= warnPercent
 
+  // The bar draws its open-panel mark at 55% of the slot unless the module
+  // says otherwise, which on a padded glyph-plus-text slot lands under the
+  // text alone. This one tracks what is actually painted.
+  readonly property real openPanelIndicatorWidth: button.vertical ? 0 : Math.ceil(content.implicitWidth)
+
   // A Panel is a bare Item: it has no implicit size of its own, and the bar
   // lays widgets out by implicitWidth. Without these the slot is zero wide
   // and the widget is placed, loaded, and invisible — with no error anywhere
@@ -217,19 +222,26 @@ Panel {
 
   // ---- bar ----------------------------------------------------------------
 
-  // WidgetButton rather than BarIconButton: the icon button sets
-  // labelVisible false and paints a glyph in a fixed square slot, so the
-  // readout beside the glyph would never be drawn. `vertical` is read off the
-  // button, which takes it from the bar — Panel does not carry one.
+  // The glyph and the readout are drawn separately, because they want
+  // different sizes: the glyph at the bar's icon size, so it matches every
+  // other status glyph beside it and the stock power widget it replaced, and
+  // the readout at label size, so it matches the text widgets it sits next
+  // to. A button paints one string in one size, so neither BarIconButton nor
+  // a plain WidgetButton label can do both.
+  //
+  // WidgetButton is still the shell: it registers the click target with the
+  // bar, owns the tooltip, and draws the hover and press chrome. Its own
+  // label is turned off and the content sits inside it, so the whole slot —
+  // glyph and readout alike — stays one click target.
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: battery.bar
-    text: battery.barText === "" || button.vertical
-      ? battery.icon
-      : battery.icon + " " + battery.barText
-    foreground: battery.low ? battery.urgent : battery.barForeground
-    fontSize: Style.font.bodySmall
+    labelVisible: false
+    // Keyed off the glyph rather than the label, which is now always empty.
+    hasVisualContent: battery.icon !== ""
+    fixedWidth: button.vertical ? -1 : Math.ceil(content.implicitWidth) + Style.space(9) * 2
+    fixedHeight: button.vertical ? Style.bar.iconSlot : -1
     tooltipText: battery.present
       ? Math.round(battery.percent) + "%  ·  " + battery.metaText
         + (battery.estimate !== "" ? "  ·  " + battery.estimate
@@ -241,6 +253,31 @@ Panel {
       else {
         if (!battery.opened) battery.sampleThenRefresh()
         battery.toggle()
+      }
+    }
+
+    Row {
+      id: content
+      anchors.centerIn: parent
+      spacing: Style.space(5)
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: battery.icon
+        color: battery.low ? battery.urgent : battery.barForeground
+        font.family: battery.fontFamily
+        font.pixelSize: Style.bar.iconFont
+        renderType: Text.NativeRendering
+      }
+
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: battery.barText !== "" && !button.vertical
+        text: battery.barText
+        color: battery.low ? battery.urgent : battery.barForeground
+        font.family: battery.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        renderType: Text.NativeRendering
       }
     }
   }
