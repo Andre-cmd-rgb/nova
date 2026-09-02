@@ -797,7 +797,10 @@ cmd_status() {
   printf '%s%%  %s  %s W\n' "$pct" "$(state_word "$state")" "$watts"
   [[ ${left:-0} -gt 0 ]] && printf 'Time left        %s\n' "$(format_duration "$left")"
   [[ ${tofull:-0} -gt 0 ]] && printf 'Until full       %s\n' "$(format_duration "$tofull")"
-  if [[ -n $(now_value runAwake "$snap") ]]; then
+  # A run with no runtime yet is one sample, not a run worth a line.
+  local run_awake
+  run_awake=$(now_value runAwake "$snap")
+  if [[ ${run_awake:-0} =~ ^[0-9]+$ ]] && ((run_awake > 0)); then
     printf 'This run         %s  ·  %s Wh  ·  %s W\n' \
       "$(format_duration "$(now_value runAwake "$snap")")" \
       "$(awk -v e="$(now_value runEnergy "$snap")" 'BEGIN { printf "%.1f", e / 1000000 }')" \

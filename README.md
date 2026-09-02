@@ -50,7 +50,8 @@ The glyph is drawn at the bar's icon size and the readout at its label size,
 so it sits level with the status glyphs on one side and the text widgets on
 the other.
 
-- **Left click** — the panel: time left, this run, and what a full charge buys
+- **Left click** — the panel: time left, what a full charge buys at the rate
+  you are drawing right now, and the power-profile switcher
 - **Right click** — cycle the readout (time left → percent → watts → percent
   and watts → nothing)
 - **Middle click** — straight to the history window
@@ -166,6 +167,14 @@ Tue 01 Sep 02:01   99% → 57 %  1h 27m    20.3 W   3h 39m
 | `GAP_SECONDS` | 300 | a quiet stretch longer than this counts as suspended |
 | `MIN_SESSION` | 600 | ignore discharge runs shorter than this |
 | `TYPICAL_DAYS` | 14 | days averaged into the full-charge projection |
+| `RESPONSE_SECONDS` | 60 | how fast the live estimate follows a change in load |
+
+`RESPONSE_SECONDS` is the half-life of the weighting behind the live
+estimate. Every interval counts for half as much as one `RESPONSE_SECONDS`
+newer, so at the default the last minute decides the number and the ten
+before it only damp the noise. Raise it for a steadier reading, lower it to
+follow the machine more closely — though nothing can react faster than
+`SAMPLE_INTERVAL`, since that is how often there is anything new to react to.
 
 `GAP_SECONDS` is the one worth understanding. It is how the plugin tells a
 suspend from a sample it simply missed. Too low and a busy moment that

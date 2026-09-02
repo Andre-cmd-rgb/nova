@@ -37,11 +37,14 @@ Item {
   readonly property var now: info.now || ({})
   readonly property var run: info.run || null
 
+  readonly property int atRate: Number(now.atRateSeconds || 0)
+  readonly property real nowWatts: Number(now.rateWatts || 0)
+  readonly property bool onBattery: String(now.state || "") === "D"
   readonly property int typicalSeconds: Number(typical.seconds || 0)
   readonly property real typicalWatts: Number(typical.watts || 0)
   readonly property int typicalRuns: Number(typical.runs || 0)
   readonly property bool haveHistory: typicalSeconds > 0
-  readonly property int shownRuns: Math.min(6, sessions.length)
+  readonly property int shownRuns: Math.min(5, sessions.length)
 
   // ---- lifecycle ----------------------------------------------------------
 
@@ -137,18 +140,37 @@ Item {
     return Qt.formatDateTime(d, "HH:mm")
   }
 
+  // "14:03" for a run that started today, "Mon 20:16" for one that did not.
+  function startedAt(epoch) {
+    var d = new Date(Number(epoch || 0) * 1000)
+    var today = new Date()
+    var sameDay = d.getFullYear() === today.getFullYear()
+      && d.getMonth() === today.getMonth()
+      && d.getDate() === today.getDate()
+    return Qt.formatDateTime(d, sameDay ? "HH:mm" : "ddd HH:mm")
+  }
+
   function dayOf(epoch) {
     var d = new Date(Number(epoch || 0) * 1000)
     return Qt.formatDateTime(d, "ddd d MMM")
   }
 
-  readonly property string headline: haveHistory ? formatDuration(typicalSeconds) : "—"
+  // What a full charge gives at the rate in force right now. It moves with
+  // the machine, which is the point: a terminal and a video are twenty watts
+  // apart here, and one pooled number describes neither.
+  readonly property string headline: {
+    if (atRate > 0) return formatDuration(atRate)
+    if (haveHistory) return formatDuration(typicalSeconds)
+    return "—"
+  }
 
   readonly property string subtitle: {
-    if (!haveHistory)
-      return "not enough history yet — runtime appears after a discharge run or two"
-    return "a full charge at " + formatWatts(typicalWatts)
-      + "  ·  measured over " + typicalRuns + (typicalRuns === 1 ? " run" : " runs")
+    if (atRate <= 0 && !haveHistory)
+      return "nothing recorded yet — this fills in once the machine runs on battery"
+    var parts = []
+    if (atRate > 0) parts.push("at " + formatWatts(nowWatts) + (onBattery ? " right now" : ""))
+    if (haveHistory) parts.push(formatDuration(typicalSeconds) + " typical")
+    return parts.join("  ·  ")
   }
 
   // ---- window -------------------------------------------------------------
@@ -445,119 +467,65 @@ Item {
           }
         }
 
-        PanelSeparator {
-          foreground: Color.foreground
-        }
-
         // ---- runs -----------------------------------------------------
-        PanelSectionHeader {
-          text: "DISCHARGE RUNS"
-          foreground: Color.foreground
-          fontFamily: Style.font.family
-        }
-
+        //
+        // One line each: when it started, the charge it spanned, how long it
+        // ran, what it drew. No section header and no bars — four columns of
+        // numbers do not need a chart underneath them to be read.
         Column {
           width: parent.width
-          spacing: Style.space(11)
+          spacing: Style.space(9)
 
           Repeater {
             model: root.shownRuns
 
-            delegate: Item {
+            delegate: Row {
               id: runRow
               required property int index
               readonly property var session: root.sessions[index]
-              // Measured against the longest run on screen, not against a
-              // day: the top bar is always full and the rest read against it.
-              readonly property real share: {
-                var top = 0
-                for (var i = 0; i < root.shownRuns; i++)
-                  top = Math.max(top, Number(root.sessions[i].awake || 0))
-                if (top <= 0 || !session) return 0
-                return Math.max(0.02, Number(session.awake || 0) / top)
-              }
+              readonly property bool live: !!(session && session.active)
 
               width: parent.width
-              implicitHeight: whenText.implicitHeight + detailText.implicitHeight + Style.space(11)
 
               Text {
-                id: whenText
-                anchors.left: parent.left
-                anchors.top: parent.top
-                width: parent.width - lengthText.width - Style.space(12)
+                width: parent.width * 0.26
+                elide: Text.ElideRight
+                text: runRow.session ? root.startedAt(runRow.session.start) : ""
+                color: Color.foreground
+                opacity: runRow.live ? 1 : 0.75
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                width: parent.width * 0.26
                 elide: Text.ElideRight
                 text: runRow.session
-                  ? root.dayOf(runRow.session.start) + "  " + root.clockOf(runRow.session.start)
-                    + (runRow.session.active ? "  ·  still running" : "")
-                  : ""
-                color: Color.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              Text {
-                id: lengthText
-                anchors.right: parent.right
-                anchors.top: parent.top
-                text: runRow.session ? root.formatDuration(runRow.session.awake) : ""
-                color: runRow.session && runRow.session.active ? Color.accent : Color.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              Text {
-                id: detailText
-                anchors.left: parent.left
-                anchors.top: whenText.bottom
-                text: runRow.session
                   ? Math.round(runRow.session.startPct) + "% → " + Math.round(runRow.session.endPct) + "%"
-                    + "  ·  " + Number(runRow.session.wh).toFixed(1) + " Wh"
                   : ""
                 color: Color.foreground
                 opacity: 0.5
                 font.family: Style.font.family
-                font.pixelSize: Style.font.caption
+                font.pixelSize: Style.font.bodySmall
               }
 
-              // What that run implies for a full battery — the same number the
-              // header averages, run by run, so an unusually cheap or
-              // expensive afternoon is visible rather than buried in the mean.
               Text {
-                anchors.right: parent.right
-                anchors.top: whenText.bottom
-                text: runRow.session
-                  ? root.formatWatts(runRow.session.watts)
-                    + (Number(runRow.session.fullSeconds || 0) > 0
-                       ? "  ·  full " + root.formatDuration(runRow.session.fullSeconds) : "")
-                  : ""
+                width: parent.width * 0.24
+                horizontalAlignment: Text.AlignRight
+                text: runRow.session ? root.formatDuration(runRow.session.awake) : ""
+                color: runRow.live ? Color.accent : Color.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              Text {
+                width: parent.width * 0.24
+                horizontalAlignment: Text.AlignRight
+                text: runRow.session ? root.formatWatts(runRow.session.watts) : ""
                 color: Color.foreground
                 opacity: 0.5
                 font.family: Style.font.family
-                font.pixelSize: Style.font.caption
-              }
-
-              Rectangle {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                height: Style.space(3)
-                radius: height / 2
-                color: Color.foreground
-                opacity: 0.1
-              }
-
-              Rectangle {
-                anchors.left: parent.left
-                anchors.bottom: parent.bottom
-                width: parent.width * runRow.share
-                height: Style.space(3)
-                radius: height / 2
-                color: runRow.session && runRow.session.active ? Color.accent : Color.foreground
-                opacity: runRow.session && runRow.session.active ? 0.9 : 0.5
-
-                Behavior on width {
-                  NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
-                }
+                font.pixelSize: Style.font.bodySmall
               }
             }
           }
@@ -566,20 +534,11 @@ Item {
             visible: root.sessions.length === 0
             width: parent.width
             wrapMode: Text.WordWrap
-            text: "No discharge runs recorded yet. Unplug for a few minutes and one will appear here — or run `batterylife import` to seed the last week from UPower's own log."
+            text: "No discharge runs yet. One appears here after ten minutes on battery."
             color: Color.foreground
             opacity: 0.5
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
-          }
-
-          Text {
-            visible: root.sessions.length > root.shownRuns
-            text: "+" + (root.sessions.length - root.shownRuns) + " more  ·  batterylife sessions 20"
-            color: Color.foreground
-            opacity: 0.45
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
           }
         }
       }
