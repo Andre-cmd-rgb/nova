@@ -43,8 +43,8 @@
   "toggle.touchpad": {"icon":"󰟸","label":"Touchpad","when":"nova-hw-touchpad","action":"nova-toggle-touchpad"},
 
   // Style
-  "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"theme=$(nova-theme-switcher) && [[ -n $theme ]] && nova-theme-set \"$theme\""},
-  "style.background": {"icon":"","label":"Background","aliases":["background","wallpaper"],"action":"background=$(nova-theme-bg-switcher) && [[ -n $background ]] && nova-theme-bg-set \"$background\""},
+  "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"nova-theme pick"},
+  "style.background": {"icon":"","label":"Background","aliases":["background","wallpaper"],"action":"nova-theme bg pick"},
   "style.font": {"icon":"","label":"Font","provider":"fonts"},
   "style.bar": {"icon":"󰍜","label":"Menu Bar"},
   "style.bar.top": {"icon":"󰁝","label":"Top","checked":"[[ \"$(nova-bar position)\" == top ]]","action":"nova-bar position top"},

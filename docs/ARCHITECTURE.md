@@ -13,7 +13,8 @@ code.
 | `src/cli/nova` | `/usr/bin/nova` | Dispatcher: `nova <group> <verb> [args]` |
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
 | `src/power/` | `/usr/lib/nova/nova-powerd`, `/usr/lib/nova/bin/nova-power-*` | Power manager (Rust daemon plus bash tools) |
-| `theme/` | `/usr/share/nova/themes/`, `/usr/share/nova/templates/` | Palettes, templates, rendered wallpapers |
+| `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
+| `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
 | `data/session/` | `/usr/lib/systemd/{system,user}/`, `/usr/lib/pam.d/`, `/etc/greetd/` | greetd, PAM, uwsm env, session guard |
 | `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/etc/snapper/` | Boot chain drop-ins |
@@ -29,7 +30,9 @@ exactly that, so pacman owns every file.
 ## Names, paths, environment
 
 - **Command:** `nova`. Helpers are `nova-<group>-<verb>` in `/usr/lib/nova/bin`, which
-  the session puts on `PATH`. `nova theme set white` runs `nova-theme-set white`.
+  the session puts on `PATH`. `nova <group> <verb>` runs `nova-<group>-<verb>` when it
+  exists, else `nova-<group>` with the verb as its first argument, so `nova theme set
+  white` runs `nova-theme set white`.
 - **Help:** each helper declares one-line metadata in its header comments, which
   `nova help` reads:
   ```bash
@@ -44,8 +47,8 @@ exactly that, so pacman owns every file.
 
   | Kind | Location |
   |---|---|
-  | User config | `~/.config/nova/` (`shell.json`, `themes/`, `usb.toml`, `hooks/`) |
-  | User state | `~/.local/state/nova/` (`current/theme`, battery and screen-time history) |
+  | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `usb.toml`, `hooks/`) |
+  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, battery and screen-time history) |
   | System config | `/etc/nova/` (`power.toml`; written only by `nova` helpers via polkit) |
   | System state | `/var/lib/nova/` (greeter theme mirror, owned by the user who ran the installer) |
   | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets) |
@@ -78,22 +81,38 @@ exactly that, so pacman owns every file.
 
 ## Theme flow
 
-A theme is a directory containing `colors.toml`, plus an optional `theme.toml` for fonts,
-rounding and gaps, plus optional hand-written per-app files.
+A theme is a directory with a `colors.toml` palette (flat `key = "value"` lines), plus any
+files it ships ready-made: a `shell.toml`, `shell.<section>.toml` overrides, an
+`icons.theme`, or a per-app file that replaces a template. Nova's themes live in
+`/usr/share/nova/themes/`; a theme of the same name in `~/.config/nova/themes/` overrides
+it file by file.
 
-`nova theme set <name>`:
-1. **Stage** into `~/.local/state/nova/current/next-theme`:
-   - the palette;
-   - every `templates/*.tpl` rendered with the palette, unless the theme ships that file
-     itself;
-   - the wallpaper rendered from `theme/wordmark/nova.svg`.
-2. **Swap atomically** into `current/theme`.
-3. **Live-reload:** Hyprland, the shell (`applyTheme` IPC), foot, GTK, Qt, Chrome policy,
-   VS Code, btop.
-4. **Mirror** the colors and wallpaper to `/var/lib/nova/greeter/`.
+`nova theme set <name>` (`nova-theme`, under 5 ms of its own work):
+1. **Render** into a fresh `~/.local/state/nova/rendered/<name>.<stamp>/`:
+   - the theme's files, Nova's copy first and then the user's;
+   - every template (`~/.config/nova/templates/*.tpl`, then Nova's) rendered with the
+     palette, unless the theme already ships that file;
+   - the wordmark background `backgrounds/nova.svg`.
+2. **Swap atomically:** `current/theme` is a symlink, replaced by one rename. Readers
+   see the old theme or the new one, never a mix.
+3. **Pick the background:** the one last chosen for this theme, else the latest shared
+   photo chosen, else the wordmark.
+4. **Tell the shell:** a `themeTransition` IPC fades to the new background and recolors
+   the shell in one step.
+5. **Apply** (`nova-theme-apply`, in parallel): `hyprctl reload`, GTK3/GTK4 `gtk.css` and
+   color-scheme (Qt follows GTK), foot (new windows read `theme.ini`, open ones get OSC
+   escapes), btop, VS Code, Claude Code, T3 Code, and the greeter mirror in
+   `/var/lib/nova/greeter/`, from which a root path unit sets Chrome's color policy.
 
-It never needs root and never rebuilds an initramfs. Nothing before the lock screen is
+Palette values may contain only hex, `rgb()`, words, numbers and a few separators, so a
+downloaded theme can't inject code into the Lua, CSS or JSON it is rendered into. It
+never needs root and never rebuilds an initramfs. Nothing before the lock screen is
 themed.
+
+**Backgrounds** (`nova theme bg pick|next|set`): a theme offers its own backgrounds,
+`~/.config/nova/backgrounds/<theme>/`, and the shared `~/.config/nova/backgrounds/`.
+Each theme remembers its pick in `~/.local/state/nova/backgrounds/by-theme/`. A pick from
+the shared folder also becomes the default for themes that have no pick of their own.
 
 ## Power and hardware
 
@@ -153,7 +172,10 @@ themed.
 - **QML:** qmllint-clean. Logic lives in singletons that can be tested against fixtures.
   No `property var data` or `property string state` on an Item root, because both shadow
   Item properties.
-- **Rust:** `cargo fmt`, `cargo clippy -D warnings`, no unsafe, minimal dependencies.
+- **Rust:** one Cargo workspace at the root. `cargo fmt`, `cargo clippy -D warnings`,
+  no unsafe, std only unless a dependency clearly pays for itself. Tools a user waits
+  on (the theme engine, the power manager) are Rust; glue that mostly runs other
+  programs stays bash.
 - **Tests:**
   - bats for helpers (`tests/unit/`)
   - qmltestrunner for QML singletons

@@ -51,8 +51,8 @@ and customization schema.
 
 ## Image picker
 
-Fullscreen image-grid selector overlay. Used by `nova-menu-images`
-(wallpaper picker) and `nova-theme-switcher` (theme picker) and any
+Fullscreen image-grid selector overlay. Used by `nova-theme bg pick`
+(background picker) and `nova-theme pick` (theme picker) and any
 other caller that wants to present a directory of images with previews.
 
 Two ways to drive it:
@@ -104,8 +104,8 @@ second Quickshell instance.
 
 The menu definition lives outside the shell host code:
 
-- defaults: `default/nova/nova-menu.jsonc`
-- user extensions: `~/.config/nova/extensions/nova-menu.jsonc`
+- defaults: `$NOVA_PATH/default/menu.jsonc`
+- user overrides: `~/.config/nova/menu.jsonc`, merged key by key
 
 The shell parses both JSONC files at startup (with `watchChanges: true`
 so edits take effect without a restart), evaluates `when:` / `checked:`
@@ -113,7 +113,3 @@ bash expressions in a single batched subprocess, and executes the
 selected `action:` string directly via `Quickshell.execDetached`. The
 long-running shell process keeps the parsed menu in memory, so the
 keybind → IPC → visible path costs ~30ms cold.
-
-## Coming soon
-
-- `nova.theme-switcher` — folds theme switching into the shell.

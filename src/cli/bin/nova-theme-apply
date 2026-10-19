@@ -1,0 +1,175 @@
+#!/bin/bash
+
+# nova:summary=Push the current theme to Hyprland, GTK, terminals, editors and the greeter
+# nova:args=[app...]
+# nova:hidden=true
+#
+# Run by `nova-theme set` after the swap, and at session start; `nova-theme bg
+# set` runs just the greeter. Each app is one function; they run in parallel and
+# none of them needs root. An app that is not installed or not running is
+# skipped.
+
+set -euo pipefail
+
+state=${XDG_STATE_HOME:-$HOME/.local/state}/nova
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+theme=$state/current/theme
+greeter=/var/lib/nova/greeter
+
+[[ -f $theme/colors.toml ]] || { echo "nova-theme-apply: no current theme" >&2; exit 1; }
+mode=$(nova-theme color mode)
+
+running() {
+  pgrep -u "$UID" -x "$1" >/dev/null
+}
+
+# Points a config file at the rendered theme, unless the user put a real file
+# there, which is theirs.
+link_config() {
+  local target=$1 link=$2
+  [[ -e $link && ! -L $link ]] && return 0
+  mkdir -p "$(dirname "$link")"
+  ln -sfn "$target" "$link"
+}
+
+apply_hyprland() {
+  [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || return 0
+  hyprctl reload >/dev/null
+}
+
+# libadwaita follows color-scheme live; the palette in gtk.css reaches windows
+# opened after the change.
+apply_gtk() {
+  link_config "$theme/gtk4.css" "$config_home/gtk-4.0/gtk.css"
+  link_config "$theme/gtk3.css" "$config_home/gtk-3.0/gtk.css"
+  [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
+  local icons=Yaru-blue
+  [[ ! -f $theme/icons.theme ]] || icons=$(<"$theme/icons.theme")
+  if [[ $mode == light ]]; then
+    gsettings set org.gnome.desktop.interface color-scheme prefer-light
+    gsettings set org.gnome.desktop.interface gtk-theme Adwaita
+  else
+    gsettings set org.gnome.desktop.interface color-scheme prefer-dark
+    gsettings set org.gnome.desktop.interface gtk-theme Adwaita-dark
+  fi
+  gsettings set org.gnome.desktop.interface icon-theme "$icons"
+}
+
+# New terminals read foot.ini; running ones get the palette as OSC sequences on
+# their ptys.
+apply_foot() {
+  link_config "$theme/foot.ini" "$config_home/foot/theme.ini"
+  running foot || return 0
+  local osc pid child tty i
+  declare -A c=()
+  while IFS=$'\t' read -r key value; do c[$key]=$value; done < <(nova-theme color --all)
+  osc=$(printf '\e]10;%s\a\e]11;%s\a\e]12;%s\a\e]17;%s\a\e]19;%s\a' \
+    "${c[foreground]}" "${c[background]}" "${c[cursor]}" "${c[selection_background]}" "${c[selection_foreground]}")
+  for i in {0..15}; do
+    osc+=$(printf '\e]4;%d;%s\a' "$i" "${c[color$i]}")
+  done
+  for pid in $(pgrep -u "$UID" -x foot); do
+    for child in $(pgrep -P "$pid" || true); do
+      tty=$(readlink "/proc/$child/fd/1" 2>/dev/null || true)
+      if [[ $tty == /dev/pts/* && -w $tty ]]; then printf '%s' "$osc" >"$tty"; fi
+    done
+  done
+}
+
+apply_btop() {
+  link_config "$theme/btop.theme" "$config_home/btop/themes/nova.theme"
+  running btop || return 0
+  pkill -u "$UID" -USR2 -x btop || true
+}
+
+# A local VS Code extension whose theme file is the rendered one. VS Code picks
+# up a changed theme file on its own once the extension is registered.
+apply_vscode() {
+  local extensions=$HOME/.vscode/extensions ext settings tmp
+  [[ -d $extensions ]] || return 0
+  ext=$extensions/nova.nova-theme-1.0.0
+  mkdir -p "$ext/themes"
+  ln -sfn "$theme/vscode-theme.json" "$ext/themes/nova.json"
+  cat >"$ext/package.json" <<JSON
+{
+  "name": "nova-theme",
+  "displayName": "Nova",
+  "publisher": "nova",
+  "version": "1.0.0",
+  "engines": { "vscode": "^1.70.0" },
+  "contributes": {
+    "themes": [{ "label": "Nova", "uiTheme": "$([[ $mode == light ]] && echo vs || echo vs-dark)", "path": "./themes/nova.json" }]
+  }
+}
+JSON
+  [[ -f $extensions/extensions.json ]] || printf '[]\n' >"$extensions/extensions.json"
+  tmp=$(mktemp)
+  jq --arg path "$ext" '
+    map(select(.identifier.id != "nova.nova-theme")) + [{
+      identifier: { id: "nova.nova-theme" },
+      version: "1.0.0",
+      location: { "$mid": 1, fsPath: $path, path: $path, scheme: "file" },
+      relativeLocation: "nova.nova-theme-1.0.0"
+    }]' "$extensions/extensions.json" >"$tmp"
+  mv "$tmp" "$extensions/extensions.json"
+
+  settings=$config_home/Code/User/settings.json
+  if [[ -f $settings ]] && jq -e . "$settings" >/dev/null 2>&1; then
+    tmp=$(mktemp)
+    if jq '."workbench.colorTheme" = "Nova"' "$settings" >"$tmp"; then mv "$tmp" "$settings"; else rm -f "$tmp"; fi
+  fi
+}
+
+apply_claude() {
+  local dir=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+  [[ -d $dir ]] || return 0
+  mkdir -p "$dir/themes"
+  cp "$theme/claude.json" "$dir/themes/nova.json.tmp"
+  mv "$dir/themes/nova.json.tmp" "$dir/themes/nova.json"
+}
+
+apply_t3code() {
+  local dir=${T3CODE_HOME:-$HOME/.t3}/userdata
+  [[ -d $dir ]] || return 0
+  mkdir -p "$dir/themes"
+  cp "$theme/t3code.json" "$dir/themes/nova.json.tmp"
+  mv "$dir/themes/nova.json.tmp" "$dir/themes/nova.json"
+}
+
+# The greeter runs before any user is logged in, so it reads a world-readable
+# mirror. nova-browser-theme.path (root) turns the mirrored chromium.theme into
+# Chrome's color policy; Chrome reloads policy files on its own.
+apply_greeter() {
+  [[ -d $greeter && -w $greeter ]] || return 0
+  local file background
+  for file in colors.toml shell.toml chromium.theme; do
+    [[ -f $theme/$file ]] || continue
+    cp "$theme/$file" "$greeter/.$file.tmp"
+    mv "$greeter/.$file.tmp" "$greeter/$file"
+  done
+  background=$(readlink -f "$state/current/background")
+  if [[ -f $background ]]; then
+    cp "$background" "$greeter/.background.tmp"
+    mv "$greeter/.background.tmp" "$greeter/background"
+  fi
+}
+
+apps=(hyprland gtk foot btop vscode claude t3code greeter)
+if (( $# > 0 )); then
+  for app in "$@"; do
+    [[ " ${apps[*]} " == *" $app "* ]] || { echo "nova-theme-apply: unknown app '$app' (${apps[*]})" >&2; exit 2; }
+  done
+  apps=("$@")
+fi
+
+pids=()
+for app in "${apps[@]}"; do
+  "apply_$app" &
+  pids+=("$!")
+done
+
+failed=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || failed=1
+done
+exit "$failed"

@@ -1,0 +1,13 @@
+# Nova's Rust components. One lock file and one target/ for all of them.
+[workspace]
+resolver = "2"
+members = ["src/theme"]
+# Joins the workspace when its rewrite as nova-powerd lands.
+exclude = ["src/power/daemon"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

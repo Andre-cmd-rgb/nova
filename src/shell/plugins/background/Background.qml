@@ -111,13 +111,13 @@ Item {
 
   Process {
     id: bgSwitchProc
-    command: ["bash", "-c", "background=$(nova-theme-bg-switcher); [[ -n $background ]] && nova-theme-bg-set \"$background\""]
+    command: ["nova-theme", "bg", "pick"]
     onExited: root.refreshBackground()
   }
 
   Process {
     id: themeSwitchProc
-    command: ["bash", "-c", "theme=$(nova-theme-switcher); [[ -n $theme ]] && nova-theme-set \"$theme\" >/dev/null 2>&1 &"]
+    command: ["nova-theme", "pick"]
     onExited: root.refreshBackground()
   }
 
@@ -219,10 +219,13 @@ Item {
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       exclusionMode: ExclusionMode.Ignore
 
+      // Decoded at cover size: a large photo costs screen-sized memory, and an
+      // SVG renders crisp at the screen's pixel density.
       Image {
         id: base
         anchors.fill: parent
         source: root.imageUrl(root.displayedBackground)
+        sourceSize: Qt.size(width, height)
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
         cache: true
@@ -239,6 +242,7 @@ Item {
         id: oldFrame
         anchors.fill: parent
         source: root.imageUrl(root.oldBackground)
+        sourceSize: Qt.size(width, height)
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
         cache: false
@@ -265,6 +269,7 @@ Item {
           id: incomingFrame
           anchors.fill: parent
           source: root.imageUrl(root.incomingBackground)
+          sourceSize: Qt.size(width, height)
           fillMode: Image.PreserveAspectCrop
           asynchronous: true
           cache: false
