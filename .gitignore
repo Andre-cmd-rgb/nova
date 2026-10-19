@@ -1,3 +1,6 @@
 *~
 *.swp
 .DS_Store
+
+# Build output for the governor.
+daemon/target/

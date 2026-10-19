@@ -6,6 +6,7 @@
 #   ./install.sh --boot-path  also trim the boot path (opt-in, see README)
 #   ./install.sh --hibernate  lid sleeps to RAM, then hibernates (opt-in)
 #   ./install.sh --hibernate-after=90min   the same, with a different delay
+#   ./install.sh --chrome-saver  force Chrome's Energy and Memory Saver on
 #   ./install.sh --uninstall  put everything back, boot path included
 #
 # Run it as your normal user; it calls sudo for the parts that need root.
@@ -13,7 +14,39 @@
 set -uo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+# Started under `sudo`, $HOME is /root — and every path below it is *session*
+# config that only the logged-in user's compositor ever reads: the GPU pin, the
+# hyprland.lua block, the Omarchy menu override, the remembered power profile.
+# Writing those into /root fails silently and completely: all four steps still
+# print a tick, and the session they were meant to configure is untouched. This
+# script escalates on its own where it needs root, so it is meant to be started
+# as the user — but being started with sudo in front is an easy mistake and a
+# quiet one, so recover the real account rather than configure an account that
+# nobody logs into.
+REAL_USER=${SUDO_USER:-$(id -un)}
+REAL_HOME=$HOME
+if [[ -n ${SUDO_USER:-} && $SUDO_USER != root ]]; then
+  REAL_HOME=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  [[ -d ${REAL_HOME:-} ]] || REAL_HOME=$HOME
+fi
+# XDG_CONFIG_HOME describes whichever session exported it, so it is honoured
+# only when this *is* that session.
+if [[ $REAL_HOME == "$HOME" ]]; then
+  CONFIG_HOME=${XDG_CONFIG_HOME:-$HOME/.config}
+  STATE_HOME=${XDG_STATE_HOME:-$HOME/.local/state}
+else
+  CONFIG_HOME=$REAL_HOME/.config
+  STATE_HOME=$REAL_HOME/.local/state
+fi
+
+# Anything created under the user's home while this runs as root would be left
+# root-owned in their own home, which breaks the next run started as the user.
+own_as_user() {
+  [[ $EUID -eq 0 && $REAL_USER != root ]] || return 0
+  chown -R "$REAL_USER" "$@" 2>/dev/null
+  return 0
+}
+
 UWSM_ENV="$CONFIG_HOME/uwsm/env-hyprland"
 HYPR_CONF="$CONFIG_HOME/hypr/hyprland.lua"
 MENU_FILE="$CONFIG_HOME/omarchy/extensions/omarchy-menu.jsonc"
@@ -87,16 +120,43 @@ detect_display_card() {
 
 uninstall() {
   step "Removing thinkpad-power"
+  # The governor first, and stopped rather than only disabled: it holds the
+  # fans and the power limits, and its own ExecStopPost is what puts them back.
+  sudo systemctl disable --now thinkpad-powerd.service >/dev/null 2>&1
+  sudo rm -f /etc/systemd/system/thinkpad-powerd.service
+  sudo rm -f /usr/local/bin/thinkpad-powerd
+  sudo rm -f /etc/modprobe.d/thinkpad-power-fan.conf
+  # Belt and braces: if the unit was already gone, nothing ran the restore.
+  [[ -w /proc/acpi/ibm/fan ]] && echo 'level auto' | sudo tee /proc/acpi/ibm/fan >/dev/null 2>&1
+  sudo rm -f /run/thinkpad-powerd.owns-cpu /run/thinkpad-powerd.state
+  ok "governor stopped and removed (fans back to the EC)"
+
   sudo rm -f /usr/local/bin/thinkpad-power
   sudo rm -f /etc/systemd/system/thinkpad-power.service
   sudo systemctl disable --now thinkpad-power-gpu.timer >/dev/null 2>&1
   sudo rm -f /etc/systemd/system/thinkpad-power-gpu.service /etc/systemd/system/thinkpad-power-gpu.timer
   sudo rm -f /etc/udev/rules.d/99-thinkpad-power.rules
   sudo rm -f /etc/udev/rules.d/98-thinkpad-power-igpu.rules
+  # Hands the Wi-Fi flag back to Omarchy's wifi.powersave = 2, but only at the
+  # next activation — the radio keeps whatever it has until then.
+  if [[ -e /etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf ]]; then
+    sudo rm -f /etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf
+    sudo systemctl reload NetworkManager >/dev/null 2>&1
+    for dev in /sys/class/net/*/wireless; do
+      [[ -e $dev ]] || continue
+      sudo iw dev "$(basename "$(dirname "$dev")")" set power_save off >/dev/null 2>&1
+    done
+    ok "Wi-Fi power save returned to NetworkManager"
+  fi
   sudo rm -f /etc/thinkpad-power.conf
+  if [[ -f /etc/opt/chrome/policies/managed/thinkpad-power.json ]]; then
+    sudo rm -f /etc/opt/chrome/policies/managed/thinkpad-power.json
+    ok "Chrome performance policy removed (restart Chrome to clear the banner)"
+  fi
   # The card may be off the bus right now, with the driver barred from
   # loading. Leaving it that way with the tool gone would strand it.
   sudo rm -f /run/modprobe.d/thinkpad-power-nvidia.conf
+  sudo rm -f /etc/modprobe.d/thinkpad-power-nvidia-fbdev.conf
   echo 1 | sudo tee /sys/bus/pci/rescan >/dev/null 2>&1 &&
     ok "PCI bus rescanned"
   sudo systemctl enable --now nvidia-persistenced >/dev/null 2>&1 &&
@@ -159,6 +219,7 @@ uninstall() {
 # of this tool that changes what boots, and the rest is worth having without
 # it. --uninstall reverts it whether or not this run asked for it.
 BOOT_PATH=0
+CHROME_SAVER=0
 HIBERNATE=0
 HIBERNATE_DELAY=2h
 HIBERNATE_DELAY_HOURS=2
@@ -166,6 +227,7 @@ DO_UNINSTALL=0
 for arg in "$@"; do
   case $arg in
   --uninstall) DO_UNINSTALL=1 ;;
+  --chrome-saver) CHROME_SAVER=1 ;;
   --boot-path) BOOT_PATH=1 ;;
   --hibernate) HIBERNATE=1 ;;
   --hibernate-after=*)
@@ -223,6 +285,28 @@ step "Installing"
 
 # Authenticate once, here, so a fingerprint that times out fails the install
 # outright instead of silently skipping the step it was asked for.
+
+# The governor is compiled here, as the invoking user, before anything wants
+# root — a cargo build under sudo would write root-owned artefacts into the
+# user's target/ directory and into ~/.cargo. It has no dependencies, so this
+# needs no network.
+step "Building the governor"
+DAEMON_BIN=""
+if [[ -f $HERE/daemon/Cargo.toml ]]; then
+  if command -v cargo >/dev/null 2>&1; then
+    if (cd "$HERE/daemon" && cargo build --release --quiet); then
+      DAEMON_BIN=$HERE/daemon/target/release/thinkpad-powerd
+      [[ -x $DAEMON_BIN ]] || { DAEMON_BIN=""; warn "cargo reported success but produced no binary"; }
+      [[ -n $DAEMON_BIN ]] && ok "thinkpad-powerd built"
+    else
+      warn "cargo build failed — installing without the governor"
+    fi
+  else
+    warn "no cargo on PATH — installing without the load-adaptive governor."
+    warn "Install Rust (omarchy pkg add rust) and re-run to add it."
+  fi
+fi
+
 info "administrator access is needed from here on"
 sudo -v || die "could not authenticate — nothing was changed"
 
@@ -240,13 +324,108 @@ else
 #
 # Optional, all off unless set:
 #   PL1_ON_BAT=30              sustained CPU power limit on battery, in watts
+#   PL2_ON_BAT=45              burst CPU power limit; must be >= PL1_ON_BAT
+#   CPU_MAX_PCT_ON_BAT=60      frequency ceiling, as a percent of the range
 #   ASPM_ON_BAT=powersave      PCIe link power management
 #   NMI_WATCHDOG_ON_BAT=off    disable the hard-lockup detector on battery
+#
+# On unless set:
+#   WIFI_POWERSAVE_ON_BAT=off  keep the Wi-Fi radio awake on battery too
+#
+# The CPU caps are lifted for one bounded stretch by:
+#   sudo thinkpad-power boost 60
+#
+# thinkpad-powerd, the load-adaptive governor. While it is running it owns PL1,
+# PL2 and the frequency ceiling, and the three settings above are inert.
+#   GOVERNOR=off               stop the governor managing the CPU at all
+#   LIGHT_PL1 / LIGHT_PL2 / LIGHT_MAX_PCT    browsing        (12 / 18 / 45)
+#   MID_PL1   / MID_PL2   / MID_MAX_PCT      working          (18 / 28 / 70)
+#   FULL_PL1  / FULL_PL2  / FULL_MAX_PCT     compiling        (28 / 42 / 100)
+#   TURBO_PL1 / TURBO_PL2 / TURBO_MAX_PCT    prolonged load   (40 / 60 / 100)
+#   LIGHT_NO_TURBO=off         let the browsing tier reach turbo after all
+#   LIGHT_GPU_MHZ / MID_GPU_MHZ / ...   iGPU ceiling, MHz; 0 leaves it alone
+#                                       (800 / 1050 / 0 / 0)
+#   GOVERNOR_CLIMB_AFTER=8     seconds before climbing; each rung costs one more
+#   GOVERNOR_FALL_AFTER=25     seconds of quiet before dropping one
+#   GOVERNOR_BUSY_CLIMB=65     percent busy that counts as work
+#   GOVERNOR_BUSY_FALL=30      percent busy that counts as done
+#   GOVERNOR_TEMP_THROTTLE=85  step down a tier above this, whatever the load
+#   FAN_CONTROL=off            leave the fans to the EC
 CONF
 fi
 printf 'NVIDIA_PCI=%s\n' "$NVIDIA_PCI" | sudo tee -a /etc/thinkpad-power.conf >/dev/null ||
   die "failed writing /etc/thinkpad-power.conf"
 ok "/etc/thinkpad-power.conf (NVIDIA_PCI only; other settings preserved)"
+
+# Omarchy sets wifi.powersave=2 (off) distribution-wide, and NetworkManager
+# applies that on every connection activation — so a roam or a reconnect would
+# undo the flag thinkpad-power sets on battery, silently. 1 means "ignore":
+# NetworkManager stops writing the flag at all and leaves it to the policy.
+# The name has to sort after omarchy-wifi-powersave.conf, and conf.d is read
+# in plain alphabetical order, so a 99- prefix would lose to an o.
+sudo tee /etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf >/dev/null <<'NMCONF'
+# thinkpad-power: the Wi-Fi power-save flag is set per power source by
+# /usr/local/bin/thinkpad-power, so NetworkManager must not write it. Removing
+# this file hands the flag back to Omarchy's own wifi.powersave = 2 (off).
+[connection]
+wifi.powersave = 1
+NMCONF
+sudo systemctl reload NetworkManager >/dev/null 2>&1
+ok "Wi-Fi power save handed to the policy (on for battery, off on AC)"
+
+if [[ -n $DAEMON_BIN ]]; then
+  run sudo install -Dm755 "$DAEMON_BIN" /usr/local/bin/thinkpad-powerd
+  run sudo install -Dm644 "$HERE/systemd/thinkpad-powerd.service" \
+    /etc/systemd/system/thinkpad-powerd.service
+
+  # Manual fan control is refused by thinkpad_acpi unless the module was loaded
+  # with fan_control=1, and the module is loaded long before this runs. The
+  # daemon checks the parameter and stands down with one line if it is off, so
+  # the gap between writing this and rebooting is harmless rather than silent.
+  sudo tee /etc/modprobe.d/thinkpad-power-fan.conf >/dev/null <<'FANCONF'
+# thinkpad-power: let thinkpad-powerd drive /proc/acpi/ibm/fan. The EC still
+# takes the fans back on its own if the daemon stops feeding the watchdog.
+options thinkpad_acpi fan_control=1
+FANCONF
+  if [[ $(cat /sys/module/thinkpad_acpi/parameters/fan_control 2>/dev/null) == Y ]]; then
+    ok "fan control enabled"
+  else
+    ok "fan control queued — thinkpad_acpi needs a reboot to accept it"
+  fi
+fi
+
+# The one reference that no process holds, and the reason `gpu-off` could fail
+# with the card completely idle. With `nvidia-drm fbdev=1` — the driver default
+# since 560, and nothing in EnvyControl's generated nvidia.conf turns it off —
+# nvidia_drm registers a DRM fbdev client at load, and drm_client_init() takes
+# `try_module_get(funcs->owner)` on nvidia_drm itself. That self-reference is
+# `refs: 1, held by -` in /proc/modules, it is there from the instant the
+# driver loads, and no amount of closing file descriptors clears it:
+#
+#   11:33:48 kernel: [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+#   11:33:49 thinkpad-power[830]: nvidia_drm would not unload
+#
+# — the unload failing 95 seconds before the compositor even started.
+#
+# modeset stays on; fact 44 is right that PRIME needs it. fbdev is only the
+# framebuffer console on the discrete card, which on a laptop with no displays
+# wired to it never had anything to draw: the kernel says so in the same
+# breath, "Cannot find any crtc or sizes". Written as its own file because
+# nvidia.conf carries "Automatically generated by EnvyControl" and gets
+# rewritten; modprobe merges options for a module across every file.
+sudo tee /etc/modprobe.d/thinkpad-power-nvidia-fbdev.conf >/dev/null <<'FBCONF'
+# thinkpad-power: stop nvidia_drm holding a reference on itself. The fbdev
+# client is a framebuffer console for a card with no displays attached, and it
+# is the difference between `gpu-off` working and "nvidia_drm is in use".
+options nvidia-drm fbdev=0
+FBCONF
+if [[ $(cat /sys/module/nvidia_drm/parameters/fbdev 2>/dev/null) == N ]]; then
+  ok "nvidia_drm fbdev off"
+elif [[ -e /sys/module/nvidia_drm ]]; then
+  ok "nvidia_drm fbdev queued — takes effect when the driver next loads"
+else
+  ok "nvidia_drm fbdev off (driver not loaded)"
+fi
 
 run sudo install -Dm644 "$HERE/systemd/thinkpad-power.service" \
   /etc/systemd/system/thinkpad-power.service
@@ -259,6 +438,16 @@ run sudo install -Dm644 "$HERE/systemd/thinkpad-power-gpu.timer" \
 run sudo systemctl daemon-reload
 sudo systemctl enable thinkpad-power.service >/dev/null 2>&1
 sudo systemctl enable --now thinkpad-power-gpu.timer >/dev/null 2>&1
+if [[ -n $DAEMON_BIN ]]; then
+  # Restarted rather than only enabled, so a re-install picks up a new binary
+  # instead of leaving the old one running and looking installed.
+  sudo systemctl enable thinkpad-powerd.service >/dev/null 2>&1
+  if sudo systemctl restart thinkpad-powerd.service >/dev/null 2>&1; then
+    ok "thinkpad-powerd running (it now owns PL1, PL2 and the frequency ceiling)"
+  else
+    warn "thinkpad-powerd would not start: systemctl status thinkpad-powerd"
+  fi
+fi
 run sudo udevadm control --reload-rules
 ok "systemd units + udev rule (plug/unplug, boot, resume, and a 2 min retry)"
 
@@ -315,6 +504,49 @@ if pacman -Q supergfxctl >/dev/null 2>&1; then
 fi
 sudo rm -f /etc/supergfxd.conf
 
+
+# ----------------------------------------------------------------- chrome
+
+# Opt-in, and for one reason: this is an *enterprise policy*, so Chrome greys
+# the settings out and shows "Managed by your organization". That is a visible
+# change to somebody's browser and not something to do to them quietly. The
+# same two settings are two clicks in chrome://settings/performance with no
+# banner at all; this exists for when you want them pinned.
+#
+# BatterySaverModeAvailability: 2 is "enabled while on battery" (1 would be
+# "only below 20%", which is the default and far too late to help). Energy
+# Saver caps background frame rates and throttles background tabs;
+# HighEfficiencyModeEnabled discards inactive ones, which is what actually
+# matters with thirty renderer processes open.
+CHROME_POLICY=/etc/opt/chrome/policies/managed/thinkpad-power.json
+
+step "Chrome"
+
+if ((CHROME_SAVER)); then
+  if [[ -d /etc/opt/chrome/policies/managed ]]; then
+    # Only real policy names go in here. Chrome validates every key in the
+    # file against its policy list and reports anything it does not recognise
+    # as an Error row in chrome://policy — including a "_comment" key, which
+    # is what the first version of this file shipped with. The explanation
+    # lives in the filename and in this script instead.
+    sudo tee "$CHROME_POLICY" >/dev/null <<'CHROMEPOL'
+{
+  "BatterySaverModeAvailability": 2,
+  "HighEfficiencyModeEnabled": true
+}
+CHROMEPOL
+    ok "Energy Saver on battery + Memory Saver pinned by policy"
+    info "restart Chrome for it to take, and expect a 'managed by your"
+    info "organization' banner — rm $CHROME_POLICY undoes it"
+  else
+    warn "no /etc/opt/chrome/policies/managed — is Google Chrome installed?"
+  fi
+elif [[ -f $CHROME_POLICY ]]; then
+  info "Chrome policy already in place — ./install.sh --uninstall removes it"
+else
+  info "not touched. ./install.sh --chrome-saver pins Energy and Memory Saver,"
+  info "or set them yourself in chrome://settings/performance (no banner)"
+fi
 
 # ------------------------------------------------------------------ boot path
 
@@ -508,6 +740,7 @@ LOGINDCONF
         { print }
       ' "$MENU_FILE" >"$tmp" && cat "$tmp" >"$MENU_FILE"
       rm -f "$tmp"
+      own_as_user "$MENU_FILE"
       grep -q '"system.suspend"' "$MENU_FILE" &&
         ok "menu Suspend entry now uses suspend-then-hibernate too"
     else
@@ -522,10 +755,11 @@ fi
 
 step "Session configuration"
 
-OLD_BATTERY_PROFILE=$(cat "${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/powerprofiles/battery" 2>/dev/null)
+OLD_BATTERY_PROFILE=$(cat "$STATE_HOME/omarchy/powerprofiles/battery" 2>/dev/null)
 
 mkdir -p "$(dirname -- "$UWSM_ENV")"
 touch "$UWSM_ENV"
+own_as_user "$(dirname -- "$UWSM_ENV")"
 # Remove the whole managed block as a unit, markers included. Anything else
 # in this file is the user's and is left alone.
 sed -i "/$ENV_BEGIN/,/$ENV_END/d" "$UWSM_ENV"
@@ -570,6 +804,7 @@ export VK_LOADER_DRIVERS_DISABLE='*nvidia*'
 $ENV_END
 ENV
   if sh -n "$UWSM_ENV" 2>/dev/null; then
+    own_as_user "$UWSM_ENV"
     ok "$UWSM_ENV (pins the compositor to /dev/dri/$IGPU_LINK_NAME)"
   else
     sed -i "/$ENV_BEGIN/,/$ENV_END/d" "$UWSM_ENV"
@@ -592,6 +827,15 @@ $MARK_BEGIN
 -- both per-process for anything that genuinely wants the dGPU.
 hl.env("LIBVA_DRIVER_NAME", "iHD")
 hl.env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
+-- A fullscreen window whose buffer the display controller can read directly
+-- skips compositing altogether: no 3840x2400 blit per frame, which is the
+-- largest single thing this GPU does while a video is playing. Hyprland ships
+-- it off. 2 would enable it only for surfaces tagged "game", and a video is
+-- tagged "video", so full-screen playback needs 1. The compositor drops back
+-- to compositing on its own the moment anything has to be drawn on top - a
+-- notification, the bar, a screen recorder - so nothing is lost by leaving it
+-- on, and "hyprctl reload" undoes it live if it ever misbehaves.
+hl.config({ render = { direct_scanout = 1 } })
 $MARK_END
 LUA
   ok "$HYPR_CONF (video decode and GLX pointed at the iGPU)"
@@ -601,8 +845,9 @@ fi
 # what you chose for each; two things doing it meant the last writer won. Tell
 # Omarchy what to remember instead of overriding it every plug event.
 if command -v omarchy-powerprofiles-set >/dev/null 2>&1; then
-  pp_state="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy/powerprofiles"
+  pp_state="$STATE_HOME/omarchy/powerprofiles"
   mkdir -p "$pp_state"
+  own_as_user "$STATE_HOME/omarchy"
   if [[ $(cat "$pp_state/battery" 2>/dev/null) != power-saver ]]; then
     printf 'power-saver\n' >"$pp_state/battery"
     ok "Omarchy will use power-saver on battery (was: ${OLD_BATTERY_PROFILE:-unset})"
@@ -628,6 +873,7 @@ if [[ -f $MENU_FILE ]]; then
     }
   ' "$MENU_FILE" >"$tmp" && cat "$tmp" >"$MENU_FILE"
   rm -f "$tmp"
+  own_as_user "$MENU_FILE"
   ok "Omarchy menu entry now toggles the GPU live instead of rebooting"
 fi
 

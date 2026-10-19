@@ -1,0 +1,40 @@
+[Unit]
+Description=Load-adaptive CPU, thermal and fan governor
+# Deliberately NOT After=power-profiles-daemon.service. PPD is itself
+# After=multi-user.target, so ordering after it closes a cycle and systemd
+# breaks it by deleting PPD's start job — PPD then does not start at boot.
+# See CLAUDE.md fact 5; that cost a boot once already.
+After=multi-user.target
+ConditionPathExists=/sys/class/powercap/intel-rapl:0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/thinkpad-powerd
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=2
+
+# This process feeds the EC's fan watchdog. If it is killed outright its own
+# restore never runs, so the cleanup is here too — and the watchdog itself is
+# the third line, handing the fans back to the EC about thirty seconds later
+# whatever else has failed.
+ExecStopPost=-/usr/local/bin/thinkpad-power daemon-stopped
+
+# Being killed for memory pressure while holding the fans at level 0 is the one
+# outcome worth spending priority on avoiding.
+OOMScoreAdjust=-500
+Nice=-5
+
+# It writes four sysfs files, one proc file and reads /proc. Nothing else is
+# needed, and a governor that can be talked into writing elsewhere is a bad one.
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

@@ -21,6 +21,15 @@ CONFIG=/etc/thinkpad-power.conf
 NVIDIA_PCI=""
 NVIDIA_MODULES=(nvidia_drm nvidia_modeset nvidia_uvm nvidia)
 
+# The three kernel surfaces the GPU half reads. Spelled as overridable globals
+# for the same reason every /run path already is: test/roundtrip.sh points them
+# at a fixture and drives the functions directly. Fact 18 — anything with an
+# awk program in it gets run against real input, and a guard firing is not a
+# test of the thing behind the guard.
+SYS_PCI=${SYS_PCI:-/sys/bus/pci/devices}
+DEV_DRI=${DEV_DRI:-/dev/dri}
+PROC_MODULES=${PROC_MODULES:-/proc/modules}
+
 [[ -r $CONFIG ]] && . "$CONFIG"
 
 VERSION=1.0.0
@@ -54,6 +63,9 @@ usage: thinkpad-power <command> [args]
   doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
+
+  boost [min|off]     lift the battery CPU caps for a while (default 30 min)
+  daemon-stopped      restore what thinkpad-powerd owned (systemd runs this)
 
   auto                apply the policy for the current power source
   post-hibernate      rescan the bus, then apply the policy (resume hook)
@@ -108,7 +120,7 @@ on_ac() {
   return 1
 }
 
-gpu_present() { [[ -n $NVIDIA_PCI && -e /sys/bus/pci/devices/$NVIDIA_PCI ]]; }
+gpu_present() { [[ -n $NVIDIA_PCI && -e $SYS_PCI/$NVIDIA_PCI ]]; }
 
 # The card is a multifunction PCI device: 01:00.0 is the GPU and 01:00.1 is
 # the HDA controller that would carry audio over HDMI/DP. `remove` takes one
@@ -124,7 +136,7 @@ gpu_present() { [[ -n $NVIDIA_PCI && -e /sys/bus/pci/devices/$NVIDIA_PCI ]]; }
 gpu_slot_functions() {
   local dev
   [[ -n $NVIDIA_PCI ]] || return 0
-  for dev in "/sys/bus/pci/devices/${NVIDIA_PCI%.*}."*; do
+  for dev in "$SYS_PCI/${NVIDIA_PCI%.*}."*; do
     [[ -e $dev ]] && basename "$dev"
   done
   return 0
@@ -136,12 +148,44 @@ gpu_slot_functions() {
 remove_gpu_functions() {
   local fn
   for fn in $(gpu_slot_functions | sort -r); do
-    echo 1 >"/sys/bus/pci/devices/$fn/remove" 2>/dev/null
+    echo 1 >"$SYS_PCI/$fn/remove" 2>/dev/null
     # A function that vanished under us is not a failure — another run may be
     # doing the same job. Success is the postcondition, not the write.
-    [[ -e /sys/bus/pci/devices/$fn ]] && log "could not remove $fn from the bus"
+    [[ -e $SYS_PCI/$fn ]] && log "could not remove $fn from the bus"
   done
   [[ -z $(gpu_slot_functions) ]]
+}
+
+# The other way to hold the card open, and the one this tool could not see.
+#
+# `/etc/modprobe.d/nvidia.conf` sets `nvidia-drm modeset=1`, so the card
+# registers a DRM device as well as its /dev/nvidia* nodes. An open fd on that
+# DRM node pins nvidia_drm exactly as firmly as an open fd on /dev/nvidia0
+# does — and `gpu_users` looked only at the latter. Anything that enumerates
+# /dev/dri on the way past therefore held the card completely invisibly: the
+# compositor, Xwayland, the greeter between boot and login. The policy would
+# report nothing holding it, attempt the unload anyway, and fail with
+# "nvidia_drm would not unload" and no name attached. That message accounted
+# for 96 declines in a fortnight on this machine against 15 removals.
+#
+# Read off the device rather than guessed at: DRM numbering is probe order, so
+# the card is not reliably card0 and is not stable across boots.
+# `gpu_drm_nodes [card|render]`; with no argument, both. The two halves answer
+# very different questions about who is holding the card — see `gpu_consumers`.
+gpu_drm_nodes() {
+  local dir name kind=${1:-all}
+  [[ -n $NVIDIA_PCI ]] || return 0
+  for dir in "$SYS_PCI/$NVIDIA_PCI/drm/"*; do
+    [[ -d $dir ]] || continue
+    name=${dir##*/}
+    case $kind in
+      card)   [[ $name == card* ]] || continue ;;
+      render) [[ $name == renderD* ]] || continue ;;
+      *)      [[ $name == card* || $name == renderD* ]] || continue ;;
+    esac
+    [[ -e $DEV_DRI/$name ]] && printf '%s\n' "$DEV_DRI/$name"
+  done
+  return 0
 }
 
 # kmod reads /run/modprobe.d, and /run is a tmpfs, so a block can never
@@ -184,11 +228,22 @@ drop_nvidia_nodes() { rm -rf /dev/nvidia*; return 0; }
 NVIDIA_SERVICES=(nvidia-powerd nvidia-persistenced)
 
 stop_nvidia_services() {
-  local unit
+  local unit was
   for unit in "${NVIDIA_SERVICES[@]}"; do
-    systemctl is-active --quiet "$unit" 2>/dev/null || continue
-    systemctl stop "$unit" 2>/dev/null && log "stopped $unit"
+    # The stop is no longer gated on is-active. nvidia-powerd is
+    # Restart=on-failure with RestartSec=10, so a unit caught between a crash
+    # and its restart reports inactive while its process is still alive and
+    # still holding the card — and that is precisely the moment this has to
+    # win. It has appeared *twice* in a single holder list, which is what a
+    # restart in the middle of a run looks like from the outside. `stop` on an
+    # already-stopped unit costs nothing, so ask unconditionally and keep the
+    # log line for the case where there was something to stop.
+    was=""
+    systemctl is-active --quiet "$unit" 2>/dev/null && was=1
+    systemctl stop "$unit" 2>/dev/null
+    [[ -n $was ]] && log "stopped $unit"
   done
+  return 0
 }
 
 # Only Dynamic Boost comes back. persistenced is left down by design: it
@@ -199,28 +254,125 @@ start_nvidia_services() {
   return 0
 }
 
-# Anything holding the device blocks the unload, and forcing past that would
-# take the GPU out from under a running program.
-#
 # fuser only reports processes the caller may see, so an unprivileged run
 # misses root's. `status` says so rather than printing a reassuring blank.
-gpu_users() {
+#
+# One PID can hold several of the nodes; report each of them once.
+holders_of() {
   local node held=""
-  for node in /dev/nvidia*; do
+  for node in "$@"; do
     [[ -e $node ]] || continue
     held+=" $(fuser "$node" 2>/dev/null)"
   done
-  # One PID can hold several of the nodes; report each of them once.
   printf '%s' "$(tr ' ' '\n' <<<"$held" | grep -E '^[0-9]+$' | sort -un | tr '\n' ' ')"
 }
 
+# The nodes that mean somebody is actually drawing or computing on the card,
+# and the only ones that may veto a switch-off.
+#
+# /dev/nvidia* is CUDA and NVML — btop reads it every couple of seconds — and
+# the DRM *render* node is where `thinkpad-power run` puts its child. A holder
+# of either is a real user, and taking the card out from under it is precisely
+# what this tool must not do.
+#
+# The DRM *card* node is deliberately not in this list, and that is the whole
+# fix for fact 48. It is the KMS node, and on any logind system it is held for
+# the life of the session by processes that are not using the GPU at all:
+# systemd-logind opens every DRM device on the seat so it can revoke and
+# restore them across VT switches, PID 1 inherits it, and aquamarine opens each
+# card once to ask whether it supports KMS *before* it applies AQ_DRM_DEVICES,
+# then drops the ones it rejected without ever closing them. Hyprland's own log
+# says so, in this order:
+#
+#   libseat: Device /dev/dri/card0 supports kms
+#   drm: Explicit device list /dev/dri/igpu
+#   drm: Found 1 GPUs
+#
+# So pinning the compositor to the iGPU cannot help: the open happens before
+# the filter. `fuser` on the card node returns "1 (systemd) 814
+# (systemd-logind) 1393 (Hyprland)" on a completely idle card, for as long as
+# the session lasts.
+#
+# Nor do those fds block anything. With Hyprland holding two of them the whole
+# card was removed from the bus in that same session — connectors, render node
+# and all — because the kernel unplugs a DRM device out from under an idle fd
+# quite happily. The card node explains a failure; it does not predict one.
+gpu_consumers() { holders_of /dev/nvidia* $(gpu_drm_nodes render); }
+
+# Every holder of every node, card node included. For explaining an unload that
+# actually failed, which is the one moment the card node is worth naming.
+gpu_users() { holders_of /dev/nvidia* $(gpu_drm_nodes); }
+
 # "40094 (btop)" reads better than "40094" when the answer is "close that".
-gpu_users_named() {
+name_pids() {
   local pid out=""
-  for pid in $(gpu_users); do
+  for pid in $@; do
     out+=" $pid ($(cat "/proc/$pid/comm" 2>/dev/null || echo '?'))"
   done
   printf '%s' "${out:-nothing}"
+}
+
+gpu_consumers_named() { name_pids "$(gpu_consumers)"; }
+gpu_users_named() { name_pids "$(gpu_users)"; }
+
+# Field 3 of /proc/modules is the reference count and field 4 is the list of
+# *modules* holding those references. A count above zero with "-" in field 4
+# is the interesting case: the references are held by open file descriptors,
+# not by another module, so the answer is a process and gpu_users_named knows
+# which one.
+module_refs() {
+  awk -v m="$1" '$1 == m { printf "%s, held by %s", $3, $4; exit }' "$PROC_MODULES"
+}
+
+modules_still_loaded() {
+  local module out=""
+  for module in "${NVIDIA_MODULES[@]}"; do
+    grep -q "^$module " "$PROC_MODULES" && out+=" $module"
+  done
+  printf '%s' "${out# }"
+}
+
+# Tried more than once, deliberately. The holders worth waiting for are the
+# ones with no name: a udev worker still settling after the bind, the greeter
+# on its way out between boot and login, anything that opens every /dev/dri
+# node once at startup and then closes it. Those clear in seconds. Handing the
+# whole question to a timer that comes back in two minutes is what made this
+# read as "it never works" — at boot the card sat powered for the entire gap.
+#
+# A holder that is still there after six seconds is a real one, and then the
+# right thing is to decline and name it rather than force past it.
+unload_nvidia_modules() {
+  local module attempt stuck held
+  for attempt in 1 2 3 4 5 6; do
+    for module in "${NVIDIA_MODULES[@]}"; do
+      grep -q "^$module " "$PROC_MODULES" && modprobe -r "$module" 2>/dev/null
+    done
+    stuck=$(modules_still_loaded)
+    [[ -z $stuck ]] && return 0
+    ((attempt == 6)) || sleep 1
+  done
+
+  # "would not unload" on its own was true and useless: it named no holder and
+  # gave nothing to act on. Say which module, how many references it has, and
+  # who has the nodes open.
+  for module in $stuck; do
+    log "$module would not unload (refs: $(module_refs "$module"))"
+  done
+  held=$(gpu_users_named)
+  [[ $held != nothing ]] && log "held by$held"
+
+  # A reference with nothing behind it is the fbdev client: with fbdev=1
+  # nvidia_drm registers one at load and drm_client_init() takes a module
+  # reference on nvidia_drm itself, so the card is pinned from the moment the
+  # driver loads and no process is ever named. "refs: 1, held by -" on a
+  # completely idle card is otherwise unactionable, so say what to do about it.
+  if [[ $stuck == *nvidia_drm* &&
+        $(cat /sys/module/nvidia_drm/parameters/fbdev 2>/dev/null) == Y ]]; then
+    log "nvidia_drm holds that reference itself: fbdev=1 registers a framebuffer"
+    log "client for a card with no displays. Set 'options nvidia-drm fbdev=0'"
+    log "(install.sh writes it) and reboot; modeset must stay on for PRIME."
+  fi
+  return 1
 }
 
 gpu_off() {
@@ -245,9 +397,9 @@ gpu_off() {
   stop_nvidia_services
 
   local users
-  users=$(gpu_users)
+  users=$(gpu_consumers)
   if [[ -n ${users// /} ]]; then
-    log "dGPU in use by $(gpu_users_named); leaving it powered"
+    log "dGPU in use by $(gpu_consumers_named); leaving it powered"
     return 1
   fi
 
@@ -255,21 +407,31 @@ gpu_off() {
   # needs the gap between the two to put the driver straight back.
   block_nvidia_autoload
 
-  local module
-  for module in "${NVIDIA_MODULES[@]}"; do
-    lsmod | grep -q "^$module " && modprobe -r "$module" 2>/dev/null
-  done
-  for module in "${NVIDIA_MODULES[@]}"; do
-    if lsmod | grep -q "^$module "; then
-      log "$module would not unload — leaving the dGPU powered"
-      unblock_if_gpu_present
-      return 1
-    fi
-  done
+  if ! unload_nvidia_modules; then
+    log "leaving the dGPU powered"
+    unblock_if_gpu_present
+    return 1
+  fi
 
   remove_gpu_functions || { unblock_if_gpu_present; return 1; }
   drop_nvidia_nodes
   log "dGPU removed from the PCI bus"
+}
+
+# The automatic policy only ever turns the card on while on AC, so a gpu_on
+# that happens on battery can only be somebody asking for it. That is the whole
+# detection — no flag to pass, no second command to remember, and nothing to get
+# out of step. The marker lives in /run, so a reboot forgets the override.
+GPU_MANUAL=/run/thinkpad-power.gpu-manual
+
+# The policy's own "turn it off", which declines when the user has said
+# otherwise. `gpu-off` by hand is the way to cancel that, and does.
+gpu_policy_off() {
+  if [[ -e $GPU_MANUAL ]]; then
+    note 'discrete GPU was turned on by hand; leaving it alone'
+    return 0
+  fi
+  gpu_off
 }
 
 gpu_on() {
@@ -292,10 +454,14 @@ gpu_on() {
   # Load the driver now rather than on first use, so the first offload is
   # instant. Runtime PM still parks the card whenever nothing renders on it.
   modprobe nvidia 2>/dev/null
-  echo auto >"/sys/bus/pci/devices/$NVIDIA_PCI/power/control" 2>/dev/null
+  echo auto >"$SYS_PCI/$NVIDIA_PCI/power/control" 2>/dev/null
   start_nvidia_services
 
   ((rescanned)) && log "dGPU back on the bus" || note "dGPU already on the bus"
+  if ! on_ac; then
+    : >"$GPU_MANUAL"
+    log 'kept on until you unplug and replug, or run: thinkpad-power gpu-off'
+  fi
   return 0
 }
 
@@ -431,6 +597,67 @@ nmi_watchdog() {
   return 0
 }
 
+# Wi-Fi power save. Omarchy turns it off for the whole distribution in
+# /etc/NetworkManager/conf.d/omarchy-wifi-powersave.conf, and that file's own
+# comment names the reason: 20-300 ms latency spikes on an idle link, and
+# Intel BE200/BE211 firmware that drops the link outright when the radio naps.
+# Neither argument holds here on battery. The radio in this machine is an
+# AX210 (8086:2725, "Typhoon Peak"), which is not one of the parts with that
+# firmware bug, and the latency is only felt by interactive traffic - a page
+# load and a video stream both buffer through it. So it goes on for battery
+# and off on AC, rather than off always.
+#
+# NetworkManager writes the flag every time a connection activates, so a roam,
+# a reconnect or a resume would silently undo this. The installer drops a
+# conf.d file setting wifi.powersave=1 ("ignore"), which stops it doing that
+# and leaves the flag to this function. Without that file this works until the
+# first reconnect and nothing says otherwise, which is the failure mode worth
+# knowing about.
+#
+# Set WIFI_POWERSAVE_ON_BAT=off in /etc/thinkpad-power.conf to disagree.
+WIFI_POWERSAVE_ON_BAT=${WIFI_POWERSAVE_ON_BAT:-on}
+# Testing seams; there is no reason to set either in normal use.
+IW=${IW:-iw}
+WIFI_NET_DIR=${WIFI_NET_DIR:-/sys/class/net}
+
+# A wireless device is one with a wireless/ directory, which is what `iw dev`
+# itself enumerates. Reading sysfs avoids parsing `iw`'s output for names.
+wifi_devices() {
+  local link
+  for link in "$WIFI_NET_DIR"/*/wireless; do
+    [[ -e $link ]] || continue
+    basename "$(dirname "$link")"
+  done
+}
+
+wifi_powersave() {
+  [[ $WIFI_POWERSAVE_ON_BAT == on ]] || return 0
+  command -v "$IW" >/dev/null 2>&1 || return 0
+  local dev want
+  case $1 in
+  battery) want=on ;;
+  ac) want=off ;;
+  *) return 0 ;;
+  esac
+  for dev in $(wifi_devices); do
+    "$IW" dev "$dev" set power_save "$want" >/dev/null 2>&1
+  done
+  return 0
+}
+
+# Reading the flag needs no privileges, so status can show it. This is the one
+# tunable here whose effect you can see without a wattmeter: ping the gateway
+# over a quiet link with it on, and the first reply is late.
+wifi_powersave_now() {
+  local dev state out=''
+  command -v "$IW" >/dev/null 2>&1 || { printf 'iw not installed'; return 0; }
+  for dev in $(wifi_devices); do
+    state=$("$IW" dev "$dev" get power_save 2>/dev/null | sed -n 's/.*Power save: *//p')
+    out+="${out:+, }$dev ${state:-unknown}"
+  done
+  printf '%s' "${out:-no wireless device}"
+}
+
 # The sustained CPU power limit. On this machine the firmware leaves PL1 at
 # 109 W and PL2 at 135 W on battery — the AC figures, never lowered — so any
 # burst of load is free to empty the battery at the rate the cooling allows.
@@ -448,6 +675,21 @@ RAPL_PL1=$RAPL/constraint_0_power_limit_uw
 RAPL_WINDOW=$RAPL/constraint_0_time_window_us
 RAPL_STATE=/run/thinkpad-power.rapl
 
+# PL2 is the other half, and the one you feel rather than measure. It governs
+# the short burst before PL1's average catches up — 135 W here against the
+# part's 45 W, over a 2.44 ms window — so every page render and every scroll
+# is allowed a spike three times TDP. That is where the fan noise and the hot
+# palm rest come from; the energy in one such burst is small, the heat is not.
+# Capping it is what makes the machine run cool rather than merely last longer.
+#
+#   PL2_ON_BAT=45
+#
+# It must be at least PL1: a PL2 below the sustained limit is not a
+# configuration, it is a contradiction, and the firmware's behaviour when given
+# one is undefined.
+PL2_ON_BAT=${PL2_ON_BAT:-}
+RAPL_PL2=$RAPL/constraint_1_power_limit_uw
+
 # PL1 is an average over a time window, and the firmware here sets that window
 # to 56 seconds — so a burst lasting most of a minute is not capped at all,
 # which is most of what a browser does. Measured: 16 threads of load pushed
@@ -456,28 +698,142 @@ RAPL_STATE=/run/thinkpad-power.rapl
 # both, and restores both.
 PL1_WINDOW_ON_BAT=10
 
-power_limit() {
-  local limit window
-  [[ -n $PL1_ON_BAT && -w $RAPL_PL1 ]] || return 0
-  if [[ ! $PL1_ON_BAT =~ ^[0-9]+$ ]] || ((PL1_ON_BAT < 5)); then
-    log "PL1_ON_BAT=$PL1_ON_BAT is not a sane wattage; ignoring"
-    return 0
+# thinkpad-powerd, when installed, is a continuous governor over the same three
+# registers this file caps once per plug event. Two things writing PL1 is how
+# the power profiles were lost the first time round (fact 4), so there is a
+# marker and exactly one owner at a time: the daemon writes it at startup and
+# removes it on the way out, and everything here stands down while it exists.
+# The GPU, the Wi-Fi flag, ASPM and runtime PM are still this file's — the
+# daemon does not touch them.
+DAEMON_OWNS_CPU=/run/thinkpad-powerd.owns-cpu
+DAEMON_STATE=/run/thinkpad-powerd.state
+
+daemon_owns_cpu() { [[ -e $DAEMON_OWNS_CPU ]]; }
+
+# One line: "battery/1 42 58 held" — mode, busy percent, package temp, fans.
+governor_now() {
+  local mode busy temp fan
+  daemon_owns_cpu || { printf 'not running'; return 0; }
+  # Redirections are set up left to right, so the input redirect has to come
+  # after 2>/dev/null or bash reports the missing file before it is silenced —
+  # which put a stray line on stderr every time status ran during the second
+  # between the daemon claiming the CPU and writing its first state line.
+  read -r mode busy temp fan 2>/dev/null <"$DAEMON_STATE" ||
+    { printf 'starting up'; return 0; }
+  printf '%s, %s%% busy, %s C, fans %s' "${mode:-?}" "${busy:-?}" "${temp:-?}" "${fan:-?}"
+  return 0
+}
+
+# A wattage this tool is willing to write to a register that decides how much
+# power the package may draw. Anything else is refused and said out loud rather
+# than silently skipped.
+sane_watts() {
+  local name=$1 value=$2
+  [[ -n $value ]] || return 1
+  if [[ ! $value =~ ^[0-9]+$ ]] || ((value < 5)); then
+    log "$name=$value is not a sane wattage; ignoring"
+    return 1
   fi
+  return 0
+}
+
+power_limit() {
+  local limit window pl2
+  [[ -w $RAPL_PL1 ]] || return 0
+  sane_watts PL1_ON_BAT "$PL1_ON_BAT" || PL1_ON_BAT=''
+  sane_watts PL2_ON_BAT "$PL2_ON_BAT" || PL2_ON_BAT=''
+  # A burst limit below the sustained limit is a contradiction, and firmware
+  # given one does something undocumented rather than something safe.
+  if [[ -n $PL1_ON_BAT && -n $PL2_ON_BAT ]] && ((PL2_ON_BAT < PL1_ON_BAT)); then
+    log "PL2_ON_BAT=$PL2_ON_BAT is below PL1_ON_BAT=$PL1_ON_BAT; ignoring PL2"
+    PL2_ON_BAT=''
+  fi
+  [[ -n $PL1_ON_BAT || -n $PL2_ON_BAT ]] || return 0
+  [[ $1 == battery && -e $BOOST_STATE ]] && return 0
+  daemon_owns_cpu && return 0
   case $1 in
   battery)
+    # One state file for both, written once. The fields were two before PL2
+    # existed, so a short line from a session that predates it still restores
+    # what it recorded rather than failing.
     if [[ ! -e $RAPL_STATE ]]; then
-      printf '%s %s\n' "$(cat "$RAPL_PL1" 2>/dev/null)" \
-        "$(cat "$RAPL_WINDOW" 2>/dev/null)" >"$RAPL_STATE"
+      printf '%s %s %s\n' "$(cat "$RAPL_PL1" 2>/dev/null)" \
+        "$(cat "$RAPL_WINDOW" 2>/dev/null)" \
+        "$(cat "$RAPL_PL2" 2>/dev/null)" >"$RAPL_STATE"
     fi
-    echo $((PL1_ON_BAT * 1000000)) >"$RAPL_PL1" 2>/dev/null
-    echo $((PL1_WINDOW_ON_BAT * 1000000)) >"$RAPL_WINDOW" 2>/dev/null
+    if [[ -n $PL1_ON_BAT ]]; then
+      echo $((PL1_ON_BAT * 1000000)) >"$RAPL_PL1" 2>/dev/null
+      echo $((PL1_WINDOW_ON_BAT * 1000000)) >"$RAPL_WINDOW" 2>/dev/null
+    fi
+    [[ -n $PL2_ON_BAT && -w $RAPL_PL2 ]] &&
+      echo $((PL2_ON_BAT * 1000000)) >"$RAPL_PL2" 2>/dev/null
     ;;
   ac)
     [[ -r $RAPL_STATE ]] || return 0
-    read -r limit window <"$RAPL_STATE"
+    read -r limit window pl2 <"$RAPL_STATE"
     [[ -n ${limit:-} ]] && echo "$limit" >"$RAPL_PL1" 2>/dev/null
     [[ -n ${window:-} ]] && echo "$window" >"$RAPL_WINDOW" 2>/dev/null
+    [[ -n ${pl2:-} && -w $RAPL_PL2 ]] && echo "$pl2" >"$RAPL_PL2" 2>/dev/null
     rm -f "$RAPL_STATE"
+    ;;
+  esac
+  return 0
+}
+
+# The frequency ceiling, and the answer to "why is it hot when I am only
+# reading a web page". intel_pstate under HWP will still walk to the top of the
+# range for a scroll, and the last third of the frequency range costs
+# disproportionately more power than it returns in speed — this part goes to
+# 4.8 GHz, and 57% of its P-state range is turbo (`turbo_pct`), so a ceiling
+# below ~43 takes turbo off the table entirely.
+#
+#   CPU_MAX_PCT_ON_BAT=60
+#
+# This is a ceiling, not a target: nothing is slower until something actually
+# wants more than the ceiling. What does want it is a compile, which is what
+# `thinkpad-power boost` is for. EPP is left alone — power-profiles-daemon owns
+# it, the same way it owns the platform profile (fact 4).
+CPU_MAX_PCT_ON_BAT=${CPU_MAX_PCT_ON_BAT:-}
+# A boost is a deliberate "I am compiling, leave the caps alone" for a bounded
+# time. It has to outlive a resume and a retry, so it is a file rather than a
+# variable, and both CPU tunables consult it before their battery branch —
+# otherwise the resume hook would end a boost silently, halfway through a build.
+BOOST_STATE=/run/thinkpad-power.boost
+BOOST_UNIT=thinkpad-power-boost
+BOOST_DEFAULT_MIN=30
+PSTATE=/sys/devices/system/cpu/intel_pstate
+PSTATE_MAX=$PSTATE/max_perf_pct
+PSTATE_MIN=$PSTATE/min_perf_pct
+PSTATE_NO_TURBO=$PSTATE/no_turbo
+PSTATE_STATE=/run/thinkpad-power.cpupct
+
+cpu_ceiling() {
+  local want floor saved
+  [[ -n $CPU_MAX_PCT_ON_BAT && -w $PSTATE_MAX ]] || return 0
+  want=$CPU_MAX_PCT_ON_BAT
+  if [[ ! $want =~ ^[0-9]+$ ]] || ((want < 1 || want > 100)); then
+    log "CPU_MAX_PCT_ON_BAT=$want is not a percentage; ignoring"
+    return 0
+  fi
+  [[ $1 == battery && -e $BOOST_STATE ]] && return 0
+  daemon_owns_cpu && return 0
+  case $1 in
+  battery)
+    # max_perf_pct below min_perf_pct is rejected by the driver, so the write
+    # would fail and leave the ceiling at 100 with nothing said about it.
+    floor=$(cat "$PSTATE_MIN" 2>/dev/null) || floor=0
+    if [[ $floor =~ ^[0-9]+$ ]] && ((want < floor)); then
+      log "CPU_MAX_PCT_ON_BAT=$want is below min_perf_pct=$floor; ignoring"
+      return 0
+    fi
+    [[ -e $PSTATE_STATE ]] || cat "$PSTATE_MAX" >"$PSTATE_STATE" 2>/dev/null
+    echo "$want" >"$PSTATE_MAX" 2>/dev/null
+    ;;
+  ac)
+    [[ -r $PSTATE_STATE ]] || return 0
+    saved=$(<"$PSTATE_STATE")
+    [[ -n $saved ]] && echo "$saved" >"$PSTATE_MAX" 2>/dev/null
+    rm -f "$PSTATE_STATE"
     ;;
   esac
   return 0
@@ -526,6 +882,28 @@ pl1_now() {
   return 0
 }
 
+pl2_now() {
+  local uw
+  uw=$(cat "$RAPL_PL2" 2>/dev/null) || { printf 'unavailable'; return 0; }
+  printf '%s W burst' "$((uw / 1000000))"
+  return 0
+}
+
+# Percent of the P-state range, which is not percent of the clock: the bottom
+# of the range is 800 MHz here, not zero. Printed as both so the number means
+# something.
+cpu_ceiling_now() {
+  local pct khz
+  pct=$(cat "$PSTATE_MAX" 2>/dev/null) || { printf 'unavailable'; return 0; }
+  khz=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
+  printf '%s%%' "$pct"
+  [[ $(cat "$PSTATE_NO_TURBO" 2>/dev/null) == 1 ]] && printf ' no turbo'
+  [[ $khz =~ ^[0-9]+$ ]] &&
+    awk -v p="$pct" -v k="$khz" 'BEGIN { printf " (~%.1f GHz)", p * k / 100000000 }'
+  [[ -e $BOOST_STATE ]] && printf ' — lifted by boost'
+  return 0
+}
+
 # The codec sleeping is the only one with a perceptible cost: a faint click
 # when audio starts after silence.
 extras() {
@@ -533,16 +911,20 @@ extras() {
   battery)
     echo 1 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null
     runtime_pm_battery
+    wifi_powersave battery
     aspm battery
     nmi_watchdog battery
     power_limit battery
+    cpu_ceiling battery
     ;;
   ac)
     echo 0 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null
     runtime_pm_ac
+    wifi_powersave ac
     aspm ac
     nmi_watchdog ac
     power_limit ac
+    cpu_ceiling ac
     ;;
   esac
   return 0
@@ -570,17 +952,101 @@ esac
 
 case $cmd in
 battery)
-  gpu_off
+  gpu_policy_off
   extras battery
   ;;
 ac)
+  # Plugging in resets the override: the card is coming back anyway, and
+  # carrying "leave it on" across a plug event would make the next unplug
+  # behave differently from the one before it for no visible reason.
+  rm -f "$GPU_MANUAL"
   gpu_on
   extras ac
+  ;;
+boost)
+  # The escape hatch for the CPU caps, and the reason a ceiling is tolerable at
+  # all: nothing on this machine needs 4.8 GHz to render a web page, and a
+  # compile does. Bounded, because a boost that is forgotten is just the caps
+  # turned off — the expiry is scheduled before the caps are lifted, so a
+  # failure to schedule leaves the machine capped rather than uncapped forever.
+  arg=${2:-$BOOST_DEFAULT_MIN}
+  # Validate before cancelling anything. Stopping the expiry timer first and
+  # then dying on a typo would leave the marker in place with nothing left to
+  # remove it — an unbounded boost, arrived at by getting the argument wrong.
+  # Same shape as fact 12: the run that is not going to finish the job must not
+  # undo the state the previous one is relying on.
+  if [[ $arg != off ]]; then
+    [[ $arg =~ ^[0-9]+$ ]] && ((arg >= 1 && arg <= 720)) ||
+      die "boost wants a number of minutes between 1 and 720, or 'off', not '$arg'"
+  fi
+  systemctl stop "$BOOST_UNIT.timer" "$BOOST_UNIT.service" >/dev/null 2>&1
+
+  if [[ $arg == off ]]; then
+    if [[ -e $BOOST_STATE ]]; then
+      rm -f "$BOOST_STATE"
+      # Put the caps back only where they belong. On AC there is nothing to
+      # re-apply and the state files do not exist.
+      if on_ac; then
+        note 'boost ended; on AC, so nothing to re-apply'
+      else
+        power_limit battery
+        cpu_ceiling battery
+        log 'boost ended; battery CPU caps back on'
+      fi
+    else
+      note 'no boost was running'
+    fi
+    exit 0
+  fi
+
+  if command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --quiet --unit="$BOOST_UNIT" --on-active="${arg}min" \
+      --description="Restore thinkpad-power battery CPU caps" \
+      "$0" boost off >/dev/null 2>&1 ||
+      die "could not schedule the expiry; caps left in place"
+  else
+    die 'systemd-run is missing, and an unbounded boost is not on offer'
+  fi
+
+  date -d "+$arg minutes" +%s >"$BOOST_STATE" 2>/dev/null || : >"$BOOST_STATE"
+  power_limit ac
+  cpu_ceiling ac
+  if on_ac; then
+    log "boost armed for $arg min (on AC, so the caps were already off)"
+  else
+    log "CPU caps lifted for $arg min — 'thinkpad-power boost off' ends it early"
+  fi
+  ;;
+daemon-stopped)
+  # systemd's ExecStopPost for thinkpad-powerd, and only that. The daemon
+  # restores the firmware limits itself on a clean stop; this exists for the
+  # kill -9, where that code never runs. The EC's own fan watchdog is the third
+  # line and needs nobody at all.
+  #
+  # Order matters: hand the fans back first, because that is the one with a
+  # thermal consequence, then the registers, then the ownership marker — so
+  # nothing here can hand the CPU back to the other half while the fans are
+  # still pinned.
+  [[ -w /proc/acpi/ibm/fan ]] && echo 'level auto' >/proc/acpi/ibm/fan 2>/dev/null
+  if [[ -r /run/thinkpad-powerd.firmware ]]; then
+    read -r d_pl1 d_win d_pl2 d_pct d_turbo </run/thinkpad-powerd.firmware
+    [[ -n ${d_pl1:-} ]] && echo "$d_pl1" >"$RAPL_PL1" 2>/dev/null
+    [[ -n ${d_win:-} ]] && echo "$d_win" >"$RAPL_WINDOW" 2>/dev/null
+    [[ -n ${d_pl2:-} ]] && echo "$d_pl2" >"$RAPL_PL2" 2>/dev/null
+    [[ -n ${d_pct:-} ]] && echo "$d_pct" >"$PSTATE_MAX" 2>/dev/null
+    # Leaving turbo off after the governor is gone would be the one leftover
+    # nobody would think to look for.
+    [[ -n ${d_turbo:-} ]] && echo "$d_turbo" >"$PSTATE_NO_TURBO" 2>/dev/null
+    log 'governor stopped; firmware limits and fans restored'
+  fi
+  rm -f "$DAEMON_OWNS_CPU" "$DAEMON_STATE"
+  # With the daemon gone this file's own caps apply again, if any are configured.
+  on_ac || { power_limit battery; cpu_ceiling battery; }
   ;;
 gpu-auto)
   # The GPU half alone. This is what the retry timer runs, so a manually
   # chosen power profile is never overwritten behind your back.
-  if on_ac; then gpu_on; else gpu_off; fi
+  if on_ac; then gpu_on; else gpu_policy_off; fi
   ;;
 auto)
   if on_ac; then "$0" ac; else "$0" battery; fi
@@ -610,9 +1076,20 @@ post-hibernate)
   if on_ac; then "$0" ac; else "$0" battery; fi
   ;;
 gpu-on) gpu_on ;;
-gpu-off) gpu_off ;;
+# An explicit off cancels an explicit on. Anything else would leave the override
+# in place with the card already gone, so the next manual on would be sticky for
+# a reason nobody could see.
+gpu-off)
+  rm -f "$GPU_MANUAL"
+  gpu_off
+  ;;
 gpu-toggle)
-  if gpu_present; then gpu_off; else gpu_on; fi
+  if gpu_present; then
+    rm -f "$GPU_MANUAL"
+    gpu_off
+  else
+    gpu_on
+  fi
   ;;
 status)
   # Read-only and side-effect free. Notably it does not call nvidia-smi: that
@@ -638,12 +1115,18 @@ status)
     # Only the rows there is something to act on. A held card is why an unplug
     # declines; with the card off, a function still listed is the orphan that
     # used to hang this machine.
-    held=$(gpu_users_named)
+    held=$(gpu_consumers_named)
     if gpu_present; then
       [[ $held != nothing ]] && row 'held by' "$held"
     else
       [[ -n $functions ]] && row 'left on bus' "$functions"
+      drm_nodes=$(gpu_drm_nodes | tr '\n' ' ' | sed 's/ $//')
+      # Omitted when the card is off the bus: there is nothing to say, and an
+      # empty row is worse than no row.
+      [[ -n $drm_nodes ]] && row 'drm nodes' "$drm_nodes"
     fi
+    [[ -e $GPU_MANUAL ]] &&
+      row '' 'on by hand — the policy will not switch it off'
   fi
 
   on_ac || row draw \
@@ -656,9 +1139,13 @@ status)
       row functions "${functions:-none on the bus}"
       row 'driver load' "$([[ -e $MODPROBE_BLOCK ]] && echo blocked || echo allowed)"
     fi
+    row 'governor' "$(governor_now)"
     row 'runtime pm' "$(runtime_pm_summary)"
+    row 'wifi ps' "$(wifi_powersave_now)"
     row 'pcie aspm' "$(aspm_policy)"
     row 'cpu pl1' "$(pl1_now)"
+    row 'cpu pl2' "$(pl2_now)"
+    row 'cpu ceiling' "$(cpu_ceiling_now)"
     [[ $EUID -ne 0 ]] &&
       row '' '(not root: root-owned holders are missing from "held by")'
   fi
@@ -755,7 +1242,7 @@ switch)
   # it wants one thing — the card on, or off — so this says what it is, asks,
   # and says what it now is. Detail lives behind `status -v`.
   if gpu_present; then
-    held=$(gpu_users_named)
+    held=$(gpu_consumers_named)
     if [[ $held != nothing ]]; then
       printf '\n  The discrete GPU is in use by %s.\n' "$held"
       printf '  Close it first — switching off underneath a running program\n'
@@ -771,9 +1258,11 @@ switch)
     out=$(sudo "$0" gpu-on 2>&1) ||
       { printf '%s\n' "$out" >&2; die 'could not turn the discrete GPU on'; }
     printf '\n  The discrete GPU is now on.\n'
-    # Worth saying only when it is about to be undone: on battery the retry
-    # timer applies the policy again within two minutes.
-    on_ac || printf '  On battery it will be switched off again within 2 min.\n'
+    # It used to be undone by the retry timer within two minutes, which was the
+    # honest thing to warn about. Now the override holds it, so what is worth
+    # saying is how long for.
+    on_ac ||
+      printf '  It stays on until you replug, reboot, or run: thinkpad-power gpu-off\n'
     echo
   fi
   ;;

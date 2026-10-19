@@ -54,6 +54,11 @@ switch frequently does not stick. The installer stands it down.
 | `~/.config/uwsm/env-hyprland` | `__EGL_VENDOR_LIBRARY_FILENAMES` | hides the NVIDIA EGL vendor from the session |
 | `~/.config/uwsm/env-hyprland` | `VK_LOADER_DRIVERS_DISABLE=*nvidia*` | hides the NVIDIA Vulkan ICD from the session |
 | `~/.config/hypr/hyprland.lua` | `LIBVA_DRIVER_NAME=iHD`, `__GLX_VENDOR_LIBRARY_NAME=mesa` | stops apps reaching for the dGPU |
+| `~/.config/hypr/hyprland.lua` | `render:direct_scanout = 1` | a fullscreen video skips the composite pass entirely |
+| `/etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf` | `wifi.powersave = 1` | hands the flag to the policy, which sets it per power source |
+| `/usr/local/bin/thinkpad-powerd` | the load-adaptive governor | CPU, iGPU and fans, continuously |
+| `/etc/systemd/system/thinkpad-powerd.service` | runs it | `Restart=always`, with an `ExecStopPost` that puts everything back |
+| `/etc/modprobe.d/thinkpad-power-fan.conf` | `thinkpad_acpi fan_control=1` | manual fan levels are refused without it |
 | `~/.config/omarchy/extensions/omarchy-menu.jsonc` | overrides the GPU menu entry | live toggle instead of a reboot |
 | `/etc/systemd/system/thinkpad-power-gpu.{service,timer}` | retry every 2 min | a plug event is one edge that never repeats |
 | `/run/modprobe.d/thinkpad-power-nvidia.conf` | blocks the nvidia modules | while the card is off the bus, only then |
@@ -271,10 +276,25 @@ in `/run`, so only the devices this tool actually changed are put back, rather
 than forcing the whole bus to `on` and overriding choices the drivers made at
 boot.
 
-Three further knobs are **opt-in**, in `/etc/thinkpad-power.conf`:
+The battery policy also turns **Wi-Fi power save on**, and back off on AC.
+Omarchy disables it for the whole distribution, and its reasons are good ones:
+20-300 ms latency spikes on an idle link, and Intel BE200/BE211 firmware that
+drops the link outright when the radio naps. Neither applies on battery on the
+machine this was written for — the radio is an AX210, which is not one of the
+parts with that firmware bug, and a page load and a video stream both buffer
+through the latency. The installer writes
+`/etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf` with
+`wifi.powersave = 1` ("ignore"), because NetworkManager otherwise rewrites the
+flag at every connection activation and a roam or a resume would quietly undo
+it. Set `WIFI_POWERSAVE_ON_BAT=off` to disagree; `--uninstall` removes the file
+and hands the flag back to Omarchy.
+
+The remaining knobs are **opt-in**, in `/etc/thinkpad-power.conf`:
 
 ```sh
 PL1_ON_BAT=30                # sustained CPU power limit on battery, in watts
+PL2_ON_BAT=45                # burst limit; must be at least PL1_ON_BAT
+CPU_MAX_PCT_ON_BAT=60        # frequency ceiling, percent of the P-state range
 ASPM_ON_BAT=powersave        # or powersupersave, which adds the L1 substates
 NMI_WATCHDOG_ON_BAT=off      # disable the lockup detector on battery
 ```
@@ -292,10 +312,126 @@ are restored on AC. Check `thinkpad-power status -v` afterwards — it prints
 the limit and the window, and DPTF drives the same registers, so it is worth
 confirming rather than assuming.
 
+**`PL2_ON_BAT` is the one you feel rather than measure.** PL2 governs the burst
+before PL1's average catches up — 135 W here against a 45 W part, over a
+2.44 ms window — so every page render is allowed a spike at three times TDP.
+The energy in one burst is small; the heat is not, and it is where the fan
+noise and the warm palm rest come from. Capping it makes the machine run cool
+rather than merely last longer. It must be at least `PL1_ON_BAT`; a burst limit
+below the sustained limit is a contradiction, and it is refused rather than
+written.
+
+**`CPU_MAX_PCT_ON_BAT` is the answer to "why is it hot when I am only reading a
+web page".** Under HWP, `intel_pstate` will still walk to the top of the range
+to scroll, and the last third of the frequency range costs disproportionately
+more power than it returns in speed — this part reaches 4.8 GHz, and 57% of its
+P-state range is turbo, so a ceiling below about 43 takes turbo off the table
+entirely. It is a ceiling, not a target: nothing is slower until something
+actually asks for more than the ceiling.
+
+What *does* ask for it is a compile, which is what `boost` is for:
+
+```sh
+sudo thinkpad-power boost        # 30 minutes
+sudo thinkpad-power boost 90     # or as long as the build takes
+sudo thinkpad-power boost off    # early
+```
+
+It lifts both CPU caps for a bounded stretch and schedules its own expiry
+through `systemd-run` before lifting anything, so a boost that fails to
+schedule leaves the machine capped rather than uncapped forever. The marker
+lives in `/run`, and both CPU tunables consult it, so a resume, a replug or the
+retry timer cannot end a boost halfway through a build. `status -v` says when
+one is active. The energy-performance preference and the platform profile are
+*not* touched by any of this — those are power-profiles-daemon's, and two
+things writing them means the last writer wins.
+
 `ASPM_ON_BAT` is off by default because forcing L0s/L1 on every link can upset
 a device that is merely ASPM-tolerant, and the symptom is a hang.
 `NMI_WATCHDOG_ON_BAT` saves very little and costs you the hard-lockup
 detector.
+
+`thermald` is installed on this machine and deliberately not running. It drives
+the same RAPL constraints this tool does, so leaving it off is what makes
+`status -v` mean what it says.
+
+## The governor
+
+`thinkpad-powerd` is the continuous half, and it exists because RAPL gives you
+the opposite of what a laptop wants. PL1/PL2 is *high briefly, low sustained*:
+a burst gets 135 W and a long job gets throttled. What is wanted is *low
+briefly, high sustained* — a browser must never reach 4.8 GHz to scroll a page,
+and a compile must have everything. No register does that, because it is a
+policy about time, and a policy about time needs something awake to watch the
+clock.
+
+Four tiers on battery, and a ladder that gets harder to climb:
+
+| tier | PL1 | PL2 | ceiling | iGPU | reached after |
+|---|---|---|---|---|---|
+| `light` | 12 W | 18 W | 45%, turbo off | 800 MHz | the default |
+| `mid` | 18 W | 28 W | 70% | 1050 MHz | 8 s of load |
+| `full` | 28 W | 42 W | 100% | free | 16 s more |
+| `turbo` | 40 W | 60 W | 100% | free | 24 s more |
+
+The dwell is the whole design. Climbing needs sustained load — longer at every
+rung, so about a minute of unbroken work to reach the top, which nothing but a
+real job produces. Falling needs 25 s of quiet, so the gaps between files in a
+build do not cost a re-ramp. Between the two thresholds nothing moves at all,
+which is what stops a load hovering on the line from oscillating. `iowait` is
+not counted as busy: a build waiting on the NVMe is not asking for frequency.
+
+**The ceiling is the lever; PL1 is the safety net.** Power goes roughly as
+*f·V²* and V tracks f, so the top of the frequency curve costs several times
+what it returns — 45% of 4.8 GHz is about 2.16 GHz, under the 2.5 GHz base
+ratio, so turbo is unreachable before `no_turbo` even says so. PL1 is not set
+lower on purpose: `intel-rapl:0` is the **package** domain, with `core` and
+`uncore` beneath it, so the iGPU spends from the same budget. 4K decode plus a
+3840x2400 display pipeline is several watts of that, and a PL1 tight enough to
+look impressive is a PL1 that stutters video.
+
+**The iGPU is the half people miss.** Measured here with a windowed 4K YouTube
+playing, the integrated GPU sat at 1100-1200 MHz against a 350 MHz floor — to
+*composite a desktop*, not to decode anything. i915's waitboost is why: a client
+stalling on a buffer boosts the GPU to `gt_boost_freq_mhz`, which ships at RP0.
+The governor caps both that and `gt_max_freq_mhz` on the lower tiers.
+
+On AC it restores the firmware's own numbers and gets out of the way. It owns
+exactly PL1, PL2, `max_perf_pct`, `no_turbo` and the iGPU clocks; EPP and the
+platform profile stay with power-profiles-daemon, and the discrete GPU, Wi-Fi,
+ASPM and runtime PM stay with the edge policy. One writer per register, enforced
+by `/run/thinkpad-powerd.owns-cpu`, which the bash half checks before touching
+any of them.
+
+### Fans
+
+Off by default in the sense that matters: `FAN_CONTROL` defaults on but is
+gated on `thinkpad_acpi` having been loaded with `fan_control=1`, which the
+installer writes to modprobe.d and which needs a reboot. Until then it is a
+no-op with one line of explanation.
+
+The battery curve is deliberately lazier than the EC's below 70 C, because a
+warm chassis is cheaper than a spinning fan and the fan is most of a watt. Three
+things stand between that and a hot machine, in order:
+
+1. Above `GOVERNOR_TEMP_CRITICAL` the daemon hands the fans back to the EC
+   *before* the curve is consulted, so no arrangement of curve entries can hold
+   a low level on a hot package.
+2. systemd's `ExecStopPost` runs `thinkpad-power daemon-stopped`, for the case
+   where the daemon is killed outright and its own restore never runs.
+3. The EC's own watchdog, refreshed every ten seconds or so, takes the fans back
+   about thirty seconds after this process stops existing — needing nobody.
+
+The level is re-asserted on every watchdog refresh rather than only on change,
+because the EC silently takes the fans back across a resume and a cache would
+never notice.
+
+### Boost
+
+`sudo thinkpad-power boost 90` pins the top tier for a bounded stretch. Both
+halves read the same `/run/thinkpad-power.boost`, so it works whichever is
+managing the CPU, and it survives a resume and a replug — a build must not lose
+its headroom halfway through because the lid was closed.
 
 ### Finding the rest of the watts
 
@@ -317,6 +453,46 @@ and a Wi-Fi card were all in use.
 That is the usual shape of this exercise: the large win is the discrete GPU,
 the second is the power limit under load, and the rest is a catalogue of
 things that are awake because you are using them.
+
+### Browsing and video
+
+Two of the levers here are not in this tool at all, because they belong to the
+compositor. Both are in `~/.config/hypr/`.
+
+**Direct scanout.** With it off — Hyprland's default — a fullscreen video is
+composited into a fresh full-resolution buffer and blitted to the panel every
+frame. On a 3840x2400 display that is the largest single thing the integrated
+GPU does during playback, and none of it is necessary: the client's own buffer
+can go straight to the display controller. `hyprctl monitors` says
+`directScanoutBlockedBy: user settings` while it is off. `render:direct_scanout`
+has to be `1`; `2` engages only for surfaces tagged `game`, and a video is
+tagged `video`. The compositor falls back to compositing by itself the moment
+something has to be drawn on top, so a notification or a screen recorder costs
+correctness nothing.
+
+**48 Hz.** The panel advertises one mode, `3840x2400@60`, but its EDID also
+says `Display supports continuous frequencies` with ranges `48-60 Hz V,
+148-148 kHz H`. The horizontal rate is pinned, so the way down is to keep the
+592.56 MHz pixel clock and stretch vertical blanking — 3086 total lines instead
+of 2469 — rather than slowing the clock, which would drop the horizontal rate
+to 118 kHz and out of spec. That is 20% off every per-frame cost while anything
+animates, and it puts 24 fps video in a clean 2:2 cadence; it also makes
+scrolling visibly less smooth, which is why it is a key binding to try rather
+than a default. A mode change is the one class of change here that can cost a
+login, so nothing writes it to disk.
+
+What was *already* right, so nobody re-tries it: hardware video decode. There
+is no `vainfo` on this machine, so it was checked by calling `libva` directly —
+`vaQueryConfigProfiles` on the iGPU's render node returns `VLD` decode for
+H264, VP9 profiles 0-3, HEVC and `AV1Profile0`, and Chrome's GPU process has
+`iHD_drv_video.so` mapped. YouTube's AV1 is being decoded in silicon; forcing
+VP9 or h264ify would make things worse, not better.
+
+The browser itself is still the largest term. Chrome's GPU process alone held
+7.6% of a core continuously across six hours with 23 renderers open, before
+anything was playing. `chrome://settings/performance` has Memory Saver and
+Energy Saver, both at their defaults, and neither is something this tool can
+or should set.
 
 ### On undervolting
 
@@ -410,7 +586,7 @@ pin, then log in again.
 ./test/roundtrip.sh
 ```
 
-33 checks, no root and no sysfs: it extracts the library half of the script,
+65 checks, no root and no sysfs: it extracts the library half of the script,
 points the tunables at temporary files and drives each battery -> AC round trip,
 checking that the firmware's value is saved and restored and that a nonsense
 wattage is refused rather than written to a register that governs package power.
@@ -431,6 +607,34 @@ silently wrong:
 - **`--hibernate-after` parsing**, because a value that does not parse leaves a
   machine that suspends and never hibernates, which looks exactly like the
   feature silently not working.
+- **Wi-Fi power save**, against a stub `iw` that records its arguments. There
+  is no file to inspect afterwards — the flag lives in the driver — and an
+  inverted on/off mapping would look exactly like a working one.
+- **The boost guard**, because the failure it prevents is a build losing its
+  headroom on a resume with nothing said about it — and because the guard is
+  the only reason a frequency ceiling is tolerable in the first place.
+- **A RAPL state file written before PL2 existed**, which has two fields where
+  the restore now reads three.
+- **The handoff to the governor**, because two writers on one register is the
+  mistake this repository has already made once, with the power profiles.
+
+Every `/run` path the library consults is redirected into the fixture directory
+first. That is not tidiness: before it was done, installing `thinkpad-powerd`
+made eight passing checks fail, because the real
+`/run/thinkpad-powerd.owns-cpu` appeared and the library correctly stood down
+from registers the test was about to assert on. A test that reads host state is
+not a test.
+
+```bash
+./test/watts.sh [seconds]
+```
+
+Not a test: the measuring stick the numbers above come from. It needs a
+battery and refuses to run on AC. It reports two figures — `energy_now`
+differenced over the window, which is the honest one, and the mean of
+`power_now`, which settles faster but is the firmware's estimate. Hold
+everything else still between two runs; the panel backlight alone outweighs
+every tunable in this repository.
 
 ## License
 
