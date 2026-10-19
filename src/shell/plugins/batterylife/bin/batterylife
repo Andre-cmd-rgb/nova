@@ -1,0 +1,1279 @@
+#!/bin/bash
+#
+# batterylife — battery runtime history for the andrecmdrgb.batterylife
+# Omarchy plugin.
+#
+# The shell-side service asks this script for a sample every minute or so.
+# Everything else — storage, session detection, the arithmetic behind "a full
+# charge lasts you 4h 05m" — lives here, so the numbers can be read, checked
+# or thrown away from a terminal without the shell running at all.
+#
+# Nothing here needs root. The only readings taken are the ones the kernel
+# already publishes in /sys/class/power_supply: charge, capacity, and draw.
+
+set -uo pipefail
+
+# Numbers and ordering are data here, not presentation. A locale with a comma
+# for a decimal point makes awk print "25,45", which is not a number to jq and
+# takes the whole panel down with it; a locale with its own collation order
+# changes what `sort` and `<` mean for the date-named history files. Neither
+# is left to the environment. LC_ALL is deliberately not set: nothing here
+# formats text for a person in a way a locale should not be allowed to touch.
+export LC_NUMERIC=C LC_COLLATE=C
+
+PLUGIN_ID="andrecmdrgb.batterylife"
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-batterylife"
+CONFIG="$CONFIG_DIR/config"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-batterylife"
+DAYS_DIR="$STATE_DIR/days"
+MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/extensions/omarchy-menu.jsonc"
+SHELL_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
+STOCK_POWER="omarchy.power"
+
+# Overridable so the test harness can point the whole script at a fixture
+# directory instead of the real battery.
+POWER_SUPPLY_DIR="${BATTERYLIFE_POWER_SUPPLY_DIR:-/sys/class/power_supply}"
+
+# Lines in a file, or 0. Not `wc -l <"$file" 2>/dev/null`: redirections are
+# processed left to right, so the input open fails and prints before the
+# suppressor on its right is ever installed.
+count_lines() {
+  [[ -r $1 ]] || { printf '0'; return 0; }
+  wc -l <"$1"
+}
+
+die() {
+  printf 'batterylife: %s\n' "$*" >&2
+  exit 1
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ------------------------------------------------------------------- config
+# Parsed, never sourced: this file is user-editable and must not be able to
+# execute anything.
+
+get_cfg() {
+  local key=$1 def=${2:-} value=""
+  # The key is always a literal from this script, never user input, so
+  # building the match out of one is safe.
+  if [[ -r $CONFIG ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$CONFIG" 2>/dev/null; then
+    value=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
+      tail -n1 | tr -d '\r')
+    value=${value%"${value##*[![:space:]]}"}
+    printf '%s' "$value"
+    return 0
+  fi
+  printf '%s' "$def"
+}
+
+set_cfg() {
+  local key=$1 value=$2 tmp
+  mkdir -p -- "$CONFIG_DIR" || return 1
+  [[ -f $CONFIG ]] || (
+    umask 077
+    : >"$CONFIG"
+  ) || return 1
+  tmp=$(mktemp -- "$CONFIG.XXXXXX") || return 1
+  # awk rather than sed: the value is data, and a sed replacement would read a
+  # & or a \1 in it as a back-reference.
+  if ! awk -v key="$key" -v value="$value" '
+    BEGIN { pattern = "^[[:space:]]*" key "[[:space:]]*=" }
+    $0 ~ pattern { if (!seen++) print key "=" value; next }
+    { print }
+    END { if (!seen) print key "=" value }
+  ' "$CONFIG" >"$tmp"; then
+    rm -f -- "$tmp"
+    return 1
+  fi
+  cat -- "$tmp" >"$CONFIG"
+  rm -f -- "$tmp"
+}
+
+cfg_number() {
+  local value
+  value=$(get_cfg "$1" "$2")
+  [[ $value =~ ^[0-9]+$ ]] || value=$2
+  printf '%s' "$((10#$value))"
+}
+
+# Settings this script recognises. Anything else is refused rather than
+# written and silently ignored later.
+setting_default() {
+  case $1 in
+  SAMPLE_INTERVAL) printf '60' ;;
+  AC_INTERVAL) printf '300' ;;
+  RETENTION_DAYS) printf '180' ;;
+  # A quiet stretch longer than this did not happen at the keyboard: the
+  # machine was suspended, or the shell was not running. It still counts as
+  # battery drained, but not as runtime you got out of the battery.
+  GAP_SECONDS) printf '300' ;;
+  # Runs shorter than this are unplugging to move rooms, not battery life.
+  MIN_SESSION) printf '600' ;;
+  # How far back "typical" looks when projecting a full charge.
+  TYPICAL_DAYS) printf '14' ;;
+  # Half-life of the weighting behind the live estimate: how quickly it
+  # follows a change in what the machine is doing.
+  RESPONSE_SECONDS) printf '60' ;;
+  *) return 1 ;;
+  esac
+}
+
+setting_help() {
+  case $1 in
+  SAMPLE_INTERVAL) printf 'seconds between samples while on battery' ;;
+  AC_INTERVAL) printf 'seconds between samples while plugged in' ;;
+  RETENTION_DAYS) printf 'days of history to keep (0 keeps everything)' ;;
+  GAP_SECONDS) printf 'a quiet stretch longer than this counts as suspended' ;;
+  MIN_SESSION) printf 'ignore discharge runs shorter than this many seconds' ;;
+  TYPICAL_DAYS) printf 'days averaged into the full-charge projection' ;;
+  RESPONSE_SECONDS) printf 'how fast the live estimate follows a change in load' ;;
+  esac
+}
+
+# ------------------------------------------------------------------ battery
+#
+# One battery, found once. A laptop with two would need a sum rather than a
+# pick, but every reading below goes through here so that stays a local
+# change.
+
+BATTERY=""
+
+find_battery() {
+  [[ -n $BATTERY ]] && return 0
+  local dir type
+  for dir in "$POWER_SUPPLY_DIR"/*/; do
+    [[ -r $dir/type ]] || continue
+    read -r type <"$dir/type" 2>/dev/null || continue
+    [[ $type == Battery ]] || continue
+    # Mice, headsets and controllers all show up here as batteries. A real
+    # system battery is the one the kernel scopes to the power supply.
+    [[ -r $dir/present || -r $dir/energy_full || -r $dir/charge_full ]] || continue
+    [[ -r $dir/scope ]] && { read -r type <"$dir/scope" 2>/dev/null; [[ $type == Device ]] && continue; }
+    BATTERY=${dir%/}
+    return 0
+  done
+  return 1
+}
+
+# A sysfs number, or the empty string. Never a partial read: these files are
+# generated on open, so a short read means the driver is busy, not zero.
+sysfs() {
+  local value
+  [[ -r $BATTERY/$1 ]] || return 1
+  read -r value <"$BATTERY/$1" 2>/dev/null || return 1
+  [[ -n $value ]] || return 1
+  printf '%s' "$value"
+}
+
+# Energy in µWh and draw in µW, whichever pair of units this battery reports.
+# Every multi-field producer here ends its line: `read` returns non-zero on a
+# stream that ends without a newline even though it has filled the variables,
+# and every caller checks that status.
+# Charge-reporting batteries publish µAh and µA, which become energy only once
+# multiplied by the voltage — so that is done here rather than in six callers.
+battery_energy() {
+  local now full design volts
+  if now=$(sysfs energy_now) && full=$(sysfs energy_full); then
+    design=$(sysfs energy_full_design) || design=0
+    printf '%s %s %s\n' "$now" "$full" "$design"
+    return 0
+  fi
+  now=$(sysfs charge_now) || return 1
+  full=$(sysfs charge_full) || return 1
+  design=$(sysfs charge_full_design) || design=0
+  volts=$(sysfs voltage_now) || volts=$(sysfs voltage_min_design) || return 1
+  [[ $volts -gt 0 ]] 2>/dev/null || return 1
+  awk -v now="$now" -v full="$full" -v design="$design" -v v="$volts" \
+    'BEGIN { printf "%d %d %d\n", now * v / 1000000, full * v / 1000000, design * v / 1000000 }'
+}
+
+battery_power() {
+  local watts volts amps
+  if watts=$(sysfs power_now); then
+    # A discharging battery on some firmware reports the magnitude as a
+    # negative number. The direction is already in `status`.
+    printf '%s' "${watts#-}"
+    return 0
+  fi
+  amps=$(sysfs current_now) || return 1
+  volts=$(sysfs voltage_now) || return 1
+  amps=${amps#-}
+  awk -v a="$amps" -v v="$volts" 'BEGIN { printf "%d", a * v / 1000000 }'
+}
+
+# One letter, so a row stays short: Discharging, Charging, Full, Not charging.
+battery_state() {
+  local status
+  status=$(sysfs status) || status=Unknown
+  case $status in
+  Discharging) printf 'D' ;;
+  Charging) printf 'C' ;;
+  Full) printf 'F' ;;
+  "Not charging") printf 'N' ;;
+  *) printf 'U' ;;
+  esac
+}
+
+battery_pct() {
+  local pct now full
+  if pct=$(sysfs capacity); then
+    printf '%s' "$pct"
+    return 0
+  fi
+  read -r now full _ < <(battery_energy) || return 1
+  ((full > 0)) || return 1
+  awk -v n="$now" -v f="$full" 'BEGIN { printf "%d", n * 100 / f + 0.5 }'
+}
+
+cycles() { sysfs cycle_count || printf '0'; }
+
+# --------------------------------------------------------------------- data
+#
+# One file per day, six tab-separated columns:
+#
+#   epoch  state  percent  energy_uWh  full_uWh  power_uW
+#
+# Energy rather than power is what makes this honest. Integrating power_now
+# over a gap would lose whatever happened during a suspend; a charge reading
+# taken before and after simply tells you how much went missing, however long
+# the machine was away and however few samples there are either side.
+
+day_file() { printf '%s/%s.tsv' "$DAYS_DIR" "$1"; }
+
+# Append one row, and keep the file sorted by time. Rows are only ever added
+# at the end in normal use, so this is a no-op sort — but an import writes
+# into the middle of a day, and every reader downstream assumes time order.
+append_row() {
+  local day=$1 row=$2 file lock
+  file=$(day_file "$day")
+  mkdir -p -- "$DAYS_DIR" 2>/dev/null || return 1
+
+  # A new day's first write is the natural moment to drop old history.
+  [[ -e $file ]] || prune_history
+
+  # No 2>/dev/null on this: `exec` with only redirections applies them to the
+  # shell itself, so a suppressor here silently swallows stderr for the rest
+  # of the run — including every error message this script means to print.
+  exec {lock}>"$STATE_DIR/.lock" || return 1
+  flock -w 5 "$lock" 2>/dev/null || {
+    exec {lock}>&-
+    return 1
+  }
+  printf '%s\n' "$row" >>"$file"
+  exec {lock}>&-
+}
+
+# Two readings a few seconds apart are one reading. The panel asks for a
+# fresh sample when it opens, the resume check can ask at the same moment,
+# and a row pair that close together contributes runtime with no measurable
+# charge between them — which drags every average down for as long as it is
+# kept. A change of power source is never suppressed: that is the row the
+# session boundary is drawn from.
+SAMPLE_FLOOR=15
+
+too_soon() {
+  local file last_ts last_state
+  file=$(day_file "$(date +%F)")
+  [[ -r $file ]] || return 1
+  IFS=$'\t' read -r last_ts last_state _ < <(tail -n1 -- "$file") || return 1
+  [[ $last_ts =~ ^[0-9]+$ ]] || return 1
+  [[ $last_state == "$1" ]] || return 1
+  (($(date +%s) - last_ts < SAMPLE_FLOOR))
+}
+
+cmd_sample() {
+  find_battery || return 0
+  local now full design pct state power ts day row print=0 force=0 arg
+  for arg in "$@"; do
+    case $arg in
+    --print) print=1 ;;
+    --force) force=1 ;;
+    esac
+  done
+
+  read -r now full design < <(battery_energy) || return 0
+  pct=$(battery_pct) || pct=0
+  state=$(battery_state)
+  power=$(battery_power) || power=0
+  ((force)) || ! too_soon "$state" || return 0
+  ts=$(date +%s)
+  day=$(date -d "@$ts" +%F)
+
+  row=$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$ts" "$state" "$pct" "$now" "$full" "$power")
+  append_row "$day" "$row" || return 0
+
+  # `sample --print` gives the caller the row it just wrote, so the shell can
+  # record and refresh in one exec rather than two.
+  ((print)) && printf '%s\n' "$row"
+  return 0
+}
+
+prune_history() {
+  local keep cutoff name base
+  keep=$(cfg_number RETENTION_DAYS 180)
+  ((keep > 0)) || return 0
+  cutoff=$(date -d "-$keep day" +%F) || return 0
+  [[ -d $DAYS_DIR ]] || return 0
+  for name in "$DAYS_DIR"/*.tsv; do
+    [[ -e $name ]] || continue
+    base=${name##*/}
+    base=${base%.tsv}
+    [[ $base =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
+    [[ $base < $cutoff ]] && rm -f -- "$name"
+  done
+  return 0
+}
+
+# Day files covering the last n days, oldest first, ending today. Missing
+# days are skipped rather than named: every reader here cats the list.
+# Day files covering the last n days, oldest first, ending today.
+#
+# Taken from the directory rather than generated a day at a time: a date
+# per day is a fork per day, and asking for ninety days of history was
+# ninety processes before a single row had been read. The names are ISO
+# dates, the glob sorts them, and LC_COLLATE=C makes the string compare
+# mean what it looks like it means.
+files_for_span() {
+  local span=$1 cutoff name base
+  cutoff=$(date -d "-$((span - 1)) day" +%F) || return 0
+  [[ -d $DAYS_DIR ]] || return 0
+  for name in "$DAYS_DIR"/*.tsv; do
+    [[ -e $name ]] || continue
+    base=${name##*/}
+    base=${base%.tsv}
+    [[ $base =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
+    [[ $base < $cutoff ]] && continue
+    printf '%s\n' "$name"
+  done
+}
+
+# Every row in the window, in time order. Sorted numerically on the timestamp
+# rather than trusting file order, so an import that landed out of order
+# cannot corrupt a session boundary.
+rows_for_span() {
+  local -a files=()
+  mapfile -t files < <(files_for_span "$1")
+  ((${#files[@]})) || return 0
+  cat -- "${files[@]}" 2>/dev/null | awk -F'\t' 'NF == 6 && $1 ~ /^[0-9]+$/' | sort -t$'\t' -k1,1n
+}
+
+# ------------------------------------------------------------------ sessions
+#
+# A discharge run is an unbroken stretch of Discharging samples. Two clocks
+# are kept over it and they answer different questions:
+#
+#   wall    end minus start. "The battery went from 09:00 to 19:30."
+#   awake   the sum of the gaps between samples, counting only gaps short
+#           enough to have been sampled through. A suspend adds to wall and
+#           not to awake, which is what makes "how long does it actually
+#           last" answerable rather than flattering.
+#
+# Energy consumed is summed the same way, so watts always divide energy that
+# was measured over time that was measured, never one over the other.
+#
+# Columns out:
+#   start_ts end_ts start_pct end_pct wall awake awake_uWh total_uWh full_uWh
+#   samples active
+
+sessions_tsv() {
+  local gap
+  gap=$(cfg_number GAP_SECONDS 300)
+  rows_for_span "${1:-90}" | awk -F'\t' -v OFS='\t' -v gap="$gap" '
+    function emit(active,   n) {
+      if (!open) return
+      print start_ts, end_ts, start_pct, end_pct, wall, awake, adrop, tdrop, full, samples, active
+      open = 0
+    }
+    function begin(ts, pct, e, f) {
+      open = 1; start_ts = ts; start_pct = pct; start_e = e
+      end_ts = ts; end_pct = pct; full = f
+      wall = 0; awake = 0; adrop = 0; tdrop = 0; samples = 1
+      prev_ts = ts; prev_e = e
+    }
+    $2 != "D" { emit(0); next }
+    {
+      ts = $1 + 0; pct = $3 + 0; e = $4 + 0; f = $5 + 0
+      if (!open) { begin(ts, pct, e, f); next }
+
+      # Charge that appeared between two Discharging samples means the machine
+      # was plugged in and unplugged again while nothing was watching. The run
+      # ended back there; it did not last through the gap.
+      if (e > prev_e + f * 0.01) { emit(0); begin(ts, pct, e, f); next }
+
+      dt = ts - prev_ts
+      de = prev_e - e
+      if (de < 0) de = 0
+      wall += dt
+      tdrop += de
+      if (dt <= gap) { awake += dt; adrop += de }
+      end_ts = ts; end_pct = pct; full = f; samples++
+      prev_ts = ts; prev_e = e
+    }
+    END { emit(1) }
+  '
+}
+
+# Session detection walks every row in the history, and one `json` asks for
+# it three times — for the projection, for the run in progress, and for the
+# list. It is the same answer each time, so it is computed once.
+SESSIONS_CACHE=""
+SESSIONS_CACHED=0
+
+sessions_cached() {
+  if ((!SESSIONS_CACHED)); then
+    SESSIONS_CACHE=$(sessions_tsv 90)
+    SESSIONS_CACHED=1
+  fi
+  printf '%s\n' "$SESSIONS_CACHE"
+}
+
+# The projection everything else quotes: pool the recent runs, divide the
+# energy they actually used by the time they were actually awake, and ask how
+# long a full battery lasts at that rate.
+#
+# Pooled rather than an average of per-run averages: a five-minute unplug at
+# the coffee machine should not carry the same weight as a four-hour flight.
+#
+# Prints: avg_watts full_charge_seconds runs_counted awake_seconds
+# Two minutes of runtime is enough to contribute to an average, even though
+# it is not enough to be worth listing as a run of its own — so the projection
+# has something to say within minutes of a fresh start rather than after the
+# first ten-minute unplug.
+TYPICAL_MIN=120
+
+typical_rate() {
+  local span cutoff
+  span=$(cfg_number TYPICAL_DAYS 14)
+  cutoff=$(( $(date +%s) - span * 86400 ))
+  sessions_cached | awk -F'\t' -v min="$TYPICAL_MIN" -v cutoff="$cutoff" '
+    $2 + 0 < cutoff { next }
+    $6 + 0 >= min {
+      awake += $6
+      drop += $7
+      runs++
+      if ($9 + 0 > full) full = $9
+    }
+    END {
+      if (awake <= 0 || drop <= 0 || full <= 0) { print "0 0 0 0"; exit }
+      rate = drop / awake                       # uWh per second
+      # runs, not NR: NR counts every run read, including the ones the cutoff
+      # and the minimum have just excluded.
+      printf "%.2f %d %d %d\n", rate * 3600 / 1000000, full / rate, runs, awake
+    }
+  '
+}
+
+# date, weekday, awake seconds on battery, uWh used, avg watts — oldest
+# first, one row per day in the span whether or not it saw any battery.
+#
+# One pass over the rows, not one per day: this runs on every panel refresh,
+# and three forks per day of history was most of what that cost.
+days_tsv() {
+  local span=$1
+  rows_for_span "$span" | awk -F'\t' -v span="$span" -v now="$(date +%s)" \
+    -v gap="$(cfg_number GAP_SECONDS 300)" '
+    BEGIN {
+      # The day walk is anchored at local noon and stepped by whole days.
+      # Stepping back from "now" would skip or repeat a day across a
+      # daylight-saving change — twice a year, silently.
+      noon = mktime(strftime("%Y %m %d", now) " 12 00 00")
+    }
+    NF == 6 && $2 == "D" {
+      ts = $1 + 0; e = $4 + 0
+      if (have) {
+        dt = ts - pt
+        de = pe - e
+        if (de < 0) de = 0
+        if (dt > 0 && dt <= gap) {
+          d = strftime("%Y-%m-%d", ts)
+          secs[d] += dt
+          drop[d] += de
+        }
+      }
+      have = 1; pt = ts; pe = e
+      next
+    }
+    { have = 0 }
+    END {
+      for (i = span - 1; i >= 0; i--) {
+        t = noon - i * 86400
+        d = strftime("%Y-%m-%d", t)
+        printf "%s\t%s\t%d\t%d\t%.2f\n", d, strftime("%a", t),
+          secs[d] + 0, drop[d] + 0,
+          (secs[d] > 0 ? drop[d] / secs[d] * 3600 / 1000000 : 0)
+      }
+    }
+  '
+}
+
+# ------------------------------------------------------------------- current
+#
+# The rate behind "time left" is measured, not instantaneous. power_now swings
+# by ten watts between two consecutive reads of the same idle desktop, and an
+# estimate built on it swings with it — which is the whole reason the stock
+# remaining-time readout is not worth watching.
+#
+# But it does have to follow the machine. Writing in a terminal and watching a
+# video are twenty watts apart here, and an average over the last quarter hour
+# describes neither. So every interval is weighted by its age, halving every
+# RESPONSE_SECONDS: the last minute decides the number, the ten before it damp
+# the noise, and anything older is arithmetically irrelevant without needing a
+# cutoff to say so.
+RECENT_WINDOW=1800
+
+# "0", "0.00" and "" all mean no rate. Everything that produces one prints a
+# fixed two-decimal number, so this needs no arithmetic and no fork.
+is_positive() { [[ -n ${1:-} && $1 != 0 && $1 != 0.0 && $1 != 0.00 ]]; }
+
+# Age-weighted watts over recent intervals, drain and fill, from one walk.
+# Charging moves energy the other way; the magnitude is the rate either way,
+# so both are accumulated in the same pass rather than in two.
+#
+# Prints: drain_watts fill_watts
+recent_rates() {
+  rows_for_span 2 | awk -v now="$(date +%s)" -v window="$RECENT_WINDOW" \
+    -v half="$(cfg_number RESPONSE_SECONDS 60)" \
+    -v gap="$(cfg_number GAP_SECONDS 300)" '
+    BEGIN { ln2 = 0.6931471805599453 }
+    function rate(wd, wt) {
+      # Weighted seconds, not wall seconds: one interval half a lifetime old
+      # is not enough to call a rate.
+      return (wt < 30 || wd <= 0) ? 0 : wd / wt * 3600 / 1000000
+    }
+    ($2 == "D" || $2 == "C") && $1 >= now - window {
+      ts = $1 + 0; e = $4 + 0
+      if (have == $2) {
+        dt = ts - pt
+        de = ($2 == "C") ? e - pe : pe - e
+        if (de < 0) de = 0
+        if (dt > 0 && dt <= gap) {
+          # Weighted at the middle of the interval, since that is when the
+          # energy it accounts for was actually moved.
+          age = now - (ts + pt) / 2
+          if (age < 0) age = 0
+          w = exp(-ln2 * age / half)
+          if ($2 == "C") { cd += w * de; ct += w * dt }
+          else           { dd += w * de; dt_ += w * dt }
+        }
+      }
+      # Keyed on the state, so a row either side of a plug event never pairs
+      # up into an interval that spans both.
+      have = $2; pt = ts; pe = e
+      next
+    }
+    { have = "" }
+    END { printf "%.2f %.2f\n", rate(dd, dt_), rate(cd, ct) }
+  '
+}
+
+# The current discharge run, or nothing. Same columns as sessions_tsv.
+current_session() {
+  sessions_cached | awk -F'\t' '$11 == 1' | tail -n1
+}
+
+# key<TAB>value lines describing right now. One place to do the arithmetic, so
+# `status`, `json` and the panel can never disagree about what a watt is.
+#
+# Keys that have no honest answer are simply absent rather than zero: there is
+# no time-to-full for a battery that is not charging, and no projection at all
+# until something has been measured. Every reader treats a missing key as
+# "unknown" and says so.
+now_tsv() {
+  local energy full design pct state power recent charge_rate rate
+  local typ_w typ_full runs sess
+
+  if ! find_battery; then
+    printf 'present\t0\n'
+    return 0
+  fi
+  read -r energy full design < <(battery_energy) || { printf 'present\t0\n'; return 0; }
+  pct=$(battery_pct) || pct=0
+  state=$(battery_state)
+  power=$(battery_power) || power=0
+
+  read -r recent charge_rate < <(recent_rates)
+  read -r typ_w typ_full runs _ < <(typical_rate)
+
+  # What the drain estimate divides by: what has just been measured, or
+  # failing that what recent runs averaged.
+  rate=$recent
+  is_positive "$rate" || rate=$typ_w
+
+  printf 'present\t1\n'
+  printf 'state\t%s\n' "$state"
+  printf 'percent\t%s\n' "$pct"
+  printf 'energy\t%s\n' "$energy"
+  printf 'full\t%s\n' "$full"
+  printf 'design\t%s\n' "$design"
+  printf 'power\t%s\n' "$power"
+  printf 'recentWatts\t%s\n' "$recent"
+  printf 'typicalWatts\t%s\n' "$typ_w"
+  printf 'typicalSeconds\t%s\n' "$typ_full"
+  printf 'typicalRuns\t%s\n' "$runs"
+  printf 'cycles\t%s\n' "$(cycles)"
+
+  # Everything derived in one pass. A process per number is most of what a
+  # panel refresh used to cost.
+  awk -v e="$energy" -v f="$full" -v p="$power" -v st="$state" \
+    -v rate="$rate" -v crate="$charge_rate" '
+    BEGIN {
+      watts = p / 1000000
+      # The instantaneous reading stands in only while nothing has been
+      # measured yet: on the first sample there is no interval to weigh.
+      if (rate + 0 <= 0 && st == "D") rate = watts
+      if (crate + 0 <= 0 && st == "C") crate = watts
+
+      printf "watts\t%.2f\n", watts
+      printf "rateWatts\t%.2f\n", rate
+      printf "chargeWatts\t%.2f\n", crate
+      # What to put in front of a person: the measured drain while draining,
+      # the measured fill while filling, and the instantaneous reading
+      # otherwise — never a discharge average quoted at a charging battery.
+      printf "displayWatts\t%.2f\n",
+        (st == "D") ? rate : ((st == "C") ? crate : watts)
+
+      if (st == "D" && rate > 0)
+        printf "timeLeft\t%d\n", e / 1000000 / rate * 3600
+      if (st == "C" && crate > 0 && f > e)
+        printf "timeToFull\t%d\n", (f - e) / 1000000 / crate * 3600
+      # What a full charge would give at the drain rate in force right now.
+      # Absent while charging with no drain history: how long this battery
+      # lasts is not something a charging curve can answer.
+      if (f > 0 && rate > 0 && st != "C")
+        printf "atRateSeconds\t%d\n", f / 1000000 / rate * 3600
+    }
+  '
+
+  sess=$(current_session)
+  [[ -n $sess ]] || return 0
+  awk -F'\t' '{
+    printf "runStart\t%d\n", $1
+    printf "runStartPct\t%d\n", $3
+    printf "runWall\t%d\n", $5
+    printf "runAwake\t%d\n", $6
+    printf "runEnergy\t%d\n", $7
+    printf "runWatts\t%.2f\n", ($6 > 0) ? $7 / $6 * 3600 / 1000000 : 0
+  }' <<<"$sess"
+}
+
+# One key out of now_tsv, or the empty string when it had nothing to say.
+now_value() { awk -F'\t' -v key="$1" '$1 == key { print $2; exit }' <<<"$2"; }
+
+# -------------------------------------------------------------------- import
+#
+# UPower has been keeping its own history in /var/lib/upower since long before
+# this plugin existed — a charge trace and a rate trace, both a few thousand
+# samples deep. The files are root-only, but the daemon hands the same data to
+# anyone over D-Bus, so a fresh install does not have to start empty and make
+# you wait a week to learn anything.
+#
+# What it cannot give is energy in watt-hours: the charge series is a
+# percentage. Those rows get an energy figure derived from the pack's capacity
+# as it reads today, which is right to within the wear accumulated over the
+# window being imported — a fraction of a percent over a week.
+
+upower_path() {
+  local name=${BATTERY##*/}
+  [[ -n $name ]] || return 1
+  printf '/org/freedesktop/UPower/devices/battery_%s' "$name"
+}
+
+# ts value state, one per line, oldest first.
+upower_history() {
+  local kind=$1 span=$2 path
+  path=$(upower_path) || return 1
+  busctl --system call org.freedesktop.UPower "$path" \
+    org.freedesktop.UPower.Device GetHistory suu "$kind" "$span" 1000000 2>/dev/null |
+    awk '
+      # a(udu) <count> then flat triples. The count is not trusted for the
+      # loop bound: a short reply should read as fewer rows, not as garbage
+      # past the end.
+      { for (i = 3; i + 2 <= NF; i += 3) print $i, $(i + 1), $(i + 2) }
+    ' | sort -k1,1n
+}
+
+cmd_import() {
+  local days=0 span=0 full design tmp count=0
+  while (($# > 0)); do
+    case $1 in
+    --days)
+      shift
+      [[ ${1:-} =~ ^[0-9]+$ ]] && days=$((10#$1))
+      ;;
+    esac
+    shift
+  done
+  ((days > 0)) && span=$((days * 86400))
+
+  have busctl || die "busctl is required to read UPower's history"
+  find_battery || die "no battery found"
+  read -r _ full design < <(battery_energy) || die "could not read the battery"
+  ((full > 0)) || die "the battery reports no capacity"
+
+  IMPORT_TMP=$(mktemp -d) || die "could not create a working directory"
+  tmp=$IMPORT_TMP
+  # die() exits rather than returns, so this has to be the exit trap — and it
+  # fires after cmd_import has returned, when a `local tmp` is already out of
+  # scope and `set -u` would abort inside the trap itself.
+  trap 'rm -rf -- "$IMPORT_TMP"' EXIT
+
+  upower_history charge "$span" >"$tmp/charge" || true
+  upower_history rate "$span" >"$tmp/rate" || true
+  [[ -s $tmp/charge ]] || die "UPower returned no history — is upower running?"
+
+  # Both series, interleaved by time, so each charge sample can take the draw
+  # that was measured nearest to it. Rate samples land every 30 s or so; a
+  # charge sample further than two minutes from one gets no watts rather than
+  # a made-up number.
+  awk -v full="$full" -v OFS='\t' '
+    function letter(s) {
+      if (s == 1) return "C"
+      if (s == 2) return "D"
+      if (s == 4) return "F"
+      if (s == 5 || s == 6) return "N"
+      return "U"
+    }
+    FNR == NR { rt[++rn] = $1; rw[rn] = $2; next }
+    {
+      ts = $1 + 0; pct = $2 + 0; st = $3 + 0
+      # State 0 is UPower marking a discontinuity in its own log, not a
+      # reading. Percentages of zero alongside it are the marker, not an
+      # empty battery.
+      if (st == 0) next
+      while (ri < rn && rt[ri + 1] <= ts) ri++
+      best = -1
+      if (ri >= 1 && ts - rt[ri] <= 120) best = rw[ri]
+      if (ri < rn && rt[ri + 1] - ts <= 120)
+        if (best < 0 || rt[ri + 1] - ts < ts - rt[ri]) best = rw[ri + 1]
+      print ts, letter(st), int(pct + 0.5), int(pct * full / 100), full,
+        (best >= 0 ? int(best * 1000000) : 0)
+    }
+  ' "$tmp/rate" "$tmp/charge" >"$tmp/rows"
+
+  [[ -s $tmp/rows ]] || die "nothing to import"
+
+  # Split by local day, then merge each day in one pass. Rows already on disk
+  # always win: they were measured by this plugin at full precision, and an
+  # import must never be able to coarsen history it did not create.
+  mkdir -p -- "$DAYS_DIR" || die "could not create $DAYS_DIR"
+  awk -F'\t' -v dir="$tmp" '{ print > (dir "/day-" strftime("%Y-%m-%d", $1)) }' "$tmp/rows"
+
+  local part day file lock before after
+  local -a srcs=()
+  exec {lock}>"$STATE_DIR/.lock" || die "could not lock the history"
+  flock -w 10 "$lock" || die "could not lock the history"
+  for part in "$tmp"/day-*; do
+    [[ -e $part ]] || continue
+    day=${part##*/day-}
+    file=$(day_file "$day")
+    before=$(count_lines "$file")
+    # Existing rows first, so the "keep the first one seen" rule keeps them.
+    # Named rather than catted blindly: under `pipefail` a cat over a day file
+    # that does not exist yet fails the pipeline, and the merge that follows
+    # it never runs — which is exactly the first day of any import.
+    srcs=("$part")
+    [[ -e $file ]] && srcs=("$file" "$part")
+    cat -- "${srcs[@]}" |
+      awk -F'\t' 'NF == 6 && !seen[$1]++' | sort -t$'\t' -k1,1n >"$file.tmp" &&
+      mv -f -- "$file.tmp" "$file"
+    rm -f -- "$file.tmp"
+    after=$(count_lines "$file")
+    count=$((count + after - before))
+  done
+  exec {lock}>&-
+
+  printf 'Imported %s samples from UPower.\n' "$count"
+  prune_history
+}
+
+# --------------------------------------------------------------------- hours
+#
+# Today, hour by hour: how long each hour ran on battery and what it drew.
+# Hours spent plugged in, asleep or switched off read as empty rather than as
+# zero watts, which is the difference between "cost nothing" and "wasn't on".
+#
+# Columns: hour awake_seconds uWh watts
+hours_tsv() {
+  awk -F'\t' -v gap="$(cfg_number GAP_SECONDS 300)" '
+    NF == 6 && $2 == "D" {
+      ts = $1 + 0; e = $4 + 0
+      if (have) {
+        dt = ts - pt
+        de = pe - e
+        if (de < 0) de = 0
+        # Attributed to the hour the interval ended in. An interval that
+        # straddles the hour is at most one sample wide, so splitting it would
+        # buy a second of accuracy for a good deal of arithmetic.
+        if (dt > 0 && dt <= gap) {
+          h = int(strftime("%H", ts))
+          secs[h] += dt
+          drop[h] += de
+        }
+      }
+      have = 1; pt = ts; pe = e
+      next
+    }
+    { have = 0 }
+    END {
+      for (i = 0; i < 24; i++)
+        # Parenthesised: a bare > inside a print argument list is an output
+        # redirection to awk, not a comparison.
+        printf "%d\t%d\t%d\t%.2f\n", i, secs[i] + 0, drop[i] + 0,
+          (secs[i] > 0 ? drop[i] / secs[i] * 3600 / 1000000 : 0)
+    }
+  ' "$(day_file "$(date +%F)")" 2>/dev/null
+}
+
+# ------------------------------------------------------------------ reports
+
+format_duration() {
+  awk -v total="${1:-0}" 'BEGIN {
+    total = int(total + 0.5)
+    if (total < 0) total = 0
+    h = int(total / 3600); m = int((total % 3600) / 60)
+    if (h > 0) printf "%dh %02dm", h, m
+    else if (m > 0) printf "%dm", m
+    else printf "%ds", total
+  }'
+}
+
+state_word() {
+  case $1 in
+  D) printf 'Discharging' ;;
+  C) printf 'Charging' ;;
+  F) printf 'Full' ;;
+  N) printf 'Not charging' ;;
+  *) printf 'Unknown' ;;
+  esac
+}
+
+cmd_status() {
+  local snap present state pct watts left tofull short=0
+  [[ ${1:-} == --short ]] && short=1
+  snap=$(now_tsv)
+  present=$(now_value present "$snap")
+  [[ $present == 1 ]] || { echo "No battery."; return 0; }
+
+  state=$(now_value state "$snap")
+  pct=$(now_value percent "$snap")
+  # displayWatts, not rateWatts: while charging the drain rate describes
+  # nothing that is happening.
+  watts=$(now_value displayWatts "$snap")
+  left=$(now_value timeLeft "$snap")
+  tofull=$(now_value timeToFull "$snap")
+
+  if ((short)); then
+    # What the bar shows: one field, no punctuation to align.
+    case $state in
+    D) [[ ${left:-0} -gt 0 ]] && format_duration "$left" || printf '%s%%' "$pct" ;;
+    C) [[ ${tofull:-0} -gt 0 ]] && format_duration "$tofull" || printf '%s%%' "$pct" ;;
+    *) printf '%s%%' "$pct" ;;
+    esac
+    echo
+    return 0
+  fi
+
+  printf '%s%%  %s  %s W\n' "$pct" "$(state_word "$state")" "$watts"
+  [[ ${left:-0} -gt 0 ]] && printf 'Time left        %s\n' "$(format_duration "$left")"
+  [[ ${tofull:-0} -gt 0 ]] && printf 'Until full       %s\n' "$(format_duration "$tofull")"
+  # A run with no runtime yet is one sample, not a run worth a line.
+  local run_awake
+  run_awake=$(now_value runAwake "$snap")
+  if [[ ${run_awake:-0} =~ ^[0-9]+$ ]] && ((run_awake > 0)); then
+    printf 'This run         %s  ·  %s Wh  ·  %s W\n' \
+      "$(format_duration "$(now_value runAwake "$snap")")" \
+      "$(awk -v e="$(now_value runEnergy "$snap")" 'BEGIN { printf "%.1f", e / 1000000 }')" \
+      "$(now_value runWatts "$snap")"
+  fi
+  local typ_s typ_w runs
+  typ_s=$(now_value typicalSeconds "$snap")
+  typ_w=$(now_value typicalWatts "$snap")
+  runs=$(now_value typicalRuns "$snap")
+  if [[ ${typ_s:-0} -gt 0 ]]; then
+    printf 'Typical charge   %s at %s W  (%s %s)\n' \
+      "$(format_duration "$typ_s")" "$typ_w" "$runs" \
+      "$([[ $runs == 1 ]] && echo run || echo runs)"
+  else
+    printf 'Typical charge   not enough history yet\n'
+  fi
+}
+
+cmd_sessions() {
+  local limit=${1:-10} min
+  [[ $limit =~ ^[0-9]+$ ]] || limit=10
+  min=$(cfg_number MIN_SESSION 600)
+  local any=0 line
+  printf '%-16s  %-9s  %-8s  %-7s  %s\n' 'STARTED' 'CHARGE' 'RUNTIME' 'DRAW' 'FULL CHARGE'
+  while IFS=$'\t' read -r start end spct epct wall awake adrop tdrop full n active; do
+    ((awake >= min)) || continue
+    any=1
+    printf '%-16s  %3s%% → %-3s%%  %-8s  %-7s  %s\n' \
+      "$(date -d "@$start" '+%a %d %b %H:%M')" "$spct" "$epct" \
+      "$(format_duration "$awake")" \
+      "$(awk -v d="$adrop" -v s="$awake" \
+        'BEGIN { printf "%.1f W", (s > 0) ? d / s * 3600 / 1000000 : 0 }')" \
+      "$(awk -v f="$full" -v d="$adrop" -v s="$awake" \
+        'BEGIN { r = (s > 0) ? d / s : 0; if (r <= 0) { print "-"; exit }
+                 t = int(f / r); printf "%dh %02dm", int(t / 3600), int((t % 3600) / 60) }')"
+    [[ $active == 1 ]] && printf '%-16s  (still running)\n' ''
+  done < <(sessions_tsv 90 | tac | head -n "$limit")
+  ((any)) || printf '(no discharge runs longer than %s recorded yet)\n' "$(format_duration "$min")"
+}
+
+cmd_health() {
+  find_battery || die "no battery found"
+  local energy full design
+  read -r energy full design < <(battery_energy) || die "could not read the battery"
+  printf 'Capacity   %s Wh of %s Wh design\n' \
+    "$(awk -v v="$full" 'BEGIN { printf "%.1f", v / 1000000 }')" \
+    "$(awk -v v="$design" 'BEGIN { printf "%.1f", v / 1000000 }')"
+  ((design > 0)) && printf 'Health     %s%%\n' \
+    "$(awk -v f="$full" -v d="$design" 'BEGIN { printf "%.1f", f * 100 / d }')"
+  printf 'Cycles     %s\n' "$(cycles)"
+  printf 'Charge     %s Wh  (%s%%)\n' \
+    "$(awk -v v="$energy" 'BEGIN { printf "%.1f", v / 1000000 }')" "$(battery_pct)"
+}
+
+# The one call the panel makes. Everything on screen comes out of this, so
+# what the window shows and what the CLI prints can never disagree.
+cmd_json() {
+  have jq || die "jq is required for json output"
+  local span=14 runs=12 snap sessions
+  while (($# > 0)); do
+    case $1 in
+    --days)
+      shift
+      [[ ${1:-} =~ ^[0-9]+$ ]] && ((10#$1 > 0)) && span=$((10#$1))
+      ;;
+    --sessions)
+      shift
+      [[ ${1:-} =~ ^[0-9]+$ ]] && ((10#$1 > 0)) && runs=$((10#$1))
+      ;;
+    esac
+    shift
+  done
+
+  snap=$(now_tsv)
+  sessions=$(sessions_cached | awk -F'\t' -v min="$(cfg_number MIN_SESSION 600)" '$6 >= min')
+
+  jq -n \
+    --arg now "$snap" \
+    --arg sessions "$sessions" \
+    --arg days "$(days_tsv "$span")" \
+    --arg hours "$(hours_tsv)" \
+    --argjson rangeDays "$span" \
+    --argjson maxRuns "$runs" '
+      def num: if . == null or . == "" then 0 else tonumber end;
+      def lines: split("\n") | map(select(length > 0) | split("\t"));
+
+      ($now | lines | map({ key: .[0], value: .[1] }) | from_entries) as $n
+      | ($sessions | lines | map({
+          start:      (.[0] | num),
+          end:        (.[1] | num),
+          startPct:   (.[2] | num),
+          endPct:     (.[3] | num),
+          wall:       (.[4] | num),
+          awake:      (.[5] | num),
+          wh:         ((.[6] | num) / 1000000),
+          totalWh:    ((.[7] | num) / 1000000),
+          watts:      (if (.[5] | num) > 0
+                       then (.[6] | num) / (.[5] | num) * 3600 / 1000000 else 0 end),
+          fullSeconds:(if (.[5] | num) > 0 and (.[6] | num) > 0
+                       then (.[8] | num) / ((.[6] | num) / (.[5] | num)) else 0 end),
+          active:     ((.[10] | num) == 1)
+        })) as $runs
+      | {
+          present: (($n.present // "0") == "1"),
+          now: {
+            state:       ($n.state // "U"),
+            percent:     ($n.percent | num),
+            watts:        ($n.watts | num),
+            displayWatts: ($n.displayWatts | num),
+            chargeWatts:  ($n.chargeWatts | num),
+            recentWatts: ($n.recentWatts | num),
+            rateWatts:   ($n.rateWatts | num),
+            energyWh:    (($n.energy | num) / 1000000),
+            fullWh:      (($n.full | num) / 1000000),
+            timeLeft:      ($n.timeLeft | num),
+            atRateSeconds: ($n.atRateSeconds | num),
+            timeToFull:  ($n.timeToFull | num)
+          },
+          run: (if $n.runAwake == null then null else {
+            start:    ($n.runStart | num),
+            startPct: ($n.runStartPct | num),
+            wall:     ($n.runWall | num),
+            awake:    ($n.runAwake | num),
+            wh:       (($n.runEnergy | num) / 1000000),
+            watts:    ($n.runWatts | num)
+          } end),
+          typical: {
+            watts:   ($n.typicalWatts | num),
+            seconds: ($n.typicalSeconds | num),
+            runs:    ($n.typicalRuns | num)
+          },
+          rangeDays: $rangeDays,
+          sessions: ($runs | reverse | .[0:$maxRuns]),
+          days: ($days | lines | map({
+            date:  .[0],
+            label: .[1],
+            awake: (.[2] | num),
+            wh:    ((.[3] | num) / 1000000),
+            watts: (.[4] | num)
+          })),
+          hours: ($hours | lines | map({
+            hour:  (.[0] | num),
+            awake: (.[1] | num),
+            wh:    ((.[2] | num) / 1000000),
+            watts: (.[3] | num)
+          }))
+        }
+    '
+}
+
+# ----------------------------------------------------------------- settings
+
+cmd_config() {
+  local key value default
+  if (($# > 0)); then
+    key=${1^^}
+    default=$(setting_default "$key") || die "unknown setting: $1"
+    printf '%s\n' "$(get_cfg "$key" "$default")"
+    return 0
+  fi
+  for key in SAMPLE_INTERVAL AC_INTERVAL RETENTION_DAYS GAP_SECONDS MIN_SESSION \
+    TYPICAL_DAYS RESPONSE_SECONDS; do
+    default=$(setting_default "$key")
+    value=$(get_cfg "$key" "$default")
+    printf '%-16s %-8s  %s\n' "$key" "$value" "$(setting_help "$key")"
+  done
+}
+
+cmd_set() {
+  local key=${1:-} value=${2:-}
+  [[ -n $key ]] || die "usage: batterylife set <key> <value>"
+  key=${key^^}
+  setting_default "$key" >/dev/null || die "unknown setting: $1"
+  (($# >= 2)) || die "usage: batterylife set $key <value>"
+  [[ $value =~ ^[0-9]+$ ]] || die "$key takes a whole number of seconds or days"
+  set_cfg "$key" "$value" || die "could not write $CONFIG"
+  printf '%s=%s\n' "$key" "$value"
+}
+
+cmd_forget() {
+  local what=${1:-}
+  [[ -n $what ]] || die "usage: batterylife forget <YYYY-MM-DD|all>"
+  if [[ $what == all ]]; then
+    rm -f -- "$DAYS_DIR"/*.tsv 2>/dev/null
+    echo "Deleted all recorded history."
+    return 0
+  fi
+  [[ $what =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "not a date: $what"
+  rm -f -- "$(day_file "$what")"
+  printf 'Deleted %s.\n' "$what"
+}
+
+# --------------------------------------------------------------- shell glue
+
+cmd_open() {
+  local payload='{}'
+  [[ ${1:-} == --week ]] && payload='{"range":"week"}'
+  have omarchy-shell || die "omarchy-shell not found"
+  omarchy-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null ||
+    die "could not open the window — is the plugin enabled?"
+}
+
+cmd_indicator() {
+  local state=${1:-status}
+  have omarchy || die "the omarchy CLI is required"
+  case $state in
+  on | off)
+    omarchy bar set "$PLUGIN_ID" indicator "$([[ $state == on ]] && echo true || echo false)" --json >/dev/null ||
+      die "could not update the bar entry — is the plugin enabled?"
+    echo "Bar indicator $state."
+    ;;
+  status)
+    if omarchy bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
+      echo "The plugin is in the bar layout."
+    else
+      echo "The plugin is not in the bar layout."
+    fi
+    ;;
+  *) die "usage: batterylife indicator on|off" ;;
+  esac
+}
+
+# Is this widget in the bar layout at all? Read rather than asked for: the
+# bar CLI can place and move widgets but has no way to report one.
+bar_has() {
+  [[ -r $SHELL_JSON ]] && grep -qF "\"$1\"" "$SHELL_JSON"
+}
+
+# Take over the slot the stock power widget occupies, and hand it back.
+cmd_takeover() {
+  local action=${1:-on}
+  have omarchy || die "the omarchy CLI is required"
+  case $action in
+  on)
+    # On the bar at all, first: `put` places a widget that is missing and
+    # deliberately leaves one that is already there where it is.
+    bar_has "$PLUGIN_ID" ||
+      omarchy bar put "$PLUGIN_ID" --section right >/dev/null 2>&1 ||
+      die "could not place the widget — is the plugin enabled?"
+
+    if ! bar_has "$STOCK_POWER"; then
+      echo "Battery Life is on the bar; the stock power widget is already off it."
+      return 0
+    fi
+
+    # Anchored to the stock widget only while the bar actually carries it.
+    # `move --after` an id the bar does not have takes this widget off the
+    # bar rather than leaving it where it was, which is how running this
+    # twice used to end with no battery widget at all.
+    omarchy bar move "$PLUGIN_ID" --after "$STOCK_POWER" >/dev/null 2>&1 ||
+      die "could not move the widget into the power widget's slot"
+    omarchy plugin disable "$STOCK_POWER" >/dev/null 2>&1 ||
+      echo "Note: the stock power widget could not be disabled; both are on the bar." >&2
+    echo "Battery Life has the power widget's slot."
+    ;;
+  off)
+    omarchy plugin enable "$STOCK_POWER" >/dev/null 2>&1 ||
+      die "could not restore the stock power widget"
+    # `plugin enable` puts a widget in the section its manifest names, and the
+    # stock power widget names none — so it comes back in the centre rather
+    # than where it was. Put it back beside this one.
+    if bar_has "$PLUGIN_ID"; then
+      omarchy bar move "$STOCK_POWER" --after "$PLUGIN_ID" >/dev/null 2>&1
+    else
+      omarchy bar move "$STOCK_POWER" --section right >/dev/null 2>&1
+    fi
+    echo "Restored the stock power widget."
+    echo "Battery Life is still on the bar beside it. Taking a widget off the bar"
+    echo "means disabling the plugin, which also stops it recording:"
+    echo "  omarchy plugin disable $PLUGIN_ID"
+    ;;
+  *) die "usage: batterylife takeover on|off" ;;
+  esac
+}
+
+MENU_ENTRY='  "batterylife": {"icon":"󰁹","label":"Battery Life","aliases":["battery","runtime","power-history"],"action":"omarchy-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
+
+cmd_menu() {
+  local action=${1:-install} tmp
+  case $action in
+  install)
+    mkdir -p -- "$(dirname -- "$MENU_FILE")" || die "could not create the extensions directory"
+    if [[ ! -f $MENU_FILE ]]; then
+      printf '{\n%s\n}\n' "$MENU_ENTRY" >"$MENU_FILE" ||
+        die "could not write $MENU_FILE"
+      echo "Added Battery Life to the Omarchy menu."
+      return 0
+    fi
+    if grep -q '^[[:space:]]*"batterylife"[[:space:]]*:' "$MENU_FILE"; then
+      echo "Battery Life is already in the Omarchy menu."
+      return 0
+    fi
+    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
+    # Insert before the final closing brace, so the comment block the file
+    # ships with stays where it is.
+    awk -v entry="$MENU_ENTRY" '
+      { lines[NR] = $0 }
+      END {
+        last = 0
+        for (i = NR; i >= 1; i--) if (lines[i] ~ /^[[:space:]]*}[[:space:]]*$/) { last = i; break }
+        for (i = 1; i <= NR; i++) {
+          if (i == last) print entry
+          print lines[i]
+        }
+        if (last == 0) print entry
+      }
+    ' "$MENU_FILE" >"$tmp" || {
+      rm -f -- "$tmp"
+      die "could not write $MENU_FILE"
+    }
+    cat -- "$tmp" >"$MENU_FILE"
+    rm -f -- "$tmp"
+    echo "Added Battery Life to the Omarchy menu (Super+Space)."
+    ;;
+  remove)
+    [[ -f $MENU_FILE ]] || return 0
+    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
+    grep -v '^[[:space:]]*"batterylife"[[:space:]]*:' "$MENU_FILE" >"$tmp"
+    cat -- "$tmp" >"$MENU_FILE"
+    rm -f -- "$tmp"
+    echo "Removed Battery Life from the Omarchy menu."
+    ;;
+  *) die "usage: batterylife menu install|remove" ;;
+  esac
+}
+
+cmd_version() {
+  local self plugin_dir version=""
+  self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || self=""
+  plugin_dir=${self%/bin/*}
+  if [[ -n $plugin_dir && -r $plugin_dir/manifest.json ]]; then
+    version=$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+      "$plugin_dir/manifest.json" | head -n1)
+  fi
+  printf 'batterylife %s\n' "${version:-unknown}"
+}
+
+usage() {
+  cat <<'USAGE'
+batterylife — how long this battery actually lasts.
+
+Usage:
+  batterylife status [--short]     charge, draw, and time left
+  batterylife sessions [n]         past discharge runs and what they cost
+  batterylife health               capacity, wear, and cycle count
+  batterylife json [--days n]      everything the window draws
+
+  batterylife open [--week]        open the Battery Life window
+  batterylife import [--days n]    seed history from UPower's own log
+
+  batterylife config [key]         show settings
+  batterylife set <key> <value>    change one
+  batterylife forget <date|all>    delete recorded history
+
+  batterylife menu install|remove    add or remove the Super+Space entry
+  batterylife takeover on|off        swap with the stock power widget
+  batterylife indicator on|off       show or hide the bar entry
+  batterylife sample [--force]       record one reading (used by the shell)
+  batterylife version
+
+Runtime is measured, not predicted: every figure comes from charge the
+battery actually lost over time the machine was actually awake. Time spent
+suspended counts against the charge and not against the runtime, which is
+why these numbers are lower — and truer — than the ones in the stock readout.
+
+Settings live in ~/.config/omarchy-batterylife/config, history in
+~/.local/state/omarchy-batterylife/days/. Only charge, draw and capacity are
+recorded — nothing about what the machine was doing at the time.
+USAGE
+}
+
+# --------------------------------------------------------------------- main
+
+command=${1:-status}
+(($# > 0)) && shift
+
+case $command in
+sample) cmd_sample "$@" ;;
+status | now) cmd_status "$@" ;;
+sessions | runs) cmd_sessions "$@" ;;
+health) cmd_health "$@" ;;
+json) cmd_json "$@" ;;
+open) cmd_open "$@" ;;
+import) cmd_import "$@" ;;
+config) cmd_config "$@" ;;
+set) cmd_set "$@" ;;
+forget) cmd_forget "$@" ;;
+prune) prune_history ;;
+menu) cmd_menu "$@" ;;
+takeover) cmd_takeover "$@" ;;
+indicator) cmd_indicator "$@" ;;
+version | --version | -V) cmd_version ;;
+-h | --help | help) usage ;;
+*) die "unknown command: $command — try: batterylife --help" ;;
+esac

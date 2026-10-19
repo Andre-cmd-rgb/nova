@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "andrecmdrgb.batterylife",
+  "name": "Battery Life",
+  "version": "1.0.0",
+  "author": "Andre-cmd-rgb",
+  "license": "MIT",
+  "description": "What this battery actually gives you: measured runtime per discharge run, average draw, and a full-charge projection built from your own history rather than the instantaneous rate.",
+  "kinds": [
+    "service",
+    "panel",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "panel": "Panel.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Battery Life",
+    "description": "Battery glyph with measured time left, and a click for the history",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "readout": "Time left",
+      "warnPercent": 15
+    },
+    "schema": [
+      {
+        "key": "readout",
+        "type": "enum",
+        "label": "Next to the glyph",
+        "options": [
+          "Time left",
+          "Percent",
+          "Watts",
+          "Percent + watts",
+          "Nothing"
+        ],
+        "defaultValue": "Time left",
+        "description": "Time left is measured from your own recent draw, not from the instantaneous reading, so it does not jump around. Right-click the widget to cycle without coming here."
+      },
+      {
+        "key": "warnPercent",
+        "type": "integer",
+        "label": "Turn the glyph urgent below (%)",
+        "min": 0,
+        "max": 50,
+        "step": 5,
+        "defaultValue": 15
+      }
+    ]
+  }
+}
