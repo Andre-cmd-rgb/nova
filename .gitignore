@@ -1,0 +1,12 @@
+# Build output
+/build/
+/out/
+*.pkg.tar.zst
+*.pkg.tar.zst.sig
+/packaging/*/src/
+/packaging/*/pkg/
+target/
+# Editor noise
+*~
+*.swp
+.DS_Store
