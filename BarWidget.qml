@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import Quickshell.Services.UPower
 import qs.Commons
 import qs.Ui
 
@@ -32,8 +33,33 @@ Panel {
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/batterylife")).replace(/^file:\/\//, ""))
   readonly property string pluginId: "andrecmdrgb.batterylife"
 
-  // Injected by omarchy-shell: this plugin's own sampler.
+  // The bar does not inject this, and never did. `shell.qml` hands `service`
+  // to *panel* loaders only; `Bar.qml`'s `injectProps` sets `bar`,
+  // `moduleName` and `settings` and nothing else. So this stayed null for the
+  // widget's whole life, the Connections block below bound to null, and the
+  // "every sample is a free refresh" path never ran once — which left the
+  // slow fallback timer as the only thing that ever refreshed the bar.
+  //
+  // The bar does carry the host shell and the host does expose the lookup, so
+  // ask for the service rather than waiting to be handed it. `service` is kept
+  // so an injected one still wins if the shell ever starts injecting.
+  //
+  // Resolved, not bound: `serviceFor` is a plain function call, so a binding
+  // would keep whatever the answer was the first time it ran and never look
+  // again — and the first answer is null. Measured on this machine: the widget
+  // asks once before the host has built its services and once after. Ask on
+  // every event that could have changed the answer, stop once it is found.
   property var service: null
+  property var resolvedSampler: null
+  readonly property var sampler: service || resolvedSampler
+
+  function resolveSampler() {
+    if (service !== null || resolvedSampler !== null) return
+    if (bar && bar.shell && typeof bar.shell.serviceFor === "function")
+      resolvedSampler = bar.shell.serviceFor(pluginId)
+  }
+
+  onBarChanged: battery.resolveSampler()
 
   // Named `info`, not `data`, and `chargeState`, not `state`: both of those
   // are properties QQuickItem already has. `data` is its *default* property —
@@ -45,12 +71,40 @@ Panel {
   readonly property var now: info.now || ({})
   readonly property var run: info.run || null
   readonly property var typical: info.typical || ({})
-  readonly property bool present: info.present === true
 
-  readonly property string chargeState: String(now.state || "U")
+  // The record is what every measured figure is built from, and it moves at
+  // the sampler's cadence — a minute on battery, five on AC. Charge and state
+  // do not have to wait for it: UPower publishes both already, and publishes
+  // them on change rather than on a clock. So the glyph and the percentage
+  // are live and cost nothing, while everything *measured* still comes from
+  // the CLI and still reads the same number the terminal would print.
+  //
+  // `percentage` is 0..1 here, not 0..100. That is the one trap in it, and it
+  // is why this goes through the same Math.round(x * 100) the stock battery
+  // service uses rather than being read straight out.
+  readonly property var device: UPower.displayDevice
+  readonly property bool deviceReady: device !== null && device.isPresent === true
+
+  readonly property string liveState: {
+    if (!deviceReady) return ""
+    switch (device.state) {
+    case UPowerDeviceState.Charging: return "C"
+    case UPowerDeviceState.Discharging: return "D"
+    case UPowerDeviceState.FullyCharged: return "F"
+    case UPowerDeviceState.PendingCharge:
+    case UPowerDeviceState.PendingDischarge: return "N"
+    default: return ""
+    }
+  }
+
+  readonly property bool present: deviceReady || info.present === true
+
+  readonly property string chargeState: liveState !== "" ? liveState : String(now.state || "U")
   readonly property bool discharging: chargeState === "D"
   readonly property bool charging: chargeState === "C"
-  readonly property real percent: Number(now.percent || 0)
+  readonly property real percent: deviceReady
+    ? Math.round(Number(device.percentage || 0) * 100)
+    : Number(now.percent || 0)
   readonly property real fraction: Math.max(0, Math.min(1, percent / 100))
   // displayWatts, not rateWatts: the CLI keeps the drain estimate and the
   // number to show apart, so a charging battery is never labelled with the
@@ -206,13 +260,22 @@ Panel {
 
   // The current minute is still unsampled. Ask for it before reading, so the
   // popup never opens on numbers a minute stale.
+  //
+  // The direct fork is the fallback for a shell where the service did not
+  // load at all. It is safe to call either way: the CLI keeps a 15 s floor
+  // between rows in the same state, so a redundant sample is a no-op rather
+  // than a duplicate row skewing the averages behind it.
   function sampleThenRefresh() {
-    if (service && typeof service.sample === "function") service.sample()
+    if (sampler && typeof sampler.sample === "function") sampler.sample()
+    else if (!directSampleProc.running) directSampleProc.running = true
     refreshTimer.restart()
     loadProfiles()
   }
 
-  Component.onCompleted: loadProfiles()
+  Component.onCompleted: {
+    resolveSampler()
+    loadProfiles()
+  }
 
   function openHistory() {
     if (!openProc.running) openProc.running = true
@@ -235,6 +298,13 @@ Panel {
   }
 
   Process { id: openProc; command: [battery.helper, "open"] }
+
+  // Only ever reached when the service did not load; see sampleThenRefresh.
+  Process {
+    id: directSampleProc
+    command: [battery.helper, "sample"]
+    onExited: battery.refresh()
+  }
 
   Process {
     id: profilesProc
@@ -272,21 +342,43 @@ Panel {
   }
 
   // Every sample the service takes is a free refresh, so the widget follows
-  // the record instead of polling on a cadence of its own. The slow timer is
-  // only there for the figures that move without a new sample — the estimate
-  // ageing while the machine sits on AC.
+  // the record instead of polling on a cadence of its own.
   Connections {
-    target: battery.service
+    target: battery.sampler
     ignoreUnknownSignals: true
     function onSampled() { battery.refresh() }
   }
 
+  // A read is a 150 ms fork, so it is worth spending on a change and not
+  // worth spending on a clock. These are the three changes that move a number
+  // this widget shows, and between them they cover everything the old timer
+  // was waiting around for.
+  //
+  // Pulling the plug is the one that was most visible: the estimate and the
+  // glyph used to keep the old source's answer for up to two minutes.
+  Connections {
+    target: UPower
+    function onOnBatteryChanged() { battery.sampleThenRefresh() }
+  }
+
+  onChargeStateChanged: battery.sampleThenRefresh()
+  onPercentChanged: battery.refresh()
+
+  // What is left for a timer is only the figures that age without any of the
+  // above moving — the run's own elapsed time, and the estimate drifting as
+  // the average behind it fills out. That is a slow thing, so this is a net
+  // rather than the mechanism.
   Timer {
-    interval: battery.opened ? 15000 : 120000
+    interval: battery.opened ? 10000 : 60000
     running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: battery.refresh()
+    onTriggered: {
+      // Costs nothing once resolved, and covers a shell that loaded this
+      // widget before it loaded the service.
+      battery.resolveSampler()
+      battery.refresh()
+    }
   }
 
   // ---- bar ----------------------------------------------------------------
