@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "andrecmdrgb.mobile-data",
+  "name": "Mobile Data",
+  "version": "1.5.1",
+  "author": "Andre-cmd-rgb",
+  "license": "MIT",
+  "description": "Compact NetworkManager-based mobile broadband indicator: signal glyph in the bar, small stats panel.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Mobile Data",
+    "description": "WWAN signal glyph with a read-only stats panel",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "interval": 10,
+      "backgroundStats": true,
+      "smsNotifications": true
+    },
+    "schema": [
+      {
+        "key": "interval",
+        "type": "integer",
+        "label": "Poll interval (seconds)",
+        "min": 2,
+        "max": 300,
+        "step": 1,
+        "defaultValue": 10
+      },
+      {
+        "key": "backgroundStats",
+        "type": "boolean",
+        "label": "Keep stats warm while the panel is closed",
+        "defaultValue": true
+      },
+      {
+        "key": "smsNotifications",
+        "type": "boolean",
+        "label": "Notify on incoming text messages",
+        "defaultValue": true
+      }
+    ]
+  }
+}
