@@ -1,0 +1,579 @@
+#!/bin/bash
+#
+# Put the current Omarchy wallpaper behind the boot splash and the login screen.
+#
+#   omarchy-splash-wallpaper [--theme <slug>] [--force] [--home <dir>]
+#
+# Omarchy's own omarchy-plymouth-set paints the splash a flat theme colour and
+# centres the theme's unlock.png on it — so the first thing you see is a logo on
+# a colour, not the wallpaper you picked. This puts the wallpaper there, on both
+# the Plymouth splash and the SDDM login screen, and drops the logo.
+#
+# On the login screen the password box would land on top of the wallpaper's own
+# branding, because both are centred. So the box is moved down to sit under it:
+# where the wallpaper's content ends is measured from the rendered image, and
+# the box goes below that.
+#
+# Plymouth lives in the initramfs, so a wallpaper change costs a rebuild of it
+# (about a minute). That is why this checks whether anything actually changed
+# before doing any work: it is wired to a path unit that fires on every
+# wallpaper change, including the ones that changed nothing.
+#
+# It also fixes the login screen's colours. omarchy-plymouth-set writes them
+# with two sequential seds:
+#
+#     sed -e "s/#1a1b26/#$bg_hex/g" -e "s/#ffffff/#$text_hex/g"
+#
+# On a theme whose background is #ffffff the first expression writes that value
+# and the second one rewrites it to the foreground — so the White theme gets a
+# black login screen. The substitution here goes through placeholders instead.
+
+set -uo pipefail
+
+# Overridable so the suite can drive the real transformations against fixture
+# directories instead of /usr/share, the way LIMINE_CONF does for the menu.
+PLY_DIR=${OMARCHY_PLYMOUTH_DIR:-/usr/share/plymouth/themes/omarchy}
+SDDM_DIR=${OMARCHY_SDDM_DIR:-/usr/share/sddm/themes/omarchy}
+STAMP_DIR=${OMARCHY_BOOT_THEME_STATE:-/var/lib/omarchy-boot-theme}
+STAMP=$STAMP_DIR/splash.stamp
+MARK_BEGIN='# >>> omarchy-boot-theme >>>'
+MARK_END='# <<< omarchy-boot-theme <<<'
+QML_MARK='// omarchy-boot-theme: wallpaper'
+# SDDM runs its greeter inside a full Hyprland, which paints its own background
+# for the seconds before the greeter draws. Its default is #111111.
+GREETER_LUA=${OMARCHY_GREETER_LUA:-/usr/share/sddm/hyprland.lua}
+# -e on every grep for these, not just the one that needs it: LUA_MARK starts
+# with -- and grep read it as an option, which made every run think it was not
+# installed yet. The next marker should not be able to do that again.
+LUA_MARK='-- omarchy-boot-theme'
+# The login prompt at upstream's size is a wide bar under a wordmark. Scaling
+# the whole Row keeps the lock, the box, the bullets and the text in proportion
+# with each other, which setting four separate sizes would not.
+PROMPT_SCALE=0.85
+# A 4K photo re-encoded as PNG can run to tens of megabytes, and this one goes
+# into the initramfs. Past this, it gets rendered smaller instead — Plymouth
+# scales it back up, and a soft splash beats a boot image that doubled in size.
+MAX_BYTES=$((4 * 1024 * 1024))
+
+die() {
+  printf '\033[31mx\033[0m %s\n' "$*" >&2
+  exit 1
+}
+ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+note() { printf '  \033[2m·\033[0m %s\n' "$*"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*" >&2; }
+
+theme=
+force=0
+user_home=
+
+while (($#)); do
+  case $1 in
+  --theme)
+    theme=${2:-}
+    shift 2 || die '--theme needs a slug'
+    ;;
+  --home)
+    user_home=${2:-}
+    shift 2 || die '--home needs a directory'
+    ;;
+  --force) force=1; shift ;;
+  -h | --help)
+    sed -n '3,6p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'
+    exit 0
+    ;;
+  *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+# Redirected targets mean a test run against fixtures, which needs no root.
+((EUID == 0)) || [[ -n ${OMARCHY_PLYMOUTH_DIR:-} ]] ||
+  die 'this writes to /usr/share and rebuilds the initramfs — run it with sudo'
+
+for cmd in magick awk sed flock; do
+  command -v "$cmd" >/dev/null 2>&1 || die "$cmd is not installed"
+done
+
+# The wallpaper lives under the user's home, and this runs as root — the same
+# trap the boot hook fell into. $HOME is /root here, so it is never the answer.
+if [[ -z $user_home ]]; then
+  if [[ -n ${OMARCHY_USER_HOME:-} ]]; then
+    user_home=$OMARCHY_USER_HOME
+  elif [[ -n ${SUDO_USER:-} ]]; then
+    user_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+  fi
+fi
+[[ -n $user_home && -d $user_home ]] ||
+  die 'could not work out whose wallpaper to use — pass --home'
+
+# Two runs inside mkinitcpio at once is a corrupt initramfs. The path unit
+# cannot overlap itself — systemd will not start a second oneshot — but a hand
+# run can overlap the unit, so both go through this. Whoever waits finds the
+# stamp already current and does nothing.
+install -d -m 755 "$STAMP_DIR" || die "could not create $STAMP_DIR"
+exec {lockfd}>"$STAMP_DIR/lock" || die "could not open $STAMP_DIR/lock"
+if ! flock -w 900 "$lockfd"; then
+  die 'another run has been holding the lock for 15 minutes — giving up'
+fi
+
+STATE=$user_home/.local/state/omarchy
+[[ -n $theme ]] || theme=$(cat "$STATE/current/theme.name" 2>/dev/null)
+[[ -n $theme ]] || die "could not read the current theme from $STATE"
+
+# readlink -f, because current/background is a symlink into the theme or into
+# the user's own pictures. A non-regular target is refused rather than copied:
+# these land in world-readable /usr/share and in the initramfs.
+wallpaper=$(readlink -f "$STATE/current/background" 2>/dev/null)
+[[ -n $wallpaper ]] || die "no current background set in $STATE"
+[[ -f $wallpaper ]] || die "the current background is not a regular file: $wallpaper"
+
+[[ -d $PLY_DIR ]] || die "$PLY_DIR is missing — is the Omarchy Plymouth theme installed?"
+
+# Editing the omarchy theme changes nothing if Plymouth is set to another one,
+# and the symptom is a splash that looks like this never ran.
+if command -v plymouth-set-default-theme >/dev/null 2>&1; then
+  default_theme=$(plymouth-set-default-theme 2>/dev/null)
+  [[ -z $default_theme || $default_theme == omarchy ]] ||
+    warn "Plymouth's default theme is \"$default_theme\", not omarchy — this will not show"
+fi
+
+# Native mode of the first enabled connector. hyprctl is not available to root
+# without the user's session, and DRM is.
+geometry() {
+  local card mode
+  for card in /sys/class/drm/card*-*; do
+    [[ -r $card/enabled ]] || continue
+    [[ $(cat "$card/enabled" 2>/dev/null) == enabled ]] || continue
+    mode=$(head -1 "$card/modes" 2>/dev/null)
+    [[ $mode =~ ^[0-9]+x[0-9]+$ ]] && { printf '%s' "$mode"; return; }
+  done
+  printf '1920x1080'
+}
+geom=${OMARCHY_SPLASH_GEOMETRY:-$(geometry)}
+[[ $geom =~ ^[0-9]+x[0-9]+$ ]] || die "not a usable screen geometry: $geom"
+
+theme_colors() {
+  local dir
+  dir=$user_home/.config/omarchy/themes/$theme
+  [[ -r $dir/colors.toml ]] || dir=${OMARCHY_PATH:-/usr/share/omarchy}/themes/$theme
+  [[ -r $dir/colors.toml ]] || return 1
+  printf '%s' "$dir/colors.toml"
+}
+colors=$(theme_colors) || die "no colors.toml for \"$theme\""
+
+val() {
+  local v
+  v=$(awk -F= -v k="$1" '
+    { key = $1; gsub(/^[ \t]+|[ \t]+$/, "", key) }
+    key == k { gsub(/[" \t]/, "", $2); print $2; exit }
+  ' "$colors")
+  v=${v#\#}
+  [[ $v =~ ^[0-9a-fA-F]{6}$ ]] || return 1
+  printf '%s' "$v"
+}
+bg=$(val background) || die "no usable 'background' in $colors"
+fg=$(val foreground) || die "no usable 'foreground' in $colors"
+
+# ---------------------------------------------------------------- up to date?
+
+sha=$(sha256sum "$wallpaper" | cut -d' ' -f1)
+
+# The tool goes in the stamp alongside its inputs, because the output depends on
+# both. Without this, changing how the files are generated -- where the password
+# box sits, how big the prompt is, what goes in the greeter config -- leaves
+# every machine that already ran the old version stuck on the old output, with
+# the stamp insisting it is current. That is not a hypothetical: moving the
+# password box did exactly nothing until this was added.
+#
+# It over-triggers, deliberately. A comment-only edit invalidates the stamp too.
+# That costs about a second, because the initramfs rebuild is gated separately
+# on the Plymouth files actually differing -- so redoing the cheap work when
+# nothing needed redoing is the right way to be wrong here.
+recipe=$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)
+want="theme=$theme wallpaper=$sha geometry=$geom recipe=$recipe"
+
+# The stamp alone is not enough. omarchy-plymouth-set rewrites omarchy.script
+# from Omarchy's default whenever anyone sets an unlock style by hand, which
+# silently removes our block while the stamp still reads current — so the
+# installed state gets checked too.
+installed() {
+  [[ -f $PLY_DIR/background.png ]] || return 1
+  grep -qFe "$MARK_BEGIN" "$PLY_DIR/omarchy.script" 2>/dev/null || return 1
+  grep -qFe "$QML_MARK" "$SDDM_DIR/Main.qml" 2>/dev/null || return 1
+  # Not our file and not regenerated on a theme change — a package upgrade of
+  # omarchy-settings restores it. Checking it means the next wallpaper change
+  # puts the greeter background back rather than silently leaving the gap.
+  # Only when there is somewhere to write it. A greeter config this cannot theme
+  # would otherwise report "not installed" forever, and every wallpaper change
+  # would redo all the work for a line that is never going to appear.
+  [[ ! -f $GREETER_LUA ]] ||
+    ! grep -q 'misc[[:space:]]*=[[:space:]]*{' "$GREETER_LUA" ||
+    grep -qFe "$LUA_MARK" "$GREETER_LUA" || return 1
+  [[ -f $STAMP && $(cat "$STAMP") == "$want" ]]
+}
+
+if ((!force)) && installed; then
+  note "splash already on this wallpaper — nothing to rebuild"
+  exit 0
+fi
+
+printf '\033[1mPutting the boot splash on the current wallpaper\033[0m\n'
+note "theme \"$theme\", $(basename -- "$wallpaper"), $geom"
+
+# ------------------------------------------------------------------- render
+
+work=$(mktemp -d) || die 'mktemp failed'
+trap 'rm -rf "$work"' EXIT
+
+render() {
+  # [0] is not optional. A wallpaper can legitimately be an animated GIF, and
+  # ImageMagick writes one numbered file per frame — background-0.png,
+  # background-1.png — so background.png is never created at all.
+  #
+  # -resize WxH^ then -extent centres and crops to fill, so nothing is
+  # stretched out of shape the way a plain Scale would. That is also how the
+  # desktop draws it (PreserveAspectCrop), so the splash frames the wallpaper
+  # the same way the desktop does.
+  #
+  # Alpha is flattened onto the theme background rather than left to
+  # ImageMagick, which picks white — wrong on every dark theme.
+  #
+  # -flatten, not -alpha remove. On ImageMagick 7.1.2 `-background '#1a1b26'
+  # -alpha remove` returns srgb(26,26,26) — it keeps the red channel and greys
+  # the rest — where -flatten with the same background correctly returns
+  # srgb(26,27,38). A transparent wallpaper on Tokyo Night came out grey.
+  magick "$wallpaper[0]" -auto-orient -strip \
+    -background "#$bg" -flatten -alpha off \
+    -resize "$1^" -gravity center -extent "$1" \
+    -define png:compression-level=9 "PNG24:$work/background.png" 2>/dev/null
+}
+
+target=$geom
+for attempt in 1 2 3 4; do
+  render "$target" || die "could not render $wallpaper at $target"
+  size=$(stat -c%s "$work/background.png")
+  ((size <= MAX_BYTES)) && break
+  ((attempt < 4)) || break
+  w=${target%x*} h=${target#*x}
+  target=$((w * 7 / 10))x$((h * 7 / 10))
+  note "$((size / 1024 / 1024))MB is too big for the initramfs, retrying at $target"
+done
+[[ $target == "$geom" ]] || note "rendered at $target to keep the initramfs small"
+((size <= MAX_BYTES)) ||
+  note "still $((size / 1024 / 1024))MB after scaling down — the initramfs will grow by that much"
+
+# ------------------------------------------------------------------ plymouth
+
+# Appended, not edited in: omarchy-plymouth-set rewrites this file from
+# Omarchy's default on every theme change, so the block has to be re-addable
+# rather than a patch to a line that may have moved.
+ply_block=$(
+  printf '%s\n' "$MARK_BEGIN"
+  printf '# Written by omarchy-splash-wallpaper. Re-appended after anything that\n'
+  printf '# regenerates this file from Omarchy'"'"'s default; edits here are lost.\n'
+  printf 'background.image = Image("background.png");\n'
+  # Already rendered at the screen size, so the usual unconditional Scale would
+  # allocate a second full-resolution copy for nothing — 36MB of it at 4K, in
+  # early boot. Scale only when the screen is not the size it was rendered for,
+  # which is what a monitor change since the last run looks like.
+  printf 'if (background.image.GetWidth() != Window.GetWidth() ||\n'
+  printf '    background.image.GetHeight() != Window.GetHeight())\n'
+  printf '  background.image = background.image.Scale(Window.GetWidth(), Window.GetHeight());\n'
+  printf 'background.sprite = Sprite(background.image);\n'
+  # Behind everything. The dialogue is at z 10001, the progress bar at 1 and its
+  # box at 0, so anything below 0 is out of their way. If a Plymouth ever
+  # ignored a negative z the sprite would tie with the progress box and hide its
+  # outline — the splash, the wallpaper and the password field would all still
+  # be there, which is why this is the direction to be wrong in.
+  printf 'background.sprite.SetPosition(0, 0, -100);\n'
+  printf '# The wallpaper carries its own branding, so the theme logo on top of it is\n'
+  printf '# two logos. The sprite has to stay — entry.y is measured from it — so it is\n'
+  printf '# hidden rather than removed.\n'
+  printf 'logo.sprite.SetOpacity(0);\n'
+  printf '%s\n' "$MARK_END"
+)
+
+[[ -r $PLY_DIR/omarchy.script ]] || die "$PLY_DIR/omarchy.script is missing"
+# Loudly, not silently: without these two the block is a no-op and the splash
+# would come out looking untouched with nothing to explain why.
+grep -q 'logo.sprite' "$PLY_DIR/omarchy.script" ||
+  die "$PLY_DIR/omarchy.script has no logo.sprite — Omarchy's theme has changed shape"
+
+awk -v b="$MARK_BEGIN" -v e="$MARK_END" '
+  $0 == b { skip = 1; next }
+  $0 == e { skip = 0; next }
+  !skip   { print }
+' "$PLY_DIR/omarchy.script" >"$work/omarchy.script" || die 'could not rewrite omarchy.script'
+printf '%s\n' "$ply_block" >>"$work/omarchy.script"
+
+# The initramfs is the only reason this is slow, and it only carries what is
+# under $PLY_DIR. A run that changes just the login screen or the greeter — a
+# package upgrade putting one of those files back is the common case — has
+# nothing to rebuild for.
+#
+# The stamp is written only after a rebuild finishes, so its absence means the
+# last run did not get that far and the initramfs cannot be trusted to hold
+# these files, whatever they look like on disk now.
+#
+# --force is exempt. Someone reaching for it is reaching past every other check
+# in here, and the reason to do that is usually an initramfs they no longer
+# trust — so it stays the one way to make the rebuild happen unconditionally.
+ply_changed=1
+if ((!force)) && [[ -f $STAMP ]] &&
+  cmp -s "$work/background.png" "$PLY_DIR/background.png" &&
+  cmp -s "$work/omarchy.script" "$PLY_DIR/omarchy.script"; then
+  ply_changed=0
+fi
+
+install -m 644 "$work/background.png" "$PLY_DIR/background.png" ||
+  die "could not install the background into $PLY_DIR"
+install -m 644 "$work/omarchy.script" "$PLY_DIR/omarchy.script" ||
+  die "could not install omarchy.script"
+ok "splash background installed ($((size / 1024))KB)"
+
+# ------------------------------------------------------------- where the box goes
+#
+# A wallpaper puts its branding in the middle of the screen. So does the
+# password box. That is how the two ended up on top of each other, and it is not
+# something a fixed offset fixes for every wallpaper — so measure it.
+#
+# -trim returns the bounding box of everything that is not the colour in the
+# image's own corner, which on a wordmark-on-a-field wallpaper is the wordmark.
+# The box then goes an eighth of the screen below where that ends.
+#
+# A photograph has no such margin and trims to the whole frame. That is the
+# signal that there is nothing to sit under, and the box stays where upstream
+# put it, in the middle.
+prompt_offset() {
+  local img=$1 h=$2 box cw ch cx cy
+  ((h > 0)) || return 0
+  box=$(magick "$img" -fuzz 2% -trim -format '%w %h %X %Y' info: 2>/dev/null) || return 0
+  read -r cw ch cx cy <<<"${box//+/ }"
+  [[ $ch =~ ^[0-9]+$ && $cy =~ ^[0-9]+$ ]] || return 0
+  ((ch * 100 / h > 85)) && return 0
+  # The gap under the branding is a quarter of the branding's own height, not a
+  # slice of the screen. A wordmark and a small mark want the box a different
+  # distance away, and the thing they have in common is their own size -- a
+  # screen-relative gap put the box in the lower third on a 2400px panel.
+  # The screen-relative floor is only there for content so short the gap would
+  # otherwise vanish.
+  #
+  # Clamped: never above the middle, and never so low the box leaves the screen
+  # on a wallpaper whose content runs to the bottom edge.
+  awk -v bottom="$((cy + ch))" -v ch="$ch" -v h="$h" 'BEGIN {
+    gap = ch * 0.25
+    if (gap < h * 0.03) gap = h * 0.03
+    f = (bottom + gap) / h
+    if (f < 0.52) f = 0.52
+    if (f > 0.85) f = 0.85
+    printf "%.4f", f - 0.5
+  }'
+}
+
+offset=$(prompt_offset "$work/background.png" "${geom#*x}")
+[[ $offset =~ ^0\.[0-9]+$ ]] || offset=0
+
+# ---------------------------------------------------------------------- sddm
+
+sddm_template=${OMARCHY_PATH:-/usr/share/omarchy}/default/sddm/omarchy/Main.qml
+if [[ -d $SDDM_DIR && -r $sddm_template ]]; then
+  # Two phases through placeholders. Substituting straight to the final values
+  # lets the second expression rewrite what the first one just wrote, which is
+  # how a white theme ends up with a black login screen.
+  sed -e 's/#1a1b26/@@OBT_BG@@/g' -e 's/#ffffff/@@OBT_FG@@/g' \
+    -e "s/@@OBT_BG@@/#$bg/g" -e "s/@@OBT_FG@@/#$fg/g" \
+    "$sddm_template" >"$work/Main.qml.colored" || die 'could not colour Main.qml'
+
+  # Put the wallpaper behind everything, move the password box below the
+  # wallpaper's own content, and drop the logo. Brace counting rather than line
+  # ranges, because the template is upstream's and will move.
+  awk -v mark="$QML_MARK" -v offset="$offset" -v scale="$PROMPT_SCALE" '
+    function emit_background() {
+      print "  " mark
+      print "  Image {"
+      print "    anchors.fill: parent"
+      print "    source: \"background.png\""
+      print "    fillMode: Image.PreserveAspectCrop"
+      print "    asynchronous: false"
+      print "    cache: false"
+      print "  }"
+    }
+    # The root Rectangle keeps its colour, so a background.png that fails to
+    # load leaves the themed colour showing rather than a black screen.
+    !placed && /^[[:space:]]*color:[[:space:]]*"#/ { print; emit_background(); placed = 1; next }
+    # The Column holds the whole login prompt and is centred on the screen.
+    # centerIn sets both axes at once, so it is replaced rather than added to:
+    # QML refuses centerIn alongside an explicit verticalCenter.
+    /^[[:space:]]*Column[[:space:]]*\{/ {
+      incol = 1
+      match($0, /^[[:space:]]*/)
+      colpad = substr($0, 1, RLENGTH)
+      print
+      next
+    }
+    incol && /^[[:space:]]*anchors\.centerIn:[[:space:]]*parent[[:space:]]*$/ {
+      incol = 0
+      awaiting_row = 1
+      if (offset + 0 == 0) { print; next }
+      match($0, /^[[:space:]]*/)
+      pad = substr($0, 1, RLENGTH)
+      print pad "anchors.horizontalCenter: parent.horizontalCenter"
+      print pad "anchors.verticalCenter: parent.verticalCenter"
+      print pad "anchors.verticalCenterOffset: Math.round(parent.height * " offset ")"
+      moved = 1
+      next
+    }
+    # An "Image {" whose next line declares id: logo, and everything to its
+    # matching brace.
+    /^[[:space:]]*Image[[:space:]]*\{[[:space:]]*$/ && !skip {
+      held = $0
+      if ((getline nxt) > 0) {
+        if (nxt ~ /id:[[:space:]]*logo/) { skip = 1; depth = 1; dropped = 1; next }
+        print held; print nxt; next
+      }
+      print held; next
+    }
+    skip {
+      depth += gsub(/\{/, "{") - gsub(/\}/, "}")
+      if (depth <= 0) skip = 0
+      next
+    }
+    # The Row holding the whole login prompt is the first one after the Column,
+    # once the logo block between them has been dropped. scale is a transform on
+    # the item and everything under it, so the lock, the box, the bullets and
+    # the text all shrink together and stay aligned.
+    awaiting_row && $0 ~ "^" colpad "  Row[[:space:]]*\\{[[:space:]]*$" {
+      awaiting_row = 0
+      print
+      print colpad "    scale: " scale
+      scaled = 1
+      next
+    }
+    { print }
+    END {
+      if (!placed) { print "OBT_ERROR: no root colour line to anchor to" > "/dev/stderr"; exit 1 }
+      if (!dropped) { print "OBT_ERROR: no logo Image block found" > "/dev/stderr"; exit 1 }
+      if (offset + 0 != 0 && !moved) { print "OBT_ERROR: no centred Column to move" > "/dev/stderr"; exit 1 }
+      if (!scaled) { print "OBT_ERROR: no login prompt Row to scale" > "/dev/stderr"; exit 1 }
+    }
+  ' "$work/Main.qml.colored" >"$work/Main.qml" ||
+    die "Omarchy's SDDM template has changed shape — not installing a broken login screen"
+
+  # The shape guards above prove the transform found what it expected. This
+  # proves the result of it still parses. A Main.qml that does not is a login
+  # screen with no password field, and the machine is then only reachable from a
+  # VT — so it is worth the second or so this costs, and refusing leaves
+  # whatever is installed now in place.
+  qmllint=/usr/lib/qt6/bin/qmllint
+  if [[ -x $qmllint ]]; then
+    errors=$("$qmllint" "$work/Main.qml" 2>&1 | grep -c '^Error:')
+    ((errors == 0)) ||
+      die "the generated Main.qml has $errors QML error(s) — not installing it"
+  fi
+
+  install -m 644 "$work/background.png" "$SDDM_DIR/background.png" ||
+    die "could not install the background into $SDDM_DIR"
+  install -m 644 "$work/Main.qml" "$SDDM_DIR/Main.qml" ||
+    die "could not install Main.qml"
+  if [[ $offset == 0 ]]; then
+    ok "login screen on the same wallpaper (background #$bg, text #$fg)"
+  else
+    ok "login screen on the same wallpaper, password box below the branding"
+  fi
+else
+  note "no SDDM theme at $SDDM_DIR — skipping the login screen"
+fi
+
+# Three answers, not two. Hyprland can check a config without running one, which
+# is worth using -- but it dies on "XDG_RUNTIME_DIR is not set!" before it reads
+# anything, and sudo does not pass that through, so under sudo it never gets as
+# far as an opinion. Treating that silence as "the config is bad" is what made
+# this refuse to theme the greeter at all on the machine it was written for.
+#
+# So: only an actual parse failure vetoes. Hyprland not being installed, or
+# refusing to start, or anything else that stops it reaching the parser, leaves
+# the structural checks to decide. The same doubt goes the other way for
+# Main.qml, where refusing costs a login screen rather than a dark gap.
+greeter_verdict() {
+  local out
+  command -v Hyprland >/dev/null 2>&1 || { printf 'unknown'; return; }
+  # $work is ours and writable; Hyprland only wants somewhere to exist.
+  # --i-am-really-stupid skips the "do not run as root" check, which this is not
+  # doing -- --verify-config parses the file and exits.
+  out=$(XDG_RUNTIME_DIR=$work Hyprland --verify-config --i-am-really-stupid \
+    --config "$1" 2>&1)
+  if [[ $out == *"config ok"* ]]; then
+    printf 'ok'
+  elif [[ $out == *"Config parsing result:"* ]]; then
+    # It reached the parser and did not say ok. That is a real verdict.
+    printf 'bad'
+  else
+    printf 'unknown'
+  fi
+}
+
+# ------------------------------------------------------------------- greeter
+#
+# The black gap between the splash and the login screen is not Plymouth letting
+# go too early. SDDM runs its greeter inside a whole Hyprland
+# (CompositorCommand in /etc/sddm.conf.d/10-wayland.conf), and that compositor
+# does its own modeset and paints its own background for the two-odd seconds
+# before the QML greeter draws. Nothing Plymouth leaves in the framebuffer
+# survives that. Hyprland's default background is #111111, which is the black.
+#
+# So the compositor gets the theme background too, and the gap stops being a
+# gap: white splash, white compositor, white login screen.
+if [[ -f $GREETER_LUA ]]; then
+  if grep -q 'misc[[:space:]]*=[[:space:]]*{' "$GREETER_LUA"; then
+    # The old line is dropped rather than edited, so this stays idempotent
+    # across theme changes and cannot accumulate.
+    awk -v mark="$LUA_MARK" -v col="$bg" '
+      index($0, mark) { next }
+      !done && /misc[[:space:]]*=[[:space:]]*\{/ {
+        print
+        printf "    background_color = \"rgb(%s)\", %s\n", col, mark
+        done = 1
+        next
+      }
+      { print }
+    ' "$GREETER_LUA" >"$work/hyprland.lua" || : # checked below, not by set -e
+
+    # Everything here warns rather than dies. The greeter config not being
+    # themed costs a dark gap in an otherwise light boot; the greeter config
+    # being broken costs the login screen entirely, and this file is upstream's
+    # to begin with. So it is checked three ways and skipped on any doubt.
+    if ! grep -q 'hl.config' "$work/hyprland.lua" 2>/dev/null; then
+      warn 'the rewritten greeter config came out wrong — leaving it alone'
+    elif ! grep -qFe "$LUA_MARK" "$work/hyprland.lua"; then
+      warn 'the greeter background line did not get written — leaving it alone'
+    elif [[ $(greeter_verdict "$work/hyprland.lua") == bad ]]; then
+      warn 'Hyprland will not parse the rewritten greeter config — leaving it alone'
+    elif install -m 644 "$work/hyprland.lua" "$GREETER_LUA"; then
+      ok "greeter compositor background #$bg (this is the black gap)"
+    else
+      warn 'could not write the greeter config'
+    fi
+  else
+    # Upstream's file, not ours: a warning, not a refusal. Getting this wrong
+    # costs the gap staying dark, not a login screen you cannot type into.
+    warn "$GREETER_LUA has no misc block — leaving the greeter background alone"
+  fi
+fi
+
+# ----------------------------------------------------------------- initramfs
+
+if ((ply_changed)); then
+  note 'rebuilding the initramfs so the splash picks this up, about a minute...'
+  if [[ -n ${OMARCHY_MKINITCPIO:-} ]]; then
+    $OMARCHY_MKINITCPIO || die "$OMARCHY_MKINITCPIO failed"
+  elif command -v limine-mkinitcpio >/dev/null 2>&1; then
+    limine-mkinitcpio || die 'limine-mkinitcpio failed'
+  else
+    mkinitcpio -P || die 'mkinitcpio failed'
+  fi
+else
+  note 'the splash itself is unchanged — no initramfs rebuild needed'
+fi
+
+printf '%s\n' "$want" >"$STAMP"
+ok 'done — visible at the next restart'

@@ -1,0 +1,10 @@
+#!/bin/bash
+# Installed as an omarchy theme-set hook: keeps the boot menu and splash on
+# whatever theme was just applied. $1 is the theme slug.
+#
+# Both halves need root and a hook has no terminal to ask in, so this opens the
+# same floating terminal Omarchy's own menu entries use. Rebuilding the
+# initramfs takes about a minute; swap the command for `omarchy-boot-theme
+# --limine "$1"` if you would rather the splash stayed put while you browse.
+exec omarchy-launch-floating-terminal-with-presentation \
+  "omarchy-boot-theme $(printf '%q' "${1:-}")"
