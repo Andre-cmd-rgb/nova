@@ -1,0 +1,80 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# Rebuilt from the AUR package of the same name (maintainer: Zesko), pinned and
+# checksummed. Upstream: https://gitlab.com/Zesko/limine-entry-tool, licensed GPL-3.0
+# (the LICENSE file in the repository is the GPLv3 text; the AUR package calls it
+# "GPL3", which Arch's license migration maps to GPL-3.0-only).
+#
+# Changes from the AUR package:
+#   - the source is pinned to the commit behind tag 1.40.0, not to the tag
+#     (tags can be moved; a commit cannot)
+#   - the GPL text is installed under /usr/share/licenses
+#   - the SPDX license identifier instead of the legacy "GPL3"
+#   - the self-referential provides/conflicts=limine-entry-tool are dropped (no-ops)
+# Build note: gradle resolves its dependencies from Maven Central, and the GraalVM
+# toolchain is downloaded (and checksummed) below, so this build needs network access.
+
+pkgname=limine-entry-tool
+pkgver=1.40.0
+pkgrel=1
+pkgdesc="Entry management for the Limine bootloader."
+arch=('x86_64')
+url="https://gitlab.com/Zesko/limine-entry-tool"
+_commit=35dab4b732861f5e8d307a1a7873856a877913aa  # tag 1.40.0
+source=("${pkgname}::git+${url}.git#commit=${_commit}"
+        "https://github.com/graalvm/graalvm-ce-builds/releases/download/graal-25.2.4/graalvm-community-jdk-25i2-25.0.4_linux-x64_bin.tar.gz")
+license=("GPL-3.0-only")
+options=(!debug !strip)
+_graalvm_version=graalvm_ce_jdk25
+depends=(
+	'bash'
+	'grep'
+	'tar'
+	'limine'
+	'efibootmgr')
+makedepends=('git' 'gradle')
+backup=(etc/limine-entry-tool.conf)
+sha256sums=('SKIP'
+            '3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e')
+
+prepare() {
+	[[ -d "${_graalvm_version}" ]] && rm -rf "${_graalvm_version}"
+	mv graalvm-community-*/ "${_graalvm_version}"
+	if ! command -v "${_graalvm_version}"/bin/javac >/dev/null 2>&1; then
+		echo "Error: ${_graalvm_version}/bin/javac not found." >&2
+		return 1
+	fi
+}
+
+build() {
+	cd "$srcdir/${pkgname}"
+	export GRAALVM_HOME="$srcdir/${_graalvm_version}"
+	export JAVA_HOME="${GRAALVM_HOME}"
+	export NATIVE_IMAGE_OPTIONS="-march=compatibility --future-defaults=all"
+	/usr/bin/gradle clean nativeCompile -Dorg.gradle.java.home="${JAVA_HOME}"
+}
+
+package() {
+	cd "$srcdir/${pkgname}"
+	local src="install/arch-linux"
+
+	# directories
+	install -dm 755 \
+		"$pkgdir/usr/share/doc/limine-entry-tool" \
+		"$pkgdir/etc/boot/hooks/pre.d" \
+		"$pkgdir/etc/boot/hooks/post.d" \
+		"$pkgdir/usr/lib/limine"
+
+	# docs
+	install -Dm 644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/limine-entry-tool/"
+
+	# files
+	cp -a "$src/limine-entry-tool/etc" "$src/limine-entry-tool/usr" "$pkgdir/"
+	install -Dm 755 "build/native/nativeCompile/limine-entry-tool" "$pkgdir/usr/lib/limine/"
+
+	# limine hook symlinks
+	ln -sf /usr/bin/limine-reset-enroll "$pkgdir/etc/boot/hooks/pre.d/10-limine-reset-enroll"
+	ln -sf /usr/bin/limine-enroll-config "$pkgdir/etc/boot/hooks/post.d/90-limine-enroll-config"
+
+	install -Dm 644 LICENSE -t "$pkgdir/usr/share/licenses/${pkgname}/"
+}
