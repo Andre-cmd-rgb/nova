@@ -2,5 +2,13 @@
 
 # nova:summary=Check if a Hyprland toggle is currently enabled.
 # nova:args=<flag-name>
+# nova:hidden=true
+
+set -euo pipefail
+
+if (($# != 1)); then
+  echo "Usage: nova-hyprland-toggle-enabled <flag-name>" >&2
+  exit 2
+fi
 
 [[ -f "$HOME/.local/state/nova/toggles/hypr/$1.lua" ]]

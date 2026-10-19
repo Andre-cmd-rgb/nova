@@ -3,6 +3,8 @@
 # nova:summary=Apply clamshell display state to Hyprland monitors
 # nova:hidden=true
 
+set -euo pipefail
+
 TOGGLES_DIR="$HOME/.local/state/nova/toggles/hypr"
 CLAMSHELL_FLAG="$TOGGLES_DIR/internal-monitor-clamshell.lua"
 MANUAL_DISABLE_FLAG="$TOGGLES_DIR/internal-monitor-disable.lua"
@@ -46,7 +48,7 @@ lua_local_value() {
   local name="$1" value
   lua_identifier "$name" && [[ -f $MONITOR_LUA ]] || return 0
 
-  value=$(sed -nE 's/^[[:space:]]*local[[:space:]]+'"$name"'[[:space:]]*=[[:space:]]*("[^"]*"|[^"[:space:]]+)[[:space:]]*(--.*)?$/\1/p' "$MONITOR_LUA" | head -1)
+  value=$(sed -nE 's/^[[:space:]]*local[[:space:]]+'"$name"'[[:space:]]*=[[:space:]]*("[^"]*"|[^"[:space:]]+)[[:space:]]*(--.*)?$/\1/;T;p;q' "$MONITOR_LUA")
   [[ $value == \"*\" ]] && value="${value:1:-1}"
   printf '%s\n' "$value"
 }
@@ -84,7 +86,7 @@ monitor_rule_regex() {
 configured_monitor_value() {
   local output="$1" key="$2" value
 
-  value=$(monitor_rules | sed -nE '/'"$(monitor_rule_regex "$output")"'/s/.*[{,;[:space:]]'"$key"'[[:space:]]*=[[:space:]]*("[^"]*"|[^,;}[:space:]]+)[[:space:]]*([,;}].*)?$/\1/p' | head -1)
+  value=$(monitor_rules | sed -nE '/'"$(monitor_rule_regex "$output")"'/{s/.*[{,;[:space:]]'"$key"'[[:space:]]*=[[:space:]]*("[^"]*"|[^,;}[:space:]]+)[[:space:]]*([,;}].*)?$/\1/;T;p;q}')
   lua_scalar "$value"
 }
 
@@ -109,7 +111,9 @@ configured_monitor_scale() {
 
 current_internal_scale() {
   [[ -n $INTERNAL ]] || return 0
-  hyprctl monitors all -j | jq -r --arg internal "$INTERNAL" '.[] | select(.name == $internal and .disabled != true) | .scale' | head -1
+  # An unreachable compositor means an unknown scale, which callers handle.
+  { hyprctl monitors all -j 2>/dev/null || true; } |
+    jq -r --arg internal "$INTERNAL" 'first(.[] | select(.name == $internal and .disabled != true) | .scale) // empty'
 }
 
 store_internal_scale() {
@@ -236,7 +240,7 @@ disable_internal() {
   local config
   config=$(printf 'hl.monitor({ output = "%s", disabled = true })' "$INTERNAL")
 
-  if [[ ! -f $CLAMSHELL_FLAG ]] || [[ $(< "$CLAMSHELL_FLAG") != $config ]]; then
+  if [[ ! -f $CLAMSHELL_FLAG ]] || [[ $(<"$CLAMSHELL_FLAG") != "$config" ]]; then
     printf '%s\n' "$config" >"$CLAMSHELL_FLAG"
     hyprctl reload >/dev/null 2>&1 || true
   fi

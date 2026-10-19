@@ -2,6 +2,16 @@
 
 # nova:summary=Match against the computer's DMI product name or product family (case-insensitive).
 # nova:args=<pattern>
+# nova:hidden=true
 
-grep -qi -- "$1" /sys/class/dmi/id/product_name 2>/dev/null ||
-grep -qi -- "$1" /sys/class/dmi/id/product_family 2>/dev/null
+set -euo pipefail
+
+if (($# != 1)); then
+  echo "Usage: nova-hw-match <pattern>" >&2
+  exit 2
+fi
+
+dmi_path="${NOVA_DMI_PATH:-/sys/class/dmi/id}"
+
+grep -qi -- "$1" "$dmi_path/product_name" 2>/dev/null ||
+  grep -qi -- "$1" "$dmi_path/product_family" 2>/dev/null

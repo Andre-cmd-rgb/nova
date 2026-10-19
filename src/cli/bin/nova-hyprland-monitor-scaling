@@ -3,6 +3,8 @@
 # nova:summary=Show, set, or adjust focused Hyprland monitor scaling
 # nova:args=[up|down|SCALE]
 
+set -euo pipefail
+
 SCALES=(1 1.25 1.6 2 3 4)
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova"
 SCALE_LOG="$STATE_DIR/monitor-scaling.log"
@@ -34,7 +36,8 @@ audit_scale_change() {
 
   mkdir -p "$STATE_DIR" || return 0
 
-  grandparent_pid=$(ps -o ppid= -p "$parent_pid" 2>/dev/null | tr -d ' ')
+  # Diagnostics only: a parent that has already gone away just leaves blanks.
+  grandparent_pid=$(ps -o ppid= -p "$parent_pid" 2>/dev/null | tr -d ' ' || true)
   parent_cmd=$(cmdline_for_pid "$parent_pid")
   grandparent_cmd=$(cmdline_for_pid "$grandparent_pid")
 
@@ -73,12 +76,11 @@ normalize_scale() {
 set_scale() {
   local requested_scale="$1"
   local requested="${2:-$requested_scale}"
-  local monitor_info="$(hyprctl monitors -j | jq -e -c '.[] | select(.focused == true)')"
-  local active_monitor="$(echo "$monitor_info" | jq -r '.name')"
-  local current_scale="$(echo "$monitor_info" | jq -r '.scale')"
-  local width="$(echo "$monitor_info" | jq -r '.width')"
-  local height="$(echo "$monitor_info" | jq -r '.height')"
-  local refresh_rate="$(echo "$monitor_info" | jq -r '.refreshRate')"
+  local active_monitor current_scale width height refresh_rate
+
+  read -r active_monitor current_scale width height refresh_rate < <(
+    hyprctl monitors -j | jq -er '.[] | select(.focused == true) | [.name, .scale, .width, .height, .refreshRate] | @tsv'
+  )
 
   # active_monitor is written into the Lua string eval'd below, so only a plain
   # connector name may pass; a hostile output name could execute otherwise.
@@ -87,14 +89,15 @@ set_scale() {
     exit 1
   fi
 
-  local new_scale="$(clean_scale "$requested_scale" "$width" "$height")"
+  local new_scale new_gdk_scale
+  new_scale=$(clean_scale "$requested_scale" "$width" "$height")
   # GTK only honors integer GDK_SCALE values, so persist the nearest whole
   # factor even when the monitor scale itself is fractional.
-  local new_gdk_scale="$(awk -v scale="$new_scale" 'BEGIN { printf "%d", int(scale + 0.5) }')"
+  new_gdk_scale=$(awk -v scale="$new_scale" 'BEGIN { printf "%d", int(scale + 0.5) }')
   local monitor_lua="$HOME/.config/hypr/monitors.lua"
 
   hyprctl eval "hl.monitor({ output = \"$active_monitor\", mode = \"${width}x${height}@${refresh_rate}\", position = \"auto\", scale = $new_scale })" >/dev/null
-  audit_scale_change "$requested" "$active_monitor" "$current_scale" "$new_scale"
+  audit_scale_change "$requested" "$active_monitor" "$current_scale" "$new_scale" || true
 
   # Persist to monitors.lua if the user still has Nova's generic catch-all
   # defaults, so the scale survives reboots.
@@ -170,33 +173,40 @@ scale_from_current() {
     }'
 }
 
+# Move one preset up or down from the focused monitor's current scale.
+step_scale() {
+  local direction="$1" label="$2" scale width height next
+
+  read -r scale width height < <(
+    hyprctl monitors -j | jq -er '.[] | select(.focused == true) | [.scale, .width, .height] | @tsv'
+  )
+  next=$(scale_from_current "$direction" "$width" "$height" <<<"$scale")
+  set_scale "$next" "$label"
+}
+
 case "${1:-}" in
-"")
-  focused_monitor_scale | normalize_scale
-  ;;
--h | --help)
-  usage
-  ;;
-up)
-  monitor_info=$(hyprctl monitors -j | jq -e -c '.[] | select(.focused == true)')
-  set_scale "$(echo "$monitor_info" | jq -r '.scale' | scale_from_current next \
-    "$(echo "$monitor_info" | jq -r '.width')" "$(echo "$monitor_info" | jq -r '.height')")" "up"
-  ;;
-down)
-  monitor_info=$(hyprctl monitors -j | jq -e -c '.[] | select(.focused == true)')
-  set_scale "$(echo "$monitor_info" | jq -r '.scale' | scale_from_current previous \
-    "$(echo "$monitor_info" | jq -r '.width')" "$(echo "$monitor_info" | jq -r '.height')")" "down"
-  ;;
-1 | 1.25 | 1.6 | 2 | 3 | 4)
-  set_scale "$1" "$1"
-  ;;
-*)
-  if [[ $1 =~ ^[0-9]+([.][0-9]+)?$ ]] &&
-    awk -v scale="$1" 'BEGIN { exit !(scale >= 1 && scale <= 4) }'; then
+  "")
+    focused_monitor_scale | normalize_scale
+    ;;
+  -h | --help)
+    usage
+    ;;
+  up)
+    step_scale next up
+    ;;
+  down)
+    step_scale previous down
+    ;;
+  1 | 1.25 | 1.6 | 2 | 3 | 4)
     set_scale "$1" "$1"
-  else
-    usage >&2
-    exit 1
-  fi
-  ;;
+    ;;
+  *)
+    if [[ $1 =~ ^[0-9]+([.][0-9]+)?$ ]] &&
+      awk -v scale="$1" 'BEGIN { exit !(scale >= 1 && scale <= 4) }'; then
+      set_scale "$1" "$1"
+    else
+      usage >&2
+      exit 1
+    fi
+    ;;
 esac

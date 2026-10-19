@@ -5,15 +5,12 @@
 
 set -euo pipefail
 
-# Whenever this runs as root — invoked directly through the passwordless
-# sudoers rule, or re-execed by require_root below — sudo's secure_path decides
-# where a bare helper resolves, and a dev link (etc/sudoers.d/nova-dev-path)
-# prepends a user-writable checkout bin/ to it. Every helper this script calls
+# Once this runs as root (re-execed by require_root below), every helper it calls
 # by bare name (dirname, install, tee, rm, nmcli, systemctl, awk) is a system
-# tool, never an nova-* command, so pin PATH to trusted system directories
-# and keep root from resolving one out of that checkout. The unprivileged
-# wrapper phase keeps the caller's PATH so it can still find sudo/pkexec.
-if (( EUID == 0 )); then
+# tool, never a nova-* command, so pin PATH to trusted system directories and
+# keep root from resolving anything out of a user-writable directory. The
+# unprivileged wrapper phase keeps the caller's PATH so it can still find pkexec.
+if ((EUID == 0)); then
   export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
 fi
 
@@ -39,33 +36,17 @@ provider_from_arg() {
   esac
 }
 
-# The path etc/sudoers.d/nova-dns names. The privileged half always runs from
-# there rather than from whichever copy was invoked, so the rule matches even
-# where $NOVA_PATH points at a checkout.
-PACKAGED_PATH=/usr/bin/nova-dns
+# The privileged half always runs from the packaged copy rather than from
+# whichever copy was invoked, so root never executes a file a user can write.
+PACKAGED_PATH=/usr/lib/nova/bin/nova-dns
 
-# True when sudo would run this exact command without stopping for a password.
-# `sudo -l` on its own reports whether a command is permitted, which the blanket
-# %wheel rule answers yes to for everything; the long listing prints the matched
-# entry's tags, so !authenticate is the grant in etc/sudoers.d/nova-dns and
-# nothing else. Listing runs nothing and, under -n, prompts for nothing, so a
-# machine whose nova-settings predates that file falls through to polkit
-# instead of dying on a password prompt it has no terminal to show.
-sudo_grants_passwordless() {
-  sudo -n -l -l "$PACKAGED_PATH" "$@" 2>/dev/null | grep -q '!authenticate'
-}
-
+# Re-run this command as root through polkit, which puts an authentication
+# prompt on screen whether or not there is a terminal.
 require_root() {
-  if (( EUID == 0 )); then
-    return
-  elif [[ -t 0 ]] || sudo_grants_passwordless "$@"; then
-    # A terminal can carry sudo's own password prompt. Without one, sudo is
-    # right only where the grant reaches; polkit can at least put a prompt on
-    # screen, and offer to authenticate as someone else.
-    exec sudo "$PACKAGED_PATH" "$@"
-  else
-    exec pkexec "$PACKAGED_PATH" "$@"
+  if ((EUID == 0)); then
+    return 0
   fi
+  exec pkexec "$PACKAGED_PATH" "$@"
 }
 
 networkmanager_global_dns() {
@@ -148,9 +129,9 @@ write_networkmanager_dns() {
   local servers="$1"
 
   install -d -m 0755 "$(dirname "$NM_DNS_CONF")"
-  # nova:heredoc-expands paths=none -- $servers is a normalized, single-line
-  # DNS server list written as data, not a path or command; nothing user-writable
-  # is resolved or executed from the root-owned drop-in.
+  # $servers is a normalized, single-line DNS server list written as data, not a
+  # path or command; nothing user-writable is resolved or executed from the
+  # root-owned drop-in.
   cat >"$NM_DNS_CONF" <<EOF
 # Managed by nova-dns. Remove this file or run nova dns DHCP to use DHCP DNS again.
 [global-dns]
@@ -304,9 +285,9 @@ Custom)
   split_dns_servers "$dns_servers"
   write_networkmanager_dns "$dns_servers"
   set_connection_dns "$ipv4_dns" "$ipv6_dns"
-  # nova:heredoc-expands paths=none -- $dns_servers is a normalized,
-  # single-line DNS server list; the //,/ turns its comma separators into the
-  # spaces resolved.conf wants. It is written as data, not a path or command.
+  # $dns_servers is a normalized, single-line DNS server list; the //,/ turns its
+  # comma separators into the spaces resolved.conf wants. It is written as data,
+  # not a path or command.
   tee /etc/systemd/resolved.conf >/dev/null <<EOF
 [Resolve]
 DNS=${dns_servers//,/ }

@@ -1,6 +1,15 @@
 #!/bin/bash
 
 # nova:summary=Print the detected Hyprland touchpad or trackpad device name
+# nova:hidden=true
+
+set -euo pipefail
 
 device=$(hyprctl devices -j | jq -r '[.mice[] | .name | select(test("touchpad|trackpad"; "i"))] | first // empty')
-[[ -n $device ]] && echo "$device"
+
+# The exit status is the answer: the menu uses this as a presence check.
+if [[ -n $device ]]; then
+  echo "$device"
+else
+  exit 1
+fi

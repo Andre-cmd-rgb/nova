@@ -3,13 +3,15 @@
 # nova:summary=Enable, disable, toggle, or recover mirroring the internal display to an external monitor
 # nova:args=<on|off|toggle|recover>
 
+set -euo pipefail
+
 TOGGLE="internal-monitor-mirror"
 TOGGLE_FLAG="$HOME/.local/state/nova/toggles/hypr/$TOGGLE.lua"
 DISABLE_TOGGLE="internal-monitor-disable"
 
 INTERNAL=$(nova-hyprland-monitor-laptop)
 # The first active external monitor
-EXTERNAL=$(hyprctl monitors -j | jq -r '.[] | select(.name | test("^(eDP|LVDS|DSI)-") | not).name' | head -n 1)
+EXTERNAL=$(hyprctl monitors -j | jq -r 'first(.[] | select(.name | test("^(eDP|LVDS|DSI)-") | not).name) // empty')
 
 on() {
   if [[ -z $EXTERNAL ]]; then
@@ -31,9 +33,10 @@ on() {
     fi
   done
 
-  nova-hyprland-toggle $DISABLE_TOGGLE off
+  nova-hyprland-toggle "$DISABLE_TOGGLE" off
 
-  if nova-hyprland-toggle-disabled $TOGGLE; then
+  if nova-hyprland-toggle-disabled "$TOGGLE"; then
+    mkdir -p "$(dirname "$TOGGLE_FLAG")"
     printf 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = 1, mirror = "%s" })\n' "$EXTERNAL" "$INTERNAL" >"$TOGGLE_FLAG"
     nova-notification-send -g 󰍹 "Mirroring enabled ($EXTERNAL)"
     hyprctl reload
@@ -41,14 +44,14 @@ on() {
 }
 
 off() {
-  if nova-hyprland-toggle-enabled $TOGGLE; then
-    nova-hyprland-toggle $TOGGLE off
+  if nova-hyprland-toggle-enabled "$TOGGLE"; then
+    nova-hyprland-toggle "$TOGGLE" off
     nova-notification-send -g 󰍹 "Extended mode restored"
   fi
 }
 
 toggle() {
-  if nova-hyprland-toggle-enabled $TOGGLE; then
+  if nova-hyprland-toggle-enabled "$TOGGLE"; then
     off
   else
     on
@@ -56,12 +59,12 @@ toggle() {
 }
 
 recover() {
-  if ! nova-hyprland-monitor-external-active && nova-hyprland-toggle-enabled $TOGGLE; then
-    nova-hyprland-toggle $TOGGLE off
+  if ! nova-hyprland-monitor-external-active && nova-hyprland-toggle-enabled "$TOGGLE"; then
+    nova-hyprland-toggle "$TOGGLE" off
   fi
 }
 
-case "$1" in
+case "${1:-}" in
   on) on ;;
   off) off ;;
   toggle) toggle ;;

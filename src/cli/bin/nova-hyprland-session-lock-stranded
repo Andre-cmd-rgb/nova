@@ -4,6 +4,8 @@
 # nova:args=<own-pid>
 # nova:hidden=true
 
+set -euo pipefail
+
 # Hyprland lets any client take over a held lock (misc:allow_session_lock_restore),
 # so a shell that recovers a lock it merely sees can take the live lock screen of
 # another shell, and strand it when it exits. A lock is stranded only while no
@@ -12,8 +14,19 @@
 #
 # Exits 0 stranded, 1 unlocked, 2 undetermined. The caller passes its own pid,
 # as a crash re-execs the shell in place.
+own_pid=${1:-}
+if [[ -z $own_pid ]]; then
+  echo "Usage: nova-hyprland-session-lock-stranded <own-pid>" >&2
+  exit 2
+fi
+
+# Not locked (1) and undetermined (2) pass straight through.
 nova-hyprland-session-locked || exit
 
-if pgrep -u "$UID" -x 'quickshell|qs|hyprlock' | grep -qvxF "$1"; then
+# Any locker other than the caller means the lock is not stranded yet. The pids
+# are captured and filtered in awk: a pgrep that finds none is not an error, and
+# grep -q would SIGPIPE it under pipefail.
+others=$(pgrep -u "$UID" -x 'quickshell|qs|hyprlock' || true)
+if awk -v own="$own_pid" '$0 != "" && $0 != own { found = 1 } END { exit !found }' <<<"$others"; then
   exit 2
 fi

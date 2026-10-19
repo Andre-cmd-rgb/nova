@@ -3,6 +3,8 @@
 # nova:summary=Toggle permanent Hyprland flags by copying them into a directory that's sourced entirely.
 # nova:args=<flag-name> [on|off|toggle]
 
+set -euo pipefail
+
 usage() {
   echo "Usage: nova-hyprland-toggle <flag-name> [on|off|toggle]" >&2
 }

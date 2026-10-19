@@ -1,5 +1,9 @@
 #!/bin/bash
 
 # nova:summary=Print the name of the built-in laptop display, including disabled outputs.
+# nova:hidden=true
 
-hyprctl monitors all -j | jq -r '.[] | select(.name | test("^(eDP|LVDS|DSI)-")).name' | head -n 1
+set -euo pipefail
+
+# No built-in panel prints nothing and still succeeds; callers test for an empty name.
+hyprctl monitors all -j | jq -r 'first(.[] | select(.name | test("^(eDP|LVDS|DSI)-")).name) // empty'

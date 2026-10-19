@@ -3,6 +3,8 @@
 # nova:summary=Returns true when the compositor holds a session lock
 # nova:hidden=true
 
+set -euo pipefail
+
 # Hyprland reports no lock state directly, but an active ext-session-lock is one
 # of the reasons a monitor cannot go solitary: LOCK in solitaryBlockedBy. It
 # stays set once the lock's client dies, which is the case worth detecting.
@@ -21,7 +23,7 @@ state=$(jq '
   elif any(.[]; readable)                 then 1
   else                                         2
   end
-' <<<"$monitors" 2>/dev/null)
+' <<<"$monitors" 2>/dev/null || true)
 
 case $state in
   0 | 1) exit "$state" ;;

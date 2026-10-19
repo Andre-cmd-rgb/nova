@@ -1,12 +1,16 @@
 #!/bin/bash
 
 # nova:summary=Returns true when an external monitor is physically connected.
+# nova:hidden=true
+
+set -euo pipefail
 
 drm_path="${NOVA_DRM_PATH:-/sys/class/drm}"
 
 for status in "$drm_path"/card*-*/status; do
   [[ -e $status ]] || continue
+  # Built-in panels do not count as external.
   [[ $status =~ -(eDP|LVDS|DSI)-[^/]+/status$ ]] && continue
-  [[ $(< $status) == "connected" ]] && exit 0
+  [[ $(<"$status") == "connected" ]] && exit 0
 done
 exit 1

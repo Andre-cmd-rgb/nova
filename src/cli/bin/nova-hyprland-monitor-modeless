@@ -3,6 +3,8 @@
 # nova:summary=Returns true when Hyprland has an enabled monitor with no mode
 # nova:hidden=true
 
+set -euo pipefail
+
 # A monitor powered off at boot answers with a partial EDID carrying no video
 # modes, so Hyprland brings it up at 0x0 and the screen stays black. Mirrors are
 # absent from plain `monitors`, hence `all` plus an explicit disabled filter.
@@ -13,7 +15,7 @@
 monitors=$(hyprctl monitors all -j 2>/dev/null) || exit 2
 
 state=$(jq 'if any(.[]; .disabled != true and (.width == 0 or .height == 0)) then 0 else 1 end' \
-  <<<"$monitors" 2>/dev/null)
+  <<<"$monitors" 2>/dev/null || true)
 
 case $state in
   0 | 1) exit "$state" ;;

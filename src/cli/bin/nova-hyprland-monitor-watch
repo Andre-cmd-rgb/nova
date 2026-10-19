@@ -1,15 +1,27 @@
 #!/bin/bash
 
 # nova:summary=Watch Hyprland monitor events and recover monitor toggles when a monitor is removed
+# nova:hidden=true
+
+set -euo pipefail
+
+if [[ -z ${XDG_RUNTIME_DIR:-} || -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  echo "nova-hyprland-monitor-watch: not running inside a Hyprland session" >&2
+  exit 1
+fi
 
 SOCKET="$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock"
-LOCK="${XDG_RUNTIME_DIR:-/tmp}/nova-monitor-clamshell.lock"
-MODELESS_LOCK="${XDG_RUNTIME_DIR:-/tmp}/nova-monitor-modeless.lock"
+LOCK_DIR="$XDG_RUNTIME_DIR/nova"
+LOCK="$LOCK_DIR/monitor-clamshell.lock"
+MODELESS_LOCK="$LOCK_DIR/monitor-modeless.lock"
+mkdir -p "$LOCK_DIR"
 
+# A failed sync must not stop the watcher: the delayed re-syncs and the poll
+# below retry it, and nothing else would restart this process.
 sync_clamshell() {
   (
     flock -n 9 || exit 0
-    nova-hyprland-monitor-clamshell
+    nova-hyprland-monitor-clamshell || true
   ) 9>"$LOCK"
 }
 
@@ -36,26 +48,35 @@ recover_modeless() {
     local delay=3 state reloaded unanswered=0
 
     while true; do
-      nova-hyprland-monitor-modeless
-      state=$?
+      # The status is the answer (0 modeless, 1 not, 2 unknown), not a failure.
+      state=0
+      nova-hyprland-monitor-modeless || state=$?
 
       # A monitor reporting a mode is recovered. One the compositor cannot speak
       # for is not an answer, and nothing else will ask again -- but a compositor
       # that stays silent has gone, taking the session and this loop's reason
       # with it.
-      (( state == 1 )) && break
-      (( state == 2 )) && (( ++unanswered > 20 )) && break
-      (( state == 0 )) && unanswered=0
+      if ((state == 1)); then
+        break
+      elif ((state == 2)); then
+        unanswered=$((unanswered + 1))
+        ((unanswered <= 20)) || break
+      else
+        unanswered=0
+      fi
 
       reloaded=0
       # Reloading into half-replaced package config is what the guard prevents.
-      if (( state == 0 )) && ! nova-hyprland-reload-guard paused; then
+      if ((state == 0)) && ! nova-hyprland-reload-guard paused; then
         hyprctl reload >/dev/null 2>&1 || true
         reloaded=1
       fi
 
       sleep "$delay"
-      (( reloaded )) && (( delay = delay * 2 > 60 ? 60 : delay * 2 ))
+      if ((reloaded)); then
+        delay=$((delay * 2))
+        ((delay <= 60)) || delay=60
+      fi
     done
   ) 9>"$MODELESS_LOCK" &
 }
@@ -81,7 +102,7 @@ sync_poll_state() {
       poll_pid=$!
     fi
   elif [[ -n $poll_pid ]]; then
-    kill "$poll_pid" 2>/dev/null
+    kill "$poll_pid" 2>/dev/null || true
     poll_pid=""
   fi
 }
@@ -94,12 +115,7 @@ recover_modeless
 # sync_poll_state can start and stop the background poll as monitors come and go.
 while read -r event; do
   case "$event" in
-    monitoradded\>\>*|monitoraddedv2\>\>*)
-      sync_clamshell_after_monitor_change
-      sync_poll_state
-      recover_modeless
-      ;;
-    monitorremoved\>\>*|monitorremovedv2\>\>*)
+    monitoradded\>\>* | monitoraddedv2\>\>* | monitorremoved\>\>* | monitorremovedv2\>\>*)
       sync_clamshell_after_monitor_change
       sync_poll_state
       recover_modeless

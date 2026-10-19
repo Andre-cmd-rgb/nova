@@ -1,28 +1,28 @@
 #!/bin/bash
 
 # nova:summary=Run a named hook from ~/.config/nova/hooks/<name> and ~/.config/nova/hooks/<name>.d/.
-# nova:args=[name] [args...]
+# nova:args=<name> [args...]
+# nova:hidden=true
 
-set -e
+set -euo pipefail
 
-if (( $# < 1 )); then
-  echo "Usage: nova-hook [name] [args...]"
+if (($# < 1)); then
+  echo "Usage: nova-hook <name> [args...]" >&2
   exit 1
 fi
 
-HOOK=$1
 HOOK_PATH="$HOME/.config/nova/hooks/$1"
 HOOK_DIR="$HOOK_PATH.d"
 shift
 
 if [[ -f $HOOK_PATH ]]; then
-  bash "$HOOK_PATH" "$@" || echo "Hook failed: $HOOK_PATH"
+  bash "$HOOK_PATH" "$@" || echo "Hook failed: $HOOK_PATH" >&2
 fi
 
 if [[ -d $HOOK_DIR ]]; then
   for hook in "$HOOK_DIR"/*; do
     [[ -f $hook ]] || continue
     [[ $hook == *.sample ]] && continue
-    bash "$hook" "$@" || echo "Hook failed: $hook"
+    bash "$hook" "$@" || echo "Hook failed: $hook" >&2
   done
 fi

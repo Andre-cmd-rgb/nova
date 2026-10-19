@@ -3,6 +3,8 @@
 # nova:summary=Enable, disable, toggle, or recover the internal laptop display
 # nova:args=<on|off|toggle|recover>
 
+set -euo pipefail
+
 TOGGLE="internal-monitor-disable"
 TOGGLE_FLAG="$HOME/.local/state/nova/toggles/hypr/$TOGGLE.lua"
 MIRROR_TOGGLE="internal-monitor-mirror"
@@ -14,8 +16,8 @@ wake() {
 }
 
 on() {
-  if nova-hyprland-toggle-enabled $TOGGLE; then
-    nova-hyprland-toggle $TOGGLE off
+  if nova-hyprland-toggle-enabled "$TOGGLE"; then
+    nova-hyprland-toggle "$TOGGLE" off
     nova-notification-send -g 󰍹 "Laptop display enabled"
   fi
 
@@ -40,7 +42,8 @@ off() {
     exit 1
   fi
 
-  if nova-hyprland-toggle-disabled $TOGGLE && nova-hyprland-toggle-disabled $MIRROR_TOGGLE; then
+  if nova-hyprland-toggle-disabled "$TOGGLE" && nova-hyprland-toggle-disabled "$MIRROR_TOGGLE"; then
+    mkdir -p "$(dirname "$TOGGLE_FLAG")"
     printf 'hl.monitor({ output = "%s", disabled = true })\n' "$INTERNAL" >"$TOGGLE_FLAG"
     nova-notification-send -g 󰍹 "Laptop display disabled"
     hyprctl reload
@@ -52,21 +55,21 @@ recover() {
   # unless it actually re-enables a display: an unconditional wake here undoes
   # lock-screen blanking and races the resume modeset into a visible flash.
   nova-hyprland-monitor-external-active && return 0
-  nova-hyprland-toggle-enabled $TOGGLE || return 0
+  nova-hyprland-toggle-enabled "$TOGGLE" || return 0
 
-  nova-hyprland-toggle $TOGGLE off
+  nova-hyprland-toggle "$TOGGLE" off
   wake
 }
 
 toggle() {
-  if nova-hyprland-toggle-enabled $TOGGLE; then
+  if nova-hyprland-toggle-enabled "$TOGGLE"; then
     on
   else
     off
   fi
 }
 
-case "$1" in
+case "${1:-}" in
   on) on ;;
   off) off ;;
   toggle) toggle ;;

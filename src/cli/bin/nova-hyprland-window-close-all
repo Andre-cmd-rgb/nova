@@ -2,11 +2,12 @@
 
 # nova:summary=Close all open windows
 
-hyprctl clients -j | \
-  jq -r ".[].address" | \
-  while read -r addr; do
-    hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null
-  done
+set -euo pipefail
+
+while read -r addr; do
+  # A window can close itself before its turn comes, which is not a failure.
+  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null || true
+done < <(hyprctl clients -j | jq -r ".[].address")
 
 # Move to first workspace
-hyprctl dispatch 'hl.dsp.focus({ workspace = "1" })' >/dev/null 2>&1 || hyprctl dispatch workspace 1
+hyprctl dispatch 'hl.dsp.focus({ workspace = "1" })' >/dev/null 2>&1 || hyprctl dispatch workspace 1 >/dev/null

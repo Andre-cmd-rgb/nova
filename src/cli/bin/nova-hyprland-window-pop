@@ -3,14 +3,16 @@
 # nova:summary=Toggle to pop-out a tile to stay fixed on a display basis.
 # nova:args=[width height x y]
 
+set -euo pipefail
+
 width=${1:-1300}
 height=${2:-900}
 x=${3:-}
 y=${4:-}
 
 active=$(hyprctl activewindow -j)
-pinned=$(echo "$active" | jq ".pinned")
-addr=$(echo "$active" | jq -r ".address")
+pinned=$(jq -r '.pinned // false' <<<"$active")
+addr=$(jq -r '.address // empty' <<<"$active")
 window="address:$addr"
 
 hypr_dispatch() {
