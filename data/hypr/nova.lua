@@ -4,6 +4,7 @@ require("default.hypr.helpers")
 local require_optional = require("default.hypr.require_optional")
 
 -- Use Nova defaults, but don't edit these directly.
+require("default.hypr.session")
 require("default.hypr.autostart")
 if _G.nova_default_bindings ~= false then
   require("default.hypr.bindings.media")

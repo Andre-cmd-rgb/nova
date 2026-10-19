@@ -53,7 +53,7 @@ function o.cmd_missing(command)
   return not o.cmd_present(command)
 end
 
-local function command_from(value, description)
+local function command_from(value)
   if type(value) ~= "table" then
     return value
   end
@@ -64,12 +64,6 @@ local function command_from(value, description)
     return o.launch_sole(value.focus, value.launch)
   elseif value.launch then
     return o.launch(value.launch)
-  elseif value.webapp then
-    if value.focus then
-      return o.launch_webapp_sole(description, value.webapp)
-    else
-      return o.launch_webapp(value.webapp)
-    end
   elseif value.tui then
     if value.focus then
       return "nova-launch-or-focus-tui " .. shell_quote(value.tui)
@@ -81,14 +75,6 @@ local function command_from(value, description)
   return value
 end
 
-function o.preinstalled_bindings_enabled()
-  if _G.nova_preinstalled_bindings ~= nil then
-    return _G.nova_preinstalled_bindings == true
-  end
-
-  return not file_exists((os.getenv("HOME") or "") .. "/.local/state/nova/preinstalls-removed")
-end
-
 function o.bind(keys, description, dispatcher, options)
   local opts = options or {}
 
@@ -96,7 +82,7 @@ function o.bind(keys, description, dispatcher, options)
     opts.description = description
   end
 
-  dispatcher = command_from(dispatcher, description)
+  dispatcher = command_from(dispatcher)
 
   if type(dispatcher) == "string" then
     dispatcher = hl.dsp.exec_cmd(dispatcher)
@@ -117,14 +103,6 @@ end
 
 function o.launch_on_start(command)
   o.exec_on_start(o.launch(command))
-end
-
-function o.launch_webapp(url)
-  return "nova-launch-webapp " .. shell_quote(url)
-end
-
-function o.launch_webapp_sole(name, url)
-  return "nova-launch-or-focus-webapp " .. shell_quote(name) .. " " .. shell_quote(url)
 end
 
 function o.launch_sole(match, command)

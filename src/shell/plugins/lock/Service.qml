@@ -16,6 +16,10 @@ Item {
   readonly property string stateHome: home + "/.local/state"
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string currentBackgroundLink: stateHome + "/nova/current/background"
+  // greetd's autologin sets NOVA_AUTOLOGIN=1: nobody has authenticated yet, so
+  // the session must lock before anything else shows.
+  readonly property bool autologin: Quickshell.env("NOVA_AUTOLOGIN") === "1"
+  readonly property string unlockedOnceFile: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/unlocked-once"
 
   property bool lockRequested: false
   property bool pendingSessionLock: false
@@ -34,6 +38,12 @@ Item {
   property string lastEventAt: ""
   property bool strandedLock: false
   property bool strandedLockResolved: false
+  // The first unlock after boot takes the password, which also unlocks the
+  // keyring; fingerprint is offered only after that. The flag lives in the
+  // runtime dir so a restarted shell does not ask for the password again.
+  property bool unlockedOnce: false
+  property bool unlockedOnceKnown: false
+  property bool bootLock: false
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -101,6 +111,28 @@ Item {
     strandedLock = false
     logEvent("lock-stranded: recovering")
     beginLock()
+  }
+
+  function lockForAutologin() {
+    if (!autologin || !unlockedOnceKnown || unlockedOnce || !passwordPamConfigured) return
+    if (locked || lockRequested) return
+
+    logEvent("lock-autologin")
+    bootLock = beginLock()
+  }
+
+  // Hyprland starts an autologin session in a submap with no binds, so keys do
+  // nothing before the lock is up. Once it is secure, Hyprland itself limits
+  // binds to the ones marked locked.
+  function leaveBootSubmap() {
+    bootLock = false
+    Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.submap(\"reset\")"])
+  }
+
+  function completeFirstUnlock(password) {
+    unlockedOnce = true
+    firstUnlockProc.password = password
+    firstUnlockProc.running = true
   }
 
   function refreshBackground() {
@@ -211,7 +243,7 @@ Item {
   }
 
   function startFingerprint() {
-    if (!lockRequested || !sessionLock.secure || !fingerprintConfigured) return
+    if (!lockRequested || !sessionLock.secure || !fingerprintConfigured || !unlockedOnce) return
     if (fingerprintPam.active || fingerprintAuthenticating) return
 
     fingerprintAuthenticating = true
@@ -243,6 +275,7 @@ Item {
         sessionLockStabilizeTimer.stop()
         pendingSessionLockTimer.stop()
         root.startFingerprint()
+        if (root.bootLock) root.leaveBootSubmap()
       }
     }
 
@@ -274,7 +307,7 @@ Item {
         anchors.fill: parent
         backgroundPath: root.backgroundPath
         backgroundVersion: root.backgroundVersion
-        fingerprintConfigured: root.fingerprintConfigured
+        fingerprintConfigured: root.fingerprintConfigured && root.unlockedOnce
         authenticatingPassword: root.authenticatingPassword
         failureMessage: root.failureMessage
         failedAttempts: root.failedAttempts
@@ -329,12 +362,17 @@ Item {
     onPamMessage: root.respondToPasswordPrompt()
 
     onCompleted: function(result) {
+      var password = root.pendingPassword
       root.authenticatingPassword = false
       root.pendingPassword = ""
 
       if (!root.lockRequested) return
-      if (result === PamResult.Success) root.finishUnlock()
-      else root.handlePasswordFailure()
+      if (result === PamResult.Success) {
+        if (!root.unlockedOnce) root.completeFirstUnlock(password)
+        root.finishUnlock()
+      } else {
+        root.handlePasswordFailure()
+      }
     }
 
     onError: function(error) {
@@ -403,6 +441,37 @@ Item {
       // A lock taken while this was in flight is this shell's own.
       root.strandedLock = exitCode === 0 && !root.locked && !root.lockRequested
       root.recoverStrandedLock()
+    }
+  }
+
+  // Unlocks the keyring with the password on stdin, records the first unlock
+  // and starts nova-unlocked.target. The password never reaches argv or env.
+  Process {
+    id: firstUnlockProc
+    property string password: ""
+    command: ["nova-session-first-unlock"]
+    stdinEnabled: true
+    onStarted: {
+      write(password)
+      password = ""
+      stdinEnabled = false
+    }
+    onExited: function(exitCode) {
+      password = ""
+      if (exitCode !== 0) root.logEvent("first-unlock: helper exited " + exitCode)
+    }
+  }
+
+  FileView {
+    path: root.unlockedOnceFile
+    printErrors: false
+    onLoaded: {
+      root.unlockedOnce = true
+      root.unlockedOnceKnown = true
+    }
+    onLoadFailed: {
+      root.unlockedOnceKnown = true
+      root.lockForAutologin()
     }
   }
 
@@ -499,6 +568,7 @@ Item {
   // the failsafe can be cleared from a TTY -- so re-ask rather than act on it.
   onPasswordPamConfiguredChanged: {
     if (!passwordPamConfigured) return
+    lockForAutologin()
 
     strandedLock = false
     strandedLockResolved = false
@@ -525,6 +595,14 @@ Item {
       return root.locked ? "true" : "false"
     }
 
+    // Read by nova-session-guard: "secure" once the compositor confirms the
+    // lock, "unlocked" after a real unlock, "starting" until one of those.
+    function state(): string {
+      if (sessionLock.secure) return "secure"
+      if (!root.locked && root.unlockedOnce) return "unlocked"
+      return "starting"
+    }
+
     function status(): string {
       return JSON.stringify({
         locked: root.locked,
@@ -535,6 +613,7 @@ Item {
         realScreens: root.realScreenCount(),
         passwordPam: root.passwordPamConfigured,
         fingerprint: root.fingerprintConfigured,
+        unlockedOnce: root.unlockedOnce,
         authenticating: root.authenticating,
         lastEvent: root.lastEvent,
         lastEventAt: root.lastEventAt

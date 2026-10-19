@@ -3,15 +3,10 @@ o.bind("SUPER + ALT + SPACE", "Apps menu", "nova-menu toggle apps")
 o.bind("SUPER + CTRL + E", "Emojis", "nova-shell shell toggle nova.emojis")
 o.bind("SUPER + CTRL + C", "Capture menu", "nova-menu toggle capture")
 o.bind("SUPER + CTRL + O", "Toggle menu", "nova-menu toggle toggle")
-o.bind("SUPER + CTRL + H", "Hardware menu", "nova-menu toggle hardware")
 o.bind("SUPER + SHIFT + code:201", "Nova menu", "nova-menu toggle root")
 o.bind("SUPER + ESCAPE", "System menu", "nova-menu toggle system")
 o.bind("XF86PowerOff", "Power menu", "nova-menu toggle system", { locked = true })
 o.bind("SUPER + K", "Keybindings", "nova-menu-keybindings")
-o.bind("SUPER + ALT + K", "Tmux keybindings", "nova-menu-tmux-keybindings")
-o.bind("SUPER + CTRL + K", "Herdr keybindings", "nova-menu-herdr-keybindings")
-o.bind("SUPER + CTRL + Q", "Calculator", "omacalc")
-o.bind("XF86Calculator", "Calculator", "omacalc")
 
 o.bind_toggle("SUPER + SHIFT + SPACE", "Toggle top bar", "bar")
 o.bind("SUPER + CTRL + SPACE", "Background switcher", "nova-menu toggle background")
@@ -35,9 +30,7 @@ o.bind("switch:on:Lid Switch", nil, "nova-system-lid-close", { locked = true })
 o.bind("switch:off:Lid Switch", nil, "nova-hyprland-monitor-clamshell", { locked = true })
 
 o.bind("PRINT", "Screenshot", "nova-capture-screenshot")
-o.bind("ALT + PRINT", "Screenrecording", "nova-capture-screenrecording --stop-recording || nova-menu toggle trigger.capture.screenrecord")
-o.bind("SUPER + ALT + code:34", "Make webcam overlay smaller", "nova-capture-webcam-resize smaller")
-o.bind("SUPER + ALT + code:35", "Make webcam overlay larger", "nova-capture-webcam-resize larger")
+o.bind("ALT + PRINT", "Screenrecording", "nova-capture-screenrecording --stop-recording || nova-menu toggle capture.screenrecord")
 o.bind("SUPER + PRINT", "Color picker", "pkill hyprpicker || hyprpicker -a")
 o.bind("SUPER + CTRL + PRINT", "Extract text (OCR) from screenshot", "nova-capture-text")
 
@@ -81,19 +74,10 @@ hl.on("layer.closed", function(layer)
   end
 end)
 
-o.bind("SUPER + CTRL + S", "Share", "nova-menu toggle share")
-
-o.bind("SUPER + CTRL + PERIOD", "Transcode", "nova-transcode")
-
-o.bind("SUPER + CTRL + R", "Set reminder", "nova-menu toggle reminder-set")
-o.bind("SUPER + CTRL + ALT + R", "Show reminders", "nova-reminder show")
-o.bind("SUPER + SHIFT + CTRL + R", "Clear reminders", "nova-reminder clear")
-
 o.bind("SUPER + CTRL + ALT + T", "Show time", "nova-notification-time")
 o.bind("SUPER + CTRL + ALT + B", "Show battery remaining", "nova-notification-battery")
 o.bind("SUPER + CTRL + ALT + W", "Toggle weather", "nova-notification-weather")
 
-o.bind("SUPER + SHIFT + CTRL + A", "Agent", "nova-agent --pick")
 o.bind("SUPER + CTRL + A", "Audio", "nova-shell shell toggle nova.audio")
 o.bind("SUPER + CTRL + B", "Bluetooth", "nova-shell shell toggle nova.bluetooth")
 o.bind("SUPER + CTRL + D", "Display", "nova-shell shell toggle nova.monitor")

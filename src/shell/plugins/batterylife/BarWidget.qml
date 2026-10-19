@@ -134,11 +134,8 @@ Panel {
   }
 
   function setProfile(name) {
-    // The stock power widget keys the remembered profile on the power source,
-    // so this has to pass the same one or the two disagree about what was
-    // chosen for battery and what was chosen for AC.
-    profileProc.command = ["nova-powerprofiles-set",
-      battery.discharging ? "battery" : "ac", String(name)]
+    // nova-powerd remembers the choice for the current power source.
+    profileProc.command = ["nova-power-profile", "set", String(name)]
     if (!profileProc.running) profileProc.running = true
   }
 
@@ -308,7 +305,7 @@ Panel {
 
   Process {
     id: profilesProc
-    command: ["nova-powerprofiles-list", "--active-state"]
+    command: ["nova-power-profile", "list", "--active-state"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

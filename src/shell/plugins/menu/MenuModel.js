@@ -372,53 +372,25 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
   }
 }
 
-// Commands a `checked:` expression reads a value out of. Every sibling row
-// asks the same one -- Defaults > Browser has seven rows all comparing
-// against `nova-default-browser` -- so the batch runs it once and the rows
-// read the captured answer.
+// Commands a `checked:` expression reads a value out of. Sibling rows ask the
+// same one -- Style > Menu Bar has two rows comparing against `nova-bar
+// position` -- so the batch runs it once and the rows read the captured answer.
 //
 // The capture has to be eager. These are read inside `$(...)`, and a value
 // cached while one expression runs lives in that subshell only, so a lazy
 // memo never survives to the expression after it.
 var GUARD_READERS = [
-  "nova-channel-current",
-  "nova-default-agent",
-  "nova-default-browser",
-  "nova-default-editor",
-  "nova-default-terminal",
-  "nova-dns"
+  "nova-bar position",
+  "nova-bar transparent"
 ]
 
-// Package and command presence account for most of what the guards ask, and
-// asked one at a time they are almost all fork: the shipped menu spends over
-// a second on them. Answer them inside the guard process instead. These
-// shadow the real commands for the batch only, so they have to agree with
-// them everywhere, including for no arguments at all (present is true of
-// nothing, missing is not).
-//
-// `pacman -Q` resolves a name through what installed packages provide, not
-// just what they are called -- with gvim installed it reports `vim` as
-// present -- so the set has to carry provides too, or `install.editor.vim`
-// comes back and offers to install what is already there. A version
-// constraint (`bash>=1`) is not a name any set can answer, so it goes to
-// pacman itself; no shipped guard writes one.
-//
-// `pacman -Qi` wraps a long list across continuation lines whenever COLUMNS
-// is set in the environment, which a login shell may well have done, so the
-// parser follows the indented lines rather than reading the first one and
-// dropping half of what is installed.
+// Command presence is most of what the guards ask, and asked one at a time it
+// is almost all fork. Answer it inside the guard process instead. These shadow
+// the real commands for the batch only, so they have to agree with them,
+// including for no arguments at all (present is true of nothing, missing is
+// not).
 function guardHelpers() {
-  return 'declare -A __nova_pkgs=()\n'
-    + 'mapfile -t __nova_pkg_names < <({ pacman -Qq; LC_ALL=C pacman -Qi'
-    + " | awk '/^[A-Za-z]/ { provides = ($0 ~ /^Provides/); sub(/^[^:]*: /, \"\") }"
-    + ' provides && $0 != "None" { n = split($0, p, " ");'
-    + ' for (i = 1; i <= n; i++) { sub(/[<>=].*/, "", p[i]); print p[i] } }\'; } 2>/dev/null)\n'
-    + 'for __nova_pkg in "${__nova_pkg_names[@]}"; do __nova_pkgs[$__nova_pkg]=1; done\n'
-    + '__nova_pkg_has() { [[ -n ${__nova_pkgs[$1]-} ]] && return 0; '
-    + '[[ $1 == *[\\<\\>=]* ]] && { pacman -Q "$1" &>/dev/null; return; }; return 1; }\n'
-    + 'nova-pkg-present() { local p; for p in "$@"; do __nova_pkg_has "$p" || return 1; done; return 0; }\n'
-    + 'nova-pkg-missing() { local p; for p in "$@"; do __nova_pkg_has "$p" || return 0; done; return 1; }\n'
-    + 'nova-cmd-present() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 1; done; return 0; }\n'
+  return 'nova-cmd-present() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 1; done; return 0; }\n'
     + 'nova-cmd-missing() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 0; done; return 1; }\n'
 }
 

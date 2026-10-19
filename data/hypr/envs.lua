@@ -27,7 +27,10 @@ hl.env("XCOMPOSEFILE", paths.home .. "/.XCompose")
 -- hyprctl setenv doesn't reach keybind dispatcher env; use hl.env.
 hl.env("NOVA_PATH", paths.nova_path)
 
-local bin_dir = paths.nova_path .. "/bin"
+-- Nova's helpers live outside /usr/bin; put them first so binds and the shell
+-- resolve nova-* commands.
+
+local bin_dir = paths.nova_lib .. "/bin"
 local kept = {}
 for entry in (os.getenv("PATH") or "/usr/local/bin:/usr/bin"):gmatch("[^:]+") do
   if entry ~= bin_dir then table.insert(kept, entry) end

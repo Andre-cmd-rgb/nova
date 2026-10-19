@@ -401,7 +401,7 @@ Item {
   function focusApp(entry) {
     if (!entry || !entry.app) return
     focusAppProc.command = [
-      service."nova-hyprland-focus-app",
+      "nova-hyprland-focus-app",
       String(entry.app)
     ]
     focusAppProc.running = true

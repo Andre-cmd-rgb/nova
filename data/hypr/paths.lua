@@ -19,4 +19,5 @@ return {
   config_home = env_or("XDG_CONFIG_HOME", home .. "/.config"),
   state_home = env_or("XDG_STATE_HOME", home .. "/.local/state"),
   nova_path = env_or("NOVA_PATH", "/usr/share/nova"),
+  nova_lib = env_or("NOVA_LIB", "/usr/lib/nova"),
 }

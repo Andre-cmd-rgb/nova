@@ -166,7 +166,7 @@ Panel {
 
   function setProfile(profile) {
     if (!profile || actionProc.running) return
-    actionProc.command = ["nova-powerprofiles-set", root.discharging ? "battery" : "ac", profile]
+    actionProc.command = ["nova-power-profile", "set", profile]
     actionProc.running = true
   }
 
@@ -214,7 +214,7 @@ Panel {
 
   Process {
     id: profilesProc
-    command: ["nova-powerprofiles-list", "--active-state"]
+    command: ["nova-power-profile", "list", "--active-state"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateProfiles(text) }
   }
 

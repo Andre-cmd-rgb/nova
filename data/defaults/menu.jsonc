@@ -1,0 +1,73 @@
+{
+  // Nova menu definition. Installed to $NOVA_PATH/default/menu.jsonc; entries in
+  // ~/.config/nova/menu.jsonc override these key by key.
+  //
+  // IDs are object keys, and dotted IDs define the tree: capture.screenrecord.stop
+  // belongs under capture.screenrecord. An entry with `action` runs it, an entry
+  // with `provider` fills its submenu from a provider in Menu.qml, anything else is
+  // a submenu.
+  // Optional fields:
+  //   aliases   extra names for `nova-menu toggle <name>`, also matched by search
+  //   title     header shown while the submenu is open (defaults to label)
+  //   when      shell condition; the row is hidden when it fails
+  //   checked   shell condition; the row gets a ✓ when it succeeds
+
+  // Root
+  "apps": {"icon":"󰀻","label":"Apps","aliases":["app","applications"],"provider":"apps"},
+  "capture": {"icon":"","label":"Capture","aliases":["screenshot","screenrecord"]},
+  "toggle": {"icon":"󰔎","label":"Toggle","aliases":["toggles"]},
+  "style": {"icon":"","label":"Style"},
+  "power": {"icon":"󰌪","label":"Power Mode","aliases":["power-mode"],"when":"nova-power-profile list","provider":"power-profiles"},
+  "settings": {"icon":"","label":"Settings","action":"nova-settings"},
+  "update": {"icon":"","label":"Update"},
+  "system": {"icon":"","label":"System","aliases":["power-menu"]},
+
+  // Capture
+  "capture.screenshot": {"icon":"","label":"Screenshot","action":"nova-capture-screenshot"},
+  "capture.screenrecord.stop": {"icon":"","label":"Stop Recording","when":"pgrep -f '^gpu-screen-recorder'","action":"nova-capture-screenrecording --stop-recording"},
+  "capture.screenrecord": {"icon":"","label":"Screen Recording"},
+  "capture.screenrecord.no-audio": {"icon":"","label":"Without audio","action":"nova-capture-screenrecording"},
+  "capture.screenrecord.desktop-audio": {"icon":"","label":"With desktop audio","action":"nova-capture-screenrecording --with-desktop-audio"},
+  "capture.screenrecord.microphone": {"icon":"","label":"With desktop and microphone audio","action":"nova-capture-screenrecording --with-desktop-audio --with-microphone-audio"},
+  "capture.text": {"icon":"󰴑","label":"Text","when":"command -v tesseract","action":"nova-capture-text"},
+  "capture.color": {"icon":"󰃉","label":"Color","action":"pkill hyprpicker || hyprpicker -a"},
+  "capture.emoji": {"icon":"","label":"Emoji","aliases":["emoji","emojis"],"action":"nova-shell shell toggle nova.emojis"},
+
+  // Toggle
+  "toggle.stay-awake": {"icon":"󰅶","label":"Stay Awake","checked":"nova-toggle-enabled stay-awake","action":"nova-toggle-idle"},
+  "toggle.notifications": {"icon":"󰂛","label":"Do Not Disturb","checked":"nova-toggle-enabled notifications-silenced","action":"nova-toggle-notification-silencing"},
+  "toggle.nightlight": {"icon":"󰔎","label":"Night Light","action":"nova-toggle-nightlight"},
+  "toggle.bar": {"icon":"󰍜","label":"Menu Bar","action":"nova-toggle-bar"},
+  "toggle.window-gaps": {"icon":"","label":"Window Gaps","action":"nova-hyprland-window-gaps-toggle"},
+  "toggle.laptop-display": {"icon":"󰛧","label":"Laptop Display","when":"nova-hw-laptop","action":"nova-hyprland-monitor-internal toggle"},
+  "toggle.touchpad": {"icon":"󰟸","label":"Touchpad","when":"nova-hw-touchpad","action":"nova-toggle-touchpad"},
+
+  // Style
+  "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"theme=$(nova-theme-switcher) && [[ -n $theme ]] && nova-theme-set \"$theme\""},
+  "style.background": {"icon":"","label":"Background","aliases":["background","wallpaper"],"action":"background=$(nova-theme-bg-switcher) && [[ -n $background ]] && nova-theme-bg-set \"$background\""},
+  "style.font": {"icon":"","label":"Font","provider":"fonts"},
+  "style.bar": {"icon":"󰍜","label":"Menu Bar"},
+  "style.bar.top": {"icon":"󰁝","label":"Top","checked":"[[ \"$(nova-bar position)\" == top ]]","action":"nova-bar position top"},
+  "style.bar.bottom": {"icon":"󰁅","label":"Bottom","checked":"[[ \"$(nova-bar position)\" == bottom ]]","action":"nova-bar position bottom"},
+  "style.bar.transparent": {"icon":"󰂵","label":"Transparent","checked":"[[ \"$(nova-bar transparent)\" == on ]]","action":"nova-bar transparent toggle"},
+
+  // Update
+  "update.nova": {"icon":"","label":"Nova","action":"nova-launch-floating-terminal-with-presentation nova-update"},
+  "update.firmware": {"icon":"","label":"Firmware","when":"command -v fwupdmgr","action":"nova-launch-floating-terminal-with-presentation nova-update-firmware"},
+  "update.restart": {"icon":"󰜉","label":"Restart","title":"Restart a service"},
+  "update.restart.shell": {"icon":"󰍜","label":"Shell","action":"nova-restart-shell"},
+  "update.restart.audio": {"icon":"","label":"Audio","action":"nova-restart-audio"},
+  "update.restart.wifi": {"icon":"󱚾","label":"Wi-Fi","action":"nova-restart-wifi"},
+  "update.restart.bluetooth": {"icon":"󰂯","label":"Bluetooth","action":"nova-restart-bluetooth"},
+  "update.timezone": {"icon":"","label":"Timezone","action":"nova-menu-timezone"},
+  "update.password": {"icon":"","label":"Password","action":"nova-launch-floating-terminal-with-presentation passwd"},
+
+  // System
+  "system.lock": {"icon":"","label":"Lock","action":"nova-system-lock"},
+  "system.suspend": {"icon":"󰒲","label":"Suspend","action":"systemctl suspend"},
+  "system.hibernate": {"icon":"󰤁","label":"Hibernate","when":"nova-hibernation-available","action":"systemctl hibernate"},
+  "system.logout": {"icon":"󰍃","label":"Log Out","action":"nova-system-logout"},
+  "system.reboot": {"icon":"󰜉","label":"Restart","action":"nova-system-reboot"},
+  "system.recovery": {"icon":"󰁯","label":"Restart to Recovery","action":"nova-system-recovery"},
+  "system.shutdown": {"icon":"󰐥","label":"Shut Down","action":"nova-system-shutdown"},
+}

@@ -149,7 +149,7 @@ Item {
   function applySelected(emoji) {
     if (!emoji) return
     root.dismiss()
-    Quickshell.execDetached([root."nova-menu-emoji-insert", emoji])
+    Quickshell.execDetached(["nova-menu-emoji-insert", emoji])
   }
 
   ListModel { id: displayModel }
