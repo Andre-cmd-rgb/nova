@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# nova:summary=Launch a TUI or focus an existing terminal window for it
+# nova:args=[--app-id=<app-id>] <command> [args...]
+
+if [[ ${1:-} == --app-id=* ]]; then
+  APP_ID="${1#--app-id=}"
+else
+  APP_ID="org.nova.$(basename "$1")"
+fi
+
+LAUNCH_COMMAND="nova-launch-tui $@"
+
+exec nova-launch-or-focus "$APP_ID" "$LAUNCH_COMMAND"

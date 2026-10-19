@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# nova:summary=List available monospace fonts
+# nova:examples=nova font list | nova font set "CaskaydiaMono Nerd Font"
+
+fc-list :spacing=100 -f "%{family[0]}\n" | grep -v -i -E 'emoji|signwriting|nova' | sort -u

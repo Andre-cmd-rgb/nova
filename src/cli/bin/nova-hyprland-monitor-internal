@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# nova:summary=Enable, disable, toggle, or recover the internal laptop display
+# nova:args=<on|off|toggle|recover>
+
+TOGGLE="internal-monitor-disable"
+TOGGLE_FLAG="$HOME/.local/state/nova/toggles/hypr/$TOGGLE.lua"
+MIRROR_TOGGLE="internal-monitor-mirror"
+
+INTERNAL=$(nova-hyprland-monitor-laptop)
+
+wake() {
+  hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1 || true
+}
+
+on() {
+  if nova-hyprland-toggle-enabled $TOGGLE; then
+    nova-hyprland-toggle $TOGGLE off
+    nova-notification-send -g 󰍹 "Laptop display enabled"
+  fi
+
+  wake
+}
+
+off() {
+  if [[ -z $INTERNAL ]]; then
+    nova-notification-send -g 󰍹 "No laptop display found"
+    exit 1
+  fi
+
+  # The name is written into generated Lua below, so only a plain connector
+  # name may pass; anything else could execute on the next reload.
+  if [[ ! $INTERNAL =~ ^[A-Za-z0-9._-]+$ ]]; then
+    nova-notification-send -g 󰍹 "Refusing unsafe monitor name"
+    exit 1
+  fi
+
+  if ! nova-hyprland-monitor-external-active; then
+    nova-notification-send -g 󰍹 "Can't disable the only active display"
+    exit 1
+  fi
+
+  if nova-hyprland-toggle-disabled $TOGGLE && nova-hyprland-toggle-disabled $MIRROR_TOGGLE; then
+    printf 'hl.monitor({ output = "%s", disabled = true })\n' "$INTERNAL" >"$TOGGLE_FLAG"
+    nova-notification-send -g 󰍹 "Laptop display disabled"
+    hyprctl reload
+  fi
+}
+
+recover() {
+  # Runs from the clamshell watcher every few seconds, so it must be a no-op
+  # unless it actually re-enables a display: an unconditional wake here undoes
+  # lock-screen blanking and races the resume modeset into a visible flash.
+  nova-hyprland-monitor-external-active && return 0
+  nova-hyprland-toggle-enabled $TOGGLE || return 0
+
+  nova-hyprland-toggle $TOGGLE off
+  wake
+}
+
+toggle() {
+  if nova-hyprland-toggle-enabled $TOGGLE; then
+    on
+  else
+    off
+  fi
+}
+
+case "$1" in
+  on) on ;;
+  off) off ;;
+  toggle) toggle ;;
+  recover) recover ;;
+  *)
+    echo "Usage: $(basename "$0") {on|off|toggle|recover}" >&2
+    exit 1
+    ;;
+esac

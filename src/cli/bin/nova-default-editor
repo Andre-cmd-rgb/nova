@@ -1,0 +1,36 @@
+#!/bin/bash
+
+# nova:summary=Set the default editor used by nova-launch-editor
+# nova:args=[code|cursor|zed|sublime_text|helix|vim|emacs|nvim]
+# nova:examples=nova default editor | nova default editor code | nova default editor helix
+
+editor_file="$HOME/.local/state/nova/defaults/editor"
+
+if (($# == 0)); then
+  if [[ -f $editor_file ]]; then
+    read -r editor <"$editor_file"
+  fi
+
+  [[ -n $editor ]] && echo "$editor" || echo "nvim"
+  exit 0
+fi
+
+case "$1" in
+code) editor="code"; name="VSCode"; glyph= ;;
+cursor) editor="cursor"; name="Cursor"; glyph= ;;
+zed | zeditor) editor="zeditor"; name="Zed"; glyph= ;;
+sublime_text) editor="sublime_text"; name="Sublime Text"; glyph= ;;
+helix) editor="helix"; name="Helix"; glyph= ;;
+vim) editor="vim"; name="Vim"; glyph= ;;
+emacs) editor="emacs"; name="Emacs"; glyph= ;;
+nvim) editor="nvim"; name="Neovim"; glyph= ;;
+*)
+  echo "Usage: nova-default-editor <code|cursor|zed|sublime_text|helix|vim|emacs|nvim>"
+  exit 1
+  ;;
+esac
+
+mkdir -p "$(dirname "$editor_file")"
+printf '%s\n' "$editor" >"$editor_file"
+
+nova-notification-send -g $glyph "$name is now the default editor"

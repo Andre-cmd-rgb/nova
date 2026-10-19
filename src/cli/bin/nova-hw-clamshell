@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# nova:summary=Returns true when clamshell mode is active
+# nova:hidden=true
+
+# Clamshell = lid closed while driving one or more external monitors.
+nova-hw-laptop-closed && nova-hw-external-monitors

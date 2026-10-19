@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# nova:summary=Send the low battery warning notification and run battery-low hooks.
+# nova:args=<percentage>
+# nova:hidden=true
+
+set -euo pipefail
+
+if (($# != 1)); then
+  echo "Usage: nova-battery-low <percentage>" >&2
+  exit 1
+fi
+
+level=$1
+
+nova-notification-send -g 󱐋 -u critical "Time to recharge!" "Battery is down to ${level}%" -i battery-caution -t 30000
+nova-hook battery-low "$level"

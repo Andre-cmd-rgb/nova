@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# nova:summary=Check if a toggle is enabled (flag file exists)
+# nova:args=<flag-name>
+
+[[ -f "$HOME/.local/state/nova/toggles/$1" ]]

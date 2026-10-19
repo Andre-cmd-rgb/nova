@@ -1,0 +1,52 @@
+#!/bin/bash
+
+# nova:summary=Control the Nova menu (toggle / summon / close / refresh)
+# nova:args=[toggle|summon|close|refresh|ping] [route]
+# nova:examples=nova menu | nova menu toggle system | nova menu summon style.theme | nova menu refresh
+
+# Thin wrapper around the standard plugin IPC surface. The menu is the
+# first-party `nova.menu` plugin; routes are passed as JSON payload.
+
+set -euo pipefail
+
+verb="${1-toggle}"
+route="${2-root}"
+
+menu_payload() {
+  jq -nc --arg menu "$1" '{ menu: $menu }'
+}
+
+case "$verb" in
+  toggle)
+    exec nova-shell shell toggle nova.menu "$(menu_payload "$route")"
+    ;;
+  summon)
+    exec nova-shell shell summon nova.menu "$(menu_payload "$route")"
+    ;;
+  close)
+    exec nova-shell shell hide nova.menu
+    ;;
+  refresh | ping)
+    exec nova-shell shell call nova.menu "$verb" "{}"
+    ;;
+  -h | --help | help)
+    cat <<USAGE
+Usage: nova menu [verb] [route]
+
+Verbs:
+  toggle [route]   Open the menu at <route>, or close it if already open. Default verb.
+  summon [route]   Always open the menu (no close-if-visible toggle).
+  close            Close the menu if it is visible.
+  refresh          Re-parse the menu JSONC files.
+  ping             Health check.
+
+Route is an item id (e.g. setup.power) or alias (e.g. power). Defaults to
+"root", which opens the top-level menu.
+USAGE
+    exit 0
+    ;;
+  *)
+    echo "nova-menu: unknown verb '$verb'. Try 'nova menu --help'." >&2
+    exit 2
+    ;;
+esac

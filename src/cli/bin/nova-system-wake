@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# nova:summary=Wake displays and restore brightness after idle
+# nova:group=system
+# nova:name=wake
+# nova:examples=nova system wake
+
+nova-brightness-display on
+nova-brightness-keyboard restore
+nova-hyprland-monitor-clamshell >/dev/null 2>&1 || true

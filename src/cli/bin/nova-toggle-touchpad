@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# nova:summary=Enable, disable, or toggle the touchpad
+# nova:args=[on|off|toggle]
+
+exec nova-toggle-input-device touchpad "${1:-toggle}"

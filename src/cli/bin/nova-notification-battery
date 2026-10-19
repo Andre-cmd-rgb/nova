@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# nova:summary=Show the current battery status notification
+
+nova-notification-send -g 󰁹 -u low "$(nova-battery-status)"

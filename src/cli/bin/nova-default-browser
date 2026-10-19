@@ -1,0 +1,41 @@
+#!/bin/bash
+
+# nova:summary=Set the default browser for Nova and XDG handlers
+# nova:args=[chromium|chrome|brave|brave-origin|edge|firefox|zen]
+# nova:examples=nova default browser firefox | nova default browser brave
+
+if (($# == 0)); then
+  current_browser=$(nova-cmd-default-browser)
+  case "$current_browser" in
+  chromium.desktop) echo "chromium" ;;
+  google-chrome.desktop) echo "chrome" ;;
+  brave-browser.desktop) echo "brave" ;;
+  brave-origin.desktop) echo "brave-origin" ;;
+  microsoft-edge.desktop) echo "edge" ;;
+  firefox.desktop) echo "firefox" ;;
+  zen.desktop) echo "zen" ;;
+  *) echo "$current_browser" ;;
+  esac
+  exit 0
+fi
+
+case "$1" in
+chromium) desktop_id="chromium.desktop"; name="Chromium"; glyph= ;;
+chrome) desktop_id="google-chrome.desktop"; name="Chrome"; glyph=󰊯 ;;
+brave) desktop_id="brave-browser.desktop"; name="Brave"; glyph=󰖟 ;;
+brave-origin) desktop_id="brave-origin.desktop"; name="Brave Origin"; glyph=󰖟 ;;
+edge) desktop_id="microsoft-edge.desktop"; name="Edge"; glyph=󰇩 ;;
+firefox) desktop_id="firefox.desktop"; name="Firefox"; glyph=󰈹 ;;
+zen) desktop_id="zen.desktop"; name="Zen"; glyph=󰖟 ;;
+*)
+  echo "Usage: nova-default-browser <chromium|chrome|brave|brave-origin|edge|firefox|zen>"
+  exit 1
+  ;;
+esac
+
+# xdg-settings checks what it set by reading the handler back, which the
+# desktop-specific list would answer with nova-browser.desktop, so it must
+# only see mimeapps.list, where the browser itself is kept.
+env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings set default-web-browser "$desktop_id" || exit 1
+
+nova-notification-send -g $glyph "$name is now the default browser"

@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# nova:summary=Cycle to the next media source and transfer playback when the current source is playing
+# nova:args=[next|previous]
+# nova:examples=nova audio source switch | nova-audio-source-switch previous
+
+direction="${1:-next}"
+
+case "$direction" in
+  next)
+    nova-shell media sourceSwitch
+    ;;
+  previous)
+    nova-shell media sourceSwitchPrevious
+    ;;
+  *)
+    echo "Usage: nova-audio-source-switch [next|previous]" >&2
+    exit 1
+    ;;
+esac

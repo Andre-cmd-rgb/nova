@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# nova:summary=Toggle single-window square aspect ratio.
+
+case $(nova-hyprland-toggle single-window-aspect-ratio) in
+  on) nova-notification-send -g  "Enable single-window square aspect ratio" ;;
+  off) nova-notification-send -g  "Disable single-window square aspect ratio" ;;
+esac
