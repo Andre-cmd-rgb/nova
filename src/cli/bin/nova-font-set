@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# nova:summary=Set the system monospace font
+# nova:args=<font-name>
+# nova:examples=nova font list | nova font set "JetBrainsMono Nerd Font"
+#
+# fontconfig is the one source of truth: the shell, foot and VS Code all ask for
+# "monospace", and this puts the chosen family first in that alias.
+
+set -euo pipefail
+
+if (($# != 1)) || [[ -z $1 || $1 == -* ]]; then
+  echo "Usage: nova-font-set <font-name>" >&2
+  exit 2
+fi
+font=$1
+
+if ! fc-list : family | tr ',' '\n' | grep -Fxq -- "$font"; then
+  echo "nova-font-set: no font family named '$font' (see nova font list)" >&2
+  exit 1
+fi
+
+# XML-escape the name; family names may contain an ampersand.
+escaped=${font//&/&amp;}
+escaped=${escaped//</&lt;}
+escaped=${escaped//>/&gt;}
+
+config="$HOME/.config/fontconfig/conf.d/50-nova-monospace.conf"
+mkdir -p "${config%/*}"
+cat >"$config.tmp" <<XML
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!-- Written by nova-font-set. -->
+<fontconfig>
+  <match target="pattern">
+    <test name="family" qual="any"><string>monospace</string></test>
+    <edit name="family" mode="prepend_first" binding="strong"><string>$escaped</string></edit>
+  </match>
+</fontconfig>
+XML
+mv "$config.tmp" "$config"
+
+# Qt caches font matches for the life of the process.
+nova-restart-shell >/dev/null 2>&1 || true
+
+if pgrep -u "$UID" -x foot >/dev/null; then
+  nova-notification-send "New terminal windows use $font"
+fi
+nova-hook font-set "$font" >/dev/null 2>&1 || true

@@ -76,7 +76,7 @@ end)
 
 o.bind("SUPER + CTRL + ALT + T", "Show time", "nova-notification-time")
 o.bind("SUPER + CTRL + ALT + B", "Show battery remaining", "nova-notification-battery")
-o.bind("SUPER + CTRL + ALT + W", "Toggle weather", "nova-notification-weather")
+o.bind("SUPER + CTRL + ALT + W", "Toggle weather", "nova-shell shell toggle nova.weather")
 
 o.bind("SUPER + CTRL + A", "Audio", "nova-shell shell toggle nova.audio")
 o.bind("SUPER + CTRL + B", "Bluetooth", "nova-shell shell toggle nova.bluetooth")

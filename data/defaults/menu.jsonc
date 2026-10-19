@@ -34,8 +34,8 @@
   "capture.emoji": {"icon":"","label":"Emoji","aliases":["emoji","emojis"],"action":"nova-shell shell toggle nova.emojis"},
 
   // Toggle
-  "toggle.stay-awake": {"icon":"󰅶","label":"Stay Awake","checked":"nova-toggle-enabled stay-awake","action":"nova-toggle-idle"},
-  "toggle.notifications": {"icon":"󰂛","label":"Do Not Disturb","checked":"nova-toggle-enabled notifications-silenced","action":"nova-toggle-notification-silencing"},
+  "toggle.stay-awake": {"icon":"󰅶","label":"Stay Awake","checked":"[[ -f $HOME/.local/state/nova/indicators/stay-awake ]]","action":"nova-toggle-idle"},
+  "toggle.notifications": {"icon":"󰂛","label":"Do Not Disturb","checked":"[[ \"$(nova-shell notifications dndState)\" == on ]]","action":"nova-toggle-notification-silencing"},
   "toggle.nightlight": {"icon":"󰔎","label":"Night Light","action":"nova-toggle-nightlight"},
   "toggle.bar": {"icon":"󰍜","label":"Menu Bar","action":"nova-toggle-bar"},
   "toggle.window-gaps": {"icon":"","label":"Window Gaps","action":"nova-hyprland-window-gaps-toggle"},

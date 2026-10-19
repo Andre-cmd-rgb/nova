@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# nova:summary=Detect an NVIDIA GPU, and whether it drives the display or has GSP firmware
+# nova:args=[display|gsp|legacy]
+# nova:hidden=true
+#
+#   (none)    an NVIDIA GPU is present
+#   display   NVIDIA drives the display, rather than a hybrid laptop's iGPU
+#   gsp       the GPU has GSP firmware (Turing or newer)
+#   legacy    the GPU predates GSP (Maxwell, Pascal, Volta)
+#
+# Reads the cached sysfs IDs rather than running lspci, which reads PCI config
+# space and so wakes a runtime-suspended GPU: on a hybrid laptop that wake alone
+# outlasts Hyprland's config reload budget.
+
+set -euo pipefail
+
+pci_devices_path=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
+mode=${1:-present}
+
+case $mode in
+  present | display | gsp | legacy) ;;
+  *)
+    echo "Usage: nova-hw-nvidia [display|gsp|legacy]" >&2
+    exit 2
+    ;;
+esac
+
+nvidia_boot=0
+other_boot=0
+shopt -s nullglob
+for device in "$pci_devices_path"/*; do
+  [[ $(<"$device/class") == 0x03* ]] || continue
+  boot_vga=0
+  if [[ -r $device/boot_vga ]]; then boot_vga=$(<"$device/boot_vga"); fi
+
+  if [[ $(<"$device/vendor") != 0x10de ]]; then
+    if ((boot_vga == 1)); then other_boot=1; fi
+    continue
+  fi
+  if ((boot_vga == 1)); then nvidia_boot=1; fi
+
+  id=$(<"$device/device")
+  case $mode in
+    present) exit 0 ;;
+    # Turing brought GSP firmware and is also where device IDs cross 0x1e00.
+    gsp) if ((id >= 0x1e00)); then exit 0; fi ;;
+    # Maxwell opens at 0x1340, one ID after the last Kepler part; older
+    # parts need a driver Nova does not package.
+    legacy) if ((id >= 0x1340 && id < 0x1e00)); then exit 0; fi ;;
+  esac
+done
+
+if [[ $mode == display ]]; then
+  # With no device claiming boot_vga, assume NVIDIA drives the display.
+  ((other_boot == 0 || nvidia_boot == 1))
+  exit
+fi
+exit 1
