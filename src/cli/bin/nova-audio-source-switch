@@ -2,7 +2,8 @@
 
 # nova:summary=Cycle to the next media source and transfer playback when the current source is playing
 # nova:args=[next|previous]
-# nova:examples=nova audio source switch | nova-audio-source-switch previous
+
+set -euo pipefail
 
 direction="${1:-next}"
 

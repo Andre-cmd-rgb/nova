@@ -2,9 +2,13 @@
 
 # nova:summary=Toggle microphone mute. Drives the hardware mic-mute LED on laptops that expose one.
 
+set -euo pipefail
+
 wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle >/dev/null
 
-if wpctl get-volume @DEFAULT_AUDIO_SOURCE@ | grep -q MUTED; then
+# Compare the output instead of piping into grep -q: with pipefail, grep exiting
+# on its first match can SIGPIPE wpctl and turn a match into a failure.
+if [[ $(wpctl get-volume @DEFAULT_AUDIO_SOURCE@) == *MUTED* ]]; then
   nova-brightness-keyboard-mute on
   nova-osd -i microphone-muted -m "Microphone muted"
 else

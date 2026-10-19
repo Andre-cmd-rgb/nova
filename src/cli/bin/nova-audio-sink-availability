@@ -1,7 +1,9 @@
 #!/bin/bash
 
 # nova:summary=Print PulseAudio sink availability for the shell
-# nova:group=audio
+# nova:hidden=true
+
+set -euo pipefail
 
 # A speaker tuning is a virtual sink in front of the real speakers. Both exist
 # in the graph, but selecting the physical one would only bypass the tuning, so

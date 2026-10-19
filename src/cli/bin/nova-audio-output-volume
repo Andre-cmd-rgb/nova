@@ -2,36 +2,38 @@
 
 # nova:summary=Adjust output volume and show the Nova OSD
 # nova:args=<raise|lower|mute-toggle|+N|-N>
-# nova:examples=nova audio output volume raise | nova audio output volume lower | nova audio output volume mute-toggle | nova audio output volume +1
+
+set -euo pipefail
 
 action="${1:-}"
 
 if [[ -z $action ]]; then
-  echo "Usage: nova-audio-output-volume <raise|lower|mute-toggle|+N|-N>"
+  echo "Usage: nova-audio-output-volume <raise|lower|mute-toggle|+N|-N>" >&2
   exit 1
 fi
 
 # Resolve through any DSP sink to the physical one, so the keys always move real
 # loudness and the processing always sees full-scale input. Shared with the audio
 # panel and the output switcher.
-sink="$(nova-audio-output-sink)"
+sink=$(nova-audio-output-sink)
 if [[ -z $sink ]]; then
   echo "Could not resolve an audio sink to control." >&2
   exit 1
 fi
 
 # pactl reports the same percentage scale wpctl does (both are the raw volume
-# over PA_VOLUME_NORM), so the OSD reads identically either way.
+# over PA_VOLUME_NORM), so the OSD reads identically either way. An unreadable
+# volume prints nothing and the callers decide what that means.
 volume_percent() {
   pactl get-sink-volume "$sink" 2>/dev/null |
     awk 'NR == 1 {
       for (i = 1; i <= NF; i++)
         if ($i ~ /%$/) {sub("%", "", $i); print $i; exit}
-    }'
+    }' || true
 }
 
 volume_muted() {
-  [[ $(pactl get-sink-mute "$sink" 2>/dev/null) == *yes ]]
+  [[ $(pactl get-sink-mute "$sink" 2>/dev/null || true) == *yes ]]
 }
 
 case "$action" in
@@ -40,11 +42,14 @@ case "$action" in
 esac
 
 if [[ $action == "mute-toggle" ]]; then
-  runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
-  debounce_file="$runtime_dir/nova-audio-output-volume-mute-toggle.last"
+  state_dir="${XDG_RUNTIME_DIR:-/tmp}/nova"
+  mkdir -p "$state_dir"
+  debounce_file="$state_dir/audio-mute-toggle.last"
   now=$(date +%s%3N)
   last=0
-  [[ -r $debounce_file ]] && read -r last <"$debounce_file" || true
+  if [[ -r $debounce_file ]]; then
+    read -r last <"$debounce_file" || last=0
+  fi
   if ((now - last < 250)); then
     exit 0
   fi
@@ -55,7 +60,7 @@ elif [[ $action =~ ^([+-])([0-9]+)$ ]]; then
   direction="${BASH_REMATCH[1]}"
   step="${BASH_REMATCH[2]}"
 
-  current="$(volume_percent)"
+  current=$(volume_percent)
   if [[ -z $current ]]; then
     echo "Could not read volume for $sink." >&2
     exit 1
@@ -72,7 +77,7 @@ elif [[ $action =~ ^([+-])([0-9]+)$ ]]; then
   pactl set-sink-mute "$sink" 0
   pactl set-sink-volume "$sink" "${next}%"
 else
-  echo "Unknown volume action: $action"
+  echo "Unknown volume action: $action" >&2
   exit 1
 fi
 

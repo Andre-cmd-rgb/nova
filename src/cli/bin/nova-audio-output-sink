@@ -2,10 +2,8 @@
 
 # nova:summary=Print the sink whose volume and mute a given output really uses
 # nova:args=[sink-name]
-# nova:group=audio
-# nova:examples=nova audio output sink | nova audio output sink nova_speaker_tuning
 
-set -uo pipefail
+set -euo pipefail
 
 # A DSP sink -- a speaker tuning filter-chain, or EasyEffects -- can be the
 # selected output without being where loudness lives. Changing its volume alters
@@ -17,8 +15,14 @@ set -uo pipefail
 # HDMI are selected it returns those, not the speakers a tuning happens to front.
 # Callers that need to describe some *other* output -- an output switcher naming
 # the next one in the rotation -- pass that sink explicitly.
+#
+# Every lookup below is best effort: an idle or missing audio server must still
+# end in the fallback at the bottom, so failures of the probes are tolerated.
 
-sink="${1:-$(pactl get-default-sink 2>/dev/null)}"
+sink=${1:-}
+if [[ -z $sink ]]; then
+  sink=$(pactl get-default-sink 2>/dev/null || true)
+fi
 
 if [[ -z $sink || $sink == alsa_output.* ]]; then
   printf '%s\n' "$sink"
@@ -27,7 +31,7 @@ fi
 
 # A DSP sink feeds its physical output through a stream of its own; follow that
 # stream down to the sink underneath.
-downstream="$(pactl list sink-inputs 2>/dev/null |
+downstream=$(pactl list sink-inputs 2>/dev/null |
   awk -v virt="$sink" '
     BEGIN {
       output = virt
@@ -48,11 +52,11 @@ downstream="$(pactl list sink-inputs 2>/dev/null |
     END {
       if (selected != "") print selected
       else if (fallback != "") print fallback
-    }')"
+    }' || true)
 
 if [[ -n $downstream ]]; then
-  name="$(pactl list sinks short 2>/dev/null |
-    awk -v id="$downstream" '$1 == id {print $2; exit}')"
+  name=$(pactl list sinks short 2>/dev/null |
+    awk -v id="$downstream" '$1 == id && !done {print $2; done = 1}' || true)
   if [[ -n $name ]]; then
     printf '%s\n' "$name"
     exit 0
@@ -66,22 +70,24 @@ fi
 # does not follow. Follow the port links instead: the first ALSA or Bluetooth
 # sink any EasyEffects output port is linked to.
 if [[ $sink == "easyeffects_sink" ]]; then
-  linked="$(pw-link -l 2>/dev/null |
+  linked=$(pw-link -l 2>/dev/null |
     awk '
       /^[^ ]/ {src = $0}
       /^[[:space:]]*\|->/ {
-        if (src ~ /^ee_/ && $2 ~ /^(alsa|bluez)_output\..*:playback_/) {
-          sub(/:playback_.*$/, "", $2); print $2; exit
+        if (!done && src ~ /^ee_/ && $2 ~ /^(alsa|bluez)_output\..*:playback_/) {
+          sub(/:playback_.*$/, "", $2); print $2; done = 1
         }
-      }')"
+      }' || true)
 
   # Idle, EasyEffects drops those links: fall back to the output device it is
   # configured to feed, when that sink exists.
   if [[ -z $linked ]]; then
-    configured="$(sed -n 's/^outputDevice=//p' \
-      "${XDG_CONFIG_HOME:-$HOME/.config}/easyeffects/db/easyeffectsrc" 2>/dev/null)"
-    if [[ -n $configured ]] && pactl list sinks short 2>/dev/null | awk '{print $2}' | grep -qxF -- "$configured"; then
-      linked="$configured"
+    configured=$(sed -n 's/^outputDevice=//p' \
+      "${XDG_CONFIG_HOME:-$HOME/.config}/easyeffects/db/easyeffectsrc" 2>/dev/null || true)
+    if [[ -n $configured ]] &&
+      pactl list sinks short 2>/dev/null |
+        awk -v want="$configured" '$2 == want {found = 1} END {exit !found}'; then
+      linked=$configured
     fi
   fi
 
