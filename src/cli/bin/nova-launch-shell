@@ -3,6 +3,10 @@
 # nova:summary=Launch the Nova shell with its log kept in the journal
 # nova:hidden=true
 
+set -euo pipefail
+
+: "${NOVA_PATH:=/usr/share/nova}"
+
 # Quickshell only logs to its instance runtime dir (tmpfs), so when the shell
 # dies the idle/lock event trail is gone after a reboot. The journal keeps it
 # across sessions, bounded and timestamped, under the nova-shell tag.
@@ -21,15 +25,15 @@ run_shell() {
 
   local status
   while true; do
-    wait "$shell_pid"
-    status=$?
+    status=0
+    wait "$shell_pid" || status=$?
 
     # An interrupted wait and a shell killed by that signal report alike.
     kill -0 "$shell_pid" 2>/dev/null || break
   done
 
   shell_pid=""
-  return $status
+  return "$status"
 }
 
 # A compositor busy reconfiguring outputs can miss a query without being gone,
@@ -39,7 +43,7 @@ compositor_alive() {
 
   for attempt in 1 2 3; do
     hyprctl -j monitors >/dev/null 2>&1 && return 0
-    (( attempt < 3 )) && sleep 0.5
+    if ((attempt < 3)); then sleep 0.5; fi
   done
 
   return 1
@@ -55,7 +59,7 @@ shell_pid=""
 
 stop() {
   terminating=1
-  [[ -n $shell_pid ]] && kill -TERM "$shell_pid" 2>/dev/null
+  if [[ -n $shell_pid ]]; then kill -TERM "$shell_pid" 2>/dev/null || true; fi
   return 0
 }
 trap stop HUP INT TERM
@@ -65,23 +69,23 @@ window_started=$SECONDS
 
 while true; do
   # A signal during the backoff only reaches the trap once the sleep is over.
-  (( terminating )) && exit 0
+  if ((terminating)); then exit 0; fi
 
-  run_shell
-  status=$?
+  status=0
+  run_shell || status=$?
 
-  (( terminating )) && exit 0
-  (( status == 0 )) && exit 0
+  if ((terminating || status == 0)); then exit 0; fi
 
   # Relaunching into a session already tearing down burns the attempt budget.
   compositor_alive || exit 0
 
-  if (( SECONDS - window_started > 60 )); then
+  if ((SECONDS - window_started > 60)); then
     attempts=0
     window_started=$SECONDS
   fi
 
-  if (( ++attempts > 5 )); then
+  attempts=$((attempts + 1))
+  if ((attempts > 5)); then
     logger -t nova-shell "Giving up on the Nova shell after $attempts relaunches in under a minute."
     exit 1
   fi

@@ -12,18 +12,25 @@
 #   --set <name> [lat,lon]  store a location
 #   --clear             return to IP auto-detect
 
+set -euo pipefail
+
 LOC_FILE="$HOME/.local/state/nova/settings/weather.json"
 COORDS_PATTERN='^(-?[0-9]+(\.[0-9]+)?),(-?[0-9]+(\.[0-9]+)?)$'
 
 case "${1:-}" in
 "")
   name=""
-  [[ -f $LOC_FILE ]] && name=$(jq -r '.name // "" | if type == "string" then . else "" end' "$LOC_FILE" 2>/dev/null)
-  if [[ -z $name ]]; then
-    name=$(curl -fsS --max-time 4 "https://wttr.in/?format=%l" 2>/dev/null)
-    name=${name%%,*}
+  if [[ -f $LOC_FILE ]]; then
+    name=$(jq -r '.name // "" | if type == "string" then . else "" end' "$LOC_FILE" 2>/dev/null || true)
   fi
-  [[ -n $name ]] && echo "$name"
+  if [[ -z $name ]]; then
+    name=$(curl -fsS --max-time 4 "https://wttr.in/?format=%l" 2>/dev/null || true)
+    # A city comes back as "City, Region"; an unnamed place as "lat,lon",
+    # which stays whole so it still works as a query.
+    [[ $name =~ $COORDS_PATTERN ]] || name=${name%%,*}
+  fi
+  [[ -n $name ]] || exit 1
+  echo "$name"
   ;;
 --set)
   [[ -n ${2:-} ]] || { echo "Usage: nova-weather-location --set <name> [lat,lon]" >&2; exit 1; }
@@ -34,7 +41,8 @@ case "${1:-}" in
     location=$(jq -n --arg name "$2" '{$name}')
   fi
   mkdir -p "$(dirname "$LOC_FILE")"
-  echo "$location" >"$LOC_FILE"
+  echo "$location" >"$LOC_FILE.tmp"
+  mv "$LOC_FILE.tmp" "$LOC_FILE"
   ;;
 --clear)
   rm -f "$LOC_FILE"

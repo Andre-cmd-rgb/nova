@@ -2,14 +2,22 @@
 
 # nova:summary=Monitor sleep preparation and lock before suspend
 # nova:hidden=true
+#
+# Holds a logind delay inhibitor and watches PrepareForSleep; when the machine
+# is about to suspend, nova-system-sleep-lock secures the session before the
+# inhibitor is released (by this process exiting, after which systemd restarts
+# it for the next sleep).
+
+set -euo pipefail
+
+here=$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")
 
 consume_sleep_events() {
-  local line sleep_lock
-  sleep_lock="$NOVA_PATH/bin/nova-system-sleep-lock"
+  local line
 
   while IFS= read -r line; do
     if [[ $line == *"boolean true"* ]]; then
-      "$sleep_lock"
+      "$here/nova-system-sleep-lock" || true
       return 0
     fi
   done
@@ -31,8 +39,8 @@ monitor_sleep_events() {
   }
   trap cleanup_monitor EXIT
 
-  consume_sleep_events <&"$monitor_fd"
-  status=$?
+  status=0
+  consume_sleep_events <&"$monitor_fd" || status=$?
   cleanup_monitor
   trap - EXIT
 
@@ -50,11 +58,9 @@ case ${1:-} in
     ;;
 esac
 
-sleep_monitor="$NOVA_PATH/bin/nova-system-sleep-monitor"
-
 exec systemd-inhibit \
   --what=sleep \
   --mode=delay \
   --who=Nova \
   --why="Lock screen before suspend" \
-  "$sleep_monitor" --inhibited
+  "$here/nova-system-sleep-monitor" --inhibited

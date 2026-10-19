@@ -3,4 +3,6 @@
 # nova:summary=Enable, disable, or toggle the touchpad
 # nova:args=[on|off|toggle]
 
+set -euo pipefail
+
 exec nova-toggle-input-device touchpad "${1:-toggle}"

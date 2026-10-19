@@ -9,6 +9,7 @@
 # none of them needs root. An app that is not installed or not running is
 # skipped.
 
+# shellcheck disable=SC2329 # each apply_<app> is called by name below
 set -euo pipefail
 
 state=${XDG_STATE_HOME:-$HOME/.local/state}/nova

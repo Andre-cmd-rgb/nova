@@ -3,6 +3,8 @@
 # nova:summary=Lock before suspend and wait for the session lock to become secure
 # nova:hidden=true
 
+set -euo pipefail
+
 # Overrunning the budget is the failure this whole path exists to prevent:
 # logind stops honouring the inhibitor and suspends mid-lock. Every call below
 # is bounded by what is left of the budget, so the deadline enforces itself
@@ -21,21 +23,21 @@ derive_budget_ms() {
   local window
   window=$(timeout --kill-after=0.1s 1s busctl get-property \
     org.freedesktop.login1 /org/freedesktop/login1 \
-    org.freedesktop.login1.Manager InhibitDelayMaxUSec 2>/dev/null)
+    org.freedesktop.login1.Manager InhibitDelayMaxUSec 2>/dev/null || true)
   window=${window##* }
 
   # An unreadable window means we cannot know, so assume logind's own default.
-  [[ $window =~ ^[0-9]+$ ]] && (( window > 0 )) || window=5000000
+  if [[ ! $window =~ ^[0-9]+$ ]] || ((window == 0)); then window=5000000; fi
   window=$((window / 1000))
 
   # Never leave logind less than a second, however small its window is.
   window=$((window - (window / 5 > 1000 ? window / 5 : 1000)))
 
-  (( window < budget_cap_ms )) && echo "$window" || echo "$budget_cap_ms"
+  if ((window < budget_cap_ms)); then echo "$window"; else echo "$budget_cap_ms"; fi
 }
 
 budget_ms=${1:-$(derive_budget_ms)}
-if [[ ! $budget_ms =~ ^[0-9]+$ ]] || (( budget_ms < 1 || budget_ms > budget_cap_ms )); then
+if [[ ! $budget_ms =~ ^[0-9]+$ ]] || ((budget_ms < 1 || budget_ms > budget_cap_ms)); then
   budget_ms=$(derive_budget_ms)
 fi
 
@@ -55,8 +57,8 @@ lock_ipc() {
   shift
 
   remaining=$(remaining_ms)
-  (( remaining > 0 )) || return 1
-  (( limit < remaining )) || limit=$remaining
+  ((remaining > 0)) || return 1
+  ((limit < remaining)) || limit=$remaining
   printf -v seconds '%d.%03d' $((limit / 1000)) $((limit % 1000))
 
   NOVA_SHELL_IPC_TIMEOUT="$seconds" \
@@ -68,7 +70,7 @@ lock_ipc() {
 # the status poll is what confirms success, and re-requesting is idempotent, so
 # a request that may not have landed costs nothing to repeat.
 request_lock() {
-  case $(lock_ipc "$lock_timeout_ms" lock lock 2>/dev/null) in
+  case $(lock_ipc "$lock_timeout_ms" lock lock 2>/dev/null || true) in
     missing-pam) report_unsecured "no lock screen is configured" ;;
   esac
 }
@@ -79,7 +81,7 @@ lock_state() {
   jq -r 'if .secure == true then "secure"
          elif .requested == true then "locking"
          else "idle" end' \
-    <<<"$(lock_ipc "$status_timeout_ms" lock status 2>/dev/null)" 2>/dev/null
+    <<<"$(lock_ipc "$status_timeout_ms" lock status 2>/dev/null || true)" 2>/dev/null || true
 }
 
 sync_clamshell() {
@@ -110,7 +112,7 @@ sync_clamshell
 
 # The trailing sleep can overshoot the deadline by one interval, which is well
 # inside the reserve derive_budget_ms already held back for logind.
-while (( $(remaining_ms) > 0 )); do
+while (($(remaining_ms) > 0)); do
   case $(lock_state) in
     secure) exit 0 ;;
     locking) ;;

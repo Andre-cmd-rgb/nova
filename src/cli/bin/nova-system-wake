@@ -1,8 +1,12 @@
 #!/bin/bash
 
 # nova:summary=Wake displays and restore brightness after idle
-# nova:name=wake
+# nova:hidden=true
 
-nova-brightness-display on
-nova-brightness-keyboard restore
+set -euo pipefail
+
+# Best effort: a laptop without a keyboard backlight must still get its
+# displays back.
+nova-brightness-display on || true
+nova-brightness-keyboard restore || true
 nova-hyprland-monitor-clamshell >/dev/null 2>&1 || true

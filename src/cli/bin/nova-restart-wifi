@@ -1,11 +1,11 @@
 #!/bin/bash
 
-# nova:summary=Unblock and restart the Wi-Fi service.
+# nova:summary=Unblock Wi-Fi and turn networking back on
 
-echo -e "Unblocking wifi...\n"
+set -euo pipefail
 
 rfkill unblock wifi
 nmcli networking on
 nmcli radio wifi on
 nmcli device wifi rescan 2>/dev/null || true
-rfkill list wifi
+nova-notification-send -g 󱚾 "Wi-Fi restarted"

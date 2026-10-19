@@ -1,16 +1,13 @@
 #!/bin/bash
 
 # nova:summary=Reboot after closing application windows
-# nova:aliases=nova reboot
 
-# Schedule the reboot in the user manager so closing the terminal's systemd
-# scope cannot terminate it before it runs.
-systemd-run --user --collect --quiet --on-active="2s" --timer-property=AccuracySec=100ms systemctl reboot --no-wall || exit 1
+set -euo pipefail
 
-nova-osd -i reboot -m "Rebooting" -d 5000
+# Scheduled in the user manager, so closing the caller's scope cannot cancel it.
+systemd-run --user --collect --quiet --on-active=2s --timer-property=AccuracySec=100ms \
+  systemctl reboot --no-wall
 
-nova-state clear re*-required
-
-# Now close all windows
-nova-hyprland-window-close-all
-sleep 1 # Allow apps like Chrome to shutdown correctly
+nova-osd -i reboot -m "Restarting" -d 5000 || true
+nova-hyprland-window-close-all || true
+sleep 1 # Let apps like Chrome shut down cleanly

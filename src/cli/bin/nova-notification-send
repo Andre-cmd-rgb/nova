@@ -194,7 +194,7 @@ hint_count=$((${#hints[@]} / 3))
 notify_cmd=(
   busctl --user -- call
   org.freedesktop.Notifications /org/freedesktop/Notifications
-  org.freedesktop.Notifications Notify susssasa{sv}i
+  org.freedesktop.Notifications Notify 'susssasa{sv}i'
   "$app_name" "$replaces_id" "$app_icon" "$headline" "$description"
   0
   "$hint_count" "${hints[@]}"

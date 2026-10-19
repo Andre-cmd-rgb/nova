@@ -3,6 +3,8 @@
 # nova:summary=Send an IPC call to the running Nova shell
 # nova:args=[-q] <target> <method> [args...]
 
+set -euo pipefail
+
 QUIET=0
 if [[ ${1:-} == "-q" ]]; then
   QUIET=1
@@ -10,12 +12,12 @@ if [[ ${1:-} == "-q" ]]; then
 fi
 
 fail() {
-  (( QUIET )) && exit 0
+  if ((QUIET)); then exit 0; fi
   echo "$1" >&2
   exit 1
 }
 
-if (( $# == 0 )) || [[ $1 == "-h" || $1 == "--help" ]]; then
+if (($# == 0)) || [[ $1 == "-h" || $1 == "--help" ]]; then
   cat <<USAGE
 Usage: nova-shell [-q] <target> <method> [args...]
 
@@ -35,19 +37,22 @@ USAGE
   exit 0
 fi
 
-(( $# >= 2 )) || fail "Usage: nova-shell <target> <method> [args...]"
-[[ -n ${NOVA_PATH:-} ]] || fail "NOVA_PATH is not set"
+(($# >= 2)) || fail "Usage: nova-shell <target> <method> [args...]"
+NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
 [[ -f $NOVA_PATH/shell/shell.qml ]] || fail "nova-shell config not found: $NOVA_PATH/shell/shell.qml"
 
 # qs matches instances by display, and a caller from outside the session (an
 # ssh or TTY nova-restart-shell, and the migrations it runs for) has none,
 # so recover it from the compositor socket.
 if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
-  socket=$(ls -t "${XDG_RUNTIME_DIR:-/run/user/$UID}"/wayland-[0-9]* 2>/dev/null | grep -v '\.lock$' | head -n1)
-  [[ -n $socket ]] && export WAYLAND_DISPLAY=${socket##*/}
+  for socket in "${XDG_RUNTIME_DIR:-/run/user/$UID}"/wayland-[0-9]*; do
+    [[ -S $socket ]] || continue
+    if [[ -z ${newest:-} || $socket -nt $newest ]]; then newest=$socket; fi
+  done
+  if [[ -n ${newest:-} ]]; then export WAYLAND_DISPLAY=${newest##*/}; fi
 fi
 
-if [[ $1 == "shell" && ( $2 == "summon" || $2 == "toggle" ) ]] && (( $# == 3 )); then
+if [[ $1 == "shell" && ($2 == "summon" || $2 == "toggle") ]] && (($# == 3)); then
   set -- "$1" "$2" "$3" "{}"
 fi
 
@@ -55,12 +60,12 @@ fi
 # positionals. qs reports connection failures with a nonzero exit, but IPC-level
 # failures (unknown target/function, bad arguments) go to stdout with exit 0.
 ipc_timeout=${NOVA_SHELL_IPC_TIMEOUT:-2s}
-output=$(timeout --kill-after=1s "$ipc_timeout" qs ipc -n -p "$NOVA_PATH/shell" call -- "$@" 2>/dev/null)
-ipc_status=$?
+ipc_status=0
+output=$(timeout --kill-after=1s "$ipc_timeout" qs ipc -n -p "$NOVA_PATH/shell" call -- "$@" 2>/dev/null) || ipc_status=$?
 
-if (( ipc_status == 124 || ipc_status == 137 )); then
+if ((ipc_status == 124 || ipc_status == 137)); then
   fail "nova-shell is not responding"
-elif (( ipc_status != 0 )); then
+elif ((ipc_status != 0)); then
   fail "nova-shell is not running"
 fi
 
@@ -75,7 +80,7 @@ case $output in
     ;;
 esac
 
-if (( !QUIET )) && [[ -n $output ]]; then
+if ((!QUIET)) && [[ -n $output ]]; then
   echo "$output"
 fi
 exit 0

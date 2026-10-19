@@ -1,7 +1,10 @@
 #!/bin/bash
 
-# nova:summary=Unblock and restart the bluetooth service.
+# nova:summary=Unblock Bluetooth and restart its service
 
-echo -e "Unblocking bluetooth...\n"
+set -euo pipefail
+
 rfkill unblock bluetooth
-rfkill list bluetooth
+# Restarting a system service asks for authorization through polkit.
+systemctl restart bluetooth.service
+nova-notification-send -g 󰂯 "Bluetooth restarted"

@@ -1,6 +1,9 @@
 #!/bin/bash
 
-# nova:summary=Display Hyprland keybindings defined in your configuration using an interactive search menu.
+# nova:summary=Search the keybindings and run the one picked
+# nova:args=[--print]
+
+set -euo pipefail
 
 # Hyprland's Lua config provider currently reports Lua binds as dispatcher
 # __lua in `hyprctl binds`. Keep a lightweight source-derived cache so the
@@ -260,7 +263,6 @@ modmask_to_text() {
 #
 # Also do some pre-processing:
 # - Fill missing Lua code:... keys and __lua dispatch metadata from the Lua source cache
-# - Remove standard Nova bin path prefix
 # - Map numeric modifier key mask to a textual rendition
 # - Output comma-separated values that the parser can understand
 dynamic_bindings() {
@@ -289,13 +291,13 @@ dynamic_bindings() {
       fi
 
       if [[ -z $key && -n $description ]]; then
-        key="${LUA_BIND_KEY_MAP["$modmask,$description"]}"
+        key="${LUA_BIND_KEY_MAP["$modmask,$description"]:-}"
       fi
 
       if [[ $dispatcher == "__lua" && -n $description && -n $key ]]; then
         cache_key="$modmask,$description,$key"
-        dispatcher="${LUA_BIND_DISPATCHER_MAP["$cache_key"]}"
-        arg="${LUA_BIND_ARG_MAP["$cache_key"]}"
+        dispatcher="${LUA_BIND_DISPATCHER_MAP["$cache_key"]:-}"
+        arg="${LUA_BIND_ARG_MAP["$cache_key"]:-}"
       fi
 
       [[ -z $description && $dispatcher == "__lua" ]] && continue
@@ -312,16 +314,9 @@ dynamic_bindings() {
       esac
 
       modifiers=$(modmask_to_text "$modmask")
-      arg="${arg//~\/.local\/share\/nova\/bin\//}"
 
       printf '%s,%s,%s,%s,%s\n' "$modifiers" "$key" "$description" "$dispatcher" "$arg"
     done
-}
-
-# Hardcoded bindings, like the copy-url extension and such
-static_bindings() {
-  echo "SHIFT ALT,L,Copy URL from Web App,sendshortcut,SHIFT ALT,L,"
-  echo "SHIFT ALT,D,Download Video from Web App,sendshortcut,SHIFT ALT,D,"
 }
 
 # Parse and format keybindings
@@ -401,8 +396,6 @@ prioritize_entries() {
     if (match(line, /Color picker/))  prio = 22
     if (match(line, /Screenshot/))  prio = 23
     if (match(line, /Screenrecording/))  prio = 24
-    if (match(line, /Tmux/)) prio = 25
-    if (match(line, /Herdr/)) prio = 26
     if (match(line, /SUPER SHIFT.*\+.*B.*→.*Browser/)) prio = 27
     if (match(line, /File manager \(cwd\)/))  prio = 28
     if (match(line, /(Switch|Next|Former|Previous).*workspace/))  prio = 29
@@ -424,10 +417,7 @@ prioritize_entries() {
     if (match(line, /Scroll active workspace/))  prio = 95
     if (match(line, /Cycle to/))  prio = 96
     if (match(line, /Reveal active/))  prio = 97
-    if (match(line, /Apple Display/))  prio = 98
     if (match(line, /XF86/))  prio = 99
-    if (match(line, /Tmux keybindings/)) prio = 100
-    if (match(line, /Herdr keybindings/)) prio = 101
 
     # print "priority<TAB>record"
     printf "%d\t%s\n", prio, $0
@@ -440,27 +430,24 @@ output_binding_records_uncached() {
   local dynamic
 
   build_lua_bind_cache
-  dynamic=$(dynamic_bindings)
+  dynamic=$(dynamic_bindings || true)
 
-  {
-    [[ -n $dynamic ]] && printf '%s\n' "$dynamic"
-    static_bindings
-  } |
+  # Fail when Hyprland reported no binds so the fallout of a broken hyprctl
+  # is never cached.
+  [[ -n $dynamic ]] || return 1
+
+  printf '%s\n' "$dynamic" |
     sort -u |
     parse_keycodes |
     parse_binding_records |
     prioritize_entries
-
-  # Fail when Hyprland reported no binds so the fallout of a broken hyprctl
-  # is never cached.
-  [[ -n $dynamic ]]
 }
 
 keybindings_cache_key() {
   {
     printf 'v11\n'
-    hyprctl devices 2>/dev/null | grep -F 'active keymap:'
-    hyprctl binds 2>/dev/null
+    hyprctl devices 2>/dev/null | grep -F 'active keymap:' || true
+    hyprctl binds 2>/dev/null || true
   } | sha256sum | awk '{ print $1 }'
 }
 
@@ -518,11 +505,11 @@ dispatch_lua_expression() {
   local expression="$1"
   local output status
 
-  output=$(hyprctl dispatch "$expression" 2>&1)
-  status=$?
+  status=0
+  output=$(hyprctl dispatch "$expression" 2>&1) || status=$?
 
-  if (( status == 0 )) && [[ -z $output || $output == "ok" ]]; then
-    [[ -n $output ]] && printf '%s\n' "$output"
+  if ((status == 0)) && [[ -z $output || $output == "ok" ]]; then
+    if [[ -n $output ]]; then printf '%s\n' "$output"; fi
     return 0
   fi
 
@@ -544,7 +531,7 @@ dispatch_sendshortcut_binding() {
   key=$(trim "$key")
   window=$(trim "$window")
 
-  [[ -z $window ]] && window="activewindow"
+  [[ -n $window ]] || window="activewindow"
 
   if [[ -n $key ]] && dispatch_lua_expression "hl.dsp.send_key_state({ mods = $(lua_string "$mods"), key = $(lua_string "$key"), state = \"down\", window = $(lua_string "$window") })"; then
     sleep 0.05
@@ -580,12 +567,12 @@ dispatch_binding() {
   esac
 }
 
-if [[ $1 == "--print" || $1 == "-p" ]]; then
+if [[ ${1:-} == "--print" || ${1:-} == "-p" ]]; then
   output_keybindings
 else
   records=$(output_binding_records)
   selection=$(cut -f1 <<<"$records" |
-    nova-menu-select 'Keybindings' -- --width 800 --height 500)
+    nova-menu-select 'Keybindings' -- --width 800 --height 500) || exit 0
 
   if [[ -n $selection ]]; then
     record=$(awk -F '\t' -v selection="$selection" '$1 == selection { print; exit }' <<<"$records")

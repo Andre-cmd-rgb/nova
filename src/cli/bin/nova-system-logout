@@ -1,12 +1,12 @@
 #!/bin/bash
 
 # nova:summary=Log out after closing application windows
-# nova:aliases=nova logout
 
+set -euo pipefail
+
+# Detached, so closing this caller's window cannot cancel the logout.
 nohup bash -c "sleep 2 && uwsm stop" >/dev/null 2>&1 &
 
-nova-osd -i logout -m "Logging out" -d 5000
-
-# Now close all windows
-nova-hyprland-window-close-all
-sleep 1 # Allow apps like Chrome to shutdown correctly
+nova-osd -i logout -m "Logging out" -d 5000 || true
+nova-hyprland-window-close-all || true
+sleep 1 # Let apps like Chrome shut down cleanly

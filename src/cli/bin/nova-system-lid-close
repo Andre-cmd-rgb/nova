@@ -3,6 +3,8 @@
 # nova:summary=Lock and reconcile displays when the laptop lid closes
 # nova:hidden=true
 
+set -euo pipefail
+
 # Locking here rather than waiting for PrepareForSleep is what keeps the lock
 # off the critical path. logind's delay inhibitor is a timer that expires
 # whether or not the session is secure, so starting the lock the moment the lid

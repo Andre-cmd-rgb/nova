@@ -5,7 +5,9 @@ ConditionPathExists=%h/.local/state/nova/toggles/hypr/internal-monitor-disable.l
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/nova-hw-recover-internal-monitor
+# Nova's helpers call each other by name.
+Environment=PATH=/usr/lib/nova/bin:/usr/local/bin:/usr/bin
+ExecStart=/usr/lib/nova/bin/nova-hw-recover-internal-monitor
 
 [Install]
 WantedBy=graphical-session-pre.target

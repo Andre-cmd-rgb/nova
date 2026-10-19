@@ -1,65 +1,25 @@
 #!/bin/bash
 
-# nova:summary=Toggle idle behavior so the system either idles normally or stays awake
-# nova:args=[toggle|stay-awake|allow-idle|status]
+# nova:summary=Toggle Stay Awake, which keeps the screen from idling and locking
+# nova:args=[toggle|on|off|status]
+#
+# The shell's idle service owns the state (and persists it), so this only asks
+# it over IPC.
 
-STATE_DIR="$HOME/.local/state/nova/indicators"
-STATE_FILE="$STATE_DIR/stay-awake"
+set -euo pipefail
 
-stay_awake_enabled() {
-  [[ -f $STATE_FILE ]]
-}
-
-print_status() {
-  if stay_awake_enabled; then
-    printf '{"enabled":true,"class":"enabled","tooltip":"Allow Idle Lock & Screensaver"}\n'
-  else
-    printf '{"enabled":false,"class":"disabled","tooltip":"Stay Awake"}\n'
-  fi
-}
-
-print_idle_state() {
-  if stay_awake_enabled; then
-    printf 'disabled\n'
-  else
-    printf 'enabled\n'
-  fi
-}
-
-apply_state() {
-  case "$1" in
-    stay-awake)
-      mkdir -p "$STATE_DIR"
-      touch "$STATE_FILE"
-      ;;
-    allow-idle)
-      rm -f "$STATE_FILE"
-      ;;
-  esac
-}
-
-case "${1:-toggle}" in
-  toggle)
-    if stay_awake_enabled; then
-      apply_state allow-idle
-    else
-      apply_state stay-awake
-    fi
-    print_idle_state
-    ;;
-  stay-awake|awake|on)
-    apply_state stay-awake
-    print_idle_state
-    ;;
-  allow-idle|idle|off)
-    apply_state allow-idle
-    print_idle_state
-    ;;
-  status|--status)
-    print_status
-    ;;
+case ${1:-toggle} in
+  toggle) method=toggle ;;
+  on) method=disable ;;
+  off) method=enable ;;
+  status) method=status ;;
   *)
-    echo "Usage: nova-toggle-idle [toggle|stay-awake|allow-idle|status]" >&2
-    exit 1
+    echo "Usage: nova-toggle-idle [toggle|on|off|status]" >&2
+    exit 2
     ;;
 esac
+
+status=$(nova-shell idle "$method")
+if [[ $method == status ]]; then
+  printf '%s\n' "$status"
+fi

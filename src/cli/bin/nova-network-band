@@ -100,7 +100,7 @@ available_bands() {
           for (i = 3; i <= NF; i++) name = name ":" $i
           if (name == want) print $1
         }' |
-      while read -r freq; do band_for_freq "$freq" || true; done
+      while read -r f; do band_for_freq "$f" || true; done
   } | sort -u -g | tr '\n' ' ' | sed 's/ $//'
 }
 

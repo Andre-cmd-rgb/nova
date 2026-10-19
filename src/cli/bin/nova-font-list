@@ -6,4 +6,4 @@ set -euo pipefail
 
 # awk rather than grep -v: an empty list is a valid answer, and grep would
 # report it as a failure under pipefail.
-fc-list :spacing=100 -f "%{family[0]}\n" | awk 'tolower($0) !~ /emoji|signwriting|nova/' | sort -u
+fc-list :spacing=100 -f "%{family[0]}\n" | awk 'tolower($0) !~ /emoji|signwriting/' | sort -u

@@ -1,24 +1,24 @@
 #!/bin/bash
 
-# nova:summary=Returns a formatted weather status string with temperature and wind speed.
+# nova:summary=Print the weather: place, temperature and wind
 
-place=$(nova-weather-location 2>/dev/null)
+set -euo pipefail
 
-if [[ -z $place ]]; then
+unavailable() {
   echo "Weather unavailable"
   exit 1
-fi
+}
+
+place=$(nova-weather-location 2>/dev/null || true)
+[[ -n $place ]] || unavailable
 
 query=$(jq -rn --arg place "$place" '$place | @uri')
-weather=$(curl -fsS --max-time 4 "https://wttr.in/${query}?format=%t|%w" 2>/dev/null | tr -d '\n')
+weather=$(curl -fsS --max-time 4 "https://wttr.in/${query}?format=%t|%w" 2>/dev/null || true)
+weather=${weather//$'\n'/}
+[[ -n $weather ]] || unavailable
 
-if [[ -z $weather ]]; then
-  echo "Weather unavailable"
-  exit 1
-fi
-
-IFS='|' read -r temperature wind <<< "$weather"
-place=${place^}
+IFS='|' read -r temperature wind <<<"$weather"
+if [[ $place =~ ^-?[0-9.]+,-?[0-9.]+$ ]]; then place="Here"; else place=${place^}; fi
 temperature=${temperature#+}
 
 echo "$place  ·  Temp $temperature  ·  Wind $wind"

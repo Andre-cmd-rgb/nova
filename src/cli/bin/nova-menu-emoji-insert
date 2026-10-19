@@ -4,11 +4,12 @@
 # nova:args=<emoji>
 # nova:hidden=true
 
-emoji="${1:-}"
-copy_pid=""
+set -euo pipefail
 
-[[ -n $emoji ]] || exit
+emoji=${1:-}
+[[ -n $emoji ]] || exit 0
 
+# Paste through the clipboard: wtype cannot type most emoji directly.
 printf '%s' "$emoji" | wl-copy --type text/plain --sensitive --foreground &
 copy_pid=$!
 

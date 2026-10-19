@@ -1,19 +1,22 @@
 #!/bin/bash
 
-# nova:summary=Returns a weather condition icon, adjusted for live sunrise and sunset.
+# nova:summary=Print a weather condition icon, adjusted for live sunrise and sunset
+# nova:hidden=true
+
+set -euo pipefail
 
 # Only consult the helper when a location is stored. Its dynamic fallback would
 # cost an extra wttr.in request when nothing is set; the bare j1 fetch already
 # auto-detects by IP.
 query=""
 if [[ -s "$HOME/.local/state/nova/settings/weather.json" ]]; then
-  location=$(nova-weather-location 2>/dev/null)
-  [[ -n $location ]] && query=$(jq -rn --arg location "$location" '$location | @uri')
+  location=$(nova-weather-location 2>/dev/null || true)
+  if [[ -n $location ]]; then query=$(jq -rn --arg location "$location" '$location | @uri'); fi
 fi
 
 weather_data=$(curl -fsS --max-time 3 "https://wttr.in/${query}?format=j1" 2>/dev/null | jq -er '[.current_condition[0].weatherCode, .weather[0].astronomy[0].sunrise, .weather[0].astronomy[0].sunset] | select(all(. != null and . != "")) | @tsv' 2>/dev/null) || exit 1
 
-IFS=$'\t' read -r weather_code sunrise sunset <<< "$weather_data"
+IFS=$'\t' read -r weather_code sunrise sunset <<<"$weather_data"
 if [[ ! $weather_code =~ ^[0-9]+$ || ! $sunrise =~ ^[0-9]{1,2}:[0-9]{2}\ [AP]M$ || ! $sunset =~ ^[0-9]{1,2}:[0-9]{2}\ [AP]M$ ]]; then
   exit 1
 fi

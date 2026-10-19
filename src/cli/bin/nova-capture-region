@@ -28,6 +28,7 @@ WINDOW_MARKER="$STATE_DIR/capture-region-window"
 mkdir -p "$STATE_DIR"
 
 # accounting for portrait/transformed displays
+# shellcheck disable=SC2016 # a jq program, expanded by jq
 JQ_MONITOR_GEO='
   def format_geo:
     .x as $x | .y as $y |

@@ -1,22 +1,29 @@
 #!/bin/bash
 
 # nova:summary=Print monitor panel state for the shell
+# nova:hidden=true
+#
+# One value per line, in the order the monitor panel reads them: brightness,
+# internal, external, enabled internal, mirrored, focused, scaling, then the
+# monitor list as JSON.
+
+set -euo pipefail
 
 monitors_json=$(hyprctl monitors all -j)
-focused_monitor=$(printf '%s\n' "$monitors_json" | jq -r '[.[] | select(.focused == true)][0].name // ""')
+focused_monitor=$(jq -r '[.[] | select(.focused == true)][0].name // ""' <<<"$monitors_json")
 
-{ nova-brightness-display --monitor "$focused_monitor" 2>/dev/null; echo; } | head -n 1
+brightness=$(nova-brightness-display --monitor "$focused_monitor" 2>/dev/null || true)
+printf '%s\n' "${brightness%%$'\n'*}"
 
-printf '%s\n' "$monitors_json" | jq -r '
+jq -r '
   def internal: test("^(eDP|LVDS|DSI)-");
   ([.[] | select(.name | internal)][0].name // ""),
   ([.[] | select((.name | internal) | not)][0].name // ""),
   ([.[] | select((.name | internal) and .disabled != true)][0].name // ""),
   ([.[] | select(.mirrorOf != "none") | if (.name | internal) then .mirrorOf else .name end][0] // "")
-'
+' <<<"$monitors_json"
 
 printf '%s\n' "$focused_monitor"
 nova-hyprland-monitor-scaling 2>/dev/null || echo
 
-printf '%s\n' "$monitors_json" | jq -c \
-  '[.[] | {name, enabled:(.disabled != true), focused:(.focused == true), width, height}]'
+jq -c '[.[] | {name, enabled:(.disabled != true), focused:(.focused == true), width, height}]' <<<"$monitors_json"

@@ -2,5 +2,13 @@
 
 # nova:summary=Check if a toggle is enabled (flag file exists)
 # nova:args=<flag-name>
+# nova:hidden=true
 
-[[ -f "$HOME/.local/state/nova/toggles/$1" ]]
+set -euo pipefail
+
+if (($# != 1)); then
+  echo "Usage: nova-toggle-enabled <flag-name>" >&2
+  exit 2
+fi
+
+[[ -f $HOME/.local/state/nova/toggles/$1 ]]

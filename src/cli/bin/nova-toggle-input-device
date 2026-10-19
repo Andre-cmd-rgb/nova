@@ -4,73 +4,67 @@
 # nova:args=<touchpad|touchscreen> [on|off|toggle]
 # nova:hidden=true
 
-KIND="${1:-}"
-ACTION="${2:-toggle}"
+set -euo pipefail
 
 usage() {
   echo "Usage: nova-toggle-input-device <touchpad|touchscreen> [on|off|toggle]" >&2
+  exit 2
 }
 
-case "$KIND" in
-  touchpad) LABEL="Touchpad" ICON="touchpad" ;;
-  touchscreen) LABEL="Touchscreen" ICON="touch" ;;
-  *)
-    usage
-    exit 1
-    ;;
+kind=${1:-}
+action=${2:-toggle}
+case $kind in
+  touchpad) label="Touchpad" icon="touchpad" ;;
+  touchscreen) label="Touchscreen" icon="touch" ;;
+  *) usage ;;
 esac
 
 # The persisted disable is the device name stored as plain data; on every
-# reload default/hypr/disabled-input-device.lua reads it back and disables the
-# device. Names come from USB descriptors and must not be interpolated into
-# shell or Lua. The path is hardcoded to ~/.local/state like the sibling
-# toggle tools, so it keeps working when XDG_STATE_HOME diverges.
-NAME_FILE="$HOME/.local/state/nova/toggles/hypr/$KIND-disabled-name"
+# reload hypr/disabled-input-device.lua reads it back and disables the device.
+# Names come from USB descriptors and must not be interpolated into shell or
+# Lua unescaped. The path is ~/.local/state like the other toggles, so it keeps
+# working when XDG_STATE_HOME diverges.
+name_file="$HOME/.local/state/nova/toggles/hypr/$kind-disabled-name"
 
-device="$("nova-hw-$KIND")"
+device=$("nova-hw-$kind" || true)
 
 require_device() {
   if [[ -z $device ]]; then
-    echo "No $KIND device found" >&2
+    echo "No $kind device found" >&2
     exit 1
   fi
-
   if [[ $device == *[[:cntrl:]]* ]]; then
-    echo "Invalid $KIND device name" >&2
+    echo "Invalid $kind device name" >&2
     exit 1
   fi
 }
 
 apply_device() {
-  local enabled=$1
   local quoted=${device//\\/\\\\}
   quoted=${quoted//\"/\\\"}
-  hyprctl eval "hl.device({ name = \"$quoted\", enabled = $enabled })" >/dev/null
+  hyprctl eval "hl.device({ name = \"$quoted\", enabled = $1 })" >/dev/null
 }
 
 enable() {
   # Clear the persisted state before requiring a usable device, so a device
   # that stops reporting a valid name can never wedge the disable in place.
-  rm -f "$NAME_FILE"
+  rm -f "$name_file"
   require_device
   apply_device true
-  nova-osd -i "$ICON" -m "$LABEL enabled"
+  nova-osd -i "$icon" -m "$label enabled" || true
 }
 
 disable() {
   require_device
   apply_device false
-  mkdir -p "$(dirname "$NAME_FILE")"
-  printf '%s\n' "$device" >"$NAME_FILE"
-  nova-osd -i "$ICON" -m "$LABEL disabled"
+  mkdir -p "${name_file%/*}"
+  printf '%s\n' "$device" >"$name_file"
+  nova-osd -i "$icon" -m "$label disabled" || true
 }
 
-case "$ACTION" in
+case $action in
   on) enable ;;
   off) disable ;;
-  toggle) if [[ -f $NAME_FILE ]]; then enable; else disable; fi ;;
-  *)
-    usage
-    exit 1
-    ;;
+  toggle) if [[ -f $name_file ]]; then enable; else disable; fi ;;
+  *) usage ;;
 esac

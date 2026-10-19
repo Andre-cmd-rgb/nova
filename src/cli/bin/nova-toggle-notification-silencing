@@ -2,5 +2,7 @@
 
 # nova:summary=Toggle notification do-not-disturb mode
 
-state=$(nova-shell notifications toggleDnd 2>/dev/null || echo "")
+set -euo pipefail
+
+nova-shell notifications toggleDnd >/dev/null
 nova-shell -q nova.indicators refresh

@@ -2,6 +2,9 @@
 
 # nova:summary=Print CPU and memory stats for the shell
 # nova:args=[--bar-widget]
+# nova:hidden=true
+
+set -euo pipefail
 
 bar_widget_stats() {
   awk '
@@ -29,23 +32,22 @@ case "${1:-}" in
     ;;
   --bar-widget)
     bar_widget_stats
-    exit
+    exit 0
     ;;
   *)
     echo "Usage: nova-system-stats [--bar-widget]" >&2
-    exit 1
+    exit 2
     ;;
 esac
 
-cpu=$(top -bn1 | awk '/^%?Cpu/ {
-  gsub(/,/, "")
-  for (i = 1; i <= NF; i++) {
-    if ($(i + 1) == "id") {
-      printf "%.0f%%", 100 - $i
-      exit
-    }
-  }
-}')
+# CPU use over a short window, from two /proc/stat samples.
+read -r _ a1 a2 a3 idle_a a5 a6 a7 a8 _ </proc/stat
+sleep 0.2
+read -r _ b1 b2 b3 idle_b b5 b6 b7 b8 _ </proc/stat
+total=$(((b1 + b2 + b3 + idle_b + b5 + b6 + b7 + b8) - (a1 + a2 + a3 + idle_a + a5 + a6 + a7 + a8)))
+idle=$(((idle_b + b5) - (idle_a + a5)))
+cpu="0%"
+if ((total > 0)); then cpu="$(((100 * (total - idle) + total / 2) / total))%"; fi
 
 awk -v cpu="$cpu" '
   /^MemTotal:/ { total = $2 }

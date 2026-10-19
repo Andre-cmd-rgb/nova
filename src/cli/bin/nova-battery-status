@@ -1,7 +1,9 @@
 #!/bin/bash
 
-# nova:summary=Returns a formatted battery status string with percentage and power draw/charge.
+# nova:summary=Print the battery charge, power draw and time left
 # nova:args=[--shell]
+
+set -euo pipefail
 
 shell_output=false
 power_supply_path="${NOVA_POWER_SUPPLY_PATH:-/sys/class/power_supply}"
@@ -18,8 +20,8 @@ case "${1:-}" in
     ;;
 esac
 
-battery=$(upower -e 2>/dev/null | grep BAT | head -n 1)
-[[ -z $battery ]] && exit 0
+battery=$(upower -e 2>/dev/null | grep -m1 BAT || true)
+[[ -n $battery ]] || exit 0
 
 battery_info=$(upower -i "$battery")
 
@@ -65,8 +67,19 @@ state=$(awk '/state/ { print $2; exit }' <<<"$battery_info")
 threshold_start=$(awk '/charge-start-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
 threshold_end=$(awk '/charge-end-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
 
-[[ -z $threshold_end ]] && threshold_end=$(cat "$power_supply_path"/BAT*/charge_control_end_threshold 2>/dev/null | head -1)
-[[ -z $threshold_start ]] && threshold_start=$(cat "$power_supply_path"/BAT*/charge_control_start_threshold 2>/dev/null | head -1)
+# The first battery's sysfs value, when UPower does not report it.
+first_battery_value() {
+  local file
+  for file in "$power_supply_path"/BAT*/"$1"; do
+    if [[ -r $file ]]; then
+      printf '%s\n' "$(<"$file")"
+      return 0
+    fi
+  done
+}
+
+[[ -n $threshold_end ]] || threshold_end=$(first_battery_value charge_control_end_threshold)
+[[ -n $threshold_start ]] || threshold_start=$(first_battery_value charge_control_start_threshold)
 
 ac_online=false
 for supply in "$power_supply_path"/*; do
@@ -89,9 +102,9 @@ charge_holding=false
 if [[ $ac_online == "true" && -n $threshold_end ]]; then
   if [[ $state == "pending-charge" ]]; then
     charge_holding=true
-  elif [[ $state == "fully-charged" ]] && (( percentage < 99 )); then
+  elif [[ $state == "fully-charged" ]] && ((percentage < 99)); then
     charge_holding=true
-  elif [[ $state == "charging" && $charge_idle == "true" ]] && (( threshold_end < 99 && percentage >= threshold_end )); then
+  elif [[ $state == "charging" && $charge_idle == "true" ]] && ((threshold_end < 99 && percentage >= threshold_end)); then
     charge_holding=true
   fi
 fi
@@ -107,12 +120,11 @@ if [[ $shell_output == "true" ]]; then
   printf 'size\t%s\n' "${capacity}Wh"
   printf 'time\t%s\n' "$time_remaining"
 
-  cycles=$(cat "$power_supply_path"/BAT*/cycle_count 2>/dev/null | head -1)
-
-  [[ -n $cycles ]] && printf 'cycles\t%s\n' "$cycles"
+  cycles=$(first_battery_value cycle_count)
+  if [[ -n $cycles ]]; then printf 'cycles\t%s\n' "$cycles"; fi
 
   if [[ -n $threshold_end ]]; then
-    if [[ -n $threshold_start && $threshold_start != $threshold_end ]]; then
+    if [[ -n $threshold_start && $threshold_start != "$threshold_end" ]]; then
       printf 'threshold\t%s-%s%%\n' "$threshold_start" "$threshold_end"
     else
       printf 'threshold\t%s%%\n' "$threshold_end"
@@ -123,15 +135,19 @@ if [[ $shell_output == "true" ]]; then
 fi
 
 if [[ $charge_holding == "true" ]]; then
-  if [[ -n $threshold_start && $threshold_start != $threshold_end ]]; then
-    threshold_label="${threshold_start}-${threshold_end}%"
+  if [[ -n $threshold_start && $threshold_start != "$threshold_end" ]]; then
+    detail="Holding at ${threshold_start}-${threshold_end}%"
   else
-    threshold_label="${threshold_end}%"
+    detail="Holding at ${threshold_end}%"
   fi
-
-  echo "Battery ${percentage}%  ·  Holding at ${threshold_label}  ·  ${power_rate}W / ${capacity}Wh"
+elif [[ $state == "fully-charged" ]]; then
+  detail="Fully charged"
+elif [[ -z $time_remaining ]]; then
+  detail=${state^}
 elif [[ $state == "charging" ]]; then
-  echo "Battery ${percentage}%  ·  ${time_remaining} to full  ·   ${power_rate}W / ${capacity}Wh"
+  detail="$time_remaining to full"
 else
-  echo "Battery ${percentage}%  ·  ${time_remaining} left  ·   ${power_rate}W / ${capacity}Wh"
+  detail="$time_remaining left"
 fi
+
+echo "Battery ${percentage}%  ·  ${detail}  ·  ${power_rate}W / ${capacity}Wh"

@@ -1,24 +1,19 @@
 #!/bin/bash
 
-# nova:summary=Lock the computer and turn off the display
-# nova:name=lock
+# nova:summary=Lock the computer
+
+set -euo pipefail
 
 nova-shell lock lock >/dev/null
 
-# Set keyboard layout to default (first layout)
-hyprctl switchxkblayout all 0 > /dev/null 2>&1
+# Unlock with the first keyboard layout, the one the password was set in.
+hyprctl switchxkblayout all 0 >/dev/null 2>&1 || true
 
-# Ensure 1password is locked. Use timeout because `1password --lock` can
-# otherwise leave a full Electron helper tree running after each lock.
-if pgrep -x "1password" >/dev/null && nova-cmd-present 1password; then
+# Lock 1Password too, when it runs. The timeout matters: `1password --lock` can
+# leave a whole Electron helper tree behind.
+if pgrep -u "$UID" -x 1password >/dev/null; then
   (
     flock -n 9 || exit 0
     timeout --kill-after=1s 3s 1password --lock >/dev/null 2>&1 || true
   ) 9>"${XDG_RUNTIME_DIR:-/tmp}/nova-1password-lock.lock" &
 fi
-
-# Avoid running screensaver when locked
-pkill -x ttfx 2>/dev/null || true
-# ttfx handles SIGTERM asynchronously, so keep its terminal alive until it exits.
-timeout 1s pidwait -x ttfx 2>/dev/null || true
-pkill -f '[o]rg.nova.screensaver' 2>/dev/null || true
