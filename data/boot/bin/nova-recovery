@@ -1,0 +1,12 @@
+#!/bin/bash
+# nova:summary=Reboot straight into the boot menu (snapshots, fallback and LTS entries)
+
+set -euo pipefail
+
+# Limine honours the one-shot menu timeout that systemd writes (see its `timeout`
+# option); 10 s is long enough to reach the keyboard.
+if ! systemctl reboot --boot-loader-menu=10; then
+  echo "nova-recovery: the firmware or boot loader refused the request." >&2
+  echo "Reboot, then press any key during the first second to open the boot menu." >&2
+  exit 1
+fi

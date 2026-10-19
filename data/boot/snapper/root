@@ -1,0 +1,21 @@
+# Snapper configuration for the root subvolume. snap-pac creates a pre/post pair
+# around every pacman transaction; number cleanup keeps the newest few, there is
+# no timeline.
+SUBVOLUME="/"
+FSTYPE="btrfs"
+
+NUMBER_CLEANUP="yes"
+NUMBER_MIN_AGE="0"
+NUMBER_LIMIT="3"
+NUMBER_LIMIT_IMPORTANT="3"
+
+TIMELINE_CREATE="no"
+TIMELINE_CLEANUP="no"
+
+# Drop pairs in which pacman changed nothing.
+EMPTY_PRE_POST_CLEANUP="yes"
+EMPTY_PRE_POST_MIN_AGE="3600"
+
+# Diffing every snapshot pair in the background is a lot of read and write traffic
+# for a feature the boot menu does not use.
+BACKGROUND_COMPARISON="no"
