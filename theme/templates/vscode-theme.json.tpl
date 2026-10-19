@@ -1,7 +1,7 @@
 {
     "name": "Nova",
     "$schema": "vscode://schemas/color-theme",
-    "type": "{{ theme_type }}",
+    "type": "{{ mode }}",
     "semanticHighlighting": true,
     "semanticTokenColors": {
         "parameter": "{{ cyan }}",

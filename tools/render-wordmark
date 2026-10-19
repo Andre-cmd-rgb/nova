@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Render theme/wordmark/nova.svg.tpl, the wallpaper template, from the pixel
+glyphs below. The output is committed; run this only after changing a glyph.
+
+The template is 3840x2400 (16:10, like both supported laptops) with the
+wordmark centred. The shell crops it to fill, so a 16:9 screen loses a strip at
+the top and bottom and the pixels are never upscaled on screens up to 4K. The wordmark is the foreground mixed 43% toward the background, the
+grey of the original white wallpaper; the spark takes the accent. nova-theme-set
+fills both from colors.toml.
+"""
+import sys
+
+GLYPHS = {
+    "n": ["#######..", "########."] + ["####.####"] + ["###...###"] * 13,
+    "o": ["..#####..", ".#######."] + ["####.####"] + ["###...###"] * 10 + ["####.####", ".#######.", "..#####.."],
+    "v": ["###...###"] * 9 + [".###.###."] * 2 + ["..#####.."] * 2 + ["...###..."] * 3,
+    "a": ["..#####..", ".#######."] + ["####.####"] + ["###...###"] * 4 + ["#########"] * 2 + ["###...###"] * 7,
+}
+# A twinkle above the "a": a nova is a new star.
+SPARK = [
+    "...#...",
+    "...#...",
+    "..###..",
+    "#######",
+    "..###..",
+    "...#...",
+    "...#...",
+]
+
+WIDTH, HEIGHT, CELL, GAP = 3840, 2400, 24, 2
+
+
+def cells(rows, x0, y0):
+    for y, row in enumerate(rows):
+        for x, ch in enumerate(row):
+            if ch == "#":
+                yield x0 + x, y0 + y
+
+
+def main():
+    word = "nova"
+    for glyph in GLYPHS.values():
+        assert len(glyph) == 16 and all(len(r) == 9 for r in glyph)
+    span = len(word) * 9 + (len(word) - 1) * GAP
+    left = (WIDTH // CELL - span) // 2
+    top = (HEIGHT // CELL - 16) // 2
+
+    pixels = []
+    x = left
+    for ch in word:
+        pixels += cells(GLYPHS[ch], x, top)
+        x += 9 + GAP
+    spark = list(cells(SPARK, x - GAP, top - 6))
+
+    def path(points):
+        return "".join(f"M{px * CELL} {py * CELL}h{CELL}v{CELL}h-{CELL}z" for px, py in points)
+
+    sys.stdout.write(
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" '
+        f'viewBox="0 0 {WIDTH} {HEIGHT}" shape-rendering="crispEdges">\n'
+        f'<rect width="{WIDTH}" height="{HEIGHT}" fill="{{{{ background }}}}"/>\n'
+        f'<path fill="{{{{ mix foreground background 43% }}}}" d="{path(pixels)}"/>\n'
+        f'<path fill="{{{{ accent }}}}" d="{path(spark)}"/>\n'
+        "</svg>\n"
+    )
+
+
+main()

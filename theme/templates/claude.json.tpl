@@ -1,6 +1,6 @@
 {
   "name": "Nova",
-  "base": "{{ theme_type }}",
+  "base": "{{ mode }}",
   "overrides": {
     "claude": "{{ accent }}",
     "claudeShimmer": "{{ mix accent foreground 35% }}",
