@@ -1,0 +1,9 @@
+[Unit]
+Description=Put the discrete GPU where the current power source wants it
+Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
+
+[Service]
+Type=oneshot
+# Fires every two minutes; a run with nothing to do should not say so.
+Environment=QUIET=1
+ExecStart=/usr/local/bin/thinkpad-power gpu-auto

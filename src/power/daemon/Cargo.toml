@@ -1,0 +1,21 @@
+[package]
+name = "thinkpad-powerd"
+version = "1.0.0"
+edition = "2021"
+description = "Load-adaptive CPU, thermal and fan governor for a ThinkPad P1 Gen 4i"
+license = "MIT"
+
+# No dependencies, on purpose. This runs as root, writes registers that decide
+# how much power the package may draw, and is built by an installer that should
+# not need a network. Everything here is std plus three libc symbols.
+
+[[bin]]
+name = "thinkpad-powerd"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
