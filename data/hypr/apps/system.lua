@@ -4,7 +4,7 @@ o.window({ tag = "floating-window" }, { center = true })
 o.window({ tag = "floating-window" }, { size = { 875, 600 } })
 
 o.window(
-  "(org.omarchy.btop|org.omarchy.terminal|org.omarchy.bash|org.codeberg.dnkl.foot|org.gnome.NautilusPreviewer|org.gnome.Evince|Omarchy|About|TUI.float|imv|mpv)",
+  "(org.nova.btop|org.nova.terminal|org.nova.bash|org.codeberg.dnkl.foot|org.gnome.NautilusPreviewer|org.gnome.Evince|Nova|About|TUI.float|imv|mpv)",
   {
     tag = "+floating-window",
   }
@@ -20,21 +20,21 @@ o.window({
 }, { tag = "+floating-window" })
 
 -- The About fastfetch layout needs more columns than the standard float provides.
--- This size only covers the first launch: omarchy-launch-about measures the
+-- This size only covers the first launch: nova-launch-about measures the
 -- rendered content, remembers the size that hugs it, and applies that as its own
 -- rule before every later launch.
-o.window("org.omarchy.about", { float = true })
-o.window("org.omarchy.about", { center = true })
-o.window("org.omarchy.about", { size = { 920, 480 } })
+o.window("org.nova.about", { float = true })
+o.window("org.nova.about", { center = true })
+o.window("org.nova.about", { size = { 920, 480 } })
 
 o.window("dev.tensaku.Tensaku", { float = true })
 o.window("dev.tensaku.Tensaku", { center = true })
 o.window("omacalc", { float = true })
 
 -- Fullscreen screensaver.
-o.window("org.omarchy.screensaver", { fullscreen = true })
-o.window("org.omarchy.screensaver", { float = true })
-o.window("org.omarchy.screensaver", { animation = "slide" })
+o.window("org.nova.screensaver", { fullscreen = true })
+o.window("org.nova.screensaver", { float = true })
+o.window("org.nova.screensaver", { animation = "slide" })
 
 -- No transparency on media windows.
 o.window(

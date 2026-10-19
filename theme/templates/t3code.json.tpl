@@ -1,5 +1,5 @@
 {
-  "name": "Omarchy",
+  "name": "Nova",
   "appearance": "{{ mode }}",
   "canvas": "{{ background }}",
   "accent": "{{ accent }}",

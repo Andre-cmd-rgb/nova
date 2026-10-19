@@ -1,6 +1,6 @@
 # Mobile Data
 
-A compact mobile-broadband (WWAN) widget for the [Omarchy](https://omarchy.org)
+A compact mobile-broadband (WWAN) widget for Nova
 shell bar: one signal glyph next to the Wi-Fi arc, and a narrow panel with an
 on/off switch, live throughput, and a billing-period data counter. Text
 messages the SIM receives arrive as desktop notifications.
@@ -27,18 +27,18 @@ rule, no systemd unit, no daemon of its own.
 
 | Needs | Why |
 |---|---|
-| Omarchy 4.0 or newer | the plugin host (`omarchy-shell`) and its `Ui` components |
+| Nova 4.0 or newer | the plugin host (`nova-shell`) and its `Ui` components |
 | NetworkManager (`nmcli`) | owns the `gsm` connection profile that carries the data |
 | ModemManager (`mmcli`) | operator, technology, signal quality, SIM and modem state, text messages |
 | `rfkill`, `iproute2`, `iputils` | radio state, interface address, the panel's ping |
 
-All four ship with a standard Omarchy install. The glyphs come from the Nerd
-Font Omarchy already uses for the bar.
+All four ship with a standard Nova install. The glyphs come from the Nerd
+Font Nova already uses for the bar.
 
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/Andre-cmd-rgb/omarchy-mobile-data.git --enable
+nova plugin add https://github.com/Andre-cmd-rgb/nova --enable
 ```
 
 Plugins run unsandboxed inside your shell process — read the code first; it is
@@ -47,16 +47,16 @@ one QML file and one bash script.
 To install by hand instead:
 
 ```bash
-git clone https://github.com/Andre-cmd-rgb/omarchy-mobile-data.git \
-  ~/.config/omarchy/plugins/andrecmdrgb.mobile-data
-omarchy-shell shell rescanPlugins
-omarchy plugin enable andrecmdrgb.mobile-data
+git clone https://github.com/Andre-cmd-rgb/nova \
+  ~/.config/nova/plugins/andrecmdrgb.mobile-data
+nova-shell shell rescanPlugins
+nova plugin enable andrecmdrgb.mobile-data
 ```
 
 Optionally put the CLI on your `PATH`:
 
 ```bash
-ln -sf ~/.config/omarchy/plugins/andrecmdrgb.mobile-data/bin/mobile-data \
+ln -sf ~/.config/nova/plugins/andrecmdrgb.mobile-data/bin/mobile-data \
   ~/.local/bin/mobile-data
 ```
 
@@ -71,7 +71,7 @@ mobile-data setup iliad      # or name the APN yourself
 ```
 
 That creates a NetworkManager `gsm` profile called `mobile`, turns autoconnect
-on, and gives it route metric 700 — above Omarchy's Wi-Fi (600), so mobile data
+on, and gives it route metric 700 — above Nova's Wi-Fi (600), so mobile data
 carries traffic only when nothing better has a default route.
 
 Then tell the counter when your plan renews:
@@ -101,7 +101,7 @@ autoconnect straight around a plain disconnect.
 
 ## Configuration
 
-Widget settings live on the bar entry in `~/.config/omarchy/shell.json`:
+Widget settings live on the bar entry in `~/.config/nova/shell.json`:
 
 ```json
 { "id": "andrecmdrgb.mobile-data", "interval": 10, "backgroundStats": true }
@@ -115,7 +115,7 @@ Widget settings live on the bar entry in `~/.config/omarchy/shell.json`:
 - `smsNotifications` — announce incoming text messages (default `true`). See
   [Text messages](#text-messages).
 
-Everything else lives in `~/.config/omarchy-mobile-data/config`, one
+Everything else lives in `~/.config/nova-mobile-data/config`, one
 `key=value` per line. The file is parsed, never sourced, so nothing in it can
 execute:
 
@@ -184,7 +184,7 @@ desktop notifications:
 The widget runs `mobile-data sms poll` on its own slow cadence — the poll
 interval, never faster than ten seconds — and that command is the whole
 lifecycle of a message: read what the modem is holding, write it to an archive
-under `~/.local/state/omarchy-mobile-data/inbox`, notify, and only then delete
+under `~/.local/state/nova-mobile-data/inbox`, notify, and only then delete
 it from the modem. A message is filed before it is deleted, always, and a
 delete that fails just leaves it to be picked up next time rather than
 announced twice.
@@ -207,7 +207,7 @@ nothing is delivered while mobile data is off — `off` blocks the radio. They
 are not lost: the network holds them and delivers when the radio comes back,
 within whatever validity period your operator uses.
 
-Nothing is read while `omarchy-shell` is not running either, because the widget
+Nothing is read while `nova-shell` is not running either, because the widget
 is what runs the poll — the plugin still has no daemon. Messages simply sit on
 the modem until it starts, and are announced then; a batch of more than three
 gets one line rather than three toasts. To pick them up without the shell,
@@ -220,7 +220,7 @@ want it.
 
 NetworkManager does not accumulate usage, and the kernel's per-interface
 counters reset whenever the interface goes away. So the plugin keeps a running
-total in `~/.local/state/omarchy-mobile-data/meter`: each poll adds the delta
+total in `~/.local/state/nova-mobile-data/meter`: each poll adds the delta
 since the last sample, a counter that moved backwards (or a new interface)
 starts a fresh baseline instead of a negative delta, and the total resets to
 zero on your renewal day. Two polls can never race each other — the file is
@@ -317,20 +317,20 @@ nothing on success, so follow it with `mobile-data sms list`. If the message is
 in the archive but no toast appeared, the notification server is the thing to
 look at, not this.
 
-**Nothing changed after editing the plugin.** `omarchy-shell shell rescanPlugins`
+**Nothing changed after editing the plugin.** `nova-shell shell rescanPlugins`
 picks up the CLI and the manifest. It does not pick up the QML: the reload runs
 and reports nothing wrong, but the bar widget comes back from Qt's cached
 compilation of the file as it was, so a widget change appears to do nothing at
-all. `omarchy-restart-shell` is what loads new QML — the bar blinks for a
-second. Not `omarchy-refresh-shell`, which resets `shell.json` to Omarchy's
+all. `nova-restart-shell` is what loads new QML — the bar blinks for a
+second. Not `nova-refresh-shell`, which resets `shell.json` to Nova's
 defaults and takes your bar layout with it.
 
 ## Uninstall
 
 ```bash
-omarchy plugin remove andrecmdrgb.mobile-data
+nova plugin remove andrecmdrgb.mobile-data
 rm -f ~/.local/bin/mobile-data
-rm -rf ~/.config/omarchy-mobile-data ~/.local/state/omarchy-mobile-data
+rm -rf ~/.config/nova-mobile-data ~/.local/state/nova-mobile-data
 ```
 
 That second path holds the message archive, and it is the only copy — read

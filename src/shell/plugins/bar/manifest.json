@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "omarchy.bar",
+  "id": "nova.bar",
   "name": "Bar",
   "version": "1.0.0",
-  "author": "Omarchy",
+  "author": "Nova",
   "description": "Status bar with widgets",
   "kinds": [
     "bar"

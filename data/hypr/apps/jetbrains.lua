@@ -1,2 +1,2 @@
--- Disable mouse focus (see https://github.com/omacom/omarchy/pull/5183#issuecomment-4189299971).
+-- JetBrains IDEs take focus on hover, so disable focus-follows-mouse for them.
 o.window("^(jetbrains-.*)$", { no_follow_mouse = true })

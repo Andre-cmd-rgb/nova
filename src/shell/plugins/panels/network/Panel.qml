@@ -11,8 +11,8 @@ import "Model.js" as Model
 
 Panel {
   id: root
-  moduleName: "omarchy.network"
-  ipcTarget: "omarchy.network"
+  moduleName: "nova.network"
+  ipcTarget: "nova.network"
   // manageIpc: false so this panel can own the single IpcHandler the target
   // permits — needed for the toggleNetwork method below.
   manageIpc: false
@@ -33,7 +33,7 @@ Panel {
   property var info: ({})  // { iface, type, ip, prefix, gateway, speed, duplex, ssid, signal, freq, bitrate, rx_bytes, tx_bytes, router_ping_ms, internet_ping_ms }
 
   // Throughput tracking. Rates are computed as deltas between successive
-  // `omarchy-network-status --verbose` samples (~1.5s apart via detailsPoll).
+  // `nova-network-status --verbose` samples (~1.5s apart via detailsPoll).
   // We hold "prev" alongside a timestamp so the first sample after open or
   // after an interface switch doesn't manufacture a spike.
   property real prevRxBytes: 0
@@ -76,7 +76,7 @@ Panel {
   property bool wifiStationAvailable: false
   property string dnsProvider: ""
   property string pendingDnsProvider: ""
-  // Wi-Fi band state from `omarchy-network-band`. `bandCurrent` is the band
+  // Wi-Fi band state from `nova-network-band`. `bandCurrent` is the band
   // the radio is actually on; `bandSelected` is the pinned choice ("auto" when
   // nothing is pinned), and the two differ whenever Auto is in effect.
   property string bandCurrent: ""
@@ -126,17 +126,12 @@ Panel {
   property int headerIndex: 0
   readonly property bool canDisconnect: !!connectedWifiNetwork
   readonly property bool headerHasDisconnect: false
-  readonly property bool canShareWifi: info.type === "wifi" && canShareNetwork(connectedWifiNetwork)
   // The hero switch is the Wi-Fi radio, so it only exists when there is a
   // radio to switch. On a wired box it would otherwise sit there reading
   // "off" beside a perfectly live Ethernet connection.
   readonly property bool canToggleWifi: networkManagerAvailable && wifiStationAvailable
-  readonly property int qrHeaderIndex: canShareWifi ? 0 : -1
-  readonly property int speedHeaderIndex: canRunSpeedTest ? (canShareWifi ? 1 : 0) : -1
-  readonly property int toggleHeaderIndex: canToggleWifi ? (canShareWifi ? 1 : 0) + (canRunSpeedTest ? 1 : 0) : -1
-  readonly property int headerActionCount: (canShareWifi ? 1 : 0) + (canRunSpeedTest ? 1 : 0) + (canToggleWifi ? 1 : 0)
-  readonly property bool qrHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === qrHeaderIndex
-  readonly property bool speedHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === speedHeaderIndex
+  readonly property int toggleHeaderIndex: canToggleWifi ? 0 : -1
+  readonly property int headerActionCount: canToggleWifi ? 1 : 0
   readonly property bool toggleHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === toggleHeaderIndex
   readonly property string toggleHint: Networking.wifiEnabled ? "Turn Wi-Fi off" : "Turn Wi-Fi on"
   readonly property var dnsProviders: ["DHCP", "Cloudflare", "Google", "Custom"]
@@ -164,7 +159,6 @@ Panel {
   readonly property bool bandBusy: pendingBand !== ""
   // The speed test needs an interface to test, so its hero action only
   // appears once there is one.
-  readonly property bool canRunSpeedTest: !!info.iface
   property int bandIndex: 0
   // The band section has up to two cursor rows: the Automatic switch on the
   // header line, then the pills. Same shape as wifiActionFocused.
@@ -209,7 +203,7 @@ Panel {
   }
 
   IpcHandler {
-    target: "omarchy.network"
+    target: "nova.network"
 
     function open() { root.open() }
     function close() { root.close() }
@@ -217,16 +211,10 @@ Panel {
     function hide() { root.close() }
     function toggle() { root.toggle() }
     function toggleNetwork() { root.toggleNetwork() }
-    // Compat routes for configs that summon the centered cards through the
-    // network target; both cards are their own plugins now.
-    function showQr() { root.summonWifiQr(true) }
-    function speedTest() { root.summonSpeedTest() }
   }
 
   function activateHeader() {
-    if (headerIndex === qrHeaderIndex) summonWifiQr()
-    else if (headerIndex === speedHeaderIndex) summonSpeedTest()
-    else if (headerIndex === toggleHeaderIndex) toggleNetwork()
+    if (headerIndex === toggleHeaderIndex) toggleNetwork()
   }
 
   function setHeaderCursor(index) {
@@ -402,11 +390,6 @@ Panel {
     return Model.canForgetNetwork(net)
   }
 
-  function canShareNetwork(net) {
-    if (!net || !net.connected) return false
-    return net.security !== WifiSecurityType.Wpa2Eap && net.security !== WifiSecurityType.WpaEap
-  }
-
   function selectWifiActionByDelta(delta) {
     if (selectedIndex < 0 || selectedIndex >= wifiNetworks.length) return
     if (!canForgetNetwork(wifiNetworks[selectedIndex])) {
@@ -453,22 +436,6 @@ Panel {
 
   readonly property string icon: Model.connectionIcon(kind, signalStrength)
 
-  // The share card is its own panel plugin (omarchy.wifiqr) so a replacement
-  // design can take it over; summon() routes to whichever implementation is
-  // enabled. The panel's own button pins the interface it is showing. The
-  // IPC route forces self-detection instead: details polling stops while the
-  // panel is closed, so its cached interface can be stale.
-  function summonWifiQr(forceDetect) {
-    controller.hide()
-    cancelPasswordPrompt()
-    var payload = {}
-    if (!forceDetect && info.type === "wifi" && info.iface) {
-      payload.iface = info.iface
-      if (info.ssid) payload.ssid = info.ssid
-    }
-    bar.shell.summon("omarchy.wifiqr", JSON.stringify(payload))
-  }
-
   function refresh(scanWifi) {
     if (scanWifi === undefined) scanWifi = false
     if (!detailsProc.running) detailsProc.running = true
@@ -477,7 +444,7 @@ Panel {
       dnsProc.running = true
     }
     if (!bandProc.running) {
-      bandProc.command = ["omarchy-network-band"]
+      bandProc.command = ["nova-network-band"]
       bandProc.running = true
     }
     // A closed panel has no nearby-network list to fill, and bare refresh()
@@ -642,25 +609,12 @@ Panel {
     if (!band || actionProc.running) return
 
     root.pendingBand = band
-    actionProc.command = ["omarchy-network-band", band]
+    actionProc.command = ["nova-network-band", band]
     actionProc.running = true
   }
 
-  // The speed test is its own panel plugin (omarchy.speedtest) so a
-  // replacement design can take it over; summon() routes to whichever
-  // implementation is enabled. The payload names the connection when this
-  // panel knows it; the plugin looks it up itself otherwise.
-  function summonSpeedTest() {
-    controller.hide()
-    cancelPasswordPrompt()
-    var connection = ""
-    if (info.type === "wifi") connection = info.ssid || "Wi-Fi"
-    else if (info.type === "ethernet") connection = "Ethernet"
-    bar.shell.summon("omarchy.speedtest", connection ? JSON.stringify({ connection: connection }) : "{}")
-  }
-
   function dnsCommand(provider) {
-    var command = "omarchy-dns"
+    var command = "nova-dns"
     if (provider) command += " " + Util.shellQuote(provider)
     return command
   }
@@ -669,7 +623,7 @@ Panel {
     if (!root.bar || !provider || actionProc.running) return
 
     if (provider === "Custom") {
-      var launcher = "omarchy-launch-floating-terminal-with-presentation"
+      var launcher = "nova-launch-floating-terminal-with-presentation"
       root.bar.run(launcher + " " + Util.shellQuote(root.dnsCommand(provider)))
       root.close()
       return
@@ -810,7 +764,7 @@ Panel {
   // Pulls everything we want about the active route's interface in one shot.
   Process {
     id: detailsProc
-    command: ["omarchy-network-status", "--verbose"]
+    command: ["nova-network-status", "--verbose"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.updateDetails(text)
@@ -861,7 +815,7 @@ Panel {
     running: root.opened
     onTriggered: {
       if (bandProc.running) return
-      bandProc.command = ["omarchy-network-band"]
+      bandProc.command = ["nova-network-band"]
       bandProc.running = true
     }
   }
@@ -1101,45 +1055,12 @@ Panel {
           anchors.verticalCenter: parent.verticalCenter
         }
 
-        // Sharing belongs to the connected-network hero rather than the scan
-        // result row. The radio switch remains beside it as the other hero action.
+        // The Wi-Fi radio switch lives in the connected-network hero.
         RowLayout {
           id: heroActions
           spacing: Style.space(8)
           anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
-
-          Button {
-            id: qrAction
-            visible: root.canShareWifi
-            iconText: "󰐲"
-            tooltipText: "Show QR code"
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-            iconSize: Style.font.subtitle * 1.5
-            horizontalPadding: Style.space(5)
-            verticalPadding: Style.space(2)
-            hasCursor: root.qrHeaderHasCursor
-            Layout.alignment: Qt.AlignVCenter
-            onHovered: function(on) { if (on) root.setHeaderCursor(root.qrHeaderIndex) }
-            onClicked: root.summonWifiQr()
-          }
-
-          Button {
-            id: speedAction
-            visible: root.canRunSpeedTest
-            iconText: "󰓅"
-            tooltipText: "Run a speed test"
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-            iconSize: Style.font.subtitle * 1.5
-            horizontalPadding: Style.space(5)
-            verticalPadding: Style.space(2)
-            hasCursor: root.speedHeaderHasCursor
-            Layout.alignment: Qt.AlignVCenter
-            onHovered: function(on) { if (on) root.setHeaderCursor(root.speedHeaderIndex) }
-            onClicked: root.summonSpeedTest()
-          }
 
           ToggleSwitch {
             id: powerSwitch

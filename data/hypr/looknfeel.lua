@@ -111,7 +111,7 @@ hl.config({
     on_focus_under_fullscreen = 1,
     initial_workspace_tracking = 0,
     -- Let a fresh shell re-acquire the session lock after the lock client
-    -- died, so omarchy-restart-shell can recover the LOCK failsafe.
+    -- died, so nova-restart-shell can recover the LOCK failsafe.
     allow_session_lock_restore = true,
   },
 

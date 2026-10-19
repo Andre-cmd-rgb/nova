@@ -8,14 +8,14 @@
   away. Nothing printed to it, which is why it never showed.
 - The README claimed `rescanPlugins` was enough after editing the plugin. It
   is enough for the CLI and the manifest; QML comes back from Qt's cached
-  compilation, and only `omarchy-restart-shell` loads a changed widget.
+  compilation, and only `nova-restart-shell` loads a changed widget.
 
 ## 1.5.0 — 2026-08-27
 
 - Text messages the SIM receives are announced as desktop notifications. The
   widget runs the new `mobile-data sms poll` on its own slow cadence — never
   faster than ten seconds, whether the panel is open or shut — and that command
-  files each message in `~/.local/state/omarchy-mobile-data/inbox`, notifies,
+  files each message in `~/.local/state/nova-mobile-data/inbox`, notifies,
   and then deletes it from the modem. A backlog of more than three gets one
   line instead of a toast each.
 - Deleting is the point, not a side effect: the modem's store holds a couple of
@@ -29,7 +29,7 @@
   text, and it stays escaped all the way into the archive — so a newline can
   never split one message into two lines of the file. Control characters are
   stripped before it reaches a terminal, `&` and `<` are escaped before it
-  reaches a notification body Omarchy renders as StyledText, and the sender is
+  reaches a notification body Nova renders as StyledText, and the sender is
   held to the characters a GSM sender ID can contain.
 
 ## 1.4.0 — 2026-08-26
@@ -94,9 +94,9 @@
 First public release, renamed from the personal `andre.mobile` plugin.
 
 - Plugin id is now `andrecmdrgb.mobile-data`; the helper CLI is `mobile-data`.
-- Config moved to `~/.config/omarchy-mobile-data/config` and state to
-  `~/.local/state/omarchy-mobile-data/`. The old `~/.config/omarchy/mobile.conf`
-  and `~/.local/state/omarchy-mobile/` are copied forward on first run, so the
+- Config moved to `~/.config/nova-mobile-data/config` and state to
+  `~/.local/state/nova-mobile-data/`. The old `~/.config/nova/mobile.conf`
+  and `~/.local/state/nova-mobile/` are copied forward on first run, so the
   billing period and profile setting survive the rename.
 - Poll interval is declared in the manifest, so the settings panel can offer it.
 - `nmcli`, `mmcli`, `rfkill`, `ip` and `ping` are pinned to the C locale; their

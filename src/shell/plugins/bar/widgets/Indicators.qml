@@ -6,9 +6,9 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "omarchy.indicators"
+  moduleName: "nova.indicators"
 
-  readonly property var defaultIndicatorEntries: [ "Dictation", "ScreenRecording", "Reminder", "NightLight", "Dnd", "StayAwake" ]
+  readonly property var defaultIndicatorEntries: [ "ScreenRecording", "NightLight", "Dnd", "StayAwake" ]
   readonly property var indicatorEntries: indicatorEntriesFromSettings(settings)
   property var activeIndicatorIds: []
   property var indicatorActiveStates: ({})
@@ -166,7 +166,7 @@ BarWidget {
   implicitHeight: orientationLoader.item ? orientationLoader.item.implicitHeight : 0
 
   IpcHandler {
-    target: "omarchy.indicators"
+    target: "nova.indicators"
 
     function refresh(): void {
       root.broadcast("refresh")

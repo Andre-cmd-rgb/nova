@@ -1,7 +1,7 @@
 #!/bin/bash
 #
 # batterylife — battery runtime history for the andrecmdrgb.batterylife
-# Omarchy plugin.
+# Nova plugin.
 #
 # The shell-side service asks this script for a sample every minute or so.
 # Everything else — storage, session detection, the arithmetic behind "a full
@@ -23,13 +23,13 @@ export LC_NUMERIC=C LC_COLLATE=C
 
 PLUGIN_ID="andrecmdrgb.batterylife"
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-batterylife"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nova-batterylife"
 CONFIG="$CONFIG_DIR/config"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-batterylife"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova-batterylife"
 DAYS_DIR="$STATE_DIR/days"
-MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/extensions/omarchy-menu.jsonc"
-SHELL_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/shell.json"
-STOCK_POWER="omarchy.power"
+MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nova/extensions/nova-menu.jsonc"
+SHELL_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json"
+STOCK_POWER="nova.power"
 
 # Overridable so the test harness can point the whole script at a fixture
 # directory instead of the real battery.
@@ -1079,22 +1079,22 @@ cmd_forget() {
 cmd_open() {
   local payload='{}'
   [[ ${1:-} == --week ]] && payload='{"range":"week"}'
-  have omarchy-shell || die "omarchy-shell not found"
-  omarchy-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null ||
+  have nova-shell || die "nova-shell not found"
+  nova-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null ||
     die "could not open the window — is the plugin enabled?"
 }
 
 cmd_indicator() {
   local state=${1:-status}
-  have omarchy || die "the omarchy CLI is required"
+  have nova || die "the nova CLI is required"
   case $state in
   on | off)
-    omarchy bar set "$PLUGIN_ID" indicator "$([[ $state == on ]] && echo true || echo false)" --json >/dev/null ||
+    nova bar set "$PLUGIN_ID" indicator "$([[ $state == on ]] && echo true || echo false)" --json >/dev/null ||
       die "could not update the bar entry — is the plugin enabled?"
     echo "Bar indicator $state."
     ;;
   status)
-    if omarchy bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
+    if nova bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
       echo "The plugin is in the bar layout."
     else
       echo "The plugin is not in the bar layout."
@@ -1113,13 +1113,13 @@ bar_has() {
 # Take over the slot the stock power widget occupies, and hand it back.
 cmd_takeover() {
   local action=${1:-on}
-  have omarchy || die "the omarchy CLI is required"
+  have nova || die "the nova CLI is required"
   case $action in
   on)
     # On the bar at all, first: `put` places a widget that is missing and
     # deliberately leaves one that is already there where it is.
     bar_has "$PLUGIN_ID" ||
-      omarchy bar put "$PLUGIN_ID" --section right >/dev/null 2>&1 ||
+      nova bar put "$PLUGIN_ID" --section right >/dev/null 2>&1 ||
       die "could not place the widget — is the plugin enabled?"
 
     if ! bar_has "$STOCK_POWER"; then
@@ -1131,33 +1131,33 @@ cmd_takeover() {
     # `move --after` an id the bar does not have takes this widget off the
     # bar rather than leaving it where it was, which is how running this
     # twice used to end with no battery widget at all.
-    omarchy bar move "$PLUGIN_ID" --after "$STOCK_POWER" >/dev/null 2>&1 ||
+    nova bar move "$PLUGIN_ID" --after "$STOCK_POWER" >/dev/null 2>&1 ||
       die "could not move the widget into the power widget's slot"
-    omarchy plugin disable "$STOCK_POWER" >/dev/null 2>&1 ||
+    nova plugin disable "$STOCK_POWER" >/dev/null 2>&1 ||
       echo "Note: the stock power widget could not be disabled; both are on the bar." >&2
     echo "Battery Life has the power widget's slot."
     ;;
   off)
-    omarchy plugin enable "$STOCK_POWER" >/dev/null 2>&1 ||
+    nova plugin enable "$STOCK_POWER" >/dev/null 2>&1 ||
       die "could not restore the stock power widget"
     # `plugin enable` puts a widget in the section its manifest names, and the
     # stock power widget names none — so it comes back in the centre rather
     # than where it was. Put it back beside this one.
     if bar_has "$PLUGIN_ID"; then
-      omarchy bar move "$STOCK_POWER" --after "$PLUGIN_ID" >/dev/null 2>&1
+      nova bar move "$STOCK_POWER" --after "$PLUGIN_ID" >/dev/null 2>&1
     else
-      omarchy bar move "$STOCK_POWER" --section right >/dev/null 2>&1
+      nova bar move "$STOCK_POWER" --section right >/dev/null 2>&1
     fi
     echo "Restored the stock power widget."
     echo "Battery Life is still on the bar beside it. Taking a widget off the bar"
     echo "means disabling the plugin, which also stops it recording:"
-    echo "  omarchy plugin disable $PLUGIN_ID"
+    echo "  nova plugin disable $PLUGIN_ID"
     ;;
   *) die "usage: batterylife takeover on|off" ;;
   esac
 }
 
-MENU_ENTRY='  "batterylife": {"icon":"󰁹","label":"Battery Life","aliases":["battery","runtime","power-history"],"action":"omarchy-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
+MENU_ENTRY='  "batterylife": {"icon":"󰁹","label":"Battery Life","aliases":["battery","runtime","power-history"],"action":"nova-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
 
 cmd_menu() {
   local action=${1:-install} tmp
@@ -1167,11 +1167,11 @@ cmd_menu() {
     if [[ ! -f $MENU_FILE ]]; then
       printf '{\n%s\n}\n' "$MENU_ENTRY" >"$MENU_FILE" ||
         die "could not write $MENU_FILE"
-      echo "Added Battery Life to the Omarchy menu."
+      echo "Added Battery Life to the Nova menu."
       return 0
     fi
     if grep -q '^[[:space:]]*"batterylife"[[:space:]]*:' "$MENU_FILE"; then
-      echo "Battery Life is already in the Omarchy menu."
+      echo "Battery Life is already in the Nova menu."
       return 0
     fi
     tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
@@ -1194,7 +1194,7 @@ cmd_menu() {
     }
     cat -- "$tmp" >"$MENU_FILE"
     rm -f -- "$tmp"
-    echo "Added Battery Life to the Omarchy menu (Super+Space)."
+    echo "Added Battery Life to the Nova menu (Super+Space)."
     ;;
   remove)
     [[ -f $MENU_FILE ]] || return 0
@@ -1202,7 +1202,7 @@ cmd_menu() {
     grep -v '^[[:space:]]*"batterylife"[[:space:]]*:' "$MENU_FILE" >"$tmp"
     cat -- "$tmp" >"$MENU_FILE"
     rm -f -- "$tmp"
-    echo "Removed Battery Life from the Omarchy menu."
+    echo "Removed Battery Life from the Nova menu."
     ;;
   *) die "usage: batterylife menu install|remove" ;;
   esac
@@ -1247,8 +1247,8 @@ battery actually lost over time the machine was actually awake. Time spent
 suspended counts against the charge and not against the runtime, which is
 why these numbers are lower — and truer — than the ones in the stock readout.
 
-Settings live in ~/.config/omarchy-batterylife/config, history in
-~/.local/state/omarchy-batterylife/days/. Only charge, draw and capacity are
+Settings live in ~/.config/nova-batterylife/config, history in
+~/.local/state/nova-batterylife/days/. Only charge, draw and capacity are
 recorded — nothing about what the machine was doing at the time.
 USAGE
 }

@@ -1,5 +1,5 @@
-name: omarchy
-description: Omarchy system theme
+name: nova
+description: Nova system theme
 colors:
   background: "{{ background }}"
   ui_text: "{{ foreground }}"

@@ -7,15 +7,15 @@ import qs.Ui
 // The Battery Life window: what one discharge run cost minute by minute, what
 // the last week averaged, and every run long enough to mean something.
 //
-// Summoned by the shell, from the Omarchy menu or the bar widget:
-//   omarchy-shell shell summon andrecmdrgb.batterylife '{}'
+// Summoned by the shell, from the Nova menu or the bar widget:
+//   nova-shell shell summon andrecmdrgb.batterylife '{}'
 //
 // It owns no data. Everything on screen comes from one `batterylife json`
 // call, so what the window shows and what the CLI prints can never disagree.
 Item {
   id: root
 
-  // Injected by omarchy-shell; `service` is this plugin's own sampler.
+  // Injected by nova-shell; `service` is this plugin's own sampler.
   property var shell: null
   property var manifest: null
   property var service: null

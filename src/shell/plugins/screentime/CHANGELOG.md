@@ -4,7 +4,7 @@
 
 First release.
 
-- Counts focused-application time inside the Omarchy shell, pausing on idle.
+- Counts focused-application time inside the Nova shell, pausing on idle.
 - Screen Time window with a per-hour chart of today, a per-day chart of the
   week, and the applications behind them.
 - Optional single-glyph bar indicator.

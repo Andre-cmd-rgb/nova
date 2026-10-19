@@ -1,6 +1,6 @@
 # Battery Life
 
-An Omarchy shell plugin that answers the one question the stock battery
+An Nova shell plugin that answers the one question the stock battery
 widget cannot: **how long does this battery actually last?**
 
 The built-in readout is an instantaneous estimate. It divides the charge left
@@ -60,27 +60,27 @@ The popup has an IPC target of its own, so a keybind can reach it without
 going through the bar:
 
 ```sh
-omarchy-shell andrecmdrgb.batterylife.bar toggle
+nova-shell andrecmdrgb.batterylife.bar toggle
 ```
 
 To take the stock power widget's slot:
 
 ```sh
-batterylife takeover on     # put this one where omarchy.power was
+batterylife takeover on     # put this one where nova.power was
 batterylife takeover off    # give it back
 ```
 
 `takeover on` moves this widget immediately after the stock one and then
 disables the stock one, which leaves this widget exactly where that one was.
 `takeover off` re-enables the stock widget and puts it back beside this one —
-`omarchy plugin enable` alone would drop it in the centre, since the stock
+`nova plugin enable` alone would drop it in the centre, since the stock
 power widget declares no section of its own.
 
 Both are safe to run twice. There is no command that takes a widget off the
 bar without disabling its plugin, so `takeover off` leaves this one in place;
 disabling the plugin would also stop it recording.
 
-Power profiles remain on the Omarchy menu under Super+Space.
+Power profiles remain on the Nova menu under Super+Space.
 
 ## The window
 
@@ -183,7 +183,7 @@ nap counts as runtime. Five minutes is five missed samples.
 
 ## What is stored
 
-`~/.local/state/omarchy-batterylife/days/YYYY-MM-DD.tsv`, one row per sample:
+`~/.local/state/nova-batterylife/days/YYYY-MM-DD.tsv`, one row per sample:
 
 ```
 epoch  state  percent  energy_uWh  full_uWh  power_uW
@@ -221,14 +221,14 @@ validation, and an empty history still producing valid JSON.
 
 ## Requirements
 
-Omarchy shell, `jq`, and `busctl` (systemd) for the optional import. The
+Nova shell, `jq`, and `busctl` (systemd) for the optional import. The
 sampler runs inside the shell; the CLI needs nothing but a battery and works
 from a TTY.
 
 ## Install
 
 ```sh
-omarchy plugin add https://github.com/Andre-cmd-rgb/omarchy-batterylife --enable
+nova plugin add https://github.com/Andre-cmd-rgb/nova --enable
 batterylife import
 batterylife takeover on
 ```

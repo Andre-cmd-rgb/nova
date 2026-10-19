@@ -10,3 +10,5 @@ target/
 *~
 *.swp
 .DS_Store
+# Agent worktrees
+/.claude/

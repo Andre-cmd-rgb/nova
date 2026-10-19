@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "omarchy.background",
+  "id": "nova.background",
   "name": "Background",
   "version": "1.0.0",
-  "author": "Omarchy",
+  "author": "Nova",
   "description": "Desktop background renderer with click handling and transitions",
   "kinds": [
     "service"

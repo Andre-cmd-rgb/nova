@@ -13,7 +13,7 @@ import Quickshell.Services.UPower
 Item {
   id: root
 
-  // Injected by omarchy-shell.
+  // Injected by nova-shell.
   property var shell: null
   property var manifest: null
 

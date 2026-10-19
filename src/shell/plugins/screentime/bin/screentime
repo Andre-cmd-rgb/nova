@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# screentime — usage tracking for the andrecmdrgb.screentime Omarchy plugin.
+# screentime — usage tracking for the andrecmdrgb.screentime Nova plugin.
 #
 # The shell-side service watches which window has focus and how long you have
 # been idle, and hands this script the seconds it has counted. Everything else
@@ -14,11 +14,11 @@ set -uo pipefail
 
 PLUGIN_ID="andrecmdrgb.screentime"
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-screentime"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nova-screentime"
 CONFIG="$CONFIG_DIR/config"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-screentime"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova-screentime"
 DAYS_DIR="$STATE_DIR/days"
-MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/extensions/omarchy-menu.jsonc"
+MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nova/extensions/nova-menu.jsonc"
 
 die() {
   printf 'screentime: %s\n' "$*" >&2
@@ -86,7 +86,7 @@ setting_default() {
   RETENTION_DAYS) printf '90' ;;
   DAILY_GOAL) printf '0' ;;
   # The shell's own surfaces are not an application you spend time in: the
-  # Omarchy menu and this plugin's own window are both org.quickshell.
+  # Nova menu and this plugin's own window are both org.quickshell.
   IGNORE) printf 'org.quickshell' ;;
   *) return 1 ;;
   esac
@@ -318,7 +318,7 @@ web_name() {
 alias_name() {
   case ${1,,} in
   xdg-desktop-portal | xdg-desktop-portal-*) printf 'System Dialog' ;;
-  org.quickshell | org.quickshell.*) printf 'Omarchy Shell' ;;
+  org.quickshell | org.quickshell.*) printf 'Nova Shell' ;;
   polkit-* | *.polkit-* | gcr-prompter) printf 'Authentication' ;;
   *) return 1 ;;
   esac
@@ -785,22 +785,22 @@ cmd_forget() {
 cmd_open() {
   local payload='{}'
   [[ ${1:-} == --week ]] && payload='{"range":"week"}'
-  have omarchy-shell || die "omarchy-shell not found"
-  omarchy-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null ||
+  have nova-shell || die "nova-shell not found"
+  nova-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null ||
     die "could not open the panel — is the plugin enabled?"
 }
 
 cmd_indicator() {
   local state=${1:-status}
-  have omarchy || die "the omarchy CLI is required"
+  have nova || die "the nova CLI is required"
   case $state in
   on | off)
-    omarchy bar set "$PLUGIN_ID" indicator "$([[ $state == on ]] && echo true || echo false)" --json >/dev/null ||
+    nova bar set "$PLUGIN_ID" indicator "$([[ $state == on ]] && echo true || echo false)" --json >/dev/null ||
       die "could not update the bar entry — is the plugin enabled?"
     echo "Bar indicator $state."
     ;;
   status)
-    if omarchy bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
+    if nova bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
       echo "The plugin is in the bar layout."
     else
       echo "The plugin is not in the bar layout."
@@ -810,7 +810,7 @@ cmd_indicator() {
   esac
 }
 
-MENU_ENTRY='  "screentime": {"icon":"󰥔","label":"Screen Time","aliases":["screen-time","usage"],"action":"omarchy-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
+MENU_ENTRY='  "screentime": {"icon":"󰥔","label":"Screen Time","aliases":["screen-time","usage"],"action":"nova-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
 
 cmd_menu() {
   local action=${1:-install} tmp
@@ -820,11 +820,11 @@ cmd_menu() {
     if [[ ! -f $MENU_FILE ]]; then
       printf '{\n%s\n}\n' "$MENU_ENTRY" >"$MENU_FILE" ||
         die "could not write $MENU_FILE"
-      echo "Added Screen Time to the Omarchy menu."
+      echo "Added Screen Time to the Nova menu."
       return 0
     fi
     if grep -q '^[[:space:]]*"screentime"[[:space:]]*:' "$MENU_FILE"; then
-      echo "Screen Time is already in the Omarchy menu."
+      echo "Screen Time is already in the Nova menu."
       return 0
     fi
     tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
@@ -847,7 +847,7 @@ cmd_menu() {
     }
     cat -- "$tmp" >"$MENU_FILE"
     rm -f -- "$tmp"
-    echo "Added Screen Time to the Omarchy menu (Super+Space)."
+    echo "Added Screen Time to the Nova menu (Super+Space)."
     ;;
   remove)
     [[ -f $MENU_FILE ]] || return 0
@@ -855,7 +855,7 @@ cmd_menu() {
     grep -v '^[[:space:]]*"screentime"[[:space:]]*:' "$MENU_FILE" >"$tmp"
     cat -- "$tmp" >"$MENU_FILE"
     rm -f -- "$tmp"
-    echo "Removed Screen Time from the Omarchy menu."
+    echo "Removed Screen Time from the Nova menu."
     ;;
   *) die "usage: screentime menu install|remove" ;;
   esac
@@ -896,9 +896,9 @@ Usage:
   screentime record <app>=<secs>   used by the shell service
   screentime version
 
-Settings live in ~/.config/omarchy-screentime/config, pinned names in
-~/.config/omarchy-screentime/names, history in
-~/.local/state/omarchy-screentime/days/. Only app ids and second counts are
+Settings live in ~/.config/nova-screentime/config, pinned names in
+~/.config/nova-screentime/names, history in
+~/.local/state/nova-screentime/days/. Only app ids and second counts are
 stored — never window titles.
 USAGE
 }

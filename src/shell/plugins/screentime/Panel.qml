@@ -7,15 +7,15 @@ import qs.Ui
 // The Screen Time window: a day or a week of usage, an hour-by-hour or
 // day-by-day chart, and the applications that account for it.
 //
-// Summoned by the shell, from the Omarchy menu or the bar indicator:
-//   omarchy-shell shell summon andrecmdrgb.screentime '{}'
+// Summoned by the shell, from the Nova menu or the bar indicator:
+//   nova-shell shell summon andrecmdrgb.screentime '{}'
 //
 // It owns no data. Everything on screen comes from one `screentime json`
 // call, so what the window shows and what the CLI prints can never disagree.
 Item {
   id: root
 
-  // Injected by omarchy-shell; `service` is this plugin's own sampler.
+  // Injected by nova-shell; `service` is this plugin's own sampler.
   property var shell: null
   property var manifest: null
   property var service: null

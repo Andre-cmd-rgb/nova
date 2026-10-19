@@ -1,9 +1,9 @@
 #!/bin/bash
 #
 # mobile-data — mobile broadband control and status for the
-# andrecmdrgb.mobile-data Omarchy bar widget.
+# andrecmdrgb.mobile-data Nova bar widget.
 #
-# NetworkManager only. Omarchy 4.0 runs NetworkManager and retires
+# NetworkManager only. Nova 4.0 runs NetworkManager and retires
 # systemd-networkd (install/hardware/network.sh), so the bearer is an ordinary
 # `gsm` connection profile. NetworkManager's shipped polkit policy sets
 # allow_active=yes for both network-control and settings.modify.system, so
@@ -12,9 +12,9 @@
 
 set -uo pipefail
 
-CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-mobile-data"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nova-mobile-data"
 CONFIG="$CONFIG_DIR/config"
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-mobile-data"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova-mobile-data"
 METER="$STATE_DIR/meter"
 MODEM_CACHE="$STATE_DIR/modem"
 # Written the first time a modem answers. Its presence is what separates a
@@ -26,11 +26,11 @@ SMS_LOCK="$STATE_DIR/.sms.lock"
 
 # Paths used by andre.mobile 2.x, read once so an upgrade keeps the billing
 # period and the configured profile instead of silently starting over.
-LEGACY_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/omarchy/mobile.conf"
-LEGACY_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-mobile"
+LEGACY_CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/nova/mobile.conf"
+LEGACY_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova-mobile"
 
 # Testing seam; there is no reason to set this in normal use.
-NET_DIR="${OMARCHY_MOBILE_NET_DIR:-/sys/class/net}"
+NET_DIR="${NOVA_MOBILE_NET_DIR:-/sys/class/net}"
 
 DUMP="" IDX=""
 STATE=absent HW=no MANAGED=no PROFILE_NAME=""
@@ -841,13 +841,13 @@ sms_archive() {
   return 0
 }
 
-# Omarchy renders a notification body as StyledText, so an unescaped & or <
+# Nova renders a notification body as StyledText, so an unescaped & or <
 # in a message loses characters or swallows the rest of the line.
 #
-# omarchy-notification-send hands the server typed D-Bus arguments instead of
+# nova-notification-send hands the server typed D-Bus arguments instead of
 # going through notify-send's argv parsing, which is the surface that would
 # read a message beginning with `--hint=` as options. notify-send is the
-# fallback for a desktop that is not Omarchy's.
+# fallback for a desktop that is not Nova's.
 sms_notify() {
   local headline=$1 body=$2
   # The backslashes are load-bearing: since bash 5.2 an unquoted & in the
@@ -856,8 +856,8 @@ sms_notify() {
   body=${body//&/\&amp;}
   body=${body//</\&lt;}
   body=${body//>/\&gt;}
-  if have omarchy-notification-send; then
-    omarchy-notification-send --app-name "Mobile Data" -u normal \
+  if have nova-notification-send; then
+    nova-notification-send --app-name "Mobile Data" -u normal \
       -g "$(printf '\U000F0361')" "$headline" "$body" >/dev/null 2>&1
   elif have notify-send; then
     notify-send -a "Mobile Data" -u normal -- "$headline" "$body" >/dev/null 2>&1
@@ -1037,7 +1037,7 @@ cmd_setup() {
   fi
 
   # Above the Wi-Fi metric so mobile data only carries traffic when nothing
-  # better has a default route. Omarchy's Wi-Fi sits at 600.
+  # better has a default route. Nova's Wi-Fi sits at 600.
   nm connection modify "$profile" \
     connection.autoconnect yes \
     ipv4.route-metric "$metric" \
@@ -1112,7 +1112,7 @@ cmd_version() {
 
 usage() {
   cat <<'USAGE'
-mobile-data — mobile broadband status and control for the Omarchy bar widget.
+mobile-data — mobile broadband status and control for the Nova bar widget.
 
 Usage:
   mobile-data info [--verbose]   key=value status block for the widget
@@ -1137,7 +1137,7 @@ archive and announced, then deleted from the modem so its small store cannot
 fill up and stop the network delivering.
 
 Config file (key=value per line):
-  ~/.config/omarchy-mobile-data/config
+  ~/.config/nova-mobile-data/config
     PROFILE=mobile        NetworkManager gsm profile to drive
     RESET_DAY=1           day of month the usage counter renews
     ROUTE_METRIC=700      route metric written by `setup`

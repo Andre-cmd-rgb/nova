@@ -23,7 +23,7 @@ Panel {
   // target means one of them is quietly ignored. This one opens the popup,
   // so a keybind can reach it:
   //
-  //   omarchy-shell andrecmdrgb.batterylife.bar toggle
+  //   nova-shell andrecmdrgb.batterylife.bar toggle
   ipcTarget: "andrecmdrgb.batterylife.bar"
 
   // Absolute path to the sibling CLI, resolved from this file's own location
@@ -137,7 +137,7 @@ Panel {
     // The stock power widget keys the remembered profile on the power source,
     // so this has to pass the same one or the two disagree about what was
     // chosen for battery and what was chosen for AC.
-    profileProc.command = ["omarchy-powerprofiles-set",
+    profileProc.command = ["nova-powerprofiles-set",
       battery.discharging ? "battery" : "ac", String(name)]
     if (!profileProc.running) profileProc.running = true
   }
@@ -181,7 +181,7 @@ Panel {
 
   function cycleReadout() {
     var next = battery.readouts[(battery.readouts.indexOf(battery.readout) + 1) % battery.readouts.length]
-    setReadoutProc.command = ["omarchy", "bar", "set", battery.pluginId, "readout", next]
+    setReadoutProc.command = ["nova", "bar", "set", battery.pluginId, "readout", next]
     if (!setReadoutProc.running) setReadoutProc.running = true
   }
 
@@ -308,7 +308,7 @@ Panel {
 
   Process {
     id: profilesProc
-    command: ["omarchy-powerprofiles-list", "--active-state"]
+    command: ["nova-powerprofiles-list", "--active-state"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

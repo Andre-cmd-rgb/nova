@@ -1,5 +1,5 @@
 {
-    "name": "Omarchy",
+    "name": "Nova",
     "$schema": "vscode://schemas/color-theme",
     "type": "{{ theme_type }}",
     "semanticHighlighting": true,

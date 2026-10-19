@@ -24,7 +24,7 @@ trap 'rm -rf -- "$FIXTURE"' EXIT
 export XDG_CONFIG_HOME="$FIXTURE/config"
 export XDG_STATE_HOME="$FIXTURE/state"
 export BATTERYLIFE_POWER_SUPPLY_DIR="$FIXTURE/power_supply"
-DAYS="$XDG_STATE_HOME/omarchy-batterylife/days"
+DAYS="$XDG_STATE_HOME/nova-batterylife/days"
 
 pass=0
 fail=0

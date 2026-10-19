@@ -1,6 +1,6 @@
 # Screen Time
 
-Where your time on this machine goes. A window you open from the Omarchy menu
+Where your time on this machine goes. A window you open from the Nova menu
 with an hour-by-hour breakdown of today, a day-by-day chart of the week, and
 the applications that account for it — plus an optional one-glyph indicator in
 the bar.
@@ -28,23 +28,23 @@ never file names, never anything about what you were doing in an app.
 
 ## Requirements
 
-Omarchy 4.0 or newer, and `jq` (already installed on Omarchy). Nothing else —
+Nova 4.0 or newer, and `jq` (already installed on Nova). Nothing else —
 no daemon of its own, no systemd unit, no root.
 
 ## Install
 
 ```bash
-omarchy plugin add https://github.com/Andre-cmd-rgb/omarchy-screentime.git --enable
+nova plugin add https://github.com/Andre-cmd-rgb/nova --enable
 ```
 
 Plugins run unsandboxed inside your shell process — read the code first.
 
-Then add it to the Omarchy menu (Super+Space → Screen Time), and put the CLI
+Then add it to the Nova menu (Super+Space → Screen Time), and put the CLI
 on your `PATH`:
 
 ```bash
-~/.config/omarchy/plugins/andrecmdrgb.screentime/bin/screentime menu install
-ln -sf ~/.config/omarchy/plugins/andrecmdrgb.screentime/bin/screentime ~/.local/bin/screentime
+~/.config/nova/plugins/andrecmdrgb.screentime/bin/screentime menu install
+ln -sf ~/.config/nova/plugins/andrecmdrgb.screentime/bin/screentime ~/.local/bin/screentime
 ```
 
 Counting starts immediately. The window has something to show after a minute.
@@ -58,11 +58,11 @@ Counting starts immediately. The window has something to show after a minute.
 | bar widget | one glyph and today's total | yes — `screentime indicator off` |
 
 Turning the indicator off only hides the glyph; the service keeps counting.
-Disabling the *plugin* (`omarchy plugin disable`) stops everything.
+Disabling the *plugin* (`nova plugin disable`) stops everything.
 
 ## Using it
 
-Open it from the Omarchy menu, from the bar indicator, or with `screentime
+Open it from the Nova menu, from the bar indicator, or with `screentime
 open` (`screentime open --week` lands on the weekly view; a summon payload of
 `{"range":"week"}` does the same from a menu entry or a keybinding). Inside the
 window:
@@ -76,7 +76,7 @@ window:
 
 Hovering a bar names the hour or the day and what it holds.
 
-The window is an ordinary toplevel, so Hyprland tiles it by default. Omarchy
+The window is an ordinary toplevel, so Hyprland tiles it by default. Nova
 configures Hyprland in Lua — add this to the bottom of
 `~/.config/hypr/hyprland.lua` to have it arrive floating, centred, and opaque:
 
@@ -127,7 +127,7 @@ screentime name hyperwriter-shot "Hyperwriter (screenshot)"
 screentime name hyperwriter-shot --reset      # back to the detected name
 ```
 
-Pinned names live in `~/.config/omarchy-screentime/names` as
+Pinned names live in `~/.config/nova-screentime/names` as
 `app-id=Display Name`, one per line, and are yours to edit directly. They
 rename what you see; the history is still keyed by the app id, so pinning,
 renaming and resetting never touch the numbers.
@@ -155,7 +155,7 @@ screentime indicator on|off      show or hide the bar indicator
 
 ## Settings
 
-In `~/.config/omarchy-screentime/config`, or via `screentime set`:
+In `~/.config/nova-screentime/config`, or via `screentime set`:
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -176,23 +176,23 @@ screentime ignore org.keepassxc.KeePassXC
 An ignored app is not recorded at all, rather than hidden after the fact. Use
 `screentime forget <app-id>` to drop what was recorded before you ignored it.
 
-`org.quickshell` is ignored out of the box: the Omarchy menu and this plugin's
+`org.quickshell` is ignored out of the box: the Nova menu and this plugin's
 own window are shell surfaces, not applications you spend time in. Setting
 `IGNORE` yourself replaces that default — include it if you still want it.
 
 ## Where the data lives
 
-`~/.local/state/omarchy-screentime/days/YYYY-MM-DD.tsv`, one file per day,
+`~/.local/state/nova-screentime/days/YYYY-MM-DD.tsv`, one file per day,
 three tab-separated columns: application id, hour of day, seconds. Plain text,
 yours to read, edit, or delete:
 
 ```bash
-rm -rf ~/.local/state/omarchy-screentime      # forget everything
+rm -rf ~/.local/state/nova-screentime      # forget everything
 ```
 
 Files older than `RETENTION_DAYS` are dropped on the first write of each day.
 
-`~/.local/state/omarchy-screentime/names.tsv` sits beside them: resolved
+`~/.local/state/nova-screentime/names.tsv` sits beside them: resolved
 display names, cached so the panel does not re-read every desktop entry on the
 machine each time it refreshes. Deleting it costs nothing.
 
@@ -200,9 +200,9 @@ machine each time it refreshes. Deleting it costs nothing.
 
 ```bash
 screentime menu remove
-omarchy plugin remove andrecmdrgb.screentime
+nova plugin remove andrecmdrgb.screentime
 rm -f ~/.local/bin/screentime
-rm -rf ~/.config/omarchy-screentime ~/.local/state/omarchy-screentime
+rm -rf ~/.config/nova-screentime ~/.local/state/nova-screentime
 ```
 
 ## License

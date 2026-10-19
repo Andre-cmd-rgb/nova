@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "omarchy.weather",
+  "id": "nova.weather",
   "name": "Weather",
   "version": "1.0.0",
-  "author": "Omarchy",
+  "author": "Nova",
   "description": "Weather pill with detail popup",
   "kinds": [
     "bar-widget"

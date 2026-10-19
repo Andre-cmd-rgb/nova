@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "omarchy.indicators",
+  "id": "nova.indicators",
   "name": "Indicators",
   "version": "1.0.0",
-  "author": "Omarchy",
+  "author": "Nova",
   "description": "Manual state indicators",
   "kinds": [
     "bar-widget"
@@ -27,19 +27,9 @@
         "emptyText": "No indicators",
         "options": [
           {
-            "value": "Dictation",
-            "label": "Dictation",
-            "description": "Voice typing status"
-          },
-          {
             "value": "ScreenRecording",
             "label": "Screen recording",
             "description": "GPU screen recorder status"
-          },
-          {
-            "value": "Reminder",
-            "label": "Reminder",
-            "description": "Queued reminder status"
           },
           {
             "value": "NightLight",
@@ -67,7 +57,7 @@
       }
     ]
   },
-  "omarchy": {
+  "nova": {
     "clonePaths": [
       {
         "source": "../indicators",
