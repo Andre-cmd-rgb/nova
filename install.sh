@@ -76,7 +76,32 @@ if ((UNINSTALL)); then
       sudo cp "$tmp" "$PLY/omarchy.script" &&
       ok "splash block removed from omarchy.script"
   fi
-  sudo rm -f "$PLY/background.png" /usr/share/sddm/themes/omarchy/background.png
+  sudo rm -f "$PLY/background.png"
+
+  # Main.qml is rewritten, not appended to, so there is no block to take back
+  # out — put upstream's template back. Deleting background.png without doing
+  # this would leave a Main.qml pointing at a file that is gone. The colours
+  # come back as Tokyo Night until the next theme change rewrites them, which
+  # omarchy-plymouth-set does on its own.
+  SDDM=/usr/share/sddm/themes/omarchy
+  SDDM_TEMPLATE=${OMARCHY_PATH:-/usr/share/omarchy}/default/sddm/omarchy/Main.qml
+  if sudo test -f "$SDDM/Main.qml" && [[ -r $SDDM_TEMPLATE ]]; then
+    sudo install -m 644 "$SDDM_TEMPLATE" "$SDDM/Main.qml" &&
+      ok "login screen restored to Omarchy's template"
+  fi
+  sudo rm -f "$SDDM/background.png"
+
+  # Same for the greeter compositor: one line added to a file this tool does not
+  # own. -e on the grep and the awk index(), because the mark starts with -- and
+  # both would otherwise read it as an option.
+  GREETER_LUA=/usr/share/sddm/hyprland.lua
+  if sudo test -f "$GREETER_LUA"; then
+    lua_tmp=$(mktemp) || die 'mktemp failed'
+    sudo awk '!index($0, "-- omarchy-boot-theme")' "$GREETER_LUA" >"$lua_tmp" &&
+      sudo cp "$lua_tmp" "$GREETER_LUA" &&
+      ok 'greeter compositor background restored'
+    rm -f "$lua_tmp"
+  fi
   # The themed block in limine.conf outlives the tool that wrote it, and
   # nothing else knows how to remove it.
   if sudo test -f /boot/limine.conf.omarchy-limine-theme.bak; then
@@ -87,8 +112,9 @@ if ((UNINSTALL)); then
   fi
   cat <<'NEXT'
 
-Done. The splash still has the wallpaper on it — that lives in the initramfs,
-and putting Omarchy's own back means a rebuild:
+Done. Two things are back to Omarchy's defaults rather than to your theme: the
+splash still has the wallpaper on it until the initramfs is rebuilt, and the
+login screen is on the template's colours. One command settles both:
 
   omarchy-plymouth-set-by-theme "$(cat ~/.local/state/omarchy/current/theme.name)"
 NEXT
