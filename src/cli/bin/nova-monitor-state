@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Print monitor panel state for the shell
-# nova:group=monitor
 
 monitors_json=$(hyprctl monitors all -j)
 focused_monitor=$(printf '%s\n' "$monitors_json" | jq -r '[.[] | select(.focused == true)][0].name // ""')

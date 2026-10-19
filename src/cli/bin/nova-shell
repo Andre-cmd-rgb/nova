@@ -2,7 +2,6 @@
 
 # nova:summary=Send an IPC call to the running Nova shell
 # nova:args=[-q] <target> <method> [args...]
-# nova:examples=nova shell shell ping | nova-shell shell toggle nova.menu '{"menu":"root"}'
 
 QUIET=0
 if [[ ${1:-} == "-q" ]]; then

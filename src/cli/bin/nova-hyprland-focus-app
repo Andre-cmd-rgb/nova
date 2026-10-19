@@ -2,7 +2,6 @@
 
 # nova:summary=Focus a Hyprland window by application identity
 # nova:args=<app-name>
-# nova:examples=nova hyprland focus app Slack
 
 usage() {
   echo "Usage: nova-hyprland-focus-app <app-name>" >&2

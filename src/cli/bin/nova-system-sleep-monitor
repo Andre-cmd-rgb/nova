@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Monitor sleep preparation and lock before suspend
-# nova:group=system
 # nova:hidden=true
 
 consume_sleep_events() {

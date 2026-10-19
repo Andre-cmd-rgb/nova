@@ -3,10 +3,34 @@
 # nova:summary=Launch the default browser as determined by xdg-settings.
 # nova:args=[url]
 
-default_browser=$(nova-cmd-default-browser)
-browser_exec=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' {~/.local,~/.nix-profile,/usr}/share/applications/$default_browser 2>/dev/null | head -1)
+set -euo pipefail
 
-if $browser_exec --help 2>/dev/null | grep -q MOZ_LOG; then
+# First word of the Exec line of the named desktop entry, from the first
+# applications directory that has it.
+desktop_exec() {
+  local dir
+  for dir in ~/.local/share ~/.nix-profile/share /usr/share; do
+    if [[ -r $dir/applications/$1 ]]; then
+      awk '/^Exec=/ { sub(/^Exec=/, ""); print $1; exit }' "$dir/applications/$1"
+      return 0
+    fi
+  done
+}
+
+default_browser=$(nova-cmd-default-browser) || {
+  echo "nova-launch-browser: no default browser is set" >&2
+  exit 1
+}
+browser_exec=$(desktop_exec "$default_browser")
+if [[ -z $browser_exec ]]; then
+  echo "nova-launch-browser: cannot find the command for $default_browser" >&2
+  exit 1
+fi
+
+# The help text is captured rather than piped into grep -q: with pipefail, grep
+# quitting at its first match would SIGPIPE the browser and read as no match.
+browser_help=$("$browser_exec" --help 2>/dev/null || true)
+if [[ $browser_help == *MOZ_LOG* ]]; then
   private_flag="--private-window"
 elif [[ $browser_exec =~ edge ]]; then
   private_flag="--inprivate"

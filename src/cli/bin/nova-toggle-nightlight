@@ -2,7 +2,6 @@
 
 # nova:summary=Toggle nightlight screen temperature
 # nova:args=[--status]
-# nova:examples=nova toggle nightlight
 
 ON_TEMP=4000
 OFF_TEMP=6500

@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Print active network status for the shell
-# nova:group=network
 # nova:args=[--verbose]
 
 verbose=false

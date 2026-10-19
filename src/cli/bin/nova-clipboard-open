@@ -1,14 +1,15 @@
 #!/bin/bash
 
 # nova:summary=Open a clipboard history entry
-# nova:group=clipboard
 # nova:args=--history-index <index>
 # nova:hidden=true
+
+set -euo pipefail
 
 history_index=""
 history_path="$HOME/.local/state/nova/clipboard-history.json"
 
-while (( $# > 0 )); do
+while (($# > 0)); do
   case "$1" in
     --history-index)
       history_index="${2:-}"

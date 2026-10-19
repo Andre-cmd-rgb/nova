@@ -1,12 +1,15 @@
 #!/bin/bash
 
 # nova:summary=Take a screenshot
-# nova:group=capture
 # nova:args=[smart|region|windows|fullscreen] [slurp|copy|save] [--editor=<name>]
-# nova:examples=nova screenshot | nova capture screenshot region
-# nova:aliases=nova screenshot
+# nova:aliases=screenshot
 
-[[ -f ~/.config/user-dirs.dirs ]] && source ~/.config/user-dirs.dirs
+set -euo pipefail
+
+if [[ -f ~/.config/user-dirs.dirs ]]; then
+  # shellcheck disable=SC1090,SC1091
+  source ~/.config/user-dirs.dirs
+fi
 OUTPUT_DIR="${NOVA_SCREENSHOT_DIR:-${XDG_PICTURES_DIR:-$HOME/Pictures}}"
 
 if [[ ! -d $OUTPUT_DIR ]]; then
@@ -14,7 +17,10 @@ if [[ ! -d $OUTPUT_DIR ]]; then
   nova-notification-send "Created screenshot directory: $OUTPUT_DIR" -t 2000
 fi
 
-pkill slurp && exit 0
+# A second press while the picker is open dismisses it.
+if pkill slurp; then
+  exit 0
+fi
 
 SCREENSHOT_EDITOR="${NOVA_SCREENSHOT_EDITOR:-tensaku-edit}"
 
@@ -40,22 +46,35 @@ PROCESSING="${2:-slurp}"
 # hardware cursors) are baked into the frames grim captures, so force
 # hardware cursors until after grim runs and restore the setting on exit.
 NO_HW_CURSORS=$(hyprctl getoption cursor:no_hardware_cursors -j | jq '.int')
+FREEZE_PID=""
+SELECTION=""
 
 set_no_hw_cursors() {
   hyprctl eval "hl.config({ cursor = { no_hardware_cursors = $1 } })" &>/dev/null ||
-    hyprctl keyword cursor:no_hardware_cursors "$1" &>/dev/null
+    hyprctl keyword cursor:no_hardware_cursors "$1" &>/dev/null ||
+    true
 }
 
 cleanup() {
-  [[ -n $FREEZE_PID ]] && kill $FREEZE_PID 2>/dev/null
+  if [[ -n $FREEZE_PID ]]; then
+    kill "$FREEZE_PID" 2>/dev/null || true
+  fi
   set_no_hw_cursors "$NO_HW_CURSORS"
 }
 trap cleanup EXIT
 
 set_no_hw_cursors 0
-{ read -r FREEZE_PID; read -r SELECTION; } < <(nova-capture-region "$MODE" --keep-freeze)
 
-[[ -z $SELECTION ]] && exit 0
+# A cancelled pick prints only the freeze PID (or nothing), so a missing second
+# line is an answer here, not an error.
+{
+  read -r FREEZE_PID || true
+  read -r SELECTION || true
+} < <(nova-capture-region "$MODE" --keep-freeze)
+
+if [[ -z $SELECTION ]]; then
+  exit 0
+fi
 
 FILENAME="screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png"
 FILEPATH="$OUTPUT_DIR/$FILENAME"
@@ -78,5 +97,9 @@ case "$PROCESSING" in
   save)
     grim -g "$SELECTION" "$FILEPATH" || exit 1
     echo "$FILEPATH"
+    ;;
+  *)
+    echo "Usage: nova-capture-screenshot [smart|region|windows|fullscreen] [slurp|copy|save] [--editor=<name>]" >&2
+    exit 1
     ;;
 esac

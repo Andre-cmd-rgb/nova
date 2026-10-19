@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Show current monospace font
-# nova:examples=nova font current
 
 # fontconfig is the source of truth. fc-match returns a comma-separated
 # alias list (e.g. "JetBrainsMono Nerd Font,JetBrainsMono NF") so take

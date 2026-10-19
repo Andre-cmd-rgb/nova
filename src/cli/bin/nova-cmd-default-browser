@@ -3,23 +3,24 @@
 # nova:summary=Print the desktop entry ID of the default web browser
 # nova:hidden=true
 
+set -euo pipefail
+
 # Read the http handler from the config-dir mimeapps.list files the way xdg-mime
 # does, desktop-specific list first, taking the first listed entry that is
 # installed. xdg-settings reaches the same answer through several shell scripts
-# in ~70ms, which every browser and web app launch would otherwise pay.
+# in ~70ms, which every browser launch would otherwise pay.
 IFS=: read -ra data_dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 IFS=: read -ra config_dirs <<<"${XDG_CONFIG_HOME:-$HOME/.config}:${XDG_CONFIG_DIRS:-/etc/xdg}"
 IFS=: read -ra desktops <<<"${XDG_CURRENT_DESKTOP:-}"
 
 # Installed means the command of the entry the launchers will read, the first
-# one found, still resolves: an entry of Nova's own can outlive the browser
-# it launched.
+# one found, still resolves.
 installed() {
   local data_dir command
 
   for data_dir in "${data_dirs[@]}"; do
     [[ -r $data_dir/applications/$1 ]] || continue
-    command=$(sed -n 's/^Exec=\([^ ]*\).*/\1/p' "$data_dir/applications/$1" | head -1)
+    command=$(awk '/^Exec=/ { sub(/^Exec=/, ""); print $1; exit }' "$data_dir/applications/$1")
     [[ -n $command ]] && command -v "$command" >/dev/null
     return
   done
@@ -35,14 +36,12 @@ for config_dir in "${config_dirs[@]}"; do
     entries=$(awk '
       /^\[Default Applications\]/ { section = 1; next }
       /^\[/ { section = 0 }
-      section && index($0, "x-scheme-handler/http=") == 1 { print substr($0, 23); exit }
+      !found && section && index($0, "x-scheme-handler/http=") == 1 { print substr($0, 23); found = 1 }
     ' "$list")
 
-    # nova-browser.desktop only routes links back through
-    # nova-launch-browser, so the browser is whatever is listed after it.
     IFS=';' read -ra entries <<<"$entries"
     for entry in "${entries[@]}"; do
-      if [[ -n $entry && $entry != "nova-browser.desktop" ]] && installed "$entry"; then
+      if [[ -n $entry ]] && installed "$entry"; then
         echo "$entry"
         exit 0
       fi
@@ -51,11 +50,14 @@ for config_dir in "${config_dirs[@]}"; do
 done
 
 # Nothing set in a config dir: let xdg-settings search the data dirs and caches.
-# It consults $BROWSER too, which the session points back at nova-launch-browser,
-# and the desktop-specific list, which points at nova-browser.desktop.
-browser=$(env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings get default-web-browser 2>/dev/null)
-if [[ -z $browser || $browser == "nova-browser.desktop" ]]; then
-  browser=$(XDG_CURRENT_DESKTOP= xdg-mime query default x-scheme-handler/https 2>/dev/null)
+# It consults $BROWSER too, which the session may point back at
+# nova-launch-browser, so hide it.
+browser=$(env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings get default-web-browser 2>/dev/null || true)
+if [[ -z $browser ]]; then
+  browser=$(env XDG_CURRENT_DESKTOP= xdg-mime query default x-scheme-handler/https 2>/dev/null || true)
 fi
 
-[[ -n $browser && $browser != "nova-browser.desktop" ]] && echo "$browser"
+if [[ -z $browser ]]; then
+  exit 1
+fi
+echo "$browser"

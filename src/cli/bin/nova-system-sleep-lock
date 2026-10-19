@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Lock before suspend and wait for the session lock to become secure
-# nova:group=system
 # nova:hidden=true
 
 # Overrunning the budget is the failure this whole path exists to prevent:

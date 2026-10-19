@@ -3,7 +3,7 @@
 # nova:summary=Choose a legible transparent bar text color
 # nova:hidden=true
 
-set -e
+set -euo pipefail
 
 position=${1:-top}
 bar_size=${2:-}
@@ -120,6 +120,8 @@ sample=$(printf '#%02x%02x%02x' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BAS
 text_contrast=$(contrast "$text_color" "$sample")
 background_contrast=$(contrast "$background_color" "$sample")
 
-awk -v text="$text_contrast" -v background="$background_contrast" 'BEGIN { exit !(background > text) }' \
-  && printf '%s\n' "$background_color" \
-  || printf '%s\n' "$text_color"
+if awk -v text="$text_contrast" -v background="$background_contrast" 'BEGIN { exit !(background > text) }'; then
+  printf '%s\n' "$background_color"
+else
+  printf '%s\n' "$text_color"
+fi

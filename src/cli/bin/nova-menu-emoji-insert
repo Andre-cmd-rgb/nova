@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Insert an emoji into the focused application
-# nova:group=menu
 # nova:args=<emoji>
 # nova:hidden=true
 

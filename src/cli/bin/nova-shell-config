@@ -3,6 +3,8 @@
 # nova:summary=Shared helpers for editing ~/.config/nova/shell.json (source this, don't run it).
 # nova:hidden=true
 
+set -euo pipefail
+
 CONFIG_FILE="$HOME/.config/nova/shell.json"
 DEFAULTS_FILE="$NOVA_PATH/default/shell.json"
 
@@ -11,10 +13,10 @@ fail() {
   exit 1
 }
 
+# Tell a running shell to re-read the file. A shell that is not running has
+# nothing to refresh, so this stays quiet either way.
 refresh_shell_config() {
-  if ! nova-shell shell reloadConfig >/dev/null 2>&1; then
-    nova-shell -q shell rescanPlugins >/dev/null 2>&1 || true
-  fi
+  nova-shell -q shell reloadConfig
 }
 
 source_file() {
@@ -28,6 +30,7 @@ source_file() {
 # jq pipeline that normalizes shell.json into a well-shaped object with
 # version=1, bar.layout.{left,center,right} arrays, and plugins array. Every
 # mutation pipes through this so downstream jq can assume structure.
+# shellcheck disable=SC2034 # used by the scripts that source this file
 NORMALIZE='
   def object_or_empty: if type == "object" then . else {} end;
   def array_or_empty: if type == "array" then . else [] end;
@@ -46,7 +49,9 @@ NORMALIZE='
 # forwarded to jq (e.g. --arg/--argjson).
 _SHELL_CONFIG_TMP=""
 cleanup_shell_config_tmp() {
-  if [[ -n $_SHELL_CONFIG_TMP ]]; then rm -f "$_SHELL_CONFIG_TMP"; fi
+  if [[ -n $_SHELL_CONFIG_TMP ]]; then
+    rm -f "$_SHELL_CONFIG_TMP"
+  fi
 }
 trap cleanup_shell_config_tmp EXIT
 

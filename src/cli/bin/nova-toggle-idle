@@ -1,9 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Toggle idle behavior so the system either idles normally or stays awake
-# nova:group=toggle
 # nova:args=[toggle|stay-awake|allow-idle|status]
-# nova:examples=nova toggle idle | nova toggle idle stay-awake | nova-toggle-idle --status
 
 STATE_DIR="$HOME/.local/state/nova/indicators"
 STATE_FILE="$STATE_DIR/stay-awake"

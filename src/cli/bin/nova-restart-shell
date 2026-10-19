@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Restart the Nova shell
-# nova:examples=nova restart shell
 
 # A caller opened after dev link/unlink may disagree with the still-running
 # desktop. The user manager receives Hyprland's environment at session start.

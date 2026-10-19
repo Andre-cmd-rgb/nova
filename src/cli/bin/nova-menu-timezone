@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Select and set the system timezone
-# nova:group=menu
 # nova:name=timezone
 
 set -e

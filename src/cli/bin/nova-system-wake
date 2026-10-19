@@ -1,9 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Wake displays and restore brightness after idle
-# nova:group=system
 # nova:name=wake
-# nova:examples=nova system wake
 
 nova-brightness-display on
 nova-brightness-keyboard restore

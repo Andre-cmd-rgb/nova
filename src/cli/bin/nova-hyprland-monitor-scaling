@@ -2,7 +2,6 @@
 
 # nova:summary=Show, set, or adjust focused Hyprland monitor scaling
 # nova:args=[up|down|SCALE]
-# nova:examples=nova hyprland monitor scaling | nova hyprland monitor scaling 1.6 | nova hyprland monitor scaling up | nova hyprland monitor scaling down
 
 SCALES=(1 1.25 1.6 2 3 4)
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova"

@@ -1,10 +1,8 @@
 #!/bin/bash
 
 # nova:summary=Pick one option from a menu
-# nova:group=menu
 # nova:name=select
 # nova:args=prompt [option...] [-- menu args...]
-# nova:examples=nova menu select Format jpg png|nova-menu-select Resolution 4k 1080p 720p -- --width 400
 
 # An option may lead with an icon, as "<glyph><TAB><label>", and may trail a
 # subtext shown under the label, as "<glyph><TAB><label><TAB><subtext>". The

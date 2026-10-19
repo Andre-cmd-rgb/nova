@@ -2,7 +2,6 @@
 
 # nova:summary=Control the Nova menu (toggle / summon / close / refresh)
 # nova:args=[toggle|summon|close|refresh|ping] [route]
-# nova:examples=nova menu | nova menu toggle system | nova menu summon style.theme | nova menu refresh
 
 # Thin wrapper around the standard plugin IPC surface. The menu is the
 # first-party `nova.menu` plugin; routes are passed as JSON payload.

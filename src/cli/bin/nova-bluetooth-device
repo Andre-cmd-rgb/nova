@@ -1,11 +1,9 @@
 #!/bin/bash
 
 # nova:summary=Control a Bluetooth device
-# nova:group=bluetooth
 # nova:args=[pair|connect|disconnect|forget] <address>
-# nova:examples=nova bluetooth device connect 00:11:22:33:44:55
 
-set -e
+set -euo pipefail
 
 usage() {
   echo "Usage: nova-bluetooth-device [pair|connect|disconnect|forget] <address>" >&2
@@ -19,7 +17,9 @@ address=${2:-}
 [[ $address =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || usage
 
 power_on() {
-  [[ $(timeout 2s bluetoothctl show 2>/dev/null) == *"Powered: yes"* ]] && return
+  if [[ $(timeout 2s bluetoothctl show 2>/dev/null || true) == *"Powered: yes"* ]]; then
+    return 0
+  fi
   # Not bluetoothctl directly: Bluetooth is turned off by an rfkill soft block,
   # and BlueZ refuses to power an adapter up while one is set.
   nova-bluetooth-power on || true

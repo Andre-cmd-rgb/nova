@@ -1,6 +1,10 @@
 #!/bin/bash
 
 # nova:summary=Check whether all required commands are available
+# nova:args=<command>...
+# nova:hidden=true
+
+set -euo pipefail
 
 for cmd in "$@"; do
   command -v -- "$cmd" &>/dev/null || exit 1

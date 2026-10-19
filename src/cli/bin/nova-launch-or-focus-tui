@@ -3,12 +3,21 @@
 # nova:summary=Launch a TUI or focus an existing terminal window for it
 # nova:args=[--app-id=<app-id>] <command> [args...]
 
-if [[ ${1:-} == --app-id=* ]]; then
+set -euo pipefail
+
+if (($# == 0)); then
+  echo "Usage: nova-launch-or-focus-tui [--app-id=<app-id>] <command> [args...]" >&2
+  exit 1
+fi
+
+if [[ $1 == --app-id=* ]]; then
   APP_ID="${1#--app-id=}"
 else
   APP_ID="org.nova.$(basename "$1")"
 fi
 
-LAUNCH_COMMAND="nova-launch-tui $@"
+# nova-launch-or-focus evaluates this as a command line, so keep each argument
+# intact by quoting it.
+printf -v LAUNCH_COMMAND 'nova-launch-tui %q ' "$@"
 
 exec nova-launch-or-focus "$APP_ID" "$LAUNCH_COMMAND"

@@ -1,9 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Lock the computer and turn off the display
-# nova:group=system
 # nova:name=lock
-# nova:examples=nova system lock
 
 nova-shell lock lock >/dev/null
 

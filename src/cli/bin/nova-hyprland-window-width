@@ -2,7 +2,6 @@
 
 # nova:summary=Save or restore the focused Hyprland window width
 # nova:args=<save|restore>
-# nova:examples=nova hyprland window width save | nova-hyprland-window-width restore
 
 set -euo pipefail
 

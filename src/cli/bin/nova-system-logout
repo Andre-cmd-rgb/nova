@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Log out after closing application windows
-# nova:examples=nova logout | nova system logout
 # nova:aliases=nova logout
 
 nohup bash -c "sleep 2 && uwsm stop" >/dev/null 2>&1 &

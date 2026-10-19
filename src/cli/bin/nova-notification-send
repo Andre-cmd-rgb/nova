@@ -2,7 +2,6 @@
 
 # nova:summary=Send an Nova desktop notification
 # nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]
-# nova:examples=nova notification send "Reminder" "5 minutes are up" -g 󰢌
 
 set -euo pipefail
 

@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Print CPU and memory stats for the shell
-# nova:group=system
 # nova:args=[--bar-widget]
 
 bar_widget_stats() {

@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Reboot after closing application windows
-# nova:examples=nova reboot | nova system reboot
 # nova:aliases=nova reboot
 
 # Schedule the reboot in the user manager so closing the terminal's systemd

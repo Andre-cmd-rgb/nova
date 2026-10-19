@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Shut down after closing application windows
-# nova:examples=nova shutdown | nova system shutdown
 # nova:aliases=nova shutdown
 
 if [[ ${1:-} == "--inhibited" ]]; then

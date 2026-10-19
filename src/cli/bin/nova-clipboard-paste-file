@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # nova:summary=Copy a file to the clipboard and paste it
-# nova:group=clipboard
 # nova:args=[--copy-only] <mime-type> <path>
-# nova:examples=nova clipboard paste file image/png /tmp/screenshot.png
 # nova:hidden=true
+
+set -euo pipefail
 
 copy_only=false
 
@@ -23,11 +23,12 @@ fi
 
 [[ -r $path ]] || exit 1
 
-wl-copy --type "$mime" < "$path"
+wl-copy --type "$mime" <"$path"
 
 if [[ $copy_only == "true" ]]; then
-  exit
+  exit 0
 fi
 
 sleep 0.15
+# Best effort: with no focused text field there is nothing to paste into.
 wtype -M shift -k Insert -m shift 2>/dev/null || true

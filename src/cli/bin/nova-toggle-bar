@@ -2,7 +2,6 @@
 
 # nova:summary=Toggle bar visibility without killing the Nova shell
 # nova:args=[toggle|on|off]
-# nova:examples=nova toggle bar | nova toggle bar off | nova toggle bar on
 
 nova-toggle bar-off "${1:-toggle}"
 

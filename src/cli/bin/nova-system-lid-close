@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Lock and reconcile displays when the laptop lid closes
-# nova:group=system
 # nova:hidden=true
 
 # Locking here rather than waiting for PrepareForSleep is what keeps the lock

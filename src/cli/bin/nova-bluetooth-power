@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Turn Bluetooth on or off, remembered across reboots
-# nova:group=bluetooth
 # nova:args=<on|off|toggle|is-on>
 
 # BlueZ never persists an adapter's Powered property, so turning Bluetooth off
@@ -16,10 +15,12 @@
 # Nova path that turns Bluetooth on or off goes through here, because a plain
 # `bluetoothctl power on` fails outright while the block is set.
 
+set -euo pipefail
+
 POWER_WAIT_SECONDS=${NOVA_BLUETOOTH_POWER_WAIT_SECONDS:-2}
 
 controllers() {
-  timeout 2s bluetoothctl list 2>/dev/null | awk '{print $2}'
+  { timeout 2s bluetoothctl list 2>/dev/null || true; } | awk '{print $2}'
 }
 
 # Any controller counts. The block is all-or-nothing across the radios, so the
@@ -29,7 +30,9 @@ powered() {
   local controller
 
   for controller in $(controllers); do
-    [[ $(timeout 2s bluetoothctl show "$controller" 2>/dev/null) == *"Powered: yes"* ]] && return 0
+    if [[ $(timeout 2s bluetoothctl show "$controller" 2>/dev/null || true) == *"Powered: yes"* ]]; then
+      return 0
+    fi
   done
 
   return 1
@@ -56,7 +59,7 @@ power_on() {
   # adapter powered down without a block, so ask directly before giving up.
   wait_powered && return 0
 
-  timeout 5s bluetoothctl power on >/dev/null 2>&1
+  timeout 5s bluetoothctl power on >/dev/null 2>&1 || true
   wait_powered && return 0
 
   echo "nova-bluetooth-power: adapter did not come up" >&2

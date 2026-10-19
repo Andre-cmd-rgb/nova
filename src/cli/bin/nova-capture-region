@@ -20,8 +20,12 @@
 #   --match-monitor print "monitor:NAME" instead when the picked geometry
 #                   exactly matches a monitor
 
-FULLSCREEN_MARKER="${XDG_RUNTIME_DIR:-/tmp}/nova-capture-region-fullscreen"
-WINDOW_MARKER="${XDG_RUNTIME_DIR:-/tmp}/nova-capture-region-window"
+set -euo pipefail
+
+STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/nova"
+FULLSCREEN_MARKER="$STATE_DIR/capture-region-fullscreen"
+WINDOW_MARKER="$STATE_DIR/capture-region-window"
+mkdir -p "$STATE_DIR"
 
 # accounting for portrait/transformed displays
 JQ_MONITOR_GEO='
@@ -120,7 +124,8 @@ warp_point_in() {
 # well as window rects, so a cursor in a gap or over the bar highlights the
 # monitor rather than any window.
 geo_at_cursor() {
-  local pos=$(hyprctl cursorpos)
+  local pos
+  pos=$(hyprctl cursorpos)
   local x=${pos%,*}
   local y=${pos#*, }
 
@@ -264,7 +269,7 @@ if [[ ${1:-} == "--select-window" ]]; then
     ;;
   esac
 
-  if [[ -n $target && -n ${warp_points[$target]} ]]; then
+  if [[ -n $target && -n ${warp_points[$target]:-} ]]; then
     read -r target_x target_y <<<"${warp_points[$target]}"
     hyprctl eval "hl.dispatch(hl.dsp.cursor.move({ x = $target_x, y = $target_y }))" >/dev/null
   fi
@@ -289,7 +294,9 @@ done
 pick() {
   local selection
   rm -f "$FULLSCREEN_MARKER" "$WINDOW_MARKER"
-  selection=$(slurp "$@" 2>/dev/null)
+  # slurp exits non-zero when the pick is cancelled or one of the --take-* binds
+  # killed it; both are told apart by the markers below, not by the status.
+  selection=$(slurp "$@" 2>/dev/null || true)
 
   if [[ -z $selection && -e $FULLSCREEN_MARKER ]]; then
     rm -f "$FULLSCREEN_MARKER"
@@ -310,8 +317,9 @@ freeze_screen() {
 }
 
 cleanup_freeze() {
-  [[ $KEEP_FREEZE == true ]] && return
-  [[ -n $FREEZE_PID ]] && kill $FREEZE_PID 2>/dev/null
+  if [[ $KEEP_FREEZE != true && -n $FREEZE_PID ]]; then
+    kill "$FREEZE_PID" 2>/dev/null || true
+  fi
 }
 trap cleanup_freeze EXIT
 
@@ -355,12 +363,14 @@ smart | *)
   ;;
 esac
 
-[[ $KEEP_FREEZE == true ]] && echo "$FREEZE_PID"
+if [[ $KEEP_FREEZE == true ]]; then
+  echo "$FREEZE_PID"
+fi
 
 [[ -n $SELECTION ]] || exit 1
 
 if [[ $MATCH_MONITOR == true ]]; then
-  monitor=$(hyprctl monitors -j | jq -r --arg geo "$SELECTION" "${JQ_MONITOR_GEO} .[] | select(format_geo == \$geo) | .name" | head -1)
+  monitor=$(hyprctl monitors -j | jq -r --arg geo "$SELECTION" "${JQ_MONITOR_GEO} first(.[] | select(format_geo == \$geo) | .name)")
   if [[ -n $monitor ]]; then
     echo "monitor:$monitor"
     exit 0

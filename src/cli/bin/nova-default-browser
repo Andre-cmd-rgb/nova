@@ -2,10 +2,11 @@
 
 # nova:summary=Set the default browser for Nova and XDG handlers
 # nova:args=[chromium|chrome|brave|brave-origin|edge|firefox|zen]
-# nova:examples=nova default browser firefox | nova default browser brave
+
+set -euo pipefail
 
 if (($# == 0)); then
-  current_browser=$(nova-cmd-default-browser)
+  current_browser=$(nova-cmd-default-browser || true)
   case "$current_browser" in
   chromium.desktop) echo "chromium" ;;
   google-chrome.desktop) echo "chrome" ;;
@@ -28,14 +29,14 @@ edge) desktop_id="microsoft-edge.desktop"; name="Edge"; glyph=󰇩 ;;
 firefox) desktop_id="firefox.desktop"; name="Firefox"; glyph=󰈹 ;;
 zen) desktop_id="zen.desktop"; name="Zen"; glyph=󰖟 ;;
 *)
-  echo "Usage: nova-default-browser <chromium|chrome|brave|brave-origin|edge|firefox|zen>"
+  echo "Usage: nova-default-browser <chromium|chrome|brave|brave-origin|edge|firefox|zen>" >&2
   exit 1
   ;;
 esac
 
-# xdg-settings checks what it set by reading the handler back, which the
-# desktop-specific list would answer with nova-browser.desktop, so it must
-# only see mimeapps.list, where the browser itself is kept.
+# xdg-settings checks what it set by reading the handler back, so keep the
+# session's $BROWSER and desktop-specific lists out of it: it must only see
+# mimeapps.list, where the browser itself is kept.
 env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings set default-web-browser "$desktop_id" || exit 1
 
-nova-notification-send -g $glyph "$name is now the default browser"
+nova-notification-send -g "$glyph" "$name is now the default browser"

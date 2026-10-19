@@ -1,7 +1,6 @@
 #!/bin/bash
 
 # nova:summary=Restart audio services and recover stuck USB audio devices.
-# nova:examples=nova restart audio | nova-restart-audio
 
 services=(wireplumber.service pipewire.service pipewire-pulse.service)
 
