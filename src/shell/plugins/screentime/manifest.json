@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "id": "andrecmdrgb.screentime",
+  "name": "Screen Time",
+  "version": "1.0.0",
+  "author": "Andre-cmd-rgb",
+  "license": "MIT",
+  "description": "Where your time on this machine goes: a per-hour and per-day breakdown by application, in a window you open from the Omarchy menu.",
+  "kinds": [
+    "service",
+    "panel",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "panel": "Panel.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Screen Time",
+    "description": "Today's total, and a click to open the breakdown",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "indicator": true,
+      "showTotal": true
+    },
+    "schema": [
+      {
+        "key": "indicator",
+        "type": "boolean",
+        "label": "Show the bar indicator",
+        "defaultValue": true
+      },
+      {
+        "key": "showTotal",
+        "type": "boolean",
+        "label": "Show today's total next to the glyph",
+        "defaultValue": true
+      }
+    ]
+  }
+}
