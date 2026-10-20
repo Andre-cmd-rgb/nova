@@ -1,0 +1,226 @@
+#!/bin/bash
+# nova:summary=Look this computer over for problems, and say how to fix each
+#
+# Read-only. Run as yourself it checks the system and your session; under sudo
+# it checks the system and the boot menu's fallback entry, which lives on the
+# EFI partition only root can read. Exits 1 when something is wrong; warnings
+# alone exit 0.
+#
+# NOVA_* variables point the checks at test fixtures (tests/unit/cli/doctor.bats).
+
+set -euo pipefail
+
+SYSFS_BTRFS=${NOVA_SYSFS_BTRFS:-/sys/fs/btrfs}
+PAM_DIR=${NOVA_PAM_DIR:-/etc/pam.d}
+MODULES_DIR=${NOVA_MODULES_DIR:-/usr/lib/modules}
+SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-/etc/snapper/configs/root}
+ESP=${NOVA_BOOT_ESP:-/boot}
+KEYRINGS=${XDG_DATA_HOME:-$HOME/.local/share}/keyrings
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/nova
+
+declare -A color=([ok]='' [warn]='' [FAIL]='' [--]='')
+reset=''
+if [[ -t 1 ]]; then
+  color=([ok]=$'\e[32m' [warn]=$'\e[33m' [FAIL]=$'\e[31m' [--]=$'\e[2m')
+  reset=$'\e[0m'
+fi
+
+failed=0
+report() { # ok|warn|FAIL|-- what [how...]
+  local level=$1 what=$2 how
+  printf '%s%-4s%s  %s\n' "${color[$level]}" "$level" "$reset" "$what"
+  for how in "${@:3}"; do printf '      %s\n' "$how"; done
+  [[ $level != FAIL ]] || failed=1
+}
+
+check_root_filesystem() {
+  local fstype options uuid file name value counted=0 errors='' total=0
+  read -r fstype options uuid < <(findmnt -rno FSTYPE,OPTIONS,UUID /)
+  if [[ ,$options, == *,ro,* ]]; then
+    report FAIL "/ is read-only: the filesystem stopped writing after an error" \
+      "journalctl -k -b says why. Back up what you can, then check it from the installer stick."
+    return
+  fi
+  if [[ $fstype != btrfs ]]; then
+    report ok "/ is writable ($fstype)"
+    return
+  fi
+  # The kernel's per-device counters, kept on the disk across boots.
+  for file in "$SYSFS_BTRFS/$uuid"/devinfo/*/error_stats; do
+    [[ -r $file ]] || continue
+    counted=1
+    while read -r name value; do
+      ((value > 0)) || continue
+      total=$((total + value))
+      errors+="${errors:+, }$name $value"
+    done <"$file"
+  done
+  if ((total > 0)); then
+    report FAIL "btrfs on / has recorded errors: $errors" \
+      "Back up now. sudo btrfs scrub start -B / finds what is damaged;" \
+      "once it is dealt with, sudo btrfs device stats -z / clears the count."
+  elif ((counted)); then
+    report ok "/ is writable btrfs, with no device errors"
+  else
+    report ok "/ is writable btrfs"
+  fi
+}
+
+check_disk_space() {
+  local used
+  used=$(df -P / | awk 'NR == 2 { sub("%", "", $5); print $5 + 0 }')
+  if ((used >= 95)); then
+    report FAIL "/ is ${used}% full" "Old snapshots keep deleted files: snapper list, then sudo snapper delete <number>."
+  elif ((used >= 90)); then
+    report warn "/ is ${used}% full" "Old snapshots keep deleted files: snapper list, then sudo snapper delete <number>."
+  else
+    report ok "/ is ${used}% full"
+  fi
+}
+
+check_package() {
+  local version summary missing
+  if ! version=$(pacman -Q nova 2>/dev/null); then
+    report warn "nova is not installed as a package"
+    return
+  fi
+  summary=$(pacman -Qk nova 2>/dev/null | tail -n 1 || true)
+  missing=$(sed -nE 's/.* ([0-9]+) missing files?$/\1/p' <<<"$summary")
+  if ((${missing:-0} > 0)); then
+    report FAIL "$missing of nova's files are missing" "sudo pacman -S nova puts them back."
+  else
+    report ok "$version, every file in place"
+  fi
+}
+
+check_kernel() {
+  local running
+  running=$(uname -r)
+  if [[ -d $MODULES_DIR/$running ]]; then
+    report ok "the running kernel is the installed one ($running)"
+  else
+    report warn "the kernel was updated since this boot" \
+      "Restart to use it; until then, a device plugged in now may not work."
+  fi
+}
+
+check_lock() {
+  if [[ -f $PAM_DIR/nova-lock-password ]]; then
+    report ok "the lock screen has its PAM service"
+  else
+    report FAIL "the lock screen has no PAM service, so it cannot lock" "sudo pacman -S nova puts it back."
+  fi
+}
+
+check_snapshots() {
+  local unit off=()
+  [[ -f $SNAPPER_CONFIG ]] || {
+    report warn "snapshots are not set up: there is no $SNAPPER_CONFIG"
+    return
+  }
+  for unit in snapper-cleanup.timer limine-snapper-sync.service; do
+    systemctl is-enabled --quiet "$unit" 2>/dev/null || off+=("$unit")
+  done
+  if ((${#off[@]} > 0)); then
+    report warn "snapshots are not looked after: ${off[*]} not enabled" "sudo systemctl enable --now ${off[*]}"
+  else
+    report ok "snapshots are taken, pruned and offered in the boot menu"
+  fi
+}
+
+check_clock() {
+  if [[ $(timedatectl show -p NTPSynchronized --value 2>/dev/null) == yes ]]; then
+    report ok "the clock is synchronised"
+  else
+    report warn "the clock is not synchronised" "It needs the network; systemctl status systemd-timesyncd says more."
+  fi
+}
+
+failed_units() { # [--user]
+  { systemctl "$@" --failed --plain --no-legend --no-pager 2>/dev/null || true; } | awk '{ print $1 }' | paste -sd' ' -
+}
+
+check_services() {
+  local system
+  system=$(failed_units)
+  if [[ -n $system ]]; then
+    report warn "failed system services: $system" "systemctl status <name> says why."
+  else
+    report ok "no failed system services"
+  fi
+}
+
+check_session() {
+  local user file name plaintext=()
+  user=$(failed_units --user)
+  if [[ -n $user ]]; then
+    report warn "failed services of yours: $user" "systemctl --user status <name> says why."
+  else
+    report ok "no failed services of yours"
+  fi
+
+  if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+    if nova-shell shell ping >/dev/null 2>&1; then
+      report ok "the shell is running"
+    else
+      report warn "the shell is not running" "nova restart shell starts it."
+    fi
+  fi
+
+  # gnome-keyring writes a keyring without a password as plain text.
+  for file in "$KEYRINGS"/*.keyring; do
+    [[ -f $file && $(head -c 9 -- "$file") == '[keyring]' ]] || continue
+    name=${file##*/}
+    plaintext+=("${name%.keyring}")
+  done
+  if ((${#plaintext[@]} == 0)); then
+    report ok "no secrets stored unencrypted"
+  elif [[ -f $STATE/keyring-migrate-pending ]]; then
+    report -- "the carried-over keyring moves into your login keyring at the next unlock"
+  else
+    report warn "secrets stored unencrypted, in the keyring ${plaintext[*]}" \
+      "To move them into your login keyring:" \
+      "echo ${plaintext[0]} >$STATE/keyring-migrate-pending && /usr/lib/nova/bin/nova-keyring-migrate"
+  fi
+}
+
+check_boot_fallback() {
+  local out line lines=()
+  if out=$(nova-boot-check status 2>&1); then
+    report ok "the boot menu has its fallback entry"
+    return
+  fi
+  while IFS= read -r line; do lines+=("$line"); done < <(tail -n +2 <<<"$out")
+  report FAIL "the boot menu's fallback is incomplete" "${lines[@]}"
+}
+
+check_hardware() {
+  local profile
+  if profile=$(nova-hw-detect 2>/dev/null); then
+    report -- "hardware profile: $profile"
+  else
+    report -- "no hardware profile for this model: the generic setup"
+  fi
+}
+
+check_root_filesystem
+check_disk_space
+check_package
+check_kernel
+check_lock
+check_snapshots
+check_clock
+check_services
+if ((EUID == 0)); then
+  check_boot_fallback
+  report -- "your session's checks: run nova doctor without sudo"
+else
+  check_session
+  if [[ -r $ESP/limine.conf ]]; then
+    check_boot_fallback
+  else
+    report -- "the boot menu's fallback entry: sudo nova doctor checks it"
+  fi
+fi
+check_hardware
+exit "$failed"

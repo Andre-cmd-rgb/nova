@@ -24,6 +24,15 @@ git repositories, folders, Wi-Fi networks, your extra packages. Boot the stick,
 type its passphrase, and the installer puts everything back. On Nova itself it
 is `nova usb`.
 
+## When something is wrong
+
+- `nova doctor` looks the system over and says how to fix what it finds; `sudo
+  nova doctor` also checks the boot menu's fallback entry.
+- `nova recovery` restarts into the boot menu: the last snapshots, the fallback
+  image and the LTS kernel. Any key during the first second of boot opens it too.
+
+## More
+
 - [Architecture](docs/ARCHITECTURE.md): how the pieces fit, and the rules for adding code
 - [NOTICE](NOTICE): Nova's shell, Hyprland defaults and palettes derive from Omarchy (MIT)
 
