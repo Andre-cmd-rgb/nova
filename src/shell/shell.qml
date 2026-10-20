@@ -158,12 +158,15 @@ ShellRoot {
   property var bar: null
 
   Loader {
-    // `shell` reads null for a moment while the shell is torn down.
+    id: barLoader
+    // Inside Bar { } the name `shell` is the bar's own property, which hides
+    // this file's root, so the root goes in under another name.
+    readonly property var host: shell
     sourceComponent: Bar {
-      novaPath: shell ? shell.novaPath : ""
-      barWidgetRegistry: shell ? shell.barWidgetRegistry : null
-      barConfig: shell ? shell.barConfig : ({})
-      shell: shell
+      novaPath: barLoader.host.novaPath
+      barWidgetRegistry: barLoader.host.barWidgetRegistry
+      barConfig: barLoader.host.barConfig
+      shell: barLoader.host
     }
     onLoaded: shell.bar = item
   }
@@ -519,11 +522,10 @@ ShellRoot {
         }
         onStatusChanged: {
           if (status === Loader.Error) {
-            // Loader.errorString() reflects the source-load failure even when
-            // sourceComponent is null. Surface both so the user sees something
-            // actionable instead of a panel that silently refuses to open.
-            var detail = errorString && errorString() ? errorString() : ""
-            if (!detail && sourceComponent) detail = sourceComponent.errorString()
+            // A Loader given a source keeps the component it made from it as
+            // sourceComponent, and that holds the reason, so the user sees
+            // something actionable instead of a panel that refuses to open.
+            var detail = sourceComponent ? sourceComponent.errorString() : ""
             console.warn("panel plugin " + panelEntry.pluginId + " failed to load:", detail)
             shell.hide(panelEntry.pluginId)
           }

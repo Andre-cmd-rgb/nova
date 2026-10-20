@@ -106,8 +106,9 @@ session() { # desktop | lock
     echo "FAIL listPlugins: $plugins"
   fi
 
+  # The clock opens from its place in the bar, so it fails when the bar is empty.
   local id payload
-  for id in nova.menu:'{"menu":"root"}' nova.settings:'{"page":"about"}' nova.batterylife:'{}' \
+  for id in nova.clock:'{}' nova.menu:'{"menu":"root"}' nova.settings:'{"page":"about"}' nova.batterylife:'{}' \
     nova.clipboard:'{}' nova.emojis:'{}'; do
     payload=${id#*:} id=${id%%:*}
     answer=$(ipc shell summon "$id" "$payload" || true)

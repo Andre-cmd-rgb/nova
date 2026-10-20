@@ -1560,8 +1560,8 @@ Item {
     // plugin enabled/disabled, etc.). Reading the `widgets` property creates
     // the binding dependency — the wrapped function call alone wouldn't.
     readonly property var registryComponent: {
-      var w = root.barWidgetRegistry ? root.barWidgetRegistry.widgets : null
-      if (!w || customType) return null
+      var w = root.barWidgetRegistry.widgets
+      if (customType) return null
       var registryName = root.canonicalWidgetId(moduleName)
       return w[registryName] ? w[registryName].component : null
     }
