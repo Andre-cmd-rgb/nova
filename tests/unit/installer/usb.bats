@@ -270,6 +270,19 @@ EOF
   [ ! -e "$UDEV_RULE" ]
 }
 
+@test "console_keymap: this computer's console layout, quoted or not, or nothing" {
+  run console_keymap
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+  mkdir -p "$NOVA_USB_SYSROOT/etc"
+  printf 'KEYMAP=es\nXKBLAYOUT=es\n' >"$NOVA_USB_SYSROOT/etc/vconsole.conf"
+  [ "$(console_keymap)" = es ]
+  printf 'FONT=ter-v16n\nKEYMAP="de-latin1"\n' >"$NOVA_USB_SYSROOT/etc/vconsole.conf"
+  [ "$(console_keymap)" = de-latin1 ]
+  printf 'KEYMAP=$(reboot)\n' >"$NOVA_USB_SYSROOT/etc/vconsole.conf"
+  run console_keymap
+  [ "$status" -eq 0 ] && [ -z "$output" ]
+}
+
 @test "the installer partition: the ISO, the packages, and room to spare" {
   [ "$(installer_mib $((1200 * MiB)) 0)" = 1388 ]
   [ "$(installer_mib $((1200 * MiB)) $((2000 * MiB)))" = 3488 ]

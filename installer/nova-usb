@@ -575,6 +575,15 @@ ask_passphrase() {
   done
 }
 
+# This computer's console keyboard layout. The stick offers it first, so the
+# passphrase and the Wi-Fi password are typed on the keys they were chosen on.
+console_keymap() {
+  local keymap=''
+  [[ -r $SYSROOT/etc/vconsole.conf ]] &&
+    keymap=$(sed -n 's/^KEYMAP=//p' "$SYSROOT/etc/vconsole.conf" | tr -d "\"'" | awk 'NR == 1')
+  if [[ $keymap =~ ^[a-z][a-z0-9_-]*$ ]]; then echo "$keymap"; fi
+}
+
 # The plan the writer reads: key=value lines, one value each, no shell in them.
 write_plan_env() { # plan key=value...
   local plan=$1
@@ -731,7 +740,8 @@ main() {
   fi
 
   write_plan_env "$plan" "device=$stick" "size=$stick_size" "serial=$stick_serial" "iso=$iso" \
-    "user=$(id -un)" "home=$USB_HOME" "items=${carried[*]}" "offline=$OFFLINE" "installer_mib=$p1_mib"
+    "user=$(id -un)" "home=$USB_HOME" "items=${carried[*]}" "offline=$OFFLINE" "installer_mib=$p1_mib" \
+    "keymap=$(console_keymap)"
   if ((dry)); then
     say "Dry run: nothing was written. The plan:"
     sed 's/^/  /' "$plan/plan.env" >&2
@@ -913,7 +923,7 @@ write_stick() { # plan, with the passphrase on stdin
   local plan=${1:?the writer needs a plan}
   ((EUID == 0)) || die "the writer runs as root (sudo nova-usb write <plan>)"
   [[ -r $plan/plan.env ]] || die "no plan at $plan"
-  local device size serial iso user home items offline installer_mib passphrase=''
+  local device size serial iso user home items offline installer_mib keymap passphrase=''
   device=$(plan_value "$plan" device)
   size=$(plan_value "$plan" size)
   serial=$(plan_value "$plan" serial)
@@ -923,6 +933,7 @@ write_stick() { # plan, with the passphrase on stdin
   items=$(plan_value "$plan" items)
   offline=$(plan_value "$plan" offline)
   installer_mib=$(plan_value "$plan" installer_mib)
+  keymap=$(plan_value "$plan" keymap)
   IFS= read -r -d '' passphrase || true
   [[ $device == /dev/* && $size =~ ^[0-9]+$ && $installer_mib =~ ^[0-9]+$ && -r $iso ]] || die "the plan is incomplete"
   [[ -z $items || -n $passphrase ]] || die "things to carry, and no passphrase to lock them with"
@@ -953,6 +964,10 @@ write_stick() { # plan, with the passphrase on stdin
   mount -o loop,ro -- "$iso" "$WORK/iso"
   mount -- "$p1" "$WORK/stick"
   cp -r -- "$WORK/iso/." "$WORK/stick/"
+  if [[ $keymap =~ ^[a-z][a-z0-9_-]*$ ]]; then
+    mkdir -p "$WORK/stick/nova"
+    echo "$keymap" >"$WORK/stick/nova/keymap"
+  fi
   if [[ $offline == 1 ]]; then
     say "Downloading the packages onto the stick"
     mkdir -p "$WORK/stick/nova/repo"
@@ -1005,7 +1020,7 @@ write_stick() { # plan, with the passphrase on stdin
   # this reads the stick itself.
   say "Checking the stick"
   mount -o ro -- "$p1" "$WORK/stick"
-  diff -r --exclude=repo -- "$WORK/iso" "$WORK/stick" >/dev/null || die "the installer on the stick does not match the ISO; the stick may be failing."
+  diff -r --exclude=repo --exclude=keymap -- "$WORK/iso" "$WORK/stick" >/dev/null || die "the installer on the stick does not match the ISO; the stick may be failing."
   umount "$WORK/stick"
   if [[ -n $items ]]; then
     printf '%s' "$passphrase" | cryptsetup open --readonly --key-file - "$p2" "$MAPPER"

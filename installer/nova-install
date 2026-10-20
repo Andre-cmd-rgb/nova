@@ -1046,13 +1046,18 @@ main() {
 
   # The layout first, and loaded at once: the password typed below has to be
   # the password the lock screen sees, on the same keyboard layout.
+  # nova-install-start has usually asked already (NOVA_KEYMAP).
   say "Keyboard"
-  local keymap
-  while :; do
-    keymap=$(ask keymap "Layout (us, es, it, de, fr, uk, ...)" us)
-    valid_keymap "$keymap" && break
-    retry "No keyboard layout called '$keymap'."
-  done
+  local keymap=${NOVA_KEYMAP:-}
+  if [[ -z $ANSWERS ]] && valid_keymap "$keymap"; then
+    info "Layout: $keymap"
+  else
+    while :; do
+      keymap=$(ask keymap "Layout (us, es, it, de, fr, uk, ...)" us)
+      valid_keymap "$keymap" && break
+      retry "No keyboard layout called '$keymap'."
+    done
+  fi
   loadkeys "$keymap" >/dev/null 2>&1 || true
 
   local disk_line disk disk_size disk_model

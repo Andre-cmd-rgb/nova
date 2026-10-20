@@ -73,7 +73,7 @@ size=$(blockdev --getsize64 "$loop")
 items="ssh chrome history wifi projects folders"
 write_plan() { # size
   printf '%s\n' "device=$loop" "size=$1" "serial=-" "iso=$work/nova.iso" "user=root" "home=$home" \
-    "items=$items" "offline=0" "installer_mib=64" >"$plan/plan.env"
+    "items=$items" "offline=0" "installer_mib=64" "keymap=es" >"$plan/plan.env"
 }
 write() {
   printf '%s' "$passphrase" |
@@ -101,9 +101,10 @@ p1=${loop}p1 p2=${loop}p2
 ok "the layout: a FAT EFI partition, then LUKS"
 
 mount -o ro "$p1" "$work/mnt"
-diff -r "$iso" "$work/mnt" || fail "the installer partition differs from the ISO"
+diff -r --exclude=keymap "$iso" "$work/mnt" || fail "the installer partition differs from the ISO"
+[[ $(cat "$work/mnt/nova/keymap") == es ]] || fail "the stick does not offer this computer's keyboard layout"
 umount "$work/mnt"
-ok "the installer partition holds the ISO's files"
+ok "the installer partition holds the ISO's files, and this computer's keyboard layout"
 
 if printf 'wrong passphrase' | cryptsetup open --test-passphrase --key-file - "$p2" 2>/dev/null; then
   fail "a wrong passphrase opened the data"

@@ -86,6 +86,18 @@ fi
 clear
 printf '\n  \e[1mNova\e[0m installer\n\n'
 
+# The keyboard first: the passphrase and the Wi-Fi password below are typed on
+# it. nova usb leaves the layout of the computer it ran on as the default.
+keymap_default=$(cat "${NOVA_STICK:-/run/archiso/bootmnt}/nova/keymap" 2>/dev/null) || keymap_default=us
+while :; do
+  read -r -p "Keyboard layout (us, es, it, de, fr, uk, ...) [$keymap_default]: " keymap
+  keymap=${keymap:-$keymap_default}
+  [[ $keymap =~ ^[a-z][a-z0-9_-]*$ ]] && localectl list-keymaps 2>/dev/null | grep -qx -- "$keymap" && break
+  echo "No keyboard layout called '$keymap'."
+done
+loadkeys "$keymap" >/dev/null 2>&1
+export NOVA_KEYMAP=$keymap
+
 # Things carried on the stick (nova usb) are opened first: their Wi-Fi
 # networks can get this system online without a question.
 nova-install --unlock
