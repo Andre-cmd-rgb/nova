@@ -107,14 +107,41 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
 
    Actions → candidate → Run cuts one at any other time; the first one needs
    the signing key (above) and takes a few hours more, for the kernel.
-2. **Test.** On a machine following pre-releases, `nova update`, then reboot;
-   install the ISO on a spare disk or in QEMU (OVMF, tmpfs-backed disk); work
-   through the hardware checklist for each supported laptop. A candidate that
-   fails is simply not promoted: fix `main`, and the next candidate replaces it.
+2. **Test.** CI has already installed and booted it in a virtual machine; what
+   is left is the hardware. On each supported laptop following pre-releases,
+   `nova update`, reboot, and work through the checklist below; now and then,
+   install the ISO on a spare disk too. A candidate that fails is simply not
+   promoted: fix `main`, and the next candidate replaces it.
 3. **Approve.** Actions → promote → Run, with the candidate's tag. It tags the
    same commit with the final version (`v1.1.0-rc.2` becomes `v1.1.0`), builds
    it again on the candidate's own Arch snapshot, and publishes it as the
    latest release. Systems pick it up at their next update check.
+
+### The hardware checklist
+
+What no virtual machine can check. A line that fails is a bug to fix before
+approving, or one to write down in the release notes.
+
+- **Boot:** firmware logo to the lock screen with no console text in between;
+  `systemd-analyze` no slower than the last release; a key in the first second
+  shows the boot menu with snapshots.
+- **Unlock:** a wrong password is refused; the right one signs Chrome in with
+  no keyring prompt; after that, the fingerprint unlocks, after suspend too.
+- **Sleep:** the lid suspends and the machine wakes to the lock screen;
+  `systemctl hibernate` on AC resumes to the session.
+- **Power:** unplugged, the profile goes to power-saver and `nova power gpu
+  status` says off (P1 Gen 4i); plugged in, both come back. *Always Off* in
+  Settings keeps the card off. `nova battery limit` reads back what was set.
+  On battery at idle, `src/power/test/watts.sh 300` is no worse than last time.
+- **Graphics:** native resolution and refresh rate (165 Hz with VRR on the
+  Legion); `chrome://gpu` shows hardware video decode; a game runs on the
+  NVIDIA card (`nova power gpu run` on the P1, `prime-run` on the Legion).
+- **Sound:** speakers (`nova audio tuning status` on the P1), the microphone,
+  headphones, a Bluetooth headset; the volume and brightness keys show the OSD.
+- **Network:** Wi-Fi, Bluetooth pairing, mobile data where there is a SIM.
+- **Desktop:** the keyboard layout, touchpad and keyboard backlight; Chrome,
+  VS Code, Nautilus, foot, Claude Code and Codex start; a theme change reaches
+  every surface; `nova doctor` finds nothing.
 
 The kernel moves only when `packaging/linux-nova` is updated
 ([packaging.md](packaging.md)); everything else follows the snapshot.

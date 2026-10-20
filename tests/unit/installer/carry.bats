@@ -50,7 +50,7 @@ carry() {
   cp -r "$REPO_ROOT/data/hardware/thinkpad-p1-gen4i" "$REPO_ROOT/data/hardware/legion-5" "$NOVA_INSTALLER_SHARE/hardware/"
   run every_package
   [ "$status" -eq 0 ]
-  for name in nova base linux-nova linux linux-lts intel-ucode amd-ucode vulkan-intel vulkan-radeon nvidia-open-nova nvidia-open nvidia-utils libva-nvidia-driver lsp-plugins-lv2; do
+  for name in nova base linux-nova linux linux-lts intel-ucode amd-ucode vulkan-intel vulkan-radeon nvidia-open-nova nvidia-open nvidia-utils nvidia-prime libva-nvidia-driver lsp-plugins-lv2; do
     grep -qx "$name" <<<"$output"
   done
   [ "$(sort <<<"$output" | uniq -d)" = "" ]

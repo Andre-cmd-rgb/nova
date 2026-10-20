@@ -153,9 +153,9 @@ END
   pci 0000:00:1f.3 0x040380 0x8086 0xa0c8
   pci 0000:01:00.0 0x030200 0x10de 0x25b8
   run hardware_packages linux-nova
-  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open-nova nvidia-utils)" ]
+  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open-nova nvidia-utils nvidia-prime)" ]
   run hardware_packages linux
-  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open nvidia-utils)" ]
+  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open nvidia-utils nvidia-prime)" ]
 }
 
 @test "hardware_packages: an NVIDIA card on its own decodes video too" {

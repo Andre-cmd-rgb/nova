@@ -182,7 +182,9 @@ hardware_packages() {
     esac
   done
   # With an integrated GPU beside it, the desktop and the browser run on that
-  # one; alone, the NVIDIA card decodes video itself.
+  # one, and prime-run puts a game on the NVIDIA card; alone, the NVIDIA card
+  # decodes video itself.
+  if ((dgpu && igpu)); then echo nvidia-prime; fi
   if ((dgpu && !igpu)); then echo libva-nvidia-driver; fi
 }
 
@@ -211,7 +213,7 @@ every_package() {
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
     printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" \
-      nvidia-open-nova nvidia-open nvidia-utils libva-nvidia-driver
+      nvidia-open-nova nvidia-open nvidia-utils nvidia-prime libva-nvidia-driver
     for list in "$SHARE"/hardware/*/packages; do
       [[ -r $list ]] || continue
       sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"
