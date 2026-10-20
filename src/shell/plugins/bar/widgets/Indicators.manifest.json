@@ -45,6 +45,11 @@
             "value": "StayAwake",
             "label": "Stay awake",
             "description": "Keeps the screen from idling and locking"
+          },
+          {
+            "value": "LidAwake",
+            "label": "Lid awake",
+            "description": "Closing the lid only turns the screen off (laptops)"
           }
         ]
       },

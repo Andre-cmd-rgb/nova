@@ -1,0 +1,190 @@
+#!/bin/bash
+
+# nova:summary=Close the lid without the laptop sleeping or locking (the screen only goes dark)
+# nova:args=[on [why]|off|toggle|status]
+#
+# Three things react to the lid closing, and all three have to be answered or
+# the laptop still stops:
+#
+#   1. logind suspends. Held off with a handle-lid-switch inhibitor, a low-level
+#      lock logind honours whatever LidSwitchIgnoreInhibited says. Only the lid
+#      is inhibited, so choosing Suspend still suspends.
+#   2. Hyprland's lid binding runs nova-system-lid-close, which locks. The
+#      binding comes here instead (close, open); unarmed, this hands it straight
+#      back, so nothing changes until a hold is armed.
+#   3. The idle lock: a closed lid makes no input. Stay Awake holds it off, and
+#      is put back as it was on release.
+#
+# The panel goes dark with DPMS rather than by disabling the output, which
+# would make Hyprland move every window onto a display that is not there.
+#
+# On a laptop with a 5G modem on mhi-pci-generic (the ThinkPad P1's Foxconn
+# T99W175), the modem is kept out of runtime suspend while armed: with the lid
+# shut and nothing sending it drops into M3 after two seconds, and it may be the
+# only link up. That write is root's, through nova-lid-awake-modem (polkit, no
+# password for the person at the computer).
+
+set -euo pipefail
+
+STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/nova/lid-awake
+ARMED=$STATE_DIR/armed
+PREV_STAY_AWAKE=$STATE_DIR/prev-stay-awake
+PREV_MODEM=$STATE_DIR/prev-modem
+STAY_AWAKE=$HOME/.local/state/nova/indicators/stay-awake
+PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
+MODEM_HELPER=${NOVA_LID_AWAKE_MODEM:-/usr/lib/nova/nova-lid-awake-modem}
+UNIT=nova-lid-awake-inhibit
+
+# logind's own list is what settles whether the lid is held; a running unit
+# is not yet a lock.
+lid_lock_held() {
+  systemd-inhibit --list --no-legend 2>/dev/null | grep -q '^nova-lid-awake .*handle-lid-switch'
+}
+
+# Armed is the marker and the lock together: a marker that outlived its lock
+# (a restart) is a stale one, and reconcile clears it.
+armed() { [[ -f $ARMED ]] && lid_lock_held; }
+
+dpms() { # on|off
+  local internal
+  internal=$(nova-hyprland-monitor-laptop 2>/dev/null) || return 0
+  [[ -n $internal ]] || return 0
+  hyprctl dispatch "hl.dsp.dpms({ action = \"$1\", monitor = \"$internal\" })" >/dev/null 2>&1 || true
+}
+
+modem() { # -> the modem's PCI device directory; by driver, since a slot is not a modem
+  local d driver
+  for d in "$PCI_DEVICES"/*; do
+    driver=$(readlink -f "$d/driver" 2>/dev/null) || continue
+    [[ ${driver##*/} == mhi-pci-generic ]] || continue
+    echo "$d"
+    return 0
+  done
+  return 1
+}
+
+modem_set() { # on|auto
+  local d
+  d=$(modem) || return 0
+  [[ $(cat "$d/power/control" 2>/dev/null) != "$1" ]] || return 0
+  pkexec "$MODEM_HELPER" "$1" >/dev/null 2>&1
+}
+
+refresh_indicator() { nova-shell -q nova.indicators refresh >/dev/null 2>&1 || true; }
+
+arm() {
+  local why=${1:-Working with the lid closed} d waited=0
+  mkdir -p "$STATE_DIR"
+  # What was there before, so release puts back exactly that.
+  if [[ -f $STAY_AWAKE ]]; then echo on >"$PREV_STAY_AWAKE"; else echo off >"$PREV_STAY_AWAKE"; fi
+  nova-toggle-idle on >/dev/null || echo "nova lid-awake: could not turn on Stay Awake; the idle lock may still lock" >&2
+  if d=$(modem); then
+    cat "$d/power/control" >"$PREV_MODEM" 2>/dev/null || true
+    modem_set on || echo "nova lid-awake: could not keep the modem awake; it may still sleep" >&2
+  fi
+  if ! systemctl --user is-active --quiet "$UNIT.service"; then
+    systemd-run --user --quiet --unit="$UNIT" --description="nova lid-awake: no suspend on lid close" \
+      systemd-inhibit --what=handle-lid-switch --who=nova-lid-awake --why="$why" --mode=block sleep infinity || {
+      echo "nova lid-awake: could not take the lid inhibitor" >&2
+      release >/dev/null
+      return 1
+    }
+  fi
+  # systemd-run returns once the unit is queued, before logind has the lock;
+  # saying the lid is safe before it is would be the one lie this must not tell.
+  until lid_lock_held; do
+    if ((waited++ >= 30)); then
+      echo "nova lid-awake: the lid inhibitor never appeared; NOT armed" >&2
+      release >/dev/null
+      return 1
+    fi
+    sleep 0.1
+  done
+  printf '%s\n' "$why" >"$ARMED"
+  refresh_indicator
+  echo "Lid awake: closing the lid only turns the screen off."
+}
+
+release() {
+  local ok=0
+  systemctl --user stop "$UNIT.service" >/dev/null 2>&1 || true
+  systemctl --user reset-failed "$UNIT.service" >/dev/null 2>&1 || true
+  if [[ -f $PREV_STAY_AWAKE && $(<"$PREV_STAY_AWAKE") == off ]]; then
+    nova-toggle-idle off >/dev/null || ok=1
+  fi
+  if [[ -f $PREV_MODEM ]]; then
+    modem_set "$(<"$PREV_MODEM")" || ok=1
+  fi
+  dpms on
+  # Kept for the next try when Stay Awake or the modem could not be put back
+  # (the shell not running yet, say).
+  if ((ok == 0)); then
+    rm -f -- "$ARMED" "$PREV_STAY_AWAKE" "$PREV_MODEM"
+  else
+    rm -f -- "$ARMED"
+  fi
+  refresh_indicator
+  echo "Lid awake is off: closing the lid sleeps and locks again."
+  return "$ok"
+}
+
+# At login: a hold that did not survive a restart is undone, so Stay Awake does
+# not stay on forever because of it.
+reconcile() {
+  if [[ -f $ARMED || -f $PREV_STAY_AWAKE || -f $PREV_MODEM ]] && ! lid_lock_held; then
+    release >/dev/null
+  fi
+  return 0
+}
+
+status() {
+  local d
+  if armed; then echo "on: $(<"$ARMED")"; else echo off; fi
+  echo "  lid inhibitor  $(lid_lock_held && echo held || echo none)"
+  echo "  stay awake     $([[ -f $STAY_AWAKE ]] && echo on || echo off)"
+  echo "  lid            $(nova-hw-laptop-closed 2>/dev/null && echo closed || echo open)"
+  if d=$(modem); then echo "  modem          $(cat "$d/power/control" 2>/dev/null) ($(cat "$d/power/runtime_status" 2>/dev/null))"; fi
+}
+
+# Hyprland's switch:on:Lid Switch.
+on_close() {
+  armed || exec nova-system-lid-close
+  # Docked, a lid close neither locks nor sleeps anyway: move to the external
+  # display as always.
+  if nova-hw-external-monitors; then exec nova-hyprland-monitor-clamshell; fi
+  dpms off
+}
+
+# Hyprland's switch:off:Lid Switch.
+on_open() {
+  dpms on
+  nova-hyprland-monitor-clamshell || true
+  if armed; then
+    nova-notification-send -u low "Lid awake is still on" \
+      "Closing the lid will not sleep or lock. Turn it off with: nova lid-awake off" >/dev/null 2>&1 || true
+  fi
+}
+
+main() {
+  case ${1:-status} in
+    on)
+      shift
+      arm "$@"
+      ;;
+    off) release ;;
+    toggle) if armed; then release; else arm; fi ;;
+    status) status ;;
+    armed) armed ;;
+    reconcile) reconcile ;;
+    close) on_close ;;
+    open) on_open ;;
+    *)
+      echo "Usage: nova lid-awake [on [why]|off|toggle|status]" >&2
+      return 2
+      ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

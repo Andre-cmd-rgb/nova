@@ -8,7 +8,7 @@ BarWidget {
   id: root
   moduleName: "nova.indicators"
 
-  readonly property var defaultIndicatorEntries: [ "ScreenRecording", "NightLight", "Dnd", "StayAwake" ]
+  readonly property var defaultIndicatorEntries: [ "ScreenRecording", "NightLight", "Dnd", "StayAwake", "LidAwake" ]
   readonly property var indicatorEntries: indicatorEntriesFromSettings(settings)
   property var activeIndicatorIds: []
   property var indicatorActiveStates: ({})

@@ -37,6 +37,7 @@
 
   // Toggle
   "toggle.stay-awake": {"icon":"󰅶","label":"Stay Awake","checked":"[[ -f $HOME/.local/state/nova/indicators/stay-awake ]]","action":"nova-toggle-idle"},
+  "toggle.lid-awake": {"icon":"󰌢","label":"Lid Awake","when":"nova-hw-laptop","checked":"nova-lid-awake armed","action":"nova-lid-awake toggle"},
   "toggle.notifications": {"icon":"󰂛","label":"Do Not Disturb","checked":"[[ \"$(nova-shell notifications dndState)\" == on ]]","action":"nova-toggle-notification-silencing"},
   "toggle.nightlight": {"icon":"󰔎","label":"Night Light","action":"nova-toggle-nightlight"},
   "toggle.screentime": {"icon":"󰥔","label":"Screen Time","checked":"nova-screentime enabled","action":"nova-screentime toggle"},
