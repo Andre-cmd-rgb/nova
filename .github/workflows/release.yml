@@ -1,8 +1,9 @@
 # A release: pins an Arch Linux Archive snapshot (yesterday's, unless given),
 # builds every Nova package against it, signs them into the [nova] repository,
-# builds the installer ISO, and puts it all on a GitHub release: a draft when a
-# tag is pushed by hand, published when candidate.yml or promote.yml calls it.
-# A tag with a "-" is a pre-release. See docs/releasing.md.
+# builds the installer ISO, installs from it in a virtual machine and boots the
+# result, and only then puts it all on a GitHub release: a draft when a tag is
+# pushed by hand, published when candidate.yml or promote.yml calls it. A tag
+# with a "-" is a pre-release. See docs/releasing.md.
 #
 # Needs the repository secret NOVA_REPO_KEY: the ASCII-armored private key whose
 # public half is in packaging/nova-keyring.
@@ -204,8 +205,48 @@ jobs:
           name: iso
           path: out/iso/
 
+  # The ISO as someone would use it: a stick made from it, an install with no
+  # questions in a KVM virtual machine, and the first boot checked from inside.
+  install-test:
+    needs: [pin, repo, iso]
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged # /dev/kvm
+      volumes:
+        - /mnt:/mnt # the runner's scratch disk: the stick and the disk images
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-toml
+      - uses: actions/download-artifact@v4
+        with:
+          name: repo
+          path: out/repo
+      - uses: actions/download-artifact@v4
+        with:
+          name: iso
+          path: out/iso
+      - name: Install it in QEMU, then boot it
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-hw-display-virtio-gpu \
+            qemu-hw-display-virtio-vga edk2-ovmf mtools dosfstools libarchive
+          TMPDIR=/mnt tests/install/run --iso out/iso/nova-*.iso --repo out/repo --release release.toml \
+            --packages out/iso/packages.txt --logs /tmp/install-logs
+      - name: Keep the serial logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-logs
+          path: /tmp/install-logs
+          if-no-files-found: ignore
+
   publish:
-    needs: [repo, iso]
+    needs: [repo, iso, install-test]
     runs-on: ubuntu-latest
     permissions:
       contents: write

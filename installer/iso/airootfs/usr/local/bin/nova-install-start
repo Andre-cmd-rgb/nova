@@ -66,6 +66,23 @@ get_online() {
   done
 }
 
+# A stick with an answers file installs with nobody there (tools/install-test):
+# no questions, the report on the console the file names, and the machine off
+# at the end, installed or not.
+answers=${NOVA_ANSWERS:-/run/archiso/bootmnt/nova/answers}
+if [[ -r $answers ]]; then
+  console=$(sed -n 's/^console=//p' "$answers" | tail -n 1)
+  [[ -z $console ]] || exec >>"$console" 2>&1
+  if nova-install --answers "$answers"; then
+    echo "nova-install-start: installed"
+  else
+    echo "nova-install-start: the install failed"
+    tail -n 40 /var/log/nova-install.log
+  fi
+  systemctl poweroff
+  exit 0
+fi
+
 clear
 printf '\n  \e[1mNova\e[0m installer\n\n'
 

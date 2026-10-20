@@ -1,0 +1,37 @@
+#!/bin/bash
+# The installed system's first boot, in tests/install/run: what a person would
+# see, reported on the serial port, then the machine off. Each line starts
+# "probe: ok", "probe: FAIL", or "probe:" for the record; "probe: done" ends
+# the report.
+set -uo pipefail
+exec >/dev/ttyS0 2>&1
+
+user=$(awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }' /etc/passwd)
+uid=$(id -u "$user")
+shell() { runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" /usr/lib/nova/bin/nova-shell "$@" 2>/dev/null; }
+check() { # what command...
+  local what=$1
+  shift
+  if "$@" >/dev/null 2>&1; then echo "probe: ok   $what"; else echo "probe: FAIL $what"; fi
+}
+
+# The desktop starts behind the lock, here on software rendering: give it time.
+for ((i = 0; i < 300; i++)); do
+  [[ $(shell lock state) == secure ]] && break
+  sleep 1
+done
+check "the session started locked, and the lock is secure" test "$(shell lock state)" = secure
+check "Hyprland is running" pgrep -u "$user" -x Hyprland
+check "the shell answers" test "$(shell shell ping)" = ok
+check "greetd is running" systemctl is-active greetd
+
+failed=$(systemctl --failed --plain --no-legend | awk '{ print $1 }' | paste -sd' ')
+check "no failed services${failed:+ (failed: $failed)}" test -z "$failed"
+doctor=$(nova doctor 2>&1)
+status=$?
+sed 's/^/probe:   /' <<<"$doctor"
+check "nova doctor finds nothing wrong" test "$status" = 0
+echo "probe: $(systemd-analyze 2>/dev/null | head -n 1)"
+
+echo "probe: done"
+systemctl poweroff

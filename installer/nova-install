@@ -14,6 +14,13 @@
 # it was installed from, which is what `nova update` moves forward.
 #
 #   nova-install                  the interactive install
+#   nova-install --answers FILE   the same install with no questions, answered
+#                                 by FILE in key=value lines: keymap, disk,
+#                                 fullname, user, password, hostname, timezone,
+#                                 passphrase (for things carried), erase=yes to
+#                                 go ahead, and optionally apps=no and
+#                                 after=<script>, run in the new system at the
+#                                 end. tools/install-test uses it.
 #   nova-install --unlock         open the things carried on the stick (nova usb),
 #                                 and join their Wi-Fi networks
 #   nova-install --list-packages  every package an install on any computer can
@@ -38,6 +45,8 @@ CARRY=${NOVA_CARRY:-/run/nova-carry}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 IWD_DIR=${NOVA_IWD_DIR:-/var/lib/iwd}
 FPRINT_DIR=${NOVA_FPRINT_DIR:-/var/lib/fprint}
+# The answers file, for an install with no questions (--answers).
+ANSWERS=''
 CARRY_MAPPER=nova-carry
 
 ESP_MIB=2048
@@ -304,14 +313,35 @@ valid_keymap() {
   [[ $1 =~ ^[a-z][a-z0-9_-]*$ ]] && localectl list-keymaps 2>/dev/null | grep -qx -- "$1"
 }
 
-ask() { # prompt default -> the answer on stdout
+# An answer from the answers file: the last key=value line for the key.
+answer() { # key
+  sed -n "s/^$1=//p" "$ANSWERS" | tail -n 1
+}
+
+ask() { # key prompt default -> the answer on stdout
   local reply
-  read -rp "  $1${2:+ [$2]}: " reply </dev/tty
-  echo "${reply:-$2}"
+  if [[ -n $ANSWERS ]]; then
+    reply=$(answer "$1")
+  else
+    read -rp "  $2${3:+ [$3]}: " reply </dev/tty
+  fi
+  echo "${reply:-$3}"
+}
+
+# Asked again after a wrong answer; from the answers file, there is no again.
+retry() { # message
+  [[ -z $ANSWERS ]] || die "the answers file: $1"
+  warn "$1"
 }
 
 ask_password() {
   local first second
+  if [[ -n $ANSWERS ]]; then
+    first=$(answer password)
+    [[ -n $first ]] || die "the answers file has no password"
+    printf '%s' "$first"
+    return
+  fi
   while :; do
     read -rsp "  Password: " first </dev/tty
     echo >&2
@@ -332,6 +362,15 @@ choose_disk() {
   local disks=() line i choice path size model serial
   mapfile -t disks < <(candidate_disks)
   ((${#disks[@]})) || die "no disk to install on: Nova needs an internal disk of at least 64 GB."
+  if [[ -n $ANSWERS ]]; then
+    for line in "${disks[@]}"; do
+      [[ ${line%%$'\t'*} == "$(answer disk)" ]] || continue
+      disk_in_use "${line%%$'\t'*}" && die "the answers file's disk is in use by the live system"
+      echo "$line"
+      return
+    done
+    die "the answers file names no disk this can install on (disk=$(answer disk))"
+  fi
   # The menu goes to stderr: what this prints on stdout is the answer.
   {
     say "Which disk? Everything on it will be erased."
@@ -344,7 +383,7 @@ choose_disk() {
     done
   } >&2
   while :; do
-    choice=$(ask "Disk number" "$( ((${#disks[@]} == 1)) && echo 1)")
+    choice=$(ask - "Disk number" "$( ((${#disks[@]} == 1)) && echo 1)")
     if [[ $choice =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#disks[@]})); then
       line=${disks[choice - 1]}
       path=${line%%$'\t'*}
@@ -544,6 +583,28 @@ copy_fingerprints() { # user
   cp -a "$FPRINT_DIR/$1" "$TARGET/var/lib/fprint/"
 }
 
+# --------------------------------------------------------------- answers file
+
+answer_or() { # key default: the answer, or the default when there is none
+  local value=''
+  [[ -z $ANSWERS ]] || value=$(answer "$1")
+  echo "${value:-$2}"
+}
+
+# The answers file's after= script, run as root in the new system once the
+# install is done; a relative path is next to the answers file.
+run_after() {
+  local script
+  script=$(answer_or after '')
+  [[ -n $script ]] || return 0
+  [[ $script == /* ]] || script=${ANSWERS%/*}/$script
+  [[ -r $script ]] || die "the answers file's after= script is not there: $script"
+  say "Running $script"
+  install -m 700 "$script" "$TARGET/root/nova-after"
+  in_target /root/nova-after || die "$script failed; the log is in $LOG"
+  rm -f "$TARGET/root/nova-after"
+}
+
 configure_snapper() {
   # What `snapper create-config` writes, without the .snapshots subvolume it
   # would create: @snapshots is already mounted there, outside the root
@@ -667,8 +728,13 @@ carry_unlock() {
   [[ -n $part ]] || return 1
   say "Your things are on this stick, encrypted"
   for ((tries = 0; tries < 5; tries++)); do
-    read -rsp "  Passphrase (Enter to install without them): " pass </dev/tty
-    echo >&2
+    if [[ -n $ANSWERS ]]; then
+      pass=$(answer passphrase)
+      tries=4
+    else
+      read -rsp "  Passphrase (Enter to install without them): " pass </dev/tty
+      echo >&2
+    fi
     [[ -n $pass ]] || return 1
     if printf '%s' "$pass" | cryptsetup open --readonly --key-file - "$part" "$CARRY_MAPPER" 2>/dev/null; then
       mkdir -p "$CARRY"
@@ -882,6 +948,9 @@ main() {
       carry_wifi_live || warn "The carried Wi-Fi networks could not be read."
       return 0
       ;;
+    --answers)
+      ANSWERS=$(realpath -e -- "${2:?--answers needs a file}") || die "no answers file at $2"
+      ;;
     "") ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -917,9 +986,9 @@ main() {
   say "Keyboard"
   local keymap
   while :; do
-    keymap=$(ask "Layout (us, es, it, de, fr, uk, ...)" us)
+    keymap=$(ask keymap "Layout (us, es, it, de, fr, uk, ...)" us)
     valid_keymap "$keymap" && break
-    warn "No keyboard layout called '$keymap'."
+    retry "No keyboard layout called '$keymap'."
   done
   loadkeys "$keymap" >/dev/null 2>&1 || true
 
@@ -934,22 +1003,22 @@ main() {
     carried_user=$(carry_value .source.user)
     valid_username "$carried_user" || carried_user=
   fi
-  fullname=$(ask "Full name" "$(carry_ready && carry_value .source.name)")
+  fullname=$(ask fullname "Full name" "$(carry_ready && carry_value .source.name)")
   while :; do
-    user=$(ask "Username" "${carried_user:-$(tr '[:upper:]' '[:lower:]' <<<"${fullname%% *}" | tr -cd 'a-z0-9_-')}")
+    user=$(ask user "Username" "${carried_user:-$(tr '[:upper:]' '[:lower:]' <<<"${fullname%% *}" | tr -cd 'a-z0-9_-')}")
     valid_username "$user" && break
-    warn "Lower-case letters, digits, - and _, starting with a letter."
+    retry "Lower-case letters, digits, - and _, starting with a letter."
   done
   password=$(ask_password)
   while :; do
-    hostname=$(ask "Computer name" nova)
+    hostname=$(ask hostname "Computer name" nova)
     valid_hostname "$hostname" && break
-    warn "Letters, digits and -, up to 63 characters."
+    retry "Letters, digits and -, up to 63 characters."
   done
   while :; do
-    timezone=$(ask "Time zone (Europe/Rome, America/New_York, ...)" UTC)
+    timezone=$(ask timezone "Time zone (Europe/Rome, America/New_York, ...)" UTC)
     valid_timezone "$timezone" && break
-    warn "No time zone called '$timezone'."
+    retry "No time zone called '$timezone'."
   done
 
   # Only a reader fprintd can drive gets fprintd in the new system; prints
@@ -959,9 +1028,9 @@ main() {
     extra+=(fprintd)
     if carried_fingerprints; then
       fingerprint="carried from $(carry_value .source.host)"
-    else
+    elif [[ -z $ANSWERS ]]; then
       say "Fingerprint"
-      while [[ $(ask "Unlock with your fingerprint? (yes/no)" yes) == y* ]]; do
+      while [[ $(ask - "Unlock with your fingerprint? (yes/no)" yes) == y* ]]; do
         if enroll_fingerprint "$user"; then
           fingerprint="right index finger"
           break
@@ -982,7 +1051,11 @@ main() {
   info "Time zone     $timezone, keyboard $keymap"
   [[ -z $fingerprint ]] || info "Fingerprint   $fingerprint"
   carry_ready && info "Your things   $(carry_items | wc -l) items from $(carry_value .source.host), put back after the install"
-  [[ $(ask "Type erase to wipe $disk and install" "") == erase ]] || die "nothing was changed."
+  if [[ -n $ANSWERS ]]; then
+    [[ $(answer erase) == yes ]] || die "the answers file does not say erase=yes; nothing was changed."
+  else
+    [[ $(ask - "Type erase to wipe $disk and install" "") == erase ]] || die "nothing was changed."
+  fi
 
   partition_and_format "$disk"
   create_subvolumes_and_mount "$disk" "$swap"
@@ -995,9 +1068,10 @@ main() {
   copy_fingerprints "$user"
   restore_carry "$user"
   install_bootloader
-  install_apps "$user"
+  [[ $(answer_or apps yes) == no ]] || install_apps "$user"
   install_carried_packages "$user"
   enable_services
+  run_after
   finish
 
   say "Nova is installed."

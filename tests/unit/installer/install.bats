@@ -290,3 +290,59 @@ END
   [ "$status" -eq 1 ]
   [[ $output == *"unknown argument: --bogus"* ]]
 }
+
+answers() { # key=value...
+  printf '%s\n' "$@" >"$SCRATCH/answers"
+  ANSWERS=$SCRATCH/answers
+}
+
+@test "answers: each question answered from the file, its default where it says nothing" {
+  answers keymap=it user=first user=nova password=secret
+  [ "$(ask keymap Layout us)" = it ]
+  [ "$(ask user Username x)" = nova ]
+  [ "$(ask hostname "Computer name" nova)" = nova ]
+  [ "$(ask_password)" = secret ]
+  [ "$(answer_or apps yes)" = yes ]
+  answers apps=no
+  [ "$(answer_or apps yes)" = no ]
+}
+
+@test "answers: a wrong answer ends the install instead of asking again" {
+  answers
+  run retry "No keyboard layout called 'xx'."
+  [ "$status" -ne 0 ]
+  [[ $output == *"the answers file: No keyboard layout called 'xx'."* ]]
+  run ask_password
+  [ "$status" -ne 0 ]
+}
+
+@test "answers: the disk has to be one the installer would offer, and free" {
+  boot_disk() { echo /dev/sda; }
+  lsblk_disks() { disks_json <<<"vda $((80 * GiB)) false false virtio"$'\n'"sda $((8 * GiB)) true false usb Stick"; }
+  disk_in_use() { [[ $1 == /dev/vdb ]]; }
+  answers disk=/dev/vda
+  run choose_disk
+  [ "$status" -eq 0 ]
+  [ "${output%%$'\t'*}" = /dev/vda ]
+  answers disk=/dev/sda
+  run choose_disk
+  [ "$status" -ne 0 ]
+  [[ $output == *"names no disk this can install on (disk=/dev/sda)"* ]]
+}
+
+@test "answers: the after= script runs in the new system, next to the answers file" {
+  export NOVA_TARGET="$SCRATCH/target" NOVA_INSTALL_LOG="$SCRATCH/log"
+  TARGET=$NOVA_TARGET LOG=$NOVA_INSTALL_LOG
+  mkdir -p "$TARGET/root"
+  in_target() { echo "in_target $*" >>"$SCRATCH/calls"; }
+  run_after
+  [ ! -e "$SCRATCH/calls" ]
+  answers after=probe
+  printf '#!/bin/bash\n' >"$SCRATCH/probe"
+  run_after
+  [ "$(cat "$SCRATCH/calls")" = "in_target /root/nova-after" ]
+  [ ! -e "$TARGET/root/nova-after" ]
+  answers after=missing
+  run run_after
+  [ "$status" -ne 0 ]
+}

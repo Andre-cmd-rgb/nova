@@ -1,0 +1,147 @@
+#!/bin/bash
+# Installs a release from its ISO in a QEMU virtual machine, as a stick made by
+# nova usb would, then boots what was installed and checks it.
+#
+#   tests/install/run --iso <file> --repo <dir> --release <release.toml>
+#                     --packages <packages.txt> [--logs <dir>]
+#
+# The stick is a disk image laid out the way nova usb lays one out: a FAT
+# partition with the ISO's files and every package an install can need, the
+# [nova] ones from --repo (the release is not published yet) and Arch's from
+# the snapshot release.toml pins. An answers file on it (nova-install
+# --answers) installs onto a blank 80 GB disk with no questions; the probe its
+# after= script leaves behind reports on the first boot (tests/install/probe).
+# Both runs log to the serial port; --logs keeps the logs.
+#
+# Needs /dev/kvm, qemu, edk2-ovmf, mtools, dosfstools, libarchive and about
+# 15 GB of disk under $TMPDIR (/var/tmp if unset). release.yml runs it before
+# anything is published.
+set -euo pipefail
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+root=$(cd -- "$here/../.." && pwd)
+# package_urls, download_packages and make_offline_repo: nova usb's own.
+# shellcheck source=installer/nova-usb
+source "$root/installer/nova-usb"
+
+die() { printf 'install-test: %s\n' "$*" >&2; exit 1; }
+step() { printf '\n== %s\n' "$*"; }
+
+iso='' repo='' release='' packages='' logs=''
+while (($#)); do
+  case $1 in
+    --iso) iso=${2:?}; shift 2 ;;
+    --repo) repo=${2:?}; shift 2 ;;
+    --release) release=${2:?}; shift 2 ;;
+    --packages) packages=${2:?}; shift 2 ;;
+    --logs) logs=${2:?}; shift 2 ;;
+    -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+[[ -r $iso && -r $repo/nova.db && -r $release && -r $packages ]] ||
+  die "usage: tests/install/run --iso <file> --repo <dir> --release <release.toml> --packages <packages.txt>"
+for tool in qemu-system-x86_64 mcopy mkfs.fat sfdisk bsdtar repo-add pacman curl; do
+  command -v "$tool" >/dev/null || die "needs $tool"
+done
+[[ -r /dev/kvm && -w /dev/kvm ]] || die "needs /dev/kvm"
+ovmf=/usr/share/edk2/x64
+[[ -r $ovmf/OVMF_CODE.4m.fd ]] || die "needs edk2-ovmf"
+repo=$(realpath -- "$repo")
+
+MiB=$((1024 * 1024))
+work=$(mktemp -d "${TMPDIR:-/var/tmp}/nova-install-test.XXXXXX")
+keep() { [[ -z $logs ]] || { mkdir -p "$logs" && cp -- "$work"/*.log "$logs/"; } 2>/dev/null || true; }
+trap 'keep; rm -rf -- "$work"' EXIT
+stick=$work/stick
+mkdir -p "$stick" "$work/db/cache"
+
+step "The stick: the ISO's files"
+bsdtar -xf "$iso" -C "$stick"
+chmod -R u+w "$stick"
+entry=$stick/loader/entries/01-nova.conf
+[[ -f $entry ]] || die "the ISO keeps no boot entries among its files, so a stick copied from it cannot boot"
+sed -i '/^options/ s/$/ console=ttyS0,115200/' "$entry"
+
+step "The stick: every package an install can need"
+arch_date=$(sed -n 's/^arch_date = "\(.*\)"$/\1/p' "$release")
+{
+  printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n\n[nova]\nServer = file://%s\n' "$repo"
+  for name in core extra multilib; do
+    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+    printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$name" "$arch_date"
+  done
+} >"$work/pacman.conf"
+pacman --config "$work/pacman.conf" --dbpath "$work/db" --logfile /dev/null -Sy >/dev/null
+mapfile -t names < <(grep -v -e '^#' -e '^[[:space:]]*$' "$packages")
+package_urls "$work/pacman.conf" "$work/db" "${names[@]}" >"$work/urls" ||
+  die "the package list does not resolve against the release's packages and its snapshot"
+mkdir -p "$stick/nova/repo"
+download_packages "$work/urls" "$stick/nova/repo" || die "a package did not download"
+make_offline_repo "$stick/nova/repo" || die "could not index the packages"
+echo "$(wc -l <"$work/urls") packages"
+
+step "The stick: answers, so nobody has to be there"
+cat >"$stick/nova/answers" <<'ANSWERS'
+console=/dev/ttyS0
+keymap=us
+disk=/dev/vda
+fullname=Nova Test
+user=nova
+password=nova-install-test
+hostname=nova-test
+timezone=UTC
+apps=no
+erase=yes
+after=after
+ANSWERS
+{
+  cat "$here/after"
+  printf "\ninstall -Dm755 /dev/stdin /usr/local/lib/nova-test-probe <<'PROBE'\n"
+  cat "$here/probe"
+  printf 'PROBE\n'
+} >"$stick/nova/after"
+
+step "The stick: a FAT partition, as nova usb writes one"
+size_mib=$(($(du -sm "$stick" | cut -f1) * 11 / 10 + 256))
+mkfs.fat -F 32 -n NOVA -C "$work/fat.img" $((size_mib * 1024)) >/dev/null
+(cd "$stick" && MTOOLS_SKIP_CHECK=1 mcopy -s -i "$work/fat.img" ./* ::/)
+rm -rf -- "$stick"
+truncate -s $(((size_mib + 2) * MiB)) "$work/stick.img"
+printf 'label: gpt\nstart=2048, size=%d, type=uefi, name="NOVA"\n' $((size_mib * 2048)) | sfdisk -q "$work/stick.img"
+dd if="$work/fat.img" of="$work/stick.img" bs=1M seek=1 conv=notrunc,sparse status=none
+rm -f -- "$work/fat.img"
+
+# One machine for both runs, the same firmware variables included. The network
+# card has no boot ROM, so the firmware goes straight to the disks.
+cp "$ovmf/OVMF_VARS.4m.fd" "$work/vars.fd"
+truncate -s 80G "$work/disk.img"
+machine() { # minutes serial-log [qemu options...]
+  local minutes=$1 log=$2
+  shift 2
+  timeout "${minutes}m" qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
+    -drive if=pflash,format=raw,unit=0,readonly=on,file="$ovmf/OVMF_CODE.4m.fd" \
+    -drive if=pflash,format=raw,unit=1,file="$work/vars.fd" \
+    -drive file="$work/disk.img",format=raw,if=none,id=disk,cache=unsafe -device virtio-blk-pci,drive=disk,bootindex=1 \
+    -netdev user,id=net -device virtio-net-pci,netdev=net,romfile= \
+    -device virtio-vga -display none -serial file:"$log" -no-reboot "$@"
+}
+
+step "Installing from the stick"
+started=$SECONDS
+machine 45 "$work/install.log" -device qemu-xhci \
+  -drive file="$work/stick.img",format=raw,if=none,id=stick,cache=unsafe -device usb-storage,drive=stick,bootindex=0 ||
+  die "the install machine did not power off by itself within 45 minutes; the log is install.log"
+grep -aq 'nova-install-start: installed' "$work/install.log" ||
+  { tr -d '\r' <"$work/install.log" | tail -n 60; die "the install failed"; }
+echo "installed in $(((SECONDS - started) / 60)) min"
+rm -f -- "$work/stick.img"
+
+step "The first boot"
+machine 20 "$work/boot.log" || die "the installed system did not power off by itself within 20 minutes; the log is boot.log"
+report=$(tr -d '\r' <"$work/boot.log" | grep -a '^probe:' || true)
+printf '%s\n' "$report"
+grep -q '^probe: done' <<<"$report" || die "the probe did not finish"
+! grep -q '^probe: FAIL' <<<"$report" || die "the installed system has problems (above)"
+echo
+echo "ok   installed from the stick, booted locked, and nova doctor is content"
