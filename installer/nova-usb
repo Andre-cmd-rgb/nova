@@ -613,7 +613,8 @@ main() {
     command -v "$tool" >/dev/null || die "nova usb needs $tool"
   done
 
-  local plan release_dir
+  # plan is not local: the EXIT trap runs after main has returned.
+  local release_dir
   plan=$(mktemp -d /tmp/nova-usb.XXXXXX)
   trap 'rm -rf -- "$plan"' EXIT
 
