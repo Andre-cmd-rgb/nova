@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // The Screen Time window: a day or a week of usage, an hour-by-hour or
@@ -136,7 +137,7 @@ Item {
   FloatingWindow {
     id: window
     title: "Screen Time"
-    color: Color.background
+    color: Commons.Color.background
     implicitWidth: Style.space(560)
     implicitHeight: Style.space(620)
     minimumSize: Qt.size(Style.space(440), Style.space(480))
@@ -198,7 +199,7 @@ Item {
 
             Text {
               text: "SCREEN TIME"
-              color: Color.foreground
+              color: Commons.Color.foreground
               opacity: 0.45
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
@@ -207,14 +208,14 @@ Item {
 
             Text {
               text: root.formatDuration(root.totalSeconds)
-              color: root.overGoal ? Color.urgent : Color.foreground
+              color: root.overGoal ? Commons.Color.urgent : Commons.Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.displayLarge
             }
 
             Text {
               text: root.subtitle
-              color: Color.foreground
+              color: Commons.Color.foreground
               opacity: 0.5
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
@@ -230,9 +231,9 @@ Item {
               { label: "Today", value: "today" },
               { label: "Week", value: "week" }
             ]
-            foreground: Color.foreground
-            background: Color.background
-            accent: Color.accent
+            foreground: Commons.Color.foreground
+            background: Commons.Color.background
+            accent: Commons.Color.accent
             fontFamily: Style.font.family
             fontSize: Style.font.bodySmall
             focusable: false
@@ -290,7 +291,7 @@ Item {
               ? chartArea.columnLabel(chartArea.hoveredIndex) + " · "
                 + root.formatDuration(chartArea.chart.values[chartArea.hoveredIndex])
               : ""
-            color: Color.foreground
+            color: Commons.Color.foreground
             opacity: 0.7
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -328,7 +329,7 @@ Item {
                 Rectangle {
                   anchors.fill: parent
                   radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-                  color: Color.foreground
+                  color: Commons.Color.foreground
                   opacity: chartArea.hoveredIndex === column.index ? 0.14 : 0.07
                 }
 
@@ -340,7 +341,7 @@ Item {
                     ? Math.min(parent.height, Math.max(Style.space(2), parent.height * column.fill))
                     : 0
                   radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-                  color: column.isNow ? Color.accent : Color.foreground
+                  color: column.isNow ? Commons.Color.accent : Commons.Color.foreground
                   opacity: column.isNow ? 0.95 : 0.55
 
                   Behavior on height {
@@ -378,7 +379,7 @@ Item {
                 text: root.weekly
                   ? (root.days[index] ? String(root.days[index].label).slice(0, 1) : "")
                   : (index % 6 === 0 ? String(index) : "")
-                color: Color.foreground
+                color: Commons.Color.foreground
                 opacity: 0.45
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -388,13 +389,13 @@ Item {
         }
 
         PanelSeparator {
-          foreground: Color.foreground
+          foreground: Commons.Color.foreground
         }
 
         // ---- applications ---------------------------------------------
         PanelSectionHeader {
           text: "MOST USED"
-          foreground: Color.foreground
+          foreground: Commons.Color.foreground
           fontFamily: Style.font.family
         }
 
@@ -425,7 +426,7 @@ Item {
                 width: parent.width - appTime.width - Style.space(12)
                 elide: Text.ElideRight
                 text: appRow.app ? appRow.app.name : ""
-                color: Color.foreground
+                color: Commons.Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
               }
@@ -435,7 +436,7 @@ Item {
                 anchors.right: parent.right
                 anchors.top: parent.top
                 text: appRow.app ? root.formatDuration(appRow.app.seconds) : ""
-                color: Color.foreground
+                color: Commons.Color.foreground
                 opacity: 0.7
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
@@ -447,7 +448,7 @@ Item {
                 anchors.bottom: parent.bottom
                 height: Style.space(3)
                 radius: height / 2
-                color: Color.foreground
+                color: Commons.Color.foreground
                 opacity: 0.1
               }
 
@@ -459,7 +460,7 @@ Item {
                 width: parent.width * appRow.share
                 height: Style.space(3)
                 radius: height / 2
-                color: appRow.index === 0 ? Color.accent : Color.foreground
+                color: appRow.index === 0 ? Commons.Color.accent : Commons.Color.foreground
                 opacity: appRow.index === 0 ? 0.9 : 0.5
 
                 Behavior on width {
@@ -476,7 +477,7 @@ Item {
             text: root.weekly
               ? "Nothing recorded in the last week yet."
               : "Nothing recorded today yet — time starts counting as soon as a window has focus."
-            color: Color.foreground
+            color: Commons.Color.foreground
             opacity: 0.5
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -485,7 +486,7 @@ Item {
           Text {
             visible: root.apps.length > root.shownApps
             text: "+" + (root.apps.length - root.shownApps) + " more · screentime top 20"
-            color: Color.foreground
+            color: Commons.Color.foreground
             opacity: 0.45
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -500,7 +501,7 @@ Item {
         anchors.margins: Style.space(18)
         horizontalAlignment: Text.AlignHCenter
         text: "T today · W week · R refresh · Esc close"
-        color: Color.foreground
+        color: Commons.Color.foreground
         opacity: 0.35
         font.family: Style.font.family
         font.pixelSize: Style.font.caption

@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // The Battery Life window: what one discharge run cost minute by minute, what
@@ -183,7 +184,7 @@ Item {
   FloatingWindow {
     id: window
     title: "Battery Life"
-    color: Color.background
+    color: Commons.Color.background
     implicitWidth: Style.space(560)
     implicitHeight: Style.space(640)
     minimumSize: Qt.size(Style.space(440), Style.space(500))
@@ -245,7 +246,7 @@ Item {
 
             Text {
               text: "BATTERY LIFE"
-              color: Color.foreground
+              color: Commons.Color.foreground
               opacity: 0.45
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
@@ -254,7 +255,7 @@ Item {
 
             Text {
               text: root.headline
-              color: Color.foreground
+              color: Commons.Color.foreground
               font.family: Style.font.family
               font.pixelSize: Style.font.displayLarge
             }
@@ -263,7 +264,7 @@ Item {
               width: Math.max(1, titleBlock.parent.width - rangePicker.width - Style.space(16))
               wrapMode: Text.WordWrap
               text: root.subtitle
-              color: Color.foreground
+              color: Commons.Color.foreground
               opacity: 0.5
               font.family: Style.font.family
               font.pixelSize: Style.font.bodySmall
@@ -279,9 +280,9 @@ Item {
               { label: "Today", value: "today" },
               { label: "Week", value: "week" }
             ]
-            foreground: Color.foreground
-            background: Color.background
-            accent: Color.accent
+            foreground: Commons.Color.foreground
+            background: Commons.Color.background
+            accent: Commons.Color.accent
             fontFamily: Style.font.family
             fontSize: Style.font.bodySmall
             focusable: false
@@ -344,7 +345,7 @@ Item {
               var value = chartArea.chart.values[chartArea.hoveredIndex]
               return value > 0 ? label + "  ·  " + root.formatWatts(value) : label
             }
-            color: Color.foreground
+            color: Commons.Color.foreground
             opacity: 0.7
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -355,7 +356,7 @@ Item {
             anchors.top: parent.top
             visible: chartArea.columns > 0
             text: root.formatWatts(chartArea.chart.peak)
-            color: Color.foreground
+            color: Commons.Color.foreground
             opacity: 0.35
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
@@ -394,7 +395,7 @@ Item {
                 Rectangle {
                   anchors.fill: parent
                   radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-                  color: Color.foreground
+                  color: Commons.Color.foreground
                   opacity: chartArea.hoveredIndex === column.index ? 0.14 : 0.07
                 }
 
@@ -406,7 +407,7 @@ Item {
                     ? Math.min(parent.height, Math.max(Style.space(2), parent.height * column.fill))
                     : 0
                   radius: Style.cornerRadius > 0 ? Style.space(3) : 0
-                  color: column.isNow ? Color.accent : Color.foreground
+                  color: column.isNow ? Commons.Color.accent : Commons.Color.foreground
                   opacity: column.isNow ? 0.95 : 0.55
 
                   Behavior on height {
@@ -448,7 +449,7 @@ Item {
                   return index % 6 === 0 ? String(row.hour) : ""
                 }
                 elide: Text.ElideRight
-                color: Color.foreground
+                color: Commons.Color.foreground
                 opacity: 0.45
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
@@ -465,7 +466,7 @@ Item {
             text: root.weekly
               ? "No time on battery in the last week."
               : "Nothing on battery today yet — the chart fills in as soon as this machine is unplugged."
-            color: Color.foreground
+            color: Commons.Color.foreground
             opacity: 0.5
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -496,7 +497,7 @@ Item {
                 width: parent.width * 0.26
                 elide: Text.ElideRight
                 text: runRow.session ? root.startedAt(runRow.session.start) : ""
-                color: Color.foreground
+                color: Commons.Color.foreground
                 opacity: runRow.live ? 1 : 0.75
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
@@ -508,7 +509,7 @@ Item {
                 text: runRow.session
                   ? Math.round(runRow.session.startPct) + "% → " + Math.round(runRow.session.endPct) + "%"
                   : ""
-                color: Color.foreground
+                color: Commons.Color.foreground
                 opacity: 0.5
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
@@ -518,7 +519,7 @@ Item {
                 width: parent.width * 0.24
                 horizontalAlignment: Text.AlignRight
                 text: runRow.session ? root.formatDuration(runRow.session.awake) : ""
-                color: runRow.live ? Color.accent : Color.foreground
+                color: runRow.live ? Commons.Color.accent : Commons.Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
               }
@@ -527,7 +528,7 @@ Item {
                 width: parent.width * 0.24
                 horizontalAlignment: Text.AlignRight
                 text: runRow.session ? root.formatWatts(runRow.session.watts) : ""
-                color: Color.foreground
+                color: Commons.Color.foreground
                 opacity: 0.5
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
@@ -540,7 +541,7 @@ Item {
             width: parent.width
             wrapMode: Text.WordWrap
             text: "No discharge runs yet. One appears here after ten minutes on battery."
-            color: Color.foreground
+            color: Commons.Color.foreground
             opacity: 0.5
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
@@ -555,7 +556,7 @@ Item {
         anchors.margins: Style.space(18)
         horizontalAlignment: Text.AlignHCenter
         text: "T today · W week · R refresh · Esc close"
-        color: Color.foreground
+        color: Commons.Color.foreground
         opacity: 0.35
         font.family: Style.font.family
         font.pixelSize: Style.font.caption

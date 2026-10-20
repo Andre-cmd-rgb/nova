@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Compact mobile-broadband widget: one signal glyph in the bar, and a narrow
@@ -65,7 +66,7 @@ Panel {
   readonly property string icon: info.icon || "󰢿"
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color dim: Qt.darker(barForeground, 1.4)
-  readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Color.urgent
+  readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Commons.Color.urgent
 
   // Why the last toggle failed, straight from the CLI. Cleared when one
   // succeeds, and when the link comes up by any other route.

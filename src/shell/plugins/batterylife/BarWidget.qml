@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell.Io
 import Quickshell.Services.UPower
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // The bar entry, and the small panel behind it. Takes the slot the stock
@@ -145,7 +146,7 @@ Panel {
 
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   readonly property color dim: Qt.darker(barForeground, 1.4)
-  readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Color.urgent
+  readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Commons.Color.urgent
 
   readonly property int warnPercent: {
     var value = Number(setting("warnPercent", 15))
