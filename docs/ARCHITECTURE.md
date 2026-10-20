@@ -205,6 +205,8 @@ the shared folder also becomes the default for themes that have no pick of their
 - **Tests:**
   - bats for helpers (`tests/unit/`)
   - qmltestrunner for QML singletons
+  - `tools/qml-smoke` opens the shell's windows offscreen from an installed tree
+    and fails on any runtime QML warning, which qmllint cannot see
   - QEMU end-to-end tests (`tests/qemu/`) for install, boot and lock
   - `make test` runs everything that doesn't need QEMU
 - **Commits:** imperative subject, a body that explains *why*.

@@ -1,6 +1,7 @@
 # Every push and pull request: lint, the name check, the Rust checks, the unit
-# tests, and a `make install` into a scratch root, all in a current Arch
-# container. Releases are built by release.yml.
+# tests, a `make install` into a scratch root and the shell's windows opened
+# offscreen from it, all in a current Arch container. Releases are built by
+# release.yml.
 name: ci
 
 on:
@@ -27,7 +28,8 @@ jobs:
     steps:
       - name: Tools
         run: |
-          pacman -Syu --noconfirm --needed git sudo shellcheck bats jq rust qt6-declarative
+          pacman -Syu --noconfirm --needed git sudo shellcheck bats jq rust qt6-declarative \
+            quickshell ttf-jetbrains-mono-nerd noto-fonts
           useradd -m builder
 
       - uses: actions/checkout@v4
@@ -58,3 +60,16 @@ jobs:
           sudo -u builder -H cargo build --locked --release
           sudo -u builder -H make install DESTDIR=/tmp/nova-root
           test -x /tmp/nova-root/usr/bin/nova
+
+      # What qmllint cannot see: the windows opened offscreen against the
+      # installed tree, failing on any QML warning at runtime.
+      - name: Shell windows, offscreen
+        run: sudo -u builder -H tools/qml-smoke --root /tmp/nova-root --shots /tmp/nova-shots
+
+      - name: Keep the window screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shell-windows
+          path: /tmp/nova-shots
+          if-no-files-found: ignore

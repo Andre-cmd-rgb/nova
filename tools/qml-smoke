@@ -1,0 +1,136 @@
+#!/bin/bash
+# qml-smoke: open each of the shell's windows offscreen and fail on any QML
+# warning or error, which qmllint cannot see: a property that shadows one of
+# Item's, a singleton that resolves to the wrong type, a binding to undefined.
+#
+#   tools/qml-smoke --root <dir> [--shots <dir>] [--theme <name>]
+#
+# --root is a `make install DESTDIR=<dir>` tree, so the windows run the
+# installed commands (nova-settings state, the plugins' own helpers). Each
+# window runs in a scratch home under Qt's offscreen platform: no compositor,
+# nothing of the real session touched. --shots saves a PNG of every page.
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+
+repo=$(cd "$(dirname "$0")/.." && pwd)
+root='' shots='' theme=white
+while (($# > 0)); do
+  case $1 in
+    --root) root=${2:?}; shift 2 ;;
+    --shots) shots=${2:?}; shift 2 ;;
+    --theme) theme=${2:?}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+[[ -n $root && -d $root/usr/share/nova/shell ]] || { usage >&2; exit 2; }
+command -v qs >/dev/null || { echo "qml-smoke: needs quickshell (qs)" >&2; exit 1; }
+root=$(cd "$root" && pwd)
+palette=$repo/theme/palettes/$theme
+[[ -f $palette/colors.toml ]] || { echo "qml-smoke: no theme '$theme'" >&2; exit 2; }
+background=$(sed -n -E 's/^background *= *"(#[0-9a-fA-F]{6})".*/\1/p' "$palette/colors.toml")
+
+# plugin: the pages to open (one shot each), "-" for a window without pages
+windows=(
+  "settings:appearance bar battery screentime lock apps updates about"
+  "batterylife:-"
+  "screentime:-"
+)
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/home" "$work/run" "$work/out" "$work/shell/plugins"
+chmod 700 "$work/run"
+ln -s "$root/usr/share/nova/shell/Commons" "$work/shell/Commons"
+ln -s "$root/usr/share/nova/shell/Ui" "$work/shell/Ui"
+
+# A shell that loads one window, opens it, and grabs each page after it has
+# had time to load its state. A window that never appears is a warning, which
+# fails the run like any other, and ends it there.
+harness() { # plugin
+  cat <<EOF
+import QtQuick
+import Quickshell
+import "plugins/$1"
+
+ShellRoot {
+  id: harness
+  property var pages: Quickshell.env("SMOKE_PAGES").split(" ")
+  property int index: 0
+  property bool backed: false
+
+  Panel { id: window }
+
+  function floating(item) {
+    for (var i = 0; i < item.data.length; i++)
+      if (item.data[i] && item.data[i].contentItem !== undefined) return item.data[i]
+    return null
+  }
+
+  Timer {
+    id: shot
+    interval: 1500
+    onTriggered: {
+      var floating = harness.floating(window)
+      if (!floating || !floating.visible) {
+        console.warn("qml-smoke: the window did not open")
+        Qt.quit()
+        return
+      }
+      var target = floating.contentItem.children[0]
+      if (!harness.backed) {
+        Qt.createQmlObject('import QtQuick; Rectangle { anchors.fill: parent; z: -1; color: "' + Quickshell.env("SMOKE_BG") + '" }', target)
+        harness.backed = true
+      }
+      target.grabToImage(function (result) {
+        result.saveToFile(Quickshell.env("SMOKE_OUT") + "/" + harness.pages[harness.index] + ".png")
+        harness.index++
+        if (harness.index < harness.pages.length) {
+          window.page = harness.pages[harness.index]
+          shot.restart()
+        } else Qt.quit()
+      })
+    }
+  }
+
+  Component.onCompleted: {
+    window.open(JSON.stringify({ page: pages[0] }))
+    shot.start()
+  }
+}
+EOF
+}
+
+failed=0
+for entry in "${windows[@]}"; do
+  plugin=${entry%%:*} pages=${entry#*:}
+  [[ $pages == - ]] && pages=$plugin
+  ln -sfn "$root/usr/share/nova/shell/plugins/$plugin" "$work/shell/plugins/$plugin"
+  harness "$plugin" >"$work/shell/$plugin.qml"
+  rm -rf "$work/run/quickshell" "$work/out"/*
+  status=0
+  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
+    PATH="$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
+    NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_THEME_DIR="$palette" \
+    QT_QPA_PLATFORM=offscreen SMOKE_PAGES="$pages" SMOKE_OUT="$work/out" SMOKE_BG="$background" \
+    timeout 90 qs --no-color -p "$work/shell/$plugin.qml" >/dev/null 2>&1 || status=$?
+  # The locale and window-mask lines are the offscreen platform's, not ours.
+  problems=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin \
+    qs log --no-color -p "$work/shell/$plugin.qml" 2>&1 |
+    grep -E '^ *(WARN|ERROR|CRIT|FATAL)' | grep -vE 'Detected locale|window masks' || true)
+  shot_count=$(find "$work/out" -name '*.png' | wc -l)
+  if ((status != 0)) || [[ -n $problems ]] || ((shot_count != $(wc -w <<<"$pages"))); then
+    echo "FAIL $plugin (exit $status, $shot_count of $(wc -w <<<"$pages") pages)"
+    [[ -z $problems ]] || while IFS= read -r line; do echo "  $line"; done <<<"$problems"
+    failed=1
+  else
+    echo "ok   $plugin ($shot_count pages)"
+  fi
+  if [[ -n $shots ]]; then
+    mkdir -p "$shots/$plugin"
+    cp "$work/out"/*.png "$shots/$plugin/" 2>/dev/null || true
+  fi
+done
+exit "$failed"
