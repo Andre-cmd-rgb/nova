@@ -28,9 +28,10 @@ jobs:
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
     steps:
+      # The commit CI just tested, not whatever main is by now.
       - uses: actions/checkout@v7
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
       # Before a tag exists: without the key every release fails at signing.
       - name: The signing key is set up

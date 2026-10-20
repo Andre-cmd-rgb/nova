@@ -201,7 +201,11 @@ jobs:
         run: |
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" archiso
           # The build host trusts the Nova key the same way an installed system does.
-          pacman -U --noconfirm out/repo/nova-keyring-*.pkg.tar.zst
+          # Installed from a copy without its .sig: pacman would check that against
+          # the very key this package is what adds, and refuse.
+          keyring=$(mktemp -d)
+          cp out/repo/nova-keyring-*.pkg.tar.zst "$keyring/"
+          pacman -U --noconfirm "$keyring"/nova-keyring-*.pkg.tar.zst
           tools/build-iso --release release.toml --repo out/repo --out out/iso
       - uses: actions/upload-artifact@v7
         with:
@@ -248,6 +252,7 @@ jobs:
           name: install-logs
           path: /tmp/install-logs
           if-no-files-found: ignore
+          overwrite: true # a re-run of a failed attempt uploads again
 
   publish:
     needs: [repo, iso, install-test]
@@ -267,6 +272,13 @@ jobs:
           flags=(--generate-notes)
           [[ $PUBLISH == true ]] || flags+=(--draft)
           [[ $version != *-* ]] || flags+=(--prerelease)
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" --title "Nova $version" \
-            --notes "Install: write the ISO to a USB stick, or make one with nova-usb (bash nova-usb, on any Arch-based system), and boot it." \
-            out/release-toml/release.toml out/repo/* out/iso/*
+          assets=(out/release-toml/release.toml out/repo/* out/iso/*)
+          # A re-run after a publish that failed halfway finds its release there.
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+            [[ $PUBLISH != true ]] || gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+          else
+            gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" --title "Nova $version" \
+              --notes "Install: write the ISO to a USB stick, or make one with nova-usb (bash nova-usb, on any Arch-based system), and boot it." \
+              "${assets[@]}"
+          fi

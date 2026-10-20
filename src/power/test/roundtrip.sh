@@ -378,5 +378,15 @@ echo off >"$GPU_MODE_FILE"; ac=1
 chk "off wants it off on AC as well"    "$(gpu_wanted && echo on || echo off)" "off"
 unset -f on_ac
 
+# A rescan that does not bring the card back puts the modprobe block back:
+# with the card absent, it is what keeps nvidia-modprobe off the bus.
+NVIDIA_PCI=0000:01:00.0 SYS_PCI=$T/pci/devices MODPROBE_BLOCK=$T/modprobe-block
+mkdir -p "$SYS_PCI"
+sleep() { :; }
+gpu_on >/dev/null 2>&1
+chk "a failed rescan asks for one"      "$(cat "$T/pci/rescan" 2>/dev/null)" "1"
+chk "  and keeps the driver blocked"    "$([[ -s $MODPROBE_BLOCK ]] && echo yes || echo no)" "yes"
+unset -f sleep
+
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi

@@ -13,7 +13,9 @@ ConditionPathExists=/sys/class/powercap/intel-rapl:0
 Type=simple
 ExecStart=/usr/lib/nova/bin/thinkpad-powerd
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
+# on-failure: with GOVERNOR=off the daemon exits 0 at once, and "always" would
+# start it again every two seconds.
+Restart=on-failure
 RestartSec=2
 
 # This process feeds the EC's fan watchdog. If it is killed outright its own

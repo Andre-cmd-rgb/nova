@@ -122,19 +122,26 @@ apply_vscode() {
 }
 JSON
   [[ -f $extensions/extensions.json ]] || printf '[]\n' >"$extensions/extensions.json"
-  tmp=$(mktemp)
-  jq --arg path "$ext" '
+  # Temporary files beside their targets, so each mv is an atomic rename. A
+  # file that does not parse is left alone, and the other apps still get the
+  # theme.
+  tmp=$(mktemp "$extensions/.extensions.json.XXXXXX")
+  if jq --arg path "$ext" '
     map(select(.identifier.id != "nova.nova-theme")) + [{
       identifier: { id: "nova.nova-theme" },
       version: "1.0.0",
       location: { "$mid": 1, fsPath: $path, path: $path, scheme: "file" },
       relativeLocation: "nova.nova-theme-1.0.0"
-    }]' "$extensions/extensions.json" >"$tmp"
-  mv "$tmp" "$extensions/extensions.json"
+    }]' "$extensions/extensions.json" >"$tmp" 2>/dev/null; then
+    mv "$tmp" "$extensions/extensions.json"
+  else
+    rm -f "$tmp"
+    echo "nova-theme-apply: VS Code's extensions.json does not parse, so its theme is not registered" >&2
+  fi
 
   settings=$config_home/Code/User/settings.json
   if [[ -f $settings ]] && jq -e . "$settings" >/dev/null 2>&1; then
-    tmp=$(mktemp)
+    tmp=$(mktemp "$settings.XXXXXX")
     if jq '."workbench.colorTheme" = "Nova" | ."window.titleBarStyle" = "native" |
       ."window.customTitleBarVisibility" = "never"' "$settings" >"$tmp"; then
       mv "$tmp" "$settings"

@@ -463,8 +463,13 @@ impl IGpu {
             if !name.starts_with("card") || name.contains('-') {
                 continue;
             }
-            let driver = fs::read_link(p.join("device/driver")).ok()?;
-            let driver = driver.file_name()?.to_string_lossy().to_string();
+            let Ok(driver) = fs::read_link(p.join("device/driver")) else {
+                continue;
+            };
+            let Some(driver) = driver.file_name() else {
+                continue;
+            };
+            let driver = driver.to_string_lossy().to_string();
             if driver != "i915" && driver != "xe" {
                 continue;
             }

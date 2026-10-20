@@ -95,6 +95,7 @@ jobs:
           name: shell-windows
           path: /tmp/nova-shots
           if-no-files-found: ignore
+          overwrite: true # a re-run of a failed attempt uploads again
 
   # nova usb's writer needs root and a disk: here, a loop device on a
   # throwaway runner. Partitions, encrypts and fills a stick image, reads it

@@ -71,6 +71,19 @@ icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \
   [ "$output" = '{"editor.fontSize":15,"window.titleBarStyle":"native","workbench.colorTheme":"Nova","window.customTitleBarVisibility":"never"}' ]
 }
 
+@test "a VS Code extensions.json that does not parse is left alone, and the settings still change" {
+  mkdir -p "$HOME/.vscode/extensions"
+  write_file "$HOME/.vscode/extensions/extensions.json" '[{"broken"'
+  write_file "$XDG_STATE_HOME/nova/current/theme/vscode-theme.json" '{}'
+  write_file "$XDG_CONFIG_HOME/Code/User/settings.json" '{}'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [[ $output == *"does not parse"* ]]
+  [ "$(cat "$HOME/.vscode/extensions/extensions.json")" = '[{"broken"' ]
+  [ -z "$(find "$HOME/.vscode/extensions" -name '.extensions.json.*')" ]
+  [ "$(jq -r '."workbench.colorTheme"' "$XDG_CONFIG_HOME/Code/User/settings.json")" = Nova ]
+}
+
 @test "the starting VS Code settings agree with what each theme change enforces" {
   run jq -r '[."workbench.colorTheme", ."window.titleBarStyle", ."window.customTitleBarVisibility"] | join(" ")' \
     "$REPO_ROOT/data/skel/.config/Code/User/settings.json"

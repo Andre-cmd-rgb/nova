@@ -483,13 +483,19 @@ gpu_on() {
   local rescanned=0
   if ! gpu_present; then
     rescanned=1
-    echo 1 >/sys/bus/pci/rescan 2>/dev/null
+    echo 1 >"${SYS_PCI%/devices}/rescan" 2>/dev/null
     local waited=0
     while ! gpu_present && ((waited < 8)); do
       sleep 1
       waited=$((waited + 1))
     done
-    gpu_present || { log "dGPU did not come back on rescan"; return 1; }
+    if ! gpu_present; then
+      # Whatever came back of it, the block goes back on: with the card absent
+      # it is all that keeps nvidia-modprobe off the bus (see above).
+      block_nvidia_autoload
+      log "dGPU did not come back on rescan"
+      return 1
+    fi
   fi
 
   # Load the driver now rather than on first use, so the first offload is
@@ -1022,7 +1028,13 @@ boost)
     [[ $arg =~ ^[0-9]+$ ]] && ((arg >= 1 && arg <= 720)) ||
       die "boost wants a number of minutes between 1 and 720, or 'off', not '$arg'"
   fi
-  systemctl stop "$BOOST_UNIT.timer" "$BOOST_UNIT.service" >/dev/null 2>&1
+  if [[ ${THINKPAD_POWER_BOOST_EXPIRY:-} == 1 ]]; then
+    # This run is the expiry, inside $BOOST_UNIT.service: stopping that would
+    # kill it before the marker is gone, and the boost would never end.
+    systemctl stop "$BOOST_UNIT.timer" >/dev/null 2>&1
+  else
+    systemctl stop "$BOOST_UNIT.timer" "$BOOST_UNIT.service" >/dev/null 2>&1
+  fi
 
   if [[ $arg == off ]]; then
     if [[ -e $BOOST_STATE ]]; then
@@ -1045,7 +1057,7 @@ boost)
   if command -v systemd-run >/dev/null 2>&1; then
     systemd-run --quiet --unit="$BOOST_UNIT" --on-active="${arg}min" \
       --description="Restore thinkpad-power battery CPU caps" \
-      "$0" boost off >/dev/null 2>&1 ||
+      --setenv=THINKPAD_POWER_BOOST_EXPIRY=1 "$0" boost off >/dev/null 2>&1 ||
       die "could not schedule the expiry; caps left in place"
   else
     die 'systemd-run is missing, and an unbounded boost is not on offer'
@@ -1088,8 +1100,9 @@ daemon-stopped)
   ;;
 gpu-auto)
   # The GPU half alone. This is what the retry timer runs, so a manually
-  # chosen power profile is never overwritten behind your back.
-  if gpu_wanted; then gpu_on; else gpu_policy_off; fi
+  # chosen power profile is never overwritten behind your back. A card still in
+  # use is no failure: the log says who holds it, and the timer tries again.
+  if gpu_wanted; then gpu_on; else gpu_policy_off || true; fi
   ;;
 gpu-mode)
   # Settings sets it through nova-power-gpu-mode-apply. The new mode takes
@@ -1126,7 +1139,7 @@ post-hibernate)
   # every single resume.
   if ! gpu_present; then
     note 'rescanning the PCI bus after hibernate'
-    echo 1 >/sys/bus/pci/rescan 2>/dev/null ||
+    echo 1 >"${SYS_PCI%/devices}/rescan" 2>/dev/null ||
       log 'warning: PCI rescan failed; the discrete card may be left powered'
     command -v udevadm >/dev/null 2>&1 && udevadm settle --timeout=5 >/dev/null 2>&1
   fi

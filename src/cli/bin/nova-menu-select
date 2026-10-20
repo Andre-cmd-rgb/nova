@@ -86,8 +86,21 @@ payload=$(perl -MEncode=decode -MJSON::PP=encode_json,decode_json -e '
 
 nova-shell shell summon nova.menu "$payload" >/dev/null
 
+# The shell writes done_file when the menu closes. If the shell that opened it
+# goes away (it crashed, or was restarted), nothing ever will. With no shell
+# process to be seen at all, this cannot tell, and waits.
+shell_pids=$(pgrep -u "$UID" -x 'qs|quickshell' || true)
+shell_alive() {
+  local pid
+  [[ -n $shell_pids ]] || return 0
+  for pid in $shell_pids; do kill -0 "$pid" 2>/dev/null && return 0; done
+  return 1
+}
+checks=0
 while [[ ! -e $done_file ]]; do
   sleep 0.05
+  checks=$((checks + 1))
+  if ((checks % 40 == 0)) && ! shell_alive; then exit 1; fi
 done
 
 if [[ -s $selection_file ]]; then
