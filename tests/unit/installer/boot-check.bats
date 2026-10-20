@@ -10,7 +10,7 @@ setup() {
   CONF="$SCRATCH/conf"
   mkdir -p "$ESP" "$CONF"
   LIMINE_CONF_FILES=("$CONF/10-nova.conf" "$CONF/default-limine")
-  printf '%s\n' 'ESP_PATH="/boot"' 'CUSTOM_UKI_NAME="nova"' 'MKINITCPIO_FALLBACK=linux-nova' >"$CONF/10-nova.conf"
+  printf '%s\n' 'ESP_PATH="/boot"' 'MKINITCPIO_FALLBACK=linux-nova' >"$CONF/10-nova.conf"
   export NOVA_BOOT_ESP="$ESP"
 }
 
@@ -42,30 +42,45 @@ make_complete_esp() {
 
 @test "boot_missing: a complete ESP reports nothing" {
   make_complete_esp
-  [ -z "$(boot_missing "$ESP" nova linux-nova)" ]
+  [ -z "$(boot_missing "$ESP" linux-nova)" ]
 }
 
 @test "boot_missing: an empty ESP reports the loader, the image and the entry" {
-  run boot_missing "$ESP" nova linux-nova
+  run boot_missing "$ESP" linux-nova
   [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 3 ]
   [[ ${lines[0]} == *BOOTX64.EFI* ]]
-  [[ ${lines[1]} == *nova_linux-nova-fallback.efi* ]]
-  [[ ${lines[2]} == *linux-nova-fallback* ]]
+  [[ ${lines[1]} == *"fallback image"* ]]
+  [[ ${lines[2]} == *"fallback entry"* ]]
 }
 
 @test "boot_missing: a fallback image without its limine.conf entry is reported" {
   make_complete_esp
   write_file "$ESP/limine.conf" $'/+Nova\n  //linux-nova\n    protocol: efi\n'
-  run boot_missing "$ESP" nova linux-nova
+  run boot_missing "$ESP" linux-nova
   [ "${#lines[@]}" -eq 1 ]
   [[ ${lines[0]} == *"entry in"* ]]
+}
+
+@test "boot_missing: other fallback image and entry spellings are accepted" {
+  make_complete_esp
+  mv "$ESP/EFI/Linux/nova_linux-nova-fallback.efi" "$ESP/EFI/Linux/0123abcd_linux-nova_fallback.efi"
+  write_file "$ESP/limine.conf" $'/+Nova\n  //linux-nova\n  //+linux-nova (fallback)\n'
+  [ -z "$(boot_missing "$ESP" linux-nova)" ]
+}
+
+@test "boot_missing: another kernel's fallback does not count" {
+  make_complete_esp
+  mv "$ESP/EFI/Linux/nova_linux-nova-fallback.efi" "$ESP/EFI/Linux/nova_linux-lts-fallback.efi"
+  write_file "$ESP/limine.conf" $'/+Nova\n  //linux-lts-fallback\n'
+  run boot_missing "$ESP" linux-nova
+  [ "${#lines[@]}" -eq 2 ]
 }
 
 @test "boot_missing: a zero-byte loader counts as missing" {
   make_complete_esp
   : >"$ESP/EFI/BOOT/BOOTX64.EFI"
-  run boot_missing "$ESP" nova linux-nova
+  run boot_missing "$ESP" linux-nova
   [ "${#lines[@]}" -eq 1 ]
   [[ ${lines[0]} == *BOOTX64.EFI* ]]
 }

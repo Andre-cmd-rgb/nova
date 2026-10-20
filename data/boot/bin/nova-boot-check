@@ -36,16 +36,21 @@ limine_setting() {
   printf '%s\n' "$value"
 }
 
-# Print one line per missing piece of the fallback. Arguments: ESP directory, UKI
-# file prefix (CUSTOM_UKI_NAME), kernel package whose fallback image is required.
+# Print one line per missing piece of the fallback. Arguments: ESP directory and
+# the kernel package whose fallback image is required. Image and entry names are
+# matched loosely (anything with the kernel's name and "fallback"): this check
+# aborts kernel updates, so a naming change in limine-entry-tool must not turn
+# it into a false refusal.
 boot_missing() {
-  local esp=$1 prefix=$2 kernel=$3
+  local esp=$1 kernel=$2 pattern
   [[ -s $esp/EFI/BOOT/BOOTX64.EFI ]] ||
     echo "the default UEFI loader $esp/EFI/BOOT/BOOTX64.EFI"
-  [[ -s $esp/EFI/Linux/${prefix}_${kernel}-fallback.efi ]] ||
-    echo "the fallback image $esp/EFI/Linux/${prefix}_${kernel}-fallback.efi"
-  grep -Eq "^[[:space:]]*/+[+-]?[[:space:]]*${kernel}-fallback[[:space:]]*$" "$esp/limine.conf" 2>/dev/null ||
-    echo "the ${kernel}-fallback entry in $esp/limine.conf"
+  compgen -G "$esp/EFI/Linux/*${kernel}*fallback*.efi" >/dev/null ||
+    echo "a ${kernel} fallback image in $esp/EFI/Linux"
+  pattern=${kernel//./\\.}
+  pattern=${pattern//+/\\+}
+  grep -Eq "^[[:space:]]*/+[+-]?[[:space:]]*[^[:space:]]*${pattern}.*fallback" "$esp/limine.conf" 2>/dev/null ||
+    echo "a ${kernel} fallback entry in $esp/limine.conf"
 }
 
 # True while the ESP has no Limine setup yet (first install): nothing to protect.
@@ -56,10 +61,9 @@ boot_is_fresh() {
 }
 
 run_check() {
-  local mode=$1 esp prefix kernel missing
+  local mode=$1 esp kernel missing missing_lines
   esp=$(limine_setting ESP_PATH /boot "${LIMINE_CONF_FILES[@]}")
   esp=${NOVA_BOOT_ESP:-$esp}
-  prefix=$(limine_setting CUSTOM_UKI_NAME nova "${LIMINE_CONF_FILES[@]}")
   kernel=$(limine_setting MKINITCPIO_FALLBACK "" "${LIMINE_CONF_FILES[@]}")
   # Only a single kernel name is checkable; "yes", "no" or empty mean no requirement.
   [[ $kernel =~ ^[A-Za-z0-9_.+-]+$ && $kernel != yes && $kernel != no ]] || return 0
@@ -69,12 +73,13 @@ run_check() {
     boot_is_fresh "$esp" && return 0
   fi
 
-  missing=$(boot_missing "$esp" "$prefix" "$kernel")
+  missing=$(boot_missing "$esp" "$kernel")
   [[ -n $missing ]] || return 0
+  mapfile -t missing_lines <<<"$missing"
 
   {
     echo "nova-boot-check: the Limine fallback is incomplete, missing:"
-    sed 's/^/  - /' <<<"$missing"
+    printf '  - %s\n' "${missing_lines[@]}"
     case $mode in
       pre) echo "Run 'limine-update' to rebuild it, then repeat this command. Refusing to change kernels without a way back." ;;
       post) echo "This update did not rebuild it. Run 'limine-update' before rebooting." ;;
