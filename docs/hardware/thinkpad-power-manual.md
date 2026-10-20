@@ -100,9 +100,8 @@ The boot they were measured against, at 32 s from the power button:
 | kernel + initramfs | ~5.7 s | |
 | userspace to `graphical.target` | 6.02 s | 4.1 s of it TPM provisioning |
 
-Boot *colours* are deliberately not here — Limine and Plymouth drift from the
-Omarchy theme, and fixing that is an Omarchy patch rather than power
-management. It lives in `omarchy-boot-theme`.
+Boot *colours* are deliberately not here, and Nova has none to set: Limine is
+quiet and there is no Plymouth.
 
 Masking the TPM units takes a known 4.1 s off the userspace figure. What
 emptying the initramfs is worth is **not yet measured** — the reasoning is that

@@ -308,13 +308,12 @@ Also on every resume, neither gating the unlock: the 5G modem
 cycle, and the Thunderbolt xHCI (`0000:00:0d.0`) reinitialises with
 `USBSTS 0x401`, so usb1/usb2 report `root hub lost power or was reset`.
 
-**24. Theming the boot path is not this tool's job.** Limine and Plymouth drift
-from the Omarchy theme — Omarchy never themes Limine at all, and re-themes
-Plymouth only when an unlock screen is picked by hand. That is a patch for
-Omarchy, not power management, and lives in
-`~/Projects/Coding/omarchy-plugins/omarchy-boot-theme`. The split the user drew:
-sleep and boot *timing* belong here because they are time and power; *colours*
-do not.
+**24. Theming the boot path is not this tool's job.** Under Omarchy, Limine and
+Plymouth drifted from the theme, and fixing that was a patch for Omarchy, not
+power management. Nova settles it by drawing no boot surfaces at all: Limine is
+quiet with a 1 s timeout and there is no Plymouth. The split the user drew still
+holds: sleep and boot *timing* belong here because they are time and power;
+*colours* do not.
 
 **25. Keeping the fingerprint reader powered through suspend is measured
 harmful. Do not re-try it.** `bmAttributes` is `0xa0`, bit 5 set, so the reader
@@ -864,9 +863,9 @@ driver is exactly what cannot be unloaded.
   `switch` is a menu entry, so it states one fact, asks, and states one fact.
   `status` must stay side-effect free: it used to call `nvidia-smi`, which
   wakes the card out of P8 just to answer.
-- `install.sh` is idempotent and has `--uninstall`. It needs sudo, which
-  **Claude cannot provide in-session** (fingerprint prompt needs a terminal) —
-  ask the user to run it with `! ~/Projects/Coding/thinkpad-power/install.sh`.
+- Installing needs sudo, which **Claude cannot provide in-session** (the
+  fingerprint prompt needs a terminal) — ask the user to run the command
+  themselves with `!`.
 - Probe scripts used to prove the EGL/Vulkan leak live at `/tmp/eglprobe.py`
   and `/tmp/vkprobe.py` — recreate them (ctypes on `libEGL.so.1` /
   `libvulkan.so.1`, then read `/proc/self/maps` and `/proc/self/fd`) rather
@@ -923,9 +922,8 @@ on a quiet machine for a real browsing figure.
 | `render:direct_scanout = 1` | in `~/.config/hypr/hyprland.lua` inside the installer's marker block, and reloaded — `hyprctl getoption` reports `int: 1, set: true`, `configerrors` clean |
 | 48 Hz binding | `SUPER+SHIFT+F12` applies the modeline live, `SUPER+CTRL+F12` reloads back to 60. Writes nothing; the commented `hl.monitor` in `monitors.lua` is there for whoever decides they want it permanently |
 
-**Written but NOT installed — `install.sh` needs sudo, which Claude cannot
-provide in-session. Ask the user to run
-`! ~/Projects/Coding/thinkpad-power/install.sh`:**
+**Written but NOT installed — the installer needs sudo, which Claude cannot
+provide in-session:**
 
 | | |
 |---|---|
@@ -993,13 +991,7 @@ rounds and are kept for the reasoning, not the state.
 
 **Ruled out this session, so nobody re-tries them:** keeping the fingerprint
 reader powered through suspend (fact 25 — it breaks the reader outright), and
-anything to do with theming living in this repo (fact 24).
-
-**Sibling repo:** `~/Projects/Coding/omarchy-plugins/omarchy-boot-theme` themes
-Limine and Plymouth from the active Omarchy theme. Installed and applied. It is
-deliberately *not* part of this tool — the user drew the line at "sleep and boot
-timing are power, colours are not".
-
+boot theming in the power tool (fact 24).
 
 ## Where it stands (2026-08-27) — working, verified on battery
 
