@@ -164,7 +164,11 @@ the shared folder also becomes the default for themes that have no pick of their
     on every install and upgrade of `nova`, and removes the ones a release dropped.
 
   Session-side settings check the model themselves: a uwsm `env.d` file and a
-  `default/hypr/hardware/<profile>.lua` module.
+  `default/hypr/hardware/<profile>.lua` module. A speaker tuning
+  (`data/audio/tunings/<name>/`, matched by DMI) needs the audio server, so it is
+  turned on at login: `nova-speaker-tuning-auto.service` runs `nova audio tuning
+  auto`, which applies it the first time, keeps it current after updates, and
+  leaves it off once someone has turned it off.
 
 ## Packaging and releases
 
