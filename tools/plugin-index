@@ -30,6 +30,8 @@ check='
     (if (.entryPoints | type) != "object" then "entryPoints is missing"
      else .kinds[]? | select(type == "string") as $kind | ($kind | entry) as $e
        | select($e != null and ($m.entryPoints | has($e) | not)) | "no entry point for \($kind)" end),
+    (("alwaysOn", "enabledByDefault", "keepLoaded") as $k
+      | if $m[$k] != null and ($m[$k] | type) != "boolean" then "\($k) is not true or false" else empty end),
     (if (.barWidget | type) == "object" and .barWidget.defaultSection != null
         and (["left", "center", "right"] | index($m.barWidget.defaultSection)) == null
      then "barWidget.defaultSection is not left, center or right" else empty end)'

@@ -5,6 +5,7 @@
   "version": "1.0.0",
   "author": "Nova",
   "description": "Status bar with widgets",
+  "alwaysOn": true,
   "kinds": [
     "bar"
   ],

@@ -12,7 +12,10 @@ import qs.Commons
 QtObject {
   id: registry
 
-  // Set by shell.qml once the config hooks below are wired; the index loads then.
+  // Set by shell.qml once the user's shell.json has been read; the index loads
+  // then. Until it has, `loading` holds and every verb that writes shell.json
+  // answers "not ready", so nothing can write the defaults over a file that has
+  // not been read yet.
   property string pluginsDir: ""
 
   // Wired by shell.qml so the registry can read the canonical shell.json
@@ -29,7 +32,6 @@ QtObject {
   property string lastEnableError: ""
 
   signal pluginsChanged()
-  signal ready()
 
   // ---------------------------------------------------------------- helpers
 
@@ -43,12 +45,18 @@ QtObject {
     return !!manifest && manifest.kinds.indexOf(kind) !== -1
   }
 
+  // The bar and the lock have no off: the bar is the desktop, and autologin is
+  // only safe because the lock comes up first.
+  function alwaysOn(manifest) {
+    return !!manifest && manifest.alwaysOn === true
+  }
+
   // Enabled = the plugin's component loads. Everything is on by default, so
   // shell.json only records the deviation: a switched-off plugin in
   // `disabledPlugins[]`. A manifest that says "enabledByDefault": false
   // (Screen Time) is the exception: it is on only while shell.json names it,
   // in the bar layout or in `plugins[]`, so taking it off the bar switches it
-  // off entirely. The bar itself is always on.
+  // off entirely. An alwaysOn plugin is on whatever shell.json says.
   function onByDefault(manifest) {
     return !!manifest && manifest.enabledByDefault !== false
   }
@@ -58,7 +66,7 @@ QtObject {
     var manifest = installedPlugins[key]
     var config = shellConfigProvider ? shellConfigProvider() : null
     if (manifest) {
-      if (hasKind(manifest, "bar")) return true
+      if (alwaysOn(manifest)) return true
       if (isDisabled(config, key)) return false
       if (onByDefault(manifest)) return true
     }
@@ -178,6 +186,7 @@ QtObject {
   }
 
   function moveBarWidget(id, placement) {
+    if (loading) return "not ready"
     var error = ""
     shellConfigMutator(function(config) {
       ensureConfigShape(config)
@@ -192,10 +201,10 @@ QtObject {
   // put is the unattended verb: where enable errors, it falls back, and it
   // leaves a widget that is already on the bar where its owner put it.
   function putBarWidget(id, placement) {
-    if (inBar(id)) return ""
-    // The index loads in the background and IPC answers before it has, so an
-    // id it has not read yet is not one that does not exist.
+    // IPC answers before the index has loaded, and an id not read yet is not
+    // one that does not exist.
     if (loading) return "not ready"
+    if (inBar(id)) return ""
     var config = shellConfigProvider ? shellConfigProvider() : null
     var target = Util.isPlainObject(placement) ? Util.cloneJson(placement) : {}
     var relativeId = String(target.before || target.after || "")
@@ -208,6 +217,7 @@ QtObject {
   }
 
   function setBarWidget(id, key, value, selector) {
+    if (loading) return "not ready"
     var error = ""
     shellConfigMutator(function(config) {
       ensureConfigShape(config)
@@ -279,6 +289,10 @@ QtObject {
   function setEnabled(id, value, placement) {
     var key = Util.canonicalWidgetId(String(id))
     lastEnableError = ""
+    if (loading) {
+      lastEnableError = "not ready"
+      return false
+    }
     if (!shellConfigMutator) {
       console.warn("PluginRegistry.setEnabled called before shellConfigMutator wired")
       return false
@@ -288,8 +302,11 @@ QtObject {
       console.warn("PluginRegistry.setEnabled: unknown plugin " + key)
       return false
     }
-    // The bar has no off, and no other bar to give way to.
-    if (hasKind(manifest, "bar")) return true
+    if (alwaysOn(manifest)) {
+      if (value) return true
+      lastEnableError = manifest.name + " cannot be switched off"
+      return false
+    }
     var isBarWidget = hasKind(manifest, "bar-widget")
     shellConfigMutator(function(config) {
       ensureConfigShape(config)
@@ -353,15 +370,15 @@ QtObject {
     registryRevision++
     loading = false
     pluginsChanged()
-    ready()
   }
 
   property FileView index: FileView {
     path: registry.pluginsDir ? registry.pluginsDir + "/index.json" : ""
     printErrors: false
     onLoaded: registry.load(text())
+    // Without the index there is no lock, no polkit agent and no widgets.
     onLoadFailed: function(error) {
-      console.warn("PluginRegistry: cannot read " + path + ": " + error)
+      console.error("PluginRegistry: cannot read " + path + ": " + error)
       registry.load("")
     }
   }

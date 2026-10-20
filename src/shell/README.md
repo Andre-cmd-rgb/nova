@@ -92,7 +92,7 @@ does not start one. `nova bar` and `nova menu` are built on these calls.
 | `call <id> <method> <arg>`                     | string           | call a method on a loaded plugin                          |
 | `applyTheme <colorsB64> <shellB64>`            | `ok`             | restyle the shell (`nova theme` sends it)                 |
 | `reloadConfig`                                 | `ok`             | reload `~/.config/nova/shell.json`                        |
-| `setPluginEnabled <id> <true\|false>`          | `ok` / `unknown` | switch a plugin on or off (only `"true"` enables)         |
+| `setPluginEnabled <id> <true\|false>`          | `ok` / error     | switch a plugin on or off (only `"true"` enables)         |
 | `enablePlugin <id> <placementJson>`            | `ok` / error     | switch on, placing a widget                               |
 | `putBarWidget <id> <placementJson>`            | `ok` / error     | enable unless already on the bar                          |
 | `moveBarWidget <id> <placementJson>`           | `ok` / error     | move a widget within or between sections                  |
@@ -142,7 +142,8 @@ anything, your file is authoritative and defaults are **not** merged back in.
 3. **Everything else is on unless switched off,** which is recorded in
    `disabledPlugins[]`. A plugin whose manifest says `"enabledByDefault":
    false` (Screen Time) is the other way round: on only while `shell.json`
-   names it, in the bar or in `plugins[]`.
+   names it, in the bar or in `plugins[]`. One that says `"alwaysOn": true`
+   (the bar, the lock) cannot be switched off.
 4. **Multiple instances** are allowed when a widget's manifest sets
    `allowMultiple: true`: two clocks in different time zones are two
    `nova.clock` entries with their own settings.

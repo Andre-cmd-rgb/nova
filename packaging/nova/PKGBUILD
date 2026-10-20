@@ -94,7 +94,6 @@ depends=(
   fontconfig     # fc-list, fc-match
   git            # nova apps install
   glib2          # gsettings
-  inotify-tools  # shell plugin hot-reload
   iproute2
   jq
   libnotify      # notify-send
@@ -110,6 +109,7 @@ depends=(
 )
 makedepends=(
   git            # pkgver() and the VCS source
+  jq             # tools/plugin-index
   rust
 )
 checkdepends=(

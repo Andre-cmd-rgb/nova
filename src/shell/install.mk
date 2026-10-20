@@ -21,6 +21,7 @@ install-shell:
 	cd src/shell && for f in $(SHELL_DATA); do install -Dm644 "$$f" "$(DESTDIR)$(NOVA_SHARE)/shell/$$f"; done
 	cd src/shell && for f in $(SHELL_EXEC); do install -Dm755 "$$f" "$(DESTDIR)$(NOVA_SHARE)/shell/$$f"; done
 	tools/plugin-index src/shell/plugins >"$(DESTDIR)$(NOVA_SHARE)/shell/plugins/index.json.new"
+	chmod 644 "$(DESTDIR)$(NOVA_SHARE)/shell/plugins/index.json.new"
 	mv "$(DESTDIR)$(NOVA_SHARE)/shell/plugins/index.json.new" "$(DESTDIR)$(NOVA_SHARE)/shell/plugins/index.json"
 	install -d $(DESTDIR)$(NOVA_BIN)
 	for link in $(SHELL_CLI); do \

@@ -123,9 +123,17 @@ ShellRoot {
     watchChanges: true
     atomicWrites: true
     printErrors: false
-    onLoaded: shell.applyShellConfig()
-    onLoadFailed: function(error) { shell.applyShellConfig() }
+    onLoaded: shell.userConfigRead()
+    onLoadFailed: function(error) { shell.userConfigRead() }
     onFileChanged: reload()
+  }
+
+  // The plugin index loads once the user's shell.json has been read (or found
+  // missing): until then the registry answers "not ready" to anything that
+  // would write shell.json, which would otherwise start from the defaults.
+  function userConfigRead() {
+    applyShellConfig()
+    pluginRegistry.pluginsDir = shell.pluginsDir
   }
 
   Component.onCompleted: {
@@ -137,8 +145,6 @@ ShellRoot {
       "userConfigPath=" + shell.userConfigPath)
     pluginRegistry.shellConfigProvider = function() { return shell.shellConfig }
     pluginRegistry.shellConfigMutator = function(mutate) { shell.mutateShellConfig(mutate) }
-    // The plugin index loads once the hooks it calls are in place.
-    pluginRegistry.pluginsDir = shell.pluginsDir
   }
 
   function mutateShellConfig(mutator) {
@@ -469,24 +475,19 @@ ShellRoot {
     return out
   }
 
-  // Every shell.json write announces pluginsChanged, and a new model array makes
-  // the Instantiator rebuild every panel, open ones included: only hand it one
-  // when the set of panels really changed.
-  function refreshPanelEntries() {
-    var next = shell.computePanelEntries()
-    function key(entries) {
-      return JSON.stringify(entries.map(function(entry) { return [entry.id, entry.kind, entry.keepLoaded] }))
-    }
-    if (key(next) !== key(shell.panelEntries)) shell.panelEntries = next
-  }
-
   Connections {
     target: shell.pluginRegistry
-    function onPluginsChanged() { shell.refreshPanelEntries() }
+    function onPluginsChanged() { shell.panelEntries = shell.computePanelEntries() }
   }
 
+  // Every shell.json write announces pluginsChanged. Matched by id, a panel
+  // that stays keeps its delegate, and an open one stays open, while another
+  // comes or goes (switching Screen Time on from Settings).
   Instantiator {
-    model: shell.panelEntries
+    model: ScriptModel {
+      values: shell.panelEntries
+      objectProp: "id"
+    }
     active: true
 
     delegate: QtObject {
@@ -730,7 +731,8 @@ ShellRoot {
     }
 
     function setPluginEnabled(id: string, enabled: string): string {
-      return shell.pluginRegistry.setEnabled(id, enabled === "true") ? "ok" : "unknown"
+      if (shell.pluginRegistry.setEnabled(id, enabled === "true")) return "ok"
+      return shell.pluginRegistry.lastEnableError || "unknown"
     }
 
     function enablePlugin(id: string, placementJson: string): string {
@@ -779,18 +781,18 @@ ShellRoot {
       var plugins = shell.pluginRegistry.installedPlugins
       for (var id in plugins) {
         var kinds = plugins[id].kinds
-        var isBar = kinds.indexOf("bar") !== -1
+        var alwaysOn = shell.pluginRegistry.alwaysOn(plugins[id])
         out.push({
           id: id,
           name: plugins[id].name,
           kinds: kinds,
-          // What `nova plugin enable/disable` toggles: for a widget that is
-          // its place in the bar, not whether its component is loadable.
-          enabled: isBar || (kinds.indexOf("bar-widget") !== -1
+          // What switching a plugin on or off changes: for a widget, its
+          // place in the bar, not whether its component is loadable.
+          enabled: alwaysOn || (kinds.indexOf("bar-widget") !== -1
             ? shell.pluginRegistry.inBar(id) : shell.pluginRegistry.isEnabled(id)),
-          // The bar has no off. Said here so that a caller offering the verbs
-          // does not have to read kinds and work it out again.
-          canDisable: !isBar
+          // The bar and the lock have no off. Said here so that a caller
+          // offering the verbs does not have to work it out again.
+          canDisable: !alwaysOn
         })
       }
       // Consumers should not each invent their own presentation order.

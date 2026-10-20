@@ -49,7 +49,7 @@ ShellRoot {
       "an entry point resolves inside its plugin's directory")
     check(registry.entryPointUrl(plugins["nova.clock"], "panel") === "", "a kind without an entry point has no URL")
 
-    check(registry.isEnabled("nova.bar") && registry.isEnabled("nova.lock") && registry.isEnabled("nova.weather"),
+    check(registry.isEnabled("nova.bar") && registry.isEnabled("nova.idle") && registry.isEnabled("nova.weather"),
       "built-ins are on without being named")
     check(!registry.isEnabled("nova.screentime"), "Screen Time is off until it is named")
     check(registry.inBar("nova.clock") && !registry.inBar("nova.weather"), "inBar is the bar layout")
@@ -60,9 +60,9 @@ ShellRoot {
     check(registry.setEnabled("nova.screentime", false) && !registry.isEnabled("nova.screentime")
       && ids("right") === "nova.tray nova.network nova.audio", "disabling Screen Time takes it off the bar and off")
 
-    check(registry.setEnabled("nova.lock", false) && !registry.isEnabled("nova.lock")
-      && JSON.stringify(config.disabledPlugins) === '["nova.lock"]', "switching off a built-in is recorded")
-    check(registry.setEnabled("nova.lock", true) && registry.isEnabled("nova.lock") && config.disabledPlugins === undefined,
+    check(registry.setEnabled("nova.idle", false) && !registry.isEnabled("nova.idle")
+      && JSON.stringify(config.disabledPlugins) === '["nova.idle"]', "switching off a built-in is recorded")
+    check(registry.setEnabled("nova.idle", true) && registry.isEnabled("nova.idle") && config.disabledPlugins === undefined,
       "switching it back on removes the record")
 
     check(registry.putBarWidget("nova.weather", { section: "center", after: "nova.clock" }) === ""
@@ -83,11 +83,24 @@ ShellRoot {
       && config.bar.layout.center[1].format === "HH:mm", "setBarWidget writes the entry's setting")
 
     var before = JSON.stringify(config)
-    check(registry.setEnabled("nova.bar", false) && registry.isEnabled("nova.bar") && JSON.stringify(config) === before,
+    check(!registry.setEnabled("nova.bar", false) && registry.isEnabled("nova.bar") && JSON.stringify(config) === before,
       "the bar has no off")
+    check(!registry.setEnabled("nova.lock", false) && registry.lastEnableError === "Lock Screen cannot be switched off"
+      && registry.isEnabled("nova.lock") && JSON.stringify(config) === before, "nor has the lock")
+    config.disabledPlugins = ["nova.lock"]
+    check(registry.isEnabled("nova.lock"), "the lock stays on even when shell.json lists it as off")
     console.log("DONE")
     Qt.quit()
   }
 
-  Component.onCompleted: registry.pluginsDir = Quickshell.env("TEST_PLUGINS")
+  // Before the index has loaded, nothing that writes shell.json goes through.
+  Component.onCompleted: {
+    var before = JSON.stringify(config)
+    check(!registry.setEnabled("nova.weather", false) && registry.lastEnableError === "not ready"
+      && registry.putBarWidget("nova.weather", {}) === "not ready"
+      && registry.moveBarWidget("nova.clock", { section: "left" }) === "not ready"
+      && registry.setBarWidget("nova.clock", "format", "HH:mm", {}) === "not ready"
+      && JSON.stringify(config) === before, "every verb waits for the index")
+    registry.pluginsDir = Quickshell.env("TEST_PLUGINS")
+  }
 }
