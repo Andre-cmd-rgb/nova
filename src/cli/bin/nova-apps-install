@@ -72,6 +72,18 @@ if [[ $mode == check ]]; then
 fi
 ((${#todo[@]})) || exit 0
 
+# A system installed from a stick starts with none of its repositories' package
+# lists, so makepkg would find none of the recipes' dependencies. They are read
+# once first. The repositories are pinned to the release, so nothing installed
+# goes out of step with them.
+sync_dir=$(pacman-conf DBPath 2>/dev/null || echo /var/lib/pacman/)sync
+for repo in $(pacman-conf --repo-list 2>/dev/null); do
+  if [[ ! -e $sync_dir/$repo.db ]]; then
+    sudo pacman -Sy "${confirm[@]}" || true
+    break
+  fi
+done
+
 work=$(mktemp -d "${TMPDIR:-/tmp}/nova-apps.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 

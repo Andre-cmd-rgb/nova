@@ -117,6 +117,17 @@ make_complete_esp() {
   [[ $output == *"limine-update"* ]]
 }
 
+@test "post: NOVA_BOOT_CHECK=skip bypasses it too (the installer, before Limine is in)" {
+  NOVA_BOOT_CHECK=skip run run_check post
+  [ "$status" -eq 0 ]
+  [[ $output == *skipped* ]]
+}
+
+@test "status: NOVA_BOOT_CHECK=skip does not hide what is missing" {
+  NOVA_BOOT_CHECK=skip run run_check status
+  [ "$status" -eq 1 ]
+}
+
 @test "no check is required when MKINITCPIO_FALLBACK is not a single kernel" {
   printf '%s\n' 'MKINITCPIO_FALLBACK=no' >"$CONF/10-nova.conf"
   run run_check post

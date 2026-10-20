@@ -91,6 +91,7 @@ depends=(
   coreutils
   base-devel     # nova apps install builds Chrome and VS Code from their AUR recipes
   curl
+  dosfstools     # mkfs.fat for nova usb, fsck.fat for the boot partition
   fontconfig     # fc-list, fc-match
   git            # nova apps install
   glib2          # gsettings

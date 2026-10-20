@@ -259,6 +259,35 @@ END
   fails valid_username nobody
 }
 
+@test "valid_fullname: anything useradd takes as the comment" {
+  valid_fullname "Andre Rossi"
+  valid_fullname "José Ñandú, jr."
+  valid_fullname ""
+  fails valid_fullname "Andre: P1"
+  fails valid_fullname $'Andre\nRossi'
+}
+
+@test "release_target: a failed try's swap file and mounts are let go, so the disk can be picked" {
+  export NOVA_TARGET="$SCRATCH/mnt" CALLS="$SCRATCH/calls"
+  TARGET=$NOVA_TARGET
+  swapon() { echo /dev/zram0; echo "$TARGET/swap/swapfile"; }
+  swapoff() { echo "swapoff $*" >>"$CALLS"; }
+  mountpoint() { return 0; }
+  umount() { echo "umount $*" >>"$CALLS"; }
+  release_target >/dev/null
+  [ "$(paste -sd';' "$CALLS")" = "swapoff -- $TARGET/swap/swapfile;umount -R -- $TARGET" ]
+}
+
+@test "release_target: nothing left behind, nothing done" {
+  export CALLS="$SCRATCH/calls"
+  swapon() { echo /dev/zram0; }
+  swapoff() { echo "swapoff $*" >>"$CALLS"; }
+  mountpoint() { return 1; }
+  umount() { echo "umount $*" >>"$CALLS"; }
+  release_target
+  [ ! -e "$CALLS" ]
+}
+
 @test "valid_hostname: letters, digits and inner hyphens" {
   valid_hostname nova
   valid_hostname thinkpad-p1

@@ -254,3 +254,13 @@ STUB
   [ "$(grep -cx fprintd <<<"$output")" = 1 ]
   [ "$(grep -c '^$' <<<"$output")" = 0 ]
 }
+
+@test "carry_unlock: Enter means installing without them, and is remembered" {
+  rm -rf "$NOVA_CARRY"
+  ANSWERS=$SCRATCH/answers
+  : >"$ANSWERS"
+  carry_partition() { echo /dev/fake2; }
+  run carry_unlock
+  [ "$status" -eq 1 ]
+  [ -e "$CARRY_DECLINED" ]
+}

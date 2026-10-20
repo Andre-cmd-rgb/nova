@@ -69,6 +69,27 @@ EOF
   [ "$(NOVA_USB_ALLOW_ANY=1 stick_candidates | cut -f1 | tr '\n' ' ')" = "/dev/sda /dev/sdb /dev/mmcblk0 " ]
 }
 
+@test "system_disks: each file system it runs from is looked up on its own" {
+  findmnt() { echo "${@: -1}" >>"$SCRATCH/asked"; }
+  swapon() { :; }
+  system_disks
+  [ "$(paste -sd' ' "$SCRATCH/asked")" = "/ /boot /efi /boot/efi /home" ]
+}
+
+@test "writer_cleanup: a mount that will not let go does not stop the rest" {
+  mkdir -p "$SCRATCH/work/data" "$SCRATCH/work/stick" "$SCRATCH/work/iso"
+  touch "$SCRATCH/rule"
+  run bash -c 'source "$1"; WORK=$2/work UDEV_RULE=$2/rule
+    mountpoint() { return 0; }
+    umount() { return 32; }
+    udevadm() { :; }
+    writer_cleanup
+    echo finished' _ "$REPO_ROOT/installer/nova-usb" "$SCRATCH"
+  [ "$status" -eq 0 ]
+  [ "$output" = finished ]
+  [ ! -e "$SCRATCH/work" ] && [ ! -e "$SCRATCH/rule" ]
+}
+
 @test "stick_matches: the writer refuses a disk that changed since it was picked" {
   json=$(disks_json <<<"sda $((32 * GB)) 1 0 usb SanDisk")
   stick_matches $((32 * GB)) S-sda <<<"$json"
@@ -116,6 +137,23 @@ EOF
   run members "$SCRATCH/projects.tar.zst"
   [[ $output == *"Projects/app/-n"* && $output == *"Projects/app/.git/HEAD"* && $output == *"Projects/app/vendor/lib/.git/HEAD"* ]]
   [[ $output != *target* && $output != *gone.txt* && $output != *node_modules* ]]
+}
+
+@test "projects: a deleted file listed last, or a repository git cannot read, is no failure" {
+  repo Projects/app
+  cd "$NOVA_USB_HOME/Projects/app"
+  echo a >a.txt
+  echo z >z.txt
+  git add a.txt z.txt
+  rm z.txt
+  mkdir -p "$NOVA_USB_HOME/Projects/broken/.git"
+  cd "$BATS_TEST_DIRNAME"
+  run repo_files Projects/app
+  [ "$status" -eq 0 ]
+  [ "$(tr '\0' '\n' <<<"$output")" = "Projects/app/a.txt" ]
+  run repo_files Projects/broken
+  [ "$status" -eq 0 ]
+  [[ $output == *"git could not read ~/Projects/broken"* ]]
 }
 
 @test "preset: what Custom chose comes back, folders with odd names included" {

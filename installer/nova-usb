@@ -203,11 +203,13 @@ find_repos() { # home-relative dir
 # What git would call the repository: tracked files, and new ones it does not
 # ignore. Files deleted from the work tree but not from the index are skipped,
 # and directories are left to the files in them. NUL-separated, home-relative.
+# A repository git cannot read is carried as its .git alone, with a word.
 repo_files() { # home-relative repo
   local repo=$1 f
-  git -C "$USB_HOME/$repo" ls-files -z --cached --others --exclude-standard 2>/dev/null |
+  { git -C "$USB_HOME/$repo" ls-files -z --cached --others --exclude-standard 2>/dev/null ||
+    warn "git could not read ~/$repo; only its .git is carried."; } |
     while IFS= read -r -d '' f; do
-      [[ -L $USB_HOME/$repo/$f || -f $USB_HOME/$repo/$f ]] && printf '%s\0' "$repo/$f"
+      if [[ -L $USB_HOME/$repo/$f || -f $USB_HOME/$repo/$f ]]; then printf '%s\0' "$repo/$f"; fi
     done
 }
 
@@ -292,10 +294,11 @@ lsblk_disks() {
 # Disks this system runs from: the root, boot and home file systems and swap,
 # traced back through any LUKS or LVM layers to the disk underneath.
 system_disks() {
-  local src
+  local src mountpoint
   {
-    findmnt -nro SOURCE / 2>/dev/null
-    findmnt -nro SOURCE /boot /efi /boot/efi /home 2>/dev/null || true
+    for mountpoint in / /boot /efi /boot/efi /home; do
+      findmnt -nro SOURCE -- "$mountpoint" 2>/dev/null || true
+    done
     swapon --noheadings --show=NAME 2>/dev/null || true
   } | while IFS= read -r src; do
     src=${src%%\[*}
@@ -367,9 +370,10 @@ choose_stick() {
 
 # The newest published release: a final one, or a pre-release while there is
 # no final one yet.
+# The newest release from GitHub's list of them, on stdin: a full one if there
+# is any, else the newest pre-release. Fails when there is none.
 latest_release() {
-  curl -fsSL --max-time 30 "$RELEASES?per_page=20" |
-    jq -ce '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + map(select(.prerelease)))[0]'
+  jq -ce '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + map(select(.prerelease)))[0]'
 }
 
 asset_url() { # release-json name
@@ -384,8 +388,11 @@ download() { # url file
 # Downloads the release's ISO (checked against its .sha256), release.toml and
 # packages.txt into the cache; prints the ISO's path.
 fetch_release() {
-  local release tag version dir iso name url
-  release=$(latest_release) || die "could not reach the Nova releases ($RELEASES). Online? Or pass --iso <file>."
+  local releases release tag version dir iso name url
+  releases=$(curl -fsSL --max-time 30 "$RELEASES?per_page=20") ||
+    die "could not reach the Nova releases ($RELEASES). Online? Or pass --iso <file>."
+  release=$(latest_release <<<"$releases") ||
+    die "Nova has no published release yet. Pass --iso <file> to use an ISO you built."
   tag=$(jq -r .tag_name <<<"$release")
   [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "the newest release has an odd tag: $tag"
   version=${tag#v}
@@ -662,16 +669,20 @@ main() {
     list_folders "$plan"
   fi
 
-  # Packages on the stick: possible when the release says what they are.
-  if [[ -r $release_dir/release.toml && -r $release_dir/packages.txt ]] && command -v pacman >/dev/null &&
-    command -v fakeroot >/dev/null; then
-    if [[ $mode == custom || $mode == clean ]]; then
-      OFFLINE=0
-      yes_no "Put every package on the stick too, so it installs without internet?" y && OFFLINE=1
-    fi
-  elif ((OFFLINE)); then
-    warn "No release.toml and packages.txt next to the ISO: the stick will install over the network."
+  # Packages on the stick: possible when the release says what they are, and
+  # this system has the tools to fetch and index them.
+  local no_offline=''
+  if [[ ! -r $release_dir/release.toml || ! -r $release_dir/packages.txt ]]; then
+    no_offline="there is no release.toml and packages.txt next to the ISO"
+  elif ! command -v pacman >/dev/null || ! command -v fakeroot >/dev/null; then
+    no_offline="putting the packages on the stick needs pacman and fakeroot"
+  fi
+  if [[ -n $no_offline ]]; then
+    if ((OFFLINE)) || [[ $mode != preset ]]; then info "The stick will install over the network: $no_offline."; fi
     OFFLINE=0
+  elif [[ $mode == custom || $mode == clean ]]; then
+    OFFLINE=0
+    yes_no "Put every package on the stick too, so it installs without internet?" y && OFFLINE=1
   fi
   local offline_bytes=0
   if ((OFFLINE)); then
@@ -730,8 +741,10 @@ main() {
 
   local self
   self=$(realpath -e -- "${BASH_SOURCE[0]}")
-  printf '%s' "$passphrase" | sudo -- "$BASH" "$self" write "$plan" ||
-    die "the stick was not finished; it is not safe to install from."
+  # sudo drops the environment, so the one setting the writer re-checks goes
+  # through by hand.
+  printf '%s' "$passphrase" | sudo -- env NOVA_USB_ALLOW_ANY="${NOVA_USB_ALLOW_ANY:-0}" "$BASH" "$self" write "$plan" ||
+    die "the stick was not written, or not finished; do not install from it."
   say "The stick is ready."
   info "Boot the computer from it (F12 on a ThinkPad, F12 or F9 on a Legion) and follow the installer."
   ((${#carried[@]} == 0)) || info "It asks for the passphrase you just chose; without it, your things stay locked."
@@ -766,10 +779,11 @@ writer_cleanup() {
   fi
   [[ -n $WORK ]] || return 0
   local m
+  # Each step on its own: one that fails must not stop the rest.
   for m in "$WORK/data" "$WORK/stick" "$WORK/iso"; do
-    mountpoint -q "$m" 2>/dev/null && umount "$m" 2>/dev/null
+    if mountpoint -q "$m" 2>/dev/null; then umount "$m" 2>/dev/null || true; fi
   done
-  [[ -e /dev/mapper/$MAPPER ]] && cryptsetup close "$MAPPER" 2>/dev/null
+  if [[ -e /dev/mapper/$MAPPER ]]; then cryptsetup close "$MAPPER" 2>/dev/null || true; fi
   # Never into a file system that failed to unmount: that would be the stick.
   rm -rf --one-file-system -- "$WORK"
   return 0

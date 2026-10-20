@@ -49,6 +49,8 @@ KBD_MODEL_MAP=${NOVA_KBD_MODEL_MAP:-/usr/share/systemd/kbd-model-map}
 # The answers file, for an install with no questions (--answers).
 ANSWERS=''
 CARRY_MAPPER=nova-carry
+# Left by "Enter to install without them", so the passphrase is asked once.
+CARRY_DECLINED=$CARRY.declined
 
 ESP_MIB=2048
 MIN_DISK_BYTES=$((64 * 1024 * 1024 * 1024))
@@ -114,6 +116,19 @@ disk_in_use() {
   local disk=$1
   lsblk -nro MOUNTPOINTS -- "$disk" | grep -q . && return 0
   lsblk -nro TYPE -- "$disk" | grep -Eq '^(lvm|crypt|raid[0-9]*|dm|md)$'
+}
+
+# What an install that stopped part-way left behind: its swap file in use and
+# the new system mounted at $TARGET. Both are let go before the disk is chosen,
+# or the disk would look in use by the live system and could not be picked.
+release_target() {
+  if swapon --noheadings --show=NAME 2>/dev/null | grep -qxF -- "$TARGET/swap/swapfile"; then
+    swapoff -- "$TARGET/swap/swapfile" || die "could not stop using the last try's swap file; restart and try again."
+  fi
+  if mountpoint -q -- "$TARGET"; then
+    info "Unmounting what the last try left at $TARGET"
+    umount -R -- "$TARGET" || die "something still uses $TARGET; restart and try again."
+  fi
 }
 
 # /dev/nvme0n1 -> /dev/nvme0n1p2, /dev/sda -> /dev/sda2
@@ -315,6 +330,12 @@ valid_username() {
   ((uid >= 1000 && uid != 65534))
 }
 
+# What useradd takes as the comment: no : (the passwd file's separator), and
+# nothing that is not text.
+valid_fullname() {
+  [[ ! $1 =~ [[:cntrl:]:] ]]
+}
+
 valid_hostname() {
   [[ $1 =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]
 }
@@ -479,9 +500,11 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
   mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
   info "${#packages[@]} packages, from $(offline_repo_ready && echo "the stick" || echo "the internet")"
   # Output goes to the terminal as well as the log: this is minutes long and
-  # pacman's own progress is the progress bar.
+  # pacman's own progress is the progress bar. The kernels' boot check is
+  # skipped: Limine is not installed yet, and install_bootloader checks once it
+  # is.
   printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
-  pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | tee -a "$LOG" ||
+  NOVA_BOOT_CHECK=skip pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | tee -a "$LOG" ||
     die "pacstrap failed; the log is in $LOG"
 }
 
@@ -762,7 +785,10 @@ carry_unlock() {
       read -rsp "  Passphrase (Enter to install without them): " pass </dev/tty
       echo >&2
     fi
-    [[ -n $pass ]] || return 1
+    if [[ -z $pass ]]; then
+      : >"$CARRY_DECLINED"
+      return 1
+    fi
     if printf '%s' "$pass" | cryptsetup open --readonly --key-file - "$part" "$CARRY_MAPPER" 2>/dev/null; then
       mkdir -p "$CARRY"
       mount -o ro "/dev/mapper/$CARRY_MAPPER" "$CARRY" || {
@@ -980,6 +1006,7 @@ main() {
       ;;
     --unlock)
       ((EUID == 0)) || die "run me as root."
+      rm -f -- "$CARRY_DECLINED"
       carry_unlock || return 0
       carry_wifi_live || warn "The carried Wi-Fi networks could not be read."
       return 0
@@ -1008,7 +1035,7 @@ main() {
 
   # Things carried on the stick: opened now (nova-install-start usually already
   # has, for their Wi-Fi), put back once the account exists.
-  carry_ready || carry_unlock || true
+  carry_ready || [[ -e $CARRY_DECLINED ]] || carry_unlock || true
 
   local kernel profile
   kernel=$(main_kernel)
@@ -1029,17 +1056,24 @@ main() {
   loadkeys "$keymap" >/dev/null 2>&1 || true
 
   local disk_line disk disk_size disk_model
+  release_target
   disk_line=$(choose_disk)
   IFS=$'\t' read -r disk disk_size disk_model _ _ <<<"$disk_line"
   [[ $disk_model != - ]] || disk_model=
 
   say "You"
-  local fullname user password hostname timezone carried_user=''
+  local fullname user password hostname timezone carried_user='' carried_name=''
   if carry_ready; then
     carried_user=$(carry_value .source.user)
     valid_username "$carried_user" || carried_user=
+    carried_name=$(carry_value .source.name)
+    valid_fullname "$carried_name" || carried_name=
   fi
-  fullname=$(ask fullname "Full name" "$(carry_ready && carry_value .source.name)")
+  while :; do
+    fullname=$(ask fullname "Full name" "$carried_name")
+    valid_fullname "$fullname" && break
+    retry "A name without : in it."
+  done
   while :; do
     user=$(ask user "Username" "${carried_user:-$(tr '[:upper:]' '[:lower:]' <<<"${fullname%% *}" | tr -cd 'a-z0-9_-')}")
     valid_username "$user" && break

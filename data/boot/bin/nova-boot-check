@@ -10,7 +10,9 @@
 #           abort after the fact
 #   status  prints what is missing and exits non-zero, for humans
 # Set NOVA_BOOT_CHECK=skip (sudo NOVA_BOOT_CHECK=skip pacman ...) to bypass `pre`
-# when the fallback cannot be rebuilt and an update is needed anyway.
+# and `post` when the fallback cannot be rebuilt and an update is needed anyway.
+# nova-install sets it for pacstrap, before Limine is installed, and runs
+# `post` itself once it is.
 
 set -euo pipefail
 
@@ -68,10 +70,11 @@ run_check() {
   # Only a single kernel name is checkable; "yes", "no" or empty mean no requirement.
   [[ $kernel =~ ^[A-Za-z0-9_.+-]+$ && $kernel != yes && $kernel != no ]] || return 0
 
-  if [[ $mode == pre ]]; then
-    [[ ${NOVA_BOOT_CHECK:-} != skip ]] || { echo "nova-boot-check: skipped by NOVA_BOOT_CHECK=skip" >&2; return 0; }
-    boot_is_fresh "$esp" && return 0
+  if [[ $mode != status && ${NOVA_BOOT_CHECK:-} == skip ]]; then
+    echo "nova-boot-check: skipped by NOVA_BOOT_CHECK=skip" >&2
+    return 0
   fi
+  if [[ $mode == pre ]] && boot_is_fresh "$esp"; then return 0; fi
 
   missing=$(boot_missing "$esp" "$kernel")
   [[ -n $missing ]] || return 0

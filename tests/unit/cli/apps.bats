@@ -15,6 +15,12 @@ setup() {
   stub pacman '[[ $1 == -Q ]] || exit 1; grep "^$2 " "$INSTALLED" || exit 1'
   stub git 'mkdir -p "${@: -1}"'
   stub makepkg 'echo "built ${PWD##*/}" >>"$CALLS"'
+  # Every repository's package list is there, unless a test removes one.
+  export SYNC="$SCRATCH/db"
+  mkdir -p "$SYNC/sync"
+  touch "$SYNC/sync/nova.db" "$SYNC/sync/core.db" "$SYNC/sync/extra.db"
+  stub pacman-conf 'case $1 in DBPath) echo "$SYNC/" ;; --repo-list) printf "%s\n" nova core extra ;; esac'
+  stub sudo 'echo "sudo $*" >>"$CALLS"'
   export PATH="$SCRATCH/bin:$PATH"
 }
 
@@ -94,4 +100,17 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
   run apps --noconfirm
   [ "$status" -eq 1 ]
   [[ $output == *"could not build google-chrome visual-studio-code-bin"* ]]
+}
+
+@test "a system without its repositories' package lists reads them once first" {
+  rm "$SYNC/sync/core.db" "$SYNC/sync/extra.db"
+  run apps --noconfirm
+  [ "$status" -eq 0 ]
+  [ "$(built)" = "sudo pacman -Sy --noconfirm built google-chrome built visual-studio-code-bin" ]
+}
+
+@test "with every package list there, nothing is read before building" {
+  run apps
+  [ "$status" -eq 0 ]
+  [ "$(built)" = "built google-chrome built visual-studio-code-bin" ]
 }
