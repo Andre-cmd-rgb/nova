@@ -179,3 +179,78 @@ EOF
   [ "$(iwd_name "Home Net_2-g")" = "Home Net_2-g" ]
   [ "$(iwd_name "A=B")" = "=413d42" ]
 }
+
+# The live system's fprintd and shadow tools, stubbed: busctl answers with the
+# readers in $READERS, fprintd-enroll prints $ENROLL and files a print when the
+# last line completes.
+fingerprint_stubs() {
+  export NOVA_FPRINT_DIR="$SCRATCH/fprint" READERS=1
+  FPRINT_DIR=$NOVA_FPRINT_DIR
+  mkdir -p "$SCRATCH/bin"
+  printf '#!/bin/bash\n[[ $READERS == 0 ]] && echo "ao 0" || echo "ao 1 \\"/net/reactivated/Fprint/Device/0\\""\n' >"$SCRATCH/bin/busctl"
+  printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/bin/id"
+  printf '#!/bin/bash\necho "useradd $*" >>"$SCRATCH/calls"\n' >"$SCRATCH/bin/useradd"
+  cat >"$SCRATCH/bin/fprintd-enroll" <<'STUB'
+#!/bin/bash
+echo "fprintd-enroll $*" >>"$SCRATCH/calls"
+printf '%s\n' "Using device /net/reactivated/Fprint/Device/0" "Enrolling right-index-finger finger." $ENROLL
+if [[ $ENROLL == *enroll-completed ]]; then
+  mkdir -p "$NOVA_FPRINT_DIR/${@: -1}/synaptics/0"
+  echo print >"$NOVA_FPRINT_DIR/${@: -1}/synaptics/0/7"
+fi
+STUB
+  chmod +x "$SCRATCH"/bin/*
+  export PATH="$SCRATCH/bin:$PATH" SCRATCH
+}
+
+@test "fingerprint_reader: only a reader fprintd can drive counts" {
+  fingerprint_stubs
+  fingerprint_reader
+  READERS=0 fails fingerprint_reader
+}
+
+@test "enroll_fingerprint: a stand-in account, the stages as words, and the print for the new system" {
+  fingerprint_stubs
+  export ENROLL="Enroll-result:enroll-stage-passed Enroll-result:enroll-retry-scan Enroll-result:enroll-completed"
+  run enroll_fingerprint nova
+  [ "$status" -eq 0 ]
+  [[ $output == *"Got it. Again."*"That did not read."*"Done."* ]]
+  grep -qx 'useradd -M -s /usr/bin/nologin nova' "$SCRATCH/calls"
+  grep -qx 'fprintd-enroll -f right-index-finger nova' "$SCRATCH/calls"
+  copy_fingerprints nova
+  [ "$(cat "$NOVA_TARGET/var/lib/fprint/nova/synaptics/0/7")" = print ]
+  [ "$(stat -c %a "$NOVA_TARGET/var/lib/fprint")" = 700 ]
+}
+
+@test "enroll_fingerprint: no print, no success, and nothing to copy" {
+  fingerprint_stubs
+  export ENROLL="Enroll-result:enroll-failed"
+  run enroll_fingerprint nova
+  [ "$status" -ne 0 ]
+  copy_fingerprints nova
+  [ ! -e "$NOVA_TARGET/var/lib/fprint" ]
+}
+
+@test "carried_fingerprints: only prints carried from this computer" {
+  mkdir -p "$OLD_ROOT/var/lib/fprint/andre"
+  echo print >"$OLD_ROOT/var/lib/fprint/andre/7"
+  mkdir -p "$OLD_HOME/.ssh"
+  echo key >"$OLD_HOME/.ssh/id_ed25519"
+  fails carried_fingerprints
+  carry ssh
+  fails carried_fingerprints
+  MACHINE=another-computer carry fingerprints
+  fails carried_fingerprints
+  carry fingerprints
+  carried_fingerprints
+}
+
+@test "package_set: extra packages join the set, once" {
+  cp "$REPO_ROOT/installer/packages" "$NOVA_INSTALLER_SHARE/packages"
+  export NOVA_CPUINFO="$SCRATCH/cpuinfo" NOVA_PCI_DEVICES_PATH="$SCRATCH/pci"
+  : >"$NOVA_CPUINFO"
+  mkdir -p "$NOVA_PCI_DEVICES_PATH"
+  run package_set linux "" fprintd fprintd
+  [ "$(grep -cx fprintd <<<"$output")" = 1 ]
+  [ "$(grep -c '^$' <<<"$output")" = 0 ]
+}

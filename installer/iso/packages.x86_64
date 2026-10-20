@@ -19,6 +19,9 @@ zstd
 nova-keyring
 tzdata
 
+# Enrolling a fingerprint before the install
+fprintd
+
 # Getting online: Wi-Fi with iwd, addresses from systemd-networkd
 iw
 iwd

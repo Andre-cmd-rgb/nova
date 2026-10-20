@@ -37,6 +37,7 @@ LOG=${NOVA_INSTALL_LOG:-/var/log/nova-install.log}
 CARRY=${NOVA_CARRY:-/run/nova-carry}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 IWD_DIR=${NOVA_IWD_DIR:-/var/lib/iwd}
+FPRINT_DIR=${NOVA_FPRINT_DIR:-/var/lib/fprint}
 CARRY_MAPPER=nova-carry
 
 ESP_MIB=2048
@@ -210,7 +211,7 @@ every_package() {
 }
 
 # Everything pacstrap installs, one per line, without duplicates.
-package_set() {
+package_set() { # kernel profile [package...]
   local kernel=$1 profile=$2
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
@@ -218,7 +219,8 @@ package_set() {
     echo linux-lts
     hardware_packages "$kernel"
     profile_packages "$profile" "$kernel"
-  } | awk '!seen[$0]++'
+    printf '%s\n' "${@:3}"
+  } | awk 'NF && !seen[$0]++'
 }
 
 # --------------------------------------------------------- the release and repos
@@ -416,12 +418,12 @@ create_subvolumes_and_mount() {
   logged swapon "$TARGET/swap/swapfile"
 }
 
-install_packages() {
+install_packages() { # kernel profile arch_date nova_repo [package...]
   local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf
   conf=$(mktemp /tmp/nova-pacstrap.XXXXXX.conf)
   pacstrap_conf "$arch_date" "$nova_repo" >"$conf"
   say "Installing packages (this is the long part)"
-  mapfile -t packages < <(package_set "$kernel" "$profile")
+  mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
   info "${#packages[@]} packages, from $(offline_repo_ready && echo "the stick" || echo "the internet")"
   # Output goes to the terminal as well as the log: this is minutes long and
   # pacman's own progress is the progress bar.
@@ -497,6 +499,49 @@ create_user() {
   install -d -m 755 "$TARGET/var/lib/nova/greeter"
   in_target chown "$user:$user" /var/lib/nova/greeter
   in_target runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/lib/nova/bin:/usr/bin nova-theme set white
+}
+
+# ------------------------------------------------------------------ fingerprint
+
+# Whether the live system's fprintd has a reader. It starts on this first call,
+# and sees only the readers libfprint can drive, which are the ones worth
+# setting up.
+fingerprint_reader() {
+  local devices
+  devices=$(busctl --system call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
+    net.reactivated.Fprint.Manager GetDevices 2>/dev/null) || return 1
+  [[ $devices == "ao "[1-9]* ]]
+}
+
+# Fingerprints carried from this same computer, which restore_carry puts back.
+carried_fingerprints() {
+  carry_ready && carry_items | awk -F'\t' '$1 == "fingerprints" { found = 1 } END { exit !found }' &&
+    [[ -n $(machine_hash) && $(machine_hash) == "$(carry_value .source.machine)" ]]
+}
+
+# One finger for the new account, enrolled here on the stick before anything
+# is installed; copy_fingerprints moves it into the new system. fprintd files
+# prints under a user name, so a stand-in for the account exists here too.
+enroll_fingerprint() { # user
+  local user=$1 line
+  id -u "$user" >/dev/null 2>&1 || useradd -M -s /usr/bin/nologin "$user" >/dev/null 2>&1 || return 1
+  info "Touch the reader with your right index finger, lift it, and again, until it says done."
+  { fprintd-enroll -f right-index-finger "$user" 2>&1 || true; } | while IFS= read -r line; do
+    case $line in
+      *enroll-stage-passed*) info "Got it. Again." ;;
+      *enroll-retry-scan* | *enroll-swipe-too-short* | *enroll-finger-not-centered* | *enroll-remove-and-retry*)
+        info "That did not read. Lift your finger and touch again."
+        ;;
+      *enroll-completed*) info "Done." ;;
+    esac
+  done
+  [[ -n $(find "$FPRINT_DIR/$user" -type f 2>/dev/null) ]]
+}
+
+copy_fingerprints() { # user
+  [[ -d $FPRINT_DIR/$1 ]] || return 0
+  install -d -m 700 "$TARGET/var/lib/fprint"
+  cp -a "$FPRINT_DIR/$1" "$TARGET/var/lib/fprint/"
 }
 
 configure_snapper() {
@@ -907,6 +952,26 @@ main() {
     warn "No time zone called '$timezone'."
   done
 
+  # Only a reader fprintd can drive gets fprintd in the new system; prints
+  # carried from this computer need no enrolling.
+  local extra=() fingerprint=''
+  if fingerprint_reader; then
+    extra+=(fprintd)
+    if carried_fingerprints; then
+      fingerprint="carried from $(carry_value .source.host)"
+    else
+      say "Fingerprint"
+      while [[ $(ask "Unlock with your fingerprint? (yes/no)" yes) == y* ]]; do
+        if enroll_fingerprint "$user"; then
+          fingerprint="right index finger"
+          break
+        fi
+        warn "That did not work."
+      done
+      [[ -n $fingerprint ]] || info "Settings, Lock Screen sets it up later."
+    fi
+  fi
+
   local swap
   swap=$(swap_gib "$disk_size")
   say "Ready to install"
@@ -915,17 +980,19 @@ main() {
   info "Kernel        $kernel, with linux-lts as the fallback"
   info "Account       $user ($fullname) on $hostname"
   info "Time zone     $timezone, keyboard $keymap"
+  [[ -z $fingerprint ]] || info "Fingerprint   $fingerprint"
   carry_ready && info "Your things   $(carry_items | wc -l) items from $(carry_value .source.host), put back after the install"
   [[ $(ask "Type erase to wipe $disk and install" "") == erase ]] || die "nothing was changed."
 
   partition_and_format "$disk"
   create_subvolumes_and_mount "$disk" "$swap"
   prepare_boot_config "$disk" "$kernel"
-  install_packages "$kernel" "$profile" "$arch_date" "$nova_repo"
+  install_packages "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}"
   write_system_config "$hostname" "$timezone" "$keymap" "$arch_date" "$nova_repo" "$tag"
   configure_snapper
   create_user "$user" "$fullname" "$password"
   unset password
+  copy_fingerprints "$user"
   restore_carry "$user"
   install_bootloader
   install_apps "$user"
