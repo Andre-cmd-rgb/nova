@@ -220,6 +220,18 @@ EOF
   [ "$status" -ne 0 ]
 }
 
+@test "while writing, the stick and its partitions are hidden from the desktop's automounter" {
+  UDEV_RULE="$SCRATCH/rules.d/90-nova-usb.rules"
+  udevadm() { :; }
+  hide_from_desktop /dev/sdb
+  grep -qx 'KERNEL=="sdb|sdb\[0-9\]\*", ENV{UDISKS_IGNORE}="1"' "$UDEV_RULE"
+  grep -qx 'ENV{DM_NAME}=="nova-usb-data", ENV{UDISKS_IGNORE}="1"' "$UDEV_RULE"
+  hide_from_desktop /dev/nvme1n1
+  grep -q 'KERNEL=="nvme1n1|nvme1n1p\[0-9\]\*"' "$UDEV_RULE"
+  writer_cleanup
+  [ ! -e "$UDEV_RULE" ]
+}
+
 @test "the installer partition: the ISO, the packages, and room to spare" {
   [ "$(installer_mib $((1200 * MiB)) 0)" = 1388 ]
   [ "$(installer_mib $((1200 * MiB)) $((2000 * MiB)))" = 3488 ]

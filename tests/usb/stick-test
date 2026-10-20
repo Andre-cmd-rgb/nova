@@ -89,7 +89,8 @@ ok "the writer refuses a disk that changed, or one it was not allowed"
 
 write_plan "$size"
 write
-ok "the writer finished"
+[[ ! -e /run/udev/rules.d/90-nova-usb.rules ]] || fail "the rule hiding the stick from udisks outlived the write"
+ok "the writer finished, and gave the stick back to the desktop"
 
 p1=${loop}p1 p2=${loop}p2
 [[ $(lsblk -nro PARTLABEL,FSTYPE "$p1") == "NOVA vfat" ]] || fail "partition 1 is $(lsblk -nro PARTLABEL,FSTYPE "$p1")"

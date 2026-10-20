@@ -743,8 +743,26 @@ main() {
 # checks it again, and stops on anything unexpected.
 
 WORK=''
+UDEV_RULE=${NOVA_USB_UDEV_RULE:-/run/udev/rules.d/90-nova-usb.rules}
+
+# A desktop automounter (udiskie, on Nova) would mount the new partitions, and
+# ask for the encrypted one's passphrase, while they are being written. udisks
+# leaves alone whatever udev marks UDISKS_IGNORE; the rule lasts as long as the
+# write, and the stick shows up again when it is next plugged in.
+hide_from_desktop() { # device
+  local name=${1##*/} part
+  part=$(partition_path "$name" "")
+  mkdir -p -- "${UDEV_RULE%/*}"
+  printf 'KERNEL=="%s|%s[0-9]*", ENV{UDISKS_IGNORE}="1"\nENV{DM_NAME}=="%s", ENV{UDISKS_IGNORE}="1"\n' \
+    "$name" "$part" "$MAPPER" >"$UDEV_RULE"
+  udevadm control --reload 2>/dev/null || true
+}
 
 writer_cleanup() {
+  if [[ -f $UDEV_RULE ]]; then
+    rm -f -- "$UDEV_RULE"
+    udevadm control --reload 2>/dev/null || true
+  fi
   [[ -n $WORK ]] || return 0
   local m
   for m in "$WORK/data" "$WORK/stick" "$WORK/iso"; do
@@ -900,6 +918,7 @@ write_stick() { # plan, with the passphrase on stdin
   WORK=$(mktemp -d /tmp/nova-usb-write.XXXXXX)
   trap writer_cleanup EXIT
   mkdir -p "$WORK/iso" "$WORK/stick" "$WORK/data"
+  hide_from_desktop "$device"
 
   say "Partitioning $device"
   wipefs -aq "$device"
