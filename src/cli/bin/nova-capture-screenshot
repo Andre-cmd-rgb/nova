@@ -22,7 +22,7 @@ if pkill slurp; then
   exit 0
 fi
 
-SCREENSHOT_EDITOR="${NOVA_SCREENSHOT_EDITOR:-tensaku-edit}"
+SCREENSHOT_EDITOR="${NOVA_SCREENSHOT_EDITOR:-satty}"
 
 # Parse --editor flag from any position
 ARGS=()
@@ -89,7 +89,7 @@ case "$PROCESSING" in
     # notification outage must not report the capture itself as failed.
     nova-notification-send "Screenshot saved to clipboard and file" "Edit with Super + Alt + , (or click this)" \
       --image "$FILEPATH" \
-      --exec "$SCREENSHOT_EDITOR" "$FILEPATH" || true
+      --exec nova-image-edit "$FILEPATH" "$SCREENSHOT_EDITOR" || true
     ;;
   copy)
     grim -g "$SELECTION" - | wl-copy --type image/png

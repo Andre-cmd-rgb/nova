@@ -3,12 +3,12 @@
 base
 linux-firmware
 nova
-# Building Chrome and VS Code from their AUR recipes, and git over SSH.
-base-devel
-git
+# SSH, and sudo. (git and base-devel come with nova, for nova apps install.)
 openssh
 sudo
 # A console editor and completion, for the day the desktop does not start.
 nano
 bash-completion
 unzip
+# The Activity window (Super+Ctrl+T).
+btop

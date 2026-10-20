@@ -13,7 +13,7 @@ if (($# == 0)); then
     read -r editor <"$editor_file" || editor=""
   fi
 
-  echo "${editor:-nvim}"
+  echo "${editor:-code}"
   exit 0
 fi
 

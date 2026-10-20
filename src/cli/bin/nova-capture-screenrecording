@@ -187,9 +187,10 @@ announce_recording() {
     image_args=(--image "$preview")
   fi
 
-  nova-notification-send "Screen recording saved" "Open with Super + Alt + , (or click this)" \
+  # Shown in Files rather than played: Nova installs no video player.
+  nova-notification-send "Screen recording saved" "Show in Files with Super + Alt + , (or click this)" \
     -t 10000 "${image_args[@]}" \
-    --exec mpv -- "$filename"
+    --exec nautilus --select "$filename"
 
   # The shell loads the thumbnail into memory when the toast appears and never
   # re-reads the file, so the preview only has to outlive that load -- not the

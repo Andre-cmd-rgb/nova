@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# nova:summary=Open an image to mark up and crop, saving over the same file
+# nova:args=<image> [editor]
+# nova:hidden=true
+#
+# What a screenshot's notification and a clipboard image open. satty, unless
+# an editor is named (nova-capture-screenshot --editor=, or
+# NOVA_SCREENSHOT_EDITOR), which then gets the path as its only argument.
+
+set -euo pipefail
+
+image=${1:-}
+editor=${2:-${NOVA_SCREENSHOT_EDITOR:-satty}}
+[[ -r $image ]] || { echo "Usage: nova-image-edit <image> [editor]" >&2; exit 2; }
+
+if [[ $editor == satty ]]; then
+  exec setsid uwsm-app -- satty --filename "$image" --output-filename "$image" --copy-command wl-copy
+fi
+exec setsid uwsm-app -- "$editor" "$image"

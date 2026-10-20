@@ -67,6 +67,7 @@ depends=(
   grim
   slurp
   wl-clipboard
+  satty          # marking up screenshots
   wtype          # paste into the focused window
   libvips        # vipsthumbnail, for the background and theme pickers
 
@@ -88,8 +89,10 @@ depends=(
   # Commands the helpers and the shell call
   bash
   coreutils
+  base-devel     # nova apps install builds Chrome and VS Code from their AUR recipes
   curl
   fontconfig     # fc-list, fc-match
+  git            # nova apps install
   glib2          # gsettings
   inotify-tools  # shell plugin hot-reload
   iproute2
@@ -98,16 +101,15 @@ depends=(
   libpulse       # pactl
   libxkbcommon   # xkbcli, for the keyboard layout widget
   mise
+  perl           # nova-menu-select, clipboard capture
   procps-ng      # pgrep, pkill
   psmisc         # fuser, for thinkpad-power
   socat          # Hyprland event socket
   systemd
   util-linux     # setpriv, rfkill, logger
 )
-# git is here, not in depends: pkgver() and the VCS source need it at build time, and no
-# helper calls it at run time. The installer adds it to the base package list anyway.
 makedepends=(
-  git
+  git            # pkgver() and the VCS source
   rust
 )
 checkdepends=(
@@ -126,13 +128,13 @@ optdepends=(
   'linux-firmware: firmware for Wi-Fi, GPUs and other hardware'
   'fprintd: fingerprint unlock'
   'btop: system monitor, themed by nova theme set'
-  'fastfetch: the About screen'
   'gpu-screen-recorder: screen recording'
   'ffmpeg: trimming screen recordings'
   'tesseract-data-eng: copy text from a screen region'
   'imagemagick: bar text color matched to the background'
   'ddcutil: brightness of external monitors'
   'modemmanager: mobile data, on laptops with a modem'
+  'fwupd: firmware updates (nova update firmware)'
 )
 options=(!debug)
 # Configuration under /etc: pacman keeps local edits across upgrades.

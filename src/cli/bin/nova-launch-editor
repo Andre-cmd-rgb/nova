@@ -14,12 +14,14 @@ else
   inline=false
 fi
 
-editor="nvim"
+# VS Code unless another was chosen, and nano, which is always there, when
+# the chosen one is missing.
+editor="code"
 if [[ -f $default_editor ]]; then
-  read -r editor <"$default_editor" || editor="nvim"
+  read -r editor <"$default_editor" || editor="code"
 fi
 
-nova-cmd-present "$editor" || editor="nvim"
+nova-cmd-present "$editor" || editor="nano"
 
 case "${editor##*/}" in
   nvim | vim | nano | micro | hx | helix | fresh)
