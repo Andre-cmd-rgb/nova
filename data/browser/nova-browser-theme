@@ -1,0 +1,47 @@
+#!/bin/bash
+# nova-browser-theme: Chrome's toolbar color, from the current theme.
+#
+# The theme engine mirrors the theme's browser color into
+# /var/lib/nova/greeter/chromium.theme as "r,g,b", in a directory the user
+# owns, so switching themes never needs root. nova-browser-theme.path runs this
+# as root when the file changes (and the service once at boot): it writes
+# {"BrowserThemeColor": "#rrggbb"} into Chrome's and Chromium's managed policy
+# directories, which the browsers watch and reload by themselves.
+#
+# The file is the user's, so nothing in it is trusted: unless it is a plain
+# file whose first line is three numbers from 0 to 255, the policy stays as
+# it was.
+set -euo pipefail
+
+SOURCE=${NOVA_BROWSER_THEME_SOURCE:-/var/lib/nova/greeter/chromium.theme}
+read -ra POLICY_DIRS <<<"${NOVA_BROWSER_POLICY_DIRS:-/etc/opt/chrome/policies/managed /etc/chromium/policies/managed}"
+POLICY=nova-theme.json
+
+theme_hex() { # "r,g,b" -> #rrggbb
+  local r g b
+  [[ $1 =~ ^([0-9]{1,3}),([0-9]{1,3}),([0-9]{1,3})$ ]] || return 1
+  r=$((10#${BASH_REMATCH[1]})) g=$((10#${BASH_REMATCH[2]})) b=$((10#${BASH_REMATCH[3]}))
+  ((r <= 255 && g <= 255 && b <= 255)) || return 1
+  printf '#%02x%02x%02x\n' "$r" "$g" "$b"
+}
+
+main() {
+  local line hex dir
+  # No theme mirrored yet, or something other than a plain file.
+  [[ -f $SOURCE && ! -L $SOURCE ]] || return 0
+  line=$(head -c 64 -- "$SOURCE" | head -n 1)
+  hex=$(theme_hex "$line") || {
+    echo "nova-browser-theme: $SOURCE does not hold r,g,b; Chrome's color is unchanged" >&2
+    return 1
+  }
+  for dir in "${POLICY_DIRS[@]}"; do
+    [[ -d $dir ]] || continue
+    printf '{"BrowserThemeColor": "%s"}\n' "$hex" >"$dir/.$POLICY.tmp"
+    chmod 644 "$dir/.$POLICY.tmp"
+    mv -f -- "$dir/.$POLICY.tmp" "$dir/$POLICY"
+  done
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

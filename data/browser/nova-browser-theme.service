@@ -1,0 +1,27 @@
+[Unit]
+Description=Give Chrome the current theme's toolbar color
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nova/nova-browser-theme
+# It reads one line of a user's file and writes two policy files; nothing else.
+ProtectSystem=strict
+ReadWritePaths=-/etc/opt/chrome/policies/managed -/etc/chromium/policies/managed
+ProtectHome=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+
+[Install]
+# Once at boot as well, so a theme set during the install reaches Chrome.
+WantedBy=multi-user.target

@@ -1,0 +1,9 @@
+[Unit]
+Description=Follow the theme in Chrome's toolbar color
+
+[Path]
+PathChanged=/var/lib/nova/greeter/chromium.theme
+Unit=nova-browser-theme.service
+
+[Install]
+WantedBy=paths.target
