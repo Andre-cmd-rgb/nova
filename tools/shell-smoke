@@ -1,0 +1,162 @@
+#!/bin/bash
+# shell-smoke: start the whole shell, as a session would, under a headless sway
+# and fail on any QML error. What qml-smoke cannot reach: the bar, startup
+# order, the services, summoning over IPC, and the boot lock.
+#
+#   tools/shell-smoke --root <dir> [--shots <dir>]
+#
+# --root is a `make install DESTDIR=<dir>` tree. sway runs on its headless
+# backend with the pixman renderer, in its own runtime dir and D-Bus session:
+# no GPU, no input, no seat. Hyprland itself needs a GPU, so its IPC is absent
+# here and the shell's Hyprland calls fail quietly. Made for CI; it starts a
+# compositor, so it does not belong inside someone's desktop session.
+#
+# It runs the shell twice. As a password login: the bar comes up, every plugin
+# is listed, and the summoned windows open. Then as an autologin, with
+# /etc/pam.d/nova-lock-password in place: the shell has to lock at startup and
+# the compositor has to confirm the lock secure.
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+
+root='' shots=''
+while (($# > 0)); do
+  case $1 in
+    --root) root=${2:?}; shift 2 ;;
+    --shots) shots=${2:?}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+[[ -n $root && -f $root/usr/share/nova/shell/shell.qml ]] || { usage >&2; exit 2; }
+for tool in sway qs dbus-run-session jq; do
+  command -v "$tool" >/dev/null || { echo "shell-smoke: needs $tool" >&2; exit 1; }
+done
+[[ -z ${WAYLAND_DISPLAY:-} ]] || { echo "shell-smoke: refusing to run inside a Wayland session" >&2; exit 1; }
+root=$(cd "$root" && pwd)
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/home" "$work/run" "$work/shots"
+chmod 700 "$work/run"
+printf 'output HEADLESS-1 resolution 1920x1080\ndefault_border none\n' >"$work/sway.conf"
+
+# One session: sway and the shell in their own D-Bus session, so the shell's
+# notification server and gsettings have a bus, and all of it ends together.
+session() { # desktop | lock
+  set -euo pipefail
+  local mode=$1
+  WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
+    sway -c "$WORK/sway.conf" >"$WORK/sway.log" 2>&1 &
+  local sway=$! socket='' i
+  for ((i = 0; i < 100; i++)); do
+    socket=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' | head -1)
+    [[ -z $socket ]] || break
+    sleep 0.1
+  done
+  [[ -n $socket ]] || { echo "FAIL sway did not start"; cat "$WORK/sway.log"; return 1; }
+  export WAYLAND_DISPLAY=$socket
+
+  # llvmpipe draws into shared memory; there is no GPU to hand buffers to.
+  LIBGL_ALWAYS_SOFTWARE=1 QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
+    qs -n --no-color -p "$SHELL_DIR" >/dev/null 2>&1 &
+  local shell=$!
+  ipc() { qs ipc -p "$SHELL_DIR" call "$@" 2>/dev/null; }
+
+  local answer=''
+  for ((i = 0; i < 300; i++)); do
+    answer=$(ipc shell ping || true)
+    [[ $answer != ok ]] || break
+    kill -0 "$shell" 2>/dev/null || break
+    sleep 0.1
+  done
+  if [[ $answer != ok ]]; then
+    echo "FAIL the shell did not answer"
+    kill "$shell" "$sway" 2>/dev/null || true
+    return 1
+  fi
+  echo "ok   the shell answers"
+  shot() { command -v grim >/dev/null && grim "$WORK/shots/$1.png" 2>/dev/null || true; }
+
+  if [[ $mode == lock ]]; then
+    for ((i = 0; i < 100; i++)); do
+      answer=$(ipc lock state || true)
+      [[ $answer != secure ]] || break
+      sleep 0.1
+    done
+    if [[ $answer == secure ]]; then echo "ok   locked at startup, and secure"; else echo "FAIL the lock is $answer, not secure"; fi
+    shot lock
+    # Nothing here can type the password: the lock ends with the compositor.
+    kill "$sway" 2>/dev/null || true
+    wait "$sway" 2>/dev/null || true
+    kill "$shell" 2>/dev/null || true
+    wait 2>/dev/null || true
+    return 0
+  fi
+
+  sleep 2
+  shot desktop
+  local plugins expected
+  plugins=$(ipc shell listPlugins || true)
+  expected=$(jq length "$SHELL_DIR/plugins/index.json")
+  if [[ $(jq length <<<"$plugins" 2>/dev/null) == "$expected" ]]; then
+    echo "ok   listPlugins names all $expected plugins"
+  else
+    echo "FAIL listPlugins: $plugins"
+  fi
+
+  local id payload
+  for id in nova.menu:'{"menu":"root"}' nova.settings:'{"page":"about"}' nova.batterylife:'{}' \
+    nova.clipboard:'{}' nova.emojis:'{}'; do
+    payload=${id#*:} id=${id%%:*}
+    answer=$(ipc shell summon "$id" "$payload" || true)
+    sleep 1.5
+    shot "$id"
+    ipc shell hide "$id" >/dev/null || true
+    if [[ $answer == ok ]]; then echo "ok   summon $id"; else echo "FAIL summon $id: $answer"; fi
+  done
+
+  kill "$shell" 2>/dev/null || true
+  kill "$sway" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+
+shell_dir=$root/usr/share/nova/shell
+results='' problems='' others=''
+run_session() { # desktop | lock
+  rm -rf "$work/run/quickshell"
+  local login=password
+  [[ $1 == desktop ]] || login=autologin
+  results+=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
+    PATH="$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
+    NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN="$login" \
+    WORK="$work" SHELL_DIR="$shell_dir" \
+    timeout 180 dbus-run-session -- bash -c "$(declare -f session); session $1" 2>&1)$'\n' || true
+  # Quickshell's own warnings about what this machine lacks (no Hyprland, no
+  # system bus) are printed; QML errors in Nova's files fail the run.
+  local log
+  log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$shell_dir" 2>&1 || true)
+  problems+=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL) +(scene|qml)|^ *(ERROR|CRIT|FATAL)' <<<"$log" | grep -v 'Detected locale' || true)$'\n'
+  others+=$(grep -E '^ *WARN' <<<"$log" | grep -vE '^ *WARN +(scene|qml)' || true)$'\n'
+}
+
+run_session desktop
+if [[ -f /etc/pam.d/nova-lock-password ]]; then
+  run_session lock
+else
+  results+="skip the boot lock: no /etc/pam.d/nova-lock-password"$'\n'
+fi
+echo -n "$results"
+problems=$(sed '/^$/d' <<<"$problems") others=$(sed '/^$/d' <<<"$others")
+[[ -z $others ]] || { echo "Quickshell warnings (not failures):"; sed 's/^/  /' <<<"$others"; }
+
+if [[ -n $shots ]]; then
+  mkdir -p "$shots"
+  cp "$work/shots"/*.png "$shots/" 2>/dev/null || true
+fi
+
+if [[ -n $problems ]] || grep -q '^FAIL ' <<<"$results" || ! grep -q '^ok ' <<<"$results"; then
+  [[ -z $problems ]] || { echo "QML errors:"; sed 's/^/  /' <<<"$problems"; }
+  exit 1
+fi

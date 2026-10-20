@@ -231,6 +231,8 @@ the shared folder also becomes the default for themes that have no pick of their
     the real plugin index) offscreen under Quickshell, from an installed tree
   - `tools/qml-smoke` opens the shell's windows offscreen from the same tree
     and fails on any runtime QML warning, which qmllint cannot see
+  - `tools/shell-smoke` starts the whole shell under a headless sway, summons
+    its windows over IPC and checks that it locks at startup, in CI only
   - `tests/usb/stick-test` writes and restores a real stick on a loop device,
     as root, in CI only
   - QEMU end-to-end tests for install, boot and lock are not written yet

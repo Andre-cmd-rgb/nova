@@ -1,6 +1,7 @@
 # Every push and pull request: lint, the name check, the Rust checks, the unit
-# tests, a `make install` into a scratch root and the shell's windows opened
-# offscreen from it, all in a current Arch container. Releases are built by
+# tests, a `make install` into a scratch root, the shell's windows opened
+# offscreen from it and the whole shell started under a headless sway, all in
+# a current Arch container. Releases are built by
 # release.yml.
 name: ci
 
@@ -29,7 +30,7 @@ jobs:
       - name: Tools
         run: |
           pacman -Syu --noconfirm --needed git sudo shellcheck bats jq rust qt6-declarative \
-            quickshell ttf-jetbrains-mono-nerd noto-fonts
+            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa
           useradd -m builder
 
       - uses: actions/checkout@v4
@@ -68,6 +69,13 @@ jobs:
 
       - name: Shell windows, offscreen
         run: sudo -u builder -H tools/qml-smoke --root /tmp/nova-root --shots /tmp/nova-shots
+
+      # The whole shell as a session starts it, the boot lock included; the
+      # container is thrown away, so the lock's PAM service can go into /etc.
+      - name: The whole shell, under a headless sway
+        run: |
+          install -Dm644 -t /etc/pam.d /tmp/nova-root/etc/pam.d/nova-lock-password
+          sudo -u builder -H tools/shell-smoke --root /tmp/nova-root --shots /tmp/nova-shots/shell
 
       - name: Keep the window screenshots
         if: always()
