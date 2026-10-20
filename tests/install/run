@@ -13,9 +13,14 @@
 # after= script leaves behind reports on the first boot (tests/install/probe).
 # Both runs log to the serial port; --logs keeps the logs.
 #
-# Needs /dev/kvm, qemu, edk2-ovmf, mtools, dosfstools, libarchive and about
-# 15 GB of disk under $TMPDIR (/var/tmp if unset). release.yml runs it before
-# anything is published.
+# Hyprland needs a GL driver in the guest, so the machine has a virgl GPU, which
+# QEMU draws with Mesa's software renderer in a hidden X server: no GPU is
+# needed, and none is touched.
+#
+# Needs /dev/kvm, qemu with its GTK and OpenGL display and the virtio-vga-gl
+# device, virglrenderer, Xvfb, edk2-ovmf, mtools, dosfstools, libarchive, and
+# about 15 GB of disk under $TMPDIR (/var/tmp if unset). release.yml runs it
+# before anything is published.
 set -euo pipefail
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -41,7 +46,7 @@ while (($#)); do
 done
 [[ -r $iso && -r $repo/nova.db && -r $release && -r $packages ]] ||
   die "usage: tests/install/run --iso <file> --repo <dir> --release <release.toml> --packages <packages.txt>"
-for tool in qemu-system-x86_64 mcopy mkfs.fat sfdisk bsdtar repo-add pacman curl; do
+for tool in qemu-system-x86_64 Xvfb mcopy mkfs.fat sfdisk bsdtar repo-add pacman curl; do
   command -v "$tool" >/dev/null || die "needs $tool"
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || die "needs /dev/kvm"
@@ -52,7 +57,8 @@ repo=$(realpath -- "$repo")
 MiB=$((1024 * 1024))
 work=$(mktemp -d "${TMPDIR:-/var/tmp}/nova-install-test.XXXXXX")
 keep() { [[ -z $logs ]] || { mkdir -p "$logs" && cp -- "$work"/*.log "$logs/"; } 2>/dev/null || true; }
-trap 'keep; rm -rf -- "$work"' EXIT
+xvfb=''
+trap '[[ -z $xvfb ]] || kill "$xvfb" 2>/dev/null; keep; rm -rf -- "$work"' EXIT
 stick=$work/stick
 mkdir -p "$stick" "$work/db/cache"
 
@@ -112,6 +118,19 @@ printf 'label: gpt\nstart=2048, size=%d, type=uefi, name="NOVA"\n' $((size_mib *
 dd if="$work/fat.img" of="$work/stick.img" bs=1M seek=1 conv=notrunc,sparse status=none
 rm -f -- "$work/fat.img"
 
+# A display nothing uses, named outright: Xvfb -displayfd takes the first one
+# whose socket it can bind, unlinking a running Xwayland's on the way.
+display=''
+for ((n = 90; n < 200; n++)); do
+  [[ -e /tmp/.X$n-lock || -e /tmp/.X11-unix/X$n ]] || { display=$n; break; }
+done
+[[ -n $display ]] || die "no free X display between :90 and :199"
+Xvfb ":$display" -screen 0 1280x800x24 -nolisten tcp >"$work/xvfb.log" 2>&1 &
+xvfb=$!
+for ((i = 0; i < 100; i++)); do [[ -S /tmp/.X11-unix/X$display ]] && break; sleep 0.1; done
+[[ -S /tmp/.X11-unix/X$display ]] || die "Xvfb did not start; the log is xvfb.log"
+display=:$display
+
 # One machine for both runs, the same firmware variables included. The network
 # card has no boot ROM, so the firmware goes straight to the disks.
 cp "$ovmf/OVMF_VARS.4m.fd" "$work/vars.fd"
@@ -119,12 +138,13 @@ truncate -s 80G "$work/disk.img"
 machine() { # minutes serial-log [qemu options...]
   local minutes=$1 log=$2
   shift 2
-  timeout "${minutes}m" qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
+  timeout "${minutes}m" env -u WAYLAND_DISPLAY DISPLAY="$display" GDK_BACKEND=x11 NO_AT_BRIDGE=1 LIBGL_ALWAYS_SOFTWARE=1 \
+    qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
     -drive if=pflash,format=raw,unit=0,readonly=on,file="$ovmf/OVMF_CODE.4m.fd" \
     -drive if=pflash,format=raw,unit=1,file="$work/vars.fd" \
     -drive file="$work/disk.img",format=raw,if=none,id=disk,cache=unsafe -device virtio-blk-pci,drive=disk,bootindex=1 \
     -netdev user,id=net -device virtio-net-pci,netdev=net,romfile= \
-    -device virtio-vga -display none -serial file:"$log" -no-reboot "$@"
+    -device virtio-vga-gl -display gtk,gl=on -serial file:"$log" -no-reboot "$@"
 }
 
 step "Installing from the stick"

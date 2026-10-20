@@ -236,8 +236,9 @@ jobs:
           path: out/iso
       - name: Install it in QEMU, then boot it
         run: |
-          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-hw-display-virtio-gpu \
-            qemu-hw-display-virtio-vga edk2-ovmf mtools dosfstools libarchive
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-ui-gtk qemu-ui-opengl \
+            qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl qemu-hw-display-virtio-vga \
+            qemu-hw-display-virtio-vga-gl virglrenderer mesa xorg-server-xvfb edk2-ovmf mtools dosfstools libarchive
           TMPDIR=/mnt tests/install/run --iso out/iso/nova-*.iso --repo out/repo --release release.toml \
             --packages out/iso/packages.txt --logs /tmp/install-logs
       - name: Keep the serial logs
