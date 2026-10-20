@@ -188,8 +188,11 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
+      // Nothing to show without a battery: the popup stays shut (its `open`
+      // needs one), and the state is put back once this change is over.
+      // Closing here would change `opened` while it is being changed.
       if (!batteryPresent) {
-        close()
+        Qt.callLater(close)
         return
       }
 
