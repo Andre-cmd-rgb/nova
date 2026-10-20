@@ -5,11 +5,14 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Networking
 import qs.Ui
+import qs.Ui as Ui
 import qs.Commons
 import qs.Commons as Commons
 import "Model.js" as Model
 
-Panel {
+// Qualified: qmllint cannot see qs.Ui, so a bare Panel here would name this
+// file, and with the inline components below that sends it round forever.
+Ui.Panel {
   id: root
   moduleName: "nova.network"
   ipcTarget: "nova.network"
@@ -1853,6 +1856,7 @@ Panel {
 
 
   component DetailValue: InfoValue {
+    id: detailValue
     property bool copyable: false
     property string tooltipText: "Copy to clipboard"
 
@@ -1862,10 +1866,10 @@ Panel {
     MouseArea {
       id: valueMouse
       anchors.fill: parent
-      enabled: copyable && parent.text !== ""
+      enabled: copyable && detailValue.text !== ""
       hoverEnabled: enabled
       cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: root.copyToClipboard(parent.text)
+      onClicked: root.copyToClipboard(detailValue.text)
     }
 
     PanelToolTip {

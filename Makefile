@@ -31,16 +31,12 @@ lint: lint-shell lint-qml check-names
 lint-shell:
 	shellcheck -x -S warning $(SHELL_SOURCES)
 
-# qmllint 6.12 never finishes on the network panel (Omarchy's original too); it
-# comes back into the lint when the panel is split into smaller files.
-QML_LINT_SKIP := src/shell/plugins/panels/network/Panel.qml
-
 # Errors fail the lint; the warnings (mostly qs.* imports qmllint cannot resolve)
 # are printed only when it fails, next to the error.
 lint-qml:
 	@set -e; log=$$(mktemp); trap 'rm -f "$$log"' EXIT; \
 	for d in $(QML_DIRS); do \
-	  find $$d -name '*.qml' $(foreach f,$(QML_LINT_SKIP),! -path $(f)) -print0 | \
+	  find $$d -name '*.qml' -print0 | \
 	    xargs -0 -r /usr/lib/qt6/bin/qmllint --max-warnings -1 >"$$log" 2>&1 || { cat "$$log" >&2; exit 1; }; \
 	done
 
