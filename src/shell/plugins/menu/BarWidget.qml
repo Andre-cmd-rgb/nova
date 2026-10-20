@@ -12,8 +12,9 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\ue900"
-    fontFamily: "nova"
+    // A four-point star, the nova: Material Design's star-four-points (U+F0AE2)
+    // in the bar's own Nerd Font, so it needs no font of its own.
+    text: "\udb82\udee2"
     horizontalMargin: 7.5
     onPressed: function(button) {
       if (!root.bar) return

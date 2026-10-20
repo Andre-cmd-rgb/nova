@@ -583,7 +583,13 @@ Item {
     return source ? Util.fileUrl(source) : ""
   }
 
-  Component.onCompleted: applyBarConfig()
+  // shell.qml's Loader hands the bar its shell. Without it the bar still draws
+  // but cannot save a change, and the guards on `shell` below would hide that,
+  // so it is said once, where the smoke tests see it.
+  Component.onCompleted: {
+    if (!shell) console.warn("Bar: started without its shell; layout changes cannot be saved")
+    applyBarConfig()
+  }
 
   // Revealing the indicators widens their section, which can slide a neighbour
   // under a stationary pointer. Collapsing on that un-hover would move it back
