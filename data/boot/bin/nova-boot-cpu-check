@@ -1,0 +1,32 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Refuse to install linux-nova on a CPU without x86-64-v3
+#
+# Run by a pacman PreTransaction hook (00-nova-cpu-check.hook) whenever linux-nova is
+# installed or upgraded. The kernel is built for the x86-64-v3 baseline and dies on its
+# first AVX2 instruction on anything older, so the transaction is aborted instead.
+# Exit status: 0 if the CPU qualifies, 1 if not.
+set -euo pipefail
+
+cpuinfo=${NOVA_CPUINFO:-/proc/cpuinfo}
+required=(avx avx2 bmi1 bmi2 f16c fma abm movbe xsave)
+
+# Without /proc (a chroot that did not mount it) there is nothing to check; stay out
+# of the way rather than block an install on a question that cannot be answered.
+[[ -r $cpuinfo ]] || exit 0
+
+flags=$(grep -m 1 '^flags' "$cpuinfo" || true)
+[[ -n $flags ]] || exit 0
+
+missing=()
+for f in "${required[@]}"; do
+  [[ " $flags " == *" $f "* ]] || missing+=("$f")
+done
+
+if (( ${#missing[@]} )); then
+  {
+    echo "error: this CPU does not support x86-64-v3 (missing: ${missing[*]})."
+    echo "linux-nova is built for x86-64-v3 and would not boot here. Keep using linux-lts."
+  } >&2
+  exit 1
+fi

@@ -1,0 +1,11 @@
+#!/bin/bash
+# nova:summary=Print "available <version>" or "current" (for the shell's update badge)
+#
+# A thin wrapper over `nova update --check`, which caches the answer for half an hour
+# so a polling widget stays far below GitHub's unauthenticated API rate limit.
+# Exit status is non-zero, with nothing on stdout, when the answer could not be had
+# (offline, rate limited): callers should keep showing the last state.
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+exec "$HERE/nova-update" --check "$@"

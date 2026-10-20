@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# nova:summary=Run a command in a floating terminal that waits for a key when done
+# nova:args=<command>
+#
+# For menu actions that print what they did (updates, restarts): the window
+# floats (org.nova.terminal, see default/hypr/apps/system.lua) and stays open
+# until a key is pressed, unless the command was interrupted with Ctrl+C.
+
+set -euo pipefail
+
+(($# > 0)) || { echo "Usage: nova-launch-floating-terminal-with-presentation <command>" >&2; exit 2; }
+
+# The command arrives as words that make up one shell command line.
+# shellcheck disable=SC2016 # expanded by the bash inside the terminal
+script="$*"' ; status=$?
+if ((status != 130)); then
+  if ((status == 0)); then printf "\n\033[32m●\033[0m Done. Press any key to close…"
+  else printf "\n\033[31m●\033[0m Failed (exit %s). Press any key to close…" "$status"; fi
+  read -rsn 1
+fi'
+
+exec setsid uwsm-app -- xdg-terminal-exec --app-id=org.nova.terminal --title=Nova -e bash -c "$script"

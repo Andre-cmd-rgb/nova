@@ -38,9 +38,16 @@ BarWidget {
 
   Process {
     id: updateProc
-    command: ["nova-update-available"]
-    onExited: function(exitCode) {
-      root.updateAvailable = exitCode === 0
+    command: ["nova-update-check"]
+    // "available <version>" or "current"; nothing when offline, which keeps
+    // the badge as it was.
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var answer = String(text).trim()
+        if (answer.startsWith("available")) root.updateAvailable = true
+        else if (answer === "current") root.updateAvailable = false
+      }
     }
   }
 

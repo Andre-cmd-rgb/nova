@@ -1,0 +1,263 @@
+#!/bin/bash
+# nova:summary=Update Nova to the newest release
+# nova:args=[--version <tag>] [--check] [--dry-run] [--yes]
+#
+# Moves this system to a Nova release: the Arch packages are taken from the Arch Linux
+# Archive snapshot the release was tested against, the nova packages from the release's
+# own signed repository, with a snapper snapshot before and after.
+#
+#   nova update                     update to the newest release
+#   nova update --version v1.0.0-beta.2
+#   nova update --check             print "available <version>" or "current"
+#   nova update --dry-run           show what would change, change nothing
+#   nova update --yes               do not ask before applying
+#   nova update --allow-downgrade   permit an older release (uses pacman -Syuu)
+#   nova update --no-snapshot       skip the snapper snapshots (not recommended)
+#   nova update --release-file F    use a local release.toml instead of GitHub
+#
+# Everything that needs root runs as one step through pkexec (nova-update-apply).
+# Packages held back with IgnorePkg stay held back, and nothing is ever downgraded
+# unless you ask for it.
+#
+# Environment (for tests and forks): NOVA_UPDATE_REPO (owner/name), NOVA_UPDATE_API,
+# GITHUB_TOKEN (raises the API rate limit), NOVA_UPDATE_CHECK_TTL (seconds).
+set -euo pipefail
+
+NOVA_UPDATE_REPO=${NOVA_UPDATE_REPO:-Andre-cmd-rgb/nova}
+API=${NOVA_UPDATE_API:-https://api.github.com/repos/$NOVA_UPDATE_REPO}
+MIRRORLIST=${NOVA_MIRRORLIST:-/etc/pacman.d/nova-mirrorlist}
+REPOFILE=${NOVA_REPOFILE:-/etc/pacman.d/nova-repo}
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+APPLY=${NOVA_UPDATE_APPLY:-$HERE/nova-update-apply}
+CACHE_TTL=${NOVA_UPDATE_CHECK_TTL:-1800}
+CACHE_FILE=${NOVA_UPDATE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nova/update-check}
+
+die() { printf 'nova update: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'nova update: %s\n' "$*" >&2; }
+
+# v1.0.0-beta.1 -> 1.0.0beta.1, the form the nova package's pkgver takes
+tag_pkgver() {
+  local v=${1#v}
+  v=${v/-/}
+  printf '%s' "${v//-/.}"
+}
+
+is_prerelease() { [[ $1 =~ [0-9](alpha|beta|rc|pre) ]]; }
+
+installed_pkgver() {
+  local line
+  if line=$(pacman -Q nova 2>/dev/null); then
+    line=${line#nova }
+    printf '%s' "${line%-*}"
+  else
+    printf '0'
+  fi
+}
+
+# Value of a "# key: value" header line in one of the files nova update writes.
+header_value() {
+  local file=$1 key=$2
+  [[ -r $file ]] || return 0
+  sed -n -E "s/^# $key: *(.*)$/\1/;T;p;q" "$file"
+}
+
+# A string value from release.toml: key = "value"
+toml_get() {
+  sed -n -E "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\1/;T;p;q" "$1"
+}
+
+api_get() { # path dest -> HTTP status on stdout; non-zero only if curl itself failed
+  local -a auth=()
+  [[ -z ${GITHUB_TOKEN:-} ]] || auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  curl -sSL --retry 2 --connect-timeout 10 --max-time 60 \
+    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "${auth[@]}" -o "$2" -w '%{http_code}' "$API$1"
+}
+
+download() { # url dest
+  local code
+  code=$(curl -sSL --retry 2 --connect-timeout 10 --max-time 120 \
+    -o "$2" -w '%{http_code}' "$1") || return 1
+  [[ $code == 200 ]]
+}
+
+# Find the release to move to and leave its JSON in $1. $2 is the requested tag (or
+# empty), $3 is "yes" when pre-releases are acceptable.
+fetch_release() {
+  local dest=$1 want=$2 pre=$3 code list
+  if [[ -n $want ]]; then
+    code=$(api_get "/releases/tags/v${want#v}" "$dest") || die "cannot reach GitHub"
+    [[ $code == 200 ]] || die "no release v${want#v} (GitHub answered $code)"
+    return 0
+  fi
+  if [[ $pre != yes ]]; then
+    code=$(api_get "/releases/latest" "$dest") || die "cannot reach GitHub"
+    case $code in
+      200) return 0 ;;
+      404) return 4 ;; # nothing but pre-releases (or nothing at all) is published
+      *)   die "GitHub answered $code for the latest release" ;;
+    esac
+  fi
+  # releases/latest never returns a pre-release, so a system on a beta follows the list.
+  list=$(mktemp)
+  code=$(api_get "/releases?per_page=30" "$list") || { rm -f "$list"; die "cannot reach GitHub"; }
+  [[ $code == 200 ]] || { rm -f "$list"; die "GitHub answered $code for the release list"; }
+  jq -e '[.[] | select(.draft | not)] | first' "$list" > "$dest" 2>/dev/null || { rm -f "$list"; return 4; }
+  rm -f "$list"
+}
+
+# --check: one line for the shell's update badge. Cached so a polling widget does not
+# burn the unauthenticated API rate limit (60 requests an hour).
+check_only() {
+  local want=$1 now cached_at cached_tag tag tmp rc=0
+  now=$(date +%s)
+  if [[ -z $want && -r $CACHE_FILE ]] && read -r cached_at cached_tag < "$CACHE_FILE" &&
+     [[ $cached_at =~ ^[0-9]+$ ]] && (( now - cached_at < CACHE_TTL )); then
+    tag=$cached_tag
+  else
+    tmp=$(mktemp)
+    fetch_release "$tmp" "$want" "$(wants_prereleases)" || rc=$?
+    if (( rc == 4 )); then
+      rm -f "$tmp"
+      echo current
+      return 0
+    fi
+    tag=$(jq -r '.tag_name // empty' "$tmp")
+    rm -f "$tmp"
+    [[ -n $tag ]] || die "the release has no tag"
+    if [[ -z $want ]]; then
+      mkdir -p "$(dirname "$CACHE_FILE")"
+      printf '%s %s\n' "$now" "$tag" > "$CACHE_FILE"
+    fi
+  fi
+  if [[ $(vercmp "$(tag_pkgver "$tag")" "$(installed_pkgver)") -gt 0 ]]; then
+    echo "available ${tag#v}"
+  else
+    echo current
+  fi
+}
+
+# Systems on a pre-release follow pre-releases; stable systems wait for stable ones.
+wants_prereleases() {
+  if [[ ${NOVA_UPDATE_PRERELEASE:-} == 1 ]] || is_prerelease "$(installed_pkgver)"; then
+    echo yes
+  else
+    echo no
+  fi
+}
+
+main() {
+  local want='' do_check=0 dry=0 assume_yes=0 downgrade=0 snapshot=1 release_file=''
+  while (( $# )); do
+    case $1 in
+      --version)         want=${2:?--version needs a tag}; shift 2 ;;
+      --check)           do_check=1; shift ;;
+      --dry-run)         dry=1; shift ;;
+      --yes|-y)          assume_yes=1; shift ;;
+      --allow-downgrade) downgrade=1; shift ;;
+      --no-snapshot)     snapshot=0; shift ;;
+      --release-file)    release_file=${2:?--release-file needs a path}; shift 2 ;;
+      -h|--help)         sed -n '2,/^set /p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//' | sed '1,2d'; exit 0 ;;
+      *) die "unknown argument: $1 (try --help)" ;;
+    esac
+  done
+
+  if (( do_check )); then
+    check_only "$want"
+    return 0
+  fi
+
+  local tmp
+  tmp=$(mktemp -d)
+  trap 'rm -rf "$tmp"' EXIT
+
+  local tag notes=
+  if [[ -n $release_file ]]; then
+    cp "$release_file" "$tmp/release.toml"
+    tag="v$(toml_get "$tmp/release.toml" version)"
+  else
+    local rc=0
+    fetch_release "$tmp/release.json" "$want" "$(wants_prereleases)" || rc=$?
+    if (( rc == 4 )); then
+      echo "No Nova release is published yet."
+      return 0
+    fi
+    tag=$(jq -r '.tag_name // empty' "$tmp/release.json")
+    [[ -n $tag ]] || die "the release has no tag"
+    notes=$(jq -r '.body // empty' "$tmp/release.json")
+    local asset
+    asset=$(jq -r '[.assets[]? | select(.name == "release.toml")][0].browser_download_url // empty' "$tmp/release.json")
+    [[ -n $asset ]] || die "release $tag has no release.toml asset; it is incomplete, try again later"
+    download "$asset" "$tmp/release.toml" || die "could not download release.toml for $tag"
+  fi
+
+  local version arch_date nova_repo
+  version=$(toml_get "$tmp/release.toml" version)
+  arch_date=$(toml_get "$tmp/release.toml" arch_date)
+  nova_repo=$(toml_get "$tmp/release.toml" nova_repo)
+  [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "release.toml has a bad version: '$version'"
+  [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "release.toml has a bad arch_date: '$arch_date'"
+  [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "release.toml has a bad nova_repo: '$nova_repo'"
+  [[ v$version == "$tag" ]] || die "release.toml says $version but the release is $tag"
+
+  local cur_tag cur_date cur_pkgver new_pkgver
+  cur_pkgver=$(installed_pkgver)
+  new_pkgver=$(tag_pkgver "$tag")
+  cur_tag=$(header_value "$REPOFILE" nova-release)
+  cur_date=$(header_value "$MIRRORLIST" arch-date)
+
+  local newer
+  newer=$(vercmp "$new_pkgver" "$cur_pkgver")
+  if [[ $newer -le 0 && -z $want && -z $release_file ]]; then
+    echo "Nova is up to date ($tag)."
+    return 0
+  fi
+  if [[ $newer -lt 0 || ( -n $cur_date && $arch_date < $cur_date ) ]] && (( ! downgrade )); then
+    die "$tag is older than what is installed (nova $cur_pkgver, Arch snapshot ${cur_date:-unknown}); pass --allow-downgrade to go back"
+  fi
+  if [[ $newer -eq 0 && ( -z $cur_date || $arch_date == "$cur_date" ) && ${cur_tag:-$tag} == "$tag" ]]; then
+    echo "Nova is already on $tag."
+    return 0
+  fi
+
+  local held
+  held=$( { pacman-conf IgnorePkg 2>/dev/null; pacman-conf IgnoreGroup 2>/dev/null; } | tr '\n' ' ' | sed 's/ *$//' || true)
+
+  printf 'Nova update\n'
+  printf '  release        %s -> %s\n' "${cur_tag:-$(printf 'nova %s' "$cur_pkgver")}" "$tag"
+  printf '  Arch snapshot  %s -> %s\n' "${cur_date:-unpinned}" "$arch_date"
+  printf '  [nova] repo    %s\n' "$nova_repo"
+  if [[ -n $held ]]; then
+    printf '  held back      %s (IgnorePkg/IgnoreGroup, left alone)\n' "$held"
+  fi
+  if (( downgrade )); then
+    printf '  WARNING        --allow-downgrade: packages newer than the snapshot WILL be downgraded\n'
+  fi
+  if [[ -n $notes ]]; then
+    printf '\nRelease notes:\n'
+    awk 'NR <= 20 { print "  " $0 }' <<<"$notes"
+  fi
+  printf '\n'
+
+  if (( dry )); then
+    echo "Dry run: nothing changed."
+    return 0
+  fi
+
+  if (( ! assume_yes )); then
+    local answer=
+    read -r -p "Apply this update? [y/N] " answer || answer=
+    [[ $answer == [yY] || $answer == [yY][eE][sS] ]] || { echo "Aborted."; return 2; }
+  fi
+
+  local -a flags=(--tag "$tag" --version "$version" --arch-date "$arch_date" --nova-repo "$nova_repo")
+  [[ -z $cur_tag ]] || flags+=(--from "$cur_tag")
+  (( snapshot )) || flags+=(--no-snapshot)
+  (( ! downgrade )) || flags+=(--allow-downgrade)
+  (( ! assume_yes )) || flags+=(--noconfirm)
+
+  [[ -x $APPLY ]] || die "missing helper: $APPLY"
+  pkexec "$APPLY" "${flags[@]}"
+}
+
+main "$@"

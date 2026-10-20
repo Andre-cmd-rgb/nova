@@ -1,0 +1,192 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# The `nova` package: everything in this repository, installed by `make install`.
+#
+# Source: by default this repository's own checkout (git+file://), so a local
+# `makepkg` builds the *committed* HEAD, not uncommitted changes. CI overrides it:
+#
+#   NOVA_SOURCE='git+https://github.com/Andre-cmd-rgb/nova.git#tag=v1.0.0-beta.1' makepkg
+#
+# pkgver comes from `git describe`. A tag v1.0.0-beta.1 becomes 1.0.0beta.1, which
+# pacman sorts before 1.0.0 (see docs/releasing.md); commits after a tag append
+# +<count>.g<hash>, which sorts after the tag.
+
+pkgname=nova
+pkgver=0.0.0
+pkgrel=1
+pkgdesc='A small, fast Arch Linux desktop: Hyprland, a Quickshell shell, one CLI and a laptop power manager'
+arch=(x86_64)
+url='https://github.com/Andre-cmd-rgb/nova'
+license=(MIT)
+depends=(
+  # Session: compositor, shell, login
+  hyprland
+  quickshell
+  uwsm
+  greetd
+  greetd-agreety
+  xdg-desktop-portal-hyprland
+  xdg-desktop-portal-gtk
+  xdg-terminal-exec
+  xdg-utils
+  hyprpicker
+  hyprsunset
+
+  # Audio
+  pipewire
+  pipewire-pulse
+  pipewire-alsa
+  pipewire-jack
+  wireplumber
+
+  # Secrets and privilege
+  gnome-keyring
+  libsecret
+  polkit
+  python-dbus    # nova-keyring-migrate
+
+  # Network, Bluetooth, power, backlight, removable disks
+  networkmanager
+  bluez
+  bluez-utils
+  bluez-tools    # bt-agent
+  upower
+  brightnessctl
+  iw
+  udiskie
+
+  # Apps the session launches
+  foot
+  nautilus
+  gvfs
+
+  # Capture, clipboard and backgrounds
+  grim
+  slurp
+  wl-clipboard
+  wtype          # paste into the focused window
+  libvips        # vipsthumbnail, for the background and theme pickers
+
+  # Boot chain and snapshots
+  btrfs-progs
+  snapper
+  snap-pac
+  limine
+  limine-entry-tool
+  limine-snapper-sync
+  mkinitcpio
+  zram-generator
+
+  # Fonts
+  ttf-jetbrains-mono-nerd
+  noto-fonts
+  noto-fonts-emoji
+
+  # Commands the helpers and the shell call
+  bash
+  coreutils
+  curl
+  fontconfig     # fc-list, fc-match
+  glib2          # gsettings
+  inotify-tools  # shell plugin hot-reload
+  iproute2
+  jq
+  libnotify      # notify-send
+  libpulse       # pactl
+  libxkbcommon   # xkbcli, for the keyboard layout widget
+  mise
+  procps-ng      # pgrep, pkill
+  socat          # Hyprland event socket
+  systemd
+  util-linux     # setpriv, rfkill, logger
+)
+# git is here, not in depends: pkgver() and the VCS source need it at build time, and no
+# helper calls it at run time. The installer adds it to the base package list anyway.
+makedepends=(
+  git
+  rust
+)
+checkdepends=(
+  bats
+  jq
+)
+optdepends=(
+  'linux-nova: the Nova kernel (BORE scheduler, x86-64-v3)'
+  'linux-nova-headers: headers for building out-of-tree modules for linux-nova'
+  'linux-lts: fallback kernel, kept as the second boot entry'
+  'nvidia-open-nova: NVIDIA modules for linux-nova (hybrid-graphics laptops)'
+  'nvidia-open-lts: NVIDIA modules for the linux-lts fallback'
+  'nvidia-utils: NVIDIA userspace (hybrid-graphics laptops)'
+  'intel-ucode: Intel CPU microcode updates'
+  'sof-firmware: audio firmware for recent Intel laptops (ThinkPad P1)'
+  'linux-firmware: firmware for Wi-Fi, GPUs and other hardware'
+  'fprintd: fingerprint unlock'
+  'btop: system monitor, themed by nova theme set'
+  'fastfetch: the About screen'
+  'gpu-screen-recorder: screen recording'
+  'ffmpeg: trimming screen recordings'
+  'tesseract-data-eng: copy text from a screen region'
+  'imagemagick: bar text color matched to the background'
+  'ddcutil: brightness of external monitors'
+  'modemmanager: mobile data, on laptops with a modem'
+)
+options=(!debug)
+# Configuration under /etc: pacman keeps local edits across upgrades.
+backup=(
+  etc/limine-entry-tool.d/10-nova.conf
+  etc/mkinitcpio.conf.d/10-nova.conf
+  etc/pam.d/nova-greeter
+  etc/pam.d/nova-greeter-session
+  etc/pam.d/nova-lock-fingerprint
+  etc/pam.d/nova-lock-password
+)
+_repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)
+source=("nova::${NOVA_SOURCE:-git+file://$_repo}")
+sha256sums=(SKIP)
+
+pkgver() {
+  cd nova
+  local desc ver n hash
+  if desc=$(git describe --long --tags --match 'v[0-9]*' 2>/dev/null) &&
+     [[ $desc =~ ^v(.+)-([0-9]+)-g([0-9a-f]+)$ ]]; then
+    ver=${BASH_REMATCH[1]} n=${BASH_REMATCH[2]} hash=${BASH_REMATCH[3]}
+    # v1.0.0-beta.1 -> 1.0.0beta.1: pkgver cannot contain '-', and a letter directly
+    # after a digit makes pacman sort it before the release (vercmp 1.0.0beta.1 1.0.0).
+    ver=${ver/-/}
+    ver=${ver//-/.}
+    if (( n == 0 )); then
+      printf '%s' "$ver"
+    else
+      printf '%s+%s.g%s' "$ver" "$n" "$hash"
+    fi
+  else
+    # No release tag reachable (a fresh clone without tags, or before the first one).
+    printf '0.0.0+%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+  fi
+}
+
+build() {
+  cd nova
+  # One workspace at the root, no dependencies and a committed Cargo.lock, so
+  # --frozen needs no network. Binaries land in target/release/, where each
+  # component's install.mk expects them.
+  export CARGO_TARGET_DIR=target
+  cargo build --release --frozen
+}
+
+check() {
+  cd nova
+  export CARGO_TARGET_DIR=target
+  cargo test --release --frozen
+  make test
+}
+
+package() {
+  cd nova
+  make DESTDIR="$pkgdir" install
+
+  install -Dm644 LICENSE NOTICE -t "$pkgdir/usr/share/licenses/$pkgname/"
+
+}
+
+# vim:set ts=2 sw=2 et:

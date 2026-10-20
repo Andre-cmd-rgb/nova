@@ -1,0 +1,71 @@
+#!/bin/bash
+# Write release.toml: the three facts that tie a Nova release to the Arch snapshot it
+# was built and tested against.
+#
+#   tools/release-pin --version 1.0.0-beta.1 [options]
+#
+#   --version V   release version, with or without a leading "v". Defaults to the
+#                 tag that points at HEAD.
+#   --date D      Arch Linux Archive date, YYYY/MM/DD. Defaults to today (UTC). CI
+#                 passes the date it built against, so the pin is the build's truth.
+#   --repo O/R    GitHub repository the release is published to. Defaults to
+#                 $GITHUB_REPOSITORY, then Andre-cmd-rgb/nova.
+#   --out FILE    where to write. Defaults to ./release.toml
+#   --verify      check that the Archive has a snapshot for the date (needs network)
+#
+# `nova update` and the installer read the result; see docs/releasing.md.
+set -euo pipefail
+
+die() { printf 'release-pin: %s\n' "$*" >&2; exit 1; }
+
+version=
+date=
+repo=${GITHUB_REPOSITORY:-Andre-cmd-rgb/nova}
+out=release.toml
+verify=0
+
+while (( $# )); do
+  case $1 in
+    --version) version=${2:?--version needs a value}; shift 2 ;;
+    --date)    date=${2:?--date needs a value}; shift 2 ;;
+    --repo)    repo=${2:?--repo needs a value}; shift 2 ;;
+    --out)     out=${2:?--out needs a value}; shift 2 ;;
+    --verify)  verify=1; shift ;;
+    -h|--help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+
+if [[ -z $version ]]; then
+  version=$(git describe --tags --exact-match 2>/dev/null) ||
+    die "no --version given and HEAD is not at a tag"
+fi
+version=${version#v}
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] ||
+  die "version must look like 1.0.0 or 1.0.0-beta.1, got: $version"
+
+[[ -n $date ]] || date=$(date -u +%Y/%m/%d)
+[[ $date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "date must be YYYY/MM/DD, got: $date"
+# Reject dates that match the pattern but do not exist (2026/02/31).
+[[ $(date -u -d "${date//\//-}" +%Y/%m/%d 2>/dev/null) == "$date" ]] ||
+  die "not a calendar date: $date"
+
+[[ $repo =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || die "repository must be owner/name, got: $repo"
+
+if (( verify )); then
+  url="https://archive.archlinux.org/repos/$date/core/os/x86_64/core.db"
+  curl -fsSI -o /dev/null "$url" || die "no Arch Linux Archive snapshot for $date ($url)"
+fi
+
+tmp=$(mktemp "$out.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cat > "$tmp" <<EOF
+# Written by tools/release-pin. Read by \`nova update\` and the installer.
+version = "$version"
+arch_date = "$date"
+nova_repo = "https://github.com/$repo/releases/download/v$version"
+EOF
+chmod 644 "$tmp"
+mv "$tmp" "$out"
+trap - EXIT
+printf 'release-pin: wrote %s (version %s, Arch snapshot %s)\n' "$out" "$version" "$date" >&2

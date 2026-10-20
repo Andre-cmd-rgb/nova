@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# nova:summary=Update device firmware through fwupd
+
+set -euo pipefail
+
+command -v fwupdmgr >/dev/null || { echo "fwupd is not installed: sudo pacman -S fwupd" >&2; exit 1; }
+
+# fwupdmgr exits 2 for "nothing to do": metadata already fresh, no updates.
+status=0
+fwupdmgr refresh || status=$?
+((status == 0 || status == 2)) || exit "$status"
+
+status=0
+fwupdmgr update || status=$?
+if ((status == 2)); then
+  echo "All firmware is up to date."
+  exit 0
+fi
+exit "$status"

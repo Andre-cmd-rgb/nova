@@ -1,0 +1,221 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Apply a Nova release as root (run by nova update through pkexec)
+# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url>
+#
+# The privileged half of `nova update`. One pkexec call runs all of it, so there is a
+# single authentication prompt and nothing privileged is left to the unprivileged side.
+#
+#   1. snapper pre-snapshot, taken first so rolling back to it restores the old
+#      mirror and repository files together with the old packages
+#   2. write /etc/pacman.d/nova-mirrorlist (Arch Linux Archive snapshot) and
+#      /etc/pacman.d/nova-repo (the release's [nova] server)
+#   3. pacman -Syyu (-Syyuu with --allow-downgrade). The databases are refreshed
+#      with -yy because pacman skips a database that is not newer than its local copy,
+#      which is exactly the case when moving to an older snapshot. A failed upgrade
+#      puts the previous files back.
+#   4. snapper post-snapshot
+#   5. check that every installed kernel still has a boot entry whose files exist
+#
+# Every argument is validated: this runs as root and its caller is merely whoever
+# polkit let through.
+set -euo pipefail
+
+ROOT=${NOVA_ROOT:-} # a test seam: prefix for every path; pkexec strips the environment
+MIRRORLIST=$ROOT/etc/pacman.d/nova-mirrorlist
+REPOFILE=$ROOT/etc/pacman.d/nova-repo
+SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-root}
+
+die() { printf 'nova update: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'nova update: %s\n' "$*" >&2; }
+say() { printf '==> %s\n' "$*"; }
+
+write_file() { # path; content on stdin. Atomic, so pacman never reads half a file.
+  local path=$1 tmp
+  tmp=$(mktemp "$path.XXXXXX")
+  cat > "$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$path"
+}
+
+write_config() {
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\n' "$tag"
+    printf '# arch-date: %s\n' "$arch_date"
+    # shellcheck disable=SC2016 # $repo and $arch are for pacman to expand
+    printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$arch_date"
+  } | write_file "$MIRRORLIST"
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\n' "$tag"
+    printf 'Server = %s\n' "$nova_repo"
+  } | write_file "$REPOFILE"
+}
+
+backup_config() {
+  local f
+  for f in "$MIRRORLIST" "$REPOFILE"; do
+    if [[ -e $f ]]; then cp -p "$f" "$f.nova-prev"; else rm -f "$f.nova-prev"; fi
+  done
+}
+
+restore_config() {
+  local f restored=0
+  for f in "$MIRRORLIST" "$REPOFILE"; do
+    if [[ -e $f.nova-prev ]]; then mv -f "$f.nova-prev" "$f"; restored=1; fi
+  done
+  if (( restored )); then
+    warn "put the previous mirror and repository files back"
+  else
+    warn "there were no previous mirror files to restore; the new ones stay, pacman.conf needs them"
+  fi
+}
+
+snapshot() { # description, then extra snapper arguments; prints the snapshot number
+  local desc=$1
+  shift
+  snapper -c "$SNAPPER_CONFIG" create "$@" --print-number \
+    --cleanup-algorithm number --description "$desc"
+}
+
+# --- boot entry verification ------------------------------------------------------
+
+find_esp() {
+  local f esp
+  for f in "$ROOT/etc/default/limine" "$ROOT/etc/limine-entry-tool.conf" "$ROOT"/etc/limine-entry-tool.d/*.conf; do
+    [[ -r $f ]] || continue
+    esp=$(grep -h -E '^[[:space:]]*ESP_PATH=' "$f" | tail -n 1 | sed 's/^[^=]*=//' | tr -d "\"'" | sed 's/[[:space:]].*//')
+    if [[ -n $esp ]]; then
+      printf '%s' "$ROOT$esp"
+      return 0
+    fi
+  done
+  for esp in /efi /boot /boot/efi; do
+    if [[ -f $ROOT$esp/limine.conf ]]; then
+      printf '%s' "$ROOT$esp"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Succeeds when limine.conf exists, names every installed kernel, and every file it
+# loads from the boot partition is there. Entries that live in a snapshot (written by
+# limine-snapper-sync) point into the root filesystem and cannot be checked from here.
+verify_boot_entries() {
+  local esp conf pkgbase_file pkgbase line value rel ok=0
+  esp=$(find_esp) || { warn "no limine.conf found (looked at ESP_PATH, /efi, /boot, /boot/efi)"; return 1; }
+  conf=$esp/limine.conf
+  [[ -s $conf ]] || { warn "$conf is missing or empty"; return 1; }
+
+  for pkgbase_file in "$ROOT"/usr/lib/modules/*/pkgbase; do
+    [[ -r $pkgbase_file && -e ${pkgbase_file%pkgbase}vmlinuz ]] || continue
+    pkgbase=$(<"$pkgbase_file")
+    if ! grep -q -F -- "$pkgbase" "$conf"; then
+      warn "$conf has no boot entry for the installed kernel $pkgbase"
+      ok=1
+    fi
+  done
+
+  while IFS= read -r line; do
+    value=${line#*:}
+    value=${value#"${value%%[![:space:]]*}"} # ltrim
+    value=${value%%#*}                      # drop a #blake2b hash suffix
+    value=${value%"${value##*[![:space:]]}"} # rtrim
+    [[ $value =~ ^boot\(\):(/.+)$ ]] || continue
+    rel=${BASH_REMATCH[1]}
+    if [[ ! -e $esp$rel ]]; then
+      warn "$conf loads $rel but $esp$rel does not exist"
+      ok=1
+    fi
+  done < <(grep -E '^[[:space:]]*(path|kernel_path|module_path|image_path|dtb_path):' "$conf" || true)
+
+  return "$ok"
+}
+
+# --- main -------------------------------------------------------------------------
+
+main() {
+  local tag='' version='' arch_date='' nova_repo='' from='' snapshot=1 downgrade=0 noconfirm=0
+  while (( $# )); do
+    case $1 in
+      --tag)             tag=${2:?}; shift 2 ;;
+      --version)         version=${2:?}; shift 2 ;;
+      --arch-date)       arch_date=${2:?}; shift 2 ;;
+      --nova-repo)       nova_repo=${2:?}; shift 2 ;;
+      --from)            from=${2:?}; shift 2 ;;
+      --no-snapshot)     snapshot=0; shift ;;
+      --allow-downgrade) downgrade=1; shift ;;
+      --noconfirm)       noconfirm=1; shift ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+
+  (( EUID == 0 )) || [[ -n $ROOT ]] || die "this helper must run as root; use 'nova update'"
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --tag"
+  [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && v$version == "$tag" ]] || die "bad --version"
+  [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad --arch-date"
+  [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "bad --nova-repo"
+  [[ -z $from || $from =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --from"
+
+  local label="nova update ${from:+$from -> }$tag" pre=
+  if (( snapshot )); then
+    say "Taking the pre-update snapshot"
+    pre=$(snapshot "$label" --type pre) ||
+      die "snapper could not take a snapshot, so nothing was changed (--no-snapshot goes on without one)"
+    [[ $pre =~ ^[0-9]+$ ]] || die "snapper printed '$pre' instead of a snapshot number; nothing was changed"
+    say "Snapshot $pre taken"
+  else
+    warn "continuing without snapshots, as asked"
+  fi
+
+  backup_config
+  say "Pointing pacman at Arch snapshot $arch_date and $tag"
+  write_config
+
+  local -a pacman_args=(-Syyu)
+  (( ! downgrade )) || pacman_args=(-Syyuu)
+  (( ! noconfirm )) || pacman_args+=(--noconfirm)
+
+  say "pacman ${pacman_args[*]}"
+  # snap-pac would add a second pair of snapshots around the same transaction.
+  local -a env_skip=()
+  (( ! snapshot )) || env_skip=(env SNAP_PAC_SKIP=y)
+  if ! "${env_skip[@]}" pacman "${pacman_args[@]}"; then
+    restore_config
+    if [[ -n $pre ]]; then
+      snapshot "$label (pacman failed)" --type post --pre-number "$pre" > /dev/null ||
+        warn "could not close snapshot $pre"
+      warn "snapshot $pre was taken before the attempt"
+    fi
+    die "pacman failed; check its output above. The system is as pacman left it."
+  fi
+  rm -f "$MIRRORLIST.nova-prev" "$REPOFILE.nova-prev"
+
+  if [[ -n $pre ]]; then
+    say "Taking the post-update snapshot"
+    snapshot "$label" --type post --pre-number "$pre" > /dev/null ||
+      warn "could not take the post-update snapshot (pre-update snapshot is $pre)"
+  fi
+
+  say "Checking the boot entries"
+  if ! verify_boot_entries; then
+    if command -v limine-update > /dev/null 2>&1; then
+      warn "regenerating boot entries with limine-update"
+      limine-update || warn "limine-update failed"
+      verify_boot_entries && { say "Boot entries repaired"; echo "Nova is now on $tag."; return 0; }
+    fi
+    warn "the boot entries do NOT check out. Do not reboot yet."
+    warn "Run limine-update, then 'nova update --dry-run' to re-check${pre:+; snapshot $pre is the state before this update}."
+    return 3
+  fi
+
+  say "Boot entries look right"
+  if [[ -z $ROOT && ! -d /usr/lib/modules/$(uname -r) ]]; then
+    echo "The running kernel was replaced: reboot to use the new one."
+  fi
+  echo "Nova is now on $tag."
+}
+
+main "$@"

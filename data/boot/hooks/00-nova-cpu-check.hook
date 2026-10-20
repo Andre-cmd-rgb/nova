@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = linux-nova
+
+[Action]
+Description = Checking that this CPU can run linux-nova (x86-64-v3)...
+When = PreTransaction
+Exec = /usr/lib/nova/bin/nova-boot-cpu-check
+AbortOnFail
