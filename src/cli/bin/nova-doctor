@@ -151,7 +151,7 @@ check_services() {
 }
 
 check_session() {
-  local user file name plaintext=()
+  local user file name plaintext=() lines
   user=$(failed_units --user)
   if [[ -n $user ]]; then
     report warn "failed services of yours: $user" "systemctl --user status <name> says why."
@@ -164,6 +164,20 @@ check_session() {
       report ok "the shell is running"
     else
       report warn "the shell is not running" "nova restart shell starts it."
+    fi
+  fi
+
+  # Hyprland reports a config error as a red banner; a clean config reports one
+  # empty string.
+  if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+    local errors
+    if errors=$(hyprctl configerrors -j 2>/dev/null | jq -r '.[] | select(. != "")' 2>/dev/null); then
+      if [[ -z $errors ]]; then
+        report ok "Hyprland's config has no errors"
+      else
+        mapfile -t lines <<<"$errors"
+        report warn "Hyprland's config has errors, in ~/.config/hypr:" "${lines[@]}"
+      fi
     fi
   fi
 

@@ -10,7 +10,7 @@ setup() {
   export HOME="$SCRATCH/home" XDG_DATA_HOME="$SCRATCH/data" XDG_STATE_HOME="$SCRATCH/state"
   export NOVA_SYSFS_BTRFS="$SCRATCH/sys" NOVA_PAM_DIR="$SCRATCH/pam.d" NOVA_MODULES_DIR="$SCRATCH/modules"
   export NOVA_SNAPPER_CONFIG="$SCRATCH/snapper/root" NOVA_BOOT_ESP="$SCRATCH/esp"
-  unset WAYLAND_DISPLAY
+  unset WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE
   mkdir -p "$HOME" "$SCRATCH/bin" "$NOVA_MODULES_DIR/6.17.0-nova1" "$NOVA_BOOT_ESP"
   write_file "$NOVA_SYSFS_BTRFS/f00d/devinfo/1/error_stats" $'write_errs 0\nread_errs 0\nflush_errs 0\ncorruption_errs 0\ngeneration_errs 0\n'
   write_file "$NOVA_PAM_DIR/nova-lock-password"
@@ -127,4 +127,17 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   stub nova-shell 'echo ok'
   WAYLAND_DISPLAY=wayland-1 run doctor
   [[ $output == *"ok    the shell is running"* ]]
+}
+
+@test "Hyprland's config errors are named inside a session" {
+  stub hyprctl 'echo "[\"\"]"'
+  HYPRLAND_INSTANCE_SIGNATURE=x run doctor
+  [[ $output == *"ok    Hyprland's config has no errors"* ]]
+  stub hyprctl 'echo "[\"bindings.lua:4: unknown dispatcher\"]"'
+  HYPRLAND_INSTANCE_SIGNATURE=x run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"warn  Hyprland's config has errors"* ]]
+  [[ $output == *"bindings.lua:4: unknown dispatcher"* ]]
+  run doctor
+  [[ $output != *"Hyprland"* ]]
 }

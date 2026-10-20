@@ -27,6 +27,17 @@ check "greetd is running" systemctl is-active greetd
 
 failed=$(systemctl --failed --plain --no-legend | awk '{ print $1 }' | paste -sd' ')
 check "no failed services${failed:+ (failed: $failed)}" test -z "$failed"
+as_user() { runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" "$@" 2>/dev/null; }
+failed=$(as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user --failed --plain --no-legend |
+  awk '{ print $1 }' | paste -sd' ')
+check "no failed services in the session${failed:+ (failed: $failed)}" test -z "$failed"
+
+# A config error is a red banner across the top of the desktop. A clean config
+# reports one empty string.
+signature=$(find "/run/user/$uid/hypr" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -n 1)
+config=$(as_user HYPRLAND_INSTANCE_SIGNATURE="$signature" hyprctl configerrors -j)
+errors=$(jq -r '.[] | select(. != "")' <<<"$config" 2>/dev/null | paste -sd';' -)
+check "Hyprland's config has no errors${errors:+ ($errors)}" jq -e 'map(select(. != "")) == []' <<<"$config"
 doctor=$(nova doctor 2>&1)
 status=$?
 sed 's/^/probe:   /' <<<"$doctor"
