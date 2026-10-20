@@ -1119,7 +1119,18 @@ gpu-mode)
   if gpu_wanted; then gpu_on; else gpu_off || log 'it goes off once nothing is using it'; fi
   ;;
 auto)
-  if on_ac; then "$0" ac; else "$0" battery; fi
+  # A plug event that lands while this runs is merged into this run by systemd
+  # (the udev rule starts the same oneshot), not queued after it. So the source
+  # is read again at the end, and the policy applied again if it changed; three
+  # rounds at most, for an adapter that will not make up its mind.
+  for _ in 1 2 3; do
+    if on_ac; then source_was=ac; else source_was=battery; fi
+    "$0" "$source_was"
+    status=$?
+    if on_ac; then source_now=ac; else source_now=battery; fi
+    [[ $source_now != "$source_was" ]] || break
+  done
+  exit "$status"
   ;;
 post-hibernate)
   # A hibernate is a full power cycle, so firmware enumerated the discrete card
