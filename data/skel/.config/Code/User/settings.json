@@ -2,7 +2,9 @@
   "workbench.colorTheme": "Nova",
   "editor.fontFamily": "monospace",
   "terminal.integrated.fontFamily": "monospace",
-  "window.titleBarStyle": "custom",
+  "window.titleBarStyle": "native",
+  "window.customTitleBarVisibility": "never",
+  "window.menuBarVisibility": "toggle",
   "update.mode": "none",
   "telemetry.telemetryLevel": "off"
 }

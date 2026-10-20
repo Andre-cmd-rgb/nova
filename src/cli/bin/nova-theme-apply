@@ -52,7 +52,8 @@ icon_theme_installed() {
 # libadwaita follows color-scheme live; the palette in gtk.css reaches windows
 # opened after the change. A theme's icons.theme names the icon set it was made
 # with (Yaru's colours, from the AUR); without that set installed, Adwaita,
-# which GTK itself depends on.
+# which GTK itself depends on. No window has title-bar buttons: an empty
+# button-layout clears them from GTK, libadwaita and Chrome alike.
 apply_gtk() {
   link_config "$theme/gtk4.css" "$config_home/gtk-4.0/gtk.css"
   link_config "$theme/gtk3.css" "$config_home/gtk-3.0/gtk.css"
@@ -68,6 +69,7 @@ apply_gtk() {
     gsettings set org.gnome.desktop.interface gtk-theme Adwaita-dark
   fi
   gsettings set org.gnome.desktop.interface icon-theme "$icons"
+  gsettings set org.gnome.desktop.wm.preferences button-layout ':'
 }
 
 # New terminals read foot.ini; running ones get the palette as OSC sequences on
@@ -98,7 +100,9 @@ apply_btop() {
 }
 
 # A local VS Code extension whose theme file is the rendered one. VS Code picks
-# up a changed theme file on its own once the extension is registered.
+# up a changed theme file on its own once the extension is registered. The
+# native title bar is the compositor's, and Hyprland draws none, so VS Code has
+# no buttons either; Alt shows its menu.
 apply_vscode() {
   local extensions=$HOME/.vscode/extensions ext settings tmp
   [[ -d $extensions ]] || return 0
@@ -131,7 +135,12 @@ JSON
   settings=$config_home/Code/User/settings.json
   if [[ -f $settings ]] && jq -e . "$settings" >/dev/null 2>&1; then
     tmp=$(mktemp)
-    if jq '."workbench.colorTheme" = "Nova"' "$settings" >"$tmp"; then mv "$tmp" "$settings"; else rm -f "$tmp"; fi
+    if jq '."workbench.colorTheme" = "Nova" | ."window.titleBarStyle" = "native" |
+      ."window.customTitleBarVisibility" = "never"' "$settings" >"$tmp"; then
+      mv "$tmp" "$settings"
+    else
+      rm -f "$tmp"
+    fi
   fi
 }
 

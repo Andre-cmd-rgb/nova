@@ -158,6 +158,13 @@ END
   [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open nvidia-utils)" ]
 }
 
+@test "hardware_packages: an NVIDIA card on its own decodes video too" {
+  printf 'vendor_id\t: AuthenticAMD\n' >"$NOVA_CPUINFO"
+  pci 0000:01:00.0 0x030000 0x10de 0x2786
+  run hardware_packages linux
+  [ "$output" = "$(printf '%s\n' amd-ucode nvidia-open nvidia-utils libva-nvidia-driver)" ]
+}
+
 @test "hardware_packages: no open-module NVIDIA driver before Turing" {
   printf 'vendor_id\t: AuthenticAMD\n' >"$NOVA_CPUINFO"
   pci 0000:01:00.0 0x030000 0x10de 0x1c03

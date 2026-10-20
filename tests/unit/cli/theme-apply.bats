@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
-# nova-theme-apply's GTK step, with gsettings stubbed: which icon set a theme
-# gets.
+# nova-theme-apply with gsettings stubbed: which icon set a theme gets, and
+# that no window has title-bar buttons.
 
 load ../test_helper
 
@@ -54,4 +54,25 @@ icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
   [ "$status" -eq 0 ]
   [ "$(icon_theme)" = Adwaita ]
+}
+
+@test "no window gets title-bar buttons" {
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  grep -qx "gsettings set org.gnome.desktop.wm.preferences button-layout :" "$CALLS"
+}
+
+@test "VS Code keeps the user's settings, with Nova's theme and no title bar of its own" {
+  mkdir -p "$HOME/.vscode/extensions"
+  write_file "$XDG_STATE_HOME/nova/current/theme/vscode-theme.json" '{}'
+  write_file "$XDG_CONFIG_HOME/Code/User/settings.json" '{"editor.fontSize": 15, "window.titleBarStyle": "custom"}'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  run jq -c . "$XDG_CONFIG_HOME/Code/User/settings.json"
+  [ "$output" = '{"editor.fontSize":15,"window.titleBarStyle":"native","workbench.colorTheme":"Nova","window.customTitleBarVisibility":"never"}' ]
+}
+
+@test "the starting VS Code settings agree with what each theme change enforces" {
+  run jq -r '[."workbench.colorTheme", ."window.titleBarStyle", ."window.customTitleBarVisibility"] | join(" ")' \
+    "$REPO_ROOT/data/skel/.config/Code/User/settings.json"
+  [ "$output" = "Nova native never" ]
 }

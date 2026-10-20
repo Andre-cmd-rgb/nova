@@ -44,10 +44,11 @@ MIN_DISK_BYTES=$((64 * 1024 * 1024 * 1024))
 BTRFS_OPTS=noatime,compress=zstd:1
 SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@snapshots:/.snapshots" "@swap:/swap")
 
-# What each kind of display controller needs. hardware_packages picks this
-# machine's; every_package lists them all.
+# What each kind of display controller needs beyond mesa, which has the AMD
+# video driver built in. hardware_packages picks this machine's; every_package
+# lists them all.
 GPU_INTEL=(intel-media-driver vulkan-intel)
-GPU_AMD=(libva-mesa-driver vulkan-radeon)
+GPU_AMD=(vulkan-radeon)
 
 say() { printf '\n\e[1m%s\e[0m\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -148,7 +149,7 @@ main_kernel() {
 # sysfs (never lspci, which wakes a sleeping GPU). The model's own profile adds
 # to this; see profile_packages.
 hardware_packages() {
-  local kernel=$1 dev vendor device
+  local kernel=$1 dev vendor device dgpu=0 igpu=0
   case $(cpu_vendor) in
     GenuineIntel) echo intel-ucode ;;
     AuthenticAMD) echo amd-ucode ;;
@@ -157,18 +158,22 @@ hardware_packages() {
     [[ -r $dev/class && $(<"$dev/class") == 0x03* ]] || continue
     vendor=$(<"$dev/vendor")
     case $vendor in
-      0x8086) printf '%s\n' "${GPU_INTEL[@]}" ;;
-      0x1002) printf '%s\n' "${GPU_AMD[@]}" ;;
+      0x8086) printf '%s\n' "${GPU_INTEL[@]}"; igpu=1 ;;
+      0x1002) printf '%s\n' "${GPU_AMD[@]}"; igpu=1 ;;
       0x10de)
         device=$(<"$dev/device")
         # The open modules need GSP firmware, which starts with Turing.
         if ((device >= 0x1e00)); then
           if [[ $kernel == linux-nova ]]; then echo nvidia-open-nova; else echo nvidia-open; fi
           echo nvidia-utils
+          dgpu=1
         fi
         ;;
     esac
   done
+  # With an integrated GPU beside it, the desktop and the browser run on that
+  # one; alone, the NVIDIA card decodes video itself.
+  if ((dgpu && !igpu)); then echo libva-nvidia-driver; fi
 }
 
 hardware_profile() {
@@ -196,7 +201,7 @@ every_package() {
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
     printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" \
-      nvidia-open-nova nvidia-open nvidia-utils
+      nvidia-open-nova nvidia-open nvidia-utils libva-nvidia-driver
     for list in "$SHARE"/hardware/*/packages; do
       [[ -r $list ]] || continue
       sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"
