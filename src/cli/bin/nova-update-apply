@@ -14,8 +14,9 @@
 #      with -yy because pacman skips a database that is not newer than its local copy,
 #      which is exactly the case when moving to an older snapshot. A failed upgrade
 #      puts the previous files back.
-#   4. snapper post-snapshot
-#   5. check that every installed kernel still has a boot entry whose files exist
+#   4. install anything the new release adds to this computer's hardware profile
+#   5. snapper post-snapshot
+#   6. check that every installed kernel still has a boot entry whose files exist
 #
 # Every argument is validated: this runs as root and its caller is merely whoever
 # polkit let through.
@@ -77,6 +78,33 @@ snapshot() { # description, then extra snapper arguments; prints the snapshot nu
   shift
   snapper -c "$SNAPPER_CONFIG" create "$@" --print-number \
     --cleanup-algorithm number --description "$desc"
+}
+
+# Packages a release adds to this computer's hardware profile (new firmware, a driver)
+# arrive with the new nova package, so the list is read after the upgrade and the
+# missing ones go in a second transaction. A failure here leaves a working system on
+# the new release, so it warns rather than failing the update.
+install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pacman
+  local noconfirm=$1 profile list name
+  local -a wanted=() missing=() confirm=()
+  shift
+  (( ! noconfirm )) || confirm=(--noconfirm)
+  profile=$(NOVA_HARDWARE=$ROOT/usr/share/nova/hardware "${0%/*}/nova-hw-detect" 2>/dev/null) || return 0
+  list=$ROOT/usr/share/nova/hardware/$profile/packages
+  [[ -r $list ]] || return 0
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name//[[:space:]]/}
+    [[ -n $name ]] || continue
+    [[ $name =~ ^[a-z0-9@._+-]+$ ]] || { warn "ignoring '$name' in $list"; continue; }
+    wanted+=("$name")
+  done < "$list"
+  (( ${#wanted[@]} )) || return 0
+  mapfile -t missing < <(pacman -T "${wanted[@]}" || true)
+  (( ${#missing[@]} )) || return 0
+  say "Installing for this computer: ${missing[*]}"
+  "$@" pacman -S --needed "${confirm[@]}" "${missing[@]}" ||
+    warn "could not install ${missing[*]}; try again with: sudo pacman -S ${missing[*]}"
 }
 
 # --- boot entry verification ------------------------------------------------------
@@ -192,6 +220,8 @@ main() {
     die "pacman failed; check its output above. The system is as pacman left it."
   fi
   rm -f "$MIRRORLIST.nova-prev" "$REPOFILE.nova-prev"
+
+  install_hardware_packages "$noconfirm" "${env_skip[@]}"
 
   if [[ -n $pre ]]; then
     say "Taking the post-update snapshot"
