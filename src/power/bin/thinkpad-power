@@ -13,6 +13,7 @@
 # runtime power management cannot park a card while a compositor holds it open.
 #
 # Run by udev on a power-supply change, once at boot, and again after resume.
+# "fact N" in the comments refers to docs/hardware/thinkpad-p1-gen4i.md.
 # Root; no user session required.
 
 set -uo pipefail
@@ -30,6 +31,7 @@ SYS_PCI=${SYS_PCI:-/sys/bus/pci/devices}
 DEV_DRI=${DEV_DRI:-/dev/dri}
 PROC_MODULES=${PROC_MODULES:-/proc/modules}
 
+# shellcheck source=/dev/null
 [[ -r $CONFIG ]] && . "$CONFIG"
 
 VERSION=1.0.0
@@ -108,7 +110,18 @@ detect_nvidia() {
   return 1
 }
 
-[[ -n $NVIDIA_PCI ]] || NVIDIA_PCI=$(detect_nvidia) || true
+# Once the card is off the bus there is nothing left in sysfs to find, so the
+# address found at boot (when firmware has always enumerated it) is kept in
+# /run for the rest of the boot. /run is a tmpfs, so a stale address can never
+# outlive the hardware it describes. NVIDIA_PCI in the config still wins.
+NVIDIA_PCI_CACHE=${NVIDIA_PCI_CACHE:-/run/thinkpad-power.nvidia-pci}
+if [[ -z $NVIDIA_PCI ]]; then
+  if NVIDIA_PCI=$(detect_nvidia); then
+    ((EUID == 0)) && printf '%s\n' "$NVIDIA_PCI" >"$NVIDIA_PCI_CACHE" 2>/dev/null
+  else
+    NVIDIA_PCI=$(cat "$NVIDIA_PCI_CACHE" 2>/dev/null) || NVIDIA_PCI=""
+  fi
+fi
 
 on_ac() {
   local supply
@@ -297,16 +310,25 @@ holders_of() {
 # card was removed from the bus in that same session — connectors, render node
 # and all — because the kernel unplugs a DRM device out from under an idle fd
 # quite happily. The card node explains a failure; it does not predict one.
-gpu_consumers() { holders_of /dev/nvidia* $(gpu_drm_nodes render); }
+gpu_consumers() {
+  local nodes
+  mapfile -t nodes < <(gpu_drm_nodes render)
+  holders_of /dev/nvidia* "${nodes[@]}"
+}
 
 # Every holder of every node, card node included. For explaining an unload that
 # actually failed, which is the one moment the card node is worth naming.
-gpu_users() { holders_of /dev/nvidia* $(gpu_drm_nodes); }
+gpu_users() {
+  local nodes
+  mapfile -t nodes < <(gpu_drm_nodes)
+  holders_of /dev/nvidia* "${nodes[@]}"
+}
 
 # "40094 (btop)" reads better than "40094" when the answer is "close that".
 name_pids() {
-  local pid out=""
-  for pid in $@; do
+  local pid pids out=""
+  read -ra pids <<<"$*"
+  for pid in "${pids[@]}"; do
     out+=" $pid ($(cat "/proc/$pid/comm" 2>/dev/null || echo '?'))"
   done
   printf '%s' "${out:-nothing}"
@@ -370,7 +392,7 @@ unload_nvidia_modules() {
         $(cat /sys/module/nvidia_drm/parameters/fbdev 2>/dev/null) == Y ]]; then
     log "nvidia_drm holds that reference itself: fbdev=1 registers a framebuffer"
     log "client for a card with no displays. Set 'options nvidia-drm fbdev=0'"
-    log "(install.sh writes it) and reboot; modeset must stay on for PRIME."
+    log "(the P1 hardware profile ships it) and reboot; modeset must stay on for PRIME."
   fi
   return 1
 }
@@ -465,10 +487,10 @@ gpu_on() {
   return 0
 }
 
-# Power profiles are left to Omarchy, which already switches them on AC and
-# battery and remembers what you picked for each
-# (omarchy-powerprofiles-set, ~/.local/state/omarchy/powerprofiles/). Setting
-# them here too meant both ran on every plug event and the last writer won.
+# Power profiles are left to the Nova shell, which switches them on AC and
+# battery and remembers what you picked for each (nova-power-profile,
+# ~/.local/state/nova/power-profile/). Setting them here too meant both ran on
+# every plug event and the last writer won.
 
 # ------------------------------------------------------------------ tunables
 #
@@ -597,20 +619,19 @@ nmi_watchdog() {
   return 0
 }
 
-# Wi-Fi power save. Omarchy turns it off for the whole distribution in
-# /etc/NetworkManager/conf.d/omarchy-wifi-powersave.conf, and that file's own
-# comment names the reason: 20-300 ms latency spikes on an idle link, and
-# Intel BE200/BE211 firmware that drops the link outright when the radio naps.
-# Neither argument holds here on battery. The radio in this machine is an
+# Wi-Fi power save. Some distributions turn it off everywhere, for two
+# reasons: 20-300 ms latency spikes on an idle link, and Intel BE200/BE211
+# firmware that drops the link outright when the radio naps. Neither argument
+# holds here on battery. The radio in this machine is an
 # AX210 (8086:2725, "Typhoon Peak"), which is not one of the parts with that
 # firmware bug, and the latency is only felt by interactive traffic - a page
 # load and a video stream both buffer through it. So it goes on for battery
 # and off on AC, rather than off always.
 #
 # NetworkManager writes the flag every time a connection activates, so a roam,
-# a reconnect or a resume would silently undo this. The installer drops a
-# conf.d file setting wifi.powersave=1 ("ignore"), which stops it doing that
-# and leaves the flag to this function. Without that file this works until the
+# a reconnect or a resume would silently undo this. The P1's hardware profile
+# ships a conf.d file setting wifi.powersave=1 ("ignore"), which stops it doing
+# that and leaves the flag to this function. Without that file this works until the
 # first reconnect and nothing says otherwise, which is the failure mode worth
 # knowing about.
 #
@@ -1238,7 +1259,7 @@ run)
     "$@"
   ;;
 switch)
-  # What the Omarchy menu entry runs, in a floating terminal. Whoever opened
+  # What `nova power gpu` runs, in a floating terminal from the menu. Whoever opened
   # it wants one thing — the card on, or off — so this says what it is, asks,
   # and says what it now is. Detail lives behind `status -v`.
   if gpu_present; then

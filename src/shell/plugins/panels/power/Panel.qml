@@ -202,6 +202,15 @@ Panel {
 
   onBatteryPresentChanged: if (!batteryPresent) close()
 
+  // The battery service puts back the power mode remembered for the new
+  // source; show it once that has had a moment to land.
+  Connections {
+    target: UPower
+    function onOnBatteryChanged() { if (root.opened) profileRefreshDelay.restart() }
+  }
+
+  Timer { id: profileRefreshDelay; interval: 600; onTriggered: root.refresh() }
+
   visible: batteryPresent
   implicitWidth: batteryPresent ? button.implicitWidth : 0
   implicitHeight: batteryPresent ? button.implicitHeight : 0

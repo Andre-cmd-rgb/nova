@@ -1,0 +1,4 @@
+# Legion 5: a placeholder until the machine is in hand. The CPU vendor decides
+# the microcode, and the power backend and charge limit are not written yet.
+nvidia-open-nova
+nvidia-utils

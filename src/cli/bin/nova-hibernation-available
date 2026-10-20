@@ -1,21 +1,14 @@
 #!/bin/bash
 
 # nova:summary=Check if hibernation is supported
+# nova:hidden=true
+#
+# logind's own answer: it checks the kernel, the swap space against the size of
+# memory in use, and where the image would go, which is everything
+# `systemctl hibernate` will check before refusing.
 
 set -euo pipefail
 
-if [[ ! -f /sys/power/image_size ]]; then
-  exit 1
-fi
-
-# Sum all swap sizes (excluding zram); /proc/swaps reports kilobytes.
-swap_kb=$(awk '!/Filename|zram/ {sum += $3} END {print sum+0}' /proc/swaps)
-swap_bytes=$((1024 * swap_kb))
-
-image_size=$(</sys/power/image_size)
-
-if ((swap_bytes > image_size)) && [[ -f /etc/mkinitcpio.conf.d/nova_resume.conf ]]; then
-  exit 0
-else
-  exit 1
-fi
+answer=$(busctl --system call org.freedesktop.login1 /org/freedesktop/login1 \
+  org.freedesktop.login1.Manager CanHibernate 2>/dev/null) || exit 1
+[[ $answer == 's "yes"' ]]

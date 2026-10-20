@@ -1,0 +1,9 @@
+# Arch packages the installer adds on a ThinkPad P1 Gen 4i, and nova update
+# keeps installed.
+intel-ucode
+sof-firmware
+intel-media-driver
+vulkan-intel
+fprintd
+nvidia-open-nova
+nvidia-utils

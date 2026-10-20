@@ -5,3 +5,7 @@ version = 4
 [[package]]
 name = "nova-theme"
 version = "1.0.0"
+
+[[package]]
+name = "thinkpad-powerd"
+version = "1.0.0"

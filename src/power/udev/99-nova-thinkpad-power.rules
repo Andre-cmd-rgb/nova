@@ -1,0 +1,6 @@
+# Re-apply the power policy whenever the mains adapter is plugged or unplugged.
+# The service reads the current state itself, so one rule covers both edges.
+# --no-block because a udev rule must not wait on anything. The DMI match keeps
+# it to the one machine the policy is for (the unit checks again).
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", \
+  RUN+="/usr/bin/systemctl --no-block start thinkpad-power.service"

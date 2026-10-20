@@ -6,6 +6,8 @@
 #
 # The functions read their paths from globals, so the test points them at
 # temporary files and drives the round trips directly. No root, no sysfs.
+# The globals set here are read by the library half it sources.
+# shellcheck disable=SC2034
 set -uo pipefail
 HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 TOOL=$HERE/../bin/thinkpad-power
@@ -360,7 +362,7 @@ chk "a node with no /dev entry is skipped" "$(gpu_drm_nodes | tr '\n' ' ')" \
 
 # Off the bus there is no drm/ directory at all, and the glob must not leak
 # its own unexpanded pattern into a path fuser would then be handed.
-rm -rf "$SYS_PCI/$NVIDIA_PCI"
+rm -rf "${SYS_PCI:?}/${NVIDIA_PCI:?}"
 chk "no device means no nodes"         "$(gpu_drm_nodes)" ""
 chk "gpu_present false once removed"   "$(gpu_present && echo yes || echo no)" "no"
 

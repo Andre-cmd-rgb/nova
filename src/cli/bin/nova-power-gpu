@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# nova:summary=Turn the discrete GPU on or off, or run one program on it
+# nova:args=[status [-v] | run <program> [args...]]
+#
+# On a ThinkPad P1 Gen 4i the desktop runs on the integrated GPU and the
+# discrete card is taken off the bus on battery. With no arguments this asks
+# whether to switch it; `run` starts one program on it (a game, say), with the
+# NVIDIA graphics drivers the session hides put back for that program alone.
+
+set -euo pipefail
+
+bin=${0%/*}
+if [[ $("$bin/nova-hw-detect" 2>/dev/null || true) != thinkpad-p1-gen4i ]]; then
+  echo "nova power gpu: this computer has no switchable discrete GPU" >&2
+  exit 1
+fi
+
+case ${1:-} in
+  "") exec "$bin/thinkpad-power" switch ;;
+  status) exec "$bin/thinkpad-power" "$@" ;;
+  run)
+    (($# > 1)) || { echo "Usage: nova power gpu run <program> [args...]" >&2; exit 2; }
+    exec "$bin/thinkpad-power" "$@"
+    ;;
+  *)
+    echo "Usage: nova power gpu [status [-v] | run <program> [args...]]" >&2
+    exit 2
+    ;;
+esac

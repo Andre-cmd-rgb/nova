@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# nova:summary=Install this computer's hardware profile files under /etc
+# nova:args=[--remove]
+# nova:hidden=true
+#
+# Run by a pacman hook whenever the nova package is installed or upgraded, and
+# with --remove when it is removed. A profile's etc/ tree is copied into /etc,
+# and anything an earlier release installed that this one no longer ships is
+# deleted, so the list in /var/lib/nova/hardware-files is always exactly what
+# is there. These are modprobe, NetworkManager and boot-entry drop-ins, which
+# have no way to apply only on one model from /usr.
+
+set -euo pipefail
+
+# NOVA_HARDWARE and NOVA_ROOT exist for the tests.
+hardware=${NOVA_HARDWARE:-/usr/share/nova/hardware}
+root=${NOVA_ROOT:-}
+# pacman hooks run without the session PATH, so the sibling is found by path.
+detect=${0%/*}/nova-hw-detect
+manifest=$root/var/lib/nova/hardware-files
+
+if (($# > 1)) || [[ $# == 1 && $1 != --remove ]]; then
+  echo "Usage: nova-hw-apply [--remove]" >&2
+  exit 2
+fi
+
+wanted=()
+if (($# == 0)) && profile=$("$detect") && [[ -d $hardware/$profile/etc ]]; then
+  src=$hardware/$profile/etc
+  while IFS= read -r -d '' file; do
+    wanted+=("${file#"$src"/}")
+  done < <(find "$src" -type f -print0 | sort -z)
+fi
+
+is_wanted() {
+  local entry
+  for entry in "${wanted[@]}"; do
+    [[ $entry == "$1" ]] && return 0
+  done
+  return 1
+}
+
+if [[ -f $manifest ]]; then
+  while IFS= read -r rel; do
+    [[ -n $rel && $rel != /* && $rel != *..* ]] || continue
+    is_wanted "$rel" || rm -f -- "$root/etc/$rel"
+  done <"$manifest"
+fi
+
+for rel in "${wanted[@]}"; do
+  install -Dm644 "$src/$rel" "$root/etc/$rel"
+done
+
+mkdir -p "${manifest%/*}"
+if ((${#wanted[@]})); then
+  printf '%s\n' "${wanted[@]}" >"$manifest.new"
+else
+  : >"$manifest.new"
+fi
+mv -f "$manifest.new" "$manifest"

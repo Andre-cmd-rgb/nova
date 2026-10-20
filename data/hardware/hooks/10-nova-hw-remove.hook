@@ -1,0 +1,9 @@
+[Trigger]
+Type = Package
+Operation = Remove
+Target = nova
+
+[Action]
+Description = Removing this computer's hardware profile...
+When = PreTransaction
+Exec = /usr/lib/nova/bin/nova-hw-apply --remove

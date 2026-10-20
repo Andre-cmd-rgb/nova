@@ -41,6 +41,7 @@
   "toggle.window-gaps": {"icon":"","label":"Window Gaps","action":"nova-hyprland-window-gaps-toggle"},
   "toggle.laptop-display": {"icon":"󰛧","label":"Laptop Display","when":"nova-hw-laptop","action":"nova-hyprland-monitor-internal toggle"},
   "toggle.touchpad": {"icon":"󰟸","label":"Touchpad","when":"nova-hw-touchpad","action":"nova-toggle-touchpad"},
+  "toggle.discrete-gpu": {"icon":"󰢮","label":"Discrete GPU","when":"[[ $(nova-hw-detect) == thinkpad-p1-gen4i ]]","action":"nova-launch-floating-terminal-with-presentation nova-power-gpu"},
 
   // Style
   "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"nova-theme pick"},
@@ -64,7 +65,7 @@
 
   // System
   "system.lock": {"icon":"","label":"Lock","action":"nova-system-lock"},
-  "system.suspend": {"icon":"󰒲","label":"Suspend","action":"systemctl suspend"},
+  "system.suspend": {"icon":"󰒲","label":"Suspend","action":"systemctl sleep"},
   "system.hibernate": {"icon":"󰤁","label":"Hibernate","when":"nova-hibernation-available","action":"systemctl hibernate"},
   "system.logout": {"icon":"󰍃","label":"Log Out","action":"nova-system-logout"},
   "system.reboot": {"icon":"󰜉","label":"Restart","action":"nova-system-reboot"},

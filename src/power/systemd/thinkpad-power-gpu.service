@@ -1,9 +1,10 @@
 [Unit]
 Description=Put the discrete GPU where the current power source wants it
-Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/hardware/thinkpad-p1-gen4i.md
+ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")
 
 [Service]
 Type=oneshot
 # Fires every two minutes; a run with nothing to do should not say so.
 Environment=QUIET=1
-ExecStart=/usr/local/bin/thinkpad-power gpu-auto
+ExecStart=/usr/lib/nova/bin/thinkpad-power gpu-auto

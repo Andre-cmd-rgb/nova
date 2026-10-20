@@ -12,14 +12,14 @@ code.
 | `src/shell/` | `/usr/share/nova/shell/` | The Quickshell shell: bar, lock, menu, notifications, OSD, panels, Settings |
 | `src/cli/nova` | `/usr/bin/nova` | Dispatcher: `nova <group> <verb> [args]` |
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
-| `src/power/` | `/usr/lib/nova/nova-powerd`, `/usr/lib/nova/bin/nova-power-*` | Power manager (Rust daemon plus bash tools) |
+| `src/power/` | `/usr/lib/nova/bin/thinkpad-power{,d}`, system units, udev rules, a sleep hook | The ThinkPad P1 Gen 4i's power manager (bash policy, Rust governor); inert on other machines |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
-| `data/hypr/` | `/usr/share/nova/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
-| `data/session/` | `/usr/lib/systemd/{system,user}/`, `/usr/lib/pam.d/`, `/etc/greetd/` | greetd, PAM, uwsm env, session guard |
-| `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/etc/snapper/` | Boot chain drop-ins |
-| `data/system/` | `/usr/lib/sysctl.d/`, `/usr/lib/systemd/zram-generator.conf.d/`, … | System tuning |
-| `hardware/<model>/` | `/usr/share/nova/hardware/<model>/` | Per-model **data** (match rules, tunings, kernel args) |
+| `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
+| `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring |
+| `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards |
+| `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
+| `data/hardware/` | `/usr/share/nova/hardware/`, `/usr/share/uwsm/env.d/`, `/etc` via `nova-hw-apply` | Per-model **data**: the DMI model list, drop-ins, packages, the session environment |
 | `installer/` | ISO only, except `nova-usb-*` in `/usr/lib/nova/bin/` | archiso profile, installer, USB creator |
 | `packaging/` | – | PKGBUILDs: `nova`, `linux-nova`, `nvidia-open-nova`, AUR rebuilds |
 
@@ -49,15 +49,15 @@ exactly that, so pacman owns every file.
   |---|---|
   | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `usb.toml`, `hooks/`) |
   | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, battery and screen-time history) |
-  | System config | `/etc/nova/` (`power.toml`; written only by `nova` helpers via polkit) |
-  | System state | `/var/lib/nova/` (greeter theme mirror, owned by the user who ran the installer) |
+  | System config | `/etc/thinkpad-power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
+  | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
   | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets) |
 
 - **Identifiers:** shell plugin ids are `nova.<name>`. Layer-shell namespaces are
   `nova-<name>`. PAM services are `nova-lock-password`, `nova-lock-fingerprint` and
   `nova-greeter`. User units are `nova-*.service`.
-- **"omarchy" appears only in `NOTICE` and `docs/omarchy-script-map.csv`.** CI fails on
-  any other occurrence outside `attic/` and `src/power/CLAUDE.md` history.
+- **"omarchy" appears only in `NOTICE` and `docs/`.** CI fails on any `omarchy-`,
+  `omarchy_`, `/omarchy`, `OMARCHY_PATH` or `qs.Omarchy` under `src/` and `data/`.
 
 ## Session flow (boot to desktop)
 
@@ -122,23 +122,38 @@ the shared folder also becomes the default for themes that have no pick of their
 
 ## Power and hardware
 
-- `nova-powerd` is the only thing that writes power policy:
-  - CPU limits and governor
-  - platform profile
-  - dGPU power
-  - charge limit
-  - Wi-Fi powersave
-  - fan
-- It picks a **backend** at start: `thinkpad`, `ideapad` (Legion and IdeaPad), or
-  `generic`, plus an `nvidia-hybrid` add-on when an NVIDIA dGPU sits beside an iGPU.
-- It reads `/etc/nova/power.toml` and exposes state and commands on the system bus
-  (`org.nova.Power1`), which the shell and `nova power …` use.
-- Charge limits are reported as a capability: `threshold` (numeric, ThinkPad),
+- **Power profiles** belong to power-profiles-daemon. `nova-power-profile` sets one
+  and remembers it for the current power source; the shell's battery panel runs
+  `nova-power-profile restore` at login and on every plug and unplug, which puts back
+  the remembered choice (performance on AC and power-saver on battery by default).
+- **The ThinkPad P1 Gen 4i** adds `thinkpad-power` (the policy: the dGPU off the PCI
+  bus on battery, CPU and platform tunables, Wi-Fi power save, the hibernate rescan)
+  and `thinkpad-powerd` (the governor that owns PL1, PL2, the frequency ceiling, the
+  iGPU ceiling and the fans). Both are enabled by the package for every machine and
+  start only on a P1 Gen 4i: each unit has a DMI `ConditionFirmware=`, and the udev
+  rule and sleep hook check the model themselves. The facts behind every choice are
+  in [hardware/thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md).
+- **A generic `nova-powerd`** with backends (`thinkpad`, `ideapad` for the Legion,
+  `generic`, plus an `nvidia-hybrid` add-on) is in progress on the `power-rewrite`
+  branch. It replaces thinkpad-power only once it matches it on the watt meter.
+- **Charge limits** are reported as a capability: `threshold` (numeric, ThinkPad),
   `toggle` (Legion `Long_Life`), or `none`. Every write is read back, and only a
   verified value counts as success.
-- Hardware data lives in `hardware/<model>/model.toml`: DMI match rules, kernel args, an
-  optional speaker tuning, and quirks. Nothing model-specific is hard-coded in code
-  paths.
+- **Sleep:** the lid, the suspend key and the menu's Suspend all `sleep`, which logind
+  turns into suspend-then-hibernate (hibernating after 2 h, and never on AC) or plain
+  suspend on a machine that cannot hibernate. The TPM key-provisioning units are
+  skipped unless `nova.tpm2` is on the kernel command line: Nova does not encrypt the
+  disk, and they cost about four seconds of every measured boot.
+- **Hardware profiles** live in `data/hardware/`. `models` maps a DMI
+  `product_version` pattern to a profile; `nova-hw-detect` and the Hyprland loader
+  both read it. A profile holds:
+  - `packages`: Arch packages the installer adds (microcode, firmware, drivers)
+  - `etc/`: modprobe, NetworkManager and boot-entry drop-ins, which cannot apply to
+    one model from `/usr`. `nova-hw-apply` copies them into `/etc` from a pacman hook
+    on every install and upgrade of `nova`, and removes the ones a release dropped.
+
+  Session-side settings check the model themselves: a uwsm `env.d` file and a
+  `default/hypr/hardware/<profile>.lua` module.
 
 ## Packaging and releases
 
@@ -173,13 +188,13 @@ the shared folder also becomes the default for themes that have no pick of their
   - shellcheck-clean (`make lint`)
   - each helper does one thing
   - errors go to stderr with a non-zero exit
-  - no `sudo` inside helpers; privileged actions go through polkit (`pkexec`) or
-    `nova-powerd`
+  - no `sudo` inside helpers; privileged actions go through polkit (`pkexec`). The
+    one exception is `thinkpad-power switch`, which runs in a terminal and says so
 - **QML:** qmllint-clean. Logic lives in singletons that can be tested against fixtures.
   No `property var data` or `property string state` on an Item root, because both shadow
   Item properties.
 - **Rust:** one Cargo workspace at the root. `cargo fmt`, `cargo clippy -D warnings`,
-  no unsafe, std only unless a dependency clearly pays for itself. Tools a user waits
+  no unsafe beyond FFI that std lacks (the governor's signal handlers), std only unless a dependency clearly pays for itself. Tools a user waits
   on (the theme engine, the power manager) are Rust; glue that mostly runs other
   programs stays bash.
 - **Tests:**

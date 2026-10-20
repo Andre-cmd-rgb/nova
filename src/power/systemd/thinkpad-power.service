@@ -1,18 +1,19 @@
 [Unit]
 Description=Apply the AC/battery power policy
-Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/hardware/thinkpad-p1-gen4i.md
+ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")
 # Ordered after the sleep targets so the same unit re-applies the policy on
 # resume: the machine may have been unplugged while it was asleep, and the
 # GPU comes back on the bus regardless of how it went to sleep.
 # Deliberately NOT ordered against power-profiles-daemon: PPD is itself
 # After=multi-user.target, so an After= on it closes a cycle
 # (multi-user -> thinkpad-power -> PPD -> multi-user) that systemd breaks by
-# dropping PPD's own start job. Profiles are Omarchy's business anyway.
+# dropping PPD's own start job. Profiles are the shell's business anyway.
 After=suspend.target hibernate.target suspend-then-hibernate.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/thinkpad-power auto
+ExecStart=/usr/lib/nova/bin/thinkpad-power auto
 
 [Install]
 WantedBy=multi-user.target suspend.target hibernate.target suspend-then-hibernate.target

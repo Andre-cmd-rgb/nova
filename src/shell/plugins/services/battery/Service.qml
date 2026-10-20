@@ -43,6 +43,29 @@ Item {
 
   Process { id: warningProcess }
 
+  // The power mode follows the power source: at login and on every plug and
+  // unplug, put back the one last chosen for it (nova-power-profile restore).
+  // A change that lands while a restore is still running gets one more run, so
+  // a quick unplug-replug ends on the right side.
+  property bool restorePending: false
+
+  function restoreProfile() {
+    if (profileProcess.running) restorePending = true
+    else profileProcess.running = true
+  }
+
+  Process {
+    id: profileProcess
+    command: ["nova-power-profile", "restore"]
+    onExited: {
+      if (!root.restorePending) return
+      root.restorePending = false
+      Qt.callLater(function() { profileProcess.running = true })
+    }
+  }
+
+  Component.onCompleted: restoreProfile()
+
   Timer {
     interval: 30000
     running: true
@@ -55,6 +78,7 @@ Item {
     target: UPower
     function onOnBatteryChanged() {
       root.checkBattery()
+      root.restoreProfile()
     }
   }
 }

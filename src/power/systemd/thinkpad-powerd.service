@@ -1,15 +1,17 @@
 [Unit]
 Description=Load-adaptive CPU, thermal and fan governor
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/hardware/thinkpad-p1-gen4i.md
+ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")
 # Deliberately NOT After=power-profiles-daemon.service. PPD is itself
 # After=multi-user.target, so ordering after it closes a cycle and systemd
 # breaks it by deleting PPD's start job — PPD then does not start at boot.
-# See CLAUDE.md fact 5; that cost a boot once already.
+# See docs/hardware/thinkpad-p1-gen4i.md, fact 5; that cost a boot once already.
 After=multi-user.target
 ConditionPathExists=/sys/class/powercap/intel-rapl:0
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/thinkpad-powerd
+ExecStart=/usr/lib/nova/bin/thinkpad-powerd
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
 RestartSec=2
@@ -18,7 +20,7 @@ RestartSec=2
 # restore never runs, so the cleanup is here too — and the watchdog itself is
 # the third line, handing the fans back to the EC about thirty seconds later
 # whatever else has failed.
-ExecStopPost=-/usr/local/bin/thinkpad-power daemon-stopped
+ExecStopPost=-/usr/lib/nova/bin/thinkpad-power daemon-stopped
 
 # Being killed for memory pressure while holding the fans at level 0 is the one
 # outcome worth spending priority on avoiding.

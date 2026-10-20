@@ -51,6 +51,7 @@ depends=(
   bluez-utils
   bluez-tools    # bt-agent
   upower
+  power-profiles-daemon
   brightnessctl
   iw
   udiskie
@@ -96,6 +97,7 @@ depends=(
   libxkbcommon   # xkbcli, for the keyboard layout widget
   mise
   procps-ng      # pgrep, pkill
+  psmisc         # fuser, for thinkpad-power
   socat          # Hyprland event socket
   systemd
   util-linux     # setpriv, rfkill, logger
@@ -186,7 +188,6 @@ package() {
   make DESTDIR="$pkgdir" install
 
   install -Dm644 LICENSE NOTICE -t "$pkgdir/usr/share/licenses/$pkgname/"
-
 }
 
 # vim:set ts=2 sw=2 et:

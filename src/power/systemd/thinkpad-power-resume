@@ -1,6 +1,6 @@
 #!/bin/sh
 # Installed at /usr/lib/systemd/system-sleep/. Runs for every sleep operation;
-# acts on exactly one.
+# acts on exactly one, and only on the P1 Gen 4i.
 #
 # A hibernate is a full power cycle. Firmware enumerates the discrete card
 # again on the way back up, but the image being restored was taken with the
@@ -21,5 +21,7 @@
 [ "$1" = post ] || exit 0
 [ "$SYSTEMD_SLEEP_ACTION" = hibernate ] || exit 0
 
-[ -x /usr/local/bin/thinkpad-power ] || exit 0
-/usr/local/bin/thinkpad-power post-hibernate || exit 0
+# Shipped for every machine Nova runs on; the policy is the P1's alone.
+[ "$(cat /sys/class/dmi/id/product_version 2>/dev/null)" = "ThinkPad P1 Gen 4i" ] || exit 0
+[ -x /usr/lib/nova/bin/thinkpad-power ] || exit 0
+/usr/lib/nova/bin/thinkpad-power post-hibernate || exit 0

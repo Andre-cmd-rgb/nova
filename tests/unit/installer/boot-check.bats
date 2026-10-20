@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 
-load test_helper
+load ../test_helper
 
 setup() {
   setup_scratch

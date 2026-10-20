@@ -1,6 +1,7 @@
 [Unit]
 Description=Retry the discrete GPU power policy
-Documentation=https://github.com/Andre-cmd-rgb/thinkpad-power
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/hardware/thinkpad-p1-gen4i.md
+ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")
 
 # Unplugging while something still has the GPU open leaves it powered: the
 # policy declines rather than pulling the card out from under a running

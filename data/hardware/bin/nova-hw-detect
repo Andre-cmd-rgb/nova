@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# nova:summary=Print this computer's Nova hardware profile, if it has one
+# nova:hidden=true
+#
+# Matches /sys/class/dmi/id/product_version against the models list in
+# /usr/share/nova/hardware. Exits 1, printing nothing, on a computer Nova has no
+# profile for; that is not an error, just a machine without extras.
+
+set -euo pipefail
+
+hardware=${NOVA_HARDWARE:-/usr/share/nova/hardware}
+dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+
+version=$(<"$dmi/product_version") || exit 1
+version=${version%"${version##*[![:space:]]}"}
+
+while IFS=$'\t' read -r pattern profile; do
+  [[ -n $pattern && $pattern != \#* && -n ${profile:-} ]] || continue
+  # The pattern is a glob on purpose; only `*` is used.
+  # shellcheck disable=SC2053
+  if [[ $version == $pattern ]]; then
+    echo "$profile"
+    exit 0
+  fi
+done <"$hardware/models"
+exit 1

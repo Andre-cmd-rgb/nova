@@ -1,4 +1,4 @@
-# Shared bats helpers for the installer, boot and session tests.
+# Shared bats helpers for every unit test. Load with `load ../test_helper`.
 
 REPO_ROOT=$(cd "$BATS_TEST_DIRNAME/../../.." && pwd)
 export REPO_ROOT

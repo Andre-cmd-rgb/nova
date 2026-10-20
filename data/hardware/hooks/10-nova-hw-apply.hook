@@ -1,0 +1,12 @@
+# Runs before mkinitcpio and limine-entry-tool (60-90), so a kernel installed in
+# the same transaction is built with the profile's command line and modprobe options.
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = nova
+
+[Action]
+Description = Applying this computer's hardware profile...
+When = PostTransaction
+Exec = /usr/lib/nova/bin/nova-hw-apply

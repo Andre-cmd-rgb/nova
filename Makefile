@@ -1,6 +1,7 @@
 # Nova build entry point. `make DESTDIR=... install` is the only way files reach a
 # system; the nova PKGBUILD runs exactly that. Each component contributes an
-# install.mk that appends to INSTALL_TARGETS, SHELL_SOURCES and TEST_DIRS.
+# install.mk that appends to INSTALL_TARGETS, SHELL_SOURCES, TEST_DIRS and
+# TEST_SCRIPTS (standalone test programs that exit non-zero on failure).
 
 PREFIX   ?= /usr
 DESTDIR  ?=
@@ -15,6 +16,7 @@ INSTALL_TARGETS :=
 SHELL_SOURCES   :=
 QML_DIRS        :=
 TEST_DIRS       := tests/unit
+TEST_SCRIPTS    :=
 
 include $(sort $(wildcard */install.mk */*/install.mk))
 
@@ -36,3 +38,4 @@ lint-qml:
 
 test:
 	bats --recursive $(TEST_DIRS)
+	@set -e; for t in $(TEST_SCRIPTS); do echo "$$t"; bash "$$t" >/dev/null; done

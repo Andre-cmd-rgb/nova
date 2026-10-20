@@ -20,8 +20,8 @@
 // anyone having to notice.
 //
 // It owns PL1, PL2, max_perf_pct and the fans, and nothing else. EPP and the
-// platform profile belong to power-profiles-daemon (see CLAUDE.md fact 4, which
-// was learned by taking them and losing).
+// platform profile belong to power-profiles-daemon (fact 4 in
+// docs/hardware/thinkpad-p1-gen4i.md, learned by taking them and losing).
 
 use std::collections::HashMap;
 use std::fs;
@@ -128,6 +128,8 @@ struct Tier {
 }
 
 impl Default for Config {
+    // The tier table reads as a table; rustfmt would put every field on its own line.
+    #[rustfmt::skip]
     fn default() -> Self {
         Config {
             poll_ms: 1000,
@@ -194,14 +196,18 @@ impl Default for Config {
 // other half rather than treated as an error.
 fn parse_config(path: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
-    let Ok(text) = fs::read_to_string(path) else { return out };
+    let Ok(text) = fs::read_to_string(path) else {
+        return out;
+    };
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         let line = line.strip_prefix("export ").unwrap_or(line);
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         let k = k.trim();
         if k.is_empty() || !k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
             continue;
@@ -227,26 +233,56 @@ impl Config {
         let flt = |k: &str| kv.get(k).and_then(|v| v.parse::<f64>().ok());
         let onoff = |k: &str| kv.get(k).map(|v| v == "on" || v == "yes" || v == "1");
 
-        if let Some(v) = onoff("GOVERNOR") { c.enabled = v; }
-        if let Some(v) = num("GOVERNOR_POLL_MS") { c.poll_ms = v.clamp(200, 10_000); }
-        if let Some(v) = flt("GOVERNOR_BUSY_CLIMB") { c.busy_climb = v.clamp(1.0, 100.0); }
-        if let Some(v) = flt("GOVERNOR_BUSY_FALL") { c.busy_fall = v.clamp(0.0, 99.0); }
-        if let Some(v) = num("GOVERNOR_CLIMB_AFTER") { c.climb_after = Duration::from_secs(v.clamp(1, 600)); }
-        if let Some(v) = num("GOVERNOR_FALL_AFTER") { c.fall_after = Duration::from_secs(v.clamp(1, 3600)); }
-        if let Some(v) = flt("GOVERNOR_TEMP_THROTTLE") { c.temp_throttle = v.clamp(50.0, 100.0); }
-        if let Some(v) = flt("GOVERNOR_TEMP_CRITICAL") { c.temp_critical = v.clamp(60.0, 105.0); }
-        if let Some(v) = onoff("FAN_CONTROL") { c.fan_control = v; }
-        if let Some(v) = num("FAN_WATCHDOG") { c.fan_watchdog_secs = v.clamp(5, 120); }
+        if let Some(v) = onoff("GOVERNOR") {
+            c.enabled = v;
+        }
+        if let Some(v) = num("GOVERNOR_POLL_MS") {
+            c.poll_ms = v.clamp(200, 10_000);
+        }
+        if let Some(v) = flt("GOVERNOR_BUSY_CLIMB") {
+            c.busy_climb = v.clamp(1.0, 100.0);
+        }
+        if let Some(v) = flt("GOVERNOR_BUSY_FALL") {
+            c.busy_fall = v.clamp(0.0, 99.0);
+        }
+        if let Some(v) = num("GOVERNOR_CLIMB_AFTER") {
+            c.climb_after = Duration::from_secs(v.clamp(1, 600));
+        }
+        if let Some(v) = num("GOVERNOR_FALL_AFTER") {
+            c.fall_after = Duration::from_secs(v.clamp(1, 3600));
+        }
+        if let Some(v) = flt("GOVERNOR_TEMP_THROTTLE") {
+            c.temp_throttle = v.clamp(50.0, 100.0);
+        }
+        if let Some(v) = flt("GOVERNOR_TEMP_CRITICAL") {
+            c.temp_critical = v.clamp(60.0, 105.0);
+        }
+        if let Some(v) = onoff("FAN_CONTROL") {
+            c.fan_control = v;
+        }
+        if let Some(v) = num("FAN_WATCHDOG") {
+            c.fan_watchdog_secs = v.clamp(5, 120);
+        }
 
         // The tiers, each overridable on its own. A partial override is a
         // legitimate thing to want — the light ceiling is the one people
         // actually tune — so this does not require all nine values.
         for (i, prefix) in ["LIGHT", "MID", "FULL", "TURBO"].iter().enumerate() {
-            if let Some(v) = num(&format!("{prefix}_PL1")) { c.tiers[i].pl1_w = v.clamp(5, 200); }
-            if let Some(v) = num(&format!("{prefix}_PL2")) { c.tiers[i].pl2_w = v.clamp(5, 250); }
-            if let Some(v) = num(&format!("{prefix}_MAX_PCT")) { c.tiers[i].max_pct = v.clamp(1, 100); }
-            if let Some(v) = onoff(&format!("{prefix}_NO_TURBO")) { c.tiers[i].no_turbo = v; }
-            if let Some(v) = num(&format!("{prefix}_GPU_MHZ")) { c.tiers[i].gpu_mhz = v.min(5000); }
+            if let Some(v) = num(&format!("{prefix}_PL1")) {
+                c.tiers[i].pl1_w = v.clamp(5, 200);
+            }
+            if let Some(v) = num(&format!("{prefix}_PL2")) {
+                c.tiers[i].pl2_w = v.clamp(5, 250);
+            }
+            if let Some(v) = num(&format!("{prefix}_MAX_PCT")) {
+                c.tiers[i].max_pct = v.clamp(1, 100);
+            }
+            if let Some(v) = onoff(&format!("{prefix}_NO_TURBO")) {
+                c.tiers[i].no_turbo = v;
+            }
+            if let Some(v) = num(&format!("{prefix}_GPU_MHZ")) {
+                c.tiers[i].gpu_mhz = v.min(5000);
+            }
         }
         // A burst limit under the sustained limit is a contradiction, and the
         // bash half refuses one rather than writing it. Same rule here, except
@@ -299,7 +335,9 @@ struct Writer {
 
 impl Writer {
     fn new() -> Self {
-        Writer { complained: std::collections::HashSet::new() }
+        Writer {
+            complained: std::collections::HashSet::new(),
+        }
     }
 
     fn write(&mut self, path: impl AsRef<Path>, value: &str) -> bool {
@@ -342,7 +380,10 @@ struct CpuSampler {
 impl CpuSampler {
     fn new() -> Self {
         let (b, t) = Self::read().unwrap_or((0, 0));
-        CpuSampler { last_busy: b, last_total: t }
+        CpuSampler {
+            last_busy: b,
+            last_total: t,
+        }
     }
 
     fn read() -> Option<(u64, u64)> {
@@ -362,14 +403,20 @@ impl CpuSampler {
     }
 
     fn busy_pct(&mut self) -> f64 {
-        let Some((busy, total)) = Self::read() else { return 0.0 };
+        let Some((busy, total)) = Self::read() else {
+            return 0.0;
+        };
         let db = busy.saturating_sub(self.last_busy) as f64;
         let dt = total.saturating_sub(self.last_total) as f64;
         self.last_busy = busy;
         self.last_total = total;
         // A resume hands back a jump in both counters; the ratio survives it,
         // and a zero window (two reads inside one tick) is not a division.
-        if dt <= 0.0 { 0.0 } else { (db / dt * 100.0).clamp(0.0, 100.0) }
+        if dt <= 0.0 {
+            0.0
+        } else {
+            (db / dt * 100.0).clamp(0.0, 100.0)
+        }
     }
 }
 
@@ -381,7 +428,9 @@ fn package_temp() -> Option<f64> {
     if let Ok(dir) = fs::read_dir("/sys/class/thermal") {
         for e in dir.flatten() {
             let p = e.path();
-            let Some(kind) = read_trim(p.join("type")) else { continue };
+            let Some(kind) = read_trim(p.join("type")) else {
+                continue;
+            };
             if kind != "x86_pkg_temp" && kind != "TCPU" {
                 continue;
             }
@@ -449,7 +498,9 @@ impl IGpu {
 }
 
 fn on_ac() -> bool {
-    let Ok(dir) = fs::read_dir("/sys/class/power_supply") else { return true };
+    let Ok(dir) = fs::read_dir("/sys/class/power_supply") else {
+        return true;
+    };
     for e in dir.flatten() {
         let p = e.path();
         if read_trim(p.join("type")).as_deref() == Some("Mains")
@@ -486,7 +537,10 @@ struct Firmware {
 impl Firmware {
     fn capture_or_load(igpu: Option<&IGpu>) -> Option<Firmware> {
         if let Some(text) = read_trim(FIRMWARE) {
-            let v: Vec<u64> = text.split_whitespace().filter_map(|f| f.parse().ok()).collect();
+            let v: Vec<u64> = text
+                .split_whitespace()
+                .filter_map(|f| f.parse().ok())
+                .collect();
             if v.len() >= 4 {
                 return Some(Firmware {
                     pl1_uw: v[0],
@@ -507,7 +561,9 @@ impl Firmware {
         // the hard way: the first run of this daemon captured PL1 as 30 W on a
         // machine whose firmware value is 109 W.
         let handover = read_trim(BASH_RAPL_STATE).map(|t| {
-            t.split_whitespace().filter_map(|f| f.parse::<u64>().ok()).collect::<Vec<u64>>()
+            t.split_whitespace()
+                .filter_map(|f| f.parse::<u64>().ok())
+                .collect::<Vec<u64>>()
         });
         let (h_pl1, h_win, h_pl2) = match handover.as_deref() {
             Some([a, b, c, ..]) => (Some(*a), Some(*b), Some(*c)),
@@ -569,7 +625,8 @@ impl Fans {
         // rejected. Saying so once at startup is better than a silent no-op
         // that looks like a curve nobody tuned right.
         let available = Path::new(FAN).exists()
-            && read_trim("/sys/module/thinkpad_acpi/parameters/fan_control").as_deref() == Some("Y");
+            && read_trim("/sys/module/thinkpad_acpi/parameters/fan_control").as_deref()
+                == Some("Y");
         Fans {
             available,
             engaged: false,
@@ -585,24 +642,22 @@ impl Fans {
         // Refresh first, then set. If the level write fails, the watchdog we
         // just armed is what ends up mattering.
         let mut refreshed = false;
-        if self.last_watchdog.elapsed() >= Duration::from_secs(watchdog_secs / 3 + 1) {
-            if w.write(FAN, &format!("watchdog {watchdog_secs}\n")) {
-                self.last_watchdog = Instant::now();
-                refreshed = true;
-            }
+        if self.last_watchdog.elapsed() >= Duration::from_secs(watchdog_secs / 3 + 1)
+            && w.write(FAN, &format!("watchdog {watchdog_secs}\n"))
+        {
+            self.last_watchdog = Instant::now();
+            refreshed = true;
         }
         // Re-asserted on every refresh rather than only on change, because the
         // EC silently takes the fans back and our cache would never know: a
         // resume resets it, and so does the watchdog firing. A proc write every
         // ten seconds is cheaper than being wrong about it for an hour.
-        if self.level != level || refreshed {
-            if w.write(FAN, &format!("level {level}\n")) {
-                if self.level != level {
-                    say!("fan level {level}");
-                }
-                self.level = level.to_string();
-                self.engaged = level != "auto";
+        if (self.level != level || refreshed) && w.write(FAN, &format!("level {level}\n")) {
+            if self.level != level {
+                say!("fan level {level}");
             }
+            self.level = level.to_string();
+            self.engaged = level != "auto";
         }
     }
 
@@ -696,7 +751,11 @@ impl Governor {
             if now.duration_since(since) >= dwell && tier < top {
                 tier += 1;
                 self.above_since = Some(now);
-                say!("climbing to {} after {}s of load", self.cfg.tiers[tier].name, dwell.as_secs());
+                say!(
+                    "climbing to {} after {}s of load",
+                    self.cfg.tiers[tier].name,
+                    dwell.as_secs()
+                );
             }
         } else if busy <= self.cfg.busy_fall {
             self.above_since = None;
@@ -760,10 +819,19 @@ impl Governor {
         if self.applied == Some(want) && self.mode == mode {
             return;
         }
-        w.write(format!("{RAPL}/constraint_0_power_limit_uw"), &pl1_uw.to_string());
-        w.write(format!("{RAPL}/constraint_0_time_window_us"), &pl1_win.to_string());
+        w.write(
+            format!("{RAPL}/constraint_0_power_limit_uw"),
+            &pl1_uw.to_string(),
+        );
+        w.write(
+            format!("{RAPL}/constraint_0_time_window_us"),
+            &pl1_win.to_string(),
+        );
         if pl2_uw > 0 {
-            w.write(format!("{RAPL}/constraint_1_power_limit_uw"), &pl2_uw.to_string());
+            w.write(
+                format!("{RAPL}/constraint_1_power_limit_uw"),
+                &pl2_uw.to_string(),
+            );
         }
         // max_perf_pct below min_perf_pct is rejected outright by the driver,
         // so a low tier on a machine with a high floor would silently do
@@ -789,7 +857,11 @@ impl Governor {
                 Mode::Ac => fw.gpu_max_mhz,
                 Mode::Battery(t) => {
                     let m = self.cfg.tiers[t].gpu_mhz;
-                    if m == 0 { fw.gpu_max_mhz } else { m }
+                    if m == 0 {
+                        fw.gpu_max_mhz
+                    } else {
+                        m
+                    }
                 }
             };
             if want > 0 {
@@ -822,7 +894,9 @@ fn write_state(mode: Mode, busy: f64, temp: Option<f64>, fan: &str) {
         Mode::Ac => "ac".to_string(),
         Mode::Battery(t) => format!("battery/{t}"),
     };
-    let t = temp.map(|t| format!("{t:.0}")).unwrap_or_else(|| "?".into());
+    let t = temp
+        .map(|t| format!("{t:.0}"))
+        .unwrap_or_else(|| "?".into());
     let _ = fs::write(STATE, format!("{label} {busy:.0} {t} {fan}\n"));
 }
 
@@ -950,7 +1024,11 @@ fn main() {
                 (Mode::Battery(_), Some(t)) => {
                     let level = Fans::pick(&cfg.fan_curve, t);
                     fans.set(&mut w, level, cfg.fan_watchdog_secs);
-                    if level == "auto" { "auto" } else { "held" }
+                    if level == "auto" {
+                        "auto"
+                    } else {
+                        "held"
+                    }
                 }
                 // No temperature is not a reason to guess.
                 (Mode::Battery(_), None) => {
@@ -968,10 +1046,19 @@ fn main() {
     // where neither does.
     say!("stopping: restoring firmware limits and releasing the fans");
     fans.release(&mut w);
-    w.write(format!("{RAPL}/constraint_0_power_limit_uw"), &fw.pl1_uw.to_string());
-    w.write(format!("{RAPL}/constraint_0_time_window_us"), &fw.pl1_window_us.to_string());
+    w.write(
+        format!("{RAPL}/constraint_0_power_limit_uw"),
+        &fw.pl1_uw.to_string(),
+    );
+    w.write(
+        format!("{RAPL}/constraint_0_time_window_us"),
+        &fw.pl1_window_us.to_string(),
+    );
     if fw.pl2_uw > 0 {
-        w.write(format!("{RAPL}/constraint_1_power_limit_uw"), &fw.pl2_uw.to_string());
+        w.write(
+            format!("{RAPL}/constraint_1_power_limit_uw"),
+            &fw.pl2_uw.to_string(),
+        );
     }
     w.write(PSTATE_MAX, &fw.max_pct.to_string());
     w.write(PSTATE_NO_TURBO, &fw.no_turbo.to_string());

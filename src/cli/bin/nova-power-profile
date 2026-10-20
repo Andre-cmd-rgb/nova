@@ -1,0 +1,92 @@
+#!/bin/bash
+
+# nova:summary=Show or set the power mode, remembered separately on AC and battery
+# nova:args=get | list [--active-state] | set <profile> | restore
+#
+# Talks to power-profiles-daemon over D-Bus. `set` remembers the choice for the
+# current power source; `restore` (run by the shell on plug and unplug, and at
+# login) puts back the one remembered for the new source, or performance on AC
+# and power-saver on battery. Battery life is the point of being unplugged, and
+# on a ThinkPad with a power governor the CPU still climbs when work needs it.
+
+set -euo pipefail
+
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/nova/power-profile
+readonly ppd=(org.freedesktop.UPower.PowerProfiles /org/freedesktop/UPower/PowerProfiles org.freedesktop.UPower.PowerProfiles)
+
+usage() {
+  echo "Usage: nova-power-profile get | list [--active-state] | set <profile> | restore" >&2
+  exit 2
+}
+
+profiles() {
+  busctl --system --json=short get-property "${ppd[@]}" Profiles 2>/dev/null |
+    jq -r '.data[].Profile.data'
+}
+
+active() {
+  busctl --system --json=short get-property "${ppd[@]}" ActiveProfile 2>/dev/null | jq -r '.data'
+}
+
+source_name() {
+  if [[ $(busctl --system get-property org.freedesktop.UPower /org/freedesktop/UPower \
+    org.freedesktop.UPower OnBattery 2>/dev/null || true) == "b true" ]]; then
+    echo battery
+  else
+    echo ac
+  fi
+}
+
+apply() {
+  busctl --system set-property "${ppd[@]}" ActiveProfile s "$1"
+}
+
+available() {
+  local want=$1 p
+  while IFS= read -r p; do [[ $p == "$want" ]] && return 0; done < <(profiles)
+  return 1
+}
+
+case ${1:-} in
+  get)
+    (($# == 1)) || usage
+    current=$(active) && [[ -n $current ]] || { echo "nova-power-profile: power-profiles-daemon is not running" >&2; exit 1; }
+    echo "$current"
+    ;;
+  list)
+    [[ $# == 1 || ($# == 2 && $2 == --active-state) ]] || usage
+    list=$(profiles) && [[ -n $list ]] || { echo "nova-power-profile: power-profiles-daemon is not running" >&2; exit 1; }
+    if (($# == 2)); then
+      current=$(active || true)
+      while IFS= read -r p; do
+        if [[ $p == "$current" ]]; then printf '%s\t1\n' "$p"; else printf '%s\t0\n' "$p"; fi
+      done <<<"$list"
+    else
+      echo "$list"
+    fi
+    ;;
+  set)
+    (($# == 2)) || usage
+    available "$2" || { echo "nova-power-profile: no power mode '$2' (see nova power profile list)" >&2; exit 1; }
+    apply "$2"
+    mkdir -p "$state_dir"
+    printf '%s\n' "$2" >"$state_dir/$(source_name)"
+    ;;
+  restore)
+    (($# == 1)) || usage
+    side=$(source_name)
+    profile=$(cat "$state_dir/$side" 2>/dev/null || true)
+    if [[ -z $profile ]] || ! available "$profile"; then
+      if [[ $side == ac ]] && available performance; then
+        profile=performance
+      elif [[ $side == battery ]] && available power-saver; then
+        profile=power-saver
+      else
+        profile=balanced
+      fi
+    fi
+    available "$profile" || exit 0
+    [[ $(active || true) == "$profile" ]] || apply "$profile"
+    ;;
+  *) usage ;;
+esac

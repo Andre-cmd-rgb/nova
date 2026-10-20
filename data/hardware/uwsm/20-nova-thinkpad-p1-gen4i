@@ -1,0 +1,44 @@
+# Nova, ThinkPad P1 Gen 4i: keep the desktop on the integrated GPU, so nothing
+# holds the discrete card open and the power policy can take it off the bus.
+#
+# uwsm sources this with /bin/sh for every session on every machine, so it
+# checks the model first, runs no programs, and must always parse: a file that
+# fails here costs the login.
+
+_nova_model=
+read -r _nova_model </sys/class/dmi/id/product_version 2>/dev/null || true
+if [ "$_nova_model" = "ThinkPad P1 Gen 4i" ]; then
+  # AQ_DRM_DEVICES splits on ":", so the card is named by the colon-free udev
+  # symlink (98-nova-igpu.rules). Pinned only when that card really has a
+  # connected display: a pin that resolves to nothing stops the compositor.
+  for _nova_status in /sys/class/drm/card*-eDP-*/status; do
+    [ -e /dev/dri/igpu ] || break
+    _nova_card=${_nova_status#/sys/class/drm/}
+    _nova_card=${_nova_card%%-*}
+    if [ "/sys/class/drm/$_nova_card/device" -ef /sys/bus/pci/devices/0000:00:02.0 ] &&
+      read -r _nova_state <"$_nova_status" && [ "$_nova_state" = connected ]; then
+      export AQ_DRM_DEVICES=/dev/dri/igpu
+      break
+    fi
+  done
+
+  # Pinning the DRM device decides which card draws, not which drivers the
+  # graphics libraries load. GLVND loads every EGL vendor it finds and the
+  # Vulkan loader every ICD, so libEGL_nvidia and the NVIDIA ICD would land in
+  # the compositor and in every GTK4 app, and open /dev/nvidia* just by
+  # starting. `thinkpad-power run` puts both back for one program.
+  _nova_egl=
+  for _nova_vendor in /usr/share/glvnd/egl_vendor.d/*.json; do
+    case $_nova_vendor in
+      *nvidia* | *'*'*) ;;
+      *) _nova_egl=${_nova_egl:+$_nova_egl:}$_nova_vendor ;;
+    esac
+  done
+  # An empty list breaks EGL for everything, so it is only set when non-NVIDIA
+  # vendors were actually found.
+  if [ -n "$_nova_egl" ]; then
+    export __EGL_VENDOR_LIBRARY_FILENAMES="$_nova_egl"
+  fi
+  export VK_LOADER_DRIVERS_DISABLE='*nvidia*'
+fi
+unset _nova_model _nova_status _nova_card _nova_state _nova_egl _nova_vendor
