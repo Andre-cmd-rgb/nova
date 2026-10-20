@@ -58,7 +58,7 @@ jobs:
     outputs:
       arch_date: ${{ steps.pin.outputs.arch_date }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
       - id: pin
@@ -69,7 +69,7 @@ jobs:
           date=${ARCH_DATE:-$(date -u -d yesterday +%Y/%m/%d)}
           tools/release-pin --version "$TAG" --date "$date" --verify --out release.toml
           echo "arch_date=$date" >>"$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-toml
           path: release.toml
@@ -85,11 +85,11 @@ jobs:
     # until packaging/linux-nova changes.
     timeout-minutes: 350
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
       - id: cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: out/kernel
           key: linux-nova-${{ hashFiles('packaging/linux-nova/**') }}
@@ -98,7 +98,7 @@ jobs:
         run: |
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
           NOVA_BUILD_ROOT=/mnt tools/build-package packaging/linux-nova out/kernel
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: kernel
           path: out/kernel/*.pkg.tar.zst
@@ -111,11 +111,11 @@ jobs:
     steps:
       - name: Tools
         run: pacman -Syu --noconfirm --needed git
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0 # the nova package's version comes from git describe
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: kernel
           path: out/kernel
@@ -143,7 +143,7 @@ jobs:
           tools/build-package packaging/nvidia-open-nova out/pkgs
           cp out/kernel/*.pkg.tar.zst out/pkgs/
           ls -l out/pkgs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: packages
           path: out/pkgs/*.pkg.tar.zst
@@ -153,10 +153,10 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: packages
           path: out/pkgs
@@ -174,7 +174,7 @@ jobs:
           tools/repo-build --key "$fpr" out/pkgs out/repo
           gpgconf --kill all
           rm -rf "$GNUPGHOME"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: repo
           path: out/repo/
@@ -187,13 +187,13 @@ jobs:
       options: --privileged # mkarchiso mounts /proc and /dev inside the image it builds
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-toml
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: repo
           path: out/repo
@@ -203,7 +203,7 @@ jobs:
           # The build host trusts the Nova key the same way an installed system does.
           pacman -U --noconfirm out/repo/nova-keyring-*.pkg.tar.zst
           tools/build-iso --release release.toml --repo out/repo --out out/iso
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: iso
           path: out/iso/
@@ -220,17 +220,17 @@ jobs:
         - /mnt:/mnt # the runner's scratch disk: the stick and the disk images
     timeout-minutes: 120
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release-toml
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: repo
           path: out/repo
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: iso
           path: out/iso
@@ -242,7 +242,7 @@ jobs:
             --packages out/iso/packages.txt --logs /tmp/install-logs
       - name: Keep the serial logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: install-logs
           path: /tmp/install-logs
@@ -254,7 +254,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: out
       - name: Make the GitHub release

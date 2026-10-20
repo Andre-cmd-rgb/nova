@@ -76,7 +76,8 @@ write_plan() { # size
     "items=$items" "offline=0" "installer_mib=64" >"$plan/plan.env"
 }
 write() {
-  printf '%s' "$passphrase" | NOVA_USB_ALLOW_ANY=1 NOVA_USB_SYSROOT=$work/root bash "$repo/installer/nova-usb" write "$plan"
+  printf '%s' "$passphrase" |
+    NOVA_USB_ALLOW_ANY=${NOVA_USB_ALLOW_ANY:-1} NOVA_USB_SYSROOT=$work/root bash "$repo/installer/nova-usb" write "$plan"
 }
 
 # The guard: a disk that is not the one the wizard saw is left alone.

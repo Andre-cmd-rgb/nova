@@ -41,8 +41,12 @@ windows=(
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/home" "$work/run" "$work/out" "$work/shell/plugins"
+mkdir -p "$work/home" "$work/run" "$work/out" "$work/shell/plugins" "$work/stub"
 chmod 700 "$work/run"
+# No compositor here: hyprctl answers as it does with no Hyprland running,
+# whether or not this machine has one installed.
+printf '#!/bin/sh\necho "HYPRLAND_INSTANCE_SIGNATURE not set! (is hyprland running?)" >&2\nexit 1\n' >"$work/stub/hyprctl"
+chmod +x "$work/stub/hyprctl"
 ln -s "$root/usr/share/nova/shell/Commons" "$work/shell/Commons"
 ln -s "$root/usr/share/nova/shell/Ui" "$work/shell/Ui"
 
@@ -112,7 +116,7 @@ for entry in "${windows[@]}"; do
   rm -rf "$work/run/quickshell" "$work/out"/*
   status=0
   env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
-    PATH="$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
+    PATH="$work/stub:$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
     NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_THEME_DIR="$palette" \
     QT_QPA_PLATFORM=offscreen SMOKE_PAGES="$pages" SMOKE_OUT="$work/out" SMOKE_BG="$background" \
     timeout 90 qs --no-color -p "$work/shell/$plugin.qml" >/dev/null 2>&1 || status=$?
