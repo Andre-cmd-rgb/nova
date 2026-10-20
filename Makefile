@@ -14,7 +14,7 @@ SYSTEMD_USER   := $(PREFIX)/lib/systemd/user
 INSTALL_TARGETS :=
 SHELL_SOURCES   :=
 QML_DIRS        :=
-TEST_DIRS       :=
+TEST_DIRS       := tests/unit
 
 include $(sort $(wildcard */install.mk */*/install.mk))
 

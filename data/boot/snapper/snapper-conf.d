@@ -1,1 +1,0 @@
-SNAPPER_CONFIGS="root"

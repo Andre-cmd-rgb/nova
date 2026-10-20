@@ -1,6 +1,6 @@
-# Snapper configuration for the root subvolume. snap-pac creates a pre/post pair
-# around every pacman transaction; number cleanup keeps the newest few, there is
-# no timeline.
+# Snapper template for the root subvolume (create-config --template nova).
+# snap-pac creates a pre/post pair around every pacman transaction; number
+# cleanup keeps the newest few, there is no timeline.
 SUBVOLUME="/"
 FSTYPE="btrfs"
 

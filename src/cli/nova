@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# nova: run a Nova command. `nova theme set white` runs the longest helper name
+# its words spell (nova-theme-set-white, nova-theme-set, then nova-theme) with
+# the remaining words as arguments. Helpers live in /usr/lib/nova/bin and
+# describe themselves with `# nova:summary=` lines; `# nova:hidden=true` keeps
+# one out of the help.
+
+set -euo pipefail
+
+readonly bin=${NOVA_BIN:-/usr/lib/nova/bin}
+
+# Compiled helpers cannot carry a summary comment.
+declare -A compiled=(
+  [nova-theme]="Switch themes and backgrounds, and read theme colors"
+)
+
+summary() {
+  local file=$bin/$1 line
+  if [[ -n ${compiled[$1]:-} ]]; then
+    echo "${compiled[$1]}"
+    return
+  fi
+  line=$(grep -m1 -a '^# nova:summary=' "$file" 2>/dev/null || true)
+  echo "${line#\# nova:summary=}"
+}
+
+hidden() {
+  grep -q -m1 -a '^# nova:hidden=true' "$bin/$1" 2>/dev/null
+}
+
+# Visible helper names, sorted, one per line.
+helpers() {
+  local path name
+  for path in "$bin"/nova-*; do
+    [[ -x $path && -f $path ]] || continue
+    name=${path##*/}
+    hidden "$name" || echo "$name"
+  done
+}
+
+list() {
+  local prefix=$1 name words
+  while IFS= read -r name; do
+    [[ $name == "$prefix"* ]] || continue
+    words=${name#nova-}
+    printf '  %-34s %s\n' "${words//-/ }" "$(summary "$name")"
+  done < <(helpers)
+}
+
+usage() {
+  local groups
+  groups=$(helpers | sed -E 's/^nova-([a-z0-9]+).*/\1/' | sort -u | paste -sd' ' -)
+  cat <<USAGE
+Usage: nova <command> [args...]
+       nova help [group]
+
+Groups: ${groups}
+
+\`nova help\` lists every command; \`nova help <group>\` one group's.
+USAGE
+}
+
+case ${1:-} in
+  "" | -h | --help)
+    usage
+    exit 0
+    ;;
+  help)
+    if (($# > 1)); then
+      [[ $2 =~ ^[a-z0-9]+$ ]] || { echo "nova: no group '$2'" >&2; exit 2; }
+      out=$(list "nova-$2")
+      [[ -n $out ]] || { echo "nova: no group '$2'" >&2; exit 2; }
+      echo "$out"
+    else
+      list nova-
+    fi
+    exit 0
+    ;;
+esac
+
+# The words that can be part of a helper name, up to the first that cannot.
+words=()
+for arg in "$@"; do
+  [[ $arg =~ ^[a-z0-9][a-z0-9-]*$ ]] || break
+  words+=("$arg")
+done
+
+for ((n = ${#words[@]}; n > 0; n--)); do
+  name=nova-$(IFS=-; echo "${words[*]:0:n}")
+  if [[ -x $bin/$name && -f $bin/$name ]]; then
+    exec "$bin/$name" "${@:n+1}"
+  fi
+done
+
+# A group name alone lists the group.
+if (($# == 1)) && out=$(list "nova-$1-") && [[ -n $out ]]; then
+  echo "$out"
+  exit 0
+fi
+
+echo "nova: unknown command '$*' (see nova help)" >&2
+exit 2
