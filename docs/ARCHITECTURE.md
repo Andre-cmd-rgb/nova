@@ -20,7 +20,7 @@ code.
 | `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards |
 | `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
 | `data/hardware/` | `/usr/share/nova/hardware/`, `/usr/share/uwsm/env.d/`, `/etc` via `nova-hw-apply` | Per-model **data**: the DMI model list, drop-ins, packages, the session environment |
-| `installer/` | ISO only, except `nova-usb-*` in `/usr/lib/nova/bin/` | archiso profile, installer, USB creator |
+| `installer/` | ISO only, except `nova-usb` in `/usr/lib/nova/bin/` | archiso profile, installer, USB creator |
 | `packaging/` | – | PKGBUILDs: `nova`, `linux-nova`, `nvidia-open-nova`, AUR rebuilds |
 
 Every component has an `install.mk` that the top-level `Makefile` includes, and
@@ -174,7 +174,27 @@ the shared folder also becomes the default for themes that have no pick of their
   - the installer ISO (`installer/iso`, built by `tools/build-iso`), which
     installs over the network;
   - `release.toml`, which pins the Arch Linux Archive date the release was tested
-    against.
+    against;
+  - `nova-usb` and `packages.txt`, for making the stick (below).
+- **The stick:** `nova usb` (`installer/nova-usb`, also on every release page, so
+  it runs on any Arch-based system) writes a GPT stick of its own instead of the
+  raw ISO:
+  - partition 1, `NOVA`: a FAT EFI partition holding the ISO's files, which
+    archiso boots from as they are (it finds itself by a `/boot/<uuid>.uuid`
+    file, not by the disk). With packages on the stick, `nova/repo/` holds
+    every package any install can need (`packages.txt`, from
+    `nova-install --list-packages`) and their signatures, as the
+    `[nova-offline]` repository;
+  - partition 2, `NOVA-DATA`, only when something is carried: LUKS2, btrfs,
+    and `carry/` with one `tar.zst` per item, `SHA256SUMS` and `manifest.json`.
+    `nova-install --unlock` opens it before the network is needed (carried
+    Wi-Fi gets the live system online); the install puts each item back once
+    the account exists. Bluetooth pairings and fingerprints come back only on
+    the computer they came from.
+
+  Everything that writes a disk runs in one root step (`nova-usb write`), which
+  checks the device again before touching it; `tests/usb/stick-test` runs it
+  against a loop device in CI.
 
   [releasing.md](releasing.md) has the steps and the signing key;
   [packaging.md](packaging.md) has how each package is kept up to date.

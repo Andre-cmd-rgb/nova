@@ -73,3 +73,20 @@ jobs:
           name: shell-windows
           path: /tmp/nova-shots
           if-no-files-found: ignore
+
+  # nova usb's writer needs root and a disk: here, a loop device on a
+  # throwaway runner. Partitions, encrypts and fills a stick image, reads it
+  # back, and restores it with the installer's own code.
+  stick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends xorriso cryptsetup dosfstools btrfs-progs zstd
+
+      - name: Write a stick, read it back, put it back
+        run: sudo tests/usb/stick-test

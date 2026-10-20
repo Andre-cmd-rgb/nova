@@ -13,6 +13,9 @@ arch-install-scripts
 btrfs-progs
 dosfstools
 jq
+# the things nova usb carries: LUKS2, then compressed archives
+cryptsetup
+zstd
 nova-keyring
 tzdata
 

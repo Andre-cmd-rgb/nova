@@ -1,0 +1,129 @@
+#!/bin/bash
+# Writes a real stick with nova usb's writer onto a loop device, reads it back,
+# and puts what it carried into a scratch target with the installer's own
+# restore: the half of nova usb that needs root and a disk, which the unit
+# tests cannot reach. It formats a loop device of its own and touches no other
+# disk, but it runs as root: CI runs it on a throwaway machine.
+#
+#   sudo tests/usb/stick-test
+set -euo pipefail
+
+repo=$(cd "$(dirname "$0")/../.." && pwd)
+((EUID == 0)) || {
+  echo "stick-test: run as root, on a throwaway machine" >&2
+  exit 1
+}
+
+work=$(mktemp -d /tmp/nova-stick-test.XXXXXX)
+loop=''
+cleanup() {
+  mountpoint -q "$work/mnt" && umount "$work/mnt"
+  local m
+  for m in nova-stick-test nova-usb-data; do
+    [[ ! -e /dev/mapper/$m ]] || cryptsetup close "$m"
+  done
+  [[ -z $loop ]] || losetup -d "$loop"
+  rm -rf -- "$work"
+}
+trap cleanup EXIT
+
+fail() {
+  echo "FAIL $*" >&2
+  exit 1
+}
+ok() { echo "ok   $*"; }
+
+passphrase='correct horse battery'
+
+# A stand-in for the ISO: the files archiso boots from, where it keeps them.
+iso=$work/isofs
+mkdir -p "$iso/EFI/BOOT" "$iso/loader/entries" "$iso/nova/x86_64" "$iso/boot" "$work/mnt"
+echo efi >"$iso/EFI/BOOT/BOOTx64.EFI"
+echo 'default 01-nova.conf' >"$iso/loader/loader.conf"
+head -c 5M /dev/urandom >"$iso/nova/x86_64/airootfs.sfs"
+: >"$iso/boot/2026-10-20-00-00-00-00.uuid"
+xorriso -as mkisofs -quiet -r -V NOVA_TEST -o "$work/nova.iso" "$iso"
+
+# A home and a system to carry from.
+home=$work/home
+mkdir -p "$home/.ssh" "$home/.config/google-chrome/Default/Cache" "$home/.local/state/omarchy-screentime/days" \
+  "$home/Documents/Taxes" "$work/root/etc/NetworkManager/system-connections"
+echo key >"$home/.ssh/id_ed25519"
+chmod 600 "$home/.ssh/id_ed25519"
+echo cookies >"$home/.config/google-chrome/Default/Cookies"
+echo junk >"$home/.config/google-chrome/Default/Cache/data_0"
+echo 60 >"$home/.local/state/omarchy-screentime/days/2026-10-19.tsv"
+echo pdf >"$home/Documents/Taxes/2025.pdf"
+git -c init.defaultBranch=main init -q "$home/Projects/app"
+printf 'target/\n' >"$home/Projects/app/.gitignore"
+echo code >"$home/Projects/app/main.rs"
+mkdir -p "$home/Projects/app/target"
+echo build >"$home/Projects/app/target/out"
+printf '[connection]\ntype=wifi\n' >"$work/root/etc/NetworkManager/system-connections/Home.nmconnection"
+chmod 600 "$work/root/etc/NetworkManager/system-connections/Home.nmconnection"
+
+plan=$work/plan
+mkdir -p "$plan"
+NOVA_USB_HOME=$home bash -c 'source "$1"; PROJECT_DIRS=(Projects) FOLDER_DIRS=(Documents); list_projects "$2"; list_folders "$2"' \
+  _ "$repo/installer/nova-usb" "$plan"
+
+truncate -s 3G "$work/stick.img"
+loop=$(losetup -fP --show "$work/stick.img")
+size=$(blockdev --getsize64 "$loop")
+items="ssh chrome history wifi projects folders"
+write_plan() { # size
+  printf '%s\n' "device=$loop" "size=$1" "serial=-" "iso=$work/nova.iso" "user=root" "home=$home" \
+    "items=$items" "offline=0" "installer_mib=64" >"$plan/plan.env"
+}
+write() {
+  printf '%s' "$passphrase" | NOVA_USB_ALLOW_ANY=1 NOVA_USB_SYSROOT=$work/root bash "$repo/installer/nova-usb" write "$plan"
+}
+
+# The guard: a disk that is not the one the wizard saw is left alone.
+write_plan $((size + 512))
+if write 2>/dev/null; then fail "the writer wrote to a disk of the wrong size"; fi
+[[ -z $(blkid -p "$loop" 2>/dev/null) ]] || fail "the refused disk was touched"
+write_plan "$size"
+if NOVA_USB_ALLOW_ANY=0 write 2>/dev/null; then fail "the writer took a loop device without being allowed to"; fi
+ok "the writer refuses a disk that changed, or one it was not allowed"
+
+write_plan "$size"
+write
+ok "the writer finished"
+
+p1=${loop}p1 p2=${loop}p2
+[[ $(lsblk -nro PARTLABEL,FSTYPE "$p1") == "NOVA vfat" ]] || fail "partition 1 is $(lsblk -nro PARTLABEL,FSTYPE "$p1")"
+[[ $(lsblk -nro PARTLABEL,FSTYPE "$p2") == "NOVA-DATA crypto_LUKS" ]] || fail "partition 2 is $(lsblk -nro PARTLABEL,FSTYPE "$p2")"
+[[ $(blkid -s TYPE -o value "$p1") == vfat && $(sfdisk --part-type "$loop" 1) == C12A7328-F81F-11D2-BA4B-00A0C93EC93B ]] ||
+  fail "partition 1 is not a FAT EFI system partition"
+ok "the layout: a FAT EFI partition, then LUKS"
+
+mount -o ro "$p1" "$work/mnt"
+diff -r "$iso" "$work/mnt" || fail "the installer partition differs from the ISO"
+umount "$work/mnt"
+ok "the installer partition holds the ISO's files"
+
+if printf 'wrong passphrase' | cryptsetup open --test-passphrase --key-file - "$p2" 2>/dev/null; then
+  fail "a wrong passphrase opened the data"
+fi
+printf '%s' "$passphrase" | cryptsetup open --readonly --key-file - "$p2" nova-stick-test
+mount -o ro /dev/mapper/nova-stick-test "$work/mnt"
+(cd "$work/mnt/carry" && sha256sum --quiet -c SHA256SUMS) || fail "the archives do not match their sums"
+[[ $(jq -r '[.items[].id] | join(" ")' "$work/mnt/carry/manifest.json") == "$items" ]] || fail "the manifest lists $(jq -c '[.items[].id]' "$work/mnt/carry/manifest.json")"
+ok "the data partition opens with the passphrase only, and its archives check out"
+
+target=$work/target
+mkdir -p "$target/etc" "$target/home/nova"
+echo 'nova:x:1000:1000::/home/nova:/bin/bash' >"$target/etc/passwd"
+NOVA_CARRY=$work/mnt NOVA_TARGET=$target NOVA_INSTALL_LOG=$work/install.log \
+  bash -c 'source "$1"; restore_carry nova' _ "$repo/installer/nova-install" 2>/dev/null
+n=$target/home/nova
+[[ $(cat "$n/.ssh/id_ed25519") == key && $(stat -c %a "$n/.ssh/id_ed25519") == 600 ]] || fail "the SSH key"
+[[ -f $n/.config/google-chrome/Default/Cookies && ! -e $n/.config/google-chrome/Default/Cache ]] || fail "the Chrome profile"
+[[ -f $n/.local/state/nova-screentime/days/2026-10-19.tsv ]] || fail "the Screen Time history"
+[[ -f $n/Projects/app/main.rs && -f $n/Projects/app/.git/HEAD && ! -e $n/Projects/app/target ]] || fail "the repository"
+[[ -f $n/Documents/Taxes/2025.pdf ]] || fail "the folder"
+[[ $(stat -c %u:%g "$n/Documents/Taxes/2025.pdf") == 1000:1000 ]] || fail "the home is not the new account's"
+conn=$target/etc/NetworkManager/system-connections/Home.nmconnection
+[[ $(stat -c %a:%u "$conn") == 600:0 ]] || fail "the Wi-Fi connection is $(stat -c %a:%u "$conn")"
+ok "the installer puts it all back"

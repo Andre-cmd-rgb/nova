@@ -12,7 +12,7 @@
 # Assembles a copy of installer/iso with nova-install, the release's files and
 # the hardware profiles' package lists, then runs mkarchiso on it, so it needs
 # root and the archiso package. Writes nova-<version>-x86_64.iso and its
-# .sha256 to --out.
+# .sha256, nova-usb and the offline package list (packages.txt) to --out.
 set -euo pipefail
 
 die() { printf 'build-iso: %s\n' "$*" >&2; exit 1; }
@@ -84,5 +84,9 @@ NOVA_ISO_VERSION=$version mkarchiso -v -r -w "$work/build" -o "$out" "$profile"
 iso=nova-$version-x86_64.iso
 [[ -f $out/$iso ]] || die "mkarchiso did not write $out/$iso"
 (cd -- "$out" && sha256sum -- "$iso" >"$iso.sha256")
+# nova usb, which makes the stick from any system, and the packages it puts
+# on one for installing without a network.
+NOVA_INSTALLER_SHARE=$share "$root/installer/nova-install" --list-packages >"$out/packages.txt"
+install -m755 "$root/installer/nova-usb" "$out/nova-usb"
 rm -rf -- "$work"
 printf 'build-iso: wrote %s/%s\n' "$out" "$iso" >&2

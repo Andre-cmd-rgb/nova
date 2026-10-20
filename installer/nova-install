@@ -13,8 +13,12 @@
 # release file. Either way the installed system ends up pointed at the release
 # it was installed from, which is what `nova update` moves forward.
 #
-#   nova-install          the interactive install
-#   nova-install --help   this text
+#   nova-install                  the interactive install
+#   nova-install --unlock         open the things carried on the stick (nova usb),
+#                                 and join their Wi-Fi networks
+#   nova-install --list-packages  every package an install on any computer can
+#                                 need: what nova usb puts on a stick
+#   nova-install --help           this text
 #
 # NOVA_* variables override paths for testing; the functions are sourceable
 # (tests/unit/installer/install.bats) and `main` runs only when executed.
@@ -30,11 +34,20 @@ CPUINFO=${NOVA_CPUINFO:-/proc/cpuinfo}
 MEMINFO=${NOVA_MEMINFO:-/proc/meminfo}
 PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
 LOG=${NOVA_INSTALL_LOG:-/var/log/nova-install.log}
+CARRY=${NOVA_CARRY:-/run/nova-carry}
+DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+IWD_DIR=${NOVA_IWD_DIR:-/var/lib/iwd}
+CARRY_MAPPER=nova-carry
 
 ESP_MIB=2048
 MIN_DISK_BYTES=$((64 * 1024 * 1024 * 1024))
 BTRFS_OPTS=noatime,compress=zstd:1
 SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@snapshots:/.snapshots" "@swap:/swap")
+
+# What each kind of display controller needs. hardware_packages picks this
+# machine's; every_package lists them all.
+GPU_INTEL=(intel-media-driver vulkan-intel)
+GPU_AMD=(libva-mesa-driver vulkan-radeon)
 
 say() { printf '\n\e[1m%s\e[0m\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
@@ -144,8 +157,8 @@ hardware_packages() {
     [[ -r $dev/class && $(<"$dev/class") == 0x03* ]] || continue
     vendor=$(<"$dev/vendor")
     case $vendor in
-      0x8086) printf '%s\n' intel-media-driver vulkan-intel ;;
-      0x1002) printf '%s\n' libva-mesa-driver vulkan-radeon ;;
+      0x8086) printf '%s\n' "${GPU_INTEL[@]}" ;;
+      0x1002) printf '%s\n' "${GPU_AMD[@]}" ;;
       0x10de)
         device=$(<"$dev/device")
         # The open modules need GSP firmware, which starts with Turing.
@@ -174,6 +187,21 @@ profile_packages() {
     if [[ $name == nvidia-open-nova && $kernel != linux-nova ]]; then name=nvidia-open; fi
     echo "$name"
   done <"$SHARE/hardware/$profile/packages"
+}
+
+# Every package an install on any computer could ask for, for the offline
+# repository nova usb puts on a stick: one stick installs any machine.
+every_package() {
+  local list
+  {
+    grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
+    printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" \
+      nvidia-open-nova nvidia-open nvidia-utils
+    for list in "$SHARE"/hardware/*/packages; do
+      [[ -r $list ]] || continue
+      sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"
+    done
+  } | awk '!seen[$0]++'
 }
 
 # Everything pacstrap installs, one per line, without duplicates.
@@ -541,6 +569,249 @@ finish() {
   logged umount -R "$TARGET"
 }
 
+# ------------------------------------------------- what nova usb carried
+#
+# A stick made by nova usb with things of yours on it has a second partition,
+# NOVA-DATA: LUKS2, then btrfs, then carry/ with one tar.zst per item, their
+# SHA-256 sums and manifest.json. It is opened read-only at $CARRY before the
+# network is needed, so carried Wi-Fi can get the live system online, and the
+# install puts each item back once the account exists.
+
+carry_ready() { [[ -r $CARRY/carry/manifest.json ]]; }
+
+# The stick's NOVA-DATA partition: on the disk the live system booted from
+# when that can be told, anywhere otherwise.
+carry_partition() {
+  local disk
+  disk=$(boot_disk)
+  if [[ -n $disk ]]; then
+    lsblk -nrpo PATH,PARTLABEL -- "$disk" 2>/dev/null
+  else
+    lsblk -nrpo PATH,PARTLABEL 2>/dev/null
+  fi | awk '$2 == "NOVA-DATA" { print $1; exit }'
+}
+
+carry_items() { # -> id, kind, file and label of each item, tab-separated
+  jq -r '.items[] | [.id, .kind, .file, (.label // .id)] | @tsv' "$CARRY/carry/manifest.json"
+}
+
+carry_value() { # jq path
+  jq -r "$1 // empty" "$CARRY/carry/manifest.json"
+}
+
+# This computer, hashed the way nova usb hashes the one it ran on.
+machine_hash() {
+  local id
+  id=$(cat "$DMI/product_uuid" "$DMI/product_serial" 2>/dev/null) || true
+  [[ -n $id ]] || return 0
+  printf '%s' "$id" | sha256sum | awk '{ print $1 }'
+}
+
+# Asks for the passphrase until it opens (or Enter skips), mounts the
+# partition and checks every archive against its sum. All or nothing: a stick
+# that reads back wrong carries nothing over.
+carry_unlock() {
+  carry_ready && return 0
+  local part pass tries
+  part=$(carry_partition)
+  [[ -n $part ]] || return 1
+  say "Your things are on this stick, encrypted"
+  for ((tries = 0; tries < 5; tries++)); do
+    read -rsp "  Passphrase (Enter to install without them): " pass </dev/tty
+    echo >&2
+    [[ -n $pass ]] || return 1
+    if printf '%s' "$pass" | cryptsetup open --readonly --key-file - "$part" "$CARRY_MAPPER" 2>/dev/null; then
+      mkdir -p "$CARRY"
+      mount -o ro "/dev/mapper/$CARRY_MAPPER" "$CARRY" || {
+        cryptsetup close "$CARRY_MAPPER"
+        warn "The partition opened but would not mount; installing without your things."
+        return 1
+      }
+      if ! (cd "$CARRY/carry" && sha256sum --quiet -c SHA256SUMS >&2); then
+        warn "Some of it does not read back as it was written (above); installing without your things."
+        umount "$CARRY"
+        cryptsetup close "$CARRY_MAPPER"
+        return 1
+      fi
+      info "$(carry_items | wc -l) things, from $(carry_value .source.host)"
+      return 0
+    fi
+    warn "That is not the passphrase."
+  done
+  return 1
+}
+
+keyfile_value() { # NetworkManager keyfile, section, key
+  awk -v section="[$2]" -v key="$3" '
+    /^\[/ { inside = ($0 == section); next }
+    inside && index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' "$1"
+}
+
+# iwd names a network's file after its SSID when that is plain, and = plus the
+# SSID in hex when it is not.
+iwd_name() {
+  local LC_ALL=C
+  if [[ $1 =~ ^[A-Za-z0-9\ _-]+$ ]]; then
+    echo "$1"
+  else
+    printf '=%s\n' "$(printf '%s' "$1" | od -An -tx1 | tr -d ' \n')"
+  fi
+}
+
+# The carried Wi-Fi networks, written as iwd networks for the live system,
+# which joins a known network by itself. Personal (WPA2/WPA3) and open ones;
+# a network that needs a certificate waits for the installed system.
+carry_wifi_live() {
+  local file tmp conf ssid psk mgmt name
+  file=$(carry_items | awk -F'\t' '$1 == "wifi" { print $3 }')
+  [[ -n $file ]] || return 0
+  tmp=$(mktemp -d)
+  if ! zstd -dc "$CARRY/carry/$file" | tar -x -C "$tmp"; then
+    rm -rf -- "$tmp"
+    return 1
+  fi
+  mkdir -p "$IWD_DIR"
+  for conf in "$tmp"/etc/NetworkManager/system-connections/*.nmconnection; do
+    [[ -r $conf && $(keyfile_value "$conf" connection type) == wifi ]] || continue
+    ssid=$(keyfile_value "$conf" wifi ssid)
+    mgmt=$(keyfile_value "$conf" wifi-security key-mgmt)
+    psk=$(keyfile_value "$conf" wifi-security psk)
+    [[ -n $ssid ]] || continue
+    name=$(iwd_name "$ssid")
+    case $mgmt in
+      "") install -m 600 /dev/null "$IWD_DIR/$name.open" ;;
+      wpa-psk | sae)
+        [[ -n $psk ]] || continue
+        printf '[Security]\nPassphrase=%s\n' "$psk" | install -m 600 /dev/stdin "$IWD_DIR/$name.psk"
+        ;;
+    esac
+  done
+  rm -rf -- "$tmp"
+}
+
+unpack() { # archive directory [tar options]
+  local archive=$1 dir=$2
+  shift 2
+  mkdir -p "$dir"
+  printf '+ unpack %s into %s\n' "$archive" "$dir" >>"$LOG"
+  zstd -dc "$CARRY/carry/$archive" 2>>"$LOG" | tar -x -C "$dir" "$@" >>"$LOG" 2>&1
+}
+
+target_ids() { # user -> uid:gid in the new system
+  awk -F: -v u="$1" '$1 == u { print $3 ":" $4 }' "$TARGET/etc/passwd"
+}
+
+# A carried menu bar layout may be Omarchy's: its widgets are renamed to
+# Nova's, and the ones Nova does not have are dropped.
+adopt_shell_config() { # shell.json
+  local file=$1 ids
+  [[ -f $file ]] || return 0
+  ids=$({ find "$TARGET/usr/share/nova/shell/plugins" -name '*manifest.json' -exec jq -r .id {} + 2>/dev/null || true; } |
+    jq -Rsc 'split("\n") | map(select(. != ""))')
+  if jq --argjson ids "$ids" '
+      def nova: if type == "string" then sub("^[A-Za-z0-9_-]+\\."; "nova.") else . end;
+      def keep: map(select(type == "object") | .id |= nova | select(.id as $i | $ids | index([$i])));
+      (if (.bar.layout | type) == "object"
+        then .bar.layout |= with_entries(.value |= (if type == "array" then keep else . end)) else . end)
+      | (if (.plugins | type) == "array" then .plugins |= keep else . end)
+      | (if (.idle | type) == "object" then del(.idle.screensaver) else . end)' \
+    "$file" >"$file.tmp" 2>>"$LOG"; then
+    mv -f -- "$file.tmp" "$file"
+  else
+    rm -f -- "$file.tmp" "$file"
+    warn "The carried menu bar layout could not be read; Nova's own is used."
+  fi
+}
+
+# The keyrings come with Chrome. A passwordless Default keyring (where Omarchy
+# keeps secrets) is moved into the login keyring at the first unlock by
+# nova-keyring-migrate; an old login keyring would not open with the new
+# password, so it is kept, renamed, for Passwords and Keys to open by hand.
+adopt_keyrings() { # keyrings-dir state-dir
+  local dir=$1 state=$2
+  [[ -d $dir ]] || return 0
+  [[ ! -f $dir/login.keyring ]] || mv -f -- "$dir/login.keyring" "$dir/carried-login.keyring"
+  if [[ -f $dir/Default_keyring.keyring ]]; then
+    mkdir -p "$state"
+    : >"$state/keyring-migrate-pending"
+  fi
+}
+
+# Puts each carried item back. Home items are unpacked into the account and
+# handed to it; network connections go to NetworkManager; Bluetooth pairings
+# and fingerprints only on the computer they came from, being tied to its
+# adapter and its sensor; the package list waits for install_carried_packages.
+restore_carry() { # user
+  local user=$1 home=$TARGET/home/$1 id kind file label same=0 here there olduser
+  carry_ready || return 0
+  say "Putting your things back"
+  here=$(machine_hash)
+  there=$(carry_value .source.machine)
+  [[ -n $here && $here == "$there" ]] && same=1
+  olduser=$(carry_value .source.user)
+  valid_username "$olduser" || olduser=
+  while IFS=$'\t' read -r id kind file label; do
+    case $kind in
+      home | projects | folders)
+        info "$label"
+        unpack "$file" "$home" || warn "$label did not unpack completely; the log is in $LOG"
+        ;;
+      system)
+        if [[ $id == bluetooth || $id == fingerprints ]] && ((!same)); then
+          info "$label: left out, this is another computer"
+          continue
+        fi
+        info "$label"
+        if [[ $id == fingerprints && -n $olduser && $olduser != "$user" ]]; then
+          unpack "$file" "$TARGET" "--transform=s,^var/lib/fprint/$olduser/,var/lib/fprint/$user/," ||
+            warn "$label did not unpack; the log is in $LOG"
+        else
+          unpack "$file" "$TARGET" || warn "$label did not unpack; the log is in $LOG"
+        fi
+        ;;
+      list)
+        unpack "$file" "$home/.local/state/nova/carried" || warn "$label did not unpack; the log is in $LOG"
+        ;;
+    esac
+  done < <(carry_items)
+  adopt_shell_config "$home/.config/nova/shell.json"
+  adopt_keyrings "$home/.local/share/keyrings" "$home/.local/state/nova"
+  chown -R "$(target_ids "$user")" "$home"
+}
+
+# The carried package list, once the system is there: what the release's
+# repositories have is installed, and the rest (AUR packages, ones Arch has
+# since dropped) is written to not-installed.txt next to the list.
+install_carried_packages() { # user
+  local user=$1 dir=$TARGET/home/$1/.local/state/nova/carried available wanted=() name
+  [[ -s $dir/packages.txt ]] || return 0
+  if ! curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/; then
+    warn "No internet: your extra packages are listed in ~/.local/state/nova/carried/ for later."
+    return 0
+  fi
+  say "Installing your extra packages"
+  in_target pacman -Sy || {
+    warn "Could not reach the repositories; your packages are listed in ~/.local/state/nova/carried/."
+    return 0
+  }
+  available=$(arch-chroot "$TARGET" pacman -Slq 2>>"$LOG" | sort -u)
+  mapfile -t wanted < <(comm -12 <(sort -u "$dir/packages.txt") <(echo "$available"))
+  comm -23 <(sort -u "$dir/packages.txt") <(echo "$available") >"$dir/not-installed.txt"
+  if ((${#wanted[@]})); then
+    info "${#wanted[@]} packages"
+    # One transaction first; if one of them conflicts with Nova's, each on its
+    # own, so the rest still go in.
+    if ! in_target pacman -S --needed --noconfirm "${wanted[@]}"; then
+      for name in "${wanted[@]}"; do
+        in_target pacman -S --needed --noconfirm "$name" || echo "$name" >>"$dir/not-installed.txt"
+      done
+    fi
+  fi
+  [[ -s $dir/not-installed.txt ]] &&
+    info "$(wc -l <"$dir/not-installed.txt") were left out; they are listed in ~/.local/state/nova/carried/not-installed.txt"
+  chown -R "$(target_ids "$user")" "$dir"
+}
+
 usage() {
   sed -n '3,/^$/s/^# \{0,1\}//p' "$0"
 }
@@ -549,6 +820,16 @@ main() {
   case ${1:-} in
     -h | --help)
       usage
+      return 0
+      ;;
+    --list-packages)
+      every_package
+      return 0
+      ;;
+    --unlock)
+      ((EUID == 0)) || die "run me as root."
+      carry_unlock || return 0
+      carry_wifi_live || warn "The carried Wi-Fi networks could not be read."
       return 0
       ;;
     "") ;;
@@ -569,6 +850,10 @@ main() {
   if ! offline_repo_ready && ! curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/; then
     die "this stick has no offline packages and there is no internet connection. Connect with: iwctl"
   fi
+
+  # Things carried on the stick: opened now (nova-install-start usually already
+  # has, for their Wi-Fi), put back once the account exists.
+  carry_ready || carry_unlock || true
 
   local kernel profile
   kernel=$(main_kernel)
@@ -594,10 +879,14 @@ main() {
   [[ $disk_model != - ]] || disk_model=
 
   say "You"
-  local fullname user password hostname timezone
-  fullname=$(ask "Full name" "")
+  local fullname user password hostname timezone carried_user=''
+  if carry_ready; then
+    carried_user=$(carry_value .source.user)
+    valid_username "$carried_user" || carried_user=
+  fi
+  fullname=$(ask "Full name" "$(carry_ready && carry_value .source.name)")
   while :; do
-    user=$(ask "Username" "$(tr '[:upper:]' '[:lower:]' <<<"${fullname%% *}" | tr -cd 'a-z0-9_-')")
+    user=$(ask "Username" "${carried_user:-$(tr '[:upper:]' '[:lower:]' <<<"${fullname%% *}" | tr -cd 'a-z0-9_-')}")
     valid_username "$user" && break
     warn "Lower-case letters, digits, - and _, starting with a letter."
   done
@@ -621,6 +910,7 @@ main() {
   info "Kernel        $kernel, with linux-lts as the fallback"
   info "Account       $user ($fullname) on $hostname"
   info "Time zone     $timezone, keyboard $keymap"
+  carry_ready && info "Your things   $(carry_items | wc -l) items from $(carry_value .source.host), put back after the install"
   [[ $(ask "Type erase to wipe $disk and install" "") == erase ]] || die "nothing was changed."
 
   partition_and_format "$disk"
@@ -631,8 +921,10 @@ main() {
   configure_snapper
   create_user "$user" "$fullname" "$password"
   unset password
+  restore_carry "$user"
   install_bootloader
   install_apps "$user"
+  install_carried_packages "$user"
   enable_services
   finish
 

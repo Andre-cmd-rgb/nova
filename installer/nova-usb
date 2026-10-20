@@ -1,0 +1,989 @@
+#!/bin/bash
+
+# nova:summary=Make a Nova installer stick, and carry your things over on it
+# nova:args=[--preset] [--iso <file>] [--dry-run]
+#
+# nova-usb: make a Nova installer stick, and carry your things over on it.
+#
+# Runs on any Arch-based Linux, Nova or not, as you; sudo is asked for once, at
+# the end, to write the stick. Every question comes first: the stick, then
+# Clean (only the installer), Custom (pick what to bring) or Last time (the
+# choices saved in ~/.config/nova/usb.toml). Nothing touches the stick until
+# its device name is typed back.
+#
+# The stick: a FAT partition with the installer (the ISO's own files, which
+# archiso boots from as they are) and, if asked for, every package an install
+# can need, so it installs without a network. When anything is carried, a
+# second, LUKS2-encrypted btrfs partition holds one compressed archive per item
+# and their SHA-256 sums; the installer asks for its passphrase and puts it all
+# back. Both partitions are read back and checked before the stick is done.
+#
+#   nova usb                 the wizard
+#   nova usb --preset        last time's choices; asks only for the stick and passphrase
+#   nova usb --iso <file>    this ISO rather than the latest release's (packages
+#                            on the stick then need the release's release.toml
+#                            and packages.txt next to it)
+#   nova usb --dry-run       everything but the writing
+#   nova usb --help          this text
+#
+# NOVA_USB_* variables override paths for testing; the functions are sourceable
+# (tests/unit/installer/usb.bats) and `main` runs only when executed.
+
+set -euo pipefail
+
+USB_HOME=${NOVA_USB_HOME:-$HOME}
+PRESET=${NOVA_USB_PRESET:-${XDG_CONFIG_HOME:-$USB_HOME/.config}/nova/usb.toml}
+CACHE=${NOVA_USB_CACHE:-${XDG_CACHE_HOME:-$USB_HOME/.cache}/nova/usb}
+RELEASES=${NOVA_USB_RELEASES:-https://api.github.com/repos/Andre-cmd-rgb/nova/releases}
+SYSROOT=${NOVA_USB_SYSROOT:-}
+DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+# The package lists of the system being left, so "your extra packages" are the
+# ones you added rather than everything it came with.
+OLD_PACKAGE_LISTS=${NOVA_USB_OLD_PACKAGE_LISTS:-/usr/share/omarchy/install}
+
+MiB=$((1024 * 1024))
+MIN_STICK_BYTES=$((2 * 1024 * MiB))
+# LUKS2 header, btrfs metadata and a margin, on top of what is carried.
+DATA_OVERHEAD=$((512 * MiB))
+MAPPER=nova-usb-data
+
+say() { printf '\n\e[1m%s\e[0m\n' "$*" >&2; }
+info() { printf '  %s\n' "$*" >&2; }
+warn() { printf '  \e[33m%s\e[0m\n' "$*" >&2; }
+die() {
+  printf '\n\e[31mnova usb: %s\e[0m\n' "$*" >&2
+  exit 1
+}
+
+human_size() {
+  awk -v b="$1" 'BEGIN { split("B KB MB GB TB PB", u); i = 1; while (b >= 1000 && i < 6) { b /= 1000; i++ } printf (i > 3 ? "%.1f %s" : "%.0f %s"), b, u[i] }'
+}
+
+# /dev/sdb -> /dev/sdb1, /dev/nvme1n1 -> /dev/nvme1n1p1
+partition_path() {
+  if [[ $1 =~ [0-9]$ ]]; then echo "${1}p$2"; else echo "$1$2"; fi
+}
+
+ask() { # prompt default -> the answer on stdout
+  local reply
+  read -rp "  $1${2:+ [$2]}: " reply </dev/tty
+  echo "${reply:-$2}"
+}
+
+yes_no() { # prompt default(y|n)
+  local reply
+  reply=$(ask "$1 [$([[ $2 == y ]] && echo Y/n || echo y/N)]" "")
+  reply=${reply:-$2}
+  [[ ${reply,,} == y* ]]
+}
+
+# ------------------------------------------------------------- what to carry
+
+# What Custom offers, one item per line, tab-separated: id, what the checklist
+# says, the kind, and the paths, |-separated. "home" paths are relative to your
+# home; "system" ones are absolute and read through sudo; "list", "projects"
+# and "folders" are made from your answers.
+catalog() {
+  cat <<'EOF'
+ssh	SSH keys	home	.ssh
+gnupg	GnuPG keys	home	.gnupg
+git	Git and GitHub CLI settings	home	.gitconfig|.config/git|.config/gh
+chrome	Chrome, signed in (its profile, and the keyring that unlocks it)	home	.config/google-chrome|.local/share/keyrings
+vscode	VS Code settings and extensions	home	.config/Code/User|.vscode/extensions
+ai	Claude Code and Codex	home	.claude|.claude.json|.codex
+mise	mise tools	home	.config/mise
+history	Screen Time, Battery Life and mobile data history	home	.local/state/nova-screentime|.local/state/nova-batterylife|.local/state/nova-mobile-data|.local/state/nova-mobile|.local/state/omarchy-screentime|.local/state/omarchy-batterylife|.local/state/omarchy-mobile-data|.local/state/omarchy-mobile
+bar	Menu bar layout	home	.config/nova/shell.json|.config/omarchy/shell.json
+shell	Shell history	home	.bash_history
+wifi	Network connections, Wi-Fi passwords included	system	/etc/NetworkManager/system-connections
+bluetooth	Bluetooth pairings (put back on this same computer only)	system	/var/lib/bluetooth
+fingerprints	Fingerprints (put back on this same computer only)	system	/var/lib/fprint
+packages	Your extra packages, installed again	list	-
+projects	Git repositories: what git tracks, and the history	projects	-
+folders	Whole folders (Documents, Pictures, ...)	folders	-
+EOF
+}
+
+# Ticked when Custom starts: everything that needs no further answer.
+DEFAULT_ITEMS=(ssh gnupg git chrome vscode ai mise history bar shell wifi bluetooth fingerprints)
+
+item_field() { # id field(2 label, 3 kind, 4 paths)
+  catalog | awk -F'\t' -v id="$1" -v f="$2" '$1 == id { print $f; exit }'
+}
+
+item_paths() { # id -> its paths, one per line
+  local paths
+  paths=$(item_field "$1" 4)
+  [[ $paths != - ]] || return 0
+  tr '|' '\n' <<<"$paths"
+}
+
+valid_item() { [[ -n $(item_field "$1" 3) ]]; }
+
+# Caches a browser or editor rebuilds by itself, and the lock files that would
+# make Chrome think its profile is open on another computer.
+item_excludes() {
+  case $1 in
+    chrome) printf '%s\n' Cache 'Code Cache' GPUCache ShaderCache GrShaderCache GraphiteDawnCache \
+      DawnGraphiteCache DawnWebGPUCache component_crx_cache 'Service Worker/CacheStorage' \
+      'Crash Reports' Crashpad SingletonLock SingletonSocket SingletonCookie ;;
+    vscode) printf '%s\n' workspaceStorage CachedExtensionVSIXs ;;
+    gnupg) printf '%s\n' 'S.*' '*.lock' ;;
+  esac
+}
+
+# Omarchy's names for the same things, renamed on the way in, so the installer
+# only ever sees Nova's.
+item_transform() {
+  case $1 in
+    history) echo 's,^\.local/state/omarchy-,.local/state/nova-,' ;;
+    bar) echo 's,^\.config/omarchy/shell\.json$,.config/nova/shell.json,' ;;
+  esac
+}
+
+# Bytes an item will take, roughly (uncompressed, so never an underestimate).
+# System items cannot be read without root and are a few kilobytes.
+item_bytes() { # id plan
+  local id=$1 plan=$2 kind path bytes=0 excludes=() pattern
+  kind=$(item_field "$id" 3)
+  case $kind in
+    home)
+      while IFS= read -r pattern; do excludes+=("--exclude=$pattern"); done < <(item_excludes "$id")
+      while IFS= read -r path; do
+        [[ -e $USB_HOME/$path ]] || continue
+        bytes=$((bytes + $(du -sb "${excludes[@]}" -- "$USB_HOME/$path" 2>/dev/null | awk '{ print $1 }')))
+      done < <(item_paths "$id")
+      ;;
+    system) bytes=$MiB ;;
+    list) bytes=$(cat "$plan/packages.txt" "$plan/aur.txt" 2>/dev/null | wc -c) ;;
+    projects)
+      [[ -s $plan/projects.files ]] && bytes=$(cd "$USB_HOME" && du -cb --files0-from="$plan/projects.files" 2>/dev/null | awk 'END { print $1 }')
+      [[ -s $plan/projects.gitdirs ]] && bytes=$((bytes + $(cd "$USB_HOME" && du -cb --files0-from="$plan/projects.gitdirs" 2>/dev/null | awk 'END { print $1 }')))
+      ;;
+    folders)
+      [[ -s $plan/folders.list ]] && bytes=$(cd "$USB_HOME" && du -cb --files0-from="$plan/folders.list" 2>/dev/null | awk 'END { print $1 }')
+      ;;
+  esac
+  echo "${bytes:-0}"
+}
+
+# An item with nothing to carry on this computer is left off the stick.
+item_present() { # id plan
+  local id=$1 plan=$2 path
+  case $(item_field "$id" 3) in
+    home | system)
+      while IFS= read -r path; do
+        if [[ $path == /* ]]; then path=$SYSROOT$path; else path=$USB_HOME/$path; fi
+        [[ -e $path ]] && return 0
+      done < <(item_paths "$id")
+      return 1
+      ;;
+    list) [[ -s $plan/packages.txt || -s $plan/aur.txt ]] ;;
+    projects) [[ -s $plan/projects.gitdirs ]] ;;
+    folders) [[ -s $plan/folders.list ]] ;;
+  esac
+}
+
+# A folder you named, as a path inside your home, or nothing if it is not one.
+home_relative() {
+  local dir=${1%/}
+  dir=${dir/#\~/$USB_HOME}
+  [[ $dir == /* ]] || dir=$USB_HOME/$dir
+  dir=$(realpath -e -- "$dir" 2>/dev/null) || return 1
+  [[ -d $dir && $dir == "$USB_HOME"/* ]] || return 1
+  echo "${dir#"$USB_HOME"/}"
+}
+
+# The git repositories under a folder (inside your home), outermost first.
+find_repos() { # home-relative dir
+  (cd "$USB_HOME" && find "$1" -maxdepth 6 \( -name node_modules -o -name .cache \) -prune -o -name .git -prune -print 2>/dev/null) |
+    sed 's,/\.git$,,' | sort
+}
+
+# What git would call the repository: tracked files, and new ones it does not
+# ignore. Files deleted from the work tree but not from the index are skipped,
+# and directories are left to the files in them. NUL-separated, home-relative.
+repo_files() { # home-relative repo
+  local repo=$1 f
+  git -C "$USB_HOME/$repo" ls-files -z --cached --others --exclude-standard 2>/dev/null |
+    while IFS= read -r -d '' f; do
+      [[ -L $USB_HOME/$repo/$f || -f $USB_HOME/$repo/$f ]] && printf '%s\0' "$repo/$f"
+    done
+}
+
+# projects.files (no recursion) and projects.gitdirs (recursed): every
+# repository under the folders named in PROJECT_DIRS.
+list_projects() { # plan
+  local plan=$1 dir repo
+  : >"$plan/projects.files"
+  : >"$plan/projects.gitdirs"
+  for dir in "${PROJECT_DIRS[@]}"; do
+    while IFS= read -r repo; do
+      repo_files "$repo" >>"$plan/projects.files"
+      printf '%s\0' "$repo/.git" >>"$plan/projects.gitdirs"
+    done < <(find_repos "$dir")
+  done
+}
+
+list_folders() { # plan
+  local plan=$1 dir
+  : >"$plan/folders.list"
+  for dir in "${FOLDER_DIRS[@]}"; do printf '%s\0' "$dir" >>"$plan/folders.list"; done
+}
+
+# Explicitly installed packages minus what the old system came with and what
+# the installer chooses for the hardware itself. Packages from the AUR go to
+# their own list: pacman cannot install them, so the installer leaves a note.
+list_packages() { # plan
+  local plan=$1 base
+  base=$(cat "$OLD_PACKAGE_LISTS"/*.packages 2>/dev/null | sed 's/#.*//; s/[[:space:]]//g; /^$/d' | sort -u)
+  local skip='^(base|base-devel|linux(-lts|-zen|-hardened)?(-headers)?|.*-ucode|nvidia.*|nova.*|omarchy.*|limine.*|plymouth.*|sddm.*|google-chrome|visual-studio-code-bin)$'
+  comm -23 <(pacman -Qqen 2>/dev/null | sort -u) <(echo "$base") | grep -Ev "$skip" >"$plan/packages.txt" || true
+  comm -23 <(pacman -Qqem 2>/dev/null | sort -u) <(echo "$base") | grep -Ev "$skip" >"$plan/aur.txt" || true
+}
+
+# ---------------------------------------------------------------- the preset
+
+# usb.toml: three arrays and a flag. Its strings are written as JSON, which is
+# what TOML's basic strings are, so jq reads them back.
+write_preset() { # items offline
+  local items=$1 offline=$2
+  mkdir -p "$(dirname "$PRESET")"
+  {
+    echo '# nova usb: what "Last time" brings. Written by nova usb; folders are inside your home.'
+    printf 'items = %s\n' "$(printf '%s\n' "$items" | jq -Rc 'split(" ") | map(select(. != ""))')"
+    printf 'projects = %s\n' "$(printf '%s\n' "${PROJECT_DIRS[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    printf 'folders = %s\n' "$(printf '%s\n' "${FOLDER_DIRS[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')"
+    printf 'offline = %s\n' "$( ((offline)) && echo true || echo false)"
+  } >"$PRESET.tmp"
+  mv -f "$PRESET.tmp" "$PRESET"
+}
+
+preset_value() { # key -> the raw value
+  sed -n "s/^$1 = //p" "$PRESET" | awk 'NR == 1'
+}
+
+# Sets ITEMS, PROJECT_DIRS, FOLDER_DIRS and OFFLINE from the preset. Unknown
+# items and folders that are gone are dropped, with a word about each.
+read_preset() {
+  [[ -r $PRESET ]] || return 1
+  local id dir rel
+  ITEMS=() PROJECT_DIRS=() FOLDER_DIRS=()
+  while IFS= read -r id; do
+    if valid_item "$id"; then ITEMS+=("$id"); else warn "usb.toml: no item called '$id', skipped."; fi
+  done < <(preset_value items | jq -r '.[]' 2>/dev/null)
+  while IFS= read -r dir; do
+    if rel=$(home_relative "$dir"); then PROJECT_DIRS+=("$rel"); else warn "usb.toml: no folder $dir, skipped."; fi
+  done < <(preset_value projects | jq -r '.[]' 2>/dev/null)
+  while IFS= read -r dir; do
+    if rel=$(home_relative "$dir"); then FOLDER_DIRS+=("$rel"); else warn "usb.toml: no folder $dir, skipped."; fi
+  done < <(preset_value folders | jq -r '.[]' 2>/dev/null)
+  OFFLINE=0
+  [[ $(preset_value offline) == true ]] && OFFLINE=1
+  return 0
+}
+
+# ----------------------------------------------------------------- the stick
+
+lsblk_disks() {
+  lsblk -J -b -d -o NAME,PATH,SIZE,MODEL,SERIAL,TYPE,RM,RO,TRAN
+}
+
+# Disks this system runs from: the root, boot and home file systems and swap,
+# traced back through any LUKS or LVM layers to the disk underneath.
+system_disks() {
+  local src
+  {
+    findmnt -nro SOURCE / 2>/dev/null
+    findmnt -nro SOURCE /boot /efi /boot/efi /home 2>/dev/null || true
+    swapon --noheadings --show=NAME 2>/dev/null || true
+  } | while IFS= read -r src; do
+    src=${src%%\[*}
+    [[ -b $src ]] || continue
+    lsblk -nrso PATH,TYPE -- "$src" 2>/dev/null | awk '$2 == "disk" { print $1 }'
+  done | sort -u
+}
+
+# One tab-separated line per disk that may become the stick: path, size in
+# bytes, model, serial, with "-" for an unknown field. Only removable and USB
+# disks, never one this system runs from; NOVA_USB_ALLOW_ANY=1 lifts the first
+# rule (an SD card in an internal reader, say), never the second.
+stick_candidates() {
+  local sys
+  sys=$(system_disks | jq -Rsc 'split("\n") | map(select(. != ""))')
+  lsblk_disks | jq -r --argjson sys "$sys" --argjson min "$MIN_STICK_BYTES" --arg any "${NOVA_USB_ALLOW_ANY:-0}" '
+    def yes: . == true or . == "1" or . == 1;
+    def field: (. // "") | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end;
+    .blockdevices[]
+    | select(.type == "disk")
+    | select(.path as $p | $sys | index([$p]) | not)
+    | select(.ro | yes | not)
+    | select($any == "1" or (.rm | yes) or .tran == "usb")
+    | select((.name | test("^(loop|zram|sr|ram|fd|nbd)")) | not)
+    | select((.size | tonumber) >= $min)
+    | [.path, (.size | tostring), (.model | field), (.serial | field)]
+    | @tsv'
+}
+
+mounted_partitions() { # disk -> "partition mountpoint" per mounted one
+  lsblk -nrpo PATH,MOUNTPOINTS -- "$1" 2>/dev/null | awk 'NF > 1 { print $1, $2 }'
+}
+
+choose_stick() {
+  local sticks=() line i choice path size model serial part where
+  mapfile -t sticks < <(stick_candidates)
+  ((${#sticks[@]})) || die "no USB stick found. Plug one in (2 GB or bigger) and run nova usb again."
+  {
+    say "Which stick? Everything on it will be erased."
+    for i in "${!sticks[@]}"; do
+      IFS=$'\t' read -r path size model serial <<<"${sticks[i]}"
+      [[ $model != - ]] || model="unknown model"
+      [[ $serial != - ]] || serial=
+      printf '  %d) %-12s %8s  %s%s\n' "$((i + 1))" "$path" "$(human_size "$size")" "$model" "${serial:+  ($serial)}"
+      lsblk -nro NAME,FSTYPE,LABEL,SIZE -- "$path" | awk 'NR > 1 { printf "       %s %s %s %s\n", $1, $2, $3, $4 }'
+    done
+  } >&2
+  while :; do
+    choice=$(ask "Stick number" "$( ((${#sticks[@]} == 1)) && echo 1)")
+    if [[ $choice =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#sticks[@]})); then
+      line=${sticks[choice - 1]}
+      path=${line%%$'\t'*}
+      # A desktop may have mounted it on its own; that much can be undone.
+      while read -r part where; do
+        [[ -n $part ]] || continue
+        if yes_no "$part is mounted at $where. Unmount it?" y && udisksctl unmount -b "$part" >/dev/null 2>&1; then
+          continue
+        fi
+        die "$part is still mounted; unmount it and run nova usb again."
+      done < <(mounted_partitions "$path")
+      echo "$line"
+      return
+    fi
+    warn "Type one of the numbers above."
+  done
+}
+
+# ----------------------------------------------------------- the release
+
+# The newest published release: a final one, or a pre-release while there is
+# no final one yet.
+latest_release() {
+  curl -fsSL --max-time 30 "$RELEASES?per_page=20" |
+    jq -ce '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + map(select(.prerelease)))[0]'
+}
+
+asset_url() { # release-json name
+  jq -r --arg n "$2" '.assets[] | select(.name == $n) | .browser_download_url' <<<"$1" | awk 'NR == 1'
+}
+
+download() { # url file
+  [[ -s $2 ]] && return 0
+  curl -fL --retry 3 --progress-bar -C - -o "$2.part" "$1" && mv -f "$2.part" "$2"
+}
+
+# Downloads the release's ISO (checked against its .sha256), release.toml and
+# packages.txt into the cache; prints the ISO's path.
+fetch_release() {
+  local release tag version dir iso name url
+  release=$(latest_release) || die "could not reach the Nova releases ($RELEASES). Online? Or pass --iso <file>."
+  tag=$(jq -r .tag_name <<<"$release")
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "the newest release has an odd tag: $tag"
+  version=${tag#v}
+  dir=$CACHE/$tag
+  iso=nova-$version-x86_64.iso
+  mkdir -p "$dir"
+  say "Nova $version"
+  for name in release.toml packages.txt "$iso.sha256" "$iso"; do
+    url=$(asset_url "$release" "$name")
+    if [[ -z $url ]]; then
+      [[ $name == packages.txt ]] && continue
+      die "the $tag release has no $name"
+    fi
+    [[ $name != "$iso" ]] || info "Downloading the installer ($(human_size "$(jq -r --arg n "$iso" '.assets[] | select(.name == $n) | .size' <<<"$release")"))"
+    download "$url" "$dir/$name" || die "could not download $name"
+  done
+  (cd "$dir" && sha256sum --quiet -c "$iso.sha256") || {
+    rm -f -- "$dir/$iso"
+    die "the downloaded ISO does not match its checksum; it was deleted, run nova usb again."
+  }
+  echo "$dir/$iso"
+}
+
+release_value() { # release.toml key
+  sed -n "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\"[[:space:]]*\$/\\1/p" "$1" | awk 'NR == 1'
+}
+
+# The pacman.conf the stick's packages are fetched with: the release's own
+# Arch snapshot and [nova] repository. Signatures are checked at install time,
+# by the stick's keyring, which trusts Nova's key; this system's may not.
+offline_pacman_conf() { # release.toml
+  local arch_date nova_repo repo
+  arch_date=$(release_value "$1" arch_date)
+  nova_repo=$(release_value "$1" nova_repo)
+  [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "$1 has no valid arch_date"
+  [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "$1 has no valid nova_repo"
+  printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n\n[nova]\nServer = %s\n' "$nova_repo"
+  for repo in core extra multilib; do
+    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+    printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$repo" "$arch_date"
+  done
+}
+
+package_urls() { # pacman.conf dbpath package... -> url<TAB>bytes of each, dependencies included
+  local conf=$1 db=$2
+  shift 2
+  pacman --config "$conf" --dbpath "$db" --cachedir "$db/cache" --logfile /dev/null \
+    --noconfirm -Sp --print-format '%l	%s' "$@" 2>/dev/null
+}
+
+# offline.urls: every package an install on any computer can need (the
+# release's packages.txt) with all of their dependencies, as "url<TAB>bytes".
+# pacman resolves them against an empty database of its own, so nothing on
+# this system counts as already installed. The list holds alternatives that
+# conflict (two NVIDIA modules), which pacman refuses in one transaction; then
+# each is resolved on its own.
+list_offline_packages() { # release.toml packages.txt plan
+  local release=$1 packages=$2 plan=$3 db names=() name status=0
+  db=$(mktemp -d)
+  offline_pacman_conf "$release" >"$plan/offline.conf"
+  mkdir -p "$db/cache"
+  mapfile -t names < <(grep -v -e '^#' -e '^[[:space:]]*$' "$packages")
+  if fakeroot -- pacman --config "$plan/offline.conf" --dbpath "$db" --logfile /dev/null -Sy >/dev/null; then
+    if ! package_urls "$plan/offline.conf" "$db" "${names[@]}" >"$plan/offline.urls"; then
+      : >"$plan/offline.urls"
+      for name in "${names[@]}"; do
+        package_urls "$plan/offline.conf" "$db" "$name" >>"$plan/offline.urls" || { status=1 && break; }
+      done
+    fi
+    sort -u -o "$plan/offline.urls" "$plan/offline.urls"
+  else
+    status=1
+  fi
+  rm -rf -- "$db"
+  return "$status"
+}
+
+# ------------------------------------------------------------ the wizard
+
+# Toggles ITEMS until Enter; asks for the folders as their items are ticked.
+checklist() { # plan
+  local plan=$1 ids=() id i reply n bytes label mark
+  mapfile -t ids < <(catalog | cut -f1)
+  while :; do
+    say "What to bring (numbers tick and untick, Enter when done)"
+    for i in "${!ids[@]}"; do
+      id=${ids[i]}
+      mark=' '
+      [[ " ${ITEMS[*]} " == *" $id "* ]] && mark=x
+      label=$(item_field "$id" 2)
+      bytes=${SIZES[$id]:-}
+      if [[ $mark == x ]] && ! item_present "$id" "$plan"; then
+        bytes="nothing here"
+      elif [[ -n $bytes ]]; then
+        bytes=$(human_size "$bytes")
+      fi
+      printf '  [%s] %2d) %-62s %s\n' "$mark" "$((i + 1))" "$label" "$bytes" >&2
+    done
+    reply=$(ask "Numbers" "")
+    [[ -n $reply ]] || return 0
+    for n in ${reply//,/ }; do
+      if ! [[ $n =~ ^[0-9]+$ ]] || ((n < 1 || n > ${#ids[@]})); then
+        warn "No item $n."
+        continue
+      fi
+      id=${ids[n - 1]}
+      if [[ " ${ITEMS[*]} " == *" $id "* ]]; then
+        local kept=() x
+        for x in "${ITEMS[@]}"; do [[ $x == "$id" ]] || kept+=("$x"); done
+        ITEMS=("${kept[@]}")
+      else
+        ITEMS+=("$id")
+        case $id in
+          projects) ask_folders PROJECT_DIRS "Folders with your git repositories" Projects ;;
+          folders) ask_folders FOLDER_DIRS "Folders to bring whole" Documents ;;
+          packages)
+            list_packages "$plan"
+            info "$(wc -l <"$plan/packages.txt") packages from Arch, $(wc -l <"$plan/aur.txt") from the AUR (listed for you, not installed)."
+            if yes_no "Look over the list first?" n; then
+              "${EDITOR:-nano}" "$plan/packages.txt" </dev/tty >/dev/tty || true
+            fi
+            ;;
+        esac
+      fi
+      measure "$id" "$plan"
+    done
+  done
+}
+
+ask_folders() { # array-name prompt default
+  local -n dirs=$1
+  local reply dir rel defaults
+  defaults=$(printf '%s ' "${dirs[@]}")
+  [[ -n ${defaults// /} ]] || defaults=$3
+  reply=$(ask "$2, inside your home, separated by commas" "${defaults% }")
+  dirs=()
+  IFS=, read -ra reply <<<"$reply"
+  for dir in "${reply[@]}"; do
+    dir=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$dir")
+    [[ -n $dir ]] || continue
+    if rel=$(home_relative "$dir"); then dirs+=("$rel"); else warn "No folder $dir in your home, skipped."; fi
+  done
+}
+
+declare -A SIZES=()
+
+measure() { # id plan
+  case $1 in
+    projects) list_projects "$2" ;;
+    folders) list_folders "$2" ;;
+  esac
+  SIZES[$1]=$(item_bytes "$1" "$2")
+}
+
+# The items that are ticked and have something to carry.
+carried_items() { # plan
+  local id
+  for id in "${ITEMS[@]}"; do
+    item_present "$id" "$1" && echo "$id"
+  done
+  return 0
+}
+
+ask_passphrase() {
+  local first second
+  info "The things you bring are encrypted on the stick. The installer asks for this passphrase."
+  while :; do
+    read -rsp "  Passphrase: " first </dev/tty
+    echo >&2
+    read -rsp "  Again: " second </dev/tty
+    echo >&2
+    if ((${#first} < 8)); then
+      warn "At least 8 characters."
+    elif [[ $first != "$second" ]]; then
+      warn "Those did not match."
+    else
+      printf '%s' "$first"
+      return
+    fi
+  done
+}
+
+# The plan the writer reads: key=value lines, one value each, no shell in them.
+write_plan_env() { # plan key=value...
+  local plan=$1
+  shift
+  printf '%s\n' "$@" >"$plan/plan.env"
+}
+
+plan_value() { # plan key
+  sed -n "s/^$2=//p" "$1/plan.env" | awk 'NR == 1'
+}
+
+# The size of the installer partition: the ISO, the packages, and room to spare.
+installer_mib() { # iso-bytes package-bytes
+  echo $(((($1 + $2) * 105 / 100 + MiB - 1) / MiB + 128))
+}
+
+main() {
+  local iso='' preset=0 dry=0
+  while (($#)); do
+    case $1 in
+      write)
+        shift
+        write_stick "$@"
+        return
+        ;;
+      --preset) preset=1 ;;
+      --iso)
+        iso=${2:?--iso needs a file}
+        shift
+        ;;
+      --dry-run) dry=1 ;;
+      -h | --help)
+        sed -n '/^# nova-usb:/,/^$/s/^# \{0,1\}//p' "$0"
+        return 0
+        ;;
+      *) die "unknown argument: $1 (try --help)" ;;
+    esac
+    shift
+  done
+  ((EUID != 0)) || die "run nova usb as yourself: it asks sudo for the writing, and reads your home as you."
+  local tool
+  for tool in lsblk jq curl sha256sum du git; do
+    command -v "$tool" >/dev/null || die "nova usb needs $tool"
+  done
+
+  local plan release_dir
+  plan=$(mktemp -d /tmp/nova-usb.XXXXXX)
+  trap 'rm -rf -- "$plan"' EXIT
+
+  if [[ -n $iso ]]; then
+    iso=$(realpath -e -- "$iso") || die "no ISO at $iso"
+    say "Nova installer: ${iso##*/}"
+  else
+    iso=$(fetch_release)
+  fi
+  release_dir=$(dirname "$iso")
+
+  local stick_line stick stick_size stick_model stick_serial
+  stick_line=$(choose_stick)
+  IFS=$'\t' read -r stick stick_size stick_model stick_serial <<<"$stick_line"
+
+  ITEMS=() PROJECT_DIRS=() FOLDER_DIRS=() OFFLINE=0
+  local mode=custom
+  if ((preset)); then
+    read_preset || die "no saved choices at $PRESET yet; run nova usb without --preset once."
+    mode=preset
+  else
+    say "What goes on the stick?"
+    info "1) Clean: only the installer"
+    info "2) Custom: the installer, and things of yours"
+    [[ -r $PRESET ]] && info "3) Last time: the same as before ($PRESET)"
+    while :; do
+      case $(ask "Choice" 2) in
+        1) mode=clean && break ;;
+        2) mode=custom && break ;;
+        3) [[ -r $PRESET ]] && read_preset && mode=preset && break ;;
+      esac
+      warn "Type one of the numbers above."
+    done
+  fi
+
+  if [[ $mode == custom ]]; then
+    ITEMS=("${DEFAULT_ITEMS[@]}")
+    info "Measuring what is here..."
+    local id
+    for id in "${ITEMS[@]}"; do measure "$id" "$plan"; done
+    checklist "$plan"
+  elif [[ $mode == preset ]]; then
+    [[ " ${ITEMS[*]} " != *" packages "* ]] || list_packages "$plan"
+    list_projects "$plan"
+    list_folders "$plan"
+  fi
+
+  # Packages on the stick: possible when the release says what they are.
+  if [[ -r $release_dir/release.toml && -r $release_dir/packages.txt ]] && command -v pacman >/dev/null &&
+    command -v fakeroot >/dev/null; then
+    if [[ $mode == custom || $mode == clean ]]; then
+      OFFLINE=0
+      yes_no "Put every package on the stick too, so it installs without internet?" y && OFFLINE=1
+    fi
+  elif ((OFFLINE)); then
+    warn "No release.toml and packages.txt next to the ISO: the stick will install over the network."
+    OFFLINE=0
+  fi
+  local offline_bytes=0
+  if ((OFFLINE)); then
+    info "Working out the packages..."
+    list_offline_packages "$release_dir/release.toml" "$release_dir/packages.txt" "$plan" ||
+      die "could not list the release's packages (is the network up?)"
+    offline_bytes=$(awk -F'\t' '{ s += $2 } END { print s + 0 }' "$plan/offline.urls")
+    info "$(wc -l <"$plan/offline.urls") packages, $(human_size "$offline_bytes")"
+  fi
+
+  local carried=() id carry_bytes=0
+  mapfile -t carried < <(carried_items "$plan")
+  for id in "${carried[@]}"; do
+    [[ -n ${SIZES[$id]:-} ]] || SIZES[$id]=$(item_bytes "$id" "$plan")
+    carry_bytes=$((carry_bytes + SIZES[$id]))
+  done
+
+  local iso_bytes p1_mib need
+  iso_bytes=$(stat -c %s -- "$iso")
+  p1_mib=$(installer_mib "$iso_bytes" "$offline_bytes")
+  need=$((p1_mib * MiB))
+  ((${#carried[@]} == 0)) || need=$((need + carry_bytes + DATA_OVERHEAD))
+  ((need <= stick_size)) || die "that is $(human_size "$need") and the stick holds $(human_size "$stick_size"). Use a bigger stick, or bring less."
+
+  # What the writer will run, checked now rather than halfway through.
+  local tools=(sudo sfdisk wipefs mkfs.fat tar zstd diff)
+  ((${#carried[@]} == 0)) || tools+=(cryptsetup mkfs.btrfs)
+  ((!OFFLINE)) || tools+=(repo-add)
+  for tool in "${tools[@]}"; do
+    command -v "$tool" >/dev/null || die "writing this stick needs $tool, which is not installed."
+  done
+
+  local passphrase=''
+  ((${#carried[@]} == 0)) || passphrase=$(ask_passphrase)
+  [[ $mode == clean ]] || write_preset "${ITEMS[*]}" "$OFFLINE"
+
+  say "Ready to write"
+  info "Stick        $stick, $(human_size "$stick_size")${stick_model:+ ($stick_model)}: ERASED"
+  info "Partition 1  the installer, ${iso##*/}$( ((OFFLINE)) && echo ", and $(human_size "$offline_bytes") of packages")"
+  if ((${#carried[@]})); then
+    info "Partition 2  the rest, encrypted:"
+    for id in "${carried[@]}"; do info "               $(item_field "$id" 2), $(human_size "${SIZES[$id]}")"; done
+    if [[ " ${carried[*]} " == *" chrome "* ]] && pgrep -x chrome >/dev/null 2>&1; then
+      warn "Chrome is open; quit it before going on, or its profile is copied mid-write."
+    fi
+  fi
+
+  write_plan_env "$plan" "device=$stick" "size=$stick_size" "serial=$stick_serial" "iso=$iso" \
+    "user=$(id -un)" "home=$USB_HOME" "items=${carried[*]}" "offline=$OFFLINE" "installer_mib=$p1_mib"
+  if ((dry)); then
+    say "Dry run: nothing was written. The plan:"
+    sed 's/^/  /' "$plan/plan.env" >&2
+    return 0
+  fi
+  [[ $(ask "Type ${stick##*/} to erase it and write Nova" "") == "${stick##*/}" ]] || die "nothing was written."
+
+  local self
+  self=$(realpath -e -- "${BASH_SOURCE[0]}")
+  printf '%s' "$passphrase" | sudo -- "$BASH" "$self" write "$plan" ||
+    die "the stick was not finished; it is not safe to install from."
+  say "The stick is ready."
+  info "Boot the computer from it (F12 on a ThinkPad, F12 or F9 on a Legion) and follow the installer."
+  ((${#carried[@]} == 0)) || info "It asks for the passphrase you just chose; without it, your things stay locked."
+}
+
+# ------------------------------------------------------------ the writer
+#
+# Everything below runs as root, through `sudo nova-usb write <plan>`, with the
+# passphrase on stdin. It trusts nothing the wizard said about the disk: it
+# checks it again, and stops on anything unexpected.
+
+WORK=''
+
+writer_cleanup() {
+  [[ -n $WORK ]] || return 0
+  local m
+  for m in "$WORK/data" "$WORK/stick" "$WORK/iso"; do
+    mountpoint -q "$m" 2>/dev/null && umount "$m" 2>/dev/null
+  done
+  [[ -e /dev/mapper/$MAPPER ]] && cryptsetup close "$MAPPER" 2>/dev/null
+  # Never into a file system that failed to unmount: that would be the stick.
+  rm -rf --one-file-system -- "$WORK"
+  return 0
+}
+
+# lsblk -J of one disk, on stdin: is it a whole removable or USB disk of this
+# size and serial? NOVA_USB_ALLOW_ANY=1 also lets through a fixed disk, or a
+# loop device (an image file, which is how CI writes a stick).
+stick_matches() { # size serial
+  jq -e --argjson size "$1" --arg serial "$2" --arg any "${NOVA_USB_ALLOW_ANY:-0}" '
+    def yes: . == true or . == "1" or . == 1;
+    .blockdevices[0]
+    | (.type == "disk" or ($any == "1" and .type == "loop")) and (.size | tonumber) == $size
+      and ((.serial // "-" | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end) == $serial)
+      and ($any == "1" or (.rm | yes) or .tran == "usb")' >/dev/null
+}
+
+# The device is still the stick that was picked: same size and serial, a whole
+# removable or USB disk, nothing of it mounted, and not one this system runs on.
+check_stick() { # device size serial
+  local device=$1 size=$2 serial=$3
+  [[ -b $device ]] || die "$device is gone."
+  lsblk -J -b -d -o PATH,SIZE,SERIAL,TYPE,RM,TRAN -- "$device" | stick_matches "$size" "$serial" ||
+    die "$device is not the stick that was picked (size, serial or kind differ). Nothing was written."
+  ! system_disks | grep -qx -- "$device" || die "$device holds this running system. Nothing was written."
+  [[ -z $(mounted_partitions "$device") ]] || die "$device has mounted partitions. Nothing was written."
+  ! lsblk -nro TYPE -- "$device" | grep -Eq '^(crypt|lvm|raid[0-9]*|md|dm)$' ||
+    die "$device is in use (an open encrypted or LVM volume on it). Nothing was written."
+  [[ ! -e /dev/mapper/$MAPPER ]] || die "an earlier nova usb left /dev/mapper/$MAPPER open; close it with: sudo cryptsetup close $MAPPER"
+}
+
+wait_for() { # device
+  local i
+  for ((i = 0; i < 50; i++)); do
+    [[ -b $1 ]] && return 0
+    udevadm settle 2>/dev/null || sleep 0.1
+  done
+  [[ -b $1 ]]
+}
+
+# The packages, straight onto the stick, each with its signature. FAT cannot
+# name a file with a colon (an epoch: ffmpeg-2:7.1-1), so those are saved with
+# an underscore; pacman fetches by the name in the database, which repo-add
+# takes from the file.
+download_packages() { # urls dir
+  local urls=$1 dir=$2 url name config
+  config=$(mktemp)
+  while IFS=$'\t' read -r url _; do
+    [[ -n $url ]] || continue
+    name=${url##*/}
+    name=$(printf '%b' "${name//%/\\x}")
+    name=${name//:/_}
+    printf 'url = "%s"\noutput = "%s/%s"\nurl = "%s.sig"\noutput = "%s/%s.sig"\n' "$url" "$dir" "$name" "$url" "$dir" "$name"
+  done <"$urls" >"$config"
+  curl --parallel --parallel-max 6 --fail --location --retry 3 --show-error --config "$config" || {
+    rm -f -- "$config"
+    return 1
+  }
+  rm -f -- "$config"
+}
+
+# repo-add writes a symlink FAT cannot hold, so the database is made aside and
+# copied under both names pacman looks for.
+make_offline_repo() { # dir
+  local dir=$1 tmp
+  tmp=$(mktemp -d)
+  repo-add -q "$tmp/nova-offline.db.tar.gz" "$dir"/*.pkg.tar.zst >/dev/null || { rm -rf -- "$tmp"; return 1; }
+  cp -- "$tmp/nova-offline.db.tar.gz" "$dir/nova-offline.db"
+  cp -- "$tmp/nova-offline.db.tar.gz" "$dir/nova-offline.db.tar.gz"
+  rm -rf -- "$tmp"
+}
+
+# One item as a zstd-compressed tar, as root, so the system items can be read
+# and the files keep their modes. A file changed while it was read (an open
+# Chrome, say) is a warning; a file that cannot be read at all, which is how
+# btrfs reports a checksum error, stops everything.
+make_archive() { # id plan home out
+  local id=$1 plan=$2 home=$3 out=$4 kind path pattern transform args=() err status
+  kind=$(item_field "$id" 3)
+  args=(--create --file=- --null --verbatim-files-from)
+  case $kind in
+    home | system)
+      while IFS= read -r pattern; do args+=("--exclude=$pattern"); done < <(item_excludes "$id")
+      transform=$(item_transform "$id")
+      [[ -z $transform ]] || args+=("--transform=$transform")
+      if [[ $kind == home ]]; then args+=(-C "$home"); else args+=(-C "$SYSROOT/"); fi
+      local present=()
+      while IFS= read -r path; do
+        if [[ $kind == system ]]; then
+          [[ -e $SYSROOT$path ]] && present+=("${path#/}")
+        else
+          [[ -e $home/$path || -L $home/$path ]] && present+=("$path")
+        fi
+      done < <(item_paths "$id")
+      ((${#present[@]})) || return 2
+      args+=(-- "${present[@]}")
+      ;;
+    projects) args+=(-C "$home" --no-recursion -T "$plan/projects.files" --recursion -T "$plan/projects.gitdirs") ;;
+    folders) args+=(-C "$home" -T "$plan/folders.list") ;;
+    list) args+=(-C "$plan" -- packages.txt aur.txt) ;;
+    *) return 1 ;;
+  esac
+  err=$(mktemp)
+  set +e
+  tar "${args[@]}" 2>"$err" | zstd -q -f -T0 -3 -o "$out"
+  status=("${PIPESTATUS[@]}")
+  set -e
+  if ((status[0] > 1 || status[1] != 0)); then
+    sed 's/^/    /' "$err" >&2
+    rm -f -- "$err"
+    return 1
+  fi
+  ((status[0] == 0)) || warn "Some files changed while they were copied; their newest version may be missing."
+  rm -f -- "$err"
+}
+
+# A hash of this computer's identity, so the installer puts back Bluetooth
+# pairings and fingerprints only on the computer they belong to.
+machine_hash() {
+  local id
+  id=$(cat "$DMI/product_uuid" "$DMI/product_serial" 2>/dev/null) || true
+  [[ -n $id ]] || return 0
+  printf '%s' "$id" | sha256sum | awk '{ print $1 }'
+}
+
+write_stick() { # plan, with the passphrase on stdin
+  local plan=${1:?the writer needs a plan}
+  ((EUID == 0)) || die "the writer runs as root (sudo nova-usb write <plan>)"
+  [[ -r $plan/plan.env ]] || die "no plan at $plan"
+  local device size serial iso user home items offline installer_mib passphrase=''
+  device=$(plan_value "$plan" device)
+  size=$(plan_value "$plan" size)
+  serial=$(plan_value "$plan" serial)
+  iso=$(plan_value "$plan" iso)
+  user=$(plan_value "$plan" user)
+  home=$(plan_value "$plan" home)
+  items=$(plan_value "$plan" items)
+  offline=$(plan_value "$plan" offline)
+  installer_mib=$(plan_value "$plan" installer_mib)
+  IFS= read -r -d '' passphrase || true
+  [[ $device == /dev/* && $size =~ ^[0-9]+$ && $installer_mib =~ ^[0-9]+$ && -r $iso ]] || die "the plan is incomplete"
+  [[ -z $items || -n $passphrase ]] || die "things to carry, and no passphrase to lock them with"
+  local id
+  for id in $items; do valid_item "$id" || die "the plan names an unknown item: $id"; done
+  check_stick "$device" "$size" "$serial"
+
+  WORK=$(mktemp -d /tmp/nova-usb-write.XXXXXX)
+  trap writer_cleanup EXIT
+  mkdir -p "$WORK/iso" "$WORK/stick" "$WORK/data"
+
+  say "Partitioning $device"
+  wipefs -aq "$device"
+  {
+    echo 'label: gpt'
+    echo "size=${installer_mib}MiB, type=uefi, name=\"NOVA\""
+    [[ -z $items ]] || echo 'type=linux, name="NOVA-DATA"'
+  } | sfdisk -q --wipe always --wipe-partitions always "$device" >/dev/null
+  partprobe "$device" 2>/dev/null || true
+  local p1 p2
+  p1=$(partition_path "$device" 1)
+  p2=$(partition_path "$device" 2)
+  wait_for "$p1" || die "the new partition $p1 did not appear"
+  mkfs.fat -F 32 -n NOVA "$p1" >/dev/null
+
+  say "Copying the installer"
+  mount -o loop,ro -- "$iso" "$WORK/iso"
+  mount -- "$p1" "$WORK/stick"
+  cp -r -- "$WORK/iso/." "$WORK/stick/"
+  if [[ $offline == 1 ]]; then
+    say "Downloading the packages onto the stick"
+    mkdir -p "$WORK/stick/nova/repo"
+    download_packages "$plan/offline.urls" "$WORK/stick/nova/repo" || die "a package did not download"
+    make_offline_repo "$WORK/stick/nova/repo" || die "could not index the packages"
+  fi
+  umount "$WORK/stick"
+
+  if [[ -n $items ]]; then
+    say "Encrypting the second partition"
+    wait_for "$p2" || die "the new partition $p2 did not appear"
+    printf '%s' "$passphrase" | cryptsetup luksFormat --type luks2 --batch-mode --label NOVA-DATA --key-file - "$p2"
+    printf '%s' "$passphrase" | cryptsetup open --key-file - "$p2" "$MAPPER"
+    mkfs.btrfs -q -f -L nova-data "/dev/mapper/$MAPPER"
+    mount "/dev/mapper/$MAPPER" "$WORK/data"
+    mkdir -p "$WORK/data/carry"
+    local entries=() file label status
+    for id in $items; do
+      label=$(item_field "$id" 2)
+      info "$label"
+      file=$id.tar.zst
+      set +e
+      make_archive "$id" "$plan" "$home" "$WORK/data/carry/$file"
+      status=$?
+      set -e
+      case $status in
+        0) ;;
+        2)
+          rm -f -- "$WORK/data/carry/$file"
+          continue
+          ;;
+        *) die "could not copy $label; the stick is not finished." ;;
+      esac
+      entries+=("$(jq -nc --arg id "$id" --arg kind "$(item_field "$id" 3)" --arg file "$file" --arg label "$label" \
+        --argjson bytes "$(stat -c %s -- "$WORK/data/carry/$file")" '{id: $id, kind: $kind, label: $label, file: $file, bytes: $bytes}')")
+    done
+    ((${#entries[@]})) || die "none of the chosen things were found; nothing to carry."
+    (cd "$WORK/data/carry" && sha256sum -- *.tar.zst >SHA256SUMS)
+    printf '%s\n' "${entries[@]}" | jq -s --arg user "$user" --arg home "$home" --arg machine "$(machine_hash)" \
+      --arg name "$(getent passwd "$user" | cut -d: -f5 | cut -d, -f1)" \
+      --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg host "$(cat /proc/sys/kernel/hostname 2>/dev/null)" \
+      '{version: 1, created: $created, source: {user: $user, name: $name, home: $home, host: $host, machine: $machine}, items: .}' \
+      >"$WORK/data/carry/manifest.json"
+    umount "$WORK/data"
+    cryptsetup close "$MAPPER"
+  fi
+  sync
+
+  # Read back what was written. Unmounting dropped it from the page cache, so
+  # this reads the stick itself.
+  say "Checking the stick"
+  mount -o ro -- "$p1" "$WORK/stick"
+  diff -r --exclude=repo -- "$WORK/iso" "$WORK/stick" >/dev/null || die "the installer on the stick does not match the ISO; the stick may be failing."
+  umount "$WORK/stick"
+  if [[ -n $items ]]; then
+    printf '%s' "$passphrase" | cryptsetup open --readonly --key-file - "$p2" "$MAPPER"
+    mount -o ro "/dev/mapper/$MAPPER" "$WORK/data"
+    (cd "$WORK/data/carry" && sha256sum --quiet -c SHA256SUMS) || die "what was carried does not read back the same; the stick may be failing."
+    umount "$WORK/data"
+    cryptsetup close "$MAPPER"
+  fi
+  umount "$WORK/iso"
+  sync
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

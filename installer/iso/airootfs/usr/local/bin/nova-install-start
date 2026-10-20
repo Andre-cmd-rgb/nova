@@ -69,6 +69,10 @@ get_online() {
 clear
 printf '\n  \e[1mNova\e[0m installer\n\n'
 
+# Things carried on the stick (nova usb) are opened first: their Wi-Fi
+# networks can get this system online without a question.
+nova-install --unlock
+
 if ! get_online; then
   echo
   if offline_repo; then

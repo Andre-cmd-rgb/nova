@@ -193,5 +193,5 @@ jobs:
           prerelease=()
           [[ $version != *-* ]] || prerelease=(--prerelease)
           gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft "${prerelease[@]}" \
-            --title "Nova $version" --notes "Nova $version. Install: write the ISO to a USB stick and boot it." \
+            --title "Nova $version" --notes "Nova $version. Install: make a stick with nova-usb (bash nova-usb, on any Arch-based system), or write the ISO to one, and boot it." \
             out/release-toml/release.toml out/repo/* out/iso/*
