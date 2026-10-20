@@ -50,6 +50,7 @@ which Arch packaging commit it follows:
    same patch and a new series needs the matching one, pinned to a commit.
 3. Update `b2sums` (`updpkgsums`) and build. `nova-config.sh check` fails the
    build if a delta did not survive.
+
 A changed `packaging/linux-nova` means the next release rebuilds the kernel
 instead of reusing the cached one.
 

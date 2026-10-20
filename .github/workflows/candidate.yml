@@ -32,6 +32,13 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
+      # Before a tag exists: without the key every release fails at signing.
+      - name: The signing key is set up
+        env:
+          NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
+        run: |
+          [[ -n $NOVA_REPO_KEY && -f packaging/nova-keyring/nova.gpg ]] ||
+            { echo "::error::no signing key yet: see docs/releasing.md, The signing key"; exit 1; }
       - id: tag
         name: Tag the next candidate
         run: |

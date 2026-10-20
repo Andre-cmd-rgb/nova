@@ -227,67 +227,6 @@ chk "boot rejects garbage"  "$(boot_timing; echo "rc=$?")" "rc=1"
 efivar LoaderTimeExecUSec 900
 chk "boot rejects backwards" "$(boot_timing; echo "rc=$?")" "rc=1"
 
-# The menu override is an awk program editing a JSONC file the compositor
-# parses at startup. A malformed one costs the menu, so it runs against a copy
-# of the real file and the result is parsed.
-MENU=$T/menu.jsonc
-cat >"$MENU" <<'JSONC'
-{
-  // A comment, which JSONC allows and JSON does not.
-  "screentime": {"icon":"X","label":"Screen Time","action":"true"},
-  "trigger.hardware.hybrid-gpu": {"label":"Discrete GPU","when":"true","action":"true"},
-}
-JSONC
-menu_add() {
-  local tmp; tmp=$(mktemp)
-  awk '
-    /^\}/ && !done {
-      print "  \"system.suspend\": {\"icon\":\"S\",\"label\":\"Suspend\",\"action\":\"systemctl suspend-then-hibernate\"},"
-      done = 1
-    }
-    { print }
-  ' "$MENU" >"$tmp" && cat "$tmp" >"$MENU"
-  rm -f "$tmp"
-}
-menu_add
-chk "menu entry added"        "$(grep -c 'system.suspend' "$MENU")" "1"
-chk "entry is before the brace" \
-  "$(( $(grep -n '"system.suspend"' "$MENU" | cut -d: -f1) < $(grep -n '^}' "$MENU" | cut -d: -f1) ))" "1"
-chk "existing entries kept"   "$(grep -c 'hybrid-gpu' "$MENU")" "1"
-chk "result still parses" "$(python3 -c '
-import re,json,sys
-s=open(sys.argv[1]).read()
-s=re.sub(r"^\s*//.*$","",s,flags=re.M); s=re.sub(r",(\s*[}\]])",r"\1",s)
-d=json.loads(s); print(d["system.suspend"]["action"])
-' "$MENU" 2>&1)" "systemctl suspend-then-hibernate"
-
-# Removing it must leave a file that still parses, or --uninstall breaks the menu.
-sed -i '/"system.suspend"/d' "$MENU"
-chk "removal still parses" "$(python3 -c '
-import re,json,sys
-s=open(sys.argv[1]).read()
-s=re.sub(r"^\s*//.*$","",s,flags=re.M); s=re.sub(r",(\s*[}\]])",r"\1",s)
-print(len(json.loads(s)))
-' "$MENU" 2>&1)" "2"
-
-# --hibernate-after parsing: a bad value must be refused, and a good one must
-# convert to hours for the cost figure printed into the config.
-hib_hours() {
-  awk -v d="$1" 'BEGIN{
-    n = d + 0
-    if (d ~ /h$/)   print n
-    else if (d ~ /(min|m)$/) printf "%.4f", n / 60
-    else            printf "%.5f", n / 3600
-  }'
-}
-chk "delay 2h -> hours"    "$(hib_hours 2h)"    "2"
-chk "delay 90min -> hours" "$(hib_hours 90min)" "1.5000"
-chk "delay 30m -> hours"   "$(hib_hours 30m)"   "0.5000"
-for bad in banana 2hours '' -1h; do
-  ok_re=$([[ $bad =~ ^[0-9]+(h|min|m|s)$ ]] && echo yes || echo no)
-  chk "delay '$bad' rejected" "$ok_re" "no"
-done
-
 # ---------------------------------------------------------------- the GPU half
 #
 # This is the part that used to decline 96 times a fortnight with a message

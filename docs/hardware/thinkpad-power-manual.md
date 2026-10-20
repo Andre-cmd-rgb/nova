@@ -1,19 +1,10 @@
 # thinkpad-power: the manual
 
-> Written before Nova, when this ran as an add-on on Omarchy. The install steps,
-> `install.sh` flags and Omarchy paths below are history: in Nova it is part of
-> the `nova` package, wired as described at the top of
-> [thinkpad-p1-gen4i.md](thinkpad-p1-gen4i.md). Usage, tunables, the governor
-> and the measurements still hold.
-
-AC/battery power management for a hybrid-graphics Omarchy laptop. One command
-sets it up; unplugging then takes the discrete GPU off the PCI bus and drops to
-`power-saver`, and plugging in brings it back and goes to `performance`.
-
-```bash
-./install.sh              # set it up
-./install.sh --uninstall  # put everything back
-```
+The P1 Gen 4i's power policy. On battery it takes the discrete GPU off the PCI
+bus and goes to `power-saver`; plugged in, it brings the card back and goes to
+`performance`. It began as an add-on for Omarchy and is now part of the `nova`
+package, inert on any other computer; the top of
+[thinkpad-p1-gen4i.md](thinkpad-p1-gen4i.md) lists where each piece installs.
 
 ## The problem it solves
 
@@ -23,8 +14,8 @@ RTX A2000 idles at about **6 W** — a large share of the total draw, and of the
 runtime, on a 74 Wh battery.
 
 Runtime power management cannot fix that on its own. NVIDIA's RTD3 is happy to
-park the card, but only while nothing holds it open, and on a stock Omarchy
-install three things do:
+park the card, but only while nothing holds it open, and on a stock install
+these do:
 
 - **Hyprland** enumerates every DRM device and opens the discrete one.
 - **GLVND** loads every EGL vendor it finds, so `libEGL_nvidia` ends up inside
@@ -33,9 +24,10 @@ install three things do:
 - **The Vulkan loader** loads every ICD it finds, so any GTK4 app (GTK renders
   with Vulkan) opens `/dev/nvidia0`, `/dev/nvidiactl` and `/dev/nvidia-modeset`
   just by starting.
-- **Omarchy's `nvidia.lua`** sets `LIBVA_DRIVER_NAME=nvidia` and
-  `__GLX_VENDOR_LIBRARY_NAME=nvidia` whenever an NVIDIA is present, so ordinary
-  apps — a browser playing video, a GTK app — reach for the discrete card too.
+- **Common NVIDIA setups** (Omarchy's `nvidia.lua` among them) set
+  `LIBVA_DRIVER_NAME=nvidia` and `__GLX_VENDOR_LIBRARY_NAME=nvidia` whenever
+  an NVIDIA is present, so ordinary apps — a browser playing video, a GTK
+  app — reach for the discrete card too.
 - Anything already running that picked it up.
 
 So the card never sleeps. This tool stops the desktop reaching for it, and then
@@ -44,54 +36,16 @@ zero.
 
 `supergfxctl` is the usual answer and is a poor fit here: its `Integrated` mode
 wants a reboot each way, and on non-ASUS hardware (`hotplug_type: None`) the
-switch frequently does not stick. The installer stands it down.
+switch frequently does not stick. Nova does not install it.
 
-## What it changes
+## The boot
 
-| Where | What | Why |
-|---|---|---|
-| `/usr/local/bin/thinkpad-power` | the policy script | run by udev, boot, and resume |
-| `/usr/local/bin/thinkpad-power` | manual toggle | what the menu entry runs |
-| `/etc/thinkpad-power.conf` | the detected GPU address | so it can be found once removed |
-| `/etc/systemd/system/thinkpad-power.service` | oneshot | applies the policy |
-| `/etc/udev/rules.d/99-thinkpad-power.rules` | mains plug/unplug | triggers the above |
-| `/etc/udev/rules.d/98-thinkpad-power-igpu.rules` | `/dev/dri/igpu` symlink | a stable, colon-free name for the iGPU |
-| `~/.config/uwsm/env-hyprland` | `AQ_DRM_DEVICES=/dev/dri/igpu` | pins the compositor to the iGPU |
-| `~/.config/uwsm/env-hyprland` | `__EGL_VENDOR_LIBRARY_FILENAMES` | hides the NVIDIA EGL vendor from the session |
-| `~/.config/uwsm/env-hyprland` | `VK_LOADER_DRIVERS_DISABLE=*nvidia*` | hides the NVIDIA Vulkan ICD from the session |
-| `~/.config/hypr/hyprland.lua` | `LIBVA_DRIVER_NAME=iHD`, `__GLX_VENDOR_LIBRARY_NAME=mesa` | stops apps reaching for the dGPU |
-| `~/.config/hypr/hyprland.lua` | `render:direct_scanout = 1` | a fullscreen video skips the composite pass entirely |
-| `/etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf` | `wifi.powersave = 1` | hands the flag to the policy, which sets it per power source |
-| `/usr/local/bin/thinkpad-powerd` | the load-adaptive governor | CPU, iGPU and fans, continuously |
-| `/etc/systemd/system/thinkpad-powerd.service` | runs it | `Restart=always`, with an `ExecStopPost` that puts everything back |
-| `/etc/modprobe.d/thinkpad-power-fan.conf` | `thinkpad_acpi fan_control=1` | manual fan levels are refused without it |
-| `~/.config/omarchy/extensions/omarchy-menu.jsonc` | overrides the GPU menu entry | live toggle instead of a reboot |
-| `/etc/systemd/system/thinkpad-power-gpu.{service,timer}` | retry every 2 min | a plug event is one edge that never repeats |
-| `/run/modprobe.d/thinkpad-power-nvidia.conf` | blocks the nvidia modules | while the card is off the bus, only then |
-| supergfxd | disabled, package removed | it fights this and cannot switch reliably here |
-| `/etc/mkinitcpio.conf.d/nvidia.conf` | **`--boot-path` only.** emptied, original kept alongside | the driver dragged 109 MB of GSP firmware into every initramfs |
-| `systemd-tpm2-setup{,-early}` | **`--boot-path` only.** masked, and only with no LUKS and no pcrlock | 4.1 s per boot provisioning a key nothing reads |
-| `/etc/systemd/sleep.conf.d/10-thinkpad-power.conf` | **`--hibernate` only.** `HibernateDelaySec`, `HibernateOnACPower=no` | S3 to RAM, then to disk, then no power |
-| `/etc/systemd/logind.conf.d/10-thinkpad-power-lid.conf` | **`--hibernate` only.** lid and suspend key | the sleep nobody chooses explicitly |
-| `/usr/lib/systemd/system-sleep/thinkpad-power-resume` | **`--hibernate` only.** rescans the bus after a hibernate | firmware re-enumerates the card; the restored image does not know |
-
-It refuses to install if the connected panel is driven by the NVIDIA card,
-because powering that off would black out the screen.
-
-The last two are **opt-in**, and off unless you ask for them:
-
-```
-./install.sh --boot-path
-```
-
-Everything else in the table is reversible from a running session. These two
-are not — they change what boots, which is a different kind of risk from a
-power tunable, so they are opt-in for the same reason `ASPM_ON_BAT` is. They
-take effect at the next boot, and the installer rebuilds the initramfs for you.
-`--uninstall` puts both back and rebuilds again, whether or not the run that
-removes them passed the flag.
-
-The boot they were measured against, at 32 s from the power button:
+Two things this tool once offered as opt-ins are simply how Nova boots: no
+NVIDIA firmware in the initramfs (the driver dragged 109 MB of GSP firmware
+into every image, and the loader reads the whole UKI off vfat), and no TPM key
+provisioning (4.1 s of every boot for a key nothing reads, on a disk Nova does
+not encrypt). The boot they were measured against, at 32 s from the power
+button:
 
 | stage | before | |
 |---|---|---|
@@ -100,34 +54,10 @@ The boot they were measured against, at 32 s from the power button:
 | kernel + initramfs | ~5.7 s | |
 | userspace to `graphical.target` | 6.02 s | 4.1 s of it TPM provisioning |
 
-Boot *colours* are deliberately not here, and Nova has none to set: Limine is
-quiet and there is no Plymouth.
-
-Masking the TPM units takes a known 4.1 s off the userspace figure. What
-emptying the initramfs is worth is **not yet measured** — the reasoning is that
-the loader stage is dominated by reading a UKI carrying 109 MB of firmware it
-never uses, but that is an inference from size, and only the next boot settles
-it.
-
-`sudo thinkpad-power doctor` prints the first two figures after each boot, so
-the answer arrives on its own. They come from the loader's own
-`LoaderTime*USec` efivars rather than `systemd-analyze`, whose split is skewed
-here by a printk clock that starts at ~6.7 s.
-
-## Installing
-
-```
-./install.sh                           the GPU and power policy
-./install.sh --boot-path               also trim the initramfs and TPM units
-./install.sh --hibernate               lid sleeps to RAM, then hibernates
-./install.sh --hibernate-after=90min   the same, with a different delay
-./install.sh --uninstall               put everything back
-```
-
-The two opt-in flags combine, and re-running is idempotent. Both are opt-in for
-the same reason: everything in the base install is reversible from a running
-session, and those two are not — one changes what boots, the other changes what
-happens at power-on.
+`sudo thinkpad-power doctor` prints the first two figures after each boot. They
+come from the loader's own `LoaderTime*USec` efivars rather than
+`systemd-analyze`, whose split is skewed here by a printk clock that starts at
+~6.7 s.
 
 ## Using it
 
@@ -213,14 +143,10 @@ survive a long weekend.
 
 What a MacBook does is two things, not one: sleep to RAM, and then after a few
 hours write RAM to disk and cut power entirely. systemd calls that
-`suspend-then-hibernate`, and every prerequisite was already on this machine —
-Omarchy's `omarchy-hibernation-setup` had laid down the swapfile, `resume=` and
-`resume_offset` long ago. The only thing missing was anything asking for it.
-
-```
-./install.sh --hibernate                  RAM for 2 h, then disk
-./install.sh --hibernate-after=90min      a different delay
-```
+`suspend-then-hibernate`, and it is how Nova sleeps: the installer makes the
+swapfile and the `resume=` arguments, and the lid, the suspend key and the
+menu's Suspend all ask for it (`data/systemd/sleep.conf.d`, overridable in
+`/etc/systemd/sleep.conf.d/`).
 
 | | |
 |---|---|
@@ -228,12 +154,8 @@ Omarchy's `omarchy-hibernation-setup` had laid down the swapfile, `resume=` and
 | after that | hibernated: RTC only, days to weeks |
 | on AC | plain suspend; `HibernateOnACPower=no`, against systemd's default of yes |
 
-Opt-in, like `--boot-path`, and for a related reason: a hibernate that fails to
-resume drops you at a fresh boot with the session gone. `--uninstall` puts the
-lid back to plain suspend.
-
 **Resuming from hibernate is a full power cycle, so it costs a whole boot** —
-which is why the boot-path work comes first. It is also why the discrete card
+which is why the boot is kept short. It is also why the discrete card
 needs handling: firmware enumerates it again on the way up, but the restored
 image was taken with it off the bus, so the kernel has no record of it, never
 touches it, and it sits in D0 drawing what this tool exists to save. Nothing
@@ -294,12 +216,11 @@ Omarchy disables it for the whole distribution, and its reasons are good ones:
 drops the link outright when the radio naps. Neither applies on battery on the
 machine this was written for — the radio is an AX210, which is not one of the
 parts with that firmware bug, and a page load and a video stream both buffer
-through the latency. The installer writes
-`/etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf` with
+through the latency. The hardware profile installs
+`/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf` with
 `wifi.powersave = 1` ("ignore"), because NetworkManager otherwise rewrites the
 flag at every connection activation and a roam or a resume would quietly undo
-it. Set `WIFI_POWERSAVE_ON_BAT=off` to disagree; `--uninstall` removes the file
-and hands the flag back to Omarchy.
+it. Set `WIFI_POWERSAVE_ON_BAT=off` to disagree.
 
 The remaining knobs are **opt-in**, in `/etc/thinkpad-power.conf`:
 
@@ -419,7 +340,8 @@ any of them.
 
 Off by default in the sense that matters: `FAN_CONTROL` defaults on but is
 gated on `thinkpad_acpi` having been loaded with `fan_control=1`, which the
-installer writes to modprobe.d and which needs a reboot. Until then it is a
+hardware profile writes to modprobe.d (`nova-hw-thinkpad-fan.conf`) and which
+needs a reboot. Until then it is a
 no-op with one line of explanation.
 
 The battery curve is deliberately lazier than the EC's below 70 C, because a
@@ -469,7 +391,7 @@ things that are awake because you are using them.
 ### Browsing and video
 
 Two of the levers here are not in this tool at all, because they belong to the
-compositor. Both are in `~/.config/hypr/`.
+compositor. Both are in Nova's `default/hypr/hardware/thinkpad-p1-gen4i.lua`.
 
 **Direct scanout.** With it off — Hyprland's default — a fullscreen video is
 composited into a fresh full-resolution buffer and blitted to the panel every
@@ -557,7 +479,7 @@ Asleep, measured over a 63 minute suspend on the same machine:
 | a full 74.5 Wh battery at that rate | ~59 h |
 | hibernated | RTC only — days to weeks |
 
-Which is the whole argument for `--hibernate`: two hours of instant-wake S3
+Which is the whole argument for suspend-then-hibernate: two hours of instant-wake S3
 costs about 2.5 Wh, and everything after that costs nothing.
 
 ## Why a symlink, and why it matters
@@ -569,36 +491,20 @@ matches none of them against the cards udev enumerated, reports "Found no gpus
 to use", and the compositor exits before you have a session. Card numbering
 (`/dev/dri/cardN`) is not stable across boots either.
 
-So the installer adds the udev rule the Hyprland wiki recommends for this, giving
-a stable colon-free `/dev/dri/igpu`, checks that the symlink actually appeared
-before writing the pin, and the pin itself is guarded at every login:
-
-```sh
-if [ -e /dev/dri/igpu ] && grep -qx connected /sys/class/drm/$(basename $(readlink -f /dev/dri/igpu))-*/status; then
-  export AQ_DRM_DEVICES=/dev/dri/igpu
-fi
-```
-
-If the card is missing, or is not the one driving a connected screen, nothing
-is set and the session starts normally on both GPUs. The worst case is that the
-discrete card keeps being held open — never that you cannot log in.
-
-## After installing
-
-Log out and back in. The compositor reads its device list once at startup, so
-until then Hyprland still holds the card open and it cannot be removed.
-
-If a login ever fails to bring the screen back, switch to a TTY with
-`Ctrl+Alt+F2` and run `rm ~/.config/uwsm/env-hyprland`, which undoes the GPU
-pin, then log in again.
+So Nova ships the udev rule the Hyprland wiki recommends for this
+(`98-nova-igpu.rules`), giving a stable colon-free `/dev/dri/igpu`, and the
+session's environment (`20-nova-thinkpad-p1-gen4i` in uwsm's `env.d`) sets the
+pin only when that card really drives a connected panel. If it does not,
+nothing is set and the session starts normally on both GPUs. The worst case is
+that the discrete card keeps being held open, never that you cannot log in.
 
 ## Tests
 
 ```bash
-./test/roundtrip.sh
+src/power/test/roundtrip.sh
 ```
 
-65 checks, no root and no sysfs: it extracts the library half of the script,
+No root and no sysfs: it extracts the library half of the script,
 points the tunables at temporary files and drives each battery -> AC round trip,
 checking that the firmware's value is saved and restored and that a nonsense
 wattage is refused rather than written to a register that governs package power.
@@ -613,12 +519,6 @@ silently wrong:
   `doctor` once printed a label and no number for two commits because the only
   run during development hit the root guard, so anything with `awk` in it is
   driven against real input here.
-- **The Omarchy menu override**, an `awk` program editing a JSONC file the
-  compositor parses at startup. The result is parsed after both adding and
-  removing the entry, because a malformed one costs the menu.
-- **`--hibernate-after` parsing**, because a value that does not parse leaves a
-  machine that suspends and never hibernates, which looks exactly like the
-  feature silently not working.
 - **Wi-Fi power save**, against a stub `iw` that records its arguments. There
   is no file to inspect afterwards — the flag lives in the driver — and an
   inverted on/off mapping would look exactly like a working one.
@@ -638,7 +538,7 @@ from registers the test was about to assert on. A test that reads host state is
 not a test.
 
 ```bash
-./test/watts.sh [seconds]
+src/power/test/watts.sh [seconds]
 ```
 
 Not a test: the measuring stick the numbers above come from. It needs a
@@ -647,7 +547,3 @@ differenced over the window, which is the honest one, and the mean of
 `power_now`, which settles faster but is the firmware's estimate. Hold
 everything else still between two runs; the panel backlight alone outweighs
 every tunable in this repository.
-
-## License
-
-MIT — see [LICENSE](LICENSE).

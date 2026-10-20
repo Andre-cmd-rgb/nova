@@ -57,7 +57,8 @@ exactly that, so pacman owns every file.
   `nova` package and the shell loads no other (`plugins/index.json`, written at
   build time by `tools/plugin-index`, lists them). Layer-shell namespaces are
   `nova-<name>`. PAM services are `nova-lock-password`, `nova-lock-fingerprint` and
-  `nova-greeter`. User units are `nova-*.service`.
+  `nova-greeter`. User units are `nova-*.service`. polkit actions are
+  `org.nova.*`.
 - **"omarchy" appears only in `NOTICE` and `docs/`.** CI fails on any `omarchy-`,
   `omarchy_`, `/omarchy`, `OMARCHY_PATH` or `qs.Omarchy` under `src/` and `data/`.
 
@@ -136,9 +137,15 @@ the shared folder also becomes the default for themes that have no pick of their
   start only on a P1 Gen 4i: each unit has a DMI `ConditionFirmware=`, and the udev
   rule and sleep hook check the model themselves. The facts behind every choice are
   in [hardware/thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md).
-- **A generic `nova-powerd`** with backends (`thinkpad`, `ideapad` for the Legion,
-  `generic`, plus an `nvidia-hybrid` add-on) is in progress on the `power-rewrite`
-  branch. It replaces thinkpad-power only once it matches it on the watt meter.
+- **When the discrete GPU is on** is the user's choice on a P1 Gen 4i:
+  Settings → Battery offers *On When Plugged In* or *Always Off* (`nova power
+  gpu mode`, which `thinkpad-power gpu-mode` applies at once; a polkit action
+  lets the active session set it without a password). Other machines leave an
+  idle NVIDIA card to the driver's runtime power management, and Settings
+  shows no choice.
+- **Other laptops** get power-profiles-daemon and the charge limit. A generic
+  power manager with per-platform backends replaces thinkpad-power only once it
+  matches it on the watt meter.
 - **Charge limits** are reported as a capability: `threshold` (numeric, ThinkPad),
   `toggle` (Legion `Long_Life`), or `none`. Every write is read back, and only a
   verified value counts as success.
@@ -172,8 +179,8 @@ the shared folder also becomes the default for themes that have no pick of their
 
 - **Fallback kernel:** Arch's `linux-lts` + `nvidia-open-lts` stay installed as the
   fallback boot entry.
-- **A release** (`v1.0.0-beta.1`, …) has three parts:
-  - the signed `[nova]` repository, attached to the GitHub release;
+- **A release** (`v1.0.0-beta.1`, …) is a GitHub release with:
+  - the signed `[nova]` repository;
   - the installer ISO (`installer/iso`, built by `tools/build-iso`), which
     installs over the network;
   - `release.toml`, which pins the Arch Linux Archive date the release was tested
@@ -199,11 +206,18 @@ the shared folder also becomes the default for themes that have no pick of their
   checks the device again before touching it; `tests/usb/stick-test` runs it
   against a loop device in CI.
 
-  [releasing.md](releasing.md) has the steps and the signing key;
+  [releasing.md](releasing.md) has the two-week cycle and the signing key;
   [packaging.md](packaging.md) has how each package is kept up to date.
+- **Every release is installed before it is published:** `tests/install/run`
+  makes a stick from the ISO as `nova usb` would, installs with no questions
+  (`nova-install --answers`) onto a blank disk in a KVM machine, boots the
+  result, and has a probe check the lock, Hyprland, the shell, greetd and
+  `nova doctor` from inside.
 - **Updating:** `nova update` moves a system to the newest release. It rewrites the
   pacman mirror to that date, runs `pacman -Syu` and updates the `[nova]` repository
-  URL, with a snapper snapshot before and after.
+  URL, with a snapper snapshot before and after. Pre-releases (the candidates)
+  reach only systems that opted in (`nova update --candidates on`) or are
+  already on one.
 - **Not redistributed:** Chrome and VS Code. They are built on the machine from their
   AUR recipes, which download from the vendors (`nova apps install`). They are outside
   the release, so `nova update` ends by rebuilding whichever is behind the AUR
@@ -237,5 +251,6 @@ the shared folder also becomes the default for themes that have no pick of their
     its windows over IPC and checks that it locks at startup, in CI only
   - `tests/usb/stick-test` writes and restores a real stick on a loop device,
     as root, in CI only
-  - QEMU end-to-end tests for install, boot and lock are not written yet
+  - `tests/install/run` installs a release in QEMU and boots it, in the
+    release workflow only
 - **Commits:** imperative subject, a body that explains *why*.

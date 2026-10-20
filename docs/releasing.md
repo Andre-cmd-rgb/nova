@@ -98,11 +98,15 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
       snapshot's driver version;
    4. signs them into the repository (`tools/repo-build`);
    5. builds the ISO (`tools/build-iso`);
-   6. publishes it all as a pre-release, which only testers are offered:
+   6. installs from it in a KVM virtual machine with no questions asked, boots
+      the result and checks it from inside (`tests/install/run`); the serial
+      logs are kept as the run's `install-logs`;
+   7. publishes it all as a pre-release, which only testers are offered:
       systems with Settings → Updates → Test Release Candidates on
       (`nova update --candidates on`), and those already on a candidate.
 
-   Actions → candidate → Run cuts one at any other time.
+   Actions → candidate → Run cuts one at any other time; the first one needs
+   the signing key (above) and takes a few hours more, for the kernel.
 2. **Test.** On a machine following pre-releases, `nova update`, then reboot;
    install the ISO on a spare disk or in QEMU (OVMF, tmpfs-backed disk); work
    through the hardware checklist for each supported laptop. A candidate that

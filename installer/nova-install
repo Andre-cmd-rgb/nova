@@ -20,7 +20,7 @@
 #                                 passphrase (for things carried), erase=yes to
 #                                 go ahead, and optionally apps=no and
 #                                 after=<script>, run in the new system at the
-#                                 end. tools/install-test uses it.
+#                                 end. tests/install/run uses it.
 #   nova-install --unlock         open the things carried on the stick (nova usb),
 #                                 and join their Wi-Fi networks
 #   nova-install --list-packages  every package an install on any computer can

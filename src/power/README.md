@@ -25,5 +25,6 @@ sudo thinkpad-power boost 60   lift the battery CPU caps for an hour
 | `bin/thinkpad-power` | the policy |
 | `daemon/` | the governor; std only, built by the workspace at the repository root |
 | `systemd/`, `udev/` | units, the sleep hook and the plug rule, each DMI-guarded |
+| `polkit/`, `bin/nova-power-gpu-mode-apply` | lets Settings choose the GPU mode without a password |
 | `test/roundtrip.sh` | the policy's library half against fixtures; part of `make test` |
 | `test/watts.sh` | the measuring stick: average draw on battery over N seconds |

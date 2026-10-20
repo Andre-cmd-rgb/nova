@@ -77,7 +77,10 @@ jobs:
   kernel:
     needs: pin
     runs-on: ubuntu-latest
-    container: archlinux:base-devel
+    container:
+      image: archlinux:base-devel
+      volumes:
+        - /mnt:/mnt # the runner's scratch disk: a kernel build tree outgrows the root disk
     # A full kernel build takes hours on a hosted runner, so a build is reused
     # until packaging/linux-nova changes.
     timeout-minutes: 350
@@ -94,7 +97,7 @@ jobs:
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
-          tools/build-package packaging/linux-nova out/kernel
+          NOVA_BUILD_ROOT=/mnt tools/build-package packaging/linux-nova out/kernel
       - uses: actions/upload-artifact@v4
         with:
           name: kernel

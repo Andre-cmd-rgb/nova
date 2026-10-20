@@ -850,208 +850,71 @@ driver is exactly what cannot be unloaded.
 
 ## Working here
 
-- **CLI conventions.** Messages carry no `thinkpad-power:` prefix — systemd
-  already stamps the unit name, and it was doubled in the journal. `log` for
-  things that happened, `note` for things that did not need doing (the retry
-  timer sets `QUIET=1`, so a no-op every two minutes is not 720 journal lines a
-  day), `die` for `error: ...` on stderr with exit 1. State-changing
-  subcommands refuse up front without root instead of letting a dozen sysfs
-  writes fail one at a time. **No power figures in the CLI** — they are
-  approximate and machine-specific; the worked example lives in the README.
-  `status` is three lines by default and puts diagnostics behind `-v`, and
-  rows whose value is uninteresting are omitted rather than printed empty;
-  `switch` is a menu entry, so it states one fact, asks, and states one fact.
-  `status` must stay side-effect free: it used to call `nvidia-smi`, which
-  wakes the card out of P8 just to answer.
-- Installing needs sudo, which **Claude cannot provide in-session** (the
-  fingerprint prompt needs a terminal) — ask the user to run the command
-  themselves with `!`.
-- Probe scripts used to prove the EGL/Vulkan leak live at `/tmp/eglprobe.py`
-  and `/tmp/vkprobe.py` — recreate them (ctypes on `libEGL.so.1` /
-  `libvulkan.so.1`, then read `/proc/self/maps` and `/proc/self/fd`) rather
-  than guessing what loads the driver.
-- Before asking anyone to log out, **always** run `sh -n` on the env file and
-  source it under `sh` to see the actual exported values.
-- `thinkpad-power status` is safe unprivileged and shows what holds the card.
+- **CLI conventions.** Messages carry no `thinkpad-power:` prefix: systemd
+  already stamps the unit name. `log` for things that happened, `note` for
+  things that did not need doing (the retry timer sets `QUIET=1`, so a no-op
+  every two minutes is not 720 journal lines a day), `die` for `error: ...` on
+  stderr with exit 1. State-changing subcommands refuse up front without root
+  instead of letting a dozen sysfs writes fail one at a time. No power figures
+  in the CLI: they are approximate and machine-specific. `status` is three
+  lines, with diagnostics behind `-v`, and must stay side-effect free: it used
+  to call `nvidia-smi`, which wakes the card out of P8 just to answer.
+- **Use `sudo thinkpad-power status`** when chasing what holds the card.
+  `fuser` reports only processes the caller may see, so unprivileged, the
+  root-owned holders are invisible and the list looks reassuringly empty.
+- **Prove a driver leak, do not guess it:** a few lines of Python that load
+  `libEGL.so.1` or `libvulkan.so.1` through ctypes, then read
+  `/proc/self/maps` and `/proc/self/fd`, show exactly what opened the card.
+- **The uwsm `env.d` file is sourced by `/bin/sh` at every login.** Run `sh -n`
+  on it, and source it under `sh` to see the exported values, before anyone
+  logs out: a file that fails there costs the login.
+- **Sample with `sleep`, never `read -t N </dev/null`,** which returns at once
+  (`/dev/null` is instant EOF). A loop built on it runs every iteration inside
+  a second and prints a column of identical numbers that look like a stable
+  measurement; it produced two bogus results here. Distrust any sample where
+  every row is the same.
 
-## Verified in production (2026-09-01, boot with thinkpad-powerd installed)
+## Measured
 
-The governor was installed and driven under 16 threads of load on battery. The
-ladder does what it claims:
+**The dGPU off the bus** on battery: no `0000:01:00.0`, no nvidia modules,
+the Intel card the only DRM card. About **6.2 W reclaimed** (19.93 W against
+~26 W with the card bound), 3.0 h on a 60.4 Wh charge where it was ~2.3 h.
+What finally did it, after three false starts, was NVIDIA's own daemons
+holding the card: `nvidia-persistenced` (enabled by the driver package, so
+disabled here) and an `nvidia-powerd` started by `gpu_on` itself.
+
+**The governor**, under 16 threads of load on battery:
 
 | | tier | PL1 | ceiling | draw |
 |---|---|---|---|---|
 | 0 s | light | 12 W | 45%, turbo off | 17.5 W |
-| **13 s** | mid | 18 W | 70% | 25.4 W |
-| **29 s** | full | 28 W | 100% | 33.6 W |
-| **53 s** | turbo | 40 W | 100% | 34.3 W |
+| 13 s | mid | 18 W | 70% | 25.4 W |
+| 29 s | full | 28 W | 100% | 33.6 W |
+| 53 s | turbo | 40 W | 100% | 34.3 W |
 
-Climb intervals of 8 / 16 / 24 s, exactly the progressive dwell. Falling took
-25 s per rung: turbo → full → mid on the way back down. Package went 51 → 59 C
-and never approached the 85 C throttle. **Under identical 100% load, light draws
-25.4 W where turbo draws 34.3 W** — a 9 W spread, which is the whole mechanism
-in one number: the same work, gated.
+Climb intervals of 8 / 16 / 24 s, the progressive dwell; falling took 25 s per
+rung. The package went 51 → 59 C and never approached the 85 C throttle. Under
+the same full load, light draws 25.4 W where turbo draws 34.3 W: the same
+work, gated. The firmware's PL1 was captured as 109 W and restored, and
+`gt_max`, `gt_boost` and `no_turbo` followed the tier.
 
-Also confirmed live: firmware captured as **109 W** (fact 36's bug does not
-reproduce — the handover from `/run/thinkpad-power.rapl` works), `gt_max` and
-`gt_boost` driven 1450 → 800 → 1450 with the tier, `no_turbo` set and cleared
-with it, Wi-Fi power save `on` on battery, and the journal at nine lines for the
-whole test rather than one per tick.
+**Sleep:** S3 drains 1.26 W, so a full battery lasts about 59 h asleep; a 63
+minute suspend on battery resumed cleanly. **Wake:** the kernel is done 0.21 s
+after resume and the lock screen prompts at 1.04 s; the rest of what feels
+slow is the fingerprint reader (facts 25 and 27).
 
-**Measurement trap, cost two bogus results before it was noticed:**
-`read -t N </dev/null` returns *immediately* — /dev/null is instant EOF, not an
-idle fd. A sampling loop built on it runs all its iterations inside one second
-and prints a column of identical numbers that look like a stable measurement.
-That is what made the first ladder test show no climb at all, and what made the
-windowed-vs-fullscreen A/B read 0.0% for everything. Use `sleep`, and distrust
-any sample where every row is identical.
+**Three hard lock-ups, one root cause.** An idle freeze on battery, a freeze
+during `pci/rescan` on plugging in, and a kernel panic when `nvidia` loaded
+13 s after the card was removed were all facts 9 and 10: a PCI transaction to
+a device inside the dGPU's power domain after that domain is gone, escalating
+to a broadcast MCE. Since the fix, removal takes both functions (`01:00.0` and
+`01:00.1`), leaves no `/dev/nvidia*`, and bars the driver from loading until
+the card is back; `sudo thinkpad-power status -v` shows both.
 
-## Where it stands (2026-09-01) — browsing, video and the CPU
-
-Read this first; everything below it is earlier rounds, kept for the reasoning.
-
-**Installed and running as of this session** (`./install.sh` was run):
-`thinkpad-powerd` active, fan control queued behind a reboot, Wi-Fi power save
-live, dGPU off the bus. Still owed: the reboot (fans), and `test/watts.sh 300`
-on a quiet machine for a real browsing figure.
-
-**Live now, no sudo needed, already applied:**
-
-| | |
-|---|---|
-| `render:direct_scanout = 1` | in `~/.config/hypr/hyprland.lua` inside the installer's marker block, and reloaded — `hyprctl getoption` reports `int: 1, set: true`, `configerrors` clean |
-| 48 Hz binding | `SUPER+SHIFT+F12` applies the modeline live, `SUPER+CTRL+F12` reloads back to 60. Writes nothing; the commented `hl.monitor` in `monitors.lua` is there for whoever decides they want it permanently |
-
-**Written but NOT installed — the installer needs sudo, which Claude cannot
-provide in-session:**
-
-| | |
-|---|---|
-| Wi-Fi power save | on for battery, off on AC, plus the `zz-` NetworkManager conf.d hand-off (fact 32) |
-| `PL2_ON_BAT`, `CPU_MAX_PCT_ON_BAT` | the knobs exist; nothing sets them. They are opt-in like `PL1_ON_BAT`, which the user set by hand |
-| `boost` | new subcommand |
-| `test/watts.sh` | the measuring stick — refuses to run on AC |
-
-**Suggested values, not written by anything:**
-
-```sh
-PL2_ON_BAT=45              # the part's own TDP, against firmware's 135 W
-CPU_MAX_PCT_ON_BAT=60      # ~2.9 GHz ceiling; turbo survives, the top does not
-```
-
-**Nothing here is measured yet.** The machine has been on AC for this whole
-session, so every figure below is derivation and none of it is a number.
-`./test/watts.sh 300` on battery, one change at a time, backlight held still.
-The order worth measuring in: Wi-Fi power save (browsing, idle link), then
-`CPU_MAX_PCT_ON_BAT` (browsing), then direct scanout (fullscreen video only),
-then 48 Hz.
-
-**Ruled out this session, so nobody re-tries them:** forcing VP9 or h264ify —
-AV1 is hardware-decoded here (fact 31); enabling `thermald` — it fights the RAPL
-constraints this tool sets; and automating the 5G modem off on battery — the
-user has his own `omarchy-mobile-data` widget with a switch, and that is his
-call to make, not a policy to make behind him.
-
-## Where it stands (2026-08-28) — everything below is installed and live
-
-Read this first in a new session; the two sections above it are the earlier
-rounds and are kept for the reasoning, not the state.
-
-**Installed and verified on disk this session:**
-
-| | |
-|---|---|
-| boot path | `nvidia.conf` emptied (backup at `nvidia.conf.thinkpad-power-orig`), `systemd-tpm2-setup{,-early}` masked. ESP 1.6G → **1.4G** |
-| sleep | `HibernateDelaySec=2h`, `HibernateOnACPower=no`; `HandleLidSwitch` and `HandleSuspendKey` = `suspend-then-hibernate` — confirmed **live** over D-Bus, no re-login needed |
-| resume hook | `/usr/lib/systemd/system-sleep/thinkpad-power-resume`, and the `suspend-then-hibernate.target.wants` symlink exists (the easy thing to miss) |
-| menu | Omarchy's `system.suspend` overridden to `systemctl suspend-then-hibernate` |
-| GPU | unchanged and still working: card off the bus, 16–19 W on battery |
-
-**Measured, and the numbers to compare against:**
-
-| | |
-|---|---|
-| S3 drain | **1.26 W** → a full battery lasts ~59 h. Upper bound: the fingerprint experiment was live during the measurement, so a clean re-measure is owed |
-| boot, **before** the trim | 11.50 s POST + 9.11 s loader + ~5.7 s kernel + 6.02 s userspace ≈ 32 s |
-| wake | kernel done at +0.21 s; PAM prompt at +1.04 s; **3–4 s to a lit screen, which is not attributable from the journal** (fact 27) |
-
-**The three things not yet done, in order:**
-
-1. **Reboot.** Nothing has booted since the boot-path trim, so the loader
-   figure is still 9.11 s and the whole point of that work is unmeasured.
-   `sudo thinkpad-power doctor` prints it. Expect userspace to drop ~4.1 s from
-   the TPM units, which is the known half.
-2. **Hibernate has never run.** Test it deliberately on AC with nothing open:
-   `sudo systemctl hibernate`, then on resume check `thinkpad-power status`
-   shows the card off — that is fact 29's rescan hook working. Only trust a
-   closed lid afterwards.
-3. **Enroll more fingers.** Only `right-index-finger` is enrolled, which is the
-   larger half of the wake complaint and the only fingerprint lever left after
-   fact 25. `fprintd-enroll -f left-index-finger`.
-
-**Ruled out this session, so nobody re-tries them:** keeping the fingerprint
-reader powered through suspend (fact 25 — it breaks the reader outright), and
-boot theming in the power tool (fact 24).
-
-## Where it stands (2026-08-27) — working, verified on battery
-
-Unplugged: `0000:01:00.0` no longer enumerated, zero nvidia modules loaded,
-`card2` (Intel) the only DRM card, `platform_profile=low-power`, `epp=power`.
-Draw 19.93 W against ~26 W with the card bound — about **6.2 W reclaimed**,
-60.4 Wh / 19.93 W = 3.0 h where it was ~2.3 h.
-
-**What finally did it** (after three false starts): NVIDIA's own daemons were
-holding the card. `nvidia-persistenced` exists to keep the driver resident and
-is enabled by the driver package — the installer disables it. `nvidia-powerd`
-was started by this script's own `gpu_on` and then counted as a holder because
-the check ran before stopping it. The third holder was `btop` reading NVML,
-which is a user program and is left alone.
-
-**Do not trust an unprivileged `thinkpad-power status`.** `fuser` only reports
-processes the caller may see, so root-owned holders are invisible and the
-holder list looks reassuringly empty. That cost a round of debugging. Use
-`sudo thinkpad-power status`; the command says so itself now.
-
-## Stability (2026-08-27) — three hard lock-ups, one root cause
-
-That loose end about the surviving `/dev/nvidia*` nodes was not inert. It, and
-the orphaned audio function, cost two freezes and a kernel panic:
-
-| when | what | how it ended |
-|---|---|---|
-| 01:39 | idle ~9 min on battery | journal stops mid-boot, hard lock |
-| 10:27 | AC plugged in, `pci/rescan` | journal stops mid-rescan, hard lock |
-| 11:09 | `nvidia` loaded 13 s after removal | `KERNEL PANIC` on the drm panic screen |
-
-All three are facts 9 and 10: a PCI transaction to a device inside the dGPU's
-power domain after that domain is gone, escalating to a broadcast MCE. The
-first needed no user action at all, which is why it looked like an idle bug.
-
-`sudo thinkpad-power status` now prints every PCI function of the card and
-whether the driver is barred from loading — the two things that were invisible
-while this was being chased.
-
-**Verified after the fix (11:29, boot 241ab0ae):** `gpu-off` on AC, then
-unplugged. `PCI functions: none on the bus` — both `01:00.0` and `01:00.1`
-gone, ALSA `card0` with them; `card2` (Intel) the only DRM card; no nvidia
-modules, no `/dev/nvidia*`; `driver reload: blocked`. Exactly one nvidia load
-attempt this boot, at 11:11:40, which is boot time with the card present —
-**zero since the removal, with `btop` running throughout**. That is the 11:09
-panic's own trigger, held. Speakers and mic unaffected: every sink was always
-on `00:1f.3`. 16.05 W on battery.
-
-One new message at removal time, and it is the kernel agreeing with us:
-`snd_hda_intel 0000:01:00.1: GPU sound probed, but not operational: please add
-a quirk to driver_denylist`. That is the re-probe triggered when nvidia
-unregisters its vga_switcheroo client, and the guard upstream added for
-exactly this hazard. Harmless — the function is removed a moment later — but
-it is the old bug's fingerprint: the old code left a *bound* driver there,
-where the guard does not reach.
-
-**Still untested from that round:** plugging back in with the fix in place (the
-10:27 lock-up, retested by nothing yet) and a game under `thinkpad-power run`.
-The idle-soak worry is settled: a 63 min suspend on battery on 2026-08-28
-resumed cleanly (fact 26).
-
-**Recovery if a login ever fails:** `Ctrl+Alt+F2`, `rm ~/.config/uwsm/env-hyprland`,
-log in. That file is the only change that can affect the compositor starting.
+**Ruled out, so nobody re-tries them:**
+- keeping the fingerprint reader powered through suspend: it breaks the reader
+  outright (fact 25);
+- forcing VP9 or h264ify: AV1 is hardware-decoded here (fact 31);
+- `thermald`: it fights the RAPL limits the policy sets;
+- turning the 5G modem off on battery automatically: the bar's mobile-data
+  switch is the user's call, not a policy to make behind their back.
