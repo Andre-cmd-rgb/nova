@@ -162,6 +162,7 @@ the shared folder also becomes the default for themes that have no pick of their
   | Package | Contents |
   |---|---|
   | `nova` | everything in this repo |
+  | `nova-keyring` | the key the `[nova]` repository is signed with |
   | `linux-nova`, `linux-nova-headers` | Arch's kernel configuration with the BORE scheduler, `HZ_1000` and the x86-64-v3 instruction-set baseline |
   | `nvidia-open-nova` | NVIDIA modules prebuilt for `linux-nova` |
   | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
@@ -170,9 +171,13 @@ the shared folder also becomes the default for themes that have no pick of their
   fallback boot entry.
 - **A release** (`v1.0.0-beta.1`, …) has three parts:
   - the signed `[nova]` repository, attached to the GitHub release;
-  - the installer ISO;
+  - the installer ISO (`installer/iso`, built by `tools/build-iso`), which
+    installs over the network;
   - `release.toml`, which pins the Arch Linux Archive date the release was tested
     against.
+
+  [releasing.md](releasing.md) has the steps and the signing key;
+  [packaging.md](packaging.md) has how each package is kept up to date.
 - **Updating:** `nova update` moves a system to the newest release. It rewrites the
   pacman mirror to that date, runs `pacman -Syu` and updates the `[nova]` repository
   URL, with a snapper snapshot before and after.

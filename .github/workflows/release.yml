@@ -1,0 +1,197 @@
+# A release: push a tag like v1.0.0-beta.1, or run this by hand for an existing
+# tag. It pins yesterday's Arch Linux Archive snapshot, builds every Nova
+# package against it, signs them into the [nova] repository, builds the
+# installer ISO, and leaves everything on a *draft* GitHub release. Publishing
+# the draft is done by hand, after testing. See docs/releasing.md.
+#
+# Needs the repository secret NOVA_REPO_KEY: the ASCII-armored private key whose
+# public half is in packaging/nova-keyring.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to build, e.g. v1.0.0-beta.1
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  pin:
+    runs-on: ubuntu-latest
+    outputs:
+      arch_date: ${{ steps.pin.outputs.arch_date }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - id: pin
+        name: Pin yesterday's Arch snapshot
+        run: |
+          date=$(date -u -d yesterday +%Y/%m/%d)
+          tools/release-pin --version "$TAG" --date "$date" --verify --out release.toml
+          echo "arch_date=$date" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-toml
+          path: release.toml
+
+  kernel:
+    needs: pin
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    # A full kernel build takes hours on a hosted runner, so a build is reused
+    # until packaging/linux-nova changes.
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: out/kernel
+          key: linux-nova-${{ hashFiles('packaging/linux-nova/**') }}
+      - name: Build linux-nova
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
+          tools/build-package packaging/linux-nova out/kernel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kernel
+          path: out/kernel/*.pkg.tar.zst
+
+  packages:
+    needs: [pin, kernel]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 120
+    steps:
+      - name: Tools
+        run: pacman -Syu --noconfirm --needed git
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0 # the nova package's version comes from git describe
+      - uses: actions/download-artifact@v4
+        with:
+          name: kernel
+          path: out/kernel
+      - name: Build the packages
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          test -f packaging/nova-keyring/nova.gpg ||
+            { echo "::error::packaging/nova-keyring has no key yet; see docs/releasing.md"; exit 1; }
+          tools/build-package packaging/nova-keyring out/pkgs
+          tools/build-package packaging/limine-entry-tool out/pkgs
+          tools/build-package packaging/limine-snapper-sync out/pkgs
+          # nova depends on these three, which no Arch repository has. Building
+          # it with --syncdeps also proves every other dependency exists in the
+          # pinned snapshot.
+          pacman -U --noconfirm out/pkgs/nova-keyring-*.pkg.tar.zst \
+            out/pkgs/limine-entry-tool-*.pkg.tar.zst out/pkgs/limine-snapper-sync-*.pkg.tar.zst
+          NOVA_SOURCE="git+file://$GITHUB_WORKSPACE#tag=$TAG" tools/build-package packaging/nova out/pkgs
+          pacman -U --noconfirm out/kernel/linux-nova-headers-*.pkg.tar.zst
+          tools/build-package packaging/nvidia-open-nova out/pkgs
+          cp out/kernel/*.pkg.tar.zst out/pkgs/
+          ls -l out/pkgs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: out/pkgs/*.pkg.tar.zst
+
+  repo:
+    needs: packages
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: out/pkgs
+      - name: Sign into the [nova] repository
+        env:
+          NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
+        run: |
+          [[ -n $NOVA_REPO_KEY ]] || { echo "::error::the NOVA_REPO_KEY secret is not set"; exit 1; }
+          export GNUPGHOME=$(mktemp -d)
+          gpg --batch --quiet --import <<<"$NOVA_REPO_KEY"
+          fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          grep -qx "$fpr:4:" packaging/nova-keyring/nova-trusted ||
+            { echo "::error::NOVA_REPO_KEY is not the key in packaging/nova-keyring"; exit 1; }
+          tools/repo-build --key "$fpr" out/pkgs out/repo
+          gpgconf --kill all
+          rm -rf "$GNUPGHOME"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repo
+          path: out/repo/
+
+  iso:
+    needs: [pin, repo]
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged # mkarchiso mounts /proc and /dev inside the image it builds
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-toml
+      - uses: actions/download-artifact@v4
+        with:
+          name: repo
+          path: out/repo
+      - name: Build the installer ISO
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" archiso
+          # The build host trusts the Nova key the same way an installed system does.
+          pacman -U --noconfirm out/repo/nova-keyring-*.pkg.tar.zst
+          tools/build-iso --release release.toml --repo out/repo --out out/iso
+      - uses: actions/upload-artifact@v4
+        with:
+          name: iso
+          path: out/iso/
+
+  publish:
+    needs: [repo, iso]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Draft the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=${TAG#v}
+          prerelease=()
+          [[ $version != *-* ]] || prerelease=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft "${prerelease[@]}" \
+            --title "Nova $version" --notes "Nova $version. Install: write the ISO to a USB stick and boot it." \
+            out/release-toml/release.toml out/repo/* out/iso/*

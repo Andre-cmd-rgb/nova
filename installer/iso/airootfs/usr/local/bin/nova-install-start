@@ -1,0 +1,92 @@
+#!/bin/bash
+# The installer stick's first console: get online, run nova-install, restart.
+#
+# Ethernet connects by itself (systemd-networkd). Wi-Fi asks for a network and
+# its password and connects with iwd; many laptops, the ThinkPad P1 among them,
+# have no Ethernet port. A stick that carries its own packages (nova usb) can
+# install without a network. Leaving at any point drops to a root shell, where
+# `nova-install-start` starts over.
+
+set -uo pipefail
+
+PROBE=https://archive.archlinux.org/
+
+online() { curl -fsI --max-time 5 -o /dev/null "$PROBE"; }
+
+offline_repo() { [[ -r ${NOVA_OFFLINE_REPO:-/run/archiso/bootmnt/nova/repo}/nova-offline.db ]]; }
+
+wifi_device() { iw dev 2>/dev/null | awk '$1 == "Interface" { print $2; exit }'; }
+
+wait_online() { # seconds
+  local i
+  for ((i = 0; i < $1; i++)); do
+    online && return 0
+    sleep 1
+  done
+  return 1
+}
+
+connect_wifi() {
+  local dev=$1 ssid pass
+  rfkill unblock wlan 2>/dev/null
+  iwctl station "$dev" scan >/dev/null 2>&1
+  sleep 3
+  iwctl station "$dev" get-networks
+  read -r -p "Network name (empty to skip): " ssid
+  [[ -n $ssid ]] || return 1
+  read -r -s -p "Password (empty for an open network): " pass
+  echo
+  if [[ -n $pass ]]; then
+    iwctl --passphrase "$pass" station "$dev" connect "$ssid"
+  else
+    iwctl station "$dev" connect "$ssid"
+  fi || {
+    echo "Could not connect to $ssid."
+    return 1
+  }
+  echo "Connected to $ssid, waiting for an address..."
+  wait_online 20
+}
+
+get_online() {
+  local dev
+  echo "Checking the network..."
+  wait_online 8 && return 0
+  dev=$(wifi_device)
+  if [[ -z $dev ]]; then
+    echo "No network: plug in an Ethernet cable, then press Enter."
+    read -r
+    wait_online 15
+    return
+  fi
+  while ! online; do
+    connect_wifi "$dev" && return 0
+    read -r -p "Try another network? [Y/n] " again
+    [[ ${again,,} != n* ]] || return 1
+  done
+}
+
+clear
+printf '\n  \e[1mNova\e[0m installer\n\n'
+
+if ! get_online; then
+  echo
+  if offline_repo; then
+    echo "Installing from the stick. Chrome, VS Code, Claude Code and Codex need"
+    echo "the network, so they come later: nova apps install; mise install"
+  else
+    echo "Nova installs over the network, so it needs a connection first."
+    echo "Connect by hand with iwctl, then run nova-install-start again."
+    exit 0
+  fi
+fi
+
+if nova-install; then
+  echo
+  read -r -p "Take the stick out and press Enter to restart. " _
+  systemctl reboot
+else
+  echo
+  echo "The install stopped. Its log is /var/log/nova-install.log;"
+  echo "run nova-install-start to try again."
+fi

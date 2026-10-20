@@ -1,0 +1,31 @@
+#!/bin/bash
+# Prepare an archlinux:base-devel container for CI.
+#
+#   tools/ci-setup [--date YYYY/MM/DD] [package...]
+#
+# With --date, pacman moves to that Arch Linux Archive snapshot first (-Syyuu
+# goes down as well as up), so a release builds against exactly the snapshot
+# its release.toml pins. Then the packages are installed, and a `builder` user
+# is made (makepkg refuses root) that may run anything through sudo, which
+# makepkg --syncdeps needs.
+set -euo pipefail
+
+die() { printf 'ci-setup: %s\n' "$*" >&2; exit 1; }
+
+((EUID == 0)) || die "run as root, inside the CI container"
+date=
+if [[ ${1:-} == --date ]]; then
+  date=${2:?--date needs YYYY/MM/DD}
+  shift 2
+  [[ $date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad --date: $date"
+  # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+  printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$date" >/etc/pacman.d/mirrorlist
+fi
+
+pacman-key --init >/dev/null
+pacman-key --populate archlinux >/dev/null
+pacman -Syyuu --noconfirm --needed git sudo "$@"
+
+id builder >/dev/null 2>&1 || useradd -m builder
+echo 'builder ALL=(ALL) NOPASSWD: ALL' >/etc/sudoers.d/90-builder
+chmod 440 /etc/sudoers.d/90-builder

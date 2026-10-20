@@ -1,0 +1,60 @@
+# Every push and pull request: lint, the name check, the Rust checks, the unit
+# tests, and a `make install` into a scratch root, all in a current Arch
+# container. Releases are built by release.yml.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    steps:
+      - name: Tools
+        run: |
+          pacman -Syu --noconfirm --needed git sudo shellcheck bats jq rust qt6-declarative
+          useradd -m builder
+
+      - uses: actions/checkout@v4
+
+      - name: Hand the checkout to the build user
+        run: chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Shell lint
+        run: sudo -u builder -H make lint-shell
+
+      - name: No Omarchy names outside NOTICE and docs
+        run: sudo -u builder -H make check-names
+
+      - name: QML lint
+        run: sudo -u builder -H make lint-qml
+
+      - name: Rust
+        run: |
+          sudo -u builder -H cargo fmt --check
+          sudo -u builder -H cargo clippy --locked --all-targets -- -D warnings
+          sudo -u builder -H cargo test --locked
+
+      - name: Unit tests
+        run: sudo -u builder -H make test
+
+      - name: Install into a scratch root
+        run: |
+          sudo -u builder -H cargo build --locked --release
+          sudo -u builder -H make install DESTDIR=/tmp/nova-root
+          test -x /tmp/nova-root/usr/bin/nova

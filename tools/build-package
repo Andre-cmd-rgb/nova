@@ -1,0 +1,34 @@
+#!/bin/bash
+# Build one of packaging/*'s PKGBUILDs as the builder user (tools/ci-setup).
+#
+#   tools/build-package <packaging/name> <out dir> [makepkg option...]
+#
+# Builds in place, with sources and build trees under /tmp, and puts the
+# packages in <out dir>. The PGP keys a PKGBUILD keeps in keys/pgp (the kernel
+# signers, for one) are imported first, so its sources are verified. Set
+# NOVA_SOURCE to pass it through to the nova PKGBUILD.
+set -euo pipefail
+
+die() { printf 'build-package: %s\n' "$*" >&2; exit 1; }
+
+(($# >= 2)) || die "usage: tools/build-package <packaging/name> <out dir> [makepkg option...]"
+dir=$(cd -- "$1" && pwd)
+out=$2
+shift 2
+[[ -f $dir/PKGBUILD ]] || die "no PKGBUILD in $dir"
+id builder >/dev/null 2>&1 || die "no builder user: run tools/ci-setup first"
+
+mkdir -p -- "$out" /tmp/nova-srcdest /tmp/nova-builddir
+out=$(cd -- "$out" && pwd)
+chown builder: -- "$out" /tmp/nova-srcdest /tmp/nova-builddir
+
+as_builder() { sudo -u builder -H -- "$@"; }
+
+if compgen -G "$dir/keys/pgp/*.asc" >/dev/null; then
+  as_builder gpg --batch --quiet --import "$dir"/keys/pgp/*.asc
+fi
+
+cd -- "$dir"
+as_builder env PKGDEST="$out" SRCDEST=/tmp/nova-srcdest BUILDDIR=/tmp/nova-builddir \
+  ${NOVA_SOURCE:+NOVA_SOURCE="$NOVA_SOURCE"} \
+  makepkg --syncdeps --noconfirm --cleanbuild "$@"

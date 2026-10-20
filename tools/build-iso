@@ -1,0 +1,88 @@
+#!/bin/bash
+# Build the installer ISO for a release.
+#
+#   tools/build-iso --release <release.toml> --repo <dir> --out <dir> [--work <dir>]
+#
+# --repo is the release's signed [nova] repository (tools/repo-build); the live
+# system installs nova-keyring from it, so the stick can verify the packages
+# nova-install downloads. Arch's packages come from the snapshot release.toml
+# names. The build host's pacman must already trust the Nova key: CI installs
+# nova-keyring from the same repository first.
+#
+# Assembles a copy of installer/iso with nova-install, the release's files and
+# the hardware profiles' package lists, then runs mkarchiso on it, so it needs
+# root and the archiso package. Writes nova-<version>-x86_64.iso and its
+# .sha256 to --out.
+set -euo pipefail
+
+die() { printf 'build-iso: %s\n' "$*" >&2; exit 1; }
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+release='' repo='' out='' work=/tmp/nova-iso-work
+while (($#)); do
+  case $1 in
+    --release) release=${2:?}; shift 2 ;;
+    --repo) repo=${2:?}; shift 2 ;;
+    --out) out=${2:?}; shift 2 ;;
+    --work) work=${2:?}; shift 2 ;;
+    -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+[[ -r $release && -d $repo && -n $out ]] || die "usage: tools/build-iso --release <release.toml> --repo <dir> --out <dir>"
+((EUID == 0)) || die "mkarchiso needs root"
+command -v mkarchiso >/dev/null || die "mkarchiso not found: pacman -S archiso"
+compgen -G "$repo/nova-keyring-*.pkg.tar.zst" >/dev/null || die "$repo has no nova-keyring package"
+
+value() { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$release"; }
+version=$(value version)
+arch_date=$(value arch_date)
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad version in $release"
+[[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad arch_date in $release"
+repo=$(cd -- "$repo" && pwd)
+
+rm -rf -- "$work"
+mkdir -p -- "$work" "$out"
+profile=$work/profile
+cp -a -- "$root/installer/iso" "$profile"
+
+airootfs=$profile/airootfs
+share=$airootfs/usr/share/nova-installer
+install -Dm755 "$root/installer/nova-install" "$airootfs/usr/local/bin/nova-install"
+install -Dm644 "$release" "$share/release.toml"
+install -Dm644 "$root/installer/packages" "$share/packages"
+install -Dm644 "$root/installer/pacman.conf" "$share/pacman.conf"
+install -Dm644 "$root/data/boot/limine/limine.conf" "$share/limine.conf"
+install -Dm644 "$root/data/hardware/models" "$share/hardware/models"
+install -Dm755 "$root/data/hardware/bin/nova-hw-detect" "$share/hardware/nova-hw-detect"
+for list in "$root"/data/hardware/*/packages; do
+  name=${list%/packages}
+  install -Dm644 "$list" "$share/hardware/${name##*/}/packages"
+done
+
+# The live system's packages: Arch's from the release's snapshot, nova-keyring
+# from the release's own repository.
+{
+  cat <<EOF
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+ParallelDownloads = 5
+
+[nova]
+SigLevel = Required
+Server = file://$repo
+EOF
+  for r in core extra; do
+    # shellcheck disable=SC2016 # $arch is pacman's to expand
+    printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$r" "$arch_date"
+  done
+} >"$profile/pacman.conf"
+
+NOVA_ISO_VERSION=$version mkarchiso -v -r -w "$work/build" -o "$out" "$profile"
+iso=nova-$version-x86_64.iso
+[[ -f $out/$iso ]] || die "mkarchiso did not write $out/$iso"
+(cd -- "$out" && sha256sum -- "$iso" >"$iso.sha256")
+rm -rf -- "$work"
+printf 'build-iso: wrote %s/%s\n' "$out" "$iso" >&2
