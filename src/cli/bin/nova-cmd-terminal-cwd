@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# nova:summary=Print the working directory of the focused terminal, or home
+# nova:hidden=true
+
+set -uo pipefail
+
+cwd=
+pid=$(hyprctl activewindow -j 2>/dev/null | jq -r '.pid // empty')
+if [[ $pid =~ ^[0-9]+$ ]]; then
+  # The terminal's newest child is the shell in it. A child that is not a
+  # login shell (an editor, ssh) has a directory too, but not one to open.
+  shell_pid=$(pgrep -P "$pid" | tail -n1)
+  if [[ -n $shell_pid ]]; then
+    cwd=$(readlink -f "/proc/$shell_pid/cwd" 2>/dev/null)
+    grep -Fqsx "$(readlink -f "/proc/$shell_pid/exe" 2>/dev/null)" /etc/shells || cwd=
+  fi
+fi
+
+if [[ -n $cwd && -d $cwd ]]; then
+  echo "$cwd"
+else
+  echo "$HOME"
+fi

@@ -1,0 +1,6 @@
+#!/bin/bash
+
+# nova:summary=Open a terminal, in the focused terminal's directory
+# nova:args=[command...]
+
+exec setsid uwsm-app -- xdg-terminal-exec --dir="$(nova-cmd-terminal-cwd)" "$@"
