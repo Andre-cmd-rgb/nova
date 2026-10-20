@@ -13,7 +13,7 @@ and installs in a few minutes from a USB stick that can carry your things over.
 
 Nova takes the whole disk. Turn Secure Boot off in the firmware settings first.
 
-**Make the stick**, from the [latest release](https://github.com/Andre-cmd-rgb/nova/releases/latest):
+**Make the stick**, from the newest [release](https://github.com/Andre-cmd-rgb/nova/releases):
 
 - On any Arch-based system, download `nova-usb` and run `bash nova-usb`. It
   writes the stick and can put every package on it, so the install needs no
