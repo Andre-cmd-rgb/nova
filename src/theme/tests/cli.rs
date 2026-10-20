@@ -271,3 +271,29 @@ fn resolves_colors_with_fallbacks() {
         .contains("mode\tlight\n"));
     assert_eq!(s.ok(&["mix", "#000000", "#ffffff", "43%"]), "#6e6e6e\n");
 }
+
+#[test]
+fn lists_themes_with_their_colors() {
+    let s = Sandbox::new();
+    let names = s.ok(&["list"]);
+    let colored = s.ok(&["list", "--colors"]);
+    assert_eq!(names.lines().count(), colored.lines().count());
+    assert!(
+        colored
+            .lines()
+            .any(|l| l == "white\t#ffffff\t#000000\t#6e6e6e"),
+        "{colored}"
+    );
+    // The user's palette wins over Nova's.
+    let mine = s.root.join("home/.config/nova/themes/white");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(
+        mine.join("colors.toml"),
+        "background = \"#101010\"\nforeground = \"#fafafa\"\naccent = \"#ff0000\"\n",
+    )
+    .unwrap();
+    assert!(s
+        .ok(&["list", "--colors"])
+        .lines()
+        .any(|l| l == "white\t#101010\t#fafafa\t#ff0000"));
+}

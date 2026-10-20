@@ -21,7 +21,8 @@ const USAGE: &str = "\
 Usage: nova-theme <command> [args]
 
   set <theme>               apply a theme
-  list                      list the installed themes
+  list [--colors]           list the installed themes; --colors adds each one's
+                            background, foreground and accent, tab-separated
   current                   print the current theme
   pick                      choose a theme in the picker
   bg list                   list the backgrounds offered for the current theme
@@ -79,6 +80,7 @@ fn run(args: &[&str]) -> Result<()> {
             match args {
                 ["set", name] => theme::set(&paths, name),
                 ["list"] => print_lines(theme::list(&paths)),
+                ["list", "--colors"] => print_lines(theme::list_colors(&paths)),
                 ["current"] => print_lines(theme::current(&paths)),
                 ["pick"] => theme::pick(&paths),
                 ["bg", "list"] => {

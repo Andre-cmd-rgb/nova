@@ -68,6 +68,24 @@ pub fn list(paths: &Paths) -> Vec<String> {
     names
 }
 
+/// "name\tbackground\tforeground\taccent" for each theme, for swatches. A
+/// palette that does not load still lists its name, with empty colors.
+pub fn list_colors(paths: &Paths) -> Vec<String> {
+    list(paths)
+        .into_iter()
+        .map(|name| {
+            let palette = colors_file(paths, &name).and_then(|f| Palette::load(&f).ok());
+            let color = |key| palette.as_ref().and_then(|p| p.get(key)).unwrap_or("");
+            format!(
+                "{name}\t{}\t{}\t{}",
+                color("background"),
+                color("foreground"),
+                color("accent")
+            )
+        })
+        .collect()
+}
+
 pub fn current(paths: &Paths) -> Option<String> {
     let name = fs::read_to_string(paths.current().join("theme.name")).ok()?;
     Some(name.trim().to_owned()).filter(|n| !n.is_empty())

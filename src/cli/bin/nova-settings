@@ -1,0 +1,185 @@
+#!/bin/bash
+
+# nova:summary=Open Settings
+# nova:args=[appearance|bar|battery|screentime|lock|apps|updates|about] | state
+#
+# Settings is a shell window (shell/plugins/settings). `state` is the one call
+# it makes to fill itself: everything it shows, as JSON, read through the same
+# commands the CLI offers, so the window and the CLI never disagree. Any piece
+# that cannot be read comes back empty rather than failing the whole call.
+
+set -euo pipefail
+
+NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
+SUPPLY=${NOVA_POWER_SUPPLY:-/sys/class/power_supply}
+DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+PAGES="appearance bar battery screentime lock apps updates about"
+
+# Lines on stdin as a JSON array of strings.
+lines_json() { jq -R . | jq -sc .; }
+
+# A command's output, or nothing if it fails or is missing.
+quiet() { "$@" 2>/dev/null || true; }
+
+# A command's JSON object or array, or the fallback when it fails or prints
+# anything else.
+json_or() {
+  local fallback=$1 out
+  shift
+  if out=$("$@" 2>/dev/null) && jq -e 'type == "object" or type == "array"' >/dev/null 2>&1 <<<"$out"; then
+    printf '%s\n' "$out"
+  else
+    printf '%s\n' "$fallback"
+  fi
+}
+
+themes_json() {
+  quiet nova-theme list --colors |
+    jq -Rc 'split("\t") | {name: .[0], background: (.[1] // ""), foreground: (.[2] // ""), accent: (.[3] // "")}' |
+    jq -sc .
+}
+
+text_size() {
+  local size
+  size=$(quiet nova-display-text-size | sed -n -E 's/^text size: ([0-9]+) px$/\1/p')
+  echo "${size:-12}"
+}
+
+first_battery() {
+  local bat
+  for bat in "$SUPPLY"/BAT*; do
+    [[ -r $bat/type && $(<"$bat/type") == Battery ]] && { echo "$bat"; return 0; }
+  done
+  return 1
+}
+
+# Health is what the battery holds now against what it held new.
+battery_json() {
+  local bat full design cycles health=null
+  if ! bat=$(first_battery); then
+    echo '{"present":false}'
+    return
+  fi
+  full=$(cat "$bat/energy_full" 2>/dev/null || cat "$bat/charge_full" 2>/dev/null || echo 0)
+  design=$(cat "$bat/energy_full_design" 2>/dev/null || cat "$bat/charge_full_design" 2>/dev/null || echo 0)
+  cycles=$(cat "$bat/cycle_count" 2>/dev/null || echo 0)
+  [[ $full =~ ^[0-9]+$ && $design =~ ^[0-9]+$ ]] || full=0 design=0
+  [[ $cycles =~ ^[0-9]+$ ]] || cycles=0
+  ((design > 0)) && health=$((full * 100 / design))
+  jq -nc \
+    --argjson health "$health" --argjson cycles "$cycles" \
+    --argjson profiles "$(quiet nova-power-profile list --active-state | jq -Rc 'split("\t") | {name: .[0], active: (.[1] == "1")}' | jq -sc .)" \
+    --argjson limit "$(json_or '{"kind":"none","limit":null,"on":false}' nova-battery-limit --json)" \
+    '{present: true, health: $health, cycles: $cycles, profiles: $profiles, limit: $limit}'
+}
+
+# The user's shell.json, or Nova's default when they have none (or a broken one).
+# The same path the shell reads, which is not under XDG_CONFIG_HOME.
+shell_config() {
+  local user=$HOME/.config/nova/shell.json config=
+  [[ -s $user ]] && config=$(json_or '' jq -c 'select(type == "object")' "$user")
+  if [[ -n $config ]]; then
+    printf '%s\n' "$config"
+  else
+    json_or '{}' jq -c . "$NOVA_PATH/default/shell.json"
+  fi
+}
+
+# Every bar widget Nova has, but the spacer (a layout tool) and Screen Time
+# (switched on its own page, since the widget is the switch for recording).
+widgets_json() {
+  find "$NOVA_PATH/shell/plugins" \( -name manifest.json -o -name '*.manifest.json' \) -print0 2>/dev/null |
+    xargs -0 -r jq -c 'select((.kinds // []) | index("bar-widget"))
+      | {id, name: (.barWidget.displayName // .name), description: (.barWidget.description // .description // "")}' 2>/dev/null |
+    jq -sc 'map(select(.id != "nova.spacer" and .id != "nova.screentime")) | sort_by(.name | ascii_downcase)'
+}
+
+installed() { # name:command...: the names whose command exists
+  local pair
+  for pair in "$@"; do
+    command -v "${pair#*:}" >/dev/null 2>&1 && echo "${pair%%:*}"
+  done
+  return 0
+}
+
+defaults_json() {
+  jq -nc \
+    --arg browser "$(quiet nova-default-browser)" \
+    --arg editor "$(quiet nova-default-editor)" \
+    --arg terminal "$(quiet nova-default-terminal)" \
+    --argjson browsers "$(installed chrome:google-chrome-stable chromium:chromium firefox:firefox brave:brave edge:microsoft-edge-stable zen:zen-browser | lines_json)" \
+    --argjson editors "$(installed code:code cursor:cursor zed:zeditor sublime_text:sublime_text helix:helix nvim:nvim vim:vim emacs:emacs | lines_json)" \
+    --argjson terminals "$(installed foot:foot alacritty:alacritty ghostty:ghostty kitty:kitty | lines_json)" \
+    '{browser: $browser, editor: $editor, terminal: $terminal,
+      browsers: $browsers, editors: $editors, terminals: $terminals}'
+}
+
+header_value() { # file key: a "# key: value" line nova update writes
+  [[ -r $1 ]] && sed -n -E "s/^# $2: *(.*)$/\1/;T;p;q" "$1"
+  return 0
+}
+
+about_json() {
+  local model cpu mem_kb disk
+  model=$(cat "$DMI/product_version" 2>/dev/null || true)
+  # Lenovo keeps the marketing name in product_version; others in product_name.
+  [[ -n $model && $model != *"System Product"* && $model != "None" ]] ||
+    model=$(cat "$DMI/product_name" 2>/dev/null || true)
+  cpu=$(sed -n -E 's/^model name\s*:\s*//p;T;q' /proc/cpuinfo 2>/dev/null | sed -E 's/\((R|TM)\)//g; s/ CPU//; s/ @.*//; s/ +/ /g')
+  mem_kb=$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null || echo 0)
+  disk=$(df -B1 --output=size,avail / 2>/dev/null | awk 'NR == 2 { print $1 "\t" $2 }')
+  jq -nc \
+    --arg version "$(pacman -Q nova 2>/dev/null | awk '{ sub(/-[0-9]+$/, "", $2); print $2 }')" \
+    --arg release "$(header_value /etc/pacman.d/nova-repo nova-release)" \
+    --arg archDate "$(header_value /etc/pacman.d/nova-mirrorlist arch-date)" \
+    --arg model "$model" --arg vendor "$(cat "$DMI/sys_vendor" 2>/dev/null || true)" \
+    --arg cpu "$cpu" --argjson memory "$((${mem_kb:-0} * 1024))" \
+    --arg disk "$disk" --arg kernel "$(uname -r)" --arg hostname "$(cat /proc/sys/kernel/hostname 2>/dev/null || true)" \
+    '{version: $version, release: $release, archDate: $archDate, model: $model, vendor: $vendor,
+      cpu: $cpu, memory: $memory, kernel: $kernel, hostname: $hostname,
+      disk: ($disk | split("\t") | {size: ((.[0] // "0") | tonumber), free: ((.[1] // "0") | tonumber)})}'
+}
+
+state() {
+  local config
+  config=$(shell_config)
+  jq -nc \
+    --arg theme "$(quiet nova-theme current)" \
+    --argjson themes "$(themes_json)" \
+    --arg background "$(quiet nova-theme bg current)" \
+    --arg font "$(quiet nova-font-current)" \
+    --argjson fonts "$(quiet nova-font-list | lines_json)" \
+    --argjson textSize "$(text_size)" \
+    --argjson battery "$(battery_json)" \
+    --argjson screenTime "$(nova-screentime enabled >/dev/null 2>&1 && echo true || echo false)" \
+    --argjson config "$config" \
+    --argjson widgets "$(widgets_json)" \
+    --argjson fingerprint "$(command -v fprintd-enroll >/dev/null && echo true || echo false)" \
+    --argjson defaults "$(defaults_json)" \
+    --argjson about "$(about_json)" \
+    '{appearance: {theme: $theme, themes: $themes, background: $background,
+                   font: $font, fonts: $fonts, textSize: $textSize},
+      battery: $battery,
+      screenTime: $screenTime,
+      bar: {position: ($config.bar.position // "top"), transparent: ($config.bar.transparent == true),
+            widgets: $widgets,
+            shown: [($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[] | .id? // empty]},
+      lock: {seconds: (if ($config.idle.lock | type) == "number" then $config.idle.lock else 300 end),
+             fingerprint: $fingerprint},
+      apps: $defaults,
+      about: $about}'
+}
+
+case ${1:-} in
+  state) state ;;
+  -h | --help) echo "Usage: nova settings [${PAGES// /|}] | nova settings state" ;;
+  *)
+    page=${1:-}
+    if [[ -n $page && " $PAGES " != *" $page "* ]]; then
+      echo "nova-settings: no page '$page'; the pages are: $PAGES" >&2
+      exit 2
+    fi
+    nova-shell shell summon nova.settings "$(jq -nc --arg page "$page" '{page: $page}')" >/dev/null ||
+      { echo "nova-settings: could not open Settings; is the shell running?" >&2; exit 1; }
+    ;;
+esac

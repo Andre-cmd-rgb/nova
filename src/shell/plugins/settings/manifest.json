@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "nova.settings",
+  "name": "Settings",
+  "version": "1.0.0",
+  "author": "Nova",
+  "description": "Appearance, the bar, battery and charge limit, Screen Time, the lock, default apps, updates and this computer, in one window.",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "Panel.qml"
+  }
+}
