@@ -72,6 +72,6 @@
   "system.hibernate": {"icon":"󰤁","label":"Hibernate","when":"nova-hibernation-available","action":"systemctl hibernate"},
   "system.logout": {"icon":"󰍃","label":"Log Out","action":"nova-system-logout"},
   "system.reboot": {"icon":"󰜉","label":"Restart","action":"nova-system-reboot"},
-  "system.recovery": {"icon":"󰁯","label":"Restart to Recovery","action":"nova-system-recovery"},
+  "system.recovery": {"icon":"󰁯","label":"Restart to Recovery","action":"nova-recovery"},
   "system.shutdown": {"icon":"󰐥","label":"Shut Down","action":"nova-system-shutdown"},
 }

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Send an Nova desktop notification
+# nova:summary=Send a Nova desktop notification
 # nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]
 
 set -euo pipefail
