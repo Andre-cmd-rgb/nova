@@ -25,15 +25,17 @@ Item {
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/screentime")).replace(/^file:\/\//, ""))
 
   property bool closingFromHost: false
-  property var data: ({})
+  // Named `info` rather than `data`: `data` is QQuickItem's default property,
+  // the one children are assigned to, and shadowing it drops them silently.
+  property var info: ({})
   property string range: "today"
 
   readonly property bool weekly: range === "week"
-  readonly property var days: data.days || []
-  readonly property var hours: data.hours || []
-  readonly property var apps: (weekly ? data.rangeApps : data.todayApps) || []
-  readonly property int totalSeconds: Number((weekly ? data.rangeSeconds : data.todaySeconds) || 0)
-  readonly property int goalMinutes: Number(data.goalMinutes || 0)
+  readonly property var days: info.days || []
+  readonly property var hours: info.hours || []
+  readonly property var apps: (weekly ? info.rangeApps : info.todayApps) || []
+  readonly property int totalSeconds: Number((weekly ? info.rangeSeconds : info.todaySeconds) || 0)
+  readonly property int goalMinutes: Number(info.goalMinutes || 0)
   readonly property bool overGoal: !weekly && goalMinutes > 0 && totalSeconds > goalMinutes * 60
   readonly property int shownApps: Math.min(7, apps.length)
 
@@ -104,7 +106,7 @@ Item {
       onStreamFinished: {
         try {
           var parsed = JSON.parse(String(text))
-          if (parsed && typeof parsed === "object") root.data = parsed
+          if (parsed && typeof parsed === "object") root.info = parsed
         } catch (e) {
           // A truncated read is not worth blanking the window over.
         }
@@ -125,7 +127,7 @@ Item {
 
   readonly property string subtitle: {
     if (weekly) {
-      var span = Math.max(1, Number(data.rangeDays || 7))
+      var span = Math.max(1, Number(info.rangeDays || 7))
       return "last " + span + " days · " + formatDuration(totalSeconds / span) + " a day"
     }
     if (goalMinutes > 0) return "today · " + formatDuration(goalMinutes * 60) + " limit"
