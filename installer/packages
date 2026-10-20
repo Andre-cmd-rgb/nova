@@ -12,3 +12,5 @@ bash-completion
 unzip
 # The Activity window (Super+Ctrl+T).
 btop
+# Screen recording, from the Capture menu.
+gpu-screen-recorder

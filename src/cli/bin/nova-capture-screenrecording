@@ -22,10 +22,8 @@ if [[ -f ~/.config/user-dirs.dirs ]]; then
 fi
 OUTPUT_DIR="${NOVA_SCREENRECORD_DIR:-${XDG_VIDEOS_DIR:-$HOME/Videos}}"
 
-if [[ ! -d $OUTPUT_DIR ]]; then
-  nova-notification-send -u critical -t 3000 "Screen recording directory does not exist: $OUTPUT_DIR"
-  exit 1
-fi
+# Quietly: a notification now would be in the recording.
+mkdir -p "$OUTPUT_DIR"
 
 DESKTOP_AUDIO="false"
 MICROPHONE_AUDIO="false"
@@ -247,6 +245,9 @@ finalize_recording() {
 if screenrecording_active; then
   stop_screenrecording
 elif [[ $STOP_RECORDING == "true" ]]; then
+  exit 1
+elif ! command -v gpu-screen-recorder >/dev/null; then
+  nova-notification-send -u critical "Screen recording needs gpu-screen-recorder" "sudo pacman -S gpu-screen-recorder"
   exit 1
 else
   # Cancelling the picker is a normal way out, not a failure.
