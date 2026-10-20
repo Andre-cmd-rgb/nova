@@ -61,8 +61,11 @@ jobs:
           sudo -u builder -H make install DESTDIR=/tmp/nova-root
           test -x /tmp/nova-root/usr/bin/nova
 
-      # What qmllint cannot see: the windows opened offscreen against the
-      # installed tree, failing on any QML warning at runtime.
+      # What qmllint cannot see, run offscreen against the installed tree and
+      # failing on any QML warning: the shell's logic, then its windows.
+      - name: Shell logic, offscreen
+        run: sudo -u builder -H tests/qml/run --root /tmp/nova-root
+
       - name: Shell windows, offscreen
         run: sudo -u builder -H tools/qml-smoke --root /tmp/nova-root --shots /tmp/nova-shots
 

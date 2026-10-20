@@ -4,14 +4,16 @@ import Quickshell.Io
 import qs.Commons
 
 // Instance, not a singleton — see BarWidgetRegistry for rationale.
+//
+// Every plugin is Nova's own and ships in the package. The package build
+// collects their manifests into one file, plugins/index.json (tools/plugin-index),
+// and the registry reads it once at startup: no directory to scan, nothing to
+// watch, no plugin from anywhere else.
 QtObject {
   id: registry
 
-  property string home: Quickshell.env("HOME")
-  property string pluginsDir: home + "/.config/nova/plugins"
-
-  // Set by shell.qml at startup so we can also scan bundled first-party plugins.
-  property string firstPartyDir: ""
+  // Set by shell.qml once the config hooks below are wired; the index loads then.
+  property string pluginsDir: ""
 
   // Wired by shell.qml so the registry can read the canonical shell.json
   // without owning file IO itself. shellConfigProvider returns the current
@@ -20,150 +22,43 @@ QtObject {
   property var shellConfigProvider: null
   property var shellConfigMutator: null
 
-  // { pluginId: manifest } — manifests have source/trust metadata stamped in.
+  // { pluginId: manifest }, each with __sourceDir stamped in.
   property var installedPlugins: ({})
   property int registryRevision: 0
-  property bool scanning: false
+  property bool loading: true
   property string lastEnableError: ""
 
   signal pluginsChanged()
-  signal scanFinished()
-  signal pluginLoadFailed(string id, string error)
-  signal localPluginChanged(string id)
+  signal ready()
 
   // ---------------------------------------------------------------- helpers
 
-  function isSafeEntryPoint(value) {
-    if (typeof value !== "string" || value.length === 0) return false
-    if (value.charAt(0) === "/") return false
-    if (value.indexOf("..") !== -1) return false
-    return true
-  }
-
-  function validateManifest(manifest, sourcePath) {
-    if (!Util.isPlainObject(manifest)) {
-      console.warn("PluginRegistry: manifest is not an object at " + sourcePath)
-      return null
-    }
-    if (manifest.schemaVersion !== 1) {
-      console.warn("PluginRegistry: unsupported schemaVersion at " + sourcePath)
-      return null
-    }
-    var required = ["id", "name", "version", "kinds", "entryPoints"]
-    for (var i = 0; i < required.length; i++) {
-      if (manifest[required[i]] === undefined) {
-        console.warn("PluginRegistry: missing required field '" + required[i] + "' at " + sourcePath)
-        return null
-      }
-    }
-    var id = String(manifest.id)
-    if (!id || id.indexOf("/") !== -1 || id.indexOf("..") !== -1 || id.charAt(0) === "/") {
-      console.warn("PluginRegistry: invalid plugin id '" + id + "' at " + sourcePath)
-      return null
-    }
-    if (!Array.isArray(manifest.kinds) || manifest.kinds.length === 0) {
-      console.warn("PluginRegistry: kinds must be a non-empty array at " + sourcePath)
-      return null
-    }
-    if (!Util.isPlainObject(manifest.entryPoints)) {
-      console.warn("PluginRegistry: entryPoints must be an object at " + sourcePath)
-      return null
-    }
-    if (manifest.barWidget !== undefined && Util.isPlainObject(manifest.barWidget)
-        && manifest.barWidget.defaultSection !== undefined) {
-      var defaultSection = String(manifest.barWidget.defaultSection)
-      if (["left", "center", "right"].indexOf(defaultSection) === -1) {
-        console.warn("PluginRegistry: invalid barWidget.defaultSection at " + sourcePath)
-        return null
-      }
-    }
-    // Every entry point must be a relative path inside the plugin's source
-    // directory. Reject the whole manifest if an entry point escapes it.
-    for (var key in manifest.entryPoints) {
-      if (!isSafeEntryPoint(manifest.entryPoints[key])) {
-        console.warn("PluginRegistry: unsafe entryPoint '" + key + "'='"
-          + manifest.entryPoints[key] + "' at " + sourcePath)
-        return null
-      }
-    }
-    return manifest
-  }
-
-  function trustedCapabilities(manifest) {
-    if (!manifest || !manifest.__isFirstParty) return []
-    var metadata = Util.isPlainObject(manifest.nova) ? manifest.nova : null
-    var declared = metadata && Array.isArray(metadata.capabilities) ? metadata.capabilities : []
-    var out = []
-    for (var i = 0; i < declared.length; i++) {
-      var capability = String(declared[i] || "")
-      if (capability && out.indexOf(capability) === -1) out.push(capability)
-    }
-    return out
-  }
-
-  function stampHostCapabilities(firstParty, thirdParty) {
-    for (var firstPartyId in firstParty)
-      firstParty[firstPartyId].__hostCapabilities = trustedCapabilities(firstParty[firstPartyId])
-
-    for (var thirdPartyId in thirdParty) {
-      var manifest = thirdParty[thirdPartyId]
-      var metadata = manifest && Util.isPlainObject(manifest.nova) ? manifest.nova : null
-      var clonedFrom = metadata ? String(metadata.clonedFrom || "") : ""
-      var source = clonedFrom ? firstParty[clonedFrom] : null
-      manifest.__hostCapabilities = source && Array.isArray(source.__hostCapabilities)
-        ? source.__hostCapabilities.slice() : []
-    }
-  }
-
   function entryPointUrl(manifest, kind) {
-    if (!Util.isPlainObject(manifest)) return ""
-    var ep = manifest.entryPoints ? manifest.entryPoints[kind] : null
-    if (!ep) return ""
-    var dir = manifest.__sourceDir || ""
-    if (!dir) return ""
-    // Defense in depth: even after validateManifest, confirm the resolved
-    // path stays inside the plugin's sourceDir.
-    var resolved = dir.replace(/\/$/, "") + "/" + String(ep)
-    var expectedPrefix = dir.replace(/\/$/, "") + "/"
-    if (resolved.indexOf(expectedPrefix) !== 0) {
-      console.warn("PluginRegistry: entry point escapes sourceDir: " + resolved)
-      return ""
-    }
-    return Util.fileUrl(resolved)
+    var entry = Util.isPlainObject(manifest) && Util.isPlainObject(manifest.entryPoints)
+      ? manifest.entryPoints[kind] : ""
+    return entry && manifest.__sourceDir ? Util.fileUrl(manifest.__sourceDir + "/" + entry) : ""
   }
 
-  // Enabled = the plugin id is referenced somewhere in shell.json. That can
-  // be either the active bar option in `bar.id`, a layout entry inside
-  // `bar.layout.*` (bar widgets), or a top-level entry in `plugins[]` (panels,
-  // overlays, services).
-  //
-  // Special cases (implicitly always enabled, no shell.json entry needed):
-  //   - the built-in bar option (`nova.bar`) is active when `bar.id` is
-  //     missing or set to `nova.bar`.
-  //   - first-party non-bar plugins are shell infrastructure (settings,
-  //     image-picker, ...). Requiring users to add them to plugins[] just to
-  //     summon them was a footgun: a stock shell.json with `plugins: []` would
-  //     silently make `nova launch bar-settings` a no-op. Turning one off
-  //     is therefore recorded the other way round, in `disabledPlugins[]`.
-  //     A first-party plugin whose manifest says "enabledByDefault": false
-  //     (Screen Time) is the exception: it is on only while shell.json names
-  //     it, so taking it off the bar switches it off entirely.
+  function hasKind(manifest, kind) {
+    return !!manifest && manifest.kinds.indexOf(kind) !== -1
+  }
+
+  // Enabled = the plugin's component loads. Everything is on by default, so
+  // shell.json only records the deviation: a switched-off plugin in
+  // `disabledPlugins[]`. A manifest that says "enabledByDefault": false
+  // (Screen Time) is the exception: it is on only while shell.json names it,
+  // in the bar layout or in `plugins[]`, so taking it off the bar switches it
+  // off entirely. The bar itself is always on.
   function onByDefault(manifest) {
-    return !!manifest && !!manifest.__isFirstParty && manifest.enabledByDefault !== false
+    return !!manifest && manifest.enabledByDefault !== false
   }
 
   function isEnabled(id) {
-    var key = String(id)
+    var key = Util.canonicalWidgetId(String(id))
     var manifest = installedPlugins[key]
     var config = shellConfigProvider ? shellConfigProvider() : null
     if (manifest) {
-      if (Array.isArray(manifest.kinds) && manifest.kinds.indexOf("bar") !== -1) {
-        var selectedBar = ""
-        if (Util.isPlainObject(config) && Util.isPlainObject(config.bar))
-          selectedBar = Util.canonicalWidgetId(String(config.bar.id || ""))
-        if (!selectedBar) selectedBar = "nova.bar"
-        return selectedBar === key
-      }
+      if (hasKind(manifest, "bar")) return true
       if (isDisabled(config, key)) return false
       if (onByDefault(manifest)) return true
     }
@@ -175,24 +70,11 @@ QtObject {
       && config.disabledPlugins.indexOf(Util.canonicalWidgetId(String(id))) !== -1
   }
 
-  function resolveEnabledId(id) {
-    var key = Util.canonicalWidgetId(String(id || ""))
-    // Callers keep using the built-in id after cloning; the enabled local
-    // manifest is the implementation that should receive the call.
-    for (var candidate in installedPlugins) {
-      var manifest = installedPlugins[candidate]
-      var metadata = manifest && Util.isPlainObject(manifest.nova) ? manifest.nova : null
-      if (metadata && String(metadata.clonedFrom || "") === key && isEnabled(candidate))
-        return candidate
-    }
-    return key
-  }
-
-  // A bar widget is on when it sits in the bar, whoever shipped it. That is a
-  // different question from isEnabled(), which decides whether the widget's
-  // component is loaded at all — a built-in stays loadable so it can be put
-  // back, and so a plugin that is both a widget and a menu (nova.menu)
-  // cannot be locked out of the shell by taking its button off the bar.
+  // A bar widget is on when it sits in the bar. That is a different question
+  // from isEnabled(), which decides whether the widget's component is loaded
+  // at all — a built-in stays loadable so it can be put back, and so a plugin
+  // that is both a widget and a menu (nova.menu) cannot be locked out of the
+  // shell by taking its button off the bar.
   function inBar(id) {
     var config = shellConfigProvider ? shellConfigProvider() : null
     return findEntryLocation(config, id).kind === "bar"
@@ -225,27 +107,11 @@ QtObject {
     return { found: false }
   }
 
-  // A caller naming a widget that has been cloned means the clone that took
-  // its place, the way resolveEnabledId routes calls to it.
-  function findRelativeBarLocation(config, id, section) {
-    var location = findBarLocation(config, id, section)
-    if (location.found) return location
-    if (!Util.isPlainObject(config) || !Util.isPlainObject(config.bar)) return { found: false }
-    var clone = activeCloneFor(config, Util.canonicalWidgetId(String(id)))
-    return clone ? findBarLocation(config, clone, section) : { found: false }
-  }
-
   function findEntryLocation(config, id) {
     if (!Util.isPlainObject(config)) return { found: false }
     var key = Util.canonicalWidgetId(String(id))
-    if (Util.isPlainObject(config.bar)) {
-      var selectedBar = Util.canonicalWidgetId(String(config.bar.id || ""))
-      if (selectedBar === key) return { found: true, kind: "bar-option" }
-    }
-    if (Util.isPlainObject(config.bar) && Util.isPlainObject(config.bar.layout)) {
-      var barLocation = findBarLocation(config, key, "")
-      if (barLocation.found) return barLocation
-    }
+    var barLocation = findBarLocation(config, key, "")
+    if (barLocation.found) return barLocation
     if (Array.isArray(config.plugins)) {
       for (var j = 0; j < config.plugins.length; j++) {
         if (config.plugins[j] && Util.canonicalWidgetId(config.plugins[j].id) === key) return { found: true, kind: "plugin", index: j }
@@ -260,7 +126,7 @@ QtObject {
       ? String(target.section) : fallbackSection
     var relativeId = String(target.before || target.after || "")
     if (relativeId) {
-      var relative = findRelativeBarLocation(config, relativeId, section && target.section ? section : "")
+      var relative = findBarLocation(config, relativeId, section && target.section ? section : "")
       if (!relative.found) return { error: "could not find target widget " + relativeId }
       return {
         section: relative.section,
@@ -275,7 +141,7 @@ QtObject {
     }
 
     var anchors = { left: "nova.workspaces", center: "nova.weather", right: "nova.tray" }
-    var anchor = findRelativeBarLocation(config, anchors[section], section)
+    var anchor = findBarLocation(config, anchors[section], section)
     return {
       section: section,
       index: anchor.found ? anchor.index + 1 : config.bar.layout[section].length
@@ -327,20 +193,15 @@ QtObject {
   // leaves a widget that is already on the bar where its owner put it.
   function putBarWidget(id, placement) {
     if (inBar(id)) return ""
+    // The index loads in the background and IPC answers before it has, so an
+    // id it has not read yet is not one that does not exist.
+    if (loading) return "not ready"
     var config = shellConfigProvider ? shellConfigProvider() : null
-    // Enabling a source whose clone is active switches back to the built-in,
-    // which is the owner's call, not an unattended caller's.
-    if (findRelativeBarLocation(config, id, "").found) return ""
-    // The manifest scan is a subprocess and IPC answers before it returns, so
-    // an id it has not reached yet is not one that does not exist.
-    if (scanning && !installedPlugins[Util.canonicalWidgetId(String(id))]) return "not ready"
     var target = Util.isPlainObject(placement) ? Util.cloneJson(placement) : {}
     var relativeId = String(target.before || target.after || "")
-    if (relativeId) {
-      if (!findRelativeBarLocation(config, relativeId, String(target.section || "")).found) {
-        delete target.before
-        delete target.after
-      }
+    if (relativeId && !findBarLocation(config, relativeId, String(target.section || "")).found) {
+      delete target.before
+      delete target.after
     }
     if (setEnabled(id, true, target)) return ""
     return lastEnableError || "unknown"
@@ -401,11 +262,6 @@ QtObject {
     if (!Array.isArray(config.plugins)) config.plugins = []
   }
 
-  // Bar widgets use the default section declared in their manifest, falling
-  // back to center. Panels/overlays/menus/services go into the plugins[] array.
-  // Built-ins are already loaded, so shell.json only ever records the
-  // deviation: an added third-party plugin in plugins[], a switched-off
-  // built-in in disabledPlugins[].
   function removeDisabled(config, id) {
     if (!Array.isArray(config.disabledPlugins)) return
     config.disabledPlugins = config.disabledPlugins.filter(function(entry) { return entry !== id })
@@ -418,66 +274,8 @@ QtObject {
     config.disabledPlugins.push(id)
   }
 
-  function cloneShouldRestoreSource(config, id) {
-    return Array.isArray(config.cloneSourceRestores) && config.cloneSourceRestores.indexOf(id) !== -1
-  }
-
-  function setCloneShouldRestoreSource(config, id, value) {
-    var restores = Array.isArray(config.cloneSourceRestores) ? config.cloneSourceRestores : []
-    restores = restores.filter(function(entry) { return entry !== id })
-    if (value) restores.push(id)
-    if (restores.length) config.cloneSourceRestores = restores
-    else delete config.cloneSourceRestores
-  }
-
-  function activeCloneFor(config, sourceId) {
-    for (var candidate in installedPlugins) {
-      var candidateManifest = installedPlugins[candidate]
-      var candidateMetadata = candidateManifest && Util.isPlainObject(candidateManifest.nova)
-        ? candidateManifest.nova : null
-      if (!candidateMetadata || String(candidateMetadata.clonedFrom || "") !== sourceId) continue
-      if (Array.isArray(candidateManifest.kinds) && candidateManifest.kinds.indexOf("bar") !== -1) {
-        if (Util.canonicalWidgetId(String(config.bar.id || "")) === candidate) return candidate
-      } else if (findEntryLocation(config, candidate).found) {
-        return candidate
-      }
-    }
-    return ""
-  }
-
-  function restoreCloneSource(config, cloneId, sourceId) {
-    var cloneManifest = installedPlugins[cloneId]
-    var isBarOption = cloneManifest && Array.isArray(cloneManifest.kinds)
-      && cloneManifest.kinds.indexOf("bar") !== -1
-    if (isBarOption) {
-      if (sourceId === "nova.bar") delete config.bar.id
-      else config.bar.id = sourceId
-    } else {
-      var cloneLocation = findEntryLocation(config, cloneId)
-      if (cloneLocation.kind === "bar") {
-        var cloneEntry = config.bar.layout[cloneLocation.section][cloneLocation.index]
-        var sections = ["left", "center", "right"]
-        for (var s = 0; s < sections.length; s++) {
-          for (var i = config.bar.layout[sections[s]].length - 1; i >= 0; i--) {
-            if (barEntryId(config.bar.layout[sections[s]][i]) === sourceId)
-              config.bar.layout[sections[s]].splice(i, 1)
-          }
-        }
-        cloneLocation = findBarLocation(config, cloneId, "")
-        if (cloneLocation.found) {
-          var restoredEntry = Util.isPlainObject(cloneEntry) ? Util.cloneJson(cloneEntry) : {}
-          restoredEntry.id = sourceId
-          config.bar.layout[cloneLocation.section][cloneLocation.index] = restoredEntry
-        }
-      } else if (cloneLocation.kind === "plugin") {
-        config.plugins.splice(cloneLocation.index, 1)
-      }
-    }
-
-    if (cloneShouldRestoreSource(config, cloneId)) removeDisabled(config, sourceId)
-    setCloneShouldRestoreSource(config, cloneId, false)
-  }
-
+  // Bar widgets go to the default section their manifest declares, falling
+  // back to center; anything else that is off by default goes into plugins[].
   function setEnabled(id, value, placement) {
     var key = Util.canonicalWidgetId(String(id))
     lastEnableError = ""
@@ -490,39 +288,18 @@ QtObject {
       console.warn("PluginRegistry.setEnabled: unknown plugin " + key)
       return false
     }
-    var isBarOption = manifest && Array.isArray(manifest.kinds) && manifest.kinds.indexOf("bar") !== -1
-    var isBarWidget = manifest && Array.isArray(manifest.kinds) && manifest.kinds.indexOf("bar-widget") !== -1
-    var hasNonWidgetKind = manifest && Array.isArray(manifest.kinds)
-      && manifest.kinds.some(function(kind) { return kind !== "bar-widget" })
-    var metadata = manifest && Util.isPlainObject(manifest.nova) ? manifest.nova : null
-    var clonedFrom = metadata ? Util.canonicalWidgetId(String(metadata.clonedFrom || "")) : ""
+    // The bar has no off, and no other bar to give way to.
+    if (hasKind(manifest, "bar")) return true
+    var isBarWidget = hasKind(manifest, "bar-widget")
     shellConfigMutator(function(config) {
       ensureConfigShape(config)
 
       if (value && placement && (placement.before || placement.after)) {
         var relativeId = String(placement.before || placement.after)
-        if (!findRelativeBarLocation(config, relativeId, String(placement.section || "")).found) {
+        if (!findBarLocation(config, relativeId, String(placement.section || "")).found) {
           lastEnableError = "could not find target widget " + relativeId
           return
         }
-      }
-
-      if (value && manifest && manifest.__isFirstParty) {
-        var activeClone = activeCloneFor(config, key)
-        if (activeClone) {
-          restoreCloneSource(config, activeClone, key)
-          removeDisabled(config, key)
-        }
-      }
-
-      if (isBarOption) {
-        if (value) {
-          config.bar.id = key
-        } else if (Util.canonicalWidgetId(String(config.bar.id || "")) === key) {
-          if (clonedFrom && clonedFrom !== "nova.bar") config.bar.id = clonedFrom
-          else delete config.bar.id
-        }
-        return
       }
 
       var onDefault = onByDefault(manifest)
@@ -530,37 +307,18 @@ QtObject {
 
       if (value) {
         removeDisabled(config, key)
-        var entry = { id: key }
-        var insertedWithPlacement = false
         if (!location.found && isBarWidget) {
-          var sourceLocation = clonedFrom ? findEntryLocation(config, clonedFrom) : { found: false }
-          if (sourceLocation.kind === "bar") {
-            var sourceEntry = config.bar.layout[sourceLocation.section][sourceLocation.index]
-            var replacement = Util.isPlainObject(sourceEntry) ? Util.cloneJson(sourceEntry) : entry
-            replacement.id = key
-            config.bar.layout[sourceLocation.section][sourceLocation.index] = replacement
-          } else {
-            var section = defaultBarWidgetSection(manifest)
-            var target = barTarget(config, placement || {}, section)
-            config.bar.layout[target.section].splice(target.index, 0, entry)
-            insertedWithPlacement = true
-          }
-        } else if (!location.found && !onDefault) {
-          config.plugins.push(entry)
+          var target = barTarget(config, placement || {}, defaultBarWidgetSection(manifest))
+          config.bar.layout[target.section].splice(target.index, 0, { id: key })
+          return
         }
-
-        if (isBarWidget && !insertedWithPlacement && placement && Object.keys(placement).length)
+        if (!location.found && !onDefault) config.plugins.push({ id: key })
+        if (isBarWidget && placement && Object.keys(placement).length)
           moveBarEntry(config, key, placement)
-
-        if (clonedFrom && hasNonWidgetKind && !isDisabled(config, clonedFrom)) {
-          addDisabled(config, clonedFrom)
-          setCloneShouldRestoreSource(config, key, true)
-        }
         return
       }
 
-      if (clonedFrom) restoreCloneSource(config, key, clonedFrom)
-      else if (location.kind === "bar") config.bar.layout[location.section].splice(location.index, 1)
+      if (location.kind === "bar") config.bar.layout[location.section].splice(location.index, 1)
       else if (location.kind === "plugin") config.plugins.splice(location.index, 1)
 
       // Dropping the layout entry is the whole story for a widget. Anything
@@ -573,178 +331,38 @@ QtObject {
     return true
   }
 
-  // ---------------------------------------------------------------- scanning
+  // ---------------------------------------------------------------- loading
 
-  // Output format produced by the rescan script:
-  //   ===<kind>::<absolute-source-dir>===
-  //   ... raw manifest.json content ...
-  //   === EOM ===
-  // (repeating for every manifest found)
-  function parseScanOutput(text) {
-    var lines = String(text || "").split("\n")
-    var firstParty = {}
-    var thirdParty = {}
-    var currentSource = null
-    var currentKind = null
-    var currentJson = []
-
-    function flush() {
-      if (!currentSource) return
-      var raw = currentJson.join("\n").trim()
-      try {
-        var manifest = JSON.parse(raw)
-        manifest.__sourceDir = currentSource
-        manifest.__isFirstParty = (currentKind === "firstparty")
-        var validated = validateManifest(manifest, currentSource + "/manifest.json")
-        if (validated) {
-          if (currentKind === "firstparty") firstParty[validated.id] = validated
-          else thirdParty[validated.id] = validated
-        }
-      } catch (e) {
-        console.warn("PluginRegistry: bad manifest at " + currentSource + ": " + e)
-      }
-      currentSource = null
-      currentKind = null
-      currentJson = []
+  // index.json: [{ "dir": "<dir under plugins/>", "manifest": { ... } }, ...],
+  // validated when the package is built.
+  function load(text) {
+    var entries = []
+    try {
+      entries = JSON.parse(String(text || "[]"))
+    } catch (e) {
+      console.warn("PluginRegistry: the plugin index is not JSON: " + e)
     }
-
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i]
-      var startMatch = line.match(/^===([a-z]+)::(.+)===$/)
-      if (startMatch) {
-        flush()
-        currentKind = startMatch[1]
-        currentSource = startMatch[2].replace(/\/$/, "")
-        currentJson = []
-        continue
-      }
-      if (line === "=== EOM ===") {
-        flush()
-        continue
-      }
-      if (currentSource) currentJson.push(line)
+    var plugins = ({})
+    for (var i = 0; Array.isArray(entries) && i < entries.length; i++) {
+      var manifest = entries[i] ? entries[i].manifest : null
+      if (!Util.isPlainObject(manifest) || !manifest.id || !Array.isArray(manifest.kinds)) continue
+      manifest.__sourceDir = pluginsDir + "/" + String(entries[i].dir || "")
+      plugins[manifest.id] = manifest
     }
-    flush()
-
-    stampHostCapabilities(firstParty, thirdParty)
-
-    var merged = {}
-    for (var fk in firstParty) merged[fk] = firstParty[fk]
-    // Third-party plugins never shadow first-party ids. The whole
-    // `nova.*` namespace is reserved for built-ins, including bar widgets
-    // registered outside the manifest-based plugin registry.
-    for (var tk in thirdParty) {
-      if (firstParty[tk] || String(tk).indexOf("nova.") === 0) {
-        console.warn("PluginRegistry: plugin " + tk
-          + " rejected: id is reserved for first-party Nova plugins")
-        continue
-      }
-      merged[tk] = thirdParty[tk]
-    }
-
-    installedPlugins = merged
+    installedPlugins = plugins
     registryRevision++
-    scanning = false
+    loading = false
     pluginsChanged()
-    scanFinished()
+    ready()
   }
 
-  property Process scanProcess: Process {
-    onExited: function(exitCode) {
-      var output = scanStdout.text || ""
-      registry.parseScanOutput(output)
-    }
-    stdout: StdioCollector {
-      id: scanStdout
-      waitForEnd: true
-    }
-  }
-
-  property Process initProcess: Process {
-    onExited: {
-      localPluginWatcher.running = true
-      registry.rescan()
+  property FileView index: FileView {
+    path: registry.pluginsDir ? registry.pluginsDir + "/index.json" : ""
+    printErrors: false
+    onLoaded: registry.load(text())
+    onLoadFailed: function(error) {
+      console.warn("PluginRegistry: cannot read " + path + ": " + error)
+      registry.load("")
     }
   }
-
-  property Process localPluginWatcher: Process {
-    command: [
-      "inotifywait",
-      "-m",
-      "-r",
-      "-q",
-      "-e",
-      "close_write,create,delete,move",
-      "--format",
-      "%w%f",
-      registry.pluginsDir
-    ]
-    stdout: SplitParser {
-      onRead: function(path) {
-        var pluginId = registry.localPluginIdForPath(path)
-        if (pluginId) registry.localPluginChanged(pluginId)
-      }
-    }
-    onExited: localPluginWatcherRestart.restart()
-  }
-
-  property Timer localPluginWatcherRestart: Timer {
-    interval: 1000
-    onTriggered: localPluginWatcher.running = true
-  }
-
-  function rescan() {
-    if (scanning) return
-    scanning = true
-    // $0 = first-party dir, $1 = third-party dir. Some bash versions need the explicit -- separator.
-    // First-party plugins may be grouped one level deeper, e.g. panels/audio
-    // or services/battery.
-    // First-party bar widgets can also carry sibling manifests such as
-    // widgets/Clock.manifest.json so multiple widgets can live in one source
-    // directory without wrapper folders.
-    // Third-party plugins stay at the top level of ~/.config/nova/plugins.
-    var script = ""
-      + "emit_manifest() { local kind=\"$1\"; local manifest=\"$2\"; local sub; "
-      + "  if [[ ${manifest##*/} == \"manifest.json\" ]]; then sub=\"${manifest%/manifest.json}\"; else sub=\"$(dirname -- \"$manifest\")\"; fi; "
-      + "  printf '===%s::%s===\\n' \"$kind\" \"$sub\"; "
-      + "  cat \"$manifest\"; "
-      + "  printf '\\n=== EOM ===\\n'; "
-      + "}; "
-      + "scan_firstparty() { local dir=\"$1\"; "
-      + "  [[ -d \"$dir\" ]] || return 0; "
-      + "  while IFS= read -r manifest; do emit_manifest firstparty \"$manifest\"; done < <(find \"$dir\" -mindepth 2 -maxdepth 3 -type f \\( -name manifest.json -o -name '*.manifest.json' \\) | sort); "
-      + "}; "
-      + "scan_thirdparty() { local dir=\"$1\"; "
-      + "  [[ -d \"$dir\" ]] || return 0; "
-      + "  for sub in \"$dir\"/*/; do "
-      + "    [[ -f \"$sub/manifest.json\" ]] || continue; "
-      + "    emit_manifest thirdparty \"$sub/manifest.json\"; "
-      + "  done; "
-      + "}; "
-      + "scan_firstparty \"$0\"; "
-      + "scan_thirdparty \"$1\""
-    scanProcess.command = ["bash", "-c", script, registry.firstPartyDir, registry.pluginsDir]
-    scanProcess.running = true
-  }
-
-  function ensureUserDir() {
-    initProcess.command = ["bash", "-c", "mkdir -p \"$0\"", registry.pluginsDir]
-    initProcess.running = true
-  }
-
-  function localPluginIdForPath(filePath) {
-    var base = pluginsDir.replace(/\/$/, "") + "/"
-    var path = String(filePath || "").trim()
-    if (path.indexOf(base) !== 0) return ""
-
-    var relative = path.slice(base.length)
-    // Hidden entries are not plugins: clone staging dirs, remove backups.
-    if (relative.indexOf(".") === 0) return ""
-    if (relative.indexOf("/.git/") !== -1 || relative.endsWith("/.git")) return ""
-
-    var slash = relative.indexOf("/")
-    return slash === -1 ? relative : relative.slice(0, slash)
-  }
-
-  Component.onCompleted: ensureUserDir()
 }

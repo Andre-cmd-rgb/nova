@@ -5,11 +5,6 @@
   "version": "1.0.0",
   "author": "Nova",
   "description": "Quickshell session lock with separate password and fingerprint PAM flows.",
-  "nova": {
-    "capabilities": [
-      "authentication"
-    ]
-  },
   "kinds": [
     "service"
   ],

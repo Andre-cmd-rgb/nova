@@ -5,11 +5,6 @@
   "version": "1.0.0",
   "author": "Nova",
   "description": "Theme-aware authentication dialog for privileged actions.",
-  "nova": {
-    "capabilities": [
-      "authentication"
-    ]
-  },
   "kinds": [
     "service"
   ],

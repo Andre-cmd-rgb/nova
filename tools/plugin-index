@@ -1,0 +1,62 @@
+#!/bin/bash
+# plugin-index: collect the shell's plugin manifests into the one file the
+# shell reads at startup, checking each on the way: a broken manifest fails the
+# build instead of leaving a plugin silently missing from the desktop.
+#
+#   tools/plugin-index <plugins dir> >index.json
+#
+# A plugin is a directory with a manifest.json, one or two levels down
+# (bar/, panels/audio/); a directory holding several widgets names each one's
+# manifest <Name>.manifest.json. The index lists them in path order:
+#   [{"dir": "panels/audio", "manifest": {...}}, ...]
+
+set -euo pipefail
+
+dir=${1:?usage: plugin-index <plugins dir>}
+cd "$dir"
+
+# The problems with one manifest, a line each. A kind is loaded from the
+# entry point of the same name (bar-widget from barWidget).
+# shellcheck disable=SC2016 # a jq program, expanded by jq
+check='
+  def entry: {"bar": "bar", "bar-widget": "barWidget", "panel": "panel",
+    "overlay": "overlay", "menu": "menu", "service": "service"}[.];
+  . as $m
+  | (if .schemaVersion != 1 then "schemaVersion is not 1" else empty end),
+    (("id", "name", "version") as $k
+      | if ($m[$k] | type) != "string" or $m[$k] == "" then "\($k) is missing" else empty end),
+    (if (.kinds | type) != "array" or (.kinds | length) == 0 then "kinds is empty"
+     else .kinds[] | select(type != "string" or entry == null) | "unknown kind \(.)" end),
+    (if (.entryPoints | type) != "object" then "entryPoints is missing"
+     else .kinds[]? | select(type == "string") as $kind | ($kind | entry) as $e
+       | select($e != null and ($m.entryPoints | has($e) | not)) | "no entry point for \($kind)" end),
+    (if (.barWidget | type) == "object" and .barWidget.defaultSection != null
+        and (["left", "center", "right"] | index($m.barWidget.defaultSection)) == null
+     then "barWidget.defaultSection is not left, center or right" else empty end)'
+
+failed=0
+entries=()
+while IFS= read -r -d '' manifest; do
+  manifest=${manifest#./}
+  sub=${manifest%/*}
+  if ! problems=$(jq -r "$check" "$manifest" 2>&1); then
+    echo "plugin-index: $manifest: $problems" >&2
+    failed=1
+    continue
+  fi
+  while IFS= read -r file; do
+    [[ -z $file || -f $sub/$file ]] || problems+=${problems:+$'\n'}"entry point $file does not exist"
+  done < <(jq -r '.entryPoints | objects | .[] | strings' "$manifest")
+  if [[ -n $problems ]]; then
+    while IFS= read -r line; do echo "plugin-index: $manifest: $line" >&2; done <<<"$problems"
+    failed=1
+    continue
+  fi
+  entries+=("$(jq -c --arg dir "$sub" '{dir: $dir, manifest: .}' "$manifest")")
+done < <(find . -mindepth 2 -maxdepth 3 -type f \( -name manifest.json -o -name '*.manifest.json' \) -print0 | LC_ALL=C sort -z)
+
+((failed == 0)) || exit 1
+((${#entries[@]} > 0)) || { echo "plugin-index: no manifests under $dir" >&2; exit 1; }
+printf '%s\n' "${entries[@]}" | jq -s '
+  (group_by(.manifest.id) | map(select(length > 1) | .[0].manifest.id)) as $twice
+  | if $twice != [] then error("plugin ids used twice: \($twice | join(", "))") else . end'

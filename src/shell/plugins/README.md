@@ -1,51 +1,54 @@
-# First-party plugins
+# Plugins
 
-These plugins ship with Nova and are discovered by the shell at startup.
-They use the same `manifest.json` contract as third-party plugins; the
-only difference is that the shell flags them with `__isFirstParty: true`.
-First-party non-bar plugins are enabled unless listed in `disabledPlugins[]`;
-`nova.bar` is the default bar option and becomes inactive only while another
-`kind: "bar"` plugin is selected. Services and keep-loaded panels are mounted
-at startup; other panels, overlays, and menus are loaded on demand.
+Everything the shell shows is one of these plugins. Each declares itself in a
+`manifest.json`, or a `<Name>.manifest.json` beside its QML for the small bar
+widgets in `bar/widgets/`; the build collects them into `index.json`, which is
+how the shell finds them (see [../README.md](../README.md#plugins)).
 
-User-installed plugins live alongside these conceptually but on disk under
-`~/.config/nova/plugins/<plugin-id>/` rather than in this directory.
+All are on by default except Screen Time. Services and keep-loaded panels are
+mounted at startup; other panels, overlays and menus load when first summoned.
 
-| Plugin        | id                        | kinds                   | entry point                           |
-|---------------|---------------------------|-------------------------|---------------------------------------|
-| Bar           | `nova.bar`             | `bar`                   | `bar/Bar.qml`                         |
-| Image picker  | `nova.image-picker`    | `overlay`               | `image-picker/ImagePicker.qml`        |
-| Emojis        | `nova.emojis`          | `overlay`               | `emojis/Emojis.qml`                   |
-| Clipboard mgr | `nova.clipboard`       | `overlay`               | `clipboard/Clipboard.qml`             |
-| Reminders     | `nova.reminders`       | `overlay`               | `reminders/ReminderFlow.qml`          |
-| Nova menu  | `nova.menu`            | `menu`, `bar-widget`    | `menu/Menu.qml`, `menu/BarWidget.qml` |
-| Notifications | `nova.notifications`   | `service`               | `notifications/Service.qml`           |
-| Audio         | `nova.audio`           | `bar-widget`            | `panels/audio/Panel.qml`              |
-| Bluetooth     | `nova.bluetooth`       | `bar-widget`            | `panels/bluetooth/Panel.qml`          |
-| Clock         | `nova.clock`           | `bar-widget`            | `panels/clock/BarWidget.qml`          |
-| Monitor       | `nova.monitor`         | `bar-widget`            | `panels/monitor/Panel.qml`            |
-| Network       | `nova.network`         | `bar-widget`            | `panels/network/Panel.qml`            |
-| Power         | `nova.power`           | `bar-widget`            | `panels/power/Panel.qml`              |
-| Tailscale     | `nova.tailscale`       | `bar-widget`            | `panels/tailscale/Panel.qml`          |
-| Agents   | `nova.agents`     | `bar-widget`            | `agents/Panel.qml`               |
-| Weather       | `nova.weather`         | `bar-widget`            | `panels/weather/BarWidget.qml`        |
-| Media         | `nova.media`           | `service`, `bar-widget` | `services/media/Service.qml`, `services/media/BarWidget.qml` |
-| Battery       | `nova.battery`         | `service`               | `services/battery/Service.qml`        |
-| Idle          | `nova.idle`            | `service`               | `services/idle/Service.qml`           |
-| Night light   | `nova.nightlight`      | `service`               | `services/nightlight/Service.qml`     |
-| Lock screen   | `nova.lock`            | `service`               | `lock/Service.qml`                    |
-| OSD           | `nova.osd`             | `panel`                 | `osd/Osd.qml`                         |
-| Polkit agent  | `nova.polkit`          | `service`               | `polkit/PolkitAgent.qml`              |
-
-First-party bar-only widgets also carry manifests next to their QML files,
-e.g. `bar/widgets/Workspaces.manifest.json`. Rich popup widgets live in their
-own plugin directories, each with its own `manifest.json`.
+| Plugin | id | kinds | entry points |
+|---|---|---|---|
+| Background | `nova.background` | `service` | `background/Background.qml` |
+| Bar | `nova.bar` | `bar` | `bar/Bar.qml` |
+| Active window | `nova.active-window` | `bar-widget` | `bar/widgets/ActiveWindow.qml` |
+| Indicators | `nova.indicators` | `bar-widget` | `bar/widgets/Indicators.qml` |
+| Keyboard layout | `nova.keyboard-layout` | `bar-widget` | `bar/widgets/KeyboardLayout.qml` |
+| Microphone | `nova.microphone` | `bar-widget` | `bar/widgets/Microphone.qml` |
+| Spacer | `nova.spacer` | `bar-widget` | `bar/widgets/Spacer.qml` |
+| Nova update | `nova.system-update` | `bar-widget` | `bar/widgets/SystemUpdate.qml` |
+| System tray | `nova.tray` | `bar-widget` | `bar/widgets/Tray.qml` |
+| Workspaces | `nova.workspaces` | `bar-widget` | `bar/widgets/Workspaces.qml` |
+| Battery Life | `nova.batterylife` | `service`, `panel`, `bar-widget` | `batterylife/Service.qml`, `batterylife/Panel.qml`, `batterylife/BarWidget.qml` |
+| Clipboard | `nova.clipboard` | `overlay` | `clipboard/Clipboard.qml` |
+| Emojis | `nova.emojis` | `overlay` | `emojis/Emojis.qml` |
+| Image picker | `nova.image-picker` | `overlay` | `image-picker/ImagePicker.qml` |
+| Lock Screen | `nova.lock` | `service` | `lock/Service.qml` |
+| Nova menu | `nova.menu` | `menu`, `bar-widget` | `menu/Menu.qml`, `menu/BarWidget.qml` |
+| Mobile Data | `nova.mobile-data` | `bar-widget` | `mobile-data/BarWidget.qml` |
+| Notifications | `nova.notifications` | `service` | `notifications/Service.qml` |
+| On-screen display | `nova.osd` | `panel` | `osd/Osd.qml` |
+| Audio | `nova.audio` | `bar-widget` | `panels/audio/Panel.qml` |
+| Bluetooth | `nova.bluetooth` | `bar-widget` | `panels/bluetooth/Panel.qml` |
+| Clock | `nova.clock` | `bar-widget` | `panels/clock/BarWidget.qml` |
+| Display | `nova.monitor` | `bar-widget` | `panels/monitor/Panel.qml` |
+| Network | `nova.network` | `bar-widget` | `panels/network/Panel.qml` |
+| Power | `nova.power` | `bar-widget` | `panels/power/Panel.qml` |
+| Weather | `nova.weather` | `bar-widget` | `panels/weather/BarWidget.qml` |
+| Polkit Agent | `nova.polkit` | `service` | `polkit/PolkitAgent.qml` |
+| Screen Time | `nova.screentime` | `service`, `panel`, `bar-widget` | `screentime/Service.qml`, `screentime/Panel.qml`, `screentime/BarWidget.qml` |
+| Battery | `nova.battery` | `service` | `services/battery/Service.qml` |
+| Idle | `nova.idle` | `service` | `services/idle/Service.qml` |
+| Media | `nova.media` | `service`, `bar-widget` | `services/media/Service.qml`, `services/media/BarWidget.qml` |
+| Night Light | `nova.nightlight` | `service` | `services/nightlight/Service.qml` |
+| Settings | `nova.settings` | `panel` | `settings/Panel.qml` |
 
 ## Bar
 
-The built-in status bar and default full-bar option. Layout lives in the
+The status bar. Its layout lives in the
 top-level `bar:` subtree of `~/.config/nova/shell.json` (with the shell
-providing [`config/nova/shell.json`](../../config/nova/shell.json) when
+providing [`$NOVA_PATH/default/shell.json`](../../../data/defaults/shell.json) when
 the user has no file). See [`bar/README.md`](bar/README.md) for the widget catalogue
 and customization schema.
 
@@ -83,9 +86,7 @@ separate PAM services: `nova-lock-password` for password auth and,
 only when fingerprints are enrolled, `nova-lock-fingerprint` for
 fingerprint auth. It mirrors the previous lock screen field dimensions,
 colors, blurred wallpaper, placeholder, and Hyprland-driven corners.
-The plugin sets `keepLoaded: true` so a plugin hot-reload (for example
-an installed bar widget changing on disk) does not destroy the lock
-client while Hyprland still holds the session lock.
+Like every service it is mounted at startup and lives as long as the shell.
 
 ## Polkit agent
 

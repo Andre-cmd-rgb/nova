@@ -4,7 +4,7 @@ import qs.Ui
 BarIndicator {
   id: root
 
-  readonly property var idleService: bar?.shell?.firstPartyServiceFor("nova.idle")
+  readonly property var idleService: bar?.shell?.serviceFor("nova.idle")
 
   active: idleService ? idleService.stayAwake : false
   activeText: "󰅶"

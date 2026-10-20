@@ -1,0 +1,53 @@
+#!/bin/bash
+# The shell's logic tests: each tests/qml/*-test.qml runs under Quickshell's
+# offscreen platform against an installed shell tree, in a scratch home, and
+# reports a line per check ("ok   ..." or "FAIL ..."), then "DONE". A FAIL, a
+# QML warning or error, or a test that never reaches DONE fails the run.
+#
+#   tests/qml/run --root <dir>
+#
+# --root is a `make install DESTDIR=<dir>` tree, the one tools/qml-smoke uses.
+
+set -euo pipefail
+
+here=$(cd "$(dirname "$0")" && pwd)
+root=''
+while (($# > 0)); do
+  case $1 in
+    --root) root=${2:?}; shift 2 ;;
+    *) sed -n '2,/^$/s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+  esac
+done
+[[ -n $root && -f $root/usr/share/nova/shell/plugins/index.json ]] || { echo "qml tests: --root needs an installed shell tree" >&2; exit 2; }
+command -v qs >/dev/null || { echo "qml tests: needs quickshell (qs)" >&2; exit 1; }
+root=$(cd "$root" && pwd)
+plugins=$root/usr/share/nova/shell/plugins
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/home" "$work/run" "$work/shell"
+chmod 700 "$work/run"
+for d in Commons Ui services plugins; do ln -s "$root/usr/share/nova/shell/$d" "$work/shell/$d"; done
+
+failed=0
+for test in "$here"/*-test.qml; do
+  name=$(basename "$test" .qml)
+  cp "$test" "$work/shell/$name.qml"
+  rm -rf "$work/run/quickshell"
+  status=0
+  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 PATH=/usr/bin QT_QPA_PLATFORM=offscreen \
+    TEST_PLUGINS="$plugins" TEST_PLUGIN_COUNT="$(jq length "$plugins/index.json")" \
+    timeout 60 qs --no-color -p "$work/shell/$name.qml" >/dev/null 2>&1 || status=$?
+  log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$work/shell/$name.qml" 2>&1)
+  # The locale line is the offscreen platform's, not ours.
+  problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -v 'Detected locale' || true)
+  if ((status != 0)) || [[ -n $problems ]] || ! grep -q 'DONE$' <<<"$log"; then
+    echo "FAIL $name (exit $status)"
+    grep -E '(ok|FAIL) ' <<<"$log" | sed -E 's/^.*(scene|qml): /  /' || true
+    [[ -z $problems ]] || grep -vE '(ok|FAIL) ' <<<"$problems" | sed 's/^/  /' || true
+    failed=1
+  else
+    echo "ok   $name ($(grep -c 'ok   ' <<<"$log") checks)"
+  fi
+done
+exit "$failed"

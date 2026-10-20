@@ -14,7 +14,7 @@ Item {
   readonly property string stayAwakeStatePath: stayAwakeStateDir + "/stay-awake"
   readonly property int defaultLockSeconds: 300
   readonly property var idleConfig: shell && shell.shellConfig && shell.shellConfig.idle
-    ? shell.shellConfig.idle : (shell && shell.idleConfig ? shell.idleConfig : ({}))
+    ? shell.shellConfig.idle : ({})
   // idle.lock in shell.json: seconds of inactivity before the screen locks, and
   // 0 never locks. The lock plugin turns the displays off and back on.
   readonly property int lockTimeoutSeconds: secondsFromConfig(idleConfig.lock, defaultLockSeconds)

@@ -8,15 +8,15 @@ the shell for its whole session.
 - `manifest.json` declares the plugin (`id: nova.bar`, `kind: bar`) and points at `Bar.qml` as the entry point.
 - `Bar.qml` is Nova-owned bar engine code, loaded by the nova-shell host. Users should not edit it directly.
 - `widgets/` holds simple first-party bar widgets with sibling manifests.
-- Feature plugins such as `../panels/audio/`, `../panels/network/`, `../panels/power/`, and `../agents/` provide richer popup bar plugins.
-- The bar receives its config from the host shell as a `barConfig` property; the host loads it from `~/.config/nova/shell.json` (or `config/nova/shell.json` when the user has no file).
+- Feature plugins such as `../panels/audio/`, `../panels/network/` and `../panels/power/` provide richer popup bar plugins.
+- The bar receives its config from the host shell as a `barConfig` property; the host loads it from `~/.config/nova/shell.json` (or `$NOVA_PATH/default/shell.json` when the user has no file).
 - `nova bar position` updates only the user shell.json file.
 
 ## Customizing
 
-The bar config lives under the `bar:` key of [`~/.config/nova/shell.json`](../../README.md#shelljson-shape). Out of the box the shell uses [`config/nova/shell.json`](../../../config/nova/shell.json). Once you customize anything via the bar gestures, `nova bar ...`, or by editing shell.json directly, your file is canonical — there is no deep-merge.
+The bar config lives under the `bar:` key of [`~/.config/nova/shell.json`](../../README.md#persisted-state). Out of the box the shell uses [`$NOVA_PATH/default/shell.json`](../../../../data/defaults/shell.json). Once you customize anything via the bar gestures, `nova bar ...`, or by editing shell.json directly, your file is canonical — there is no deep-merge.
 
-The bar is configured directly on the bar itself: drag empty bar space (or click-and-hold) to move the bar to another screen edge, double-left-click empty center-bar space to toggle transparency, and drag widgets to reorder them. The `nova bar position`, `nova bar transparent`, `nova bar move`, and `nova bar set` commands do the same from scripts. Enable or disable widgets with `nova plugin enable` and `nova plugin disable` (widget ids come from `nova plugin list`).
+The bar is configured directly on the bar itself: drag empty bar space (or click-and-hold) to move the bar to another screen edge, double-left-click empty center-bar space to toggle transparency, and drag widgets to reorder them. The `nova bar position`, `nova bar transparent`, `nova bar move`, and `nova bar set` commands do the same from scripts. Add or take off widgets with `nova bar put` and `nova bar remove`, or in Settings.
 
 Example `shell.json` (bar subtree only shown):
 
@@ -63,16 +63,19 @@ Example `shell.json` (bar subtree only shown):
 | `nova.tray` | System tray | hover = reveal drawer · right on chevron = manage |
 | `nova.weather` | Weather icon + popup with forecast | left = popup · right = full notification |
 | `nova.microphone` | Mic icon + scroll volume | left = mute toggle · middle = audio panel · scroll = source volume |
-
+| `nova.keyboard-layout` | Current keyboard layout | left = next layout |
+| `nova.active-window` | Title of the focused window | — |
+| `nova.spacer` | Configurable blank space | — |
 | `nova.audio` | Volume icon + popup with master slider, output-device picker, per-app mixer | left = popup · right = mute · middle = popup · scroll = volume |
 | `nova.network` | Wi-Fi/Ethernet icon + popup with Wi-Fi scan, signal, connect, DNS provider selection | left = popup |
-| `nova.tailscale` | Tailscale status, connection switcher, machine browser, and copy actions | left = popup · right = toggle · middle = refresh |
-| `nova.agents` | AI coding agent limits with pace, today, last week, and all-time model breakdown | left = panel · right = launch agent · middle = next subscription |
 | `nova.power` | Battery/AC icon + popup with battery stats, power profiles, and system info | left = popup · right = toggle percentage |
 | `nova.bluetooth` | Bluetooth icon + popup with device list, connect/disconnect, battery | left = popup · right = toggle radio |
 | `nova.monitor` | Brightness and laptop display controls | left = popup |
+| `nova.batterylife` | Battery glyph with measured time left | left = history panel |
+| `nova.screentime` | Today's screen time (off until you turn it on) | left = breakdown panel |
+| `nova.mobile-data` | WWAN signal, shown while a modem has a SIM | left = stats panel |
 
-The `nova.indicators` widget loads individual bar indicators from `indicators/`. Omit `items` (or set it to an empty array) to show all indicators in the default order, or set `items` to a subset such as `["Dnd", "Reminder", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators visible instead of revealing them only on hover. Multiple `nova.indicators` instances are allowed, so different sections can show different subsets.
+The `nova.indicators` widget loads individual bar indicators from `indicators/`. Omit `items` (or set it to an empty array) to show all indicators in the default order, or set `items` to a subset of `Dnd`, `NightLight`, `StayAwake`, `LidAwake` and `ScreenRecording`, such as `["Dnd", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators visible instead of revealing them only on hover. Multiple `nova.indicators` instances are allowed, so different sections can show different subsets.
 
 ## Orientation
 
@@ -165,19 +168,10 @@ Widgets receive `bar` (the shell root), `moduleName` (string), and `settings` (o
 - `bar.showTooltip(target, text)` / `bar.hideTooltip(target)` — shared tooltip popup
 - `bar.requestPopout(owner)` / `bar.releasePopout(owner)` — one-popup-at-a-time coordinator
 
-First-party bar widgets are manifest-backed just like third-party widgets.
-Simple widgets carry sibling manifests such as `widgets/Workspaces.manifest.json`;
-richer popup plugins live in feature directories such as `../panels/audio/`,
-`../panels/network/`, and `../agents/`; and feature plugins such as
-`nova.menu` and `nova.media` declare their bar-widget entry points in their own
-`manifest.json`. Bar layout ids are namespaced, e.g. `nova.audio`,
-`nova.network`, and `nova.clock`. Older UpperCamelCase ids such as
-`AudioPanel` and `Clock` are migrated forward; new configs should use the
-namespaced ids.
-
-Third-party widgets ship as separate plugins under
-`~/.config/nova/plugins/<plugin-id>/` with their own `manifest.json`
-declaring `kinds: ["bar-widget"]` and a `barWidget` entry point. See
-[../../README.md](../../README.md) for the manifest schema. Rescan, enable,
-and place third-party plugins with `nova-shell shell rescanPlugins`,
-`nova plugin enable`, and `nova bar move`.
+Every bar widget is a plugin with a manifest. Simple widgets carry sibling
+manifests such as `widgets/Workspaces.manifest.json`; richer popup plugins live
+in feature directories such as `../panels/audio/` and `../panels/network/`; and
+feature plugins such as `nova.menu` and `nova.media` declare their bar-widget
+entry points in their own `manifest.json`. Layout ids are namespaced:
+`nova.audio`, `nova.network`, `nova.clock`. Put, move and remove widgets with
+`nova bar` (`nova bar put nova.weather --after nova.clock`).

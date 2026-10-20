@@ -53,7 +53,9 @@ exactly that, so pacman owns every file.
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
   | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets) |
 
-- **Identifiers:** shell plugin ids are `nova.<name>`. Layer-shell namespaces are
+- **Identifiers:** shell plugin ids are `nova.<name>`; every plugin ships in the
+  `nova` package and the shell loads no other (`plugins/index.json`, written at
+  build time by `tools/plugin-index`, lists them). Layer-shell namespaces are
   `nova-<name>`. PAM services are `nova-lock-password`, `nova-lock-fingerprint` and
   `nova-greeter`. User units are `nova-*.service`.
 - **"omarchy" appears only in `NOTICE` and `docs/`.** CI fails on any `omarchy-`,
@@ -223,10 +225,12 @@ the shared folder also becomes the default for themes that have no pick of their
   on (the theme engine, the power manager) are Rust; glue that mostly runs other
   programs stays bash.
 - **Tests:**
-  - bats for helpers (`tests/unit/`)
-  - qmltestrunner for QML singletons
-  - `tools/qml-smoke` opens the shell's windows offscreen from an installed tree
+  - bats for helpers (`tests/unit/`); `make test` runs them
+  - `tests/qml/run` runs the shell's logic tests (the plugin registry against
+    the real plugin index) offscreen under Quickshell, from an installed tree
+  - `tools/qml-smoke` opens the shell's windows offscreen from the same tree
     and fails on any runtime QML warning, which qmllint cannot see
-  - QEMU end-to-end tests (`tests/qemu/`) for install, boot and lock
-  - `make test` runs everything that doesn't need QEMU
+  - `tests/usb/stick-test` writes and restores a real stick on a loop device,
+    as root, in CI only
+  - QEMU end-to-end tests for install, boot and lock are not written yet
 - **Commits:** imperative subject, a body that explains *why*.

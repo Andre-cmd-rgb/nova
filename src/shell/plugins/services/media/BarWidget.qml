@@ -8,7 +8,7 @@ BarWidget {
   id: root
   moduleName: "nova.media"
 
-  readonly property var mediaService: bar?.shell?.firstPartyServiceFor("nova.media")
+  readonly property var mediaService: bar?.shell?.serviceFor("nova.media")
   readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
   readonly property var sourcePlayers: mediaService ? mediaService.sourcePlayers : []
 
