@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# nova:summary=Run the login greeter: Quickshell on a minimal Hyprland
+# nova:args=[--client]
+# nova:hidden=true
+#
+# greetd's default_session runs this as the unprivileged `greeter` user after
+# every session but the boot autologin. It starts Hyprland with the greeter
+# config, whose start hook runs `nova-greeter-session --client`: the client runs
+# the Quickshell greeter, records how it ended and stops Hyprland, which hands
+# the seat back to greetd. If the greeter never got as far as showing itself,
+# agreety on the console takes over, so a broken greeter never locks anyone out.
+
+set -euo pipefail
+
+readonly share=${NOVA_PATH:-/usr/share/nova}
+readonly session_cmd=(uwsm start -e -D Hyprland hyprland.desktop)
+runtime=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/nova-greeter}
+status_file=$runtime/status
+
+# The account to greet: the boot autologin user in greetd's config, which the
+# installer fills in.
+greeted_user() {
+  awk '
+    /^\[/ { section = $0 }
+    section == "[initial_session]" && $1 == "user" {
+      sub(/^[^=]*=[ \t]*"?/, ""); sub(/"?[ \t]*$/, ""); print; exit
+    }' /etc/greetd/config.toml 2>/dev/null || true
+}
+
+client() {
+  local qs_pid ready=0 status=0
+  NOVA_GREETER_USER=$(greeted_user)
+  export NOVA_GREETER_USER
+  export NOVA_THEME_DIR=/var/lib/nova/greeter
+  export NOVA_GREETER_READY=$runtime/ready
+
+  qs -p "$share/shell/greeter.qml" &
+  qs_pid=$!
+  # The greeter touches the ready file once its windows are up. A greeter that
+  # shows nothing within ten seconds is treated as broken.
+  for _ in {1..50}; do
+    [[ -e $NOVA_GREETER_READY ]] && { ready=1; break; }
+    kill -0 "$qs_pid" 2>/dev/null || break
+    sleep 0.2
+  done
+  if ((ready)); then
+    wait "$qs_pid" || status=$?
+  else
+    kill "$qs_pid" 2>/dev/null || true
+    wait "$qs_pid" 2>/dev/null || true
+    status=1
+  fi
+
+  # Quickshell exits 0 only after greetd accepted the session it launched.
+  if ((status == 0)); then echo launched >"$status_file"; else echo failed >"$status_file"; fi
+  pkill -TERM -u "$(id -u)" -x Hyprland || true
+}
+
+console() {
+  exec agreety --cmd "env NOVA_LOGIN=password ${session_cmd[*]}"
+}
+
+server() {
+  if [[ -z $runtime ]] || ! rm -rf "$runtime" || ! mkdir -m 700 "$runtime"; then
+    console
+  fi
+  Hyprland --config "$share/greeter/hyprland.lua" >"$runtime/hyprland.log" 2>&1 || true
+
+  [[ $(cat "$status_file" 2>/dev/null || true) == launched ]] && exit 0
+  # The greeter never handed a session to greetd: log in on the console.
+  console
+}
+
+case ${1:-} in
+  --client) client ;;
+  "") server ;;
+  *) echo "Usage: nova-greeter-session [--client]" >&2; exit 2 ;;
+esac

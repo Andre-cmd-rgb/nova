@@ -14,7 +14,8 @@ QtObject {
 
   readonly property string home: Quickshell.env("HOME")
   readonly property string stateHome: home + "/.local/state"
-  readonly property string currentThemePath: stateHome + "/nova/current/theme"
+  // The greeter runs as another user and reads the theme mirror instead.
+  readonly property string currentThemePath: Quickshell.env("NOVA_THEME_DIR") || stateHome + "/nova/current/theme"
 
   property color foreground: "#cacccc"
   property color background: "#101315"

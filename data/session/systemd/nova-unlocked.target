@@ -1,0 +1,6 @@
+[Unit]
+Description=First password unlock of this boot
+# Started by nova-session-first-unlock after the first password unlock or a
+# password login, when the login keyring is open. Services that need secrets,
+# such as the keyring migration, are WantedBy= this target. It is deliberately
+# not part of graphical-session.target.

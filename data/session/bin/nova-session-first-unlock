@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# nova:summary=Record the first unlock of this boot and start what waits for it
+# nova:hidden=true
+#
+# Run by the lock screen after the first password unlock, and by
+# nova-session-guard after a password login. The password never comes here:
+# pam_gnome_keyring, in nova-lock-password and nova-greeter, has already
+# unlocked the login keyring with it. Fingerprint unlock is offered from now on.
+
+set -euo pipefail
+
+runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/nova
+mkdir -p "$runtime"
+: >"$runtime/unlocked-once"
+
+# Reported, not fatal: apps then ask for the keyring password themselves.
+locked=$(busctl --user get-property org.freedesktop.secrets \
+  /org/freedesktop/secrets/aliases/default org.freedesktop.Secret.Collection Locked 2>/dev/null || true)
+if [[ $locked != "b false" ]]; then
+  logger -t nova-session -p user.warning "the login keyring is still locked after the first unlock"
+fi
+
+systemctl --user start --no-block nova-unlocked.target

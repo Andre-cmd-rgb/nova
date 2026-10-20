@@ -1,0 +1,35 @@
+#!/bin/bash
+
+# nova:summary=End a session nobody authenticated if its lock never engages
+# nova:hidden=true
+#
+# Run once per session by nova-session-guard.service. greetd marks each session
+# it starts: NOVA_LOGIN=password once the greeter has checked a password,
+# NOVA_LOGIN=autologin for the boot session. A password login counts as the
+# first unlock of the boot. Any other session must show a secure lock within
+# the deadline, or it is terminated and greetd shows the greeter instead.
+
+set -euo pipefail
+
+# Long enough for the first start after an update, when Quickshell compiles its
+# QML cache; until then Hyprland sits in a submap with no binds.
+readonly attempts=75 interval=0.2
+
+if [[ ${NOVA_LOGIN:-} == password ]]; then
+  exec nova-session-first-unlock
+fi
+
+for ((i = 0; i < attempts; i++)); do
+  state=$(timeout 2 nova-shell lock state 2>/dev/null || true)
+  case $state in
+    secure | unlocked) exit 0 ;;
+  esac
+  sleep "$interval"
+done
+
+echo "nova-session-guard: the lock did not engage; ending the session" >&2
+if [[ -n ${XDG_SESSION_ID:-} ]]; then
+  loginctl terminate-session "$XDG_SESSION_ID" && exit 1
+fi
+loginctl terminate-user "$(id -un)"
+exit 1

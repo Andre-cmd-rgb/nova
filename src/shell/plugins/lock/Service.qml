@@ -16,9 +16,10 @@ Item {
   readonly property string stateHome: home + "/.local/state"
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string currentBackgroundLink: stateHome + "/nova/current/background"
-  // greetd's autologin sets NOVA_AUTOLOGIN=1: nobody has authenticated yet, so
-  // the session must lock before anything else shows.
-  readonly property bool autologin: Quickshell.env("NOVA_AUTOLOGIN") === "1"
+  // greetd marks a session NOVA_LOGIN=password once the greeter has checked a
+  // password. Any other session, autologin above all, has had nobody
+  // authenticate yet, so it locks before anything else shows.
+  readonly property bool autologin: Quickshell.env("NOVA_LOGIN") !== "password"
   readonly property string unlockedOnceFile: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/unlocked-once"
 
   property bool lockRequested: false
@@ -129,9 +130,8 @@ Item {
     Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.submap(\"reset\")"])
   }
 
-  function completeFirstUnlock(password) {
+  function completeFirstUnlock() {
     unlockedOnce = true
-    firstUnlockProc.password = password
     firstUnlockProc.running = true
   }
 
@@ -362,13 +362,12 @@ Item {
     onPamMessage: root.respondToPasswordPrompt()
 
     onCompleted: function(result) {
-      var password = root.pendingPassword
       root.authenticatingPassword = false
       root.pendingPassword = ""
 
       if (!root.lockRequested) return
       if (result === PamResult.Success) {
-        if (!root.unlockedOnce) root.completeFirstUnlock(password)
+        if (!root.unlockedOnce) root.completeFirstUnlock()
         root.finishUnlock()
       } else {
         root.handlePasswordFailure()
@@ -444,20 +443,13 @@ Item {
     }
   }
 
-  // Unlocks the keyring with the password on stdin, records the first unlock
-  // and starts nova-unlocked.target. The password never reaches argv or env.
+  // Records the first unlock and starts nova-unlocked.target. The password
+  // stays inside PAM: pam_gnome_keyring in nova-lock-password has already
+  // unlocked the login keyring with it.
   Process {
     id: firstUnlockProc
-    property string password: ""
     command: ["nova-session-first-unlock"]
-    stdinEnabled: true
-    onStarted: {
-      write(password)
-      password = ""
-      stdinEnabled = false
-    }
     onExited: function(exitCode) {
-      password = ""
       if (exitCode !== 0) root.logEvent("first-unlock: helper exited " + exitCode)
     }
   }

@@ -65,18 +65,24 @@ exactly that, so pacman owns every file.
    shows the menu with snapshots. `nova recovery` reboots straight into that menu.
 2. systemd initramfs, no plymouth. The firmware logo stays until Hyprland's first frame.
 3. greetd `initial_session` runs `uwsm start hyprland` as the installed user, once per
-   boot.
+   boot, with `NOVA_LOGIN=autologin`. Every command greetd runs sets `NOVA_LOGIN`;
+   only the greeter's `password` means somebody authenticated. Anything else, or
+   nothing, is treated as autologin, so the session fails closed.
 4. Hyprland starts in the `nova-boot` submap, which has no binds.
 5. The shell locks before it draws anything else.
-6. The `nova-session-guard` user unit waits up to 6 s for the shell to report
-   `lock secure`. If it doesn't, the guard terminates the session, and greetd shows
-   `nova-greeter`, or `agreety` if QML fails. Nothing ever shows an unlocked desktop that
-   nobody authenticated.
+6. `nova-session-guard` (a user unit every user has enabled) waits up to 15 s for
+   `nova-shell lock state` to say `secure`. If it doesn't, the guard terminates the
+   session, and greetd shows the greeter: `src/shell/greeter.qml` on a minimal
+   Hyprland, or `agreety` on the console if that never shows. Nothing ever shows an
+   unlocked desktop that nobody authenticated.
 7. **First unlock after boot needs the password.**
-   - The lock passes it to `gnome-keyring-daemon --unlock`.
-   - It writes `$XDG_RUNTIME_DIR/nova/unlocked-once`.
-   - It starts `nova-unlocked.target`, which brings up keyring users such as Chrome and
-     VS Code autostarts.
+   - `nova-lock-password` ends with `pam_gnome_keyring`, which unlocks the login
+     keyring with the password during auth. The password never leaves PAM.
+   - `nova-session-first-unlock` writes `$XDG_RUNTIME_DIR/nova/unlocked-once` and
+     starts `nova-unlocked.target`, which brings up keyring users such as the
+     migration of a carried-over keyring.
+   - A greeter login does the same through the guard: the greeter's PAM stack has
+     already unlocked the keyring.
    - Fingerprint unlock is offered only once `unlocked-once` exists.
 
 ## Theme flow

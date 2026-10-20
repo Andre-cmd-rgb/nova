@@ -1,0 +1,12 @@
+# Nova's session environment, sourced by uwsm for every graphical session and exported
+# to the systemd user manager and the D-Bus activation environment.
+# Changes take effect at the next login.
+
+export NOVA_PATH=/usr/share/nova
+
+# Helper commands (nova-<group>-<verb>) are on PATH for every app the session starts,
+# so shell code and keybindings can call them by name.
+case ":$PATH:" in
+  *:/usr/lib/nova/bin:*) ;;
+  *) export PATH="/usr/lib/nova/bin:$PATH" ;;
+esac

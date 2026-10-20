@@ -1,0 +1,15 @@
+[Unit]
+Description=Nova session guard (end an autologin session whose lock never engaged)
+PartOf=graphical-session.target
+After=graphical-session-pre.target
+
+[Service]
+Type=oneshot
+Environment=PATH=/usr/lib/nova/bin:/usr/local/bin:/usr/bin
+RemainAfterExit=yes
+# uwsm keeps XDG_SESSION_ID out of the user manager and writes it here instead.
+EnvironmentFile=-%t/uwsm/env_session.conf
+ExecStart=/usr/lib/nova/bin/nova-session-guard
+
+[Install]
+WantedBy=graphical-session.target

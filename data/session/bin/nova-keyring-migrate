@@ -1,0 +1,114 @@
+#!/usr/bin/python3 -I
+
+# nova:summary=Move a carried-over passwordless keyring into the login keyring
+# nova:hidden=true
+#
+# Omarchy keeps secrets in "Default_keyring", stored without a password, so
+# readable by anything that can read the file. The installer restores that file
+# and drops ~/.local/state/nova/keyring-migrate-pending (optionally naming
+# another keyring). After the first password unlock this copies every item into
+# the password-encrypted login keyring, reads each one back, points the default
+# alias at login, and only then deletes the old keyring and the marker. The
+# original stays on the carry-over stick.
+#
+# Python because the Secret Service is D-Bus only, and dbus-python is already
+# on every Nova system (uwsm needs it).
+
+import os
+import sys
+
+import dbus
+
+SERVICE = "org.freedesktop.secrets"
+ROOT = "/org/freedesktop/secrets"
+LOGIN = ROOT + "/collection/login"
+SERVICE_IFACE = "org.freedesktop.Secret.Service"
+COLLECTION_IFACE = "org.freedesktop.Secret.Collection"
+ITEM_IFACE = "org.freedesktop.Secret.Item"
+PROPS_IFACE = "org.freedesktop.DBus.Properties"
+
+
+def fail(message):
+    print(f"nova-keyring-migrate: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def object_path(keyring):
+    """gnome-keyring's D-Bus path for a keyring file name: anything but
+    letters and digits is escaped as _xx."""
+    escaped = "".join(c if c.isascii() and c.isalnum() else f"_{ord(c):02x}" for c in keyring)
+    return f"{ROOT}/collection/{escaped}"
+
+
+def prop(bus, path, iface, name):
+    return bus.get_object(SERVICE, path).Get(iface, name, dbus_interface=PROPS_IFACE)
+
+
+def main():
+    state = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+    marker = os.path.join(state, "nova", "keyring-migrate-pending")
+    try:
+        with open(marker, encoding="utf-8") as f:
+            keyring = f.read().strip() or "Default_keyring"
+    except FileNotFoundError:
+        return
+
+    bus = dbus.SessionBus()
+    service = dbus.Interface(bus.get_object(SERVICE, ROOT), SERVICE_IFACE)
+    collections = [str(c) for c in prop(bus, ROOT, SERVICE_IFACE, "Collections")]
+    source = object_path(keyring)
+    if source not in collections:
+        print(f"nova-keyring-migrate: no keyring '{keyring}', nothing to move")
+        os.remove(marker)
+        return
+    if LOGIN not in collections:
+        fail("there is no login keyring yet")
+    if prop(bus, LOGIN, COLLECTION_IFACE, "Locked"):
+        fail("the login keyring is locked")
+    if prop(bus, source, COLLECTION_IFACE, "Locked"):
+        fail(f"the keyring '{keyring}' is locked")
+
+    _, session = service.OpenSession("plain", dbus.String("", variant_level=1))
+    login = dbus.Interface(bus.get_object(SERVICE, LOGIN), COLLECTION_IFACE)
+
+    items = [str(i) for i in prop(bus, source, COLLECTION_IFACE, "Items")]
+    secrets = service.GetSecrets(items, session) if items else {}
+    moved = []
+    for path in items:
+        if path not in secrets:
+            fail(f"could not read {path}")
+        _, _, value, content_type = secrets[path]
+        label = prop(bus, path, ITEM_IFACE, "Label")
+        attributes = prop(bus, path, ITEM_IFACE, "Attributes")
+        properties = {
+            ITEM_IFACE + ".Label": label,
+            ITEM_IFACE + ".Attributes": dbus.Dictionary(attributes, signature="ss"),
+        }
+        secret = dbus.Struct(
+            (session, dbus.ByteArray(b""), dbus.ByteArray(bytes(value)), content_type),
+            signature="oayays",
+        )
+        created, _prompt = login.CreateItem(properties, secret, True)
+        if created == "/":
+            fail(f"the login keyring refused '{label}'")
+        moved.append((str(created), bytes(value)))
+
+    # Read every copy back before anything is deleted.
+    copies = service.GetSecrets([path for path, _ in moved], session) if moved else {}
+    for path, value in moved:
+        if path not in copies or bytes(copies[path][2]) != value:
+            fail(f"{path} did not read back the same; the old keyring is kept")
+
+    service.SetAlias("default", dbus.ObjectPath(LOGIN))
+    prompt = dbus.Interface(bus.get_object(SERVICE, source), COLLECTION_IFACE).Delete()
+    if prompt != "/":
+        fail(f"deleting '{keyring}' needs a prompt; it is kept")
+    os.remove(marker)
+    print(f"nova-keyring-migrate: moved {len(moved)} secrets from '{keyring}' into login")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except dbus.DBusException as e:
+        fail(e.get_dbus_message() or e.get_dbus_name())

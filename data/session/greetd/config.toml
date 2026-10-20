@@ -1,0 +1,31 @@
+# greetd configuration for Nova. The installer replaces @NOVA_USER@ with the account
+# it creates (nova-install renders this file; see docs/boot-and-login.md).
+#
+# greetd's parser is deliberately small: values on one line, comments only on lines
+# of their own.
+
+[terminal]
+vt = 1
+switch = true
+
+[general]
+# PAM service for sessions greetd starts after a password login. It unlocks the
+# login keyring (pam_gnome_keyring) with the password that was just typed.
+service = "nova-greeter"
+
+# Autologin, once per boot: the disk is not encrypted, so the machine boots to the
+# lock screen instead of a login prompt. Every command greetd runs says how its user
+# got in: NOVA_LOGIN=autologin here, NOVA_LOGIN=password from the greeter. Only
+# "password" starts unlocked; anything else, or nothing, locks before it shows, and
+# nova-session-guard ends the session if the lock does not engage.
+[initial_session]
+command = "env NOVA_LOGIN=autologin uwsm start -e -D Hyprland hyprland.desktop"
+user = "@NOVA_USER@"
+
+# Everything after the first session (logout, a refused autologin, a shell that
+# died): the Quickshell greeter on a minimal Hyprland. When that cannot start,
+# nova-greeter-session hands over to agreety on the console.
+[default_session]
+command = "/usr/lib/nova/bin/nova-greeter-session"
+user = "greeter"
+service = "nova-greeter-session"

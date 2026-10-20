@@ -1,0 +1,6 @@
+#%PAM-1.0
+# Fingerprint unlock for the lock screen. The shell offers it only after the first
+# password unlock of the boot (the login keyring needs the password, a finger
+# cannot supply it).
+auth       required                    pam_fprintd.so
+account    include                     system-local-login
