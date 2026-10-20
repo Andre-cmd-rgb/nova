@@ -254,6 +254,9 @@ END
   fails valid_username greeter
   fails valid_username "an dre"
   fails valid_username ""
+  # System accounts exist in the new system too.
+  fails valid_username bin
+  fails valid_username nobody
 }
 
 @test "valid_hostname: letters, digits and inner hyphens" {
@@ -275,11 +278,23 @@ END
   fails valid_timezone ""
 }
 
-@test "xkb_layout: console keymaps map to XKB layouts" {
-  [ "$(xkb_layout es)" = es ]
-  [ "$(xkb_layout de-latin1)" = de ]
-  [ "$(xkb_layout fr-latin9)" = fr ]
-  [ "$(xkb_layout uk)" = gb ]
+@test "xkb_layout: console keymaps map to XKB layouts and variants" {
+  KBD_MODEL_MAP="$SCRATCH/kbd-model-map"
+  printf '%s\n' '# consolelayout xlayout xmodel xvariant xoptions' \
+    'sv-latin1 se pc105 - terminate:ctrl_alt_bksp' \
+    'sg ch pc105 de_nodeadkeys terminate:ctrl_alt_bksp' \
+    'dvorak us pc105 dvorak terminate:ctrl_alt_bksp' \
+    'dvorak us pc105 dvorak-alt-intl terminate:ctrl_alt_bksp' \
+    'uk gb pc105 - terminate:ctrl_alt_bksp' >"$KBD_MODEL_MAP"
+  [ "$(xkb_layout sv-latin1)" = "se$(printf '\t')" ]
+  [ "$(xkb_layout sg)" = "ch$(printf '\t')de_nodeadkeys" ]
+  [ "$(xkb_layout dvorak)" = "us$(printf '\t')dvorak" ]
+  [ "$(xkb_layout uk)" = "gb$(printf '\t')" ]
+  # Not in the table: the keymap's own name, less its suffix.
+  [ "$(xkb_layout es)" = "es$(printf '\t')" ]
+  [ "$(xkb_layout fr-latin9)" = "fr$(printf '\t')" ]
+  rm "$KBD_MODEL_MAP"
+  [ "$(xkb_layout de-latin1)" = "de$(printf '\t')" ]
 }
 
 @test "the installer prints its help, and refuses an unknown argument" {

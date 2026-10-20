@@ -45,6 +45,7 @@ CARRY=${NOVA_CARRY:-/run/nova-carry}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 IWD_DIR=${NOVA_IWD_DIR:-/var/lib/iwd}
 FPRINT_DIR=${NOVA_FPRINT_DIR:-/var/lib/fprint}
+KBD_MODEL_MAP=${NOVA_KBD_MODEL_MAP:-/usr/share/systemd/kbd-model-map}
 # The answers file, for an install with no questions (--answers).
 ANSWERS=''
 CARRY_MAPPER=nova-carry
@@ -86,9 +87,10 @@ lsblk_disks() {
 }
 
 # One tab-separated line per disk Nova may go on: path, size in bytes, model,
-# serial, transport, with "-" for an unknown field so the columns never shift. Left out: the stick it booted from, read-only, removable
-# and USB disks, virtual devices, and anything under 64 GiB. NOVA_ALLOW_USB=1
-# lets a USB disk through, for installing onto an external drive on purpose.
+# serial, transport, with "-" for an unknown field so the columns never shift.
+# Left out: the stick it booted from, read-only, removable and USB disks,
+# virtual devices, and anything under 64 GiB. NOVA_ALLOW_USB=1 lets a USB disk
+# through, for installing onto an external drive on purpose.
 candidate_disks() {
   local boot
   boot=$(boot_disk)
@@ -301,8 +303,16 @@ strip_subvolid() {
 
 # ------------------------------------------------------------- the questions
 
+# Never root, the greeter or another system account: those exist in the new
+# system too, and useradd would fail there after the disk is already erased. An
+# ordinary account of that name on the live system (the fingerprint stand-in of
+# an earlier attempt) is fine.
 valid_username() {
-  [[ $1 =~ ^[a-z_][a-z0-9_-]{0,31}$ && $1 != root && $1 != greeter ]]
+  [[ $1 =~ ^[a-z_][a-z0-9_-]{0,31}$ && $1 != root && $1 != greeter ]] || return 1
+  local entry uid
+  entry=$(getent passwd "$1") || return 0
+  IFS=: read -r _ _ uid _ <<<"$entry"
+  ((uid >= 1000 && uid != 65534))
 }
 
 valid_hostname() {
@@ -492,21 +502,34 @@ write_system_config() {
   echo 'LANG=en_US.UTF-8' >"$TARGET/etc/locale.conf"
   # The session reads the keyboard layout from here (default/hypr/input.lua), so
   # the console, the greeter, the lock screen and the desktop all agree.
-  printf 'KEYMAP=%s\nXKBLAYOUT=%s\n' "$keymap" "$(xkb_layout "$keymap")" >"$TARGET/etc/vconsole.conf"
+  local layout variant
+  IFS=$'\t' read -r layout variant < <(xkb_layout "$keymap")
+  {
+    printf 'KEYMAP=%s\nXKBLAYOUT=%s\n' "$keymap" "$layout"
+    [[ -z $variant ]] || printf 'XKBVARIANT=%s\n' "$variant"
+  } >"$TARGET/etc/vconsole.conf"
 
   install -Dm644 "$SHARE/pacman.conf" "$TARGET/etc/pacman.conf"
   write_release_pins "$arch_date" "$nova_repo" "$tag"
 }
 
-# The console keymap and the XKB layout mostly share names; the exceptions are
-# the ones whose console name carries a suffix.
-xkb_layout() {
-  local keymap=$1
-  case $keymap in
-    *-latin1 | *-latin9 | *-nodeadkeys) echo "${keymap%%-*}" ;;
-    uk) echo gb ;;
-    *) echo "$keymap" ;;
-  esac
+# The XKB layout and variant for a console keymap, tab-separated, from the table
+# localectl converts with (sv-latin1 is se, sg is ch with de_nodeadkeys). A
+# keymap the table lacks is taken to be the layout's own name, less a -latin1
+# style suffix.
+xkb_layout() { # keymap
+  local keymap=$1 layout='' variant=''
+  if [[ -r $KBD_MODEL_MAP ]]; then
+    read -r layout variant < <(awk -v k="$keymap" \
+      '$1 == k { print $2, ($4 == "-" ? "" : $4); found = 1; exit } END { if (!found) print "" }' "$KBD_MODEL_MAP")
+  fi
+  if [[ -z $layout ]]; then
+    case $keymap in
+      *-latin1 | *-latin9 | *-nodeadkeys) layout=${keymap%%-*} ;;
+      *) layout=$keymap ;;
+    esac
+  fi
+  printf '%s\t%s\n' "$layout" "$variant"
 }
 
 # The same two files nova update rewrites for every release, so the installed
@@ -936,6 +959,15 @@ usage() {
   sed -n '3,/^$/s/^# \{0,1\}//p' "$0"
 }
 
+# The ERR trap once the disk is being written: a step that fails ends the
+# install, and this says which instead of stopping without a word. Subshells
+# inherit the trap (set -E), so only the outermost shell speaks.
+stopped() { # line command
+  ((BASH_SUBSHELL)) && return
+  printf '\n\e[31mnova-install: the install stopped at line %s (%s). The log is in %s.\e[0m\n' \
+    "$1" "$2" "$LOG" >&2
+}
+
 main() {
   case ${1:-} in
     -h | --help)
@@ -1061,6 +1093,8 @@ main() {
     [[ $(ask - "Type erase to wipe $disk and install" "") == erase ]] || die "nothing was changed."
   fi
 
+  set -E
+  trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
   partition_and_format "$disk"
   create_subvolumes_and_mount "$disk" "$swap"
   prepare_boot_config "$disk" "$kernel"
