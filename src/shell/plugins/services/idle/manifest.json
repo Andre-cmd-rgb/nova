@@ -4,7 +4,7 @@
   "name": "Idle",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Quickshell-based idle detection for screensaver, lock, and display wake.",
+  "description": "Locks the screen after a stretch of inactivity, unless Stay Awake is on.",
   "kinds": [
     "service"
   ],
