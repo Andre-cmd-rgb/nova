@@ -135,8 +135,9 @@ run_session() { # desktop | lock
     WORK="$work" SHELL_DIR="$shell_dir" \
     timeout 180 dbus-run-session -- bash -c "$(declare -f session); session $1" 2>&1)$'\n' || true
   # Quickshell's own warnings about what this machine lacks (no Hyprland, no
-  # system bus, no PipeWire) are printed; QML errors in Nova's files fail the run.
-  local log lacks='Failed to create pipewire context'
+  # system bus, no PipeWire, no NetworkManager) are printed; QML errors in
+  # Nova's files fail the run.
+  local log lacks='Failed to create pipewire context|Network will not work'
   log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$shell_dir" 2>&1 || true)
   problems+=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL) +(scene|qml)|^ *(ERROR|CRIT|FATAL)' <<<"$log" |
     grep -vE "Detected locale|$lacks" || true)$'\n'
