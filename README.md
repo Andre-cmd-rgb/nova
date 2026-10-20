@@ -56,6 +56,10 @@ get candidates early: Settings → Updates → Test Release Candidates.
 
 ## When something is wrong
 
+- If the install stops, it says at which step, and the whole log is
+  `/var/log/nova-install.log` (in the installer's memory: copy it to the
+  stick's data or a phone photo before restarting). `nova-install-start` tries
+  again from the start, without a restart.
 - `nova doctor` looks the system over and says how to fix what it finds; `sudo
   nova doctor` also checks the boot menu's fallback entry.
 - `nova recovery` restarts into the boot menu: the last snapshots, the fallback
@@ -64,7 +68,7 @@ get candidates early: Settings → Updates → Test Release Candidates.
 ## Working on Nova
 
 ```sh
-make lint                                 # shellcheck, qmllint, actionlint, the name check
+make lint                                 # shellcheck, luac, qmllint, actionlint, the name check
 make test                                 # the unit tests
 cargo test
 make DESTDIR=/tmp/nova-root install       # the nova package's files, into a scratch root
