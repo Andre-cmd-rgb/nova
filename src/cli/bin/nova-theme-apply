@@ -38,14 +38,28 @@ apply_hyprland() {
   hyprctl reload >/dev/null
 }
 
+# True when GTK would find the named icon theme where it looks for them.
+icon_theme_installed() {
+  local dir dirs
+  IFS=: read -ra dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  [[ -f $HOME/.icons/$1/index.theme ]] && return 0
+  for dir in "${dirs[@]}"; do
+    [[ -f $dir/icons/$1/index.theme ]] && return 0
+  done
+  return 1
+}
+
 # libadwaita follows color-scheme live; the palette in gtk.css reaches windows
-# opened after the change.
+# opened after the change. A theme's icons.theme names the icon set it was made
+# with (Yaru's colours, from the AUR); without that set installed, Adwaita,
+# which GTK itself depends on.
 apply_gtk() {
   link_config "$theme/gtk4.css" "$config_home/gtk-4.0/gtk.css"
   link_config "$theme/gtk3.css" "$config_home/gtk-3.0/gtk.css"
   [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
-  local icons=Yaru-blue
+  local icons=Adwaita
   [[ ! -f $theme/icons.theme ]] || icons=$(<"$theme/icons.theme")
+  icon_theme_installed "$icons" || icons=Adwaita
   if [[ $mode == light ]]; then
     gsettings set org.gnome.desktop.interface color-scheme prefer-light
     gsettings set org.gnome.desktop.interface gtk-theme Adwaita

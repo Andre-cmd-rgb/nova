@@ -91,7 +91,8 @@ exactly that, so pacman owns every file.
 
 A theme is a directory with a `colors.toml` palette (flat `key = "value"` lines), plus any
 files it ships ready-made: a `shell.toml`, `shell.<section>.toml` overrides, an
-`icons.theme`, or a per-app file that replaces a template. Nova's themes live in
+`icons.theme` (the icon set it was made with, used when that set is installed, Adwaita
+otherwise), or a per-app file that replaces a template. Nova's themes live in
 `/usr/share/nova/themes/`; a theme of the same name in `~/.config/nova/themes/` overrides
 it file by file.
 
