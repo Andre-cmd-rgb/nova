@@ -167,7 +167,7 @@ main() {
     return 0
   fi
 
-  local tmp
+  # Not local: the EXIT trap runs after main has returned.
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
 
@@ -258,6 +258,17 @@ main() {
 
   [[ -x $APPLY ]] || die "missing helper: $APPLY"
   pkexec "$APPLY" "${flags[@]}"
+  restart_shell "$cur_pkgver"
+}
+
+# The running shell holds the old release's QML and would load the rest from
+# the new files as it needs them, half one release and half the other: move it
+# onto the new release, if one is running and nova changed.
+restart_shell() { # the nova pkgver before the update
+  [[ $(installed_pkgver) != "$1" ]] || return 0
+  nova-shell shell ping >/dev/null 2>&1 || return 0
+  echo "Restarting the shell on the new release."
+  nova-restart-shell || warn "the shell did not restart; log out and back in to finish the update"
 }
 
 main "$@"
