@@ -1,0 +1,61 @@
+# Approving a candidate, by hand once it has been tested: Actions → promote →
+# Run, with the candidate's tag. The same commit is tagged as the final
+# version (v1.1.0-rc.2 becomes v1.1.0) and built again against the candidate's
+# own Arch snapshot, so the release is what was tested under its final name,
+# and published as the latest release. See docs/releasing.md.
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: The tested candidate, e.g. v1.1.0-rc.2
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      arch_date: ${{ steps.tag.outputs.arch_date }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: tag
+        name: Tag the candidate's commit with its final version
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ $CANDIDATE =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(beta|rc)\.[0-9]+$ ]] ||
+            { echo "::error::$CANDIDATE is not a candidate tag"; exit 1; }
+          final=${CANDIDATE%%-*}
+          ! git rev-parse -q --verify "refs/tags/$final" >/dev/null ||
+            { echo "::error::$final exists already"; exit 1; }
+          [[ $(gh release view "$CANDIDATE" --json isDraft --jq .isDraft) == false ]] ||
+            { echo "::error::$CANDIDATE has no published release to have been tested"; exit 1; }
+          arch_date=$(gh release download "$CANDIDATE" --pattern release.toml --output - |
+            sed -n 's/^arch_date = "\([0-9/]*\)"$/\1/p')
+          [[ -n $arch_date ]] || { echo "::error::$CANDIDATE's release.toml has no arch_date"; exit 1; }
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            tag -a "$final" -m "Nova ${final#v}" "$CANDIDATE^{commit}"
+          git push origin "refs/tags/$final"
+          echo "tag=$final" >>"$GITHUB_OUTPUT"
+          echo "arch_date=$arch_date" >>"$GITHUB_OUTPUT"
+
+  release:
+    needs: tag
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      arch_date: ${{ needs.tag.outputs.arch_date }}
+      publish: true
+    secrets: inherit

@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova:summary=Update Nova to the newest release, and Chrome and VS Code
-# nova:args=[--version <tag>] [--check] [--dry-run] [--yes]
+# nova:args=[--version <tag>] [--check] [--dry-run] [--yes] | --candidates [on|off]
 #
 # Moves this system to a Nova release: the Arch packages are taken from the Arch Linux
 # Archive snapshot the release was tested against, the nova packages from the release's
@@ -17,7 +17,11 @@
 #   nova update --allow-downgrade   permit an older release (uses pacman -Syuu)
 #   nova update --no-snapshot       skip the snapper snapshots (not recommended)
 #   nova update --release-file F    use a local release.toml instead of GitHub
+#   nova update --candidates on     follow the release candidates too, to test
+#                                   each two weeks before it is released; off
+#                                   stops, and with neither it says which
 #
+# A system on a candidate follows candidates anyway, until a final release.
 # Everything that needs root runs as one step through pkexec (nova-update-apply).
 # Packages held back with IgnorePkg stay held back, and nothing is ever downgraded
 # unless you ask for it.
@@ -35,6 +39,7 @@ APPLY=${NOVA_UPDATE_APPLY:-$HERE/nova-update-apply}
 APPS=${NOVA_UPDATE_APPS:-$HERE/nova-apps-install}
 CACHE_TTL=${NOVA_UPDATE_CHECK_TTL:-1800}
 CACHE_FILE=${NOVA_UPDATE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nova/update-check}
+CANDIDATES=${NOVA_UPDATE_CANDIDATES:-${XDG_CONFIG_HOME:-$HOME/.config}/nova/update-candidates}
 
 die() { printf 'nova update: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'nova update: %s\n' "$*" >&2; }
@@ -142,9 +147,10 @@ check_only() {
   fi
 }
 
-# Systems on a pre-release follow pre-releases; stable systems wait for stable ones.
+# Systems on a pre-release follow pre-releases, and so do those of the people
+# testing candidates; the rest wait for final releases.
 wants_prereleases() {
-  if [[ ${NOVA_UPDATE_PRERELEASE:-} == 1 ]] || is_prerelease "$(installed_pkgver)"; then
+  if [[ ${NOVA_UPDATE_PRERELEASE:-} == 1 || -e $CANDIDATES ]] || is_prerelease "$(installed_pkgver)"; then
     echo yes
   else
     echo no
@@ -152,6 +158,17 @@ wants_prereleases() {
 }
 
 want='' do_check=0 dry=0 assume_yes=0 downgrade=0 snapshot=1 release_file=''
+
+candidates() { # [on|off]
+  case $1 in
+    on) mkdir -p "${CANDIDATES%/*}" && : >"$CANDIDATES" ;;
+    off) rm -f "$CANDIDATES" ;;
+    "") if [[ -e $CANDIDATES ]]; then echo on; else echo off; fi; return ;;
+    *) die "--candidates takes on or off" ;;
+  esac
+  # The cached check answered for the other kind of release.
+  rm -f "$CACHE_FILE"
+}
 
 main() {
   while (( $# )); do
@@ -163,6 +180,7 @@ main() {
       --allow-downgrade) downgrade=1; shift ;;
       --no-snapshot)     snapshot=0; shift ;;
       --release-file)    release_file=${2:?--release-file needs a path}; shift 2 ;;
+      --candidates)      candidates "${2:-}"; return ;;
       -h|--help)         sed -n '2,/^set /p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//' | sed '1,2d'; exit 0 ;;
       *) die "unknown argument: $1 (try --help)" ;;
     esac

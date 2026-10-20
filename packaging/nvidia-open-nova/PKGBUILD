@@ -5,21 +5,23 @@
 # licensed 0BSD. It builds the same open kernel modules, from the same
 # nvidia-open-dkms sources, against linux-nova instead of linux.
 #
-# pkgver must equal the version of extra/nvidia-utils in the release's Arch Linux
-# Archive snapshot, because the userspace and the modules have to match exactly. When
-# Arch moves nvidia-open to a newer version, bump pkgver here (see docs/packaging.md).
-# The build then fails loudly if the two are out of step: it cannot resolve
-# nvidia-open-dkms=$pkgver.
+# pkgver is two versions joined: NVIDIA's, which must equal extra/nvidia-utils in the
+# release's Arch Linux Archive snapshot because userspace and modules have to match
+# exactly, and the linux-nova build the modules are for. A change in either makes a
+# newer package. The release workflow writes it from the snapshot and the kernel it
+# just built (see docs/packaging.md); the value here is the last one released. Out of
+# step, the build fails loudly: it cannot resolve nvidia-open-dkms=$_nvidia.
 
 pkgname=nvidia-open-nova
-pkgver=615.78.08
-pkgrel=3
+pkgver=615.78.08_7.2.11.arch1_1
+pkgrel=1
+_nvidia=${pkgver%%_*}
 pkgdesc='NVIDIA open kernel modules for linux-nova'
 arch=(x86_64)
 url='https://github.com/NVIDIA/open-gpu-kernel-modules'
 license=('MIT AND GPL-2.0-only')
-depends=("nvidia-utils=${pkgver}" libglvnd)
-makedepends=(linux-nova-headers "nvidia-open-dkms=$pkgver")
+depends=("nvidia-utils=${_nvidia}" libglvnd)
+makedepends=(linux-nova-headers "nvidia-open-dkms=$_nvidia")
 options=('!strip' '!debug')
 conflicts=(nvidia)
 provides=(NVIDIA-MODULE)
@@ -27,7 +29,7 @@ provides=(NVIDIA-MODULE)
 build() {
   _kernver=$(</usr/src/linux-nova/version)
 
-  fakeroot dkms build --dkmstree "${srcdir}" -m nvidia/${pkgver} -k ${_kernver}
+  fakeroot dkms build --dkmstree "${srcdir}" -m nvidia/${_nvidia} -k ${_kernver}
 }
 
 package() {
@@ -40,9 +42,9 @@ package() {
   _kernpkgver=${_kernpkgver/-/.}
   # (The ${:+} form keeps `makepkg --printsrcinfo`, which evaluates this line without
   # the variable set, printing a plain "linux-nova" instead of a broken "linux-nova=".)
-  depends=("linux-nova${_kernpkgver:+=$_kernpkgver}" "nvidia-utils=${pkgver}" libglvnd)
+  depends=("linux-nova${_kernpkgver:+=$_kernpkgver}" "nvidia-utils=${_nvidia}" libglvnd)
 
-  install -Dt "${pkgdir}/usr/lib/modules/${_kernver}/extramodules" -m644 nvidia/${pkgver}/${_kernver}/${CARCH}/module/*.ko
+  install -Dt "${pkgdir}/usr/lib/modules/${_kernver}/extramodules" -m644 nvidia/${_nvidia}/${_kernver}/${CARCH}/module/*.ko
 
   # compress each module individually
   find "$pkgdir" -name '*.ko' -exec zstd --rm -19 {} +

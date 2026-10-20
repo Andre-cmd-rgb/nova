@@ -20,13 +20,13 @@ TEST_SCRIPTS    :=
 
 include $(sort $(wildcard */install.mk */*/install.mk))
 
-.PHONY: all install lint lint-shell lint-qml check-names test
+.PHONY: all install lint lint-shell lint-qml lint-workflows check-names test
 all:
 	@echo "Nothing to build here; see packaging/ for packages. Targets: install lint test"
 
 install: $(INSTALL_TARGETS)
 
-lint: lint-shell lint-qml check-names
+lint: lint-shell lint-qml lint-workflows check-names
 
 lint-shell:
 	shellcheck -x -S warning $(SHELL_SOURCES)
@@ -39,6 +39,9 @@ lint-qml:
 	  find $$d -name '*.qml' -print0 | \
 	    xargs -0 -r /usr/lib/qt6/bin/qmllint --max-warnings -1 >"$$log" 2>&1 || { cat "$$log" >&2; exit 1; }; \
 	done
+
+lint-workflows:
+	actionlint
 
 # "omarchy" belongs in NOTICE and docs/ only (docs/ARCHITECTURE.md, Naming).
 check-names:

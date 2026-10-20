@@ -44,6 +44,12 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c '[.apps.browsers, .apps.editors, .apps.terminals]' <<<"$output")" = '[[],[],[]]' ]
   [ "$(jq -r .bar.position <<<"$output")" = top ]
   [ "$(jq -c '.bar.shown | index("nova.power") != null' <<<"$output")" = true ]
+  [ "$(jq -c .updates <<<"$output")" = '{"candidates":false}' ]
+}
+
+@test "state: whether this system tests release candidates" {
+  stub nova-update '[[ $* == --candidates ]] && echo on'
+  [ "$(state .updates.candidates)" = true ]
 }
 
 @test "state: themes with their colors, and the current one" {

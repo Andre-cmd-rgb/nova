@@ -1,0 +1,52 @@
+# A release candidate every other week, on the 1st and the 15th: CI on main,
+# then the next candidate tag (tools/release-next), built against yesterday's
+# Arch snapshot and published as a pre-release, which only systems already on
+# a pre-release follow. Once it has been tested on the machines, promote.yml
+# makes it the release. See docs/releasing.md.
+name: candidate
+
+on:
+  schedule:
+    - cron: '17 6 1,15 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: candidate
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  tag:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - id: tag
+        name: Tag the next candidate
+        run: |
+          tag=$(tools/release-next)
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            tag -a "$tag" -m "Nova ${tag#v}"
+          git push origin "refs/tags/$tag"
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+
+  release:
+    needs: tag
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      publish: true
+    secrets: inherit

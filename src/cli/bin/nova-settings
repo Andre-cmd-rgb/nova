@@ -160,6 +160,7 @@ state() {
     --argjson fingerprint "$(command -v fprintd-enroll >/dev/null && echo true || echo false)" \
     --argjson defaults "$(defaults_json)" \
     --argjson about "$(about_json)" \
+    --argjson candidates "$([[ $(quiet nova-update --candidates) == on ]] && echo true || echo false)" \
     '{appearance: {theme: $theme, themes: $themes, background: $background,
                    font: $font, fonts: $fonts, textSize: $textSize},
       battery: $battery,
@@ -170,6 +171,7 @@ state() {
       lock: {seconds: (if ($config.idle.lock | type) == "number" then $config.idle.lock else 300 end),
              fingerprint: $fingerprint},
       apps: $defaults,
+      updates: {candidates: $candidates},
       about: $about}'
 }
 

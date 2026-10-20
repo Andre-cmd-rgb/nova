@@ -50,19 +50,17 @@ which Arch packaging commit it follows:
    same patch and a new series needs the matching one, pinned to a commit.
 3. Update `b2sums` (`updpkgsums`) and build. `nova-config.sh check` fails the
    build if a delta did not survive.
-4. Bump `pkgrel` of `nvidia-open-nova` too: its modules are tied to one exact
-   `linux-nova` build.
-
 A changed `packaging/linux-nova` means the next release rebuilds the kernel
 instead of reusing the cached one.
 
 ## nvidia-open-nova
 
-`pkgver` must equal the version of `extra/nvidia-utils` in the release's Arch
-snapshot: userspace and modules have to match exactly. When Arch moves to a new
-NVIDIA version, set `pkgver` to it and reset `pkgrel` to 1. A mismatch cannot
-slip through, because the build needs `nvidia-open-dkms=$pkgver` and fails when
-the snapshot does not have it.
+Its `pkgver` joins two versions, NVIDIA's and the `linux-nova` build the
+modules are for: `615.78.08_7.2.11.arch1_1`. NVIDIA's must equal
+`extra/nvidia-utils` in the release's Arch snapshot, because userspace and
+modules have to match exactly. The release workflow writes both from the
+snapshot and the kernel it built, so a new driver in Arch, or a new kernel,
+needs nothing by hand; the committed value is only the last one released.
 
 ## limine-entry-tool and limine-snapper-sync
 

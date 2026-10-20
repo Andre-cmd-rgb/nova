@@ -40,6 +40,7 @@ Item {
   readonly property var lock: info.lock || ({})
   readonly property var apps: info.apps || ({})
   readonly property var about: info.about || ({})
+  readonly property var updates: info.updates || ({})
   readonly property var limit: battery.limit || ({})
 
   readonly property var allPages: [
@@ -835,6 +836,17 @@ Item {
         Caption {
           width: parent.width
           text: "Each release moves the whole system to a tested snapshot of Arch Linux. Before every update, a snapshot of the system is taken. Chrome and VS Code come from Google and Microsoft, and update with it."
+        }
+      }
+
+      Section {
+        width: p.inner
+        Toggle {
+          width: parent.width
+          label: "Test Release Candidates"
+          description: "A release comes every other week, first as a candidate for testing. Get each candidate as it comes, two weeks before everyone else."
+          checked: root.updates.candidates === true
+          onClicked: root.run(["nova-update", "--candidates", checked ? "off" : "on"])
         }
       }
 

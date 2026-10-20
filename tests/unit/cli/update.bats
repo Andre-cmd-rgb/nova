@@ -109,3 +109,27 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   run "$REPO_ROOT/src/cli/bin/nova-update" --check
   [ "$output" = "available 1.0.0-beta.2" ]
 }
+
+@test "following candidates: switched on and off, and the check then offers them" {
+  export NOVA_UPDATE_CANDIDATES="$SCRATCH/config/update-candidates" NOVA_UPDATE_CACHE="$SCRATCH/cache"
+  echo 1.0.0 >"$PKGVER"
+  # GitHub: v1.0.0 is the latest release, v1.1.0-rc.1 the newest of all.
+  stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; url=$1; shift; done
+    case $url in
+      */releases/latest) echo "{\"tag_name\":\"v1.0.0\"}" >"$out" ;;
+      *"/releases?"*) echo "[{\"tag_name\":\"v1.1.0-rc.1\",\"draft\":false},{\"tag_name\":\"v1.0.0\",\"draft\":false}]" >"$out" ;;
+    esac
+    printf 200'
+  check() { "$REPO_ROOT/src/cli/bin/nova-update" --check; }
+  candidates() { "$REPO_ROOT/src/cli/bin/nova-update" --candidates "$@"; }
+
+  [ "$(candidates)" = off ]
+  [ "$(check)" = current ]
+  candidates on
+  [ "$(candidates)" = on ]
+  [ "$(check)" = "available 1.1.0-rc.1" ]
+  candidates off
+  [ "$(check)" = current ]
+  run candidates maybe
+  [ "$status" -ne 0 ]
+}

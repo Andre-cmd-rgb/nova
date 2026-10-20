@@ -1,8 +1,8 @@
-# A release: push a tag like v1.0.0-beta.1, or run this by hand for an existing
-# tag. It pins yesterday's Arch Linux Archive snapshot, builds every Nova
-# package against it, signs them into the [nova] repository, builds the
-# installer ISO, and leaves everything on a *draft* GitHub release. Publishing
-# the draft is done by hand, after testing. See docs/releasing.md.
+# A release: pins an Arch Linux Archive snapshot (yesterday's, unless given),
+# builds every Nova package against it, signs them into the [nova] repository,
+# builds the installer ISO, and puts it all on a GitHub release: a draft when a
+# tag is pushed by hand, published when candidate.yml or promote.yml calls it.
+# A tag with a "-" is a pre-release. See docs/releasing.md.
 #
 # Needs the repository secret NOVA_REPO_KEY: the ASCII-armored private key whose
 # public half is in packaging/nova-keyring.
@@ -15,6 +15,27 @@ on:
     inputs:
       tag:
         description: Existing tag to build, e.g. v1.0.0-beta.1
+        required: true
+      arch_date:
+        description: Arch Linux Archive date, YYYY/MM/DD (empty for yesterday)
+        default: ''
+      publish:
+        description: Publish the release instead of leaving a draft
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      tag:
+        type: string
+        required: true
+      arch_date:
+        type: string
+        default: ''
+      publish:
+        type: boolean
+        default: false
+    secrets:
+      NOVA_REPO_KEY:
         required: true
 
 permissions:
@@ -40,9 +61,11 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       - id: pin
-        name: Pin yesterday's Arch snapshot
+        name: Pin the Arch snapshot
+        env:
+          ARCH_DATE: ${{ inputs.arch_date }}
         run: |
-          date=$(date -u -d yesterday +%Y/%m/%d)
+          date=${ARCH_DATE:-$(date -u -d yesterday +%Y/%m/%d)}
           tools/release-pin --version "$TAG" --date "$date" --verify --out release.toml
           echo "arch_date=$date" >>"$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
@@ -109,6 +132,10 @@ jobs:
             out/pkgs/limine-entry-tool-*.pkg.tar.zst out/pkgs/limine-snapper-sync-*.pkg.tar.zst
           NOVA_SOURCE="git+file://$GITHUB_WORKSPACE#tag=$TAG" tools/build-package packaging/nova out/pkgs
           pacman -U --noconfirm out/kernel/linux-nova-headers-*.pkg.tar.zst
+          # The NVIDIA modules follow the snapshot's driver and this kernel.
+          nvidia=$(pacman -Si nvidia-open-dkms | sed -n 's/^Version *: \(.*\)-[^-]*$/\1/p')
+          kernel=$(pacman -Q linux-nova-headers | awk '{ print $2 }')
+          sed -i "s/^pkgver=.*/pkgver=${nvidia}_${kernel//-/_}/; s/^pkgrel=.*/pkgrel=1/" packaging/nvidia-open-nova/PKGBUILD
           tools/build-package packaging/nvidia-open-nova out/pkgs
           cp out/kernel/*.pkg.tar.zst out/pkgs/
           ls -l out/pkgs
@@ -134,7 +161,8 @@ jobs:
           NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
         run: |
           [[ -n $NOVA_REPO_KEY ]] || { echo "::error::the NOVA_REPO_KEY secret is not set"; exit 1; }
-          export GNUPGHOME=$(mktemp -d)
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
           gpg --batch --quiet --import <<<"$NOVA_REPO_KEY"
           fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
           grep -qx "$fpr:4:" packaging/nova-keyring/nova-trusted ||
@@ -185,13 +213,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: out
-      - name: Draft the GitHub release
+      - name: Make the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          PUBLISH: ${{ inputs.publish }}
         run: |
           version=${TAG#v}
-          prerelease=()
-          [[ $version != *-* ]] || prerelease=(--prerelease)
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --draft "${prerelease[@]}" \
-            --title "Nova $version" --notes "Nova $version. Install: make a stick with nova-usb (bash nova-usb, on any Arch-based system), or write the ISO to one, and boot it." \
+          flags=(--generate-notes)
+          [[ $PUBLISH == true ]] || flags+=(--draft)
+          [[ $version != *-* ]] || flags+=(--prerelease)
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" --title "Nova $version" \
+            --notes "Install: write the ISO to a USB stick, or make one with nova-usb (bash nova-usb, on any Arch-based system), and boot it." \
             out/release-toml/release.toml out/repo/* out/iso/*

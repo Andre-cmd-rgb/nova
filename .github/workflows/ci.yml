@@ -1,20 +1,23 @@
 # Every push and pull request: lint, the name check, the Rust checks, the unit
 # tests, a `make install` into a scratch root, the shell's windows opened
 # offscreen from it and the whole shell started under a headless sway, all in
-# a current Arch container. Releases are built by
-# release.yml.
+# a current Arch container, and nova usb's writer on a loop device.
+# candidate.yml runs it too, before cutting a release.
 name: ci
 
 on:
   push:
     branches: [main]
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
 
+# github.workflow is the caller's name when candidate.yml calls this, so a
+# candidate's run and a push's never cancel each other.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 defaults:
@@ -29,7 +32,7 @@ jobs:
     steps:
       - name: Tools
         run: |
-          pacman -Syu --noconfirm --needed git sudo shellcheck bats jq rust qt6-declarative \
+          pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats jq rust qt6-declarative \
             quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa
           useradd -m builder
 
@@ -46,6 +49,9 @@ jobs:
 
       - name: QML lint
         run: sudo -u builder -H make lint-qml
+
+      - name: Workflow lint
+        run: sudo -u builder -H make lint-workflows
 
       - name: Rust
         run: |
