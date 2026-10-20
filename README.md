@@ -23,9 +23,11 @@ Nova takes the whole disk. Turn Secure Boot off in the firmware settings first.
 - Anywhere else, write the ISO as it is, with `dd` or any USB writer. That
   stick installs over the network.
 
-**Boot it** and answer a few questions: keyboard layout, Wi-Fi when there is no
-cable, the disk, your name, user name and password, the computer's name, the
-time zone, and a fingerprint if there is a reader. Nothing touches the disk
+**Boot it** and answer a few questions: keyboard layout (a stick from
+`nova-usb` offers the one of the computer it was made on), the passphrase of
+what it carries, Wi-Fi when there is no cable, the disk, your name, user name
+and password, the computer's name, the time zone, and a fingerprint if there is
+a reader. Nothing touches the disk
 until you type `erase`. Drivers for Intel, AMD and NVIDIA graphics, microcode
 and firmware are chosen for the hardware. The computer restarts into the lock
 screen.

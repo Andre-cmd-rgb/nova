@@ -20,16 +20,21 @@ TEST_SCRIPTS    :=
 
 include $(sort $(wildcard */install.mk */*/install.mk))
 
-.PHONY: all install lint lint-shell lint-qml lint-workflows check-names test
+.PHONY: all install lint lint-shell lint-lua lint-qml lint-workflows check-names test
 all:
 	@echo "Nothing to build here; see packaging/ for packages. Targets: install lint test"
 
 install: $(INSTALL_TARGETS)
 
-lint: lint-shell lint-qml lint-workflows check-names
+lint: lint-shell lint-lua lint-qml lint-workflows check-names
 
 lint-shell:
 	shellcheck -x -S warning $(SHELL_SOURCES)
+
+# The Hyprland configs: a syntax error there leaves the session, or the greeter,
+# without its config.
+lint-lua:
+	git ls-files -z '*.lua' | xargs -0 -r luac -p
 
 # Errors fail the lint; the warnings (mostly qs.* imports qmllint cannot resolve)
 # are printed only when it fails, next to the error.

@@ -33,6 +33,21 @@ hl.config({
   },
 })
 
+-- The keyboard layout the session uses, so the password is typed on the same
+-- keys. Guarded: without it the greeter still starts, on US keys.
+local ok, keyboard = pcall(function()
+  return dofile("/usr/share/nova/default/hypr/keyboard.lua").layout()
+end)
+if ok then
+  hl.config({
+    input = {
+      kb_layout = keyboard.layout,
+      kb_variant = keyboard.variant,
+      kb_options = keyboard.options,
+    },
+  })
+end
+
 -- The client runs the greeter, records how it ended and asks Hyprland to exit, which
 -- hands the seat back to greetd.
 hl.on("hyprland.start", function()

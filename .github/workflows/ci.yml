@@ -34,7 +34,7 @@ jobs:
     steps:
       - name: Tools
         run: |
-          pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats jq rust qt6-declarative \
+          pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats jq lua rust qt6-declarative \
             quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa
           useradd -m builder
 
@@ -45,6 +45,9 @@ jobs:
 
       - name: Shell lint
         run: sudo -u builder -H make lint-shell
+
+      - name: Lua syntax
+        run: sudo -u builder -H make lint-lua
 
       - name: No Omarchy names outside NOTICE and docs
         run: sudo -u builder -H make check-names
