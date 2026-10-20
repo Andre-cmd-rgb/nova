@@ -7,6 +7,8 @@
 # if unset), and puts the packages in <out dir>. The PGP keys a PKGBUILD keeps
 # in keys/pgp (the kernel signers, for one) are imported first, so its sources
 # are verified. Set NOVA_SOURCE to pass it through to the nova PKGBUILD.
+# make uses every CPU: Arch's makepkg.conf leaves MAKEFLAGS unset, which builds
+# the kernel on one core, for longer than a CI job may run.
 set -euo pipefail
 
 die() { printf 'build-package: %s\n' "$*" >&2; exit 1; }
@@ -31,5 +33,6 @@ fi
 
 cd -- "$dir"
 as_builder env PKGDEST="$out" SRCDEST="$scratch/nova-srcdest" BUILDDIR="$scratch/nova-builddir" \
+  MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
   ${NOVA_SOURCE:+NOVA_SOURCE="$NOVA_SOURCE"} \
   makepkg --syncdeps --noconfirm --cleanbuild "$@"
