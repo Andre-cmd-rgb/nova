@@ -1,0 +1,157 @@
+#!/bin/bash
+# nova-battery-limit-apply: the root half of `nova battery limit`.
+#
+#   status         print what the battery supports and what is set, as JSON
+#   set <value>    apply a limit and remember it: 50-100 for a percentage
+#                  (100 is no limit), on or off for a firmware switch
+#   restore        apply the remembered limit (nova-battery-limit.service,
+#                  whenever a battery appears, which includes every boot)
+#
+# Run through pkexec (org.nova.battery-limit lets the active user do it
+# without a password), so it trusts nothing it is given: the value must match
+# one of the forms above, and it only ever writes the charge files of a
+# battery under /sys/class/power_supply.
+#
+# Two kinds of hardware:
+#   threshold  charge_control_end_threshold, a percentage (ThinkPads, ASUS,
+#              Dell, most laptops). With a start threshold too, charging
+#              resumes 5 points below the limit.
+#   switch     charge_types with Long_Life (Lenovo IdeaPad and Legion): the
+#              firmware caps the charge at a level of its own.
+
+set -euo pipefail
+
+SUPPLY=${NOVA_POWER_SUPPLY:-/sys/class/power_supply}
+STATE=${NOVA_BATTERY_LIMIT_STATE:-/var/lib/nova/battery-limit}
+
+die() {
+  echo "nova-battery-limit-apply: $*" >&2
+  exit 1
+}
+
+battery() { # kind: prints the battery directory that has it
+  local bat
+  for bat in "$SUPPLY"/BAT*; do
+    [[ -d $bat ]] || continue
+    case $1 in
+      threshold) [[ -f $bat/charge_control_end_threshold ]] && { echo "$bat"; return 0; } ;;
+      switch) [[ -f $bat/charge_types ]] && grep -qw Long_Life "$bat/charge_types" && { echo "$bat"; return 0; } ;;
+    esac
+  done
+  return 1
+}
+
+kind() {
+  if battery threshold >/dev/null; then echo threshold
+  elif battery switch >/dev/null; then echo switch
+  else echo none
+  fi
+}
+
+# charge_types lists every type and brackets the one in force: "[Standard] Long_Life".
+active_type() { grep -o '\[[A-Za-z_]*\]' "$1/charge_types" | tr -d '[]'; }
+
+status() {
+  local bat end
+  case $(kind) in
+    threshold)
+      bat=$(battery threshold)
+      end=$(<"$bat/charge_control_end_threshold")
+      # Some firmware reports 0 for "never set", which means no limit.
+      ((end > 0 && end < 100)) || end=100
+      printf '{"kind":"threshold","limit":%d,"on":%s}\n' "$end" "$( ((end < 100)) && echo true || echo false)"
+      ;;
+    switch)
+      bat=$(battery switch)
+      printf '{"kind":"switch","limit":null,"on":%s}\n' "$([[ $(active_type "$bat") == Long_Life ]] && echo true || echo false)"
+      ;;
+    none) echo '{"kind":"none","limit":null,"on":false}' ;;
+  esac
+}
+
+write() { # file value
+  printf '%s\n' "$2" 2>/dev/null >"$1"
+}
+
+set_threshold() {
+  local bat end=$1 start current
+  bat=$(battery threshold)
+  # The firmware keeps start below end at every step, so the order depends on
+  # the direction: lowering moves start first, raising moves end first.
+  if [[ -f $bat/charge_control_start_threshold ]]; then
+    start=$((end < 100 ? end - 5 : 0))
+    current=$(<"$bat/charge_control_end_threshold")
+    if ((end < current)); then
+      write "$bat/charge_control_start_threshold" "$start" || true
+      write "$bat/charge_control_end_threshold" "$end" || true
+    else
+      write "$bat/charge_control_end_threshold" "$end" || true
+      write "$bat/charge_control_start_threshold" "$start" || true
+    fi
+  else
+    write "$bat/charge_control_end_threshold" "$end" || true
+  fi
+  # Only the end threshold is the promise; a start some firmware rejects
+  # (Dell wants it at 50 or more) still leaves the limit working.
+  [[ $(<"$bat/charge_control_end_threshold") == "$end" ]] ||
+    die "the battery did not accept a limit of $end%"
+}
+
+set_switch() {
+  local bat want
+  bat=$(battery switch)
+  [[ $1 == on ]] && want=Long_Life || want=Standard
+  # Firmware that came up with two types in force refuses any write but
+  # Standard, so a refused write gets one retry from there.
+  if ! write "$bat/charge_types" "$want"; then
+    write "$bat/charge_types" Standard || true
+    write "$bat/charge_types" "$want" || true
+  fi
+  [[ $(active_type "$bat") == "$want" ]] || die "the battery did not switch to $want"
+}
+
+apply() { # value
+  case $(kind):$1 in
+    threshold:off) set_threshold 100 ;;
+    threshold:on) die "this battery takes a percentage, 50 to 100" ;;
+    threshold:*) set_threshold "$1" ;;
+    switch:on | switch:off) set_switch "$1" ;;
+    switch:*) die "this battery's limit is a switch: on or off" ;;
+    none:*) die "this computer has no battery charge limit" ;;
+  esac
+}
+
+valid() {
+  [[ $1 == on || $1 == off ]] && return 0
+  [[ $1 =~ ^[0-9]{2,3}$ ]] && ((10#$1 >= 50 && 10#$1 <= 100))
+}
+
+main() {
+  local value
+  case ${1:-} in
+    status) status ;;
+    set)
+      value=${2:-}
+      valid "$value" || die "a limit is 50 to 100, on or off, not '$value'"
+      [[ $value == on || $value == off ]] || value=$((10#$value))
+      apply "$value"
+      mkdir -p "$(dirname "$STATE")"
+      printf '%s\n' "$value" >"$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"
+      ;;
+    restore)
+      [[ -r $STATE ]] || return 0
+      value=$(<"$STATE")
+      valid "$value" || die "ignoring $STATE: '$value' is not a limit"
+      apply "$value"
+      ;;
+    *)
+      echo "Usage: nova-battery-limit-apply status | set <50-100|on|off> | restore" >&2
+      return 2
+      ;;
+  esac
+}
+
+# Sourced by the tests, which stand in for the firmware's own rules.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

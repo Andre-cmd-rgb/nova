@@ -1,0 +1,60 @@
+#!/bin/bash
+
+# nova:summary=Show or set the battery charge limit, which keeps the battery healthy on long stretches plugged in
+# nova:args=[50-100|on|off] [--json]
+#
+# A percentage on most laptops; on Lenovo IdeaPads and Legions the firmware has
+# a fixed limit that is either on or off. The value is read back from the
+# battery after it is set, and kept across restarts.
+
+set -euo pipefail
+
+APPLY=${NOVA_BATTERY_LIMIT_APPLY:-/usr/lib/nova/nova-battery-limit-apply}
+
+usage() {
+  cat <<'EOF'
+Usage: nova battery limit [50-100|on|off] [--json]
+
+  nova battery limit          what is set, and what this battery supports
+  nova battery limit 80       stop charging at 80% (charging resumes at 75%)
+  nova battery limit off      charge to 100% again
+  nova battery limit on       the firmware's limit, where the battery has a switch
+EOF
+}
+
+json=false
+value=
+for arg in "$@"; do
+  case $arg in
+    --json) json=true ;;
+    -h | --help) usage; exit 0 ;;
+    -*) usage >&2; exit 2 ;;
+    *)
+      [[ -z $value ]] || { usage >&2; exit 2; }
+      value=$arg
+      ;;
+  esac
+done
+
+if [[ -n $value ]]; then
+  if ((EUID == 0)); then
+    "$APPLY" set "$value"
+  else
+    pkexec "$APPLY" set "$value"
+  fi
+fi
+
+status=$("$APPLY" status)
+if $json; then
+  printf '%s\n' "$status"
+  exit 0
+fi
+
+kind=$(jq -r .kind <<<"$status")
+case $kind:$(jq -r .on <<<"$status") in
+  threshold:true) echo "Charging stops at $(jq -r .limit <<<"$status")%." ;;
+  threshold:false) echo "No charge limit: the battery charges to 100%. Set one with: nova battery limit 80" ;;
+  switch:true) echo "The charge limit is on: the firmware stops charging below full." ;;
+  switch:false) echo "The charge limit is off. Turn it on with: nova battery limit on" ;;
+  none:*) echo "This computer has no battery charge limit." ;;
+esac

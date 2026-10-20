@@ -1,0 +1,10 @@
+# Puts back the charge limit set with `nova battery limit`. Started by
+# 90-nova-battery-limit.rules whenever a battery appears, which includes every
+# boot: not all firmware keeps the limit through a restart or a flat battery.
+[Unit]
+Description=Restore the battery charge limit
+ConditionPathExists=/var/lib/nova/battery-limit
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nova/nova-battery-limit-apply restore
