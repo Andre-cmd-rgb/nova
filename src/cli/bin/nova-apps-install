@@ -1,41 +1,82 @@
 #!/bin/bash
-
-# nova:summary=Install Google Chrome and VS Code from their AUR recipes
-# nova:args=[--noconfirm]
+# nova:summary=Install Google Chrome and VS Code from their AUR recipes, or update them
+# nova:args=[--update | --check] [--noconfirm]
 #
 # Neither may be redistributed, so Nova builds them here from their AUR
 # recipes, which download the vendors' own releases from Google and Microsoft.
-# Run it as yourself: makepkg refuses root, and asks for your password once it
-# installs. The installer runs it for the new account when it has internet.
-# Already-installed apps are skipped, so running it again is harmless; updates
-# arrive the same way, by running it again.
+# They are outside Nova's releases, so this is also how they are updated:
+# nova update runs it with --update. Run it as yourself: makepkg refuses root,
+# and asks for your password once it installs.
+#
+#   nova apps install              install what is missing, update what is behind
+#   nova apps install --update     update only the ones installed (nova apps update)
+#   nova apps install --check      print "apps <name>..." for those behind, or
+#                                  "current"; a non-zero exit when the AUR cannot
+#                                  be reached
+#   --noconfirm                    ask nothing (the installer, nova update --yes)
 
 set -euo pipefail
 
 apps=(google-chrome visual-studio-code-bin)
-aur=https://aur.archlinux.org
+aur=${NOVA_AUR:-https://aur.archlinux.org}
 
+mode=all
 confirm=()
-case ${1:-} in
-  "") ;;
-  --noconfirm) confirm=(--noconfirm) ;;
-  *)
-    echo "Usage: nova apps install [--noconfirm]" >&2
-    exit 2
-    ;;
-esac
+for arg in "$@"; do
+  case $arg in
+    --update) mode=update ;;
+    --check) mode=check ;;
+    --noconfirm) confirm=(--noconfirm) ;;
+    *)
+      echo "Usage: nova apps install [--update | --check] [--noconfirm]" >&2
+      exit 2
+      ;;
+  esac
+done
+[[ $mode == check ]] || ((EUID != 0)) || { echo "nova apps install: run this as yourself, not root" >&2; exit 1; }
 
-((EUID != 0)) || { echo "nova apps install: run this as yourself, not root" >&2; exit 1; }
+# "name<TAB>version" for each app, as the AUR has it now.
+aur_versions() {
+  local query=() app
+  for app in "${apps[@]}"; do query+=("arg%5B%5D=$app"); done
+  curl -fsS --max-time 20 "$aur/rpc/v5/info?$(IFS='&'; echo "${query[*]}")" |
+    jq -er '.results[] | "\(.Name)\t\(.Version)"'
+}
+
+declare -A latest=()
+if versions=$(aur_versions 2>/dev/null); then
+  while IFS=$'\t' read -r name version; do latest[$name]=$version; done <<<"$versions"
+elif [[ $mode == check ]]; then
+  exit 1
+else
+  echo "nova apps install: the AUR did not answer, so installed apps are left as they are" >&2
+fi
+
+todo=() behind=()
+for app in "${apps[@]}"; do
+  have=$(pacman -Q "$app" 2>/dev/null) && have=${have#* } || have=''
+  if [[ -z $have ]]; then
+    [[ $mode != all ]] || todo+=("$app")
+  elif [[ -n ${latest[$app]:-} && $(vercmp "${latest[$app]}" "$have") -gt 0 ]]; then
+    behind+=("$app")
+    todo+=("$app")
+    [[ $mode == check ]] || echo "$app $have -> ${latest[$app]}"
+  elif [[ $mode != check ]]; then
+    echo "$app is up to date ($have)"
+  fi
+done
+
+if [[ $mode == check ]]; then
+  if ((${#behind[@]})); then echo "apps ${behind[*]}"; else echo current; fi
+  exit 0
+fi
+((${#todo[@]})) || exit 0
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/nova-apps.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 
 failed=()
-for app in "${apps[@]}"; do
-  if pacman -Q "$app" >/dev/null 2>&1; then
-    echo "$app is already installed"
-    continue
-  fi
+for app in "${todo[@]}"; do
   echo "==> $app"
   if git clone --quiet --depth 1 "$aur/$app.git" "$work/$app" &&
     (cd "$work/$app" && makepkg --syncdeps --install --needed --clean "${confirm[@]}"); then
@@ -45,6 +86,6 @@ for app in "${apps[@]}"; do
 done
 
 if ((${#failed[@]})); then
-  echo "nova apps install: could not install ${failed[*]}; run nova apps install again to retry" >&2
+  echo "nova apps install: could not build ${failed[*]}; run it again to retry" >&2
   exit 1
 fi

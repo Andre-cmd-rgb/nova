@@ -1,14 +1,17 @@
 #!/bin/bash
-# nova:summary=Update Nova to the newest release
+# nova:summary=Update Nova to the newest release, and Chrome and VS Code
 # nova:args=[--version <tag>] [--check] [--dry-run] [--yes]
 #
 # Moves this system to a Nova release: the Arch packages are taken from the Arch Linux
 # Archive snapshot the release was tested against, the nova packages from the release's
-# own signed repository, with a snapper snapshot before and after.
+# own signed repository, with a snapper snapshot before and after. Then it brings
+# Chrome and VS Code up to date, which come from their vendors outside the release
+# (nova apps update).
 #
 #   nova update                     update to the newest release
 #   nova update --version v1.0.0-beta.2
-#   nova update --check             print "available <version>" or "current"
+#   nova update --check             print "available <version>", "apps <name>..." when
+#                                   only Chrome or VS Code is behind, or "current"
 #   nova update --dry-run           show what would change, change nothing
 #   nova update --yes               do not ask before applying
 #   nova update --allow-downgrade   permit an older release (uses pacman -Syuu)
@@ -29,6 +32,7 @@ MIRRORLIST=${NOVA_MIRRORLIST:-/etc/pacman.d/nova-mirrorlist}
 REPOFILE=${NOVA_REPOFILE:-/etc/pacman.d/nova-repo}
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 APPLY=${NOVA_UPDATE_APPLY:-$HERE/nova-update-apply}
+APPS=${NOVA_UPDATE_APPS:-$HERE/nova-apps-install}
 CACHE_TTL=${NOVA_UPDATE_CHECK_TTL:-1800}
 CACHE_FILE=${NOVA_UPDATE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nova/update-check}
 
@@ -109,7 +113,7 @@ fetch_release() {
 # --check: one line for the shell's update badge. Cached so a polling widget does not
 # burn the unauthenticated API rate limit (60 requests an hour).
 check_only() {
-  local want=$1 now cached_at cached_tag tag tmp rc=0
+  local want=$1 now cached_at cached_tag tag='' tmp rc=0 apps
   now=$(date +%s)
   if [[ -z $want && -r $CACHE_FILE ]] && read -r cached_at cached_tag < "$CACHE_FILE" &&
      [[ $cached_at =~ ^[0-9]+$ ]] && (( now - cached_at < CACHE_TTL )); then
@@ -117,21 +121,22 @@ check_only() {
   else
     tmp=$(mktemp)
     fetch_release "$tmp" "$want" "$(wants_prereleases)" || rc=$?
-    if (( rc == 4 )); then
-      rm -f "$tmp"
-      echo current
-      return 0
+    if (( rc != 4 )); then
+      tag=$(jq -r '.tag_name // empty' "$tmp")
+      [[ -n $tag ]] || { rm -f "$tmp"; die "the release has no tag"; }
+      if [[ -z $want ]]; then
+        mkdir -p "$(dirname "$CACHE_FILE")"
+        printf '%s %s\n' "$now" "$tag" > "$CACHE_FILE"
+      fi
     fi
-    tag=$(jq -r '.tag_name // empty' "$tmp")
     rm -f "$tmp"
-    [[ -n $tag ]] || die "the release has no tag"
-    if [[ -z $want ]]; then
-      mkdir -p "$(dirname "$CACHE_FILE")"
-      printf '%s %s\n' "$now" "$tag" > "$CACHE_FILE"
-    fi
   fi
-  if [[ $(vercmp "$(tag_pkgver "$tag")" "$(installed_pkgver)") -gt 0 ]]; then
+  if [[ -n $tag && $(vercmp "$(tag_pkgver "$tag")" "$(installed_pkgver)") -gt 0 ]]; then
     echo "available ${tag#v}"
+  # A Chrome security fix is as urgent as a release; an AUR that does not
+  # answer is not news.
+  elif apps=$("$APPS" --check 2>/dev/null) && [[ $apps == "apps "* ]]; then
+    echo "$apps"
   else
     echo current
   fi
@@ -146,8 +151,9 @@ wants_prereleases() {
   fi
 }
 
+want='' do_check=0 dry=0 assume_yes=0 downgrade=0 snapshot=1 release_file=''
+
 main() {
-  local want='' do_check=0 dry=0 assume_yes=0 downgrade=0 snapshot=1 release_file=''
   while (( $# )); do
     case $1 in
       --version)         want=${2:?--version needs a tag}; shift 2 ;;
@@ -166,7 +172,27 @@ main() {
     check_only "$want"
     return 0
   fi
+  # Called plainly, not in a condition, which would switch set -e off inside it:
+  # a release that fails or is declined ends the run here.
+  update_release
+  update_apps
+}
 
+# Chrome and VS Code come from their vendors through AUR recipes, outside the
+# release: the installed ones are brought up to date after it.
+update_apps() {
+  local behind
+  if (( dry )); then
+    behind=$("$APPS" --check 2>/dev/null) || return 0
+    [[ $behind != "apps "* ]] || echo "Apps to update: ${behind#apps }"
+    return 0
+  fi
+  local -a flags=(--update)
+  (( ! assume_yes )) || flags+=(--noconfirm)
+  "$APPS" "${flags[@]}" || warn "Chrome or VS Code did not update; nova apps update tries again"
+}
+
+update_release() {
   # Not local: the EXIT trap runs after main has returned.
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT

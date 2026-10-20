@@ -122,6 +122,14 @@ Item {
     actionProc.running = true
   }
 
+  // "google-chrome visual-studio-code-bin" -> "Google Chrome and VS Code"
+  function appNames(packages) {
+    var names = { "google-chrome": "Google Chrome", "visual-studio-code-bin": "VS Code" }
+    var out = packages.split(" ").filter(function (p) { return p.length > 0 })
+      .map(function (p) { return names[p] || p })
+    return out.length > 1 ? out.slice(0, -1).join(", ") + " and " + out[out.length - 1] : out.join("")
+  }
+
   function terminal(command) {
     run(["nova-launch-floating-terminal-with-presentation", command])
   }
@@ -210,7 +218,8 @@ Item {
       onStreamFinished: {
         var line = String(text || "").trim()
         if (line.indexOf("available ") === 0) root.updateStatus = "Nova " + line.slice(10) + " is available."
-        else if (line === "current") root.updateStatus = "Nova is up to date."
+        else if (line.indexOf("apps ") === 0) root.updateStatus = "Nova is up to date. Updates for " + root.appNames(line.slice(5)) + " are available."
+        else if (line === "current") root.updateStatus = "Nova and its apps are up to date."
         else root.updateStatus = "Could not check for updates."
       }
     }
@@ -808,7 +817,7 @@ Item {
         }
         Caption {
           width: parent.width
-          text: "Each release moves the whole system to a tested snapshot of Arch Linux. Before every update, a snapshot of the system is taken."
+          text: "Each release moves the whole system to a tested snapshot of Arch Linux. Before every update, a snapshot of the system is taken. Chrome and VS Code come from Google and Microsoft, and update with it."
         }
       }
 

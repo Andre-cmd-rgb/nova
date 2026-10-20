@@ -9,6 +9,7 @@ BarWidget {
   moduleName: "nova.system-update"
 
   property bool updateAvailable: false
+  property string tooltip: "Pending Nova Updates"
 
   function refresh() {
     if (!updateProc.running) updateProc.running = true
@@ -39,14 +40,22 @@ BarWidget {
   Process {
     id: updateProc
     command: ["nova-update-check"]
-    // "available <version>" or "current"; nothing when offline, which keeps
-    // the badge as it was.
+    // "available <version>", "apps <name>..." when only Chrome or VS Code is
+    // behind, or "current"; nothing when offline, which keeps the badge as it
+    // was.
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var answer = String(text).trim()
-        if (answer.startsWith("available")) root.updateAvailable = true
-        else if (answer === "current") root.updateAvailable = false
+        if (answer.startsWith("available ")) {
+          root.tooltip = "Nova " + answer.slice(10) + " is available"
+          root.updateAvailable = true
+        } else if (answer.startsWith("apps ")) {
+          root.tooltip = "App updates are available"
+          root.updateAvailable = true
+        } else if (answer === "current") {
+          root.updateAvailable = false
+        }
       }
     }
   }
@@ -66,7 +75,7 @@ BarWidget {
     text: "\uf021"
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
-    tooltipText: "Pending Nova Updates"
+    tooltipText: root.tooltip
     onPressed: root.runUpdate()
   }
 }

@@ -4,7 +4,7 @@
   "name": "Nova update",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Indicates available Nova updates",
+  "description": "Indicates available Nova and app updates",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Nova update",
-    "description": "Indicates available Nova updates",
+    "description": "Indicates available Nova and app updates",
     "category": "System",
     "allowMultiple": false
   }

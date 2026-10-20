@@ -205,7 +205,9 @@ the shared folder also becomes the default for themes that have no pick of their
   pacman mirror to that date, runs `pacman -Syu` and updates the `[nova]` repository
   URL, with a snapper snapshot before and after.
 - **Not redistributed:** Chrome and VS Code. They are built on the machine from their
-  AUR recipes, which download from the vendors.
+  AUR recipes, which download from the vendors (`nova apps install`). They are outside
+  the release, so `nova update` ends by rebuilding whichever is behind the AUR
+  (`nova apps update`), and the bar's update badge shows when one is.
 
 ## Code rules
 
