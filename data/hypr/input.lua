@@ -21,8 +21,7 @@ local function read_vconsole()
   return values
 end
 
--- Layouts that can't type Latin letters. Keep in sync with the list in
--- etc/mkinitcpio.conf.d/nova_hooks.conf.
+-- Layouts that can't type Latin letters.
 local non_latin_layouts =
   " af am ara bd bg by et ge gr il in iq ir kg kh kz la lk mk mm mn mv np rs ru sy th tj ua "
 
@@ -62,7 +61,8 @@ hl.config({
     numlock_by_default = true,
 
     touchpad = {
-      natural_scroll = false,
+      -- Content follows the fingers, as on a Mac.
+      natural_scroll = true,
       clickfinger_behavior = true,
       scroll_factor = 0.4,
     },

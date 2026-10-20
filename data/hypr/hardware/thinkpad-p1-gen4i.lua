@@ -14,3 +14,8 @@ hl.env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
 -- video is tagged "video". Hyprland falls back to compositing by itself the
 -- moment anything is drawn on top (a notification, the bar, a recorder).
 hl.config({ render = { direct_scanout = 1 } })
+
+-- The 16" 3840x2400 panel at 2x. A rule naming the output wins over the
+-- catch-all in ~/.config/hypr/monitors.lua; X11 apps get the same scale.
+hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 2 })
+hl.env("GDK_SCALE", "2")
