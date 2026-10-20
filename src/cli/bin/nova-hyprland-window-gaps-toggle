@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Toggles the window gaps globally between no gaps and the default.
+# nova:summary=Toggle window gaps between none and the default
 
 set -euo pipefail
 

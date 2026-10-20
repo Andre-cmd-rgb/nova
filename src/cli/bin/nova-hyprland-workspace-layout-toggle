@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Toggle the layout on the current active workspace between dwindle and scrolling
+# nova:summary=Toggle this workspace between the dwindle and scrolling layouts
 
 set -euo pipefail
 

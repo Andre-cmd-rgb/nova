@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Check if a Hyprland toggle is currently enabled.
+# nova:summary=Check if a Hyprland toggle is currently enabled
 # nova:args=<flag-name>
 # nova:hidden=true
 

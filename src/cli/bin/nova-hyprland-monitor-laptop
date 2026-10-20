@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Print the name of the built-in laptop display, including disabled outputs.
+# nova:summary=Print the name of the built-in laptop display, including disabled outputs
 # nova:hidden=true
 
 set -euo pipefail

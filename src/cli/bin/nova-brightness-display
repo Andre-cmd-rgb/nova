@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Show or adjust brightness on the focused display.
+# nova:summary=Show or adjust brightness on the focused display
 # nova:args=[--no-osd] [--monitor name] [+N%|N%-|N%|off|on]
 
 set -euo pipefail

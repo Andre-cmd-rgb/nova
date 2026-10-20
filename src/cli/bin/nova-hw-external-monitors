@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Returns true when an external monitor is physically connected.
+# nova:summary=Returns true when an external monitor is physically connected
 # nova:hidden=true
 
 set -euo pipefail

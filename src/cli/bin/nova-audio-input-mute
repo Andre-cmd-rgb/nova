@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Toggle microphone mute. Drives the hardware mic-mute LED on laptops that expose one.
+# nova:summary=Mute or unmute the microphone, and its key's light where there is one
 
 set -euo pipefail
 

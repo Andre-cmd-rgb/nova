@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Run a named hook from ~/.config/nova/hooks/<name> and ~/.config/nova/hooks/<name>.d/.
+# nova:summary=Run a named hook from ~/.config/nova/hooks/<name> and ~/.config/nova/hooks/<name>.d/
 # nova:args=<name> [args...]
 # nova:hidden=true
 

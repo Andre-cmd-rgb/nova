@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Shared helpers for editing ~/.config/nova/shell.json (source this, don't run it).
+# nova:summary=Shared helpers for editing ~/.config/nova/shell.json (source this, don't run it)
 # nova:hidden=true
 
 set -euo pipefail

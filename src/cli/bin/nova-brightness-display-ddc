@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Show or adjust DDC/CI display brightness for a Hyprland monitor.
+# nova:summary=Show or adjust DDC/CI display brightness for a Hyprland monitor
 # nova:args=<monitor> [+N%|N%-|N%]
 # nova:hidden=true
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Toggle single-window square aspect ratio.
+# nova:summary=Toggle single-window square aspect ratio
 
 set -euo pipefail
 

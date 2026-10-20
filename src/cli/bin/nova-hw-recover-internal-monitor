@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Clear the internal-monitor-disable toggle if no external display is connected.
+# nova:summary=Clear the internal-monitor-disable toggle if no external display is connected
 # nova:hidden=true
 
 set -euo pipefail

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Cycle to the next media source and transfer playback when the current source is playing
+# nova:summary=Switch to the next media player, taking playback with it
 # nova:args=[next|previous]
 
 set -euo pipefail

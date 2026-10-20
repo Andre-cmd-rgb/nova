@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Toggle to pop-out a tile to stay fixed on a display basis.
+# nova:summary=Pop the focused window out to float, pinned on every workspace, or back
 # nova:args=[width height x y]
 
 set -euo pipefail

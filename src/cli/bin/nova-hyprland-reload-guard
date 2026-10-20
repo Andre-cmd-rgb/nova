@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Pause or resume Hyprland config auto-reload around package transactions.
+# nova:summary=Pause or resume Hyprland config auto-reload around package transactions
 # nova:hidden=true
 
 set -euo pipefail

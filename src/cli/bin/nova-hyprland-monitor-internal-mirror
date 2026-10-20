@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Enable, disable, toggle, or recover mirroring the internal display to an external monitor
+# nova:summary=Mirror the laptop screen on an external monitor, or stop
 # nova:args=<on|off|toggle|recover>
 
 set -euo pipefail

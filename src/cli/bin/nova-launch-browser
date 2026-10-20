@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Launch the default browser as determined by xdg-settings.
+# nova:summary=Open the default browser
 # nova:args=[url]
 
 set -euo pipefail

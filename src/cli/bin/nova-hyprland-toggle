@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Toggle permanent Hyprland flags by copying them into a directory that's sourced entirely.
+# nova:summary=Turn a Hyprland setting on or off, and keep it that way
 # nova:args=<flag-name> [on|off|toggle]
 
 set -euo pipefail

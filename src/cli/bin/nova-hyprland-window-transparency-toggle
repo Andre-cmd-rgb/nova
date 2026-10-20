@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Toggles transparency for the currently focused window.
+# nova:summary=Toggle transparency for the focused window
 
 set -euo pipefail
 

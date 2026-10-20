@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Show or set the battery charge limit, which keeps the battery healthy on long stretches plugged in
+# nova:summary=Show or set the battery charge limit, for long stretches plugged in
 # nova:args=[50-100|on|off] [--json]
 #
 # A percentage on most laptops; on Lenovo IdeaPads and Legions the firmware has

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Launch the default editor selected via Nova defaults.
+# nova:summary=Open the default editor
 # nova:args=[--inline] <path>
 
 set -euo pipefail

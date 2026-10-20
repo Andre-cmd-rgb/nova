@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Send the low battery warning notification and run battery-low hooks.
+# nova:summary=Send the low battery warning notification and run battery-low hooks
 # nova:args=<percentage>
 # nova:hidden=true
 

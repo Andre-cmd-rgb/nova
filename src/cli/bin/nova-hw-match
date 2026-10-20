@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Match against the computer's DMI product name or product family (case-insensitive).
+# nova:summary=Match against the computer's DMI product name or product family (case-insensitive)
 # nova:args=<pattern>
 # nova:hidden=true
 

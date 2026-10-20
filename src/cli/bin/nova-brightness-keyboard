@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Adjust keyboard backlight brightness using available steps.
+# nova:summary=Adjust keyboard backlight brightness using available steps
 # nova:args=[--no-osd] <up|down|cycle|off|restore>
 
 set -euo pipefail

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Returns true when running on a laptop (has a lid or laptop chassis).
+# nova:summary=Returns true when running on a laptop (has a lid or laptop chassis)
 # nova:hidden=true
 
 set -euo pipefail

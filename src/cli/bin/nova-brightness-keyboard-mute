@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Set the mic-mute indicator LED on laptops that expose a platform::micmute LED node.
+# nova:summary=Set the mic-mute indicator LED on laptops that expose a platform::micmute LED node
 # nova:args=<on|off>
 # nova:hidden=true
 
