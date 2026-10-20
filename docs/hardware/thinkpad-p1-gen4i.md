@@ -36,14 +36,14 @@ the table above.
 
 ## The machine
 
-ThinkPad P1 Gen 4i (`20Y4S34G33`), i7-11850H, Omarchy 4, Hyprland 0.56 +
-aquamarine 0.14 under uwsm, greeter is sddm.
+ThinkPad P1 Gen 4i, i7-11850H. The facts below were measured under Omarchy 4:
+Hyprland 0.56 + aquamarine 0.14 under uwsm, with sddm.
 
 | | |
 |---|---|
 | iGPU | `0000:00:02.0`, i915 — **drives eDP-1 and every connected output** |
 | dGPU | `0000:01:00.0`, RTX A2000 Mobile, nvidia 610.57.04 |
-| dGPU outputs | DP-1, DP-2, HDMI-A-1 — all disconnected, user has **no external displays** |
+| dGPU outputs | DP-1, DP-2, HDMI-A-1 — **none connected** while measuring |
 | Idle cost of the dGPU | ~6.2 W at P8 while merely bound; battery is 74.5 Wh of 90 Wh design |
 
 Because the panel is on the iGPU, the discrete card renders nothing on the
@@ -617,9 +617,9 @@ therefore SIGSTOPs the measuring script along with the target, which looks
 exactly like a hang, and the tool times out with the browser still frozen. Take
 the PIDs first (`PIDS=$(pgrep -f ...)`) and then `kill -STOP $PIDS`, which
 cannot match by name. Do not SIGSTOP a live browser to measure it at all —
-doing so here cost the user their Chrome session and produced a nonsense result
-(21.45 W frozen against 20.70 W running) because the window was polluted by the
-agent's own work.
+doing so here cost a Chrome session and produced a nonsense result (21.45 W
+frozen against 20.70 W running) because the window was polluted by the
+measuring itself.
 
 `read -t N </dev/null` returns **immediately** — /dev/null is instant EOF, not
 an idle fd. A sampling loop built on it runs every iteration inside one second
@@ -627,13 +627,13 @@ and prints a column of identical numbers that reads like a stable measurement.
 Use `sleep`, and distrust any sample where every row is identical.
 
 **42. What the machine actually costs, and what 12 W means here.** Measured
-this session, dGPU off the bus, backlight at 90/600:
+with the dGPU off the bus, backlight at 90/600:
 
 | | |
 |---|---|
 | quiet desktop, little running | **15.3 W** |
 | Chrome open and idle | **16.4 W** |
-| Chrome busy, ~29 renderers, plus an agent session | **19-21 W** |
+| Chrome busy, ~29 renderers, plus a coding agent in a terminal | **19-21 W** |
 
 The README's own figures agree: ~12 W coding, ~19 W browser. **12 W is the
 coding number and it is already met; 12 W while browsing is not reachable on

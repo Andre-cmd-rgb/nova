@@ -2,9 +2,10 @@ nova
 Copyright (c) 2026 Andre-cmd-rgb. Licensed under the MIT License (see LICENSE).
 
 This project contains code derived from Omarchy 4.0.5 (https://github.com/basecamp/omarchy):
-the Quickshell shell (src/shell), the Hyprland defaults (data/hypr), the theme templates
-(theme/templates) and the theme palettes (theme/palettes). Omarchy's wallpapers and
-images are NOT included. Omarchy is distributed under the following license:
+the Quickshell shell (src/shell, its emoji list included), many of the helper commands
+(src/cli/bin), the Hyprland defaults (data/hypr), the session units and menu defaults
+(data/systemd/user, data/defaults), the theme templates (theme/templates) and the theme
+palettes (theme/palettes). Omarchy's wallpapers and images are NOT included. Omarchy is distributed under the following license:
 
   MIT License
 
