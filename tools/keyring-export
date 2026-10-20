@@ -1,0 +1,32 @@
+#!/bin/bash
+# Write packaging/nova-keyring's files from the repository signing key.
+#
+#   tools/keyring-export <fingerprint> [<revoked fingerprint>...]
+#
+# The key itself never enters the repository: this exports the public half
+# (nova.gpg), marks it fully trusted (nova-trusted) and lists retired keys
+# (nova-revoked), then sets pkgver to today. Uses $GNUPGHOME like gpg does.
+# See docs/releasing.md for making the key in the first place.
+set -euo pipefail
+
+die() { printf 'keyring-export: %s\n' "$*" >&2; exit 1; }
+
+dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../packaging/nova-keyring" && pwd)
+
+(($#)) || die "usage: tools/keyring-export <fingerprint> [<revoked fingerprint>...]"
+fpr=${1^^}
+shift
+[[ $fpr =~ ^[0-9A-F]{40}$ ]] || die "give the full 40-character fingerprint, got: $fpr"
+gpg --list-secret-keys -- "$fpr" >/dev/null 2>&1 || die "no secret key $fpr in ${GNUPGHOME:-~/.gnupg}"
+
+gpg --armor --export -- "$fpr" >"$dir/nova.gpg"
+[[ -s $dir/nova.gpg ]] || die "gpg exported nothing for $fpr"
+printf '%s:4:\n' "$fpr" >"$dir/nova-trusted"
+: >"$dir/nova-revoked"
+for revoked in "$@"; do
+  revoked=${revoked^^}
+  [[ $revoked =~ ^[0-9A-F]{40}$ ]] || die "not a full fingerprint: $revoked"
+  echo "$revoked" >>"$dir/nova-revoked"
+done
+sed -i "s/^pkgver=.*/pkgver=$(date -u +%Y%m%d)/" "$dir/PKGBUILD"
+printf 'keyring-export: wrote %s/{nova.gpg,nova-trusted,nova-revoked}; commit them.\n' "$dir" >&2

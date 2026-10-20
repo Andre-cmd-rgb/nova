@@ -1,0 +1,29 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# The public key that signs the [nova] repository, in pacman's keyring format.
+# A package of its own, so the installer ISO can trust the repository without
+# carrying the whole desktop. Installing or upgrading it runs
+# `pacman-key --populate nova` (nova-keyring.install).
+#
+# nova.gpg, nova-trusted and nova-revoked are written by tools/keyring-export
+# from the maintainer's signing key; docs/releasing.md has the steps. pkgver is
+# the date the key set last changed.
+
+pkgname=nova-keyring
+pkgver=0
+pkgrel=1
+pkgdesc='Key that signs the Nova package repository'
+arch=(any)
+url='https://github.com/Andre-cmd-rgb/nova'
+license=(MIT)
+install=$pkgname.install
+# The files sit next to this PKGBUILD in the same git tree, so a checksum would
+# only repeat what the commit already pins.
+source=(nova.gpg nova-trusted nova-revoked)
+sha256sums=(SKIP SKIP SKIP)
+
+package() {
+  install -Dm644 -t "$pkgdir/usr/share/pacman/keyrings" nova.gpg nova-trusted nova-revoked
+}
+
+# vim:set ts=2 sw=2 et:

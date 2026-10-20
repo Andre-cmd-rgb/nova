@@ -19,6 +19,8 @@ arch=(x86_64)
 url='https://github.com/Andre-cmd-rgb/nova'
 license=(MIT)
 depends=(
+  nova-keyring   # trusts the [nova] repository's key
+
   # Session: compositor, shell, login
   hyprland
   quickshell

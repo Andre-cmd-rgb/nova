@@ -205,7 +205,7 @@ END
 
 @test "pacstrap_conf: otherwise the pinned snapshot and the release repository" {
   run pacstrap_conf 2026/10/19 https://example.org/repo
-  [[ $output == *"[nova]"$'\n'"Server = https://example.org/repo"* ]]
+  [[ $output == *"[nova]"$'\n'"SigLevel = Required"$'\n'"Server = https://example.org/repo"* ]]
   [[ $output == *'[core]'$'\n''Server = https://archive.archlinux.org/repos/2026/10/19/$repo/os/$arch'* ]]
   [[ $output == *"[multilib]"* ]]
   [[ $output != *nova-offline* ]]

@@ -213,7 +213,7 @@ EOF
   if offline_repo_ready; then
     printf '\n[nova-offline]\nServer = file://%s\n' "$OFFLINE_REPO"
   else
-    printf '\n[nova]\nServer = %s\n' "$nova_repo"
+    printf '\n[nova]\nSigLevel = Required\nServer = %s\n' "$nova_repo"
     local repo
     for repo in core extra multilib; do
       # shellcheck disable=SC2016 # $arch is pacman's to expand
