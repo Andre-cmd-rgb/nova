@@ -106,17 +106,30 @@ session() { # desktop | lock
     echo "FAIL listPlugins: $plugins"
   fi
 
-  # The clock opens from its place in the bar, so it fails when the bar is empty.
-  local id payload
-  for id in nova.clock:'{}' nova.menu:'{"menu":"root"}' nova.settings:'{"page":"about"}' nova.batterylife:'{}' \
-    nova.clipboard:'{}' nova.emojis:'{}'; do
-    payload=${id#*:} id=${id%%:*}
+  # shot name, plugin, payload. The bar's panels open from their place in the
+  # bar, so they fail when the bar is empty.
+  local name id payload
+  while read -r name id payload; do
     answer=$(ipc shell summon "$id" "$payload" || true)
     sleep 1.5
-    shot "$id"
+    shot "$name"
     ipc shell hide "$id" >/dev/null || true
-    if [[ $answer == ok ]]; then echo "ok   summon $id"; else echo "FAIL summon $id: $answer"; fi
-  done
+    if [[ $answer == ok ]]; then echo "ok   summon $name"; else echo "FAIL summon $name: $answer"; fi
+  done <<'SUMMON'
+clock nova.clock {}
+weather nova.weather {}
+bluetooth nova.bluetooth {}
+network nova.network {}
+audio nova.audio {}
+power nova.power {}
+menu nova.menu {"menu":"root"}
+menu-capture nova.menu {"menu":"capture"}
+menu-system nova.menu {"menu":"system"}
+settings nova.settings {"page":"about"}
+batterylife nova.batterylife {}
+clipboard nova.clipboard {}
+emojis nova.emojis {}
+SUMMON
 
   kill "$shell" 2>/dev/null || true
   kill "$sway" 2>/dev/null || true
