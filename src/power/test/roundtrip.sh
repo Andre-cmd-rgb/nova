@@ -28,6 +28,7 @@ BOOST_STATE=$T/boost
 DAEMON_OWNS_CPU=$T/owns-cpu
 DAEMON_STATE=$T/dstate
 GPU_MANUAL=$T/gpu-manual
+GPU_MODE_FILE=$T/gpu-mode
 RUNTIME_PM_STATE=$T/runtime-pm
 
 fail=0
@@ -421,6 +422,22 @@ chk "unload gives up on a real holder"     "$rc" "1"
 chk "  and names the module"     "$(grep -c 'nvidia_drm would not unload' <<<"$out")" "1"
 chk "  and quotes the refcount"  "$(grep -c 'refs: 4, held by -'          <<<"$out")" "1"
 unset -f modprobe sleep
+
+# ---------------------------------------------------------------- the GPU mode
+#
+# Settings' choice: auto wants the card on with AC only, off never; anything
+# else in the file is auto.
+on_ac() { ((ac)); }
+ac=1
+chk "no mode file is auto"              "$(gpu_mode)" "auto"
+echo banana >"$GPU_MODE_FILE"
+chk "an unknown mode is auto"           "$(gpu_mode)" "auto"
+chk "  which wants the card on AC"      "$(gpu_wanted && echo on || echo off)" "on"
+ac=0
+chk "  and off on battery"              "$(gpu_wanted && echo on || echo off)" "off"
+echo off >"$GPU_MODE_FILE"; ac=1
+chk "off wants it off on AC as well"    "$(gpu_wanted && echo on || echo off)" "off"
+unset -f on_ac
 
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi

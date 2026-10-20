@@ -53,9 +53,10 @@ first_battery() {
   return 1
 }
 
-# Health is what the battery holds now against what it held new.
+# Health is what the battery holds now against what it held new. gpu is when
+# the discrete GPU is on (auto or off), or empty where Nova cannot switch it.
 battery_json() {
-  local bat full design cycles health=null
+  local bat full design cycles health=null gpu
   if ! bat=$(first_battery); then
     echo '{"present":false}'
     return
@@ -66,11 +67,13 @@ battery_json() {
   [[ $full =~ ^[0-9]+$ && $design =~ ^[0-9]+$ ]] || full=0 design=0
   [[ $cycles =~ ^[0-9]+$ ]] || cycles=0
   ((design > 0)) && health=$((full * 100 / design))
+  gpu=$(quiet nova-power-gpu mode)
+  [[ $gpu == auto || $gpu == off ]] || gpu=''
   jq -nc \
-    --argjson health "$health" --argjson cycles "$cycles" \
+    --argjson health "$health" --argjson cycles "$cycles" --arg gpu "$gpu" \
     --argjson profiles "$(quiet nova-power-profile list --active-state | jq -Rc 'split("\t") | {name: .[0], active: (.[1] == "1")}' | jq -sc .)" \
     --argjson limit "$(json_or '{"kind":"none","limit":null,"on":false}' nova-battery-limit --json)" \
-    '{present: true, health: $health, cycles: $cycles, profiles: $profiles, limit: $limit}'
+    '{present: true, health: $health, cycles: $cycles, profiles: $profiles, limit: $limit, gpu: $gpu}'
 }
 
 # The user's shell.json, or Nova's default when they have none (or a broken one).

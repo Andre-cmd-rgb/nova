@@ -13,6 +13,7 @@ the full manual (commands, tunables, the governor) is
 
 ```
 nova power gpu                 turn the discrete GPU on or off
+nova power gpu mode off        keep it off plugged in too (Settings, Battery); auto undoes it
 nova power gpu status -v       what holds it, and everything else worth knowing
 nova power gpu run <program>   one program on the discrete GPU
 sudo thinkpad-power doctor     what keeps the machine out of deep package states

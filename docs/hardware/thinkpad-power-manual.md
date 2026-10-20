@@ -145,10 +145,12 @@ thinkpad-power <command> [args]
   gpu-auto            the GPU half of the policy only
   gpu-on, gpu-off     put the discrete GPU on or off the PCI bus
   gpu-toggle          whichever it is not
+  gpu-mode [auto|off] print or set the policy for the card: auto puts it on
+                      with AC and off on battery, off keeps it off on both
 ```
 
-`status`, `switch` and `run` need no privileges; everything else requires
-root. `status` is side-effect free — in particular it does not call
+`status`, `switch`, `run` and a bare `gpu-mode` need no privileges; everything
+else requires root. `status` is side-effect free — in particular it does not call
 `nvidia-smi`, which would wake the card out of P8 just to answer.
 
 `status` answers the question you asked in three lines; `-v` adds the
@@ -191,9 +193,14 @@ Steam: put `thinkpad-power run %command%` in a game's launch options.
   The discrete GPU is now off.
 ```
 
-That lasts until the next plug or unplug, when the automatic policy applies
-again — and turning the card *on* while on battery says so, because the retry
-timer will switch it back off within two minutes.
+A card turned off by hand comes back at the next plug-in. One turned on by
+hand when the policy wants it off stays on until the charger is next plugged
+in, or a restart; the retry timer leaves it alone, and `status` says so.
+
+**Settings → Battery → Discrete GPU** picks the policy, kept in
+`/var/lib/nova/gpu-mode`: *On When Plugged In* (`auto`, the default) or
+*Always Off* (`off`), for a cooler, quieter machine at the desk.
+`nova power gpu mode off` does the same from a terminal.
 
 The card will not be powered off while a program is using it; the tool names
 what is holding it rather than pulling the GPU out from under it.

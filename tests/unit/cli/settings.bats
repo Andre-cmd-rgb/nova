@@ -56,7 +56,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '.appearance.themes[1]')" = '{"name":"nord","background":"#2e3440","foreground":"#d8dee9","accent":"#88c0d0"}' ]
 }
 
-@test "state: the battery's health, power modes and charge limit" {
+@test "state: the battery's health, power modes, charge limit and GPU mode" {
   mkdir -p "$NOVA_POWER_SUPPLY/BAT0"
   echo Battery >"$NOVA_POWER_SUPPLY/BAT0/type"
   echo 81000000 >"$NOVA_POWER_SUPPLY/BAT0/energy_full"
@@ -64,7 +64,16 @@ state() { nova-settings state | jq -c "$1"; }
   echo 586 >"$NOVA_POWER_SUPPLY/BAT0/cycle_count"
   stub nova-power-profile 'printf "power-saver\t0\nbalanced\t1\n"'
   stub nova-battery-limit 'echo "{\"kind\":\"threshold\",\"limit\":80,\"on\":true}"'
-  [ "$(state .battery)" = '{"present":true,"health":81,"cycles":586,"profiles":[{"name":"power-saver","active":false},{"name":"balanced","active":true}],"limit":{"kind":"threshold","limit":80,"on":true}}' ]
+  stub nova-power-gpu '[[ $* == mode ]] && echo off'
+  [ "$(state .battery)" = '{"present":true,"health":81,"cycles":586,"profiles":[{"name":"power-saver","active":false},{"name":"balanced","active":true}],"limit":{"kind":"threshold","limit":80,"on":true},"gpu":"off"}' ]
+}
+
+@test "state: no GPU mode where the GPU cannot be switched" {
+  mkdir -p "$NOVA_POWER_SUPPLY/BAT0"
+  echo Battery >"$NOVA_POWER_SUPPLY/BAT0/type"
+  [ "$(state .battery.gpu)" = '""' ]
+  stub nova-power-gpu 'echo "nova power gpu: this computer has no switchable discrete GPU" >&2; exit 1'
+  [ "$(state .battery.gpu)" = '""' ]
 }
 
 @test "state: a charge limit that prints garbage reads as none" {

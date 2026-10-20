@@ -75,11 +75,14 @@ usage: thinkpad-power <command> [args]
   gpu-auto            the GPU half of the policy only
   gpu-on, gpu-off     put the discrete GPU on or off the PCI bus
   gpu-toggle          whichever it is not
+  gpu-mode [auto|off] print or set the policy for the card: auto puts it on
+                      with AC and off on battery, off keeps it off on both
 
   -h, --help          this message
   -V, --version       print the version
 
-status, switch and run need no privileges; every other command requires root.
+status, switch, run and a bare gpu-mode need no privileges; every other
+command requires root.
 The policy is applied on plug and unplug, at boot, after resume, and by a
 retry timer every two minutes.
 USAGE
@@ -440,10 +443,24 @@ gpu_off() {
   log "dGPU removed from the PCI bus"
 }
 
-# The automatic policy only ever turns the card on while on AC, so a gpu_on
-# that happens on battery can only be somebody asking for it. That is the whole
-# detection — no flag to pass, no second command to remember, and nothing to get
-# out of step. The marker lives in /run, so a reboot forgets the override.
+# What the card is for, chosen in Settings: auto (on with AC, off on battery)
+# or off (off on both, for a cooler and quieter machine at the desk). Anything
+# unreadable is auto, the behaviour from before there was a choice.
+GPU_MODE_FILE=${GPU_MODE_FILE:-/var/lib/nova/gpu-mode}
+
+gpu_mode() {
+  local mode=''
+  [[ -r $GPU_MODE_FILE ]] && read -r mode <"$GPU_MODE_FILE"
+  [[ $mode == off ]] && echo off || echo auto
+}
+
+# Whether the policy wants the card on right now.
+gpu_wanted() { [[ $(gpu_mode) == auto ]] && on_ac; }
+
+# The policy turns the card on only when it is wanted, so a gpu_on at any other
+# time can only be somebody asking for it. That is the whole detection — no
+# flag to pass, no second command to remember, and nothing to get out of step.
+# Plugging in clears it; the marker lives in /run, so a reboot forgets it too.
 GPU_MANUAL=/run/thinkpad-power.gpu-manual
 
 # The policy's own "turn it off", which declines when the user has said
@@ -480,9 +497,9 @@ gpu_on() {
   start_nvidia_services
 
   ((rescanned)) && log "dGPU back on the bus" || note "dGPU already on the bus"
-  if ! on_ac; then
+  if ! gpu_wanted; then
     : >"$GPU_MANUAL"
-    log 'kept on until you unplug and replug, or run: thinkpad-power gpu-off'
+    log 'kept on until the charger is next plugged in, or run: thinkpad-power gpu-off'
   fi
   return 0
 }
@@ -956,19 +973,22 @@ cmd=${1:-auto}
 # Everything that changes state needs root, and only one such run at a time —
 # the udev plug rule and the retry timer otherwise land on the same work.
 # Refuse up front rather than letting a dozen sysfs writes fail one at a time.
+exclusive() {
+  [[ $EUID -eq 0 ]] || die "$cmd requires root — try: sudo thinkpad-power $*"
+  if [[ -z ${THINKPAD_POWER_LOCKED:-} ]]; then
+    export THINKPAD_POWER_LOCKED=1
+    exec flock -w 60 "$LOCK" "$0" "$@"
+  fi
+}
+
 case $cmd in
 status | switch | run | -h | --help | -V | --version) ;;
 doctor)
   # Read-only, but debugfs is root-only.
   [[ $EUID -eq 0 ]] || die 'doctor needs root — try: sudo thinkpad-power doctor'
   ;;
-*)
-  [[ $EUID -eq 0 ]] || die "$cmd requires root — try: sudo thinkpad-power $cmd"
-  if [[ -z ${THINKPAD_POWER_LOCKED:-} ]]; then
-    export THINKPAD_POWER_LOCKED=1
-    exec flock -w 60 "$LOCK" "$0" "$@"
-  fi
-  ;;
+gpu-mode) [[ -z ${2:-} ]] || exclusive "$@" ;;
+*) exclusive "$@" ;;
 esac
 
 case $cmd in
@@ -977,11 +997,11 @@ battery)
   extras battery
   ;;
 ac)
-  # Plugging in resets the override: the card is coming back anyway, and
-  # carrying "leave it on" across a plug event would make the next unplug
-  # behave differently from the one before it for no visible reason.
+  # Plugging in resets the override: carrying "leave it on" across a plug event
+  # would make the next unplug behave differently from the one before it for
+  # no visible reason.
   rm -f "$GPU_MANUAL"
-  gpu_on
+  if gpu_wanted; then gpu_on; else gpu_off; fi
   extras ac
   ;;
 boost)
@@ -1067,7 +1087,21 @@ daemon-stopped)
 gpu-auto)
   # The GPU half alone. This is what the retry timer runs, so a manually
   # chosen power profile is never overwritten behind your back.
-  if on_ac; then gpu_on; else gpu_policy_off; fi
+  if gpu_wanted; then gpu_on; else gpu_policy_off; fi
+  ;;
+gpu-mode)
+  # Settings sets it through nova-power-gpu-mode-apply. The new mode takes
+  # effect at once; a card in use stays on until the retry timer finds it free.
+  if [[ -z ${2:-} ]]; then
+    gpu_mode
+    exit 0
+  fi
+  [[ $2 == auto || $2 == off ]] || die "gpu-mode is auto or off, not '$2'"
+  mkdir -p "${GPU_MODE_FILE%/*}"
+  printf '%s\n' "$2" >"$GPU_MODE_FILE.tmp"
+  mv "$GPU_MODE_FILE.tmp" "$GPU_MODE_FILE"
+  rm -f "$GPU_MANUAL"
+  if gpu_wanted; then gpu_on; else gpu_off || log 'it goes off once nothing is using it'; fi
   ;;
 auto)
   if on_ac; then "$0" ac; else "$0" battery; fi
@@ -1282,8 +1316,8 @@ switch)
     # It used to be undone by the retry timer within two minutes, which was the
     # honest thing to warn about. Now the override holds it, so what is worth
     # saying is how long for.
-    on_ac ||
-      printf '  It stays on until you replug, reboot, or run: thinkpad-power gpu-off\n'
+    gpu_wanted ||
+      printf '  It stays on until the charger is next plugged in, or you restart.\n'
     echo
   fi
   ;;

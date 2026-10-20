@@ -9,7 +9,8 @@
 POWER_SRC := src/power
 
 INSTALL_TARGETS += install-power
-SHELL_SOURCES   += $(POWER_SRC)/bin/thinkpad-power $(POWER_SRC)/test/roundtrip.sh $(POWER_SRC)/test/watts.sh
+SHELL_SOURCES   += $(POWER_SRC)/bin/thinkpad-power $(POWER_SRC)/bin/nova-power-gpu-mode-apply \
+                   $(POWER_SRC)/test/roundtrip.sh $(POWER_SRC)/test/watts.sh
 TEST_SCRIPTS    += $(POWER_SRC)/test/roundtrip.sh
 
 POWER_WANTS := multi-user.target:thinkpad-power.service \
@@ -22,6 +23,8 @@ POWER_WANTS := multi-user.target:thinkpad-power.service \
 .PHONY: install-power
 install-power:
 	install -Dm755 $(POWER_SRC)/bin/thinkpad-power $(DESTDIR)$(NOVA_BIN)/thinkpad-power
+	install -Dm755 $(POWER_SRC)/bin/nova-power-gpu-mode-apply $(DESTDIR)$(NOVA_LIB)/nova-power-gpu-mode-apply
+	install -Dm644 $(POWER_SRC)/polkit/org.nova.power-gpu.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.nova.power-gpu.policy
 	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/thinkpad-powerd $(DESTDIR)$(NOVA_BIN)/thinkpad-powerd
 	install -Dm644 -t $(DESTDIR)$(SYSTEMD_SYSTEM) $(POWER_SRC)/systemd/*.service $(POWER_SRC)/systemd/*.timer
 	install -Dm755 $(POWER_SRC)/systemd/thinkpad-power-resume $(DESTDIR)$(PREFIX)/lib/systemd/system-sleep/thinkpad-power-resume

@@ -1,16 +1,20 @@
 #!/bin/bash
 
-# nova:summary=Turn the discrete GPU on or off, or run one program on it
-# nova:args=[status [-v] | run <program> [args...]]
+# nova:summary=Turn the discrete GPU on or off, choose when it is on, or run one program on it
+# nova:args=[status [-v] | mode [auto|off] | run <program> [args...]]
 #
 # On a ThinkPad P1 Gen 4i the desktop runs on the integrated GPU and the
 # discrete card is taken off the bus on battery. With no arguments this asks
-# whether to switch it; `run` starts one program on it (a game, say), with the
-# NVIDIA graphics drivers the session hides put back for that program alone.
+# whether to switch it; `mode` prints or sets when it is on by itself (auto:
+# plugged in only; off: never, for a cooler machine at the desk); `run` starts
+# one program on it (a game, say), with the NVIDIA graphics drivers the
+# session hides put back for that program alone.
 
 set -euo pipefail
 
 bin=${0%/*}
+APPLY=${NOVA_POWER_GPU_APPLY:-/usr/lib/nova/nova-power-gpu-mode-apply}
+usage() { echo "Usage: nova power gpu [status [-v] | mode [auto|off] | run <program> [args...]]" >&2; }
 if [[ $("$bin/nova-hw-detect" 2>/dev/null || true) != thinkpad-p1-gen4i ]]; then
   echo "nova power gpu: this computer has no switchable discrete GPU" >&2
   exit 1
@@ -19,12 +23,19 @@ fi
 case ${1:-} in
   "") exec "$bin/thinkpad-power" switch ;;
   status) exec "$bin/thinkpad-power" "$@" ;;
+  mode)
+    case $#:${2:-} in
+      1:) exec "$bin/thinkpad-power" gpu-mode ;;
+      2:auto | 2:off)
+        if ((EUID == 0)); then exec "$bin/thinkpad-power" gpu-mode "$2"; fi
+        exec pkexec "$APPLY" "$2"
+        ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
   run)
-    (($# > 1)) || { echo "Usage: nova power gpu run <program> [args...]" >&2; exit 2; }
+    (($# > 1)) || { usage; exit 2; }
     exec "$bin/thinkpad-power" "$@"
     ;;
-  *)
-    echo "Usage: nova power gpu [status [-v] | run <program> [args...]]" >&2
-    exit 2
-    ;;
+  *) usage; exit 2 ;;
 esac

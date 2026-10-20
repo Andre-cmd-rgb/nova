@@ -679,6 +679,23 @@ Item {
           text: "This battery has no charge limit Nova can set."
         }
       }
+
+      Section {
+        width: p.inner
+        title: "DISCRETE GPU"
+        visible: root.battery.gpu === "auto" || root.battery.gpu === "off"
+        ButtonGroup {
+          options: [{ value: "auto", label: "On When Plugged In" }, { value: "off", label: "Always Off" }]
+          value: root.battery.gpu || ""
+          onChanged: function (value) { root.run(["nova-power-gpu", "mode", value]) }
+        }
+        Caption {
+          width: parent.width
+          text: root.battery.gpu === "off"
+            ? "Off plugged in too, for a cooler, quieter computer. For a game, turn it on from the menu: Toggle, Discrete GPU."
+            : "Off the moment you unplug: on battery it would draw several watts doing nothing."
+        }
+      }
     }
   }
 
