@@ -31,11 +31,11 @@ never file names, never anything about what you were doing in an app.
 Screen Time is off until you turn it on, and records nothing before that:
 
 ```bash
-nova nova screentime on        # or Super+Space → Toggle → Screen Time
+nova screentime on        # or Super+Space → Toggle → Screen Time
 ```
 
 It then appears in the bar and in the menu (Super+Space → Screen Time) and
-counts from that moment. `nova nova screentime off` stops it; what it recorded
+counts from that moment. `nova screentime off` stops it; what it recorded
 stays until you delete it (see below).
 
 ## The three parts
@@ -44,10 +44,10 @@ stays until you delete it (see below).
 |---|---|---|
 | service | counts seconds against the focused window, pauses when you are idle | no — this is the plugin |
 | panel | the Screen Time window | opened on demand |
-| bar widget | one glyph and today's total | yes — `nova nova screentime indicator off` |
+| bar widget | one glyph and today's total | yes — `nova screentime indicator off` |
 
 Turning the indicator off only hides the glyph; the service keeps counting.
-`nova nova screentime off` stops everything.
+`nova screentime off` stops everything.
 
 ## Using it
 
@@ -187,6 +187,6 @@ machine each time it refreshes. Deleting it costs nothing.
 ## Forgetting everything
 
 ```bash
-nova nova screentime off
+nova screentime off
 rm -rf ~/.config/nova-screentime ~/.local/state/nova-screentime
 ```
