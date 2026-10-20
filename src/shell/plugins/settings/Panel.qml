@@ -816,6 +816,11 @@ Item {
         width: p.inner
         title: "RECOVERY"
         Line {
+          label: "Check for Problems"
+          detail: "Looks the system over and says how to fix what it finds."
+          Button { text: "Check…"; bordered: true; onClicked: root.terminal("nova doctor") }
+        }
+        Line {
           label: "Restart to Recovery"
           detail: root.confirmRecovery
             ? "Restarts now, into the boot menu."
