@@ -89,8 +89,9 @@ notes, since a leaked key must not stay trusted for a transition.
 Nova follows Arch two weeks behind, tested: each release is a candidate first.
 
 1. **Candidate.** On the 1st and the 15th, `candidate.yml` runs CI on `main`,
-   tags the next candidate (`tools/release-next`: `v1.0.0-beta.N` before 1.0,
-   then `vX.Y.0-rc.N`), and calls `release.yml`, which:
+   tags the commit it tested as the next candidate (`tools/release-next`:
+   `v1.0.0-beta.N` before 1.0, then `vX.Y.0-rc.N`), and calls `release.yml`,
+   which:
    1. pins yesterday's Arch Linux Archive snapshot (`tools/release-pin --verify`);
    2. builds `linux-nova` against it, or reuses the build cached by the hash of
       `packaging/linux-nova` (an uncached build takes a few hours);
@@ -106,7 +107,10 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
       (`nova update --candidates on`), and those already on a candidate.
 
    Actions → candidate → Run cuts one at any other time; the first one needs
-   the signing key (above) and takes a few hours more, for the kernel.
+   the signing key (above) and takes a few hours more, for the kernel. A run
+   that fails on something passing (a flaky download, say) can have its failed
+   jobs re-run; one that fails on a bug is cancelled, its tag deleted
+   (`git push origin :refs/tags/<tag>`), and the next run reuses the number.
 2. **Test.** CI has already installed and booted it in a virtual machine; what
    is left is the hardware. On each supported laptop following pre-releases,
    `nova update`, reboot, and work through the checklist below; now and then,
@@ -139,7 +143,8 @@ approving, or one to write down in the release notes.
 - **Sound:** speakers (`nova audio tuning status` on the P1), the microphone,
   headphones, a Bluetooth headset; the volume and brightness keys show the OSD.
 - **Network:** Wi-Fi, Bluetooth pairing, mobile data where there is a SIM.
-- **Desktop:** the keyboard layout, touchpad and keyboard backlight; Chrome,
+- **Desktop:** the keyboard layout, at the lock screen and at the greeter
+  after a logout too; the touchpad and keyboard backlight; Chrome,
   VS Code, Nautilus, foot, Claude Code and Codex start; a theme change reaches
   every surface; `nova doctor` finds nothing.
 
