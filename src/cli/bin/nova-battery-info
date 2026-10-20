@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# nova:summary=Print the battery charge, power draw and time left
+# nova:summary=Print the battery charge, power draw and time left (for the power panel)
+# nova:hidden=true
 # nova:args=[--shell]
 
 set -euo pipefail
@@ -15,7 +16,7 @@ case "${1:-}" in
     shell_output=true
     ;;
   *)
-    echo "Usage: nova-battery-status [--shell]" >&2
+    echo "Usage: nova-battery-info [--shell]" >&2
     exit 2
     ;;
 esac

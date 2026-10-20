@@ -13,8 +13,8 @@ import qs.Ui
 // it. A distinct id removes any question about which one wins.
 Panel {
   id: mobile
-  moduleName: "andrecmdrgb.mobile-data"
-  ipcTarget: "andrecmdrgb.mobile-data"
+  moduleName: "nova.mobile-data"
+  ipcTarget: "nova.mobile-data"
 
   // Absolute path to the sibling CLI, resolved from this file's own location
   // so nothing has to be symlinked onto PATH and the plugin keeps working if
@@ -58,6 +58,9 @@ Panel {
   // people flip it.
   readonly property bool pending: wwanState === "starting" || wwanState === "connecting"
   readonly property bool live: connected || pending
+  // A computer without a modem is hidden from the bar, and only checked now and
+  // then in case one is plugged in.
+  readonly property bool noModem: info.hw === "no" && wwanState === "absent"
   readonly property bool busy: actionProc.running
   readonly property string icon: info.icon || "󰢿"
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -314,7 +317,7 @@ Panel {
   // takes to come back after a suspend should not also cost ten seconds of
   // stale glyph at the end of it.
   Timer {
-    interval: (mobile.pending ? 2 : mobile.pollInterval) * 1000
+    interval: (mobile.pending ? 2 : mobile.noModem ? 60 : mobile.pollInterval) * 1000
     running: !mobile.opened
     repeat: true
     triggeredOnStart: true

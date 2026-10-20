@@ -16,22 +16,22 @@ import qs.Ui
 // it. A distinct id removes any question about which one wins.
 Panel {
   id: battery
-  moduleName: "andrecmdrgb.batterylife"
+  moduleName: "nova.batterylife"
 
   // A target of its own, not the plugin id: the shell summons the `panel`
   // kind — the history window — by plugin id, and two IpcHandlers on one
   // target means one of them is quietly ignored. This one opens the popup,
   // so a keybind can reach it:
   //
-  //   nova-shell andrecmdrgb.batterylife.bar toggle
-  ipcTarget: "andrecmdrgb.batterylife.bar"
+  //   nova-shell nova.batterylife.bar toggle
+  ipcTarget: "nova.batterylife.bar"
 
   // Absolute path to the sibling CLI, resolved from this file's own location
   // so nothing has to be symlinked onto PATH and the plugin keeps working if
   // the directory is renamed. Decoded, because resolvedUrl percent-encodes
   // anything unusual in the path.
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/batterylife")).replace(/^file:\/\//, ""))
-  readonly property string pluginId: "andrecmdrgb.batterylife"
+  readonly property string pluginId: "nova.batterylife"
 
   // The bar does not inject this, and never did. `shell.qml` hands `service`
   // to *panel* loaders only; `Bar.qml`'s `injectProps` sets `bar`,

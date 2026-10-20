@@ -1,7 +1,6 @@
 # Mobile Data
 
-A compact mobile-broadband (WWAN) widget for Nova
-shell bar: one signal glyph next to the Wi-Fi arc, and a narrow panel with an
+A compact mobile-broadband (WWAN) widget for Nova's bar: one signal glyph next to the Wi-Fi arc, and a narrow panel with an
 on/off switch, live throughput, and a billing-period data counter. Text
 messages the SIM receives arrive as desktop notifications.
 
@@ -27,38 +26,13 @@ rule, no systemd unit, no daemon of its own.
 
 | Needs | Why |
 |---|---|
-| Nova 4.0 or newer | the plugin host (`nova-shell`) and its `Ui` components |
 | NetworkManager (`nmcli`) | owns the `gsm` connection profile that carries the data |
 | ModemManager (`mmcli`) | operator, technology, signal quality, SIM and modem state, text messages |
 | `rfkill`, `iproute2`, `iputils` | radio state, interface address, the panel's ping |
 
-All four ship with a standard Nova install. The glyphs come from the Nerd
-Font Nova already uses for the bar.
-
-## Install
-
-```bash
-nova plugin add https://github.com/Andre-cmd-rgb/nova --enable
-```
-
-Plugins run unsandboxed inside your shell process — read the code first; it is
-one QML file and one bash script.
-
-To install by hand instead:
-
-```bash
-git clone https://github.com/Andre-cmd-rgb/nova \
-  ~/.config/nova/plugins/andrecmdrgb.mobile-data
-nova-shell shell rescanPlugins
-nova plugin enable andrecmdrgb.mobile-data
-```
-
-Optionally put the CLI on your `PATH`:
-
-```bash
-ln -sf ~/.config/nova/plugins/andrecmdrgb.mobile-data/bin/mobile-data \
-  ~/.local/bin/mobile-data
-```
+ModemManager is the one Nova does not install everywhere (`pacman -S
+modemmanager` on a laptop with a modem). The widget is in the default bar and
+stays hidden on a computer without a modem.
 
 ## First run
 
@@ -66,8 +40,8 @@ If you have never used mobile data on this machine, create the connection
 profile once:
 
 ```bash
-mobile-data setup            # APN auto-detected from the SIM
-mobile-data setup iliad      # or name the APN yourself
+nova mobile-data setup            # APN auto-detected from the SIM
+nova mobile-data setup iliad      # or name the APN yourself
 ```
 
 That creates a NetworkManager `gsm` profile called `mobile`, turns autoconnect
@@ -77,7 +51,7 @@ carries traffic only when nothing better has a default route.
 Then tell the counter when your plan renews:
 
 ```bash
-mobile-data reset-day 17
+nova mobile-data reset-day 17
 ```
 
 ## Using it
@@ -104,7 +78,7 @@ autoconnect straight around a plain disconnect.
 Widget settings live on the bar entry in `~/.config/nova/shell.json`:
 
 ```json
-{ "id": "andrecmdrgb.mobile-data", "interval": 10, "backgroundStats": true }
+{ "id": "nova.mobile-data", "interval": 10, "backgroundStats": true }
 ```
 
 - `interval` — seconds between background polls while the panel is closed
@@ -121,21 +95,21 @@ execute:
 
 | Key | Default | Meaning |
 |---|---|---|
-| `PROFILE` | first `gsm` profile found | NetworkManager profile to drive (`mobile-data profile <name>`) |
+| `PROFILE` | first `gsm` profile found | NetworkManager profile to drive (`nova mobile-data profile <name>`) |
 | `RESET_DAY` | `1` | day of the month the usage counter renews |
-| `ROUTE_METRIC` | `700` | metric written by `mobile-data setup` |
+| `ROUTE_METRIC` | `700` | metric written by `nova mobile-data setup` |
 | `ON_TIMEOUT` | `90` | seconds `on` may spend bringing the modem up |
 | `SMS_KEEP` | `200` | messages kept in the local archive |
 
 ## More than one mobile profile
 
 If NetworkManager has several `gsm` profiles — one you made yourself and one
-`mobile-data setup` created, say — decide which is yours and point the plugin
+`nova mobile-data setup` created, say — decide which is yours and point the plugin
 at it:
 
 ```bash
-mobile-data profile very          # drive this one
-mobile-data setup internet.it     # and give it the right APN
+nova mobile-data profile very          # drive this one
+nova mobile-data setup internet.it     # and give it the right APN
 ```
 
 Leave only that one on autoconnect, or NetworkManager will pick whichever it
@@ -148,21 +122,21 @@ nmcli connection modify <the-other-one> connection.autoconnect no
 ## CLI
 
 ```
-mobile-data info [--verbose]   key=value status block for the widget
-mobile-data status             one human-readable line
-mobile-data on | off | toggle  radio and connection control
-mobile-data enable | disable   aliases for on and off
-mobile-data reset              power-cycle a modem that refuses to connect
-mobile-data setup [APN]        create or refresh the NetworkManager profile
-mobile-data profile [name]     show or choose the NetworkManager profile
-mobile-data apn <APN>          change the APN on the profile
-mobile-data reset-day <1-31>   billing day for the usage counter
-mobile-data version            print the plugin version
+nova mobile-data info [--verbose]   key=value status block for the widget
+nova mobile-data status             one human-readable line
+nova mobile-data on | off | toggle  radio and connection control
+nova mobile-data enable | disable   aliases for on and off
+nova mobile-data reset              power-cycle a modem that refuses to connect
+nova mobile-data setup [APN]        create or refresh the NetworkManager profile
+nova mobile-data profile [name]     show or choose the NetworkManager profile
+nova mobile-data apn <APN>          change the APN on the profile
+nova mobile-data reset-day <1-31>   billing day for the usage counter
+nova mobile-data version            print the plugin version
 
-mobile-data sms list           messages received, newest first
-mobile-data sms show <id>      one message in full
-mobile-data sms poll           file and announce what has arrived
-mobile-data sms clear          empty the local archive
+nova mobile-data sms list           messages received, newest first
+nova mobile-data sms show <id>      one message in full
+nova mobile-data sms poll           file and announce what has arrived
+nova mobile-data sms clear          empty the local archive
 ```
 
 `info` is the widget's data feed; `--verbose` adds byte counters and a
@@ -181,7 +155,7 @@ desktop notifications:
 ╰──────────────────────────────╯
 ```
 
-The widget runs `mobile-data sms poll` on its own slow cadence — the poll
+The widget runs `nova mobile-data sms poll` on its own slow cadence — the poll
 interval, never faster than ten seconds — and that command is the whole
 lifecycle of a message: read what the modem is holding, write it to an archive
 under `~/.local/state/nova-mobile-data/inbox`, notify, and only then delete
@@ -190,9 +164,9 @@ delete that fails just leaves it to be picked up next time rather than
 announced twice.
 
 ```bash
-mobile-data sms list        # newest first
-mobile-data sms show 12     # one message in full
-mobile-data sms clear       # empty the archive
+nova mobile-data sms list        # newest first
+nova mobile-data sms show 12     # one message in full
+nova mobile-data sms clear       # empty the archive
 ```
 
 **Why it deletes them.** The modem's own store is small — a couple of dozen
@@ -211,7 +185,7 @@ Nothing is read while `nova-shell` is not running either, because the widget
 is what runs the poll — the plugin still has no daemon. Messages simply sit on
 the modem until it starts, and are announced then; a batch of more than three
 gets one line rather than three toasts. To pick them up without the shell,
-run `mobile-data sms poll` from a systemd user timer.
+run `nova mobile-data sms poll` from a systemd user timer.
 
 Sending is not part of this. `mmcli --messaging-create-sms` is there if you
 want it.
@@ -253,10 +227,10 @@ that cadence, which a laptop on battery will notice. Set `backgroundStats` to
 ## Troubleshooting
 
 **The widget is not in the bar.** It hides itself when `rfkill` lists no `wwan`
-device and ModemManager sees no modem. Check with `mobile-data status` and
+device and ModemManager sees no modem. Check with `nova mobile-data status` and
 `mmcli -L`.
 
-**"No connection profile".** Run `mobile-data setup <APN>`.
+**"No connection profile".** Run `nova mobile-data setup <APN>`.
 
 **"NetworkManager is not managing the modem".** Something else owns it —
 usually a leftover `systemd-networkd` or a `NetworkManager.conf` `unmanaged-devices`
@@ -279,7 +253,7 @@ polls every two seconds until it is back. Flipping the switch during that
 window does not speed anything up — and used to make it slower, by starting a
 second activation that cancelled the one NetworkManager had already begun.
 
-If it is still not back after a minute, `mobile-data status` will say what the
+If it is still not back after a minute, `nova mobile-data status` will say what the
 modem is doing.
 
 **Turning it on takes a while.** Coming back from `off` means a firmware boot
@@ -292,9 +266,9 @@ urgent colour, rather than the switch flicking back with no explanation.
 **"the modem refused the connection (Busy)".** An MBIM modem answers every
 connect with `Busy` while a data session from the last connection is still open
 inside its firmware, which is what cutting the radio out from under a live
-connection used to leave behind. `mobile-data off` now disconnects and clears
+connection used to leave behind. `nova mobile-data off` now disconnects and clears
 the modem's bearers before blocking the radio, so this should not happen; if a
-modem is wedged already, `mobile-data reset` power-cycles it.
+modem is wedged already, `nova mobile-data reset` power-cycles it.
 
 If even that does not clear it — a scan or registration also coming back `Busy`
 is the sign — the firmware needs a harder reset than any of this reaches:
@@ -312,24 +286,18 @@ rfkill switch, so "turn it off and on again" genuinely cannot reach them.
 **No notification for a message you know arrived.** The modem only stores
 messages while its radio is on, and only the running shell reads them out.
 Check that mobile data is on, that `Notify on incoming text messages` is still
-ticked for the widget, and then `mobile-data sms poll` by hand — it prints
-nothing on success, so follow it with `mobile-data sms list`. If the message is
+ticked for the widget, and then `nova mobile-data sms poll` by hand — it prints
+nothing on success, so follow it with `nova mobile-data sms list`. If the message is
 in the archive but no toast appeared, the notification server is the thing to
 look at, not this.
 
-**Nothing changed after editing the plugin.** `nova-shell shell rescanPlugins`
-picks up the CLI and the manifest. It does not pick up the QML: the reload runs
-and reports nothing wrong, but the bar widget comes back from Qt's cached
-compilation of the file as it was, so a widget change appears to do nothing at
-all. `nova-restart-shell` is what loads new QML — the bar blinks for a
-second. Not `nova-refresh-shell`, which resets `shell.json` to Nova's
-defaults and takes your bar layout with it.
+**Nothing changed after editing the widget.** `nova-restart-shell` loads new
+QML; the bar blinks for a second.
 
-## Uninstall
+## Removing it
 
 ```bash
-nova plugin remove andrecmdrgb.mobile-data
-rm -f ~/.local/bin/mobile-data
+nova bar remove nova.mobile-data
 rm -rf ~/.config/nova-mobile-data ~/.local/state/nova-mobile-data
 ```
 
@@ -338,7 +306,3 @@ anything you want to keep before removing it.
 
 The NetworkManager profile is yours and is left alone. Remove it too with
 `nmcli connection delete mobile` if you want it gone.
-
-## License
-
-MIT — see [LICENSE](LICENSE).

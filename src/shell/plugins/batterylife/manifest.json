@@ -1,10 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "andrecmdrgb.batterylife",
+  "id": "nova.batterylife",
   "name": "Battery Life",
   "version": "1.0.0",
-  "author": "Andre-cmd-rgb",
-  "license": "MIT",
+  "author": "Nova",
   "description": "What this battery actually gives you: measured runtime per discharge run, average draw, and a full-charge projection built from your own history rather than the instantaneous rate.",
   "kinds": [
     "service",

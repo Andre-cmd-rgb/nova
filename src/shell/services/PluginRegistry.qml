@@ -145,6 +145,13 @@ QtObject {
   //     summon them was a footgun: a stock shell.json with `plugins: []` would
   //     silently make `nova launch bar-settings` a no-op. Turning one off
   //     is therefore recorded the other way round, in `disabledPlugins[]`.
+  //     A first-party plugin whose manifest says "enabledByDefault": false
+  //     (Screen Time) is the exception: it is on only while shell.json names
+  //     it, so taking it off the bar switches it off entirely.
+  function onByDefault(manifest) {
+    return !!manifest && !!manifest.__isFirstParty && manifest.enabledByDefault !== false
+  }
+
   function isEnabled(id) {
     var key = String(id)
     var manifest = installedPlugins[key]
@@ -158,7 +165,7 @@ QtObject {
         return selectedBar === key
       }
       if (isDisabled(config, key)) return false
-      if (manifest.__isFirstParty) return true
+      if (onByDefault(manifest)) return true
     }
     return findEntryLocation(config, key).found
   }
@@ -518,7 +525,7 @@ QtObject {
         return
       }
 
-      var isFirstParty = manifest && manifest.__isFirstParty
+      var onDefault = onByDefault(manifest)
       var location = findEntryLocation(config, key)
 
       if (value) {
@@ -538,7 +545,7 @@ QtObject {
             config.bar.layout[target.section].splice(target.index, 0, entry)
             insertedWithPlacement = true
           }
-        } else if (!location.found && !isFirstParty) {
+        } else if (!location.found && !onDefault) {
           config.plugins.push(entry)
         }
 
@@ -558,7 +565,7 @@ QtObject {
 
       // Dropping the layout entry is the whole story for a widget. Anything
       // else built-in loads by default, so switching it off has to be stated.
-      if (isFirstParty && !isBarWidget) addDisabled(config, key)
+      if (onDefault && !isBarWidget) addDisabled(config, key)
     })
     if (lastEnableError) return false
     registryRevision++

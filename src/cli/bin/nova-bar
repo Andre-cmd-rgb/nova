@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Configure the bar and its widget layout
-# nova:args=defaults | position [top|bottom|left|right] | transparent [true|false|toggle] | put <id> [placement] | move <id> [placement] | set <id> <key> <value> [--json] [placement]
+# nova:args=defaults | position [top|bottom|left|right] | transparent [true|false|toggle] | put <id> [placement] | remove <id> | move <id> [placement] | set <id> <key> <value> [--json] [placement]
 
 set -euo pipefail
 
@@ -16,6 +16,8 @@ Usage: nova bar <command> [args...]
   transparent [true|false|toggle]      Show (on/off) or set bar transparency
   put <id> [placement]                 Put a widget on the bar, leaving one
                                        that is already there where it is
+  remove <id>                          Take a widget off the bar; one that is
+                                       off by default (Screen Time) stops too
   move <id> [placement]                Move a widget within or between sections
   set <id> <key> <value> [--json] [placement]
                                        Set a per-widget option
@@ -35,6 +37,7 @@ carry.
 Examples:
   nova bar position bottom
   nova bar put nova.keyboard-layout --after nova.clock
+  nova bar remove nova.weather
   nova bar move nova.media left
   nova bar move nova.clock --section center --index 0
   nova bar set nova.clock format HH:mm
@@ -227,6 +230,17 @@ cmd_put() {
   echo "$id is on the bar"
 }
 
+cmd_remove() {
+  local id="${1:-}"
+  [[ -n $id ]] || fail "remove requires a widget id"
+  (($# == 1)) || fail "remove takes a widget id and nothing else"
+
+  local result
+  result=$(nova-shell shell setPluginEnabled "$id" false)
+  [[ $result == "ok" ]] || fail "could not remove $id: $result"
+  echo "$id is off the bar"
+}
+
 cmd_move() {
   local id="${1:-}"
   [[ -n $id ]] || fail "move requires a widget id"
@@ -307,6 +321,9 @@ case "$command" in
     ;;
   put)
     cmd_put "$@"
+    ;;
+  remove)
+    cmd_remove "$@"
     ;;
   move)
     cmd_move "$@"

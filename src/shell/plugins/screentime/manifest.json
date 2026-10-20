@@ -1,10 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "andrecmdrgb.screentime",
+  "id": "nova.screentime",
   "name": "Screen Time",
   "version": "1.0.0",
-  "author": "Andre-cmd-rgb",
-  "license": "MIT",
+  "author": "Nova",
   "description": "Where your time on this machine goes: a per-hour and per-day breakdown by application, in a window you open from the Nova menu.",
   "kinds": [
     "service",
@@ -40,5 +39,6 @@
         "defaultValue": true
       }
     ]
-  }
+  },
+  "enabledByDefault": false
 }

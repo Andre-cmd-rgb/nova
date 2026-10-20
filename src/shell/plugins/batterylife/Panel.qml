@@ -8,7 +8,7 @@ import qs.Ui
 // the last week averaged, and every run long enough to mean something.
 //
 // Summoned by the shell, from the Nova menu or the bar widget:
-//   nova-shell shell summon andrecmdrgb.batterylife '{}'
+//   nova-shell shell summon nova.batterylife '{}'
 //
 // It owns no data. Everything on screen comes from one `batterylife json`
 // call, so what the window shows and what the CLI prints can never disagree.
@@ -20,7 +20,7 @@ Item {
   property var manifest: null
   property var service: null
 
-  readonly property string pluginId: "andrecmdrgb.batterylife"
+  readonly property string pluginId: "nova.batterylife"
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/batterylife")).replace(/^file:\/\//, ""))
 
   property bool closingFromHost: false

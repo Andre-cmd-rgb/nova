@@ -4,4 +4,4 @@
 
 set -euo pipefail
 
-nova-notification-send -g 󰁹 -u low "$(nova-battery-status)"
+nova-notification-send -g 󰁹 -u low "$(nova-battery-info)"

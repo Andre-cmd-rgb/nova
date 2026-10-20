@@ -11,10 +11,10 @@ import qs.Ui
 // keeps counting, because it is a separate kind in the same manifest.
 BarWidget {
   id: root
-  moduleName: "andrecmdrgb.screentime"
+  moduleName: "nova.screentime"
 
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/screentime")).replace(/^file:\/\//, ""))
-  readonly property string pluginId: "andrecmdrgb.screentime"
+  readonly property string pluginId: "nova.screentime"
 
   function settingEnabled(name, fallback) {
     var value = setting(name, fallback)

@@ -1,11 +1,11 @@
 #!/bin/bash
+# nova:summary=Mobile data: the modem's connection, signal, usage and texts
 #
-# mobile-data — mobile broadband control and status for the
-# andrecmdrgb.mobile-data Nova bar widget.
+# mobile-data — mobile broadband control and status behind Nova's mobile data
+# bar widget (nova.mobile-data), run as `nova mobile-data <command>`.
 #
-# NetworkManager only. Nova 4.0 runs NetworkManager and retires
-# systemd-networkd (install/hardware/network.sh), so the bearer is an ordinary
-# `gsm` connection profile. NetworkManager's shipped polkit policy sets
+# NetworkManager only: Nova's network stack is NetworkManager, so the bearer is
+# an ordinary `gsm` connection profile. NetworkManager's shipped polkit policy sets
 # allow_active=yes for both network-control and settings.modify.system, so
 # every command here runs as your normal user — no root, no polkit rule, no
 # systemd unit.
@@ -62,7 +62,7 @@ get_cfg() {
   if [[ -r $CONFIG ]]; then
     # Keys are literals from this script, never user input, so building the
     # match out of one is safe.
-    value=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
+    value=$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
       tail -n1 | tr -d '\r')
     value=${value%"${value##*[![:space:]]}"}
   fi

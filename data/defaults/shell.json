@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "idle": {
+    "lock": 300
+  },
+  "bar": {
+    "position": "top",
+    "transparent": false,
+    "centerAnchor": "nova.clock",
+    "layout": {
+      "left": [
+        { "id": "nova.menu" },
+        { "id": "nova.workspaces" }
+      ],
+      "center": [
+        { "id": "nova.indicators" },
+        {
+          "id": "nova.clock",
+          "format": "dddd HH:mm",
+          "formatAlt": "d MMMM 'W'ww yyyy",
+          "verticalFormat": "HH\n—\nmm"
+        },
+        { "id": "nova.keyboard-layout" },
+        { "id": "nova.weather" },
+        { "id": "nova.system-update" }
+      ],
+      "right": [
+        { "id": "nova.tray" },
+        { "id": "nova.bluetooth" },
+        { "id": "nova.mobile-data" },
+        { "id": "nova.network" },
+        { "id": "nova.audio" },
+        { "id": "nova.power" }
+      ]
+    }
+  },
+  "plugins": []
+}

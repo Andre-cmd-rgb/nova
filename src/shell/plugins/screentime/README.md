@@ -26,28 +26,17 @@ Everything stays on this machine. Only the application id, the hour it was
 used in, and a count of seconds are ever written down — never window titles,
 never file names, never anything about what you were doing in an app.
 
-## Requirements
+## Turning it on
 
-Nova 4.0 or newer, and `jq` (already installed on Nova). Nothing else —
-no daemon of its own, no systemd unit, no root.
-
-## Install
+Screen Time is off until you turn it on, and records nothing before that:
 
 ```bash
-nova plugin add https://github.com/Andre-cmd-rgb/nova --enable
+nova nova screentime on        # or Super+Space → Toggle → Screen Time
 ```
 
-Plugins run unsandboxed inside your shell process — read the code first.
-
-Then add it to the Nova menu (Super+Space → Screen Time), and put the CLI
-on your `PATH`:
-
-```bash
-~/.config/nova/plugins/andrecmdrgb.screentime/bin/screentime menu install
-ln -sf ~/.config/nova/plugins/andrecmdrgb.screentime/bin/screentime ~/.local/bin/screentime
-```
-
-Counting starts immediately. The window has something to show after a minute.
+It then appears in the bar and in the menu (Super+Space → Screen Time) and
+counts from that moment. `nova nova screentime off` stops it; what it recorded
+stays until you delete it (see below).
 
 ## The three parts
 
@@ -55,15 +44,15 @@ Counting starts immediately. The window has something to show after a minute.
 |---|---|---|
 | service | counts seconds against the focused window, pauses when you are idle | no — this is the plugin |
 | panel | the Screen Time window | opened on demand |
-| bar widget | one glyph and today's total | yes — `screentime indicator off` |
+| bar widget | one glyph and today's total | yes — `nova nova screentime indicator off` |
 
 Turning the indicator off only hides the glyph; the service keeps counting.
-Disabling the *plugin* (`nova plugin disable`) stops everything.
+`nova nova screentime off` stops everything.
 
 ## Using it
 
 Open it from the Nova menu, from the bar indicator, or with `screentime
-open` (`screentime open --week` lands on the weekly view; a summon payload of
+open` (`nova screentime open --week` lands on the weekly view; a summon payload of
 `{"range":"week"}` does the same from a menu entry or a keybinding). Inside the
 window:
 
@@ -118,13 +107,13 @@ anything is shown:
 | `xdg-desktop-portal-gtk` | System Dialog | a built-in rule — this is every file chooser and screen-share prompt |
 | anything unknown | `Foo Bar` from `foo-bar` | a guess at the id |
 
-`screentime names` lists every id in your history next to the name it is shown
+`nova screentime names` lists every id in your history next to the name it is shown
 under. When one of them is wrong or unhelpful, pin your own:
 
 ```bash
-screentime names
-screentime name hyperwriter-shot "Hyperwriter (screenshot)"
-screentime name hyperwriter-shot --reset      # back to the detected name
+nova screentime names
+nova screentime name hyperwriter-shot "Hyperwriter (screenshot)"
+nova screentime name hyperwriter-shot --reset      # back to the detected name
 ```
 
 Pinned names live in `~/.config/nova-screentime/names` as
@@ -135,27 +124,26 @@ renaming and resetting never touch the numbers.
 ## CLI
 
 ```
-screentime today [--short]     today's total and its busiest apps
-screentime week [days]         a day-by-day breakdown (default 7)
-screentime top [n]             today's busiest apps
-screentime json [--days n]     everything the window draws
-screentime open                open the window
+nova screentime today [--short]     today's total and its busiest apps
+nova screentime week [days]         a day-by-day breakdown (default 7)
+nova screentime top [n]             today's busiest apps
+nova screentime json [--days n]     everything the window draws
+nova screentime open                open the window
 
-screentime config [key]        show settings
-screentime set <key> <value>   change one
-screentime names               every app id and the name it is shown under
-screentime name <id> [name]    show that name, or pin your own
-screentime ignore <app-id>     never record an app again
-screentime unignore <app-id>   undo that
-screentime forget <app-id>     delete an app's history
+nova screentime config [key]        show settings
+nova screentime set <key> <value>   change one
+nova screentime names               every app id and the name it is shown under
+nova screentime name <id> [name]    show that name, or pin your own
+nova screentime ignore <app-id>     never record an app again
+nova screentime unignore <app-id>   undo that
+nova screentime forget <app-id>     delete an app's history
 
-screentime menu install|remove   add or remove the Super+Space entry
-screentime indicator on|off      show or hide the bar indicator
+nova screentime indicator on|off      show or hide the bar indicator
 ```
 
 ## Settings
 
-In `~/.config/nova-screentime/config`, or via `screentime set`:
+In `~/.config/nova-screentime/config`, or via `nova screentime set`:
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -169,12 +157,12 @@ Display names are not settings — they live in their own file, see
 [What the apps are called](#what-the-apps-are-called).
 
 ```bash
-screentime set DAILY_GOAL 300
-screentime ignore org.keepassxc.KeePassXC
+nova screentime set DAILY_GOAL 300
+nova screentime ignore org.keepassxc.KeePassXC
 ```
 
 An ignored app is not recorded at all, rather than hidden after the fact. Use
-`screentime forget <app-id>` to drop what was recorded before you ignored it.
+`nova screentime forget <app-id>` to drop what was recorded before you ignored it.
 
 `org.quickshell` is ignored out of the box: the Nova menu and this plugin's
 own window are shell surfaces, not applications you spend time in. Setting
@@ -196,15 +184,9 @@ Files older than `RETENTION_DAYS` are dropped on the first write of each day.
 display names, cached so the panel does not re-read every desktop entry on the
 machine each time it refreshes. Deleting it costs nothing.
 
-## Uninstall
+## Forgetting everything
 
 ```bash
-screentime menu remove
-nova plugin remove andrecmdrgb.screentime
-rm -f ~/.local/bin/screentime
+nova nova screentime off
 rm -rf ~/.config/nova-screentime ~/.local/state/nova-screentime
 ```
-
-## License
-
-MIT — see [LICENSE](LICENSE).

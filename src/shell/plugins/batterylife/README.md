@@ -1,7 +1,7 @@
 # Battery Life
 
-An Nova shell plugin that answers the one question the stock battery
-widget cannot: **how long does this battery actually last?**
+Battery Life answers the one question the stock battery widget
+cannot: **how long does this battery actually last?**
 
 The built-in readout is an instantaneous estimate. It divides the charge left
 by whatever the battery happens to be drawing at the moment you look, so it
@@ -60,31 +60,22 @@ The popup has an IPC target of its own, so a keybind can reach it without
 going through the bar:
 
 ```sh
-nova-shell andrecmdrgb.batterylife.bar toggle
+nova-shell nova.batterylife.bar toggle
 ```
 
-To take the stock power widget's slot:
+Battery Life records from the first boot, but its widget is not on the bar by
+default: the stock power widget (`nova.power`) holds the battery slot, with the
+power modes. To show this one beside it:
 
 ```sh
-batterylife takeover on     # put this one where nova.power was
-batterylife takeover off    # give it back
+nova bar put nova.batterylife --after nova.power
 ```
 
-`takeover on` moves this widget immediately after the stock one and then
-disables the stock one, which leaves this widget exactly where that one was.
-`takeover off` re-enables the stock widget and puts it back beside this one —
-`nova plugin enable` alone would drop it in the centre, since the stock
-power widget declares no section of its own.
-
-Both are safe to run twice. There is no command that takes a widget off the
-bar without disabling its plugin, so `takeover off` leaves this one in place;
-disabling the plugin would also stop it recording.
-
-Power profiles remain on the Nova menu under Super+Space.
+The history window is always in the menu (Super+Space → Battery Life).
 
 ## The window
 
-`batterylife open`, the bar widget, or Super+Space → Battery Life.
+`nova battery open`, the bar widget, or Super+Space → Battery Life.
 
 - **Today** — 24 columns, the average draw for each hour that ran on battery.
   An hour spent plugged in, asleep or switched off is drawn empty rather than
@@ -118,8 +109,8 @@ installed. The files under `/var/lib/upower` are root-only, but the daemon
 hands the same data to anyone over D-Bus:
 
 ```sh
-batterylife import           # everything UPower still has
-batterylife import --days 7  # just the last week
+nova battery import           # everything UPower still has
+nova battery import --days 7  # just the last week
 ```
 
 So a fresh install has a week of real runs in it rather than an empty chart.
@@ -136,21 +127,21 @@ run again.
 Everything the window shows, and a few things it does not.
 
 ```
-batterylife status [--short]     charge, draw, and time left
-batterylife sessions [n]         past discharge runs and what they cost
-batterylife health               capacity, wear, and cycle count
-batterylife json [--days n]      everything the window draws
+nova battery status [--short]     charge, draw, and time left
+nova battery sessions [n]         past discharge runs and what they cost
+nova battery health               capacity, wear, and cycle count
+nova battery json [--days n]      everything the window draws
 
-batterylife open [--week]        open the Battery Life window
-batterylife import [--days n]    seed history from UPower's own log
+nova battery open [--week]        open the Battery Life window
+nova battery import [--days n]    seed history from UPower's own log
 
-batterylife config [key]         show settings
-batterylife set <key> <value>    change one
-batterylife forget <date|all>    delete recorded history
+nova battery config [key]         show settings
+nova battery set <key> <value>    change one
+nova battery forget <date|all>    delete recorded history
 ```
 
 ```
-$ batterylife sessions
+$ nova battery sessions
 STARTED           CHARGE     RUNTIME   DRAW     FULL CHARGE
 Tue 01 Sep 23:32   99% → 37 %  2h 02m    22.0 W   3h 23m
 Tue 01 Sep 15:48   99% → 7  %  2h 09m    29.4 W   2h 32m
@@ -190,7 +181,7 @@ epoch  state  percent  energy_uWh  full_uWh  power_uW
 ```
 
 Charge, draw and capacity. Nothing about what the machine was doing at the
-time, and nothing that leaves the machine. `batterylife forget all` deletes
+time, and nothing that leaves the machine. `nova battery forget all` deletes
 the lot.
 
 ## Charging
@@ -219,20 +210,9 @@ batteries, device batteries being skipped, the sampling floor, run detection
 across a suspend and across a charge, the charging path, retention, settings
 validation, and an empty history still producing valid JSON.
 
-## Requirements
+## Turning it off
 
-Nova shell, `jq`, and `busctl` (systemd) for the optional import. The
-sampler runs inside the shell; the CLI needs nothing but a battery and works
-from a TTY.
-
-## Install
-
-```sh
-nova plugin add https://github.com/Andre-cmd-rgb/nova --enable
-batterylife import
-batterylife takeover on
-```
-
-## License
-
-MIT.
+Battery Life is on from the first boot. `nova bar remove nova.batterylife`
+takes its widget off the bar; to stop the recording as well, add
+`"nova.batterylife"` to `disabledPlugins` in `~/.config/nova/shell.json`.
+`nova battery forget all` deletes what it recorded.

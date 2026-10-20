@@ -217,7 +217,7 @@ Panel {
 
   Process {
     id: batteryProc
-    command: ["nova-battery-status", "--shell"]
+    command: ["nova-battery-info", "--shell"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "battery") }
   }
 

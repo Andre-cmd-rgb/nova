@@ -1,7 +1,8 @@
 #!/bin/bash
+# nova:summary=Battery Life: measured runtime, draw and health of this battery
 #
-# batterylife — battery runtime history for the andrecmdrgb.batterylife
-# Nova plugin.
+# batterylife — the history behind Nova's Battery Life (nova.batterylife), run
+# as `nova battery <command>`.
 #
 # The shell-side service asks this script for a sample every minute or so.
 # Everything else — storage, session detection, the arithmetic behind "a full
@@ -21,15 +22,12 @@ set -uo pipefail
 # formats text for a person in a way a locale should not be allowed to touch.
 export LC_NUMERIC=C LC_COLLATE=C
 
-PLUGIN_ID="andrecmdrgb.batterylife"
+PLUGIN_ID="nova.batterylife"
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nova-batterylife"
 CONFIG="$CONFIG_DIR/config"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova-batterylife"
 DAYS_DIR="$STATE_DIR/days"
-MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nova/extensions/nova-menu.jsonc"
-SHELL_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json"
-STOCK_POWER="nova.power"
 
 # Overridable so the test harness can point the whole script at a fixture
 # directory instead of the real battery.
@@ -58,8 +56,8 @@ get_cfg() {
   local key=$1 def=${2:-} value=""
   # The key is always a literal from this script, never user input, so
   # building the match out of one is safe.
-  if [[ -r $CONFIG ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$CONFIG" 2>/dev/null; then
-    value=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
+  if [[ -r $CONFIG ]] && grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$CONFIG" 2>/dev/null; then
+    value=$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
       tail -n1 | tr -d '\r')
     value=${value%"${value##*[![:space:]]}"}
     printf '%s' "$value"
@@ -904,9 +902,9 @@ cmd_sessions() {
   local limit=${1:-10} min
   [[ $limit =~ ^[0-9]+$ ]] || limit=10
   min=$(cfg_number MIN_SESSION 600)
-  local any=0 line
+  local any=0
   printf '%-16s  %-9s  %-8s  %-7s  %s\n' 'STARTED' 'CHARGE' 'RUNTIME' 'DRAW' 'FULL CHARGE'
-  while IFS=$'\t' read -r start end spct epct wall awake adrop tdrop full n active; do
+  while IFS=$'\t' read -r start _ spct epct _ awake adrop _ full _ active; do
     ((awake >= min)) || continue
     any=1
     printf '%-16s  %3s%% → %-3s%%  %-8s  %-7s  %s\n' \
@@ -1104,110 +1102,6 @@ cmd_indicator() {
   esac
 }
 
-# Is this widget in the bar layout at all? Read rather than asked for: the
-# bar CLI can place and move widgets but has no way to report one.
-bar_has() {
-  [[ -r $SHELL_JSON ]] && grep -qF "\"$1\"" "$SHELL_JSON"
-}
-
-# Take over the slot the stock power widget occupies, and hand it back.
-cmd_takeover() {
-  local action=${1:-on}
-  have nova || die "the nova CLI is required"
-  case $action in
-  on)
-    # On the bar at all, first: `put` places a widget that is missing and
-    # deliberately leaves one that is already there where it is.
-    bar_has "$PLUGIN_ID" ||
-      nova bar put "$PLUGIN_ID" --section right >/dev/null 2>&1 ||
-      die "could not place the widget — is the plugin enabled?"
-
-    if ! bar_has "$STOCK_POWER"; then
-      echo "Battery Life is on the bar; the stock power widget is already off it."
-      return 0
-    fi
-
-    # Anchored to the stock widget only while the bar actually carries it.
-    # `move --after` an id the bar does not have takes this widget off the
-    # bar rather than leaving it where it was, which is how running this
-    # twice used to end with no battery widget at all.
-    nova bar move "$PLUGIN_ID" --after "$STOCK_POWER" >/dev/null 2>&1 ||
-      die "could not move the widget into the power widget's slot"
-    nova plugin disable "$STOCK_POWER" >/dev/null 2>&1 ||
-      echo "Note: the stock power widget could not be disabled; both are on the bar." >&2
-    echo "Battery Life has the power widget's slot."
-    ;;
-  off)
-    nova plugin enable "$STOCK_POWER" >/dev/null 2>&1 ||
-      die "could not restore the stock power widget"
-    # `plugin enable` puts a widget in the section its manifest names, and the
-    # stock power widget names none — so it comes back in the centre rather
-    # than where it was. Put it back beside this one.
-    if bar_has "$PLUGIN_ID"; then
-      nova bar move "$STOCK_POWER" --after "$PLUGIN_ID" >/dev/null 2>&1
-    else
-      nova bar move "$STOCK_POWER" --section right >/dev/null 2>&1
-    fi
-    echo "Restored the stock power widget."
-    echo "Battery Life is still on the bar beside it. Taking a widget off the bar"
-    echo "means disabling the plugin, which also stops it recording:"
-    echo "  nova plugin disable $PLUGIN_ID"
-    ;;
-  *) die "usage: batterylife takeover on|off" ;;
-  esac
-}
-
-MENU_ENTRY='  "batterylife": {"icon":"󰁹","label":"Battery Life","aliases":["battery","runtime","power-history"],"action":"nova-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
-
-cmd_menu() {
-  local action=${1:-install} tmp
-  case $action in
-  install)
-    mkdir -p -- "$(dirname -- "$MENU_FILE")" || die "could not create the extensions directory"
-    if [[ ! -f $MENU_FILE ]]; then
-      printf '{\n%s\n}\n' "$MENU_ENTRY" >"$MENU_FILE" ||
-        die "could not write $MENU_FILE"
-      echo "Added Battery Life to the Nova menu."
-      return 0
-    fi
-    if grep -q '^[[:space:]]*"batterylife"[[:space:]]*:' "$MENU_FILE"; then
-      echo "Battery Life is already in the Nova menu."
-      return 0
-    fi
-    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
-    # Insert before the final closing brace, so the comment block the file
-    # ships with stays where it is.
-    awk -v entry="$MENU_ENTRY" '
-      { lines[NR] = $0 }
-      END {
-        last = 0
-        for (i = NR; i >= 1; i--) if (lines[i] ~ /^[[:space:]]*}[[:space:]]*$/) { last = i; break }
-        for (i = 1; i <= NR; i++) {
-          if (i == last) print entry
-          print lines[i]
-        }
-        if (last == 0) print entry
-      }
-    ' "$MENU_FILE" >"$tmp" || {
-      rm -f -- "$tmp"
-      die "could not write $MENU_FILE"
-    }
-    cat -- "$tmp" >"$MENU_FILE"
-    rm -f -- "$tmp"
-    echo "Added Battery Life to the Nova menu (Super+Space)."
-    ;;
-  remove)
-    [[ -f $MENU_FILE ]] || return 0
-    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
-    grep -v '^[[:space:]]*"batterylife"[[:space:]]*:' "$MENU_FILE" >"$tmp"
-    cat -- "$tmp" >"$MENU_FILE"
-    rm -f -- "$tmp"
-    echo "Removed Battery Life from the Nova menu."
-    ;;
-  *) die "usage: batterylife menu install|remove" ;;
-  esac
-}
-
 cmd_version() {
   local self plugin_dir version=""
   self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || self=""
@@ -1221,26 +1115,24 @@ cmd_version() {
 
 usage() {
   cat <<'USAGE'
-batterylife — how long this battery actually lasts.
+nova battery — how long this battery actually lasts.
 
 Usage:
-  batterylife status [--short]     charge, draw, and time left
-  batterylife sessions [n]         past discharge runs and what they cost
-  batterylife health               capacity, wear, and cycle count
-  batterylife json [--days n]      everything the window draws
+  nova battery status [--short]     charge, draw, and time left
+  nova battery sessions [n]         past discharge runs and what they cost
+  nova battery health               capacity, wear, and cycle count
+  nova battery json [--days n]      everything the window draws
 
-  batterylife open [--week]        open the Battery Life window
-  batterylife import [--days n]    seed history from UPower's own log
+  nova battery open [--week]        open the Battery Life window
+  nova battery import [--days n]    seed history from UPower's own log
 
-  batterylife config [key]         show settings
-  batterylife set <key> <value>    change one
-  batterylife forget <date|all>    delete recorded history
+  nova battery config [key]         show settings
+  nova battery set <key> <value>    change one
+  nova battery forget <date|all>    delete recorded history
 
-  batterylife menu install|remove    add or remove the Super+Space entry
-  batterylife takeover on|off        swap with the stock power widget
-  batterylife indicator on|off       show or hide the bar entry
-  batterylife sample [--force]       record one reading (used by the shell)
-  batterylife version
+  nova battery indicator on|off       show or hide the bar entry
+  nova battery sample [--force]       record one reading (used by the shell)
+  nova battery version
 
 Runtime is measured, not predicted: every figure comes from charge the
 battery actually lost over time the machine was actually awake. Time spent
@@ -1270,10 +1162,8 @@ config) cmd_config "$@" ;;
 set) cmd_set "$@" ;;
 forget) cmd_forget "$@" ;;
 prune) prune_history ;;
-menu) cmd_menu "$@" ;;
-takeover) cmd_takeover "$@" ;;
 indicator) cmd_indicator "$@" ;;
 version | --version | -V) cmd_version ;;
 -h | --help | help) usage ;;
-*) die "unknown command: $command — try: batterylife --help" ;;
+*) die "unknown command: $command — try: nova battery --help" ;;
 esac

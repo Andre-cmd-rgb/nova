@@ -1,6 +1,9 @@
 #!/bin/bash
+# nova:summary=Screen Time: where your time on this computer goes, per app
 #
-# screentime — usage tracking for the andrecmdrgb.screentime Nova plugin.
+# screentime — the history behind Nova's Screen Time (nova.screentime), run as
+# `nova screentime <command>`. Off until turned on: nothing is recorded while
+# the plugin is not in ~/.config/nova/shell.json.
 #
 # The shell-side service watches which window has focus and how long you have
 # been idle, and hands this script the seconds it has counted. Everything else
@@ -12,13 +15,12 @@
 
 set -uo pipefail
 
-PLUGIN_ID="andrecmdrgb.screentime"
+PLUGIN_ID="nova.screentime"
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nova-screentime"
 CONFIG="$CONFIG_DIR/config"
 STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova-screentime"
 DAYS_DIR="$STATE_DIR/days"
-MENU_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/nova/extensions/nova-menu.jsonc"
 
 die() {
   printf 'screentime: %s\n' "$*" >&2
@@ -37,8 +39,8 @@ get_cfg() {
   local key=$1 def=${2:-} value=""
   # The key is always a literal from this script, never user input, so
   # building the match out of one is safe.
-  if [[ -r $CONFIG ]] && grep -qE "^[[:space:]]*$key[[:space:]]*=" "$CONFIG" 2>/dev/null; then
-    value=$(sed -n "s/^[[:space:]]*$key[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
+  if [[ -r $CONFIG ]] && grep -qE "^[[:space:]]*${key}[[:space:]]*=" "$CONFIG" 2>/dev/null; then
+    value=$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
       tail -n1 | tr -d '\r')
     value=${value%"${value##*[![:space:]]}"}
     printf '%s' "$value"
@@ -790,6 +792,30 @@ cmd_open() {
     die "could not open the panel — is the plugin enabled?"
 }
 
+# Screen Time records only while shell.json names it (its manifest says
+# "enabledByDefault": false), so turning it on and off is its bar entry.
+is_enabled() {
+  local config=${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json
+  [[ -r $config ]] &&
+    jq -e --arg id "$PLUGIN_ID" '[.. | objects | select(.id? == $id)] | length > 0' "$config" >/dev/null 2>&1
+}
+
+cmd_switch() {
+  have nova || die "the nova CLI is required"
+  case $1 in
+  on)
+    nova bar put "$PLUGIN_ID" >/dev/null || die "could not turn Screen Time on"
+    echo "Screen Time is on, and counts from now."
+    ;;
+  off)
+    nova bar remove "$PLUGIN_ID" >/dev/null || die "could not turn Screen Time off"
+    echo "Screen Time is off. What it recorded stays until: nova screentime forget <app-id>"
+    ;;
+  toggle) if is_enabled; then cmd_switch off; else cmd_switch on; fi ;;
+  enabled) is_enabled ;;
+  esac
+}
+
 cmd_indicator() {
   local state=${1:-status}
   have nova || die "the nova CLI is required"
@@ -810,57 +836,6 @@ cmd_indicator() {
   esac
 }
 
-MENU_ENTRY='  "screentime": {"icon":"󰥔","label":"Screen Time","aliases":["screen-time","usage"],"action":"nova-shell shell summon '"$PLUGIN_ID"' '"'"'{}'"'"'"},'
-
-cmd_menu() {
-  local action=${1:-install} tmp
-  case $action in
-  install)
-    mkdir -p -- "$(dirname -- "$MENU_FILE")" || die "could not create the extensions directory"
-    if [[ ! -f $MENU_FILE ]]; then
-      printf '{\n%s\n}\n' "$MENU_ENTRY" >"$MENU_FILE" ||
-        die "could not write $MENU_FILE"
-      echo "Added Screen Time to the Nova menu."
-      return 0
-    fi
-    if grep -q '^[[:space:]]*"screentime"[[:space:]]*:' "$MENU_FILE"; then
-      echo "Screen Time is already in the Nova menu."
-      return 0
-    fi
-    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
-    # Insert before the final closing brace, so the comment block the file
-    # ships with stays where it is.
-    awk -v entry="$MENU_ENTRY" '
-      { lines[NR] = $0 }
-      END {
-        last = 0
-        for (i = NR; i >= 1; i--) if (lines[i] ~ /^[[:space:]]*}[[:space:]]*$/) { last = i; break }
-        for (i = 1; i <= NR; i++) {
-          if (i == last) print entry
-          print lines[i]
-        }
-        if (last == 0) print entry
-      }
-    ' "$MENU_FILE" >"$tmp" || {
-      rm -f -- "$tmp"
-      die "could not write $MENU_FILE"
-    }
-    cat -- "$tmp" >"$MENU_FILE"
-    rm -f -- "$tmp"
-    echo "Added Screen Time to the Nova menu (Super+Space)."
-    ;;
-  remove)
-    [[ -f $MENU_FILE ]] || return 0
-    tmp=$(mktemp -- "$MENU_FILE.XXXXXX") || die "could not write $MENU_FILE"
-    grep -v '^[[:space:]]*"screentime"[[:space:]]*:' "$MENU_FILE" >"$tmp"
-    cat -- "$tmp" >"$MENU_FILE"
-    rm -f -- "$tmp"
-    echo "Removed Screen Time from the Nova menu."
-    ;;
-  *) die "usage: screentime menu install|remove" ;;
-  esac
-}
-
 cmd_version() {
   local self plugin_dir version=""
   self=$(readlink -f -- "${BASH_SOURCE[0]}" 2>/dev/null) || self=""
@@ -874,27 +849,28 @@ cmd_version() {
 
 usage() {
   cat <<'USAGE'
-screentime — where your time on this machine goes.
+nova screentime — where your time on this machine goes.
 
 Usage:
-  screentime today [--short]     today's total and its busiest apps
-  screentime week [days]         a day-by-day breakdown (default 7)
-  screentime top [n]             today's busiest apps
-  screentime json [--days n]     everything the panel draws
-  screentime open [--week]       open the Screen Time window
+  nova screentime today [--short]     today's total and its busiest apps
+  nova screentime week [days]         a day-by-day breakdown (default 7)
+  nova screentime top [n]             today's busiest apps
+  nova screentime json [--days n]     everything the panel draws
+  nova screentime open [--week]       open the Screen Time window
 
-  screentime config [key]        show settings
-  screentime set <key> <value>   change one
-  screentime names               every app id and the name it is shown under
-  screentime name <id> [name]    show that name, or pin your own
-  screentime ignore <app-id>     never record an app again
-  screentime unignore <app-id>   undo that
-  screentime forget <app-id>     delete an app's history
+  nova screentime config [key]        show settings
+  nova screentime set <key> <value>   change one
+  nova screentime names               every app id and the name it is shown under
+  nova screentime name <id> [name]    show that name, or pin your own
+  nova screentime ignore <app-id>     never record an app again
+  nova screentime unignore <app-id>   undo that
+  nova screentime forget <app-id>     delete an app's history
 
-  screentime menu install|remove   add or remove the Super+Space entry
-  screentime indicator on|off      show or hide the bar indicator
-  screentime record <app>=<secs>   used by the shell service
-  screentime version
+  nova screentime on | off | toggle     start or stop recording (off at first)
+  nova screentime enabled               succeeds while it is on
+  nova screentime indicator on|off      show or hide the bar indicator
+  nova screentime record <app>=<secs>   used by the shell service
+  nova screentime version
 
 Settings live in ~/.config/nova-screentime/config, pinned names in
 ~/.config/nova-screentime/names, history in
@@ -923,9 +899,9 @@ ignore) cmd_ignore "$@" ;;
 unignore) cmd_unignore "$@" ;;
 forget) cmd_forget "$@" ;;
 prune) prune_history ;;
-menu) cmd_menu "$@" ;;
+on | off | toggle | enabled) cmd_switch "$command" ;;
 indicator) cmd_indicator "$@" ;;
 version | --version | -V) cmd_version ;;
 -h | --help | help) usage ;;
-*) die "unknown command: $command — try: screentime --help" ;;
+*) die "unknown command: $command — try: nova screentime --help" ;;
 esac

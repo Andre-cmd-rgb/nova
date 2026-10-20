@@ -8,7 +8,7 @@ import qs.Ui
 // day-by-day chart, and the applications that account for it.
 //
 // Summoned by the shell, from the Nova menu or the bar indicator:
-//   nova-shell shell summon andrecmdrgb.screentime '{}'
+//   nova-shell shell summon nova.screentime '{}'
 //
 // It owns no data. Everything on screen comes from one `screentime json`
 // call, so what the window shows and what the CLI prints can never disagree.
@@ -20,7 +20,7 @@ Item {
   property var manifest: null
   property var service: null
 
-  readonly property string pluginId: "andrecmdrgb.screentime"
+  readonly property string pluginId: "nova.screentime"
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/screentime")).replace(/^file:\/\//, ""))
 
   property bool closingFromHost: false
