@@ -1,0 +1,6 @@
+# Command-line tools, managed by mise (https://mise.jdx.dev): `mise up` updates
+# them, `mise use -g <tool>` adds one.
+[tools]
+node = "lts"
+claude = "latest"
+codex = "latest"

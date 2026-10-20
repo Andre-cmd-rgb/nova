@@ -1,0 +1,8 @@
+{
+  "workbench.colorTheme": "Nova",
+  "editor.fontFamily": "monospace",
+  "terminal.integrated.fontFamily": "monospace",
+  "window.titleBarStyle": "custom",
+  "update.mode": "none",
+  "telemetry.telemetryLevel": "off"
+}

@@ -1,0 +1,646 @@
+#!/bin/bash
+#
+# nova-install: install Nova from the USB stick onto this computer's disk.
+#
+# Runs as root in the live system. Every question comes first, then one summary,
+# and only after "erase" is typed does anything touch a disk. The whole disk is
+# used: a 2 GiB EFI system partition and one btrfs partition holding the
+# subvolumes that snapshots and rollback expect (@ @home @log @pkg @snapshots
+# @swap).
+#
+# Packages come from the offline repository on the stick when there is one, and
+# otherwise from the pinned Arch snapshot and [nova] repository named in the
+# release file. Either way the installed system ends up pointed at the release
+# it was installed from, which is what `nova update` moves forward.
+#
+#   nova-install          the interactive install
+#   nova-install --help   this text
+#
+# NOVA_* variables override paths for testing; the functions are sourceable
+# (tests/unit/installer/install.bats) and `main` runs only when executed.
+
+set -euo pipefail
+
+SHARE=${NOVA_INSTALLER_SHARE:-/usr/share/nova-installer}
+TARGET=${NOVA_TARGET:-/mnt}
+STICK=${NOVA_STICK:-/run/archiso/bootmnt}
+OFFLINE_REPO=${NOVA_OFFLINE_REPO:-$STICK/nova/repo}
+RELEASE_FILE=${NOVA_RELEASE_FILE:-$SHARE/release.toml}
+CPUINFO=${NOVA_CPUINFO:-/proc/cpuinfo}
+MEMINFO=${NOVA_MEMINFO:-/proc/meminfo}
+PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
+LOG=${NOVA_INSTALL_LOG:-/var/log/nova-install.log}
+
+ESP_MIB=2048
+MIN_DISK_BYTES=$((64 * 1024 * 1024 * 1024))
+BTRFS_OPTS=noatime,compress=zstd:1
+SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@snapshots:/.snapshots" "@swap:/swap")
+
+say() { printf '\n\e[1m%s\e[0m\n' "$*"; }
+info() { printf '  %s\n' "$*"; }
+warn() { printf '  \e[33m%s\e[0m\n' "$*" >&2; }
+die() {
+  printf '\n\e[31mnova-install: %s\e[0m\n' "$*" >&2
+  exit 1
+}
+
+# ------------------------------------------------------------------- the disk
+
+# The disk the live system booted from, so it is never offered. Empty when it
+# cannot be told (booted with copytoram, say); removable disks are left out
+# anyway.
+boot_disk() {
+  local src parent
+  src=$(findmnt -no SOURCE -- "$STICK" 2>/dev/null) || return 0
+  [[ -b $src ]] || return 0
+  parent=$(lsblk -no PKNAME -- "$src" 2>/dev/null | awk 'NR == 1')
+  if [[ -n $parent ]]; then echo "/dev/$parent"; else echo "$src"; fi
+}
+
+lsblk_disks() {
+  lsblk -J -b -d -o NAME,PATH,SIZE,MODEL,SERIAL,TYPE,RM,RO,TRAN
+}
+
+# One tab-separated line per disk Nova may go on: path, size in bytes, model,
+# serial, transport, with "-" for an unknown field so the columns never shift. Left out: the stick it booted from, read-only, removable
+# and USB disks, virtual devices, and anything under 64 GiB. NOVA_ALLOW_USB=1
+# lets a USB disk through, for installing onto an external drive on purpose.
+candidate_disks() {
+  local boot
+  boot=$(boot_disk)
+  lsblk_disks | jq -r --arg boot "$boot" --argjson min "$MIN_DISK_BYTES" \
+    --arg usb "${NOVA_ALLOW_USB:-0}" '
+    def yes: . == true or . == "1" or . == 1;
+    .blockdevices[]
+    | select(.type == "disk" and .path != $boot)
+    | select(.ro | yes | not)
+    | select($usb == "1" or ((.rm | yes | not) and .tran != "usb"))
+    | select((.name | test("^(loop|zram|sr|ram|fd)")) | not)
+    | select((.size | tonumber) >= $min)
+    | def field: (. // "") | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end;
+      [.path, (.size | tostring), (.model | field), (.serial | field), (.tran | field)]
+    | @tsv'
+}
+
+# Something on the live system is using the disk: a mounted partition, active
+# swap, or an LVM, RAID or dm-crypt device built on it.
+disk_in_use() {
+  local disk=$1
+  lsblk -nro MOUNTPOINTS -- "$disk" | grep -q . && return 0
+  lsblk -nro TYPE -- "$disk" | grep -Eq '^(lvm|crypt|raid[0-9]*|dm|md)$'
+}
+
+# /dev/nvme0n1 -> /dev/nvme0n1p2, /dev/sda -> /dev/sda2
+partition_path() {
+  local disk=$1 number=$2
+  if [[ $disk =~ [0-9]$ ]]; then echo "${disk}p$number"; else echo "$disk$number"; fi
+}
+
+human_size() {
+  awk -v b="$1" 'BEGIN { split("B KB MB GB TB PB", u); i = 1; while (b >= 1000 && i < 6) { b /= 1000; i++ } printf (i > 3 ? "%.1f %s" : "%.0f %s"), b, u[i] }'
+}
+
+# Swap for hibernation: the size of RAM, so a full image always fits, rounded
+# up to a GiB and never more than an eighth of the disk.
+swap_gib() {
+  local disk_bytes=$1 ram_gib cap
+  ram_gib=$(awk '/^MemTotal:/ { printf "%d", ($2 + 1048575) / 1048576 }' "$MEMINFO")
+  cap=$((disk_bytes / 8 / 1024 / 1024 / 1024))
+  ((ram_gib > 0)) || ram_gib=8
+  if ((ram_gib > cap)); then echo "$cap"; else echo "$ram_gib"; fi
+}
+
+# ------------------------------------------------------------- the machine
+
+cpu_has_x86_64_v3() {
+  local flags f
+  flags=$(grep -m 1 '^flags' "$CPUINFO" 2>/dev/null) || return 1
+  for f in avx avx2 bmi1 bmi2 f16c fma abm movbe xsave; do
+    [[ " ${flags#*:} " == *" $f "* ]] || return 1
+  done
+}
+
+cpu_vendor() {
+  awk -F': ' '/^vendor_id/ { print $2; exit }' "$CPUINFO" 2>/dev/null
+}
+
+# The kernel Nova boots: linux-nova is built for x86-64-v3, so an older CPU
+# gets Arch's own kernel instead. linux-lts is installed either way as the
+# fallback entry.
+main_kernel() {
+  if cpu_has_x86_64_v3; then echo linux-nova; else echo linux; fi
+}
+
+# Packages this hardware needs, from the CPU and the display controllers in
+# sysfs (never lspci, which wakes a sleeping GPU). The model's own profile adds
+# to this; see profile_packages.
+hardware_packages() {
+  local kernel=$1 dev vendor device
+  case $(cpu_vendor) in
+    GenuineIntel) echo intel-ucode ;;
+    AuthenticAMD) echo amd-ucode ;;
+  esac
+  for dev in "$PCI_DEVICES"/*; do
+    [[ -r $dev/class && $(<"$dev/class") == 0x03* ]] || continue
+    vendor=$(<"$dev/vendor")
+    case $vendor in
+      0x8086) printf '%s\n' intel-media-driver vulkan-intel ;;
+      0x1002) printf '%s\n' libva-mesa-driver vulkan-radeon ;;
+      0x10de)
+        device=$(<"$dev/device")
+        # The open modules need GSP firmware, which starts with Turing.
+        if ((device >= 0x1e00)); then
+          if [[ $kernel == linux-nova ]]; then echo nvidia-open-nova; else echo nvidia-open; fi
+          echo nvidia-utils
+        fi
+        ;;
+    esac
+  done
+}
+
+hardware_profile() {
+  NOVA_HARDWARE=$SHARE/hardware "$SHARE/hardware/nova-hw-detect" 2>/dev/null || true
+}
+
+# The model profile's package list. nvidia-open-nova only exists for linux-nova,
+# so an older CPU gets Arch's nvidia-open in its place.
+profile_packages() {
+  local profile=$1 kernel=$2 name
+  [[ -n $profile && -r $SHARE/hardware/$profile/packages ]] || return 0
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name//[[:space:]]/}
+    [[ -n $name ]] || continue
+    if [[ $name == nvidia-open-nova && $kernel != linux-nova ]]; then name=nvidia-open; fi
+    echo "$name"
+  done <"$SHARE/hardware/$profile/packages"
+}
+
+# Everything pacstrap installs, one per line, without duplicates.
+package_set() {
+  local kernel=$1 profile=$2
+  {
+    grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
+    echo "$kernel"
+    echo linux-lts
+    hardware_packages "$kernel"
+    profile_packages "$profile" "$kernel"
+  } | awk '!seen[$0]++'
+}
+
+# --------------------------------------------------------- the release and repos
+
+# A string value from release.toml: key = "value"
+release_value() {
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\"[[:space:]]*\$/\\1/p" "$RELEASE_FILE" | awk 'NR == 1'
+}
+
+offline_repo_ready() {
+  [[ -r $OFFLINE_REPO/nova-offline.db ]]
+}
+
+# The pacman.conf pacstrap uses. Offline, one repository on the stick holds
+# every package; online, the same repositories the installed system will use.
+pacstrap_conf() {
+  local arch_date=$1 nova_repo=$2
+  cat <<EOF
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+ParallelDownloads = 5
+EOF
+  if offline_repo_ready; then
+    printf '\n[nova-offline]\nServer = file://%s\n' "$OFFLINE_REPO"
+  else
+    printf '\n[nova]\nServer = %s\n' "$nova_repo"
+    local repo
+    for repo in core extra multilib; do
+      # shellcheck disable=SC2016 # $arch is pacman's to expand
+      printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$repo" "$arch_date"
+    done
+  fi
+}
+
+# ------------------------------------------------------------- the boot line
+
+# The machine-specific half of the kernel command line; the quiet-boot half is
+# in /etc/limine-entry-tool.d/10-nova.conf. zswap is off because zram does the
+# compressing. rootflags=subvol=@ is the form limine-snapper-sync rewrites to
+# boot a snapshot.
+install_cmdline() {
+  local root_partuuid=$1 resume_offset=$2
+  printf 'root=PARTUUID=%s rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0 resume=PARTUUID=%s resume_offset=%s' \
+    "$root_partuuid" "$root_partuuid" "$resume_offset"
+}
+
+limine_install_conf() {
+  local cmdline=$1 kernel=$2
+  echo "# Written by nova-install for this machine's disk."
+  printf 'KERNEL_CMDLINE[default]+=" %s"\n' "$cmdline"
+  if [[ $kernel != linux-nova ]]; then
+    echo "# This CPU predates x86-64-v3, so Arch's kernel stands in for linux-nova."
+    echo "MKINITCPIO_FALLBACK=$kernel"
+    echo "BOOT_ORDER=\"$kernel, *fallback, linux-lts, *, Snapshots\""
+  fi
+}
+
+# genfstab writes subvolid= next to subvol=, and a subvolid pins the mount to
+# one subvolume forever: rolling back to a snapshot would mount the old one.
+strip_subvolid() {
+  sed -E 's/,subvolid=[0-9]+//; s/subvolid=[0-9]+,//'
+}
+
+# ------------------------------------------------------------- the questions
+
+valid_username() {
+  [[ $1 =~ ^[a-z_][a-z0-9_-]{0,31}$ && $1 != root && $1 != greeter ]]
+}
+
+valid_hostname() {
+  [[ $1 =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]]
+}
+
+valid_timezone() {
+  [[ $1 =~ ^[A-Za-z0-9_+-]+(/[A-Za-z0-9_+-]+)*$ && -f ${NOVA_ZONEINFO:-/usr/share/zoneinfo}/$1 ]]
+}
+
+valid_keymap() {
+  [[ $1 =~ ^[a-z][a-z0-9_-]*$ ]] && localectl list-keymaps 2>/dev/null | grep -qx -- "$1"
+}
+
+ask() { # prompt default -> the answer on stdout
+  local reply
+  read -rp "  $1${2:+ [$2]}: " reply </dev/tty
+  echo "${reply:-$2}"
+}
+
+ask_password() {
+  local first second
+  while :; do
+    read -rsp "  Password: " first </dev/tty
+    echo >&2
+    read -rsp "  Again: " second </dev/tty
+    echo >&2
+    if [[ -z $first ]]; then
+      warn "The password cannot be empty."
+    elif [[ $first != "$second" ]]; then
+      warn "Those did not match."
+    else
+      printf '%s' "$first"
+      return
+    fi
+  done
+}
+
+choose_disk() {
+  local disks=() line i choice path size model serial
+  mapfile -t disks < <(candidate_disks)
+  ((${#disks[@]})) || die "no disk to install on: Nova needs an internal disk of at least 64 GB."
+  # The menu goes to stderr: what this prints on stdout is the answer.
+  {
+    say "Which disk? Everything on it will be erased."
+    for i in "${!disks[@]}"; do
+      IFS=$'\t' read -r path size model serial _ <<<"${disks[i]}"
+      [[ $model != - ]] || model="unknown model"
+      [[ $serial != - ]] || serial=
+      printf '  %d) %-14s %8s  %s%s\n' "$((i + 1))" "$path" "$(human_size "$size")" "$model" "${serial:+  ($serial)}"
+      lsblk -nro NAME,FSTYPE,LABEL,SIZE -- "$path" | awk 'NR > 1 { printf "       %s %s %s %s\n", $1, $2, $3, $4 }'
+    done
+  } >&2
+  while :; do
+    choice=$(ask "Disk number" "$( ((${#disks[@]} == 1)) && echo 1)")
+    if [[ $choice =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#disks[@]})); then
+      line=${disks[choice - 1]}
+      path=${line%%$'\t'*}
+      if disk_in_use "$path"; then
+        warn "$path is in use by the live system (mounted, swap or LVM). Pick another."
+        continue
+      fi
+      echo "$line"
+      return
+    fi
+    warn "Type one of the numbers above."
+  done
+}
+
+# ------------------------------------------------------------- the install
+
+logged() { # log the command, then run it with its output in the log
+  printf '+ %s\n' "$*" >>"$LOG"
+  "$@" >>"$LOG" 2>&1
+}
+
+in_target() {
+  logged arch-chroot "$TARGET" "$@"
+}
+
+partition_and_format() {
+  local disk=$1 esp root
+  say "Partitioning $disk"
+  logged wipefs -af "$disk"
+  logged sfdisk --wipe always --wipe-partitions always "$disk" <<EOF
+label: gpt
+size=${ESP_MIB}MiB, type=uefi, name="NOVA-ESP"
+type=linux, name="nova"
+EOF
+  logged udevadm settle
+  esp=$(partition_path "$disk" 1)
+  root=$(partition_path "$disk" 2)
+  [[ -b $esp && -b $root ]] || die "the new partitions did not appear ($esp, $root)"
+  logged mkfs.fat -F 32 -n NOVA-ESP "$esp"
+  logged mkfs.btrfs -f -L nova "$root"
+}
+
+create_subvolumes_and_mount() {
+  local disk=$1 swap=$2 esp root entry name mountpoint
+  esp=$(partition_path "$disk" 1)
+  root=$(partition_path "$disk" 2)
+  say "Creating the filesystem layout"
+  logged mount "$root" "$TARGET"
+  for entry in "${SUBVOLUMES[@]}"; do
+    logged btrfs subvolume create "$TARGET/${entry%%:*}"
+  done
+  logged umount "$TARGET"
+
+  logged mount -o "$BTRFS_OPTS,subvol=@" "$root" "$TARGET"
+  for entry in "${SUBVOLUMES[@]:1}"; do
+    name=${entry%%:*}
+    mountpoint=${entry#*:}
+    logged mkdir -p "$TARGET$mountpoint"
+    if [[ $name == @swap ]]; then
+      logged mount -o "noatime,subvol=$name" "$root" "$TARGET$mountpoint"
+    else
+      logged mount -o "$BTRFS_OPTS,subvol=$name" "$root" "$TARGET$mountpoint"
+    fi
+  done
+  logged chmod 750 "$TARGET/.snapshots"
+  logged mkdir -p "$TARGET/boot"
+  logged mount -o fmask=0077,dmask=0077 "$esp" "$TARGET/boot"
+
+  info "A ${swap} GiB swap file, for hibernation"
+  logged btrfs filesystem mkswapfile --size "${swap}g" --uuid clear "$TARGET/swap/swapfile"
+  logged swapon "$TARGET/swap/swapfile"
+}
+
+install_packages() {
+  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf
+  conf=$(mktemp /tmp/nova-pacstrap.XXXXXX.conf)
+  pacstrap_conf "$arch_date" "$nova_repo" >"$conf"
+  say "Installing packages (this is the long part)"
+  mapfile -t packages < <(package_set "$kernel" "$profile")
+  info "${#packages[@]} packages, from $(offline_repo_ready && echo "the stick" || echo "the internet")"
+  # Output goes to the terminal as well as the log: this is minutes long and
+  # pacman's own progress is the progress bar.
+  printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
+  pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | tee -a "$LOG" ||
+    die "pacstrap failed; the log is in $LOG"
+}
+
+write_system_config() {
+  local hostname=$1 timezone=$2 keymap=$3 arch_date=$4 nova_repo=$5 tag=$6
+  say "Configuring the system"
+  genfstab -U "$TARGET" | strip_subvolid >"$TARGET/etc/fstab"
+  # genfstab lists the swap file it saw active; make sure it is there.
+  grep -q '/swap/swapfile' "$TARGET/etc/fstab" ||
+    echo '/swap/swapfile none swap defaults 0 0' >>"$TARGET/etc/fstab"
+
+  echo "$hostname" >"$TARGET/etc/hostname"
+  printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s.localdomain %s\n' "$hostname" "$hostname" >"$TARGET/etc/hosts"
+  ln -sf "/usr/share/zoneinfo/$timezone" "$TARGET/etc/localtime"
+  in_target hwclock --systohc
+  sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' "$TARGET/etc/locale.gen"
+  in_target locale-gen
+  echo 'LANG=en_US.UTF-8' >"$TARGET/etc/locale.conf"
+  # The session reads the keyboard layout from here (default/hypr/input.lua), so
+  # the console, the greeter, the lock screen and the desktop all agree.
+  printf 'KEYMAP=%s\nXKBLAYOUT=%s\n' "$keymap" "$(xkb_layout "$keymap")" >"$TARGET/etc/vconsole.conf"
+
+  install -Dm644 "$SHARE/pacman.conf" "$TARGET/etc/pacman.conf"
+  write_release_pins "$arch_date" "$nova_repo" "$tag"
+}
+
+# The console keymap and the XKB layout mostly share names; the exceptions are
+# the ones whose console name carries a suffix.
+xkb_layout() {
+  local keymap=$1
+  case $keymap in
+    *-latin1 | *-latin9 | *-nodeadkeys) echo "${keymap%%-*}" ;;
+    uk) echo gb ;;
+    *) echo "$keymap" ;;
+  esac
+}
+
+# The same two files nova update rewrites for every release, so the installed
+# system starts on the release it was installed from.
+write_release_pins() {
+  local arch_date=$1 nova_repo=$2 tag=$3
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\n# arch-date: %s\n' "$tag" "$arch_date"
+    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+    printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$arch_date"
+  } >"$TARGET/etc/pacman.d/nova-mirrorlist"
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\nServer = %s\n' "$tag" "$nova_repo"
+  } >"$TARGET/etc/pacman.d/nova-repo"
+}
+
+create_user() {
+  local user=$1 fullname=$2 password=$3
+  say "Creating your account"
+  in_target useradd -m -k /usr/share/nova/skel -G wheel -c "$fullname" -s /bin/bash "$user"
+  printf '%s:%s\n' "$user" "$password" | arch-chroot "$TARGET" chpasswd ||
+    die "could not set the password"
+  in_target passwd -l root
+  install -m 440 /dev/stdin "$TARGET/etc/sudoers.d/10-nova-wheel" <<<'%wheel ALL=(ALL:ALL) ALL'
+  in_target visudo -cf /etc/sudoers.d/10-nova-wheel
+
+  # Autologin goes to this account; anyone else signs in at the greeter.
+  sed "s/@NOVA_USER@/$user/" "$TARGET/usr/share/nova/session/greetd.toml" >"$TARGET/etc/greetd/config.toml"
+  # The greeter shows the user's theme without root: the theme engine mirrors
+  # it here, and the directory is the user's.
+  install -d -m 755 "$TARGET/var/lib/nova/greeter"
+  in_target chown "$user:$user" /var/lib/nova/greeter
+  in_target runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/lib/nova/bin:/usr/bin nova-theme set white
+}
+
+configure_snapper() {
+  # What `snapper create-config` writes, without the .snapshots subvolume it
+  # would create: @snapshots is already mounted there, outside the root
+  # subvolume, so a rollback does not take the snapshots with it.
+  install -Dm644 "$TARGET/usr/share/snapper/config-templates/nova" "$TARGET/etc/snapper/configs/root"
+  echo 'SNAPPER_CONFIGS="root"' >"$TARGET/etc/conf.d/snapper"
+}
+
+# Written before pacstrap: the kernel's own install hooks build the boot
+# entries, and they need the root and resume arguments and the Limine header
+# already in place to get them right the first time.
+prepare_boot_config() {
+  local disk=$1 kernel=$2 root partuuid offset
+  root=$(partition_path "$disk" 2)
+  partuuid=$(blkid -s PARTUUID -o value "$root")
+  [[ -n $partuuid ]] || die "could not read the PARTUUID of $root"
+  offset=$(btrfs inspect-internal map-swapfile -r "$TARGET/swap/swapfile")
+  [[ $offset =~ ^[0-9]+$ ]] || die "could not find the swap file's offset"
+  mkdir -p "$TARGET/etc/limine-entry-tool.d"
+  limine_install_conf "$(install_cmdline "$partuuid" "$offset")" "$kernel" >"$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
+  install -Dm644 "$SHARE/limine.conf" "$TARGET/boot/limine.conf"
+}
+
+install_bootloader() {
+  say "Installing the boot loader"
+  # --fallback also puts Limine at EFI/BOOT/BOOTX64.EFI, so the disk boots even
+  # if the firmware forgets its boot entries.
+  in_target limine-install --fallback
+  in_target limine-update
+  # The same check nova update makes: every kernel has an entry, and every file
+  # an entry loads is on the ESP.
+  in_target /usr/lib/nova/bin/nova-boot-check post || die "the boot entries did not check out; the log is in $LOG"
+}
+
+# Chrome, VS Code (built from their AUR recipes, since neither may be
+# redistributed) and the mise tools, Claude Code and Codex. Online only, and
+# never fatal: the system is complete without them, and the same two commands
+# finish the job later.
+install_apps() {
+  local user=$1 rule=$TARGET/etc/sudoers.d/90-nova-install-apps
+  if ! curl -fsI --max-time 10 -o /dev/null https://aur.archlinux.org/; then
+    warn "No internet: Chrome, VS Code, Claude Code and Codex are not installed."
+    warn "Once connected, run: nova apps install; mise install"
+    return 0
+  fi
+  say "Installing Chrome, VS Code, Claude Code and Codex"
+  # makepkg installs through sudo, and the account has no password prompt to
+  # answer here, so pacman alone is allowed for the length of this step.
+  install -m 440 /dev/stdin "$rule" <<<"$user ALL=(root) NOPASSWD: /usr/bin/pacman"
+  trap 'rm -f -- "$rule"' EXIT
+  in_target runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/lib/nova/bin:/usr/bin nova-apps-install --noconfirm ||
+    warn "Chrome or VS Code did not install; run nova apps install after the first login."
+  rm -f -- "$rule"
+  trap - EXIT
+  in_target runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/bin mise install --yes ||
+    warn "The mise tools did not install; run mise install after the first login."
+}
+
+enable_services() {
+  say "Enabling services"
+  in_target systemctl enable greetd.service NetworkManager.service bluetooth.service \
+    systemd-resolved.service systemd-timesyncd.service systemd-oomd.service \
+    power-profiles-daemon.service fstrim.timer snapper-cleanup.timer limine-snapper-sync.service
+}
+
+finish() {
+  # arch-chroot binds the live system's resolv.conf over the target's while it
+  # runs, so the link to systemd-resolved is made from outside.
+  ln -sf ../run/systemd/resolve/stub-resolv.conf "$TARGET/etc/resolv.conf"
+  install -Dm600 "$LOG" "$TARGET/var/log/nova-install.log"
+  logged swapoff "$TARGET/swap/swapfile"
+  sync
+  logged umount -R "$TARGET"
+}
+
+usage() {
+  sed -n '3,/^$/s/^# \{0,1\}//p' "$0"
+}
+
+main() {
+  case ${1:-} in
+    -h | --help)
+      usage
+      return 0
+      ;;
+    "") ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+  ((EUID == 0)) || die "run me as root."
+  [[ -d /sys/firmware/efi ]] || die "this computer booted the stick in legacy BIOS mode; Nova needs UEFI. Turn on UEFI boot in the firmware settings."
+  [[ -r $RELEASE_FILE ]] || die "no release file at $RELEASE_FILE"
+  : >"$LOG"
+
+  local tag arch_date nova_repo
+  tag=v$(release_value version)
+  arch_date=$(release_value arch_date)
+  nova_repo=$(release_value nova_repo)
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "the release file has no valid version"
+  [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "the release file has no valid arch_date"
+  [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "the release file has no valid nova_repo"
+  if ! offline_repo_ready && ! curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/; then
+    die "this stick has no offline packages and there is no internet connection. Connect with: iwctl"
+  fi
+
+  local kernel profile
+  kernel=$(main_kernel)
+  profile=$(hardware_profile)
+  say "Nova ${tag#v}"
+  info "Computer: $(cat /sys/class/dmi/id/product_version 2>/dev/null || echo unknown)${profile:+ (Nova knows this one)}"
+  [[ $kernel == linux-nova ]] || info "This CPU predates x86-64-v3, so Nova will use Arch's standard kernel."
+
+  # The layout first, and loaded at once: the password typed below has to be
+  # the password the lock screen sees, on the same keyboard layout.
+  say "Keyboard"
+  local keymap
+  while :; do
+    keymap=$(ask "Layout (us, es, it, de, fr, uk, ...)" us)
+    valid_keymap "$keymap" && break
+    warn "No keyboard layout called '$keymap'."
+  done
+  loadkeys "$keymap" >/dev/null 2>&1 || true
+
+  local disk_line disk disk_size disk_model
+  disk_line=$(choose_disk)
+  IFS=$'\t' read -r disk disk_size disk_model _ _ <<<"$disk_line"
+  [[ $disk_model != - ]] || disk_model=
+
+  say "You"
+  local fullname user password hostname timezone
+  fullname=$(ask "Full name" "")
+  while :; do
+    user=$(ask "Username" "$(tr '[:upper:]' '[:lower:]' <<<"${fullname%% *}" | tr -cd 'a-z0-9_-')")
+    valid_username "$user" && break
+    warn "Lower-case letters, digits, - and _, starting with a letter."
+  done
+  password=$(ask_password)
+  while :; do
+    hostname=$(ask "Computer name" nova)
+    valid_hostname "$hostname" && break
+    warn "Letters, digits and -, up to 63 characters."
+  done
+  while :; do
+    timezone=$(ask "Time zone (Europe/Rome, America/New_York, ...)" UTC)
+    valid_timezone "$timezone" && break
+    warn "No time zone called '$timezone'."
+  done
+
+  local swap
+  swap=$(swap_gib "$disk_size")
+  say "Ready to install"
+  info "Disk          $disk, $(human_size "$disk_size") ${disk_model:+($disk_model)}: ERASED"
+  info "Layout        2 GiB EFI partition, btrfs with snapshots, ${swap} GiB swap file"
+  info "Kernel        $kernel, with linux-lts as the fallback"
+  info "Account       $user ($fullname) on $hostname"
+  info "Time zone     $timezone, keyboard $keymap"
+  [[ $(ask "Type erase to wipe $disk and install" "") == erase ]] || die "nothing was changed."
+
+  partition_and_format "$disk"
+  create_subvolumes_and_mount "$disk" "$swap"
+  prepare_boot_config "$disk" "$kernel"
+  install_packages "$kernel" "$profile" "$arch_date" "$nova_repo"
+  write_system_config "$hostname" "$timezone" "$keymap" "$arch_date" "$nova_repo" "$tag"
+  configure_snapper
+  create_user "$user" "$fullname" "$password"
+  unset password
+  install_bootloader
+  install_apps "$user"
+  enable_services
+  finish
+
+  say "Nova is installed."
+  info "Take the stick out and restart: reboot"
+  info "The install log is kept at /var/log/nova-install.log."
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

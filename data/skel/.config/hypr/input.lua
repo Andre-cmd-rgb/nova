@@ -1,0 +1,26 @@
+-- Keyboard, mouse and touchpad. Anything uncommented here replaces Nova's
+-- default. https://wiki.hypr.land/Configuring/Basics/Variables/#input
+--
+-- The keyboard layout comes from /etc/vconsole.conf (XKBLAYOUT), which the
+-- installer set, so the lock screen and the console agree with the desktop.
+
+-- hl.config({
+--   input = {
+--     -- Several layouts, switched with Left Alt + Right Alt.
+--     kb_layout = "us,es",
+--     kb_options = "compose:caps,grp:alts_toggle",
+--
+--     -- Key repeat.
+--     repeat_rate = 40,
+--     repeat_delay = 250,
+--
+--     -- Pointer speed, -1.0 to 1.0, and no acceleration.
+--     sensitivity = 0.35,
+--     accel_profile = "flat",
+--
+--     touchpad = {
+--       -- Scroll the way a mouse wheel does rather than the way content moves.
+--       natural_scroll = false,
+--     },
+--   },
+-- })

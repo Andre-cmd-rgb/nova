@@ -10,3 +10,10 @@ case ":$PATH:" in
   *:/usr/lib/nova/bin:*) ;;
   *) export PATH="/usr/lib/nova/bin:$PATH" ;;
 esac
+
+# Tools installed with mise (Claude Code, Codex, node, ...) for apps started
+# from the desktop, which never read ~/.bashrc.
+case ":$PATH:" in
+  *:"$HOME/.local/share/mise/shims":*) ;;
+  *) export PATH="$PATH:$HOME/.local/share/mise/shims" ;;
+esac

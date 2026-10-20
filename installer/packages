@@ -1,0 +1,14 @@
+# What pacstrap installs besides nova (which pulls in the desktop), the kernels and
+# the hardware's own packages. One per line.
+base
+linux-firmware
+nova
+# Building Chrome and VS Code from their AUR recipes, and git over SSH.
+base-devel
+git
+openssh
+sudo
+# A console editor and completion, for the day the desktop does not start.
+nano
+bash-completion
+unzip

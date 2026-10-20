@@ -1,0 +1,13 @@
+-- Gaps, borders, corners and animations. Anything uncommented here replaces
+-- Nova's default. https://wiki.hypr.land/Configuring/Basics/Variables/
+
+-- hl.config({
+--   general = {
+--     gaps_in = 0,
+--     gaps_out = 0,
+--     border_size = 0,
+--   },
+--   decoration = {
+--     rounding = 8,
+--   },
+-- })
