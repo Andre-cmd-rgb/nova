@@ -134,11 +134,12 @@ run_session() { # desktop | lock
     WORK="$work" SHELL_DIR="$shell_dir" \
     timeout 180 dbus-run-session -- bash -c "$(declare -f session); session $1" 2>&1)$'\n' || true
   # Quickshell's own warnings about what this machine lacks (no Hyprland, no
-  # system bus) are printed; QML errors in Nova's files fail the run.
-  local log
+  # system bus, no PipeWire) are printed; QML errors in Nova's files fail the run.
+  local log lacks='Failed to create pipewire context'
   log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$shell_dir" 2>&1 || true)
-  problems+=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL) +(scene|qml)|^ *(ERROR|CRIT|FATAL)' <<<"$log" | grep -v 'Detected locale' || true)$'\n'
-  others+=$(grep -E '^ *WARN' <<<"$log" | grep -vE '^ *WARN +(scene|qml)' || true)$'\n'
+  problems+=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL) +(scene|qml)|^ *(ERROR|CRIT|FATAL)' <<<"$log" |
+    grep -vE "Detected locale|$lacks" || true)$'\n'
+  others+=$(grep -E '^ *WARN|'"$lacks" <<<"$log" | grep -vE '^ *WARN +(scene|qml)' || true)$'\n'
 }
 
 run_session desktop

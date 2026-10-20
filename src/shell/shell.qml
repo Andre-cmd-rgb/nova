@@ -158,10 +158,11 @@ ShellRoot {
   property var bar: null
 
   Loader {
+    // `shell` reads null for a moment while the shell is torn down.
     sourceComponent: Bar {
-      novaPath: shell.novaPath
-      barWidgetRegistry: shell.barWidgetRegistry
-      barConfig: shell.barConfig
+      novaPath: shell ? shell.novaPath : ""
+      barWidgetRegistry: shell ? shell.barWidgetRegistry : null
+      barConfig: shell ? shell.barConfig : ({})
       shell: shell
     }
     onLoaded: shell.bar = item
