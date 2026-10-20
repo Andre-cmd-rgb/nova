@@ -10,7 +10,8 @@ sudo
 nano
 bash-completion
 unzip
-# The Activity window (Super+Ctrl+T).
+# The Activity window (Super+Ctrl+T), and a summary of the system.
 btop
+fastfetch
 # Screen recording, from the Capture menu.
 gpu-screen-recorder

@@ -32,13 +32,17 @@ screen.
 
 ## Using it
 
-- **Keys** are Omarchy's: Super+Space opens the menu, Super+Return a terminal,
-  Super+Shift+Return Chrome, Super+W closes a window (windows have no title-bar
-  buttons), and Super+K lists every binding.
-- **Settings**, in the menu, covers appearance, displays, battery and the
-  discrete GPU, sound, the fingerprint, default apps, updates and snapshots.
-- **`nova help`** lists the commands. Chrome, VS Code, Nautilus, foot, Claude
-  Code and Codex come installed.
+- **Keys:** Super+Space opens the menu and Super+Alt+Space the apps,
+  Super+Return a terminal, Super+Shift+Return Chrome and Super+Shift+F Files.
+  Super+W closes a window (windows have no title-bar buttons), Super+Ctrl+L
+  locks, Print takes a screenshot, and Super+K lists every binding.
+- **Settings**, in the menu: the theme and background, what the bar shows,
+  battery (power mode, charge limit, the discrete GPU), Screen Time, the lock
+  screen and fingerprint, default apps, updates and recovery. Sound, network
+  and Bluetooth open from their icons in the bar; Settings → Menu Bar adds
+  more, such as Display for brightness and the laptop screen.
+- **`nova help`** lists the commands. Chrome, VS Code, Nautilus, foot, btop,
+  fastfetch, Claude Code and Codex come installed.
 
 ## Updates
 
