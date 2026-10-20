@@ -153,16 +153,16 @@ END
   pci 0000:00:1f.3 0x040380 0x8086 0xa0c8
   pci 0000:01:00.0 0x030200 0x10de 0x25b8
   run hardware_packages linux-nova
-  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open-nova nvidia-utils nvidia-prime)" ]
+  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open-nova nvidia-open-lts nvidia-utils nvidia-prime)" ]
   run hardware_packages linux
-  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open nvidia-utils nvidia-prime)" ]
+  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel nvidia-open nvidia-open-lts nvidia-utils nvidia-prime)" ]
 }
 
 @test "hardware_packages: an NVIDIA card on its own decodes video too" {
   printf 'vendor_id\t: AuthenticAMD\n' >"$NOVA_CPUINFO"
   pci 0000:01:00.0 0x030000 0x10de 0x2786
   run hardware_packages linux
-  [ "$output" = "$(printf '%s\n' amd-ucode nvidia-open nvidia-utils libva-nvidia-driver)" ]
+  [ "$output" = "$(printf '%s\n' amd-ucode nvidia-open nvidia-open-lts nvidia-utils libva-nvidia-driver)" ]
 }
 
 @test "hardware_packages: no open-module NVIDIA driver before Turing" {

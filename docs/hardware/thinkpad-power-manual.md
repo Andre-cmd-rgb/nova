@@ -1,9 +1,10 @@
 # thinkpad-power: the manual
 
 The P1 Gen 4i's power policy. On battery it takes the discrete GPU off the PCI
-bus and goes to `power-saver`; plugged in, it brings the card back and goes to
-`performance`. It began as an add-on for Omarchy and is now part of the `nova`
-package, inert on any other computer; the top of
+bus; plugged in, it brings the card back. (The power mode follows the power
+source too, power-saver on battery and performance on AC until you pick
+another, but that is `nova-power-profile`'s, not this tool's.) It is part of
+the `nova` package and inert on any other computer; the top of
 [thinkpad-p1-gen4i.md](thinkpad-p1-gen4i.md) lists where each piece installs.
 
 ## The problem it solves
@@ -24,7 +25,7 @@ these do:
 - **The Vulkan loader** loads every ICD it finds, so any GTK4 app (GTK renders
   with Vulkan) opens `/dev/nvidia0`, `/dev/nvidiactl` and `/dev/nvidia-modeset`
   just by starting.
-- **Common NVIDIA setups** (Omarchy's `nvidia.lua` among them) set
+- **Common NVIDIA setups** set
   `LIBVA_DRIVER_NAME=nvidia` and `__GLX_VENDOR_LIBRARY_NAME=nvidia` whenever
   an NVIDIA is present, so ordinary apps — a browser playing video, a GTK
   app — reach for the discrete card too.
@@ -205,14 +206,14 @@ usb2 report `root hub lost power or was reset`.
 Beyond the GPU, the battery policy sets runtime power management to `auto` on
 PCI devices whose drivers left them pinned at `on`, and lets the HDA codec
 sleep between sounds. Note that `auto` grants permission to suspend; whether a
-device takes it is up to its driver, and a busy one will stay awake. Both are reverted on AC — the runtime PM changes are recorded
-in `/run`, so only the devices this tool actually changed are put back, rather
-than forcing the whole bus to `on` and overriding choices the drivers made at
-boot.
+device takes it is up to its driver, and a busy one will stay awake. Both are
+reverted on AC — the runtime PM changes are recorded in `/run`, so only the
+devices this tool actually changed are put back, rather than forcing the whole
+bus to `on` and overriding choices the drivers made at boot.
 
 The battery policy also turns **Wi-Fi power save on**, and back off on AC.
-Omarchy disables it for the whole distribution, and its reasons are good ones:
-20-300 ms latency spikes on an idle link, and Intel BE200/BE211 firmware that
+Some distributions turn it off for every machine, and their reasons are good
+ones: 20-300 ms latency spikes on an idle link, and Intel BE200/BE211 firmware that
 drops the link outright when the radio naps. Neither applies on battery on the
 machine this was written for — the radio is an AX210, which is not one of the
 parts with that firmware bug, and a page load and a video stream both buffer

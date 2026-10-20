@@ -28,16 +28,15 @@ Everything ships in the `nova` package and is inert on any other computer.
 is found at boot, when firmware has always enumerated it, and kept in
 `/run/thinkpad-power.nvidia-pci` for the rest of the boot (fact 15).
 
-The numbered facts below were written while this ran as an add-on on Omarchy,
-before Nova existed, so they talk about `install.sh`, `/usr/local/bin`,
-Omarchy's menu and Omarchy's power-profile state. Those paths are history; the
-hardware findings and the measurements are not. What `install.sh` did is now
-the table above.
+The numbered facts below were learned before Nova existed, when this was an
+add-on with an installer of its own. Where Nova now does something differently,
+the fact says how; the hardware findings and the measurements stand as they
+were.
 
 ## The machine
 
-ThinkPad P1 Gen 4i, i7-11850H. The facts below were measured under Omarchy 4:
-Hyprland 0.56 + aquamarine 0.14 under uwsm, with sddm.
+ThinkPad P1 Gen 4i, i7-11850H. The facts below were measured on Hyprland 0.56
+and aquamarine 0.14, under uwsm.
 
 | | |
 |---|---|
@@ -56,7 +55,7 @@ so `/dev/dri/by-path/pci-0000:00:02.0-card` is torn into three nonexistent
 paths; aquamarine matches none, logs *"Found no gpus to use"*, and throws
 `CBackend::create() failed!`. The session dies and the greeter silently clears
 the password field. Hence the `/dev/dri/igpu` udev symlink
-(`98-thinkpad-power-igpu.rules`), which is also stable across boots where
+(`98-nova-igpu.rules`), which is also stable across boots where
 `cardN` numbering is not.
 
 **2. Pinning the DRM device is not enough.** It decides which card *draws*, not
@@ -67,32 +66,34 @@ renders with Vulkan) opens `/dev/nvidia0`, `/dev/nvidiactl` and
 `/dev/nvidia-modeset` just by starting. Measured: 9 NVIDIA libraries and three
 device nodes on a bare `vkCreateInstance`; zero once filtered. Hence
 `__EGL_VENDOR_LIBRARY_FILENAMES` and `VK_LOADER_DRIVERS_DISABLE=*nvidia*` in
-`~/.config/uwsm/env-hyprland`.
+`/usr/share/uwsm/env.d/20-nova-thinkpad-p1-gen4i`.
 
 **3. uwsm sources that file with `/bin/sh`** (`/usr/lib/uwsm/prepare-env.sh`,
-`. "${1}"`). A file that does not parse costs the login. It is written as one
-marker-delimited block and the installer runs `sh -n` on the result and refuses
-to keep a block that fails. **Never edit that file line-by-line** — doing so
-once left a dangling `if` with its `fi` deleted.
+`. "${1}"`), for every session on every machine. A file that does not parse
+costs the login. The add-on generated it at install time, and once left a
+dangling `if` with its `fi` deleted. Nova's is a fixed file in the package: it
+reads the model before doing anything else, runs no programs, and the unit
+tests parse it and source it under `sh`. Keep it POSIX.
 
-**4. Omarchy already manages power profiles.** `shell/plugins/services/battery/Service.qml`
-calls `omarchy-powerprofiles-set`, which remembers a profile per source in
-`~/.local/state/omarchy/powerprofiles/{ac,battery}`. This tool used to set them
-too and the last writer won. **Profiles are Omarchy's; do not set them here.**
-The installer only writes what Omarchy should remember for battery.
+**4. Power profiles have one owner, and it is not this tool.** Before Nova, the
+desktop remembered a profile per power source and set it on every plug event,
+and this tool set profiles too; the last writer won, and the profiles were
+lost. Now `nova-power-profile` remembers one per source in
+`~/.local/state/nova/power-profile/`, and the shell's battery service puts it
+back at login and on every plug and unplug. **thinkpad-power never sets a
+profile**, and leaves EPP and the platform profile to power-profiles-daemon.
 
 **5. Do not order the unit `After=power-profiles-daemon.service`.** PPD is
 itself `After=multi-user.target`, so it closes a cycle and systemd breaks it by
 *deleting PPD's start job* — PPD then does not start at boot.
 
-**6. supergfxctl is removed on purpose.** Reboot per switch, `hotplug_type: None`
+**6. supergfxctl is left out on purpose.** Reboot per switch, `hotplug_type: None`
 on non-ASUS hardware, and its `Integrated` leftovers
 (`/usr/lib/systemd/system-sleep/force-igpu`, `supergfxd.service.d/delay-start.conf`)
-run `supergfxctl -m Vfio/-m Integrated` on **every resume**. The installer
-deletes both. Omarchy's menu entry `trigger.hardware.hybrid-gpu` is overridden
-in `~/.config/omarchy/extensions/omarchy-menu.jsonc` to run `thinkpad-power switch`.
-Its original `when:` counts GPUs with `lspci`, so it would vanish exactly when
-the card is off — the override sets `when: "true"`.
+run `supergfxctl -m Vfio/-m Integrated` on **every resume**. The switch is
+`nova power gpu`, which is also the menu's Discrete GPU entry. That entry is
+shown by the model (`nova-hw-detect`), not by counting GPUs: a count with
+`lspci` would hide it exactly when the card is off, and wakes the card to ask.
 
 **7. The policy is edge-triggered and can legitimately decline.** `gpu_off`
 refuses while anything holds the card, rather than pulling it from under a
@@ -156,21 +157,22 @@ worth about a watt. PCIe ASPM is deliberately **opt-in** — `ASPM_ON_BAT=powers
 in `/etc/thinkpad-power.conf` — because forcing L0s/L1 on every link can hang
 an NVMe that is merely ASPM-tolerant, and this machine has had enough hangs.
 
-**14. The installer's heredocs are unquoted, so backticks in them run.**
-`cat >>"$HYPR_CONF" <<LUA` (and `<<ENV`) expand their bodies — that is how
-`$MARK_BEGIN` and the computed EGL list get in. A comment written as
-`` `thinkpad-power run` `` was therefore command substitution: the installer
-executed it, printed `error: run needs a program` mid-install, and spliced the
-empty output into the user's `hyprland.lua`, leaving `so send them there;
-overrides`. Use double quotes in those bodies, never backticks, and escape any
-`\$` that must survive. The two unquoted heredocs are at `install.sh:263` and
-`:304`.
+**14. An unquoted heredoc runs the backticks in it.** The add-on's installer
+appended config with `cat >>"$HYPR_CONF" <<LUA`, unquoted so its variables
+would expand. A comment written as `` `thinkpad-power run` `` was therefore
+command substitution: it ran mid-install, printed `error: run needs a program`,
+and spliced its empty output into the user's Hyprland config. Nova ships those
+files as files and generates nothing at install time, but the rule holds for
+every script here: quote the delimiter (`<<'EOF'`) unless the body must expand,
+and then put no backticks in it.
 
-**15. Re-installing has to work with the card already off the bus.** Once this
-tool has done its job there is nothing in sysfs for `detect_nvidia` to find,
-so the installer concluded the machine had no discrete GPU and refused —
-reproducibly, on every second run. It now falls back to the `NVIDIA_PCI`
-recorded in `/etc/thinkpad-power.conf`.
+**15. Bringing the card back has to work when it is already off the bus.**
+Once the policy has done its job there is nothing in sysfs for `detect_nvidia`
+to find, so the add-on's installer concluded the machine had no discrete GPU
+and refused, on every second run. Firmware always enumerates the card at boot,
+so `thinkpad-power` records its address then, in
+`/run/thinkpad-power.nvidia-pci`, and reads it back for the rest of the boot.
+`NVIDIA_PCI` in `/etc/thinkpad-power.conf` still wins when it is set.
 
 **16. The OC mailbox is locked here — measured, not assumed.** Writing −5 mV
 to the CPU-core plane through MSR `0x150` command `0x11` and reading it back
@@ -227,28 +229,23 @@ an `awk` program in it gets run against a fixture of real input —
 `test/roundtrip.sh` is where that goes.
 
 **19. The initramfs was carrying the NVIDIA driver, and the driver drags 109 MB
-behind it.** *(Opt-in: `./install.sh --boot-path`, along with fact 20. Boot-path
-changes are the one thing here that is not reversible from a running session,
-so they are gated the same way `ASPM_ON_BAT` is. `--uninstall` reverts them
-regardless of the flag.)* mkinitcpio pulls in the firmware a module *declares*, and
+behind it.** mkinitcpio pulls in the firmware a module *declares*, and
 `nvidia.ko` declares four GSP blobs under `nvidia/610.57.04/` — a 109 MB
-directory. Omarchy writes `MODULES+=(nvidia nvidia_modeset nvidia_uvm
-nvidia_drm)` into `/etc/mkinitcpio.conf.d/nvidia.conf` (`install/hardware/nvidia.sh`,
-guarded by `lspci | grep -qi nvidia`, so it does not fire while the card is off
-the bus). That is right on a machine whose displays hang off the NVIDIA. Here
-the panel is on the iGPU and this tool removes the card entirely, so the driver
-was being loaded early, at maximum cost, for a device that renders nothing. The
-boot loader reads the whole UKI off vfat before the kernel starts, so it is
-paid every boot: **9.1 s in Limine against 11.5 s of firmware POST**, with the
-ESP 76% full. The installer empties that file, keeping the original at
-`nvidia.conf.thinkpad-power-orig` — the backup must not end in `.conf`, because
-mkinitcpio sources `*.conf` from that directory and would put the line back.
+directory. The usual NVIDIA setup writes `MODULES+=(nvidia nvidia_modeset
+nvidia_uvm nvidia_drm)` into `/etc/mkinitcpio.conf.d/nvidia.conf`, which is
+right on a machine whose displays hang off the NVIDIA. Here the panel is on the
+iGPU and the policy removes the card entirely, so the driver was being loaded
+early, at maximum cost, for a device that renders nothing. The boot loader reads
+the whole UKI off vfat before the kernel starts, so it is paid every boot:
+**9.1 s in Limine against 11.5 s of firmware POST**, with the ESP 76% full.
+Nova's initramfs (`data/boot/mkinitcpio/10-nova.conf`) never loads NVIDIA early,
+and nothing in Nova writes that file. If one ever appears, a backup of it must
+not end in `.conf`: mkinitcpio sources every `*.conf` in that directory.
 
-`kms` **stays**, and still early-loads i915 for Plymouth. Omarchy's hook file
-drops `kms` only when `nvidia_drm` is in `MODULES` and no other GPU is present,
-so emptying the file leaves `kms` in place rather than removing it. `nouveau` is
-already blacklisted by `nvidia-utils.conf`, and autodetect cannot see the card
-while it is off the bus, so nothing pulls its firmware in either.
+`kms` **stays**: it early-loads i915, so the firmware logo hands straight over
+to the compositor. `nouveau` is already blacklisted by `nvidia-utils`, and
+autodetect cannot see the card while it is off the bus, so nothing pulls its
+firmware in either.
 
 **20. 4 s of every boot was provisioning a TPM key nothing reads.**
 `systemd-tpm2-setup-early` (2.10 s) and `systemd-tpm2-setup` (1.99 s) sit on the
@@ -256,9 +253,11 @@ critical chain — `sysinit.target` waits for them, and together they are 4.1 s 
 a 6.0 s userspace. They provision the SRK for TPM-bound disk unlock. There is
 **no LUKS volume on this machine** (`nvme0n1p2` is plain btrfs), no pcrlock
 policy, and the SRK has been cached since install, so this was not first-boot
-generation — it was 4.1 s per boot for a key with no consumer. The installer
-masks both, and only when both guards hold. They are `static` units, so `disable`
-is a no-op and `mask` is the only thing that works.
+generation — it was 4.1 s per boot for a key with no consumer. Nova skips both
+with a drop-in, `ConditionKernelCommandLine=nova.tpm2`
+(`data/systemd/system/tpm2-setup.conf`), so adding `nova.tpm2` to the command
+line brings them back for TPM-bound disk unlock. They are `static` units:
+`disable` is a no-op, so a condition or a mask is the only thing that works.
 
 **21. `systemd-analyze`'s boot split does not add up here — use the loader's own
 numbers.** It reported `11.4s (firmware) + 14.7s (loader)`, but
@@ -308,9 +307,9 @@ Also on every resume, neither gating the unlock: the 5G modem
 cycle, and the Thunderbolt xHCI (`0000:00:0d.0`) reinitialises with
 `USBSTS 0x401`, so usb1/usb2 report `root hub lost power or was reset`.
 
-**24. Theming the boot path is not this tool's job.** Under Omarchy, Limine and
-Plymouth drifted from the theme, and fixing that was a patch for Omarchy, not
-power management. Nova settles it by drawing no boot surfaces at all: Limine is
+**24. Theming the boot path is not this tool's job.** Limine and Plymouth used
+to drift from the desktop theme, and fixing that was never power management.
+Nova settles it by drawing no boot surfaces at all: Limine is
 quiet with a 1 s timeout and there is no Plymouth. The split the user drew still
 holds: sleep and boot *timing* belong here because they are time and power;
 *colours* do not.
@@ -361,13 +360,12 @@ time-to-visible.
 The modem's `mhi_wwan_ctrl mhi0_MBIM: Failed to queue buffer` is loud — 114
 lines — but takes 90 ms, so it is noise, not latency.
 
-**28. The lock screen blanks after 5 s and that is Omarchy, by design.**
-`shell/plugins/lock/Service.qml` has `idleBlankTimer.interval: 5000`, which
-runs `omarchy-brightness-display off`. It re-arms once across a resume, so it
-reads as ~10 s after opening the lid. It is not configurable through
-`shell.json` — changing it means `omarchy plugin clone` on the lock plugin. It
-is only ever noticed when unlocking is *already* broken, so fix the unlock
-first.
+**28. The lock screen blanks after 5 s, by design.**
+`src/shell/plugins/lock/Service.qml` has `idleBlankTimer.interval: 5000`, which
+runs `nova-brightness-display off` (and the same for the keyboard backlight).
+It re-arms once across a resume, so it reads as ~10 s after opening the lid. It
+is a constant in that file, not a setting. It is only ever noticed when
+unlocking is *already* broken, so fix the unlock first.
 
 **29. Hibernate resume leaves the discrete card powered and invisible, and
 nothing reports it.** A hibernate is a full power cycle: firmware enumerates
@@ -408,8 +406,8 @@ It has to be `1`. `2` is "auto", which engages only for surfaces whose content
 type is `game`; a video is tagged `video` and would never qualify. Hyprland
 drops back to compositing on its own the moment anything must be drawn over the
 fullscreen surface — a notification, the bar, a screencopy client — so there is
-no correctness cost to leaving it on, and `hyprctl reload` undoes it live. It is
-in the installer's `hyprland.lua` block, so `--uninstall` takes it away.
+no correctness cost to leaving it on. It is set in Nova's Hyprland module for
+this model, `default/hypr/hardware/thinkpad-p1-gen4i.lua`.
 
 Decode itself was re-verified rather than trusted, because there is no `vainfo`
 on this machine: a ctypes probe on `libva.so.2` + `libva-drm.so.2`
@@ -420,22 +418,21 @@ hardware-decoded here and h264ify-style codec forcing would cost power, not save
 it. Write the probe, do not assume — this is the same rule as the EGL/Vulkan
 probes.
 
-**32. Omarchy's Wi-Fi power-save argument is about a different chip.**
-`/etc/NetworkManager/conf.d/omarchy-wifi-powersave.conf` sets
-`wifi.powersave = 2` distribution-wide, and its comment gives two reasons:
-20-300 ms latency spikes on an idle link, and Intel **BE200/BE211** firmware
-that drops the link when the radio naps. The radio here is an **AX210**
+**32. The usual argument against Wi-Fi power save is about a different chip.**
+Some distributions turn it off for every machine (`wifi.powersave = 2`), for
+two reasons: 20-300 ms latency spikes on an idle link, and Intel
+**BE200/BE211** firmware that drops the link when the radio naps. The radio here is an **AX210**
 (`8086:2725`, Typhoon Peak) — not one of those parts — and the latency is only
 felt by interactive traffic, which a page load and a video stream are not. So
 the policy sets it on for battery and off on AC.
 
 The trap is that NetworkManager writes the flag at **every connection
 activation**, so a roam, a reconnect or a resume silently reverts it and
-`thinkpad-power status` would be the only place it showed. The installer writes
-`/etc/NetworkManager/conf.d/zz-thinkpad-power-wifi.conf` with
-`wifi.powersave = 1` ("ignore") to stop that. The `zz-` prefix is load-bearing:
-conf.d is read in plain alphabetical order and a `99-` prefix sorts *before*
-`omarchy-`, so it would have lost.
+`thinkpad-power status` would be the only place it showed.
+`/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf` sets
+`wifi.powersave = 1` ("ignore") to stop that. conf.d is read in plain
+alphabetical order and the last file wins, so another file that sets the flag
+and sorts after it would undo it; Nova ships no other.
 
 `WIFI_POWERSAVE_ON_BAT` is the one tunable here that defaults to **on**. Its
 failure mode is latency, not a hang, which is what separates it from `ASPM_ON_BAT`.
@@ -457,11 +454,10 @@ modeline 592.56 3840 3888 3920 4000 2400 2403 2409 3086 +hsync -vsync
 
 It is worth ~20% of every per-frame cost while anything animates, and 24 fps
 video lands in a 2:2 cadence. It also makes scrolling visibly less smooth, and
-it is still a display-mode change, so it is a **key binding** (`SUPER+SHIFT+F12`,
-with `SUPER+CTRL+F12` reloading back to 60) that writes nothing, plus a
-commented `hl.monitor` in `monitors.lua` for whoever decides they want it
-permanently. Live-only is what makes a mode change safe to put on a key: if the
-panel refuses it, a reload or a logout is already the fix.
+it is still a display-mode change, so it was tried as a key binding that writes
+nothing: live-only is what makes a mode change safe to try, because if the
+panel refuses it, a reload or a logout is already the fix. Fact 39 measured it,
+and Nova does not ship the binding.
 
 **34. PL1 was half the CPU story, and the ceiling was none of it.** Fact 16
 capped the sustained limit and stopped there. Two things were left:
@@ -516,9 +512,10 @@ stands down on all four while `/run/thinkpad-powerd.owns-cpu` exists, so there
 is one writer at a time — that marker is the whole coordination protocol.
 
 **Fans, and the three lines of defence.** `FAN_CONTROL` defaults on but is
-gated on `thinkpad_acpi` having been loaded with `fan_control=1`, which the
-installer writes to modprobe.d and which needs a reboot; before that it is a
-no-op with one line of explanation rather than a knob nobody finds. The battery
+gated on `thinkpad_acpi` having been loaded with `fan_control=1`, which
+`/etc/modprobe.d/nova-hw-thinkpad-fan.conf` sets and which is read only when the
+module loads; until then it is a no-op with one line of explanation rather than
+a knob nobody finds. The battery
 curve is deliberately *lazier* than the EC's below 70 C, because a warm chassis
 is cheaper than a spinning fan. Then: the daemon releases to `auto` above
 `GOVERNOR_TEMP_CRITICAL` before the curve is consulted at all, so no arrangement
@@ -587,7 +584,8 @@ result. It is also the expected one in hindsight: a compositor only redraws on
 damage, so on a static desktop the refresh rate costs almost nothing, and the
 20% saving is 20% of the frames that are actually drawn — which is nearly none
 while reading. It may still be worth something during continuous animation, but
-that has not been measured and the binding is there for anyone who wants to.
+that has not been measured; the command below sets it live for anyone who wants
+to try.
 
 **`hyprctl keyword` does nothing under the Lua parser.** It answers *"keyword
 can't work with non-legacy parsers. Use eval."* and changes nothing, which is
@@ -635,7 +633,7 @@ with the dGPU off the bus, backlight at 90/600:
 | Chrome open and idle | **16.4 W** |
 | Chrome busy, ~29 renderers, plus a coding agent in a terminal | **19-21 W** |
 
-The README's own figures agree: ~12 W coding, ~19 W browser. **12 W is the
+The figures this machine was known by before agree: ~12 W coding, ~19 W browser. **12 W is the
 coding number and it is already met; 12 W while browsing is not reachable on
 this hardware.** Chrome's GPU process alone measured 24.4% of a core presenting
 a windowed video, with Hyprland a further 9.4% — that is watts, and no kernel
@@ -648,7 +646,9 @@ Verified on this machine: `BatterySaverModeAvailability: 2` and
 `HighEfficiencyModeEnabled: true` both report **OK / Platform / Machine /
 Mandatory**. So 2 really is "enabled whenever on battery" and the value is
 accepted — that was documented behaviour being trusted until this, not
-something measured.
+something measured. Nova does not pin them: the add-on only wrote the policy
+when asked, a mandatory policy takes both switches away from the user, and both
+are two clicks in `chrome://settings/performance`.
 
 Two things that look like failures and are not. First, `Local State` keeps
 showing `"battery_saver_mode":{"state":0}` *after* the policy is live: a
@@ -663,16 +663,13 @@ key against its policy list and gives an `Error` row to anything it does not
 recognise. The first version of this file carried a `"_comment"` key explaining
 itself, which earned a permanent red row in the user's `chrome://policy` next
 to two OK ones. There is no comment syntax in JSON and no comment key in
-Chrome's schema; the explanation belongs in the filename and in `install.sh`.
-
-(The other `Error` row on this machine, `BrowserColorScheme: device`, is
-Omarchy's own `/etc/opt/chrome/policies/managed/color.json` and is not ours.)
+Chrome's schema; the explanation belongs in the filename and in whatever writes
+it. Nova's own policy file, the theme colour, holds one key for this reason.
 
 **44. The GPU policy was half-blind, and it is why "turn it off" mostly did
-not.** `gpu_users` scanned `/dev/nvidia*` and nothing else. But
-`/etc/modprobe.d/nvidia.conf` — written by EnvyControl before this tool
-existed, and what Omarchy's own installer writes too — sets
-`nvidia-drm modeset=1`, so the card *also* registers a DRM device. An open fd
+not.** `gpu_users` scanned `/dev/nvidia*` and nothing else. But with
+`nvidia-drm modeset=1`, which PRIME offload needs, the card *also* registers a
+DRM device. An open fd
 on that node pins `nvidia_drm` exactly as hard as an fd on `/dev/nvidia0`, and
 the policy could not see it. So it reported nothing holding the card, tried the
 unload anyway, and failed with a message that named nobody.
@@ -739,29 +736,24 @@ Trap found writing those tests, in the test and not the tool: `grep -v` exits
 module looks like. The shim's `&& mv` therefore never ran and the fixture kept
 the module, which reads as the unloader failing.
 
-**47. `sudo ./install.sh` silently configured the wrong account, and every
-step still printed a tick.** The four session paths — the compositor's GPU pin
-in `env-hyprland`, the `hyprland.lua` block, the Omarchy menu override, and
-Omarchy's remembered battery profile — were all keyed off `$HOME`, which under
-`sudo` is `/root`. Nothing reads `/root/.config`, so the session half of the
-install did nothing at all while reporting success:
+**47. A per-user step run under `sudo` configures root, and still reports
+success.** The add-on's installer wrote four session files — the compositor's
+GPU pin, a Hyprland block, a menu entry and a remembered battery profile —
+under `$HOME`, which under `sudo` is `/root`. Nothing reads `/root/.config`, so
+the session half of the install did nothing at all while printing a tick for
+every step:
 
 ```
   ✓ /root/.config/uwsm/env-hyprland (pins the compositor to /dev/dri/igpu)
 ```
 
-"Run it without sudo, the script escalates itself" was the existing workaround
-and it is in *Working here*, but a workaround that fails silently when ignored
-is a bug. The invoking account is recovered from `SUDO_USER` now, and anything
-created below that home while running as root is chowned back — a root-owned
-file in the user's own home would break the next run started as the user.
-`XDG_CONFIG_HOME` is honoured only when `$REAL_HOME` is `$HOME`, since that
-variable describes whichever session exported it.
-
-No damage on the machine this was found on: the user's files were already
-correct from an earlier non-sudo run, so the sudo run wrote a stray unread copy
-under `/root` and changed nothing else. The stray copy is harmless and can be
-removed with `sudo rm -rf /root/.config/uwsm`.
+Nova has no such step: the session files are system files in the package (the
+uwsm `env.d` file and the Hyprland hardware module), and the one piece of
+per-user state, the remembered power profile, is written by the session itself.
+The rule stands for anything here that writes into a home while running as
+root: recover the account from `SUDO_USER`, and chown back what is created
+there, since a root-owned file in the user's home breaks the next run as the
+user.
 
 **48. Fact 44's fix inverted itself: the DRM card node is held by logind
 forever, so the policy declined every single time.** Adding the DRM nodes to
@@ -840,13 +832,13 @@ default since 560) and EnvyControl's generated `nvidia.conf` sets only
 `modeset=1`, so nothing here ever turned it off. `modeset` stays — fact 44 is
 right that PRIME needs it; the two are unrelated options.
 
-`install.sh` now writes `/etc/modprobe.d/thinkpad-power-nvidia-fbdev.conf` with
-`options nvidia-drm fbdev=0`, as its own file because nvidia.conf is
-EnvyControl's and gets rewritten (modprobe merges options across files).
+Nova's hardware profile installs `/etc/modprobe.d/nova-hw-nvidia-fbdev.conf`
+with `options nvidia-drm fbdev=0`, in a file of its own because modprobe merges
+options across files and `nvidia.conf` may belong to something else.
 `unload_nvidia_modules` also names the condition when it sees it, since
-`refs: 1, held by -` on an idle card is otherwise unactionable. **It needs a
-reboot to take effect** — the parameter is read when the driver loads, and the
-driver is exactly what cannot be unloaded.
+`refs: 1, held by -` on an idle card is otherwise unactionable. **A change to it
+needs a reboot** — the parameter is read when the driver loads, and the driver
+is exactly what cannot be unloaded.
 
 ## Working here
 
@@ -865,9 +857,10 @@ driver is exactly what cannot be unloaded.
 - **Prove a driver leak, do not guess it:** a few lines of Python that load
   `libEGL.so.1` or `libvulkan.so.1` through ctypes, then read
   `/proc/self/maps` and `/proc/self/fd`, show exactly what opened the card.
-- **The uwsm `env.d` file is sourced by `/bin/sh` at every login.** Run `sh -n`
-  on it, and source it under `sh` to see the exported values, before anyone
-  logs out: a file that fails there costs the login.
+- **The uwsm `env.d` file is sourced by `/bin/sh` at every login.** The unit
+  tests parse it and source it; on the machine itself, source it under `sh` to
+  see the exported values before anyone logs out: a file that fails there costs
+  the login.
 - **Sample with `sleep`, never `read -t N </dev/null`,** which returns at once
   (`/dev/null` is instant EOF). A loop built on it runs every iteration inside
   a second and prints a column of identical numbers that look like a stable

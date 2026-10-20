@@ -2,9 +2,11 @@
 #
 # thinkpad-power — AC/battery power policy for a hybrid-graphics laptop.
 #
-#   battery : the discrete GPU is unloaded and taken off the PCI bus, and the
-#             power profile drops to power-saver.
-#   AC      : the card is rescanned back and the profile goes to performance.
+#   battery : the discrete GPU is unloaded and taken off the PCI bus.
+#   AC      : the card is rescanned back.
+#
+# The power profile follows the power source as well, but that belongs to
+# nova-power-profile, which the shell runs on every plug and unplug (fact 4).
 #
 # The point is the dGPU. On a laptop whose panel hangs off the iGPU, the
 # discrete card renders nothing on the desktop and still bills several watts

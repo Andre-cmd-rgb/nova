@@ -127,9 +127,10 @@ the shared folder also becomes the default for themes that have no pick of their
 ## Power and hardware
 
 - **Power profiles** belong to power-profiles-daemon. `nova-power-profile` sets one
-  and remembers it for the current power source; the shell's battery panel runs
+  and remembers it for the current power source; the shell's battery service runs
   `nova-power-profile restore` at login and on every plug and unplug, which puts back
   the remembered choice (performance on AC and power-saver on battery by default).
+  thinkpad-power never sets one.
 - **The ThinkPad P1 Gen 4i** adds `thinkpad-power` (the policy: the dGPU off the PCI
   bus on battery, CPU and platform tunables, Wi-Fi power save, the hibernate rescan)
   and `thinkpad-powerd` (the governor that owns PL1, PL2, the frequency ceiling, the
@@ -235,12 +236,20 @@ the shared folder also becomes the default for themes that have no pick of their
   - no `sudo` inside helpers; privileged actions go through polkit (`pkexec`). The
     one exception is `thinkpad-power switch`, which runs in a terminal and says so
 - **QML:** qmllint-clean. Logic lives in singletons that can be tested against fixtures.
-  No `property var data` or `property string state` on an Item root, because both shadow
-  Item properties.
+  Three traps that load without an error and draw nothing:
+  - no `property var data` or `property string state` on an Item root: both shadow
+    Item properties, and `data` is where children go;
+  - inside `Type { }`, a name the type declares means the type's own property, so
+    `Bar { shell: shell }` assigns the bar's empty `shell` to itself. Pass an outer
+    object in under another name (see the bar's Loader in `shell.qml`);
+  - Nerd Font icons in the private-use range (U+E000-U+F8FF) are easy to lose when a
+    file is rewritten by a tool; `tests/unit/cli/menu.bats` catches an empty one in
+    the menu.
 - **Rust:** one Cargo workspace at the root. `cargo fmt`, `cargo clippy -D warnings`,
-  no unsafe beyond FFI that std lacks (the governor's signal handlers), std only unless a dependency clearly pays for itself. Tools a user waits
-  on (the theme engine, the power manager) are Rust; glue that mostly runs other
-  programs stays bash.
+  no unsafe beyond FFI that std lacks (the governor's signal handlers), and std only
+  unless a dependency clearly pays for itself. Tools a user waits on (the theme
+  engine, the power manager) are Rust; glue that mostly runs other programs stays
+  bash.
 - **Tests:**
   - bats for helpers (`tests/unit/`); `make test` runs them
   - `tests/qml/run` runs the shell's logic tests (the plugin registry against

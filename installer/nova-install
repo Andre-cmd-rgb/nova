@@ -172,9 +172,11 @@ hardware_packages() {
       0x1002) printf '%s\n' "${GPU_AMD[@]}"; igpu=1 ;;
       0x10de)
         device=$(<"$dev/device")
-        # The open modules need GSP firmware, which starts with Turing.
+        # The open modules need GSP firmware, which starts with Turing. The
+        # LTS fallback kernel gets its own build, so it can drive the card too.
         if ((device >= 0x1e00)); then
           if [[ $kernel == linux-nova ]]; then echo nvidia-open-nova; else echo nvidia-open; fi
+          echo nvidia-open-lts
           echo nvidia-utils
           dgpu=1
         fi
@@ -213,7 +215,7 @@ every_package() {
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
     printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" \
-      nvidia-open-nova nvidia-open nvidia-utils nvidia-prime libva-nvidia-driver
+      nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver
     for list in "$SHARE"/hardware/*/packages; do
       [[ -r $list ]] || continue
       sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"

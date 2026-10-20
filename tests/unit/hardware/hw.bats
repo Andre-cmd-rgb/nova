@@ -107,3 +107,17 @@ model() { printf '%s\n' "$1" >"$NOVA_DMI_PATH/product_version"; }
   run "$apply" --bogus
   [ "$status" -eq 2 ]
 }
+
+# uwsm sources these with /bin/sh at every login, on every machine: one that
+# fails to parse or run costs the login (docs/hardware/thinkpad-p1-gen4i.md,
+# fact 3).
+@test "session env: every uwsm env.d file is POSIX sh that sources cleanly" {
+  local f
+  for f in "$NOVA_HARDWARE"/uwsm/*; do
+    sh -n "$f"
+    if command -v shellcheck >/dev/null; then shellcheck -s sh -S warning "$f"; fi
+    run sh -c '. "$1" && echo sourced' sh "$f"
+    [ "$status" -eq 0 ]
+    [ "$output" = sourced ]
+  done
+}

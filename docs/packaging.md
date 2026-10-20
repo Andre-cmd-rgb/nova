@@ -13,7 +13,8 @@ a release pins, and nothing is built on a laptop except to test a PKGBUILD.
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
 
 Arch's own `linux` stands in for `linux-nova` on CPUs older than x86-64-v3,
-with `nvidia-open`, and `linux-lts` is always installed as the fallback entry.
+with `nvidia-open`, and `linux-lts` is always installed as the fallback entry,
+with `nvidia-open-lts` when there is an NVIDIA card.
 
 ## Building one locally
 
