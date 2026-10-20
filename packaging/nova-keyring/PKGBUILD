@@ -10,7 +10,7 @@
 # the date the key set last changed.
 
 pkgname=nova-keyring
-pkgver=0
+pkgver=20261020
 pkgrel=1
 pkgdesc='Key that signs the Nova package repository'
 arch=(any)
