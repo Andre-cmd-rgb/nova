@@ -40,6 +40,13 @@ jobs:
             { echo "::error::$final exists already"; exit 1; }
           [[ $(gh release view "$CANDIDATE" --json isDraft --jq .isDraft) == false ]] ||
             { echo "::error::$CANDIDATE has no published release to have been tested"; exit 1; }
+          # Testers on a later candidate are on a later Arch snapshot, and nova
+          # update never moves a system back to an older one: they would be
+          # offered this release and then refused it.
+          newest=$(gh release list --limit 100 --json tagName,isDraft \
+            --jq ".[] | select(.isDraft | not) | .tagName | select(startswith(\"$final-\"))" | sort -V | tail -n 1)
+          [[ $newest == "$CANDIDATE" ]] ||
+            { echo "::error::$newest is a later candidate of $final; promote that one"; exit 1; }
           arch_date=$(gh release download "$CANDIDATE" --pattern release.toml --output - |
             sed -n 's/^arch_date = "\([0-9/]*\)"$/\1/p')
           [[ -n $arch_date ]] || { echo "::error::$CANDIDATE's release.toml has no arch_date"; exit 1; }

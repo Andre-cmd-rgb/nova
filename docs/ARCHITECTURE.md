@@ -218,9 +218,11 @@ the shared folder also becomes the default for themes that have no pick of their
   (`nova-install --answers`) onto a blank disk in a KVM machine, boots the
   result, and has a probe check the lock, Hyprland, the shell, greetd and
   `nova doctor` from inside.
-- **Updating:** `nova update` moves a system to the newest release. It rewrites the
-  pacman mirror to that date, runs `pacman -Syu` and updates the `[nova]` repository
-  URL, with a snapper snapshot before and after. Pre-releases (the candidates)
+- **Updating:** `nova update` moves a system to the newest release. It points the
+  pacman mirror at the release's Arch date and the `[nova]` repository at its URL,
+  updates the keyrings, then runs `pacman -Su`, with a snapper snapshot before and
+  after. A failed step puts the old files and package databases back; afterwards it
+  checks that every kernel's boot image was rebuilt. Pre-releases (the candidates)
   reach only systems that opted in (`nova update --candidates on`) or are
   already on one.
 - **Not redistributed:** Chrome and VS Code. They are built on the machine from their

@@ -75,6 +75,15 @@ toml_get() {
   sed -n -E "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*\"([^\"]*)\".*/\1/;T;p;q" "$1"
 }
 
+# Dies with what GitHub's answer means for someone waiting on it.
+api_error() { # code what
+  case $1 in
+    403 | 429) die "GitHub's rate limit for this address is used up; try again within the hour (GITHUB_TOKEN raises it)" ;;
+    401) die "GitHub refused GITHUB_TOKEN; unset it or renew it" ;;
+    *) die "GitHub answered $1 for $2" ;;
+  esac
+}
+
 api_get() { # path dest -> HTTP status on stdout; non-zero only if curl itself failed
   local -a auth=()
   [[ -z ${GITHUB_TOKEN:-} ]] || auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
@@ -96,35 +105,53 @@ fetch_release() {
   local dest=$1 want=$2 pre=$3 code list
   if [[ -n $want ]]; then
     code=$(api_get "/releases/tags/v${want#v}" "$dest") || die "cannot reach GitHub"
-    [[ $code == 200 ]] || die "no release v${want#v} (GitHub answered $code)"
-    return 0
+    case $code in
+      200) return 0 ;;
+      404) die "there is no release v${want#v}" ;;
+      *) api_error "$code" "release v${want#v}" ;;
+    esac
   fi
   if [[ $pre != yes ]]; then
     code=$(api_get "/releases/latest" "$dest") || die "cannot reach GitHub"
     case $code in
       200) return 0 ;;
       404) return 4 ;; # nothing but pre-releases (or nothing at all) is published
-      *)   die "GitHub answered $code for the latest release" ;;
+      *) api_error "$code" "the latest release" ;;
     esac
   fi
   # releases/latest never returns a pre-release, so a system on a beta follows the list.
+  local tag best=''
   list=$(mktemp)
   code=$(api_get "/releases?per_page=30" "$list") || { rm -f "$list"; die "cannot reach GitHub"; }
-  [[ $code == 200 ]] || { rm -f "$list"; die "GitHub answered $code for the release list"; }
-  jq -e '[.[] | select(.draft | not)] | first' "$list" > "$dest" 2>/dev/null || { rm -f "$list"; return 4; }
+  [[ $code == 200 ]] || { rm -f "$list"; api_error "$code" "the release list"; }
+  # The newest by version: GitHub orders the list by commit date, and a final
+  # release shares its candidate's commit.
+  while IFS= read -r tag; do
+    [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || continue
+    if [[ -z $best ]] || (($(vercmp "$(tag_pkgver "$tag")" "$(tag_pkgver "$best")") > 0)); then
+      best=$tag
+    fi
+  done < <(jq -r '.[]? | select(.draft | not) | .tag_name // empty' "$list" 2>/dev/null)
+  if [[ -z $best ]]; then
+    rm -f "$list"
+    return 4
+  fi
+  jq --arg tag "$best" '[.[] | select(.tag_name == $tag)] | first' "$list" >"$dest"
   rm -f "$list"
 }
 
 # --check: one line for the shell's update badge. Cached so a polling widget does not
 # burn the unauthenticated API rate limit (60 requests an hour).
 check_only() {
-  local want=$1 now cached_at cached_tag tag='' tmp rc=0 apps
+  local want=$1 now cached_at cached_tag tag='' rc=0 apps
   now=$(date +%s)
   if [[ -z $want && -r $CACHE_FILE ]] && read -r cached_at cached_tag < "$CACHE_FILE" &&
      [[ $cached_at =~ ^[0-9]+$ ]] && (( now - cached_at < CACHE_TTL )); then
     tag=$cached_tag
   else
+    # Not local: the EXIT trap runs after this function, when fetch_release dies.
     tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
     fetch_release "$tmp" "$want" "$(wants_prereleases)" || rc=$?
     if (( rc != 4 )); then
       tag=$(jq -r '.tag_name // empty' "$tmp")
@@ -223,12 +250,17 @@ update_release() {
     local rc=0
     fetch_release "$tmp/release.json" "$want" "$(wants_prereleases)" || rc=$?
     if (( rc == 4 )); then
-      echo "No Nova release is published yet."
+      if [[ $(wants_prereleases) == yes ]]; then
+        echo "No Nova release is published yet."
+      else
+        echo "No final Nova release is published yet; nova update --candidates on follows the release candidates."
+      fi
       return 0
     fi
     tag=$(jq -r '.tag_name // empty' "$tmp/release.json")
     [[ -n $tag ]] || die "the release has no tag"
-    notes=$(jq -r '.body // empty' "$tmp/release.json")
+    # Printed in a terminal: no escape sequences from the release page.
+    notes=$(jq -r '.body // empty' "$tmp/release.json" | tr -d '\000-\010\013-\037\177')
     local asset
     asset=$(jq -r '[.assets[]? | select(.name == "release.toml")][0].browser_download_url // empty' "$tmp/release.json")
     [[ -n $asset ]] || die "release $tag has no release.toml asset; it is incomplete, try again later"

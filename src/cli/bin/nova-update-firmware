@@ -7,9 +7,12 @@ set -euo pipefail
 command -v fwupdmgr >/dev/null || { echo "fwupd is not installed: sudo pacman -S fwupd" >&2; exit 1; }
 
 # fwupdmgr exits 2 for "nothing to do": metadata already fresh, no updates.
+# Metadata that cannot be refreshed (offline) is not fatal: the copy from the
+# last refresh still says what there is to install.
 status=0
 fwupdmgr refresh || status=$?
-((status == 0 || status == 2)) || exit "$status"
+((status == 0 || status == 2)) ||
+  echo "nova-update-firmware: could not refresh the firmware list; using the one from last time" >&2
 
 status=0
 fwupdmgr update || status=$?

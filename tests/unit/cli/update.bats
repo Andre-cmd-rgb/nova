@@ -133,3 +133,26 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   run candidates maybe
   [ "$status" -ne 0 ]
 }
+
+@test "candidates: the newest release by version, whatever order GitHub lists them in" {
+  export NOVA_UPDATE_CANDIDATES="$SCRATCH/config/update-candidates" NOVA_UPDATE_CACHE="$SCRATCH/cache"
+  echo 1.1.0rc.2 >"$PKGVER"
+  # A final shares its candidate's commit, so GitHub can list a later
+  # candidate above it.
+  stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; url=$1; shift; done
+    case $url in
+      *"/releases?"*) echo "[{\"tag_name\":\"v1.1.0-rc.3\",\"draft\":false},{\"tag_name\":\"v1.2.0-rc.1\",\"draft\":true},{\"tag_name\":\"v1.1.0\",\"draft\":false},{\"tag_name\":\"v1.1.0-rc.2\",\"draft\":false}]" >"$out" ;;
+    esac
+    printf 200'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$status" -eq 0 ]
+  [ "$output" = "available 1.1.0" ]
+}
+
+@test "a used-up rate limit says so" {
+  export NOVA_UPDATE_CACHE="$SCRATCH/cache"
+  stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; shift; done; echo "{}" >"$out"; printf 403'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$status" -ne 0 ]
+  [[ $output == *"rate limit"* ]]
+}

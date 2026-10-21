@@ -10,13 +10,20 @@
 #      mirror and repository files together with the old packages
 #   2. write /etc/pacman.d/nova-mirrorlist (Arch Linux Archive snapshot) and
 #      /etc/pacman.d/nova-repo (the release's [nova] server)
-#   3. pacman -Syyu (-Syyuu with --allow-downgrade). The databases are refreshed
-#      with -yy because pacman skips a database that is not newer than its local copy,
-#      which is exactly the case when moving to an older snapshot. A failed upgrade
-#      puts the previous files back.
-#   4. install anything the new release adds to this computer's hardware profile
-#   5. snapper post-snapshot
-#   6. check that every installed kernel still has a boot entry whose files exist
+#   3. the keyrings first (pacman -Syy archlinux-keyring nova-keyring), so a new
+#      packager key is trusted before the upgrade checks signatures. The databases
+#      are refreshed with -yy because pacman skips a database that is not newer
+#      than its local copy, which is exactly the case when moving to an older
+#      snapshot.
+#   4. pacman -Su (-Suu with --allow-downgrade). A failed step puts the previous
+#      mirror and repository files back, and the databases that went with them.
+#   5. install anything the new release adds to this computer's hardware profile
+#   6. snapper post-snapshot
+#   7. check that every installed kernel still has a boot entry whose files exist
+#      and hold that kernel
+#
+# Closing the terminal does not stop it: from then on its output goes to
+# /var/log/nova-update.log.
 #
 # Every argument is validated: this runs as root and its caller is merely whoever
 # polkit let through.
@@ -25,6 +32,8 @@ set -euo pipefail
 ROOT=${NOVA_ROOT:-} # a test seam: prefix for every path; pkexec strips the environment
 MIRRORLIST=$ROOT/etc/pacman.d/nova-mirrorlist
 REPOFILE=$ROOT/etc/pacman.d/nova-repo
+SYNC_DIR=$ROOT/var/lib/pacman/sync
+LOG=$ROOT/var/log/nova-update.log
 SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-root}
 
 die() { printf 'nova update: %s\n' "$*" >&2; exit 1; }
@@ -54,11 +63,15 @@ write_config() {
   } | write_file "$REPOFILE"
 }
 
+# The sync databases go with the mirror files: put back without them, pacman
+# would read the new snapshot's packages from the old snapshot's server.
 backup_config() {
   local f
   for f in "$MIRRORLIST" "$REPOFILE"; do
     if [[ -e $f ]]; then cp -p "$f" "$f.nova-prev"; else rm -f "$f.nova-prev"; fi
   done
+  rm -rf "$SYNC_DIR.nova-prev"
+  if [[ -d $SYNC_DIR ]]; then cp -a "$SYNC_DIR" "$SYNC_DIR.nova-prev"; fi
 }
 
 restore_config() {
@@ -66,11 +79,19 @@ restore_config() {
   for f in "$MIRRORLIST" "$REPOFILE"; do
     if [[ -e $f.nova-prev ]]; then mv -f "$f.nova-prev" "$f"; restored=1; fi
   done
+  if [[ -d $SYNC_DIR.nova-prev ]]; then
+    rm -rf "$SYNC_DIR"
+    mv "$SYNC_DIR.nova-prev" "$SYNC_DIR"
+  fi
   if (( restored )); then
     warn "put the previous mirror and repository files back"
   else
     warn "there were no previous mirror files to restore; the new ones stay, pacman.conf needs them"
   fi
+}
+
+drop_backup() {
+  rm -rf "$MIRRORLIST.nova-prev" "$REPOFILE.nova-prev" "$SYNC_DIR.nova-prev"
 }
 
 snapshot() { # description, then extra snapper arguments; prints the snapshot number
@@ -132,7 +153,7 @@ find_esp() {
 # loads from the boot partition is there. Entries that live in a snapshot (written by
 # limine-snapper-sync) point into the root filesystem and cannot be checked from here.
 verify_boot_entries() {
-  local esp conf pkgbase_file pkgbase line value rel ok=0
+  local esp conf pkgbase_file pkgbase kver uki line value rel ok=0
   esp=$(find_esp) || { warn "no limine.conf found (looked at ESP_PATH, /efi, /boot, /boot/efi)"; return 1; }
   conf=$esp/limine.conf
   [[ -s $conf ]] || { warn "$conf is missing or empty"; return 1; }
@@ -140,10 +161,21 @@ verify_boot_entries() {
   for pkgbase_file in "$ROOT"/usr/lib/modules/*/pkgbase; do
     [[ -r $pkgbase_file && -e ${pkgbase_file%pkgbase}vmlinuz ]] || continue
     pkgbase=$(<"$pkgbase_file")
+    kver=${pkgbase_file%/pkgbase}
+    kver=${kver##*/}
     if ! grep -q -F -- "$pkgbase" "$conf"; then
       warn "$conf has no boot entry for the installed kernel $pkgbase"
       ok=1
     fi
+    # An image the kernel hook did not rebuild boots the old kernel, whose
+    # modules this update removed. Each image carries its kernel's version.
+    for uki in "$esp"/EFI/Linux/*_"$pkgbase".efi "$esp"/EFI/Linux/*_"$pkgbase"-fallback.efi; do
+      [[ -f $uki ]] || continue
+      if ! LC_ALL=C grep -aqF -- "$kver" "$uki"; then
+        warn "${uki#"$esp"/} was not rebuilt for the installed $pkgbase ($kver)"
+        ok=1
+      fi
+    done
   done
 
   while IFS= read -r line; do
@@ -160,6 +192,39 @@ verify_boot_entries() {
   done < <(grep -E '^[[:space:]]*(path|kernel_path|module_path|image_path|dtb_path):' "$conf" || true)
 
   return "$ok"
+}
+
+# Why this machine has to restart to run what was installed, if it has to.
+reboot_reason() {
+  local loaded installed
+  if [[ ! -d /usr/lib/modules/$(uname -r) ]]; then
+    echo "The running kernel was replaced"
+    return 0
+  fi
+  # NVIDIA's module and its libraries must be the same version; the loaded
+  # module stays the old one until a restart.
+  if [[ -r /sys/module/nvidia/version ]] && installed=$(pacman -Q nvidia-utils 2>/dev/null); then
+    read -r loaded </sys/module/nvidia/version || loaded=''
+    installed=${installed#* }
+    installed=${installed%-*}
+    installed=${installed#*:}
+    if [[ $loaded != "$installed" ]]; then
+      echo "The NVIDIA driver was updated"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# pacman failed: the previous files back, the snapshot pair closed.
+pacman_failed() {
+  restore_config
+  if [[ -n $pre ]]; then
+    snapshot "$label (pacman failed)" --type post --pre-number "$pre" > /dev/null ||
+      warn "could not close snapshot $pre"
+    warn "snapshot $pre was taken before the attempt"
+  fi
+  die "pacman failed; check its output above. The system is as pacman left it: run nova update again once the problem is fixed."
 }
 
 # --- main -------------------------------------------------------------------------
@@ -187,7 +252,10 @@ main() {
   [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "bad --nova-repo"
   [[ -z $from || $from =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --from"
 
-  local label="nova update ${from:+$from -> }$tag" pre=
+  # Read by pacman_failed. pacman finishes a transaction when the terminal
+  # closes; so does this, writing to the log instead.
+  label="nova update ${from:+$from -> }$tag" pre=''
+  trap 'exec >>"$LOG" 2>&1; echo "==> the terminal closed; continuing here"' HUP
   if (( snapshot )); then
     say "Taking the pre-update snapshot"
     pre=$(snapshot "$label" --type pre) ||
@@ -202,24 +270,18 @@ main() {
   say "Pointing pacman at Arch snapshot $arch_date and $tag"
   write_config
 
-  local -a pacman_args=(-Syyu)
-  (( ! downgrade )) || pacman_args=(-Syyuu)
+  local -a pacman_args=(-Su)
+  (( ! downgrade )) || pacman_args=(-Suu)
   (( ! noconfirm )) || pacman_args+=(--noconfirm)
 
-  say "pacman ${pacman_args[*]}"
   # snap-pac would add a second pair of snapshots around the same transaction.
   local -a env_skip=()
   (( ! snapshot )) || env_skip=(env SNAP_PAC_SKIP=y)
-  if ! "${env_skip[@]}" pacman "${pacman_args[@]}"; then
-    restore_config
-    if [[ -n $pre ]]; then
-      snapshot "$label (pacman failed)" --type post --pre-number "$pre" > /dev/null ||
-        warn "could not close snapshot $pre"
-      warn "snapshot $pre was taken before the attempt"
-    fi
-    die "pacman failed; check its output above. The system is as pacman left it."
-  fi
-  rm -f "$MIRRORLIST.nova-prev" "$REPOFILE.nova-prev"
+  say "Updating the keyrings"
+  "${env_skip[@]}" pacman -Syy --needed --noconfirm archlinux-keyring nova-keyring || pacman_failed
+  say "pacman ${pacman_args[*]}"
+  "${env_skip[@]}" pacman "${pacman_args[@]}" || pacman_failed
+  drop_backup
 
   install_hardware_packages "$noconfirm" "${env_skip[@]}"
 
@@ -242,10 +304,13 @@ main() {
   fi
 
   say "Boot entries look right"
-  if [[ -z $ROOT && ! -d /usr/lib/modules/$(uname -r) ]]; then
-    echo "The running kernel was replaced: reboot to use the new one."
+  local reason
+  if [[ -z $ROOT ]] && reason=$(reboot_reason); then
+    echo "$reason: restart to finish the update."
   fi
   echo "Nova is now on $tag."
 }
 
-main "$@"
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

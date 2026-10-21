@@ -54,7 +54,8 @@ version=${version#v}
 
 if (( verify )); then
   url="https://archive.archlinux.org/repos/$date/core/os/x86_64/core.db"
-  curl -fsSI -o /dev/null "$url" || die "no Arch Linux Archive snapshot for $date ($url)"
+  curl -fsSI --retry 3 --connect-timeout 10 --max-time 60 -o /dev/null "$url" ||
+    die "no Arch Linux Archive snapshot for $date ($url)"
 fi
 
 tmp=$(mktemp "$out.XXXXXX")

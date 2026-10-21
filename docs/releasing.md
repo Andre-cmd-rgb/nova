@@ -119,7 +119,9 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
 3. **Approve.** Actions → promote → Run, with the candidate's tag. It tags the
    same commit with the final version (`v1.1.0-rc.2` becomes `v1.1.0`), builds
    it again on the candidate's own Arch snapshot, and publishes it as the
-   latest release. Systems pick it up at their next update check.
+   latest release. Systems pick it up at their next update check. Only the
+   newest published candidate of a version can be promoted: testers on a later
+   one have a later Arch snapshot, which `nova update` never moves back from.
 
 ### The hardware checklist
 
