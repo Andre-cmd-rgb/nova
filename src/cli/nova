@@ -79,6 +79,9 @@ case ${1:-} in
     ;;
 esac
 
+# Helpers call one another by name, also under sudo, whose PATH lacks $bin.
+export PATH="$bin:$PATH"
+
 # The words that can be part of a helper name, up to the first that cannot.
 words=()
 for arg in "$@"; do

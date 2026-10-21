@@ -120,6 +120,14 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   [[ $output == *"- a linux-lts fallback entry in /boot/limine.conf"* ]]
 }
 
+@test "a boot check that cannot run shows its own error" {
+  write_file "$NOVA_BOOT_ESP/limine.conf" 'timeout: 1'
+  stub nova-boot-check 'echo "nova-boot-check: /boot/limine.conf: Permission denied" >&2; exit 1'
+  run doctor
+  [ "$status" -eq 1 ]
+  [[ $output == *"FAIL  the boot menu's fallback is incomplete"$'\n'"      nova-boot-check: /boot/limine.conf: Permission denied"* ]]
+}
+
 @test "the shell is checked inside a session" {
   stub nova-shell 'exit 1'
   WAYLAND_DISPLAY=wayland-1 run doctor

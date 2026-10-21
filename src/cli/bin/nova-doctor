@@ -202,12 +202,18 @@ check_session() {
 }
 
 check_boot_fallback() {
-  local out line lines=()
+  local out lines
   if out=$(nova-boot-check status 2>&1); then
     report ok "the boot menu has its fallback entry"
     return
   fi
-  while IFS= read -r line; do lines+=("$line"); done < <(tail -n +2 <<<"$out")
+  # Below its heading line, nova-boot-check lists what is missing. A single
+  # line is an error of its own (it could not run), so show that instead.
+  if [[ $out == *$'\n'* ]]; then
+    mapfile -t lines < <(tail -n +2 <<<"$out")
+  else
+    lines=("$out")
+  fi
   report FAIL "the boot menu's fallback is incomplete" "${lines[@]}"
 }
 
