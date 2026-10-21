@@ -124,6 +124,8 @@ jobs:
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
           chown -R builder:builder "$GITHUB_WORKSPACE"
           git config --system --add safe.directory "$GITHUB_WORKSPACE"
+          # pacman -U fetches dependencies from the archive, which stalls now and then.
+          retry() { "$@" || { sleep 30; "$@"; } || { sleep 30; "$@"; }; }
           test -f packaging/nova-keyring/nova.gpg ||
             { echo "::error::packaging/nova-keyring has no key yet; see docs/releasing.md"; exit 1; }
           tools/build-package packaging/nova-keyring out/pkgs
@@ -132,10 +134,10 @@ jobs:
           # nova depends on these three, which no Arch repository has. Building
           # it with --syncdeps also proves every other dependency exists in the
           # pinned snapshot.
-          pacman -U --noconfirm out/pkgs/nova-keyring-*.pkg.tar.zst \
+          retry pacman -U --noconfirm out/pkgs/nova-keyring-*.pkg.tar.zst \
             out/pkgs/limine-entry-tool-*.pkg.tar.zst out/pkgs/limine-snapper-sync-*.pkg.tar.zst
           NOVA_SOURCE="git+file://$GITHUB_WORKSPACE#tag=$TAG" tools/build-package packaging/nova out/pkgs
-          pacman -U --noconfirm out/kernel/linux-nova-headers-*.pkg.tar.zst
+          retry pacman -U --noconfirm out/kernel/linux-nova-headers-*.pkg.tar.zst
           # The NVIDIA modules follow the snapshot's driver and this kernel.
           nvidia=$(pacman -Si nvidia-open-dkms | sed -n 's/^Version *: \(.*\)-[^-]*$/\1/p')
           kernel=$(pacman -Q linux-nova-headers | awk '{ print $2 }')

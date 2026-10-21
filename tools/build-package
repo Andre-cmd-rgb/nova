@@ -32,7 +32,16 @@ if compgen -G "$dir/keys/pgp/*.asc" >/dev/null; then
 fi
 
 cd -- "$dir"
-as_builder env PKGDEST="$out" SRCDEST="$scratch/nova-srcdest" BUILDDIR="$scratch/nova-builddir" \
-  MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
-  ${NOVA_SOURCE:+NOVA_SOURCE="$NOVA_SOURCE"} \
-  makepkg --syncdeps --noconfirm --cleanbuild "$@"
+# The archive is one server, and it stalls now and then. makepkg exits 8 when
+# the build dependencies did not install, which happens before anything is
+# built, so only that is tried again; pacman keeps what it fetched.
+for attempt in 1 2 3; do
+  status=0
+  as_builder env PKGDEST="$out" SRCDEST="$scratch/nova-srcdest" BUILDDIR="$scratch/nova-builddir" \
+    MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
+    ${NOVA_SOURCE:+NOVA_SOURCE="$NOVA_SOURCE"} \
+    makepkg --syncdeps --noconfirm --cleanbuild "$@" || status=$?
+  ((status == 8 && attempt < 3)) || exit "$status"
+  echo "build-package: the build dependencies did not install; trying again in 30 seconds" >&2
+  sleep 30
+done
