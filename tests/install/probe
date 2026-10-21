@@ -24,6 +24,7 @@ check "the session started locked, and the lock is secure" test "$(shell lock st
 check "Hyprland is running" pgrep -u "$user" -x Hyprland
 check "the shell answers" test "$(shell shell ping)" = ok
 check "greetd is running" systemctl is-active greetd
+check "the lock screen can count wrong passwords" test "$(stat -c %U "/run/faillock/$user" 2>/dev/null)" = "$user"
 
 failed=$(systemctl --failed --plain --no-legend | awk '{ print $1 }' | paste -sd' ')
 check "no failed services${failed:+ (failed: $failed)}" test -z "$failed"

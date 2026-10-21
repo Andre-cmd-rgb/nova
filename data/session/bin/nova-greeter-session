@@ -14,6 +14,8 @@
 set -euo pipefail
 
 readonly share=${NOVA_PATH:-/usr/share/nova}
+readonly env_dir=${NOVA_UWSM_ENV_DIR:-/usr/share/uwsm/env.d}
+readonly greetd_config=${NOVA_GREETD_CONFIG:-/etc/greetd/config.toml}
 readonly session_cmd=(uwsm start -e -D Hyprland hyprland.desktop)
 runtime=${XDG_RUNTIME_DIR:+$XDG_RUNTIME_DIR/nova-greeter}
 status_file=$runtime/status
@@ -23,15 +25,21 @@ status_file=$runtime/status
 greeted_user() {
   awk '
     /^\[/ { section = $0 }
-    section == "[initial_session]" && $1 == "user" {
+    section == "[initial_session]" && /^[ \t]*user[ \t]*=/ {
       sub(/^[^=]*=[ \t]*"?/, ""); sub(/"?[ \t]*$/, ""); print; exit
-    }' /etc/greetd/config.toml 2>/dev/null || true
+    }' "$greetd_config" 2>/dev/null || true
 }
 
 client() {
   local qs_pid ready=0 status=0
   NOVA_GREETER_USER=$(greeted_user)
   export NOVA_GREETER_USER
+  # Nobody to greet means no password field: the console can still log anyone in.
+  if [[ -z $NOVA_GREETER_USER ]]; then
+    echo failed >"$status_file"
+    pkill -TERM -u "$(id -u)" -x Hyprland || true
+    return 0
+  fi
   export NOVA_THEME_DIR=/var/lib/nova/greeter
   export NOVA_GREETER_READY=$runtime/ready
 
@@ -61,10 +69,24 @@ console() {
   exec agreety --cmd "env NOVA_LOGIN=password ${session_cmd[*]}"
 }
 
+# A session gets its machine's graphics environment from the hardware files
+# in uwsm's env.d. The greeter's Hyprland starts without uwsm, so it reads them
+# here: on the P1 that keeps it on the integrated GPU and off /dev/nvidia*.
+hardware_env() {
+  local file
+  for file in "$env_dir"/*-nova-*; do
+    if [[ -r $file ]]; then
+      # shellcheck disable=SC1090 # POSIX sh that checks the model itself
+      . "$file" || true
+    fi
+  done
+}
+
 server() {
   if [[ -z $runtime ]] || ! rm -rf "$runtime" || ! mkdir -m 700 "$runtime"; then
     console
   fi
+  hardware_env
   Hyprland --config "$share/greeter/hyprland.lua" >"$runtime/hyprland.log" 2>&1 || true
 
   [[ $(cat "$status_file" 2>/dev/null || true) == launched ]] && exit 0
@@ -72,8 +94,10 @@ server() {
   console
 }
 
-case ${1:-} in
-  --client) client ;;
-  "") server ;;
-  *) echo "Usage: nova-greeter-session [--client]" >&2; exit 2 ;;
-esac
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  case ${1:-} in
+    --client) client ;;
+    "") server ;;
+    *) echo "Usage: nova-greeter-session [--client]" >&2; exit 2 ;;
+  esac
+fi

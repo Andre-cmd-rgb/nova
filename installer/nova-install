@@ -592,12 +592,17 @@ create_user() {
   install -m 440 /dev/stdin "$TARGET/etc/sudoers.d/10-nova-wheel" <<<'%wheel ALL=(ALL:ALL) ALL'
   in_target visudo -cf /etc/sudoers.d/10-nova-wheel
 
-  # Autologin goes to this account; anyone else signs in at the greeter.
+  # Autologin goes to this account, and the greeter greets it after a logout;
+  # other accounts log in on a text console (Ctrl+Alt+F2).
   sed "s/@NOVA_USER@/$user/" "$TARGET/usr/share/nova/session/greetd.toml" >"$TARGET/etc/greetd/config.toml"
   # The greeter shows the user's theme without root: the theme engine mirrors
   # it here, and the directory is the user's.
   install -d -m 755 "$TARGET/var/lib/nova/greeter"
   in_target chown "$user:$user" /var/lib/nova/greeter
+  # The lock screen runs PAM as the user, so pam_faillock can count its wrong
+  # passwords only in a tally file that already exists: /run/faillock is
+  # root's. The boot autologin never runs root's PAM to create one.
+  install -Dm644 /dev/stdin "$TARGET/etc/tmpfiles.d/nova-faillock.conf" <<<"f /run/faillock/$user 0660 $user root -"
   as_user "$user" nova-theme set white
 }
 

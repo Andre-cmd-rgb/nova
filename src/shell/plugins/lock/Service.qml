@@ -41,10 +41,13 @@ Item {
   property bool strandedLockResolved: false
   // The first unlock after boot takes the password, which also unlocks the
   // keyring; fingerprint is offered only after that. The flag lives in the
-  // runtime dir so a restarted shell does not ask for the password again.
-  property bool unlockedOnce: false
+  // runtime dir so a restarted shell does not ask for the password again. A
+  // password login at the greeter was that first unlock.
+  property bool unlockedOnce: !autologin
   property bool unlockedOnceKnown: false
   property bool bootLock: false
+  property double fingerprintStartedAt: 0
+  property int fingerprintQuickFailures: 0
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
@@ -156,7 +159,9 @@ Item {
     failedAttempts = 0
     authenticatingPassword = false
     fingerprintAuthenticating = false
+    fingerprintQuickFailures = 0
     fingerprintRetryTimer.stop()
+    passwordWatchdog.stop()
     if (passwordPam.active) passwordPam.abort()
     if (fingerprintPam.active) fingerprintPam.abort()
   }
@@ -223,7 +228,25 @@ Item {
       return
     }
 
+    passwordWatchdog.restart()
     Qt.callLater(respondToPasswordPrompt)
+  }
+
+  // A lock reset or the watchdog may already have settled the attempt.
+  function finishPassword(result) {
+    if (!authenticatingPassword) return
+
+    passwordWatchdog.stop()
+    authenticatingPassword = false
+    pendingPassword = ""
+
+    if (!lockRequested) return
+    if (result === PamResult.Success) {
+      if (!unlockedOnce) completeFirstUnlock()
+      finishUnlock()
+    } else {
+      handlePasswordFailure()
+    }
   }
 
   function respondToPasswordPrompt() {
@@ -234,6 +257,7 @@ Item {
   function handlePasswordFailure() {
     if (!lockRequested) return
 
+    passwordWatchdog.stop()
     authenticatingPassword = false
     enteredPassword = ""
     pendingPassword = ""
@@ -247,6 +271,7 @@ Item {
     if (fingerprintPam.active || fingerprintAuthenticating) return
 
     fingerprintAuthenticating = true
+    fingerprintStartedAt = Date.now()
     if (!fingerprintPam.start()) {
       fingerprintAuthenticating = false
     }
@@ -258,9 +283,21 @@ Item {
     if (!lockRequested) return
     if (result === PamResult.Success) {
       finishUnlock()
-    } else if (fingerprintConfigured) {
-      fingerprintRetryTimer.restart()
+    } else {
+      retryFingerprint()
     }
+  }
+
+  // A scan that did not match takes seconds. pam_fprintd fails at once while
+  // the reader is gone or fprintd is down (just after resume, say), so quick
+  // failures back off instead of restarting it four times a second.
+  function retryFingerprint() {
+    if (!lockRequested || !fingerprintConfigured) return
+
+    if (Date.now() - fingerprintStartedAt < 1000) fingerprintQuickFailures += 1
+    else fingerprintQuickFailures = 0
+    fingerprintRetryTimer.interval = Math.min(250 * Math.pow(2, fingerprintQuickFailures), 30000)
+    fingerprintRetryTimer.restart()
   }
 
   WlSessionLock {
@@ -275,7 +312,9 @@ Item {
         sessionLockStabilizeTimer.stop()
         pendingSessionLockTimer.stop()
         root.startFingerprint()
-        if (root.bootLock) root.leaveBootSubmap()
+        // The first lock of a boot may not be the autologin one (a stranded
+        // lock recovered, a lock over IPC); any of them ends the boot submap.
+        if (root.bootLock || !root.unlockedOnce) root.leaveBootSubmap()
       }
     }
 
@@ -361,20 +400,24 @@ Item {
     onResponseRequiredChanged: root.respondToPasswordPrompt()
     onPamMessage: root.respondToPasswordPrompt()
 
+    // A PAM error is followed by completed(PamResult.Error), so this one
+    // handler sees every outcome.
     onCompleted: function(result) {
-      root.authenticatingPassword = false
-      root.pendingPassword = ""
-
-      if (!root.lockRequested) return
-      if (result === PamResult.Success) {
-        if (!root.unlockedOnce) root.completeFirstUnlock()
-        root.finishUnlock()
-      } else {
-        root.handlePasswordFailure()
-      }
+      root.finishPassword(result)
     }
+  }
 
-    onError: function(error) {
+  // A PAM module that never answers (a stuck keyring daemon, say) would leave
+  // the field disabled at "Checking..." for the rest of the lock. abort() emits
+  // nothing, so the attempt is failed here.
+  Timer {
+    id: passwordWatchdog
+    interval: 20000
+    repeat: false
+    onTriggered: {
+      if (!root.authenticatingPassword) return
+      root.logEvent("password: PAM did not answer")
+      if (passwordPam.active) passwordPam.abort()
       root.handlePasswordFailure()
     }
   }
@@ -386,11 +429,6 @@ Item {
 
     onCompleted: function(result) {
       root.handleFingerprintFinished(result)
-    }
-
-    onError: function(error) {
-      root.fingerprintAuthenticating = false
-      if (root.lockRequested && root.fingerprintConfigured) fingerprintRetryTimer.restart()
     }
   }
 
@@ -418,7 +456,7 @@ Item {
 
   Process {
     id: fingerprintCheckProc
-    command: ["bash", "-c", "if [[ -f /etc/pam.d/nova-lock-fingerprint ]] && command -v fprintd-list >/dev/null 2>&1 && fprintd-list \"$USER\" 2>/dev/null | grep -qi finger; then echo yes; else echo no; fi"]
+    command: ["bash", "-c", "if [[ -f /etc/pam.d/nova-lock-fingerprint ]] && command -v fprintd-list >/dev/null 2>&1 && fprintd-list \"$USER\" 2>/dev/null | grep -qE '^ *- #[0-9]+: '; then echo yes; else echo no; fi"]
     stdout: StdioCollector { id: fingerprintCheckStdout; waitForEnd: true }
     onExited: {
       root.fingerprintConfigured = String(fingerprintCheckStdout.text || "").trim() === "yes"

@@ -1,5 +1,5 @@
 # greetd configuration for Nova. The installer replaces @NOVA_USER@ with the account
-# it creates (nova-install renders this file; see docs/boot-and-login.md).
+# it creates (nova-install renders this file; see "Session flow" in docs/ARCHITECTURE.md).
 #
 # greetd's parser is deliberately small: values on one line, comments only on lines
 # of their own.
