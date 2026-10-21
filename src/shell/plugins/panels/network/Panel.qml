@@ -208,12 +208,12 @@ Ui.Panel {
   IpcHandler {
     target: "nova.network"
 
-    function open() { root.open() }
-    function close() { root.close() }
-    function show() { root.open() }
-    function hide() { root.close() }
-    function toggle() { root.toggle() }
-    function toggleNetwork() { root.toggleNetwork() }
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function toggleNetwork(): void { root.toggleNetwork() }
   }
 
   function activateHeader() {
@@ -322,8 +322,10 @@ Ui.Panel {
     } else {
       // Drop a restart armed by this open: without it a close/reopen inside
       // the 100ms window reuses the running timer and re-enables the scanner
-      // almost immediately, undoing the deferral #6605 restored.
+      // almost immediately, undoing the deferral.
       scanRestart.stop()
+      scanDone.stop()
+      scanning = false
       // Reset throughput tracking so the next open doesn't compute a fake
       // rate from a sample taken minutes ago.
       prevSampleTime = 0
@@ -576,7 +578,6 @@ Ui.Panel {
     }
     wifiNetworks = Model.sortWifiRows(nets)
     wifiStationAvailable = !!wifiDevice
-    scanning = false
   }
 
   function wifiSectionTitle(index) {
@@ -786,11 +787,15 @@ Ui.Panel {
     }
   }
 
+  // The scan started by opening the panel: its header shows until then.
   Timer {
     id: scanDone
     interval: 1500
     repeat: false
-    onTriggered: root.syncWifiNetworks()
+    onTriggered: {
+      root.scanning = false
+      root.syncWifiNetworks()
+    }
   }
 
   Process {

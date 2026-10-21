@@ -110,9 +110,21 @@ state() { nova-settings state | jq -c "$1"; }
   stub foot
   stub google-chrome-stable
   stub fprintd-enroll
+  stub busctl 'echo "ao 1 \"/net/reactivated/Fprint/Device/0\""'
   stub nova-screentime '[[ $1 == enabled ]]'
   stub nova-default-browser 'echo chrome'
   [ "$(state '[.apps.browsers, .apps.terminals, .apps.browser, .screenTime, .lock.fingerprint]')" = '[["chrome"],["foot"],"chrome",true,true]' ]
+}
+
+@test "state: no fingerprint setup without a reader, or without fprintd" {
+  stub fprintd-enroll
+  stub busctl 'echo "ao 0"'
+  [ "$(state .lock.fingerprint)" = false ]
+  stub busctl 'exit 1'
+  [ "$(state .lock.fingerprint)" = false ]
+  rm "$SCRATCH/bin/fprintd-enroll"
+  stub busctl 'echo "ao 1 \"/net/reactivated/Fprint/Device/0\""'
+  [ "$(state .lock.fingerprint)" = false ]
 }
 
 @test "state: this computer, named the way its maker names it" {

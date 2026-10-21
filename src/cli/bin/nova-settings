@@ -117,6 +117,16 @@ defaults_json() {
       browsers: $browsers, editors: $editors, terminals: $terminals}'
 }
 
+# Fingerprint setup needs fprintd and a reader it can drive. Asking starts
+# fprintd if it is not running.
+fingerprint_reader() {
+  local devices
+  command -v fprintd-enroll >/dev/null || return 1
+  devices=$(busctl --system call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
+    net.reactivated.Fprint.Manager GetDevices 2>/dev/null) || return 1
+  [[ $devices == "ao "[1-9]* ]]
+}
+
 header_value() { # file key: a "# key: value" line nova update writes
   [[ -r $1 ]] && sed -n -E "s/^# $2: *(.*)$/\1/;T;p;q" "$1"
   return 0
@@ -157,7 +167,7 @@ state() {
     --argjson screenTime "$(nova-screentime enabled >/dev/null 2>&1 && echo true || echo false)" \
     --argjson config "$config" \
     --argjson widgets "$(widgets_json)" \
-    --argjson fingerprint "$(command -v fprintd-enroll >/dev/null && echo true || echo false)" \
+    --argjson fingerprint "$(fingerprint_reader && echo true || echo false)" \
     --argjson defaults "$(defaults_json)" \
     --argjson about "$(about_json)" \
     --argjson candidates "$([[ $(quiet nova-update --candidates) == on ]] && echo true || echo false)" \

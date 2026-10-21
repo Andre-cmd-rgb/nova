@@ -15,7 +15,6 @@ Panel {
   // permits — needed for the togglePercentage method below.
   manageIpc: false
   property var batteryInfo: ({})
-  property var systemInfo: ({})
   property var profiles: []
   property string activeProfile: ""
   property int profileIndex: 0
@@ -138,16 +137,14 @@ Panel {
 
     if (!batteryProc.running) batteryProc.running = true
     if (!profilesProc.running) profilesProc.running = true
-    if (!systemProc.running) systemProc.running = true
   }
 
-  function updateKeyValue(raw, targetName) {
+  function updateBatteryInfo(raw) {
     var next = Model.parseKeyValue(raw)
     // Keep last known good data if a refresh briefly returns nothing — happens
     // around AC plug/unplug events. Avoids the section collapsing mid-transition.
     if (Object.keys(next).length === 0) return
-    if (targetName === "battery") batteryInfo = next
-    else systemInfo = next
+    batteryInfo = next
   }
 
   function updateProfiles(raw) {
@@ -178,12 +175,12 @@ Panel {
   IpcHandler {
     target: "nova.power"
 
-    function open() { root.open() }
-    function close() { root.close() }
-    function show() { root.open() }
-    function hide() { root.close() }
-    function toggle() { root.toggle() }
-    function togglePercentage() { root.togglePercentage() }
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function togglePercentage(): void { root.togglePercentage() }
   }
 
   onOpenedChanged: {
@@ -221,19 +218,13 @@ Panel {
   Process {
     id: batteryProc
     command: ["nova-battery-info", "--shell"]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "battery") }
+    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateBatteryInfo(text) }
   }
 
   Process {
     id: profilesProc
     command: ["nova-power-profile", "list", "--active-state"]
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateProfiles(text) }
-  }
-
-  Process {
-    id: systemProc
-    command: ["nova-system-stats"]
-    stdout: StdioCollector { waitForEnd: true; onStreamFinished: root.updateKeyValue(text, "system") }
   }
 
   Process {
@@ -465,11 +456,14 @@ Panel {
         }
 
         // ---------- Power profile picker ----------
+        // Shown only when power-profiles-daemon offers profiles.
         PanelSeparator {
+          visible: root.profiles.length > 0
           foreground: root.bar.foreground
         }
 
         Column {
+          visible: root.profiles.length > 0
           width: parent.width
           spacing: Style.space(10)
 

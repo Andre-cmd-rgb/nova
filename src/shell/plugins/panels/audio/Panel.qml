@@ -140,8 +140,13 @@ Panel {
   // safety net for the tuning being applied or removed underneath us.
   onSinkChanged: resolveVolumeSink()
 
+  // A change while a lookup runs asks again once it ends: that lookup may
+  // have read the old output.
+  property bool volumeSinkStale: false
+
   function resolveVolumeSink() {
-    if (!volumeSinkProc.running) volumeSinkProc.running = true
+    if (volumeSinkProc.running) volumeSinkStale = true
+    else volumeSinkProc.running = true
   }
 
   readonly property real outputVolume: volumeSink && volumeSink.audio ? volumeSink.audio.volume : 0
@@ -599,6 +604,11 @@ Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: root.volumeSinkName = String(text).trim()
+    }
+    onExited: {
+      if (!root.volumeSinkStale) return
+      root.volumeSinkStale = false
+      Qt.callLater(root.resolveVolumeSink)
     }
   }
 

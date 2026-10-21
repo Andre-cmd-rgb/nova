@@ -641,12 +641,12 @@ Panel {
   IpcHandler {
     target: "nova.bluetooth"
 
-    function open() { root.open() }
-    function close() { root.close() }
-    function show() { root.open() }
-    function hide() { root.close() }
-    function toggle() { root.toggle() }
-    function toggleBluetooth() { root.toggleBluetooth() }
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function toggleBluetooth(): void { root.toggleBluetooth() }
   }
 
   BarIconButton {

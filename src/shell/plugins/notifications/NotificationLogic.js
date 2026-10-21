@@ -155,8 +155,8 @@ function execArgvFromHints(hints) {
 // non-string or empty program, or a leading-dash program that argv would read as
 // an option). It does not judge intent — a well-formed ["bash","-c",…] is
 // accepted. WHICH senders may set this hint is a separate boundary: any
-// session-bus process can, by the freedesktop protocol's design (see
-// docs/notifications.md), which is equivalent to same-uid code execution.
+// session-bus process can, by the freedesktop protocol's design, which is
+// equivalent to same-uid code execution.
 function parseExecArgv(value) {
   var text = String(value || "")
   if (!text) return null

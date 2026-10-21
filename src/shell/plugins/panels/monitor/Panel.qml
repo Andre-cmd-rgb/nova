@@ -203,7 +203,9 @@ Panel {
   }
 
   function brightnessIpc(percent) {
-    var value = Number(percent)
+    var value = Number(String(percent).trim())
+    // Number("") is 0, which would dim the panel as far as it goes.
+    if (String(percent).trim() === "" || !isFinite(value)) return "error: not a number: " + percent
     root.setBrightness(value)
     return "got " + root.pendingBrightnessPercent
   }
@@ -223,11 +225,11 @@ Panel {
 
     function brightness(percent: string): string { return root.brightnessIpc(percent) }
     function state(): string { return root.stateIpc() }
-    function open() { root.open() }
-    function close() { root.close() }
-    function toggle() { root.toggle() }
-    function show() { root.open() }
-    function hide() { root.close() }
+    function open(): void { root.open() }
+    function close(): void { root.close() }
+    function toggle(): void { root.toggle() }
+    function show(): void { root.open() }
+    function hide(): void { root.close() }
   }
 
   function refresh() {

@@ -26,7 +26,20 @@ Item {
   property int tickCount: 0
   property color tickColor: bar ? bar.background : Commons.Color.background
 
-  onValueChanged: if (!dragging) liveValue = value
+  onValueChanged: {
+    if (dragging) return
+    liveValue = value
+    settleTimer.stop()
+  }
+
+  // Some callers update `value` only once a change has landed (Settings waits
+  // for its state to reload), so the knob stays where it was let go until
+  // then. A value that never moves means the change was refused.
+  Timer {
+    id: settleTimer
+    interval: 3000
+    onTriggered: if (!root.dragging) root.liveValue = root.value
+  }
 
   signal moved(real value)
   signal released(real value)
@@ -136,7 +149,7 @@ Item {
       if (mouse.button !== Qt.LeftButton) return
       root.dragging = false
       root.released(root.liveValue)
-      root.liveValue = root.value
+      settleTimer.restart()
     }
     onWheel: function(wheel) {
       var delta = wheel.angleDelta.y > 0 ? root.step : -root.step
@@ -145,6 +158,7 @@ Item {
       root.liveValue = next
       root.moved(next)
       root.released(next)
+      settleTimer.restart()
     }
   }
 }
