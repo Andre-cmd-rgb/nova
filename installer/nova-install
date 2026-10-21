@@ -444,6 +444,16 @@ in_target() {
   logged arch-chroot "$TARGET" "$@"
 }
 
+# A command as the new account, inside the new system, with an environment of
+# its own: the live system's root session would lend it XDG_RUNTIME_DIR=/run/user/0
+# and the like, which the account cannot write to.
+as_user() { # user command...
+  local user=$1
+  shift
+  in_target runuser -u "$user" -- env -i HOME="/home/$user" USER="$user" LOGNAME="$user" \
+    LANG=C.UTF-8 PATH=/usr/lib/nova/bin:/usr/bin "$@"
+}
+
 partition_and_format() {
   local disk=$1 esp root
   say "Partitioning $disk"
@@ -502,9 +512,10 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
   # Output goes to the terminal as well as the log: this is minutes long and
   # pacman's own progress is the progress bar. The kernels' boot check is
   # skipped: Limine is not installed yet, and install_bootloader checks once it
-  # is.
+  # is. So are snap-pac's snapshots: snapper has no configuration until
+  # configure_snapper, and the first snapshot is the installed system's.
   printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
-  NOVA_BOOT_CHECK=skip pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | tee -a "$LOG" ||
+  NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | tee -a "$LOG" ||
     die "pacstrap failed; the log is in $LOG"
 }
 
@@ -587,7 +598,7 @@ create_user() {
   # it here, and the directory is the user's.
   install -d -m 755 "$TARGET/var/lib/nova/greeter"
   in_target chown "$user:$user" /var/lib/nova/greeter
-  in_target runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/lib/nova/bin:/usr/bin nova-theme set white
+  as_user "$user" nova-theme set white
 }
 
 # ------------------------------------------------------------------ fingerprint
@@ -705,11 +716,11 @@ install_apps() {
   # answer here, so pacman alone is allowed for the length of this step.
   install -m 440 /dev/stdin "$rule" <<<"$user ALL=(root) NOPASSWD: /usr/bin/pacman"
   trap 'rm -f -- "$rule"' EXIT
-  in_target runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/lib/nova/bin:/usr/bin nova-apps-install --noconfirm ||
+  as_user "$user" nova-apps-install --noconfirm ||
     warn "Chrome or VS Code did not install; run nova apps install after the first login."
   rm -f -- "$rule"
   trap - EXIT
-  in_target runuser -u "$user" -- env HOME="/home/$user" PATH=/usr/bin mise install --yes ||
+  as_user "$user" mise install --yes ||
     warn "The mise tools did not install; run mise install after the first login."
 }
 

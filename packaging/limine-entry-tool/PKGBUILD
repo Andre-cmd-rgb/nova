@@ -1,23 +1,31 @@
 # Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
 #
-# Rebuilt from the AUR package of the same name (maintainer: Zesko), pinned and
-# checksummed. Upstream: https://gitlab.com/Zesko/limine-entry-tool, licensed GPL-3.0
-# (the LICENSE file in the repository is the GPLv3 text; the AUR package calls it
-# "GPL3", which Arch's license migration maps to GPL-3.0-only).
+# Rebuilt from the AUR's limine-mkinitcpio-hook (maintainer: Zesko): the entry
+# tool together with its mkinitcpio half, which is what Nova boots with. That
+# half has limine-update, the pacman hook that rebuilds the UKIs and boot entries
+# on every kernel change, and the sd-btrfs-overlayfs initramfs hook that lets a
+# read-only snapshot boot. Pinned and checksummed. Upstream:
+# https://gitlab.com/Zesko/limine-entry-tool, licensed GPL-3.0 (the LICENSE file
+# in the repository is the GPLv3 text; the AUR package calls it "GPL3", which
+# Arch's license migration maps to GPL-3.0-only).
 #
 # Changes from the AUR package:
+#   - named limine-entry-tool, which is what it provides and what nova depends on
+#   - no /usr/local/bin/mkinitcpio: a package does not install into /usr/local, and
+#     that wrapper stops to ask a question when anything runs `mkinitcpio -P`
 #   - the source is pinned to the commit behind tag 1.40.0, not to the tag
 #     (tags can be moved; a commit cannot)
 #   - the GPL text is installed under /usr/share/licenses
 #   - the SPDX license identifier instead of the legacy "GPL3"
-#   - the self-referential provides/conflicts=limine-entry-tool are dropped (no-ops)
+#   - the self-referential provides/conflicts=limine-entry-tool are dropped (no-ops),
+#     and it conflicts with the AUR's limine-mkinitcpio-hook, which has the same files
 # Build note: gradle resolves its dependencies from Maven Central, and the GraalVM
 # toolchain is downloaded (and checksummed) below, so this build needs network access.
 
 pkgname=limine-entry-tool
 pkgver=1.40.0
-pkgrel=1
-pkgdesc="Entry management for the Limine bootloader."
+pkgrel=2
+pkgdesc="Install kernels for the Limine bootloader, with mkinitcpio."
 arch=('x86_64')
 url="https://gitlab.com/Zesko/limine-entry-tool"
 _commit=35dab4b732861f5e8d307a1a7873856a877913aa  # tag 1.40.0
@@ -31,8 +39,10 @@ depends=(
 	'grep'
 	'tar'
 	'limine'
+	'mkinitcpio'
 	'efibootmgr')
 makedepends=('git' 'gradle')
+conflicts=('limine-mkinitcpio-hook')
 backup=(etc/limine-entry-tool.conf)
 sha256sums=('SKIP'
             '3f4a89de8eaa96f2ed677f09957c7e872cd8467aad3537f8b5394c1b8c4b942e')
@@ -68,8 +78,11 @@ package() {
 	# docs
 	install -Dm 644 README.md CHANGELOG.md -t "$pkgdir/usr/share/doc/limine-entry-tool/"
 
-	# files
+	# files: the mkinitcpio half second, as upstream does, so its config and its
+	# efi-deploy hook are the ones installed
 	cp -a "$src/limine-entry-tool/etc" "$src/limine-entry-tool/usr" "$pkgdir/"
+	cp -a "$src/limine-mkinitcpio-hook/etc" "$src/limine-mkinitcpio-hook/usr" "$pkgdir/"
+	rm -rf "$pkgdir/usr/local"
 	install -Dm 755 "build/native/nativeCompile/limine-entry-tool" "$pkgdir/usr/lib/limine/"
 
 	# limine hook symlinks

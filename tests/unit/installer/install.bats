@@ -390,3 +390,13 @@ answers() { # key=value...
   run run_after
   [ "$status" -ne 0 ]
 }
+
+@test "as_user: the new account's commands get an environment of their own, not the live root's" {
+  in_target() { printf '%s\n' "$@" >"$SCRATCH/args"; }
+  XDG_RUNTIME_DIR=/run/user/0 as_user nova nova-theme set white
+  run cat "$SCRATCH/args"
+  [ "${lines[0]}" = runuser ] && [ "${lines[2]}" = nova ] && [ "${lines[4]}" = env ] && [ "${lines[5]}" = -i ]
+  [[ $output == *"HOME=/home/nova"* && $output == *"PATH=/usr/lib/nova/bin:/usr/bin"* ]]
+  [[ $output != *XDG_RUNTIME_DIR* ]]
+  [ "${lines[-3]}" = nova-theme ] && [ "${lines[-1]}" = white ]
+}

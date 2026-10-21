@@ -67,9 +67,13 @@ needs nothing by hand; the committed value is only the last one released.
 ## limine-entry-tool and limine-snapper-sync
 
 Rebuilt from their AUR recipes with the source pinned to a commit, not a tag
-(tags can move). To update: take the new AUR PKGBUILD, compare it with ours,
-pin the commit behind the new tag, and update the checksums. Their gradle
-builds download dependencies, so they need network access at build time.
+(tags can move). `limine-entry-tool` follows the AUR's `limine-mkinitcpio-hook`,
+the entry tool with its mkinitcpio half: `limine-update`, the pacman hook that
+rebuilds the UKIs and boot entries whenever a kernel changes, and the
+`sd-btrfs-overlayfs` initramfs hook a snapshot boots with. To update: take the
+new AUR PKGBUILD, compare it with ours, pin the commit behind the new tag, and
+update the checksums. Their gradle builds download dependencies, so they need
+network access at build time.
 
 ## nova-keyring
 
