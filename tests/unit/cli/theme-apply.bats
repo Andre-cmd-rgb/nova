@@ -71,6 +71,19 @@ icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \
   [ "$output" = '{"editor.fontSize":15,"window.titleBarStyle":"native","workbench.colorTheme":"Nova","window.customTitleBarVisibility":"never"}' ]
 }
 
+@test "VS Code settings kept in a dotfiles repository stay a symlink, with their mode" {
+  mkdir -p "$HOME/.vscode/extensions" "$XDG_CONFIG_HOME/Code/User"
+  write_file "$XDG_STATE_HOME/nova/current/theme/vscode-theme.json" '{}'
+  write_file "$HOME/dotfiles/settings.json" '{"editor.fontSize": 15}'
+  chmod 640 "$HOME/dotfiles/settings.json"
+  ln -s "$HOME/dotfiles/settings.json" "$XDG_CONFIG_HOME/Code/User/settings.json"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [ -L "$XDG_CONFIG_HOME/Code/User/settings.json" ]
+  [ "$(jq -r '."workbench.colorTheme"' "$HOME/dotfiles/settings.json")" = Nova ]
+  [ "$(stat -c %a "$HOME/dotfiles/settings.json")" = 640 ]
+}
+
 @test "a VS Code extensions.json that does not parse is left alone, and the settings still change" {
   mkdir -p "$HOME/.vscode/extensions"
   write_file "$HOME/.vscode/extensions/extensions.json" '[{"broken"'
@@ -80,7 +93,7 @@ icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \
   [ "$status" -eq 0 ]
   [[ $output == *"does not parse"* ]]
   [ "$(cat "$HOME/.vscode/extensions/extensions.json")" = '[{"broken"' ]
-  [ -z "$(find "$HOME/.vscode/extensions" -name '.extensions.json.*')" ]
+  [ -z "$(find "$HOME/.vscode/extensions" -name 'extensions.json.*')" ]
   [ "$(jq -r '."workbench.colorTheme"' "$XDG_CONFIG_HOME/Code/User/settings.json")" = Nova ]
 }
 

@@ -104,7 +104,7 @@ apply_btop() {
 # native title bar is the compositor's, and Hyprland draws none, so VS Code has
 # no buttons either; Alt shows its menu.
 apply_vscode() {
-  local extensions=$HOME/.vscode/extensions ext settings tmp
+  local extensions=$HOME/.vscode/extensions ext settings
   [[ -d $extensions ]] || return 0
   ext=$extensions/nova.nova-theme-1.0.0
   mkdir -p "$ext/themes"
@@ -122,32 +122,41 @@ apply_vscode() {
 }
 JSON
   [[ -f $extensions/extensions.json ]] || printf '[]\n' >"$extensions/extensions.json"
-  # Temporary files beside their targets, so each mv is an atomic rename. A
-  # file that does not parse is left alone, and the other apps still get the
-  # theme.
-  tmp=$(mktemp "$extensions/.extensions.json.XXXXXX")
-  if jq --arg path "$ext" '
+  # A file that does not parse is left alone, and the other apps still get
+  # the theme.
+  # shellcheck disable=SC2016 # $path is jq's
+  jq_in_place "$extensions/extensions.json" --arg path "$ext" '
     map(select(.identifier.id != "nova.nova-theme")) + [{
       identifier: { id: "nova.nova-theme" },
       version: "1.0.0",
       location: { "$mid": 1, fsPath: $path, path: $path, scheme: "file" },
       relativeLocation: "nova.nova-theme-1.0.0"
-    }]' "$extensions/extensions.json" >"$tmp" 2>/dev/null; then
-    mv "$tmp" "$extensions/extensions.json"
-  else
-    rm -f "$tmp"
+    }]' ||
     echo "nova-theme-apply: VS Code's extensions.json does not parse, so its theme is not registered" >&2
-  fi
 
   settings=$config_home/Code/User/settings.json
-  if [[ -f $settings ]] && jq -e . "$settings" >/dev/null 2>&1; then
-    tmp=$(mktemp "$settings.XXXXXX")
-    if jq '."workbench.colorTheme" = "Nova" | ."window.titleBarStyle" = "native" |
-      ."window.customTitleBarVisibility" = "never"' "$settings" >"$tmp"; then
-      mv "$tmp" "$settings"
-    else
-      rm -f "$tmp"
-    fi
+  if [[ -f $settings ]]; then
+    jq_in_place "$settings" '."workbench.colorTheme" = "Nova" | ."window.titleBarStyle" = "native" |
+      ."window.customTitleBarVisibility" = "never"' ||
+      echo "nova-theme-apply: VS Code's settings.json does not parse, so its theme is not set" >&2
+  fi
+}
+
+# Runs a jq filter over a file in place. The temporary file sits beside the
+# real file, so the mv is an atomic rename; a symlink (a dotfiles repository)
+# stays a symlink, and the file keeps its mode. Fails, changing nothing, when
+# the file does not parse.
+jq_in_place() { # file jq-arguments...
+  local file tmp
+  file=$(readlink -f -- "$1") || return 1
+  shift
+  tmp=$(mktemp "$file.XXXXXX") || return 1
+  if jq "$@" "$file" >"$tmp" 2>/dev/null; then
+    chmod --reference="$file" -- "$tmp"
+    mv -- "$tmp" "$file"
+  else
+    rm -f -- "$tmp"
+    return 1
   fi
 }
 

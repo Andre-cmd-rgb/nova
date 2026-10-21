@@ -230,12 +230,23 @@ fn parse(text: &str) -> (BTreeMap<String, String>, Vec<String>) {
                 let rest = &value[open + 1..];
                 rest[..rest.find(['"', '\'']).unwrap_or(rest.len())].to_owned()
             }
-            None => value
-                .split('#')
-                .next()
-                .unwrap_or_default()
-                .split_whitespace()
-                .collect(),
+            None => match value.split_whitespace().next() {
+                // TOML wants it quoted, but a bare #rrggbb is a color, not a
+                // comment.
+                Some(word) if Rgb::parse(word).is_some() => word.to_owned(),
+                // Something like a color that is not one (#rgb, #rrggbbaa):
+                // dropping it silently would leave the theme half drawn.
+                Some(word) if word.len() > 1 && word.starts_with('#') => {
+                    skipped.push(key.to_owned());
+                    continue;
+                }
+                _ => value
+                    .split('#')
+                    .next()
+                    .unwrap_or_default()
+                    .split_whitespace()
+                    .collect(),
+            },
         };
         if !valid_key(key) || !valid_value(&value) {
             skipped.push(key.to_owned());
@@ -259,6 +270,14 @@ mod tests {
         assert_eq!(c["accent"], "#7aa2f7");
         assert_eq!(c["mode"], "light");
         assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn takes_a_bare_hex_color_and_reports_a_broken_one() {
+        let (c, skipped) = parse("background = #1a1b26 # night\nfoo = #fff\nbar = # nothing yet\n");
+        assert_eq!(c["background"], "#1a1b26");
+        assert!(!c.contains_key("foo") && !c.contains_key("bar"));
+        assert_eq!(skipped, ["foo"]);
     }
 
     #[test]
