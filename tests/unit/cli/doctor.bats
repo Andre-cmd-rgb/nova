@@ -141,3 +141,9 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   run doctor
   [[ $output != *"Hyprland"* ]]
 }
+
+@test "runs without HOME, as a service would run it" {
+  run env -u HOME -u XDG_DATA_HOME -u XDG_STATE_HOME "$REPO_ROOT/src/cli/bin/nova-doctor"
+  [ "$status" -eq 0 ]
+  [[ $output != *unbound* ]]
+}

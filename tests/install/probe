@@ -39,6 +39,15 @@ signature=$(find "/run/user/$uid/hypr" -mindepth 1 -maxdepth 1 -type d -printf '
 config=$(as_user HYPRLAND_INSTANCE_SIGNATURE="$signature" hyprctl configerrors -j)
 errors=$(jq -r '.[] | select(. != "")' <<<"$config" 2>/dev/null | paste -sd';' -)
 check "Hyprland's config has no errors${errors:+ ($errors)}" jq -e 'map(select(. != "")) == []' <<<"$config"
+# What nova update will ask pacman for. The release's own [nova] repository is
+# not published yet, so only the pinned Arch snapshot is asked.
+pinned_mirror() {
+  local dir
+  dir=$(mktemp -d)
+  printf '[options]\nDBPath = %s\n\n[core]\nInclude = /etc/pacman.d/nova-mirrorlist\n' "$dir" >"$dir/pacman.conf"
+  pacman --config "$dir/pacman.conf" --logfile /dev/null -Sy
+}
+check "the pinned Arch snapshot answers, for nova update" pinned_mirror
 doctor=$(nova doctor 2>&1)
 status=$?
 sed 's/^/probe:   /' <<<"$doctor"

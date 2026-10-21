@@ -603,7 +603,10 @@ create_user() {
   # passwords only in a tally file that already exists: /run/faillock is
   # root's. The boot autologin never runs root's PAM to create one.
   install -Dm644 /dev/stdin "$TARGET/etc/tmpfiles.d/nova-faillock.conf" <<<"f /run/faillock/$user 0660 $user root -"
-  as_user "$user" nova-theme set white
+  # Without a theme the desktop still starts, in the default colors, and
+  # Settings sets one: not worth stopping an install on a wiped disk for.
+  as_user "$user" nova-theme set white ||
+    warn "The theme did not apply; choose one in Settings, Appearance."
 }
 
 # ------------------------------------------------------------------ fingerprint

@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+# A service (or pkexec) runs it without HOME.
+: "${HOME:=$(getent passwd "$EUID" | cut -d: -f6)}"
+
 SYSFS_BTRFS=${NOVA_SYSFS_BTRFS:-/sys/fs/btrfs}
 PAM_DIR=${NOVA_PAM_DIR:-/etc/pam.d}
 MODULES_DIR=${NOVA_MODULES_DIR:-/usr/lib/modules}

@@ -159,7 +159,8 @@ rm -f -- "$work/stick.img"
 
 step "The first boot"
 machine 20 "$work/boot.log" || die "the installed system did not power off by itself within 20 minutes; the log is boot.log"
-report=$(tr -d '\r' <"$work/boot.log" | grep -a '^probe:' || true)
+# The firmware's cursor codes can precede the first line.
+report=$(tr -d '\r' <"$work/boot.log" | grep -ao 'probe:.*' || true)
 printf '%s\n' "$report"
 grep -q '^probe: done' <<<"$report" || die "the probe did not finish"
 ! grep -q '^probe: FAIL' <<<"$report" || die "the installed system has problems (above)"
