@@ -17,3 +17,8 @@ ExecStart=/usr/local/lib/nova-test-probe
 WantedBy=multi-user.target
 UNIT
 systemctl enable nova-test-probe.service
+
+# The kernel console is the serial port, so systemd starts a getty there. It
+# starts last (Type=idle) and its vhangup() cuts off the probe, which opened
+# the port first: every report line would be lost.
+systemctl mask serial-getty@ttyS0.service
