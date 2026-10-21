@@ -16,7 +16,8 @@
 # can need, so it installs without a network. When anything is carried, a
 # second, LUKS2-encrypted btrfs partition holds one compressed archive per item
 # and their SHA-256 sums; the installer asks for its passphrase and puts it all
-# back. Both partitions are read back and checked before the stick is done.
+# back. Everything written is read back from the stick and checked before it is
+# done.
 #
 #   nova usb                 the wizard
 #   nova usb --preset        last time's choices; asks only for the stick and passphrase
@@ -99,7 +100,7 @@ wifi	Network connections, Wi-Fi passwords included	system	/etc/NetworkManager/sy
 bluetooth	Bluetooth pairings (put back on this same computer only)	system	/var/lib/bluetooth
 fingerprints	Fingerprints (put back on this same computer only)	system	/var/lib/fprint
 packages	Your extra packages, installed again	list	-
-projects	Git repositories: what git tracks, and the history	projects	-
+projects	Git repositories: their files and history, not what git ignores	projects	-
 folders	Whole folders (Documents, Pictures, ...)	folders	-
 EOF
 }
@@ -291,13 +292,17 @@ lsblk_disks() {
   lsblk -J -b -d -o NAME,PATH,SIZE,MODEL,SERIAL,TYPE,RM,RO,TRAN
 }
 
-# Disks this system runs from: the root, boot and home file systems and swap,
-# traced back through any LUKS or LVM layers to the disk underneath.
+# Disks this system runs from: its own file systems and swap, and the ones your
+# home and the download cache are on, traced back through any LUKS or LVM
+# layers to the disk underneath.
 system_disks() {
-  local src mountpoint
+  local src mountpoint path
   {
-    for mountpoint in / /boot /efi /boot/efi /home; do
+    for mountpoint in / /boot /efi /boot/efi /home /usr /var /opt /srv; do
       findmnt -nro SOURCE -- "$mountpoint" 2>/dev/null || true
+    done
+    for path in "$USB_HOME" "$CACHE"; do
+      if [[ -e $path ]]; then findmnt -nro SOURCE -T "$path" 2>/dev/null || true; fi
     done
     swapon --noheadings --show=NAME 2>/dev/null || true
   } | while IFS= read -r src; do
@@ -328,6 +333,14 @@ stick_candidates() {
     | @tsv'
 }
 
+# What is on a disk now, one line per partition: name, size, file system and
+# label, so a backup drive is recognised before it is erased.
+disk_contents() { # disk
+  lsblk -J -o NAME,SIZE,FSTYPE,LABEL -- "$1" 2>/dev/null | jq -r '
+    .blockdevices[0].children[]?
+    | "\(.name)  \(.size)  \(.fstype // "no file system")\(if .label then "  \"\(.label)\"" else "" end)"'
+}
+
 mounted_partitions() { # disk -> "partition mountpoint" per mounted one
   lsblk -nrpo PATH,MOUNTPOINTS -- "$1" 2>/dev/null | awk 'NF > 1 { print $1, $2 }'
 }
@@ -335,7 +348,7 @@ mounted_partitions() { # disk -> "partition mountpoint" per mounted one
 choose_stick() {
   local sticks=() line i choice path size model serial part where
   mapfile -t sticks < <(stick_candidates)
-  ((${#sticks[@]})) || die "no USB stick found. Plug one in (2 GB or bigger) and run nova usb again."
+  ((${#sticks[@]})) || die "no USB stick found: one of 2 GiB or more, not write-protected. Plug one in and run nova usb again (a card in a built-in reader needs NOVA_USB_ALLOW_ANY=1)."
   {
     say "Which stick? Everything on it will be erased."
     for i in "${!sticks[@]}"; do
@@ -343,7 +356,7 @@ choose_stick() {
       [[ $model != - ]] || model="unknown model"
       [[ $serial != - ]] || serial=
       printf '  %d) %-12s %8s  %s%s\n' "$((i + 1))" "$path" "$(human_size "$size")" "$model" "${serial:+  ($serial)}"
-      lsblk -nro NAME,FSTYPE,LABEL,SIZE -- "$path" | awk 'NR > 1 { printf "       %s %s %s %s\n", $1, $2, $3, $4 }'
+      disk_contents "$path" | sed 's/^/       /'
     done
   } >&2
   while :; do
@@ -368,10 +381,9 @@ choose_stick() {
 
 # ----------------------------------------------------------- the release
 
-# The newest published release: a final one, or a pre-release while there is
-# no final one yet.
-# The newest release from GitHub's list of them, on stdin: a full one if there
-# is any, else the newest pre-release. Fails when there is none.
+# The newest release from GitHub's list of them (newest first), on stdin: a
+# final one if there is any, else the newest pre-release. Fails when there is
+# none.
 latest_release() {
   jq -ce '[.[] | select(.draft | not)] | (map(select(.prerelease | not)) + map(select(.prerelease)))[0]'
 }
@@ -524,10 +536,9 @@ checklist() { # plan
 
 ask_folders() { # array-name prompt default
   local -n dirs=$1
-  local reply dir rel defaults
-  defaults=$(printf '%s ' "${dirs[@]}")
-  [[ -n ${defaults// /} ]] || defaults=$3
-  reply=$(ask "$2, inside your home, separated by commas" "${defaults% }")
+  local reply dir rel defaults=$3
+  if ((${#dirs[@]})); then defaults=$(IFS=,; echo "${dirs[*]}"); fi
+  reply=$(ask "$2, inside your home, separated by commas" "$defaults")
   dirs=()
   IFS=, read -ra reply <<<"$reply"
   for dir in "${reply[@]}"; do
@@ -730,6 +741,13 @@ main() {
 
   say "Ready to write"
   info "Stick        $stick, $(human_size "$stick_size")${stick_model:+ ($stick_model)}: ERASED"
+  local held line
+  held=$(disk_contents "$stick")
+  if [[ -n $held ]]; then
+    info "             what is on it now, and will be gone:"
+    while IFS= read -r line; do info "               $line"; done <<<"$held"
+  fi
+  ((stick_size <= 256 * 1024 * MiB)) || warn "That is a big disk for a stick. Make sure it is not a backup drive."
   info "Partition 1  the installer, ${iso##*/}$( ((OFFLINE)) && echo ", and $(human_size "$offline_bytes") of packages")"
   if ((${#carried[@]})); then
     info "Partition 2  the rest, encrypted:"
@@ -866,6 +884,16 @@ make_offline_repo() { # dir
   rm -rf -- "$tmp"
 }
 
+# The names in a NUL-separated list that are still there. The wizard listed
+# them minutes ago, and tar gives up on a name it is handed that has gone since
+# (an editor's swap file, say).
+still_there() { # home list
+  local name
+  while IFS= read -r -d '' name; do
+    if [[ -e $1/$name || -L $1/$name ]]; then printf '%s\0' "$name"; fi
+  done <"$2"
+}
+
 # One item as a zstd-compressed tar, as root, so the system items can be read
 # and the files keep their modes. A file changed while it was read (an open
 # Chrome, say) is a warning; a file that cannot be read at all, which is how
@@ -891,8 +919,15 @@ make_archive() { # id plan home out
       ((${#present[@]})) || return 2
       args+=(-- "${present[@]}")
       ;;
-    projects) args+=(-C "$home" --no-recursion -T "$plan/projects.files" --recursion -T "$plan/projects.gitdirs") ;;
-    folders) args+=(-C "$home" -T "$plan/folders.list") ;;
+    projects)
+      still_there "$home" "$plan/projects.files" >"$plan/projects.files.now"
+      still_there "$home" "$plan/projects.gitdirs" >"$plan/projects.gitdirs.now"
+      args+=(-C "$home" --no-recursion -T "$plan/projects.files.now" --recursion -T "$plan/projects.gitdirs.now")
+      ;;
+    folders)
+      still_there "$home" "$plan/folders.list" >"$plan/folders.list.now"
+      args+=(-C "$home" -T "$plan/folders.list.now")
+      ;;
     list) args+=(-C "$plan" -- packages.txt aur.txt) ;;
     *) return 1 ;;
   esac
@@ -954,6 +989,8 @@ write_stick() { # plan, with the passphrase on stdin
     [[ -z $items ]] || echo 'type=linux, name="NOVA-DATA"'
   } | sfdisk -q --wipe always --wipe-partitions always "$device" >/dev/null
   partprobe "$device" 2>/dev/null || true
+  # udev looks the new partitions over first; mkfs waits for it to finish.
+  udevadm settle 2>/dev/null || true
   local p1 p2
   p1=$(partition_path "$device" 1)
   p2=$(partition_path "$device" 2)
@@ -1005,12 +1042,12 @@ write_stick() { # plan, with the passphrase on stdin
         --argjson bytes "$(stat -c %s -- "$WORK/data/carry/$file")" '{id: $id, kind: $kind, label: $label, file: $file, bytes: $bytes}')")
     done
     ((${#entries[@]})) || die "none of the chosen things were found; nothing to carry."
-    (cd "$WORK/data/carry" && sha256sum -- *.tar.zst >SHA256SUMS)
     printf '%s\n' "${entries[@]}" | jq -s --arg user "$user" --arg home "$home" --arg machine "$(machine_hash)" \
       --arg name "$(getent passwd "$user" | cut -d: -f5 | cut -d, -f1)" \
       --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg host "$(cat /proc/sys/kernel/hostname 2>/dev/null)" \
       '{version: 1, created: $created, source: {user: $user, name: $name, home: $home, host: $host, machine: $machine}, items: .}' \
       >"$WORK/data/carry/manifest.json"
+    (cd "$WORK/data/carry" && sha256sum -- manifest.json *.tar.zst >SHA256SUMS)
     umount "$WORK/data"
     cryptsetup close "$MAPPER"
   fi
@@ -1021,6 +1058,10 @@ write_stick() { # plan, with the passphrase on stdin
   say "Checking the stick"
   mount -o ro -- "$p1" "$WORK/stick"
   diff -r --exclude=repo --exclude=keymap -- "$WORK/iso" "$WORK/stick" >/dev/null || die "the installer on the stick does not match the ISO; the stick may be failing."
+  if [[ $offline == 1 ]]; then
+    info "Reading the packages back"
+    zstd -tq -- "$WORK/stick/nova/repo"/*.pkg.tar.zst || die "the packages on the stick do not read back whole; the stick may be failing."
+  fi
   umount "$WORK/stick"
   if [[ -n $items ]]; then
     printf '%s' "$passphrase" | cryptsetup open --readonly --key-file - "$p2" "$MAPPER"

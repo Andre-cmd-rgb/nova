@@ -534,8 +534,9 @@ write_system_config() {
   sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' "$TARGET/etc/locale.gen"
   in_target locale-gen
   echo 'LANG=en_US.UTF-8' >"$TARGET/etc/locale.conf"
-  # The session reads the keyboard layout from here (default/hypr/input.lua), so
-  # the console, the greeter, the lock screen and the desktop all agree.
+  # The session and the greeter read the keyboard layout from here
+  # (default/hypr/keyboard.lua), so the console, the greeter, the lock screen
+  # and the desktop all agree.
   local layout variant
   IFS=$'\t' read -r layout variant < <(xkb_layout "$keymap")
   {

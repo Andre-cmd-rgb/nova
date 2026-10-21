@@ -70,10 +70,32 @@ EOF
 }
 
 @test "system_disks: each file system it runs from is looked up on its own" {
+  mkdir -p "$NOVA_USB_CACHE"
   findmnt() { echo "${@: -1}" >>"$SCRATCH/asked"; }
   swapon() { :; }
   system_disks
-  [ "$(paste -sd' ' "$SCRATCH/asked")" = "/ /boot /efi /boot/efi /home" ]
+  [ "$(paste -sd' ' "$SCRATCH/asked")" = "/ /boot /efi /boot/efi /home /usr /var /opt /srv $NOVA_USB_HOME $NOVA_USB_CACHE" ]
+}
+
+@test "disk_contents: one line per partition, with or without a label" {
+  lsblk() {
+    echo '{"blockdevices":[{"name":"sdb","size":"114.6G","fstype":null,"label":null,"children":[
+      {"name":"sdb1","size":"114.6G","fstype":"exfat","label":"andre backups"},
+      {"name":"sdb2","size":"16M","fstype":null,"label":null}]}]}'
+  }
+  [ "$(disk_contents /dev/sdb)" = $'sdb1  114.6G  exfat  "andre backups"\nsdb2  16M  no file system' ]
+}
+
+@test "ask_folders: the folders chosen before come back as the default" {
+  mkdir -p "$NOVA_USB_HOME/Projects" "$NOVA_USB_HOME/Work"
+  ask() { echo "$2"; }
+  PROJECT_DIRS=(Projects Work)
+  ask_folders PROJECT_DIRS "Folders" Documents
+  [ "${PROJECT_DIRS[*]}" = "Projects Work" ]
+  PROJECT_DIRS=()
+  mkdir -p "$NOVA_USB_HOME/Documents"
+  ask_folders PROJECT_DIRS "Folders" Documents
+  [ "${PROJECT_DIRS[*]}" = Documents ]
 }
 
 @test "writer_cleanup: a mount that will not let go does not stop the rest" {
@@ -137,6 +159,19 @@ EOF
   run members "$SCRATCH/projects.tar.zst"
   [[ $output == *"Projects/app/-n"* && $output == *"Projects/app/.git/HEAD"* && $output == *"Projects/app/vendor/lib/.git/HEAD"* ]]
   [[ $output != *target* && $output != *gone.txt* && $output != *node_modules* ]]
+}
+
+@test "projects: a file deleted after it was listed is left out, and the rest carried" {
+  repo Projects/app
+  echo a >"$NOVA_USB_HOME/Projects/app/a.txt"
+  echo swap >"$NOVA_USB_HOME/Projects/app/.a.txt.swp"
+  PROJECT_DIRS=(Projects)
+  list_projects "$PLAN"
+  rm "$NOVA_USB_HOME/Projects/app/.a.txt.swp"
+  make_archive projects "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/projects.tar.zst"
+  run members "$SCRATCH/projects.tar.zst"
+  [[ $output == *"Projects/app/a.txt"* && $output == *"Projects/app/.git/HEAD"* ]]
+  [[ $output != *swp* ]]
 }
 
 @test "projects: a deleted file listed last, or a repository git cannot read, is no failure" {
