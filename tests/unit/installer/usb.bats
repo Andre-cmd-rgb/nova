@@ -370,6 +370,15 @@ wizard_setup() {
   mounted_partitions() { :; }
   console_keymap() { echo es; }
   UI_NOTES=$SCRATCH/notes
+  # The summary checks the writer's tools are there; where this machine lacks
+  # one (CI has no cryptsetup), a stand-in at the end of PATH answers for it.
+  local tool
+  mkdir -p "$SCRATCH/writer-bin"
+  for tool in sudo sfdisk wipefs mkfs.fat tar zstd diff cryptsetup mkfs.btrfs repo-add; do
+    printf '#!/bin/sh\nexit 0\n' >"$SCRATCH/writer-bin/$tool"
+    chmod +x "$SCRATCH/writer-bin/$tool"
+  done
+  PATH=$PATH:$SCRATCH/writer-bin
 }
 
 @test "wizard: Custom with what is ticked, a passphrase, and the plan for the writer" {
