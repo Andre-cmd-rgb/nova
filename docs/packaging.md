@@ -11,6 +11,7 @@ a release pins, and nothing is built on a laptop except to test a PKGBUILD.
 | `linux-nova`, `linux-nova-headers` | Arch's `linux` packaging plus BORE | the kernel Nova boots on x86-64-v3 CPUs |
 | `nvidia-open-nova` | Arch's `nvidia-open` packaging | NVIDIA's open modules prebuilt for `linux-nova`, so no DKMS on the laptop |
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
+| `ttfx` | `packaging/ttfx`, its release tag | the screensaver's text effects, in no Arch repository |
 
 Arch's own `linux` stands in for `linux-nova` on CPUs older than x86-64-v3,
 with `nvidia-open`, and `linux-lts` is always installed as the fallback entry,
@@ -74,6 +75,14 @@ rebuilds the UKIs and boot entries whenever a kernel changes, and the
 new AUR PKGBUILD, compare it with ours, pin the commit behind the new tag, and
 update the checksums. Their gradle builds download dependencies, so they need
 network access at build time.
+
+## ttfx
+
+Built with cargo from a release tag of [omacom/ttfx](https://github.com/omacom/ttfx),
+the tarball pinned by its checksum and the crates by its `Cargo.lock`
+(`cargo fetch --locked`, so the build needs network access). To update: bump
+`pkgver`, then the checksum (`makepkg -g`). The nova package depends on it, so
+release.yml installs it before building nova.
 
 ## nova-keyring
 

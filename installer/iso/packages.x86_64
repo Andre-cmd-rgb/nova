@@ -8,10 +8,11 @@ amd-ucode
 mkinitcpio
 mkinitcpio-archiso
 
-# nova-install
+# nova-install, and gum for its screens
 arch-install-scripts
 btrfs-progs
 dosfstools
+gum
 jq
 # the things nova usb carries: LUKS2, then compressed archives
 cryptsetup
@@ -27,6 +28,7 @@ iw
 iwd
 wireless-regdb
 
-# A rescue shell
+# A rescue shell, and a memory test in the boot menu
 less
+memtest86+-efi
 nano

@@ -737,6 +737,24 @@ Item {
 
       Section {
         width: p.inner
+        title: "SCREENSAVER AFTER"
+        ButtonGroup {
+          readonly property int seconds: Number(root.lock.screensaver === undefined ? 180 : root.lock.screensaver)
+          options: [
+            { value: "1", label: "1 min" }, { value: "2", label: "2 min" }, { value: "3", label: "3 min" },
+            { value: "5", label: "5 min" }, { value: "10", label: "10 min" }, { value: "never", label: "Never" }
+          ]
+          value: seconds <= 0 ? "never" : String(Math.ceil(seconds / 60))
+          onChanged: function (value) { root.run(["nova-idle-screensaver", value]) }
+        }
+        Caption {
+          width: parent.width
+          text: "Any key or the mouse ends it. To see it now: nova screensaver"
+        }
+      }
+
+      Section {
+        width: p.inner
         title: "LOCK WHEN UNUSED FOR"
         ButtonGroup {
           readonly property int seconds: Number(root.lock.seconds === undefined ? 300 : root.lock.seconds)
@@ -750,7 +768,7 @@ Item {
         }
         Caption {
           width: parent.width
-          text: "Stay Awake, in the bar's indicators, pauses this for as long as it is on."
+          text: "Caffeine, in the bar's indicators (or Super+Ctrl+I), pauses both for as long as it is on."
         }
       }
 

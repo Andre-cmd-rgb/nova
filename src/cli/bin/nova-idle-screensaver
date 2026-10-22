@@ -1,0 +1,34 @@
+#!/bin/bash
+
+# nova:summary=Show or set how long the computer waits, unused, before the screensaver starts
+# nova:args=[minutes|never]
+# nova:examples=nova idle screensaver | nova idle screensaver 5 | nova idle screensaver never
+#
+# idle.screensaver in ~/.config/nova/shell.json, in seconds; the shell picks it
+# up live. Caffeine (nova caffeine) pauses it without changing it, and
+# `nova screensaver` shows it now.
+
+set -euo pipefail
+
+source nova-shell-config
+
+case ${1:-} in
+  "")
+    (($# == 0)) || fail "usage: nova idle screensaver [minutes|never]"
+    seconds=$(jq -r 'if (.idle.screensaver | type) == "number" then .idle.screensaver else 180 end' "$(source_file)")
+    if ((seconds <= 0)); then
+      echo "never"
+    else
+      echo "$(((seconds + 59) / 60)) min"
+    fi
+    ;;
+  never) commit '.idle.screensaver = 0' && echo "No screensaver: the screen stays as it is until it locks." ;;
+  *)
+    if ! [[ $# == 1 && $1 =~ ^[0-9]{1,3}$ ]] || ((10#$1 < 1 || 10#$1 > 720)); then
+      fail "usage: nova idle screensaver [minutes|never], minutes from 1 to 720"
+    fi
+    minutes=$((10#$1))
+    commit ".idle.screensaver = \$s" --argjson s "$((minutes * 60))"
+    echo "The screensaver starts after $minutes min unused."
+    ;;
+esac

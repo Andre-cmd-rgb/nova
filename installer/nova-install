@@ -2,8 +2,9 @@
 #
 # nova-install: install Nova from the USB stick onto this computer's disk.
 #
-# Runs as root in the live system. Every question comes first, then one summary,
-# and only after "erase" is typed does anything touch a disk. The whole disk is
+# Runs as root in the live system. Every question comes first, one a screen
+# (installer/ui.bash), then one summary, and only after "erase" is typed does
+# anything touch a disk. The whole disk is
 # used: a 2 GiB EFI system partition and one btrfs partition holding the
 # subvolumes that snapshots and rollback expect (@ @home @log @pkg @snapshots
 # @swap).
@@ -23,6 +24,8 @@
 #                                 end. tests/install/run uses it.
 #   nova-install --unlock         open the things carried on the stick (nova usb),
 #                                 and join their Wi-Fi networks
+#   nova-install --keymap [km]    the keyboard layout screen, km first; prints
+#                                 the keymap chosen (km for Esc)
 #   nova-install --list-packages  every package an install on any computer can
 #                                 need: what nova usb puts on a stick
 #   nova-install --help           this text
@@ -63,9 +66,22 @@ SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@s
 GPU_INTEL=(intel-media-driver vulkan-intel)
 GPU_AMD=(vulkan-radeon)
 
+# The setup screens' look: beside this file in the repository, in the share on
+# the stick.
+if [[ -r ${BASH_SOURCE[0]%/*}/ui.bash ]]; then
+  # shellcheck source=installer/ui.bash
+  source "${BASH_SOURCE[0]%/*}/ui.bash"
+else
+  # shellcheck source=installer/ui.bash
+  source "$SHARE/ui.bash"
+fi
+
 say() { printf '\n\e[1m%s\e[0m\n' "$*"; }
 info() { printf '  %s\n' "$*"; }
-warn() { printf '  \e[33m%s\e[0m\n' "$*" >&2; }
+warn() {
+  printf '  \e[33m%s\e[0m\n' "$*" >&2
+  [[ -z ${UI_NOTES:-} ]] || printf '%s\n' "$*" >>"$UI_NOTES"
+}
 die() {
   printf '\n\e[31mnova-install: %s\e[0m\n' "$*" >&2
   exit 1
@@ -353,83 +369,282 @@ answer() { # key
   sed -n "s/^$1=//p" "$ANSWERS" | tail -n 1
 }
 
-ask() { # key prompt default -> the answer on stdout
-  local reply
-  if [[ -n $ANSWERS ]]; then
-    reply=$(answer "$1")
-  else
-    read -rp "  $2${3:+ [$3]}: " reply </dev/tty
-  fi
-  echo "${reply:-$3}"
+# The answers, asked on screen or read from the answers file.
+KEYMAP='' DISK_LINE='' FULLNAME='' ACCOUNT='' PASSWORD='' COMPUTER='' TIMEZONE='' FINGERPRINT=''
+# Who FINGERPRINT was enrolled for: going back and changing the username
+# leaves the print behind.
+ENROLLED_FOR=''
+UI_STOPPED="The installer stopped; nothing was changed. nova-install-start starts it again."
+
+# What carried things say about the computer they came from, as defaults.
+carried_default() { # name|user|host|timezone
+  carry_ready || return 0
+  local value
+  value=$(carry_value ".source.$1")
+  case $1 in
+    name) valid_fullname "$value" || value= ;;
+    user) valid_username "$value" || value= ;;
+    # Only for this same computer; another one deserves its own name.
+    host) [[ -n $(machine_hash) && $(machine_hash) == "$(carry_value .source.machine)" ]] && valid_hostname "$value" || value= ;;
+    timezone) valid_timezone "$value" || value= ;;
+  esac
+  echo "$value"
 }
 
-# Asked again after a wrong answer; from the answers file, there is no again.
-retry() { # message
-  [[ -z $ANSWERS ]] || die "the answers file: $1"
-  warn "$1"
+# --answers: every answer from the file, where a wrong one ends the install
+# rather than asking again.
+answers_from_file() {
+  local line
+  KEYMAP=$(answer keymap)
+  KEYMAP=${KEYMAP:-us}
+  valid_keymap "$KEYMAP" || die "the answers file: no keyboard layout called '$KEYMAP'."
+  local disks=()
+  mapfile -t disks < <(candidate_disks)
+  ((${#disks[@]})) || die "no disk to install on: Nova needs an internal disk of at least 64 GB."
+  DISK_LINE=''
+  for line in "${disks[@]}"; do
+    [[ ${line%%$'\t'*} == "$(answer disk)" ]] && DISK_LINE=$line
+  done
+  [[ -n $DISK_LINE ]] || die "the answers file names no disk this can install on (disk=$(answer disk))"
+  ! disk_in_use "${DISK_LINE%%$'\t'*}" || die "the answers file's disk is in use by the live system"
+  FULLNAME=$(answer_or fullname "$(carried_default name)")
+  valid_fullname "$FULLNAME" || die "the answers file: a name without : in it."
+  ACCOUNT=$(answer_or user "$(carried_default user)")
+  [[ -n $ACCOUNT ]] || ACCOUNT=$(suggested_username "$FULLNAME")
+  valid_username "$ACCOUNT" || die "the answers file: no account can be called '$ACCOUNT'."
+  PASSWORD=$(answer password)
+  [[ -n $PASSWORD ]] || die "the answers file has no password"
+  COMPUTER=$(answer_or hostname nova)
+  valid_hostname "$COMPUTER" || die "the answers file: no computer can be called '$COMPUTER'."
+  TIMEZONE=$(answer_or timezone UTC)
+  valid_timezone "$TIMEZONE" || die "the answers file: no time zone called '$TIMEZONE'."
 }
 
-ask_password() {
-  local first second
-  if [[ -n $ANSWERS ]]; then
-    first=$(answer password)
-    [[ -n $first ]] || die "the answers file has no password"
-    printf '%s' "$first"
-    return
-  fi
+suggested_username() { # full name
+  tr '[:upper:]' '[:lower:]' <<<"${1%% *}" | tr -cd 'a-z0-9_-'
+}
+
+# ------------------------------------------------------------- the screens
+#
+# One question a screen under the wordmark, as nova usb asks its own: Esc goes
+# back a step, Ctrl+C stops with nothing changed. Each step_ function returns 1
+# for Esc.
+
+screen() { # [what this step is about]
+  ui_header "Install Nova${1:+  ·  $1}"
+}
+
+# Keyboard layouts by name. Any other console keymap can be typed in.
+keymap_names() {
+  cat <<'EOF'
+English (US)	us
+English (UK)	uk
+English (US international)	us-acentos
+Spanish	es
+Latin American	la-latin1
+Italian	it
+German	de
+French	fr
+Portuguese	pt-latin1
+Brazilian	br-abnt2
+Swiss German	de_CH-latin1
+Swiss French	fr_CH-latin1
+Belgian	be-latin1
+Dutch	nl
+Danish	dk-latin1
+Norwegian	no-latin1
+Swedish	sv-latin1
+Finnish	fi
+Polish	pl
+Czech	cz
+Hungarian	hu
+Greek	gr
+Turkish	trq
+Russian	ru
+Ukrainian	ua
+Japanese	jp106
+Dvorak	dvorak
+Colemak	colemak
+EOF
+}
+
+# The keyboard layout, picked by name with the default on top; prints its
+# keymap. nova-install-start asks this first (nova-install --keymap), before
+# any password is typed.
+choose_keymap() { # default
+  local default=$1 line keymap problem=''
   while :; do
-    read -rsp "  Password: " first </dev/tty
-    echo >&2
-    read -rsp "  Again: " second </dev/tty
-    echo >&2
-    if [[ -z $first ]]; then
-      warn "The password cannot be empty."
-    elif [[ $first != "$second" ]]; then
-      warn "Those did not match."
+    screen "keyboard"
+    [[ -z $problem ]] || ui_warn "$problem"
+    line=$({
+      keymap_names | awk -F'\t' -v d="$default" '$2 == d { print $1 " (" $2 ")"; found = 1 }
+        END { if (!found && d != "") print d " (" d ")" }'
+      keymap_names | awk -F'\t' -v d="$default" '$2 != d { print $1 " (" $2 ")" }'
+      echo "Another layout..."
+    } | ui_filter "Keyboard layout" "Type to narrow the list: Spanish, German, ...") || return
+    if [[ $line == "Another layout..." ]]; then
+      keymap=$(ui_input "Its console keymap" "" "as listed by localectl list-keymaps") ||
+        { (($? == 130)) && return 130; continue; }
     else
-      printf '%s' "$first"
-      return
+      keymap=${line##*(}
+      keymap=${keymap%)}
     fi
+    if valid_keymap "$keymap"; then
+      echo "$keymap"
+      return 0
+    fi
+    problem="No keyboard layout called '$keymap'."
   done
 }
 
-choose_disk() {
-  local disks=() line i choice path size model serial
+step_keymap() {
+  ui_ask choose_keymap "${KEYMAP:-us}" || return 1
+  KEYMAP=$REPLY
+  loadkeys "$KEYMAP" >/dev/null 2>&1 || true
+}
+
+step_disk() {
+  local disks=() options=() i path size model held label selected='' problem=''
   mapfile -t disks < <(candidate_disks)
   ((${#disks[@]})) || die "no disk to install on: Nova needs an internal disk of at least 64 GB."
-  if [[ -n $ANSWERS ]]; then
-    for line in "${disks[@]}"; do
-      [[ ${line%%$'\t'*} == "$(answer disk)" ]] || continue
-      disk_in_use "${line%%$'\t'*}" && die "the answers file's disk is in use by the live system"
-      echo "$line"
-      return
-    done
-    die "the answers file names no disk this can install on (disk=$(answer disk))"
-  fi
-  # The menu goes to stderr: what this prints on stdout is the answer.
-  {
-    say "Which disk? Everything on it will be erased."
-    for i in "${!disks[@]}"; do
-      IFS=$'\t' read -r path size model serial _ <<<"${disks[i]}"
-      [[ $model != - ]] || model="unknown model"
-      [[ $serial != - ]] || serial=
-      printf '  %d) %-14s %8s  %s%s\n' "$((i + 1))" "$path" "$(human_size "$size")" "$model" "${serial:+  ($serial)}"
-      lsblk -nro NAME,FSTYPE,LABEL,SIZE -- "$path" | awk 'NR > 1 { printf "       %s %s %s %s\n", $1, $2, $3, $4 }'
-    done
-  } >&2
+  for i in "${!disks[@]}"; do
+    IFS=$'\t' read -r path size model _ _ <<<"${disks[i]}"
+    [[ $model != - ]] || model="unknown model"
+    held=$(disk_contents "$path" | awk '{ printf "%s%s", (NR > 1 ? "  ·  " : ""), $0 }')
+    label="${path#/dev/}  $(human_size "$size")  $model${held:+  ·  $held}"
+    label=${label//[,$'\t']/ }
+    options+=("$label"$'\t'"$i")
+    [[ ${disks[i]} != "$DISK_LINE" ]] || selected=$label
+  done
   while :; do
-    choice=$(ask - "Disk number" "$( ((${#disks[@]} == 1)) && echo 1)")
-    if [[ $choice =~ ^[0-9]+$ ]] && ((choice >= 1 && choice <= ${#disks[@]})); then
-      line=${disks[choice - 1]}
-      path=${line%%$'\t'*}
-      if disk_in_use "$path"; then
-        warn "$path is in use by the live system (mounted, swap or LVM). Pick another."
-        continue
-      fi
-      echo "$line"
-      return
+    screen "the disk"
+    [[ -z $problem ]] || ui_warn "$problem"
+    ui_ask ui_choose "Which disk? Everything on it will be erased." "$selected" "${options[@]}" || return 1
+    path=${disks[REPLY]%%$'\t'*}
+    if ! disk_in_use "$path"; then
+      DISK_LINE=${disks[REPLY]}
+      return 0
     fi
-    warn "Type one of the numbers above."
+    problem="${path#/dev/} is in use by the live system (mounted, swap or LVM). Pick another."
+  done
+}
+
+step_you() {
+  screen "you"
+  while :; do
+    ui_ask ui_input "Your full name" "${FULLNAME:-$(carried_default name)}" || return 1
+    valid_fullname "$REPLY" && break
+    ui_warn "A name without : in it."
+  done
+  FULLNAME=$REPLY
+  ui_answered Name "$FULLNAME"
+  while :; do
+    ui_ask ui_input "Username" "${ACCOUNT:-$(carried_default user)}" "$(suggested_username "$FULLNAME")" || return 1
+    REPLY=${REPLY:-$(suggested_username "$FULLNAME")}
+    valid_username "$REPLY" && break
+    ui_warn "Lower-case letters, digits, - and _, starting with a letter."
+  done
+  ACCOUNT=$REPLY
+  ui_answered Username "$ACCOUNT"
+  ui_ask ui_password "Password, for the lock screen and sudo" || return 1
+  PASSWORD=$REPLY
+}
+
+step_computer() {
+  screen "this computer"
+  while :; do
+    ui_ask ui_input "This computer's name" "${COMPUTER:-$(carried_default host)}" nova || return 1
+    REPLY=${REPLY:-nova}
+    valid_hostname "$REPLY" && break
+    ui_warn "Letters, digits and -, up to 63 characters."
+  done
+  COMPUTER=$REPLY
+  ui_answered Name "$COMPUTER"
+  while :; do
+    ui_ask choose_timezone "${TIMEZONE:-$(carried_default timezone)}" || return 1
+    valid_timezone "$REPLY" && break
+    ui_warn "Pick one of the list."
+  done
+  TIMEZONE=$REPLY
+}
+
+timezones() { timedatectl list-timezones 2>/dev/null; }
+
+choose_timezone() { # default
+  { echo "${1:-UTC}"; timezones | grep -vxF -- "${1:-UTC}"; } |
+    ui_filter "Time zone" "Type a city: Rome, New York, ..."
+}
+
+# Offered when the reader is one fprintd drives, and no prints were carried
+# from this computer. Esc is No here.
+step_fingerprint() {
+  screen "fingerprint"
+  if ! ui_ask ui_confirm "Unlock with your fingerprint too?"; then
+    FINGERPRINT='' ENROLLED_FOR=''
+    return 0
+  fi
+  until enroll_fingerprint "$ACCOUNT"; do
+    ui_warn "That did not work."
+    if ! ui_ask ui_confirm "Try again?"; then
+      FINGERPRINT='' ENROLLED_FOR=''
+      ui_note "Settings, Lock Screen sets it up later."
+      return 0
+    fi
+  done
+  FINGERPRINT="right index finger" ENROLLED_FOR=$ACCOUNT
+}
+
+# What the install will do, one line each; the screens frame it, the answers
+# file's install logs it.
+summary_lines() {
+  local disk size model line
+  IFS=$'\t' read -r disk size model _ _ <<<"$DISK_LINE"
+  echo "Erased       ${disk#/dev/}  $(human_size "$size")$([[ $model == - ]] || echo "  $model")"
+  while IFS= read -r line; do
+    [[ -z $line ]] || echo "             now holds $line"
+  done < <(disk_contents "$disk")
+  echo "Layout       2 GiB EFI partition, btrfs with snapshots, $(swap_gib "$size") GiB swap file"
+  echo "Kernel       $(main_kernel), with linux-lts as the fallback"
+  echo "Account      $ACCOUNT ($FULLNAME) on $COMPUTER"
+  echo "Time zone    $TIMEZONE, keyboard $KEYMAP"
+  [[ -z $FINGERPRINT ]] || echo "Fingerprint  $FINGERPRINT"
+  if carry_ready; then
+    echo "Your things  $(carry_items | wc -l) from $(carry_value .source.host), put back after the install"
+  fi
+}
+
+step_summary() {
+  local disk=${DISK_LINE%%$'\t'*} lines=()
+  mapfile -t lines < <(summary_lines)
+  screen "ready"
+  ui_box "${lines[@]}"
+  echo >&2
+  while :; do
+    ui_ask ui_input "Type erase to wipe ${disk#/dev/} and install, or Esc to go back" || return 1
+    [[ $REPLY != erase ]] || return 0
+    ui_warn "That is not erase."
+  done
+}
+
+# The steps in order, Esc stepping back one. The layout is asked only when
+# nova-install-start has not asked it already.
+questions_on_screen() { # fingerprint(yes|no): whether to offer enrolling one
+  local steps=() i=0
+  KEYMAP=${NOVA_KEYMAP:-}
+  steps=()
+  valid_keymap "$KEYMAP" || steps+=(keymap)
+  steps+=(disk you computer)
+  [[ $1 != yes ]] || steps+=(fingerprint)
+  steps+=(summary)
+  while ((i < ${#steps[@]})); do
+    [[ -z $ENROLLED_FOR || $ENROLLED_FOR == "$ACCOUNT" ]] || FINGERPRINT='' ENROLLED_FOR=''
+    if "step_${steps[i]}"; then
+      i=$((i + 1))
+    elif ((i > 0)); then
+      i=$((i - 1))
+    else
+      die "nothing was changed."
+    fi
   done
 }
 
@@ -796,14 +1011,21 @@ carry_unlock() {
   local part pass tries
   part=$(carry_partition)
   [[ -n $part ]] || return 1
-  say "Your things are on this stick, encrypted"
+  if [[ -n $ANSWERS ]]; then
+    say "Your things are on this stick, encrypted"
+  else
+    screen "your things"
+    ui_note "What nova usb brought from your other computer is on this stick, encrypted."
+    echo >&2
+  fi
   for ((tries = 0; tries < 5; tries++)); do
     if [[ -n $ANSWERS ]]; then
       pass=$(answer passphrase)
       tries=4
     else
-      read -rsp "  Passphrase (Enter to install without them): " pass </dev/tty
-      echo >&2
+      # Esc, or Enter on nothing, installs without them.
+      ui_ask ui_secret "Its passphrase" "Enter on nothing installs without them" || REPLY=''
+      pass=$REPLY
     fi
     if [[ -z $pass ]]; then
       : >"$CARRY_DECLINED"
@@ -902,8 +1124,7 @@ adopt_shell_config() { # shell.json
       def keep: map(select(type == "object") | .id |= nova | select(.id as $i | $ids | index([$i])));
       (if (.bar.layout | type) == "object"
         then .bar.layout |= with_entries(.value |= (if type == "array" then keep else . end)) else . end)
-      | (if (.plugins | type) == "array" then .plugins |= keep else . end)
-      | (if (.idle | type) == "object" then del(.idle.screensaver) else . end)' \
+      | (if (.plugins | type) == "array" then .plugins |= keep else . end)' \
     "$file" >"$file.tmp" 2>>"$LOG"; then
     mv -f -- "$file.tmp" "$file"
   else
@@ -1031,6 +1252,16 @@ main() {
       carry_wifi_live || warn "The carried Wi-Fi networks could not be read."
       return 0
       ;;
+    --keymap)
+      local status=0
+      choose_keymap "${2:-us}" || status=$?
+      if ((status == 130)); then
+        printf '\n  %s\n' "$UI_STOPPED" >&2
+        exit 130
+      fi
+      ((status == 0)) || echo "${2:-us}"
+      return 0
+      ;;
     --answers)
       ANSWERS=$(realpath -e -- "${2:?--answers needs a file}") || die "no answers file at $2"
       ;;
@@ -1060,113 +1291,52 @@ main() {
   local kernel profile
   kernel=$(main_kernel)
   profile=$(hardware_profile)
-  say "Nova ${tag#v}"
-  info "Computer: $(cat /sys/class/dmi/id/product_version 2>/dev/null || echo unknown)${profile:+ (Nova knows this one)}"
-  [[ $kernel == linux-nova ]] || info "This CPU predates x86-64-v3, so Nova will use Arch's standard kernel."
-
-  # The layout first, and loaded at once: the password typed below has to be
-  # the password the lock screen sees, on the same keyboard layout.
-  # nova-install-start has usually asked already (NOVA_KEYMAP).
-  say "Keyboard"
-  local keymap=${NOVA_KEYMAP:-}
-  if [[ -z $ANSWERS ]] && valid_keymap "$keymap"; then
-    info "Layout: $keymap"
-  else
-    while :; do
-      keymap=$(ask keymap "Layout (us, es, it, de, fr, uk, ...)" us)
-      valid_keymap "$keymap" && break
-      retry "No keyboard layout called '$keymap'."
-    done
-  fi
-  loadkeys "$keymap" >/dev/null 2>&1 || true
-
-  local disk_line disk disk_size disk_model
-  release_target
-  disk_line=$(choose_disk)
-  IFS=$'\t' read -r disk disk_size disk_model _ _ <<<"$disk_line"
-  [[ $disk_model != - ]] || disk_model=
-
-  say "You"
-  local fullname user password hostname timezone carried_user='' carried_name=''
-  if carry_ready; then
-    carried_user=$(carry_value .source.user)
-    valid_username "$carried_user" || carried_user=
-    carried_name=$(carry_value .source.name)
-    valid_fullname "$carried_name" || carried_name=
-  fi
-  while :; do
-    fullname=$(ask fullname "Full name" "$carried_name")
-    valid_fullname "$fullname" && break
-    retry "A name without : in it."
-  done
-  while :; do
-    user=$(ask user "Username" "${carried_user:-$(tr '[:upper:]' '[:lower:]' <<<"${fullname%% *}" | tr -cd 'a-z0-9_-')}")
-    valid_username "$user" && break
-    retry "Lower-case letters, digits, - and _, starting with a letter."
-  done
-  password=$(ask_password)
-  while :; do
-    hostname=$(ask hostname "Computer name" nova)
-    valid_hostname "$hostname" && break
-    retry "Letters, digits and -, up to 63 characters."
-  done
-  while :; do
-    timezone=$(ask timezone "Time zone (Europe/Rome, America/New_York, ...)" UTC)
-    valid_timezone "$timezone" && break
-    retry "No time zone called '$timezone'."
-  done
-
   # Only a reader fprintd can drive gets fprintd in the new system; prints
   # carried from this computer need no enrolling.
-  local extra=() fingerprint=''
+  local extra=() offer_fingerprint=no
   if fingerprint_reader; then
     extra+=(fprintd)
     if carried_fingerprints; then
-      fingerprint="carried from $(carry_value .source.host)"
-    elif [[ -z $ANSWERS ]]; then
-      say "Fingerprint"
-      while [[ $(ask - "Unlock with your fingerprint? (yes/no)" yes) == y* ]]; do
-        if enroll_fingerprint "$user"; then
-          fingerprint="right index finger"
-          break
-        fi
-        warn "That did not work."
-      done
-      [[ -n $fingerprint ]] || info "Settings, Lock Screen sets it up later."
+      FINGERPRINT="carried from $(carry_value .source.host)"
+    else
+      offer_fingerprint=yes
     fi
   fi
+  release_target
 
-  local swap
-  swap=$(swap_gib "$disk_size")
-  say "Ready to install"
-  info "Disk          $disk, $(human_size "$disk_size") ${disk_model:+($disk_model)}: ERASED"
-  info "Layout        2 GiB EFI partition, btrfs with snapshots, ${swap} GiB swap file"
-  info "Kernel        $kernel, with linux-lts as the fallback"
-  info "Account       $user ($fullname) on $hostname"
-  info "Time zone     $timezone, keyboard $keymap"
-  [[ -z $fingerprint ]] || info "Fingerprint   $fingerprint"
-  carry_ready && info "Your things   $(carry_items | wc -l) items from $(carry_value .source.host), put back after the install"
   if [[ -n $ANSWERS ]]; then
+    answers_from_file
+    say "Nova ${tag#v}"
+    info "Computer: $(cat /sys/class/dmi/id/product_version 2>/dev/null || echo unknown)${profile:+ (Nova knows this one)}"
+    say "Ready to install"
+    summary_lines | sed 's/^/  /'
     [[ $(answer erase) == yes ]] || die "the answers file does not say erase=yes; nothing was changed."
   else
-    [[ $(ask - "Type erase to wipe $disk and install" "") == erase ]] || die "nothing was changed."
+    questions_on_screen "$offer_fingerprint"
+    screen "installing"
+    info "Nova ${tag#v} on $(cat /sys/class/dmi/id/product_version 2>/dev/null || echo "this computer")${profile:+, which Nova knows}"
   fi
+  [[ $kernel == linux-nova ]] || info "This CPU predates x86-64-v3, so Nova uses Arch's standard kernel."
+  loadkeys "$KEYMAP" >/dev/null 2>&1 || true
 
+  local disk swap
+  disk=${DISK_LINE%%$'\t'*}
+  swap=$(swap_gib "$(cut -f2 <<<"$DISK_LINE")")
   set -E
   trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
   partition_and_format "$disk"
   create_subvolumes_and_mount "$disk" "$swap"
   prepare_boot_config "$disk" "$kernel"
   install_packages "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}"
-  write_system_config "$hostname" "$timezone" "$keymap" "$arch_date" "$nova_repo" "$tag"
+  write_system_config "$COMPUTER" "$TIMEZONE" "$KEYMAP" "$arch_date" "$nova_repo" "$tag"
   configure_snapper
-  create_user "$user" "$fullname" "$password"
-  unset password
-  copy_fingerprints "$user"
-  restore_carry "$user"
+  create_user "$ACCOUNT" "$FULLNAME" "$PASSWORD"
+  unset PASSWORD
+  copy_fingerprints "$ACCOUNT"
+  restore_carry "$ACCOUNT"
   install_bootloader
-  [[ $(answer_or apps yes) == no ]] || install_apps "$user"
-  install_carried_packages "$user"
+  [[ $(answer_or apps yes) == no ]] || install_apps "$ACCOUNT"
+  install_carried_packages "$ACCOUNT"
   enable_services
   run_after
   finish

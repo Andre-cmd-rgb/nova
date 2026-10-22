@@ -1,19 +1,29 @@
 #!/bin/bash
-# The installer stick's first console: get online, run nova-install, restart.
+# The installer stick's first console: the keyboard, the network, nova-install,
+# and a restart; one screen each, as nova-install asks its own questions.
 #
-# Ethernet connects by itself (systemd-networkd). Wi-Fi asks for a network and
-# its password and connects with iwd; many laptops, the ThinkPad P1 among them,
+# Ethernet connects by itself (systemd-networkd). Wi-Fi is picked from what iwd
+# sees, and joined with its password; many laptops, the ThinkPad P1 among them,
 # have no Ethernet port. A stick that carries its own packages (nova usb) can
 # install without a network. Leaving at any point drops to a root shell, where
 # `nova-install-start` starts over.
+#
+# The functions are sourceable (tests/unit/installer/start.bats); `main` runs
+# only when executed.
 
 set -uo pipefail
 
+SHARE=${NOVA_INSTALLER_SHARE:-/usr/share/nova-installer}
+STICK=${NOVA_STICK:-/run/archiso/bootmnt}
 PROBE=https://archive.archlinux.org/
+
+# shellcheck source=installer/ui.bash
+source "$SHARE/ui.bash"
+UI_STOPPED="Stopped. nova-install-start starts again."
 
 online() { curl -fsI --max-time 5 -o /dev/null "$PROBE"; }
 
-offline_repo() { [[ -r ${NOVA_OFFLINE_REPO:-/run/archiso/bootmnt/nova/repo}/nova-offline.db ]]; }
+offline_repo() { [[ -r ${NOVA_OFFLINE_REPO:-$STICK/nova/repo}/nova-offline.db ]]; }
 
 wifi_device() { iw dev 2>/dev/null | awk '$1 == "Interface" { print $2; exit }'; }
 
@@ -26,100 +36,139 @@ wait_online() { # seconds
   return 1
 }
 
-connect_wifi() {
-  local dev=$1 ssid pass
+screen() { ui_header "Install Nova${1:+  ·  $1}"; }
+
+# The networks iwd found, one "name<TAB>security" line each, as iwctl lists
+# them (strongest first). Only the ones a password or nothing joins: a network
+# that needs a certificate waits for the installed system.
+wifi_networks() { # device
+  iwctl station "$1" get-networks 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | awk '
+    /Network name/ { listed = 1; next }
+    !listed || /^[-[:space:]]*$/ { next }
+    {
+      sub(/^[[:space:]]*>?[[:space:]]*/, "")
+      if (match($0, /[[:space:]][[:space:]]+(psk|open)[[:space:]]/)) {
+        security = substr($0, RSTART, RLENGTH)
+        gsub(/[[:space:]]/, "", security)
+        print substr($0, 1, RSTART - 1) "\t" security
+      }
+    }'
+}
+
+# Returns 0 once online, 1 to go on without a network.
+connect_wifi() { # device
+  local dev=$1 networks=() options=() pass=() i ssid security verb problem=''
   rfkill unblock wlan 2>/dev/null
-  iwctl station "$dev" scan >/dev/null 2>&1
-  sleep 3
-  iwctl station "$dev" get-networks
-  read -r -p "Network name (empty to skip): " ssid
-  [[ -n $ssid ]] || return 1
-  read -r -s -p "Password (empty for an open network): " pass
-  echo
-  if [[ -n $pass ]]; then
-    iwctl --passphrase "$pass" station "$dev" connect "$ssid"
-  else
-    iwctl station "$dev" connect "$ssid"
-  fi || {
-    echo "Could not connect to $ssid."
-    return 1
-  }
-  echo "Connected to $ssid, waiting for an address..."
-  wait_online 20
+  while :; do
+    screen "network"
+    ui_note "Looking for Wi-Fi networks..."
+    iwctl station "$dev" scan >/dev/null 2>&1
+    sleep 3
+    mapfile -t networks < <(wifi_networks "$dev")
+    options=()
+    for i in "${!networks[@]}"; do
+      IFS=$'\t' read -r ssid security <<<"${networks[i]}"
+      ssid=${ssid//[,$'\t']/ }
+      [[ $security != open ]] || ssid+="  (open)"
+      options+=("$ssid"$'\t'"$i")
+    done
+    options+=("A hidden network"$'\t'hidden "Look again"$'\t'again "Without a network"$'\t'none)
+    screen "network"
+    [[ -z $problem ]] || ui_warn "$problem"
+    ui_ask ui_choose "Which Wi-Fi network?" "" "${options[@]}" || return 1
+    verb=connect
+    case $REPLY in
+      again) problem='' && continue ;;
+      none) return 1 ;;
+      hidden)
+        ui_ask ui_input "The network's name" || continue
+        ssid=$REPLY security=psk verb=connect-hidden
+        ;;
+      *) IFS=$'\t' read -r ssid security <<<"${networks[REPLY]}" ;;
+    esac
+    pass=()
+    if [[ $security != open ]]; then
+      ui_ask ui_secret "Password for $ssid" || continue
+      pass=(--passphrase "$REPLY")
+    fi
+    if iwctl "${pass[@]}" station "$dev" "$verb" "$ssid" >/dev/null 2>&1; then
+      ui_note "Connected to $ssid, waiting for an address..."
+      wait_online 20 && return 0
+    fi
+    problem="Could not connect to $ssid."
+  done
 }
 
 get_online() {
   local dev
-  echo "Checking the network..."
+  screen "network"
+  ui_note "Checking the network..."
   wait_online 8 && return 0
   dev=$(wifi_device)
-  if [[ -z $dev ]]; then
-    echo "No network: plug in an Ethernet cable, then press Enter."
-    read -r
-    wait_online 15
+  if [[ -n $dev ]]; then
+    connect_wifi "$dev"
     return
   fi
-  while ! online; do
-    connect_wifi "$dev" && return 0
-    read -r -p "Try another network? [Y/n] " again
-    [[ ${again,,} != n* ]] || return 1
-  done
+  ui_ask ui_confirm "No network. Plug in an Ethernet cable, then Yes; No goes on without one." || return 1
+  wait_online 15
 }
 
-# A stick with an answers file installs with nobody there (tests/install/run):
-# no questions, the report on the console the file names, and the machine off
-# at the end, installed or not.
-answers=${NOVA_ANSWERS:-/run/archiso/bootmnt/nova/answers}
-if [[ -r $answers ]]; then
-  console=$(sed -n 's/^console=//p' "$answers" | tail -n 1)
-  [[ -z $console ]] || exec >>"$console" 2>&1
-  if nova-install --answers "$answers"; then
-    echo "nova-install-start: installed"
-  else
-    echo "nova-install-start: the install failed"
-    tail -n 40 /var/log/nova-install.log
-  fi
-  systemctl poweroff
-  exit 0
-fi
-
-clear
-printf '\n  \e[1mNova\e[0m installer\n\n'
-
-# The keyboard first: the passphrase and the Wi-Fi password below are typed on
-# it. nova usb leaves the layout of the computer it ran on as the default.
-keymap_default=$(cat "${NOVA_STICK:-/run/archiso/bootmnt}/nova/keymap" 2>/dev/null) || keymap_default=us
-while :; do
-  read -r -p "Keyboard layout (us, es, it, de, fr, uk, ...) [$keymap_default]: " keymap
-  keymap=${keymap:-$keymap_default}
-  [[ $keymap =~ ^[a-z][a-z0-9_-]*$ ]] && localectl list-keymaps 2>/dev/null | grep -qx -- "$keymap" && break
-  echo "No keyboard layout called '$keymap'."
-done
-loadkeys "$keymap" >/dev/null 2>&1
-export NOVA_KEYMAP=$keymap
-
-# Things carried on the stick (nova usb) are opened first: their Wi-Fi
-# networks can get this system online without a question.
-nova-install --unlock
-
-if ! get_online; then
-  echo
-  if offline_repo; then
-    echo "Installing from the stick. Chrome, VS Code, Claude Code and Codex need"
-    echo "the network, so they come later: nova apps install; mise install"
-  else
-    echo "Nova installs over the network, so it needs a connection first."
-    echo "Connect by hand with iwctl, then run nova-install-start again."
+main() {
+  # A stick with an answers file installs with nobody there (tests/install/run):
+  # no questions, the report on the console the file names, and the machine off
+  # at the end, installed or not.
+  local answers=${NOVA_ANSWERS:-$STICK/nova/answers} console keymap keymap_default
+  if [[ -r $answers ]]; then
+    console=$(sed -n 's/^console=//p' "$answers" | tail -n 1)
+    [[ -z $console ]] || exec >>"$console" 2>&1
+    if nova-install --answers "$answers"; then
+      echo "nova-install-start: installed"
+    else
+      echo "nova-install-start: the install failed"
+      tail -n 40 /var/log/nova-install.log
+    fi
+    systemctl poweroff
     exit 0
   fi
-fi
 
-if nova-install; then
-  echo
-  read -r -p "Take the stick out and press Enter to restart. " _
-  systemctl reboot
-else
-  echo
-  echo "The install stopped. Its log is /var/log/nova-install.log;"
-  echo "run nova-install-start to try again."
+  # The keyboard first: the passphrase and the Wi-Fi password below are typed
+  # on it. nova usb leaves the layout of the computer it ran on as the default.
+  keymap_default=$(cat "$STICK/nova/keymap" 2>/dev/null) || keymap_default=us
+  # A warning nova-install gives (a stick that will not open) stays on screen
+  # past the next one's clearing.
+  UI_NOTES=$(mktemp)
+  export UI_NOTES
+  keymap=$(nova-install --keymap "$keymap_default") || exit
+  loadkeys "$keymap" >/dev/null 2>&1
+  export NOVA_KEYMAP=$keymap
+
+  # Things carried on the stick (nova usb) are opened first: their Wi-Fi
+  # networks can get this system online without a question.
+  nova-install --unlock || (($? != 130)) || exit 130
+
+  if ! get_online; then
+    screen
+    if ! offline_repo; then
+      ui_note "Nova installs over the network, so it needs a connection first."
+      ui_note "Connect by hand with iwctl, then run nova-install-start again."
+      exit 0
+    fi
+    ui_note "Without a network, Nova installs from the stick. Chrome, VS Code, Claude"
+    ui_note "Code and Codex need the network, so they come later: nova apps install"
+    echo >&2
+    ui_ask ui_confirm "Install without a network?" || exit 0
+  fi
+
+  if nova-install; then
+    echo
+    ui_ask ui_confirm "Take the stick out. Restart now?" && systemctl reboot
+  elif (($? != 130)); then
+    echo
+    echo "The install stopped. Its log is /var/log/nova-install.log;"
+    echo "run nova-install-start to try again."
+  fi
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
 fi

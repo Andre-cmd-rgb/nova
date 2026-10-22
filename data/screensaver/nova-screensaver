@@ -1,0 +1,81 @@
+#!/bin/bash
+
+# nova:summary=Show the screensaver now; any key ends it
+# nova:args=[stop]
+# nova:examples=nova screensaver | nova screensaver stop
+#
+# A terminal on each display plays the wordmark through ttfx's text effects
+# (github.com/omacom/ttfx), as Omarchy's screensaver does. The text is
+# ~/.config/nova/screensaver.txt when there is one. A key, the window losing
+# focus, the lock or `nova screensaver stop` ends it (nova-screensaver-run).
+#
+# The shell's idle service starts it after idle.screensaver seconds unused
+# (nova idle screensaver) with `auto`, which leaves it be under the lock or
+# while it already shows, and stops it again when the mouse moves.
+
+set -euo pipefail
+
+APP_ID=org.nova.screensaver
+# Matches the terminals' command lines, and never pgrep's or pkill's own.
+PATTERN='[o]rg.nova.screensaver'
+FOOT_CONFIG=${NOVA_SCREENSAVER_FOOT:-/usr/share/nova/screensaver/foot.ini}
+SOCKET=${XDG_RUNTIME_DIR:-}/hypr/${HYPRLAND_INSTANCE_SIGNATURE:-}/.socket2.sock
+
+running() { pgrep -f "$PATTERN" >/dev/null; }
+
+locked() { [[ $(nova-shell lock isLocked 2>/dev/null) == true ]]; }
+
+focus() { hyprctl dispatch "hl.dsp.focus({ monitor = \"$1\" })" >/dev/null 2>&1 || true; }
+
+stop() {
+  pkill -f "$PATTERN" || true
+  hyprctl eval 'hl.config({ cursor = { invisible = false } })' >/dev/null 2>&1 || true
+}
+
+# A new window opens on the focused display, and exec_cmd returns before it
+# does: the next display waits for this one's window, or they all pile onto the
+# last. Five seconds at most.
+window_opened() { # events-fd
+  local line deadline=$((SECONDS + 5))
+  while ((SECONDS < deadline)) && IFS= read -r -t $((deadline - SECONDS)) -u "$1" line; do
+    [[ $line != "openwindow>>"*",$APP_ID,"* ]] || return 0
+  done
+  return 0
+}
+
+show() {
+  local events focused monitor
+  if ! command -v ttfx >/dev/null; then
+    echo "nova screensaver: ttfx is missing; sudo pacman -S ttfx" >&2
+    return 1
+  fi
+  focused=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')
+  # Listening before the first window is asked for, so none opens unseen.
+  exec {events}< <(socat -U - "UNIX-CONNECT:$SOCKET")
+  while IFS= read -r monitor; do
+    focus "$monitor"
+    hyprctl dispatch "hl.dsp.exec_cmd([[foot --app-id=$APP_ID --config=$FOOT_CONFIG nova-screensaver-run]])" >/dev/null
+    window_opened "$events"
+  done < <(hyprctl monitors -j | jq -r '.[].name')
+  exec {events}<&-
+  [[ -z $focused ]] || focus "$focused"
+}
+
+main() {
+  case ${1:-} in
+    "")
+      stop
+      show
+      ;;
+    auto) running || locked || show ;;
+    stop) stop ;;
+    *)
+      echo "Usage: nova screensaver [stop]" >&2
+      return 2
+      ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

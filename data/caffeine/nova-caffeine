@@ -1,0 +1,202 @@
+#!/bin/bash
+
+# nova:summary=Caffeine: the screen stays on, and a closed lid only turns it off
+# nova:args=[on [why]|off|toggle|status]
+# nova:examples=nova caffeine | nova caffeine on "Rendering" | nova caffeine off
+#
+# On, the computer stops minding that nobody is at it: no screensaver, no idle
+# lock, and on a laptop, closing the lid turns the panel off and nothing else.
+# It does not sleep, lock or drop the network. Choosing Lock or Suspend still
+# does, and Caffeine lasts until it is turned off or you log out.
+#
+# What it answers:
+#
+#   1. The shell's idle service, which starts the screensaver and locks after a
+#      while unused. It watches the switch, $XDG_RUNTIME_DIR/nova/caffeine,
+#      and pauses while it is there.
+#   2. logind, which suspends when the lid closes. Held off with a
+#      handle-lid-switch inhibitor, a low-level lock logind honours whatever
+#      LidSwitchIgnoreInhibited says. Only the lid is inhibited.
+#   3. Hyprland's lid binding, which runs nova-system-lid-close (it locks). The
+#      binding comes here instead (close, open); off, this hands it straight
+#      back.
+#
+# The panel goes dark with DPMS rather than by disabling the output, which
+# would make Hyprland move every window onto a display that is not there.
+#
+# On a laptop with a 5G modem on mhi-pci-generic (the ThinkPad P1's Foxconn
+# T99W175), the modem is kept out of runtime suspend while on: with the lid
+# shut and nothing sending it drops into M3 after two seconds, and it may be the
+# only link up. That write is root's, through nova-caffeine-modem (polkit, no
+# password for the person at the computer).
+
+set -euo pipefail
+
+# Kept where a restart clears them: Caffeine never outlives the session.
+RUN_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova
+SWITCH=$RUN_DIR/caffeine
+PREV_MODEM=$RUN_DIR/caffeine-modem
+PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
+MODEM_HELPER=${NOVA_CAFFEINE_MODEM:-/usr/lib/nova/nova-caffeine-modem}
+UNIT=nova-caffeine-inhibit
+
+laptop() { nova-hw-laptop >/dev/null 2>&1; }
+
+# logind's own list is what settles whether the lid is held; a running unit
+# is not yet a lock.
+lid_lock_held() {
+  systemd-inhibit --list --no-legend 2>/dev/null | grep -q '^nova-caffeine .*handle-lid-switch'
+}
+
+# On is the switch, and on a laptop the lid lock with it: a switch that outlived
+# its lock is a broken one, and reconcile undoes it.
+armed() { [[ -f $SWITCH ]] && { ! laptop || lid_lock_held; }; }
+
+dpms() { # on|off
+  local internal
+  internal=$(nova-hyprland-monitor-laptop 2>/dev/null) || return 0
+  [[ -n $internal ]] || return 0
+  hyprctl dispatch "hl.dsp.dpms({ action = \"$1\", monitor = \"$internal\" })" >/dev/null 2>&1 || true
+}
+
+modem() { # -> the modem's PCI device directory; by driver, since a slot is not a modem
+  local d driver
+  for d in "$PCI_DEVICES"/*; do
+    driver=$(readlink -f "$d/driver" 2>/dev/null) || continue
+    [[ ${driver##*/} == mhi-pci-generic ]] || continue
+    echo "$d"
+    return 0
+  done
+  return 1
+}
+
+modem_set() { # on|auto
+  local d
+  d=$(modem) || return 0
+  [[ $(cat "$d/power/control" 2>/dev/null) != "$1" ]] || return 0
+  pkexec "$MODEM_HELPER" "$1" >/dev/null 2>&1
+}
+
+# The shell's idle service and the bar's indicator read the switch again.
+tell_shell() { nova-shell -q idle refresh >/dev/null 2>&1 || true; }
+
+# The lid: no suspend while closed, and the modem kept awake.
+hold_lid() { # why
+  local d waited=0
+  if d=$(modem); then
+    # Its own setting, not "on" from a hold already taken.
+    [[ -f $PREV_MODEM ]] || cat "$d/power/control" >"$PREV_MODEM" 2>/dev/null || true
+    modem_set on || echo "nova caffeine: could not keep the modem awake; it may still sleep" >&2
+  fi
+  if ! systemctl --user is-active --quiet "$UNIT.service"; then
+    systemd-run --user --quiet --unit="$UNIT" --description="nova caffeine: no suspend on lid close" \
+      systemd-inhibit --what=handle-lid-switch --who=nova-caffeine --why="$1" --mode=block sleep infinity || {
+      echo "nova caffeine: could not take the lid inhibitor" >&2
+      return 1
+    }
+  fi
+  # systemd-run returns once the unit is queued, before logind has the lock;
+  # saying the lid is safe before it is would be the one lie this must not tell.
+  until lid_lock_held; do
+    if ((waited++ >= 30)); then
+      echo "nova caffeine: the lid inhibitor never appeared" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
+arm() {
+  local why=${1:-Keeping the screen on}
+  mkdir -p "$RUN_DIR"
+  if laptop && ! hold_lid "$why"; then
+    release >/dev/null || true
+    echo "nova caffeine: NOT on" >&2
+    return 1
+  fi
+  printf '%s\n' "$why" >"$SWITCH"
+  tell_shell
+  if laptop; then
+    echo "Caffeine is on: the screen stays on, and closing the lid only turns it off."
+  else
+    echo "Caffeine is on: the screen stays on."
+  fi
+}
+
+release() {
+  local ok=0
+  systemctl --user stop "$UNIT.service" >/dev/null 2>&1 || true
+  systemctl --user reset-failed "$UNIT.service" >/dev/null 2>&1 || true
+  if [[ -f $PREV_MODEM ]]; then
+    modem_set "$(<"$PREV_MODEM")" || ok=1
+  fi
+  dpms on
+  # The modem's setting is kept for the next try when it could not be put back.
+  rm -f -- "$SWITCH"
+  ((ok)) || rm -f -- "$PREV_MODEM"
+  tell_shell
+  echo "Caffeine is off: the screen sleeps and locks when unused again."
+  return "$ok"
+}
+
+# When Hyprland starts: a switch whose lid lock is gone (a restarted user
+# manager), or a modem setting not yet put back, is undone.
+reconcile() {
+  if [[ -f $SWITCH || -f $PREV_MODEM ]] && ! armed; then
+    release >/dev/null || true
+  fi
+  return 0
+}
+
+status() {
+  local d
+  if armed; then echo "on: $(<"$SWITCH")"; else echo off; fi
+  if laptop; then
+    echo "  lid inhibitor  $(lid_lock_held && echo held || echo none)"
+    echo "  lid            $(nova-hw-laptop-closed 2>/dev/null && echo closed || echo open)"
+  fi
+  if d=$(modem); then echo "  modem          $(cat "$d/power/control" 2>/dev/null) ($(cat "$d/power/runtime_status" 2>/dev/null))"; fi
+}
+
+# Hyprland's switch:on:Lid Switch.
+on_close() {
+  armed || exec nova-system-lid-close
+  # Docked, a lid close neither locks nor sleeps anyway: move to the external
+  # display as always.
+  if nova-hw-external-monitors; then exec nova-hyprland-monitor-clamshell; fi
+  dpms off
+}
+
+# Hyprland's switch:off:Lid Switch.
+on_open() {
+  dpms on
+  nova-hyprland-monitor-clamshell || true
+  if armed; then
+    nova-notification-send -u low "Caffeine is still on" \
+      "Closing the lid will not sleep or lock. Turn it off in the bar, or: nova caffeine off" >/dev/null 2>&1 || true
+  fi
+}
+
+main() {
+  case ${1:-status} in
+    on)
+      shift
+      arm "$@"
+      ;;
+    off) release ;;
+    toggle) if armed; then release; else arm; fi ;;
+    status) status ;;
+    armed) armed ;;
+    reconcile) reconcile ;;
+    close) on_close ;;
+    open) on_open ;;
+    *)
+      echo "Usage: nova caffeine [on [why]|off|toggle|status]" >&2
+      return 2
+      ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

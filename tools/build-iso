@@ -9,8 +9,9 @@
 # names. The build host's pacman must already trust the Nova key: CI installs
 # nova-keyring from the same repository first.
 #
-# Assembles a copy of installer/iso with nova-install, the release's files and
-# the hardware profiles' package lists, then runs mkarchiso on it, so it needs
+# Assembles a copy of installer/iso with nova-install and the look of its
+# screens (ui.bash, the wordmark), the release's files and the hardware
+# profiles' package lists, then runs mkarchiso on it, so it needs
 # root and the archiso package. Writes nova-<version>-x86_64.iso and its
 # .sha256, nova-usb and the offline package list (packages.txt) to --out.
 set -euo pipefail
@@ -49,6 +50,8 @@ cp -a -- "$root/installer/iso" "$profile"
 airootfs=$profile/airootfs
 share=$airootfs/usr/share/nova-installer
 install -Dm755 "$root/installer/nova-install" "$airootfs/usr/local/bin/nova-install"
+install -Dm644 "$root/installer/ui.bash" "$share/ui.bash"
+install -Dm644 "$root/theme/wordmark/nova.txt" "$share/nova.txt"
 install -Dm644 "$release" "$share/release.toml"
 install -Dm644 "$root/installer/packages" "$share/packages"
 install -Dm644 "$root/installer/pacman.conf" "$share/pacman.conf"
@@ -84,9 +87,10 @@ NOVA_ISO_VERSION=$version mkarchiso -v -r -w "$work/build" -o "$out" "$profile"
 iso=nova-$version-x86_64.iso
 [[ -f $out/$iso ]] || die "mkarchiso did not write $out/$iso"
 (cd -- "$out" && sha256sum -- "$iso" >"$iso.sha256")
-# nova usb, which makes the stick from any system, and the packages it puts
-# on one for installing without a network.
+# nova usb, which makes the stick from any system, in one file, and the
+# packages it puts on one for installing without a network.
 NOVA_INSTALLER_SHARE=$share "$root/installer/nova-install" --list-packages >"$out/packages.txt"
-install -m755 "$root/installer/nova-usb" "$out/nova-usb"
+"$root/tools/inline-ui" >"$out/nova-usb"
+chmod 755 "$out/nova-usb"
 rm -rf -- "$work"
 printf 'build-iso: wrote %s/%s\n' "$out" "$iso" >&2

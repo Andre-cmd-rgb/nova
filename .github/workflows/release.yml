@@ -131,11 +131,13 @@ jobs:
           tools/build-package packaging/nova-keyring out/pkgs
           tools/build-package packaging/limine-entry-tool out/pkgs
           tools/build-package packaging/limine-snapper-sync out/pkgs
-          # nova depends on these three, which no Arch repository has. Building
+          tools/build-package packaging/ttfx out/pkgs
+          # nova depends on these four, which no Arch repository has. Building
           # it with --syncdeps also proves every other dependency exists in the
           # pinned snapshot.
           retry pacman -U --noconfirm out/pkgs/nova-keyring-*.pkg.tar.zst \
-            out/pkgs/limine-entry-tool-*.pkg.tar.zst out/pkgs/limine-snapper-sync-*.pkg.tar.zst
+            out/pkgs/limine-entry-tool-*.pkg.tar.zst out/pkgs/limine-snapper-sync-*.pkg.tar.zst \
+            out/pkgs/ttfx-*.pkg.tar.zst
           NOVA_SOURCE="git+file://$GITHUB_WORKSPACE#tag=$TAG" tools/build-package packaging/nova out/pkgs
           retry pacman -U --noconfirm out/kernel/linux-nova-headers-*.pkg.tar.zst
           # The NVIDIA modules follow the snapshot's driver and this kernel.

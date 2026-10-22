@@ -9,7 +9,7 @@ Nothing is built or published from a laptop.
 |---|---|
 | `release.toml` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the URL of its `[nova]` repository |
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
-| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync` |
+| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `ttfx` |
 | `nova-<version>-x86_64.iso` and `.sha256` | people: the installer stick |
 
 The repository *is* the release page: `release.toml` points pacman at

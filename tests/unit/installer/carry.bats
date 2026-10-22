@@ -125,7 +125,8 @@ EOF
   local file=$NOVA_TARGET/home/nova/.config/nova/shell.json
   [ "$(jq -c .bar.layout "$file")" = '{"left":[{"id":"nova.menu"}],"right":[{"id":"nova.tray"},{"id":"nova.batterylife","readout":"Time left"}]}' ]
   [ "$(jq -c .plugins "$file")" = '[{"id":"nova.batterylife","x":1}]' ]
-  [ "$(jq -c .idle "$file")" = '{"lock":600}' ]
+  # Its idle times are kept: Nova has a screensaver too.
+  [ "$(jq -c .idle "$file")" = '{"lock":600,"screensaver":150}' ]
   [ "$(jq -r .bar.position "$file")" = top ]
 }
 
@@ -263,4 +264,32 @@ STUB
   run carry_unlock
   [ "$status" -eq 1 ]
   [ -e "$CARRY_DECLINED" ]
+}
+
+@test "carry_unlock: on screen, a wrong passphrase asks again, and Esc goes on without them" {
+  rm -rf "$NOVA_CARRY"
+  carry_partition() { echo /dev/fake2; }
+  cryptsetup() { return 1; }
+  stub_gum wrong '!1'
+  run carry_unlock
+  [ "$status" -eq 1 ]
+  [[ $output == *"That is not the passphrase."* ]]
+  [ -e "$CARRY_DECLINED" ]
+  [ "$(gum_replies_left)" = 0 ]
+}
+
+@test "carry_unlock: Ctrl+C at the passphrase stops, rather than going on without them" {
+  rm -rf "$NOVA_CARRY"
+  carry_partition() { echo /dev/fake2; }
+  stub_gum '!130'
+  run carry_unlock
+  [ "$status" -eq 130 ]
+  [ ! -e "$CARRY_DECLINED" ]
+}
+
+@test "a warning is kept for the next screen when there is one" {
+  UI_NOTES=$SCRATCH/notes
+  : >"$UI_NOTES"
+  warn "The stick would not open." 2>/dev/null
+  [ "$(cat "$UI_NOTES")" = "The stick would not open." ]
 }

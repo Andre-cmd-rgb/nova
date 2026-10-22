@@ -1,0 +1,58 @@
+#!/bin/bash
+
+# nova:hidden=true
+# nova:summary=The screensaver inside one of its terminals (nova screensaver opens them)
+#
+# ttfx plays the text, one random effect after another, until a key comes or the
+# window loses focus to anything that is not another screensaver; then every
+# screensaver window closes, not only this one.
+
+set -uo pipefail
+
+APP_ID=org.nova.screensaver
+TEXT=${XDG_CONFIG_HOME:-$HOME/.config}/nova/screensaver.txt
+[[ -s $TEXT ]] || TEXT=${NOVA_WORDMARK:-/usr/share/nova/wordmark/nova.txt}
+effect=''
+
+cursor() { # true|false: hidden
+  hyprctl eval "hl.config({ cursor = { invisible = $1 } })" >/dev/null 2>&1 || true
+}
+
+in_focus() { hyprctl activewindow -j 2>/dev/null | jq -e --arg id "$APP_ID" '.class == $id' >/dev/null; }
+
+finish() {
+  trap - INT TERM HUP QUIT
+  cursor false
+  [[ -z $effect ]] || kill "$effect" 2>/dev/null
+  pkill -f '[o]rg.nova.screensaver'
+  exit 0
+}
+
+# foot opens at 80x24 and takes the window's size a moment later, while ttfx
+# measures once, as it starts: it waits for the real size, two seconds at most.
+wait_for_size() {
+  local deadline=$((SECONDS + 2))
+  while ((SECONDS < deadline)) && [[ $(stty size 2>/dev/null) == "24 80" ]]; do
+    sleep 0.02
+  done
+}
+
+main() {
+  trap finish INT TERM HUP QUIT
+  cursor true
+  wait_for_size
+  while :; do
+    ttfx -i "$TEXT" --frame-rate 60 --canvas-width 0 --canvas-height 0 --reuse-canvas \
+      --anchor-canvas c --anchor-text c --random-effect --no-eol --no-restore-cursor &
+    effect=$!
+    while kill -0 "$effect" 2>/dev/null; do
+      if read -rsn1 -t 1 || ! in_focus; then
+        finish
+      fi
+    done
+  done
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

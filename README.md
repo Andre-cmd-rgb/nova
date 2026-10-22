@@ -15,11 +15,13 @@ Nova takes the whole disk. Turn Secure Boot off in the firmware settings first.
 
 **Make the stick**, from the newest [release](https://github.com/Andre-cmd-rgb/nova/releases):
 
-- On any Arch-based system, download `nova-usb` and run `bash nova-usb`. It
-  writes the stick and can put every package on it, so the install needs no
-  internet. It can also carry your things over, encrypted: SSH and GnuPG keys,
-  Wi-Fi networks, Chrome signed in, VS Code, Claude Code, git repositories,
-  folders and your extra packages.
+- On any Arch-based system, download `nova-usb` and run `bash nova-usb` (it
+  asks its questions with gum: `sudo pacman -S gum`). It writes the stick and
+  can put every package on it, so the install needs no internet. It can also
+  carry your things over, encrypted: SSH and GnuPG keys, Wi-Fi networks, Chrome
+  signed in, VS Code, Claude Code and Codex, T3 Code, git repositories, folders,
+  your own backgrounds and your extra packages. `bash nova-usb --dry-run` asks
+  everything and writes nothing.
 - Anywhere else, write the ISO as it is, with `dd` or any USB writer. That
   stick installs over the network.
 
@@ -30,7 +32,7 @@ and password, the computer's name, the time zone, and a fingerprint if there is
 a reader. Nothing touches the disk
 until you type `erase`. Drivers for Intel, AMD and NVIDIA graphics, microcode
 and firmware are chosen for the hardware. The computer restarts into the lock
-screen.
+screen. The stick's boot menu also has a memory test (memtest86+).
 
 ## Using it
 
@@ -43,6 +45,14 @@ screen.
   screen and fingerprint, default apps, updates and recovery. Sound, network
   and Bluetooth open from their icons in the bar; Settings → Menu Bar adds
   more, such as Display for brightness and the laptop screen.
+- **Caffeine**, the coffee cup in the bar or Super+Ctrl+I, keeps the screen on:
+  no screensaver, no lock when unused, and on a laptop closing the lid only
+  turns the panel off, without sleeping, locking or dropping the network. It
+  lasts until you turn it off or log out.
+- **The screensaver** plays the wordmark in text effects after three minutes
+  unused, and the screen locks after five; both are in Settings → Lock Screen.
+  `nova screensaver` shows it now, and `~/.config/nova/screensaver.txt`, when
+  there is one, is played instead of the wordmark.
 - **`nova help`** lists the commands. Chrome, VS Code, Nautilus, foot, btop,
   fastfetch, Claude Code and Codex come installed.
 

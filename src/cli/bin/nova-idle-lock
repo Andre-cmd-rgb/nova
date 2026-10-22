@@ -5,7 +5,7 @@
 # nova:examples=nova idle lock | nova idle lock 10 | nova idle lock never
 #
 # idle.lock in ~/.config/nova/shell.json, in seconds; the shell picks it up
-# live. Stay Awake (nova toggle idle) pauses it without changing it.
+# live. Caffeine (nova caffeine) pauses it without changing it.
 
 set -euo pipefail
 

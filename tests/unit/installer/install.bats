@@ -340,38 +340,172 @@ answers() { # key=value...
   ANSWERS=$SCRATCH/answers
 }
 
+# A live system with one disk, a few layouts and zones, and no carried things.
+questions_setup() {
+  export NOVA_CARRY="$SCRATCH/carry"
+  CARRY=$NOVA_CARRY
+  mkdir -p "$NOVA_ZONEINFO/Europe"
+  touch "$NOVA_ZONEINFO/UTC" "$NOVA_ZONEINFO/Europe/Rome"
+  echo "MemTotal: 16000000 kB" >"$NOVA_MEMINFO"
+  valid_keymap() { [[ $1 =~ ^(us|es|de|it)$ ]]; }
+  boot_disk() { :; }
+  lsblk_disks() { disks_json <<<"vda $((80 * GiB)) false false virtio Disk"; }
+  disk_contents() { echo 'vda1  80G  ext4  "old"'; }
+  disk_in_use() { return 1; }
+  timezones() { printf '%s\n' UTC Europe/Rome; }
+  main_kernel() { echo linux-nova; }
+  machine_hash() { :; }
+}
+
 @test "answers: each question answered from the file, its default where it says nothing" {
-  answers keymap=it user=first user=nova password=secret
-  [ "$(ask keymap Layout us)" = it ]
-  [ "$(ask user Username x)" = nova ]
-  [ "$(ask hostname "Computer name" nova)" = nova ]
-  [ "$(ask_password)" = secret ]
+  questions_setup
+  answers keymap=it disk=/dev/vda fullname="Ada Lovelace" password=secret timezone=Europe/Rome
+  answers_from_file
+  [ "$KEYMAP" = it ]
+  [ "${DISK_LINE%%$'\t'*}" = /dev/vda ]
+  [ "$FULLNAME" = "Ada Lovelace" ]
+  [ "$ACCOUNT" = ada ]
+  [ "$PASSWORD" = secret ]
+  [ "$COMPUTER" = nova ]
+  [ "$TIMEZONE" = Europe/Rome ]
   [ "$(answer_or apps yes)" = yes ]
   answers apps=no
   [ "$(answer_or apps yes)" = no ]
 }
 
 @test "answers: a wrong answer ends the install instead of asking again" {
-  answers
-  run retry "No keyboard layout called 'xx'."
+  questions_setup
+  answers keymap=xx disk=/dev/vda password=secret
+  run answers_from_file
   [ "$status" -ne 0 ]
-  [[ $output == *"the answers file: No keyboard layout called 'xx'."* ]]
-  run ask_password
+  [[ $output == *"the answers file: no keyboard layout called 'xx'."* ]]
+  answers disk=/dev/vda user=ada
+  run answers_from_file
   [ "$status" -ne 0 ]
+  [[ $output == *"the answers file has no password"* ]]
+  answers disk=/dev/vda user=ada password=secret timezone=Mars/Olympus
+  run answers_from_file
+  [[ $output == *"no time zone called 'Mars/Olympus'"* ]]
 }
 
 @test "answers: the disk has to be one the installer would offer, and free" {
+  questions_setup
   boot_disk() { echo /dev/sda; }
   lsblk_disks() { disks_json <<<"vda $((80 * GiB)) false false virtio"$'\n'"sda $((8 * GiB)) true false usb Stick"; }
   disk_in_use() { [[ $1 == /dev/vdb ]]; }
-  answers disk=/dev/vda
-  run choose_disk
-  [ "$status" -eq 0 ]
-  [ "${output%%$'\t'*}" = /dev/vda ]
-  answers disk=/dev/sda
-  run choose_disk
+  answers disk=/dev/vda user=ada password=secret
+  answers_from_file
+  [ "${DISK_LINE%%$'\t'*}" = /dev/vda ]
+  answers disk=/dev/sda user=ada password=secret
+  run answers_from_file
   [ "$status" -ne 0 ]
   [[ $output == *"names no disk this can install on (disk=/dev/sda)"* ]]
+}
+
+@test "screens: one question a screen, then erase typed back" {
+  questions_setup
+  NOVA_KEYMAP=es
+  stub_gum 0 "Ada Lovelace" "" secret secret "" Europe/Rome nope erase
+  questions_on_screen no 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "$KEYMAP" = es ]
+  [ "${DISK_LINE%%$'\t'*}" = /dev/vda ]
+  [ "$ACCOUNT" = ada ]
+  [ "$PASSWORD" = secret ]
+  [ "$COMPUTER" = nova ]
+  [ "$TIMEZONE" = Europe/Rome ]
+  grep -q -- 'vda  85.9 GB  Disk  ·  vda1  80G  ext4  "old"' "$GUM_LOG"
+  grep -q 'Erased       vda  85.9 GB  Disk' "$SCRATCH/screens"
+  grep -q 'Account      ada (Ada Lovelace) on nova' "$SCRATCH/screens"
+  grep -q 'That is not erase.' "$SCRATCH/screens"
+}
+
+@test "screens: Esc goes back a step, and on the first one changes nothing" {
+  questions_setup
+  NOVA_KEYMAP=es
+  # The disk, Esc on the name: the disk again, then Esc there.
+  stub_gum 0 '!1' '!1'
+  run questions_on_screen no
+  [ "$status" -eq 1 ]
+  [[ $output == *"nothing was changed."* ]]
+  [ "$(grep -c '^choose .*Which disk' "$GUM_LOG")" = 2 ]
+}
+
+@test "screens: Ctrl+C stops the installer, with nothing changed" {
+  questions_setup
+  NOVA_KEYMAP=es
+  stub_gum 0 "Ada" '!130'
+  run questions_on_screen no
+  [ "$status" -eq 130 ]
+  [[ $output == *"The installer stopped; nothing was changed."* ]]
+}
+
+@test "screens: no layout from nova-install-start asks for one first" {
+  questions_setup
+  NOVA_KEYMAP='' 
+  loadkeys() { :; }
+  stub_gum "German (de)" '!1' '!1'
+  run questions_on_screen no
+  [ "$(sed -n 2p "$GUM_LOG" | cut -d' ' -f1)" = choose ]
+}
+
+@test "the keyboard layout: by name, the default on top, or typed in" {
+  questions_setup
+  stub_gum "German (de)"
+  [ "$(choose_keymap es 2>/dev/null)" = de ]
+  stub_gum "Another layout..." it
+  [ "$(choose_keymap es 2>/dev/null)" = it ]
+  # A layout not in the list is offered on top all the same.
+  stub_gum '!1'
+  run choose_keymap us-intl
+  [ "$status" -eq 1 ]
+  stub_gum "Another layout..." xx "Spanish (es)"
+  run choose_keymap es
+  [ "${lines[-1]}" = es ]
+  [[ $output == *"No keyboard layout called 'xx'."* ]]
+}
+
+@test "the keyboard layout: Ctrl+C stops, also when typing one in, and --keymap says so" {
+  questions_setup
+  stub_gum '!130'
+  run choose_keymap es
+  [ "$status" -eq 130 ]
+  stub_gum "Another layout..." '!130'
+  run choose_keymap es
+  [ "$status" -eq 130 ]
+  stub_gum '!130'
+  run main --keymap es
+  [ "$status" -eq 130 ]
+  [[ $output == *"The installer stopped; nothing was changed."* ]]
+  # Esc keeps the default.
+  stub_gum '!1'
+  run main --keymap es
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = es ]
+}
+
+@test "the time zone: the carried one on top, else UTC, and the rest after" {
+  questions_setup
+  timezones() { printf '%s\n' Africa/Abidjan Europe/Rome UTC; }
+  stub_gum UTC
+  [ "$(choose_timezone "" 2>/dev/null)" = UTC ]
+  [ "$(paste -sd' ' "$GUM_LOG.filter")" = "UTC Africa/Abidjan Europe/Rome" ]
+  stub_gum Europe/Rome
+  choose_timezone Europe/Rome >/dev/null 2>&1
+  [ "$(paste -sd' ' "$GUM_LOG.filter")" = "Europe/Rome Africa/Abidjan UTC" ]
+}
+
+@test "the account and computer name default to what was carried from this computer" {
+  questions_setup
+  mkdir -p "$CARRY/carry"
+  echo '{"source": {"user": "ada", "name": "Ada L", "host": "engine", "machine": "m1", "timezone": "Europe/Rome"}, "items": []}' \
+    >"$CARRY/carry/manifest.json"
+  [ "$(carried_default user)" = ada ]
+  [ "$(carried_default name)" = "Ada L" ]
+  [ "$(carried_default timezone)" = Europe/Rome ]
+  [ "$(carried_default host)" = "" ]
+  machine_hash() { echo m1; }
+  [ "$(carried_default host)" = engine ]
 }
 
 @test "answers: the after= script runs in the new system, next to the answers file" {

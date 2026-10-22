@@ -179,6 +179,7 @@ state() {
             widgets: $widgets,
             shown: [($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[] | .id? // empty]},
       lock: {seconds: (if ($config.idle.lock | type) == "number" then $config.idle.lock else 300 end),
+             screensaver: (if ($config.idle.screensaver | type) == "number" then $config.idle.screensaver else 180 end),
              fingerprint: $fingerprint},
       apps: $defaults,
       updates: {candidates: $candidates},

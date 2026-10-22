@@ -12,9 +12,9 @@ setup() {
   export NOVA_DMI_PATH="$SCRATCH/dmi"
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
   mkdir -p "$NOVA_USB_HOME" "$NOVA_USB_SYSROOT" "$SCRATCH/plan"
-  PLAN=$SCRATCH/plan
   # shellcheck source=/dev/null
   source "$REPO_ROOT/installer/nova-usb"
+  PLAN=$SCRATCH/plan
 }
 
 teardown() { teardown_scratch; }
@@ -43,8 +43,10 @@ repo() { # home-relative dir
 # The member names of an archive the writer made, sorted.
 members() { zstd -dc "$1" | tar -t | sed 's,/$,,' | sort; }
 
-@test "catalog: unique ids, known kinds, and the defaults are in it" {
+@test "catalog: unique ids, known kinds, the defaults in it, and labels a checklist can hold" {
   [ "$(catalog | cut -f1 | sort | uniq -d)" = "" ]
+  # gum splits the ticked labels on commas.
+  [ "$(catalog | cut -f2 | grep -c ,)" = 0 ]
   [ "$(catalog | cut -f3 | sort -u | tr '\n' ' ')" = "folders home list projects system " ]
   for id in "${DEFAULT_ITEMS[@]}"; do valid_item "$id"; done
   fails valid_item nonsense
@@ -87,14 +89,18 @@ EOF
 }
 
 @test "ask_folders: the folders chosen before come back as the default" {
-  mkdir -p "$NOVA_USB_HOME/Projects" "$NOVA_USB_HOME/Work"
-  ask() { echo "$2"; }
+  mkdir -p "$NOVA_USB_HOME/Projects" "$NOVA_USB_HOME/Work" "$NOVA_USB_HOME/Documents"
+  stub_gum "Projects, Work" " Documents , nowhere" '!1'
   PROJECT_DIRS=(Projects Work)
-  ask_folders PROJECT_DIRS "Folders" Documents
+  ask_folders PROJECT_DIRS "Folders?" Documents
   [ "${PROJECT_DIRS[*]}" = "Projects Work" ]
+  grep -q -- '--value Projects, Work ' "$GUM_LOG"
   PROJECT_DIRS=()
-  mkdir -p "$NOVA_USB_HOME/Documents"
-  ask_folders PROJECT_DIRS "Folders" Documents
+  ask_folders PROJECT_DIRS "Folders?" Documents 2>"$SCRATCH/err"
+  [ "${PROJECT_DIRS[*]}" = Documents ]
+  grep -q 'No folder nowhere in your home' "$SCRATCH/err"
+  # Esc leaves the folders as they were.
+  fails ask_folders PROJECT_DIRS "Folders?" Documents
   [ "${PROJECT_DIRS[*]}" = Documents ]
 }
 
@@ -232,21 +238,37 @@ EOF
   [ "$(tr '\n' ' ' <"$PLAN/aur.txt")" = "spotify yay " ]
 }
 
-@test "archives: Chrome without its caches or the locks of a running browser" {
+@test "archives: Chrome signed in, without what it downloads again or the locks of a running browser" {
   local profile=$NOVA_USB_HOME/.config/google-chrome
   mkdir -p "$profile/Default/Cache" "$profile/Default/Code Cache/js" "$profile/Default/Service Worker/CacheStorage" \
-    "$profile/Default/Service Worker/Database" "$NOVA_USB_HOME/.local/share/keyrings"
+    "$profile/Default/File System/000" "$profile/Default/IndexedDB" "$profile/screen_ai" "$NOVA_USB_HOME/.local/share/keyrings"
   echo cookies >"$profile/Default/Cookies"
+  echo logins >"$profile/Default/Login Data"
+  echo idb >"$profile/Default/IndexedDB/site.leveldb"
   echo junk >"$profile/Default/Cache/data_0"
   echo js >"$profile/Default/Code Cache/js/x"
   echo sw >"$profile/Default/Service Worker/CacheStorage/y"
-  echo db >"$profile/Default/Service Worker/Database/z"
+  echo download >"$profile/Default/File System/000/big"
+  echo model >"$profile/screen_ai/model.bin"
   ln -s host-123 "$profile/SingletonLock"
   echo secret >"$NOVA_USB_HOME/.local/share/keyrings/Default_keyring.keyring"
   make_archive chrome "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/chrome.tar.zst"
   run members "$SCRATCH/chrome.tar.zst"
-  [[ $output == *"Default/Cookies"* && $output == *"Service Worker/Database/z"* && $output == *"keyrings/Default_keyring.keyring"* ]]
-  [[ $output != *Cache/data_0* && $output != *"Code Cache"* && $output != *CacheStorage* && $output != *SingletonLock* ]]
+  [[ $output == *"Default/Cookies"* && $output == *"Default/Login Data"* && $output == *"IndexedDB/site.leveldb"* ]]
+  [[ $output == *"keyrings/Default_keyring.keyring"* ]]
+  [[ $output != *Cache/data_0* && $output != *"Code Cache"* && $output != *"Service Worker"* ]]
+  [[ $output != *"File System"* && $output != *screen_ai* && $output != *SingletonLock* ]]
+  # The size shown is of what is carried.
+  [ "$(item_bytes chrome "$PLAN")" -lt 100 ]
+}
+
+@test "archives: Codex's sessions without the runtime it downloads itself" {
+  mkdir -p "$NOVA_USB_HOME/.codex/packages/standalone" "$NOVA_USB_HOME/.codex/sessions"
+  echo runtime >"$NOVA_USB_HOME/.codex/packages/standalone/codex"
+  echo chat >"$NOVA_USB_HOME/.codex/sessions/one.jsonl"
+  make_archive ai "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/ai.tar.zst"
+  run members "$SCRATCH/ai.tar.zst"
+  [[ $output == *".codex/sessions/one.jsonl"* && $output != *packages* ]]
 }
 
 @test "archives: Omarchy's history and bar layout are renamed to Nova's on the way in" {
@@ -333,4 +355,137 @@ EOF
   [ "$usb" = "$installer" ]
   rm "$NOVA_DMI_PATH"/*
   [ -z "$(machine_hash)" ]
+}
+
+# ------------------------------------------------------------ the wizard
+
+# A wizard ready to run: one 32 GB stick, an ISO, no packages on the stick.
+wizard_setup() {
+  ISO=$SCRATCH/nova.iso RELEASE_DIR=$SCRATCH NO_OFFLINE="not in this test" DRY=1
+  head -c 1000 /dev/zero >"$ISO"
+  mkdir -p "$NOVA_USB_HOME/.ssh"
+  echo key >"$NOVA_USB_HOME/.ssh/id_ed25519"
+  stick_candidates() { printf '/dev/sdx\t%s\tCruzer\tS1\n' "$((32 * GB))"; }
+  disk_contents() { echo 'sdx1  28G  exfat  "old"'; }
+  mounted_partitions() { :; }
+  console_keymap() { echo es; }
+  UI_NOTES=$SCRATCH/notes
+}
+
+@test "wizard: Custom with what is ticked, a passphrase, and the plan for the writer" {
+  wizard_setup
+  stub_gum 0 custom 'ssh\nfolders' Documents secret-pass secret-pass
+  mkdir -p "$NOVA_USB_HOME/Documents"
+  echo hi >"$NOVA_USB_HOME/Documents/a.txt"
+  wizard 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "${ITEMS[*]}" = "ssh folders" ]
+  [ "${CARRIED[*]}" = "ssh folders" ]
+  [ "$PASSPHRASE" = secret-pass ]
+  [ "$(plan_value "$PLAN" device)" = /dev/sdx ]
+  [ "$(plan_value "$PLAN" items)" = "ssh folders" ]
+  [ "$(plan_value "$PLAN" keymap)" = es ]
+  [ "$(plan_value "$PLAN" offline)" = 0 ]
+  # The stick's list shows what is on each; the summary what is erased and brought.
+  grep -q -- 'sdx  32.0 GB  Cruzer  ·  sdx1  28G  exfat  "old"' "$GUM_LOG"
+  grep -q 'Erased     sdx  32.0 GB  Cruzer' "$SCRATCH/screens"
+  grep -q 'now holds sdx1' "$SCRATCH/screens"
+  grep -Eq 'SSH keys +[0-9]+ B' "$SCRATCH/screens"
+  grep -q 'Whole folders such as Documents or Pictures' "$GUM_LOG"
+}
+
+@test "wizard: the checklist starts with the defaults ticked, and sizes beside them" {
+  wizard_setup
+  stub_gum 0 custom ssh '!1' '!1' '!1'
+  run wizard
+  [ "$status" -eq 1 ]
+  grep -q -- '--selected SSH keys .*[0-9] B,' "$GUM_LOG"
+  grep -q 'GnuPG keys .*nothing here' "$GUM_LOG"
+}
+
+@test "wizard: Esc goes back a question, and on the first one stops" {
+  wizard_setup
+  # stick, mode Custom, Esc on the checklist, then Clean instead.
+  stub_gum 0 custom '!1' clean
+  wizard 2>/dev/null
+  [ "$MODE" = clean ]
+  [ "${#CARRIED[@]}" = 0 ]
+  [ "$(grep -c '^choose .*What goes on the stick' "$GUM_LOG")" = 2 ]
+  # Clean asks for no passphrase.
+  ! grep -q -- --password "$GUM_LOG"
+  stub_gum '!1'
+  run wizard
+  [ "$status" -eq 1 ]
+  [[ $output == *"nothing was written"* ]]
+}
+
+@test "wizard: Ctrl+C stops anywhere, with nothing written" {
+  wizard_setup
+  stub_gum 0 custom '!130'
+  run wizard
+  [ "$status" -eq 130 ]
+  [[ $output == *"nova usb stopped; nothing was written."* ]]
+  [ ! -e "$PLAN/plan.env" ]
+}
+
+@test "wizard: the stick's name is typed back before anything is written" {
+  wizard_setup
+  DRY=0
+  stub_gum 0 clean sdy sdx
+  wizard 2>"$SCRATCH/screens"
+  grep -q 'That is not sdx' "$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  # Esc there goes back to the question before.
+  MODE='' STICK=''
+  stub_gum 0 clean '!1' '!1' '!1'
+  run wizard
+  [ "$status" -eq 1 ]
+  [ "$(grep -c '^choose .*What goes on the stick' "$GUM_LOG")" = 2 ]
+}
+
+@test "wizard: what does not fit is not written" {
+  wizard_setup
+  stick_candidates() { printf '/dev/sdx\t%s\tCruzer\tS1\n' "$((3 * GB))"; }
+  installer_mib() { echo 2900; }
+  stub_gum 0 custom ssh pass-word pass-word '!1'
+  run wizard
+  [ "$status" -eq 1 ]
+  [[ $output == *"That is more than the stick holds."* ]]
+  [[ $output == *"it does not fit on the stick; nothing was written."* ]]
+}
+
+@test "wizard: Last time's choices ask only for the stick and the passphrase" {
+  wizard_setup
+  ITEMS=(ssh) PROJECT_DIRS=() FOLDER_DIRS=()
+  write_preset "ssh teleporter" 0
+  load_preset 2>/dev/null
+  MODE=preset PRESET_ONLY=1
+  stub_gum 0 pass-word pass-word
+  wizard 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "${CARRIED[*]}" = ssh ]
+  # The word about the unknown item is shown again on the next screen.
+  grep -q "no item called 'teleporter'" "$SCRATCH/screens"
+  [ ! -s "$UI_NOTES" ]
+}
+
+@test "the nova-usb on a release page carries its look and wordmark inside" {
+  "$REPO_ROOT/tools/inline-ui" >"$SCRATCH/nova-usb"
+  bash -n "$SCRATCH/nova-usb"
+  ! grep -q '^source ' "$SCRATCH/nova-usb"
+  run bash -c 'source "$1"; ui_wordmark; declare -F ui_choose ui_box step_stick' _ "$SCRATCH/nova-usb"
+  [ "$status" -eq 0 ]
+  [ "${lines[3]}" = "$(sed -n 4p "$REPO_ROOT/theme/wordmark/nova.txt")" ]
+  [[ $output == *ui_choose*ui_box*step_stick* ]]
+  run bash "$SCRATCH/nova-usb" --help
+  [ "$status" -eq 0 ]
+  [[ $output == *"nova usb --dry-run"* ]]
+}
+
+@test "local_timezone: this computer's zone, for the installer to offer first" {
+  mkdir -p "$NOVA_USB_SYSROOT/etc"
+  ln -s /usr/share/zoneinfo/Europe/Rome "$NOVA_USB_SYSROOT/etc/localtime"
+  [ "$(local_timezone)" = Europe/Rome ]
+  rm "$NOVA_USB_SYSROOT/etc/localtime"
+  [ "$(local_timezone)" = "" ]
 }

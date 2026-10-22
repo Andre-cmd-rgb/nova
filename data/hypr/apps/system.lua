@@ -36,5 +36,8 @@ o.window(
 -- Popped window rounding.
 o.window({ tag = "pop" }, { rounding = 8 })
 
+-- The screensaver (nova screensaver): a window on each display, over everything.
+o.window("org.nova.screensaver", { fullscreen = true, float = true, animation = "slide" })
+
 -- Prevent idle while open.
 o.window({ tag = "noidle" }, { idle_inhibit = "always" })

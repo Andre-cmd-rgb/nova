@@ -3,7 +3,7 @@ Copyright (c) 2026 Andre-cmd-rgb. Licensed under the MIT License (see LICENSE).
 
 This project contains code derived from Omarchy 4.0.5 (https://github.com/basecamp/omarchy):
 the Quickshell shell (src/shell, its emoji list included), many of the helper commands
-(src/cli/bin), the Hyprland defaults (data/hypr), the session units and menu defaults
+(src/cli/bin), the screensaver (data/screensaver), the Hyprland defaults (data/hypr), the session units and menu defaults
 (data/systemd/user, data/defaults), the theme templates (theme/templates) and the theme
 palettes (theme/palettes). Omarchy's wallpapers and images are NOT included. Omarchy is distributed under the following license:
 
@@ -32,3 +32,7 @@ palettes (theme/palettes). Omarchy's wallpapers and images are NOT included. Oma
 The palettes are ports of color schemes by their respective authors (Catppuccin,
 Everforest, Gruvbox, Kanagawa, Nord, Rose Pine, Tokyo Night, Flexoki and others), each
 under its own permissive license.
+
+The [nova] package repository also carries ttfx (https://github.com/omacom/ttfx, MIT,
+itself a port of TerminalTextEffects, MIT), built unmodified from its release tag by
+packaging/ttfx; its licence and notice ship in that package.

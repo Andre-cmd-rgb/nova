@@ -1,0 +1,28 @@
+#!/bin/bash
+# The single-file nova-usb for a release page: installer/nova-usb with
+# installer/ui.bash and the wordmark written in where it would otherwise source
+# them from beside itself (between its "# @ui begin" and "# @ui end" lines).
+#
+#   tools/inline-ui >out/nova-usb
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+grep -q '^# @ui begin' "$root/installer/nova-usb" || {
+  echo "inline-ui: installer/nova-usb has no '# @ui begin' line" >&2
+  exit 1
+}
+awk -v ui="$root/installer/ui.bash" -v mark="$root/theme/wordmark/nova.txt" '
+  /^# @ui begin/ {
+    while ((getline line < ui) > 0) print line
+    print ""
+    print "ui_wordmark() {"
+    print "  cat <<'\''WORDMARK'\''"
+    while ((getline line < mark) > 0) print line
+    print "WORDMARK"
+    print "}"
+    skip = 1
+    next
+  }
+  /^# @ui end/ { skip = 0; next }
+  !skip
+' "$root/installer/nova-usb"

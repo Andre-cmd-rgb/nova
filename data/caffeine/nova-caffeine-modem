@@ -1,8 +1,8 @@
 #!/bin/bash
-# nova-lid-awake-modem: keep the 5G modem out of runtime suspend, or let it
-# suspend again. Root's half of nova lid-awake, run through pkexec.
+# nova-caffeine-modem: keep the 5G modem out of runtime suspend, or let it
+# suspend again. Root's half of nova caffeine, run through pkexec.
 #
-#   nova-lid-awake-modem on|auto
+#   nova-caffeine-modem on|auto
 #
 # Writes only the power/control of the device bound to mhi-pci-generic, and
 # only "on" or "auto".
@@ -12,7 +12,7 @@ export PATH=/usr/bin
 PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
 
 [[ ${1:-} == on || ${1:-} == auto ]] || {
-  echo "usage: nova-lid-awake-modem on|auto" >&2
+  echo "usage: nova-caffeine-modem on|auto" >&2
   exit 2
 }
 for d in "$PCI_DEVICES"/*; do
@@ -21,5 +21,5 @@ for d in "$PCI_DEVICES"/*; do
   echo "$1" >"$d/power/control"
   exit 0
 done
-echo "nova-lid-awake-modem: no modem on mhi-pci-generic" >&2
+echo "nova-caffeine-modem: no modem on mhi-pci-generic" >&2
 exit 1

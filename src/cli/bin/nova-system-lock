@@ -6,6 +6,9 @@ set -euo pipefail
 
 nova-shell lock lock >/dev/null
 
+# The screensaver would go on drawing under the lock, for nobody.
+nova-screensaver stop >/dev/null 2>&1 || true
+
 # Unlock with the first keyboard layout, the one the password was set in.
 hyprctl switchxkblayout all 0 >/dev/null 2>&1 || true
 

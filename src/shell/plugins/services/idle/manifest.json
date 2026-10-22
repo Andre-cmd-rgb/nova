@@ -4,7 +4,7 @@
   "name": "Idle",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Locks the screen after a stretch of inactivity, unless Stay Awake is on.",
+  "description": "Starts the screensaver, then locks the screen, after a stretch of inactivity, unless Caffeine is on.",
   "kinds": [
     "service"
   ],

@@ -8,7 +8,10 @@ BarWidget {
   id: root
   moduleName: "nova.indicators"
 
-  readonly property var defaultIndicatorEntries: [ "ScreenRecording", "NightLight", "Dnd", "StayAwake", "LidAwake" ]
+  readonly property var defaultIndicatorEntries: [ "ScreenRecording", "NightLight", "Dnd", "Caffeine" ]
+  // Stay Awake and Lid Awake became one Caffeine indicator; a layout naming
+  // either gets it.
+  readonly property var renamedIndicators: ({ "StayAwake": "Caffeine", "LidAwake": "Caffeine" })
   readonly property var indicatorEntries: indicatorEntriesFromSettings(settings)
   property var activeIndicatorIds: []
   property var indicatorActiveStates: ({})
@@ -55,6 +58,11 @@ BarWidget {
         }
       }
       var id = entryId(item)
+      if (renamedIndicators[id] !== undefined) {
+        id = renamedIndicators[id]
+        item = id
+        if (result.some(function(entry) { return entryId(entry) === id })) continue
+      }
       if (id !== "") result.push(item)
     }
     return result

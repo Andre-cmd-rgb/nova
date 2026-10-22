@@ -19,6 +19,7 @@ code.
 | `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring |
 | `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards |
 | `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
+| `data/caffeine/`, `data/screensaver/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, `/usr/share/nova/screensaver/`, a polkit action | Caffeine (the screen stays on, a closed lid only darkens it) and the screensaver |
 | `data/hardware/` | `/usr/share/nova/hardware/`, `/usr/share/uwsm/env.d/`, `/etc` via `nova-hw-apply` | Per-model **data**: the DMI model list, drop-ins, packages, the session environment |
 | `installer/` | ISO only, except `nova-usb` in `/usr/lib/nova/bin/` | archiso profile, installer, USB creator |
 | `packaging/` | – | PKGBUILDs: `nova`, `linux-nova`, `nvidia-open-nova`, AUR rebuilds |
@@ -155,6 +156,19 @@ the shared folder also becomes the default for themes that have no pick of their
   suspend on a machine that cannot hibernate. The TPM key-provisioning units are
   skipped unless `nova.tpm2` is on the kernel command line: Nova does not encrypt the
   disk, and they cost about four seconds of every measured boot.
+- **Unused:** the shell's idle service (`src/shell/plugins/services/idle`) starts
+  the screensaver after `idle.screensaver` seconds (three minutes by default)
+  and locks after `idle.lock` (five), both in `shell.json` and in Settings →
+  Lock Screen. The screensaver (`nova-screensaver`) opens a foot window on each
+  display, where `nova-screensaver-run` plays the wordmark through ttfx until
+  a key, the mouse, the window losing focus or the lock ends it.
+- **Caffeine** (`nova caffeine`, the bar's coffee cup, Super+Ctrl+I) is one
+  switch, `$XDG_RUNTIME_DIR/nova/caffeine`, so it never outlives the session.
+  While it is there the idle service does nothing; on a laptop it also holds a
+  logind `handle-lid-switch` inhibitor, and the Hyprland lid binding goes
+  through `nova caffeine close`, which turns the panel off with DPMS instead of
+  locking. The P1's 5G modem is kept out of runtime suspend meanwhile, as root
+  through `nova-caffeine-modem` (polkit).
 - **Hardware profiles** live in `data/hardware/`. `models` maps a DMI
   `product_version` pattern to a profile; `nova-hw-detect` and the Hyprland loader
   both read it. A profile holds:
@@ -181,6 +195,7 @@ the shared folder also becomes the default for themes that have no pick of their
   | `linux-nova`, `linux-nova-headers` | Arch's kernel configuration with the BORE scheduler, `HZ_1000` and the x86-64-v3 instruction-set baseline |
   | `nvidia-open-nova` | NVIDIA modules prebuilt for `linux-nova` |
   | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
+  | `ttfx` | the screensaver's text effects ([omacom/ttfx](https://github.com/omacom/ttfx)), built from its release tag; Arch does not package it |
 
 - **Fallback kernel:** Arch's `linux-lts` + `nvidia-open-lts` stay installed as the
   fallback boot entry.
@@ -206,6 +221,12 @@ the shared folder also becomes the default for themes that have no pick of their
     Wi-Fi gets the live system online); the install puts each item back once
     the account exists. Bluetooth pairings and fingerprints come back only on
     the computer they came from.
+
+  `nova usb` and the stick's installer ask one question per screen, with gum,
+  under the wordmark: `installer/ui.bash` holds the prompts both use, and the
+  glyphs stay within the Linux console's font. The released `nova-usb` is one
+  file, so `tools/inline-ui` writes `ui.bash` and the wordmark into it. A
+  stick's boot menu also has memtest86+.
 
   Everything that writes a disk runs in one root step (`nova-usb write`), which
   checks the device again before touching it; `tests/usb/stick-test` runs it

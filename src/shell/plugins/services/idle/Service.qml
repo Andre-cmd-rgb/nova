@@ -9,22 +9,27 @@ Item {
   // Injected by nova-shell (the first-party service loader).
   property var shell: null
 
-  readonly property string home: Quickshell.env("HOME")
-  readonly property string stayAwakeStateDir: home + "/.local/state/nova/indicators"
-  readonly property string stayAwakeStatePath: stayAwakeStateDir + "/stay-awake"
+  // Caffeine's switch (nova caffeine): while the file is there, nothing here
+  // starts the screensaver or locks. nova caffeine asks for a refresh when it
+  // flips it.
+  readonly property string caffeinePath: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/caffeine"
+  readonly property int defaultScreensaverSeconds: 180
   readonly property int defaultLockSeconds: 300
   readonly property var idleConfig: shell && shell.shellConfig && shell.shellConfig.idle
     ? shell.shellConfig.idle : ({})
-  // idle.lock in shell.json: seconds of inactivity before the screen locks, and
-  // 0 never locks. The lock plugin turns the displays off and back on.
+  // idle.screensaver and idle.lock in shell.json: seconds unused before the
+  // screensaver starts and before the screen locks, and 0 for never. The lock
+  // plugin turns the displays off and back on.
+  readonly property int screensaverTimeoutSeconds: secondsFromConfig(idleConfig.screensaver, defaultScreensaverSeconds)
   readonly property int lockTimeoutSeconds: secondsFromConfig(idleConfig.lock, defaultLockSeconds)
+  readonly property bool screensaverEnabled: screensaverTimeoutSeconds > 0
   readonly property bool lockEnabled: lockTimeoutSeconds > 0
-  readonly property bool idleEnabled: stayAwakeStateLoaded && !stayAwake
+  readonly property bool idleEnabled: caffeineStateLoaded && !caffeine
 
-  property bool stayAwake: false
-  property bool stayAwakeStateLoaded: false
-  property bool hasPendingStayAwakePersist: false
-  property bool pendingStayAwakePersist: false
+  property bool caffeine: false
+  property bool caffeineStateLoaded: false
+  // Started by this service since the last input, so input stops it again.
+  property bool screensaverShown: false
   property string lastEvent: "starting"
   property string lastEventAt: ""
 
@@ -41,27 +46,60 @@ Item {
     console.log("nova idle " + root.lastEventAt + " " + root.lastEvent)
   }
 
-  function lockSystem(reason) {
-    if (lockProcess.running) {
-      logEvent("lock-skip", "already locking")
+  function run(process, what) {
+    if (process.running) {
+      logEvent(what + "-skip", "already running")
       return
     }
-    logEvent("lock-system", reason)
-    lockProcess.running = true
+    logEvent(what)
+    process.running = true
   }
 
-  function handleIdleChanged() {
-    logEvent("idle-monitor", idleMonitor.isIdle ? "idle" : "active")
-    if (root.idleEnabled && root.lockEnabled && idleMonitor.isIdle) lockSystem("lock-timeout")
+  function handleScreensaverIdleChanged() {
+    logEvent("screensaver-monitor", screensaverMonitor.isIdle ? "idle" : "active")
+    if (screensaverMonitor.isIdle) {
+      if (!root.idleEnabled || !root.screensaverEnabled) return
+      root.screensaverShown = true
+      run(screensaverProcess, "screensaver")
+    } else if (root.screensaverShown) {
+      // A key ends the screensaver by itself; the mouse ends it here.
+      root.screensaverShown = false
+      run(screensaverStopProcess, "screensaver-stop")
+    }
+  }
+
+  function handleLockIdleChanged() {
+    logEvent("lock-monitor", lockMonitor.isIdle ? "idle" : "active")
+    if (root.idleEnabled && root.lockEnabled && lockMonitor.isIdle) {
+      root.screensaverShown = false
+      run(lockProcess, "lock-system")
+    }
+  }
+
+  function refreshCaffeine() {
+    if (!caffeineProbe.running) caffeineProbe.running = true
+  }
+
+  function applyCaffeine(on) {
+    var changed = !root.caffeineStateLoaded || root.caffeine !== on
+    root.caffeine = on
+    root.caffeineStateLoaded = true
+    if (!changed) return
+    logEvent("caffeine", on ? "on" : "off")
+    if (on && root.screensaverShown) {
+      root.screensaverShown = false
+      run(screensaverStopProcess, "screensaver-stop")
+    }
   }
 
   function statusJson() {
     return JSON.stringify({
       enabled: root.idleEnabled,
-      stayAwake: root.stayAwake,
-      stayAwakeStateLoaded: root.stayAwakeStateLoaded,
-      stayAwakeStatePath: root.stayAwakeStatePath,
-      idle: idleMonitor.isIdle,
+      caffeine: root.caffeine,
+      caffeineStateLoaded: root.caffeineStateLoaded,
+      caffeinePath: root.caffeinePath,
+      idle: lockMonitor.isIdle,
+      screensaver: root.screensaverTimeoutSeconds,
       lock: root.lockTimeoutSeconds,
       locking: lockProcess.running,
       lastEvent: root.lastEvent,
@@ -69,52 +107,32 @@ Item {
     })
   }
 
-  function persistStayAwake(value) {
-    var command = value
-      ? "mkdir -p \"$HOME/.local/state/nova/indicators\" && touch \"$HOME/.local/state/nova/indicators/stay-awake\""
-      : "rm -f \"$HOME/.local/state/nova/indicators/stay-awake\""
-
-    if (stayAwakeStateWriter.running) {
-      root.pendingStayAwakePersist = !!value
-      root.hasPendingStayAwakePersist = true
-      return
-    }
-
-    stayAwakeStateWriter.command = ["bash", "-c", command]
-    stayAwakeStateWriter.running = true
-  }
-
-  function refreshStayAwakeState() {
-    if (!stayAwakeStateProbe.running) stayAwakeStateProbe.running = true
-  }
-
-  function applyStayAwake(value, persist, reason) {
-    var enabled = !!value
-    var changed = !root.stayAwakeStateLoaded || root.stayAwake !== enabled
-
-    if (persist) persistStayAwake(enabled)
-
-    root.stayAwake = enabled
-    root.stayAwakeStateLoaded = true
-
-    if (!changed) return enabled ? "disabled" : "enabled"
-
-    logEvent("stay-awake", (enabled ? "enabled" : "disabled") + (reason ? " " + reason : ""))
-    if (!enabled) Qt.callLater(root.handleIdleChanged)
-
-    return enabled ? "disabled" : "enabled"
-  }
-
-  function setIdleEnabled(value) {
-    return applyStayAwake(!value, true, "ipc")
+  IdleMonitor {
+    id: screensaverMonitor
+    enabled: root.idleEnabled && root.screensaverEnabled
+    timeout: Math.max(1, root.screensaverTimeoutSeconds)
+    respectInhibitors: true
+    onIsIdleChanged: root.handleScreensaverIdleChanged()
   }
 
   IdleMonitor {
-    id: idleMonitor
+    id: lockMonitor
     enabled: root.idleEnabled && root.lockEnabled
     timeout: Math.max(1, root.lockTimeoutSeconds)
     respectInhibitors: true
-    onIsIdleChanged: root.handleIdleChanged()
+    onIsIdleChanged: root.handleLockIdleChanged()
+  }
+
+  // nova-screensaver auto leaves it be when the screen is locked or it is
+  // already showing.
+  Process {
+    id: screensaverProcess
+    command: ["nova-screensaver", "auto"]
+  }
+
+  Process {
+    id: screensaverStopProcess
+    command: ["nova-screensaver", "stop"]
   }
 
   Process {
@@ -124,39 +142,14 @@ Item {
   }
 
   Process {
-    id: stayAwakeStateProbe
-    command: ["bash", "-c", "mkdir -p \"$HOME/.local/state/nova/indicators\"; if [[ -f $HOME/.local/state/nova/indicators/stay-awake ]]; then echo yes; else echo no; fi"]
-    stdout: SplitParser {
-      onRead: function(line) { root.applyStayAwake(String(line).trim() === "yes", false, "state-file") }
-    }
-    onExited: function() { stayAwakeStateDirWatcher.reload() }
-  }
-
-  Process {
-    id: stayAwakeStateWriter
-    onExited: function() {
-      if (root.hasPendingStayAwakePersist) {
-        var pending = root.pendingStayAwakePersist
-        root.hasPendingStayAwakePersist = false
-        root.persistStayAwake(pending)
-        return
-      }
-
-      root.refreshStayAwakeState()
-    }
-  }
-
-  FileView {
-    id: stayAwakeStateDirWatcher
-    path: root.stayAwakeStateDir
-    watchChanges: true
-    printErrors: false
-    onFileChanged: root.refreshStayAwakeState()
+    id: caffeineProbe
+    command: ["test", "-f", root.caffeinePath]
+    onExited: function(exitCode) { root.applyCaffeine(exitCode === 0) }
   }
 
   Component.onCompleted: {
     logEvent("service-ready")
-    refreshStayAwakeState()
+    refreshCaffeine()
   }
 
   IpcHandler {
@@ -166,20 +159,10 @@ Item {
       return root.statusJson()
     }
 
-    function debug(): string {
-      return root.statusJson()
-    }
-
-    function enable(): string {
-      return root.setIdleEnabled(true)
-    }
-
-    function disable(): string {
-      return root.setIdleEnabled(false)
-    }
-
-    function toggle(): string {
-      return root.setIdleEnabled(!root.idleEnabled)
+    // nova caffeine, after it flips the switch.
+    function refresh(): string {
+      root.refreshCaffeine()
+      return "ok"
     }
   }
 }

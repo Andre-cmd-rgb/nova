@@ -1,11 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
-<!-- nova lid-awake: the person at the computer may keep the modem awake
+<!-- nova caffeine: the person at the computer may keep the modem awake
      without a password; it runs from a lid binding, where nobody can type one. -->
 <policyconfig>
   <vendor>Nova</vendor>
-  <action id="org.nova.lid-awake-modem">
+  <action id="org.nova.caffeine-modem">
     <description>Keep the mobile broadband modem awake</description>
     <message>Authentication is required to change the modem's power management</message>
     <defaults>
@@ -13,6 +13,6 @@
       <allow_inactive>auth_admin</allow_inactive>
       <allow_active>yes</allow_active>
     </defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-lid-awake-modem</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-caffeine-modem</annotate>
   </action>
 </policyconfig>

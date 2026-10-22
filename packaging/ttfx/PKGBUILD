@@ -1,0 +1,43 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# ttfx: terminal text effects in one binary, a Rust port of TerminalTextEffects.
+# Nova's screensaver plays its effects on the wordmark. No Arch repository has
+# it, so the [nova] repository carries this build of the tagged release.
+# Upstream: https://github.com/omacom/ttfx, MIT (its NOTICE credits
+# TerminalTextEffects, also MIT).
+#
+# Build note: cargo fetches the crates Cargo.lock pins from crates.io, so this
+# build needs network access.
+
+pkgname=ttfx
+pkgver=0.5.0
+pkgrel=1
+pkgdesc='Terminal text effects, a Rust port of TerminalTextEffects'
+arch=(x86_64)
+url='https://github.com/omacom/ttfx'
+license=(MIT)
+depends=(gcc-libs glibc)
+makedepends=(cargo)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('2882c7e47011a95f4d136303f7320da71613299840f67f88fd1385ef53d5f2a0')
+
+prepare() {
+  cd "$pkgname-$pkgver"
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/^host: //p')"
+}
+
+build() {
+  cd "$pkgname-$pkgver"
+  CARGO_TARGET_DIR=target cargo build --frozen --release
+  target/release/ttfx --print-completion bash >ttfx.bash
+  target/release/ttfx --print-completion zsh >_ttfx
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  install -Dm755 target/release/ttfx "$pkgdir/usr/bin/ttfx"
+  install -Dm644 ttfx.bash "$pkgdir/usr/share/bash-completion/completions/ttfx"
+  install -Dm644 _ttfx "$pkgdir/usr/share/zsh/site-functions/_ttfx"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/ttfx/"
+  install -Dm644 LICENSE NOTICE -t "$pkgdir/usr/share/licenses/ttfx/"
+}

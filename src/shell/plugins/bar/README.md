@@ -75,7 +75,7 @@ Example `shell.json` (bar subtree only shown):
 | `nova.screentime` | Today's screen time (off until you turn it on) | left = breakdown panel |
 | `nova.mobile-data` | WWAN signal, shown while a modem has a SIM | left = stats panel |
 
-The `nova.indicators` widget loads individual bar indicators from `indicators/`. Omit `items` (or set it to an empty array) to show all indicators in the default order, or set `items` to a subset of `Dnd`, `NightLight`, `StayAwake`, `LidAwake` and `ScreenRecording`, such as `["Dnd", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators visible instead of revealing them only on hover. Multiple `nova.indicators` instances are allowed, so different sections can show different subsets.
+The `nova.indicators` widget loads individual bar indicators from `indicators/`. Omit `items` (or set it to an empty array) to show all indicators in the default order, or set `items` to a subset of `Dnd`, `NightLight`, `Caffeine` and `ScreenRecording`, such as `["Dnd", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators visible instead of revealing them only on hover. Multiple `nova.indicators` instances are allowed, so different sections can show different subsets.
 
 ## Orientation
 

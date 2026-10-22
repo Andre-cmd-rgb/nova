@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """Render theme/wordmark/nova.svg.tpl, the wallpaper template, from the pixel
-glyphs below. The output is committed; run this only after changing a glyph.
+glyphs below. The output is committed; run this only after changing a glyph:
+
+    tools/render-wordmark >theme/wordmark/nova.svg.tpl
+    tools/render-wordmark --text >theme/wordmark/nova.txt
+
+The text is the same pixels in half blocks, two pixel rows to a line, for the
+setup screens and the screensaver.
 
 The template is 3840x2400 (16:10, like both supported laptops) with the
 wordmark centred. The shell crops it to fill, so a 16:9 screen loses a strip at
@@ -37,6 +43,19 @@ def cells(rows, x0, y0):
                 yield x0 + x, y0 + y
 
 
+def text(points):
+    on = set(points)
+    xs = [x for x, _ in on]
+    ys = [y for _, y in on]
+    lines = []
+    for y in range(min(ys), max(ys) + 1, 2):
+        row = ""
+        for x in range(min(xs), max(xs) + 1):
+            row += " ▀▄█"[((x, y) in on) + 2 * ((x, y + 1) in on)]
+        lines.append(row.rstrip())
+    return "\n".join(lines) + "\n"
+
+
 def main():
     word = "nova"
     for glyph in GLYPHS.values():
@@ -51,6 +70,10 @@ def main():
         pixels += cells(GLYPHS[ch], x, top)
         x += 9 + GAP
     spark = list(cells(SPARK, x - GAP, top - 6))
+
+    if sys.argv[1:] == ["--text"]:
+        sys.stdout.write(text(pixels + spark))
+        return
 
     def path(points):
         return "".join(f"M{px * CELL} {py * CELL}h{CELL}v{CELL}h-{CELL}z" for px, py in points)

@@ -18,12 +18,14 @@ setup() {
   done
   ln -s "$REPO_ROOT/src/cli/bin/nova-settings" "$SCRATCH/bin/nova-settings"
   ln -s "$REPO_ROOT/src/cli/bin/nova-idle-lock" "$SCRATCH/bin/nova-idle-lock"
+  ln -s "$REPO_ROOT/src/cli/bin/nova-idle-screensaver" "$SCRATCH/bin/nova-idle-screensaver"
   ln -s "$REPO_ROOT/src/cli/bin/nova-shell-config" "$SCRATCH/bin/nova-shell-config"
   SAFE_PATH="$SCRATCH/bin:$SCRATCH/sys"
 }
 
 nova-settings() { PATH=$SAFE_PATH "$SCRATCH/bin/nova-settings" "$@"; }
 nova-idle-lock() { PATH=$SAFE_PATH "$SCRATCH/bin/nova-idle-lock" "$@"; }
+nova-idle-screensaver() { PATH=$SAFE_PATH "$SCRATCH/bin/nova-idle-screensaver" "$@"; }
 
 teardown() { teardown_scratch; }
 
@@ -40,7 +42,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c .appearance <<<"$output")" = '{"theme":"","themes":[],"background":"","font":"","fonts":[],"textSize":12}' ]
   [ "$(jq -c .battery <<<"$output")" = '{"present":false}' ]
   [ "$(jq -c .screenTime <<<"$output")" = false ]
-  [ "$(jq -c .lock <<<"$output")" = '{"seconds":300,"fingerprint":false}' ]
+  [ "$(jq -c .lock <<<"$output")" = '{"seconds":300,"screensaver":180,"fingerprint":false}' ]
   [ "$(jq -c '[.apps.browsers, .apps.editors, .apps.terminals]' <<<"$output")" = '[[],[],[]]' ]
   [ "$(jq -r .bar.position <<<"$output")" = top ]
   [ "$(jq -c '.bar.shown | index("nova.power") != null' <<<"$output")" = true ]
@@ -160,4 +162,19 @@ state() { nova-settings state | jq -c "$1"; }
     [ "$status" -eq 1 ]
   done
   [ "$(jq -c .bar.layout.right "$HOME/.config/nova/shell.json" | jq length)" -gt 0 ]
+}
+
+@test "idle screensaver: reads, sets in minutes, never, and refuses nonsense" {
+  stub nova-shell
+  [ "$(nova-idle-screensaver)" = "3 min" ]
+  nova-idle-screensaver 5
+  [ "$(jq -c .idle "$HOME/.config/nova/shell.json")" = '{"lock":300,"screensaver":300}' ]
+  [ "$(nova-idle-screensaver)" = "5 min" ]
+  [ "$(state .lock.screensaver)" = 300 ]
+  nova-idle-screensaver never
+  [ "$(nova-idle-screensaver)" = never ]
+  for bad in 0 721 abc -5 "1 2"; do
+    run nova-idle-screensaver "$bad"
+    [ "$status" -eq 1 ]
+  done
 }
