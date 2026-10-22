@@ -10,7 +10,13 @@ Nothing is built or published from a laptop.
 | `release.toml` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the URL of its `[nova]` repository |
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
 | `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `ttfx` |
-| `nova-<version>-x86_64.iso` and `.sha256` | people: the installer stick |
+| `nova-usb` | people: makes the installer stick, with the ISO and whatever is carried |
+| `nova-<version>-x86_64.iso` and `.sha256` | people, or `nova-usb`: the installer stick |
+| `packages.txt` | `nova-usb`: the packages an install can need, to put on the stick for an offline install |
+
+That is why a release has so many files: most of them are the repository,
+which pacman downloads by itself, and the release notes link the two files a
+person needs.
 
 The repository *is* the release page: `release.toml` points pacman at
 `https://github.com/Andre-cmd-rgb/nova/releases/download/<tag>`, and every

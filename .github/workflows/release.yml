@@ -277,12 +277,20 @@ jobs:
           [[ $PUBLISH == true ]] || flags+=(--draft)
           [[ $version != *-* ]] || flags+=(--prerelease)
           assets=(out/release-toml/release.toml out/repo/* out/iso/*)
+          # GitHub lists assets by name and folds most of them away, so the
+          # notes link the two a person downloads.
+          base=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG
+          cat >notes.md <<EOF
+          **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($base/nova-$version-x86_64.iso), and can carry your files and logins over and add the packages for an offline install. Writing the ISO to a stick yourself works too.
+
+          Every other file here is Nova's package repository: pacman reads them on its own, during the install and on \`nova update\`.
+          EOF
           # A re-run after a publish that failed halfway finds its release there.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
             [[ $PUBLISH != true ]] || gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" --title "Nova $version" \
-              --notes "Install: write the ISO to a USB stick, or make one with nova-usb (bash nova-usb, on any Arch-based system), and boot it." \
+              --notes-file notes.md \
               "${assets[@]}"
           fi
