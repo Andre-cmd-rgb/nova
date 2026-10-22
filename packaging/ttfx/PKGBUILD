@@ -18,6 +18,7 @@ url='https://github.com/omacom/ttfx'
 license=(MIT)
 depends=(gcc-libs glibc)
 makedepends=(cargo)
+options=(!debug)
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
 sha256sums=('2882c7e47011a95f4d136303f7320da71613299840f67f88fd1385ef53d5f2a0')
 
