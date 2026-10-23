@@ -14,9 +14,11 @@ runtime=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/nova
 mkdir -p "$runtime"
 : >"$runtime/unlocked-once"
 
-# Reported, not fatal: apps then ask for the keyring password themselves.
+# Reported, not fatal: apps then ask for the keyring password themselves. The
+# login keyring by name: until a carried-over keyring has moved into it, the
+# default is that one, which reads as locked even though it has no password.
 locked=$(busctl --user get-property org.freedesktop.secrets \
-  /org/freedesktop/secrets/aliases/default org.freedesktop.Secret.Collection Locked 2>/dev/null || true)
+  /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked 2>/dev/null || true)
 if [[ $locked != "b false" ]]; then
   logger -t nova-session -p user.warning "the login keyring is still locked after the first unlock"
 fi

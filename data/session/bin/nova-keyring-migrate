@@ -25,6 +25,7 @@ LOGIN = ROOT + "/collection/login"
 SERVICE_IFACE = "org.freedesktop.Secret.Service"
 COLLECTION_IFACE = "org.freedesktop.Secret.Collection"
 ITEM_IFACE = "org.freedesktop.Secret.Item"
+PROMPT_IFACE = "org.freedesktop.Secret.Prompt"
 PROPS_IFACE = "org.freedesktop.DBus.Properties"
 
 
@@ -66,7 +67,14 @@ def main():
     if prop(bus, LOGIN, COLLECTION_IFACE, "Locked"):
         fail("the login keyring is locked")
     if prop(bus, source, COLLECTION_IFACE, "Locked"):
-        fail(f"the keyring '{keyring}' is locked")
+        # A keyring stored without a password reads as locked until something
+        # asks to open it, which it then does without a prompt. One that needs
+        # a prompt is left alone: a password dialog out of nowhere is worse.
+        unlocked, prompt = service.Unlock([dbus.ObjectPath(source)])
+        if prompt != "/":
+            dbus.Interface(bus.get_object(SERVICE, prompt), PROMPT_IFACE).Dismiss()
+        if source not in [str(c) for c in unlocked]:
+            fail(f"the keyring '{keyring}' is locked, and opening it needs its password")
 
     _, session = service.OpenSession("plain", dbus.String("", variant_level=1))
     login = dbus.Interface(bus.get_object(SERVICE, LOGIN), COLLECTION_IFACE)
