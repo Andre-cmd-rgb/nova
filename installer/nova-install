@@ -47,7 +47,6 @@ PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
 LOG=${NOVA_INSTALL_LOG:-/var/log/nova-install.log}
 CARRY=${NOVA_CARRY:-/run/nova-carry}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
-IWD_DIR=${NOVA_IWD_DIR:-/var/lib/iwd}
 FPRINT_DIR=${NOVA_FPRINT_DIR:-/var/lib/fprint}
 KBD_MODEL_MAP=${NOVA_KBD_MODEL_MAP:-/usr/share/systemd/kbd-model-map}
 # The answers file, for an install with no questions (--answers).
@@ -70,14 +69,18 @@ SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@s
 GPU_INTEL=(intel-media-driver vulkan-intel)
 GPU_AMD=(vulkan-radeon)
 
-# The setup screens' look: beside this file in the repository, in the share on
-# the stick.
+# The setup screens' look, and joining Wi-Fi: beside this file in the
+# repository, in the share on the stick.
 if [[ -r ${BASH_SOURCE[0]%/*}/ui.bash ]]; then
   # shellcheck source=installer/ui.bash
   source "${BASH_SOURCE[0]%/*}/ui.bash"
+  # shellcheck source=installer/wifi.bash
+  source "${BASH_SOURCE[0]%/*}/wifi.bash"
 else
   # shellcheck source=installer/ui.bash
   source "$SHARE/ui.bash"
+  # shellcheck source=installer/wifi.bash
+  source "$SHARE/wifi.bash"
 fi
 
 say() { printf '\n\e[1m%s\e[0m\n' "$*"; }
@@ -1065,17 +1068,6 @@ keyfile_value() { # NetworkManager keyfile, section, key
     inside && index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' "$1"
 }
 
-# iwd names a network's file after its SSID when that is plain, and = plus the
-# SSID in hex when it is not.
-iwd_name() {
-  local LC_ALL=C
-  if [[ $1 =~ ^[A-Za-z0-9\ _-]+$ ]]; then
-    echo "$1"
-  else
-    printf '=%s\n' "$(printf '%s' "$1" | od -An -tx1 | tr -d ' \n')"
-  fi
-}
-
 # The carried Wi-Fi networks, written as iwd networks for the live system,
 # which joins a known network by itself. Personal (WPA2/WPA3) and open ones;
 # a network that needs a certificate waits for the installed system.
@@ -1100,7 +1092,7 @@ carry_wifi_live() {
       "") install -m 600 /dev/null "$IWD_DIR/$name.open" ;;
       wpa-psk | sae)
         [[ -n $psk ]] || continue
-        printf '[Security]\nPassphrase=%s\n' "$psk" | install -m 600 /dev/stdin "$IWD_DIR/$name.psk"
+        iwd_write_psk "$ssid" "$psk"
         ;;
     esac
   done

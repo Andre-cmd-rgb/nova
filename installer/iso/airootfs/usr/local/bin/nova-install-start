@@ -19,6 +19,8 @@ PROBE=https://archive.archlinux.org/
 
 # shellcheck source=installer/ui.bash
 source "$SHARE/ui.bash"
+# shellcheck source=installer/wifi.bash
+source "$SHARE/wifi.bash"
 UI_STOPPED="Stopped. nova-install-start starts again."
 
 online() { curl -fsI --max-time 5 -o /dev/null "$PROBE"; }
@@ -57,7 +59,7 @@ wifi_networks() { # device
 
 # Returns 0 once online, 1 to go on without a network.
 connect_wifi() { # device
-  local dev=$1 networks=() options=() pass=() i ssid security verb problem=''
+  local dev=$1 networks=() options=() i ssid security verb hidden problem=''
   rfkill unblock wlan 2>/dev/null
   while :; do
     screen "network"
@@ -76,24 +78,30 @@ connect_wifi() { # device
     screen "network"
     [[ -z $problem ]] || ui_warn "$problem"
     ui_ask ui_choose "Which Wi-Fi network?" "" "${options[@]}" || return 1
-    verb=connect
+    verb=connect hidden=''
     case $REPLY in
       again) problem='' && continue ;;
       none) return 1 ;;
       hidden)
         ui_ask ui_input "The network's name" || continue
-        ssid=$REPLY security=psk verb=connect-hidden
+        ssid=$REPLY security=psk verb=connect-hidden hidden=yes
         ;;
       *) IFS=$'\t' read -r ssid security <<<"${networks[REPLY]}" ;;
     esac
-    pass=()
+    # The password goes in iwd's file for the network, not on iwctl's command
+    # line, where any process could read it. --dont-ask fails the connection
+    # rather than prompting where nobody sees it.
     if [[ $security != open ]]; then
       ui_ask ui_secret "Password for $ssid" || continue
-      pass=(--passphrase "$REPLY")
+      iwd_write_psk "$ssid" "$REPLY" "$hidden"
+      iwd_wait_known "$ssid" || true
     fi
-    if iwctl "${pass[@]}" station "$dev" "$verb" "$ssid" >/dev/null 2>&1; then
+    if iwctl --dont-ask station "$dev" "$verb" "$ssid" >/dev/null 2>&1; then
       ui_note "Connected to $ssid, waiting for an address..."
       wait_online 20 && return 0
+    elif [[ $security != open ]]; then
+      # A refused password is not kept for iwd to try again by itself.
+      rm -f -- "$IWD_DIR/$(iwd_name "$ssid").psk"
     fi
     problem="Could not connect to $ssid."
   done

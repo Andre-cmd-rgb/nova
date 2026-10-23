@@ -7,7 +7,7 @@
 # from another system (with ui.bash written in: tools/inline-ui).
 
 INSTALL_TARGETS += install-usb
-SHELL_SOURCES += installer/nova-install installer/nova-usb installer/ui.bash installer/iso/profiledef.sh \
+SHELL_SOURCES += installer/nova-install installer/nova-usb installer/ui.bash installer/wifi.bash installer/iso/profiledef.sh \
 	installer/iso/airootfs/usr/local/bin/nova-install-start
 
 .PHONY: install-usb
