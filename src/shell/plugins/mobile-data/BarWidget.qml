@@ -50,6 +50,10 @@ Panel {
   property var info: ({})
   readonly property string wwanState: info.state || "absent"
   readonly property bool hwPresent: info.hw === "yes"
+  // Switched off for want of a SIM (mobile-data check, from Settings, looks
+  // again), so out of the bar altogether.
+  readonly property bool parked: wwanState === "parked"
+  readonly property bool shown: hwPresent && !parked
   readonly property bool hasProfile: (info.profile || "") !== ""
   readonly property bool managed: info.managed !== "no"
   readonly property bool connected: wwanState === "connected"
@@ -101,6 +105,7 @@ Panel {
     case "disabled": return "Mobile data off"
     case "noprofile": return "No connection profile"
     case "absent": return "No modem"
+    case "parked": return "Off — no SIM"
     default: return "Modem starting…"
     }
   }
@@ -246,9 +251,9 @@ Panel {
 
   onOpenedChanged: if (!opened && !backgroundStats) resetStats()
 
-  visible: hwPresent
-  implicitWidth: hwPresent ? button.implicitWidth : 0
-  implicitHeight: hwPresent ? button.implicitHeight : 0
+  visible: shown
+  implicitWidth: shown ? button.implicitWidth : 0
+  implicitHeight: shown ? button.implicitHeight : 0
 
   Process {
     id: statusProc
@@ -303,7 +308,7 @@ Panel {
     interval: Math.max(mobile.pollInterval, 10) * 1000
     // Not while the radio is blocked: messages arrive at the modem, so with
     // mobile data off there is nothing to find and no reason to keep looking.
-    running: mobile.smsNotifications && mobile.hwPresent && mobile.wwanState !== "disabled"
+    running: mobile.smsNotifications && mobile.shown && mobile.wwanState !== "disabled"
     repeat: true
     // So a message that arrived while the shell was down is announced when it
     // comes back up, rather than a poll interval later.
@@ -318,7 +323,7 @@ Panel {
   // takes to come back after a suspend should not also cost ten seconds of
   // stale glyph at the end of it.
   Timer {
-    interval: (mobile.pending ? 2 : mobile.noModem ? 60 : mobile.pollInterval) * 1000
+    interval: (mobile.pending ? 2 : (mobile.noModem || mobile.parked) ? 60 : mobile.pollInterval) * 1000
     running: !mobile.opened
     repeat: true
     triggeredOnStart: true
@@ -359,7 +364,7 @@ Panel {
     anchorItem: button
     owner: mobile
     bar: mobile.bar
-    open: mobile.opened && mobile.hwPresent
+    open: mobile.opened && mobile.shown
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(250))
     contentHeight: panel.fittedContentHeight(column.implicitHeight)

@@ -20,6 +20,12 @@ MODEM_CACHE="$STATE_DIR/modem"
 # Written the first time a modem answers. Its presence is what separates a
 # machine whose modem has not come back yet from one that never had one.
 MODEM_SEEN="$STATE_DIR/seen"
+# Written the first time the modem reports a SIM in its slot.
+SIM_SEEN="$STATE_DIR/sim-seen"
+# A modem that has never had a SIM is switched off and left out of the bar,
+# for the power it saves, until `check` (Settings > Mobile Data) finds one.
+# The file holds why: nosim, or no-modemmanager when nothing can ask.
+PARKED="$STATE_DIR/parked"
 # Text messages, once they are off the modem and safely somewhere else.
 INBOX="$STATE_DIR/inbox"
 SMS_LOCK="$STATE_DIR/.sms.lock"
@@ -153,6 +159,42 @@ load_dump() {
 mark_modem_seen() {
   [[ -e $MODEM_SEEN ]] && return 0
   mkdir -p -- "$STATE_DIR" 2>/dev/null && : >"$MODEM_SEEN" 2>/dev/null
+  return 0
+}
+
+mark_sim_seen() {
+  [[ -e $SIM_SEEN ]] && return 0
+  mkdir -p -- "$STATE_DIR" 2>/dev/null && : >"$SIM_SEEN" 2>/dev/null
+  return 0
+}
+
+# The radio soft-blocked straight through rfkill, not `nmcli radio wwan off`:
+# NetworkManager does nothing with a modem ModemManager is not there to drive.
+# systemd-rfkill keeps the block across reboots.
+park() { # reason
+  mkdir -p -- "$STATE_DIR" 2>/dev/null && printf '%s\n' "$1" >"$PARKED" 2>/dev/null
+  have rfkill && rf block wwan >/dev/null 2>&1
+  STATE=parked
+  return 0
+}
+
+parked_reason() {
+  [[ -r $PARKED ]] || return 1
+  local reason
+  reason=$(<"$PARKED")
+  printf '%s' "${reason:-nosim}"
+}
+
+# The first start decides, once, and only for a modem that has never had a
+# SIM: no SIM in the slot, or no ModemManager to ask, and it is switched off.
+# A radio somebody turned off is no answer, and nor is a modem still on its
+# way up. A SIM seen once means the decision is never made again.
+decide_first_start() {
+  [[ -e $SIM_SEEN || $HW != yes ]] && return 0
+  case $STATE in
+  nosim) park nosim ;;
+  absent | starting) have mmcli || park no-modemmanager ;;
+  esac
   return 0
 }
 
@@ -432,6 +474,11 @@ read_state() {
 
   if radio_present; then HW=yes; fi
 
+  if [[ -e $PARKED ]]; then
+    STATE=parked
+    return 0
+  fi
+
   if radio_blocked; then
     STATE=disabled
     HW=yes
@@ -465,7 +512,12 @@ read_state() {
 
   case $modem_state in
   locked) STATE=locked ;;
-  disabled | disabling | failed) STATE=disabled ;;
+  # An empty slot is where ModemManager gives up on a modem: "failed", with
+  # the reason beside it.
+  failed)
+    if [[ $(kv modem.generic.state-failed-reason) == sim-missing ]]; then STATE=nosim; else STATE=disabled; fi
+    ;;
+  disabled | disabling) STATE=disabled ;;
   initializing | enabling) STATE=starting ;;
   searching) STATE=searching ;;
   connecting) STATE=connecting ;;
@@ -479,7 +531,9 @@ read_state() {
   esac
 
   # An empty slot reports the path "/".
-  if [[ -z $sim || $sim == "/" ]] && [[ $STATE != disabled ]]; then
+  if [[ -n $sim && $sim != "/" ]]; then
+    mark_sim_seen
+  elif [[ $STATE != disabled ]]; then
     STATE=nosim
   fi
 
@@ -496,6 +550,11 @@ read_state() {
 
 cmd_info() {
   read_state
+  decide_first_start
+  # Kept off: airplane mode going off, say, unblocks every radio at once.
+  if [[ $STATE == parked ]] && ! radio_blocked; then
+    have rfkill && rf block wwan >/dev/null 2>&1
+  fi
   meter_update
 
   printf 'hw=%s\n' "$HW"
@@ -531,6 +590,13 @@ cmd_info() {
 cmd_status() {
   read_state
   case $STATE in
+  parked)
+    if [[ $(parked_reason) == no-modemmanager ]]; then
+      echo "Off: ModemManager is not installed (sudo pacman -S modemmanager), then: mobile-data check"
+    else
+      echo "Off: no SIM was found. Settings > Mobile Data, or mobile-data check, looks again."
+    fi
+    ;;
   absent) echo "No WWAN modem detected." ;;
   disabled) echo "Mobile data: off" ;;
   nosim) echo "No SIM." ;;
@@ -586,6 +652,7 @@ wait_for_state() {
 }
 
 cmd_on() {
+  [[ ! -e $PARKED ]] || die "the modem is off because no SIM was found — mobile-data check looks again"
   require_nmcli
   local profile timeout deadline left reason=""
   profile=$(nm_profile)
@@ -716,6 +783,49 @@ cmd_reset() {
   echo "Powering it back up…"
   cmd_on
   echo "Connected."
+}
+
+# What Settings > Mobile Data runs: the modem switched on and asked whether it
+# has a SIM. One found, it stays on and comes back to the bar for good; none,
+# and it is switched off again. The module boots afresh when the radio comes
+# back, and reads its slot about half a minute later.
+cmd_check() {
+  local timeout deadline state sim
+  rm -f -- "$PARKED"
+  if ! have mmcli; then
+    park no-modemmanager
+    die "looking for a SIM needs ModemManager: sudo pacman -S modemmanager"
+  fi
+  radio_hard_blocked && die "the WWAN radio is off at the hardware switch"
+  have rfkill && rf unblock wwan >/dev/null 2>&1
+  have nmcli && nm radio wwan on >/dev/null 2>&1
+  timeout=$(cfg_number CHECK_TIMEOUT 90)
+  deadline=$((SECONDS + timeout))
+  while :; do
+    if load_dump; then
+      state=$(kv modem.generic.state)
+      sim=$(kv modem.generic.sim)
+      if [[ -n $sim && $sim != "/" ]]; then
+        mark_modem_seen
+        mark_sim_seen
+        echo "There is a SIM: mobile data is back in the bar."
+        return 0
+      fi
+      # Still reading its slot.
+      case $state in
+      "" | unknown | initializing | enabling) ;;
+      *)
+        park nosim
+        die "there is no SIM in the slot; the modem is off again"
+        ;;
+      esac
+    fi
+    if ((SECONDS >= deadline)); then
+      park nosim
+      die "the modem did not answer within ${timeout}s; it is off again"
+    fi
+    sleep 2
+  done
 }
 
 cmd_toggle() {
@@ -1120,6 +1230,8 @@ Usage:
   mobile-data on | off | toggle  radio and connection control
   mobile-data enable | disable   aliases for on and off
   mobile-data reset              power-cycle a modem that refuses to connect
+  mobile-data check              switch on a modem kept off for want of a SIM,
+                                 and look for one again
   mobile-data setup [APN]        create or refresh the NetworkManager profile
   mobile-data profile [name]     show or choose the NetworkManager profile
   mobile-data apn <APN>          change the APN on the profile
@@ -1142,6 +1254,7 @@ Config file (key=value per line):
     RESET_DAY=1           day of month the usage counter renews
     ROUTE_METRIC=700      route metric written by `setup`
     ON_TIMEOUT=90         seconds `on` may spend bringing the modem up
+    CHECK_TIMEOUT=90      seconds `check` waits for the modem to read its slot
     SMS_KEEP=200          messages kept in the archive
 USAGE
 }
@@ -1160,6 +1273,7 @@ on | enable) cmd_on ;;
 off | disable) cmd_off ;;
 toggle) cmd_toggle ;;
 reset) cmd_reset ;;
+check) cmd_check ;;
 setup) cmd_setup "${1:-}" ;;
 profile) cmd_profile "${1:-}" ;;
 apn) cmd_apn "${1:-}" ;;
