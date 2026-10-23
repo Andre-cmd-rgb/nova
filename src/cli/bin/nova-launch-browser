@@ -27,16 +27,16 @@ if [[ -z $browser_exec ]]; then
   exit 1
 fi
 
-# The help text is captured rather than piped into grep -q: with pipefail, grep
-# quitting at its first match would SIGPIPE the browser and read as no match.
-browser_help=$("$browser_exec" --help 2>/dev/null || true)
-if [[ $browser_help == *MOZ_LOG* ]]; then
-  private_flag="--private-window"
-elif [[ $browser_exec =~ edge ]]; then
-  private_flag="--inprivate"
-else
-  private_flag="--incognito"
-fi
+# Firefox and its forks open a private window with --private-window, Edge with
+# --inprivate, the rest of Chromium's family with --incognito. The name tells
+# which: asking the browser itself for its --help starts it every time, and
+# Chrome crashes on it.
+case ${browser_exec##*/} in
+  *firefox* | *librewolf* | zen* | *waterfox* | *floorp* | *mullvad* | *tor-browser* | *icecat*)
+    private_flag="--private-window" ;;
+  *edge*) private_flag="--inprivate" ;;
+  *) private_flag="--incognito" ;;
+esac
 
 if ! nova-cmd-browser-handoff "$browser_exec" "${@/--private/$private_flag}"; then
   systemd-run --user --quiet --collect --unit="nova-browser-$(date +%s%N)" \
