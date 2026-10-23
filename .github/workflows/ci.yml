@@ -38,7 +38,7 @@ jobs:
             quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa
           useradd -m builder
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Hand the checkout to the build user
         run: chown -R builder:builder "$GITHUB_WORKSPACE"
@@ -90,7 +90,7 @@ jobs:
 
       - name: Keep the window screenshots
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: shell-windows
           path: /tmp/nova-shots
@@ -104,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Tools
         run: |
