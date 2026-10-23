@@ -333,8 +333,12 @@ update_release() {
   (( ! assume_yes )) || flags+=(--noconfirm)
 
   [[ -x $APPLY ]] || die "missing helper: $APPLY"
-  pkexec "$APPLY" "${flags[@]}"
+  # A failure can come after the packages are in (3: the boot entries do not
+  # check out), and the shell has to follow them all the same.
+  local status=0
+  pkexec "$APPLY" "${flags[@]}" || status=$?
   restart_shell "$cur_pkgver"
+  return "$status"
 }
 
 # The running shell holds the old release's QML and would load the rest from

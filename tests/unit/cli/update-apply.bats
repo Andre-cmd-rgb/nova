@@ -62,6 +62,14 @@ uki() { # name kernel-version: an image whose setup header names that kernel
   [[ $output == *"no boot entry for the installed kernel linux-lts"* ]]
 }
 
+@test "boot entries: linux is not mistaken for linux-nova or linux-lts" {
+  put "$NOVA_ROOT/usr/lib/modules/7.2.11-arch1-1/pkgbase" linux
+  put "$NOVA_ROOT/usr/lib/modules/7.2.11-arch1-1/vmlinuz"
+  run verify_boot_entries
+  [ "$status" -eq 1 ]
+  [[ $output == *"no boot entry for the installed kernel linux"* ]]
+}
+
 @test "a failed pacman puts back the mirror files and the databases that went with them" {
   put "$MIRRORLIST" 'old mirror'
   put "$REPOFILE" 'old repo'
@@ -76,6 +84,23 @@ uki() { # name kernel-version: an image whose setup header names that kernel
   [ "$(cat "$SYNC_DIR/core.db")" = 'old core' ]
   [ ! -e "$SYNC_DIR/extra.db" ]
   [ ! -e "$SYNC_DIR.nova-prev" ]
+}
+
+@test "an update that never finished keeps what was there before it to go back to" {
+  put "$MIRRORLIST" 'old mirror'
+  put "$REPOFILE" 'old repo'
+  put "$SYNC_DIR/core.db" 'old core'
+  backup_config
+  # The power goes after the new files are written.
+  put "$MIRRORLIST" 'half mirror'
+  put "$SYNC_DIR/core.db" 'half core'
+  run backup_config
+  [[ $output == *"did not finish"* ]]
+  put "$MIRRORLIST" 'new mirror'
+  restore_config 2>/dev/null
+  [ "$(cat "$MIRRORLIST")" = 'old mirror' ]
+  [ "$(cat "$SYNC_DIR/core.db")" = 'old core' ]
+  [ ! -e "$SYNC_DIR.nova-prev" ] && [ ! -e "$SYNC_DIR.nova-old" ]
 }
 
 @test "a successful update drops the copies" {

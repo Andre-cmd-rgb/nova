@@ -65,13 +65,26 @@ write_config() {
 
 # The sync databases go with the mirror files: put back without them, pacman
 # would read the new snapshot's packages from the old snapshot's server.
+# A copy already there is from an update that never finished (the power went,
+# say), and holds what was in place before it: it is kept rather than replaced
+# by what that update left half done. Each copy is made aside and renamed, so
+# one that is there is whole.
 backup_config() {
-  local f
+  local f kept=0
   for f in "$MIRRORLIST" "$REPOFILE"; do
-    if [[ -e $f ]]; then cp -p "$f" "$f.nova-prev"; else rm -f "$f.nova-prev"; fi
+    if [[ -e $f.nova-prev ]]; then kept=1; continue; fi
+    if [[ -e $f ]]; then cp -p "$f" "$f.nova-prev.tmp" && mv -f "$f.nova-prev.tmp" "$f.nova-prev"; fi
   done
-  rm -rf "$SYNC_DIR.nova-prev"
-  if [[ -d $SYNC_DIR ]]; then cp -a "$SYNC_DIR" "$SYNC_DIR.nova-prev"; fi
+  if [[ -d $SYNC_DIR.nova-prev ]]; then
+    kept=1
+  elif [[ -d $SYNC_DIR ]]; then
+    rm -rf "$SYNC_DIR.nova-prev.tmp"
+    cp -a "$SYNC_DIR" "$SYNC_DIR.nova-prev.tmp"
+    mv "$SYNC_DIR.nova-prev.tmp" "$SYNC_DIR.nova-prev"
+  fi
+  if (( kept )); then
+    warn "an earlier update did not finish; keeping the files from before it to go back to"
+  fi
 }
 
 restore_config() {
@@ -80,8 +93,10 @@ restore_config() {
     if [[ -e $f.nova-prev ]]; then mv -f "$f.nova-prev" "$f"; restored=1; fi
   done
   if [[ -d $SYNC_DIR.nova-prev ]]; then
-    rm -rf "$SYNC_DIR"
+    rm -rf "$SYNC_DIR.nova-old"
+    if [[ -d $SYNC_DIR ]]; then mv "$SYNC_DIR" "$SYNC_DIR.nova-old"; fi
     mv "$SYNC_DIR.nova-prev" "$SYNC_DIR"
+    rm -rf "$SYNC_DIR.nova-old"
   fi
   if (( restored )); then
     warn "put the previous mirror and repository files back"
@@ -153,7 +168,7 @@ find_esp() {
 # loads from the boot partition is there. Entries that live in a snapshot (written by
 # limine-snapper-sync) point into the root filesystem and cannot be checked from here.
 verify_boot_entries() {
-  local esp conf pkgbase_file pkgbase kver uki line value rel ok=0
+  local esp conf pkgbase_file pkgbase pattern kver uki line value rel ok=0
   esp=$(find_esp) || { warn "no limine.conf found (looked at ESP_PATH, /efi, /boot, /boot/efi)"; return 1; }
   conf=$esp/limine.conf
   [[ -s $conf ]] || { warn "$conf is missing or empty"; return 1; }
@@ -163,7 +178,13 @@ verify_boot_entries() {
     pkgbase=$(<"$pkgbase_file")
     kver=${pkgbase_file%/pkgbase}
     kver=${kver##*/}
-    if ! grep -q -F -- "$pkgbase" "$conf"; then
+    # The name as a whole word, so linux is not found in linux-lts; still loose
+    # about how limine-entry-tool names the entry around it.
+    pattern=${pkgbase//./\\.}
+    pattern=${pattern//+/\\+}
+    # Not a pipe: grep -q stops at the first match, and pipefail would count
+    # the first grep's broken pipe on a long limine.conf as no match.
+    if ! grep -qE -- "(^|[^A-Za-z0-9+-])$pattern([^A-Za-z0-9+-]|$)" <<<"$(grep -v '^[[:space:]]*#' "$conf")"; then
       warn "$conf has no boot entry for the installed kernel $pkgbase"
       ok=1
     fi
@@ -266,6 +287,11 @@ main() {
     warn "continuing without snapshots, as asked"
   fi
 
+  # Stopped between here and the end of pacman, the new mirror files would stay
+  # without the update they belong to. Like pacman's own commit, this does not
+  # stop halfway: Ctrl+C still reaches pacman, which sets its own handler, and
+  # stops it cleanly, and pacman_failed puts the old files back.
+  trap '' INT
   backup_config
   say "Pointing pacman at Arch snapshot $arch_date and $tag"
   write_config
@@ -282,6 +308,7 @@ main() {
   say "pacman ${pacman_args[*]}"
   "${env_skip[@]}" pacman "${pacman_args[@]}" || pacman_failed
   drop_backup
+  trap - INT
 
   install_hardware_packages "$noconfirm" "${env_skip[@]}"
 
