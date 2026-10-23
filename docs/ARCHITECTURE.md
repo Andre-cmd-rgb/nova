@@ -260,7 +260,12 @@ the shared folder also becomes the default for themes that have no pick of their
 - **Not redistributed:** Chrome and VS Code. They are built on the machine from their
   AUR recipes, which download from the vendors (`nova apps install`). They are outside
   the release, so `nova update` ends by rebuilding whichever is behind the AUR
-  (`nova apps update`), and the bar's update badge shows when one is.
+  (`nova apps update`), and the bar's update badge shows when one is. A recipe runs
+  as the user and anyone can push to the AUR, so the commit each was built from is
+  kept in `~/.local/state/nova/aur/`. A new release is built unasked only when its
+  recipe changed nothing but `pkgver`, `pkgrel` and checksums. Any other change is
+  shown in the terminal and built only on a yes; under `--yes` that app waits. The
+  first build on a machine takes the recipe as it is.
 
 ## Code rules
 
