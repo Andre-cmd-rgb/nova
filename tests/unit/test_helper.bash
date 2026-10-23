@@ -12,9 +12,22 @@ setup_scratch() {
 }
 
 teardown_scratch() {
+  [[ ! -d ${SCRATCH:-}/gnupg ]] || gpgconf --homedir "$SCRATCH/gnupg" --kill all 2>/dev/null || true
   [[ -n ${SCRATCH:-} && -d $SCRATCH ]] && rm -rf -- "$SCRATCH"
   return 0
 }
+
+# A signing key of the test's own, standing in for Nova's: TEST_KEY is its
+# public half, armored as nova-keyring ships it, and test_sign <file> writes
+# <file>.sig with it.
+test_key() {
+  export GNUPGHOME="$SCRATCH/gnupg" TEST_KEY="$SCRATCH/test-key.asc"
+  mkdir -m 700 "$GNUPGHOME"
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Nova test <test@example.org>' ed25519 sign never 2>/dev/null
+  gpg --batch --armor --export >"$TEST_KEY"
+}
+
+test_sign() { gpg --batch --quiet --yes --detach-sign --output "$1.sig" -- "$1"; }
 
 # Create a file with its parent directories: write_file <path> [content]
 write_file() {

@@ -215,6 +215,60 @@ jobs:
         with:
           name: iso
           path: out/iso/
+      # The small files of it, for the sign job, which then need not fetch the ISO.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: iso-files
+          path: |
+            out/iso/*.sha256
+            out/iso/packages.txt
+            out/iso/nova-usb
+
+  # Signatures for the files read straight off the release page rather than
+  # through pacman: release.toml (nova update checks it), the ISO's .sha256 and
+  # packages.txt (nova-usb checks them), and nova-usb itself, for people.
+  sign:
+    needs: iso
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-toml
+          path: out/files
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: iso-files
+          path: out/files
+      - name: Sign the release files
+        env:
+          NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
+        run: |
+          [[ -n $NOVA_REPO_KEY ]] || { echo "::error::the NOVA_REPO_KEY secret is not set"; exit 1; }
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          gpg --batch --quiet --import <<<"$NOVA_REPO_KEY"
+          fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          grep -qx "$fpr:4:" packaging/nova-keyring/nova-trusted ||
+            { echo "::error::NOVA_REPO_KEY is not the key in packaging/nova-keyring"; exit 1; }
+          # Checked as nova update and nova-usb will: against the shipped key alone.
+          keyring=$(mktemp)
+          gpg --batch --dearmor <packaging/nova-keyring/nova.gpg >"$keyring"
+          mkdir -p out/signatures
+          for file in out/files/*; do
+            sig=out/signatures/${file##*/}.sig
+            gpg --batch --yes --local-user "$fpr" --detach-sign --no-armor --output "$sig" -- "$file"
+            gpgv --quiet --keyring "$keyring" "$sig" "$file"
+          done
+          ls -l out/signatures
+          gpgconf --kill all
+          rm -rf "$GNUPGHOME" "$keyring"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signatures
+          path: out/signatures/
 
   # The ISO as someone would use it: a stick made from it, an install with no
   # questions in a KVM virtual machine, and the first boot checked from inside.
@@ -259,7 +313,7 @@ jobs:
           overwrite: true # a re-run of a failed attempt uploads again
 
   publish:
-    needs: [repo, iso, install-test]
+    needs: [repo, iso, install-test, sign]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -276,12 +330,14 @@ jobs:
           flags=(--generate-notes)
           [[ $PUBLISH == true ]] || flags+=(--draft)
           [[ $version != *-* ]] || flags+=(--prerelease)
-          assets=(out/release-toml/release.toml out/repo/* out/iso/*)
+          assets=(out/release-toml/release.toml out/repo/* out/iso/* out/signatures/*)
           # GitHub lists assets by name and folds most of them away, so the
           # notes link the two a person downloads.
           base=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG
           cat >notes.md <<EOF
           **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($base/nova-$version-x86_64.iso), and can carry your files and logins over and add the packages for an offline install. Writing the ISO to a stick yourself works too.
+
+          nova-usb checks the ISO against its checksum, and the checksum against Nova's signing key, which it carries. [nova-usb.sig]($base/nova-usb.sig) is nova-usb's own signature, by the key in [nova-keyring](https://github.com/$GITHUB_REPOSITORY/tree/$TAG/packaging/nova-keyring).
 
           Every other file here is Nova's package repository: pacman reads them on its own, during the install and on \`nova update\`.
           EOF

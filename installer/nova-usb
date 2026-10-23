@@ -23,7 +23,8 @@
 #   nova usb --preset        last time's choices; asks only for the stick and passphrase
 #   nova usb --iso <file>    this ISO rather than the latest release's (packages
 #                            on the stick then need the release's release.toml
-#                            and packages.txt next to it)
+#                            and packages.txt next to it); taken as it is, with
+#                            no signature checked
 #   nova usb --dry-run       everything but the writing
 #   nova usb --help          this text
 #
@@ -60,6 +61,17 @@ else
   source /usr/share/nova/ui.bash
 fi
 # @ui end
+
+# Nova's signing key, armored, which a release's files are checked against
+# before its ISO is used: the copy in the repository beside this file, or the
+# nova-keyring package's. tools/inline-ui writes it in between these markers.
+# @key begin
+release_key() {
+  local key=${NOVA_USB_KEY:-${BASH_SOURCE[0]%/*}/../packaging/nova-keyring/nova.gpg}
+  [[ -r $key ]] || key=/usr/share/pacman/keyrings/nova.gpg
+  cat -- "$key"
+}
+# @key end
 
 say() { printf '\n  \e[1m%s\e[0m\n' "$*" >&2; }
 info() { printf '  %s\n' "$*" >&2; }
@@ -369,10 +381,24 @@ download() { # url file
   curl -fL --retry 3 --progress-bar -C - -o "$2.part" "$1" && mv -f "$2.part" "$2"
 }
 
-# Downloads the release's ISO (checked against its .sha256), release.toml and
-# packages.txt into the cache; prints the ISO's path.
+# Checks file.sig against Nova's key alone, not the keyring pacman trusts,
+# which holds every Arch packager's. gpgv reads only an unarmored key.
+signed_by_nova() { # file
+  local keyring status=0
+  keyring=$(mktemp)
+  if ! release_key | gpg --batch --dearmor >"$keyring" 2>/dev/null ||
+    ! gpgv --quiet --keyring "$keyring" "$1.sig" "$1" >/dev/null 2>&1; then
+    status=1
+  fi
+  rm -f -- "$keyring"
+  return "$status"
+}
+
+# Downloads the release's release.toml, packages.txt and the ISO's .sha256,
+# each signed by Nova's key, and then the ISO, checked against the .sha256,
+# into the cache; prints the ISO's path.
 fetch_release() {
-  local releases release tag version dir iso name url
+  local releases release tag version dir iso name url sig
   releases=$(curl -fsSL --max-time 30 "$RELEASES?per_page=20") ||
     die "could not reach the Nova releases ($RELEASES). Online? Or pass --iso <file>."
   release=$(latest_release <<<"$releases") ||
@@ -384,15 +410,25 @@ fetch_release() {
   iso=nova-$version-x86_64.iso
   mkdir -p "$dir"
   say "Nova $version"
-  for name in release.toml packages.txt "$iso.sha256" "$iso"; do
+  for name in release.toml packages.txt "$iso.sha256"; do
     url=$(asset_url "$release" "$name")
     if [[ -z $url ]]; then
       [[ $name == packages.txt ]] && continue
       die "the $tag release has no $name"
     fi
-    [[ $name != "$iso" ]] || info "Downloading the installer ($(human_size "$(jq -r --arg n "$iso" '.assets[] | select(.name == $n) | .size' <<<"$release")"))"
+    sig=$(asset_url "$release" "$name.sig")
+    [[ -n $sig ]] || die "the $tag release has no $name.sig, so nothing shows it is Nova's: it is incomplete, or older than signed releases."
     download "$url" "$dir/$name" || die "could not download $name"
+    download "$sig" "$dir/$name.sig" || die "could not download $name.sig"
+    signed_by_nova "$dir/$name" || {
+      rm -f -- "$dir/$name" "$dir/$name.sig"
+      die "the $tag release's $name is not signed by Nova's key; it was deleted, and nothing was written."
+    }
   done
+  url=$(asset_url "$release" "$iso")
+  [[ -n $url ]] || die "the $tag release has no $iso"
+  info "Downloading the installer ($(human_size "$(jq -r --arg n "$iso" '.assets[] | select(.name == $n) | .size' <<<"$release")"))"
+  download "$url" "$dir/$iso" || die "could not download $iso"
   (cd "$dir" && sha256sum --quiet -c "$iso.sha256") || {
     rm -f -- "$dir/$iso"
     die "the downloaded ISO does not match its checksum; it was deleted, run nova usb again."
@@ -798,7 +834,7 @@ main() {
     shift
   done
   ((EUID != 0)) || die "run nova usb as yourself: it asks sudo for the writing, and reads your home as you."
-  for tool in lsblk jq curl sha256sum du git; do
+  for tool in lsblk jq curl sha256sum du git gpg gpgv; do
     command -v "$tool" >/dev/null || die "nova usb needs $tool"
   done
   command -v gum >/dev/null || die "nova usb needs gum: sudo pacman -S gum"

@@ -213,7 +213,10 @@ the shared folder also becomes the default for themes that have no pick of their
     installs over the network;
   - `release.toml`, which pins the Arch Linux Archive date the release was tested
     against;
-  - `nova-usb` and `packages.txt`, for making the stick (below).
+  - `nova-usb` and `packages.txt`, for making the stick (below);
+  - a `.sig` by the repository key for each file read straight off the page
+    (`release.toml`, the ISO's `.sha256`, `packages.txt`, `nova-usb`), which
+    `nova update` and `nova-usb` check against the key alone.
 - **The stick:** `nova usb` (`installer/nova-usb`, also on every release page, so
   it runs on any Arch-based system) writes a GPT stick of its own instead of the
   raw ISO:

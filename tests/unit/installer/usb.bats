@@ -504,6 +504,81 @@ wizard_setup() {
   run bash "$SCRATCH/nova-usb" --help
   [ "$status" -eq 0 ]
   [[ $output == *"nova usb --dry-run"* ]]
+  # Nova's key too, to check the release's files with on a system without it.
+  [ "$(NOVA_USB_KEY=/nonexistent bash -c 'source "$1"; release_key' _ "$SCRATCH/nova-usb")" = "$(cat "$REPO_ROOT/packaging/nova-keyring/nova.gpg")" ]
+}
+
+# GitHub with one release, v1.0.0, whose assets are what is in $SCRATCH/served:
+# a release.toml, packages.txt and an ISO with its .sha256, each but the ISO
+# signed by the test's key, which stands in for Nova's.
+serve_release() {
+  test_key
+  export NOVA_USB_KEY=$TEST_KEY
+  local served=$SCRATCH/served name assets=''
+  mkdir -p "$served"
+  printf 'version = "1.0.0"\n' >"$served/release.toml"
+  echo nova >"$served/packages.txt"
+  echo 'an ISO' >"$served/nova-1.0.0-x86_64.iso"
+  (cd "$served" && sha256sum -- nova-1.0.0-x86_64.iso >nova-1.0.0-x86_64.iso.sha256)
+  for name in release.toml packages.txt nova-1.0.0-x86_64.iso.sha256; do test_sign "$served/$name"; done
+  for name in "$served"/*; do
+    name=${name##*/}
+    assets+="${assets:+,}{\"name\":\"$name\",\"size\":7,\"browser_download_url\":\"https://dl.example.org/$name\"}"
+  done
+  echo "[{\"tag_name\":\"v1.0.0\",\"draft\":false,\"prerelease\":false,\"assets\":[$assets]}]" >"$SCRATCH/releases.json"
+  curl() {
+    local url=${*: -1} out='' prev='' arg
+    for arg; do [[ $prev != -o ]] || out=$arg; prev=$arg; done
+    case $url in
+      *'?per_page='*) cat "$SCRATCH/releases.json" ;;
+      https://dl.example.org/*)
+        echo "${url##*/}" >>"$SCRATCH/downloaded"
+        [[ -e $SCRATCH/served/${url##*/} ]] && cp -- "$SCRATCH/served/${url##*/}" "$out"
+        ;;
+    esac
+  }
+}
+
+@test "fetch_release: the release's files are Nova's, and the ISO matches its checksum" {
+  serve_release
+  run fetch_release
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
+  [ "$(cat "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso")" = 'an ISO' ]
+  [ -s "$NOVA_USB_CACHE/v1.0.0/packages.txt" ]
+}
+
+@test "fetch_release: a file changed after it was signed stops it before the ISO" {
+  serve_release
+  sed -i 's/^[0-9a-f]*/0000/' "$SCRATCH/served/nova-1.0.0-x86_64.iso.sha256"
+  run fetch_release
+  [ "$status" -ne 0 ]
+  [[ $output == *"nova-1.0.0-x86_64.iso.sha256 is not signed by Nova's key"* ]]
+  [ ! -e "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso.sha256" ]
+  fails grep -qx nova-1.0.0-x86_64.iso "$SCRATCH/downloaded"
+}
+
+@test "fetch_release: a release whose files are not signed is not used" {
+  serve_release
+  rm "$SCRATCH/served/release.toml.sig"
+  sed -i 's/,{"name":"release.toml.sig"[^}]*}//; s/{"name":"release.toml.sig"[^}]*},//' "$SCRATCH/releases.json"
+  run fetch_release
+  [ "$status" -ne 0 ]
+  [[ $output == *"has no release.toml.sig"* ]]
+  [ ! -e "$SCRATCH/downloaded" ]
+}
+
+@test "fetch_release: a signature by some other key is refused" {
+  serve_release
+  export NOVA_USB_KEY=$SCRATCH/other-key.asc
+  GNUPGHOME=$SCRATCH/gnupg-other
+  mkdir -m 700 "$GNUPGHOME"
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Other <other@example.org>' ed25519 sign never 2>/dev/null
+  gpg --batch --armor --export >"$NOVA_USB_KEY"
+  gpgconf --kill all
+  run fetch_release
+  [ "$status" -ne 0 ]
+  [[ $output == *"release.toml is not signed by Nova's key"* ]]
 }
 
 @test "local_timezone: this computer's zone, for the installer to offer first" {

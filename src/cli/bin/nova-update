@@ -16,7 +16,8 @@
 #   nova update --yes               do not ask before applying
 #   nova update --allow-downgrade   permit an older release (uses pacman -Syuu)
 #   nova update --no-snapshot       skip the snapper snapshots (not recommended)
-#   nova update --release-file F    use a local release.toml instead of GitHub
+#   nova update --release-file F    use a local release.toml instead of GitHub (taken
+#                                   as it is: no signature is checked)
 #   nova update --candidates on     follow the release candidates too, to test
 #                                   each two weeks before it is released; off
 #                                   stops, and with neither it says which
@@ -26,8 +27,12 @@
 # Packages held back with IgnorePkg stay held back, and nothing is ever downgraded
 # unless you ask for it.
 #
+# A release's release.toml must be signed by Nova's own key, the one in the
+# nova-keyring package, since it says where every package comes from.
+#
 # Environment (for tests and forks): NOVA_UPDATE_REPO (owner/name), NOVA_UPDATE_API,
-# GITHUB_TOKEN (raises the API rate limit), NOVA_UPDATE_CHECK_TTL (seconds).
+# GITHUB_TOKEN (raises the API rate limit), NOVA_UPDATE_CHECK_TTL (seconds),
+# NOVA_UPDATE_KEY (the armored public key release.toml is checked against).
 set -euo pipefail
 
 NOVA_UPDATE_REPO=${NOVA_UPDATE_REPO:-Andre-cmd-rgb/nova}
@@ -40,6 +45,7 @@ APPS=${NOVA_UPDATE_APPS:-$HERE/nova-apps-install}
 CACHE_TTL=${NOVA_UPDATE_CHECK_TTL:-1800}
 CACHE_FILE=${NOVA_UPDATE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nova/update-check}
 CANDIDATES=${NOVA_UPDATE_CANDIDATES:-${XDG_CONFIG_HOME:-$HOME/.config}/nova/update-candidates}
+RELEASE_KEY=${NOVA_UPDATE_KEY:-/usr/share/pacman/keyrings/nova.gpg}
 
 die() { printf 'nova update: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'nova update: %s\n' "$*" >&2; }
@@ -97,6 +103,20 @@ download() { # url dest
   code=$(curl -sSL --retry 2 --connect-timeout 10 --max-time 120 \
     -o "$2" -w '%{http_code}' "$1") || return 1
   [[ $code == 200 ]]
+}
+
+# Checks file.sig against Nova's key alone, not the keyring pacman trusts, which
+# holds every Arch packager's. gpgv reads only an unarmored key.
+signed_by_nova() { # file
+  local keyring status=0
+  [[ -r $RELEASE_KEY ]] || die "Nova's key is not at $RELEASE_KEY; reinstall nova-keyring"
+  keyring=$(mktemp)
+  if ! gpg --batch --dearmor <"$RELEASE_KEY" >"$keyring" 2>/dev/null ||
+    ! gpgv --quiet --keyring "$keyring" "$1.sig" "$1" >/dev/null 2>&1; then
+    status=1
+  fi
+  rm -f "$keyring"
+  return "$status"
 }
 
 # Find the release to move to and leave its JSON in $1. $2 is the requested tag (or
@@ -261,10 +281,13 @@ update_release() {
     [[ -n $tag ]] || die "the release has no tag"
     # Printed in a terminal: no escape sequences from the release page.
     notes=$(jq -r '.body // empty' "$tmp/release.json" | tr -d '\000-\010\013-\037\177')
-    local asset
-    asset=$(jq -r '[.assets[]? | select(.name == "release.toml")][0].browser_download_url // empty' "$tmp/release.json")
-    [[ -n $asset ]] || die "release $tag has no release.toml asset; it is incomplete, try again later"
-    download "$asset" "$tmp/release.toml" || die "could not download release.toml for $tag"
+    local name asset
+    for name in release.toml release.toml.sig; do
+      asset=$(jq -r --arg n "$name" '[.assets[]? | select(.name == $n)][0].browser_download_url // empty' "$tmp/release.json")
+      [[ -n $asset ]] || die "release $tag has no $name; it is incomplete (try again later), or older than signed releases"
+      download "$asset" "$tmp/$name" || die "could not download $name for $tag"
+    done
+    signed_by_nova "$tmp/release.toml" || die "release.toml for $tag is not signed by Nova's key; nothing was changed"
   fi
 
   local version arch_date nova_repo

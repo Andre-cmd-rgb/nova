@@ -7,12 +7,12 @@ Nothing is built or published from a laptop.
 
 | Asset | What reads it |
 |---|---|
-| `release.toml` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the URL of its `[nova]` repository |
+| `release.toml` and its `.sig` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the URL of its `[nova]` repository |
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
 | `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `ttfx` |
-| `nova-usb` | people: makes the installer stick, with the ISO and whatever is carried |
-| `nova-<version>-x86_64.iso` and `.sha256` | people, or `nova-usb`: the installer stick |
-| `packages.txt` | `nova-usb`: the packages an install can need, to put on the stick for an offline install |
+| `nova-usb` and its `.sig` | people: makes the installer stick, with the ISO and whatever is carried |
+| `nova-<version>-x86_64.iso`, its `.sha256` and that one's `.sig` | people, or `nova-usb`: the installer stick |
+| `packages.txt` and its `.sig` | `nova-usb`: the packages an install can need, to put on the stick for an offline install |
 
 That is why a release has so many files: most of them are the repository,
 which pacman downloads by itself, and the release notes link the two files a
@@ -42,9 +42,14 @@ nobody else (below).
 ## The signing key (once)
 
 The `[nova]` repository and every package in it are signed, and pacman refuses
-anything else (`SigLevel = Required` in `installer/pacman.conf`). The public
-key ships in the `nova-keyring` package; the private key lives only in the
-`NOVA_REPO_KEY` repository secret and in an offline backup.
+anything else (`SigLevel = Required` in `installer/pacman.conf`). The files
+read straight off the release page are signed with the same key: `nova update`
+refuses a `release.toml` without a good `.sig`, and `nova-usb` checks
+`release.toml`, `packages.txt` and the ISO's `.sha256` before it downloads the
+ISO. The public key ships in the `nova-keyring` package, and `tools/inline-ui`
+writes it into the `nova-usb` on the release page, which runs on systems
+without it; the private key lives only in the `NOVA_REPO_KEY` repository
+secret and in an offline backup.
 
 1. Make a key used for nothing else. It has no passphrase, because CI signs
    unattended, so it never lives on a laptop's normal keyring:
@@ -104,7 +109,8 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    3. builds the other packages on the same snapshot, `nvidia-open-nova` at the
       snapshot's driver version;
    4. signs them into the repository (`tools/repo-build`);
-   5. builds the ISO (`tools/build-iso`);
+   5. builds the ISO (`tools/build-iso`), and signs `release.toml`, the
+      ISO's `.sha256`, `packages.txt` and `nova-usb` with the repository key;
    6. installs from it in a KVM virtual machine with no questions asked, boots
       the result and checks it from inside (`tests/install/run`); the serial
       logs are kept as the run's `install-logs`;

@@ -149,6 +149,68 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [ "$output" = "available 1.1.0" ]
 }
 
+# GitHub with release v1.0.0-beta.2, whose assets are the files in $SCRATCH/served.
+serve_release() { # asset...
+  mkdir -p "$SCRATCH/served"
+  local assets='' name
+  for name in "$@"; do
+    assets+="${assets:+,}{\"name\":\"$name\",\"browser_download_url\":\"https://dl.example.org/$name\"}"
+  done
+  stub curl "while ((\$#)); do [[ \$1 == -o ]] && out=\$2; url=\$1; shift; done
+    case \$url in
+      */releases/tags/v1.0.0-beta.2) echo '{\"tag_name\":\"v1.0.0-beta.2\",\"assets\":[$assets]}' >\"\$out\" ;;
+      https://dl.example.org/*) cp \"$SCRATCH/served/\${url##*/}\" \"\$out\" ;;
+    esac
+    printf 200"
+}
+
+@test "a release's release.toml is taken only signed by Nova's key" {
+  test_key
+  export NOVA_UPDATE_KEY=$TEST_KEY
+  serve_release release.toml release.toml.sig
+  cp "$SCRATCH/release.toml" "$SCRATCH/served/"
+  test_sign "$SCRATCH/served/release.toml"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --version v1.0.0-beta.2 --yes
+  [ "$status" -eq 0 ]
+  grep -q '^nova-update-apply --tag v1.0.0-beta.2' "$CALLS"
+}
+
+@test "a release.toml changed after it was signed changes nothing" {
+  test_key
+  export NOVA_UPDATE_KEY=$TEST_KEY
+  serve_release release.toml release.toml.sig
+  cp "$SCRATCH/release.toml" "$SCRATCH/served/"
+  test_sign "$SCRATCH/served/release.toml"
+  sed -i 's|example.org/repo|example.net/repo|' "$SCRATCH/served/release.toml"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --version v1.0.0-beta.2 --yes
+  [ "$status" -ne 0 ]
+  [[ $output == *"not signed by Nova's key"* ]]
+  ! grep -q '^nova-update-apply' "$CALLS"
+}
+
+@test "a release.toml signed by another key, or not at all, changes nothing" {
+  test_key
+  serve_release release.toml release.toml.sig
+  cp "$SCRATCH/release.toml" "$SCRATCH/served/"
+  test_sign "$SCRATCH/served/release.toml"
+  # Nova's key is some other one.
+  export NOVA_UPDATE_KEY=$SCRATCH/other-key.asc
+  GNUPGHOME=$SCRATCH/gnupg-other
+  mkdir -m 700 "$GNUPGHOME"
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Other <other@example.org>' ed25519 sign never 2>/dev/null
+  gpg --batch --armor --export >"$NOVA_UPDATE_KEY"
+  gpgconf --kill all
+  run "$REPO_ROOT/src/cli/bin/nova-update" --version v1.0.0-beta.2 --yes
+  [ "$status" -ne 0 ]
+  [[ $output == *"not signed by Nova's key"* ]]
+
+  serve_release release.toml
+  run "$REPO_ROOT/src/cli/bin/nova-update" --version v1.0.0-beta.2 --yes
+  [ "$status" -ne 0 ]
+  [[ $output == *"has no release.toml.sig"* ]]
+  ! grep -q '^nova-update-apply' "$CALLS"
+}
+
 @test "a used-up rate limit says so" {
   export NOVA_UPDATE_CACHE="$SCRATCH/cache"
   stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; shift; done; echo "{}" >"$out"; printf 403'

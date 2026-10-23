@@ -21,7 +21,8 @@ Nova takes the whole disk. Turn Secure Boot off in the firmware settings first.
   carry your things over, encrypted: SSH and GnuPG keys, Wi-Fi networks, Chrome
   signed in, VS Code, Claude Code and Codex, T3 Code, git repositories, folders,
   your own backgrounds and your extra packages. `bash nova-usb --dry-run` asks
-  everything and writes nothing.
+  everything and writes nothing. It checks the ISO against the release's
+  checksum, and the checksum against Nova's signing key.
 - Anywhere else, write the ISO as it is, with `dd` or any USB writer. That
   stick installs over the network.
 
