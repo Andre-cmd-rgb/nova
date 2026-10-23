@@ -509,6 +509,10 @@ Item {
                 color: swatch.modelData.foreground || Commons.Color.foreground
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
+                // Two words that do not fit on one line ("catppuccin latte")
+                // take two, which the tile has room for.
+                wrapMode: Text.Wrap
+                maximumLineCount: 2
                 elide: Text.ElideRight
                 textFormat: Text.PlainText
               }
