@@ -19,7 +19,7 @@ set -euo pipefail
 die() { printf 'build-iso: %s\n' "$*" >&2; exit 1; }
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-release='' repo='' out='' work=/tmp/nova-iso-work
+release='' repo='' out='' work=''
 while (($#)); do
   case $1 in
     --release) release=${2:?}; shift 2 ;;
@@ -42,8 +42,14 @@ arch_date=$(value arch_date)
 [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad arch_date in $release"
 repo=$(cd -- "$repo" && pwd)
 
-rm -rf -- "$work"
-mkdir -p -- "$work" "$out"
+# A fixed name in /tmp could be anybody's, and this runs as root.
+if [[ -n $work ]]; then
+  rm -rf -- "$work"
+  mkdir -p -- "$work"
+else
+  work=$(mktemp -d /tmp/nova-iso.XXXXXX)
+fi
+mkdir -p -- "$out"
 profile=$work/profile
 cp -a -- "$root/installer/iso" "$profile"
 

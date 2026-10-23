@@ -116,7 +116,10 @@ it file by file.
    `/var/lib/nova/greeter/`, from which a root path unit sets Chrome's color policy.
 
 Palette values may contain only hex, `rgb()`, words, numbers and a few separators, so a
-downloaded theme can't inject code into the Lua, CSS or JSON it is rendered into. It
+`colors.toml` can't inject code into the Lua, CSS or JSON it is rendered into. The files a
+theme ships ready-made are used as they are, and some are code: Hyprland runs
+`hyprland.lua`, and a `foot.ini` can set the terminal's shell. A downloaded theme with
+more than a palette is a program, to install only from someone you trust. Theming
 never needs root and never rebuilds an initramfs. Nothing before the lock screen is
 themed.
 

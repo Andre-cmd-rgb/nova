@@ -16,7 +16,7 @@ INSTALL_TARGETS :=
 SHELL_SOURCES   :=
 QML_DIRS        :=
 TEST_DIRS       := tests/unit
-TEST_SCRIPTS    := src/power/test/roundtrip.sh src/shell/plugins/batterylife/test/roundtrip.sh
+TEST_SCRIPTS    :=
 
 include $(sort $(wildcard */install.mk */*/install.mk))
 
