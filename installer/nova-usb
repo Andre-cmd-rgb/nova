@@ -932,6 +932,12 @@ download_packages() { # urls dir
     name=${url##*/}
     name=$(printf '%b' "${name//%/\\x}")
     name=${name//:/_}
+    # Decoded, %2F is a slash: as root, a name like that could write anywhere.
+    [[ -n $name && $name != [.-]* && $name != */* ]] || {
+      echo "nova usb: refusing the package file name '$name'" >&2
+      rm -f -- "$config"
+      return 1
+    }
     printf 'url = "%s"\noutput = "%s/%s"\nurl = "%s.sig"\noutput = "%s/%s.sig"\n' "$url" "$dir" "$name" "$url" "$dir" "$name"
   done <"$urls" >"$config"
   curl --parallel --parallel-max 6 --fail --location --retry 3 --show-error --config "$config" || {
@@ -954,10 +960,12 @@ make_offline_repo() { # dir
 
 # The names in a NUL-separated list that are still there. The wizard listed
 # them minutes ago, and tar gives up on a name it is handed that has gone since
-# (an editor's swap file, say).
+# (an editor's swap file, say). The list is the user's and the writer is root,
+# so a name that would leave the home is dropped.
 still_there() { # home list
   local name
   while IFS= read -r -d '' name; do
+    [[ $name != /* && /$name/ != */../* ]] || continue
     if [[ -e $1/$name || -L $1/$name ]]; then printf '%s\0' "$name"; fi
   done <"$2"
 }
@@ -967,7 +975,7 @@ still_there() { # home list
 # Chrome, say) is a warning; a file that cannot be read at all, which is how
 # btrfs reports a checksum error, stops everything.
 make_archive() { # id plan home out
-  local id=$1 plan=$2 home=$3 out=$4 kind path pattern transform args=() err status
+  local id=$1 plan=$2 home=$3 out=$4 kind path pattern transform args=() err status files='' gitdirs=''
   kind=$(item_field "$id" 3)
   args=(--create --file=- --null --verbatim-files-from)
   case $kind in
@@ -987,14 +995,19 @@ make_archive() { # id plan home out
       ((${#present[@]})) || return 2
       args+=(-- "${present[@]}")
       ;;
+    # The lists that are still there go in files of the writer's own: the
+    # plan's directory is the user's, and a link planted there would have root
+    # write through it.
     projects)
-      still_there "$home" "$plan/projects.files" >"$plan/projects.files.now"
-      still_there "$home" "$plan/projects.gitdirs" >"$plan/projects.gitdirs.now"
-      args+=(-C "$home" --no-recursion -T "$plan/projects.files.now" --recursion -T "$plan/projects.gitdirs.now")
+      files=$(mktemp) gitdirs=$(mktemp)
+      still_there "$home" "$plan/projects.files" >"$files"
+      still_there "$home" "$plan/projects.gitdirs" >"$gitdirs"
+      args+=(-C "$home" --no-recursion -T "$files" --recursion -T "$gitdirs")
       ;;
     folders)
-      still_there "$home" "$plan/folders.list" >"$plan/folders.list.now"
-      args+=(-C "$home" -T "$plan/folders.list.now")
+      files=$(mktemp)
+      still_there "$home" "$plan/folders.list" >"$files"
+      args+=(-C "$home" -T "$files")
       ;;
     list) args+=(-C "$plan" -- packages.txt aur.txt) ;;
     *) return 1 ;;
@@ -1004,6 +1017,7 @@ make_archive() { # id plan home out
   tar "${args[@]}" 2>"$err" | zstd -q -f -T0 -3 -o "$out"
   status=("${PIPESTATUS[@]}")
   set -e
+  rm -f -- ${files:+"$files"} ${gitdirs:+"$gitdirs"}
   if ((status[0] > 1 || status[1] != 0)); then
     sed 's/^/    /' "$err" >&2
     rm -f -- "$err"

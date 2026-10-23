@@ -305,6 +305,21 @@ EOF
   grep -qx 'output = "/stick/repo/libc++-1-1-x86_64.pkg.tar.zst"' "$SCRATCH/curl.config"
 }
 
+@test "packages on the stick: a name that decodes to a path is refused" {
+  printf 'https://example.org/repo/..%%2F..%%2Fetc%%2Fcron.d%%2Fx.pkg.tar.zst\t10\n' >"$PLAN/offline.urls"
+  curl() { touch "$SCRATCH/curl.ran"; }
+  run download_packages "$PLAN/offline.urls" /stick/repo
+  [ "$status" -ne 0 ]
+  [[ $output == *refusing* ]]
+  [ ! -e "$SCRATCH/curl.ran" ]
+}
+
+@test "still_there: a listed name that leaves the home is dropped" {
+  mkdir -p "$NOVA_USB_HOME/Documents" "$SCRATCH/secret"
+  printf '%s\0' Documents ../secret "$SCRATCH/secret" Documents/../../secret >"$PLAN/folders.list"
+  [ "$(still_there "$NOVA_USB_HOME" "$PLAN/folders.list" | tr '\0' ' ')" = "Documents " ]
+}
+
 @test "packages on the stick: fetched from the release's own snapshot and repository" {
   printf 'version = "1.0.0"\narch_date = "2026/10/01"\nnova_repo = "https://github.com/Andre-cmd-rgb/nova/releases/download/v1.0.0"\n' >"$SCRATCH/release.toml"
   run offline_pacman_conf "$SCRATCH/release.toml"
