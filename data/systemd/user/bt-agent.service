@@ -1,5 +1,5 @@
 [Unit]
-Description=Bluetooth pairing agent (auto-accept)
+Description=Bluetooth pairing agent (auto-accept, while a pairing runs)
 Documentation=man:bt-agent(1)
 ConditionPathIsDirectory=/sys/class/bluetooth
 # bluez must be reachable on the system bus before we can register.
@@ -11,13 +11,11 @@ Type=simple
 # If bluetoothd is unavailable (for example in VMs or machines without a
 # usable adapter), skip cleanly instead of entering a restart loop.
 ExecCondition=/usr/bin/systemctl is-active --quiet bluetooth.service
-# NoInputNoOutput auto-accepts pair requests. Safe because the adapter
-# is only `pairable: true` when the user explicitly opens the nova
-# bluetoothPanel and starts scanning; outside that window bluez refuses
-# inbound pair attempts at a lower layer.
+# NoInputNoOutput accepts every pairing without asking, and BlueZ keeps the
+# adapter pairable for as long as an agent is registered: left running, any
+# device in range that knows the address could pair, a keyboard included.
+# So nothing enables this unit; nova-bluetooth-device starts it for the
+# pairing the user picked and stops it after, and it ends itself after two
+# minutes in case that stop never comes.
 ExecStart=/usr/bin/bt-agent -c NoInputNoOutput
-Restart=on-failure
-RestartSec=2
-
-[Install]
-WantedBy=graphical-session.target
+RuntimeMaxSec=120

@@ -1,9 +1,9 @@
 # systemd: the session's user units, Nova's logind and sleep policy, and the
-# memory setup (zram, the reclaim sysctls, systemd-oomd). bt-agent, the sleep
-# lock, the monitor recovery and the speaker tuning's login check are on for
-# everyone; the tuning itself is enabled per machine by nova-audio-tuning, which
-# that check runs. Vendor config goes in /usr/lib so /etc stays the
-# administrator's.
+# memory setup (zram, the reclaim sysctls, systemd-oomd). The sleep lock, the
+# monitor recovery and the speaker tuning's login check are on for everyone;
+# bt-agent runs only while nova-bluetooth-device pairs, and the tuning itself is
+# enabled per machine by nova-audio-tuning, which that check runs. Vendor config
+# goes in /usr/lib so /etc stays the administrator's.
 
 INSTALL_TARGETS += install-systemd
 
@@ -12,7 +12,6 @@ install-systemd:
 	install -Dm644 -t $(DESTDIR)$(SYSTEMD_USER) data/systemd/user/*.service
 	install -Dm644 -t $(DESTDIR)$(SYSTEMD_USER)/app.slice.d data/systemd/user/app.slice.d/*.conf
 	install -d $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants $(DESTDIR)$(SYSTEMD_USER)/graphical-session-pre.target.wants
-	ln -sf ../bt-agent.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/bt-agent.service
 	ln -sf ../nova-sleep-lock.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-sleep-lock.service
 	ln -sf ../nova-speaker-tuning-auto.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-speaker-tuning-auto.service
 	ln -sf ../nova-recover-internal-monitor.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session-pre.target.wants/nova-recover-internal-monitor.service
