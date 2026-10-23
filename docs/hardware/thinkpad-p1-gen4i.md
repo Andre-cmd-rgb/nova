@@ -174,14 +174,38 @@ so `thinkpad-power` records its address then, in
 `/run/thinkpad-power.nvidia-pci`, and reads it back for the rest of the boot.
 `NVIDIA_PCI` in `/etc/thinkpad-power.conf` still wins when it is set.
 
-**16. The OC mailbox is locked here — measured, not assumed.** Writing −5 mV
-to the CPU-core plane through MSR `0x150` command `0x11` and reading it back
-returns **+0.0 mV**. It does not fault; it accepts the write and discards it.
-Plane 3 answers command `0x10` with status `0x5`, so the mailbox is alive and
-responding, it just will not take offsets. `MSR_PLATFORM_INFO` bits 28 and 29
-are *set* (programmable ratio limit and TDP), which is misleading — they do
-not imply the voltage mailbox is open. That closes the AC loadline question
-too: loadline is a different command to the same mailbox behind the same lock.
+**16. The OC mailbox is locked as shipped, and the firmware can open it.**
+With the BIOS's defaults, writing −5 mV to the CPU-core plane through MSR
+`0x150` command `0x11` and reading it back returns **+0.0 mV**. It does not
+fault; it accepts the write and discards it. Plane 3 answers command `0x10`
+with status `0x5`, so the mailbox is alive and responding, it just will not
+take offsets. `MSR_PLATFORM_INFO` bits 28 and 29 are *set* (programmable ratio
+limit and TDP), which is misleading — they do not imply the voltage mailbox is
+open. AC loadline is a different command to the same mailbox behind the same
+lock.
+
+The lock is **Overclocking Lock**, in a hidden Advanced menu (BIOS N40ET53W
+1.35, EC 1.19): F12 at power-on, Tab to the App Menu, Setup, then Left Ctrl +
+Left Shift on the Main tab, Restart → Exit Discarding Changes, and Setup again
+without rebooting. It is under Advanced → Intel Advanced Menu → Power &
+Performance → CPU - Power Management Control → CPU Lock Configuration. Only
+that one was changed; CFG Lock and the rest were left alone. Linux sees it in
+`MSR_FLEX_RATIO` (`0x194`) bit 20: `0x110000` locked, `0x10000` open. Opened
+(2026-10-23, i7-11850H, microcode `0x58`), the mailbox keeps what it is given:
+
+| core + cache | result |
+|---|---|
+| −25 to −50 mV | passed, on battery and at capped power on AC |
+| −70 mV (−70.3) | passed the long AC qualification: a stock control, 5 mV steps, verified arithmetic, single- and all-core stress-ng |
+| −75 mV | short screens only |
+| −80 mV | **rejected**: two bank-12 machine checks in the all-core phase, though every calculation came out right |
+
+The machine checks are the warning: −80 mV logged them and kept running.
+`nova-undervolt` therefore takes the offset off at the first one, and holds
+it at the boot after one that ended without shutting down while it was on
+(`nova power undervolt`). Sleep, resume and long use at −70 mV are not
+qualified yet. The overclocking ratio stays closed: `0x194` bits 19:17
+(OC bins) are 0, and `CAPID0_B` bit 29 (OC enabled) is 0.
 
 **Test it correctly or not at all.** The first probe wrote a *zero* offset,
 read zero back, and concluded "unlocked" — which is worthless, because a
@@ -189,7 +213,7 @@ locked mailbox that silently discards writes returns the identical result. It
 also masked off bits 63:32 of the response, which is where the status code
 lives. Only a **non-zero** round trip distinguishes accepted from discarded.
 
-The safe lever is the RAPL sustained limit instead. Firmware leaves PL1 at
+With the lock on, the safe lever is the RAPL sustained limit instead. Firmware leaves PL1 at
 109 W and PL2 at 135 W **on battery** — the AC figures, against a 45 W part.
 `PL1_ON_BAT` caps it, and also shortens the averaging window from the
 firmware's 56 s to 10 s: PL1 is an average, so without that a burst lasting

@@ -1,0 +1,20 @@
+[Unit]
+Description=Undervolt the CPU by the offset set with nova power undervolt
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/hardware/thinkpad-p1-gen4i.md
+# Nothing to do until somebody sets an offset; inert on every other machine.
+ConditionPathExists=/var/lib/nova/undervolt/offset
+
+[Service]
+# apply holds the offset instead when the last boot ended without shutting
+# down while it was on, or when the CPU will not take it, and says why in
+# /var/lib/nova/undervolt/held. watch then takes it off at the first machine
+# check. The stop, at shutdown too, takes it off: that is how the next boot
+# knows this one shut down cleanly. Not restarted: watch ends only once it
+# has taken the offset off.
+ExecStartPre=-/usr/bin/modprobe -q msr
+ExecStartPre=/usr/lib/nova/bin/nova-undervolt apply
+ExecStart=/usr/lib/nova/bin/nova-undervolt watch
+ExecStopPost=/usr/lib/nova/bin/nova-undervolt reset
+
+[Install]
+WantedBy=multi-user.target

@@ -73,7 +73,8 @@ battery_json() {
     --argjson health "$health" --argjson cycles "$cycles" --arg gpu "$gpu" \
     --argjson profiles "$(quiet nova-power-profile list --active-state | jq -Rc 'split("\t") | {name: .[0], active: (.[1] == "1")}' | jq -sc .)" \
     --argjson limit "$(json_or '{"kind":"none","limit":null,"on":false}' nova-battery-limit --json)" \
-    '{present: true, health: $health, cycles: $cycles, profiles: $profiles, limit: $limit, gpu: $gpu}'
+    --argjson undervolt "$(json_or null nova-power-undervolt status --json)" \
+    '{present: true, health: $health, cycles: $cycles, profiles: $profiles, limit: $limit, gpu: $gpu, undervolt: $undervolt}'
 }
 
 # The user's shell.json, or Nova's default when they have none (or a broken one).

@@ -217,6 +217,20 @@ check_boot_fallback() {
   report FAIL "the boot menu's fallback is incomplete" "${lines[@]}"
 }
 
+check_undervolt() {
+  local json state offset reason
+  json=$(nova-power-undervolt status --json 2>/dev/null) || return 0
+  IFS=$'\t' read -r state offset reason < <(jq -r '[.state, (.offset // ""), (.reason // "")] | @tsv' <<<"$json")
+  case $state in
+    applied) report ok "the CPU is undervolted by $offset mV" ;;
+    held)
+      report warn "the CPU's undervolt is held: $reason" \
+        "nova power undervolt on applies it again; nova power undervolt set <mV> sets a smaller one"
+      ;;
+    pending) report warn "an undervolt of $offset mV is set but not on the CPU" "systemctl status nova-undervolt says why" ;;
+  esac
+}
+
 check_hardware() {
   local profile
   if profile=$(nova-hw-detect 2>/dev/null); then
@@ -245,5 +259,6 @@ else
     report -- "the boot menu's fallback entry: sudo nova doctor checks it"
   fi
 fi
+check_undervolt
 check_hardware
 exit "$failed"

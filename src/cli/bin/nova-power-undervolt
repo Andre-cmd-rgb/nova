@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# nova:summary=Lower the CPU's voltage by an offset you have tested, or show it
+# nova:args=[status [--json] | set <mV> | on | off]
+#
+# An undervolt makes an Intel CPU run cooler and draw less for the same work,
+# where its firmware lets an offset through (a ThinkPad's only once its
+# hidden Overclocking Lock is off). Too deep an offset makes it compute wrong
+# answers or freeze, and the safe depth differs from one CPU to the next, so
+# Nova sets none by itself: find yours with a stress test first.
+#
+#   nova power undervolt          what is set, and whether the CPU has it
+#   nova power undervolt set -70  -70 mV on the core and cache, now and at every boot
+#   nova power undervolt on       apply it again after it was held
+#   nova power undervolt off      none
+#
+# It takes itself off and holds after a machine-check error, and at the boot
+# after one that ended without shutting down while it was on (a freeze), so a
+# bad offset cannot freeze every boot. Setting it asks for your password.
+
+set -euo pipefail
+
+bin=${0%/*}
+APPLY=${NOVA_POWER_UNDERVOLT_APPLY:-/usr/lib/nova/nova-power-undervolt-apply}
+TOOL=${NOVA_UNDERVOLT:-$bin/nova-undervolt}
+usage() { echo "Usage: nova power undervolt [status [--json] | set <mV> | on | off]" >&2; }
+
+case "$#:${1:-}" in
+  0: | 1:status) exec "$TOOL" status ;;
+  2:status) [[ $2 == --json ]] || { usage; exit 2; }; exec "$TOOL" status --json ;;
+  2:set | 1:on | 1:off)
+    status=0
+    if ((EUID == 0)); then "$APPLY" "$@" || status=$?; else pkexec "$APPLY" "$@" || status=$?; fi
+    # 126: the password was not given, so nothing changed.
+    ((status == 126)) || "$TOOL" status || true
+    exit "$status"
+    ;;
+  *) usage; exit 2 ;;
+esac

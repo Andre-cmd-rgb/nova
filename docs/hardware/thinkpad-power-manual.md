@@ -431,25 +431,40 @@ or should set.
 
 ### On undervolting
 
-There isn't one, and on this hardware there cannot be. Undervolting an
-11th-gen mobile part goes through the overclocking mailbox at MSR `0x150`,
-gated in microcode after Plundervolt (CVE-2019-11157) and locked by vendor
-firmware on business laptops. Measured on a P1 Gen 4i, i7-11850H, microcode
-`0x58`: writing a −5 mV offset to the CPU-core plane and reading it back
-returns **+0.0 mV**. The mailbox does not fault — it accepts the write and
-discards it, which is the silent-ignore form of the lock. (Plane 3 answers
-command `0x10` with status `0x5`, so the mailbox is alive and responding; it
-simply will not take offsets.)
+Not this tool's: `nova power undervolt`, below, and only where the firmware
+lets it. Undervolting an 11th-gen mobile part goes through the overclocking
+mailbox at MSR `0x150`, gated after Plundervolt (CVE-2019-11157) and locked by
+vendor firmware on business laptops. As shipped, a P1 Gen 4i (i7-11850H,
+microcode `0x58`) takes a −5 mV offset to the CPU-core plane and reads back
+**+0.0 mV**: the silent-ignore form of the lock. Its firmware's hidden
+Advanced menu has the switch, **Overclocking Lock**; the way in, and what an
+opened one took (−70 mV passed, −80 mV logged machine checks), are fact 16 in
+[thinkpad-p1-gen4i.md](thinkpad-p1-gen4i.md).
 
-That result matters for the AC/DC loadline trick too, which is often suggested
-as a way around a locked undervolt. It is not: it is a *different command to
-the same mailbox*, behind the same lock. If offsets are discarded, loadline
-writes are discarded.
+The AC/DC loadline trick, often suggested as a way around a locked undervolt,
+is not one: it is a *different command to the same mailbox*, behind the same
+lock.
 
-Worth testing rather than assuming, though, and worth testing correctly — a
-zero-offset write that reads back zero proves nothing, because a locked
-mailbox returns exactly that. Only a non-zero round trip distinguishes
-"accepted" from "silently discarded".
+Test it correctly — a zero-offset write that reads back zero proves nothing,
+because a locked mailbox returns exactly that. Only a non-zero round trip
+distinguishes "accepted" from "silently discarded", which is why
+`nova-undervolt` reads every offset back.
+
+With the lock open:
+
+```sh
+nova power undervolt set -70   # core and cache; asks for your password
+nova power undervolt           # what is set, and whether the CPU has it
+sudo nova power undervolt      # plus the CPU's own registers
+nova power undervolt off
+```
+
+It is applied at boot and again after every sleep. The first machine check
+takes it off, and so does the boot after one that ended without shutting
+down while it was on; either way it stays off ("held", with the reason, in
+Settings → Battery and `nova doctor`) until `nova power undervolt on`. Find
+the depth with a stress test that checks its own arithmetic, and stay a step
+short of the first machine check: a CPU that logs them is already wrong.
 
 ## What to expect
 

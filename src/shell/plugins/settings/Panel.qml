@@ -42,6 +42,7 @@ Item {
   readonly property var about: info.about || ({})
   readonly property var updates: info.updates || ({})
   readonly property var limit: battery.limit || ({})
+  readonly property var undervolt: battery.undervolt || ({})
 
   readonly property var allPages: [
     { id: "appearance", label: "Appearance", icon: "󰸌" },
@@ -699,6 +700,34 @@ Item {
           text: root.battery.gpu === "off"
             ? "Off plugged in too, for a cooler, quieter computer. For a game, turn it on from the menu: Toggle, Discrete GPU."
             : "Off the moment you unplug: on battery it would draw several watts doing nothing."
+        }
+      }
+
+      // Shown once an offset is set (nova power undervolt set): the depth is
+      // each CPU's own, found with a stress test, so it is not offered here.
+      Section {
+        width: p.inner
+        title: "UNDERVOLT"
+        visible: root.undervolt.state === "applied" || root.undervolt.state === "held" || root.undervolt.state === "pending"
+        Line {
+          label: String(root.undervolt.offset).replace("-", "\u2212") + " mV on the CPU"
+          detail: root.undervolt.state === "applied" ? "On: cooler, and less power for the same work."
+            : root.undervolt.state === "held" ? "Held: " + (root.undervolt.reason || "") + "."
+            : "Set, but not on the CPU in this boot: systemctl status nova-undervolt says why."
+          Row {
+            spacing: Style.space(8)
+            Button {
+              visible: root.undervolt.state !== "applied"
+              text: "Apply Again"
+              bordered: true
+              onClicked: root.run(["nova-power-undervolt", "on"])
+            }
+            Button { text: "Turn Off"; bordered: true; onClicked: root.run(["nova-power-undervolt", "off"]) }
+          }
+        }
+        Caption {
+          width: parent.width
+          text: "Taken off by itself after a machine-check error, and at the next start after the computer stopped without shutting down. nova power undervolt set changes it."
         }
       }
     }

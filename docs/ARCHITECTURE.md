@@ -12,7 +12,7 @@ code.
 | `src/shell/` | `/usr/share/nova/shell/` | The Quickshell shell: bar, lock, menu, notifications, OSD, panels, Settings |
 | `src/cli/nova` | `/usr/bin/nova` | Dispatcher: `nova <group> <verb> [args]` |
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
-| `src/power/` | `/usr/lib/nova/bin/thinkpad-power{,d}`, system units, udev rules, a sleep hook | The ThinkPad P1 Gen 4i's power manager (bash policy, Rust governor); inert on other machines |
+| `src/power/` | `/usr/lib/nova/bin/thinkpad-power{,d}`, `nova-undervolt`, system units, udev rules, sleep hooks | The ThinkPad P1 Gen 4i's power manager (bash policy, Rust governor), inert on other machines; the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
@@ -153,6 +153,16 @@ the shared folder also becomes the default for themes that have no pick of their
   lets the active session set it without a password). Other machines leave an
   idle NVIDIA card to the driver's runtime power management, and Settings
   shows no choice.
+- **Undervolt** (`nova power undervolt set -70`): an offset on an Intel CPU's
+  core and cache, through the overclocking mailbox, where the firmware lets
+  one through (a P1 Gen 4i's only with its hidden Overclocking Lock off, fact
+  16). Nova sets none by itself: the depth is each CPU's own. `nova-undervolt`
+  applies it at boot (`nova-undervolt.service`) and after every sleep, and
+  reads it back. Before writing it records the boot it is on in, on disk; a
+  clean shutdown takes it off and clears the record. So a boot that finds an
+  earlier boot's record holds the offset instead of applying it, and so does
+  the first machine check the kernel logs. Setting it takes an
+  administrator's password, through polkit.
 - **Other laptops** get power-profiles-daemon and the charge limit. A generic
   power manager with per-platform backends replaces thinkpad-power only once it
   matches it on the watt meter.

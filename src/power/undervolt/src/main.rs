@@ -1,0 +1,647 @@
+//! nova-undervolt: lowers an Intel CPU's voltage by the offset chosen with
+//! `nova power undervolt set`, and takes it off again by itself whenever it
+//! may not be safe.
+//!
+//! An offset that is too deep does not fail cleanly: the CPU computes wrong
+//! answers, logs machine checks, or freezes. So:
+//! - before the offset is written, `armed` records it on disk with this
+//!   boot's id, and a clean shutdown (the unit's stop) takes the offset off
+//!   and removes the record. A boot that finds another boot's record knows
+//!   that one ended without shutting down while undervolted, and holds the
+//!   offset instead of applying it, so a bad one cannot freeze every boot;
+//! - `watch` reads the kernel's log while it is on, and the first machine
+//!   check takes it off and holds it;
+//! - a hold lasts until somebody applies the offset again, and says why.
+//!
+//! The firmware has to allow it at all: on most laptops its Overclocking Lock
+//! makes the CPU discard every offset, so each one is read back.
+//!
+//! Commands (root, but status):
+//!   apply            the service's start: the offset onto the CPU, or a hold
+//!   watch            the service's main process: off on a machine check
+//!   reset            the service's stop: the offset off
+//!   reapply          after sleep, which can lose it (a hibernate is a power cycle)
+//!   status [--json]  what is set and what the CPU has; the CPU's own
+//!                    registers only as root
+//!
+//! State, in /var/lib/nova/undervolt/: `offset` (whole millivolts, written by
+//! nova-power-undervolt-apply), `armed` ("<boot id> <millivolts>"), and `held`
+//! (why it is held).
+
+mod mailbox;
+
+use mailbox::{CpuMsr, Msr, PLANES};
+use std::fs::{self, File};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+/// The deepest offset taken. Tiger Lake parts give out well before it: on a
+/// P1 Gen 4i, -80 mV logged machine checks (docs/hardware, fact 16).
+const DEEPEST: i32 = -150;
+
+const LOCKED: &str = "the firmware's Overclocking Lock is on, so the CPU discards any offset \
+(on a ThinkPad it is in the hidden Advanced menu, under CPU Lock Configuration)";
+
+struct Paths {
+    state: PathBuf,
+    boot_id: PathBuf,
+    cpuinfo: PathBuf,
+}
+
+impl Paths {
+    fn system() -> Paths {
+        Paths {
+            state: PathBuf::from("/var/lib/nova/undervolt"),
+            boot_id: PathBuf::from("/proc/sys/kernel/random/boot_id"),
+            cpuinfo: PathBuf::from("/proc/cpuinfo"),
+        }
+    }
+
+    fn file(&self, name: &str) -> PathBuf {
+        self.state.join(name)
+    }
+}
+
+type Open<'a> = &'a mut dyn FnMut() -> io::Result<Box<dyn Msr>>;
+
+enum Setting {
+    Off,
+    Offset(i32),
+    Bad(String),
+}
+
+fn setting(paths: &Paths) -> Setting {
+    match fs::read_to_string(paths.file("offset")) {
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Setting::Off,
+        Err(e) => Setting::Bad(e.to_string()),
+        Ok(text) => match text.trim().parse::<i32>() {
+            Ok(mv) if (DEEPEST..=-1).contains(&mv) => Setting::Offset(mv),
+            _ => Setting::Bad(text.trim().to_string()),
+        },
+    }
+}
+
+fn read_trimmed(path: &Path) -> Option<String> {
+    let text = fs::read_to_string(path).ok()?;
+    Some(text.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+fn held(paths: &Paths) -> Option<String> {
+    read_trimmed(&paths.file("held"))
+}
+
+/// The boot and offset the CPU was last given an offset in, until it is
+/// taken off.
+fn armed(paths: &Paths) -> Option<(String, i32)> {
+    let text = read_trimmed(&paths.file("armed"))?;
+    let (boot, mv) = text.split_once(' ')?;
+    Some((boot.to_string(), mv.parse().ok()?))
+}
+
+fn boot_id(paths: &Paths) -> io::Result<String> {
+    Ok(fs::read_to_string(&paths.boot_id)?.trim().to_string())
+}
+
+fn intel(paths: &Paths) -> bool {
+    fs::read_to_string(&paths.cpuinfo)
+        .map(|t| {
+            t.lines()
+                .any(|l| l.starts_with("vendor_id") && l.ends_with("GenuineIntel"))
+        })
+        .unwrap_or(false)
+}
+
+fn sync_dir(path: &Path) -> io::Result<()> {
+    File::open(path.parent().unwrap_or(Path::new("/")))?.sync_all()
+}
+
+/// Written so that a crash a moment later still finds it: `armed` has to be
+/// on the disk before the offset is on the CPU.
+fn write_durably(path: &Path, text: &str) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let tmp = path.with_extension("tmp");
+    {
+        let mut file = File::create(&tmp)?;
+        file.write_all(text.as_bytes())?;
+        file.sync_all()?;
+    }
+    fs::rename(&tmp, path)?;
+    sync_dir(path)
+}
+
+fn remove_durably(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => sync_dir(path),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Keeps the offset off the CPU until somebody applies it again. Only once
+/// it is off, or was never on: this forgets that it was armed.
+fn hold(paths: &Paths, reason: &str) -> io::Result<String> {
+    write_durably(&paths.file("held"), &format!("{reason}\n"))?;
+    remove_durably(&paths.file("armed"))?;
+    Ok(format!("held: {reason}"))
+}
+
+fn take_off(paths: &Paths, msr: &mut dyn Msr) -> io::Result<()> {
+    mailbox::set(msr, 0)
+        .map_err(|e| io::Error::other(format!("could not take the offset off: {e}")))?;
+    remove_durably(&paths.file("armed"))
+}
+
+/// Opens the CPU's registers and checks the firmware lets an offset through;
+/// the reason it is held otherwise.
+fn open_unlocked(paths: &Paths, open: Open) -> Result<Box<dyn Msr>, String> {
+    if !intel(paths) {
+        return Err(
+            "this is not an Intel CPU, which take an offset through their \
+                    overclocking mailbox"
+                .into(),
+        );
+    }
+    let mut msr = open().map_err(|e| {
+        format!("the CPU's registers cannot be written ({e}); is kernel lockdown on?")
+    })?;
+    match mailbox::locked(msr.as_mut()) {
+        Ok(false) => Ok(msr),
+        Ok(true) => Err(LOCKED.into()),
+        Err(e) => Err(format!("the CPU's lock register cannot be read ({e})")),
+    }
+}
+
+fn apply(paths: &Paths, open: Open) -> io::Result<String> {
+    let mv = match setting(paths) {
+        Setting::Off => return Ok("no undervolt is set".into()),
+        Setting::Bad(text) => {
+            return hold(
+                paths,
+                &format!(
+                    "the offset '{text}' is not a whole number of millivolts from {DEEPEST} to -1"
+                ),
+            )
+        }
+        Setting::Offset(mv) => mv,
+    };
+    if let Some(reason) = held(paths) {
+        return Ok(format!("held: {reason}"));
+    }
+    let boot = boot_id(paths)?;
+    if let Some((was, at)) = armed(paths) {
+        if was != boot {
+            return hold(
+                paths,
+                &format!(
+                    "the computer stopped without shutting down while undervolted by {at} mV \
+                     (a freeze, a forced power-off or a flat battery)"
+                ),
+            );
+        }
+    }
+    let mut msr = match open_unlocked(paths, open) {
+        Ok(msr) => msr,
+        Err(reason) => return hold(paths, &reason),
+    };
+    write_durably(&paths.file("armed"), &format!("{boot} {mv}\n"))?;
+    if let Err(e) = mailbox::set(msr.as_mut(), mv) {
+        let _ = mailbox::set(msr.as_mut(), 0);
+        return hold(paths, &format!("the CPU did not take {mv} mV: {e}"));
+    }
+    Ok(format!(
+        "{:.1} mV on the CPU core and cache",
+        mailbox::decode(mailbox::encode(mv))
+    ))
+}
+
+fn reset(paths: &Paths, open: Open) -> io::Result<String> {
+    if armed(paths).is_none() {
+        return Ok("not undervolted".into());
+    }
+    take_off(paths, open()?.as_mut())?;
+    Ok("the offset is off".into())
+}
+
+/// After a sleep: the offset again, as a hibernate's power cycle (and some
+/// firmware on a resume from suspend) puts the CPU back to none.
+fn reapply(paths: &Paths, open: Open) -> io::Result<String> {
+    let boot = boot_id(paths)?;
+    let mv = match armed(paths) {
+        Some((was, mv)) if was == boot => mv,
+        _ => return Ok("not undervolted".into()),
+    };
+    let mut msr = match open_unlocked(paths, open) {
+        Ok(msr) => msr,
+        Err(reason) => return hold(paths, &reason),
+    };
+    if let Err(e) = mailbox::set(msr.as_mut(), mv) {
+        let _ = mailbox::set(msr.as_mut(), 0);
+        return hold(
+            paths,
+            &format!("the CPU did not take {mv} mV after sleep: {e}"),
+        );
+    }
+    Ok(format!("{mv} mV again after sleep"))
+}
+
+/// A /dev/kmsg record's message: what follows "level,seq,time,flags;", up to
+/// the first newline (continuation lines follow it).
+fn message(record: &str) -> &str {
+    let text = record.split_once(';').map_or(record, |(_, m)| m);
+    text.lines().next().unwrap_or("")
+}
+
+fn machine_check(record: &str) -> Option<&str> {
+    let line = message(record);
+    line.contains("[Hardware Error]").then_some(line)
+}
+
+/// Waits for a machine check while the offset is on. The first one takes it
+/// off: at -80 mV, a P1 Gen 4i logged them and kept running.
+fn watch(
+    paths: &Paths,
+    open: Open,
+    records: &mut dyn Iterator<Item = String>,
+) -> io::Result<String> {
+    let boot = boot_id(paths)?;
+    let mv = match armed(paths) {
+        Some((was, mv)) if was == boot => mv,
+        _ => return Ok("not undervolted, so nothing to watch".into()),
+    };
+    for record in records {
+        if let Some(line) = machine_check(&record) {
+            let reason =
+                format!("the kernel logged a machine check while undervolted by {mv} mV: {line}");
+            let mut msr = open()?;
+            let _ = mailbox::set(msr.as_mut(), 0);
+            hold(paths, &reason)?;
+            return Err(io::Error::other(reason));
+        }
+    }
+    Err(io::Error::other("the kernel's log ended"))
+}
+
+/// The kernel's log from now on, one record a read.
+struct Kmsg(File);
+
+impl Kmsg {
+    fn open() -> io::Result<Kmsg> {
+        let mut file = File::open("/dev/kmsg")?;
+        file.seek(SeekFrom::End(0))?;
+        Ok(Kmsg(file))
+    }
+}
+
+impl Iterator for Kmsg {
+    type Item = String;
+
+    fn next(&mut self) -> Option<String> {
+        let mut buf = vec![0; 16384];
+        loop {
+            match self.0.read(&mut buf) {
+                Ok(0) => return None,
+                Ok(n) => return Some(String::from_utf8_lossy(&buf[..n]).into_owned()),
+                // EPIPE: records were overwritten before they were read.
+                Err(e) if e.raw_os_error() == Some(32) => continue,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => return None,
+            }
+        }
+    }
+}
+
+fn json_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn status(paths: &Paths, open: Open, json: bool) -> io::Result<String> {
+    let boot = boot_id(paths).unwrap_or_default();
+    let (offset, state, reason) = match setting(paths) {
+        Setting::Off => (None, "off", None),
+        Setting::Bad(text) => (
+            None,
+            "held",
+            Some(format!("the offset '{text}' is not valid")),
+        ),
+        Setting::Offset(mv) => match (held(paths), armed(paths)) {
+            (Some(reason), _) => (Some(mv), "held", Some(reason)),
+            (None, Some((was, _))) if was == boot => (Some(mv), "applied", None),
+            _ => (Some(mv), "pending", None),
+        },
+    };
+    if json {
+        return Ok(format!(
+            "{{\"offset\":{},\"state\":\"{state}\",\"reason\":{}}}",
+            offset.map_or("null".into(), |mv| mv.to_string()),
+            reason.as_deref().map_or("null".into(), json_string),
+        ));
+    }
+    let mv = offset.unwrap_or(0);
+    let mut text = match state {
+        "off" => "No undervolt is set; nova power undervolt set <mV> sets one.".to_string(),
+        "applied" => format!(
+            "The CPU core and cache are undervolted by {mv} mV ({:.1} mV).",
+            mailbox::decode(mailbox::encode(mv))
+        ),
+        "held" => format!(
+            "The undervolt{} is held: {}.\n\
+             nova power undervolt on applies it again; nova power undervolt set <mV> sets a smaller one.",
+            offset.map_or(String::new(), |mv| format!(" of {mv} mV")),
+            reason.unwrap_or_default()
+        ),
+        _ => format!(
+            "An undervolt of {mv} mV is set but not on the CPU in this boot; \
+             systemctl status nova-undervolt says why."
+        ),
+    };
+    // The CPU's own answer, where this may read its registers (root).
+    if let Ok(mut msr) = open() {
+        let lock = match mailbox::locked(msr.as_mut()) {
+            Ok(true) => "on",
+            Ok(false) => "off",
+            Err(_) => "unreadable",
+        };
+        let planes: Vec<String> = PLANES
+            .iter()
+            .map(
+                |&(plane, name)| match mailbox::offset(msr.as_mut(), plane) {
+                    Ok(mv) => format!("{name} {mv:.1} mV"),
+                    Err(e) => format!("{name} unreadable ({e})"),
+                },
+            )
+            .collect();
+        text.push_str(&format!(
+            "\nThe CPU now: {}; Overclocking Lock {lock}.",
+            planes.join(", ")
+        ));
+    }
+    Ok(text)
+}
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let paths = Paths::system();
+    let mut open = || CpuMsr::open().map(|msr| Box::new(msr) as Box<dyn Msr>);
+    let result = match args.as_slice() {
+        ["apply"] => apply(&paths, &mut open),
+        ["watch"] => Kmsg::open().and_then(|mut kmsg| watch(&paths, &mut open, &mut kmsg)),
+        ["reset"] => reset(&paths, &mut open),
+        ["reapply"] => reapply(&paths, &mut open),
+        ["status"] => status(&paths, &mut open, false),
+        ["status", "--json"] => status(&paths, &mut open, true),
+        _ => {
+            eprintln!("Usage: nova-undervolt apply | watch | reset | reapply | status [--json]");
+            return ExitCode::from(2);
+        }
+    };
+    match result {
+        Ok(text) => {
+            println!("{text}");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("nova-undervolt: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mailbox::fake::Fake;
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// One fake CPU that the code under test opens as often as it likes.
+    #[derive(Clone)]
+    struct Cpu(Rc<RefCell<Fake>>);
+
+    impl Msr for Cpu {
+        fn read(&mut self, register: u32) -> io::Result<u64> {
+            self.0.borrow_mut().read(register)
+        }
+        fn write(&mut self, register: u32, value: u64) -> io::Result<()> {
+            self.0.borrow_mut().write(register, value)
+        }
+    }
+
+    struct Machine {
+        paths: Paths,
+        cpu: Cpu,
+    }
+
+    impl Machine {
+        fn new() -> Machine {
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "nova-undervolt-test-{}-{}",
+                std::process::id(),
+                N.fetch_add(1, Ordering::SeqCst)
+            ));
+            let _ = fs::remove_dir_all(&root);
+            fs::create_dir_all(&root).unwrap();
+            fs::write(root.join("boot_id"), "boot-1\n").unwrap();
+            fs::write(root.join("cpuinfo"), "vendor_id\t: GenuineIntel\n").unwrap();
+            Machine {
+                paths: Paths {
+                    state: root.join("state"),
+                    boot_id: root.join("boot_id"),
+                    cpuinfo: root.join("cpuinfo"),
+                },
+                cpu: Cpu(Rc::new(RefCell::new(Fake::new()))),
+            }
+        }
+
+        fn set_offset(&self, text: &str) {
+            fs::create_dir_all(&self.paths.state).unwrap();
+            fs::write(self.paths.file("offset"), text).unwrap();
+        }
+
+        fn reboot(&self) {
+            fs::write(&self.paths.boot_id, "boot-2\n").unwrap();
+            self.cpu.0.borrow_mut().planes = [0x0000_0123; 5];
+        }
+
+        fn run(&self, f: fn(&Paths, Open) -> io::Result<String>) -> String {
+            let cpu = self.cpu.clone();
+            let mut open = move || Ok(Box::new(cpu.clone()) as Box<dyn Msr>);
+            f(&self.paths, &mut open).unwrap()
+        }
+
+        fn json(&self) -> String {
+            let mut open = || Err(io::Error::from_raw_os_error(13));
+            status(&self.paths, &mut open, true).unwrap()
+        }
+
+        fn core(&self) -> f64 {
+            mailbox::offset(&mut self.cpu.clone(), 0).unwrap()
+        }
+
+        fn writes(&self) -> usize {
+            self.cpu.0.borrow().writes
+        }
+    }
+
+    impl Drop for Machine {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(self.paths.boot_id.parent().unwrap());
+        }
+    }
+
+    #[test]
+    fn nothing_set_touches_nothing() {
+        let m = Machine::new();
+        assert_eq!(m.run(apply), "no undervolt is set");
+        assert_eq!(m.writes(), 0);
+        assert_eq!(m.json(), r#"{"offset":null,"state":"off","reason":null}"#);
+    }
+
+    #[test]
+    fn applied_it_is_armed_for_this_boot_and_reset_takes_it_off() {
+        let m = Machine::new();
+        m.set_offset("-70\n");
+        assert_eq!(m.run(apply), "-70.3 mV on the CPU core and cache");
+        assert!((m.core() - -70.3125).abs() < 1e-9);
+        assert_eq!(
+            fs::read_to_string(m.paths.file("armed")).unwrap(),
+            "boot-1 -70\n"
+        );
+        assert_eq!(
+            m.json(),
+            r#"{"offset":-70,"state":"applied","reason":null}"#
+        );
+        assert_eq!(m.run(reset), "the offset is off");
+        assert_eq!(m.core(), 0.0);
+        assert!(!m.paths.file("armed").exists());
+        // A clean shutdown, then the next boot applies it again.
+        m.reboot();
+        m.run(apply);
+        assert!((m.core() - -70.3125).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_boot_after_one_that_never_shut_down_holds_it() {
+        let m = Machine::new();
+        m.set_offset("-70");
+        m.run(apply);
+        // A freeze: no reset, and the CPU comes back with no offset.
+        m.reboot();
+        let writes = m.writes();
+        assert!(m
+            .run(apply)
+            .starts_with("held: the computer stopped without shutting down"));
+        assert_eq!(m.writes(), writes);
+        assert_eq!(m.core(), 0.0);
+        assert!(m.json().contains(r#""state":"held""#));
+        // Held, it stays off at every boot until somebody says otherwise.
+        m.reboot();
+        assert!(m.run(apply).starts_with("held:"));
+        assert_eq!(m.writes(), writes);
+        assert_eq!(m.run(reset), "not undervolted");
+    }
+
+    #[test]
+    fn a_locked_or_discarding_cpu_holds_it_with_the_reason() {
+        let m = Machine::new();
+        m.set_offset("-70");
+        m.cpu.0.borrow_mut().lock = true;
+        assert!(m.run(apply).contains("Overclocking Lock is on"));
+        assert_eq!(m.writes(), 0);
+        assert!(!m.paths.file("armed").exists());
+
+        let m = Machine::new();
+        m.set_offset("-70");
+        m.cpu.0.borrow_mut().discard = true;
+        assert!(m.run(apply).contains("the CPU did not take -70 mV"));
+        assert!(!m.paths.file("armed").exists());
+    }
+
+    #[test]
+    fn only_an_intel_cpu_is_tried() {
+        let m = Machine::new();
+        m.set_offset("-70");
+        fs::write(&m.paths.cpuinfo, "vendor_id\t: AuthenticAMD\n").unwrap();
+        assert!(m.run(apply).contains("not an Intel CPU"));
+        assert_eq!(m.writes(), 0);
+    }
+
+    #[test]
+    fn an_offset_out_of_range_is_held_not_applied() {
+        for bad in ["-200", "20", "0", "-70mV", ""] {
+            let m = Machine::new();
+            m.set_offset(bad);
+            assert!(m.run(apply).starts_with("held: the offset"), "{bad}");
+            assert_eq!(m.writes(), 0, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_machine_check_takes_it_off_and_holds_it() {
+        let m = Machine::new();
+        m.set_offset("-80");
+        m.run(apply);
+        let cpu = m.cpu.clone();
+        let mut open = move || Ok(Box::new(cpu.clone()) as Box<dyn Msr>);
+        let mut records = [
+            "6,1,1,-;usb 3-1: new device\n SUBSYSTEM=usb",
+            "2,2,2,-;mce: [Hardware Error]: Machine check events logged\n",
+            "6,3,3,-;never read",
+        ]
+        .into_iter()
+        .map(String::from);
+        let err = watch(&m.paths, &mut open, &mut records).unwrap_err();
+        assert!(err.to_string().contains("Machine check events logged"));
+        assert_eq!(m.core(), 0.0);
+        assert!(m
+            .json()
+            .contains("machine check while undervolted by -80 mV"));
+        assert!(!m.paths.file("armed").exists());
+    }
+
+    #[test]
+    fn nothing_is_watched_while_it_is_not_on() {
+        let m = Machine::new();
+        let mut open = || Err(io::Error::from_raw_os_error(13));
+        let mut records = std::iter::empty();
+        assert!(watch(&m.paths, &mut open, &mut records)
+            .unwrap()
+            .starts_with("not undervolted"));
+    }
+
+    #[test]
+    fn after_sleep_it_is_put_back() {
+        let m = Machine::new();
+        m.set_offset("-70");
+        assert_eq!(m.run(reapply), "not undervolted");
+        m.run(apply);
+        m.cpu.0.borrow_mut().planes = [0x0000_0123; 5];
+        assert_eq!(m.run(reapply), "-70 mV again after sleep");
+        assert!((m.core() - -70.3125).abs() < 1e-9);
+    }
+
+    #[test]
+    fn records_and_reasons_are_read_and_written_safely() {
+        assert_eq!(
+            machine_check("2,9,9,-;mce: [Hardware Error]: CPU 0: Machine Check: 0 Bank 12\n x"),
+            Some("mce: [Hardware Error]: CPU 0: Machine Check: 0 Bank 12")
+        );
+        assert_eq!(machine_check("6,1,1,-;Hardware Error-free day"), None);
+        assert_eq!(json_string("a \"b\" \\ \n"), r#""a \"b\" \\ \u000a""#);
+    }
+}

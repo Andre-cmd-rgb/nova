@@ -1,0 +1,44 @@
+#!/bin/bash
+# nova-power-undervolt-apply: the root half of `nova power undervolt`. Run
+# through pkexec (org.nova.power-undervolt, which asks for the administrator's
+# password), so it takes a verb and a number and passes nothing else on.
+#
+#   set <mV>   an offset from -150 to -1 mV, applied now and at every boot
+#   on         the offset set before, again, after a hold
+#   off        no offset, now and from now on
+
+set -euo pipefail
+
+STATE=${NOVA_UNDERVOLT_STATE:-/var/lib/nova/undervolt}
+UNIT=nova-undervolt.service
+
+die() { printf 'nova power undervolt: %s\n' "$*" >&2; exit 1; }
+
+case "$#:${1:-}" in
+  2:set)
+    if [[ ! $2 =~ ^-[1-9][0-9]{0,2}$ ]] || (($2 < -150)); then
+      die "an undervolt is a whole number of millivolts from -150 to -1, such as -70; not '$2'"
+    fi
+    mkdir -p "$STATE"
+    # The old offset off first, and a hold forgotten: this one is new.
+    systemctl stop "$UNIT"
+    rm -f -- "$STATE/held"
+    printf '%s\n' "$2" >"$STATE/offset.tmp"
+    mv -f -- "$STATE/offset.tmp" "$STATE/offset"
+    systemctl start "$UNIT"
+    ;;
+  1:on)
+    [[ -s $STATE/offset ]] || die "no undervolt is set; nova power undervolt set <mV> sets one"
+    systemctl stop "$UNIT"
+    rm -f -- "$STATE/held"
+    systemctl start "$UNIT"
+    ;;
+  1:off)
+    systemctl stop "$UNIT"
+    rm -f -- "$STATE/offset" "$STATE/held"
+    ;;
+  *)
+    echo "Usage: nova-power-undervolt-apply set <mV> | on | off" >&2
+    exit 2
+    ;;
+esac

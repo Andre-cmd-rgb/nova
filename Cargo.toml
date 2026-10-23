@@ -1,7 +1,7 @@
 # Nova's Rust components. One lock file and one target/ for all of them.
 [workspace]
 resolver = "2"
-members = ["src/theme", "src/power/daemon"]
+members = ["src/theme", "src/power/daemon", "src/power/undervolt"]
 
 [profile.release]
 opt-level = "s"
