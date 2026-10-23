@@ -88,6 +88,11 @@ exactly that, so pacman owns every file.
    - A greeter login does the same through the guard: the greeter's PAM stack has
      already unlocked the keyring.
    - Fingerprint unlock is offered only once `unlocked-once` exists.
+8. **Removable drives mount only in an unlocked session.** Mounting one has the
+   kernel read its file system, so a drive plugged into a locked computer waits.
+   The lock service runs `nova-automount on` after the first unlock and `off`
+   whenever it locks: udiskie (`nova-automount.service`) is started, then frozen
+   and thawed, not restarted, since a fresh udiskie mounts every drive there is.
 
 ## Theme flow
 

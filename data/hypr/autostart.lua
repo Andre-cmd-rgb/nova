@@ -7,7 +7,6 @@ hl.on("hyprland.start", function()
   -- Caffeine left on without its lid lock (a restarted user manager) is undone.
   hl.exec_cmd("nova-caffeine reconcile")
   hl.exec_cmd(o.launch("nova-hyprland-monitor-watch"))
-  hl.exec_cmd(o.launch("udiskie --automount --no-notify --no-tray"))
 
   -- Run post-boot hooks after startup config has loaded.
   hl.exec_cmd("sleep 2 && nova-hook post-boot")

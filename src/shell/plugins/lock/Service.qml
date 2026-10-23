@@ -51,6 +51,10 @@ Item {
 
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
   readonly property bool authenticating: authenticatingPassword || fingerprintAuthenticating
+  // Removable drives mount only in a session somebody has unlocked: never
+  // under the lock, not before the first unlock of the boot, and not while a
+  // lock this shell may have to take back from a crashed one is unanswered.
+  readonly property bool automountAllowed: !locked && unlockedOnce && strandedLockResolved
 
   function realScreenCount() {
     var screens = Quickshell.screens || []
@@ -131,6 +135,14 @@ Item {
   function leaveBootSubmap() {
     bootLock = false
     Quickshell.execDetached(["hyprctl", "dispatch", "hl.dsp.submap(\"reset\")"])
+  }
+
+  function applyAutomount() {
+    // A change while the last call runs is applied once it exits.
+    if (automountProc.running) return
+    automountProc.allowed = automountAllowed
+    automountProc.command = ["nova-automount", automountAllowed ? "on" : "off"]
+    automountProc.running = true
   }
 
   function completeFirstUnlock() {
@@ -473,11 +485,12 @@ Item {
       // No output to read the lock off yet.
       if (exitCode === 2) return
 
-      root.strandedLockResolved = true
-
       // A lock taken while this was in flight is this shell's own.
       root.strandedLock = exitCode === 0 && !root.locked && !root.lockRequested
       root.recoverStrandedLock()
+      // Answered only once a stranded lock is taken back, so the moment
+      // between never reads as an unlocked session.
+      root.strandedLockResolved = true
     }
   }
 
@@ -504,6 +517,14 @@ Item {
       root.lockForAutologin()
     }
   }
+
+  Process {
+    id: automountProc
+    property bool allowed: false
+    onExited: if (allowed !== root.automountAllowed) root.applyAutomount()
+  }
+
+  onAutomountAllowedChanged: applyAutomount()
 
   Process {
     id: wakeProcess
@@ -610,6 +631,7 @@ Item {
     refreshBackground()
     refreshFingerprintStatus()
     checkStrandedLock()
+    applyAutomount()
   }
 
   IpcHandler {
