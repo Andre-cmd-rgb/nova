@@ -278,6 +278,18 @@ STUB
   [ "$(gum_replies_left)" = 0 ]
 }
 
+@test "carry_unlock: unattended, a passphrase that does not open it stops the install" {
+  rm -rf "$NOVA_CARRY"
+  ANSWERS=$SCRATCH/answers
+  printf 'passphrase=wrong\n' >"$ANSWERS"
+  carry_partition() { echo /dev/fake2; }
+  cryptsetup() { return 1; }
+  run carry_unlock
+  [ "$status" -eq 1 ]
+  [[ $output == *"does not open what this stick carries"* ]]
+  [ ! -e "$CARRY_DECLINED" ]
+}
+
 @test "carry_unlock: Ctrl+C at the passphrase stops, rather than going on without them" {
   rm -rf "$NOVA_CARRY"
   carry_partition() { echo /dev/fake2; }

@@ -745,7 +745,8 @@ write_system_config() {
   echo "$hostname" >"$TARGET/etc/hostname"
   printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s.localdomain %s\n' "$hostname" "$hostname" >"$TARGET/etc/hosts"
   ln -sf "/usr/share/zoneinfo/$timezone" "$TARGET/etc/localtime"
-  in_target hwclock --systohc
+  # Some machines and VMs have no clock this can set; timesyncd sets it later.
+  in_target hwclock --systohc || warn "Could not set the hardware clock; it is set once the system is online."
   sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' "$TARGET/etc/locale.gen"
   in_target locale-gen
   echo 'LANG=en_US.UTF-8' >"$TARGET/etc/locale.conf"
@@ -1047,6 +1048,7 @@ carry_unlock() {
       info "$(carry_items | wc -l) things, from $(carry_value .source.host)"
       return 0
     fi
+    [[ -z $ANSWERS ]] || die "the answers file's passphrase does not open what this stick carries; nothing was changed."
     warn "That is not the passphrase."
   done
   return 1
@@ -1271,6 +1273,8 @@ main() {
   ((EUID == 0)) || die "run me as root."
   [[ -d /sys/firmware/efi ]] || die "this computer booted the stick in legacy BIOS mode; Nova needs UEFI. Turn on UEFI boot in the firmware settings."
   [[ -r $RELEASE_FILE ]] || die "no release file at $RELEASE_FILE"
+  # A try after a stopped one keeps the stopped one's log beside it.
+  [[ ! -s $LOG ]] || mv -f -- "$LOG" "$LOG.1"
   : >"$LOG"
 
   local tag arch_date nova_repo
@@ -1322,6 +1326,11 @@ main() {
   local disk swap
   disk=${DISK_LINE%%$'\t'*}
   swap=$(swap_gib "$(cut -f2 <<<"$DISK_LINE")")
+  # Minutes may have gone by since the disk was picked. The same disk, by size,
+  # model and serial, has to be there still, and free, before it is erased.
+  grep -qxF -- "$DISK_LINE" <<<"$(candidate_disks)" ||
+    die "$disk is no longer the disk that was picked (unplugged or swapped?); nothing was changed."
+  ! disk_in_use "$disk" || die "$disk is in use by the live system now; nothing was changed."
   set -E
   trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
   partition_and_format "$disk"

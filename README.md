@@ -68,7 +68,8 @@ get candidates early: Settings → Updates → Test Release Candidates.
 
 - If the install stops, it says at which step. The whole log is
   `/var/log/nova-install.log`, kept in memory until the installer restarts;
-  `nova-install-start` tries again from the start, with no restart needed.
+  `nova-install-start` tries again from the start, with no restart needed,
+  and keeps the stopped try's log as `nova-install.log.1`.
 - `nova doctor` looks the system over and says how to fix what it finds; `sudo
   nova doctor` also checks the boot menu's fallback entry.
 - `nova recovery` restarts into the boot menu: the last snapshots, the fallback
