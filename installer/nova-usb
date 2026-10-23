@@ -188,10 +188,27 @@ item_bytes() { # id plan
       [[ -s $plan/projects.gitdirs ]] && bytes=$((bytes + $(cd "$USB_HOME" && du -cb --files0-from="$plan/projects.gitdirs" 2>/dev/null | awk 'END { print $1 }')))
       ;;
     folders)
-      [[ -s $plan/folders.list ]] && bytes=$(cd "$USB_HOME" && du -cb --files0-from="$plan/folders.list" 2>/dev/null | awk 'END { print $1 }')
+      if [[ -s $plan/folders.list ]]; then
+        bytes=$(cd "$USB_HOME" && du -cb --files0-from="$plan/folders.list" 2>/dev/null | awk 'END { print $1 }')
+        bytes=$((bytes - $(cd "$USB_HOME" && du -cb --files0-from=<(tagged_caches "$plan/folders.list") 2>/dev/null | awk 'END { print $1 }')))
+      fi
       ;;
   esac
   echo "${bytes:-0}"
+}
+
+# The directories in the folders listed that a program tagged as its cache with
+# a CACHEDIR.TAG (a Rust build's target, pytest's), which it makes again: tar
+# leaves them out of a whole folder, as backup programs do. The outermost only,
+# home-relative, NUL-separated.
+tagged_caches() { # list
+  local dir
+  (cd "$USB_HOME" && find -files0-from "$1" -type d -exec test -f '{}/CACHEDIR.TAG' ';' -prune -print0 2>/dev/null) |
+    while IFS= read -r -d '' dir; do
+      if [[ $(head -c 43 -- "$USB_HOME/$dir/CACHEDIR.TAG" 2>/dev/null) == "Signature: 8a477f597d28d172789f06886806bc55" ]]; then
+        printf '%s\0' "$dir"
+      fi
+    done
 }
 
 # An item with nothing to carry on this computer is left off the stick.
@@ -1043,7 +1060,7 @@ make_archive() { # id plan home out
     folders)
       files=$(mktemp)
       still_there "$home" "$plan/folders.list" >"$files"
-      args+=(-C "$home" -T "$files")
+      args+=(--exclude-caches -C "$home" -T "$files")
       ;;
     list) args+=(-C "$plan" -- packages.txt aur.txt) ;;
     *) return 1 ;;

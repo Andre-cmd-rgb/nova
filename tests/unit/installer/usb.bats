@@ -292,6 +292,28 @@ EOF
   fails item_present gnupg "$PLAN"
 }
 
+@test "archives: whole folders, less what a program tagged as its cache" {
+  local work=$NOVA_USB_HOME/Work
+  mkdir -p "$work/game/src" "$work/game/target/debug" "$work/notes/target"
+  echo main >"$work/game/src/main.rs"
+  echo 'Signature: 8a477f597d28d172789f06886806bc55' >"$work/game/target/CACHEDIR.TAG"
+  head -c 100000 /dev/zero >"$work/game/target/debug/game"
+  # A tag without the signature tags nothing.
+  echo 'keep me' >"$work/notes/target/CACHEDIR.TAG"
+  echo plan >"$work/notes/target/plan.md"
+  FOLDER_DIRS=(Work)
+  list_folders "$PLAN"
+  make_archive folders "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/folders.tar.zst"
+  run members "$SCRATCH/folders.tar.zst"
+  [[ $output == *"Work/game/src/main.rs"* && $output == *"Work/notes/target/plan.md"* ]]
+  [[ $output != *debug* ]]
+  # The size shown is of what is carried, with a cache or without one.
+  [ "$(item_bytes folders "$PLAN")" -lt 100000 ]
+  FOLDER_DIRS=(Work/notes)
+  list_folders "$PLAN"
+  [ "$(item_bytes folders "$PLAN")" -gt 0 ]
+}
+
 @test "packages on the stick: names FAT can hold, each with its signature" {
   printf 'https://archive.archlinux.org/repos/2026/10/01/extra/os/x86_64/ffmpeg-2:7.1-1-x86_64.pkg.tar.zst\t100\n' >"$PLAN/offline.urls"
   printf 'https://github.com/Andre-cmd-rgb/nova/releases/download/v1.0.0/nova-1.0.0-1-any.pkg.tar.zst\t50\n' >>"$PLAN/offline.urls"
