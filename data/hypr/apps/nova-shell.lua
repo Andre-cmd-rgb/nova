@@ -8,3 +8,7 @@ hl.layer_rule({ match = { namespace = "nova-bar" }, no_anim = true, animation = 
 -- panels should pop without compositor layer fades. Panels keep their own
 -- QML opacity transition for normal open/close, and skip it for panel handoff.
 hl.layer_rule({ match = { namespace = "^(nova-menu|nova-image-selector|nova-emojis|nova-clipboard|nova-keyboard-panel)$" }, no_anim = true, animation = "none" })
+
+-- The shell's own windows (Settings, Screen Time, Battery Life) float in the
+-- middle of the screen at the size each one asks for, rather than tiling.
+o.window({ class = "^org\\.quickshell$", title = "^(Settings|Screen Time|Battery Life)$" }, { float = true, center = true })
