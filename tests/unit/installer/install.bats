@@ -359,13 +359,13 @@ questions_setup() {
 
 @test "answers: each question answered from the file, its default where it says nothing" {
   questions_setup
-  answers keymap=it disk=/dev/vda fullname="Ada Lovelace" password=secret timezone=Europe/Rome
+  answers keymap=it disk=/dev/vda fullname="Ada Lovelace" password=s3cret-pass timezone=Europe/Rome
   answers_from_file
   [ "$KEYMAP" = it ]
   [ "${DISK_LINE%%$'\t'*}" = /dev/vda ]
   [ "$FULLNAME" = "Ada Lovelace" ]
   [ "$ACCOUNT" = ada ]
-  [ "$PASSWORD" = secret ]
+  [ "$PASSWORD" = s3cret-pass ]
   [ "$COMPUTER" = nova ]
   [ "$TIMEZONE" = Europe/Rome ]
   [ "$(answer_or apps yes)" = yes ]
@@ -375,7 +375,7 @@ questions_setup() {
 
 @test "answers: a wrong answer ends the install instead of asking again" {
   questions_setup
-  answers keymap=xx disk=/dev/vda password=secret
+  answers keymap=xx disk=/dev/vda password=s3cret-pass
   run answers_from_file
   [ "$status" -ne 0 ]
   [[ $output == *"the answers file: no keyboard layout called 'xx'."* ]]
@@ -383,9 +383,13 @@ questions_setup() {
   run answers_from_file
   [ "$status" -ne 0 ]
   [[ $output == *"the answers file has no password"* ]]
-  answers disk=/dev/vda user=ada password=secret timezone=Mars/Olympus
+  answers disk=/dev/vda user=ada password=s3cret-pass timezone=Mars/Olympus
   run answers_from_file
   [[ $output == *"no time zone called 'Mars/Olympus'"* ]]
+  answers disk=/dev/vda user=ada password=secret
+  run answers_from_file
+  [ "$status" -ne 0 ]
+  [[ $output == *"a password of at least 8 characters"* ]]
 }
 
 @test "answers: the disk has to be one the installer would offer, and free" {
@@ -393,25 +397,35 @@ questions_setup() {
   boot_disk() { echo /dev/sda; }
   lsblk_disks() { disks_json <<<"vda $((80 * GiB)) false false virtio"$'\n'"sda $((8 * GiB)) true false usb Stick"; }
   disk_in_use() { [[ $1 == /dev/vdb ]]; }
-  answers disk=/dev/vda user=ada password=secret
+  answers disk=/dev/vda user=ada password=s3cret-pass
   answers_from_file
   [ "${DISK_LINE%%$'\t'*}" = /dev/vda ]
-  answers disk=/dev/sda user=ada password=secret
+  answers disk=/dev/sda user=ada password=s3cret-pass
   run answers_from_file
   [ "$status" -ne 0 ]
   [[ $output == *"names no disk this can install on (disk=/dev/sda)"* ]]
 }
 
+@test "screens: a password shorter than 8 characters is asked again" {
+  questions_setup
+  NOVA_KEYMAP=es
+  stub_gum 0 "Ada Lovelace" "" short short s3cret-pass s3cret-pass "" Europe/Rome erase
+  questions_on_screen no 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "$PASSWORD" = s3cret-pass ]
+  grep -q 'At least 8 characters.' "$SCRATCH/screens"
+}
+
 @test "screens: one question a screen, then erase typed back" {
   questions_setup
   NOVA_KEYMAP=es
-  stub_gum 0 "Ada Lovelace" "" secret secret "" Europe/Rome nope erase
+  stub_gum 0 "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome nope erase
   questions_on_screen no 2>"$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$KEYMAP" = es ]
   [ "${DISK_LINE%%$'\t'*}" = /dev/vda ]
   [ "$ACCOUNT" = ada ]
-  [ "$PASSWORD" = secret ]
+  [ "$PASSWORD" = s3cret-pass ]
   [ "$COMPUTER" = nova ]
   [ "$TIMEZONE" = Europe/Rome ]
   grep -q -- 'vda  85.9 GB  Disk  ·  vda1  80G  ext4  "old"' "$GUM_LOG"

@@ -17,7 +17,8 @@
 #   nova-install                  the interactive install
 #   nova-install --answers FILE   the same install with no questions, answered
 #                                 by FILE in key=value lines: keymap, disk,
-#                                 fullname, user, password, hostname, timezone,
+#                                 fullname, user, password (8 characters or
+#                                 more), hostname, timezone,
 #                                 passphrase (for things carried), erase=yes to
 #                                 go ahead, and optionally apps=no and
 #                                 after=<script>, run in the new system at the
@@ -57,6 +58,9 @@ CARRY_DECLINED=$CARRY.declined
 
 ESP_MIB=2048
 MIN_DISK_BYTES=$((64 * 1024 * 1024 * 1024))
+# The disk is not encrypted, so this password is what stands between the
+# computer and anyone at its lock screen or its sudo.
+MIN_PASSWORD=8
 BTRFS_OPTS=noatime,compress=zstd:1
 SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@snapshots:/.snapshots" "@swap:/swap")
 
@@ -414,6 +418,7 @@ answers_from_file() {
   valid_username "$ACCOUNT" || die "the answers file: no account can be called '$ACCOUNT'."
   PASSWORD=$(answer password)
   [[ -n $PASSWORD ]] || die "the answers file has no password"
+  ((${#PASSWORD} >= MIN_PASSWORD)) || die "the answers file: a password of at least $MIN_PASSWORD characters."
   COMPUTER=$(answer_or hostname nova)
   valid_hostname "$COMPUTER" || die "the answers file: no computer can be called '$COMPUTER'."
   TIMEZONE=$(answer_or timezone UTC)
@@ -546,7 +551,7 @@ step_you() {
   done
   ACCOUNT=$REPLY
   ui_answered Username "$ACCOUNT"
-  ui_ask ui_password "Password, for the lock screen and sudo" || return 1
+  ui_ask ui_password "Password, for the lock screen and sudo" "$MIN_PASSWORD" || return 1
   PASSWORD=$REPLY
 }
 
