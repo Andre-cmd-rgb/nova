@@ -209,16 +209,18 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
   [[ $output == *"google-chrome: its AUR recipe changed more than the version"* ]]
 }
 
-@test "in a terminal, the change is shown, and built only on a yes" {
-  command -v script >/dev/null || skip "needs script (util-linux)"
+@test "asked, the change is shown, and built only on a yes" {
   echo "google-chrome 141.0-1" >>"$INSTALLED"
   recipe google-chrome 142.0 'post_install() { echo installed; }'
-  run bash -c 'printf "n\n" | script -qec "$1 --update" /dev/null' _ "$REPO_ROOT/src/cli/bin/nova-apps-install"
-  [ "$status" -ne 0 ]
+  run bash -c 'printf "n\n" | "$1" --update' _ "$REPO_ROOT/src/cli/bin/nova-apps-install"
+  [ "$status" -eq 1 ]
   [[ $output == *"+post_install() { echo installed; }"* ]]
   [[ $output == *"upgpkg: 142.0"* ]]
   [ -z "$(built)" ]
-  run bash -c 'printf "y\n" | script -qec "$1 --update" /dev/null' _ "$REPO_ROOT/src/cli/bin/nova-apps-install"
+  run bash -c '"$1" --update </dev/null' _ "$REPO_ROOT/src/cli/bin/nova-apps-install"
+  [ "$status" -eq 1 ]
+  [ -z "$(built)" ]
+  run bash -c 'printf "y\n" | "$1" --update' _ "$REPO_ROOT/src/cli/bin/nova-apps-install"
   [ "$status" -eq 0 ]
   [ "$(built)" = "built google-chrome" ]
   [ "$(cat "$NOVA_AUR_STATE/google-chrome")" = "$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)" ]

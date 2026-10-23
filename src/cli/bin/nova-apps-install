@@ -12,8 +12,8 @@
 # first one is taken as it is; after that, each one built here is remembered
 # (~/.local/state/nova/aur/), and a new release is built unasked only when its
 # recipe changed nothing but the version and the checksums. Any other change
-# is shown, and built only once you say so; with --noconfirm, or without a
-# terminal to ask in, that app waits.
+# is shown, and built only once you say so; with --noconfirm, or with nobody
+# to answer, that app waits.
 #
 #   nova apps install              install what is missing, update what is behind
 #   nova apps install --update     update only the ones installed (nova apps update)
@@ -145,13 +145,14 @@ approved() { # app dir
   fi
 
   echo "$app: its AUR recipe changed more than the version since it was last built here."
-  if ((${#confirm[@]})) || [[ ! -t 0 ]]; then
+  if ((${#confirm[@]})); then
     echo "  Not built. Run nova apps update in a terminal to read the change first." >&2
     return 1
   fi
   git -C "$dir" --no-pager log --format='  %h %ad %an: %s' --date=short "$base..HEAD" 2>/dev/null || true
   git -C "$dir" --no-pager diff --no-ext-diff --no-textconv "$base" HEAD "${recipe[@]}"
-  read -rp "Build $app from this recipe? It runs as you. [y/N] " answer
+  # No answer at all (stdin closed) is a no.
+  read -rp "Build $app from this recipe? It runs as you. [y/N] " answer || return 1
   [[ $answer == [yY]* ]]
 }
 
