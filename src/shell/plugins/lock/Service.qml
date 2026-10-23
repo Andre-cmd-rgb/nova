@@ -201,13 +201,17 @@ Item {
   function finishUnlock() {
     if (!root.locked && !lockRequested) return
 
+    // The session lock goes first: WlSessionLock reads unlocked at once but
+    // announces only secure=false, while it still reads locked, so `locked`
+    // would keep its old true, and every later lock request be taken as one
+    // already done. lockRequested going false after it brings `locked` round.
+    sessionLock.locked = false
     lockRequested = false
     pendingSessionLock = false
     sessionLockStabilizeTimer.stop()
     pendingSessionLockTimer.stop()
     resetAuthenticationState()
     idleBlankTimer.stop()
-    sessionLock.locked = false
     logEvent("unlocked")
     runWake()
   }
