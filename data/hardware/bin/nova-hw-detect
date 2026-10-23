@@ -5,14 +5,16 @@
 #
 # Matches /sys/class/dmi/id/product_version against the models list in
 # /usr/share/nova/hardware. Exits 1, printing nothing, on a computer Nova has no
-# profile for; that is not an error, just a machine without extras.
+# profile for; that is not an error, just a machine without extras. Exits 2 when
+# the model cannot be read at all (a chroot without /sys), which is not knowing.
 
 set -euo pipefail
 
 hardware=${NOVA_HARDWARE:-/usr/share/nova/hardware}
 dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 
-version=$(<"$dmi/product_version") || exit 1
+[[ -r $dmi/product_version ]] || exit 2
+version=$(<"$dmi/product_version") || exit 2
 version=${version%"${version##*[![:space:]]}"}
 
 while IFS=$'\t' read -r pattern profile; do

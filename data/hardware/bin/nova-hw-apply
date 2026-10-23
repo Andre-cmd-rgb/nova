@@ -26,11 +26,21 @@ if (($# > 1)) || [[ $# == 1 && $1 != --remove ]]; then
 fi
 
 wanted=()
-if (($# == 0)) && profile=$("$detect") && [[ -d $hardware/$profile/etc ]]; then
-  src=$hardware/$profile/etc
-  while IFS= read -r -d '' file; do
-    wanted+=("${file#"$src"/}")
-  done < <(find "$src" -type f -print0 | sort -z)
+if (($# == 0)); then
+  status=0
+  profile=$("$detect") || status=$?
+  # An upgrade from a chroot without /sys cannot tell which computer this is,
+  # which is no reason to take its files away.
+  if ((status == 2)); then
+    echo "nova-hw-apply: cannot read this computer's model; its hardware files are left as they are" >&2
+    exit 0
+  fi
+  if ((status == 0)) && [[ -d $hardware/$profile/etc ]]; then
+    src=$hardware/$profile/etc
+    while IFS= read -r -d '' file; do
+      wanted+=("${file#"$src"/}")
+    done < <(find "$src" -type f -print0 | sort -z)
+  fi
 fi
 
 is_wanted() {

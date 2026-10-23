@@ -37,9 +37,10 @@ model() { printf '%s\n' "$1" >"$NOVA_DMI_PATH/product_version"; }
   [ -z "$output" ]
 }
 
-@test "detect: no DMI at all is a machine without a profile" {
+@test "detect: no DMI at all is not knowing, not a machine without a profile" {
   run "$detect"
-  [ "$status" -eq 1 ]
+  [ "$status" -eq 2 ]
+  [ -z "$output" ]
 }
 
 @test "detect: every profile in the models list exists" {
@@ -93,6 +94,18 @@ model() { printf '%s\n' "$1" >"$NOVA_DMI_PATH/product_version"; }
   [ "$status" -eq 0 ]
   [ -z "$(find "$NOVA_ROOT/etc" -type f)" ]
   [ ! -s "$NOVA_ROOT/var/lib/nova/hardware-files" ]
+}
+
+@test "apply: a model it cannot read leaves the installed files alone" {
+  model "ThinkPad P1 Gen 4i"
+  "$apply"
+  local before
+  before=$(cat "$NOVA_ROOT/var/lib/nova/hardware-files")
+  rm "$NOVA_DMI_PATH/product_version"
+  run "$apply"
+  [ "$status" -eq 0 ]
+  [ -f "$NOVA_ROOT/etc/modprobe.d/nova-hw-nvidia-fbdev.conf" ]
+  [ "$(cat "$NOVA_ROOT/var/lib/nova/hardware-files")" = "$before" ]
 }
 
 @test "apply --remove: takes everything back off" {
