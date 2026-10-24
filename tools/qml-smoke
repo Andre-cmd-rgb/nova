@@ -7,7 +7,8 @@
 #
 # --root is a `make install DESTDIR=<dir>` tree, so the windows run the
 # installed commands (nova-settings state, the plugins' own helpers). Each
-# window runs in a scratch home under Qt's offscreen platform: no compositor,
+# window runs in a scratch home under Qt's offscreen platform, with no system
+# bus and the modem helper stubbed: no compositor, no radios,
 # nothing of the real session touched. --shots saves a PNG of every page.
 
 set -euo pipefail
@@ -44,7 +45,22 @@ chmod 700 "$work/run"
 # No compositor here: hyprctl answers as it does with no Hyprland running,
 # whether or not this machine has one installed.
 printf '#!/bin/sh\necho "HYPRLAND_INSTANCE_SIGNATURE not set! (is hyprland running?)" >&2\nexit 1\n' >"$work/stub/hyprctl"
-chmod +x "$work/stub/hyprctl"
+# The real one asks the modem, and the first start it decides on can switch
+# the radio off; this one is a modem on a network, so its page shows the most.
+cat >"$work/stub/nova-mobile-data" <<'EOF'
+#!/bin/sh
+[ "$1" = info ] || exit 0
+printf '%s\n' hw=yes state=connected managed=yes profile=smoke operator=Smoke tech=5G signal=70 \
+  iface=wwan0 ip=10.0.0.2 used_bytes=123456789 next_reset=2026-11-01
+EOF
+chmod +x "$work/stub/hyprctl" "$work/stub/nova-mobile-data"
+# Screen Time on, with a day recorded, so its page draws the chart and the
+# apps rather than only its switch.
+mkdir -p "$work/home/.config/nova" "$work/home/.local/state/nova-screentime/days"
+jq '.bar.layout.right += [{ id: "nova.screentime" }]' "$root/usr/share/nova/default/shell.json" \
+  >"$work/home/.config/nova/shell.json"
+printf 'foot\t9\t1500\nfoot\t10\t2400\ngoogle-chrome\t10\t900\norg.gnome.Nautilus\t11\t300\n' \
+  >"$work/home/.local/state/nova-screentime/days/$(date +%F).tsv"
 ln -s "$root/usr/share/nova/shell/Commons" "$work/shell/Commons"
 ln -s "$root/usr/share/nova/shell/Ui" "$work/shell/Ui"
 
@@ -113,16 +129,21 @@ for entry in "${windows[@]}"; do
   harness "$plugin" >"$work/shell/$plugin.qml"
   rm -rf "$work/run/quickshell" "$work/out"/*
   status=0
+  # A system bus that is not there: Bluetooth, Wi-Fi and the battery come
+  # from it, and the pages would scan with the real radios.
   env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
+    DBUS_SYSTEM_BUS_ADDRESS="unix:path=$work/run/no-system-bus" \
     PATH="$work/stub:$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
     NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_THEME_DIR="$palette" \
     QT_QPA_PLATFORM=offscreen SMOKE_PAGES="$pages" SMOKE_OUT="$work/out" SMOKE_BG="$background" \
     timeout 90 qs --no-color -p "$work/shell/$plugin.qml" >/dev/null 2>&1 || status=$?
-  # The locale and window-mask lines are the offscreen platform's, and the
-  # PipeWire one the scratch session's, which has no sound server: not ours.
+  # The locale and window-mask lines are the offscreen platform's, the
+  # PipeWire one the scratch session's, which has no sound server, and the
+  # Bluetooth and network ones its missing system bus: not ours.
   problems=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin \
     qs log --no-color -p "$work/shell/$plugin.qml" 2>&1 |
-    grep -E '^ *(WARN|ERROR|CRIT|FATAL)' | grep -vE 'Detected locale|window masks|pipewire context' || true)
+    grep -E '^ *(WARN|ERROR|CRIT|FATAL)' |
+    grep -vE 'Detected locale|window masks|pipewire context|quickshell\.(bluetooth|network\.networkmanager): Could not connect to DBus|quickshell\.network: Network will not work' || true)
   shot_count=$(find "$work/out" -name '*.png' | wc -l)
   if ((status != 0)) || [[ -n $problems ]] || ((shot_count != $(wc -w <<<"$pages"))); then
     echo "FAIL $plugin (exit $status, $shot_count of $(wc -w <<<"$pages") pages)"
