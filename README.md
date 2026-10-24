@@ -41,11 +41,12 @@ screen. The stick's boot menu also has a memory test (memtest86+).
   Super+Return a terminal, Super+Shift+Return Chrome and Super+Shift+F Files.
   Super+W closes a window (windows have no title-bar buttons), Super+Ctrl+L
   locks, Print takes a screenshot, and Super+K lists every binding.
-- **Settings**, in the menu: the theme and background, what the bar shows,
-  battery (power mode, charge limit, the discrete GPU), Screen Time, the lock
-  screen and fingerprint, default apps, updates and recovery. Sound, network
-  and Bluetooth open from their icons in the bar; Settings → Menu Bar adds
-  more, such as Display for brightness and the laptop screen.
+- **Settings**, in the menu: Wi-Fi, Bluetooth, mobile data and sound (also a
+  click away in the bar), battery (its history, power mode, charge limit, the
+  discrete GPU), Screen Time, the theme and background, what the bar shows,
+  the lock screen and fingerprint, default apps, updates and recovery.
+  Settings → Menu Bar adds more to the bar, such as Display for brightness and
+  the laptop screen.
 - **Caffeine**, the coffee cup in the bar or Super+Ctrl+I, keeps the screen on:
   no screensaver, no lock when unused, and on a laptop closing the lid only
   turns the panel off, without sleeping, locking or dropping the network. It

@@ -559,6 +559,8 @@ cmd_info() {
 
   printf 'hw=%s\n' "$HW"
   printf 'state=%s\n' "$STATE"
+  # Why it is off, while it is kept off: nosim or no-modemmanager.
+  [[ $STATE != parked ]] || printf 'parked=%s\n' "$(parked_reason)"
   printf 'managed=%s\n' "$MANAGED"
   printf 'profile=%s\n' "$PROFILE_NAME"
   printf 'operator=%s\n' "$OPERATOR"

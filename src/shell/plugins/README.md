@@ -20,7 +20,7 @@ mounted at startup; other panels, overlays and menus load when first summoned.
 | Nova update | `nova.system-update` | `bar-widget` | `bar/widgets/SystemUpdate.qml` |
 | System tray | `nova.tray` | `bar-widget` | `bar/widgets/Tray.qml` |
 | Workspaces | `nova.workspaces` | `bar-widget` | `bar/widgets/Workspaces.qml` |
-| Battery Life | `nova.batterylife` | `service`, `panel`, `bar-widget` | `batterylife/Service.qml`, `batterylife/Panel.qml`, `batterylife/BarWidget.qml` |
+| Battery Life | `nova.batterylife` | `service`, `bar-widget` | `batterylife/Service.qml`, `batterylife/BarWidget.qml` (its page: `settings/BatteryLifeView.qml`) |
 | Clipboard | `nova.clipboard` | `overlay` | `clipboard/Clipboard.qml` |
 | Emojis | `nova.emojis` | `overlay` | `emojis/Emojis.qml` |
 | Image picker | `nova.image-picker` | `overlay` | `image-picker/ImagePicker.qml` |
@@ -37,7 +37,7 @@ mounted at startup; other panels, overlays and menus load when first summoned.
 | Power | `nova.power` | `bar-widget` | `panels/power/Panel.qml` |
 | Weather | `nova.weather` | `bar-widget` | `panels/weather/BarWidget.qml` |
 | Polkit Agent | `nova.polkit` | `service` | `polkit/PolkitAgent.qml` |
-| Screen Time | `nova.screentime` | `service`, `panel`, `bar-widget` | `screentime/Service.qml`, `screentime/Panel.qml`, `screentime/BarWidget.qml` |
+| Screen Time | `nova.screentime` | `service`, `bar-widget` | `screentime/Service.qml`, `screentime/BarWidget.qml` (its page: `settings/ScreenTimeView.qml`) |
 | Battery | `nova.battery` | `service` | `services/battery/Service.qml` |
 | Idle | `nova.idle` | `service` | `services/idle/Service.qml` |
 | Media | `nova.media` | `service`, `bar-widget` | `services/media/Service.qml`, `services/media/BarWidget.qml` |

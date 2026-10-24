@@ -1,12 +1,12 @@
 # Screen Time
 
-Where your time on this machine goes. A window you open from the Nova menu
-with an hour-by-hour breakdown of today, a day-by-day chart of the week, and
-the applications that account for it — plus an optional one-glyph indicator in
-the bar.
+Where your time on this machine goes. A page in Settings with an hour-by-hour
+breakdown of today, a day-by-day chart of the week, and the applications that
+account for it — plus an optional one-glyph indicator in the bar.
 
 ```
- SCREEN TIME                           ┌───────┬──────┐
+ Screen Time
+
  3h 42m                                │ Today │ Week │
  today · 5h limit                      └───────┴──────┘
 
@@ -38,49 +38,25 @@ It then appears in the bar and in the menu (Super+Space → Screen Time) and
 counts from that moment. `nova screentime off` stops it; what it recorded
 stays until you delete it (see below).
 
-## The three parts
+## The two parts
 
 | Part | What it does | Optional |
 |---|---|---|
 | service | counts seconds against the focused window, pauses when you are idle | no — this is the plugin |
-| panel | the Screen Time window | opened on demand |
 | bar widget | one glyph and today's total | yes — `nova screentime indicator off` |
 
-Turning the indicator off only hides the glyph; the service keeps counting.
-`nova screentime off` stops everything.
+What it counted is on its page in Settings. Turning the indicator off only
+hides the glyph; the service keeps counting. `nova screentime off` stops
+everything.
 
 ## Using it
 
-Open it from the Nova menu, from the bar indicator, or with `screentime
-open` (`nova screentime open --week` lands on the weekly view; a summon payload of
-`{"range":"week"}` does the same from a menu entry or a keybinding). Inside the
-window:
-
-| Key | Does |
-|---|---|
-| `T` / `W` | today, or the last seven days |
-| `←` `→` `Tab` | switch between them |
-| `R` | refresh now |
-| `Esc` | close |
-
-Hovering a bar names the hour or the day and what it holds.
-
-The window is an ordinary toplevel, so Hyprland tiles it by default. Nova
-configures Hyprland in Lua — add this to the bottom of
-`~/.config/hypr/hyprland.lua` to have it arrive floating, centred, and opaque:
-
-```lua
-o.window({ class = "^org\\.quickshell$", title = "^Screen Time$" }, {
-  float = true,
-  center = true,
-  size = { 620, 720 },
-  -- A chart read through the window behind it is not a chart.
-  tag = "-default-opacity",
-  opacity = "1 1",
-})
-```
-
-Then `hyprctl reload`.
+Settings → Screen Time, which the Nova menu, the bar indicator and `nova
+screentime open` all open (`nova screentime open --week` lands on the weekly
+view; a summon of `nova.settings` with `{"page":"screentime","range":"week"}`
+does the same from a menu entry or a keybinding). Today and Week switch
+between the last day and the last seven, and hovering a bar names the hour or
+the day and what it holds.
 
 ## What counts as time
 
@@ -127,8 +103,8 @@ renaming and resetting never touch the numbers.
 nova screentime today [--short]     today's total and its busiest apps
 nova screentime week [days]         a day-by-day breakdown (default 7)
 nova screentime top [n]             today's busiest apps
-nova screentime json [--days n]     everything the window draws
-nova screentime open                open the window
+nova screentime json [--days n]     everything its page draws
+nova screentime open [--week]       show it in Settings, under Screen Time
 
 nova screentime config [key]        show settings
 nova screentime set <key> <value>   change one
@@ -164,8 +140,8 @@ nova screentime ignore org.keepassxc.KeePassXC
 An ignored app is not recorded at all, rather than hidden after the fact. Use
 `nova screentime forget <app-id>` to drop what was recorded before you ignored it.
 
-`org.quickshell` is ignored out of the box: the Nova menu and this plugin's
-own window are shell surfaces, not applications you spend time in. Setting
+`org.quickshell` is ignored out of the box: the Nova menu and Settings are
+shell surfaces, not applications you spend time in. Setting
 `IGNORE` yourself replaces that default — include it if you still want it.
 
 ## Where the data lives
@@ -181,7 +157,7 @@ rm -rf ~/.local/state/nova-screentime      # forget everything
 Files older than `RETENTION_DAYS` are dropped on the first write of each day.
 
 `~/.local/state/nova-screentime/names.tsv` sits beside them: resolved
-display names, cached so the panel does not re-read every desktop entry on the
+display names, cached so its page does not re-read every desktop entry on the
 machine each time it refreshes. Deleting it costs nothing.
 
 ## Forgetting everything

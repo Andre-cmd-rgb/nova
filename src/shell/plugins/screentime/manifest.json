@@ -4,15 +4,13 @@
   "name": "Screen Time",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Where your time on this machine goes: a per-hour and per-day breakdown by application, in a window you open from the Nova menu.",
+  "description": "Where your time on this machine goes: a per-hour and per-day breakdown by application, on its page in Settings.",
   "kinds": [
     "service",
-    "panel",
     "bar-widget"
   ],
   "entryPoints": {
     "service": "Service.qml",
-    "panel": "Panel.qml",
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {

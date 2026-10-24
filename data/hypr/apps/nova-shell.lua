@@ -9,6 +9,7 @@ hl.layer_rule({ match = { namespace = "nova-bar" }, no_anim = true, animation = 
 -- QML opacity transition for normal open/close, and skip it for panel handoff.
 hl.layer_rule({ match = { namespace = "^(nova-menu|nova-image-selector|nova-emojis|nova-clipboard|nova-keyboard-panel)$" }, no_anim = true, animation = "none" })
 
--- The shell's own windows (Settings, Screen Time, Battery Life) float in the
--- middle of the screen at the size each one asks for, rather than tiling.
-o.window({ class = "^org\\.quickshell$", title = "^(Settings|Screen Time|Battery Life)$" }, { float = true, center = true })
+-- Settings, the shell's one window, floats in the middle of the screen at the
+-- size it asks for, rather than tiling, and is opaque: it is drawn in the
+-- theme's own background, and text behind it would read through.
+o.window({ class = "^org\\.quickshell$", title = "^Settings$" }, { float = true, center = true, tag = "-default-opacity" })

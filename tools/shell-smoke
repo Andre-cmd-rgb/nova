@@ -126,7 +126,7 @@ menu nova.menu {"menu":"root"}
 menu-capture nova.menu {"menu":"capture"}
 menu-system nova.menu {"menu":"system"}
 settings nova.settings {"page":"about"}
-batterylife nova.batterylife {}
+settings-battery nova.settings {"page":"battery","range":"week"}
 clipboard nova.clipboard {}
 emojis nova.emojis {}
 SUMMON

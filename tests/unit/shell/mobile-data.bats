@@ -66,6 +66,7 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [ "$(info state)" = parked ]
   [ "$(cat "$SCRATCH/wwan")" = blocked ]
   [ "$(cat "$state/parked")" = nosim ]
+  [ "$(info parked)" = nosim ]
   run "$helper" status
   [[ $output == *"no SIM was found"* ]]
 }
@@ -73,6 +74,7 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
 @test "first start, a SIM: nothing is switched off, and it never will be for want of one" {
   with_sim
   [ "$(info state)" = disabled ]
+  [ -z "$(info parked)" ]
   [ -e "$state/sim-seen" ]
   empty_slot
   [ "$(info state)" = nosim ]
@@ -84,6 +86,7 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   if command -v mmcli >/dev/null; then skip "this system has ModemManager"; fi
   [ "$(info state)" = parked ]
   [ "$(cat "$state/parked")" = no-modemmanager ]
+  [ "$(info parked)" = no-modemmanager ]
   run "$helper" status
   [[ $output == *"ModemManager is not installed"* ]]
 }

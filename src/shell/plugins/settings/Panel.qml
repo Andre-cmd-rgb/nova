@@ -10,10 +10,13 @@ import qs.Ui
 // settings of its own. `nova-settings state` fills it, every change runs the
 // same command the CLI offers (nova-theme set, nova battery limit, nova bar
 // put, ...), and the window reads the state back afterwards, so what it shows
-// is what is set.
+// is what is set. Wi-Fi, Bluetooth, Mobile Data and Sound have the bar's quick
+// menus too; here they have a page each, and Screen Time and Battery Life live
+// on theirs rather than in windows of their own.
 //
-// Summoned by the shell, from the menu or the CLI:
-//   nova-shell shell summon nova.settings '{"page":"battery"}'
+// Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
+// and Battery Life's, "today" or "week":
+//   nova-shell shell summon nova.settings '{"page":"battery","range":"week"}'
 Item {
   id: root
 
@@ -28,6 +31,7 @@ Item {
   property var info: ({})
   property bool loaded: false
   property string page: "appearance"
+  property string range: "today"
   property bool reloadWanted: false
   property var queue: []
   property string failure: ""
@@ -44,18 +48,29 @@ Item {
   readonly property var limit: battery.limit || ({})
   readonly property var undervolt: battery.undervolt || ({})
 
+  // `group` starts a new group in the sidebar; `radio` is the rfkill type a
+  // page needs the hardware for.
   readonly property var allPages: [
-    { id: "appearance", label: "Appearance", icon: "󰸌" },
-    { id: "bar", label: "Menu Bar", icon: "󰍜" },
+    { id: "wifi", label: "Wi-Fi", icon: "󰖩", radio: "wlan" },
+    { id: "bluetooth", label: "Bluetooth", icon: "󰂯", radio: "bluetooth" },
+    { id: "mobile-data", label: "Mobile Data", icon: "󰞃", radio: "wwan" },
+    { id: "sound", label: "Sound", icon: "󰕾", group: true },
     { id: "battery", label: "Battery", icon: "󰁹" },
     { id: "screentime", label: "Screen Time", icon: "󰥔" },
+    { id: "appearance", label: "Appearance", icon: "󰸌", group: true },
+    { id: "bar", label: "Menu Bar", icon: "󰍜" },
     { id: "lock", label: "Lock Screen", icon: "󰌾" },
     { id: "apps", label: "Default Apps", icon: "󰀻" },
-    { id: "updates", label: "Updates", icon: "󰚰" },
+    { id: "updates", label: "Updates", icon: "󰚰", group: true },
     { id: "about", label: "About", icon: "󰋼" }
   ]
+  // Until the state is read, every page is offered; then only the ones this
+  // computer has the hardware for.
   readonly property var pages: allPages.filter(function (p) {
-    return p.id !== "battery" || !root.loaded || root.battery.present === true
+    if (!root.loaded) return true
+    if (p.id === "battery") return root.battery.present === true
+    if (p.radio) return (root.info.radios || []).indexOf(p.radio) >= 0
+    return true
   })
 
   readonly property var names: ({
@@ -80,6 +95,7 @@ Item {
       try {
         var payload = JSON.parse(String(payloadJson))
         if (payload && allPages.some(function (p) { return p.id === payload.page })) page = payload.page
+        if (payload) range = payload.range === "week" ? "week" : "today"
       } catch (e) {
         // An unparseable payload opens the page that was open last.
       }
@@ -232,72 +248,12 @@ Item {
 
   // ---- pieces ---------------------------------------------------------------
 
-  component Caption: Text {
-    color: Commons.Color.foreground
-    opacity: 0.6
-    font.family: Style.font.family
-    font.pixelSize: Style.font.bodySmall
-    wrapMode: Text.WordWrap
-    textFormat: Text.PlainText
-  }
-
   component Heading: Text {
     color: Commons.Color.foreground
     font.family: Style.font.family
     font.pixelSize: Style.font.heading
     font.bold: true
     textFormat: Text.PlainText
-  }
-
-  component Section: Column {
-    property alias title: header.text
-    width: parent ? parent.width : 0
-    spacing: Style.space(8)
-    PanelSectionHeader {
-      id: header
-      visible: text.length > 0
-    }
-  }
-
-  // A label on the left, a control on the right.
-  component Line: Item {
-    id: line
-    property string label: ""
-    property string detail: ""
-    default property alias control: slot.data
-    width: parent ? parent.width : 0
-    implicitHeight: Math.max(labels.implicitHeight, slot.childrenRect.height)
-
-    Column {
-      id: labels
-      anchors.left: parent.left
-      anchors.right: slot.left
-      anchors.rightMargin: Style.space(16)
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(2)
-      Text {
-        width: parent.width
-        text: line.label
-        color: Commons.Color.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-        elide: Text.ElideRight
-        textFormat: Text.PlainText
-      }
-      Caption {
-        width: parent.width
-        text: line.detail
-        visible: text.length > 0
-      }
-    }
-
-    Item {
-      id: slot
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      width: childrenRect.width
-      height: childrenRect.height
-    }
   }
 
   // ---- window -------------------------------------------------------------
@@ -342,46 +298,63 @@ Item {
         width: Style.space(200)
         color: Qt.alpha(Commons.Color.foreground, 0.03)
 
-        Column {
+        Flickable {
           anchors.fill: parent
           anchors.margins: Style.space(12)
           anchors.topMargin: Style.space(18)
-          spacing: Style.space(2)
+          contentHeight: entries.implicitHeight
+          boundsBehavior: Flickable.StopAtBounds
+          clip: true
 
-          Repeater {
-            model: root.pages
+          Column {
+            id: entries
+            width: parent.width
+            spacing: Style.space(2)
 
-            delegate: Rectangle {
-              id: entry
-              required property var modelData
-              readonly property bool selected: root.page === modelData.id
-              width: parent.width
-              height: Style.space(32)
-              radius: Style.cornerRadius
-              color: selected ? Style.selectedFill : (hover.hovered ? Style.hoverFill : "transparent")
+            Repeater {
+              model: root.pages
 
-              HoverHandler { id: hover }
-              TapHandler { onTapped: root.page = entry.modelData.id }
+              delegate: Item {
+                id: entry
+                required property var modelData
+                required property int index
+                readonly property bool selected: root.page === modelData.id
+                readonly property real gap: modelData.group && index > 0 ? Style.space(14) : 0
+                width: parent.width
+                height: gap + Style.space(32)
 
-              Row {
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(10)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(10)
-                Text {
-                  width: Style.space(18)
-                  text: entry.modelData.icon
-                  color: entry.selected ? Commons.Color.accent : Commons.Color.foreground
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.icon
-                  horizontalAlignment: Text.AlignHCenter
-                }
-                Text {
-                  text: entry.modelData.label
-                  color: Commons.Color.foreground
-                  font.family: Style.font.family
-                  font.pixelSize: Style.font.body
-                  font.bold: entry.selected
+                Rectangle {
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.bottom: parent.bottom
+                  height: Style.space(32)
+                  radius: Style.cornerRadius
+                  color: entry.selected ? Style.selectedFill : (hover.hovered ? Style.hoverFill : "transparent")
+
+                  HoverHandler { id: hover }
+                  TapHandler { onTapped: root.page = entry.modelData.id }
+
+                  Row {
+                    anchors.left: parent.left
+                    anchors.leftMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(10)
+                    Text {
+                      width: Style.space(18)
+                      text: entry.modelData.icon
+                      color: entry.selected ? Commons.Color.accent : Commons.Color.foreground
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.icon
+                      horizontalAlignment: Text.AlignHCenter
+                    }
+                    Text {
+                      text: entry.modelData.label
+                      color: Commons.Color.foreground
+                      font.family: Style.font.family
+                      font.pixelSize: Style.font.body
+                      font.bold: entry.selected
+                    }
+                  }
                 }
               }
             }
@@ -408,11 +381,18 @@ Item {
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
+        // Made only while the window is open: a page reads what it shows as
+        // it is made, and stops following it once the window closes.
         Loader {
           id: pageLoader
           width: scroll.availableWidth
+          active: window.visible
           sourceComponent: {
             switch (root.page) {
+            case "wifi": return wifiPage
+            case "bluetooth": return bluetoothPage
+            case "mobile-data": return mobileDataPage
+            case "sound": return soundPage
             case "bar": return barPage
             case "battery": return batteryPage
             case "screentime": return screenTimePage
@@ -464,6 +444,42 @@ Item {
     Heading {
       id: pageTitle
       font.pixelSize: Style.font.display
+    }
+  }
+
+  Component {
+    id: wifiPage
+    Page {
+      id: p
+      title: "Wi-Fi"
+      WifiView { width: p.inner }
+    }
+  }
+
+  Component {
+    id: bluetoothPage
+    Page {
+      id: p
+      title: "Bluetooth"
+      BluetoothView { width: p.inner }
+    }
+  }
+
+  Component {
+    id: mobileDataPage
+    Page {
+      id: p
+      title: "Mobile Data"
+      MobileDataView { width: p.inner }
+    }
+  }
+
+  Component {
+    id: soundPage
+    Page {
+      id: p
+      title: "Sound"
+      SoundView { width: p.inner }
     }
   }
 
@@ -619,18 +635,21 @@ Item {
       id: p
       title: "Battery"
 
+      BatteryLifeView {
+        width: p.inner
+        shell: root.shell
+        range: root.range
+        onRangePicked: function (range) { root.range = range }
+      }
+
       Section {
         width: p.inner
+        title: "HEALTH"
         Line {
           label: "Battery health"
           detail: root.battery.health !== null && root.battery.health !== undefined
             ? root.battery.health + "% of its original capacity, after " + (root.battery.cycles || 0) + " charge cycles"
             : "This battery does not report its health."
-          Button {
-            text: "Battery Life…"
-            bordered: true
-            onClicked: root.run(["nova-battery", "open"])
-          }
         }
       }
 
@@ -748,16 +767,19 @@ Item {
           checked: root.info.screenTime === true
           onClicked: root.run(["nova-screentime", checked ? "off" : "on"])
         }
-        Line {
-          visible: root.info.screenTime === true
-          label: "Today and this week"
-          detail: "The breakdown by app."
-          Button { text: "Open Screen Time…"; bordered: true; onClicked: root.run(["nova-screentime", "open"]) }
-        }
-        Caption {
-          width: parent.width
-          text: "To delete what it recorded: nova screentime forget"
-        }
+      }
+
+      ScreenTimeView {
+        width: p.inner
+        visible: root.info.screenTime === true
+        shell: root.shell
+        range: root.range
+        onRangePicked: function (range) { root.range = range }
+      }
+
+      Caption {
+        width: p.inner
+        text: "To delete what it recorded: nova screentime forget"
       }
     }
   }

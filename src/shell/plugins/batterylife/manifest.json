@@ -7,12 +7,10 @@
   "description": "What this battery actually gives you: measured runtime per discharge run, average draw, and a full-charge projection built from your own history rather than the instantaneous rate.",
   "kinds": [
     "service",
-    "panel",
     "bar-widget"
   ],
   "entryPoints": {
     "service": "Service.qml",
-    "panel": "Panel.qml",
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {

@@ -1074,12 +1074,13 @@ cmd_forget() {
 
 # --------------------------------------------------------------- shell glue
 
+# Its page in Settings, today or (--week) the last seven days.
 cmd_open() {
-  local payload='{}'
-  [[ ${1:-} == --week ]] && payload='{"range":"week"}'
+  local range=today
+  [[ ${1:-} == --week ]] && range=week
   have nova-shell || die "nova-shell not found"
-  nova-shell shell summon "$PLUGIN_ID" "$payload" >/dev/null ||
-    die "could not open the window — is the plugin enabled?"
+  nova-shell shell summon nova.settings "{\"page\":\"battery\",\"range\":\"$range\"}" >/dev/null ||
+    die "could not open Settings"
 }
 
 cmd_indicator() {
@@ -1123,7 +1124,7 @@ Usage:
   nova battery health               capacity, wear, and cycle count
   nova battery json [--days n]      everything the window draws
 
-  nova battery open [--week]        open the Battery Life window
+  nova battery open [--week]        show it in Settings, under Battery
   nova battery import [--days n]    seed history from UPower's own log
 
   nova battery config [key]         show settings

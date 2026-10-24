@@ -71,8 +71,8 @@ Example `shell.json` (bar subtree only shown):
 | `nova.power` | Battery/AC icon + popup with battery stats, power profiles, and system info | left = popup · right = toggle percentage |
 | `nova.bluetooth` | Bluetooth icon + popup with device list, connect/disconnect, battery | left = popup · right = toggle radio |
 | `nova.monitor` | Brightness and laptop display controls | left = popup |
-| `nova.batterylife` | Battery glyph with measured time left | left = history panel |
-| `nova.screentime` | Today's screen time (off until you turn it on) | left = breakdown panel |
+| `nova.batterylife` | Battery glyph with measured time left | left = its history, in Settings |
+| `nova.screentime` | Today's screen time (off until you turn it on) | left = the breakdown, in Settings |
 | `nova.mobile-data` | WWAN signal, shown while a modem has a SIM | left = stats panel |
 
 The `nova.indicators` widget loads individual bar indicators from `indicators/`. Omit `items` (or set it to an empty array) to show all indicators in the default order, or set `items` to a subset of `Dnd`, `NightLight`, `Caffeine` and `ScreenRecording`, such as `["Dnd", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators visible instead of revealing them only on hover. Multiple `nova.indicators` instances are allowed, so different sections can show different subsets.

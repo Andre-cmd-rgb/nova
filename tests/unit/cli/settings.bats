@@ -8,6 +8,7 @@ setup() {
   export NOVA_PATH="$SCRATCH/share"
   export NOVA_POWER_SUPPLY="$SCRATCH/power_supply"
   export NOVA_DMI_PATH="$SCRATCH/dmi"
+  export NOVA_RFKILL_PATH="$SCRATCH/rfkill"
   mkdir -p "$HOME" "$NOVA_PATH/default" "$NOVA_PATH/shell/plugins" "$NOVA_POWER_SUPPLY" "$NOVA_DMI_PATH" "$SCRATCH/bin" "$SCRATCH/sys"
   cp "$REPO_ROOT/data/defaults/shell.json" "$NOVA_PATH/default/"
   # Only the tools the commands need, so whatever this machine has installed
@@ -145,6 +146,17 @@ state() { nova-settings state | jq -c "$1"; }
   echo "None" >"$NOVA_DMI_PATH/product_version"
   echo "Legion 5 15ACH6H" >"$NOVA_DMI_PATH/product_name"
   [ "$(state .about.model)" = '"Legion 5 15ACH6H"' ]
+}
+
+@test "state: the radios, once each, switched off or not" {
+  [ "$(state .radios)" = '[]' ]
+  local i=0 type
+  for type in wlan bluetooth bluetooth wwan; do
+    mkdir -p "$NOVA_RFKILL_PATH/rfkill$i"
+    echo "$type" >"$NOVA_RFKILL_PATH/rfkill$i/type"
+    i=$((i + 1))
+  done
+  [ "$(state .radios)" = '["bluetooth","wlan","wwan"]' ]
 }
 
 @test "open: a known page goes to the shell, an unknown one is refused" {

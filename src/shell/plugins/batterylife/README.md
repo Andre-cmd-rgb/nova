@@ -54,7 +54,7 @@ the other.
   you are drawing right now, and the power-profile switcher
 - **Right click** — cycle the readout (time left → percent → watts → percent
   and watts → nothing)
-- **Middle click** — straight to the history window
+- **Middle click** — straight to the history, in Settings
 
 The popup has an IPC target of its own, so a keybind can reach it without
 going through the bar:
@@ -71,11 +71,12 @@ power modes. To show this one beside it:
 nova bar put nova.batterylife --after nova.power
 ```
 
-The history window is always in the menu (Super+Space → Battery Life).
+The history is always in the menu (Super+Space → Battery Life), which opens it in Settings.
 
-## The window
+## Its place in Settings
 
-`nova battery open`, the bar widget, or Super+Space → Battery Life.
+Settings → Battery, at the top: `nova battery open`, the bar widget, or
+Super+Space → Battery Life.
 
 - **Today** — 24 columns, the average draw for each hour that ran on battery.
   An hour spent plugged in, asleep or switched off is drawn empty rather than
@@ -84,23 +85,7 @@ The history window is always in the menu (Super+Space → Battery Life).
 - **Week** — one column per day, the average draw for the time that day spent
   on battery.
 - **Discharge runs** — every run long enough to mean something: when it
-  started, the charge it spanned, how long it ran, what it averaged, and what
-  that implies for a full battery.
-
-`T` today · `W` week · `R` refresh · `Esc` close.
-
-The window is a floating one. Hyprland tiles it by default, so it wants a
-rule of its own — the same one Screen Time uses:
-
-```lua
-o.window({ class = "^org\\.quickshell$", title = "^Battery Life$" }, {
-  float = true,
-  center = true,
-  size = { 620, 720 },
-  tag = "-default-opacity",
-  opacity = "1 1",
-})
-```
+  started, the charge it spanned, how long it ran, and what it averaged.
 
 ## Starting with real numbers
 
@@ -124,15 +109,15 @@ run again.
 
 ## The CLI
 
-Everything the window shows, and a few things it does not.
+Everything its page shows, and a few things it does not.
 
 ```
 nova battery status [--short]     charge, draw, and time left
 nova battery sessions [n]         past discharge runs and what they cost
 nova battery health               capacity, wear, and cycle count
-nova battery json [--days n]      everything the window draws
+nova battery json [--days n]      everything its page draws
 
-nova battery open [--week]        open the Battery Life window
+nova battery open [--week]        show it in Settings, under Battery
 nova battery import [--days n]    seed history from UPower's own log
 
 nova battery config [key]         show settings

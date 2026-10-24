@@ -34,9 +34,7 @@ background=$(sed -n -E 's/^background *= *"(#[0-9a-fA-F]{6})".*/\1/p' "$palette/
 
 # plugin: the pages to open (one shot each), "-" for a window without pages
 windows=(
-  "settings:appearance bar battery screentime lock apps updates about"
-  "batterylife:-"
-  "screentime:-"
+  "settings:wifi bluetooth mobile-data sound battery screentime appearance bar lock apps updates about"
 )
 
 work=$(mktemp -d)
@@ -120,10 +118,11 @@ for entry in "${windows[@]}"; do
     NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_THEME_DIR="$palette" \
     QT_QPA_PLATFORM=offscreen SMOKE_PAGES="$pages" SMOKE_OUT="$work/out" SMOKE_BG="$background" \
     timeout 90 qs --no-color -p "$work/shell/$plugin.qml" >/dev/null 2>&1 || status=$?
-  # The locale and window-mask lines are the offscreen platform's, not ours.
+  # The locale and window-mask lines are the offscreen platform's, and the
+  # PipeWire one the scratch session's, which has no sound server: not ours.
   problems=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin \
     qs log --no-color -p "$work/shell/$plugin.qml" 2>&1 |
-    grep -E '^ *(WARN|ERROR|CRIT|FATAL)' | grep -vE 'Detected locale|window masks' || true)
+    grep -E '^ *(WARN|ERROR|CRIT|FATAL)' | grep -vE 'Detected locale|window masks|pipewire context' || true)
   shot_count=$(find "$work/out" -name '*.png' | wc -l)
   if ((status != 0)) || [[ -n $problems ]] || ((shot_count != $(wc -w <<<"$pages"))); then
     echo "FAIL $plugin (exit $status, $shot_count of $(wc -w <<<"$pages") pages)"
