@@ -29,15 +29,12 @@ Item {
   readonly property var sessions: info.sessions || []
   readonly property var typical: info.typical || ({})
   readonly property var now: info.now || ({})
-  readonly property var run: info.run || null
 
   readonly property int atRate: Number(now.atRateSeconds || 0)
   readonly property real nowWatts: Number(now.displayWatts || 0)
   readonly property bool onBattery: String(now.state || "") === "D"
   readonly property bool charging: String(now.state || "") === "C"
   readonly property int typicalSeconds: Number(typical.seconds || 0)
-  readonly property real typicalWatts: Number(typical.watts || 0)
-  readonly property int typicalRuns: Number(typical.runs || 0)
   readonly property bool haveHistory: typicalSeconds > 0
   readonly property int shownRuns: Math.min(5, sessions.length)
 
@@ -102,11 +99,6 @@ Item {
     return (w >= 10 ? w.toFixed(1) : w.toFixed(2)) + " W"
   }
 
-  function clockOf(epoch) {
-    var d = new Date(Number(epoch || 0) * 1000)
-    return Qt.formatDateTime(d, "HH:mm")
-  }
-
   // "14:03" for a run that started today, "Mon 20:16" for one that did not.
   function startedAt(epoch) {
     var d = new Date(Number(epoch || 0) * 1000)
@@ -115,11 +107,6 @@ Item {
       && d.getMonth() === today.getMonth()
       && d.getDate() === today.getDate()
     return Qt.formatDateTime(d, sameDay ? "HH:mm" : "ddd HH:mm")
-  }
-
-  function dayOf(epoch) {
-    var d = new Date(Number(epoch || 0) * 1000)
-    return Qt.formatDateTime(d, "ddd d MMM")
   }
 
   // What a full charge gives at the rate in force right now. It moves with
@@ -217,7 +204,7 @@ Item {
         var rows = root.weekly ? root.days : root.hours
         var values = []
         for (var i = 0; i < rows.length; i++)
-          values.push(Number((root.weekly ? rows[i].watts : rows[i].watts) || 0))
+          values.push(Number(rows[i].watts || 0))
         var peak = 1
         for (var j = 0; j < values.length; j++) peak = Math.max(peak, values[j])
         return { values: values, peak: peak, rows: rows }

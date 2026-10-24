@@ -19,10 +19,9 @@ Panel {
   id: battery
   moduleName: "nova.batterylife"
 
-  // A target of its own, not the plugin id: the shell summons the `panel`
-  // kind — the history window — by plugin id, and two IpcHandlers on one
-  // target means one of them is quietly ignored. This one opens the popup,
-  // so a keybind can reach it:
+  // A target of its own, from when the plugin id summoned the history window
+  // (now Settings' Battery page, `nova battery`). Summoning the id opens this
+  // popup now too; the target stays so the keybinds made for it still work:
   //
   //   nova-shell nova.batterylife.bar toggle
   ipcTarget: "nova.batterylife.bar"

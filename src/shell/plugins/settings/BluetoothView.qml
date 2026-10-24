@@ -43,12 +43,16 @@ Column {
     return String(d.deviceName || d.name || "").trim()
   }
 
-  // A scan turns up devices known only by an address or a service UUID;
-  // nobody can tell those apart, so they are not listed.
+  // A scan turns up devices known only by an address or a service UUID, in
+  // any of its spellings; nobody can tell those apart, so they are not
+  // listed. The bar's Bluetooth menu tests the same way, in its own
+  // panels/bluetooth/Model.js: each plugin carries what it uses.
   function named(text) {
     return text !== ""
       && !/^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(text)
       && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(text)
+      && !/^[0-9a-f]{32}$/i.test(text)
+      && !/^0x[0-9a-f]{4,32}$/i.test(text)
   }
 
   function sync() {
