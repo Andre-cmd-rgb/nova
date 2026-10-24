@@ -52,20 +52,16 @@ function firstMatchingIndex(images, filterText) {
   return -1
 }
 
-function filteredPosition(images, index, filterText) {
-  if (!filterText) return index
-
+// Each image's place among those the filter keeps, -1 for one it drops: one
+// pass over the images for all of them, where each asking for its own place
+// went over every image before it.
+function filteredPositions(images, filterText) {
+  var values = Array.isArray(images) ? images : []
+  var positions = []
   var position = 0
-  for (var i = 0; i < index; i++) {
-    if (itemMatches(images, i, filterText)) position++
-  }
-
-  return position
-}
-
-function selectedFilteredPosition(images, selectedIndex, filterText) {
-  if (!filterText) return selectedIndex
-  return itemMatches(images, selectedIndex, filterText) ? filteredPosition(images, selectedIndex, filterText) : 0
+  for (var i = 0; i < values.length; i++)
+    positions.push(itemMatches(values, i, filterText) ? position++ : -1)
+  return positions
 }
 
 function indexForSelectedImage(images, selectedImage) {
@@ -89,8 +85,7 @@ if (typeof module !== "undefined") {
     loadRows: loadRows,
     itemMatches: itemMatches,
     firstMatchingIndex: firstMatchingIndex,
-    filteredPosition: filteredPosition,
-    selectedFilteredPosition: selectedFilteredPosition,
+    filteredPositions: filteredPositions,
     indexForSelectedImage: indexForSelectedImage,
     nextSelectedIndexForFilter: nextSelectedIndexForFilter
   }

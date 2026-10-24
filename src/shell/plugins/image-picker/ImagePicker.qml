@@ -95,14 +95,6 @@ Item {
     return ImagePickerModel.firstMatchingIndex(imageArray, filterText)
   }
 
-  function filteredPosition(index) {
-    return ImagePickerModel.filteredPosition(imageArray, index, filterText)
-  }
-
-  function selectedFilteredPosition() {
-    return ImagePickerModel.selectedFilteredPosition(imageArray, selectedIndex, filterText)
-  }
-
   function select(index, immediate) {
     if (imageArray.length === 0) return
     if (index < 0) index = 0
@@ -255,6 +247,10 @@ Item {
   }
 
   property var imageArray: []
+  // Worked out once per filter for every slice to read: each image's place
+  // among those shown, -1 for one the filter drops, and the selected one's.
+  readonly property var filteredPositions: ImagePickerModel.filteredPositions(imageArray, filterText)
+  readonly property int selectedPosition: filteredPositions[selectedIndex] >= 0 ? filteredPositions[selectedIndex] : 0
 
   function startImageScan(serial, dirs) {
     if (loadImagesProc.running) {
@@ -447,8 +443,8 @@ Item {
               readonly property string fileName: imageData ? imageData.fileName : ""
               readonly property string thumbnailPath: imageData ? imageData.thumbnailPath : ""
 
-              readonly property bool matched: root.itemMatches(index)
-              readonly property int relativeIndex: root.filteredPosition(index) - root.selectedFilteredPosition()
+              readonly property bool matched: root.filteredPositions[index] >= 0
+              readonly property int relativeIndex: root.filteredPositions[index] - root.selectedPosition
               readonly property bool selected: matched && index === root.selectedIndex
               readonly property bool nearby: matched && Math.abs(relativeIndex) <= 16
               property bool sourceActivated: nearby
