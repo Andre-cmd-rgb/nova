@@ -1,7 +1,11 @@
 #!/bin/bash
 
 # nova:summary=Print the desktop entry ID of the default web browser
+# nova:args=[--file]
 # nova:hidden=true
+#
+# --file prints the entry's file instead: the first of that ID in the data
+# directories, the one the browser is launched from.
 
 set -euo pipefail
 
@@ -13,19 +17,42 @@ IFS=: read -ra data_dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIR
 IFS=: read -ra config_dirs <<<"${XDG_CONFIG_HOME:-$HOME/.config}:${XDG_CONFIG_DIRS:-/etc/xdg}"
 IFS=: read -ra desktops <<<"${XDG_CURRENT_DESKTOP:-}"
 
-# Installed means the command of the entry the launchers will read, the first
-# one found, still resolves.
-installed() {
-  local data_dir command
+want="id"
+[[ ${1:-} != --file ]] || want="file"
+
+# The entry the launchers read: the first of that ID in the data dirs.
+desktop_file() {
+  local data_dir
 
   for data_dir in "${data_dirs[@]}"; do
     [[ -r $data_dir/applications/$1 ]] || continue
-    command=$(awk '/^Exec=/ { sub(/^Exec=/, ""); print $1; exit }' "$data_dir/applications/$1")
-    [[ -n $command ]] && command -v "$command" >/dev/null
-    return
+    echo "$data_dir/applications/$1"
+    return 0
   done
 
   return 1
+}
+
+# Installed means the command of that entry still resolves: the first word of
+# its Exec line, which may be quoted.
+installed() {
+  local file command
+
+  file=$(desktop_file "$1") || return 1
+  command=$(awk '/^Exec=/ {
+    sub(/^Exec=/, "")
+    if (substr($0, 1, 1) == "\"") { rest = substr($0, 2); print substr(rest, 1, index(rest, "\"") - 1) } else print $1
+    exit
+  }' "$file")
+  [[ -n $command ]] && command -v "$command" >/dev/null
+}
+
+answer() {
+  if [[ $want == file ]]; then
+    desktop_file "$1"
+  else
+    echo "$1"
+  fi
 }
 
 for config_dir in "${config_dirs[@]}"; do
@@ -42,8 +69,8 @@ for config_dir in "${config_dirs[@]}"; do
     IFS=';' read -ra entries <<<"$entries"
     for entry in "${entries[@]}"; do
       if [[ -n $entry ]] && installed "$entry"; then
-        echo "$entry"
-        exit 0
+        answer "$entry"
+        exit
       fi
     done
   done
@@ -60,4 +87,4 @@ fi
 if [[ -z $browser ]]; then
   exit 1
 fi
-echo "$browser"
+answer "$browser"

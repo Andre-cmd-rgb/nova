@@ -5,43 +5,75 @@
 
 set -euo pipefail
 
-# First word of the Exec line of the named desktop entry, from the first
-# applications directory that has it.
-desktop_exec() {
-  local dir
-  for dir in ~/.local/share ~/.nix-profile/share /usr/share; do
-    if [[ -r $dir/applications/$1 ]]; then
-      awk '/^Exec=/ { sub(/^Exec=/, ""); print $1; exit }' "$dir/applications/$1"
-      return 0
+# The [Desktop Entry] Exec line of a desktop file as words, quoted and escaped
+# as the Desktop Entry Specification says, without its field codes (%u, %U,
+# ...): the URLs go after the rest.
+exec_words() { # file
+  local line word='' have=0 quoted=0 escaped=0 c i
+  line=$(awk '/^\[/ { main = ($0 == "[Desktop Entry]") } main && /^Exec=/ { sub(/^Exec=/, ""); print; exit }' "$1")
+  for ((i = 0; i < ${#line}; i++)); do
+    c=${line:i:1}
+    if ((escaped)); then
+      word+=$c escaped=0
+      continue
     fi
+    case $c in
+      \\) escaped=1 have=1 ;;
+      '"') quoted=$((!quoted)) have=1 ;;
+      ' ' | $'\t')
+        if ((quoted)); then
+          word+=$c
+        elif ((have)); then
+          [[ $word =~ ^%[fFuUdDnNickvm]$ ]] || printf '%s\0' "${word//%%/%}"
+          word='' have=0
+        fi
+        ;;
+      *) word+=$c have=1 ;;
+    esac
   done
+  if ((have)) && [[ ! $word =~ ^%[fFuUdDnNickvm]$ ]]; then
+    printf '%s\0' "${word//%%/%}"
+  fi
 }
 
-default_browser=$(nova-cmd-default-browser) || {
+browser_file=$(nova-cmd-default-browser --file) || {
   echo "nova-launch-browser: no default browser is set" >&2
   exit 1
 }
-browser_exec=$(desktop_exec "$default_browser")
-if [[ -z $browser_exec ]]; then
+default_browser=${browser_file##*/}
+mapfile -d '' -t browser < <(exec_words "$browser_file")
+if ((${#browser[@]} == 0)); then
   echo "nova-launch-browser: cannot find the command for $default_browser" >&2
   exit 1
 fi
+browser_exec=${browser[0]}
 
 # Firefox and its forks open a private window with --private-window, Edge with
-# --inprivate, the rest of Chromium's family with --incognito. The name tells
-# which: asking the browser itself for its --help starts it every time, and
-# Chrome crashes on it.
-case ${browser_exec##*/} in
-  *firefox* | *librewolf* | zen* | *waterfox* | *floorp* | *mullvad* | *tor-browser* | *icecat*)
+# --inprivate, the rest of Chromium's family with --incognito. The names tell
+# which, the entry's and its command's (a Flatpak's command is flatpak):
+# asking the browser itself for its --help starts it every time, and Chrome
+# crashes on it.
+case "${default_browser%.desktop} ${browser_exec##*/}" in
+  *firefox* | *librewolf* | *zen* | *waterfox* | *floorp* | *mullvad* | *tor-browser* | *icecat*)
     private_flag="--private-window" ;;
   *edge*) private_flag="--inprivate" ;;
   *) private_flag="--incognito" ;;
 esac
 
-if ! nova-cmd-browser-handoff "$browser_exec" "${@/--private/$private_flag}"; then
+# --private only where it is a whole argument: a URL may have it inside.
+args=()
+for argument in "$@"; do
+  if [[ $argument == --private ]]; then
+    args+=("$private_flag")
+  else
+    args+=("$argument")
+  fi
+done
+
+if ! nova-cmd-browser-handoff "${browser[@]}" "${args[@]}"; then
   systemd-run --user --quiet --collect --unit="nova-browser-$(date +%s%N)" \
     --property=StandardOutput=null --property=StandardError=null \
-    uwsm-app -- "$browser_exec" "${@/--private/$private_flag}"
+    uwsm-app -- "${browser[@]}" "${args[@]}"
 fi
 
 url=""
