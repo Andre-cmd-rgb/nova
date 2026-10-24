@@ -199,13 +199,17 @@ main_kernel() {
 # sysfs (never lspci, which wakes a sleeping GPU). The model's own profile adds
 # to this; see profile_packages.
 hardware_packages() {
-  local kernel=$1 dev vendor device dgpu=0 igpu=0
+  local kernel=$1 dev vendor device dgpu=0 igpu=0 modem=0
   case $(cpu_vendor) in
     GenuineIntel) echo intel-ucode ;;
     AuthenticAMD) echo amd-ucode ;;
   esac
   for dev in "$PCI_DEVICES"/*; do
-    [[ -r $dev/class && $(<"$dev/class") == 0x03* ]] || continue
+    [[ -r $dev/class ]] || continue
+    # A cellular modem on PCIe: ModemManager reads its SIM and runs it. With
+    # no SIM, Nova keeps it switched off (shell/plugins/mobile-data).
+    if [[ $(<"$dev/class") == 0x0d40* ]]; then modem=1; continue; fi
+    [[ $(<"$dev/class") == 0x03* ]] || continue
     vendor=$(<"$dev/vendor")
     case $vendor in
       0x8086) printf '%s\n' "${GPU_INTEL[@]}"; igpu=1 ;;
@@ -228,6 +232,7 @@ hardware_packages() {
   # decodes video itself.
   if ((dgpu && igpu)); then echo nvidia-prime; fi
   if ((dgpu && !igpu)); then echo libva-nvidia-driver; fi
+  if ((modem)); then echo modemmanager; fi
 }
 
 hardware_profile() {
@@ -255,7 +260,7 @@ every_package() {
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
     printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" \
-      nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver
+      nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver modemmanager
     for list in "$SHARE"/hardware/*/packages; do
       [[ -r $list ]] || continue
       sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"

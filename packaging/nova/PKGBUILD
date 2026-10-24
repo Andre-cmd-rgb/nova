@@ -40,6 +40,7 @@ depends=(
   pipewire-alsa
   pipewire-jack
   wireplumber
+  rtkit          # realtime scheduling for PipeWire's audio threads
 
   # Secrets and privilege
   gnome-keyring
@@ -56,6 +57,7 @@ depends=(
   power-profiles-daemon
   brightnessctl
   iw
+  wireless-regdb # the radio rules of the country the computer is in
   udiskie
 
   # Apps the session launches

@@ -165,6 +165,14 @@ END
   [ "$output" = "$(printf '%s\n' amd-ucode nvidia-open nvidia-open-lts nvidia-utils libva-nvidia-driver)" ]
 }
 
+@test "hardware_packages: a cellular modem gets ModemManager" {
+  printf 'vendor_id\t: GenuineIntel\n' >"$NOVA_CPUINFO"
+  pci 0000:00:02.0 0x030000 0x8086 0x9a60
+  pci 0000:08:00.0 0x0d4000 0x105b 0xe0ab
+  run hardware_packages linux-nova
+  [ "$output" = "$(printf '%s\n' intel-ucode intel-media-driver vulkan-intel modemmanager)" ]
+}
+
 @test "hardware_packages: no open-module NVIDIA driver before Turing" {
   printf 'vendor_id\t: AuthenticAMD\n' >"$NOVA_CPUINFO"
   pci 0000:01:00.0 0x030000 0x10de 0x1c03
