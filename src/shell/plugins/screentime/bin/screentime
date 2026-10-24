@@ -452,30 +452,40 @@ is_ignored() {
   return 1
 }
 
-# app=seconds pairs from the service. Seconds may be negative: when the idle
-# monitor fires, the service takes back the timeout it had already counted.
+# app=seconds pairs from the service, each in this hour or in the one after
+# its @: app=60@2026-10-24T09. Seconds may be negative: when the idle monitor
+# fires, the service takes back the timeout it had already counted, from the
+# hours it was written to.
 cmd_record() {
   (($# > 0)) || return 0
-  local day hour file lock deltas="" pair app secs
-  day=$(today_date)
+  local today hour pair app secs at day lock
+  local -A deltas=()
+  today=$(today_date)
   hour=$((10#$(date +%H)))
-  file=$(day_file "$day")
 
   for pair in "$@"; do
     app=${pair%%=*}
     secs=${pair#*=}
     [[ -n $app && $app != "$pair" ]] || continue
+    at=""
+    [[ $secs != *@* ]] || at=${secs#*@} secs=${secs%%@*}
     [[ $secs =~ ^-?[0-9]+$ ]] || continue
+    if [[ -z $at ]]; then
+      at=${today}T$(printf '%02d' "$hour")
+    elif [[ ! $at =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T([01][0-9]|2[0-3])$ ]]; then
+      continue
+    fi
     app=${app//[$'\t\n']/ }
     is_ignored "$app" && continue
-    deltas+="$app"$'\t'"$hour"$'\t'"$secs"$'\n'
+    day=${at%T*}
+    deltas[$day]+="$app"$'\t'"$((10#${at#*T}))"$'\t'"$secs"$'\n'
   done
-  [[ -n $deltas ]] || return 0
+  ((${#deltas[@]} > 0)) || return 0
 
   mkdir -p -- "$DAYS_DIR" 2>/dev/null || return 0
 
   # A new day's first write is the natural moment to drop old history.
-  [[ -e $file ]] || prune_history
+  [[ -e $(day_file "$today") ]] || prune_history
 
   exec {lock}>"$STATE_DIR/.lock" 2>/dev/null || return 0
   flock -w 5 "$lock" 2>/dev/null || {
@@ -483,9 +493,20 @@ cmd_record() {
     return 0
   }
 
+  for day in "${!deltas[@]}"; do
+    record_day "$(day_file "$day")" "${deltas[$day]}"
+  done
+
+  exec {lock}>&-
+}
+
+# Adds app<TAB>hour<TAB>seconds lines to a day file. An hour that comes to
+# less than a second is dropped.
+record_day() { # file deltas
+  local file=$1
   {
     [[ -r $file ]] && cat -- "$file"
-    printf '%s' "$deltas"
+    printf '%s' "$2"
   } | awk -F'\t' -v OFS='\t' '
       NF == 3 { total[$1 SUBSEP $2] += $3 }
       END {
@@ -497,8 +518,6 @@ cmd_record() {
       }
     ' | sort >"$file.tmp" 2>/dev/null && mv -f -- "$file.tmp" "$file"
   rm -f -- "$file.tmp"
-
-  exec {lock}>&-
 }
 
 prune_history() {
@@ -870,7 +889,8 @@ Usage:
   nova screentime on | off | toggle     start or stop recording (off at first)
   nova screentime enabled               succeeds while it is on
   nova screentime indicator on|off      show or hide the bar indicator
-  nova screentime record <app>=<secs>   used by the shell service
+  nova screentime record <app>=<secs>[@<day>T<hour>]
+                                        used by the shell service
   nova screentime version
 
 Settings live in ~/.config/nova-screentime/config, pinned names in

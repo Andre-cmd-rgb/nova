@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell.Io
 import Quickshell.Wayland
+import "Counting.js" as Counting
 
 // The part that does the counting. It watches which window has focus and
 // whether anyone is still at the keyboard, adds up seconds per application,
@@ -28,6 +29,12 @@ Item {
 
   // Seconds counted but not yet written, keyed by app id.
   property var pending: ({})
+  // The writes of the last idle timeout, newest first: when each was made,
+  // the hour it went to, and its seconds per app. Going idle takes the
+  // timeout back from the hours it was written to.
+  property var written: []
+  // Negative pairs for hours already written, sent with the next write.
+  property var takenBack: []
   property string currentApp: ""
   property real since: 0
   property bool counting: true
@@ -60,18 +67,36 @@ Item {
     // one rather than dropped or double-counted.
     if (recordProc.running) return
 
-    var args = []
+    var time = now()
+    var hour = Counting.hourOf(new Date())
+    var args = takenBack.slice()
+    var seconds = ({})
     for (var app in pending) {
-      var seconds = Math.round(pending[app])
-      if (seconds !== 0) args.push(app + "=" + seconds)
+      var counted = Math.round(pending[app])
+      if (counted <= 0) continue
+      args.push(app + "=" + counted + "@" + hour)
+      seconds[app] = counted
     }
     pending = ({})
+    takenBack = []
+    written = [{ time: time, hour: hour, seconds: seconds }].concat(written.filter(function (write) {
+      return write.time > time - root.idleTimeout
+    }))
     if (args.length === 0) {
       flushed()
       return
     }
     recordProc.command = [root.helper, "record"].concat(args)
     recordProc.running = true
+  }
+
+  // The idle timeout has been counted by the time the monitor fires: part of
+  // it is still pending, and the rest went to the hours of the last writes.
+  function takeBackIdle(app) {
+    var back = Counting.takeBack(pending, written, app, idleTimeout, now() - idleTimeout)
+    pending = back.pending
+    written = back.written
+    takenBack = takenBack.concat(back.pairs)
   }
 
   function flushNow() {
@@ -126,7 +151,7 @@ Item {
 
   // Idle is what separates "at this machine" from "left it running". The
   // timeout has already been counted by the time it fires, so it is taken
-  // back off whatever had focus.
+  // back off whatever had focus, in the hours it was counted in.
   IdleMonitor {
     id: idleMonitor
     enabled: true
@@ -137,7 +162,7 @@ Item {
     onIsIdleChanged: {
       if (isIdle) {
         accumulate()
-        if (root.currentApp !== "") root.add(root.currentApp, -root.idleTimeout)
+        if (root.currentApp !== "") root.takeBackIdle(root.currentApp)
         root.counting = false
         root.flush()
       } else {
