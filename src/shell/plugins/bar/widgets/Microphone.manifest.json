@@ -15,6 +15,7 @@
     "displayName": "Microphone",
     "description": "Mic input state and mute toggle",
     "category": "Audio",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }

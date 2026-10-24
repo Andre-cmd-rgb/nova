@@ -15,6 +15,7 @@
     "displayName": "Power",
     "description": "Battery and power profile",
     "category": "System",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }

@@ -15,6 +15,7 @@
     "displayName": "Audio",
     "description": "Volume slider, output picker, per-app mixer",
     "category": "Audio",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }

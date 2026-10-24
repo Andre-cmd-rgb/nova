@@ -145,6 +145,7 @@ ShellRoot {
       "userConfigPath=" + shell.userConfigPath)
     pluginRegistry.shellConfigProvider = function() { return shell.shellConfig }
     pluginRegistry.shellConfigMutator = function(mutate) { shell.mutateShellConfig(mutate) }
+    pluginRegistry.defaultsProvider = function() { return shell.defaultsConfig }
   }
 
   function mutateShellConfig(mutator) {

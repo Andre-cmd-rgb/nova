@@ -15,6 +15,7 @@
     "displayName": "System tray",
     "description": "Status notifier items",
     "category": "Status",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }

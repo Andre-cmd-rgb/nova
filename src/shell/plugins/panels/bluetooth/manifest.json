@@ -15,6 +15,7 @@
     "displayName": "Bluetooth",
     "description": "Bluetooth device list with connect/disconnect",
     "category": "Network",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }

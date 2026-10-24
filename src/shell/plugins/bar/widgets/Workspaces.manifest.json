@@ -15,6 +15,7 @@
     "displayName": "Workspaces",
     "description": "Workspace number indicators",
     "category": "Compositor",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "left"
   }
 }

@@ -18,6 +18,7 @@
     "displayName": "Nova menu",
     "description": "Launches the Nova menu",
     "category": "Compositor",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "left"
   }
 }

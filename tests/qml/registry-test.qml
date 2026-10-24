@@ -2,9 +2,9 @@ import QtQuick
 import Quickshell
 import "services"
 
-// The plugin registry against the real, generated plugin index and a config
-// held in memory: what is on, where enabling puts a widget, and what each verb
-// writes into shell.json.
+// The plugin registry against the real, generated plugin index, a config held
+// in memory and Nova's default layout: what is on, where enabling puts a
+// widget, and what each verb writes into shell.json.
 ShellRoot {
   id: test
 
@@ -19,10 +19,23 @@ ShellRoot {
     },
     plugins: []
   })
+  // The right of data/defaults/shell.json, and a center without the weather.
+  property var defaults: ({
+    version: 1,
+    bar: {
+      layout: {
+        left: [{ id: "nova.menu" }, { id: "nova.workspaces" }],
+        center: [{ id: "nova.indicators" }, { id: "nova.clock" }],
+        right: [{ id: "nova.tray" }, { id: "nova.bluetooth" }, { id: "nova.mobile-data" }, { id: "nova.network" },
+          { id: "nova.audio" }, { id: "nova.power" }]
+      }
+    }
+  })
   property bool ran: false
 
   property PluginRegistry registry: PluginRegistry {
     shellConfigProvider: function() { return test.config }
+    defaultsProvider: function() { return test.defaults }
     shellConfigMutator: function(mutate) {
       var copy = JSON.parse(JSON.stringify(test.config))
       mutate(copy)
@@ -70,17 +83,31 @@ ShellRoot {
     check(registry.putBarWidget("nova.weather", { section: "center", before: "nova.indicators" }) === ""
       && ids("center") === "nova.indicators nova.clock nova.weather", "put leaves a placed widget alone")
     check(registry.putBarWidget("nova.power", { after: "nova.nowhere" }) === ""
-      && ids("center") === "nova.indicators nova.clock nova.weather nova.power",
-      "put falls back to the default place when its anchor is missing: " + ids("center"))
+      && ids("right") === "nova.tray nova.network nova.audio nova.power",
+      "put falls back to the default place when its anchor is missing: " + ids("right"))
 
     check(!registry.setEnabled("nova.bluetooth", true, { before: "nova.nowhere" })
       && registry.lastEnableError === "could not find target widget nova.nowhere" && !registry.inBar("nova.bluetooth"),
       "enable with a missing anchor fails and changes nothing")
     check(registry.moveBarWidget("nova.weather", { section: "right", before: "nova.audio" }) === ""
-      && ids("right") === "nova.tray nova.network nova.weather nova.audio"
-      && ids("center") === "nova.indicators nova.clock nova.power", "move: " + ids("right"))
+      && ids("right") === "nova.tray nova.network nova.weather nova.audio nova.power"
+      && ids("center") === "nova.indicators nova.clock", "move: " + ids("right"))
     check(registry.setBarWidget("nova.clock", "format", "HH:mm", {}) === ""
       && config.bar.layout.center[1].format === "HH:mm", "setBarWidget writes the entry's setting")
+
+    // Turned back on with no place given, a widget goes where the default
+    // layout has it, not after the weather.
+    check(registry.setEnabled("nova.bluetooth", true)
+      && ids("right") === "nova.tray nova.bluetooth nova.network nova.weather nova.audio nova.power",
+      "a widget comes back before its next default neighbour: " + ids("right"))
+    check(registry.setEnabled("nova.bluetooth", false) && registry.putBarWidget("nova.bluetooth", {}) === ""
+      && ids("right") === "nova.tray nova.bluetooth nova.network nova.weather nova.audio nova.power",
+      "off and on again, it is back in the same place: " + ids("right"))
+    check(registry.setEnabled("nova.microphone", true)
+      && ids("right") === "nova.tray nova.microphone nova.bluetooth nova.network nova.weather nova.audio nova.power",
+      "one the default layout lacks goes to its manifest's section: " + ids("right"))
+    check(registry.setEnabled("nova.bluetooth", false) && registry.putBarWidget("nova.bluetooth", { section: "left" }) === ""
+      && ids("left") === "nova.menu nova.workspaces nova.bluetooth", "a section asked for wins over the default place: " + ids("left"))
 
     var before = JSON.stringify(config)
     check(!registry.setEnabled("nova.bar", false) && registry.isEnabled("nova.bar") && JSON.stringify(config) === before,

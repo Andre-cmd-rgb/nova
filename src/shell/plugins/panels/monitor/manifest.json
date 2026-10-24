@@ -15,6 +15,7 @@
     "displayName": "Display",
     "description": "Brightness slider and laptop display controls",
     "category": "System",
-    "allowMultiple": false
+    "allowMultiple": false,
+    "defaultSection": "right"
   }
 }

@@ -24,6 +24,9 @@ QtObject {
   // a deep-cloned config it can mutate in place and persists the result.
   property var shellConfigProvider: null
   property var shellConfigMutator: null
+  // Nova's default shell.json, wired by the shell like the two above: where a
+  // widget turned back on without a place goes (defaultBarPlace).
+  property var defaultsProvider: null
 
   // { pluginId: manifest }, each with __sourceDir stamped in.
   property var installedPlugins: ({})
@@ -156,6 +159,34 @@ QtObject {
     }
   }
 
+  // Whether a placement names a place at all; {} leaves it to the defaults.
+  function namesPlace(placement) {
+    if (!Util.isPlainObject(placement)) return false
+    return ["section", "index", "before", "after"].some(function(key) {
+      return placement[key] !== undefined && placement[key] !== null && placement[key] !== ""
+    })
+  }
+
+  // Where Nova's default layout keeps a widget: its section there, before the
+  // next of its neighbours there that this bar has, or else after the nearest
+  // one before it. Null for a widget the default layout does not have.
+  function defaultBarPlace(config, key) {
+    var defaults = defaultsProvider ? defaultsProvider() : null
+    var home = findBarLocation(defaults, key, "")
+    if (!home.found) return null
+    var entries = defaults.bar.layout[home.section]
+    var i, near
+    for (i = home.index + 1; i < entries.length; i++) {
+      near = findBarLocation(config, barEntryId(entries[i]), home.section)
+      if (near.found) return { section: home.section, index: near.index }
+    }
+    for (i = home.index - 1; i >= 0; i--) {
+      near = findBarLocation(config, barEntryId(entries[i]), home.section)
+      if (near.found) return { section: home.section, index: near.index + 1 }
+    }
+    return { section: home.section, index: config.bar.layout[home.section].length }
+  }
+
   function moveBarEntry(config, id, placement) {
     var key = Util.canonicalWidgetId(String(id))
     var source
@@ -284,8 +315,9 @@ QtObject {
     config.disabledPlugins.push(id)
   }
 
-  // Bar widgets go to the default section their manifest declares, falling
-  // back to center; anything else that is off by default goes into plugins[].
+  // A bar widget goes where the placement says; with none, where Nova's
+  // default layout has it, else to the section its manifest declares, else
+  // center. Anything else that is off by default goes into plugins[].
   function setEnabled(id, value, placement) {
     var key = Util.canonicalWidgetId(String(id))
     lastEnableError = ""
@@ -325,7 +357,8 @@ QtObject {
       if (value) {
         removeDisabled(config, key)
         if (!location.found && isBarWidget) {
-          var target = barTarget(config, placement || {}, defaultBarWidgetSection(manifest))
+          var target = (namesPlace(placement) ? null : defaultBarPlace(config, key))
+            || barTarget(config, placement || {}, defaultBarWidgetSection(manifest))
           config.bar.layout[target.section].splice(target.index, 0, { id: key })
           return
         }
