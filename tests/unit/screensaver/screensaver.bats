@@ -38,6 +38,21 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   [ "$(grep -o 'monitor = "[^"]*"' "$CALLS" | paste -sd' ')" = 'monitor = "eDP-1" monitor = "DP-2" monitor = "eDP-1"' ]
 }
 
+@test "the event listener stops once the windows are open, not at Hyprland's next event" {
+  local state
+  # A real listener stays connected after the events it was waiting for.
+  stub socat 'echo $$ >"$SCRATCH/listener"
+printf "openwindow>>a1,1,org.nova.screensaver,foot\nopenwindow>>a2,2,org.nova.screensaver,foot\n"
+exec sleep 5'
+  main auto
+  for _ in {1..20}; do
+    state=$(cut -d' ' -f3 "/proc/$(<"$SCRATCH/listener")/stat" 2>/dev/null) || break
+    [[ $state != Z ]] || break
+    sleep 0.1
+  done
+  [[ -z $state || $state == Z ]]
+}
+
 @test "auto leaves it be under the lock, and while it already shows" {
   stub nova-shell 'echo true'
   main auto

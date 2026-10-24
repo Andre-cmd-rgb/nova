@@ -44,19 +44,23 @@ window_opened() { # events-fd
 }
 
 show() {
-  local events focused monitor
+  local events listener focused monitor
   if ! command -v ttfx >/dev/null; then
     echo "nova screensaver: ttfx is missing; sudo pacman -S ttfx" >&2
     return 1
   fi
   focused=$(hyprctl monitors -j | jq -r '.[] | select(.focused) | .name')
   # Listening before the first window is asked for, so none opens unseen.
-  exec {events}< <(socat -U - "UNIX-CONNECT:$SOCKET")
+  # Stopped once they are all open: left to itself, the listener would write
+  # Hyprland's next event into the closed pipe and complain into the terminal.
+  exec {events}< <(exec socat -U - "UNIX-CONNECT:$SOCKET" 2>/dev/null)
+  listener=$!
   while IFS= read -r monitor; do
     focus "$monitor"
     hyprctl dispatch "hl.dsp.exec_cmd([[foot --app-id=$APP_ID --config=$FOOT_CONFIG nova-screensaver-run]])" >/dev/null
     window_opened "$events"
   done < <(hyprctl monitors -j | jq -r '.[].name')
+  kill "$listener" 2>/dev/null || true
   exec {events}<&-
   [[ -z $focused ]] || focus "$focused"
 }
