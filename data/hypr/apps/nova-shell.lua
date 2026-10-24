@@ -11,5 +11,7 @@ hl.layer_rule({ match = { namespace = "^(nova-menu|nova-image-selector|nova-emoj
 
 -- Settings, the shell's one window, floats in the middle of the screen at the
 -- size it asks for, rather than tiling, and is opaque: it is drawn in the
--- theme's own background, and text behind it would read through.
-o.window({ class = "^org\\.quickshell$", title = "^Settings$" }, { float = true, center = true, tag = "-default-opacity" })
+-- theme's own background, and text behind it would read through. Its pages
+-- move exactly as far as the touchpad says, with no acceleration of their own,
+-- so the 0.4 that tames other apps (input.lua) left them crawling.
+o.window({ class = "^org\\.quickshell$", title = "^Settings$" }, { float = true, center = true, tag = "-default-opacity", scroll_touchpad = 1.0 })
