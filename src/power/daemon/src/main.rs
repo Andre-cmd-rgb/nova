@@ -69,7 +69,8 @@ const OWNS_CPU: &str = "/run/thinkpad-powerd.owns-cpu";
 // restart would otherwise record our own capped values as the originals and
 // there would be no way back to the real ones without a reboot.
 const FIRMWARE: &str = "/run/thinkpad-powerd.firmware";
-// One line, for `thinkpad-power status`.
+// One line, for `thinkpad-power status` and Settings' readout: mode, busy
+// percent, package temperature, fans, package watts.
 const STATE: &str = "/run/thinkpad-powerd.state";
 // Written by `thinkpad-power boost`. Shared with the bash half deliberately:
 // one boost, one file, whichever half is asked.
@@ -418,6 +419,51 @@ impl CpuSampler {
             (db / dt * 100.0).clamp(0.0, 100.0)
         }
     }
+}
+
+// What the package draws, from RAPL's energy counter. Plugged in, nothing else
+// says: the battery reports only its own flow. The counter is root's to read
+// (it leaks what the CPU is doing), so this is the one place that can.
+struct PackageMeter {
+    range_uj: u64,
+    last: Option<(u64, Instant)>,
+}
+
+impl PackageMeter {
+    fn new() -> Self {
+        PackageMeter {
+            range_uj: read_u64(format!("{RAPL}/max_energy_range_uj")).unwrap_or(0),
+            last: None,
+        }
+    }
+
+    // None for the first reading, and after forget(): one reading is no rate.
+    fn watts(&mut self, now: Instant) -> Option<f64> {
+        let Some(uj) = read_u64(format!("{RAPL}/energy_uj")) else {
+            self.last = None;
+            return None;
+        };
+        let (was, then) = self.last.replace((uj, now))?;
+        watts_between(was, uj, self.range_uj, now.duration_since(then))
+    }
+
+    // A resume: firmware resets the counter across one.
+    fn forget(&mut self) {
+        self.last = None;
+    }
+}
+
+// The counter wraps at range_uj, every hour or so at full load.
+fn watts_between(was: u64, now: u64, range_uj: u64, dt: Duration) -> Option<f64> {
+    let used = if now >= was {
+        now - was
+    } else if range_uj > was {
+        range_uj - was + now
+    } else {
+        return None;
+    };
+    let secs = dt.as_secs_f64();
+    (secs > 0.0).then(|| used as f64 / secs / 1e6)
 }
 
 // The hottest thing that speaks for the package. x86_pkg_temp is the one that
@@ -894,15 +940,25 @@ impl Governor {
 
 // ---------------------------------------------------------------- main
 
-fn write_state(mode: Mode, busy: f64, temp: Option<f64>, fan: &str) {
+fn write_state(
+    cfg: &Config,
+    mode: Mode,
+    busy: f64,
+    temp: Option<f64>,
+    fan: &str,
+    watts: Option<f64>,
+) {
     let label = match mode {
         Mode::Ac => "ac".to_string(),
-        Mode::Battery(t) => format!("battery/{t}"),
+        Mode::Battery(t) => format!("battery/{}", cfg.tiers.get(t).map_or("?", |tier| tier.name)),
     };
     let t = temp
         .map(|t| format!("{t:.0}"))
         .unwrap_or_else(|| "?".into());
-    let _ = fs::write(STATE, format!("{label} {busy:.0} {t} {fan}\n"));
+    let w = watts
+        .map(|w| format!("{w:.1}"))
+        .unwrap_or_else(|| "?".into());
+    let _ = fs::write(STATE, format!("{label} {busy:.0} {t} {fan} {w}\n"));
 }
 
 fn main() {
@@ -950,6 +1006,7 @@ fn main() {
     let _ = fs::write(OWNS_CPU, "thinkpad-powerd\n");
 
     let mut sampler = CpuSampler::new();
+    let mut meter = PackageMeter::new();
     let mut gov = Governor::new(cfg.clone());
     let mut last_ac = on_ac();
     // Instant is CLOCK_MONOTONIC, which does not advance across S3, so the
@@ -990,11 +1047,13 @@ fn main() {
             // The counters did not advance while asleep, so the first sample
             // after a resume describes the moment before it. Throw it away.
             let _ = sampler.busy_pct();
+            meter.forget();
             continue;
         }
 
         let busy = sampler.busy_pct();
         let temp = package_temp();
+        let watts = meter.watts(now);
 
         // A plug event is the one transition worth resetting everything for:
         // the dwell timers measured a different machine.
@@ -1043,7 +1102,7 @@ fn main() {
             }
         };
 
-        write_state(mode, busy, temp, fan_label);
+        write_state(&cfg, mode, busy, temp, fan_label, watts);
     }
 
     // On the way out, put everything back. systemd also has an ExecStopPost for
@@ -1077,4 +1136,32 @@ fn main() {
     }
     let _ = fs::remove_file(OWNS_CPU);
     let _ = fs::remove_file(STATE);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watts_are_energy_over_time() {
+        let w = watts_between(1_000_000, 13_000_000, 0, Duration::from_secs(2));
+        assert_eq!(w, Some(6.0));
+    }
+
+    #[test]
+    fn a_wrapped_counter_counts_across_the_wrap() {
+        let w = watts_between(
+            990_000_000,
+            4_000_000,
+            1_000_000_000,
+            Duration::from_secs(1),
+        );
+        assert_eq!(w, Some(14.0));
+    }
+
+    #[test]
+    fn a_counter_that_went_back_without_a_range_is_no_reading() {
+        assert_eq!(watts_between(5, 4, 0, Duration::from_secs(1)), None);
+        assert_eq!(watts_between(1, 2, 0, Duration::ZERO), None);
+    }
 }

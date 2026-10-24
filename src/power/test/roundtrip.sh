@@ -154,8 +154,12 @@ cpu_ceiling battery
 chk "daemon owns the power limit"  "$(cat "$RAPL_PL1")"    "109000000"
 chk "daemon owns the ceiling"      "$(cat "$PSTATE_MAX")"  "100"
 chk "governor row reads the state" "$(governor_now)"       "starting up"
-echo 'battery/2 91 74 held' >"$DAEMON_STATE"
-chk "governor row formats state"   "$(governor_now)" "battery/2, 91% busy, 74 C, fans held"
+echo 'battery/full 91 74 held 23.4' >"$DAEMON_STATE"
+chk "governor row formats state"   "$(governor_now)" "battery/full, 91% busy, 74 C, fans held, 23.4 W"
+echo 'ac 3 51 auto ?' >"$DAEMON_STATE"
+chk "governor row before a reading" "$(governor_now)" "ac, 3% busy, 51 C, fans auto"
+echo 'battery/full 91 74 held' >"$DAEMON_STATE"
+chk "governor row, an older daemon" "$(governor_now)" "battery/full, 91% busy, 74 C, fans held"
 rm -f "$DAEMON_OWNS_CPU"
 chk "governor row when absent"     "$(governor_now)"       "not running"
 power_limit battery
@@ -387,6 +391,24 @@ gpu_on >/dev/null 2>&1
 chk "a failed rescan asks for one"      "$(cat "$T/pci/rescan" 2>/dev/null)" "1"
 chk "  and keeps the driver blocked"    "$([[ -s $MODPROBE_BLOCK ]] && echo yes || echo no)" "yes"
 unset -f sleep
+
+# Settings' readout, from the same files.
+RAPL_PL1=$T/pl1 RAPL_PL2=$T/pl2 PSTATE_MAX=$T/max PSTATE_NO_TURBO=$T/no-turbo
+FAN_PROC=$T/fan BAT_POWER=$T/power-now BOOST_STATE=$T/boost
+echo 18000000 >"$RAPL_PL1"; echo 28000000 >"$RAPL_PL2"; echo 70 >"$PSTATE_MAX"; echo 0 >"$PSTATE_NO_TURBO"
+printf 'status:\t\tenabled\nspeed:\t\t2581\nlevel:\t\t2\n' >"$FAN_PROC"
+echo 9870000 >"$BAT_POWER"
+: >"$DAEMON_OWNS_CPU"; echo 'battery/mid 71 64 held 11.3' >"$DAEMON_STATE"; : >"$BOOST_STATE"
+on_ac() { return 1; }
+chk "readout on battery"           "$(status_json)" \
+  '{"source":"battery","governor":{"tier":"mid","busy":71,"temp":64,"fans":"held","watts":11.3},"pl1":18,"pl2":28,"ceiling":70,"turbo":true,"boost":true,"fanRpm":2581,"batteryWatts":9.87}'
+echo 'ac 3 ? ec ?' >"$DAEMON_STATE"; echo 1 >"$PSTATE_NO_TURBO"; rm -f "$BOOST_STATE" "$FAN_PROC"
+on_ac() { return 0; }
+chk "readout, a figure missing"    "$(status_json)" \
+  '{"source":"ac","governor":{"tier":null,"busy":3,"temp":null,"fans":"ec","watts":null},"pl1":18,"pl2":28,"ceiling":70,"turbo":false,"boost":false,"fanRpm":null,"batteryWatts":null}'
+rm -f "$DAEMON_OWNS_CPU"
+chk "readout without the governor" "$(status_json | jq -c .governor)" "null"
+unset -f on_ac
 
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi

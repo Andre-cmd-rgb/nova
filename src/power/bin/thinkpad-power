@@ -64,6 +64,7 @@ thinkpad-power — AC/battery power policy for a hybrid-graphics laptop
 usage: thinkpad-power <command> [args]
 
   status [-v]         power source and discrete GPU; -v adds diagnostics
+  status --json       the governor, limits, fans and draw, for Settings
   doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
@@ -756,18 +757,52 @@ DAEMON_STATE=/run/thinkpad-powerd.state
 
 daemon_owns_cpu() { [[ -e $DAEMON_OWNS_CPU ]]; }
 
-# One line: "battery/1 42 58 held" — mode, busy percent, package temp, fans.
+# One line: "battery/mid 42 58 held 9.4" — mode, busy percent, package temp,
+# fans, package watts ("?" until the daemon has two readings).
 governor_now() {
-  local mode busy temp fan
+  local mode busy temp fan watts
   daemon_owns_cpu || { printf 'not running'; return 0; }
   # Redirections are set up left to right, so the input redirect has to come
   # after 2>/dev/null or bash reports the missing file before it is silenced —
   # which put a stray line on stderr every time status ran during the second
   # between the daemon claiming the CPU and writing its first state line.
-  read -r mode busy temp fan 2>/dev/null <"$DAEMON_STATE" ||
+  read -r mode busy temp fan watts 2>/dev/null <"$DAEMON_STATE" ||
     { printf 'starting up'; return 0; }
   printf '%s, %s%% busy, %s C, fans %s' "${mode:-?}" "${busy:-?}" "${temp:-?}" "${fan:-?}"
+  [[ -z $watts || $watts == '?' ]] || printf ', %s W' "$watts"
   return 0
+}
+
+FAN_PROC=/proc/acpi/ibm/fan
+BAT_POWER=/sys/class/power_supply/BAT0/power_now
+
+# Settings' readout: what the governor and the registers say right now, as one
+# JSON object. Files only, no GPU holder scan, so it is cheap enough to read
+# every couple of seconds. A figure this machine does not give is null; the
+# governor is null while thinkpad-powerd is not running.
+status_json() {
+  local mode='' busy='' temp='' fan='' watts='' running=false source=battery battery=''
+  daemon_owns_cpu && read -r mode busy temp fan watts 2>/dev/null <"$DAEMON_STATE" && running=true
+  if on_ac; then source=ac; else battery=$(cat "$BAT_POWER" 2>/dev/null); fi
+  jq -cn --arg source "$source" --argjson running "$running" --arg mode "$mode" \
+    --arg busy "$busy" --arg temp "$temp" --arg fans "$fan" --arg watts "$watts" \
+    --arg pl1 "$(cat "$RAPL_PL1" 2>/dev/null)" --arg pl2 "$(cat "$RAPL_PL2" 2>/dev/null)" \
+    --arg ceiling "$(cat "$PSTATE_MAX" 2>/dev/null)" --arg noTurbo "$(cat "$PSTATE_NO_TURBO" 2>/dev/null)" \
+    --arg rpm "$(awk '$1 == "speed:" { print $2 }' "$FAN_PROC" 2>/dev/null)" --arg battery "$battery" \
+    --argjson boost "$([[ -e $BOOST_STATE ]] && echo true || echo false)" '
+    def num: tonumber? // null;
+    def watts: num | if . == null then null else . / 1000000 end;
+    {
+      source: $source,
+      governor: (if $running then {
+        tier: (if $mode | startswith("battery/") then $mode[8:] else null end),
+        busy: ($busy | num), temp: ($temp | num), fans: $fans, watts: ($watts | num)
+      } else null end),
+      pl1: ($pl1 | watts | if . == null then null else round end),
+      pl2: ($pl2 | watts | if . == null then null else round end),
+      ceiling: ($ceiling | num), turbo: ($noTurbo | if . == "" then null else . != "1" end),
+      boost: $boost, fanRpm: ($rpm | num), batteryWatts: ($battery | watts)
+    }'
 }
 
 # A wattage this tool is willing to write to a register that decides how much
@@ -1178,7 +1213,8 @@ status)
   #
   # Three lines by default. The rest is diagnostic — useful when something is
   # wrong, noise when you only wanted to know whether the card is on — so it
-  # lives behind -v.
+  # lives behind -v. --json is Settings' readout.
+  [[ ${2:-} != --json ]] || { status_json; exit 0; }
   row() { printf '  %-14s %s\n' "$1" "$2"; }
   verbose=''
   [[ ${2:-} == -v || ${2:-} == --verbose ]] && verbose=1
