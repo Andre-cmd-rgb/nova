@@ -20,10 +20,17 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
+      "indicator": true,
       "readout": "Time left",
       "warnPercent": 15
     },
     "schema": [
+      {
+        "key": "indicator",
+        "type": "boolean",
+        "label": "Show the bar indicator",
+        "defaultValue": true
+      },
       {
         "key": "readout",
         "type": "enum",

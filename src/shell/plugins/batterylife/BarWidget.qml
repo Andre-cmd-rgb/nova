@@ -158,13 +158,20 @@ Panel {
   // text alone. This one tracks what is actually painted.
   readonly property real openPanelIndicatorWidth: button.vertical ? 0 : Math.ceil(content.implicitWidth)
 
+  // `nova battery indicator off` hides the entry and nothing else: the
+  // service keeps sampling, a kind of its own in the same manifest.
+  readonly property bool indicator: {
+    var value = setting("indicator", true)
+    return value !== false && value !== "false" && value !== 0 && value !== "0"
+  }
+
   // A Panel is a bare Item: it has no implicit size of its own, and the bar
   // lays widgets out by implicitWidth. Without these the slot is zero wide
   // and the widget is placed, loaded, and invisible — with no error anywhere
   // to say so. Nothing to show before the first reading lands, either.
-  visible: present
-  implicitWidth: present ? button.implicitWidth : 0
-  implicitHeight: present ? button.implicitHeight : 0
+  visible: present && indicator
+  implicitWidth: visible ? button.implicitWidth : 0
+  implicitHeight: visible ? button.implicitHeight : 0
 
   // ---- readout ------------------------------------------------------------
   //
