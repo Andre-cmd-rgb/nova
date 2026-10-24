@@ -18,6 +18,7 @@ PAM_DIR=${NOVA_PAM_DIR:-/etc/pam.d}
 MODULES_DIR=${NOVA_MODULES_DIR:-/usr/lib/modules}
 SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-/etc/snapper/configs/root}
 ESP=${NOVA_BOOT_ESP:-/boot}
+HARDWARE=${NOVA_HARDWARE:-/usr/share/nova/hardware}
 KEYRINGS=${XDG_DATA_HOME:-$HOME/.local/share}/keyrings
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/nova
 
@@ -232,11 +233,33 @@ check_undervolt() {
 }
 
 check_hardware() {
-  local profile
-  if profile=$(nova-hw-detect 2>/dev/null); then
-    report -- "hardware profile: $profile"
-  else
+  local profile list name missing
+  local -a wanted=()
+  if ! profile=$(nova-hw-detect 2>/dev/null); then
     report -- "no hardware profile for this model: the generic setup"
+    return 0
+  fi
+  report -- "hardware profile: $profile"
+
+  # What the profile adds (firmware, a driver, the speaker tuning's plugins)
+  # comes with nova update, so one missing is an update yet to run, or one
+  # that could not install it.
+  list=$HARDWARE/$profile/packages
+  [[ -r $list ]] || return 0
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name//[[:space:]]/}
+    [[ -n $name ]] || continue
+    # nvidia-open-nova is built for linux-nova; another kernel has Arch's.
+    if [[ $name == nvidia-open-nova ]] && ! pacman -T linux-nova >/dev/null 2>&1; then name=nvidia-open; fi
+    wanted+=("$name")
+  done <"$list"
+  ((${#wanted[@]})) || return 0
+  missing=$(pacman -T "${wanted[@]}" 2>/dev/null || true)
+  if [[ -n $missing ]]; then
+    report warn "packages this computer needs are not installed: ${missing//$'\n'/ }" "nova update installs them."
+  else
+    report ok "this computer's packages are installed"
   fi
 }
 

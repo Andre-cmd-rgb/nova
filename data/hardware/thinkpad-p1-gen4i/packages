@@ -5,6 +5,8 @@ sof-firmware
 intel-media-driver
 vulkan-intel
 fprintd
+# The speaker tuning's LV2 plugins: Calf's bass enhancer, LSP's limiter.
+calf
 lsp-plugins-lv2
 nvidia-open-nova
 nvidia-utils

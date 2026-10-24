@@ -155,3 +155,18 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   [ "$status" -eq 0 ]
   [[ $output != *unbound* ]]
 }
+
+@test "hardware: a package the profile adds and nothing has installed is a warning" {
+  export NOVA_HARDWARE="$SCRATCH/hardware"
+  write_file "$NOVA_HARDWARE/thinkpad-p1-gen4i/packages" $'# the profile\nfprintd\ncalf  # the tuning\nlsp-plugins-lv2\n'
+  stub nova-hw-detect 'echo thinkpad-p1-gen4i'
+  stub pacman 'case $1 in -Q) echo "nova 1.0.0beta.1-1" ;; -Qk) echo "nova: 1200 total files, 0 missing files" ;;
+    -T) shift; for p in "$@"; do [[ $p == calf ]] && echo "$p"; done; exit 127 ;; esac'
+  run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"warn  packages this computer needs are not installed: calf"* ]]
+  [[ $output == *"nova update installs them."* ]]
+  stub pacman 'case $1 in -Q) echo "nova 1.0.0beta.1-1" ;; -Qk) echo "nova: 1200 total files, 0 missing files" ;; esac'
+  run doctor
+  [[ $output == *"ok    this computer's packages are installed"* ]]
+}

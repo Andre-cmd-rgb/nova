@@ -17,6 +17,14 @@ setup() {
   printf '#!/bin/sh\necho "systemctl $*" >>"%s/calls"\n' "$SCRATCH" >"$SCRATCH/bin/systemctl"
   chmod +x "$SCRATCH/bin"/*
   export PATH="$SCRATCH/bin:$REPO_ROOT/src/cli/bin:$PATH"
+  # The P1's plugins, as their bundles declare them: Calf in full, LSP through
+  # a prefix.
+  export LV2_PATH="$SCRATCH/lv2"
+  mkdir -p "$LV2_PATH/calf.lv2" "$LV2_PATH/lsp-plugins.lv2"
+  echo '<http://calf.sourceforge.net/plugins/BassEnhancer> a lv2:Plugin ; rdfs:seeAlso <BassEnhancer.ttl> .' \
+    >"$LV2_PATH/calf.lv2/manifest.ttl"
+  printf '%s\n' '@prefix plug:       <http://lsp-plug.in/plugins/lv2/> .' 'plug:limiter_stereo' \
+    '	a lv2:Plugin ;' >"$LV2_PATH/lsp-plugins.lv2/manifest.ttl"
 }
 
 teardown() { teardown_scratch; }
@@ -48,4 +56,16 @@ tuning="$REPO_ROOT/src/cli/bin/nova-audio-tuning"
   run "$tuning" auto
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+@test "on: a plugin the graph needs is missing, so nothing is installed" {
+  echo "ThinkPad P1 Gen 4i" >"$NOVA_DMI_PATH/product_family"
+  rm -r "$LV2_PATH/calf.lv2"
+  run "$tuning" on
+  [ "$status" -eq 1 ]
+  [[ $output == *"http://calf.sourceforge.net/plugins/BassEnhancer"* ]]
+  [[ $output != *"lsp-plug.in"* ]]
+  [[ $output == *"nova update installs them"* ]]
+  [ ! -e "$XDG_CONFIG_HOME/pipewire/nova-speaker-tuning.conf" ]
+  [ ! -e "$SCRATCH/calls" ]
 }

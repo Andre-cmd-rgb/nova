@@ -145,6 +145,37 @@ easyeffects_running() {
     systemctl --user is-active --quiet easyeffects.service 2>/dev/null
 }
 
+# The LV2 plugins a tuning's graph names that no installed bundle declares,
+# one URI per line. A bundle's manifest.ttl names its plugins in full
+# (<http://...>) or through a prefix (plug:limiter_stereo), and PipeWire looks
+# for bundles where lilv does: LV2_PATH, or its default.
+missing_lv2_plugins() { # filter-chain.conf
+  local uri dir manifest found
+  local -a dirs
+  IFS=: read -r -a dirs <<<"${LV2_PATH:-$HOME/.lv2:/usr/local/lib/lv2:/usr/lib/lv2}"
+  while IFS= read -r uri; do
+    found=0
+    for dir in "${dirs[@]}"; do
+      for manifest in "$dir"/*/manifest.ttl; do
+        [[ -r $manifest ]] || continue
+        if awk -v uri="$uri" '
+          $1 == "@prefix" {
+            iri = $3
+            gsub(/[<>]/, "", iri)
+            if (iri != "" && index(uri, iri) == 1) short[$2 substr(uri, length(iri) + 1)] = 1
+            next
+          }
+          { for (i = 1; i <= NF; i++) if ($i == "<" uri ">" || ($i in short)) { found = 1; exit } }
+          END { exit !found }' "$manifest"; then
+          found=1
+          break 2
+        fi
+      done
+    done
+    ((found)) || printf '%s\n' "$uri"
+  done < <(sed -n -E 's/^[[:space:]]*plugin[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$1" | sort -u)
+}
+
 # Roll back a half-installed tuning. Failures are ignored on purpose: this runs on
 # the way out of an error and the unit may already be gone.
 remove_tuning() {
@@ -247,6 +278,17 @@ case "$action" in
     # shellcheck disable=SC1090,SC1091
     source "$selected/tuning.conf"
 
+    # Without every plugin its graph names, the graph fails to load and the
+    # tuning sink never appears. They are in this computer's hardware
+    # packages, which nova update installs.
+    missing=$(missing_lv2_plugins "$selected/filter-chain.conf")
+    [[ -z $missing ]] || {
+      echo "The speaker tuning needs LV2 plugins that are not installed:" >&2
+      sed 's/^/  /' <<<"$missing" >&2
+      echo "nova update installs them, with the rest of this computer's packages." >&2
+      exit 1
+    }
+
     # At first-run the session is up but the sink can still be settling.
     speaker_sink=""
     for _ in {1..20}; do
@@ -270,13 +312,6 @@ Stop it first:  systemctl --user disable --now easyeffects.service
 EOF
       exit 1
     fi
-
-    # Every tuning ends in a limiter, which is an LV2 plugin. Without it the graph
-    # fails to instantiate and the tuning sink never appears.
-    [[ -e /usr/lib/lv2/lsp-plugins.lv2/limiter_stereo.ttl ]] || {
-      echo "lsp-plugins-lv2 is required for the tuning limiter." >&2
-      exit 1
-    }
 
     rendered=$(mktemp)
     trap 'rm -f "$rendered"' EXIT
