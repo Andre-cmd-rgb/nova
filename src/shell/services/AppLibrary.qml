@@ -222,7 +222,8 @@ Item {
     watchChanges: true
     printErrors: false
     onLoaded: root.loadConfiguredHides(text())
-    onFileChanged: root.loadConfiguredHides(text())
+    // text() is what was loaded last: the change has to be read first.
+    onFileChanged: reload()
     onLoadFailed: root.loadConfiguredHides("")
   }
 
