@@ -153,8 +153,11 @@ Item {
     return out.length > 1 ? out.slice(0, -1).join(", ") + " and " + out[out.length - 1] : out.join("")
   }
 
+  // Detached, as the rest of the shell opens terminals. Through actionProc the
+  // terminal was that very process and died with the shell, so "nova update",
+  // which restarts the shell, went down with it before the new one started.
   function terminal(command) {
-    run(["nova-launch-floating-terminal-with-presentation", command])
+    Util.execArgv(["nova-launch-floating-terminal-with-presentation", command])
   }
 
   function step(delta) {

@@ -8,6 +8,13 @@ export NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
 CONFIG_DIR="$NOVA_PATH/shell"
 [[ -f $CONFIG_DIR/shell.qml ]] || { echo "Nova shell config not found: $CONFIG_DIR" >&2; exit 1; }
 
+# Run from a terminal the shell started and still owns (Settings opened
+# "nova update" that way up to 1.0.0-beta.5), the kill below takes that
+# terminal with it, and its hangup ended this script before it launched the
+# replacement: no bar until the next login. Nothing past the kill needs the
+# terminal.
+trap '' HUP
+
 # Allow running from outside the session (e.g. over ssh) by deriving the
 # Hyprland instance signature from the newest instance runtime dir.
 if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
