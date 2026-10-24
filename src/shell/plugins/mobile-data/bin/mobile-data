@@ -946,10 +946,14 @@ sms_archive() {
 
   # Keep the tail. The archive is also the duplicate check, so it is never
   # trimmed to nothing: a message still sitting on the modem whose line had
-  # been dropped would be announced all over again.
+  # been dropped would be announced all over again. The copy that replaces it
+  # is as private as the archive was made.
   count=$(wc -l <"$INBOX")
   if [[ $count =~ ^[0-9]+$ ]] && ((count > keep)); then
-    tail -n "$keep" "$INBOX" >"$INBOX.tmp" 2>/dev/null &&
+    (
+      umask 077
+      rm -f -- "$INBOX.tmp" && tail -n "$keep" "$INBOX" >"$INBOX.tmp"
+    ) 2>/dev/null &&
       mv -f -- "$INBOX.tmp" "$INBOX" 2>/dev/null || rm -f -- "$INBOX.tmp"
   fi
   return 0

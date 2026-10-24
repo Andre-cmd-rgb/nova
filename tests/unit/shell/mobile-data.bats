@@ -141,3 +141,16 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [ "$(cat "$SCRATCH/wwan")" = blocked ]
   grep -qx "rfkill unblock" "$CALLS"
 }
+
+@test "the SMS archive stays private when it is trimmed" {
+  sed '/^usage() {/,$d' "$helper" >"$SCRATCH/mobile-data.sh"
+  # shellcheck source=/dev/null
+  source "$SCRATCH/mobile-data.sh"
+  mkdir -p "$XDG_CONFIG_HOME/nova-mobile-data"
+  echo SMS_KEEP=2 >"$XDG_CONFIG_HOME/nova-mobile-data/config"
+  umask 022
+  local n
+  for n in 1 2 3; do sms_archive "hash$n" 2026-10-24 +100 "text $n"; done
+  [ "$(cut -f2 "$INBOX" | paste -sd ' ')" = 'hash2 hash3' ]
+  [ "$(stat -c %a "$INBOX")" = 600 ]
+}
