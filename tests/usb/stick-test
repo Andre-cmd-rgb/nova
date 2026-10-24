@@ -44,40 +44,34 @@ head -c 5M /dev/urandom >"$iso/nova/x86_64/airootfs.sfs"
 : >"$iso/boot/2026-10-20-00-00-00-00.uuid"
 xorriso -as mkisofs -quiet -r -V NOVA_TEST -o "$work/nova.iso" "$iso"
 
-# A home and a system to carry from.
+# A home to carry from: the SSH keys, and the files picked from it.
 home=$work/home
-mkdir -p "$home/.ssh" "$home/.config/google-chrome/Default/Cache" "$home/.local/state/omarchy-screentime/days" \
-  "$home/Documents/Taxes" "$work/root/etc/NetworkManager/system-connections"
+mkdir -p "$home/.ssh" "$home/Documents/Taxes" "$home/Projects/app/target" "$home/Music"
 echo key >"$home/.ssh/id_ed25519"
 chmod 600 "$home/.ssh/id_ed25519"
-echo cookies >"$home/.config/google-chrome/Default/Cookies"
-echo junk >"$home/.config/google-chrome/Default/Cache/data_0"
-echo 60 >"$home/.local/state/omarchy-screentime/days/2026-10-19.tsv"
 echo pdf >"$home/Documents/Taxes/2025.pdf"
-git -c init.defaultBranch=main init -q "$home/Projects/app"
-printf 'target/\n' >"$home/Projects/app/.gitignore"
+echo todo >"$home/todo.txt"
 echo code >"$home/Projects/app/main.rs"
-mkdir -p "$home/Projects/app/target"
+echo 'Signature: 8a477f597d28d172789f06886806bc55' >"$home/Projects/app/target/CACHEDIR.TAG"
 echo build >"$home/Projects/app/target/out"
-printf '[connection]\ntype=wifi\n' >"$work/root/etc/NetworkManager/system-connections/Home.nmconnection"
-chmod 600 "$work/root/etc/NetworkManager/system-connections/Home.nmconnection"
+echo song >"$home/Music/song.flac"
 
 plan=$work/plan
 mkdir -p "$plan"
-NOVA_USB_HOME=$home bash -c 'source "$1"; PROJECT_DIRS=(Projects) FOLDER_DIRS=(Documents); list_projects "$2"; list_folders "$2"' \
+NOVA_USB_HOME=$home bash -c 'source "$1"; FILE_PATHS=(Documents Projects todo.txt); list_files "$2"' \
   _ "$repo/installer/nova-usb" "$plan"
 
 truncate -s 3G "$work/stick.img"
 loop=$(losetup -fP --show "$work/stick.img")
 size=$(blockdev --getsize64 "$loop")
-items="ssh chrome history wifi projects folders"
+items="ssh files"
 write_plan() { # size
   printf '%s\n' "device=$loop" "size=$1" "serial=-" "iso=$work/nova.iso" "user=root" "home=$home" \
     "items=$items" "offline=0" "installer_mib=64" "keymap=es" >"$plan/plan.env"
 }
 write() {
   printf '%s' "$passphrase" |
-    NOVA_USB_ALLOW_ANY=${NOVA_USB_ALLOW_ANY:-1} NOVA_USB_SYSROOT=$work/root bash "$repo/installer/nova-usb" write "$plan"
+    NOVA_USB_ALLOW_ANY=${NOVA_USB_ALLOW_ANY:-1} bash "$repo/installer/nova-usb" write "$plan"
 }
 
 # The guard: a disk that is not the one the wizard saw is left alone.
@@ -122,11 +116,8 @@ NOVA_CARRY=$work/mnt NOVA_TARGET=$target NOVA_INSTALL_LOG=$work/install.log \
   bash -c 'source "$1"; restore_carry nova' _ "$repo/installer/nova-install" 2>/dev/null
 n=$target/home/nova
 [[ $(cat "$n/.ssh/id_ed25519") == key && $(stat -c %a "$n/.ssh/id_ed25519") == 600 ]] || fail "the SSH key"
-[[ -f $n/.config/google-chrome/Default/Cookies && ! -e $n/.config/google-chrome/Default/Cache ]] || fail "the Chrome profile"
-[[ -f $n/.local/state/nova-screentime/days/2026-10-19.tsv ]] || fail "the Screen Time history"
-[[ -f $n/Projects/app/main.rs && -f $n/Projects/app/.git/HEAD && ! -e $n/Projects/app/target ]] || fail "the repository"
-[[ -f $n/Documents/Taxes/2025.pdf ]] || fail "the folder"
+[[ -f $n/Documents/Taxes/2025.pdf && -f $n/todo.txt ]] || fail "the files picked"
+[[ -f $n/Projects/app/main.rs && ! -e $n/Projects/app/target/out ]] || fail "the project, less its build cache"
+[[ ! -e $n/Music ]] || fail "a folder that was not picked came along"
 [[ $(stat -c %u:%g "$n/Documents/Taxes/2025.pdf") == 1000:1000 ]] || fail "the home is not the new account's"
-conn=$target/etc/NetworkManager/system-connections/Home.nmconnection
-[[ $(stat -c %a:%u "$conn") == 600:0 ]] || fail "the Wi-Fi connection is $(stat -c %a:%u "$conn")"
-ok "the installer puts it all back"
+ok "the installer puts back the keys and the files picked"

@@ -194,7 +194,7 @@ check_session() {
   if ((${#plaintext[@]} == 0)); then
     report ok "no secrets stored unencrypted"
   elif [[ -f $STATE/keyring-migrate-pending ]]; then
-    report -- "the carried-over keyring moves into your login keyring at the next unlock"
+    report -- "the passwordless keyring moves into your login keyring at the next unlock"
   else
     report warn "secrets stored unencrypted, in the keyring ${plaintext[*]}" \
       "To move them into your login keyring:" \

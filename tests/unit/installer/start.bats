@@ -83,6 +83,11 @@ $'      eduroam                           8021x               **\n'
   [ "$(cat "$NOVA_IWD_DIR/Attic.psk")" = "$(printf '[Security]\nPassphrase=secret\n\n[Settings]\nHidden=true')" ]
 }
 
+@test "iwd_name: a plain name as it is, any other in hex" {
+  [ "$(iwd_name "Home Net_2-g")" = "Home Net_2-g" ]
+  [ "$(iwd_name "A=B")" = "=413d42" ]
+}
+
 @test "iwd_value: a password reaches iwd as it was typed" {
   [ "$(iwd_value 'plain pass')" = 'plain pass' ]
   [ "$(iwd_value ' leading')" = '\sleading' ]

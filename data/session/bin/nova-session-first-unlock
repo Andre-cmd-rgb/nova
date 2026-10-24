@@ -15,7 +15,7 @@ mkdir -p "$runtime"
 : >"$runtime/unlocked-once"
 
 # Reported, not fatal: apps then ask for the keyring password themselves. The
-# login keyring by name: until a carried-over keyring has moved into it, the
+# login keyring by name: until a passwordless keyring has moved into it, the
 # default is that one, which reads as locked even though it has no password.
 locked=$(busctl --user get-property org.freedesktop.secrets \
   /org/freedesktop/secrets/collection/login org.freedesktop.Secret.Collection Locked 2>/dev/null || true)

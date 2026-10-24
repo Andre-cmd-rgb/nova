@@ -1,8 +1,8 @@
 [Unit]
 Description=Move secrets from the passwordless Default keyring into the login keyring
 After=nova-unlocked.target
-# The installer drops this marker when it restores a carried-over keyring and the
-# helper removes it once the migration is verified.
+# nova doctor's fix drops this marker, and the helper removes it once the
+# migration is verified.
 ConditionPathExists=%h/.local/state/nova/keyring-migrate-pending
 StartLimitIntervalSec=300
 StartLimitBurst=5

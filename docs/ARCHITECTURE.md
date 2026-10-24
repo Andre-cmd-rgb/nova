@@ -48,7 +48,7 @@ exactly that, so pacman owns every file.
 
   | Kind | Location |
   |---|---|
-  | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `usb.toml`, `hooks/`) |
+  | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`) |
   | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, battery and screen-time history) |
   | System config | `/etc/thinkpad-power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
@@ -84,7 +84,7 @@ exactly that, so pacman owns every file.
      keyring with the password during auth. The password never leaves PAM.
    - `nova-session-first-unlock` writes `$XDG_RUNTIME_DIR/nova/unlocked-once` and
      starts `nova-unlocked.target`, which brings up keyring users such as the
-     migration of a carried-over keyring.
+     migration of a passwordless keyring (`nova doctor` offers it).
    - A greeter login does the same through the guard: the greeter's PAM stack has
      already unlocked the keyring.
    - Fingerprint unlock is offered only once `unlocked-once` exists.
@@ -240,12 +240,11 @@ the shared folder also becomes the default for themes that have no pick of their
     every package any install can need (`packages.txt`, from
     `nova-install --list-packages`) and their signatures, as the
     `[nova-offline]` repository;
-  - partition 2, `NOVA-DATA`, only when something is carried: LUKS2, btrfs,
-    and `carry/` with one `tar.zst` per item, `SHA256SUMS` and `manifest.json`.
-    `nova-install --unlock` opens it before the network is needed (carried
-    Wi-Fi gets the live system online); the install puts each item back once
-    the account exists. Bluetooth pairings and fingerprints come back only on
-    the computer they came from.
+  - partition 2, `NOVA-DATA`, only when something is carried (the SSH keys,
+    and the files and folders picked from the home): LUKS2, btrfs, and
+    `carry/` with one `tar.zst` per item, `SHA256SUMS` and `manifest.json`.
+    `nova-install --unlock` opens it before the questions; the install puts
+    each item back into the new home once the account exists.
 
   `nova usb` and the stick's installer ask one question per screen, with gum,
   under the wordmark: `installer/ui.bash` holds the prompts both use, and the

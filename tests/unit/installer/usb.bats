@@ -5,15 +5,11 @@ load ../test_helper
 setup() {
   setup_scratch
   export NOVA_USB_HOME="$SCRATCH/home"
-  export NOVA_USB_PRESET="$SCRATCH/config/usb.toml"
   export NOVA_USB_CACHE="$SCRATCH/cache"
   export NOVA_USB_SYSROOT="$SCRATCH/sys"
-  export NOVA_USB_OLD_PACKAGE_LISTS="$SCRATCH/old"
   export NOVA_USB_STAGE_ROOT="$SCRATCH/staging"
   export NOVA_USB_UDEV_RULE="$SCRATCH/rules.d/90-nova-usb.rules"
   export NOVA_DMI_PATH="$SCRATCH/dmi"
-  export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
-  export GIT_CEILING_DIRECTORIES=$SCRATCH
   mkdir -p "$NOVA_USB_HOME" "$NOVA_USB_SYSROOT" "$SCRATCH/plan"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/installer/nova-usb"
@@ -21,8 +17,6 @@ setup() {
 }
 
 teardown() { teardown_scratch; }
-
-fails() { if "$@"; then return 1; fi; }
 
 GB=$((1000 * 1000 * 1000))
 
@@ -39,20 +33,16 @@ disks_json() {
   printf ']}\n'
 }
 
-repo() { # home-relative dir
-  git -C "$NOVA_USB_HOME" init -q "$1"
-}
-
 # The member names of an archive the writer made, sorted.
 members() { zstd -dc "$1" | tar -t | sed 's,/$,,' | sort; }
 
-@test "catalog: unique ids, known kinds, the defaults in it, and labels a checklist can hold" {
-  [ "$(catalog | cut -f1 | sort | uniq -d)" = "" ]
-  # gum splits the ticked labels on commas.
-  [ "$(catalog | cut -f2 | grep -c ,)" = 0 ]
-  [ "$(catalog | cut -f3 | sort -u | tr '\n' ' ')" = "folders home list projects system " ]
-  for id in "${DEFAULT_ITEMS[@]}"; do valid_item "$id"; done
-  fails valid_item nonsense
+@test "items: the SSH keys and the files picked, and nothing else" {
+  [ "$(item_label ssh)" = "SSH keys" ] && [ "$(item_kind ssh)" = home ]
+  [ "$(item_label files)" = "Files and folders" ] && [ "$(item_kind files)" = folders ]
+  valid_item ssh
+  valid_item files
+  fails valid_item chrome
+  fails valid_item ''
 }
 
 @test "stick_candidates: removable or USB disks only, never the system's own" {
@@ -91,20 +81,20 @@ EOF
   [ "$(disk_contents /dev/sdb)" = $'sdb1  114.6G  exfat  "andre backups"\nsdb2  16M  no file system' ]
 }
 
-@test "ask_folders: the folders chosen before come back as the default" {
-  mkdir -p "$NOVA_USB_HOME/Projects" "$NOVA_USB_HOME/Work" "$NOVA_USB_HOME/Documents"
-  stub_gum "Projects, Work" " Documents , nowhere" '!1'
-  PROJECT_DIRS=(Projects Work)
-  ask_folders PROJECT_DIRS "Folders?" Documents
-  [ "${PROJECT_DIRS[*]}" = "Projects Work" ]
-  grep -q -- '--value Projects, Work ' "$GUM_LOG"
-  PROJECT_DIRS=()
-  ask_folders PROJECT_DIRS "Folders?" Documents 2>"$SCRATCH/err"
-  [ "${PROJECT_DIRS[*]}" = Documents ]
-  grep -q 'No folder nowhere in your home' "$SCRATCH/err"
-  # Esc leaves the folders as they were.
-  fails ask_folders PROJECT_DIRS "Folders?" Documents
-  [ "${PROJECT_DIRS[*]}" = Documents ]
+@test "ask_paths: what was typed before comes back, and a name not in the home is skipped" {
+  mkdir -p "$NOVA_USB_HOME/Projects/app" "$NOVA_USB_HOME/Work"
+  echo notes >"$NOVA_USB_HOME/Work/notes.md"
+  stub_gum "Projects/app, Work/notes.md" " Work/notes.md , nowhere" '!1'
+  TYPED_PATHS=(Projects/app Work/notes.md)
+  ask_paths
+  [ "${TYPED_PATHS[*]}" = "Projects/app Work/notes.md" ]
+  grep -q -- '--value Projects/app, Work/notes.md ' "$GUM_LOG"
+  ask_paths 2>"$SCRATCH/err"
+  [ "${TYPED_PATHS[*]}" = Work/notes.md ]
+  grep -q 'Nothing called nowhere in your home' "$SCRATCH/err"
+  # Esc leaves them as they were.
+  fails ask_paths
+  [ "${TYPED_PATHS[*]}" = Work/notes.md ]
 }
 
 @test "writer_cleanup: a mount that will not let go does not stop the rest" {
@@ -131,171 +121,78 @@ EOF
   NOVA_USB_ALLOW_ANY=1 stick_matches $((32 * GB)) S-nvme0n1 <<<"$internal"
 }
 
-@test "home_relative: folders inside the home only" {
+@test "home_relative: files and folders inside the home only" {
   mkdir -p "$NOVA_USB_HOME/Projects/Coding" "$SCRATCH/elsewhere"
+  echo notes >"$NOVA_USB_HOME/Projects/notes.md"
+  ln -s "$SCRATCH/elsewhere" "$NOVA_USB_HOME/out"
   [ "$(home_relative Projects)" = Projects ]
   [ "$(home_relative "$NOVA_USB_HOME/Projects/Coding/")" = Projects/Coding ]
   [ "$(home_relative "~/Projects")" = Projects ]
+  [ "$(home_relative Projects/notes.md)" = Projects/notes.md ]
   fails home_relative "$SCRATCH/elsewhere"
+  fails home_relative out
   fails home_relative Missing
   fails home_relative ../elsewhere
   fails home_relative "$NOVA_USB_HOME"
+  # A home reached through a link is still the home.
+  ln -s "$NOVA_USB_HOME" "$SCRATCH/linked-home"
+  USB_HOME=$SCRATCH/linked-home
+  [ "$(home_relative Projects/notes.md)" = Projects/notes.md ]
+  [ "$(home_relative "$SCRATCH/linked-home/Projects")" = Projects ]
 }
 
-@test "projects: what git tracks and would track, the history, and nothing ignored" {
-  repo Projects/app
-  cd "$NOVA_USB_HOME/Projects/app"
-  printf 'target/\n' >.gitignore
-  mkdir -p src target node_modules/dep
-  echo main >src/main.rs
-  echo gone >gone.txt
-  echo build >target/out
-  echo dep >node_modules/dep/index.js
-  echo '-n' >-n
-  git add .gitignore src/main.rs gone.txt -- -n
-  rm gone.txt
-  echo new >notes.md
-  # A repository of its own inside it, and one hidden in node_modules.
-  repo Projects/app/vendor/lib
-  echo lib >vendor/lib/lib.c
-  repo Projects/app/node_modules/dep
-  cd "$BATS_TEST_DIRNAME"
-  PROJECT_DIRS=(Projects)
-  list_projects "$PLAN"
-  [ "$(tr '\0' '\n' <"$PLAN/projects.files" | LC_ALL=C sort | tr '\n' ' ')" = "Projects/app/-n Projects/app/.gitignore Projects/app/notes.md Projects/app/src/main.rs Projects/app/vendor/lib/lib.c " ]
-  [ "$(tr '\0' '\n' <"$PLAN/projects.gitdirs" | tr '\n' ' ')" = "Projects/app/.git Projects/app/vendor/lib/.git " ]
-  make_archive projects "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/projects.tar.zst"
-  run members "$SCRATCH/projects.tar.zst"
-  [[ $output == *"Projects/app/-n"* && $output == *"Projects/app/.git/HEAD"* && $output == *"Projects/app/vendor/lib/.git/HEAD"* ]]
-  [[ $output != *target* && $output != *gone.txt* && $output != *node_modules* ]]
-}
-
-@test "projects: a file deleted after it was listed is left out, and the rest carried" {
-  repo Projects/app
-  echo a >"$NOVA_USB_HOME/Projects/app/a.txt"
-  echo swap >"$NOVA_USB_HOME/Projects/app/.a.txt.swp"
-  PROJECT_DIRS=(Projects)
-  list_projects "$PLAN"
-  rm "$NOVA_USB_HOME/Projects/app/.a.txt.swp"
-  make_archive projects "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/projects.tar.zst"
-  run members "$SCRATCH/projects.tar.zst"
-  [[ $output == *"Projects/app/a.txt"* && $output == *"Projects/app/.git/HEAD"* ]]
-  [[ $output != *swp* ]]
-}
-
-@test "projects: a deleted file listed last, or a repository git cannot read, is no failure" {
-  repo Projects/app
-  cd "$NOVA_USB_HOME/Projects/app"
-  echo a >a.txt
-  echo z >z.txt
-  git add a.txt z.txt
-  rm z.txt
-  mkdir -p "$NOVA_USB_HOME/Projects/broken/.git"
-  cd "$BATS_TEST_DIRNAME"
-  run repo_files Projects/app
+@test "home_entries: the top of the home with sizes, by name, the hidden left out" {
+  mkdir -p "$NOVA_USB_HOME/Documents" "$NOVA_USB_HOME/bin" "$NOVA_USB_HOME/.config"
+  head -c 5000 /dev/zero >"$NOVA_USB_HOME/Documents/a"
+  echo notes >"$NOVA_USB_HOME/notes.txt"
+  echo rc >"$NOVA_USB_HOME/.bashrc"
+  echo odd >"$NOVA_USB_HOME/with"$'\t'"tab"
+  run home_entries
   [ "$status" -eq 0 ]
-  [ "$(tr '\0' '\n' <<<"$output")" = "Projects/app/a.txt" ]
-  run repo_files Projects/broken
-  [ "$status" -eq 0 ]
-  [[ $output == *"git could not read ~/Projects/broken"* ]]
+  [ "$(cut -f2 <<<"$output" | paste -sd' ')" = "bin Documents notes.txt" ]
+  [ "$(awk -F'\t' '$2 == "Documents" { print $1 }' <<<"$output")" -ge 5000 ]
+  # A folder du cannot read all of is still listed, with what it could read.
+  if ((EUID != 0)); then
+    mkdir -p "$NOVA_USB_HOME/bin/locked"
+    chmod 000 "$NOVA_USB_HOME/bin/locked"
+    run home_entries
+    chmod 700 "$NOVA_USB_HOME/bin/locked"
+    [ "$status" -eq 0 ]
+    [ "$(cut -f2 <<<"$output" | paste -sd' ')" = "bin Documents notes.txt" ]
+  fi
 }
 
-@test "preset: what Custom chose comes back, folders with odd names included" {
-  mkdir -p "$NOVA_USB_HOME/My \"Stuff\", old" "$NOVA_USB_HOME/Projects"
-  PROJECT_DIRS=(Projects) FOLDER_DIRS=('My "Stuff", old')
-  write_preset "ssh chrome folders projects" 1
-  ITEMS=() PROJECT_DIRS=() FOLDER_DIRS=() OFFLINE=0
-  read_preset
-  [ "${ITEMS[*]}" = "ssh chrome folders projects" ]
-  [ "${PROJECT_DIRS[*]}" = Projects ]
-  [ "${FOLDER_DIRS[0]}" = 'My "Stuff", old' ]
-  [ "$OFFLINE" = 1 ]
+@test "list_files: each path once, and none inside another picked" {
+  FILE_PATHS=(Work Documents/a.txt Work/notes Documents/a.txt "Odd, name" Workshop)
+  list_files "$PLAN"
+  [ "$(tr '\0' '\n' <"$PLAN/files.list" | paste -sd'|')" = "Work|Documents/a.txt|Odd, name|Workshop" ]
+  FILE_PATHS=()
+  list_files "$PLAN"
+  [ ! -s "$PLAN/files.list" ]
+  fails item_present files "$PLAN"
 }
 
-@test "preset: an unknown item or a folder that is gone is dropped, with a word" {
-  mkdir -p "$(dirname "$NOVA_USB_PRESET")"
-  printf '%s\n' 'items = ["ssh", "teleporter"]' 'projects = ["Gone"]' 'folders = []' 'offline = false' >"$NOVA_USB_PRESET"
-  read_preset 2>"$SCRATCH/err"
-  [ "${ITEMS[*]}" = ssh ]
-  [ "${#PROJECT_DIRS[@]}" = 0 ]
-  [ "$OFFLINE" = 0 ]
-  grep -q teleporter "$SCRATCH/err"
-  grep -q Gone "$SCRATCH/err"
-}
-
-@test "preset: none saved yet" {
-  fails read_preset
-}
-
-@test "packages: what you added, without what the old system came with or the hardware decides" {
-  mkdir -p "$NOVA_USB_OLD_PACKAGE_LISTS"
-  printf '%s\n' '# base' hyprland waybar >"$NOVA_USB_OLD_PACKAGE_LISTS/omarchy-base.packages"
-  pacman() {
-    case $1 in
-      -Qqen) printf '%s\n' base hyprland waybar kicad linux linux-headers intel-ucode nvidia-open steam omarchy-keyring ;;
-      -Qqem) printf '%s\n' google-chrome yay spotify ;;
-    esac
-  }
-  list_packages "$PLAN"
-  [ "$(tr '\n' ' ' <"$PLAN/packages.txt")" = "kicad steam " ]
-  [ "$(tr '\n' ' ' <"$PLAN/aur.txt")" = "spotify yay " ]
-}
-
-@test "archives: Chrome signed in, without what it downloads again or the locks of a running browser" {
-  local profile=$NOVA_USB_HOME/.config/google-chrome
-  mkdir -p "$profile/Default/Cache" "$profile/Default/Code Cache/js" "$profile/Default/Service Worker/CacheStorage" \
-    "$profile/Default/File System/000" "$profile/Default/IndexedDB" "$profile/screen_ai" "$NOVA_USB_HOME/.local/share/keyrings"
-  echo cookies >"$profile/Default/Cookies"
-  echo logins >"$profile/Default/Login Data"
-  echo idb >"$profile/Default/IndexedDB/site.leveldb"
-  echo junk >"$profile/Default/Cache/data_0"
-  echo js >"$profile/Default/Code Cache/js/x"
-  echo sw >"$profile/Default/Service Worker/CacheStorage/y"
-  echo download >"$profile/Default/File System/000/big"
-  echo model >"$profile/screen_ai/model.bin"
-  ln -s host-123 "$profile/SingletonLock"
-  echo secret >"$NOVA_USB_HOME/.local/share/keyrings/Default_keyring.keyring"
-  make_archive chrome "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/chrome.tar.zst"
-  run members "$SCRATCH/chrome.tar.zst"
-  [[ $output == *"Default/Cookies"* && $output == *"Default/Login Data"* && $output == *"IndexedDB/site.leveldb"* ]]
-  [[ $output == *"keyrings/Default_keyring.keyring"* ]]
-  [[ $output != *Cache/data_0* && $output != *"Code Cache"* && $output != *"Service Worker"* ]]
-  [[ $output != *"File System"* && $output != *screen_ai* && $output != *SingletonLock* ]]
-  # The size shown is of what is carried.
-  [ "$(item_bytes chrome "$PLAN")" -lt 100 ]
-}
-
-@test "archives: Codex's sessions without the runtime it downloads itself" {
-  mkdir -p "$NOVA_USB_HOME/.codex/packages/standalone" "$NOVA_USB_HOME/.codex/sessions"
-  echo runtime >"$NOVA_USB_HOME/.codex/packages/standalone/codex"
-  echo chat >"$NOVA_USB_HOME/.codex/sessions/one.jsonl"
-  make_archive ai "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/ai.tar.zst"
-  run members "$SCRATCH/ai.tar.zst"
-  [[ $output == *".codex/sessions/one.jsonl"* && $output != *packages* ]]
-}
-
-@test "archives: Omarchy's history and bar layout are renamed to Nova's on the way in" {
-  mkdir -p "$NOVA_USB_HOME/.local/state/omarchy-screentime/days" "$NOVA_USB_HOME/.config/omarchy"
-  echo 1 >"$NOVA_USB_HOME/.local/state/omarchy-screentime/days/2026-10-19.tsv"
-  echo '{}' >"$NOVA_USB_HOME/.config/omarchy/shell.json"
-  make_archive history "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/history.tar.zst"
-  make_archive bar "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/bar.tar.zst"
-  members "$SCRATCH/history.tar.zst" | grep -qx '.local/state/nova-screentime/days/2026-10-19.tsv'
-  [ "$(members "$SCRATCH/bar.tar.zst")" = .config/nova/shell.json ]
-}
-
-@test "archives: system items come from the root, and an item with nothing here is skipped" {
-  mkdir -p "$NOVA_USB_SYSROOT/etc/NetworkManager/system-connections"
-  echo '[connection]' >"$NOVA_USB_SYSROOT/etc/NetworkManager/system-connections/Home.nmconnection"
-  make_archive wifi "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/wifi.tar.zst"
-  members "$SCRATCH/wifi.tar.zst" | grep -qx 'etc/NetworkManager/system-connections/Home.nmconnection'
-  run make_archive gnupg "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/gnupg.tar.zst"
+@test "archives: the SSH keys as they are, and nothing for an item with nothing here" {
+  run make_archive ssh "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/ssh.tar.zst"
   [ "$status" -eq 2 ]
-  item_present wifi "$PLAN"
-  fails item_present gnupg "$PLAN"
+  fails item_present ssh "$PLAN"
+  mkdir -m 700 "$NOVA_USB_HOME/.ssh"
+  echo key >"$NOVA_USB_HOME/.ssh/id_ed25519"
+  chmod 600 "$NOVA_USB_HOME/.ssh/id_ed25519"
+  item_present ssh "$PLAN"
+  make_archive ssh "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/ssh.tar.zst"
+  [ "$(members "$SCRATCH/ssh.tar.zst" | paste -sd' ')" = ".ssh .ssh/id_ed25519" ]
+  zstd -dc "$SCRATCH/ssh.tar.zst" | tar -tv | grep -Eq '^-rw------- .* \.ssh/id_ed25519$'
+  [ "$(item_bytes ssh "$PLAN")" -gt 0 ]
+  # Picked files that have all gone since are nothing to carry either.
+  printf '%s\0' gone.txt >"$PLAN/files.list"
+  run make_archive files "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/files.tar.zst"
+  [ "$status" -eq 2 ]
+  run make_archive chrome "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/chrome.tar.zst"
+  [ "$status" -eq 1 ]
 }
 
-@test "archives: whole folders, less what a program tagged as its cache" {
+@test "archives: the files and folders picked, less what a program tagged as its cache" {
   local work=$NOVA_USB_HOME/Work
   mkdir -p "$work/game/src" "$work/game/target/debug" "$work/notes/target"
   echo main >"$work/game/src/main.rs"
@@ -304,17 +201,20 @@ EOF
   # A tag without the signature tags nothing.
   echo 'keep me' >"$work/notes/target/CACHEDIR.TAG"
   echo plan >"$work/notes/target/plan.md"
-  FOLDER_DIRS=(Work)
-  list_folders "$PLAN"
-  make_archive folders "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/folders.tar.zst"
-  run members "$SCRATCH/folders.tar.zst"
+  echo todo >"$NOVA_USB_HOME/todo.txt"
+  echo other >"$NOVA_USB_HOME/other.txt"
+  FILE_PATHS=(Work todo.txt)
+  list_files "$PLAN"
+  make_archive files "$PLAN" "$NOVA_USB_HOME" "$SCRATCH/files.tar.zst"
+  run members "$SCRATCH/files.tar.zst"
   [[ $output == *"Work/game/src/main.rs"* && $output == *"Work/notes/target/plan.md"* ]]
-  [[ $output != *debug* ]]
+  grep -qx todo.txt <<<"$output"
+  [[ $output != *debug* && $output != *other.txt* ]]
   # The size shown is of what is carried, with a cache or without one.
-  [ "$(item_bytes folders "$PLAN")" -lt 100000 ]
-  FOLDER_DIRS=(Work/notes)
-  list_folders "$PLAN"
-  [ "$(item_bytes folders "$PLAN")" -gt 0 ]
+  [ "$(item_bytes files "$PLAN")" -lt 100000 ]
+  FILE_PATHS=(Work/notes)
+  list_files "$PLAN"
+  [ "$(item_bytes files "$PLAN")" -gt 0 ]
 }
 
 @test "packages on the stick: names FAT can hold, each with its signature" {
@@ -435,8 +335,8 @@ staging_setup() {
 
 @test "still_there: a listed name that leaves the home is dropped" {
   mkdir -p "$NOVA_USB_HOME/Documents" "$SCRATCH/secret"
-  printf '%s\0' Documents ../secret "$SCRATCH/secret" Documents/../../secret >"$PLAN/folders.list"
-  [ "$(still_there "$NOVA_USB_HOME" "$PLAN/folders.list" | tr '\0' ' ')" = "Documents " ]
+  printf '%s\0' Documents ../secret "$SCRATCH/secret" Documents/../../secret >"$PLAN/files.list"
+  [ "$(still_there "$NOVA_USB_HOME" "$PLAN/files.list" | tr '\0' ' ')" = "Documents " ]
 }
 
 @test "packages on the stick: fetched from the release's own snapshot and repository" {
@@ -517,33 +417,77 @@ wizard_setup() {
 
 @test "wizard: Custom with what is ticked, a passphrase, and the plan for the writer" {
   wizard_setup
-  stub_gum 0 custom 'ssh\nfolders' Documents secret-pass secret-pass
   mkdir -p "$NOVA_USB_HOME/Documents"
   echo hi >"$NOVA_USB_HOME/Documents/a.txt"
+  echo todo >"$NOVA_USB_HOME/todo.txt"
+  stub_gum 0 custom 'item:ssh\npath:Documents\npath:todo.txt' secret-pass secret-pass
   wizard 2>"$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
-  [ "${ITEMS[*]}" = "ssh folders" ]
-  [ "${CARRIED[*]}" = "ssh folders" ]
+  [ "${ITEMS[*]}" = "ssh files" ]
+  [ "${CARRIED[*]}" = "ssh files" ]
   [ "$PASSPHRASE" = secret-pass ]
+  [ "$(tr '\0' ' ' <"$PLAN/files.list")" = "Documents todo.txt " ]
   [ "$(plan_value "$PLAN" device)" = /dev/sdx ]
-  [ "$(plan_value "$PLAN" items)" = "ssh folders" ]
+  [ "$(plan_value "$PLAN" items)" = "ssh files" ]
   [ "$(plan_value "$PLAN" keymap)" = es ]
   [ "$(plan_value "$PLAN" offline)" = 0 ]
-  # The stick's list shows what is on each; the summary what is erased and brought.
+  # The stick's list shows what is on each; the summary what is erased and
+  # brought, the files by name.
   grep -q -- 'sdx  32.0 GB  Cruzer  ·  sdx1  28G  exfat  "old"' "$GUM_LOG"
   grep -q 'Erased     sdx  32.0 GB  Cruzer' "$SCRATCH/screens"
   grep -q 'now holds sdx1' "$SCRATCH/screens"
   grep -Eq 'SSH keys +[0-9]+ B' "$SCRATCH/screens"
-  grep -q 'Whole folders such as Documents or Pictures' "$GUM_LOG"
+  grep -Eq 'Files and folders +[0-9]+ B' "$SCRATCH/screens"
+  grep -qx ' *~/Documents' "$SCRATCH/screens"
+  grep -qx ' *~/todo.txt' "$SCRATCH/screens"
 }
 
-@test "wizard: the checklist starts with the defaults ticked, and sizes beside them" {
+@test "wizard: the summary names the first few files, then how many more" {
   wizard_setup
-  stub_gum 0 custom ssh '!1' '!1' '!1'
+  local i
+  for i in 1 2 3 4 5 6 7; do echo "$i" >"$NOVA_USB_HOME/file$i.txt"; done
+  stub_gum 0 custom 'path:file1.txt\npath:file2.txt\npath:file3.txt\npath:file4.txt\npath:file5.txt\npath:file6.txt\npath:file7.txt' pass-word pass-word
+  wizard 2>"$SCRATCH/screens"
+  [ "${CARRIED[*]}" = files ]
+  grep -qx ' *~/file5.txt' "$SCRATCH/screens"
+  fails grep -q 'file6.txt' "$SCRATCH/screens"
+  grep -qx ' *and 2 more' "$SCRATCH/screens"
+}
+
+@test "wizard: the checklist has the SSH keys ticked, and the top of the home with sizes" {
+  wizard_setup
+  mkdir -p "$NOVA_USB_HOME/Documents" "$NOVA_USB_HOME/.config"
+  head -c 3000 /dev/zero >"$NOVA_USB_HOME/Documents/a"
+  echo rc >"$NOVA_USB_HOME/.bashrc"
+  echo odd >"$NOVA_USB_HOME/one, two"
+  stub_gum 0 custom '!1' '!1' '!1'
   run wizard
   [ "$status" -eq 1 ]
-  grep -q -- '--selected SSH keys .*[0-9] B,' "$GUM_LOG"
-  grep -q 'GnuPG keys .*nothing here' "$GUM_LOG"
+  grep -q -- '--selected SSH keys .*[0-9] B ' "$GUM_LOG"
+  grep -Eq 'Documents/ +3 KB'$'\t''path:Documents' "$GUM_LOG"
+  # gum splits its selection on commas, so a label has none; the value keeps it.
+  grep -Eq 'one  two +[0-9]+ B'$'\t''path:one, two' "$GUM_LOG"
+  grep -q $'Something further in, typed by hand\tother' "$GUM_LOG"
+  fails grep -q 'path:\.' "$GUM_LOG"
+}
+
+@test "wizard: something further in is typed, and Esc there goes back to the checklist as it was" {
+  wizard_setup
+  mkdir -p "$NOVA_USB_HOME/Projects/app/src" "$NOVA_USB_HOME/Music"
+  echo main >"$NOVA_USB_HOME/Projects/app/src/main.rs"
+  # SSH keys unticked, Music and something further in ticked; Esc on the
+  # typing; Enter on the checklist again; then the path.
+  stub_gum 0 custom 'path:Music\nother' '!1' 'path:Music\nother' 'Projects/app, nowhere' pass-word pass-word
+  wizard 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "${CARRIED[*]}" = files ]
+  [ "$(tr '\0' ' ' <"$PLAN/files.list")" = "Music Projects/app " ]
+  grep -q 'Nothing called nowhere in your home' "$SCRATCH/screens"
+  # The second checklist kept Music ticked and the SSH keys not.
+  [ "$(grep -c -- '--selected Music/' "$GUM_LOG")" = 1 ]
+  fails grep -q -- '--selected SSH keys' <(grep -- '--selected Music/' "$GUM_LOG")
+  # The home was measured once.
+  [ "$(grep -c 'Measuring what is in your home' "$SCRATCH/screens")" = 1 ]
 }
 
 @test "wizard: Esc goes back a question, and on the first one stops" {
@@ -555,7 +499,7 @@ wizard_setup() {
   [ "${#CARRIED[@]}" = 0 ]
   [ "$(grep -c '^choose .*What goes on the stick' "$GUM_LOG")" = 2 ]
   # Clean asks for no passphrase.
-  ! grep -q -- --password "$GUM_LOG"
+  fails grep -q -- --password "$GUM_LOG"
   stub_gum '!1'
   run wizard
   [ "$status" -eq 1 ]
@@ -590,32 +534,17 @@ wizard_setup() {
   wizard_setup
   stick_candidates() { printf '/dev/sdx\t%s\tCruzer\tS1\n' "$((3 * GB))"; }
   installer_mib() { echo 2900; }
-  stub_gum 0 custom ssh pass-word pass-word '!1'
+  stub_gum 0 custom item:ssh pass-word pass-word '!1'
   run wizard
   [ "$status" -eq 1 ]
   [[ $output == *"That is more than the stick holds."* ]]
   [[ $output == *"it does not fit on the stick; nothing was written."* ]]
 }
 
-@test "wizard: Last time's choices ask only for the stick and the passphrase" {
-  wizard_setup
-  ITEMS=(ssh) PROJECT_DIRS=() FOLDER_DIRS=()
-  write_preset "ssh teleporter" 0
-  load_preset 2>/dev/null
-  MODE=preset PRESET_ONLY=1
-  stub_gum 0 pass-word pass-word
-  wizard 2>"$SCRATCH/screens"
-  [ "$(gum_replies_left)" = 0 ]
-  [ "${CARRIED[*]}" = ssh ]
-  # The word about the unknown item is shown again on the next screen.
-  grep -q "no item called 'teleporter'" "$SCRATCH/screens"
-  [ ! -s "$UI_NOTES" ]
-}
-
 @test "the nova-usb on a release page carries its look and wordmark inside" {
   "$REPO_ROOT/tools/inline-ui" >"$SCRATCH/nova-usb"
   bash -n "$SCRATCH/nova-usb"
-  ! grep -q '^source ' "$SCRATCH/nova-usb"
+  fails grep -q '^source ' "$SCRATCH/nova-usb"
   run bash -c 'source "$1"; ui_wordmark; declare -F ui_choose ui_box step_stick' _ "$SCRATCH/nova-usb"
   [ "$status" -eq 0 ]
   [ "${lines[3]}" = "$(sed -n 4p "$REPO_ROOT/theme/wordmark/nova.txt")" ]

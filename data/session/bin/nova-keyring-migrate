@@ -1,15 +1,15 @@
 #!/usr/bin/python3 -I
 
-# nova:summary=Move a carried-over passwordless keyring into the login keyring
+# nova:summary=Move a passwordless keyring into the login keyring
 # nova:hidden=true
 #
-# Omarchy keeps secrets in "Default_keyring", stored without a password, so
-# readable by anything that can read the file. The installer restores that file
-# and drops ~/.local/state/nova/keyring-migrate-pending (optionally naming
-# another keyring). After the first password unlock this copies every item into
-# the password-encrypted login keyring, reads each one back, points the default
-# alias at login, and only then deletes the old keyring and the marker. The
-# original stays on the carry-over stick.
+# A keyring stored without a password (Omarchy keeps its secrets in one,
+# "Default_keyring") is readable by anything that can read the file. nova
+# doctor finds one, and its fix drops ~/.local/state/nova/keyring-migrate-pending
+# (optionally naming another keyring) and runs this. At a password unlock this
+# copies every item into the password-encrypted login keyring, reads each one
+# back, points the default alias at login, and only then deletes the old
+# keyring and the marker.
 #
 # Python because the Secret Service is D-Bus only, and dbus-python is already
 # on every Nova system (uwsm needs it).

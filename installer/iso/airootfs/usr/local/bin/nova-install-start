@@ -150,8 +150,8 @@ main() {
   loadkeys "$keymap" >/dev/null 2>&1
   export NOVA_KEYMAP=$keymap
 
-  # Things carried on the stick (nova usb) are opened first: their Wi-Fi
-  # networks can get this system online without a question.
+  # Things carried on the stick (nova usb) are opened first, while the
+  # passphrase's layout is the one just picked.
   nova-install --unlock || (($? != 130)) || exit 130
 
   if ! get_online; then

@@ -23,8 +23,7 @@
 #                                 go ahead, and optionally apps=no and
 #                                 after=<script>, run in the new system at the
 #                                 end. tests/install/run uses it.
-#   nova-install --unlock         open the things carried on the stick (nova usb),
-#                                 and join their Wi-Fi networks
+#   nova-install --unlock         open the things carried on the stick (nova usb)
 #   nova-install --keymap [km]    the keyboard layout screen, km first; prints
 #                                 the keymap chosen (km for Esc)
 #   nova-install --list-packages  every package an install on any computer can
@@ -69,18 +68,14 @@ SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@s
 GPU_INTEL=(intel-media-driver vulkan-intel)
 GPU_AMD=(vulkan-radeon)
 
-# The setup screens' look, and joining Wi-Fi: beside this file in the
-# repository, in the share on the stick.
+# The setup screens' look: beside this file in the repository, in the share
+# on the stick.
 if [[ -r ${BASH_SOURCE[0]%/*}/ui.bash ]]; then
   # shellcheck source=installer/ui.bash
   source "${BASH_SOURCE[0]%/*}/ui.bash"
-  # shellcheck source=installer/wifi.bash
-  source "${BASH_SOURCE[0]%/*}/wifi.bash"
 else
   # shellcheck source=installer/ui.bash
   source "$SHARE/ui.bash"
-  # shellcheck source=installer/wifi.bash
-  source "$SHARE/wifi.bash"
 fi
 
 say() { echo >&2; ui_title "$*"; }
@@ -589,8 +584,7 @@ choose_timezone() { # default
     ui_filter "Time zone" "Type a city: Rome, New York, ..."
 }
 
-# Offered when the reader is one fprintd drives, and no prints were carried
-# from this computer. Esc is No here.
+# Offered when the reader is one fprintd drives. Esc is No here.
 step_fingerprint() {
   screen "fingerprint"
   if ! ui_ask ui_confirm "Unlock with your fingerprint too?"; then
@@ -622,8 +616,8 @@ summary_lines() {
   echo "Account      $ACCOUNT ($FULLNAME) on $COMPUTER"
   echo "Time zone    $TIMEZONE, keyboard $KEYMAP"
   [[ -z $FINGERPRINT ]] || echo "Fingerprint  $FINGERPRINT"
-  if carry_ready; then
-    echo "Your things  $(carry_items | wc -l) from $(carry_value .source.host), put back after the install"
+  if carry_ready && [[ -n $(restorable_labels) ]]; then
+    echo "Your things  $(restorable_labels | paste -sd, - | sed 's/,/, /g') from $(carry_value .source.host)"
   fi
 }
 
@@ -852,12 +846,6 @@ fingerprint_reader() {
   [[ $devices == "ao "[1-9]* ]]
 }
 
-# Fingerprints carried from this same computer, which restore_carry puts back.
-carried_fingerprints() {
-  carry_ready && carry_items | awk -F'\t' '$1 == "fingerprints" { found = 1 } END { exit !found }' &&
-    [[ -n $(machine_hash) && $(machine_hash) == "$(carry_value .source.machine)" ]]
-}
-
 # One finger for the new account, enrolled here on the stick before anything
 # is installed; copy_fingerprints moves it into the new system. fprintd files
 # prints under a user name, so a stand-in for the account exists here too.
@@ -985,8 +973,8 @@ finish() {
 # A stick made by nova usb with things of yours on it has a second partition,
 # NOVA-DATA: LUKS2, then btrfs, then carry/ with one tar.zst per item, their
 # SHA-256 sums and manifest.json. It is opened read-only at $CARRY before the
-# network is needed, so carried Wi-Fi can get the live system online, and the
-# install puts each item back once the account exists.
+# questions, so the account can default to the old one's name, and the install
+# puts the SSH keys and the files back once the account exists.
 
 carry_ready() { [[ -r $CARRY/carry/manifest.json ]]; }
 
@@ -1068,43 +1056,6 @@ carry_unlock() {
   return 1
 }
 
-keyfile_value() { # NetworkManager keyfile, section, key
-  awk -v section="[$2]" -v key="$3" '
-    /^\[/ { inside = ($0 == section); next }
-    inside && index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' "$1"
-}
-
-# The carried Wi-Fi networks, written as iwd networks for the live system,
-# which joins a known network by itself. Personal (WPA2/WPA3) and open ones;
-# a network that needs a certificate waits for the installed system.
-carry_wifi_live() {
-  local file tmp conf ssid psk mgmt name
-  file=$(carry_items | awk -F'\t' '$1 == "wifi" { print $3 }')
-  [[ -n $file ]] || return 0
-  tmp=$(mktemp -d)
-  if ! zstd -dc "$CARRY/carry/$file" | tar -x -C "$tmp"; then
-    rm -rf -- "$tmp"
-    return 1
-  fi
-  mkdir -p "$IWD_DIR"
-  for conf in "$tmp"/etc/NetworkManager/system-connections/*.nmconnection; do
-    [[ -r $conf && $(keyfile_value "$conf" connection type) == wifi ]] || continue
-    ssid=$(keyfile_value "$conf" wifi ssid)
-    mgmt=$(keyfile_value "$conf" wifi-security key-mgmt)
-    psk=$(keyfile_value "$conf" wifi-security psk)
-    [[ -n $ssid ]] || continue
-    name=$(iwd_name "$ssid")
-    case $mgmt in
-      "") install -m 600 /dev/null "$IWD_DIR/$name.open" ;;
-      wpa-psk | sae)
-        [[ -n $psk ]] || continue
-        iwd_write_psk "$ssid" "$psk"
-        ;;
-    esac
-  done
-  rm -rf -- "$tmp"
-}
-
 unpack() { # archive directory [tar options]
   local archive=$1 dir=$2
   shift 2
@@ -1117,114 +1068,36 @@ target_ids() { # user -> uid:gid in the new system
   awk -F: -v u="$1" '$1 == u { print $3 ":" $4 }' "$TARGET/etc/passwd"
 }
 
-# A carried menu bar layout may be Omarchy's: its widgets are renamed to
-# Nova's, and the ones Nova does not have are dropped.
-adopt_shell_config() { # shell.json
-  local file=$1 ids
-  [[ -f $file ]] || return 0
-  ids=$({ find "$TARGET/usr/share/nova/shell/plugins" -name '*manifest.json' -exec jq -r .id {} + 2>/dev/null || true; } |
-    jq -Rsc 'split("\n") | map(select(. != ""))')
-  if jq --argjson ids "$ids" '
-      def nova: if type == "string" then sub("^[A-Za-z0-9_-]+\\."; "nova.") else . end;
-      def keep: map(select(type == "object") | .id |= nova | select(.id as $i | $ids | index([$i])));
-      (if (.bar.layout | type) == "object"
-        then .bar.layout |= with_entries(.value |= (if type == "array" then keep else . end)) else . end)
-      | (if (.plugins | type) == "array" then .plugins |= keep else . end)' \
-    "$file" >"$file.tmp" 2>>"$LOG"; then
-    mv -f -- "$file.tmp" "$file"
-  else
-    rm -f -- "$file.tmp" "$file"
-    warn "The carried menu bar layout could not be read; Nova's own is used."
-  fi
+# What this installer puts back: the SSH keys and the files picked. A stick
+# from an older nova usb may carry more (a browser, Wi-Fi networks, a package
+# list); that is left on the stick.
+restorable() { # id kind
+  [[ $1:$2 == ssh:home || $2 == folders || $2 == projects ]]
 }
 
-# The keyrings come with Chrome. A passwordless Default keyring (where Omarchy
-# keeps secrets) is moved into the login keyring at the first unlock by
-# nova-keyring-migrate; an old login keyring would not open with the new
-# password, so it is kept, renamed, for Passwords and Keys to open by hand.
-adopt_keyrings() { # keyrings-dir state-dir
-  local dir=$1 state=$2
-  [[ -d $dir ]] || return 0
-  [[ ! -f $dir/login.keyring ]] || mv -f -- "$dir/login.keyring" "$dir/carried-login.keyring"
-  if [[ -f $dir/Default_keyring.keyring ]]; then
-    mkdir -p "$state"
-    : >"$state/keyring-migrate-pending"
-  fi
+# The labels of what restore_carry puts back, one a line.
+restorable_labels() {
+  local id kind file label
+  while IFS=$'\t' read -r id kind file label; do
+    ! restorable "$id" "$kind" || echo "$label"
+  done < <(carry_items)
 }
 
-# Puts each carried item back. Home items are unpacked into the account and
-# handed to it; network connections go to NetworkManager; Bluetooth pairings
-# and fingerprints only on the computer they came from, being tied to its
-# adapter and its sensor; the package list waits for install_carried_packages.
+# Puts each carried item back into the new home, as it was in the old one,
+# and hands it all to the account.
 restore_carry() { # user
-  local user=$1 home=$TARGET/home/$1 id kind file label same=0 here there olduser
+  local user=$1 home=$TARGET/home/$1 id kind file label
   carry_ready || return 0
   say "Putting your things back"
-  here=$(machine_hash)
-  there=$(carry_value .source.machine)
-  [[ -n $here && $here == "$there" ]] && same=1
-  olduser=$(carry_value .source.user)
-  valid_username "$olduser" || olduser=
   while IFS=$'\t' read -r id kind file label; do
-    case $kind in
-      home | projects | folders)
-        info "$label"
-        unpack "$file" "$home" || warn "$label did not unpack completely; the log is in $LOG"
-        ;;
-      system)
-        if [[ $id == bluetooth || $id == fingerprints ]] && ((!same)); then
-          info "$label: left out, this is another computer"
-          continue
-        fi
-        info "$label"
-        if [[ $id == fingerprints && -n $olduser && $olduser != "$user" ]]; then
-          unpack "$file" "$TARGET" "--transform=s,^var/lib/fprint/$olduser/,var/lib/fprint/$user/," ||
-            warn "$label did not unpack; the log is in $LOG"
-        else
-          unpack "$file" "$TARGET" || warn "$label did not unpack; the log is in $LOG"
-        fi
-        ;;
-      list)
-        unpack "$file" "$home/.local/state/nova/carried" || warn "$label did not unpack; the log is in $LOG"
-        ;;
-    esac
-  done < <(carry_items)
-  adopt_shell_config "$home/.config/nova/shell.json"
-  adopt_keyrings "$home/.local/share/keyrings" "$home/.local/state/nova"
-  chown -R "$(target_ids "$user")" "$home"
-}
-
-# The carried package list, once the system is there: what the release's
-# repositories have is installed, and the rest (AUR packages, ones Arch has
-# since dropped) is written to not-installed.txt next to the list.
-install_carried_packages() { # user
-  local user=$1 dir=$TARGET/home/$1/.local/state/nova/carried available wanted=() name
-  [[ -s $dir/packages.txt ]] || return 0
-  if ! curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/; then
-    warn "No internet: your extra packages are listed in ~/.local/state/nova/carried/ for later."
-    return 0
-  fi
-  say "Installing your extra packages"
-  in_target pacman -Sy || {
-    warn "Could not reach the repositories; your packages are listed in ~/.local/state/nova/carried/."
-    return 0
-  }
-  available=$(arch-chroot "$TARGET" pacman -Slq 2>>"$LOG" | sort -u)
-  mapfile -t wanted < <(comm -12 <(sort -u "$dir/packages.txt") <(echo "$available"))
-  comm -23 <(sort -u "$dir/packages.txt") <(echo "$available") >"$dir/not-installed.txt"
-  if ((${#wanted[@]})); then
-    info "${#wanted[@]} packages"
-    # One transaction first; if one of them conflicts with Nova's, each on its
-    # own, so the rest still go in.
-    if ! in_target pacman -S --needed --noconfirm "${wanted[@]}"; then
-      for name in "${wanted[@]}"; do
-        in_target pacman -S --needed --noconfirm "$name" || echo "$name" >>"$dir/not-installed.txt"
-      done
+    if ! restorable "$id" "$kind"; then
+      info "$label: left out, this installer brings back only SSH keys and files"
+      continue
     fi
-  fi
-  [[ -s $dir/not-installed.txt ]] &&
-    info "$(wc -l <"$dir/not-installed.txt") were left out; they are listed in ~/.local/state/nova/carried/not-installed.txt"
-  chown -R "$(target_ids "$user")" "$dir"
+    info "$label"
+    unpack "$file" "$home" || warn "$label did not unpack completely; the log is in $LOG"
+  done < <(carry_items)
+  chown -R "$(target_ids "$user")" "$home"
 }
 
 usage() {
@@ -1253,8 +1126,7 @@ main() {
     --unlock)
       ((EUID == 0)) || die "run me as root."
       rm -f -- "$CARRY_DECLINED"
-      carry_unlock || return 0
-      carry_wifi_live || warn "The carried Wi-Fi networks could not be read."
+      carry_unlock || true
       return 0
       ;;
     --keymap)
@@ -1293,22 +1165,18 @@ main() {
   fi
 
   # Things carried on the stick: opened now (nova-install-start usually already
-  # has, for their Wi-Fi), put back once the account exists.
+  # has), put back once the account exists.
   carry_ready || [[ -e $CARRY_DECLINED ]] || carry_unlock || true
 
   local kernel profile
   kernel=$(main_kernel)
   profile=$(hardware_profile)
-  # Only a reader fprintd can drive gets fprintd in the new system; prints
-  # carried from this computer need no enrolling.
+  # Only a reader fprintd can drive gets fprintd in the new system, and the
+  # offer to enroll a finger.
   local extra=() offer_fingerprint=no
   if fingerprint_reader; then
     extra+=(fprintd)
-    if carried_fingerprints; then
-      FINGERPRINT="carried from $(carry_value .source.host)"
-    else
-      offer_fingerprint=yes
-    fi
+    offer_fingerprint=yes
   fi
   release_target
 
@@ -1349,7 +1217,6 @@ main() {
   restore_carry "$ACCOUNT"
   install_bootloader
   [[ $(answer_or apps yes) == no ]] || install_apps "$ACCOUNT"
-  install_carried_packages "$ACCOUNT"
   enable_services
   run_after
   finish

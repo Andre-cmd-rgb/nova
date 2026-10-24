@@ -1,28 +1,26 @@
 #!/bin/bash
 
 # nova:summary=Make a Nova installer stick, and carry your things over on it
-# nova:args=[--preset] [--iso <file>] [--dry-run]
+# nova:args=[--iso <file>] [--dry-run]
 #
 # nova-usb: make a Nova installer stick, and carry your things over on it.
 #
 # Runs on any Arch-based Linux, Nova or not, as you; sudo is asked for once, at
 # the end, to write the stick. Every question comes first: the stick, then
-# Clean (only the installer), Custom (pick what to bring) or Last time (the
-# choices saved in ~/.config/nova/usb.toml). Nothing touches the stick until
-# its device name is typed back.
+# Clean (only the installer) or Custom: your SSH keys, and the files and
+# folders of your home you pick. Nothing touches the stick until its device
+# name is typed back.
 #
 # The stick: a FAT partition with the installer (the ISO's own files, which
 # archiso boots from as they are) and, if asked for, every package an install
 # can need, so it installs without a network. When anything is carried, a
-# second, LUKS2-encrypted btrfs partition holds one compressed archive per item
-# and their SHA-256 sums; the installer asks for its passphrase and puts it all
-# back. Everything written is read back from the stick and checked before it is
-# done.
-# Packages download to local disk before the stick is erased, then copy in
-# order. If local disk space is short, they download straight to the stick.
+# second, LUKS2-encrypted btrfs partition holds them, compressed, with their
+# SHA-256 sums; the installer asks for its passphrase and puts them back in
+# your new home. Packages download to this computer before the stick is
+# erased, or straight to the stick when there is no room here. Everything
+# written is read back from the stick and checked before it is done.
 #
 #   nova usb                 the wizard
-#   nova usb --preset        last time's choices; asks only for the stick and passphrase
 #   nova usb --iso <file>    this ISO rather than the latest release's (packages
 #                            on the stick then need the release's release.toml
 #                            and packages.txt next to it); taken as it is, with
@@ -36,14 +34,10 @@
 set -euo pipefail
 
 USB_HOME=${NOVA_USB_HOME:-$HOME}
-PRESET=${NOVA_USB_PRESET:-${XDG_CONFIG_HOME:-$USB_HOME/.config}/nova/usb.toml}
 CACHE=${NOVA_USB_CACHE:-${XDG_CACHE_HOME:-$USB_HOME/.cache}/nova/usb}
 RELEASES=${NOVA_USB_RELEASES:-https://api.github.com/repos/Andre-cmd-rgb/nova/releases}
 SYSROOT=${NOVA_USB_SYSROOT:-}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
-# The package lists of the system being left, so "your extra packages" are the
-# ones you added rather than everything it came with.
-OLD_PACKAGE_LISTS=${NOVA_USB_OLD_PACKAGE_LISTS:-/usr/share/omarchy/install}
 
 MiB=$((1024 * 1024))
 MIN_STICK_BYTES=$((2 * 1024 * MiB))
@@ -100,110 +94,45 @@ partition_path() {
 
 # ------------------------------------------------------------- what to carry
 
-# What Custom offers, one item per line, tab-separated: id, what the checklist
-# says (no commas: the checklist's gum splits on them), the kind, and the
-# paths, |-separated. "home" paths are relative to your home; "system" ones are
-# absolute and read through sudo; "list", "projects" and "folders" are made
-# from your answers.
-catalog() {
-  cat <<'EOF'
-ssh	SSH keys	home	.ssh
-gnupg	GnuPG keys	home	.gnupg
-git	Git and GitHub CLI settings	home	.gitconfig|.config/git|.config/gh
-chrome	Chrome signed in: its profile and the keyring that unlocks it	home	.config/google-chrome|.local/share/keyrings
-vscode	VS Code settings and extensions	home	.config/Code/User|.vscode/extensions
-ai	Claude Code and Codex	home	.claude|.claude.json|.codex
-t3	T3 Code	home	.t3|.config/t3code|.config/t3code-v2
-mise	mise tools	home	.config/mise
-history	Screen Time and Battery Life and mobile data history	home	.local/state/nova-screentime|.local/state/nova-batterylife|.local/state/nova-mobile-data|.local/state/nova-mobile|.local/state/omarchy-screentime|.local/state/omarchy-batterylife|.local/state/omarchy-mobile-data|.local/state/omarchy-mobile
-bar	Menu bar layout	home	.config/nova/shell.json|.config/omarchy/shell.json
-backgrounds	Your own backgrounds	home	.config/nova/backgrounds
-shell	Shell history	home	.bash_history
-wifi	Network connections with their Wi-Fi passwords	system	/etc/NetworkManager/system-connections
-bluetooth	Bluetooth pairings (back on this same computer only)	system	/var/lib/bluetooth
-fingerprints	Fingerprints (back on this same computer only)	system	/var/lib/fprint
-packages	Your extra packages installed again	list	-
-projects	Git repositories: their files and history but not what git ignores	projects	-
-folders	Whole folders such as Documents or Pictures	folders	-
-EOF
-}
-
-# Ticked when Custom starts: everything that needs no further answer.
-DEFAULT_ITEMS=(ssh gnupg git chrome vscode ai t3 mise history bar backgrounds shell wifi bluetooth fingerprints)
-
-item_field() { # id field(2 label, 3 kind, 4 paths)
-  catalog | awk -F'\t' -v id="$1" -v f="$2" '$1 == id { print $f; exit }'
-}
-
-item_paths() { # id -> its paths, one per line
-  local paths
-  paths=$(item_field "$1" 4)
-  [[ $paths != - ]] || return 0
-  tr '|' '\n' <<<"$paths"
-}
-
-valid_item() { [[ -n $(item_field "$1" 3) ]]; }
-
-# What rebuilds or downloads itself again: a browser's and an editor's caches,
-# Chrome's site storage (File System holds what sites downloaded, often
-# gigabytes) and the components it fetches, Codex's own runtime; and the lock
-# files that would make Chrome think its profile is open on another computer.
-# Cookies, passwords, extensions and IndexedDB stay, so Chrome is still signed
-# in.
-item_excludes() {
+# Two things can come along: your SSH keys, and files and folders you pick
+# from your home. The installer's manifest calls them "ssh" (kind home,
+# unpacked into the new home as it is) and "files" (kind folders, the paths
+# in the plan's files.list).
+item_label() { # id
   case $1 in
-    chrome) printf '%s\n' Cache 'Code Cache' GPUCache ShaderCache GrShaderCache GraphiteDawnCache \
-      DawnGraphiteCache DawnWebGPUCache component_crx_cache 'File System' 'Service Worker' \
-      screen_ai optimization_guide_model_store OptGuideOnDeviceModel WasmTtsEngine \
-      'Crash Reports' Crashpad SingletonLock SingletonSocket SingletonCookie ;;
-    vscode) printf '%s\n' workspaceStorage CachedExtensionVSIXs ;;
-    ai) printf '%s\n' .codex/packages ;;
-    gnupg) printf '%s\n' 'S.*' '*.lock' ;;
+    ssh) echo "SSH keys" ;;
+    files) echo "Files and folders" ;;
   esac
 }
 
-# Omarchy's names for the same things, renamed on the way in, so the installer
-# only ever sees Nova's.
-item_transform() {
+item_kind() { # id
   case $1 in
-    history) echo 's,^\.local/state/omarchy-,.local/state/nova-,' ;;
-    bar) echo 's,^\.config/omarchy/shell\.json$,.config/nova/shell.json,' ;;
+    ssh) echo home ;;
+    files) echo folders ;;
   esac
 }
+
+valid_item() { [[ -n $(item_kind "$1") ]]; }
 
 # Bytes an item will take, roughly (uncompressed, so never an underestimate).
-# System items cannot be read without root and are a few kilobytes.
 item_bytes() { # id plan
-  local id=$1 plan=$2 kind path bytes=0 excludes=() pattern
-  kind=$(item_field "$id" 3)
-  case $kind in
-    home)
-      while IFS= read -r pattern; do excludes+=("--exclude=$pattern"); done < <(item_excludes "$id")
-      while IFS= read -r path; do
-        [[ -e $USB_HOME/$path ]] || continue
-        bytes=$((bytes + $(du -sb "${excludes[@]}" -- "$USB_HOME/$path" 2>/dev/null | awk '{ print $1 }')))
-      done < <(item_paths "$id")
-      ;;
-    system) bytes=$MiB ;;
-    list) bytes=$(cat "$plan/packages.txt" "$plan/aur.txt" 2>/dev/null | wc -c) ;;
-    projects)
-      [[ -s $plan/projects.files ]] && bytes=$(cd "$USB_HOME" && du -cb --files0-from="$plan/projects.files" 2>/dev/null | awk 'END { print $1 }')
-      [[ -s $plan/projects.gitdirs ]] && bytes=$((bytes + $(cd "$USB_HOME" && du -cb --files0-from="$plan/projects.gitdirs" 2>/dev/null | awk 'END { print $1 }')))
-      ;;
-    folders)
-      if [[ -s $plan/folders.list ]]; then
-        bytes=$(cd "$USB_HOME" && du -cb --files0-from="$plan/folders.list" 2>/dev/null | awk 'END { print $1 }')
-        bytes=$((bytes - $(cd "$USB_HOME" && du -cb --files0-from=<(tagged_caches "$plan/folders.list") 2>/dev/null | awk 'END { print $1 }')))
+  local bytes=0
+  case $1 in
+    ssh) [[ ! -e $USB_HOME/.ssh ]] || bytes=$(du -sb -- "$USB_HOME/.ssh" 2>/dev/null | awk '{ print $1 }') ;;
+    files)
+      if [[ -s $2/files.list ]]; then
+        bytes=$(cd "$USB_HOME" && du -cb --files0-from="$2/files.list" 2>/dev/null | awk 'END { print $1 }')
+        bytes=$((bytes - $(cd "$USB_HOME" && du -cb --files0-from=<(tagged_caches "$2/files.list") 2>/dev/null | awk 'END { print $1 }')))
       fi
       ;;
   esac
   echo "${bytes:-0}"
 }
 
-# The directories in the folders listed that a program tagged as its cache with
+# The directories in the paths listed that a program tagged as its cache with
 # a CACHEDIR.TAG (a Rust build's target, pytest's), which it makes again: tar
-# leaves them out of a whole folder, as backup programs do. The outermost only,
-# home-relative, NUL-separated.
+# leaves them out, as backup programs do. The outermost only, home-relative,
+# NUL-separated.
 tagged_caches() { # list
   local dir
   (cd "$USB_HOME" && find -files0-from "$1" -type d -exec test -f '{}/CACHEDIR.TAG' ';' -prune -print0 2>/dev/null) |
@@ -216,120 +145,53 @@ tagged_caches() { # list
 
 # An item with nothing to carry on this computer is left off the stick.
 item_present() { # id plan
-  local id=$1 plan=$2 path
-  case $(item_field "$id" 3) in
-    home | system)
-      while IFS= read -r path; do
-        if [[ $path == /* ]]; then path=$SYSROOT$path; else path=$USB_HOME/$path; fi
-        [[ -e $path ]] && return 0
-      done < <(item_paths "$id")
-      return 1
-      ;;
-    list) [[ -s $plan/packages.txt || -s $plan/aur.txt ]] ;;
-    projects) [[ -s $plan/projects.gitdirs ]] ;;
-    folders) [[ -s $plan/folders.list ]] ;;
+  case $1 in
+    ssh) [[ -e $USB_HOME/.ssh ]] ;;
+    files) [[ -s $2/files.list ]] ;;
+    *) return 1 ;;
   esac
 }
 
-# A folder you named, as a path inside your home, or nothing if it is not one.
+# A file or folder you named, as a path inside your home, or nothing if it is
+# not one.
 home_relative() {
-  local dir=${1%/}
-  dir=${dir/#\~/$USB_HOME}
-  [[ $dir == /* ]] || dir=$USB_HOME/$dir
-  dir=$(realpath -e -- "$dir" 2>/dev/null) || return 1
-  [[ -d $dir && $dir == "$USB_HOME"/* ]] || return 1
-  echo "${dir#"$USB_HOME"/}"
+  local path=${1%/} home
+  home=$(realpath -e -- "$USB_HOME") || return 1
+  path=${path/#\~/$USB_HOME}
+  [[ $path == /* ]] || path=$USB_HOME/$path
+  path=$(realpath -e -- "$path" 2>/dev/null) || return 1
+  [[ $path == "$home"/* ]] || return 1
+  echo "${path#"$home"/}"
 }
 
-# The git repositories under a folder (inside your home), outermost first.
-find_repos() { # home-relative dir
-  (cd "$USB_HOME" && find "$1" -maxdepth 6 \( -name node_modules -o -name .cache \) -prune -o -name .git -prune -print 2>/dev/null) |
-    sed 's,/\.git$,,' | sort
+# What the checklist offers: the files and folders at the top of your home,
+# not the hidden ones, as "bytes<TAB>name" by name. A name with a tab or a
+# newline in it cannot travel in a list; it can still be typed. A folder du
+# cannot read all of (one a root build left behind) still gets its size.
+home_entries() {
+  local name
+  (cd "$USB_HOME" && find . -mindepth 1 -maxdepth 1 ! -name '.*' -printf '%P\0' 2>/dev/null) |
+    while IFS= read -r -d '' name; do
+      [[ $name == *[$'\t\n']* ]] || printf '%s\0' "$name"
+    done |
+    (cd "$USB_HOME" && du -sb --files0-from=- 2>/dev/null || true) | LC_ALL=C sort -f -t $'\t' -k 2
 }
 
-# What git would call the repository: tracked files, and new ones it does not
-# ignore. Files deleted from the work tree but not from the index are skipped,
-# and directories are left to the files in them. NUL-separated, home-relative.
-# A repository git cannot read is carried as its .git alone, with a word.
-repo_files() { # home-relative repo
-  local repo=$1 f
-  { git -C "$USB_HOME/$repo" ls-files -z --cached --others --exclude-standard 2>/dev/null ||
-    warn "git could not read ~/$repo; only its .git is carried."; } |
-    while IFS= read -r -d '' f; do
-      if [[ -L $USB_HOME/$repo/$f || -f $USB_HOME/$repo/$f ]]; then printf '%s\0' "$repo/$f"; fi
+# The plan's files.list, which the writer reads: the paths picked,
+# home-relative and NUL-separated, each once, less any inside another picked
+# path.
+list_files() { # plan
+  local path other inside
+  local -A seen=()
+  : >"$1/files.list"
+  for path in "${FILE_PATHS[@]}"; do
+    inside=0
+    for other in "${FILE_PATHS[@]}"; do
+      [[ $path != "$other"/* ]] || inside=1
     done
-}
-
-# projects.files (no recursion) and projects.gitdirs (recursed): every
-# repository under the folders named in PROJECT_DIRS.
-list_projects() { # plan
-  local plan=$1 dir repo
-  : >"$plan/projects.files"
-  : >"$plan/projects.gitdirs"
-  for dir in "${PROJECT_DIRS[@]}"; do
-    while IFS= read -r repo; do
-      repo_files "$repo" >>"$plan/projects.files"
-      printf '%s\0' "$repo/.git" >>"$plan/projects.gitdirs"
-    done < <(find_repos "$dir")
+    ((inside)) || [[ -n ${seen[$path]:-} ]] || printf '%s\0' "$path" >>"$1/files.list"
+    seen[$path]=1
   done
-}
-
-list_folders() { # plan
-  local plan=$1 dir
-  : >"$plan/folders.list"
-  for dir in "${FOLDER_DIRS[@]}"; do printf '%s\0' "$dir" >>"$plan/folders.list"; done
-}
-
-# Explicitly installed packages minus what the old system came with and what
-# the installer chooses for the hardware itself. Packages from the AUR go to
-# their own list: pacman cannot install them, so the installer leaves a note.
-list_packages() { # plan
-  local plan=$1 base
-  base=$(cat "$OLD_PACKAGE_LISTS"/*.packages 2>/dev/null | sed 's/#.*//; s/[[:space:]]//g; /^$/d' | sort -u)
-  local skip='^(base|base-devel|linux(-lts|-zen|-hardened)?(-headers)?|.*-ucode|nvidia.*|nova.*|omarchy.*|limine.*|plymouth.*|sddm.*|google-chrome|visual-studio-code-bin)$'
-  comm -23 <(pacman -Qqen 2>/dev/null | sort -u) <(echo "$base") | grep -Ev "$skip" >"$plan/packages.txt" || true
-  comm -23 <(pacman -Qqem 2>/dev/null | sort -u) <(echo "$base") | grep -Ev "$skip" >"$plan/aur.txt" || true
-}
-
-# ---------------------------------------------------------------- the preset
-
-# usb.toml: three arrays and a flag. Its strings are written as JSON, which is
-# what TOML's basic strings are, so jq reads them back.
-write_preset() { # items offline
-  local items=$1 offline=$2
-  mkdir -p "$(dirname "$PRESET")"
-  {
-    echo '# nova usb: what "Last time" brings. Written by nova usb; folders are inside your home.'
-    printf 'items = %s\n' "$(printf '%s\n' "$items" | jq -Rc 'split(" ") | map(select(. != ""))')"
-    printf 'projects = %s\n' "$(printf '%s\n' "${PROJECT_DIRS[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')"
-    printf 'folders = %s\n' "$(printf '%s\n' "${FOLDER_DIRS[@]}" | jq -Rsc 'split("\n") | map(select(. != ""))')"
-    printf 'offline = %s\n' "$( ((offline)) && echo true || echo false)"
-  } >"$PRESET.tmp"
-  mv -f "$PRESET.tmp" "$PRESET"
-}
-
-preset_value() { # key -> the raw value
-  sed -n "s/^$1 = //p" "$PRESET" | awk 'NR == 1'
-}
-
-# Sets ITEMS, PROJECT_DIRS, FOLDER_DIRS and OFFLINE from the preset. Unknown
-# items and folders that are gone are dropped, with a word about each.
-read_preset() {
-  [[ -r $PRESET ]] || return 1
-  local id dir rel
-  ITEMS=() PROJECT_DIRS=() FOLDER_DIRS=()
-  while IFS= read -r id; do
-    if valid_item "$id"; then ITEMS+=("$id"); else warn "usb.toml: no item called '$id', skipped."; fi
-  done < <(preset_value items | jq -r '.[]' 2>/dev/null)
-  while IFS= read -r dir; do
-    if rel=$(home_relative "$dir"); then PROJECT_DIRS+=("$rel"); else warn "usb.toml: no folder $dir, skipped."; fi
-  done < <(preset_value projects | jq -r '.[]' 2>/dev/null)
-  while IFS= read -r dir; do
-    if rel=$(home_relative "$dir"); then FOLDER_DIRS+=("$rel"); else warn "usb.toml: no folder $dir, skipped."; fi
-  done < <(preset_value folders | jq -r '.[]' 2>/dev/null)
-  OFFLINE=0
-  [[ $(preset_value offline) == true ]] && OFFLINE=1
-  return 0
 }
 
 # ----------------------------------------------------------------- the stick
@@ -515,26 +377,18 @@ list_offline_packages() { # release.toml packages.txt plan
 # One question a screen, under the wordmark: Esc goes back a question, Ctrl+C
 # stops with nothing written. Each step_ function asks its question and returns
 # 1 for Esc. The answers are globals: STICK (its stick_candidates line), MODE
-# (clean, custom or preset), ITEMS, PROJECT_DIRS, FOLDER_DIRS, OFFLINE and
-# PASSPHRASE. PLAN is the folder the writer reads its orders from.
+# (clean or custom), what the checklist has ticked (SSH_TICKED, PICKED_PATHS,
+# OTHER_TICKED) and the paths typed (TYPED_PATHS), which make ITEMS and
+# FILE_PATHS, then OFFLINE and PASSPHRASE. PLAN is the folder the writer reads
+# its orders from.
 
 declare -gA SIZES=()
-STICK='' MODE='' PASSPHRASE='' PLAN='' ISO='' RELEASE_DIR='' NO_OFFLINE='' DRY=0 PRESET_ONLY=0
-ITEMS=() PROJECT_DIRS=() FOLDER_DIRS=() CARRIED=() OFFLINE=1
+STICK='' MODE='' PASSPHRASE='' PLAN='' ISO='' RELEASE_DIR='' NO_OFFLINE='' DRY=0 HOME_LIST=''
+ITEMS=() PICKED_PATHS=() TYPED_PATHS=() FILE_PATHS=() CARRIED=() OFFLINE=1 SSH_TICKED=0 OTHER_TICKED=0
 UI_STOPPED="nova usb stopped; nothing was written."
 
 screen() { # [what this question is about]
   ui_header "Make a Nova stick${1:+  ·  $1}"
-}
-
-ticked() { [[ " ${ITEMS[*]} " == *" $1 "* ]]; }
-
-measure() { # id plan
-  case $1 in
-    projects) list_projects "$2" ;;
-    folders) list_folders "$2" ;;
-  esac
-  SIZES[$1]=$(item_bytes "$1" "$2")
 }
 
 # The items that are ticked and have something to carry.
@@ -544,14 +398,6 @@ carried_items() { # plan
     item_present "$id" "$1" && echo "$id"
   done
   return 0
-}
-
-# Last time's choices, and the lists they need.
-load_preset() {
-  read_preset || return 1
-  ! ticked packages || list_packages "$PLAN"
-  list_projects "$PLAN"
-  list_folders "$PLAN"
 }
 
 # The removable disks, each with what is on it now, so a backup drive is
@@ -583,9 +429,8 @@ step_stick() {
 }
 
 step_mode() {
-  local options=() option selected='' before=$MODE id
+  local options=() option selected='' before=$MODE
   options=("Clean: only the installer"$'\t'clean "Custom: the installer and things of yours"$'\t'custom)
-  [[ ! -r $PRESET ]] || options+=("Last time: the same as before"$'\t'preset)
   for option in "${options[@]}"; do
     [[ ${option#*$'\t'} != "${MODE:-custom}" ]] || selected=${option%$'\t'*}
   done
@@ -593,87 +438,94 @@ step_mode() {
   ui_ask ui_choose "What goes on the stick?" "$selected" "${options[@]}" || return 1
   MODE=$REPLY
   case $MODE in
-    clean) ITEMS=() ;;
-    preset) load_preset ;;
+    clean) ITEMS=() FILE_PATHS=() ;;
     custom)
       [[ $before != custom ]] || return 0
-      ITEMS=("${DEFAULT_ITEMS[@]}") PROJECT_DIRS=() FOLDER_DIRS=() OFFLINE=1
-      ui_note "Measuring what is here..."
-      while IFS=$'\t' read -r id _ kind _; do
-        [[ $kind != home && $kind != system ]] || [[ -n ${SIZES[$id]:-} ]] || measure "$id" "$PLAN"
-      done < <(catalog)
+      ITEMS=() PICKED_PATHS=() TYPED_PATHS=() FILE_PATHS=() OFFLINE=1 SSH_TICKED=0 OTHER_TICKED=0
+      [[ ! -e $USB_HOME/.ssh ]] || SSH_TICKED=1
       ;;
   esac
 }
 
-# The checklist, every item with its size; then the folders for the items that
-# need them, and a look at the package list.
+# The checklist: your SSH keys and what is at the top of your home, each with
+# its size, and a way to name something further in; Esc on that comes back
+# to the checklist.
 step_items() {
   while :; do
     checklist || return 1
-    item_details && return 0
+    if ((!OTHER_TICKED)); then
+      TYPED_PATHS=()
+      break
+    fi
+    ask_paths && break
   done
-}
-
-checklist() {
-  local id label kind size options=() selected=()
-  while IFS=$'\t' read -r id label kind _; do
-    size=''
-    if [[ $kind == home || $kind == system ]] && ! item_present "$id" "$PLAN"; then
-      size="nothing here"
-    elif [[ -n ${SIZES[$id]:-} ]]; then
-      size=$(human_size "${SIZES[$id]}")
-    fi
-    [[ -z $size ]] || label=$(printf '%-66s %s' "$label" "$size")
-    options+=("$label"$'\t'"$id")
-    ! ticked "$id" || selected+=("$label")
-  done < <(catalog)
-  screen "what to bring"
-  ui_ask ui_choose_many "What to bring? Tab ticks and unticks, Enter goes on." \
-    "$(printf '%s\n' "${selected[@]}")" "${options[@]}" || return 1
   ITEMS=()
-  [[ -z $REPLY ]] || mapfile -t ITEMS <<<"$REPLY"
-}
-
-# Returns 1 for Esc, back to the checklist.
-item_details() {
-  if ticked projects; then
-    ask_folders PROJECT_DIRS "Which folders hold your git repositories?" Projects || return 1
+  ((!SSH_TICKED)) || ITEMS=(ssh)
+  FILE_PATHS=("${PICKED_PATHS[@]}" "${TYPED_PATHS[@]}")
+  list_files "$PLAN"
+  if [[ -s $PLAN/files.list ]]; then
+    ITEMS+=(files)
     ui_note "Measuring..."
-    measure projects "$PLAN"
-  fi
-  if ticked folders; then
-    ask_folders FOLDER_DIRS "Which folders, whole?" Documents || return 1
-    ui_note "Measuring..."
-    measure folders "$PLAN"
-  fi
-  if ticked packages; then
-    list_packages "$PLAN"
-    measure packages "$PLAN"
-    screen "your extra packages"
-    ui_note "$(wc -l <"$PLAN/packages.txt") from Arch, installed again; $(wc -l <"$PLAN/aur.txt") from the AUR, listed for you."
-    if ui_ask ui_confirm "Look over the list first?" no; then
-      "${EDITOR:-nano}" "$PLAN/packages.txt" </dev/tty >/dev/tty || true
-    fi
+    SIZES[files]=$(item_bytes files "$PLAN")
   fi
   return 0
 }
 
-ask_folders() { # array-name question default
-  local -n dirs=$1
-  local entered=() dir rel defaults=$3
-  if ((${#dirs[@]})); then
-    defaults=$(printf '%s, ' "${dirs[@]}")
+checklist() {
+  local options=() selected=() bytes name label value ssh_label='' other_label
+  local -A picked=()
+  if [[ -z $HOME_LIST ]]; then
+    screen "what to bring"
+    ui_note "Measuring what is in your home..."
+    HOME_LIST=$(home_entries)$'\n'
+  fi
+  for name in "${PICKED_PATHS[@]}"; do picked[$name]=1; done
+  if [[ -e $USB_HOME/.ssh ]]; then
+    [[ -n ${SIZES[ssh]:-} ]] || SIZES[ssh]=$(item_bytes ssh "$PLAN")
+    ssh_label=$(printf '%-52s %s' "SSH keys" "$(human_size "${SIZES[ssh]}")")
+    options+=("$ssh_label"$'\t'item:ssh)
+    ((!SSH_TICKED)) || selected+=("$ssh_label")
+  fi
+  while IFS=$'\t' read -r bytes name; do
+    [[ -n $name ]] || continue
+    label=$name
+    [[ ! -d $USB_HOME/$name || -L $USB_HOME/$name ]] || label+=/
+    # gum splits its selection on commas.
+    label=$(printf '%-52s %s' "${label//,/ }" "$(human_size "$bytes")")
+    options+=("$label"$'\t'"path:$name")
+    [[ -z ${picked[$name]:-} ]] || selected+=("$label")
+  done <<<"$HOME_LIST"
+  other_label="Something further in, typed by hand"
+  options+=("$other_label"$'\t'other)
+  ((${#TYPED_PATHS[@]} == 0)) || selected+=("$other_label")
+  screen "what to bring"
+  ui_ask ui_choose_many "What to bring? Tab ticks and unticks, Enter goes on." \
+    "$(printf '%s\n' "${selected[@]}")" "${options[@]}" || return 1
+  PICKED_PATHS=() SSH_TICKED=0 OTHER_TICKED=0
+  while IFS= read -r value; do
+    case $value in
+      item:ssh) SSH_TICKED=1 ;;
+      path:*) PICKED_PATHS+=("${value#path:}") ;;
+      other) OTHER_TICKED=1 ;;
+    esac
+  done <<<"$REPLY"
+}
+
+# Files and folders anywhere in your home, typed. Returns 1 for Esc.
+ask_paths() {
+  local entered=() path rel defaults=''
+  if ((${#TYPED_PATHS[@]})); then
+    defaults=$(printf '%s, ' "${TYPED_PATHS[@]}")
     defaults=${defaults%, }
   fi
-  screen "folders"
-  ui_ask ui_input "$2" "$defaults" "inside your home, separated by commas" || return 1
-  dirs=()
+  screen "something further in"
+  ui_ask ui_input "Which files or folders?" "$defaults" "inside your home, separated by commas" || return 1
+  TYPED_PATHS=()
   IFS=, read -ra entered <<<"$REPLY"
-  for dir in "${entered[@]}"; do
-    dir=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$dir")
-    [[ -n $dir ]] || continue
-    if rel=$(home_relative "$dir"); then dirs+=("$rel"); else warn "No folder $dir in your home, skipped."; fi
+  for path in "${entered[@]}"; do
+    path=$(sed 's/^[[:space:]]*//; s/[[:space:]]*$//' <<<"$path")
+    [[ -n $path ]] || continue
+    if rel=$(home_relative "$path"); then TYPED_PATHS+=("$rel"); else warn "Nothing called $path in your home, skipped."; fi
   done
 }
 
@@ -698,7 +550,7 @@ step_passphrase() {
 # What happens to which disk, and whether it fits; then the stick's name typed
 # back. Writes the plan the writer reads.
 step_summary() {
-  local stick size model serial id label line tool tools offline_bytes=0 carry_bytes=0 iso_bytes p1_mib need lines=()
+  local stick size model serial id line tool tools offline_bytes=0 carry_bytes=0 iso_bytes p1_mib need lines=() shown path
   IFS=$'\t' read -r stick size model serial <<<"$STICK"
   [[ -z $NO_OFFLINE ]] || OFFLINE=0
 
@@ -741,10 +593,18 @@ step_summary() {
   if ((${#CARRIED[@]})); then
     lines+=("Encrypted  $(human_size "$carry_bytes") of yours")
     for id in "${CARRIED[@]}"; do
-      # The label's head: "Chrome signed in", "Bluetooth pairings".
-      label=$(item_field "$id" 2)
-      label=${label%%[:(]*}
-      lines+=("$(printf '           %-34s %s' "${label% }" "$(human_size "${SIZES[$id]}")")")
+      lines+=("$(printf '           %-34s %s' "$(item_label "$id")" "$(human_size "${SIZES[$id]}")")")
+      [[ $id == files ]] || continue
+      # The first few by name, so a wrong pick shows before anything is erased.
+      shown=0
+      while IFS= read -r -d '' path; do
+        if ((shown == 5)); then
+          lines+=("             and $(($(tr -cd '\0' <"$PLAN/files.list" | wc -c) - 5)) more")
+          break
+        fi
+        lines+=("             ~/$path")
+        shown=$((shown + 1))
+      done <"$PLAN/files.list"
     done
   fi
   lines+=("" "$(ui_bar "$need" "$size" 34)  $(human_size "$need") of $(human_size "$size")")
@@ -752,9 +612,6 @@ step_summary() {
   ui_box "${lines[@]}"
   [[ -z $NO_OFFLINE ]] || ui_note "No packages on the stick: $NO_OFFLINE."
   ((size <= 256 * 1024 * MiB)) || ui_warn "That is a big disk for a stick. Make sure it is not a backup drive."
-  if [[ " ${CARRIED[*]} " == *" chrome "* ]] && pgrep -x chrome >/dev/null 2>&1; then
-    ui_warn "Chrome is open; quit it before going on, or its profile is copied mid-write."
-  fi
   if ((need > size)); then
     ui_warn "That is more than the stick holds."
     ui_ask ui_confirm "Go back and bring less?" && return 1
@@ -779,10 +636,9 @@ wizard() {
   local steps=() i=0
   while :; do
     mapfile -t CARRIED < <(carried_items "$PLAN")
-    steps=(stick)
-    ((PRESET_ONLY)) || steps+=(mode)
+    steps=(stick mode)
     [[ $MODE != custom ]] || steps+=(items)
-    [[ $MODE == preset || -n $NO_OFFLINE ]] || steps+=(offline)
+    [[ -n $NO_OFFLINE ]] || steps+=(offline)
     ((${#CARRIED[@]} == 0)) || steps+=(passphrase)
     steps+=(summary)
     ((i < ${#steps[@]})) || return 0
@@ -830,7 +686,7 @@ installer_mib() { # iso-bytes package-bytes
 }
 
 main() {
-  local preset=0 tool self
+  local tool self
   while (($#)); do
     case $1 in
       write)
@@ -838,7 +694,6 @@ main() {
         write_stick "$@"
         return
         ;;
-      --preset) preset=1 ;;
       --iso)
         ISO=${2:?--iso needs a file}
         shift
@@ -853,7 +708,7 @@ main() {
     shift
   done
   ((EUID != 0)) || die "run nova usb as yourself: it asks sudo for the writing, and reads your home as you."
-  for tool in lsblk jq curl sha256sum du git gpg gpgv; do
+  for tool in lsblk jq curl sha256sum du gpg gpgv; do
     command -v "$tool" >/dev/null || die "nova usb needs $tool"
   done
   command -v gum >/dev/null || die "nova usb needs gum: sudo pacman -S gum"
@@ -879,12 +734,7 @@ main() {
     NO_OFFLINE="that needs pacman and fakeroot on this system"
   fi
 
-  if ((preset)); then
-    load_preset || die "no saved choices at $PRESET yet; run nova usb without --preset once."
-    MODE=preset PRESET_ONLY=1
-  fi
   wizard
-  [[ $MODE == clean ]] || write_preset "${ITEMS[*]}" "$OFFLINE"
 
   if ((DRY)); then
     say "Dry run: nothing was written. The plan:"
@@ -1081,41 +931,25 @@ still_there() { # home list
 # Chrome, say) is a warning; a file that cannot be read at all, which is how
 # btrfs reports a checksum error, stops everything.
 make_archive() { # id plan home out
-  local id=$1 plan=$2 home=$3 out=$4 kind path pattern transform args=() err status files='' gitdirs=''
-  kind=$(item_field "$id" 3)
-  args=(--create --file=- --null --verbatim-files-from)
-  case $kind in
-    home | system)
-      while IFS= read -r pattern; do args+=("--exclude=$pattern"); done < <(item_excludes "$id")
-      transform=$(item_transform "$id")
-      [[ -z $transform ]] || args+=("--transform=$transform")
-      if [[ $kind == home ]]; then args+=(-C "$home"); else args+=(-C "$SYSROOT/"); fi
-      local present=()
-      while IFS= read -r path; do
-        if [[ $kind == system ]]; then
-          [[ -e $SYSROOT$path ]] && present+=("${path#/}")
-        else
-          [[ -e $home/$path || -L $home/$path ]] && present+=("$path")
-        fi
-      done < <(item_paths "$id")
-      ((${#present[@]})) || return 2
-      args+=(-- "${present[@]}")
+  local id=$1 plan=$2 home=$3 out=$4 args=() err status files=''
+  args=(--create --file=- --null --verbatim-files-from -C "$home")
+  case $(item_kind "$id") in
+    home)
+      [[ -e $home/.ssh || -L $home/.ssh ]] || return 2
+      args+=(-- .ssh)
       ;;
-    # The lists that are still there go in files of the writer's own: the
-    # plan's directory is the user's, and a link planted there would have root
-    # write through it.
-    projects)
-      files=$(mktemp) gitdirs=$(mktemp)
-      still_there "$home" "$plan/projects.files" >"$files"
-      still_there "$home" "$plan/projects.gitdirs" >"$gitdirs"
-      args+=(-C "$home" --no-recursion -T "$files" --recursion -T "$gitdirs")
-      ;;
+    # The paths that are still there go in a file of the writer's own: the
+    # plan's directory is the user's, and a link planted there would have
+    # root write through it.
     folders)
       files=$(mktemp)
-      still_there "$home" "$plan/folders.list" >"$files"
-      args+=(--exclude-caches -C "$home" -T "$files")
+      still_there "$home" "$plan/files.list" >"$files"
+      if [[ ! -s $files ]]; then
+        rm -f -- "$files"
+        return 2
+      fi
+      args+=(--exclude-caches -T "$files")
       ;;
-    list) args+=(-C "$plan" -- packages.txt aur.txt) ;;
     *) return 1 ;;
   esac
   err=$(mktemp)
@@ -1123,7 +957,7 @@ make_archive() { # id plan home out
   tar "${args[@]}" 2>"$err" | zstd -q -f -T0 -3 -o "$out"
   status=("${PIPESTATUS[@]}")
   set -e
-  rm -f -- ${files:+"$files"} ${gitdirs:+"$gitdirs"}
+  rm -f -- ${files:+"$files"}
   if ((status[0] > 1 || status[1] != 0)); then
     sed 's/^/    /' "$err" >&2
     rm -f -- "$err"
@@ -1133,8 +967,8 @@ make_archive() { # id plan home out
   rm -f -- "$err"
 }
 
-# A hash of this computer's identity, so the installer puts back Bluetooth
-# pairings and fingerprints only on the computer they belong to.
+# A hash of this computer's identity, so the installer offers its old name
+# again only on the same computer.
 machine_hash() {
   local id
   id=$(cat "$DMI/product_uuid" "$DMI/product_serial" 2>/dev/null) || true
@@ -1222,7 +1056,7 @@ write_stick() { # plan, with the passphrase on stdin
     mkdir -p "$WORK/data/carry"
     local entries=() file label status
     for id in $items; do
-      label=$(item_field "$id" 2)
+      label=$(item_label "$id")
       info "$label"
       file=$id.tar.zst
       set +e
@@ -1237,7 +1071,7 @@ write_stick() { # plan, with the passphrase on stdin
           ;;
         *) die "could not copy $label; the stick is not finished." ;;
       esac
-      entries+=("$(jq -nc --arg id "$id" --arg kind "$(item_field "$id" 3)" --arg file "$file" --arg label "$label" \
+      entries+=("$(jq -nc --arg id "$id" --arg kind "$(item_kind "$id")" --arg file "$file" --arg label "$label" \
         --argjson bytes "$(stat -c %s -- "$WORK/data/carry/$file")" '{id: $id, kind: $kind, label: $label, file: $file, bytes: $bytes}')")
     done
     ((${#entries[@]})) || die "none of the chosen things were found; nothing to carry."
