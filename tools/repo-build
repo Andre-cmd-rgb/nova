@@ -5,11 +5,12 @@
 #   tools/repo-build --key <fingerprint> <package dir> <out dir>
 #
 # Every package gets a detached signature, and repo-add writes nova.db and
-# nova.files, signed too. A GitHub release cannot hold symlinks, so the
+# nova.files, signed too. A bucket cannot hold symlinks, so the
 # nova.db -> nova.db.tar.gz links repo-add makes are replaced by the files
 # themselves: pacman asks for nova.db and nova.db.sig by exactly those names.
-# GitHub also renames assets with unusual characters, so a package file name
-# outside A-Z a-z 0-9 . _ - (an epoch's ':', a dev build's '+') stops the build.
+# A URL can change unusual characters, and the FAT on a nova usb stick refuses
+# some, so a package file name outside A-Z a-z 0-9 . _ - (an epoch's ':', a dev
+# build's '+') stops the build.
 set -euo pipefail
 
 die() { printf 'repo-build: %s\n' "$*" >&2; exit 1; }
@@ -35,7 +36,7 @@ mkdir -p -- "$out"
 
 for pkg in "${pkgs[@]}"; do
   name=${pkg##*/}
-  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "$name: GitHub would rename this asset and pacman would not find it"
+  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "$name: a URL or the stick's FAT would change it, and pacman would not find it"
   cp -- "$pkg" "$out/$name"
   gpg --batch --yes --local-user "$key" --detach-sign --no-armor --output "$out/$name.sig" -- "$out/$name"
 done

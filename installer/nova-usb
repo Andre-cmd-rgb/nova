@@ -278,9 +278,12 @@ signed_by_nova() { # file
 
 # Downloads the release's release.toml, packages.txt and the ISO's .sha256,
 # each signed by Nova's key, and then the ISO, checked against the .sha256,
-# into the cache; prints the ISO's path.
+# into the cache; prints the ISO's path. release.toml and the ISO are on the
+# release page; packages.txt, the .sha256 and the signatures are in the
+# package repository release.toml names, except on releases before
+# 1.0.0-beta.6, which had them all on the page.
 fetch_release() {
-  local releases release tag version dir iso name url sig
+  local releases release tag version dir iso name url sig repo=''
   releases=$(curl -fsSL --max-time 30 "$RELEASES?per_page=20") ||
     die "could not reach the Nova releases ($RELEASES). Online? Or pass --iso <file>."
   release=$(latest_release <<<"$releases") ||
@@ -294,18 +297,24 @@ fetch_release() {
   say "Nova $version"
   for name in release.toml packages.txt "$iso.sha256"; do
     url=$(asset_url "$release" "$name")
-    if [[ -z $url ]]; then
-      [[ $name == packages.txt ]] && continue
-      die "the $tag release has no $name"
-    fi
     sig=$(asset_url "$release" "$name.sig")
+    [[ $name == release.toml || -n $sig ]] || url=$repo/$name sig=$repo/$name.sig
+    [[ -n $url ]] || die "the $tag release has no $name"
     [[ -n $sig ]] || die "the $tag release has no $name.sig, so nothing shows it is Nova's: it is incomplete, or older than signed releases."
-    download "$url" "$dir/$name" || die "could not download $name"
+    if ! download "$url" "$dir/$name"; then
+      # Without the package list, the stick is made without the offline packages.
+      [[ $name == packages.txt ]] && continue
+      die "could not download $name"
+    fi
     download "$sig" "$dir/$name.sig" || die "could not download $name.sig"
     signed_by_nova "$dir/$name" || {
       rm -f -- "$dir/$name" "$dir/$name.sig"
       die "the $tag release's $name is not signed by Nova's key; it was deleted, and nothing was written."
     }
+    if [[ $name == release.toml ]]; then
+      repo=$(release_value "$dir/release.toml" nova_repo)
+      [[ $repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "the $tag release's release.toml names no package repository"
+    fi
   done
   url=$(asset_url "$release" "$iso")
   [[ -n $url ]] || die "the $tag release has no $iso"

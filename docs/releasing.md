@@ -1,33 +1,45 @@
 # Releasing Nova
 
-A release is a git tag (`v1.0.0-beta.1`), built by CI into a GitHub release.
-Nothing is built or published from a laptop.
+A release is a git tag (`v1.0.0-beta.1`), built by CI into a GitHub release
+and a folder of Nova's package bucket. Nothing is built or published from a
+laptop.
 
 ## What a release contains
 
-| Asset | What reads it |
+A release lives in two places. The GitHub release holds what people download,
+and `release.toml`, which `nova update` and `nova-usb` look for there:
+
+| On the GitHub release | What reads it |
 |---|---|
-| `release.toml` and its `.sig` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the URL of its `[nova]` repository |
+| `nova-<version>-x86_64.iso` and its `.sha256` | people, or `nova-usb`: the installer stick |
+| `nova-usb` | people: makes the installer stick, with the ISO and whatever is carried |
+| `release.toml` and its `.sig` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the address of its `[nova]` repository |
+
+Everything else is in the `nova-packages` bucket on Cloudflare R2, in a folder
+named after the tag, served at `https://nova-packages.piserver.stream/<tag>`:
+
+| In the bucket | What reads it |
+|---|---|
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
 | `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `ttfx` |
-| `nova-usb` and its `.sig` | people: makes the installer stick, with the ISO and whatever is carried |
-| `nova-<version>-x86_64.iso`, its `.sha256` and that one's `.sig` | people, or `nova-usb`: the installer stick |
-| `packages.txt` and its `.sig` | `nova-usb`: the packages an install can need, to put on the stick for an offline install |
+| `packages.txt`, the ISO's `.sha256`, and their `.sig` | `nova-usb`: the packages an install can need, to put on the stick for an offline install, and the checksum it checks the ISO with |
+| `nova-usb.sig` | people: the release notes link it |
+| `release.toml` and its `.sig` | a copy |
 
-That is why a release has so many files: most of them are the repository,
-which pacman downloads by itself, and the release notes link the two files a
-person needs.
+`release.toml` points pacman at the release's folder, and every system stays on
+its release's packages and Arch snapshot until `nova update` moves it to the
+next one. Since each release names its own folder, the bucket can move to
+another address at any release: `tools/release-pin --packages`. Releases up to
+1.0.0-beta.5 had everything on the GitHub release, and stay that way.
 
-The repository *is* the release page: `release.toml` points pacman at
-`https://github.com/Andre-cmd-rgb/nova/releases/download/<tag>`, and every
-system stays on its release's packages and Arch snapshot until `nova update`
-moves it to the next one.
+The publish job puts the files in the bucket first and reads each back from the
+public address (`tools/packages-upload`), so a release never appears on GitHub
+before its packages can be downloaded.
 
-GitHub limits a release asset to 2 GiB and renames assets with unusual
-characters, so the ISO installs over the network rather than carrying every
-package (`nova usb` adds an offline copy to the stick), and `tools/repo-build`
-stops on a package file name pacman would not find again (an epoch's `:`, a
-development build's `+`).
+GitHub limits a release asset to 2 GiB, so the ISO installs over the network
+rather than carrying every package (`nova usb` adds an offline copy to the
+stick). `tools/repo-build` stops on a package file name a URL or the stick's FAT
+would change (an epoch's `:`, a development build's `+`).
 
 ## Versions
 
@@ -43,7 +55,7 @@ nobody else (below).
 
 The `[nova]` repository and every package in it are signed, and pacman refuses
 anything else (`SigLevel = Required` in `installer/pacman.conf`). The files
-read straight off the release page are signed with the same key: `nova update`
+read without pacman are signed with the same key: `nova update`
 refuses a `release.toml` without a good `.sig`, and `nova-usb` checks
 `release.toml`, `packages.txt` and the ISO's `.sha256` before it downloads the
 ISO. The public key ships in the `nova-keyring` package, and `tools/inline-ui`
@@ -94,6 +106,31 @@ Installing the transition release's `nova-keyring`, which the old key signed,
 fixes it: `sudo pacman -U <its URL on the transition release>`, then
 `nova update`. After a leak, revoke at once instead and say so in the release
 notes, since a leaked key must not stay trusted for a transition.
+
+## The package bucket (once)
+
+The packages are public and signed, so the bucket only has to serve them; it
+holds nothing secret.
+
+1. In the Cloudflare dashboard, turn on R2 and create the bucket
+   `nova-packages`, storage class Standard (the free tier covers only that).
+2. In the bucket's settings, connect a custom domain from the same Cloudflare
+   account (`nova-packages.piserver.stream`). Leave the `r2.dev` address off:
+   it is rate-limited and not meant for real downloads. A different address
+   means changing the default in `tools/release-pin`.
+3. Create an Account API token for R2: Object Read & Write, on
+   `nova-packages` only. Store its two halves as repository secrets, and the
+   account ID (on the R2 overview page) as a repository variable:
+
+   ```sh
+   gh secret set R2_ACCESS_KEY_ID
+   gh secret set R2_SECRET_ACCESS_KEY
+   gh variable set R2_ACCOUNT_ID --body <account id>
+   ```
+
+A release adds about 280 MiB to the bucket (the ISO stays on GitHub), so R2's
+free 10 GB lasts more than a year of releases; past that, storage costs
+$0.015 per GB a month, and downloads are free.
 
 ## A release every other week
 

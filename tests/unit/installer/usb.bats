@@ -219,7 +219,7 @@ EOF
 
 @test "packages on the stick: names FAT can hold, each with its signature" {
   printf 'https://archive.archlinux.org/repos/2026/10/01/extra/os/x86_64/ffmpeg-2:7.1-1-x86_64.pkg.tar.zst\t100\n' >"$PLAN/offline.urls"
-  printf 'https://github.com/Andre-cmd-rgb/nova/releases/download/v1.0.0/nova-1.0.0-1-any.pkg.tar.zst\t50\n' >>"$PLAN/offline.urls"
+  printf 'https://nova-packages.piserver.stream/v1.0.0/nova-1.0.0-1-any.pkg.tar.zst\t50\n' >>"$PLAN/offline.urls"
   printf 'https://example.org/repo/libc%%2B%%2B-1-1-x86_64.pkg.tar.zst\t10\n' >>"$PLAN/offline.urls"
   curl() { cp -- "${@: -1}" "$SCRATCH/curl.config"; }
   download_packages "$PLAN/offline.urls" /stick/repo
@@ -340,10 +340,10 @@ staging_setup() {
 }
 
 @test "packages on the stick: fetched from the release's own snapshot and repository" {
-  printf 'version = "1.0.0"\narch_date = "2026/10/01"\nnova_repo = "https://github.com/Andre-cmd-rgb/nova/releases/download/v1.0.0"\n' >"$SCRATCH/release.toml"
+  printf 'version = "1.0.0"\narch_date = "2026/10/01"\nnova_repo = "https://nova-packages.piserver.stream/v1.0.0"\n' >"$SCRATCH/release.toml"
   run offline_pacman_conf "$SCRATCH/release.toml"
   [[ $output == *'Server = https://archive.archlinux.org/repos/2026/10/01/$repo/os/$arch'* ]]
-  [[ $output == *'Server = https://github.com/Andre-cmd-rgb/nova/releases/download/v1.0.0'* ]]
+  [[ $output == *'Server = https://nova-packages.piserver.stream/v1.0.0'* ]]
   printf 'arch_date = "yesterday"\n' >"$SCRATCH/bad.toml"
   run offline_pacman_conf "$SCRATCH/bad.toml"
   [ "$status" -ne 0 ]
@@ -556,20 +556,25 @@ wizard_setup() {
   [ "$(NOVA_USB_KEY=/nonexistent bash -c 'source "$1"; release_key' _ "$SCRATCH/nova-usb")" = "$(cat "$REPO_ROOT/packaging/nova-keyring/nova.gpg")" ]
 }
 
-# GitHub with one release, v1.0.0, whose assets are what is in $SCRATCH/served:
-# a release.toml, packages.txt and an ISO with its .sha256, each but the ISO
-# signed by the test's key, which stands in for Nova's.
-serve_release() {
+# GitHub with one release, v1.0.0, and its package repository at
+# https://packages.example.org/v1.0.0, both serving $SCRATCH/served: the
+# release page has release.toml and the ISO with its .sha256, the repository
+# the rest. `serve_release page` puts it all on the page, as releases before
+# 1.0.0-beta.6 did. Each file but the ISO is signed by the test's key, which
+# stands in for Nova's.
+serve_release() { # [page]
   test_key
   export NOVA_USB_KEY=$TEST_KEY
   local served=$SCRATCH/served name assets=''
+  local page=(release.toml release.toml.sig nova-1.0.0-x86_64.iso nova-1.0.0-x86_64.iso.sha256)
   mkdir -p "$served"
-  printf 'version = "1.0.0"\n' >"$served/release.toml"
+  printf 'version = "1.0.0"\nnova_repo = "https://packages.example.org/v1.0.0"\n' >"$served/release.toml"
   echo nova >"$served/packages.txt"
   echo 'an ISO' >"$served/nova-1.0.0-x86_64.iso"
   (cd "$served" && sha256sum -- nova-1.0.0-x86_64.iso >nova-1.0.0-x86_64.iso.sha256)
   for name in release.toml packages.txt nova-1.0.0-x86_64.iso.sha256; do test_sign "$served/$name"; done
-  for name in "$served"/*; do
+  [[ ${1:-} != page ]] || page=("$served"/*)
+  for name in "${page[@]}"; do
     name=${name##*/}
     assets+="${assets:+,}{\"name\":\"$name\",\"size\":7,\"browser_download_url\":\"https://dl.example.org/$name\"}"
   done
@@ -579,10 +584,11 @@ serve_release() {
     for arg; do [[ $prev != -o ]] || out=$arg; prev=$arg; done
     case $url in
       *'?per_page='*) cat "$SCRATCH/releases.json" ;;
-      https://dl.example.org/*)
-        echo "${url##*/}" >>"$SCRATCH/downloaded"
+      https://dl.example.org/* | https://packages.example.org/v1.0.0/*)
+        echo "$url" >>"$SCRATCH/downloaded"
         [[ -e $SCRATCH/served/${url##*/} ]] && cp -- "$SCRATCH/served/${url##*/}" "$out"
         ;;
+      *) return 22 ;;
     esac
   }
 }
@@ -594,6 +600,29 @@ serve_release() {
   [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
   [ "$(cat "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso")" = 'an ISO' ]
   [ -s "$NOVA_USB_CACHE/v1.0.0/packages.txt" ]
+  # The page for release.toml and the ISO, the package repository for the rest.
+  [ "$(paste -sd' ' "$SCRATCH/downloaded")" = "https://dl.example.org/release.toml https://dl.example.org/release.toml.sig \
+https://packages.example.org/v1.0.0/packages.txt https://packages.example.org/v1.0.0/packages.txt.sig \
+https://packages.example.org/v1.0.0/nova-1.0.0-x86_64.iso.sha256 https://packages.example.org/v1.0.0/nova-1.0.0-x86_64.iso.sha256.sig \
+https://dl.example.org/nova-1.0.0-x86_64.iso" ]
+}
+
+@test "fetch_release: a release from before beta.6, with everything on its page, still works" {
+  serve_release page
+  run fetch_release
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
+  [ -s "$NOVA_USB_CACHE/v1.0.0/packages.txt" ]
+  fails grep -q packages.example.org "$SCRATCH/downloaded"
+}
+
+@test "fetch_release: without the package list, the stick is made without offline packages" {
+  serve_release
+  rm "$SCRATCH/served/packages.txt"
+  run fetch_release
+  [ "$status" -eq 0 ]
+  [ ! -e "$NOVA_USB_CACHE/v1.0.0/packages.txt" ]
+  [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
 }
 
 @test "fetch_release: a file changed after it was signed stops it before the ISO" {
@@ -603,7 +632,7 @@ serve_release() {
   [ "$status" -ne 0 ]
   [[ $output == *"nova-1.0.0-x86_64.iso.sha256 is not signed by Nova's key"* ]]
   [ ! -e "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso.sha256" ]
-  fails grep -qx nova-1.0.0-x86_64.iso "$SCRATCH/downloaded"
+  fails grep -q '/nova-1.0.0-x86_64.iso$' "$SCRATCH/downloaded"
 }
 
 @test "fetch_release: a release whose files are not signed is not used" {

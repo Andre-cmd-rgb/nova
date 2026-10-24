@@ -1,12 +1,15 @@
 # A release: pins an Arch Linux Archive snapshot (yesterday's, unless given),
 # builds every Nova package against it, signs them into the [nova] repository,
 # builds the installer ISO, installs from it in a virtual machine and boots the
-# result, and only then puts it all on a GitHub release: a draft when a tag is
-# pushed by hand, published when candidate.yml or promote.yml calls it. A tag
-# with a "-" is a pre-release. See docs/releasing.md.
+# result, and only then publishes it: the package repository to the
+# nova-packages bucket on Cloudflare R2, then the GitHub release, which carries
+# only the ISO, nova-usb and release.toml. A draft when a tag is pushed by
+# hand, published when candidate.yml or promote.yml calls it. A tag with a "-"
+# is a pre-release. See docs/releasing.md.
 #
-# Needs the repository secret NOVA_REPO_KEY: the ASCII-armored private key whose
-# public half is in packaging/nova-keyring.
+# Needs the repository secrets NOVA_REPO_KEY (the ASCII-armored private key
+# whose public half is in packaging/nova-keyring) and R2_ACCESS_KEY_ID and
+# R2_SECRET_ACCESS_KEY (the bucket's token), and the variable R2_ACCOUNT_ID.
 name: release
 
 on:
@@ -37,6 +40,10 @@ on:
         default: false
     secrets:
       NOVA_REPO_KEY:
+        required: true
+      R2_ACCESS_KEY_ID:
+        required: true
+      R2_SECRET_ACCESS_KEY:
         required: true
 
 permissions:
@@ -224,9 +231,9 @@ jobs:
             out/iso/packages.txt
             out/iso/nova-usb
 
-  # Signatures for the files read straight off the release page rather than
-  # through pacman: release.toml (nova update checks it), the ISO's .sha256 and
-  # packages.txt (nova-usb checks them), and nova-usb itself, for people.
+  # Signatures for the files read without pacman: release.toml (nova update
+  # checks it), the ISO's .sha256 and packages.txt (nova-usb checks them), and
+  # nova-usb itself, for people.
   sign:
     needs: iso
     runs-on: ubuntu-latest
@@ -318,28 +325,47 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: out
+      # First, so the release is not offered before its packages are there.
+      - name: Put the package repository in the bucket
+        env:
+          R2_ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: nova-packages
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          ACCOUNT: ${{ vars.R2_ACCOUNT_ID }}
+        run: |
+          [[ -n $ACCOUNT ]] || { echo "::error::the R2_ACCOUNT_ID variable is not set"; exit 1; }
+          # Everything but the ISO and nova-usb, which only people download.
+          tools/packages-upload --release out/release-toml/release.toml \
+            out/release-toml/release.toml out/repo/* out/iso/packages.txt out/iso/*.sha256 out/signatures/*
       - name: Make the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ inputs.publish }}
         run: |
           version=${TAG#v}
+          iso=nova-$version-x86_64.iso
           flags=(--generate-notes)
           [[ $PUBLISH == true ]] || flags+=(--draft)
           [[ $version != *-* ]] || flags+=(--prerelease)
-          assets=(out/release-toml/release.toml out/repo/* out/iso/* out/signatures/*)
-          # GitHub lists assets by name and folds most of them away, so the
-          # notes link the two a person downloads.
+          # What a person downloads, and release.toml, which nova update finds
+          # here and which says where the packages are.
+          assets=(out/iso/"$iso" out/iso/"$iso.sha256" out/iso/nova-usb
+            out/release-toml/release.toml out/signatures/release.toml.sig)
           base=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG
+          packages=$(sed -n 's/^nova_repo = "\(.*\)"$/\1/p' out/release-toml/release.toml)
           cat >notes.md <<EOF
-          **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($base/nova-$version-x86_64.iso), and can carry your files and logins over and add the packages for an offline install. Writing the ISO to a stick yourself works too.
+          **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($base/$iso), and can carry your SSH keys and the files you pick over and add the packages for an offline install. Writing the ISO to a stick yourself works too.
 
-          nova-usb checks the ISO against its checksum, and the checksum against Nova's signing key, which it carries. [nova-usb.sig]($base/nova-usb.sig) is nova-usb's own signature, by the key in [nova-keyring](https://github.com/$GITHUB_REPOSITORY/tree/$TAG/packaging/nova-keyring).
+          nova-usb checks the ISO against its checksum, and the checksum against Nova's signing key, which it carries. [nova-usb.sig]($packages/nova-usb.sig) is nova-usb's own signature, by the key in [nova-keyring](https://github.com/$GITHUB_REPOSITORY/tree/$TAG/packaging/nova-keyring).
 
-          Every other file here is Nova's package repository: pacman reads them on its own, during the install and on \`nova update\`.
+          release.toml tells \`nova update\` and the installer which Arch snapshot this release was tested on, and where its packages are: $packages, which pacman reads on its own.
           EOF
           # A re-run after a publish that failed halfway finds its release there.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
