@@ -62,6 +62,9 @@ Panel {
   // base-size so the knob doesn't snap back during the file round-trip. -1 =
   // no pending change; follow Style.font.baseSize.
   property int textSizePreviewIndex: -1
+  // A size asked for while one is being applied waits for it, and only the
+  // last of a quick run of them is applied after.
+  property int queuedTextPx: 0
 
   // A text-size change reflows the whole panel (both font and spacing scale),
   // which slides rows under a stationary pointer and fires synthetic hover.
@@ -342,8 +345,12 @@ Panel {
   }
 
   function setTextSize(px) {
+    if (textScaleProc.running) {
+      queuedTextPx = px
+      return
+    }
     textScaleProc.command = ["nova-display-text-size", String(px)]
-    if (!textScaleProc.running) textScaleProc.running = true
+    textScaleProc.running = true
   }
 
   function adjustTextSize(deltaSteps) {
@@ -450,6 +457,12 @@ Panel {
   Process {
     id: textScaleProc
     stdout: StdioCollector { waitForEnd: true }
+    onRunningChanged: {
+      if (running || root.queuedTextPx === 0) return
+      var px = root.queuedTextPx
+      root.queuedTextPx = 0
+      root.setTextSize(px)
+    }
   }
 
   // Clears the hover-suppression flag once the reflow triggered by a text-size
