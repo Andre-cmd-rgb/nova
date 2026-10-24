@@ -110,11 +110,12 @@ ShellRoot {
           window.page = harness.pages[harness.index]
           shot.restart()
         } else {
-          // Opened again with no page asked for, it starts over at its first
-          // rather than staying on the last.
+          // Opened again with no page asked for, it starts over at the first
+          // it offers rather than staying on the last: Wi-Fi, or on a
+          // computer with no radios, as in CI, Sound.
           window.open("")
-          if (window.page !== harness.pages[0])
-            console.warn("qml-smoke: opened again, the window shows " + window.page + ", not " + harness.pages[0])
+          if (window.page !== window.pages[0].id)
+            console.warn("qml-smoke: opened again, the window shows " + window.page + ", not " + window.pages[0].id)
           Qt.quit()
         }
       })
