@@ -25,10 +25,14 @@
 # would make Hyprland move every window onto a display that is not there.
 #
 # On a laptop with a 5G modem on mhi-pci-generic (the ThinkPad P1's Foxconn
-# T99W175), the modem is kept out of runtime suspend while on: with the lid
-# shut and nothing sending it drops into M3 after two seconds, and it may be the
-# only link up. That write is root's, through nova-caffeine-modem (polkit, no
-# password for the person at the computer).
+# T99W175), the modem is kept out of runtime suspend while on and its radio is
+# on: with the lid shut and nothing sending it drops into M3 after two seconds,
+# and it may be the only link up. A modem switched off (by hand, or by Nova for
+# want of a SIM) is left to sleep. That write is root's, through
+# nova-caffeine-modem (polkit, no password for the person at the computer).
+#
+# On battery it lasts until the battery is low: the shell's idle service then
+# runs `nova caffeine low-battery`, which ends it, and a closed lid sleeps.
 
 set -euo pipefail
 
@@ -37,6 +41,7 @@ RUN_DIR=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova
 SWITCH=$RUN_DIR/caffeine
 PREV_MODEM=$RUN_DIR/caffeine-modem
 PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
+RFKILL=${NOVA_RFKILL_PATH:-/sys/class/rfkill}
 MODEM_HELPER=${NOVA_CAFFEINE_MODEM:-/usr/lib/nova/nova-caffeine-modem}
 UNIT=nova-caffeine-inhibit
 
@@ -70,6 +75,16 @@ modem() { # -> the modem's PCI device directory; by driver, since a slot is not 
   return 1
 }
 
+# Whether every WWAN radio is on. Off, the modem is no link to keep up.
+modem_radio_on() {
+  local d
+  for d in "$RFKILL"/rfkill*; do
+    [[ $(cat "$d/type" 2>/dev/null) == wwan ]] || continue
+    [[ $(cat "$d/soft" 2>/dev/null) == 0 && $(cat "$d/hard" 2>/dev/null) == 0 ]] || return 1
+  done
+  return 0
+}
+
 modem_set() { # on|auto
   local d
   d=$(modem) || return 0
@@ -83,7 +98,7 @@ tell_shell() { nova-shell -q idle refresh >/dev/null 2>&1 || true; }
 # The lid: no suspend while closed, and the modem kept awake.
 hold_lid() { # why
   local d waited=0
-  if d=$(modem); then
+  if d=$(modem) && modem_radio_on; then
     # Its own setting, not "on" from a hold already taken.
     [[ -f $PREV_MODEM ]] || cat "$d/power/control" >"$PREV_MODEM" 2>/dev/null || true
     modem_set on || echo "nova caffeine: could not keep the modem awake; it may still sleep" >&2
@@ -148,6 +163,20 @@ reconcile() {
   return 0
 }
 
+# The battery is low, on battery power (the shell's idle service): Caffeine
+# ends, and a lid closed meanwhile does what a lid close does, lock and sleep,
+# rather than leave the computer running flat in a bag.
+low_battery() {
+  armed || return 0
+  release >/dev/null || true
+  nova-notification-send -u critical "Caffeine is off: the battery is low" \
+    "The computer sleeps and locks when unused again, and when its lid closes." >/dev/null 2>&1 || true
+  if laptop && nova-hw-laptop-closed && ! nova-hw-external-monitors; then
+    nova-system-lid-close || true
+    systemctl sleep
+  fi
+}
+
 status() {
   local d
   if armed; then echo "on: $(<"$SWITCH")"; else echo off; fi
@@ -177,17 +206,30 @@ on_open() {
   fi
 }
 
+toggle() { if armed; then release; else arm; fi; }
+
+# One change at a time: two at once (a double click, the bar and a key) would
+# each start the lid lock, and the loser's undo take the winner's lock away.
+serialized() { # command...
+  mkdir -p "$RUN_DIR"
+  {
+    flock -w 30 9 || { echo "nova caffeine: another change is still running" >&2; return 1; }
+    "$@"
+  } 9>"$RUN_DIR/caffeine.lock"
+}
+
 main() {
   case ${1:-status} in
     on)
       shift
-      arm "$@"
+      serialized arm "$@"
       ;;
-    off) release ;;
-    toggle) if armed; then release; else arm; fi ;;
+    off) serialized release ;;
+    toggle) serialized toggle ;;
     status) status ;;
     armed) armed ;;
-    reconcile) reconcile ;;
+    reconcile) serialized reconcile ;;
+    low-battery) serialized low_battery ;;
     close) on_close ;;
     open) on_open ;;
     *)

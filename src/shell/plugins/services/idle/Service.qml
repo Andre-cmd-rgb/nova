@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.UPower
 import Quickshell.Wayland
 
 Item {
@@ -11,7 +12,8 @@ Item {
 
   // Caffeine's switch (nova caffeine): while the file is there, nothing here
   // starts the screensaver or locks. nova caffeine asks for a refresh when it
-  // flips it.
+  // flips it, and a slow look now and then catches one that could not reach
+  // the shell (a restart, say).
   readonly property string caffeinePath: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/caffeine"
   readonly property int defaultScreensaverSeconds: 180
   readonly property int defaultLockSeconds: 300
@@ -28,6 +30,11 @@ Item {
 
   property bool caffeine: false
   property bool caffeineStateLoaded: false
+  property bool caffeineProbeAgain: false
+  // Caffeine on battery lasts until the battery is low, so a laptop left
+  // with its lid shut does not run flat: then nova caffeine ends it.
+  readonly property bool batteryLow: UPower.onBattery && !!UPower.displayDevice
+    && UPower.displayDevice.isLaptopBattery && UPower.displayDevice.percentage <= 0.10
   // Started by this service since the last input, so input stops it again.
   property bool screensaverShown: false
   property string lastEvent: "starting"
@@ -76,9 +83,14 @@ Item {
     }
   }
 
+  // A request that arrives while a probe runs is answered by one more after
+  // it, since that probe may have read the switch before it flipped.
   function refreshCaffeine() {
-    if (!caffeineProbe.running) caffeineProbe.running = true
+    if (caffeineProbe.running) caffeineProbeAgain = true
+    else caffeineProbe.running = true
   }
+
+  onBatteryLowChanged: if (batteryLow && caffeine) run(caffeineLowBatteryProcess, "caffeine-low-battery")
 
   function applyCaffeine(on) {
     var changed = !root.caffeineStateLoaded || root.caffeine !== on
@@ -144,7 +156,25 @@ Item {
   Process {
     id: caffeineProbe
     command: ["test", "-f", root.caffeinePath]
-    onExited: function(exitCode) { root.applyCaffeine(exitCode === 0) }
+    onExited: function(exitCode) {
+      root.applyCaffeine(exitCode === 0)
+      if (root.caffeineProbeAgain) {
+        root.caffeineProbeAgain = false
+        running = true
+      }
+    }
+  }
+
+  Timer {
+    interval: 60000
+    repeat: true
+    running: true
+    onTriggered: root.refreshCaffeine()
+  }
+
+  Process {
+    id: caffeineLowBatteryProcess
+    command: ["nova-caffeine", "low-battery"]
   }
 
   Component.onCompleted: {

@@ -154,6 +154,7 @@ menu's Suspend all ask for it (`data/systemd/sleep.conf.d`, overridable in
 | first 2 h | S3 at 1.26 W — instant wake, costs ~2.5 Wh |
 | after that | hibernated: RTC only, days to weeks |
 | on AC | plain suspend; `HibernateOnACPower=no`, against systemd's default of yes |
+| battery at 2% | hibernates outright: UPower's critical action, set to `Hibernate` in `/etc/UPower/UPower.conf.d/10-nova.conf`, since S3 first would empty it |
 
 **Resuming from hibernate is a full power cycle, so it costs a whole boot** —
 which is why the boot is kept short. It is also why the discrete card

@@ -144,6 +144,7 @@ optdepends=(
 options=(!debug)
 # Configuration under /etc: pacman keeps local edits across upgrades.
 backup=(
+  etc/UPower/UPower.conf.d/10-nova.conf
   etc/limine-entry-tool.d/10-nova.conf
   etc/mkinitcpio.conf.d/10-nova.conf
   etc/pam.d/nova-greeter

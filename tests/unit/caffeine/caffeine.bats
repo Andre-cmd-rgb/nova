@@ -11,6 +11,7 @@ setup() {
   export XDG_RUNTIME_DIR="$SCRATCH/run"
   export NOVA_PCI_DEVICES_PATH="$SCRATCH/pci"
   export NOVA_CAFFEINE_MODEM="$SCRATCH/modem-helper"
+  export NOVA_RFKILL_PATH="$SCRATCH/rfkill"
   export CALLS="$SCRATCH/calls" LOCK="$SCRATCH/lock"
   mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$NOVA_PCI_DEVICES_PATH" "$SCRATCH/bin"
   stub systemd-run 'touch "$LOCK"'
@@ -19,6 +20,7 @@ setup() {
   stub pkexec 'echo "$2" >"$NOVA_PCI_DEVICES_PATH/0000:08:00.0/power/control"'
   stub nova-hyprland-monitor-laptop 'echo eDP-1'
   stub nova-hw-external-monitors 'exit 1'
+  stub nova-hw-laptop-closed 'exit 1'
   for name in nova-hw-laptop hyprctl nova-shell nova-system-lid-close nova-hyprland-monitor-clamshell nova-notification-send; do
     stub "$name"
   done
@@ -96,6 +98,54 @@ add_modem() { # a modem on mhi-pci-generic, its power/control set to $1
   [ "$(cat "$NOVA_PCI_DEVICES_PATH/0000:08:00.0/power/control")" = auto ]
   grep -qx "pkexec $NOVA_CAFFEINE_MODEM on" "$CALLS"
   [ ! -e "$XDG_RUNTIME_DIR/nova/caffeine-modem" ]
+}
+
+@test "a modem whose radio is off is left to sleep" {
+  add_modem auto
+  mkdir -p "$NOVA_RFKILL_PATH/rfkill3"
+  echo wwan >"$NOVA_RFKILL_PATH/rfkill3/type"
+  echo 1 >"$NOVA_RFKILL_PATH/rfkill3/soft"
+  echo 0 >"$NOVA_RFKILL_PATH/rfkill3/hard"
+  main on >/dev/null
+  armed
+  [ "$(cat "$NOVA_PCI_DEVICES_PATH/0000:08:00.0/power/control")" = auto ]
+  fails grep -q pkexec "$CALLS"
+}
+
+@test "two changes at once are made one after the other" {
+  # A unit can be started once: the second start fails, as systemd-run's does.
+  stub systemd-run 'mkdir "$SCRATCH/unit" 2>/dev/null || exit 1; sleep 0.3; touch "$LOCK"'
+  stub systemctl 'case "$*" in *stop*) rm -rf "$LOCK" "$SCRATCH/unit" ;; *is-active*) [[ -f $LOCK ]] ;; esac'
+  main on >"$SCRATCH/first" 2>&1 &
+  main on >"$SCRATCH/second" 2>&1 &
+  wait
+  armed
+  [ -f "$SWITCH" ]
+  fails grep -q "NOT on" "$SCRATCH/first" "$SCRATCH/second"
+  [ "$(grep -c '^systemd-run ' "$CALLS")" -eq 1 ]
+}
+
+@test "low battery: Caffeine ends, and a lid closed meanwhile locks and sleeps" {
+  main on >/dev/null
+  stub nova-hw-laptop-closed 'exit 0'
+  run main low-battery
+  [ "$status" -eq 0 ]
+  fails armed
+  [ ! -e "$SWITCH" ]
+  grep -q 'nova-notification-send -u critical Caffeine is off: the battery is low' "$CALLS"
+  grep -qx 'nova-system-lid-close ' "$CALLS"
+  grep -qx 'systemctl sleep' "$CALLS"
+}
+
+@test "low battery, with the lid open or Caffeine off: nothing sleeps" {
+  main on >/dev/null
+  main low-battery
+  fails armed
+  fails grep -q 'systemctl sleep' "$CALLS"
+  : >"$CALLS"
+  stub nova-hw-laptop-closed 'exit 0'
+  main low-battery
+  [ ! -s "$CALLS" ]
 }
 
 @test "without a modem nothing asks for root" {

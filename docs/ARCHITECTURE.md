@@ -171,7 +171,9 @@ the shared folder also becomes the default for themes that have no pick of their
   verified value counts as success.
 - **Sleep:** the lid, the suspend key and the menu's Suspend all `sleep`, which logind
   turns into suspend-then-hibernate (hibernating after 2 h, and never on AC) or plain
-  suspend on a machine that cannot hibernate. The TPM key-provisioning units are
+  suspend on a machine that cannot hibernate. At UPower's last 2% the computer
+  hibernates outright (`/etc/UPower/UPower.conf.d/10-nova.conf`): sleeping to
+  RAM first is what would empty it. The TPM key-provisioning units are
   skipped unless `nova.tpm2` is on the kernel command line: Nova does not encrypt the
   disk, and they cost about four seconds of every measured boot.
 - **Unused:** the shell's idle service (`src/shell/plugins/services/idle`) starts
@@ -185,8 +187,10 @@ the shared folder also becomes the default for themes that have no pick of their
   While it is there the idle service does nothing; on a laptop it also holds a
   logind `handle-lid-switch` inhibitor, and the Hyprland lid binding goes
   through `nova caffeine close`, which turns the panel off with DPMS instead of
-  locking. The P1's 5G modem is kept out of runtime suspend meanwhile, as root
-  through `nova-caffeine-modem` (polkit).
+  locking. The P1's 5G modem, while its radio is on, is kept out of runtime
+  suspend meanwhile, as root through `nova-caffeine-modem` (polkit). On battery
+  it ends at 10%, from the idle service, and a lid closed meanwhile then locks
+  and sleeps.
 - **Hardware profiles** live in `data/hardware/`. `models` maps a DMI
   `product_version` pattern to a profile; `nova-hw-detect` and the Hyprland loader
   both read it. A profile holds:

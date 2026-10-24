@@ -50,7 +50,8 @@ screen. The stick's boot menu also has a memory test (memtest86+).
 - **Caffeine**, the coffee cup in the bar or Super+Ctrl+I, keeps the screen on:
   no screensaver, no lock when unused, and on a laptop closing the lid only
   turns the panel off, without sleeping, locking or dropping the network. It
-  lasts until you turn it off or log out.
+  lasts until you turn it off or log out, or, on battery, until the battery
+  is down to 10%.
 - **The screensaver** plays the wordmark in text effects after three minutes
   unused, and the screen locks after five; both are in Settings → Lock Screen.
   `nova screensaver` shows it now, and `~/.config/nova/screensaver.txt`, when
