@@ -140,13 +140,21 @@ shell_dir=$root/usr/share/nova/shell
 results='' problems='' others=''
 run_session() { # desktop | lock
   rm -rf "$work/run/quickshell"
-  local login=password
+  local login=password out status=0
   [[ $1 == desktop ]] || login=autologin
-  results+=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
+  out=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
     PATH="$root/usr/lib/nova/bin:$root/usr/bin:/usr/bin" \
     NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN="$login" \
     WORK="$work" SHELL_DIR="$shell_dir" \
-    timeout 180 dbus-run-session -- bash -c "$(declare -f session); session $1" 2>&1)$'\n' || true
+    timeout 180 dbus-run-session -- bash -c "$(declare -f session); session $1" 2>&1) || status=$?
+  results+=$out$'\n'
+  # A session that ran out of time or stopped partway said ok to what it got
+  # through and nothing of the rest, so its end counts as a check of its own.
+  if ((status == 124)); then
+    results+="FAIL the $1 session ran out of time"$'\n'
+  elif ((status != 0)); then
+    results+="FAIL the $1 session ended with status $status"$'\n'
+  fi
   # Quickshell's own warnings about what this machine lacks (no Hyprland, no
   # system bus, no PipeWire, no NetworkManager) are printed; QML errors in
   # Nova's files fail the run.
