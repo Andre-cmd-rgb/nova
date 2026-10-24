@@ -1435,12 +1435,13 @@ Ui.Panel {
             width: parent.width
             spacing: Style.space(4)
 
+            // A Column leaves out what is not visible; a height bound to
+            // visible as well loops when the list hides a delegate.
             PanelSectionHeader {
               visible: sectionTitle !== ""
               text: sectionTitle
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              height: visible ? implicitHeight : 0
             }
 
             NetworkRow {
@@ -1727,11 +1728,10 @@ Ui.Panel {
           // Signal strength is conveyed by the wifi-bars icon and the
           // right-edge glyph/buttons carry protection or forget affordances,
           // so the second line only carries action status (Connecting…,
-          // Connected, Failed, etc.). Collapses to zero height when empty
-          // so rows without status keep a tight one-line look.
+          // Connected, Failed, etc.). Hidden when empty, which the Column
+          // leaves out, so rows without status keep a tight one-line look.
           text: row.statusText
           visible: row.statusText !== ""
-          height: visible ? implicitHeight : 0
           color: row.statusColor
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption

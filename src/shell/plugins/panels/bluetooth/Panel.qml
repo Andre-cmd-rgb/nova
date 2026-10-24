@@ -867,15 +867,15 @@ Panel {
               width: parent.width
               spacing: Style.space(10)
 
+              // A Column leaves out what is not visible; a height bound to
+              // visible as well loops when the list hides a delegate.
               PanelSeparator {
                 visible: index > 0 && sectionTitle !== ""
-                height: visible ? implicitHeight : 0
                 foreground: root.bar.foreground
               }
 
               PanelSectionHeader {
                 visible: sectionTitle !== ""
-                height: visible ? implicitHeight : 0
                 text: sectionTitle
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily

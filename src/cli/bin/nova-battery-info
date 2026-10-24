@@ -65,10 +65,7 @@ power_rate=$(awk -v rate="${power_rate_raw:-0}" 'BEGIN {
   print rounded
 }')
 state=$(awk '/state/ { print $2; exit }' <<<"$battery_info")
-threshold_start=$(awk '/charge-start-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
-threshold_end=$(awk '/charge-end-threshold:/ { gsub(/%/, "", $2); print int($2); exit }' <<<"$battery_info")
-
-# The first battery's sysfs value, when UPower does not report it.
+# The first battery's sysfs value.
 first_battery_value() {
   local file
   for file in "$power_supply_path"/BAT*/"$1"; do
@@ -79,8 +76,14 @@ first_battery_value() {
   done
 }
 
-[[ -n $threshold_end ]] || threshold_end=$(first_battery_value charge_control_end_threshold)
-[[ -n $threshold_start ]] || threshold_start=$(first_battery_value charge_control_start_threshold)
+# The kernel's charge thresholds, which nova battery limit writes. Not UPower's:
+# its charge-start/end-threshold are the ones it would set if asked to, whether
+# or not anything is set. An end of 100 is no limit.
+threshold_start=$(first_battery_value charge_control_start_threshold)
+threshold_end=$(first_battery_value charge_control_end_threshold)
+if [[ ! $threshold_end =~ ^[0-9]+$ ]] || ((threshold_end >= 100)); then
+  threshold_start='' threshold_end=''
+fi
 
 ac_online=false
 for supply in "$power_supply_path"/*; do
