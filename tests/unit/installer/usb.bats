@@ -9,8 +9,11 @@ setup() {
   export NOVA_USB_CACHE="$SCRATCH/cache"
   export NOVA_USB_SYSROOT="$SCRATCH/sys"
   export NOVA_USB_OLD_PACKAGE_LISTS="$SCRATCH/old"
+  export NOVA_USB_STAGE_ROOT="$SCRATCH/staging"
+  export NOVA_USB_UDEV_RULE="$SCRATCH/rules.d/90-nova-usb.rules"
   export NOVA_DMI_PATH="$SCRATCH/dmi"
   export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+  export GIT_CEILING_DIRECTORIES=$SCRATCH
   mkdir -p "$NOVA_USB_HOME" "$NOVA_USB_SYSROOT" "$SCRATCH/plan"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/installer/nova-usb"
@@ -334,6 +337,100 @@ EOF
   [ "$status" -ne 0 ]
   [[ $output == *refusing* ]]
   [ ! -e "$SCRATCH/curl.ran" ]
+}
+
+# A disk with room, a package server, and an indexer. No block devices used.
+staging_setup() {
+  mkdir -p "$NOVA_USB_STAGE_ROOT" "$SCRATCH/stick" "$SCRATCH/pkg"
+  printf 'https://example.org/a-1-1-any.pkg.tar.zst\t4\n' >"$PLAN/offline.urls"
+  findmnt() { echo ext4; }
+  df() { printf 'Filesystem 1B-blocks Used Available Use%% Mounted\n/disk 999999999 0 999999999 0%% /\n'; }
+  pacman-conf() { echo "$SCRATCH/pkg"; }
+  curl() {
+    cp -- "${@: -1}" "$SCRATCH/curl.config"
+    local line path
+    while IFS= read -r line; do
+      [[ $line == 'output = '* ]] || continue
+      path=${line#output = \"}
+      path=${path%\"}
+      printf data >"$path"
+    done <"${@: -1}"
+  }
+  make_offline_repo() { printf db >"$1/nova-offline.db"; }
+}
+
+@test "packages stage on local disk, then copy one file at a time" {
+  staging_setup
+  stage_packages "$PLAN/offline.urls"
+  [[ $PACKAGE_STAGE == "$NOVA_USB_STAGE_ROOT"/nova-usb-packages.* ]]
+  [ -f "$PACKAGE_STAGE/a-1-1-any.pkg.tar.zst.sig" ]
+  [ ! -e "$SCRATCH/stick/a-1-1-any.pkg.tar.zst" ]
+  cp() { printf '%s\n' "$*" >>"$SCRATCH/copies"; command cp "$@"; }
+  copy_packages "$PACKAGE_STAGE" "$SCRATCH/stick"
+  [ "$(wc -l <"$SCRATCH/copies")" -eq 3 ]
+  diff -r "$PACKAGE_STAGE" "$SCRATCH/stick"
+  local staged=$PACKAGE_STAGE
+  writer_cleanup
+  [ ! -e "$staged" ]
+}
+
+@test "packages fall back to the stick when local disk space is short" {
+  staging_setup
+  df() { printf 'Filesystem 1B-blocks Used Available Use%% Mounted\n/disk 100 0 100 0%% /\n'; }
+  stage_packages "$PLAN/offline.urls" 2>"$SCRATCH/notice"
+  [ -z "$PACKAGE_STAGE" ]
+  [ "$(wc -l <"$SCRATCH/notice")" -eq 1 ]
+  grep -q 'straight to the stick' "$SCRATCH/notice"
+  [ ! -e "$SCRATCH/curl.config" ]
+  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
+  [ -f "$SCRATCH/stick/a-1-1-any.pkg.tar.zst.sig" ]
+}
+
+@test "packages never stage on tmpfs even when it has room" {
+  staging_setup
+  findmnt() { echo tmpfs; }
+  stage_packages "$PLAN/offline.urls"
+  [ -z "$PACKAGE_STAGE" ]
+  [ ! -e "$SCRATCH/curl.config" ]
+}
+
+@test "the package space check includes a margin above the plan's bytes" {
+  staging_setup
+  printf 'https://example.org/a.pkg.tar.zst\t200000000\n' >"$PLAN/offline.urls"
+  df() { printf 'Filesystem 1B-blocks Used Available Use%% Mounted\n/disk 210000000 0 210000000 0%% /\n'; }
+  stage_packages "$PLAN/offline.urls"
+  [ -z "$PACKAGE_STAGE" ]
+}
+
+@test "the EXIT trap removes staged packages after success or a failed download" {
+  staging_setup
+  export -f findmnt df pacman-conf curl make_offline_repo
+  run bash -c 'source "$REPO_ROOT/installer/nova-usb"; make_offline_repo() { :; }; trap writer_cleanup EXIT; stage_packages "$1/offline.urls"' _ "$PLAN"
+  [ "$status" -eq 0 ]
+  [ -z "$(ls -A "$NOVA_USB_STAGE_ROOT")" ]
+  curl() { touch "$SCRATCH/partial"; return 22; }
+  export -f curl
+  run bash -c 'source "$REPO_ROOT/installer/nova-usb"; trap writer_cleanup EXIT; stage_packages "$1/offline.urls"' _ "$PLAN"
+  [ "$status" -ne 0 ]
+  [[ $output == *"nothing was written"* ]]
+  [ -e "$SCRATCH/partial" ]
+  [ -z "$(ls -A "$NOVA_USB_STAGE_ROOT")" ]
+}
+
+@test "packages reuse a cache entry only with the same name, size and a signature" {
+  staging_setup
+  printf data >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst"
+  printf signed >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst.sig"
+  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
+  [ ! -e "$SCRATCH/curl.config" ]
+  [ "$(cat "$SCRATCH/stick/a-1-1-any.pkg.tar.zst.sig")" = signed ]
+  printf wrong-size >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst"
+  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
+  [ -e "$SCRATCH/curl.config" ]
+  rm "$SCRATCH/curl.config" "$SCRATCH/pkg/a-1-1-any.pkg.tar.zst.sig"
+  printf data >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst"
+  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
+  [ -e "$SCRATCH/curl.config" ]
 }
 
 @test "still_there: a listed name that leaves the home is dropped" {

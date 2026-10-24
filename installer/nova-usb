@@ -18,6 +18,8 @@
 # and their SHA-256 sums; the installer asks for its passphrase and puts it all
 # back. Everything written is read back from the stick and checked before it is
 # done.
+# Packages download to local disk before the stick is erased, then copy in
+# order. If local disk space is short, they download straight to the stick.
 #
 #   nova usb                 the wizard
 #   nova usb --preset        last time's choices; asks only for the stick and passphrase
@@ -906,6 +908,7 @@ main() {
 # checks it again, and stops on anything unexpected.
 
 WORK=''
+PACKAGE_STAGE=''
 UDEV_RULE=${NOVA_USB_UDEV_RULE:-/run/udev/rules.d/90-nova-usb.rules}
 
 # A desktop automounter (udiskie, on Nova) would mount the new partitions, and
@@ -922,6 +925,7 @@ hide_from_desktop() { # device
 }
 
 writer_cleanup() {
+  [[ -z $PACKAGE_STAGE ]] || rm -rf --one-file-system -- "$PACKAGE_STAGE"
   if [[ -f $UDEV_RULE ]]; then
     rm -f -- "$UDEV_RULE"
     udevadm control --reload 2>/dev/null || true
@@ -973,31 +977,79 @@ wait_for() { # device
   [[ -b $1 ]]
 }
 
-# The packages, straight onto the stick, each with its signature. FAT cannot
+# The packages, each with its signature. FAT cannot
 # name a file with a colon (an epoch: ffmpeg-2:7.1-1), so those are saved with
 # an underscore; pacman fetches by the name in the database, which repo-add
 # takes from the file.
 download_packages() { # urls dir
-  local urls=$1 dir=$2 url name config
+  local urls=$1 dir=$2 url name original bytes config cache cached caches=()
+  mapfile -t caches < <(pacman-conf CacheDir 2>/dev/null || echo /var/cache/pacman/pkg)
   config=$(mktemp)
-  while IFS=$'\t' read -r url _; do
+  while IFS=$'\t' read -r url bytes; do
     [[ -n $url ]] || continue
     name=${url##*/}
     name=$(printf '%b' "${name//%/\\x}")
+    original=$name
     name=${name//:/_}
     # Decoded, %2F is a slash: as root, a name like that could write anywhere.
-    [[ -n $name && $name != [.-]* && $name != */* ]] || {
+    [[ -n $name && $name != [.-]* && $name != */* && $name != *\"* && $name != *\\* && ! $name =~ [[:cntrl:]] ]] || {
       echo "nova usb: refusing the package file name '$name'" >&2
       rm -f -- "$config"
       return 1
     }
+    cached=0
+    for cache in "${caches[@]}"; do
+      if [[ -f $cache/$original && -s $cache/$original.sig && $bytes =~ ^[0-9]+$ ]] &&
+        [[ $(stat -c %s -- "$cache/$original") == "$bytes" ]]; then
+        cp -- "$cache/$original" "$dir/$name" && cp -- "$cache/$original.sig" "$dir/$name.sig" || {
+          rm -f -- "$config"
+          return 1
+        }
+        cached=1
+        break
+      fi
+    done
+    ((cached == 0)) || continue
     printf 'url = "%s"\noutput = "%s/%s"\nurl = "%s.sig"\noutput = "%s/%s.sig"\n' "$url" "$dir" "$name" "$url" "$dir" "$name"
   done <"$urls" >"$config"
-  curl --parallel --parallel-max 6 --fail --location --retry 3 --show-error --config "$config" || {
+  if [[ -s $config ]] && ! curl --parallel --parallel-max 6 --fail --location --retry 3 --show-error --config "$config"; then
     rm -f -- "$config"
     return 1
-  }
+  fi
   rm -f -- "$config"
+}
+
+# /tmp may be RAM. Keep the packages on disk, with room for signatures and
+# other users of that disk. NOVA_USB_STAGE_ROOT overrides the path in tests.
+stage_packages() { # urls
+  local urls=$1 root=${NOVA_USB_STAGE_ROOT:-/var/tmp} bytes available fs
+  bytes=$(awk -F'\t' '{ s += $2 } END { printf "%.0f\n", s }' "$urls")
+  fs=$(findmnt -n -o FSTYPE --target "$root") || fs=tmpfs
+  available=$(df -PB1 -- "$root" | awk 'NR == 2 { print $4 }') || available=0
+  if [[ $fs == tmpfs || $fs == ramfs || ! $available =~ ^[0-9]+$ ]] ||
+    ((available < bytes + bytes / 10 + 128 * MiB)) ||
+    ! PACKAGE_STAGE=$(mktemp -d "$root/nova-usb-packages.XXXXXX"); then
+    info "Local disk space is short; packages will download straight to the stick."
+    return 0
+  fi
+  say "Downloading the packages to local disk"
+  download_packages "$urls" "$PACKAGE_STAGE" || die "a package did not download; nothing was written."
+  make_offline_repo "$PACKAGE_STAGE" || die "could not index the packages; nothing was written."
+}
+
+# One file at a time keeps writes to a slow stick sequential.
+copy_packages() { # source destination
+  local package_files=("$1"/*) file i=0 total
+  total=${#package_files[@]}
+  for file in "${package_files[@]}"; do
+    cp -- "$file" "$2/" || return 1
+    i=$((i + 1))
+    if [[ -t 2 ]]; then
+      printf '\r\e[K  %s  %s of %s files' "$(ui_bar "$i" "$total" 24)" "$i" "$total" >&2
+    fi
+  done
+  [[ ! -t 2 ]] || echo >&2
+  return 0
 }
 
 # repo-add writes a symlink FAT cannot hold, so the database is made aside and
@@ -1114,6 +1166,11 @@ write_stick() { # plan, with the passphrase on stdin
   WORK=$(mktemp -d /tmp/nova-usb-write.XXXXXX)
   trap writer_cleanup EXIT
   mkdir -p "$WORK/iso" "$WORK/stick" "$WORK/data"
+  if [[ $offline == 1 ]]; then
+    stage_packages "$plan/offline.urls"
+    # A download may take a while; the device must still be the same stick.
+    check_stick "$device" "$size" "$serial"
+  fi
   hide_from_desktop "$device"
 
   say "Partitioning $device"
@@ -1141,11 +1198,17 @@ write_stick() { # plan, with the passphrase on stdin
     echo "$keymap" >"$WORK/stick/nova/keymap"
   fi
   if [[ $offline == 1 ]]; then
-    say "Downloading the packages onto the stick"
     mkdir -p "$WORK/stick/nova/repo"
-    download_packages "$plan/offline.urls" "$WORK/stick/nova/repo" || die "a package did not download"
-    make_offline_repo "$WORK/stick/nova/repo" || die "could not index the packages"
+    if [[ -n $PACKAGE_STAGE ]]; then
+      say "Copying the packages to the stick"
+      copy_packages "$PACKAGE_STAGE" "$WORK/stick/nova/repo" || die "could not copy the packages"
+    else
+      say "Downloading the packages onto the stick"
+      download_packages "$plan/offline.urls" "$WORK/stick/nova/repo" || die "a package did not download"
+      make_offline_repo "$WORK/stick/nova/repo" || die "could not index the packages"
+    fi
   fi
+  sync -f "$WORK/stick"
   umount "$WORK/stick"
 
   if [[ -n $items ]]; then
