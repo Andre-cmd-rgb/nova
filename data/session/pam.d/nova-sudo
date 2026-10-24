@@ -2,9 +2,9 @@
 # sudo, with the fingerprint first (/etc/sudoers.d/20-nova-pam points sudo
 # here): a finger the reader knows is enough, and three misses, the timeout or
 # no print at all fall through to sudo's own stack, which this includes as it
-# is. While the lid is shut, the line before it skips the reader, which is out
-# of reach; over SSH pam_fprintd skips itself.
-auth       [success=1 default=ignore]  pam_exec.so quiet /usr/lib/nova/bin/nova-hw-laptop-closed
+# is. The line before it skips the reader unless the lid is open: shut, the
+# reader is out of reach. Over SSH pam_fprintd skips itself.
+auth       [success=ignore default=1]  pam_exec.so quiet /usr/lib/nova/bin/nova-hw-laptop-open
 -auth      sufficient                  pam_fprintd.so timeout=15
 auth       include                     sudo
 account    include                     sudo

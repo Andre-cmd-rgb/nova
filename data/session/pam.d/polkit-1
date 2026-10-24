@@ -2,13 +2,14 @@
 # The password prompts of polkit (installs, system settings, Settings' own
 # switches), with the fingerprint first: a finger the reader knows is enough,
 # and three misses, the timeout or no print at all fall through to the
-# password. While the lid is shut, the line before it skips the reader, which
-# is out of reach. The shell's polkit dialog reads this file to know the reader
-# is in play.
+# password. The line before it skips the reader unless the lid is open: shut,
+# the reader is out of reach. (It asks "open?" rather than "shut?" because
+# pam_exec logs every no as an error.) The shell's polkit dialog reads this
+# file to know the reader is in play.
 #
 # This shadows polkit's own /usr/lib/pam.d/polkit-1, so the lines after the
 # fingerprint repeat it; tests/unit/session/pam.bats checks they still do.
-auth       [success=1 default=ignore]  pam_exec.so quiet /usr/lib/nova/bin/nova-hw-laptop-closed
+auth       [success=ignore default=1]  pam_exec.so quiet /usr/lib/nova/bin/nova-hw-laptop-open
 -auth      sufficient                  pam_fprintd.so timeout=15
 auth       include                     system-auth
 account    include                     system-auth
