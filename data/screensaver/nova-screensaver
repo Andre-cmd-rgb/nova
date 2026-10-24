@@ -5,7 +5,7 @@
 # nova:examples=nova screensaver | nova screensaver stop
 #
 # A terminal on each display plays the wordmark through ttfx's text effects
-# (github.com/omacom/ttfx), as Omarchy's screensaver does. The text is
+# (github.com/omacom/ttfx). The text is
 # ~/.config/nova/screensaver.txt when there is one. A key, the window losing
 # focus, the lock or `nova screensaver stop` ends it (nova-screensaver-run).
 #

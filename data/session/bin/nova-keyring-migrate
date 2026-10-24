@@ -3,8 +3,8 @@
 # nova:summary=Move a passwordless keyring into the login keyring
 # nova:hidden=true
 #
-# A keyring stored without a password (Omarchy keeps its secrets in one,
-# "Default_keyring") is readable by anything that can read the file. nova
+# A keyring stored without a password ("Default_keyring", say) is readable
+# by anything that can read the file. nova
 # doctor finds one, and its fix drops ~/.local/state/nova/keyring-migrate-pending
 # (optionally naming another keyring) and runs this. At a password unlock this
 # copies every item into the password-encrypted login keyring, reads each one

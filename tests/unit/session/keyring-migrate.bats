@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 # data/session/bin/nova-keyring-migrate against a real gnome-keyring, on a D-Bus
-# session of its own and a scratch home: the keyring Omarchy leaves, stored
+# session of its own and a scratch home: a keyring stored
 # without a password, moves into the password-encrypted login keyring.
 
 load ../test_helper
@@ -26,8 +26,8 @@ EOF
 
 teardown() { teardown_scratch; }
 
-# A keyring as Omarchy leaves it: plain text, holding Chrome's key.
-omarchy_keyring() {
+# A keyring stored without a password: plain text, holding Chrome's key.
+passwordless_keyring() {
   cat >"$XDG_DATA_HOME/keyrings/Default_keyring.keyring" <<'EOF'
 [keyring]
 display-name=Default keyring
@@ -62,7 +62,7 @@ first_unlock() {
 }
 
 @test "the passwordless keyring, locked until asked, moves into the login keyring and is gone" {
-  omarchy_keyring
+  passwordless_keyring
   : >"$XDG_STATE_HOME/nova/keyring-migrate-pending"
   run first_unlock
   [ "$status" -eq 0 ]
@@ -73,8 +73,8 @@ first_unlock() {
   [ ! -e "$XDG_STATE_HOME/nova/keyring-migrate-pending" ]
 }
 
-@test "without the installer's marker, the keyring is left as it is" {
-  omarchy_keyring
+@test "without the marker, the keyring is left as it is" {
+  passwordless_keyring
   run first_unlock
   [ "$status" -eq 0 ]
   [[ $output != *moved* ]]

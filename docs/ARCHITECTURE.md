@@ -60,8 +60,8 @@ exactly that, so pacman owns every file.
   `nova-<name>`. PAM services are `nova-lock-password`, `nova-lock-fingerprint` and
   `nova-greeter`. User units are `nova-*.service`. polkit actions are
   `org.nova.*`.
-- **"omarchy" appears only in `NOTICE` and `docs/`.** CI fails on any `omarchy-`,
-  `omarchy_`, `/omarchy`, `OMARCHY_PATH` or `qs.Omarchy` under `src/` and `data/`.
+- **The project Nova derives from is named in `NOTICE` only**, as its license
+  asks. `make check-names` (run in CI) fails on the name anywhere else.
 
 ## Session flow (boot to desktop)
 

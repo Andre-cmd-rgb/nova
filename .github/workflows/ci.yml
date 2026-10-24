@@ -49,7 +49,7 @@ jobs:
       - name: Lua syntax
         run: sudo -u builder -H make lint-lua
 
-      - name: No Omarchy names outside NOTICE and docs
+      - name: Nova's names only
         run: sudo -u builder -H make check-names
 
       - name: QML lint

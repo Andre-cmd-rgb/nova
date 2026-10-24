@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 # installer/ui.bash: how Nova's setup screens look, for nova usb and for the
 # installer on the stick. The wordmark sits on top and one question at a time
-# below it, asked with gum (github.com/charmbracelet/gum), as Omarchy's
-# installer asks.
+# below it, asked with gum (github.com/charmbracelet/gum).
 #
 # Every ui_ prompt prints its answer on stdout and returns gum's status: 0 for
 # an answer, 1 for Esc (or No), 130 for Ctrl+C. ui_ask runs one and keeps the

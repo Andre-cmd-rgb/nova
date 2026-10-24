@@ -48,11 +48,14 @@ lint-qml:
 lint-workflows:
 	actionlint
 
-# "omarchy" belongs in NOTICE and docs/ only (docs/ARCHITECTURE.md, Naming).
+# The project Nova derives from is named in NOTICE only, which its license
+# asks for (docs/ARCHITECTURE.md, Naming). The [m] keeps this line from
+# matching itself; git grep exits 1 for no match, and above that for an error.
 check-names:
-	@if grep -rnE 'omarchy[-_]|/omarchy|OMARCHY_PATH|qs\.Omarchy' src data; then \
-	  echo "Omarchy names in src/ or data/, listed above" >&2; exit 1; \
-	fi
+	@status=0; git grep -n -i --untracked -e 'o[m]archy' -- ':!NOTICE' || status=$$?; \
+	if [ $$status -eq 0 ]; then \
+	  echo "a name from before Nova, listed above; only NOTICE keeps it" >&2; exit 1; \
+	elif [ $$status -ne 1 ]; then exit $$status; fi
 
 test:
 	bats --recursive $(TEST_DIRS)

@@ -96,6 +96,5 @@ before it is published.
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The shell, the Hyprland defaults and the palettes
-derive from [Omarchy](https://github.com/basecamp/omarchy) (MIT); see
-[NOTICE](NOTICE).
+MIT, see [LICENSE](LICENSE). [NOTICE](NOTICE) has the licenses of the code
+Nova builds on.
