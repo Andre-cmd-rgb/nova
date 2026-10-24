@@ -83,14 +83,18 @@ check_disk_space() {
 }
 
 check_package() {
-  local version summary missing
+  local version checked missing unreadable
   if ! version=$(pacman -Q nova 2>/dev/null); then
     report warn "nova is not installed as a package"
     return
   fi
-  summary=$(pacman -Qk nova 2>/dev/null | tail -n 1 || true)
-  missing=$(sed -nE 's/.* ([0-9]+) missing files?$/\1/p' <<<"$summary")
-  if ((${missing:-0} > 0)); then
+  checked=$(LC_ALL=C pacman -Qk nova 2>&1 || true)
+  missing=$(sed -nE 's/.* ([0-9]+) missing files?$/\1/p' <<<"$checked")
+  # Run as a user, pacman cannot look into root-only directories
+  # (/etc/sudoers.d) and counts each file in them as missing.
+  unreadable=$(grep -c ' (Permission denied)$' <<<"$checked" || true)
+  missing=$((${missing:-0} - unreadable))
+  if ((missing > 0)); then
     report FAIL "$missing of nova's files are missing" "sudo pacman -S nova puts them back."
   else
     report ok "$version, every file in place"

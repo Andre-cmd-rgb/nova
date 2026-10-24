@@ -77,6 +77,23 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   [[ $output == *"FAIL  3 of nova's files are missing"* ]]
 }
 
+@test "a file a user cannot look at is not missing" {
+  stub pacman 'case $1 in -Q) echo "nova 1.0.0beta.1-1" ;;
+    -Qk) echo "warning: nova: /etc/sudoers.d/20-nova-pam (Permission denied)" >&2; echo "nova: 1200 total files, 1 missing file" ;; esac'
+  run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"ok    nova 1.0.0beta.1-1, every file in place"* ]]
+}
+
+@test "a missing file is still counted next to one a user cannot look at" {
+  stub pacman 'case $1 in -Q) echo "nova 1.0.0beta.1-1" ;;
+    -Qk) printf "warning: nova: /etc/sudoers.d/20-nova-pam (Permission denied)\nwarning: nova: /usr/bin/nova (No such file or directory)\n" >&2
+         echo "nova: 1200 total files, 2 missing files" ;; esac'
+  run doctor
+  [ "$status" -eq 1 ]
+  [[ $output == *"FAIL  1 of nova's files are missing"* ]]
+}
+
 @test "a kernel updated since boot is a warning" {
   rm -r "$NOVA_MODULES_DIR/6.17.0-nova1"
   run doctor
