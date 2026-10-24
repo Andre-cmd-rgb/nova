@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import Quickshell
+import Quickshell.Bluetooth
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -246,6 +247,40 @@ Item {
     }
   }
 
+  // ---- Bluetooth's scan ------------------------------------------------------
+
+  // Bluetooth's page scans for devices while it is open. BlueZ confirms a scan
+  // some time after it is asked for, the page can be gone by then, and a write
+  // that matches the state BlueZ last reported is not passed on: a stop from
+  // the page as it goes misses a scan confirmed after it. So the stop lives
+  // here, where it outlasts the page, bound to the confirmed state, as the
+  // bar's Bluetooth menu does. Three tries, so a scan some other program keeps
+  // starting is not fought forever.
+  property bool owesDiscoveryStop: false
+  readonly property var bluetoothAdapter: Bluetooth.defaultAdapter
+
+  Timer {
+    interval: 1000
+    repeat: true
+    property int attempts: 0
+    running: root.owesDiscoveryStop && !(window.visible && root.page === "bluetooth")
+      && !!root.bluetoothAdapter && root.bluetoothAdapter.discovering
+    onRunningChanged: if (running) attempts = 0
+    onTriggered: {
+      attempts += 1
+      if (attempts > 3) root.owesDiscoveryStop = false
+      else root.bluetoothAdapter.discovering = false
+    }
+  }
+
+  // Settled the moment BlueZ reports the scan down, however it ended.
+  Connections {
+    target: root.bluetoothAdapter
+    function onDiscoveringChanged() {
+      if (!root.bluetoothAdapter.discovering) root.owesDiscoveryStop = false
+    }
+  }
+
   // ---- pieces ---------------------------------------------------------------
 
   component Heading: Text {
@@ -461,7 +496,10 @@ Item {
     Page {
       id: p
       title: "Bluetooth"
-      BluetoothView { width: p.inner }
+      BluetoothView {
+        width: p.inner
+        onDiscoveryStarted: root.owesDiscoveryStop = true
+      }
     }
   }
 

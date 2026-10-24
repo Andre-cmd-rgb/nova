@@ -31,13 +31,12 @@ Column {
 
   // address -> "connecting" | "disconnecting" | "forgetting"
   property var pending: ({})
-  // Discovery is the adapter's, so this page ends only a scan it started.
-  property bool startedDiscovery: false
+
+  // Each scan this page asks for. Settings ends it once the page is gone: the
+  // page cannot, as BlueZ may confirm the scan only after that.
+  signal discoveryStarted()
 
   Component.onCompleted: sync()
-  Component.onDestruction: {
-    if (startedDiscovery && adapter && adapter.discovering) adapter.discovering = false
-  }
   onDeviceObjectsChanged: sync()
 
   function label(d) {
@@ -117,7 +116,7 @@ Column {
     triggeredOnStart: true
     running: root.powered && !root.adapter.discovering
     onTriggered: {
-      root.startedDiscovery = true
+      root.discoveryStarted()
       root.adapter.discovering = true
     }
   }

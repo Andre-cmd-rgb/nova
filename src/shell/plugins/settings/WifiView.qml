@@ -43,15 +43,21 @@ Column {
   // The row asking for a password, and what is typed into it.
   property string askingSsid: ""
 
-  // Scanning lives on the shared device, so this page turns it off again
-  // only when it was the one to turn it on.
+  // Scanning lives on the shared device, and the bar's Wi-Fi menu turns it
+  // off as it closes, whoever turned it on. So while this page is open it
+  // turns scanning back on whenever it finds it off, and as it goes, turns it
+  // off only if it was the one to turn it on.
   property var scanner: null
 
   function scan() {
-    if (scanner === device) return
-    if (scanner) scanner.scannerEnabled = false
-    scanner = device && !device.scannerEnabled ? device : null
-    if (scanner) scanner.scannerEnabled = true
+    if (scanner && scanner !== device) {
+      scanner.scannerEnabled = false
+      scanner = null
+    }
+    if (device && !device.scannerEnabled) {
+      device.scannerEnabled = true
+      scanner = device
+    }
   }
 
   Component.onCompleted: { scan(); sync() }
@@ -149,12 +155,13 @@ Column {
   }
 
   // The radio's on/off, and a scan's results, arrive without a signal for the
-  // networks already listed: a light poll keeps the rows true.
+  // networks already listed: a light poll keeps the rows true, and the
+  // scanning on.
   Timer {
     interval: 2000
     repeat: true
     running: true
-    onTriggered: root.sync()
+    onTriggered: { root.scan(); root.sync() }
   }
 
   Timer {

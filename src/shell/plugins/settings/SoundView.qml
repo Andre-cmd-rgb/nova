@@ -14,6 +14,8 @@ Column {
   spacing: Style.space(22)
 
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
+  // The output chosen, which with a speaker tuning on is the tuning itself.
+  readonly property var selected: Pipewire.defaultAudioSink
   readonly property var source: Pipewire.defaultAudioSource
   // Speaker tuning puts a filter in front of the speakers and makes it the
   // default; the volume that matters is the speakers' own, behind it, which
@@ -33,24 +35,22 @@ Column {
   property var outputs: []
   property var inputs: []
   property string choicesText: ""
-  // sink name -> false for an output with nothing plugged in (HDMI, say).
+  // sink name -> false for an output with nothing plugged in (HDMI, say), and
+  // for the speakers a speaker tuning stands in front of: the tuning is listed
+  // in their place, as choosing them would leave it out.
   property var plugged: ({})
 
   PwObjectTracker { objects: [root.output, root.source] }
 
   Component.onCompleted: { sync(); probe() }
   onNodesChanged: sync()
-  onOutputChanged: sync()
+  onSelectedChanged: sync()
   onSourceChanged: sync()
 
   function label(n) {
     var p = n && n.ready && n.properties ? n.properties : {}
     var text = String(n.nickname || p["node.nick"] || n.description || p["node.description"] || n.name || "")
     return text.replace(/^sof-soundwire\s+/i, "").replace(/\s+(Output|Input)$/i, "").replace(/\bMicrophones\b/g, "Microphone")
-  }
-
-  function filter(name) {
-    return name.indexOf("effect_input.") === 0 || name.indexOf("nova_speaker_tuning") >= 0
   }
 
   function sync() {
@@ -60,7 +60,9 @@ Column {
       if (!n || n.isStream || !n.name) continue
       var name = String(n.name)
       if (n.isSink) {
-        if (filter(name) || (plugged[name] === false && n !== output)) continue
+        // A filter's own input is processing on the way somewhere, not a
+        // place sound goes.
+        if (name.indexOf("effect_input.") === 0 || (plugged[name] === false && n !== selected)) continue
         outs.push({ value: name, label: label(n), id: n.id })
       } else if (n.audio && name !== "quickshell") {
         ins.push({ value: name, label: label(n), id: n.id })
@@ -136,7 +138,7 @@ Column {
         width: Style.spacing.dropdownWidth
         showLabel: false
         options: root.outputs
-        value: root.output ? String(root.output.name) : ""
+        value: root.selected ? String(root.selected.name) : ""
         onChanged: function (value) {
           root.choose(root.outputs, value, "nova-audio-output-set-default", function (n) { Pipewire.preferredDefaultAudioSink = n })
         }
