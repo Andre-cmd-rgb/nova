@@ -17,8 +17,8 @@
 //! makes the CPU discard every offset, so each one is read back.
 //!
 //! Commands (root, but status):
-//!   apply            the service's start: the offset onto the CPU, or a hold
-//!   watch            the service's main process: off on a machine check
+//!   run              the service: the offset onto the CPU (or a hold), then
+//!                    off at the first machine check
 //!   reset            the service's stop: the offset off
 //!   reapply          after sleep, which can lose it (a hibernate is a power cycle)
 //!   status [--json]  what is set and what the CPU has; the CPU's own
@@ -154,6 +154,16 @@ fn take_off(paths: &Paths, msr: &mut dyn Msr) -> io::Result<()> {
     remove_durably(&paths.file("armed"))
 }
 
+/// Holds the offset and takes it off. While the CPU will not take it off, it
+/// stays armed and this fails, so the service's stop (reset) tries again
+/// rather than finding nothing to undo.
+fn hold_off(paths: &Paths, msr: io::Result<Box<dyn Msr>>, reason: &str) -> io::Result<String> {
+    write_durably(&paths.file("held"), &format!("{reason}\n"))?;
+    msr.and_then(|mut msr| take_off(paths, msr.as_mut()))
+        .map_err(|e| io::Error::other(format!("{reason}; {e}")))?;
+    Ok(format!("held: {reason}"))
+}
+
 /// Opens the CPU's registers and checks the firmware lets an offset through;
 /// the reason it is held otherwise.
 fn open_unlocked(paths: &Paths, open: Open) -> Result<Box<dyn Msr>, String> {
@@ -208,8 +218,11 @@ fn apply(paths: &Paths, open: Open) -> io::Result<String> {
     };
     write_durably(&paths.file("armed"), &format!("{boot} {mv}\n"))?;
     if let Err(e) = mailbox::set(msr.as_mut(), mv) {
-        let _ = mailbox::set(msr.as_mut(), 0);
-        return hold(paths, &format!("the CPU did not take {mv} mV: {e}"));
+        return hold_off(
+            paths,
+            Ok(msr),
+            &format!("the CPU did not take {mv} mV: {e}"),
+        );
     }
     Ok(format!(
         "{:.1} mV on the CPU core and cache",
@@ -238,9 +251,9 @@ fn reapply(paths: &Paths, open: Open) -> io::Result<String> {
         Err(reason) => return hold(paths, &reason),
     };
     if let Err(e) = mailbox::set(msr.as_mut(), mv) {
-        let _ = mailbox::set(msr.as_mut(), 0);
-        return hold(
+        return hold_off(
             paths,
+            Ok(msr),
             &format!("the CPU did not take {mv} mV after sleep: {e}"),
         );
     }
@@ -275,13 +288,22 @@ fn watch(
         if let Some(line) = machine_check(&record) {
             let reason =
                 format!("the kernel logged a machine check while undervolted by {mv} mV: {line}");
-            let mut msr = open()?;
-            let _ = mailbox::set(msr.as_mut(), 0);
-            hold(paths, &reason)?;
+            let msr = open().map_err(|e| {
+                io::Error::other(format!("the CPU's registers cannot be opened: {e}"))
+            });
+            hold_off(paths, msr, &reason)?;
             return Err(io::Error::other(reason));
         }
     }
     Err(io::Error::other("the kernel's log ended"))
+}
+
+/// The service: listens to the kernel's log before the offset goes on, so a
+/// machine check the offset itself causes is caught too, then applies it and
+/// watches.
+fn run(paths: &Paths, open: Open, records: &mut dyn Iterator<Item = String>) -> io::Result<String> {
+    println!("{}", apply(paths, open)?);
+    watch(paths, open, records)
 }
 
 /// The kernel's log from now on, one record a read.
@@ -397,14 +419,13 @@ fn main() -> ExitCode {
     let paths = Paths::system();
     let mut open = || CpuMsr::open().map(|msr| Box::new(msr) as Box<dyn Msr>);
     let result = match args.as_slice() {
-        ["apply"] => apply(&paths, &mut open),
-        ["watch"] => Kmsg::open().and_then(|mut kmsg| watch(&paths, &mut open, &mut kmsg)),
+        ["run"] => Kmsg::open().and_then(|mut kmsg| run(&paths, &mut open, &mut kmsg)),
         ["reset"] => reset(&paths, &mut open),
         ["reapply"] => reapply(&paths, &mut open),
         ["status"] => status(&paths, &mut open, false),
         ["status", "--json"] => status(&paths, &mut open, true),
         _ => {
-            eprintln!("Usage: nova-undervolt apply | watch | reset | reapply | status [--json]");
+            eprintln!("Usage: nova-undervolt run | reset | reapply | status [--json]");
             return ExitCode::from(2);
         }
     };
@@ -612,6 +633,53 @@ mod tests {
             .json()
             .contains("machine check while undervolted by -80 mV"));
         assert!(!m.paths.file("armed").exists());
+    }
+
+    #[test]
+    fn an_offset_the_cpu_will_not_drop_stays_armed_until_reset_takes_it_off() {
+        let m = Machine::new();
+        m.set_offset("-80");
+        m.run(apply);
+        m.cpu.0.borrow_mut().discard = true;
+        let cpu = m.cpu.clone();
+        let mut open = move || Ok(Box::new(cpu.clone()) as Box<dyn Msr>);
+        let mut records = ["2,1,1,-;mce: [Hardware Error]: Machine check events logged"]
+            .into_iter()
+            .map(String::from);
+        let err = watch(&m.paths, &mut open, &mut records).unwrap_err();
+        assert!(
+            err.to_string().contains("could not take the offset off"),
+            "{err}"
+        );
+        // Held, so no boot applies it again, but still armed for reset.
+        assert!(m.json().contains(r#""state":"held""#));
+        assert!(m.paths.file("armed").exists());
+        let cpu = m.cpu.clone();
+        let mut open = move || Ok(Box::new(cpu.clone()) as Box<dyn Msr>);
+        assert!(reset(&m.paths, &mut open).is_err());
+        assert!(m.paths.file("armed").exists());
+        m.cpu.0.borrow_mut().discard = false;
+        assert_eq!(m.run(reset), "the offset is off");
+        assert_eq!(m.core(), 0.0);
+        assert!(!m.paths.file("armed").exists());
+    }
+
+    #[test]
+    fn a_machine_check_as_the_offset_goes_on_is_caught() {
+        let m = Machine::new();
+        m.set_offset("-80");
+        let cpu = m.cpu.clone();
+        let mut open = move || Ok(Box::new(cpu.clone()) as Box<dyn Msr>);
+        // run reads the log from before the offset is applied.
+        let mut records = ["2,1,1,-;mce: [Hardware Error]: Machine check events logged"]
+            .into_iter()
+            .map(String::from);
+        let err = run(&m.paths, &mut open, &mut records).unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("machine check while undervolted by -80 mV"));
+        assert_eq!(m.core(), 0.0);
+        assert!(m.json().contains(r#""state":"held""#));
     }
 
     #[test]

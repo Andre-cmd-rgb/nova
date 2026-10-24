@@ -5,15 +5,15 @@ Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/hardware/thin
 ConditionPathExists=/var/lib/nova/undervolt/offset
 
 [Service]
-# apply holds the offset instead when the last boot ended without shutting
-# down while it was on, or when the CPU will not take it, and says why in
-# /var/lib/nova/undervolt/held. watch then takes it off at the first machine
-# check. The stop, at shutdown too, takes it off: that is how the next boot
-# knows this one shut down cleanly. Not restarted: watch ends only once it
-# has taken the offset off.
+# run listens to the kernel's log, applies the offset, and takes it off at the
+# first machine check, the ones the offset causes as it goes on included. It
+# holds the offset instead when the last boot ended without shutting down
+# while it was on, or when the CPU will not take it, and says why in
+# /var/lib/nova/undervolt/held. The stop, at shutdown too, takes it off: that
+# is how the next boot knows this one shut down cleanly. Not restarted: run
+# ends only once it has taken the offset off, or found nothing to watch.
 ExecStartPre=-/usr/bin/modprobe -q msr
-ExecStartPre=/usr/lib/nova/bin/nova-undervolt apply
-ExecStart=/usr/lib/nova/bin/nova-undervolt watch
+ExecStart=/usr/lib/nova/bin/nova-undervolt run
 ExecStopPost=/usr/lib/nova/bin/nova-undervolt reset
 
 [Install]
