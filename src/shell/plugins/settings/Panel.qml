@@ -422,6 +422,50 @@ Item {
           id: pageLoader
           width: scroll.availableWidth
           active: window.visible
+
+          // A touchpad scrolls the page as GTK, and so every other window
+          // here, scrolls one: Qt moves a page by the touchpad's delta itself
+          // and stops dead when the fingers lift, GTK multiplies the delta by
+          // the page's height to the power 2/3 over 10 (about 7 for this
+          // window) and glides on. A mouse wheel's notch is left to Qt, which
+          // moves it as far as GTK does. Under the page, so a slider still
+          // takes the wheel it is under.
+          MouseArea {
+            id: touchpad
+            anchors.fill: parent
+            z: -1
+            acceptedButtons: Qt.NoButton
+            // The last tenth of a second of movement, which the glide carries on.
+            property var recent: []
+
+            onWheel: function (wheel) {
+              if (wheel.pixelDelta.y === 0) {
+                wheel.accepted = false
+                return
+              }
+              var page = scroll.contentItem
+              var dy = wheel.pixelDelta.y * Math.pow(page.height, 2 / 3) / 10
+              var now = Date.now()
+              page.cancelFlick()
+              page.contentY = Math.max(0, Math.min(page.contentHeight - page.height, page.contentY - dy))
+              recent = recent.filter(function (s) { return now - s.t < 100 }).concat([{ t: now, dy: dy }])
+              glide.restart()
+            }
+
+            // No event for this long: the fingers have lifted (or stopped).
+            Timer {
+              id: glide
+              interval: 50
+              onTriggered: {
+                var r = touchpad.recent
+                touchpad.recent = []
+                if (r.length < 2) return
+                var moved = 0
+                for (var i = 1; i < r.length; i++) moved += r[i].dy
+                scroll.contentItem.flick(0, moved / Math.max(0.016, (r[r.length - 1].t - r[0].t) / 1000))
+              }
+            }
+          }
           sourceComponent: {
             switch (root.page) {
             case "wifi": return wifiPage
