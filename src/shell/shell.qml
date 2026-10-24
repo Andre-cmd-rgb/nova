@@ -710,12 +710,8 @@ ShellRoot {
     }
 
     function applyTheme(colorsB64: string, shellB64: string): string {
-      var colorsRaw = ""
-      var shellRaw = ""
-      try { colorsRaw = Qt.atob(String(colorsB64 || "")) } catch (e) { colorsRaw = "" }
-      try { shellRaw = Qt.atob(String(shellB64 || "")) } catch (e2) { shellRaw = "" }
-      Commons.Color.loadColors(colorsRaw)
-      Commons.Color.loadShell(shellRaw)
+      Commons.Color.loadColors(Util.decodeBase64(colorsB64))
+      Commons.Color.loadShell(Util.decodeBase64(shellB64))
       Style.scheduleRefresh()
       return "ok"
     }

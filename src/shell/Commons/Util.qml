@@ -71,12 +71,28 @@ QtObject {
     return String(id || "")
   }
 
-  // Best-effort base64 decode. Returns "" on parse failure rather than
-  // surfacing garbage downstream.
+  // "%00" to "%ff", for decodeBase64.
+  readonly property var percentBytes: {
+    var table = []
+    for (var i = 0; i < 256; i++) table.push((i < 16 ? "%0" : "%") + i.toString(16))
+    return table
+  }
+
+  // Best-effort base64 decode of UTF-8 text. Returns "" on parse failure
+  // rather than surfacing garbage downstream. Qt.atob on a string is
+  // deprecated, and warns each call; on an array of character codes it gives
+  // the bytes, which decodeURIComponent reads as UTF-8.
   function decodeBase64(value) {
     var s = String(value || "")
     if (!s) return ""
-    try { return Qt.atob(s) } catch (e) { return "" }
+    try {
+      var codes = new Array(s.length)
+      for (var i = 0; i < s.length; i++) codes[i] = s.charCodeAt(i)
+      var bytes = new Uint8Array(Qt.atob(codes))
+      var escaped = new Array(bytes.length)
+      for (var j = 0; j < bytes.length; j++) escaped[j] = percentBytes[bytes[j]]
+      return decodeURIComponent(escaped.join(""))
+    } catch (e) { return "" }
   }
 
   function cloneJson(value) {
