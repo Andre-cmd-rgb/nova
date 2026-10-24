@@ -827,7 +827,7 @@ cmd_indicator() {
     echo "Bar indicator $state."
     ;;
   status)
-    if nova bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
+    if is_enabled; then
       echo "The plugin is in the bar layout."
     else
       echo "The plugin is not in the bar layout."

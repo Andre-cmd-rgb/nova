@@ -1083,6 +1083,14 @@ cmd_open() {
     die "could not open Settings"
 }
 
+# On the bar: in the layout of ~/.config/nova/shell.json, which `nova bar`
+# keeps, or of the default one before there is a file.
+in_bar_layout() {
+  local config=${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json
+  [[ -s $config ]] || config=${NOVA_PATH:-/usr/share/nova}/default/shell.json
+  jq -e --arg id "$PLUGIN_ID" 'any(.bar.layout[]?[]?; .id? == $id)' "$config" >/dev/null 2>&1
+}
+
 cmd_indicator() {
   local state=${1:-status}
   have nova || die "the nova CLI is required"
@@ -1093,7 +1101,7 @@ cmd_indicator() {
     echo "Bar indicator $state."
     ;;
   status)
-    if nova bar 2>/dev/null | grep -q "$PLUGIN_ID"; then
+    if in_bar_layout; then
       echo "The plugin is in the bar layout."
     else
       echo "The plugin is not in the bar layout."
