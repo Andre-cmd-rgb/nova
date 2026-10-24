@@ -20,6 +20,7 @@ Item {
 
   property string historyPath: Quickshell.env("HOME") + "/.local/state/nova/clipboard-history.json"
   property string captureScript: root.novaPath + "/shell/plugins/clipboard/capture.sh"
+  property string pruneScript: root.novaPath + "/shell/plugins/clipboard/prune-images.sh"
   // Shares the [menu] surface tokens — themes that style the menu also
   // style the clipboard. Selected-row colors composed in the
   // singleton so consumers drop them straight into Rectangle bindings.
@@ -71,10 +72,12 @@ Item {
   function loadHistory(raw) {
     root.history = ClipboardHistory.parseHistory(raw)
     if (root.opened) root.rebuildDisplay()
+    pruneTimer.restart()
   }
 
   function saveHistory() {
     historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
+    pruneTimer.restart()
   }
 
   function addClipboardEntry(entry) {
@@ -307,6 +310,28 @@ Item {
       onRead: function(data) { root.addClipboardJson(data) }
     }
   }
+
+  // The images the history no longer names are deleted a little after it
+  // changes, and after it is first read: the last of a quick run of changes
+  // is the one that counts.
+  Timer {
+    id: pruneTimer
+    interval: 5000
+    repeat: false
+    onTriggered: {
+      if (pruneProc.running) {
+        restart()
+        return
+      }
+      var paths = []
+      for (var i = 0; i < root.history.length; i++)
+        if (root.history[i].type === "image") paths.push(root.history[i].path)
+      pruneProc.command = [root.pruneScript].concat(paths)
+      pruneProc.running = true
+    }
+  }
+
+  Process { id: pruneProc }
 
   // A watcher that dies takes clipboard history with it, silently: copying still
   // works, the picker still opens, and the old entries are all still there, so

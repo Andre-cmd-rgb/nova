@@ -34,6 +34,8 @@ emit_image() {
   file="$IMAGE_DIR/$hash.$ext"
   if [[ -e $file ]]; then
     rm -f "$tmp"
+    # Fresh again, so prune-images.sh leaves it until its entry is back.
+    touch -- "$file"
   else
     mv "$tmp" "$file"
   fi
