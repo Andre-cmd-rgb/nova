@@ -1,0 +1,17 @@
+# Hyprland reloads its configuration as soon as a file it read changes, and an
+# update replaces Nova's files one at a time: a reload in between finds one
+# missing and drops the session into emergency mode, with no key bindings and
+# the touchpad back at Hyprland's defaults. Every running Hyprland stops
+# watching here and reloads once in 99-nova-hyprland-resume.hook, with the
+# files all in place.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/share/nova/*
+
+[Action]
+Description = Pausing Hyprland's config reload during the update...
+When = PreTransaction
+Exec = /usr/lib/nova/bin/nova-hyprland-reload-guard pause

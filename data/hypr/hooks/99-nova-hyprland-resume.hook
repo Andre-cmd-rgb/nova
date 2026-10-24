@@ -1,0 +1,13 @@
+# Last of Nova's hooks, so the reload also sees what the others wrote (the
+# hardware profile at 10). See 00-nova-hyprland-pause.hook.
+[Trigger]
+Type = Path
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Target = usr/share/nova/*
+
+[Action]
+Description = Reloading Hyprland's config after the update...
+When = PostTransaction
+Exec = /usr/lib/nova/bin/nova-hyprland-reload-guard resume
