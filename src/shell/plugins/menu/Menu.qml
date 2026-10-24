@@ -57,18 +57,13 @@ Item {
   readonly property bool dmenuActive: mode === "select" || mode === "input"
   property string dmenuPrompt: ""
   property var dmenuOptions: []
-  property string selectionFile: ""
-  property string doneFile: ""
   property int dmenuWidth: 300
   property int dmenuMaxHeight: 0
-  property bool requestActive: false
   property bool rowsLoaded: false
   property string activeMenu: "root"
   property string filterText: ""
   property int selectedIndex: 0
   property bool cursorActive: false
-  property int requestSerial: 0
-  property int applySerial: 0
   property var items: ({})
   property var itemOrder: []
   property var navStack: []
@@ -115,24 +110,12 @@ Item {
     ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
     : Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
 
+  // The nova-menu-select waiting on the chooser, if one is. With none,
+  // finishing only closes the menu.
+  ChooserRequest { id: request }
+
   function finishRequest(selection) {
-    if (!root.requestActive || !root.doneFile) {
-      root.opened = false
-      return
-    }
-
-    var activeSelectionFile = root.selectionFile
-    var activeDoneFile = root.doneFile
-    root.requestActive = false
-    root.selectionFile = ""
-    root.doneFile = ""
-
-    if (selection === null || selection === undefined) {
-      resultProc.command = ["bash", "-c", ": > " + Util.shellQuote(activeDoneFile)]
-    } else {
-      resultProc.command = ["bash", "-c", "printf '%s\\n' " + Util.shellQuote(selection) + " > " + Util.shellQuote(activeSelectionFile) + "; : > " + Util.shellQuote(activeDoneFile)]
-    }
-    resultProc.running = true
+    if (!request.finish(selection)) root.opened = false
   }
 
   function runAction(action) {
@@ -736,7 +719,6 @@ Item {
     } else if (row.kind === "app") {
       var appId = row.appId
       var label = row.label
-      applySerial = requestSerial
       opened = false
       filterText = ""
       if (root.appLibrary) root.appLibrary.launch(appId, label)
@@ -772,7 +754,6 @@ Item {
   }
 
   function applyDmenuSelection(value) {
-    applySerial = requestSerial
     opened = false
     filterText = ""
     root.finishRequest(value)
@@ -781,7 +762,6 @@ Item {
   function applySelected(id, action) {
     if (!id) { cancel(); return }
 
-    applySerial = requestSerial
     opened = false
     filterText = ""
     root.runAction(action)
@@ -794,11 +774,8 @@ Item {
   }
 
   function openExistingMenu(initialMenu) {
-    requestSerial += 1
+    request.release()
     mode = "menu"
-    requestActive = false
-    selectionFile = ""
-    doneFile = ""
     activeMenu = root.item(initialMenu) ? initialMenu : "root"
     navStack = []
     filterText = ""
@@ -818,13 +795,10 @@ Item {
   }
 
   function openDmenu(payload) {
-    requestSerial += 1
     mode = payload.mode === "input" ? "input" : "select"
     dmenuPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
     dmenuOptions = Array.isArray(payload.options) ? payload.options : []
-    selectionFile = String(payload.selectionFile || "")
-    doneFile = String(payload.doneFile || "")
-    requestActive = !!doneFile
+    request.begin(String(payload.selectionFile || ""), String(payload.doneFile || ""))
     dmenuWidth = Math.max(1, Number(payload.width || 300))
     dmenuMaxHeight = Math.max(0, Number(payload.maxHeight || 0))
     activeMenu = "root"
@@ -897,13 +871,6 @@ Item {
     }
   }
 
-  Process {
-    id: resultProc
-    onExited: {
-      if (root.applySerial === root.requestSerial)
-        root.opened = false
-    }
-  }
 
   PointerMoveGate {
     id: pointerGate

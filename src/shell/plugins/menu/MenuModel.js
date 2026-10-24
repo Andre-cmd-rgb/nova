@@ -1,7 +1,28 @@
+// Whole-line // comments out, and trailing commas outside strings: a label or
+// a command may hold ",}" of its own.
 function stripJsonc(raw) {
-  return String(raw || "")
-    .replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
-    .replace(/,(\s*[}\]])/g, "$1")
+  var text = String(raw || "").replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
+  var out = []
+  var inString = false
+  for (var i = 0; i < text.length; i++) {
+    var c = text.charAt(i)
+    if (inString) {
+      if (c === "\\") {
+        out.push(c + text.charAt(i + 1))
+        i++
+        continue
+      }
+      if (c === '"') inString = false
+    } else if (c === '"') {
+      inString = true
+    } else if (c === ",") {
+      var next = i + 1
+      while (next < text.length && /\s/.test(text.charAt(next))) next++
+      if (text.charAt(next) === "}" || text.charAt(next) === "]") continue
+    }
+    out.push(c)
+  }
+  return out.join("")
 }
 
 function normalizeAliases(value) {
@@ -38,6 +59,9 @@ function normalizeItem(id, raw) {
   }
 }
 
+// The items of a menu file as written, each with its id. They are normalized
+// once merged: a user file's entry names only what it changes, and the
+// defaults normalizing fills in would overwrite the rest.
 function parseMenuJsonc(raw) {
   var stripped = stripJsonc(raw)
   if (!stripped.trim()) return []
@@ -57,7 +81,9 @@ function parseMenuJsonc(raw) {
   for (var id in source) {
     var entry = source[id]
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
-    out.push(normalizeItem(id, entry))
+    var item = { id: id }
+    for (var key in entry) if (key !== "id") item[key] = entry[key]
+    out.push(item)
   }
   return out
 }
@@ -81,6 +107,8 @@ function mergeMenuSources(defaultItems, userItems) {
       nextItems[entry.id] = merged
     }
   }
+  for (var n = 0; n < nextOrder.length; n++)
+    nextItems[nextOrder[n]] = normalizeItem(nextOrder[n], nextItems[nextOrder[n]])
 
   if (!nextItems.root) {
     nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" }
