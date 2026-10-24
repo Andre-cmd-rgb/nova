@@ -132,7 +132,7 @@ add_modem() { # a modem on mhi-pci-generic, its power/control set to $1
   [ "$status" -eq 0 ]
   fails armed
   [ ! -e "$SWITCH" ]
-  grep -q 'nova-notification-send -u critical Caffeine is off: the battery is low' "$CALLS"
+  grep -q 'nova-notification-send -g 󰅶 -u critical Caffeine is off: the battery is low' "$CALLS"
   grep -qx 'nova-system-lid-close ' "$CALLS"
   grep -qx 'systemctl sleep' "$CALLS"
 }
@@ -188,7 +188,7 @@ add_modem() { # a modem on mhi-pci-generic, its power/control set to $1
   main on >/dev/null
   main open
   grep -q 'action = "on", monitor = "eDP-1"' "$CALLS"
-  grep -q "nova-notification-send -u low Caffeine is still on" "$CALLS"
+  grep -q "nova-notification-send -g 󰅶 -u low Caffeine is still on" "$CALLS"
 }
 
 @test "reconcile: a switch whose lid lock did not survive a restart is undone" {

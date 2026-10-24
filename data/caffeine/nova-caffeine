@@ -169,7 +169,7 @@ reconcile() {
 low_battery() {
   armed || return 0
   release >/dev/null || true
-  nova-notification-send -u critical "Caffeine is off: the battery is low" \
+  nova-notification-send -g 󰅶 -u critical "Caffeine is off: the battery is low" \
     "The computer sleeps and locks when unused again, and when its lid closes." >/dev/null 2>&1 || true
   if laptop && nova-hw-laptop-closed && ! nova-hw-external-monitors; then
     nova-system-lid-close || true
@@ -201,7 +201,7 @@ on_open() {
   dpms on
   nova-hyprland-monitor-clamshell || true
   if armed; then
-    nova-notification-send -u low "Caffeine is still on" \
+    nova-notification-send -g 󰅶 -u low "Caffeine is still on" \
       "Closing the lid will not sleep or lock. Turn it off in the bar, or: nova caffeine off" >/dev/null 2>&1 || true
   fi
 }

@@ -13,5 +13,7 @@ fi
 
 level=$1
 
-nova-notification-send -g 󱐋 -u critical "Time to recharge!" "Battery is down to ${level}%" -i battery-caution -t 30000
+# A glyph of the bar's own battery set: the icon theme's battery-caution is
+# an old bitmap, blurred and out of place beside the rest.
+nova-notification-send -g 󰂃 -u critical "Time to recharge!" "Battery is down to ${level}%" -t 30000
 nova-hook battery-low "$level"
