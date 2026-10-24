@@ -17,6 +17,13 @@ QtObject {
     return clamp(value, 0, 1)
   }
 
+  // A list's cursor moved by delta: an arrow (one) wraps round, a page stops
+  // at the ends.
+  function stepIndex(index, delta, count) {
+    if (Math.abs(delta) === 1) return ((index + delta) % count + count) % count
+    return Math.max(0, Math.min(count - 1, index + delta))
+  }
+
   function wheelSteps(accumulator, delta) {
     // Some mouse/compositor combinations scale a single notch well beyond
     // Qt's conventional 120 units. Keep one event to one step while still
