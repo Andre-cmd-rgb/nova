@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # nova:summary=Open a clipboard history entry
-# nova:args=--history-index <index>
+# nova:args=--history-index <index> [--history-md5 <md5>]
 # nova:hidden=true
 
 set -euo pipefail
 
 history_index=""
+history_md5=""
 history_path="$HOME/.local/state/nova/clipboard-history.json"
 
 while (($# > 0)); do
@@ -15,8 +16,12 @@ while (($# > 0)); do
       history_index="${2:-}"
       shift 2
       ;;
+    --history-md5)
+      history_md5="${2:-}"
+      shift 2
+      ;;
     *)
-      echo "Usage: nova-clipboard-open --history-index <index>" >&2
+      echo "Usage: nova-clipboard-open --history-index <index> [--history-md5 <md5>]" >&2
       exit 1
       ;;
   esac
@@ -24,6 +29,11 @@ done
 
 [[ $history_index =~ ^[0-9]+$ ]] || exit 1
 [[ -r $history_path ]] || exit 1
+
+# Still the entry picked: the md5 of its key, as the clipboard's entryKey
+# makes it, is the one the shell sent.
+key='.[$index] | if .type == "image" then "image:" + .path else "text:" + .text end'
+[[ -z $history_md5 || $(jq -j --argjson index "$history_index" "$key" "$history_path" | md5sum) == "$history_md5  -" ]] || exit 1
 
 entry_type=$(jq -er --argjson index "$history_index" '.[$index].type' "$history_path") || exit 1
 

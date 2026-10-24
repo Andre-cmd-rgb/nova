@@ -213,13 +213,22 @@ Item {
     root.openSelected(row)
   }
 
+  // The entry picked, by its place in the history and by the md5 of its key:
+  // a copy made before the helper reads the file moves every entry down one,
+  // and the helper must not take the neighbour then. The md5, not the text,
+  // since anyone can read a command line.
+  function historyArgs(row) {
+    return ["--history-index", String(row.historyIndex),
+      "--history-md5", Qt.md5(root.entryKey(root.history[row.historyIndex]))]
+  }
+
   function applySelected(row) {
     if (!row) return
     root.opened = false
     if (row.entryType === "image") {
       Quickshell.execDetached(["nova-clipboard-paste-file", row.mime, row.path])
     } else if (row.fullText) {
-      Quickshell.execDetached(["nova-clipboard-paste-text", "--shift-insert", "--history-index", String(row.historyIndex)])
+      Quickshell.execDetached(["nova-clipboard-paste-text", "--shift-insert"].concat(root.historyArgs(row)))
     }
   }
 
@@ -229,14 +238,14 @@ Item {
     if (row.entryType === "image") {
       Quickshell.execDetached(["nova-clipboard-paste-file", "--copy-only", row.mime, row.path])
     } else if (row.fullText) {
-      Quickshell.execDetached(["nova-clipboard-paste-text", "--copy-only", "--history-index", String(row.historyIndex)])
+      Quickshell.execDetached(["nova-clipboard-paste-text", "--copy-only"].concat(root.historyArgs(row)))
     }
   }
 
   function openSelected(row) {
     if (!row) return
     root.opened = false
-    Quickshell.execDetached(["nova-clipboard-open", "--history-index", String(row.historyIndex)])
+    Quickshell.execDetached(["nova-clipboard-open"].concat(root.historyArgs(row)))
   }
 
   Component.onCompleted: initProc.running = true
