@@ -530,10 +530,12 @@ read_state() {
   *) STATE=starting ;;
   esac
 
-  # An empty slot reports the path "/".
+  # An empty slot reports the path "/". A modem still starting has not read
+  # its slot yet, and no path then says nothing about the SIM: taken as an
+  # empty slot, the first start would switch off a modem that has one.
   if [[ -n $sim && $sim != "/" ]]; then
     mark_sim_seen
-  elif [[ $STATE != disabled ]]; then
+  elif [[ $STATE != disabled && $STATE != starting ]]; then
     STATE=nosim
   fi
 

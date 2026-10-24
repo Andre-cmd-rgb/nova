@@ -82,6 +82,17 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [ ! -e "$state/parked" ]
 }
 
+@test "first start, a modem still reading its slot: nothing is decided yet" {
+  modem "modem.generic.state                              : initializing" \
+    "modem.generic.sim                                : --"
+  [ "$(info state)" = starting ]
+  [ ! -e "$state/parked" ]
+  [ "$(cat "$SCRATCH/wwan")" = unblocked ]
+  with_sim
+  [ "$(info state)" = disabled ]
+  [ -e "$state/sim-seen" ]
+}
+
 @test "first start without ModemManager: nothing can ask for a SIM, so it is off" {
   if command -v mmcli >/dev/null; then skip "this system has ModemManager"; fi
   [ "$(info state)" = parked ]
