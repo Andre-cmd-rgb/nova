@@ -91,6 +91,19 @@ Item {
   property alias popupModel: popupModel
   ListModel { id: popupModel }
 
+  // Toasts under the pointer, by their timestamp and id (imageStem). Every
+  // screen shows each toast, and none of its copies counts down while the
+  // pointer is on one: the one left running would take the toast away from
+  // under it.
+  property var hoveredPopups: ({})
+
+  function setPopupHovered(stem, hovered) {
+    var next = ({})
+    for (var key in hoveredPopups) if (key !== stem) next[key] = true
+    if (hovered) next[stem] = true
+    hoveredPopups = next
+  }
+
   // How many notifications the history directory keeps, and therefore how
   // many `showHistory` can replay.
   readonly property int historyLimit: 10
@@ -1003,6 +1016,8 @@ Item {
             required property int urgency
             required property double expireTimeout
             required property double timestamp
+            required property int originalId
+            readonly property string stem: NotificationLogic.imageStem(cardSlot)
 
             // Each card sizes itself based on mode (text vs media); the slot
             // tracks the card so the column auto-fits to whichever is widest.
@@ -1012,7 +1027,10 @@ Item {
 
             readonly property real lifetime: service.durationFor(cardSlot.urgency, cardSlot.expireTimeout)
             property real remainingLifetime: 1.0
-            readonly property bool ticking: cardSlot.lifetime > 0 && !card.hovered
+            readonly property bool ticking: cardSlot.lifetime > 0 && !service.hoveredPopups[cardSlot.stem]
+            // A toast leaving with the pointer on it takes its hover along.
+            property bool pointerOn: false
+            Component.onDestruction: if (pointerOn) service.setPopupHovered(stem, false)
 
             // A client updating this notification in place rewrites the row
             // under the card (see refreshPopup). New text deserves a full look,
@@ -1052,6 +1070,10 @@ Item {
               fontFamily: service.shell && service.shell.bar ? service.shell.bar.fontFamily : ""
               glyph: cardSlot.glyph
 
+              onHoveredChanged: {
+                cardSlot.pointerOn = hovered
+                service.setPopupHovered(cardSlot.stem, hovered)
+              }
               onCloseRequested: service.dismissPopup(cardSlot.index)
               onCardClicked: service.invokePopupDefault(cardSlot.index)
             }
