@@ -15,7 +15,11 @@ if (($# != 1)) || [[ -z $1 || $1 == -* ]]; then
 fi
 font=$1
 
-if ! fc-list : family | tr ',' '\n' | grep -Fxq -- "$font"; then
+# The list is read whole before it is searched: grep -q stops at the first
+# match, and under pipefail the writer it leaves behind dies of SIGPIPE, which
+# would fail a family that is there.
+families=$(fc-list : family | tr ',' '\n')
+if ! grep -Fxq -- "$font" <<<"$families"; then
   echo "nova-font-set: no font family named '$font' (see nova font list)" >&2
   exit 1
 fi
