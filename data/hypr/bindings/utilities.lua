@@ -5,7 +5,8 @@ o.bind("SUPER + CTRL + C", "Capture menu", "nova-menu toggle capture")
 o.bind("SUPER + CTRL + O", "Toggle menu", "nova-menu toggle toggle")
 o.bind("SUPER + SHIFT + code:201", "Nova menu", "nova-menu toggle root")
 o.bind("SUPER + ESCAPE", "System menu", "nova-menu toggle system")
-o.bind("XF86PowerOff", "Power menu", "nova-menu toggle system", { locked = true })
+-- The system menu unless Settings says sleep or shut down (nova power button).
+o.bind("XF86PowerOff", "Power button", "nova-power-button press", { locked = true })
 o.bind("SUPER + K", "Keybindings", "nova-menu-keybindings")
 
 o.bind_toggle("SUPER + SHIFT + SPACE", "Toggle top bar", "bar")

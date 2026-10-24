@@ -65,7 +65,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '.appearance.themes[1]')" = '{"name":"nord","background":"#2e3440","foreground":"#d8dee9","accent":"#88c0d0"}' ]
 }
 
-@test "state: the battery's health, power modes, charge limit, GPU mode and undervolt" {
+@test "state: the battery's health, power modes, charge limit, GPU mode, undervolt, lid and power button" {
   mkdir -p "$NOVA_POWER_SUPPLY/BAT0"
   echo Battery >"$NOVA_POWER_SUPPLY/BAT0/type"
   echo 81000000 >"$NOVA_POWER_SUPPLY/BAT0/energy_full"
@@ -75,7 +75,17 @@ state() { nova-settings state | jq -c "$1"; }
   stub nova-battery-limit 'echo "{\"kind\":\"threshold\",\"limit\":80,\"on\":true}"'
   stub nova-power-gpu '[[ $* == mode ]] && echo off'
   stub nova-power-undervolt '[[ $* == "status --json" ]] && echo "{\"offset\":-70,\"state\":\"applied\",\"reason\":null}"'
-  [ "$(state .battery)" = '{"present":true,"health":81,"cycles":586,"profiles":[{"name":"power-saver","active":false},{"name":"balanced","active":true}],"limit":{"kind":"threshold","limit":80,"on":true},"gpu":"off","undervolt":{"offset":-70,"state":"applied","reason":null}}' ]
+  stub nova-power-lid 'echo lock'
+  stub nova-power-button 'echo sleep'
+  stub nova-power-hibernate 'echo 4h'
+  [ "$(state .battery)" = '{"present":true,"health":81,"cycles":586,"profiles":[{"name":"power-saver","active":false},{"name":"balanced","active":true}],"limit":{"kind":"threshold","limit":80,"on":true},"gpu":"off","undervolt":{"offset":-70,"state":"applied","reason":null},"lid":"lock","powerButton":"sleep","hibernate":"4h"}' ]
+}
+
+@test "state: no hibernate choice where the computer cannot hibernate" {
+  mkdir -p "$NOVA_POWER_SUPPLY/BAT0"
+  echo Battery >"$NOVA_POWER_SUPPLY/BAT0/type"
+  stub nova-power-hibernate 'echo "nova power hibernate: this computer cannot hibernate" >&2; exit 1'
+  [ "$(state .battery.hibernate)" = '""' ]
 }
 
 @test "state: no undervolt where its tool cannot answer" {

@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# nova:summary=Choose what closing the lid does while plugged in: sleep, or lock and keep running
+# nova:args=[sleep | lock]
+#
+# On battery a closed lid always sleeps: a laptop in a bag must not run on
+# until it is hot and flat. Plugged in it sleeps too, unless you choose lock:
+# the computer then keeps running behind the lock screen with the panel dark,
+# for a download, a build or music on speakers. Docked to a display a closed
+# lid never sleeps anyway. With no argument it says which is set, as logind
+# has it; setting it asks for no password.
+
+set -euo pipefail
+
+APPLY=${NOVA_POWER_SLEEP_APPLY:-/usr/lib/nova/nova-power-sleep-apply}
+usage() { echo "Usage: nova power lid [sleep | lock]" >&2; }
+
+logind() { # property -> its value, unquoted
+  local out
+  out=$(busctl get-property org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager "$1") || return 1
+  out=${out#s \"}
+  printf '%s\n' "${out%\"}"
+}
+
+current() {
+  local action
+  action=$(logind HandleLidSwitchExternalPower) || return 1
+  # Empty is "as on battery".
+  [[ -n $action ]] || action=$(logind HandleLidSwitch) || return 1
+  case $action in
+    lock) echo lock ;;
+    sleep | suspend | suspend-then-hibernate | hibernate | hybrid-sleep) echo sleep ;;
+    *) echo "$action" ;;
+  esac
+}
+
+case "$#:${1:-}" in
+  0:) current ;;
+  1:sleep | 1:lock)
+    if ((EUID == 0)); then exec "$APPLY" lid "$1"; fi
+    exec pkexec "$APPLY" lid "$1"
+    ;;
+  *) usage; exit 2 ;;
+esac

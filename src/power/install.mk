@@ -14,6 +14,7 @@ POWER_SRC := src/power
 
 INSTALL_TARGETS += install-power
 SHELL_SOURCES   += $(POWER_SRC)/bin/nova-power $(POWER_SRC)/bin/nova-power-gpu-mode-apply \
+                   $(POWER_SRC)/bin/nova-power-sleep-apply \
                    $(POWER_SRC)/bin/nova-power-undervolt-apply $(POWER_SRC)/systemd/nova-undervolt-resume \
                    $(POWER_SRC)/test/roundtrip.sh $(POWER_SRC)/test/watts.sh
 TEST_SCRIPTS    += $(POWER_SRC)/test/roundtrip.sh
@@ -31,6 +32,8 @@ install-power:
 	install -Dm755 $(POWER_SRC)/bin/nova-power $(DESTDIR)$(NOVA_BIN)/nova-power
 	install -Dm755 $(POWER_SRC)/bin/nova-power-gpu-mode-apply $(DESTDIR)$(NOVA_LIB)/nova-power-gpu-mode-apply
 	install -Dm644 $(POWER_SRC)/polkit/org.nova.power-gpu.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.nova.power-gpu.policy
+	install -Dm755 $(POWER_SRC)/bin/nova-power-sleep-apply $(DESTDIR)$(NOVA_LIB)/nova-power-sleep-apply
+	install -Dm644 $(POWER_SRC)/polkit/org.nova.power-sleep.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.nova.power-sleep.policy
 	install -Dm755 $(POWER_SRC)/bin/nova-power-undervolt-apply $(DESTDIR)$(NOVA_LIB)/nova-power-undervolt-apply
 	install -Dm644 $(POWER_SRC)/polkit/org.nova.power-undervolt.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.nova.power-undervolt.policy
 	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/nova-powerd $(DESTDIR)$(NOVA_LIB)/nova-powerd

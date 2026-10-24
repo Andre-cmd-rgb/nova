@@ -5,6 +5,21 @@
 
 set -euo pipefail
 
+SUPPLY=${NOVA_POWER_SUPPLY:-/sys/class/power_supply}
+
+plugged_in() {
+  local supply
+  for supply in "$SUPPLY"/*; do
+    [[ -r $supply/type && $(<"$supply/type") == Mains ]] || continue
+    [[ -r $supply/online && $(<"$supply/online") == 1 ]] && return 0
+  done
+  return 1
+}
+
+secured() {
+  timeout 0.5s nova-shell lock status 2>/dev/null | jq -e '.secure == true' >/dev/null 2>&1
+}
+
 # Locking here rather than waiting for PrepareForSleep is what keeps the lock
 # off the critical path. logind's delay inhibitor is a timer that expires
 # whether or not the session is secure, so starting the lock the moment the lid
@@ -16,6 +31,19 @@ set -euo pipefail
 # the external display.
 if nova-hw-laptop-closed && ! nova-hw-external-monitors; then
   nova-system-lock >/dev/null 2>&1 || true
+  # Plugged in with the lid set to lock (nova power lid lock), the computer
+  # keeps running: once the lock is drawn the panel goes dark, as under
+  # Caffeine, and opening the lid lights it again (nova caffeine open).
+  if plugged_in && [[ $(nova-power-lid 2>/dev/null) == lock ]]; then
+    for _ in {1..50}; do
+      secured && break
+      sleep 0.1
+    done
+    internal=$(nova-hyprland-monitor-laptop 2>/dev/null) || internal=''
+    if [[ -n $internal ]]; then
+      hyprctl dispatch "hl.dsp.dpms({ action = \"off\", monitor = \"$internal\" })" >/dev/null 2>&1 || true
+    fi
+  fi
 fi
 
 nova-hyprland-monitor-clamshell

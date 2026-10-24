@@ -18,6 +18,9 @@ nova power gpu                 turn the discrete GPU on or off
 nova power gpu mode off        keep it off plugged in too (Settings, Battery); auto undoes it
 nova power gpu run <program>   one program on the discrete GPU
 nova power undervolt           the CPU's voltage offset (any Intel laptop that allows one)
+nova power lid lock            plugged in, a closed lid locks and the computer keeps running
+nova power button sleep        the power button sleeps (or menu, the default, or off)
+nova power hibernate 4h        asleep on battery, hibernate after four hours (or never)
 sudo nova power doctor         what keeps the machine out of deep package states
 sudo nova power boost 60       lift the battery CPU caps for an hour
 ```
@@ -28,5 +31,6 @@ sudo nova power boost 60       lift the battery CPU caps for an hour
 | `daemon/` | the governor; std only, built by the workspace at the repository root |
 | `systemd/`, `udev/` | units, the sleep hook and the plug rule, each DMI-guarded |
 | `polkit/`, `bin/nova-power-gpu-mode-apply` | lets Settings choose the GPU mode without a password |
+| `bin/nova-power-sleep-apply` | the root half of `nova power lid` and `hibernate`, through polkit too |
 | `test/roundtrip.sh` | the policy's library half against fixtures; part of `make test` |
 | `test/watts.sh` | the measuring stick: average draw on battery over N seconds |

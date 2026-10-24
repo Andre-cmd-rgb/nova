@@ -791,6 +791,41 @@ Item {
           text: "Taken off by itself after a machine-check error, and at the next start after the computer stopped without shutting down. nova power undervolt set changes it."
         }
       }
+
+      Section {
+        width: p.inner
+        title: "LID AND POWER BUTTON"
+        Line {
+          label: "Closing the lid, plugged in"
+          visible: root.battery.lid === "sleep" || root.battery.lid === "lock"
+          ButtonGroup {
+            options: [{ value: "sleep", label: "Sleep" }, { value: "lock", label: "Lock, Keep Running" }]
+            value: root.battery.lid || ""
+            onChanged: function (value) { root.run(["nova-power-lid", value]) }
+          }
+        }
+        Line {
+          label: "Power button"
+          ButtonGroup {
+            options: [{ value: "menu", label: "Menu" }, { value: "sleep", label: "Sleep" }, { value: "off", label: "Shut Down" }]
+            value: root.battery.powerButton || "menu"
+            onChanged: function (value) { root.run(["nova-power-button", value]) }
+          }
+        }
+        Line {
+          label: "Asleep on battery, hibernate after"
+          visible: (root.battery.hibernate || "") !== ""
+          ButtonGroup {
+            options: [{ value: "1h", label: "1 Hour" }, { value: "2h", label: "2 Hours" }, { value: "4h", label: "4 Hours" }, { value: "never", label: "Never" }]
+            value: root.battery.hibernate || ""
+            onChanged: function (value) { root.run(["nova-power-hibernate", value]) }
+          }
+        }
+        Caption {
+          width: parent.width
+          text: "On battery a closed lid always sleeps. Hibernating saves what is open to disk and turns the computer off, so a weekend in a bag does not drain it; the power button brings it all back. Plugged in it never hibernates."
+        }
+      }
     }
   }
 

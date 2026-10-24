@@ -179,7 +179,13 @@ the shared folder also becomes the default for themes that have no pick of their
   verified value counts as success.
 - **Sleep:** the lid, the suspend key and the menu's Suspend all `sleep`, which logind
   turns into suspend-then-hibernate (hibernating after 2 h, and never on AC) or plain
-  suspend on a machine that cannot hibernate. At UPower's last 2% the computer
+  suspend on a machine that cannot hibernate. Settings → Battery chooses three
+  things over that, each through a `nova power` command: what a closed lid does
+  plugged in (`lid`: sleep, or lock and keep running with the panel dark), what
+  the power button does (`button`: the system menu, sleep or shut down; the
+  session's, so no root), and the 2 h (`hibernate`: 1 to 24 hours, or never).
+  The first and last are drop-ins in `/etc/systemd/{logind,sleep}.conf.d/`,
+  written by `nova-power-sleep-apply` through polkit. At UPower's last 2% the computer
   hibernates outright (`/etc/UPower/UPower.conf.d/10-nova.conf`): sleeping to
   RAM first is what would empty it. The TPM key-provisioning units are
   skipped unless `nova.tpm2` is on the kernel command line: Nova does not encrypt the
