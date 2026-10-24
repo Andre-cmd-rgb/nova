@@ -922,6 +922,70 @@ cpu_ceiling() {
   return 0
 }
 
+DAEMON_FIRMWARE=/run/nova-powerd.firmware
+DRM=/sys/class/drm
+
+# The integrated card's directory, found by driver as nova-powerd finds it:
+# cardN numbering changes between boots.
+igpu_dir() {
+  local card driver
+  for card in "$DRM"/card*; do
+    [[ ${card##*/} != *-* && -e $card/gt_max_freq_mhz ]] || continue
+    driver=$(readlink "$card/device/driver") || continue
+    [[ ${driver##*/} == i915 || ${driver##*/} == xe ]] || continue
+    echo "$card"
+    return 0
+  done
+  return 1
+}
+
+# A limit nova-powerd saved, written back; a failed write sets the caller's
+# `failed`.
+restore_value() { # file value
+  [[ -n $2 ]] || return 0
+  echo "$2" 2>/dev/null >"$1" || failed=1
+}
+
+# systemd's ExecStopPost for nova-powerd, and only that. The daemon restores
+# the firmware limits itself on a clean stop; this exists for the kill -9,
+# where that code never runs. The EC's own fan watchdog is the third line and
+# needs nobody at all.
+#
+# Order matters: hand the fans back first, because that is the one with a
+# thermal consequence, then the registers, then the ownership marker, so
+# nothing here can hand the CPU back to the other half while the fans are
+# still pinned.
+governor_stopped() {
+  local pl1 win pl2 pct turbo gpu_max gpu_boost gt failed=0
+  [[ -w $FAN_PROC ]] && echo 'level auto' >"$FAN_PROC" 2>/dev/null
+  if [[ -r $DAEMON_FIRMWARE ]]; then
+    # As nova-powerd writes it: PL1, its window, PL2, the ceiling, no_turbo,
+    # and the integrated GPU's ceiling and boost target. A 0 is a figure the
+    # daemon could not read, but for no_turbo.
+    read -r pl1 win pl2 pct turbo gpu_max gpu_boost _ <"$DAEMON_FIRMWARE"
+    restore_value "$RAPL_PL1" "$pl1"
+    restore_value "$RAPL_WINDOW" "$win"
+    [[ $pl2 == 0 ]] || restore_value "$RAPL_PL2" "$pl2"
+    restore_value "$PSTATE_MAX" "$pct"
+    # Leaving turbo off after the governor is gone would be the one leftover
+    # nobody would think to look for.
+    restore_value "$PSTATE_NO_TURBO" "$turbo"
+    # The GPU's ceiling first: its boost target cannot be above it.
+    if gt=$(igpu_dir); then
+      [[ $gpu_max == 0 ]] || restore_value "$gt/gt_max_freq_mhz" "$gpu_max"
+      [[ $gpu_boost == 0 ]] || restore_value "$gt/gt_boost_freq_mhz" "$gpu_boost"
+    fi
+    if ((failed)); then
+      log 'governor stopped; fans restored, but some firmware limits could not be written back'
+    else
+      log 'governor stopped; firmware limits and fans restored'
+    fi
+  fi
+  rm -f "$DAEMON_OWNS_CPU" "$DAEMON_STATE"
+  # With the daemon gone this file's own caps apply again, if any are configured.
+  on_ac || { power_limit battery; cpu_ceiling battery; }
+}
+
 EFIVARS=/sys/firmware/efi/efivars
 
 # The boot loader records when it started and when it handed off, in
@@ -1109,32 +1173,7 @@ boost)
     log "CPU caps lifted for $arg min — 'nova power boost off' ends it early"
   fi
   ;;
-daemon-stopped)
-  # systemd's ExecStopPost for nova-powerd, and only that. The daemon
-  # restores the firmware limits itself on a clean stop; this exists for the
-  # kill -9, where that code never runs. The EC's own fan watchdog is the third
-  # line and needs nobody at all.
-  #
-  # Order matters: hand the fans back first, because that is the one with a
-  # thermal consequence, then the registers, then the ownership marker — so
-  # nothing here can hand the CPU back to the other half while the fans are
-  # still pinned.
-  [[ -w /proc/acpi/ibm/fan ]] && echo 'level auto' >/proc/acpi/ibm/fan 2>/dev/null
-  if [[ -r /run/nova-powerd.firmware ]]; then
-    read -r d_pl1 d_win d_pl2 d_pct d_turbo </run/nova-powerd.firmware
-    [[ -n ${d_pl1:-} ]] && echo "$d_pl1" >"$RAPL_PL1" 2>/dev/null
-    [[ -n ${d_win:-} ]] && echo "$d_win" >"$RAPL_WINDOW" 2>/dev/null
-    [[ -n ${d_pl2:-} ]] && echo "$d_pl2" >"$RAPL_PL2" 2>/dev/null
-    [[ -n ${d_pct:-} ]] && echo "$d_pct" >"$PSTATE_MAX" 2>/dev/null
-    # Leaving turbo off after the governor is gone would be the one leftover
-    # nobody would think to look for.
-    [[ -n ${d_turbo:-} ]] && echo "$d_turbo" >"$PSTATE_NO_TURBO" 2>/dev/null
-    log 'governor stopped; firmware limits and fans restored'
-  fi
-  rm -f "$DAEMON_OWNS_CPU" "$DAEMON_STATE"
-  # With the daemon gone this file's own caps apply again, if any are configured.
-  on_ac || { power_limit battery; cpu_ceiling battery; }
-  ;;
+daemon-stopped) governor_stopped ;;
 gpu-auto)
   # The GPU half alone. This is what the retry timer runs, so a manually
   # chosen power profile is never overwritten behind your back. A card still in

@@ -410,5 +410,28 @@ rm -f "$DAEMON_OWNS_CPU"
 chk "readout without the governor" "$(status_json | jq -c .governor)" "null"
 unset -f on_ac
 
+# A killed governor's cleanup puts back everything it saved, the integrated
+# GPU's figures too, and says when it could not.
+DAEMON_FIRMWARE=$T/firmware DRM=$T/drm RAPL_WINDOW=$T/win FAN_PROC=$T/fan
+mkdir -p "$DRM/card1/device" "$DRM/card1-eDP-1" "$T/drivers/i915"
+ln -s "$T/drivers/i915" "$DRM/card1/device/driver"
+echo 800 >"$DRM/card1/gt_max_freq_mhz"; echo 800 >"$DRM/card1/gt_boost_freq_mhz"
+echo 'level 0' >"$FAN_PROC"; echo 1 >"$PSTATE_NO_TURBO"; : >"$DAEMON_OWNS_CPU"
+echo '109000000 55967744 135000000 100 0 1300 1250' >"$DAEMON_FIRMWARE"
+on_ac() { return 0; }
+out=$(governor_stopped)
+chk "a killed governor: fans back"    "$(cat "$FAN_PROC")" "level auto"
+chk "  the CPU limits"                "$(cat "$RAPL_PL1" "$RAPL_WINDOW" "$RAPL_PL2" "$PSTATE_MAX" | paste -sd' ')" \
+  "109000000 55967744 135000000 100"
+chk "  turbo"                         "$(cat "$PSTATE_NO_TURBO")" "0"
+chk "  the GPU's ceiling and boost"   "$(cat "$DRM/card1/gt_max_freq_mhz" "$DRM/card1/gt_boost_freq_mhz" | paste -sd' ')" "1300 1250"
+chk "  and says so"                   "$out" "governor stopped; firmware limits and fans restored"
+chk "  and lets the CPU go"           "$([[ -e $DAEMON_OWNS_CPU ]] && echo kept || echo gone)" "gone"
+echo '109000000 55967744 0 100 0 0 0' >"$DAEMON_FIRMWARE"; echo 1 >"$PSTATE_NO_TURBO"
+out=$(PSTATE_NO_TURBO=$T/gone/no_turbo governor_stopped)
+chk "a figure it never read stays"    "$(cat "$RAPL_PL2" "$DRM/card1/gt_max_freq_mhz" | paste -sd' ')" "135000000 1300"
+chk "a write that fails is said"      "$out" "governor stopped; fans restored, but some firmware limits could not be written back"
+unset -f on_ac
+
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi

@@ -1024,6 +1024,13 @@ fn main() {
 
         if RELOAD.swap(false, Ordering::SeqCst) {
             cfg = Config::load();
+            // Off on a reload as at a start: everything goes back the way a
+            // stop puts it, and the exit is a clean one, which the unit does
+            // not restart. systemctl start brings it back.
+            if !cfg.enabled {
+                say!("GOVERNOR=off in {CONFIG} — handing everything back");
+                break;
+            }
             gov.cfg = cfg.clone();
             gov.applied = None;
             say!("config reloaded");

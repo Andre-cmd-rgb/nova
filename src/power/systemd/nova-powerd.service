@@ -13,8 +13,8 @@ ConditionPathExists=/sys/class/powercap/intel-rapl:0
 Type=simple
 ExecStart=/usr/lib/nova/nova-powerd
 ExecReload=/bin/kill -HUP $MAINPID
-# on-failure: with GOVERNOR=off the daemon exits 0 at once, and "always" would
-# start it again every two seconds.
+# on-failure: with GOVERNOR=off the daemon exits 0, at once or at the reload
+# that turns it off, and "always" would start it again every two seconds.
 Restart=on-failure
 RestartSec=2
 
