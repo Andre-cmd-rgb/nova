@@ -31,7 +31,7 @@ Item {
   // `info`, not `data`: `data` is QQuickItem's default property.
   property var info: ({})
   property bool loaded: false
-  property string page: "appearance"
+  property string page: "wifi"
   property string range: "today"
   property bool reloadWanted: false
   property var queue: []
@@ -73,6 +73,9 @@ Item {
     if (p.radio) return (root.info.radios || []).indexOf(p.radio) >= 0
     return true
   })
+  // A page the state shows this computer has not got (Wi-Fi on a desktop with
+  // no card, Battery) gives way to the first one it has.
+  onPagesChanged: if (!pages.some(function (p) { return p.id === root.page })) page = pages[0].id
 
   readonly property var names: ({
     "power-saver": "Power Saver", "balanced": "Balanced", "performance": "Performance",
@@ -90,17 +93,18 @@ Item {
 
   // ---- lifecycle ----------------------------------------------------------
 
+  // Settings opens on the page asked for, or else on its first (Wi-Fi, on a
+  // computer that has it), never on whichever was open when it last closed.
   function open(payloadJson) {
     closingFromHost = false
-    if (payloadJson) {
-      try {
-        var payload = JSON.parse(String(payloadJson))
-        if (payload && allPages.some(function (p) { return p.id === payload.page })) page = payload.page
-        if (payload) range = payload.range === "week" ? "week" : "today"
-      } catch (e) {
-        // An unparseable payload opens the page that was open last.
-      }
+    var payload = {}
+    try {
+      payload = JSON.parse(String(payloadJson || "{}")) || {}
+    } catch (e) {
+      // An unparseable payload asks for nothing.
     }
+    page = allPages.some(function (p) { return p.id === payload.page }) ? payload.page : pages[0].id
+    range = payload.range === "week" ? "week" : "today"
     confirmRecovery = false
     window.visible = true
     load()

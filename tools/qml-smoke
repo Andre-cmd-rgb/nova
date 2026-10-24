@@ -65,8 +65,9 @@ ln -s "$root/usr/share/nova/shell/Commons" "$work/shell/Commons"
 ln -s "$root/usr/share/nova/shell/Ui" "$work/shell/Ui"
 
 # A shell that loads one window, opens it, and grabs each page after it has
-# had time to load its state. A window that never appears is a warning, which
-# fails the run like any other, and ends it there.
+# had time to load its state, then opens it once more with no page asked for.
+# A window that never appears, or that opens again where it was left, is a
+# warning, which fails the run like any other, and ends it there.
 harness() { # plugin
   cat <<EOF
 import QtQuick
@@ -108,7 +109,14 @@ ShellRoot {
         if (harness.index < harness.pages.length) {
           window.page = harness.pages[harness.index]
           shot.restart()
-        } else Qt.quit()
+        } else {
+          // Opened again with no page asked for, it starts over at its first
+          // rather than staying on the last.
+          window.open("")
+          if (window.page !== harness.pages[0])
+            console.warn("qml-smoke: opened again, the window shows " + window.page + ", not " + harness.pages[0])
+          Qt.quit()
+        }
       })
     }
   }
