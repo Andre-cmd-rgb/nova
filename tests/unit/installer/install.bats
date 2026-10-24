@@ -23,9 +23,6 @@ teardown() { teardown_scratch; }
 GiB=$((1024 * 1024 * 1024))
 V3_FLAGS="flags : fpu sse avx avx2 bmi1 bmi2 f16c fma abm movbe xsave"
 
-# A bare `! cmd` never fails a bats test; this does.
-fails() { if "$@"; then return 1; fi; }
-
 pci() { # name class vendor device
   mkdir -p "$NOVA_PCI_DEVICES_PATH/$1"
   echo "$2" >"$NOVA_PCI_DEVICES_PATH/$1/class"

@@ -13,8 +13,6 @@ setup() {
 
 teardown() { teardown_scratch; }
 
-fails() { if "$@"; then return 1; fi; }
-
 @test "theme_hex: three numbers from 0 to 255, nothing else" {
   [ "$(theme_hex 255,255,255)" = "#ffffff" ]
   [ "$(theme_hex 30,30,46)" = "#1e1e2e" ]

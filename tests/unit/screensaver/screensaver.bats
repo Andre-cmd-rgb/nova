@@ -25,8 +25,6 @@ setup() {
 
 teardown() { teardown_scratch; }
 
-fails() { if "$@"; then return 1; fi; }
-
 stub() { # name [body]: logs "name args" to $CALLS, then runs body
   printf '#!/bin/bash\necho "%s $*" >>"$CALLS"\n%s\n' "$1" "${2:-exit 0}" >"$SCRATCH/bin/$1"
   chmod +x "$SCRATCH/bin/$1"

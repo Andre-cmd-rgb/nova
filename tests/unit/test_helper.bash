@@ -11,6 +11,10 @@ setup_scratch() {
   export SCRATCH
 }
 
+# A bare `! cmd` fails a bats test only as its last line; this fails it
+# anywhere.
+fails() { if "$@"; then return 1; fi; }
+
 teardown_scratch() {
   [[ ! -d ${SCRATCH:-}/gnupg ]] || gpgconf --homedir "$SCRATCH/gnupg" --kill all 2>/dev/null || true
   [[ -n ${SCRATCH:-} && -d $SCRATCH ]] && rm -rf -- "$SCRATCH"

@@ -61,9 +61,6 @@ firmware_write() {
   printf '%s\n' "$value" >"$file"
 }
 
-# A bare `! cmd` never fails a bats test; this does.
-fails() { if "$@"; then return 1; fi; }
-
 @test "status: a computer without a battery has no limit" {
   run main status
   [ "$output" = '{"kind":"none","limit":null,"on":false}' ]

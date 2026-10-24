@@ -53,7 +53,7 @@ undervolt() { "$REPO_ROOT/src/cli/bin/nova-power-undervolt" "$@"; }
     [[ $output == *"from -150 to -1"* ]]
   done
   [ ! -e "$NOVA_UNDERVOLT_STATE/offset" ]
-  ! grep -q systemctl "$CALLS"
+  fails grep -q systemctl "$CALLS"
   run "$NOVA_POWER_UNDERVOLT_APPLY" set -150
   [ "$status" -eq 0 ]
 }

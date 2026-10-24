@@ -79,7 +79,7 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   echo 1.0.0beta.2 >"$PKGVER"
   run update
   [ "$status" -eq 0 ]
-  ! grep -q nova-update-apply "$CALLS"
+  fails grep -q nova-update-apply "$CALLS"
   grep -qx 'nova-apps-install --update --noconfirm' "$CALLS"
 }
 
