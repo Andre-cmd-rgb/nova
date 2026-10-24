@@ -1,6 +1,6 @@
-// thinkpad-powerd — the continuous half of thinkpad-power.
+// nova-powerd — the continuous half of nova-power.
 //
-// thinkpad-power itself is edge-triggered: it runs on a plug event, at boot and
+// nova-power itself is edge-triggered: it runs on a plug event, at boot and
 // after resume, and it decides one thing per edge. That is the right shape for
 // the discrete GPU, which you either have on the bus or you do not. It is the
 // wrong shape for the CPU.
@@ -55,7 +55,7 @@ extern "C" fn on_signal(sig: i32) {
 
 // ---------------------------------------------------------------- paths
 
-const CONFIG: &str = "/etc/thinkpad-power.conf";
+const CONFIG: &str = "/etc/nova/power.conf";
 const RAPL: &str = "/sys/class/powercap/intel-rapl:0";
 const PSTATE_MAX: &str = "/sys/devices/system/cpu/intel_pstate/max_perf_pct";
 const PSTATE_MIN: &str = "/sys/devices/system/cpu/intel_pstate/min_perf_pct";
@@ -64,22 +64,22 @@ const FAN: &str = "/proc/acpi/ibm/fan";
 // The bash half checks for this before touching PL1, PL2 or max_perf_pct. Two
 // things writing the same register is how the power profiles were lost the
 // first time round; this is the same hazard with a file in front of it.
-const OWNS_CPU: &str = "/run/thinkpad-powerd.owns-cpu";
+const OWNS_CPU: &str = "/run/nova-powerd.owns-cpu";
 // What the firmware had before anything here ran. Persisted because a daemon
 // restart would otherwise record our own capped values as the originals and
 // there would be no way back to the real ones without a reboot.
-const FIRMWARE: &str = "/run/thinkpad-powerd.firmware";
-// One line, for `thinkpad-power status` and Settings' readout: mode, busy
+const FIRMWARE: &str = "/run/nova-powerd.firmware";
+// One line, for `nova power status` and Settings' readout: mode, busy
 // percent, package temperature, fans, package watts.
-const STATE: &str = "/run/thinkpad-powerd.state";
-// Written by `thinkpad-power boost`. Shared with the bash half deliberately:
+const STATE: &str = "/run/nova-powerd.state";
+// Written by `nova power boost`. Shared with the bash half deliberately:
 // one boost, one file, whichever half is asked.
-const BOOST: &str = "/run/thinkpad-power.boost";
+const BOOST: &str = "/run/nova-power.boost";
 // The bash half's own save files. If it capped the registers before this
 // started, these hold what the firmware actually had — which is the only
 // honest source for "restore everything" on AC.
-const BASH_RAPL_STATE: &str = "/run/thinkpad-power.rapl";
-const BASH_PCT_STATE: &str = "/run/thinkpad-power.cpupct";
+const BASH_RAPL_STATE: &str = "/run/nova-power.rapl";
+const BASH_PCT_STATE: &str = "/run/nova-power.cpupct";
 
 // ---------------------------------------------------------------- config
 
@@ -623,7 +623,7 @@ impl Firmware {
         };
         let h_pct = read_u64(BASH_PCT_STATE);
         if h_pl1.is_some() || h_pct.is_some() {
-            say!("taking the firmware values from thinkpad-power's own saved state");
+            say!("taking the firmware values from nova-power's own saved state");
         }
         let fw = Firmware {
             pl1_uw: h_pl1.or_else(|| read_u64(format!("{RAPL}/constraint_0_power_limit_uw")))?,
@@ -1003,7 +1003,7 @@ fn main() {
     // The marker the bash half checks before touching PL1, PL2 or max_perf_pct.
     // Written after the firmware capture, so a crash between the two does not
     // leave the other half standing down for a daemon that never started.
-    let _ = fs::write(OWNS_CPU, "thinkpad-powerd\n");
+    let _ = fs::write(OWNS_CPU, "nova-powerd\n");
 
     let mut sampler = CpuSampler::new();
     let mut meter = PackageMeter::new();

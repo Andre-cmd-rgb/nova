@@ -1,7 +1,7 @@
 # Nova architecture
 
 Nova is a small Arch Linux desktop: Hyprland, a Quickshell shell, one `nova` command,
-and a power manager. It ships as **one package, `nova`**, installed into a plain Arch
+and a power governor. It ships as **one package, `nova`**, installed into a plain Arch
 system. This document is the contract every component follows; read it before adding
 code.
 
@@ -12,7 +12,7 @@ code.
 | `src/shell/` | `/usr/share/nova/shell/` | The Quickshell shell: bar, lock, menu, notifications, OSD, panels, Settings |
 | `src/cli/nova` | `/usr/bin/nova` | Dispatcher: `nova <group> <verb> [args]` |
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
-| `src/power/` | `/usr/lib/nova/bin/thinkpad-power{,d}`, `nova-undervolt`, system units, udev rules, sleep hooks | The ThinkPad P1 Gen 4i's power manager (bash policy, Rust governor), inert on other machines; the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
+| `src/power/` | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd`, `nova-undervolt`, system units, udev rules, sleep hooks | Nova's power governor: the policy (bash) and the governor (Rust), tuned for and so far started only on the ThinkPad P1 Gen 4i; the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
@@ -50,7 +50,7 @@ exactly that, so pacman owns every file.
   |---|---|
   | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`) |
   | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, battery and screen-time history) |
-  | System config | `/etc/thinkpad-power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
+  | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
   | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets) |
 
@@ -139,21 +139,25 @@ the shared folder also becomes the default for themes that have no pick of their
 
 ## Power and hardware
 
+- **One power system, `nova power`**, with its controls in Settings → Battery:
+  the power mode, the charge limit, the discrete GPU, the undervolt, and what the
+  governor is doing right now. Its manual is [power.md](power.md).
 - **Power profiles** belong to power-profiles-daemon. `nova-power-profile` sets one
   and remembers it for the current power source; the shell's battery service runs
   `nova-power-profile restore` at login and on every plug and unplug, which puts back
   the remembered choice (performance on AC and power-saver on battery by default).
-  thinkpad-power never sets one.
-- **The ThinkPad P1 Gen 4i** adds `thinkpad-power` (the policy: the dGPU off the PCI
-  bus on battery, CPU and platform tunables, Wi-Fi power save, the hibernate rescan)
-  and `thinkpad-powerd` (the governor that owns PL1, PL2, the frequency ceiling, the
-  iGPU ceiling and the fans). Both are enabled by the package for every machine and
-  start only on a P1 Gen 4i: each unit has a DMI `ConditionFirmware=`, and the udev
+  The governor never sets one.
+- **The governor** is two halves: `nova-power`, the policy, run on each plug and
+  unplug, at boot and after resume (the dGPU off the PCI bus on battery, CPU and
+  platform tunables, Wi-Fi power save, the hibernate rescan), and `nova-powerd`,
+  which runs throughout and owns PL1, PL2, the frequency ceiling, the iGPU ceiling
+  and the fans. Its tiers and limits are measured on the ThinkPad P1 Gen 4i, so
+  today it starts only there: each unit has a DMI `ConditionFirmware=`, and the udev
   rule and sleep hook check the model themselves. The facts behind every choice are
   in [hardware/thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md).
 - **When the discrete GPU is on** is the user's choice on a P1 Gen 4i:
   Settings → Battery offers *On When Plugged In* or *Always Off* (`nova power
-  gpu mode`, which `thinkpad-power gpu-mode` applies at once; a polkit action
+  gpu mode`, which `nova power gpu-mode` applies at once; a polkit action
   lets the active session set it without a password). Other machines leave an
   idle NVIDIA card to the driver's runtime power management, and Settings
   shows no choice.
@@ -167,9 +171,9 @@ the shared folder also becomes the default for themes that have no pick of their
   earlier boot's record holds the offset instead of applying it, and so does
   the first machine check the kernel logs. Setting it takes an
   administrator's password, through polkit.
-- **Other laptops** get power-profiles-daemon and the charge limit. A generic
-  power manager with per-platform backends replaces thinkpad-power only once it
-  matches it on the watt meter.
+- **Other laptops** get power-profiles-daemon, the charge limit and the
+  undervolt for now. The governor starts on another model once its tiers are
+  measured there and match the P1's results on the watt meter.
 - **Charge limits** are reported as a capability: `threshold` (numeric, ThinkPad),
   `toggle` (Legion `Long_Life`), or `none`. Every write is read back, and only a
   verified value counts as success.
@@ -294,7 +298,7 @@ the shared folder also becomes the default for themes that have no pick of their
   - each helper does one thing
   - errors go to stderr with a non-zero exit
   - no `sudo` inside helpers; privileged actions go through polkit (`pkexec`). The
-    one exception is `thinkpad-power switch`, which runs in a terminal and says so
+    one exception is `nova power switch`, which runs in a terminal and says so
 - **QML:** qmllint-clean. Logic lives in singletons that can be tested against fixtures.
   Three traps that load without an error and draw nothing:
   - no `property var data` or `property string state` on an Item root: both shadow

@@ -11,7 +11,7 @@ ConditionPathExists=/sys/class/powercap/intel-rapl:0
 
 [Service]
 Type=simple
-ExecStart=/usr/lib/nova/bin/thinkpad-powerd
+ExecStart=/usr/lib/nova/nova-powerd
 ExecReload=/bin/kill -HUP $MAINPID
 # on-failure: with GOVERNOR=off the daemon exits 0 at once, and "always" would
 # start it again every two seconds.
@@ -22,7 +22,7 @@ RestartSec=2
 # restore never runs, so the cleanup is here too — and the watchdog itself is
 # the third line, handing the fans back to the EC about thirty seconds later
 # whatever else has failed.
-ExecStopPost=-/usr/lib/nova/bin/thinkpad-power daemon-stopped
+ExecStopPost=-/usr/lib/nova/bin/nova-power daemon-stopped
 
 # Being killed for memory pressure while holding the fans at level 0 is the one
 # outcome worth spending priority on avoiding.

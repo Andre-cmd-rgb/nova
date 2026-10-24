@@ -1,6 +1,10 @@
 #!/bin/bash
+
+# nova:summary=Nova's power governor: what it is doing now, a boost, and what keeps the computer awake
+# nova:args=[status [-v | --json] | boost [min|off] | doctor]
 #
-# thinkpad-power — AC/battery power policy for a hybrid-graphics laptop.
+# The policy half of Nova's power governor, run on each plug and unplug;
+# nova-powerd is the half that runs throughout.
 #
 #   battery : the discrete GPU is unloaded and taken off the PCI bus.
 #   AC      : the card is rescanned back.
@@ -20,7 +24,7 @@
 
 set -uo pipefail
 
-CONFIG=/etc/thinkpad-power.conf
+CONFIG=/etc/nova/power.conf
 NVIDIA_PCI=""
 NVIDIA_MODULES=(nvidia_drm nvidia_modeset nvidia_uvm nvidia)
 
@@ -36,7 +40,6 @@ PROC_MODULES=${PROC_MODULES:-/proc/modules}
 # shellcheck source=/dev/null
 [[ -r $CONFIG ]] && . "$CONFIG"
 
-VERSION=1.0.0
 
 # systemd already stamps the unit name on every line, so the messages carry no
 # prefix of their own. `note` is for the things that happened not to need
@@ -59,18 +62,18 @@ confirm() {
 
 usage() {
   cat <<'USAGE'
-thinkpad-power — AC/battery power policy for a hybrid-graphics laptop
+nova power — Nova's power governor
 
-usage: thinkpad-power <command> [args]
+usage: nova power [command] [args]
 
-  status [-v]         power source and discrete GPU; -v adds diagnostics
+  status [-v]         power source and discrete GPU, the default; -v adds diagnostics
   status --json       the governor, limits, fans and draw, for Settings
   doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
 
   boost [min|off]     lift the battery CPU caps for a while (default 30 min)
-  daemon-stopped      restore what thinkpad-powerd owned (systemd runs this)
+  daemon-stopped      restore what nova-powerd owned (systemd runs this)
 
   auto                apply the policy for the current power source
   post-hibernate      rescan the bus, then apply the policy (resume hook)
@@ -82,7 +85,6 @@ usage: thinkpad-power <command> [args]
                       with AC and off on battery, off keeps it off on both
 
   -h, --help          this message
-  -V, --version       print the version
 
 status, switch, run and a bare gpu-mode need no privileges; every other
 command requires root.
@@ -98,7 +100,7 @@ USAGE
 # that panics. Serialise everything that changes state. The flag is exported
 # so the nested `auto -> ac|battery` call does not deadlock on a lock it is
 # already holding.
-LOCK=/run/thinkpad-power.lock
+LOCK=/run/nova-power.lock
 
 # Cached sysfs ids, never lspci: reading PCI config space resumes a
 # runtime-suspended GPU, which is the opposite of the job.
@@ -120,7 +122,7 @@ detect_nvidia() {
 # address found at boot (when firmware has always enumerated it) is kept in
 # /run for the rest of the boot. /run is a tmpfs, so a stale address can never
 # outlive the hardware it describes. NVIDIA_PCI in the config still wins.
-NVIDIA_PCI_CACHE=${NVIDIA_PCI_CACHE:-/run/thinkpad-power.nvidia-pci}
+NVIDIA_PCI_CACHE=${NVIDIA_PCI_CACHE:-/run/nova-power.nvidia-pci}
 if [[ -z $NVIDIA_PCI ]]; then
   if NVIDIA_PCI=$(detect_nvidia); then
     ((EUID == 0)) && printf '%s\n' "$NVIDIA_PCI" >"$NVIDIA_PCI_CACHE" 2>/dev/null
@@ -209,7 +211,7 @@ gpu_drm_nodes() {
 
 # kmod reads /run/modprobe.d, and /run is a tmpfs, so a block can never
 # survive into a boot where the card is back on the bus.
-MODPROBE_BLOCK=/run/modprobe.d/thinkpad-power-nvidia.conf
+MODPROBE_BLOCK=/run/modprobe.d/nova-power-nvidia.conf
 
 # nvidia-modprobe is setuid root and exists to load the driver on demand, so
 # any process that opens one of the /dev/nvidia* nodes gets the module back —
@@ -290,7 +292,7 @@ holders_of() {
 # and the only ones that may veto a switch-off.
 #
 # /dev/nvidia* is CUDA and NVML — btop reads it every couple of seconds — and
-# the DRM *render* node is where `thinkpad-power run` puts its child. A holder
+# the DRM *render* node is where `nova power run` puts its child. A holder
 # of either is a real user, and taking the card out from under it is precisely
 # what this tool must not do.
 #
@@ -464,7 +466,7 @@ gpu_wanted() { [[ $(gpu_mode) == auto ]] && on_ac; }
 # time can only be somebody asking for it. That is the whole detection — no
 # flag to pass, no second command to remember, and nothing to get out of step.
 # Plugging in clears it; the marker lives in /run, so a reboot forgets it too.
-GPU_MANUAL=/run/thinkpad-power.gpu-manual
+GPU_MANUAL=/run/nova-power.gpu-manual
 
 # The policy's own "turn it off", which declines when the user has said
 # otherwise. `gpu-off` by hand is the way to cancel that, and does.
@@ -508,7 +510,7 @@ gpu_on() {
   ((rescanned)) && log "dGPU back on the bus" || note "dGPU already on the bus"
   if ! gpu_wanted; then
     : >"$GPU_MANUAL"
-    log 'kept on until the charger is next plugged in, or run: thinkpad-power gpu-off'
+    log 'kept on until the charger is next plugged in, or run: nova power gpu-off'
   fi
   return 0
 }
@@ -542,7 +544,7 @@ runtime_pm_skip() {
 # with work to do stays active anyway. On this machine the NVMe and the AX210
 # both sit at `auto`/`active`, so the honest reading of the status line is
 # "allowed to suspend", not "suspended".
-RUNTIME_PM_STATE=/run/thinkpad-power.runtime-pm
+RUNTIME_PM_STATE=/run/nova-power.runtime-pm
 
 runtime_pm_battery() {
   local dev addr
@@ -595,11 +597,11 @@ runtime_pm_ac() {
 # The one knob here with a real failure mode. Forcing L0s/L1 on every link can
 # upset an NVMe or a wireless card that is merely tolerant of ASPM, and the
 # symptom is a hang — the last thing this machine needs. Off unless
-# ASPM_ON_BAT is set in /etc/thinkpad-power.conf. `powersave` is the sane
+# ASPM_ON_BAT is set in /etc/nova/power.conf. `powersave` is the sane
 # value; `powersupersave` adds the L1 substates, and more risk with them.
 ASPM_ON_BAT=${ASPM_ON_BAT:-}
 ASPM_POLICY=/sys/module/pcie_aspm/parameters/policy
-ASPM_STATE=/run/thinkpad-power.aspm
+ASPM_STATE=/run/nova-power.aspm
 
 aspm() {
   [[ -n $ASPM_ON_BAT && -w $ASPM_POLICY ]] || return 0
@@ -623,11 +625,11 @@ aspm() {
 # The NMI watchdog runs a per-CPU performance counter purely to detect hard
 # lockups. Turning it off is standard practice and saves very little; on a
 # machine with this one's history of hard lockups the diagnostic is worth more
-# than the milliwatts. Set NMI_WATCHDOG_ON_BAT=off in /etc/thinkpad-power.conf
+# than the milliwatts. Set NMI_WATCHDOG_ON_BAT=off in /etc/nova/power.conf
 # to disagree.
 NMI_WATCHDOG_ON_BAT=${NMI_WATCHDOG_ON_BAT:-}
 NMI_WATCHDOG=/proc/sys/kernel/nmi_watchdog
-NMI_STATE=/run/thinkpad-power.nmi
+NMI_STATE=/run/nova-power.nmi
 
 nmi_watchdog() {
   [[ $NMI_WATCHDOG_ON_BAT == off && -w $NMI_WATCHDOG ]] || return 0
@@ -661,7 +663,7 @@ nmi_watchdog() {
 # first reconnect and nothing says otherwise, which is the failure mode worth
 # knowing about.
 #
-# Set WIFI_POWERSAVE_ON_BAT=off in /etc/thinkpad-power.conf to disagree.
+# Set WIFI_POWERSAVE_ON_BAT=off in /etc/nova/power.conf to disagree.
 WIFI_POWERSAVE_ON_BAT=${WIFI_POWERSAVE_ON_BAT:-on}
 # Testing seams; there is no reason to set either in normal use.
 IW=${IW:-iw}
@@ -715,12 +717,12 @@ wifi_powersave_now() {
 #   PL1_ON_BAT=30
 #
 # Firmware may put it back — DPTF also drives these registers — so check with
-# `thinkpad-power status -v` after setting it.
+# `nova power status -v` after setting it.
 PL1_ON_BAT=${PL1_ON_BAT:-}
 RAPL=/sys/class/powercap/intel-rapl:0
 RAPL_PL1=$RAPL/constraint_0_power_limit_uw
 RAPL_WINDOW=$RAPL/constraint_0_time_window_us
-RAPL_STATE=/run/thinkpad-power.rapl
+RAPL_STATE=/run/nova-power.rapl
 
 # PL2 is the other half, and the one you feel rather than measure. It governs
 # the short burst before PL1's average catches up — 135 W here against the
@@ -745,15 +747,15 @@ RAPL_PL2=$RAPL/constraint_1_power_limit_uw
 # both, and restores both.
 PL1_WINDOW_ON_BAT=10
 
-# thinkpad-powerd, when installed, is a continuous governor over the same three
+# nova-powerd, when installed, is a continuous governor over the same three
 # registers this file caps once per plug event. Two things writing PL1 is how
 # the power profiles were lost the first time round (fact 4), so there is a
 # marker and exactly one owner at a time: the daemon writes it at startup and
 # removes it on the way out, and everything here stands down while it exists.
 # The GPU, the Wi-Fi flag, ASPM and runtime PM are still this file's — the
 # daemon does not touch them.
-DAEMON_OWNS_CPU=/run/thinkpad-powerd.owns-cpu
-DAEMON_STATE=/run/thinkpad-powerd.state
+DAEMON_OWNS_CPU=/run/nova-powerd.owns-cpu
+DAEMON_STATE=/run/nova-powerd.state
 
 daemon_owns_cpu() { [[ -e $DAEMON_OWNS_CPU ]]; }
 
@@ -779,7 +781,7 @@ BAT_POWER=/sys/class/power_supply/BAT0/power_now
 # Settings' readout: what the governor and the registers say right now, as one
 # JSON object. Files only, no GPU holder scan, so it is cheap enough to read
 # every couple of seconds. A figure this machine does not give is null; the
-# governor is null while thinkpad-powerd is not running.
+# governor is null while nova-powerd is not running.
 status_json() {
   local mode='' busy='' temp='' fan='' watts='' running=false source=battery battery=''
   daemon_owns_cpu && read -r mode busy temp fan watts 2>/dev/null <"$DAEMON_STATE" && running=true
@@ -872,21 +874,21 @@ power_limit() {
 #
 # This is a ceiling, not a target: nothing is slower until something actually
 # wants more than the ceiling. What does want it is a compile, which is what
-# `thinkpad-power boost` is for. EPP is left alone — power-profiles-daemon owns
+# `nova power boost` is for. EPP is left alone — power-profiles-daemon owns
 # it, the same way it owns the platform profile (fact 4).
 CPU_MAX_PCT_ON_BAT=${CPU_MAX_PCT_ON_BAT:-}
 # A boost is a deliberate "I am compiling, leave the caps alone" for a bounded
 # time. It has to outlive a resume and a retry, so it is a file rather than a
 # variable, and both CPU tunables consult it before their battery branch —
 # otherwise the resume hook would end a boost silently, halfway through a build.
-BOOST_STATE=/run/thinkpad-power.boost
-BOOST_UNIT=thinkpad-power-boost
+BOOST_STATE=/run/nova-power.boost
+BOOST_UNIT=nova-power-boost
 BOOST_DEFAULT_MIN=30
 PSTATE=/sys/devices/system/cpu/intel_pstate
 PSTATE_MAX=$PSTATE/max_perf_pct
 PSTATE_MIN=$PSTATE/min_perf_pct
 PSTATE_NO_TURBO=$PSTATE/no_turbo
-PSTATE_STATE=/run/thinkpad-power.cpupct
+PSTATE_STATE=/run/nova-power.cpupct
 
 cpu_ceiling() {
   local want floor saved
@@ -1011,24 +1013,24 @@ extras() {
   return 0
 }
 
-cmd=${1:-auto}
+cmd=${1:-status}
 
 # Everything that changes state needs root, and only one such run at a time —
 # the udev plug rule and the retry timer otherwise land on the same work.
 # Refuse up front rather than letting a dozen sysfs writes fail one at a time.
 exclusive() {
-  [[ $EUID -eq 0 ]] || die "$cmd requires root — try: sudo thinkpad-power $*"
-  if [[ -z ${THINKPAD_POWER_LOCKED:-} ]]; then
-    export THINKPAD_POWER_LOCKED=1
+  [[ $EUID -eq 0 ]] || die "$cmd requires root — try: sudo nova power $*"
+  if [[ -z ${NOVA_POWER_LOCKED:-} ]]; then
+    export NOVA_POWER_LOCKED=1
     exec flock -w 60 "$LOCK" "$0" "$@"
   fi
 }
 
 case $cmd in
-status | switch | run | -h | --help | -V | --version) ;;
+status | switch | run | -h | --help) ;;
 doctor)
   # Read-only, but debugfs is root-only.
-  [[ $EUID -eq 0 ]] || die 'doctor needs root — try: sudo thinkpad-power doctor'
+  [[ $EUID -eq 0 ]] || die 'doctor needs root — try: sudo nova power doctor'
   ;;
 gpu-mode) [[ -z ${2:-} ]] || exclusive "$@" ;;
 *) exclusive "$@" ;;
@@ -1063,7 +1065,7 @@ boost)
     [[ $arg =~ ^[0-9]+$ ]] && ((arg >= 1 && arg <= 720)) ||
       die "boost wants a number of minutes between 1 and 720, or 'off', not '$arg'"
   fi
-  if [[ ${THINKPAD_POWER_BOOST_EXPIRY:-} == 1 ]]; then
+  if [[ ${NOVA_POWER_BOOST_EXPIRY:-} == 1 ]]; then
     # This run is the expiry, inside $BOOST_UNIT.service: stopping that would
     # kill it before the marker is gone, and the boost would never end.
     systemctl stop "$BOOST_UNIT.timer" >/dev/null 2>&1
@@ -1091,8 +1093,8 @@ boost)
 
   if command -v systemd-run >/dev/null 2>&1; then
     systemd-run --quiet --unit="$BOOST_UNIT" --on-active="${arg}min" \
-      --description="Restore thinkpad-power battery CPU caps" \
-      --setenv=THINKPAD_POWER_BOOST_EXPIRY=1 "$0" boost off >/dev/null 2>&1 ||
+      --description="Restore nova power battery CPU caps" \
+      --setenv=NOVA_POWER_BOOST_EXPIRY=1 "$0" boost off >/dev/null 2>&1 ||
       die "could not schedule the expiry; caps left in place"
   else
     die 'systemd-run is missing, and an unbounded boost is not on offer'
@@ -1104,11 +1106,11 @@ boost)
   if on_ac; then
     log "boost armed for $arg min (on AC, so the caps were already off)"
   else
-    log "CPU caps lifted for $arg min — 'thinkpad-power boost off' ends it early"
+    log "CPU caps lifted for $arg min — 'nova power boost off' ends it early"
   fi
   ;;
 daemon-stopped)
-  # systemd's ExecStopPost for thinkpad-powerd, and only that. The daemon
+  # systemd's ExecStopPost for nova-powerd, and only that. The daemon
   # restores the firmware limits itself on a clean stop; this exists for the
   # kill -9, where that code never runs. The EC's own fan watchdog is the third
   # line and needs nobody at all.
@@ -1118,8 +1120,8 @@ daemon-stopped)
   # nothing here can hand the CPU back to the other half while the fans are
   # still pinned.
   [[ -w /proc/acpi/ibm/fan ]] && echo 'level auto' >/proc/acpi/ibm/fan 2>/dev/null
-  if [[ -r /run/thinkpad-powerd.firmware ]]; then
-    read -r d_pl1 d_win d_pl2 d_pct d_turbo </run/thinkpad-powerd.firmware
+  if [[ -r /run/nova-powerd.firmware ]]; then
+    read -r d_pl1 d_win d_pl2 d_pct d_turbo </run/nova-powerd.firmware
     [[ -n ${d_pl1:-} ]] && echo "$d_pl1" >"$RAPL_PL1" 2>/dev/null
     [[ -n ${d_win:-} ]] && echo "$d_win" >"$RAPL_WINDOW" 2>/dev/null
     [[ -n ${d_pl2:-} ]] && echo "$d_pl2" >"$RAPL_PL2" 2>/dev/null
@@ -1346,8 +1348,8 @@ run)
   # vendor and Vulkan ICD so nothing reaches for the card by accident; this
   # puts them back for this process only, and adds the usual offload hints.
   shift
-  (($# > 0)) || die 'run needs a program: thinkpad-power run <program> [args...]'
-  gpu_present || die "the discrete GPU is off the bus. Plug in, or: sudo thinkpad-power gpu-on"
+  (($# > 0)) || die 'run needs a program: nova power run <program> [args...]'
+  gpu_present || die "the discrete GPU is off the bus. Plug in, or: sudo nova power gpu-on"
   exec env -u __EGL_VENDOR_LIBRARY_FILENAMES -u VK_LOADER_DRIVERS_DISABLE \
     __NV_PRIME_RENDER_OFFLOAD=1 \
     __GLX_VENDOR_LIBRARY_NAME=nvidia \
@@ -1383,8 +1385,7 @@ switch)
     echo
   fi
   ;;
--h | --help | -V | --version)
-  [[ $cmd == -V || $cmd == --version ]] && { echo "thinkpad-power $VERSION"; exit 0; }
+-h | --help)
   usage
   exit 0
   ;;

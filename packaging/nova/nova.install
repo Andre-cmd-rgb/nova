@@ -1,0 +1,37 @@
+# pacman runs these around an upgrade of nova.
+
+# Nova's power governor was thinkpad-power and thinkpad-powerd until
+# 1.0.0-beta.5. Left alone, the old governor would run on until a reboot
+# beside the renamed policy, which no longer sees its marker: two writers on
+# the CPU's limits. So before its files go, the old governor stops (its own
+# stop puts the firmware's limits and the fans back), any policy run finishes,
+# and what they saved in /run moves to the new names: the firmware's values,
+# what AC restores, the NVIDIA autoload block. The renamed governor starts
+# after the upgrade.
+pre_upgrade() {
+  [ -e /usr/lib/systemd/system/thinkpad-powerd.service ] || return 0
+  systemctl stop thinkpad-power-gpu.timer thinkpad-powerd.service 2>/dev/null || true
+  # A policy run holds this lock; stopping one midway could leave the card
+  # half off the bus.
+  flock -w 60 /run/thinkpad-power.lock true 2>/dev/null || true
+  for f in /run/thinkpad-power.* /run/thinkpad-powerd.*; do
+    [ -e "$f" ] || continue
+    case $f in *.lock) continue ;; esac
+    mv -f -- "$f" "/run/nova-power${f#/run/thinkpad-power}"
+  done
+  if [ -e /run/modprobe.d/thinkpad-power-nvidia.conf ]; then
+    mv -f /run/modprobe.d/thinkpad-power-nvidia.conf /run/modprobe.d/nova-power-nvidia.conf
+  fi
+  if [ -e /etc/thinkpad-power.conf ] && [ ! -e /etc/nova/power.conf ]; then
+    mkdir -p /etc/nova && mv /etc/thinkpad-power.conf /etc/nova/power.conf
+  fi
+  : >/run/nova-power.renamed
+}
+
+post_upgrade() {
+  [ -e /run/nova-power.renamed ] || return 0
+  rm -f /run/nova-power.renamed
+  systemctl daemon-reload 2>/dev/null || true
+  # Each unit checks the model itself, so this starts nothing elsewhere.
+  systemctl start nova-powerd.service nova-power-gpu.timer 2>/dev/null || true
+}

@@ -10,7 +10,7 @@
 # shellcheck disable=SC2034
 set -uo pipefail
 HERE=$(cd -- "$(dirname -- "$0")" && pwd)
-TOOL=$HERE/../bin/thinkpad-power
+TOOL=$HERE/../bin/nova-power
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 
 # Everything above the dispatch is the library half.
@@ -19,8 +19,8 @@ grep -q '^aspm()' "$T/lib.sh" || { echo "could not extract the library half of $
 CONFIG=/dev/null . "$T/lib.sh"
 
 # Every /run path the library consults has to be redirected before the first
-# tunable is exercised. This was learned the moment thinkpad-powerd was
-# actually installed: the real /run/thinkpad-powerd.owns-cpu appeared, the
+# tunable is exercised. This was learned the moment nova-powerd was
+# actually installed: the real /run/nova-powerd.owns-cpu appeared, the
 # library correctly stood down from the CPU registers, and eight checks that
 # had passed all day started failing on a machine that was working perfectly.
 # A test that reads host state is not a test.

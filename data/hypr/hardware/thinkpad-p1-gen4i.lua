@@ -4,7 +4,7 @@
 
 -- Video decode and GLX go to the iGPU too. Pointed at the NVIDIA, ordinary apps
 -- open the card and hold it awake, and decoding breaks outright once it is off
--- the bus. `thinkpad-power run` points both back for one program.
+-- the bus. `nova power run` points both back for one program.
 hl.env("LIBVA_DRIVER_NAME", "iHD")
 hl.env("__GLX_VENDOR_LIBRARY_NAME", "mesa")
 

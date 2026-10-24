@@ -26,7 +26,7 @@ if [ "$_nova_model" = "ThinkPad P1 Gen 4i" ]; then
   # graphics libraries load. GLVND loads every EGL vendor it finds and the
   # Vulkan loader every ICD, so libEGL_nvidia and the NVIDIA ICD would land in
   # the compositor and in every GTK4 app, and open /dev/nvidia* just by
-  # starting. `thinkpad-power run` puts both back for one program.
+  # starting. `nova power run` puts both back for one program.
   _nova_egl=
   for _nova_vendor in /usr/share/glvnd/egl_vendor.d/*.json; do
     case $_nova_vendor in

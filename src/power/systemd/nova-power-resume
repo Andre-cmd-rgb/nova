@@ -6,7 +6,7 @@
 # again on the way back up, but the image being restored was taken with the
 # card off the bus, so the restored kernel has no record of it and will never
 # touch it. It sits in D0, drawing what this tool exists to save, and nothing
-# reports it: `thinkpad-power auto` sees no device and says "already off the
+# reports it: `nova power auto` sees no device and says "already off the
 # bus". `post-hibernate` rescans first, so the policy has something to remove.
 #
 # $2 is the operation that was requested and SYSTEMD_SLEEP_ACTION is the one
@@ -16,12 +16,12 @@
 # hibernate did not happen, so it is deliberately not matched here.
 #
 # systemd freezes user.slice while these run, so this must not talk to any user
-# service and must not block: thinkpad-power takes a bounded flock and returns.
+# service and must not block: nova-power takes a bounded flock and returns.
 
 [ "$1" = post ] || exit 0
 [ "$SYSTEMD_SLEEP_ACTION" = hibernate ] || exit 0
 
 # Shipped for every machine Nova runs on; the policy is the P1's alone.
 [ "$(cat /sys/class/dmi/id/product_version 2>/dev/null)" = "ThinkPad P1 Gen 4i" ] || exit 0
-[ -x /usr/lib/nova/bin/thinkpad-power ] || exit 0
-/usr/lib/nova/bin/thinkpad-power post-hibernate || exit 0
+[ -x /usr/lib/nova/bin/nova-power ] || exit 0
+/usr/lib/nova/bin/nova-power post-hibernate || exit 0

@@ -10,9 +10,11 @@ set -euo pipefail
 
 readonly bin=${NOVA_BIN:-/usr/lib/nova/bin}
 
-# Compiled helpers cannot carry a summary comment.
+# Compiled helpers cannot carry a summary comment, or a hidden one: "" keeps
+# one out of the help. nova-undervolt is nova power undervolt's own half.
 declare -A compiled=(
   [nova-theme]="Switch themes and backgrounds, and read theme colors"
+  [nova-undervolt]=""
 )
 
 summary() {
@@ -26,6 +28,7 @@ summary() {
 }
 
 hidden() {
+  [[ ! -v compiled[$1] || -n ${compiled[$1]} ]] || return 0
   grep -q -m1 -a '^# nova:hidden=true' "$bin/$1" 2>/dev/null
 }
 

@@ -6,7 +6,7 @@
 set -euo pipefail
 
 case "$#:${1:-}" in
-  1:auto | 1:off) exec /usr/lib/nova/bin/thinkpad-power gpu-mode "$1" ;;
+  1:auto | 1:off) exec /usr/lib/nova/bin/nova-power gpu-mode "$1" ;;
   *)
     echo "Usage: nova-power-gpu-mode-apply auto|off" >&2
     exit 2

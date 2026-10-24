@@ -1,7 +1,8 @@
 # ThinkPad P1 Gen 4i
 
-Power management for the P1 Gen 4i: `thinkpad-power` (the policy, bash) and
-`thinkpad-powerd` (the load-adaptive governor, Rust), in `src/power/`. Read
+How Nova's power governor, `nova-power` (the policy, bash) and `nova-powerd`
+(the load-adaptive governor, Rust) in `src/power/`, runs on the P1 Gen 4i,
+the machine its tiers were measured on. Read
 this before changing anything there: most of it was learned the expensive way,
 twice at the cost of a login screen.
 
@@ -11,11 +12,11 @@ Everything ships in the `nova` package and is inert on any other computer.
 
 | | |
 |---|---|
-| `/usr/lib/nova/bin/thinkpad-power`, `thinkpad-powerd` | the policy and the governor |
-| `thinkpad-power.service`, `thinkpad-powerd.service`, `thinkpad-power-gpu.timer` | enabled by the package, each with `ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")` |
-| `99-nova-thinkpad-power.rules` | plug and unplug re-apply the policy (DMI-matched) |
+| `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd` | the policy and the governor |
+| `nova-power.service`, `nova-powerd.service`, `nova-power-gpu.timer` | enabled by the package, each with `ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")` |
+| `99-nova-power.rules` | plug and unplug re-apply the policy (DMI-matched) |
 | `98-nova-igpu.rules` | `/dev/dri/igpu`, the colon-free name for the integrated card (fact 1) |
-| `/usr/lib/systemd/system-sleep/thinkpad-power-resume` | the hibernate rescan (fact 29) |
+| `/usr/lib/systemd/system-sleep/nova-power` | the hibernate rescan (fact 29) |
 | `/usr/share/uwsm/env.d/20-nova-thinkpad-p1-gen4i` | the compositor pin and the hidden NVIDIA EGL vendor and Vulkan ICD (facts 1-3) |
 | `default/hypr/hardware/thinkpad-p1-gen4i.lua` | VA-API and GLX on the iGPU, direct scanout (fact 31) |
 | `data/hardware/thinkpad-p1-gen4i/etc/` | fan control, `nvidia-drm fbdev=0`, Bluetooth autosuspend off, NetworkManager's hands off the Wi-Fi power-save flag, and `rtc_cmos.use_acpi_alarm=1`; copied into `/etc` by `nova-hw-apply` from a pacman hook |
@@ -23,10 +24,10 @@ Everything ships in the `nova` package and is inert on any other computer.
 | `nova-power-profile` | power profiles, remembered per power source (fact 4); power-saver on battery by default |
 | `nova power gpu` | the switch, `status` and `run` |
 
-`/etc/thinkpad-power.conf` is optional and holds the tunables below
+`/etc/nova/power.conf` is optional and holds the tunables below
 (`PL1_ON_BAT`, the governor's tiers, `FAN_CONTROL`, ...). The dGPU's address
 is found at boot, when firmware has always enumerated it, and kept in
-`/run/thinkpad-power.nvidia-pci` for the rest of the boot (fact 15).
+`/run/nova-power.nvidia-pci` for the rest of the boot (fact 15).
 
 The numbered facts below were learned before Nova existed, when this was an
 add-on with an installer of its own. Where Nova now does something differently,
@@ -80,7 +81,7 @@ desktop remembered a profile per power source and set it on every plug event,
 and this tool set profiles too; the last writer won, and the profiles were
 lost. Now `nova-power-profile` remembers one per source in
 `~/.local/state/nova/power-profile/`, and the shell's battery service puts it
-back at login and on every plug and unplug. **thinkpad-power never sets a
+back at login and on every plug and unplug. **nova-power never sets a
 profile**, and leaves EPP and the platform profile to power-profiles-daemon.
 
 **5. Do not order the unit `After=power-profiles-daemon.service`.** PPD is
@@ -98,12 +99,12 @@ shown by the model (`nova-hw-detect`), not by counting GPUs: a count with
 **7. The policy is edge-triggered and can legitimately decline.** `gpu_off`
 refuses while anything holds the card, rather than pulling it from under a
 running program. A plug event is one edge that never repeats, so
-`thinkpad-power-gpu.timer` retries every 2 min, GPU only, never touching the
+`nova-power-gpu.timer` retries every 2 min, GPU only, never touching the
 profile.
 
-**8. Use `thinkpad-power run`, not `prime-run`.** The session hides the NVIDIA
+**8. Use `nova power run`, not `prime-run`.** The session hides the NVIDIA
 EGL vendor and Vulkan ICD; `prime-run` does not know to restore them. Steam
-launch options: `thinkpad-power run %command%`.
+launch options: `nova power run %command%`.
 
 **9. The card is more than one PCI function.** `0000:01:00.0` is the GPU;
 `0000:01:00.1` is its HDA controller for HDMI/DP audio, bound to
@@ -124,14 +125,14 @@ the unload. `btop` does it every couple of seconds through NVML. Loading the
 driver while the card is off the bus reaches the same machine check: card
 removed 11:09:05, `nvidia` loaded 11:09:18, panic 11:09:42. `gpu_off` now
 writes `install <module> /bin/false` into
-`/run/modprobe.d/thinkpad-power-nvidia.conf` **before** unloading — the gap
+`/run/modprobe.d/nova-power-nvidia.conf` **before** unloading — the gap
 between unload and block is enough on its own — and deletes the nodes once the
 functions are gone. `gpu_on` lifts the block **before** the rescan, since the
 rescan is itself what makes udev try the driver. `/run` is a tmpfs, so a block
 can never survive into a boot where the card is back.
 
 **11. `run` had no `die`.** It was called twice and never defined, and there is
-no `set -e`, so `thinkpad-power run` on battery printed `die: command not
+no `set -e`, so `nova power run` on battery printed `die: command not
 found` and then `exec`ed the program anyway with the NVIDIA EGL vendor and
 Vulkan ICD restored — a third route to fact 10's panic. Defined now.
 
@@ -140,8 +141,8 @@ plug rule and the 2 min retry timer both fire `gpu_off`. At 11:35:09 the udev
 run removed the card and installed the modprobe block; the timer, 81 ms
 behind, found the functions already gone, called its failure path, and
 *deleted the block the winner had just installed* — card off the bus, driver
-free to load. Three guards now: `flock` on `/run/thinkpad-power.lock` around
-every state-changing subcommand (the `THINKPAD_POWER_LOCKED` export keeps the
+free to load. Three guards now: `flock` on `/run/nova-power.lock` around
+every state-changing subcommand (the `NOVA_POWER_LOCKED` export keeps the
 nested `auto -> ac|battery` call from deadlocking on its own lock),
 `remove_gpu_functions` treating a vanished function as success and testing the
 postcondition instead of the write, and `unblock_if_gpu_present` so no failure
@@ -149,17 +150,17 @@ path can ever lift a block while the card is off the bus.
 
 **13. The tunables are not where the watts are.** `extras` now also parks
 runtime PM on PCI devices the drivers left pinned (recorded in
-`/run/thinkpad-power.runtime-pm` so AC restores exactly those, rather than
+`/run/nova-power.runtime-pm` so AC restores exactly those, rather than
 forcing the whole bus to `on`). Real but small. The measured budget on this
 machine at 15.7 W, dGPU already off: the 3840x2400 panel and the browser
 dominate, the connected 5G modem is next, and every kernel knob together is
 worth about a watt. PCIe ASPM is deliberately **opt-in** — `ASPM_ON_BAT=powersave`
-in `/etc/thinkpad-power.conf` — because forcing L0s/L1 on every link can hang
+in `/etc/nova/power.conf` — because forcing L0s/L1 on every link can hang
 an NVMe that is merely ASPM-tolerant, and this machine has had enough hangs.
 
 **14. An unquoted heredoc runs the backticks in it.** The add-on's installer
 appended config with `cat >>"$HYPR_CONF" <<LUA`, unquoted so its variables
-would expand. A comment written as `` `thinkpad-power run` `` was therefore
+would expand. A comment written as `` `nova power run` `` was therefore
 command substitution: it ran mid-install, printed `error: run needs a program`,
 and spliced its empty output into the user's Hyprland config. Nova ships those
 files as files and generates nothing at install time, but the rule holds for
@@ -170,9 +171,9 @@ and then put no backticks in it.
 Once the policy has done its job there is nothing in sysfs for `detect_nvidia`
 to find, so the add-on's installer concluded the machine had no discrete GPU
 and refused, on every second run. Firmware always enumerates the card at boot,
-so `thinkpad-power` records its address then, in
-`/run/thinkpad-power.nvidia-pci`, and reads it back for the rest of the boot.
-`NVIDIA_PCI` in `/etc/thinkpad-power.conf` still wins when it is set.
+so `nova-power` records its address then, in
+`/run/nova-power.nvidia-pci`, and reads it back for the rest of the boot.
+`NVIDIA_PCI` in `/etc/nova/power.conf` still wins when it is set.
 
 **16. The OC mailbox is locked as shipped, and the firmware can open it.**
 With the BIOS's defaults, writing −5 mV to the CPU-core plane through MSR
@@ -220,7 +221,7 @@ firmware's 56 s to 10 s: PL1 is an average, so without that a burst lasting
 most of a minute escapes the cap entirely. Measured under 16 threads of load
 with PL1 already at 30 W, draw was past 31 W and still climbing at t+20s.
 
-**17. What is left is in use, not misconfigured.** `thinkpad-power doctor`
+**17. What is left is in use, not misconfigured.** `nova power doctor`
 reads the PMC latency-tolerance table, which names whatever forbids the deep
 package states. Here: xHCI at 500 ns-scale 499712 ns — the Bluetooth mouse
 (`8087:0032`, `btusb`, USB `3-14`) — and HD audio at 363520 ns, but only while
@@ -452,7 +453,7 @@ the policy sets it on for battery and off on AC.
 
 The trap is that NetworkManager writes the flag at **every connection
 activation**, so a roam, a reconnect or a resume silently reverts it and
-`thinkpad-power status` would be the only place it showed.
+`nova power status` would be the only place it showed.
 `/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf` sets
 `wifi.powersave = 1` ("ignore") to stop that. conf.d is read in plain
 alphabetical order and the last file wins, so another file that sets the flag
@@ -504,7 +505,7 @@ nothing gets slower until something asks for more than the ceiling.
 because the thing that genuinely wants 4.8 GHz is a compile. `boost [minutes]`
 lifts both CPU caps and schedules its own expiry with `systemd-run` **before**
 lifting anything, so a scheduling failure leaves the machine capped rather than
-uncapped forever. The marker is `/run/thinkpad-power.boost` and *both* CPU
+uncapped forever. The marker is `/run/nova-power.boost` and *both* CPU
 tunables check it before their battery branch — without that, the resume hook,
 a replug or the retry timer would re-apply the caps in the middle of a build
 and print nothing. That guard is the interesting part and is what the round-trip
@@ -520,7 +521,7 @@ burst gets 135 W and a long job gets throttled. What is wanted is "low briefly,
 high sustained" — a browser must never reach 4.8 GHz to scroll, a compile must
 have everything. No register does that, because it is a policy about *time*,
 and a policy about time needs something awake to watch the clock. Hence
-`thinkpad-powerd`, in `daemon/`, Rust, std only.
+`nova-powerd`, in `daemon/`, Rust, std only.
 
 Three tiers on battery (light 12/20/50, mid 20/32/75, full 30/45/100), a dwell
 of 8 s above 65% busy before climbing and 25 s below 30% before falling. The
@@ -532,7 +533,7 @@ NVMe is not asking for frequency.
 
 What it owns is exactly PL1, PL2, `max_perf_pct` and the fans. EPP and the
 platform profile are still power-profiles-daemon's (fact 4). The bash half
-stands down on all four while `/run/thinkpad-powerd.owns-cpu` exists, so there
+stands down on all four while `/run/nova-powerd.owns-cpu` exists, so there
 is one writer at a time — that marker is the whole coordination protocol.
 
 **Fans, and the three lines of defence.** `FAN_CONTROL` defaults on but is
@@ -544,23 +545,23 @@ curve is deliberately *lazier* than the EC's below 70 C, because a warm chassis
 is cheaper than a spinning fan. Then: the daemon releases to `auto` above
 `GOVERNOR_TEMP_CRITICAL` before the curve is consulted at all, so no arrangement
 of curve entries can hold a low level on a hot package; systemd's `ExecStopPost`
-runs `thinkpad-power daemon-stopped` for the kill -9 case; and the EC's own
+runs `nova power daemon-stopped` for the kill -9 case; and the EC's own
 watchdog, refreshed every ~10 s, takes the fans back about thirty seconds after
 this process stops existing, needing nobody. The level is re-asserted on every
 watchdog refresh rather than only on change, because the EC silently takes the
 fans back across a resume and a cache would never notice.
 
-**36. The first firmware capture recorded the cap.** `thinkpad-powerd` reads
+**36. The first firmware capture recorded the cap.** `nova-powerd` reads
 PL1 at startup to know what to restore on AC. Run for the first time on battery
 with the bash half's `PL1_ON_BAT=30` already applied, it recorded **30 W** as
 "what the firmware wanted" — after which plugging in would "restore" to 30 W,
 and there is no route back short of a reboot. Caught by reading its own first
-log line against `/etc/thinkpad-power.conf`.
+log line against `/etc/nova/power.conf`.
 
 The fix is that the bash half already saves the true values, in
-`/run/thinkpad-power.rapl` and `/run/thinkpad-power.cpupct`, for exactly this
+`/run/nova-power.rapl` and `/run/nova-power.cpupct`, for exactly this
 purpose — so those are consulted first and the live registers only when neither
-exists. The capture is then persisted to `/run/thinkpad-powerd.firmware` so a
+exists. The capture is then persisted to `/run/nova-powerd.firmware` so a
 daemon *restart* does not repeat the mistake against its own tiers. Three files,
 one question: what did this machine look like before anything here ran.
 
@@ -568,7 +569,7 @@ one question: what did this machine look like before anything here ran.
 2 min and did `if on_ac; then gpu_on; else gpu_off; fi`, so turning the card on
 by hand on battery was undone by the retry timer — `switch` even said so, which
 made it documented rather than fixed. There is now
-`/run/thinkpad-power.gpu-manual`, and the detection needs no flag: **the policy
+`/run/nova-power.gpu-manual`, and the detection needs no flag: **the policy
 only ever calls `gpu_on` while on AC**, so a `gpu_on` that happens on battery
 can only be somebody asking for it. An explicit `gpu-off` cancels it, plugging
 in cancels it, and /run means a reboot forgets it.
@@ -716,12 +717,12 @@ Under the old code all seven were invisible. The nodes are read off the device
 numbering is probe order and does not survive a reboot.
 
 `modeset=1` was **not** removed, and should not be. It is what makes DRM PRIME
-buffer sharing work, which is what `thinkpad-power run` needs on Wayland. The
+buffer sharing work, which is what `nova power run` needs on Wayland. The
 blind spot was the bug; the option is not.
 
 **45. Two of the three failure modes were reachable without any of that.**
 
-*The boot race.* `thinkpad-power.service` runs about a second into boot, loses
+*The boot race.* `nova-power.service` runs about a second into boot, loses
 to whatever still has the card open that early, and then hands the question to
 a timer that comes back in **two minutes** — with the card powered for the
 whole gap, every boot. The holders that early are transient by nature, so
@@ -841,7 +842,7 @@ The boot log is the clean proof, because it brackets the compositor:
 
 ```
 11:33:48 kernel: [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
-11:33:49 thinkpad-power[830]: nvidia_drm would not unload
+11:33:49 nova-power[830]: nvidia_drm would not unload
 11:35:13 Hyprland starts
 ```
 
@@ -866,7 +867,7 @@ is exactly what cannot be unloaded.
 
 ## Working here
 
-- **CLI conventions.** Messages carry no `thinkpad-power:` prefix: systemd
+- **CLI conventions.** Messages carry no `nova-power:` prefix: systemd
   already stamps the unit name. `log` for things that happened, `note` for
   things that did not need doing (the retry timer sets `QUIET=1`, so a no-op
   every two minutes is not 720 journal lines a day), `die` for `error: ...` on
@@ -875,7 +876,7 @@ is exactly what cannot be unloaded.
   in the CLI: they are approximate and machine-specific. `status` is three
   lines, with diagnostics behind `-v`, and must stay side-effect free: it used
   to call `nvidia-smi`, which wakes the card out of P8 just to answer.
-- **Use `sudo thinkpad-power status`** when chasing what holds the card.
+- **Use `sudo nova power status`** when chasing what holds the card.
   `fuser` reports only processes the caller may see, so unprivileged, the
   root-owned holders are invisible and the list looks reassuringly empty.
 - **Prove a driver leak, do not guess it:** a few lines of Python that load
@@ -926,7 +927,7 @@ during `pci/rescan` on plugging in, and a kernel panic when `nvidia` loaded
 a device inside the dGPU's power domain after that domain is gone, escalating
 to a broadcast MCE. Since the fix, removal takes both functions (`01:00.0` and
 `01:00.1`), leaves no `/dev/nvidia*`, and bars the driver from loading until
-the card is back; `sudo thinkpad-power status -v` shows both.
+the card is back; `sudo nova power status -v` shows both.
 
 **Ruled out, so nobody re-tries them:**
 - keeping the fingerprint reader powered through suspend: it breaks the reader

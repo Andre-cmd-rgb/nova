@@ -107,7 +107,7 @@ depends=(
   mise
   perl           # nova-menu-select, clipboard capture
   procps-ng      # pgrep, pkill
-  psmisc         # fuser, for thinkpad-power
+  psmisc         # fuser, for nova-power
   socat          # Hyprland event socket
   systemd
   util-linux     # setpriv, rfkill, logger
@@ -142,6 +142,8 @@ optdepends=(
   'fwupd: firmware updates (nova update firmware)'
 )
 options=(!debug)
+# Moves what an upgrade renames out of the way (the power governor's).
+install=nova.install
 # Configuration under /etc: pacman keeps local edits across upgrades.
 backup=(
   etc/UPower/UPower.conf.d/10-nova.conf

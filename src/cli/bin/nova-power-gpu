@@ -21,13 +21,13 @@ if [[ $("$bin/nova-hw-detect" 2>/dev/null || true) != thinkpad-p1-gen4i ]]; then
 fi
 
 case ${1:-} in
-  "") exec "$bin/thinkpad-power" switch ;;
-  status) exec "$bin/thinkpad-power" "$@" ;;
+  "") exec "$bin/nova-power" switch ;;
+  status) exec "$bin/nova-power" "$@" ;;
   mode)
     case $#:${2:-} in
-      1:) exec "$bin/thinkpad-power" gpu-mode ;;
+      1:) exec "$bin/nova-power" gpu-mode ;;
       2:auto | 2:off)
-        if ((EUID == 0)); then exec "$bin/thinkpad-power" gpu-mode "$2"; fi
+        if ((EUID == 0)); then exec "$bin/nova-power" gpu-mode "$2"; fi
         exec pkexec "$APPLY" "$2"
         ;;
       *) usage; exit 2 ;;
@@ -35,7 +35,7 @@ case ${1:-} in
     ;;
   run)
     (($# > 1)) || { usage; exit 2; }
-    exec "$bin/thinkpad-power" "$@"
+    exec "$bin/nova-power" "$@"
     ;;
   *) usage; exit 2 ;;
 esac

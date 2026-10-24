@@ -1,11 +1,14 @@
-# thinkpad-power: the manual
+# Nova's power governor: the manual
 
-The P1 Gen 4i's power policy. On battery it takes the discrete GPU off the PCI
-bus; plugged in, it brings the card back. (The power mode follows the power
+`nova power` is Nova's power governor. Its policy half, `nova-power`, takes the
+discrete GPU off the PCI bus on battery and brings it back plugged in; its
+continuous half, `nova-powerd`, sets the CPU's limits and the fans to the load
+(below). Settings → Battery shows what it is doing, and holds the switches. (The power mode follows the power
 source too, power-saver on battery and performance on AC until you pick
 another, but that is `nova-power-profile`'s, not this tool's.) It is part of
-the `nova` package and inert on any other computer; the top of
-[thinkpad-p1-gen4i.md](thinkpad-p1-gen4i.md) lists where each piece installs.
+the `nova` package; its tiers and limits are measured on the ThinkPad P1 Gen 4i,
+and until another model's are, it is inert on any other computer. The top of
+[thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md) lists where each piece installs.
 
 ## The problem it solves
 
@@ -55,7 +58,7 @@ button:
 | kernel + initramfs | ~5.7 s | |
 | userspace to `graphical.target` | 6.02 s | 4.1 s of it TPM provisioning |
 
-`sudo thinkpad-power doctor` prints the first two figures after each boot. They
+`sudo nova power doctor` prints the first two figures after each boot. They
 come from the loader's own `LoaderTime*USec` efivars rather than
 `systemd-analyze`, whose split is skewed here by a printk clock that starts at
 ~6.7 s.
@@ -63,7 +66,7 @@ come from the loader's own `LoaderTime*USec` efivars rather than
 ## Using it
 
 ```
-thinkpad-power <command> [args]
+nova-power <command> [args]
 
   status [-v]         power source and discrete GPU; -v adds diagnostics
   doctor              what is keeping this machine awake (root)
@@ -90,13 +93,13 @@ only when something is actually holding the card, and `left on bus` only if a
 PCI function of it somehow survived being removed.
 
 ```
-$ thinkpad-power status
+$ nova power status
 
   power source   battery (power-saver)
   discrete GPU   off
   draw           12.94 W
 
-$ thinkpad-power status -v
+$ nova power status -v
 
   power source   battery (power-saver)
   discrete GPU   off
@@ -109,12 +112,12 @@ $ thinkpad-power status -v
   pcie aspm      default
 ```
 
-Use `thinkpad-power run`, not `prime-run`. The session hides NVIDIA's EGL
+Use `nova power run`, not `prime-run`. The session hides NVIDIA's EGL
 vendor and Vulkan ICD so nothing reaches for the card by accident, and
-`prime-run` does not know to put those back; `thinkpad-power run` restores them
+`prime-run` does not know to put those back; `nova power run` restores them
 for that one process and adds the usual offload hints.
 
-Steam: put `thinkpad-power run %command%` in a game's launch options.
+Steam: put `nova power run %command%` in a game's launch options.
 
 **Super+Space → Discrete GPU** toggles it by hand, and says only what it did:
 
@@ -161,7 +164,7 @@ which is why the boot is kept short. It is also why the discrete card
 needs handling: firmware enumerates it again on the way up, but the restored
 image was taken with it off the bus, so the kernel has no record of it, never
 touches it, and it sits in D0 drawing what this tool exists to save. Nothing
-would report that — `thinkpad-power auto` sees no device and says "already off
+would report that — `nova power auto` sees no device and says "already off
 the bus". The resume hook rescans first, so the policy has something to remove.
 It fires only on the hibernate half, keyed on `SYSTEMD_SLEEP_ACTION`: on an
 ordinary S3 resume the card is correctly absent and a rescan would bring it
@@ -224,7 +227,7 @@ through the latency. The hardware profile installs
 flag at every connection activation and a roam or a resume would quietly undo
 it. Set `WIFI_POWERSAVE_ON_BAT=off` to disagree.
 
-The remaining knobs are **opt-in**, in `/etc/thinkpad-power.conf`:
+The remaining knobs are **opt-in**, in `/etc/nova/power.conf`:
 
 ```sh
 PL1_ON_BAT=30                # sustained CPU power limit on battery, in watts
@@ -243,7 +246,7 @@ undervolting is not: the worst case is a slower CPU, not an unstable one.
 PL1 is an *average over a time window*, and the firmware sets that window to
 56 seconds, so a burst lasting most of a minute escapes the cap entirely.
 Setting `PL1_ON_BAT` therefore also shortens the window to 10 s; both values
-are restored on AC. Check `thinkpad-power status -v` afterwards — it prints
+are restored on AC. Check `nova power status -v` afterwards — it prints
 the limit and the window, and DPTF drives the same registers, so it is worth
 confirming rather than assuming.
 
@@ -267,9 +270,9 @@ actually asks for more than the ceiling.
 What *does* ask for it is a compile, which is what `boost` is for:
 
 ```sh
-sudo thinkpad-power boost        # 30 minutes
-sudo thinkpad-power boost 90     # or as long as the build takes
-sudo thinkpad-power boost off    # early
+sudo nova power boost        # 30 minutes
+sudo nova power boost 90     # or as long as the build takes
+sudo nova power boost off    # early
 ```
 
 It lifts both CPU caps for a bounded stretch and schedules its own expiry
@@ -292,7 +295,7 @@ the same RAPL constraints this tool does, so leaving it off is what makes
 
 ## The governor
 
-`thinkpad-powerd` is the continuous half, and it exists because RAPL gives you
+`nova-powerd` is the continuous half, and it exists because RAPL gives you
 the opposite of what a laptop wants. PL1/PL2 is *high briefly, low sustained*:
 a burst gets 135 W and a long job gets throttled. What is wanted is *low
 briefly, high sustained* — a browser must never reach 4.8 GHz to scroll a page,
@@ -335,7 +338,7 @@ On AC it restores the firmware's own numbers and gets out of the way. It owns
 exactly PL1, PL2, `max_perf_pct`, `no_turbo` and the iGPU clocks; EPP and the
 platform profile stay with power-profiles-daemon, and the discrete GPU, Wi-Fi,
 ASPM and runtime PM stay with the edge policy. One writer per register, enforced
-by `/run/thinkpad-powerd.owns-cpu`, which the bash half checks before touching
+by `/run/nova-powerd.owns-cpu`, which the bash half checks before touching
 any of them.
 
 ### Fans
@@ -353,7 +356,7 @@ things stand between that and a hot machine, in order:
 1. Above `GOVERNOR_TEMP_CRITICAL` the daemon hands the fans back to the EC
    *before* the curve is consulted, so no arrangement of curve entries can hold
    a low level on a hot package.
-2. systemd's `ExecStopPost` runs `thinkpad-power daemon-stopped`, for the case
+2. systemd's `ExecStopPost` runs `nova power daemon-stopped`, for the case
    where the daemon is killed outright and its own restore never runs.
 3. The EC's own watchdog, refreshed every ten seconds or so, takes the fans back
    about thirty seconds after this process stops existing — needing nobody.
@@ -364,14 +367,14 @@ never notice.
 
 ### Boost
 
-`sudo thinkpad-power boost 90` pins the top tier for a bounded stretch. Both
-halves read the same `/run/thinkpad-power.boost`, so it works whichever is
+`sudo nova power boost 90` pins the top tier for a bounded stretch. Both
+halves read the same `/run/nova-power.boost`, so it works whichever is
 managing the CPU, and it survives a resume and a replug — a build must not lose
 its headroom halfway through because the lid was closed.
 
 ### Finding the rest of the watts
 
-`sudo thinkpad-power doctor` reads the platform controller's latency-tolerance
+`sudo nova power doctor` reads the platform controller's latency-tolerance
 table, the package C-state residency, whether the panel is self-refreshing,
 and which PCI devices never sleep. The LTR table is the useful part: an IP
 block advertising a short latency tolerance forbids the platform from entering
@@ -440,7 +443,7 @@ microcode `0x58`) takes a −5 mV offset to the CPU-core plane and reads back
 **+0.0 mV**: the silent-ignore form of the lock. Its firmware's hidden
 Advanced menu has the switch, **Overclocking Lock**; the way in, and what an
 opened one took (−70 mV passed, −80 mV logged machine checks), are fact 16 in
-[thinkpad-p1-gen4i.md](thinkpad-p1-gen4i.md).
+[thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md).
 
 The AC/DC loadline trick, often suggested as a way around a locked undervolt,
 is not one: it is a *different command to the same mailbox*, behind the same
@@ -548,9 +551,9 @@ silently wrong:
   mistake this repository has already made once, with the power profiles.
 
 Every `/run` path the library consults is redirected into the fixture directory
-first. That is not tidiness: before it was done, installing `thinkpad-powerd`
+first. That is not tidiness: before it was done, installing `nova-powerd`
 made eight passing checks fail, because the real
-`/run/thinkpad-powerd.owns-cpu` appeared and the library correctly stood down
+`/run/nova-powerd.owns-cpu` appeared and the library correctly stood down
 from registers the test was about to assert on. A test that reads host state is
 not a test.
 

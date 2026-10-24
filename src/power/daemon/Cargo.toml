@@ -1,5 +1,5 @@
 [package]
-name = "thinkpad-powerd"
+name = "nova-powerd"
 version = "1.0.0"
 edition = "2021"
 description = "Load-adaptive CPU, thermal and fan governor for a ThinkPad P1 Gen 4i"
@@ -10,5 +10,5 @@ license = "MIT"
 # not need a network. Everything here is std plus three libc symbols.
 
 [[bin]]
-name = "thinkpad-powerd"
+name = "nova-powerd"
 path = "src/main.rs"

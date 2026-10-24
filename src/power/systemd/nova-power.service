@@ -7,13 +7,13 @@ ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")
 # GPU comes back on the bus regardless of how it went to sleep.
 # Deliberately NOT ordered against power-profiles-daemon: PPD is itself
 # After=multi-user.target, so an After= on it closes a cycle
-# (multi-user -> thinkpad-power -> PPD -> multi-user) that systemd breaks by
+# (multi-user -> nova-power -> PPD -> multi-user) that systemd breaks by
 # dropping PPD's own start job. Profiles are the shell's business anyway.
 After=suspend.target hibernate.target suspend-then-hibernate.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/nova/bin/thinkpad-power auto
+ExecStart=/usr/lib/nova/bin/nova-power auto
 
 [Install]
 WantedBy=multi-user.target suspend.target hibernate.target suspend-then-hibernate.target

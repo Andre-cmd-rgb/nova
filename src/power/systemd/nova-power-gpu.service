@@ -7,4 +7,4 @@ ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")
 Type=oneshot
 # Fires every two minutes; a run with nothing to do should not say so.
 Environment=QUIET=1
-ExecStart=/usr/lib/nova/bin/thinkpad-power gpu-auto
+ExecStart=/usr/lib/nova/bin/nova-power gpu-auto

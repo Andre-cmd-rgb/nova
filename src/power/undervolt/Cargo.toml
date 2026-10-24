@@ -5,7 +5,7 @@ edition = "2021"
 description = "Lowers an Intel CPU's voltage by a chosen offset, and takes it off again after a crash or a machine check"
 license = "MIT"
 
-# No dependencies, like thinkpad-powerd: this runs as root and writes the
+# No dependencies, like nova-powerd: this runs as root and writes the
 # CPU's voltage. Everything here is std.
 
 [[bin]]

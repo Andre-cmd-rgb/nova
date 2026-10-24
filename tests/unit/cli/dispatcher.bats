@@ -50,6 +50,14 @@ nova() { "$REPO_ROOT/src/cli/nova" "$@"; }
   [[ $output != *"boot check"* ]]
 }
 
+@test "help leaves out a compiled helper that is no command of its own" {
+  printf '\177ELF' >"$NOVA_BIN/nova-undervolt"
+  chmod +x "$NOVA_BIN/nova-undervolt"
+  run nova help
+  [ "$status" -eq 0 ]
+  [[ $output != *undervolt* ]]
+}
+
 @test "help for a group lists only that group" {
   run nova help theme
   [[ $output == *"theme set"* ]]
