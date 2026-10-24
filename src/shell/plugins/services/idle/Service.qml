@@ -98,6 +98,9 @@ Item {
     root.caffeineStateLoaded = true
     if (!changed) return
     logEvent("caffeine", on ? "on" : "off")
+    // Turned on, or found on at startup, with the battery already low: the
+    // battery going low, which ends it, has already happened, so it ends now.
+    if (on && root.batteryLow) run(caffeineLowBatteryProcess, "caffeine-low-battery")
     if (on && root.screensaverShown) {
       root.screensaverShown = false
       run(screensaverStopProcess, "screensaver-stop")
