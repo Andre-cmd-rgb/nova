@@ -75,8 +75,8 @@ release_key() {
 }
 # @key end
 
-say() { printf '\n  \e[1m%s\e[0m\n' "$*" >&2; }
-info() { printf '  %s\n' "$*" >&2; }
+say() { echo >&2; ui_title "$*"; }
+info() { ui_note "$*"; }
 # The wizard clears the screen between questions, so a warning given during
 # one is shown again under the next one's header (UI_NOTES, set by main).
 warn() {
@@ -84,7 +84,8 @@ warn() {
   [[ -z ${UI_NOTES:-} ]] || printf '%s\n' "$*" >>"$UI_NOTES"
 }
 die() {
-  printf '\n\e[31mnova usb: %s\e[0m\n' "$*" >&2
+  echo >&2
+  ui_error "nova usb: $*"
   exit 1
 }
 
@@ -688,8 +689,7 @@ step_offline() {
 
 step_passphrase() {
   screen "passphrase"
-  ui_note "What you bring is encrypted on the stick, and the installer asks for this"
-  ui_note "passphrase to open it. Without it, your things stay locked."
+  ui_note $'What you bring is encrypted on the stick, and the installer asks for this\npassphrase to open it. Without it, your things stay locked.'
   echo >&2
   ui_ask ui_password "Choose a passphrase, 8 characters or more" 8 || return 1
   PASSPHRASE=$REPLY
@@ -888,7 +888,7 @@ main() {
 
   if ((DRY)); then
     say "Dry run: nothing was written. The plan:"
-    sed 's/^/  /' "$PLAN/plan.env" >&2
+    ui_note "$(cat -- "$PLAN/plan.env")"
     return 0
   fi
   self=$(realpath -e -- "${BASH_SOURCE[0]}")
@@ -993,7 +993,7 @@ download_packages() { # urls dir
     name=${name//:/_}
     # Decoded, %2F is a slash: as root, a name like that could write anywhere.
     [[ -n $name && $name != [.-]* && $name != */* && $name != *\"* && $name != *\\* && ! $name =~ [[:cntrl:]] ]] || {
-      echo "nova usb: refusing the package file name '$name'" >&2
+      ui_error "nova usb: refusing the package file name '$name'"
       rm -f -- "$config"
       return 1
     }
@@ -1039,13 +1039,14 @@ stage_packages() { # urls
 
 # One file at a time keeps writes to a slow stick sequential.
 copy_packages() { # source destination
-  local package_files=("$1"/*) file i=0 total
+  local package_files=("$1"/*) file i=0 total left
   total=${#package_files[@]}
+  left=$(ui_left "$((24 + 12 + ${#total} * 2))")
   for file in "${package_files[@]}"; do
     cp -- "$file" "$2/" || return 1
     i=$((i + 1))
     if [[ -t 2 ]]; then
-      printf '\r\e[K  %s  %s of %s files' "$(ui_bar "$i" "$total" 24)" "$i" "$total" >&2
+      printf '\r\e[K%*s%s  %s of %s files' "$left" '' "$(ui_bar "$i" "$total" 24)" "$i" "$total" >&2
     fi
   done
   [[ ! -t 2 ]] || echo >&2

@@ -83,14 +83,15 @@ else
   source "$SHARE/wifi.bash"
 fi
 
-say() { printf '\n\e[1m%s\e[0m\n' "$*"; }
-info() { printf '  %s\n' "$*"; }
+say() { echo >&2; ui_title "$*"; }
+info() { ui_note "$*"; }
 warn() {
-  printf '  \e[33m%s\e[0m\n' "$*" >&2
+  ui_warn "$*"
   [[ -z ${UI_NOTES:-} ]] || printf '%s\n' "$*" >>"$UI_NOTES"
 }
 die() {
-  printf '\n\e[31mnova-install: %s\e[0m\n' "$*" >&2
+  echo >&2
+  ui_error "nova-install: $*"
   exit 1
 }
 
@@ -1037,8 +1038,8 @@ carry_unlock() {
       pass=$(answer passphrase)
       tries=4
     else
-      # Esc, or Enter on nothing, installs without them.
-      ui_ask ui_secret "Its passphrase" "Enter on nothing installs without them" || REPLY=''
+      # Esc, or Enter on an empty field, installs without them.
+      ui_ask ui_secret "Its passphrase" "Enter to install without them" || REPLY=''
       pass=$REPLY
     fi
     if [[ -z $pass ]]; then
@@ -1235,8 +1236,8 @@ usage() {
 # inherit the trap (set -E), so only the outermost shell speaks.
 stopped() { # line command
   ((BASH_SUBSHELL)) && return
-  printf '\n\e[31mnova-install: the install stopped at line %s (%s). The log is in %s.\e[0m\n' \
-    "$1" "$2" "$LOG" >&2
+  echo >&2
+  ui_error "nova-install: the install stopped at line $1 ($2). The log is in $LOG."
 }
 
 main() {
@@ -1260,7 +1261,8 @@ main() {
       local status=0
       choose_keymap "${2:-us}" || status=$?
       if ((status == 130)); then
-        printf '\n  %s\n' "$UI_STOPPED" >&2
+        echo >&2
+        ui_note "$UI_STOPPED"
         exit 130
       fi
       ((status == 0)) || echo "${2:-us}"

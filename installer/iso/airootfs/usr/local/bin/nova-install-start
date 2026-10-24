@@ -157,12 +157,10 @@ main() {
   if ! get_online; then
     screen
     if ! offline_repo; then
-      ui_note "Nova installs over the network, so it needs a connection first."
-      ui_note "Connect by hand with iwctl, then run nova-install-start again."
+      ui_note $'Nova installs over the network, so it needs a connection first.\nConnect by hand with iwctl, then run nova-install-start again.'
       exit 0
     fi
-    ui_note "Without a network, Nova installs from the stick. Chrome, VS Code, Claude"
-    ui_note "Code and Codex need the network, so they come later: nova apps install"
+    ui_note $'Without a network, Nova installs from the stick. Chrome, VS Code, Claude\nCode and Codex need the network, so they come later: nova apps install.'
     echo >&2
     ui_ask ui_confirm "Install without a network?" || exit 0
   fi
@@ -172,8 +170,7 @@ main() {
     ui_ask ui_confirm "Take the stick out. Restart now?" && systemctl reboot
   elif (($? != 130)); then
     echo
-    echo "The install stopped. Its log is /var/log/nova-install.log;"
-    echo "run nova-install-start to try again."
+    ui_warn $'The install stopped. Its log is /var/log/nova-install.log.\nRun nova-install-start to try again.'
   fi
 }
 
