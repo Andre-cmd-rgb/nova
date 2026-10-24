@@ -1,5 +1,9 @@
 [Unit]
 Description=Give Chrome the current theme's toolbar color
+# No start limit: flicking through themes starts this once a theme, and five in
+# ten seconds would fail the path unit, leaving Chrome on that color until the
+# next boot.
+StartLimitIntervalSec=0
 
 [Service]
 Type=oneshot
