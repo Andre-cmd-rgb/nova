@@ -16,7 +16,7 @@ code.
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
-| `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring |
+| `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/etc/sudoers.d/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring |
 | `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards |
 | `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
 | `data/caffeine/`, `data/screensaver/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, `/usr/share/nova/screensaver/`, a polkit action | Caffeine (the screen stays on, a closed lid only darkens it) and the screensaver |
@@ -57,8 +57,8 @@ exactly that, so pacman owns every file.
 - **Identifiers:** shell plugin ids are `nova.<name>`; every plugin ships in the
   `nova` package and the shell loads no other (`plugins/index.json`, written at
   build time by `tools/plugin-index`, lists them). Layer-shell namespaces are
-  `nova-<name>`. PAM services are `nova-lock-password`, `nova-lock-fingerprint` and
-  `nova-greeter`. User units are `nova-*.service`. polkit actions are
+  `nova-<name>`. PAM services are `nova-lock-password`, `nova-lock-fingerprint`,
+  `nova-greeter` and `nova-sudo`. User units are `nova-*.service`. polkit actions are
   `org.nova.*`.
 - **The project Nova derives from is named in `NOTICE` only**, as its license
   asks. `make check-names` (run in CI) fails on the name anywhere else.
@@ -88,6 +88,10 @@ exactly that, so pacman owns every file.
    - A greeter login does the same through the guard: the greeter's PAM stack has
      already unlocked the keyring.
    - Fingerprint unlock is offered only once `unlocked-once` exists.
+   - polkit's prompts and sudo take a finger from the start: neither needs the
+     password for the keyring. Nova's `/etc/pam.d/polkit-1` shadows polkit's own,
+     and `/etc/sudoers.d/20-nova-pam` points sudo at `nova-sudo`; both put
+     `pam_fprintd` ahead of the stack they wrap, and skip it while the lid is shut.
 8. **Removable drives mount only in an unlocked session.** Mounting one has the
    kernel read its file system, so a drive plugged into a locked computer waits.
    The lock service runs `nova-automount on` after the first unlock and `off`

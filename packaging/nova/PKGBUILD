@@ -151,6 +151,9 @@ backup=(
   etc/pam.d/nova-greeter-session
   etc/pam.d/nova-lock-fingerprint
   etc/pam.d/nova-lock-password
+  etc/pam.d/nova-sudo
+  etc/pam.d/polkit-1
+  etc/sudoers.d/20-nova-pam
 )
 _repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)
 source=("nova::${NOVA_SOURCE:-git+file://$_repo}")

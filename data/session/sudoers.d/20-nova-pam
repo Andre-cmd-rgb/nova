@@ -1,0 +1,3 @@
+# sudo authenticates through Nova's PAM service, which offers the fingerprint
+# first and then runs sudo's own stack (/etc/pam.d/nova-sudo); `sudo -i` too.
+Defaults pam_service=nova-sudo, pam_login_service=nova-sudo

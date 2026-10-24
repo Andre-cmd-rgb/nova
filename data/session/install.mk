@@ -12,6 +12,9 @@ SHELL_SOURCES   += $(SESSION_SRC)/bin/nova-session-guard $(SESSION_SRC)/bin/nova
 install-session:
 	install -Dm755 -t $(DESTDIR)$(NOVA_BIN) $(SESSION_SRC)/bin/*
 	install -Dm644 -t $(DESTDIR)$(SYSCONFDIR)/pam.d $(SESSION_SRC)/pam.d/*
+	# sudo's own modes: the directory 750, a drop-in 440, or sudo ignores it.
+	install -d -m750 $(DESTDIR)$(SYSCONFDIR)/sudoers.d
+	install -m440 -t $(DESTDIR)$(SYSCONFDIR)/sudoers.d $(SESSION_SRC)/sudoers.d/*
 	install -Dm644 -t $(DESTDIR)$(SYSTEMD_USER) $(SESSION_SRC)/systemd/*
 	install -Dm644 $(SESSION_SRC)/uwsm/10-nova $(DESTDIR)$(PREFIX)/share/uwsm/env.d/10-nova
 	install -Dm644 $(SESSION_SRC)/greetd/config.toml $(DESTDIR)$(NOVA_SHARE)/session/greetd.toml
