@@ -707,6 +707,10 @@ Item {
         }
       }
 
+      PowerReadout {
+        width: p.inner
+      }
+
       Section {
         width: p.inner
         title: "CHARGE LIMIT"
