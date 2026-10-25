@@ -28,7 +28,19 @@ pre_upgrade() {
   : >/run/nova-power.renamed
 }
 
+# Up to 1.0.0-beta.5 the boot autologin started uwsm with its start-up report
+# on the console: white and green text between the firmware logo and the lock
+# screen. greetd owns its config and the installer wrote it, so the line the
+# installer wrote is changed in place; a line changed by hand is left alone.
+quiet_session_start() {
+  config=${NOVA_GREETD_CONFIG:-/etc/greetd/config.toml}
+  old='command = "env NOVA_LOGIN=autologin uwsm start '
+  grep -q "^$old" "$config" 2>/dev/null || return 0
+  sed -i "s|^$old|command = \"env NOVA_LOGIN=autologin UWSM_SILENT_START=1 uwsm start |" "$config"
+}
+
 post_upgrade() {
+  quiet_session_start
   [ -e /run/nova-power.renamed ] || return 0
   rm -f /run/nova-power.renamed
   systemctl daemon-reload 2>/dev/null || true

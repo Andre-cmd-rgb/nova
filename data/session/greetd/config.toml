@@ -18,8 +18,10 @@ service = "nova-greeter"
 # got in: NOVA_LOGIN=autologin here, NOVA_LOGIN=password from the greeter. Only
 # "password" starts unlocked; anything else, or nothing, locks before it shows, and
 # nova-session-guard ends the session if the lock does not engage.
+# UWSM_SILENT_START=1 keeps uwsm's start-up report (it goes to the journal too)
+# off the console between the firmware logo and the lock screen.
 [initial_session]
-command = "env NOVA_LOGIN=autologin uwsm start -e -D Hyprland hyprland.desktop"
+command = "env NOVA_LOGIN=autologin UWSM_SILENT_START=1 uwsm start -e -D Hyprland hyprland.desktop"
 user = "@NOVA_USER@"
 
 # Everything after the first session (logout, a refused autologin, a shell that
