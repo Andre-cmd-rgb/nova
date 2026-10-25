@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import Quickshell
 import Quickshell.Bluetooth
+import Quickshell.Hyprland
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -106,9 +107,27 @@ Item {
     page = allPages.some(function (p) { return p.id === payload.page }) ? payload.page : pages[0].id
     range = payload.range === "week" ? "week" : "today"
     confirmRecovery = false
+    if (!window.visible) measureRoom()
     window.visible = true
     load()
     Qt.callLater(function () { keys.forceActiveFocus() })
+  }
+
+  // The room on the focused screen, where the window opens: its full size
+  // wherever that fits, and no bigger than a small screen (a Raspberry Pi's
+  // 1024x600 panel) where it does not, with space for the bar and the gaps.
+  // Taken as it opens, so focusing another screen does not resize it.
+  property size room: Qt.size(Style.space(820), Style.space(600))
+
+  function measureRoom() {
+    var name = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+    var screens = Quickshell.screens
+    for (var i = 0; i < screens.length; i++) {
+      if (screens[i].name === name) {
+        room = Qt.size(screens[i].width - Style.space(48), screens[i].height - Style.space(80))
+        return
+      }
+    }
   }
 
   function close() {
@@ -304,9 +323,9 @@ Item {
     id: window
     title: "Settings"
     color: Commons.Color.background
-    implicitWidth: Style.space(820)
-    implicitHeight: Style.space(600)
-    minimumSize: Qt.size(Style.space(680), Style.space(480))
+    implicitWidth: Math.min(Style.space(820), root.room.width)
+    implicitHeight: Math.min(Style.space(600), root.room.height)
+    minimumSize: Qt.size(Math.min(Style.space(680), root.room.width), Math.min(Style.space(480), root.room.height))
 
     onVisibleChanged: {
       if (!visible && !root.closingFromHost && root.shell && typeof root.shell.hide === "function")

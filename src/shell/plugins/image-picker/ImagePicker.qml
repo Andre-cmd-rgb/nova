@@ -39,12 +39,20 @@ Item {
   property color scrim: Commons.Color.imagePicker.scrim
   property color selectedBorder: Commons.Color.imagePicker.selectedBorder
   property color unselectedBorder: Commons.Color.imagePicker.unselectedBorder
-  property int expandedWidth: 768
-  property int expandedHeight: 475
-  property int sliceWidth: 108
-  property int sliceHeight: 432
-  property int sliceSpacing: -30
-  property int skewOffset: 28
+  // The carousel at full size suits a screen some 770 px tall or more. On a
+  // smaller one (a Raspberry Pi's 1024x600 panel) it shrinks, to about 60% of
+  // the screen's height; the names and the filter under it keep their size.
+  readonly property real fit: {
+    if (!(panel.width > 0 && panel.height > 0)) return 1
+    var room = Math.min(panel.height * 0.62, panel.height - Style.space(40) - Style.space(30) - bottomChromeHeight)
+    return Math.max(0.5, Math.min(1, room / 475, (panel.width - 80) / 768))
+  }
+  property int expandedWidth: Math.round(768 * fit)
+  property int expandedHeight: Math.round(475 * fit)
+  property int sliceWidth: Math.round(108 * fit)
+  property int sliceHeight: Math.round(432 * fit)
+  property int sliceSpacing: Math.round(-30 * fit)
+  property int skewOffset: Math.round(28 * fit)
   property int bottomChromeHeight: showLabels ? (filterable ? 104 : 74) : (filterable ? 60 : 30)
 
   onOpenedChanged: if (!opened) layoutSettled = false

@@ -1,7 +1,9 @@
 -- Floating windows.
 o.window({ tag = "floating-window" }, { float = true })
 o.window({ tag = "floating-window" }, { center = true })
-o.window({ tag = "floating-window" }, { size = { 875, 600 } })
+-- 875x600 wherever that fits, and no more than most of a small screen (a
+-- Raspberry Pi's 1024x600 panel) where it does not.
+o.window({ tag = "floating-window" }, { size = { "(min(875, monitor_w*0.94))", "(min(600, monitor_h*0.86))" } })
 
 o.window(
   "(org.nova.btop|org.nova.terminal|org.nova.bash|org.codeberg.dnkl.foot|org.gnome.NautilusPreviewer|org.gnome.Evince|TUI.float|imv|mpv)",
