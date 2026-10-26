@@ -1,15 +1,16 @@
 # Nova's power governor
 
-`nova power` is one system with two halves. `nova-power` is the AC/battery policy: the discrete GPU off the PCI bus on
-battery, CPU and platform tunables, Wi-Fi power save, and the hibernate rescan.
-`nova-powerd` is the load-adaptive governor that owns PL1, PL2, the
-frequency ceiling, the iGPU ceiling and the fans while it runs.
+`nova power` is one system with two halves. `nova-power` is the AC/battery
+policy: the discrete GPU off the PCI bus on battery, CPU and platform
+tunables, Wi-Fi power save, and the hibernate rescan. `nova-powerd` is the
+load-adaptive governor that owns PL1, PL2, the frequency ceiling, the iGPU
+ceiling and the fans while it runs.
 
-Both ship in the `nova` package for every machine. Their tiers and limits
-are measured on the ThinkPad P1 Gen 4i, so for now they start only there. How they are wired, and the facts behind every choice, are in
-[docs/hardware/thinkpad-p1-gen4i.md](../../docs/hardware/thinkpad-p1-gen4i.md);
-the full manual (commands, tunables, the governor) is
-[docs/power.md](../../docs/power.md).
+Both ship in the `nova` package for every machine. Their tiers and limits are
+measured on the ThinkPad P1 Gen 4i, so for now they start only there. The
+manual (commands, tunables, the governor) is [docs/power.md](../../docs/power.md);
+how they are wired on the P1, and the facts behind every choice, are in
+[docs/hardware/thinkpad-p1-gen4i.md](../../docs/hardware/thinkpad-p1-gen4i.md).
 
 ```
 nova power                     what the governor is doing: power source, GPU, draw

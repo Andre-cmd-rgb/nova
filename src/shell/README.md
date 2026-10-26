@@ -18,11 +18,14 @@ shell/
   shell.qml              entry point (ShellRoot): services, panels, IPC
   greeter.qml            the greeter's entry point
   services/
-    PluginRegistry.qml   reads the plugin index, answers what is enabled
-    BarWidgetRegistry.qml the bar widgets' components
-  Commons/  Ui/          shared singletons and controls
+    PluginRegistry.qml      reads the plugin index, answers what is enabled
+    BarWidgetRegistry.qml   the bar widgets' components
+    AppLibrary.qml          the installed apps, sorted, launched and removed, for the menu
+    AppSearch.js            how a search matches and ranks them
+    hidden-entries.sh       the desktop entries hidden from this desktop
+  Commons/  Ui/             shared singletons and controls
   plugins/
-    index.json           every manifest below, collected when Nova is built
+    index.json              every manifest below, collected when Nova is built
     bar/ lock/ menu/ notifications/ panels/ services/ settings/ ...
 ```
 
@@ -119,7 +122,7 @@ anything, your file is authoritative and defaults are **not** merged back in.
 ```json
 {
   "version": 1,
-  "idle": { "lock": 300 },
+  "idle": { "screensaver": 180, "lock": 300 },
   "bar": {
     "position": "top",
     "transparent": false,
@@ -147,5 +150,5 @@ anything, your file is authoritative and defaults are **not** merged back in.
 4. **Multiple instances** are allowed when a widget's manifest sets
    `allowMultiple: true`: two clocks in different time zones are two
    `nova.clock` entries with their own settings.
-5. **`idle.lock`** is the seconds of inactivity before the screen locks; 0
-   never locks.
+5. **`idle.screensaver`** and **`idle.lock`** are the seconds unused before
+   the screensaver starts and before the screen locks; 0 is never.

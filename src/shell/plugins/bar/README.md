@@ -5,18 +5,33 @@ shipped as a first-party plugin of [`nova-shell`](../../README.md), the
 long-running shell host. The bar is mounted at startup and lives inside
 the shell for its whole session.
 
-- `manifest.json` declares the plugin (`id: nova.bar`, `kind: bar`) and points at `Bar.qml` as the entry point.
-- `Bar.qml` is Nova-owned bar engine code, loaded by the nova-shell host. Users should not edit it directly.
+- `manifest.json` declares the plugin (`id: nova.bar`, `kind: bar`) and points
+  at `Bar.qml` as the entry point.
+- `Bar.qml` is Nova-owned bar engine code, loaded by the nova-shell host. Users
+  should not edit it directly.
 - `widgets/` holds simple first-party bar widgets with sibling manifests.
-- Feature plugins such as `../panels/audio/`, `../panels/network/` and `../panels/power/` provide richer popup bar plugins.
-- The bar receives its config from the host shell as a `barConfig` property; the host loads it from `~/.config/nova/shell.json` (or `$NOVA_PATH/default/shell.json` when the user has no file).
+- Feature plugins such as `../panels/audio/`, `../panels/network/` and
+  `../panels/power/` provide richer popup bar plugins.
+- The bar receives its config from the host shell as a `barConfig` property;
+  the host loads it from `~/.config/nova/shell.json` (or
+  `$NOVA_PATH/default/shell.json` when the user has no file).
 - `nova bar position` updates only the user shell.json file.
 
 ## Customizing
 
-The bar config lives under the `bar:` key of [`~/.config/nova/shell.json`](../../README.md#persisted-state). Out of the box the shell uses [`$NOVA_PATH/default/shell.json`](../../../../data/defaults/shell.json). Once you customize anything via the bar gestures, `nova bar ...`, or by editing shell.json directly, your file is canonical — there is no deep-merge.
+The bar config lives under the `bar:` key of
+[`~/.config/nova/shell.json`](../../README.md#persisted-state). Out of the box
+the shell uses
+[`$NOVA_PATH/default/shell.json`](../../../../data/defaults/shell.json). Once
+you customize anything via the bar gestures, `nova bar ...`, or by editing
+shell.json directly, your file is the whole config, as the shell's README says.
 
-The bar is configured directly on the bar itself: drag empty bar space (or click-and-hold) to move the bar to another screen edge, double-left-click empty center-bar space to toggle transparency, and drag widgets to reorder them. The `nova bar position`, `nova bar transparent`, `nova bar move`, and `nova bar set` commands do the same from scripts. Add or take off widgets with `nova bar put` and `nova bar remove`, or in Settings.
+The bar is configured directly on the bar itself: drag empty bar space (or
+click-and-hold) to move the bar to another screen edge, double-left-click empty
+center-bar space to toggle transparency, and drag widgets to reorder them. The
+`nova bar position`, `nova bar transparent`, `nova bar move`, and
+`nova bar set` commands do the same from scripts. Add or take off widgets with
+`nova bar put` and `nova bar remove`, or in Settings.
 
 Example `shell.json` (bar subtree only shown):
 
@@ -46,7 +61,9 @@ Example `shell.json` (bar subtree only shown):
 }
 ```
 
-`centerAnchor` pins one center module to the exact horizontal/vertical center and flanks others around it. Set to an empty string to disable anchoring (the center list is centered as a group).
+`centerAnchor` pins one center module to the exact horizontal/vertical center
+and flanks others around it. Set to an empty string to disable anchoring (the
+center list is centered as a group).
 
 ## Module catalogue
 
@@ -75,15 +92,26 @@ Example `shell.json` (bar subtree only shown):
 | `nova.screentime` | Today's screen time (off until you turn it on) | left = the breakdown, in Settings |
 | `nova.mobile-data` | WWAN signal, shown while a modem has a SIM | left = stats panel |
 
-The `nova.indicators` widget loads individual bar indicators from `indicators/`. Omit `items` (or set it to an empty array) to show all indicators in the default order, or set `items` to a subset of `Dnd`, `NightLight`, `Caffeine` and `ScreenRecording`, such as `["Dnd", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators visible instead of revealing them only on hover. Multiple `nova.indicators` instances are allowed, so different sections can show different subsets.
+The `nova.indicators` widget loads individual bar indicators from
+`indicators/`. Omit `items` (or set it to an empty array) to show all
+indicators in the default order, or set `items` to a subset of `Dnd`,
+`NightLight`, `Caffeine` and `ScreenRecording`, such as
+`["Dnd", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators
+visible instead of revealing them only on hover. Multiple `nova.indicators`
+instances are allowed, so different sections can show different subsets.
 
 ## Orientation
 
-All widgets work in `top`, `bottom`, `left`, and `right` positions. Popups anchor on the side opposite the bar edge, sliding into the workspace. Vertical bars use 28px width; widgets that show text fall back to compact icon-only forms (e.g. `media` hides its scrolling label).
+All widgets work in `top`, `bottom`, `left`, and `right` positions. Popups
+anchor on the side opposite the bar edge, sliding into the workspace. Vertical
+bars use 28px width; widgets that show text fall back to compact icon-only
+forms (e.g. `media` hides its scrolling label).
 
 ## Custom user modules
 
-The schema accepts arbitrary module ids that you provide. Set `type` to `command` for shell-driven output or `qml` for a custom QML widget. Both still go under `bar.layout.<section>` in `shell.json`.
+The schema accepts arbitrary module ids that you provide. Set `type` to
+`command` for shell-driven output or `qml` for a custom QML widget. Both still
+go under `bar.layout.<section>` in `shell.json`.
 
 Command module:
 
@@ -124,9 +152,12 @@ QML module:
 }
 ```
 
-Then create `~/.config/nova/bar/modules/gpu.qml`. If you want to store it elsewhere, add a `source` path.
+Then create `~/.config/nova/bar/modules/gpu.qml`. If you want to store it
+elsewhere, add a `source` path.
 
-Custom QML modules should be an `Item` with `implicitWidth` and `implicitHeight`. They may optionally define these properties, which the bar fills after loading:
+Custom QML modules should be an `Item` with `implicitWidth` and
+`implicitHeight`. They may optionally define these properties, which the bar
+fills after loading:
 
 ```qml
 import QtQuick
@@ -156,17 +187,21 @@ Item {
 
 ## Bar properties available to widgets
 
-Widgets receive `bar` (the shell root), `moduleName` (string), and `settings` (object) injected at load time. The bar exposes:
+Widgets receive `bar` (the shell root), `moduleName` (string), and `settings`
+(object) injected at load time. The bar exposes:
 
-- `bar.foreground`, `bar.background`, `bar.urgent` — theme colors (live-updated)
+- `bar.foreground`, `bar.background`, `bar.urgent` — theme colors
+  (live-updated)
 - `bar.fontFamily` — current monospace family
 - `bar.position` — `"top" | "bottom" | "left" | "right"`
 - `bar.vertical` — boolean shortcut
 - `bar.barSize` — 26 horizontal / 28 vertical
 - `bar.run(command)` — fire-and-forget bash exec
 - `bar.shellQuote(value)` — safe shell-quote a string
-- `bar.showTooltip(target, text)` / `bar.hideTooltip(target)` — shared tooltip popup
-- `bar.requestPopout(owner)` / `bar.releasePopout(owner)` — one-popup-at-a-time coordinator
+- `bar.showTooltip(target, text)` / `bar.hideTooltip(target)` — shared tooltip
+  popup
+- `bar.requestPopout(owner)` / `bar.releasePopout(owner)` — one-popup-at-a-time
+  coordinator
 
 Every bar widget is a plugin with a manifest. Simple widgets carry sibling
 manifests such as `widgets/Workspaces.manifest.json`; richer popup plugins live

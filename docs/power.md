@@ -1,14 +1,16 @@
 # Nova's power governor: the manual
 
-`nova power` is Nova's power governor. Its policy half, `nova-power`, takes the
-discrete GPU off the PCI bus on battery and brings it back plugged in; its
+`nova power` is Nova's power governor. Its policy half, `nova-power`, takes
+the discrete GPU off the PCI bus on battery and brings it back plugged in; its
 continuous half, `nova-powerd`, sets the CPU's limits and the fans to the load
-(below). Settings → Battery shows what it is doing, and holds the switches. (The power mode follows the power
-source too, power-saver on battery and performance on AC until you pick
-another, but that is `nova-power-profile`'s, not this tool's.) It is part of
-the `nova` package; its tiers and limits are measured on the ThinkPad P1 Gen 4i,
-and until another model's are, it is inert on any other computer. The top of
-[thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md) lists where each piece installs.
+(below). Settings → Battery shows what it is doing, and holds the switches.
+(The power mode follows the power source too, power-saver on battery and
+performance on AC until you pick another, but that is `nova-power-profile`'s,
+not the governor's.) It is part of the `nova` package; its tiers and limits
+are measured on the ThinkPad P1 Gen 4i, and until another model's are, it is
+inert on any other computer. The top of
+[thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md) lists where each piece
+installs, and [src/power/README.md](../src/power/README.md) where its code is.
 
 ## The problem it solves
 
@@ -34,7 +36,7 @@ these do:
   app — reach for the discrete card too.
 - Anything already running that picked it up.
 
-So the card never sleeps. This tool stops the desktop reaching for it, and then
+So the card never sleeps. Nova stops the desktop reaching for it, and then
 removes it from the bus outright on battery, which is the only way to reach
 zero.
 
@@ -42,14 +44,30 @@ zero.
 wants a reboot each way, and on non-ASUS hardware (`hotplug_type: None`) the
 switch frequently does not stick. Nova does not install it.
 
+## The compositor's GPU, by a symlink
+
+The compositor is pinned to the iGPU with `AQ_DRM_DEVICES`, which takes a
+`:`-separated list, so **the value cannot contain a colon** — which rules out
+`/dev/dri/by-path/pci-0000:00:02.0-card`, since PCI addresses are full of them.
+Aquamarine splits such a path into fragments, matches none of them against the
+cards udev enumerated, reports "Found no gpus to use", and the compositor exits
+before you have a session. Card numbering (`/dev/dri/cardN`) is not stable
+across boots either.
+
+So Nova ships the udev rule the Hyprland wiki recommends for this
+(`98-nova-igpu.rules`), giving a stable colon-free `/dev/dri/igpu`, and the
+session's environment (`20-nova-thinkpad-p1-gen4i` in uwsm's `env.d`) sets the
+pin only when that card really drives a connected panel. If it does not,
+nothing is set and the session starts normally on both GPUs. The worst case is
+that the discrete card keeps being held open, never that you cannot log in.
+
 ## The boot
 
-Two things this tool once offered as opt-ins are simply how Nova boots: no
-NVIDIA firmware in the initramfs (the driver dragged 109 MB of GSP firmware
-into every image, and the loader reads the whole UKI off vfat), and no TPM key
-provisioning (4.1 s of every boot for a key nothing reads, on a disk Nova does
-not encrypt). The boot they were measured against, at 32 s from the power
-button:
+Two things are left out of every Nova boot: NVIDIA firmware in the initramfs
+(the driver dragged 109 MB of GSP firmware into every image, and the loader
+reads the whole UKI off vfat), and TPM key provisioning (4.1 s of every boot
+for a key nothing reads, on a disk Nova does not encrypt). The boot they were
+measured against, at 32 s from the power button:
 
 | stage | before | |
 |---|---|---|
@@ -66,12 +84,16 @@ come from the loader's own `LoaderTime*USec` efivars rather than
 ## Using it
 
 ```
-nova-power <command> [args]
+usage: nova power [command] [args]
 
-  status [-v]         power source and discrete GPU; -v adds diagnostics
+  status [-v]         power source and discrete GPU, the default; -v adds diagnostics
+  status --json       the governor, limits, fans and draw, for Settings
   doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
+
+  boost [min|off]     lift the battery CPU caps for a while (default 30 min)
+  daemon-stopped      restore what nova-powerd owned (systemd runs this)
 
   auto                apply the policy for the current power source
   post-hibernate      rescan the bus, then apply the policy (resume hook)
@@ -119,7 +141,8 @@ for that one process and adds the usual offload hints.
 
 Steam: put `nova power run %command%` in a game's launch options.
 
-**Super+Space → Discrete GPU** toggles it by hand, and says only what it did:
+**Super+Space → Toggle → Discrete GPU** toggles it by hand, and says only what
+it did:
 
 ```
   The discrete GPU is on. Turn it off? [y/N]
@@ -136,8 +159,8 @@ in, or a restart; the retry timer leaves it alone, and `status` says so.
 *Always Off* (`off`), for a cooler, quieter machine at the desk.
 `nova power gpu mode off` does the same from a terminal.
 
-The card will not be powered off while a program is using it; the tool names
-what is holding it rather than pulling the GPU out from under it.
+The card will not be powered off while a program is using it; `nova power`
+names what is holding it rather than pulling the GPU out from under it.
 
 ## Sleep
 
@@ -163,7 +186,7 @@ menu's Suspend all ask for it (`data/systemd/sleep.conf.d`, overridable in
 which is why the boot is kept short. It is also why the discrete card
 needs handling: firmware enumerates it again on the way up, but the restored
 image was taken with it off the bus, so the kernel has no record of it, never
-touches it, and it sits in D0 drawing what this tool exists to save. Nothing
+touches it, and it sits in D0 drawing what the policy exists to save. Nothing
 would report that — `nova power auto` sees no device and says "already off
 the bus". The resume hook rescans first, so the policy has something to remove.
 It fires only on the hibernate half, keyed on `SYSTEMD_SLEEP_ACTION`: on an
@@ -212,14 +235,14 @@ PCI devices whose drivers left them pinned at `on`, and lets the HDA codec
 sleep between sounds. Note that `auto` grants permission to suspend; whether a
 device takes it is up to its driver, and a busy one will stay awake. Both are
 reverted on AC — the runtime PM changes are recorded in `/run`, so only the
-devices this tool actually changed are put back, rather than forcing the whole
+devices the policy actually changed are put back, rather than forcing the whole
 bus to `on` and overriding choices the drivers made at boot.
 
 The battery policy also turns **Wi-Fi power save on**, and back off on AC.
 Some distributions turn it off for every machine, and their reasons are good
 ones: 20-300 ms latency spikes on an idle link, and Intel BE200/BE211 firmware that
 drops the link outright when the radio naps. Neither applies on battery on the
-machine this was written for — the radio is an AX210, which is not one of the
+P1 Gen 4i — the radio is an AX210, which is not one of the
 parts with that firmware bug, and a page load and a video stream both buffer
 through the latency. The hardware profile installs
 `/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf` with
@@ -238,8 +261,8 @@ NMI_WATCHDOG_ON_BAT=off      # disable the lockup detector on battery
 ```
 
 **`PL1_ON_BAT` is the one that changes anything under load.** Firmware here
-leaves the sustained limit at the AC figure on battery — 109 W on the machine
-this was written for, against a 45 W part — so a busy browser is free to empty
+leaves the sustained limit at the AC figure on battery — 109 W on the P1 Gen
+4i, against a 45 W part — so a busy browser is free to empty
 the battery as fast as the cooling allows. Capping it is safe in the way
 undervolting is not: the worst case is a slower CPU, not an unstable one.
 
@@ -275,11 +298,12 @@ sudo nova power boost 90     # or as long as the build takes
 sudo nova power boost off    # early
 ```
 
-It lifts both CPU caps for a bounded stretch and schedules its own expiry
-through `systemd-run` before lifting anything, so a boost that fails to
-schedule leaves the machine capped rather than uncapped forever. The marker
-lives in `/run`, and both CPU tunables consult it, so a resume, a replug or the
-retry timer cannot end a boost halfway through a build. `status -v` says when
+It lifts both CPU caps for a bounded stretch (the governor's top tier, while
+it runs) and schedules its own expiry through `systemd-run` before lifting
+anything, so a boost that fails to schedule leaves the machine capped rather
+than uncapped forever. The marker, `/run/nova-power.boost`, is read by both
+halves, so it works whichever is managing the CPU, and a resume, a replug or
+the retry timer cannot end a boost halfway through a build. `status -v` says when
 one is active. The energy-performance preference and the platform profile are
 *not* touched by any of this — those are power-profiles-daemon's, and two
 things writing them means the last writer wins.
@@ -290,7 +314,7 @@ a device that is merely ASPM-tolerant, and the symptom is a hang.
 detector.
 
 `thermald` is installed on this machine and deliberately not running. It drives
-the same RAPL constraints this tool does, so leaving it off is what makes
+the same RAPL constraints the governor does, so leaving it off is what makes
 `status -v` mean what it says.
 
 ## The governor
@@ -365,14 +389,7 @@ The level is re-asserted on every watchdog refresh rather than only on change,
 because the EC silently takes the fans back across a resume and a cache would
 never notice.
 
-### Boost
-
-`sudo nova power boost 90` pins the top tier for a bounded stretch. Both
-halves read the same `/run/nova-power.boost`, so it works whichever is
-managing the CPU, and it survives a resume and a replug — a build must not lose
-its headroom halfway through because the lid was closed.
-
-### Finding the rest of the watts
+## Finding the rest of the watts
 
 `sudo nova power doctor` reads the platform controller's latency-tolerance
 table, the package C-state residency, whether the panel is self-refreshing,
@@ -380,7 +397,7 @@ and which PCI devices never sleep. The LTR table is the useful part: an IP
 block advertising a short latency tolerance forbids the platform from entering
 its deep package states, and the table names it.
 
-On the machine this was written for the answer was undramatic. xHCI advertises
+On the P1 Gen 4i the answer was undramatic. xHCI advertises
 500 µs — that is the Bluetooth mouse. The audio controller advertises 364 µs,
 but only while something is playing; it is suspended otherwise. Panel Self
 Refresh was already enabled (PSR1; the panel does not support PSR2 or Panel
@@ -393,9 +410,9 @@ That is the usual shape of this exercise: the large win is the discrete GPU,
 the second is the power limit under load, and the rest is a catalogue of
 things that are awake because you are using them.
 
-### Browsing and video
+## Browsing and video
 
-Two of the levers here are not in this tool at all, because they belong to the
+Two of the levers are not the governor's at all, because they belong to the
 compositor. Both are in Nova's `default/hypr/hardware/thinkpad-p1-gen4i.lua`.
 
 **Direct scanout.** With it off — Hyprland's default — a fullscreen video is
@@ -430,20 +447,20 @@ VP9 or h264ify would make things worse, not better.
 The browser itself is still the largest term. Chrome's GPU process alone held
 7.6% of a core continuously across six hours with 23 renderers open, before
 anything was playing. `chrome://settings/performance` has Memory Saver and
-Energy Saver, both at their defaults, and neither is something this tool can
-or should set.
+Energy Saver, both at their defaults, and neither is something Nova can or
+should set.
 
-### On undervolting
+## Undervolting
 
-Not this tool's: `nova power undervolt`, below, and only where the firmware
-lets it. Undervolting an 11th-gen mobile part goes through the overclocking
-mailbox at MSR `0x150`, gated after Plundervolt (CVE-2019-11157) and locked by
-vendor firmware on business laptops. As shipped, a P1 Gen 4i (i7-11850H,
-microcode `0x58`) takes a −5 mV offset to the CPU-core plane and reads back
-**+0.0 mV**: the silent-ignore form of the lock. Its firmware's hidden
-Advanced menu has the switch, **Overclocking Lock**; the way in, and what an
-opened one took (−70 mV passed, −80 mV logged machine checks), are fact 16 in
-[thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md).
+The undervolt is `nova power undervolt`, below, and works only where the
+firmware lets it. Undervolting an 11th-gen mobile part goes through the
+overclocking mailbox at MSR `0x150`, gated after Plundervolt (CVE-2019-11157)
+and locked by vendor firmware on business laptops. As shipped, a P1 Gen 4i
+(i7-11850H, microcode `0x58`) takes a −5 mV offset to the CPU-core plane and
+reads back **+0.0 mV**: the silent-ignore form of the lock. Its firmware's
+hidden Advanced menu has the switch, **Overclocking Lock**; the way in, and
+what an opened one took (−70 mV passed, −80 mV logged machine checks), are fact
+16 in [thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md).
 
 The AC/DC loadline trick, often suggested as a way around a locked undervolt,
 is not one: it is a *different command to the same mailbox*, behind the same
@@ -474,7 +491,7 @@ short of the first machine check: a CPU that logs them is already wrong.
 
 Numbers depend entirely on the machine, the panel and what is running, so
 treat the following as one worked example rather than a promise. On the
-ThinkPad P1 Gen 4i this was built for — RTX A2000, 3840x2400 panel — with the
+ThinkPad P1 Gen 4i — RTX A2000, 3840x2400 panel — with the
 screen at 30% and a light desktop:
 
 | | draw |
@@ -488,8 +505,8 @@ watt between them.
 
 They are also not where the remaining watts are. On that machine the panel and
 the browser dominate, and a connected 5G modem costs more than every kernel
-knob in this tool put together. `powertop` will tell you which of those applies
-to yours; this tool deliberately does not guess.
+knob here put together. `powertop` will tell you which of those applies to
+yours; Nova deliberately does not guess.
 
 Asleep, measured over a 63 minute suspend on the same machine:
 
@@ -502,22 +519,6 @@ Asleep, measured over a 63 minute suspend on the same machine:
 Which is the whole argument for suspend-then-hibernate: two hours of instant-wake S3
 costs about 2.5 Wh, and everything after that costs nothing.
 
-## Why a symlink, and why it matters
-
-`AQ_DRM_DEVICES` takes a `:`-separated list, so **the value cannot contain a
-colon** — which rules out `/dev/dri/by-path/pci-0000:00:02.0-card`, since PCI
-addresses are full of them. Aquamarine splits such a path into fragments,
-matches none of them against the cards udev enumerated, reports "Found no gpus
-to use", and the compositor exits before you have a session. Card numbering
-(`/dev/dri/cardN`) is not stable across boots either.
-
-So Nova ships the udev rule the Hyprland wiki recommends for this
-(`98-nova-igpu.rules`), giving a stable colon-free `/dev/dri/igpu`, and the
-session's environment (`20-nova-thinkpad-p1-gen4i` in uwsm's `env.d`) sets the
-pin only when that card really drives a connected panel. If it does not,
-nothing is set and the session starts normally on both GPUs. The worst case is
-that the discrete card keeps being held open, never that you cannot log in.
-
 ## Tests
 
 ```bash
@@ -528,17 +529,16 @@ No root and no sysfs: it extracts the library half of the script,
 points the tunables at temporary files and drives each battery -> AC round trip,
 checking that the firmware's value is saved and restored and that a nonsense
 wattage is refused rather than written to a register that governs package power.
-The runtime-PM state file was silently truncated on every battery run for a
-while, so AC had nothing to put back; that is the class of bug this catches.
+A state file truncated on the way to battery, which leaves AC nothing to put
+back, is the class of bug it catches.
 
 It also covers the things that are not tunables but are just as easy to get
 silently wrong:
 
 - **`doctor`'s boot figures**, against fixture efivars — including a
-  half-recorded pair, a garbage value and a backwards one. An `awk` program in
-  `doctor` once printed a label and no number for two commits because the only
-  run during development hit the root guard, so anything with `awk` in it is
-  driven against real input here.
+  half-recorded pair, a garbage value and a backwards one. `doctor` runs as
+  root, so a run by hand stops at its root guard: anything with `awk` in it is
+  driven against real input here instead.
 - **Wi-Fi power save**, against a stub `iw` that records its arguments. There
   is no file to inspect afterwards — the flag lives in the driver — and an
   inverted on/off mapping would look exactly like a working one.
@@ -548,14 +548,12 @@ silently wrong:
 - **A RAPL state file written before PL2 existed**, which has two fields where
   the restore now reads three.
 - **The handoff to the governor**, because two writers on one register is the
-  mistake this repository has already made once, with the power profiles.
+  easiest of these mistakes to make.
 
 Every `/run` path the library consults is redirected into the fixture directory
-first. That is not tidiness: before it was done, installing `nova-powerd`
-made eight passing checks fail, because the real
-`/run/nova-powerd.owns-cpu` appeared and the library correctly stood down
-from registers the test was about to assert on. A test that reads host state is
-not a test.
+first. On a machine running `nova-powerd`, the real `/run/nova-powerd.owns-cpu`
+would otherwise have the library stand down from the registers a check asserts
+on. A test that reads host state is not a test.
 
 ```bash
 src/power/test/watts.sh [seconds]
@@ -566,4 +564,4 @@ battery and refuses to run on AC. It reports two figures — `energy_now`
 differenced over the window, which is the honest one, and the mean of
 `power_now`, which settles faster but is the firmware's estimate. Hold
 everything else still between two runs; the panel backlight alone outweighs
-every tunable in this repository.
+every tunable here.

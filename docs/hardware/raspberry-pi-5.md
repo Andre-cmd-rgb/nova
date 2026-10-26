@@ -3,8 +3,8 @@
 How Nova runs on the Raspberry Pi 5, on Arch Linux ARM. The desktop is the
 same as on a PC; what differs is everything under it: the firmware boots the
 kernel itself, there is no btrfs and so no snapshots, the kernel cannot
-suspend, and the screen is HDMI only. This was worked out on a Pi 5 (4 GB)
-with a 1024x600 HDMI panel, booting from a card and from a USB stick.
+suspend, and the screen is HDMI only. Tested on a Pi 5 (4 GB) with a 1024x600
+HDMI panel and a 2560x1440 monitor, booting from a card and from a USB stick.
 
 ## How Nova wires it
 
@@ -79,7 +79,7 @@ that file, as `ddcutil detect` prints it.
 start as a first boot (`ConditionFirstBoot`), and `nova-first-boot.service`
 runs on tty1 before greetd, which `Requires=` it. It grows the root partition
 to fill the drive, fills pacman's keyring, and asks the keyboard layout, the
-name and time zone, Wi-Fi when there is no cable, and the user, with
+computer's name and time zone, Wi-Fi when there is no cable, and the user, with
 `installer/setup.bash`, the code `nova-install` asks with. Then it writes them,
 installs the apps over the network, and remakes the initramfs with the chosen
 keyboard. A step that fails, or a power cut, starts it over at the first
@@ -112,20 +112,19 @@ memory pages, so fewer misses in the CPU's and the GPU's address caches. Both
 install `/boot/kernel8.img`, so a Pi has one or the other.
 
 **11. On a 4K screen the GPU is short of memory bandwidth, not shading.** The
-GPU shares the memory with the CPU, and each layer drawn into a 3840x2160
-frame reads and writes 33 MB. Nova's windows are slightly see-through on a PC
+GPU shares the memory with the CPU, and each layer drawn into a 3840x2160 frame
+reads and writes 33 MB. Nova's windows are slightly see-through on a PC
 (`0.985`); Hyprland draws nothing under an opaque window, but under a
 see-through one the wallpaper and every window below it, each frame. The Pi's
 profile makes every window opaque (`o.opaque_windows`, in
-`data/hypr/windows.lua`). A frame
-that still misses the refresh would, double-buffered, wait for the next one
-and halve the frame rate; `render:new_render_scheduling` starts the next
-frame at once in a third buffer, which needs the GPU's native fences
-(`EGL_ANDROID_native_fence_sync`, which Mesa's V3D has). Hyprland renders on
-the GPU (`V3D 7.1`) and the display controller reads its frames directly:
-`vc4` is the one display device, so aquamarine never copies a frame between
-GPUs, and the display sits behind an IOMMU, so 4K frames do not come from the
-64 MB CMA pool.
+`data/hypr/windows.lua`). A frame that still misses the refresh would,
+double-buffered, wait for the next one and halve the frame rate;
+`render:new_render_scheduling` starts the next frame at once in a third buffer,
+which needs the GPU's native fences (`EGL_ANDROID_native_fence_sync`, which
+Mesa's V3D has). Hyprland renders on the GPU (`V3D 7.1`) and the display
+controller reads its frames directly: `vc4` is the one display device, so
+aquamarine never copies a frame between GPUs, and the display sits behind an
+IOMMU, so 4K frames do not come from the 64 MB CMA pool.
 
 **12. A Pi keeps no time while it is off.** Its clock runs from a battery few
 Pis have, so each start begins at systemd's epoch, the newest of systemd's own

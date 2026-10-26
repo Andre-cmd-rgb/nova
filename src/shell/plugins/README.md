@@ -7,11 +7,16 @@ how the shell finds them (see [../README.md](../README.md#plugins)).
 
 All are on by default except Screen Time. Services and keep-loaded panels are
 mounted at startup; other panels, overlays and menus load when first summoned.
+Three have "battery" in what they do: Battery (`nova.battery`) is the service
+behind the low-battery warning and the power mode, Power (`nova.power`) the
+bar's battery widget and its panel, and Battery Life (`nova.batterylife`) the
+history and the time left. Battery Life, Mobile Data, Screen Time and the bar
+have READMEs of their own, linked from their rows.
 
 | Plugin | id | kinds | entry points |
 |---|---|---|---|
 | Background | `nova.background` | `service` | `background/Background.qml` |
-| Bar | `nova.bar` | `bar` | `bar/Bar.qml` |
+| [Bar](bar/README.md) | `nova.bar` | `bar` | `bar/Bar.qml` |
 | Active window | `nova.active-window` | `bar-widget` | `bar/widgets/ActiveWindow.qml` |
 | Indicators | `nova.indicators` | `bar-widget` | `bar/widgets/Indicators.qml` |
 | Keyboard layout | `nova.keyboard-layout` | `bar-widget` | `bar/widgets/KeyboardLayout.qml` |
@@ -20,13 +25,13 @@ mounted at startup; other panels, overlays and menus load when first summoned.
 | Nova update | `nova.system-update` | `bar-widget` | `bar/widgets/SystemUpdate.qml` |
 | System tray | `nova.tray` | `bar-widget` | `bar/widgets/Tray.qml` |
 | Workspaces | `nova.workspaces` | `bar-widget` | `bar/widgets/Workspaces.qml` |
-| Battery Life | `nova.batterylife` | `service`, `bar-widget` | `batterylife/Service.qml`, `batterylife/BarWidget.qml` (its page: `settings/BatteryLifeView.qml`) |
+| [Battery Life](batterylife/README.md) | `nova.batterylife` | `service`, `bar-widget` | `batterylife/Service.qml`, `batterylife/BarWidget.qml` (its page: `settings/BatteryLifeView.qml`) |
 | Clipboard | `nova.clipboard` | `overlay` | `clipboard/Clipboard.qml` |
 | Emojis | `nova.emojis` | `overlay` | `emojis/Emojis.qml` |
 | Image picker | `nova.image-picker` | `overlay` | `image-picker/ImagePicker.qml` |
 | Lock Screen | `nova.lock` | `service` | `lock/Service.qml` |
 | Nova menu | `nova.menu` | `menu`, `bar-widget` | `menu/Menu.qml`, `menu/BarWidget.qml` |
-| Mobile Data | `nova.mobile-data` | `bar-widget` | `mobile-data/BarWidget.qml` |
+| [Mobile Data](mobile-data/README.md) | `nova.mobile-data` | `bar-widget` | `mobile-data/BarWidget.qml` |
 | Notifications | `nova.notifications` | `service` | `notifications/Service.qml` |
 | On-screen display | `nova.osd` | `panel` | `osd/Osd.qml` |
 | Audio | `nova.audio` | `bar-widget` | `panels/audio/Panel.qml` |
@@ -37,7 +42,7 @@ mounted at startup; other panels, overlays and menus load when first summoned.
 | Power | `nova.power` | `bar-widget` | `panels/power/Panel.qml` |
 | Weather | `nova.weather` | `bar-widget` | `panels/weather/BarWidget.qml` |
 | Polkit Agent | `nova.polkit` | `service` | `polkit/PolkitAgent.qml` |
-| Screen Time | `nova.screentime` | `service`, `bar-widget` | `screentime/Service.qml`, `screentime/BarWidget.qml` (its page: `settings/ScreenTimeView.qml`) |
+| [Screen Time](screentime/README.md) | `nova.screentime` | `service`, `bar-widget` | `screentime/Service.qml`, `screentime/BarWidget.qml` (its page: `settings/ScreenTimeView.qml`) |
 | Battery | `nova.battery` | `service` | `services/battery/Service.qml` |
 | Idle | `nova.idle` | `service` | `services/idle/Service.qml` |
 | Media | `nova.media` | `service`, `bar-widget` | `services/media/Service.qml`, `services/media/BarWidget.qml` |
@@ -46,11 +51,11 @@ mounted at startup; other panels, overlays and menus load when first summoned.
 
 ## Bar
 
-The status bar. Its layout lives in the
-top-level `bar:` subtree of `~/.config/nova/shell.json` (with the shell
-providing [`$NOVA_PATH/default/shell.json`](../../../data/defaults/shell.json) when
-the user has no file). See [`bar/README.md`](bar/README.md) for the widget catalogue
-and customization schema.
+The status bar. Its layout lives in the top-level `bar:` subtree of
+`~/.config/nova/shell.json` (with the shell providing
+[`$NOVA_PATH/default/shell.json`](../../../data/defaults/shell.json) when the
+user has no file). See [`bar/README.md`](bar/README.md) for the widget
+catalogue and customization schema.
 
 ## Image picker
 
@@ -66,9 +71,9 @@ Two ways to drive it:
   in-shell callers that already speak JSON.
 - Direct IPC target: `nova-shell image-selector open <imageDirs> <imageRowsB64> <selectedImage> <selectionFile> <doneFile> <showLabels> <filterable>`.
   Positional args; `imageRowsB64` is base64-encoded so embedded newlines /
-  tabs survive the bash argv handoff. This is what `nova-menu-images`
-  uses. Colors come from the central shell theme singleton; there is no
-  per-call override surface.
+  tabs survive the bash argv handoff. This is what `nova-theme` uses
+  (`src/theme/src/picker.rs`). Colors come from the central shell theme
+  singleton; there is no per-call override surface.
 
 The selection round-trip remains file-based: callers create a
 `selection_file` and `done_file` (both `mktemp`), pass the paths, and
@@ -81,27 +86,25 @@ between summons within a single shell session.
 
 ## Lock screen
 
-Session-lock surface using Quickshell's native `WlSessionLock` and two
-separate PAM services: `nova-lock-password` for password auth and,
-only when fingerprints are enrolled, `nova-lock-fingerprint` for
-fingerprint auth. It mirrors the previous lock screen field dimensions,
-colors, blurred wallpaper, placeholder, and Hyprland-driven corners.
-Like every service it is mounted at startup and lives as long as the shell.
+Session-lock surface using Quickshell's native `WlSessionLock` and two separate
+PAM services: `nova-lock-password` for password auth and, only when
+fingerprints are enrolled, `nova-lock-fingerprint` for fingerprint auth. It
+shows the blurred wallpaper and the password field, in the theme's colors and
+with Hyprland's corners. Like every service it is mounted at startup and lives
+as long as the shell.
 
 ## Polkit agent
 
 Theme-aware authentication dialog for privileged actions. It uses
 Quickshell's native `Quickshell.Services.Polkit.PolkitAgent` backend and
-runs inside the long-lived `nova-shell` process, replacing the old
-`polkit-gnome-authentication-agent-1` autostart.
+runs inside the long-lived `nova-shell` process.
 
 ## Nova menu
 
-Quickshell-powered Nova command menu.
-The menu UI lives in `menu/Menu.qml` as a first-party `menu` plugin and is
-summoned through the shell (`nova-shell shell summon nova.menu ...`),
-so it shares the long-running `nova-shell` process instead of starting a
-second Quickshell instance.
+Quickshell-powered Nova command menu. The menu UI lives in `menu/Menu.qml` as a
+first-party `menu` plugin and is summoned through the shell
+(`nova-shell shell summon nova.menu ...`), so it shares the long-running
+`nova-shell` process instead of starting a second Quickshell instance.
 
 The menu definition lives outside the shell host code:
 

@@ -1,8 +1,9 @@
 # Mobile Data
 
-A compact mobile-broadband (WWAN) widget for Nova's bar: one signal glyph next to the Wi-Fi arc, and a narrow panel with an
-on/off switch, live throughput, and a billing-period data counter. Text
-messages the SIM receives arrive as desktop notifications.
+A compact mobile-broadband (WWAN) widget for Nova's bar: one signal glyph next
+to the Wi-Fi arc, and a narrow panel with an on/off switch, live throughput,
+and a billing-period data counter. Text messages the SIM receives arrive as
+desktop notifications.
 
 Everything runs as your normal user through NetworkManager — no root, no polkit
 rule, no systemd unit, no daemon of its own.
@@ -30,9 +31,9 @@ rule, no systemd unit, no daemon of its own.
 | ModemManager (`mmcli`) | operator, technology, signal quality, SIM and modem state, text messages |
 | `rfkill`, `iproute2`, `iputils` | radio state, interface address, the panel's ping |
 
-ModemManager is the one Nova does not install everywhere (`pacman -S
-modemmanager` on a laptop with a modem). The widget is in the default bar and
-stays hidden on a computer without a modem.
+The installer adds ModemManager when it finds a modem; anywhere else it is
+`pacman -S modemmanager`. The widget is in the default bar and stays hidden on
+a computer without a modem.
 
 ## First run
 
@@ -99,6 +100,7 @@ execute:
 | `RESET_DAY` | `1` | day of the month the usage counter renews |
 | `ROUTE_METRIC` | `700` | metric written by `nova mobile-data setup` |
 | `ON_TIMEOUT` | `90` | seconds `on` may spend bringing the modem up |
+| `CHECK_TIMEOUT` | `90` | seconds `check` waits for the modem to read its SIM slot |
 | `SMS_KEEP` | `200` | messages kept in the local archive |
 
 ## More than one mobile profile
@@ -127,6 +129,8 @@ nova mobile-data status             one human-readable line
 nova mobile-data on | off | toggle  radio and connection control
 nova mobile-data enable | disable   aliases for on and off
 nova mobile-data reset              power-cycle a modem that refuses to connect
+nova mobile-data check              switch on a modem kept off for want of a SIM,
+                                    and look for one again
 nova mobile-data setup [APN]        create or refresh the NetworkManager profile
 nova mobile-data profile [name]     show or choose the NetworkManager profile
 nova mobile-data apn <APN>          change the APN on the profile

@@ -20,6 +20,11 @@ code.
 | `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards (x86 only) |
 | `data/raspberry-pi/` | `/usr/lib/nova/bin/`, `/etc/mkinitcpio.conf.d/`, pacman hooks, `nova-first-boot.service`; `image/` only into the image | The Raspberry Pi 5's own pieces (aarch64 only): the boot partition's guard, its initramfs, the first-boot setup, and what `tools/build-pi-image` puts in its image |
 | `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
+| `data/audio/` | `/usr/share/nova/default/audio/` | Speaker tunings, matched to the machine by `nova-audio-tuning` |
+| `data/battery/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, a udev rule, a system unit, a polkit action, a UPower drop-in | The charge limit, and what UPower does at the battery's end |
+| `data/browser/` | `/usr/lib/nova/`, Chrome's and Chromium's managed policies, a system path unit | Chrome's toolbar in the theme's color |
+| `data/defaults/` | `/usr/share/nova/default/` | The defaults the shell reads (`shell.json`, `menu.jsonc`, the launcher's hidden entries), which `~/.config/nova` overrides |
+| `data/skel/` | `/usr/share/nova/skel/` | A new account's starting files (`useradd -k`) |
 | `data/caffeine/`, `data/screensaver/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, `/usr/share/nova/screensaver/`, a polkit action | Caffeine (the screen stays on, a closed lid only darkens it) and the screensaver |
 | `data/hardware/` | `/usr/share/nova/hardware/`, `/usr/share/uwsm/env.d/`, `/etc` via `nova-hw-apply` | Per-model **data**: the DMI model list, drop-ins, packages, the session environment |
 | `installer/` | ISO only, except `nova-usb` in `/usr/lib/nova/bin/`, and on a Pi `setup.bash` | archiso profile, installer, USB creator; `setup.bash`, the questions and the account every Nova setup shares |
@@ -34,8 +39,8 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
 
 - **Command:** `nova`. Helpers are `nova-<group>-<verb>` in `/usr/lib/nova/bin`, which
   the session puts on `PATH`. `nova <group> <verb>` runs `nova-<group>-<verb>` when it
-  exists, else `nova-<group>` with the verb as its first argument, so `nova theme set
-  white` runs `nova-theme set white`.
+  exists, else `nova-<group>` with the verb as its first argument, so
+  `nova theme set white` runs `nova-theme set white`.
 - **Help:** each helper declares one-line metadata in its header comments, which
   `nova help` reads:
   ```bash
@@ -50,8 +55,8 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
 
   | Kind | Location |
   |---|---|
-  | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`) |
-  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, battery and screen-time history) |
+  | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`); a plugin's own settings in `~/.config/nova-<plugin>/` (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
+  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `power-profile/`, `aur/`); a plugin's history in `~/.local/state/nova-<plugin>/` |
   | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
   | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets) |
@@ -100,6 +105,21 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
    whenever it locks: udiskie (`nova-automount.service`) is started, then frozen
    and thawed, not restarted, since a fresh udiskie mounts every drive there is.
 
+### On a Raspberry Pi 5
+
+The firmware starts `kernel8.img` (Arch Linux ARM's `linux-rpi-16k`) and its
+initramfs straight from the FAT partition at `/boot`; there is no boot menu,
+and no snapshots. `nova-boot-check` refuses a kernel update while that
+partition is not mounted, and says when it does not hold the installed kernel.
+From there it is the same flow, from step 3.
+
+The first start from Nova's image has no account yet: `nova-first-boot.service`,
+which greetd's drop-in requires, asks on the first console what `nova-install`
+asks on a PC (`installer/setup.bash`), then gives the greeter an account to
+start. It runs only while `ConditionFirstBoot` holds, so a setup cut short is
+asked again at the next start, and never once one has finished. Why each
+piece is as it is: [hardware/raspberry-pi-5.md](hardware/raspberry-pi-5.md).
+
 ## Theme flow
 
 A theme is a directory with a `colors.toml` palette (flat `key = "value"` lines), plus any
@@ -138,21 +158,6 @@ themed.
 `~/.config/nova/backgrounds/<theme>/`, and the shared `~/.config/nova/backgrounds/`.
 Each theme remembers its pick in `~/.local/state/nova/backgrounds/by-theme/`. A pick from
 the shared folder also becomes the default for themes that have no pick of their own.
-
-### On a Raspberry Pi 5
-
-The firmware starts `kernel8.img` (Arch Linux ARM's `linux-rpi-16k`) and its
-initramfs straight from the FAT partition at `/boot`; there is no boot menu,
-and no snapshots. `nova-boot-check` refuses a kernel update while that
-partition is not mounted, and says when it does not hold the installed kernel.
-From there it is the same flow, from step 3.
-
-The first start from Nova's image has no account yet: `nova-first-boot.service`,
-which greetd's drop-in requires, asks on the first console what `nova-install`
-asks on a PC (`installer/setup.bash`), then gives the greeter an account to
-start. It runs only while `ConditionFirstBoot` holds, so a setup cut short is
-asked again at the next start, and never once one has finished. Why each
-piece is as it is: [hardware/raspberry-pi-5.md](hardware/raspberry-pi-5.md).
 
 ## Power and hardware
 
@@ -343,7 +348,14 @@ piece is as it is: [hardware/raspberry-pi-5.md](hardware/raspberry-pi-5.md).
   - each helper does one thing
   - errors go to stderr with a non-zero exit
   - no `sudo` inside helpers; privileged actions go through polkit (`pkexec`). The
-    one exception is `nova power switch`, which runs in a terminal and says so
+    exceptions run in a terminal and say so: `nova power switch`,
+    `nova apps install` (and the launcher's Uninstall) and `nova usb`
+  - a heredoc's delimiter is quoted (`<<'EOF'`) unless its body must expand,
+    and then the body holds no backticks, which would run
+    ([P1 fact 14](hardware/thinkpad-p1-gen4i.md))
+  - code that runs as root and writes into a home takes the account from
+    `SUDO_USER` and gives back what it creates there: under `sudo`, `$HOME` is
+    `/root` ([P1 fact 47](hardware/thinkpad-p1-gen4i.md))
 - **QML:** qmllint-clean. Logic lives in singletons that can be tested against fixtures.
   Three traps that load without an error and draw nothing:
   - no `property var data` or `property string state` on an Item root: both shadow

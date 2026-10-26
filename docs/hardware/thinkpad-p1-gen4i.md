@@ -1,10 +1,10 @@
 # ThinkPad P1 Gen 4i
 
-How Nova's power governor, `nova-power` (the policy, bash) and `nova-powerd`
-(the load-adaptive governor, Rust) in `src/power/`, runs on the P1 Gen 4i,
-the machine its tiers were measured on. Read
-this before changing anything there: most of it was learned the expensive way,
-twice at the cost of a login screen.
+What Nova's power governor does on the P1 Gen 4i, the machine its tiers were
+measured on, and why: `nova-power`, the policy (bash), and `nova-powerd`, the
+load-adaptive governor (Rust), both in `src/power/`. Read this before changing
+anything there: most of it was learned the expensive way, twice at the cost of
+a login screen.
 
 ## How Nova wires it
 
@@ -29,10 +29,9 @@ Everything ships in the `nova` package and is inert on any other computer.
 is found at boot, when firmware has always enumerated it, and kept in
 `/run/nova-power.nvidia-pci` for the rest of the boot (fact 15).
 
-The numbered facts below were learned before Nova existed, when this was an
-add-on with an installer of its own. Where Nova now does something differently,
-the fact says how; the hardware findings and the measurements stand as they
-were.
+The numbered facts were learned while the governor was being built, first
+with an installer of its own. Where Nova now does something differently, the
+fact says how; the findings and the measurements stand.
 
 ## The machine
 
@@ -71,14 +70,14 @@ device nodes on a bare `vkCreateInstance`; zero once filtered. Hence
 
 **3. uwsm sources that file with `/bin/sh`** (`/usr/lib/uwsm/prepare-env.sh`,
 `. "${1}"`), for every session on every machine. A file that does not parse
-costs the login. The add-on generated it at install time, and once left a
+costs the login. The governor's first installer generated it, and once left a
 dangling `if` with its `fi` deleted. Nova's is a fixed file in the package: it
 reads the model before doing anything else, runs no programs, and the unit
 tests parse it and source it under `sh`. Keep it POSIX.
 
-**4. Power profiles have one owner, and it is not this tool.** Before Nova, the
-desktop remembered a profile per power source and set it on every plug event,
-and this tool set profiles too; the last writer won, and the profiles were
+**4. Power profiles have one owner, and it is not the governor.** The desktop
+once remembered a profile per power source and set it on every plug event,
+and the governor set profiles too; the last writer won, and the profiles were
 lost. Now `nova-power-profile` remembers one per source in
 `~/.local/state/nova/power-profile/`, and the shell's battery service puts it
 back at login and on every plug and unplug. **nova-power never sets a
@@ -158,8 +157,8 @@ worth about a watt. PCIe ASPM is deliberately **opt-in** — `ASPM_ON_BAT=powers
 in `/etc/nova/power.conf` — because forcing L0s/L1 on every link can hang
 an NVMe that is merely ASPM-tolerant, and this machine has had enough hangs.
 
-**14. An unquoted heredoc runs the backticks in it.** The add-on's installer
-appended config with `cat >>"$HYPR_CONF" <<LUA`, unquoted so its variables
+**14. An unquoted heredoc runs the backticks in it.** The governor's first
+installer appended config with `cat >>"$HYPR_CONF" <<LUA`, unquoted so its variables
 would expand. A comment written as `` `nova power run` `` was therefore
 command substitution: it ran mid-install, printed `error: run needs a program`,
 and spliced its empty output into the user's Hyprland config. Nova ships those
@@ -169,7 +168,7 @@ and then put no backticks in it.
 
 **15. Bringing the card back has to work when it is already off the bus.**
 Once the policy has done its job there is nothing in sysfs for `detect_nvidia`
-to find, so the add-on's installer concluded the machine had no discrete GPU
+to find, so the governor's first installer concluded the machine had no discrete GPU
 and refused, on every second run. Firmware always enumerates the card at boot,
 so `nova-power` records its address then, in
 `/run/nova-power.nvidia-pci`, and reads it back for the rest of the boot.
@@ -202,11 +201,12 @@ that one was changed; CFG Lock and the rest were left alone. Linux sees it in
 | −80 mV | **rejected**: two bank-12 machine checks in the all-core phase, though every calculation came out right |
 
 The machine checks are the warning: −80 mV logged them and kept running.
-`nova-undervolt` therefore takes the offset off at the first one, and holds
-it at the boot after one that ended without shutting down while it was on
-(`nova power undervolt`). Sleep, resume and long use at −70 mV are not
-qualified yet. The overclocking ratio stays closed: `0x194` bits 19:17
-(OC bins) are 0, and `CAPID0_B` bit 29 (OC enabled) is 0.
+`nova-undervolt` therefore takes the offset off at the first one, and holds it
+at the boot after one that ended without shutting down while it was on
+(`nova power undervolt`). At −70 mV since 2026-10-24 the P1 has logged no
+machine check; sleep and resume at that depth are not qualified yet. The
+overclocking ratio stays closed: `0x194` bits 19:17 (OC bins) are 0, and
+`CAPID0_B` bit 29 (OC enabled) is 0.
 
 **Test it correctly or not at all.** The first probe wrote a *zero* offset,
 read zero back, and concluded "unlocked" — which is worthless, because a
@@ -214,16 +214,17 @@ locked mailbox that silently discards writes returns the identical result. It
 also masked off bits 63:32 of the response, which is where the status code
 lives. Only a **non-zero** round trip distinguishes accepted from discarded.
 
-With the lock on, the safe lever is the RAPL sustained limit instead. Firmware leaves PL1 at
-109 W and PL2 at 135 W **on battery** — the AC figures, against a 45 W part.
-`PL1_ON_BAT` caps it, and also shortens the averaging window from the
+With the lock on, the safe lever is the RAPL sustained limit instead. Firmware
+leaves PL1 at 109 W and PL2 at 135 W **on battery** — the AC figures, against
+a 45 W part. `PL1_ON_BAT` caps it, and also shortens the averaging window from
+the
 firmware's 56 s to 10 s: PL1 is an average, so without that a burst lasting
 most of a minute escapes the cap entirely. Measured under 16 threads of load
 with PL1 already at 30 W, draw was past 31 W and still climbing at t+20s.
 
 **17. What is left is in use, not misconfigured.** `nova power doctor`
 reads the PMC latency-tolerance table, which names whatever forbids the deep
-package states. Here: xHCI at 500 ns-scale 499712 ns — the Bluetooth mouse
+package states. Here: xHCI at 499712 ns (about 500 µs) — the Bluetooth mouse
 (`8087:0032`, `btusb`, USB `3-14`) — and HD audio at 363520 ns, but only while
 something plays; `00:1f.3` is suspended otherwise. Neither is reclaimable
 without giving up the device. Package C2 sits above half of cumulative
@@ -242,7 +243,7 @@ The one untried lever: EDID declares `Monitor ranges: 48-60 Hz V`, so a fixed
 48 Hz mode is within spec even though only `3840x2400@60` is advertised. It is
 a display-mode change, which is the single class of change that can cost a
 login, so it belongs in Hyprland's config where it can be tested live and
-reverted — **not** in this tool. *(Derived in fact 33; and see fact 31 — the
+reverted — **not** in the governor. *(Derived in fact 33; and see fact 31 — the
 decode was fine, the composite pass was not.)*
 
 **18. `doctor` shipped broken because "it errored out" was mistaken for
@@ -319,9 +320,8 @@ fault.** Measured on resume 2 of boot `aea39391`:
 
 So there are two problems and only the first is ours. The retry storm is the
 reader losing power in S3 and re-enumerating (~650 ms) while the lock screen
-is already asking for it; `FINGERPRINT_WAKE=on` writes a udev rule marking it
-wake-capable so the port stays powered. Off by default — it costs sleep power,
-and whether the platform honours it is unproven here. The match failures are
+is already asking for it. Marking it wake-capable keeps the port powered, but
+breaks fprintd (fact 25). The match failures are
 the bigger half and no knob touches them: **only `right-index-finger` was
 enrolled**, so a slightly-off placement fails. `bmAttributes` is `0xa0`, bit 5
 set, so the device does advertise remote wakeup — that is what makes the
@@ -332,7 +332,7 @@ Also on every resume, neither gating the unlock: the 5G modem
 cycle, and the Thunderbolt xHCI (`0000:00:0d.0`) reinitialises with
 `USBSTS 0x401`, so usb1/usb2 report `root hub lost power or was reset`.
 
-**24. Theming the boot path is not this tool's job.** Limine and Plymouth used
+**24. Theming the boot path is not the governor's job.** Limine and Plymouth used
 to drift from the desktop theme, and fixing that was never power management.
 Nova settles it by drawing no boot surfaces at all: Limine is
 quiet with a 1 s timeout and there is no Plymouth. The split the user drew still
@@ -372,7 +372,7 @@ That is worse than the 0.8–1 W this was guessed at, and it makes the case for
 `suspend-then-hibernate` **stronger**, not weaker: a closed lid flattens the
 battery over a long weekend. Caveat, so the number is not over-trusted: the
 fingerprint `power/wakeup` experiment was live for this measurement, so 1.26 W
-is an upper bound and a clean re-measure is owed.
+is an upper bound.
 
 **27. Wake to a *lit screen* is not the same as wake to a working session.**
 The kernel is done fast — `PM: suspend exit` at +0.21 s — and the journal then
@@ -396,7 +396,7 @@ unlocking is *already* broken, so fix the unlock first.
 nothing reports it.** A hibernate is a full power cycle: firmware enumerates
 `01:00.0` again on the way back up, but the image being restored was taken with
 the card off the bus, so the restored kernel has no record of it, never touches
-it, and it sits in D0 drawing the ~6 W this tool exists to save. `gpu_off` sees
+it, and it sits in D0 drawing the ~6 W the policy exists to save. `gpu_off` sees
 no device and reports "already off the bus" — exactly the reassuring message it
 prints when everything is fine. `post-hibernate` rescans first so the policy has
 something to remove. The modprobe block lives in `/run`, which is tmpfs and
@@ -446,10 +446,10 @@ probes.
 **32. The usual argument against Wi-Fi power save is about a different chip.**
 Some distributions turn it off for every machine (`wifi.powersave = 2`), for
 two reasons: 20-300 ms latency spikes on an idle link, and Intel
-**BE200/BE211** firmware that drops the link when the radio naps. The radio here is an **AX210**
-(`8086:2725`, Typhoon Peak) — not one of those parts — and the latency is only
-felt by interactive traffic, which a page load and a video stream are not. So
-the policy sets it on for battery and off on AC.
+**BE200/BE211** firmware that drops the link when the radio naps. The radio
+here is an **AX210** (`8086:2725`, Typhoon Peak) — not one of those parts — and
+the latency is only felt by interactive traffic, which a page load and a video
+stream are not. So the policy sets it on for battery and off on AC.
 
 The trap is that NetworkManager writes the flag at **every connection
 activation**, so a roam, a reconnect or a resume silently reverts it and
@@ -523,40 +523,42 @@ have everything. No register does that, because it is a policy about *time*,
 and a policy about time needs something awake to watch the clock. Hence
 `nova-powerd`, in `daemon/`, Rust, std only.
 
-Three tiers on battery (light 12/20/50, mid 20/32/75, full 30/45/100), a dwell
-of 8 s above 65% busy before climbing and 25 s below 30% before falling. The
-dwell is the whole design: it is longer than any interaction, so a spike cannot
-buy a tier, and a build's gaps between files cannot lose one. The band between
-the two thresholds is dead on purpose — a load hovering on the line would
-otherwise oscillate. `iowait` is not counted as busy: a build waiting on the
-NVMe is not asking for frequency.
+Four tiers on battery (PL1/PL2 in watts and the frequency ceiling: light
+12/18/45% with turbo off, mid 18/28/70%, full 28/42/100%, turbo 40/60/100%), a
+dwell above 65% busy before climbing that grows with each rung (8, 16 and 24 s)
+and 25 s below 30% before falling. The dwell is the whole design: it is longer
+than any interaction, so a spike cannot buy a tier, and a build's gaps between
+files cannot lose one. The band between the two thresholds is dead on purpose —
+a load hovering on the line would otherwise oscillate. `iowait` is not counted
+as busy: a build waiting on the NVMe is not asking for frequency.
 
-What it owns is exactly PL1, PL2, `max_perf_pct` and the fans. EPP and the
-platform profile are still power-profiles-daemon's (fact 4). The bash half
-stands down on all four while `/run/nova-powerd.owns-cpu` exists, so there
-is one writer at a time — that marker is the whole coordination protocol.
+What it owns is exactly PL1, PL2, `max_perf_pct`, `no_turbo`, the iGPU clocks
+and the fans. EPP and the platform profile are still power-profiles-daemon's
+(fact 4). The bash half stands down on all of them while
+`/run/nova-powerd.owns-cpu` exists, so there is one writer at a time — that
+marker is the whole coordination protocol.
 
 **Fans, and the three lines of defence.** `FAN_CONTROL` defaults on but is
 gated on `thinkpad_acpi` having been loaded with `fan_control=1`, which
-`/etc/modprobe.d/nova-hw-thinkpad-fan.conf` sets and which is read only when the
-module loads; until then it is a no-op with one line of explanation rather than
-a knob nobody finds. The battery
-curve is deliberately *lazier* than the EC's below 70 C, because a warm chassis
-is cheaper than a spinning fan. Then: the daemon releases to `auto` above
-`GOVERNOR_TEMP_CRITICAL` before the curve is consulted at all, so no arrangement
-of curve entries can hold a low level on a hot package; systemd's `ExecStopPost`
-runs `nova power daemon-stopped` for the kill -9 case; and the EC's own
-watchdog, refreshed every ~10 s, takes the fans back about thirty seconds after
-this process stops existing, needing nobody. The level is re-asserted on every
-watchdog refresh rather than only on change, because the EC silently takes the
-fans back across a resume and a cache would never notice.
+`/etc/modprobe.d/nova-hw-thinkpad-fan.conf` sets and which is read only when
+the module loads; until then it is a no-op with one line of explanation rather
+than a knob nobody finds. The battery curve is deliberately *lazier* than the
+EC's below 70 C, because a warm chassis is cheaper than a spinning fan. Then:
+the daemon releases to `auto` above `GOVERNOR_TEMP_CRITICAL` before the curve
+is consulted at all, so no arrangement of curve entries can hold a low level on
+a hot package; systemd's `ExecStopPost` runs `nova power daemon-stopped` for
+the kill -9 case; and the EC's own watchdog, refreshed every ~10 s, takes the
+fans back about thirty seconds after this process stops existing, needing
+nobody. The level is re-asserted on every watchdog refresh rather than only on
+change, because the EC silently takes the fans back across a resume and a cache
+would never notice.
 
 **36. The first firmware capture recorded the cap.** `nova-powerd` reads
 PL1 at startup to know what to restore on AC. Run for the first time on battery
 with the bash half's `PL1_ON_BAT=30` already applied, it recorded **30 W** as
 "what the firmware wanted" — after which plugging in would "restore" to 30 W,
-and there is no route back short of a reboot. Caught by reading its own first
-log line against `/etc/nova/power.conf`.
+and there is no route back short of a reboot. Its first log line, read
+against `/etc/nova/power.conf`, is what shows it.
 
 The fix is that the bash half already saves the true values, in
 `/run/nova-power.rapl` and `/run/nova-power.cpupct`, for exactly this
@@ -584,8 +586,8 @@ ordinary swap and irrelevant to hibernation because `/sys/power/resume` names
 the file explicitly.
 
 One thing found and **not** changed, because it is a judgement call:
-`nvidia-utils` ships
-`/usr/lib/systemd/system/systemd-{suspend,hibernate,hybrid-sleep,suspend-then-hibernate}.service.d/10-nvidia-no-freeze-session.conf`,
+`nvidia-utils` ships a `10-nvidia-no-freeze-session.conf` drop-in for
+`systemd-{suspend,hibernate,hybrid-sleep,suspend-then-hibernate}.service`,
 setting `SYSTEMD_SLEEP_FREEZE_USER_SESSIONS=false`. systemd warns about this on
 every single sleep, and names suspend-then-hibernate as the case it is most
 likely to break. On this machine the argument for the drop-in is thin —
@@ -658,22 +660,23 @@ with the dGPU off the bus, backlight at 90/600:
 | Chrome open and idle | **16.4 W** |
 | Chrome busy, ~29 renderers, plus a coding agent in a terminal | **19-21 W** |
 
-The figures this machine was known by before agree: ~12 W coding, ~19 W browser. **12 W is the
-coding number and it is already met; 12 W while browsing is not reachable on
-this hardware.** Chrome's GPU process alone measured 24.4% of a core presenting
-a windowed video, with Hyprland a further 9.4% — that is watts, and no kernel
-knob touches it. The levers that remain are all in the browser: fewer tabs,
-Memory Saver discarding the idle ones, and Energy Saver throttling what is left.
-Everything this repository manages below the browser is already spent.
+The figures this machine was known by before agree: ~12 W coding, ~19 W
+browser. **12 W is the coding number and it is already met; 12 W while browsing
+is not reachable on this hardware.** Chrome's GPU process alone measured 24.4%
+of a core presenting a windowed video, with Hyprland a further 9.4% — that is
+watts, and no kernel knob touches it. The levers that remain are all in the
+browser: fewer tabs, Memory Saver discarding the idle ones, and Energy Saver
+throttling what is left. Everything this repository manages below the browser
+is already spent.
 
-**43. The Chrome policy works, and `chrome://policy` is the only honest check.**
-Verified on this machine: `BatterySaverModeAvailability: 2` and
+**43. The Chrome policy works, and `chrome://policy` is the only honest
+check.** Verified on this machine: `BatterySaverModeAvailability: 2` and
 `HighEfficiencyModeEnabled: true` both report **OK / Platform / Machine /
 Mandatory**. So 2 really is "enabled whenever on battery" and the value is
 accepted — that was documented behaviour being trusted until this, not
-something measured. Nova does not pin them: the add-on only wrote the policy
-when asked, a mandatory policy takes both switches away from the user, and both
-are two clicks in `chrome://settings/performance`.
+something measured. Nova does not pin them: a mandatory policy takes both
+switches away from the user, and both are two clicks in
+`chrome://settings/performance`.
 
 Two things that look like failures and are not. First, `Local State` keeps
 showing `"battery_saver_mode":{"state":0}` *after* the policy is live: a
@@ -744,7 +747,7 @@ is closed — the policy declining correctly rather than pulling the card from
 under a running program. `shown_gpus = "intel"` in `~/.config/btop/btop.conf`
 stops it touching NVML at all, at the cost of GPU stats on AC. Not changed
 here; fact 42's rule holds — the browser and the user's own programs are not
-this tool's to decide.
+the governor's to decide.
 
 **46. The awk in `module_refs` is covered, and so is the removal path.** Field
 3 of `/proc/modules` is the reference count and field 4 the *modules* holding
@@ -756,13 +759,13 @@ module survives and `gpu_off` must not conclude it is finished. 84 checks.
 `SYS_PCI`, `DEV_DRI` and `PROC_MODULES` are overridable globals now, for the
 same reason every `/run` path already was.
 
-Trap found writing those tests, in the test and not the tool: `grep -v` exits
-**1** when it filters out every line, which is exactly what removing the last
+A trap in the test, not the tool: `grep -v` exits **1** when it filters out
+every line, which is exactly what removing the last
 module looks like. The shim's `&& mv` therefore never ran and the fixture kept
 the module, which reads as the unloader failing.
 
 **47. A per-user step run under `sudo` configures root, and still reports
-success.** The add-on's installer wrote four session files — the compositor's
+success.** The governor's first installer wrote four session files — the compositor's
 GPU pin, a Hyprland block, a menu entry and a remembered battery profile —
 under `$HOME`, which under `sudo` is `/root`. Nothing reads `/root/.config`, so
 the session half of the install did nothing at all while printing a tick for
@@ -820,7 +823,6 @@ actually failed. The unload is the authority on whether the card can go; it
 fails safely with `EBUSY`, and gating it on a test that is permanently true
 only meant never asking.
 
-
 **49. The reference nothing holds is `nvidia_drm` holding one on itself, and
 `fbdev=1` is why.** Fixing fact 48 got the policy as far as *attempting* the
 unload, and it still failed on a completely idle card:
@@ -847,7 +849,7 @@ The boot log is the clean proof, because it brackets the compositor:
 ```
 
 The unload failed 95 seconds before Hyprland existed. Every "in use by
-Hyprland" line this tool ever printed was a misattribution twice over — the
+Hyprland" line the policy ever printed was a misattribution twice over — the
 wrong holders, for a reference none of them held.
 
 `fbdev` is the framebuffer console on the discrete card, and this laptop wires
@@ -919,7 +921,7 @@ work, gated. The firmware's PL1 was captured as 109 W and restored, and
 **Sleep:** S3 drains 1.26 W, so a full battery lasts about 59 h asleep; a 63
 minute suspend on battery resumed cleanly. **Wake:** the kernel is done 0.21 s
 after resume and the lock screen prompts at 1.04 s; the rest of what feels
-slow is the fingerprint reader (facts 25 and 27).
+slow is the fingerprint reader (facts 23 and 25).
 
 **Three hard lock-ups, one root cause.** An idle freeze on battery, a freeze
 during `pci/rescan` on plugging in, and a kernel panic when `nvidia` loaded

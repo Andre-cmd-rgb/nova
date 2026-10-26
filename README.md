@@ -1,19 +1,20 @@
 # Nova
 
-A small, fast Arch Linux desktop for laptops: Hyprland, a Quickshell shell, one
-`nova` command, and power management that knows the machine it runs on. It
-boots from the firmware logo straight to the lock screen, uses one theme
-everywhere, and installs in a few minutes from a USB stick that can carry your
-files over.
+An Arch Linux desktop for laptops and the Raspberry Pi 5: Hyprland, a
+Quickshell shell, one `nova` command, and power management that knows the
+machine it runs on. It boots from the firmware logo straight to the lock
+screen, uses one theme everywhere, and installs in a few minutes from a USB
+stick that can carry your files over.
 
-**Status: beta.** Tuned for the Lenovo ThinkPad P1 Gen 4i and the Lenovo Legion
-5 (RTX 4070), and runs on the Raspberry Pi 5. Other x86-64 laptops and desktops
-with Intel, AMD or NVIDIA graphics should work, but are untested.
+**Status: beta.** Tuned for the Lenovo ThinkPad P1 Gen 4i, and runs on the
+Raspberry Pi 5. The Lenovo Legion 5 (RTX 4070) has a first profile, not yet
+tuned. Other x86-64 laptops and desktops with Intel, AMD or NVIDIA graphics
+should work, but are untested.
 
 ## Install on a PC
 
-Nova takes the whole disk. Turn Secure Boot off in the firmware settings
-first, and download the newest
+Nova takes the whole disk, of 64 GiB or more, and starts with UEFI. Turn
+Secure Boot off in the firmware settings first, and download the newest
 [release](https://github.com/Andre-cmd-rgb/nova/releases).
 
 **1. Make the stick.** On an Arch-based system, run the release's `nova-usb`:
@@ -25,8 +26,10 @@ bash nova-usb          # --dry-run asks everything and writes nothing
 
 It checks the ISO against the release's checksum, and the checksum against
 Nova's signing key, then writes the stick. It can also put every package on
-it, so the install needs no internet, and carry your SSH keys and the files and
-folders you pick from your home, encrypted.
+it, so the install needs no internet, and carry your SSH keys and the files
+and folders you pick from your home, encrypted. Chrome, VS Code, Claude Code
+and Codex are the exception: an offline install says so, and
+`nova apps install; mise install` adds them once online.
 
 On any other system, write the ISO as it is with `dd` or any USB writer. That
 stick installs over the network.
@@ -59,12 +62,12 @@ into the lock screen. What differs from a PC is in
 
 ## Using Nova
 
-| Keys | |
+| Key | Opens or does |
 |---|---|
 | Super+Space | the menu |
 | Super+Alt+Space | the apps |
 | Super+Return | a terminal |
-| Super+Shift+Return | Chrome |
+| Super+Shift+Return | the browser (Chrome) |
 | Super+Shift+F | Files |
 | Super+W | close the window (windows have no title-bar buttons) |
 | Super+Ctrl+L | lock |
@@ -87,17 +90,18 @@ into the lock screen. What differs from a PC is in
   unused, and the screen locks after five; both are in Settings → Lock Screen.
   `nova screensaver` shows it now, and `~/.config/nova/screensaver.txt`, when
   there is one, is played instead of the wordmark.
-- **`nova help`** lists the commands. Chrome, VS Code, Nautilus, foot, btop,
-  fastfetch, Claude Code and Codex come installed.
+- **Apps:** Chrome, VS Code, Nautilus, foot, btop, fastfetch, Claude Code and
+  Codex come installed.
+- **`nova help`** lists the commands.
 
 ## Updates
 
-Nova follows Arch Linux two weeks behind, tested. Every other week CI builds a
-release candidate and installs it in a virtual machine; once it has been tried
-on real hardware it becomes a release. `nova update`, or the update badge in
-the bar, moves the system to the newest release, with a snapshot before and
-after (a Raspberry Pi has no snapshots). Settings → Updates → Test Release
-Candidates gets the candidates early.
+Nova follows Arch Linux two weeks behind, tested. On the 1st and the 15th of
+each month CI builds a release candidate and installs it in a virtual machine;
+once it has been tried on real hardware it becomes a release. `nova update`, or
+the update badge in the bar, moves the system to the newest release, with a
+snapshot before and after (a Raspberry Pi has no snapshots). Settings → Updates
+→ Test Release Candidates gets the candidates early.
 
 ## When something goes wrong
 
@@ -109,10 +113,10 @@ Candidates gets the candidates early.
   first question, as it does after a power cut. Its log is
   `/var/log/nova-first-boot.log`.
 - **`nova doctor`** looks the system over and says how to fix what it finds;
-  `sudo nova doctor` also checks the boot menu's fallback entry.
-- **`nova recovery`** restarts into the boot menu: the last snapshots, the
-  fallback image and the LTS kernel. Any key in the first second of the boot
-  opens it too.
+  on a PC, `sudo nova doctor` also checks the boot menu's fallback entry.
+- **`nova recovery`**, on a PC, restarts into the boot menu: the last
+  snapshots, the fallback image and the LTS kernel. Any key in the first
+  second of the boot opens it too.
 
 ## Working on Nova
 
@@ -131,7 +135,7 @@ before it is published.
 |---|---|
 | [Architecture](docs/ARCHITECTURE.md) | how the pieces fit, and the rules for code |
 | [The shell](src/shell/README.md) and [its plugins](src/shell/plugins/README.md) | the bar, the panels, the lock screen |
-| [Power](docs/power.md) | `nova power`: the GPU, the CPU's limits and the fans |
+| [Power](docs/power.md) and [its code](src/power/README.md) | `nova power`: the GPU, the CPU's limits and the fans |
 | [Releasing](docs/releasing.md) | versions, the signing key, the two-week cycle |
 | [Packaging](docs/packaging.md) | the kernel, the NVIDIA modules, the AUR rebuilds |
 | [ThinkPad P1 Gen 4i](docs/hardware/thinkpad-p1-gen4i.md) | what was measured on it, and why |

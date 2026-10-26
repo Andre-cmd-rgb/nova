@@ -123,6 +123,10 @@ nova battery import [--days n]    seed history from UPower's own log
 nova battery config [key]         show settings
 nova battery set <key> <value>    change one
 nova battery forget <date|all>    delete recorded history
+
+nova battery indicator on|off     show or hide the bar entry
+nova battery sample [--force]     record one reading (the shell runs it)
+nova battery version
 ```
 
 ```
@@ -187,7 +191,7 @@ level glyph rather than a bolt, because no current is flowing.
 bash test/roundtrip.sh
 ```
 
-49 checks against a fake battery and a written history, in a temporary tree —
+51 checks against a fake battery and a written history, in a temporary tree —
 the real machine is never touched. That is what makes the awkward cases
 testable: a battery cannot be asked to be at 3% and charging on demand, and a
 suspend cannot be arranged to order. Covered: energy- and charge-reporting

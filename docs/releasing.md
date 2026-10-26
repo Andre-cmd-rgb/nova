@@ -150,7 +150,7 @@ with a Pi build fills the pool, about 1 GiB. R2's free 10 GB lasts most of a
 year of releases; past that, storage costs $0.015 per GB a month, and
 downloads are free.
 
-## A release every other week
+## A release twice a month
 
 Nova follows Arch two weeks behind, tested: each release is a candidate first.
 
@@ -193,8 +193,8 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
 3. **Approve.** Actions → promote → Run, with the candidate's tag. It tags the
    same commit with the final version (`v1.1.0-rc.2` becomes `v1.1.0`), builds
    it again on the candidate's own Arch snapshot and Arch Linux ARM set, and
-   publishes it as the
-   latest release. Systems pick it up at their next update check. Only the
+   publishes it as the latest release. Systems pick it up at their next update
+   check. Only the
    newest published candidate of a version can be promoted: testers on a later
    one have a later Arch snapshot, which `nova update` never moves back from.
 
@@ -216,7 +216,7 @@ approving, or one to write down in the release notes.
   On battery at idle, `src/power/test/watts.sh 300` is no worse than last time.
 - **Graphics:** native resolution and refresh rate (165 Hz with VRR on the
   Legion); `chrome://gpu` shows hardware video decode; a game runs on the
-  NVIDIA card (`nova power gpu run` on the P1, `prime-run` on the Legion).
+  NVIDIA card (`nova power run` on the P1, `prime-run` on the Legion).
 - **Sound:** speakers (`nova audio tuning status` on the P1), the microphone,
   headphones, a Bluetooth headset; the volume and brightness keys show the OSD.
 - **Network:** Wi-Fi, Bluetooth pairing, mobile data where there is a SIM.

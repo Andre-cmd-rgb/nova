@@ -14,11 +14,11 @@ account for it — plus an optional one-glyph indicator in the bar.
    0           6          12          18
 
  MOST USED
- Chromium                                       1h 20m
+ Google Chrome                                 1h 20m
  ████████████████████████████████████████░░░░░░░░░░░░
- Alacritty                                         55m
+ foot                                             55m
  ███████████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░
- Zed                                               41m
+ Visual Studio Code                               41m
  ████████████████████░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░
 ```
 
@@ -148,11 +148,8 @@ shell surfaces, not applications you spend time in. Setting
 
 `~/.local/state/nova-screentime/days/YYYY-MM-DD.tsv`, one file per day,
 three tab-separated columns: application id, hour of day, seconds. Plain text,
-yours to read, edit, or delete:
-
-```bash
-rm -rf ~/.local/state/nova-screentime      # forget everything
-```
+yours to read, edit, or delete (all of it: [Forgetting
+everything](#forgetting-everything)).
 
 Files older than `RETENTION_DAYS` are dropped on the first write of each day.
 
