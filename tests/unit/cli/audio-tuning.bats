@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 
 # nova-audio-tuning auto, run at every login: a laptop with a tuning gets it,
-# one without is left alone, and a tuning turned off by hand stays off.
+# one without is left alone, and a tuning turned off by hand stays off. And
+# every tuning's own volumes stay at 100%.
 
 load ../test_helper
 
@@ -68,4 +69,16 @@ tuning="$REPO_ROOT/src/cli/bin/nova-audio-tuning"
   [[ $output == *"nova update installs them"* ]]
   [ ! -e "$XDG_CONFIG_HOME/pipewire/nova-speaker-tuning.conf" ]
   [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "every tuning: its volumes are locked, and WirePlumber keeps none of them" {
+  # A volume WirePlumber had kept for the P1's tuning (0.000125) made its
+  # speakers silent at every start, the keys moving the speakers behind it.
+  for conf in "$REPO_ROOT"/data/audio/tunings/*/filter-chain.conf; do
+    for side in capture playback; do
+      props=$(sed -n "/^ *$side.props = {/,/^ *}/p" "$conf")
+      [[ $props == *"channelmix.lock-volumes = true"* ]] || { echo "$conf: $side.props is not locked"; return 1; }
+      [[ $props == *"state.restore-props = false"* ]] || { echo "$conf: $side.props is restored"; return 1; }
+    done
+  done
 }
