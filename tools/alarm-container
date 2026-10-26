@@ -54,4 +54,11 @@ image=nova-alarm:$(sha256sum <"$tarball" | cut -c1-16)
 if ! docker image inspect "$image" >/dev/null 2>&1; then
   docker import "$tarball" "$image" >/dev/null
 fi
-exec docker run "${docker_args[@]}" --volume "$PWD:$PWD" --workdir "$PWD" "$image" "$@"
+# pacman 7 downloads in a sandbox of Landlock rules, which Docker's seccomp
+# filter refuses ("the Landlock ruleset could not be applied: Operation not
+# permitted"), and then every download fails. The container is the sandbox
+# here, so its pacman goes without one of its own.
+# shellcheck disable=SC2016 # the container's shell expands it
+exec docker run "${docker_args[@]}" --volume "$PWD:$PWD" --workdir "$PWD" "$image" /bin/bash -c '
+  grep -q "^DisableSandbox" /etc/pacman.conf || sed -i "/^\[options\]/a DisableSandbox" /etc/pacman.conf
+  exec "$@"' alarm-container "$@"
