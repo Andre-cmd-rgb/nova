@@ -133,6 +133,8 @@ BarWidget {
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             source: root.activePlayer && root.activePlayer.trackArtUrl ? root.activePlayer.trackArtUrl : ""
+            // Album art is often 1200 px square; it is shown at 64.
+            sourceSize: Qt.size(width, height)
             visible: source !== ""
           }
 

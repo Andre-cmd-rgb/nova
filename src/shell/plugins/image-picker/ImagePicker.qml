@@ -57,6 +57,18 @@ Item {
 
   onOpenedChanged: if (!opened) layoutSettled = false
 
+  // The picker stays loaded, so it opens at once, and with it every card's
+  // decoded thumbnail and texture: some 30 screen-sized images, a lot to hold
+  // for a picker that is shut, on a 4 GB Raspberry Pi most of all. Shut for a
+  // while, it lets them go; the next open decodes the cards near the selection
+  // again.
+  property bool thumbnailsReleased: false
+  Timer {
+    interval: 120000
+    running: !root.opened && !root.thumbnailsReleased
+    onTriggered: root.thumbnailsReleased = true
+  }
+
   function scriptPath(name) {
     return novaPath + "/shell/plugins/image-picker/" + name
   }
@@ -213,6 +225,7 @@ Item {
       finishDoneFile(doneFile)
 
     requestSerial += 1
+    thumbnailsReleased = false
 
     imageDirs = nextImageDirs
     imageRows = nextImageRows
@@ -336,6 +349,7 @@ Item {
     if (opened || requestActive) return
 
     requestSerial += 1
+    thumbnailsReleased = false
     imageRows = nextImageRows
     selectedImage = nextSelectedImage
     showLabels = nextShowLabels === true || nextShowLabels === "true"
@@ -457,6 +471,12 @@ Item {
               readonly property bool nearby: matched && Math.abs(relativeIndex) <= 16
               property bool sourceActivated: nearby
               onNearbyChanged: if (nearby) sourceActivated = true
+              Connections {
+                target: root
+                function onThumbnailsReleasedChanged() {
+                  if (root.thumbnailsReleased) item.sourceActivated = item.nearby
+                }
+              }
 
               visible: nearby
               x: selected ? carousel.previewX : (relativeIndex < 0 ? carousel.previewX + relativeIndex * carousel.itemStep : carousel.previewX + root.expandedWidth + root.sliceSpacing + (relativeIndex - 1) * carousel.itemStep)
@@ -510,7 +530,14 @@ Item {
                   // Load only the initial/visited nearby images, but keep the
                   // source once activated so Qt does not tear textures down as
                   // selection moves through the carousel.
-                  source: item.sourceActivated && item.thumbnailPath ? Util.fileUrl(item.thumbnailPath) : ""
+                  source: !root.thumbnailsReleased && item.sourceActivated && item.thumbnailPath
+                    ? Util.fileUrl(item.thumbnailPath) : ""
+                  // Decoded at the open card's size, the largest any card is
+                  // shown, so moving the selection reloads none: the 1536x864
+                  // thumbnails are made for a 2x screen, and a picture with no
+                  // thumbnail is the original, which may be a 50-megapixel
+                  // photo.
+                  sourceSize: Qt.size(root.expandedWidth, root.expandedHeight)
                   fillMode: Image.PreserveAspectCrop
                   asynchronous: false
                   cache: true
