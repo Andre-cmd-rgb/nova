@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# nova:summary=Check if this computer can sleep
+# nova:hidden=true
+#
+# logind's own answer for `systemctl sleep`: "na" on a computer whose kernel
+# cannot suspend (a Raspberry Pi), where the menu then offers no Suspend.
+# "challenge" still sleeps, once polkit has asked.
+
+set -euo pipefail
+
+answer=$(busctl --system call org.freedesktop.login1 /org/freedesktop/login1 \
+  org.freedesktop.login1.Manager CanSleep 2>/dev/null) || exit 1
+[[ $answer == 's "yes"' || $answer == 's "challenge"' ]]

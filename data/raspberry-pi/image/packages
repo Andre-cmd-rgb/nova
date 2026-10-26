@@ -1,0 +1,30 @@
+# What a Raspberry Pi 5's image holds besides nova (which pulls in the
+# desktop), as installer/packages is for a PC, and besides its hardware
+# profile's packages (data/hardware/raspberry-pi-5/packages). One per line.
+base
+archlinuxarm-keyring
+nova
+# The Pi 5's own kernel, built from Raspberry Pi's configuration for it as
+# Raspberry Pi OS's is: 16K pages, and the transparent huge pages its GPU
+# driver needs for its large pages (linux-rpi is the Pi 3 and 4's, with
+# neither). And the firmware that starts it, with its Wi-Fi and Bluetooth.
+linux-rpi-16k
+raspberrypi-bootloader
+firmware-raspberrypi
+linux-firmware
+# Which Wi-Fi channels the country allows, set from the time zone at the
+# first start (nova-first-boot).
+wireless-regdb
+iw
+# SSH, and sudo. (git and base-devel come with nova, for nova apps install.)
+openssh
+sudo
+# A console editor and completion, for the day the desktop does not start.
+nano
+bash-completion
+unzip
+# The Activity window (Super+Ctrl+T), and a summary of the system.
+btop
+fastfetch
+# Screen recording, from the Capture menu.
+gpu-screen-recorder

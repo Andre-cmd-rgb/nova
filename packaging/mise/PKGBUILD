@@ -1,0 +1,46 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# mise, for the Raspberry Pi. Nova installs its command-line tools with it
+# (Claude Code, Codex, node), and Arch Linux ARM has no mise package, so the
+# [nova] repository carries upstream's own build of the tagged release. On x86
+# mise comes from Arch's extra repository, which this package leaves alone.
+# Upstream: https://github.com/jdx/mise, MIT.
+#
+# The checksum is the one GitHub lists for the release asset; a new release
+# changes pkgver and it together.
+
+pkgname=mise
+pkgver=2026.10.19
+pkgrel=1
+pkgdesc='The front-end to your dev env: tools, environments and tasks'
+arch=(aarch64)
+url='https://mise.jdx.dev'
+license=(MIT)
+depends=(gcc-libs glibc)
+optdepends=('bash-completion: bash completion')
+options=(!debug !strip)
+source=("https://github.com/jdx/mise/releases/download/v$pkgver/mise-v$pkgver-linux-arm64.tar.xz")
+sha256sums=('ba80814e8ca01cfa35dd6e5d60ad8406e09970f631e1ebe3d59663e86c6f6123')
+
+build() {
+  # Completions from the very binary that ships.
+  mise/bin/mise completion bash >mise.bash
+  mise/bin/mise completion zsh >_mise
+  mise/bin/mise completion fish >mise.fish
+}
+
+package() {
+  install -Dm755 mise/bin/mise "$pkgdir/usr/bin/mise"
+  # pacman updates it; `mise self-update` would fight it.
+  install -Dm644 /dev/null "$pkgdir/usr/lib/mise/.disable-self-update"
+
+  install -Dm644 mise/man/man1/mise.1 "$pkgdir/usr/share/man/man1/mise.1"
+  install -Dm644 mise.bash "$pkgdir/usr/share/bash-completion/completions/mise"
+  install -Dm644 _mise "$pkgdir/usr/share/zsh/site-functions/_mise"
+  install -Dm644 mise.fish "$pkgdir/usr/share/fish/vendor_completions.d/mise.fish"
+  install -Dm644 mise/share/fish/vendor_conf.d/mise-activate.fish \
+    "$pkgdir/usr/share/fish/vendor_conf.d/mise-activate.fish"
+  install -Dm644 mise/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
+
+# vim:set ts=2 sw=2 et:

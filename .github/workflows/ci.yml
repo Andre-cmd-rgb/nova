@@ -73,6 +73,14 @@ jobs:
           sudo -u builder -H make install DESTDIR=/tmp/nova-root
           test -x /tmp/nova-root/usr/bin/nova
 
+      # The Raspberry Pi's files instead of the x86 boot chain; the release
+      # builds and checks the real thing on arm64.
+      - name: Install a Raspberry Pi's into a scratch root
+        run: |
+          sudo -u builder -H make install DESTDIR=/tmp/nova-root-pi NOVA_ARCH=aarch64
+          test -x /tmp/nova-root-pi/usr/lib/nova/bin/nova-first-boot
+          test ! -e /tmp/nova-root-pi/etc/limine-entry-tool.d
+
       # What qmllint cannot see, run offscreen against the installed tree and
       # failing on any QML warning: the shell's logic, then its windows.
       - name: Shell logic, offscreen

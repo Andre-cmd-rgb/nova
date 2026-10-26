@@ -57,6 +57,7 @@ airootfs=$profile/airootfs
 share=$airootfs/usr/share/nova-installer
 install -Dm755 "$root/installer/nova-install" "$airootfs/usr/local/bin/nova-install"
 install -Dm644 "$root/installer/ui.bash" "$share/ui.bash"
+install -Dm644 "$root/installer/setup.bash" "$share/setup.bash"
 install -Dm644 "$root/installer/wifi.bash" "$share/wifi.bash"
 install -Dm644 "$root/theme/wordmark/nova.txt" "$share/nova.txt"
 install -Dm644 "$release" "$share/release.toml"

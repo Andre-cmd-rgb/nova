@@ -9,6 +9,7 @@ setup() {
   setup_scratch
   export CALLS="$SCRATCH/calls" PKGVER="$SCRATCH/pkgver"
   export NOVA_MIRRORLIST="$SCRATCH/nova-mirrorlist" NOVA_REPOFILE="$SCRATCH/nova-repo"
+  export NOVA_ALARMFILE="$SCRATCH/nova-alarm" NOVA_ARCH=x86_64
   export NOVA_UPDATE_APPLY="$SCRATCH/bin/nova-update-apply" NOVA_UPDATE_APPS="$SCRATCH/bin/nova-apps-install"
   mkdir -p "$SCRATCH/bin"
   echo 1.0.0beta.1 >"$PKGVER"
@@ -217,4 +218,46 @@ serve_release() { # asset...
   run "$REPO_ROOT/src/cli/bin/nova-update" --check
   [ "$status" -ne 0 ]
   [[ $output == *"rate limit"* ]]
+}
+
+# A release with a Raspberry Pi build, and a Pi on the release before it.
+pi_release() {
+  export NOVA_ARCH=aarch64
+  printf 'alarm_date = "2026/10/20"\nalarm_pool = "https://example.org/alarm/aarch64"\n' >>"$SCRATCH/release.toml"
+  printf '# nova-release: v1.0.0-beta.1\n# alarm-date: 2026/10/06\n' >"$NOVA_ALARMFILE"
+  printf '# nova-release: v1.0.0-beta.1\n' >"$NOVA_REPOFILE"
+}
+
+@test "a Pi moves to the release's Arch Linux ARM set" {
+  pi_release
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output == *"Arch Linux ARM 2026/10/06 -> 2026/10/20"* ]]
+  grep -q -- '--alarm-date 2026/10/20 --alarm-pool https://example.org/alarm/aarch64 --from v1.0.0-beta.1' "$CALLS"
+}
+
+@test "a release without a Raspberry Pi build changes nothing on a Pi" {
+  export NOVA_ARCH=aarch64
+  run update
+  [ "$status" -ne 0 ]
+  [[ $output == *"v1.0.0-beta.2 has no Raspberry Pi build; nothing was changed"* ]]
+  fails grep -q nova-update-apply "$CALLS"
+}
+
+@test "a Pi does not go back to an older Arch Linux ARM set unless asked" {
+  pi_release
+  printf '# nova-release: v1.0.0-beta.1\n# alarm-date: 2026/10/27\n' >"$NOVA_ALARMFILE"
+  run update
+  [ "$status" -ne 0 ]
+  [[ $output == *"older than what is installed (nova 1.0.0beta.1, Arch Linux ARM 2026/10/27)"* ]]
+  fails grep -q nova-update-apply "$CALLS"
+}
+
+@test "a PC's update says nothing of Arch Linux ARM" {
+  pi_release
+  export NOVA_ARCH=x86_64
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output == *"Arch snapshot  unpinned -> 2026/10/19"* ]]
+  fails grep -q -- --alarm "$CALLS"
 }

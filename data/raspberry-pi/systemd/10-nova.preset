@@ -1,0 +1,8 @@
+# A Pi's first start is a first boot to systemd (/etc/machine-id is
+# "uninitialized" in the image), and at a first boot systemd enables every unit
+# a preset says to. The image enables what Nova runs itself
+# (tools/build-pi-image), so no preset enables anything: systemd's own list
+# would add systemd-networkd beside NetworkManager, and homed, sysext and the
+# systemd-boot updater, none of which a Pi has a use for. This comes before
+# systemd's 90-systemd.preset, and the first line that names a unit decides.
+disable *

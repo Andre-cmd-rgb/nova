@@ -8,7 +8,9 @@
 # in keys/pgp (the kernel signers, for one) are imported first, so its sources
 # are verified. Set NOVA_SOURCE to pass it through to the nova PKGBUILD.
 # make uses every CPU: Arch's makepkg.conf leaves MAKEFLAGS unset, which builds
-# the kernel on one core, for longer than a CI job may run.
+# the kernel on one core, for longer than a CI job may run. Every package is a
+# .pkg.tar.zst, which the repository and the ISO take, on Arch Linux ARM too,
+# whose makepkg.conf makes .pkg.tar.xz.
 set -euo pipefail
 
 die() { printf 'build-package: %s\n' "$*" >&2; exit 1; }
@@ -34,14 +36,16 @@ fi
 cd -- "$dir"
 # The archive is one server, and it stalls now and then. makepkg exits 8 when
 # the build dependencies did not install, which happens before anything is
-# built, so only that is tried again; pacman keeps what it fetched.
+# built, so only that is tried again; pacman keeps what it fetched, but not a
+# download cut off halfway, which a mirror that cannot resume would fail again.
 for attempt in 1 2 3; do
   status=0
   as_builder env PKGDEST="$out" SRCDEST="$scratch/nova-srcdest" BUILDDIR="$scratch/nova-builddir" \
-    MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
+    MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" PKGEXT=.pkg.tar.zst \
     ${NOVA_SOURCE:+NOVA_SOURCE="$NOVA_SOURCE"} \
     makepkg --syncdeps --noconfirm --cleanbuild "$@" || status=$?
   ((status == 8 && attempt < 3)) || exit "$status"
   echo "build-package: the build dependencies did not install; trying again in 30 seconds" >&2
+  while read -r cache; do rm -f -- "${cache%/}"/*.part; done < <(pacman-conf CacheDir)
   sleep 30
 done

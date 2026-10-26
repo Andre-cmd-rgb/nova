@@ -4,10 +4,15 @@
 # pacman will use and compare, so a release is published only once its
 # packages are there.
 #
-#   tools/packages-upload --release <release.toml> <file>...
+#   tools/packages-upload --release <release.toml> [--into <folder> | --pool] <file>...
 #
 # The files go into the folder release.toml's nova_repo names: for
-# https://nova-packages.piserver.stream/v1.0.0, the bucket's v1.0.0/.
+# https://nova-packages.piserver.stream/v1.0.0, the bucket's v1.0.0/, or with
+# --into aarch64 its aarch64/, the Raspberry Pi's (or aarch64/alarm, the Arch
+# Linux ARM databases a release is built against). With --pool they go into the
+# folder alarm_pool names, the files of the Arch Linux ARM packages releases
+# pin (tools/alarm-pin), which every release shares: a file there already is
+# left as it is, since a package's file never changes under the same name.
 #
 # Environment: R2_ENDPOINT (https://<account id>.r2.cloudflarestorage.com),
 # R2_BUCKET, and the bucket's token as AWS_ACCESS_KEY_ID and
@@ -16,38 +21,55 @@ set -euo pipefail
 
 die() { printf 'packages-upload: %s\n' "$*" >&2; exit 1; }
 
-release=''
+release='' into='' pool=0
 while (($#)); do
   case $1 in
     --release) release=${2:?--release needs a file}; shift 2 ;;
+    --into) into=${2:?--into needs a folder}; shift 2 ;;
+    --pool) pool=1; shift ;;
     -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     -*) die "unknown option: $1" ;;
     *) break ;;
   esac
 done
-[[ -r $release && $# -gt 0 ]] || die "usage: tools/packages-upload --release <release.toml> <file>..."
+[[ -r $release && $# -gt 0 ]] || die "usage: tools/packages-upload --release <release.toml> [--into <folder> | --pool] <file>..."
+[[ -z $into || $into =~ ^[a-z0-9]+(/[a-z0-9]+)*$ ]] || die "--into takes a folder's name, got: $into"
+[[ -z $into || $pool == 0 ]] || die "--into and --pool are two different places"
 [[ -n ${R2_ENDPOINT:-} && -n ${R2_BUCKET:-} ]] || die "R2_ENDPOINT and R2_BUCKET must be set"
 [[ -n ${AWS_ACCESS_KEY_ID:-} && -n ${AWS_SECRET_ACCESS_KEY:-} ]] ||
   die "the bucket's token is not set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)"
 command -v aws >/dev/null || die "needs the aws CLI"
 
-repo=$(sed -n 's/^nova_repo = "\(.*\)"$/\1/p' "$release")
-[[ $repo =~ ^https://[A-Za-z0-9.-]+/(.+)$ ]] || die "$release has no nova_repo with a folder in it"
+key=nova_repo
+((!pool)) || key=alarm_pool
+repo=$(sed -n "s/^$key = \"\\(.*\\)\"\$/\\1/p" "$release")
+[[ $repo =~ ^https://[A-Za-z0-9.-]+/(.+)$ ]] || die "$release has no $key with a folder in it"
 folder=${BASH_REMATCH[1]}
+if [[ -n $into ]]; then
+  repo+=/$into folder+=/$into
+fi
 
 # R2 takes any region and ignores it; the checksums are the ones R2 asks for,
 # not every one a newer aws CLI would add.
 export AWS_DEFAULT_REGION=auto AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 
+files=()
 for file; do
   [[ -f $file ]] || die "$file is not a file"
+  if ((pool)) && curl -fsI --retry 2 --max-time 30 -o /dev/null "$repo/${file##*/}"; then
+    continue
+  fi
+  files+=("$file")
+done
+for file in "${files[@]}"; do
   aws s3 cp --only-show-errors --endpoint-url "$R2_ENDPOINT" "$file" "s3://$R2_BUCKET/$folder/${file##*/}" ||
     die "could not upload ${file##*/}"
 done
-for file; do
+for file in "${files[@]}"; do
   sent=$(sha256sum <"$file")
   served=$(curl -fsSL --retry 3 --max-time 600 "$repo/${file##*/}" | sha256sum) ||
     die "$repo/${file##*/} cannot be read back"
   [[ $served == "$sent" ]] || die "$repo/${file##*/} is not what was uploaded"
 done
-printf 'packages-upload: %d files at %s\n' "$#" "$repo" >&2
+printf 'packages-upload: %d files at %s%s\n' "${#files[@]}" "$repo" \
+  "$( (($# == ${#files[@]})) || echo ", $(($# - ${#files[@]})) there already")" >&2

@@ -87,6 +87,15 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
   [ -z "$output" ]
 }
 
+@test "--list names the apps, asking nothing of the AUR" {
+  : >"$AUR_JSON"
+  run apps --list
+  [ "$status" -eq 0 ]
+  [ "$output" = "google-chrome
+visual-studio-code-bin" ]
+  [ -z "$(built)" ]
+}
+
 @test "--update rebuilds what is behind and installs nothing new" {
   echo "google-chrome 141.0-1" >>"$INSTALLED"
   run apps --update --noconfirm

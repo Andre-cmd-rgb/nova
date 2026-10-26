@@ -1,0 +1,94 @@
+#!/bin/bash
+# nova:summary=Verify the Raspberry Pi's boot partition before and after kernel changes
+# nova:args=<pre|post|status>
+# nova:hidden=true
+#
+# The Pi's firmware boots kernel8.img and its initramfs straight from the FAT
+# partition mounted at /boot. A kernel update while that partition is not
+# mounted writes them into the root filesystem's /boot instead, where the
+# firmware never looks: the Pi starts the old kernel, whose modules the update
+# removed, and comes up without its Wi-Fi, USB or screen.
+#
+# Called by the pacman hooks 00-nova-boot-check-pre and 95-nova-boot-check-post,
+# as the x86 nova-boot-check is, and by nova update and nova doctor.
+#   pre     aborts the transaction (exit 1) when /boot is not the boot partition
+#   post    reports loudly when the boot partition does not hold the installed
+#           kernel; pacman cannot abort after the fact
+#   status  prints what is wrong and exits non-zero, for humans
+# NOVA_BOOT_CHECK=skip bypasses pre and post.
+
+set -euo pipefail
+
+ROOT=${NOVA_ROOT:-} # a test seam: prefix for every path
+
+# The kernel version a kernel image carries, from its "Linux version" banner.
+image_version() {
+  local banner
+  banner=$(LC_ALL=C grep -aom1 'Linux version [^ ]*' "$1" 2>/dev/null) || return 1
+  printf '%s\n' "${banner#Linux version }"
+}
+
+# Prints one line per problem; succeeds when there is none.
+problems() { # mode: pre checks the mount only
+  local mode=$1 boot=$ROOT/boot fstype image version found=0 initramfs
+  fstype=$(findmnt -rno FSTYPE --mountpoint "$boot" 2>/dev/null || true)
+  if [[ $fstype != vfat ]]; then
+    echo "the boot partition is not mounted at /boot (mount it: sudo mount /boot)"
+    return 0
+  fi
+  [[ $mode != pre ]] || return 0
+
+  for image in "$boot"/kernel*.img; do
+    [[ -f $image ]] || continue
+    found=1
+    if ! version=$(image_version "$image"); then
+      echo "/boot/${image##*/} does not look like a kernel"
+    elif [[ ! -d $ROOT/usr/lib/modules/$version ]]; then
+      echo "/boot/${image##*/} is kernel $version, whose modules are not installed"
+    fi
+  done
+  ((found)) || echo "/boot holds no kernel (kernel8.img)"
+
+  # config.txt names the initramfs the firmware loads next to the kernel.
+  initramfs=$(sed -nE 's/^[[:space:]]*initramfs[[:space:]]+([^[:space:]]+).*/\1/p' "$boot/config.txt" 2>/dev/null | tail -n 1)
+  if [[ -n $initramfs && ! -s $boot/$initramfs ]]; then
+    echo "/boot/$initramfs, which config.txt loads, is missing"
+  fi
+}
+
+main() {
+  local mode=${1:-} found
+  case $mode in
+    pre | post | status) ;;
+    *)
+      echo "Usage: nova-boot-check <pre|post|status>" >&2
+      exit 2
+      ;;
+  esac
+  if [[ $mode != status && ${NOVA_BOOT_CHECK:-} == skip ]]; then
+    exit 0
+  fi
+
+  found=$(problems "$mode")
+  if [[ -z $found ]]; then
+    [[ $mode != status ]] || echo "The boot partition holds the installed kernel."
+    exit 0
+  fi
+  case $mode in
+    pre) echo "nova-boot-check: not changing kernels: $found" >&2 ;;
+    post)
+      echo "nova-boot-check: WARNING: the Pi may not start the new kernel:" >&2
+      sed 's/^/  /' <<<"$found" >&2
+      echo "Fix it before restarting (NOVA_BOOT_CHECK=skip overrides the check)." >&2
+      ;;
+    status)
+      echo "The boot partition is not ready to start this Pi:"
+      sed 's/^/  /' <<<"$found"
+      ;;
+  esac
+  exit 1
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

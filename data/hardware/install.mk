@@ -12,6 +12,7 @@ SHELL_SOURCES   += $(wildcard $(HARDWARE_SRC)/bin/*)
 install-hardware:
 	install -Dm755 -t $(DESTDIR)$(NOVA_BIN) $(HARDWARE_SRC)/bin/*
 	install -Dm644 $(HARDWARE_SRC)/models $(DESTDIR)$(NOVA_SHARE)/hardware/models
+	install -Dm644 $(HARDWARE_SRC)/ddc-reversed $(DESTDIR)$(NOVA_SHARE)/hardware/ddc-reversed
 	cd $(HARDWARE_SRC) && for f in $$(find */ -type f ! -path 'bin/*' ! -path 'hooks/*' ! -path 'uwsm/*'); do \
 	  install -Dm644 "$$f" "$(DESTDIR)$(NOVA_SHARE)/hardware/$$f"; \
 	done

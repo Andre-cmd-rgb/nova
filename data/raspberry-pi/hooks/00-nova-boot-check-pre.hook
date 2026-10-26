@@ -1,0 +1,12 @@
+# The Raspberry Pi's: a kernel goes on the boot partition, or not at all.
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/modules/*/vmlinuz
+
+[Action]
+Description = Checking the boot partition before changing kernels...
+When = PreTransaction
+Exec = /usr/lib/nova/bin/nova-boot-check pre
+AbortOnFail

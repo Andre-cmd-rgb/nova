@@ -1,0 +1,402 @@
+#!/bin/bash
+# nova:summary=Set up a Raspberry Pi the first time Nova's image starts on it
+# nova:hidden=true
+#
+# Nova's image for a Raspberry Pi 5 has no account, name or keyboard layout of
+# its own yet. This asks for them on the first console, before the greeter,
+# with the screens nova-install asks a PC's on (installer/setup.bash), and sets
+# the Pi up the way nova-install sets up a PC: one screen each for the
+# keyboard, this computer, the network, you, and what it is about to do. The
+# time zone comes before the network, since it says which country's Wi-Fi
+# channels the Pi may use. Esc steps back; Ctrl+C at a question, or a step
+# that fails, starts over from the first screen.
+#
+# Before the questions it grows the root partition to the end of the card,
+# and gives pacman a keyring of the Pi's own, which an image cannot ship.
+#
+# nova-first-boot.service runs it on the first start only (ConditionFirstBoot):
+# until it has finished, each start is the first, so a setup cut short (the
+# power pulled, say) is asked again at the next.
+#
+# The functions are sourceable (tests/unit/raspberry-pi/first-boot.bats); main
+# runs only when executed. NOVA_* variables move its paths, for the tests.
+
+set -euo pipefail
+
+SHARE=${NOVA_SETUP_SHARE:-/usr/share/nova}
+TARGET=${NOVA_TARGET:-/}
+LOG=${NOVA_FIRST_BOOT_LOG:-/var/log/nova-first-boot.log}
+BOOT=${NOVA_BOOT:-/boot}
+NM_CONNECTIONS=${NOVA_NM_CONNECTIONS:-/etc/NetworkManager/system-connections}
+ZONE_TAB=${NOVA_ZONE_TAB:-/usr/share/zoneinfo/zone.tab}
+# What the network is needed for: the AUR, where Chrome and VS Code come from.
+PROBE=https://aur.archlinux.org/
+
+# shellcheck source=installer/ui.bash
+source "$SHARE/ui.bash"
+# shellcheck source=installer/setup.bash
+source "$SHARE/setup.bash"
+UI_STOPPED="Starting over."
+
+say() { echo >&2; ui_title "$*"; }
+info() { ui_note "$*"; }
+warn() { ui_warn "$*"; }
+die() {
+  echo >&2
+  ui_error "nova-first-boot: $*"
+  exit 1
+}
+
+screen() { ui_header "Set up Nova${1:+  ·  $1}"; }
+
+# The answers, besides the ones setup.bash's screens keep. NETWORK is the Pi's
+# network: the Wi-Fi network's name, "Ethernet", or empty for none. ONLINE is 1
+# once the AUR answers through it, which a network joined behind a captive
+# portal or a router's parental control does not.
+KEYMAP='' FULLNAME='' ACCOUNT='' PASSWORD='' COMPUTER='' TIMEZONE='' NETWORK='' ONLINE=0
+
+# ------------------------------------------------------------- the card
+
+# The image is only as big as what it holds, the card bigger. The root is the
+# last partition, so it grows to the card's end, and its filesystem with it,
+# both while mounted. Growing what has grown already changes nothing.
+grow_root() {
+  local part disk number
+  part=$(findmnt -no SOURCE /)
+  disk=/dev/$(lsblk -no PKNAME "$part")
+  number=$(<"/sys/class/block/${part##*/}/partition")
+  logged sfdisk --no-reread --no-tell-kernel -N "$number" "$disk" <<<', +'
+  logged partx -u -n "$number" "$disk"
+  logged resize2fs "$part"
+}
+
+# An image cannot ship a pacman keyring: its secret key would be every Pi's.
+# Each makes its own, and trusts the packagers of the keyrings installed
+# (archlinuxarm-keyring and nova-keyring). An attempt after one cut short does
+# both again, as that one may have left a keyring short of a key. gpg skips a
+# key made later than the clock says it is, and a Pi's clock is behind until
+# it is online (fact 12 in docs/hardware/raspberry-pi-5.md).
+init_keyring() {
+  logged pacman-key --init
+  logged pacman-key --populate ||
+    die "pacman's keyring refused a packager's key, with the clock at $(date '+%F %R'). The log is in $LOG."
+}
+
+# ------------------------------------------------------------- the network
+
+online() { curl -fsI --max-time 5 -o /dev/null "$PROBE"; }
+
+wait_online() { # seconds
+  local i
+  for ((i = 0; i < $1; i++)); do
+    online && return 0
+    sleep 1
+  done
+  return 1
+}
+
+wifi_device() { nmcli -t -f DEVICE,TYPE device 2>/dev/null | awk -F: '$2 == "wifi" { print $1; exit }'; }
+
+# How the Pi is online, for the summary: Ethernet, or the Wi-Fi network's name.
+current_network() {
+  local dev type state
+  while IFS=: read -r dev type state; do
+    [[ $state == connected ]] || continue
+    case $type in
+      ethernet) echo Ethernet && return 0 ;;
+      wifi) nmcli -g GENERAL.CONNECTION device show "$dev" 2>/dev/null | sed 's/\\\(.\)/\1/g' && return 0 ;;
+    esac
+  done < <(nmcli -t -f DEVICE,TYPE,STATE device 2>/dev/null)
+  echo "connected"
+}
+
+# The networks in reach, one "name<TAB>security" line each, strongest first and
+# each name once. The security is psk, sae (WPA3 alone) or open; a network
+# that needs a certificate (802.1X) or WEP is left for Settings.
+wifi_networks() { # device
+  nmcli -t -e yes -f SIGNAL,SECURITY,SSID device wifi list --rescan yes ifname "$1" 2>/dev/null |
+    awk '
+      # nmcli escapes a ":" or "\" inside a field with a "\".
+      {
+        n = 0; field[0] = ""
+        for (i = 1; i <= length($0); i++) {
+          c = substr($0, i, 1)
+          if (c == "\\") { field[n] = field[n] substr($0, ++i, 1) }
+          else if (c == ":") { field[++n] = "" }
+          else { field[n] = field[n] c }
+        }
+        signal = field[0]; security = field[1]; ssid = field[2]
+        if (ssid == "" || security ~ /802\.1X|WEP/) next
+        if (security == "" || security == "--") kind = "open"
+        else if (security ~ /WPA3/ && security !~ /WPA[12]/) kind = "sae"
+        else kind = "psk"
+        print signal "\t" ssid "\t" kind
+      }' |
+    sort -t$'\t' -k1,1nr | awk -F'\t' '!seen[$2]++ { print $2 "\t" $3 }'
+}
+
+# A string as NetworkManager's files hold it (GLib's key files): a backslash,
+# a line break, a tab and a leading space are escaped.
+keyfile_value() {
+  local value=${1//\\/\\\\}
+  value=${value//$'\n'/\\n}
+  value=${value//$'\t'/\\t}
+  value=${value//$'\r'/\\r}
+  [[ $value != ' '* ]] || value="\\s${value:1}"
+  printf '%s' "$value"
+}
+
+# A network's name byte by byte, which holds any name exactly.
+keyfile_bytes() {
+  local LC_ALL=C
+  printf '%s' "$1" | od -An -v -tu1 | tr -s ' \n' ' ' | sed 's/^ //; s/ $//; s/ /;/g; s/$/;/'
+}
+
+# A network NetworkManager joins from now on, written as its own file, so the
+# password never goes on a command line, where any process can read it. Prints
+# the connection's file.
+nm_write_wifi() { # ssid security(psk|sae|open) [password] [hidden]
+  local ssid=$1 security=$2 password=${3:-} hidden=${4:-} uuid file
+  uuid=$(</proc/sys/kernel/random/uuid)
+  file=$NM_CONNECTIONS/$(printf '%s' "$ssid" | tr -c 'A-Za-z0-9_-' _ | head -c 40)-${uuid:0:8}.nmconnection
+  mkdir -p -- "$NM_CONNECTIONS"
+  {
+    printf '[connection]\nid=%s\nuuid=%s\ntype=wifi\n\n' "$(keyfile_value "$ssid")" "$uuid"
+    printf '[wifi]\nmode=infrastructure\nssid=%s\n' "$(keyfile_bytes "$ssid")"
+    [[ -z $hidden ]] || echo 'hidden=true'
+    if [[ $security != open ]]; then
+      printf '\n[wifi-security]\nkey-mgmt=%s\npsk=%s\n' \
+        "$([[ $security == sae ]] && echo sae || echo wpa-psk)" "$(keyfile_value "$password")"
+    fi
+    printf '\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n'
+  } | install -m 600 /dev/stdin "$file"
+  printf '%s\n' "$file"
+}
+
+# Joins the network a connection file describes; a network that cannot be
+# joined is forgotten again.
+nm_join() { # file
+  local uuid
+  uuid=$(sed -n 's/^uuid=//p' "$1")
+  if nmcli connection load "$1" >/dev/null 2>&1 &&
+    nmcli --wait 30 connection up uuid "$uuid" >/dev/null 2>&1; then
+    return 0
+  fi
+  nmcli connection delete uuid "$uuid" >/dev/null 2>&1 || rm -f -- "$1"
+  return 1
+}
+
+# Returns 0 once a network is joined, 1 for Esc, 2 to go on without a network.
+connect_wifi() { # device
+  local dev=$1 networks=() options=() i ssid security hidden file problem=''
+  while :; do
+    screen "network"
+    ui_note "Looking for Wi-Fi networks..."
+    mapfile -t networks < <(wifi_networks "$dev")
+    options=()
+    for i in "${!networks[@]}"; do
+      IFS=$'\t' read -r ssid security <<<"${networks[i]}"
+      ssid=${ssid//[,$'\t']/ }
+      [[ $security != open ]] || ssid+="  (open)"
+      options+=("$ssid"$'\t'"$i")
+    done
+    options+=("A hidden network"$'\t'hidden "Look again"$'\t'again "Without a network"$'\t'none)
+    screen "network"
+    [[ -z $problem ]] || ui_warn "$problem"
+    ui_ask ui_choose "Which Wi-Fi network?" "" "${options[@]}" || return 1
+    hidden=''
+    case $REPLY in
+      again) problem='' && continue ;;
+      none) return 2 ;;
+      hidden)
+        ui_ask ui_input "The network's name" || continue
+        ssid=$REPLY security=psk hidden=yes
+        ;;
+      *) IFS=$'\t' read -r ssid security <<<"${networks[REPLY]}" ;;
+    esac
+    if [[ $security == open ]]; then
+      file=$(nm_write_wifi "$ssid" open)
+    else
+      ui_ask ui_secret "Password for $ssid" || continue
+      if ((${#REPLY} < 8)); then
+        problem="A Wi-Fi password has 8 characters or more."
+        continue
+      fi
+      file=$(nm_write_wifi "$ssid" "$security" "$REPLY" "$hidden")
+    fi
+    ui_note "Joining $ssid..."
+    if nm_join "$file"; then
+      # Joined is the Pi's network, internet or not: what needs the internet
+      # waits for it, and the summary says so.
+      NETWORK=$ssid
+      ! wait_online 20 || ONLINE=1
+      return 0
+    fi
+    problem="Could not connect to $ssid."
+  done
+}
+
+step_network() {
+  local dev status=0
+  screen "network"
+  ui_note "Checking the network..."
+  if wait_online 8; then
+    NETWORK=$(current_network) ONLINE=1
+    return 0
+  fi
+  NETWORK='' ONLINE=0
+  dev=$(wifi_device)
+  if [[ -n $dev ]]; then
+    connect_wifi "$dev" || status=$?
+    ((status != 1)) || return 1
+    return 0
+  fi
+  ui_ask ui_confirm "No network. Plug in an Ethernet cable, then Yes; No goes on without one." || return 0
+  ! wait_online 15 || NETWORK=Ethernet ONLINE=1
+  return 0
+}
+
+# ------------------------------------------------------------- the questions
+
+step_keymap() {
+  ui_ask choose_keymap "${KEYMAP:-us}" || return 1
+  KEYMAP=$REPLY
+  loadkeys "$KEYMAP" >/dev/null 2>&1 || true
+}
+
+# The Wi-Fi channels a country allows: the country of the time zone, in
+# zone.tab. A zone of no country (UTC) keeps to those every country allows.
+regdom_for() { # timezone
+  awk -F'\t' -v tz="$1" '!/^#/ && $3 == tz { print $1; exit }' "$ZONE_TAB"
+}
+
+# Set now, so the networks the country allows are found, and on the kernel's
+# command line, where the Wi-Fi reads it at every start.
+use_regdom() { # timezone
+  local country
+  country=$(regdom_for "$1")
+  [[ -n $country ]] || return 0
+  iw reg set "$country" >/dev/null 2>&1 || true
+  sed -i -E "1 { s/ cfg80211\.ieee80211_regdom=[^ ]*//g; s/\$/ cfg80211.ieee80211_regdom=$country/ }" "$BOOT/cmdline.txt"
+}
+
+summary_lines() {
+  echo "Account      $ACCOUNT ($FULLNAME) on $COMPUTER"
+  echo "Time zone    $TIMEZONE, keyboard $KEYMAP"
+  if [[ -z $NETWORK ]]; then
+    echo "Network      none: Chrome, VS Code, Claude Code and Codex come later"
+  elif ((ONLINE)); then
+    echo "Network      $NETWORK"
+  else
+    echo "Network      $NETWORK, no internet: Chrome, VS Code, Claude Code and Codex come later"
+  fi
+}
+
+step_summary() {
+  local lines=()
+  mapfile -t lines < <(summary_lines)
+  screen "ready"
+  ui_box "${lines[@]}"
+  echo >&2
+  ui_ask ui_confirm "Set up Nova with these?" yes
+}
+
+# The steps in order, Esc stepping back one; on the first, Esc stays there.
+questions_on_screen() {
+  local steps=(keymap computer network you summary) i=0
+  while ((i < ${#steps[@]})); do
+    if "step_${steps[i]}"; then
+      [[ ${steps[i]} != computer ]] || use_regdom "$TIMEZONE"
+      i=$((i + 1))
+    elif ((i > 0)); then
+      i=$((i - 1))
+    fi
+  done
+}
+
+# ------------------------------------------------------------- the setup
+
+# An account an earlier attempt made before it was cut short is made again
+# from these answers: useradd refuses a name that is taken. Nothing else has
+# made one on a Pi that has never finished its first start.
+forget_earlier_attempt() {
+  local name uid
+  while IFS=: read -r name _ uid _; do
+    ((uid >= 1000 && uid < 60000)) || continue
+    logged userdel -r "$name"
+  done <"$TARGET/etc/passwd"
+}
+
+set_up() {
+  set -E
+  trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
+  # The attempt before keeps its log beside this one's.
+  [[ ! -s $LOG ]] || mv -f -- "$LOG" "$LOG.1"
+  : >"$LOG"
+  screen "getting ready"
+  info "Making room on the card, and a keyring of this Pi's own..."
+  grow_root
+  init_keyring
+  questions_on_screen
+
+  # From here on it does not stop halfway: Ctrl+C reaches no step.
+  trap '' INT
+  screen "setting up"
+  say "Setting up $COMPUTER"
+  write_keyboard "$KEYMAP"
+  write_names "$COMPUTER" "$TIMEZONE"
+  logged hostnamectl hostname "$COMPUTER"
+  forget_earlier_attempt
+  create_user "$ACCOUNT" "$FULLNAME" "$PASSWORD"
+  unset PASSWORD
+  # This start goes on to the lock screen, which needs the tally file the
+  # next starts make at boot.
+  logged systemd-tmpfiles --create /etc/tmpfiles.d/nova-faillock.conf
+  install_apps "$ACCOUNT"
+  # The console layout, for a prompt before the root is mounted.
+  say "Rebuilding the initramfs"
+  logged mkinitcpio -P
+}
+
+# A step that fails ends the attempt, and this says which. Subshells inherit the
+# trap (set -E), so only the outermost shell speaks.
+stopped() { # line command
+  ((BASH_SUBSHELL > 1)) && return
+  echo >&2
+  ui_error "nova-first-boot: the setup stopped at line $1 ($2). The log is in $LOG."
+}
+
+# Each attempt in a subshell of its own, so Ctrl+C or a failure ends only the
+# attempt, and the next starts from the first screen with nothing left over.
+# Returns once one has finished.
+attempts() {
+  local status
+  trap 'true' INT
+  while :; do
+    # A statement of its own, not `(set_up) || status=$?`: in a subshell a ||
+    # tests, bash ignores set -e and the ERR trap, and every step would run on
+    # past one that failed.
+    set +e
+    (
+      set -e
+      set_up
+    )
+    status=$?
+    set -e
+    ((status != 0)) || return 0
+    if ((status != 130)); then
+      ui_note "Press Enter to start over."
+      read -r _ || sleep 5
+    fi
+  done
+}
+
+main() {
+  ((EUID == 0)) || die "run me as root."
+  # The greeter starts once an attempt has finished, and not before.
+  attempts
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

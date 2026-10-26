@@ -1,8 +1,9 @@
 # Approving a candidate, by hand once it has been tested: Actions → promote →
 # Run, with the candidate's tag. The same commit is tagged as the final
 # version (v1.1.0-rc.2 becomes v1.1.0) and built again against the candidate's
-# own Arch snapshot, so the release is what was tested under its final name,
-# and published as the latest release. See docs/releasing.md.
+# own Arch snapshot and Arch Linux ARM set, so the release is what was tested
+# under its final name, and published as the latest release. See
+# docs/releasing.md.
 name: promote
 
 on:
@@ -64,5 +65,6 @@ jobs:
     with:
       tag: ${{ needs.tag.outputs.tag }}
       arch_date: ${{ needs.tag.outputs.arch_date }}
+      alarm_from: ${{ inputs.candidate }}
       publish: true
     secrets: inherit

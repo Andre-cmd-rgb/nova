@@ -15,7 +15,9 @@ pkgname=nova
 pkgver=0.0.0
 pkgrel=1
 pkgdesc='A small, fast Arch Linux desktop: Hyprland, a Quickshell shell, one CLI and a laptop power manager'
-arch=(x86_64)
+# aarch64 is the Raspberry Pi 5 on Arch Linux ARM: its firmware boots it, so it
+# has no Limine, no snapshots and no x86 boot checks.
+arch=(x86_64 aarch64)
 url='https://github.com/Andre-cmd-rgb/nova'
 license=(MIT)
 depends=(
@@ -74,13 +76,7 @@ depends=(
   wtype          # paste into the focused window
   libvips        # vipsthumbnail, for the background and theme pickers
 
-  # Boot chain and snapshots
-  btrfs-progs
-  snapper
-  snap-pac
-  limine
-  limine-entry-tool
-  limine-snapper-sync
+  # Boot chain (the rest is the x86 one, below)
   mkinitcpio
   zram-generator
 
@@ -112,6 +108,15 @@ depends=(
   systemd
   util-linux     # setpriv, rfkill, logger
 )
+# Limine boots from UEFI and snapper rolls a btrfs root back.
+depends_x86_64=(
+  btrfs-progs
+  snapper
+  snap-pac
+  limine
+  limine-entry-tool
+  limine-snapper-sync
+)
 makedepends=(
   git            # pkgver() and the VCS source
   jq             # tools/plugin-index
@@ -121,7 +126,7 @@ checkdepends=(
   bats
   jq
 )
-optdepends=(
+optdepends_x86_64=(
   'linux-nova: the Nova kernel (BORE scheduler, x86-64-v3)'
   'linux-nova-headers: headers for building out-of-tree modules for linux-nova'
   'linux-lts: fallback kernel, kept as the second boot entry'
@@ -131,13 +136,15 @@ optdepends=(
   'intel-ucode: Intel CPU microcode updates'
   'sof-firmware: audio firmware for recent Intel laptops (ThinkPad P1)'
   'linux-firmware: firmware for Wi-Fi, GPUs and other hardware'
+  'ddcutil: brightness of external monitors'
+)
+optdepends=(
   'fprintd: fingerprint unlock'
   'btop: system monitor, themed by nova theme set'
   'gpu-screen-recorder: screen recording'
   'ffmpeg: trimming screen recordings'
   'tesseract-data-eng: copy text from a screen region'
   'imagemagick: bar text color matched to the background'
-  'ddcutil: brightness of external monitors'
   'modemmanager: mobile data, on laptops with a modem'
   'fwupd: firmware updates (nova update firmware)'
 )
@@ -147,8 +154,6 @@ install=nova.install
 # Configuration under /etc: pacman keeps local edits across upgrades.
 backup=(
   etc/UPower/UPower.conf.d/10-nova.conf
-  etc/limine-entry-tool.d/10-nova.conf
-  etc/mkinitcpio.conf.d/10-nova.conf
   etc/pam.d/nova-greeter
   etc/pam.d/nova-greeter-session
   etc/pam.d/nova-lock-fingerprint
@@ -156,7 +161,12 @@ backup=(
   etc/pam.d/nova-sudo
   etc/pam.d/polkit-1
   etc/sudoers.d/20-nova-pam
+  etc/mkinitcpio.conf.d/10-nova.conf
 )
+# Limine's, which a Pi has none of.
+if [[ $CARCH == x86_64 ]]; then
+  backup+=(etc/limine-entry-tool.d/10-nova.conf)
+fi
 _repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)
 source=("nova::${NOVA_SOURCE:-git+file://$_repo}")
 sha256sums=(SKIP)
@@ -200,7 +210,7 @@ check() {
 
 package() {
   cd nova
-  make DESTDIR="$pkgdir" install
+  make DESTDIR="$pkgdir" NOVA_ARCH="$CARCH" install
 
   install -Dm644 LICENSE NOTICE -t "$pkgdir/usr/share/licenses/$pkgname/"
 }

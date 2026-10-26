@@ -18,7 +18,19 @@ local function glob_matches(pattern, value)
   return value:match(lua_pattern) ~= nil
 end
 
-local version = read_line("/sys/class/dmi/id/product_version")
+-- A PC names itself in its DMI tables; a board without them (a Raspberry Pi)
+-- in its devicetree, where the name ends at a NUL.
+local function model()
+  local dmi = read_line("/sys/class/dmi/id/product_version")
+  if dmi then return dmi end
+  local devicetree = read_line("/proc/device-tree/model")
+  if not devicetree then return nil end
+  local nul = devicetree:find("\0", 1, true)
+  local name = nul and devicetree:sub(1, nul - 1) or devicetree
+  return (name:gsub("%s+$", ""))
+end
+
+local version = model()
 local models = io.open(paths.nova_path .. "/hardware/models")
 if version and models then
   for line in models:lines() do

@@ -1,0 +1,25 @@
+# The questions a Pi from Nova's image asks the first time it starts, on the
+# first console, before the greeter (greetd.service.d/10-nova-first-boot.conf).
+# Until first-boot-complete.target is reached, every start is the first, so a
+# setup cut short is asked again; once it is, this never runs again.
+[Unit]
+Description=Set up Nova on this Raspberry Pi
+Documentation=file:///usr/lib/nova/bin/nova-first-boot
+ConditionFirstBoot=yes
+After=systemd-user-sessions.service NetworkManager.service
+Wants=NetworkManager.service first-boot-complete.target
+Before=first-boot-complete.target getty@tty1.service
+Conflicts=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nova/bin/nova-first-boot
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+# It takes as long as the person answering does, and then the apps build.
+TimeoutStartSec=infinity

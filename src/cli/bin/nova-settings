@@ -13,6 +13,8 @@ set -euo pipefail
 NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
 SUPPLY=${NOVA_POWER_SUPPLY:-/sys/class/power_supply}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+DEVICETREE=${NOVA_DEVICETREE_PATH:-/proc/device-tree}
+CPUINFO=${NOVA_CPUINFO:-/proc/cpuinfo}
 RFKILL=${NOVA_RFKILL_PATH:-/sys/class/rfkill}
 PAGES="wifi bluetooth mobile-data sound battery screentime appearance bar lock apps updates about"
 
@@ -147,22 +149,35 @@ header_value() { # file key: a "# key: value" line nova update writes
 }
 
 about_json() {
-  local model cpu mem_kb disk
+  local model cpu mem_kb disk base base_date
   model=$(cat "$DMI/product_version" 2>/dev/null || true)
   # Lenovo keeps the marketing name in product_version; others in product_name.
   [[ -n $model && $model != *"System Product"* && $model != "None" ]] ||
     model=$(cat "$DMI/product_name" 2>/dev/null || true)
-  cpu=$(sed -n -E 's/^model name\s*:\s*//p;T;q' /proc/cpuinfo 2>/dev/null | sed -E 's/\((R|TM)\)//g; s/ CPU//; s/ @.*//; s/ +/ /g')
+  # A board without DMI tables (a Raspberry Pi) names itself in its devicetree.
+  [[ -n $model ]] || model=$(tr -d '\0' 2>/dev/null <"$DEVICETREE/model" || true)
+  cpu=$(sed -n -E 's/^model name\s*:\s*//p;T;q' "$CPUINFO" 2>/dev/null | sed -E 's/\((R|TM)\)//g; s/ CPU//; s/ @.*//; s/ +/ /g')
+  # An Arm CPU's /proc/cpuinfo has no model name; lscpu names its cores.
+  [[ -n $cpu ]] || cpu=$(LC_ALL=C lscpu 2>/dev/null |
+    awk -F': *' '/^Vendor ID:/ { vendor = $2 } /^Model name:/ { name = $2 }
+      END { if (name != "") print (vendor != "" ? vendor " " : "") name }')
+  # The Arch packages the release was tested with: on a PC the Archive's
+  # snapshot, on a Raspberry Pi the Arch Linux ARM set nova update pins.
+  if [[ -r /etc/pacman.d/nova-alarm ]]; then
+    base="Arch Linux ARM" base_date=$(header_value /etc/pacman.d/nova-alarm alarm-date)
+  else
+    base="Arch Linux" base_date=$(header_value /etc/pacman.d/nova-mirrorlist arch-date)
+  fi
   mem_kb=$(awk '/^MemTotal:/ { print $2; exit }' /proc/meminfo 2>/dev/null || echo 0)
   disk=$(df -B1 --output=size,avail / 2>/dev/null | awk 'NR == 2 { print $1 "\t" $2 }')
   jq -nc \
     --arg version "$(pacman -Q nova 2>/dev/null | awk '{ sub(/-[0-9]+$/, "", $2); print $2 }')" \
     --arg release "$(header_value /etc/pacman.d/nova-repo nova-release)" \
-    --arg archDate "$(header_value /etc/pacman.d/nova-mirrorlist arch-date)" \
+    --arg base "$base" --arg archDate "$base_date" \
     --arg model "$model" --arg vendor "$(cat "$DMI/sys_vendor" 2>/dev/null || true)" \
     --arg cpu "$cpu" --argjson memory "$((${mem_kb:-0} * 1024))" \
     --arg disk "$disk" --arg kernel "$(uname -r)" --arg hostname "$(cat /proc/sys/kernel/hostname 2>/dev/null || true)" \
-    '{version: $version, release: $release, archDate: $archDate, model: $model, vendor: $vendor,
+    '{version: $version, release: $release, base: $base, archDate: $archDate, model: $model, vendor: $vendor,
       cpu: $cpu, memory: $memory, kernel: $kernel, hostname: $hostname,
       disk: ($disk | split("\t") | {size: ((.[0] // "0") | tonumber), free: ((.[1] // "0") | tonumber)})}'
 }
@@ -186,6 +201,7 @@ state() {
     --argjson defaults "$(defaults_json)" \
     --argjson about "$(about_json)" \
     --argjson candidates "$([[ $(quiet nova-update --candidates) == on ]] && echo true || echo false)" \
+    --argjson recovery "$(command -v nova-recovery >/dev/null && echo true || echo false)" \
     '{appearance: {theme: $theme, themes: $themes, background: $background,
                    font: $font, fonts: $fonts, textSize: $textSize},
       battery: $battery,
@@ -198,7 +214,7 @@ state() {
              screensaver: (if ($config.idle.screensaver | type) == "number" then $config.idle.screensaver else 180 end),
              fingerprint: $fingerprint},
       apps: $defaults,
-      updates: {candidates: $candidates},
+      updates: {candidates: $candidates, recovery: $recovery},
       about: $about}'
 }
 

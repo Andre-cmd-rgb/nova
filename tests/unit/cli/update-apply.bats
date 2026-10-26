@@ -1,14 +1,14 @@
 #!/usr/bin/env bats
 
 # nova-update-apply, the root half of nova update, under a scratch root
-# (NOVA_ROOT): the boot entries it checks after an update, and what a failed
-# pacman leaves behind.
+# (NOVA_ROOT): the boot entries it checks after an update, what a failed
+# pacman leaves behind, and the Raspberry Pi's way of doing both.
 
 load ../test_helper
 
 setup() {
   setup_scratch
-  export NOVA_ROOT=$SCRATCH/root
+  export NOVA_ROOT=$SCRATCH/root NOVA_ARCH=x86_64
   kver=7.2.11-arch1-1-nova
   put "$NOVA_ROOT/usr/lib/modules/$kver/pkgbase" linux-nova
   put "$NOVA_ROOT/usr/lib/modules/$kver/vmlinuz"
@@ -111,4 +111,80 @@ uki() { # name kernel-version: an image whose setup header names that kernel
   [ ! -e "$MIRRORLIST.nova-prev" ]
   [ ! -e "$SYNC_DIR.nova-prev" ]
   [ "$(cat "$SYNC_DIR/core.db")" = 'old core' ]
+}
+
+# The script as a Raspberry Pi runs it.
+on_a_pi() {
+  NOVA_ARCH=aarch64
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/src/cli/bin/nova-update-apply"
+  tag=v1.1.0 nova_repo=https://example.org/repo alarm_date=2026/10/20 alarm_pool=https://example.org/alarm/aarch64
+  mkdir -p "$NOVA_ROOT/etc/pacman.d"
+}
+
+@test "a Pi is pointed at its release's Arch Linux ARM packages and aarch64 folder" {
+  on_a_pi
+  write_config
+  [ "$(cat "$ALARMFILE")" = "# Managed by nova update; the next update rewrites this file.
+# nova-release: v1.1.0
+# alarm-date: 2026/10/20
+CacheServer = https://example.org/alarm/aarch64
+Server = https://example.org/repo/aarch64" ]
+  grep -qx 'Server = https://example.org/repo/aarch64' "$REPOFILE"
+  [ ! -e "$MIRRORLIST" ]
+}
+
+@test "a failed pacman on a Pi puts back its own files" {
+  on_a_pi
+  put "$ALARMFILE" 'old alarm'
+  put "$REPOFILE" 'old repo'
+  put "$SYNC_DIR/nova-alarm.db" 'old set'
+  backup_config
+  write_config
+  put "$SYNC_DIR/nova-alarm.db" 'new set'
+  run restore_config
+  [ "$(cat "$ALARMFILE")" = 'old alarm' ]
+  [ "$(cat "$REPOFILE")" = 'old repo' ]
+  [ "$(cat "$SYNC_DIR/nova-alarm.db")" = 'old set' ]
+  drop_backup
+  [ ! -e "$ALARMFILE.nova-prev" ] && [ ! -e "$REPOFILE.nova-prev" ]
+}
+
+# A whole update on a Pi, with the helpers next to the script as they are
+# installed, and pacman, snapper and the boot check stubbed.
+pi_update() { # boot-check status
+  mkdir -p "$SCRATCH/lib" "$SCRATCH/bin" "$NOVA_ROOT/etc/pacman.d"
+  cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
+  printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/lib/nova-hw-detect"
+  printf '#!/bin/bash\necho "nova-boot-check $*" >>"$SCRATCH/calls"\nexit %s\n' "$1" >"$SCRATCH/lib/nova-boot-check"
+  printf '#!/bin/bash\necho "${0##*/} $*" >>"$SCRATCH/calls"\n' >"$SCRATCH/bin/pacman"
+  cp "$SCRATCH/bin/pacman" "$SCRATCH/bin/snapper"
+  chmod +x "$SCRATCH"/lib/* "$SCRATCH"/bin/*
+  PATH="$SCRATCH/bin:$PATH" NOVA_ARCH=aarch64 "$SCRATCH/lib/nova-update-apply" --tag v1.1.0 --version 1.1.0 \
+    --arch-date 2026/10/19 --nova-repo https://example.org/repo \
+    --alarm-date 2026/10/20 --alarm-pool https://example.org/alarm/aarch64 --noconfirm
+}
+
+@test "an update on a Pi: its keyring, no snapshots, and the boot partition checked" {
+  run pi_update 0
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/calls")" = "pacman -Syy --needed --noconfirm archlinuxarm-keyring nova-keyring
+pacman -Su --noconfirm
+nova-boot-check status" ]
+  [[ $output == *"Arch Linux ARM packages of 2026/10/20 and v1.1.0"* ]]
+  [[ $output == *"Nova is now on v1.1.0."* ]]
+  [[ $output != *"without snapshots"* ]]
+}
+
+@test "an update on a Pi whose boot partition does not hold the new kernel says so" {
+  run pi_update 1
+  [ "$status" -eq 3 ]
+  [[ $output == *"Do not restart yet"* ]]
+}
+
+@test "a Pi's update needs the release's Arch Linux ARM set" {
+  on_a_pi
+  run main --tag v1.1.0 --version 1.1.0 --arch-date 2026/10/19 --nova-repo https://example.org/repo
+  [ "$status" -ne 0 ]
+  [[ $output == *"bad --alarm-date"* ]]
 }

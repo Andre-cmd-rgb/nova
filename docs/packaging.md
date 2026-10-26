@@ -12,6 +12,14 @@ a release pins, and nothing is built on a laptop except to test a PKGBUILD.
 | `nvidia-open-nova` | Arch's `nvidia-open` packaging | NVIDIA's open modules prebuilt for `linux-nova`, so no DKMS on the laptop |
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
 | `ttfx` | `packaging/ttfx`, its release tag | the screensaver's text effects, in no Arch repository |
+| `mise` | `packaging/mise`, the project's own arm64 build | the developer tools' version manager, which Arch Linux ARM does not package (aarch64 only) |
+
+`nova`, `nova-keyring`, `ttfx` and `mise` are also built for aarch64, the
+Raspberry Pi 5, in Arch Linux ARM on arm64 runners, against the Arch Linux ARM
+databases the release pins (`tools/ci-setup --alarm-dbs`). A PKGBUILD says
+what differs there with makepkg's arch-specific arrays (`depends_x86_64`),
+and `nova` passes `CARCH` to `make install` as `NOVA_ARCH`, which leaves out
+the x86 boot chain and puts in the Pi's pieces.
 
 Arch's own `linux` stands in for `linux-nova` on CPUs older than x86-64-v3,
 with `nvidia-open`, and `linux-lts` is always installed as the fallback entry,
@@ -83,6 +91,14 @@ the tarball pinned by its checksum and the crates by its `Cargo.lock`
 (`cargo fetch --locked`, so the build needs network access). To update: bump
 `pkgver`, then the checksum (`makepkg -g`). The nova package depends on it, so
 release.yml installs it before building nova.
+
+## mise
+
+On x86, Arch's own `extra/mise`. Arch Linux ARM has none, so the Pi gets the
+project's release build for linux-arm64, its tarball pinned by its checksum,
+with self-update switched off (pacman updates it) and the shell completions
+generated at build time. To update: bump `pkgver`, then the checksum
+(`makepkg -g`).
 
 ## nova-keyring
 

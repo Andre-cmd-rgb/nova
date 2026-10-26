@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova:summary=Install Google Chrome and VS Code from their AUR recipes, or update them
-# nova:args=[--update | --check] [--noconfirm]
+# nova:args=[--update | --check | --list] [--noconfirm]
 #
 # Neither may be redistributed, so Nova builds them here from their AUR
 # recipes, which download the vendors' own releases from Google and Microsoft.
@@ -20,6 +20,8 @@
 #   nova apps install --check      print "apps <name>..." for those behind, or
 #                                  "current"; a non-zero exit when the AUR cannot
 #                                  be reached
+#   nova apps install --list       print the apps' AUR names, for the release
+#                                  that pins what building them takes
 #   --noconfirm                    ask nothing (the installer, nova update --yes)
 #
 # NOVA_AUR (the AUR's address) and NOVA_AUR_STATE are for tests.
@@ -36,9 +38,10 @@ for arg in "$@"; do
   case $arg in
     --update) mode=update ;;
     --check) mode=check ;;
+    --list) printf '%s\n' "${apps[@]}" && exit 0 ;;
     --noconfirm) confirm=(--noconfirm) ;;
     *)
-      echo "Usage: nova apps install [--update | --check] [--noconfirm]" >&2
+      echo "Usage: nova apps install [--update | --check | --list] [--noconfirm]" >&2
       exit 2
       ;;
   esac

@@ -11,6 +11,10 @@ NOVA_LIB   := $(PREFIX)/lib/nova
 NOVA_BIN   := $(NOVA_LIB)/bin
 SYSTEMD_SYSTEM := $(PREFIX)/lib/systemd/system
 SYSTEMD_USER   := $(PREFIX)/lib/systemd/user
+# The architecture installed for: x86_64, or aarch64 (a Raspberry Pi 5), which
+# boots from its firmware and so gets none of the x86 boot chain. The nova
+# PKGBUILD passes makepkg's CARCH.
+NOVA_ARCH ?= $(shell uname -m)
 
 INSTALL_TARGETS :=
 SHELL_SOURCES   :=

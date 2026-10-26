@@ -3,9 +3,15 @@
 # builds the installer ISO, installs from it in a virtual machine and boots the
 # result, and only then publishes it: the package repository to the
 # nova-packages bucket on Cloudflare R2, then the GitHub release, which carries
-# only the ISO, nova-usb and release.toml. A draft when a tag is pushed by
-# hand, published when candidate.yml or promote.yml calls it. A tag with a "-"
-# is a pre-release. See docs/releasing.md.
+# only the ISO, nova-usb, the Raspberry Pi image and release.toml. A draft when
+# a tag is pushed by hand, published when candidate.yml or promote.yml calls it.
+# A tag with a "-" is a pre-release. See docs/releasing.md.
+#
+# The Raspberry Pi 5 build runs beside it on arm64 runners, in Arch Linux ARM
+# (tools/alarm-container): Nova's packages for aarch64, built against Arch
+# Linux ARM's databases as the pin job fetched them, the set of Arch Linux ARM
+# packages a Pi installs pinned from those (tools/alarm-pin), and the image a
+# Pi starts from (tools/build-pi-image).
 #
 # Needs the repository secrets NOVA_REPO_KEY (the ASCII-armored private key
 # whose public half is in packaging/nova-keyring) and R2_ACCESS_KEY_ID and
@@ -23,6 +29,9 @@ on:
       arch_date:
         description: Arch Linux Archive date, YYYY/MM/DD (empty for yesterday)
         default: ''
+      alarm_from:
+        description: A release whose Arch Linux ARM set to build on again (empty for today's)
+        default: ''
       publish:
         description: Publish the release instead of leaving a draft
         type: boolean
@@ -33,6 +42,9 @@ on:
         type: string
         required: true
       arch_date:
+        type: string
+        default: ''
+      alarm_from:
         type: string
         default: ''
       publish:
@@ -69,17 +81,36 @@ jobs:
         with:
           ref: ${{ env.TAG }}
       - id: pin
-        name: Pin the Arch snapshot
+        name: Pin the Arch snapshot and the Arch Linux ARM set
         env:
           ARCH_DATE: ${{ inputs.arch_date }}
+          ALARM_FROM: ${{ inputs.alarm_from }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           date=${ARCH_DATE:-$(date -u -d yesterday +%Y/%m/%d)}
-          tools/release-pin --version "$TAG" --date "$date" --verify --out release.toml
+          # Arch Linux ARM's databases as they are now, or as the release
+          # named had them, which keeps them for this (promote.yml).
+          alarm_date=$(date -u +%Y/%m/%d) from=
+          if [[ -n $ALARM_FROM ]]; then
+            gh release download "$ALARM_FROM" --repo "$GITHUB_REPOSITORY" --pattern release.toml --output from.toml
+            value() { sed -n "s/^$1 = \"\(.*\)\"\$/\1/p" from.toml; }
+            if [[ -n $(value alarm_date) ]]; then
+              alarm_date=$(value alarm_date) from=$(value nova_repo)/aarch64/alarm
+            else
+              echo "::warning::$ALARM_FROM has no Raspberry Pi build; this one pins Arch Linux ARM as it is today"
+            fi
+          fi
+          tools/alarm-pin --fetch alarm-dbs ${from:+--from "$from"}
+          tools/release-pin --version "$TAG" --date "$date" --alarm-date "$alarm_date" --verify --out release.toml
           echo "arch_date=$date" >>"$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-toml
           path: release.toml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: alarm-dbs
+          path: alarm-dbs/
 
   kernel:
     needs: pin
@@ -233,9 +264,9 @@ jobs:
 
   # Signatures for the files read without pacman: release.toml (nova update
   # checks it), the ISO's .sha256 and packages.txt (nova-usb checks them), and
-  # nova-usb itself, for people.
+  # nova-usb and the Raspberry Pi image's .sha256, for people.
   sign:
-    needs: iso
+    needs: [iso, pi-image]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -248,6 +279,10 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: iso-files
+          path: out/files
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pi-image-files
           path: out/files
       - name: Sign the release files
         env:
@@ -319,8 +354,170 @@ jobs:
           if-no-files-found: ignore
           overwrite: true # a re-run of a failed attempt uploads again
 
+  # Nova's packages for the Raspberry Pi 5, in Arch Linux ARM on an arm64
+  # runner, against Arch Linux ARM's databases as the pin job fetched them.
+  # Building nova with --syncdeps also proves every dependency it has on a Pi
+  # exists in that set.
+  pi-packages:
+    needs: pin
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+          fetch-depth: 0 # the nova package's version comes from git describe
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: alarm-dbs
+          path: out/alarm-dbs
+      - id: month
+        run: echo "month=$(date -u +%Y-%m)" >>"$GITHUB_OUTPUT"
+      # Arch Linux ARM's root filesystem, which tools/alarm-container fetches
+      # again only when a newer one is out.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nova-alarm
+          key: alarm-rootfs-${{ steps.month.outputs.month }}
+      - name: Build the packages
+        run: |
+          test -f packaging/nova-keyring/nova.gpg ||
+            { echo "::error::packaging/nova-keyring has no key yet; see docs/releasing.md"; exit 1; }
+          # shellcheck disable=SC2016 # the container's shell expands it
+          tools/alarm-container --env TAG -- bash -euo pipefail -c '
+            tools/ci-setup --alarm-dbs out/alarm-dbs base-devel
+            chown -R builder:builder "$PWD"
+            git config --system --add safe.directory "$PWD"
+            tools/build-package packaging/nova-keyring out/pi-pkgs
+            tools/build-package packaging/ttfx out/pi-pkgs
+            tools/build-package packaging/mise out/pi-pkgs
+            # nova depends on these three, which Arch Linux ARM has none of.
+            pacman -U --noconfirm out/pi-pkgs/nova-keyring-*.pkg.tar.zst out/pi-pkgs/ttfx-*.pkg.tar.zst \
+              out/pi-pkgs/mise-*.pkg.tar.zst
+            NOVA_SOURCE="git+file://$PWD#tag=$TAG" tools/build-package packaging/nova out/pi-pkgs
+            ls -l out/pi-pkgs
+          '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pi-packages
+          path: out/pi-pkgs/*.pkg.tar.zst
+
+  # The Raspberry Pi's [nova] repository, signed, and the Arch Linux ARM set a
+  # Pi on this release installs: everything the image holds, and what nova
+  # apps install builds Chrome and VS Code with (tools/alarm-pin). The files
+  # the shared pool lacks yet are kept for the publish job, and the databases
+  # the set came from go with the repository, so the release can be built
+  # again on them.
+  pi-repo:
+    needs: [pin, pi-packages]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-toml
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: alarm-dbs
+          path: out/alarm-dbs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pi-packages
+          path: out/pi-pkgs
+      - name: Sign into the aarch64 repository, and pin Arch Linux ARM's packages
+        env:
+          NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
+        run: |
+          [[ -n $NOVA_REPO_KEY ]] || { echo "::error::the NOVA_REPO_KEY secret is not set"; exit 1; }
+          GNUPGHOME=$(mktemp -d)
+          export GNUPGHOME
+          gpg --batch --quiet --import <<<"$NOVA_REPO_KEY"
+          fpr=$(gpg --batch --with-colons --list-secret-keys | awk -F: '$1 == "fpr" { print $10; exit }')
+          grep -qx "$fpr:4:" packaging/nova-keyring/nova-trusted ||
+            { echo "::error::NOVA_REPO_KEY is not the key in packaging/nova-keyring"; exit 1; }
+          tools/repo-build --key "$fpr" out/pi-pkgs out/pi-repo
+          aur=()
+          while read -r app; do aur+=(--aur "$app"); done < <(src/cli/bin/nova-apps-install --list)
+          tools/alarm-pin --dbs out/alarm-dbs --repo out/pi-repo \
+            --pool "$(sed -n 's/^alarm_pool = "\(.*\)"$/\1/p' release.toml)" --key "$fpr" \
+            --out out/pi-repo --new out/alarm-new "${aur[@]}" \
+            data/raspberry-pi/image/packages data/hardware/raspberry-pi-5/packages
+          mkdir -p out/pi-repo/alarm
+          cp out/alarm-dbs/*.db out/pi-repo/alarm/
+          gpgconf --kill all
+          rm -rf "$GNUPGHOME"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pi-repo
+          path: out/pi-repo/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: alarm-new
+          path: out/alarm-new/
+          if-no-files-found: ignore # every file pinned is in the pool already
+
+  # The image a Raspberry Pi 5 starts Nova from, built in Arch Linux ARM from
+  # the two repositories alone, then checked (tools/build-pi-image).
+  pi-image:
+    needs: pi-repo
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-toml
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: alarm-dbs
+          path: out/alarm-dbs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: pi-repo
+          path: out/pi-repo
+      - name: The files the pool lacks yet
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true # none, when the pool has them all
+        with:
+          name: alarm-new
+          path: out/alarm-new
+      - id: month
+        run: echo "month=$(date -u +%Y-%m)" >>"$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/nova-alarm
+          key: alarm-rootfs-${{ steps.month.outputs.month }}
+      - name: Build the Raspberry Pi image
+        run: |
+          mkdir -p out/alarm-new
+          # shellcheck disable=SC2016 # the container's shell expands it
+          tools/alarm-container --privileged -- bash -euo pipefail -c '
+            tools/ci-setup --alarm-dbs out/alarm-dbs arch-install-scripts dosfstools xz
+            # The build host trusts the Nova key the way a Pi does, from a
+            # copy of nova-keyring without its .sig, as for the ISO.
+            keyring=$(mktemp -d)
+            cp out/pi-repo/nova-keyring-*.pkg.tar.zst "$keyring/"
+            pacman -U --noconfirm "$keyring"/nova-keyring-*.pkg.tar.zst
+            tools/build-pi-image --release release.toml --repo out/pi-repo --dbs out/alarm-dbs \
+              --new out/alarm-new --out out/pi-image
+          '
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pi-image
+          path: out/pi-image/
+      # Its checksum, for the sign job, which then need not fetch the image.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pi-image-files
+          path: out/pi-image/*.sha256
+
   publish:
-    needs: [repo, iso, install-test, sign]
+    needs: [repo, iso, install-test, sign, pi-repo, pi-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -341,9 +538,19 @@ jobs:
           ACCOUNT: ${{ vars.R2_ACCOUNT_ID }}
         run: |
           [[ -n $ACCOUNT ]] || { echo "::error::the R2_ACCOUNT_ID variable is not set"; exit 1; }
-          # Everything but the ISO and nova-usb, which only people download.
-          tools/packages-upload --release out/release-toml/release.toml \
-            out/release-toml/release.toml out/repo/* out/iso/packages.txt out/iso/*.sha256 out/signatures/*
+          release=out/release-toml/release.toml
+          # The Raspberry Pi's first: the pool's new files before the list of
+          # them a Pi reads, and its repository before the release that
+          # names it.
+          shopt -s nullglob
+          new=(out/alarm-new/*)
+          ((${#new[@]} == 0)) || tools/packages-upload --release "$release" --pool "${new[@]}"
+          tools/packages-upload --release "$release" --into aarch64/alarm out/pi-repo/alarm/*
+          mapfile -t pi_repo < <(find out/pi-repo -maxdepth 1 -type f)
+          tools/packages-upload --release "$release" --into aarch64 "${pi_repo[@]}"
+          # Everything but the ISO, the image and nova-usb, which only people download.
+          tools/packages-upload --release "$release" \
+            "$release" out/repo/* out/iso/packages.txt out/iso/*.sha256 out/pi-image/*.sha256 out/signatures/*
       - name: Make the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -351,12 +558,14 @@ jobs:
         run: |
           version=${TAG#v}
           iso=nova-$version-x86_64.iso
+          image=nova-$version-raspberry-pi-5.img.xz
           flags=(--generate-notes)
           [[ $PUBLISH == true ]] || flags+=(--draft)
           [[ $version != *-* ]] || flags+=(--prerelease)
           # What a person downloads, and release.toml, which nova update finds
           # here and which says where the packages are.
           assets=(out/iso/"$iso" out/iso/"$iso.sha256" out/iso/nova-usb
+            out/pi-image/"$image" out/pi-image/"$image.sha256"
             out/release-toml/release.toml out/signatures/release.toml.sig)
           base=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG
           packages=$(sed -n 's/^nova_repo = "\(.*\)"$/\1/p' out/release-toml/release.toml)
@@ -364,6 +573,8 @@ jobs:
           **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($base/$iso), and can carry your SSH keys and the files you pick over and add the packages for an offline install. Writing the ISO to a stick yourself works too.
 
           nova-usb checks the ISO against its checksum, and the checksum against Nova's signing key, which it carries. [nova-usb.sig]($packages/nova-usb.sig) is nova-usb's own signature, by the key in [nova-keyring](https://github.com/$GITHUB_REPOSITORY/tree/$TAG/packaging/nova-keyring).
+
+          **On a Raspberry Pi 5**, write [the image]($base/$image) to a card, a USB stick or an NVMe drive (Raspberry Pi Imager: Use custom; or \`xzcat $image | sudo dd of=/dev/sdX bs=4M\`). At its first start it asks for the keyboard, the network and your account, as the installer does. [Its checksum]($base/$image.sha256) is signed: [$image.sha256.sig]($packages/$image.sha256.sig).
 
           release.toml tells \`nova update\` and the installer which Arch snapshot this release was tested on, and where its packages are: $packages, which pacman reads on its own.
           EOF

@@ -3,4 +3,4 @@
 # CI and when the package is built, never on an installed system, so nothing
 # here is installed.
 
-SHELL_SOURCES += $(filter-out tools/install.mk tools/render-wordmark,$(wildcard tools/*))
+SHELL_SOURCES += $(filter-out tools/install.mk tools/render-wordmark %.asc,$(wildcard tools/*))

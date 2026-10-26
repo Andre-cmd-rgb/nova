@@ -8,6 +8,8 @@ setup() {
   export NOVA_PATH="$SCRATCH/share"
   export NOVA_POWER_SUPPLY="$SCRATCH/power_supply"
   export NOVA_DMI_PATH="$SCRATCH/dmi"
+  export NOVA_DEVICETREE_PATH="$SCRATCH/devicetree"
+  export NOVA_CPUINFO="$SCRATCH/cpuinfo"
   export NOVA_RFKILL_PATH="$SCRATCH/rfkill"
   mkdir -p "$HOME" "$NOVA_PATH/default" "$NOVA_PATH/shell/plugins" "$NOVA_POWER_SUPPLY" "$NOVA_DMI_PATH" "$SCRATCH/bin" "$SCRATCH/sys"
   cp "$REPO_ROOT/data/defaults/shell.json" "$NOVA_PATH/default/"
@@ -47,7 +49,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c '[.apps.browsers, .apps.editors, .apps.terminals]' <<<"$output")" = '[[],[],[]]' ]
   [ "$(jq -r .bar.position <<<"$output")" = top ]
   [ "$(jq -c '.bar.shown | index("nova.power") != null' <<<"$output")" = true ]
-  [ "$(jq -c .updates <<<"$output")" = '{"candidates":false}' ]
+  [ "$(jq -c .updates <<<"$output")" = '{"candidates":false,"recovery":false}' ]
 }
 
 @test "state: whether this system tests release candidates" {
@@ -156,6 +158,20 @@ state() { nova-settings state | jq -c "$1"; }
   echo "None" >"$NOVA_DMI_PATH/product_version"
   echo "Legion 5 15ACH6H" >"$NOVA_DMI_PATH/product_name"
   [ "$(state .about.model)" = '"Legion 5 15ACH6H"' ]
+}
+
+@test "state: a Raspberry Pi, named by its devicetree, its cores by lscpu" {
+  rm -r "$NOVA_DMI_PATH"
+  mkdir -p "$NOVA_DEVICETREE_PATH"
+  printf 'Raspberry Pi 5 Model B Rev 1.0\0' >"$NOVA_DEVICETREE_PATH/model"
+  stub lscpu "printf 'Architecture:  aarch64\nVendor ID:     ARM\nModel name:    Cortex-A76\n'"
+  [ "$(state '[.about.model, .about.vendor, .about.cpu]')" = '["Raspberry Pi 5 Model B Rev 1.0","","ARM Cortex-A76"]' ]
+}
+
+@test "state: Restart to Recovery is offered only where there is a recovery" {
+  [ "$(state .updates.recovery)" = false ]
+  stub nova-recovery
+  [ "$(state .updates.recovery)" = true ]
 }
 
 @test "state: the radios, once each, switched off or not" {

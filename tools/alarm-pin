@@ -1,0 +1,205 @@
+#!/bin/bash
+# The Arch Linux ARM packages a Raspberry Pi on a release installs, pinned for
+# it. Arch Linux ARM keeps no archive of older packages, as the Arch Linux
+# Archive does for a PC, so a release keeps the ones it was built and tested
+# with itself: their entries in Arch Linux ARM's databases become a repository
+# of their own, [nova-alarm], each with its packager's signature in it, and
+# their files go to a pool every release shares, each one uploaded once, with
+# that signature beside it: pacman fetches a package's .sig as a file too, and
+# refuses the package without one.
+#
+#   tools/alarm-pin --fetch <dir> [--from <url>]
+#       Arch Linux ARM's databases as they are now, into <dir>: the set a
+#       release builds against (tools/ci-setup --alarm-dbs) and then pins.
+#       --from takes them from a release's folder instead (<url>/core.db...),
+#       so a release can be built again on its candidate's set.
+#
+#   tools/alarm-pin --dbs <dir> --repo <dir> --pool <url> --key <fingerprint>
+#                   --out <dir> --new <dir> [--aur <name>]... <list>...
+#       Everything installing the packages in the lists takes: Arch Linux
+#       ARM's from the databases in --dbs, Nova's from its aarch64 repository
+#       in --repo, and also what building each --aur recipe takes (nova apps
+#       install builds Chrome and VS Code). Writes <out>/nova-alarm.db, signed,
+#       and puts into <new> what the pool at --pool does not have yet: each
+#       package's file, downloaded and checked against its database's checksum,
+#       and its .sig, written from the signature in the database.
+#
+# A list holds package names, one per line, and # comments, as
+# data/raspberry-pi/image/packages does. Each file is named in the pool, and in
+# nova-alarm.db, with A-Z a-z 0-9 . _ - only, as tools/repo-build requires of
+# Nova's own: a URL can change other characters (glibc's version has a +). A
+# Pi checks a package by its signature and checksum, not by its name.
+#
+# Needs pacman, bsdtar, curl and gpg. It installs nothing, so it runs as any
+# user on any architecture.
+set -euo pipefail
+
+die() { printf 'alarm-pin: %s\n' "$*" >&2; exit 1; }
+
+MIRROR=${NOVA_ALARM_MIRROR:-http://mirror.archlinuxarm.org}
+AUR=${NOVA_AUR:-https://aur.archlinux.org}
+REPOS=(core extra alarm aur)
+
+# The name a package file has in the pool.
+pool_name() { printf '%s' "${1//[^A-Za-z0-9._-]/_}"; }
+
+fetch() { # dir [url]
+  local dir=$1 from=${2:-} repo url
+  mkdir -p -- "$dir"
+  for repo in "${REPOS[@]}"; do
+    url=${from:+$from/$repo.db}
+    url=${url:-$MIRROR/aarch64/$repo/$repo.db}
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 300 -o "$dir/$repo.db" "$url" ||
+      die "could not fetch $url"
+  done
+  printf 'alarm-pin: Arch Linux ARM databases in %s\n' "$dir" >&2
+}
+
+# The packages a list names: one a line, # comments.
+list_names() { sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' "$@"; }
+
+# What building an AUR recipe installs: its dependencies of every kind, the
+# arm64 ones too.
+aur_deps() { # name
+  curl -fsSL --retry 3 --max-time 60 "$AUR/cgit/aur.git/plain/.SRCINFO?h=$1" |
+    sed -n -E 's/^[[:space:]]*(make|check)?depends(_aarch64)? = (.+)$/\3/p'
+}
+
+# A value of a package's desc entry in a database.
+desc_value() { # file key
+  sed -n "/^%$2%\$/{n;p;q}" "$1"
+}
+
+main() {
+  local dbs='' repo_dir='' pool='' key='' out='' new='' from='' fetch_dir=''
+  local -a aur=() lists=()
+  while (($#)); do
+    case $1 in
+      --fetch) fetch_dir=${2:?--fetch needs a directory}; shift 2 ;;
+      --from) from=${2:?--from needs an address}; shift 2 ;;
+      --dbs) dbs=${2:?--dbs needs a directory}; shift 2 ;;
+      --repo) repo_dir=${2:?--repo needs a directory}; shift 2 ;;
+      --pool) pool=${2:?--pool needs an address}; shift 2 ;;
+      --key) key=${2:?--key needs a fingerprint}; shift 2 ;;
+      --out) out=${2:?--out needs a directory}; shift 2 ;;
+      --new) new=${2:?--new needs a directory}; shift 2 ;;
+      --aur) aur+=("${2:?--aur needs a name}"); shift 2 ;;
+      -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+      -*) die "unknown option: $1" ;;
+      *) lists+=("$1"); shift ;;
+    esac
+  done
+  if [[ -n $fetch_dir ]]; then
+    fetch "$fetch_dir" "$from"
+    return 0
+  fi
+  [[ -n $dbs && -n $repo_dir && -n $pool && -n $out && -n $new && ${#lists[@]} -gt 0 ]] ||
+    die "usage: tools/alarm-pin --dbs <dir> --repo <dir> --pool <url> --key <fingerprint> --out <dir> --new <dir> [--aur <name>]... <list>..."
+  [[ -n $key ]] || die "--key is required: the repository is always signed"
+  [[ -r $repo_dir/nova.db ]] || die "no nova.db in $repo_dir"
+  pool=${pool%/}
+
+  local work
+  work=$(mktemp -d)
+  # shellcheck disable=SC2064 # expanded now, on purpose
+  trap "rm -rf -- '$work'" EXIT
+  mkdir -p -- "$work/db/sync" "$work/root" "$work/cache" "$work/entries" "$out" "$new"
+
+  # pacman resolves what the lists take as if installing them on an empty
+  # root, from the repositories in a Pi's order; it is only asked to print it.
+  {
+    printf '[options]\nArchitecture = aarch64\nSigLevel = Never\n\n[nova]\nServer = file://%s\n' "$(realpath -- "$repo_dir")"
+    for r in "${REPOS[@]}"; do
+      # shellcheck disable=SC2016 # $arch and $repo are pacman's
+      printf '\n[%s]\nServer = %s/$arch/$repo\n' "$r" "$MIRROR"
+    done
+  } >"$work/pacman.conf"
+  cp -- "$repo_dir/nova.db" "$work/db/sync/nova.db"
+  for r in "${REPOS[@]}"; do
+    [[ -r $dbs/$r.db ]] || die "no $r.db in $dbs"
+    cp -- "$dbs/$r.db" "$work/db/sync/$r.db"
+    mkdir -p "$work/x/$r"
+    bsdtar -xf "$dbs/$r.db" -C "$work/x/$r"
+  done
+
+  local -a targets=()
+  mapfile -t targets < <(list_names "${lists[@]}")
+  local name deps
+  for name in "${aur[@]}"; do
+    deps=$(aur_deps "$name") || die "could not read the AUR recipe of $name"
+    [[ -z $deps ]] || mapfile -t -O "${#targets[@]}" targets <<<"$deps"
+  done
+
+  local resolved
+  resolved=$(pacman --config "$work/pacman.conf" --dbpath "$work/db" --root "$work/root" \
+    --cachedir "$work/cache" --logfile /dev/null --noconfirm \
+    -Sp --print-format '%r %n %v' "${targets[@]}") ||
+    die "pacman could not resolve what the lists take (above)"
+
+  # Each Arch Linux ARM entry, its file renamed for the pool. Only the lines
+  # naming a package: a choice of providers pacman made is printed too.
+  local r version entry file named sums=() count=0
+  declare -A seen=() sigs=()
+  while read -r r name version; do
+    [[ $r != nova ]] || continue
+    entry=$name-$version
+    [[ -d $work/x/$r/$entry ]] || die "$r.db has no entry $entry"
+    cp -r -- "$work/x/$r/$entry" "$work/entries/"
+    file=$(desc_value "$work/entries/$entry/desc" FILENAME)
+    named=$(pool_name "$file")
+    [[ -z ${seen[$named]:-} ]] || die "$file and ${seen[$named]} have the same name in the pool"
+    seen[$named]=$file
+    sed -i "/^%FILENAME%\$/{n;s|.*|$named|}" "$work/entries/$entry/desc"
+    sums+=("$r $file $named $(desc_value "$work/entries/$entry/desc" SHA256SUM)")
+    sigs[$named]=$(desc_value "$work/entries/$entry/desc" PGPSIG)
+    [[ -n ${sigs[$named]} ]] || die "$r.db has no signature for $entry"
+    count=$((count + 1))
+  done < <(grep -E "^(nova|$(IFS='|' && echo "${REPOS[*]}")) [^ ]+ [^ ]+\$" <<<"$resolved")
+  ((count)) || die "the lists take no Arch Linux ARM package"
+
+  (cd "$work/entries" && LC_ALL=C bsdtar -czf "$work/nova-alarm.db" *)
+  install -m644 "$work/nova-alarm.db" "$out/nova-alarm.db"
+  gpg --batch --yes --local-user "$key" --detach-sign --no-armor \
+    --output "$out/nova-alarm.db.sig" -- "$out/nova-alarm.db"
+
+  # The pool has a file or not; one there never changes, a package's file
+  # name being its version. curl asks for many at once (-Z), from a list of
+  # them (-K), as it downloads the missing ones after.
+  local line sum code url fetched=0 signed=0
+  declare -A have=()
+  for line in "${sums[@]}"; do
+    read -r r file named sum <<<"$line"
+    printf 'url = "%s"\noutput = "/dev/null"\n' "$pool/$named" "$pool/$named.sig"
+  done >"$work/pool.curl"
+  while read -r code url; do
+    [[ $code != 200 ]] || have[${url##*/}]=1
+  done < <(curl -sS -Z --parallel-max 16 -I --retry 2 --max-time 60 -w '%{http_code} %{url}\n' -K "$work/pool.curl" || true)
+
+  : >"$work/new.curl"
+  for line in "${sums[@]}"; do
+    read -r r file named sum <<<"$line"
+    [[ -z ${have[$named]:-} ]] || continue
+    printf 'url = "%s"\noutput = "%s"\n' "$MIRROR/aarch64/$r/$file" "$new/$named" >>"$work/new.curl"
+    fetched=$((fetched + 1))
+  done
+  if ((fetched)); then
+    curl -fsSL -Z --parallel-max 8 --retry 3 --connect-timeout 10 --max-time 1800 -K "$work/new.curl" ||
+      die "could not download every package from $MIRROR"
+    for line in "${sums[@]}"; do
+      read -r r file named sum <<<"$line"
+      [[ -z ${have[$named]:-} ]] || continue
+      [[ $(sha256sum <"$new/$named") == "$sum  -" ]] || die "$file is not what $r.db says it is"
+    done
+  fi
+  for line in "${sums[@]}"; do
+    read -r r file named sum <<<"$line"
+    [[ -z ${have[$named.sig]:-} ]] || continue
+    base64 -d <<<"${sigs[$named]}" >"$new/$named.sig" 2>/dev/null ||
+      die "$r.db has a signature for $file that does not decode"
+    signed=$((signed + 1))
+  done
+  printf 'alarm-pin: %d Arch Linux ARM packages pinned in %s; %d files and %d signatures new to the pool in %s\n' \
+    "$count" "$out/nova-alarm.db" "$fetched" "$signed" "$new" >&2
+}
+
+main "$@"

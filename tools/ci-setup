@@ -1,35 +1,58 @@
 #!/bin/bash
-# Prepare an archlinux:base-devel container for CI.
+# Prepare an archlinux:base-devel container for CI, or an Arch Linux ARM one
+# (tools/alarm-container).
 #
-#   tools/ci-setup [--date YYYY/MM/DD] [package...]
+#   tools/ci-setup [--date YYYY/MM/DD | --alarm-dbs DIR] [package...]
 #
 # With --date, pacman moves to that Arch Linux Archive snapshot first (-Syyuu
 # goes down as well as up), so a release builds against exactly the snapshot
-# its release.toml pins. Then the packages are installed, and a `builder` user
-# is made (makepkg refuses root) that may run anything through sudo, which
-# makepkg --syncdeps needs.
+# its release.toml pins. Arch Linux ARM has no archive: with --alarm-dbs its
+# databases are the ones in DIR (tools/alarm-pin --fetch), and pacman installs
+# from those without refreshing them, at the versions the release pins. Then
+# the packages are installed, and a `builder` user is made (makepkg refuses
+# root) that may run anything through sudo, which makepkg --syncdeps needs.
 set -euo pipefail
 
 die() { printf 'ci-setup: %s\n' "$*" >&2; exit 1; }
 
 ((EUID == 0)) || die "run as root, inside the CI container"
-date=
-if [[ ${1:-} == --date ]]; then
-  date=${2:?--date needs YYYY/MM/DD}
-  shift 2
-  [[ $date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad --date: $date"
-  # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
-  printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$date" >/etc/pacman.d/mirrorlist
-fi
+sync=-Syyuu
+case ${1:-} in
+  --date)
+    date=${2:?--date needs YYYY/MM/DD}
+    shift 2
+    [[ $date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad --date: $date"
+    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+    printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$date" >/etc/pacman.d/mirrorlist
+    ;;
+  --alarm-dbs)
+    dbs=${2:?--alarm-dbs needs a directory}
+    shift 2
+    for repo in core extra alarm aur; do
+      [[ -r $dbs/$repo.db ]] || die "no $repo.db in $dbs"
+    done
+    install -m644 -t /var/lib/pacman/sync "$dbs"/{core,extra,alarm,aur}.db
+    sync=-Suu
+    # Arch Linux ARM's one Server is a redirector to a mirror picked per file,
+    # and now and then that mirror resets or serves a file of another size.
+    # With every mirror listed after it, pacman fetches that file from the next
+    # one instead of failing the whole transaction.
+    sed -i 's/^# *\(Server = \)/\1/' /etc/pacman.d/mirrorlist
+    ;;
+esac
 
+# Every keyring the container has: Arch's, or Arch Linux ARM's.
 pacman-key --init >/dev/null
-pacman-key --populate archlinux >/dev/null
+pacman-key --populate >/dev/null
 # The archive is one server, and it stalls now and then. pacman keeps what it
-# fetched, so a second try picks up where the first stopped.
+# fetched, so a second try picks up where the first stopped. A download cut
+# off halfway is left as a .part, which pacman would resume, and a mirror that
+# cannot resume fails it every time after: those start over.
 for attempt in 1 2 3; do
-  pacman -Syyuu --noconfirm --needed git sudo "$@" && break
+  pacman "$sync" --noconfirm --needed git sudo "$@" && break
   ((attempt < 3)) || die "pacman failed three times"
   echo "ci-setup: pacman failed; trying again in 30 seconds" >&2
+  while read -r cache; do rm -f -- "${cache%/}"/*.part; done < <(pacman-conf CacheDir)
   sleep 30
 done
 

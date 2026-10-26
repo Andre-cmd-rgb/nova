@@ -16,6 +16,42 @@ cache_name="${monitor//[^[:alnum:]_.-]/_}"
 cache_file="$cache_dir/$cache_name.bus"
 unavailable_cache_seconds=60
 range_cache_seconds=10
+# NOVA_HARDWARE and NOVA_DRM_PATH are for the tests.
+hardware=${NOVA_HARDWARE:-/usr/share/nova/hardware}
+drm=${NOVA_DRM_PATH:-/sys/class/drm}
+
+# The screen's maker and model as ddcutil names them, HCH:HETECH: the EDID's
+# three-letter manufacturer code and its display-name descriptor.
+edid_id() {
+  local edid bytes code maker='' name='' at i
+  edid=$(compgen -G "$drm/card*-$monitor/edid" | head -n 1) || return 1
+  read -ra bytes < <(od -An -v -tu1 -N128 "$edid" | tr '\n' ' ')
+  ((${#bytes[@]} == 128)) || return 1
+  # Three letters of five bits each, A being 1, in a big-endian word.
+  code=$((bytes[8] << 8 | bytes[9]))
+  for i in 10 5 0; do
+    maker+=$(printf "\\x$(printf %x $(((code >> i & 31) + 64)))")
+  done
+  # One of the four 18-byte descriptors may be the name (tag 0xfc): up to 13
+  # characters, ended by a newline and padded with spaces.
+  for at in 54 72 90 108; do
+    ((bytes[at] == 0 && bytes[at + 1] == 0 && bytes[at + 2] == 0 && bytes[at + 3] == 252)) || continue
+    for ((i = at + 5; i < at + 18 && bytes[i] != 10; i++)); do
+      name+=$(printf "\\x$(printf %x "${bytes[i]}")")
+    done
+    break
+  done
+  name=${name%"${name##*[![:space:]]}"}
+  [[ -n $name ]] || return 1
+  printf '%s:%s\n' "$maker" "$name"
+}
+
+# Some screens run their DDC brightness backwards, 0 being their brightest;
+# Nova's numbers are flipped for those, so the keys and slider go the right way.
+reversed=0
+if id=$(edid_id) && grep -qxF -- "$id" "$hardware/ddc-reversed" 2>/dev/null; then
+  reversed=1
+fi
 
 # The cache only saves ddcutil round trips, which are slow; failing to write it
 # must never fail the brightness change, hence the || true on every write.
@@ -99,6 +135,7 @@ read_brightness() {
     rm -f "$cache_file"
     return 1
   }
+  if ((reversed)); then values="$((${values##* } - ${values% *})) ${values##* }"; fi
 
   now=$(date +%s)
   mkdir -p "$cache_dir" 2>/dev/null || true
@@ -168,6 +205,7 @@ fi
 ((target >= 1)) || target=1
 ((target <= 100)) || target=100
 raw_target=$(((target * maximum + 50) / 100))
+if ((reversed)); then raw_target=$((maximum - raw_target)); fi
 
 if ! ddcutil --bus "$bus" --skip-ddc-checks --noverify setvcp 10 "$raw_target" >/dev/null 2>&1; then
   rm -f "$cache_file"

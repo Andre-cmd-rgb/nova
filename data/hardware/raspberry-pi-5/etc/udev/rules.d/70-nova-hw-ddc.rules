@@ -1,0 +1,5 @@
+# The Pi 5's two HDMI DDC lines, for whoever sits at the screen, so Nova's
+# brightness keys and slider work without root. ddcutil's own rule matches
+# only a PCI graphics card, which a Pi does not have. The names are the
+# lines' devicetree addresses.
+SUBSYSTEM=="i2c-dev", ATTR{name}=="107d508200.i2c|107d508280.i2c", TAG+="uaccess"

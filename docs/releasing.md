@@ -13,7 +13,8 @@ and `release.toml`, which `nova update` and `nova-usb` look for there:
 |---|---|
 | `nova-<version>-x86_64.iso` and its `.sha256` | people, or `nova-usb`: the installer stick |
 | `nova-usb` | people: makes the installer stick, with the ISO and whatever is carried |
-| `release.toml` and its `.sig` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the address of its `[nova]` repository |
+| `nova-<version>-raspberry-pi-5.img.xz` and its `.sha256` | people: written to a Raspberry Pi 5's card, USB stick or NVMe drive |
+| `release.toml` and its `.sig` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, the address of its `[nova]` repository, and for a Pi the day its Arch Linux ARM set was pinned and where that set's files are |
 
 Everything else is in the `nova-packages` bucket on Cloudflare R2, in a folder
 named after the tag, served at `https://nova-packages.piserver.stream/<tag>`:
@@ -23,8 +24,22 @@ named after the tag, served at `https://nova-packages.piserver.stream/<tag>`:
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
 | `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `ttfx` |
 | `packages.txt`, the ISO's `.sha256`, and their `.sig` | `nova-usb`: the packages an install can need, to put on the stick for an offline install, and the checksum it checks the ISO with |
-| `nova-usb.sig` | people: the release notes link it |
+| `nova-usb.sig`, the Pi image's `.sha256` and its `.sig` | people: the release notes link them |
 | `release.toml` and its `.sig` | a copy |
+| `aarch64/`: `nova.db`, `nova.files`, `nova-alarm.db`, their `.sig`, and Nova's aarch64 packages | a Raspberry Pi's pacman: its `[nova]` repository, and `[nova-alarm]`, the Arch Linux ARM packages the release pins |
+| `aarch64/alarm/`: `core.db`, `extra.db`, `alarm.db`, `aur.db` | the release workflow: Arch Linux ARM's databases as the release was built against them, to build it again on (promote) |
+
+Arch Linux ARM keeps no archive of older packages, so the files of the
+packages a release pins for the Pi go to a folder every release shares,
+`alarm/aarch64/`, each the first time a release pins it (`tools/alarm-pin`,
+`tools/packages-upload --pool`). `nova-alarm.db` is Arch Linux ARM's own
+entries for them, with each packager's signature in it, so a Pi checks every
+package against archlinuxarm-keyring as it would from Arch Linux ARM itself,
+and the list against Nova's key. Each signature is also in the pool, as the
+package's `.sig`, written from that entry: pacman fetches a package's `.sig`
+as a file even when its database holds the signature, and refuses the package
+when there is none. Each file is named with A-Z a-z 0-9 . _ - only, as Nova's
+own packages are: a URL can change other characters.
 
 `release.toml` points pacman at the release's folder, and every system stays on
 its release's packages and Arch snapshot until `nova update` moves it to the
@@ -128,9 +143,12 @@ holds nothing secret.
    gh variable set R2_ACCOUNT_ID --body <account id>
    ```
 
-A release adds about 280 MiB to the bucket (the ISO stays on GitHub), so R2's
-free 10 GB lasts more than a year of releases; past that, storage costs
-$0.015 per GB a month, and downloads are free.
+A release adds about 280 MiB to the bucket for PCs (the ISO and the Pi image
+stay on GitHub), and for the Pi its aarch64 packages and whatever Arch Linux
+ARM changed since the release before, a few hundred MiB; the first release
+with a Pi build fills the pool, about 1 GiB. R2's free 10 GB lasts most of a
+year of releases; past that, storage costs $0.015 per GB a month, and
+downloads are free.
 
 ## A release every other week
 
@@ -151,7 +169,14 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    6. installs from it in a KVM virtual machine with no questions asked, boots
       the result and checks it from inside (`tests/install/run`); the serial
       logs are kept as the run's `install-logs`;
-   7. publishes it all as a pre-release, which only testers are offered:
+   7. for the Raspberry Pi 5, on arm64 runners in Arch Linux ARM
+      (`tools/alarm-container`): builds `nova`, `nova-keyring`, `ttfx` and
+      `mise` against Arch Linux ARM's databases as the first step fetched
+      them, signs them into the aarch64 repository, pins the Arch Linux ARM
+      packages a Pi installs (`tools/alarm-pin`), and builds the image from
+      those two repositories alone (`tools/build-pi-image`), which checks its
+      boot partition and its packages' files;
+   8. publishes it all as a pre-release, which only testers are offered:
       systems with Settings → Updates → Test Release Candidates on
       (`nova update --candidates on`), and those already on a candidate.
 
@@ -167,7 +192,8 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    promoted: fix `main`, and the next candidate replaces it.
 3. **Approve.** Actions → promote → Run, with the candidate's tag. It tags the
    same commit with the final version (`v1.1.0-rc.2` becomes `v1.1.0`), builds
-   it again on the candidate's own Arch snapshot, and publishes it as the
+   it again on the candidate's own Arch snapshot and Arch Linux ARM set, and
+   publishes it as the
    latest release. Systems pick it up at their next update check. Only the
    newest published candidate of a version can be promoted: testers on a later
    one have a later Arch snapshot, which `nova update` never moves back from.
@@ -198,6 +224,18 @@ approving, or one to write down in the release notes.
   after a logout too; the touchpad and keyboard backlight; Chrome,
   VS Code, Nautilus, foot, Claude Code and Codex start; a theme change reaches
   every surface; `nova doctor` finds nothing.
+
+On the Raspberry Pi 5, from its image on a spare card or stick:
+
+- **First start:** the setup's screens fit the screen; the keyboard layout
+  holds at the setup's own password prompts; Wi-Fi joins with its password;
+  the time zone's country is on `/boot/cmdline.txt`; the Pi restarts into the
+  lock screen with Chrome, VS Code, Claude Code and Codex there; pulling the
+  power during the questions asks them again at the next start.
+- **Updating:** `nova update` from the release before moves both `[nova]` and
+  `[nova-alarm]`, and `nova doctor` finds nothing after a restart.
+- **Desktop:** the screen's resolution, its brightness from Settings (DDC), sound
+  over HDMI, Bluetooth, and the menu without Suspend.
 
 The kernel moves only when `packaging/linux-nova` is updated
 ([packaging.md](packaging.md)); everything else follows the snapshot.

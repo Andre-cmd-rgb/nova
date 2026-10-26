@@ -3,18 +3,27 @@
 # nova:summary=Print this computer's Nova hardware profile, if it has one
 # nova:hidden=true
 #
-# Matches /sys/class/dmi/id/product_version against the models list in
-# /usr/share/nova/hardware. Exits 1, printing nothing, on a computer Nova has no
-# profile for; that is not an error, just a machine without extras. Exits 2 when
-# the model cannot be read at all (a chroot without /sys), which is not knowing.
+# Matches the computer's model against the models list in
+# /usr/share/nova/hardware: a PC's /sys/class/dmi/id/product_version, or, on a
+# board without DMI tables (a Raspberry Pi), its devicetree model. Exits 1,
+# printing nothing, on a computer Nova has no profile for; that is not an error,
+# just a machine without extras. Exits 2 when the model cannot be read at all (a
+# chroot without /sys or /proc), which is not knowing.
 
 set -euo pipefail
 
 hardware=${NOVA_HARDWARE:-/usr/share/nova/hardware}
 dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+devicetree=${NOVA_DEVICETREE_PATH:-/proc/device-tree}
 
-[[ -r $dmi/product_version ]] || exit 2
-version=$(<"$dmi/product_version") || exit 2
+if [[ -r $dmi/product_version ]]; then
+  version=$(<"$dmi/product_version") || exit 2
+elif [[ -r $devicetree/model ]]; then
+  # NUL-terminated, which bash cannot hold.
+  version=$(tr -d '\0' <"$devicetree/model") || exit 2
+else
+  exit 2
+fi
 version=${version%"${version##*[![:space:]]}"}
 
 while IFS=$'\t' read -r pattern profile; do

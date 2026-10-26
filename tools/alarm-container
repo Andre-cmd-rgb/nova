@@ -1,0 +1,57 @@
+#!/bin/bash
+# Run a command in an Arch Linux ARM container, on an arm64 machine (CI's
+# ubuntu-24.04-arm runners), as the x86 jobs run in archlinux:base-devel. Arch
+# Linux ARM publishes no container image, only its root filesystem, so this
+# downloads that, checks it against Arch Linux ARM's build key
+# (tools/archlinuxarm-build.asc), and imports it into docker.
+#
+#   tools/alarm-container [--privileged] [--env NAME]... -- <command>...
+#
+# The working directory is mounted at the same path inside, and the command
+# runs there as root. --privileged gives it loop devices and mounts, which the
+# image build needs; --env passes a variable through. The download is kept in
+# NOVA_ALARM_CACHE (~/.cache/nova-alarm), for actions/cache to keep between
+# runs, and fetched again only once Arch Linux ARM publishes a newer one.
+set -euo pipefail
+
+die() { printf 'alarm-container: %s\n' "$*" >&2; exit 1; }
+
+ROOTFS=http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz
+# Arch Linux ARM Build System <builder@archlinuxarm.org>
+FINGERPRINT=68B3537F39A313B3E574D06777193F152BDBE6A6
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+cache=${NOVA_ALARM_CACHE:-$HOME/.cache/nova-alarm}
+
+docker_args=(--rm)
+while (($#)); do
+  case $1 in
+    --privileged) docker_args+=(--privileged); shift ;;
+    --env) docker_args+=(--env "${2:?--env needs a name}"); shift 2 ;;
+    --) shift; break ;;
+    -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+(($#)) || die "usage: tools/alarm-container [--privileged] [--env NAME]... -- <command>..."
+[[ $(uname -m) == aarch64 ]] || die "run on an arm64 machine: the container is not emulated"
+
+mkdir -p -- "$cache"
+tarball=$cache/${ROOTFS##*/}
+# -z: only when the one published is newer than the one kept.
+curl -fsSL --retry 3 --connect-timeout 10 --max-time 1800 -z "$tarball" -o "$tarball" -R "$ROOTFS" ||
+  die "could not download $ROOTFS"
+curl -fsSL --retry 3 --max-time 60 -o "$tarball.sig" "$ROOTFS.sig" || die "could not download $ROOTFS.sig"
+
+keyring=$(mktemp)
+trap 'rm -f -- "$keyring"' EXIT
+gpg --batch --dearmor <"$here/archlinuxarm-build.asc" >"$keyring"
+gpgv --status-fd 1 --keyring "$keyring" "$tarball.sig" "$tarball" 2>/dev/null |
+  grep -q "^\[GNUPG:\] VALIDSIG $FINGERPRINT " ||
+  die "$tarball is not signed by Arch Linux ARM's build key"
+
+# One image for each root filesystem, by its checksum.
+image=nova-alarm:$(sha256sum <"$tarball" | cut -c1-16)
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+  docker import "$tarball" "$image" >/dev/null
+fi
+exec docker run "${docker_args[@]}" --volume "$PWD:$PWD" --workdir "$PWD" "$image" "$@"

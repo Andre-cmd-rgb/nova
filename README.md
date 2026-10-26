@@ -6,8 +6,9 @@ from the firmware logo straight to the lock screen, uses one theme everywhere,
 and installs in a few minutes from a USB stick that can carry your things over.
 
 > **Status: beta.** Tuned for the Lenovo ThinkPad P1 Gen 4i and the Lenovo
-> Legion 5 (RTX 4070). Other x86-64 laptops and desktops with Intel, AMD or
-> NVIDIA graphics should work, but are untested.
+> Legion 5 (RTX 4070), and runs on the Raspberry Pi 5. Other x86-64 laptops
+> and desktops with Intel, AMD or NVIDIA graphics should work, but are
+> untested.
 
 ## Install
 
@@ -32,6 +33,14 @@ a reader. Nothing touches the disk
 until you type `erase`. Drivers for Intel, AMD and NVIDIA graphics, microcode
 and firmware are chosen for the hardware. The computer restarts into the lock
 screen. The stick's boot menu also has a memory test (memtest86+).
+
+**On a Raspberry Pi 5**, write the release's
+`nova-<version>-raspberry-pi-5.img.xz` to a card, a USB stick or an NVMe drive
+(Raspberry Pi Imager, *Use custom*, or `xzcat … | sudo dd of=/dev/sdX bs=4M`).
+At its first start it fills the drive and asks what the installer asks: the
+keyboard layout, the computer's name and time zone (which also sets the
+country's Wi-Fi channels), Wi-Fi when there is no cable, your name, user name
+and password. Then it installs the apps and starts into the lock screen.
 
 ## Using it
 
@@ -62,15 +71,18 @@ screen. The stick's boot menu also has a memory test (memtest86+).
 Nova follows Arch two weeks behind, tested. Every other week CI builds a
 release candidate and installs it in a virtual machine; once it has been tried
 on real hardware it becomes a release. `nova update`, or the bar's update badge,
-moves the system to the newest release, with a snapshot before and after. To
-get candidates early: Settings → Updates → Test Release Candidates.
+moves the system to the newest release, with a snapshot before and after (a
+Raspberry Pi has no snapshots). To get candidates early: Settings → Updates →
+Test Release Candidates.
 
 ## When something is wrong
 
 - If the install stops, it says at which step. The whole log is
   `/var/log/nova-install.log`, kept in memory until the installer restarts;
   `nova-install-start` tries again from the start, with no restart needed,
-  and keeps the stopped try's log as `nova-install.log.1`.
+  and keeps the stopped try's log as `nova-install.log.1`. A Pi's first start
+  keeps its log in `/var/log/nova-first-boot.log`, and starts over at the
+  first question when a step fails or the power goes.
 - `nova doctor` looks the system over and says how to fix what it finds; `sudo
   nova doctor` also checks the boot menu's fallback entry.
 - `nova recovery` restarts into the boot menu: the last snapshots, the fallback
@@ -92,7 +104,7 @@ before it is published.
 - [Architecture](docs/ARCHITECTURE.md): how the pieces fit, and the rules for code
 - [Releasing](docs/releasing.md): versions, the signing key, the two-week cycle
 - [Packaging](docs/packaging.md): the kernel, the NVIDIA modules and the AUR rebuilds
-- [Hardware notes](docs/hardware/): what was measured on the P1 Gen 4i, and why
+- [Hardware notes](docs/hardware/): what was measured on the P1 Gen 4i, and why; the Raspberry Pi 5
 
 ## License
 

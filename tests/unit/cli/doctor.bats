@@ -10,6 +10,7 @@ setup() {
   export HOME="$SCRATCH/home" XDG_DATA_HOME="$SCRATCH/data" XDG_STATE_HOME="$SCRATCH/state"
   export NOVA_SYSFS_BTRFS="$SCRATCH/sys" NOVA_PAM_DIR="$SCRATCH/pam.d" NOVA_MODULES_DIR="$SCRATCH/modules"
   export NOVA_SNAPPER_CONFIG="$SCRATCH/snapper/root" NOVA_BOOT_ESP="$SCRATCH/esp"
+  export NOVA_ARCH=x86_64
   unset WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE
   mkdir -p "$HOME" "$SCRATCH/bin" "$NOVA_MODULES_DIR/6.17.0-nova1" "$NOVA_BOOT_ESP"
   write_file "$NOVA_SYSFS_BTRFS/f00d/devinfo/1/error_stats" $'write_errs 0\nread_errs 0\nflush_errs 0\ncorruption_errs 0\ngeneration_errs 0\n'
@@ -186,4 +187,27 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   stub pacman 'case $1 in -Q) echo "nova 1.0.0beta.1-1" ;; -Qk) echo "nova: 1200 total files, 0 missing files" ;; esac'
   run doctor
   [[ $output == *"ok    this computer's packages are installed"* ]]
+}
+
+@test "a Raspberry Pi: its boot partition is checked as you, and no snapshots are asked for" {
+  rm "$NOVA_SNAPPER_CONFIG"
+  stub findmnt 'echo "ext4 $ROOT_OPTIONS f00d"'
+  NOVA_ARCH=aarch64 run doctor
+  [ "$status" -eq 0 ]
+  [[ $output != *snapshot* && $output != *"boot menu"* ]]
+  [[ $output == *"ok    / is writable (ext4)"* ]]
+  [[ $output == *"ok    the boot partition holds the installed kernel"* ]]
+}
+
+@test "a Raspberry Pi whose boot partition lacks the installed kernel fails" {
+  stub nova-boot-check 'printf "The boot partition is not ready to start this Pi:\n  the boot partition is not mounted at /boot (mount it: sudo mount /boot)\n"; exit 1'
+  NOVA_ARCH=aarch64 run doctor
+  [ "$status" -eq 1 ]
+  [[ $output == *"FAIL  the Pi may not start the installed kernel"* ]]
+  [[ $output == *"not mounted at /boot"* ]]
+}
+
+@test "a Raspberry Pi's full disk points at pacman's cache, not snapshots" {
+  USED=96 NOVA_ARCH=aarch64 run doctor
+  [[ $output == *"sudo pacman -Sc"* && $output != *snapper* ]]
 }

@@ -2,11 +2,16 @@
 # /etc/conf.d/snapper, so its config ships as a template: nova-install runs
 # `snapper -c root create-config --template nova /`.
 # Tests live in tests/unit/installer.
+#
+# x86 only: a Raspberry Pi's firmware boots it straight from /boot, with Arch
+# Linux ARM's initramfs and no snapshots, so it has none of this to install.
 
 BOOT_SRC     := data/boot
 BOOT_HOOKS   := $(PREFIX)/share/libalpm/hooks
 
+ifeq ($(NOVA_ARCH),x86_64)
 INSTALL_TARGETS += install-boot
+endif
 SHELL_SOURCES   += $(wildcard $(BOOT_SRC)/bin/*)
 
 .PHONY: install-boot

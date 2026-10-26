@@ -1,0 +1,3 @@
+# Arch Linux ARM packages a Raspberry Pi 5 gets, and nova update keeps installed.
+# The brightness of an HDMI screen, the Pi's only kind, over DDC/CI.
+ddcutil

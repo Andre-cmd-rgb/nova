@@ -17,16 +17,18 @@ code.
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
 | `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/etc/sudoers.d/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring |
-| `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards |
+| `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards (x86 only) |
+| `data/raspberry-pi/` | `/usr/lib/nova/bin/`, `/etc/mkinitcpio.conf.d/`, pacman hooks, `nova-first-boot.service`; `image/` only into the image | The Raspberry Pi 5's own pieces (aarch64 only): the boot partition's guard, its initramfs, the first-boot setup, and what `tools/build-pi-image` puts in its image |
 | `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
 | `data/caffeine/`, `data/screensaver/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, `/usr/share/nova/screensaver/`, a polkit action | Caffeine (the screen stays on, a closed lid only darkens it) and the screensaver |
 | `data/hardware/` | `/usr/share/nova/hardware/`, `/usr/share/uwsm/env.d/`, `/etc` via `nova-hw-apply` | Per-model **data**: the DMI model list, drop-ins, packages, the session environment |
-| `installer/` | ISO only, except `nova-usb` in `/usr/lib/nova/bin/` | archiso profile, installer, USB creator |
+| `installer/` | ISO only, except `nova-usb` in `/usr/lib/nova/bin/`, and on a Pi `setup.bash` | archiso profile, installer, USB creator; `setup.bash`, the questions and the account every Nova setup shares |
 | `packaging/` | – | PKGBUILDs: `nova`, `linux-nova`, `nvidia-open-nova`, AUR rebuilds |
 
 Every component has an `install.mk` that the top-level `Makefile` includes, and
 `make DESTDIR=… install` is the only way files reach a system. The `nova` PKGBUILD calls
-exactly that, so pacman owns every file.
+exactly that, so pacman owns every file. `NOVA_ARCH` (makepkg's `CARCH`) picks the
+architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi's.
 
 ## Names, paths, environment
 
@@ -137,6 +139,21 @@ themed.
 Each theme remembers its pick in `~/.local/state/nova/backgrounds/by-theme/`. A pick from
 the shared folder also becomes the default for themes that have no pick of their own.
 
+### On a Raspberry Pi 5
+
+The firmware starts `kernel8.img` (Arch Linux ARM's `linux-rpi-16k`) and its
+initramfs straight from the FAT partition at `/boot`; there is no boot menu,
+and no snapshots. `nova-boot-check` refuses a kernel update while that
+partition is not mounted, and says when it does not hold the installed kernel.
+From there it is the same flow, from step 3.
+
+The first start from Nova's image has no account yet: `nova-first-boot.service`,
+which greetd's drop-in requires, asks on the first console what `nova-install`
+asks on a PC (`installer/setup.bash`), then gives the greeter an account to
+start. It runs only while `ConditionFirstBoot` holds, so a setup cut short is
+asked again at the next start, and never once one has finished. Why each
+piece is as it is: [hardware/raspberry-pi-5.md](hardware/raspberry-pi-5.md).
+
 ## Power and hardware
 
 - **One power system, `nova power`**, with its controls in Settings → Battery:
@@ -232,6 +249,10 @@ the shared folder also becomes the default for themes that have no pick of their
   | `nvidia-open-nova` | NVIDIA modules prebuilt for `linux-nova` |
   | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
   | `ttfx` | the screensaver's text effects ([omacom/ttfx](https://github.com/omacom/ttfx)), built from its release tag; Arch does not package it |
+  | `mise` | the developer tools' version manager, the project's own arm64 build: Arch Linux ARM does not package it (aarch64 only) |
+
+  `nova`, `nova-keyring`, `ttfx` and `mise` are built for aarch64 too, in Arch
+  Linux ARM, for the Raspberry Pi 5.
 
 - **Fallback kernel:** Arch's `linux-lts` + `nvidia-open-lts` stay installed as the
   fallback boot entry.
@@ -239,8 +260,10 @@ the shared folder also becomes the default for themes that have no pick of their
   - the installer ISO (`installer/iso`, built by `tools/build-iso`), which
     installs over the network, and its `.sha256`;
   - `nova-usb`, for making the stick (below);
+  - the Raspberry Pi 5 image (`tools/build-pi-image`), and its `.sha256`;
   - `release.toml`, which pins the Arch Linux Archive date the release was tested
-    against and says where its packages are.
+    against, the Arch Linux ARM set its Pi build pins, and says where its
+    packages are.
 
   The rest is in the release's folder of the `nova-packages` bucket on
   Cloudflare R2 (`https://nova-packages.piserver.stream/<tag>`): the signed
@@ -248,6 +271,17 @@ the shared folder also becomes the default for themes that have no pick of their
   repository key for each file read without pacman (`release.toml`, the ISO's
   `.sha256`, `packages.txt`, `nova-usb`), which `nova update` and `nova-usb`
   check against the key alone. See [releasing.md](releasing.md).
+- **The Raspberry Pi's packages.** Arch Linux ARM keeps no archive, so a
+  release pins its own: `tools/alarm-pin` takes every package the image and
+  `nova apps install` need from Arch Linux ARM's databases, at the versions
+  the release was built with, into `nova-alarm.db`, signed by Nova and each
+  entry still signed by its Arch Linux ARM packager. The list is in the
+  release's `aarch64/` folder with its `[nova]` repository; the files are in
+  a pool every release shares (`alarm/aarch64/`), each uploaded once. A Pi's
+  pacman reads `[nova]`, then `[nova-alarm]`, then Arch Linux ARM's own
+  repositories, and takes a package from the first that has it, so what the
+  release pinned stays put and anything else installed comes from Arch Linux
+  ARM as it is that day.
 - **The stick:** `nova usb` (`installer/nova-usb`, also on every release page, so
   it runs on any Arch-based system) writes a GPT stick of its own instead of the
   raw ISO:
@@ -284,7 +318,9 @@ the shared folder also becomes the default for themes that have no pick of their
   pacman mirror at the release's Arch date and the `[nova]` repository at its URL,
   updates the keyrings, then runs `pacman -Su`, with a snapper snapshot before and
   after. A failed step puts the old files and package databases back; afterwards it
-  checks that every kernel's boot image was rebuilt. Pre-releases (the candidates)
+  checks that every kernel's boot image was rebuilt. On a Raspberry Pi it points
+  `[nova-alarm]` at the release's set and `[nova]` at its aarch64 folder, with no
+  snapshots, and checks the boot partition instead. Pre-releases (the candidates)
   reach only systems that opted in (`nova update --candidates on`) or are
   already on one.
 - **Not redistributed:** Chrome and VS Code. They are built on the machine from their

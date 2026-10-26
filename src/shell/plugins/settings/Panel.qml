@@ -1042,7 +1042,7 @@ Item {
         Line {
           label: root.about.version ? "Nova " + root.about.version : "Nova"
           detail: root.updateStatus.length > 0 ? root.updateStatus
-            : (root.about.archDate ? "Arch Linux as of " + root.about.archDate + ", as tested for this release." : "")
+            : (root.about.archDate ? (root.about.base || "Arch Linux") + " as of " + root.about.archDate + ", as tested for this release." : "")
           Row {
             spacing: Style.space(8)
             Button {
@@ -1078,7 +1078,9 @@ Item {
           detail: "Looks the system over and says how to fix what it finds."
           Button { text: "Check…"; bordered: true; onClicked: root.terminal("nova doctor") }
         }
+        // Recovery is the x86 boot menu, which a Raspberry Pi does not have.
         Line {
+          visible: root.updates.recovery === true
           label: "Restart to Recovery"
           detail: root.confirmRecovery
             ? "Restarts now, into the boot menu."

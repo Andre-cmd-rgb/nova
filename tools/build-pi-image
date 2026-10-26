@@ -1,0 +1,252 @@
+#!/bin/bash
+# Build the image a Raspberry Pi 5 starts Nova from, written as it is to a
+# card, a USB stick or an NVMe drive. It starts into nova-first-boot, which asks
+# what nova-install asks on a PC and sets up the rest: the account, the
+# keyboard, the name, the network, the apps.
+#
+#   tools/build-pi-image --release <release.toml> --repo <dir> --dbs <dir> --new <dir> --out <dir>
+#
+#   --release  the release's release.toml: its version, and where its packages are
+#   --repo     the release's signed aarch64 repository: Nova's packages, nova.db
+#              and nova-alarm.db (tools/repo-build, tools/alarm-pin)
+#   --dbs      the Arch Linux ARM databases the release pinned (tools/alarm-pin --fetch)
+#   --new      the pinned files the pool does not have yet (tools/alarm-pin --new);
+#              the rest come from the pool
+#   --out      where nova-<version>-raspberry-pi-5.img.xz and its .sha256 go
+#
+# Everything installed comes from those two repositories, [nova] and
+# [nova-alarm], so a package the release did not pin cannot get in, and the
+# image starts on its release as a PC does that nova-install installs.
+#
+# Runs as root on aarch64 Arch Linux ARM (tools/alarm-container, in CI), where
+# the packages' install scripts run as on a Pi, with two loop devices free and
+# arch-install-scripts, dosfstools and xz installed. The build host's pacman
+# must trust Nova's key: CI installs nova-keyring from the same repository
+# first, as for the ISO.
+set -euo pipefail
+
+die() { printf 'build-pi-image: %s\n' "$*" >&2; exit 1; }
+say() { printf '==> %s\n' "$*" >&2; }
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+release='' repo='' dbs='' new='' out=''
+while (($#)); do
+  case $1 in
+    --release) release=${2:?}; shift 2 ;;
+    --repo) repo=${2:?}; shift 2 ;;
+    --dbs) dbs=${2:?}; shift 2 ;;
+    --new) new=${2:?}; shift 2 ;;
+    --out) out=${2:?}; shift 2 ;;
+    -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+[[ -r $release && -d $repo && -d $dbs && -d $new && -n $out ]] ||
+  die "usage: tools/build-pi-image --release <release.toml> --repo <dir> --dbs <dir> --new <dir> --out <dir>"
+((EUID == 0)) || die "run as root: it mounts the image it builds"
+[[ $(uname -m) == aarch64 ]] || die "run on aarch64: the packages' install scripts run as on a Pi"
+for tool in pacstrap arch-chroot sfdisk partx losetup mkfs.vfat mkfs.ext4 resize2fs dumpe2fs xz; do
+  command -v "$tool" >/dev/null || die "needs $tool"
+done
+[[ -r $repo/nova.db && -r $repo/nova-alarm.db ]] || die "$repo has no nova.db and nova-alarm.db"
+
+value() { sed -n "s/^$1 = \"\\(.*\\)\"\$/\\1/p" "$release"; }
+version=$(value version)
+nova_repo=$(value nova_repo)
+alarm_date=$(value alarm_date)
+alarm_pool=$(value alarm_pool)
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad version in $release"
+[[ $alarm_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "$release has no alarm_date: not a release with a Raspberry Pi build"
+[[ $alarm_pool =~ ^https:// ]] || die "bad alarm_pool in $release"
+repo=$(cd -- "$repo" && pwd) dbs=$(cd -- "$dbs" && pwd) new=$(cd -- "$new" && pwd)
+mkdir -p -- "$out"
+out=$(cd -- "$out" && pwd)
+image=nova-$version-raspberry-pi-5.img
+
+work=$(mktemp -d /tmp/nova-pi-image.XXXXXX)
+mnt=$work/root
+boot_loop='' root_loop=''
+cleanup() {
+  umount -R "$mnt" 2>/dev/null || true
+  [[ -z $boot_loop ]] || losetup -d "$boot_loop" 2>/dev/null || true
+  [[ -z $root_loop ]] || losetup -d "$root_loop" 2>/dev/null || true
+  rm -rf -- "$work"
+}
+trap cleanup EXIT
+
+# --------------------------------------------------------------- the disk
+#
+# MBR, which every Pi's firmware reads: a FAT partition the firmware starts the
+# kernel from, mounted at /boot, and the root, which is shrunk to what it holds
+# at the end and grows to the card's end at the first start. The raw file is
+# sparse, so its size costs nothing until written.
+BOOT_MIB=512
+RAW_GIB=12
+# Free room the shrunk root keeps: the first start writes its logs and state,
+# its own log first, before nova-first-boot grows it to the drive. Empty, it
+# compresses to nothing.
+ROOM_MIB=256
+raw=$work/$image
+say "Partitioning $image"
+truncate -s "${RAW_GIB}G" "$raw"
+sfdisk --quiet "$raw" <<EOF
+label: dos
+start=1MiB, size=${BOOT_MIB}MiB, type=c, bootable
+type=83
+EOF
+disk_id=$(sfdisk --disk-id "$raw")
+disk_id=${disk_id#0x}
+# A partition's first sector and its length, in sectors.
+part() { partx -g -o START,SECTORS -n "$1" "$raw"; }
+# A loop device for each partition, by its offset: a container's /dev gets no
+# partition nodes for a whole-disk loop device.
+part_loop() { # number
+  local start sectors
+  read -r start sectors < <(part "$1")
+  losetup --find --show --offset $((start * 512)) --sizelimit $((sectors * 512)) "$raw"
+}
+boot_loop=$(part_loop 1)
+root_loop=$(part_loop 2)
+mkfs.vfat -F 32 -n NOVA-BOOT "$boot_loop" >/dev/null
+mkfs.ext4 -q -L nova "$root_loop"
+mkdir -p "$mnt"
+mount "$root_loop" "$mnt"
+mkdir "$mnt/boot"
+mount "$boot_loop" "$mnt/boot"
+
+# ------------------------------------------------------------ the packages
+
+say "Installing the release's packages"
+# The pinned files the pool lacks are in --new, named as nova-alarm.db names
+# them; the rest come from the pool, into a cache that is not the image's.
+mkdir -p "$work/cache"
+cat >"$work/pacman.conf" <<EOF
+[options]
+Architecture = aarch64
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+ParallelDownloads = 5
+CacheDir = $work/cache/
+CacheDir = $new/
+
+[nova]
+SigLevel = Required
+Server = file://$repo
+
+[nova-alarm]
+SigLevel = Required
+CacheServer = $alarm_pool
+Server = file://$repo
+EOF
+# -c reads the cache directories above, not the image's; -G and -M leave the
+# host's keyring and mirror list out of it: the first start makes a keyring of
+# its own (nova-first-boot), and the mirror list is Arch Linux ARM's package's.
+# The hardware profile's packages too, as nova-install installs a PC's.
+mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' \
+  "$root/data/raspberry-pi/image/packages" "$root/data/hardware/raspberry-pi-5/packages")
+pacstrap -C "$work/pacman.conf" -c -G -M "$mnt" "${packages[@]}"
+
+# ------------------------------------------------------------- the system
+
+say "Configuring the system"
+# The release Nova starts on, as nova update writes it and moves it on.
+(
+  NOVA_ROOT=$mnt NOVA_ARCH=aarch64
+  # shellcheck source=src/cli/bin/nova-update-apply
+  source "$root/src/cli/bin/nova-update-apply"
+  # shellcheck disable=SC2034 # read by write_config
+  tag=v$version nova_repo=$nova_repo alarm_date=$alarm_date alarm_pool=$alarm_pool
+  write_config
+)
+install -Dm644 "$root/data/raspberry-pi/image/pacman.conf" "$mnt/etc/pacman.conf"
+# The databases the release pinned, so the first start's builds (Chrome and VS
+# Code) find their dependencies without updating anything first.
+install -m644 -t "$mnt/var/lib/pacman/sync" "$repo"/nova.db "$repo"/nova.db.sig \
+  "$repo"/nova-alarm.db "$repo"/nova-alarm.db.sig "$dbs"/{core,extra,alarm,aur}.db
+
+cat >"$mnt/etc/fstab" <<EOF
+PARTUUID=$disk_id-02  /      ext4  defaults,noatime  0 1
+PARTUUID=$disk_id-01  /boot  vfat  defaults,noatime  0 2
+EOF
+# Quiet from the firmware to the first screen, as a PC's boot is
+# (data/boot/limine/10-nova.conf). systemd needs memory accounting, which the
+# firmware switches off unless asked. nova-first-boot adds the Wi-Fi's country.
+echo "root=PARTUUID=$disk_id-02 rw rootwait console=tty1 fsck.repair=yes quiet loglevel=0" \
+  "systemd.show_status=false rd.udev.log_level=0 vt.global_cursor_default=0 logo.nologo" \
+  "cgroup_enable=memory" >"$mnt/boot/cmdline.txt"
+
+# What nova-first-boot asks for has a placeholder until then; the language is
+# a PC's, as nova-install sets it.
+echo nova >"$mnt/etc/hostname"
+ln -sf /usr/share/zoneinfo/UTC "$mnt/etc/localtime"
+echo 'KEYMAP=us' >"$mnt/etc/vconsole.conf"
+sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' "$mnt/etc/locale.gen"
+arch-chroot "$mnt" locale-gen >/dev/null
+echo 'LANG=en_US.UTF-8' >"$mnt/etc/locale.conf"
+ln -sf ../run/systemd/resolve/stub-resolv.conf "$mnt/etc/resolv.conf"
+
+# The services nova-install enables on a PC, less snapper's and Limine's. The
+# greeter waits for nova-first-boot, which its drop-in requires; systemd's
+# own first-start questions are nova-first-boot's to ask.
+arch-chroot "$mnt" systemctl enable --quiet greetd.service NetworkManager.service bluetooth.service \
+  systemd-resolved.service systemd-timesyncd.service systemd-oomd.service \
+  power-profiles-daemon.service fstrim.timer
+arch-chroot "$mnt" systemctl mask --quiet systemd-firstboot.service
+arch-chroot "$mnt" passwd -l root >/dev/null
+
+# What would be the same on every Pi made from the image: each makes its own
+# at its first start. "uninitialized" is what makes that start the first one.
+echo uninitialized >"$mnt/etc/machine-id"
+rm -rf -- "$mnt/etc/pacman.d/gnupg" "$mnt"/etc/ssh/ssh_host_*key* "$mnt/var/lib/systemd/random-seed" \
+  "$mnt/var/lib/systemd/credential.secret"
+find "$mnt/var/log" -type f -delete
+find "$mnt/var/cache/pacman/pkg" -mindepth 1 -delete
+
+# A Pi keeps no time while it is off, and starts at the newest of systemd's
+# build date and this file's (docs/hardware/raspberry-pi-5.md, fact 12): from
+# the image's own time, then, which is later than any key in its keyrings.
+touch "$mnt/usr/lib/clock-epoch"
+
+# -------------------------------------------------------------- the checks
+
+say "Checking it"
+NOVA_ROOT=$mnt "$root/data/raspberry-pi/bin/nova-boot-check" status ||
+  die "the boot partition would not start this image"
+[[ $(cat "$mnt/etc/pacman.d/nova-alarm") == *"alarm-date: $alarm_date"* ]] || die "nova-alarm was not written"
+! awk -F: '$3 >= 1000 && $3 < 60000 { found = 1 } END { exit !found }' "$mnt/etc/passwd" ||
+  die "the image has an account, which nova-first-boot would remove"
+arch-chroot "$mnt" systemctl is-enabled --quiet greetd.service || die "greetd is not enabled"
+[[ -r $mnt/usr/lib/systemd/system/nova-first-boot.service ]] || die "nova-first-boot.service is not installed"
+[[ -r $mnt/usr/lib/systemd/system-preset/10-nova.preset ]] ||
+  die "10-nova.preset is not installed: the first start would enable systemd's own services"
+arch-chroot "$mnt" pacman -Qkq >"$work/missing" 2>/dev/null || true
+[[ ! -s $work/missing ]] || die "files the packages list are missing: $(head -n 5 "$work/missing")"
+
+# ---------------------------------------------------------------- the file
+
+say "Shrinking it to what it holds"
+umount -R "$mnt"
+# 1 is errors fixed, which a filesystem this new has none of anyway.
+e2fsck -fy "$root_loop" >/dev/null || (($? == 1))
+block_size=$(dumpe2fs -h "$root_loop" 2>/dev/null | awk -F: '/^Block size/ { print $2 + 0 }')
+minimum=$(resize2fs -P "$root_loop" 2>/dev/null | awk -F: '/minimum size/ { print $2 + 0 }')
+((block_size > 0 && minimum > 0)) || die "could not read the root filesystem's size"
+resize2fs "$root_loop" $((minimum + ROOM_MIB * 1048576 / block_size)) >/dev/null 2>&1
+read -r blocks block_size < <(dumpe2fs -h "$root_loop" 2>/dev/null |
+  awk -F: '/^Block count/ { c = $2 } /^Block size/ { s = $2 } END { print c + 0, s + 0 }')
+losetup -d "$boot_loop" "$root_loop"
+boot_loop='' root_loop=''
+# The root's partition ends where its filesystem does, the file there.
+read -r start _ < <(part 2)
+sectors=$(((blocks * block_size + 511) / 512))
+echo "start=$start, size=$sectors, type=83" | sfdisk --quiet -N 2 "$raw"
+truncate -s $(((start + sectors) * 512)) "$raw"
+
+say "Compressing it"
+xz -T0 -6 -c "$raw" >"$out/$image.xz"
+(cd -- "$out" && sha256sum -- "$image.xz" >"$image.xz.sha256")
+size=$(stat -c %s "$out/$image.xz")
+# GitHub refuses a release asset larger than this.
+((size < 2 * 1024 * 1024 * 1024)) || die "$image.xz is $((size / 1048576)) MiB, past GitHub's 2 GiB a file"
+printf 'build-pi-image: %s, %d MiB (%d MiB written out)\n' "$out/$image.xz" \
+  $((size / 1048576)) $(((start + sectors) / 2048)) >&2

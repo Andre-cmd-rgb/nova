@@ -6,7 +6,9 @@
 # Archive snapshot the release was tested against, the nova packages from the release's
 # own signed repository, with a snapper snapshot before and after. Then it brings
 # Chrome and VS Code up to date, which come from their vendors outside the release
-# (nova apps update).
+# (nova apps update). On a Raspberry Pi the Arch Linux ARM packages are the set the
+# release pinned itself, Arch Linux ARM having no archive, and there are no
+# snapshots to take.
 #
 #   nova update                     update to the newest release
 #   nova update --version v1.0.0-beta.2
@@ -38,7 +40,9 @@ set -euo pipefail
 NOVA_UPDATE_REPO=${NOVA_UPDATE_REPO:-Andre-cmd-rgb/nova}
 API=${NOVA_UPDATE_API:-https://api.github.com/repos/$NOVA_UPDATE_REPO}
 MIRRORLIST=${NOVA_MIRRORLIST:-/etc/pacman.d/nova-mirrorlist}
+ALARMFILE=${NOVA_ALARMFILE:-/etc/pacman.d/nova-alarm}
 REPOFILE=${NOVA_REPOFILE:-/etc/pacman.d/nova-repo}
+ARCH=${NOVA_ARCH:-$(uname -m)}
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 APPLY=${NOVA_UPDATE_APPLY:-$HERE/nova-update-apply}
 APPS=${NOVA_UPDATE_APPS:-$HERE/nova-apps-install}
@@ -290,20 +294,36 @@ update_release() {
     signed_by_nova "$tmp/release.toml" || die "release.toml for $tag is not signed by Nova's key; nothing was changed"
   fi
 
-  local version arch_date nova_repo
+  local version arch_date nova_repo alarm_date alarm_pool
   version=$(toml_get "$tmp/release.toml" version)
   arch_date=$(toml_get "$tmp/release.toml" arch_date)
   nova_repo=$(toml_get "$tmp/release.toml" nova_repo)
+  alarm_date=$(toml_get "$tmp/release.toml" alarm_date)
+  alarm_pool=$(toml_get "$tmp/release.toml" alarm_pool)
   [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "release.toml has a bad version: '$version'"
   [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "release.toml has a bad arch_date: '$arch_date'"
   [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "release.toml has a bad nova_repo: '$nova_repo'"
   [[ v$version == "$tag" ]] || die "release.toml says $version but the release is $tag"
 
+  # Where this computer's Arch packages come from, and the date they are of.
+  local base date pinfile pinkey
+  case $ARCH in
+    x86_64) base='Arch snapshot' date=$arch_date pinfile=$MIRRORLIST pinkey=arch-date ;;
+    aarch64)
+      # Releases from before the Raspberry Pi port have no packages for it.
+      [[ -n $alarm_date ]] || die "$tag has no Raspberry Pi build; nothing was changed"
+      [[ $alarm_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "release.toml has a bad alarm_date: '$alarm_date'"
+      [[ $alarm_pool =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "release.toml has a bad alarm_pool: '$alarm_pool'"
+      base='Arch Linux ARM' date=$alarm_date pinfile=$ALARMFILE pinkey=alarm-date
+      ;;
+    *) die "Nova is not built for $ARCH" ;;
+  esac
+
   local cur_tag cur_date cur_pkgver new_pkgver
   cur_pkgver=$(installed_pkgver)
   new_pkgver=$(tag_pkgver "$tag")
   cur_tag=$(header_value "$REPOFILE" nova-release)
-  cur_date=$(header_value "$MIRRORLIST" arch-date)
+  cur_date=$(header_value "$pinfile" "$pinkey")
 
   local newer
   newer=$(vercmp "$new_pkgver" "$cur_pkgver")
@@ -311,10 +331,10 @@ update_release() {
     echo "Nova is up to date ($tag)."
     return 0
   fi
-  if [[ $newer -lt 0 || ( -n $cur_date && $arch_date < $cur_date ) ]] && (( ! downgrade )); then
-    die "$tag is older than what is installed (nova $cur_pkgver, Arch snapshot ${cur_date:-unknown}); pass --allow-downgrade to go back"
+  if [[ $newer -lt 0 || ( -n $cur_date && $date < $cur_date ) ]] && (( ! downgrade )); then
+    die "$tag is older than what is installed (nova $cur_pkgver, $base ${cur_date:-unknown}); pass --allow-downgrade to go back"
   fi
-  if [[ $newer -eq 0 && ( -z $cur_date || $arch_date == "$cur_date" ) && ${cur_tag:-$tag} == "$tag" ]]; then
+  if [[ $newer -eq 0 && ( -z $cur_date || $date == "$cur_date" ) && ${cur_tag:-$tag} == "$tag" ]]; then
     echo "Nova is already on $tag."
     return 0
   fi
@@ -324,7 +344,7 @@ update_release() {
 
   printf 'Nova update\n'
   printf '  release        %s -> %s\n' "${cur_tag:-$(printf 'nova %s' "$cur_pkgver")}" "$tag"
-  printf '  Arch snapshot  %s -> %s\n' "${cur_date:-unpinned}" "$arch_date"
+  printf '  %-15s%s -> %s\n' "$base" "${cur_date:-unpinned}" "$date"
   printf '  [nova] repo    %s\n' "$nova_repo"
   if [[ -n $held ]]; then
     printf '  held back      %s (IgnorePkg/IgnoreGroup, left alone)\n' "$held"
@@ -350,6 +370,7 @@ update_release() {
   fi
 
   local -a flags=(--tag "$tag" --version "$version" --arch-date "$arch_date" --nova-repo "$nova_repo")
+  [[ $ARCH == x86_64 ]] || flags+=(--alarm-date "$alarm_date" --alarm-pool "$alarm_pool")
   [[ -z $cur_tag ]] || flags+=(--from "$cur_tag")
   (( snapshot )) || flags+=(--no-snapshot)
   (( ! downgrade )) || flags+=(--allow-downgrade)

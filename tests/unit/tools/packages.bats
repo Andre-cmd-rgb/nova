@@ -77,3 +77,33 @@ EOF
   [ "$status" -ne 0 ]
   [[ $output == *"token is not set"* ]]
 }
+
+@test "release-pin: a release with a Raspberry Pi build pins its Arch Linux ARM set and pool" {
+  "$REPO_ROOT/tools/release-pin" --version 1.1.0 --date 2026/10/23 --alarm-date 2026/10/24 \
+    --packages https://packages.example.org --out "$SCRATCH/pi.toml" 2>/dev/null
+  grep -qx 'alarm_date = "2026/10/24"' "$SCRATCH/pi.toml"
+  grep -qx 'alarm_pool = "https://packages.example.org/alarm/aarch64"' "$SCRATCH/pi.toml"
+  fails grep -q alarm "$SCRATCH/release.toml"
+  run "$REPO_ROOT/tools/release-pin" --version 1.1.0 --alarm-pool https://packages.example.org/p --out "$SCRATCH/bad.toml"
+  [ "$status" -ne 0 ]
+}
+
+@test "upload: the Raspberry Pi's repository in the release's aarch64 folder" {
+  run upload --into aarch64 "$SCRATCH/out/nova.db"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BUCKET/v1.0.0-beta.6/aarch64/nova.db")" = db ]
+}
+
+@test "upload: the pool gets the files it lacks, and keeps the ones it has" {
+  "$REPO_ROOT/tools/release-pin" --version v1.0.0-beta.6 --date 2026/10/23 --alarm-date 2026/10/24 \
+    --packages https://packages.example.org/ --out "$SCRATCH/release.toml" 2>/dev/null
+  mkdir -p "$BUCKET/alarm/aarch64"
+  echo kept >"$BUCKET/alarm/aarch64/glibc-2.43-1-aarch64.pkg.tar.xz"
+  echo new >"$SCRATCH/out/glibc-2.43-1-aarch64.pkg.tar.xz"
+  echo zlib >"$SCRATCH/out/zlib-1.3-1-aarch64.pkg.tar.xz"
+  run upload --pool "$SCRATCH/out/glibc-2.43-1-aarch64.pkg.tar.xz" "$SCRATCH/out/zlib-1.3-1-aarch64.pkg.tar.xz"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$BUCKET/alarm/aarch64/glibc-2.43-1-aarch64.pkg.tar.xz")" = kept ]
+  [ "$(cat "$BUCKET/alarm/aarch64/zlib-1.3-1-aarch64.pkg.tar.xz")" = zlib ]
+  [[ $output == *"1 files at https://packages.example.org/alarm/aarch64, 1 there already"* ]]
+}

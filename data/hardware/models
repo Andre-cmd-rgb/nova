@@ -1,5 +1,7 @@
-# Supported computers, matched against /sys/class/dmi/id/product_version.
+# Supported computers, matched against /sys/class/dmi/id/product_version, or
+# on a board without DMI tables (a Raspberry Pi) against its devicetree model.
 # One per line: a pattern (`*` matches anything), a tab, and the profile
 # directory next to this file. The first match wins.
 ThinkPad P1 Gen 4i	thinkpad-p1-gen4i
 Legion 5*	legion-5
+Raspberry Pi 5 *	raspberry-pi-5

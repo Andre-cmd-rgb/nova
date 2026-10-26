@@ -6,6 +6,7 @@ setup() {
   setup_scratch
   export NOVA_HARDWARE="$REPO_ROOT/data/hardware"
   export NOVA_DMI_PATH="$SCRATCH/dmi"
+  export NOVA_DEVICETREE_PATH="$SCRATCH/devicetree"
   export NOVA_ROOT="$SCRATCH/root"
   mkdir -p "$NOVA_DMI_PATH" "$NOVA_ROOT"
 }
@@ -16,6 +17,14 @@ detect="$REPO_ROOT/data/hardware/bin/nova-hw-detect"
 apply="$REPO_ROOT/data/hardware/bin/nova-hw-apply"
 
 model() { printf '%s\n' "$1" >"$NOVA_DMI_PATH/product_version"; }
+
+# A board without DMI tables, as the kernel shows its devicetree: no DMI
+# directory, and the model NUL-terminated.
+board() {
+  rm -rf "$NOVA_DMI_PATH"
+  mkdir -p "$NOVA_DEVICETREE_PATH"
+  printf '%s\0' "$1" >"$NOVA_DEVICETREE_PATH/model"
+}
 
 @test "detect: the P1 Gen 4i matches exactly" {
   model "ThinkPad P1 Gen 4i"
@@ -43,6 +52,28 @@ model() { printf '%s\n' "$1" >"$NOVA_DMI_PATH/product_version"; }
   [ -z "$output" ]
 }
 
+@test "detect: a Raspberry Pi 5 is matched by its devicetree model" {
+  board "Raspberry Pi 5 Model B Rev 1.0"
+  run "$detect"
+  [ "$status" -eq 0 ]
+  [ "$output" = raspberry-pi-5 ]
+}
+
+@test "detect: another Raspberry Pi has no profile" {
+  board "Raspberry Pi 4 Model B Rev 1.5"
+  run "$detect"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}
+
+@test "detect: DMI wins over a devicetree" {
+  model "ThinkPad P1 Gen 4i"
+  mkdir -p "$NOVA_DEVICETREE_PATH"
+  printf 'Raspberry Pi 5 Model B Rev 1.0\0' >"$NOVA_DEVICETREE_PATH/model"
+  run "$detect"
+  [ "$output" = thinkpad-p1-gen4i ]
+}
+
 @test "detect: every profile in the models list exists" {
   while IFS=$'\t' read -r pattern profile; do
     [[ -n $pattern && $pattern != \#* ]] || continue
@@ -58,6 +89,14 @@ model() { printf '%s\n' "$1" >"$NOVA_DMI_PATH/product_version"; }
   [ -f "$NOVA_ROOT/etc/modprobe.d/nova-hw-nvidia-fbdev.conf" ]
   [ -f "$NOVA_ROOT/etc/NetworkManager/conf.d/nova-hw-wifi-powersave.conf" ]
   [ "$(wc -l <"$NOVA_ROOT/var/lib/nova/hardware-files")" -eq "$(find "$NOVA_HARDWARE/thinkpad-p1-gen4i/etc" -type f | wc -l)" ]
+}
+
+@test "apply: a Raspberry Pi 5 gets the HDMI brightness files" {
+  board "Raspberry Pi 5 Model B Rev 1.0"
+  run "$apply"
+  [ "$status" -eq 0 ]
+  grep -qx i2c-dev "$NOVA_ROOT/etc/modules-load.d/nova-hw-ddc.conf"
+  grep -q 'TAG+="uaccess"' "$NOVA_ROOT/etc/udev/rules.d/70-nova-hw-ddc.rules"
 }
 
 @test "apply: a file an earlier release shipped and this one does not is removed" {
