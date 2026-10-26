@@ -541,11 +541,19 @@ recent_rates() {
       return (wt < 30 || wd <= 0) ? 0 : wd / wt * 3600 / 1000000
     }
     ($2 == "D" || $2 == "C") && $1 >= now - window {
-      ts = $1 + 0; e = $4 + 0
+      ts = $1 + 0; e = $4 + 0; p = $6 + 0
       if (have == $2) {
         dt = ts - pt
         de = ($2 == "C") ? e - pe : pe - e
         if (de < 0) de = 0
+        # The gauge moved, not the machine, when the energy it reports changed
+        # three times more or less than the power readings either side allow:
+        # the gauge of a worn battery drops a fifth of its charge in two
+        # minutes when it corrects itself, then holds still while it drains.
+        # The readings stand in for that interval, or the rate reads hundreds
+        # of watts and then none, and the time left hours where it is minutes.
+        pde = (p + pp) / 2 * dt / 3600
+        if (p > 0 && pp > 0 && (de > 3 * pde || 3 * de < pde)) de = pde
         if (dt > 0 && dt <= gap) {
           # Weighted at the middle of the interval, since that is when the
           # energy it accounts for was actually moved.
@@ -558,7 +566,7 @@ recent_rates() {
       }
       # Keyed on the state, so a row either side of a plug event never pairs
       # up into an interval that spans both.
-      have = $2; pt = ts; pe = e
+      have = $2; pt = ts; pe = e; pp = p
       next
     }
     { have = "" }

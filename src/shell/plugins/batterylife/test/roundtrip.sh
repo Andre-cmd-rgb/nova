@@ -146,6 +146,20 @@ ok "a full charge is 74.48/20 hours" "3h 43m" \
   "$($CLI sessions | awk 'NR==2 { print $(NF-1), $NF }')"
 contains "one run is spelled as one run" "(1 run)" "$($CLI status)"
 
+echo "== a gauge that corrects itself, then stands still =="
+# As a P1's did at 30%: its energy fell 9 Wh in a minute and 7 in the next,
+# then stayed at 4.54 Wh while the battery went on drawing 20 W.
+reset_history
+for i in $(seq 30 -1 13); do row $((i * 60)) D $(( 21050000 + (i - 13) * 370000 )); done
+row 720 D 11560000
+for i in $(seq 11 -1 0); do row $((i * 60)) D 4540000; done
+sort_history
+battery Discharging 4540000 20000000
+now=$($CLI json | jq -c '.now')
+ok "the drain is the battery's, not the gauge's" "20" "$(jq -r '.displayWatts | round' <<<"$now")"
+contains "and the time left is minutes, not hours" "true" \
+  "$(jq -r '.timeLeft > 600 and .timeLeft < 1200' <<<"$now")"
+
 echo "== a suspend in the middle =="
 # Same energy, same start and end, but two hours of nothing between.
 reset_history
