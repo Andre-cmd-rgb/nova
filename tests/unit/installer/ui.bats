@@ -49,6 +49,21 @@ plain() { sed $'s/\e\\[[0-9;]*m//g'; }
   [ "$(unset COLUMNS; ui_columns)" -eq 80 ]
 }
 
+@test "centering: the width is the terminal's, also for a list that comes on stdin" {
+  # As ui_filter measures: the list on stdin, the answer captured, and no
+  # COLUMNS, as under nova-first-boot.service. script(1) gives it a terminal
+  # 200 columns wide.
+  cat >"$SCRATCH/width" <<EOF
+unset COLUMNS
+stty cols 200 rows 50
+source "$REPO_ROOT/installer/ui.bash"
+cols=\$(echo list | ui_columns)
+echo "\$cols"
+EOF
+  run script -qec "bash $SCRATCH/width" /dev/null
+  [ "${output//$'\r'/}" = 200 ]
+}
+
 @test "header: artwork moves as one block and notes use the same centering" {
   ui_wordmark() { printf '  *\nNOVA\n'; }
   UI_NOTES=$SCRATCH/notes

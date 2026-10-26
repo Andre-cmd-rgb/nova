@@ -18,10 +18,13 @@ UI_MUTED=8
 # Count terminal columns, including wide and combining characters, not bytes.
 ui_width() { printf '%s\n' "$@" | LC_ALL=C.UTF-8 wc -L; }
 
+# The width of the screen the prompts are drawn on, stderr. Not tput's: it asks
+# stdin, and where a list comes on stdin (ui_filter) it answers 80, so the list
+# sat to the left of a wider console.
 ui_columns() {
-  local cols=${COLUMNS:-}
-  if [[ -t 2 ]]; then
-    cols=$(tput cols 2>/dev/null) || cols=${COLUMNS:-80}
+  local cols=${COLUMNS:-} size
+  if [[ -t 2 ]] && size=$(stty size <&2 2>/dev/null); then
+    cols=${size#* }
   fi
   if [[ $cols =~ ^[1-9][0-9]{0,3}$ ]]; then echo "$cols"; else echo 80; fi
 }
