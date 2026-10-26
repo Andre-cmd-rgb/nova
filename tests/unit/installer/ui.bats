@@ -36,9 +36,11 @@ plain() { sed $'s/\e\\[[0-9;]*m//g'; }
 @test "centering: block glyphs, wide characters and combining marks use display columns" {
   [ "$(LC_ALL=C ui_width '██')" -eq 2 ]
   [ "$(ui_width '界')" -eq 2 ]
-  [ "$(ui_width $'e\u0301')" -eq 1 ]
-  run ui_center 8 '██' '界' $'e\u0301'
-  [ "$output" = $'   ██\n   界\n   e\u0301' ]
+  # A combining accent, as its UTF-8 bytes: bash turns $'\u0301' into
+  # characters only in a UTF-8 locale, and a build container may have none.
+  [ "$(ui_width $'e\xcc\x81')" -eq 1 ]
+  run ui_center 8 '██' '界' $'e\xcc\x81'
+  [ "$output" = $'   ██\n   界\n   e\xcc\x81' ]
 }
 
 @test "centering: terminal columns use a sane fallback without a tty" {
