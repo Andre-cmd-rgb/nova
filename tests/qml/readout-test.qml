@@ -2,7 +2,7 @@ import QtQuick
 import Quickshell
 import "plugins/settings/Readout.js" as Readout
 
-// The Battery page's readout in words, from `nova-power status --json`
+// The Performance page's readout in words, from `nova-power status --json`
 // objects: on battery under a tier, plugged in, and with figures missing.
 ShellRoot {
   function check(ok, what) {

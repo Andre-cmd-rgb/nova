@@ -91,10 +91,10 @@ recover_modeless() {
   ) 9>"$MODELESS_LOCK" &
 }
 
-# A pass of nova-hyprland-monitor-clamshell is some 25 processes, and most two
-# seconds nothing has moved: the poll reads the lid itself (a builtin read, no
-# process), and passes when it has moved since the last pass, or every 30 s
-# for drift the lid does not show.
+# A pass of nova-hyprland-monitor-clamshell is some 25 processes, and nearly
+# always nothing has moved: every two seconds the poll reads the lid itself (a
+# builtin read, no process), and passes when it has moved since the last
+# pass, or every 30 s for drift the lid does not show.
 poll_clamshell_state() {
   local lid last="" polls=0 state word
   while true; do

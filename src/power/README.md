@@ -16,7 +16,7 @@ how they are wired on the P1, and the facts behind every choice, are in
 nova power                     what the governor is doing: power source, GPU, draw
 nova power status -v           and the limits, the fans, runtime PM, ASPM, Wi-Fi
 nova power gpu                 turn the discrete GPU on or off
-nova power gpu mode off        keep it off plugged in too (Settings, Battery); auto undoes it
+nova power gpu mode off        keep it off plugged in too (Settings, Performance); auto undoes it
 nova power gpu run <program>   one program on the discrete GPU
 nova power undervolt           the CPU's voltage offset (any Intel laptop that allows one)
 nova power lid lock            plugged in, a closed lid locks and the computer keeps running

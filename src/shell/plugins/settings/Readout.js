@@ -1,4 +1,4 @@
-// What the Battery page's readout says, from `nova-power status --json`:
+// What the Performance page's readout says, from `nova-power status --json`:
 // the governor's figures in words. A figure the computer does not give is
 // null there and left out here.
 

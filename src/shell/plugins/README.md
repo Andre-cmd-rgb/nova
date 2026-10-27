@@ -46,6 +46,7 @@ have READMEs of their own, linked from their rows.
 | [Screen Time](screentime/README.md) | `nova.screentime` | `service`, `bar-widget` | `screentime/Service.qml`, `screentime/BarWidget.qml` (its page: `settings/ScreenTimeView.qml`) |
 | Battery | `nova.battery` | `service` | `services/battery/Service.qml` |
 | Idle | `nova.idle` | `service` | `services/idle/Service.qml` |
+| Volume and brightness keys | `nova.keys` | `service` | `services/keys/Service.qml` |
 | Media | `nova.media` | `service`, `bar-widget` | `services/media/Service.qml`, `services/media/BarWidget.qml` |
 | Night Light | `nova.nightlight` | `service` | `services/nightlight/Service.qml` |
 | Settings | `nova.settings` | `panel` | `settings/Panel.qml` |

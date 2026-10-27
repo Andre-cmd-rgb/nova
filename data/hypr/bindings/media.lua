@@ -1,8 +1,9 @@
 -- Volume, brightness, keyboard backlight, and touchpad controls. The volume,
 -- brightness and keyboard backlight keys are the shell's global shortcuts (its
--- nova.keys service): a press takes no process for the volume and one
--- brightnessctl for a backlight. The shell repeats a held one itself, as a
--- global shortcut gets a press and a release and nothing between.
+-- nova.keys service): a volume press takes no process, or one lookup behind
+-- a speaker tuning, and a backlight one brightnessctl. The shell repeats a
+-- held one itself, as a global shortcut gets a press and a release and
+-- nothing between.
 o.bind("XF86AudioRaiseVolume", "Volume up", hl.dsp.global("nova:volume-up"), { locked = true })
 o.bind("XF86AudioLowerVolume", "Volume down", hl.dsp.global("nova:volume-down"), { locked = true })
 o.bind("XF86AudioMute", "Mute", hl.dsp.global("nova:volume-mute"), { locked = true })

@@ -1,8 +1,7 @@
 #!/usr/bin/env bats
 
 # The volume, brightness and keyboard backlight keys are Hyprland global
-# shortcuts that the
-# shell's nova.keys service registers: a name bound in
+# shortcuts that the shell's nova.keys service registers: a name bound in
 # data/hypr/bindings/media.lua that the service does not register is a key
 # that does nothing, and Hyprland says so nowhere.
 
@@ -33,7 +32,7 @@ shell_keys() {
     "$REPO_ROOT/data/hypr/bindings/media.lua" | grep -v '^o\.bind("SHIFT + XF86AudioMute"'
 }
 
-@test "the volume and brightness keys go to the shell, which repeats them" {
+@test "the volume and brightness keys go to the shell, and Hyprland repeats none of them" {
   [ "$(shell_keys | wc -l)" -eq 14 ]
   [ -z "$(shell_keys | grep -v 'hl\.dsp\.global(')" ]
   [ -z "$(shell_keys | grep 'repeating')" ]
