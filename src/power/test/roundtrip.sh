@@ -402,6 +402,20 @@ chk "the card on the bus loads every module" "$(cat "$T/modprobe-calls")" \
 unset -f modprobe systemctl
 rm -rf "${SYS_PCI:?}/$NVIDIA_PCI" "$T/modprobe-calls"
 
+# A rescan that brings the card back keeps the block on until it is there,
+# then lifts it and loads the driver.
+NVIDIA_PCI=0000:01:00.0 SYS_PCI=$T/pci/devices MODPROBE_BLOCK=$T/modprobe-block
+mkdir -p "$SYS_PCI"; block_nvidia_autoload
+sleep() { [[ -s $MODPROBE_BLOCK ]] && echo blocked >"$T/at-rescan"; mkdir -p "$SYS_PCI/$NVIDIA_PCI/power"; }
+modprobe() { printf '%s\n' "$*" >>"$T/modprobe-calls"; }
+systemctl() { :; }
+gpu_on >/dev/null 2>&1
+chk "a rescan keeps the driver blocked"  "$(cat "$T/at-rescan" 2>/dev/null)" "blocked"
+chk "  until the card is back"          "$([[ -e $MODPROBE_BLOCK ]] && echo yes || echo no)" "no"
+chk "  and then loads it"               "$(cat "$T/modprobe-calls")" "-a nvidia nvidia_modeset nvidia_drm nvidia_uvm"
+unset -f sleep modprobe systemctl
+rm -rf "${SYS_PCI:?}/$NVIDIA_PCI" "$T/modprobe-calls" "$T/at-rescan" "$T/pci/rescan"
+
 # A rescan that does not bring the card back puts the modprobe block back:
 # with the card absent, it is what keeps nvidia-modprobe off the bus.
 NVIDIA_PCI=0000:01:00.0 SYS_PCI=$T/pci/devices MODPROBE_BLOCK=$T/modprobe-block

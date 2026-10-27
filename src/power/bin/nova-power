@@ -480,9 +480,10 @@ gpu_policy_off() {
 
 gpu_on() {
   [[ -n $NVIDIA_PCI ]] || { note "no discrete GPU configured"; return 0; }
-  # Before the rescan, not after: the rescan itself makes udev try the driver.
-  unblock_nvidia_autoload
 
+  # The block stays on through the rescan. The card is on the bus before it
+  # can take a driver, and udev loads nvidia for it then: the load finds no
+  # card to probe and fails, twice, for some 100 MB of module each time.
   local rescanned=0
   if ! gpu_present; then
     rescanned=1
@@ -500,6 +501,7 @@ gpu_on() {
       return 1
     fi
   fi
+  unblock_nvidia_autoload
 
   # Load the driver now rather than on first use, so the first offload is
   # instant. Runtime PM still parks the card whenever nothing renders on it.
