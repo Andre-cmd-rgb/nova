@@ -19,3 +19,8 @@ ExecCondition=/usr/bin/systemctl is-active --quiet bluetooth.service
 # minutes in case that stop never comes.
 ExecStart=/usr/bin/bt-agent -c NoInputNoOutput
 RuntimeMaxSec=120
+# bt-agent can sit on SIGTERM, and with systemd's 90 s default it stayed
+# registered, saying yes to any pairing, that long after the one picked had
+# ended. Killed, it is gone at once: BlueZ drops an agent when its connection
+# to the bus closes.
+TimeoutStopSec=2
