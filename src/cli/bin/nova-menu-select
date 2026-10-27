@@ -96,9 +96,12 @@ shell_alive() {
   for pid in $shell_pids; do kill -0 "$pid" 2>/dev/null && return 0; done
   return 1
 }
+# The wait is a read that never gets a line, on a pipe this holds both ends
+# of: a builtin, where sleep would be a process twenty times a second.
+exec {wait_fd}<> <(:)
 checks=0
 while [[ ! -e $done_file ]]; do
-  sleep 0.05
+  read -rt 0.05 -u "$wait_fd" _ || true
   checks=$((checks + 1))
   if ((checks % 40 == 0)) && ! shell_alive; then exit 1; fi
 done
