@@ -466,27 +466,44 @@ fn watts_between(was: u64, now: u64, range_uj: u64, dt: Duration) -> Option<f64>
     (secs > 0.0).then(|| used as f64 / secs / 1e6)
 }
 
-// The hottest thing that speaks for the package. x86_pkg_temp is the one that
-// matters and it is a thermal zone rather than an hwmon here, so it is found by
-// type rather than by a path that renumbers.
-fn package_temp() -> Option<f64> {
-    let mut best: Option<f64> = None;
-    if let Ok(dir) = fs::read_dir("/sys/class/thermal") {
-        for e in dir.flatten() {
+// The package's temperature. x86_pkg_temp is the one that matters and it is a
+// thermal zone rather than an hwmon here, so it is found by type rather than by
+// a path that renumbers, once, and again only when the read fails. It is the
+// CPU's own sensor and free to read; the firmware's TCPU is asked of the EC
+// through ACPI, some six interrupts a read, so it stands in only where there
+// is no x86_pkg_temp.
+struct PackageTemp {
+    zone: Option<PathBuf>,
+}
+
+impl PackageTemp {
+    fn new() -> Self {
+        PackageTemp { zone: Self::find() }
+    }
+
+    fn find() -> Option<PathBuf> {
+        let mut fallback = None;
+        for e in fs::read_dir("/sys/class/thermal").ok()?.flatten() {
             let p = e.path();
-            let Some(kind) = read_trim(p.join("type")) else {
-                continue;
-            };
-            if kind != "x86_pkg_temp" && kind != "TCPU" {
-                continue;
-            }
-            if let Some(mc) = read_u64(p.join("temp")) {
-                let c = mc as f64 / 1000.0;
-                best = Some(best.map_or(c, |b: f64| b.max(c)));
+            match read_trim(p.join("type")).as_deref() {
+                Some("x86_pkg_temp") => return Some(p.join("temp")),
+                Some("TCPU") => fallback = Some(p.join("temp")),
+                _ => {}
             }
         }
+        fallback
     }
-    best
+
+    fn read(&mut self) -> Option<f64> {
+        let mc = match self.zone.as_ref().and_then(read_u64) {
+            Some(mc) => mc,
+            None => {
+                self.zone = Self::find();
+                self.zone.as_ref().and_then(read_u64)?
+            }
+        };
+        Some(mc as f64 / 1000.0)
+    }
 }
 
 // The integrated card's frequency knobs. cardN numbering is not stable across
@@ -548,19 +565,46 @@ impl IGpu {
     }
 }
 
-fn on_ac() -> bool {
-    let Ok(dir) = fs::read_dir("/sys/class/power_supply") else {
-        return true;
-    };
-    for e in dir.flatten() {
-        let p = e.path();
-        if read_trim(p.join("type")).as_deref() == Some("Mains")
-            && read_trim(p.join("online")).as_deref() == Some("1")
-        {
-            return true;
+// Whether a charger is in. Reading `online` asks the EC, so the supplies that
+// are chargers are found once and read once a poll; they are looked for again
+// every minute, for one that appears later, and whenever there is none.
+struct Mains {
+    online: Vec<PathBuf>,
+    found_at: Instant,
+}
+
+impl Mains {
+    fn new() -> Self {
+        Mains {
+            online: Self::find(),
+            found_at: Instant::now(),
         }
     }
-    false
+
+    fn find() -> Vec<PathBuf> {
+        let Ok(dir) = fs::read_dir("/sys/class/power_supply") else {
+            return Vec::new();
+        };
+        dir.flatten()
+            .map(|e| e.path())
+            .filter(|p| read_trim(p.join("type")).as_deref() == Some("Mains"))
+            .map(|p| p.join("online"))
+            .collect()
+    }
+
+    // No charger to ask is a desktop, and a desktop is on AC.
+    fn on_ac(&mut self) -> bool {
+        if self.online.is_empty() || self.found_at.elapsed() >= Duration::from_secs(60) {
+            self.online = Self::find();
+            self.found_at = Instant::now();
+        }
+        if self.online.is_empty() {
+            return true;
+        }
+        self.online
+            .iter()
+            .any(|p| read_trim(p).as_deref() == Some("1"))
+    }
 }
 
 fn boosting() -> bool {
@@ -771,8 +815,8 @@ impl Governor {
     // rule. A spike does not climb: it has to hold above the threshold for
     // climb_after, which is longer than any interaction. Falling takes longer
     // still, so the gaps between files in a build do not cost a re-ramp.
-    fn step(&mut self, busy: f64, temp: Option<f64>, now: Instant) -> Mode {
-        if on_ac() {
+    fn step(&mut self, ac: bool, busy: f64, temp: Option<f64>, now: Instant) -> Mode {
+        if ac {
             self.above_since = None;
             self.below_since = None;
             return Mode::Ac;
@@ -1008,7 +1052,9 @@ fn main() {
     let mut sampler = CpuSampler::new();
     let mut meter = PackageMeter::new();
     let mut gov = Governor::new(cfg.clone());
-    let mut last_ac = on_ac();
+    let mut mains = Mains::new();
+    let mut package = PackageTemp::new();
+    let mut last_ac = mains.on_ac();
     // Instant is CLOCK_MONOTONIC, which does not advance across S3, so the
     // dwell timers correctly ignore time spent asleep. That also means they
     // cannot see a resume — and firmware does reset RAPL across one, while the
@@ -1059,12 +1105,12 @@ fn main() {
         }
 
         let busy = sampler.busy_pct();
-        let temp = package_temp();
+        let temp = package.read();
         let watts = meter.watts(now);
 
         // A plug event is the one transition worth resetting everything for:
         // the dwell timers measured a different machine.
-        let ac = on_ac();
+        let ac = mains.on_ac();
         if ac != last_ac {
             gov.above_since = None;
             gov.below_since = None;
@@ -1072,7 +1118,7 @@ fn main() {
             last_ac = ac;
         }
 
-        let mode = gov.step(busy, temp, now);
+        let mode = gov.step(ac, busy, temp, now);
         gov.apply(&mut w, mode, fw, igpu.as_ref());
 
         // Fans last, and temperature-first. The critical hand-back is checked
@@ -1087,9 +1133,12 @@ fn main() {
                     "ec/hot"
                 }
                 // On AC the EC's own curve is the right one: there is no
-                // battery to save and headroom is worth more than quiet.
+                // battery to save and headroom is worth more than quiet. The
+                // fans are handed back once, not refreshed: with the EC on its
+                // own curve there is no watchdog to keep and nothing to lose
+                // if it takes them back.
                 (Mode::Ac, _) => {
-                    fans.set(&mut w, "auto", cfg.fan_watchdog_secs);
+                    fans.release(&mut w);
                     "auto"
                 }
                 (Mode::Battery(_), Some(t)) => {
