@@ -81,6 +81,16 @@ live_two() {
   [ ! -e "$pending" ]
 }
 
+@test "set: a change Hyprland refuses goes back at once, and nothing waits to be kept" {
+  stub hyprctl '[[ $1 == monitors ]] && cat "$LIVE"; [[ $1 != eval ]]'
+  run cmd_set DP-2 mode 2560x1440@120.00
+  [ "$status" -eq 1 ]
+  [[ $output == *"did not take the change"* ]]
+  grep -qx 'hyprctl reload' "$CALLS"
+  ! grep -q '^setsid' "$CALLS"
+  [ ! -e "$pending" ]
+}
+
 @test "keep: writes the change down, as a rule after monitors.lua's, without a reload" {
   cmd_set DP-2 mode 2560x1440@120.00
   run cmd_keep

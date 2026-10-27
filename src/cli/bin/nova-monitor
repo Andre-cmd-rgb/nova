@@ -161,7 +161,11 @@ propose() { # <candidate json> <live json> <name>...
   mkdir -p "$(dirname "$PENDING")"
   jq -nc --argjson candidate "$candidate" --arg stamp "$stamp" --argjson until "$(($(date +%s) + REVERT_AFTER))" \
     '{stamp: $stamp, until: $until, candidate: $candidate}' >"$PENDING"
-  hyprctl eval "$rules" >/dev/null
+  # One a display: a rule Hyprland refused may come after one it took.
+  if ! hyprctl eval "$rules" >/dev/null; then
+    cmd_revert --stamp "$stamp" || true
+    die "Hyprland did not take the change"
+  fi
   setsid -f "$SELF" revert --stamp "$stamp" --after "$REVERT_AFTER" </dev/null >/dev/null 2>&1
 }
 
