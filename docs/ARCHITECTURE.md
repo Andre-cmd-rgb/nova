@@ -162,9 +162,10 @@ the shared folder also becomes the default for themes that have no pick of their
 
 ## Power and hardware
 
-- **One power system, `nova power`**, with its controls in Settings → Battery:
-  the power mode, the charge limit, the discrete GPU, the undervolt, and what the
-  governor is doing right now. Its manual is [power.md](power.md).
+- **One power system, `nova power`**, with its controls in Settings → Battery
+  (the power mode, the charge limit, the discrete GPU, and what the governor is
+  doing right now) and the undervolt's in Settings → Performance. Its manual is
+  [power.md](power.md).
 - **Power profiles** belong to power-profiles-daemon. `nova-power-profile` sets one
   and remembers it for the current power source; the shell's battery service runs
   `nova-power-profile restore` at login and on every plug and unplug, which puts back
@@ -184,16 +185,21 @@ the shared folder also becomes the default for themes that have no pick of their
   lets the active session set it without a password). Other machines leave an
   idle NVIDIA card to the driver's runtime power management, and Settings
   shows no choice.
-- **Undervolt** (`nova power undervolt set -70`): an offset on an Intel CPU's
-  core and cache, through the overclocking mailbox, where the firmware lets
-  one through (a P1 Gen 4i's only with its hidden Overclocking Lock off, fact
-  16). Nova sets none by itself: the depth is each CPU's own. `nova-undervolt`
+- **Undervolt** (`nova power undervolt set -70`, or `set -80 -70` for the core's
+  and the cache's each): an offset on an Intel CPU's core and cache, through
+  the overclocking mailbox, where the firmware lets one through (a P1 Gen 4i's
+  only with its hidden Overclocking Lock off, fact 16). Nova sets none by
+  itself: the depth is each CPU's own. `nova-undervolt`
   applies it at boot (`nova-undervolt.service`) and after every sleep, and
   reads it back. Before writing it records the boot it is on in, on disk; a
   clean shutdown takes it off and clears the record. So a boot that finds an
   earlier boot's record holds the offset instead of applying it, and so does
   the first machine check the kernel logs. Setting it takes an
-  administrator's password, through polkit.
+  administrator's password, through polkit. The core and the cache are
+  thought to share one voltage, at the higher of what each asks for, so
+  `nova power undervolt compare` reads the core's own voltage
+  (IA32_PERF_STATUS) under load with each of two offsets, to show whether a
+  core deeper than its cache moves it at all.
 - **Other laptops** get power-profiles-daemon, the charge limit and the
   undervolt for now. The governor starts on another model once its tiers are
   measured there and match the P1's results on the watt meter.

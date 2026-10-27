@@ -4,7 +4,7 @@
   "name": "Settings",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Wi-Fi, Bluetooth, mobile data, sound and displays; battery and its history, Screen Time; the look, the bar, the lock, default apps, updates and this computer: in one window.",
+  "description": "Wi-Fi, Bluetooth, mobile data, sound and displays; battery and its history, the undervolt, Screen Time; the look, the bar, the lock, default apps, updates and this computer: in one window.",
   "kinds": [
     "panel"
   ],

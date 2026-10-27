@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Lower the CPU's voltage by an offset you have tested, or show it
-# nova:args=[status [--json] | set <mV> | on | off]
+# nova:args=[status [--json] | set <mV> [<cache mV>] | on | off | compare <core mV> <cache mV> [--all]]
 #
 # An undervolt makes an Intel CPU run cooler and draw less for the same work,
 # where its firmware lets an offset through (a ThinkPad's only once its
@@ -9,10 +9,20 @@
 # answers or freeze, and the safe depth differs from one CPU to the next, so
 # Nova sets none by itself: find yours with a stress test first.
 #
-#   nova power undervolt          what is set, and whether the CPU has it
-#   nova power undervolt set -70  -70 mV on the core and cache, now and at every boot
-#   nova power undervolt on       apply it again after it was held
-#   nova power undervolt off      none
+#   nova power undervolt              what is set, and whether the CPU has it
+#   nova power undervolt set -70      -70 mV on the core and cache, now and at every boot
+#   nova power undervolt set -80 -70  -80 mV on the core, -70 mV on the cache
+#   nova power undervolt on           apply it again after it was held
+#   nova power undervolt off          none
+#   nova power undervolt compare -80 -70
+#                                     whether the core really runs lower with its
+#                                     own offset deeper than the cache's: its
+#                                     voltage read with each, one core flat out
+#                                     (--all: every core)
+#
+# The cores and the cache are thought to share one voltage on these CPUs, at
+# the higher of what the two offsets ask for, so a core offset deeper than
+# the cache's may do nothing; compare measures it on yours.
 #
 # It takes itself off and holds after a machine-check error, and at the boot
 # after one that ended without shutting down while it was on (a freeze), so a
@@ -23,16 +33,30 @@ set -euo pipefail
 bin=${0%/*}
 APPLY=${NOVA_POWER_UNDERVOLT_APPLY:-/usr/lib/nova/nova-power-undervolt-apply}
 TOOL=${NOVA_UNDERVOLT:-$bin/nova-undervolt}
-usage() { echo "Usage: nova power undervolt [status [--json] | set <mV> | on | off]" >&2; }
+# The status once the service has put the offset on (or held it): its start
+# returns as it starts, so straight after it the offset is still pending.
+settled_status() {
+  local i
+  for ((i = 0; i < 40; i++)); do
+    [[ $("$TOOL" status --json 2>/dev/null | jq -r '.state // empty' 2>/dev/null) == pending ]] || break
+    sleep 0.05
+  done
+  "$TOOL" status
+}
+
+usage() { echo "Usage: nova power undervolt [status [--json] | set <mV> [<cache mV>] | on | off | compare <core mV> <cache mV> [--all]]" >&2; }
 
 case "$#:${1:-}" in
   0: | 1:status) exec "$TOOL" status ;;
   2:status) [[ $2 == --json ]] || { usage; exit 2; }; exec "$TOOL" status --json ;;
-  2:set | 1:on | 1:off)
+  3:compare | 4:compare)
+    if ((EUID == 0)); then exec "$APPLY" "$@"; else exec pkexec "$APPLY" "$@"; fi
+    ;;
+  2:set | 3:set | 1:on | 1:off)
     status=0
     if ((EUID == 0)); then "$APPLY" "$@" || status=$?; else pkexec "$APPLY" "$@" || status=$?; fi
     # 126: the password was not given, so nothing changed.
-    ((status == 126)) || "$TOOL" status || true
+    ((status == 126)) || settled_status || true
     exit "$status"
     ;;
   *) usage; exit 2 ;;

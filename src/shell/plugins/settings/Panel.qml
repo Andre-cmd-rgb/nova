@@ -48,7 +48,7 @@ Item {
   readonly property var about: info.about || ({})
   readonly property var updates: info.updates || ({})
   readonly property var limit: battery.limit || ({})
-  readonly property var undervolt: battery.undervolt || ({})
+  readonly property var undervolt: (info.performance || {}).undervolt || ({})
 
   // `group` starts a new group in the sidebar; `radio` is the rfkill type a
   // page needs the hardware for.
@@ -59,6 +59,7 @@ Item {
     { id: "sound", label: "Sound", icon: "󰕾", group: true },
     { id: "displays", label: "Displays", icon: "󰍹" },
     { id: "battery", label: "Battery", icon: "󰁹" },
+    { id: "performance", label: "Performance", icon: "󰓅" },
     { id: "screentime", label: "Screen Time", icon: "󰥔" },
     { id: "appearance", label: "Appearance", icon: "󰸌", group: true },
     { id: "bar", label: "Menu Bar", icon: "󰍜" },
@@ -72,6 +73,8 @@ Item {
   readonly property var pages: allPages.filter(function (p) {
     if (!root.loaded) return true
     if (p.id === "battery") return root.battery.present === true
+    // An Intel CPU, which takes an undervolt through its mailbox at all.
+    if (p.id === "performance") return root.undervolt.intel === true
     if (p.radio) return (root.info.radios || []).indexOf(p.radio) >= 0
     return true
   })
@@ -502,6 +505,7 @@ Item {
             case "displays": return displaysPage
             case "bar": return barPage
             case "battery": return batteryPage
+            case "performance": return performancePage
             case "screentime": return screenTimePage
             case "lock": return lockPage
             case "apps": return appsPage
@@ -850,34 +854,6 @@ Item {
         }
       }
 
-      // Shown once an offset is set (nova power undervolt set): the depth is
-      // each CPU's own, found with a stress test, so it is not offered here.
-      Section {
-        width: p.inner
-        title: "UNDERVOLT"
-        visible: root.undervolt.state === "applied" || root.undervolt.state === "held" || root.undervolt.state === "pending"
-        Line {
-          label: String(root.undervolt.offset).replace("-", "\u2212") + " mV on the CPU"
-          detail: root.undervolt.state === "applied" ? "On: cooler, and less power for the same work."
-            : root.undervolt.state === "held" ? "Held: " + (root.undervolt.reason || "") + "."
-            : "Set, but not on the CPU in this boot: systemctl status nova-undervolt says why."
-          Row {
-            spacing: Style.space(8)
-            Button {
-              visible: root.undervolt.state !== "applied"
-              text: "Apply Again"
-              bordered: true
-              onClicked: root.run(["nova-power-undervolt", "on"])
-            }
-            Button { text: "Turn Off"; bordered: true; onClicked: root.run(["nova-power-undervolt", "off"]) }
-          }
-        }
-        Caption {
-          width: parent.width
-          text: "Taken off by itself after a machine-check error, and at the next start after the computer stopped without shutting down. nova power undervolt set changes it."
-        }
-      }
-
       Section {
         width: p.inner
         title: "LID AND POWER BUTTON"
@@ -911,6 +887,19 @@ Item {
           width: parent.width
           text: "On battery a closed lid always sleeps. Hibernating saves what is open to disk and turns the computer off, so a weekend in a bag does not drain it; the power button brings it all back. Plugged in it never hibernates."
         }
+      }
+    }
+  }
+
+  Component {
+    id: performancePage
+    Page {
+      id: p
+      title: "Performance"
+      PerformanceView {
+        width: p.inner
+        undervolt: root.undervolt
+        onCommand: function (argv) { root.run(argv) }
       }
     }
   }

@@ -1,30 +1,167 @@
 #!/bin/bash
 # nova-power-undervolt-apply: the root half of `nova power undervolt`. Run
 # through pkexec (org.nova.power-undervolt, which asks for the administrator's
-# password), so it takes a verb and a number and passes nothing else on.
+# password), so it takes a verb and numbers and passes nothing else on.
 #
-#   set <mV>   an offset from -150 to -1 mV, applied now and at every boot
-#   on         the offset set before, again, after a hold
-#   off        no offset, now and from now on
+#   set <mV> [<mV>]           an offset from -150 to -1 mV for the core and the
+#                             cache both, or the core's and the cache's (each
+#                             from -150 to 0), applied now and at every boot
+#   on                        the offset set before, again, after a hold
+#   off                       no offset, now and from now on
+#   compare <mV> <mV> [--all] one core's voltage under load, with the offset
+#                             set now and with this core's and cache's, in turns
 
 set -euo pipefail
 
 STATE=${NOVA_UNDERVOLT_STATE:-/var/lib/nova/undervolt}
+TOOL=${NOVA_UNDERVOLT:-/usr/lib/nova/bin/nova-undervolt}
+MSR=${NOVA_UNDERVOLT_MSR:-/dev/cpu}
 UNIT=nova-undervolt.service
 
 die() { printf 'nova power undervolt: %s\n' "$*" >&2; exit 1; }
 
+valid_mv() { [[ $1 =~ ^(0|-[1-9][0-9]{0,2})$ ]] && (($1 >= -150)); }
+
+# The offset as nova-undervolt reads it: "-70" for the core and cache both,
+# "-80 -70" for the core and the cache.
+offsets() { # <core> [<cache>]
+  local core=$1 cache=${2-$1}
+  if ! valid_mv "$core" || ! valid_mv "$cache" || ((core == 0 && cache == 0)); then
+    die "an undervolt is a whole number of millivolts from -150 to -1, such as -70, or the core's and the cache's from -150 to 0, such as -80 -70; not '$*'"
+  fi
+  if [[ $core == "$cache" ]]; then echo "$core"; else echo "$core $cache"; fi
+}
+
+# "-70 mV on the core and cache", or "-80 mV on the core, -70 mV on the cache".
+describe() { # <offset>
+  local core cache
+  read -r core cache <<<"$1"
+  if [[ -z $cache ]]; then echo "$core mV on the core and cache"; else echo "$core mV on the core, $cache mV on the cache"; fi
+}
+
+write_offset() { # <offset>
+  mkdir -p "$STATE"
+  printf '%s\n' "$1" >"$STATE/offset.tmp"
+  mv -f -- "$STATE/offset.tmp" "$STATE/offset"
+}
+
+# <offset> on the CPU through the service: its stop takes the old one off, its
+# start puts this one on and watches for machine checks. A hold stays.
+put() { # <offset>
+  systemctl stop "$UNIT"
+  write_offset "$1"
+  systemctl start "$UNIT"
+}
+
+state() { "$TOOL" status --json 2>/dev/null | jq -r '.state // empty' 2>/dev/null || true; }
+
+# Whether the offset is on the CPU once the service has had a moment: its
+# start returns as it starts, before the offset is on (pending), and a hold
+# says no at once.
+applied() {
+  local i
+  for ((i = 0; i < 40; i++)); do
+    case $(state) in
+      applied) return 0 ;;
+      held | off) return 1 ;;
+    esac
+    sleep 0.05
+  done
+  return 1
+}
+
+# <cpu>'s clock ratio (to the 100 MHz base clock) and voltage (in 1/8192 V)
+# now: IA32_PERF_STATUS, MSR 0x198, bits 15:8 and 47:32.
+perf_status() { # <cpu>
+  local value
+  value=$(dd if="$MSR/$1/msr" bs=8 count=1 skip=$((0x198)) iflag=skip_bytes status=none 2>/dev/null | od -An -t u8 | tr -d ' ')
+  [[ $value =~ ^[0-9]+$ ]] || return 1
+  echo "$(((value >> 8) & 0xff)) $(((value >> 32) & 0xffff))"
+}
+
+# The load's processes, global so the exit's trap still has them once
+# cmd_compare has returned.
+spinners=()
+
+# Whether the core's own offset moves its voltage, or the cache's holds it up
+# (the two are thought to share one voltage, at the higher of what each asks
+# for): one core flat out (every core, with --all), read twenty times with the
+# offset set now and twenty with <core> <cache>, twice over in turns, so a
+# clock or temperature that drifts touches both. Only readings at the clock
+# both have are compared. The service watches as for any undervolt, and the
+# offset set now is put back at the end, whatever happens.
+cmd_compare() { # <core> <cache> [--all]
+  local candidate baseline cpu all=false setting i samples core cache
+  candidate=$(offsets "$1" "$2")
+  [[ ${3:-} == --all ]] && all=true
+  [[ -s $STATE/offset ]] || die "set the undervolt you have first (nova power undervolt set <mV>): compare measures against it"
+  read -r core cache <"$STATE/offset"
+  baseline=$(offsets "$core" ${cache:+"$cache"})
+  [[ $candidate != "$baseline" ]] || die "that is the undervolt set now"
+  [[ $(state) == applied ]] || die "the undervolt set now is not on the CPU (nova power undervolt says why); compare measures against it"
+  cpu=$(($(nproc --all) - 1))
+  modprobe -q msr 2>/dev/null || true
+  perf_status "$cpu" >/dev/null || die "the CPU's voltage cannot be read"
+  samples=$(mktemp)
+  # shellcheck disable=SC2064 # the file is known now
+  trap "kill \${spinners[*]:-} 2>/dev/null || true; put $(printf '%q' "$baseline"); rm -f -- $(printf '%q' "$samples")" EXIT
+  if $all; then
+    for ((i = 0; i <= cpu; i++)); do
+      taskset -c "$i" sh -c 'while :; do :; done' &
+      spinners+=($!)
+    done
+  else
+    taskset -c "$cpu" sh -c 'while :; do :; done' &
+    spinners+=($!)
+  fi
+  echo "Reading CPU $cpu's voltage, $( $all && echo "every core" || echo "one core") flat out, for about 20 seconds..."
+  for _ in 1 2; do
+    for setting in "$baseline" "$candidate"; do
+      put "$setting"
+      applied || die "the CPU did not keep $(describe "$setting"), and the undervolt is held; nova power undervolt says why"
+      sleep 2
+      for ((i = 0; i < 20; i++)); do
+        echo "${setting// /,} $(perf_status "$cpu")" >>"$samples"
+        sleep 0.1
+      done
+      [[ $(state) == applied ]] || die "a machine check at $(describe "$setting"): the undervolt is held; nova power undervolt says why"
+    done
+  done
+  awk -v base="${baseline// /,}" -v cand="${candidate// /,}" \
+    -v base_text="$(describe "$baseline")" -v cand_text="$(describe "$candidate")" '
+    NF == 3 { n[$1, $2]++; sum[$1, $2] += $3; ratios[$2] = 1 }
+    END {
+      best = -1
+      for (r in ratios) {
+        m = n[base, r] < n[cand, r] ? n[base, r] : n[cand, r]
+        if (m > best || (m == best && r + 0 > at + 0)) { best = m; at = r }
+      }
+      if (best < 5) { print "The clock moved too much between the readings to compare them; try again, plugged in and with nothing else running."; exit 1 }
+      vb = sum[base, at] / n[base, at] / 8192; vc = sum[cand, at] / n[cand, at] / 8192
+      if (vb == 0) { print "This CPU does not report its voltage."; exit 1 }
+      printf "At %.1f GHz, %d readings each:\n  %-42s %.4f V\n  %-42s %.4f V\n", at / 10, best, base_text, vb, cand_text, vc
+      split(base, b, ","); split(cand, c, ",")
+      asked = c[1] - b[1]; moved = (vc - vb) * 1000
+      if (asked == 0) {
+        if (moved > -2 && moved < 2) printf "The core did not move (%+.1f mV): the cache offset alone does not hold it up at this load.\n", moved
+        else printf "The core moved %+.1f mV with the cache offset alone: at this load they share one voltage.\n", moved
+      } else if (moved / asked >= 0.7) {
+        printf "The core ran %+.1f mV of the %+d mV asked: at this load its offset is its own.\n", moved, asked
+      } else if (moved / asked <= 0.3) {
+        printf "The core ran %+.1f mV of the %+d mV asked: the cache held it up, as they share one voltage at this load.\n", moved, asked
+      } else {
+        printf "The core ran %+.1f mV of the %+d mV asked: partly its own, partly held up by the cache, at this load.\n", moved, asked
+      }
+    }' "$samples"
+}
+
 case "$#:${1:-}" in
-  2:set)
-    if [[ ! $2 =~ ^-[1-9][0-9]{0,2}$ ]] || (($2 < -150)); then
-      die "an undervolt is a whole number of millivolts from -150 to -1, such as -70; not '$2'"
-    fi
-    mkdir -p "$STATE"
+  2:set | 3:set)
+    setting=$(offsets "${@:2}")
     # The old offset off first, and a hold forgotten: this one is new.
     systemctl stop "$UNIT"
     rm -f -- "$STATE/held"
-    printf '%s\n' "$2" >"$STATE/offset.tmp"
-    mv -f -- "$STATE/offset.tmp" "$STATE/offset"
+    write_offset "$setting"
     systemctl start "$UNIT"
     ;;
   1:on)
@@ -37,8 +174,12 @@ case "$#:${1:-}" in
     systemctl stop "$UNIT"
     rm -f -- "$STATE/offset" "$STATE/held"
     ;;
+  3:compare | 4:compare)
+    [[ $# == 3 || $4 == --all ]] || { echo "Usage: nova-power-undervolt-apply compare <core mV> <cache mV> [--all]" >&2; exit 2; }
+    cmd_compare "${@:2}"
+    ;;
   *)
-    echo "Usage: nova-power-undervolt-apply set <mV> | on | off" >&2
+    echo "Usage: nova-power-undervolt-apply set <mV> [<cache mV>] | on | off | compare <core mV> <cache mV> [--all]" >&2
     exit 2
     ;;
 esac

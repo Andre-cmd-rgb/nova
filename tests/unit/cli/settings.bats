@@ -73,7 +73,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '.appearance.themes[1]')" = '{"name":"nord","background":"#2e3440","foreground":"#d8dee9","accent":"#88c0d0"}' ]
 }
 
-@test "state: the battery's health, power modes, charge limit, GPU mode, undervolt, lid and power button" {
+@test "state: the battery's health, power modes, charge limit, GPU mode, lid and power button" {
   mkdir -p "$NOVA_POWER_SUPPLY/BAT0"
   echo Battery >"$NOVA_POWER_SUPPLY/BAT0/type"
   echo 81000000 >"$NOVA_POWER_SUPPLY/BAT0/energy_full"
@@ -82,11 +82,10 @@ state() { nova-settings state | jq -c "$1"; }
   stub nova-power-profile 'printf "power-saver\t0\nbalanced\t1\n"'
   stub nova-battery-limit 'echo "{\"kind\":\"threshold\",\"limit\":80,\"on\":true}"'
   stub nova-power-gpu '[[ $* == mode ]] && echo off'
-  stub nova-power-undervolt '[[ $* == "status --json" ]] && echo "{\"offset\":-70,\"state\":\"applied\",\"reason\":null}"'
   stub nova-power-lid 'echo lock'
   stub nova-power-button 'echo sleep'
   stub nova-power-hibernate 'echo 4h'
-  [ "$(state .battery)" = '{"present":true,"health":81,"cycles":586,"profiles":[{"name":"power-saver","active":false},{"name":"balanced","active":true}],"limit":{"kind":"threshold","limit":80,"on":true},"gpu":"off","undervolt":{"offset":-70,"state":"applied","reason":null},"lid":"lock","powerButton":"sleep","hibernate":"4h"}' ]
+  [ "$(state .battery)" = '{"present":true,"health":81,"cycles":586,"profiles":[{"name":"power-saver","active":false},{"name":"balanced","active":true}],"limit":{"kind":"threshold","limit":80,"on":true},"gpu":"off","lid":"lock","powerButton":"sleep","hibernate":"4h"}' ]
 }
 
 @test "state: no hibernate choice where the computer cannot hibernate" {
@@ -96,11 +95,14 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state .battery.hibernate)" = '""' ]
 }
 
+@test "state: the undervolt, on Performance, as nova power undervolt says it is" {
+  stub nova-power-undervolt '[[ $* == "status --json" ]] && echo "{\"core\":-80,\"cache\":-70,\"state\":\"applied\",\"reason\":null,\"intel\":true}"'
+  [ "$(state .performance)" = '{"undervolt":{"core":-80,"cache":-70,"state":"applied","reason":null,"intel":true}}' ]
+}
+
 @test "state: no undervolt where its tool cannot answer" {
-  mkdir -p "$NOVA_POWER_SUPPLY/BAT0"
-  echo Battery >"$NOVA_POWER_SUPPLY/BAT0/type"
   stub nova-power-undervolt 'exit 1'
-  [ "$(state .battery.undervolt)" = null ]
+  [ "$(state .performance.undervolt)" = null ]
 }
 
 @test "state: no GPU mode where the GPU cannot be switched" {

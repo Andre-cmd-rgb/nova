@@ -25,12 +25,14 @@
 //!                    registers only as root
 //!
 //! State, in /var/lib/nova/undervolt/: `offset` (whole millivolts, written by
-//! nova-power-undervolt-apply), `armed` ("<boot id> <millivolts>"), and `held`
-//! (why it is held).
+//! nova-power-undervolt-apply: "-70" for the core and cache both, "-80 -70"
+//! for the core and the cache each), `armed` ("<boot id> <offset>"), and
+//! `held` (why it is held).
 
 mod mailbox;
 
 use mailbox::{CpuMsr, Msr, PLANES};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -65,9 +67,80 @@ impl Paths {
 
 type Open<'a> = &'a mut dyn FnMut() -> io::Result<Box<dyn Msr>>;
 
+/// An undervolt: the core's offset and the cache's, in whole millivolts,
+/// each from DEEPEST to 0 and not both 0.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct Offsets {
+    core: i32,
+    cache: i32,
+}
+
+impl Offsets {
+    /// "-70", the core and cache both, or "-80 -70", the core and the cache.
+    fn parse(text: &str) -> Option<Offsets> {
+        let numbers: Vec<i32> = text
+            .split_whitespace()
+            .map(str::parse)
+            .collect::<Result<_, _>>()
+            .ok()?;
+        let offsets = match numbers.as_slice() {
+            [both] => Offsets {
+                core: *both,
+                cache: *both,
+            },
+            [core, cache] => Offsets {
+                core: *core,
+                cache: *cache,
+            },
+            _ => return None,
+        };
+        let valid = |mv: i32| (DEEPEST..=0).contains(&mv);
+        (valid(offsets.core) && valid(offsets.cache) && offsets.planes() != [0, 0])
+            .then_some(offsets)
+    }
+
+    fn planes(self) -> [i32; 2] {
+        [self.core, self.cache]
+    }
+
+    /// As `parse` reads it.
+    fn record(self) -> String {
+        if self.core == self.cache {
+            self.core.to_string()
+        } else {
+            format!("{} {}", self.core, self.cache)
+        }
+    }
+
+    /// What the CPU has once the mailbox rounds them to its steps.
+    fn on_the_cpu(self) -> String {
+        let [core, cache] = self.planes().map(|mv| mailbox::decode(mailbox::encode(mv)));
+        if self.core == self.cache {
+            format!("{core:.1} mV on the CPU core and cache")
+        } else {
+            format!("{core:.1} mV on the CPU core, {cache:.1} mV on its cache")
+        }
+    }
+}
+
+/// "-70 mV", or "-80 mV on the core and -70 mV on the cache".
+impl fmt::Display for Offsets {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.core == self.cache {
+            write!(f, "{} mV", self.core)
+        } else {
+            write!(
+                f,
+                "{} mV on the core and {} mV on the cache",
+                self.core, self.cache
+            )
+        }
+    }
+}
+
 enum Setting {
     Off,
-    Offset(i32),
+    Offset(Offsets),
     Bad(String),
 }
 
@@ -75,9 +148,9 @@ fn setting(paths: &Paths) -> Setting {
     match fs::read_to_string(paths.file("offset")) {
         Err(e) if e.kind() == io::ErrorKind::NotFound => Setting::Off,
         Err(e) => Setting::Bad(e.to_string()),
-        Ok(text) => match text.trim().parse::<i32>() {
-            Ok(mv) if (DEEPEST..=-1).contains(&mv) => Setting::Offset(mv),
-            _ => Setting::Bad(text.trim().to_string()),
+        Ok(text) => match Offsets::parse(&text) {
+            Some(offsets) => Setting::Offset(offsets),
+            None => Setting::Bad(text.trim().to_string()),
         },
     }
 }
@@ -93,10 +166,10 @@ fn held(paths: &Paths) -> Option<String> {
 
 /// The boot and offset the CPU was last given an offset in, until it is
 /// taken off.
-fn armed(paths: &Paths) -> Option<(String, i32)> {
+fn armed(paths: &Paths) -> Option<(String, Offsets)> {
     let text = read_trimmed(&paths.file("armed"))?;
-    let (boot, mv) = text.split_once(' ')?;
-    Some((boot.to_string(), mv.parse().ok()?))
+    let (boot, offsets) = text.split_once(' ')?;
+    Some((boot.to_string(), Offsets::parse(offsets)?))
 }
 
 fn boot_id(paths: &Paths) -> io::Result<String> {
@@ -149,7 +222,7 @@ fn hold(paths: &Paths, reason: &str) -> io::Result<String> {
 }
 
 fn take_off(paths: &Paths, msr: &mut dyn Msr) -> io::Result<()> {
-    mailbox::set(msr, 0)
+    mailbox::set(msr, [0, 0])
         .map_err(|e| io::Error::other(format!("could not take the offset off: {e}")))?;
     remove_durably(&paths.file("armed"))
 }
@@ -185,17 +258,18 @@ fn open_unlocked(paths: &Paths, open: Open) -> Result<Box<dyn Msr>, String> {
 }
 
 fn apply(paths: &Paths, open: Open) -> io::Result<String> {
-    let mv = match setting(paths) {
+    let offsets = match setting(paths) {
         Setting::Off => return Ok("no undervolt is set".into()),
         Setting::Bad(text) => {
             return hold(
                 paths,
                 &format!(
-                    "the offset '{text}' is not a whole number of millivolts from {DEEPEST} to -1"
+                    "the offset '{text}' is not a whole number of millivolts from {DEEPEST} to -1, \
+                     or one for the core and one for the cache from {DEEPEST} to 0"
                 ),
             )
         }
-        Setting::Offset(mv) => mv,
+        Setting::Offset(offsets) => offsets,
     };
     if let Some(reason) = held(paths) {
         return Ok(format!("held: {reason}"));
@@ -206,7 +280,7 @@ fn apply(paths: &Paths, open: Open) -> io::Result<String> {
             return hold(
                 paths,
                 &format!(
-                    "the computer stopped without shutting down while undervolted by {at} mV \
+                    "the computer stopped without shutting down while undervolted by {at} \
                      (a freeze, a forced power-off or a flat battery)"
                 ),
             );
@@ -216,18 +290,18 @@ fn apply(paths: &Paths, open: Open) -> io::Result<String> {
         Ok(msr) => msr,
         Err(reason) => return hold(paths, &reason),
     };
-    write_durably(&paths.file("armed"), &format!("{boot} {mv}\n"))?;
-    if let Err(e) = mailbox::set(msr.as_mut(), mv) {
+    write_durably(
+        &paths.file("armed"),
+        &format!("{boot} {}\n", offsets.record()),
+    )?;
+    if let Err(e) = mailbox::set(msr.as_mut(), offsets.planes()) {
         return hold_off(
             paths,
             Ok(msr),
-            &format!("the CPU did not take {mv} mV: {e}"),
+            &format!("the CPU did not take {offsets}: {e}"),
         );
     }
-    Ok(format!(
-        "{:.1} mV on the CPU core and cache",
-        mailbox::decode(mailbox::encode(mv))
-    ))
+    Ok(offsets.on_the_cpu())
 }
 
 fn reset(paths: &Paths, open: Open) -> io::Result<String> {
@@ -242,22 +316,22 @@ fn reset(paths: &Paths, open: Open) -> io::Result<String> {
 /// firmware on a resume from suspend) puts the CPU back to none.
 fn reapply(paths: &Paths, open: Open) -> io::Result<String> {
     let boot = boot_id(paths)?;
-    let mv = match armed(paths) {
-        Some((was, mv)) if was == boot => mv,
+    let offsets = match armed(paths) {
+        Some((was, offsets)) if was == boot => offsets,
         _ => return Ok("not undervolted".into()),
     };
     let mut msr = match open_unlocked(paths, open) {
         Ok(msr) => msr,
         Err(reason) => return hold(paths, &reason),
     };
-    if let Err(e) = mailbox::set(msr.as_mut(), mv) {
+    if let Err(e) = mailbox::set(msr.as_mut(), offsets.planes()) {
         return hold_off(
             paths,
             Ok(msr),
-            &format!("the CPU did not take {mv} mV after sleep: {e}"),
+            &format!("the CPU did not take {offsets} after sleep: {e}"),
         );
     }
-    Ok(format!("{mv} mV again after sleep"))
+    Ok(format!("{offsets} again after sleep"))
 }
 
 /// A /dev/kmsg record's message: what follows "level,seq,time,flags;", up to
@@ -280,14 +354,14 @@ fn watch(
     records: &mut dyn Iterator<Item = String>,
 ) -> io::Result<String> {
     let boot = boot_id(paths)?;
-    let mv = match armed(paths) {
-        Some((was, mv)) if was == boot => mv,
+    let offsets = match armed(paths) {
+        Some((was, offsets)) if was == boot => offsets,
         _ => return Ok("not undervolted, so nothing to watch".into()),
     };
     for record in records {
         if let Some(line) = machine_check(&record) {
             let reason =
-                format!("the kernel logged a machine check while undervolted by {mv} mV: {line}");
+                format!("the kernel logged a machine check while undervolted by {offsets}: {line}");
             let msr = open().map_err(|e| {
                 io::Error::other(format!("the CPU's registers cannot be opened: {e}"))
             });
@@ -351,43 +425,44 @@ fn json_string(text: &str) -> String {
 
 fn status(paths: &Paths, open: Open, json: bool) -> io::Result<String> {
     let boot = boot_id(paths).unwrap_or_default();
-    let (offset, state, reason) = match setting(paths) {
+    let (offsets, state, reason) = match setting(paths) {
         Setting::Off => (None, "off", None),
         Setting::Bad(text) => (
             None,
             "held",
             Some(format!("the offset '{text}' is not valid")),
         ),
-        Setting::Offset(mv) => match (held(paths), armed(paths)) {
-            (Some(reason), _) => (Some(mv), "held", Some(reason)),
-            (None, Some((was, _))) if was == boot => (Some(mv), "applied", None),
-            _ => (Some(mv), "pending", None),
+        Setting::Offset(offsets) => match (held(paths), armed(paths)) {
+            (Some(reason), _) => (Some(offsets), "held", Some(reason)),
+            (None, Some((was, _))) if was == boot => (Some(offsets), "applied", None),
+            _ => (Some(offsets), "pending", None),
         },
     };
+    // `intel`: a CPU that takes an offset this way at all, which Settings
+    // offers the undervolt on.
     if json {
+        let mv = |pick: fn(Offsets) -> i32| offsets.map_or("null".into(), |o| pick(o).to_string());
         return Ok(format!(
-            "{{\"offset\":{},\"state\":\"{state}\",\"reason\":{}}}",
-            offset.map_or("null".into(), |mv| mv.to_string()),
+            "{{\"core\":{},\"cache\":{},\"state\":\"{state}\",\"reason\":{},\"intel\":{}}}",
+            mv(|o| o.core),
+            mv(|o| o.cache),
             reason.as_deref().map_or("null".into(), json_string),
+            intel(paths),
         ));
     }
-    let mv = offset.unwrap_or(0);
-    let mut text = match state {
-        "off" => "No undervolt is set; nova power undervolt set <mV> sets one.".to_string(),
-        "applied" => format!(
-            "The CPU core and cache are undervolted by {mv} mV ({:.1} mV).",
-            mailbox::decode(mailbox::encode(mv))
-        ),
-        "held" => format!(
+    let mut text = match (state, offsets) {
+        ("held", _) => format!(
             "The undervolt{} is held: {}.\n\
              nova power undervolt on applies it again; nova power undervolt set <mV> sets a smaller one.",
-            offset.map_or(String::new(), |mv| format!(" of {mv} mV")),
+            offsets.map_or(String::new(), |o| format!(" of {o}")),
             reason.unwrap_or_default()
         ),
-        _ => format!(
-            "An undervolt of {mv} mV is set but not on the CPU in this boot; \
+        ("applied", Some(o)) => format!("Undervolted: {}.", o.on_the_cpu()),
+        ("pending", Some(o)) => format!(
+            "An undervolt of {o} is set but not on the CPU in this boot; \
              systemctl status nova-undervolt says why."
         ),
+        _ => "No undervolt is set; nova power undervolt set <mV> sets one.".to_string(),
     };
     // The CPU's own answer, where this may read its registers (root).
     if let Ok(mut msr) = open() {
@@ -530,7 +605,10 @@ mod tests {
         let m = Machine::new();
         assert_eq!(m.run(apply), "no undervolt is set");
         assert_eq!(m.writes(), 0);
-        assert_eq!(m.json(), r#"{"offset":null,"state":"off","reason":null}"#);
+        assert_eq!(
+            m.json(),
+            r#"{"core":null,"cache":null,"state":"off","reason":null,"intel":true}"#
+        );
     }
 
     #[test]
@@ -545,7 +623,7 @@ mod tests {
         );
         assert_eq!(
             m.json(),
-            r#"{"offset":-70,"state":"applied","reason":null}"#
+            r#"{"core":-70,"cache":-70,"state":"applied","reason":null,"intel":true}"#
         );
         assert_eq!(m.run(reset), "the offset is off");
         assert_eq!(m.core(), 0.0);
@@ -554,6 +632,55 @@ mod tests {
         m.reboot();
         m.run(apply);
         assert!((m.core() - -70.3125).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_core_and_the_cache_each_take_their_own() {
+        let m = Machine::new();
+        m.set_offset("-80 -70\n");
+        assert_eq!(
+            m.run(apply),
+            "-80.1 mV on the CPU core, -70.3 mV on its cache"
+        );
+        assert!((m.core() - -80.078125).abs() < 1e-9);
+        assert!((mailbox::offset(&mut m.cpu.clone(), 2).unwrap() - -70.3125).abs() < 1e-9);
+        assert_eq!(
+            fs::read_to_string(m.paths.file("armed")).unwrap(),
+            "boot-1 -80 -70\n"
+        );
+        assert_eq!(
+            m.json(),
+            r#"{"core":-80,"cache":-70,"state":"applied","reason":null,"intel":true}"#
+        );
+        // A freeze says what both were.
+        m.reboot();
+        assert!(m
+            .run(apply)
+            .contains("undervolted by -80 mV on the core and -70 mV on the cache"));
+    }
+
+    #[test]
+    fn offsets_are_one_number_for_both_or_one_each() {
+        let both = Offsets::parse("-70\n").unwrap();
+        assert_eq!(both.planes(), [-70, -70]);
+        assert_eq!(both.record(), "-70");
+        assert_eq!(both.to_string(), "-70 mV");
+        let each = Offsets::parse("-80 -70").unwrap();
+        assert_eq!(each.record(), "-80 -70");
+        assert_eq!(Offsets::parse("-80 -80").unwrap().record(), "-80");
+        // One plane may be left alone, but not both.
+        assert_eq!(Offsets::parse("-50 0").unwrap().planes(), [-50, 0]);
+        for bad in [
+            "0",
+            "0 0",
+            "-151 -70",
+            "-80 5",
+            "-80 -70 -60",
+            "-80,-70",
+            "core -80",
+        ] {
+            assert_eq!(Offsets::parse(bad), None, "{bad}");
+        }
     }
 
     #[test]

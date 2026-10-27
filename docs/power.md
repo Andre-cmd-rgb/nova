@@ -474,16 +474,32 @@ distinguishes "accepted" from "silently discarded", which is why
 With the lock open:
 
 ```sh
-nova power undervolt set -70   # core and cache; asks for your password
-nova power undervolt           # what is set, and whether the CPU has it
-sudo nova power undervolt      # plus the CPU's own registers
+nova power undervolt set -70      # core and cache; asks for your password
+nova power undervolt set -80 -70  # the core's, then the cache's
+nova power undervolt              # what is set, and whether the CPU has it
+sudo nova power undervolt         # plus the CPU's own registers
+nova power undervolt compare -80 -70
 nova power undervolt off
 ```
+
+Settings → Performance has the same, with a slider each for the core and the
+cache.
+
+The core and the cache are thought to share one voltage on these CPUs, at the
+higher of what the two offsets ask for: a core offset deeper than the cache's
+may change nothing, and a core alone nothing at all. `compare` measures it on
+yours: with the undervolt set now on, it runs one core flat out (every core,
+with `--all`) and reads that core's voltage from IA32_PERF_STATUS (MSR
+`0x198`), twenty times with the offset set now and twenty with the one given,
+twice over in turns, compares the readings at the clock both have, and puts
+the offset set now back. The machine-check watch is on throughout. The answer
+holds for the load it ran: which of the two asks for more can change with the
+clocks.
 
 It is applied at boot and again after every sleep. The first machine check
 takes it off, and so does the boot after one that ended without shutting
 down while it was on; either way it stays off ("held", with the reason, in
-Settings → Battery and `nova doctor`) until `nova power undervolt on`. Find
+Settings → Performance and `nova doctor`) until `nova power undervolt on`. Find
 the depth with a stress test that checks its own arithmetic, and stay a step
 short of the first machine check: a CPU that logs them is already wrong.
 

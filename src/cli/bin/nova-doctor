@@ -234,14 +234,16 @@ check_boot() {
 check_undervolt() {
   local json state offset reason
   json=$(nova-power-undervolt status --json 2>/dev/null) || return 0
-  IFS=$'\t' read -r state offset reason < <(jq -r '[.state, (.offset // ""), (.reason // "")] | @tsv' <<<"$json")
+  IFS=$'\t' read -r state offset reason < <(jq -r '[.state,
+    (if .core == null then "" elif .core == .cache then "\(.core) mV" else "\(.core) mV on the core and \(.cache) mV on the cache" end),
+    (.reason // "")] | @tsv' <<<"$json")
   case $state in
-    applied) report ok "the CPU is undervolted by $offset mV" ;;
+    applied) report ok "the CPU is undervolted by $offset" ;;
     held)
       report warn "the CPU's undervolt is held: $reason" \
         "nova power undervolt on applies it again; nova power undervolt set <mV> sets a smaller one"
       ;;
-    pending) report warn "an undervolt of $offset mV is set but not on the CPU" "systemctl status nova-undervolt says why" ;;
+    pending) report warn "an undervolt of $offset is set but not on the CPU" "systemctl status nova-undervolt says why" ;;
   esac
 }
 

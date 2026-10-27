@@ -29,6 +29,8 @@ setup() {
   stub timedatectl 'echo yes'
   stub nova-hw-detect 'exit 1'
   stub nova-boot-check 'exit 0'
+  # No undervolt tool, rather than this computer's own undervolt.
+  stub nova-power-undervolt 'exit 1'
   export PATH="$SCRATCH/bin:$PATH"
 }
 
@@ -210,4 +212,13 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
 @test "a Raspberry Pi's full disk points at pacman's cache, not snapshots" {
   USED=96 NOVA_ARCH=aarch64 run doctor
   [[ $output == *"sudo pacman -Sc"* && $output != *snapper* ]]
+}
+
+@test "an undervolt: on, with the core's and the cache's, or held with why" {
+  stub nova-power-undervolt 'echo "{\"core\":-80,\"cache\":-70,\"state\":\"applied\",\"reason\":null,\"intel\":true}"'
+  run doctor
+  [[ $output == *"ok    the CPU is undervolted by -80 mV on the core and -70 mV on the cache"* ]]
+  stub nova-power-undervolt 'echo "{\"core\":-70,\"cache\":-70,\"state\":\"held\",\"reason\":\"a freeze\",\"intel\":true}"'
+  run doctor
+  [[ $output == *"warn  the CPU's undervolt is held: a freeze"* ]]
 }

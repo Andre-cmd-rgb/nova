@@ -22,8 +22,10 @@ const WRITE: u64 = 0x11;
 /// Bits 31:21 of a plane's settings: the offset, signed, in 1/1.024 mV.
 const OFFSET_MASK: u32 = 0xFFE0_0000;
 
-/// The planes moved, always together: the cores and the cache (ring) share
-/// one voltage on these CPUs, so an offset on only one of them does nothing.
+/// The planes an undervolt moves, each by its own offset: the cores and the
+/// cache (ring). On these CPUs the two are thought to share one voltage, at
+/// the higher of what each asks for, so a deeper offset on one of them alone
+/// may change nothing; `nova power undervolt compare` measures it.
 pub const PLANES: [(u64, &str); 2] = [(0, "core"), (2, "cache")];
 
 pub trait Msr {
@@ -138,11 +140,11 @@ pub fn offset(msr: &mut dyn Msr, plane: u64) -> Result<f64, Error> {
     Ok(decode(command(msr, plane, READ, 0)?))
 }
 
-/// Gives every plane the offset, keeping the rest of each plane's settings,
-/// and reads each back: a locked mailbox takes a write without complaint and
-/// discards it, which only the read-back shows.
-pub fn set(msr: &mut dyn Msr, millivolts: i32) -> Result<(), Error> {
-    for (plane, name) in PLANES {
+/// Gives each plane its offset, in the order of PLANES, keeping the rest of
+/// each plane's settings, and reads each back: a locked mailbox takes a write
+/// without complaint and discards it, which only the read-back shows.
+pub fn set(msr: &mut dyn Msr, offsets: [i32; 2]) -> Result<(), Error> {
+    for ((plane, name), millivolts) in PLANES.into_iter().zip(offsets) {
         let current = command(msr, plane, READ, 0)?;
         let wanted = (current & !OFFSET_MASK) | encode(millivolts);
         command(msr, plane, WRITE, wanted)?;
@@ -233,22 +235,32 @@ mod tests {
     #[test]
     fn set_moves_core_and_cache_and_keeps_their_other_settings() {
         let mut cpu = Fake::new();
-        set(&mut cpu, -70).unwrap();
+        set(&mut cpu, [-70, -70]).unwrap();
         for plane in [0, 2] {
             assert_eq!(cpu.planes[plane], 0x0000_0123 | encode(-70));
             assert!((offset(&mut cpu, plane as u64).unwrap() - -70.3125).abs() < 1e-9);
         }
         // The GPU, system agent and analog planes are left alone.
         assert_eq!(cpu.planes[1], 0x0000_0123);
-        set(&mut cpu, 0).unwrap();
+        set(&mut cpu, [0, 0]).unwrap();
         assert_eq!(cpu.planes[0], 0x0000_0123);
+    }
+
+    #[test]
+    fn each_plane_takes_its_own_offset() {
+        let mut cpu = Fake::new();
+        set(&mut cpu, [-80, -70]).unwrap();
+        assert_eq!(cpu.planes[0], 0x0000_0123 | encode(-80));
+        assert_eq!(cpu.planes[2], 0x0000_0123 | encode(-70));
+        set(&mut cpu, [-50, 0]).unwrap();
+        assert_eq!(cpu.planes[2], 0x0000_0123);
     }
 
     #[test]
     fn a_write_the_mailbox_discards_is_an_error() {
         let mut cpu = Fake::new();
         cpu.discard = true;
-        match set(&mut cpu, -70) {
+        match set(&mut cpu, [-70, -70]) {
             Err(Error::Discarded { plane: "core", .. }) => {}
             other => panic!("{other:?}"),
         }
