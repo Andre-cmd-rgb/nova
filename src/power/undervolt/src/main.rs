@@ -260,21 +260,15 @@ fn open_unlocked(paths: &Paths, open: Open) -> Result<Box<dyn Msr>, String> {
 fn apply(paths: &Paths, open: Open) -> io::Result<String> {
     let offsets = match setting(paths) {
         Setting::Off => return Ok("no undervolt is set".into()),
-        Setting::Bad(text) => {
-            return hold(
-                paths,
-                &format!(
-                    "the offset '{text}' is not a whole number of millivolts from {DEEPEST} to -1, \
-                     or one for the core and one for the cache from {DEEPEST} to 0"
-                ),
-            )
-        }
-        Setting::Offset(offsets) => offsets,
+        Setting::Bad(text) => Err(text),
+        Setting::Offset(offsets) => Ok(offsets),
     };
     if let Some(reason) = held(paths) {
         return Ok(format!("held: {reason}"));
     }
     let boot = boot_id(paths)?;
+    // Before the offset is read: a freeze a moment after it was set can leave
+    // it empty, and the freeze is what the hold should say.
     if let Some((was, at)) = armed(paths) {
         if was != boot {
             return hold(
@@ -286,6 +280,18 @@ fn apply(paths: &Paths, open: Open) -> io::Result<String> {
             );
         }
     }
+    let offsets = match offsets {
+        Ok(offsets) => offsets,
+        Err(text) => {
+            return hold(
+                paths,
+                &format!(
+                    "the offset '{text}' is not a whole number of millivolts from {DEEPEST} to -1, \
+                     or one for the core and one for the cache from {DEEPEST} to 0"
+                ),
+            )
+        }
+    };
     let mut msr = match open_unlocked(paths, open) {
         Ok(msr) => msr,
         Err(reason) => return hold(paths, &reason),
@@ -702,6 +708,22 @@ mod tests {
         assert!(m.run(apply).starts_with("held:"));
         assert_eq!(m.writes(), writes);
         assert_eq!(m.run(reset), "not undervolted");
+    }
+
+    #[test]
+    fn a_freeze_that_emptied_the_offset_is_held_as_a_freeze() {
+        let m = Machine::new();
+        m.set_offset("-100 -70");
+        m.run(apply);
+        // Frozen before the offset's file reached the disk, as `armed` did.
+        m.set_offset("");
+        m.reboot();
+        let writes = m.writes();
+        assert!(m.run(apply).starts_with(
+            "held: the computer stopped without shutting down while undervolted by \
+             -100 mV on the core and -70 mV on the cache"
+        ));
+        assert_eq!(m.writes(), writes);
     }
 
     #[test]

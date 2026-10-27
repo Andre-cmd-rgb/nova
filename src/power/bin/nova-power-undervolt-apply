@@ -39,10 +39,14 @@ describe() { # <offset>
   if [[ -z $cache ]]; then echo "$core mV on the core and cache"; else echo "$core mV on the core, $cache mV on the cache"; fi
 }
 
+# On the disk before the service puts it on the CPU: a freeze moments later
+# otherwise finds the file there but empty.
 write_offset() { # <offset>
   mkdir -p "$STATE"
   printf '%s\n' "$1" >"$STATE/offset.tmp"
+  sync -- "$STATE/offset.tmp"
   mv -f -- "$STATE/offset.tmp" "$STATE/offset"
+  sync -- "$STATE"
 }
 
 # <offset> on the CPU through the service: its stop takes the old one off, its
