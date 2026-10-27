@@ -124,10 +124,16 @@ Item {
     function ping(): string { return "ok" }
   }
 
+  // The card's own size, centred above the bottom edge: a surface the size
+  // of the screen was a 4K buffer for Qt to redraw on every step of a held
+  // key, and for Hyprland to fade in and out.
   PanelWindow {
     id: panel
     visible: root.opened
-    anchors { top: true; bottom: true; left: true; right: true }
+    anchors.bottom: true
+    margins.bottom: Style.space(67)
+    implicitWidth: card.width
+    implicitHeight: card.height
     color: "transparent"
     WlrLayershell.namespace: "nova-osd"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -141,9 +147,6 @@ Item {
       id: card
       width: card.borderLeft + root.pad + root.contentWidth + root.pad + card.borderRight
       height: card.borderTop + root.pad + Style.font.displayLarge + root.pad + card.borderBottom
-      anchors.horizontalCenter: parent.horizontalCenter
-      anchors.bottom: parent.bottom
-      anchors.bottomMargin: Style.space(67)
       color: Util.alpha(Commons.Color.background, 0.97)
       borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
       radius: Style.cornerRadius
