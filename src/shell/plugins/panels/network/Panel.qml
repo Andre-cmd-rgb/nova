@@ -382,7 +382,10 @@ Ui.Panel {
     syncWifiNetworks()
   }
 
-  onWifiNetworkObjectsChanged: syncWifiNetworks()
+  onWifiNetworkObjectsChanged: {
+    syncWifiNetworks()
+    if (opened) bandSettle.restart()
+  }
 
   function selectByDelta(delta) {
     if (wifiNetworks.length === 0) { selectedIndex = -1; return }
@@ -448,10 +451,7 @@ Ui.Panel {
       dnsProc.command = ["bash", "-c", root.dnsCommand("")]
       dnsProc.running = true
     }
-    if (!bandProc.running) {
-      bandProc.command = ["nova-network-band"]
-      bandProc.running = true
-    }
+    probeBand()
     // A closed panel has no nearby-network list to fill, and bare refresh()
     // reaches here from action completion, timeouts and construction.
     if (opened && wifiDevice) {
@@ -814,18 +814,31 @@ Ui.Panel {
     }
   }
 
-  // Slower than detailsPoll on purpose: this shells out to nmcli several times,
-  // and band availability only moves when a scan turns up a new BSSID.
+  function probeBand() {
+    if (bandProc.running) return
+    bandProc.command = ["nova-network-band"]
+    bandProc.running = true
+  }
+
+  // The bands on offer move only when the link does, or when a scan turns up
+  // an access point; nova-network-band starts nmcli several times, so it asks
+  // then, once things settle, and every 15 s besides for an access point the
+  // list does not show.
+  readonly property string bandLink: String(info.ssid || "") + "\t" + String(info.freq || "")
+  onBandLinkChanged: if (opened) bandSettle.restart()
+
+  Timer {
+    id: bandSettle
+    interval: 1000
+    onTriggered: if (root.opened) root.probeBand()
+  }
+
   Timer {
     id: bandPoll
-    interval: 4000
+    interval: 15000
     repeat: true
     running: root.opened
-    onTriggered: {
-      if (bandProc.running) return
-      bandProc.command = ["nova-network-band"]
-      bandProc.running = true
-    }
+    onTriggered: root.probeBand()
   }
 
   // Action runner for DNS provider changes. Wi-Fi actions use the

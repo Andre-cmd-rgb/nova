@@ -55,51 +55,60 @@ print_status() {
   printf 'wifi\t%s\t\t\n' "$device"
 }
 
+# The panel reads this every 1.5 s while it is open, so it parses with bash
+# rather than starting a jq or an awk for each field.
 ping_latency_ms() {
-  local host=$1
+  local host=$1 line
 
-  LC_ALL=C ping -n -c 1 -W 1 "$host" 2>/dev/null | awk -F'time[=<]' '/time[=<]/ { split($2, parts, " "); print parts[1]; exit }' || true
+  while read -r line; do
+    if [[ $line =~ time[=\<]([0-9.]+) ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]}"
+      break
+    fi
+  done < <(LC_ALL=C ping -n -c 1 -W 1 "$host" 2>/dev/null || true)
 }
 
+# Both at once: an unanswered ping takes its full second.
 print_ping_samples() {
-  local gateway=$1
-  local tmpdir router_file internet_file
-  local router_pid="" internet_pid=""
+  local gateway=$1 router internet router_fd internet_fd
 
-  nova-cmd-present ping || return 0
-  tmpdir=$(mktemp -d) || return 0
-  router_file="$tmpdir/router"
-  internet_file="$tmpdir/internet"
+  command -v ping >/dev/null || return 0
 
   if [[ -n $gateway ]]; then
-    ping_latency_ms "$gateway" >"$router_file" &
-    router_pid=$!
+    exec {router_fd}< <(ping_latency_ms "$gateway")
+  fi
+  exec {internet_fd}< <(ping_latency_ms "$internet_probe")
+
+  if [[ -n $gateway ]]; then
+    read -r router <&"$router_fd" || router=""
+    exec {router_fd}<&-
+    printf 'router_ping_ms\t%s\n' "$router"
   fi
 
-  ping_latency_ms "$internet_probe" >"$internet_file" &
-  internet_pid=$!
-
-  if [[ -n $router_pid ]]; then
-    wait "$router_pid" || true
-    printf 'router_ping_ms\t%s\n' "$(cat "$router_file")"
-  fi
-
-  wait "$internet_pid" || true
-  printf 'internet_ping_ms\t%s\n' "$(cat "$internet_file")"
-  rm -rf "$tmpdir"
+  read -r internet <&"$internet_fd" || internet=""
+  exec {internet_fd}<&-
+  printf 'internet_ping_ms\t%s\n' "$internet"
 }
 
 print_verbose() {
-  local route_json iface gw src prefix link
+  local -a route words
+  local iface="" gw="" src="" prefix="" line value i
 
-  route_json=$(ip -j route get "$internet_probe" 2>/dev/null || true)
-  [[ -n $route_json ]] || return 0
+  read -r -a route < <(ip route get "$internet_probe" 2>/dev/null || true)
+  for ((i = 0; i < ${#route[@]}; i++)); do
+    case ${route[i]} in
+      dev) iface=${route[i + 1]:-} ;;
+      via) gw=${route[i + 1]:-} ;;
+      src) src=${route[i + 1]:-} ;;
+    esac
+  done
+  [[ -n $iface ]] || return 0
 
-  IFS=$'\t' read -r iface gw src < <(jq -r '.[0] | [.dev // "", .gateway // "", .prefsrc // ""] | @tsv' <<<"$route_json" 2>/dev/null || true)
-  [[ -n ${iface:-} ]] || return 0
-  gw=${gw:-} src=${src:-}
-
-  prefix=$(ip -j addr show "$iface" 2>/dev/null | jq -r 'first(.[0].addr_info[]? | select(.family == "inet") | .prefixlen) // ""' 2>/dev/null || true)
+  # The first IPv4 address's prefix; a point-to-point one has it on the peer.
+  read -r line < <(ip -o -4 addr show dev "$iface" 2>/dev/null || true) || true
+  if [[ $line =~ inet\ ([^\ ]+\ peer\ )?[^\ /]+/([0-9]+) ]]; then
+    prefix=${BASH_REMATCH[2]}
+  fi
 
   printf 'iface\t%s\n' "$iface"
   printf 'ip\t%s\n' "$src"
@@ -107,27 +116,49 @@ print_verbose() {
   printf 'gateway\t%s\n' "$gw"
 
   local sys=/sys/class/net/$iface
-  if [[ -r $sys/statistics/rx_bytes ]]; then printf 'rx_bytes\t%s\n' "$(<"$sys/statistics/rx_bytes")"; fi
-  if [[ -r $sys/statistics/tx_bytes ]]; then printf 'tx_bytes\t%s\n' "$(<"$sys/statistics/tx_bytes")"; fi
+  if read -r value <"$sys/statistics/rx_bytes" 2>/dev/null; then printf 'rx_bytes\t%s\n' "$value"; fi
+  if read -r value <"$sys/statistics/tx_bytes" 2>/dev/null; then printf 'tx_bytes\t%s\n' "$value"; fi
 
-  if [[ -d /sys/class/net/$iface/wireless ]]; then
+  if [[ -d $sys/wireless ]]; then
     printf 'type\twifi\n'
 
-    if nova-cmd-present iw; then
-      link=$(iw dev "$iface" link 2>/dev/null || true)
+    if command -v iw >/dev/null; then
+      local linked=false ssid="" signal="" freq="" rate="" unit=""
 
-      if [[ -n $link ]]; then
-        printf 'ssid\t%s\n' "$(awk '/SSID:/ { sub(/.*SSID: /, ""); print; exit }' <<<"$link")"
-        printf 'signal_dbm\t%s\n' "$(awk '/signal:/ { print $2; exit }' <<<"$link")"
-        printf 'freq\t%s\n' "$(awk '/freq:/ { print $2; exit }' <<<"$link")"
-        printf 'bitrate\t%s %s\n' "$(awk '/tx bitrate:/ { print $3; exit }' <<<"$link")" "$(awk '/tx bitrate:/ { print $4; exit }' <<<"$link")"
+      while IFS= read -r line; do
+        linked=true
+        line=${line#"${line%%[![:space:]]*}"}
+        case $line in
+          "SSID: "*) [[ -n $ssid ]] || ssid=${line#SSID: } ;;
+          "signal: "*)
+            read -r -a words <<<"${line#signal: }"
+            [[ -n $signal ]] || signal=${words[0]:-}
+            ;;
+          "freq: "*)
+            read -r -a words <<<"${line#freq: }"
+            [[ -n $freq ]] || freq=${words[0]:-}
+            ;;
+          "tx bitrate: "*)
+            read -r -a words <<<"${line#tx bitrate: }"
+            [[ -n $rate ]] || { rate=${words[0]:-} unit=${words[1]:-}; }
+            ;;
+        esac
+      done < <(iw dev "$iface" link 2>/dev/null || true)
+
+      if [[ $linked == true ]]; then
+        printf 'ssid\t%s\n' "$ssid"
+        printf 'signal_dbm\t%s\n' "$signal"
+        printf 'freq\t%s\n' "$freq"
+        printf 'bitrate\t%s %s\n' "$rate" "$unit"
       fi
     fi
   else
     printf 'type\tethernet\n'
     # A link that is down answers EINVAL instead of a speed.
-    printf 'speed\t%s\n' "$(cat "$sys/speed" 2>/dev/null || true)"
-    printf 'duplex\t%s\n' "$(cat "$sys/duplex" 2>/dev/null || true)"
+    read -r value <"$sys/speed" 2>/dev/null || value=""
+    printf 'speed\t%s\n' "$value"
+    read -r value <"$sys/duplex" 2>/dev/null || value=""
+    printf 'duplex\t%s\n' "$value"
   fi
 
   print_ping_samples "$gw"
