@@ -32,6 +32,11 @@ Column {
   // address -> "connecting" | "disconnecting" | "forgetting"
   property var pending: ({})
 
+  // Whether Bluetooth LE is on, as `nova bluetooth le` has it; null where it
+  // cannot say. Its switch runs through Settings, which reads it back.
+  property var le: null
+  signal command(var argv)
+
   // Each scan this page asks for. Settings ends it once the page is gone: the
   // page cannot, as BlueZ may confirm the scan only after that.
   signal discoveryStarted()
@@ -151,6 +156,15 @@ Column {
         : "On. While this page is open, it looks for devices nearby."
       checked: root.powered
       onClicked: if (root.available) Quickshell.execDetached(["nova-bluetooth-power", root.powered ? "off" : "on"])
+    }
+    Toggle {
+      width: parent.width
+      visible: root.available && root.le !== null
+      label: "Bluetooth LE"
+      description: root.le ? "On. Off can help headphones that stutter."
+        : "Off: classic Bluetooth only. Devices that speak only LE cannot connect."
+      checked: root.le === true
+      onClicked: root.command(["nova-bluetooth-le", checked ? "off" : "on"])
     }
   }
 

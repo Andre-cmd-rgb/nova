@@ -202,6 +202,7 @@ state() {
     --argjson battery "$(battery_json)" \
     --argjson performance "$(performance_json)" \
     --argjson radios "$(radios_json)" \
+    --argjson bluetooth "$(json_or null nova-bluetooth-le --json)" \
     --argjson displays "$(json_or '{"displays":[],"pending":null}' nova-monitor list --json)" \
     --argjson screenTime "$(nova-screentime enabled >/dev/null 2>&1 && echo true || echo false)" \
     --argjson config "$config" \
@@ -216,6 +217,7 @@ state() {
       battery: $battery,
       performance: $performance,
       radios: $radios,
+      bluetooth: $bluetooth,
       displays: $displays,
       screenTime: $screenTime,
       bar: {position: ($config.bar.position // "top"), transparent: ($config.bar.transparent == true),

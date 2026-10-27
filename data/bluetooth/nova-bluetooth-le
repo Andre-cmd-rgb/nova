@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# nova:summary=Turn Bluetooth LE on or off: off keeps to classic Bluetooth, for headphones that stutter
+# nova:args=[on|off] [--json]
+#
+# Off is classic Bluetooth only. On some controllers, the P1's AX210 among
+# them, LE connection attempts break classic audio, and headphones stutter or
+# drop; classic alone plays them smoothly, with their best codec still (aptX,
+# AAC). A device that speaks only LE, such as some mice and trackers, cannot
+# connect while it is off. Kept in /etc/bluetooth/main.conf, across restarts
+# and updates; Bluetooth restarts to take it, and devices drop for a moment.
+
+set -euo pipefail
+
+APPLY=${NOVA_BLUETOOTH_LE_APPLY:-/usr/lib/nova/nova-bluetooth-le-apply}
+
+usage() {
+  cat <<'EOF'
+Usage: nova bluetooth le [on|off] [--json]
+
+  nova bluetooth le        whether Bluetooth LE is on
+  nova bluetooth le off    classic Bluetooth only, for headphones that stutter
+  nova bluetooth le on     LE and classic both, the default
+EOF
+}
+
+json=false
+value=
+for arg in "$@"; do
+  case $arg in
+    --json) json=true ;;
+    -h | --help) usage; exit 0 ;;
+    on | off)
+      [[ -z $value ]] || { usage >&2; exit 2; }
+      value=$arg
+      ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+
+if [[ -n $value ]]; then
+  if ((EUID == 0)); then
+    "$APPLY" "$value"
+  else
+    pkexec "$APPLY" "$value"
+  fi
+fi
+
+state=$("$APPLY" status)
+if $json; then
+  printf '{"le":%s}\n' "$([[ $state == on ]] && echo true || echo false)"
+elif [[ $state == on ]]; then
+  echo "Bluetooth LE is on. For headphones that stutter: nova bluetooth le off"
+else
+  echo "Bluetooth LE is off: classic Bluetooth only. Turn it back on with: nova bluetooth le on"
+fi

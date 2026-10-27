@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- nova bluetooth le: the person at the computer may switch Bluetooth LE
+     without a password, as with the Bluetooth radio itself. -->
+<policyconfig>
+  <vendor>Nova</vendor>
+  <action id="org.nova.bluetooth-le">
+    <description>Turn Bluetooth LE on or off</description>
+    <message>Authentication is required to turn Bluetooth LE on or off</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-bluetooth-le-apply</annotate>
+  </action>
+</policyconfig>

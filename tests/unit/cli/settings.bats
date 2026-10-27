@@ -51,6 +51,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c '.bar.shown | index("nova.power") != null' <<<"$output")" = true ]
   [ "$(jq -c .updates <<<"$output")" = '{"candidates":false,"recovery":false}' ]
   [ "$(jq -c .displays <<<"$output")" = '{"displays":[],"pending":null}' ]
+  [ "$(jq -c .bluetooth <<<"$output")" = null ]
 }
 
 @test "state: the displays as nova monitor lists them" {
@@ -189,6 +190,12 @@ state() { nova-settings state | jq -c "$1"; }
     i=$((i + 1))
   done
   [ "$(state .radios)" = '["bluetooth","wlan","wwan"]' ]
+}
+
+@test "state: Bluetooth LE as nova bluetooth le has it, or null where it cannot say" {
+  [ "$(state .bluetooth)" = null ]
+  stub nova-bluetooth-le '[[ $* == "--json" ]] && echo "{\"le\":false}"'
+  [ "$(state .bluetooth)" = '{"le":false}' ]
 }
 
 @test "open: a known page goes to the shell, an unknown one is refused" {

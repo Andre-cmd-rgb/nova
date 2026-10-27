@@ -542,7 +542,9 @@ Item {
       title: "Bluetooth"
       BluetoothView {
         width: p.inner
+        le: root.info.bluetooth ? root.info.bluetooth.le === true : null
         onDiscoveryStarted: root.owesDiscoveryStop = true
+        onCommand: function (argv) { root.run(argv) }
       }
     }
   }
