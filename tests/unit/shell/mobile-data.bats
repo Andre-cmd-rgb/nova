@@ -154,3 +154,56 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [ "$(cut -f2 "$INBOX" | paste -sd ' ')" = 'hash2 hash3' ]
   [ "$(stat -c %a "$INBOX")" = 600 ]
 }
+
+@test "a connected modem: what the bar shows, read in one pass of its dump" {
+  modem "modem.generic.ports.value[1]                    : cdc-wdm0 (mbim)" \
+    "modem.generic.ports.value[2]                    : wwan0 (net)" \
+    "modem.generic.access-technologies.value[1]      : lte" \
+    "modem.generic.access-technologies.value[2]      : 5gnr" \
+    "modem.generic.state                             : connected" \
+    "modem.generic.signal-quality.value              : 72" \
+    "modem.generic.sim                               : /org/freedesktop/ModemManager1/SIM/0" \
+    "modem.3gpp.operator-name                        : Voda: fone"
+  stub nmcli '
+case "$*" in
+  "-t -f TYPE,NAME connection show") printf "%s\n" "802-11-wireless:Home" "gsm:Work\\: SIM" ;;
+  "-t -f TYPE,DEVICE,STATE device status") printf "%s\n" "wifi:wlp9s0:connected" "gsm:cdc-wdm0:connected" ;;
+esac'
+  stub ip 'echo "5: wwan0    inet 10.1.2.3/30 scope global wwan0"'
+  [ "$(info state)" = connected ]
+  [ "$(info operator)" = "Voda: fone" ]
+  [ "$(info tech)" = 5G ]
+  [ "$(info signal)" = 72 ]
+  [ "$(info iface)" = wwan0 ]
+  [ "$(info ip)" = 10.1.2.3 ]
+  [ "$(info profile)" = "Work: SIM" ]
+  [ "$(info managed)" = yes ]
+}
+
+@test "the billing period starts on its day, or the last of a shorter month" {
+  sed '/^usage() {/,$d' "$helper" >"$SCRATCH/mobile-data.sh"
+  # shellcheck source=/dev/null
+  source "$SCRATCH/mobile-data.sh"
+  mkdir -p "$XDG_CONFIG_HOME/nova-mobile-data"
+  period() { # today reset-day
+    echo "RESET_DAY=$2" >"$CONFIG"
+    NOVA_MOBILE_TODAY=$1 period_bounds
+    echo "$PERIOD_START $PERIOD_NEXT"
+  }
+  [ "$(period 2025-02-15 31)" = "2025-01-31 2025-02-28" ]
+  [ "$(period 2024-02-29 31)" = "2024-02-29 2024-03-31" ]
+  [ "$(period 2100-02-28 29)" = "2100-02-28 2100-03-29" ]
+  [ "$(period 2025-12-31 1)" = "2025-12-01 2026-01-01" ]
+  [ "$(period 2026-01-05 10)" = "2025-12-10 2026-01-10" ]
+  [ "$(period 2026-03-01 x)" = "2026-03-01 2026-04-01" ]
+}
+
+@test "the config: the last line for a key wins, spaces and CRLF aside" {
+  sed '/^usage() {/,$d' "$helper" >"$SCRATCH/mobile-data.sh"
+  # shellcheck source=/dev/null
+  source "$SCRATCH/mobile-data.sh"
+  mkdir -p "$XDG_CONFIG_HOME/nova-mobile-data"
+  printf '%s\r\n' "PROFILE = first" " PROFILE =  Last One  " "PROFILE_X=no" >"$CONFIG"
+  [ "$(get_cfg PROFILE)" = "Last One" ]
+  [ "$(get_cfg APN fallback)" = fallback ]
+}

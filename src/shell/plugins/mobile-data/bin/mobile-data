@@ -64,12 +64,16 @@ rf() { LC_ALL=C rfkill "$@"; }
 # execute anything.
 
 get_cfg() {
-  local key=$1 def=${2:-} value=""
+  local key=$1 def=${2:-} value="" line
   if [[ -r $CONFIG ]]; then
     # Keys are literals from this script, never user input, so building the
-    # match out of one is safe.
-    value=$(sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$CONFIG" |
-      tail -n1 | tr -d '\r')
+    # match out of one is safe. The last line for a key wins.
+    local pattern="^[[:space:]]*${key}[[:space:]]*=(.*)$"
+    while IFS= read -r line || [[ -n $line ]]; do
+      [[ $line =~ $pattern ]] && value=${BASH_REMATCH[1]}
+    done <"$CONFIG"
+    value=${value//$'\r'/}
+    value=${value#"${value%%[![:space:]]*}"}
     value=${value%"${value##*[![:space:]]}"}
   fi
   printf '%s' "${value:-$def}"
@@ -144,6 +148,7 @@ load_dump() {
   if [[ $cached =~ ^[0-9]+$ ]]; then
     DUMP=$(mm -m "$cached" -K 2>/dev/null) && {
       IDX=$cached
+      parse_dump
       return 0
     }
   fi
@@ -152,6 +157,7 @@ load_dump() {
   [[ -n $index ]] || return 1
   DUMP=$(mm -m "$index" -K 2>/dev/null) || return 1
   IDX=$index
+  parse_dump
   mkdir -p -- "$STATE_DIR" && printf '%s' "$index" >"$MODEM_CACHE"
   return 0
 }
@@ -198,26 +204,43 @@ decide_first_start() {
   return 0
 }
 
-# Pull one key out of an `mmcli -K` dump. Splitting on the first colon only,
-# so values that contain colons (IPv6) survive intact.
+# An `mmcli -K` dump, read once into KV by key, and its keys in order. Split
+# on the first colon only, so values that contain colons (IPv6) survive
+# intact. The widget reads a status every few seconds, and an awk for each
+# key was most of what one cost.
+declare -A KV=()
+KV_KEYS=() KV_DUMP=""
+
+parse_dump() {
+  local line key
+  KV=() KV_KEYS=() KV_DUMP=$DUMP
+  while IFS= read -r line; do
+    [[ $line == *:* ]] || continue
+    key=${line%%:*}
+    key=${key%"${key##*[![:space:]]}"}
+    [[ -n ${KV[$key]+set} ]] && continue
+    line=${line#*:}
+    KV[$key]=${line#"${line%%[![:space:]]*}"}
+    KV_KEYS+=("$key")
+  done <<<"$DUMP"
+}
+
+# One key of the dump in DUMP.
 kv() {
-  awk -v want="$1" '
-    { key = $0; sub(/[[:space:]]*:.*$/, "", key) }
-    key == want {
-      value = $0; sub(/^[^:]*:[[:space:]]*/, "", value)
-      print value == "--" ? "" : value
-      exit
-    }
-  ' <<<"$DUMP"
+  [[ $DUMP == "$KV_DUMP" ]] || parse_dump
+  local value=${KV[$1]-}
+  [[ $value != "--" ]] || value=""
+  printf '%s\n' "$value"
 }
 
 # Values of a repeated `foo.value[N]` list, one per line.
 kv_list() {
-  awk -v prefix="$1" '
-    index($0, prefix) == 1 && $0 ~ /^[^:]*\.value\[[0-9]+\]/ {
-      value = $0; sub(/^[^:]*:[[:space:]]*/, "", value); print value
-    }
-  ' <<<"$DUMP"
+  [[ $DUMP == "$KV_DUMP" ]] || parse_dump
+  local key
+  for key in "${KV_KEYS[@]}"; do
+    [[ $key == "$1"* && $key =~ \.value\[[0-9]+\] ]] && printf '%s\n' "${KV[$key]}"
+  done
+  return 0
 }
 
 # The honest label is the highest generation the modem reports. On 5G NSA
@@ -268,7 +291,9 @@ signal_icon() {
 # before anything else and the rfkill entry itself proves the hardware.
 radio_blocked() {
   have rfkill || return 1
-  [[ $(rf -n -o TYPE,SOFT list wwan 2>/dev/null | awk 'NR == 1 { print $2 }') == blocked ]]
+  local soft=""
+  read -r _ soft _ < <(rf -n -o TYPE,SOFT list wwan 2>/dev/null) || true
+  [[ $soft == blocked ]]
 }
 
 radio_present() {
@@ -318,8 +343,15 @@ nm_profile() {
     return 0
   fi
   have nmcli || return 0
-  nm -t -f TYPE,NAME connection show 2>/dev/null |
-    sed -n 's/^gsm://p' | head -n1 | nm_unescape
+  local line
+  while IFS= read -r line; do
+    if [[ $line == gsm:* ]]; then
+      line=${line#gsm:}
+      printf '%s\n' "$line" | nm_unescape
+      return 0
+    fi
+  done < <(nm -t -f TYPE,NAME connection show 2>/dev/null)
+  return 0
 }
 
 nm_has_profile() {
@@ -338,8 +370,14 @@ nm_gsm_device_name() {
 
 nm_gsm_device_state() {
   have nmcli || return 0
-  nm -t -f TYPE,DEVICE,STATE device status 2>/dev/null |
-    awk -F: '$1 == "gsm" { print $3; exit }'
+  local type device state
+  while IFS=: read -r type device state; do
+    if [[ $type == gsm ]]; then
+      printf '%s\n' "${state%%:*}"
+      return 0
+    fi
+  done < <(nm -t -f TYPE,DEVICE,STATE device status 2>/dev/null)
+  return 0
 }
 
 # ------------------------------------------------------------------- meter
@@ -349,37 +387,41 @@ nm_gsm_device_state() {
 # the last sample, and treat a counter that went backwards (or a new
 # interface) as a fresh start rather than a negative delta.
 
-days_in_month() { date -d "$1-$2-01 +1 month -1 day" +%d; }
-
-clamp_day() {
-  local year=$1 month=$2 day=$3 last
-  last=$(days_in_month "$year" "$month")
-  ((10#$day > 10#$last)) && day=$last
-  printf '%d' "$((10#$day))"
+# Sets <var> to <day>, or to the last day of <month> in <year> when that
+# month is shorter.
+clamp_day() { # var year month day
+  local last=31
+  case $3 in
+  2) last=$(($2 % 4 == 0 && ($2 % 100 != 0 || $2 % 400 == 0) ? 29 : 28)) ;;
+  4 | 6 | 9 | 11) last=30 ;;
+  esac
+  printf -v "$1" '%d' "$(($4 > last ? last : $4))"
 }
 
-# Sets PERIOD_START and PERIOD_NEXT from the configured renewal day.
+# Sets PERIOD_START and PERIOD_NEXT from the configured renewal day. In
+# bash, without a `date`: the widget asks for this every few seconds.
 period_bounds() {
-  local reset_day year month day start
+  local reset_day year month day start today=${NOVA_MOBILE_TODAY:-}
   reset_day=$(get_cfg RESET_DAY 1)
   [[ $reset_day =~ ^[0-9]+$ ]] && ((10#$reset_day >= 1 && 10#$reset_day <= 31)) || reset_day=1
+  reset_day=$((10#$reset_day))
 
-  year=$(date +%Y)
-  month=$(date +%m)
-  day=$(clamp_day "$year" "$month" "$reset_day")
-  start=$(printf '%04d-%02d-%02d' "$((10#$year))" "$((10#$month))" "$day")
+  [[ -n $today ]] || printf -v today '%(%F)T' -1
+  year=$((10#${today:0:4})) month=$((10#${today:5:2}))
+  clamp_day day "$year" "$month" "$reset_day"
+  printf -v start '%04d-%02d-%02d' "$year" "$month" "$day"
 
   # Zero-padded ISO dates, so a plain lexical comparison is also chronological.
-  if [[ $(date +%F) < $start ]]; then
-    read -r year month <<<"$(date -d "$year-$month-01 -1 month" '+%Y %m')"
-    day=$(clamp_day "$year" "$month" "$reset_day")
-    start=$(printf '%04d-%02d-%02d' "$((10#$year))" "$((10#$month))" "$day")
+  if [[ $today < $start ]]; then
+    if ((month == 1)); then year=$((year - 1)) month=12; else month=$((month - 1)); fi
+    clamp_day day "$year" "$month" "$reset_day"
+    printf -v start '%04d-%02d-%02d' "$year" "$month" "$day"
   fi
   PERIOD_START=$start
 
-  read -r year month <<<"$(date -d "${start%-*}-01 +1 month" '+%Y %m')"
-  day=$(clamp_day "$year" "$month" "$reset_day")
-  PERIOD_NEXT=$(printf '%04d-%02d-%02d' "$((10#$year))" "$((10#$month))" "$day")
+  if ((month == 12)); then year=$((year + 1)) month=1; else month=$((month + 1)); fi
+  clamp_day day "$year" "$month" "$reset_day"
+  printf -v PERIOD_NEXT '%04d-%02d-%02d' "$year" "$month" "$day"
 }
 
 meter_update() {
@@ -411,12 +453,19 @@ meter_update() {
     return 0
   }
 
-  local period="" used=0 last=0 last_iface=""
+  local period="" used=0 last=0 last_iface="" key value read=" "
   if [[ -r $METER ]]; then
-    period=$(sed -n 's/^period=//p' "$METER" | head -n1)
-    used=$(sed -n 's/^used=//p' "$METER" | head -n1)
-    last=$(sed -n 's/^last=//p' "$METER" | head -n1)
-    last_iface=$(sed -n 's/^iface=//p' "$METER" | head -n1)
+    while IFS='=' read -r key value; do
+      [[ $read == *" $key "* ]] && continue
+      case $key in
+      period) period=$value ;;
+      used) used=$value ;;
+      last) last=$value ;;
+      iface) last_iface=$value ;;
+      *) continue ;;
+      esac
+      read+="$key "
+    done <"$METER"
   fi
   [[ $used =~ ^[0-9]+$ ]] || used=0
   [[ $last =~ ^[0-9]+$ ]] || last=0
@@ -503,8 +552,13 @@ read_state() {
   SIGNAL=$(kv modem.generic.signal-quality.value)
   [[ $SIGNAL =~ ^[0-9]+$ ]] || SIGNAL=0
 
-  IFACE=$(kv_list "modem.generic.ports" |
-    awk '/\(net\)$/ { sub(/ \(net\)$/, ""); print; exit }')
+  local port
+  while IFS= read -r port; do
+    if [[ $port == *" (net)" ]]; then
+      IFACE=${port% (net)}
+      break
+    fi
+  done < <(kv_list "modem.generic.ports")
 
   local modem_state sim
   modem_state=$(kv modem.generic.state)
@@ -545,8 +599,11 @@ read_state() {
   fi
 
   if [[ -n $IFACE ]]; then
-    IPADDR=$(LC_ALL=C ip -4 -o addr show dev "$IFACE" 2>/dev/null |
-      awk '{ for (i = 1; i <= NF; i++) if ($i == "inet") { split($(i + 1), a, "/"); print a[1]; exit } }')
+    local line
+    read -r line < <(LC_ALL=C ip -4 -o addr show dev "$IFACE" 2>/dev/null) || true
+    if [[ $line =~ [[:space:]]inet[[:space:]]+([^/[:space:]]+) ]]; then
+      IPADDR=${BASH_REMATCH[1]}
+    fi
   fi
 }
 
@@ -585,8 +642,14 @@ cmd_info() {
     # Bound to the modem's interface: the default route is normally Wi-Fi, and
     # an unbound ping would measure the wrong link entirely.
     if [[ $STATE == connected ]] && have ping; then
-      printf 'ping_ms=%s\n' "$(LC_ALL=C ping -n -c 1 -W 1 -I "$IFACE" 1.1.1.1 2>/dev/null |
-        awk -F'time[=<]' '/time[=<]/ { split($2, parts, " "); print parts[1]; exit }')"
+      local line ms=""
+      while read -r line; do
+        if [[ $line =~ time[=\<]([0-9.]+) ]]; then
+          ms=${BASH_REMATCH[1]}
+          break
+        fi
+      done < <(LC_ALL=C ping -n -c 1 -W 1 -I "$IFACE" 1.1.1.1 2>/dev/null || true)
+      printf 'ping_ms=%s\n' "$ms"
     fi
   fi
 }
@@ -1028,6 +1091,7 @@ cmd_sms_poll() {
       # kv reads whatever is in DUMP, so this replaces the modem's dump with
       # the message's. Nothing below wants the modem's again.
       DUMP=$(mm -s "$path" -K 2>/dev/null) || continue
+      parse_dump
 
       pdu=$(kv sms.properties.pdu-type)
       state=$(kv sms.properties.state)
