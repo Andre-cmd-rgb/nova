@@ -78,8 +78,8 @@ into the lock screen. What differs from a PC is in
 
 - **Settings**, in the menu: Wi-Fi, Bluetooth, mobile data and sound (also a
   click away in the bar), the displays (resolution, refresh rate, scale,
-  rotation and arrangement), the battery (its history, the power mode, the
-  charge limit, the discrete GPU), the CPU's undervolt (Performance), Screen
+  rotation and arrangement), the battery (its history and charge limit),
+  Performance (the power mode, the discrete GPU and the CPU's undervolt), Screen
   Time, the theme and background, what the bar shows, the lock screen and
   fingerprint, default apps, updates and recovery. Settings → Menu Bar adds
   more to the bar, such as Display for the brightness and the laptop screen.

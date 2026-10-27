@@ -2,7 +2,7 @@ import QtQuick
 import Quickshell.Io
 import "Readout.js" as Readout
 
-// The Battery page's live readout: what Nova's power governor has set and
+// Performance's live readout: what Nova's power governor has set and
 // what the computer is doing under it, read every two seconds while the page
 // is open. It is `nova power status --json`, the figures `nova power status
 // -v` prints, and it hides where the governor does not run.
@@ -41,9 +41,4 @@ Section {
   Line { label: "Limits"; detail: Readout.limits(root.info) }
   Line { label: "Fans"; detail: Readout.fans(root.info); visible: detail.length > 0 }
   Line { label: "Draw"; detail: Readout.battery(root.info); visible: detail.length > 0 }
-
-  Caption {
-    width: parent.width
-    text: "On battery the governor sets the limits to the work, and climbs a tier only for work that lasts. Plugged in it leaves the firmware's."
-  }
 }

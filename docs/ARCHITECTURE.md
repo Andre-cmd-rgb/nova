@@ -162,10 +162,10 @@ the shared folder also becomes the default for themes that have no pick of their
 
 ## Power and hardware
 
-- **One power system, `nova power`**, with its controls in Settings → Battery
-  (the power mode, the charge limit, the discrete GPU, and what the governor is
-  doing right now) and the undervolt's in Settings → Performance. Its manual is
-  [power.md](power.md).
+- **One power system, `nova power`**, with its controls in Settings →
+  Performance (the power mode, what the governor is doing right now, the
+  discrete GPU and the undervolt) and Settings → Battery (the charge limit, the
+  lid and the power button). Its manual is [power.md](power.md).
 - **Power profiles** belong to power-profiles-daemon. `nova-power-profile` sets one
   and remembers it for the current power source; the shell's battery service runs
   `nova-power-profile restore` at login and on every plug and unplug, which puts back
@@ -180,7 +180,7 @@ the shared folder also becomes the default for themes that have no pick of their
   rule and sleep hook check the model themselves. The facts behind every choice are
   in [hardware/thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md).
 - **When the discrete GPU is on** is the user's choice on a P1 Gen 4i:
-  Settings → Battery offers *On When Plugged In* or *Always Off* (`nova power
+  Settings → Performance offers *On When Plugged In* or *Always Off* (`nova power
   gpu mode`, which `nova power gpu-mode` applies at once; a polkit action
   lets the active session set it without a password). Other machines leave an
   idle NVIDIA card to the driver's runtime power management, and Settings

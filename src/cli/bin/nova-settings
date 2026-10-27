@@ -56,13 +56,12 @@ first_battery() {
   return 1
 }
 
-# Health is what the battery holds now against what it held new. gpu is when
-# the discrete GPU is on (auto or off), or empty where Nova cannot switch it.
-# lid is what a closed lid does plugged in, powerButton what the button does,
+# Health is what the battery holds now against what it held new. lid is what
+# a closed lid does plugged in, powerButton what the button does,
 # hibernate how long sleep on battery lasts before it hibernates (empty on a
 # computer that cannot).
 battery_json() {
-  local bat full design cycles health=null gpu
+  local bat full design cycles health=null
   if ! bat=$(first_battery); then
     echo '{"present":false}'
     return
@@ -73,16 +72,25 @@ battery_json() {
   [[ $full =~ ^[0-9]+$ && $design =~ ^[0-9]+$ ]] || full=0 design=0
   [[ $cycles =~ ^[0-9]+$ ]] || cycles=0
   ((design > 0)) && health=$((full * 100 / design))
-  gpu=$(quiet nova-power-gpu mode)
-  [[ $gpu == auto || $gpu == off ]] || gpu=''
   jq -nc \
-    --argjson health "$health" --argjson cycles "$cycles" --arg gpu "$gpu" \
+    --argjson health "$health" --argjson cycles "$cycles" \
     --arg lid "$(quiet nova-power-lid)" --arg powerButton "$(quiet nova-power-button)" \
     --arg hibernate "$(quiet nova-power-hibernate)" \
-    --argjson profiles "$(quiet nova-power-profile list --active-state | jq -Rc 'split("\t") | {name: .[0], active: (.[1] == "1")}' | jq -sc .)" \
     --argjson limit "$(json_or '{"kind":"none","limit":null,"on":false}' nova-battery-limit --json)" \
-    '{present: true, health: $health, cycles: $cycles, profiles: $profiles, limit: $limit, gpu: $gpu,
+    '{present: true, health: $health, cycles: $cycles, limit: $limit,
       lid: $lid, powerButton: $powerButton, hibernate: $hibernate}'
+}
+
+# Performance's page: the power modes, gpu (when the discrete GPU is on: auto
+# or off, or empty where Nova cannot switch it) and the CPU's undervolt.
+performance_json() {
+  local gpu
+  gpu=$(quiet nova-power-gpu mode)
+  [[ $gpu == auto || $gpu == off ]] || gpu=''
+  jq -nc --arg gpu "$gpu" \
+    --argjson profiles "$(quiet nova-power-profile list --active-state | jq -Rc 'split("\t") | {name: .[0], active: (.[1] == "1")}' | jq -sc .)" \
+    --argjson undervolt "$(json_or null nova-power-undervolt status --json)" \
+    '{profiles: $profiles, gpu: $gpu, undervolt: $undervolt}'
 }
 
 # The radios this computer has, by rfkill type (wlan, bluetooth, wwan), switched
@@ -192,7 +200,7 @@ state() {
     --argjson fonts "$(quiet nova-font-list | lines_json)" \
     --argjson textSize "$(text_size)" \
     --argjson battery "$(battery_json)" \
-    --argjson undervolt "$(json_or null nova-power-undervolt status --json)" \
+    --argjson performance "$(performance_json)" \
     --argjson radios "$(radios_json)" \
     --argjson displays "$(json_or '{"displays":[],"pending":null}' nova-monitor list --json)" \
     --argjson screenTime "$(nova-screentime enabled >/dev/null 2>&1 && echo true || echo false)" \
@@ -206,7 +214,7 @@ state() {
     '{appearance: {theme: $theme, themes: $themes, background: $background,
                    font: $font, fonts: $fonts, textSize: $textSize},
       battery: $battery,
-      performance: {undervolt: $undervolt},
+      performance: $performance,
       radios: $radios,
       displays: $displays,
       screenTime: $screenTime,

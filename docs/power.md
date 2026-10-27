@@ -3,7 +3,7 @@
 `nova power` is Nova's power governor. Its policy half, `nova-power`, takes
 the discrete GPU off the PCI bus on battery and brings it back plugged in; its
 continuous half, `nova-powerd`, sets the CPU's limits and the fans to the load
-(below). Settings → Battery shows what it is doing, and holds the switches.
+(below). Settings → Performance shows what it is doing, and holds the switches.
 (The power mode follows the power source too, power-saver on battery and
 performance on AC until you pick another, but that is `nova-power-profile`'s,
 not the governor's.) It is part of the `nova` package; its tiers and limits
@@ -154,7 +154,7 @@ A card turned off by hand comes back at the next plug-in. One turned on by
 hand when the policy wants it off stays on until the charger is next plugged
 in, or a restart; the retry timer leaves it alone, and `status` says so.
 
-**Settings → Battery → Discrete GPU** picks the policy, kept in
+**Settings → Performance → Discrete GPU** picks the policy, kept in
 `/var/lib/nova/gpu-mode`: *On When Plugged In* (`auto`, the default) or
 *Always Off* (`off`), for a cooler, quieter machine at the desk.
 `nova power gpu mode off` does the same from a terminal.

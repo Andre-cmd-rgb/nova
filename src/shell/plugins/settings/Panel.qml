@@ -48,7 +48,10 @@ Item {
   readonly property var about: info.about || ({})
   readonly property var updates: info.updates || ({})
   readonly property var limit: battery.limit || ({})
-  readonly property var undervolt: (info.performance || {}).undervolt || ({})
+  readonly property var performance: info.performance || ({})
+  readonly property var undervolt: performance.undervolt || ({})
+  readonly property var profiles: performance.profiles || []
+  readonly property bool gpuSwitch: performance.gpu === "auto" || performance.gpu === "off"
 
   // `group` starts a new group in the sidebar; `radio` is the rfkill type a
   // page needs the hardware for.
@@ -73,8 +76,9 @@ Item {
   readonly property var pages: allPages.filter(function (p) {
     if (!root.loaded) return true
     if (p.id === "battery") return root.battery.present === true
-    // An Intel CPU, which takes an undervolt through its mailbox at all.
-    if (p.id === "performance") return root.undervolt.intel === true
+    // Power modes, a discrete GPU Nova switches, or an Intel CPU, which takes
+    // an undervolt through its mailbox at all.
+    if (p.id === "performance") return root.profiles.length > 0 || root.gpuSwitch || root.undervolt.intel === true
     if (p.radio) return (root.info.radios || []).indexOf(p.radio) >= 0
     return true
   })
@@ -783,26 +787,6 @@ Item {
 
       Section {
         width: p.inner
-        title: "POWER MODE"
-        visible: (root.battery.profiles || []).length > 0
-        ButtonGroup {
-          readonly property var active: (root.battery.profiles || []).filter(function (x) { return x.active })
-          options: (root.battery.profiles || []).map(function (x) { return { value: x.name, label: root.nameOf(x.name) } })
-          value: active.length > 0 ? active[0].name : ""
-          onChanged: function (value) { root.run(["nova-power-profile", "set", value]) }
-        }
-        Caption {
-          width: parent.width
-          text: "Remembered separately on battery and plugged in."
-        }
-      }
-
-      PowerReadout {
-        width: p.inner
-      }
-
-      Section {
-        width: p.inner
         title: "CHARGE LIMIT"
         Toggle {
           width: parent.width
@@ -834,23 +818,6 @@ Item {
           width: parent.width
           visible: root.limit.kind !== "threshold" && root.limit.kind !== "switch"
           text: "This battery has no charge limit Nova can set."
-        }
-      }
-
-      Section {
-        width: p.inner
-        title: "DISCRETE GPU"
-        visible: root.battery.gpu === "auto" || root.battery.gpu === "off"
-        ButtonGroup {
-          options: [{ value: "auto", label: "On When Plugged In" }, { value: "off", label: "Always Off" }]
-          value: root.battery.gpu || ""
-          onChanged: function (value) { root.run(["nova-power-gpu", "mode", value]) }
-        }
-        Caption {
-          width: parent.width
-          text: root.battery.gpu === "off"
-            ? "Off plugged in too, for a cooler, quieter computer. For a game, turn it on from the menu: Toggle, Discrete GPU."
-            : "Off the moment you unplug: on battery it would draw several watts doing nothing."
         }
       }
 
@@ -896,8 +863,46 @@ Item {
     Page {
       id: p
       title: "Performance"
+
+      Section {
+        width: p.inner
+        title: "POWER MODE"
+        visible: root.profiles.length > 0
+        ButtonGroup {
+          readonly property var active: root.profiles.filter(function (x) { return x.active })
+          options: root.profiles.map(function (x) { return { value: x.name, label: root.nameOf(x.name) } })
+          value: active.length > 0 ? active[0].name : ""
+          onChanged: function (value) { root.run(["nova-power-profile", "set", value]) }
+        }
+        Caption {
+          width: parent.width
+          text: "Remembered separately on battery and plugged in."
+        }
+      }
+
+      PowerReadout {
+        width: p.inner
+      }
+
+      Section {
+        width: p.inner
+        title: "DISCRETE GPU"
+        visible: root.gpuSwitch
+        ButtonGroup {
+          options: [{ value: "auto", label: "On When Plugged In" }, { value: "off", label: "Always Off" }]
+          value: root.performance.gpu || ""
+          onChanged: function (value) { root.run(["nova-power-gpu", "mode", value]) }
+        }
+        Caption {
+          width: parent.width
+          visible: root.performance.gpu === "off"
+          text: "For a game, turn it on from the menu: Toggle, Discrete GPU."
+        }
+      }
+
       PerformanceView {
         width: p.inner
+        visible: root.undervolt.intel === true
         undervolt: root.undervolt
         onCommand: function (argv) { root.run(argv) }
       }
