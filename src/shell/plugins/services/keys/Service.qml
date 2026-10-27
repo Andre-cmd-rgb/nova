@@ -243,7 +243,15 @@ Item {
     return key !== "max" && key !== "min"
   }
 
+  // The panel's brightness keys can come twice, once from each GPU's ACPI
+  // video device, a few milliseconds apart: a second press that soon is the
+  // same press, and taking it too steps twice and shows both.
+  property real lastBrightness: 0
+
   function pressBrightness(key) {
+    var now = Date.now()
+    if (now - lastBrightness < 100) return
+    lastBrightness = now
     if (root.focusedExternal) {
       var first = true
       hold(function () {
