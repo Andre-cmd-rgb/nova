@@ -33,6 +33,12 @@ The palettes are ports of color schemes by their respective authors (Catppuccin,
 Everforest, Gruvbox, Kanagawa, Nord, Rose Pine, Tokyo Night, Flexoki and others), each
 under its own permissive license.
 
+Dictation (src/shell/plugins/dictation) downloads, at its first use and not with Nova,
+NVIDIA's Parakeet TDT 0.6B v3 speech model (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3),
+licensed under CC-BY-4.0 (https://creativecommons.org/licenses/by/4.0/), in the
+conversion ggml-org made of it for whisper.cpp (https://huggingface.co/ggml-org/parakeet-GGUF).
+Nova does not redistribute it.
+
 The [nova] package repository also carries ttfx (https://github.com/omacom/ttfx, MIT,
 itself a port of TerminalTextEffects, MIT), built unmodified from its release tag by
 packaging/ttfx; its licence and notice ship in that package.

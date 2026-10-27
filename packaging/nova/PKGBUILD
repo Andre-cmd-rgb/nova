@@ -41,6 +41,7 @@ depends=(
   pipewire-pulse
   pipewire-alsa
   pipewire-jack
+  pipewire-audio # pw-record, for dictation
   wireplumber
   rtkit          # realtime scheduling for PipeWire's audio threads
 
@@ -108,8 +109,10 @@ depends=(
   systemd
   util-linux     # setpriv, rfkill, logger
 )
-# Limine boots from UEFI and snapper rolls a btrfs root back.
+# Limine boots from UEFI and snapper rolls a btrfs root back. Dictation's
+# speech engine (parakeet-cli) is x86 only: Arch Linux ARM has no whisper-cpp.
 depends_x86_64=(
+  whisper-cpp
   btrfs-progs
   snapper
   snap-pac

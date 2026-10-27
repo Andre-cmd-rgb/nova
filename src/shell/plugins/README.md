@@ -27,6 +27,7 @@ have READMEs of their own, linked from their rows.
 | Workspaces | `nova.workspaces` | `bar-widget` | `bar/widgets/Workspaces.qml` |
 | [Battery Life](batterylife/README.md) | `nova.batterylife` | `service`, `bar-widget` | `batterylife/Service.qml`, `batterylife/BarWidget.qml` (its page: `settings/BatteryLifeView.qml`) |
 | Clipboard | `nova.clipboard` | `overlay` | `clipboard/Clipboard.qml` |
+| Dictation | `nova.dictation` | `panel` | `dictation/Dictation.qml` (its speech side: `dictation/bin/dictation`, `nova dictation`) |
 | Emojis | `nova.emojis` | `overlay` | `emojis/Emojis.qml` |
 | Image picker | `nova.image-picker` | `overlay` | `image-picker/ImagePicker.qml` |
 | Lock Screen | `nova.lock` | `service` | `lock/Service.qml` |

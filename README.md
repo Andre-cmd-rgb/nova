@@ -72,6 +72,7 @@ into the lock screen. What differs from a PC is in
 | Super+W | close the window (windows have no title-bar buttons) |
 | Super+Ctrl+L | lock |
 | Super+Ctrl+I | Caffeine |
+| Super+D | dictation: hold and speak, or tap for hands-free |
 | Print | a screenshot |
 | Super+K | every binding |
 
@@ -81,6 +82,12 @@ into the lock screen. What differs from a PC is in
   shows, the lock screen and fingerprint, default apps, updates and recovery.
   Settings → Menu Bar adds more to the bar, such as Display for the brightness
   and the laptop screen.
+- **Dictation:** hold Super+D and speak, and the words are pasted where the
+  cursor is when you let go; a tap listens until the next press, and Esc
+  cancels. It runs on the computer (NVIDIA's Parakeet, in 25 European
+  languages), and nothing leaves it: the speech model, 669 MB, is downloaded
+  once, at the first press, when you say yes. Not on the Raspberry Pi.
+  `nova dictation` says whether it is ready.
 - **Caffeine**, the coffee cup in the bar, keeps the screen on: no
   screensaver, no lock when unused, and on a laptop closing the lid only turns
   the panel off, without sleeping, locking or dropping the network. It lasts

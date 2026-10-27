@@ -1,7 +1,7 @@
 # nova-shell: the Quickshell desktop and the greeter entry point, run from
 # $NOVA_PATH/shell. Plugin helper scripts keep their executable bit, and the
 # ones people run are linked into the nova CLI: nova battery, nova screentime,
-# nova mobile-data. The plugins' manifests are also collected into
+# nova mobile-data, nova dictation. The plugins' manifests are also collected into
 # plugins/index.json, the one file the shell reads to find its plugins.
 
 INSTALL_TARGETS += install-shell
@@ -11,7 +11,7 @@ TEST_SCRIPTS    += src/shell/plugins/batterylife/test/roundtrip.sh
 
 # CLI name, then the plugin directory and script it runs
 SHELL_CLI := battery:batterylife/bin/batterylife screentime:screentime/bin/screentime \
-	mobile-data:mobile-data/bin/mobile-data
+	mobile-data:mobile-data/bin/mobile-data dictation:dictation/bin/dictation
 
 SHELL_DATA := $(shell cd src/shell && find . -type f \( -name '*.qml' -o -name '*.js' -o -name qmldir -o -name '*.json' \))
 SHELL_EXEC := $(shell cd src/shell && find . -type f \( -name '*.sh' -o -path './plugins/*/bin/*' \) ! -path '*/test/*')

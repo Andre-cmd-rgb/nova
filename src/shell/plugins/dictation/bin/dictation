@@ -1,0 +1,235 @@
+#!/bin/bash
+# nova:summary=Dictation: hold Super+D, speak, and the words are pasted where the cursor is
+# nova:args=[status|setup|remove|toggle|cancel]
+#
+# dictation — the speech side of Nova's dictation (nova.dictation), run as
+# `nova dictation <command>`. The shell owns the shortcut, the pill at the
+# bottom of the screen and the recording; this script downloads the speech
+# model, turns a recording into text, and pastes the text where the cursor is.
+#
+# All of it happens on this computer. A recording is a file in
+# $XDG_RUNTIME_DIR, which is memory and private to you, deleted once it is
+# read; Parakeet (whisper-cpp's parakeet-cli) transcribes it on the CPU. The
+# network is used once, by `setup`, for the model.
+
+set -euo pipefail
+
+# NVIDIA's Parakeet TDT 0.6B v3 (CC-BY-4.0), as ggml-org converted it for
+# whisper.cpp (MIT): 25 European languages, English and Spanish among them,
+# each told apart by itself, with punctuation and capitals. The 8-bit file is
+# as accurate as the 16-bit one at half its size. It is pinned to a commit,
+# and used only once its SHA-256 matches: whisper.cpp trusts what it loads.
+MODEL_NAME=ggml-parakeet-tdt-0.6b-v3-q8_0.bin
+MODEL_URL=https://huggingface.co/ggml-org/parakeet-GGUF/resolve/35156454d1a39de06863303dd209fd2bed6ee079/$MODEL_NAME
+MODEL_BYTES=668757119
+MODEL_SIZE="669 MB"
+MODEL_SHA256=4d64e9e96c2792186d072fde0034df0ad670cf680a2f53069052ead827fd600e
+
+DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/nova-dictation
+MODEL=$DATA_DIR/$MODEL_NAME
+ENGINE=parakeet-cli
+
+die() {
+  printf 'dictation: %s\n' "$*" >&2
+  exit 1
+}
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# NetworkManager's Metered: 1 is yes, 3 a guess of yes (a phone's hotspot).
+metered() {
+  local value
+  value=$(busctl --system get-property org.freedesktop.NetworkManager /org/freedesktop/NetworkManager \
+    org.freedesktop.NetworkManager Metered 2>/dev/null) || return 1
+  [[ $value == "u 1" || $value == "u 3" ]]
+}
+
+# One thread per core, up to 8: on a P1 Gen 4i's 8 cores Parakeet is no
+# faster on 16 threads than on 6.
+threads() {
+  local cores
+  cores=$(lscpu -p=core 2>/dev/null | grep -v '^#' | sort -u | wc -l) || cores=0
+  ((cores > 0)) || cores=$(nproc)
+  ((cores <= 8)) || cores=8
+  printf '%s' "$cores"
+}
+
+# --------------------------------------------------------------- the shell's
+
+# One word for the shell: ready, no-engine (a Raspberry Pi: Arch Linux ARM
+# has no whisper-cpp), or no-model, with "metered" when downloading it would
+# spend a data plan.
+cmd_check() {
+  if ! have "$ENGINE"; then
+    echo no-engine
+  elif [[ -f $MODEL ]]; then
+    echo ready
+  elif metered; then
+    echo "no-model metered"
+  else
+    echo no-model
+  fi
+}
+
+# Records 16 kHz mono, what Parakeet reads, into <file>. exec, so the shell's
+# SIGTERM reaches pw-record, which then finishes the file's header.
+cmd_record() {
+  local file=${1:?usage: dictation record <file.wav>}
+  (
+    umask 077
+    mkdir -p -- "$(dirname -- "$file")"
+  )
+  exec pw-record --rate 16000 --channels 1 --format s16 -P '{ application.name = "Nova Dictation" }' "$file"
+}
+
+# Prints what was said in <file>, on one line, or nothing for silence, and
+# deletes the file whatever happens.
+cmd_transcribe() {
+  local file=${1:?usage: dictation transcribe <file.wav>} log text
+  log=$(mktemp)
+  # Quoted in now: the trap runs as the script ends, after these locals.
+  # shellcheck disable=SC2064
+  trap "rm -f -- $(printf '%q ' "$file" "$log")" EXIT
+  [[ -f $MODEL ]] || die "there is no speech model; nova dictation setup downloads it"
+  have "$ENGINE" || die "there is no speech engine: dictation needs whisper-cpp"
+  # pdeathsig: a dictation cancelled from the shell stops the engine with
+  # this script, rather than leaving it to finish for nobody. -ng keeps it on
+  # the CPU even where a ggml GPU backend is installed: a laptop's integrated
+  # one is slower (a P1 Gen 4i's takes 1.6 s where its CPU takes 0.4).
+  if ! text=$(setpriv --pdeathsig TERM -- "$ENGINE" -m "$MODEL" -f "$file" -t "$(threads)" -ng -np 2>"$log"); then
+    die "the speech engine failed: $(tail -n 1 -- "$log")"
+  fi
+  printf '%s\n' "$text"
+}
+
+# Pastes <text> where the cursor is, as SUPER + V does (default/hypr/bindings/
+# clipboard.lua): from the clipboard, with Hyprland sending the paste keys
+# with modifiers of their own, Shift+Insert to a terminal and Ctrl+V to the
+# rest, down and up apart. Typed by wtype instead, the words would merge with
+# the SUPER still held from the shortcut into shortcuts. The text stays on the
+# clipboard, so a paste that went to the wrong window can be made again.
+cmd_insert() {
+  local text=${1-} mods=CTRL key=V state
+  [[ -n $text ]] || return 0
+  printf '%s' "$text" | wl-copy
+  # Dynamic tags carry a trailing "*".
+  if hyprctl activewindow -j 2>/dev/null | jq -e '(.tags // []) | map(sub("\\*$"; "")) | index("terminal") != null' >/dev/null; then
+    mods=SHIFT key=Insert
+  fi
+  for state in down up; do
+    hyprctl dispatch "hl.dsp.send_key_state({ mods = \"$mods\", key = \"$key\", state = \"$state\" })" >/dev/null
+    [[ $state == up ]] || sleep 0.05
+  done
+}
+
+# ---------------------------------------------------------------- yours
+
+progress_line() { # <percent> <for the shell?>
+  if [[ $2 == true ]]; then
+    printf 'progress %d\n' "$1"
+  else
+    printf '\rDownloading the speech model (%s): %3d%%' "$MODEL_SIZE" "$1"
+  fi
+}
+
+# Downloads the model, once: a stopped download carries on from where it
+# was, and the file is moved into place only once its SHA-256 matches.
+# --progress prints "progress <percent>" lines, then "checking", for the shell.
+cmd_setup() {
+  local for_shell=false part size pid
+  [[ ${1:-} == --progress ]] && for_shell=true
+  have "$ENGINE" || die "this computer has no speech engine: dictation needs whisper-cpp, which Arch Linux ARM does not package"
+  if [[ -f $MODEL ]]; then
+    $for_shell || echo "The speech model is already here."
+    return 0
+  fi
+  mkdir -p -- "$DATA_DIR"
+  part=$MODEL.part
+  size=$(stat -c %s -- "$part" 2>/dev/null || echo 0)
+  if ((size < MODEL_BYTES)); then
+    curl -fsSL --retry 3 -C - -o "$part" "$MODEL_URL" &
+    pid=$!
+    # Stopped (the pill's Esc), curl stops too, and the part is kept.
+    # shellcheck disable=SC2064 # the pid is fixed now
+    trap "kill $pid 2>/dev/null; exit 1" TERM INT
+    while kill -0 "$pid" 2>/dev/null; do
+      size=$(stat -c %s -- "$part" 2>/dev/null || echo 0)
+      progress_line $((size * 100 / MODEL_BYTES)) "$for_shell"
+      sleep 0.5
+    done
+    trap - TERM INT
+    if ! wait "$pid"; then
+      $for_shell || echo
+      die "the download stopped; nova dictation setup carries on from where it is"
+    fi
+  fi
+  progress_line 100 "$for_shell"
+  if $for_shell; then echo checking; else echo; fi
+  if [[ $(sha256sum -- "$part" | cut -d' ' -f1) != "$MODEL_SHA256" ]]; then
+    rm -f -- "$part"
+    die "the download is not the model Nova knows, so it was deleted"
+  fi
+  mv -- "$part" "$MODEL"
+  nova-shell -q dictation refresh || true
+  $for_shell || echo "Dictation is ready: hold Super+D and speak."
+}
+
+cmd_remove() {
+  rm -f -- "$MODEL" "$MODEL.part"
+  rmdir -- "$DATA_DIR" 2>/dev/null || true
+  nova-shell -q dictation refresh || true
+  echo "The speech model is deleted; nova dictation setup downloads it again."
+}
+
+cmd_status() {
+  echo "Hold Super+D and speak, and the words are pasted where the cursor is when"
+  echo "you let go. A tap keeps listening until the next; Esc cancels."
+  echo
+  if ! have "$ENGINE"; then
+    echo "Not available here: dictation needs whisper-cpp, which this computer does not have."
+  elif [[ -f $MODEL ]]; then
+    echo "Ready. The speech model ($MODEL_SIZE) is in $DATA_DIR."
+  else
+    echo "The speech model is not downloaded yet: nova dictation setup ($MODEL_SIZE)."
+  fi
+}
+
+usage() {
+  cat <<'USAGE'
+Usage: nova dictation [command]
+
+Hold Super+D and speak: the words are pasted where the cursor is when you
+let go. A tap keeps listening until the next press, and Esc cancels. It is
+all done on this computer; only the speech model is downloaded, once.
+
+Commands:
+  status    whether dictation is ready (the default)
+  setup     download the speech model (669 MB)
+  remove    delete the speech model
+  toggle    start listening hands-free, or stop and paste: for a key of your own
+  press     start listening, as Super+D going down does
+  release   stop and paste, as letting Super+D go does, unless it was a tap
+  cancel    stop without pasting
+USAGE
+}
+
+main() {
+  case ${1:-status} in
+  status) cmd_status ;;
+  setup) cmd_setup "${@:2}" ;;
+  remove) cmd_remove ;;
+  press | release | toggle | cancel) nova-shell dictation "$1" >/dev/null ;;
+  check) cmd_check ;;
+  record) cmd_record "${@:2}" ;;
+  transcribe) cmd_transcribe "${@:2}" ;;
+  insert) cmd_insert "${@:2}" ;;
+  -h | --help | help) usage ;;
+  *) die "unknown command: $1 — try: nova dictation --help" ;;
+  esac
+}
+
+# Sourced by tests/unit/shell/dictation.bats, which swaps the model for one of
+# its own; executed, it runs.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
