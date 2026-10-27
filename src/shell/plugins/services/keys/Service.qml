@@ -24,11 +24,13 @@ Item {
 
   // A press takes a step now; held, it goes on after Hyprland's repeat delay
   // (data/hypr/input.lua), a step every 50 ms, until it is let go or <step>
-  // says there is no further to go.
+  // says there is no further to go. Ten seconds of it at most: further than
+  // any key goes, for a release that never arrives.
   function hold(step) {
     held.stop()
     if (!step()) return
     held.step = step
+    held.steps = 0
     held.interval = 250
     held.start()
   }
@@ -40,10 +42,11 @@ Item {
   Timer {
     id: held
     property var step: null
+    property int steps: 0
     repeat: true
     onTriggered: {
       interval = 50
-      if (!step()) stop()
+      if (++steps > 200 || !step()) stop()
     }
   }
 
@@ -214,19 +217,25 @@ Item {
   }
 
   // DDC/CI takes its time: a step asked for while one runs is the one it is
-  // already taking, and the OSD shows what the display says it is at.
+  // already taking, and the OSD shows what the display says it is at. Held,
+  // it stops where the display says it can go no further.
+  property int ddcPercent: -1
+
   Process {
     id: ddcProc
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
         var percent = parseInt(String(text).trim(), 10)
-        if (!isNaN(percent)) root.showOsd("brightness", percent)
+        if (isNaN(percent)) return
+        root.ddcPercent = percent
+        root.showOsd("brightness", percent)
       }
     }
   }
 
-  function stepDdc(key) {
+  function stepDdc(key, first) {
+    if (!first && root.ddcPercent >= 0 && !Model.brightnessMore(root.ddcPercent, key)) return false
     if (!ddcProc.running) {
       ddcProc.command = ["nova-brightness-display-ddc", root.focusedMonitor, Model.ddcStep(key)]
       ddcProc.running = true
@@ -236,7 +245,12 @@ Item {
 
   function pressBrightness(key) {
     if (root.focusedExternal) {
-      hold(function () { return root.stepDdc(key) })
+      var first = true
+      hold(function () {
+        var more = root.stepDdc(key, first)
+        first = false
+        return more
+      })
       return
     }
     var percent = -1
