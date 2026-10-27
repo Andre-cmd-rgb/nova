@@ -13,8 +13,14 @@ Item {
   property var plugged: ({})
   property bool loaded: false
 
-  onActiveChanged: if (active) probe()
-  Component.onCompleted: if (active) probe()
+  onActiveChanged: {
+    subscription.running = active
+    if (active) probe()
+  }
+  Component.onCompleted: {
+    subscription.running = active
+    if (active) probe()
+  }
 
   // A change while a probe runs asks again once it ends: that probe may have
   // read the old sinks.
@@ -57,12 +63,25 @@ Item {
   // A sink's own changes are mostly its volume, and a port plugged in shows
   // on its card.
   Process {
+    id: subscription
     command: ["pactl", "subscribe"]
-    running: root.active
     stdout: SplitParser {
       onRead: function (line) {
         if (/ on card #|'(new|remove)' on sink #/.test(line)) settle.restart()
       }
+    }
+    // The sound server restarting ends it: it starts again a moment later,
+    // and asks again, as what changed meanwhile was not heard.
+    onExited: if (root.active) resubscribe.start()
+  }
+
+  Timer {
+    id: resubscribe
+    interval: 2000
+    onTriggered: {
+      if (!root.active) return
+      subscription.running = true
+      root.probe()
     }
   }
 }
