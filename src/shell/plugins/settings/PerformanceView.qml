@@ -44,10 +44,10 @@ Column {
       id: slider
       width: Style.space(260)
       minimum: 0
-      maximum: 120
+      maximum: 150
       step: 5
       integer: true
-      tickCount: 13
+      tickCount: 16
       value: -depth.offset
       onReleased: function (value) { depth.picked(-Math.round(value)) }
     }
