@@ -309,7 +309,10 @@ one is active. The energy-performance preference and the platform profile are
 things writing them means the last writer wins.
 
 `ASPM_ON_BAT` is off by default because forcing L0s/L1 on every link can upset
-a device that is merely ASPM-tolerant, and the symptom is a hang.
+a device that is merely ASPM-tolerant, and the symptom is a hang. On the P1
+Gen 4i it does nothing at all: the firmware keeps ASPM to itself (the kernel
+logs "FADT indicates ASPM is unsupported"), and `nova power status` shows the
+policy as the firmware's.
 `NMI_WATCHDOG_ON_BAT` saves very little and costs you the hard-lockup
 detector.
 

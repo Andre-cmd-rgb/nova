@@ -583,6 +583,10 @@ runtime_pm_summary() {
 # The policy file lists every choice with the live one in brackets.
 aspm_policy() {
   local live
+  if aspm_firmware_held; then
+    printf "the firmware's"
+    return 0
+  fi
   live=$(sed -n 's/.*\[\(.*\)\].*/\1/p' "$ASPM_POLICY" 2>/dev/null)
   printf '%s' "${live:-unavailable}"
 }
@@ -606,9 +610,18 @@ runtime_pm_ac() {
 ASPM_ON_BAT=${ASPM_ON_BAT:-}
 ASPM_POLICY=/sys/module/pcie_aspm/parameters/policy
 ASPM_STATE=/run/nova-power.aspm
+ASPM_PCI=/sys/bus/pci/devices
+
+# Firmware can keep ASPM to itself, as the P1 Gen 4i's FADT does: the kernel
+# then leaves every link as the BIOS set it, with no per-link control, and the
+# policy file takes a write and changes nothing.
+aspm_firmware_held() {
+  compgen -G "$ASPM_PCI/*/link" >/dev/null && ! compgen -G "$ASPM_PCI/*/link/l1_aspm" >/dev/null
+}
 
 aspm() {
   [[ -n $ASPM_ON_BAT && -w $ASPM_POLICY ]] || return 0
+  aspm_firmware_held && return 0
   case $1 in
   battery)
     # The policy file lists every choice with the live one in brackets.

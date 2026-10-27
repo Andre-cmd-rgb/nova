@@ -37,7 +37,9 @@ chk() {
   else printf '  FAIL %s: got %q want %q\n' "$1" "$2" "$3"; fail=1; fi
 }
 
-ASPM_ON_BAT=powersave ASPM_POLICY=$T/aspm ASPM_STATE=$T/aspm.state
+ASPM_ON_BAT=powersave ASPM_POLICY=$T/aspm ASPM_STATE=$T/aspm.state ASPM_PCI=$T/pci-aspm
+mkdir -p "$ASPM_PCI/0000:00:1d.0/link"
+: >"$ASPM_PCI/0000:00:1d.0/link/l1_aspm"
 echo '[default] performance powersave powersupersave' >"$ASPM_POLICY"
 aspm battery
 chk "aspm battery writes policy"   "$(cat "$ASPM_POLICY")" "powersave"
@@ -47,6 +49,12 @@ chk "aspm battery idempotent"      "$(cat "$ASPM_STATE")"  "default"
 aspm ac
 chk "aspm ac restores"             "$(cat "$ASPM_POLICY")" "default"
 chk "aspm ac clears state"         "$([[ -e $ASPM_STATE ]] && echo yes || echo no)" "no"
+# Links with no control of their own: the firmware keeps ASPM, and the
+# policy is left alone and said to be its.
+rm -f "$ASPM_PCI/0000:00:1d.0/link/l1_aspm"
+aspm battery
+chk "aspm held by firmware is left"  "$(cat "$ASPM_POLICY")" "default"
+chk "  and said to be the firmware's" "$(aspm_policy)" "the firmware's"
 
 NMI_WATCHDOG_ON_BAT=off NMI_WATCHDOG=$T/nmi NMI_STATE=$T/nmi.state
 echo 1 >"$NMI_WATCHDOG"
