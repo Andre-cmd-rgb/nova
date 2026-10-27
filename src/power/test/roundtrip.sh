@@ -382,6 +382,18 @@ echo off >"$GPU_MODE_FILE"; ac=1
 chk "off wants it off on AC as well"    "$(gpu_wanted && echo on || echo off)" "off"
 unset -f on_ac
 
+# A card on the bus gets every module by name: an nvidia loaded alone, by
+# udev during a rescan, had left it without nvidia_drm.
+NVIDIA_PCI=0000:01:00.0 SYS_PCI=$T/pci/devices MODPROBE_BLOCK=$T/modprobe-block
+mkdir -p "$SYS_PCI/$NVIDIA_PCI/power"
+modprobe() { printf '%s\n' "$*" >>"$T/modprobe-calls"; }
+systemctl() { :; }
+gpu_on >/dev/null 2>&1
+chk "the card on the bus loads every module" "$(cat "$T/modprobe-calls")" \
+                                             "-a nvidia nvidia_modeset nvidia_drm nvidia_uvm"
+unset -f modprobe systemctl
+rm -rf "${SYS_PCI:?}/$NVIDIA_PCI" "$T/modprobe-calls"
+
 # A rescan that does not bring the card back puts the modprobe block back:
 # with the card absent, it is what keeps nvidia-modprobe off the bus.
 NVIDIA_PCI=0000:01:00.0 SYS_PCI=$T/pci/devices MODPROBE_BLOCK=$T/modprobe-block

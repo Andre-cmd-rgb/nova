@@ -503,7 +503,11 @@ gpu_on() {
 
   # Load the driver now rather than on first use, so the first offload is
   # instant. Runtime PM still parks the card whenever nothing renders on it.
-  modprobe nvidia 2>/dev/null
+  # Every module by name, not nvidia's softdeps: udev tries it during the
+  # rescan, before the card is ready, and an nvidia already loaded leaves
+  # modprobe nothing to do. The card then had no DRM node, which a game
+  # offloaded to it on Wayland needs.
+  modprobe -a nvidia nvidia_modeset nvidia_drm nvidia_uvm 2>/dev/null
   echo auto >"$SYS_PCI/$NVIDIA_PCI/power/control" 2>/dev/null
   start_nvidia_services
 
