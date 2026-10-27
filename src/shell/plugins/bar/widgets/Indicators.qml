@@ -218,18 +218,23 @@ BarWidget {
           onHoveredChanged: root.setIndicatorAreaHovered(hovered)
         }
 
+        // The indicators that are off keep their room, and only fade in on
+        // a hover: room made then would move the clock and everything else
+        // beside them, each time the pointer crossed the bar.
         Item {
           id: inactiveHorizontalArea
 
-          implicitWidth: root.revealInactiveIndicators ? inactiveHorizontalBlock.implicitWidth : 0
+          implicitWidth: inactiveHorizontalBlock.implicitWidth
           implicitHeight: Math.max(inactiveHorizontalBlock.implicitHeight, root.barSize)
           width: implicitWidth
           height: implicitHeight
-          clip: true
 
           IndicatorBlock {
             id: inactiveHorizontalBlock
             anchors.verticalCenter: parent.verticalCenter
+            opacity: root.revealInactiveIndicators ? 1 : 0
+            enabled: root.revealInactiveIndicators
+            Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
             indicatorsModule: root
             indicatorEntries: root.indicatorEntries
             indicatorBlock: "inactive"
@@ -271,18 +276,21 @@ BarWidget {
           onHoveredChanged: root.setIndicatorAreaHovered(hovered)
         }
 
+        // As in the horizontal tree: room kept, a fade on a hover.
         Item {
           id: inactiveVerticalArea
 
           implicitWidth: Math.max(inactiveVerticalBlock.implicitWidth, root.barSize)
-          implicitHeight: root.revealInactiveIndicators ? inactiveVerticalBlock.implicitHeight : 0
+          implicitHeight: inactiveVerticalBlock.implicitHeight
           width: implicitWidth
           height: implicitHeight
-          clip: true
 
           IndicatorBlock {
             id: inactiveVerticalBlock
             anchors.horizontalCenter: parent.horizontalCenter
+            opacity: root.revealInactiveIndicators ? 1 : 0
+            enabled: root.revealInactiveIndicators
+            Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
             indicatorsModule: root
             indicatorEntries: root.indicatorEntries
             indicatorBlock: "inactive"

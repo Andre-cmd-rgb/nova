@@ -65,6 +65,17 @@ function entriesAfter(entries, name) {
   return index === -1 ? [] : entries.slice(index + 1)
 }
 
+// The widget the centre is centred on, the rest hanging off its sides. One
+// shell.json names that is not in the centre, an id from before a rename, is
+// the clock when the clock is there: with no anchor the centre is centred as
+// one block, and every widget in it that changes width moves all the others.
+// No anchor named at all is no anchor.
+function centerAnchor(configured, center) {
+  var anchor = String(configured || "")
+  if (anchor === "" || entryIndex(center, anchor) !== -1) return anchor
+  return entryIndex(center, "nova.clock") !== -1 ? "nova.clock" : anchor
+}
+
 // A shell.json write that only changes inline widget settings (the battery
 // percentage toggle, a clock format change) must not rebuild the bar.
 // Compare two normalized layouts: when the structure is unchanged — same
@@ -222,6 +233,7 @@ if (typeof module !== "undefined") {
     entryIndex: entryIndex,
     entriesBefore: entriesBefore,
     entriesAfter: entriesAfter,
+    centerAnchor: centerAnchor,
     inlineSettingsDelta: inlineSettingsDelta,
     expandPath: expandPath,
     customModuleSafeName: customModuleSafeName,

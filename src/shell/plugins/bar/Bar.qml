@@ -361,13 +361,13 @@ Item {
 
     position = normalizePosition(config.position)
     setRequestedTransparency(config.transparent === true)
-    centerAnchor = Util.canonicalWidgetId(config.centerAnchor || "")
 
     // layoutEntries feeds plain JS arrays to the module Repeaters, and QML
     // cannot diff those: reassigning layoutConfig rebuilds every widget on
     // every monitor. When a shell.json write only changed inline widget
     // settings, patch the live layout and running widgets in place instead.
     var next = normalizeLayout(config.layout)
+    centerAnchor = BarModel.centerAnchor(Util.canonicalWidgetId(config.centerAnchor || ""), next.center)
     var delta = BarModel.inlineSettingsDelta(layoutConfig, next)
     if (delta) {
       applySettingsDelta(delta)
