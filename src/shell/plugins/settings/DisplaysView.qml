@@ -125,10 +125,6 @@ Column {
         }
       }
     }
-    Caption {
-      width: parent.width
-      text: "Outlined, the display in use. Position, under each display, moves it."
-    }
   }
 
   Repeater {
@@ -154,9 +150,6 @@ Column {
         enabled: !(section.d.enabled && root.enabledDisplays.length === 1)
         opacity: enabled ? 1 : 0.5
         label: "Use this display"
-        description: section.d.internal
-          ? "The computer's own screen, which goes off by itself when the lid closes with a display plugged in."
-          : "Plugged into " + section.d.name + "."
         checked: section.d.enabled
         onClicked: root.set(section.d, checked ? "off" : "on")
       }
@@ -253,16 +246,9 @@ Column {
 
       Line {
         visible: section.d.saved
-        label: "Kept in Settings"
-        detail: "Over what ~/.config/hypr/monitors.lua says for it."
-        Button { text: "Reset"; bordered: true; onClicked: root.command(["nova-monitor", "reset", section.d.name]) }
+        label: "Defaults"
+        Button { text: "Restore"; bordered: true; onClicked: root.command(["nova-monitor", "reset", section.d.name]) }
       }
     }
-  }
-
-  Caption {
-    width: parent.width
-    visible: root.displays.length > 0
-    text: "A change shows at once, and goes back by itself after 15 seconds unless you keep it. Kept, it wins over ~/.config/hypr/monitors.lua; Reset hands a display back to that file."
   }
 }
