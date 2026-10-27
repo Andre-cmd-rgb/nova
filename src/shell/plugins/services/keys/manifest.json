@@ -4,7 +4,7 @@
   "name": "Volume and brightness keys",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "The volume, mute and brightness keys, as Hyprland's global shortcuts: the shell sets the volume over its own PipeWire connection and the backlight with one brightnessctl, and shows the OSD itself.",
+  "description": "The volume, mute, brightness and keyboard backlight keys, as Hyprland's global shortcuts: the shell sets the volume over its own PipeWire connection and a backlight with one brightnessctl, and shows the OSD itself.",
   "kinds": [
     "service"
   ],

@@ -2,8 +2,9 @@ import QtQuick
 import Quickshell
 import "plugins/services/keys/KeysModel.js" as Model
 
-// The volume and brightness keys' steps, as nova-audio-output-volume and
-// nova-brightness-display take them.
+// The volume, brightness and keyboard backlight keys' steps, as
+// nova-audio-output-volume, nova-brightness-display and
+// nova-brightness-keyboard take them.
 ShellRoot {
   function check(ok, what) {
     console.log((ok ? "ok   " : "FAIL ") + what)
@@ -28,6 +29,11 @@ ShellRoot {
     check(Model.brightnessMore(55, "up") && !Model.brightnessMore(100, "up") && !Model.brightnessMore(1, "down-fine") && !Model.brightnessMore(100, "max"), "a held brightness key stops at either end, and Shift's at once")
     check(Model.backlightPercent("150\n", "600\n") === 25 && Model.backlightPercent("", "600") === -1 && Model.backlightPercent("5", "0") === -1, "a backlight's raw value in percent, or unread")
     check(Model.ddcStep("up") === "+5%" && Model.ddcStep("down-fine") === "1%-" && Model.ddcStep("min") === "1%", "an external display's step, as nova-brightness-display-ddc takes it")
+
+    check(Model.keyboardStep(0, 2, "up") === 1 && Model.keyboardStep(2, 2, "up") === 2 && Model.keyboardStep(1, 2, "down") === 0, "a keyboard light of three levels, a level at a time")
+    check(Model.keyboardStep(100, 512, "up") === 151 && Model.keyboardStep(30, 512, "down") === 0, "a tenth of a long range, to the top or off")
+    check(Model.keyboardStep(1, 2, "cycle") === 2 && Model.keyboardStep(2, 2, "cycle") === 0, "cycle goes round past the top to off")
+    check(Model.keyboardMore(1, 2, "up") && !Model.keyboardMore(2, 2, "up") && !Model.keyboardMore(0, 2, "down") && !Model.keyboardMore(1, 2, "cycle"), "a held keyboard key stops at either end, and cycle at once")
 
     console.log("DONE")
     Qt.quit()

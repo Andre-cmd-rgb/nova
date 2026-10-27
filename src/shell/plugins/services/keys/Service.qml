@@ -5,13 +5,14 @@ import Quickshell.Io
 import Quickshell.Services.Pipewire
 import "KeysModel.js" as Model
 
-// The volume and brightness keys, in the shell. Hyprland hands them over as
-// global shortcuts (data/hypr/bindings/media.lua), and the shell does the
-// rest: the volume over its own PipeWire connection, the backlight with one
-// brightnessctl, the OSD in place. Run as commands, a press started ten or a
-// dozen processes for some 130 ms of CPU, and a held key asked for forty a
-// second. `nova-audio-output-volume` and `nova-brightness-display` do the
-// same from a terminal.
+// The volume, brightness and keyboard backlight keys, in the shell. Hyprland
+// hands them over as global shortcuts (data/hypr/bindings/media.lua), and the
+// shell does the rest: the volume over its own PipeWire connection, a
+// backlight with one brightnessctl, the OSD in place. Run as commands, a press
+// started ten or a dozen processes for some 130 ms of CPU, and a held key
+// asked for forty a second. `nova-audio-output-volume`,
+// `nova-brightness-display` and `nova-brightness-keyboard` do the same from a
+// terminal.
 Item {
   id: root
 
@@ -43,6 +44,30 @@ Item {
     onTriggered: {
       interval = 50
       if (!step()) stop()
+    }
+  }
+
+  // One brightnessctl at a time for a device; a value asked for while one
+  // runs waits for it, and only the last of them is set. A backlight's files
+  // are root's, so brightnessctl goes through logind.
+  component Setter: Process {
+    property string device: ""
+    property string queued: ""
+
+    function set(value) {
+      if (running) {
+        queued = String(value)
+        return
+      }
+      command = ["brightnessctl", "-q", "-d", device, "set", String(value)]
+      running = true
+    }
+
+    onExited: {
+      if (queued === "") return
+      var value = queued
+      queued = ""
+      set(value)
     }
   }
 
@@ -93,18 +118,14 @@ Item {
     }
   }
 
-  // A safety net for a tuning applied or removed under the same default.
-  Timer {
-    interval: 15000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.resolveVolumeSink()
-  }
+  Component.onCompleted: resolveVolumeSink()
 
   // A step unmutes. Held, each step follows the last one set rather than
-  // PipeWire's answer to it.
+  // PipeWire's answer to it. Each press looks the sink up again for the next,
+  // for a tuning applied or removed under the same default: a lookup is a
+  // process, worth one a press but not one every few seconds all day.
   function pressVolume(delta) {
+    resolveVolumeSink()
     var percent = -1
     hold(function () {
       var node = root.volumeSink
@@ -125,6 +146,7 @@ Item {
     var now = Date.now()
     if (now - lastMute < 250) return
     lastMute = now
+    resolveVolumeSink()
     var node = root.volumeSink
     if (!node || !node.audio) return
     var muted = !node.audio.muted
@@ -140,8 +162,7 @@ Item {
   readonly property string focusedMonitor: Hyprland.focusedMonitor ? String(Hyprland.focusedMonitor.name) : ""
   readonly property bool focusedExternal: focusedMonitor !== "" && !/^(eDP|LVDS|DSI)-/.test(focusedMonitor)
 
-  // The backlight, as nova-hw-display picks it; read here, and set with
-  // brightnessctl, which goes through logind: the file is root's.
+  // The backlight, as nova-hw-display picks it.
   property string backlight: ""
 
   Process {
@@ -171,27 +192,9 @@ Item {
     return Model.backlightPercent(backlightValue.text(), backlightMax.text())
   }
 
-  // One brightnessctl at a time; a step asked for while one runs waits for
-  // it, and only the last of them is set.
-  property int backlightQueued: -1
-
-  function setBacklight(percent) {
-    if (backlightSetProc.running) {
-      backlightQueued = percent
-      return
-    }
-    backlightSetProc.command = ["brightnessctl", "-q", "-d", root.backlight, "set", percent + "%"]
-    backlightSetProc.running = true
-  }
-
-  Process {
-    id: backlightSetProc
-    onExited: {
-      if (root.backlightQueued < 0) return
-      var percent = root.backlightQueued
-      root.backlightQueued = -1
-      root.setBacklight(percent)
-    }
+  Setter {
+    id: backlightSetter
+    device: root.backlight
   }
 
   // DDC/CI takes its time: a step asked for while one runs is the one it is
@@ -226,9 +229,57 @@ Item {
       var from = percent < 0 ? root.backlightNow() : percent
       if (from < 0) return false
       percent = Model.brightnessStep(from, key)
-      root.setBacklight(percent)
+      backlightSetter.set(percent + "%")
       root.showOsd("brightness", percent)
       return Model.brightnessMore(percent, key)
+    })
+  }
+
+  // ------------------------------------------------ keyboard backlight
+
+  property string keyboard: ""
+
+  Process {
+    id: keyboardProc
+    command: ["nova-brightness-keyboard", "device"]
+    running: true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.keyboard = String(text).trim()
+    }
+  }
+
+  FileView {
+    id: keyboardValue
+    path: root.keyboard !== "" ? "/sys/class/leds/" + root.keyboard + "/brightness" : ""
+    blockLoading: true
+  }
+
+  FileView {
+    id: keyboardMax
+    path: root.keyboard !== "" ? "/sys/class/leds/" + root.keyboard + "/max_brightness" : ""
+    blockLoading: true
+  }
+
+  Setter {
+    id: keyboardSetter
+    device: root.keyboard
+  }
+
+  function pressKeyboard(key) {
+    var level = -1
+    hold(function () {
+      if (root.keyboard === "") return false
+      var max = parseInt(keyboardMax.text(), 10)
+      if (level < 0) {
+        keyboardValue.reload()
+        level = parseInt(keyboardValue.text(), 10)
+      }
+      if (isNaN(level) || isNaN(max) || max <= 0) return false
+      level = Model.keyboardStep(level, max, key)
+      keyboardSetter.set(level)
+      root.showOsd("keyboard", Math.floor(level * 100 / max))
+      return Model.keyboardMore(level, max, key)
     })
   }
 
@@ -317,5 +368,28 @@ Item {
     name: "brightness-min"
     description: "Brightness minimum"
     onPressed: root.pressBrightness("min")
+  }
+
+  GlobalShortcut {
+    appid: "nova"
+    name: "keyboard-up"
+    description: "Keyboard brightness up"
+    onPressed: root.pressKeyboard("up")
+    onReleased: root.release()
+  }
+
+  GlobalShortcut {
+    appid: "nova"
+    name: "keyboard-down"
+    description: "Keyboard brightness down"
+    onPressed: root.pressKeyboard("down")
+    onReleased: root.release()
+  }
+
+  GlobalShortcut {
+    appid: "nova"
+    name: "keyboard-cycle"
+    description: "Keyboard backlight cycle"
+    onPressed: root.pressKeyboard("cycle")
   }
 }

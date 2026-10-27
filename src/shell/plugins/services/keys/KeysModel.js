@@ -1,5 +1,5 @@
-// The volume and brightness keys' arithmetic, as nova-audio-output-volume and
-// nova-brightness-display have it, in whole percents.
+// The volume and brightness keys' arithmetic, as nova-audio-output-volume,
+// nova-brightness-display and nova-brightness-keyboard have it.
 
 // The volume <volume> (PipeWire's, 1.0 at 100%) moves to by <delta> percent.
 // Up stops at 100 even from above it; down only at 0.
@@ -55,4 +55,23 @@ function backlightPercent(value, max) {
 function ddcStep(key) {
   var steps = { "up": "+5%", "down": "5%-", "up-fine": "+1%", "down-fine": "1%-", "max": "100%", "min": "1%" }
   return steps[key] || ""
+}
+
+// The keyboard backlight's level a key moves to from <current> out of <max>:
+// a tenth of the range at a time (at least one level), up to the top and down
+// to off; cycle goes round past the top to off.
+function keyboardStep(current, max, key) {
+  var step = Math.max(1, Math.floor(max / 10))
+  if (key === "up") return Math.min(max, current + step)
+  if (key === "down") return Math.max(0, current - step)
+  if (key === "cycle") return current + step <= max ? current + step : 0
+  return current
+}
+
+// Whether a held keyboard backlight key has further to go from <level>:
+// cycle is one press.
+function keyboardMore(level, max, key) {
+  if (key === "up") return level < max
+  if (key === "down") return level > 0
+  return false
 }

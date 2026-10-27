@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 
-# The volume and brightness keys are Hyprland global shortcuts that the
+# The volume, brightness and keyboard backlight keys are Hyprland global
+# shortcuts that the
 # shell's nova.keys service registers: a name bound in
 # data/hypr/bindings/media.lua that the service does not register is a key
 # that does nothing, and Hyprland says so nowhere.
@@ -20,20 +21,20 @@ registered() {
 }
 
 @test "every key bound to the shell is a shortcut the shell registers" {
-  [ "$(bound | wc -l)" -eq 11 ]
+  [ "$(bound | wc -l)" -eq 14 ]
   [ "$(bound)" = "$(registered)" ]
 }
 
 # Volume up, down and mute, brightness up and down, each with Alt, and
-# brightness all the way with Shift; Shift + Mute switches the output, a
-# command of its own.
+# brightness all the way with Shift, and the keyboard backlight's three;
+# Shift + Mute switches the output, a command of its own.
 shell_keys() {
-  grep -E '^o\.bind\("((ALT|SHIFT) \+ )?XF86(Audio(RaiseVolume|LowerVolume)|AudioMute|MonBrightness(Up|Down))"' \
+  grep -E '^o\.bind\("((ALT|SHIFT) \+ )?XF86(Audio(RaiseVolume|LowerVolume)|AudioMute|MonBrightness(Up|Down)|KbdBrightness(Up|Down)|KbdLightOnOff)"' \
     "$REPO_ROOT/data/hypr/bindings/media.lua" | grep -v '^o\.bind("SHIFT + XF86AudioMute"'
 }
 
 @test "the volume and brightness keys go to the shell, which repeats them" {
-  [ "$(shell_keys | wc -l)" -eq 11 ]
+  [ "$(shell_keys | wc -l)" -eq 14 ]
   [ -z "$(shell_keys | grep -v 'hl\.dsp\.global(')" ]
   [ -z "$(shell_keys | grep 'repeating')" ]
 }

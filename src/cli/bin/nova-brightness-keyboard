@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Adjust keyboard backlight brightness using available steps
-# nova:args=[--no-osd] <up|down|cycle|off|restore>
+# nova:args=[--no-osd] <up|down|cycle|off|restore|device>
 
 set -euo pipefail
 
@@ -14,9 +14,9 @@ fi
 direction="${1:-up}"
 
 case "$direction" in
-  up | down | cycle | off | restore) ;;
+  up | down | cycle | off | restore | device) ;;
   *)
-    echo "Usage: nova-brightness-keyboard [--no-osd] <up|down|cycle|off|restore>" >&2
+    echo "Usage: nova-brightness-keyboard [--no-osd] <up|down|cycle|off|restore|device>" >&2
     exit 1
     ;;
 esac
@@ -35,7 +35,12 @@ if [[ -z $device ]]; then
   exit 1
 fi
 
-if [[ $direction == "off" ]]; then
+# The device's name, for the shell, which takes the keyboard backlight keys
+# itself (its nova.keys service).
+if [[ $direction == "device" ]]; then
+  printf '%s\n' "$device"
+  exit 0
+elif [[ $direction == "off" ]]; then
   brightnessctl -sd "$device" set 0 >/dev/null
   exit 0
 elif [[ $direction == "restore" ]]; then
