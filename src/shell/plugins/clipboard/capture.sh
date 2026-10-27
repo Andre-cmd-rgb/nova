@@ -44,10 +44,13 @@ emit_image() {
     '{type:"image", mime:$mime, path:$path, capturedAt:$captured_at}'
 }
 
+# Text over 1 MiB stays on the clipboard but out of the history, which the
+# shell holds in memory and writes out whole at every copy.
 emit_text() {
   perl -MEncode=decode,FB_CROAK,LEAVE_SRC -MJSON::PP=encode_json -0777 -e '
     my $raw = <STDIN>;
     exit unless length $raw;
+    exit if length $raw > 1 << 20;
 
     my $encoding;
     my $heuristic_encoding = 0;
