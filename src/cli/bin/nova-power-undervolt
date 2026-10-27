@@ -20,9 +20,10 @@
 #                                     voltage read with each, one core flat out
 #                                     (--all: every core)
 #
-# The cores and the cache are thought to share one voltage on these CPUs, at
-# the higher of what the two offsets ask for, so a core offset deeper than
-# the cache's may do nothing; compare measures it on yours.
+# On some of these CPUs the cores and the cache share one voltage, at the
+# higher of what the two offsets ask for, so a core offset deeper than the
+# cache's does nothing; on the P1 Gen 4i the core's offset is its own.
+# compare measures it on yours.
 #
 # It takes itself off and holds after a machine-check error, and at the boot
 # after one that ended without shutting down while it was on (a freeze), so a

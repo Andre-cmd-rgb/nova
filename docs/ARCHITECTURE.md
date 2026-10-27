@@ -195,9 +195,10 @@ the shared folder also becomes the default for themes that have no pick of their
   clean shutdown takes it off and clears the record. So a boot that finds an
   earlier boot's record holds the offset instead of applying it, and so does
   the first machine check the kernel logs. Setting it takes an
-  administrator's password, through polkit. The core and the cache are
-  thought to share one voltage, at the higher of what each asks for, so
-  `nova power undervolt compare` reads the core's own voltage
+  administrator's password, through polkit. On some of these CPUs the core
+  and the cache share one voltage, at the higher of what each asks for (on
+  the P1 Gen 4i the core's is its own), so `nova power undervolt compare`
+  reads the core's own voltage
   (IA32_PERF_STATUS) under load with each of two offsets, to show whether a
   core deeper than its cache moves it at all.
 - **Other laptops** get power-profiles-daemon, the charge limit and the

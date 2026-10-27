@@ -23,9 +23,10 @@ const WRITE: u64 = 0x11;
 const OFFSET_MASK: u32 = 0xFFE0_0000;
 
 /// The planes an undervolt moves, each by its own offset: the cores and the
-/// cache (ring). On these CPUs the two are thought to share one voltage, at
-/// the higher of what each asks for, so a deeper offset on one of them alone
-/// may change nothing; `nova power undervolt compare` measures it.
+/// cache (ring). On some of these CPUs the two share one voltage, at the
+/// higher of what each asks for, so a deeper offset on one of them alone
+/// changes nothing; on the P1 Gen 4i the core's is its own. `nova power
+/// undervolt compare` measures it.
 pub const PLANES: [(u64, &str); 2] = [(0, "core"), (2, "cache")];
 
 pub trait Msr {

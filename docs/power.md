@@ -488,10 +488,11 @@ nova power undervolt off
 Settings → Performance has the same, with a slider each for the core and the
 cache.
 
-The core and the cache are thought to share one voltage on these CPUs, at the
-higher of what the two offsets ask for: a core offset deeper than the cache's
-may change nothing, and a core alone nothing at all. `compare` measures it on
-yours: with the undervolt set now on, it runs one core flat out (every core,
+On some of these CPUs the core and the cache share one voltage, at the higher
+of what the two offsets ask for: a core offset deeper than the cache's changes
+nothing there, and a core alone nothing at all. On the P1 Gen 4i the core's is
+its own: at 4.4 GHz, -80 mV on the core with -70 on the cache ran 10 mV below
+-70 on both. `compare` measures it on yours: with the undervolt set now on, it runs one core flat out (every core,
 with `--all`) and reads that core's voltage from IA32_PERF_STATUS (MSR
 `0x198`), twenty times with the offset set now and twenty with the one given,
 twice over in turns, compares the readings at the clock both have, and puts

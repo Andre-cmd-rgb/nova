@@ -88,8 +88,8 @@ perf_status() { # <cpu>
 spinners=()
 
 # Whether the core's own offset moves its voltage, or the cache's holds it up
-# (the two are thought to share one voltage, at the higher of what each asks
-# for): one core flat out (every core, with --all), read twenty times with the
+# (on some of these CPUs the two share one voltage, at the higher of what each
+# asks for; on the P1 Gen 4i the core's is its own): one core flat out (every core, with --all), read twenty times with the
 # offset set now and twenty with <core> <cache>, twice over in turns, so a
 # clock or temperature that drifts touches both. Only readings at the clock
 # both have are compared. The service watches as for any undervolt, and the
@@ -123,6 +123,10 @@ cmd_compare() { # <core> <cache> [--all]
     for setting in "$baseline" "$candidate"; do
       put "$setting"
       applied || die "the CPU did not keep $(describe "$setting"), and the undervolt is held; nova power undervolt says why"
+      # Tried, not chosen: once it is on the CPU the disk has the one set now
+      # again, so a freeze in the middle is held with that one to apply
+      # again, and `armed` still names the one that froze.
+      [[ $setting == "$baseline" ]] || write_offset "$baseline"
       sleep 2
       for ((i = 0; i < 20; i++)); do
         echo "${setting// /,} $(perf_status "$cpu")" >>"$samples"

@@ -144,6 +144,15 @@ FAKE
   [[ $output == *"The core ran +0.0 mV of the -10 mV asked: the cache held it up, as they share one voltage at this load."* ]]
 }
 
+@test "compare: the disk has the undervolt set now while the other one runs" {
+  fake_cpu
+  stub sleep 'cat "$NOVA_UNDERVOLT_STATE/offset" >>"$SCRATCH/on-disk"'
+  run undervolt compare -80 -70
+  [ "$status" -eq 0 ]
+  [[ $output == *"its offset is its own"* ]]
+  [ "$(sort -u "$SCRATCH/on-disk")" = -70 ]
+}
+
 @test "compare --all loads every core" {
   fake_cpu
   run undervolt compare -80 -70 --all
