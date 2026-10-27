@@ -70,7 +70,9 @@ build_lua_bind_cache() {
 
   nova-cmd-present lua || return 0
 
-  while IFS=$'\t' read -r modmask description key dispatcher arg; do
+  # A unit separator between the fields, not a tab: bash runs empty tab
+  # fields together, and a bind can have no dispatcher Nova knows.
+  while IFS=$'\x1f' read -r modmask description key dispatcher arg; do
     [[ -z $modmask || -z $description || -z $key ]] && continue
 
     LUA_BIND_KEY_MAP["$modmask,$description"]="$key"
@@ -209,7 +211,7 @@ hl = setmetatable({
         arg = bind_dispatcher
       end
 
-      print(table.concat({ tostring(modmask), opts.description, key, kind, arg }, "\t"))
+      print(table.concat({ tostring(modmask), opts.description, key, kind, arg }, "\31"))
     end
 
     return noop

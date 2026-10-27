@@ -1151,13 +1151,15 @@ cmd_sms_list() {
   [[ $width =~ ^[0-9]+$ ]] && ((width > 48)) || width=80
   room=$((width - 31))
 
-  # Newest first: the one worth reading is the one that just arrived.
-  while IFS=$'\t' read -r id hash date number text; do
+  # Newest first: the one worth reading is the one that just arrived. The
+  # tabs are read as unit separators, as bash runs empty tab fields together
+  # and a message can come without a number.
+  while IFS=$'\x1f' read -r id hash date number text; do
     text=$(sms_unescape "$text" | sms_printable | tr '\n\t' '  ')
     ((${#text} > room)) && text="${text:0:room - 1}…"
     printf '%4s  %-14.14s %-7s %s\n' \
       "$id" "$(sms_sender "$number")" "$(sms_when "$date")" "$text"
-  done < <(tac -- "$INBOX")
+  done < <(tac -- "$INBOX" | tr '\t' '\037')
 }
 
 cmd_sms_show() {
@@ -1165,13 +1167,13 @@ cmd_sms_show() {
   [[ $want =~ ^[0-9]+$ ]] || die "usage: mobile-data sms show <id>"
   [[ -s $INBOX ]] || die "there are no messages"
 
-  while IFS=$'\t' read -r id hash date number text; do
+  while IFS=$'\x1f' read -r id hash date number text; do
     [[ $id == "$want" ]] || continue
     printf 'From: %s\n' "$(sms_sender "$number")"
     printf 'Date: %s\n\n' "$(sms_stamp "$date")"
     printf '%s\n' "$(sms_unescape "$text" | sms_printable)"
     return 0
-  done <"$INBOX"
+  done < <(tr '\t' '\037' <"$INBOX")
   die "no message with id $want — try: mobile-data sms list"
 }
 

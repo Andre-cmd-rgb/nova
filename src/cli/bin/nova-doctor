@@ -234,9 +234,10 @@ check_boot() {
 check_undervolt() {
   local json state offset reason
   json=$(nova-power-undervolt status --json 2>/dev/null) || return 0
-  IFS=$'\t' read -r state offset reason < <(jq -r '[.state,
+  # A unit separator, not a tab: bash runs empty tab fields together.
+  IFS=$'\x1f' read -r state offset reason < <(jq -r '[.state,
     (if .core == null then "" elif .core == .cache then "\(.core) mV" else "\(.core) mV on the core and \(.cache) mV on the cache" end),
-    (.reason // "")] | @tsv' <<<"$json")
+    (.reason // "")] | join("\u001f")' <<<"$json")
   case $state in
     applied) report ok "the CPU is undervolted by $offset" ;;
     held)

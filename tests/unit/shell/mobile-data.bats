@@ -155,6 +155,18 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [ "$(stat -c %a "$INBOX")" = 600 ]
 }
 
+@test "a message that came without a number is from Unknown, and keeps its words" {
+  sed '/^usage() {/,$d' "$helper" >"$SCRATCH/mobile-data.sh"
+  # shellcheck source=/dev/null
+  source "$SCRATCH/mobile-data.sh"
+  sms_archive hash1 2026-10-24T09:00:00+02:00 "" "Your bill is ready"
+  run cmd_sms_list
+  [[ $output == *"Unknown"*"Your bill is ready"* ]]
+  run cmd_sms_show 1
+  [ "${lines[0]}" = "From: Unknown" ]
+  [ "${lines[2]}" = "Your bill is ready" ]
+}
+
 @test "a connected modem: what the bar shows, read in one pass of its dump" {
   modem "modem.generic.ports.value[1]                    : cdc-wdm0 (mbim)" \
     "modem.generic.ports.value[2]                    : wwan0 (net)" \

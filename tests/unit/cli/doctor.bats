@@ -221,4 +221,8 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   stub nova-power-undervolt 'echo "{\"core\":-70,\"cache\":-70,\"state\":\"held\",\"reason\":\"a freeze\",\"intel\":true}"'
   run doctor
   [[ $output == *"warn  the CPU's undervolt is held: a freeze"* ]]
+  # Held with no offset left set, the reason is still the reason.
+  stub nova-power-undervolt 'echo "{\"core\":null,\"cache\":null,\"state\":\"held\",\"reason\":\"a freeze\",\"intel\":true}"'
+  run doctor
+  [[ $output == *"warn  the CPU's undervolt is held: a freeze"* ]]
 }
