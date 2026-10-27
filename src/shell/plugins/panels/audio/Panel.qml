@@ -56,8 +56,6 @@ Panel {
     return list
   }
 
-  property var sinkAvailability: ({})
-  property bool sinkAvailabilityLoaded: false
 
   // Identify true playback streams without reading node.properties here:
   // PwNode.properties is invalid until the node is bound, and reading it while
@@ -119,35 +117,13 @@ Panel {
   // such sink to the physical one, which is the same definition the volume keys
   // and the output switcher use. Resolving the default (rather than "whatever a
   // tuning fronts") is what keeps this correct when headphones or HDMI are
-  // selected while a tuning still exists.
-  property string volumeSinkName: ""
+  // selected while a tuning still exists. The keys' service looks it up once
+  // for the shell.
+  readonly property var keysService: bar?.shell?.serviceFor("nova.keys")
+  readonly property var volumeSink: keysService ? keysService.volumeSink : sink
 
   // Carry sub-notch touchpad deltas between wheel events.
   property real wheelAccumulator: 0
-
-  readonly property var volumeSink: {
-    if (volumeSinkName === "" || !sink) return sink
-    if (volumeSinkName === String(sink.name)) return sink
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i]
-      if (n && n.isSink && !n.isStream && String(n.name) === volumeSinkName && n.audio)
-        return n
-    }
-    return sink
-  }
-
-  // Re-resolve whenever the selected output changes; the timer below is only a
-  // safety net for the tuning being applied or removed underneath us.
-  onSinkChanged: resolveVolumeSink()
-
-  // A change while a lookup runs asks again once it ends: that lookup may
-  // have read the old output.
-  property bool volumeSinkStale: false
-
-  function resolveVolumeSink() {
-    if (volumeSinkProc.running) volumeSinkStale = true
-    else volumeSinkProc.running = true
-  }
 
   readonly property real outputVolume: volumeSink && volumeSink.audio ? volumeSink.audio.volume : 0
   readonly property bool outputMuted: volumeSink && volumeSink.audio ? volumeSink.audio.muted : false
@@ -491,14 +467,8 @@ Panel {
   }
 
   function sinkAvailable(node) {
-    if (!node || !node.name || !sinkAvailabilityLoaded) return true
-    var name = String(node.name)
-    return sinkAvailability[name] !== false
-  }
-
-  function updateSinkAvailability(raw) {
-    sinkAvailability = Model.parseSinkAvailability(raw)
-    sinkAvailabilityLoaded = true
+    if (!node || !node.name || !sinkAvailability.loaded) return true
+    return sinkAvailability.plugged[String(node.name)] !== false
   }
 
   function friendlyDeviceLabel(text) {
@@ -589,46 +559,9 @@ Panel {
     enabled: root.opened && !!root.source
   }
 
-  Process {
-    id: sinkAvailabilityProc
-    command: ["nova-audio-sink-availability"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateSinkAvailability(text)
-    }
-  }
-
-  Process {
-    id: volumeSinkProc
-    command: ["nova-audio-output-sink"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.volumeSinkName = String(text).trim()
-    }
-    onExited: {
-      if (!root.volumeSinkStale) return
-      root.volumeSinkStale = false
-      Qt.callLater(root.resolveVolumeSink)
-    }
-  }
-
-  Timer {
-    interval: 5000
-    running: root.opened
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: if (!sinkAvailabilityProc.running) sinkAvailabilityProc.running = true
-  }
-
-  // Runs whether or not the panel is open: the bar shows and scrolls the output
-  // volume too, so an unresolved sink there would read and change the virtual
-  // tuning sink instead of the speakers.
-  Timer {
-    interval: 15000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.resolveVolumeSink()
+  SinkAvailability {
+    id: sinkAvailability
+    active: root.opened
   }
 
   Timer {

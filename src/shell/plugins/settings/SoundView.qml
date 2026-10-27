@@ -1,6 +1,5 @@
 import QtQuick
 import Quickshell
-import Quickshell.Io
 import Quickshell.Services.Pipewire
 import qs.Commons
 import qs.Commons as Commons
@@ -13,36 +12,26 @@ Column {
   id: root
   spacing: Style.space(22)
 
+  property var shell: null
+
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
   // The output chosen, which with a speaker tuning on is the tuning itself.
   readonly property var selected: Pipewire.defaultAudioSink
   readonly property var source: Pipewire.defaultAudioSource
   // Speaker tuning puts a filter in front of the speakers and makes it the
   // default; the volume that matters is the speakers' own, behind it, which
-  // nova-audio-output-sink names.
-  property string outputName: ""
-  readonly property var output: {
-    var fallback = Pipewire.defaultAudioSink
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i]
-      if (n && n.isSink && !n.isStream && n.audio && String(n.name) === outputName) return n
-    }
-    return fallback
-  }
+  // the keys' service looks up.
+  readonly property var keysService: shell ? shell.serviceFor("nova.keys") : null
+  readonly property var output: keysService ? keysService.volumeSink : selected
 
   // The choices, as plain snapshots: a Repeater or a menu holding PipeWire
   // nodes outlives the ones that go away, and takes Quickshell down with them.
   property var outputs: []
   property var inputs: []
   property string choicesText: ""
-  // sink name -> false for an output with nothing plugged in (HDMI, say), and
-  // for the speakers a speaker tuning stands in front of: the tuning is listed
-  // in their place, as choosing them would leave it out.
-  property var plugged: ({})
-
   PwObjectTracker { objects: [root.output, root.source] }
 
-  Component.onCompleted: { sync(); probe() }
+  Component.onCompleted: sync()
   onNodesChanged: sync()
   onSelectedChanged: sync()
   onSourceChanged: sync()
@@ -62,7 +51,7 @@ Column {
       if (n.isSink) {
         // A filter's own input is processing on the way somewhere, not a
         // place sound goes.
-        if (name.indexOf("effect_input.") === 0 || (plugged[name] === false && n !== selected)) continue
+        if (name.indexOf("effect_input.") === 0 || (availability.plugged[name] === false && n !== selected)) continue
         outs.push({ value: name, label: label(n), id: n.id })
       } else if (n.audio && name !== "quickshell") {
         ins.push({ value: name, label: label(n), id: n.id })
@@ -81,53 +70,15 @@ Column {
     for (var i = 0; i < nodes.length; i++)
       if (nodes[i] && String(nodes[i].name) === name) preferred(nodes[i])
     Quickshell.execDetached([command, String(row.id), name])
-    outputProbe.restart()
   }
 
-  function probe() {
-    if (!sinkProc.running) sinkProc.running = true
-    if (!pluggedProc.running) pluggedProc.running = true
-  }
-
-  // Which output is behind the default, and what is plugged in, change with
-  // a cable or a click in the bar: a light poll keeps the page true.
-  Timer {
-    interval: 4000
-    repeat: true
-    running: true
-    onTriggered: root.probe()
-  }
-
-  Timer {
-    id: outputProbe
-    interval: 600
-    onTriggered: root.probe()
-  }
-
-  Process {
-    id: sinkProc
-    command: ["nova-audio-output-sink"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.outputName = String(text).trim()
-    }
-  }
-
-  Process {
-    id: pluggedProc
-    command: ["nova-audio-sink-availability"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var next = {}
-        String(text || "").split("\n").forEach(function (line) {
-          var parts = line.trim().split("\t")
-          if (parts.length >= 2) next[parts[0]] = parts[1] !== "0"
-        })
-        root.plugged = next
-        root.sync()
-      }
-    }
+  // An output with nothing plugged in (HDMI, say), and the speakers a speaker
+  // tuning stands in front of, are left out: the tuning is listed in their
+  // place, as choosing them would leave it out.
+  SinkAvailability {
+    id: availability
+    active: true
+    onPluggedChanged: root.sync()
   }
 
   Section {

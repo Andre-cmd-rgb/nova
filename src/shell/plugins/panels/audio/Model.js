@@ -35,18 +35,6 @@ function outputVolumeName(volume, muted) {
   return "Whisper"
 }
 
-function parseSinkAvailability(raw) {
-  var next = {}
-  var lines = String(raw || "").split("\n")
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim()
-    if (!line) continue
-    var parts = line.split("\t")
-    if (parts.length >= 2) next[parts[0]] = parts[1] !== "0"
-  }
-  return next
-}
-
 function friendlyDeviceLabel(text) {
   var label = String(text || "").trim()
   label = label.replace(/^sof-soundwire\s+/i, "")
@@ -239,7 +227,6 @@ if (typeof module !== "undefined") {
     isAudioSource: isAudioSource,
     listSnapshot: listSnapshot,
     outputVolumeName: outputVolumeName,
-    parseSinkAvailability: parseSinkAvailability,
     friendlyDeviceLabel: friendlyDeviceLabel,
     nodeProps: nodeProps,
     nodeLabel: nodeLabel,

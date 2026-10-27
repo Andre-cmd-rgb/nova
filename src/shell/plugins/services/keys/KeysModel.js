@@ -9,6 +9,14 @@ function volumeStep(volume, delta) {
   return Math.max(0, next)
 }
 
+// Whether the sink <name> may stand in front of another, where its loudness
+// lives (a speaker tuning, EasyEffects): only an ALSA output is surely its
+// own, as nova-audio-output-sink has it, and nothing is no sink at all.
+function sinkFronts(name) {
+  name = String(name || "")
+  return name !== "" && name.indexOf("alsa_output.") !== 0
+}
+
 // Whether a held volume key has further to go from <percent>.
 function volumeMore(percent, delta) {
   return delta > 0 ? percent < 100 : percent > 0

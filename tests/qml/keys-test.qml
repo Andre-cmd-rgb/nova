@@ -19,6 +19,8 @@ ShellRoot {
     check(Model.volumeStep(0.98, 5) === 100 && Model.volumeStep(0.02, -5) === 0, "no further than 100 or 0")
     check(Model.volumeStep(1.2, 5) === 100 && Model.volumeStep(1.2, -5) === 115, "up stops at 100 even from above; down steps")
     check(Model.volumeStep(undefined, 5) === 5, "an unread volume counts as none")
+    check(Model.sinkFronts("nova_speaker_tuning") && Model.sinkFronts("easyeffects_sink") && Model.sinkFronts("bluez_output.AA_BB.1"), "a DSP or other sink needs the lookup")
+    check(!Model.sinkFronts("alsa_output.pci-0000_00_1f.3.analog-stereo") && !Model.sinkFronts("") && !Model.sinkFronts(undefined), "an ALSA output, or none, does not")
     check(Model.volumeMore(95, 5) && !Model.volumeMore(100, 5) && !Model.volumeMore(0, -1) && Model.volumeMore(1, -1), "a held volume key stops at either end")
     check(Model.volumeIcon(40, false) === "volume-high" && Model.volumeIcon(40, true) === "volume-muted" && Model.volumeIcon(0, false) === "volume-muted", "struck through, muted or silent")
 

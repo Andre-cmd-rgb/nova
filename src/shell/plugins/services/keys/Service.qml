@@ -77,8 +77,9 @@ Item {
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
 
   // The physical sink under any DSP sink in front of it (a speaker tuning,
-  // EasyEffects): where loudness lives, as nova-audio-output-sink resolves it
-  // for the audio panel too. The default output until it answers.
+  // EasyEffects): where loudness lives, as nova-audio-output-sink resolves it.
+  // The bar's sound menu and Settings take it from here. The default output
+  // until it answers.
   property string volumeSinkName: ""
   readonly property var volumeSink: {
     if (volumeSinkName === "" || !sink) return sink
@@ -93,15 +94,31 @@ Item {
 
   PwObjectTracker { objects: [root.sink, root.volumeSink].filter(function (n) { return !!n }) }
 
-  onSinkChanged: resolveVolumeSink()
+  readonly property string sinkName: sink ? String(sink.name || "") : ""
+
+  onSinkNameChanged: resolveVolumeSink()
+  // A DSP sink's output appears and goes with the nodes, a tuning applied or
+  // EasyEffects started under the same default: ask again once they settle.
+  onNodesChanged: if (Model.sinkFronts(sinkName)) volumeSinkSettle.restart()
 
   // A change while a lookup runs asks again once it ends: that lookup may
-  // have read the old output.
+  // have read the old output, and its answer is dropped.
   property bool volumeSinkStale: false
 
   function resolveVolumeSink() {
-    if (volumeSinkProc.running) volumeSinkStale = true
-    else volumeSinkProc.running = true
+    if (volumeSinkProc.running) {
+      volumeSinkStale = true
+      return
+    }
+    var name = sink ? String(sink.name || "") : ""
+    if (Model.sinkFronts(name)) volumeSinkProc.running = true
+    else volumeSinkName = name
+  }
+
+  Timer {
+    id: volumeSinkSettle
+    interval: 500
+    onTriggered: root.resolveVolumeSink()
   }
 
   Process {
@@ -109,7 +126,7 @@ Item {
     command: ["nova-audio-output-sink"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.volumeSinkName = String(text).trim()
+      onStreamFinished: if (!root.volumeSinkStale) root.volumeSinkName = String(text).trim()
     }
     onExited: {
       if (!root.volumeSinkStale) return
@@ -121,9 +138,8 @@ Item {
   Component.onCompleted: resolveVolumeSink()
 
   // A step unmutes. Held, each step follows the last one set rather than
-  // PipeWire's answer to it. Each press looks the sink up again for the next,
-  // for a tuning applied or removed under the same default: a lookup is a
-  // process, worth one a press but not one every few seconds all day.
+  // PipeWire's answer to it. Behind a DSP sink, each press looks the sink up
+  // again for the next, for a move the nodes do not show.
   function pressVolume(delta) {
     resolveVolumeSink()
     var percent = -1

@@ -597,7 +597,10 @@ Item {
     Page {
       id: p
       title: "Sound"
-      SoundView { width: p.inner }
+      SoundView {
+        width: p.inner
+        shell: root.shell
+      }
     }
   }
 
