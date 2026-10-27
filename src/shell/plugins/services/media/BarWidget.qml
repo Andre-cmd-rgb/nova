@@ -64,9 +64,14 @@ BarWidget {
 
         property bool needsScroll: implicitWidth > scrollClip.width
 
+        // A frame at the display's rate for as long as it runs, so only
+        // while something plays on a bar that is on screen; stopped, the
+        // title sits at its start.
         NumberAnimation on x {
           id: scrollAnim
           running: labelText.needsScroll && !root.popupOpen && !root.bar.vertical
+            && !root.bar.barHidden && !!root.activePlayer && root.activePlayer.isPlaying
+          onRunningChanged: if (!running) labelText.x = 0
           loops: Animation.Infinite
           duration: Math.max(6000, labelText.implicitWidth * 25)
           from: scrollClip.width
