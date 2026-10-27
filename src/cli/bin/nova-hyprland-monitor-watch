@@ -25,15 +25,25 @@ sync_clamshell() {
   ) 9>"$LOCK"
 }
 
+# Hyprland reports each monitor twice (v1 and v2) and a dock brings several
+# at once, so the passes follow the last of a burst: an event moments after
+# another leaves the pass to the delayed ones, and the delayed ones start
+# again, from the newest event. Killing the old schedule leaves a pass it is
+# in the middle of to finish.
+delayed_pid="" last_change=0
 sync_clamshell_after_monitor_change() {
-  sync_clamshell
+  local now=${EPOCHREALTIME/./}
+  ((now - last_change < 500000)) || sync_clamshell
+  last_change=$now
 
+  [[ -z $delayed_pid ]] || kill "$delayed_pid" 2>/dev/null || true
   (
     for delay in 1 3 7; do
       sleep "$delay"
       sync_clamshell
     done
   ) &
+  delayed_pid=$!
 }
 
 # Powering the monitor on fires no DRM hotplug, and forcing a re-probe needs
