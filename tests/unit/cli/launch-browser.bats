@@ -90,3 +90,11 @@ launch() { "$REPO_ROOT/src/cli/bin/nova-launch-browser" "$@"; }
   launch --private https://example.org/--private/report
   [ "$(cat "$CALLS")" = "handoff $SCRATCH/bin/google-chrome-stable --incognito https://example.org/--private/report" ]
 }
+
+@test "no browser installed: said in a notification that installs one, not on stderr alone" {
+  stub nova-notification-send 'printf "notify %s\n" "$*" >>"$CALLS"'
+  printf '[Default Applications]\nx-scheme-handler/http=google-chrome.desktop\n' >"$XDG_CONFIG_HOME/mimeapps.list"
+  run launch https://example.org
+  [ "$status" -eq 1 ]
+  grep -q '^notify .*No web browser is installed.* --exec nova-launch-floating-terminal-with-presentation nova apps install$' "$CALLS"
+}

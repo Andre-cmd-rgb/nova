@@ -36,8 +36,13 @@ exec_words() { # file
   fi
 }
 
+# Pressed from a key or the menu, where nobody reads stderr; and a stick
+# that installed offline left no browser at all.
 browser_file=$(nova-cmd-default-browser --file) || {
   echo "nova-launch-browser: no default browser is set" >&2
+  nova-notification-send -u normal -g 󰖟 "No web browser is installed" \
+    "Click to install Chrome, or run: nova apps install" \
+    --exec nova-launch-floating-terminal-with-presentation "nova apps install" || true
   exit 1
 }
 default_browser=${browser_file##*/}
