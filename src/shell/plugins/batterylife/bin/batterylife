@@ -415,15 +415,21 @@ sessions_tsv() {
 
 # Session detection walks every row in the history, and one `json` asks for
 # it three times — for the projection, for the run in progress, and for the
-# list. It is the same answer each time, so it is computed once.
+# list. It is the same answer each time, so it is computed once. Each asks
+# from inside a $( ) or <( ), whose subshell keeps nothing it sets, so the
+# commands fill the cache in their own shell first (cache_sessions), and the
+# subshells inherit it.
 SESSIONS_CACHE=""
 SESSIONS_CACHED=0
 
+cache_sessions() {
+  ((SESSIONS_CACHED)) && return
+  SESSIONS_CACHE=$(sessions_tsv 90)
+  SESSIONS_CACHED=1
+}
+
 sessions_cached() {
-  if ((!SESSIONS_CACHED)); then
-    SESSIONS_CACHE=$(sessions_tsv 90)
-    SESSIONS_CACHED=1
-  fi
+  cache_sessions
   printf '%s\n' "$SESSIONS_CACHE"
 }
 
@@ -858,6 +864,7 @@ state_word() {
 cmd_status() {
   local snap present state pct watts left tofull short=0
   [[ ${1:-} == --short ]] && short=1
+  cache_sessions
   snap=$(now_tsv)
   present=$(now_value present "$snap")
   [[ $present == 1 ]] || { echo "No battery."; return 0; }
@@ -961,6 +968,7 @@ cmd_json() {
     shift
   done
 
+  cache_sessions
   snap=$(now_tsv)
   sessions=$(sessions_cached | awk -F'\t' -v min="$(cfg_number MIN_SESSION 600)" '$6 >= min')
 
