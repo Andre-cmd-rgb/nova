@@ -35,7 +35,7 @@ background=$(sed -n -E 's/^background *= *"(#[0-9a-fA-F]{6})".*/\1/p' "$palette/
 
 # plugin: the pages to open (one shot each), "-" for a window without pages
 windows=(
-  "settings:wifi bluetooth mobile-data sound battery screentime appearance bar lock apps updates about"
+  "settings:wifi bluetooth mobile-data sound displays battery screentime appearance bar lock apps updates about"
 )
 
 work=$(mktemp -d)

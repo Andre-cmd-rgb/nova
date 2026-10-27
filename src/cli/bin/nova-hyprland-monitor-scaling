@@ -98,6 +98,9 @@ set_scale() {
 
   hyprctl eval "hl.monitor({ output = \"$active_monitor\", mode = \"${width}x${height}@${refresh_rate}\", position = \"auto\", scale = $new_scale })" >/dev/null
   audit_scale_change "$requested" "$active_monitor" "$current_scale" "$new_scale" || true
+  # A display with settings kept in Settings → Displays keeps this scale there
+  # too, or its rule would put the old one back at the next reload.
+  nova-monitor remember "$active_monitor" scale "$new_scale" 2>/dev/null || true
 
   # Persist to monitors.lua if the user still has Nova's generic catch-all
   # defaults, so the scale survives reboots.

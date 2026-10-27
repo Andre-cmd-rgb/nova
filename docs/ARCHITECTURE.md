@@ -56,11 +56,11 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
   | Kind | Location |
   |---|---|
   | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`); a plugin's own settings in `~/.config/nova-<plugin>/` (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
-  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `power-profile/`, `aur/`); a plugin's history in `~/.local/state/nova-<plugin>/` |
+  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `power-profile/`, `aur/`, `monitors.json`: the displays as Settings keeps them); a plugin's history in `~/.local/state/nova-<plugin>/` |
   | User data | `~/.local/share/nova-dictation/` (the speech model, downloaded at dictation's first use) |
   | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
-  | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets, `dictation/`'s recordings until they are read) |
+  | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets, `dictation/`'s recordings until they are read, a display change not kept yet) |
 
 - **Identifiers:** shell plugin ids are `nova.<name>`; every plugin ships in the
   `nova` package and the shell loads no other (`plugins/index.json`, written at

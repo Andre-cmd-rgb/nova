@@ -77,11 +77,12 @@ into the lock screen. What differs from a PC is in
 | Super+K | every binding |
 
 - **Settings**, in the menu: Wi-Fi, Bluetooth, mobile data and sound (also a
-  click away in the bar), the battery (its history, the power mode, the charge
-  limit, the discrete GPU), Screen Time, the theme and background, what the bar
-  shows, the lock screen and fingerprint, default apps, updates and recovery.
-  Settings → Menu Bar adds more to the bar, such as Display for the brightness
-  and the laptop screen.
+  click away in the bar), the displays (resolution, refresh rate, scale,
+  rotation and arrangement), the battery (its history, the power mode, the
+  charge limit, the discrete GPU), Screen Time, the theme and background, what
+  the bar shows, the lock screen and fingerprint, default apps, updates and
+  recovery. Settings → Menu Bar adds more to the bar, such as Display for the
+  brightness and the laptop screen.
 - **Dictation:** hold Super+D and speak, and the words are pasted where the
   cursor is when you let go; a tap listens until the next press, and Esc
   cancels. It runs on the computer (NVIDIA's Parakeet, in 25 European

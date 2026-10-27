@@ -14,7 +14,7 @@ import qs.Ui
 // put, ...), and the window reads the state back afterwards, so what it shows
 // is what is set. Wi-Fi, Bluetooth, Mobile Data and Sound have the bar's quick
 // menus too; here they have a page each, and Screen Time and Battery Life live
-// on theirs rather than in windows of their own.
+// on theirs rather than in windows of their own. Displays is nova monitor's.
 //
 // Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
 // and Battery Life's, "today" or "week":
@@ -57,6 +57,7 @@ Item {
     { id: "bluetooth", label: "Bluetooth", icon: "󰂯", radio: "bluetooth" },
     { id: "mobile-data", label: "Mobile Data", icon: "󰞃", radio: "wwan" },
     { id: "sound", label: "Sound", icon: "󰕾", group: true },
+    { id: "displays", label: "Displays", icon: "󰍹" },
     { id: "battery", label: "Battery", icon: "󰁹" },
     { id: "screentime", label: "Screen Time", icon: "󰥔" },
     { id: "appearance", label: "Appearance", icon: "󰸌", group: true },
@@ -498,6 +499,7 @@ Item {
             case "bluetooth": return bluetoothPage
             case "mobile-data": return mobileDataPage
             case "sound": return soundPage
+            case "displays": return displaysPage
             case "bar": return barPage
             case "battery": return batteryPage
             case "screentime": return screenTimePage
@@ -588,6 +590,20 @@ Item {
       id: p
       title: "Sound"
       SoundView { width: p.inner }
+    }
+  }
+
+  Component {
+    id: displaysPage
+    Page {
+      id: p
+      title: "Displays"
+      DisplaysView {
+        width: p.inner
+        listing: root.info.displays || ({})
+        onCommand: function (argv) { root.run(argv) }
+        onExpired: root.load()
+      }
     }
   }
 

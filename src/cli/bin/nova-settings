@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Open Settings
-# nova:args=[wifi|bluetooth|mobile-data|sound|battery|screentime|appearance|bar|lock|apps|updates|about] | state
+# nova:args=[wifi|bluetooth|mobile-data|sound|displays|battery|screentime|appearance|bar|lock|apps|updates|about] | state
 #
 # Settings is a shell window (shell/plugins/settings). `state` is the one call
 # it makes to fill itself: everything it shows, as JSON, read through the same
@@ -16,7 +16,7 @@ DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 DEVICETREE=${NOVA_DEVICETREE_PATH:-/proc/device-tree}
 CPUINFO=${NOVA_CPUINFO:-/proc/cpuinfo}
 RFKILL=${NOVA_RFKILL_PATH:-/sys/class/rfkill}
-PAGES="wifi bluetooth mobile-data sound battery screentime appearance bar lock apps updates about"
+PAGES="wifi bluetooth mobile-data sound displays battery screentime appearance bar lock apps updates about"
 
 # Lines on stdin as a JSON array of strings.
 lines_json() { jq -R . | jq -sc .; }
@@ -194,6 +194,7 @@ state() {
     --argjson textSize "$(text_size)" \
     --argjson battery "$(battery_json)" \
     --argjson radios "$(radios_json)" \
+    --argjson displays "$(json_or '{"displays":[],"pending":null}' nova-monitor list --json)" \
     --argjson screenTime "$(nova-screentime enabled >/dev/null 2>&1 && echo true || echo false)" \
     --argjson config "$config" \
     --argjson widgets "$(widgets_json)" \
@@ -206,6 +207,7 @@ state() {
                    font: $font, fonts: $fonts, textSize: $textSize},
       battery: $battery,
       radios: $radios,
+      displays: $displays,
       screenTime: $screenTime,
       bar: {position: ($config.bar.position // "top"), transparent: ($config.bar.transparent == true),
             widgets: $widgets,

@@ -10,6 +10,9 @@ CLAMSHELL_FLAG="$TOGGLES_DIR/internal-monitor-clamshell.lua"
 MANUAL_DISABLE_FLAG="$TOGGLES_DIR/internal-monitor-disable.lua"
 SCALE_STATE="$TOGGLES_DIR/internal-monitor-scale"
 MONITOR_LUA="$HOME/.config/hypr/monitors.lua"
+# What Settings → Displays keeps (nova monitor), whose rules load after
+# monitors.lua and so win over it.
+DISPLAY_SETTINGS="${XDG_STATE_HOME:-$HOME/.local/state}/nova/monitors.json"
 
 INTERNAL=$(nova-hyprland-monitor-laptop)
 
@@ -90,8 +93,19 @@ configured_monitor_value() {
   lua_scalar "$value"
 }
 
+# The panel's value as Settings keeps it, by its connector, when it has one;
+# monitors.lua's otherwise.
 configured_internal_monitor_value() {
   [[ -n $INTERNAL ]] || return 0
+  local value=""
+
+  if [[ -f $DISPLAY_SETTINGS ]]; then
+    value=$(jq -r --arg name "$INTERNAL" --arg key "$1" '.[$name][$key] // empty | tostring' "$DISPLAY_SETTINGS" 2>/dev/null || true)
+  fi
+  if [[ -n $value ]]; then
+    printf '%s\n' "$value"
+    return
+  fi
 
   configured_monitor_value "$INTERNAL" "$1"
 }

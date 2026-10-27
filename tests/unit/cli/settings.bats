@@ -50,6 +50,12 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -r .bar.position <<<"$output")" = top ]
   [ "$(jq -c '.bar.shown | index("nova.power") != null' <<<"$output")" = true ]
   [ "$(jq -c .updates <<<"$output")" = '{"candidates":false,"recovery":false}' ]
+  [ "$(jq -c .displays <<<"$output")" = '{"displays":[],"pending":null}' ]
+}
+
+@test "state: the displays as nova monitor lists them" {
+  stub nova-monitor '[[ $* == "list --json" ]] && echo "{\"displays\":[{\"name\":\"eDP-1\"}],\"pending\":{\"until\":99}}"'
+  [ "$(state .displays)" = '{"displays":[{"name":"eDP-1"}],"pending":{"until":99}}' ]
 }
 
 @test "state: whether this system tests release candidates" {

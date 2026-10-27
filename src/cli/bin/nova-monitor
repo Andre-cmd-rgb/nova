@@ -1,0 +1,313 @@
+#!/bin/bash
+
+# nova:summary=Displays: resolution, refresh rate, scale, rotation and arrangement
+# nova:args=[list [--json] | set <display> <setting> <value> | keep | revert | reset <display>]
+#
+# What Settings → Displays changes, and how it is kept. A change applies at
+# once and is written down only when it is kept (`keep`, the page's Keep
+# button); otherwise it goes back by itself after 15 s, so a mode the display
+# cannot show, which leaves it black, undoes itself. Kept settings are
+# ~/.local/state/nova/monitors.json, one entry a display, written out as
+# Hyprland rules in toggles/hypr/display-settings.lua, which loads after
+# ~/.config/hypr/monitors.lua and so wins over it. `reset` hands a display
+# back to that file. The laptop's own display is switched on and off by
+# nova-hyprland-monitor-internal, as the bar's Display menu does.
+#
+#   nova monitor set DP-2 mode 2560x1440@143.97
+#   nova monitor set DP-2 scale 1.25
+#   nova monitor set DP-2 rotate 90
+#   nova monitor set DP-2 position right-of eDP-1
+#   nova monitor set DP-2 off
+
+set -euo pipefail
+
+STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/nova
+SAVED=$STATE_DIR/monitors.json
+RULES=$STATE_DIR/toggles/hypr/display-settings.lua
+PENDING=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/monitors-pending.json
+REVERT_AFTER=${NOVA_MONITOR_REVERT_AFTER:-15}
+SELF=$(realpath -- "${BASH_SOURCE[0]}")
+
+die() {
+  echo "nova monitor: $*" >&2
+  exit 1
+}
+
+usage() { sed -n '3,/^$/s/^# \{0,1\}//p' "$0"; }
+
+# The jq both the list and the rules are made with.
+#
+# A rule is Lua that Hyprland runs, and a display's description comes from
+# the display itself (its EDID), so every string is written with anything but
+# letters, digits and a few separators as an escape, and an entry whose
+# values are not the shapes Nova writes is dropped rather than written.
+JQ_LIB='
+  def internal: test("^(eDP|LVDS|DSI)-");
+  def hex: if . < 16 then "0123456789abcdef"[.:(. + 1)] else ((. / 16 | floor) | hex) + (. % 16 | hex) end;
+  def lua: "\"" + ([explode[] |
+      if (. >= 48 and . <= 57) or (. >= 65 and . <= 90) or (. >= 97 and . <= 122) or . == 32 or . == 45 or . == 46 or . == 95 or . == 58 or . == 64
+      then [.] | implode
+      elif . < 128 then "\\" + ("00" + tostring | .[-3:])
+      else "\\u{" + hex + "}" end] | join("")) + "\"";
+  def valid: (.mode | type == "string" and test("^([0-9]{2,5}x[0-9]{2,5}@[0-9]{1,3}([.][0-9]{1,3})?|preferred)$"))
+    and (.position | type == "string" and test("^(-?[0-9]{1,5}x-?[0-9]{1,5}|auto)$"))
+    and ((.scale | type == "number" and . > 0 and . <= 4) or .scale == "auto")
+    and (.transform | type == "number" and . >= 0 and . <= 3 and floor == .);
+  def rule($output):
+    if .disabled == true then "hl.monitor({ output = \($output | lua), disabled = true })"
+    elif valid then "hl.monitor({ output = \($output | lua), mode = \(.mode | lua), position = \(.position | lua), scale = \(if .scale == "auto" then "\"auto\"" else (.scale | tostring) end), transform = \(.transform) })"
+    else empty end;
+  def gcd($a; $b): if $b == 0 then $a else gcd($b; $a % $b) end;
+  # A scale Hyprland takes for a mode: one that divides it into whole logical
+  # pixels, in steps of 1/120 (nova-hyprland-monitor-scaling rounds the same way).
+  def clean($w; $h): (gcd($w * 120; $h * 120)) as $g | ((. * 120 + 0.5) | floor) as $k0 |
+    ([$k0, $g] | min) as $k | [range($k; $g + 1)] | map(select($g % . == 0)) | first / 120;
+  def logical: (if (.transform % 2) == 1 then [.height, .width] else [.width, .height] end) as [$w, $h] |
+    {w: ($w / .scale | round), h: ($h / .scale | round)};
+  # Its match in a rule: the description for a display plugged in, which
+  # follows it from one port or dock to the next, unless another one has the
+  # same; the connector for the laptop panel, which never moves.
+  def key($all): . as $d |
+    if (.name | internal) or (.description // "") == "" or ([$all[] | select(.description == $d.description)] | length) > 1
+    then .name else "desc:" + .description end;
+'
+
+monitors() {
+  hyprctl monitors all -j 2>/dev/null || die "cannot reach Hyprland"
+}
+
+key_of() { # <live json> <name>
+  jq -r --arg name "$2" "$JQ_LIB"' . as $all | first(.[] | select(.name == $name)) | key($all) // empty' <<<"$1"
+}
+
+saved() {
+  if [[ -f $PENDING ]] && jq -e '.candidate | type == "object"' "$PENDING" >/dev/null 2>&1; then
+    jq -c .candidate "$PENDING"
+  elif [[ -f $SAVED ]] && jq -e 'type == "object"' "$SAVED" >/dev/null 2>&1; then
+    jq -c . "$SAVED"
+  else
+    echo '{}'
+  fi
+}
+
+# Every display, with what Settings offers for each: its resolutions, the
+# rates of each, the scales it takes, and whether a change waits to be kept.
+cmd_list() {
+  local json=false live
+  [[ ${1:-} == --json ]] && json=true
+  live=$(monitors)
+  if ! $json; then
+    jq -r '.[] | "\(.name)\t\(if .disabled then "off" else "\(.width)x\(.height)@\(.refreshRate | floor) Hz, scale \(.scale), at \(.x),\(.y)" end)\t\(.description)"' <<<"$live" | column -t -s $'\t'
+    [[ ! -f $PENDING ]] || echo "A change waits to be kept: nova monitor keep, or nova monitor revert."
+    return 0
+  fi
+  jq -c --argjson saved "$(saved)" --argjson pending "$(jq -c '{until}' "$PENDING" 2>/dev/null || echo null)" "$JQ_LIB"'
+    . as $all |
+    {displays: [.[] | . as $d | (key($all)) as $key | {
+      name, description, key: $key,
+      label: (if (.name | internal) then "Built-in Display"
+              else ([.make, .model] | map(select(. != null and . != "")) | join(" ")) as $m | if $m != "" then $m else .name end end),
+      internal: (.name | internal),
+      enabled: (.disabled != true), focused: (.focused == true),
+      width, height, refresh: .refreshRate, scale, x, y, transform,
+      mode: "\(.width)x\(.height)@\(.refreshRate * 100 | round / 100)",
+      logicalWidth: (if .disabled then 0 else logical.w end), logicalHeight: (if .disabled then 0 else logical.h end),
+      modes: [.availableModes[] | capture("^(?<w>[0-9]+)x(?<h>[0-9]+)@(?<r>[0-9.]+)Hz$") |
+        {width: (.w | tonumber), height: (.h | tonumber), refresh: (.r | tonumber), mode: "\(.w)x\(.h)@\(.r)"}] | unique_by([.width, .height, .refresh]) | reverse,
+      # 1 always; above it, the presets that leave 720 logical lines or more.
+      scales: (if $d.width > 0 and $d.height > 0
+        then [1, 1.25, 1.5, 1.6, 2, 2.5, 3] | map(clean($d.width; $d.height)) | map(select(. == 1 or ([$d.width, $d.height] | min) / . >= 720)) | unique
+        else [1] end),
+      saved: ($saved | has($key))
+    }], pending: $pending}' <<<"$live"
+}
+
+# The rules file from the kept settings, put in place in one rename.
+write_rules() {
+  local tmp
+  mkdir -p "$(dirname "$RULES")"
+  tmp=$(mktemp "$RULES.XXXXXX")
+  {
+    echo "-- Written by nova monitor (Settings → Displays) from $SAVED; changed there, not here."
+    jq -r "$JQ_LIB"' to_entries[] | .key as $k | .value | rule($k)' "$SAVED"
+  } >"$tmp"
+  mv "$tmp" "$RULES"
+}
+
+save() { # <json object>
+  local tmp
+  mkdir -p "$STATE_DIR"
+  tmp=$(mktemp "$SAVED.XXXXXX")
+  printf '%s\n' "$1" >"$tmp"
+  mv "$tmp" "$SAVED"
+  write_rules
+}
+
+# A display's settings as they are now, the start of a change to them.
+entry_now() { # <live json> <name>
+  jq -c --arg name "$2" 'first(.[] | select(.name == $name)) |
+    {name, mode: "\(.width)x\(.height)@\(.refreshRate * 100 | round / 100)", position: "\(.x)x\(.y)", scale, transform, disabled: (.disabled == true)}' <<<"$1"
+}
+
+# Applies <candidate> (every display's settings, kept or not) to the displays
+# named, now, and leaves it waiting to be kept, with the clock running.
+propose() { # <candidate json> <live json> <name>...
+  local candidate=$1 live=$2 stamp rules
+  shift 2
+  rules=$(jq -r --argjson live "$live" --args "$JQ_LIB"' . as $c | $ARGS.positional[] as $name |
+    first($live[] | select(.name == $name)) | key($live) as $k | ($c[$k] // empty) | rule($k)' "$@" <<<"$candidate")
+  [[ -n $rules ]] || die "that is not a setting Nova can write"
+  stamp=$(date +%s%N)
+  mkdir -p "$(dirname "$PENDING")"
+  jq -nc --argjson candidate "$candidate" --arg stamp "$stamp" --argjson until "$(($(date +%s) + REVERT_AFTER))" \
+    '{stamp: $stamp, until: $until, candidate: $candidate}' >"$PENDING"
+  hyprctl eval "$rules" >/dev/null
+  setsid -f "$SELF" revert --stamp "$stamp" --after "$REVERT_AFTER" </dev/null >/dev/null 2>&1
+}
+
+cmd_set() {
+  local name=${1:-} setting=${2:-} value=${3:-} live entry key candidate others
+  [[ -n $name && -n $setting ]] || die "usage: nova monitor set <display> <setting> <value>"
+  [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || die "no display '$name'"
+  live=$(monitors)
+  jq -e --arg name "$name" 'any(.[]; .name == $name)' <<<"$live" >/dev/null || die "no display '$name'"
+  # The laptop's panel has its own switch, which also knows about clamshell
+  # mode and mirroring.
+  if [[ $setting == on || $setting == off ]] && [[ $name =~ ^(eDP|LVDS|DSI)- ]]; then
+    exec nova-hyprland-monitor-internal "$setting"
+  fi
+  key=$(key_of "$live" "$name")
+  candidate=$(saved)
+  entry=$(jq -c --arg key "$key" '.[$key] // empty' <<<"$candidate")
+  # A display switched off since it was plugged in has no settings of its
+  # own to come back with: it comes back as monitors.lua's catch-all would.
+  if [[ -z $entry && $setting == on ]]; then
+    entry=$(jq -nc --arg name "$name" '{name: $name, mode: "preferred", position: "auto", scale: "auto", transform: 0}')
+  fi
+  [[ -n $entry ]] || entry=$(entry_now "$live" "$name")
+  case $setting in
+    mode)
+      jq -e --arg mode "$value" --arg name "$name" 'first(.[] | select(.name == $name)) | .availableModes | any(sub("Hz$"; "") == $mode)' <<<"$live" >/dev/null ||
+        die "$name has no mode $value; nova monitor list --json has its modes"
+      entry=$(jq -c --arg mode "$value" '.mode = $mode' <<<"$entry")
+      ;;
+    scale)
+      [[ $value =~ ^[0-9]+([.][0-9]+)?$ ]] || die "a scale is a number, such as 1.25"
+      entry=$(jq -c --argjson scale "$value" --argjson live "$live" --arg name "$name" "$JQ_LIB"'
+        first($live[] | select(.name == $name)) as $d | .scale = ($scale | clean($d.width; $d.height))' <<<"$entry")
+      ;;
+    rotate)
+      case $value in 0 | normal) value=0 ;; 90) value=1 ;; 180) value=2 ;; 270) value=3 ;; *) die "rotate takes 0, 90, 180 or 270" ;; esac
+      entry=$(jq -c --argjson t "$value" '.transform = $t' <<<"$entry")
+      ;;
+    position)
+      cmd_position "$name" "$value" "${4:-}" "$live" "$candidate"
+      return
+      ;;
+    on)
+      entry=$(jq -c '.disabled = false' <<<"$entry")
+      ;;
+    off)
+      others=$(jq --arg name "$name" '[.[] | select(.name != $name and .disabled != true)] | length' <<<"$live")
+      ((others > 0)) || die "$name is the only display on"
+      entry=$(jq -c '.disabled = true' <<<"$entry")
+      ;;
+    *) die "no setting '$setting': mode, scale, rotate, position, on or off" ;;
+  esac
+  candidate=$(jq -c --arg key "$key" --argjson entry "$entry" '.[$key] = $entry' <<<"$candidate")
+  propose "$candidate" "$live" "$name"
+}
+
+# Puts <name> left of, right of, above or below <other>, edge to edge, and
+# moves every display so the arrangement starts at 0,0.
+cmd_position() { # <name> <where> <other> <live> <candidate>
+  local name=$1 where=$2 other=$3 live=$4 candidate=$5 placed
+  case $where in left-of | right-of | above | below) ;; *) die "position takes left-of, right-of, above or below, and a display" ;; esac
+  [[ $other != "$name" ]] && jq -e --arg o "$other" 'any(.[]; .name == $o and .disabled != true)' <<<"$live" >/dev/null ||
+    die "no display '$other' on to put it next to"
+  placed=$(jq -c --arg name "$name" --arg where "$where" --arg other "$other" "$JQ_LIB"'
+    [.[] | select(.disabled != true) | {name, x, y} + logical] as $d |
+    first($d[] | select(.name == $other)) as $o | first($d[] | select(.name == $name)) as $s |
+    (if $where == "left-of" then {x: ($o.x - $s.w), y: $o.y}
+     elif $where == "right-of" then {x: ($o.x + $o.w), y: $o.y}
+     elif $where == "above" then {x: $o.x, y: ($o.y - $s.h)}
+     else {x: $o.x, y: ($o.y + $o.h)} end) as $at |
+    [$d[] | if .name == $name then .x = $at.x | .y = $at.y else . end] |
+    (map(.x) | min) as $mx | (map(.y) | min) as $my | map({name, position: "\(.x - $mx)x\(.y - $my)"})' <<<"$live")
+  local names=() row display entry key
+  while IFS= read -r row; do
+    display=$(jq -r .name <<<"$row")
+    names+=("$display")
+    key=$(key_of "$live" "$display")
+    entry=$(jq -c --arg key "$key" '.[$key] // empty' <<<"$candidate")
+    [[ -n $entry ]] || entry=$(entry_now "$live" "$display")
+    candidate=$(jq -c --arg key "$key" --argjson entry "$entry" --arg p "$(jq -r .position <<<"$row")" '.[$key] = ($entry | .position = $p)' <<<"$candidate")
+  done < <(jq -c '.[]' <<<"$placed")
+  propose "$candidate" "$live" "${names[@]}"
+}
+
+cmd_keep() {
+  [[ -f $PENDING ]] || return 0
+  save "$(jq -c .candidate "$PENDING")"
+  rm -f "$PENDING"
+}
+
+# Back to what was kept: Hyprland reads its rules again, which drops the
+# change it was given live. --stamp and --after are the clock `set` starts.
+cmd_revert() {
+  local stamp='' after=0
+  while (($#)); do
+    case $1 in
+      --stamp) stamp=$2; shift 2 ;;
+      --after) after=$2; shift 2 ;;
+      *) die "revert takes --stamp and --after" ;;
+    esac
+  done
+  ((after == 0)) || sleep "$after"
+  [[ -f $PENDING ]] || return 0
+  [[ -z $stamp || $(jq -r .stamp "$PENDING" 2>/dev/null) == "$stamp" ]] || return 0
+  rm -f "$PENDING"
+  hyprctl reload >/dev/null
+}
+
+# A display back to ~/.config/hypr/monitors.lua's rules.
+cmd_reset() {
+  local name=${1:-} live key kept
+  [[ -n $name ]] || die "usage: nova monitor reset <display>"
+  live=$(monitors)
+  key=$(key_of "$live" "$name")
+  [[ -n $key ]] || die "no display '$name'"
+  rm -f "$PENDING"
+  kept=$([[ -f $SAVED ]] && jq -c . "$SAVED" 2>/dev/null || echo '{}')
+  save "$(jq -c --arg key "$key" --arg name "$name" 'del(.[$key]) | with_entries(select(.value.name != $name))' <<<"$kept")"
+  hyprctl reload >/dev/null
+}
+
+# What the bar's Display menu changed live, kept for a display Settings has
+# settings for, so the next reload does not take it back: nova-hyprland-
+# monitor-scaling's scale.
+cmd_remember() { # <display> scale <value>
+  local name=${1:-} value=${3:-} live key
+  [[ ${2:-} == scale && $value =~ ^[0-9]+([.][0-9]+)?$ && -f $SAVED ]] || return 0
+  live=$(monitors)
+  key=$(key_of "$live" "$name")
+  [[ -n $key ]] && jq -e --arg key "$key" 'has($key)' "$SAVED" >/dev/null || return 0
+  save "$(jq -c --arg key "$key" --argjson s "$value" '.[$key].scale = $s' "$SAVED")"
+}
+
+main() {
+  case ${1:-list} in
+    list) cmd_list "${@:2}" ;;
+    set) cmd_set "${@:2}" ;;
+    keep) cmd_keep ;;
+    revert) cmd_revert "${@:2}" ;;
+    reset) cmd_reset "${@:2}" ;;
+    remember) cmd_remember "${@:2}" ;;
+    -h | --help | help) usage ;;
+    *) die "no command '$1'; try nova monitor --help" ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
