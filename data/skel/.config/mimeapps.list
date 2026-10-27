@@ -4,4 +4,4 @@ x-scheme-handler/https=google-chrome.desktop
 text/html=google-chrome.desktop
 application/pdf=google-chrome.desktop
 inode/directory=org.gnome.Nautilus.desktop
-text/plain=code.desktop
+text/plain=com.microsoft.VSCode.desktop;code.desktop;
