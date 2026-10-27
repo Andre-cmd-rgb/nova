@@ -7,9 +7,10 @@ import Quickshell.Services.UPower
 // discharge run and the next is written down at the moment it happens rather
 // than up to a minute late.
 //
-// Deliberately thin: nothing is aggregated here and nothing is held in memory
-// between samples. A shell restart costs one sample, and every question about
-// the data is answered by the CLI instead.
+// Deliberately thin: nothing is aggregated here. A shell restart costs one
+// sample, and every question about the data is answered by the CLI instead;
+// its last answer is kept for the bar on every screen and for Settings, which
+// would otherwise each ask it the same question.
 Item {
   id: root
 
@@ -28,6 +29,57 @@ Item {
   readonly property int interval: (onBattery ? batteryInterval : acInterval) * 1000
 
   signal sampled()
+
+  // The CLI's `json`, as the bar and Settings show it.
+  property var info: ({})
+  property real readAt: 0
+
+  // A read walks the whole history, and a sample, a percent and a charge
+  // state tend to move at once, with every screen's widget asking: they share
+  // one read. A <maxAge> in ms is a read only if the last is older.
+  function refresh(maxAge) {
+    if (maxAge !== undefined && Date.now() - readAt < maxAge) return
+    if (!readSettle.running) readSettle.start()
+  }
+
+  Timer {
+    id: readSettle
+    interval: 200
+    onTriggered: root.read()
+  }
+
+  // Asked while a read runs, it reads again once that one ends: the first may
+  // have missed what moved.
+  property bool readStale: false
+
+  function read() {
+    if (readProc.running) readStale = true
+    else readProc.running = true
+  }
+
+  Process {
+    id: readProc
+    command: [root.helper, "json", "--days", "7", "--sessions", "12"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var parsed = JSON.parse(String(text))
+          if (parsed && typeof parsed === "object") {
+            root.info = parsed
+            root.readAt = Date.now()
+          }
+        } catch (e) {
+          // A truncated read is not worth blanking the widgets over.
+        }
+      }
+    }
+    onExited: {
+      if (!root.readStale) return
+      root.readStale = false
+      root.read()
+    }
+  }
 
   function sample() {
     // A sample still in flight is a sample: asking twice writes two rows a
@@ -49,7 +101,10 @@ Item {
   Process {
     id: sampleProc
     command: [root.helper, "sample"]
-    onExited: root.sampled()
+    onExited: {
+      root.sampled()
+      root.refresh()
+    }
   }
 
   Process {

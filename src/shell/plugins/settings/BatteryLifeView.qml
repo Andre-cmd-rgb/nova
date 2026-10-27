@@ -9,7 +9,8 @@ import qs.Ui
 // hour-by-hour or day-by-day chart of the draw, and the last runs on battery.
 //
 // It owns no data: everything on it comes from one `nova-battery json` call, so the
-// page and the CLI can never disagree.
+// page and the CLI can never disagree. The plugin's service makes that call for
+// the bar as well, and the page shows its answer.
 Item {
   id: root
 
@@ -21,7 +22,9 @@ Item {
   signal rangePicked(string range)
   readonly property string helper: "nova-battery"
   // Named `info` rather than `data`: `data` is QQuickItem's default property.
-  property var info: ({})
+  // localInfo is the page's own read, in a shell without the service.
+  property var localInfo: ({})
+  readonly property var info: service && service.info !== undefined ? service.info : localInfo
 
   readonly property bool weekly: range === "week"
   readonly property var hours: info.hours || []
@@ -49,7 +52,8 @@ Item {
   }
 
   function load() {
-    if (!jsonProc.running) jsonProc.running = true
+    if (service && typeof service.refresh === "function") service.refresh()
+    else if (!jsonProc.running) jsonProc.running = true
   }
 
   Timer {
@@ -59,13 +63,8 @@ Item {
     onTriggered: root.load()
   }
 
-  // Every sample is a free refresh: the page follows the record while it is
-  // open without polling on its own.
-  Connections {
-    target: root.service
-    ignoreUnknownSignals: true
-    function onSampled() { root.load() }
-  }
+  // The service reads after every sample, so the page follows the record
+  // while it is open without polling on its own.
 
   Process {
     id: jsonProc
@@ -75,7 +74,7 @@ Item {
       onStreamFinished: {
         try {
           var parsed = JSON.parse(String(text))
-          if (parsed && typeof parsed === "object") root.info = parsed
+          if (parsed && typeof parsed === "object") root.localInfo = parsed
         } catch (e) {
           // A truncated read is not worth blanking the page over.
         }

@@ -67,7 +67,10 @@ Panel {
   // silently stops every child below from being added to the item. The widget
   // then loads without an error, reserves a slot the width of an empty label,
   // and paints nothing at all.
-  property var info: ({})
+  //
+  // The service's read is every screen's; localInfo is for a shell without it.
+  property var localInfo: ({})
+  readonly property var info: sampler && sampler.info !== undefined ? sampler.info : localInfo
   readonly property var now: info.now || ({})
   readonly property var run: info.run || null
   readonly property var typical: info.typical || ({})
@@ -258,12 +261,16 @@ Panel {
 
   // ---- data ---------------------------------------------------------------
 
-  function refresh() {
-    if (!jsonProc.running) jsonProc.running = true
+  // Through the service, which reads once for every screen; <maxAge> in ms
+  // skips a read made since.
+  function refresh(maxAge) {
+    if (sampler && typeof sampler.refresh === "function") sampler.refresh(maxAge)
+    else if (!jsonProc.running) jsonProc.running = true
   }
 
   // The current minute is still unsampled. Ask for it before reading, so the
-  // popup never opens on numbers a minute stale.
+  // popup never opens on numbers a minute stale; either sample reads once it
+  // is written.
   //
   // The direct fork is the fallback for a shell where the service did not
   // load at all. It is safe to call either way: the CLI keeps a 15 s floor
@@ -272,7 +279,6 @@ Panel {
   function sampleThenRefresh() {
     if (sampler && typeof sampler.sample === "function") sampler.sample()
     else if (!directSampleProc.running) directSampleProc.running = true
-    refreshTimer.restart()
     loadProfiles()
   }
 
@@ -293,7 +299,7 @@ Panel {
       onStreamFinished: {
         try {
           var parsed = JSON.parse(String(text))
-          if (parsed && typeof parsed === "object") battery.info = parsed
+          if (parsed && typeof parsed === "object") battery.localInfo = parsed
         } catch (e) {
           // A truncated read is not worth blanking the widget over.
         }
@@ -338,23 +344,8 @@ Panel {
   }
   Process { id: setReadoutProc; onExited: battery.refresh() }
 
-  Timer {
-    id: refreshTimer
-    interval: 200
-    repeat: false
-    onTriggered: battery.refresh()
-  }
-
-  // Every sample the service takes is a free refresh, so the widget follows
-  // the record instead of polling on a cadence of its own.
-  Connections {
-    target: battery.sampler
-    ignoreUnknownSignals: true
-    function onSampled() { battery.refresh() }
-  }
-
-  // A read is a 150 ms fork, so it is worth spending on a change and not
-  // worth spending on a clock. These are the three changes that move a number
+  // A read walks the whole history, so it is worth spending on a change and
+  // not worth spending on a clock. These are the three changes that move a number
   // this widget shows, and between them they cover everything the old timer
   // was waiting around for.
   //
@@ -381,7 +372,7 @@ Panel {
       // Costs nothing once resolved, and covers a shell that loaded this
       // widget before it loaded the service.
       battery.resolveSampler()
-      battery.refresh()
+      battery.refresh(battery.opened ? 5000 : 30000)
     }
   }
 
