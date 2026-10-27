@@ -1026,11 +1026,41 @@ Item {
             implicitHeight: card.implicitHeight
 
             readonly property real lifetime: service.durationFor(cardSlot.urgency, cardSlot.expireTimeout)
+            // The share of the lifetime still to run, kept while the pointer
+            // holds the toast; one timer for what is left, not a tick.
             property real remainingLifetime: 1.0
+            property real tickFrom: 0
             readonly property bool ticking: cardSlot.lifetime > 0 && !service.hoveredPopups[cardSlot.stem]
             // A toast leaving with the pointer on it takes its hover along.
             property bool pointerOn: false
             Component.onDestruction: if (pointerOn) service.setPopupHovered(stem, false)
+
+            function pauseLifetime() {
+              if (!expiry.running) return
+              expiry.stop()
+              if (cardSlot.lifetime > 0)
+                cardSlot.remainingLifetime = Math.max(0, cardSlot.remainingLifetime - (Date.now() - cardSlot.tickFrom) / cardSlot.lifetime)
+            }
+
+            function runLifetime() {
+              expiry.stop()
+              if (!cardSlot.ticking) return
+              cardSlot.tickFrom = Date.now()
+              expiry.interval = Math.max(1, Math.round(cardSlot.remainingLifetime * cardSlot.lifetime))
+              expiry.start()
+            }
+
+            function restartLifetime() {
+              cardSlot.remainingLifetime = 1.0
+              cardSlot.runLifetime()
+            }
+
+            onTickingChanged: cardSlot.ticking ? cardSlot.runLifetime() : cardSlot.pauseLifetime()
+            onLifetimeChanged: {
+              cardSlot.pauseLifetime()
+              cardSlot.runLifetime()
+            }
+            Component.onCompleted: cardSlot.runLifetime()
 
             // A client updating this notification in place rewrites the row
             // under the card (see refreshPopup). New text deserves a full look,
@@ -1038,21 +1068,15 @@ Item {
             // superseded text was already most of the way through. Delegates
             // keep their own row as the model changes around them, so only a
             // real content change lands here.
-            onSummaryChanged: cardSlot.remainingLifetime = 1.0
-            onBodyChanged: cardSlot.remainingLifetime = 1.0
-            onImageChanged: cardSlot.remainingLifetime = 1.0
+            onSummaryChanged: cardSlot.restartLifetime()
+            onBodyChanged: cardSlot.restartLifetime()
+            onImageChanged: cardSlot.restartLifetime()
 
             Timer {
-              interval: 50
-              repeat: true
-              running: cardSlot.ticking
+              id: expiry
               onTriggered: {
-                if (cardSlot.lifetime <= 0) return
-                cardSlot.remainingLifetime -= 50.0 / cardSlot.lifetime
-                if (cardSlot.remainingLifetime <= 0) {
-                  cardSlot.remainingLifetime = 0
-                  service.expirePopup(cardSlot.index)
-                }
+                cardSlot.remainingLifetime = 0
+                service.expirePopup(cardSlot.index)
               }
             }
 
