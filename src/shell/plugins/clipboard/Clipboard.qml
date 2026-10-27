@@ -568,6 +568,12 @@ Item {
                   }
                 }
               }
+
+              // The touchpad scrolls the list as GTK does.
+              TouchpadScroll {
+                anchors.fill: resultList
+                flickable: resultList
+              }
             }
 
             Item {

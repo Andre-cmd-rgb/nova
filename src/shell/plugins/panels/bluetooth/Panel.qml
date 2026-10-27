@@ -890,6 +890,9 @@ Panel {
               }
             }
           }
+
+          // The touchpad scrolls the list as GTK does.
+          TouchpadScroll { flickable: deviceListView }
         }
 
         Text {

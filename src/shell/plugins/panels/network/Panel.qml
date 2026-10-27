@@ -1465,6 +1465,9 @@ Ui.Panel {
             }
           }
         }
+
+        // The touchpad scrolls the list as GTK does.
+        TouchpadScroll { flickable: networkList }
       }
     }
     }

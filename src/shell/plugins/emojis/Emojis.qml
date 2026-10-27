@@ -313,6 +313,12 @@ Item {
             }
           }
 
+          // The touchpad scrolls the list as GTK does.
+          TouchpadScroll {
+            anchors.fill: resultGrid
+            flickable: resultGrid
+          }
+
           Column {
             anchors.centerIn: parent
             spacing: Style.space(8)

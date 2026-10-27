@@ -1321,6 +1321,12 @@ Item {
             }
           }
 
+          // The touchpad scrolls the list as GTK does.
+          TouchpadScroll {
+            anchors.fill: resultList
+            flickable: resultList
+          }
+
           // Scroll scrims. The clipped row already marks the fold at rest;
           // these keep both edges honest once the list has been scrolled,
           // when content hides above the card top as well as below. Strength
