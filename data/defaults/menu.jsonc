@@ -44,7 +44,7 @@
   "toggle.window-gaps": {"icon":"","label":"Window Gaps","action":"nova-hyprland-window-gaps-toggle"},
   "toggle.laptop-display": {"icon":"󰛧","label":"Laptop Display","when":"nova-hw-laptop","action":"nova-hyprland-monitor-internal toggle"},
   "toggle.touchpad": {"icon":"󰟸","label":"Touchpad","when":"nova-hw-touchpad","action":"nova-toggle-touchpad"},
-  "toggle.discrete-gpu": {"icon":"󰢮","label":"Discrete GPU","when":"[[ $(nova-hw-detect) == thinkpad-p1-gen4i ]]","action":"nova-launch-floating-terminal-with-presentation nova-power-gpu"},
+  "toggle.discrete-gpu": {"icon":"󰢮","label":"Discrete GPU","when":"[[ $(nova-hw-detect) == thinkpad-p1-gen4i ]]","action":"nova-power-gpu toggle"},
 
   // Style
   "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"nova-theme pick"},

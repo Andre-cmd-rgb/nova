@@ -1,14 +1,17 @@
 #!/bin/bash
-# nova-power-gpu-mode-apply: the root half of `nova power gpu mode`. Run
-# through pkexec (org.nova.power-gpu lets the person at the computer choose
-# without a password), so it takes one word and passes nothing else on.
+# nova-power-gpu-mode-apply: the root half of `nova power gpu mode`, and of
+# `nova power gpu toggle`. Run through pkexec (org.nova.power-gpu lets the
+# person at the computer choose without a password), so it takes one word and
+# passes nothing else on.
 
 set -euo pipefail
 
 case "$#:${1:-}" in
   1:auto | 1:off) exec /usr/lib/nova/bin/nova-power gpu-mode "$1" ;;
+  # The card off only when nothing holds it: gpu-toggle declines otherwise.
+  1:toggle) exec /usr/lib/nova/bin/nova-power gpu-toggle ;;
   *)
-    echo "Usage: nova-power-gpu-mode-apply auto|off" >&2
+    echo "Usage: nova-power-gpu-mode-apply auto|off|toggle" >&2
     exit 2
     ;;
 esac

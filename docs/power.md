@@ -141,8 +141,9 @@ for that one process and adds the usual offload hints.
 
 Steam: put `nova power run %command%` in a game's launch options.
 
-**Super+Space → Toggle → Discrete GPU** toggles it by hand, and says only what
-it did:
+**Super+Space → Toggle → Discrete GPU** toggles it by hand at once, and says
+what it did in a notification (`nova power gpu toggle`). `nova power gpu`
+in a terminal asks first:
 
 ```
   The discrete GPU is on. Turn it off? [y/N]

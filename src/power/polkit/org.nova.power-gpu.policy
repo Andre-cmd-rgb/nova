@@ -7,7 +7,7 @@
   <vendor>Nova</vendor>
   <action id="org.nova.power-gpu">
     <description>Choose when the discrete GPU is on</description>
-    <message>Authentication is required to choose when the discrete GPU is on</message>
+    <message>Authentication is required to switch the discrete GPU, or choose when it is on</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
