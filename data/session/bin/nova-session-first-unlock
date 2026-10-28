@@ -24,3 +24,18 @@ if [[ $locked != "b false" ]]; then
 fi
 
 systemctl --user start --no-block nova-unlocked.target
+
+# A new account's first unlock: the few keys that lead to everything else. The
+# marker comes with the account (Nova's skel), so an account made before this
+# existed is not welcomed long after.
+pending=${XDG_STATE_HOME:-$HOME/.local/state}/nova/welcome-pending
+if [[ -e $pending ]]; then
+  rm -f -- "$pending"
+  nova-notification-send -u normal -t 30000 -g 󰌌 "Welcome to Nova" \
+    "Super+Space: the menu, with Settings in it
+Super+Return: a terminal
+Super+Shift+Return: the browser
+Super+W: close a window
+Super+K: every key; click here for them" \
+    --exec nova-menu-keybindings || true
+fi
