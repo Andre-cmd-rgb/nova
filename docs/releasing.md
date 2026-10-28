@@ -185,6 +185,8 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    that fails on something passing (a flaky download, say) can have its failed
    jobs re-run; one that fails on a bug is cancelled, its tag deleted
    (`git push origin :refs/tags/<tag>`), and the next run reuses the number.
+   Once a release is published its files are never replaced: a re-run only
+   sets its flags again, and a draft alone gets the re-run's files.
 2. **Test.** CI has already installed and booted it in a virtual machine; what
    is left is the hardware. On each supported laptop following pre-releases,
    `nova update`, reboot, and work through the checklist below; now and then,
@@ -194,7 +196,8 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    same commit with the final version (`v1.1.0-rc.2` becomes `v1.1.0`), builds
    it again on the candidate's own Arch snapshot and Arch Linux ARM set, and
    publishes it as the latest release. Systems pick it up at their next update
-   check. Only the
+   check. A promote that failed after tagging runs again with the same input:
+   it takes the final tag as it is, on the candidate's commit. Only the
    newest published candidate of a version can be promoted: testers on a later
    one have a later Arch snapshot, which `nova update` never moves back from.
 

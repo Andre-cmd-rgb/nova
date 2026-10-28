@@ -534,8 +534,22 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: out
+      # A published release's files are never replaced: machines may already
+      # have them, and a rebuild differs byte for byte. Only a draft, which
+      # nothing reads, is filled in again by a re-run.
+      - name: See whether the release is published already
+        id: published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null || echo none)
+          published=false
+          [[ $draft != false ]] || published=true
+          [[ $published == false ]] || echo "::notice::$TAG is published; its files stay as they are"
+          echo "published=$published" >>"$GITHUB_OUTPUT"
       # First, so the release is not offered before its packages are there.
       - name: Put the package repository in the bucket
+        if: steps.published.outputs.published == 'false'
         env:
           R2_ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
           R2_BUCKET: nova-packages
@@ -561,6 +575,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ inputs.publish }}
+          PUBLISHED: ${{ steps.published.outputs.published }}
         run: |
           version=${TAG#v}
           iso=nova-$version-x86_64.iso
@@ -586,9 +601,10 @@ jobs:
 
           release.toml tells \`nova update\` and the installer which Arch snapshot this release was tested on, and where its packages are: $packages, which pacman reads on its own.
           EOF
-          # A re-run after a publish that failed halfway finds its release there.
+          # A re-run after a publish that failed halfway finds its release
+          # there: a draft gets this run's files, a published one only its flags.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
+            [[ $PUBLISHED == true ]] || gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
             edit_flags=(--prerelease="$prerelease")
             [[ $PUBLISH != true ]] || edit_flags+=(--draft=false)
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${edit_flags[@]}"

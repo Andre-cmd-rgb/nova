@@ -37,8 +37,14 @@ jobs:
           [[ $CANDIDATE =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(beta|rc)\.[0-9]+$ ]] ||
             { echo "::error::$CANDIDATE is not a candidate tag"; exit 1; }
           final=${CANDIDATE%%-*}
-          ! git rev-parse -q --verify "refs/tags/$final" >/dev/null ||
-            { echo "::error::$final exists already"; exit 1; }
+          # A re-run after the tag was pushed finds it on the candidate's
+          # commit; on any other, it is not this candidate's to publish.
+          tagged=no
+          if git rev-parse -q --verify "refs/tags/$final" >/dev/null; then
+            [[ $(git rev-parse "$final^{commit}") == "$(git rev-parse "$CANDIDATE^{commit}")" ]] ||
+              { echo "::error::$final exists already, on another commit than $CANDIDATE"; exit 1; }
+            tagged=yes
+          fi
           [[ $(gh release view "$CANDIDATE" --json isDraft --jq .isDraft) == false ]] ||
             { echo "::error::$CANDIDATE has no published release to have been tested"; exit 1; }
           # Testers on a later candidate are on a later Arch snapshot, and nova
@@ -51,9 +57,11 @@ jobs:
           arch_date=$(gh release download "$CANDIDATE" --pattern release.toml --output - |
             sed -n 's/^arch_date = "\([0-9/]*\)"$/\1/p')
           [[ -n $arch_date ]] || { echo "::error::$CANDIDATE's release.toml has no arch_date"; exit 1; }
-          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
-            tag -a "$final" -m "Nova ${final#v}" "$CANDIDATE^{commit}"
-          git push origin "refs/tags/$final"
+          if [[ $tagged == no ]]; then
+            git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+              tag -a "$final" -m "Nova ${final#v}" "$CANDIDATE^{commit}"
+            git push origin "refs/tags/$final"
+          fi
           echo "tag=$final" >>"$GITHUB_OUTPUT"
           echo "arch_date=$arch_date" >>"$GITHUB_OUTPUT"
 
