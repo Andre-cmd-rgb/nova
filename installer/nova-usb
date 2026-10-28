@@ -284,7 +284,9 @@ signed_by_nova() { # file
 # 1.0.0-beta.6, which had them all on the page.
 fetch_release() {
   local releases release tag version dir iso name url sig repo=''
-  releases=$(curl -fsSL --max-time 30 "$RELEASES?per_page=20") ||
+  # GitHub's most: a final release stays in the list behind two years of
+  # candidates.
+  releases=$(curl -fsSL --max-time 30 "$RELEASES?per_page=100") ||
     die "could not reach the Nova releases ($RELEASES). Online? Or pass --iso <file>."
   release=$(latest_release <<<"$releases") ||
     die "Nova has no published release yet. Pass --iso <file> to use an ISO you built."

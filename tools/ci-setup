@@ -2,7 +2,7 @@
 # Prepare an archlinux:base-devel container for CI, or an Arch Linux ARM one
 # (tools/alarm-container).
 #
-#   tools/ci-setup [--date YYYY/MM/DD | --alarm-dbs DIR] [package...]
+#   tools/ci-setup [--date YYYY/MM/DD | --alarm-dbs DIR [--cache DIR]] [package...]
 #
 # With --date, pacman moves to that Arch Linux Archive snapshot first (-Syyuu
 # goes down as well as up), so a release builds against exactly the snapshot
@@ -11,6 +11,14 @@
 # from those without refreshing them, at the versions the release pins. Then
 # the packages are installed, and a `builder` user is made (makepkg refuses
 # root) that may run anything through sudo, which makepkg --syncdeps needs.
+#
+# Arch Linux ARM's mirrors keep only the newest version of a package, so
+# within days of a candidate some of what its containers installed is gone
+# from every one of them, and promote.yml builds again on the same databases.
+# With --cache, pacman keeps every package it fetches in DIR, makepkg's too,
+# and every one the container has at the databases' versions is fetched there
+# as well, those its root filesystem came with included: a newer root
+# filesystem may hold them at other versions. CI keeps DIR (release.yml).
 set -euo pipefail
 
 die() { printf 'ci-setup: %s\n' "$*" >&2; exit 1; }
@@ -38,6 +46,13 @@ case ${1:-} in
     # With every mirror listed after it, pacman fetches that file from the next
     # one instead of failing the whole transaction.
     sed -i 's/^# *\(Server = \)/\1/' /etc/pacman.d/mirrorlist
+    if [[ ${1:-} == --cache ]]; then
+      cache=$(realpath -m -- "${2:?--cache needs a directory}")
+      shift 2
+      mkdir -p -- "$cache"
+      # The first CacheDir is where pacman downloads to.
+      sed -i "/^\[options\]/a CacheDir = $cache/" /etc/pacman.conf
+    fi
     ;;
 esac
 
@@ -48,13 +63,21 @@ pacman-key --populate >/dev/null
 # fetched, so a second try picks up where the first stopped. A download cut
 # off halfway is left as a .part, which pacman would resume, and a mirror that
 # cannot resume fails it every time after: those start over.
-for attempt in 1 2 3; do
-  pacman "$sync" --noconfirm --needed git sudo "$@" && break
-  ((attempt < 3)) || die "pacman failed three times"
-  echo "ci-setup: pacman failed; trying again in 30 seconds" >&2
-  while read -r cache; do rm -f -- "${cache%/}"/*.part; done < <(pacman-conf CacheDir)
-  sleep 30
-done
+tries() { # pacman's arguments
+  local attempt dir
+  for attempt in 1 2 3; do
+    pacman "$@" && return 0
+    ((attempt < 3)) || die "pacman failed three times"
+    echo "ci-setup: pacman failed; trying again in 30 seconds" >&2
+    while read -r dir; do rm -f -- "${dir%/}"/*.part; done < <(pacman-conf CacheDir)
+    sleep 30
+  done
+}
+tries "$sync" --noconfirm --needed git sudo "$@"
+if [[ -n ${cache:-} ]]; then
+  mapfile -t native < <(pacman -Qqn)
+  tries -Sw --noconfirm "${native[@]}"
+fi
 
 id builder >/dev/null 2>&1 || useradd -m builder
 echo 'builder ALL=(ALL) NOPASSWD: ALL' >/etc/sudoers.d/90-builder

@@ -385,13 +385,20 @@ jobs:
         with:
           path: ~/.cache/nova-alarm
           key: alarm-rootfs-${{ steps.month.outputs.month }}
+      # Every package the container installs, by the candidate and the
+      # databases it came from: Arch Linux ARM's mirrors drop them within
+      # days, and promote.yml builds on the same ones (tools/ci-setup --cache).
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/alarm-build
+          key: alarm-build-${{ inputs.alarm_from || env.TAG }}-${{ hashFiles('out/alarm-dbs/*.db') }}
       - name: Build the packages
         run: |
           test -f packaging/nova-keyring/nova.gpg ||
             { echo "::error::packaging/nova-keyring has no key yet; see docs/releasing.md"; exit 1; }
           # shellcheck disable=SC2016 # the container's shell expands it
           tools/alarm-container --env TAG -- bash -euo pipefail -c '
-            tools/ci-setup --alarm-dbs out/alarm-dbs base-devel
+            tools/ci-setup --alarm-dbs out/alarm-dbs --cache out/alarm-build base-devel
             chown -R builder:builder "$PWD"
             git config --system --add safe.directory "$PWD"
             tools/build-package packaging/nova-keyring out/pi-pkgs
@@ -498,6 +505,14 @@ jobs:
         with:
           path: ~/.cache/nova-alarm
           key: alarm-rootfs-${{ steps.month.outputs.month }}
+      # The packages the container builds the image with, kept as pi-packages
+      # keeps its own, and kept from a build that failed after them too: its
+      # re-run may come once the mirrors have dropped some.
+      - id: host
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/alarm-host
+          key: alarm-host-${{ inputs.alarm_from || env.TAG }}-${{ hashFiles('out/alarm-dbs/*.db') }}
       # The pool's files, which the runners download slowly and with stalls:
       # kept even from a build that failed, so that its re-run fetches only
       # what is still missing. A file's name never changes what it holds.
@@ -511,7 +526,8 @@ jobs:
           mkdir -p out/alarm-new
           # shellcheck disable=SC2016 # the container's shell expands it
           tools/alarm-container --privileged -- bash -euo pipefail -c '
-            tools/ci-setup --alarm-dbs out/alarm-dbs arch-install-scripts dosfstools xz
+            tools/ci-setup --alarm-dbs out/alarm-dbs --cache out/alarm-host arch-install-scripts dosfstools xz
+            touch out/alarm-host.ready
             # The build host trusts the Nova key the way a Pi does, from a
             # copy of nova-keyring without its .sig, as for the ISO.
             keyring=$(mktemp -d)
@@ -526,6 +542,12 @@ jobs:
         with:
           path: out/pi-cache
           key: pi-pool-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always() && steps.host.outputs.cache-hit != 'true' && hashFiles('out/alarm-host.ready') != ''
+        continue-on-error: true
+        with:
+          path: out/alarm-host
+          key: ${{ steps.host.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pi-image
@@ -590,15 +612,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PUBLISH: ${{ inputs.publish }}
           PUBLISHED: ${{ steps.published.outputs.published }}
+          CANDIDATE: ${{ inputs.alarm_from }}
         run: |
           version=${TAG#v}
           iso=nova-$version-x86_64.iso
           image=nova-$version-raspberry-pi-5.img.xz
           flags=(--generate-notes)
           [[ $PUBLISH == true ]] || flags+=(--draft)
-          prerelease=false
+          prerelease=false latest=()
           [[ $version != *-* ]] || prerelease=true
-          flags+=(--prerelease="$prerelease")
+          [[ $prerelease == true || $PUBLISH != true ]] || latest=(--latest)
+          flags+=(--prerelease="$prerelease" "${latest[@]}")
           # What a person downloads, and release.toml, which nova update finds
           # here and which says where the packages are.
           assets=(out/iso/"$iso" out/iso/"$iso.sha256" out/iso/nova-usb
@@ -606,7 +630,10 @@ jobs:
             out/release-toml/release.toml out/signatures/release.toml.sig)
           base=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG
           packages=$(sed -n 's/^nova_repo = "\(.*\)"$/\1/p' out/release-toml/release.toml)
-          cat >notes.md <<EOF
+          : >notes.md
+          [[ -z $CANDIDATE ]] || printf 'Nova %s is [%s](%s), tested, under its final name.\n\n' \
+            "$version" "$CANDIDATE" "https://github.com/$GITHUB_REPOSITORY/releases/tag/$CANDIDATE" >>notes.md
+          cat >>notes.md <<EOF
           **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($base/$iso), and can carry your SSH keys and the files you pick over and add the packages for an offline install. Writing the ISO to a stick yourself works too.
 
           nova-usb checks the ISO against its checksum, and the checksum against Nova's signing key, which it carries. [nova-usb.sig]($packages/nova-usb.sig) is nova-usb's own signature, by the key in [nova-keyring](https://github.com/$GITHUB_REPOSITORY/tree/$TAG/packaging/nova-keyring).
@@ -619,7 +646,7 @@ jobs:
           # there: a draft gets this run's files, a published one only its flags.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             [[ $PUBLISHED == true ]] || gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
-            edit_flags=(--prerelease="$prerelease")
+            edit_flags=(--prerelease="$prerelease" "${latest[@]}")
             [[ $PUBLISH != true ]] || edit_flags+=(--draft=false)
             gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${edit_flags[@]}"
           else

@@ -4,6 +4,10 @@
 # own Arch snapshot and Arch Linux ARM set, so the release is what was tested
 # under its final name, and published as the latest release. See
 # docs/releasing.md.
+#
+# Run it from the candidate's tag (Use workflow from: Tags), or from a branch
+# whose workflows are still the candidate's: release.yml is read from where
+# promote runs, and every tool it runs from the candidate's commit.
 name: promote
 
 on:
@@ -16,11 +20,17 @@ on:
 permissions:
   contents: read
 
+# Never beside a candidate's build: one published while this builds would be a
+# later candidate of the same version.
+concurrency:
+  group: candidate
+
 jobs:
   tag:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read # the caches the Raspberry Pi build needs
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       arch_date: ${{ steps.tag.outputs.arch_date }}
@@ -28,6 +38,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # Before a tag exists: a promote that fails at signing or publishing
+      # leaves the final tag behind.
+      - name: The signing key and the bucket are set up
+        env:
+          NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+        run: |
+          [[ -n $NOVA_REPO_KEY && -f packaging/nova-keyring/nova.gpg ]] ||
+            { echo "::error::no signing key: see docs/releasing.md, The signing key"; exit 1; }
+          [[ -n $R2_ACCESS_KEY_ID && -n $R2_SECRET_ACCESS_KEY && -n $R2_ACCOUNT_ID ]] ||
+            { echo "::error::no bucket credentials: see docs/releasing.md, The package bucket"; exit 1; }
       - id: tag
         name: Tag the candidate's commit with its final version
         env:
@@ -37,6 +60,10 @@ jobs:
           [[ $CANDIDATE =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(beta|rc)\.[0-9]+$ ]] ||
             { echo "::error::$CANDIDATE is not a candidate tag"; exit 1; }
           final=${CANDIDATE%%-*}
+          git diff --quiet "$CANDIDATE^{commit}" HEAD -- .github ||
+            { echo "::error::the workflows here are not $CANDIDATE's: run promote from its tag (Use workflow from: Tags, $CANDIDATE)"; exit 1; }
+          [[ $(gh release view "$final" --json isDraft --jq .isDraft 2>/dev/null) != false ]] ||
+            { echo "::error::$final is published already"; exit 1; }
           # A re-run after the tag was pushed finds it on the candidate's
           # commit; on any other, it is not this candidate's to publish.
           tagged=no
@@ -54,9 +81,18 @@ jobs:
             --jq ".[] | select(.isDraft | not) | .tagName | select(startswith(\"$final-\"))" | sort -V | tail -n 1)
           [[ $newest == "$CANDIDATE" ]] ||
             { echo "::error::$newest is a later candidate of $final; promote that one"; exit 1; }
-          arch_date=$(gh release download "$CANDIDATE" --pattern release.toml --output - |
-            sed -n 's/^arch_date = "\([0-9/]*\)"$/\1/p')
+          gh release download "$CANDIDATE" --pattern release.toml --output from.toml
+          arch_date=$(sed -n 's/^arch_date = "\([0-9/]*\)"$/\1/p' from.toml)
           [[ -n $arch_date ]] || { echo "::error::$CANDIDATE's release.toml has no arch_date"; exit 1; }
+          # The Raspberry Pi build runs on the packages the candidate's own
+          # containers installed, which Arch Linux ARM's mirrors no longer
+          # have, and which CI keeps for a week once unused (tools/ci-setup).
+          if grep -q '^alarm_date = ' from.toml; then
+            for kept in alarm-build alarm-host; do
+              [[ $(gh cache list --key "$kept-$CANDIDATE-" --limit 1 --json key --jq length) == 1 ]] ||
+                { echo "::error::CI no longer keeps the packages $CANDIDATE's Raspberry Pi build ran on ($kept): cut a new candidate, and promote that one"; exit 1; }
+            done
+          fi
           if [[ $tagged == no ]]; then
             git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
               tag -a "$final" -m "Nova ${final#v}" "$CANDIDATE^{commit}"

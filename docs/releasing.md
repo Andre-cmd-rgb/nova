@@ -193,7 +193,9 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    update`, reboot, and work through the checklist below; now and then,
    install the ISO on a spare disk too. A candidate that fails is simply not
    promoted: fix `main`, and the next candidate replaces it.
-3. **Approve.** Actions → promote → Run, with the candidate's tag. It tags the
+3. **Approve,** within a week of the candidate: Actions → promote → Run, from
+   the candidate's tag (Use workflow from: Tags) and with it as the input, or
+   `gh workflow run promote.yml --ref <tag> -f candidate=<tag>`. It tags the
    same commit with the final version (`v1.1.0-rc.2` becomes `v1.1.0`), builds
    it again on the candidate's own Arch snapshot and Arch Linux ARM set, and
    publishes it as the latest release. Systems pick it up at their next update
@@ -201,6 +203,16 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    it takes the final tag as it is, on the candidate's commit. Only the
    newest published candidate of a version can be promoted: testers on a later
    one have a later Arch snapshot, which `nova update` never moves back from.
+
+   From its tag, because promote reads `release.yml` from where it runs and
+   every tool from the candidate's commit; from `main` it refuses once the
+   workflows there have changed. Within a week, because Arch Linux ARM's
+   mirrors drop old packages within days, and the Raspberry Pi build runs on
+   the ones the candidate's containers installed, which CI keeps for a week
+   unused (`tools/ci-setup --cache`). Past that, promote refuses before it
+   tags anything, and the next candidate is the one to promote. A candidate
+   due on the 1st or the 15th waits while promote runs, and after it is the
+   next version's first (`v1.1.0-rc.1`).
 
 ### The hardware checklist
 
