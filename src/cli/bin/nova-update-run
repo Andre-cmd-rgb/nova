@@ -1,0 +1,18 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Start nova update for Settings, out of sight
+# nova:args=[--apps-only | --apps-install] [--only <app>] [--approve <app>=<commit>]
+#
+# As a user service of its own, so that it outlives the Settings window that
+# started it and the shell it restarts on the new release. How far it is, is in
+# $XDG_RUNTIME_DIR/nova/update/status.json (nova update --status), and its
+# output beside it. One at a time: while one runs, this does nothing.
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+status=${XDG_RUNTIME_DIR:?}/nova/update/status.json
+
+! systemctl --user --quiet is-active nova-update.service || exit 0
+mkdir -p "${status%/*}"
+exec systemd-run --user --quiet --collect --unit=nova-update --service-type=exec \
+  --setenv=PATH="$PATH" -- "$HERE/nova-update" --status "$status" "$@"

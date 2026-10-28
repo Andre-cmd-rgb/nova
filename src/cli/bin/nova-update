@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova:summary=Update Nova to the newest release, and Chrome and VS Code
-# nova:args=[--version <tag>] [--check] [--dry-run] [--yes] | --check-boot | --candidates [on|off]
+# nova:args=[--version <tag>] [--check] [--dry-run] [--yes] | --check-boot | --candidates [on|off] | --status <file> [--apps-only | --apps-install]
 #
 # Moves this system to a Nova release: the Arch packages are taken from the Arch Linux
 # Archive snapshot the release was tested against, the nova packages from the release's
@@ -25,6 +25,17 @@
 #   nova update --candidates on     follow the release candidates too, to test
 #                                   each two weeks before it is released; off
 #                                   stops, and with neither it says which
+#
+# Settings runs it with no terminal (nova-update-run, which starts it as a user
+# service of its own, so that it outlives the shell it restarts):
+#
+#   nova update --status F          ask nothing; build Chrome and VS Code first,
+#                                   so that one authentication installs them with
+#                                   the release; and keep F, as JSON, saying how
+#                                   far it is, with the whole output beside it
+#   --apps-only                     the apps alone (after a review in Settings,
+#                                   with nova apps install's --only and --approve)
+#   --apps-install                  the apps that are missing too
 #
 # A system on a candidate follows candidates anyway, until a final release.
 # Everything that needs root runs as one step through pkexec (nova-update-apply).
@@ -54,7 +65,14 @@ CACHE_FILE=${NOVA_UPDATE_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/nova/update-chec
 CANDIDATES=${NOVA_UPDATE_CANDIDATES:-${XDG_CONFIG_HOME:-$HOME/.config}/nova/update-candidates}
 RELEASE_KEY=${NOVA_UPDATE_KEY:-/usr/share/pacman/keyrings/nova.gpg}
 
-die() { printf 'nova update: %s\n' "$*" >&2; exit 1; }
+die() {
+  printf 'nova update: %s\n' "$*" >&2
+  if [[ -n ${STATUS:-} ]]; then
+    st_state=failed st_error=$*
+    status_write
+  fi
+  exit 1
+}
 warn() { printf 'nova update: %s\n' "$*" >&2; }
 
 # v1.0.0-beta.1 -> 1.0.0beta.1, the form the nova package's pkgver takes
@@ -225,6 +243,8 @@ wants_prereleases() {
 }
 
 want='' do_check=0 dry=0 assume_yes=0 downgrade=0 snapshot=1 release_file='' check_boot=0
+STATUS='' apps_only=0 apps_install=0 only_app=''
+apps_flags=() release_flags=() release_tag=''
 
 candidates() { # [on|off]
   case $1 in
@@ -249,6 +269,11 @@ main() {
       --release-file)    release_file=${2:?--release-file needs a path}; shift 2 ;;
       --candidates)      candidates "${2:-}"; return ;;
       --check-boot)      check_boot=1; shift ;;
+      --status)          STATUS=${2:?--status needs a file}; assume_yes=1; shift 2 ;;
+      --apps-only)       apps_only=1; shift ;;
+      --apps-install)    apps_install=1; shift ;;
+      --only)            only_app=${2:?--only needs an app}; apps_flags+=(--only "$only_app"); shift 2 ;;
+      --approve)         apps_flags+=(--approve "${2:?--approve needs app=commit}"); shift 2 ;;
       -h|--help)         sed -n '2,/^set /p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//' | sed '1,3d'; exit 0 ;;
       *) die "unknown argument: $1 (try --help)" ;;
     esac
@@ -261,6 +286,10 @@ main() {
   if (( check_boot )); then
     [[ -x $APPLY ]] || die "missing helper: $APPLY"
     pkexec "$APPLY" --check-boot
+    return
+  fi
+  if [[ -n $STATUS ]]; then
+    settings_update
     return
   fi
   # Called plainly, not in a condition, which would switch set -e off inside it:
@@ -286,7 +315,7 @@ update_apps() {
 update_release() {
   # Not local: the EXIT trap runs after main has returned.
   tmp=$(mktemp -d)
-  trap 'rm -rf "$tmp"' EXIT
+  trap cleanup EXIT
 
   local unfinished=0 retry_tag
   if unfinished_update; then
@@ -407,6 +436,11 @@ update_release() {
   (( ! assume_yes )) || flags+=(--noconfirm)
 
   [[ -x $APPLY ]] || die "missing helper: $APPLY"
+  # For Settings the apps are built first, and go into the same root step.
+  if [[ -n $STATUS ]]; then
+    release_flags=("${flags[@]}") release_tag=$tag
+    return 0
+  fi
   # A failure can come after the packages are in (3: the boot entries do not
   # check out), and the shell has to follow them all the same.
   local status=0
@@ -425,4 +459,203 @@ restart_shell() { # the nova pkgver before the update
   nova-restart-shell || warn "the shell did not restart; log out and back in to finish the update"
 }
 
-main "$@"
+# --- Settings ---------------------------------------------------------------------
+#
+# --status F: the same update, for Settings. F says, in JSON, what it is doing
+# (state "running", then "done", "failed" or "cancelled", and a few words), how
+# far it is (percent, or -1 while that is unknown), what came of it, and where
+# the whole output is.
+
+st_state=running st_text='' st_progress=-1 st_version='' st_error='' st_restart=0
+st_held=() st_apps=() st_failed=()
+ST_LOG='' build='' last_error='' notified=0
+
+status_write() {
+  jq -n --arg state "$st_state" --arg text "$st_text" --argjson progress "$st_progress" \
+    --arg version "$st_version" --arg error "$st_error" --argjson restart "$st_restart" \
+    --arg held "${st_held[*]}" --arg apps "${st_apps[*]}" --arg failed "${st_failed[*]}" \
+    --arg log "$ST_LOG" \
+    'def words: split(" ") | map(select(. != ""));
+     {state: $state, text: $text, progress: $progress, version: $version, error: $error,
+      restart: ($restart == 1), held: ($held | words), apps: ($apps | words),
+      failed: ($failed | words), log: $log}' >"$STATUS.part" &&
+    mv -f "$STATUS.part" "$STATUS"
+}
+
+progress() { # percent text: written only when either changed
+  [[ $1 != "$st_progress" || $2 != "$st_text" ]] || return 0
+  st_progress=$1 st_text=$2
+  status_write
+}
+
+# Whatever ends a run before it is through, Settings hears of it.
+status_stopped() {
+  [[ -n $STATUS && $st_state == running ]] || return 0
+  st_state=failed st_error=${st_error:-the update stopped before it finished}
+  status_write
+}
+
+cleanup() {
+  rm -rf -- "${tmp:-}" "$build"
+  status_stopped
+  # One that ended early, before the root step, has not said so yet.
+  [[ -z $STATUS || $notified == 1 ]] || notify_result
+}
+
+app_name() {
+  case $1 in
+    google-chrome) echo Chrome ;;
+    visual-studio-code-bin) echo "VS Code" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# Copies nova-update-apply's output into the log, and reads from it how far it
+# is: its steps, and then pacman's packages as they download and go in.
+track() {
+  local line phase='' total=1 downloaded=0 installed=0 hooks=0
+  while IFS= read -r line; do
+    printf '%s\n' "$line"
+    case $line in
+      '==> Taking the pre-update snapshot') progress 1 "Taking a snapshot" ;;
+      '==> Pointing pacman at '* | '==> Updating the keyrings') progress 3 "Preparing" ;;
+      '==> pacman -S'*) phase=pacman; progress 5 "Downloading" ;;
+      '==> Installing for this computer: '*) phase=''; progress 92 "Installing drivers" ;;
+      '==> Installing '*) phase=''; progress $(( ${#release_flags[@]} ? 93 : 50 )) "Installing apps" ;;
+      '==> Taking the post-update snapshot') progress 95 "Taking a snapshot" ;;
+      '==> Checking the boot '*) progress 97 "Checking the boot entries" ;;
+      *': restart to finish the update.') st_restart=1 ;;
+      'nova update: '*) last_error=${line#nova update: } ;;
+    esac
+    [[ $phase == pacman ]] || continue
+    if [[ $line =~ ^Packages\ \(([0-9]+)\) ]]; then
+      total=${BASH_REMATCH[1]}
+    elif [[ $line =~ ^\ ?[^\ ]+\ downloading\.\.\.$ ]]; then
+      (( downloaded < total )) && downloaded=$((downloaded + 1))
+      progress $((5 + 35 * downloaded / total)) "Downloading"
+    elif [[ $line =~ ^(installing|upgrading|reinstalling|downgrading|removing)\ [^\ ]+\.\.\.$ ]]; then
+      (( installed < total )) && installed=$((installed + 1))
+      progress $((40 + 42 * installed / total)) "Installing"
+    elif [[ $line == ':: Running post-transaction hooks...' ]]; then
+      hooks=1
+      progress 82 "Finishing"
+    elif (( hooks )) && [[ $line =~ ^\(\ *([0-9]+)/([0-9]+)\)\  ]]; then
+      progress $((82 + 10 * BASH_REMATCH[1] / BASH_REMATCH[2])) "Finishing"
+    fi
+  done
+}
+
+# The version in a package's file name, as pacman -Q prints it.
+package_version() { # app file
+  local name=${2##*/}
+  name=${name%-*}
+  printf '%s' "${name#"$1"-}"
+}
+
+# Chrome and VS Code, behind (or missing, with --apps-install), built into
+# $build; their files are in packages afterwards, for the root step.
+build_apps() {
+  local cache=${XDG_CACHE_HOME:-$HOME/.cache}/nova
+  mkdir -p "$cache"
+  build=$(mktemp -d "$cache/update-build.XXXXXX")
+  local -a flags=(--build "$build")
+  (( apps_install )) || flags+=(--update)
+  local line
+  # Not in a condition: set -e stays on inside it. What did not build is in
+  # the result.
+  "$APPS" "${flags[@]}" "${apps_flags[@]}" 2>&1 | while IFS= read -r line; do
+    printf '%s\n' "$line"
+    # "==> google-chrome" as each app starts; makepkg's own "==> " lines say more.
+    [[ ! $line =~ ^==\>\ ([a-z0-9@._+-]+)$ ]] || progress -1 "Building $(app_name "${BASH_REMATCH[1]}")"
+  done || true
+  local kind app commit file
+  [[ -r $build/result ]] || return 0
+  while read -r kind app commit file; do
+    case $kind in
+      built) packages+=(--package "$file"); built+=("$app $commit $file") ;;
+      held) st_held+=("$app") ;;
+      *) st_failed+=("$app") ;;
+    esac
+  done <"$build/result"
+}
+
+settings_update() {
+  ST_LOG=${STATUS%.json}.log
+  mkdir -p "${STATUS%/*}"
+  # Building one reviewed app, the others it held still wait.
+  local -a waiting=()
+  [[ -z $only_app || ! -r $STATUS ]] ||
+    mapfile -t waiting < <(jq -r --arg app "$only_app" '.held[]? | select(. != $app)' "$STATUS" 2>/dev/null || true)
+  exec >"$ST_LOG" 2>&1
+  shopt -s lastpipe
+  trap cleanup EXIT
+  progress -1 "Checking for updates"
+  (( apps_only )) || update_release
+  st_version=${release_tag#v}
+
+  local -a packages=() built=() root=()
+  build_apps
+  st_held+=("${waiting[@]}")
+  if (( ${#release_flags[@]} )); then
+    root=("${release_flags[@]}" "${packages[@]}")
+  elif (( ${#packages[@]} )); then
+    root=(--packages-only "${packages[@]}")
+  fi
+
+  local cur_pkgver status=0
+  cur_pkgver=$(installed_pkgver)
+  if (( ${#root[@]} )); then
+    progress -1 "Waiting for authentication"
+    pkexec "$APPLY" "${root[@]}" 2>&1 | track || status=$?
+  fi
+  case $status in
+    0) st_state='done' ;;
+    126) st_state=cancelled ;;
+    127) st_state=failed st_error="not authorized to install updates" ;;
+    3) st_state=failed st_error="installed, but the boot entries did not check out; do not restart yet" ;;
+    *) st_state=failed st_error=${last_error:-the update failed} ;;
+  esac
+
+  local entry app commit file
+  for entry in "${built[@]}"; do
+    read -r app commit file <<<"$entry"
+    if [[ $(pacman -Q "$app" 2>/dev/null) == "$app $(package_version "$app" "$file")" ]]; then
+      "$APPS" --record "$app" "$commit"
+      st_apps+=("$app")
+    elif (( status == 0 )); then
+      st_failed+=("$app")
+    fi
+  done
+  (( status != 0 )) || st_progress=100
+  status_write
+  notify_result
+  notified=1
+  # Last: a restart that takes long, or fails, changes nothing of the above.
+  restart_shell "$cur_pkgver"
+}
+
+# For a window that may be closed by now.
+notify_result() {
+  local -a open=(--exec nova-shell shell summon nova.settings '{"page":"updates"}')
+  local app names=()
+  for app in "${st_apps[@]}"; do names+=("$(app_name "$app")"); done
+  case $st_state in
+    done)
+      if [[ -n $st_version && $(installed_pkgver) == "$(tag_pkgver "$st_version")" ]]; then
+        nova-notification-send -g 󰚰 "Nova is up to date" \
+          "Now on $st_version.$( (( ! st_restart )) || echo " Restart to finish.")" "${open[@]}"
+      elif (( ${#names[@]} )); then
+        nova-notification-send -g 󰚰 "${names[0]}${names[1]:+ and ${names[1]}} updated"
+      fi
+      for app in "${st_held[@]}"; do
+        nova-notification-send -g 󰚰 "$(app_name "$app") is waiting for you" \
+          "Its recipe changed; Settings shows how." "${open[@]}"
+      done
+      ;;
+    failed) nova-notification-send -u normal -g 󰚰 "The update did not finish" "${st_error^}." "${open[@]}" ;;
+  esac >/dev/null 2>&1 || true
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

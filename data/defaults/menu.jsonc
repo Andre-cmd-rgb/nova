@@ -56,7 +56,7 @@
   "style.bar.transparent": {"icon":"󰂵","label":"Transparent","checked":"[[ \"$(nova-bar transparent)\" == on ]]","action":"nova-bar transparent toggle"},
 
   // Update
-  "update.nova": {"icon":"󰚰","label":"Nova","action":"nova-launch-floating-terminal-with-presentation nova-update"},
+  "update.nova": {"icon":"󰚰","label":"Nova","action":"nova-settings updates"},
   "update.firmware": {"icon":"","label":"Firmware","when":"command -v fwupdmgr","action":"nova-launch-floating-terminal-with-presentation nova-update-firmware"},
   "update.restart": {"icon":"󰜉","label":"Restart","title":"Restart a service"},
   "update.restart.shell": {"icon":"󰍜","label":"Shell","action":"nova-restart-shell"},

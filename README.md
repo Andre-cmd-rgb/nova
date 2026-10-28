@@ -120,10 +120,14 @@ into the lock screen. What differs from a PC is in
 
 Nova follows Arch Linux two weeks behind, tested. On the 1st and the 15th of
 each month CI builds a release candidate and installs it in a virtual machine;
-once it has been tried on real hardware it becomes a release. `nova update`, or
-the update badge in the bar, moves the system to the newest release, with a
-snapshot before and after (a Raspberry Pi has no snapshots). Settings → Updates
-→ Test Release Candidates gets the candidates early.
+once it has been tried on real hardware it becomes a release. Settings →
+Updates (or the update badge in the bar) moves the system to the newest
+release, with a bar for how far it is and one password or fingerprint, and a
+snapshot before and after (a Raspberry Pi has no snapshots); `nova update` does
+the same in a terminal. Chrome and VS Code update with it. When one's AUR
+recipe changed more than its version, Settings shows the change and builds it
+once you have read it. Settings → Updates → Test Release Candidates gets the
+candidates early.
 
 ## Going back
 

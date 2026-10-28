@@ -17,8 +17,9 @@ BarWidget {
 
   function clear() { updateAvailable = false }
 
+  // Settings runs it, with a bar for how far it is and no terminal.
   function runUpdate() {
-    if (root.bar) root.bar.run("nova-launch-floating-terminal-with-presentation nova-update")
+    if (root.bar) root.bar.run("nova-settings updates")
   }
 
   visible: updateAvailable
@@ -44,6 +45,32 @@ BarWidget {
         } else if (answer === "current") {
           root.updateAvailable = false
         }
+      }
+    }
+  }
+
+  // An update Settings ran asks again as it ends, rather than in six hours.
+  // Watched once its folder exists: Quickshell sees a file appear in a folder
+  // that is there, not in one made after it started looking.
+  readonly property string statusDir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/update"
+  property bool watching: false
+
+  Process {
+    command: ["mkdir", "-p", root.statusDir]
+    running: true
+    onExited: root.watching = true
+  }
+
+  FileView {
+    path: root.watching ? root.statusDir + "/status.json" : ""
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      try {
+        if (JSON.parse(text()).state === "done") root.refresh()
+      } catch (e) {
+        // Written whole, then moved into place: a bad read is someone else's.
       }
     }
   }

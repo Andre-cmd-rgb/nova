@@ -314,3 +314,101 @@ STUB
   run run_pi_update
   [ "$status" -eq 0 ]
 }
+
+# Chrome and VS Code, built by nova update for Settings before it asks for
+# root, go in with the same authentication.
+built_package() { # file name -> its path
+  mkdir -p "$SCRATCH/build"
+  : >"$SCRATCH/build/$1"
+  echo "$SCRATCH/build/$1"
+}
+
+# One repository, whose package list is there.
+lists_read() {
+  printf '#!/bin/bash\necho core\n' >"$SCRATCH/bin/pacman-conf"
+  chmod +x "$SCRATCH/bin/pacman-conf"
+  mkdir -p "$SYNC_DIR"
+  : >"$SYNC_DIR/core.db"
+}
+
+@test "--packages-only installs a copy of the built packages, which only root could change" {
+  prepare_pi_update 0
+  lists_read
+  local chrome
+  chrome=$(built_package google-chrome-141.0.7390.54-1-x86_64.pkg.tar.zst)
+  run env PATH="$SCRATCH/bin:$PATH" PKEXEC_UID="$(id -u)" "$SCRATCH/lib/nova-update-apply" --packages-only --package "$chrome"
+  [ "$status" -eq 0 ]
+  [[ $(cat "$SCRATCH/calls") =~ ^"pacman -U --needed --noconfirm $NOVA_ROOT/var/tmp/nova-update."[A-Za-z0-9]+"/google-chrome-141.0.7390.54-1-x86_64.pkg.tar.zst"$ ]]
+  [[ $output == *"Installing google-chrome"* ]]
+  # The copy goes once it is in.
+  [ -z "$(ls "$NOVA_ROOT/var/tmp")" ]
+}
+
+@test "--packages-only reads the package lists first on a system that has none" {
+  prepare_pi_update 0
+  printf '#!/bin/bash\necho core\n' >"$SCRATCH/bin/pacman-conf"
+  chmod +x "$SCRATCH/bin/pacman-conf"
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.lz4)
+  run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --packages-only --package "$chrome"
+  [ "$status" -eq 0 ]
+  [ "$(grep -oE '^pacman -[A-Za-z]+' "$SCRATCH/calls" | paste -sd' ')" = "pacman -Sy pacman -U" ]
+}
+
+@test "a release goes in with the built packages after it, under one authentication" {
+  prepare_pi_update 0
+  local code
+  code=$(built_package visual-studio-code-bin-1.106.0-1-aarch64.pkg.tar.zst)
+  run env PATH="$SCRATCH/bin:$PATH" NOVA_ARCH=aarch64 "$SCRATCH/lib/nova-update-apply" --tag v1.1.0 --version 1.1.0 \
+    --arch-date 2026/10/19 --nova-repo https://example.org/repo \
+    --alarm-date 2026/10/20 --alarm-pool https://example.org/alarm/aarch64 --noconfirm --package "$code"
+  [ "$status" -eq 0 ]
+  [[ $(cat "$SCRATCH/calls") =~ ^"pacman -Syy --needed --noconfirm archlinuxarm-keyring nova-keyring
+pacman -Su --noconfirm
+pacman -U --needed --noconfirm $NOVA_ROOT/var/tmp/nova-update."[A-Za-z0-9]+"/visual-studio-code-bin-1.106.0-1-aarch64.pkg.tar.zst
+nova-boot-check status"$ ]]
+}
+
+@test "an app that will not go in leaves the release installed" {
+  prepare_pi_update 0
+  printf '#!/bin/bash\necho "${0##*/} $*" >>"$SCRATCH/calls"\n[[ $1 != -U ]]\n' >"$SCRATCH/bin/pacman"
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
+  run env PATH="$SCRATCH/bin:$PATH" NOVA_ARCH=aarch64 "$SCRATCH/lib/nova-update-apply" --tag v1.1.0 --version 1.1.0 \
+    --arch-date 2026/10/19 --nova-repo https://example.org/repo \
+    --alarm-date 2026/10/20 --alarm-pool https://example.org/alarm/aarch64 --noconfirm --package "$chrome"
+  [ "$status" -eq 0 ]
+  [[ $output == *"could not install google-chrome; nova apps install tries again"* ]]
+  [[ $output == *"Nova is now on v1.1.0."* ]]
+}
+
+@test "anything but a package file is refused before anything changes" {
+  prepare_pi_update 0
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
+  ln -s "$chrome" "$SCRATCH/build/link-1-1-x86_64.pkg.tar.zst"
+  for bad in /etc/passwd "build/google-chrome-141.0-1-x86_64.pkg.tar.zst" "$SCRATCH/build/link-1-1-x86_64.pkg.tar.zst" \
+    "$SCRATCH/build/missing-1-1-x86_64.pkg.tar.zst"; do
+    run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --packages-only --package "$bad"
+    [ "$status" -ne 0 ]
+    [[ $output == *"bad --package: $bad"* ]]
+  done
+  run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --packages-only
+  [ "$status" -ne 0 ]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "only Chrome and VS Code, and only the authenticating user's own files" {
+  prepare_pi_update 0
+  local pam chrome
+  pam=$(built_package pam-1.7.1-1-x86_64.pkg.tar.zst)
+  run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --packages-only --package "$pam"
+  [ "$status" -ne 0 ]
+  [[ $output == *"bad --package: $pam"* ]]
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
+  run env PATH="$SCRATCH/bin:$PATH" PKEXEC_UID=$(($(id -u) + 1)) "$SCRATCH/lib/nova-update-apply" --packages-only --package "$chrome"
+  [ "$status" -ne 0 ]
+  [[ $output == *"bad --package: $chrome"* ]]
+  [ ! -e "$SCRATCH/calls" ]
+  [ -z "$(ls "$NOVA_ROOT/var/tmp" 2>/dev/null)" ]
+}

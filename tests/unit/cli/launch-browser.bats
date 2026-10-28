@@ -96,5 +96,7 @@ launch() { "$REPO_ROOT/src/cli/bin/nova-launch-browser" "$@"; }
   printf '[Default Applications]\nx-scheme-handler/http=google-chrome.desktop\n' >"$XDG_CONFIG_HOME/mimeapps.list"
   run launch https://example.org
   [ "$status" -eq 1 ]
-  grep -q '^notify .*No web browser is installed.* --exec nova-launch-floating-terminal-with-presentation nova apps install$' "$CALLS"
+  # Settings, Updates installs it, with no terminal.
+  grep -qF -- '--exec nova-shell shell summon nova.settings {"page":"updates","apps":"install"}' "$CALLS"
+  grep -q '^notify .*No web browser is installed' "$CALLS"
 }

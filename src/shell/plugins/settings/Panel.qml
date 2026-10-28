@@ -17,7 +17,8 @@ import qs.Ui
 // on theirs rather than in windows of their own. Displays is nova monitor's.
 //
 // Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
-// and Battery Life's, "today" or "week":
+// and Battery Life's, "today" or "week", and `apps` "install" has Updates
+// offer Chrome and VS Code:
 //   nova-shell shell summon nova.settings '{"page":"battery","range":"week"}'
 Item {
   id: root
@@ -37,8 +38,9 @@ Item {
   property bool reloadWanted: false
   property var queue: []
   property string failure: ""
-  property string updateStatus: ""
   property bool confirmRecovery: false
+  // Updates offers Chrome and VS Code (opened so by nova-launch-browser).
+  property bool offerApps: false
 
   readonly property var appearance: info.appearance || ({})
   readonly property var battery: info.battery || ({})
@@ -114,6 +116,7 @@ Item {
     }
     page = allPages.some(function (p) { return p.id === payload.page }) ? payload.page : pages[0].id
     range = payload.range === "week" ? "week" : "today"
+    offerApps = payload.apps === "install"
     confirmRecovery = false
     if (!window.visible) measureRoom()
     window.visible = true
@@ -170,14 +173,6 @@ Item {
     actionProc.command = next.shift()
     queue = next
     actionProc.running = true
-  }
-
-  // "google-chrome visual-studio-code-bin" -> "Google Chrome and VS Code"
-  function appNames(packages) {
-    var names = { "google-chrome": "Google Chrome", "visual-studio-code-bin": "VS Code" }
-    var out = packages.split(" ").filter(function (p) { return p.length > 0 })
-      .map(function (p) { return names[p] || p })
-    return out.length > 1 ? out.slice(0, -1).join(", ") + " and " + out[out.length - 1] : out.join("")
   }
 
   // Detached, as the rest of the shell opens terminals. Through actionProc the
@@ -260,24 +255,6 @@ Item {
       }
       if (root.queue.length > 0) root.pump()
       else root.load()
-    }
-  }
-
-  Process {
-    id: checkProc
-    command: ["nova-update-check"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var line = String(text || "").trim()
-        if (line.indexOf("available ") === 0) root.updateStatus = "Nova " + line.slice(10) + " is available."
-        else if (line.indexOf("apps ") === 0) root.updateStatus = "Nova is up to date. Updates for " + root.appNames(line.slice(5)) + " are available."
-        else if (line === "current") root.updateStatus = "Nova and its apps are up to date."
-        else root.updateStatus = "Could not check for updates."
-      }
-    }
-    onExited: function (exitCode) {
-      if (exitCode !== 0) root.updateStatus = "Could not check for updates."
     }
   }
 
@@ -1018,19 +995,11 @@ Item {
 
       Section {
         width: p.inner
-        Line {
-          label: root.about.version ? "Nova " + root.about.version : "Nova"
-          detail: root.updateStatus.length > 0 ? root.updateStatus
-            : (root.about.archDate ? (root.about.base || "Arch Linux") + " as of " + root.about.archDate + ", as tested for this release." : "")
-          Row {
-            spacing: Style.space(8)
-            Button {
-              text: checkProc.running ? "Checking…" : "Check"
-              bordered: true
-              onClicked: if (!checkProc.running) { root.updateStatus = ""; checkProc.running = true }
-            }
-            Button { text: "Update…"; bordered: true; onClicked: root.terminal("nova update") }
-          }
+        UpdatesView {
+          width: parent.width
+          version: root.about.version || ""
+          offerApps: root.offerApps
+          onFinished: root.load()
         }
         Line {
           visible: root.updates.firmware === true

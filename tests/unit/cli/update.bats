@@ -326,3 +326,182 @@ JSON
   [ "$(cat "$CALLS")" = "pkexec $NOVA_UPDATE_APPLY --check-boot
 nova-update-apply --check-boot" ]
 }
+
+# --- Settings: nova update --status, with no terminal ---------------------------
+
+# The apps' builds: Chrome built into the folder it is given, and recorded.
+build_chrome() {
+  stub nova-apps-install 'case $1 in
+    --build) printf "built google-chrome %s %s\n" "$(printf a%.0s {1..40})" "$2/google-chrome-141.0-1-x86_64.pkg.tar.zst" >>"$2/result" ;;
+  esac'
+}
+
+settings_update() { # extra arguments
+  "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release.toml" --status "$SCRATCH/run/status.json" "$@"
+}
+
+field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
+
+@test "Settings: one authentication installs the release with the apps built for it" {
+  export XDG_CACHE_HOME=$SCRATCH/cache
+  build_chrome
+  stub pacman 'case $2 in google-chrome) echo "google-chrome 141.0-1" ;; *) echo "nova $(cat "$PKGVER")-1" ;; esac'
+  stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"
+    echo "==> pacman -Su --noconfirm"
+    echo "The running kernel was replaced: restart to finish the update."
+    echo "Nova is now on v1.0.0-beta.2."'
+  stub nova-notification-send
+  run settings_update
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ "$(field state)" = '"done"' ]
+  [ "$(field progress)" = 100 ]
+  [ "$(field version)" = '"1.0.0-beta.2"' ]
+  [ "$(field restart)" = true ]
+  [ "$(field apps)" = '["google-chrome"]' ]
+  # Built first, then one root step for both, then remembered.
+  [ "$(grep -oE '^(nova-apps-install --[a-z]+|pkexec)' "$CALLS" | paste -sd' ')" = \
+    "nova-apps-install --build pkexec nova-apps-install --record" ]
+  grep -qE "^pkexec $NOVA_UPDATE_APPLY --tag v1.0.0-beta.2 .*--noconfirm --package $XDG_CACHE_HOME/nova/update-build\.[^/]+/google-chrome-141.0-1-x86_64.pkg.tar.zst\$" "$CALLS"
+  grep -qx 'nova-apps-install --build .* --update' "$CALLS"
+  grep -qx "nova-apps-install --record google-chrome $(printf a%.0s {1..40})" "$CALLS"
+  grep -q '^nova-notification-send .*Nova is up to date Now on 1.0.0-beta.2. Restart to finish.' "$CALLS"
+  # The shell last, after Settings has the result.
+  [ "$(tail -n 1 "$CALLS")" = 'nova-restart-shell ' ]
+  grep -q 'Nova is now on v1.0.0-beta.2.' "$SCRATCH/run/status.log"
+  [ -z "$(ls "$XDG_CACHE_HOME/nova")" ]
+}
+
+@test "Settings: a dismissed authentication changes nothing and says so" {
+  export XDG_CACHE_HOME=$SCRATCH/cache
+  build_chrome
+  stub pkexec 'exit 126'
+  run settings_update
+  [ "$(field state)" = '"cancelled"' ]
+  [ "$(field apps)" = '[]' ]
+  fails grep -q -- '--record' "$CALLS"
+  fails grep -q nova-restart-shell "$CALLS"
+}
+
+@test "Settings: a root step that fails says why" {
+  stub nova-update-apply 'echo "nova update: pacman failed; check its output above." >&2; exit 1'
+  stub nova-notification-send
+  run settings_update
+  [ "$(field state)" = '"failed"' ]
+  [ "$(field error)" = '"pacman failed; check its output above."' ]
+  grep -q '^nova-notification-send .*The update did not finish Pacman failed; check its output above.' "$CALLS"
+}
+
+@test "Settings: what stops it before the root step says why, also with the window closed" {
+  printf 'version = "1.0.0-beta.2"\narch_date = "yesterday"\n' >"$SCRATCH/release.toml"
+  stub nova-notification-send
+  run settings_update
+  [ "$status" -ne 0 ]
+  [ "$(field state)" = '"failed"' ]
+  [[ $(field error) == *"bad arch_date"* ]]
+  fails grep -q pkexec "$CALLS"
+  [ "$(grep -c '^nova-notification-send .*The update did not finish Release.toml has a bad arch_date' "$CALLS")" -eq 1 ]
+}
+
+@test "Settings: building one reviewed app, the other still waits for its review" {
+  mkdir -p "$SCRATCH/run"
+  echo '{"state":"done","held":["google-chrome","visual-studio-code-bin"]}' >"$SCRATCH/run/status.json"
+  build_chrome
+  stub pacman 'case $2 in google-chrome) echo "google-chrome 141.0-1" ;; *) echo "nova $(cat "$PKGVER")-1" ;; esac'
+  run settings_update --apps-only --only google-chrome --approve "google-chrome=$(printf b%.0s {1..40})"
+  [ "$(field state)" = '"done"' ]
+  [ "$(field apps)" = '["google-chrome"]' ]
+  [ "$(field held)" = '["visual-studio-code-bin"]' ]
+}
+
+@test "Settings: an app whose recipe changed waits, and nothing else is asked" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  stub nova-apps-install 'case $1 in --build) echo "held visual-studio-code-bin" >>"$2/result" ;; esac'
+  stub nova-notification-send
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  [ "$(field held)" = '["visual-studio-code-bin"]' ]
+  fails grep -q pkexec "$CALLS"
+  grep -q '^nova-notification-send .*VS Code is waiting for you' "$CALLS"
+}
+
+@test "Settings: a reviewed app alone, approved for its commit" {
+  build_chrome
+  stub pacman 'case $2 in google-chrome) echo "google-chrome 141.0-1" ;; *) echo "nova $(cat "$PKGVER")-1" ;; esac'
+  run settings_update --apps-only --only google-chrome --approve "google-chrome=$(printf b%.0s {1..40})"
+  [ "$(field state)" = '"done"' ]
+  grep -qx "nova-apps-install --build .* --update --only google-chrome --approve google-chrome=$(printf b%.0s {1..40})" "$CALLS"
+  grep -qE "^pkexec $NOVA_UPDATE_APPLY --packages-only --package [^ ]+/google-chrome-141.0-1-x86_64.pkg.tar.zst\$" "$CALLS"
+  fails grep -q -- '--tag' "$CALLS"
+}
+
+@test "Settings: an app that did not go in is not remembered as built" {
+  build_chrome
+  stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"'
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  [ "$(field failed)" = '["google-chrome"]' ]
+  fails grep -q -- '--record' "$CALLS"
+}
+
+@test "Settings: how far it is follows the steps and pacman's packages" {
+  STATUS=$SCRATCH/status.json
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/src/cli/bin/nova-update"
+  status_write() { echo "$st_progress $st_text" >>"$SCRATCH/progress"; }
+  release_flags=(--tag v1.0.0)
+  track >/dev/null <<'OUT'
+==> Taking the pre-update snapshot
+==> Updating the keyrings
+==> pacman -Su --noconfirm
+Packages (4) a-1-1  b-1-1  c-1-1  d-1-1
+ a-1-1-x86_64 downloading...
+ b-1-1-x86_64 downloading...
+:: Processing package changes...
+upgrading a...
+upgrading b...
+installing c...
+removing d...
+:: Running post-transaction hooks...
+(1/2) Arming ConditionNeedsUpdate...
+(2/2) Building the boot images...
+==> Installing google-chrome
+Packages (1) google-chrome-141.0-1
+installing google-chrome...
+==> Checking the boot entries
+The NVIDIA driver was updated: restart to finish the update.
+OUT
+  [ "$(cut -d' ' -f1 "$SCRATCH/progress" | paste -sd' ')" = "1 3 5 13 22 50 61 71 82 82 87 92 93 97" ]
+  grep -qx '50 Installing' "$SCRATCH/progress"
+  grep -qx '87 Finishing' "$SCRATCH/progress"
+  [ "$st_restart" = 1 ]
+}
+
+@test "Settings: building says which app, not what makepkg is at" {
+  STATUS=$SCRATCH/status.json
+  # shellcheck source=/dev/null
+  source "$REPO_ROOT/src/cli/bin/nova-update"
+  status_write() { echo "$st_progress $st_text" >>"$SCRATCH/progress"; }
+  export XDG_CACHE_HOME=$SCRATCH/cache
+  stub nova-apps-install 'echo "==> google-chrome"; echo "==> Making package: google-chrome 141.0-1" >&2
+    echo "==> Retrieving sources..." >&2; echo "==> visual-studio-code-bin"'
+  APPS=$SCRATCH/bin/nova-apps-install
+  local -a packages=() built=()
+  build_apps >/dev/null
+  [ "$(cat "$SCRATCH/progress")" = "-1 Building Chrome
+-1 Building VS Code" ]
+}
+
+@test "nova-update-run starts it as a user service of its own, one at a time" {
+  export XDG_RUNTIME_DIR=$SCRATCH/xdg
+  stub systemctl 'exit 3'
+  stub systemd-run
+  run "$REPO_ROOT/src/cli/bin/nova-update-run" --apps-install
+  [ "$status" -eq 0 ]
+  grep -qx "systemd-run --user --quiet --collect --unit=nova-update --service-type=exec --setenv=PATH=$PATH -- $REPO_ROOT/src/cli/bin/nova-update --status $XDG_RUNTIME_DIR/nova/update/status.json --apps-install" "$CALLS"
+  : >"$CALLS"
+  stub systemctl
+  run "$REPO_ROOT/src/cli/bin/nova-update-run"
+  [ "$status" -eq 0 ]
+  fails grep -q systemd-run "$CALLS"
+}

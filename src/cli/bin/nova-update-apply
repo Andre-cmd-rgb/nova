@@ -1,7 +1,7 @@
 #!/bin/bash
 # nova:hidden=true
 # nova:summary=Apply a Nova release as root (run by nova update through pkexec)
-# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url> [--alarm-date <YYYY/MM/DD> --alarm-pool <url>] | --check-boot
+# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url> [--alarm-date <YYYY/MM/DD> --alarm-pool <url>] [--package <file>]... | --packages-only --package <file>... | --check-boot
 #
 # The privileged half of `nova update`. One pkexec call runs all of it, so there is a
 # single authentication prompt and nothing privileged is left to the unprivileged side.
@@ -26,6 +26,12 @@
 # around later pacman runs do not push the way back out (NUMBER_LIMIT_IMPORTANT).
 # --check-boot runs step 7 alone, and the boot fallback's check, to look again
 # after a repair.
+#
+# --package installs a package built beforehand as the user (Chrome and VS Code,
+# by nova apps install --build), after step 5, so that an update from Settings
+# asks for authentication once. With --packages-only it installs those alone,
+# when only the apps are behind. It takes those two apps alone, from files of
+# the user who authenticated, and installs copies made as they were checked.
 #
 # A Raspberry Pi (aarch64) takes the same steps the way it is built. Arch Linux
 # ARM has no archive, so a release pins the packages it was tested with itself:
@@ -55,7 +61,11 @@ SYNC_DIR=$ROOT/var/lib/pacman/sync
 LOG=$ROOT/var/log/nova-update.log
 SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-root}
 
-die() { printf 'nova update: %s\n' "$*" >&2; exit 1; }
+die() {
+  printf 'nova update: %s\n' "$*" >&2
+  [[ -z ${staged:-} ]] || rm -rf -- "$staged"
+  exit 1
+}
 warn() { printf 'nova update: %s\n' "$*" >&2; }
 say() { printf '==> %s\n' "$*"; }
 
@@ -181,6 +191,67 @@ install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pac
   say "Installing for this computer: ${missing[*]}"
   "$@" pacman -S --needed "${confirm[@]}" "${missing[@]}" ||
     warn "could not install ${missing[*]}; try again with: sudo pacman -S ${missing[*]}"
+}
+
+# The apps nova apps install builds: the only packages --package takes.
+BUILT_APPS=(google-chrome visual-studio-code-bin)
+
+package_name() { # path
+  local name=${1##*/}
+  printf '%s\n' "${name%-*-*-*}"
+}
+
+# A package file as makepkg names one, name-version-release-arch.pkg.tar[.*],
+# of one of those apps, and the authenticating user's own.
+valid_package() { # path
+  [[ $1 == /* && -f $1 && ! -L $1 && ${1##*/} =~ ^[a-z0-9@._+-]+-[^/-]+-[^/-]+-(x86_64|aarch64|any)\.pkg\.tar(\.[a-z0-9]+)?$ ]] || return 1
+  [[ " ${BUILT_APPS[*]} " == *" $(package_name "$1") "* ]] || return 1
+  [[ -z ${PKEXEC_UID:-} || $(stat -c %u -- "$1") == "$PKEXEC_UID" ]]
+}
+
+# Copied, as they are checked, to where only root writes: pacman reads them
+# long after, once the release is in, and reads the files that were checked.
+stage_packages() {
+  (( ${#packages[@]} )) || return 0
+  mkdir -p "$ROOT/var/tmp"
+  staged=$(mktemp -d -p "$ROOT/var/tmp" nova-update.XXXXXX)
+  local i copy
+  for i in "${!packages[@]}"; do
+    valid_package "${packages[i]}" || die "bad --package: ${packages[i]}"
+    copy=$staged/${packages[i]##*/}
+    cp -P -- "${packages[i]}" "$copy" && [[ -f $copy && ! -L $copy ]] || die "could not copy ${packages[i]}"
+    packages[i]=$copy
+  done
+}
+
+# A system installed offline starts with none of its repositories' package
+# lists, and pacman would find none of the apps' dependencies: they are read
+# once first. The repositories are pinned to the release, so nothing installed
+# goes out of step with them.
+read_missing_lists() {
+  local repo
+  for repo in $(pacman-conf --repo-list 2>/dev/null); do
+    if [[ ! -e $SYNC_DIR/$repo.db ]]; then
+      say "Reading the package lists"
+      pacman -Sy
+      return
+    fi
+  done
+}
+
+# The packages of --package. Failing leaves what came before in place, the
+# release among it, so the caller decides what that means.
+install_built_packages() { # then a command prefix for pacman
+  (( ${#packages[@]} )) || return 0
+  local -a names=()
+  local file status=0
+  for file in "${packages[@]}"; do names+=("$(package_name "$file")"); done
+  say "Installing ${names[*]}"
+  "$@" pacman -U --needed --noconfirm "${packages[@]}" || status=$?
+  rm -rf -- "$staged"
+  staged=''
+  (( status == 0 )) || warn "could not install ${names[*]}; nova apps install tries again"
+  return "$status"
 }
 
 # --- boot entry verification ------------------------------------------------------
@@ -331,10 +402,13 @@ check_boot() {
 # --- main -------------------------------------------------------------------------
 
 main() {
-  local tag='' version='' arch_date='' nova_repo='' alarm_date='' alarm_pool='' from='' snapshot=1 downgrade=0 noconfirm=0 only_boot=0
+  local tag='' version='' arch_date='' nova_repo='' alarm_date='' alarm_pool='' from='' snapshot=1 downgrade=0 noconfirm=0 only_boot=0 only_packages=0
+  packages=() staged=''
   while (( $# )); do
     case $1 in
       --check-boot)      only_boot=1; shift ;;
+      --packages-only)   only_packages=1; shift ;;
+      --package)         packages+=("${2:?}"); shift 2 ;;
       --tag)             tag=${2:?}; shift 2 ;;
       --version)         version=${2:?}; shift 2 ;;
       --arch-date)       arch_date=${2:?}; shift 2 ;;
@@ -353,6 +427,14 @@ main() {
   if (( only_boot )); then
     take_lock
     check_boot
+    return
+  fi
+  stage_packages
+  if (( only_packages )); then
+    (( ${#packages[@]} )) || die "--packages-only needs a --package"
+    take_lock
+    read_missing_lists
+    install_built_packages
     return
   fi
   [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --tag"
@@ -426,10 +508,12 @@ main() {
   trap - EXIT
   "${env_skip[@]}" pacman -Syy --needed --noconfirm "${keyrings[@]}" || pacman_failed
   say "pacman ${pacman_args[*]}"
-  "${env_skip[@]}" pacman "${pacman_args[@]}" || pacman_failed
+  # A line at a time, also into a pipe: Settings reads how far it is from it.
+  "${env_skip[@]}" stdbuf -oL pacman "${pacman_args[@]}" || pacman_failed
   trap - INT
 
   install_hardware_packages "$noconfirm" "${env_skip[@]}"
+  install_built_packages "${env_skip[@]}" || true
 
   if [[ -n $pre ]]; then
     say "Taking the post-update snapshot"
