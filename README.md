@@ -116,6 +116,22 @@ the update badge in the bar, moves the system to the newest release, with a
 snapshot before and after (a Raspberry Pi has no snapshots). Settings → Updates
 → Test Release Candidates gets the candidates early.
 
+## Going back
+
+On a PC, every change to the system's packages takes a snapshot first, an
+update included. When something is wrong after one:
+
+1. `nova recovery` restarts into the boot menu (any key in the first second of
+   a boot opens it too). **Snapshots** lists the system as it was before each
+   of the last three changes, newest first.
+2. A snapshot starts as it was, but what is done in it lives in memory only,
+   and is gone at the next restart: try it out first.
+3. To keep it, take the notification's **Restore now**, or run
+   `limine-snapper-restore`. The snapshot becomes the system, and it restarts.
+
+Snapshots hold the system, not `/home`: going back never touches your files,
+and nothing backs them up either. A Raspberry Pi has no snapshots.
+
 ## When something goes wrong
 
 - **The install stops:** it says at which step. The whole log is
@@ -128,8 +144,11 @@ snapshot before and after (a Raspberry Pi has no snapshots). Settings → Update
 - **`nova doctor`** looks the system over and says how to fix what it finds;
   on a PC, `sudo nova doctor` also checks the boot menu's fallback entry.
 - **`nova recovery`**, on a PC, restarts into the boot menu: the last
-  snapshots, the fallback image and the LTS kernel. Any key in the first
-  second of the boot opens it too.
+  snapshots (see [Going back](#going-back)), the fallback image and the LTS
+  kernel. Any key in the first second of the boot opens it too.
+- **The boot entries don't check out** after an update: it says what is
+  missing. `sudo limine-update` writes them again, and
+  `nova update --check-boot` looks again before you restart.
 
 ## Working on Nova
 
