@@ -36,9 +36,14 @@ stick installs over the network.
 
 **2. Boot it** and answer the questions: the keyboard layout (a stick from
 `nova-usb` offers the one of the computer it was made on), the passphrase of
-what it carries, Wi-Fi when there is no cable, the disk, your name, user name
-and password, the computer's name and time zone, and a fingerprint if there is
-a reader. Nothing touches the disk until you type `erase`.
+what it carries, Wi-Fi when there is no cable, the disk, whether to encrypt
+it, your name, user name and password, the computer's name and time zone, and
+a fingerprint if there is a reader. Nothing touches the disk until you type
+`erase`.
+
+Encryption is off unless you turn it on. Off, anyone who has the disk can
+read it; on, the disk asks for its passphrase at every start, and without it
+nothing on the disk can be read by anyone, you included.
 
 The installer picks the drivers for Intel, AMD and NVIDIA graphics, the
 microcode and the firmware, and the computer restarts into the lock screen.

@@ -7,7 +7,7 @@
 # anything touch a disk. The whole disk is
 # used: a 2 GiB EFI system partition and one btrfs partition holding the
 # subvolumes that snapshots and rollback expect (@ @home @log @pkg @snapshots
-# @swap).
+# @swap). The btrfs partition can be encrypted (LUKS2), when asked for.
 #
 # Packages come from the offline repository on the stick when there is one, and
 # otherwise from the pinned Arch snapshot and [nova] repository named in the
@@ -20,7 +20,8 @@
 #                                 fullname, user, password (8 characters or
 #                                 more), hostname, timezone,
 #                                 passphrase (for things carried), erase=yes to
-#                                 go ahead, and optionally apps=no and
+#                                 go ahead, and optionally encrypt=yes with
+#                                 disk_passphrase (8 characters or more), apps=no and
 #                                 after=<script>, run in the new system at the
 #                                 end. tests/install/run uses it.
 #   nova-install --unlock         open the things carried on the stick (nova usb)
@@ -57,6 +58,9 @@ ESP_MIB=2048
 MIN_DISK_BYTES=$((64 * 1024 * 1024 * 1024))
 BTRFS_OPTS=noatime,compress=zstd:1
 SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@snapshots:/.snapshots" "@swap:/swap")
+# The opened LUKS2 container of an encrypted install, as /dev/mapper/ names it
+# here and in the new system's initramfs.
+CRYPT_NAME=nova-root
 
 # What each kind of display controller needs beyond mesa, which has the AMD
 # video driver built in. hardware_packages picks this machine's; every_package
@@ -151,6 +155,9 @@ release_target() {
   if mountpoint -q -- "$TARGET"; then
     info "Unmounting what the last try left at $TARGET"
     umount -R -- "$TARGET" || die "something still uses $TARGET; restart and try again."
+  fi
+  if [[ -e /dev/mapper/$CRYPT_NAME ]]; then
+    cryptsetup close "$CRYPT_NAME" || die "could not close the last try's encrypted disk; restart and try again."
   fi
 }
 
@@ -320,11 +327,34 @@ EOF
 # The machine-specific half of the kernel command line; the quiet-boot half is
 # in /etc/limine-entry-tool.d/10-nova.conf. zswap is off because zram does the
 # compressing. rootflags=subvol=@ is the form limine-snapper-sync rewrites to
-# boot a snapshot.
-install_cmdline() {
-  local root_partuuid=$1 resume_offset=$2
-  printf 'root=PARTUUID=%s rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0 resume=PARTUUID=%s resume_offset=%s' \
-    "$root_partuuid" "$root_partuuid" "$resume_offset"
+# boot a snapshot. root is PARTUUID=<the partition's>, or, encrypted,
+# /dev/mapper/nova-root, which rd.luks.name has the initramfs open with the
+# passphrase it asks for; the swap file, and so resume, is inside it.
+install_cmdline() { # root resume-offset [luks-uuid]
+  local root=$1 resume_offset=$2 luks=${3:-}
+  [[ -z $luks ]] || printf 'rd.luks.name=%s=%s ' "$luks" "$CRYPT_NAME"
+  printf 'root=%s rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0 resume=%s resume_offset=%s' \
+    "$root" "$root" "$resume_offset"
+}
+
+# An encrypted install's initramfs asks for the passphrase (sd-encrypt), in
+# the keyboard layout picked (sd-vconsole, from /etc/vconsole.conf): both put
+# into Nova's own HOOKS line, wherever a later Nova moves the rest of it.
+encrypt_mkinitcpio_conf() {
+  cat <<'CONF'
+# Written by nova-install: the root is encrypted. The initramfs asks for its
+# passphrase, in the keyboard layout of /etc/vconsole.conf.
+_nova_hooks=()
+for _nova_hook in "${HOOKS[@]}"; do
+  case $_nova_hook in
+    keyboard) _nova_hooks+=(keyboard sd-vconsole) ;;
+    block) _nova_hooks+=(block sd-encrypt) ;;
+    *) _nova_hooks+=("$_nova_hook") ;;
+  esac
+done
+HOOKS=("${_nova_hooks[@]}")
+unset _nova_hooks _nova_hook
+CONF
 }
 
 limine_install_conf() {
@@ -356,6 +386,7 @@ answer() { # key
 
 # The answers, asked on screen or read from the answers file.
 KEYMAP='' DISK_LINE='' FULLNAME='' ACCOUNT='' PASSWORD='' COMPUTER='' TIMEZONE='' FINGERPRINT=''
+ENCRYPT=no DISK_PASSPHRASE=''
 # Who FINGERPRINT was enrolled for: going back and changing the username
 # leaves the print behind.
 ENROLLED_FOR=''
@@ -406,6 +437,14 @@ answers_from_file() {
   valid_hostname "$COMPUTER" || die "the answers file: no computer can be called '$COMPUTER'."
   TIMEZONE=$(answer_or timezone UTC)
   valid_timezone "$TIMEZONE" || die "the answers file: no time zone called '$TIMEZONE'."
+  ENCRYPT=$(answer_or encrypt no)
+  [[ $ENCRYPT == yes || $ENCRYPT == no ]] || die "the answers file: encrypt=yes or encrypt=no."
+  DISK_PASSPHRASE=''
+  if [[ $ENCRYPT == yes ]]; then
+    DISK_PASSPHRASE=$(answer disk_passphrase)
+    ((${#DISK_PASSPHRASE} >= MIN_PASSWORD)) ||
+      die "the answers file: encrypt=yes needs a disk_passphrase of at least $MIN_PASSWORD characters."
+  fi
 }
 
 # ------------------------------------------------------------- the screens
@@ -450,6 +489,23 @@ step_disk() {
   done
 }
 
+# Off unless asked for. On, the btrfs partition is LUKS2 and its passphrase is
+# asked at every start, before anything else; the EFI partition, which holds
+# the kernels, stays plain for the firmware to start them. A choice rather
+# than a yes or no, so Esc goes back to the disk.
+step_encryption() {
+  local off="No" on="Yes: a passphrase at every start"
+  screen "encryption"
+  ui_ask ui_choose "Encrypt the disk?" "$([[ $ENCRYPT == yes ]] && echo "$on" || echo "$off")" \
+    "$off"$'\t'no "$on"$'\t'yes || return 1
+  ENCRYPT=$REPLY DISK_PASSPHRASE=''
+  [[ $ENCRYPT == yes ]] || return 0
+  ui_answered Encryption on
+  ui_note "Without the passphrase nothing on the disk can be read, by anyone: keep it safe."
+  ui_ask ui_password "The disk's passphrase" "$MIN_PASSWORD" || return 1
+  DISK_PASSPHRASE=$REPLY
+}
+
 # Offered when the reader is one fprintd drives. Esc is No here.
 step_fingerprint() {
   screen "fingerprint"
@@ -478,6 +534,11 @@ summary_lines() {
     [[ -z $line ]] || echo "             now holds $line"
   done < <(disk_contents "$disk")
   echo "Layout       2 GiB EFI partition, btrfs with snapshots, $(swap_gib "$size") GiB swap file"
+  if [[ $ENCRYPT == yes ]]; then
+    echo "Encryption   on: the passphrase at every start"
+  else
+    echo "Encryption   off: anyone with the disk can read it"
+  fi
   echo "Kernel       $(main_kernel), with linux-lts as the fallback"
   echo "Account      $ACCOUNT ($FULLNAME) on $COMPUTER"
   echo "Time zone    $TIMEZONE, keyboard $KEYMAP"
@@ -507,7 +568,7 @@ questions_on_screen() { # fingerprint(yes|no): whether to offer enrolling one
   KEYMAP=${NOVA_KEYMAP:-}
   steps=()
   valid_keymap "$KEYMAP" || steps+=(keymap)
-  steps+=(disk you computer)
+  steps+=(disk encryption you computer)
   [[ $1 != yes ]] || steps+=(fingerprint)
   steps+=(summary)
   while ((i < ${#steps[@]})); do
@@ -538,13 +599,29 @@ EOF
   root=$(partition_path "$disk" 2)
   [[ -b $esp && -b $root ]] || die "the new partitions did not appear ($esp, $root)"
   logged mkfs.fat -F 32 -n NOVA-ESP "$esp"
-  logged mkfs.btrfs -f -L nova "$root"
+  if [[ $ENCRYPT == yes ]]; then
+    say "Encrypting the btrfs partition"
+    # The passphrase on stdin, never on a command line. Discards pass
+    # through (the flag kept in the header), so fstrim still reaches the SSD.
+    printf '%s' "$DISK_PASSPHRASE" | logged cryptsetup luksFormat --type luks2 --batch-mode --label nova-crypt --key-file - "$root"
+    printf '%s' "$DISK_PASSPHRASE" | logged cryptsetup open --allow-discards --persistent --key-file - "$root" "$CRYPT_NAME"
+  fi
+  logged mkfs.btrfs -f -L nova "$(root_device "$disk")"
+}
+
+# Where the btrfs filesystem is: the partition, or the container opened on it.
+root_device() { # disk
+  if [[ $ENCRYPT == yes ]]; then
+    echo "/dev/mapper/$CRYPT_NAME"
+  else
+    partition_path "$1" 2
+  fi
 }
 
 create_subvolumes_and_mount() {
   local disk=$1 swap=$2 esp root entry name mountpoint
   esp=$(partition_path "$disk" 1)
-  root=$(partition_path "$disk" 2)
+  root=$(root_device "$disk")
   say "Creating the filesystem layout"
   logged mount "$root" "$TARGET"
   for entry in "${SUBVOLUMES[@]}"; do
@@ -694,14 +771,25 @@ configure_snapper() {
 # entries, and they need the root and resume arguments and the Limine header
 # already in place to get them right the first time.
 prepare_boot_config() {
-  local disk=$1 kernel=$2 root partuuid offset
+  local disk=$1 kernel=$2 root partuuid offset luks cmdline
   root=$(partition_path "$disk" 2)
-  partuuid=$(blkid -s PARTUUID -o value "$root")
-  [[ -n $partuuid ]] || die "could not read the PARTUUID of $root"
   offset=$(btrfs inspect-internal map-swapfile -r "$TARGET/swap/swapfile")
   [[ $offset =~ ^[0-9]+$ ]] || die "could not find the swap file's offset"
+  if [[ $ENCRYPT == yes ]]; then
+    luks=$(cryptsetup luksUUID "$root")
+    [[ -n $luks ]] || die "could not read the LUKS UUID of $root"
+    cmdline=$(install_cmdline "/dev/mapper/$CRYPT_NAME" "$offset" "$luks")
+    encrypt_mkinitcpio_conf | install -Dm644 /dev/stdin "$TARGET/etc/mkinitcpio.conf.d/20-nova-encrypt.conf"
+    # The kernels' install hooks build the initramfs, keyboard layout
+    # included, during pacstrap: the layout has to be there first.
+    write_keyboard "$KEYMAP"
+  else
+    partuuid=$(blkid -s PARTUUID -o value "$root")
+    [[ -n $partuuid ]] || die "could not read the PARTUUID of $root"
+    cmdline=$(install_cmdline "PARTUUID=$partuuid" "$offset")
+  fi
   mkdir -p "$TARGET/etc/limine-entry-tool.d"
-  limine_install_conf "$(install_cmdline "$partuuid" "$offset")" "$kernel" >"$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
+  limine_install_conf "$cmdline" "$kernel" >"$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
   install -Dm644 "$SHARE/limine.conf" "$TARGET/boot/limine.conf"
 }
 
@@ -973,6 +1061,7 @@ main() {
   set -E
   trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
   partition_and_format "$disk"
+  unset DISK_PASSPHRASE
   create_subvolumes_and_mount "$disk" "$swap"
   prepare_boot_config "$disk" "$kernel"
   install_packages "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}"

@@ -218,8 +218,9 @@ the shared folder also becomes the default for themes that have no pick of their
   written by `nova-power-sleep-apply` through polkit. At UPower's last 2% the computer
   hibernates outright (`/etc/UPower/UPower.conf.d/10-nova.conf`): sleeping to
   RAM first is what would empty it. The TPM key-provisioning units are
-  skipped unless `nova.tpm2` is on the kernel command line: Nova does not encrypt the
-  disk, and they cost about four seconds of every measured boot.
+  skipped unless `nova.tpm2` is on the kernel command line: an encrypted Nova
+  disk opens with its passphrase, never the TPM, and they cost about four
+  seconds of every measured boot.
 - **Unused:** the shell's idle service (`src/shell/plugins/services/idle`) starts
   the screensaver after `idle.screensaver` seconds (three minutes by default)
   and locks after `idle.lock` (five), both in `shell.json` and in Settings →

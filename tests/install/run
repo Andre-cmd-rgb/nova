@@ -3,7 +3,10 @@
 # nova usb would, then boots what was installed and checks it.
 #
 #   tests/install/run --iso <file> --repo <dir> --release <release.toml>
-#                     --packages <packages.txt> [--logs <dir>]
+#                     --packages <packages.txt> [--logs <dir>] [--encrypt]
+#
+# --encrypt installs onto an encrypted disk (encrypt=yes), opened at the first
+# boot by a key file the test leaves in the initramfs (tests/install/after-encrypted).
 #
 # The stick is a disk image laid out the way nova usb lays one out: a FAT
 # partition with the ISO's files and every package an install can need, the
@@ -32,7 +35,7 @@ source "$root/installer/nova-usb"
 die() { printf 'install-test: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 
-iso='' repo='' release='' packages='' logs=''
+iso='' repo='' release='' packages='' logs='' encrypt=0
 while (($#)); do
   case $1 in
     --iso) iso=${2:?}; shift 2 ;;
@@ -40,6 +43,7 @@ while (($#)); do
     --release) release=${2:?}; shift 2 ;;
     --packages) packages=${2:?}; shift 2 ;;
     --logs) logs=${2:?}; shift 2 ;;
+    --encrypt) encrypt=1; shift ;;
     -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -101,8 +105,10 @@ apps=no
 erase=yes
 after=after
 ANSWERS
+((!encrypt)) || printf 'encrypt=yes\ndisk_passphrase=nova-disk-test\n' >>"$stick/nova/answers"
 {
   cat "$here/after"
+  ((!encrypt)) || cat "$here/after-encrypted"
   printf "\ninstall -Dm755 /dev/stdin /usr/local/lib/nova-test-probe <<'PROBE'\n"
   cat "$here/probe"
   printf 'PROBE\n'
@@ -165,4 +171,4 @@ printf '%s\n' "$report"
 grep -q '^probe: done' <<<"$report" || die "the probe did not finish"
 ! grep -q '^probe: FAIL' <<<"$report" || die "the installed system has problems (above)"
 echo
-echo "ok   installed from the stick, booted locked, and nova doctor is content"
+echo "ok   installed from the stick$( ((encrypt)) && echo " onto an encrypted disk"), booted locked, and nova doctor is content"

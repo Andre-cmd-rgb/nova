@@ -224,8 +224,39 @@ END
 }
 
 @test "install_cmdline: root and resume on the same partition, in limine-snapper-sync's form" {
-  run install_cmdline abcd-1234 1941442
+  run install_cmdline PARTUUID=abcd-1234 1941442
   [ "$output" = "root=PARTUUID=abcd-1234 rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0 resume=PARTUUID=abcd-1234 resume_offset=1941442" ]
+}
+
+@test "install_cmdline: encrypted, the initramfs opens the container, and root and resume are in it" {
+  run install_cmdline /dev/mapper/nova-root 1941442 1111-2222
+  [ "$output" = "rd.luks.name=1111-2222=nova-root root=/dev/mapper/nova-root rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0 resume=/dev/mapper/nova-root resume_offset=1941442" ]
+}
+
+@test "encrypt_mkinitcpio_conf: sd-vconsole after keyboard and sd-encrypt after block, in Nova's own line" {
+  encrypt_mkinitcpio_conf >"$SCRATCH/20.conf"
+  run bash -c '. "$1"; . "$2"; echo "${HOOKS[*]}"' _ "$REPO_ROOT/data/boot/mkinitcpio/10-nova.conf" "$SCRATCH/20.conf"
+  [ "$output" = "base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems sd-btrfs-overlayfs" ]
+}
+
+@test "prepare_boot_config: the command line, initramfs and layout of a plain and an encrypted root" {
+  export NOVA_TARGET=$SCRATCH/mnt
+  TARGET=$NOVA_TARGET
+  mkdir -p "$TARGET/swap"
+  printf 'cfg\n' >"$NOVA_INSTALLER_SHARE/limine.conf"
+  btrfs() { echo 1941442; }
+  blkid() { echo abcd-1234; }
+  cryptsetup() { [[ $* == "luksUUID /dev/vda2" ]] && echo 1111-2222; }
+  ENCRYPT=no
+  prepare_boot_config /dev/vda linux-nova
+  grep -q 'root=PARTUUID=abcd-1234 ' "$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
+  [ ! -e "$TARGET/etc/mkinitcpio.conf.d/20-nova-encrypt.conf" ]
+  [ ! -e "$TARGET/etc/vconsole.conf" ]
+  ENCRYPT=yes KEYMAP=it
+  prepare_boot_config /dev/vda linux-nova
+  grep -q '" rd.luks.name=1111-2222=nova-root root=/dev/mapper/nova-root ' "$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
+  grep -q 'sd-encrypt' "$TARGET/etc/mkinitcpio.conf.d/20-nova-encrypt.conf"
+  grep -qx 'KEYMAP=it' "$TARGET/etc/vconsole.conf"
 }
 
 @test "limine_install_conf: adds to the command line, and swaps the kernel only when needed" {
@@ -378,6 +409,25 @@ questions_setup() {
   [ "$(answer_or apps yes)" = no ]
 }
 
+@test "answers: no encryption unless the file asks, and then a disk passphrase of 8 or more" {
+  questions_setup
+  answers disk=/dev/vda user=ada password=s3cret-pass
+  answers_from_file
+  [ "$ENCRYPT" = no ]
+  [ -z "$DISK_PASSPHRASE" ]
+  answers disk=/dev/vda user=ada password=s3cret-pass encrypt=yes disk_passphrase=disk-secret
+  answers_from_file
+  [ "$ENCRYPT" = yes ]
+  [ "$DISK_PASSPHRASE" = disk-secret ]
+  answers disk=/dev/vda user=ada password=s3cret-pass encrypt=yes disk_passphrase=short
+  run answers_from_file
+  [ "$status" -ne 0 ]
+  [[ $output == *"encrypt=yes needs a disk_passphrase of at least 8 characters"* ]]
+  answers disk=/dev/vda user=ada password=s3cret-pass encrypt=maybe
+  run answers_from_file
+  [[ $output == *"encrypt=yes or encrypt=no"* ]]
+}
+
 @test "answers: a wrong answer ends the install instead of asking again" {
   questions_setup
   answers keymap=xx disk=/dev/vda password=s3cret-pass
@@ -414,7 +464,7 @@ questions_setup() {
 @test "screens: a password shorter than 8 characters is asked again" {
   questions_setup
   NOVA_KEYMAP=es
-  stub_gum 0 "Ada Lovelace" "" short short s3cret-pass s3cret-pass "" Europe/Rome erase
+  stub_gum 0 no "Ada Lovelace" "" short short s3cret-pass s3cret-pass "" Europe/Rome erase
   questions_on_screen no 2>"$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$PASSWORD" = s3cret-pass ]
@@ -424,7 +474,7 @@ questions_setup() {
 @test "screens: one question a screen, then erase typed back" {
   questions_setup
   NOVA_KEYMAP=es
-  stub_gum 0 "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome nope erase
+  stub_gum 0 no "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome nope erase
   questions_on_screen no 2>"$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$KEYMAP" = es ]
@@ -436,7 +486,26 @@ questions_setup() {
   grep -q -- 'vda  85.9 GB  Disk  ·  vda1  80G  ext4  "old"' "$GUM_LOG"
   grep -q 'Erased       vda  85.9 GB  Disk' "$SCRATCH/screens"
   grep -q 'Account      ada (Ada Lovelace) on nova' "$SCRATCH/screens"
+  grep -q 'Encryption   off: anyone with the disk can read it' "$SCRATCH/screens"
   grep -q 'That is not erase.' "$SCRATCH/screens"
+  [ "$ENCRYPT" = no ]
+}
+
+@test "screens: encryption, asked for, takes a passphrase typed twice; Esc there goes back to the disk" {
+  questions_setup
+  NOVA_KEYMAP=es
+  stub_gum 0 yes short short disk-secret disk-secret "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome erase
+  questions_on_screen no 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "$ENCRYPT" = yes ]
+  [ "$DISK_PASSPHRASE" = disk-secret ]
+  [ "$PASSWORD" = s3cret-pass ]
+  grep -q 'Encryption   on: the passphrase at every start' "$SCRATCH/screens"
+  grep -q '^choose .*Encrypt the disk?' "$GUM_LOG"
+  # Esc on the question: the disk again.
+  stub_gum 0 '!1' 0 no '!130'
+  run questions_on_screen no
+  [ "$(grep -c '^choose .*Which disk' "$GUM_LOG")" = 2 ]
 }
 
 @test "screens: Esc goes back a step, and on the first one changes nothing" {
@@ -453,7 +522,7 @@ questions_setup() {
 @test "screens: Ctrl+C stops the installer, with nothing changed" {
   questions_setup
   NOVA_KEYMAP=es
-  stub_gum 0 "Ada" '!130'
+  stub_gum 0 no "Ada" '!130'
   run questions_on_screen no
   [ "$status" -eq 130 ]
   [[ $output == *"The installer stopped; nothing was changed."* ]]

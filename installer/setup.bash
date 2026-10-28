@@ -10,8 +10,9 @@
 # up, / for the running one) and LOG. default_answer, below, may be redefined.
 
 KBD_MODEL_MAP=${NOVA_KBD_MODEL_MAP:-/usr/share/systemd/kbd-model-map}
-# The disk is not encrypted, so this password is what stands between the
-# computer and anyone at its lock screen or its sudo.
+# Unless the disk is encrypted (an install can ask for it; a Pi's cannot),
+# this password is all that stands between the computer and anyone at its
+# lock screen or its sudo.
 MIN_PASSWORD=8
 
 # ------------------------------------------------------------- the questions

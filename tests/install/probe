@@ -31,6 +31,13 @@ check "the shell answers" test "$(shell shell ping)" = ok
 check "greetd is running" systemctl is-active greetd
 check "the lock screen can count wrong passwords" test "$(stat -c %U "/run/faillock/$user" 2>/dev/null)" = "$user"
 
+# An encrypted install: the root came out of the LUKS2 container, as the
+# initramfs opened it.
+if [[ -e /etc/mkinitcpio.conf.d/20-nova-encrypt.conf ]]; then
+  check "the root is on the encrypted disk" \
+    bash -c '[[ $(findmnt -no SOURCE /) == /dev/mapper/nova-root* ]] && cryptsetup status nova-root | grep -q "type: *LUKS2"'
+fi
+
 failed=$(systemctl --failed --plain --no-legend | awk '{ print $1 }' | paste -sd' ')
 check "no failed services${failed:+ (failed: $failed)}" test -z "$failed"
 as_user() { runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" "$@" 2>/dev/null; }
