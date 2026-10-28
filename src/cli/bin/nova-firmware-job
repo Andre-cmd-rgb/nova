@@ -1,0 +1,159 @@
+#!/bin/bash
+# nova:hidden=true
+# Firmware belongs to a user service so closing Settings cannot stop a flash.
+
+set -euo pipefail
+
+runtime=${XDG_RUNTIME_DIR:?}/nova
+state=$runtime/firmware.json
+unit=nova-firmware-update
+mkdir -p "$runtime"
+chmod 700 "$runtime"
+
+write_state() {
+  local temporary
+  temporary=$(mktemp "$runtime/firmware.XXXXXX")
+  if jq "$@" >"$temporary"; then
+    mv -f -- "$temporary" "$state"
+  else
+    rm -f -- "$temporary"
+    return 1
+  fi
+}
+
+change_state() { write_state "$@" "$state"; }
+
+case ${1:-} in
+  check|install)
+    action=$1
+    shift
+    [[ $action != install || $# -gt 0 ]] || exit 2
+    # systemd owns the process before the caller returns. The fixed unit name
+    # refuses a second job, including one requested from another window.
+    exec systemd-run --user --unit="$unit" --collect -- \
+      "$(readlink -f "$0")" run "$action" "$@"
+    ;;
+  status)
+    if [[ -f $state ]]; then
+      if jq -e '.running == true' "$state" >/dev/null; then
+        active=$(systemctl --user show "$unit" --property=ActiveState --value 2>/dev/null || true)
+        case $active in
+          active|activating|reloading) ;;
+          # Read again as it is written: a job that ended just now left its
+          # own result, which stays.
+          *) change_state 'if .running == true then .running = false | .error = "The firmware job stopped. Check again before retrying." else . end' ;;
+        esac
+      fi
+      cat "$state"
+    else
+      echo '{}'
+    fi
+    exit
+    ;;
+  run) shift ;;
+  *) echo 'Usage: nova-firmware-job check|install <device>...|status' >&2; exit 2 ;;
+esac
+
+action=${1:?}
+shift
+exec 9>"$runtime/firmware.lock"
+flock -n 9 || exit 1
+[[ -f $state ]] || write_state -n '{devices: [], running: false, reboot: false, error: ""}'
+finish() {
+  local result=$?
+  if ((result != 0)); then
+    change_state '.running = false | .error = (if .error == "" then "The firmware job failed. Check again before retrying." else .error end)'
+  fi
+}
+trap finish EXIT
+trap 'exit 1' TERM INT HUP
+change_state --arg action "$action" '.running = true | .action = $action | .error = ""'
+export LC_ALL=C TERM=dumb
+
+if [[ $action == check ]]; then
+  status=0
+  fwupdmgr refresh >"$runtime/firmware-refresh.log" 2>&1 || status=$?
+  warning=''
+  if ((status != 0 && status != 2)); then warning='Could not refresh; showing saved updates.'; fi
+  status=0
+  fwupdmgr get-updates --json >"$runtime/firmware-updates.json" 2>"$runtime/firmware-error.log" || status=$?
+  if ((status == 2)); then
+    change_state --arg warning "$warning" '.devices = [] | .running = false | .checked = true | .error = $warning'
+  elif ((status == 0)); then
+    devices=$(jq '[.Devices[]? | select((.Releases // [] | length) > 0) | {
+      id: .DeviceId, name: .Name, current: .Version, version: .Releases[0].Version,
+      summary: (.Releases[0].Summary // "" | gsub("[\\r\\n]+"; " ")),
+      needsReboot: ((.Flags // []) | if type == "array" then index("needs-reboot") != null
+        elif type == "number" then ((. / 256 | floor) % 2 == 1) else false end),
+      progress: 0, status: "available"
+    }]' "$runtime/firmware-updates.json")
+    change_state --argjson devices "$devices" --arg warning "$warning" \
+      '.devices = $devices | .running = false | .checked = true | .error = $warning'
+  else
+    change_state --rawfile error "$runtime/firmware-error.log" '.running = false | .error = $error'
+    exit "$status"
+  fi
+  exit
+fi
+
+[[ $action == install && $# -gt 0 ]] || exit 2
+for device in "$@"; do
+  # Only IDs from the checked list may reach fwupdmgr, never an option or a
+  # device path supplied through an IPC payload.
+  jq -e --arg id "$device" '.devices[] | select(.id == $id and .status == "available")' "$state" >/dev/null
+  [[ $device =~ ^[[:alnum:]-]+$ ]] || exit 2
+done
+
+: >"$runtime/firmware-install.log"
+selected=$(printf '%s\n' "$@" | jq -Rsc 'split("\n")[:-1]')
+change_state --argjson ids "$selected" \
+  '(.devices[] | select(.id as $id | $ids | index($id))) |= (.status = "queued" | .progress = 0)'
+status=0
+# Keep one D-Bus client for the whole selection so fwupd can retain its polkit
+# authorization. Non-terminal output also leaves authentication to Nova's agent.
+fwupdmgr --assume-yes --no-reboot-check --no-unreported-check update "$@" </dev/null 2>&1 \
+  | stdbuf -oL tr '\r' '\n' | while IFS= read -r line; do
+    printf '%s\n' "$line" >>"$runtime/firmware-install.log"
+    [[ $line =~ ([0-9]{1,3})% ]] || continue
+    percent=$((10#${BASH_REMATCH[1]}))
+    ((percent <= 100)) || continue
+    if (($# == 1)); then
+      change_state --arg id "$1" --argjson progress "$percent" \
+        '(.devices[] | select(.id == $id)) |= (.status = "installing" | .progress = $progress)'
+    elif fwupdmgr get-devices --json >"$runtime/firmware-progress.json" 2>/dev/null; then
+      # Global progress can move backwards as fwupd changes stages or devices.
+      # Match each daemon snapshot by ID rather than guessing the flash order.
+      change_state --argjson ids "$selected" --slurpfile live "$runtime/firmware-progress.json" '
+        .devices |= map(. as $device |
+          ([$live[0].Devices[]? | select(.DeviceId == $device.id)][0] // {}) as $now |
+          if ($ids | index($device.id)) == null then .
+          elif ($now.Status // 0) > 1 then .status = "installing" | .progress = ($now.Percentage // 0)
+          elif $now.Version == .version then .status = "installed" | .progress = 100
+          else . end)'
+    fi
+  done || status=$?
+
+if ! fwupdmgr get-devices --json >"$runtime/firmware-devices.json" 2>/dev/null; then
+  echo '{"Devices":[]}' >"$runtime/firmware-devices.json"
+fi
+change_state --argjson ids "$selected" --argjson result "$status" \
+  --slurpfile live "$runtime/firmware-devices.json" --rawfile log "$runtime/firmware-install.log" '
+  def needs_reboot:
+    .UpdateState == 1 or .UpdateState == 4 or .UpdateState == "pending" or .UpdateState == "needs-reboot" or
+    (if (.Flags | type) == "array" then (.Flags | index("needs-reboot") != null)
+     elif (.Flags | type) == "number" then ((.Flags / 256 | floor) % 2 == 1) else false end);
+  .devices |= map(. as $device |
+    ([$live[0].Devices[]? | select(.DeviceId == $device.id)][0] // {}) as $now |
+    if ($ids | index($device.id)) == null then . else
+      ($now.Problems // [] | if type == "array" then length > 0 else . != 0 end) as $blocked |
+      if ($now.Version == .version or $now.UpdateState == 1 or $now.UpdateState == 4 or
+          $now.UpdateState == "pending" or $now.UpdateState == "needs-reboot" or
+          (($result == 0 or $result == 2) and ($blocked | not))) then
+        .status = "installed" | .progress = 100 | .needsReboot = (.needsReboot or ($now | needs_reboot))
+      else .status = (if $result == 0 then "available" else "failed" end) end
+    end) |
+  .reboot = (.reboot or any(.devices[]; .status == "installed" and .needsReboot == true)) |
+  .running = false |
+  .error = (if ($result != 0 and $result != 2) or any(.devices[]; (.id as $id | $ids | index($id)) != null and .status != "installed")
+    then $log else "" end)'
+((status == 0 || status == 2)) || exit "$status"

@@ -57,7 +57,7 @@
 
   // Update
   "update.nova": {"icon":"󰚰","label":"Nova","action":"nova-settings updates"},
-  "update.firmware": {"icon":"","label":"Firmware","when":"command -v fwupdmgr","action":"nova-launch-floating-terminal-with-presentation nova-update-firmware"},
+  "update.firmware": {"icon":"","label":"Firmware","when":"command -v fwupdmgr","action":"nova-settings updates"},
   "update.restart": {"icon":"󰜉","label":"Restart","title":"Restart a service"},
   "update.restart.shell": {"icon":"󰍜","label":"Shell","action":"nova-restart-shell"},
   "update.restart.audio": {"icon":"","label":"Audio","action":"nova-restart-audio"},
