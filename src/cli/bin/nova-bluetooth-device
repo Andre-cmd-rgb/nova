@@ -36,6 +36,30 @@ pairing_agent() { # start|stop
   systemctl --user "$1" bt-agent.service >/dev/null 2>&1 || true
 }
 
+# A connect can return before the link is up (InProgress, when the device
+# reached out first), so this waits a few seconds for it.
+connected() {
+  local _
+  for _ in {1..10}; do
+    [[ $(timeout 2s bluetoothctl info "$address" 2>/dev/null || true) != *"Connected: yes"* ]] || return 0
+    sleep "${NOVA_BLUETOOTH_POLL:-0.3}"
+  done
+  return 1
+}
+
+device_name() {
+  local name
+  name=$(timeout 2s bluetoothctl info "$address" 2>/dev/null | sed -n 's/^[[:space:]]*Alias: //p' | head -n 1 || true)
+  printf '%s\n' "${name:-$address}"
+}
+
+# Started from the Bluetooth panel, where nobody reads stderr: without this,
+# a row that fails just stops saying Connecting….
+failed() { # headline description
+  nova-notification-send -u normal -g 󰂯 "$1" "$2" || true
+  exit 1
+}
+
 wait_pairable() {
   local _
   for _ in {1..10}; do
@@ -50,14 +74,21 @@ case "$action" in
     trap 'pairing_agent stop' EXIT
     pairing_agent start
     wait_pairable
-    timeout 20s bluetoothctl pair "$address" >/dev/null 2>&1 || true
+    # The agent answers without a screen or keyboard, so a device that wants
+    # a PIN or a code typed is refused.
+    if ! out=$(timeout 20s bluetoothctl pair "$address" 2>&1) && [[ $out != *AlreadyExists* ]]; then
+      failed "Could not pair with $(device_name)" \
+        "Put it in pairing mode and try again. One that asks for a PIN or a code cannot pair yet."
+    fi
     trust_device
     timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1 || true
+    connected || failed "Could not connect to $(device_name)" "It is paired: try again once it is on and near."
     ;;
   connect)
     power_on
     trust_device
     timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1 || true
+    connected || failed "Could not connect to $(device_name)" "Is it on and near? A device paired elsewhere since may need forgetting and pairing again."
     ;;
   disconnect)
     timeout 10s bluetoothctl disconnect "$address" >/dev/null 2>&1 || true
