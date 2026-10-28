@@ -6,7 +6,7 @@ o.window({ tag = "floating-window" }, { center = true })
 o.window({ tag = "floating-window" }, { size = { "(min(875, monitor_w*0.94))", "(min(600, monitor_h*0.86))" } })
 
 o.window(
-  "(org.nova.btop|org.nova.terminal|org.nova.bash|org.codeberg.dnkl.foot|org.gnome.NautilusPreviewer|org.gnome.Evince|TUI.float|imv|mpv)",
+  "(org.nova.btop|org.nova.terminal|org.nova.bash|org.codeberg.dnkl.foot|org.gnome.NautilusPreviewer|org.gnome.Evince|TUI.float|imv|mpv|org.gnome.Loupe)",
   {
     tag = "+floating-window",
   }
@@ -23,13 +23,13 @@ o.window({
 
 -- No transparency on media windows.
 o.window(
-  "^(zoom|vlc|mpv|org.kde.kdenlive|com.obsproject.Studio|com.github.PintaProject.Pinta|imv|org.gnome.NautilusPreviewer)$",
+  "^(zoom|vlc|mpv|org.kde.kdenlive|com.obsproject.Studio|com.github.PintaProject.Pinta|imv|org.gnome.Loupe|org.gnome.NautilusPreviewer)$",
   {
     tag = "-default-opacity",
   }
 )
 o.window(
-  "^(zoom|vlc|mpv|org.kde.kdenlive|com.obsproject.Studio|com.github.PintaProject.Pinta|imv|org.gnome.NautilusPreviewer)$",
+  "^(zoom|vlc|mpv|org.kde.kdenlive|com.obsproject.Studio|com.github.PintaProject.Pinta|imv|org.gnome.Loupe|org.gnome.NautilusPreviewer)$",
   {
     opacity = "1 1",
   }

@@ -67,6 +67,12 @@ depends=(
   foot
   nautilus
   gvfs
+  gvfs-mtp       # phones and cameras over USB, in Nautilus
+  gvfs-gphoto2
+  gvfs-afc       # iPhones
+  gvfs-smb       # Windows shares
+  loupe          # photos
+  mpv            # video and music
   ttfx           # the screensaver's text effects (in the [nova] repository)
 
   # Capture, clipboard and backgrounds

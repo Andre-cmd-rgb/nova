@@ -1,0 +1,33 @@
+# Nova's defaults, for the files nobody has picked an app for. Read after
+# ~/.config/mimeapps.list (which Settings → Default Apps and xdg-mime write),
+# so anything set there wins, and an app that is not installed is passed over.
+# Listed type by type, not as image/*: Chrome claims PNG, JPEG, GIF and WebP
+# too, and would otherwise open every photo.
+[Default Applications]
+text/plain=com.microsoft.VSCode.desktop;code.desktop;
+inode/directory=org.gnome.Nautilus.desktop;
+image/png=org.gnome.Loupe.desktop;
+image/jpeg=org.gnome.Loupe.desktop;
+image/gif=org.gnome.Loupe.desktop;
+image/webp=org.gnome.Loupe.desktop;
+image/avif=org.gnome.Loupe.desktop;
+image/heic=org.gnome.Loupe.desktop;
+image/jxl=org.gnome.Loupe.desktop;
+image/bmp=org.gnome.Loupe.desktop;
+image/tiff=org.gnome.Loupe.desktop;
+image/svg+xml=org.gnome.Loupe.desktop;
+video/mp4=mpv.desktop;
+video/x-matroska=mpv.desktop;
+video/webm=mpv.desktop;
+video/quicktime=mpv.desktop;
+video/x-msvideo=mpv.desktop;
+video/mpeg=mpv.desktop;
+video/ogg=mpv.desktop;
+audio/mpeg=mpv.desktop;
+audio/mp4=mpv.desktop;
+audio/flac=mpv.desktop;
+audio/ogg=mpv.desktop;
+audio/opus=mpv.desktop;
+audio/x-wav=mpv.desktop;
+audio/wav=mpv.desktop;
+audio/aac=mpv.desktop;
