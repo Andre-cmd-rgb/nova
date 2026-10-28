@@ -51,26 +51,36 @@ Item {
   }
 
   // One brightnessctl at a time for a device; a value asked for while one
-  // runs waits for it, and only the last of them is set. A backlight's files
+  // runs waits for it, and only the last of them is set. Until it is, the
+  // device's file still has the value before: <target> is the last asked
+  // for, in <unit>, and busy() says it is not set yet. A backlight's files
   // are root's, so brightnessctl goes through logind.
   component Setter: Process {
     property string device: ""
-    property string queued: ""
+    property string unit: ""
+    property int target: -1
+    property bool queued: false
+
+    // A function, not a binding: Process says it runs only once it has
+    // started, and a press can come before that.
+    function busy() {
+      return running || queued
+    }
 
     function set(value) {
+      target = value
       if (running) {
-        queued = String(value)
+        queued = true
         return
       }
-      command = ["brightnessctl", "-q", "-d", device, "set", String(value)]
+      command = ["brightnessctl", "-q", "-d", device, "set", value + unit]
       running = true
     }
 
     onExited: {
-      if (queued === "") return
-      var value = queued
-      queued = ""
-      set(value)
+      if (!queued) return
+      queued = false
+      set(target)
     }
   }
 
@@ -194,10 +204,12 @@ Item {
     }
   }
 
+  // Read afresh at each reload(): with blockLoading, it reads on in the
+  // background, and text() answers with what was there before.
   FileView {
     id: backlightValue
     path: root.backlight !== "" ? "/sys/class/backlight/" + root.backlight + "/brightness" : ""
-    blockLoading: true
+    blockAllReads: true
   }
 
   FileView {
@@ -206,7 +218,10 @@ Item {
     blockLoading: true
   }
 
+  // The backlight's percent, or the one last asked for while brightnessctl
+  // has yet to set it: a press the firmware repeats can come before it does.
   function backlightNow() {
+    if (backlightSetter.busy()) return backlightSetter.target
     backlightValue.reload()
     return Model.backlightPercent(backlightValue.text(), backlightMax.text())
   }
@@ -214,6 +229,7 @@ Item {
   Setter {
     id: backlightSetter
     device: root.backlight
+    unit: "%"
   }
 
   // DDC/CI takes its time: a step asked for while one runs is the one it is
@@ -245,12 +261,14 @@ Item {
 
   // The panel's brightness keys can come twice, once from each GPU's ACPI
   // video device, a few milliseconds apart: a second press that soon is the
-  // same press, and taking it too steps twice and shows both.
+  // same press, and taking it too steps twice and shows both. A held one is
+  // pressed and let go again and again by the firmware, which the window is
+  // short enough to let through.
   property real lastBrightness: 0
 
   function pressBrightness(key) {
     var now = Date.now()
-    if (now - lastBrightness < 100) return
+    if (now - lastBrightness < 40) return
     lastBrightness = now
     if (root.focusedExternal) {
       var first = true
@@ -267,7 +285,7 @@ Item {
       var from = percent < 0 ? root.backlightNow() : percent
       if (from < 0) return false
       percent = Model.brightnessStep(from, key)
-      backlightSetter.set(percent + "%")
+      backlightSetter.set(percent)
       root.showOsd("brightness", percent)
       return Model.brightnessMore(percent, key)
     })
@@ -290,7 +308,7 @@ Item {
   FileView {
     id: keyboardValue
     path: root.keyboard !== "" ? "/sys/class/leds/" + root.keyboard + "/brightness" : ""
-    blockLoading: true
+    blockAllReads: true
   }
 
   FileView {
@@ -304,15 +322,19 @@ Item {
     device: root.keyboard
   }
 
+  // The keyboard light's level, as backlightNow() has the backlight's.
+  function keyboardNow() {
+    if (keyboardSetter.busy()) return keyboardSetter.target
+    keyboardValue.reload()
+    return parseInt(keyboardValue.text(), 10)
+  }
+
   function pressKeyboard(key) {
     var level = -1
     hold(function () {
       if (root.keyboard === "") return false
       var max = parseInt(keyboardMax.text(), 10)
-      if (level < 0) {
-        keyboardValue.reload()
-        level = parseInt(keyboardValue.text(), 10)
-      }
+      if (level < 0) level = root.keyboardNow()
       if (isNaN(level) || isNaN(max) || max <= 0) return false
       level = Model.keyboardStep(level, max, key)
       keyboardSetter.set(level)
