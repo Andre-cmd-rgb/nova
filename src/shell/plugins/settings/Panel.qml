@@ -179,13 +179,6 @@ Item {
     actionProc.running = true
   }
 
-  // Detached, as the rest of the shell opens terminals. Through actionProc the
-  // terminal was that very process and died with the shell, so "nova update",
-  // which restarts the shell, went down with it before the new one started.
-  function terminal(command) {
-    Util.execArgv(["nova-launch-floating-terminal-with-presentation", command])
-  }
-
   function step(delta) {
     for (var i = 0; i < pages.length; i++) {
       if (pages[i].id === page) {
@@ -1042,11 +1035,7 @@ Item {
       Section {
         width: p.inner
         title: "RECOVERY"
-        Line {
-          label: "Check for Problems"
-          detail: "Looks the system over and says how to fix what it finds."
-          Button { text: "Check…"; bordered: true; onClicked: root.terminal("nova doctor") }
-        }
+        DoctorView {}
         // Recovery is the x86 boot menu, which a Raspberry Pi does not have.
         Line {
           visible: root.updates.recovery === true

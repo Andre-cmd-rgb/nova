@@ -41,7 +41,7 @@ stub() { # name [body]
   chmod +x "$SCRATCH/bin/$1"
 }
 
-doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
+doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor" "$@"; }
 
 @test "a healthy system: everything ok, and the run passes" {
   run doctor
@@ -225,4 +225,31 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor"; }
   stub nova-power-undervolt 'echo "{\"core\":null,\"cache\":null,\"state\":\"held\",\"reason\":\"a freeze\",\"intel\":true}"'
   run doctor
   [[ $output == *"warn  the CPU's undervolt is held: a freeze"* ]]
+}
+
+@test "JSON reports keep levels and repair lines, with the same failure status" {
+  ROOT_OPTIONS=ro run doctor --json
+  [ "$status" -eq 1 ]
+  jq -e 'type == "array" and all(.[]; has("level") and has("what") and (.how | type == "array"))' <<<"$output"
+  jq -e '.[0].level == "FAIL" and (.[0].how[0] | contains("journalctl"))' <<<"$output"
+  USED=91 run doctor --json
+  [ "$status" -eq 0 ]
+  jq -e 'any(.[]; .level == "warn")' <<<"$output"
+}
+
+@test "JSON with an undervolt on: one array, the undervolt in it" {
+  stub nova-power-undervolt 'echo "{\"core\":-86,\"cache\":-65,\"state\":\"applied\",\"reason\":null,\"intel\":true}"'
+  doctor --json >"$SCRATCH/out" 2>"$SCRATCH/err" || true
+  [ ! -s "$SCRATCH/err" ]
+  jq -e 'any(.[]; .level == "ok" and (.what | startswith("the CPU is undervolted by -86 mV")))' "$SCRATCH/out"
+}
+
+@test "JSON preserves quotes and option-like repair text as data" {
+  write_file "$NOVA_BOOT_ESP/limine.conf"
+  stub nova-boot-check 'printf "problem\n--repair \"boot\"\n"; exit 1'
+  run doctor --json
+  [ "$status" -eq 1 ]
+  jq -e 'any(.[]; .how | index("--repair \"boot\""))' <<<"$output"
+  run doctor --unknown
+  [ "$status" -eq 2 ]
 }

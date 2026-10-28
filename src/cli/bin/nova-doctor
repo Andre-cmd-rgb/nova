@@ -1,5 +1,6 @@
 #!/bin/bash
 # nova:summary=Look this computer over for problems, and say how to fix each
+# nova:args=[--json]
 #
 # Read-only. Run as yourself it checks the system and your session; under sudo
 # it checks the system and the boot menu's fallback entry, which lives on the
@@ -11,6 +12,14 @@
 # NOVA_* variables point the checks at test fixtures (tests/unit/cli/doctor.bats).
 
 set -euo pipefail
+
+json=false
+case $#:${1:-} in
+  0:) ;;
+  1:--json) json=true ;;
+  *) echo 'Usage: nova doctor [--json]' >&2; exit 2 ;;
+esac
+reports=()
 
 # A service (or pkexec) runs it without HOME.
 : "${HOME:=$(getent passwd "$EUID" | cut -d: -f6)}"
@@ -35,8 +44,13 @@ fi
 failed=0
 report() { # ok|warn|FAIL|-- what [how...]
   local level=$1 what=$2 how
-  printf '%s%-4s%s  %s\n' "${color[$level]}" "$level" "$reset" "$what"
-  for how in "${@:3}"; do printf '      %s\n' "$how"; done
+  if $json; then
+    reports+=("$(jq -cn --arg level "$level" --arg what "$what" --args \
+      '{level: $level, what: $what, how: $ARGS.positional}' -- "${@:3}")")
+  else
+    printf '%s%-4s%s  %s\n' "${color[$level]}" "$level" "$reset" "$what"
+    for how in "${@:3}"; do printf '      %s\n' "$how"; done
+  fi
   [[ $level != FAIL ]] || failed=1
 }
 
@@ -232,12 +246,12 @@ check_boot() {
 }
 
 check_undervolt() {
-  local json state offset reason
-  json=$(nova-power-undervolt status --json 2>/dev/null) || return 0
+  local undervolt state offset reason
+  undervolt=$(nova-power-undervolt status --json 2>/dev/null) || return 0
   # A unit separator, not a tab: bash runs empty tab fields together.
   IFS=$'\x1f' read -r state offset reason < <(jq -r '[.state,
     (if .core == null then "" elif .core == .cache then "\(.core) mV" else "\(.core) mV on the core and \(.cache) mV on the cache" end),
-    (.reason // "")] | join("\u001f")' <<<"$json")
+    (.reason // "")] | join("\u001f")' <<<"$undervolt")
   case $state in
     applied) report ok "the CPU is undervolted by $offset" ;;
     held)
@@ -300,4 +314,5 @@ else
 fi
 check_undervolt
 check_hardware
+if $json; then printf '%s\n' "${reports[@]}" | jq -s .; fi
 exit "$failed"
