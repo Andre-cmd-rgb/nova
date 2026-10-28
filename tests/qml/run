@@ -25,8 +25,13 @@ plugins=$root/usr/share/nova/shell/plugins
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/home" "$work/run" "$work/shell"
+mkdir -p "$work/home" "$work/run" "$work/shell" "$work/bin"
 chmod 700 "$work/run"
+# No Hyprland here, on a desktop or in CI: what asks it (Style's rounding and
+# gaps) gets the answer it gets without a session, whether or not hyprctl is
+# installed.
+printf '#!/bin/sh\nexit 1\n' >"$work/bin/hyprctl"
+chmod +x "$work/bin/hyprctl"
 for d in Commons Ui services plugins; do ln -s "$root/usr/share/nova/shell/$d" "$work/shell/$d"; done
 
 failed=0
@@ -35,7 +40,7 @@ for test in "$here"/*-test.qml; do
   cp "$test" "$work/shell/$name.qml"
   rm -rf "$work/run/quickshell"
   status=0
-  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 PATH=/usr/bin QT_QPA_PLATFORM=offscreen \
+  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 PATH="$work/bin:/usr/bin" QT_QPA_PLATFORM=offscreen \
     TEST_PLUGINS="$plugins" TEST_PLUGIN_COUNT="$(jq length "$plugins/index.json")" \
     timeout 60 qs --no-color -p "$work/shell/$name.qml" >/dev/null 2>&1 || status=$?
   log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$work/shell/$name.qml" 2>&1)
