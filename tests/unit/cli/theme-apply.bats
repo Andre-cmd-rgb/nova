@@ -102,3 +102,42 @@ icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \
     "$REPO_ROOT/data/skel/.config/Code/User/settings.json"
   [ "$output" = "Nova native never" ]
 }
+
+# argv.json as VS Code reads it: its comments taken out, and the trailing
+# commas it allows.
+argv() { grep -vE '^[[:space:]]*//' "$1" | sed -E 's/,([[:space:]]*\})/\1/' | jq -r "$2"; }
+
+@test "VS Code is told the login keyring is gnome-keyring's, in the argv.json it wrote" {
+  mkdir -p "$HOME/.vscode"
+  printf '%s\n' '// This configuration file allows you to pass permanent command line arguments to VS Code.' \
+    '{' '	// "disable-hardware-acceleration": true,' '	"enable-crash-reporter": false,' \
+    '	"crash-reporter-id": "d9f40467"' '}' >"$HOME/.vscode/argv.json"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [ "$(argv "$HOME/.vscode/argv.json" '."password-store" + " " + ."crash-reporter-id"')" = "gnome-libsecret d9f40467" ]
+  grep -q 'disable-hardware-acceleration' "$HOME/.vscode/argv.json"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$(grep -c '"password-store"' "$HOME/.vscode/argv.json")" -eq 1 ]
+}
+
+@test "a keyring the user picked for VS Code is theirs" {
+  mkdir -p "$HOME/.vscode"
+  printf '{\n\t"password-store": "basic"\n}\n' >"$HOME/.vscode/argv.json"
+  cp "$HOME/.vscode/argv.json" "$SCRATCH/before"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  cmp "$SCRATCH/before" "$HOME/.vscode/argv.json"
+}
+
+@test "VS Code with no argv.json yet gets one, and VS Code never run gets none" {
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ ! -e "$HOME/.vscode" ]
+  mkdir -p "$HOME/.vscode"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [ "$(argv "$HOME/.vscode/argv.json" '."password-store"')" = gnome-libsecret ]
+}
+
+@test "the starting argv.json uses the login keyring, as each session start enforces" {
+  [ "$(argv "$REPO_ROOT/data/skel/.vscode/argv.json" '."password-store"')" = gnome-libsecret ]
+}

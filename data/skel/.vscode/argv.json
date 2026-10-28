@@ -1,0 +1,7 @@
+// VS Code's command line, read as it starts. It cannot tell the login
+// keyring is there under Hyprland, and without password-store keeps its
+// sign-ins under a key of its own instead.
+{
+	"password-store": "gnome-libsecret",
+	"enable-crash-reporter": false
+}

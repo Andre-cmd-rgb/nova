@@ -99,12 +99,38 @@ apply_btop() {
   pkill -u "$UID" -USR2 -x btop || true
 }
 
+# VS Code cannot place Hyprland, so it finds no keyring and offers to keep its
+# sign-ins under a key of its own instead; like Chrome, it is told the login
+# keyring is gnome-keyring's. argv.json, which it reads that from, is JSON with
+# comments, which jq cannot read, so the setting goes in as a line of its own
+# after the brace. One the user set (basic, kwallet6) is theirs.
+vscode_keyring() {
+  local argv=$HOME/.vscode/argv.json file tmp
+  if [[ ! -e $argv ]]; then
+    printf '{\n\t"password-store": "gnome-libsecret",\n\t"enable-crash-reporter": false\n}\n' >"$argv.tmp"
+    mv -- "$argv.tmp" "$argv"
+    return 0
+  fi
+  grep -vE '^[[:space:]]*//' "$argv" | grep -qE '"password-store"[[:space:]]*:' && return 0
+  file=$(readlink -f -- "$argv") || return 0
+  tmp=$(mktemp "$file.XXXXXX") || return 0
+  if sed '0,/^[[:space:]]*{/s//&\n\t"password-store": "gnome-libsecret",/' "$file" >"$tmp" && ! cmp -s "$file" "$tmp"; then
+    chmod --reference="$file" -- "$tmp"
+    mv -- "$tmp" "$file"
+  else
+    rm -f -- "$tmp"
+    echo "nova-theme-apply: VS Code's argv.json has no opening brace, so its keyring is not set" >&2
+  fi
+}
+
 # A local VS Code extension whose theme file is the rendered one. VS Code picks
 # up a changed theme file on its own once the extension is registered. The
 # native title bar is the compositor's, and Hyprland draws none, so VS Code has
 # no buttons either; Alt shows its menu.
 apply_vscode() {
   local extensions=$HOME/.vscode/extensions ext settings
+  [[ -d $HOME/.vscode ]] || return 0
+  vscode_keyring
   [[ -d $extensions ]] || return 0
   ext=$extensions/nova.nova-theme-1.0.0
   mkdir -p "$ext/themes"
