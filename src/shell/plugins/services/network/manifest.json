@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "nova.network-portal",
+  "name": "Network sign-in",
+  "version": "1.0.0",
+  "author": "Nova",
+  "description": "Sign in when Wi-Fi needs a captive portal",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

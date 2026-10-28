@@ -1587,7 +1587,7 @@ Ui.Panel {
       if (isBusy && root.actionKind === "disconnect") return "Disconnecting…"
       if (isBusy && root.actionKind === "forget") return "Forgetting…"
       if (isFailed) return root.failureReason || "Failed"
-      if (isConnected) return "Connected"
+      if (isConnected) return Networking.connectivity === NetworkConnectivity.Portal ? "Sign in required" : "Connected"
       return ""
     }
 
