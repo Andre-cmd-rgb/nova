@@ -64,7 +64,7 @@
   "update.restart.wifi": {"icon":"󱚾","label":"Wi-Fi","action":"nova-restart-wifi"},
   "update.restart.bluetooth": {"icon":"󰂯","label":"Bluetooth","action":"nova-restart-bluetooth"},
   "update.timezone": {"icon":"","label":"Timezone","action":"nova-menu-timezone"},
-  "update.password": {"icon":"","label":"Password","action":"nova-launch-floating-terminal-with-presentation passwd"},
+  "update.password": {"icon":"","label":"Password","action":"nova-shell shell summon nova.settings '{\"page\":\"lock\",\"sheet\":\"password\"}'"},
 
   // System
   "system.lock": {"icon":"","label":"Lock","action":"nova-system-lock"},

@@ -121,7 +121,11 @@ Item {
     if (!window.visible) measureRoom()
     window.visible = true
     load()
-    Qt.callLater(function () { keys.forceActiveFocus() })
+    Qt.callLater(function () {
+      keys.forceActiveFocus()
+      if (root.page === "lock" && payload.sheet === "password" && pageLoader.item)
+        pageLoader.item.showPassword()
+    })
   }
 
   // The room on the focused screen, where the window opens: its full size
@@ -892,6 +896,27 @@ Item {
     Page {
       id: p
       title: "Lock Screen"
+
+      function showPassword() { passwordSheet.open() }
+
+      PasswordSheet {
+        id: passwordSheet
+        parent: keys
+        anchors.fill: parent
+        z: 100
+        onChanged: passwordConfirmation.restart()
+      }
+
+      Timer { id: passwordConfirmation; interval: 3000 }
+
+      Section {
+        width: p.inner
+        Line {
+          label: "Password"
+          Button { text: "Change…"; bordered: true; onClicked: p.showPassword() }
+        }
+        Caption { visible: passwordConfirmation.running; text: "Password changed." }
+      }
 
       Section {
         width: p.inner
