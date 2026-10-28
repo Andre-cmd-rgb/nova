@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova:summary=Update Nova to the newest release, and Chrome and VS Code
-# nova:args=[--version <tag>] [--check] [--dry-run] [--yes] | --candidates [on|off]
+# nova:args=[--version <tag>] [--check] [--dry-run] [--yes] | --check-boot | --candidates [on|off]
 #
 # Moves this system to a Nova release: the Arch packages are taken from the Arch Linux
 # Archive snapshot the release was tested against, the nova packages from the release's
@@ -15,6 +15,8 @@
 #   nova update --check             print "available <version>", "apps <name>..." when
 #                                   only Chrome or VS Code is behind, or "current"
 #   nova update --dry-run           show what would change, change nothing
+#   nova update --check-boot        check the boot entries again, as an update ends:
+#                                   after repairing them, before restarting
 #   nova update --yes               do not ask before applying
 #   nova update --allow-downgrade   permit an older release (uses pacman -Syuu)
 #   nova update --no-snapshot       skip the snapper snapshots (not recommended)
@@ -222,7 +224,7 @@ wants_prereleases() {
   fi
 }
 
-want='' do_check=0 dry=0 assume_yes=0 downgrade=0 snapshot=1 release_file=''
+want='' do_check=0 dry=0 assume_yes=0 downgrade=0 snapshot=1 release_file='' check_boot=0
 
 candidates() { # [on|off]
   case $1 in
@@ -246,6 +248,7 @@ main() {
       --no-snapshot)     snapshot=0; shift ;;
       --release-file)    release_file=${2:?--release-file needs a path}; shift 2 ;;
       --candidates)      candidates "${2:-}"; return ;;
+      --check-boot)      check_boot=1; shift ;;
       -h|--help)         sed -n '2,/^set /p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//' | sed '1,2d'; exit 0 ;;
       *) die "unknown argument: $1 (try --help)" ;;
     esac
@@ -254,6 +257,11 @@ main() {
   if (( do_check )); then
     check_only "$want"
     return 0
+  fi
+  if (( check_boot )); then
+    [[ -x $APPLY ]] || die "missing helper: $APPLY"
+    pkexec "$APPLY" --check-boot
+    return
   fi
   # Called plainly, not in a condition, which would switch set -e off inside it:
   # a release that fails or is declined ends the run here.

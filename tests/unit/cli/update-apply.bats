@@ -70,6 +70,53 @@ uki() { # name kernel-version: an image whose setup header names that kernel
   [[ $output == *"no boot entry for the installed kernel linux"* ]]
 }
 
+# The check alone, as nova update --check-boot runs it, with the fallback's
+# check next to the script as it is installed.
+check_boot_alone() { # fallback check's status
+  mkdir -p "$SCRATCH/lib"
+  cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
+  printf '#!/bin/bash\necho "nova-boot-check $*" >>"$SCRATCH/calls"\nexit %s\n' "$1" >"$SCRATCH/lib/nova-boot-check"
+  chmod +x "$SCRATCH"/lib/*
+  "$SCRATCH/lib/nova-update-apply" --check-boot
+}
+
+@test "--check-boot checks the entries and the fallback, and changes nothing" {
+  run check_boot_alone 0
+  [ "$status" -eq 0 ]
+  [[ $output == *"Boot entries look right"* ]]
+  [ "$(cat "$SCRATCH/calls")" = "nova-boot-check status" ]
+  [ ! -e "$NOVA_ROOT/etc/pacman.d" ]
+}
+
+@test "--check-boot says when the entries do not check out, and how to look again" {
+  rm "$NOVA_ROOT/boot/EFI/Linux/nova_linux-nova.efi"
+  run check_boot_alone 0
+  [ "$status" -eq 3 ]
+  [[ $output == *"do NOT check out"* ]]
+  [[ $output == *"sudo limine-update, then nova update --check-boot"* ]]
+  run check_boot_alone 1
+  [ "$status" -eq 3 ]
+}
+
+@test "a boot partition fstab names but nobody mounted is caught, with what to do" {
+  findmnt() { return 0; }
+  mountpoint() { return 1; }
+  ROOT='' run esp_unmounted /boot
+  [ "$status" -eq 0 ]
+  ROOT='' run boot_advice 12
+  [[ $output == *"Mount the boot partition (sudo mount /boot)"* ]]
+  [[ $output == *"Snapshot 12 is the state before this update."* ]]
+  mountpoint() { return 0; }
+  ROOT='' run esp_unmounted /boot
+  [ "$status" -eq 1 ]
+}
+
+@test "the update's snapshots are kept apart from the ones around every pacman run" {
+  snapper() { echo "snapper $*"; }
+  run snapshot "nova update v1.0.0 -> v1.1.0" --type pre
+  [[ $output == *"--cleanup-algorithm number --userdata important=yes"* ]]
+}
+
 @test "a failed pacman puts back the mirror files and the databases that went with them" {
   put "$MIRRORLIST" 'old mirror'
   put "$REPOFILE" 'old repo'

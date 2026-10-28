@@ -318,3 +318,11 @@ JSON
   [[ $output != *"Nova is up to date"* ]]
   grep -q '^nova-update-apply --tag v1.0.0-beta.2' "$CALLS"
 }
+
+@test "--check-boot runs the root half's boot check and nothing else" {
+  stub nova-update-apply 'exit 3'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check-boot
+  [ "$status" -eq 3 ]
+  [ "$(cat "$CALLS")" = "pkexec $NOVA_UPDATE_APPLY --check-boot
+nova-update-apply --check-boot" ]
+}
