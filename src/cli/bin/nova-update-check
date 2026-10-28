@@ -1,11 +1,63 @@
 #!/bin/bash
 # nova:summary=Print "available <version>" or "current" (for the shell's update badge)
+# nova:args=[--notify]
 #
 # A thin wrapper over `nova update --check`, which caches the answer for half an hour
 # so a polling widget stays far below GitHub's unauthenticated API rate limit.
 # Exit status is non-zero, with nothing on stdout, when the answer could not be had
 # (offline, rate limited): callers should keep showing the last state.
+#
+# With --notify, as the bar's badge asks, a notification says it too: once for
+# each answer with something to install, and again only after Nova was current
+# in between. Being current is never one. Each screen's bar asks: one at a time.
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-exec "$HERE/nova-update" --check "$@"
+NOTIFIED=${NOVA_UPDATE_NOTIFIED:-${XDG_STATE_HOME:-$HOME/.local/state}/nova/update-notified}
+
+notify=0
+if [[ ${1:-} == --notify ]]; then
+  notify=1
+  shift
+fi
+answer=$("$HERE/nova-update" --check "$@")
+printf '%s\n' "$answer"
+((notify)) || exit 0
+
+mkdir -p -- "${NOTIFIED%/*}"
+exec {lock}>"$NOTIFIED.lock"
+flock "$lock"
+[[ $(cat -- "$NOTIFIED" 2>/dev/null) != "$answer" ]] || exit 0
+
+apps() { # package...: their names, as Settings has them, "A, B and C"
+  local app name i=0
+  for app in "$@"; do
+    case $app in
+      google-chrome) name=Chrome ;;
+      visual-studio-code-bin) name="VS Code" ;;
+      *) name=$app ;;
+    esac
+    if ((++i == $#)) && ((i > 1)); then
+      printf ' and '
+    elif ((i > 1)); then
+      printf ', '
+    fi
+    printf '%s' "$name"
+  done
+}
+
+open=(--exec nova-shell shell summon nova.settings '{"page":"updates"}')
+case $answer in
+  "available "*)
+    nova-notification-send -g 󰚰 "Nova ${answer#available } is available" \
+      "Settings → Updates installs it." "${open[@]}" >/dev/null || exit 0
+    ;;
+  "apps "*)
+    read -ra behind <<<"${answer#apps }"
+    them=it
+    ((${#behind[@]} == 1)) || them=them
+    nova-notification-send -g 󰚰 "$(apps "${behind[@]}") can be updated" \
+      "Settings → Updates installs $them." "${open[@]}" >/dev/null || exit 0
+    ;;
+esac
+printf '%s\n' "$answer" >"$NOTIFIED"

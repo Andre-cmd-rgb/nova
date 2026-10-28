@@ -28,7 +28,8 @@ BarWidget {
 
   Process {
     id: updateProc
-    command: ["nova-update-check"]
+    // And a notification, once for each update found.
+    command: ["nova-update-check", "--notify"]
     // "available <version>", "apps <name>..." when only Chrome or VS Code is
     // behind, or "current"; nothing when offline, which keeps the badge as it
     // was.

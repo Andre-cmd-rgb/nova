@@ -634,16 +634,18 @@ settings_update() {
   restart_shell "$cur_pkgver"
 }
 
-# For a window that may be closed by now.
+# For a window that may be closed by now: what is left to do, and what
+# changed. Nova installed needs saying only when it waits for a restart, and
+# Nova already current never.
 notify_result() {
   local -a open=(--exec nova-shell shell summon nova.settings '{"page":"updates"}')
   local app names=()
   for app in "${st_apps[@]}"; do names+=("$(app_name "$app")"); done
   case $st_state in
     done)
-      if [[ -n $st_version && $(installed_pkgver) == "$(tag_pkgver "$st_version")" ]]; then
-        nova-notification-send -g 󰚰 "Nova is up to date" \
-          "Now on $st_version.$( (( ! st_restart )) || echo " Restart to finish.")" "${open[@]}"
+      if (( ${#release_flags[@]} && st_restart )) && [[ -n $st_version && $(installed_pkgver) == "$(tag_pkgver "$st_version")" ]]; then
+        nova-notification-send -g 󰚰 "Restart to finish the update" \
+          "Nova $st_version is installed." "${open[@]}"
       elif (( ${#names[@]} )); then
         nova-notification-send -g 󰚰 "${names[0]}${names[1]:+ and ${names[1]}} updated"
       fi

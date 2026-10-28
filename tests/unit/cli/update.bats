@@ -112,6 +112,58 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [ "$output" = "available 1.0.0-beta.2" ]
 }
 
+@test "the badge's check says an update once, and again only after Nova was current" {
+  export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_API=http://127.0.0.1:9 NOVA_UPDATE_NOTIFIED="$SCRATCH/state/notified"
+  stub nova-notification-send
+  echo "$(date +%s) v1.0.0-beta.2" >"$NOVA_UPDATE_CACHE"
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$status" -eq 0 ]
+  [ "$output" = "available 1.0.0-beta.2" ]
+  grep -qx 'nova-notification-send -g 󰚰 Nova 1.0.0-beta.2 is available Settings → Updates installs it. --exec nova-shell shell summon nova.settings {"page":"updates"}' "$CALLS"
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$output" = "available 1.0.0-beta.2" ]
+  [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 1 ]
+  # Current, then the apps behind: said, with no word for being current.
+  echo 1.0.0beta.2 >"$PKGVER"
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$output" = current ]
+  [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 1 ]
+  stub nova-apps-install 'echo "apps google-chrome visual-studio-code-bin"'
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  grep -q '^nova-notification-send -g 󰚰 Chrome and VS Code can be updated Settings → Updates installs them. ' "$CALLS"
+  # Without --notify, as Settings asks, nothing is said.
+  stub nova-apps-install 'echo "apps google-chrome"'
+  run "$REPO_ROOT/src/cli/bin/nova-update-check"
+  [ "$output" = "apps google-chrome" ]
+  [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 2 ]
+}
+
+@test "the badge's check tries again an update it could not say" {
+  export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_API=http://127.0.0.1:9 NOVA_UPDATE_NOTIFIED="$SCRATCH/state/notified"
+  echo "$(date +%s) v1.0.0-beta.2" >"$NOVA_UPDATE_CACHE"
+  stub nova-notification-send 'exit 1'
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$status" -eq 0 ]
+  [ "$output" = "available 1.0.0-beta.2" ]
+  stub nova-notification-send
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 2 ]
+  [ "$(cat "$NOVA_UPDATE_NOTIFIED")" = "available 1.0.0-beta.2" ]
+}
+
+@test "the badge's check, offline, says nothing and keeps what it said" {
+  export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_API=http://127.0.0.1:9 NOVA_UPDATE_NOTIFIED="$SCRATCH/state/notified"
+  mkdir -p "$SCRATCH/state"
+  echo "available 1.0.0-beta.2" >"$NOVA_UPDATE_NOTIFIED"
+  stub nova-notification-send
+  stub curl 'exit 7'
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$status" -ne 0 ]
+  [ -z "$output" ] || [[ $output != available* && $output != current ]]
+  fails grep -q '^nova-notification-send' "$CALLS"
+  [ "$(cat "$NOVA_UPDATE_NOTIFIED")" = "available 1.0.0-beta.2" ]
+}
+
 @test "following candidates: switched on and off, and the check then offers them" {
   export NOVA_UPDATE_CANDIDATES="$SCRATCH/config/update-candidates" NOVA_UPDATE_CACHE="$SCRATCH/cache"
   echo 1.0.0 >"$PKGVER"
@@ -365,7 +417,7 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   grep -qE "^pkexec $NOVA_UPDATE_APPLY --tag v1.0.0-beta.2 .*--noconfirm --package $XDG_CACHE_HOME/nova/update-build\.[^/]+/google-chrome-141.0-1-x86_64.pkg.tar.zst\$" "$CALLS"
   grep -qx 'nova-apps-install --build .* --update' "$CALLS"
   grep -qx "nova-apps-install --record google-chrome $(printf a%.0s {1..40})" "$CALLS"
-  grep -q '^nova-notification-send .*Nova is up to date Now on 1.0.0-beta.2. Restart to finish.' "$CALLS"
+  grep -q '^nova-notification-send .*Restart to finish the update Nova 1.0.0-beta.2 is installed.' "$CALLS"
   # The shell last, after Settings has the result.
   [ "$(tail -n 1 "$CALLS")" = 'nova-restart-shell ' ]
   grep -q 'Nova is now on v1.0.0-beta.2.' "$SCRATCH/run/status.log"
@@ -423,6 +475,34 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field held)" = '["visual-studio-code-bin"]' ]
   fails grep -q pkexec "$CALLS"
   grep -q '^nova-notification-send .*VS Code is waiting for you' "$CALLS"
+}
+
+@test "Settings: Nova already current, with nothing else to do, says nothing" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  stub nova-notification-send
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  fails grep -q pkexec "$CALLS"
+  fails grep -q nova-notification-send "$CALLS"
+}
+
+@test "Settings: with Nova current, an app updated is what it says" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  build_chrome
+  stub pacman 'case $2 in google-chrome) echo "google-chrome 141.0-1" ;; *) echo "nova $(cat "$PKGVER")-1" ;; esac'
+  stub nova-notification-send
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  [ "$(grep '^nova-notification-send' "$CALLS")" = 'nova-notification-send -g 󰚰 Chrome updated' ]
+}
+
+@test "Settings: Nova installed with no restart to wait for says nothing" {
+  stub nova-notification-send
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  [ "$(field version)" = '"1.0.0-beta.2"' ]
+  [ "$(field restart)" = false ]
+  fails grep -q nova-notification-send "$CALLS"
 }
 
 @test "Settings: a reviewed app alone, approved for its commit" {
