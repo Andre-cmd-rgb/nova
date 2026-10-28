@@ -144,9 +144,28 @@ EOF
 # The hardware profile's packages too, as nova-install installs a PC's.
 mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' \
   "$root/data/raspberry-pi/image/packages" "$root/data/hardware/raspberry-pi-5/packages")
-# A download that stalls fails the whole transaction, which then installs
-# nothing; the files already fetched stay in the cache, so a second try only
-# fetches the rest.
+# From a GitHub runner the pool can go quiet for longer than the ten seconds
+# pacman waits, and one stalled file fails its whole transaction: curl fetches
+# the pool's files first, each retried on its own. The signature beside a
+# file, when nova-alarm.db does not carry it.
+say "Fetching the packages from the pool"
+mkdir -p "$work/db"
+pacman --config "$work/pacman.conf" --dbpath "$work/db" -Sy >/dev/null
+pacman --config "$work/pacman.conf" --dbpath "$work/db" -Sp --print-format '%r %f %g' "${packages[@]}" |
+  while read -r from file sig; do
+    [[ $from == nova-alarm && ! -e $new/$file ]] || continue
+    names=("$file")
+    [[ -n $sig ]] || names+=("$file.sig")
+    for name in "${names[@]}"; do
+      printf 'url = "%s/%s"\noutput = "%s/%s"\n' "$alarm_pool" "$name" "$work/cache" "$name"
+    done
+  done >"$work/fetch"
+curl --parallel --parallel-max 4 --fail --silent --show-error --remove-on-error \
+  --retry 5 --retry-all-errors --retry-delay 5 --speed-limit 1024 --speed-time 60 \
+  --config "$work/fetch" || say "Some did not download; pacman tries them again"
+# Whatever is still missing, pacman fetches. A download that stalls fails the
+# whole transaction, which then installs nothing; the files already fetched
+# stay in the cache, so a second try only fetches the rest.
 for try in 1 2 3; do
   pacstrap -C "$work/pacman.conf" -c -G -M "$mnt" "${packages[@]}" && break
   ((try < 3)) || die "the packages did not install"
