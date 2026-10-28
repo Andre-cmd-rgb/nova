@@ -318,6 +318,13 @@ main() {
     *) die "Nova is not built for $ARCH" ;;
   esac
 
+  # Pacman's lock starts too late to protect the pins and their backups.
+  # /run is owned by root, so another account cannot supply this lock file.
+  mkdir -p "$ROOT/run"
+  local update_lock
+  exec {update_lock}>"$ROOT/run/nova-update.lock"
+  flock -n "$update_lock" || die "another Nova update is running"
+
   # Read by pacman_failed. pacman finishes a transaction when the terminal
   # closes; so does this, writing to the log instead.
   label="nova update ${from:+$from -> }$tag" pre=''

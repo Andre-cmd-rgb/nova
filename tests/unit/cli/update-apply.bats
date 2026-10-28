@@ -152,7 +152,7 @@ Server = https://example.org/repo/aarch64" ]
 
 # A whole update on a Pi, with the helpers next to the script as they are
 # installed, and pacman, snapper and the boot check stubbed.
-pi_update() { # boot-check status
+prepare_pi_update() { # boot-check status
   mkdir -p "$SCRATCH/lib" "$SCRATCH/bin" "$NOVA_ROOT/etc/pacman.d"
   cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
   printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/lib/nova-hw-detect"
@@ -160,9 +160,17 @@ pi_update() { # boot-check status
   printf '#!/bin/bash\necho "${0##*/} $*" >>"$SCRATCH/calls"\n' >"$SCRATCH/bin/pacman"
   cp "$SCRATCH/bin/pacman" "$SCRATCH/bin/snapper"
   chmod +x "$SCRATCH"/lib/* "$SCRATCH"/bin/*
+}
+
+run_pi_update() {
   PATH="$SCRATCH/bin:$PATH" NOVA_ARCH=aarch64 "$SCRATCH/lib/nova-update-apply" --tag v1.1.0 --version 1.1.0 \
     --arch-date 2026/10/19 --nova-repo https://example.org/repo \
     --alarm-date 2026/10/20 --alarm-pool https://example.org/alarm/aarch64 --noconfirm
+}
+
+pi_update() { # boot-check status
+  prepare_pi_update "$1"
+  run_pi_update
 }
 
 @test "an update on a Pi: its keyring, no snapshots, and the boot partition checked" {
@@ -232,4 +240,30 @@ STUB
   [ ! -e "$MIRRORLIST" ]
   [ ! -e "$REPOFILE" ]
   [ ! -e "$REPOFILE.nova-absent" ]
+}
+
+@test "a second update cannot change pins while the first verifies boot" {
+  prepare_pi_update 0
+  mkfifo "$SCRATCH/entered" "$SCRATCH/release"
+  cat >"$SCRATCH/lib/nova-boot-check" <<'STUB'
+#!/bin/bash
+echo ready >"$SCRATCH/entered"
+read -r -t 10 reply <"$SCRATCH/release"
+STUB
+  run_pi_update >"$SCRATCH/first.log" 2>&1 &
+  local first_pid=$!
+  # Hold the first process in verification, after pacman released its lock.
+  read -r -t 10 reply <"$SCRATCH/entered"
+  run run_pi_update
+  local second_status=$status second_output=$output
+  echo done >"$SCRATCH/release"
+  wait "$first_pid"
+  [ "$second_status" -ne 0 ]
+  [[ $second_output == *"another Nova update is running"* ]]
+  [ "$(grep -c '^pacman -Syy' "$SCRATCH/calls")" -eq 1 ]
+  [ "$(grep -c '^pacman -Su ' "$SCRATCH/calls")" -eq 1 ]
+  # Exiting releases the lock, so the next attempt is allowed.
+  printf '#!/bin/bash\nexit 0\n' >"$SCRATCH/lib/nova-boot-check"
+  run run_pi_update
+  [ "$status" -eq 0 ]
 }
