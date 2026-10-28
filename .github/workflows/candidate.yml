@@ -3,12 +3,21 @@
 # Arch snapshot and published as a pre-release, which only systems already on
 # a pre-release follow. Once it has been tested on the machines, promote.yml
 # makes it the release. See docs/releasing.md.
+#
+# After a final release the next is a patch version (v1.0.1) unless a run by
+# hand asks for a minor one (v1.1.0), for new features, or a major one.
 name: candidate
 
 on:
   schedule:
     - cron: '17 6 1,15 * *'
   workflow_dispatch:
+    inputs:
+      version:
+        description: After a final release, the next version is a
+        type: choice
+        options: [patch, minor, major]
+        default: patch
 
 permissions:
   contents: read
@@ -42,8 +51,13 @@ jobs:
             { echo "::error::no signing key yet: see docs/releasing.md, The signing key"; exit 1; }
       - id: tag
         name: Tag the next candidate
+        env:
+          BUMP: ${{ inputs.version }}
         run: |
-          tag=$(tools/release-next)
+          # A scheduled run has no input: a patch version.
+          bump=()
+          [[ ${BUMP:-patch} == patch ]] || bump=("--$BUMP")
+          tag=$(tools/release-next "${bump[@]}")
           git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
             tag -a "$tag" -m "Nova ${tag#v}"
           git push origin "refs/tags/$tag"

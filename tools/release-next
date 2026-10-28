@@ -1,35 +1,68 @@
 #!/bin/bash
 # release-next: the tag the next release candidate gets, from the tags there are.
 #
-#   tools/release-next [--stdin]
+#   tools/release-next [--minor | --major] [--stdin]
 #
 # A candidate continues the newest version that is not final yet: after
-# v1.0.0-beta.3 comes v1.0.0-beta.4, after v1.1.0-rc.1 comes v1.1.0-rc.2. Once
-# the newest is final (v1.1.0), the next candidate starts the next minor
-# version, v1.2.0-rc.1; with no tags at all, it is v1.0.0-beta.1. The tags come
-# from `git tag`, or one per line on stdin with --stdin.
+# v1.0.0-beta.3 comes v1.0.0-beta.4, after v1.0.1-rc.1 comes v1.0.1-rc.2. Once
+# the newest is final (v1.0.0), the next candidate starts the next patch
+# version, v1.0.1-rc.1: the fortnightly release of fixes and Arch's updates.
+# --minor starts the next minor version instead (v1.1.0-rc.1), for new
+# features, and --major the next major one (v2.0.0-rc.1), each counted from
+# the newest final release: one already started is continued, and a smaller
+# one still open is left behind. With no tags at all, it is v1.0.0-beta.1. The
+# tags come from `git tag`, or one per line on stdin with --stdin.
 set -euo pipefail
 
-case ${1:-} in
-  --stdin) tags=$(cat) ;;
-  "") tags=$(git tag --list 'v*') ;;
-  *) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//' >&2; exit 2 ;;
-esac
+usage() { sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//' >&2; exit 2; }
+
+bump=patch stdin=0
+while (($#)); do
+  case $1 in
+    --stdin) stdin=1 ;;
+    --minor) bump=minor ;;
+    --major) bump=major ;;
+    *) usage ;;
+  esac
+  shift
+done
+if ((stdin)); then
+  tags=$(cat)
+else
+  tags=$(git tag --list 'v*')
+fi
 
 # major minor patch stage n name, where stage orders beta < rc < final.
-newest=$(awk '/^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$/ {
+versions=$(awk '/^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$/ {
     split(substr($0, 2), part, /[.-]/)
     stage = part[4] == "" ? 2 : part[4] == "rc" ? 1 : 0
     printf "%d %d %d %d %d %s\n", part[1], part[2], part[3], stage, part[5], part[4]
-  }' <<<"$tags" | sort -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n | tail -n 1)
+  }' <<<"$tags" | sort -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n)
 
-if [[ -z $newest ]]; then
+if [[ -z $versions ]]; then
   echo v1.0.0-beta.1
   exit 0
 fi
-read -r major minor patch stage n name <<<"$newest"
+read -r major minor patch stage n name <<<"$(tail -n 1 <<<"$versions")"
+
+# The version a bump asks for, from the newest final release; none yet, and
+# the first is still to come.
+final=$(awk '$4 == 2' <<<"$versions" | tail -n 1)
+if [[ $bump != patch && -n $final ]]; then
+  read -r fmajor fminor _ <<<"$final"
+  if [[ $bump == minor ]]; then
+    want=("$fmajor" $((fminor + 1)) 0)
+  else
+    want=($((fmajor + 1)) 0 0)
+  fi
+  if ((major < want[0] || (major == want[0] && (minor < want[1] || (minor == want[1] && patch < want[2]))))); then
+    echo "v${want[0]}.${want[1]}.${want[2]}-rc.1"
+    exit 0
+  fi
+fi
+
 if ((stage == 2)); then
-  echo "v$major.$((minor + 1)).0-rc.1"
+  echo "v$major.$minor.$((patch + 1))-rc.1"
 else
   echo "v$major.$minor.$patch-$name.$((n + 1))"
 fi

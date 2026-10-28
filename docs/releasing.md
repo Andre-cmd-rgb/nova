@@ -66,6 +66,14 @@ is -1), so moving from a beta to the final release is an ordinary upgrade.
 A tag with a `-` becomes a GitHub pre-release, which reaches testers and
 nobody else (below).
 
+After a final release, the next is a patch version: v1.0.0, then v1.0.1, the
+fortnight's fixes and Arch's updates. New features make a minor version
+(v1.1.0), and a major one is for what breaks how Nova is used: Actions →
+candidate → Run with *minor* or *major*, or `gh workflow run candidate.yml -f
+version=minor`. A version once started is continued by every candidate after
+it, the scheduled ones too, until it is final; a patch candidate still open
+when a minor one starts is left behind, never promoted.
+
 ## The signing key (once)
 
 The `[nova]` repository and every package in it are signed, and pacman refuses
@@ -214,7 +222,7 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    unused (`tools/ci-setup --cache`). Past that, promote refuses before it
    tags anything, and the next candidate is the one to promote. A candidate
    due on the 1st or the 15th waits while promote runs, and after it is the
-   next version's first (`v1.1.0-rc.1`).
+   next version's first (`v1.0.1-rc.1`).
 
 ### The hardware checklist
 
