@@ -215,7 +215,7 @@ report_boot() { # log expected-completion; cursor codes can precede the first li
   local log=$1 completion=$2 report
   report=$(tr -d '\r' <"$log" | grep -ao 'probe:.*' || true)
   printf '%s\n' "$report"
-  grep -qx "probe: done$completion" <<<"$report" || die "the probe did not finish"
+  grep -q "^probe: done$completion" <<<"$report" || die "the probe did not finish"
   ! grep -q '^probe: FAIL' <<<"$report" || die "the installed system has problems (above)"
 }
 

@@ -122,6 +122,18 @@ releases() { # tag...; all published, candidates included
   [ "$status" -eq 22 ]
 }
 
+@test "a client that connects and says nothing holds up no other" {
+  mkdir "$SCRATCH/repo"
+  echo 'the signed database' >"$SCRATCH/repo/nova.db"
+  start_upgrade_repo "$SCRATCH" "$SCRATCH/repo"
+  port=$(cat "$SCRATCH/repo.port")
+  exec {stall}<>"/dev/tcp/127.0.0.1/$port"
+  reply=$(curl -fsS --max-time 10 --noproxy '*' --cacert "$SCRATCH/ca.crt" \
+    --connect-to "10.0.2.2:$port:127.0.0.1:$port" "$upgrade_repo/nova.db")
+  exec {stall}>&-
+  [ "$reply" = 'the signed database' ]
+}
+
 @test "the guest payload is valid Bash and carries the manifests without interpreting them" {
   here=$REPO_ROOT/tests/install
   printf 'version = "1.0.0-beta.8"\nnova_repo = "https://published.example/v1.0.0-beta.8"\n' >"$SCRATCH/previous.toml"
@@ -144,6 +156,27 @@ releases() { # tag...; all published, candidates included
   echo 'an update that never took its snapshot' >"$SCRATCH/update.log"
   run update_snapshot "$SCRATCH/update.log"
   [ "$status" -ne 0 ]
+}
+
+@test "an update that fails is tried again, three times at most, and its log is the last try's" {
+  source "$REPO_ROOT/tests/install/upgrade-probe"
+  sleep() { :; }
+  # Each try takes its snapshot; the third succeeds.
+  nova() {
+    echo try >>"$SCRATCH/tries"
+    local n
+    n=$(wc -l <"$SCRATCH/tries")
+    echo "==> Snapshot $((16 + n)) taken"
+    ((n == 3))
+  }
+  update_tries "$SCRATCH/update.log" --release-file candidate.toml --yes
+  [ "$(update_snapshot "$SCRATCH/update.log")" = 19 ]
+  rm "$SCRATCH/tries"
+  nova() { echo try >>"$SCRATCH/tries"; return 1; }
+  run update_tries "$SCRATCH/update.log" --yes
+  [ "$status" -eq 1 ]
+  [ "$(wc -l <"$SCRATCH/tries")" -eq 3 ]
+  [[ $output == *'nova update failed (try 3 of 3)'* ]]
 }
 
 @test "the old release uses its fallback guard and the upgraded release must pass check-boot" {

@@ -40,6 +40,20 @@ update_snapshot() { # update-log
 # the serial log. Never start the next operation after one has failed.
 checks_passed() { ((probe_failures == 0)); }
 
+# nova update, up to three times: a download that stalls (the archive, the
+# bucket) fails it, and a failed update puts the pins back as they were. The
+# log is the last try's, with that try's one snapshot.
+update_tries() { # log nova-update-argument...
+  local log=$1 try
+  shift
+  for try in 1 2 3; do
+    nova update "$@" 2>&1 | tee "$log" && return 0
+    echo "probe:   nova update failed (try $try of 3)"
+    ((try == 3)) || sleep 30
+  done
+  return 1
+}
+
 # Booting a Limine snapshot and its overlay depends on menu input and graphics.
 # Use the same Btrfs effect as RESTORE_METHOD=replace instead: a writable copy
 # of the exact pre-update snapshot takes the name @, which fstab and the UKI
@@ -70,7 +84,8 @@ main() {
   set -euo pipefail
   set -o errtrace
   exec >/dev/ttyS0 2>&1
-  export PATH=/usr/lib/nova/bin:$PATH
+  # A service has no HOME unless it names a user, and nova update reads it.
+  export PATH=/usr/lib/nova/bin:$PATH HOME=/root
   state=/home/nova-upgrade-test
   stage=$(cat "$state/stage")
   trap 'echo "probe: FAIL $stage stopped at line $LINENO"; systemctl poweroff' ERR
@@ -85,7 +100,7 @@ main() {
       cp /etc/pacman.d/nova-{mirrorlist,repo} "$state/"
       pacman -Q >"$state/packages.before"
       echo before > /etc/nova-upgrade-test
-      nova update --release-file "$state/candidate.toml" --yes 2>&1 | tee "$state/update.log"
+      update_tries "$state/update.log" --release-file "$state/candidate.toml" --yes
       update_snapshot "$state/update.log" >"$state/snapshot"
       number=$(cat "$state/snapshot")
       [[ $number =~ ^[0-9]+$ && -d /.snapshots/$number/snapshot ]]
@@ -99,7 +114,7 @@ main() {
       checks_passed
       # This local manifest was checked with nova-usb's signature helper before
       # installation. Its repository is the previous release's public one.
-      nova update --release-file "$state/previous.toml" --allow-downgrade --yes
+      update_tries "$state/downgrade.log" --release-file "$state/previous.toml" --allow-downgrade --yes
       echo downgraded >"$state/stage"
       ;;
     downgraded)

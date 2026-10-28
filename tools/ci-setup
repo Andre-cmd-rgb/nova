@@ -50,8 +50,11 @@ case ${1:-} in
       cache=$(realpath -m -- "${2:?--cache needs a directory}")
       shift 2
       mkdir -p -- "$cache"
-      # The first CacheDir is where pacman downloads to.
-      sed -i "/^\[options\]/a CacheDir = $cache/" /etc/pacman.conf
+      # The first CacheDir is where pacman downloads to. pacman downloads as
+      # its alpm user, into a folder it makes there, and this one is on the
+      # runner's disk, whose folders that user may not be let into: as root,
+      # since the container is the sandbox here (tools/alarm-container).
+      sed -i -e "/^\[options\]/a CacheDir = $cache/" -e '/^DownloadUser/d' /etc/pacman.conf
     fi
     ;;
 esac
@@ -77,6 +80,8 @@ tries "$sync" --noconfirm --needed git sudo "$@"
 if [[ -n ${cache:-} ]]; then
   mapfile -t native < <(pacman -Qqn)
   tries -Sw --noconfirm "${native[@]}"
+  # What a stopped try left half-fetched, which CI would keep with the rest.
+  rm -rf -- "$cache"/download-* "$cache"/*.part
 fi
 
 id builder >/dev/null 2>&1 || useradd -m builder

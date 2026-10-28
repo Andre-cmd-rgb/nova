@@ -65,13 +65,23 @@ import pathlib
 import ssl
 import sys
 
+
+class Handler(http.server.SimpleHTTPRequestHandler):
+    # The handshake in the connection's own thread, and bounded: done in
+    # accept(), one client that stalls would hold up every other.
+    timeout = 60
+
+    def setup(self):
+        self.request.settimeout(self.timeout)
+        self.request.do_handshake()
+        super().setup()
+
+
 repo, work = sys.argv[1], pathlib.Path(sys.argv[2])
-server = http.server.ThreadingHTTPServer(
-    ("127.0.0.1", 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=repo)
-)
+server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=repo))
 context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
 context.load_cert_chain(work / "server.crt", work / "server.key")
-server.socket = context.wrap_socket(server.socket, server_side=True)
+server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
 (work / "repo.port").write_text(str(server.server_port))
 server.serve_forever()
 PY

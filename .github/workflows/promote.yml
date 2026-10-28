@@ -30,7 +30,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      actions: read # the caches the Raspberry Pi build needs
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       arch_date: ${{ steps.tag.outputs.arch_date }}
@@ -51,8 +50,8 @@ jobs:
             { echo "::error::no signing key: see docs/releasing.md, The signing key"; exit 1; }
           [[ -n $R2_ACCESS_KEY_ID && -n $R2_SECRET_ACCESS_KEY && -n $R2_ACCOUNT_ID ]] ||
             { echo "::error::no bucket credentials: see docs/releasing.md, The package bucket"; exit 1; }
-      - id: tag
-        name: Tag the candidate's commit with its final version
+      - id: check
+        name: The candidate can be promoted
         env:
           CANDIDATE: ${{ inputs.candidate }}
           GH_TOKEN: ${{ github.token }}
@@ -84,22 +83,56 @@ jobs:
           gh release download "$CANDIDATE" --pattern release.toml --output from.toml
           arch_date=$(sed -n 's/^arch_date = "\([0-9/]*\)"$/\1/p' from.toml)
           [[ -n $arch_date ]] || { echo "::error::$CANDIDATE's release.toml has no arch_date"; exit 1; }
-          # The Raspberry Pi build runs on the packages the candidate's own
-          # containers installed, which Arch Linux ARM's mirrors no longer
-          # have, and which CI keeps for a week once unused (tools/ci-setup).
-          if grep -q '^alarm_date = ' from.toml; then
-            for kept in alarm-build alarm-host; do
-              [[ $(gh cache list --key "$kept-$CANDIDATE-" --limit 1 --json key --jq length) == 1 ]] ||
-                { echo "::error::CI no longer keeps the packages $CANDIDATE's Raspberry Pi build ran on ($kept): cut a new candidate, and promote that one"; exit 1; }
-            done
-          fi
-          if [[ $tagged == no ]]; then
+          alarm=
+          ! grep -q '^alarm_date = ' from.toml ||
+            alarm=$(sed -n 's/^nova_repo = "\(.*\)"$/\1/p' from.toml)/aarch64/alarm
+          {
+            echo "final=$final"
+            echo "tagged=$tagged"
+            echo "arch_date=$arch_date"
+            echo "alarm=$alarm"
+          } >>"$GITHUB_OUTPUT"
+      # The Raspberry Pi build runs on the packages the candidate's own
+      # containers installed, which Arch Linux ARM's mirrors no longer have, and
+      # which CI keeps for a week once unused (tools/ci-setup --cache): looked
+      # up here as the Pi's jobs will restore them, by the candidate's own
+      # databases, before anything is tagged.
+      - name: The candidate's Arch Linux ARM databases
+        if: steps.check.outputs.alarm != ''
+        env:
+          ALARM: ${{ steps.check.outputs.alarm }}
+        run: tools/alarm-pin --fetch out/alarm-dbs --from "$ALARM"
+      - name: CI still keeps the packages its Raspberry Pi build ran on
+        if: steps.check.outputs.alarm != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/alarm-build
+          key: alarm-build-${{ inputs.candidate }}-${{ hashFiles('out/alarm-dbs/*.db') }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - name: CI still keeps the packages its Raspberry Pi image was built with
+        if: steps.check.outputs.alarm != ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/alarm-host
+          key: alarm-host-${{ inputs.candidate }}-${{ hashFiles('out/alarm-dbs/*.db') }}
+          lookup-only: true
+          fail-on-cache-miss: true
+      - id: tag
+        name: Tag the candidate's commit with its final version
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          FINAL: ${{ steps.check.outputs.final }}
+          TAGGED: ${{ steps.check.outputs.tagged }}
+          ARCH_DATE: ${{ steps.check.outputs.arch_date }}
+        run: |
+          if [[ $TAGGED == no ]]; then
             git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
-              tag -a "$final" -m "Nova ${final#v}" "$CANDIDATE^{commit}"
-            git push origin "refs/tags/$final"
+              tag -a "$FINAL" -m "Nova ${FINAL#v}" "$CANDIDATE^{commit}"
+            git push origin "refs/tags/$FINAL"
           fi
-          echo "tag=$final" >>"$GITHUB_OUTPUT"
-          echo "arch_date=$arch_date" >>"$GITHUB_OUTPUT"
+          echo "tag=$FINAL" >>"$GITHUB_OUTPUT"
+          echo "arch_date=$ARCH_DATE" >>"$GITHUB_OUTPUT"
 
   release:
     needs: tag
