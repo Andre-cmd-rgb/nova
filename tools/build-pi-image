@@ -144,7 +144,14 @@ EOF
 # The hardware profile's packages too, as nova-install installs a PC's.
 mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' \
   "$root/data/raspberry-pi/image/packages" "$root/data/hardware/raspberry-pi-5/packages")
-pacstrap -C "$work/pacman.conf" -c -G -M "$mnt" "${packages[@]}"
+# A download that stalls fails the whole transaction, which then installs
+# nothing; the files already fetched stay in the cache, so a second try only
+# fetches the rest.
+for try in 1 2 3; do
+  pacstrap -C "$work/pacman.conf" -c -G -M "$mnt" "${packages[@]}" && break
+  ((try < 3)) || die "the packages did not install"
+  say "Fetching the packages that failed again"
+done
 
 # ------------------------------------------------------------- the system
 
