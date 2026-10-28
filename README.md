@@ -9,7 +9,8 @@ stick that can carry your files over.
 **Status: beta.** Tuned for the Lenovo ThinkPad P1 Gen 4i, and runs on the
 Raspberry Pi 5. The Lenovo Legion 5 (RTX 4070) has a first profile, not yet
 tuned. Other x86-64 laptops and desktops with Intel, AMD or NVIDIA graphics
-should work, but are untested.
+should work, but are untested. NVIDIA cards older than the GTX 16 and RTX 20
+series get the basic nouveau driver: NVIDIA's own starts with those.
 
 ## Install on a PC
 
@@ -46,7 +47,8 @@ read it; on, the disk asks for its passphrase at every start, and without it
 nothing on the disk can be read by anyone, you included.
 
 The installer picks the drivers for Intel, AMD and NVIDIA graphics, the
-microcode and the firmware, and the computer restarts into the lock screen.
+microcode and the firmware. Then take the stick out and restart (`reboot`):
+the computer starts into the lock screen.
 The stick's boot menu also has a memory test (memtest86+).
 
 ## Install on a Raspberry Pi 5
@@ -105,6 +107,13 @@ into the lock screen. What differs from a PC is in
   there is one, is played instead of the wordmark.
 - **Apps:** Chrome, VS Code, Nautilus, foot, btop, fastfetch, Claude Code and
   Codex come installed.
+- **Keyboard:** Caps Lock is the Compose key (Compose, ', e types é), and
+  both Shifts together are Caps Lock. More layouts, the key repeat and the
+  scrolling direction are in `~/.config/hypr/input.lua`, with examples; there
+  is no Settings page for them yet.
+- **Languages:** Nova is in English. Other languages' text shows; Chinese,
+  Japanese and Korean need `sudo pacman -S noto-fonts-cjk`, and have no input
+  method yet.
 - **`nova help`** lists the commands.
 
 ## Updates

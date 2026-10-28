@@ -246,6 +246,20 @@ The kernel moves only when `packaging/linux-nova` is updated
 Pushing a tag by hand (`git tag -s v1.0.1 -m 'Nova 1.0.1' && git push origin
 v1.0.1`) builds the same way but leaves a draft, for a fix between candidates.
 
-A release that turns out broken is never deleted, because systems may already
-be on it: tag a fixed one. `nova update --version <tag> --allow-downgrade`
-takes a system back, and snapper has the snapshot from before the update.
+### Withdrawing a broken release
+
+A release that turns out broken is never deleted, and its files stay in the
+bucket, because systems may already be on it. Instead:
+
+1. **Stop offering it:** `gh release edit <tag> --draft=true`. Drafts are in
+   no list `nova update` reads, so no other system moves to it; for a final
+   release, `/releases/latest` falls back to the one before. Note it in the
+   tag's release notes before, so the reason stays with it.
+2. **Move the systems on it:** `nova update` never goes back to an older Arch
+   snapshot unasked, so systems already on it stay there until a newer
+   release. Cut the fix as the next candidate, from `main`, at once rather
+   than at the next 1st or 15th; for a final release, a fixed version tagged
+   by hand (above), its draft published once tested.
+3. **Until then**, on each system: boot the snapshot from before the update
+   and restore it (README, Going back), or
+   `nova update --version <the release before> --allow-downgrade`.
