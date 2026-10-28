@@ -223,6 +223,33 @@ END
   [[ $output != *nova-offline* ]]
 }
 
+@test "packages_available: both repositories are asked for the whole set before the erase" {
+  LOG=$SCRATCH/log
+  pacman() { # --config conf --dbpath db --logfile /dev/null operation...
+    echo "pacman ${*:7}" >>"$SCRATCH/calls"
+    grep -c '^SigLevel = Never$' "$2" >>"$SCRATCH/calls"
+    echo "${2%/*}" >"$SCRATCH/dir"
+    [[ $* != *" -Sp "* || $* != *missing-package* ]]
+  }
+  run packages_available linux "" 2026/10/19 https://example.org/repo fprintd
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 1p "$SCRATCH/calls")" = "pacman -Sy" ]
+  [ "$(sed -n 2p "$SCRATCH/calls")" = 2 ]
+  [[ $(sed -n 3p "$SCRATCH/calls") == "pacman -Sp --print-format %n base "*" fprintd" ]]
+  run packages_available linux "" 2026/10/19 https://example.org/repo missing-package
+  [ "$status" -ne 0 ]
+  [ ! -e "$(cat "$SCRATCH/dir")" ]
+}
+
+@test "packages_available: the stick's repository needs no asking" {
+  mkdir -p "$NOVA_OFFLINE_REPO"
+  : >"$NOVA_OFFLINE_REPO/nova-offline.db"
+  pacman() { echo called >>"$SCRATCH/calls"; }
+  run packages_available linux "" 2026/10/19 https://example.org/repo
+  [ "$status" -eq 0 ]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
 @test "install_cmdline: root and resume on the same partition, in limine-snapper-sync's form" {
   run install_cmdline PARTUUID=abcd-1234 1941442
   [ "$output" = "root=PARTUUID=abcd-1234 rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0 resume=PARTUUID=abcd-1234 resume_offset=1941442" ]

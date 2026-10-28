@@ -649,6 +649,25 @@ create_subvolumes_and_mount() {
   logged swapon "$TARGET/swap/swapfile"
 }
 
+# Online, every package comes from the release's Arch snapshot and its own
+# repository. Both are asked for the whole set before the disk is erased, so
+# an outage of either stops the install with the disk as it was. Nothing is
+# installed from this, so signatures are left to pacstrap.
+packages_available() { # kernel profile arch_date nova_repo [package...]
+  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 dir status=0
+  local -a packages
+  offline_repo_ready && return 0
+  dir=$(mktemp -d /tmp/nova-preflight.XXXXXX)
+  mkdir "$dir/db"
+  pacstrap_conf "$arch_date" "$nova_repo" | sed 's/^SigLevel = .*/SigLevel = Never/' >"$dir/pacman.conf"
+  mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
+  logged pacman --config "$dir/pacman.conf" --dbpath "$dir/db" --logfile /dev/null -Sy &&
+    logged pacman --config "$dir/pacman.conf" --dbpath "$dir/db" --logfile /dev/null -Sp --print-format %n "${packages[@]}" ||
+    status=$?
+  rm -rf -- "$dir"
+  return "$status"
+}
+
 install_packages() { # kernel profile arch_date nova_repo [package...]
   local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf
   conf=$(mktemp /tmp/nova-pacstrap.XXXXXX.conf)
@@ -1058,6 +1077,11 @@ main() {
   grep -qxF -- "$DISK_LINE" <<<"$(candidate_disks)" ||
     die "$disk is no longer the disk that was picked (unplugged or swapped?); nothing was changed."
   ! disk_in_use "$disk" || die "$disk is in use by the live system now; nothing was changed."
+  if ! offline_repo_ready; then
+    info "Checking that every package is there to download"
+    packages_available "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}" ||
+      die "the Arch snapshot of $arch_date or Nova's repository did not have every package; nothing was changed. Try again later; the log is in $LOG"
+  fi
   set -E
   trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
   partition_and_format "$disk"
