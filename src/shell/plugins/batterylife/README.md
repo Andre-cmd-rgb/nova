@@ -71,12 +71,11 @@ power modes. To show this one beside it:
 nova bar put nova.batterylife --after nova.power
 ```
 
-The history is always in the menu (Super+Space → Battery Life), which opens it in Settings.
+The history is always in Settings → Battery.
 
 ## Its place in Settings
 
-Settings → Battery, at the top: `nova battery open`, the bar widget, or
-Super+Space → Battery Life.
+Settings → Battery, at the top: `nova battery open` or the bar widget opens it.
 
 - **Today** — 24 columns, the average draw for each hour that ran on battery.
   An hour spent plugged in, asleep or switched off is drawn empty rather than

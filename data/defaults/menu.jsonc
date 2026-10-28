@@ -18,8 +18,6 @@
   "toggle": {"icon":"󰔎","label":"Toggle","aliases":["toggles"]},
   "style": {"icon":"","label":"Style"},
   "power": {"icon":"󰌪","label":"Power Mode","aliases":["power-mode"],"when":"nova-power-profile list","provider":"power-profiles"},
-  "battery": {"icon":"󰁹","label":"Battery Life","aliases":["battery-life","runtime"],"when":"compgen -G '/sys/class/power_supply/BAT*'","action":"nova-battery open"},
-  "screentime": {"icon":"󰥔","label":"Screen Time","aliases":["screen-time","usage"],"when":"nova-screentime enabled","action":"nova-screentime open"},
   "settings": {"icon":"","label":"Settings","action":"nova-settings"},
   "update": {"icon":"","label":"Update"},
   "system": {"icon":"","label":"System","aliases":["power-menu"]},

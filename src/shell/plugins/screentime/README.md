@@ -34,9 +34,8 @@ Screen Time is off until you turn it on, and records nothing before that:
 nova screentime on        # or Super+Space → Toggle → Screen Time
 ```
 
-It then appears in the bar and in the menu (Super+Space → Screen Time) and
-counts from that moment. `nova screentime off` stops it; what it recorded
-stays until you delete it (see below).
+It then appears in the bar and counts from that moment. `nova screentime
+off` stops it; what it recorded stays until you delete it (see below).
 
 ## The two parts
 
@@ -51,10 +50,10 @@ everything.
 
 ## Using it
 
-Settings → Screen Time, which the Nova menu, the bar indicator and `nova
-screentime open` all open (`nova screentime open --week` lands on the weekly
-view; a summon of `nova.settings` with `{"page":"screentime","range":"week"}`
-does the same from a menu entry or a keybinding). Today and Week switch
+Settings → Screen Time, which the bar indicator and `nova screentime open`
+both open (`nova screentime open --week` lands on the weekly view; a summon
+of `nova.settings` with `{"page":"screentime","range":"week"}` does the same
+from a menu entry or a keybinding). Today and Week switch
 between the last day and the last seven, and hovering a bar names the hour or
 the day and what it holds.
 
