@@ -91,6 +91,14 @@ into the lock screen. What differs from a PC is in
   Time, the theme and background, what the bar shows, the lock screen and
   fingerprint, default apps, updates and recovery. Settings → Menu Bar adds
   more to the bar, such as Display for the brightness and the laptop screen.
+- **Calendar**, in the menu and under the bar's clock: events and tasks, in a
+  week or a month, moved by dragging. An event's bottom edge says when it
+  ends, and a drag over the empty hours makes one; a task goes onto a day, a
+  time, or off its day into the list beside. Reminders come as notifications,
+  and the clock dots the days with anything on them and lists what today has.
+  It is one iCalendar file on the computer,
+  `~/.local/share/nova/calendar/calendar.ics`, synced with nothing.
+  `nova calendar` opens it.
 - **Dictation:** hold Super+D and speak, and the words are pasted where the
   cursor is when you let go; a tap listens until the next press, and Esc
   cancels. It runs on the computer (NVIDIA's Parakeet, in 25 European

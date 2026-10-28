@@ -10,8 +10,8 @@ mounted at startup; other panels, overlays and menus load when first summoned.
 Three have "battery" in what they do: Battery (`nova.battery`) is the service
 behind the low-battery warning and the power mode, Power (`nova.power`) the
 bar's battery widget and its panel, and Battery Life (`nova.batterylife`) the
-history and the time left. Battery Life, Mobile Data, Screen Time and the bar
-have READMEs of their own, linked from their rows.
+history and the time left. Battery Life, the Calendar, Mobile Data, Screen
+Time and the bar have READMEs of their own, linked from their rows.
 
 | Plugin | id | kinds | entry points |
 |---|---|---|---|
@@ -26,6 +26,7 @@ have READMEs of their own, linked from their rows.
 | System tray | `nova.tray` | `bar-widget` | `bar/widgets/Tray.qml` |
 | Workspaces | `nova.workspaces` | `bar-widget` | `bar/widgets/Workspaces.qml` |
 | [Battery Life](batterylife/README.md) | `nova.batterylife` | `service`, `bar-widget` | `batterylife/Service.qml`, `batterylife/BarWidget.qml` (its page: `settings/BatteryLifeView.qml`) |
+| [Calendar](calendar/README.md) | `nova.calendar` | `service`, `panel` | `calendar/Service.qml`, `calendar/Panel.qml` (in the bar's clock: `panels/clock/Panel.qml`; `nova calendar`) |
 | Clipboard | `nova.clipboard` | `overlay` | `clipboard/Clipboard.qml` |
 | Dictation | `nova.dictation` | `panel` | `dictation/Dictation.qml` (its speech side: `dictation/bin/dictation`, `nova dictation`) |
 | Emojis | `nova.emojis` | `overlay` | `emojis/Emojis.qml` |

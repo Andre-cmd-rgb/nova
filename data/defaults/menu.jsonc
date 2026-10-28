@@ -18,6 +18,7 @@
   "toggle": {"icon":"󰔎","label":"Toggle","aliases":["toggles"]},
   "style": {"icon":"","label":"Style"},
   "power": {"icon":"󰌪","label":"Power Mode","aliases":["power-mode"],"when":"nova-power-profile list","provider":"power-profiles"},
+  "calendar": {"icon":"󰃭","label":"Calendar","aliases":["agenda","events","tasks"],"action":"nova-calendar"},
   "settings": {"icon":"","label":"Settings","action":"nova-settings"},
   "update": {"icon":"","label":"Update"},
   "system": {"icon":"","label":"System","aliases":["power-menu"]},

@@ -36,6 +36,7 @@ background=$(sed -n -E 's/^background *= *"(#[0-9a-fA-F]{6})".*/\1/p' "$palette/
 # plugin: the pages to open (one shot each), "-" for a window without pages
 windows=(
   "settings:wifi bluetooth mobile-data sound displays battery performance screentime appearance bar lock apps updates about"
+  "calendar:week month"
 )
 
 work=$(mktemp -d)
@@ -61,6 +62,24 @@ jq '.bar.layout.right += [{ id: "nova.screentime" }]' "$root/usr/share/nova/defa
   >"$work/home/.config/nova/shell.json"
 printf 'foot\t9\t1500\nfoot\t10\t2400\ngoogle-chrome\t10\t900\norg.gnome.Nautilus\t11\t300\n' \
   >"$work/home/.local/state/nova-screentime/days/$(date +%F).tsv"
+# A calendar with this week in it: events side by side, one every week, a
+# day off, and tasks for a day, for no day and from days gone by.
+mkdir -p "$work/home/.local/share/nova/calendar"
+day() { date -d "$1 day" +%Y%m%d; }
+{
+  printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Nova//Smoke//EN\r\n'
+  ev() { printf 'BEGIN:VEVENT\r\nUID:%s@smoke\r\nDTSTAMP:20261001T000000Z\r\n%s\r\nEND:VEVENT\r\n' "$1" "$2"; }
+  ev standup "DTSTART:$(day 0)T091500"$'\r\n'"DTEND:$(day 0)T100000"$'\r\n'"RRULE:FREQ=WEEKLY"$'\r\n'"SUMMARY:Standup"
+  ev lunch "DTSTART:$(day 0)T123000"$'\r\n'"DTEND:$(day 0)T133000"$'\r\n'"SUMMARY:Lunch with Sam"$'\r\n'"LOCATION:Corner café"
+  ev call "DTSTART:$(day 0)T120000"$'\r\n'"DTEND:$(day 0)T130000"$'\r\n'"SUMMARY:Call the bank"
+  ev dentist "DTSTART:$(day 1)T150000"$'\r\n'"DTEND:$(day 1)T163000"$'\r\n'"SUMMARY:Dentist"
+  ev gym "DTSTART:$(day 2)T180000"$'\r\n'"DTEND:$(day 2)T200000"$'\r\n'"SUMMARY:Gym"
+  ev off "DTSTART;VALUE=DATE:$(day -1)"$'\r\n'"DTEND;VALUE=DATE:$(day 1)"$'\r\n'"SUMMARY:Day off"
+  printf 'BEGIN:VTODO\r\nUID:rent@smoke\r\nSUMMARY:Pay rent\r\nDUE;VALUE=DATE:%s\r\nEND:VTODO\r\n' "$(day 0)"
+  printf 'BEGIN:VTODO\r\nUID:milk@smoke\r\nSUMMARY:Buy milk\r\nEND:VTODO\r\n'
+  printf 'BEGIN:VTODO\r\nUID:passport@smoke\r\nSUMMARY:Renew the passport\r\nDUE;VALUE=DATE:%s\r\nEND:VTODO\r\n' "$(day -3)"
+  printf 'END:VCALENDAR\r\n'
+} >"$work/home/.local/share/nova/calendar/calendar.ics"
 ln -s "$root/usr/share/nova/shell/Commons" "$work/shell/Commons"
 ln -s "$root/usr/share/nova/shell/Ui" "$work/shell/Ui"
 

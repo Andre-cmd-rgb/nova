@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# nova:summary=Open the Calendar
+# nova:args=[week|month] [day]
+#
+# The calendar is a shell window (shell/plugins/calendar) on the events and
+# tasks in ~/.local/share/nova/calendar/calendar.ics, a file other calendar
+# programs read too. The day is 2026-10-29, or what date(1) reads as one:
+# tomorrow, next friday.
+
+set -euo pipefail
+
+page='' words=()
+while (($# > 0)); do
+  case $1 in
+    -h | --help) echo "Usage: nova calendar [week|month] [day]"; exit 0 ;;
+    week | month) page=$1 ;;
+    *) words+=("$1") ;;
+  esac
+  shift
+done
+
+day=''
+if ((${#words[@]})); then
+  day=$(date -d "${words[*]}" +%F 2>/dev/null) || { echo "nova-calendar: '${words[*]}' is not a day" >&2; exit 2; }
+fi
+
+nova-shell shell summon nova.calendar "$(jq -nc --arg page "$page" --arg date "$day" '{page: $page, date: $date}')" >/dev/null ||
+  { echo "nova-calendar: could not open the Calendar; is the shell running?" >&2; exit 1; }

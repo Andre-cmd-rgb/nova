@@ -9,9 +9,11 @@ import "Model.js" as Model
 // sit beside the weather panel — same hero-over-detail composition, same
 // spacing scale, same small-caps labels.
 //
-// The grid is a read-out rather than a picker: today is the only marked
-// day, and the only thing that moves is which month is on screen —
-// chevrons, the scroll wheel, and the arrow keys all step it.
+// Chevrons, the scroll wheel, and the arrow keys step the month on screen.
+// With Nova's calendar on (plugins/calendar), the days with anything on them
+// have a dot, and under the grid is what a day has: today's, or the one
+// clicked. Its tasks are ticked off there; a double click on a day, or Open
+// Calendar, opens the calendar's window on it.
 //
 // BarWidget.qml owns the bar label and hands this panel the button to
 // anchor against.
@@ -35,8 +37,7 @@ Panel {
   property date today: new Date()
   readonly property string todayKey: Model.keyForDate(today)
 
-  // The month on screen. Stepping moves this and nothing else: the grid is
-  // a read-out, not a picker, so there is no per-day cursor to keep in sync.
+  // The month on screen. Stepping moves this and nothing else.
   property int viewYear: today.getFullYear()
   property int viewMonth: today.getMonth()
 
@@ -73,6 +74,17 @@ Panel {
   readonly property string nextWeekStartLabel: labelLocale.dayName(Model.toggledWeekStart(weekStart), Locale.LongFormat)
   readonly property var weekdays: Model.weekdayOrder(weekStart)
   readonly property var weeks: Model.monthGrid(viewYear, viewMonth, weekStart, todayKey)
+
+  // Nova's calendar, looked up as the panel opens: `serviceFor` is a plain
+  // call, which a binding would not follow.
+  property var calendar: null
+  property string pickedKey: todayKey
+  readonly property real pickedDay: dayOf(pickedKey)
+  readonly property bool pickedToday: pickedKey === String(todayKey)
+  // Reading `items` is what has these follow the calendar as it changes.
+  readonly property var busy: calendar && calendar.items ? calendar.busyDays(dayOf(weeks[0].days[0].key), dayOf(weeks[5].days[6].key, 1)) : ({})
+  readonly property var picked: calendar && calendar.items ? calendar.agenda(pickedDay) : []
+  readonly property int agendaRows: 6
 
 
   // Guarded so the widget renders before the bar is injected (the bar-widget
@@ -130,6 +142,27 @@ Panel {
   function refresh() {
     root.today = new Date()
     root.goToToday()
+    root.pickedKey = root.todayKey
+    if (root.bar && root.bar.shell && typeof root.bar.shell.serviceFor === "function")
+      root.calendar = root.bar.shell.serviceFor("nova.calendar")
+  }
+
+  // A day's local midnight from its key, or <after> days on.
+  function dayOf(key, after) {
+    var p = String(key).split("-")
+    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) + (after || 0)).getTime()
+  }
+
+  function openCalendar(day) {
+    if (!root.calendar) return
+    root.close()
+    root.calendar.show(day)
+  }
+
+  function agendaLead(occ) {
+    if (occ.item.kind === "task") return occ.item.dueTime ? root.calendar.clock(occ.start) : ""
+    if (occ.item.allDay) return "All day"
+    return occ.start < root.pickedDay ? "…" + root.calendar.clock(occ.end) : root.calendar.clock(occ.start)
   }
 
   function goToToday() {
@@ -265,6 +298,7 @@ Panel {
         else if (t === "{") root.moveYear(-1)
         else if (t === "}") root.moveYear(1)
         else if (t === "t" || t === "T") root.goToToday()
+        else if (t === "c" || t === "C") root.openCalendar(root.pickedDay)
         else if (t === "w" || t === "W") root.toggleWeekStart()
       }
 
@@ -666,10 +700,29 @@ Panel {
                       height: root.cellHeight
                       radius: Style.cornerRadius
                       // Today is outlined, not filled: a lit-up block shouts
-                      // over a grid this quiet.
-                      color: "transparent"
+                      // over a grid this quiet. The day clicked is tinted.
+                      color: modelData.key === root.pickedKey && !modelData.today
+                        ? Style.hoverFillFor(root.contentForeground, Commons.Color.accent) : "transparent"
                       border.width: modelData.today ? Style.spacing.hairline : 0
                       border.color: Style.normalBorderFor(root.contentForeground, Commons.Color.accent)
+
+                      // Something on this day.
+                      Rectangle {
+                        visible: root.busy[parent.modelData.key] === true
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors.bottom: parent.bottom
+                        anchors.bottomMargin: Style.space(4)
+                        width: Style.space(4)
+                        height: width
+                        radius: width / 2
+                        color: Style.selectedStateColor(root.contentForeground, Commons.Color.accent)
+                      }
+
+                      TapHandler {
+                        enabled: root.calendar !== null
+                        onTapped: root.pickedKey = parent.modelData.key
+                        onDoubleTapped: root.openCalendar(root.dayOf(parent.modelData.key))
+                      }
 
                       Text {
                         textFormat: Text.PlainText
@@ -754,6 +807,158 @@ Panel {
                 foreground: root.contentForeground
                 fontFamily: root.contentFontFamily
                 onClicked: root.moveMonth(1)
+              }
+            }
+          }
+
+          // ---- What the day has, from Nova's calendar: its all-day events,
+          //      the timed ones by their start, then its tasks, ticked off
+          //      here. A row opens the calendar on the day.
+          Item {
+            visible: root.calendar !== null
+            width: parent.width
+            height: visible ? agendaColumn.height : 0
+
+            Column {
+              id: agendaColumn
+              anchors.horizontalCenter: parent.horizontalCenter
+              width: gridColumn.width
+              spacing: Style.space(2)
+
+              Rectangle {
+                width: parent.width
+                height: Style.spacing.hairline
+                color: root.contentForeground
+                opacity: 0.1
+              }
+
+              Item {
+                width: parent.width
+                height: openButton.implicitHeight + Style.space(8)
+
+                Text {
+                  textFormat: Text.PlainText
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: root.pickedToday ? "TODAY" : Qt.formatDate(new Date(root.pickedDay), "ddd d MMMM").toUpperCase()
+                  color: Qt.darker(root.contentForeground, 1.4)
+                  font.family: root.contentFontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  font.letterSpacing: 1
+                }
+
+                Button {
+                  id: openButton
+                  anchors.right: parent.right
+                  anchors.rightMargin: -Style.space(8)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: "Open Calendar"
+                  foreground: root.contentForeground
+                  fontFamily: root.contentFontFamily
+                  fontSize: Style.font.bodySmall
+                  onClicked: root.openCalendar(root.pickedDay)
+                }
+              }
+
+              Text {
+                visible: root.picked.length === 0
+                textFormat: Text.PlainText
+                height: Style.space(24)
+                verticalAlignment: Text.AlignVCenter
+                text: "Nothing on this day"
+                color: Qt.darker(root.contentForeground, 1.9)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.body
+              }
+
+              Repeater {
+                model: root.picked.slice(0, root.picked.length > root.agendaRows ? root.agendaRows - 1 : root.agendaRows)
+
+                Rectangle {
+                  id: agendaRow
+                  required property var modelData
+                  readonly property bool isTask: modelData.item.kind === "task"
+                  readonly property bool done: isTask && modelData.item.done
+                  width: parent.width
+                  height: Style.space(26)
+                  radius: Style.cornerRadius
+                  color: rowHover.hovered ? Style.hoverFillFor(root.contentForeground, Commons.Color.accent) : "transparent"
+
+                  HoverHandler { id: rowHover }
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: root.openCalendar(root.pickedDay)
+                  }
+
+                  Row {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.leftMargin: Style.space(6)
+                    anchors.rightMargin: Style.space(6)
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(10)
+
+                    Item {
+                      width: Style.space(64)
+                      height: Style.space(20)
+
+                      Text {
+                        visible: !agendaRow.isTask || agendaRow.modelData.item.dueTime
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: agendaRow.isTask ? Style.space(24) : 0
+                        textFormat: Text.PlainText
+                        text: root.agendaLead(agendaRow.modelData)
+                        color: Qt.darker(root.contentForeground, 1.5)
+                        font.family: root.contentFontFamily
+                        font.pixelSize: Style.font.bodySmall
+                      }
+
+                      // The task's box, which ticks it and opens nothing.
+                      Text {
+                        visible: agendaRow.isTask
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: agendaRow.done ? "󰄵" : "󰄱"
+                        color: agendaRow.done ? Qt.darker(root.contentForeground, 1.9) : Style.selectedStateColor(root.contentForeground, Commons.Color.accent)
+                        font.family: root.contentFontFamily
+                        font.pixelSize: Style.font.icon
+                        MouseArea {
+                          anchors.fill: parent
+                          anchors.margins: -Style.space(4)
+                          cursorShape: Qt.PointingHandCursor
+                          onClicked: root.calendar.toggleTask(agendaRow.modelData.uid)
+                        }
+                      }
+                    }
+
+                    Text {
+                      width: parent.width - x
+                      anchors.verticalCenter: parent.verticalCenter
+                      textFormat: Text.PlainText
+                      text: (agendaRow.modelData.item.title || (agendaRow.isTask ? "Task" : "Event")) +
+                        (agendaRow.modelData.item.location ? "  ·  " + agendaRow.modelData.item.location : "")
+                      color: agendaRow.done ? Qt.darker(root.contentForeground, 1.9) : root.contentForeground
+                      font.family: root.contentFontFamily
+                      font.pixelSize: Style.font.body
+                      font.strikeout: agendaRow.done
+                      elide: Text.ElideRight
+                    }
+                  }
+                }
+              }
+
+              Text {
+                visible: root.picked.length > root.agendaRows
+                textFormat: Text.PlainText
+                height: Style.space(22)
+                leftPadding: Style.space(6)
+                verticalAlignment: Text.AlignVCenter
+                text: "+" + (root.picked.length - root.agendaRows + 1) + " more"
+                color: Qt.darker(root.contentForeground, 1.6)
+                font.family: root.contentFontFamily
+                font.pixelSize: Style.font.bodySmall
+                TapHandler { onTapped: root.openCalendar(root.pickedDay) }
               }
             }
           }
