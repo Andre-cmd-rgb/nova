@@ -55,7 +55,7 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   [ "$output" = ready ]
 }
 
-@test "check: no-engine where there is no parakeet-cli (a Raspberry Pi)" {
+@test "check: no-engine where there is no parakeet-cli" {
   ENGINE=nova-test-no-such-engine
   put_model
   run cmd_check

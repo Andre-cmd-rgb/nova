@@ -447,9 +447,10 @@ jobs:
             tools/build-package packaging/nova-keyring out/pi-pkgs
             tools/build-package packaging/ttfx out/pi-pkgs
             tools/build-package packaging/mise out/pi-pkgs
-            # nova depends on these three, which Arch Linux ARM has none of.
+            tools/build-package packaging/whisper-cpp out/pi-pkgs
+            # nova depends on these four, which Arch Linux ARM has none of.
             pacman -U --noconfirm out/pi-pkgs/nova-keyring-*.pkg.tar.zst out/pi-pkgs/ttfx-*.pkg.tar.zst \
-              out/pi-pkgs/mise-*.pkg.tar.zst
+              out/pi-pkgs/mise-*.pkg.tar.zst out/pi-pkgs/whisper-cpp-*.pkg.tar.zst
             NOVA_SOURCE="git+file://$PWD#tag=$TAG" tools/build-package packaging/nova out/pi-pkgs
             ls -l out/pi-pkgs
           '

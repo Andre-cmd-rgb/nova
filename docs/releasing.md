@@ -172,9 +172,9 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
       installs the release before this one and moves it forward and back
       (below);
    7. for the Raspberry Pi 5, on arm64 runners in Arch Linux ARM
-      (`tools/alarm-container`): builds `nova`, `nova-keyring`, `ttfx` and
-      `mise` against Arch Linux ARM's databases as the first step fetched
-      them, signs them into the aarch64 repository, pins the Arch Linux ARM
+      (`tools/alarm-container`): builds `nova`, `nova-keyring`, `ttfx`, `mise`
+      and `whisper-cpp` against Arch Linux ARM's databases as the first step
+      fetched them, signs them into the aarch64 repository, pins the Arch Linux ARM
       packages a Pi installs (`tools/alarm-pin`), and builds the image from
       those two repositories alone (`tools/build-pi-image`), which checks its
       boot partition and its packages' files;
@@ -256,6 +256,8 @@ On the Raspberry Pi 5, from its image on a spare card or stick:
   `[nova-alarm]`, and `nova doctor` finds nothing after a restart.
 - **Desktop:** the screen's resolution, its brightness from Settings (DDC), sound
   over HDMI, Bluetooth, and the menu without Suspend.
+- **Dictation:** Super+D offers the speech model; once it is in, a held
+  sentence is pasted where the cursor is.
 
 The kernel moves only when `packaging/linux-nova` is updated
 ([packaging.md](packaging.md)); everything else follows the snapshot.

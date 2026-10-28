@@ -1,0 +1,55 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# whisper-cpp, for the Raspberry Pi: dictation's speech engine, whose
+# parakeet-cli turns a recording into text. Arch Linux ARM packages neither it
+# nor ggml, its tensor library, so the [nova] repository carries this build of
+# the tagged release Arch's x86 package is at. On x86 whisper-cpp comes from
+# Arch's extra repository, which this package leaves alone.
+# Upstream: https://github.com/ggml-org/whisper.cpp, MIT.
+#
+# Built for the one ARM CPU Nova runs on, the Pi 5's Cortex-A76: Armv8.2-A,
+# with the dot-product and half-precision instructions ggml uses. CI builds on
+# arm64 machines with instructions the Pi lacks, and a build for the machine
+# it ran on would stop on the Pi with an illegal instruction. ggml is the copy
+# whisper.cpp carries, linked in, with the CPU its only backend. A recording
+# is a WAV, which whisper.cpp reads by itself, so ffmpeg is not needed.
+
+pkgname=whisper-cpp
+pkgver=1.9.5
+pkgrel=1
+pkgdesc="Port of OpenAI's Whisper model in C/C++, with NVIDIA's Parakeet (Raspberry Pi 5)"
+arch=(aarch64)
+url='https://github.com/ggml-org/whisper.cpp'
+license=(MIT)
+depends=(gcc-libs glibc)
+makedepends=(cmake)
+options=(!debug !lto)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720')
+
+build() {
+  cmake -S "whisper.cpp-$pkgver" -B build \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DGGML_NATIVE=OFF \
+    -DGGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16 \
+    -DWHISPER_BUILD_TESTS=OFF \
+    -DWHISPER_BUILD_SERVER=OFF \
+    -DWHISPER_COMMON_FFMPEG=OFF \
+    -DWHISPER_SDL2=OFF \
+    -DWHISPER_CURL=OFF
+  cmake --build build --target parakeet-cli whisper-cli
+}
+
+check() {
+  # It starts: linked whole, and on a CPU at least the Pi's.
+  build/bin/parakeet-cli --help >/dev/null
+}
+
+package() {
+  install -Dm755 build/bin/parakeet-cli build/bin/whisper-cli -t "$pkgdir/usr/bin/"
+  install -Dm644 "whisper.cpp-$pkgver/LICENSE" -t "$pkgdir/usr/share/licenses/$pkgname/"
+}
+
+# vim:set ts=2 sw=2 et:

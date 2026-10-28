@@ -95,7 +95,8 @@ into the lock screen. What differs from a PC is in
   cursor is when you let go; a tap listens until the next press, and Esc
   cancels. It runs on the computer (NVIDIA's Parakeet, in 25 European
   languages), and nothing leaves it: the speech model, 669 MB, is downloaded
-  once, at the first press, when you say yes. Not on the Raspberry Pi.
+  once, at the first press, when you say yes. A Raspberry Pi takes longer to
+  write the words out than a laptop.
   `nova dictation` says whether it is ready.
 - **Caffeine**, the coffee cup in the bar, keeps the screen on: no
   screensaver, no lock when unused, and on a laptop closing the lid only turns

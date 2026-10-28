@@ -23,6 +23,7 @@ model, is `data/hardware/raspberry-pi-5/`.
 | `data/hardware/raspberry-pi-5/etc/` | `i2c-dev` loaded, and the HDMI DDC lines for whoever sits at the screen (fact 4); copied into `/etc` by `nova-hw-apply` |
 | `/usr/share/nova/hardware/ddc-reversed` | screens whose brightness runs backwards (fact 5) |
 | `nova-sleep-available` | the menu's Suspend only where logind can sleep (fact 3) |
+| `whisper-cpp`, Nova's own build (`packaging/whisper-cpp`) | dictation's speech engine (fact 14) |
 | `data/hypr/hardware/raspberry-pi-5.lua` | opaque windows, and a late frame rendered at once (fact 11) |
 | `/usr/lib/clock-epoch`, from `tools/build-pi-image` | the clock starts no earlier than the image (fact 12) |
 | `/usr/lib/systemd/system-preset/10-nova.preset` | the first start enables no service of its own (fact 13) |
@@ -146,3 +147,11 @@ applies the unit presets to every unit, enabling those a preset names
 wait-online beside NetworkManager (the wait then fails at every start),
 `systemd-homed`, sysext and the systemd-boot updater. `10-nova.preset` comes
 first and enables nothing, so a Pi runs what `tools/build-pi-image` enabled.
+
+**14. Dictation's engine is built for the Cortex-A76.** Arch Linux ARM has
+neither whisper-cpp nor ggml, its tensor library, so the `[nova]` repository
+carries a build of its own, with ggml linked in and the CPU its only backend.
+It is built for the Pi 5's CPU, Armv8.2-A with the dot-product and
+half-precision instructions, not for the machine CI builds it on, whose newer
+instructions the Pi lacks. Parakeet runs on the four cores, slower than on a
+laptop, and holds about 750 MB of memory while it transcribes.

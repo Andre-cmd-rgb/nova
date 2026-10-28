@@ -13,13 +13,14 @@ a release pins, and nothing is built on a laptop except to test a PKGBUILD.
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
 | `ttfx` | `packaging/ttfx`, its release tag | the screensaver's text effects, in no Arch repository |
 | `mise` | `packaging/mise`, the project's own arm64 build | the developer tools' version manager, which Arch Linux ARM does not package (aarch64 only) |
+| `whisper-cpp` | `packaging/whisper-cpp`, its release tag | dictation's speech engine, which Arch Linux ARM does not package (aarch64 only, built for the Pi 5's CPU) |
 
-`nova`, `nova-keyring`, `ttfx` and `mise` are also built for aarch64, the
-Raspberry Pi 5, in Arch Linux ARM on arm64 runners, against the Arch Linux ARM
-databases the release pins (`tools/ci-setup --alarm-dbs`). A PKGBUILD says
-what differs there with makepkg's arch-specific arrays (`depends_x86_64`),
-and `nova` passes `CARCH` to `make install` as `NOVA_ARCH`, which leaves out
-the x86 boot chain and puts in the Pi's pieces.
+`nova`, `nova-keyring`, `ttfx`, `mise` and `whisper-cpp` are also built for
+aarch64, the Raspberry Pi 5, in Arch Linux ARM on arm64 runners, against the
+Arch Linux ARM databases the release pins (`tools/ci-setup --alarm-dbs`). A
+PKGBUILD says what differs there with makepkg's arch-specific arrays
+(`depends_x86_64`), and `nova` passes `CARCH` to `make install` as
+`NOVA_ARCH`, which leaves out the x86 boot chain and puts in the Pi's pieces.
 
 Arch's own `linux` stands in for `linux-nova` on CPUs older than x86-64-v3,
 with `nvidia-open`, and `linux-lts` is always installed as the fallback entry,
@@ -98,6 +99,16 @@ On x86, Arch's own `extra/mise`. Arch Linux ARM has none, so the Pi gets the
 project's release build for linux-arm64, its tarball pinned by its checksum,
 with self-update switched off (pacman updates it) and the shell completions
 generated at build time. To update: bump `pkgver`, then the checksum
+(`makepkg -g`).
+
+## whisper-cpp
+
+On x86, Arch's own `extra/whisper-cpp`. Arch Linux ARM has neither it nor
+ggml, so the Pi gets a build of the same tag with ggml's own copy linked in,
+the CPU its only backend, and no ffmpeg, as dictation records WAV. It is built
+for the Pi 5's Cortex-A76 (`GGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16`), not
+for the CI machine: with `GGML_NATIVE` on, the build would use instructions
+the Pi lacks. To update: follow Arch's `pkgver`, then the checksum
 (`makepkg -g`).
 
 ## nova-keyring

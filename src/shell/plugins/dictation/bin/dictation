@@ -56,9 +56,8 @@ threads() {
 
 # --------------------------------------------------------------- the shell's
 
-# One word for the shell: ready, no-engine (a Raspberry Pi: Arch Linux ARM
-# has no whisper-cpp), or no-model, with "metered" when downloading it would
-# spend a data plan.
+# One word for the shell: ready, no-engine (whisper-cpp is not installed), or
+# no-model, with "metered" when downloading it would spend a data plan.
 cmd_check() {
   if ! have "$ENGINE"; then
     echo no-engine
@@ -138,7 +137,7 @@ progress_line() { # <percent> <for the shell?>
 cmd_setup() {
   local for_shell=false part size pid
   [[ ${1:-} == --progress ]] && for_shell=true
-  have "$ENGINE" || die "this computer has no speech engine: dictation needs whisper-cpp, which Arch Linux ARM does not package"
+  have "$ENGINE" || die "this computer has no speech engine: dictation needs whisper-cpp (nova update installs it)"
   if [[ -f $MODEL ]]; then
     $for_shell || echo "The speech model is already here."
     return 0

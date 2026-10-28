@@ -272,9 +272,10 @@ the shared folder also becomes the default for themes that have no pick of their
   | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
   | `ttfx` | the screensaver's text effects ([omacom/ttfx](https://github.com/omacom/ttfx)), built from its release tag; Arch does not package it |
   | `mise` | the developer tools' version manager, the project's own arm64 build: Arch Linux ARM does not package it (aarch64 only) |
+  | `whisper-cpp` | dictation's speech engine, built for the Pi 5's CPU: Arch Linux ARM does not package it (aarch64 only) |
 
-  `nova`, `nova-keyring`, `ttfx` and `mise` are built for aarch64 too, in Arch
-  Linux ARM, for the Raspberry Pi 5.
+  `nova`, `nova-keyring`, `ttfx`, `mise` and `whisper-cpp` are built for
+  aarch64 too, in Arch Linux ARM, for the Raspberry Pi 5.
 
 - **Fallback kernel:** Arch's `linux-lts` + `nvidia-open-lts` stay installed as the
   fallback boot entry.
