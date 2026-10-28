@@ -10,6 +10,7 @@ setup() {
   export CALLS="$SCRATCH/calls" PKGVER="$SCRATCH/pkgver"
   export NOVA_MIRRORLIST="$SCRATCH/nova-mirrorlist" NOVA_REPOFILE="$SCRATCH/nova-repo"
   export NOVA_ALARMFILE="$SCRATCH/nova-alarm" NOVA_ARCH=x86_64
+  export NOVA_UPDATE_SYNC_DIR="$SCRATCH/sync"
   export NOVA_UPDATE_APPLY="$SCRATCH/bin/nova-update-apply" NOVA_UPDATE_APPS="$SCRATCH/bin/nova-apps-install"
   mkdir -p "$SCRATCH/bin"
   echo 1.0.0beta.1 >"$PKGVER"
@@ -279,4 +280,41 @@ pi_release() {
     [[ $output == *"No final Nova release is published yet"* ]]
   done
   fails grep -q '^nova-update-apply' "$CALLS"
+}
+
+@test "an interrupted update retries even when its nova package is already installed" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  printf '# nova-release: v1.0.0-beta.2\n' >"$NOVA_REPOFILE"
+  printf 'old repo' >"$NOVA_REPOFILE.nova-prev"
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output == *"an earlier update did not finish"* ]]
+  [[ $output == *"nova update --version v1.0.0-beta.2 --yes"* ]]
+  grep -q '^nova-update-apply --tag v1.0.0-beta.2' "$CALLS"
+}
+
+@test "the latest-release shortcut also waits for unfinished boot checks" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  mkdir -p "$NOVA_UPDATE_SYNC_DIR.nova-prev"
+  serve_release release.toml release.toml.sig
+  cp "$SCRATCH/release.toml" "$SCRATCH/served/release.toml"
+  touch "$SCRATCH/served/release.toml.sig"
+  stub gpg 'cat'
+  stub gpgv
+  export NOVA_UPDATE_KEY="$SCRATCH/key"
+  touch "$NOVA_UPDATE_KEY"
+  # The candidate list and its assets are the same release already installed.
+  cat >"$SCRATCH/list.json" <<'JSON'
+[{"tag_name":"v1.0.0-beta.2","draft":false,"assets":[{"name":"release.toml","browser_download_url":"https://dl.example.org/release.toml"},{"name":"release.toml.sig","browser_download_url":"https://dl.example.org/release.toml.sig"}]}]
+JSON
+  stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; url=$1; shift; done
+    case $url in
+      *"/releases?"*) cp "$SCRATCH/list.json" "$out" ;;
+      https://dl.example.org/*) cp "$SCRATCH/served/${url##*/}" "$out" ;;
+    esac
+    printf 200'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --yes
+  [ "$status" -eq 0 ]
+  [[ $output != *"Nova is up to date"* ]]
+  grep -q '^nova-update-apply --tag v1.0.0-beta.2' "$CALLS"
 }

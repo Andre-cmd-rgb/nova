@@ -42,6 +42,7 @@ API=${NOVA_UPDATE_API:-https://api.github.com/repos/$NOVA_UPDATE_REPO}
 MIRRORLIST=${NOVA_MIRRORLIST:-/etc/pacman.d/nova-mirrorlist}
 ALARMFILE=${NOVA_ALARMFILE:-/etc/pacman.d/nova-alarm}
 REPOFILE=${NOVA_REPOFILE:-/etc/pacman.d/nova-repo}
+SYNC_DIR=${NOVA_UPDATE_SYNC_DIR:-/var/lib/pacman/sync}
 ARCH=${NOVA_ARCH:-$(uname -m)}
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 APPLY=${NOVA_UPDATE_APPLY:-$HERE/nova-update-apply}
@@ -78,6 +79,14 @@ header_value() {
   local file=$1 key=$2
   [[ -r $file ]] || return 0
   sed -n -E "s/^# $key: *(.*)$/\1/;T;p;q" "$file"
+}
+
+unfinished_update() {
+  local f
+  for f in "$MIRRORLIST" "$ALARMFILE" "$REPOFILE" "$SYNC_DIR"; do
+    [[ ! -e $f.nova-prev && ! -e $f.nova-absent ]] || return 0
+  done
+  return 1
 }
 
 # A string value from release.toml: key = "value"
@@ -271,6 +280,14 @@ update_release() {
   tmp=$(mktemp -d)
   trap 'rm -rf "$tmp"' EXIT
 
+  local unfinished=0 retry_tag
+  if unfinished_update; then
+    unfinished=1
+    retry_tag=$(header_value "$REPOFILE" nova-release)
+    warn "an earlier update did not finish; retrying the packages and boot checks"
+    warn "if this run cannot finish, run: nova update ${retry_tag:+--version $retry_tag }--yes"
+  fi
+
   local tag notes=
   if [[ -n $release_file ]]; then
     cp "$release_file" "$tmp/release.toml"
@@ -332,14 +349,14 @@ update_release() {
 
   local newer
   newer=$(vercmp "$new_pkgver" "$cur_pkgver")
-  if [[ $newer -le 0 && -z $want && -z $release_file ]]; then
+  if (( ! unfinished )) && [[ $newer -le 0 && -z $want && -z $release_file ]]; then
     echo "Nova is up to date ($tag)."
     return 0
   fi
   if [[ $newer -lt 0 || ( -n $cur_date && $date < $cur_date ) ]] && (( ! downgrade )); then
     die "$tag is older than what is installed (nova $cur_pkgver, $base ${cur_date:-unknown}); pass --allow-downgrade to go back"
   fi
-  if [[ $newer -eq 0 && ( -z $cur_date || $date == "$cur_date" ) && ${cur_tag:-$tag} == "$tag" ]]; then
+  if (( ! unfinished )) && [[ $newer -eq 0 && ( -z $cur_date || $date == "$cur_date" ) && ${cur_tag:-$tag} == "$tag" ]]; then
     echo "Nova is already on $tag."
     return 0
   fi

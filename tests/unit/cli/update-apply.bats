@@ -188,3 +188,48 @@ nova-boot-check status" ]
   [ "$status" -ne 0 ]
   [[ $output == *"bad --alarm-date"* ]]
 }
+
+@test "a failed second pin write restores both pins before any pacman runs" {
+  put "$NOVA_ROOT/etc/pacman.d/nova-alarm" 'old alarm'
+  put "$REPOFILE" 'old repo'
+  put "$SYNC_DIR/core.db" 'old core'
+  mkdir -p "$SCRATCH/bin"
+  cat >"$SCRATCH/bin/mv" <<'STUB'
+#!/bin/bash
+if [[ ${3:-} == "$NOVA_ROOT/etc/pacman.d/nova-repo" && ${2:-} != *.nova-prev ]]; then
+  echo 'mv: No space left on device' >&2
+  exit 1
+fi
+exec /usr/bin/mv "$@"
+STUB
+  chmod +x "$SCRATCH/bin/mv"
+  run pi_update 0
+  [ "$status" -ne 0 ]
+  [[ $output == *"No space left on device"* ]]
+  [ "$(cat "$NOVA_ROOT/etc/pacman.d/nova-alarm")" = 'old alarm' ]
+  [ "$(cat "$REPOFILE")" = 'old repo' ]
+  [ "$(cat "$SYNC_DIR/core.db")" = 'old core' ]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "boot verification must finish before recovery copies are dropped" {
+  put "$REPOFILE" 'old repo'
+  run pi_update 1
+  [ "$status" -eq 3 ]
+  [ "$(cat "$REPOFILE.nova-prev")" = 'old repo' ]
+  run pi_update 0
+  [ "$status" -eq 0 ]
+  [ ! -e "$REPOFILE.nova-prev" ]
+  [ ! -e "$NOVA_ROOT/etc/pacman.d/nova-alarm.nova-absent" ]
+}
+
+@test "restoring a pin that did not exist removes the new file" {
+  mkdir -p "$NOVA_ROOT/etc/pacman.d"
+  backup_config
+  put "$MIRRORLIST" 'new mirror'
+  put "$REPOFILE" 'new repo'
+  restore_config
+  [ ! -e "$MIRRORLIST" ]
+  [ ! -e "$REPOFILE" ]
+  [ ! -e "$REPOFILE.nova-absent" ]
+}

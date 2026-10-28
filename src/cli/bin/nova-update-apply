@@ -100,8 +100,12 @@ write_config() {
 backup_config() {
   local f kept=0
   for f in "${PIN_FILES[@]}"; do
-    if [[ -e $f.nova-prev ]]; then kept=1; continue; fi
-    if [[ -e $f ]]; then cp -p "$f" "$f.nova-prev.tmp" && mv -f "$f.nova-prev.tmp" "$f.nova-prev"; fi
+    if [[ -e $f.nova-prev || -e $f.nova-absent ]]; then kept=1; continue; fi
+    if [[ -e $f ]]; then
+      cp -p "$f" "$f.nova-prev.tmp" && mv -f "$f.nova-prev.tmp" "$f.nova-prev"
+    else
+      touch "$f.nova-absent"
+    fi
   done
   if [[ -d $SYNC_DIR.nova-prev ]]; then
     kept=1
@@ -119,6 +123,7 @@ restore_config() {
   local f restored=0
   for f in "${PIN_FILES[@]}"; do
     if [[ -e $f.nova-prev ]]; then mv -f "$f.nova-prev" "$f"; restored=1; fi
+    if [[ -e $f.nova-absent ]]; then rm -f "$f" "$f.nova-absent"; restored=1; fi
   done
   if [[ -d $SYNC_DIR.nova-prev ]]; then
     rm -rf "$SYNC_DIR.nova-old"
@@ -135,7 +140,7 @@ restore_config() {
 
 drop_backup() {
   local f
-  for f in "${PIN_FILES[@]}"; do rm -f "$f.nova-prev"; done
+  for f in "${PIN_FILES[@]}"; do rm -f "$f.nova-prev" "$f.nova-absent"; done
   rm -rf "$SYNC_DIR.nova-prev"
 }
 
@@ -342,6 +347,9 @@ main() {
   else
     say "Pointing pacman at the Arch Linux ARM packages of $alarm_date and $tag"
   fi
+  # Until pacman starts, any error must put both pins back, including a
+  # failed second write after the first file was replaced.
+  trap 'restore_config' EXIT
   write_config
 
   local -a pacman_args=(-Su)
@@ -354,10 +362,10 @@ main() {
   local -a keyrings=(archlinux-keyring nova-keyring)
   [[ $ARCH == x86_64 ]] || keyrings=(archlinuxarm-keyring nova-keyring)
   say "Updating the keyrings"
+  trap - EXIT
   "${env_skip[@]}" pacman -Syy --needed --noconfirm "${keyrings[@]}" || pacman_failed
   say "pacman ${pacman_args[*]}"
   "${env_skip[@]}" pacman "${pacman_args[@]}" || pacman_failed
-  drop_backup
   trap - INT
 
   install_hardware_packages "$noconfirm" "${env_skip[@]}"
@@ -383,7 +391,7 @@ main() {
     if command -v limine-update > /dev/null 2>&1; then
       warn "regenerating boot entries with limine-update"
       limine-update || warn "limine-update failed"
-      verify_boot_entries && { say "Boot entries repaired"; echo "Nova is now on $tag."; return 0; }
+      verify_boot_entries && { say "Boot entries repaired"; finished; return 0; }
     fi
     warn "the boot entries do NOT check out. Do not reboot yet."
     warn "Run limine-update, then 'nova update --dry-run' to re-check${pre:+; snapshot $pre is the state before this update}."
@@ -395,6 +403,7 @@ main() {
 }
 
 finished() {
+  drop_backup
   local reason
   if [[ -z $ROOT ]] && reason=$(reboot_reason); then
     echo "$reason: restart to finish the update."
