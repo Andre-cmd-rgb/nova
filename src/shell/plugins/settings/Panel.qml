@@ -1013,11 +1013,12 @@ Item {
           version: root.about.version || ""
           offerApps: root.offerApps
           onFinished: root.load()
+          onChecking: firmwareView.check()
         }
-        FirmwareView { visible: root.updates.firmware === true }
-        Caption {
-          width: parent.width
-          text: "Each release moves the whole system to a tested snapshot of Arch Linux. Before every update, a snapshot of the system is taken. Chrome and VS Code come from Google and Microsoft, and update with it."
+        FirmwareView {
+          id: firmwareView
+          monitor: root.updates.firmware === true
+          visible: monitor && shown
         }
       }
 

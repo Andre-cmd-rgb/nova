@@ -5,6 +5,9 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
+// The device firmware fwupd has updates for, under Nova's own: there only
+// while one is found, goes in or waits for a restart. Updates' Check looks
+// for it with Nova's, and opening the page does once a boot.
 Section {
   id: root
   title: "FIRMWARE"
@@ -14,6 +17,14 @@ Section {
   property bool confirmRestart: false
   readonly property var devices: state.devices || []
   readonly property bool busy: launcher.running || state.running === true
+  // An install's: a check that fails says nothing, as Nova's own says when
+  // the network is down. The end of fwupdmgr's output, which says what went
+  // wrong; Details is not worth a page of it.
+  readonly property string error: failure !== "" ? failure
+    : state.action !== "install" ? ""
+    : String(state.error || "").trim().split("\n").slice(-3).join("\n").slice(-300)
+  readonly property bool restart: state.reboot === true && !busy
+  readonly property bool shown: devices.length > 0 || error !== "" || restart
   readonly property string statePath: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/firmware.json"
 
   function readState(text) {
@@ -31,15 +42,22 @@ Section {
     launcher.running = true
   }
 
-  function installAll() {
-    start("install", devices.filter(function (d) { return d.status === "available" }).map(function (d) { return d.id }))
+  // Where fwupd is not, Settings leaves it off, and there is nothing to ask.
+  function check() {
+    if (monitor) start("check")
   }
 
   Process {
     id: probe
     running: root.monitor
     command: ["nova-firmware-job", "status"]
-    stdout: StdioCollector { onStreamFinished: root.readState(text) }
+    stdout: StdioCollector {
+      onStreamFinished: {
+        root.readState(text)
+        // Its state is in the runtime folder: none yet this boot.
+        if (root.state.checked !== true && !root.busy) root.check()
+      }
+    }
   }
   FileView {
     id: stateFile
@@ -55,27 +73,12 @@ Section {
     id: launcher
     stderr: StdioCollector { id: launchError }
     onExited: function (code) {
-      if (code !== 0) root.failure = launchError.text.trim() || "Could not start the firmware job."
+      if (code !== 0 && command[1] === "install") root.failure = launchError.text.trim() || "Could not start the firmware job."
       stateFile.reload()
     }
   }
   Process { id: reboot; command: ["systemctl", "reboot"] }
 
-  Line {
-    label: root.busy ? (root.state.action === "install" ? "Installing…" : "Checking…")
-      : (root.state.checked && root.devices.length === 0 ? "Up to Date" : "Device Firmware")
-    Row {
-      spacing: Style.space(8)
-      Button { text: "Check"; bordered: true; enabled: !root.busy; onClicked: root.start("check") }
-      Button {
-        text: "Install All"
-        visible: root.devices.some(function (d) { return d.status === "available" })
-        enabled: !root.busy
-        bordered: true
-        onClicked: root.installAll()
-      }
-    }
-  }
   Repeater {
     model: root.devices
     Column {
@@ -115,12 +118,10 @@ Section {
   Caption {
     width: parent.width
     visible: text.length > 0
-    // The end of fwupdmgr's output, which says what went wrong; Details is
-    // not worth a page of it.
-    text: root.failure || String(root.state.error || "").trim().split("\n").slice(-3).join("\n").slice(-300)
+    text: root.error
   }
   Line {
-    visible: root.state.reboot === true && !root.busy
+    visible: root.restart
     label: "Restart to finish"
     Row {
       spacing: Style.space(8)

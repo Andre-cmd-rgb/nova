@@ -23,6 +23,8 @@ Column {
   property bool offerApps: false
   // A run ended: Settings reads its state again.
   signal finished()
+  // Check was pressed: Settings looks for firmware too.
+  signal checking()
 
   readonly property string dir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/update"
   readonly property string releases: "https://github.com/Andre-cmd-rgb/nova/releases/tag/v"
@@ -68,7 +70,10 @@ Column {
   function act(action) {
     if (action === "update" || action === "retry") start([])
     else if (action === "restart") Util.execArgv(["nova-system-reboot"])
-    else if (action === "check" && !checkProc.running) checkProc.running = true
+    else if (action === "check") {
+      if (!checkProc.running) checkProc.running = true
+      root.checking()
+    }
   }
 
   function review(pkg) {
