@@ -62,6 +62,7 @@ depends=(
   iw
   wireless-regdb # the radio rules of the country the computer is in
   udiskie
+  ddcutil        # brightness of external monitors
 
   # Apps the session launches
   foot
@@ -118,6 +119,8 @@ depends=(
 # Limine boots from UEFI and snapper rolls a btrfs root back. Dictation's
 # speech engine (parakeet-cli) is x86 only: Arch Linux ARM has no whisper-cpp.
 depends_x86_64=(
+  sof-firmware   # sound on recent Intel and AMD laptops
+  fwupd          # firmware updates from the makers (nova update firmware)
   whisper-cpp
   btrfs-progs
   snapper
@@ -143,9 +146,7 @@ optdepends_x86_64=(
   'nvidia-open-lts: NVIDIA modules for the linux-lts fallback'
   'nvidia-utils: NVIDIA userspace (hybrid-graphics laptops)'
   'intel-ucode: Intel CPU microcode updates'
-  'sof-firmware: audio firmware for recent Intel laptops (ThinkPad P1)'
   'linux-firmware: firmware for Wi-Fi, GPUs and other hardware'
-  'ddcutil: brightness of external monitors'
 )
 optdepends=(
   'fprintd: fingerprint unlock'
@@ -155,7 +156,6 @@ optdepends=(
   'tesseract-data-eng: copy text from a screen region'
   'imagemagick: bar text color matched to the background'
   'modemmanager: mobile data, on laptops with a modem'
-  'fwupd: firmware updates (nova update firmware)'
 )
 options=(!debug)
 # Moves what an upgrade renames out of the way (the power governor's).

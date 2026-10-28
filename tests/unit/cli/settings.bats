@@ -49,7 +49,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c '[.apps.browsers, .apps.editors, .apps.terminals]' <<<"$output")" = '[[],[],[]]' ]
   [ "$(jq -r .bar.position <<<"$output")" = top ]
   [ "$(jq -c '.bar.shown | index("nova.power") != null' <<<"$output")" = true ]
-  [ "$(jq -c .updates <<<"$output")" = '{"candidates":false,"recovery":false}' ]
+  [ "$(jq -c .updates <<<"$output")" = '{"candidates":false,"recovery":false,"firmware":false}' ]
   [ "$(jq -c .displays <<<"$output")" = '{"displays":[],"pending":null}' ]
   [ "$(jq -c .bluetooth <<<"$output")" = null ]
 }
@@ -190,6 +190,12 @@ state() { nova-settings state | jq -c "$1"; }
     i=$((i + 1))
   done
   [ "$(state .radios)" = '["bluetooth","wlan","wwan"]' ]
+}
+
+@test "state: Firmware is offered only where fwupd is" {
+  [ "$(state .updates.firmware)" = false ]
+  stub fwupdmgr
+  [ "$(state .updates.firmware)" = true ]
 }
 
 @test "state: Bluetooth LE as nova bluetooth le has it, or null where it cannot say" {

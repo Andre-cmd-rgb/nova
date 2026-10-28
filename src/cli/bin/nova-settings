@@ -212,6 +212,7 @@ state() {
     --argjson about "$(about_json)" \
     --argjson candidates "$([[ $(quiet nova-update --candidates) == on ]] && echo true || echo false)" \
     --argjson recovery "$(command -v nova-recovery >/dev/null && echo true || echo false)" \
+    --argjson firmware "$(command -v fwupdmgr >/dev/null && echo true || echo false)" \
     '{appearance: {theme: $theme, themes: $themes, background: $background,
                    font: $font, fonts: $fonts, textSize: $textSize},
       battery: $battery,
@@ -227,7 +228,7 @@ state() {
              screensaver: (if ($config.idle.screensaver | type) == "number" then $config.idle.screensaver else 180 end),
              fingerprint: $fingerprint},
       apps: $defaults,
-      updates: {candidates: $candidates, recovery: $recovery},
+      updates: {candidates: $candidates, recovery: $recovery, firmware: $firmware},
       about: $about}'
 }
 

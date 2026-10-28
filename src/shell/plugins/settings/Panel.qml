@@ -1032,6 +1032,12 @@ Item {
             Button { text: "Update…"; bordered: true; onClicked: root.terminal("nova update") }
           }
         }
+        Line {
+          visible: root.updates.firmware === true
+          label: "Firmware"
+          detail: "From the computer's maker: BIOS, Thunderbolt, fingerprint reader."
+          Button { text: "Check…"; bordered: true; onClicked: root.terminal("nova-update-firmware") }
+        }
         Caption {
           width: parent.width
           text: "Each release moves the whole system to a tested snapshot of Arch Linux. Before every update, a snapshot of the system is taken. Chrome and VS Code come from Google and Microsoft, and update with it."
