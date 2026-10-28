@@ -4,16 +4,24 @@
 # nova:args=<desktop-id> [name]
 # nova:hidden=true
 #
-# The launcher's Remove action. An entry of the user's own is deleted; one from
-# a package uninstalls the package in a terminal, where pacman asks before it
-# removes anything and says so when something else still needs it.
+# The launcher's Remove action, after its confirmation dialog. Pacman's
+# dependency check runs before authentication, and again during removal.
 
 set -euo pipefail
 
 id=${1:-}
 name=${2:-$id}
-[[ -n $id ]] || { echo "Usage: nova-remove-launcher-entry <desktop-id> [name]" >&2; exit 2; }
+[[ -n $id && $id != */* && $id != . && $id != .. ]] || {
+  echo "Usage: nova-remove-launcher-entry <desktop-id> [name]" >&2
+  exit 2
+}
 file_name=${id%.desktop}.desktop
+
+failed() {
+  nova-notification-send "Could not remove $name" "$1"
+  exit 1
+}
+removed() { nova-notification-send "Removed $name"; }
 
 user_dir=${XDG_DATA_HOME:-$HOME/.local/share}/applications
 IFS=: read -ra data_dirs <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
@@ -25,22 +33,47 @@ for dir in "$user_dir" "${data_dirs[@]/%//applications}"; do
     break
   fi
 done
-[[ -n $desktop_file ]] || { echo "nova-remove-launcher-entry: no launcher entry $file_name" >&2; exit 1; }
+[[ -n $desktop_file ]] || failed "The launcher entry no longer exists."
 
 if [[ $desktop_file == "$user_dir/"* ]]; then
-  rm -f -- "$desktop_file"
+  rm -f -- "$desktop_file" || failed 'Could not delete the launcher entry.'
   update-desktop-database "$user_dir" >/dev/null 2>&1 || true
+  removed
   exit 0
 fi
 
-if package=$(pacman -Qqo "$desktop_file" 2>/dev/null); then
-  exec nova-launch-floating-terminal-with-presentation \
-    "echo $(printf '%q' "Uninstalling $name ($package)")...; sudo pacman -Rns $(printf '%q' "$package")"
+export LC_ALL=C
+if package=$(pacman -Qqo -- "$desktop_file" 2>/dev/null); then
+  case $package in
+    nova|nova-*) failed 'This package is part of Nova.' ;;
+  esac
+  [[ $package =~ ^[[:alnum:]@._+-]+$ ]] || failed 'Could not identify one package for this app.'
+  # libalpm refuses a removal that would break Nova or any other installed
+  # package, including dependencies reached through another dependency.
+  # -n is not taken with --print; what it would break is the same.
+  if ! reason=$(pacman -Rs --print --print-format '%n' -- "$package" 2>&1); then
+    failed "$reason"
+  fi
+  if ! reason=$(pkexec pacman -Rns --noconfirm -- "$package" 2>&1); then
+    failed "${reason:-Authentication was cancelled or removal failed.}"
+  fi
+  removed
+  exit 0
 fi
 
-if nova-cmd-present flatpak && flatpak info "${file_name%.desktop}" >/dev/null 2>&1; then
-  exec nova-launch-floating-terminal-with-presentation "flatpak uninstall $(printf '%q' "${file_name%.desktop}")"
+app=${file_name%.desktop}
+if command -v flatpak >/dev/null; then
+  scope=''
+  if flatpak info --user "$app" >/dev/null 2>&1; then scope=--user
+  elif flatpak info --system "$app" >/dev/null 2>&1; then scope=--system
+  fi
+  if [[ -n $scope ]]; then
+    if ! reason=$(flatpak uninstall "$scope" -y -- "$app" 2>&1); then
+      failed "${reason:-The app could not be uninstalled.}"
+    fi
+    removed
+    exit 0
+  fi
 fi
 
-echo "nova-remove-launcher-entry: nothing owns $desktop_file, so it was left alone" >&2
-exit 1
+failed 'No package owns this launcher entry; it was left alone.'
