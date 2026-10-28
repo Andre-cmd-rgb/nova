@@ -567,7 +567,9 @@ jobs:
           image=nova-$version-raspberry-pi-5.img.xz
           flags=(--generate-notes)
           [[ $PUBLISH == true ]] || flags+=(--draft)
-          [[ $version != *-* ]] || flags+=(--prerelease)
+          prerelease=false
+          [[ $version != *-* ]] || prerelease=true
+          flags+=(--prerelease="$prerelease")
           # What a person downloads, and release.toml, which nova update finds
           # here and which says where the packages are.
           assets=(out/iso/"$iso" out/iso/"$iso.sha256" out/iso/nova-usb
@@ -587,7 +589,9 @@ jobs:
           # A re-run after a publish that failed halfway finds its release there.
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${assets[@]}"
-            [[ $PUBLISH != true ]] || gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            edit_flags=(--prerelease="$prerelease")
+            [[ $PUBLISH != true ]] || edit_flags+=(--draft=false)
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${edit_flags[@]}"
           else
             gh release create "$TAG" --repo "$GITHUB_REPOSITORY" "${flags[@]}" --title "Nova $version" \
               --notes-file notes.md \

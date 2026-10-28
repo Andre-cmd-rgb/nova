@@ -261,3 +261,22 @@ pi_release() {
   [[ $output == *"Arch snapshot  unpinned -> 2026/10/19"* ]]
   fails grep -q -- --alarm "$CALLS"
 }
+
+@test "stable machines reject candidate tags and pre-release flags from latest" {
+  echo 1.0.0 >"$PKGVER"
+  export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_CANDIDATES="$SCRATCH/candidates"
+  stub curl 'while (($#)); do [[ $1 == -o ]] && out=$2; shift; done
+    cp "$SCRATCH/latest.json" "$out"
+    printf 200'
+  for release in '{"tag_name":"v1.1.0-rc.1","prerelease":false}' '{"tag_name":"v1.1.0","prerelease":true}'; do
+    echo "$release" >"$SCRATCH/latest.json"
+    run "$REPO_ROOT/src/cli/bin/nova-update" --check
+    [ "$status" -eq 0 ]
+    [ "$output" = current ]
+    [ ! -e "$NOVA_UPDATE_CACHE" ]
+    run "$REPO_ROOT/src/cli/bin/nova-update" --yes
+    [ "$status" -eq 0 ]
+    [[ $output == *"No final Nova release is published yet"* ]]
+  done
+  fails grep -q '^nova-update-apply' "$CALLS"
+}
