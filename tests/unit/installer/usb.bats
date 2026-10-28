@@ -607,6 +607,19 @@ https://packages.example.org/v1.0.0/nova-1.0.0-x86_64.iso.sha256 https://package
 https://dl.example.org/nova-1.0.0-x86_64.iso" ]
 }
 
+@test "fetch_release_files: a selected release gets the same signature and ISO checks" {
+  serve_release
+  release=$(jq -c '.[0]' "$SCRATCH/releases.json")
+  run fetch_release_files "$release"
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
+  rm -rf "$NOVA_USB_CACHE"
+  echo changed >>"$SCRATCH/served/release.toml"
+  run fetch_release_files "$release"
+  [ "$status" -ne 0 ]
+  [[ $output == *"release.toml is not signed by Nova's key"* ]]
+}
+
 @test "fetch_release: a release from before beta.6, with everything on its page, still works" {
   serve_release page
   run fetch_release

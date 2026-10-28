@@ -1,0 +1,108 @@
+#!/bin/bash
+# Host-side pieces of tests/install/run --upgrade. Nothing here is installed.
+set -euo pipefail
+
+upgrade_pkgver() { # tag, in the form pacman compares
+  local version=${1#v}
+  printf '%s\n' "${version/-/}"
+}
+
+# GitHub orders releases by commit date, not version. A promoted release can
+# share its candidate's commit, and a later release can already be published
+# when someone re-runs an older tag. Include candidates and compare versions.
+previous_release() { # tag; the complete release list on stdin
+  local target=$1 tag best='' list
+  [[ $target =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || return 1
+  list=$(jq -ce 'if type == "array" then . else error("not a release list") end') || return 1
+  while IFS= read -r tag; do
+    [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || continue
+    (($(vercmp "$(upgrade_pkgver "$tag")" "$(upgrade_pkgver "$target")") < 0)) || continue
+    if [[ -z $best ]] || (($(vercmp "$(upgrade_pkgver "$tag")" "$(upgrade_pkgver "$best")") > 0)); then
+      best=$tag
+    fi
+  done < <(jq -r '.[] | select(.draft == false) | .tag_name // empty' <<<"$list")
+  [[ -n $best ]] || return 4
+  jq -ce --arg tag "$best" 'first(.[] | select(.tag_name == $tag and .draft == false))' <<<"$list"
+}
+
+published_releases() { # destination; fail rather than mistake an API error for no predecessor
+  local dest=$1 page list count
+  local -a auth=()
+  [[ -z ${GITHUB_TOKEN:-} ]] || auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  : >"$dest.pages"
+  for ((page = 1; page <= 20; page++)); do
+    list=$(curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "${auth[@]}" \
+      -H 'Accept: application/vnd.github+json' \
+      "https://api.github.com/repos/Andre-cmd-rgb/nova/releases?per_page=100&page=$page") || return 1
+    count=$(jq -er 'if type == "array" then length else error("not a release list") end' <<<"$list") || return 1
+    jq -c '.[]' <<<"$list" >>"$dest.pages"
+    if ((count < 100)); then
+      jq -s . "$dest.pages" >"$dest"
+      rm -f "$dest.pages"
+      return 0
+    fi
+  done
+  echo 'upgrade-test: more than 2000 releases; refusing to use an incomplete list' >&2
+  return 1
+}
+
+# QEMU's user network reaches the host's loopback as 10.0.2.2. The server
+# exposes only the signed repo artifact, with a fresh CA trusted only inside
+# this guest. Neither curl nor pacman gets an insecure TLS option.
+start_upgrade_repo() { # work repo
+  local work=$1 repo=$2
+  openssl req -x509 -newkey rsa:2048 -nodes -days 2 -subj /CN=Nova-upgrade-test-CA \
+    -addext basicConstraints=critical,CA:TRUE -keyout "$work/ca.key" -out "$work/ca.crt" >"$work/tls.log" 2>&1 || return 1
+  openssl req -newkey rsa:2048 -nodes -subj /CN=10.0.2.2 \
+    -keyout "$work/server.key" -out "$work/server.csr" >>"$work/tls.log" 2>&1 || return 1
+  printf 'subjectAltName=IP:10.0.2.2\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n' >"$work/server.ext"
+  openssl x509 -req -days 2 -in "$work/server.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" \
+    -CAcreateserial -extfile "$work/server.ext" -out "$work/server.crt" >>"$work/tls.log" 2>&1 || return 1
+  python3 - "$repo" "$work" >"$work/repo.log" 2>&1 <<'PY' &
+import functools
+import http.server
+import pathlib
+import ssl
+import sys
+
+repo, work = sys.argv[1], pathlib.Path(sys.argv[2])
+server = http.server.ThreadingHTTPServer(
+    ("127.0.0.1", 0), functools.partial(http.server.SimpleHTTPRequestHandler, directory=repo)
+)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(work / "server.crt", work / "server.key")
+server.socket = context.wrap_socket(server.socket, server_side=True)
+(work / "repo.port").write_text(str(server.server_port))
+server.serve_forever()
+PY
+  repo_pid=$!
+  for ((i = 0; i < 100; i++)); do
+    [[ -s $work/repo.port ]] && break
+    kill -0 "$repo_pid" 2>/dev/null || return 1
+    sleep 0.1
+  done
+  [[ -s $work/repo.port ]] || return 1
+  upgrade_repo=https://10.0.2.2:$(cat "$work/repo.port")
+  curl -fsS --noproxy '*' --max-time 10 --cacert "$work/ca.crt" \
+    --connect-to "10.0.2.2:$(cat "$work/repo.port"):127.0.0.1:$(cat "$work/repo.port")" \
+    "$upgrade_repo/nova.db" -o /dev/null
+}
+
+upgrade_after() { # work; print the extra after= script, before the first snapshot
+  local work=$1 file dir
+  dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+  printf '\ninstall -d -m700 /home/nova-upgrade-test\n'
+  for file in previous.toml candidate.toml; do
+    printf "cat > /home/nova-upgrade-test/%s <<'MANIFEST'\n" "$file"
+    cat "$work/$file"
+    printf 'MANIFEST\n'
+  done
+  printf "install -Dm644 /dev/stdin /etc/ca-certificates/trust-source/anchors/nova-upgrade-test.crt <<'CA'\n"
+  cat "$work/ca.crt"
+  printf 'CA\nupdate-ca-trust\n'
+  printf "install -Dm755 /dev/stdin /usr/local/lib/nova-upgrade-probe <<'UPGRADE'\n"
+  cat "$dir/upgrade-probe"
+  printf 'UPGRADE\n'
+  printf "sed -i 's@ExecStart=.*@ExecStart=/usr/local/lib/nova-upgrade-probe@' /etc/systemd/system/nova-test-probe.service\n"
+  printf 'echo previous > /home/nova-upgrade-test/stage\n'
+}

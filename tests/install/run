@@ -5,6 +5,13 @@
 #   tests/install/run --iso <file> --repo <dir> --release <release.toml>
 #                     --packages <packages.txt> [--logs <dir>] [--encrypt]
 #
+#   tests/install/run --upgrade --repo <dir> --release <release.toml> [--logs <dir>]
+#
+# --upgrade installs the newest published release older than --release, from
+# its signed ISO and its own packages. Four boots check it, update to --release,
+# downgrade, and restore the pre-update root snapshot. It needs python and
+# openssl too, for the guest's HTTPS repository (upgrade-lib).
+#
 # --encrypt installs onto an encrypted disk (encrypt=yes), opened at the first
 # boot by a key file the test leaves in the initramfs (tests/install/after-encrypted).
 #
@@ -35,7 +42,7 @@ source "$root/installer/nova-usb"
 die() { printf 'install-test: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 
-iso='' repo='' release='' packages='' logs='' encrypt=0
+iso='' repo='' release='' packages='' logs='' encrypt=0 upgrade=0
 while (($#)); do
   case $1 in
     --iso) iso=${2:?}; shift 2 ;;
@@ -44,25 +51,59 @@ while (($#)); do
     --packages) packages=${2:?}; shift 2 ;;
     --logs) logs=${2:?}; shift 2 ;;
     --encrypt) encrypt=1; shift ;;
+    --upgrade) upgrade=1; shift ;;
     -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
-[[ -r $iso && -r $repo/nova.db && -r $release && -r $packages ]] ||
-  die "usage: tests/install/run --iso <file> --repo <dir> --release <release.toml> --packages <packages.txt>"
+[[ -r $repo/nova.db && -r $release ]] || die "needs --repo <dir> and --release <release.toml>"
+repo=$(realpath -- "$repo")
+
+MiB=$((1024 * 1024))
+work=$(mktemp -d "${TMPDIR:-/var/tmp}/nova-install-test.XXXXXX")
+keep() { [[ -z $logs ]] || { mkdir -p "$logs" && cp -- "$work"/*.log "$logs/"; } 2>/dev/null || true; }
+xvfb='' repo_pid=''
+cleanup() {
+  [[ -z $xvfb ]] || kill "$xvfb" 2>/dev/null || true
+  [[ -z $repo_pid ]] || kill "$repo_pid" 2>/dev/null || true
+  keep
+  rm -rf -- "$work"
+}
+trap cleanup EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
+
+if ((upgrade)); then
+  ((!encrypt)) || die "--upgrade uses the plain disk; encryption is tested by install-test"
+  # shellcheck source=tests/install/upgrade-lib
+  source "$here/upgrade-lib"
+  step "The previous published release, candidates included"
+  published_releases "$work/releases.json" || die "could not read the published releases"
+  tag=v$(release_value "$release" version)
+  rc=0
+  previous=$(previous_release "$tag" <"$work/releases.json") || rc=$?
+  if ((rc == 4)); then
+    echo "::notice::No published Nova release older than $tag; skipping the upgrade test."
+    exit 0
+  fi
+  ((rc == 0)) || die "could not select the previous release"
+  CACHE=$work/download
+  iso=$(fetch_release_files "$previous")
+  previous_dir=${iso%/*}
+  [[ v$(release_value "$previous_dir/release.toml" version) == "$(jq -r .tag_name <<<"$previous")" ]] || die "previous manifest and release disagree"
+  cp "$previous_dir/release.toml" "$work/previous.toml"
+  start_upgrade_repo "$work" "$repo" || die "the HTTPS repository did not start"
+  sed "s@^nova_repo = .*@nova_repo = \"$upgrade_repo\"@" "$release" >"$work/candidate.toml"
+  release=$previous_dir/release.toml
+  packages=$previous_dir/packages.txt
+fi
+[[ -r $iso && -r $packages ]] || die "needs --iso <file> and --packages <packages.txt> (or --upgrade)"
 for tool in qemu-system-x86_64 Xvfb mcopy mkfs.fat sfdisk bsdtar repo-add pacman curl; do
   command -v "$tool" >/dev/null || die "needs $tool"
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || die "needs /dev/kvm"
 ovmf=/usr/share/edk2/x64
 [[ -r $ovmf/OVMF_CODE.4m.fd ]] || die "needs edk2-ovmf"
-repo=$(realpath -- "$repo")
-
-MiB=$((1024 * 1024))
-work=$(mktemp -d "${TMPDIR:-/var/tmp}/nova-install-test.XXXXXX")
-keep() { [[ -z $logs ]] || { mkdir -p "$logs" && cp -- "$work"/*.log "$logs/"; } 2>/dev/null || true; }
-xvfb=''
-trap '[[ -z $xvfb ]] || kill "$xvfb" 2>/dev/null; keep; rm -rf -- "$work"' EXIT
 stick=$work/stick
 mkdir -p "$stick" "$work/db/cache"
 
@@ -74,14 +115,20 @@ entry=$stick/loader/entries/01-nova.conf
 sed -i '/^options/ s/$/ console=ttyS0,115200/' "$entry"
 
 step "The stick: every package an install can need"
-arch_date=$(sed -n 's/^arch_date = "\(.*\)"$/\1/p' "$release")
-{
-  printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n\n[nova]\nServer = file://%s\n' "$repo"
-  for name in core extra multilib; do
-    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
-    printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$name" "$arch_date"
-  done
-} >"$work/pacman.conf"
+if ((upgrade)); then
+  # The predecessor's repository, not the unpublished artifact: the disk must
+  # start as an installed older release, including its own installer.
+  offline_pacman_conf "$release" >"$work/pacman.conf"
+else
+  arch_date=$(sed -n 's/^arch_date = "\(.*\)"$/\1/p' "$release")
+  {
+    printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n\n[nova]\nServer = file://%s\n' "$repo"
+    for name in core extra multilib; do
+      # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+      printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$name" "$arch_date"
+    done
+  } >"$work/pacman.conf"
+fi
 pacman --config "$work/pacman.conf" --dbpath "$work/db" --logfile /dev/null -Sy >/dev/null
 mapfile -t names < <(grep -v -e '^#' -e '^[[:space:]]*$' "$packages")
 package_urls "$work/pacman.conf" "$work/db" "${names[@]}" >"$work/urls" ||
@@ -112,6 +159,7 @@ ANSWERS
   printf "\ninstall -Dm755 /dev/stdin /usr/local/lib/nova-test-probe <<'PROBE'\n"
   cat "$here/probe"
   printf 'PROBE\n'
+  ((!upgrade)) || upgrade_after "$work"
 } >"$stick/nova/after"
 
 step "The stick: a FAT partition, as nova usb writes one"
@@ -137,7 +185,7 @@ for ((i = 0; i < 100; i++)); do [[ -S /tmp/.X11-unix/X$display ]] && break; slee
 [[ -S /tmp/.X11-unix/X$display ]] || die "Xvfb did not start; the log is xvfb.log"
 display=:$display
 
-# One machine for both runs, the same firmware variables included. The network
+# One machine for every run, the same firmware variables included. The network
 # card has no boot ROM, so the firmware goes straight to the disks.
 cp "$ovmf/OVMF_VARS.4m.fd" "$work/vars.fd"
 truncate -s 80G "$work/disk.img"
@@ -163,12 +211,29 @@ grep -aq 'nova-install-start: installed' "$work/install.log" ||
 echo "installed in $(((SECONDS - started) / 60)) min"
 rm -f -- "$work/stick.img"
 
-step "The first boot"
-machine 20 "$work/boot.log" || die "the installed system did not power off by itself within 20 minutes; the log is boot.log"
-# The firmware's cursor codes can precede the first line.
-report=$(tr -d '\r' <"$work/boot.log" | grep -ao 'probe:.*' || true)
-printf '%s\n' "$report"
-grep -q '^probe: done' <<<"$report" || die "the probe did not finish"
-! grep -q '^probe: FAIL' <<<"$report" || die "the installed system has problems (above)"
-echo
-echo "ok   installed from the stick$( ((encrypt)) && echo " onto an encrypted disk"), booted locked, and nova doctor is content"
+report_boot() { # log expected-completion; cursor codes can precede the first line
+  local log=$1 completion=$2 report
+  report=$(tr -d '\r' <"$log" | grep -ao 'probe:.*' || true)
+  printf '%s\n' "$report"
+  grep -qx "probe: done$completion" <<<"$report" || die "the probe did not finish"
+  ! grep -q '^probe: FAIL' <<<"$report" || die "the installed system has problems (above)"
+}
+
+if ((upgrade)); then
+  # One install, four boots, with a separate deadline and serial log for each.
+  # Powering off between them gives QEMU a reboot boundary without needing
+  # an unreliable serial-console login.
+  for stage in previous upgraded downgraded restored; do
+    case $stage in previous|upgraded) minutes=30 ;; *) minutes=15 ;; esac
+    step "Upgrade test: $stage"
+    machine "$minutes" "$work/$stage.log" || die "$stage did not power off within $minutes minutes"
+    report_boot "$work/$stage.log" " $stage"
+  done
+  echo 'ok   installed the previous release, upgraded, downgraded, and booted its pre-update snapshot as the root'
+else
+  step "The first boot"
+  machine 20 "$work/boot.log" || die "the installed system did not power off by itself within 20 minutes; the log is boot.log"
+  report_boot "$work/boot.log" ''
+  echo
+  echo "ok   installed from the stick$( ((encrypt)) && echo " onto an encrypted disk"), booted locked, and nova doctor is content"
+fi

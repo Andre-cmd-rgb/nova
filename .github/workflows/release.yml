@@ -360,6 +360,49 @@ jobs:
           if-no-files-found: ignore
           overwrite: true # a re-run of a failed attempt uploads again
 
+  # An installed release must move forward and back before its successor is
+  # published. This installs once, on a plain disk, beside the two install legs.
+  upgrade-test:
+    needs: [pin, repo]
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --privileged # /dev/kvm
+      volumes:
+        - /mnt:/mnt # the runner's scratch disk: the stick and the disk images
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-toml
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repo
+          path: out/repo
+      - name: Install the previous release, update, downgrade, and restore
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-ui-gtk qemu-ui-opengl \
+            qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl qemu-hw-display-virtio-vga \
+            qemu-hw-display-virtio-vga-gl virglrenderer mesa xorg-server-xvfb edk2-ovmf mtools dosfstools libarchive \
+            python openssl jq
+          # 45 minutes to install, 30 each to update and downgrade, 15 each
+          # for the restore and its boot. The outer limit bounds downloads too.
+          TMPDIR=/mnt timeout 150m tests/install/run --upgrade --repo out/repo --release release.toml \
+            --logs /tmp/upgrade-logs
+      - name: Keep the serial and repository logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: upgrade-logs
+          path: /tmp/upgrade-logs
+          if-no-files-found: ignore
+          overwrite: true
+
   # Nova's packages for the Raspberry Pi 5, in Arch Linux ARM on an arm64
   # runner, against Arch Linux ARM's databases as the pin job fetched them.
   # Building nova with --syncdeps also proves every dependency it has on a Pi
@@ -559,7 +602,7 @@ jobs:
           path: out/pi-image/*.sha256
 
   publish:
-    needs: [repo, iso, install-test, sign, pi-repo, pi-image]
+    needs: [repo, iso, install-test, upgrade-test, sign, pi-repo, pi-image]
     runs-on: ubuntu-latest
     permissions:
       contents: write

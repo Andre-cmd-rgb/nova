@@ -4,70 +4,79 @@
 # "probe: ok", "probe: FAIL", or "probe:" for the record; "probe: done" ends
 # the report.
 set -uo pipefail
-exec >/dev/ttyS0 2>&1
 
-user=$(awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }' /etc/passwd)
-uid=$(id -u "$user")
-shell() { runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" /usr/lib/nova/bin/nova-shell "$@" 2>/dev/null; }
 check() { # what command...: a failure is followed by the command's last lines
   local what=$1 out
   shift
   if out=$("$@" 2>&1); then
     echo "probe: ok   $what"
   else
+    probe_failures=1
     echo "probe: FAIL $what"
     [[ -z $out ]] || tail -n 5 <<<"$out" | sed 's/^/probe:   /'
   fi
 }
 
-# The desktop starts behind the lock, here on software rendering: give it time.
-for ((i = 0; i < 300; i++)); do
-  [[ $(shell lock state) == secure ]] && break
-  sleep 1
-done
-check "the session started locked, and the lock is secure" test "$(shell lock state)" = secure
-check "Hyprland is running" pgrep -u "$user" -x Hyprland
-check "the shell answers" test "$(shell shell ping)" = ok
-check "greetd is running" systemctl is-active greetd
-check "the lock screen can count wrong passwords" test "$(stat -c %U "/run/faillock/$user" 2>/dev/null)" = "$user"
+probe() {
+  probe_failures=0
+  user=$(awk -F: '$3 >= 1000 && $3 < 60000 { print $1; exit }' /etc/passwd)
+  uid=$(id -u "$user")
+  shell() { runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" /usr/lib/nova/bin/nova-shell "$@" 2>/dev/null; }
 
-# An encrypted install: the root came out of the LUKS2 container, as the
-# initramfs opened it.
-if [[ -e /etc/mkinitcpio.conf.d/20-nova-encrypt.conf ]]; then
-  check "the root is on the encrypted disk" \
-    bash -c '[[ $(findmnt -no SOURCE /) == /dev/mapper/nova-root* ]] && cryptsetup status nova-root | grep -q "type: *LUKS2"'
-fi
+  # The desktop starts behind the lock, here on software rendering: give it time.
+  for ((i = 0; i < 300; i++)); do
+    [[ $(shell lock state) == secure ]] && break
+    sleep 1
+  done
+  check "the session started locked, and the lock is secure" test "$(shell lock state)" = secure
+  check "Hyprland is running" pgrep -u "$user" -x Hyprland
+  check "the shell answers" test "$(shell shell ping)" = ok
+  check "greetd is running" systemctl is-active greetd
+  check "the lock screen can count wrong passwords" test "$(stat -c %U "/run/faillock/$user" 2>/dev/null)" = "$user"
 
-failed=$(systemctl --failed --plain --no-legend | awk '{ print $1 }' | paste -sd' ')
-check "no failed services${failed:+ (failed: $failed)}" test -z "$failed"
-as_user() { runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" "$@" 2>/dev/null; }
-failed=$(as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user --failed --plain --no-legend |
-  awk '{ print $1 }' | paste -sd' ')
-check "no failed services in the session${failed:+ (failed: $failed)}" test -z "$failed"
+  # An encrypted install: the root came out of the LUKS2 container, as the
+  # initramfs opened it.
+  if [[ -e /etc/mkinitcpio.conf.d/20-nova-encrypt.conf ]]; then
+    check "the root is on the encrypted disk" \
+      bash -c '[[ $(findmnt -no SOURCE /) == /dev/mapper/nova-root* ]] && cryptsetup status nova-root | grep -q "type: *LUKS2"'
+  fi
 
-# A config error is a red banner across the top of the desktop. A clean config
-# reports one empty string.
-signature=$(find "/run/user/$uid/hypr" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -n 1)
-config=$(as_user HYPRLAND_INSTANCE_SIGNATURE="$signature" hyprctl configerrors -j)
-errors=$(jq -r '.[] | select(. != "")' <<<"$config" 2>/dev/null | paste -sd';' -)
-check "Hyprland's config has no errors${errors:+ ($errors)}" jq -e 'map(select(. != "")) == []' <<<"$config"
+  failed=$(systemctl --failed --plain --no-legend | awk '{ print $1 }' | paste -sd' ')
+  check "no failed services${failed:+ (failed: $failed)}" test -z "$failed"
+  as_user() { runuser -u "$user" -- env XDG_RUNTIME_DIR="/run/user/$uid" "$@" 2>/dev/null; }
+  failed=$(as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user --failed --plain --no-legend |
+    awk '{ print $1 }' | paste -sd' ')
+  check "no failed services in the session${failed:+ (failed: $failed)}" test -z "$failed"
 
-# What nova update will ask pacman for, with /etc/pacman.conf's options. The
-# release's own [nova] repository is not published yet, so only the pinned Arch
-# snapshot is asked, once the network is up.
-pinned_mirror() {
-  local dir
-  nm-online -q --timeout=60 || echo "the network did not come up within a minute"
-  dir=$(mktemp -d)
-  printf '[options]\nArchitecture = auto\nSigLevel = Required DatabaseOptional\nDBPath = %s\n\n[core]\nInclude = /etc/pacman.d/nova-mirrorlist\n' "$dir" >"$dir/pacman.conf"
-  pacman --config "$dir/pacman.conf" --logfile /dev/null -Sy
+  # A config error is a red banner across the top of the desktop. A clean config
+  # reports one empty string.
+  signature=$(find "/run/user/$uid/hypr" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -n 1)
+  config=$(as_user HYPRLAND_INSTANCE_SIGNATURE="$signature" hyprctl configerrors -j)
+  errors=$(jq -r '.[] | select(. != "")' <<<"$config" 2>/dev/null | paste -sd';' -)
+  check "Hyprland's config has no errors${errors:+ ($errors)}" jq -e 'map(select(. != "")) == []' <<<"$config"
+
+  # What nova update will ask pacman for, with /etc/pacman.conf's options. The
+  # release's own [nova] repository is not published yet, so only the pinned Arch
+  # snapshot is asked, once the network is up.
+  pinned_mirror() {
+    local dir
+    nm-online -q --timeout=60 || echo "the network did not come up within a minute"
+    dir=$(mktemp -d)
+    printf '[options]\nArchitecture = auto\nSigLevel = Required DatabaseOptional\nDBPath = %s\n\n[core]\nInclude = /etc/pacman.d/nova-mirrorlist\n' "$dir" >"$dir/pacman.conf"
+    pacman --config "$dir/pacman.conf" --logfile /dev/null -Sy
+  }
+  check "the pinned Arch snapshot answers, for nova update" pinned_mirror
+  doctor=$(nova doctor 2>&1)
+  status=$?
+  sed 's/^/probe:   /' <<<"$doctor"
+  check "nova doctor finds nothing wrong" test "$status" = 0
+  echo "probe: $(systemd-analyze 2>/dev/null | head -n 1)"
+  return "$probe_failures"
 }
-check "the pinned Arch snapshot answers, for nova update" pinned_mirror
-doctor=$(nova doctor 2>&1)
-status=$?
-sed 's/^/probe:   /' <<<"$doctor"
-check "nova doctor finds nothing wrong" test "$status" = 0
-echo "probe: $(systemd-analyze 2>/dev/null | head -n 1)"
 
-echo "probe: done"
-systemctl poweroff
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  exec >/dev/ttyS0 2>&1
+  probe || true
+  echo "probe: done"
+  systemctl poweroff
+fi

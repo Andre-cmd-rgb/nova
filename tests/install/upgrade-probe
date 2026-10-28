@@ -1,0 +1,132 @@
+#!/bin/bash
+# Runs only in the QEMU guest made by tests/install/run --upgrade. /home is
+# outside the root snapshots, so the next boot knows which step it must check
+# even after replacing the root with the snapshot from before the update.
+set -euo pipefail
+
+value() { sed -n "s/^$2 = \"\(.*\)\"$/\1/p" "$1"; }
+pkgver() { local v=${1#v}; printf '%s' "${v/-/}"; }
+
+release_checks() { # manifest [update]
+  local manifest=$1 version installed date repo
+  version=$(value "$manifest" version)
+  installed=$(pacman -Q nova)
+  installed=${installed#nova }
+  check "nova runs version $version" test "${installed%-*}" = "$(pkgver "$version")"
+  check "the Limine fallback checks out" /usr/lib/nova/bin/nova-boot-check status
+  # beta.8 predates --check-boot. The successor must pass its updater's full
+  # check after the upgrade; the predecessor still has its fallback guard.
+  if [[ ${2:-} == update ]]; then
+    check "the boot entries check out" /usr/lib/nova/bin/nova-update-apply --check-boot
+  fi
+  check "the running kernel has its modules" test -d "/usr/lib/modules/$(uname -r)"
+  date=$(value "$manifest" arch_date)
+  repo=$(value "$manifest" nova_repo)
+  check "Arch is pinned to $date" grep -Fx "# arch-date: $date" /etc/pacman.d/nova-mirrorlist
+  check "Nova is pinned to v$version" grep -Fx "# nova-release: v$version" /etc/pacman.d/nova-repo
+  check "the repository is $repo" grep -Fx "Server = $repo" /etc/pacman.d/nova-repo
+}
+
+# Take the number the updater reports, not the newest entry in Snapper's
+# list: another pacman hook or timer could have made a snapshot since then.
+update_snapshot() { # update-log
+  local number
+  number=$(sed -n 's/^==> Snapshot \([0-9][0-9]*\) taken$/\1/p' "$1")
+  [[ $number =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "$number"
+}
+
+# A failed check is a report, so all the useful diagnostics still make it to
+# the serial log. Never start the next operation after one has failed.
+checks_passed() { ((probe_failures == 0)); }
+
+# Booting a Limine snapshot and its overlay depends on menu input and graphics.
+# Use the same Btrfs effect as RESTORE_METHOD=replace instead: a writable copy
+# of the exact pre-update snapshot takes the name @, which fstab and the UKI
+# boot. The downgrade has already restored this release's ESP files. This
+# tests the restored root and pins, not the menu, overlay or restore dialog.
+restore_snapshot() {
+  local number uuid top=/run/nova-test-restore
+  number=$(cat "$state/snapshot")
+  [[ $number =~ ^[0-9]+$ && -d /.snapshots/$number/snapshot ]]
+  [[ $(findmnt -nro FSROOT /) == /@ ]]
+  uuid=$(findmnt -nro UUID /)
+  systemctl stop greetd limine-snapper-sync.service
+  mkdir -p "$top"
+  mount -t btrfs -o subvolid=5 "UUID=$uuid" "$top"
+  [[ -d $top/@ && ! -e $top/@nova-test-before-restore ]]
+  btrfs subvolume snapshot "/.snapshots/$number/snapshot" "$top/@nova-test-restored"
+  btrfs subvolume show "$top/@nova-test-restored" | awk '$1 == "UUID:" {print $2}' >"$state/restored-uuid"
+  test -s "$state/restored-uuid"
+  mv "$top/@" "$top/@nova-test-before-restore"
+  mv "$top/@nova-test-restored" "$top/@"
+  sync
+  umount "$top"
+}
+
+main() {
+  # shellcheck source=tests/install/probe
+  source /usr/local/lib/nova-test-probe
+  set -euo pipefail
+  set -o errtrace
+  exec >/dev/ttyS0 2>&1
+  export PATH=/usr/lib/nova/bin:$PATH
+  state=/home/nova-upgrade-test
+  stage=$(cat "$state/stage")
+  trap 'echo "probe: FAIL $stage stopped at line $LINENO"; systemctl poweroff' ERR
+
+  probe || true
+  case $stage in
+    previous)
+      release_checks "$state/previous.toml"
+      checks_passed
+      # Preserve this one even if cleanup runs during the two transactions.
+      systemctl disable --now snapper-cleanup.timer
+      cp /etc/pacman.d/nova-{mirrorlist,repo} "$state/"
+      pacman -Q >"$state/packages.before"
+      echo before > /etc/nova-upgrade-test
+      nova update --release-file "$state/candidate.toml" --yes 2>&1 | tee "$state/update.log"
+      update_snapshot "$state/update.log" >"$state/snapshot"
+      number=$(cat "$state/snapshot")
+      [[ $number =~ ^[0-9]+$ && -d /.snapshots/$number/snapshot ]]
+      cmp "$state/nova-repo" "/.snapshots/$number/snapshot/etc/pacman.d/nova-repo"
+      cmp "$state/nova-mirrorlist" "/.snapshots/$number/snapshot/etc/pacman.d/nova-mirrorlist"
+      echo after > /etc/nova-upgrade-test
+      echo upgraded >"$state/stage"
+      ;;
+    upgraded)
+      release_checks "$state/candidate.toml" update
+      checks_passed
+      # This local manifest was checked with nova-usb's signature helper before
+      # installation. Its repository is the previous release's public one.
+      nova update --release-file "$state/previous.toml" --allow-downgrade --yes
+      echo downgraded >"$state/stage"
+      ;;
+    downgraded)
+      release_checks "$state/previous.toml"
+      check "the change after the snapshot is still present" grep -Fx after /etc/nova-upgrade-test
+      checks_passed
+      restore_snapshot
+      echo restored >"$state/stage"
+      ;;
+    restored)
+      release_checks "$state/previous.toml"
+      check "the snapshot's root is running" test "$(btrfs subvolume show / | awk '$1 == "UUID:" {print $2}')" = "$(cat "$state/restored-uuid")"
+      check "the snapshot's marker is back" grep -Fx before /etc/nova-upgrade-test
+      check "the old Nova pins are back, byte for byte" cmp "$state/nova-repo" /etc/pacman.d/nova-repo
+      check "the old Arch pins are back, byte for byte" cmp "$state/nova-mirrorlist" /etc/pacman.d/nova-mirrorlist
+      pacman -Q >"$state/packages.restored"
+      check "the snapshot's full package set is back" cmp "$state/packages.before" "$state/packages.restored"
+      check "no unfinished update pins remain" bash -c '! compgen -G "/etc/pacman.d/*.nova-prev" && ! compgen -G "/etc/pacman.d/*.nova-absent" && [[ ! -e /var/lib/pacman/sync.nova-prev ]]'
+      checks_passed
+      echo 'done' >"$state/stage"
+      ;;
+    *) echo "probe: FAIL unknown stage $stage"; exit 1 ;;
+  esac
+  echo "probe: done $stage"
+  systemctl poweroff
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi
