@@ -249,7 +249,7 @@ main() {
       --release-file)    release_file=${2:?--release-file needs a path}; shift 2 ;;
       --candidates)      candidates "${2:-}"; return ;;
       --check-boot)      check_boot=1; shift ;;
-      -h|--help)         sed -n '2,/^set /p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//' | sed '1,2d'; exit 0 ;;
+      -h|--help)         sed -n '2,/^set /p' "${BASH_SOURCE[0]}" | sed '$d; s/^# \{0,1\}//' | sed '1,3d'; exit 0 ;;
       *) die "unknown argument: $1 (try --help)" ;;
     esac
   done

@@ -136,6 +136,14 @@ visual-studio-code-bin" ]
   [[ $output == *"could not build google-chrome visual-studio-code-bin"* ]]
 }
 
+@test "a recipe that cannot be downloaded is not called a failed build" {
+  stub git 'exit 128'
+  run apps --noconfirm
+  [ "$status" -eq 1 ]
+  [[ $output == *"could not download the recipe for google-chrome visual-studio-code-bin from the AUR"* ]]
+  [[ $output != *"could not build"* ]]
+}
+
 @test "a system without its repositories' package lists reads them once first" {
   rm "$SYNC/sync/core.db" "$SYNC/sync/extra.db"
   run apps --noconfirm

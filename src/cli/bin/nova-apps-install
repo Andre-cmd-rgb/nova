@@ -162,12 +162,12 @@ approved() { # app dir
 work=$(mktemp -d "${TMPDIR:-/tmp}/nova-apps.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 
-failed=() held=()
+failed=() held=() unreachable=()
 for app in "${todo[@]}"; do
   echo "==> $app"
   dir=$work/$app
   if ! git clone --quiet "$aur/$app.git" "$dir"; then
-    failed+=("$app")
+    unreachable+=("$app")
     continue
   fi
   approved "$app" "$dir" || { held+=("$app") && continue; }
@@ -180,7 +180,9 @@ for app in "${todo[@]}"; do
 done
 
 ((${#held[@]} == 0)) || echo "nova apps install: ${held[*]} not updated: the recipe changed beyond a new version" >&2
+((${#unreachable[@]} == 0)) ||
+  echo "nova apps install: could not download the recipe for ${unreachable[*]} from the AUR; run it again once online" >&2
 if ((${#failed[@]})); then
   echo "nova apps install: could not build ${failed[*]}; run it again to retry" >&2
 fi
-((${#held[@]} + ${#failed[@]} == 0))
+((${#held[@]} + ${#failed[@]} + ${#unreachable[@]} == 0))
