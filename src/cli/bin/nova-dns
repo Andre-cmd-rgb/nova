@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Show or configure the system DNS provider
-# nova:args=[Cloudflare|Google|DHCP|Custom]
+# nova:args=[Cloudflare|Google|DHCP|Custom [server...]]
 
 set -euo pipefail
 
@@ -146,8 +146,9 @@ valid_server() {
   [[ -z $name || $name =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || return 1
   address=$(server_address "$server") || return 1
   if [[ $address =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    # No leading zeros, which inet_pton, and so NetworkManager, refuses.
     for octet in ${address//./ }; do
-      ((10#$octet <= 255)) || return 1
+      [[ $octet == 0 || $octet != 0* ]] && ((10#$octet <= 255)) || return 1
     done
     return 0
   fi
@@ -265,7 +266,7 @@ reload_dns_stack() {
 }
 
 usage() {
-  echo "Usage: nova-dns [Cloudflare|Google|DHCP|Custom]" >&2
+  echo "Usage: nova-dns [Cloudflare|Google|DHCP|Custom [server...]]" >&2
 }
 
 if (( $# == 0 )); then
@@ -273,17 +274,39 @@ if (( $# == 0 )); then
   exit 0
 fi
 
-if (( $# > 1 )); then
-  usage
-  exit 1
-fi
-
 if ! provider=$(provider_from_arg "$1"); then
   usage
   exit 1
 fi
+shift
 
-require_root "$provider"
+if [[ $provider == Custom ]]; then
+  if (($# == 0)); then
+    echo "Enter your DNS servers (one to four, space-separated):"
+    read -r dns_servers || dns_servers=''
+    dns_servers=$(normalize_servers "$dns_servers")
+    IFS=, read -ra entered <<<"$dns_servers"
+  else
+    entered=("$@")
+  fi
+  # Two of each, IPv4 and IPv6, as the presets have.
+  if ((${#entered[@]} < 1 || ${#entered[@]} > 4)); then
+    echo 'Error: Enter one to four DNS server addresses; nothing was changed.' >&2
+    exit 1
+  fi
+  # Validate before authentication, and again in the packaged privileged copy.
+  for server in "${entered[@]}"; do
+    valid_server "$server" || {
+      echo "Error: '$server' is not a DNS server address; nothing was changed." >&2
+      exit 1
+    }
+  done
+  dns_servers=$(IFS=,; echo "${entered[*]}")
+  require_root "$provider" "${entered[@]}"
+else
+  (($# == 0)) || { usage; exit 1; }
+  require_root "$provider"
+fi
 
 case "$provider" in
 Cloudflare)
@@ -318,25 +341,6 @@ EOF
   ;;
 
 Custom)
-  echo "Enter your DNS servers (space-separated, e.g. '192.168.1.1 1.1.1.1'):"
-  if ! read -r dns_servers; then
-    dns_servers=""
-  fi
-
-  dns_servers=$(normalize_servers "$dns_servers")
-  if [[ -z $dns_servers ]]; then
-    echo "Error: No DNS servers provided." >&2
-    exit 1
-  fi
-  # Every address checked before anything is written, so a typo changes nothing.
-  IFS=, read -ra entered <<<"$dns_servers"
-  for server in "${entered[@]}"; do
-    valid_server "$server" || {
-      echo "Error: '$server' is not a DNS server address; nothing was changed." >&2
-      exit 1
-    }
-  done
-
   split_dns_servers "$dns_servers"
   write_networkmanager_dns "$dns_servers"
   set_connection_dns "$ipv4_dns" "$ipv6_dns"

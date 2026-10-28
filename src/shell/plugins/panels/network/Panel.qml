@@ -9,6 +9,7 @@ import qs.Ui as Ui
 import qs.Commons
 import qs.Commons as Commons
 import "Model.js" as Model
+import "../../settings" as Settings
 
 // Qualified: qmllint cannot see qs.Ui, so a bare Panel here would name this
 // file, and with the inline components below that sends it round forever.
@@ -75,6 +76,7 @@ Ui.Panel {
   property bool scanning: false
   property bool wifiStationAvailable: false
   property string dnsProvider: ""
+  property bool customDnsOpen: false
   property string pendingDnsProvider: ""
   // Wi-Fi band state from `nova-network-band`. `bandCurrent` is the band
   // the radio is actually on; `bandSelected` is the pinned choice ("auto" when
@@ -610,15 +612,14 @@ Ui.Panel {
   }
 
   function setDns(provider) {
-    if (!root.bar || !provider || actionProc.running) return
+    if (!root.bar || !provider || actionProc.running || customDns.busy) return
 
     if (provider === "Custom") {
-      var launcher = "nova-launch-floating-terminal-with-presentation"
-      root.bar.run(launcher + " " + Util.shellQuote(root.dnsCommand(provider)))
-      root.close()
+      root.customDnsOpen = true
       return
     }
 
+    root.customDnsOpen = false
     root.pendingDnsProvider = provider
     actionProc.command = ["bash", "-c", root.dnsCommand(provider)]
     actionProc.running = true
@@ -1381,6 +1382,12 @@ Ui.Panel {
             width: dnsRow.cellWidth
             onClicked: root.setDns(provider)
           }
+        }
+        Settings.DnsView {
+          id: customDns
+          visible: root.customDnsOpen
+          title: ""
+          onApplied: root.refresh()
         }
       }
 
