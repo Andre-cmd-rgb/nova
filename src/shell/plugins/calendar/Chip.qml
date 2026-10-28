@@ -82,15 +82,18 @@ Item {
     property point pressedAt
     onPressed: function (mouse) {
       pressedAt = Qt.point(mouse.x, mouse.y)
+      chip.calendar.refused = null
       chip.calendar.focusKeys()
     }
     onPositionChanged: function (mouse) {
+      if (chip.calendar.refused === chip) return
       if (!chip.calendar.dragging && Math.abs(mouse.x - pressedAt.x) + Math.abs(mouse.y - pressedAt.y) > Style.space(6))
         chip.calendar.beginDrag(chip.occ, chip, Qt.point(pressedAt.x + anchors.leftMargin, pressedAt.y), chip.day)
       if (chip.calendar.dragging) chip.calendar.moveDrag(mapToItem(chip.calendar.content, mouse.x, mouse.y))
     }
     onReleased: {
-      if (chip.calendar.dragging) chip.calendar.endDrag()
+      if (chip.calendar.refused === chip) chip.calendar.refused = null
+      else if (chip.calendar.dragging) chip.calendar.endDrag()
       else chip.calendar.openItem(chip.occ)
     }
     onCanceled: chip.calendar.cancelDrag()

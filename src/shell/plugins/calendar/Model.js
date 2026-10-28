@@ -508,7 +508,10 @@ function undatedTasks(list) {
 // event's "on the day"); a task with a time, at that time, while not done.
 function alarms(list, from, to) {
   var out = []
-  occurrences(list, from - 2 * DAY, to + 2 * DAY).forEach(function (o) {
+  // As far around as the earliest reminder before, or latest after, its time.
+  var reach = 2 * DAY
+  list.forEach(function (i) { if (i.reminder !== null) reach = Math.max(reach, Math.abs(i.reminder) + DAY) })
+  occurrences(list, from - reach, to + reach).forEach(function (o) {
     var time = null
     if (o.item.kind === "event" && o.item.reminder !== null) time = o.start + o.item.reminder
     else if (o.item.kind === "task" && o.item.dueTime && !o.item.done) time = o.start
@@ -657,10 +660,20 @@ function setReminder(c, offset) {
   c.components.push(alarm)
 }
 
+// Writes only what changes: a start or an end as it was keeps its zone, the
+// one another program wrote it in, which this calendar cannot convert from.
 function setTimes(c, start, end, allDay, zone) {
-  Ical.setTime(c, "DTSTART", start, allDay, zone)
+  end = allDay ? Math.max(end, addDays(dayStart(start), 1)) : Math.max(end, start)
+  var was = Ical.parseTime(Ical.prop(c, "DTSTART"))
+  var sameStart = was !== null && was.time === start && was.allDay === allDay
+  if (!sameStart) Ical.setTime(c, "DTSTART", start, allDay, zone)
+  var wasEnd = Ical.parseTime(Ical.prop(c, "DTEND"))
+  var duration = Ical.prop(c, "DURATION")
+  var length = duration ? Ical.parseDuration(duration.value) : null
+  var sameEnd = sameStart && (wasEnd ? wasEnd.time === end && wasEnd.allDay === allDay : length !== null && was.time + length === end)
+  if (sameEnd) return
   Ical.removeProp(c, "DURATION")
-  Ical.setTime(c, "DTEND", allDay ? Math.max(end, addDays(dayStart(start), 1)) : Math.max(end, start), allDay, zone)
+  Ical.setTime(c, "DTEND", end, allDay, zone)
 }
 
 // <fields>: { title, notes, location, start, end, allDay, repeat, reminder }.
@@ -684,9 +697,15 @@ function addEvent(root, fields, now, zone) {
   return uid
 }
 
+// <time>, <days> and <minutes> on by the clock: across a change to or from
+// summer time, a series moved stays at the time of day it was moved to.
+function shiftWall(time, days, minutes) {
+  return atMinutes(addDays(dayStart(time), days), minutesInDay(time) + minutes)
+}
+
 // A time the series was given (an EXDATE, a RECURRENCE-ID) moved with it.
-function shiftTimes(c, name, delta, allDay, zone) {
-  var shifted = timesOf(Ical.props(c, name)).map(function (t) { return t + delta })
+function shiftTimes(c, name, days, minutes, allDay, zone) {
+  var shifted = timesOf(Ical.props(c, name)).map(function (t) { return shiftWall(t, days, minutes) })
   Ical.removeProp(c, name)
   shifted.forEach(function (t) {
     c.props.push({ name: name, params: allDay ? { VALUE: "DATE" } : (zone ? { TZID: zone } : {}),
@@ -710,9 +729,10 @@ function shiftRuleDays(c, days) {
 
 // Edits the occurrence of <uid> that the series put at <instance>: on its
 // own (scope "this", for one time of a series) or the whole event. Only the
-// fields given change. For the whole series, a new start moves it by as much
-// as it moves this time from where the series put it, its other times and
-// its weekdays with it.
+// fields given change. For the whole series, a new start moves it by as much,
+// by the clock, as it moves this time from where the series put it: its
+// weekdays, the times taken out of it, and those moved on their own, this
+// one too, which also take what else was changed for all of them.
 function updateEvent(root, uid, instance, fields, scope, now, zone) {
   var done = editEvent(root, uid, instance, fields, scope, now, zone)
   if (done) dropOrphans(root, uid)
@@ -731,53 +751,84 @@ function editEvent(root, uid, instance, fields, scope, now, zone) {
       own.props = own.props.filter(function (p) {
         return ["RRULE", "EXDATE", "RDATE", "DTSTART", "DTEND", "DURATION"].indexOf(p.name) < 0
       })
-      var length = item.end - item.start
       Ical.setTime(own, "RECURRENCE-ID", instance, item.allDay, zone)
-      setTimes(own, instance, instance + length, item.allDay, zone)
+      setTimes(own, instance, instance + (item.end - item.start), item.allDay, zone)
       calendarOf(root).components.push(own)
     }
     return applyFields(own, fields, now, zone, false)
   }
-  if (!master) return applyFields(own, fields, now, zone, false)
-  if (series && fields.start !== undefined) {
-    var current = { start: instance, end: instance + (item.end - item.start) }
-    var delta = fields.start - current.start
-    var newLength = (fields.end !== undefined ? fields.end : fields.start + (current.end - current.start)) - fields.start
-    var allDay = fields.allDay !== undefined ? !!fields.allDay : item.allDay
-    var masterFields = {}
-    for (var key in fields) masterFields[key] = fields[key]
-    masterFields.start = item.start + delta
-    masterFields.end = item.start + delta + newLength
-    if (delta !== 0) {
-      shiftTimes(master, "EXDATE", delta, allDay, zone)
-      // The times moved on their own stay as far from the series' as they were.
-      componentsOf(root, uid).forEach(function (c) {
-        if (c === master || c === own || !Ical.prop(c, "RECURRENCE-ID")) return
-        var moved = itemOf(c)
-        shiftTimes(c, "RECURRENCE-ID", delta, allDay, zone)
-        setTimes(c, moved.start + delta, moved.end + delta, moved.allDay, zone)
-      })
-      shiftRuleDays(master, daysBetween(current.start, fields.start))
-    }
-    // The time moved for all of them: one that had its own goes with them.
-    if (own) removeComponent(root, own)
-    return applyFields(master, masterFields, now, zone, true)
+  if (!series) return applyFields(master || own, fields, now, zone, !!master)
+
+  var allDay = fields.allDay !== undefined ? !!fields.allDay : item.allDay
+  var flipped = allDay !== item.allDay
+  var timed = fields.start !== undefined || fields.end !== undefined
+  var days = 0
+  var minutes = 0
+  var length = item.end - item.start
+  var masterFields = {}
+  for (var key in fields) masterFields[key] = fields[key]
+  if (timed) {
+    var start = fields.start !== undefined ? fields.start : instance
+    days = daysBetween(instance, start)
+    minutes = minutesInDay(start) - minutesInDay(instance)
+    length = (fields.end !== undefined ? fields.end : start + length) - start
+    masterFields.start = shiftWall(item.start, days, minutes)
+    masterFields.end = masterFields.start + length
   }
-  return applyFields(master, fields, now, zone, true)
+  var moves = days !== 0 || minutes !== 0
+  if (moves || flipped) shiftTimes(master, "EXDATE", days, minutes, allDay, zone)
+  if (days !== 0) shiftRuleDays(master, days)
+  componentsOf(root, uid).forEach(function (c) {
+    if (c === master || !Ical.prop(c, "RECURRENCE-ID")) return
+    // A time moved on its own keeps no hours of its own in a series made
+    // all-day, nor its day alone in one given hours: it goes back into it.
+    if (flipped) {
+      removeComponent(root, c)
+      return
+    }
+    var moved = itemOf(c)
+    if (moves || (c === own && timed)) {
+      var from = shiftWall(moved.start, days, minutes)
+      if (moves) shiftTimes(c, "RECURRENCE-ID", days, minutes, allDay, zone)
+      setTimes(c, from, from + (c === own && timed ? length : moved.end - moved.start), moved.allDay, zone)
+    }
+    applyWords(c, fields)
+    touch(c, now)
+  })
+  return applyFields(master, masterFields, now, zone, true)
+}
+
+// The fields a change to occurrence <o> makes, for every time of its series:
+// a new start or end moves the series as far, by the clock, from where it put
+// this time as the change moves it from where it is.
+function forAll(o, fields) {
+  var f = {}
+  for (var key in fields) f[key] = fields[key]
+  if (f.start === undefined && f.end === undefined) return f
+  var start = f.start !== undefined ? f.start : o.start
+  var end = f.end !== undefined ? f.end : start + (o.end - o.start)
+  f.start = shiftWall(o.instance, daysBetween(o.start, start), minutesInDay(start) - minutesInDay(o.start))
+  f.end = f.start + (end - start)
+  return f
+}
+
+// What an event says, besides when: its title, notes, place and reminder.
+function applyWords(c, fields) {
+  if (fields.title !== undefined) setText(c, "SUMMARY", fields.title || "New Event")
+  if (fields.notes !== undefined) setText(c, "DESCRIPTION", fields.notes)
+  if (fields.location !== undefined) setText(c, "LOCATION", fields.location)
+  if (fields.reminder !== undefined) setReminder(c, fields.reminder)
 }
 
 function applyFields(c, fields, now, zone, isMaster) {
   var item = itemOf(c)
-  if (fields.title !== undefined) setText(c, "SUMMARY", fields.title || "New Event")
-  if (fields.notes !== undefined) setText(c, "DESCRIPTION", fields.notes)
-  if (fields.location !== undefined) setText(c, "LOCATION", fields.location)
+  applyWords(c, fields)
   if (fields.start !== undefined || fields.end !== undefined || fields.allDay !== undefined) {
     var allDay = fields.allDay !== undefined ? !!fields.allDay : item.allDay
     var start = fields.start !== undefined ? fields.start : item.start
     var end = fields.end !== undefined ? fields.end : start + (item.end - item.start)
     setTimes(c, start, end, allDay, zone)
   }
-  if (fields.reminder !== undefined) setReminder(c, fields.reminder)
   if (isMaster && fields.repeat !== undefined && fields.repeat !== "custom") {
     var startNow = itemOf(c).start
     var rule = repeatRule(fields.repeat, startNow)

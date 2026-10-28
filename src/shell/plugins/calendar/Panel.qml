@@ -219,8 +219,13 @@ Item {
     if (where) applyDrop(occ, fromDay, where)
   }
 
+  // The item whose drag Esc called off: its press goes on, and must neither
+  // take it up again nor open it when let go.
+  property var refused: null
+
   function cancelDrag() {
     if (!dragging) return
+    refused = dragSource
     proxy.Drag.cancel()
     finishDrag()
   }
@@ -318,28 +323,36 @@ Item {
   // One time of a repeating event, or all of them: asked, unless the change
   // is to how it repeats, which is the series'.
   function changeEvent(o, fields) {
-    if (!o.recurring || fields.repeat !== undefined) applyChange(o, fields, "all")
-    else askScope(false, function (which) { root.applyChange(o, fields, which) })
+    if (!o.recurring || fields.repeat !== undefined) {
+      applyChange(o, fields, "all")
+      return
+    }
+    // A rule another program set (the 15th of each month, until June) is not
+    // one this calendar moves, so a new time is for this time of it only.
+    var series = seriesOf(o)
+    var moved = (fields.start !== undefined && fields.start !== o.start) || (fields.allDay !== undefined && fields.allDay !== o.item.allDay)
+    var fixed = moved && series !== null && Model.repeatPreset(series.rrule, series.start) === "custom"
+    askScope(false, function (which) { root.applyChange(o, fields, which) }, fixed)
+  }
+
+  // The event an occurrence is a time of, with its rule.
+  function seriesOf(o) {
+    var list = store ? store.items : []
+    for (var i = 0; i < list.length; i++)
+      if (list[i].uid === o.uid && list[i].recurrenceId === null && list[i].rrule !== null) return list[i]
+    return null
   }
 
   function applyChange(o, fields, which) {
-    var f = {}
-    for (var key in fields) f[key] = fields[key]
-    if (which === "all" && (f.start !== undefined || f.end !== undefined)) {
-      var start = f.start !== undefined ? f.start : o.start
-      var end = f.end !== undefined ? f.end : start + (o.end - o.start)
-      // The series moves as far as this time did, from where it put it.
-      f.start = o.instance + (start - o.start)
-      f.end = f.start + (end - start)
-    }
-    store.updateEvent(o.uid, o.instance, f, which)
+    store.updateEvent(o.uid, o.instance, which === "all" ? Model.forAll(o, fields) : fields, which)
   }
 
   property var scopeAction: null
 
-  function askScope(deleting, action) {
+  function askScope(deleting, action, thisOnly) {
     scopeAction = action
     scope.deleting = deleting
+    scope.thisOnly = thisOnly === true
     scope.opened = true
   }
 
@@ -551,6 +564,7 @@ Item {
       Sheet {
         id: scope
         property bool deleting: false
+        property bool thisOnly: false
         cardWidth: Style.space(400)
         onCanceled: root.answerScope("")
 
@@ -564,7 +578,8 @@ Item {
         }
         Text {
           width: parent.width
-          text: scope.deleting ? "Delete only this time, or every time it repeats?" : "Change only this time, or every time it repeats?"
+          text: scope.thisOnly ? "It repeats as another program set it, so only this time can move."
+            : scope.deleting ? "Delete only this time, or every time it repeats?" : "Change only this time, or every time it repeats?"
           color: Commons.Color.foreground
           font.family: Style.font.family
           font.pixelSize: Style.font.body
@@ -579,6 +594,7 @@ Item {
             onClicked: root.answerScope("")
           }
           Button {
+            visible: !scope.thisOnly
             text: "All Events"
             bordered: true
             onClicked: root.answerScope("all")

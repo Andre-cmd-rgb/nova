@@ -162,6 +162,47 @@ ShellRoot {
     Model.deleteTask(tasks, t)
     check(Model.items(tasks).length === 0, "a task deleted")
 
+    // ---- what the review found
+    function at(occs, uid) {
+      return occs.filter(function (o) { return o.uid === uid }).map(function (o) { return o.start })
+    }
+    var dst = Model.parse("")
+    var sat = Model.addEvent(dst, { title: "Club", start: local(2026, 1, 3, 18), end: local(2026, 1, 3, 19), repeat: "weekly" }, now, "Europe/Rome")
+    var march = Model.occurrences(Model.items(dst), local(2026, 3, 28), local(2026, 3, 29))[0]
+    Model.updateEvent(dst, sat, march.instance, Model.forAll(march, { start: local(2026, 3, 30, 18), end: local(2026, 3, 30, 19) }), "all", now, "Europe/Rome")
+    var monday = at(Model.occurrences(Model.items(dst), local(2026, 1, 1), local(2026, 4, 14)), sat)
+    check(monday[0] === local(2026, 1, 5, 18) && monday[monday.length - 1] === local(2026, 4, 13, 18) &&
+      monday.every(function (t) { return new Date(t).getDay() === 1 && new Date(t).getHours() === 18 }), "a series moved across the change to summer time stays at six")
+
+    var zoned = Model.parse(file(event("z", ["DTSTART;TZID=America/New_York:20261029T090000", "DTEND;TZID=America/New_York:20261029T100000", "SUMMARY:Call"])))
+    var call = Model.occurrences(Model.items(zoned), local(2026, 10, 29), local(2026, 10, 30))[0]
+    Model.updateEvent(zoned, "z", call.instance, Model.forAll(call, { end: local(2026, 10, 29, 10, 30) }), "all", now, "Europe/Rome")
+    var rezoned = Model.serialize(zoned)
+    check(rezoned.indexOf("DTSTART;TZID=America/New_York:20261029T090000") >= 0 && rezoned.indexOf("DTEND;TZID=Europe/Rome:20261029T103000") >= 0, "an end changed leaves the start in the zone it was written in")
+
+    var early = Model.items(Ical.parse(file(event("w", ["DTSTART:20261110T090000", "DTEND:20261110T100000", "SUMMARY:Trip", "BEGIN:VALARM", "TRIGGER:-P1W", "END:VALARM"]))))
+    check(Model.alarms(early, local(2026, 11, 3, 8), local(2026, 11, 3, 10)).length === 1, "a reminder a week before is said")
+
+    var moved2 = Model.parse("")
+    var gym2 = Model.addEvent(moved2, { title: "Gym", start: local(2026, 10, 5, 18), end: local(2026, 10, 5, 19), repeat: "weekly" }, now, "")
+    Model.updateEvent(moved2, gym2, local(2026, 10, 12, 18), { start: local(2026, 10, 12, 20), end: local(2026, 10, 12, 21) }, "this", now, "")
+    var late = Model.occurrences(Model.items(moved2), local(2026, 10, 12), local(2026, 10, 13))[0]
+    Model.updateEvent(moved2, gym2, late.instance, Model.forAll(late, { start: local(2026, 10, 13, 20), end: local(2026, 10, 13, 21), title: "Run" }), "all", now, "")
+    var after2 = Model.occurrences(Model.items(moved2), local(2026, 10, 5), local(2026, 10, 21))
+    check(starts(after2) === "2026-10-06 18:00, 2026-10-13 20:00, 2026-10-20 18:00" && after2.every(function (o) { return o.item.title === "Run" }),
+      "a time moved on its own, moved for all of them, lands where it was dropped, and takes the new title")
+    var flip = Model.parse("")
+    var gym3 = Model.addEvent(flip, { title: "Gym", start: local(2026, 10, 5, 18), end: local(2026, 10, 5, 19), repeat: "weekly" }, now, "")
+    Model.updateEvent(flip, gym3, local(2026, 10, 12, 18), { start: local(2026, 10, 12, 20), end: local(2026, 10, 12, 21) }, "this", now, "")
+    var whole = Model.occurrences(Model.items(flip), local(2026, 10, 5), local(2026, 10, 6))[0]
+    Model.updateEvent(flip, gym3, whole.instance, Model.forAll(whole, { allDay: true, start: local(2026, 10, 5), end: local(2026, 10, 6) }), "all", now, "")
+    var allDays = Model.occurrences(Model.items(flip), local(2026, 10, 5), local(2026, 10, 20))
+    check(starts(allDays) === "2026-10-05, 2026-10-12, 2026-10-19" && allDays.every(function (o) { return o.item.allDay }),
+      "a series made all-day takes back the times moved on their own")
+
+    var member = "ATTENDEE;MEMBER=\"mailto:a@x.org\",\"mailto:b@x.org\";X-P=a,b:mailto:c@x.org"
+    check(Ical.serialize(Ical.parse(file(event("m", ["DTSTART:20261029T090000", member])))).indexOf(member) >= 0, "a parameter that is a list is written back as it was")
+
     console.log("DONE")
     Qt.quit()
   }

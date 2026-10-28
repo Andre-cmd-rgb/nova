@@ -167,6 +167,37 @@ ShellRoot {
         editor.save()
         check(editor.opened && editor.error === "It ends before it starts.", "an end before the start is not saved")
         editor.opened = false
+      },
+      function () {
+        var written = cal.store.items.filter(function (i) { return i.title === "Written" })[0]
+        cal.openItem(Model.occurrences([written], local(2026, 11, 4), local(2026, 11, 5))[0])
+        var editor = find(function (i) { return i.keptStart !== undefined })
+        var start = find(function (i) { return i.placeholderText === "9:00" })
+        start.text = "11:00"
+        editor.save()
+        var item = cal.store.items.filter(function (i) { return i.title === "Written" })[0]
+        check(!editor.opened && item.start === local(2026, 11, 4, 11) && item.end === local(2026, 11, 4, 12, 30), "a start typed and saved straight away takes the end with it")
+      },
+      function () {
+        cal.newEvent(local(2026, 11, 5, 14), local(2026, 11, 5, 15), false)
+        var kinds = find(function (i) { return i.options !== undefined && i.options.length === 2 && i.options[1].value === "task" })
+        kinds.changed("task")
+        kinds.changed("event")
+        var start = find(function (i) { return i.placeholderText === "9:00" })
+        check(start.text === cal.clock(local(2026, 11, 5, 14)), "a new event made a task and an event again keeps its time")
+        find(function (i) { return i.keptStart !== undefined }).opened = false
+      },
+      function () {
+        // The 15th of each month, as another program writes it.
+        cal.store.read(Model.serialize(cal.store.root).replace("END:VCALENDAR",
+          "BEGIN:VEVENT\r\nUID:fifteenth@test\r\nDTSTART:20261015T100000\r\nDTEND:20261015T110000\r\nRRULE:FREQ=MONTHLY;BYMONTHDAY=15\r\nSUMMARY:Rent\r\nEND:VEVENT\r\nEND:VCALENDAR"))
+        var rent = Model.occurrences(cal.store.items, local(2026, 11, 15), local(2026, 11, 16)).filter(function (o) { return o.uid === "fifteenth@test" })[0]
+        cal.changeEvent(rent, { start: local(2026, 11, 16, 10), end: local(2026, 11, 16, 11) })
+        var scope = find(function (i) { return i.thisOnly !== undefined })
+        check(scope.opened && scope.thisOnly, "a rule another program set moves one time only")
+        cal.answerScope("this")
+        var times = Model.occurrences(cal.store.items, local(2026, 10, 1), local(2027, 1, 1)).filter(function (o) { return o.uid === "fifteenth@test" }).map(function (o) { return o.start })
+        check(times.length === 3 && times[1] === local(2026, 11, 16, 10) && times[2] === local(2026, 12, 15, 10), "and the rest stay on the 15th")
       }
     ]
   }

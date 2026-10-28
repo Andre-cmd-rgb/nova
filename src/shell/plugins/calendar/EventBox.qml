@@ -92,9 +92,11 @@ Rectangle {
     property point pressedAt
     onPressed: function (mouse) {
       pressedAt = Qt.point(mouse.x, mouse.y)
+      box.calendar.refused = null
       box.calendar.focusKeys()
     }
     onPositionChanged: function (mouse) {
+      if (box.calendar.refused === box) return
       if (!box.calendar.dragging && Math.abs(mouse.x - pressedAt.x) + Math.abs(mouse.y - pressedAt.y) > Style.space(6)) {
         // One from the day before lands by its true start, not where midnight cuts it.
         var before = box.occ.start < box.day ? Math.round((box.day - box.occ.start) / Model.MINUTE) : 0
@@ -103,7 +105,8 @@ Rectangle {
       if (box.calendar.dragging) box.calendar.moveDrag(mapToItem(box.calendar.content, mouse.x, mouse.y))
     }
     onReleased: {
-      if (box.calendar.dragging) box.calendar.endDrag()
+      if (box.calendar.refused === box) box.calendar.refused = null
+      else if (box.calendar.dragging) box.calendar.endDrag()
       else box.calendar.openItem(box.occ)
     }
     onCanceled: box.calendar.cancelDrag()

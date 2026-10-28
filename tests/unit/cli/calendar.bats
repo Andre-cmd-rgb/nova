@@ -39,3 +39,10 @@ summoned() { cat "$SCRATCH/summoned"; }
   [ "$status" -eq 1 ]
   [[ $output == *"is the shell running"* ]]
 }
+
+@test "open: next week and next month are days, after the view or without one" {
+  "$REPO_ROOT/src/cli/bin/nova-calendar" next week
+  [ "$(summoned)" = "shell summon nova.calendar {\"page\":\"\",\"date\":\"$(date -d 'next week' +%F)\"}" ]
+  "$REPO_ROOT/src/cli/bin/nova-calendar" month next month
+  [ "$(summoned)" = "shell summon nova.calendar {\"page\":\"month\",\"date\":\"$(date -d 'next month' +%F)\"}" ]
+}

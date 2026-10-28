@@ -40,7 +40,9 @@ for test in "$here"/*-test.qml; do
   cp "$test" "$work/shell/$name.qml"
   rm -rf "$work/run/quickshell"
   status=0
-  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 PATH="$work/bin:/usr/bin" QT_QPA_PLATFORM=offscreen \
+  # A zone with summer time, here and in CI alike, for the calendar's times
+  # across a change to or from it.
+  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ=Europe/Rome PATH="$work/bin:/usr/bin" QT_QPA_PLATFORM=offscreen \
     TEST_PLUGINS="$plugins" TEST_PLUGIN_COUNT="$(jq length "$plugins/index.json")" \
     timeout 60 qs --no-color -p "$work/shell/$name.qml" >/dev/null 2>&1 || status=$?
   log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$work/shell/$name.qml" 2>&1)

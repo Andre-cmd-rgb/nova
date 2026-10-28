@@ -16,7 +16,13 @@ FocusScope {
   anchors.fill: parent
   visible: opened
   z: 20
-  onOpenedChanged: if (opened) forceActiveFocus()
+  // When it opened: the second click of a double click on an item is not one
+  // on the backdrop, which would close it again.
+  property real openedAt: 0
+  onOpenedChanged: if (opened) {
+    openedAt = Date.now()
+    forceActiveFocus()
+  }
   // No key gets past it to the calendar behind, but Tab, which goes from
   // one field to the next.
   Keys.onPressed: function (event) {
@@ -30,7 +36,7 @@ FocusScope {
     color: Util.alpha(Commons.Color.background, 0.7)
     MouseArea {
       anchors.fill: parent
-      onClicked: root.canceled()
+      onClicked: if (Date.now() - root.openedAt > 500) root.canceled()
       onWheel: function (wheel) { wheel.accepted = true }
     }
 

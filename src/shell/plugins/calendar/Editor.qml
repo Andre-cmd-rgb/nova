@@ -135,6 +135,9 @@ Sheet {
   // The fields to save, only those changed for an item as it was; or null,
   // with <error> saying what is wrong.
   function values() {
+    // A start typed in and saved straight away, never left, takes the end
+    // with it too.
+    if (isEvent && startValue() !== keptStart) keepLength()
     var v = { title: titleField.text.trim(), notes: notes.text, location: place.text }
     if (isEvent) {
       v.allDay = allDay
@@ -243,10 +246,16 @@ Sheet {
           dueDate.text = isNaN(start) ? "" : editor.dateText(start)
           dueClock.text = isNaN(start) || editor.allDay ? "" : editor.clockText(start)
         } else {
-          var at = isNaN(start) ? Model.atMinutes(editor.calendar.today, 9 * 60) : start
-          startDate.text = endDate.text = editor.dateText(at)
-          startClock.text = editor.clockText(at)
-          endClock.text = editor.clockText(at + Model.HOUR)
+          // At the task's time, or nine on its day; as the event was, if the
+          // task kept its day and time.
+          var minutes = Model.parseClock(dueClock.text)
+          var at = isNaN(start) ? Model.atMinutes(editor.calendar.today, 9 * 60) : Model.atMinutes(start, isNaN(minutes) ? 9 * 60 : minutes)
+          var was = editor.startValue()
+          if (isNaN(was) || Model.dayStart(was) !== Model.dayStart(at) || (!editor.allDay && was !== at)) {
+            startDate.text = endDate.text = editor.dateText(at)
+            startClock.text = editor.clockText(at)
+            endClock.text = editor.clockText(at + Model.HOUR)
+          }
           editor.keptStart = editor.startValue()
         }
       }

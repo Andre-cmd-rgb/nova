@@ -37,7 +37,9 @@ reminder, or with `nova calendar [week|month] [day]`, where the day is
   notes. Only what was changed is saved.
 - **A repeating event**, moved or changed, asks whether for this time only or
   for every time it repeats. Moved for every time, the series moves as far as
-  that time did, its weekday with it.
+  that time did, by the clock, its weekday with it, and the times moved on
+  their own go as far. One whose rule another program set (the 15th of each
+  month, until June) moves one time at a time.
 - **Keys:** ← and → (or PageUp and PageDown) step a week or a month, T is
   today, W and M the week and the month, N a new event, Esc closes.
 
@@ -52,10 +54,11 @@ before; a task's at the time it is due, if it has one and is still to do.
 The notification opens the calendar on its day.
 
 The service looks at the clock every minute at most, rather than sleeping
-until the next reminder, so a suspend does not make it late. What it said
-last is kept in `~/.local/state/nova/calendar.json`: after a shutdown or a
-suspend, the reminders due since then are said if their event has not ended
-yet, or their task is still to do today, and the rest are let go.
+until the next reminder, so a suspend does not make it late. How far it has
+looked is kept in `~/.local/state/nova/calendar.json`, a quarter of an hour
+behind at most: after a shutdown or a suspend, the reminders due since then
+are said if their event has not ended yet, or their task is still to do
+today, and the rest are let go.
 
 ## The file
 

@@ -3,8 +3,12 @@
 // not know is kept as it was read, so a file another program wrote, or a
 // later sync, loses nothing to an edit made here.
 //
-// A component is { name, props: [{ name, params, value }], components }; a
-// value is the property's text as it stands in the file, still escaped.
+// A component is { name, props: [{ name, params, value, raw }], components };
+// a value is the property's text as it stands in the file, still escaped, and
+// raw its name and parameters as they were read, written back the same, since
+// a parameter can be a list (MEMBER="mailto:a","mailto:b") that params, read
+// for what this calendar needs of them, does not keep. A property made or
+// changed here has none, and is written from its params.
 
 // ---- reading
 
@@ -48,7 +52,7 @@ function parseLine(line) {
       value = value.slice(1, -1)
     params[parts[k].slice(0, eq).toUpperCase()] = value
   }
-  return { name: parts[0].toUpperCase(), params: params, value: line.slice(colon + 1) }
+  return { name: parts[0].toUpperCase(), params: params, value: line.slice(colon + 1), raw: head }
 }
 
 // The file as a tree under a nameless root: its VCALENDAR is a component of
@@ -108,6 +112,7 @@ function fold(line) {
 }
 
 function propLine(p) {
+  if (p.raw !== undefined) return fold(p.raw + ":" + p.value)
   var line = p.name
   for (var key in p.params) line += ";" + key + "=" + quoteParam(p.params[key])
   return fold(line + ":" + p.value)

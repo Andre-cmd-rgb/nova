@@ -8,9 +8,10 @@ import "Model.js" as Model
 //
 // The clock is looked at every minute at most, not slept on: a timer stops
 // with the computer, so after a suspend the wall clock is what says how far
-// it is. The last reminder said is kept in ~/.local/state/nova/calendar.json;
-// after a shutdown or a suspend, those due since then are said if their
-// event has not ended yet, or their task is still to do today.
+// it is. How far it has looked is kept in ~/.local/state/nova/calendar.json,
+// a quarter of an hour behind at most; after a shutdown or a suspend, the
+// reminders due since then are said if their event has not ended yet, or
+// their task is still to do today.
 Item {
   id: root
 
@@ -19,6 +20,10 @@ Item {
   readonly property var store: storeItem
   readonly property string statePath: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/calendar.json"
   property real said: 0
+  // What the file has: said is kept up to date as the clock is looked at, the
+  // file only when a reminder is said, or a quarter of an hour on, so that
+  // after a restart nothing older is gone over again.
+  property real saidKept: 0
   property bool stateRead: false
 
   Store {
@@ -33,8 +38,9 @@ Item {
     var from = said > 0 && said < now ? said : now
     var due = Model.alarms(storeItem.items, from, now).filter(function (a) { return Model.stillDue(a, now) })
     due.forEach(function (a) { root.notify(a, now) })
-    if (due.length > 0 || said <= 0 || said > now) {
-      said = now
+    said = now
+    if (due.length > 0 || saidKept <= 0 || saidKept > now || now - saidKept >= 15 * Model.MINUTE) {
+      saidKept = now
       stateFile.setText(JSON.stringify({ said: now }) + "\n")
     }
     schedule()
@@ -116,9 +122,9 @@ Item {
     onLoaded: {
       try {
         var state = JSON.parse(text())
-        root.said = Number(state.said) || 0
+        root.said = root.saidKept = Number(state.said) || 0
       } catch (e) {
-        root.said = 0
+        root.said = root.saidKept = 0
       }
       root.stateRead = true
       root.remind()

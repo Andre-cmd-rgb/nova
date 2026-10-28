@@ -10,15 +10,13 @@
 
 set -euo pipefail
 
-page='' words=()
-while (($# > 0)); do
-  case $1 in
-    -h | --help) echo "Usage: nova calendar [week|month] [day]"; exit 0 ;;
-    week | month) page=$1 ;;
-    *) words+=("$1") ;;
-  esac
-  shift
-done
+# The view first, so that the day can be "next week" or "next month".
+page=''
+case ${1:-} in
+  -h | --help) echo "Usage: nova calendar [week|month] [day]"; exit 0 ;;
+  week | month) page=$1; shift ;;
+esac
+words=("$@")
 
 day=''
 if ((${#words[@]})); then

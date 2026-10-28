@@ -56,7 +56,7 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
   | Kind | Location |
   |---|---|
   | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`); a plugin's own settings in `~/.config/nova-<plugin>/` (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
-  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `power-profile/`, `aur/`, `monitors.json`: the displays as Settings keeps them; `calendar.json`: the last reminder said); a plugin's history in `~/.local/state/nova-<plugin>/` |
+  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `power-profile/`, `aur/`, `monitors.json`: the displays as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at); a plugin's history in `~/.local/state/nova-<plugin>/` |
   | User data | `~/.local/share/nova/calendar/calendar.ics` (the calendar); `~/.local/share/nova-dictation/` (the speech model, downloaded at dictation's first use) |
   | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
