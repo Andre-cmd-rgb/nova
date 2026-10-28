@@ -6,12 +6,13 @@ SESSION_SRC := data/session
 
 INSTALL_TARGETS += install-session
 SHELL_SOURCES   += $(SESSION_SRC)/bin/nova-session-guard $(SESSION_SRC)/bin/nova-session-first-unlock \
-                   $(SESSION_SRC)/bin/nova-greeter-session
+                   $(SESSION_SRC)/bin/nova-greeter-session $(SESSION_SRC)/bin/nova-keyring-passwd
 
 .PHONY: install-session
 install-session:
 	install -Dm755 -t $(DESTDIR)$(NOVA_BIN) $(SESSION_SRC)/bin/*
 	install -Dm644 -t $(DESTDIR)$(SYSCONFDIR)/pam.d $(SESSION_SRC)/pam.d/*
+	install -Dm644 -t $(DESTDIR)$(PREFIX)/share/libalpm/hooks $(SESSION_SRC)/hooks/*.hook
 	# sudo's own modes: the directory 750, a drop-in 440, or sudo ignores it.
 	install -d -m750 $(DESTDIR)$(SYSCONFDIR)/sudoers.d
 	install -m440 -t $(DESTDIR)$(SYSCONFDIR)/sudoers.d $(SESSION_SRC)/sudoers.d/*
