@@ -16,9 +16,6 @@ Ui.Panel {
   id: root
   moduleName: "nova.network"
   ipcTarget: "nova.network"
-  // manageIpc: false so this panel can own the single IpcHandler the target
-  // permits — needed for the toggleNetwork method below.
-  manageIpc: false
 
   // Centralized close so callers can't forget to drop the passphrase prompt.
   function close() {
@@ -203,17 +200,6 @@ Ui.Panel {
     if (!networkManagerAvailable) return
     Networking.wifiEnabled = !Networking.wifiEnabled
     Qt.callLater(function() { root.refresh(true) })
-  }
-
-  IpcHandler {
-    target: "nova.network"
-
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function toggleNetwork(): void { root.toggleNetwork() }
   }
 
   function activateHeader() {

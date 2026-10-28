@@ -22,10 +22,7 @@ Item {
   readonly property bool vertical: bar ? bar.vertical : false
   readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
 
-  // Run `method` on every live instance of this widget. An IPC target only
-  // ever routes to one handler, but a bar surface exists per monitor, so the
-  // instance that owns the target relays the call to its peers — otherwise a
-  // refresh would land on a single screen and leave the others stale.
+  // Run `method` on every live instance of this widget, across all monitors.
   function broadcast(method) {
     var items = bar && typeof bar.moduleWidgets === "function"
       ? bar.moduleWidgets(moduleName) : [root]

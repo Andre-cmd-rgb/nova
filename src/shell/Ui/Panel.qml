@@ -1,11 +1,10 @@
 import QtQuick
-import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 
 // Base item for plugin popup widgets. Many first-party plugins expose a bar
 // button plus a popup from one QML entry point; this base owns the shared
-// IPC-backed open/close lifecycle while implementations own button behavior,
+// open/close lifecycle while implementations own button behavior,
 // keyboard navigation, and content.
 Item {
   id: root
@@ -14,7 +13,6 @@ Item {
   property string moduleName: ""
   property var settings: ({})
   property string ipcTarget: ""
-  property bool manageIpc: true
   property alias controller: panelController
   property bool popoutSwitching: false
   property bool popoutSwitchClosing: false
@@ -45,16 +43,4 @@ Item {
   PanelController {
     id: panelController
   }
-
-  IpcHandler {
-    enabled: root.manageIpc && root.ipcTarget !== ""
-    target: root.ipcTarget
-
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
-  }
-
 }

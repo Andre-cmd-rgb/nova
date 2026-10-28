@@ -173,14 +173,6 @@ BarWidget {
   implicitWidth: orientationLoader.item ? orientationLoader.item.implicitWidth : 0
   implicitHeight: orientationLoader.item ? orientationLoader.item.implicitHeight : 0
 
-  IpcHandler {
-    target: "nova.indicators"
-
-    function refresh(): void {
-      root.broadcast("refresh")
-    }
-  }
-
   Timer {
     id: indicatorHideTimer
     interval: 120

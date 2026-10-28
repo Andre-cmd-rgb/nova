@@ -37,6 +37,12 @@ BarWidget {
     if (panelLoader.item && panelLoader.item.close) panelLoader.item.close()
   }
 
+  function edit() {
+    if (!panelLoader.item) return
+    panelLoader.item.openFromHotkey()
+    panelLoader.item.startEditingLocation()
+  }
+
   // Forwarded so this widget can stand in for the panel as the bar's popout
   // identity: Bar.requestPopout prefers closeForPopoutSwitch over close, and
   // KeyboardPanel reads popoutSwitchClosing back off its owner.

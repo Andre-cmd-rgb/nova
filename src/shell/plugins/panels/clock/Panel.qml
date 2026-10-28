@@ -19,7 +19,6 @@ Panel {
   id: root
   moduleName: "nova.clock"
   ipcTarget: "nova.clock"
-  manageIpc: false
 
   property var anchorItem: null
 

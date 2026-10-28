@@ -11,10 +11,7 @@ Panel {
   id: root
   moduleName: "nova.monitor"
   ipcTarget: "nova.monitor"
-  manageIpc: false
 
-  // manageIpc: false so this panel can own the single IpcHandler the target
-  // permits — needed for the brightness + state methods below.
   property int brightnessPercent: 0
   property int pendingBrightnessPercent: 0
   property bool brightnessSetQueued: false
@@ -221,18 +218,6 @@ Panel {
       scale: root.monitorScale,
       displays: root.displays
     })
-  }
-
-  IpcHandler {
-    target: "nova.monitor"
-
-    function brightness(percent: string): string { return root.brightnessIpc(percent) }
-    function state(): string { return root.stateIpc() }
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
   }
 
   function refresh() {

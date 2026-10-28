@@ -171,18 +171,21 @@ function pickDrawnSlot(slots) {
 //
 // An open copy wins first: hide and toggle have to reach the panel the user
 // can actually see, wherever it was opened from. Otherwise the focused
-// monitor's copy wins, so a summon lands where the user is working instead of
-// on whichever output registered its slot first. Neither narrowing applies on
-// a single monitor, or when the focused output has no bar of its own.
+// monitor's copy wins, so hotkeys act where the user is working; with no
+// matching output, the first bar's. Within that screen, prefer the drawn slot
+// over its zero-size placeholder.
 function pickPanelSlot(candidates, focusedScreen) {
   var rows = Array.isArray(candidates) ? candidates : []
   var pool = rows.filter(function(row) { return row && row.opened === true })
   if (pool.length === 0) pool = rows.filter(function(row) { return !!row })
 
   var focused = String(focusedScreen || "")
-  if (focused) {
-    var onFocused = pool.filter(function(row) { return row.screenName === focused })
-    if (onFocused.length > 0) pool = onFocused
+  var onFocused = pool.filter(function(row) { return row.screenName === focused })
+  if (focused && onFocused.length > 0) {
+    pool = onFocused
+  } else if (pool.length > 0) {
+    var firstScreen = pool[0].screenName
+    pool = pool.filter(function(row) { return row.screenName === firstScreen })
   }
 
   return pickDrawnSlot(pool.map(function(row) { return row.slot }))

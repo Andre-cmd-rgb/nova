@@ -25,18 +25,6 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  IpcHandler {
-    target: "nova.system-update"
-
-    function refresh(): void {
-      root.broadcast("refresh")
-    }
-
-    function clear(): void {
-      root.broadcast("clear")
-    }
-  }
-
   Process {
     id: updateProc
     command: ["nova-update-check"]

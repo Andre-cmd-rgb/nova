@@ -13,9 +13,6 @@ Panel {
   id: root
   moduleName: "nova.bluetooth"
   ipcTarget: "nova.bluetooth"
-  // manageIpc: false so this panel can own the single IpcHandler the target
-  // permits — needed for the toggleBluetooth method below.
-  manageIpc: false
 
   // Address -> "connecting" | "disconnecting" | "forgetting".
   // The actual Bluetooth sequencing lives in bin/nova-bluetooth-device;
@@ -663,17 +660,6 @@ Panel {
         root.radioSwitches = switches
       }
     }
-  }
-
-  IpcHandler {
-    target: "nova.bluetooth"
-
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
-    function toggleBluetooth(): void { root.toggleBluetooth() }
   }
 
   BarIconButton {
