@@ -94,3 +94,28 @@ $'      eduroam                           8021x               **\n'
   [ "$(iwd_value 'back\slash\s')" = 'back\\slash\\s' ]
   [ "$(iwd_value $'tab\there')" = 'tab\there' ]
 }
+
+@test "iwd_to_networkmanager: the stick's networks as NetworkManager files, 600, passphrase as typed" {
+  iwd_write_psk "Home Net" 'p\ss	word'
+  iwd_write_psk "A=B" secret hidden
+  mkdir -p "$NOVA_IWD_DIR"
+  : >"$NOVA_IWD_DIR/Cafe.open"
+  printf '[Security]\nPreSharedKey=abcd\n' >"$NOVA_IWD_DIR/Office.psk"
+  iwd_to_networkmanager "$SCRATCH/nm"
+  [ "$(stat -c %a "$SCRATCH/nm/Home Net.nmconnection")" = 600 ]
+  grep -qx 'ssid=Home Net' "$SCRATCH/nm/Home Net.nmconnection"
+  grep -qxF 'psk=p\\ss\tword' "$SCRATCH/nm/Home Net.nmconnection"
+  grep -qx 'hidden=false' "$SCRATCH/nm/Home Net.nmconnection"
+  grep -qx 'ssid=65;61;66;' "$SCRATCH/nm/=413d42.nmconnection"
+  grep -qx 'id=A=B' "$SCRATCH/nm/=413d42.nmconnection"
+  grep -qx 'hidden=true' "$SCRATCH/nm/=413d42.nmconnection"
+  ! grep -q 'wifi-security' "$SCRATCH/nm/Cafe.nmconnection"
+  # No passphrase to give NetworkManager: left for the person to join again.
+  [ ! -e "$SCRATCH/nm/Office.nmconnection" ]
+  grep -qx 'uuid=[0-9a-f-]\{36\}' "$SCRATCH/nm/Cafe.nmconnection"
+}
+
+@test "iwd_to_networkmanager: no networks joined, no files" {
+  iwd_to_networkmanager "$SCRATCH/nm"
+  [ ! -e "$SCRATCH/nm" ]
+}

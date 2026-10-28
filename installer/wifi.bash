@@ -1,8 +1,8 @@
 # shellcheck shell=bash
 # Wi-Fi on the installer stick: networks written as iwd's own files, so a
 # password never goes on a command line, where any process can read it.
-# Sourced by nova-install (carried networks) and nova-install-start (the
-# network screen).
+# Sourced by nova-install (the networks the new system starts with) and
+# nova-install-start (the network screen).
 
 IWD_DIR=${NOVA_IWD_DIR:-/var/lib/iwd}
 
@@ -45,3 +45,42 @@ iwd_wait_known() { # ssid
   done
   return 1
 }
+
+# The networks joined on the stick, as NetworkManager's own files in the new
+# system: without them a laptop with no Ethernet port starts offline, and asks
+# again for the password typed here. Personal and open networks; iwd's
+# escapes (\\, \t, a leading \s) are those of NetworkManager's files too, so
+# a passphrase goes over as it is. An SSID in hex (iwd's name for one that is
+# not plain) goes over as its bytes.
+iwd_to_networkmanager() { # directory
+  local dest=$1 file base name kind passphrase hidden id ssid hex i
+  for file in "$IWD_DIR"/*.psk "$IWD_DIR"/*.open; do
+    [[ -f $file ]] || continue
+    base=${file##*/} name=${base%.*} kind=${base##*.}
+    passphrase=$(sed -n 's/^Passphrase=//p' "$file" | head -n 1)
+    [[ $kind == open || -n $passphrase ]] || continue
+    hidden=false
+    ! grep -qx 'Hidden=true' "$file" || hidden=true
+    if [[ $name == =* ]]; then
+      hex=${name#=} ssid='' id=''
+      for ((i = 0; i < ${#hex}; i += 2)); do
+        ssid+="$((16#${hex:i:2}));"
+        id+="\\x${hex:i:2}"
+      done
+      id=$(printf '%b' "$id" | LC_ALL=C tr -c '[:print:]' '?')
+      id=${id//\\/\\\\}
+    else
+      ssid=$name id=$name
+    fi
+    # A leading space is one GKeyFile would drop.
+    [[ $ssid != ' '* ]] || ssid="\\s${ssid:1}"
+    [[ $id != ' '* ]] || id="\\s${id:1}"
+    {
+      printf '[connection]\nid=%s\nuuid=%s\ntype=wifi\n\n' "$id" "$(cat /proc/sys/kernel/random/uuid)"
+      printf '[wifi]\nmode=infrastructure\nssid=%s\nhidden=%s\n\n' "$ssid" "$hidden"
+      [[ $kind == open ]] || printf '[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n' "$passphrase"
+      printf '[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n'
+    } | install -D -m 600 /dev/stdin "$dest/$name.nmconnection"
+  done
+}
+

@@ -71,11 +71,15 @@ if [[ -r ${BASH_SOURCE[0]%/*}/ui.bash ]]; then
   source "${BASH_SOURCE[0]%/*}/ui.bash"
   # shellcheck source=installer/setup.bash
   source "${BASH_SOURCE[0]%/*}/setup.bash"
+  # shellcheck source=installer/wifi.bash
+  source "${BASH_SOURCE[0]%/*}/wifi.bash"
 else
   # shellcheck source=installer/ui.bash
   source "$SHARE/ui.bash"
   # shellcheck source=installer/setup.bash
   source "$SHARE/setup.bash"
+  # shellcheck source=installer/wifi.bash
+  source "$SHARE/wifi.bash"
 fi
 
 say() { echo >&2; ui_title "$*"; }
@@ -714,6 +718,7 @@ install_bootloader() {
 
 enable_services() {
   say "Enabling services"
+  iwd_to_networkmanager "$TARGET/etc/NetworkManager/system-connections"
   in_target systemctl enable greetd.service NetworkManager.service bluetooth.service \
     systemd-resolved.service systemd-timesyncd.service systemd-oomd.service \
     power-profiles-daemon.service fstrim.timer snapper-cleanup.timer limine-snapper-sync.service
