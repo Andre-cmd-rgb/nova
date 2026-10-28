@@ -23,8 +23,10 @@ cp "${*: -2:1}" "$BUCKET/$key"
 EOF
   cat >"$SCRATCH/bin/curl" <<'EOF'
 #!/bin/bash
-url=${*: -1}
-[[ $url == https://packages.example.org/* ]] && cat "$BUCKET/${url#https://packages.example.org/}"
+echo "curl $*" >>"$CALLS"
+out=/dev/stdout
+while (($#)); do [[ $1 == -o ]] && out=$2; url=$1; shift; done
+[[ $url == https://packages.example.org/* ]] && cat "$BUCKET/${url#https://packages.example.org/}" >"$out"
 EOF
   chmod +x "$SCRATCH/bin/aws" "$SCRATCH/bin/curl"
   export PATH="$SCRATCH/bin:$PATH"
@@ -55,16 +57,26 @@ upload() { "$REPO_ROOT/tools/packages-upload" --release "$SCRATCH/release.toml" 
   [ "$(cat "$BUCKET/v1.0.0-beta.6/nova.db")" = db ]
   [ "$(cat "$BUCKET/v1.0.0-beta.6/nova-1.0-1-x86_64.pkg.tar.zst")" = pkg ]
   grep -q -- "--endpoint-url $R2_ENDPOINT .* region=auto checksums=when_required" "$CALLS"
+  # A read cut off midway is tried again, into a file curl can start over.
+  grep -qE -- '^curl .*--retry-all-errors .*-o [^ ]+ https://packages.example.org/v1.0.0-beta.6/nova.db$' "$CALLS"
 }
 
 @test "upload: a file the address serves differently fails it" {
   cat >"$SCRATCH/bin/curl" <<'EOF'
 #!/bin/bash
-echo something else
+while (($#)); do [[ $1 == -o ]] && out=$2; shift; done
+echo something else >"$out"
 EOF
   run upload "$SCRATCH/out/nova.db"
   [ "$status" -ne 0 ]
   [[ $output == *"https://packages.example.org/v1.0.0-beta.6/nova.db is not what was uploaded"* ]]
+}
+
+@test "upload: a file that cannot be read back, after curl's tries, fails it" {
+  printf '#!/bin/bash\nexit 56\n' >"$SCRATCH/bin/curl"
+  run upload "$SCRATCH/out/nova.db"
+  [ "$status" -ne 0 ]
+  [[ $output == *"https://packages.example.org/v1.0.0-beta.6/nova.db cannot be read back"* ]]
 }
 
 @test "upload: a refused upload, or no token, stops before anything is read back" {

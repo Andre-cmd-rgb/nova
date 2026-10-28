@@ -65,11 +65,15 @@ for file in "${files[@]}"; do
   aws s3 cp --only-show-errors --endpoint-url "$R2_ENDPOINT" "$file" "s3://$R2_BUCKET/$folder/${file##*/}" ||
     die "could not upload ${file##*/}"
 done
+# A read cut off midway, as v1.0.0's first publish was, is tried again whole:
+# into a file, which curl starts over, where a pipe would keep the first part.
+back=$(mktemp)
+trap 'rm -f "$back"' EXIT
 for file in "${files[@]}"; do
   sent=$(sha256sum <"$file")
-  served=$(curl -fsSL --retry 3 --max-time 600 "$repo/${file##*/}" | sha256sum) ||
+  curl -fsSL --retry 3 --retry-all-errors --max-time 600 -o "$back" "$repo/${file##*/}" ||
     die "$repo/${file##*/} cannot be read back"
-  [[ $served == "$sent" ]] || die "$repo/${file##*/} is not what was uploaded"
+  [[ $(sha256sum <"$back") == "$sent" ]] || die "$repo/${file##*/} is not what was uploaded"
 done
 printf 'packages-upload: %d files at %s%s\n' "${#files[@]}" "$repo" \
   "$( (($# == ${#files[@]})) || echo ", $(($# - ${#files[@]})) there already")" >&2
