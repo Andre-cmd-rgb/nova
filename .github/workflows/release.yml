@@ -470,7 +470,7 @@ jobs:
   pi-image:
     needs: pi-repo
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 90
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -498,6 +498,14 @@ jobs:
         with:
           path: ~/.cache/nova-alarm
           key: alarm-rootfs-${{ steps.month.outputs.month }}
+      # The pool's files, which the runners download slowly and with stalls:
+      # kept even from a build that failed, so that its re-run fetches only
+      # what is still missing. A file's name never changes what it holds.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/pi-cache
+          key: pi-pool-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: pi-pool-
       - name: Build the Raspberry Pi image
         run: |
           mkdir -p out/alarm-new
@@ -510,8 +518,14 @@ jobs:
             cp out/pi-repo/nova-keyring-*.pkg.tar.zst "$keyring/"
             pacman -U --noconfirm "$keyring"/nova-keyring-*.pkg.tar.zst
             tools/build-pi-image --release release.toml --repo out/pi-repo --dbs out/alarm-dbs \
-              --new out/alarm-new --out out/pi-image
+              --new out/alarm-new --out out/pi-image --cache out/pi-cache
           '
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: always()
+        continue-on-error: true
+        with:
+          path: out/pi-cache
+          key: pi-pool-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: pi-image

@@ -4,7 +4,7 @@
 # what nova-install asks on a PC and sets up the rest: the account, the
 # keyboard, the name, the network, the apps.
 #
-#   tools/build-pi-image --release <release.toml> --repo <dir> --dbs <dir> --new <dir> --out <dir>
+#   tools/build-pi-image --release <release.toml> --repo <dir> --dbs <dir> --new <dir> --out <dir> [--cache <dir>]
 #
 #   --release  the release's release.toml: its version, and where its packages are
 #   --repo     the release's signed aarch64 repository: Nova's packages, nova.db
@@ -13,6 +13,9 @@
 #   --new      the pinned files the pool does not have yet (tools/alarm-pin --new);
 #              the rest come from the pool
 #   --out      where nova-<version>-raspberry-pi-5.img.xz and its .sha256 go
+#   --cache    where the pool's files are kept between builds (CI keeps it in
+#              its cache even when a build fails, so the next one fetches only
+#              the rest); left with this release's files alone
 #
 # Everything installed comes from those two repositories, [nova] and
 # [nova-alarm], so a package the release did not pin cannot get in, and the
@@ -29,7 +32,7 @@ die() { printf 'build-pi-image: %s\n' "$*" >&2; exit 1; }
 say() { printf '==> %s\n' "$*" >&2; }
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-release='' repo='' dbs='' new='' out=''
+release='' repo='' dbs='' new='' out='' cache=''
 while (($#)); do
   case $1 in
     --release) release=${2:?}; shift 2 ;;
@@ -37,6 +40,7 @@ while (($#)); do
     --dbs) dbs=${2:?}; shift 2 ;;
     --new) new=${2:?}; shift 2 ;;
     --out) out=${2:?}; shift 2 ;;
+    --cache) cache=${2:?}; shift 2 ;;
     -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
@@ -61,9 +65,14 @@ alarm_pool=$(value alarm_pool)
 repo=$(cd -- "$repo" && pwd) dbs=$(cd -- "$dbs" && pwd) new=$(cd -- "$new" && pwd)
 mkdir -p -- "$out"
 out=$(cd -- "$out" && pwd)
+if [[ -n $cache ]]; then
+  mkdir -p -- "$cache"
+  cache=$(cd -- "$cache" && pwd)
+fi
 image=nova-$version-raspberry-pi-5.img
 
 work=$(mktemp -d /tmp/nova-pi-image.XXXXXX)
+cache=${cache:-$work/cache}
 mnt=$work/root
 boot_loop='' root_loop=''
 cleanup() {
@@ -119,14 +128,14 @@ mount "$boot_loop" "$mnt/boot"
 say "Installing the release's packages"
 # The pinned files the pool lacks are in --new, named as nova-alarm.db names
 # them; the rest come from the pool, into a cache that is not the image's.
-mkdir -p "$work/cache"
+mkdir -p "$cache"
 cat >"$work/pacman.conf" <<EOF
 [options]
 Architecture = aarch64
 SigLevel = Required DatabaseOptional
 LocalFileSigLevel = Optional
 ParallelDownloads = 5
-CacheDir = $work/cache/
+CacheDir = $cache/
 CacheDir = $new/
 
 [nova]
@@ -146,23 +155,33 @@ mapfile -t packages < <(sed -e 's/#.*//' -e 's/[[:space:]]//g' -e '/^$/d' \
   "$root/data/raspberry-pi/image/packages" "$root/data/hardware/raspberry-pi-5/packages")
 # From a GitHub runner the pool can go quiet for longer than the ten seconds
 # pacman waits, and one stalled file fails its whole transaction: curl fetches
-# the pool's files first, each retried on its own. The signature beside a
-# file, when nova-alarm.db does not carry it.
+# the pool's files first, each retried on its own, in rounds, over a
+# connection each (one HTTP/2 connection stalls every file on it). The
+# signature beside a file, when nova-alarm.db does not carry it.
 say "Fetching the packages from the pool"
 mkdir -p "$work/db"
 pacman --config "$work/pacman.conf" --dbpath "$work/db" -Sy >/dev/null
 pacman --config "$work/pacman.conf" --dbpath "$work/db" -Sp --print-format '%r %f %g' "${packages[@]}" |
   while read -r from file sig; do
     [[ $from == nova-alarm && ! -e $new/$file ]] || continue
-    names=("$file")
-    [[ -n $sig ]] || names+=("$file.sig")
-    for name in "${names[@]}"; do
-      printf 'url = "%s/%s"\noutput = "%s/%s"\n' "$alarm_pool" "$name" "$work/cache" "$name"
-    done
-  done >"$work/fetch"
-curl --parallel --parallel-max 4 --fail --silent --show-error --remove-on-error \
-  --retry 5 --retry-all-errors --retry-delay 5 --speed-limit 1024 --speed-time 60 \
-  --config "$work/fetch" || say "Some did not download; pacman tries them again"
+    echo "$file"
+    [[ -n $sig ]] || echo "$file.sig"
+  done >"$work/wanted"
+# The cache keeps this release's files alone, so it does not grow with every
+# release that pinned another version.
+find "$cache" -maxdepth 1 -type f -printf '%f\n' | { grep -vxF -f "$work/wanted" || true; } |
+  while IFS= read -r stale; do rm -f -- "$cache/$stale"; done
+for round in 1 2 3; do
+  while IFS= read -r name; do
+    [[ -s $cache/$name ]] ||
+      printf 'url = "%s/%s"\noutput = "%s/%s"\n' "$alarm_pool" "$name" "$cache" "$name"
+  done <"$work/wanted" >"$work/fetch"
+  [[ -s $work/fetch ]] || break
+  say "Fetching $(($(wc -l <"$work/fetch") / 2)) files (round $round)"
+  curl --parallel --parallel-max 4 --http1.1 --fail --silent --show-error --remove-on-error \
+    --retry 5 --retry-all-errors --retry-delay 5 --speed-limit 1024 --speed-time 60 \
+    --config "$work/fetch" && break
+done
 # Whatever is still missing, pacman fetches. A download that stalls fails the
 # whole transaction, which then installs nothing; the files already fetched
 # stay in the cache, so a second try only fetches the rest.
