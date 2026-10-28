@@ -188,8 +188,9 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
    Once a release is published its files are never replaced: a re-run only
    sets its flags again, and a draft alone gets the re-run's files.
 2. **Test.** CI has already installed and booted it in a virtual machine; what
-   is left is the hardware. On each supported laptop following pre-releases,
-   `nova update`, reboot, and work through the checklist below; now and then,
+   is left is the hardware: the ThinkPad P1 Gen 4i and the Raspberry Pi 5,
+   the two the README supports. On each, following pre-releases, `nova
+   update`, reboot, and work through the checklist below; now and then,
    install the ISO on a spare disk too. A candidate that fails is simply not
    promoted: fix `main`, and the next candidate replaces it.
 3. **Approve.** Actions → promote → Run, with the candidate's tag. It tags the

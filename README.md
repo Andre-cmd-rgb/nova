@@ -6,11 +6,12 @@ machine it runs on. It boots from the firmware logo straight to the lock
 screen, uses one theme everywhere, and installs in a few minutes from a USB
 stick that can carry your files over.
 
-**Status: beta.** Tuned for the Lenovo ThinkPad P1 Gen 4i, and runs on the
-Raspberry Pi 5. The Lenovo Legion 5 (RTX 4070) has a first profile, not yet
-tuned. Other x86-64 laptops and desktops with Intel, AMD or NVIDIA graphics
-should work, but are untested. NVIDIA cards older than the GTX 16 and RTX 20
-series get the basic nouveau driver: NVIDIA's own starts with those.
+**Supported:** the Lenovo ThinkPad P1 Gen 4i, which Nova is tuned for, and
+the Raspberry Pi 5. Every release is tried on both before it is out. Other
+x86-64 laptops and desktops with Intel, AMD or NVIDIA graphics work, but are
+neither tuned nor tested; the Lenovo Legion 5 (RTX 4070) has a first profile,
+not yet tuned. NVIDIA cards older than the GTX 16 and RTX 20 series get the
+basic nouveau driver: NVIDIA's own starts with those.
 
 ## Install on a PC
 
