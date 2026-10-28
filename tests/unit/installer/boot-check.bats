@@ -4,6 +4,8 @@ load ../test_helper
 
 setup() {
   setup_scratch
+  export NOVA_FSTAB="$SCRATCH/fstab"
+  : >"$NOVA_FSTAB"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/data/boot/bin/nova-boot-check"
   ESP="$SCRATCH/boot"
@@ -108,6 +110,25 @@ make_complete_esp() {
   make_complete_esp
   rm "$ESP/EFI/BOOT/BOOTX64.EFI"
   NOVA_BOOT_CHECK=skip run run_check pre
+  [ "$status" -eq 0 ]
+}
+
+@test "pre: refuses while fstab mounts the ESP and it is not mounted" {
+  printf 'UUID=64E2-9B71 %s vfat rw 0 2\n' "$ESP" >"$NOVA_FSTAB"
+  run run_check pre
+  [ "$status" -eq 1 ]
+  [[ $output == *"not mounted at $ESP"* ]]
+  [[ $output == *"Refusing to change kernels"* ]]
+  run run_check status
+  [ "$status" -eq 1 ]
+  [[ $output == *"sudo mount $ESP"* ]]
+}
+
+@test "pre: a mounted ESP is checked as before" {
+  printf 'UUID=64E2-9B71 %s vfat rw 0 2\n' "$ESP" >"$NOVA_FSTAB"
+  mountpoint() { [ "$2" = "--" ] && [ "$3" = "$ESP" ]; }
+  make_complete_esp
+  run run_check pre
   [ "$status" -eq 0 ]
 }
 

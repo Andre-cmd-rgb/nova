@@ -17,6 +17,7 @@
 set -euo pipefail
 
 LIMINE_CONF_FILES=(/etc/limine-entry-tool.conf /etc/limine-entry-tool.d/*.conf /etc/default/limine)
+FSTAB=${NOVA_FSTAB:-/etc/fstab}
 
 # The value of KEY in the given limine-entry-tool config files, last assignment
 # wins, quotes stripped. The files are shell, but never sourced here.
@@ -55,6 +56,15 @@ boot_missing() {
     echo "a ${kernel} fallback entry in $esp/limine.conf"
 }
 
+# True when fstab mounts the ESP but it is not mounted. Its directory is then
+# an empty one on the root filesystem, which looks like a first install: a
+# kernel update would write its images there, where the firmware never looks,
+# and the old kernel would start without the modules the update removed.
+esp_unmounted() {
+  local esp=$1
+  findmnt -n -s -F "$FSTAB" -- "$esp" >/dev/null 2>&1 && ! mountpoint -q -- "$esp"
+}
+
 # True while the ESP has no Limine setup yet (first install): nothing to protect.
 boot_is_fresh() {
   local esp=$1
@@ -73,6 +83,17 @@ run_check() {
   if [[ $mode != status && ${NOVA_BOOT_CHECK:-} == skip ]]; then
     echo "nova-boot-check: skipped by NOVA_BOOT_CHECK=skip" >&2
     return 0
+  fi
+  if esp_unmounted "$esp"; then
+    {
+      echo "nova-boot-check: the boot partition is not mounted at $esp"
+      case $mode in
+        pre) echo "Mount it (sudo mount $esp), then repeat this command. Refusing to change kernels where the firmware would not find them." ;;
+        post) echo "This update wrote its kernel images to the root filesystem. Mount it (sudo mount $esp) and run 'limine-update' before rebooting." ;;
+        *) echo "Mount it: sudo mount $esp" ;;
+      esac
+    } >&2
+    return 1
   fi
   if [[ $mode == pre ]] && boot_is_fresh "$esp"; then return 0; fi
 
