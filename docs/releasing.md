@@ -168,9 +168,9 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
       ISO's `.sha256`, `packages.txt` and `nova-usb` with the repository key;
    6. installs from it in a KVM virtual machine with no questions asked, boots
       the result and checks it from inside (`tests/install/run`); the serial
-      logs are kept as the run's `install-logs`. A separate `upgrade-test` job
-      installs the previous published release and proves the way forward and
-      back (below);
+      logs are kept as the run's `install-logs`. Beside it, `upgrade-test`
+      installs the release before this one and moves it forward and back
+      (below);
    7. for the Raspberry Pi 5, on arm64 runners in Arch Linux ARM
       (`tools/alarm-container`): builds `nova`, `nova-keyring`, `ttfx` and
       `mise` against Arch Linux ARM's databases as the first step fetched
@@ -223,7 +223,9 @@ approving, or one to write down in the release notes.
 
 - **Boot:** firmware logo to the lock screen with no console text in between;
   `systemd-analyze` no slower than the last release; a key in the first second
-  shows the boot menu with snapshots.
+  shows the boot menu with snapshots, and the one from before the update starts
+  and offers **Restore now** (leave it: the next restart is back on the
+  update).
 - **Unlock:** a wrong password is refused; the right one signs Chrome in with
   no keyring prompt; after that, the fingerprint unlocks, after suspend too.
 - **Sleep:** the lid suspends and the machine wakes to the lock screen;
@@ -279,51 +281,31 @@ bucket, because systems may already be on it. Instead:
    and restore it (README, Going back), or
    `nova update --version <the release before> --allow-downgrade`.
 
-### The upgrade gate
+### The upgrade test
 
-`upgrade-test` runs `tests/install/run --upgrade --repo out/repo --release
-release.toml` before `publish`, beside the plain and encrypted install tests.
-It uses one plain disk and the same KVM, virgl, firmware and unattended stick
-as the install test. Its scratch files live on `/mnt`. The job has 180 minutes;
-the test has 150, downloads included, with separate limits and serial logs for
-each machine run. The `upgrade-logs` artifact holds those logs and the HTTPS
-server's log even on failure.
+Before anything is published, CI installs the release before this one and
+takes it forward and back (`tests/install/run --upgrade`, the `upgrade-test`
+job), in four starts of one virtual machine:
 
-1. Read all published GitHub releases (including pre-releases), compare their
-   package versions, and choose the highest version strictly below this tag.
-   Drafts, this tag and newer tags are excluded. With none, succeed with a
-   notice; an API failure is an error. `nova-usb`'s download helpers check the
-   previous release's signed manifest, package list and ISO checksum, and the
-   ISO against that checksum. The stick gets that release's own Nova packages
-   and its own pinned Arch snapshot, never the new artifact's packages.
-2. Boot the installed predecessor. Run the ordinary install probe, check its
-   version and boot entries, then run its installed `nova update --release-file
-   candidate.toml --yes`. This takes the updater's own pre-update snapshot.
-3. Boot again. Check the new version, running kernel modules, boot entries,
-   repository pins, desktop, and `nova doctor`. Use the new updater to downgrade
-   with `--release-file previous.toml --allow-downgrade --yes`. That manifest
-   was signature-checked when it was downloaded and still names its published
-   repository.
-4. Boot the downgraded release and check it. Make a writable Btrfs copy of the
-   exact snapshot taken before step 2 and replace the `@` root subvolume with
-   it. Boot it and verify its UUID, the previous version, the complete package
-   inventory, and both pin files byte for byte. A marker changed after the
-   snapshot must also return to its earlier value, proving a restore happened
-   even though the downgrade already put the old packages back.
+1. It installs the newest published release older than this one, candidates
+   included, from that release's own ISO and packages, each checked against
+   Nova's key by `nova-usb`'s own code. With none older, it passes with a
+   notice.
+2. That system's own `nova update` moves it to this release. After a restart,
+   the version, the pins, the boot entries, the desktop and `nova doctor` are
+   checked.
+3. This release's `nova update --allow-downgrade` takes it back, and after a
+   restart the older release is checked again.
+4. The snapshot `nova update` took before step 2 replaces the root, as
+   `limine-snapper-restore` does. After a restart, the older version, every
+   one of its packages and its pins are back, byte for byte.
 
-The unpublished `[nova]` repository is the signed `repo` artifact, served by a
-small Python standard-library HTTPS server on the runner's loopback. QEMU's
-user network reaches it at `10.0.2.2`. A fresh CA signs a certificate for that
-address; only the disposable guest trusts the CA. A copy of the candidate
-manifest changes only `nova_repo` to this address and is passed through the
-existing `--release-file` option. Its Arch snapshot stays as built. Pacman
-still checks repository and package signatures, and the updater and its root
-helper still require HTTPS. No production validation or pkexec path changes.
-
-This is the Btrfs effect of Nova's `RESTORE_METHOD=replace`, not an automated
-Limine menu test. It does not exercise selecting a snapshot, its temporary
-overlay, or the restore dialog. The preceding downgrade has already restored
-the old release's ESP files; the test checks those again on the restored boot,
-without claiming to test restoring the ESP from a snapshot. These UI and boot
-menu steps stay on the hardware checklist. Each guest powers off between
-steps and QEMU starts the same disk and firmware again.
+This release's `[nova]` repository is not published yet, so the guest reads
+it from the runner, at QEMU's address for the host, over HTTPS with a
+certificate from a CA made for the run and trusted by that guest alone, and
+through the `--release-file` option `nova update` already has. pacman checks
+every signature as it always does, and nothing in `nova update` or its root
+helper changes for the test. Choosing the snapshot in the boot menu, its
+overlay and the notification's **Restore now** are not in it: those are on
+the hardware checklist. The serial logs are kept as the run's
+`upgrade-logs`.
