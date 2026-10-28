@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 
 # packaging/nova/nova.install: an upgrade quiets the boot autologin's uwsm in a
-# greetd config the installer wrote, and leaves a changed one alone.
+# greetd config the installer wrote, and leaves a changed one alone; an
+# upgrade from before printing came starts it.
 
 load ../test_helper
 
@@ -49,4 +50,19 @@ command = "my-session"
   run quiet_session_start
   [ "$status" -eq 0 ]
   [ ! -e "$NOVA_GREETD_CONFIG" ]
+}
+
+@test "printing starts once, on the upgrade from before it came" {
+  systemctl() { echo "systemctl $*" >>"$SCRATCH/calls"; }
+  findmnt() { echo btrfs; }
+  start_printing 1.0.0beta.9
+  grep -qx 'systemctl try-restart systemd-resolved.service' "$SCRATCH/calls"
+  grep -qx 'systemctl enable --now avahi-daemon.service cups.socket' "$SCRATCH/calls"
+  grep -qx 'systemctl enable --now btrfs-scrub@-.timer' "$SCRATCH/calls"
+  [ "$(head -n 1 "$SCRATCH/calls")" = 'systemctl try-restart systemd-resolved.service' ]
+  rm "$SCRATCH/calls"
+  start_printing 1.0.0beta.10
+  start_printing 1.0.0
+  start_printing ''
+  [ ! -e "$SCRATCH/calls" ]
 }

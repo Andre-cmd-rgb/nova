@@ -190,7 +190,7 @@ ln -sf ../run/systemd/resolve/stub-resolv.conf "$mnt/etc/resolv.conf"
 # own first-start questions are nova-first-boot's to ask.
 arch-chroot "$mnt" systemctl enable --quiet greetd.service NetworkManager.service bluetooth.service \
   systemd-resolved.service systemd-timesyncd.service systemd-oomd.service \
-  power-profiles-daemon.service fstrim.timer
+  power-profiles-daemon.service fstrim.timer avahi-daemon.service cups.socket
 arch-chroot "$mnt" systemctl mask --quiet systemd-firstboot.service
 arch-chroot "$mnt" passwd -l root >/dev/null
 

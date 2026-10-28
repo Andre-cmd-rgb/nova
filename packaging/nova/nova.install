@@ -39,8 +39,20 @@ quiet_session_start() {
   sed -i "s|^$old|command = \"env NOVA_LOGIN=autologin UWSM_SILENT_START=1 uwsm start |" "$config"
 }
 
+# Printing came with 1.0.0-beta.10, and a monthly check of the btrfs root:
+# what a new install enables itself. resolved restarts first, to hand mDNS
+# to Avahi (Nova's resolved.conf.d) before Avahi starts.
+start_printing() { # the version upgraded from
+  [ -n "$1" ] && [ "$(vercmp "$1" 1.0.0beta.10)" -lt 0 ] || return 0
+  systemctl try-restart systemd-resolved.service 2>/dev/null || true
+  systemctl enable --now avahi-daemon.service cups.socket 2>/dev/null || true
+  [ "$(findmnt -no FSTYPE / 2>/dev/null)" != btrfs ] ||
+    systemctl enable --now 'btrfs-scrub@-.timer' 2>/dev/null || true
+}
+
 post_upgrade() {
   quiet_session_start
+  start_printing "$2"
   [ -e /run/nova-power.renamed ] || return 0
   rm -f /run/nova-power.renamed
   systemctl daemon-reload 2>/dev/null || true

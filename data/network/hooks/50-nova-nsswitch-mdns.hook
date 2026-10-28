@@ -1,0 +1,13 @@
+# After the transaction, so the filesystem package's nsswitch.conf is there
+# even when pacstrap installs it beside nova.
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = nova
+Target = filesystem
+
+[Action]
+Description = Letting .local names resolve through Avahi...
+When = PostTransaction
+Exec = /usr/lib/nova/bin/nova-nsswitch-mdns

@@ -64,6 +64,15 @@ depends=(
   udiskie
   ddcutil        # brightness of external monitors
 
+  # Printing and scanning: CUPS takes the jobs, Avahi finds the printers and
+  # scanners on the network, nss-mdns reaches them by their .local names
+  cups
+  cups-filters
+  avahi
+  nss-mdns
+  sane-airscan
+  system-config-printer # Print Settings, in the launcher
+
   # Apps the session launches
   foot
   nautilus
