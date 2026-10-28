@@ -1,0 +1,13 @@
+# For systems installed before the installer set the country. After the
+# transaction, so wireless-regdb's file is there when pacstrap installs both.
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = nova
+Target = wireless-regdb
+
+[Action]
+Description = Setting the Wi-Fi rules of the time zone's country...
+When = PostTransaction
+Exec = /usr/lib/nova/bin/nova-wireless-regdom

@@ -1,0 +1,35 @@
+#!/bin/bash
+
+# nova:summary=Set the Wi-Fi rules of the country the time zone is in
+# nova:hidden=true
+#
+# Which Wi-Fi channels a radio may use, and at what power, is each country's
+# rule. Told no country, the kernel keeps to what every country allows, which
+# leaves out much of 5 GHz; Intel cards work their country out themselves,
+# most others do not. wireless-regdb's set-wireless-regdom reads the country
+# from /etc/conf.d/wireless-regdom whenever the Wi-Fi stack loads, and fails
+# when there is none. The country is the time zone's, in zone.tab, as the
+# Raspberry Pi's first start takes it; one set by hand is left alone, and a
+# zone of no country (UTC) sets none. Run by the installer once the time zone
+# is set, and by a pacman hook, so a system installed before this gets it too.
+
+set -euo pipefail
+
+CONF=${NOVA_REGDOM_CONF:-/etc/conf.d/wireless-regdom}
+LOCALTIME=${NOVA_LOCALTIME:-/etc/localtime}
+ZONE_TAB=${NOVA_ZONE_TAB:-/usr/share/zoneinfo/zone.tab}
+
+[[ -f $CONF ]] || exit 0
+! grep -q '^[[:space:]]*WIRELESS_REGDOM=' "$CONF" || exit 0
+zone=$(readlink "$LOCALTIME" 2>/dev/null) || exit 0
+zone=${zone#*zoneinfo/}
+country=$(awk -F'\t' -v tz="$zone" '!/^#/ && $3 == tz { print $1; exit }' "$ZONE_TAB" 2>/dev/null || true)
+[[ $country =~ ^[A-Z]{2}$ ]] || exit 0
+
+# wireless-regdb lists every country commented out: the country's own line is
+# taken in place, and written at the end where it has none.
+if grep -q "^#WIRELESS_REGDOM=\"$country\"" "$CONF"; then
+  sed -i "s/^#WIRELESS_REGDOM=\"$country\"/WIRELESS_REGDOM=\"$country\"/" "$CONF"
+else
+  printf 'WIRELESS_REGDOM="%s"\n' "$country" >>"$CONF"
+fi

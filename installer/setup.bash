@@ -232,6 +232,8 @@ write_names() { # hostname timezone
   echo "$1" >"$TARGET/etc/hostname"
   printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s.localdomain %s\n' "$1" "$1" >"$TARGET/etc/hosts"
   ln -sf "/usr/share/zoneinfo/$2" "$TARGET/etc/localtime"
+  # The Wi-Fi channels the time zone's country allows, from the next start.
+  in_target /usr/lib/nova/bin/nova-wireless-regdom || warn "Could not set the Wi-Fi country; Wi-Fi keeps to the channels every country allows."
   # Some machines and VMs have no clock this can set; timesyncd sets it later.
   in_target hwclock --systohc || warn "Could not set the hardware clock; it is set once the system is online."
 }
