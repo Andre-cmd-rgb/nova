@@ -105,6 +105,14 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
    The lock service runs `nova-automount on` after the first unlock and `off`
    whenever it locks: udiskie (`nova-automount.service`) is started, then frozen
    and thawed, not restarted, since a fresh udiskie mounts every drive there is.
+9. **The machine sleeps locked.** `nova-system-sleep-monitor` holds a logind delay
+   inhibitor; at PrepareForSleep, `nova-system-sleep-lock` asks for the lock and
+   waits for `secure`, up to 36 s of logind's 45 s window
+   (`InhibitDelayMaxSec`). A healthy lock takes well under a second. A slow one
+   gets the screens turned off after 2 s, and again each second, as a key press
+   turns them on. If logind suspends before it is secure (a delay inhibitor is
+   a timer), the screens stay off after the wake and the lock is asked for again
+   (`--resumed`, from `sleep-unsecured` in the runtime directory) until it is up.
 
 ### On a Raspberry Pi 5
 

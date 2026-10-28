@@ -53,6 +53,12 @@ case ${1:-} in
     exit 0
     ;;
   --inhibited)
+    # The last suspend went without a secure lock: the screens stay off until
+    # it is up. systemd restarts this as the machine goes down, so it may run
+    # before the suspend or after it; --resumed holds on across it either way.
+    if [[ -e ${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/sleep-unsecured ]]; then
+      "$here/nova-system-sleep-lock" --resumed </dev/null >/dev/null 2>&1 &
+    fi
     monitor_sleep_events
     exit 0
     ;;

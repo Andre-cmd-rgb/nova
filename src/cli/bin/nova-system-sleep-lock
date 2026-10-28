@@ -2,6 +2,14 @@
 
 # nova:summary=Lock before suspend and wait for the session lock to become secure
 # nova:hidden=true
+#
+#   nova-system-sleep-lock [budget-ms]   before suspend (nova-system-sleep-monitor)
+#   nova-system-sleep-lock --resumed     after it, when the lock was not up in time
+#
+# A lock slow to come up gets the screens turned off while it is waited for,
+# so the session is not on show. If logind suspends before it is secure, the
+# screens stay off after the machine wakes, and the lock is asked for again,
+# until it is up: only then do they come back on.
 
 set -euo pipefail
 
@@ -9,15 +17,22 @@ set -euo pipefail
 # logind stops honouring the inhibitor and suspends mid-lock. Every call below
 # is bounded by what is left of the budget, so the deadline enforces itself
 # rather than depending on an estimate of how long a step ought to take.
-budget_cap_ms=12000
+budget_cap_ms=36000
 lock_timeout_ms=1000
 status_timeout_ms=500
 poll_interval=0.1
+# After this long without a secure lock, the screens go off; they are turned
+# off again each second, as a key press turns them on.
+blank_after_ms=2000
+blank_every_ms=1000
+# How long after waking the lock is asked for, the screens off.
+resumed_budget_ms=120000
+unsecured=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/sleep-unsecured
 
 # logind decides how long a delay inhibitor may hold the machine, and the
 # shipped drop-in only counts once logind has reloaded it, so ask rather than
 # assume. Leaving logind a fifth of its own window to deliver PrepareForSleep
-# and act on the release gives 4s at the 5s default and 12s at the shipped 15s.
+# and act on the release gives 4s at the 5s default and 36s at the shipped 45s.
 # The cap keeps a hand-raised window from stranding a closed laptop in a bag.
 derive_budget_ms() {
   local window
@@ -36,10 +51,22 @@ derive_budget_ms() {
   if ((window < budget_cap_ms)); then echo "$window"; else echo "$budget_cap_ms"; fi
 }
 
-budget_ms=${1:-$(derive_budget_ms)}
-if [[ ! $budget_ms =~ ^[0-9]+$ ]] || ((budget_ms < 1 || budget_ms > budget_cap_ms)); then
-  budget_ms=$(derive_budget_ms)
+resumed=0
+if [[ ${1:-} == --resumed ]]; then
+  resumed=1
+  # Nothing to do unless the last suspend went without a secure lock, and
+  # nothing a second time.
+  [[ -e $unsecured ]] || exit 0
+  exec {resumed_lock}>>"$unsecured"
+  flock -n "$resumed_lock" || exit 0
+  budget_ms=$resumed_budget_ms
+else
+  budget_ms=${1:-$(derive_budget_ms)}
+  if [[ ! $budget_ms =~ ^[0-9]+$ ]] || ((budget_ms < 1 || budget_ms > budget_cap_ms)); then
+    budget_ms=$(derive_budget_ms)
+  fi
 fi
+started_ms=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
 
 # EPOCHREALTIME renders with the locale's decimal separator, so drop every
 # non-digit rather than assuming a period. A comma would otherwise read as
@@ -91,16 +118,59 @@ sync_clamshell() {
     nova-hyprland-monitor-clamshell >/dev/null 2>&1 || true
 }
 
+# Bounded like the lock calls: Hyprland's IPC is what stalls under load.
+blank() {
+  timeout --kill-after=0.1s 0.4s nova-brightness-display off >/dev/null 2>&1 || true
+}
+
+last_blank_ms=0
+blank_while_waiting() {
+  local now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
+  ((resumed || now - started_ms >= blank_after_ms)) || return 0
+  ((now - last_blank_ms >= blank_every_ms)) || return 0
+  last_blank_ms=$now
+  blank
+}
+
+# Secure: the screens it turned off come back, on the lock screen.
+secured() {
+  ((!resumed)) || rm -f -- "$unsecured"
+  if ((resumed || last_blank_ms > 0)); then
+    timeout --kill-after=0.1s 1s nova-brightness-display on >/dev/null 2>&1 || true
+  fi
+  exit 0
+}
+
+# Woken, its clock has jumped by however long the machine slept: the time
+# left starts again from the wake.
+last_poll_ms=$started_ms
+after_sleep() {
+  local now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
+  if ((resumed && now - last_poll_ms > 5000)); then
+    deadline_ms=$((now + budget_ms))
+    last_blank_ms=0
+  fi
+  last_poll_ms=$now
+}
+
 # logind suspends whether or not this wait succeeded, so a failure here means
-# the machine slept with the session exposed. The notification is the only way
-# anyone finds out, and it lands on the screen they unlock into.
+# the machine slept with the session exposed, though with the screens off and
+# the lock asked for again as it wakes (--resumed). The notification lands on
+# the screen they unlock into.
 report_unsecured() {
   printf 'nova-system-sleep-lock: suspending without a secure lock (%s)\n' \
     "$1" >&2
+  if ((resumed)); then
+    rm -f -- "$unsecured"
+    exit 1
+  fi
+  mkdir -p -- "${unsecured%/*}"
+  : >"$unsecured"
+  blank
 
   nova-notification-send -u critical -g 󰌾 \
     "Screen did not lock before suspend" \
-    "The session was left unlocked ($1)." >/dev/null 2>&1 || true
+    "The screens stayed off until it locked ($1)." >/dev/null 2>&1 || true
 
   exit 1
 }
@@ -112,12 +182,13 @@ sync_clamshell
 
 # The trailing sleep can overshoot the deadline by one interval, which is well
 # inside the reserve derive_budget_ms already held back for logind.
-while (($(remaining_ms) > 0)); do
+while after_sleep && (($(remaining_ms) > 0)); do
   case $(lock_state) in
-    secure) exit 0 ;;
+    secure) secured ;;
     locking) ;;
     *) request_lock ;;
   esac
+  blank_while_waiting
 
   sleep "$poll_interval"
 done
