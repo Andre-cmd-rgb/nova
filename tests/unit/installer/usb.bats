@@ -354,7 +354,8 @@ staging_setup() {
   udevadm() { :; }
   hide_from_desktop /dev/sdb
   grep -qx 'KERNEL=="sdb|sdb\[0-9\]\*", ENV{UDISKS_IGNORE}="1"' "$UDEV_RULE"
-  grep -qx 'ENV{DM_NAME}=="nova-usb-data", ENV{UDISKS_IGNORE}="1"' "$UDEV_RULE"
+  # What is carried, and a portable stick's encrypted root, as they are opened.
+  grep -qx 'ENV{DM_NAME}=="nova-usb-data|nova-usb-root", ENV{UDISKS_IGNORE}="1"' "$UDEV_RULE"
   hide_from_desktop /dev/nvme1n1
   grep -q 'KERNEL=="nvme1n1|nvme1n1p\[0-9\]\*"' "$UDEV_RULE"
   writer_cleanup
@@ -408,7 +409,7 @@ wizard_setup() {
   # one (CI has no cryptsetup), a stand-in at the end of PATH answers for it.
   local tool
   mkdir -p "$SCRATCH/writer-bin"
-  for tool in sudo sfdisk wipefs mkfs.fat tar zstd diff cryptsetup mkfs.btrfs repo-add; do
+  for tool in sudo sfdisk wipefs mkfs.fat tar zstd diff cryptsetup mkfs.btrfs repo-add chroot mount umount; do
     printf '#!/bin/sh\nexit 0\n' >"$SCRATCH/writer-bin/$tool"
     chmod +x "$SCRATCH/writer-bin/$tool"
   done
@@ -539,6 +540,132 @@ wizard_setup() {
   [ "$status" -eq 1 ]
   [[ $output == *"That is more than the stick holds."* ]]
   [[ $output == *"it does not fit on the stick; nothing was written."* ]]
+}
+
+@test "wizard: Portable brings what is ticked straight into its home, and leaves the rest to the installer" {
+  wizard_setup
+  NO_OFFLINE=''
+  stick_candidates() { printf '/dev/sdx\t%s\tExtreme\tS1\n' "$((64 * GB))"; }
+  mkdir -p "$NOVA_USB_HOME/Documents"
+  echo hi >"$NOVA_USB_HOME/Documents/a.txt"
+  stub_gum 0 portable 'item:ssh\npath:Documents'
+  wizard 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "$MODE" = portable ]
+  [ "${CARRIED[*]}" = "ssh files" ]
+  # No passphrase of its own, and no question about packages on the stick.
+  [ -z "$PASSPHRASE" ]
+  fails grep -q -- --password "$GUM_LOG"
+  fails grep -q 'Put every package' "$GUM_LOG"
+  [ "$(plan_value "$PLAN" mode)" = portable ]
+  [ "$(plan_value "$PLAN" device)" = /dev/sdx ]
+  [ "$(plan_value "$PLAN" items)" = "ssh files" ]
+  [ "$(plan_value "$PLAN" keymap)" = es ]
+  [[ $(plan_value "$PLAN" carry_bytes) =~ ^[1-9][0-9]*$ ]]
+  grep -q 'Erased     sdx  64.0 GB  Extreme' "$SCRATCH/screens"
+  grep -q 'Nova       installed on it, from nova.iso' "$SCRATCH/screens"
+  grep -q 'Brought .* of yours, into its home' "$SCRATCH/screens"
+  grep -qx ' *~/Documents' "$SCRATCH/screens"
+  grep -q 'Asked next your name and password' "$SCRATCH/screens"
+  grep -q 'Nova runs as fast as the stick' "$SCRATCH/screens"
+}
+
+@test "wizard: a portable Nova needs a stick of 32 GB or more" {
+  wizard_setup
+  stick_candidates() { printf '/dev/sdx\t%s\tCruzer\tS1\n' "$((16 * GB))"; }
+  stub_gum 0 portable '' '!1'
+  run wizard
+  [ "$status" -eq 1 ]
+  [[ $output == *"A portable Nova needs a stick of 32 GB or more."* ]]
+  [[ $output == *"it does not fit on the stick; nothing was written."* ]]
+  [ ! -e "$PLAN/plan.env" ]
+}
+
+@test "wizard: what is ticked for Custom stays ticked for Portable" {
+  wizard_setup
+  MODE=custom PICKED_PATHS=(Documents) SSH_TICKED=0
+  stub_gum portable
+  step_mode 2>/dev/null
+  [ "$MODE" = portable ]
+  [ "${PICKED_PATHS[*]}" = Documents ]
+  [ "$SSH_TICKED" = 0 ]
+  grep -q $'Portable: Nova itself, to start any PC from the stick\tportable' "$GUM_LOG"
+}
+
+@test "usb_speed: the link of the USB device above the disk, and nothing off USB" {
+  export NOVA_USB_SYSFS=$SCRATCH/sysfs
+  local usb=$NOVA_USB_SYSFS/devices/pci0000:00/0000:00:14.0/usb2/2-1
+  mkdir -p "$usb/2-1:1.0/host0/target0:0:0/0:0:0:0" "$NOVA_USB_SYSFS/block/sdx" "$NOVA_USB_SYSFS/block/nvme0n1" \
+    "$NOVA_USB_SYSFS/devices/pci0000:00/0000:00:1d.0/nvme/nvme0"
+  echo 480 >"$usb/speed" && echo 0781 >"$usb/idVendor"
+  echo 5000 >"$usb/../speed" && echo 1d6b >"$usb/../idVendor"
+  ln -s "$usb/2-1:1.0/host0/target0:0:0/0:0:0:0" "$NOVA_USB_SYSFS/block/sdx/device"
+  ln -s "$NOVA_USB_SYSFS/devices/pci0000:00/0000:00:1d.0/nvme/nvme0" "$NOVA_USB_SYSFS/block/nvme0n1/device"
+  [ "$(usb_speed /dev/sdx)" = 480 ]
+  [ -z "$(usb_speed /dev/nvme0n1)" ]
+  [ -z "$(usb_speed /dev/sdz)" ]
+}
+
+@test "wizard: a portable stick on a USB 2 link is called slow" {
+  wizard_setup
+  stick_candidates() { printf '/dev/sdx\t%s\tExtreme\tS1\n' "$((64 * GB))"; }
+  usb_speed() { echo 480; }
+  stub_gum 0 portable ''
+  wizard 2>"$SCRATCH/screens"
+  grep -q 'sdx is connected at USB 2 speed' "$SCRATCH/screens"
+  usb_speed() { echo 10000; }
+  MODE='' STICK=''
+  stub_gum 0 portable ''
+  wizard 2>"$SCRATCH/screens"
+  fails grep -q 'USB 2 speed' "$SCRATCH/screens"
+}
+
+@test "write_carry: the SSH keys, their sums, and the manifest; with nothing brought, the manifest alone" {
+  mkdir -p "$NOVA_USB_HOME/.ssh"
+  echo key >"$NOVA_USB_HOME/.ssh/id_ed25519"
+  write_carry "$SCRATCH/out" "$PLAN" "$NOVA_USB_HOME" "$(id -un)" ssh 2>/dev/null
+  [ "$(members "$SCRATCH/out/carry/ssh.tar.zst")" = $'.ssh\n.ssh/id_ed25519' ]
+  jq -e '.items | length == 1 and .[0].id == "ssh"' "$SCRATCH/out/carry/manifest.json" >/dev/null
+  (cd "$SCRATCH/out/carry" && sha256sum --quiet -c SHA256SUMS)
+  [ "$(wc -l <"$SCRATCH/out/carry/SHA256SUMS")" = 2 ]
+  write_carry "$SCRATCH/none" "$PLAN" "$NOVA_USB_HOME" "$(id -un)" "" 2>/dev/null
+  jq -e --arg user "$(id -un)" '.items == [] and .source.user == $user' "$SCRATCH/none/carry/manifest.json" >/dev/null
+  (cd "$SCRATCH/none/carry" && sha256sum --quiet -c SHA256SUMS)
+  [ "$(wc -l <"$SCRATCH/none/carry/SHA256SUMS")" = 1 ]
+}
+
+@test "installer_term: the terminal's own type when the live system knows it, else xterm-256color" {
+  mkdir -p "$SCRATCH/root/usr/share/terminfo/x"
+  touch "$SCRATCH/root/usr/share/terminfo/x/xterm-kitty"
+  [ "$(TERM=xterm-kitty installer_term "$SCRATCH/root")" = xterm-kitty ]
+  [ "$(TERM=foot installer_term "$SCRATCH/root")" = xterm-256color ]
+  [ "$(TERM=../x/xterm-kitty installer_term "$SCRATCH/root")" = xterm-256color ]
+  [ "$(TERM='' installer_term "$SCRATCH/root")" = xterm-256color ]
+}
+
+@test "installer_processes: what runs in the installer's root or below it, and nothing else" {
+  export NOVA_USB_PROC=$SCRATCH/proc
+  ROOTFS=$SCRATCH/work/root
+  mkdir -p "$NOVA_USB_PROC"/{10,11,12,13,self}
+  ln -s "$ROOTFS" "$NOVA_USB_PROC/10/root"
+  ln -s "$ROOTFS/mnt" "$NOVA_USB_PROC/11/root"
+  ln -s / "$NOVA_USB_PROC/12/root"
+  ln -s "${ROOTFS}2" "$NOVA_USB_PROC/13/root"
+  [ "$(installer_processes | paste -sd' ')" = "10 11" ]
+}
+
+@test "installer_down: the installer's root comes apart even when a mount will not let go" {
+  WORK=$SCRATCH/work ROOTFS=$SCRATCH/work/root CARRY_STAGE=$SCRATCH/stage
+  mkdir -p "$ROOTFS" "$CARRY_STAGE/carry"
+  installer_processes() { :; }
+  mountpoint() { return 0; }
+  umount() { echo "umount $*" >>"$SCRATCH/calls"; return 32; }
+  run installer_down
+  [ "$status" -eq 0 ]
+  grep -qx "umount -R $ROOTFS" "$SCRATCH/calls"
+  grep -qx "umount -R -l $ROOTFS" "$SCRATCH/calls"
+  grep -qx "umount $WORK/lower" "$SCRATCH/calls"
+  [ ! -e "$CARRY_STAGE" ]
 }
 
 @test "the nova-usb on a release page carries its look and wordmark inside" {

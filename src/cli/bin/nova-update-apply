@@ -169,11 +169,15 @@ snapshot() { # description, then extra snapper arguments; prints the snapshot nu
 # Packages a release adds to this computer's hardware profile (new firmware, a driver)
 # arrive with the new nova package, so the list is read after the upgrade and the
 # missing ones go in a second transaction. A failure here leaves a working system on
-# the new release, so it warns rather than failing the update.
+# the new release, so it warns rather than failing the update. A portable Nova
+# (/etc/nova/portable) takes none: the model it is updated on is only one of many it
+# starts, and a model's packages (NVIDIA's driver, linux-nova's modules) would not
+# start the others.
 install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pacman
   local noconfirm=$1 profile list name
   local -a wanted=() missing=() confirm=()
   shift
+  [[ ! -e $ROOT/etc/nova/portable ]] || return 0
   (( ! noconfirm )) || confirm=(--noconfirm)
   profile=$(NOVA_HARDWARE=$ROOT/usr/share/nova/hardware "${0%/*}/nova-hw-detect" 2>/dev/null) || return 0
   list=$ROOT/usr/share/nova/hardware/$profile/packages

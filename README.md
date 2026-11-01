@@ -52,6 +52,38 @@ microcode and the firmware. Then take the stick out and restart (`reboot`):
 the computer starts into the lock screen.
 The stick's boot menu also has a memory test (memtest86+).
 
+## Run Nova from a USB stick
+
+Nova can also live on a USB stick or drive of 32 GB or more, and start any
+64-bit PC from it without touching the PC's own disk: to try it, to use it on
+a computer that runs Windows, or to carry your desktop, settings and files
+from one computer to the next.
+
+Run `nova-usb` (above) and pick **Portable**. Like Custom, it brings your SSH
+keys and the files you pick; then the release's own installer asks for your
+name, password, the stick's name and whether to encrypt it (do: a stick is
+easy to lose), and installs Nova onto the stick. The packages download as it
+goes, so it needs the internet. Without a Linux computer, write the ISO to one
+stick as above and plug a second one in beside it: the installer offers to put
+Nova on that one.
+
+To use it, plug it in and pick it in the PC's boot menu (F12 on most, F9, F11
+or Esc on some). Secure Boot has to be off, as for an install. On a Windows PC
+with BitLocker or Device Encryption, turning it off makes Windows ask for its
+recovery key at its next start, so have the key at hand first.
+
+A portable Nova is the same Nova, made a guest wherever it starts: Arch's own
+kernel, which any 64-bit CPU runs; drivers for Intel, AMD and NVIDIA graphics,
+NVIDIA's on the open nouveau driver, since NVIDIA's own would leave older cards
+with none; no hibernation; and nothing tuned for one model, an undervolt
+included. No PC gets a boot entry written into its firmware, the one it was
+made on included.
+
+It runs as fast as the stick does. A fast USB 3 stick, or better an SSD in a
+USB case, feels like an internal disk; a cheap stick is slow at the many small
+writes a desktop makes. Use a USB 3 port: `nova-usb` says when the stick is
+on a USB 2 link.
+
 ## Install on a Raspberry Pi 5
 
 Write the release's `nova-<version>-raspberry-pi-5.img.xz` to a card, a USB

@@ -200,6 +200,53 @@ END
   fails grep -q -e '#' -e '^$' <<<"$output"
 }
 
+@test "candidate_disks: a portable install takes USB and removable disks of 32 GB or more" {
+  portable_mode
+  boot_disk() { echo /dev/sdb; }
+  lsblk_disks() {
+    disks_json <<EOF
+nvme0n1 $((512 * GiB)) false false nvme Internal
+sda $((30 * GiB)) false false usb Extreme
+sdb $((64 * GiB)) true false usb Installer
+sdc $((16 * GiB)) true false usb Small
+sdd $((64 * GiB)) true true usb Locked
+mmcblk0 $((64 * GiB)) true false null Card
+EOF
+  }
+  run candidate_disks
+  [ "$(cut -f1 <<<"$output" | paste -sd' ')" = "/dev/sda /dev/mmcblk0" ]
+  # A "32 GB" stick is about 29.8 GiB.
+  ((32 * 1000 * 1000 * 1000 >= MIN_PORTABLE_BYTES))
+}
+
+@test "candidate_disks: NOVA_ALLOW_ANY=1 lets an image on a loop device through, for a portable install alone" {
+  boot_disk() { :; }
+  lsblk_disks() {
+    printf '{"blockdevices":[{"name":"loop0","path":"/dev/loop0","size":%s,"model":null,"serial":null,"type":"loop","rm":false,"ro":false,"tran":null}]}\n' "$((64 * GiB))"
+  }
+  portable_mode
+  [ -z "$(candidate_disks)" ]
+  NOVA_ALLOW_ANY=1
+  [ "$(candidate_disks | cut -f1)" = /dev/loop0 ]
+  PORTABLE=0
+  [ -z "$(candidate_disks)" ]
+}
+
+@test "a portable install: Arch's kernel, every computer's microcode and drivers, no model's profile" {
+  printf 'vendor_id\t: GenuineIntel\n%s\n' "$V3_FLAGS" >"$NOVA_CPUINFO"
+  pci 0000:01:00.0 0x030000 0x10de 0x2520
+  printf 'ThinkPad P1 Gen 4i\tthinkpad-p1-gen4i\n' >"$NOVA_INSTALLER_SHARE/hardware/models"
+  portable_mode
+  [ "$(main_kernel)" = linux ]
+  run hardware_packages linux
+  [ "$output" = "$(printf '%s\n' intel-ucode amd-ucode intel-media-driver vulkan-intel vulkan-radeon vulkan-nouveau)" ]
+  [ -z "$(hardware_profile)" ]
+  run package_set linux ''
+  [[ $output != *nvidia* ]]
+  # The offline packages on an installer stick can make one too.
+  every_package | grep -qx vulkan-nouveau
+}
+
 @test "release_value: reads quoted values from release.toml" {
   printf 'version = "1.0.0-beta.1"\narch_date = "2026/10/19"\nnova_repo = "https://example.org/repo"\n' >"$NOVA_RELEASE_FILE"
   [ "$(release_value version)" = 1.0.0-beta.1 ]
@@ -258,6 +305,57 @@ END
 @test "install_cmdline: encrypted, the initramfs opens the container, and root and resume are in it" {
   run install_cmdline /dev/mapper/nova-root 1941442 1111-2222
   [ "$output" = "rd.luks.name=1111-2222=nova-root root=/dev/mapper/nova-root rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0 resume=/dev/mapper/nova-root resume_offset=1941442" ]
+}
+
+@test "install_cmdline: a portable install has no swap file, so no resume" {
+  run install_cmdline PARTUUID=abcd-1234 ""
+  [ "$output" = "root=PARTUUID=abcd-1234 rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0" ]
+}
+
+@test "portable_mkinitcpio_conf: Nova's line without autodetect and kms, encrypted or not" {
+  portable_mkinitcpio_conf >"$SCRATCH/30.conf"
+  run bash -c '. "$1"; . "$2"; echo "${HOOKS[*]}"' _ "$REPO_ROOT/data/boot/mkinitcpio/10-nova.conf" "$SCRATCH/30.conf"
+  [ "$output" = "base systemd microcode modconf keyboard block filesystems sd-btrfs-overlayfs" ]
+  encrypt_mkinitcpio_conf >"$SCRATCH/20.conf"
+  run bash -c '. "$1"; . "$2"; . "$3"; echo "${HOOKS[*]}"' _ "$REPO_ROOT/data/boot/mkinitcpio/10-nova.conf" "$SCRATCH/20.conf" "$SCRATCH/30.conf"
+  [ "$output" = "base systemd microcode modconf keyboard sd-vconsole block sd-encrypt filesystems sd-btrfs-overlayfs" ]
+}
+
+@test "prepare_boot_config: a portable install, plain and encrypted" {
+  export NOVA_TARGET=$SCRATCH/mnt
+  TARGET=$NOVA_TARGET
+  mkdir -p "$TARGET"
+  printf 'cfg\n' >"$NOVA_INSTALLER_SHARE/limine.conf"
+  btrfs() { echo "asked for a swap file" >&2; return 1; }
+  blkid() { echo abcd-1234; }
+  cryptsetup() { [[ $* == "luksUUID /dev/sdb2" ]] && echo 1111-2222; }
+  portable_mode
+  ENCRYPT=no
+  prepare_boot_config /dev/sdb linux
+  conf=$TARGET/etc/limine-entry-tool.d/90-nova-install.conf
+  grep -q 'root=PARTUUID=abcd-1234 rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0"' "$conf"
+  fails grep -q resume "$conf"
+  grep -qx 'SKIP_UEFI=yes' "$conf"
+  grep -qx 'MKINITCPIO_FALLBACK=linux' "$conf"
+  grep -q 'portable' "$TARGET/etc/nova/portable"
+  grep -q autodetect "$TARGET/etc/mkinitcpio.conf.d/30-nova-portable.conf"
+  grep -qx 'AllowHibernation=no' "$TARGET/etc/systemd/sleep.conf.d/20-nova-portable.conf"
+  grep -qx 'AllowSuspendThenHibernate=no' "$TARGET/etc/systemd/sleep.conf.d/20-nova-portable.conf"
+  # Opened under a name of its own while it is made, and as nova-root once it starts.
+  ENCRYPT=yes KEYMAP=it
+  [ "$CRYPT_NAME" = nova-usb-root ]
+  prepare_boot_config /dev/sdb linux
+  grep -q '" rd.luks.name=1111-2222=nova-root root=/dev/mapper/nova-root rootflags' "$conf"
+}
+
+@test "limine_install_conf: a portable stick writes no boot entry into any computer's firmware" {
+  portable_mode
+  limine_install_conf "root=X rw" linux >"$SCRATCH/90.conf"
+  run bash -c 'declare -A KERNEL_CMDLINE=([default]="quiet"); . "$1"; echo "${KERNEL_CMDLINE[default]}|$SKIP_UEFI|$MKINITCPIO_FALLBACK"' _ "$SCRATCH/90.conf"
+  [ "$output" = "quiet root=X rw|yes|linux" ]
+  PORTABLE=0
+  run limine_install_conf "root=X" linux
+  [[ $output != *SKIP_UEFI* ]]
 }
 
 @test "encrypt_mkinitcpio_conf: sd-vconsole after keyboard and sd-encrypt after block, in Nova's own line" {
@@ -608,6 +706,54 @@ questions_setup() {
   stub_gum Europe/Rome
   choose_timezone Europe/Rome >/dev/null 2>&1
   [ "$(paste -sd' ' "$GUM_LOG.filter")" = "Europe/Rome Africa/Abidjan UTC" ]
+}
+
+@test "screens: a portable install onto the disk nova usb picked, with encryption already chosen" {
+  questions_setup
+  portable_mode
+  PORTABLE_DISK=/dev/sdb
+  lsblk_disks() { disks_json <<<"sdb $((64 * GiB)) true false usb Extreme"; }
+  DISK_LINE=$(candidate_disks)
+  NOVA_KEYMAP=es
+  # Encryption (Yes, already picked), its passphrase twice, you, the computer
+  # (its name as offered), the zone, erase.
+  stub_gum yes disk-pass1 disk-pass1 "Ada Lovelace" "" s3cret-pass s3cret-pass nova-usb Europe/Rome erase
+  questions_on_screen no 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "$ENCRYPT" = yes ]
+  [ "$DISK_PASSPHRASE" = disk-pass1 ]
+  [ "$COMPUTER" = nova-usb ]
+  fails grep -q 'Which disk' "$GUM_LOG"
+  grep -q -- '--selected Yes: a passphrase at every start' "$GUM_LOG"
+  grep -q -- '--value nova-usb' "$GUM_LOG"
+  grep -q 'Portable Nova' "$SCRATCH/screens"
+  grep -q 'Erased       sdb  68.7 GB  Extreme' "$SCRATCH/screens"
+  grep -q 'btrfs with snapshots, no swap file' "$SCRATCH/screens"
+  grep -q "no PC's firmware gets a boot entry" "$SCRATCH/screens"
+  grep -q 'and put Nova on it' "$GUM_LOG"
+}
+
+@test "answers: portable=yes makes a portable install, onto a USB disk" {
+  questions_setup
+  lsblk_disks() { disks_json <<<"sdb $((64 * GiB)) true false usb Extreme"; }
+  answers portable=yes disk=/dev/sdb fullname="Ada Lovelace" password=s3cret-pass
+  [[ $(answer portable) == yes ]] && portable_mode
+  answers_from_file
+  [ "${DISK_LINE%%$'\t'*}" = /dev/sdb ]
+  # The answers file says what it wants: no encryption unless it asks.
+  [ "$ENCRYPT" = no ]
+  [ "$PORTABLE" = 1 ]
+}
+
+@test "the installer lists the USB disks a portable install would take" {
+  run bash -c 'source "$1"
+    boot_disk() { :; }
+    lsblk_disks() {
+      echo "{\"blockdevices\":[{\"name\":\"sdb\",\"path\":\"/dev/sdb\",\"size\":68719476736,\"type\":\"disk\",\"rm\":true,\"ro\":false,\"tran\":\"usb\"},{\"name\":\"nvme0n1\",\"path\":\"/dev/nvme0n1\",\"size\":512110190592,\"type\":\"disk\",\"rm\":false,\"ro\":false,\"tran\":\"nvme\"}]}"
+    }
+    main --portable-disks' _ "$REPO_ROOT/installer/nova-install"
+  [ "$status" -eq 0 ]
+  [ "$output" = /dev/sdb ]
 }
 
 @test "the account and computer name default to what was carried from this computer" {

@@ -412,3 +412,31 @@ nova-boot-check status"$ ]]
   [ ! -e "$SCRATCH/calls" ]
   [ -z "$(ls "$NOVA_ROOT/var/tmp" 2>/dev/null)" ]
 }
+
+# A model's packages after an update, with nova-hw-detect beside the script
+# naming the model and pacman stubbed: -T says each one is missing.
+hardware_update() {
+  mkdir -p "$SCRATCH/lib" "$SCRATCH/bin"
+  cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
+  printf '#!/bin/bash\necho thinkpad-p1-gen4i\n' >"$SCRATCH/lib/nova-hw-detect"
+  printf '#!/bin/bash\nif [[ $1 == -T ]]; then shift; printf "%%s\\n" "$@"; exit 127; fi\necho "pacman $*" >>"%s/calls"\n' "$SCRATCH" >"$SCRATCH/bin/pacman"
+  chmod +x "$SCRATCH/lib/nova-hw-detect" "$SCRATCH/bin/pacman"
+  put "$NOVA_ROOT/usr/share/nova/hardware/thinkpad-p1-gen4i/packages" $'# the P1\nnvidia-open-nova\nfprintd\n'
+  # $0 beside the script, so its nova-hw-detect is found and its main stays put.
+  PATH="$SCRATCH/bin:$PATH" bash -c 'source "$1"; install_hardware_packages 1' "$SCRATCH/lib/test" "$SCRATCH/lib/nova-update-apply"
+}
+
+@test "an update installs what the computer's model needs and is missing" {
+  run hardware_update
+  [ "$status" -eq 0 ]
+  [[ $output == *"Installing for this computer: nvidia-open-nova fprintd"* ]]
+  grep -qx 'pacman -S --needed --noconfirm nvidia-open-nova fprintd' "$SCRATCH/calls"
+}
+
+@test "a portable Nova takes no model's packages, whichever computer it is updated on" {
+  put "$NOVA_ROOT/etc/nova/portable" "# portable"
+  run hardware_update
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$SCRATCH/calls" ]
+}

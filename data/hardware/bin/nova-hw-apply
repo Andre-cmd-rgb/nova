@@ -10,6 +10,10 @@
 # deleted, so the list in /var/lib/nova/hardware-files is always exactly what
 # is there. These are modprobe, NetworkManager and boot-entry drop-ins, which
 # have no way to apply only on one model from /usr.
+#
+# A portable Nova (/etc/nova/portable, from nova-install --portable) takes no
+# model's files: it starts a different computer each time from the same /etc,
+# and what is right for one model can be wrong for the next.
 
 set -euo pipefail
 
@@ -19,6 +23,7 @@ root=${NOVA_ROOT:-}
 # pacman hooks run without the session PATH, so the sibling is found by path.
 detect=${0%/*}/nova-hw-detect
 manifest=$root/var/lib/nova/hardware-files
+portable=$root/etc/nova/portable
 
 if (($# > 1)) || [[ $# == 1 && $1 != --remove ]]; then
   echo "Usage: nova-hw-apply [--remove]" >&2
@@ -26,7 +31,7 @@ if (($# > 1)) || [[ $# == 1 && $1 != --remove ]]; then
 fi
 
 wanted=()
-if (($# == 0)); then
+if (($# == 0)) && [[ ! -e $portable ]]; then
   status=0
   profile=$("$detect") || status=$?
   # An upgrade from a chroot without /sys cannot tell which computer this is,

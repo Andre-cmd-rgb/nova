@@ -17,6 +17,10 @@ STATE=${NOVA_UNDERVOLT_STATE:-/var/lib/nova/undervolt}
 TOOL=${NOVA_UNDERVOLT:-/usr/lib/nova/bin/nova-undervolt}
 MSR=${NOVA_UNDERVOLT_MSR:-/dev/cpu}
 UNIT=nova-undervolt.service
+# A portable Nova (nova-install --portable) starts other computers from the
+# same disk, and an offset is right for one CPU only: set here, it would go on
+# with the stick to the next one. nova-undervolt.service never starts there.
+PORTABLE=${NOVA_PORTABLE_MARKER:-/etc/nova/portable}
 
 die() { printf 'nova power undervolt: %s\n' "$*" >&2; exit 1; }
 
@@ -162,6 +166,13 @@ cmd_compare() { # <core> <cache> [--all]
       }
     }' "$samples"
 }
+
+case ${1:-} in
+  set | on)
+    [[ ! -e $PORTABLE ]] ||
+      die "this Nova is portable: it starts other computers too, and an undervolt is right for one CPU only, so it stays off"
+    ;;
+esac
 
 case "$#:${1:-}" in
   2:set | 3:set)

@@ -329,6 +329,32 @@ the shared folder also becomes the default for themes that have no pick of their
   Everything that writes a disk runs in one root step (`nova-usb write`), which
   checks the device again before touching it; `tests/usb/stick-test` runs it
   against a loop device in CI.
+- **A portable stick:** Nova installed on a USB disk of 32 GB or more, to
+  start any PC from (`nova-install --portable`). `nova usb`'s Portable has the
+  release's own installer do it: its root step (`nova-usb write-portable`)
+  mounts the ISO's live system read-only under a tmpfs overlay, with this
+  computer's `/dev`, udev and network but no `efivarfs`, stages what is
+  brought as the same `carry/` a NOVA-DATA partition holds at
+  `/run/nova-carry`, and runs `nova-install --portable <disk>` in it, on the
+  terminal. The live stick's `nova-install-start` offers the same when a USB
+  disk sits beside it. What makes it portable:
+  - Arch's `linux` (no x86-64-v3), both microcodes, the Intel and AMD drivers
+    and NVK; NVIDIA cards run on nouveau, since `nvidia-utils` blacklists it
+    and the open modules drive nothing before Turing;
+  - an initramfs without `autodetect` and `kms` (about 60 MB rather than 220),
+    no swap file and no `resume=`, and hibernation off in a sleep.conf drop-in;
+  - `SKIP_UEFI=yes` in `90-nova-install.conf`, so `limine-install`, the
+    `limine` package's hook after an update included, writes Limine only to
+    `EFI/BOOT/BOOTX64.EFI` and never into a computer's NVRAM;
+  - `/etc/nova/portable`, which keeps the model's `/etc` files
+    (`nova-hw-apply`), its packages (`nova update`) and an undervolt
+    (`nova-undervolt.service`, `nova power undervolt`) off. What reads the
+    model at run time (Hyprland's and uwsm's per-model files, the P1's power
+    services) still does, on whichever computer it starts.
+
+  An encrypted one is opened as `nova-usb-root` while it is made, since the
+  computer making it may be a Nova with its own `nova-root`, and boots as
+  `nova-root`.
 
   [releasing.md](releasing.md) has the two-week cycle and the signing key;
   [packaging.md](packaging.md) has how each package is kept up to date.

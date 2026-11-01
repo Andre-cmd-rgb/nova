@@ -1,15 +1,16 @@
 #!/bin/bash
 
-# nova:summary=Make a Nova installer stick, and carry your things over on it
+# nova:summary=Make a Nova installer stick, carry your things over on it, or put Nova itself on one to carry around
 # nova:args=[--iso <file>] [--dry-run]
 #
-# nova-usb: make a Nova installer stick, and carry your things over on it.
+# nova-usb: make a Nova installer stick, and carry your things over on it; or
+# put Nova itself on the stick, to start any PC from.
 #
 # Runs on any Arch-based Linux, Nova or not, as you; sudo is asked for once, at
 # the end, to write the stick. Every question comes first: the stick, then
-# Clean (only the installer) or Custom: your SSH keys, and the files and
-# folders of your home you pick. Nothing touches the stick until its device
-# name is typed back.
+# Clean (only the installer), Custom: your SSH keys, and the files and
+# folders of your home you pick, or Portable. Nothing touches the stick until
+# its device name is typed back.
 #
 # The stick: a FAT partition with the installer (the ISO's own files, which
 # archiso boots from as they are) and, if asked for, every package an install
@@ -19,6 +20,16 @@
 # your new home. Packages download to this computer before the stick is
 # erased, or straight to the stick when there is no room here. Everything
 # written is read back from the stick and checked before it is done.
+#
+# Portable: Nova installed on the stick, of 32 GB or more, as on a computer's
+# own disk, and kept there: plug it into any 64-bit PC, start the PC from it,
+# and it is your Nova, with your settings and files, on that PC's screen and
+# keyboard; nothing on the PC's own disk is touched. The release's own
+# installer does it (nova-install --portable), run on this computer from the
+# ISO's live system: it asks for your name, password, the stick's name and
+# encryption, then for erase to be typed. Your SSH keys and the files you pick
+# go straight into the new home. It needs the internet: the packages download
+# onto the stick.
 #
 #   nova usb                 the wizard
 #   nova usb --iso <file>    this ISO rather than the latest release's (packages
@@ -41,6 +52,10 @@ DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 
 MiB=$((1024 * 1024))
 MIN_STICK_BYTES=$((2 * 1024 * MiB))
+# A portable stick: a "32 GB" one (about 29.8 GiB) or more, as nova-install
+# --portable has it. The system, its apps and some snapshots take about 14 GB.
+MIN_PORTABLE_BYTES=$((28 * 1024 * MiB))
+PORTABLE_SYSTEM_BYTES=$((14 * 1000 * 1000 * 1000))
 # LUKS2 header, btrfs metadata and a margin, on top of what is carried.
 DATA_OVERHEAD=$((512 * MiB))
 MAPPER=nova-usb-data
@@ -243,6 +258,21 @@ stick_candidates() {
 
 mounted_partitions() { # disk -> "partition mountpoint" per mounted one
   lsblk -nrpo PATH,MOUNTPOINTS -- "$1" 2>/dev/null | awk 'NF > 1 { print $1, $2 }'
+}
+
+# The speed the stick's USB link runs at, in Mb/s (480 is USB 2, 5000 and up
+# USB 3), from the first USB device above the disk in sysfs; nothing when it
+# is not on USB.
+usb_speed() { # disk
+  local dir
+  dir=$(readlink -f -- "${NOVA_USB_SYSFS:-/sys}/block/${1##*/}/device" 2>/dev/null) || return 0
+  while [[ -n $dir && $dir != / ]]; do
+    if [[ -r $dir/speed && -r $dir/idVendor ]]; then
+      cat -- "$dir/speed"
+      return 0
+    fi
+    dir=${dir%/*}
+  done
 }
 
 # ----------------------------------------------------------- the release
@@ -448,7 +478,8 @@ step_stick() {
 
 step_mode() {
   local options=() option selected='' before=$MODE
-  options=("Clean: only the installer"$'\t'clean "Custom: the installer and things of yours"$'\t'custom)
+  options=("Clean: only the installer"$'\t'clean "Custom: the installer and things of yours"$'\t'custom
+    "Portable: Nova itself, to start any PC from the stick"$'\t'portable)
   for option in "${options[@]}"; do
     [[ ${option#*$'\t'} != "${MODE:-custom}" ]] || selected=${option%$'\t'*}
   done
@@ -457,8 +488,10 @@ step_mode() {
   MODE=$REPLY
   case $MODE in
     clean) ITEMS=() FILE_PATHS=() ;;
-    custom)
-      [[ $before != custom ]] || return 0
+    # Custom and Portable bring the same things: what was ticked for one
+    # stays ticked for the other.
+    custom | portable)
+      [[ $before != custom && $before != portable ]] || return 0
       ITEMS=() PICKED_PATHS=() TYPED_PATHS=() FILE_PATHS=() OFFLINE=1 SSH_TICKED=0 OTHER_TICKED=0
       [[ ! -e $USB_HOME/.ssh ]] || SSH_TICKED=1
       ;;
@@ -567,8 +600,27 @@ step_passphrase() {
 
 # What happens to which disk, and whether it fits; then the stick's name typed
 # back. Writes the plan the writer reads.
+# The summary's lines for what is brought: each item with its size, and the
+# first few files by name, so a wrong pick shows before anything is erased.
+carried_lines() {
+  local id path shown
+  for id in "${CARRIED[@]}"; do
+    printf '           %-34s %s\n' "$(item_label "$id")" "$(human_size "${SIZES[$id]}")"
+    [[ $id == files ]] || continue
+    shown=0
+    while IFS= read -r -d '' path; do
+      if ((shown == 5)); then
+        echo "             and $(($(tr -cd '\0' <"$PLAN/files.list" | wc -c) - 5)) more"
+        break
+      fi
+      echo "             ~/$path"
+      shown=$((shown + 1))
+    done <"$PLAN/files.list"
+  done
+}
+
 step_summary() {
-  local stick size model serial id line tool tools offline_bytes=0 carry_bytes=0 iso_bytes p1_mib need lines=() shown path
+  local stick size model serial id line tool tools offline_bytes=0 carry_bytes=0 iso_bytes p1_mib need lines=()
   IFS=$'\t' read -r stick size model serial <<<"$STICK"
   [[ -z $NO_OFFLINE ]] || OFFLINE=0
 
@@ -610,20 +662,7 @@ step_summary() {
   fi
   if ((${#CARRIED[@]})); then
     lines+=("Encrypted  $(human_size "$carry_bytes") of yours")
-    for id in "${CARRIED[@]}"; do
-      lines+=("$(printf '           %-34s %s' "$(item_label "$id")" "$(human_size "${SIZES[$id]}")")")
-      [[ $id == files ]] || continue
-      # The first few by name, so a wrong pick shows before anything is erased.
-      shown=0
-      while IFS= read -r -d '' path; do
-        if ((shown == 5)); then
-          lines+=("             and $(($(tr -cd '\0' <"$PLAN/files.list" | wc -c) - 5)) more")
-          break
-        fi
-        lines+=("             ~/$path")
-        shown=$((shown + 1))
-      done <"$PLAN/files.list"
-    done
+    mapfile -t -O "${#lines[@]}" lines < <(carried_lines)
   fi
   lines+=("" "$(ui_bar "$need" "$size" 34)  $(human_size "$need") of $(human_size "$size")")
   screen "ready"
@@ -648,6 +687,63 @@ step_summary() {
   done
 }
 
+# Portable: what happens to which stick, whether Nova fits on it with what is
+# brought, and whether the stick is fast enough to run it; then the stick's
+# name typed back, as for the other kinds. The installer asks the rest, and
+# for erase to be typed, before it writes anything.
+step_portable() {
+  local stick size model serial id line tool carry_bytes=0 need lines=() speed
+  IFS=$'\t' read -r stick size model serial <<<"$STICK"
+  for tool in sudo chroot mount umount tar zstd; do
+    command -v "$tool" >/dev/null || die "a portable stick needs $tool, which is not installed."
+  done
+  for id in "${CARRIED[@]}"; do
+    [[ -n ${SIZES[$id]:-} ]] || SIZES[$id]=$(item_bytes "$id" "$PLAN")
+    carry_bytes=$((carry_bytes + SIZES[$id]))
+  done
+  need=$((PORTABLE_SYSTEM_BYTES + carry_bytes))
+
+  lines=("Erased     ${stick##*/}  $(human_size "$size")$([[ $model == - ]] || echo "  $model")")
+  while IFS= read -r line; do
+    [[ -z $line ]] || lines+=("           now holds $line")
+  done < <(disk_contents "$stick")
+  lines+=("Nova       installed on it, from ${ISO##*/}, to start any"
+    "           64-bit PC from; the PC's own disk is never touched"
+    "           its packages download as it is made")
+  if ((${#CARRIED[@]})); then
+    lines+=("Brought    $(human_size "$carry_bytes") of yours, into its home")
+    mapfile -t -O "${#lines[@]}" lines < <(carried_lines)
+  fi
+  lines+=("Asked next your name and password, its name, encryption")
+  lines+=("" "$(ui_bar "$need" "$size" 34)  $(human_size "$need") of $(human_size "$size")")
+  screen "ready"
+  ui_box "${lines[@]}"
+  ui_note $'Nova runs as fast as the stick: a fast USB 3 stick, or an SSD in a USB case,\nfeels like an internal disk; a cheap stick is slow at a desktop\'s small writes.'
+  speed=$(usb_speed "$stick")
+  if [[ $speed =~ ^[0-9]+$ ]] && ((speed < 5000)); then
+    ui_warn "${stick##*/} is connected at USB 2 speed, and Nova would be slow from it: try a USB 3 port (often blue)."
+  fi
+  if ((size < MIN_PORTABLE_BYTES || need > size)); then
+    if ((size < MIN_PORTABLE_BYTES)); then
+      ui_warn "A portable Nova needs a stick of 32 GB or more."
+    else
+      ui_warn "That is more than the stick holds."
+    fi
+    ui_ask ui_confirm "Go back and change it?" && return 1
+    die "it does not fit on the stick; nothing was written."
+  fi
+
+  write_plan_env "$PLAN" "mode=portable" "device=$stick" "size=$size" "serial=$serial" "iso=$ISO" \
+    "user=$(id -un)" "home=$USB_HOME" "items=${CARRIED[*]}" "keymap=$(console_keymap)" "carry_bytes=$carry_bytes"
+  ((!DRY)) || return 0
+  echo >&2
+  while :; do
+    ui_ask ui_input "Type ${stick##*/} to go on to the installer, or Esc to go back" || return 1
+    [[ $REPLY != "${stick##*/}" ]] || return 0
+    ui_warn "That is not ${stick##*/}."
+  done
+}
+
 # The questions in order, Esc stepping back one. Which are asked depends on
 # the answers so far, so the list is made again after each.
 wizard() {
@@ -655,10 +751,17 @@ wizard() {
   while :; do
     mapfile -t CARRIED < <(carried_items "$PLAN")
     steps=(stick mode)
-    [[ $MODE != custom ]] || steps+=(items)
-    [[ -n $NO_OFFLINE ]] || steps+=(offline)
-    ((${#CARRIED[@]} == 0)) || steps+=(passphrase)
-    steps+=(summary)
+    if [[ $MODE == portable ]]; then
+      # What is brought goes straight into the new home, which the installer
+      # encrypts if asked: no second partition, so no passphrase of its own,
+      # and the packages download onto the stick as it is made.
+      steps+=(items portable)
+    else
+      [[ $MODE != custom ]] || steps+=(items)
+      [[ -n $NO_OFFLINE ]] || steps+=(offline)
+      ((${#CARRIED[@]} == 0)) || steps+=(passphrase)
+      steps+=(summary)
+    fi
     ((i < ${#steps[@]})) || return 0
     if "step_${steps[i]}"; then
       i=$((i + 1))
@@ -712,6 +815,11 @@ main() {
         write_stick "$@"
         return
         ;;
+      write-portable)
+        shift
+        write_portable "$@"
+        return
+        ;;
       --iso)
         ISO=${2:?--iso needs a file}
         shift
@@ -760,6 +868,16 @@ main() {
     return 0
   fi
   self=$(realpath -e -- "${BASH_SOURCE[0]}")
+  if [[ $MODE == portable ]]; then
+    # The installer asks its questions on this terminal, so the writer keeps
+    # it as its input.
+    sudo -- env NOVA_USB_ALLOW_ANY="${NOVA_USB_ALLOW_ANY:-0}" TERM="${TERM:-linux}" "$BASH" "$self" write-portable "$PLAN" ||
+      die "Nova is not on the stick, or not finished (above says why); do not start a computer from it."
+    say "The portable stick is ready."
+    info "Plug it into any PC and pick it in the PC's boot menu: F12 on a ThinkPad, F12 or F9"
+    info "on a Legion, F12, F11 or Esc on most others. Secure Boot has to be off."
+    return 0
+  fi
   # sudo drops the environment, so the one setting the writer re-checks goes
   # through by hand.
   printf '%s' "$PASSPHRASE" | sudo -- env NOVA_USB_ALLOW_ANY="${NOVA_USB_ALLOW_ANY:-0}" "$BASH" "$self" write "$PLAN" ||
@@ -778,6 +896,14 @@ main() {
 WORK=''
 PACKAGE_STAGE=''
 UDEV_RULE=${NOVA_USB_UDEV_RULE:-/run/udev/rules.d/90-nova-usb.rules}
+# A portable stick's writer: the installer's root (installer_up), what is
+# brought on its way to the stick (stage_carry), the name nova-install
+# --portable opens the stick's encrypted partition under, and where the
+# installer's log is kept when it stops.
+ROOTFS=''
+CARRY_STAGE=''
+PORTABLE_MAPPER=nova-usb-root
+INSTALL_LOG_KEPT=${NOVA_USB_INSTALL_LOG:-/var/log/nova-usb-portable.log}
 
 # A desktop automounter (udiskie, on Nova) would mount the new partitions, and
 # ask for the encrypted one's passphrase, while they are being written. udisks
@@ -787,12 +913,13 @@ hide_from_desktop() { # device
   local name=${1##*/} part
   part=$(partition_path "$name" "")
   mkdir -p -- "${UDEV_RULE%/*}"
-  printf 'KERNEL=="%s|%s[0-9]*", ENV{UDISKS_IGNORE}="1"\nENV{DM_NAME}=="%s", ENV{UDISKS_IGNORE}="1"\n' \
-    "$name" "$part" "$MAPPER" >"$UDEV_RULE"
+  printf 'KERNEL=="%s|%s[0-9]*", ENV{UDISKS_IGNORE}="1"\nENV{DM_NAME}=="%s|%s", ENV{UDISKS_IGNORE}="1"\n' \
+    "$name" "$part" "$MAPPER" "$PORTABLE_MAPPER" >"$UDEV_RULE"
   udevadm control --reload 2>/dev/null || true
 }
 
 writer_cleanup() {
+  installer_down
   [[ -z $PACKAGE_STAGE ]] || rm -rf --one-file-system -- "$PACKAGE_STAGE"
   if [[ -f $UDEV_RULE ]]; then
     rm -f -- "$UDEV_RULE"
@@ -808,6 +935,39 @@ writer_cleanup() {
   # Never into a file system that failed to unmount: that would be the stick.
   rm -rf --one-file-system -- "$WORK"
   return 0
+}
+
+# The processes running inside the installer's root, or in the new system
+# under it: gpg's agent, which pacman-key and pacstrap leave behind, keeps
+# them busy.
+installer_processes() {
+  local p root
+  for p in "${NOVA_USB_PROC:-/proc}"/[0-9]*; do
+    root=$(readlink -- "$p/root" 2>/dev/null) || continue
+    if [[ $root == "$ROOTFS" || $root == "$ROOTFS"/* ]]; then echo "${p##*/}"; fi
+  done
+}
+
+# Takes the installer's root apart, each step on its own as writer_cleanup
+# does, and closes the stick's encrypted partition, which nova-install leaves
+# open: the stick can be pulled out once this is done.
+installer_down() {
+  [[ -n $ROOTFS ]] || return 0
+  local pids=() m
+  mapfile -t pids < <(installer_processes)
+  if ((${#pids[@]})); then
+    kill -- "${pids[@]}" 2>/dev/null || true
+    sleep 1
+  fi
+  if mountpoint -q "$ROOTFS" 2>/dev/null; then
+    umount -R "$ROOTFS" 2>/dev/null || umount -R -l "$ROOTFS" 2>/dev/null || true
+  fi
+  if [[ -e /dev/mapper/$PORTABLE_MAPPER ]]; then cryptsetup close "$PORTABLE_MAPPER" 2>/dev/null || true; fi
+  for m in "$WORK/rw" "$WORK/lower"; do
+    if mountpoint -q "$m" 2>/dev/null; then umount "$m" 2>/dev/null || true; fi
+  done
+  [[ -z $CARRY_STAGE ]] || rm -rf --one-file-system -- "$CARRY_STAGE"
+  ROOTFS='' CARRY_STAGE=''
 }
 
 # lsblk -J of one disk, on stdin: is it a whole removable or USB disk of this
@@ -994,6 +1154,46 @@ machine_hash() {
   printf '%s' "$id" | sha256sum | awk '{ print $1 }'
 }
 
+# <dir>/carry, as the installer reads it (nova-install restore_carry): one
+# tar.zst per item, manifest.json with who they came from, and SHA256SUMS.
+# With no items, the manifest alone, which still gives the installer the
+# account's name and time zone as defaults.
+write_carry() { # dir plan home user items
+  local dir=$1/carry plan=$2 home=$3 user=$4 items=$5 entries=() id file label status
+  mkdir -p "$dir"
+  for id in $items; do
+    label=$(item_label "$id")
+    info "$label"
+    file=$id.tar.zst
+    set +e
+    make_archive "$id" "$plan" "$home" "$dir/$file"
+    status=$?
+    set -e
+    case $status in
+      0) ;;
+      2)
+        rm -f -- "$dir/$file"
+        continue
+        ;;
+      *) die "could not copy $label; the stick is not finished." ;;
+    esac
+    entries+=("$(jq -nc --arg id "$id" --arg kind "$(item_kind "$id")" --arg file "$file" --arg label "$label" \
+      --argjson bytes "$(stat -c %s -- "$dir/$file")" '{id: $id, kind: $kind, label: $label, file: $file, bytes: $bytes}')")
+  done
+  [[ -z $items ]] || ((${#entries[@]})) || die "none of the chosen things were found; nothing to carry."
+  { ((${#entries[@]} == 0)) || printf '%s\n' "${entries[@]}"; } |
+    jq -s --arg user "$user" --arg home "$home" --arg machine "$(machine_hash)" \
+      --arg name "$(getent passwd "$user" | cut -d: -f5 | cut -d, -f1)" --arg timezone "$(local_timezone)" \
+      --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg host "$(cat /proc/sys/kernel/hostname 2>/dev/null)" \
+      '{version: 1, created: $created, source: {user: $user, name: $name, home: $home, host: $host, machine: $machine, timezone: $timezone}, items: .}' \
+      >"$dir/manifest.json"
+  (
+    cd "$dir"
+    shopt -s nullglob
+    sha256sum -- manifest.json *.tar.zst >SHA256SUMS
+  )
+}
+
 write_stick() { # plan, with the passphrase on stdin
   local plan=${1:?the writer needs a plan}
   ((EUID == 0)) || die "the writer runs as root (sudo nova-usb write <plan>)"
@@ -1071,34 +1271,7 @@ write_stick() { # plan, with the passphrase on stdin
     printf '%s' "$passphrase" | cryptsetup open --key-file - "$p2" "$MAPPER"
     mkfs.btrfs -q -f -L nova-data "/dev/mapper/$MAPPER"
     mount "/dev/mapper/$MAPPER" "$WORK/data"
-    mkdir -p "$WORK/data/carry"
-    local entries=() file label status
-    for id in $items; do
-      label=$(item_label "$id")
-      info "$label"
-      file=$id.tar.zst
-      set +e
-      make_archive "$id" "$plan" "$home" "$WORK/data/carry/$file"
-      status=$?
-      set -e
-      case $status in
-        0) ;;
-        2)
-          rm -f -- "$WORK/data/carry/$file"
-          continue
-          ;;
-        *) die "could not copy $label; the stick is not finished." ;;
-      esac
-      entries+=("$(jq -nc --arg id "$id" --arg kind "$(item_kind "$id")" --arg file "$file" --arg label "$label" \
-        --argjson bytes "$(stat -c %s -- "$WORK/data/carry/$file")" '{id: $id, kind: $kind, label: $label, file: $file, bytes: $bytes}')")
-    done
-    ((${#entries[@]})) || die "none of the chosen things were found; nothing to carry."
-    printf '%s\n' "${entries[@]}" | jq -s --arg user "$user" --arg home "$home" --arg machine "$(machine_hash)" \
-      --arg name "$(getent passwd "$user" | cut -d: -f5 | cut -d, -f1)" --arg timezone "$(local_timezone)" \
-      --arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg host "$(cat /proc/sys/kernel/hostname 2>/dev/null)" \
-      '{version: 1, created: $created, source: {user: $user, name: $name, home: $home, host: $host, machine: $machine, timezone: $timezone}, items: .}' \
-      >"$WORK/data/carry/manifest.json"
-    (cd "$WORK/data/carry" && sha256sum -- manifest.json *.tar.zst >SHA256SUMS)
+    write_carry "$WORK/data" "$plan" "$home" "$user" "$items"
     umount "$WORK/data"
     cryptsetup close "$MAPPER"
   fi
@@ -1123,6 +1296,123 @@ write_stick() { # plan, with the passphrase on stdin
   fi
   umount "$WORK/iso"
   sync
+}
+
+# ------------------------------------------------------- the portable writer
+#
+# Runs as root, through `sudo nova-usb write-portable <plan>`, with this
+# terminal as its input: the release's own installer asks its questions on it.
+# The stick is checked again first, as the writer above does.
+
+# The release's own installer, run on this computer from its ISO: the ISO's
+# live system read-only underneath, what the installer changes in memory above
+# it, and this computer's devices, udev and network. Its firmware's variables
+# are not there to write to: a portable stick never lands in a computer's boot
+# entries, this one's included.
+installer_up() { # iso
+  local sfs
+  # Named first, so that installer_down takes apart whatever a failure here
+  # leaves mounted.
+  ROOTFS=$WORK/root
+  mount -o loop,ro -- "$1" "$WORK/iso"
+  sfs=$(find "$WORK/iso" -maxdepth 3 -path '*/x86_64/airootfs.sfs' -print -quit)
+  [[ -n $sfs ]] || die "${1##*/} has no live system in it (x86_64/airootfs.sfs); nothing was written."
+  mkdir -p "$WORK/lower" "$WORK/rw" "$WORK/root"
+  mount -t squashfs -o loop,ro -- "$sfs" "$WORK/lower"
+  mount -t tmpfs -o mode=0755 nova-usb "$WORK/rw"
+  mkdir -p "$WORK/rw/upper" "$WORK/rw/work"
+  mount -t overlay -o "lowerdir=$WORK/lower,upperdir=$WORK/rw/upper,workdir=$WORK/rw/work" nova-usb "$ROOTFS"
+  mount -t proc proc "$ROOTFS/proc"
+  mount -t sysfs -o ro,nosuid,nodev,noexec sys "$ROOTFS/sys"
+  # This computer's /dev, with what udev made in it (/dev/disk/by-uuid, the
+  # partitions as they appear); a slave, so unmounting it unmounts nothing here.
+  mount --rbind /dev "$ROOTFS/dev"
+  mount --make-rslave "$ROOTFS/dev"
+  mount -t tmpfs -o mode=0755,nosuid,nodev run "$ROOTFS/run"
+  mount -t tmpfs -o mode=1777,nosuid,nodev tmp "$ROOTFS/tmp"
+  # udev's database and socket: lsblk reads the one, udevadm settle the other.
+  if [[ -d /run/udev ]]; then
+    mkdir -p "$ROOTFS/run/udev"
+    mount --bind /run/udev "$ROOTFS/run/udev"
+  fi
+  # The live system's resolv.conf is a link to systemd-resolved's, which does
+  # not run there; this computer's own servers answer instead.
+  rm -f -- "$ROOTFS/etc/resolv.conf"
+  cat /etc/resolv.conf >"$ROOTFS/etc/resolv.conf" 2>/dev/null || true
+}
+
+# What is brought, as carry/ (write_carry), made on this computer's disk,
+# where it can be bigger than memory, and shown to the installer read-only at
+# /run/nova-carry, where an installer stick's NOVA-DATA would be. With nothing
+# brought, the manifest alone: the account's name and time zone as defaults.
+stage_carry() { # plan home user items bytes
+  local plan=$1 home=$2 user=$3 items=$4 bytes=${5:-0} root=${NOVA_USB_STAGE_ROOT:-/var/tmp} available
+  [[ $bytes =~ ^[0-9]+$ ]] || bytes=0
+  available=$(df -PB1 -- "$root" | awk 'NR == 2 { print $4 }') || available=0
+  [[ $available =~ ^[0-9]+$ ]] && ((available >= bytes + 128 * MiB)) ||
+    die "there is no room in $root to gather what is brought on its way to the stick; bring less. Nothing was written."
+  CARRY_STAGE=$(mktemp -d "$root/nova-usb-carry.XXXXXX")
+  write_carry "$CARRY_STAGE" "$plan" "$home" "$user" "$items"
+  mkdir -p "$ROOTFS/run/nova-carry"
+  mount --bind -o ro -- "$CARRY_STAGE" "$ROOTFS/run/nova-carry"
+}
+
+# A terminal type the live system knows, so the installer's screens draw
+# right; xterm-256color stands in for one it lacks (a newer terminal's).
+installer_term() { # root
+  local term=${TERM:-linux}
+  [[ $term =~ ^[A-Za-z0-9._+-]+$ && -e $1/usr/share/terminfo/${term:0:1}/$term ]] || term=xterm-256color
+  echo "$term"
+}
+
+write_portable() { # plan, with the terminal on stdin
+  local plan=${1:?the writer needs a plan}
+  ((EUID == 0)) || die "the writer runs as root (sudo nova-usb write-portable <plan>)"
+  [[ -r $plan/plan.env ]] || die "no plan at $plan"
+  local device size serial iso user home items keymap carry_bytes id status=0
+  [[ $(plan_value "$plan" mode) == portable ]] || die "the plan is not for a portable stick"
+  device=$(plan_value "$plan" device)
+  size=$(plan_value "$plan" size)
+  serial=$(plan_value "$plan" serial)
+  iso=$(plan_value "$plan" iso)
+  user=$(plan_value "$plan" user)
+  home=$(plan_value "$plan" home)
+  items=$(plan_value "$plan" items)
+  keymap=$(plan_value "$plan" keymap)
+  carry_bytes=$(plan_value "$plan" carry_bytes)
+  [[ $device == /dev/* && $size =~ ^[0-9]+$ && -r $iso ]] || die "the plan is incomplete"
+  ((size >= MIN_PORTABLE_BYTES)) || die "a portable Nova needs a stick of 32 GB or more"
+  for id in $items; do valid_item "$id" || die "the plan names an unknown item: $id"; done
+  [[ $keymap =~ ^[a-z][a-z0-9_-]*$ ]] || keymap=''
+  check_stick "$device" "$size" "$serial"
+  [[ ! -e /dev/mapper/$PORTABLE_MAPPER ]] ||
+    die "an earlier nova usb left /dev/mapper/$PORTABLE_MAPPER open; close it with: sudo cryptsetup close $PORTABLE_MAPPER"
+
+  WORK=$(mktemp -d /tmp/nova-usb-write.XXXXXX)
+  trap writer_cleanup EXIT
+  mkdir -p "$WORK/iso"
+  say "Opening the installer"
+  installer_up "$iso"
+  grep -q -e '--portable' "$ROOTFS/usr/local/bin/nova-install" 2>/dev/null ||
+    die "the installer in ${iso##*/} cannot make a portable stick: a later Nova's can. Nothing was written."
+  [[ -z $items ]] || info "Gathering what you bring"
+  stage_carry "$plan" "$home" "$user" "$items" "$carry_bytes"
+  info "Setting up its keyring"
+  { chroot "$ROOTFS" pacman-key --init && chroot "$ROOTFS" pacman-key --populate; } >/dev/null 2>&1 ||
+    die "could not set up the installer's keyring; nothing was written."
+  hide_from_desktop "$device"
+
+  chroot "$ROOTFS" /usr/bin/env -i HOME=/root TERM="$(installer_term "$ROOTFS")" LANG=C.UTF-8 \
+    PATH=/usr/local/sbin:/usr/local/bin:/usr/bin NOVA_KEYMAP="$keymap" NOVA_ALLOW_ANY="${NOVA_USB_ALLOW_ANY:-0}" \
+    /usr/local/bin/nova-install --portable "$device" || status=$?
+  # The installer's own log is on the stick when it finished, and in its
+  # root, about to go, when it did not.
+  if ((status != 0)) && [[ -s $ROOTFS/var/log/nova-install.log ]] &&
+    install -m 600 -- "$ROOTFS/var/log/nova-install.log" "$INSTALL_LOG_KEPT"; then
+    ui_note "The installer's log is kept at $INSTALL_LOG_KEPT."
+  fi
+  sync
+  return "$status"
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

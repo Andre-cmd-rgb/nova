@@ -80,6 +80,25 @@ FAKE
   [[ $output == *"the status"* ]]
 }
 
+@test "a portable Nova takes no undervolt: an offset is right for one CPU, and the stick meets many" {
+  export NOVA_PORTABLE_MARKER="$SCRATCH/portable"
+  touch "$NOVA_PORTABLE_MARKER"
+  mkdir -p "$NOVA_UNDERVOLT_STATE"
+  echo -70 >"$NOVA_UNDERVOLT_STATE/offset"
+  for verb in "set -70" on; do
+    # shellcheck disable=SC2086 # the verb and its number, split
+    run "$NOVA_POWER_UNDERVOLT_APPLY" $verb
+    [ "$status" -eq 1 ]
+    [[ $output == *"this Nova is portable"* ]]
+  done
+  fails grep -q systemctl "$CALLS"
+  # Taking one off still works.
+  run "$NOVA_POWER_UNDERVOLT_APPLY" off
+  [ "$status" -eq 0 ]
+  [ ! -e "$NOVA_UNDERVOLT_STATE/offset" ]
+  grep -q '^ConditionPathExists=!/etc/nova/portable$' "$REPO_ROOT/src/power/systemd/nova-undervolt.service"
+}
+
 @test "set takes only a whole number of millivolts from -150 to -1" {
   for bad in 70 -0 -070 -151 -1000 -7.5 abc ''; do
     run "$NOVA_POWER_UNDERVOLT_APPLY" set "$bad"

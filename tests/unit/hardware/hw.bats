@@ -147,6 +147,24 @@ board() {
   [ "$(cat "$NOVA_ROOT/var/lib/nova/hardware-files")" = "$before" ]
 }
 
+@test "apply: a portable Nova takes no model's files, and drops any it had" {
+  model "ThinkPad P1 Gen 4i"
+  "$apply"
+  [ -n "$(find "$NOVA_ROOT/etc" -type f)" ]
+  write_file "$NOVA_ROOT/etc/nova/portable" "# portable"
+  run "$apply"
+  [ "$status" -eq 0 ]
+  [ -z "$(find "$NOVA_ROOT/etc" -type f ! -path '*/etc/nova/portable')" ]
+  [ ! -s "$NOVA_ROOT/var/lib/nova/hardware-files" ]
+}
+
+@test "a portable Nova started on a P1 runs none of the P1's power services" {
+  local unit
+  for unit in nova-power.service nova-power-gpu.service nova-power-gpu.timer nova-powerd.service nova-undervolt.service; do
+    grep -qx 'ConditionPathExists=!/etc/nova/portable' "$REPO_ROOT/src/power/systemd/$unit"
+  done
+}
+
 @test "apply --remove: takes everything back off" {
   model "ThinkPad P1 Gen 4i"
   "$apply"

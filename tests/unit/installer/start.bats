@@ -119,3 +119,22 @@ $'      eduroam                           8021x               **\n'
   iwd_to_networkmanager "$SCRATCH/nm"
   [ ! -e "$SCRATCH/nm" ]
 }
+
+@test "where Nova goes: asked only with a USB disk beside the stick to put it on" {
+  mkdir -p "$SCRATCH/bin"
+  printf '#!/bin/bash\n[[ $1 == --portable-disks ]] && cat "%s/portable-disks"\n' "$SCRATCH" >"$SCRATCH/bin/nova-install"
+  chmod +x "$SCRATCH/bin/nova-install"
+  PATH="$SCRATCH/bin:$PATH"
+  : >"$SCRATCH/portable-disks"
+  stub_gum
+  where_nova_goes 2>/dev/null
+  [ "$WHERE" = install ]
+  fails grep -q 'Where does Nova go' "$GUM_LOG"
+  echo /dev/sdb >"$SCRATCH/portable-disks"
+  stub_gum portable
+  where_nova_goes 2>/dev/null
+  [ "$WHERE" = portable ]
+  grep -q 'Where does Nova go' "$GUM_LOG"
+  stub_gum '!1'
+  fails where_nova_goes 2>/dev/null
+}

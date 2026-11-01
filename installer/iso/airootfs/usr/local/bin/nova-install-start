@@ -1,6 +1,9 @@
 #!/bin/bash
 # The installer stick's first console: the keyboard, the network, nova-install,
-# and a restart; one screen each, as nova-install asks its own questions.
+# and a restart; one screen each, as nova-install asks its own questions. With
+# a USB disk of 32 GB or more plugged in beside the stick, Nova can go on that
+# instead, to start any PC from (nova-install --portable): how a stick written
+# with any USB writer, on Windows say, makes a portable Nova.
 #
 # Ethernet connects by itself (systemd-networkd). Wi-Fi is picked from what iwd
 # sees, and joined with its password; many laptops, the ThinkPad P1 among them,
@@ -121,6 +124,20 @@ get_online() {
   wait_online 15
 }
 
+# WHERE: this computer's disk (install), or a USB disk plugged in beside the
+# stick, to carry around (portable); asked only when there is such a disk.
+# Returns 1 for Esc.
+WHERE=install
+where_nova_goes() {
+  WHERE=install
+  [[ -n $(nova-install --portable-disks 2>/dev/null) ]] || return 0
+  screen
+  ui_ask ui_choose "Where does Nova go?" "" \
+    "On this computer's disk"$'\t'install \
+    "On the USB disk beside this stick, to start any PC from"$'\t'portable || return 1
+  WHERE=$REPLY
+}
+
 main() {
   # A stick with an answers file installs with nobody there (tests/install/run):
   # no questions, the report on the console the file names, and the machine off
@@ -165,7 +182,16 @@ main() {
     ui_ask ui_confirm "Install without a network?" || exit 0
   fi
 
-  if nova-install; then
+  where_nova_goes || exit 0
+  if [[ $WHERE == portable ]]; then
+    if nova-install --portable; then
+      echo
+      ui_ask ui_confirm "Take this stick out and leave the new one in. Restart now?" && systemctl reboot
+    elif (($? != 130)); then
+      echo
+      ui_warn $'Nova was not put on the USB disk. The log is /var/log/nova-install.log.\nRun nova-install-start to try again.'
+    fi
+  elif nova-install; then
     echo
     ui_ask ui_confirm "Take the stick out. Restart now?" && systemctl reboot
   elif (($? != 130)); then
