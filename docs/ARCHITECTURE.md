@@ -13,6 +13,7 @@ code.
 | `src/cli/nova` | `/usr/bin/nova` | Dispatcher: `nova <group> <verb> [args]` |
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
 | `src/power/` | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd`, `nova-undervolt`, system units, udev rules, sleep hooks | Nova's power governor: the policy (bash) and the governor (Rust), tuned for and so far started only on the ThinkPad P1 Gen 4i; the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
+| `src/patch/` | `/usr/lib/nova/bin/nova-patch`, `/usr/lib/nova/nova-patch-apply`, a polkit action, `nova-patch-ram.service` | Patches: fixes for one computer's faults (bad memory, a device's quirk), kept across reinstalls by export and add; see [patches.md](patches.md) |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
@@ -58,8 +59,8 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
   | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`); a plugin's own settings in `~/.config/nova-<plugin>/` (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
   | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `power-profile/`, `aur/`, `monitors.json`: the displays as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at); a plugin's history in `~/.local/state/nova-<plugin>/` |
   | User data | `~/.local/share/nova/calendar/calendar.ics` (the calendar); `~/.local/share/nova-dictation/` (the speech model, downloaded at dictation's first use) |
-  | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files` |
-  | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`) |
+  | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files`; this computer's patches in `/etc/nova/patches/`, their `/etc` files listed in `/var/lib/nova/patch-files` |
+  | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`; `patch-files`, and `patches`: whether each patch is on) |
   | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets, `dictation/`'s recordings until they are read, a display change not kept yet) |
 
 - **Identifiers:** shell plugin ids are `nova.<name>`; every plugin ships in the

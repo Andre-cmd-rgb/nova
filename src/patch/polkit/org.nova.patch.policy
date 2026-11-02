@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- nova patch: a patch's files go into /etc, where they can do anything root
+     can, so each change takes the administrator's password, never one given
+     a moment before. -->
+<policyconfig>
+  <vendor>Nova</vendor>
+  <action id="org.nova.patch">
+    <description>Change this computer's patches</description>
+    <message>Authentication is required to change this computer's patches</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-patch-apply</annotate>
+  </action>
+</policyconfig>

@@ -10,7 +10,7 @@ setup() {
   export HOME="$SCRATCH/home" XDG_DATA_HOME="$SCRATCH/data" XDG_STATE_HOME="$SCRATCH/state"
   export NOVA_SYSFS_BTRFS="$SCRATCH/sys" NOVA_PAM_DIR="$SCRATCH/pam.d" NOVA_MODULES_DIR="$SCRATCH/modules"
   export NOVA_SNAPPER_CONFIG="$SCRATCH/snapper/root" NOVA_BOOT_ESP="$SCRATCH/esp"
-  export NOVA_ARCH=x86_64
+  export NOVA_ARCH=x86_64 NOVA_PATCH_STATUS="$SCRATCH/patches" NOVA_RAM_TEST="$SCRATCH/ram-test.conf"
   unset WAYLAND_DISPLAY HYPRLAND_INSTANCE_SIGNATURE
   mkdir -p "$HOME" "$SCRATCH/bin" "$NOVA_MODULES_DIR/6.17.0-nova1" "$NOVA_BOOT_ESP"
   write_file "$NOVA_SYSFS_BTRFS/f00d/devinfo/1/error_stats" $'write_errs 0\nread_errs 0\nflush_errs 0\ncorruption_errs 0\ngeneration_errs 0\n'
@@ -225,6 +225,17 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor" "$@"; }
   stub nova-power-undervolt 'echo "{\"core\":null,\"cache\":null,\"state\":\"held\",\"reason\":\"a freeze\",\"intel\":true}"'
   run doctor
   [[ $output == *"warn  the CPU's undervolt is held: a freeze"* ]]
+}
+
+@test "patches: those on named, one that cannot apply a warning, a memory test due said" {
+  printf 'ram\ton\t\nbluetooth\tother\tit was made for another computer\nwake\tbad\t/etc/udev/rules.d/90-nova-patch-wake.rules is there already, and not from a patch\n' >"$NOVA_PATCH_STATUS"
+  write_file "$NOVA_RAM_TEST"
+  run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"--    this computer's patches: ram"* ]]
+  [[ $output == *"--    patches made for another computer, so off here: bluetooth"* ]]
+  [[ $output == *"warn  patch wake is off: /etc/udev/rules.d/90-nova-patch-wake.rules is there already, and not from a patch"* ]]
+  [[ $output == *"--    the memory test runs at the next start"* ]]
 }
 
 @test "JSON reports keep levels and repair lines, with the same failure status" {

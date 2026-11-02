@@ -1,0 +1,152 @@
+#!/bin/bash
+
+# nova:summary=Fixes for this one computer's faults, kept across reinstalls
+# nova:args=[show <name> | add <folder|zip>... | remove <name>... | export [<zip>] | apply | ram test | ram <address>...]
+#
+# A patch fixes one computer, not a model: memory with a bad spot, a Bluetooth
+# chip that needs a quirk, a start that needs a kernel option. A model's fixes
+# are its hardware profile, for every computer of that model. Each patch is a
+# folder in /etc/nova/patches: a patch file that says what it does and which
+# computer it is for, its notes (README.md), and the files it puts in /etc.
+# docs/patches.md is the recipe for making one, for you or an AI agent.
+#
+#   nova patch                     the patches here, and whether each is on
+#   nova patch show <name>         what one does: its notes, and its files
+#   nova patch add <folder|zip>... add patches: a folder made by hand, or a zip
+#                                  from nova patch export
+#   nova patch remove <name>...    take patches out, and what they put in /etc
+#   nova patch export [<zip>]      all of them in one zip, to add after a reinstall
+#   nova patch apply               apply them again, after editing one by hand
+#   nova patch ram test            test the memory at the next start, and keep
+#                                  the bad spots it finds out of use
+#   nova patch ram <address>...    keep the memory at these addresses out of use
+#                                  (in hex, as memtest86+ shows them)
+#
+# Changing them asks for the administrator's password, each time.
+
+set -euo pipefail
+
+APPLY=${NOVA_PATCH_APPLY:-/usr/lib/nova/nova-patch-apply}
+ROOT=${NOVA_ROOT:-}
+PATCHES=$ROOT/etc/nova/patches
+STATUS=$ROOT/var/lib/nova/patches
+
+die() { printf 'nova patch: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  echo "Usage: nova patch [show <name> | add <folder|zip>... | remove <name>... | export [<zip>] | apply | ram test | ram <address>...]" >&2
+  exit 2
+}
+
+root() { if ((EUID == 0)); then exec "$APPLY" "$@"; else exec pkexec "$APPLY" "$@"; fi; }
+
+declare -A state=() reason=()
+read_status() {
+  local name on why
+  [[ -r $STATUS ]] || return 0
+  while IFS=$'\t' read -r name on why; do
+    state[$name]=$on reason[$name]=$why
+  done <"$STATUS"
+}
+
+# Whether <name> is on, and why not.
+says() { # <name>
+  case ${state[$1]:-} in
+    on) echo "on" ;;
+    other) echo "off: it was made for another computer" ;;
+    off | bad) echo "off: ${reason[$1]}" ;;
+    *) echo "not applied yet: nova patch apply applies it" ;;
+  esac
+}
+
+description() { sed -n 's/^description=//p' "$1/patch" 2>/dev/null | head -n 1; }
+
+list() {
+  local folder name any=false
+  read_status
+  for folder in "$PATCHES"/*/; do
+    [[ -f $folder/patch ]] || continue
+    folder=${folder%/}
+    name=${folder##*/}
+    any=true
+    printf '%s, %s\n    %s\n' "$name" "$(says "$name")" "$(description "$folder")"
+  done
+  $any || echo "No patches on this computer. docs/patches.md says how to make one; nova patch add <zip> adds exported ones."
+}
+
+show() { # <name>
+  local folder=$PATCHES/$1 file
+  [[ $1 =~ ^[a-z0-9-]+$ && -f $folder/patch ]] || die "there is no patch named $1"
+  read_status
+  printf '%s, %s\n    %s\n' "$1" "$(says "$1")" "$(description "$folder")"
+  if [[ -f $folder/README.md ]]; then
+    echo
+    cat -- "$folder/README.md"
+  fi
+  while IFS= read -r -d '' file; do
+    printf '\n/%s:\n' "${file#"$folder"/}"
+    sed 's/^/    /' -- "$file"
+  done < <(find "$folder/etc" -type f -print0 2>/dev/null | sort -z)
+}
+
+# The patches in <folder>, as a zip from export holds them (patches/<name>),
+# up to <depth> levels down.
+found=()
+find_patches() { # <folder> <depth> <what>
+  local before=${#found[@]} file
+  while IFS= read -r -d '' file; do
+    found+=("$(realpath -- "${file%/patch}")")
+  done < <(find "$1" -mindepth 2 -maxdepth "$2" -name patch -type f -print0 | sort -z)
+  ((${#found[@]} > before)) || die "$3 holds no patch: a patch is a folder with a patch file in it"
+}
+
+temporary=()
+cleanup() { if ((${#temporary[@]})); then rm -rf -- "${temporary[@]}"; fi; }
+
+add() { # <folder|zip>...
+  local source dir
+  trap cleanup EXIT
+  for source; do
+    if [[ -d $source ]]; then
+      if [[ -f $source/patch ]]; then found+=("$(realpath -- "$source")"); else find_patches "$source" 3 "$source"; fi
+    elif [[ -f $source ]]; then
+      # Unpacked as you, and checked again by the root half: a zip from
+      # anywhere is only as good as what is in it.
+      dir=$(mktemp -d)
+      temporary+=("$dir")
+      bsdtar -xf "$source" -C "$dir" 2>/dev/null || die "$source: not a zip that can be read"
+      find_patches "$dir" 3 "$source"
+    else
+      die "$source: no such folder or zip"
+    fi
+  done
+  status=0
+  if ((EUID == 0)); then "$APPLY" add "${found[@]}" || status=$?; else pkexec "$APPLY" add "${found[@]}" || status=$?; fi
+  exit "$status"
+}
+
+export_zip() { # [zip]
+  local zip=${1:-$HOME/nova-patches-$(uname -n).zip} names
+  [[ $zip == *.zip ]] || die "export writes a zip: name it something.zip"
+  names=$(find "$PATCHES" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n' 2>/dev/null | sort | paste -sd ' ')
+  [[ -n $names ]] || die "there are no patches to export"
+  bsdtar --format zip -cf "$zip.part" -C "${PATCHES%/*}" --exclude 'patches/.*' patches
+  mv -f -- "$zip.part" "$zip"
+  echo "Exported $names to $zip. On this computer after a reinstall: nova patch add $zip"
+}
+
+case $#:${1:-} in
+  0: | 1:list) list ;;
+  2:show) show "$2" ;;
+  *:add) (($# > 1)) || usage; add "${@:2}" ;;
+  *:remove) (($# > 1)) || usage; root remove "${@:2}" ;;
+  1:export | 2:export) export_zip "${@:2}" ;;
+  1:apply) root apply ;;
+  1:ram)
+    [[ -f $PATCHES/ram/patch ]] || die "there is no ram patch: nova patch ram test makes one, from what a memory test finds"
+    show ram
+    ;;
+  2:ram) if [[ $2 == test ]]; then root ram-test; else root ram-set "$2"; fi ;;
+  *:ram) root ram-set "${@:2}" ;;
+  *) usage ;;
+esac

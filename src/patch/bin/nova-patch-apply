@@ -1,0 +1,503 @@
+#!/bin/bash
+# nova-patch-apply: the root half of `nova patch`. Run through pkexec
+# (org.nova.patch, which asks for the administrator's password every time: a
+# patch's files go into /etc, where they can do anything root can), and by
+# nova-patch-ram.service at the start that runs a memory test.
+#
+#   apply                 put into /etc what this computer's patches hold, and
+#                         take out what a changed or removed one no longer does
+#   add <folder>...       copy these patches into /etc/nova/patches, then apply
+#   remove <name>...      remove these patches, then apply
+#   ram-test              test the memory at the next start
+#   ram-finish            at that start: keep the bad spots it found out of use
+#   ram-set <address>...  keep the memory at these addresses out of use
+#
+# A patch is data, never a program: a patch file (its description, and the
+# computer it is for) and the files it puts in /etc, each named after it so
+# that it cannot take the place of anything else there. docs/patches.md says
+# how to make one.
+
+set -euo pipefail
+umask 022
+
+# NOVA_ROOT, NOVA_SYS, NOVA_PROC and NOVA_KERNEL_LOG point it at the tests' fixtures.
+ROOT=${NOVA_ROOT:-}
+SYS=${NOVA_SYS:-/sys}
+PROC=${NOVA_PROC:-/proc}
+KERNEL_LOG=${NOVA_KERNEL_LOG:-}
+PATCHES=$ROOT/etc/nova/patches
+STATE=$ROOT/var/lib/nova
+MANIFEST=$STATE/patch-files # what the patches put in /etc, so a removed one's files go too
+STATUS=$STATE/patches       # name <tab> on|other|off|bad <tab> why, for nova patch and nova doctor
+# A portable Nova (nova-install --portable) starts a different computer each
+# time, and a patch is for one: it takes none.
+PORTABLE=$ROOT/etc/nova/portable
+
+RAM=$PATCHES/ram
+RAM_CONF=etc/limine-entry-tool.d/85-nova-patch-ram.conf
+RAM_TEST=etc/limine-entry-tool.d/85-nova-patch-ram-test.conf
+# The memory test's bad spots are joined when this close, and kept out of use
+# only up to these limits: past them the memory is failing in more places than
+# setting some aside can fix. 16 ranges keep the command line well short of
+# its 2048 bytes.
+RAM_JOIN=$((1 << 20))
+RAM_MAX_RANGES=16
+RAM_MAX_BYTES=$((64 << 20))
+
+die() { printf 'nova patch: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  echo "Usage: nova-patch-apply apply | add <folder>... | remove <name>... | ram-test | ram-finish | ram-set <address>..." >&2
+  exit 2
+}
+
+valid_name() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]]; }
+
+# A file's path under /etc, as a patch may hold one: no spaces, nothing odd.
+valid_path() { [[ $1 =~ ^[A-Za-z0-9_@+.-]+(/[A-Za-z0-9_@+.-]+)*$ && /$1/ != */../* ]]; }
+
+# This computer, as a patch's machine= names it: a digest of its board's and
+# its maker's serial numbers, which a reinstall keeps and no other computer
+# has. Only root can read them.
+machine_id() {
+  local file id=
+  for file in class/dmi/id/product_uuid class/dmi/id/product_serial class/dmi/id/board_serial \
+    firmware/devicetree/base/serial-number; do
+    if [[ -r $SYS/$file ]]; then id+=$(tr -d '\0\n' <"$SYS/$file"); fi
+    id+=/
+  done
+  [[ $id =~ [^/[:space:]] ]] || return 1
+  printf '%s' "$id" | sha256sum | cut -c1-16
+}
+
+# Reads <folder>/patch into description and machine, or says in problem what
+# is wrong with it.
+read_patch() { # <folder>
+  local line
+  description='' machine=''
+  if [[ ! -f $1/patch || -L $1/patch ]]; then problem="it has no patch file"; return 1; fi
+  while IFS= read -r line || [[ -n $line ]]; do
+    case $line in
+      description=*) description=${line#description=} ;;
+      machine=*) machine=${line#machine=} ;;
+    esac
+  done <"$1/patch"
+  if [[ -z $description || $description == *[[:cntrl:]]* || ${#description} -gt 300 ]]; then
+    problem="its patch file needs a description= line, of one line"
+    return 1
+  fi
+  if [[ $machine != any && ! $machine =~ ^[0-9a-f]{16}$ ]]; then
+    problem="its patch file's machine= is neither a computer's nor any"
+    return 1
+  fi
+}
+
+# The files under <folder>/etc, as paths under /etc, into files; or says in
+# problem what is wrong with them. Each file's name holds nova-patch-<name>.
+patch_files() { # <folder> <name>
+  local dir=$1/etc rel
+  files=()
+  [[ -e $dir || -L $dir ]] || return 0
+  if [[ ! -d $dir || -L $dir ]]; then problem="its etc is not a folder"; return 1; fi
+  if [[ -n $(find "$dir" -mindepth 1 ! -type f ! -type d -print -quit) ]]; then
+    problem="it holds a link or a device: a patch holds only files"
+    return 1
+  fi
+  while IFS= read -r -d '' rel; do
+    rel=${rel#"$dir"/}
+    if ! valid_path "$rel"; then problem="etc/$rel: a name of letters, digits and ._@+- only"; return 1; fi
+    if [[ ${rel##*/} != *nova-patch-"$2"* ]]; then
+      problem="etc/$rel: each file's name holds nova-patch-$2, so nothing else in /etc is ever replaced"
+      return 1
+    fi
+    if [[ $rel == nova/* ]]; then problem="etc/$rel: /etc/nova is Nova's own"; return 1; fi
+    if (($(stat -c %s -- "$dir/$rel") > 65536)); then problem="etc/$rel is over 64 KiB"; return 1; fi
+    files+=("$rel")
+  done < <(find "$dir" -type f -print0 | sort -z)
+  if ((${#files[@]} > 64)); then problem="it holds over 64 files"; return 1; fi
+}
+
+# <file> with one line for each further argument, or empty.
+write_lines() { # <file> [line...]
+  local file=$1
+  shift
+  if (($#)); then printf '%s\n' "$@" >"$file.new"; else : >"$file.new"; fi
+  mv -f -- "$file.new" "$file"
+}
+
+# Rebuilds the boot entries, which carry the kernel's command line and the
+# initramfs (modprobe options included). Neither Ctrl+C nor a shutdown stops
+# it halfway, since a half-written entry would not start.
+rebuild_boot() {
+  local log status=0
+  command -v limine-update >/dev/null || return 0
+  echo "Rebuilding the boot entries, which takes a minute..."
+  log=$(mktemp)
+  trap '' INT TERM HUP
+  limine-update >"$log" 2>&1 || status=$?
+  trap - INT TERM HUP
+  if ((status)); then
+    cat -- "$log" >&2
+    rm -f -- "$log"
+    die "the boot entries could not be rebuilt; sudo limine-update tries again"
+  fi
+  rm -f -- "$log"
+}
+
+# Puts into /etc the files of each patch for this computer, and takes out
+# those a patch no longer has, or a patch no longer here had.
+apply() {
+  local id='' folder name rel clash rebuild=false systemd=false udev=false
+  local -a status=() changed=()
+  local -A ours=() want=() owner=()
+
+  [[ -e $PORTABLE ]] || id=$(machine_id) || id=''
+  if [[ -f $MANIFEST ]]; then
+    while IFS= read -r rel; do
+      if valid_path "$rel"; then ours[$rel]=1; fi
+    done <"$MANIFEST"
+  fi
+
+  for folder in "$PATCHES"/*/; do
+    [[ -d $folder ]] || continue
+    folder=${folder%/}
+    name=${folder##*/}
+    if [[ -e $PORTABLE ]]; then
+      status+=("$name	off	a portable Nova starts other computers, and takes no patches")
+      continue
+    fi
+    if ! valid_name "$name"; then
+      status+=("$name	bad	its name is not lowercase letters, digits and dashes")
+      continue
+    fi
+    if ! read_patch "$folder" || ! patch_files "$folder" "$name"; then
+      status+=("$name	bad	$problem")
+      continue
+    fi
+    if [[ $machine != any && $machine != "$id" ]]; then
+      status+=("$name	other	it was made for another computer")
+      continue
+    fi
+    clash=''
+    for rel in "${files[@]}"; do
+      if [[ -n ${owner[$rel]:-} ]]; then
+        clash="/etc/$rel is patch ${owner[$rel]}'s too"
+      elif [[ -z ${ours[$rel]:-} ]] && [[ -e $ROOT/etc/$rel || -L $ROOT/etc/$rel ]]; then
+        clash="/etc/$rel is there already, and not from a patch"
+      fi
+      [[ -z $clash ]] || break
+    done
+    if [[ -n $clash ]]; then
+      status+=("$name	bad	$clash")
+      continue
+    fi
+    for rel in "${files[@]}"; do
+      want[$rel]=$folder/etc/$rel
+      owner[$rel]=$name
+    done
+    status+=("$name	on	")
+  done
+
+  for rel in "${!ours[@]}"; do
+    [[ -z ${want[$rel]:-} ]] || continue
+    rm -f -- "$ROOT/etc/$rel"
+    echo "- /etc/$rel"
+    changed+=("$rel")
+  done
+  for rel in "${!want[@]}"; do
+    ! cmp -s -- "${want[$rel]}" "$ROOT/etc/$rel" || continue
+    install -Dm644 -- "${want[$rel]}" "$ROOT/etc/$rel"
+    echo "+ /etc/$rel"
+    changed+=("$rel")
+  done
+
+  mkdir -p -- "$STATE"
+  write_lines "$MANIFEST" "${!want[@]}"
+  write_lines "$STATUS" "${status[@]}"
+
+  ((${#changed[@]})) || return 0
+  for rel in "${changed[@]}"; do
+    case $rel in
+      limine-entry-tool.d/* | modprobe.d/* | mkinitcpio.conf.d/*) rebuild=true ;;
+      systemd/*) systemd=true ;;
+      udev/*) udev=true ;;
+    esac
+  done
+  if $systemd; then systemctl daemon-reload || true; fi
+  if $udev; then udevadm control --reload || true; fi
+  if $rebuild; then rebuild_boot; fi
+  echo "This takes full effect at the next start."
+}
+
+staged=()
+cleanup() { if ((${#staged[@]})); then rm -rf -- "${staged[@]}"; fi; }
+
+# Copies each patch to /etc/nova/patches, in place of one of the same name.
+# A copy is checked, not its source, which its owner could change meanwhile.
+add() { # <folder>...
+  local src name stage id i
+  local -a names=() descriptions=()
+  [[ ! -e $PORTABLE ]] || die "a portable Nova starts other computers, and a patch is for one: none is added here"
+  id=$(machine_id) || die "cannot tell this computer from another: it has no serial number to read"
+  mkdir -p -- "$PATCHES"
+  trap cleanup EXIT
+  for src; do
+    name=${src%/}
+    name=${name##*/}
+    valid_name "$name" || die "$src: a patch's folder is named after it, in lowercase letters, digits and dashes, such as bluetooth"
+    [[ -f $src/patch ]] || die "$src: not a patch, as it has no patch file"
+    stage=$(mktemp -d "$PATCHES/.add.XXXXXX")
+    staged+=("$stage")
+    cp -P -- "$src/patch" "$stage/patch"
+    if [[ -e $src/README.md || -L $src/README.md ]]; then cp -P -- "$src/README.md" "$stage/README.md"; fi
+    if [[ -e $src/etc || -L $src/etc ]]; then cp -RP -- "$src/etc" "$stage/etc"; fi
+    if [[ -L $stage/patch || -L $stage/README.md ]] || [[ -e $stage/README.md && ! -f $stage/README.md ]]; then
+      die "$src: its patch file and notes must be files, not links"
+    fi
+    # machine=this: the computer it is added on.
+    sed -i "s/^machine=this\$/machine=$id/" "$stage/patch"
+    read_patch "$stage" || die "$src: $problem"
+    patch_files "$stage" "$name" || die "$src: $problem"
+    chmod -R u=rwX,go=rX -- "$stage"
+    ((EUID)) || chown -R 0:0 -- "$stage"
+    names+=("$name")
+    descriptions+=("$description")
+  done
+  for i in "${!names[@]}"; do
+    rm -rf -- "${PATCHES:?}/${names[i]}"
+    mv -- "${staged[i]}" "$PATCHES/${names[i]}"
+    echo "Added ${names[i]}: ${descriptions[i]}"
+  done
+  staged=()
+  apply
+}
+
+remove() { # <name>...
+  local name
+  for name; do
+    valid_name "$name" && [[ -d $PATCHES/$name ]] || die "there is no patch named $name"
+  done
+  for name; do
+    rm -rf -- "${PATCHES:?}/$name"
+    echo "Removed $name"
+  done
+  apply
+}
+
+# The memory patch. The kernel tests the memory as it starts with memtest=4
+# (four patterns, so a bit stuck at 0 or at 1 shows), sets the bad spots aside
+# for that start, and logs each; the next start's kernel is told to keep them
+# out of use with memmap=<size>$<address>, a line each in the patch's boot
+# command line file. Its bad spots, "start end" a line (end exclusive), are
+# read back from that file.
+
+ram_ranges() {
+  local line
+  [[ -f $RAM/$RAM_CONF ]] || return 0
+  while IFS= read -r line; do
+    if [[ $line =~ memmap=([0-9]+)K\$0x([0-9a-f]+) ]]; then
+      echo "$((16#${BASH_REMATCH[2]})) $((16#${BASH_REMATCH[2]} + BASH_REMATCH[1] * 1024))"
+    fi
+  done <"$RAM/$RAM_CONF"
+}
+
+# "start end" lines, in any order, to whole 4 KiB pages, sorted, with those
+# up to <gap> bytes apart joined.
+ram_merge() { # <gap>
+  local gap=$1 start end first='' last=''
+  while read -r start end; do
+    [[ -n $start ]] || continue
+    start=$((start & ~4095)) end=$(((end + 4095) & ~4095))
+    if [[ -n $first ]] && ((start <= last + gap)); then
+      ((end <= last)) || last=$end
+      continue
+    fi
+    [[ -z $first ]] || echo "$first $last"
+    first=$start last=$end
+  done < <(sort -n -k1,1)
+  [[ -z $first ]] || echo "$first $last"
+}
+
+# How much "start end" lines cover, in KiB.
+ram_kib() {
+  local start end total=0
+  while read -r start end; do total=$((total + end - start)); done
+  echo $((total / 1024))
+}
+
+size() { # <KiB>
+  if (($1 >= 1024)); then echo "$(($1 / 1024)) MiB"; else echo "$1 KiB"; fi
+}
+
+# The patch's files from <ranges> ("start end" lines), and its patch file,
+# whose description says what it does and, given, what the last test found.
+ram_write() { # <ranges> [note]
+  local ranges=$1 note=${2:-} start end count=0 description
+  local -a lines=() parts=()
+  while read -r start end; do
+    lines+=("KERNEL_CMDLINE[default]+=\" memmap=$(((end - start) / 1024))K\$$(printf '0x%x' "$start")\"")
+    count=$((count + 1))
+  done < <(grep . <<<"$ranges" || true)
+  if ((count)); then
+    mkdir -p -- "$RAM/${RAM_CONF%/*}"
+    {
+      echo "# Nova patch ram: memory this computer's RAM gets wrong, kept out of use from"
+      echo "# the kernel's start (memmap=<size>\$<address>). Made by nova patch ram."
+      printf '%s\n' "${lines[@]}"
+    } >"$RAM/$RAM_CONF"
+    parts+=("keeps $count bad $( ((count == 1)) && echo spot || echo spots) in memory ($(size "$(ram_kib <<<"$ranges")")) out of use")
+  else
+    rm -f -- "$RAM/$RAM_CONF"
+  fi
+  [[ ! -f $RAM/$RAM_TEST ]] || parts+=("tests the memory at the next start")
+  [[ -z $note ]] || parts+=("$note")
+  ((${#parts[@]})) || parts=("keeps nothing out of use")
+  description=${parts[0]}
+  for ((count = 1; count < ${#parts[@]}; count++)); do description+="; ${parts[count]}"; done
+  printf 'description=%s\nmachine=%s\n' "${description^}" "$id" >"$RAM/patch"
+  [[ -f $RAM/README.md ]] || cat >"$RAM/README.md" <<'EOF'
+# ram
+
+This computer's memory has spots that do not hold what is written to them.
+The patch keeps them out of use: its boot command line file tells the kernel,
+with one memmap=<size>$<address> each, to set them aside from the start.
+
+`nova patch ram test` has the kernel test the memory at the next start (up to
+a minute longer, on a dark screen) and adds what it finds; `nova patch ram
+<address>...` adds addresses another test found, such as memtest86+'s.
+
+Only this computer's memory has these spots: the patch is off on any other.
+Move the memory to another computer and the spots go with it, so test there.
+EOF
+}
+
+# The memory patch needs Limine's boot entries, this computer's identity, and
+# a patch for this computer if one is there.
+ram_ready() {
+  [[ ! -e $PORTABLE ]] || die "a portable Nova starts other computers, and the memory patch is for one"
+  [[ -d $ROOT/etc/limine-entry-tool.d ]] || die "the memory patch needs Limine's boot entries, which this computer does not start from"
+  id=$(machine_id) || die "cannot tell this computer from another: it has no serial number to read"
+  if [[ -f $RAM/patch ]]; then
+    read_patch "$RAM" && [[ $machine == "$id" ]] ||
+      die "the ram patch here is another computer's, or damaged: nova patch remove ram takes it out"
+  fi
+  mkdir -p -- "$RAM"
+}
+
+ram_test() {
+  ram_ready
+  mkdir -p -- "$RAM/${RAM_TEST%/*}"
+  cat >"$RAM/$RAM_TEST" <<'EOF'
+# Nova patch ram: test the memory as the kernel starts, once. Made by nova
+# patch ram test; nova-patch-ram.service takes it out at that start.
+KERNEL_CMDLINE[default]+=" memtest=4"
+EOF
+  ram_write "$(ram_ranges)"
+  apply
+  echo
+  echo "At the next start, the kernel tests the memory: the screen stays dark for up"
+  echo "to a minute longer. Then Nova keeps any bad spots out of use, from the start"
+  echo "after, and nova patch says what the test found. A restart, not a wake from sleep."
+}
+
+# Each bad spot the memory test logged, as "start end", from <log>; fails when
+# they do not add up to the total the kernel kept, as when its log, which holds
+# a few thousand lines from before the journal starts, lost some.
+ram_found() { # <log> <KiB>
+  local start end total=0 kib
+  local -a found=()
+  while read -r start end; do
+    found+=("$((16#$start)) $((16#$end))")
+    total=$((total + 16#$end - 16#$start))
+  done < <(sed -n 's/.* bad mem addr 0x\([0-9a-f]*\) - 0x\([0-9a-f]*\) reserved$/\1 \2/p' "$1")
+  kib=$((total >> 10))
+  ((!total || kib)) || kib=1
+  ((kib == $2)) || return 1
+  if ((${#found[@]})); then printf '%s\n' "${found[@]}"; fi
+}
+
+ram_finish() {
+  local tested kib log found merged new count
+  [[ -f $RAM/$RAM_TEST && ! -e $PORTABLE ]] || return 0
+  id=$(machine_id) || return 0
+  read_patch "$RAM" && [[ $machine == "$id" ]] || return 0
+  # Not this start's command line: one the entries had before the test was
+  # asked for (a snapshot's, or limine-update had failed). The next one runs it.
+  if [[ " $(<"$PROC/cmdline") " != *" memtest="* ]]; then
+    echo "The memory test was not on this start's command line; it runs at the next."
+    return 0
+  fi
+  rm -f -- "$RAM/$RAM_TEST"
+  tested="the memory test of $(date +%F)"
+  kib=$(sed -n 's/^EarlyMemtestBad: *\([0-9]*\) kB$/\1/p' "$PROC/meminfo")
+  if [[ -z $kib ]]; then
+    ram_write "$(ram_ranges)" "$tested did not run: this kernel cannot test memory"
+    apply
+    return 0
+  fi
+
+  log=$(mktemp)
+  found=''
+  # The journal has the whole of this start's kernel log; the kernel's own
+  # buffer, the rest of it, unless the journal lost some.
+  if [[ -n $KERNEL_LOG ]]; then cat -- "$KERNEL_LOG" >"$log"; else journalctl -k -b 0 -o cat --no-pager >"$log" 2>/dev/null || true; fi
+  if ! found=$(ram_found "$log" "$kib"); then
+    if [[ -z $KERNEL_LOG ]] && dmesg >"$log" 2>/dev/null && found=$(ram_found "$log" "$kib"); then
+      :
+    else
+      rm -f -- "$log"
+      ram_write "$(ram_ranges)" "$tested found more bad memory than the kernel's log could hold ($(size "$kib")): the memory is failing in too many places to keep out of use"
+      apply
+      return 0
+    fi
+  fi
+  rm -f -- "$log"
+
+  new=$(printf '%s' "$found" | ram_merge 0)
+  count=$(grep -c . <<<"$new" || true)
+  merged=$({ ram_ranges; printf '%s' "$found"; } | ram_merge "$RAM_JOIN")
+  if (($(grep -c . <<<"$merged" || true) > RAM_MAX_RANGES || $(ram_kib <<<"$merged") > RAM_MAX_BYTES / 1024)); then
+    ram_write "$(ram_ranges)" "$tested found bad memory in $count places: too many to keep out of use, so the memory is failing and needs replacing"
+  elif ((count)); then
+    ram_write "$merged" "$tested found $count"
+  else
+    ram_write "$merged" "$tested found nothing bad"
+  fi
+  apply
+}
+
+ram_set() { # <address>...
+  local arg start end merged
+  local -a added=()
+  (($#)) || usage
+  for arg; do
+    [[ $arg =~ ^(0x)?([0-9a-fA-F]{1,12})(-(0x)?([0-9a-fA-F]{1,12}))?$ ]] ||
+      die "'$arg' is not a memory address: one in hex, such as 0x7d4e1a008, or a range, such as 0x7d4e1a000-0x7d4e1bfff"
+    start=$((16#${BASH_REMATCH[2]}))
+    end=$((16#${BASH_REMATCH[5]:-${BASH_REMATCH[2]}}))
+    ((end >= start)) || die "'$arg' ends before it starts"
+    added+=("$start $((end + 1))")
+  done
+  ram_ready
+  merged=$({ ram_ranges; printf '%s\n' "${added[@]}"; } | ram_merge "$RAM_JOIN")
+  if (($(grep -c . <<<"$merged") > RAM_MAX_RANGES || $(ram_kib <<<"$merged") > RAM_MAX_BYTES / 1024)); then
+    die "that is more memory, or more places, than Nova keeps out of use ($RAM_MAX_RANGES places, $(size $((RAM_MAX_BYTES / 1024))) in all): memory failing that widely needs replacing"
+  fi
+  ram_write "$merged"
+  apply
+}
+
+(($#)) || usage
+mkdir -p -- "$STATE"
+exec 9>"$STATE/patch.lock"
+flock 9
+
+case $1 in
+  apply) (($# == 1)) || usage; apply ;;
+  add) (($# > 1)) || usage; add "${@:2}" ;;
+  remove) (($# > 1)) || usage; remove "${@:2}" ;;
+  ram-test) (($# == 1)) || usage; ram_test ;;
+  ram-finish) (($# == 1)) || usage; ram_finish ;;
+  ram-set) ram_set "${@:2}" ;;
+  *) usage ;;
+esac

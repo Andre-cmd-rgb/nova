@@ -1,0 +1,17 @@
+[Unit]
+Description=Keep the bad spots the memory test found out of use
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/patches.md
+# Only at the start after nova patch ram test, the one that runs the test.
+ConditionPathExists=/etc/limine-entry-tool.d/85-nova-patch-ram-test.conf
+# The boot entries it rebuilds are on the boot partition.
+RequiresMountsFor=/boot
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nova/nova-patch-apply ram-finish
+# The rebuild ignores the stop a shutdown sends, so a shutdown meanwhile
+# waits for it to finish rather than leave an entry half-written.
+TimeoutStopSec=5min
+
+[Install]
+WantedBy=multi-user.target
