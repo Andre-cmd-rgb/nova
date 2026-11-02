@@ -4,7 +4,7 @@
   "name": "Notifications",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Notification daemon, popups, DND, and history",
+  "description": "Notifications as toasts on every screen, with do-not-disturb and a history.",
   "kinds": [
     "service"
   ],

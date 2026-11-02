@@ -1,132 +1,106 @@
-function isChromiumDerived(app, appIcon) {
-  var source = (String(app || "") + "\n" + String(appIcon || "")).toLowerCase()
-  return source.indexOf("chrom") >= 0 || source.indexOf("brave") >= 0 ||
-         source.indexOf("vivaldi") >= 0 || source.indexOf("microsoft-edge") >= 0 ||
-         source.indexOf("opera") >= 0
-}
+// What the notification service works out apart from its QML: the text a
+// toast shows, the row it keeps of a notification, how long it stays, and
+// the JSON files the toasts on screen and the history are kept in.
 
-// True when a `<...>` run is an image tag, so the name is read the way Qt's
-// parser reads it: after the `<`, the leading run of letters and digits.
-//
-// Skip everything up to that run rather than matching the separator, because
-// there is no JavaScript expression for what Qt skips. QQuickStyledText calls
-// skipSpace(), which is QChar::isSpace(), and that set is not `\s`: Qt counts
-// U+0085 NEL and `\s` does not, while `\s` counts U+FEFF and Qt does not. A
-// name read with `\s` therefore misses a tag written as `<`, U+0085, `img`:
-// Qt skips the NEL, reads `img` and issues the GET, while the regex finds no
-// name at all and the tag is kept. Measured against Qt 6.11.2.
-//
-// Over-skipping is the safe direction. It can only classify more runs as
-// images, and dropping a run never manufactures a tag: a dropped run joins two
-// stretches of text that each contain no `<`.
+// Quickshell's NotificationUrgency.
+var LOW = 0
+var NORMAL = 1
+var CRITICAL = 2
+
+// ------------------------------------------------------------------- text
+
+// Whether a tag, from its `<` to the next `>`, is an image. Qt names a tag by
+// the first run of letters and digits after the `<`, skipping what it counts
+// as space before it, and that is not JavaScript's \s: U+0085 is space to Qt
+// and not to \s, U+FEFF the other way round (Qt 6.11). So everything before
+// the run is skipped: a tag taken for an image by mistake is only dropped.
 function isImageTag(tag) {
   var name = /^<[^A-Za-z0-9]*([A-Za-z0-9]+)/.exec(tag)
   return !!name && name[1].toLowerCase() === "img"
 }
 
-// The body renders as StyledText so notifications can use the markup the
-// body-markup capability advertises (see Service.qml). StyledText honours
-// <img src>, and a remote src makes the shell issue an unauthenticated GET
-// with no user action, so image tags go before the renderer sees them.
+// The text with its image tags dropped. The body is drawn as StyledText, which
+// fetches an <img src> from anywhere as soon as it is shown, with no one
+// asking.
 //
-// Work in whole tags, never in substrings of one. A `<` opens a tag that runs
-// to the next `>`, nested `<` and all, and only a tag whose own name is `img`
-// is dropped.
+// A tag runs from a `<` to the next `>`, whatever is in between. Qt lets a `>`
+// inside quotes pass, so a tag of Qt's can be longer than one taken here; that
+// only ever splits it, and splitting can show an image tag hidden inside it but
+// never hide one. Honouring the quotes instead would let
+// `<b title="a>b"><img src="http://host/x.png">` through.
 //
-// That is the conservative bound, not Qt's exact one: Qt lets a `>` inside a
-// quoted attribute value pass without closing the tag, so a Qt tag can be
-// longer than the run taken here. Do not "correct" this to match Qt. Taking
-// the shorter run only ever splits one Qt tag into several, and a split can
-// only expose an `<img` to be dropped, never hide one — whereas honouring
-// quotes would let `<b title="a>b"><img src="http://host/x.png">` through.
-//
-// Deleting a substring is what makes a naive `/<img[^>]*>/g` unsafe. Given
-//
-//   <im<img src="http://a/decoy.png">g src="http://a/beacon.png">
-//
-// Qt reads ONE malformed tag named `im` and renders nothing, but removing the
-// inner match closes the surviving halves up into `<img src=".../beacon.png">`
-// — a live tag the input never contained. The stripper would be manufacturing
-// the very thing it exists to remove.
-//
-// Because every `<` opens a tag, the text between tags never contains one, so
-// dropping a tag cannot splice its neighbours into a new one. That makes a
-// single pass sufficient, with no re-scanning and no input bound to police.
-function stripImageTags(text) {
+// Whole tags are dropped, never part of one: taking `<img src="http://a/d.png">`
+// out of `<im<img src="http://a/d.png">g src="http://a/b.png">`, which Qt reads
+// as one tag named `im`, would join what is left into a new image tag. The text
+// between tags has no `<` in it, so dropping a tag cannot join its neighbours
+// into one, and one pass is enough.
+function withoutImages(text) {
   var out = ""
-  var i = 0
-
-  while (i < text.length) {
-    var open = text.indexOf("<", i)
+  var at = 0
+  while (at < text.length) {
+    var open = text.indexOf("<", at)
     if (open === -1) {
-      out += text.slice(i)
+      out += text.slice(at)
       break
     }
-
-    out += text.slice(i, open)
-
-    // An unterminated tag at the end of the string still reaches the renderer,
-    // which closes it itself, so treat the remainder as one tag.
+    out += text.slice(at, open)
+    // A tag left open at the end reaches Qt all the same, which closes it.
     var close = text.indexOf(">", open)
     var tag = close === -1 ? text.slice(open) : text.slice(open, close + 1)
-
     if (!isImageTag(tag)) out += tag
-    i = close === -1 ? text.length : close + 1
+    at = close === -1 ? text.length : close + 1
   }
-
   return out
 }
 
-// What the card renders, and the last thing to touch the string before Qt parses
-// it. The newline rewrite belongs here rather than in the card because it inserts
-// `<br/>` into text stripImageTags chose to KEEP, and a kept tag may hold a `<` of
-// its own: `<x`, newline, `<img src="http://…">` is one tag named `x` to both the
-// stripper and Qt, until the rewrite splits it into `<x<br/>` and a live image tag
-// the input never contained. Measured against Qt 6.11.2 — the rewritten form
-// fetches, the original does not. So strip again after, and what Qt parses is what
-// was checked last.
-function styledBody(body, app, appIcon) {
-  return stripImageTags(sanitizeBody(body, app, appIcon).replace(/\r\n|\r|\n/g, "<br/>"))
+// Chromium and the browsers built on it begin a web page's notification with
+// the site's address, which the toast leaves out.
+function fromBrowser(app, appIcon) {
+  var source = (String(app || "") + "\n" + String(appIcon || "")).toLowerCase()
+  return source.indexOf("chrom") >= 0 || source.indexOf("brave") >= 0 || source.indexOf("vivaldi") >= 0
+    || source.indexOf("microsoft-edge") >= 0 || source.indexOf("opera") >= 0
 }
 
-function sanitizeBody(body, app, appIcon) {
-  var text = stripImageTags(String(body || ""))
-  if (!isChromiumDerived(app, appIcon)) return text
+var LINKED_ADDRESS = /^\s*<a\b[^>]*>\s*(?:https?:\/\/|www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/[^<\s]*)?\s*<\/a>\s*/i
+var ADDRESS = /^\s*(?:https?:\/\/|www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/\S*)?\s+/i
 
-  return text
-    .replace(/^\s*<a\b[^>]*>\s*(?:https?:\/\/|www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/[^<\s]*)?\s*<\/a>\s*/i, "")
-    .replace(/^\s*(?:https?:\/\/|www\.)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?::\d+)?(?:\/\S*)?\s+/i, "")
+// The body as the toast has it: no images, and from a browser no address
+// first. A toast whose body is nothing then has one line.
+function shownBody(body, app, appIcon) {
+  var text = withoutImages(String(body || ""))
+  if (!fromBrowser(app, appIcon)) return text
+  return text.replace(LINKED_ADDRESS, "").replace(ADDRESS, "")
 }
 
-function summaryStartsWithGlyph(summary) {
+// The body as the toast draws it, its lines broken by <br/>, the last thing done
+// to it before Qt reads it. The images are dropped again after: a kept tag
+// with a line break and an image tag inside it, `<x`, newline,
+// `<img src="http://...">`, is one tag named `x` until the break becomes
+// `<x<br/>`, which leaves the image tag whole (Qt 6.11 fetches it).
+function bodyMarkup(body, app, appIcon) {
+  return withoutImages(shownBody(body, app, appIcon).replace(/\r\n|\r|\n/g, "<br/>"))
+}
+
+// Whether a one-character summary prefix stands for an icon: a character, a
+// surrogate pair counting as one, then two spaces or more, as in "󰂚  Silenced".
+// Such a toast shows no icon beside it.
+function startsWithGlyph(summary) {
   var text = String(summary || "").replace(/^\s+/, "")
   if (!text) return false
-
-  var offset = 1
-  var first = text.charCodeAt(0)
-  if (first >= 0xd800 && first <= 0xdbff && text.length > 1) offset = 2
-
+  var at = text.length > 1 && text.charCodeAt(0) >= 0xd800 && text.charCodeAt(0) <= 0xdbff ? 2 : 1
   var spaces = 0
-  while (offset < text.length && text.charAt(offset) === " ") {
-    spaces++
-    offset++
-  }
-
+  for (; at < text.length && text.charAt(at) === " "; at++) spaces++
   return spaces >= 2
 }
 
-function shouldBypassDnd(notification, criticalUrgency) {
-  var appName = String((notification && notification.appName) || "")
-  if (appName === "nova-action") return true
-  return appName === "notify-send" && notification && notification.urgency === criticalUrgency
+// A toast's glyph is drawn small, in line, when it has one line and no picture.
+function compactGlyph(glyph, picture, oneLine) {
+  return String(glyph || "").length > 0 && String(picture || "").length === 0 && !!oneLine
 }
 
-function isEphemeralApp(appName) {
-  var name = String(appName || "")
-  return name === "notify-send" || name === "nova-action"
-}
+// ---------------------------------------------------------------- senders
 
-function stringHint(hints, name) {
+function hint(hints, name) {
   try {
     if (hints) {
       var value = hints[name]
@@ -137,54 +111,64 @@ function stringHint(hints, name) {
   return ""
 }
 
-function glyphFromHints(hints) {
-  return stringHint(hints, "nova-glyph")
+// What do-not-disturb lets through: Nova's own toasts (nova-action), which
+// answer something just done, and critical ones from notify-send, which
+// scripts send. Chat apps mark messages critical too, but under their own
+// name.
+function breaksThroughDnd(notification) {
+  var app = String((notification && notification.appName) || "")
+  if (app === "nova-action") return true
+  return app === "notify-send" && notification && notification.urgency === CRITICAL
 }
 
-// The click action: a JSON argv string from nova-notification-send
-// --exec. Carried as data so a toast restored after a shell restart stays
-// clickable (a libnotify action can't — its sender is gone). Run via
-// Util.execArgv as bash positional parameters, never a shell string, so
-// attacker-controlled values (a title, a filename) can't become commands.
-function execArgvFromHints(hints) {
-  return stringHint(hints, "nova-exec-argv")
+// A notification no one looks back at: one marked transient, one from
+// notify-send with no app named, and Nova's own. Silenced, it is not kept.
+function passing(notification) {
+  var transient = false
+  try {
+    transient = !!(notification.hints && notification.hints["transient"])
+  } catch (e) {
+    transient = false
+  }
+  var app = String(notification.appName || "")
+  return transient || app === "notify-send" || app === "nova-action"
 }
 
-// Validate a persisted nova-exec-argv into a runnable argv, or null. This is
-// a STRUCTURAL check only: it fails closed on a malformed hint (non-array, a
-// non-string or empty program, or a leading-dash program that argv would read as
-// an option). It does not judge intent — a well-formed ["bash","-c",…] is
-// accepted. WHICH senders may set this hint is a separate boundary: any
-// session-bus process can, by the freedesktop protocol's design, which is
-// equivalent to same-uid code execution.
-function parseExecArgv(value) {
+// The command a click on the toast runs, from its nova-exec-argv hint, which
+// nova-notification-send sets and a toast's file keeps, so a toast restored
+// after a restart still runs it: a JSON array of strings, the program first.
+// Anything else runs nothing, nor does a program starting with "-", which
+// would be read as an option. This checks the form only: any program on the
+// session bus may send the hint, and could run anything anyway.
+function runnable(value) {
   var text = String(value || "")
   if (!text) return null
-
-  var parsed
+  var argv
   try {
-    parsed = JSON.parse(text)
+    argv = JSON.parse(text)
   } catch (e) {
     return null
   }
-
-  if (!Array.isArray(parsed) || parsed.length === 0) return null
-  for (var i = 0; i < parsed.length; i++) {
-    if (typeof parsed[i] !== "string") return null
-  }
-  if (!parsed[0] || parsed[0].charAt(0) === "-") return null
-  return parsed
+  if (!Array.isArray(argv) || argv.length === 0) return null
+  for (var i = 0; i < argv.length; i++)
+    if (typeof argv[i] !== "string") return null
+  if (!argv[0] || argv[0].charAt(0) === "-") return null
+  return argv
 }
 
-function shouldRenderCompactGlyph(glyph, iconSource, singleLineToast) {
-  return String(glyph || "").length > 0 && String(iconSource || "").length === 0 && !!singleLineToast
+// ------------------------------------------------------------------- rows
+
+function nonNegative(value) {
+  var number = Number(value || 0)
+  return isFinite(number) && number >= 0 ? number : 0
 }
 
-function snapshotOf(notification, timestamp) {
+// The row a toast keeps of a notification, in the order its file has the keys.
+// The model holds this copy and never the object, which the server frees when
+// the notification goes; a row still holding it would crash the next read.
+function rowOf(notification, timestamp) {
   var n = notification || {}
   var id = n.id || 0
-  var expireTimeout = Number(n.expireTimeout || 0)
-  if (!isFinite(expireTimeout) || expireTimeout < 0) expireTimeout = 0
   return {
     id: id,
     originalId: id,
@@ -193,48 +177,77 @@ function snapshotOf(notification, timestamp) {
     summary: String(n.summary || ""),
     body: n.body || "",
     image: n.image || "",
-    glyph: glyphFromHints(n.hints),
-    execArgv: execArgvFromHints(n.hints),
+    glyph: hint(n.hints, "nova-glyph"),
+    execArgv: hint(n.hints, "nova-exec-argv"),
     urgency: n.urgency,
-    expireTimeout: expireTimeout,
+    expireTimeout: nonNegative(n.expireTimeout),
     timestamp: timestamp === undefined ? Date.now() : timestamp
   }
 }
 
-// Everything the popup card draws, and therefore everything an in-place
-// update has to write through to the row and its file.
-var POPUP_ROLES = ["app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "urgency", "expireTimeout"]
-
-function popupRoles() {
-  return POPUP_ROLES
+// The row again after its sender replaced the notification: the new content
+// under the toast's own id and time, which name its file.
+function updatedRow(notification, originalId, timestamp) {
+  var row = rowOf(notification, timestamp)
+  row.id = originalId
+  row.originalId = originalId
+  return row
 }
 
-// Whether a refresh has anything to write. Each property a client updates
-// emits its own signal, and the catch-up refresh after a row is inserted
-// usually finds the object exactly as it was snapshotted — without this,
-// one update would rewrite the file several times over.
-function popupRowChanged(row, updated) {
-  var current = row || {}
-  var next = updated || {}
-  for (var i = 0; i < POPUP_ROLES.length; i++) {
-    var role = POPUP_ROLES[i]
-    if (current[role] !== next[role]) return true
-  }
+// What the card draws, so what an update writes to the row and its file.
+function shownRoles() {
+  return ["app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "urgency", "expireTimeout"]
+}
+
+// Whether an update changes what is drawn. A sender's update comes as one
+// signal per property, and the catch-up after a row is added mostly finds
+// nothing new; without this a file would be written for each.
+function differs(row, updated) {
+  var roles = shownRoles()
+  for (var i = 0; i < roles.length; i++)
+    if ((row || {})[roles[i]] !== (updated || {})[roles[i]]) return true
   return false
 }
 
-// A client updating a notification through replaces_id keeps the identity of
-// the popup it took over: the file name is the timestamp and id the popup was
-// first persisted under, and the restore, replace and archive paths all key
-// off that name. Only what the card draws comes from the updated object.
-function replacementSnapshot(notification, originalId, timestamp) {
-  var updated = snapshotOf(notification, timestamp)
-  updated.id = originalId
-  updated.originalId = originalId
-  return updated
+// How long a toast stays: a critical one until it is closed (0), the others as
+// long as their sender asked, at least 5 s (low) or 8 s and at most 30 s.
+function lifetime(urgency, expireTimeout) {
+  if (urgency === CRITICAL) return 0
+  var asked = Number(expireTimeout || 0)
+  asked = isFinite(asked) && asked > 0 ? Math.round(asked) : 0
+  return Math.min(30000, Math.max(urgency === LOW ? 5000 : 8000, asked))
 }
 
-function historyEntry(value, normalUrgency) {
+// The toasts' margins: the bar's room on the edge it is on, top or right, and
+// the gap elsewhere.
+function margins(barPosition, clearance, gap) {
+  var position = String(barPosition || "top")
+  clearance = isFinite(Number(clearance)) ? Number(clearance) : 0
+  gap = isFinite(Number(gap)) ? Number(gap) : 0
+  return { top: position === "top" ? clearance : gap, right: position === "right" ? clearance : gap }
+}
+
+// ------------------------------------------------------------------ files
+//
+// Each toast on screen has a file of its own in notifications/, so the toasts
+// come back after the shell restarts, as nova-update restarts it. It is
+// written as the toast shows and moved into notifications/history/ as it goes,
+// whatever takes it away; the history is the newest ten of those.
+
+// A toast's file is named by its time and id, which tell toasts apart across
+// shells, as every server counts ids from 1. Its pictures' copies are named
+// <stem>-appIcon and <stem>-image after it.
+function stem(row) {
+  var e = row || {}
+  return String(e.timestamp || 0) + "-" + String(e.originalId || 0)
+}
+
+function fileName(row) {
+  return stem(row) + ".json"
+}
+
+// A row as the history has it: no lifetime of its own.
+function historyRow(value) {
   var e = value || {}
   return {
     id: e.id || 0,
@@ -246,20 +259,123 @@ function historyEntry(value, normalUrgency) {
     image: e.image || "",
     glyph: e.glyph || "",
     execArgv: e.execArgv || "",
-    urgency: typeof e.urgency === "number" ? e.urgency : normalUrgency,
+    urgency: typeof e.urgency === "number" ? e.urgency : NORMAL,
     expireTimeout: 0,
     timestamp: e.timestamp || 0
   }
 }
 
-// notifications.json holds nothing but the last-set DND preference now that
-// history is a directory of files. Older versions kept `pending`/`past`
-// (and, older still, `entries`) arrays in there; their presence is reported
-// so the service can rewrite the file without the dead payload.
+// A row as a toast's file has it: its sender's timeout, and the deadline a
+// restored toast was given, which is left out when there is none so that the
+// row has the same keys as a new one.
+function toastRow(value) {
+  var row = historyRow(value)
+  row.expireTimeout = nonNegative((value || {}).expireTimeout)
+  var deadline = Number((value || {}).deadline || 0)
+  if (isFinite(deadline) && deadline > 0) row.deadline = deadline
+  return row
+}
+
+// The file behind a picture's value, or "" for one that cannot be copied: an
+// icon's name, nothing, or a picture held in the server's memory.
+function localFile(value) {
+  var path = String(value || "")
+  if (path.indexOf("file://") === 0) {
+    path = path.slice(7)
+    try { path = decodeURIComponent(path) } catch (e) {}
+  }
+  return path.charAt(0) === "/" ? path : ""
+}
+
+// A row as it is written, and the copies of its pictures to make before. A
+// picture lasts only as long as its notification (Chromium deletes its files
+// when it closes, a picture sent as data goes with the server's object), so
+// the row names a copy in images/ instead; one held in memory is dropped and
+// the card shows the app's icon. A value naming its copy already stays and
+// makes no copy, so writing a restored toast again changes nothing.
+function forDisk(row, imagesDir) {
+  var out = {}
+  for (var key in row || {}) out[key] = row[key]
+  var copies = []
+  var roles = ["appIcon", "image"]
+  for (var i = 0; i < roles.length; i++) {
+    var value = String(out[roles[i]] || "")
+    if (!value) continue
+    var source = localFile(value)
+    if (source) {
+      var copy = String(imagesDir || "") + stem(row) + "-" + roles[i]
+      if (source !== copy) copies.push({ from: source, to: copy })
+      out[roles[i]] = "file://" + copy
+    } else if (value.indexOf("image://") === 0) {
+      out[roles[i]] = ""
+    }
+  }
+  return { entry: out, copies: copies }
+}
+
+// A file's one line: the files are read back joined, and parsed a line each.
+function line(row) {
+  return JSON.stringify(toastRow(row))
+}
+
+// The rows of the toast files, read back joined, newest first. A line that
+// does not parse, from a write a crash cut short, is skipped. Two files with
+// one id both stay: with ids counted from 1 by each server, they are most
+// likely two notifications, and a critical one restored must not go for a new
+// one. A crash between a replacement's write and the replaced file's removal
+// shows the replaced toast once more, until it goes as toasts do.
+function parseFiles(raw) {
+  var lines = String(raw || "").split("\n")
+  var rows = []
+  for (var i = 0; i < lines.length; i++) {
+    var text = lines[i].trim()
+    if (!text) continue
+    try {
+      var value = JSON.parse(text)
+      if (value && typeof value === "object") rows.push(toastRow(value))
+    } catch (e) {
+    }
+  }
+  rows.sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0) })
+  return rows
+}
+
+// Whether a toast the shell before left on screen ran out since. A restored
+// toast's deadline counts instead of its time, or a second restart would judge
+// it by a clock it is no longer shown by; a toast with no lifetime, a critical
+// one, never runs out.
+function expired(row, duration, now) {
+  var deadline = Number((row || {}).deadline || 0)
+  if (isFinite(deadline) && deadline > 0) return Number(now) >= deadline
+  var span = Number(duration || 0)
+  if (!isFinite(span) || span <= 0) return false
+  return Number(now) - Number((row || {}).timestamp || 0) >= span
+}
+
+// The rows the history replays, newest first, `limit` at most: the toasts on
+// screen as it was asked for, then the history's files. Those toasts go to
+// the history meanwhile, so the read may have them or not; a file and a
+// toast of one name are one. Each is replayed for its urgency's lifetime, not
+// what its sender asked.
+function replayRows(raw, onScreen, limit) {
+  var rows = []
+  var seen = {}
+  var both = (onScreen || []).concat(parseFiles(raw))
+  for (var i = 0; i < both.length; i++) {
+    if (!both[i] || seen[fileName(both[i])]) continue
+    seen[fileName(both[i])] = true
+    rows.push(historyRow(both[i]))
+  }
+  rows.sort(function (a, b) { return (b.timestamp || 0) - (a.timestamp || 0) })
+  return rows.slice(0, limit)
+}
+
+// notifications.json: {"version": 3, "dnd": true}. Versions before kept the
+// history in it too, as pending, past or entries; `legacy` says so, and the
+// file is written again without it.
 function parseSettings(raw) {
   var text = String(raw || "").trim()
   if (!text) return { error: false, dnd: null, legacy: false }
-
   try {
     var parsed = JSON.parse(text)
     return {
@@ -269,211 +385,5 @@ function parseSettings(raw) {
     }
   } catch (e) {
     return { error: true, errorMessage: String(e), dnd: null, legacy: false }
-  }
-}
-
-// ---------------------------------------------------- popup persistence
-//
-// Each on-screen popup is mirrored to its own file under
-// $XDG_STATE_HOME/nova/notifications/ so toasts survive shell restarts
-// (e.g. the restart `nova-update` performs). The file exists exactly as
-// long as the popup is on screen: it is written when the toast appears and
-// moved into the history/ subdirectory when the toast expires, is dismissed,
-// or its action is invoked. History is those moved files, newest last-10.
-
-function popupEntry(value, normalUrgency) {
-  var entry = historyEntry(value, normalUrgency)
-  var expire = Number((value || {}).expireTimeout || 0)
-  if (!isFinite(expire) || expire < 0) expire = 0
-  entry.expireTimeout = expire
-  // Absolute expiry deadline, set only when a restore resets a surviving
-  // popup's display lifetime. Kept out of the entry entirely when unset so
-  // restored rows match the roles of freshly received ones.
-  var deadline = Number((value || {}).deadline || 0)
-  if (isFinite(deadline) && deadline > 0) entry.deadline = deadline
-  return entry
-}
-
-function popupFileName(entry) {
-  return imageStem(entry) + ".json"
-}
-
-// ---------------------------------------------------- persisted images
-//
-// A notification's images only exist while it is live: Chromium-family
-// senders (all Nova web apps) delete their scoped /tmp files on close,
-// and image-data hints surface as in-process image:// URLs that die with
-// the server object. Persisted entries therefore reference their own
-// copies, named by the entry's file stem so cleanup can find them from
-// the JSON file name alone.
-
-var PERSISTED_IMAGE_ROLES = ["appIcon", "image"]
-
-function imageStem(entry) {
-  var e = entry || {}
-  return String(e.timestamp || 0) + "-" + String(e.originalId || 0)
-}
-
-// The filesystem path behind a file-backed image value, or "" for anything
-// a copy can't capture: themed icon names, in-process image:// URLs, empty.
-function localImageFile(value) {
-  var s = String(value || "")
-  if (s.indexOf("file://") === 0) {
-    s = s.slice(7)
-    try { s = decodeURIComponent(s) } catch (e) {}
-  }
-  return s.charAt(0) === "/" ? s : ""
-}
-
-// The entry as it should hit the disk, plus the copies that make it true.
-// File-backed images redirect to their copy under imagesDir; dead image://
-// URLs drop to "" (the card falls back to the app icon). Already-redirected
-// values map onto themselves and produce no copy, keeping restores no-ops.
-function persistablePopup(entry, imagesDir) {
-  var e = entry || {}
-  var out = {}
-  for (var key in e) out[key] = e[key]
-  var copies = []
-  for (var i = 0; i < PERSISTED_IMAGE_ROLES.length; i++) {
-    var role = PERSISTED_IMAGE_ROLES[i]
-    var value = String(out[role] || "")
-    if (!value) continue
-    var source = localImageFile(value)
-    if (source) {
-      var copy = String(imagesDir || "") + imageStem(e) + "-" + role
-      if (source !== copy) copies.push({ from: source, to: copy })
-      out[role] = "file://" + copy
-    } else if (value.indexOf("image://") === 0) {
-      out[role] = ""
-    }
-  }
-  return { entry: out, copies: copies }
-}
-
-function serializePopup(entry, normalUrgency) {
-  // Compact (single-line) on purpose: restore cats every file together and
-  // parses line by line, which only works when each file is one line.
-  return JSON.stringify(popupEntry(entry, normalUrgency))
-}
-
-// Parse the concatenation of every persisted popup file into entries,
-// newest-first. Deliberately NO dedupe by originalId: ids restart from 1
-// with every server process, so two files sharing an id are usually
-// different generations — dropping the older one would silently discard a
-// restored critical alert the moment a fresh notification reuses its id.
-// The one case that leaves a genuine duplicate (a crash between a
-// replacement's write and the replaced file's delete) merely re-shows a
-// superseded toast, which expires or is dismissed and cleans itself up.
-function parsePopupFiles(raw, normalUrgency) {
-  var lines = String(raw || "").split("\n")
-  var entries = []
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].trim()
-    if (!line) continue
-    try {
-      var value = JSON.parse(line)
-      if (value && typeof value === "object") entries.push(popupEntry(value, normalUrgency))
-    } catch (e) {
-      // A torn write from a crash mid-save — skip the line, keep the rest.
-    }
-  }
-  entries.sort(function(a, b) { return (b.timestamp || 0) - (a.timestamp || 0) })
-  return entries
-}
-
-// A persisted popup whose lifetime already ran out would have expired on
-// screen had the shell kept running, so it is not restored. duration 0 means
-// the popup never expires (critical urgency) and always survives restarts.
-// A restore-reset deadline outranks the original timestamp: without it, a
-// second restart would judge a re-shown toast by a clock that no longer
-// governs its display and drop it while it is still on screen.
-function popupExpired(entry, duration, now) {
-  var deadline = Number((entry || {}).deadline || 0)
-  if (isFinite(deadline) && deadline > 0) return Number(now) >= deadline
-  var lifetime = Number(duration || 0)
-  if (!isFinite(lifetime) || lifetime <= 0) return false
-  return (Number(now) - Number((entry || {}).timestamp || 0)) >= lifetime
-}
-
-function popupPlacement(barPosition, barClearance, gapsOut) {
-  var position = String(barPosition || "top")
-  var clearance = Number(barClearance)
-  var gap = Number(gapsOut)
-  if (!isFinite(clearance)) clearance = 0
-  if (!isFinite(gap)) gap = 0
-
-  return {
-    anchors: { top: true, bottom: false, left: false, right: true },
-    margins: {
-      top: position === "top" ? clearance : gap,
-      bottom: gap,
-      left: gap,
-      right: position === "right" ? clearance : gap
-    }
-  }
-}
-
-// The archived files are the history. They are read back exactly like the
-// live popup files, then normalized into history rows: replaying a toast
-// must not inherit the original's expire timeout or restore deadline, so it
-// gets the standard on-screen lifetime for its urgency instead.
-//
-// liveRows are the toasts still on screen when the replay was asked for.
-// They belong in it — they're the newest notifications there are — but the
-// directory read races their archival, so they're carried across by hand and
-// keyed by file name (timestamp + id) to drop the copy the read already saw.
-function historyRows(raw, liveRows, normalUrgency, limit) {
-  var max = limit === undefined || limit === null ? 10 : Number(limit)
-  if (isNaN(max)) max = 10
-  max = Math.max(0, max)
-
-  var out = []
-  var seen = {}
-  function collect(rows) {
-    for (var i = 0; i < rows.length; i++) {
-      var entry = rows[i]
-      if (!entry) continue
-      var key = popupFileName(entry)
-      if (seen[key]) continue
-      seen[key] = true
-      out.push(historyEntry(entry, normalUrgency))
-    }
-  }
-
-  collect(Array.isArray(liveRows) ? liveRows : [])
-  collect(parsePopupFiles(raw, normalUrgency))
-  out.sort(function(a, b) { return (b.timestamp || 0) - (a.timestamp || 0) })
-  return out.slice(0, max)
-}
-
-if (typeof module !== "undefined") {
-  module.exports = {
-    isChromiumDerived: isChromiumDerived,
-    sanitizeBody: sanitizeBody,
-    styledBody: styledBody,
-    summaryStartsWithGlyph: summaryStartsWithGlyph,
-    shouldBypassDnd: shouldBypassDnd,
-    isEphemeralApp: isEphemeralApp,
-    stringHint: stringHint,
-    glyphFromHints: glyphFromHints,
-    execArgvFromHints: execArgvFromHints,
-    parseExecArgv: parseExecArgv,
-    shouldRenderCompactGlyph: shouldRenderCompactGlyph,
-    snapshotOf: snapshotOf,
-    popupRoles: popupRoles,
-    popupRowChanged: popupRowChanged,
-    replacementSnapshot: replacementSnapshot,
-    historyEntry: historyEntry,
-    parseSettings: parseSettings,
-    historyRows: historyRows,
-    popupEntry: popupEntry,
-    popupFileName: popupFileName,
-    imageStem: imageStem,
-    localImageFile: localImageFile,
-    persistablePopup: persistablePopup,
-    serializePopup: serializePopup,
-    parsePopupFiles: parsePopupFiles,
-    popupExpired: popupExpired,
-    popupPlacement: popupPlacement
   }
 }
