@@ -449,8 +449,11 @@ Item {
   function replay(text) {
     var rows = NotificationLogic.replayRows(text, carried, historyLimit)
     carried = []
-    // An empty history says so, or the key would seem dead.
+    // An empty history says so, or the key would seem dead; once, asked again
+    // it starts over.
     if (rows.length === 0) {
+      for (var k = toasts.count - 1; k >= 0; k--)
+        if (toasts.get(k).originalId < 0) toasts.remove(k)
       toasts.insert(0, {
         id: -1, originalId: -1, app: "nova-action", appIcon: "", summary: "No recent notifications", body: "", image: "",
         glyph: "\u{F009A}", execArgv: "", urgency: NotificationUrgency.Low, expireTimeout: 0, timestamp: Date.now()
