@@ -1,15 +1,15 @@
 [Unit]
-Description=Bluetooth pairing agent (auto-accept, while a pairing runs)
+Description=Bluetooth pairing agent, for the pairing nova-bluetooth-device runs
 Documentation=man:bt-agent(1)
 ConditionPathIsDirectory=/sys/class/bluetooth
-# bluez must be reachable on the system bus before we can register.
+# It registers with BlueZ over the system bus.
 After=dbus.socket
 Requires=dbus.socket
 
 [Service]
 Type=simple
-# If bluetoothd is unavailable (for example in VMs or machines without a
-# usable adapter), skip cleanly instead of entering a restart loop.
+# No BlueZ running (no adapter, a virtual machine): nothing to register with,
+# so the unit is skipped rather than failed.
 ExecCondition=/usr/bin/systemctl is-active --quiet bluetooth.service
 # NoInputNoOutput accepts every pairing without asking, and BlueZ keeps the
 # adapter pairable for as long as an agent is registered: left running, any

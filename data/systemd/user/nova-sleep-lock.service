@@ -1,8 +1,8 @@
 [Unit]
-Description=Lock Nova before suspend
-# The monitor calls into the running Nova shell. Wait until UWSM has imported
-# NOVA_PATH and WAYLAND_DISPLAY, but keep the default target ordering so the
-# monitor starts before graphical-session.target is reached.
+Description=Lock the session before the computer sleeps
+# The monitor asks the shell to lock, so it needs the session's NOVA_PATH and
+# WAYLAND_DISPLAY, which uwsm has set once wayland-session-waitenv is done.
+# It still starts before graphical-session.target is reached.
 After=dbus.socket wayland-session-waitenv.service
 Requires=dbus.socket
 PartOf=graphical-session.target
