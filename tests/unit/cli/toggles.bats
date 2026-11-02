@@ -90,6 +90,18 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   [ ! -e "$HOME/.local/state/nova/toggles/hypr/touchpad-disabled-name" ]
 }
 
+@test "touchscreen: found among the touch devices, off and on by its name" {
+  echo '{"mice": [{"name": "elan067a:00-04f3:3197-touchpad"}], "touch": [{"name": "wacom-hid-52eb-finger"}]}' >"$HYPR/devices.json"
+  nova-toggle-input-device touchscreen off
+  [ "$(cat "$HOME/.local/state/nova/toggles/hypr/touchscreen-disabled-name")" = "wacom-hid-52eb-finger" ]
+  grep -qxF 'hyprctl eval hl.device({ name = "wacom-hid-52eb-finger", enabled = false })' "$CALLS"
+  nova-toggle-input-device touchscreen on
+  [ ! -e "$HOME/.local/state/nova/toggles/hypr/touchscreen-disabled-name" ]
+  echo '{"mice": [], "touch": []}' >"$HYPR/devices.json"
+  run nova-toggle-input-device touchscreen off
+  [ "$output" = "No touchscreen device found" ]
+}
+
 @test "bar: on is its flag off, and the shell is told to look again" {
   nova-toggle-bar on
   nova-toggle-bar
