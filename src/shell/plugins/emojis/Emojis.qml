@@ -83,6 +83,8 @@ Item {
     Quickshell.execDetached(["nova-menu-emoji-insert", emoji])
   }
 
+  // emojis.json is made by tools/emoji-list from Unicode's data: Emoji 18.0's
+  // emoji-test.txt and CLDR 49's English annotations.
   FileView {
     path: root.novaPath + "/shell/plugins/emojis/emojis.json"
     onLoaded: {
