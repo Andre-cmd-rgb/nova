@@ -2,7 +2,7 @@ nova
 Copyright (c) 2026 Andre-cmd-rgb. Licensed under the MIT License (see LICENSE).
 
 This project contains code derived from Omarchy 4.0.5 (https://github.com/basecamp/omarchy):
-the Quickshell shell (src/shell, its emoji list included), many of the helper commands
+the Quickshell shell (src/shell), many of the helper commands
 (src/cli/bin), the shell's defaults (data/defaults), the theme templates (theme/templates)
 and the theme palettes (theme/palettes). Nova's Hyprland defaults (data/hypr) are its own code, but
 keep Omarchy's key bindings, window rules and look. Omarchy's wallpapers and images are
@@ -33,6 +33,50 @@ NOT included. Omarchy is distributed under the following license:
 The palettes are ports of color schemes by their respective authors (Catppuccin,
 Everforest, Gruvbox, Kanagawa, Nord, Rose Pine, Tokyo Night, Flexoki and others), each
 under its own permissive license.
+
+The emoji picker's list (src/shell/plugins/emojis/emojis.json) is made by tools/emoji-list
+from Unicode's data: emoji-test.txt of Emoji 18.0 and the English annotations of CLDR 49.
+That data is distributed under the following license:
+
+  UNICODE LICENSE V3
+
+  COPYRIGHT AND PERMISSION NOTICE
+
+  Copyright © 1991-2026 Unicode, Inc.
+
+  NOTICE TO USER: Carefully read the following legal agreement. BY
+  DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+  SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+  TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+  DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+  Permission is hereby granted, free of charge, to any person obtaining a
+  copy of data files and any associated documentation (the "Data Files") or
+  software and any associated documentation (the "Software") to deal in the
+  Data Files or Software without restriction, including without limitation
+  the rights to use, copy, modify, merge, publish, distribute, and/or sell
+  copies of the Data Files or Software, and to permit persons to whom the
+  Data Files or Software are furnished to do so, provided that either (a)
+  this copyright and permission notice appear with all copies of the Data
+  Files or Software, or (b) this copyright and permission notice appear in
+  associated Documentation.
+
+  THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+  KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+  MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+  THIRD PARTY RIGHTS.
+
+  IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+  BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+  OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+  WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+  ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+  FILES OR SOFTWARE.
+
+  Except as contained in this notice, the name of a copyright holder shall
+  not be used in advertising or otherwise to promote the sale, use or other
+  dealings in these Data Files or Software without prior written
+  authorization of the copyright holder.
 
 Dictation (src/shell/plugins/dictation) downloads, at its first use and not with Nova,
 NVIDIA's Parakeet TDT 0.6B v3 speech model (https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3),
