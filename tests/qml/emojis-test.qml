@@ -38,6 +38,13 @@ ShellRoot {
       && EmojiSearch.search(joined, "heart eyes", 9).join("") === "😍", "_ and a - between letters are spaces, typed or in the list")
     check(EmojiSearch.search(joined, "-1", 9).join("") === "👎", "a - that joins no words stays one")
 
+    var ranked = EmojiSearch.parse('[{"e":"🥴","k":"woozy face intoxicated"},{"e":"😺","k":"grinning cat"},{"e":"🙀","k":"weary cat"},'
+      + '{"e":"🏷️","k":"label (category)"},{"e":"🐱","k":"cat face"}]')
+    check(EmojiSearch.search(ranked, "cat", 9).join("") === "😺🙀🏷️🐱🥴",
+      "a word that begins with what is typed comes first, then one with it inside, each in the list's order")
+    check(EmojiSearch.search(ranked, "cat", 3).join("") === "😺🙀🏷️" && EmojiSearch.search(ranked, "at", 9).join("") === "🥴😺🙀🏷️🐱",
+      "the limit counts after the order; inside words only, the list's order")
+
     var emojis = EmojiSearch.parse(installed.text())
     check(emojis.length > 1800 && emojis.every(function (item) { return item.k.length > 0 }),
       "the installed list: every emoji has words to find it by")
@@ -47,6 +54,9 @@ ShellRoot {
       "the installed list finds an emoji by its name")
     check(finds("heart_eyes", "😍") && finds("face_with_tears_of_joy", "😂") && finds("partying_face", "🥳")
       && finds("t-shirt", "👕") && finds("t shirt", "👕"), "and by GitHub's name for it, words joined by _ or -")
+    var first = function (query) { return EmojiSearch.search(emojis, query, 1000)[0] }
+    check(first("cat") === "😺" && first("lock") === "🔒" && first("rain") === "⛈️" && first("dog") !== "🌭",
+      "in the installed list, the first emoji for a word has it as a word")
     console.log("DONE")
     Qt.quit()
   }
