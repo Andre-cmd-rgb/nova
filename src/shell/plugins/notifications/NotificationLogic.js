@@ -276,10 +276,13 @@ function toastRow(value) {
   return row
 }
 
-// The file behind a picture's value, or "" for one that cannot be copied: an
-// icon's name, nothing, or a picture held in the server's memory.
+// The file behind a picture's value: a path, a file:// URL, or a path sent as
+// the image-path hint, which Quickshell hands over as image://icon/<path>. ""
+// for one that cannot be copied: an icon's name, nothing, or a picture held in
+// the server's memory.
 function localFile(value) {
   var path = String(value || "")
+  if (path.indexOf("image://icon//") === 0) path = path.slice("image://icon/".length)
   if (path.indexOf("file://") === 0) {
     path = path.slice(7)
     try { path = decodeURIComponent(path) } catch (e) {}

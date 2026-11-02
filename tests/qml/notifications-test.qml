@@ -48,6 +48,11 @@ ShellRoot {
       && JSON.stringify(disk.copies) === JSON.stringify([{ from: "/tmp/a b.png", to: "/s/5-3-appIcon" }])
       && again.copies.length === 0 && again.entry.appIcon === disk.entry.appIcon,
       "a file is written naming copies of its pictures, and a picture held in memory is dropped")
+    // The image-path hint as Quickshell hands it over.
+    var byPath = NotificationLogic.forDisk({ timestamp: 5, originalId: 3, image: "image://icon//tmp/chrome/p.png", appIcon: "image://icon/dialog-information" }, "/s/")
+    check(byPath.entry.image === "file:///s/5-3-image" && byPath.entry.appIcon === ""
+      && JSON.stringify(byPath.copies) === JSON.stringify([{ from: "/tmp/chrome/p.png", to: "/s/5-3-image" }]),
+      "a picture sent by its path is copied too, an icon's name is not")
     check(NotificationLogic.line({ id: 3, originalId: 3, app: "a", timestamp: 5, deadline: 9, extra: 1 })
       === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"urgency\":1,\"expireTimeout\":0,\"timestamp\":5,\"deadline\":9}",
       "a toast's file: one line, its keys in order")
