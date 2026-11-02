@@ -14,12 +14,12 @@ import qs.Ui
 // the background picker, right double-click for the theme picker.
 //
 // nova-theme says what changed through the background IPC target; at
-// startup the background is the one ~/.local/state/nova/current/background
+// startup the background is the one $XDG_STATE_HOME/nova/current/background
 // links to.
 Item {
   id: root
 
-  readonly property string link: Quickshell.env("HOME") + "/.local/state/nova/current/background"
+  readonly property string link: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/current/background"
 
   // The background chosen last, as the path it was given by.
   property string current: ""

@@ -275,7 +275,7 @@ function parseSettings(raw) {
 // ---------------------------------------------------- popup persistence
 //
 // Each on-screen popup is mirrored to its own file under
-// ~/.local/state/nova/notifications/ so toasts survive shell restarts
+// $XDG_STATE_HOME/nova/notifications/ so toasts survive shell restarts
 // (e.g. the restart `nova-update` performs). The file exists exactly as
 // long as the popup is on screen: it is written when the toast appears and
 // moved into the history/ subdirectory when the toast expires, is dismissed,

@@ -23,7 +23,8 @@ Item {
   // The request: where its images come from, which to start on, where the
   // answer goes. A request with no done file has no one waiting on it.
   property string imageDirs: Quickshell.env("NOVA_IMAGE_SELECTOR_DIRS") || Quickshell.env("NOVA_IMAGE_SELECTOR_DIR")
-    || Quickshell.env("NOVA_STOCK_BACKGROUNDS_DIR") || (Quickshell.env("HOME") + "/.local/state/nova/current/theme/backgrounds")
+    || Quickshell.env("NOVA_STOCK_BACKGROUNDS_DIR")
+    || (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/current/theme/backgrounds"
   property string selectedImage: Quickshell.env("NOVA_IMAGE_SELECTOR_SELECTED")
   property string selectionFile: Quickshell.env("NOVA_IMAGE_SELECTOR_SELECTION_FILE") || Quickshell.env("NOVA_BACKGROUND_SELECTION_FILE")
   property string doneFile: ""

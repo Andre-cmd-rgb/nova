@@ -9,7 +9,7 @@ import "ClipboardHistory.js" as ClipboardHistory
 
 // The clipboard history: what was copied, text and images, newest first. Two
 // wl-paste watchers run capture.sh at every copy and the entry it prints goes
-// to the top of ~/.local/state/nova/clipboard-history.json, 300 at most. The
+// to the top of $XDG_STATE_HOME/nova/clipboard-history.json, 300 at most. The
 // picker shows the 50 newest a search finds, the one under the cursor in full
 // beside them: Return pastes it, Shift+Return copies it, Alt+Return opens it,
 // Delete drops it and Shift+Delete, once confirmed, clears the history.
@@ -17,7 +17,7 @@ Item {
   id: root
 
   property string novaPath: Quickshell.env("NOVA_PATH")
-  readonly property string historyPath: Quickshell.env("HOME") + "/.local/state/nova/clipboard-history.json"
+  readonly property string historyPath: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/clipboard-history.json"
   readonly property string helpers: novaPath + "/shell/plugins/clipboard/"
   readonly property int historyLimit: 300
 
