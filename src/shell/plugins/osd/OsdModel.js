@@ -1,62 +1,69 @@
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value))
+// What the OSD shows for a request: an icon, and a level with its readout or
+// a message. Requests come as nova-osd sends them, every field a string, or
+// from the shell's keys and panels, with numbers.
+
+// Icons by the names callers give. A name not here is shown as it is, so a
+// caller can pass a glyph of its own.
+var ICONS = {
+  "volume-muted": "\u{EEE8}", "volume-mute": "\u{EEE8}", "muted": "\u{EEE8}", "mute": "\u{EEE8}",
+  "volume-low": "\u{F026}",
+  "volume-medium": "\u{F027}",
+  "volume-high": "\u{F028}", "volume": "\u{F028}",
+  "microphone-muted": "\u{F036D}", "microphone-off": "\u{F036D}", "mic-muted": "\u{F036D}", "mic-off": "\u{F036D}",
+  "microphone": "\u{F036C}", "mic": "\u{F036C}",
+  "keyboard": "\u{F030C}",
+  "brightness": "\u{F0379}", "display": "\u{F0379}",
+  "touchpad": "\u{F07F8}",
+  "touch": "\u{F0741}", "touchscreen": "\u{F0741}",
+  "reboot": "\u{F0709}", "restart": "\u{F0709}",
+  "shutdown": "\u{F0425}", "power": "\u{F0425}", "poweroff": "\u{F0425}",
+  "logout": "\u{F0343}", "sign-out": "\u{F0343}", "leave": "\u{F0343}",
+  "media": "\u{F075A}", "player": "\u{F075A}", "media-source": "\u{F075A}", "player-source": "\u{F075A}",
+  "media-play": "\u{F040A}", "player-play": "\u{F040A}",
+  "media-pause": "\u{F03E4}", "player-pause": "\u{F03E4}",
+  "media-next": "\u{F04AD}", "player-next": "\u{F04AD}",
+  "media-previous": "\u{F04AE}", "player-previous": "\u{F04AE}"
 }
 
-// The widest glyph `iconFor` can return. The progress OSD sizes its icon
-// column to it so the bar keeps its place as the icon changes.
-var widestIcon = ""
+// The widest icon a level is shown with. The icon's column is kept this
+// wide, so the bar stays put as the speaker's waves come and go.
+var widestIcon = ICONS["volume-high"]
 
+// With no name, the speaker, its waves by the level (-1: none given).
 function iconFor(name, percent) {
-  var n = String(name || "").toLowerCase()
-  if (n === "volume-muted" || n === "volume-mute" || n === "muted" || n === "mute") return ""
-  if (n === "volume-low") return ""
-  if (n === "volume-medium") return ""
-  if (n === "volume-high" || n === "volume") return ""
-  if (n === "microphone-muted" || n === "microphone-off" || n === "mic-muted" || n === "mic-off") return "󰍭"
-  if (n === "microphone" || n === "mic") return "󰍬"
-  if (n === "keyboard") return "󰌌"
-  if (n === "brightness" || n === "display") return "󰍹"
-  if (n === "touchpad") return "󰟸"
-  if (n === "touch" || n === "touchscreen") return "󰝁"
-  if (n === "reboot" || n === "restart") return "󰜉"
-  if (n === "shutdown" || n === "power" || n === "poweroff") return "󰐥"
-  if (n === "logout" || n === "sign-out" || n === "leave") return "󰍃"
-  if (n === "media" || n === "player") return "󰝚"
-  if (n === "media-source" || n === "player-source") return "󰝚"
-  if (n === "media-play" || n === "player-play") return "󰐊"
-  if (n === "media-pause" || n === "player-pause") return "󰏤"
-  if (n === "media-next" || n === "player-next") return "󰒭"
-  if (n === "media-previous" || n === "player-previous") return "󰒮"
-  if (n.length > 0) return name
-  if (percent <= 0) return ""
-  if (percent <= 33) return ""
-  if (percent <= 66) return ""
-  return ""
+  var key = String(name || "").toLowerCase()
+  if (Object.prototype.hasOwnProperty.call(ICONS, key)) return ICONS[key]
+  if (key) return name
+  if (percent <= 0) return ICONS["volume-muted"]
+  if (percent <= 33) return ICONS["volume-low"]
+  if (percent <= 66) return ICONS["volume-medium"]
+  return ICONS["volume-high"]
 }
 
-function stateForShow(iconName, rawMessage, rawValue, rawMax, rawProgressText, rawDuration) {
-  var maxValue = Math.max(1, parseInt(rawMax || "100", 10))
-  var parsedValue = parseInt(rawValue || "0", 10)
-  var hasProgress = rawValue !== "" && !isNaN(parsedValue) && rawMessage === ""
-  var value = hasProgress ? clamp(parsedValue, 0, maxValue) : 0
-  var percent = hasProgress ? Math.round(value * 100 / maxValue) : -1
-  var parsedDuration = parseInt(rawDuration || "1200", 10)
+function given(value) {
+  return value === undefined ? "" : String(value)
+}
 
+// A request ({ icon, message, value, max, progressText, duration }, each one
+// optional) as the card shows it. A message wins over a level; a level shows
+// as a percentage unless progressText says otherwise. The duration is in ms,
+// 0 to stay up until closed, 1200 when none is given.
+function parse(request) {
+  var message = request.message || ""
+  var valueText = given(request.value)
+  var max = Math.max(1, parseInt(given(request.max) || "100", 10))
+  var level = parseInt(valueText || "0", 10)
+  var hasProgress = valueText !== "" && !isNaN(level) && message === ""
+  var value = hasProgress ? Math.max(0, Math.min(max, level)) : 0
+  var percent = hasProgress ? Math.round(value * 100 / max) : -1
+  var duration = parseInt(given(request.duration) || "1200", 10)
   return {
-    iconKey: String(iconName || "").toLowerCase(),
-    maxValue: maxValue,
+    iconKey: String(request.icon || "").toLowerCase(),
+    icon: iconFor(request.icon || "", percent),
     hasProgress: hasProgress,
     value: value,
-    message: String(rawMessage || (hasProgress ? (rawProgressText || percent + "%") : "")),
-    icon: iconFor(iconName, percent),
-    duration: isNaN(parsedDuration) ? 1200 : Math.max(0, parsedDuration)
-  }
-}
-
-if (typeof module !== "undefined") {
-  module.exports = {
-    widestIcon: widestIcon,
-    iconFor: iconFor,
-    stateForShow: stateForShow
+    maxValue: max,
+    message: String(message || (hasProgress ? request.progressText || percent + "%" : "")),
+    duration: isNaN(duration) ? 1200 : Math.max(0, duration)
   }
 }

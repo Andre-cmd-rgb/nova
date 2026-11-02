@@ -3,7 +3,7 @@
   "id": "nova.osd",
   "name": "On-screen display",
   "version": "1.0.0",
-  "description": "Quickshell volume, brightness, and status overlays.",
+  "description": "A card for a moment: the volume or brightness as it changes, or a short message.",
   "kinds": [
     "panel"
   ],

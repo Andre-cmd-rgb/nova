@@ -7,82 +7,65 @@ import qs.Commons as Commons
 import qs.Ui
 import "OsdModel.js" as OsdModel
 
+// The on-screen display: a card above the bottom edge with an icon and a
+// level or a message, gone after its duration. `nova-osd` shows it through
+// the osd IPC target, the shell's keys and panels through summon.
 Item {
   id: root
 
   property bool opened: false
-  property string icon: ""
-  property string message: ""
-  property string iconKey: ""
-  property int value: 0
-  property int maxValue: 100
-  property bool hasProgress: true
-  property int duration: 1200
+  // What the card shows: OsdModel.parse's answer to the last request.
+  property var shown: OsdModel.parse({})
 
-  readonly property bool mediaOsd: iconKey.indexOf("media") === 0 || iconKey.indexOf("player") === 0
+  readonly property bool media: shown.iconKey.indexOf("media") === 0 || shown.iconKey.indexOf("player") === 0
 
-  // The card is built out of measured columns instead of fixed widths, so it
-  // keeps exactly `pad` between border and content on every side whatever
-  // glyph or message it carries. Messages grow with their text up to
-  // `maxMessageWidth` and elide beyond it.
+  // The card is sized by what it holds, with `pad` round it whatever the
+  // glyph and the text. A message grows with its text up to maxMessageWidth,
+  // a media title's further, and is cut short with an ellipsis beyond.
   readonly property int pad: Style.space(16)
   readonly property int gap: Style.space(16)
-  // A glyph next to a message reads airier than it measures: the icon outline
-  // and the letterforms both fall away from their ink extremes, so the space
-  // between them opens up well past the nominal gap. Text takes two thirds of
-  // it; the progress bar's hard edge keeps the full gap.
-  readonly property int messageGap: Math.round(root.gap * 2 / 3)
+  // An icon next to text looks further from it than it measures, both
+  // falling away from their edges; text sits at two thirds of the gap, the
+  // bar, square-ended, at all of it.
+  readonly property int messageGap: Math.round(gap * 2 / 3)
   readonly property int barWidth: Style.space(142)
-  readonly property int maxMessageWidth: root.mediaOsd ? Style.space(325) : Style.space(190)
+  readonly property int maxMessageWidth: media ? Style.space(325) : Style.space(190)
 
-  // Nerd Font glyphs draw well outside their monospace cell, so the icon
-  // column is measured by ink rather than by advance width. Progress OSDs pin
-  // it to the widest glyph the model can return, so the bar doesn't shift when
-  // volume crosses an icon threshold.
+  // Nerd Font glyphs draw outside their cell, so the icon's column is as
+  // wide as its ink. With a level it is as wide as the widest icon, and the
+  // readout as wide as "100%", so nothing moves as the level changes.
   readonly property int iconInkWidth: Math.ceil(iconMetrics.tightBoundingRect.width)
-  readonly property int iconWidth: root.hasProgress
-    ? Math.max(root.iconInkWidth, Math.ceil(widestIconMetrics.tightBoundingRect.width))
-    : root.iconInkWidth
-  // Same idea for the readout: it is as wide as the longest percentage so the
-  // digits don't jitter between 9% and 100%.
+  readonly property int iconWidth: shown.hasProgress
+    ? Math.max(iconInkWidth, Math.ceil(widestIconMetrics.tightBoundingRect.width))
+    : iconInkWidth
   readonly property int valueWidth: Math.ceil(Math.max(valueMetrics.advanceWidth, messageMetrics.advanceWidth))
-  readonly property int messageWidth: Math.min(Math.ceil(messageMetrics.advanceWidth), root.maxMessageWidth)
-  readonly property int contentWidth: root.hasProgress
-    ? root.iconWidth + root.gap + root.barWidth + root.gap + root.valueWidth
-    : (root.message === "" ? root.iconWidth : root.iconWidth + root.messageGap + root.messageWidth)
+  readonly property int messageWidth: Math.min(Math.ceil(messageMetrics.advanceWidth), maxMessageWidth)
+  readonly property int contentWidth: shown.hasProgress
+    ? iconWidth + gap + barWidth + gap + valueWidth
+    : shown.message === "" ? iconWidth : iconWidth + messageGap + messageWidth
 
-  function iconFor(name, percent) {
-    return OsdModel.iconFor(name, percent)
-  }
-
-  function show(iconName, rawMessage, rawValue, rawMax, rawProgressText, rawDuration) {
-    var next = OsdModel.stateForShow(iconName, rawMessage, rawValue, rawMax, rawProgressText, rawDuration)
-    // Update before opening so a fresh OSD starts at its new value; only
-    // subsequent updates while it remains open animate the progress bar.
-    iconKey = next.iconKey
-    maxValue = next.maxValue
-    hasProgress = next.hasProgress
-    value = next.value
-    message = next.message
-    icon = next.icon
-    duration = next.duration
+  // The request as JSON: see OsdModel.parse. One that does not parse is
+  // dropped. A level shown while the card is up slides to its new place.
+  function open(requestJson) {
+    var next
+    try {
+      next = OsdModel.parse(JSON.parse(requestJson || "{}"))
+    } catch (e) {
+      return
+    }
+    shown = next
     opened = true
-    if (duration > 0) hideTimer.restart()
+    if (shown.duration > 0) hideTimer.restart()
     else hideTimer.stop()
   }
 
-  function open(payloadJson) {
-    try {
-      var p = JSON.parse(payloadJson || "{}")
-      show(p.icon || "", p.message || "", p.value === undefined ? "" : String(p.value), p.max === undefined ? "100" : String(p.max), p.progressText || "", p.duration === undefined ? "1200" : String(p.duration))
-    } catch (e) {}
+  function close() {
+    opened = false
   }
-
-  function close() { opened = false }
 
   Timer {
     id: hideTimer
-    interval: root.duration
+    interval: root.shown.duration
     onTriggered: root.opened = false
   }
 
@@ -91,7 +74,7 @@ Item {
     font.family: Style.font.family
     font.bold: true
     font.pixelSize: Style.font.title
-    text: root.message
+    text: root.shown.message
   }
 
   TextMetrics {
@@ -104,7 +87,7 @@ Item {
     id: iconMetrics
     font.family: Style.font.family
     font.pixelSize: Style.font.displayLarge
-    text: root.icon
+    text: root.shown.icon
   }
 
   TextMetrics {
@@ -115,20 +98,30 @@ Item {
 
   IpcHandler {
     target: "osd"
-    function show(payloadJson: string): string {
-      root.open(payloadJson)
+
+    function show(requestJson: string): string {
+      root.open(requestJson)
       return "ok"
     }
-    function close(): string { root.close(); return "ok" }
-    function state(): string { return root.opened ? "open" : "closed" }
-    function ping(): string { return "ok" }
+
+    function close(): string {
+      root.close()
+      return "ok"
+    }
+
+    function state(): string {
+      return root.opened ? "open" : "closed"
+    }
+
+    function ping(): string {
+      return "ok"
+    }
   }
 
-  // The card's own size, centred above the bottom edge: a surface the size
-  // of the screen was a 4K buffer for Qt to redraw on every step of a held
-  // key, and for Hyprland to fade in and out.
+  // A window the card's size, not the screen's: a full-screen one was a
+  // screen-sized buffer to redraw at each step of a held key, and for
+  // Hyprland to fade.
   PanelWindow {
-    id: panel
     visible: root.opened
     anchors.bottom: true
     margins.bottom: Style.space(67)
@@ -139,14 +132,14 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
-    // Visual-only surface: keep the layer-shell input region empty so the OSD
-    // never blocks clicks to the desktop below it.
+    // Shown, never touched: clicks go through to what is under it.
     mask: Region {}
 
     BorderSurface {
       id: card
-      width: card.borderLeft + root.pad + root.contentWidth + root.pad + card.borderRight
-      height: card.borderTop + root.pad + Style.font.displayLarge + root.pad + card.borderBottom
+      padding: root.pad
+      width: contentLeftInset + root.contentWidth + contentRightInset
+      height: contentTopInset + Style.font.displayLarge + contentBottomInset
       color: Util.alpha(Commons.Color.background, 0.97)
       borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
       radius: Style.cornerRadius
@@ -154,34 +147,37 @@ Item {
 
       Row {
         anchors.fill: parent
-        anchors.topMargin: card.borderTop + root.pad
-        anchors.rightMargin: card.borderRight + root.pad
-        anchors.bottomMargin: card.borderBottom + root.pad
-        anchors.leftMargin: card.borderLeft + root.pad
-        spacing: root.hasProgress ? root.gap : root.messageGap
+        anchors.topMargin: card.contentTopInset
+        anchors.rightMargin: card.contentRightInset
+        anchors.bottomMargin: card.contentBottomInset
+        anchors.leftMargin: card.contentLeftInset
+        spacing: root.shown.hasProgress ? root.gap : root.messageGap
+
         Item {
           width: root.iconWidth
           height: parent.height
+
+          // The glyph's ink, not its cell, centred in the column.
           Text {
-            textFormat: Text.PlainText
-            // Sit the glyph's ink flush in the column, centered when the
-            // column is wider than this particular glyph.
             x: Math.round((root.iconWidth - root.iconInkWidth) / 2 - iconMetrics.tightBoundingRect.x)
             anchors.verticalCenter: parent.verticalCenter
-            text: root.icon
+            textFormat: Text.PlainText
+            text: root.shown.icon
             font: iconMetrics.font
             color: Commons.Color.popups.text
           }
         }
+
         Rectangle {
-          visible: root.hasProgress
+          visible: root.shown.hasProgress
           width: root.barWidth
           height: Math.max(Style.space(6), Style.spacing.sm)
           anchors.verticalCenter: parent.verticalCenter
           color: Util.alpha(Commons.Color.popups.text, 0.45)
+
           Rectangle {
+            width: parent.width * (root.shown.hasProgress ? root.shown.value / root.shown.maxValue : 0)
             height: parent.height
-            width: parent.width * (root.hasProgress ? root.value / root.maxValue : 0)
             color: Commons.Color.accent
 
             Behavior on width {
@@ -190,15 +186,16 @@ Item {
             }
           }
         }
+
+        // A readout ends at the card's padding, its slack in the gap before
+        // it; a message starts after the icon.
         Text {
-          textFormat: Text.PlainText
-          visible: root.message !== ""
-          width: root.hasProgress ? root.valueWidth : root.messageWidth
-          // The readout hugs the card edge so a short percentage doesn't leave
-          // a hole in the padding; the slack lands in the gap after the bar.
-          horizontalAlignment: root.hasProgress ? Text.AlignRight : Text.AlignLeft
+          visible: root.shown.message !== ""
+          width: root.shown.hasProgress ? root.valueWidth : root.messageWidth
           anchors.verticalCenter: parent.verticalCenter
-          text: root.message
+          horizontalAlignment: root.shown.hasProgress ? Text.AlignRight : Text.AlignLeft
+          textFormat: Text.PlainText
+          text: root.shown.message
           font: messageMetrics.font
           color: Commons.Color.popups.text
           elide: Text.ElideRight
