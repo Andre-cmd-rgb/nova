@@ -170,7 +170,7 @@ Item {
       service.toasts.insert(0, row)
       // An update that came before the row was there had no row to change,
       // and will not come again.
-      service.update(notification, id, row.timestamp)
+      service.refresh(notification, id, row.timestamp)
     })
   }
 
@@ -204,7 +204,7 @@ Item {
   function follow(notification, row) {
     var changes = ["summaryChanged", "bodyChanged", "appNameChanged", "appIconChanged",
       "imageChanged", "urgencyChanged", "expireTimeoutChanged", "hintsChanged"]
-    var again = function () { service.update(notification, row.originalId, row.timestamp) }
+    var again = function () { service.refresh(notification, row.originalId, row.timestamp) }
     for (var i = 0; i < changes.length; i++) {
       var signal = notification[changes[i]]
       if (signal && typeof signal.connect === "function") signal.connect(again)
@@ -214,7 +214,7 @@ Item {
   // The toast of <id> and <timestamp> drawn again from its notification, and
   // its file written again, to the same name: a restart restores what was
   // shown last, and the history keeps it.
-  function update(notification, id, timestamp) {
+  function refresh(notification, id, timestamp) {
     // The id taken by a newer notification, or the toast gone.
     if (live[id] !== notification) return
     var updated
