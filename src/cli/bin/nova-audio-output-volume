@@ -1,91 +1,82 @@
 #!/bin/bash
 
-# nova:summary=Adjust output volume and show the Nova OSD
+# nova:summary=Turn the output volume up or down, or mute it, and show it in the OSD
 # nova:args=<raise|lower|mute-toggle|+N|-N>
 
 set -euo pipefail
 
-action="${1:-}"
-
+action=${1:-}
 if [[ -z $action ]]; then
   echo "Usage: nova-audio-output-volume <raise|lower|mute-toggle|+N|-N>" >&2
   exit 1
 fi
 
-# Resolve through any DSP sink to the physical one, so the keys always move real
-# loudness and the processing always sees full-scale input. Shared with the audio
-# panel and the output switcher.
+# The sink under any filter in front of the output (nova-audio-output-sink):
+# the volume moves how loud it is, and the filter keeps getting its input at
+# full scale.
 sink=$(nova-audio-output-sink)
 if [[ -z $sink ]]; then
   echo "Could not resolve an audio sink to control." >&2
   exit 1
 fi
 
-# pactl reports the same percentage scale wpctl does (both are the raw volume
-# over PA_VOLUME_NORM), so the OSD reads identically either way. An unreadable
-# volume prints nothing and the callers decide what that means.
-volume_percent() {
-  pactl get-sink-volume "$sink" 2>/dev/null |
-    awk 'NR == 1 {
-      for (i = 1; i <= NF; i++)
-        if ($i ~ /%$/) {sub("%", "", $i); print $i; exit}
-    }' || true
+# The volume as a percentage, the first "N%" pactl gives (its scale is
+# wpctl's, so the OSD reads the same either way); nothing when it cannot say.
+volume() {
+  local words word
+  read -r -a words < <(pactl get-sink-volume "$sink" 2>/dev/null) || true
+  for word in "${words[@]}"; do
+    if [[ $word == *% ]]; then
+      echo "${word/\%/}"
+      return
+    fi
+  done
 }
 
-volume_muted() {
-  [[ $(pactl get-sink-mute "$sink" 2>/dev/null || true) == *yes ]]
-}
-
-case "$action" in
-  raise) action="+5" ;;
-  lower) action="-5" ;;
+case $action in
+  raise) action=+5 ;;
+  lower) action=-5 ;;
 esac
 
-if [[ $action == "mute-toggle" ]]; then
-  state_dir="${XDG_RUNTIME_DIR:-/tmp}/nova"
-  mkdir -p "$state_dir"
-  debounce_file="$state_dir/audio-mute-toggle.last"
-  now=$(date +%s%3N)
+if [[ $action == mute-toggle ]]; then
+  # A key that sends its press twice, within a quarter of a second, toggles once.
+  last_file=${XDG_RUNTIME_DIR:-/tmp}/nova/audio-mute-toggle.last
+  mkdir -p "${last_file%/*}"
+  now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
   last=0
-  if [[ -r $debounce_file ]]; then
-    read -r last <"$debounce_file" || last=0
+  if [[ -r $last_file ]]; then
+    read -r last <"$last_file" || last=0
   fi
-  if ((now - last < 250)); then
-    exit 0
-  fi
-  printf '%s\n' "$now" >"$debounce_file"
-
+  ((now - last >= 250)) || exit 0
+  echo "$now" >"$last_file"
   pactl set-sink-mute "$sink" toggle
 elif [[ $action =~ ^([+-])([0-9]+)$ ]]; then
-  direction="${BASH_REMATCH[1]}"
-  step="${BASH_REMATCH[2]}"
-
-  current=$(volume_percent)
-  if [[ -z $current ]]; then
+  sign=${BASH_REMATCH[1]} step=${BASH_REMATCH[2]}
+  now=$(volume)
+  if [[ -z $now ]]; then
     echo "Could not read volume for $sink." >&2
     exit 1
   fi
-
-  if [[ $direction == "+" ]]; then
-    next=$((current + step))
-    ((next <= 100)) || next=100
+  # Up stops at 100%, down at 0; a volume set above 100% elsewhere comes down
+  # a step at a time. Changing it unmutes.
+  if [[ $sign == + ]]; then
+    target=$((now + step))
+    ((target <= 100)) || target=100
   else
-    next=$((current - step))
-    ((next >= 0)) || next=0
+    target=$((now - step))
+    ((target >= 0)) || target=0
   fi
-
   pactl set-sink-mute "$sink" 0
-  pactl set-sink-volume "$sink" "${next}%"
+  pactl set-sink-volume "$sink" "$target%"
 else
   echo "Unknown volume action: $action" >&2
   exit 1
 fi
 
-percent=$(volume_percent)
-if volume_muted || ((${percent:-0} == 0)); then
-  icon="volume-muted"
+percent=$(volume)
+if [[ $(pactl get-sink-mute "$sink" 2>/dev/null || true) == *yes ]] || ((${percent:-0} == 0)); then
+  icon=volume-muted
 else
-  icon="volume-high"
+  icon=volume-high
 fi
-
 nova-osd -i "$icon" -p "${percent:-0}"

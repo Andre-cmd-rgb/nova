@@ -3,110 +3,74 @@
 # nova:summary=Show or configure the system DNS provider
 # nova:args=[Cloudflare|Google|DHCP|Custom [server...]]
 
+# Without an argument, the provider in use: Cloudflare, Google, DHCP (the
+# network's own), or Custom. With one, it is set, for NetworkManager (a global
+# drop-in, and every Wi-Fi and wired profile's own DNS) and for systemd-resolved
+# (resolved.conf). Custom takes one to four servers, or asks for them. Setting
+# needs root: it runs again as root, through polkit, from the packaged copy.
+
 set -euo pipefail
 
-# Once this runs as root (re-execed by require_root below), every helper it calls
-# by bare name (dirname, install, tee, rm, nmcli, systemctl, awk) is a system
-# tool, never a nova-* command, so pin PATH to trusted system directories and
-# keep root from resolving anything out of a user-writable directory. The
-# unprivileged wrapper phase keeps the caller's PATH so it can still find pkexec.
+# As root, every command this runs by name (install, tee, rm, nmcli,
+# systemctl and the like) is the system's, and none comes from a directory a
+# user can write to. Before that, the caller's PATH finds pkexec.
 if ((EUID == 0)); then
   export PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
 fi
 
-NM_DNS_CONF=/etc/NetworkManager/conf.d/20-nova-dns.conf
+nm_conf=/etc/NetworkManager/conf.d/20-nova-dns.conf
+resolved_conf=/etc/systemd/resolved.conf
+# Root runs the packaged copy, never the one that was called, which a user
+# could have written.
+packaged=/usr/lib/nova/bin/nova-dns
 
-provider_from_arg() {
-  case "${1:-}" in
-  Cloudflare | cloudflare)
-    echo "Cloudflare"
-    ;;
-  Google | google)
-    echo "Google"
-    ;;
-  DHCP | dhcp)
-    echo "DHCP"
-    ;;
-  Custom | custom)
-    echo "Custom"
-    ;;
-  *)
-    return 1
-    ;;
-  esac
-}
-
-# The privileged half always runs from the packaged copy rather than from
-# whichever copy was invoked, so root never executes a file a user can write.
-PACKAGED_PATH=/usr/lib/nova/bin/nova-dns
-
-# Re-run this command as root through polkit, which puts an authentication
-# prompt on screen whether or not there is a terminal.
+# Runs this again as root, through polkit, which asks for the password on
+# screen, with or without a terminal.
 require_root() {
-  if ((EUID == 0)); then
-    return 0
-  fi
-  exec pkexec "$PACKAGED_PATH" "$@"
+  ((EUID != 0)) || return 0
+  exec pkexec "$packaged" "$@"
 }
 
-networkmanager_global_dns() {
-  [[ -f $NM_DNS_CONF ]] || return 0
-
-  awk -F= '
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*\[global-dns-domain-\*\][[:space:]]*$/ { in_default = 1; next }
-    /^[[:space:]]*\[/ { in_default = 0 }
-    in_default && /^[[:space:]]*servers[[:space:]]*=/ {
-      value = $0
-      sub(/^[^=]*=/, "", value)
-      print value
-      exit
-    }
-  ' "$NM_DNS_CONF"
+# The value of the first key=value line that the pattern matches, of a file,
+# passing over comments: of the [global-dns-domain-*] section only, for
+# NetworkManager's.
+setting() { # file key-pattern [section]
+  local line section="" wanted=${3:-}
+  [[ -r $1 ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ ! $line =~ ^[[:space:]]*# ]] || continue
+    if [[ $line =~ ^[[:space:]]*\[ ]]; then
+      section=""
+      if [[ $line =~ ^[[:space:]]*\[global-dns-domain-\*\][[:space:]]*$ ]]; then section=global-dns-domain; fi
+      continue
+    fi
+    if [[ $section == "$wanted" && $line =~ ^[[:space:]]*$2[[:space:]]*= ]]; then
+      printf '%s\n' "${line#*=}"
+      return 0
+    fi
+  done <"$1"
 }
 
-resolved_dns() {
-  awk -F= '
-    /^[[:space:]]*#/ { next }
-    /^[[:space:]]*DNS[[:space:]]*=/ {
-      value=$0
-      sub(/^[^=]*=/, "", value)
-      print value
-      exit
-    }
-  ' /etc/systemd/resolved.conf 2>/dev/null || true
-}
-
-current_dns_provider() {
-  local dns=""
-  local compact=""
-
-  dns=$(networkmanager_global_dns)
-  if [[ -z $(printf '%s' "$dns" | tr -d '[:space:],') ]]; then
-    dns=$(resolved_dns)
-  fi
-
-  compact=$(printf '%s' "$dns" | tr -d '[:space:],')
-
-  if [[ -z $compact ]]; then
-    echo "DHCP"
-  elif [[ $dns == *"cloudflare-dns.com"* || $dns == *"1.1.1.1"* || $dns == *"2606:4700:4700::1111"* ]]; then
-    echo "Cloudflare"
-  elif [[ $dns == *"dns.google"* || $dns == *"8.8.8.8"* || $dns == *"2001:4860:4860::8888"* ]]; then
-    echo "Google"
+# NetworkManager's servers where its drop-in has any, resolved's where not.
+provider() {
+  local servers
+  servers=$(setting "$nm_conf" servers global-dns-domain)
+  [[ -n ${servers//[[:space:],]/} ]] || servers=$(setting "$resolved_conf" DNS)
+  if [[ -z ${servers//[[:space:],]/} ]]; then
+    echo DHCP
+  elif [[ $servers == *cloudflare-dns.com* || $servers == *1.1.1.1* || $servers == *2606:4700:4700::1111* ]]; then
+    echo Cloudflare
+  elif [[ $servers == *dns.google* || $servers == *8.8.8.8* || $servers == *2001:4860:4860::8888* ]]; then
+    echo Google
   else
-    echo "Custom"
+    echo Custom
   fi
 }
 
-normalize_servers() {
-  printf '%s\n' "$*" | tr ',\t\n' ' ' | xargs | tr ' ' ','
-}
-
-# The address in one server as resolved.conf takes it, which is all
+# Of one server as resolved.conf takes it, the address alone, which is all
 # NetworkManager's ipv4.dns and ipv6.dns take: without dns+tls:// or
-# dns+udp://, a #server-name for DNS over TLS, the brackets around an IPv6
-# address followed by a port, or the :port. Fails on a port out of range.
+# dns+udp://, a #server-name for DNS over TLS, the brackets of an IPv6 address
+# before a port, or the :port. 1 for a port out of range.
 server_address() {
   local address=${1%%#*}
   address=${address#dns+tls://}
@@ -155,112 +119,84 @@ valid_server() {
   valid_ipv6 "$address"
 }
 
-split_dns_servers() {
-  local servers="$1"
-  local server clean list=()
+# The addresses of servers given with commas or spaces between them, by their
+# family, in $ipv4_dns and $ipv6_dns, spaces between.
+split_dns_servers() { # servers
+  local server address
+  local -a servers=()
   ipv4_dns=""
   ipv6_dns=""
-
-  IFS=', ' read -ra list <<<"$servers"
-  for server in "${list[@]}"; do
-    clean=$(server_address "$server") || continue
-    [[ -n $clean ]] || continue
-    if [[ $clean == *:* ]]; then
-      ipv6_dns+="${ipv6_dns:+ }$clean"
+  IFS=', ' read -ra servers <<<"$1"
+  for server in "${servers[@]}"; do
+    address=$(server_address "$server") || continue
+    [[ -n $address ]] || continue
+    if [[ $address == *:* ]]; then
+      ipv6_dns+=${ipv6_dns:+ }$address
     else
-      ipv4_dns+="${ipv4_dns:+ }$clean"
+      ipv4_dns+=${ipv4_dns:+ }$address
     fi
   done
 }
 
-write_networkmanager_dns() {
-  local servers="$1"
-
-  install -d -m 0755 "$(dirname "$NM_DNS_CONF")"
-  # $servers is a normalized, single-line DNS server list written as data, not a
-  # path or command; nothing user-writable is resolved or executed from the
-  # root-owned drop-in.
-  cat >"$NM_DNS_CONF" <<EOF
+# NetworkManager's drop-in, its servers comma-separated: a line of data, which
+# nothing reads as a path or a command.
+nm_global() { # servers
+  install -d -m 0755 "${nm_conf%/*}"
+  cat >"$nm_conf" <<EOF
 # Managed by nova-dns. Remove this file or run nova dns DHCP to use DHCP DNS again.
 [global-dns]
 
 [global-dns-domain-*]
-servers=$servers
+servers=$1
 EOF
 }
 
-clear_networkmanager_dns() {
-  rm -f "$NM_DNS_CONF"
-}
-
-networkmanager_dns_connection() {
-  case "$1" in
-    802-11-wireless|802-3-ethernet) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-set_connection_dns() {
+# Every Wi-Fi and wired profile's own DNS: the servers given in place of
+# DHCP's (yes), or DHCP's again (no).
+profiles() { # yes|no ipv4-servers ipv6-servers
   local uuid type
-  local ipv4_dns="${1:-}"
-  local ipv6_dns="${2:-}"
-
   while IFS=: read -r uuid type; do
     [[ -n $uuid ]] || continue
-    networkmanager_dns_connection "$type" || continue
-
-    nmcli connection modify "$uuid" \
-      ipv4.ignore-auto-dns yes \
-      ipv4.dns "$ipv4_dns" \
-      ipv6.ignore-auto-dns yes \
-      ipv6.dns "$ipv6_dns" \
-      >/dev/null
-  done < <(nmcli -t -f UUID,TYPE connection show)
-}
-
-clear_connection_dns() {
-  local uuid type
-
-  while IFS=: read -r uuid type; do
-    [[ -n $uuid ]] || continue
-    networkmanager_dns_connection "$type" || continue
-
-    nmcli connection modify "$uuid" \
-      ipv4.ignore-auto-dns no \
-      ipv4.dns "" \
-      ipv6.ignore-auto-dns no \
-      ipv6.dns "" \
-      >/dev/null
-  done < <(nmcli -t -f UUID,TYPE connection show)
-}
-
-reapply_active_dns_connections() {
-  local device type state
-
-  while IFS=: read -r device type state; do
-    [[ -n $device && $state == connected ]] || continue
-    case "$type" in
-      wifi|ethernet)
-        nmcli device reapply "$device" >/dev/null 2>&1 || true
-        ;;
+    case $type in
+      802-11-wireless | 802-3-ethernet) ;;
+      *) continue ;;
     esac
-  done < <(nmcli -t -f DEVICE,TYPE,STATE device status)
+    nmcli connection modify "$uuid" \
+      ipv4.ignore-auto-dns "$1" \
+      ipv4.dns "$2" \
+      ipv6.ignore-auto-dns "$1" \
+      ipv6.dns "$3" \
+      >/dev/null
+  done < <(nmcli -t -f UUID,TYPE connection show)
 }
 
+set_connection_dns() { # ipv4-servers ipv6-servers
+  profiles yes "${1:-}" "${2:-}"
+}
+
+# resolved.conf, from stdin.
+resolved() {
+  tee "$resolved_conf" >/dev/null
+}
+
+# NetworkManager's settings read again first, and then its connected Wi-Fi and
+# wired devices given their profiles again: reloading both settings and DNS at
+# once (conf,dns-full) hands out the DNS it had, and the shell's choice would
+# show the one before. resolved after it; and NetworkManager's DNS once more,
+# as reloading resolved can leave a link's DNS old or empty.
 reload_dns_stack() {
+  local device type state
   if systemctl is-active --quiet NetworkManager.service 2>/dev/null; then
-    # Load the updated NetworkManager config first, then reapply the active
-    # profiles. A single conf,dns-full reload here pushes the old active DNS
-    # settings, making the shell toggle appear one selection behind.
     nmcli general reload conf >/dev/null 2>&1 || systemctl reload NetworkManager.service 2>/dev/null || true
-    reapply_active_dns_connections
+    while IFS=: read -r device type state; do
+      [[ -n $device && $state == connected ]] || continue
+      case $type in
+        wifi | ethernet) nmcli device reapply "$device" >/dev/null 2>&1 || true ;;
+      esac
+    done < <(nmcli -t -f DEVICE,TYPE,STATE device status)
   fi
-
   systemctl reload systemd-resolved.service 2>/dev/null || systemctl restart systemd-resolved.service
-
   if systemctl is-active --quiet NetworkManager.service 2>/dev/null; then
-    # A resolved reload/restart can leave per-link DNS stale or empty; ask
-    # NetworkManager to publish DNS after resolved has reread its config.
     nmcli general reload dns-full >/dev/null 2>&1 || true
   fi
 }
@@ -269,90 +205,98 @@ usage() {
   echo "Usage: nova-dns [Cloudflare|Google|DHCP|Custom [server...]]" >&2
 }
 
-if (( $# == 0 )); then
-  current_dns_provider
+if (($# == 0)); then
+  provider
   exit 0
 fi
 
-if ! provider=$(provider_from_arg "$1"); then
-  usage
-  exit 1
-fi
+case $1 in
+  Cloudflare | cloudflare) chosen=Cloudflare ;;
+  Google | google) chosen=Google ;;
+  DHCP | dhcp) chosen=DHCP ;;
+  Custom | custom) chosen=Custom ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac
 shift
 
-if [[ $provider == Custom ]]; then
+if [[ $chosen == Custom ]]; then
   if (($# == 0)); then
     echo "Enter your DNS servers (one to four, space-separated):"
-    read -r dns_servers || dns_servers=''
-    dns_servers=$(normalize_servers "$dns_servers")
-    IFS=, read -ra entered <<<"$dns_servers"
+    read -r typed || typed=''
+    # Commas, tabs and spaces between them; quotes as xargs takes them.
+    typed=$(tr ',\t\n' ' ' <<<"$typed" | xargs | tr ' ' ',')
+    IFS=, read -ra servers <<<"$typed"
   else
-    entered=("$@")
+    servers=("$@")
   fi
   # Two of each, IPv4 and IPv6, as the presets have.
-  if ((${#entered[@]} < 1 || ${#entered[@]} > 4)); then
+  if ((${#servers[@]} < 1 || ${#servers[@]} > 4)); then
     echo 'Error: Enter one to four DNS server addresses; nothing was changed.' >&2
     exit 1
   fi
-  # Validate before authentication, and again in the packaged privileged copy.
-  for server in "${entered[@]}"; do
-    valid_server "$server" || {
+  # Before the password is asked for, and again as root, in the packaged copy.
+  for server in "${servers[@]}"; do
+    if ! valid_server "$server"; then
       echo "Error: '$server' is not a DNS server address; nothing was changed." >&2
       exit 1
-    }
+    fi
   done
-  dns_servers=$(IFS=,; echo "${entered[*]}")
-  require_root "$provider" "${entered[@]}"
+  require_root "$chosen" "${servers[@]}"
 else
-  (($# == 0)) || { usage; exit 1; }
-  require_root "$provider"
+  if (($#)); then
+    usage
+    exit 1
+  fi
+  require_root "$chosen"
 fi
 
-case "$provider" in
-Cloudflare)
-  write_networkmanager_dns "1.1.1.1,1.0.0.1,2606:4700:4700::1111,2606:4700:4700::1001"
-  set_connection_dns "1.1.1.1 1.0.0.1" "2606:4700:4700::1111 2606:4700:4700::1001"
-  tee /etc/systemd/resolved.conf >/dev/null <<'EOF'
+# resolved falls back to Quad9. The presets ask for DNS over TLS where the
+# server offers it.
+case $chosen in
+  Cloudflare)
+    nm_global "1.1.1.1,1.0.0.1,2606:4700:4700::1111,2606:4700:4700::1001"
+    set_connection_dns "1.1.1.1 1.0.0.1" "2606:4700:4700::1111 2606:4700:4700::1001"
+    resolved <<'EOF'
 [Resolve]
 DNS=1.1.1.1#cloudflare-dns.com 1.0.0.1#cloudflare-dns.com 2606:4700:4700::1111#cloudflare-dns.com 2606:4700:4700::1001#cloudflare-dns.com
 FallbackDNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 2620:fe::9#dns.quad9.net
 DNSOverTLS=opportunistic
 EOF
-  ;;
-
-Google)
-  write_networkmanager_dns "8.8.8.8,8.8.4.4,2001:4860:4860::8888,2001:4860:4860::8844"
-  set_connection_dns "8.8.8.8 8.8.4.4" "2001:4860:4860::8888 2001:4860:4860::8844"
-  tee /etc/systemd/resolved.conf >/dev/null <<'EOF'
+    ;;
+  Google)
+    nm_global "8.8.8.8,8.8.4.4,2001:4860:4860::8888,2001:4860:4860::8844"
+    set_connection_dns "8.8.8.8 8.8.4.4" "2001:4860:4860::8888 2001:4860:4860::8844"
+    resolved <<'EOF'
 [Resolve]
 DNS=8.8.8.8#dns.google 8.8.4.4#dns.google 2001:4860:4860::8888#dns.google 2001:4860:4860::8844#dns.google
 FallbackDNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 2620:fe::9#dns.quad9.net
 DNSOverTLS=opportunistic
 EOF
-  ;;
-
-DHCP)
-  clear_networkmanager_dns
-  clear_connection_dns
-  tee /etc/systemd/resolved.conf >/dev/null <<'EOF'
+    ;;
+  DHCP)
+    rm -f "$nm_conf"
+    profiles no "" ""
+    resolved <<'EOF'
 [Resolve]
 DNSOverTLS=no
 EOF
-  ;;
-
-Custom)
-  split_dns_servers "$dns_servers"
-  write_networkmanager_dns "$dns_servers"
-  set_connection_dns "$ipv4_dns" "$ipv6_dns"
-  # $dns_servers is a normalized, single-line DNS server list; the //,/ turns its
-  # comma separators into the spaces resolved.conf wants. It is written as data,
-  # not a path or command.
-  tee /etc/systemd/resolved.conf >/dev/null <<EOF
+    ;;
+  Custom)
+    # The servers as data, a line of them, commas between for NetworkManager
+    # and spaces for resolved.
+    joined=$(IFS=,; echo "${servers[*]}")
+    split_dns_servers "$joined"
+    nm_global "$joined"
+    set_connection_dns "$ipv4_dns" "$ipv6_dns"
+    resolved <<EOF
 [Resolve]
-DNS=${dns_servers//,/ }
+DNS=${joined//,/ }
 FallbackDNS=9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 2620:fe::9#dns.quad9.net
 EOF
-  ;;
+    ;;
 esac
 
 reload_dns_stack

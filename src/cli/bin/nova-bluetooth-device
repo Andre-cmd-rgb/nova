@@ -5,39 +5,41 @@
 
 set -euo pipefail
 
-usage() {
-  echo "Usage: nova-bluetooth-device [pair|connect|disconnect|forget] <address>" >&2
-  exit 1
-}
-
 action=${1:-}
 address=${2:-}
+if [[ ! $action =~ ^(pair|connect|disconnect|forget)$ || ! $address =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+  echo "Usage: nova-bluetooth-device [pair|connect|disconnect|forget] <address>" >&2
+  exit 1
+fi
 
-[[ $action == "pair" || $action == "connect" || $action == "disconnect" || $action == "forget" ]] || usage
-[[ $address =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]] || usage
-
+# Through nova-bluetooth-power, not bluetoothctl: Bluetooth is off by an rfkill
+# block, and BlueZ cannot power an adapter up while it is there.
 power_on() {
-  if [[ $(timeout 2s bluetoothctl show 2>/dev/null || true) == *"Powered: yes"* ]]; then
-    return 0
-  fi
-  # Not bluetoothctl directly: Bluetooth is turned off by an rfkill soft block,
-  # and BlueZ refuses to power an adapter up while one is set.
+  [[ $(timeout 2s bluetoothctl show 2>/dev/null || true) != *"Powered: yes"* ]] || return 0
   nova-bluetooth-power on || true
 }
 
-trust_device() {
+trust() {
   bluetoothctl trust "$address" >/dev/null 2>&1 || true
 }
 
-# The agent that says yes to the pairing runs only while this one does: BlueZ
-# keeps the adapter pairable while any agent is registered, and this agent
-# would say yes to any device that asked, not only the one picked here.
-pairing_agent() { # start|stop
+# The agent that agrees to the pairing runs only while this does: BlueZ keeps
+# the adapter pairable while any agent is there, and it would agree to any
+# device that asked, not only the one picked here.
+agent() { # start|stop
   systemctl --user "$1" bt-agent.service >/dev/null 2>&1 || true
 }
 
-# A connect can return before the link is up (InProgress, when the device
-# reached out first), so this waits a few seconds for it.
+until_pairable() {
+  local _
+  for _ in {1..10}; do
+    [[ $(timeout 2s bluetoothctl show 2>/dev/null || true) != *"Pairable: yes"* ]] || return 0
+    sleep 0.2
+  done
+}
+
+# A connect can come back before the link is up (InProgress, where the device
+# asked first), so it is given a few seconds.
 connected() {
   local _
   for _ in {1..10}; do
@@ -47,48 +49,49 @@ connected() {
   return 1
 }
 
-device_name() {
-  local name
-  name=$(timeout 2s bluetoothctl info "$address" 2>/dev/null | sed -n 's/^[[:space:]]*Alias: //p' | head -n 1 || true)
-  printf '%s\n' "${name:-$address}"
+# The device's name (its alias), or its address.
+name() {
+  local line
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*Alias:\ (.*)$ ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]:-$address}"
+      return
+    fi
+  done < <(timeout 2s bluetoothctl info "$address" 2>/dev/null || true)
+  printf '%s\n' "$address"
 }
 
-# Started from the Bluetooth panel, where nobody reads stderr: without this,
-# a row that fails just stops saying Connecting….
+# The Bluetooth panel runs this, and nobody reads its errors: without a
+# notification, a row that fails just stops saying Connecting….
 failed() { # headline description
   nova-notification-send -u normal -g 󰂯 "$1" "$2" || true
   exit 1
 }
 
-wait_pairable() {
-  local _
-  for _ in {1..10}; do
-    [[ $(timeout 2s bluetoothctl show 2>/dev/null || true) != *"Pairable: yes"* ]] || return 0
-    sleep 0.2
-  done
+connect() { # what to say when it does not
+  timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1 || true
+  connected || failed "Could not connect to $(name)" "$1"
 }
 
-case "$action" in
+case $action in
   pair)
     power_on
-    trap 'pairing_agent stop' EXIT
-    pairing_agent start
-    wait_pairable
-    # The agent answers without a screen or keyboard, so a device that wants
-    # a PIN or a code typed is refused.
+    trap 'agent stop' EXIT
+    agent start
+    until_pairable
+    # The agent answers with no screen or keyboard, so a device that asks for
+    # a PIN or a code to be typed is turned down.
     if ! out=$(timeout 20s bluetoothctl pair "$address" 2>&1) && [[ $out != *AlreadyExists* ]]; then
-      failed "Could not pair with $(device_name)" \
+      failed "Could not pair with $(name)" \
         "Put it in pairing mode and try again. One that asks for a PIN or a code cannot pair yet."
     fi
-    trust_device
-    timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1 || true
-    connected || failed "Could not connect to $(device_name)" "It is paired: try again once it is on and near."
+    trust
+    connect "It is paired: try again once it is on and near."
     ;;
   connect)
     power_on
-    trust_device
-    timeout 20s bluetoothctl connect "$address" >/dev/null 2>&1 || true
-    connected || failed "Could not connect to $(device_name)" "Is it on and near? A device paired elsewhere since may need forgetting and pairing again."
+    trust
+    connect "Is it on and near? A device paired elsewhere since may need forgetting and pairing again."
     ;;
   disconnect)
     timeout 10s bluetoothctl disconnect "$address" >/dev/null 2>&1 || true

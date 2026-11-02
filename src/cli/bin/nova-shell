@@ -5,20 +5,22 @@
 
 set -euo pipefail
 
-QUIET=0
-if [[ ${1:-} == "-q" ]]; then
-  QUIET=1
+# -q: for callers that only nudge the shell. Whatever goes wrong, nothing is
+# printed and the exit is 0.
+quiet=false
+if [[ ${1:-} == -q ]]; then
+  quiet=true
   shift
 fi
 
-fail() {
-  if ((QUIET)); then exit 0; fi
+die() {
+  $quiet && exit 0
   echo "$1" >&2
   exit 1
 }
 
-if (($# == 0)) || [[ $1 == "-h" || $1 == "--help" ]]; then
-  cat <<USAGE
+if (($# == 0)) || [[ $1 == -h || $1 == --help ]]; then
+  cat <<'USAGE'
 Usage: nova-shell [-q] <target> <method> [args...]
 
 Forwards an IPC call to the running Nova shell. The shell is expected
@@ -37,50 +39,48 @@ USAGE
   exit 0
 fi
 
-(($# >= 2)) || fail "Usage: nova-shell <target> <method> [args...]"
-NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
-[[ -f $NOVA_PATH/shell/shell.qml ]] || fail "nova-shell config not found: $NOVA_PATH/shell/shell.qml"
+(($# >= 2)) || die "Usage: nova-shell <target> <method> [args...]"
+config=${NOVA_PATH:-/usr/share/nova}/shell
+[[ -f $config/shell.qml ]] || die "nova-shell config not found: $config/shell.qml"
 
-# qs matches instances by display, and a caller from outside the session (an
-# ssh or TTY nova-restart-shell, and the migrations it runs for) has none,
-# so recover it from the compositor socket.
+# qs finds the shell by its Wayland display. Run from outside the session
+# (over ssh, from a TTY: nova-restart-shell, and the migrations it runs), there
+# is none: take the compositor's newest socket.
 if [[ -z ${WAYLAND_DISPLAY:-} ]]; then
+  display=""
   for socket in "${XDG_RUNTIME_DIR:-/run/user/$UID}"/wayland-[0-9]*; do
-    [[ -S $socket ]] || continue
-    if [[ -z ${newest:-} || $socket -nt $newest ]]; then newest=$socket; fi
+    if [[ -S $socket && (-z $display || $socket -nt $display) ]]; then display=$socket; fi
   done
-  if [[ -n ${newest:-} ]]; then export WAYLAND_DISPLAY=${newest##*/}; fi
+  if [[ -n $display ]]; then export WAYLAND_DISPLAY=${display##*/}; fi
 fi
 
-if [[ $1 == "shell" && ($2 == "summon" || $2 == "toggle") ]] && (($# == 3)); then
-  set -- "$1" "$2" "$3" "{}"
+# A menu summoned or toggled without a payload gets an empty one.
+if (($# == 3)) && [[ $1 == shell && ($2 == summon || $2 == toggle) ]]; then
+  set -- "$@" "{}"
 fi
 
-# The -- keeps function names that shadow qs subcommands (e.g. show) as
-# positionals. qs reports connection failures with a nonzero exit, but IPC-level
-# failures (unknown target/function, bad arguments) go to stdout with exit 0.
-ipc_timeout=${NOVA_SHELL_IPC_TIMEOUT:-2s}
-ipc_status=0
-output=$(timeout --kill-after=1s "$ipc_timeout" qs ipc -n -p "$NOVA_PATH/shell" call -- "$@" 2>/dev/null) || ipc_status=$?
+# qs fails only when it reaches no shell; a shell that refuses the call (no
+# such target or function, the wrong arguments) says so on stdout, with a 0.
+# The -- keeps a function named like a qs option (show) an argument.
+status=0
+reply=$(timeout --kill-after=1s "${NOVA_SHELL_IPC_TIMEOUT:-2s}" qs ipc -n -p "$config" call -- "$@" 2>/dev/null) || status=$?
+case $status in
+  0) ;;
+  124 | 137) die "nova-shell is not responding" ;;
+  *) die "nova-shell is not running" ;;
+esac
 
-if ((ipc_status == 124 || ipc_status == 137)); then
-  fail "nova-shell is not responding"
-elif ((ipc_status != 0)); then
-  fail "nova-shell is not running"
-fi
-
-case $output in
+case $reply in
   "Target not found." | "Function not found." | "Too few arguments provided"* | "Too many arguments provided"*)
-    fail "$output"
+    die "$reply"
     ;;
-  # A starting shell answers on stdout and exits 0, so a ping reads it as up
-  # and the next call's answer as a result. It is as unreachable as none.
+  # A shell still starting answers this, with a 0: a ping would count it up,
+  # and the next call take its answer for a result.
   "Not ready to accept queries yet"*)
-    fail "nova-shell is not ready"
+    die "nova-shell is not ready"
     ;;
 esac
 
-if ((!QUIET)) && [[ -n $output ]]; then
-  echo "$output"
+if ! $quiet && [[ -n $reply ]]; then
+  echo "$reply"
 fi
-exit 0

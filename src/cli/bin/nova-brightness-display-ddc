@@ -1,74 +1,80 @@
 #!/bin/bash
 
-# nova:summary=Show or adjust DDC/CI display brightness for a Hyprland monitor
+# nova:summary=Show or change the brightness of an external display, over DDC/CI
 # nova:args=<monitor> [+N%|N%-|N%]
 # nova:hidden=true
 
 set -euo pipefail
 
-monitor="${1:-}"
-step="${2:-}"
-
+monitor=${1:-}
+step=${2:-}
 [[ -n $monitor ]] || exit 1
 
-cache_dir="${XDG_RUNTIME_DIR:-/tmp}/nova/brightness-ddc"
-cache_name="${monitor//[^[:alnum:]_.-]/_}"
-cache_file="$cache_dir/$cache_name.bus"
-unavailable_cache_seconds=60
-range_cache_seconds=10
+# ddcutil is slow, so what it finds is kept, in a file for each display:
+#   <bus>                    the I2C bus the display is on
+#   <bus> <max> <time>       that, and its brightness range, read at <time>
+#   unavailable <time>       no DDC/CI found at <time>; not asked again for a minute
+# A range read in the last ten seconds is trusted for a brightness set as a
+# percentage. Writing it is never worth failing over.
+cache=${XDG_RUNTIME_DIR:-/tmp}/nova/brightness-ddc/${monitor//[^[:alnum:]_.-]/_}.bus
 # NOVA_HARDWARE and NOVA_DRM_PATH are for the tests.
 hardware=${NOVA_HARDWARE:-/usr/share/nova/hardware}
 drm=${NOVA_DRM_PATH:-/sys/class/drm}
 
-# The screen's maker and model as ddcutil names them, HCH:HETECH: the EDID's
-# three-letter manufacturer code and its display-name descriptor.
-edid_id() {
-  local edid bytes code maker='' name='' at i
-  edid=$(compgen -G "$drm/card*-$monitor/edid" | head -n 1) || return 1
-  read -ra bytes < <(od -An -v -tu1 -N128 "$edid" | tr '\n' ' ')
+remember() { # line
+  mkdir -p "${cache%/*}" 2>/dev/null || true
+  echo "$1" >"$cache" 2>/dev/null || true
+}
+
+# The display's maker and model as ddcutil names them, such as HCH:HETECH:
+# the three letters of the EDID's manufacturer code, and its name descriptor.
+model() {
+  local edid="" file bytes code maker="" name="" at i char
+  for file in "$drm"/card*-"$monitor"/edid; do
+    [[ -e $file ]] && edid=$file
+    break
+  done
+  [[ -n $edid ]] || return 1
+  read -r -d '' -a bytes < <(od -An -v -tu1 -N128 "$edid") || true
   ((${#bytes[@]} == 128)) || return 1
-  # Three letters of five bits each, A being 1, in a big-endian word.
+  # Three letters of five bits each, 1 for A, in the big-endian word at 8.
   code=$((bytes[8] << 8 | bytes[9]))
   for i in 10 5 0; do
-    maker+=$(printf "\\x$(printf %x $(((code >> i & 31) + 64)))")
+    printf -v char '\\x%x' $(((code >> i & 31) + 64))
+    printf -v char '%b' "$char"
+    maker+=$char
   done
-  # One of the four 18-byte descriptors may be the name (tag 0xfc): up to 13
-  # characters, ended by a newline and padded with spaces.
+  # The name is the descriptor (of four, 18 bytes each) tagged 0xfc: up to 13
+  # characters after its 5-byte header, a newline ending it and spaces after.
   for at in 54 72 90 108; do
     ((bytes[at] == 0 && bytes[at + 1] == 0 && bytes[at + 2] == 0 && bytes[at + 3] == 252)) || continue
     for ((i = at + 5; i < at + 18 && bytes[i] != 10; i++)); do
-      name+=$(printf "\\x$(printf %x "${bytes[i]}")")
+      printf -v char '\\x%x' "${bytes[i]}"
+      printf -v char '%b' "$char"
+      name+=$char
     done
     break
   done
   name=${name%"${name##*[![:space:]]}"}
   [[ -n $name ]] || return 1
-  printf '%s:%s\n' "$maker" "$name"
+  echo "$maker:$name"
 }
 
-# Some screens run their DDC brightness backwards, 0 being their brightest;
-# Nova's numbers are flipped for those, so the keys and slider go the right way.
-reversed=0
-if id=$(edid_id) && grep -qxF -- "$id" "$hardware/ddc-reversed" 2>/dev/null; then
-  reversed=1
+# Some displays run their brightness backwards, 0 the brightest; the numbers
+# are flipped for them, so that the keys and the slider go the right way.
+reversed=false
+if model=$(model) && grep -qxF -- "$model" "$hardware/ddc-reversed" 2>/dev/null; then
+  reversed=true
 fi
 
-# The cache only saves ddcutil round trips, which are slow; failing to write it
-# must never fail the brightness change, hence the || true on every write.
-cache_unavailable() {
-  mkdir -p "$cache_dir" 2>/dev/null || true
-  printf 'unavailable %s\n' "$(date +%s)" >"$cache_file" 2>/dev/null || true
-}
-
-# No match is an empty answer, not an error, so the caller can cache it. The
-# awk reads to the end so ddcutil is never cut off mid-write by a SIGPIPE.
+# The bus ddcutil finds the display on; none is an answer to keep, not an
+# error. awk reads to the end, so that ddcutil is never cut off by SIGPIPE.
 detect_bus() {
   { ddcutil --skip-ddc-checks detect --brief 2>/dev/null || true; } | awk -v monitor="$monitor" '
     /I2C bus:/ {
       bus = $NF
       sub(/^.*\/i2c-/, "", bus)
     }
-
     /DRM connector:/ {
       connector = $NF
       sub(/^card[0-9]+-/, "", connector)
@@ -77,126 +83,95 @@ detect_bus() {
         found = 1
       }
       bus = ""
-    }
-  '
+    }'
 }
 
-find_bus() {
-  local bus=""
-  local cached_value=""
-  local now=0
-
-  if [[ -r $cache_file ]]; then
-    read -r bus cached_value <"$cache_file" || true
+bus() {
+  local bus="" since="" now
+  if [[ -r $cache ]]; then
+    read -r bus since <"$cache" || true
   fi
-
-  if [[ $bus == "unavailable" ]]; then
-    now=$(date +%s)
-    if [[ $cached_value =~ ^[0-9]+$ ]] && ((now - cached_value < unavailable_cache_seconds)); then
+  if [[ $bus == unavailable ]]; then
+    printf -v now '%(%s)T' -1
+    if [[ $since =~ ^[0-9]+$ ]] && ((now - since < 60)); then
       return 1
     fi
     bus=""
-    rm -f "$cache_file"
+    rm -f "$cache"
   fi
-
   if [[ -z $bus ]]; then
     bus=$(detect_bus)
     if [[ ! $bus =~ ^[0-9]+$ ]]; then
-      cache_unavailable
+      printf -v now '%(%s)T' -1
+      remember "unavailable $now"
       return 1
     fi
-    mkdir -p "$cache_dir" 2>/dev/null || true
-    printf '%s\n' "$bus" >"$cache_file" 2>/dev/null || true
+    remember "$bus"
   fi
-
-  printf '%s\n' "$bus"
+  echo "$bus"
 }
 
-read_vcp() {
-  local bus="$1"
-
-  { ddcutil --bus "$bus" --skip-ddc-checks getvcp 10 --brief 2>/dev/null || true; } | awk '
-    !found && $1 == "VCP" && toupper($2) == "10" && $3 == "C" && $4 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/ && $5 > 0 {
+# "<bus> <brightness> <max>", the brightness flipped for a display that runs
+# backwards; the range is kept.
+brightness() {
+  local bus vcp value max now
+  bus=$(bus) || return 1
+  vcp=$({ ddcutil --bus "$bus" --skip-ddc-checks getvcp 10 --brief 2>/dev/null || true; } | awk '
+    !read && $1 == "VCP" && toupper($2) == "10" && $3 == "C" && $4 ~ /^[0-9]+$/ && $5 ~ /^[0-9]+$/ && $5 > 0 {
       print $4, $5
-      found = 1
+      read = 1
     }
-
-    END { exit !found }
-  '
-}
-
-read_brightness() {
-  local bus=""
-  local now=0
-  local values=""
-
-  bus=$(find_bus) || return 1
-  values=$(read_vcp "$bus") || {
-    rm -f "$cache_file"
+    END { exit !read }') || {
+    rm -f "$cache"
     return 1
   }
-  if ((reversed)); then values="$((${values##* } - ${values% *})) ${values##* }"; fi
-
-  now=$(date +%s)
-  mkdir -p "$cache_dir" 2>/dev/null || true
-  printf '%s %s %s\n' "$bus" "${values##* }" "$now" >"$cache_file" 2>/dev/null || true
-  printf '%s %s\n' "$bus" "$values"
+  read -r value max <<<"$vcp"
+  if $reversed; then value=$((max - value)); fi
+  printf -v now '%(%s)T' -1
+  remember "$bus $max $now"
+  echo "$bus $value $max"
 }
 
-# Percentage of the monitor's range, rounded to nearest.
-to_percent() {
+# Of the range, rounded to the nearest percent.
+percent() { # value max
   echo $((($1 * 100 + $2 / 2) / $2))
 }
 
-bus=""
-current=""
-maximum=""
-percent=""
-range_cached_at=""
-
 if [[ -z $step ]]; then
-  read -r bus current maximum < <(read_brightness) || exit 1
-  [[ -n $bus && -n $current && -n $maximum ]] || exit 1
-  to_percent "$current" "$maximum"
+  read -r bus now max < <(brightness) || exit 1
+  [[ -n $bus && -n $now && -n $max ]] || exit 1
+  percent "$now" "$max"
   exit 0
 fi
 
+bus="" max=""
 if [[ $step =~ ^([0-9]+)%$ ]]; then
-  target="${BASH_REMATCH[1]}"
-  range_cache_fresh=0
-  if [[ -r $cache_file ]]; then
-    read -r bus maximum range_cached_at <"$cache_file" || true
-  fi
-
-  if [[ $bus =~ ^[0-9]+$ && $maximum =~ ^[0-9]+$ && $range_cached_at =~ ^[0-9]+$ ]] && ((maximum > 0)); then
-    now=$(date +%s)
-    if ((range_cached_at <= now && now - range_cached_at < range_cache_seconds)); then
-      range_cache_fresh=1
+  target=${BASH_REMATCH[1]}
+  # Set as a percentage, the range is all it needs, and a fresh one is kept.
+  fresh=false
+  if [[ -r $cache ]]; then
+    read -r bus max since <"$cache" || true
+    if [[ $bus =~ ^[0-9]+$ && $max =~ ^[0-9]+$ && $since =~ ^[0-9]+$ ]] && ((max > 0)); then
+      printf -v now '%(%s)T' -1
+      if ((since <= now && now - since < 10)); then fresh=true; fi
     fi
   fi
-
-  if ((!range_cache_fresh)); then
-    read -r bus current maximum < <(read_brightness) || exit 1
+  if ! $fresh; then
+    read -r bus now max < <(brightness) || exit 1
   fi
-elif [[ $step =~ ^\+([0-9]+)%$ ]]; then
-  amount="${BASH_REMATCH[1]}"
-  read -r bus current maximum < <(read_brightness) || exit 1
-  [[ -n $bus && -n $current && -n $maximum ]] || exit 1
-  percent=$(to_percent "$current" "$maximum")
-  if ((amount == 5 && percent < 5)); then
-    target=$((percent + 1))
+elif [[ $step =~ ^\+([0-9]+)%$ || $step =~ ^([0-9]+)%-$ ]]; then
+  # +N% or N%-: from the brightness it has. The keys' 5% steps go by 1% at 5%
+  # and under, as the backlight's do.
+  amount=${BASH_REMATCH[1]}
+  up=false
+  if [[ $step == +* ]]; then up=true; fi
+  read -r bus now max < <(brightness) || exit 1
+  [[ -n $bus && -n $now && -n $max ]] || exit 1
+  from=$(percent "$now" "$max")
+  if $up; then
+    if ((amount == 5 && from < 5)); then target=$((from + 1)); else target=$((from + amount)); fi
   else
-    target=$((percent + amount))
-  fi
-elif [[ $step =~ ^([0-9]+)%-$ ]]; then
-  amount="${BASH_REMATCH[1]}"
-  read -r bus current maximum < <(read_brightness) || exit 1
-  [[ -n $bus && -n $current && -n $maximum ]] || exit 1
-  percent=$(to_percent "$current" "$maximum")
-  if ((amount == 5 && percent <= 5)); then
-    target=$((percent - 1))
-  else
-    target=$((percent - amount))
+    if ((amount == 5 && from <= 5)); then target=$((from - 1)); else target=$((from - amount)); fi
   fi
 else
   exit 1
@@ -204,12 +179,11 @@ fi
 
 ((target >= 1)) || target=1
 ((target <= 100)) || target=100
-raw_target=$(((target * maximum + 50) / 100))
-if ((reversed)); then raw_target=$((maximum - raw_target)); fi
+raw=$(((target * max + 50) / 100))
+if $reversed; then raw=$((max - raw)); fi
 
-if ! ddcutil --bus "$bus" --skip-ddc-checks --noverify setvcp 10 "$raw_target" >/dev/null 2>&1; then
-  rm -f "$cache_file"
+if ! ddcutil --bus "$bus" --skip-ddc-checks --noverify setvcp 10 "$raw" >/dev/null 2>&1; then
+  rm -f "$cache"
   exit 1
 fi
-
-printf '%s\n' "$target"
+echo "$target"

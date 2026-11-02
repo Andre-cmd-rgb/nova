@@ -1,12 +1,14 @@
 #!/bin/bash
 
-# nova:summary=Log out after closing application windows
+# nova:summary=Close every window, then end the session
 
 set -euo pipefail
 
-# Detached, so closing this caller's window cannot cancel the logout.
+# The session ends two seconds from now in a process of its own, whatever
+# becomes of this one: it may be running in one of the windows closed below.
 nohup bash -c "sleep 2 && uwsm stop" >/dev/null 2>&1 &
 
 nova-osd -i logout -m "Logging out" -d 5000 || true
+# Asked to close now, apps such as Chrome get a second to save their state.
 nova-hyprland-window-close-all || true
-sleep 1 # Let apps like Chrome shut down cleanly
+sleep 1

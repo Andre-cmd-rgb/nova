@@ -1,54 +1,61 @@
 #!/bin/bash
 
-# nova:summary=Show or set the location used for weather reports
+# nova:summary=Show or set the place the weather is for
 #
-# State lives in ~/.local/state/nova/settings/weather.json as
-# {"name": ..., "latitude": ..., "longitude": ...}. A missing file means the
-# location is auto-detected from the IP address. Coordinates make the weather
-# panel exact; a hand-written {"name": "Malibu"} alone works too.
+#   nova-weather-location                       the place: the one set, else
+#                                               the town wttr.in places this
+#                                               computer's address in
+#   nova-weather-location --set <name> [lat,lon]  set it
+#   nova-weather-location --clear               back to the address's town
 #
-#   (no args)           the current location: the stored name, or the
-#                       IP-detected city when nothing is set
-#   --set <name> [lat,lon]  store a location
-#   --clear             return to IP auto-detect
+# The place set is $XDG_STATE_HOME/nova/settings/weather.json:
+# {"name": ..., "latitude": ..., "longitude": ...}. The coordinates make the
+# weather panel's forecast exact, and may be left out: {"name": "Malibu"}
+# written by hand works too.
 
 set -euo pipefail
 
-LOC_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/nova/settings/weather.json"
-COORDS_PATTERN='^(-?[0-9]+(\.[0-9]+)?),(-?[0-9]+(\.[0-9]+)?)$'
+file=${XDG_STATE_HOME:-$HOME/.local/state}/nova/settings/weather.json
+coordinates='^(-?[0-9]+(\.[0-9]+)?),(-?[0-9]+(\.[0-9]+)?)$'
 
-case "${1:-}" in
-"")
-  name=""
-  if [[ -f $LOC_FILE ]]; then
-    name=$(jq -r '.name // "" | if type == "string" then . else "" end' "$LOC_FILE" 2>/dev/null || true)
-  fi
-  if [[ -z $name ]]; then
-    name=$(curl -fsS --max-time 4 "https://wttr.in/?format=%l" 2>/dev/null || true)
-    # A city comes back as "City, Region"; an unnamed place as "lat,lon",
-    # which stays whole so it still works as a query.
-    [[ $name =~ $COORDS_PATTERN ]] || name=${name%%,*}
-  fi
-  [[ -n $name ]] || exit 1
-  echo "$name"
-  ;;
---set)
-  [[ -n ${2:-} ]] || { echo "Usage: nova-weather-location --set <name> [lat,lon]" >&2; exit 1; }
-  if [[ -n ${3:-} ]]; then
-    [[ ${3} =~ $COORDS_PATTERN ]] || { echo "Invalid coordinates: $3 (expected lat,lon)" >&2; exit 1; }
-    location=$(jq -n --arg name "$2" --argjson latitude "${3%,*}" --argjson longitude "${3#*,}" '{$name, $latitude, $longitude}')
-  else
-    location=$(jq -n --arg name "$2" '{$name}')
-  fi
-  mkdir -p "$(dirname "$LOC_FILE")"
-  echo "$location" >"$LOC_FILE.tmp"
-  mv "$LOC_FILE.tmp" "$LOC_FILE"
-  ;;
---clear)
-  rm -f "$LOC_FILE"
-  ;;
-*)
-  echo "Usage: nova-weather-location [--set <name> [lat,lon]|--clear]" >&2
-  exit 1
-  ;;
+case ${1:-} in
+  "")
+    place=""
+    if [[ -f $file ]]; then
+      place=$(jq -r '.name // "" | if type == "string" then . else "" end' "$file" 2>/dev/null || true)
+    fi
+    if [[ -z $place ]]; then
+      # wttr.in names a town "Town, Region", and a place without a name by
+      # its coordinates, "lat,lon": that stays whole, a query as it is.
+      place=$(curl -fsS --max-time 4 'https://wttr.in/?format=%l' 2>/dev/null || true)
+      [[ $place =~ $coordinates ]] || place=${place%%,*}
+    fi
+    [[ -n $place ]] || exit 1
+    echo "$place"
+    ;;
+  --set)
+    if [[ -z ${2:-} ]]; then
+      echo "Usage: nova-weather-location --set <name> [lat,lon]" >&2
+      exit 1
+    fi
+    if [[ -z ${3:-} ]]; then
+      place=$(jq -n --arg name "$2" '{$name}')
+    elif [[ $3 =~ $coordinates ]]; then
+      place=$(jq -n --arg name "$2" --argjson latitude "${3%,*}" --argjson longitude "${3#*,}" '{$name, $latitude, $longitude}')
+    else
+      echo "Invalid coordinates: $3 (expected lat,lon)" >&2
+      exit 1
+    fi
+    # Whole or not at all: the weather panel reads it while this writes.
+    mkdir -p "${file%/*}"
+    echo "$place" >"$file.tmp"
+    mv "$file.tmp" "$file"
+    ;;
+  --clear)
+    rm -f "$file"
+    ;;
+  *)
+    echo "Usage: nova-weather-location [--set <name> [lat,lon]|--clear]" >&2
+    exit 1
+    ;;
 esac

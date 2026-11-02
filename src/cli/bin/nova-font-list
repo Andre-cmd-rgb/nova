@@ -1,9 +1,10 @@
 #!/bin/bash
 
-# nova:summary=List available monospace fonts
+# nova:summary=List the monospace font families installed
 
 set -euo pipefail
 
-# awk rather than grep -v: an empty list is a valid answer, and grep would
-# report it as a failure under pipefail.
-fc-list :spacing=100 -f "%{family[0]}\n" | awk 'tolower($0) !~ /emoji|signwriting/' | sort -u
+# One family a line, sorted, each once. Emoji and SignWriting fonts call
+# themselves monospaced but are no fonts to write in. The filter is awk's, not
+# grep -v's: no font left is an answer too, which grep would fail on.
+fc-list :spacing=100 -f '%{family[0]}\n' | awk 'tolower($0) !~ /emoji|signwriting/' | sort -u

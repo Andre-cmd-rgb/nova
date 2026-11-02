@@ -3,125 +3,100 @@
 # nova:summary=Choose a legible transparent bar text color
 # nova:hidden=true
 
+# For a transparent bar: of its text color and its background color, the one
+# that stands out more against the wallpaper where the bar is. The wallpaper
+# there is taken as its average color, and each color's contrast with it
+# measured as WCAG does. Anything it cannot tell answers the text color.
+#
+#   nova-bar-text-color <position> <bar size> <text color> <background color>
+#                       [--background <wallpaper>] [--screen <WxH>]
+#
+# Colors are #rrggbb. The wallpaper is the theme's current one, and the screen
+# Hyprland's first monitor, unless given.
+
 set -euo pipefail
 
 position=${1:-top}
-bar_size=${2:-}
-text_color=${3:-}
-background_color=${4:-}
-background_path=""
-screen_size=""
-
+size=${2:-}
+text=${3:-}
+background=${4:-}
+wallpaper=""
+screen=""
 shift 4 2>/dev/null || true
-while (($# > 0)); do
-  case "$1" in
-  --background)
-    background_path=${2:-}
-    shift 2
-    ;;
-  --screen)
-    screen_size=${2:-}
-    shift 2
-    ;;
-  *)
-    shift
-    ;;
+while (($#)); do
+  case $1 in
+    --background)
+      wallpaper=${2:-}
+      shift 2
+      ;;
+    --screen)
+      screen=${2:-}
+      shift 2
+      ;;
+    *) shift ;;
   esac
 done
 
-valid_hex() {
-  [[ $1 =~ ^#[0-9A-Fa-f]{6}$ ]]
-}
-
-fallback() {
-  printf '%s\n' "$text_color"
+answer_text() {
+  printf '%s\n' "$text"
   exit 0
 }
 
-contrast() {
-  local color="$1"
-  local sample="$2"
+[[ $text =~ ^#[0-9A-Fa-f]{6}$ ]] || answer_text
+[[ $background =~ ^#[0-9A-Fa-f]{6}$ ]] || answer_text
+[[ $position =~ ^(top|bottom|left|right)$ ]] || answer_text
+[[ $size =~ ^[0-9]+$ ]] || answer_text
+command -v magick >/dev/null 2>&1 || answer_text
 
-  awk -v fg="$color" -v bg="$sample" '
-    function channel(hex, start) {
-      return strtonum("0x" substr(hex, start, 2)) / 255
-    }
-    function linear(c) {
-      return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ^ 2.4
-    }
-    function luminance(hex, r, g, b) {
-      r = linear(channel(hex, 2))
-      g = linear(channel(hex, 4))
-      b = linear(channel(hex, 6))
-      return 0.2126 * r + 0.7152 * g + 0.0722 * b
-    }
-    BEGIN {
-      l1 = luminance(fg)
-      l2 = luminance(bg)
-      if (l1 < l2) {
-        t = l1
-        l1 = l2
-        l2 = t
-      }
-      printf "%.6f\n", (l1 + 0.05) / (l2 + 0.05)
-    }
-  '
-}
-
-valid_hex "$text_color" || fallback
-valid_hex "$background_color" || fallback
-[[ $position =~ ^(top|bottom|left|right)$ ]] || fallback
-[[ $bar_size =~ ^[0-9]+$ ]] || fallback
-nova-cmd-present magick || fallback
-
-if [[ -z $background_path ]]; then
-  background_path=$(readlink -f "${XDG_STATE_HOME:-$HOME/.local/state}/nova/current/background" 2>/dev/null || true)
+if [[ -z $wallpaper ]]; then
+  wallpaper=$(readlink -f "${XDG_STATE_HOME:-$HOME/.local/state}/nova/current/background" 2>/dev/null || true)
 fi
-[[ -f $background_path ]] || fallback
+[[ -f $wallpaper ]] || answer_text
 
-if [[ -z $screen_size ]]; then
-  if nova-cmd-present hyprctl && nova-cmd-present jq; then
-    screen_size=$(hyprctl monitors -j 2>/dev/null | jq -r '.[0] | "\(.width)x\(.height)"' 2>/dev/null || true)
-  fi
+if [[ -z $screen ]] && command -v hyprctl >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  screen=$(hyprctl monitors -j 2>/dev/null | jq -r '.[0] | "\(.width)x\(.height)"' 2>/dev/null || true)
 fi
-[[ $screen_size =~ ^([0-9]+)x([0-9]+)$ ]] || fallback
+[[ $screen =~ ^([0-9]+)x([0-9]+)$ ]] || answer_text
+width=${BASH_REMATCH[1]}
+height=${BASH_REMATCH[2]}
+((width > 0 && height > 0 && size > 0)) || answer_text
 
-screen_width=${BASH_REMATCH[1]}
-screen_height=${BASH_REMATCH[2]}
-((screen_width > 0 && screen_height > 0 && bar_size > 0)) || fallback
-
-case "$position" in
-top)
-  crop="${screen_width}x${bar_size}+0+0"
-  ;;
-bottom)
-  crop_y=$((screen_height - bar_size))
-  ((crop_y >= 0)) || fallback
-  crop="${screen_width}x${bar_size}+0+${crop_y}"
-  ;;
-left)
-  crop="${bar_size}x${screen_height}+0+0"
-  ;;
-right)
-  crop_x=$((screen_width - bar_size))
-  ((crop_x >= 0)) || fallback
-  crop="${bar_size}x${screen_height}+${crop_x}+0"
-  ;;
+# The strip of the screen the bar covers.
+case $position in
+  top) strip=${width}x$size+0+0 ;;
+  bottom)
+    ((height >= size)) || answer_text
+    strip=${width}x$size+0+$((height - size))
+    ;;
+  left) strip=${size}x$height+0+0 ;;
+  right)
+    ((width >= size)) || answer_text
+    strip=${size}x$height+$((width - size))+0
+    ;;
 esac
 
-pixel=$(magick "$background_path" -auto-orient \
-  -resize "${screen_width}x${screen_height}^" \
-  -gravity center -extent "${screen_width}x${screen_height}" \
-  -gravity NorthWest -crop "$crop" +repage \
+# The wallpaper as it fills the screen (scaled to cover it, centred, cut to
+# it), and of that the strip, averaged to one pixel.
+pixel=$(magick "$wallpaper" -auto-orient \
+  -resize "${width}x${height}^" \
+  -gravity center -extent "${width}x${height}" \
+  -gravity NorthWest -crop "$strip" +repage \
   -resize '1x1!' -format '%[fx:int(255*r)],%[fx:int(255*g)],%[fx:int(255*b)]' info:- 2>/dev/null || true)
-[[ $pixel =~ ^([0-9]+),([0-9]+),([0-9]+)$ ]] || fallback
+[[ $pixel =~ ^([0-9]+),([0-9]+),([0-9]+)$ ]] || answer_text
+printf -v behind '#%02x%02x%02x' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
 
-sample=$(printf '#%02x%02x%02x' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
-text_contrast=$(contrast "$text_color" "$sample")
-background_contrast=$(contrast "$background_color" "$sample")
-
-if awk -v text="$text_contrast" -v background="$background_contrast" 'BEGIN { exit !(background > text) }'; then
-  printf '%s\n' "$background_color"
-else
-  printf '%s\n' "$text_color"
-fi
+# WCAG's contrast ratio, to six places: the background color only where it
+# stands out more than the text color.
+awk -v text="$text" -v background="$background" -v behind="$behind" '
+  function channel(hex, at) { return strtonum("0x" substr(hex, at, 2)) / 255 }
+  function linear(c) { return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ^ 2.4 }
+  function luminance(hex) {
+    return 0.2126 * linear(channel(hex, 2)) + 0.7152 * linear(channel(hex, 4)) + 0.0722 * linear(channel(hex, 6))
+  }
+  function contrast(a, b,    la, lb) {
+    la = luminance(a)
+    lb = luminance(b)
+    if (la < lb) return sprintf("%.6f", (lb + 0.05) / (la + 0.05)) + 0
+    return sprintf("%.6f", (la + 0.05) / (lb + 0.05)) + 0
+  }
+  BEGIN { print (contrast(background, behind) > contrast(text, behind) ? background : text) }'

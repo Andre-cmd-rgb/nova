@@ -1,24 +1,26 @@
 #!/bin/bash
 
-# nova:summary=Print the weather: place, temperature and wind
+# nova:summary=Print the weather in a line: the place, its temperature and its wind
 
 set -euo pipefail
 
-unavailable() {
+# Such as "Lisbon  ·  Temp 21°C  ·  Wind ↗12km/h", from wttr.in, for the
+# place nova-weather-location gives; one given by its coordinates alone is
+# "Here". Without a place or an answer, "Weather unavailable" and a failure.
+place=$(nova-weather-location 2>/dev/null || true)
+report=""
+if [[ -n $place ]]; then
+  query=$(jq -rn --arg place "$place" '$place | @uri')
+  report=$(curl -fsS --max-time 4 "https://wttr.in/$query?format=%t|%w" 2>/dev/null || true)
+  report=${report//$'\n'/}
+fi
+if [[ -z $report ]]; then
   echo "Weather unavailable"
   exit 1
-}
+fi
 
-place=$(nova-weather-location 2>/dev/null || true)
-[[ -n $place ]] || unavailable
-
-query=$(jq -rn --arg place "$place" '$place | @uri')
-weather=$(curl -fsS --max-time 4 "https://wttr.in/${query}?format=%t|%w" 2>/dev/null || true)
-weather=${weather//$'\n'/}
-[[ -n $weather ]] || unavailable
-
-IFS='|' read -r temperature wind <<<"$weather"
-if [[ $place =~ ^-?[0-9.]+,-?[0-9.]+$ ]]; then place="Here"; else place=${place^}; fi
-temperature=${temperature#+}
-
-echo "$place  ·  Temp $temperature  ·  Wind $wind"
+IFS='|' read -r temperature wind <<<"$report"
+if [[ $place =~ ^-?[0-9.]+,-?[0-9.]+$ ]]; then
+  place=Here
+fi
+echo "${place^}  ·  Temp ${temperature#+}  ·  Wind $wind"

@@ -44,104 +44,81 @@ Examples:
 USAGE
 }
 
-# ------------------------------------------------------------------ validation
+# The layout lives in the shell, which holds the settings in memory: widgets
+# are put, moved and set by asking it, not by changing the file behind it.
+# What the bar as a whole looks like is the settings', and changed there.
 
-validate_section() {
+section() { # value
   [[ $1 =~ ^(left|center|right)$ ]] || fail "section must be left, center, or right"
 }
-
-validate_index() {
+index() { # value
   [[ $1 =~ ^[0-9]+$ ]] || fail "index must be a non-negative integer"
 }
 
-# --------------------------------------------------------------------- placement
-
-PLACEMENT_SECTION=""
-PLACEMENT_INDEX=""
-PLACEMENT_BEFORE=""
-PLACEMENT_AFTER=""
-PLACEMENT_FROM_SECTION=""
-PLACEMENT_FROM_INDEX=""
-
-parse_placement() {
-  while (($# > 0)); do
-    case "$1" in
-      --section)
-        PLACEMENT_SECTION="${2:-}"
-        validate_section "$PLACEMENT_SECTION"
-        shift 2
-        ;;
-      --index)
-        PLACEMENT_INDEX="${2:-}"
-        validate_index "$PLACEMENT_INDEX"
-        shift 2
-        ;;
+# Where a widget goes, and where from, from the placement options.
+to_section="" to_index="" before="" after="" from_section="" from_index=""
+placement() { # option...
+  while (($#)); do
+    case $1 in
+      --section) section "${2:-}" && to_section=$2 ;;
+      --index) index "${2:-}" && to_index=$2 ;;
       --before)
-        PLACEMENT_BEFORE="${2:-}"
-        [[ -n $PLACEMENT_BEFORE ]] || fail "--before requires a widget id"
-        shift 2
+        before=${2:-}
+        [[ -n $before ]] || fail "--before requires a widget id"
         ;;
       --after)
-        PLACEMENT_AFTER="${2:-}"
-        [[ -n $PLACEMENT_AFTER ]] || fail "--after requires a widget id"
-        shift 2
+        after=${2:-}
+        [[ -n $after ]] || fail "--after requires a widget id"
         ;;
-      --from-section)
-        PLACEMENT_FROM_SECTION="${2:-}"
-        validate_section "$PLACEMENT_FROM_SECTION"
-        shift 2
-        ;;
-      --from-index)
-        PLACEMENT_FROM_INDEX="${2:-}"
-        validate_index "$PLACEMENT_FROM_INDEX"
-        shift 2
-        ;;
+      --from-section) section "${2:-}" && from_section=$2 ;;
+      --from-index) index "${2:-}" && from_index=$2 ;;
       -h | --help)
         usage
         exit 0
         ;;
-      *)
-        fail "unknown option: $1"
-        ;;
+      *) fail "unknown option: $1" ;;
     esac
+    shift 2
   done
-
-  [[ -z $PLACEMENT_BEFORE || -z $PLACEMENT_AFTER ]] || fail "use only one of --before or --after"
+  [[ -z $before || -z $after ]] || fail "use only one of --before or --after"
 }
 
+# The placement as the shell takes it: only what was given.
+# shellcheck disable=SC2016 # jq's own variables
 placement_json() {
-  jq -cn \
-    --arg section "$PLACEMENT_SECTION" \
-    --arg index "$PLACEMENT_INDEX" \
-    --arg before "$PLACEMENT_BEFORE" \
-    --arg after "$PLACEMENT_AFTER" \
-    --arg fromSection "$PLACEMENT_FROM_SECTION" \
-    --arg fromIndex "$PLACEMENT_FROM_INDEX" '
-      {}
-      + (if $section == "" then {} else {section: $section} end)
-      + (if $index == "" then {} else {index: ($index | tonumber)} end)
-      + (if $before == "" then {} else {before: $before} end)
-      + (if $after == "" then {} else {after: $after} end)
-      + (if $fromSection == "" then {} else {fromSection: $fromSection} end)
-      + (if $fromIndex == "" then {} else {fromIndex: ($fromIndex | tonumber)} end)
-    '
+  jq -cn --arg section "$to_section" --arg index "$to_index" --arg before "$before" --arg after "$after" \
+    --arg fromSection "$from_section" --arg fromIndex "$from_index" '
+    $ARGS.named
+    | .index |= (select(. != "") | tonumber)
+    | .fromIndex |= (select(. != "") | tonumber)
+    | with_entries(select(.value != ""))'
 }
 
-# -------------------------------------------------------------------- commands
+# A section given before the options, as in "move nova.media left", in
+# $positional; the options after it in $rest.
+positional="" rest=()
+section_first() { # option...
+  positional=""
+  if (($#)) && [[ $1 != --* ]]; then
+    section "$1"
+    positional=$1
+    shift
+  fi
+  rest=("$@")
+}
 
-cmd_defaults() {
+defaults() {
   (($# == 0)) || fail "defaults does not take arguments"
-
-  # One file mutation, so it cannot race the shell's in-memory config.
+  # In one change to the file, which the shell's settings in memory cannot
+  # come between.
   commit "$NORMALIZE | .bar = \$defaults[0].bar" --slurpfile defaults "$DEFAULTS_FILE"
   echo "Restored the default Nova bar"
 }
 
-# With a value, sets the bar position; without, prints the current one. The menu
-# reads the printed form to tick the active row.
-cmd_position() {
+# Without a value, what it is: the menu reads it to tick its row.
+position() {
   (($# <= 1)) || fail "position takes a single value"
-  local position="${1:-}"
+  local position=${1:-}
   if [[ -z $position ]]; then
     jq -r '.bar.position // "top"' "$(source_file)"
     return 0
@@ -151,190 +128,127 @@ cmd_position() {
   echo "Bar position set to $position"
 }
 
-# With a value, sets transparency; without, prints on or off for the menu.
-cmd_transparent() {
+# Without a value, on or off, for the menu.
+transparent() {
   (($# <= 1)) || fail "transparent takes a single value"
-  local transparent="${1:-}"
-  if [[ -z $transparent ]]; then
-    jq -r 'if .bar.transparent == true then "on" else "off" end' "$(source_file)"
-    return 0
-  fi
-  [[ $transparent =~ ^(true|false|toggle)$ ]] || fail "transparent must be true, false, or toggle"
-  if [[ $transparent == "toggle" ]]; then
-    commit "$NORMALIZE | .bar.transparent = (.bar.transparent != true)"
-    echo "Bar transparency toggled"
-  else
-    commit "$NORMALIZE | .bar.transparent = \$transparent" --argjson transparent "$transparent"
-    echo "Bar transparency set to $transparent"
-  fi
+  local transparent=${1:-}
+  case $transparent in
+    "")
+      jq -r 'if .bar.transparent == true then "on" else "off" end' "$(source_file)"
+      ;;
+    toggle)
+      commit "$NORMALIZE | .bar.transparent = (.bar.transparent != true)"
+      echo "Bar transparency toggled"
+      ;;
+    true | false)
+      commit "$NORMALIZE | .bar.transparent = \$transparent" --argjson transparent "$transparent"
+      echo "Bar transparency set to $transparent"
+      ;;
+    *) fail "transparent must be true, false, or toggle" ;;
+  esac
 }
 
-# Asks the shell to place a widget, waiting out one still coming up. Returns 0
-# with the reply in PUT_RESULT, or 1 when there was no shell to ask.
-PUT_RESULT=""
-SHELL_ANSWERED=0
-ask_to_put() {
-  local id="$1" placement="$2" attempt absent=0
+# Asks the shell to put a widget on the bar, in $answer, waiting for one that
+# is still coming up. 1 when there is no shell to ask.
+answer=""
+asked=false
+ask_to_put() { # id placement
+  local id=$1 attempt missing=0
   for ((attempt = 0; attempt < ${NOVA_SHELL_READY_ATTEMPTS:-50}; attempt++)); do
-    if PUT_RESULT=$(nova-shell shell putBarWidget "$id" "$placement" 2>&1); then
-      SHELL_ANSWERED=1
-      [[ $PUT_RESULT == "not ready" ]] || return 0
-    elif [[ $PUT_RESULT == *"not ready"* ]]; then
-      SHELL_ANSWERED=1
-    elif [[ $PUT_RESULT == *"is not running"* ]]; then
-      # Answered once and now gone: it stopped mid-request.
-      if ((SHELL_ANSWERED)); then
-        fail "nova-shell did not become ready; $id was not put on the bar"
-      fi
-      # A shell being spawned has no socket yet, and nothing says a launch is
-      # under way, so give one a few seconds to turn up.
-      if ((++absent >= ${NOVA_SHELL_ABSENT_ATTEMPTS:-30})); then
+    if answer=$(nova-shell shell putBarWidget "$id" "$2" 2>&1); then
+      asked=true
+      [[ $answer == "not ready" ]] || return 0
+    elif [[ $answer == *"not ready"* ]]; then
+      asked=true
+    elif [[ $answer == *"is not running"* ]]; then
+      # It answered, and has gone since: it stopped while it was asked.
+      if $asked; then fail "nova-shell did not become ready; $id was not put on the bar"; fi
+      # A shell just started has no socket yet, and nothing says that one is
+      # starting: it is given a few seconds to come.
+      if ((++missing >= ${NOVA_SHELL_ABSENT_ATTEMPTS:-30})); then
         echo "nova-shell is not running; $id was not put on the bar" >&2
         return 1
       fi
     else
-      fail "could not put $id on the bar: $PUT_RESULT"
+      fail "could not put $id on the bar: $answer"
     fi
     sleep 0.1
   done
   fail "nova-shell did not become ready; $id was not put on the bar"
 }
 
-# Placement lives in the shell, which owns the config it has in memory. Putting
-# a widget therefore asks the shell rather than editing the file behind it.
-cmd_put() {
-  local id="${1:-}"
+put() {
+  local id=${1:-}
   [[ -n $id ]] || fail "put requires a widget id"
   shift
-
-  local positional_section=""
-  if (($# > 0)) && [[ $1 != --* ]]; then
-    positional_section="$1"
-    validate_section "$positional_section"
-    shift
-  fi
-
-  parse_placement "$@"
-  [[ -z $positional_section || -z $PLACEMENT_SECTION ]] ||
-    fail "specify a section positionally or with --section, not both"
-  [[ -z $positional_section ]] || PLACEMENT_SECTION="$positional_section"
-  [[ -z $PLACEMENT_FROM_SECTION && -z $PLACEMENT_FROM_INDEX ]] ||
-    fail "put does not accept --from-section or --from-index"
+  section_first "$@"
+  placement "${rest[@]}"
+  [[ -z $positional || -z $to_section ]] || fail "specify a section positionally or with --section, not both"
+  [[ -z $positional ]] || to_section=$positional
+  [[ -z $from_section && -z $from_index ]] || fail "put does not accept --from-section or --from-index"
 
   ask_to_put "$id" "$(placement_json)" || return 0
-
-  [[ $PUT_RESULT != "unknown" ]] || fail "$id is not a known widget"
-  [[ $PUT_RESULT == "ok" ]] || fail "$PUT_RESULT"
-  # Says nothing about whether it had to be placed: a widget already on the bar
-  # is left where it is, and both outcomes are the same answer to the caller.
+  [[ $answer != unknown ]] || fail "$id is not a known widget"
+  [[ $answer == ok ]] || fail "$answer"
+  # The same answer whether it was put there now or was there already.
   echo "$id is on the bar"
 }
 
-cmd_remove() {
-  local id="${1:-}"
+remove() {
+  local id=${1:-} answer
   [[ -n $id ]] || fail "remove requires a widget id"
   (($# == 1)) || fail "remove takes a widget id and nothing else"
-
-  local result
-  result=$(nova-shell shell setPluginEnabled "$id" false)
-  [[ $result == "ok" ]] || fail "could not remove $id: $result"
+  answer=$(nova-shell shell setPluginEnabled "$id" false)
+  [[ $answer == ok ]] || fail "could not remove $id: $answer"
   echo "$id is off the bar"
 }
 
-cmd_move() {
-  local id="${1:-}"
+move() {
+  local id=${1:-} answer
   [[ -n $id ]] || fail "move requires a widget id"
   shift
-
-  local positional_section=""
-  if (($# > 0)) && [[ $1 != --* ]]; then
-    positional_section="$1"
-    validate_section "$positional_section"
-    shift
+  section_first "$@"
+  placement "${rest[@]}"
+  if [[ -n $positional ]]; then
+    [[ -z $to_section ]] || fail "specify a section positionally or with --section, not both"
+    [[ -z $to_index ]] || fail "specify a section positionally or use --index, not both"
+    [[ -z $before ]] || fail "specify a section positionally or use --before, not both"
+    [[ -z $after ]] || fail "specify a section positionally or use --after, not both"
+    to_section=$positional
   fi
-
-  parse_placement "$@"
-  [[ -z $positional_section || -z $PLACEMENT_SECTION ]] ||
-    fail "specify a section positionally or with --section, not both"
-  [[ -z $positional_section || -z $PLACEMENT_INDEX ]] ||
-    fail "specify a section positionally or use --index, not both"
-  [[ -z $positional_section || -z $PLACEMENT_BEFORE ]] ||
-    fail "specify a section positionally or use --before, not both"
-  [[ -z $positional_section || -z $PLACEMENT_AFTER ]] ||
-    fail "specify a section positionally or use --after, not both"
-  [[ -z $positional_section ]] || PLACEMENT_SECTION="$positional_section"
-
-  local result
-  result=$(nova-shell shell moveBarWidget "$id" "$(placement_json)")
-  [[ $result == "ok" ]] || fail "$result"
+  answer=$(nova-shell shell moveBarWidget "$id" "$(placement_json)")
+  [[ $answer == ok ]] || fail "$answer"
   echo "Moved $id"
 }
 
-cmd_set() {
-  local id="${1:-}"
-  local key="${2:-}"
-  local value="${3:-}"
+set_option() {
+  local id=${1:-} key=${2:-} value=${3:-} json=false value_json answer
   [[ -n $id ]] || fail "set requires a widget id"
   [[ -n $key ]] || fail "set requires a setting key"
   (($# >= 3)) || fail "set requires a value"
   shift 3
-
-  local value_is_json="false"
-  if (($# > 0)) && [[ $1 == "--json" ]]; then
-    value_is_json="true"
+  if [[ ${1:-} == --json ]]; then
+    json=true
     shift
   fi
-  parse_placement "$@"
-  [[ -z $PLACEMENT_BEFORE && -z $PLACEMENT_AFTER ]] ||
-    fail "set does not accept --before or --after"
-
-  local value_json
-  if [[ $value_is_json == "true" ]]; then
-    value_json=$(jq -cn --argjson value "$value" '$value') ||
-      fail "invalid JSON value: $value"
+  placement "$@"
+  [[ -z $before && -z $after ]] || fail "set does not accept --before or --after"
+  # shellcheck disable=SC2016 # jq's own variables
+  if $json; then
+    value_json=$(jq -cn --argjson value "$value" '$value') || fail "invalid JSON value: $value"
   else
     value_json=$(jq -cn --arg value "$value" '$value')
   fi
-
-  local result
-  result=$(nova-shell shell setBarWidget "$id" "$key" "$value_json" "$(placement_json)")
-  [[ $result == "ok" ]] || fail "$result"
+  answer=$(nova-shell shell setBarWidget "$id" "$key" "$value_json" "$(placement_json)")
+  [[ $answer == ok ]] || fail "$answer"
   echo "Set $key on $id"
 }
 
-# --------------------------------------------------------------------- dispatch
-
-command="${1:-}"
-if (($# > 0)); then
-  shift
-fi
-
-case "$command" in
-  defaults)
-    cmd_defaults "$@"
-    ;;
-  position)
-    cmd_position "$@"
-    ;;
-  transparent)
-    cmd_transparent "$@"
-    ;;
-  put)
-    cmd_put "$@"
-    ;;
-  remove)
-    cmd_remove "$@"
-    ;;
-  move)
-    cmd_move "$@"
-    ;;
-  set)
-    cmd_set "$@"
-    ;;
-  -h | --help | help | "")
-    usage
-    ;;
-  *)
-    fail "unknown command: $command"
-    ;;
+command=${1:-}
+if (($#)); then shift; fi
+case $command in
+  defaults | position | transparent | put | remove | move) "$command" "$@" ;;
+  set) set_option "$@" ;;
+  -h | --help | help | "") usage ;;
+  *) fail "unknown command: $command" ;;
 esac

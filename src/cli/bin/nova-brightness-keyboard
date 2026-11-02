@@ -1,19 +1,17 @@
 #!/bin/bash
 
-# nova:summary=Adjust keyboard backlight brightness using available steps
+# nova:summary=Step the keyboard backlight up, down or round, or turn it off and back on
 # nova:args=[--no-osd] <up|down|cycle|off|restore|device>
 
 set -euo pipefail
 
-no_osd=0
-if [[ ${1:-} == "--no-osd" ]]; then
-  no_osd=1
+osd=true
+if [[ ${1:-} == --no-osd ]]; then
+  osd=false
   shift
 fi
-
-direction="${1:-up}"
-
-case "$direction" in
+direction=${1:-up}
+case $direction in
   up | down | cycle | off | restore | device) ;;
   *)
     echo "Usage: nova-brightness-keyboard [--no-osd] <up|down|cycle|off|restore|device>" >&2
@@ -21,53 +19,51 @@ case "$direction" in
     ;;
 esac
 
-# Find keyboard backlight device (look for *kbd_backlight* pattern in leds class).
+# The keyboard's light: the first LED named so, such as tpacpi::kbd_backlight.
+# NOVA_LEDS_PATH is for the tests.
 device=""
-for candidate in /sys/class/leds/*kbd_backlight*; do
-  if [[ -e $candidate ]]; then
-    device="$(basename "$candidate")"
+for led in "${NOVA_LEDS_PATH:-/sys/class/leds}"/*kbd_backlight*; do
+  if [[ -e $led ]]; then
+    device=${led##*/}
     break
   fi
 done
-
 if [[ -z $device ]]; then
   echo "No keyboard backlight device found" >&2
   exit 1
 fi
 
-# The device's name, for the shell, which takes the keyboard backlight keys
-# itself (its nova.keys service).
-if [[ $direction == "device" ]]; then
-  printf '%s\n' "$device"
-  exit 0
-elif [[ $direction == "off" ]]; then
-  brightnessctl -sd "$device" set 0 >/dev/null
-  exit 0
-elif [[ $direction == "restore" ]]; then
-  brightnessctl -rd "$device" >/dev/null
-  exit 0
+case $direction in
+  # Its name, for the shell, whose nova.keys service takes the keyboard
+  # light's keys itself.
+  device)
+    printf '%s\n' "$device"
+    exit 0
+    ;;
+  # Off while the screen is locked, and back as it was: brightnessctl keeps
+  # the level it had.
+  off)
+    brightnessctl -sd "$device" set 0 >/dev/null
+    exit 0
+    ;;
+  restore)
+    brightnessctl -rd "$device" >/dev/null
+    exit 0
+    ;;
+esac
+
+# A step is a tenth of the range: a light with 512 levels needs big steps, and
+# one with 3 takes them one at a time. Round goes up, and from the top to off.
+max=$(brightnessctl -d "$device" max)
+now=$(brightnessctl -d "$device" get)
+step=$((max / 10 > 1 ? max / 10 : 1))
+case $direction in
+  up) level=$((now + step > max ? max : now + step)) ;;
+  down) level=$((now - step < 0 ? 0 : now - step)) ;;
+  cycle) level=$((now + step > max ? 0 : now + step)) ;;
+esac
+
+brightnessctl -d "$device" set "$level" >/dev/null
+if $osd; then
+  nova-osd -i keyboard -p "$((level * 100 / max))"
 fi
-
-# Get current and max brightness to determine step size.
-max_brightness=$(brightnessctl -d "$device" max)
-current_brightness=$(brightnessctl -d "$device" get)
-
-# Calculate step as 10% of max brightness. Keyboards with many levels (e.g. 512)
-# need larger steps; keyboards with few levels (e.g. 3) fall back to step=1.
-step=$((max_brightness / 10))
-((step >= 1)) || step=1
-
-if [[ $direction == "cycle" ]]; then
-  new_brightness=$((current_brightness + step))
-  ((new_brightness <= max_brightness)) || new_brightness=0
-elif [[ $direction == "up" ]]; then
-  new_brightness=$((current_brightness + step))
-  ((new_brightness <= max_brightness)) || new_brightness=$max_brightness
-else
-  new_brightness=$((current_brightness - step))
-  ((new_brightness >= 0)) || new_brightness=0
-fi
-
-# Set the new brightness.
-brightnessctl -d "$device" set "$new_brightness" >/dev/null
-((no_osd)) || nova-osd -i keyboard -p "$((new_brightness * 100 / max_brightness))"

@@ -1,56 +1,34 @@
 #!/bin/bash
 
-# nova:summary=Print PulseAudio sink availability for the shell
+# nova:summary=Print each audio output and whether it can play, for the shell
 # nova:hidden=true
 
 set -euo pipefail
 
-# A speaker tuning is a virtual sink in front of the real speakers. Both exist
-# in the graph, but selecting the physical one would only bypass the tuning, so
-# report it unavailable and keep it out of the output list.
-fronted="$(nova-audio-tuning fronted-sink 2>/dev/null || true)"
+# A line an output: its sink's name, a tab, then 1 when it can play and 0 when
+# it cannot. One that has ports can play through one not marked "not
+# available" (headphones plugged in); one without ports always can.
+#
+# The speakers behind a speaker tuning cannot: the tuning is a sink in front of
+# them, and choosing them would only leave it out.
+fronted=$(nova-audio-tuning fronted-sink 2>/dev/null || true)
 
 pactl list sinks 2>/dev/null | awk -v fronted="$fronted" '
-  function emit_sink() {
-    if (name == "") return
-    if (fronted != "" && name == fronted) {
-      print name "\t0"
-      return
-    }
-    print name "\t" ((port_count == 0 || available) ? 1 : 0)
+  function done_with_sink() {
+    if (sink != "") print sink "\t" (sink != fronted && (ports == 0 || usable) ? 1 : 0)
   }
-
   /^Sink #/ {
-    emit_sink()
-    name = ""
-    in_ports = 0
-    port_count = 0
-    available = 0
+    done_with_sink()
+    sink = ""
+    listing = ports = usable = 0
     next
   }
-
-  /^[[:space:]]*Name:/ {
-    name = $2
+  /^[[:space:]]*Name:/ { sink = $2; next }
+  /^[[:space:]]*Ports:$/ { listing = 1; next }
+  listing && /^\tActive Port:/ { listing = 0; next }
+  listing && /^\t\t/ {
+    ports++
+    if (!/not available/) usable = 1
     next
   }
-
-  /^[[:space:]]*Ports:$/ {
-    in_ports = 1
-    next
-  }
-
-  in_ports && /^\tActive Port:/ {
-    in_ports = 0
-    next
-  }
-
-  in_ports && /^\t\t/ {
-    port_count++
-    if ($0 !~ /not available/) available = 1
-    next
-  }
-
-  END {
-    emit_sink()
-  }
-'
+  END { done_with_sink() }'

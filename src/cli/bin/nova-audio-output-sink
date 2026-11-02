@@ -1,102 +1,105 @@
 #!/bin/bash
 
-# nova:summary=Print the sink whose volume and mute a given output really uses
+# nova:summary=Print the sink whose volume and mute an output really goes by
 # nova:args=[sink-name]
 
 set -euo pipefail
 
-# A DSP sink -- a speaker tuning filter-chain, or EasyEffects -- can be the
-# selected output without being where loudness lives. Changing its volume alters
-# the level going *into* the processing: the display moves while the speakers do
-# not, and on a chain with a compressor or limiter the tone changes too. Resolve
-# through it to the physical sink it feeds.
+# An output can be a filter in front of the real one: a speaker tuning, or
+# EasyEffects. Its own volume is the level going into the filter, so turning
+# that changes the sound (a limiter's, a compressor's) more than how loud it
+# is. The loudness is the volume of the sink the filter plays into, and this
+# finds that one.
 #
-# With no argument this resolves the current default output, so when headphones or
-# HDMI are selected it returns those, not the speakers a tuning happens to front.
-# Callers that need to describe some *other* output -- an output switcher naming
-# the next one in the rotation -- pass that sink explicitly.
+# The output is the default one unless named: headphones or a display chosen
+# answer themselves, never the speakers a tuning happens to be in front of.
+# The output switcher names the output it is about to switch to.
 #
-# Every lookup below is best effort: an idle or missing audio server must still
-# end in the fallback at the bottom, so failures of the probes are tolerated.
+# Every lookup may fail, an audio server not up yet among them: what cannot be
+# followed answers the output itself.
 
 sink=${1:-}
 if [[ -z $sink ]]; then
   sink=$(pactl get-default-sink 2>/dev/null || true)
 fi
 
+# A sound card's own sink is where the loudness is.
 if [[ -z $sink || $sink == alsa_output.* ]]; then
   printf '%s\n' "$sink"
   exit 0
 fi
 
-# A DSP sink feeds its physical output through a stream of its own; follow that
-# stream down to the sink underneath.
-downstream=$(pactl list sink-inputs 2>/dev/null |
-  awk -v virt="$sink" '
-    BEGIN {
-      output = virt
-      sub(/^effect_input\./, "effect_output.", output)
-    }
-    /^Sink Input #/ {target = ""}
-    /^[[:space:]]*Sink:/ {target = $2}
-    /node\.name = / {
-      name = $0
-      sub(/.*node\.name = "/, "", name)
-      sub(/"$/, "", name)
-      if (target != "" && (name == output || (output == virt && index(name, virt) == 1))) {selected = target; exit}
-      if (target != "" && fallback == "" && index(name, virt) == 1) fallback = target
-    }
-    /application\.name = "EasyEffects"/ {
-      if (virt == "easyeffects_sink" && target != "") {selected = target; exit}
-    }
-    END {
-      if (selected != "") print selected
-      else if (fallback != "") print fallback
-    }' || true)
+# The name of the sink with this id, from the first line that has it.
+sink_with_id() {
+  local id name
+  while read -r id name _; do
+    if [[ $id == "$1" ]]; then
+      printf '%s\n' "$name"
+      return
+    fi
+  done < <(pactl list sinks short 2>/dev/null || true)
+}
 
-if [[ -n $downstream ]]; then
-  name=$(pactl list sinks short 2>/dev/null |
-    awk -v id="$downstream" '$1 == id && !done {print $2; done = 1}' || true)
-  if [[ -n $name ]]; then
-    printf '%s\n' "$name"
+# A filter plays into the sink under it through a stream of its own, named
+# after it: a tuning's effect_input.x through effect_output.x, others by a
+# name that starts with theirs. EasyEffects' stream is known by its
+# application. The first stream named exactly so wins; one only named after
+# the filter is kept in case none is.
+stream_target=$(pactl list sink-inputs 2>/dev/null | awk -v filter="$sink" '
+  BEGIN {
+    exact = filter
+    sub(/^effect_input\./, "effect_output.", exact)
+    loose = (exact == filter)
+  }
+  /^Sink Input #/ { target = "" }
+  /^[[:space:]]*Sink:/ { target = $2 }
+  target != "" && /node\.name = / {
+    name = $0
+    sub(/.*node\.name = "/, "", name)
+    sub(/"$/, "", name)
+    named = index(name, filter) == 1
+    if (name == exact || (loose && named)) { found = target; exit }
+    if (named && spare == "") spare = target
+  }
+  target != "" && filter == "easyeffects_sink" && /application\.name = "EasyEffects"/ { found = target; exit }
+  END { print (found != "" ? found : spare) }' || true)
+
+if [[ -n $stream_target ]]; then
+  under=$(sink_with_id "$stream_target")
+  if [[ -n $under ]]; then
+    printf '%s\n' "$under"
     exit 0
   fi
 fi
 
-# EasyEffects 8 does not play into the physical sink through a stream of its
-# own: its output node links its ports straight to the sink's playback ports,
-# so the sink-input search above finds nothing and the keys would move the
-# EasyEffects sink -- whose volume its monitor, the input of the processing,
-# does not follow. Follow the port links instead: the first ALSA or Bluetooth
-# sink any EasyEffects output port is linked to.
-if [[ $sink == "easyeffects_sink" ]]; then
-  linked=$(pw-link -l 2>/dev/null |
-    awk '
-      /^[^ ]/ {src = $0}
-      /^[[:space:]]*\|->/ {
-        if (!done && src ~ /^ee_/ && $2 ~ /^(alsa|bluez)_output\..*:playback_/) {
-          sub(/:playback_.*$/, "", $2); print $2; done = 1
-        }
-      }' || true)
+# EasyEffects 8 has no such stream: its output node's ports are linked
+# straight to the sink's. Under it is the first sound card or Bluetooth sink
+# one of its ports (ee_*) plays into. awk reads pw-link to the end, which
+# leaving early could kill with SIGPIPE.
+if [[ $sink == easyeffects_sink ]]; then
+  under=$(pw-link -l 2>/dev/null | awk '
+    /^[^ ]/ { port = $0 }
+    !found && /^[[:space:]]*\|->/ && port ~ /^ee_/ && $2 ~ /^(alsa|bluez)_output\..*:playback_/ {
+      found = $2
+      sub(/:playback_.*$/, "", found)
+      print found
+    }' || true)
 
-  # Idle, EasyEffects drops those links: fall back to the output device it is
-  # configured to feed, when that sink exists.
-  if [[ -z $linked ]]; then
-    configured=$(sed -n 's/^outputDevice=//p' \
-      "${XDG_CONFIG_HOME:-$HOME/.config}/easyeffects/db/easyeffectsrc" 2>/dev/null || true)
-    if [[ -n $configured ]] &&
-      pactl list sinks short 2>/dev/null |
-        awk -v want="$configured" '$2 == want {found = 1} END {exit !found}'; then
-      linked=$configured
+  # Idle, EasyEffects unlinks them: then the output its settings name, if
+  # that sink is there.
+  if [[ -z $under ]]; then
+    configured=$(sed -n 's/^outputDevice=//p' "${XDG_CONFIG_HOME:-$HOME/.config}/easyeffects/db/easyeffectsrc" 2>/dev/null || true)
+    if [[ -n $configured ]] && pactl list sinks short 2>/dev/null | awk -v want="$configured" '$2 == want { found = 1 } END { exit !found }'; then
+      under=$configured
     fi
   fi
 
-  if [[ -n $linked ]]; then
-    printf '%s\n' "$linked"
+  if [[ -n $under ]]; then
+    printf '%s\n' "$under"
     exit 0
   fi
 fi
 
-# Nothing resolvable downstream -- the DSP sink may simply be idle and unlinked.
-# Fall back to the sink itself so callers still have something to act on.
+# Nothing under it to be found, an idle filter's links among them: the output
+# itself, so that callers still have one to act on.
 printf '%s\n' "$sink"

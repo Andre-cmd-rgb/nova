@@ -7,28 +7,22 @@
 set -euo pipefail
 
 copy_only=false
-
-if [[ ${1:-} == "--copy-only" ]]; then
+if [[ ${1:-} == --copy-only ]]; then
   copy_only=true
   shift
 fi
-
 mime=${1:-}
-path=${2:-}
-
-if [[ -z $mime || -z $path ]]; then
+file=${2:-}
+if [[ -z $mime || -z $file ]]; then
   echo "Usage: nova-clipboard-paste-file [--copy-only] <mime-type> <path>" >&2
   exit 1
 fi
+[[ -r $file ]] || exit 1
 
-[[ -r $path ]] || exit 1
+wl-copy --type "$mime" <"$file"
+if $copy_only; then exit 0; fi
 
-wl-copy --type "$mime" <"$path"
-
-if [[ $copy_only == "true" ]]; then
-  exit 0
-fi
-
+# A moment for the clipboard to have it. Pasted into nothing, with no text
+# field in focus, is no error.
 sleep 0.15
-# Best effort: with no focused text field there is nothing to paste into.
 wtype -M shift -k Insert -m shift 2>/dev/null || true

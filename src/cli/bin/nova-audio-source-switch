@@ -1,19 +1,14 @@
 #!/bin/bash
 
-# nova:summary=Switch to the next media player, taking playback with it
+# nova:summary=Make the next media player the one the media keys control, its playback moved over
 # nova:args=[next|previous]
 
 set -euo pipefail
 
-direction="${1:-next}"
-
-case "$direction" in
-  next)
-    nova-shell media sourceSwitch
-    ;;
-  previous)
-    nova-shell media sourceSwitchPrevious
-    ;;
+# The shell's media service keeps the list of players and does the moving.
+case ${1:-next} in
+  next) exec nova-shell media sourceSwitch ;;
+  previous) exec nova-shell media sourceSwitchPrevious ;;
   *)
     echo "Usage: nova-audio-source-switch [next|previous]" >&2
     exit 1

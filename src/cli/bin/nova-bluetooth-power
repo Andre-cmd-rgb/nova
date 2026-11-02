@@ -3,78 +3,60 @@
 # nova:summary=Turn Bluetooth on or off, remembered across reboots
 # nova:args=<on|off|toggle|is-on>
 
-# BlueZ never persists an adapter's Powered property, so turning Bluetooth off
-# through bluetoothctl lasts only until the next boot. The rfkill soft block does
-# persist: systemd-rfkill saves every switch under /var/lib/systemd/rfkill and
-# restores it early on the next boot, which is its entire job. Blocking is also
-# what the kernel hands every radio at once, so a machine with two controllers
-# gets both, where bluetoothctl only ever addresses the default one.
-#
-# So the block is the state, and BlueZ follows it: unblocking leaves AutoEnable
-# at its stock default and bluetoothd powers the adapter up by itself. Every
-# Nova path that turns Bluetooth on or off goes through here, because a plain
-# `bluetoothctl power on` fails outright while the block is set.
+# Bluetooth is on or off by its rfkill soft block, and BlueZ follows that.
+# BlueZ never keeps an adapter's Powered across a reboot, so off through
+# bluetoothctl lasts until the next boot; systemd-rfkill keeps every block
+# (under /var/lib/systemd/rfkill) and puts it back early in the next boot, and
+# the block holds every Bluetooth radio, where bluetoothctl speaks to the
+# default one only. Taken off, bluetoothd powers the adapter up by itself
+# (AutoEnable, as shipped). Everything in Nova that turns Bluetooth on or off
+# does it here, as bluetoothctl cannot power an adapter up while it is blocked.
 
 set -euo pipefail
 
-POWER_WAIT_SECONDS=${NOVA_BLUETOOTH_POWER_WAIT_SECONDS:-2}
+wait_seconds=${NOVA_BLUETOOTH_POWER_WAIT_SECONDS:-2}
 
-controllers() {
-  { timeout 2s bluetoothctl list 2>/dev/null || true; } | awk '{print $2}'
-}
-
-# Any controller counts. The block is all-or-nothing across the radios, so the
-# state has to be read the same way; a bare `bluetoothctl show` would report the
-# default controller and miss a powered dongle sitting behind it.
+# On when any adapter is: the block holds them all, so they are all asked, not
+# only the default one, behind which a dongle could be powered.
 powered() {
-  local controller
-
-  for controller in $(controllers); do
+  local _ controller
+  local -a controllers=()
+  while read -r _ controller _; do
+    if [[ -n $controller ]]; then controllers+=("$controller"); fi
+  done < <(timeout 2s bluetoothctl list 2>/dev/null || true)
+  for controller in "${controllers[@]}"; do
     if [[ $(timeout 2s bluetoothctl show "$controller" 2>/dev/null || true) == *"Powered: yes"* ]]; then
       return 0
     fi
   done
-
   return 1
 }
 
-# One deadline around the whole wait rather than a fixed number of probes: every
-# probe can sit on its own timeout when D-Bus is wedged, and counting probes then
-# stretches a two-second wait into half a minute.
+# Until a time, not for a number of tries: with D-Bus stuck, each try can take
+# its whole timeout, and ten of them half a minute.
 wait_powered() {
-  local deadline=$((SECONDS + POWER_WAIT_SECONDS))
-
-  while :; do
-    powered && return 0
-    ((SECONDS < deadline)) || return 1
+  local until_seconds=$((SECONDS + wait_seconds))
+  until powered; do
+    ((SECONDS < until_seconds)) || return 1
     sleep 0.2
   done
 }
 
 power_on() {
   rfkill unblock bluetooth
-
-  # Usually all it takes: with AutoEnable at its default, bluetoothd powers the
-  # adapter up on its own once the block is gone. It will not do that for an
-  # adapter powered down without a block, so ask directly before giving up.
+  # bluetoothd powers it up as the block goes, but not an adapter that was
+  # powered down without one: that is asked for, before giving up.
   wait_powered && return 0
-
   timeout 5s bluetoothctl power on >/dev/null 2>&1 || true
   wait_powered && return 0
-
   echo "nova-bluetooth-power: adapter did not come up" >&2
   return 1
 }
 
-case "${1:-}" in
-  on)
-    power_on
-    ;;
-  off)
-    # No bluetoothctl power off to go with this: the block already drops the
-    # adapter to Powered: no, and it is the half that survives the reboot.
-    rfkill block bluetooth
-    ;;
+case ${1:-} in
+  on) power_on ;;
+  # The block powers the adapter down too, and it is what lasts.
+  off) rfkill block bluetooth ;;
   toggle)
     if powered; then
       rfkill block bluetooth
@@ -82,9 +64,7 @@ case "${1:-}" in
       power_on
     fi
     ;;
-  is-on)
-    powered
-    ;;
+  is-on) powered ;;
   *)
     echo "Usage: nova-bluetooth-power <on|off|toggle|is-on>" >&2
     exit 1

@@ -46,3 +46,20 @@ stub() { # name body
   run "$REPO_ROOT/src/cli/bin/nova-clipboard-open" --history-index 1 --history-md5 "$picked"
   [ "$(cat "$CALLS")" = 'editor picked' ]
 }
+
+@test "open: of a text with web addresses, the first is opened in the browser" {
+  stub nova-launch-browser 'printf "browser %s|" "$@" >>"$CALLS"'
+  # Two on one line: the browser was once given both, as one argument.
+  jq -n '[{type: "text", text: "see https://example.com/a?b=1 and http://two.org"}]' \
+    >"$HOME/.local/state/nova/clipboard-history.json"
+  run "$REPO_ROOT/src/cli/bin/nova-clipboard-open" --history-index 0
+  [ "$status" -eq 0 ]
+  [ "$(cat "$CALLS")" = 'browser https://example.com/a?b=1|' ]
+}
+
+@test "open: a text that is only a domain and a path is opened as https" {
+  stub nova-launch-browser 'printf "browser %s|" "$@" >>"$CALLS"'
+  jq -n '[{type: "text", text: "  example.org/docs  "}]' >"$HOME/.local/state/nova/clipboard-history.json"
+  run "$REPO_ROOT/src/cli/bin/nova-clipboard-open" --history-index 0
+  [ "$(cat "$CALLS")" = 'browser https://example.org/docs|' ]
+}

@@ -3,27 +3,27 @@
 # nova:summary=Print monitor panel state for the shell
 # nova:hidden=true
 #
-# One value per line, in the order the monitor panel reads them: brightness,
-# internal, external, enabled internal, mirrored, focused, scaling, then the
-# monitor list as JSON.
+# A value a line, in the order the shell's monitor panel reads them: the
+# brightness, the internal monitor, the first external one, the internal one
+# if it is on, the one mirrored, the focused one, the scaling, and then every
+# monitor as JSON. A monitor missing is an empty line.
 
 set -euo pipefail
 
-monitors_json=$(hyprctl monitors all -j)
-focused_monitor=$(jq -r '[.[] | select(.focused == true)][0].name // ""' <<<"$monitors_json")
+monitors=$(hyprctl monitors all -j)
+# shellcheck disable=SC2016 # jq's own variables
+mapfile -t state < <(jq -r '
+  def internal: .name | test("^(eDP|LVDS|DSI)-");
+  def first_of(f): [.[] | f][0] // "";
+  first_of(select(.focused == true) | .name),
+  first_of(select(internal) | .name),
+  first_of(select(internal | not) | .name),
+  first_of(select(internal and .disabled != true) | .name),
+  first_of(select(.mirrorOf != "none") | if internal then .mirrorOf else .name end),
+  ([.[] | {name, enabled: (.disabled != true), focused: (.focused == true), width, height}] | tojson)' <<<"$monitors")
+wait "$!"
 
-brightness=$(nova-brightness-display --monitor "$focused_monitor" 2>/dev/null || true)
-printf '%s\n' "${brightness%%$'\n'*}"
-
-jq -r '
-  def internal: test("^(eDP|LVDS|DSI)-");
-  ([.[] | select(.name | internal)][0].name // ""),
-  ([.[] | select((.name | internal) | not)][0].name // ""),
-  ([.[] | select((.name | internal) and .disabled != true)][0].name // ""),
-  ([.[] | select(.mirrorOf != "none") | if (.name | internal) then .mirrorOf else .name end][0] // "")
-' <<<"$monitors_json"
-
-printf '%s\n' "$focused_monitor"
+brightness=$(nova-brightness-display --monitor "${state[0]}" 2>/dev/null || true)
+printf '%s\n' "${brightness%%$'\n'*}" "${state[@]:1:4}" "${state[0]}"
 nova-hyprland-monitor-scaling 2>/dev/null || echo
-
-jq -c '[.[] | {name, enabled:(.disabled != true), focused:(.focused == true), width, height}]' <<<"$monitors_json"
+printf '%s\n' "${state[5]}"

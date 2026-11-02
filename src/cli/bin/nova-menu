@@ -1,26 +1,25 @@
 #!/bin/bash
 
-# nova:summary=Control the Nova menu (toggle / summon / close / refresh)
+# nova:summary=Open, close or refresh the Nova menu
 # nova:args=[toggle|summon|close|refresh|ping] [route]
-
-# Thin wrapper around the standard plugin IPC surface. The menu is the
-# first-party `nova.menu` plugin; routes are passed as JSON payload.
 
 set -euo pipefail
 
-verb="${1-toggle}"
-route="${2-root}"
+# The menu is the shell's nova.menu plugin, and this speaks its IPC. A route,
+# the menu item to open at, goes as {"menu": route}.
+verb=${1-toggle}
+route=${2-root}
 
-menu_payload() {
-  jq -nc --arg menu "$1" '{ menu: $menu }'
-}
-
-case "$verb" in
-  toggle)
-    exec nova-shell shell toggle nova.menu "$(menu_payload "$route")"
-    ;;
-  summon)
-    exec nova-shell shell summon nova.menu "$(menu_payload "$route")"
+case $verb in
+  toggle | summon)
+    # An item id needs no JSON escaping, which saves starting jq on every
+    # SUPER + SPACE; anything else goes through it.
+    if [[ $route =~ ^[A-Za-z0-9._-]*$ ]]; then
+      payload="{\"menu\":\"$route\"}"
+    else
+      payload=$(jq -nc --arg menu "$route" '{ menu: $menu }')
+    fi
+    exec nova-shell shell "$verb" nova.menu "$payload"
     ;;
   close)
     exec nova-shell shell hide nova.menu
@@ -29,7 +28,7 @@ case "$verb" in
     exec nova-shell shell call nova.menu "$verb" "{}"
     ;;
   -h | --help | help)
-    cat <<USAGE
+    cat <<'USAGE'
 Usage: nova menu [verb] [route]
 
 Verbs:
@@ -42,7 +41,6 @@ Verbs:
 Route is an item id (e.g. setup.power) or alias (e.g. power). Defaults to
 "root", which opens the top-level menu.
 USAGE
-    exit 0
     ;;
   *)
     echo "nova-menu: unknown verb '$verb'. Try 'nova menu --help'." >&2

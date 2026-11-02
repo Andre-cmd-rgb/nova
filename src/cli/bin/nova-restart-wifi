@@ -1,9 +1,11 @@
 #!/bin/bash
 
-# nova:summary=Unblock Wi-Fi and turn networking back on
+# nova:summary=Bring Wi-Fi back: lift its block and switch NetworkManager's networking and radio on
 
 set -euo pipefail
 
+# Each switch that can keep Wi-Fi off, from the kernel's up, then a scan so
+# the networks show at once. A radio that cannot scan yet is no failure.
 rfkill unblock wifi
 nmcli networking on
 nmcli radio wifi on

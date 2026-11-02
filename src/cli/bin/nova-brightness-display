@@ -1,116 +1,98 @@
 #!/bin/bash
 
-# nova:summary=Show or adjust brightness on the focused display
+# nova:summary=Show or change the brightness of the focused display, or turn the displays off and on
 # nova:args=[--no-osd] [--monitor name] [+N%|N%-|N%|off|on]
 
 set -euo pipefail
 
-no_osd=0
+osd=true
 monitor=""
-
-while (($# > 0)); do
-  case "$1" in
+while (($#)); do
+  case $1 in
     --no-osd)
-      no_osd=1
+      osd=false
       shift
       ;;
     --monitor)
       (($# >= 2)) || exit 1
-      monitor="$2"
+      monitor=$2
       shift 2
       ;;
-    *)
-      break
-      ;;
+    *) break ;;
   esac
 done
 
-# Get the brightness of the passed display
-backlight_brightness() {
-  brightnessctl -d "$1" -m 2>/dev/null | awk -F, '{ gsub("%", "", $4); print $4; found=1 } END{ exit !found }'
+# A backlight's brightness in percent, from brightnessctl's machine-readable
+# line: device,class,level,percent,max.
+percent_of() {
+  brightnessctl -d "$1" -m 2>/dev/null | awk -F, '{ gsub("%", "", $4); print $4; read = 1 } END { exit !read }'
 }
 
-[[ -n $monitor ]] || monitor=$(nova-hyprland-monitor-focused 2>/dev/null || true)
-
-monitor_is_internal() {
-  [[ $monitor =~ ^(eDP|LVDS|DSI)- ]]
-}
-
-# External monitors are driven over DDC/CI; internal panels through the backlight.
-use_ddc_display() {
-  [[ -n $monitor ]] && ! monitor_is_internal
-}
+# The focused display, unless one was named. A laptop's own panel has a
+# backlight; any other display is set over DDC/CI.
+if [[ -z $monitor ]]; then
+  monitor=$(nova-hyprland-monitor-focused 2>/dev/null || true)
+fi
+external=false
+if [[ -n $monitor && ! $monitor =~ ^(eDP|LVDS|DSI)- ]]; then
+  external=true
+fi
 
 if (($# == 0)); then
-  if use_ddc_display; then
-    nova-brightness-display-ddc "$monitor"
-    exit
+  if $external; then
+    exec nova-brightness-display-ddc "$monitor"
   fi
-
-  device=$(nova-hw-display) || exit 1
-  backlight_brightness "$device"
+  backlight=$(nova-hw-display) || exit 1
+  percent_of "$backlight"
   exit
 fi
 
-step="$1"
-
-# DPMS is best effort: with no compositor to talk to there is nothing to switch.
-if [[ $step == "off" ]]; then
-  hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })' >/dev/null 2>&1 || true
-  exit 0
-elif [[ $step == "on" ]]; then
-  # Skip the dispatch when every active display is already lit: a redundant
-  # DPMS enable right after system resume forces another modeset, which blanks
-  # the panel for a beat (visible flash at the unlock screen).
-  if hyprctl monitors -j 2>/dev/null | jq -e '[.[] | select(.disabled == false)] | length > 0 and all(.dpmsStatus)' >/dev/null 2>&1; then
+step=$1
+case $step in
+  # The displays' power, which needs no Hyprland to fail quietly without.
+  off)
+    hyprctl dispatch 'hl.dsp.dpms({ action = "disable" })' >/dev/null 2>&1 || true
     exit 0
-  fi
-  hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1 || true
+    ;;
+  on)
+    # Not when every display in use is lit already: a needless enable just
+    # after a wake sets the mode again, and the panel blinks on the lock
+    # screen.
+    if hyprctl monitors -j 2>/dev/null | jq -e '[.[] | select(.disabled == false)] | length > 0 and all(.dpmsStatus)' >/dev/null 2>&1; then
+      exit 0
+    fi
+    hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1 || true
+    exit 0
+    ;;
+esac
+
+# One change at a time: a key that repeats, as some do in hardware, starts
+# these faster than they end, and the OSD stutters. One that finds another
+# running gives way.
+mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/nova"
+exec {lock}>"${XDG_RUNTIME_DIR:-/tmp}/nova/brightness-display.lock"
+flock -n "$lock" || exit 0
+
+if $external; then
+  percent=$(nova-brightness-display-ddc "$monitor" "$step") || exit 1
+  if $osd; then nova-osd -i brightness -p "$percent"; fi
   exit 0
 fi
 
-# Drop overlapping brightness key events so concurrent invocations do not race.
-# Hardware key repeat present on some devices can otherwise glitch OSD rendering.
-lock_dir="${XDG_RUNTIME_DIR:-/tmp}/nova"
-mkdir -p "$lock_dir"
-exec {lock_fd}>"$lock_dir/brightness-display.lock"
-flock -n "$lock_fd" || exit 0
-
-if use_ddc_display; then
-  brightness=$(nova-brightness-display-ddc "$monitor" "$step") || exit 1
-  ((no_osd)) || nova-osd -i brightness -p "$brightness"
-else
-  # Current device highlighted
-  device=$(nova-hw-display) || exit 1
-
-  # Current brightness percentage
-  current=$(backlight_brightness "$device") || exit 1
-
-  # Apply non-uniform step size: 1% steps if at or below 5%, otherwise set an
-  # absolute target percentage to avoid raw backlight rounding causing uneven OSD steps.
-  if [[ $step == "+5%" ]]; then
-    if ((current < 5)); then
-      target=$((current + 1))
-    else
-      target=$((current + 5))
-    fi
-
-    ((target <= 100)) || target=100
-    step="$target%"
-  elif [[ $step == "5%-" ]]; then
-    if ((current <= 5)); then
-      target=$((current - 1))
-    else
-      target=$((current - 5))
-    fi
-
-    ((target >= 1)) || target=1
-    step="$target%"
-  fi
-
-  # Set brightness of the display device.
-  brightnessctl -d "$device" set "$step" >/dev/null
-
-  # Show the new brightness in OSD
-  ((no_osd)) || nova-osd -i brightness -p "$(backlight_brightness "$device")"
-fi
+backlight=$(nova-hw-display) || exit 1
+now=$(percent_of "$backlight") || exit 1
+# The keys' steps are 5%, and 1% at 5% and under, set as the percentage they
+# land on: a relative step rounds on the backlight's raw levels and lands
+# unevenly. Down stops at 1%, so the panel never goes black.
+case $step in
+  +5%)
+    target=$((now < 5 ? now + 1 : now + 5))
+    step=$((target > 100 ? 100 : target))%
+    ;;
+  5%-)
+    target=$((now <= 5 ? now - 1 : now - 5))
+    step=$((target < 1 ? 1 : target))%
+    ;;
+esac
+brightnessctl -d "$backlight" set "$step" >/dev/null
+if $osd; then nova-osd -i brightness -p "$(percent_of "$backlight")"; fi

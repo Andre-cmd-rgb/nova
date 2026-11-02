@@ -1,21 +1,22 @@
 #!/bin/bash
 
-# nova:summary=Set the mic-mute indicator LED on laptops that expose a platform::micmute LED node
+# nova:summary=Light or darken the microphone-mute LED, on laptops whose kernel has one as platform::micmute
 # nova:args=<on|off>
 # nova:hidden=true
 
 set -euo pipefail
 
-case "${1:-}" in
-  on) value=1 ;;
-  off) value=0 ;;
+case ${1:-} in
+  on) level=1 ;;
+  off) level=0 ;;
   *)
     echo "Usage: nova-brightness-keyboard-mute <on|off>" >&2
     exit 1
     ;;
 esac
 
-# Most machines have no such LED; that is not an error.
-if [[ -e /sys/class/leds/platform::micmute/brightness ]]; then
-  brightnessctl --device="platform::micmute" set "$value" >/dev/null 2>&1 || true
+# Most computers have no such LED, and then there is nothing to do.
+led=platform::micmute
+if [[ -e /sys/class/leds/$led/brightness ]]; then
+  brightnessctl --device="$led" set "$level" >/dev/null 2>&1 || true
 fi

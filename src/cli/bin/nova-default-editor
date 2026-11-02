@@ -5,34 +5,34 @@
 
 set -euo pipefail
 
-editor_file="${XDG_STATE_HOME:-$HOME/.local/state}/nova/defaults/editor"
+# Kept as the command, on the first line, for nova-launch-editor.
+choice=${XDG_STATE_HOME:-$HOME/.local/state}/nova/defaults/editor
 
 if (($# == 0)); then
   editor=""
-  if [[ -f $editor_file ]]; then
-    read -r editor <"$editor_file" || editor=""
+  if [[ -f $choice ]]; then
+    read -r editor <"$choice" || editor=""
   fi
-
   echo "${editor:-code}"
   exit 0
 fi
 
-case "$1" in
-code) editor="code"; name="VSCode"; glyph= ;;
-cursor) editor="cursor"; name="Cursor"; glyph= ;;
-zed | zeditor) editor="zeditor"; name="Zed"; glyph= ;;
-sublime_text) editor="sublime_text"; name="Sublime Text"; glyph= ;;
-helix) editor="helix"; name="Helix"; glyph= ;;
-vim) editor="vim"; name="Vim"; glyph= ;;
-emacs) editor="emacs"; name="Emacs"; glyph= ;;
-nvim) editor="nvim"; name="Neovim"; glyph= ;;
-*)
-  echo "Usage: nova-default-editor <code|cursor|zed|sublime_text|helix|vim|emacs|nvim>" >&2
-  exit 1
-  ;;
+# The command, the icon and the name the notification shows.
+case $1 in
+  code) set -- code  VSCode ;;
+  cursor) set -- cursor  Cursor ;;
+  zed | zeditor) set -- zeditor  Zed ;;
+  sublime_text) set -- sublime_text  "Sublime Text" ;;
+  helix) set -- helix  Helix ;;
+  vim) set -- vim  Vim ;;
+  emacs) set -- emacs  Emacs ;;
+  nvim) set -- nvim  Neovim ;;
+  *)
+    echo "Usage: nova-default-editor <code|cursor|zed|sublime_text|helix|vim|emacs|nvim>" >&2
+    exit 1
+    ;;
 esac
 
-mkdir -p "$(dirname "$editor_file")"
-printf '%s\n' "$editor" >"$editor_file"
-
-nova-notification-send -g "$glyph" "$name is now the default editor"
+mkdir -p "${choice%/*}"
+printf '%s\n' "$1" >"$choice"
+nova-notification-send -g "$2" "$3 is now the default editor"

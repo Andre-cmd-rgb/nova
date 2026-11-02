@@ -4,30 +4,23 @@
 
 set -euo pipefail
 
-PID=""
-
-# Keep hyprpicker alive until after grim captures so the screenshot sees the
-# frozen overlay rather than live content shifting during teardown.
-cleanup_freeze() {
-  if [[ -n $PID ]]; then
-    kill "$PID" 2>/dev/null || true
-  fi
+# The screen is frozen (hyprpicker) until grim has taken the region, so that
+# it takes the still, not the screen moving as the freeze ends.
+freezer=""
+unfreeze() {
+  if [[ -n $freezer ]]; then kill "$freezer" 2>/dev/null || true; fi
 }
-trap cleanup_freeze EXIT
-
+trap unfreeze EXIT
 hyprpicker -r -z >/dev/null 2>&1 &
-PID=$!
+freezer=$!
 sleep .1
 
-# slurp exits non-zero when the pick is cancelled, which just means nothing to do.
-SELECTION=$(slurp 2>/dev/null || true)
-if [[ -z $SELECTION ]]; then
-  exit 0
-fi
+# slurp fails when the pick is given up, and then there is nothing to do.
+picked=$(slurp 2>/dev/null || true)
+[[ -n $picked ]] || exit 0
 
-TEXT=$(grim -g "$SELECTION" - | tesseract stdin stdout --oem 1 --psm 6 -l "${NOVA_OCR_LANGS:-eng}" --dpi 300 -c preserve_interword_spaces=1 2>/dev/null) || exit 1
+text=$(grim -g "$picked" - | tesseract stdin stdout --oem 1 --psm 6 -l "${NOVA_OCR_LANGS:-eng}" --dpi 300 -c preserve_interword_spaces=1 2>/dev/null) || exit 1
+[[ -n $text ]] || exit 1
 
-[[ -n $TEXT ]] || exit 1
-
-printf "%s" "$TEXT" | wl-copy
+printf '%s' "$text" | wl-copy
 nova-notification-send -g 󰴑 "Copied text from selection to clipboard"

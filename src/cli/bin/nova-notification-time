@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# nova:summary=Show the current time and date notification
+# nova:summary=Show the time, the date and the week number in a notification
 
 set -euo pipefail
 
-nova-notification-send -g  -u low "$(date +"%A %H:%M  ·  %d %B %Y  ·  Week %V")"
+# Such as "Friday 14:05  ·  02 January 2026  ·  Week 01", ISO's week.
+nova-notification-send -g  -u low "$(date '+%A %H:%M  ·  %d %B %Y  ·  Week %V')"

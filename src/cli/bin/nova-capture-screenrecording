@@ -4,252 +4,205 @@
 # nova:args=[--fullscreen] [--with-desktop-audio] [--with-microphone-audio] [--resolution=<size>] [--stop-recording]
 # nova:aliases=screenrecord
 #
-# Env: NOVA_SCREENRECORD_USE_PORTAL=true skips the built-in slurp picker and
-# uses gpu-screen-recorder's xdg-desktop-portal capture backend instead. Choose
-# it for HDR-aware capture, monitors driven by external GPUs, or window capture.
-# Off by default because the portal path can fail EGL DMA-BUF modifier import on
-# some configurations, leaving recording unable to start.
+# Env: NOVA_SCREENRECORD_USE_PORTAL=true records what the desktop portal
+# offers (gpu-screen-recorder's portal backend) instead of a region picked
+# here: for HDR, a monitor on an external GPU, or a window. It is not the
+# default, as on some setups the portal's frames cannot be imported (EGL
+# DMA-BUF modifiers) and no recording starts.
 #
-# Env: NOVA_SCREENRECORD_DEBUG=true appends gpu-screen-recorder's stderr (and
-# the picker target it was launched with) to /tmp/nova-screenrecord.log so
-# users can attach a log when reporting capture failures.
+# Env: NOVA_SCREENRECORD_DEBUG=true keeps gpu-screen-recorder's errors, and
+# what it was asked to record, in /tmp/nova-screenrecord.log, to go with a
+# report of a recording that failed.
 
 set -euo pipefail
 
+# Into Videos, or the directory the user's XDG settings name for it; made
+# quietly, as a notification now would be in the recording.
 if [[ -f ~/.config/user-dirs.dirs ]]; then
   # shellcheck disable=SC1090,SC1091
   source ~/.config/user-dirs.dirs
 fi
-OUTPUT_DIR="${NOVA_SCREENRECORD_DIR:-${XDG_VIDEOS_DIR:-$HOME/Videos}}"
+dir=${NOVA_SCREENRECORD_DIR:-${XDG_VIDEOS_DIR:-$HOME/Videos}}
+mkdir -p "$dir"
 
-# Quietly: a notification now would be in the recording.
-mkdir -p "$OUTPUT_DIR"
-
-DESKTOP_AUDIO="false"
-MICROPHONE_AUDIO="false"
-RESOLUTION=""
-FULLSCREEN="false"
-STOP_RECORDING="false"
-STATE_DIR="${XDG_RUNTIME_DIR:-/tmp}/nova"
-RECORDING_FILE="$STATE_DIR/screenrecord-filename"
-LOG_FILE="/dev/null"
-if [[ ${NOVA_SCREENRECORD_DEBUG:-false} == "true" ]]; then
-  LOG_FILE="/tmp/nova-screenrecord.log"
-fi
-mkdir -p "$STATE_DIR"
-SCRIPT_ARGS="$*"
-
-for arg in "$@"; do
-  case "$arg" in
-    --with-desktop-audio) DESKTOP_AUDIO="true" ;;
-    --with-microphone-audio) MICROPHONE_AUDIO="true" ;;
-    --resolution=*) RESOLUTION="${arg#*=}" ;;
-    --fullscreen) FULLSCREEN="true" ;;
-    --stop-recording) STOP_RECORDING="true" ;;
+desktop_audio=false
+microphone=false
+resolution=""
+fullscreen=false
+stop_only=false
+for arg; do
+  case $arg in
+    --with-desktop-audio) desktop_audio=true ;;
+    --with-microphone-audio) microphone=true ;;
+    --resolution=*) resolution=${arg#*=} ;;
+    --fullscreen) fullscreen=true ;;
+    --stop-recording) stop_only=true ;;
   esac
 done
 
-default_resolution() {
+# The file being recorded into, for the stop to finish.
+state=${XDG_RUNTIME_DIR:-/tmp}/nova
+current=$state/screenrecord-filename
+mkdir -p "$state"
+log=/dev/null
+if [[ ${NOVA_SCREENRECORD_DEBUG:-false} == true ]]; then log=/tmp/nova-screenrecord.log; fi
+
+recording() {
+  pgrep -f "^gpu-screen-recorder" >/dev/null
+}
+
+# The bar's recording indicator.
+indicator() {
+  nova-shell -q nova.indicators refresh
+}
+
+# A monitor larger than 4K is recorded at 4K, any other at its own size (0x0).
+default_size() {
   local width=0 height=0
   read -r width height < <(hyprctl monitors -j | jq -r '.[] | select(.focused == true) | "\(.width) \(.height)"') || true
   if ((width > 3840 || height > 2160)); then
-    echo "3840x2160"
+    echo 3840x2160
   else
-    echo "0x0"
+    echo 0x0
   fi
 }
 
-# Echoes "monitor:NAME" when the selection matches an entire monitor (prefer
-# -w <monitor> over a region capture — same kms backend, but no scaling math
-# and full native res), otherwise "region:WxH+X+Y". Returns non-zero if the
-# user cancelled the picker.
-select_capture_target() {
-  local target
-  target=$(nova-capture-region smart --match-monitor) || return 1
-
-  if [[ $target == monitor:* ]]; then
-    echo "$target"
+# What was picked, as gpu-screen-recorder takes it: "monitor:NAME" for a whole
+# monitor, recorded as that monitor (at its own resolution, with no scaling),
+# or "region:WxH+X+Y". 1 when the pick was given up.
+picked() {
+  local picked
+  picked=$(nova-capture-region smart --match-monitor) || return 1
+  if [[ $picked == monitor:* ]]; then
+    echo "$picked"
     return 0
   fi
-
-  [[ $target =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$ ]] || return 1
-
-  # gpu-screen-recorder wants region geometry in the compositor's logical
-  # coordinate space — same space slurp returns — so pass the values through
-  # untouched. (gsr scales to physical pixels itself based on the monitor.)
+  [[ $picked =~ ^(-?[0-9]+),(-?[0-9]+)[[:space:]]([0-9]+)x([0-9]+)$ ]] || return 1
+  # In logical pixels, as slurp gives them: gpu-screen-recorder scales them to
+  # the monitor's own.
   echo "region:${BASH_REMATCH[3]}x${BASH_REMATCH[4]}+${BASH_REMATCH[1]}+${BASH_REMATCH[2]}"
 }
 
-start_screenrecording() {
-  local capture_args=()
-  local target
-
-  # Opt-in path for HDR, external-GPU monitors, and window capture (all things
-  # the portal backend supports and the kms backend doesn't). Default flow uses
-  # slurp + the kms backend, which avoids the EGL DMA-BUF modifier import
-  # failures the portal path can hit on some configurations.
-  if [[ $FULLSCREEN == "true" ]]; then
+start() {
+  local target file audio="" pid
+  local -a capture=() audio_args=()
+  if $fullscreen; then
     target="monitor:$(nova-hyprland-monitor-focused)"
-    capture_args=(-w "${target#monitor:}" -s "${RESOLUTION:-$(default_resolution)}")
-  elif [[ ${NOVA_SCREENRECORD_USE_PORTAL:-false} == "true" ]]; then
-    target="portal"
-    capture_args=(-w portal -s "${RESOLUTION:-$(default_resolution)}")
+    capture=(-w "${target#monitor:}" -s "${resolution:-$(default_size)}")
+  elif [[ ${NOVA_SCREENRECORD_USE_PORTAL:-false} == true ]]; then
+    target=portal
+    capture=(-w portal -s "${resolution:-$(default_size)}")
   else
-    target=$(select_capture_target) || return 1
-
+    target=$(picked) || return 1
     case $target in
       monitor:*)
-        capture_args=(-w "${target#monitor:}" -s "${RESOLUTION:-$(default_resolution)}")
+        capture=(-w "${target#monitor:}" -s "${resolution:-$(default_size)}")
         ;;
       region:*)
-        capture_args=(-w "${target#region:}")
-        if [[ -n $RESOLUTION ]]; then
-          capture_args+=(-s "$RESOLUTION")
-        fi
+        capture=(-w "${target#region:}")
+        if [[ -n $resolution ]]; then capture+=(-s "$resolution"); fi
         ;;
     esac
   fi
 
-  local filename
-  filename="$OUTPUT_DIR/screenrecording-$(date +'%Y-%m-%d_%H-%M-%S').mp4"
-  local audio_devices=""
-  local audio_args=()
+  file=$dir/screenrecording-$(date +'%Y-%m-%d_%H-%M-%S').mp4
+  # The desktop and the microphone in one track: most players play only one.
+  if $desktop_audio; then audio=default_output; fi
+  if $microphone; then audio+=${audio:+|}default_input; fi
+  if [[ -n $audio ]]; then audio_args=(-a "$audio" -ac aac); fi
 
-  if [[ $DESKTOP_AUDIO == "true" ]]; then
-    audio_devices+="default_output"
-  fi
-
-  if [[ $MICROPHONE_AUDIO == "true" ]]; then
-    # Merge audio tracks into one - separate tracks only play one at a time in most players
-    if [[ -n $audio_devices ]]; then
-      audio_devices+="|"
-    fi
-    audio_devices+="default_input"
-  fi
-
-  if [[ -n $audio_devices ]]; then
-    audio_args+=(-a "$audio_devices" -ac aac)
-  fi
-
-  echo "===== $(date '+%F %T') args: $SCRIPT_ARGS target: $target =====" >>"$LOG_FILE"
-  gpu-screen-recorder "${capture_args[@]}" -k auto -f 60 -fm cfr -fallback-cpu-encoding yes -o "$filename" "${audio_args[@]}" 2>>"$LOG_FILE" &
-  local pid=$!
-
-  while kill -0 "$pid" 2>/dev/null && [[ ! -f $filename ]]; do
+  echo "===== $(date '+%F %T') args: $all_args target: $target =====" >>"$log"
+  gpu-screen-recorder "${capture[@]}" -k auto -f 60 -fm cfr -fallback-cpu-encoding yes -o "$file" "${audio_args[@]}" 2>>"$log" &
+  pid=$!
+  # It is recording once the file is there; one that ended first failed.
+  while kill -0 "$pid" 2>/dev/null && [[ ! -f $file ]]; do
     sleep 0.2
   done
-
   if kill -0 "$pid" 2>/dev/null; then
-    echo "$filename" >"$RECORDING_FILE"
-    refresh_indicator
+    echo "$file" >"$current"
+    indicator
   fi
 }
 
-stop_screenrecording() {
-  # SIGINT is required to save the video properly. The recorder may already be
-  # gone by now, which is fine.
-  pkill -SIGINT -f "^gpu-screen-recorder" || true
-
-  # Wait a maximum of 5 seconds to finish before hard killing
-  local count=0
-  while screenrecording_active && ((count < 50)); do
-    sleep 0.1
-    count=$((count + 1))
-  done
-
-  refresh_indicator
-
-  if screenrecording_active; then
-    pkill -9 -f "^gpu-screen-recorder" || true
-    nova-notification-send -u critical -t 5000 "Screen recording error" "Recording process had to be force-killed. Video may be corrupted."
+# Cuts the first frame, and brings the sound to -14 LUFS where there is any,
+# in one pass. The video is copied as it is, unless its first frames hold
+# packets to be discarded (the encoder warming up): a copy cannot cut those,
+# as it goes back to the keyframe before them, so then it is encoded again.
+finish() { # file
+  local file=$1 flags streams processed
+  local -a video=(-c:v copy) args
+  [[ -f $file ]] || return 0
+  # Kept and then matched, not piped into grep -q: pipefail would take an
+  # ffprobe cut off by SIGPIPE for no match.
+  flags=$(ffprobe -v error -select_streams v:0 -read_intervals %+0.2 -show_entries packet=flags -of csv=p=0 "$file" 2>/dev/null || true)
+  if [[ $flags == *D* ]]; then video=(-c:v libx264 -preset veryfast -crf 20); fi
+  args=(-y -ss 0.1 -i "$file" "${video[@]}")
+  streams=$(ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null || true)
+  if [[ $streams == *audio* ]]; then
+    # Silent for the first 400 ms, which hold the pop of PipeWire opening the
+    # microphone (near clipping, at 130 to 200 ms; a fade takes too little off
+    # it), then 50 ms of fade in, so as not to click, before loudnorm.
+    args+=(-af "volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11")
+  fi
+  processed=${file%.mp4}-processed.mp4
+  if ffmpeg "${args[@]}" "$processed" -loglevel quiet 2>/dev/null; then
+    mv "$processed" "$file"
   else
-    finalize_recording
-    local filename
-    filename=$(cat "$RECORDING_FILE" 2>/dev/null || true)
-    if [[ -f $filename ]]; then
-      echo "$filename"
-      announce_recording "$filename"
-    fi
+    rm -f "$processed"
   fi
-
-  rm -f "$RECORDING_FILE"
 }
 
-announce_recording() {
-  local filename="$1"
-  local preview="${filename%.mp4}-preview.png"
-  local image_args=()
-
-  # Generate a preview thumbnail from the first frame
-  if ffmpeg -y -i "$filename" -ss 00:00:00.1 -vframes 1 -q:v 2 "$preview" -loglevel quiet 2>/dev/null; then
-    image_args=(--image "$preview")
+announce() { # file
+  local file=$1 preview=${1%.mp4}-preview.png
+  local -a image=()
+  # Its first frame, for a preview.
+  if ffmpeg -y -i "$file" -ss 00:00:00.1 -vframes 1 -q:v 2 "$preview" -loglevel quiet 2>/dev/null; then
+    image=(--image "$preview")
   fi
-
-  # Shown in Files rather than played: Nova installs no video player.
+  # Shown in Files, not played: Nova installs no video player.
   nova-notification-send "Screen recording saved" "Show in Files with Super + Alt + , (or click this)" \
-    -t 10000 "${image_args[@]}" \
-    --exec nautilus --select "$filename"
-
-  # The shell loads the thumbnail into memory when the toast appears and never
-  # re-reads the file, so the preview only has to outlive that load -- not the
-  # toast. Clear it out of the recordings directory a moment later.
+    -t 10000 "${image[@]}" \
+    --exec nautilus --select "$file"
+  # The shell reads the preview once, as the notification comes up, so it is
+  # taken out of the recordings a moment later.
   (
     sleep 2
     rm -f "$preview"
   ) &
 }
 
-refresh_indicator() {
-  nova-shell -q nova.indicators refresh
-}
-
-screenrecording_active() {
-  pgrep -f "^gpu-screen-recorder" >/dev/null
-}
-
-finalize_recording() {
-  local latest
-  latest=$(cat "$RECORDING_FILE" 2>/dev/null || true)
-  [[ -f $latest ]] || return 0
-
-  # Re-encode only when the first GOP contains discardable warmup packets — stream copy can't
-  # trim those (it rewinds to the keyframe). Clean recordings stay on the fast stream-copy path.
-  # The probes are captured, not piped into grep -q, so pipefail cannot read a
-  # SIGPIPE'd probe as "no match".
-  local video_codec=(-c:v copy)
-  local packet_flags
-  packet_flags=$(ffprobe -v error -select_streams v:0 -read_intervals %+0.2 -show_entries packet=flags -of csv=p=0 "$latest" 2>/dev/null || true)
-  if [[ $packet_flags == *D* ]]; then
-    video_codec=(-c:v libx264 -preset veryfast -crf 20)
-  fi
-
-  # Trim the first frame, and normalize audio to -14 LUFS if present, in a single pass
-  local args=(-y -ss 0.1 -i "$latest" "${video_codec[@]}")
-  local stream_types
-  stream_types=$(ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$latest" 2>/dev/null || true)
-  if [[ $stream_types == *audio* ]]; then
-    # Hard-mute the first 400ms to drop the PipeWire capture-open pop (a near-clipping
-    # transient around 130-200ms that a gentle fade-in can't attenuate enough), then a
-    # 50ms fade avoids a click at the boundary before loudnorm normalizes the rest.
-    args+=(-af "volume=enable='lt(t,0.4)':volume=0,afade=t=in:st=0.4:d=0.05,loudnorm=I=-14:TP=-1.5:LRA=11")
-  fi
-
-  local processed="${latest%.mp4}-processed.mp4"
-  if ffmpeg "${args[@]}" "$processed" -loglevel quiet 2>/dev/null; then
-    mv "$processed" "$latest"
+stop() {
+  local count=0 file=""
+  # SIGINT, for it to finish the file; it may have ended already.
+  pkill -SIGINT -f "^gpu-screen-recorder" || true
+  # Five seconds for it to end, and then it is killed.
+  while recording && ((count++ < 50)); do
+    sleep 0.1
+  done
+  indicator
+  if recording; then
+    pkill -9 -f "^gpu-screen-recorder" || true
+    nova-notification-send -u critical -t 5000 "Screen recording error" "Recording process had to be force-killed. Video may be corrupted."
   else
-    rm -f "$processed"
+    if [[ -r $current ]]; then IFS= read -r file <"$current" || true; fi
+    finish "$file"
+    if [[ -f $file ]]; then
+      echo "$file"
+      announce "$file"
+    fi
   fi
+  rm -f "$current"
 }
 
-if screenrecording_active; then
-  stop_screenrecording
-elif [[ $STOP_RECORDING == "true" ]]; then
+all_args=$*
+if recording; then
+  stop
+elif $stop_only; then
   exit 1
 elif ! command -v gpu-screen-recorder >/dev/null; then
   nova-notification-send -u critical "Screen recording needs gpu-screen-recorder" "sudo pacman -S gpu-screen-recorder"
   exit 1
 else
-  # Cancelling the picker is a normal way out, not a failure.
-  start_screenrecording || true
+  # A pick given up is a way out, not a failure.
+  start || true
 fi

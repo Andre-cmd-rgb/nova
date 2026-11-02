@@ -6,97 +6,82 @@
 
 set -euo pipefail
 
+# Into Pictures, or the directory the user's XDG settings name for it.
 if [[ -f ~/.config/user-dirs.dirs ]]; then
   # shellcheck disable=SC1090,SC1091
   source ~/.config/user-dirs.dirs
 fi
-OUTPUT_DIR="${NOVA_SCREENSHOT_DIR:-${XDG_PICTURES_DIR:-$HOME/Pictures}}"
-
-if [[ ! -d $OUTPUT_DIR ]]; then
-  mkdir -p "$OUTPUT_DIR"
-  nova-notification-send "Created screenshot directory: $OUTPUT_DIR" -t 2000
+dir=${NOVA_SCREENSHOT_DIR:-${XDG_PICTURES_DIR:-$HOME/Pictures}}
+if [[ ! -d $dir ]]; then
+  mkdir -p "$dir"
+  nova-notification-send "Created screenshot directory: $dir" -t 2000
 fi
 
-# A second press while the picker is open dismisses it.
+# PRINT pressed again while the picker is up puts it away.
 if pkill slurp; then
   exit 0
 fi
 
-SCREENSHOT_EDITOR="${NOVA_SCREENSHOT_EDITOR:-satty}"
-
-# Parse --editor flag from any position
-ARGS=()
-for arg in "$@"; do
-  if [[ $arg == --editor=* ]]; then
-    SCREENSHOT_EDITOR="${arg#--editor=}"
-  else
-    ARGS+=("$arg")
-  fi
+# The mode and what to do with it, with --editor=<name> anywhere among them.
+editor=${NOVA_SCREENSHOT_EDITOR:-satty}
+args=()
+for arg; do
+  case $arg in
+    --editor=*) editor=${arg#--editor=} ;;
+    *) args+=("$arg") ;;
+  esac
 done
-set -- "${ARGS[@]}"
+mode=${args[0]:-smart}
+action=${args[1]:-slurp}
 
-MODE="${1:-smart}"
-PROCESSING="${2:-slurp}"
-
-# The picker leaves the screen freeze running (PID on its first output line)
-# so grim captures the frozen overlay rather than live content shifting
-# during teardown.
-#
-# Software-composited cursors (Hyprland's fallback on GPUs without working
-# hardware cursors) are baked into the frames grim captures, so force
-# hardware cursors until after grim runs and restore the setting on exit.
-NO_HW_CURSORS=$(hyprctl getoption cursor:no_hardware_cursors -j | jq '.int')
-FREEZE_PID=""
-SELECTION=""
-
-set_no_hw_cursors() {
+# Where Hyprland draws the cursor itself (a GPU without working hardware
+# cursors), it is in every frame grim takes; so hardware cursors until the
+# screenshot is taken, and the setting as it was after.
+no_hardware_cursors=$(hyprctl getoption cursor:no_hardware_cursors -j | jq '.int')
+cursors() { # 0|1
   hyprctl eval "hl.config({ cursor = { no_hardware_cursors = $1 } })" &>/dev/null ||
     hyprctl keyword cursor:no_hardware_cursors "$1" &>/dev/null ||
     true
 }
 
-cleanup() {
-  if [[ -n $FREEZE_PID ]]; then
-    kill "$FREEZE_PID" 2>/dev/null || true
-  fi
-  set_no_hw_cursors "$NO_HW_CURSORS"
+# The picker leaves the screen frozen, its PID on the first line, so that
+# grim takes the still and not the screen moving as the freeze ends.
+freezer=""
+picked=""
+restore() {
+  if [[ -n $freezer ]]; then kill "$freezer" 2>/dev/null || true; fi
+  cursors "$no_hardware_cursors"
 }
-trap cleanup EXIT
+trap restore EXIT
 
-set_no_hw_cursors 0
+cursors 0
 
-# A cancelled pick prints only the freeze PID (or nothing), so a missing second
-# line is an answer here, not an error.
+# A pick given up prints the PID alone, or nothing.
 {
-  read -r FREEZE_PID || true
-  read -r SELECTION || true
-} < <(nova-capture-region "$MODE" --keep-freeze)
+  read -r freezer || true
+  read -r picked || true
+} < <(nova-capture-region "$mode" --keep-freeze)
+[[ -n $picked ]] || exit 0
 
-if [[ -z $SELECTION ]]; then
-  exit 0
-fi
+file=$dir/screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png
 
-FILENAME="screenshot-$(date +'%Y-%m-%d_%H-%M-%S').png"
-FILEPATH="$OUTPUT_DIR/$FILENAME"
-
-case "$PROCESSING" in
+case $action in
   slurp)
-    grim -g "$SELECTION" "$FILEPATH" || exit 1
-    echo "$FILEPATH"
-    wl-copy --type image/png <"$FILEPATH"
-
-    # Best-effort: the screenshot is already saved and on the clipboard, so a
-    # notification outage must not report the capture itself as failed.
+    grim -g "$picked" "$file" || exit 1
+    echo "$file"
+    wl-copy --type image/png <"$file"
+    # It is saved and on the clipboard by now, so a notification that fails
+    # does not make the screenshot one.
     nova-notification-send "Screenshot saved to clipboard and file" "Edit with Super + Alt + , (or click this)" \
-      --image "$FILEPATH" \
-      --exec nova-image-edit "$FILEPATH" "$SCREENSHOT_EDITOR" || true
+      --image "$file" \
+      --exec nova-image-edit "$file" "$editor" || true
     ;;
   copy)
-    grim -g "$SELECTION" - | wl-copy --type image/png
+    grim -g "$picked" - | wl-copy --type image/png
     ;;
   save)
-    grim -g "$SELECTION" "$FILEPATH" || exit 1
-    echo "$FILEPATH"
+    grim -g "$picked" "$file" || exit 1
+    echo "$file"
     ;;
   *)
     echo "Usage: nova-capture-screenshot [smart|region|windows|fullscreen] [slurp|copy|save] [--editor=<name>]" >&2

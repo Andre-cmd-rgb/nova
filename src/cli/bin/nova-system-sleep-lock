@@ -13,184 +13,168 @@
 
 set -euo pipefail
 
-# Overrunning the budget is the failure this whole path exists to prevent:
-# logind stops honouring the inhibitor and suspends mid-lock. Every call below
-# is bounded by what is left of the budget, so the deadline enforces itself
-# rather than depending on an estimate of how long a step ought to take.
+# The time there is: logind holds the suspend for a delay inhibitor only so
+# long, and then suspends with the lock half done. So every step is cut short
+# at the time left, and the deadline keeps itself, with no guess at how long
+# a step takes.
 budget_cap_ms=36000
 lock_timeout_ms=1000
 status_timeout_ms=500
-poll_interval=0.1
-# After this long without a secure lock, the screens go off; they are turned
-# off again each second, as a key press turns them on.
+# Without a secure lock this long, the screens go off, and again every second
+# after, as a key press turns them on.
 blank_after_ms=2000
 blank_every_ms=1000
-# How long after waking the lock is asked for, the screens off.
+# Woken without a secure lock, how long it is asked for.
 resumed_budget_ms=120000
 unsecured=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/sleep-unsecured
 
-# logind decides how long a delay inhibitor may hold the machine, and the
-# shipped drop-in only counts once logind has reloaded it, so ask rather than
-# assume. Leaving logind a fifth of its own window to deliver PrepareForSleep
-# and act on the release gives 4s at the 5s default and 36s at the shipped 45s.
-# The cap keeps a hand-raised window from stranding a closed laptop in a bag.
-derive_budget_ms() {
+# The time now, in milliseconds, in $now. EPOCHREALTIME has the locale's
+# decimal separator, which a comma would turn into bash's comma operator, so
+# every character but the digits goes.
+clock() {
+  now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
+}
+
+# The budget logind's window leaves, asked of logind rather than assumed, as
+# Nova's drop-in counts only once logind has reloaded. A fifth of it, and at
+# least a second, is left for logind to send PrepareForSleep and act on the
+# release: 4 s of the 5 s default, 36 s of Nova's 45 s. The cap keeps a window
+# raised by hand from holding a closed laptop awake in a bag.
+logind_budget() {
   local window
   window=$(timeout --kill-after=0.1s 1s busctl get-property \
     org.freedesktop.login1 /org/freedesktop/login1 \
     org.freedesktop.login1.Manager InhibitDelayMaxUSec 2>/dev/null || true)
   window=${window##* }
-
-  # An unreadable window means we cannot know, so assume logind's own default.
+  # Unread, it is logind's default.
   if [[ ! $window =~ ^[0-9]+$ ]] || ((window == 0)); then window=5000000; fi
   window=$((window / 1000))
-
-  # Never leave logind less than a second, however small its window is.
   window=$((window - (window / 5 > 1000 ? window / 5 : 1000)))
-
-  if ((window < budget_cap_ms)); then echo "$window"; else echo "$budget_cap_ms"; fi
+  echo $((window < budget_cap_ms ? window : budget_cap_ms))
 }
 
-resumed=0
+resumed=false
 if [[ ${1:-} == --resumed ]]; then
-  resumed=1
-  # Nothing to do unless the last suspend went without a secure lock, and
-  # nothing a second time.
+  resumed=true
+  # Only after a suspend without a secure lock, and only once at a time.
   [[ -e $unsecured ]] || exit 0
-  exec {resumed_lock}>>"$unsecured"
-  flock -n "$resumed_lock" || exit 0
+  exec {held}>>"$unsecured"
+  flock -n "$held" || exit 0
   budget_ms=$resumed_budget_ms
 else
-  budget_ms=${1:-$(derive_budget_ms)}
+  budget_ms=${1:-$(logind_budget)}
   if [[ ! $budget_ms =~ ^[0-9]+$ ]] || ((budget_ms < 1 || budget_ms > budget_cap_ms)); then
-    budget_ms=$(derive_budget_ms)
+    budget_ms=$(logind_budget)
   fi
 fi
-started_ms=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
+clock
+started=$now
+deadline=$((now + budget_ms))
 
-# EPOCHREALTIME renders with the locale's decimal separator, so drop every
-# non-digit rather than assuming a period. A comma would otherwise read as
-# bash's comma operator and silently void the deadline.
-deadline_ms=$((10#${EPOCHREALTIME//[!0-9]/} / 1000 + budget_ms))
-
-remaining_ms() {
-  echo $((deadline_ms - 10#${EPOCHREALTIME//[!0-9]/} / 1000))
-}
-
-# Clamping to what is left as well as to the call's own limit is what lets the
-# loop below stay a plain "while there is time" without predicting step costs.
-lock_ipc() {
-  local limit=$1 remaining seconds
+# The shell, asked within its own limit and the time left; 1 with no time left.
+shell() { # limit-ms argument...
+  local limit=$1 seconds
   shift
-
-  remaining=$(remaining_ms)
-  ((remaining > 0)) || return 1
-  ((limit < remaining)) || limit=$remaining
+  clock
+  ((deadline - now > 0)) || return 1
+  ((limit < deadline - now)) || limit=$((deadline - now))
   printf -v seconds '%d.%03d' $((limit / 1000)) $((limit % 1000))
-
-  NOVA_SHELL_IPC_TIMEOUT="$seconds" \
-    timeout --kill-after=0.1s "$seconds" nova-shell "$@"
+  NOVA_SHELL_IPC_TIMEOUT=$seconds timeout --kill-after=0.1s "$seconds" nova-shell "$@"
 }
 
-# The shell answers refusals on stdout with a zero exit, so the reply is the
-# only way to spot a lock it can never perform. Nothing else needs inspecting:
-# the status poll is what confirms success, and re-requesting is idempotent, so
-# a request that may not have landed costs nothing to repeat.
-request_lock() {
-  case $(lock_ipc "$lock_timeout_ms" lock lock 2>/dev/null || true) in
-    missing-pam) report_unsecured "no lock screen is configured" ;;
+# The shell turns a lock down with a zero exit, and says why: only that is
+# looked for. Whether it locked is for the status to say, and asking again
+# does no harm.
+ask_to_lock() {
+  case $(shell "$lock_timeout_ms" lock lock 2>/dev/null || true) in
+    missing-pam) give_up "no lock screen is configured" ;;
   esac
 }
 
-# secure: done. locking: the shell has the request and is working on it, so
-# leave it alone. Anything else, unreadable replies included, means ask again.
+# secure, or locking while the shell works on it; anything else, an answer
+# that cannot be read too, is asked again.
 lock_state() {
-  jq -r 'if .secure == true then "secure"
-         elif .requested == true then "locking"
-         else "idle" end' \
-    <<<"$(lock_ipc "$status_timeout_ms" lock status 2>/dev/null || true)" 2>/dev/null || true
+  jq -r 'if .secure == true then "secure" elif .requested == true then "locking" else "idle" end' \
+    <<<"$(shell "$status_timeout_ms" lock status 2>/dev/null || true)" 2>/dev/null || true
 }
 
-sync_clamshell() {
-  # Lid transitions can temporarily stall Hyprland IPC. This is best-effort:
-  # the lid binding and monitor watcher also reconcile clamshell state.
-  timeout --kill-after=0.1s 0.4s \
-    nova-hyprland-monitor-clamshell >/dev/null 2>&1 || true
+# Hyprland's IPC can stall as the lid moves: the lid's bind and the monitor
+# watcher see to clamshell too, so this need not succeed.
+clamshell() {
+  timeout --kill-after=0.1s 0.4s nova-hyprland-monitor-clamshell >/dev/null 2>&1 || true
 }
 
-# Bounded like the lock calls: Hyprland's IPC is what stalls under load.
+# The screens off, as long as Hyprland's IPC, which is what stalls, allows.
 blank() {
   timeout --kill-after=0.1s 0.4s nova-brightness-display off >/dev/null 2>&1 || true
 }
 
-last_blank_ms=0
+blanked=0
 blank_while_waiting() {
-  local now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
-  ((resumed || now - started_ms >= blank_after_ms)) || return 0
-  ((now - last_blank_ms >= blank_every_ms)) || return 0
-  last_blank_ms=$now
-  blank
+  clock
+  if $resumed || ((now - started >= blank_after_ms)); then
+    if ((now - blanked >= blank_every_ms)); then
+      blanked=$now
+      blank
+    fi
+  fi
 }
 
-# Secure: the screens it turned off come back, on the lock screen.
+# Secure: the screens it turned off come back on, on the lock screen.
 secured() {
-  ((!resumed)) || rm -f -- "$unsecured"
-  if ((resumed || last_blank_ms > 0)); then
+  if $resumed; then rm -f -- "$unsecured"; fi
+  if $resumed || ((blanked > 0)); then
     timeout --kill-after=0.1s 1s nova-brightness-display on >/dev/null 2>&1 || true
   fi
   exit 0
 }
 
-# Woken, its clock has jumped by however long the machine slept: the time
-# left starts again from the wake.
-last_poll_ms=$started_ms
-after_sleep() {
-  local now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
-  if ((resumed && now - last_poll_ms > 5000)); then
-    deadline_ms=$((now + budget_ms))
-    last_blank_ms=0
+# Woken, the clock has jumped by however long the machine slept: the time left
+# starts again from the wake.
+polled=$started
+woke() {
+  clock
+  if $resumed && ((now - polled > 5000)); then
+    deadline=$((now + budget_ms))
+    blanked=0
   fi
-  last_poll_ms=$now
+  polled=$now
 }
 
-# logind suspends whether or not this wait succeeded, so a failure here means
-# the machine slept with the session exposed, though with the screens off and
-# the lock asked for again as it wakes (--resumed). The notification lands on
-# the screen they unlock into.
-report_unsecured() {
-  printf 'nova-system-sleep-lock: suspending without a secure lock (%s)\n' \
-    "$1" >&2
-  if ((resumed)); then
+# logind suspends whether this succeeded or not: then the machine sleeps with
+# the session open, but its screens off, and the lock asked for again as it
+# wakes (--resumed). The notification is on the screen it unlocks into.
+give_up() { # why
+  printf 'nova-system-sleep-lock: suspending without a secure lock (%s)\n' "$1" >&2
+  if $resumed; then
     rm -f -- "$unsecured"
     exit 1
   fi
   mkdir -p -- "${unsecured%/*}"
   : >"$unsecured"
   blank
-
   nova-notification-send -u critical -g 󰌾 \
     "Screen did not lock before suspend" \
     "The screens stayed off until it locked ($1)." >/dev/null 2>&1 || true
-
   exit 1
 }
 
-# Request the lock before touching monitor state, so a stuck Hyprland IPC call
-# cannot consume the window before Quickshell has begun securing the session.
-request_lock
-sync_clamshell
+# The lock first, before anything to do with the monitors, so that a Hyprland
+# IPC call that hangs cannot use up the time before the shell has started to
+# lock.
+ask_to_lock
+clamshell
 
-# The trailing sleep can overshoot the deadline by one interval, which is well
-# inside the reserve derive_budget_ms already held back for logind.
-while after_sleep && (($(remaining_ms) > 0)); do
+# The sleep at the end can go past the deadline by one poll, well within what
+# the budget leaves logind.
+while woke && clock && ((deadline - now > 0)); do
   case $(lock_state) in
     secure) secured ;;
     locking) ;;
-    *) request_lock ;;
+    *) ask_to_lock ;;
   esac
   blank_while_waiting
-
-  sleep "$poll_interval"
+  sleep 0.1
 done
 
-report_unsecured "the shell did not secure the session within ${budget_ms}ms"
+give_up "the shell did not secure the session within ${budget_ms}ms"

@@ -1,35 +1,28 @@
 #!/bin/bash
 
-# nova:summary=Set the default audio output and move active streams
+# nova:summary=Make an output the default one, and move what is playing to it
 # nova:args=<node-id> <sink-name>
 
 set -euo pipefail
 
-node_id=${1:-}
-sink_name=${2:-}
-
-if [[ -z $node_id || -z $sink_name ]]; then
+node=${1:-}
+sink=${2:-}
+if [[ -z $node || -z $sink ]]; then
   echo "Usage: nova-audio-output-set-default <node-id> <sink-name>" >&2
   exit 1
 fi
 
-# Best effort: either tool may be missing or racing a device that just vanished,
-# and one succeeding is enough. The timeouts keep a wedged audio server from
-# hanging the caller.
-timeout 2 wpctl set-default "$node_id" 2>/dev/null || true
-timeout 2 pactl set-default-sink "$sink_name" 2>/dev/null || true
+# WirePlumber and PulseAudio each get told; either may be missing, or the
+# device already gone, and one of them taking it is enough. Every call has two
+# seconds, so that an audio server that hangs does not hang the panel too.
+timeout 2 wpctl set-default "$node" 2>/dev/null || true
+timeout 2 pactl set-default-sink "$sink" 2>/dev/null || true
 
-# Move only real application streams. A DSP filter-chain's own output is also a
-# sink input but carries no application.name, and moving it would rewire the
-# processing itself -- onto headphones, or into its own virtual sink, which is a
-# cycle. EasyEffects' output stream must stay put for the same reason.
-while read -r input; do
-  timeout 2 pactl move-sink-input "$input" "$sink_name" 2>/dev/null || true
+# Only the streams of applications move. A filter's own output, a speaker
+# tuning's or EasyEffects', is a stream too; moved, it would play into the
+# headphones unprocessed, or into its own input.
+while read -r stream; do
+  timeout 2 pactl move-sink-input "$stream" "$sink" 2>/dev/null || true
 done < <(timeout 2 pactl list sink-inputs 2>/dev/null | awk '
-  /^Sink Input #/ {id = substr($3, 2)}
-  /application\.name = / {
-    app = $0
-    sub(/.*application\.name = "/, "", app)
-    sub(/"$/, "", app)
-    if (app != "EasyEffects") print id
-  }')
+  /^Sink Input #/ { stream = substr($3, 2) }
+  /application\.name = / && !/application\.name = "EasyEffects"$/ { print stream }')

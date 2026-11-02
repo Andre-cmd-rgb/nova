@@ -5,206 +5,158 @@
 
 set -euo pipefail
 
-headline=""
-description=""
-glyph=
-urgency="low"
-app_name="nova-action"
-app_icon=""
-image=
-expire_timeout=-1
-replaces_id=0
-print_id=0
-exec_args=()
-exec_present=0
-parsed_option_args=0
-
 usage() {
   echo "Usage: nova-notification-send [--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]" >&2
 }
 
-# Recognize a known option, in both `--flag value` and `--flag=value` forms.
-# Returns 1 for anything unrecognized so the caller can decide (headline, or a
-# hard error in option position).
-parse_nova_option() {
-  local opt val nargs
-  if [[ $1 == --?*=* ]]; then
-    opt=${1%%=*}
-    val=${1#*=}
-    nargs=1
-  else
-    opt=$1
-    val=${2-}
-    nargs=2
-  fi
+app_name=nova-action
+icon=""
+glyph=""
+image=""
+urgency=low
+expire=-1
+replaces=0
+print_id=false
+click=()
+clickable=false
 
-  # -p/--print-id is a flag; it takes no value.
-  if [[ $opt == -p || $opt == --print-id ]]; then
-    print_id=1
-    parsed_option_args=1
-    return 0
+# Takes the option at the front of the arguments, as "--name value" or
+# "--name=value", and leaves in $taken how many words it was; a word that is no
+# option returns 1.
+take_option() {
+  local name=$1 value=${2-}
+  taken=2
+  if [[ $name == --?*=* ]]; then
+    value=${name#*=} name=${name%%=*} taken=1
   fi
-
-  case $opt in
-  -g | --glyph | -u | --urgency | --app-name | -i | --icon | --image | -r | --replace-id | -t | --expire-time) ;;
-  *) return 1 ;;
+  case $name in
+    -p | --print-id)
+      print_id=true taken=1
+      return 0
+      ;;
+    -g | --glyph | -u | --urgency | --app-name | -i | --icon | --image | -r | --replace-id | -t | --expire-time) ;;
+    *) return 1 ;;
   esac
-
-  if ((nargs == 2)) && (($# < 2)); then
-    echo "Missing value for $opt" >&2
+  if ((taken == 2 && $# < 2)); then
+    echo "Missing value for $name" >&2
     exit 1
   fi
-
-  case $opt in
-  -g | --glyph) glyph=$val ;;
-  -u | --urgency) urgency=$val ;;
-  --app-name) app_name=$val ;;
-  -i | --icon) app_icon=$val ;;
-  --image) image=$val ;;
-  -r | --replace-id)
-    [[ $val =~ ^[0-9]+$ ]] || {
-      echo "Invalid $opt value (numeric id expected): $val" >&2
-      exit 1
-    }
-    replaces_id=$val
-    ;;
-  -t | --expire-time)
-    [[ $val =~ ^-?[0-9]+$ ]] || {
-      echo "Invalid $opt value (milliseconds expected): $val" >&2
-      exit 1
-    }
-    expire_timeout=$val
-    ;;
+  case $name in
+    -g | --glyph) glyph=$value ;;
+    -u | --urgency) urgency=$value ;;
+    --app-name) app_name=$value ;;
+    -i | --icon) icon=$value ;;
+    --image) image=$value ;;
+    -r | --replace-id)
+      if [[ ! $value =~ ^[0-9]+$ ]]; then
+        echo "Invalid $name value (numeric id expected): $value" >&2
+        exit 1
+      fi
+      replaces=$value
+      ;;
+    -t | --expire-time)
+      if [[ ! $value =~ ^-?[0-9]+$ ]]; then
+        echo "Invalid $name value (milliseconds expected): $value" >&2
+        exit 1
+      fi
+      expire=$value
+      ;;
   esac
-
-  parsed_option_args=$nargs
-  return 0
 }
 
-while (($# > 0)); do
-  if parse_nova_option "$@"; then
-    shift "$parsed_option_args"
-  else
-    break
-  fi
-done
-
-if (($# < 1)); then
+# Options, up to the first word that is none: the headline.
+while (($#)) && take_option "$@"; do shift "$taken"; done
+if (($# == 0)); then
   usage
   exit 1
 fi
-
 headline=$1
 shift
 
-# The description is the next positional, taken as text even when it begins with
-# a dash — a body like "-50% off" or a negative number is content, not options.
-# Only a recognized option flag or --exec in that slot is not the description.
-known_flag() {
+# The word after the headline is the description, though it starts with a dash
+# ("-50% off" is text), unless it is one of the options or --exec.
+description=""
+if (($#)); then
   case $1 in
-  -g | --glyph | -u | --urgency | --app-name | -i | --icon | -t | --expire-time | --image | -r | --replace-id | -p | --print-id | --exec) return 0 ;;
-  --glyph=* | --urgency=* | --app-name=* | --icon=* | --expire-time=* | --image=* | --replace-id=*) return 0 ;;
+    -g | --glyph | -u | --urgency | --app-name | -i | --icon | -t | --expire-time | --image | -r | --replace-id | -p | --print-id | --exec) ;;
+    --glyph=* | --urgency=* | --app-name=* | --icon=* | --expire-time=* | --image=* | --replace-id=*) ;;
+    *)
+      description=$1
+      shift
+      ;;
   esac
-  return 1
-}
-
-if (($# > 0)) && ! known_flag "$1"; then
-  description=$1
-  shift
 fi
 
-while (($# > 0)); do
-  if [[ $1 == "--exec" ]]; then
-    # --exec consumes the rest of the line as the click command's argv. The
-    # caller's shell already tokenized those words into discrete arguments, and
-    # the shell runs them as-is (never re-parsed), so untrusted data in an
-    # argument is only ever one argument and can never become a command.
-    # Detected only here, after the headline/description positionals are
-    # captured, so an untrusted headline that is literally "--exec" is taken as
-    # text and can't be mistaken for the delimiter. --exec therefore comes last.
+# More options, then --exec and the command a click runs, one word each, to
+# the end. --exec is looked for only here, after the text, so a headline that
+# reads "--exec" stays a headline.
+while (($#)); do
+  if [[ $1 == --exec ]]; then
     shift
-    exec_args=("$@")
-    exec_present=1
+    click=("$@")
+    clickable=true
     break
-  elif parse_nova_option "$@"; then
-    shift "$parsed_option_args"
-  else
+  fi
+  if ! take_option "$@"; then
     echo "Unknown option: $1" >&2
     usage
     exit 1
   fi
+  shift "$taken"
 done
 
 case $urgency in
-low) urgency_byte=0 ;;
-normal) urgency_byte=1 ;;
-critical) urgency_byte=2 ;;
-*)
-  echo "Unknown urgency: $urgency (use low, normal, or critical)" >&2
-  exit 1
-  ;;
+  low) level=0 ;;
+  normal) level=1 ;;
+  critical) level=2 ;;
+  *)
+    echo "Unknown urgency: $urgency (use low, normal, or critical)" >&2
+    exit 1
+    ;;
 esac
 
-# a{sv} hints, as busctl triples (key, variant type, value). urgency is a byte;
-# the rest are strings. The click command rides here as nova-exec-argv, built
-# only from --exec below.
-hints=(urgency y "$urgency_byte")
-
-if [[ -n $glyph ]]; then
-  hints+=(nova-glyph s "$glyph")
-fi
-
-if [[ -n $image ]]; then
-  hints+=(image-path s "$image")
-fi
-
-if ((exec_present)); then
-  if ((${#exec_args[@]} == 0)) || [[ -z ${exec_args[0]} ]]; then
+# The hints, a{sv}, as busctl writes them: a name, a type, a value.
+hints=(urgency y "$level")
+if [[ -n $glyph ]]; then hints+=(nova-glyph s "$glyph"); fi
+if [[ -n $image ]]; then hints+=(image-path s "$image"); fi
+if $clickable; then
+  if ((${#click[@]} == 0)) || [[ -z ${click[0]} ]]; then
     echo "--exec needs a command: --exec <program> [args...]" >&2
     exit 1
   fi
-  # A single word with a space is almost always a whole command passed as one
-  # quoted string — which would run a program literally named that. Splitting it
-  # ourselves is exactly the injection we avoid, so reject it and point at the
-  # unquoted form instead.
-  if ((${#exec_args[@]} == 1)) && [[ ${exec_args[0]} == *[[:space:]]* ]]; then
+  # A command in one quoted word would run a program of that whole name. It
+  # is refused rather than split, as splitting it here would let its text
+  # become commands.
+  if ((${#click[@]} == 1)) && [[ ${click[0]} == *[[:space:]]* ]]; then
     echo "--exec takes the command as separate words, not one quoted string." >&2
-    echo "Write:  --exec ${exec_args[0]}" >&2
+    echo "Write:  --exec ${click[0]}" >&2
     exit 1
   fi
-  # NUL-delimit into jq so every byte survives as data: jq's own --args would eat
-  # a bare "--", and a newline in an arg must not split the vector.
-  exec_argv_json=$(printf '%s\0' "${exec_args[@]}" | jq -Rsc 'split("\u0000")[:-1]')
-  hints+=(nova-exec-argv s "$exec_argv_json")
+  # The shell runs the words as they are, never through a shell. They reach
+  # jq NUL-separated, so a newline or a lone "--" in one stays inside it.
+  hints+=(nova-exec-argv s "$(printf '%s\0' "${click[@]}" | jq -Rsc 'split("\u0000")[:-1]')")
 fi
 
-hint_count=$((${#hints[@]} / 3))
-
-# Call org.freedesktop.Notifications.Notify directly — never notify-send. Its
-# argv parsing is the surface that reinterprets a relayed headline like
-# `--hint=…` or `-rf` as options or hints; busctl takes each value as one typed
-# D-Bus parameter instead, and the leading `--` keeps a dash-leading value
-# (headline, description, a negative timeout) positional rather than a busctl
-# option. So the summary and body are strings that can never become a hint, and
-# nova-exec-argv is set only from --exec.
-#
-# Signature susssasa{sv}i: app_name, replaces_id, app_icon, summary, body,
-# actions (empty), hints, expire_timeout. replaces_id (from -r) updates a toast
-# in place; -p prints the returned id so a caller can reuse it.
-notify_cmd=(
+# org.freedesktop.Notifications.Notify (susssasa{sv}i: app name, the id to
+# replace, icon, summary, body, actions, hints, timeout), called through busctl
+# rather than notify-send, which reads a headline such as "--hint=..." as one
+# of its options. busctl takes each value as one typed argument, and its "--"
+# keeps one that starts with a dash from being taken for an option of its own.
+notify=(
   busctl --user -- call
   org.freedesktop.Notifications /org/freedesktop/Notifications
   org.freedesktop.Notifications Notify 'susssasa{sv}i'
-  "$app_name" "$replaces_id" "$app_icon" "$headline" "$description"
+  "$app_name" "$replaces" "$icon" "$headline" "$description"
   0
-  "$hint_count" "${hints[@]}"
-  "$expire_timeout"
+  "$((${#hints[@]} / 3))" "${hints[@]}"
+  "$expire"
 )
 
-if ((print_id)); then
-  # busctl prints the UINT32 return as "u <id>"; emit just the id.
-  out=$("${notify_cmd[@]}")
-  printf '%s\n' "${out##* }"
+# -p prints the new notification's id, which -r can replace later; busctl
+# answers "u <id>".
+if $print_id; then
+  id=$("${notify[@]}")
+  echo "${id##* }"
 else
-  "${notify_cmd[@]}" >/dev/null
+  "${notify[@]}" >/dev/null
 fi

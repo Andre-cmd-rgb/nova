@@ -5,38 +5,44 @@
 
 set -euo pipefail
 
+# The browsers to choose from: the name given here, the desktop entry, the
+# icon and the name the notification shows.
+browsers=(
+  "chromium chromium.desktop  Chromium"
+  "chrome google-chrome.desktop 󰊯 Chrome"
+  "brave brave-browser.desktop 󰖟 Brave"
+  "brave-origin brave-origin.desktop 󰖟 Brave Origin"
+  "edge microsoft-edge.desktop 󰇩 Edge"
+  "firefox firefox.desktop 󰈹 Firefox"
+  "zen zen.desktop 󰖟 Zen"
+)
+
+# Without one, the default browser by the name given here, or its desktop
+# entry for one not among them.
 if (($# == 0)); then
-  current_browser=$(nova-cmd-default-browser || true)
-  case "$current_browser" in
-  chromium.desktop) echo "chromium" ;;
-  google-chrome.desktop) echo "chrome" ;;
-  brave-browser.desktop) echo "brave" ;;
-  brave-origin.desktop) echo "brave-origin" ;;
-  microsoft-edge.desktop) echo "edge" ;;
-  firefox.desktop) echo "firefox" ;;
-  zen.desktop) echo "zen" ;;
-  *) echo "$current_browser" ;;
-  esac
+  current=$(nova-cmd-default-browser || true)
+  for browser in "${browsers[@]}"; do
+    read -r short entry _ <<<"$browser"
+    if [[ $entry == "$current" ]]; then
+      echo "$short"
+      exit 0
+    fi
+  done
+  echo "$current"
   exit 0
 fi
 
-case "$1" in
-chromium) desktop_id="chromium.desktop"; name="Chromium"; glyph= ;;
-chrome) desktop_id="google-chrome.desktop"; name="Chrome"; glyph=󰊯 ;;
-brave) desktop_id="brave-browser.desktop"; name="Brave"; glyph=󰖟 ;;
-brave-origin) desktop_id="brave-origin.desktop"; name="Brave Origin"; glyph=󰖟 ;;
-edge) desktop_id="microsoft-edge.desktop"; name="Edge"; glyph=󰇩 ;;
-firefox) desktop_id="firefox.desktop"; name="Firefox"; glyph=󰈹 ;;
-zen) desktop_id="zen.desktop"; name="Zen"; glyph=󰖟 ;;
-*)
+for browser in "${browsers[@]}"; do
+  read -r short entry glyph name <<<"$browser"
+  [[ $short != "$1" ]] || break
+done
+if [[ $short != "$1" ]]; then
   echo "Usage: nova-default-browser <chromium|chrome|brave|brave-origin|edge|firefox|zen>" >&2
   exit 1
-  ;;
-esac
+fi
 
-# xdg-settings checks what it set by reading the handler back, so keep the
-# session's $BROWSER and desktop-specific lists out of it: it must only see
-# mimeapps.list, where the browser itself is kept.
-env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings set default-web-browser "$desktop_id" || exit 1
-
+# xdg-settings reads the handler back to check what it set: without the
+# session's $BROWSER and its desktop's own lists, it reads mimeapps.list, which
+# is where the browser is kept.
+env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings set default-web-browser "$entry" || exit 1
 nova-notification-send -g "$glyph" "$name is now the default browser"

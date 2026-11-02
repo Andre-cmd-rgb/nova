@@ -4,110 +4,98 @@
 # nova:name=select
 # nova:args=prompt [option...] [-- menu args...]
 
-# An option may lead with an icon, as "<glyph><TAB><label>", and may trail a
-# subtext shown under the label, as "<glyph><TAB><label><TAB><subtext>". The
-# menu shows the glyph but never returns it. A plain option returns the label
-# alone; an option with a subtext returns "<label><TAB><subtext>", so callers
-# with same-named rows get the subtext back as the stable key.
+# An option is a label, or "<glyph><TAB><label>" for one with an icon, or
+# "<glyph><TAB><label><TAB><subtext>" for one with a line under it too. The
+# glyph is shown but never given back: the pick prints the label, and for an
+# option with a subtext "<label><TAB><subtext>", so that rows with the same
+# label can be told apart by it. The options come from stdin when none are
+# given. After --, --width and --height (or --maxheight) size the menu.
 
 set -euo pipefail
 
-if (( $# < 1 )); then
+usage() {
   echo "Usage: nova-menu-select <prompt> [option...] [-- menu args...]" >&2
   exit 1
-fi
+}
 
-prompt="$1"
+(($#)) || usage
+prompt=$1
 shift
 
 options=()
-menu_width=""
-menu_maxheight=""
-
-while (( $# > 0 )); do
-  if [[ $1 == "--" ]]; then
-    shift
-    while (( $# > 0 )); do
-      case "$1" in
-        --width)
-          shift
-          if (( $# == 0 )); then
-            echo "nova-menu-select: --width requires a value" >&2
-            exit 1
-          fi
-          menu_width="$1"
-          ;;
-        --height|--maxheight)
-          arg="$1"
-          shift
-          if (( $# == 0 )); then
-            echo "nova-menu-select: $arg requires a value" >&2
-            exit 1
-          fi
-          menu_maxheight="$1"
-          ;;
-      esac
-      shift
-    done
-    break
-  fi
-
+while (($#)) && [[ $1 != -- ]]; do
   options+=("$1")
   shift
 done
+width=""
+height=""
+if (($#)); then
+  shift
+  while (($#)); do
+    case $1 in
+      --width | --height | --maxheight)
+        if (($# < 2)); then
+          echo "nova-menu-select: $1 requires a value" >&2
+          exit 1
+        fi
+        if [[ $1 == --width ]]; then width=$2; else height=$2; fi
+        shift
+        ;;
+    esac
+    shift
+  done
+fi
 
-if (( ${#options[@]} == 0 )) && [[ ! -t 0 ]]; then
+if ((${#options[@]} == 0)) && [[ ! -t 0 ]]; then
   mapfile -t options
 fi
+((${#options[@]})) || usage
 
-if (( ${#options[@]} == 0 )); then
-  echo "Usage: nova-menu-select <prompt> [option...] [-- menu args...]" >&2
-  exit 1
-fi
+# A size in whole pixels: the number it starts with, or 0 when it starts with
+# none.
+whole() {
+  if [[ $1 =~ ^[[:space:]]*([+-]?)([0-9]+) ]]; then
+    echo $((${BASH_REMATCH[1]:-+}10#${BASH_REMATCH[2]}))
+  else
+    echo 0
+  fi
+}
 
-selection_file=$(mktemp)
-done_file=$(mktemp)
-rm -f "$done_file"
-trap 'rm -f "$selection_file" "$done_file"' EXIT
+# The shell writes the pick to one file, and makes the other as the menu
+# closes.
+picked=$(mktemp)
+closed=$(mktemp)
+rm -f "$closed"
+trap 'rm -f "$picked" "$closed"' EXIT
 
-options_json=$(perl -MEncode=decode -MJSON::PP=encode_json -e 'print encode_json([map { decode("UTF-8", $_) } @ARGV])' "${options[@]}")
-payload=$(perl -MEncode=decode -MJSON::PP=encode_json,decode_json -e '
-  my $payload = {
-    mode => "select",
-    prompt => decode("UTF-8", $ARGV[0]),
-    options => decode_json($ARGV[1]),
-    selectionFile => decode("UTF-8", $ARGV[2]),
-    doneFile => decode("UTF-8", $ARGV[3])
-  };
-  $payload->{width} = int($ARGV[4]) if length($ARGV[4] // "");
-  $payload->{maxHeight} = int($ARGV[5]) if length($ARGV[5] // "");
-  print encode_json($payload)
-' "$prompt" "$options_json" "$selection_file" "$done_file" "$menu_width" "$menu_maxheight")
-
+# shellcheck disable=SC2016 # jq's own variables
+payload=$(jq -cn --arg prompt "$prompt" --arg picked "$picked" --arg closed "$closed" \
+  --arg width "${width:+$(whole "$width")}" --arg height "${height:+$(whole "$height")}" '
+  {mode: "select", prompt: $prompt, options: $ARGS.positional, selectionFile: $picked, doneFile: $closed}
+  + if $width == "" then {} else {width: ($width | tonumber)} end
+  + if $height == "" then {} else {maxHeight: ($height | tonumber)} end' --args "${options[@]}")
 nova-shell shell summon nova.menu "$payload" >/dev/null
 
-# The shell writes done_file when the menu closes. If the shell that opened it
-# goes away (it crashed, or was restarted), nothing ever will. With no shell
-# process to be seen at all, this cannot tell, and waits.
-shell_pids=$(pgrep -u "$UID" -x 'qs|quickshell' || true)
-shell_alive() {
+# Nothing will close the menu if the shell that opened it goes away (it
+# crashed, or was restarted), so that is looked for every two seconds. With no
+# shell to be seen at the start, there is no telling, and it waits.
+shells=$(pgrep -u "$UID" -x 'qs|quickshell' || true)
+shell_gone() {
   local pid
-  [[ -n $shell_pids ]] || return 0
-  for pid in $shell_pids; do kill -0 "$pid" 2>/dev/null && return 0; done
-  return 1
+  [[ -n $shells ]] || return 1
+  for pid in $shells; do
+    if kill -0 "$pid" 2>/dev/null; then return 1; fi
+  done
+  return 0
 }
-# The wait is a read that never gets a line, on a pipe this holds both ends
+# The wait is a read that never gets a line, from a pipe this holds both ends
 # of: a builtin, where sleep would be a process twenty times a second.
-exec {wait_fd}<> <(:)
-checks=0
-while [[ ! -e $done_file ]]; do
-  read -rt 0.05 -u "$wait_fd" _ || true
-  checks=$((checks + 1))
-  if ((checks % 40 == 0)) && ! shell_alive; then exit 1; fi
+exec {never}<> <(:)
+for ((checks = 1; ; checks++)); do
+  [[ ! -e $closed ]] || break
+  read -rt 0.05 -u "$never" _ || true
+  if ((checks % 40 == 0)) && shell_gone; then exit 1; fi
 done
 
-if [[ -s $selection_file ]]; then
-  cat "$selection_file"
-else
-  exit 1
-fi
+[[ -s $picked ]] || exit 1
+cat "$picked"

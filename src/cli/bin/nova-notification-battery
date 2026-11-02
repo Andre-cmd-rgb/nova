@@ -1,7 +1,8 @@
 #!/bin/bash
 
-# nova:summary=Show the current battery status notification
+# nova:summary=Show the battery's charge and time left in a notification
 
 set -euo pipefail
 
+# nova-battery-info's one line, in a quiet notification with the bar's glyph.
 nova-notification-send -g 󰁹 -u low "$(nova-battery-info)"

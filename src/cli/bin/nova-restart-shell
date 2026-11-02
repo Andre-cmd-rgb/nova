@@ -5,96 +5,100 @@
 set -euo pipefail
 
 export NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
-CONFIG_DIR="$NOVA_PATH/shell"
-[[ -f $CONFIG_DIR/shell.qml ]] || { echo "Nova shell config not found: $CONFIG_DIR" >&2; exit 1; }
+config=$NOVA_PATH/shell
+if [[ ! -f $config/shell.qml ]]; then
+  echo "Nova shell config not found: $config" >&2
+  exit 1
+fi
 
-# Run from a terminal the shell started and still owns (Settings opened
-# "nova update" that way up to 1.0.0-beta.5), the kill below takes that
-# terminal with it, and its hangup ended this script before it launched the
-# replacement: no bar until the next login. Nothing past the kill needs the
-# terminal.
+# Run from a terminal the shell started and owns (Settings opened "nova
+# update" in one until 1.0.0-beta.5), it goes with the shell, and its hangup
+# used to end this before the new shell was started: no bar until the next
+# login. Nothing after the old shell is stopped needs the terminal.
 trap '' HUP
 
-# Allow running from outside the session (e.g. over ssh) by deriving the
-# Hyprland instance signature from the newest instance runtime dir.
+# From outside the session (over ssh), the Hyprland instance is the one whose
+# runtime directory is newest.
 if [[ -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
-  hypr_dir=$(find "${XDG_RUNTIME_DIR:-/run/user/$UID}/hypr" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -n 1 | cut -d' ' -f2- || true)
-  if [[ -n $hypr_dir ]]; then export HYPRLAND_INSTANCE_SIGNATURE=${hypr_dir##*/}; fi
+  newest=""
+  for instance in "${XDG_RUNTIME_DIR:-/run/user/$UID}"/hypr/*/; do
+    instance=${instance%/}
+    [[ -d $instance && ! -L $instance ]] || continue
+    if [[ -z $newest || ! $newest -nt $instance ]]; then newest=$instance; fi
+  done
+  if [[ -n $newest ]]; then export HYPRLAND_INSTANCE_SIGNATURE=${newest##*/}; fi
 fi
 
-# Restarting a live lock client would kill the lock screen and strand the
-# session behind Hyprland's failsafe. But a LOCK session without an active
-# locker — the shell died, or its crash handler re-execed a fresh instance
-# that holds no lock — sits in that failsafe with no way to authenticate,
-# and a restart plus re-lock is the only way back in without a reboot. So
-# ask the lock service rather than merely pinging the shell: only a locker
-# that reports the lock secure or in progress is worth preserving.
-relock=0
+# The shell's lock state: secure, locking, or idle for anything else, a shell
+# that does not answer too.
+lock_state() {
+  NOVA_SHELL_IPC_TIMEOUT=0.5s nova-shell lock status 2>/dev/null |
+    jq -r 'if .secure == true then "secure" elif .requested == true then "locking" else "idle" end' 2>/dev/null || true
+}
+
+# A lock screen up is never restarted: that would end it, and leave the session
+# behind Hyprland's failsafe. But a session locked with no lock screen (the
+# shell died, or came back after a crash without the lock) is behind that
+# failsafe already, with nothing to unlock it, and a restart that locks again
+# is the way out without a reboot. So the shell's lock is asked how it stands:
+# only one secure or on its way is kept.
+relock=false
 if nova-hyprland-session-locked; then
-  locking=$(NOVA_SHELL_IPC_TIMEOUT=0.5s nova-shell lock status 2>/dev/null |
-    jq -r '.secure or .requested' 2>/dev/null || true)
-  if [[ $locking == "true" ]]; then
-    echo "Refusing to restart Nova shell while the session is locked." >&2
-    exit 1
-  fi
-  relock=1
+  case $(lock_state) in
+    secure | locking)
+      echo "Refusing to restart Nova shell while the session is locked." >&2
+      exit 1
+      ;;
+  esac
+  relock=true
 fi
 
-# The lock plugin loads asynchronously, so a fresh shell answers ping before
-# it can lock, and may even refuse early lock requests while its plugins or
-# PAM config are still loading. Mirror nova-system-sleep-lock: request the
-# lock and poll until the session reports secure, re-requesting as needed, so
-# recovery never claims success while the failsafe is still up. The deadline
-# is generous because slow plugin discovery delays the lock IPC target.
+# A new shell answers before its lock plugin has loaded, and may turn a lock
+# down while its plugins or PAM settings are still loading. So, as
+# nova-system-sleep-lock does, the lock is asked for until the shell says it
+# is secure, and the restart never claims a lock that is not there. A slow
+# plugin search holds the lock's IPC back, so the time allowed is long.
 relock_session() {
-  local state deadline=$((SECONDS + 30))
-
-  while ((SECONDS < deadline)); do
-    state=$(NOVA_SHELL_IPC_TIMEOUT=0.5s nova-shell lock status 2>/dev/null |
-      jq -r 'if .secure == true then "secure" elif .requested == true then "locking" else "idle" end' 2>/dev/null || true)
-
-    case $state in
+  local limit=$((SECONDS + 30))
+  while ((SECONDS < limit)); do
+    case $(lock_state) in
       secure) return 0 ;;
       locking) ;;
       *) NOVA_SHELL_IPC_TIMEOUT=0.5s nova-shell lock lock >/dev/null 2>&1 || true ;;
     esac
-
     sleep 0.1
   done
-
   return 1
 }
 
-# Each kill stops the oldest matching instance and only returns once it has
-# fully exited. A large bar can take longer than a few seconds to tear down,
-# so the client gets time to see that through, and the wait below covers a
-# client that timed out anyway: the fresh shell refuses to start next to a
-# still-dying instance (-n), which is how a restart used to end with no bar.
-while timeout 30 quickshell kill -p "$CONFIG_DIR" --any-display >/dev/null 2>&1; do :; done
+# Each kill stops the oldest shell of this config, and returns once it is gone.
+# A big bar can take more than a few seconds to come down, so each has its
+# time; and the wait after covers one that timed out anyway, as a new shell
+# will not start beside one still on its way out (-n), which is how restarts
+# used to end with no bar.
+while timeout 30 quickshell kill -p "$config" --any-display >/dev/null 2>&1; do :; done
 
-shell_instance_running() {
+shell_running() {
   quickshell list -a -j 2>/dev/null |
-    jq -e --arg dir "$CONFIG_DIR/" 'any(.[]; .config_path | startswith($dir))' >/dev/null 2>&1
+    jq -e --arg dir "$config/" 'any(.[]; .config_path | startswith($dir))' >/dev/null 2>&1
 }
-
-deadline=$((SECONDS + 30))
-while ((SECONDS < deadline)) && shell_instance_running; do
+limit=$((SECONDS + 30))
+while ((SECONDS < limit)) && shell_running; do
   sleep 0.1
 done
 
-# Spawn from Hyprland so the shell inherits the canonical session environment,
-# not transient variables from a terminal, SSH connection, or development tool.
+# Started by Hyprland, so that it has the session's own environment, not what
+# a terminal, ssh or a development tool put in this one's.
 hyprctl dispatch 'hl.dsp.exec_cmd("nova-launch-shell")' >/dev/null
 
-# The shell answers once its plugins have loaded, which on a large bar is
-# well past ten seconds, so wait on a deadline rather than a fixed handful
-# of attempts.
-deadline=$((SECONDS + 60))
-while ((SECONDS < deadline)); do
+# It answers once its plugins have loaded, on a big bar well after ten
+# seconds: so it is given until a time, not a number of tries.
+limit=$((SECONDS + 60))
+while ((SECONDS < limit)); do
   if NOVA_SHELL_IPC_TIMEOUT=0.5s nova-shell shell ping >/dev/null 2>&1; then
-    # The session stays compositor-locked after the old lock client died, so
-    # re-acquire the lock and let the user authenticate out of it.
-    if ((relock)) && ! relock_session; then
+    # The session is still locked by Hyprland, with the old lock screen gone:
+    # it is locked again, for the user to unlock.
+    if $relock && ! relock_session; then
       echo "Nova shell restarted, but the session lock was not re-secured." >&2
       exit 1
     fi

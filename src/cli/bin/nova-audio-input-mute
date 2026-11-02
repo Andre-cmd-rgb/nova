@@ -1,17 +1,18 @@
 #!/bin/bash
 
-# nova:summary=Mute or unmute the microphone, and its key's light where there is one
+# nova:summary=Mute or unmute the microphone, and light its key's LED to match where there is one
 
 set -euo pipefail
 
 wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle >/dev/null
 
-# Compare the output instead of piping into grep -q: with pipefail, grep exiting
-# on its first match can SIGPIPE wpctl and turn a match into a failure.
+# A muted source reads "Volume: 0.40 [MUTED]". The answer is kept rather than
+# piped to grep -q, which leaves at its first match: under pipefail, wpctl
+# could die of SIGPIPE and turn the match into a failure.
 if [[ $(wpctl get-volume @DEFAULT_AUDIO_SOURCE@) == *MUTED* ]]; then
-  nova-brightness-keyboard-mute on
-  nova-osd -i microphone-muted -m "Microphone muted"
+  led=on icon=microphone-muted message="Microphone muted"
 else
-  nova-brightness-keyboard-mute off
-  nova-osd -i microphone -m "Microphone on"
+  led=off icon=microphone message="Microphone on"
 fi
+nova-brightness-keyboard-mute "$led"
+nova-osd -i "$icon" -m "$message"

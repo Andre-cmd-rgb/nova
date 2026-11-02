@@ -3,65 +3,64 @@
 # nova:summary=Shared helpers for editing ~/.config/nova/shell.json (source this, don't run it)
 # nova:hidden=true
 
+# For the commands that change the shell's settings (nova bar, nova idle):
+#   source_file      the settings to start from: the user's, or Nova's defaults
+#   commit PROGRAM   PROGRAM (jq, with any jq options after it) run on them,
+#                    written as the user's, and the shell told to read them
+#   fail MESSAGE     the message, after the command's name, and exit 1
+#   NORMALIZE        a jq program giving the settings the shape every change
+#                    can count on, to start a change with
+
 set -euo pipefail
 
-CONFIG_FILE="$HOME/.config/nova/shell.json"
-DEFAULTS_FILE="$NOVA_PATH/default/shell.json"
+shell_config=$HOME/.config/nova/shell.json
+# shellcheck disable=SC2034 # for the commands that source this
+DEFAULTS_FILE=$NOVA_PATH/default/shell.json
 
 fail() {
   echo "${0##*/}: $*" >&2
   exit 1
 }
 
-# Tell a running shell to re-read the file. A shell that is not running has
-# nothing to refresh, so this stays quiet either way.
-refresh_shell_config() {
-  nova-shell -q shell reloadConfig
-}
-
 source_file() {
-  if [[ -s $CONFIG_FILE ]]; then
-    printf '%s\n' "$CONFIG_FILE"
+  if [[ -s $shell_config ]]; then
+    printf '%s\n' "$shell_config"
   else
     printf '%s\n' "$DEFAULTS_FILE"
   fi
 }
 
-# jq pipeline that normalizes shell.json into a well-shaped object with
-# version=1, bar.layout.{left,center,right} arrays, and plugins array. Every
-# mutation pipes through this so downstream jq can assume structure.
-# shellcheck disable=SC2034 # used by the scripts that source this file
+# An object at version 1, with a bar, its layout's three sections, and the
+# plugins, each made what it should be where it is anything else.
+# shellcheck disable=SC2034 # for the commands that source this
 NORMALIZE='
-  def object_or_empty: if type == "object" then . else {} end;
-  def array_or_empty: if type == "array" then . else [] end;
-  object_or_empty
+  def object: if type == "object" then . else {} end;
+  def array: if type == "array" then . else [] end;
+  object
   | .version = 1
-  | .bar = (.bar | object_or_empty)
-  | .bar.layout = (.bar.layout | object_or_empty)
-  | .bar.layout.left = (.bar.layout.left | array_or_empty)
-  | .bar.layout.center = (.bar.layout.center | array_or_empty)
-  | .bar.layout.right = (.bar.layout.right | array_or_empty)
-  | .plugins = (.plugins | array_or_empty)
-'
+  | .bar = (.bar | object)
+  | .bar.layout = (.bar.layout | object)
+  | .bar.layout.left = (.bar.layout.left | array)
+  | .bar.layout.center = (.bar.layout.center | array)
+  | .bar.layout.right = (.bar.layout.right | array)
+  | .plugins = (.plugins | array)'
 
-# Apply a jq program to the source file and atomically write the result to the
-# user config, then refresh the running shell. Extra args after the program are
-# forwarded to jq (e.g. --arg/--argjson).
-_SHELL_CONFIG_TMP=""
-cleanup_shell_config_tmp() {
-  if [[ -n $_SHELL_CONFIG_TMP ]]; then
-    rm -f "$_SHELL_CONFIG_TMP"
-  fi
+# Written beside the settings and renamed over them, so that the shell never
+# reads them half written. A shell that is not running has nothing to read
+# again, and says nothing.
+shell_config_next=""
+shell_config_cleanup() {
+  if [[ -n $shell_config_next ]]; then rm -f "$shell_config_next"; fi
 }
-trap cleanup_shell_config_tmp EXIT
+trap shell_config_cleanup EXIT
 
-commit() {
-  local program="$1"
+commit() { # program [jq option...]
+  local program=$1
   shift
-  mkdir -p "$(dirname "$CONFIG_FILE")"
-  _SHELL_CONFIG_TMP=$(mktemp)
-  jq -S -e "$@" "$program" "$(source_file)" >"$_SHELL_CONFIG_TMP" || fail "could not update shell config"
-  mv "$_SHELL_CONFIG_TMP" "$CONFIG_FILE"
-  _SHELL_CONFIG_TMP=""
-  refresh_shell_config
+  mkdir -p "${shell_config%/*}"
+  shell_config_next=$(mktemp "$shell_config.XXXXXX")
+  jq -S -e "$@" "$program" "$(source_file)" >"$shell_config_next" || fail "could not update shell config"
+  mv "$shell_config_next" "$shell_config"
+  shell_config_next=""
+  nova-shell -q shell reloadConfig
 }

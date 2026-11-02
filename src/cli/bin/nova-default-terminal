@@ -5,35 +5,45 @@
 
 set -euo pipefail
 
+# The terminals to choose from: the name given here, the desktop entry, and
+# the name the notification shows.
+terminals=(
+  "alacritty Alacritty.desktop Alacritty"
+  "foot foot.desktop Foot"
+  "ghostty com.mitchellh.ghostty.desktop Ghostty"
+  "kitty kitty.desktop Kitty"
+)
+
+# Without one, the terminal xdg-terminal-exec runs, by the name given here, or
+# its desktop entry (without an action after a colon) for one not among them.
 if (($# == 0)); then
-  desktop_id=$(xdg-terminal-exec --print-id 2>/dev/null || true)
-  desktop_id=${desktop_id%%:*}
-  case "$desktop_id" in
-  Alacritty.desktop) echo "alacritty" ;;
-  foot.desktop) echo "foot" ;;
-  com.mitchellh.ghostty.desktop) echo "ghostty" ;;
-  kitty.desktop) echo "kitty" ;;
-  *) echo "$desktop_id" ;;
-  esac
+  current=$(xdg-terminal-exec --print-id 2>/dev/null || true)
+  current=${current%%:*}
+  for terminal in "${terminals[@]}"; do
+    read -r short entry _ <<<"$terminal"
+    if [[ $entry == "$current" ]]; then
+      echo "$short"
+      exit 0
+    fi
+  done
+  echo "$current"
   exit 0
 fi
 
-case "$1" in
-alacritty) desktop_id="Alacritty.desktop"; name="Alacritty"; glyph= ;;
-foot) desktop_id="foot.desktop"; name="Foot"; glyph= ;;
-ghostty) desktop_id="com.mitchellh.ghostty.desktop"; name="Ghostty"; glyph= ;;
-kitty) desktop_id="kitty.desktop"; name="Kitty"; glyph= ;;
-*)
+for terminal in "${terminals[@]}"; do
+  read -r short entry name <<<"$terminal"
+  [[ $short != "$1" ]] || break
+done
+if [[ $short != "$1" ]]; then
   echo "Usage: nova-default-terminal <alacritty|foot|ghostty|kitty>" >&2
   exit 1
-  ;;
-esac
+fi
 
+# xdg-terminal-exec takes the first terminal in its list that is installed.
 mkdir -p ~/.config
 cat >~/.config/xdg-terminals.list <<EOF
 # Terminal emulator preference order for xdg-terminal-exec
 # The first found and valid terminal will be used
-$desktop_id
+$entry
 EOF
-
-nova-notification-send -g "$glyph" "$name is now the default terminal"
+nova-notification-send -g  "$name is now the default terminal"

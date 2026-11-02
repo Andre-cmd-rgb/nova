@@ -1,39 +1,33 @@
 #!/bin/bash
 
-# nova:summary=Show the Nova Quickshell on-screen display
+# nova:summary=Show a message, or a level, in the Nova shell's on-screen display
 # nova:args=[-i|--icon <icon>] [-m|--message <text>] [-p|--progress <0-100>] [-d|--duration <ms>]
 
 set -euo pipefail
 
-icon=""
-message=""
-progress=""
-progress_text=""
-max="100"
-duration=""
+usage="Usage: nova-osd [-i|--icon <icon>] [-m|--message <text>] [-p|--progress <0-100>] [-d|--duration <ms>]"
 
+icon="" message="" progress="" duration=""
 while (($#)); do
   case $1 in
-    -i|--icon) icon="${2:-}"; shift 2 ;;
-    -m|--message) message="${2:-}"; shift 2 ;;
-    -p|--progress) progress="${2:-}"; shift 2 ;;
-    -d|--duration) duration="${2:-}"; shift 2 ;;
-    -h|--help) nova osd --help; exit 0 ;;
-    *) echo "Unknown OSD option: $1" >&2; exit 1 ;;
+    -i | --icon) icon=${2:-} ;;
+    -m | --message) message=${2:-} ;;
+    -p | --progress) progress=${2:-} ;;
+    -d | --duration) duration=${2:-} ;;
+    -h | --help)
+      echo "$usage"
+      exit 0
+      ;;
+    *)
+      echo "Unknown OSD option: $1" >&2
+      exit 1
+      ;;
   esac
+  # An option without its value is the end, a failed one.
+  shift 2
 done
 
-if [[ -n $progress ]]; then
-  progress_text="${progress}%"
-fi
-
-payload=$(jq -cn \
-  --arg icon "$icon" \
-  --arg message "$message" \
-  --arg value "$progress" \
-  --arg progressText "$progress_text" \
-  --arg max "$max" \
-  --arg duration "$duration" \
-  '{icon:$icon,message:$message,value:$value,progressText:$progressText,max:$max,duration:$duration}')
-
-nova-shell -q osd show "$payload"
+# The shell's osd plugin takes every field as a string, and draws a level as a
+# bar out of max with the percentage beside it.
+nova-shell -q osd show "$(jq -cn --arg icon "$icon" --arg message "$message" --arg value "$progress" \
+  --arg progressText "${progress:+$progress%}" --arg max 100 --arg duration "$duration" '$ARGS.named')"
