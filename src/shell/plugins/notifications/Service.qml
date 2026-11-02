@@ -136,9 +136,15 @@ Item {
     var row = NotificationLogic.rowOf(notification, Date.now())
     var id = row.originalId
     live[id] = notification
-    // A newer notification may have taken the id meanwhile.
-    notification.closed.connect(function () {
+    // Closed by its sender (CloseNotification), it leaves the screen, as the
+    // specification has it: what it said no longer holds, or it was one that
+    // never runs out. A newer notification may have taken the id meanwhile.
+    var closedBySender = false
+    notification.closed.connect(function (reason) {
       if (service.live[id] === notification) delete service.live[id]
+      if (reason !== NotificationCloseReason.CloseRequested) return
+      closedBySender = true
+      service.takeDown(id, row.timestamp)
     })
 
     if (doNotDisturb && !NotificationLogic.breaksThroughDnd(notification)) {
@@ -156,6 +162,11 @@ Item {
     // Later: changing the model while its Repeater makes a card crashes.
     Qt.callLater(function () {
       service.replace(id, NotificationLogic.fileName(row))
+      // Closed before it showed: its file goes to the history as it would.
+      if (closedBySender) {
+        service.archive(row)
+        return
+      }
       service.toasts.insert(0, row)
       // An update that came before the row was there had no row to change,
       // and will not come again.
@@ -233,6 +244,18 @@ Item {
       var row = toasts.get(i)
       if (!row || row.originalId !== id || isRestored(row)) continue
       if (NotificationLogic.fileName(row) !== keep) forget(row)
+      toasts.remove(i)
+    }
+  }
+
+  // The toast of <id> and <timestamp> off the screen, its sender having closed
+  // it, and its file into the history, as any toast gone. The sender is not
+  // told: it knows.
+  function takeDown(id, timestamp) {
+    for (var i = toasts.count - 1; i >= 0; i--) {
+      var row = toasts.get(i)
+      if (!row || row.originalId !== id || row.timestamp !== timestamp || isRestored(row)) continue
+      archive(row)
       toasts.remove(i)
     }
   }
