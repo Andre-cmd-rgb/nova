@@ -19,7 +19,6 @@ nova.bind("SUPER + BACKSPACE", "Toggle window transparency", "nova-hyprland-wind
 nova.bind("SUPER + SHIFT + BACKSPACE", "Toggle window gaps", "nova-hyprland-window-gaps-toggle")
 nova.bind("SUPER + CTRL + BACKSPACE", "Toggle single-window square aspect", "nova-hyprland-window-single-square-aspect-toggle")
 
--- xkbcommon names the key "comma"; "COMMA" matches nothing.
 nova.bind("SUPER + comma", "Dismiss last notification", "nova-shell notifications dismissOne")
 nova.bind("SUPER + SHIFT + comma", "Dismiss all notifications", "nova-shell notifications dismissAll")
 nova.bind_toggle("SUPER + CTRL + comma", "Toggle silencing notifications", "notification-silencing")

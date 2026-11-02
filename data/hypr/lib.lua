@@ -73,23 +73,22 @@ function nova.bind_toggle(keys, description, toggle, options)
 end
 
 -- Binds that exist only while a layer of `namespace` is on screen: made by
--- make(), which returns their handles, as the first such layer opens, and
--- removed as the last closes. Removed by handle, since unbinding a key would
--- take a binding of the same key in your config with it.
+-- make(), which returns their handles, as the first opens, and removed by
+-- handle once none is left (unbinding the key would take a binding of the
+-- same key in your config with it). Hyprland is asked which are left, rather
+-- than told by a count, so one close that goes unseen is put right at the next.
 function nova.bind_while_layer(namespace, make)
-  local open, handles = 0, {}
+  local handles
   hl.on("layer.opened", function(layer)
-    if layer.namespace ~= namespace then return end
-    open = open + 1
-    if open == 1 then handles = make() end
+    if layer.namespace == namespace and not handles then handles = make() end
   end)
   hl.on("layer.closed", function(layer)
-    if layer.namespace ~= namespace or open == 0 then return end
-    open = open - 1
-    if open == 0 then
-      for _, handle in ipairs(handles) do handle:unbind() end
-      handles = {}
+    if layer.namespace ~= namespace or not handles then return end
+    for _, other in ipairs(hl.get_layers({ namespace = namespace })) do
+      if other.address ~= layer.address and other.mapped then return end
     end
+    for _, handle in ipairs(handles) do handle:unbind() end
+    handles = nil
   end)
 end
 

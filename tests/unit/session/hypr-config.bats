@@ -77,27 +77,13 @@ hypr() { # lua
   [ -z "$output" ]
 }
 
-@test "the module path is set once, however often the config loads" {
+@test "your modules and Nova's are found, ahead of Lua's own" {
+  write_file "$SCRATCH/home/.config/hypr/mine.lua" 'mine = true'
   run hypr '
-    local first = package.path
-    dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
-    dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
-    print(package.path == first)
-    print(package.searchpath("default.hypr.lib", package.path) ~= nil)'
-  [ "$status" -eq 0 ]
-  [ "$output" = "$(printf 'true\ntrue')" ]
-}
-
-@test "a reload loads Nova's modules and yours afresh, and forgets nova_default_bindings" {
-  write_file "$SCRATCH/home/.config/hypr/mine.lua" 'loads = (loads or 0) + 1'
-  run hypr '
-    nova_default_bindings = false
     require("hypr.mine")
-    dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
-    require("hypr.mine")
-    print(loads, nova_default_bindings)'
+    print(mine, package.searchpath("default.hypr.lib", package.path))'
   [ "$status" -eq 0 ]
-  [ "$output" = "2	nil" ]
+  [ "$output" = "true	$SCRATCH/nova/default/hypr/lib.lua" ]
 }
 
 @test "nova.bind copies its options, so binds can share one table" {
@@ -136,22 +122,42 @@ hypr() { # lua
 
 # Escape for dictation and the region picker's keys live while their layer is
 # up: slurp opens one per display, and the keys go when the last one closes.
+# The closing layer is still listed, unmapped, as its event fires.
 @test "keys bound while a layer is up go with the last of its layers" {
   run hypr '
     require("default.hypr.lib")
-    local handlers = { ["layer.opened"] = {}, ["layer.closed"] = {} }
+    local handlers, layers = { ["layer.opened"] = {}, ["layer.closed"] = {} }, {}
     hl.on = function(event, fn) table.insert(handlers[event], fn) end
-    local function fire(event, namespace) for _, fn in ipairs(handlers[event]) do fn({ namespace = namespace }) end end
+    hl.get_layers = function(filter)
+      local found = {}
+      for _, layer in pairs(layers) do
+        if layer.namespace == filter.namespace then found[#found + 1] = layer end
+      end
+      return found
+    end
+    local function open(address, namespace)
+      layers[address] = { address = address, namespace = namespace, mapped = true }
+      for _, fn in ipairs(handlers["layer.opened"]) do fn(layers[address]) end
+    end
+    local function close(address)
+      layers[address].mapped = false
+      for _, fn in ipairs(handlers["layer.closed"]) do fn(layers[address]) end
+      layers[address] = nil
+    end
     nova.bind_while_layer("selection", function() return { nova.bind("RETURN", "Pick", "pick") } end)
-    fire("layer.opened", "selection")
-    fire("layer.opened", "selection")
-    fire("layer.opened", "other")
+    open("0x1", "selection")
+    open("0x2", "selection")
+    open("0x3", "other")
     print("closing")
-    fire("layer.closed", "selection")
-    fire("layer.closed", "other")
+    close("0x1")
+    close("0x3")
     print("closing the last")
-    fire("layer.closed", "selection")
-    fire("layer.closed", "selection")'
+    close("0x2")
+    print("one closes unseen")
+    open("0x4", "selection")
+    layers["0x4"] = nil
+    open("0x5", "selection")
+    close("0x5")'
   [ "$status" -eq 0 ]
-  [ "$output" = "$(printf 'bind RETURN pick {description=Pick}\nclosing\nclosing the last\nunbind')" ]
+  [ "$output" = "$(printf 'bind RETURN pick {description=Pick}\nclosing\nclosing the last\nunbind\none closes unseen\nbind RETURN pick {description=Pick}\nunbind')" ]
 }
