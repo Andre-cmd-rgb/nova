@@ -6,7 +6,7 @@ import Quickshell.Services.Pipewire
 import "KeysModel.js" as Model
 
 // The volume, brightness and keyboard backlight keys, in the shell. Hyprland
-// hands them over as global shortcuts (data/hypr/bindings/media.lua), and the
+// hands them over as global shortcuts (data/hypr/keys/media.lua), and the
 // shell does the rest: the volume over its own PipeWire connection, a
 // backlight with one brightnessctl, the OSD in place. Run as commands, a press
 // started ten or a dozen processes for some 130 ms of CPU, and a held key

@@ -14,5 +14,5 @@ hl.config({
   },
 })
 
--- Kanagawa backdrop is too strong for default opacity.
-o.window({ tag = "terminal" }, { opacity = "0.99 0.985" })
+-- Kanagawa's backgrounds show through a see-through terminal too strongly.
+nova.window({ tag = "terminal" }, { opacity = "0.99 0.985" })

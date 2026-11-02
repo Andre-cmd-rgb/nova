@@ -117,8 +117,8 @@ GPU shares the memory with the CPU, and each layer drawn into a 3840x2160 frame
 reads and writes 33 MB. Nova's windows are slightly see-through on a PC
 (`0.985`); Hyprland draws nothing under an opaque window, but under a
 see-through one the wallpaper and every window below it, each frame. The Pi's
-profile makes every window opaque (`o.opaque_windows`, in
-`data/hypr/windows.lua`). A frame that still misses the refresh would,
+profile makes every window opaque (`nova.opaque_windows`, in
+`data/hypr/rules.lua`). A frame that still misses the refresh would,
 double-buffered, wait for the next one and halve the frame rate;
 `render:new_render_scheduling` starts the next frame at once in a third buffer,
 which needs the GPU's native fences (`EGL_ANDROID_native_fence_sync`, which

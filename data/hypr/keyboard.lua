@@ -1,52 +1,43 @@
--- The system's keyboard layout, from /etc/vconsole.conf (XKBLAYOUT and
--- XKBVARIANT, which the installer writes). The session (input.lua) and the
--- login greeter both take it from here, so a password typed at one is typed on
--- the same keys at the other.
+-- The keyboard layout, from /etc/vconsole.conf, where the installer writes
+-- XKBLAYOUT and XKBVARIANT. The session (input.lua) and the login greeter
+-- both read it here, so a password is typed on the same keys at both.
 
 local M = {}
 
-local function read_vconsole()
+local function vconsole()
   local values = {}
-  local file = io.open("/etc/vconsole.conf", "r")
-  if not file then
-    return values
-  end
-
+  local file = io.open("/etc/vconsole.conf")
+  if not file then return values end
   for line in file:lines() do
     local key, value = line:match("^%s*([%w_]+)%s*=%s*(.-)%s*$")
-    if key and value then
-      value = value:gsub("%s+#.*$", "")
-      value = value:gsub('^"(.*)"$', "%1")
-      value = value:gsub("^'(.*)'$", "%1")
+    if key then
+      -- A trailing comment off, then quotes.
+      value = value:gsub("%s+#.*$", ""):gsub('^"(.*)"$', "%1"):gsub("^'(.*)'$", "%1")
       values[key] = value
     end
   end
-
   file:close()
   return values
 end
 
--- Layouts that can't type Latin letters.
-local non_latin_layouts =
-  " af am ara bd bg by et ge gr il in iq ir kg kh kz la lk mk mm mn mv np rs ru sy th tj ua "
+-- Layouts that cannot type Latin letters.
+local non_latin = {}
+for code in ("af am ara bd bg by et ge gr il in iq ir kg kh kz la lk mk mm mn mv np rs ru sy th tj ua"):gmatch("%S+") do
+  non_latin[code] = true
+end
 
 -- { layout, variant, options } for Hyprland's kb_layout, kb_variant and
--- kb_options. Hyprland resolves keybindings against the first entry in
--- kb_layout, not the layout that's currently active, so Nova's Latin-keysym
--- bindings (SUPER + W and friends) only fire when a Latin layout leads.
--- Installing with a non-Latin one would otherwise leave the desktop unusable,
--- so US goes first and the system's layout is reached with Left Alt + Right Alt.
+-- kb_options. Hyprland matches key bindings against the first layout listed,
+-- whichever is in use, so with a non-Latin one first SUPER + W and every
+-- other letter binding would do nothing. US goes first then, and Left Alt +
+-- Right Alt switches to the system's layout.
 function M.layout()
-  local vconsole = read_vconsole()
-  local layout = vconsole.XKBLAYOUT or "us"
-  local variant = vconsole.XKBVARIANT or ""
-  local options = ""
-  if non_latin_layouts:find(" " .. layout:match("^[^,]*") .. " ", 1, true) then
-    layout = "us," .. layout
-    variant = "," .. variant
-    options = "grp:alts_toggle"
+  local conf = vconsole()
+  local layout, variant = conf.XKBLAYOUT or "us", conf.XKBVARIANT or ""
+  if non_latin[layout:match("^[^,]*")] then
+    return { layout = "us," .. layout, variant = "," .. variant, options = "grp:alts_toggle" }
   end
-  return { layout = layout, variant = variant, options = options }
+  return { layout = layout, variant = variant, options = "" }
 end
 
 return M

@@ -1,23 +1,25 @@
--- Nova Hyprland setup: helpers, defaults, and current theme overrides.
+-- Nova's Hyprland defaults, required by ~/.config/hypr/hyprland.lua before your
+-- own modules. Updates change these; your files stay as you left them.
 
-require("default.hypr.helpers")
-local require_optional = require("default.hypr.require_optional")
+require("default.hypr.lib")
 
--- Use Nova defaults, but don't edit these directly.
 require("default.hypr.session")
 require("default.hypr.autostart")
-if _G.nova_default_bindings ~= false then
-  require("default.hypr.bindings.media")
-  require("default.hypr.bindings.clipboard")
-  require("default.hypr.bindings.tiling")
-  require("default.hypr.bindings.utilities")
-  require("default.hypr.bindings.dictation")
-  require_optional.module("default.hypr.bindings.applications")
-end
-require("default.hypr.envs")
-require("default.hypr.looknfeel")
-require("default.hypr.input")
-require("default.hypr.windows")
 
--- Current theme overrides.
-require_optional.module("nova.current.theme.hyprland")
+if nova_default_bindings ~= false then
+  require("default.hypr.keys.media")
+  require("default.hypr.keys.clipboard")
+  require("default.hypr.keys.windows")
+  require("default.hypr.keys.desktop")
+  require("default.hypr.keys.dictation")
+  require("default.hypr.keys.apps")
+end
+
+require("default.hypr.env")
+require("default.hypr.look")
+require("default.hypr.behavior")
+require("default.hypr.input")
+require("default.hypr.rules")
+
+-- The theme's borders, last, so a theme wins over the defaults above.
+nova.run_if_present(nova.state .. "/current/theme/hyprland.lua")

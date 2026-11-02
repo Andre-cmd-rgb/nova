@@ -1,13 +1,15 @@
+-- What the session starts, in order, once Hyprland is up.
 hl.on("hyprland.start", function()
-  -- Slow app launch fix -- set systemd vars before starting session services.
+  -- Programs that systemd and D-Bus start (every app, through uwsm-app) get
+  -- the session's environment: its PATH, with Nova's commands, and the rest
+  -- of env.lua.
   hl.exec_cmd("systemctl --user import-environment $(env | cut -d'=' -f 1)")
   hl.exec_cmd("dbus-update-activation-environment --systemd --all")
 
   hl.exec_cmd("nova-launch-shell")
-  -- Caffeine left on without its lid lock (a restarted user manager) is undone.
+  -- Caffeine left on without its lid lock (by a user manager that restarted)
+  -- is turned off.
   hl.exec_cmd("nova-caffeine reconcile")
-  hl.exec_cmd(o.launch("nova-hyprland-monitor-watch"))
-
-  -- Run post-boot hooks after startup config has loaded.
+  hl.exec_cmd(nova.launch("nova-hyprland-monitor-watch"))
   hl.exec_cmd("sleep 2 && nova-hook post-boot")
 end)

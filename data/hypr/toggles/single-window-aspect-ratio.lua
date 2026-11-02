@@ -1,6 +1,5 @@
--- Avoid overly wide single-window layouts on wide screens.
+-- A window alone on a wide screen is kept square rather than stretched across
+-- it (SUPER + CTRL + BACKSPACE).
 hl.config({
-  layout = {
-    single_window_aspect_ratio = { 1, 1 },
-  },
+  layout = { single_window_aspect_ratio = { 1, 1 } },
 })

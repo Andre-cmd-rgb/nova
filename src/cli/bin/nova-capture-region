@@ -138,7 +138,7 @@ geo_at_cursor() {
 }
 
 # Keyboard control while slurp is open: binds scoped to slurp's layer
-# surface (default/hypr/bindings/utilities.lua) invoke these modes. The
+# surface (default/hypr/keys/desktop.lua) invoke these modes. The
 # --take-* modes flag the intent with a marker file and dismiss slurp.
 if [[ ${1:-} == "--take-fullscreen" ]]; then
   pgrep -x slurp >/dev/null || exit 0

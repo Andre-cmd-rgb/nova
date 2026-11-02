@@ -1,6 +1,6 @@
 # nova caffeine: the screen stays on, and a closed lid only turns it off. The
 # shell's idle service watches its switch; the Hyprland lid bindings go through
-# it (data/hypr/bindings/utilities.lua); the modem write is root's, through
+# it (data/hypr/keys/desktop.lua); the modem write is root's, through
 # pkexec. Tests live in tests/unit/caffeine.
 
 INSTALL_TARGETS += install-caffeine

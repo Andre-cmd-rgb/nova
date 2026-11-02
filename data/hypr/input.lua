@@ -1,15 +1,13 @@
+-- Keyboard, mouse and touchpad.
 -- https://wiki.hypr.land/Configuring/Basics/Variables/#input
 
 local keyboard = require("default.hypr.keyboard").layout()
 
--- CapsLock is the compose key, so Caps Lock itself has to live somewhere else.
--- Both Shifts together is the usual home for it, but it's easy to hit by
--- accident while typing. The _cancel variant sets Caps Lock the same way and
--- releases it on the next lone Shift, so a misfire clears itself.
+-- Caps Lock is the compose key. Caps Lock itself is both Shifts together, in
+-- the _cancel kind, which the next Shift alone turns off again: both pressed
+-- by accident while typing set right themselves.
 local kb_options = "compose:caps,shift:both_capslock_cancel"
-if keyboard.options ~= "" then
-  kb_options = kb_options .. "," .. keyboard.options
-end
+if keyboard.options ~= "" then kb_options = kb_options .. "," .. keyboard.options end
 
 hl.config({
   input = {
@@ -20,25 +18,27 @@ hl.config({
     kb_rules = "",
     follow_mouse = 1,
     sensitivity = 0,
-
+    -- A held key repeats sooner, and faster, than Hyprland's 600 ms and 25 a second.
     repeat_rate = 40,
     repeat_delay = 250,
     numlock_by_default = true,
-
     touchpad = {
-      -- Content follows the fingers, as on a Mac.
+      -- Content follows the fingers.
       natural_scroll = true,
+      -- One finger clicks left, two right and three middle, anywhere on the pad.
       clickfinger_behavior = true,
       scroll_factor = 0.4,
     },
   },
 
+  -- A key press or a mouse move turns the displays back on once they are off.
   misc = {
     key_press_enables_dpms = true,
     mouse_move_enables_dpms = true,
   },
 })
 
--- Scroll nicely in the terminal.
-o.window("(Alacritty|kitty|foot)", { scroll_touchpad = 1.5 })
-o.window("com.mitchellh.ghostty", { scroll_touchpad = 0.2 })
+-- Terminals each take a touchpad scroll their own way: faster in these three,
+-- slower in Ghostty.
+nova.window("(Alacritty|kitty|foot)", { scroll_touchpad = 1.5 })
+nova.window("com.mitchellh.ghostty", { scroll_touchpad = 0.2 })

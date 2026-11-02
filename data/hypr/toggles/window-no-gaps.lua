@@ -1,12 +1,5 @@
--- Remove all window gaps and borders.
+-- No gaps, borders or rounded corners (SUPER + SHIFT + BACKSPACE).
 hl.config({
-  general = {
-    gaps_out = 0,
-    gaps_in = 0,
-    border_size = 0,
-  },
-
-  decoration = {
-    rounding = 0,
-  },
+  general = { gaps_out = 0, gaps_in = 0, border_size = 0 },
+  decoration = { rounding = 0 },
 })

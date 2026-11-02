@@ -8,7 +8,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "DictationModel.js" as Model
 
-// Dictation. SUPER + D (default/hypr/bindings/dictation.lua) calls press and
+// Dictation. SUPER + D (default/hypr/keys/dictation.lua) calls press and
 // release here: a hold records until the release, a tap until the next press.
 // `nova dictation` (bin/dictation) turns the recording into text on this
 // computer and pastes it where the cursor is. The pill at the bottom of the

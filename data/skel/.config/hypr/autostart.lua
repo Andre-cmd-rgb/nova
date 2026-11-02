@@ -1,2 +1,2 @@
 -- Programs to start with the session.
--- o.launch_on_start("my-program")
+-- nova.launch_on_start("my-program")

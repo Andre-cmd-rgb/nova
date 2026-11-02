@@ -4,7 +4,7 @@
 # nova:args=<command>
 #
 # For menu actions that print what they did (updates, restarts): the window
-# floats (org.nova.terminal, see default/hypr/apps/system.lua) and stays open
+# floats (org.nova.terminal, see default/hypr/rules.lua) and stays open
 # until a key is pressed, unless the command was interrupted with Ctrl+C.
 
 set -euo pipefail

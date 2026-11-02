@@ -101,7 +101,7 @@ cmd_transcribe() {
   printf '%s\n' "$text"
 }
 
-# Pastes <text> where the cursor is, as SUPER + V does (default/hypr/bindings/
+# Pastes <text> where the cursor is, as SUPER + V does (default/hypr/keys/
 # clipboard.lua): from the clipboard, with Hyprland sending the paste keys
 # with modifiers of their own, Shift+Insert to a terminal and Ctrl+V to the
 # rest, down and up apart. Typed by wtype instead, the words would merge with

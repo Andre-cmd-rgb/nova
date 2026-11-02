@@ -76,7 +76,7 @@ hook() { sed -n "s/^$2 = //p" "$REPO_ROOT/data/hypr/hooks/$1"; }
     [ "$(hook "$name" Type)" = Path ]
     [ "$(hook "$name" Operation | paste -sd' ')" = "Install Upgrade Remove" ]
     # Hyprland reads the defaults and the themes; alpm's * crosses slashes.
-    for file in usr/share/nova/default/hypr/bootstrap.lua usr/share/nova/default/hypr/bindings/utilities.lua \
+    for file in usr/share/nova/default/hypr/bootstrap.lua usr/share/nova/default/hypr/keys/desktop.lua \
       usr/share/nova/themes/nord/hyprland.lua; do
       # shellcheck disable=SC2053
       [[ $file == $(hook "$name" Target) ]]

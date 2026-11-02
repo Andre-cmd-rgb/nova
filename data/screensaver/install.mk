@@ -1,6 +1,6 @@
 # nova screensaver: ttfx's text effects in a terminal on each display. The
 # shell's idle service starts it (src/shell/plugins/services/idle); its window
-# rule is in data/hypr/apps/system.lua. Tests live in tests/unit/screensaver.
+# rule is in data/hypr/rules.lua. Tests live in tests/unit/screensaver.
 
 INSTALL_TARGETS += install-screensaver
 SHELL_SOURCES   += data/screensaver/nova-screensaver data/screensaver/nova-screensaver-run
