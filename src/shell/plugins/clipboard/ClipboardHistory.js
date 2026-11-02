@@ -1,225 +1,158 @@
-function normalizeEntry(value) {
-  if (typeof value === "string")
-    return value.trim().length > 0 ? { type: "text", text: value } : null
+// The clipboard's history, newest first, as clipboard-history.json keeps it,
+// and the rows the picker shows for it. An entry is text,
+//   { "type": "text", "text": ... }
+// or an image capture.sh saved,
+//   { "type": "image", "path": ..., "mime": ..., "capturedAt": "Monday 14:05" }
+// nova-clipboard-paste-text and nova-clipboard-open read the same file, and
+// check they have the entry picked by the md5 of its entryKey.
 
+// <value> as an entry, or null: text that is only whitespace, an image with
+// no path, and anything else are none. A bare string is text, and "kind"
+// stands for "type".
+function entry(value) {
+  if (typeof value === "string") return value.trim() ? { type: "text", text: value } : null
   if (!value || typeof value !== "object") return null
-
   var type = String(value.type || value.kind || "")
   if (type === "text") {
     var text = String(value.text || "")
-    return text.trim().length > 0 ? { type: "text", text: text } : null
+    return text.trim() ? { type: "text", text: text } : null
   }
-
-  if (type === "image") {
-    var path = String(value.path || "")
-    if (!path) return null
-    var entry = {
-      type: "image",
-      path: path,
-      mime: String(value.mime || "image/png")
-    }
-    if (value.capturedAt !== undefined && value.capturedAt !== null)
-      entry.capturedAt = String(value.capturedAt)
-    return entry
-  }
-
-  return null
+  if (type !== "image" || !value.path) return null
+  var image = { type: "image", path: String(value.path), mime: String(value.mime || "image/png") }
+  if (value.capturedAt !== undefined && value.capturedAt !== null) image.capturedAt = String(value.capturedAt)
+  return image
 }
 
-function entryKey(entry) {
-  if (!entry) return ""
-  if (entry.type === "image") return "image:" + String(entry.path || "")
-  return "text:" + String(entry.text || "")
+// What makes two entries the same one: the text, or the image's path.
+function entryKey(item) {
+  if (!item) return ""
+  return item.type === "image" ? "image:" + String(item.path || "") : "text:" + String(item.text || "")
 }
 
-function parseHistory(raw) {
+// The history in clipboard-history.json's <text>; [] for a file that does not
+// parse.
+function parse(text) {
+  var list
   try {
-    var parsed = JSON.parse(String(raw || "[]"))
-    var next = []
-    if (!Array.isArray(parsed)) return next
-
-    for (var i = 0; i < parsed.length; i++) {
-      var entry = normalizeEntry(parsed[i])
-      if (entry) next.push(entry)
-    }
-    return next
+    list = JSON.parse(String(text || "[]"))
   } catch (e) {
     return []
   }
-}
-
-function addEntry(history, entry, limit) {
-  var normalized = normalizeEntry(entry)
-  var max = limit === undefined || limit === null ? 100 : Number(limit)
-  if (isNaN(max)) max = 100
-  max = Math.max(0, max)
-  if (!normalized) return Array.isArray(history) ? history.slice(0, max) : []
-  if (max === 0) return []
-
-  var key = entryKey(normalized)
-  var next = [normalized]
-  var values = Array.isArray(history) ? history : []
-
-  for (var i = 0; i < values.length && next.length < max; i++) {
-    var existing = normalizeEntry(values[i])
-    if (!existing || entryKey(existing) === key) continue
-    next.push(existing)
+  if (!Array.isArray(list)) return []
+  var history = []
+  for (var i = 0; i < list.length; i++) {
+    var item = entry(list[i])
+    if (item) history.push(item)
   }
+  return history
+}
 
+// An entry from a line capture.sh printed, or null.
+function parseLine(line) {
+  var text = String(line || "").trim()
+  if (!text) return null
+  try {
+    return entry(JSON.parse(text))
+  } catch (e) {
+    return null
+  }
+}
+
+// <history> with <item> first, the same entry further down dropped, at most
+// <limit> long.
+function added(history, item, limit) {
+  var key = entryKey(item)
+  var next = [item]
+  for (var i = 0; i < history.length && next.length < limit; i++)
+    if (entryKey(history[i]) !== key) next.push(history[i])
   return next
 }
 
-function removeEntryAt(history, index) {
-  var values = Array.isArray(history) ? history : []
-  var target = Number(index)
-  if (isNaN(target) || target < 0 || target >= values.length) return values.slice()
-
-  var next = values.slice()
-  next.splice(target, 1)
+function removed(history, index) {
+  var next = history.slice()
+  if (!(index >= 0 && index < history.length)) return next
+  next.splice(index, 1)
   return next
 }
 
-function clearHistory() {
-  return []
-}
-
-function parseEntryJson(line) {
-  var raw = String(line || "").trim()
-  if (!raw) return null
-  try { return normalizeEntry(JSON.parse(raw)) } catch (e) { return null }
-}
-
-function searchableText(entry) {
-  if (!entry) return ""
-  if (entry.type === "image") return "image screenshot " + String(entry.mime || "") + " " + String(entry.capturedAt || "")
-  return String(entry.text || "") + " " + fileEntryText(entry)
-}
-
-function decodeFileUri(uri) {
-  var value = String(uri || "").trim()
-  if (value.indexOf("file://") !== 0) return ""
-
-  var path = value.substring(7)
-  if (path.indexOf("localhost/") === 0) path = path.substring(9)
-  if (path.charAt(0) !== "/") return ""
-
-  try { return decodeURIComponent(path) } catch (e) { return path }
-}
-
-function filePaths(entry) {
-  if (!entry || entry.type !== "text") return []
-
-  var lines = String(entry.text || "").split(/\r?\n/)
+// A text entry made of file:// URIs, a line each, is a copy of files: those
+// are their paths. Lines that are not are left out.
+function filePaths(text) {
   var paths = []
+  var lines = text.split(/\r?\n/)
   for (var i = 0; i < lines.length; i++) {
-    var path = decodeFileUri(lines[i])
+    var line = lines[i].trim()
+    if (line.indexOf("file://") !== 0) continue
+    var path = line.substring(7)
+    if (path.indexOf("localhost/") === 0) path = path.substring(9)
+    if (path.charAt(0) !== "/") continue
+    try {
+      path = decodeURIComponent(path)
+    } catch (e) {
+      // A stray % stays as it is.
+    }
     if (path) paths.push(path)
   }
   return paths
 }
 
-function fileName(path) {
-  var parts = String(path || "").split("/")
-  return parts.length > 0 ? parts[parts.length - 1] : String(path || "")
+// The picker reads and draws no more of an entry than its first 8 KiB, cut
+// at a line's end so no file:// URI is cut short. A single huge paste would
+// otherwise cost hundreds of megabytes of string work and stall the shell.
+// Pasting reads the whole entry back from the file, by its place.
+var shownLength = 8192
+
+function shownText(text) {
+  if (text.length <= shownLength) return text
+  var cut = text.lastIndexOf("\n", shownLength)
+  return text.slice(0, cut > 0 ? cut : shownLength)
 }
 
-function isImagePath(path) {
-  return /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(String(path || ""))
-}
-
-function fileEntryText(entry) {
-  var paths = filePaths(entry)
-  if (paths.length === 0) return ""
-  if (paths.length === 1) return fileName(paths[0])
-  return paths.length + " files"
-}
-
-function imagePreviewText(entry) {
-  var timestamp = String(entry && entry.capturedAt || "")
-  if (!timestamp) return "Image"
-
-  var label = String(entry && entry.mime || "") === "image/png" ? "Screenshot" : "Image"
-  return label + " from " + timestamp
-}
-
-function previewText(entry) {
-  if (!entry) return ""
-  if (entry.type === "image") return imagePreviewText(entry)
-  var fileText = fileEntryText(entry)
-  if (fileText) return fileText
-  return String(entry.text || "").replace(/\s+/g, " ")
-}
-
-function fullText(entry) {
-  if (!entry) return ""
-  var paths = filePaths(entry)
-  if (paths.length > 0) return paths.join("\n")
-  return String(entry.text || "")
-}
-
-// The picker only ever searches and renders a prefix of an entry, so scan and
-// render just that much. A single huge paste otherwise costs hundreds of
-// megabytes of string work on every keystroke and stalls the whole shell.
-// Pasting reads the full entry back from history by index, so nothing is lost.
-var displayTextLimit = 8192
-
-function cappedEntry(entry) {
-  if (!entry || entry.type !== "text" || entry.text.length <= displayTextLimit) return entry
-
-  // Cut on a line break so a file:// URI never truncates into a bogus path.
-  var cut = entry.text.lastIndexOf("\n", displayTextLimit)
-  return { type: "text", text: entry.text.slice(0, cut > 0 ? cut : displayTextLimit) }
-}
-
-function displayRows(history, query, limit) {
-  var values = Array.isArray(history) ? history : []
-  var needle = String(query || "").trim().toLowerCase()
-  var max = limit === undefined || limit === null ? 50 : Number(limit)
-  if (isNaN(max)) max = 50
-  max = Math.max(0, max)
-  if (max === 0) return []
-
-  var rows = []
-
-  for (var i = 0; i < values.length; i++) {
-    var entry = cappedEntry(normalizeEntry(values[i]))
-    if (!entry) continue
-    if (needle && searchableText(entry).toLowerCase().indexOf(needle) < 0) continue
-
-    var paths = filePaths(entry)
-    var isFile = paths.length > 0
-    var isImage = entry.type === "image"
-    var previewPath = isImage ? String(entry.path || "") : (isFile && paths.length === 1 && isImagePath(paths[0]) ? paths[0] : "")
-    rows.push({
-      entryType: isFile ? "file" : entry.type,
-      fullText: isImage ? "" : fullText(entry),
-      previewText: previewText(entry),
-      previewImage: previewPath,
-      path: isImage ? String(entry.path || "") : (isFile && paths.length === 1 ? paths[0] : ""),
-      mime: isImage ? String(entry.mime || "image/png") : "text/plain",
-      index: i
+// What the picker shows for each entry, worked out once when the history
+// changes, not at every key: the row's words, what a search looks in, the
+// text or image in the pane beside the list, and what a paste is given.
+function views(history) {
+  var shown = []
+  for (var i = 0; i < history.length; i++) {
+    var item = history[i]
+    if (item.type === "image") {
+      var when = String(item.capturedAt || "")
+      shown.push({
+        entryType: "image",
+        fullText: "",
+        previewText: when ? (item.mime === "image/png" ? "Screenshot" : "Image") + " from " + when : "Image",
+        previewImage: item.path,
+        path: item.path,
+        mime: item.mime,
+        index: i,
+        search: ("image screenshot " + item.mime + " " + when).toLowerCase()
+      })
+      continue
+    }
+    var text = shownText(item.text)
+    var paths = filePaths(text)
+    var one = paths.length === 1 ? paths[0] : ""
+    var files = paths.length === 0 ? "" : one ? one.split("/").pop() : paths.length + " files"
+    shown.push({
+      entryType: paths.length > 0 ? "file" : "text",
+      fullText: paths.length > 0 ? paths.join("\n") : text,
+      previewText: files || text.replace(/\s+/g, " "),
+      previewImage: /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(one) ? one : "",
+      path: one,
+      mime: "text/plain",
+      index: i,
+      search: (text + " " + files).toLowerCase()
     })
-    if (rows.length >= max) break
   }
-
-  return rows
+  return shown
 }
 
-if (typeof module !== "undefined") {
-  module.exports = {
-    normalizeEntry: normalizeEntry,
-    entryKey: entryKey,
-    parseHistory: parseHistory,
-    addEntry: addEntry,
-    removeEntryAt: removeEntryAt,
-    clearHistory: clearHistory,
-    parseEntryJson: parseEntryJson,
-    searchableText: searchableText,
-    previewText: previewText,
-    imagePreviewText: imagePreviewText,
-    filePaths: filePaths,
-    fileEntryText: fileEntryText,
-    fullText: fullText,
-    displayRows: displayRows
-  }
+// The rows a search shows, at most <limit>: those whose words hold what is
+// typed, trimmed, whatever its case; all of them with nothing typed.
+function rows(shown, query, limit) {
+  var needle = String(query || "").trim().toLowerCase()
+  var found = []
+  for (var i = 0; i < shown.length && found.length < limit; i++)
+    if (!needle || shown[i].search.indexOf(needle) !== -1) found.push(shown[i])
+  return found
 }

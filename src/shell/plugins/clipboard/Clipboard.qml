@@ -7,23 +7,37 @@ import qs.Commons as Commons
 import qs.Ui
 import "ClipboardHistory.js" as ClipboardHistory
 
+// The clipboard history: what was copied, text and images, newest first. Two
+// wl-paste watchers run capture.sh at every copy and the entry it prints goes
+// to the top of ~/.local/state/nova/clipboard-history.json, 300 at most. The
+// picker shows the 50 newest a search finds, the one under the cursor in full
+// beside them: Return pastes it, Shift+Return copies it, Alt+Return opens it,
+// Delete drops it and Shift+Delete, once confirmed, clears the history.
 Item {
   id: root
 
   property string novaPath: Quickshell.env("NOVA_PATH")
+  readonly property string historyPath: Quickshell.env("HOME") + "/.local/state/nova/clipboard-history.json"
+  readonly property string helpers: novaPath + "/shell/plugins/clipboard/"
+  readonly property int historyLimit: 300
+
+  property var history: []
+  // What the picker shows for each entry, worked out again only when the
+  // history has changed since.
+  property var shown: []
+  property bool shownStale: true
+  onHistoryChanged: shownStale = true
+
   property bool opened: false
   property string filterText: ""
   property int selectedIndex: 0
-  property bool cursorActive: false
-  property bool clearConfirmOpen: false
-  property var history: []
+  // The cursor is drawn once the keys or the pointer have moved it; a picker
+  // just cleared has none, and Return first brings it back.
+  property bool cursorShown: false
+  property bool confirmingClear: false
 
-  property string historyPath: Quickshell.env("HOME") + "/.local/state/nova/clipboard-history.json"
-  property string captureScript: root.novaPath + "/shell/plugins/clipboard/capture.sh"
-  property string pruneScript: root.novaPath + "/shell/plugins/clipboard/prune-images.sh"
-  // Shares the [menu] surface tokens — themes that style the menu also
-  // style the clipboard. Selected-row colors composed in the
-  // singleton so consumers drop them straight into Rectangle bindings.
+  // The [menu] section's colours: a theme that styles the menu styles the
+  // clipboard too.
   property color background: Commons.Color.menu.background
   property color foreground: Commons.Color.menu.text
   property color border: Commons.Color.menu.border
@@ -39,221 +53,177 @@ Item {
   property int cardWidth: Math.min(Style.space(875), panel.width - Style.gapsOut * 2)
   property int cardHeight: Math.min(Style.space(600), panel.height - Style.gapsOut * 2)
   property int rowHeight: Math.max(Style.space(50), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)
-  property int historyLimit: 300
 
-  function open(payloadJson) {
-    root.opened = true
-    root.filterText = ""
-    root.selectedIndex = 0
-    root.cursorActive = true
-    root.disarmPointer()
-    root.rebuildDisplay()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  // The shell's summon, hide and toggle.
+  function open(payload) {
+    opened = true
+    filterText = ""
+    selectedIndex = 0
+    cursorShown = true
+    pointerGate.reset()
+    refresh()
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
-    root.cancelClearHistory()
-    root.opened = false
+    keepHistory()
+    opened = false
   }
 
   function toggle() {
-    if (root.opened) root.close()
-    else root.open("{}")
+    if (opened) close()
+    else open("{}")
   }
 
-  function normalizeEntry(value) {
-    return ClipboardHistory.normalizeEntry(value)
+  // -------------------------------------------------------------- history
+
+  function load(text) {
+    history = ClipboardHistory.parse(text)
+    if (opened) refresh()
+    pruneSoon.restart()
   }
 
-  function entryKey(entry) {
-    return ClipboardHistory.entryKey(entry)
+  function save() {
+    historyFile.setText(JSON.stringify(history.slice(0, historyLimit), null, 2) + "\n")
+    pruneSoon.restart()
   }
 
-  function loadHistory(raw) {
-    root.history = ClipboardHistory.parseHistory(raw)
-    if (root.opened) root.rebuildDisplay()
-    pruneTimer.restart()
+  // A line capture.sh printed: the entry copied, at the top.
+  function record(line) {
+    var item = ClipboardHistory.parseLine(line)
+    if (!item) return
+    history = ClipboardHistory.added(history, item, historyLimit)
+    save()
+    if (opened) refresh()
   }
 
-  function saveHistory() {
-    historyFile.setText(JSON.stringify(root.history.slice(0, root.historyLimit), null, 2) + "\n")
-    pruneTimer.restart()
-  }
-
-  function addClipboardEntry(entry) {
-    var normalized = ClipboardHistory.normalizeEntry(entry)
-    if (!normalized) return
-
-    root.history = ClipboardHistory.addEntry(root.history, normalized, root.historyLimit)
-    root.saveHistory()
-    if (root.opened) root.rebuildDisplay()
-  }
-
-  function addClipboardJson(line) {
-    root.addClipboardEntry(ClipboardHistory.parseEntryJson(line))
-  }
-
-  function requestClearHistory() {
-    if (root.history.length === 0) return
+  function askClear() {
+    if (history.length === 0) return
     clearConfirm.selectedIndex = 1
-    root.clearConfirmOpen = true
+    confirmingClear = true
   }
 
-  function cancelClearHistory() {
-    root.clearConfirmOpen = false
-    root.disarmPointer()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  function keepHistory() {
+    confirmingClear = false
+    pointerGate.reset()
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
-  function confirmClearHistory() {
-    root.history = ClipboardHistory.clearHistory()
-    root.saveHistory()
-    root.selectedIndex = 0
-    root.cursorActive = false
-    root.disarmPointer()
-    root.clearConfirmOpen = false
-    root.rebuildDisplay()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  function clear() {
+    history = []
+    save()
+    selectedIndex = 0
+    cursorShown = false
+    pointerGate.reset()
+    confirmingClear = false
+    refresh()
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
-  function removeDisplayIndex(index) {
-    if (index < 0 || index >= displayModel.count) return
-
-    var row = displayModel.get(index)
-    root.history = ClipboardHistory.removeEntryAt(root.history, row.historyIndex)
-    root.saveHistory()
-
-    if (displayModel.count <= 1) {
-      root.selectedIndex = 0
-      root.cursorActive = false
-    } else if (root.selectedIndex >= displayModel.count - 1) {
-      root.selectedIndex = displayModel.count - 2
+  // Drops the entry of row <index>; the cursor stays on the row that takes
+  // its place, or the last.
+  function remove(index) {
+    if (index < 0 || index >= rows.count) return
+    history = ClipboardHistory.removed(history, rows.get(index).historyIndex)
+    save()
+    if (rows.count <= 1) {
+      selectedIndex = 0
+      cursorShown = false
+    } else if (selectedIndex >= rows.count - 1) {
+      selectedIndex = rows.count - 2
     }
-
-    root.disarmPointer()
-    root.rebuildDisplay()
+    pointerGate.reset()
+    refresh()
   }
 
-  function rebuildDisplay() {
-    var rows = ClipboardHistory.displayRows(root.history, root.filterText, 50)
+  // ---------------------------------------------------------------- picker
 
-    displayModel.clear()
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i]
-      displayModel.append({
-        entryType: row.entryType,
-        fullText: row.fullText,
-        previewText: row.previewText,
-        previewImage: row.previewImage ? Util.fileUrl(row.previewImage) : "",
-        path: row.path,
-        mime: row.mime,
-        historyIndex: row.index
+  // The rows for the history and the search, the cursor kept within them.
+  function refresh() {
+    if (shownStale) {
+      shown = ClipboardHistory.views(history)
+      shownStale = false
+    }
+    var found = ClipboardHistory.rows(shown, filterText, 50)
+    rows.clear()
+    for (var i = 0; i < found.length; i++) {
+      rows.append({
+        entryType: found[i].entryType,
+        fullText: found[i].fullText,
+        previewText: found[i].previewText,
+        previewImage: found[i].previewImage ? Util.fileUrl(found[i].previewImage) : "",
+        path: found[i].path,
+        mime: found[i].mime,
+        historyIndex: found[i].index
       })
     }
-
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
-
-    Qt.callLater(function() {
-      if (displayModel.count > 0) resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
+    selectedIndex = rows.count === 0 ? 0 : Math.max(0, Math.min(selectedIndex, rows.count - 1))
+    Qt.callLater(function () {
+      if (rows.count > 0) list.positionViewAtIndex(root.selectedIndex, ListView.Contain)
     })
   }
 
-  function select(delta) {
-    if (displayModel.count === 0) return
-    root.disarmPointer()
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-    } else {
-      selectedIndex = Util.stepIndex(selectedIndex, delta, displayModel.count)
-    }
-    resultList.positionViewAtIndex(selectedIndex, ListView.Contain)
-  }
-
-  function selectAbsolute(index) {
-    if (displayModel.count === 0) return
-    root.disarmPointer()
-    root.cursorActive = true
-    root.selectedIndex = Math.max(0, Math.min(index, displayModel.count - 1))
-    resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
-  }
-
-  function setFilter(nextFilter) {
-    root.filterText = nextFilter
-    root.selectedIndex = 0
-    root.cursorActive = true
-    root.disarmPointer()
-    root.rebuildDisplay()
-  }
-
-  function disarmPointer() {
+  // The cursor <delta> rows on: one row wraps round the ends, more stop at
+  // them. With no cursor drawn, the first move puts it on the first row, or
+  // the last.
+  function move(delta) {
+    if (rows.count === 0) return
     pointerGate.reset()
+    if (!cursorShown) {
+      cursorShown = true
+      selectedIndex = delta < 0 ? rows.count - 1 : 0
+    } else {
+      selectedIndex = Util.stepIndex(selectedIndex, delta, rows.count)
+    }
+    list.positionViewAtIndex(selectedIndex, ListView.Contain)
   }
 
-  function selectFromPointer(index, item, mouse) {
+  function moveTo(index) {
+    if (rows.count === 0) return
+    pointerGate.reset()
+    cursorShown = true
+    selectedIndex = Math.max(0, Math.min(index, rows.count - 1))
+    list.positionViewAtIndex(selectedIndex, ListView.Contain)
+  }
+
+  function setFilter(text) {
+    filterText = text
+    selectedIndex = 0
+    cursorShown = true
+    pointerGate.reset()
+    refresh()
+  }
+
+  // The pointer moves the cursor only when it moves itself, not when a row
+  // slides under it.
+  function point(index, item, mouse) {
     if (!pointerGate.moved(item, mouse)) return
-    root.cursorActive = true
-    root.selectedIndex = index
+    cursorShown = true
+    selectedIndex = index
   }
 
-  function activateIndex(index) {
-    if (index < 0 || index >= displayModel.count) return
-    var row = displayModel.get(index)
-    root.applySelected(row)
+  // ---------------------------------------------------------------- actions
+
+  // Row <index> pasted, copied or opened, by the helpers, the picker shut. An
+  // image is pasted from its file; text by its place in the history and the
+  // md5 of its entryKey, which the helper checks, so a copy that lands
+  // meanwhile and moves every entry down one is not mistaken for it. The md5,
+  // not the text, as anyone can read a command line.
+  function use(index, how) {
+    if (index < 0 || index >= rows.count) return
+    var row = rows.get(index)
+    opened = false
+    var entry = ["--history-index", String(row.historyIndex),
+      "--history-md5", Qt.md5(ClipboardHistory.entryKey(history[row.historyIndex]))]
+    if (how === "open")
+      Quickshell.execDetached(["nova-clipboard-open"].concat(entry))
+    else if (row.entryType === "image")
+      Quickshell.execDetached(["nova-clipboard-paste-file"].concat(how === "copy" ? ["--copy-only"] : [], [row.mime, row.path]))
+    else if (row.fullText)
+      Quickshell.execDetached(["nova-clipboard-paste-text", how === "copy" ? "--copy-only" : "--shift-insert"].concat(entry))
   }
 
-  function copyIndex(index) {
-    if (index < 0 || index >= displayModel.count) return
-    var row = displayModel.get(index)
-    root.copySelected(row)
-  }
-
-  function openIndex(index) {
-    if (index < 0 || index >= displayModel.count) return
-    var row = displayModel.get(index)
-    root.openSelected(row)
-  }
-
-  // The entry picked, by its place in the history and by the md5 of its key:
-  // a copy made before the helper reads the file moves every entry down one,
-  // and the helper must not take the neighbour then. The md5, not the text,
-  // since anyone can read a command line.
-  function historyArgs(row) {
-    return ["--history-index", String(row.historyIndex),
-      "--history-md5", Qt.md5(root.entryKey(root.history[row.historyIndex]))]
-  }
-
-  function applySelected(row) {
-    if (!row) return
-    root.opened = false
-    if (row.entryType === "image") {
-      Quickshell.execDetached(["nova-clipboard-paste-file", row.mime, row.path])
-    } else if (row.fullText) {
-      Quickshell.execDetached(["nova-clipboard-paste-text", "--shift-insert"].concat(root.historyArgs(row)))
-    }
-  }
-
-  function copySelected(row) {
-    if (!row) return
-    root.opened = false
-    if (row.entryType === "image") {
-      Quickshell.execDetached(["nova-clipboard-paste-file", "--copy-only", row.mime, row.path])
-    } else if (row.fullText) {
-      Quickshell.execDetached(["nova-clipboard-paste-text", "--copy-only"].concat(root.historyArgs(row)))
-    }
-  }
-
-  function openSelected(row) {
-    if (!row) return
-    root.opened = false
-    Quickshell.execDetached(["nova-clipboard-open"].concat(root.historyArgs(row)))
-  }
-
-  Component.onCompleted: initProc.running = true
-
-  ListModel { id: displayModel }
+  ListModel { id: rows }
 
   PointerMoveGate {
     id: pointerGate
@@ -266,85 +236,87 @@ Item {
     watchChanges: true
     atomicWrites: true
     printErrors: false
-    onLoaded: root.loadHistory(text())
-    onLoadFailed: root.loadHistory("[]")
+    onLoaded: root.load(text())
+    onLoadFailed: root.load("[]")
     onFileChanged: reload()
   }
 
-  // Reap watchers left behind by a previous shell instance, then start our
-  // own. The pdeathsig on the watchers makes the kernel kill them whenever
-  // the shell exits, however it exits, so no further lifecycle management.
+  // --------------------------------------------------------------- watchers
+
+  // Watchers a shell before this one left are ended first. Ours end with the
+  // shell however it ends: setpriv has the kernel signal them when it goes.
+  Component.onCompleted: reap.running = true
+
   Process {
-    id: initProc
+    id: reap
     command: ["pkill", "-f", "wl-paste .*--watch .*/shell/plugins/clipboard/capture\\.sh"]
     onExited: {
-      currentProc.running = true
-      textWatchProc.running = true
-      imageWatchProc.running = true
+      current.running = true
+      textWatch.running = true
+      imageWatch.running = true
     }
   }
 
+  // What is on the clipboard as the shell starts.
   Process {
-    id: currentProc
-    command: [root.captureScript]
+    id: current
+    command: [root.helpers + "capture.sh"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.addClipboardJson(text)
+      onStreamFinished: root.record(text)
     }
   }
 
   Process {
-    id: textWatchProc
-    command: ["setpriv", "--pdeathsig", "TERM", "wl-paste", "--type", "text", "--watch", root.captureScript, "text"]
-    onExited: watchRestartTimer.restart()
+    id: textWatch
+    command: ["setpriv", "--pdeathsig", "TERM", "wl-paste", "--type", "text", "--watch", root.helpers + "capture.sh", "text"]
+    onExited: rewatch.restart()
     stdout: SplitParser {
-      onRead: function(data) { root.addClipboardJson(data) }
+      onRead: function (line) { root.record(line) }
     }
   }
 
   Process {
-    id: imageWatchProc
-    command: ["setpriv", "--pdeathsig", "TERM", "wl-paste", "--type", "image/png", "--watch", root.captureScript, "image/png"]
-    onExited: watchRestartTimer.restart()
+    id: imageWatch
+    command: ["setpriv", "--pdeathsig", "TERM", "wl-paste", "--type", "image/png", "--watch", root.helpers + "capture.sh", "image/png"]
+    onExited: rewatch.restart()
     stdout: SplitParser {
-      onRead: function(data) { root.addClipboardJson(data) }
+      onRead: function (line) { root.record(line) }
     }
   }
 
-  // The images the history no longer names are deleted a little after it
-  // changes, and after it is first read: the last of a quick run of changes
-  // is the one that counts.
+  // A watcher that dies would stop the history without a sign: copying still
+  // works and the picker still shows what it had. It is started again.
   Timer {
-    id: pruneTimer
-    interval: 5000
-    repeat: false
+    id: rewatch
+    interval: 1000
     onTriggered: {
-      if (pruneProc.running) {
+      if (!textWatch.running) textWatch.running = true
+      if (!imageWatch.running) imageWatch.running = true
+    }
+  }
+
+  // Images the history no longer names are deleted, by prune-images.sh, five
+  // seconds after it last changed or was read.
+  Timer {
+    id: pruneSoon
+    interval: 5000
+    onTriggered: {
+      if (prune.running) {
         restart()
         return
       }
-      var paths = []
+      var named = []
       for (var i = 0; i < root.history.length; i++)
-        if (root.history[i].type === "image") paths.push(root.history[i].path)
-      pruneProc.command = [root.pruneScript].concat(paths)
-      pruneProc.running = true
+        if (root.history[i].type === "image") named.push(root.history[i].path)
+      prune.command = [root.helpers + "prune-images.sh"].concat(named)
+      prune.running = true
     }
   }
 
-  Process { id: pruneProc }
+  Process { id: prune }
 
-  // A watcher that dies takes clipboard history with it, silently: copying still
-  // works, the picker still opens, and the old entries are all still there, so
-  // nothing recorded until the next shell reload. Bring it back instead.
-  Timer {
-    id: watchRestartTimer
-    interval: 1000
-    repeat: false
-    onTriggered: {
-      if (!textWatchProc.running) textWatchProc.running = true
-      if (!imageWatchProc.running) imageWatchProc.running = true
-    }
-  }
+  // ----------------------------------------------------------------- window
 
   PanelWindow {
     id: panel
@@ -381,62 +353,49 @@ Item {
       Item {
         id: keyCatcher
         anchors.fill: parent
-        z: root.clearConfirmOpen ? 20 : 0
+        z: root.confirmingClear ? 20 : 0
         focus: true
 
+        // Typing searches, edited as everywhere in the shell; Escape clears
+        // the search, then closes. While the clear is being confirmed, the
+        // dialog has the keys.
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          if (root.clearConfirmOpen) {
+        Keys.onPressed: function (event) {
+          if (root.confirmingClear) {
             if (clearConfirm.handleKey(event)) event.accepted = true
             return
           }
-
-          if (event.key === Qt.Key_Escape) {
+          var key = event.key
+          var alt = event.modifiers & Qt.AltModifier
+          var shift = event.modifiers & Qt.ShiftModifier
+          if (key === Qt.Key_Escape) {
             if (root.filterText) root.setFilter("")
             else root.close()
-            event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
             root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if (event.key === Qt.Key_Delete) {
-            if (event.modifiers & Qt.ShiftModifier) root.requestClearHistory()
-            else root.removeDisplayIndex(root.selectedIndex)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.select(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.select(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.select(-6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.select(6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Home) {
-            root.selectAbsolute(0)
-            event.accepted = true
-          } else if (event.key === Qt.Key_End) {
-            root.selectAbsolute(displayModel.count - 1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.cursorActive && (event.modifiers & Qt.AltModifier)) root.openIndex(root.selectedIndex)
-            else if (root.cursorActive && (event.modifiers & Qt.ShiftModifier)) root.copyIndex(root.selectedIndex)
-            else if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
-            event.accepted = true
+          } else if (key === Qt.Key_Delete) {
+            if (shift) root.askClear()
+            else root.remove(root.selectedIndex)
+          } else if (key === Qt.Key_Up || key === Qt.Key_Down || key === Qt.Key_PageUp || key === Qt.Key_PageDown) {
+            root.move(key === Qt.Key_Up ? -1 : key === Qt.Key_Down ? 1 : key === Qt.Key_PageUp ? -6 : 6)
+          } else if (key === Qt.Key_Home || key === Qt.Key_End) {
+            root.moveTo(key === Qt.Key_Home ? 0 : rows.count - 1)
+          } else if (key === Qt.Key_Return || key === Qt.Key_Enter) {
+            if (!root.cursorShown) root.cursorShown = rows.count > 0
+            else root.use(root.selectedIndex, alt ? "open" : shift ? "copy" : "paste")
           } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
             root.setFilter(root.filterText + event.text)
-            event.accepted = true
+          } else {
+            return
           }
+          event.accepted = true
         }
 
         ConfirmDialog {
           id: clearConfirm
 
           anchors.fill: parent
-          opened: root.clearConfirmOpen
+          opened: root.confirmingClear
           z: 10
           message: "Delete entire clipboard history?"
           confirmText: "Delete"
@@ -447,8 +406,8 @@ Item {
           selectedText: root.selectedText
           fontFamily: root.fontFamily
           cornerRadius: root.cornerRadius
-          onCanceled: root.cancelClearHistory()
-          onConfirmed: root.confirmClearHistory()
+          onCanceled: root.keepHistory()
+          onConfirmed: root.clear()
         }
       }
 
@@ -460,6 +419,7 @@ Item {
         anchors.leftMargin: card.contentLeftInset
         spacing: root.contentSpacing
 
+        // The search, or what it is for.
         Rectangle {
           width: parent.width
           height: root.headerHeight
@@ -488,16 +448,17 @@ Item {
             anchors.fill: parent
             spacing: 0
 
+            // The entries, a line each.
             Item {
               width: parent.width / 2
               height: parent.height
               clip: true
 
               ListView {
-                id: resultList
+                id: list
                 anchors.fill: parent
                 anchors.rightMargin: root.contentMargin
-                model: displayModel
+                model: rows
                 clip: true
                 spacing: Style.space(4)
                 boundsBehavior: Flickable.StopAtBounds
@@ -510,7 +471,8 @@ Item {
                   required property string fullText
                   required property string previewImage
 
-                  readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex
+                  readonly property bool hasCursor: root.cursorShown && index === root.selectedIndex
+                  readonly property bool hasImage: previewImage.length > 0
 
                   width: ListView.view.width
                   height: root.rowHeight
@@ -528,25 +490,26 @@ Item {
                     // Decoded at the row's size: the entry is the image copied,
                     // a screenshot or a photo, and the history is always loaded.
                     Image {
-                      visible: parent.parent.previewImage.length > 0
+                      visible: row.hasImage
                       width: visible ? parent.height : 0
                       height: parent.height
-                      source: parent.parent.previewImage
+                      source: row.previewImage
                       sourceSize: Qt.size(height, height)
                       fillMode: Image.PreserveAspectFit
                       asynchronous: true
                       smooth: true
                     }
 
+                    // Files and images in grey, text as it is.
                     Text {
                       textFormat: Text.PlainText
-                      width: parent.width - (parent.parent.previewImage.length > 0 ? parent.height + parent.spacing : 0)
+                      width: parent.width - (row.hasImage ? parent.height + parent.spacing : 0)
                       height: parent.height
-                      text: parent.parent.previewText
-                      color: parent.parent.hasCursor ? root.selectedText : root.foreground
+                      text: row.previewText
+                      color: row.hasCursor ? root.selectedText : root.foreground
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.title
-                      opacity: parent.parent.entryType === "image" || parent.parent.entryType === "file" ? 0.72 : 1.0
+                      opacity: row.entryType === "image" || row.entryType === "file" ? 0.72 : 1.0
                       elide: Text.ElideRight
                       wrapMode: Text.NoWrap
                       verticalAlignment: Text.AlignVCenter
@@ -557,13 +520,13 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onPositionChanged: function(mouse) {
-                      root.selectFromPointer(row.index, row, mouse)
+                    onPositionChanged: function (mouse) {
+                      root.point(row.index, row, mouse)
                     }
                     onClicked: {
-                      root.cursorActive = true
+                      root.cursorShown = true
                       root.selectedIndex = row.index
-                      root.activateIndex(row.index)
+                      root.use(row.index, "paste")
                     }
                   }
                 }
@@ -571,17 +534,19 @@ Item {
 
               // The touchpad scrolls the list as GTK does.
               TouchpadScroll {
-                anchors.fill: resultList
-                flickable: resultList
+                anchors.fill: list
+                flickable: list
               }
             }
 
+            // The entry under the cursor, whole: its text, or its image.
             Item {
+              id: pane
               width: parent.width / 2
               height: parent.height
               clip: true
 
-              property var activeRow: displayModel.count > 0 && root.selectedIndex >= 0 && root.selectedIndex < displayModel.count ? displayModel.get(root.selectedIndex) : null
+              property var entry: rows.count > 0 && root.selectedIndex >= 0 && root.selectedIndex < rows.count ? rows.get(root.selectedIndex) : null
 
               Rectangle {
                 anchors.left: parent.left
@@ -593,13 +558,10 @@ Item {
 
               Text {
                 textFormat: Text.PlainText
-                visible: parent.activeRow && !parent.activeRow.previewImage
+                visible: pane.entry && !pane.entry.previewImage
                 anchors.fill: parent
                 anchors.leftMargin: root.contentMargin
-                anchors.rightMargin: 0
-                anchors.topMargin: 0
-                anchors.bottomMargin: 0
-                text: parent.activeRow ? parent.activeRow.fullText : ""
+                text: pane.entry ? pane.entry.fullText : ""
                 color: root.foreground
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.title
@@ -608,15 +570,12 @@ Item {
                 verticalAlignment: Text.AlignTop
               }
 
+              // At the pane's size, as the rows are at theirs.
               Image {
-                visible: parent.activeRow && parent.activeRow.previewImage
+                visible: pane.entry && pane.entry.previewImage
                 anchors.fill: parent
                 anchors.leftMargin: root.contentMargin
-                anchors.rightMargin: 0
-                anchors.topMargin: 0
-                anchors.bottomMargin: 0
-                source: parent.activeRow ? parent.activeRow.previewImage : ""
-                // At the pane's size, as the rows are at theirs.
+                source: pane.entry ? pane.entry.previewImage : ""
                 sourceSize: Qt.size(width, height)
                 fillMode: Image.PreserveAspectFit
                 verticalAlignment: Image.AlignTop
@@ -626,13 +585,14 @@ Item {
             }
           }
 
+          // Nothing to show: an empty history, or a search that finds none.
           Column {
             anchors.centerIn: parent
             spacing: Style.space(8)
-            visible: displayModel.count === 0
+            visible: rows.count === 0
 
             Text {
-              text: "󰅌"
+              text: "\u{F014C}"
               color: root.selectedText
               opacity: 0.8
               font.family: root.fontFamily
