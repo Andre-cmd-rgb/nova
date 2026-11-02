@@ -4,7 +4,7 @@
   "name": "Background",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Desktop background renderer with click handling and transitions",
+  "description": "The desktop background, and the reveal from one to the next.",
   "kinds": [
     "service"
   ],
