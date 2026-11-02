@@ -97,7 +97,6 @@ ShellRoot {
         backgroundPath: root.themeDir + "/background"
         authenticatingPassword: root.authenticating
         failureMessage: root.failureMessage
-        failedAttempts: root.failedAttempts
         inputEnabled: root.user !== ""
         passwordText: root.passwordText
         onPasswordTextEdited: function(password) { root.passwordText = password }

@@ -4,87 +4,79 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
+// What the lock screen and the greeter show: the background, blurred, and a
+// password field in the middle. Whoever holds the view (the lock service, the
+// greeter) holds the password and checks it; the view shows it as dots, says
+// how the check went, and reports each keystroke back.
 Item {
   id: root
 
   property string backgroundPath: ""
+  // Raised when the background changes under the same path, to load it again.
   property int backgroundVersion: 0
+  property bool loadBackground: true
   property bool fingerprintConfigured: false
   property bool authenticatingPassword: false
   property string failureMessage: ""
-  property int failedAttempts: 0
   property bool inputEnabled: true
-  property bool loadBackground: true
   property string passwordText: ""
-  property bool syncingPasswordText: false
 
-  readonly property string placeholderText: "Enter Password"
-  readonly property int fieldWidth: 381
-  readonly property int fieldHeight: 67
-  readonly property int outlineThickness: 3
-  readonly property int fieldFontSize: Math.round(Style.font.heading * 1.125)
-  readonly property int passwordDotFontSize: Math.round(Style.font.heading * 1.33)
-  readonly property int passwordDotLetterSpacing: Math.round(Style.font.heading * 0.19)
-  // Space to keep clear on each side of the field for the fingerprint icon
-  // (icon width plus a gap) so the centered dots never run under it.
-  readonly property real fingerprintReserve: fingerprintConfigured ? Math.round(fingerprintIcon.implicitWidth + 12) : 0
-  // Shrink the dots to fit once the password outgrows the field, so every
-  // keystroke stays visible — otherwise long passwords clip with no feedback.
-  readonly property real passwordDotScale: dotMetrics.advanceWidth > 0
-    ? Math.min(1, (passwordInput.width - 4) / dotMetrics.advanceWidth)
-    : 1
-  readonly property bool showPasswordCursor: inputEnabled && !authenticatingPassword && failureMessage.length === 0
-  readonly property bool errorState: failureMessage.length > 0
-  readonly property var inputBorderSpec: errorState
-    ? Border.surfaceSpec("lock", "border-error", Commons.Color.lock.borderError, root.outlineThickness, "border-alpha")
-    : Border.surfaceSpec("lock", "border-active", Commons.Color.lock.borderActive, root.outlineThickness, "border-alpha")
-
-  signal submitPassword(string password)
   signal passwordTextEdited(string password)
+  signal submitPassword(string password)
   signal clearFailureRequested()
+  // Any key or pointer movement: the screen should stay on.
   signal wakeRequested()
 
-  // Cache-busts the lock background by appending `?v=`. Adding a query
-  // string keeps Image's loader happy while forcing it to reload when the
-  // user picks a new background mid-session.
-  function fileUrl(path) {
-    if (!path) return ""
-    var encoded = String(path).split("/").map(encodeURIComponent).join("/")
-    return "file://" + encoded + "?v=" + backgroundVersion
+  readonly property bool failed: failureMessage.length > 0
+  // No cursor while a password is checked or a failure is shown.
+  readonly property bool cursorWanted: inputEnabled && !authenticatingPassword && !failed
+  readonly property int textSize: Math.round(Style.font.heading * 1.125)
+  readonly property int dotSize: Math.round(Style.font.heading * 1.33)
+  readonly property int dotSpacing: Math.round(Style.font.heading * 0.19)
+  readonly property int padding: 18
+  // The fingerprint mark sits inside the field's right edge; the same room is
+  // kept on both sides, so the dots stay centred and never run under it.
+  readonly property real markRoom: fingerprintConfigured ? Math.round(fingerprintMark.implicitWidth + 12) : 0
+  // A password wider than the field draws smaller dots, so every keystroke
+  // still shows.
+  readonly property real dotScale: allDots.advanceWidth > 0 ? Math.min(1, (field.width - 4) / allDots.advanceWidth) : 1
+
+  // The field changes the password only through passwordTextEdited; a change
+  // from outside (a reset after a failure) is copied in without echoing back.
+  property bool copyingIn: false
+
+  function focusField() {
+    field.forceActiveFocus()
   }
 
-  function forcePasswordFocus() {
-    passwordInput.forceActiveFocus()
+  function copyPasswordIn() {
+    if (field.text === passwordText) return
+    copyingIn = true
+    field.text = passwordText
+    copyingIn = false
   }
 
-  function clearPassword() {
-    passwordTextEdited("")
+  // The path as a file URL, its parts escaped, with the version as a query so
+  // a new background at the same path is loaded rather than taken from cache.
+  function backgroundUrl() {
+    if (!backgroundPath) return ""
+    return "file://" + String(backgroundPath).split("/").map(encodeURIComponent).join("/") + "?v=" + backgroundVersion
   }
 
-  function syncPasswordText() {
-    if (passwordInput.text === passwordText) return
-    syncingPasswordText = true
-    passwordInput.text = passwordText
-    syncingPasswordText = false
-  }
-
-  onPasswordTextChanged: syncPasswordText()
-  onInputEnabledChanged: {
-    if (inputEnabled) Qt.callLater(forcePasswordFocus)
-  }
+  onPasswordTextChanged: copyPasswordIn()
+  onInputEnabledChanged: if (inputEnabled) Qt.callLater(focusField)
   Component.onCompleted: {
-    syncPasswordText()
-    if (inputEnabled) Qt.callLater(forcePasswordFocus)
+    copyPasswordIn()
+    if (inputEnabled) Qt.callLater(focusField)
   }
 
-  // Measures the masked password at full size; passwordDotScale compares this
-  // against the field width to decide how far the dots must shrink to fit.
+  // The password's dots at full size, which dotScale fits into the field.
   TextMetrics {
-    id: dotMetrics
+    id: allDots
     font.family: Style.font.family
-    font.pixelSize: root.passwordDotFontSize
-    font.letterSpacing: root.passwordDotLetterSpacing
-    text: "●".repeat(passwordInput.text.length)
+    font.pixelSize: root.dotSize
+    font.letterSpacing: root.dotSpacing
+    text: "●".repeat(field.text.length)
   }
 
   Rectangle {
@@ -92,9 +84,9 @@ Item {
     color: Commons.Color.background
 
     Image {
-      id: wallpaper
+      id: background
       anchors.fill: parent
-      source: root.loadBackground ? root.fileUrl(root.backgroundPath) : ""
+      source: root.loadBackground ? root.backgroundUrl() : ""
       fillMode: Image.PreserveAspectCrop
       asynchronous: true
       cache: false
@@ -103,10 +95,10 @@ Item {
     }
 
     MultiEffect {
-      anchors.fill: wallpaper
-      source: wallpaper
+      anchors.fill: background
+      source: background
       autoPaddingEnabled: false
-      blurEnabled: root.loadBackground && wallpaper.status === Image.Ready
+      blurEnabled: root.loadBackground && background.status === Image.Ready
       blur: 1.0
       blurMax: 128
       blurMultiplier: 1.25
@@ -116,65 +108,72 @@ Item {
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      onClicked: { root.wakeRequested(); root.forcePasswordFocus() }
       onPositionChanged: root.wakeRequested()
+      onClicked: {
+        root.wakeRequested()
+        root.focusField()
+      }
     }
 
     BorderSurface {
-      id: inputField
-      width: root.fieldWidth
-      height: root.fieldHeight
+      id: box
+      width: 381
+      height: 67
       anchors.centerIn: parent
       color: Commons.Color.lock.background
-      borderSpec: root.inputBorderSpec
+      borderSpec: root.failed
+        ? Border.surfaceSpec("lock", "border-error", Commons.Color.lock.borderError, 3, "border-alpha")
+        : Border.surfaceSpec("lock", "border-active", Commons.Color.lock.borderActive, 3, "border-alpha")
       radius: Style.cornerRadius
       clip: true
 
       TextInput {
-        id: passwordInput
-        anchors.fill: parent
-        anchors.topMargin: inputField.borderTop
-        // Reserve the fingerprint icon's width on both sides so the centered
-        // dots stay symmetric and never slide under the icon as they grow.
-        anchors.rightMargin: inputField.borderRight + 18 + root.fingerprintReserve
-        anchors.bottomMargin: inputField.borderBottom
-        anchors.leftMargin: inputField.borderLeft + 18 + root.fingerprintReserve
-        verticalAlignment: TextInput.AlignVCenter
+        id: field
+        anchors {
+          fill: parent
+          topMargin: box.borderTop
+          bottomMargin: box.borderBottom
+          leftMargin: box.borderLeft + root.padding + root.markRoom
+          rightMargin: box.borderRight + root.padding + root.markRoom
+        }
         horizontalAlignment: TextInput.AlignHCenter
-        activeFocusOnPress: true
+        verticalAlignment: TextInput.AlignVCenter
         clip: true
+        activeFocusOnPress: true
         enabled: root.inputEnabled && !root.authenticatingPassword
         readOnly: root.authenticatingPassword
         echoMode: TextInput.Password
-        passwordCharacter: "\u25CF"
+        passwordCharacter: "●"
         passwordMaskDelay: 0
         color: Commons.Color.lock.text
         selectionColor: Commons.Color.lock.selection
         selectedTextColor: Commons.Color.lock.text
         font.family: Style.font.family
-        font.pixelSize: text.length > 0 ? Math.max(1, Math.floor(root.passwordDotFontSize * root.passwordDotScale)) : root.fieldFontSize
-        font.letterSpacing: text.length > 0 ? root.passwordDotLetterSpacing * root.passwordDotScale : 0
-        cursorVisible: activeFocus && root.showPasswordCursor && text.length > 0
+        // Dots once there is a password; the hint's size while it is empty.
+        font.pixelSize: text.length > 0 ? Math.max(1, Math.floor(root.dotSize * root.dotScale)) : root.textSize
+        font.letterSpacing: text.length > 0 ? root.dotSpacing * root.dotScale : 0
+        cursorVisible: activeFocus && root.cursorWanted && text.length > 0
         cursorDelegate: Rectangle {
           width: 2
           color: Commons.Color.lock.text
-          visible: passwordInput.cursorVisible
+          visible: field.cursorVisible
         }
 
         onTextChanged: {
-          if (!root.syncingPasswordText) root.passwordTextEdited(text)
-          if (text.length > 0) {
-            root.wakeRequested()
-          }
-          if (text.length > 0 && root.failureMessage.length > 0) root.clearFailureRequested()
+          if (!root.copyingIn) root.passwordTextEdited(text)
+          if (text.length === 0) return
+          root.wakeRequested()
+          // Typing again puts the failure away.
+          if (root.failed) root.clearFailureRequested()
         }
 
         onAccepted: {
-          var submitted = root.passwordText
+          var password = root.passwordText
           root.passwordTextEdited("")
-          if (submitted.length > 0) root.submitPassword(submitted)
+          if (password.length > 0) root.submitPassword(password)
         }
 
+        // Escape and Ctrl+U clear the field, as in a terminal.
         Keys.onPressed: function(event) {
           root.wakeRequested()
           if (event.key === Qt.Key_Escape || (event.modifiers & Qt.ControlModifier && event.key === Qt.Key_U)) {
@@ -184,34 +183,34 @@ Item {
         }
       }
 
+      // In the empty field: the hint, "Checking…" while the password is
+      // checked, or why the last one failed.
       Text {
+        anchors.fill: field
+        visible: field.text.length === 0
         textFormat: Text.PlainText
-        anchors.fill: passwordInput
-        text: root.authenticatingPassword ? "Checking…" : (root.failureMessage.length > 0 ? root.failureMessage : root.placeholderText)
-        visible: passwordInput.text.length === 0
-        color: root.authenticatingPassword ? Commons.Color.lock.text : (root.failureMessage.length > 0 ? Commons.Color.lock.textError : Commons.Color.lock.placeholder)
+        text: root.authenticatingPassword ? "Checking…" : root.failed ? root.failureMessage : "Enter Password"
+        color: root.authenticatingPassword ? Commons.Color.lock.text : root.failed ? Commons.Color.lock.textError : Commons.Color.lock.placeholder
         font.family: Style.font.family
-        font.pixelSize: root.fieldFontSize
-        font.italic: !root.authenticatingPassword && root.failureMessage.length > 0
+        font.pixelSize: root.textSize
+        font.italic: !root.authenticatingPassword && root.failed
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         elide: Text.ElideRight
       }
 
-      // Fingerprint hint pinned inside the field's right edge when a sensor is
-      // enrolled, so the user knows they can touch to unlock instead of typing.
-      // Matches hyprlock, which draws its fingerprint icon in the same spot.
+      // A fingerprint enrolled: the mark says a touch unlocks too.
       Text {
-        id: fingerprintIcon
+        id: fingerprintMark
         objectName: "fingerprintIndicator"
         anchors.right: parent.right
-        anchors.rightMargin: inputField.borderRight + 18
+        anchors.rightMargin: box.borderRight + root.padding
         anchors.verticalCenter: parent.verticalCenter
         visible: root.fingerprintConfigured
         text: "󰈷"
         color: Commons.Color.lock.placeholder
         font.family: Style.font.family
-        font.pixelSize: Math.round(root.fieldFontSize * 1.1)
+        font.pixelSize: Math.round(root.textSize * 1.1)
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
       }
