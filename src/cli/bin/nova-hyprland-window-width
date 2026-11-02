@@ -30,7 +30,7 @@ eval "$window"
 
 name="workspace-$workspace-$app"
 name=${name//\//_}
-file=$HOME/.local/state/nova/windows/${name//$'\n'/_}.width
+file=${XDG_STATE_HOME:-$HOME/.local/state}/nova/windows/${name//$'\n'/_}.width
 
 if [[ $action == save ]]; then
   [[ -n $width ]] || exit 1

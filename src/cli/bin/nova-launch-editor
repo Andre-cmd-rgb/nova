@@ -16,7 +16,7 @@ fi
 # The editor chosen with nova-default-editor, VS Code when none was; nano,
 # which is always installed, when the chosen one is not.
 editor=code
-choice=$HOME/.local/state/nova/defaults/editor
+choice=${XDG_STATE_HOME:-$HOME/.local/state}/nova/defaults/editor
 if [[ -f $choice ]]; then
   read -r editor <"$choice" || editor=code
 fi

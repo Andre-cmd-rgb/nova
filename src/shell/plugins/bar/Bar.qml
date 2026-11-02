@@ -35,7 +35,7 @@ Item {
   // without an exclusion zone; updated by the FileView watcher further down.
   property bool barHidden: false
   property string home: Quickshell.env("HOME")
-  property string stateHome: home + "/.local/state"
+  property string stateHome: Commons.Color.stateHome
   property string novaConfigDir: home + "/.config/nova"
   property var fallbackBarConfig: ({
     position: "top",
@@ -952,11 +952,11 @@ Item {
   Process {
     id: barHiddenProbe
     running: true
-    command: ["bash", "-c", "[[ -f $HOME/.local/state/nova/toggles/bar-off ]] && echo yes || echo no"]
+    command: ["bash", "-c", "[[ -f ${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/bar-off ]] && echo yes || echo no"]
     stdout: SplitParser { onRead: function(line) { root.barHidden = String(line).trim() === "yes" } }
   }
   FileView {
-    path: root.home + "/.local/state/nova/toggles"
+    path: root.stateHome + "/nova/toggles"
     watchChanges: true
     printErrors: false
     onFileChanged: barHiddenProbe.running = true

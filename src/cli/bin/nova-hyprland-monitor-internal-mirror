@@ -16,7 +16,7 @@ esac
 # Mirroring is a toggle, a rule the Hyprland config loads at every reload: the
 # first external display that is on shows what the panel shows.
 toggle=internal-monitor-mirror
-flag=$HOME/.local/state/nova/toggles/hypr/$toggle.lua
+flag=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/$toggle.lua
 # Looked up whatever the action: one Hyprland cannot answer changes nothing.
 panel=$(nova-hyprland-monitor-laptop)
 external=$(hyprctl monitors -j | jq -r 'first(.[].name | select(test("^(eDP|LVDS|DSI)-") | not)) // empty')

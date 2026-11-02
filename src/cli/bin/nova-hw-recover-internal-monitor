@@ -7,7 +7,7 @@ set -euo pipefail
 
 # Run before the session starts: the laptop's panel turned off for a display
 # that is no longer plugged in would leave it with no screen at all.
-flag=$HOME/.local/state/nova/toggles/hypr/internal-monitor-disable.lua
+flag=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/internal-monitor-disable.lua
 if [[ -f $flag ]] && ! nova-hw-external-monitors; then
   rm -f -- "$flag"
 fi

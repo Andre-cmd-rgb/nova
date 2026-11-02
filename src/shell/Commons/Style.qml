@@ -501,7 +501,7 @@ QtObject {
   // reloads its config when sourced files change, then hyprctl reflects
   // the new effective value.
   property FileView windowNoGapsToggle: FileView {
-    path: Quickshell.env("HOME") + "/.local/state/nova/toggles/hypr/window-no-gaps.lua"
+    path: Commons.Color.stateHome + "/nova/toggles/hypr/window-no-gaps.lua"
     watchChanges: true
     printErrors: false
     onFileChanged: refreshTimer.restart()

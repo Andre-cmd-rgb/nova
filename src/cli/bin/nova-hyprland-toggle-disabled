@@ -12,4 +12,4 @@ if (($# != 1)); then
 fi
 
 # Off while nova-hyprland-toggle has no file for it among the toggles.
-[[ ! -f $HOME/.local/state/nova/toggles/hypr/$1.lua ]]
+[[ ! -f ${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/$1.lua ]]

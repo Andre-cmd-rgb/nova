@@ -20,9 +20,8 @@ esac
 
 # A device turned off stays off: its name is kept, as text, where the Hyprland
 # config reads it back at every reload (data/hypr/toggles.lua). Names come
-# from the hardware, so one is never run as shell or Lua. ~/.local/state, as
-# for the other toggles, whatever XDG_STATE_HOME says.
-kept=$HOME/.local/state/nova/toggles/hypr/$kind-disabled-name
+# from the hardware, so one is never run as shell or Lua.
+kept=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/$kind-disabled-name
 device=$("nova-hw-$kind" || true)
 
 usable_device() {

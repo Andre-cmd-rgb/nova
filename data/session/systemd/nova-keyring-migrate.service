@@ -3,7 +3,7 @@ Description=Move secrets from the passwordless Default keyring into the login ke
 After=nova-unlocked.target
 # nova doctor's fix drops this marker, and the helper removes it once the
 # migration is verified.
-ConditionPathExists=%h/.local/state/nova/keyring-migrate-pending
+ConditionPathExists=%S/nova/keyring-migrate-pending
 StartLimitIntervalSec=300
 StartLimitBurst=5
 

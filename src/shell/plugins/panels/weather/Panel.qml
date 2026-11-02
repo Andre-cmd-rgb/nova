@@ -95,7 +95,7 @@ Panel {
   }
 
   property FileView locationFile: FileView {
-    path: Quickshell.env("HOME") + "/.local/state/nova/settings/weather.json"
+    path: Commons.Color.stateHome + "/nova/settings/weather.json"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()

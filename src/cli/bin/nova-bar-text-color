@@ -75,7 +75,7 @@ valid_hex "$background_color" || fallback
 nova-cmd-present magick || fallback
 
 if [[ -z $background_path ]]; then
-  background_path=$(readlink -f "$HOME/.local/state/nova/current/background" 2>/dev/null || true)
+  background_path=$(readlink -f "${XDG_STATE_HOME:-$HOME/.local/state}/nova/current/background" 2>/dev/null || true)
 fi
 [[ -f $background_path ]] || fallback
 

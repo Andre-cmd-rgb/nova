@@ -5,6 +5,10 @@ export REPO_ROOT
 FIXTURES="$BATS_TEST_DIRNAME/fixtures"
 export FIXTURES
 
+# A session exports these with the real home's folders: a test that gives a
+# tool a scratch HOME would still have it read and write the real ones.
+unset XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+
 # Every test gets its own scratch directory, removed afterwards.
 setup_scratch() {
   SCRATCH=$(mktemp -d "${BATS_TMPDIR:-/tmp}/nova-test.XXXXXX")

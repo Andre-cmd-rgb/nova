@@ -13,7 +13,7 @@ Item {
   property string novaPath: ""
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property string stateHome: home + "/.local/state"
+  readonly property string stateHome: Commons.Color.stateHome
   readonly property string userName: Quickshell.env("USER") || Quickshell.env("LOGNAME")
   readonly property string currentBackgroundLink: stateHome + "/nova/current/background"
   // greetd marks a session NOVA_LOGIN=password once the greeter has checked a

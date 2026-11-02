@@ -2,7 +2,7 @@
 Description=Turn the laptop's own display back on when it is off and nothing else is plugged in
 # Before Hyprland starts, which would otherwise come up with no display at all.
 Before=graphical-session-pre.target
-ConditionPathExists=%h/.local/state/nova/toggles/hypr/internal-monitor-disable.lua
+ConditionPathExists=%S/nova/toggles/hypr/internal-monitor-disable.lua
 
 [Service]
 Type=oneshot

@@ -19,9 +19,8 @@ nova = {
   home = home,
   path = setting("NOVA_PATH", "/usr/share/nova"),
   lib = setting("NOVA_LIB", "/usr/lib/nova"),
-  -- Nova's tools keep a user's state in ~/.local/state/nova whatever
-  -- XDG_STATE_HOME says, so the config reads it from there too.
-  state = home .. "/.local/state/nova",
+  -- Where Nova's tools keep the user's state.
+  state = setting("XDG_STATE_HOME", home .. "/.local/state") .. "/nova",
 }
 o = nova
 

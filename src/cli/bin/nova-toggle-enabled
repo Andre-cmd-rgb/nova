@@ -12,4 +12,4 @@ if (($# != 1)); then
 fi
 
 # On while nova-toggle has left its flag file.
-[[ -f $HOME/.local/state/nova/toggles/$1 ]]
+[[ -f ${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/$1 ]]

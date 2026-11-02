@@ -1,5 +1,5 @@
 -- Settings switched from the menu, Settings and the keys, kept as files in
--- ~/.local/state/nova. ~/.config/hypr/hyprland.lua loads this last, so they
+-- Nova's state ($XDG_STATE_HOME/nova, ~/.local/state/nova by default). ~/.config/hypr/hyprland.lua loads this last, so they
 -- win over your own settings too.
 
 require("default.hypr.lib")

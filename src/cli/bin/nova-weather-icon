@@ -9,7 +9,7 @@ set -euo pipefail
 # cost an extra wttr.in request when nothing is set; the bare j1 fetch already
 # auto-detects by IP.
 query=""
-if [[ -s "$HOME/.local/state/nova/settings/weather.json" ]]; then
+if [[ -s "${XDG_STATE_HOME:-$HOME/.local/state}/nova/settings/weather.json" ]]; then
   location=$(nova-weather-location 2>/dev/null || true)
   if [[ -n $location ]]; then query=$(jq -rn --arg location "$location" '$location | @uri'); fi
 fi

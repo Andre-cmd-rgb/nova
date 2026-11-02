@@ -11,7 +11,7 @@ set -euo pipefail
 # always nothing has moved, so it asks Hyprland once and does no more than
 # that answer calls for.
 
-toggles=$HOME/.local/state/nova/toggles/hypr
+toggles=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr
 clamshell_flag=$toggles/internal-monitor-clamshell.lua
 # The panel turned off by hand, and mirrored (nova-hyprland-monitor-internal
 # and -mirror).

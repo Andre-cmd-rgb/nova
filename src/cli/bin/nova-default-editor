@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-editor_file="$HOME/.local/state/nova/defaults/editor"
+editor_file="${XDG_STATE_HOME:-$HOME/.local/state}/nova/defaults/editor"
 
 if (($# == 0)); then
   editor=""

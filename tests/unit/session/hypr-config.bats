@@ -64,8 +64,9 @@ hypr() { # lua
   [ ! -e "$SCRATCH/ran" ]
 }
 
-@test "toggles come from ~/.local/state, where Nova's tools write them, whatever XDG_STATE_HOME says" {
-  write_file "$TOGGLES/window-no-gaps.lua" 'hl.config({ general = { gaps_in = 0 } })'
+@test "toggles come from XDG_STATE_HOME when it is set, where Nova's tools write them" {
+  write_file "$SCRATCH/elsewhere/nova/toggles/hypr/window-no-gaps.lua" 'hl.config({ general = { gaps_in = 0 } })'
+  write_file "$TOGGLES/window-no-gaps.lua" 'hl.config({ general = { gaps_in = 8 } })'
   XDG_STATE_HOME=$SCRATCH/elsewhere run hypr 'require("default.hypr.toggles")'
   [ "$status" -eq 0 ]
   [ "$output" = "config {general={gaps_in=0}}" ]

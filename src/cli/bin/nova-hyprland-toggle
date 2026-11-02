@@ -15,7 +15,7 @@ usage() {
 # A setting that is on is a copy of Nova's Lua for it among the toggles, which
 # the Hyprland config loads last (data/hypr/toggles.lua); off, there is none.
 name=$1
-flag=$HOME/.local/state/nova/toggles/hypr/$name.lua
+flag=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/$name.lua
 shipped=$NOVA_PATH/default/hypr/toggles/$name.lua
 
 turn_on() {

@@ -16,7 +16,7 @@ esac
 # The panel off is a toggle of its own, a rule the Hyprland config loads at
 # every reload. Mirroring the panel is another, and needs it on.
 toggle=internal-monitor-disable
-flag=$HOME/.local/state/nova/toggles/hypr/$toggle.lua
+flag=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/$toggle.lua
 # Looked up whatever the action: one Hyprland cannot answer changes nothing.
 panel=$(nova-hyprland-monitor-laptop)
 
