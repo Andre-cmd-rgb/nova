@@ -13,7 +13,7 @@ ShellRoot {
   Component.onCompleted: Qt.callLater(run)
 
   function run() {
-    var configured = PolkitModel.fingerprintConfiguredFromPamConfig
+    var configured = PolkitModel.fingerprintInPam
     check(configured("auth [success=ignore default=1] pam_exec.so quiet /usr/lib/nova/bin/nova-hw-laptop-open\n"
       + "-auth sufficient pam_fprintd.so timeout=15\nauth include system-auth\n"), "Nova's own polkit-1, its reader on an -auth line")
     check(configured("auth\tsufficient\tpam_fprintd.so\nauth include system-auth"), "a reader on a plain auth line")

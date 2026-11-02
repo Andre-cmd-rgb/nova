@@ -1,33 +1,18 @@
-function promptLooksFingerprint(text) {
-  var s = String(text || "").toLowerCase()
-  return s.indexOf("finger") !== -1 || s.indexOf("fprint") !== -1 || s.indexOf("swipe") !== -1
+// Whether a PAM file has the fingerprint reader in its auth stack: a line
+// for pam_fprintd, on "auth" or "-auth" (skipped when the module is not
+// installed). A gate before it, such as Nova's lid check, changes nothing.
+function fingerprintInPam(text) {
+  return String(text || "").split("\n").some(function (line) {
+    line = line.trim()
+    return /^-?auth\s/.test(line) && line.indexOf("pam_fprintd.so") !== -1
+  })
 }
 
-function fingerprintConfiguredFromPamConfig(raw) {
-  // Fingerprint is available whenever pam_fprintd appears anywhere in the auth
-  // stack, "-auth" (loaded only when installed) included — it need not be the
-  // first module. A clamshell gate (pam_exec) may legitimately precede it to
-  // skip fingerprint while the lid is closed.
-  var lines = String(raw || "").split("\n")
-  for (var i = 0; i < lines.length; i++) {
-    var line = lines[i].replace(/^\s+|\s+$/g, "")
-    if (!line || line.charAt(0) === "#") continue
-    if (!line.match(/^-?auth\s+/)) continue
-    if (line.indexOf("pam_fprintd.so") !== -1) return true
-  }
-  return false
-}
-
-function authorizationLabel(message) {
+// What the dialog says the request is for. pkexec's "Authentication is
+// needed to run `cmd' as the super user" becomes "Authorize running 'cmd'";
+// any other message is shown as it is.
+function requestLabel(message) {
   var text = String(message || "")
-  var match = text.match(/^Authentication is (?:needed|required) to run [`']([^`']+)[`'] as /i)
-  return match ? "Authorize running '" + match[1] + "'" : text
-}
-
-if (typeof module !== "undefined") {
-  module.exports = {
-    promptLooksFingerprint: promptLooksFingerprint,
-    fingerprintConfiguredFromPamConfig: fingerprintConfiguredFromPamConfig,
-    authorizationLabel: authorizationLabel
-  }
+  var command = /^Authentication is (?:needed|required) to run [`']([^`']+)[`'] as /i.exec(text)
+  return command ? "Authorize running '" + command[1] + "'" : text
 }

@@ -4,7 +4,7 @@
   "name": "Polkit Agent",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Theme-aware authentication dialog for privileged actions.",
+  "description": "Asks for your password, or your finger, when an app needs root.",
   "kinds": [
     "service"
   ],
