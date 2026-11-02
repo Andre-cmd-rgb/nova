@@ -4,7 +4,7 @@
   "name": "Emojis",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Search, copy, and type emojis",
+  "description": "Find an emoji by name and put it where you were typing.",
   "kinds": [
     "overlay"
   ],

@@ -7,6 +7,9 @@ import qs.Commons as Commons
 import qs.Ui
 import "EmojiSearch.js" as EmojiSearch
 
+// The emoji picker (SUPER + CTRL + E): type to search, arrows to move, Enter
+// or a click to type the emoji into the window that had the keys, through
+// nova-menu-emoji-insert. It has the menu's colours.
 Item {
   id: root
 
@@ -17,147 +20,77 @@ Item {
   property bool opened: false
   property string filterText: ""
   property int selectedIndex: 0
-  property bool cursorActive: false
+  // Every emoji, from emojis.json, and those the search shows, at most 1000.
   property var emojis: []
-  property var filteredEmojis: []
+  property var results: []
 
-  // Shares the [menu] surface tokens — themes that style the menu also
-  // style emojis. Selected-cell colors composed in the
-  // singleton so consumers drop them straight into Rectangle bindings.
   property color background: Commons.Color.menu.background
   property color foreground: Commons.Color.menu.text
-  property color border: Commons.Color.menu.border
-  property var borderSpec: Border.surfaceSpec("menu", "border", border, Math.max(1, Style.space(2)))
-  property color scrim: Commons.Color.menu.scrim
   property color selectedBackground: Commons.Color.menu.selectedBackground
-  property color selectedText: Commons.Color.menu.selectedText
-  readonly property int cornerRadius: Style.cornerRadius
   property string fontFamily: Style.font.menuFamily
-  property int contentMargin: Style.spacing.panelPadding
-  property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int contentSpacing: Style.spacing.md
-  property int cardWidth: Math.min(Style.space(400), panel.width - Style.gapsOut * 2)
-  property int cardHeight: Math.min(Style.space(500), panel.height - Style.gapsOut * 2)
-
-  property int cellWidth: Math.max(Style.space(44), Style.font.display + Style.spacing.md)
-  property int cellHeight: Math.max(Style.space(44), Style.font.display + Style.spacing.md)
-  property int columns: Math.floor((cardWidth - contentMargin * 2) / cellWidth)
+  readonly property int contentMargin: Style.spacing.panelPadding
+  readonly property int contentSpacing: Style.spacing.md
+  readonly property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
+  readonly property int cellSize: Math.max(Style.space(44), Style.font.display + Style.spacing.md)
+  readonly property int columns: Math.floor((card.width - contentMargin * 2) / cellSize)
 
   function open(payloadJson) {
-    root.opened = true
-    root.filterText = ""
-    root.selectedIndex = 0
-    root.cursorActive = true
-    root.rebuildDisplay()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    opened = true
+    search("")
+    Qt.callLater(function () { keyCatcher.forceActiveFocus() })
   }
 
   function close() {
-    root.opened = false
+    opened = false
   }
 
+  // Closed from inside: the shell is told, so its toggle opens it next.
   function dismiss() {
-    root.opened = false
-    if (root.shell && typeof root.shell.hide === "function")
-      root.shell.hide((root.manifest && root.manifest.id) || "nova.emojis")
+    opened = false
+    if (shell && typeof shell.hide === "function") shell.hide((manifest && manifest.id) || "nova.emojis")
   }
 
   function toggle() {
-    if (root.opened) root.dismiss()
-    else root.open("{}")
+    if (opened) dismiss()
+    else open("{}")
   }
 
-  function loadEmojis(raw) {
-    root.emojis = EmojiSearch.parseEmojis(raw)
-    if (root.opened) root.rebuildDisplay()
+  function search(text) {
+    filterText = text
+    selectedIndex = 0
+    update()
   }
 
-  function rebuildDisplay() {
-    var out = EmojiSearch.filterEmojis(root.emojis, root.filterText, 1000)
-    root.filteredEmojis = out
-
-    displayModel.clear()
-    for (var j = 0; j < out.length; j++) {
-      displayModel.append({ emoji: out[j].e, index: j })
-    }
-
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
-    cursorActive = displayModel.count > 0
-
-    Qt.callLater(function() {
-      if (displayModel.count > 0) resultGrid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
+  function update() {
+    results = EmojiSearch.search(emojis, filterText, 1000)
+    selectedIndex = Math.max(0, Math.min(selectedIndex, results.length - 1))
+    Qt.callLater(function () {
+      if (root.results.length > 0) grid.positionViewAtIndex(root.selectedIndex, GridView.Contain)
     })
   }
 
-  function select(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-    } else {
-      selectedIndex = (selectedIndex + delta + displayModel.count) % displayModel.count
-    }
-    resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
+  // To <index>, kept within the results, and into view.
+  function moveTo(index) {
+    if (results.length === 0) return
+    selectedIndex = Math.max(0, Math.min(index, results.length - 1))
+    grid.positionViewAtIndex(selectedIndex, GridView.Contain)
   }
 
-  function selectRow(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-      resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-      return
-    }
-    var newIndex = selectedIndex + delta * columns
-    if (newIndex < 0) newIndex = 0
-    if (newIndex >= displayModel.count) newIndex = displayModel.count - 1
-    selectedIndex = newIndex
-    resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-  }
-
-  function selectPage(delta) {
-    if (displayModel.count === 0) return
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-      resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-      return
-    }
-    var visibleRows = Math.max(1, Math.floor(resultGrid.height / cellHeight))
-    var newIndex = selectedIndex + delta * columns * visibleRows
-    if (newIndex < 0) newIndex = 0
-    if (newIndex >= displayModel.count) newIndex = displayModel.count - 1
-    selectedIndex = newIndex
-    resultGrid.positionViewAtIndex(selectedIndex, GridView.Contain)
-  }
-
-  function setFilter(nextFilter) {
-    root.filterText = nextFilter
-    root.selectedIndex = 0
-    root.cursorActive = true
-    root.rebuildDisplay()
-  }
-
-  function activateIndex(index) {
-    if (index < 0 || index >= displayModel.count) return
-    var row = displayModel.get(index)
-    root.applySelected(row.emoji)
-  }
-
-  function applySelected(emoji) {
-    if (!emoji) return
-    root.dismiss()
+  function insert(index) {
+    if (index < 0 || index >= results.length) return
+    var emoji = results[index]
+    dismiss()
     Quickshell.execDetached(["nova-menu-emoji-insert", emoji])
   }
 
-  ListModel { id: displayModel }
-
   FileView {
     path: root.novaPath + "/shell/plugins/emojis/emojis.json"
-    onLoaded: root.loadEmojis(text())
+    onLoaded: {
+      root.emojis = EmojiSearch.parse(text())
+      if (root.opened) root.update()
+    }
   }
+
   PanelWindow {
     id: panel
     visible: root.opened
@@ -170,9 +103,10 @@ Item {
 
     Rectangle {
       anchors.fill: parent
-      color: root.scrim
+      color: Commons.Color.menu.scrim
     }
 
+    // A click beside the card closes the picker; one on it does nothing.
     MouseArea {
       anchors.fill: parent
       onClicked: root.dismiss()
@@ -180,56 +114,47 @@ Item {
 
     BorderSurface {
       id: card
-      width: root.cardWidth
-      height: root.cardHeight
-      radius: root.cornerRadius
       anchors.centerIn: parent
+      width: Math.min(Style.space(400), panel.width - Style.gapsOut * 2)
+      height: Math.min(Style.space(500), panel.height - Style.gapsOut * 2)
+      radius: Style.cornerRadius
       color: root.background
-      borderSpec: root.borderSpec
+      borderSpec: Border.surfaceSpec("menu", "border", Commons.Color.menu.border, Math.max(1, Style.space(2)))
       padding: root.contentMargin
 
-      MouseArea { anchors.fill: parent; onClicked: {} }
+      MouseArea {
+        anchors.fill: parent
+        onClicked: {}
+      }
 
       Item {
         id: keyCatcher
         anchors.fill: parent
         focus: true
-
         Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          if (event.key === Qt.Key_Escape) {
-            if (root.filterText) root.setFilter("")
+        Keys.onPressed: function (event) {
+          var key = event.key
+          if (key === Qt.Key_Escape) {
+            if (root.filterText) root.search("")
             else root.dismiss()
-            event.accepted = true
           } else if (Util.editsFilter(event, root.filterText)) {
-            root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if (event.key === Qt.Key_Left) {
-            root.select(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Right) {
-            root.select(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.selectRow(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.selectRow(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.selectPage(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.selectPage(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
-            event.accepted = true
-          } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
-            root.setFilter(root.filterText + event.text)
-            event.accepted = true
+            root.search(Util.editedFilter(event, root.filterText))
+          } else if (key === Qt.Key_Left || key === Qt.Key_Right) {
+            if (root.results.length > 0)
+              root.moveTo(Util.stepIndex(root.selectedIndex, key === Qt.Key_Left ? -1 : 1, root.results.length))
+          } else if (key === Qt.Key_Up || key === Qt.Key_Down) {
+            root.moveTo(root.selectedIndex + (key === Qt.Key_Up ? -1 : 1) * root.columns)
+          } else if (key === Qt.Key_PageUp || key === Qt.Key_PageDown) {
+            var rows = Math.max(1, Math.floor(grid.height / root.cellSize))
+            root.moveTo(root.selectedIndex + (key === Qt.Key_PageUp ? -1 : 1) * root.columns * rows)
+          } else if (key === Qt.Key_Return || key === Qt.Key_Enter) {
+            root.insert(root.selectedIndex)
+          } else if (event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127) {
+            root.search(root.filterText + event.text)
+          } else {
+            return
           }
+          event.accepted = true
         }
       }
 
@@ -241,24 +166,17 @@ Item {
         anchors.leftMargin: card.contentLeftInset
         spacing: root.contentSpacing
 
-        Rectangle {
+        Text {
           width: parent.width
           height: root.headerHeight
-          radius: root.cornerRadius
-          color: "transparent"
-
-          Text {
-            textFormat: Text.PlainText
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.filterText || "Search emojis…"
-            color: root.foreground
-            opacity: root.filterText ? 1 : 0.58
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.heading
-            elide: Text.ElideRight
-          }
+          verticalAlignment: Text.AlignVCenter
+          textFormat: Text.PlainText
+          text: root.filterText || "Search emojis…"
+          color: root.foreground
+          opacity: root.filterText ? 1 : 0.58
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.heading
+          elide: Text.ElideRight
         }
 
         Item {
@@ -266,83 +184,77 @@ Item {
           height: parent.height - root.headerHeight - root.contentSpacing
 
           GridView {
-            id: resultGrid
+            id: grid
             anchors.fill: parent
-            model: displayModel
+            model: root.results
             clip: true
-            cellWidth: root.cellWidth
-            cellHeight: root.cellHeight
+            cellWidth: root.cellSize
+            cellHeight: root.cellSize
             boundsBehavior: Flickable.StopAtBounds
 
             delegate: Rectangle {
+              id: cell
               required property int index
-              required property string emoji
+              required property string modelData
 
-              readonly property bool hasCursor: root.cursorActive && index === root.selectedIndex
-
-              width: root.cellWidth
-              height: root.cellHeight
-              radius: root.cornerRadius
-              color: hasCursor ? root.selectedBackground : "transparent"
+              width: root.cellSize
+              height: root.cellSize
+              radius: Style.cornerRadius
+              color: index === root.selectedIndex ? root.selectedBackground : "transparent"
 
               Text {
-                textFormat: Text.PlainText
-                text: parent.emoji
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
                 anchors.centerIn: parent
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
+                textFormat: Text.PlainText
+                text: cell.modelData
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.display
               }
 
               MouseArea {
-                id: mouseArea
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onContainsMouseChanged: if (containsMouse) {
-                  root.cursorActive = true
-                  root.selectedIndex = index
-                }
+                onContainsMouseChanged: if (containsMouse) root.selectedIndex = cell.index
                 onClicked: {
-                  root.cursorActive = true
-                  root.selectedIndex = index
-                  root.activateIndex(index)
+                  root.selectedIndex = cell.index
+                  root.insert(cell.index)
                 }
               }
             }
           }
 
-          // The touchpad scrolls the list as GTK does.
+          // The touchpad scrolls the grid as GTK does.
           TouchpadScroll {
-            anchors.fill: resultGrid
-            flickable: resultGrid
+            anchors.fill: grid
+            flickable: grid
           }
 
           Column {
             anchors.centerIn: parent
             spacing: Style.space(8)
-            visible: displayModel.count === 0
+            visible: root.results.length === 0
 
             Text {
-              text: "󰈉"
-              color: root.selectedText
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
+              text: "\u{F0209}"
+              color: Commons.Color.menu.selectedText
               opacity: 0.8
               font.family: root.fontFamily
               font.pixelSize: Style.font.displayLarge
-              horizontalAlignment: Text.AlignHCenter
-              width: parent.width
             }
 
             Text {
+              width: parent.width
+              horizontalAlignment: Text.AlignHCenter
               textFormat: Text.PlainText
               text: "No matches for “" + root.filterText + "”"
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
-              horizontalAlignment: Text.AlignHCenter
-              width: parent.width
             }
           }
         }

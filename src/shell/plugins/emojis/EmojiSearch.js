@@ -1,46 +1,30 @@
-function parseEmojis(raw) {
+// The emoji picker's search. emojis.json is a list of { e: an emoji, k: the
+// words a search matches }; what is typed is looked for anywhere in "k".
+
+// The list, ready to search: "k" lower-cased once, not at every key. A file
+// that does not parse is an empty list.
+function parse(text) {
+  var list
   try {
-    var data = JSON.parse(String(raw || ""))
-    return Array.isArray(data) ? data : []
+    list = JSON.parse(String(text || ""))
   } catch (e) {
     return []
   }
-}
-
-function normalizedQuery(query) {
-  return String(query || "").trim().toLowerCase()
-}
-
-function keywordText(item) {
-  return String((item && item.k) || "").toLowerCase()
-}
-
-function filterEmojis(emojis, query, limit) {
-  var values = Array.isArray(emojis) ? emojis : []
-  var needle = normalizedQuery(query)
-  var max = limit === undefined || limit === null ? 1000 : Number(limit)
-  if (isNaN(max)) max = 1000
-  max = Math.max(0, max)
-  if (max === 0) return []
-
-  var out = []
-
-  for (var i = 0; i < values.length; i++) {
-    var item = values[i]
-    if (!item || !item.e) continue
-    if (!needle || keywordText(item).indexOf(needle) >= 0) {
-      out.push(item)
-      if (out.length >= max) break
-    }
+  if (!Array.isArray(list)) return []
+  var emojis = []
+  for (var i = 0; i < list.length; i++) {
+    var item = list[i]
+    if (item && item.e) emojis.push({ e: item.e, k: String(item.k || "").toLowerCase() })
   }
-
-  return out
+  return emojis
 }
 
-if (typeof module !== "undefined") {
-  module.exports = {
-    parseEmojis: parseEmojis,
-    normalizedQuery: normalizedQuery,
-    filterEmojis: filterEmojis
-  }
+// The emoji that match <query>, in the list's order, at most <limit>: all of
+// them, up to the limit, for an empty one.
+function search(emojis, query, limit) {
+  var needle = String(query || "").trim().toLowerCase()
+  var found = []
+  for (var i = 0; i < emojis.length && found.length < limit; i++)
+    if (!needle || emojis[i].k.indexOf(needle) !== -1) found.push(emojis[i].e)
+  return found
 }
