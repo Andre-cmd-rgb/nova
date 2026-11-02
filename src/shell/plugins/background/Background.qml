@@ -21,12 +21,18 @@ Item {
 
   readonly property string link: Commons.Color.stateHome + "/nova/current/background"
 
-  // The background chosen last, as the path it was given by.
+  // The background chosen last: the file, by which choosing it again is
+  // told apart, and the path it is shown by once revealed, the same file by
+  // one that a theme's next render leaves in place.
   property string current: ""
+  property string currentPath: ""
   // What the screens show: `shown` under the reveal, `outgoing` revealed
   // over, `incoming` coming in. When the reveal ends `shown` is the new one,
-  // `settling` until its image has loaded and the reveal's are let go.
+  // `settling` until every screen has its image and the reveal's are let go.
   property string shown: ""
+  // The shown image's source, new with each change: a theme's background can
+  // be a new file under the path of the last, and must be read again.
+  property url shownSource: ""
   property string outgoing: ""
   property string incoming: ""
   property bool settling: false
@@ -44,16 +50,17 @@ Item {
     if (!readLink.running) readLink.running = true
   }
 
-  // Reveals <path> over <from> (or over what is shown), and keeps <final>,
-  // the same file by another path, as the one chosen. Choosing the one
-  // already chosen does nothing, unless <force>. With <instant>, or with
-  // nothing shown yet, it is shown at once.
+  // Reveals <path> over <from> (or over what is shown), then shows it by
+  // <final>, the same file by another path. Choosing the file already chosen
+  // does nothing, unless <force>. With <instant>, or with nothing shown yet,
+  // it is shown at once.
   function change(from, path, final, instant, force) {
     path = String(path || "").trim()
     final = String(final || path).trim()
     from = String(from || "").trim()
-    if (!path || (!force && final === current)) return
-    current = final
+    if (!path || (!force && path === current)) return
+    current = path
+    currentPath = final
     serial++
     revealedSerial = -1
     reveal.stop()
@@ -62,13 +69,42 @@ Item {
     if (instant || !shown) {
       outgoing = ""
       incoming = ""
-      shown = path
+      show(final)
       revealProgress = 1
       return
     }
     outgoing = from || shown
     incoming = path
     revealProgress = 0
+  }
+
+  function show(path) {
+    shown = path
+    shownSource = path ? Util.fileUrl(path) + "?v=" + serial : ""
+  }
+
+  // The reveal's images go once every screen has drawn the new one under
+  // them, so none is bare while it loads.
+  function settle() {
+    if (!settling) return
+    for (var i = 0; i < screens.instances.length; i++) {
+      if (!screens.instances[i].showing) return
+    }
+    incoming = ""
+    outgoing = ""
+    settling = false
+  }
+
+  // A background that cannot be read is not revealed: what is shown stays,
+  // and choosing it again tries again.
+  function abandon() {
+    if (!incoming || settling) return
+    reveal.stop()
+    current = ""
+    incoming = ""
+    outgoing = ""
+    revealProgress = 1
+    applyTheme()
   }
 
   function changeWithTheme(from, path, final, colorsB64, shellB64) {
@@ -162,17 +198,18 @@ Item {
     duration: 420
     easing.type: Easing.InOutCubic
     onFinished: {
-      if (root.incoming) {
-        root.shown = root.current || root.incoming
-        root.settling = true
-      }
       root.revealProgress = 1
+      if (!root.incoming) return
+      root.show(root.currentPath || root.incoming)
+      root.settling = true
+      root.settle()
     }
   }
 
   Component.onCompleted: refresh()
 
   Variants {
+    id: screens
     model: Quickshell.screens
 
     PanelWindow {
@@ -181,6 +218,9 @@ Item {
 
       // Whether this screen's mask is drawn for the reveal under way.
       property bool maskReady: false
+      // Whether this screen has the shown image as it is now.
+      readonly property bool showing: shownImage.status === Image.Ready && String(shownImage.source) === String(root.shownSource)
+      onShowingChanged: if (showing) root.settle()
 
       // Starts the reveal once the incoming image is loaded here, a turn
       // later, when it is drawn.
@@ -215,19 +255,13 @@ Item {
       // Every image is decoded at the screen's size: a large photo then
       // costs a screen's worth of memory, and an SVG is drawn sharp.
       Image {
+        id: shownImage
         anchors.fill: parent
-        source: Util.fileUrl(root.shown)
+        source: root.shownSource
         sourceSize: Qt.size(width, height)
         fillMode: Image.PreserveAspectCrop
         asynchronous: true
         cache: true
-        onStatusChanged: {
-          if (status === Image.Ready && root.settling) {
-            root.incoming = ""
-            root.outgoing = ""
-            root.settling = false
-          }
-        }
       }
 
       Image {
@@ -265,7 +299,10 @@ Item {
           cache: false
           smooth: true
           mipmap: true
-          onStatusChanged: surface.revealWhenReady()
+          onStatusChanged: {
+            if (status === Image.Error) root.abandon()
+            else surface.revealWhenReady()
+          }
         }
       }
 
