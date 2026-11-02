@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Notifications
 import qs.Commons
+import qs.Commons as Commons
 
 import "components"
 import "NotificationLogic.js" as NotificationLogic
@@ -26,7 +27,7 @@ Item {
 
   property string novaPath: Quickshell.env("NOVA_PATH")
   readonly property string files: novaPath + "/shell/plugins/notifications/files.sh"
-  readonly property string stateDir: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/"
+  readonly property string stateDir: Commons.Color.stateHome + "/nova/"
   readonly property string settingsPath: stateDir + "notifications.json"
   readonly property string toastDir: stateDir + "notifications/"
   readonly property string historyDir: toastDir + "history/"

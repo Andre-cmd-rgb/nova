@@ -19,7 +19,7 @@ import qs.Ui
 Item {
   id: root
 
-  readonly property string link: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/current/background"
+  readonly property string link: Commons.Color.stateHome + "/nova/current/background"
 
   // The background chosen last, as the path it was given by.
   property string current: ""

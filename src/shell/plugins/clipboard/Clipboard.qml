@@ -17,7 +17,7 @@ Item {
   id: root
 
   property string novaPath: Quickshell.env("NOVA_PATH")
-  readonly property string historyPath: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/clipboard-history.json"
+  readonly property string historyPath: Commons.Color.stateHome + "/nova/clipboard-history.json"
   readonly property string helpers: novaPath + "/shell/plugins/clipboard/"
   readonly property int historyLimit: 300
 

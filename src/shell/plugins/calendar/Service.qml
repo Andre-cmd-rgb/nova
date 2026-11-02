@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // The calendar behind its window and the bar's clock: its file (Store.qml),
@@ -18,7 +19,7 @@ Item {
   property var shell: null
 
   readonly property var store: storeItem
-  readonly property string statePath: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/nova/calendar.json"
+  readonly property string statePath: Commons.Color.stateHome + "/nova/calendar.json"
   property real said: 0
   // What the file has: said is kept up to date as the clock is looked at, the
   // file only when a reminder is said, or a quarter of an hour on, so that
