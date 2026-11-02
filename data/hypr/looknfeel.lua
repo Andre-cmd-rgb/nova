@@ -123,4 +123,14 @@ hl.config({
   binds = {
     hide_special_on_workspace_change = true,
   },
+
+  -- Hyprland switches a display to HDR when a fullscreen window asks for it
+  -- (an HDR video on YouTube, say), but HDR needs the display at 10 bits per
+  -- channel and Nova runs every display at 8: the ThinkPad P1's panel keeps
+  -- its framebuffer compression only at 8. The switch then only warned, "wide
+  -- color gamut is enabled but the display is not in 10-bit mode", over the
+  -- video. Off, the video plays tone-mapped to the display, as in a window.
+  render = {
+    cm_auto_hdr = 0,
+  },
 })

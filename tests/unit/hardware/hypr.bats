@@ -65,3 +65,18 @@ rules() { # [profile]
   [ "${lines[0]}" = "opacity 0.985 0.96 for default-opacity" ]
   [ "${lines[1]}" = "render direct_scanout=1" ]
 }
+
+# Nova runs every display at 8 bits per channel, and HDR needs 10: a display
+# switched to HDR by a fullscreen video only showed Hyprland's warning.
+@test "hypr: a fullscreen window never switches a display to HDR" {
+  LOOKNFEEL=$REPO_ROOT/data/hypr/looknfeel.lua run lua -e '
+    local render = {}
+    hl = {
+      config = function(c) for k, v in pairs(c.render or {}) do render[k] = v end end,
+      curve = function() end, animation = function() end,
+    }
+    dofile(os.getenv("LOOKNFEEL"))
+    print("cm_auto_hdr=" .. tostring(render.cm_auto_hdr))' </dev/null
+  [ "$status" -eq 0 ]
+  [ "$output" = "cm_auto_hdr=0" ]
+}
