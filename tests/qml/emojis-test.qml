@@ -33,6 +33,11 @@ ShellRoot {
     check(EmojiSearch.search(list, "", 2).join("") === "🐶🐱" && EmojiSearch.search(list, "dog", 1).join("") === "🐶",
       "no more than the limit")
 
+    var joined = EmojiSearch.parse('[{"e":"😍","k":"smiling face with heart-eyes"},{"e":"👎","k":"thumbs down -1"},{"e":"💯","k":"hundred points 100"}]')
+    check(EmojiSearch.search(joined, "heart_eyes", 9).join("") === "😍" && EmojiSearch.search(joined, "Heart-Eyes", 9).join("") === "😍"
+      && EmojiSearch.search(joined, "heart eyes", 9).join("") === "😍", "_ and a - between letters are spaces, typed or in the list")
+    check(EmojiSearch.search(joined, "-1", 9).join("") === "👎", "a - that joins no words stays one")
+
     var emojis = EmojiSearch.parse(installed.text())
     check(emojis.length > 1800 && emojis.every(function (item) { return item.k.length > 0 }),
       "the installed list: every emoji has words to find it by")
@@ -40,6 +45,8 @@ ShellRoot {
     check(finds("dog", "🐶") && finds("cat", "😺") && finds("heart", "❤️") && finds("thumbs up", "👍")
       && finds("smile", "😄") && finds("italy", "🇮🇹") && finds("technologist", "🧑‍💻"),
       "the installed list finds an emoji by its name")
+    check(finds("heart_eyes", "😍") && finds("face_with_tears_of_joy", "😂") && finds("partying_face", "🥳")
+      && finds("t-shirt", "👕") && finds("t shirt", "👕"), "and by GitHub's name for it, words joined by _ or -")
     console.log("DONE")
     Qt.quit()
   }
