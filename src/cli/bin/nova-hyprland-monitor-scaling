@@ -5,211 +5,159 @@
 
 set -euo pipefail
 
-SCALES=(1 1.25 1.6 2 3 4)
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova"
-SCALE_LOG="$STATE_DIR/monitor-scaling.log"
+# The steps up and down go through.
+presets="1 1.25 1.6 2 3 4"
 
 usage() {
   echo "Usage: nova-hyprland-monitor-scaling [up|down|SCALE]"
 }
 
-focused_monitor_scale() {
-  hyprctl monitors -j | jq -er '.[] | select(.focused == true) | .scale'
+# The focused display: its scale, width, height, refresh rate and name. None
+# focused, and this stops here. The name comes last, as read merges the tabs
+# around an empty field, and whole, spaces and all, to be refused.
+focused() {
+  IFS=$'\t' read -r scale width height rate monitor < <(
+    hyprctl monitors -j |
+      jq -er '.[] | select(.focused == true) | [.scale, .width, .height, .refreshRate, .name] | @tsv'
+  )
 }
 
-cmdline_for_pid() {
-  local pid="$1"
+# Hyprland only takes a scale that divides the mode into whole logical pixels,
+# in steps of 1/120: a divisor of the greatest common divisor of width × 120
+# and height × 120. The scale asked for goes up to the next one of those.
+# Shared by the awk programs below.
+usable_scale='
+  function gcd(a, b) { return b ? gcd(b, a % b) : a }
+  function usable(scale,    whole, steps) {
+    whole = gcd(width * 120, height * 120)
+    steps = int(scale * 120 + 0.5)
+    if (steps > whole) steps = whole
+    while (whole % steps) steps++
+    return steps / 120
+  }'
 
-  [[ -r /proc/$pid/cmdline ]] || return 0
-  tr '\0\t\n' '   ' <"/proc/$pid/cmdline" | sed -E 's/[[:space:]]+/ /g; s/[[:space:]]+$//'
-}
-
-audit_scale_change() {
-  local requested="$1"
-  local active_monitor="$2"
-  local current_scale="$3"
-  local new_scale="$4"
-  local parent_pid="$PPID"
-  local grandparent_pid
-  local parent_cmd
-  local grandparent_cmd
-
-  mkdir -p "$STATE_DIR" || return 0
-
-  # Diagnostics only: a parent that has already gone away just leaves blanks.
-  grandparent_pid=$(ps -o ppid= -p "$parent_pid" 2>/dev/null | tr -d ' ' || true)
-  parent_cmd=$(cmdline_for_pid "$parent_pid")
-  grandparent_cmd=$(cmdline_for_pid "$grandparent_pid")
-
-  printf 'at=%s\trequested=%s\tcurrent=%s\tnew=%s\tmonitor=%s\tpid=%s\tppid=%s\tparent=%s\tgppid=%s\tgrandparent=%s\n' \
-    "$(date --iso-8601=seconds)" \
-    "$requested" \
-    "$current_scale" \
-    "$new_scale" \
-    "$active_monitor" \
-    "$$" \
-    "$parent_pid" \
-    "$parent_cmd" \
-    "$grandparent_pid" \
-    "$grandparent_cmd" >>"$SCALE_LOG"
-}
-
-# Hyprland only accepts scales where the mode divides into whole logical
-# pixels (in 1/120 steps), so clean scales are divisors of gcd(w*120, h*120).
-# Round the requested scale up to the nearest clean value.
-clean_scale() {
-  awk -v scale="$1" -v width="$2" -v height="$3" '
-    function gcd(a, b, t) { while (b) { t = a % b; a = b; b = t } return a }
+# The preset a step lands on. Presets that come out as the same usable scale
+# count once, under the one nearest to it, so each step changes something.
+# The current scale is matched to the nearest: Hyprland reports floats.
+step_to() { # next|previous
+  awk -v direction="$1" -v presets="$presets" -v current="$scale" -v width="$width" -v height="$height" \
+    "$usable_scale"'
     BEGIN {
-      g = gcd(width * 120, height * 120)
-      k = int(scale * 120 + 0.5)
-      if (k > g) k = g
-      while (g % k != 0) k++
-      printf "%g\n", k / 120
+      count = split(presets, preset, " ")
+      for (i = 1; i <= count; i++) {
+        takes = usable(preset[i])
+        key = sprintf("%.8f", takes)
+        off = preset[i] - takes
+        if (off < 0) off = -off
+        if (!(key in slot)) {
+          slot[key] = ++n
+          scale_at[n] = takes
+          label[n] = preset[i]
+          off_at[n] = off
+        } else if (off < off_at[slot[key]]) {
+          label[slot[key]] = preset[i]
+          off_at[slot[key]] = off
+        }
+      }
+
+      nearest = 1
+      best = 1e9
+      for (i = 1; i <= n; i++) {
+        d = current - scale_at[i]
+        if (d < 0) d = -d
+        if (d < best) { best = d; nearest = i }
+      }
+
+      # In parentheses, or print would take the > for a redirection.
+      if (direction == "next") print label[(nearest < n ? nearest + 1 : n)]
+      else print label[(nearest > 1 ? nearest - 1 : 1)]
     }'
 }
 
-normalize_scale() {
-  awk 'NR == 1 { printf "%g\n", $0 }'
+# A line for each change in the log, with the processes that asked for it:
+# scales have changed when nobody meant them to.
+command_line() { # pid → REPLY
+  local -a words=()
+  REPLY=""
+  [[ -r /proc/$1/cmdline ]] || return 0
+  mapfile -d '' -t words <"/proc/$1/cmdline"
+  REPLY=${words[*]}
+  REPLY=${REPLY//[[:space:]]/ }
+  while [[ $REPLY == *"  "* ]]; do REPLY=${REPLY//"  "/ }; done
+  REPLY=${REPLY% }
 }
 
-set_scale() {
-  local requested_scale="$1"
-  local requested="${2:-$requested_scale}"
-  local active_monitor current_scale width height refresh_rate
+log_change() { # asked new
+  local log=${XDG_STATE_HOME:-$HOME/.local/state}/nova/monitor-scaling.log
+  local now stat grandparent="" parent_line
+  mkdir -p "${log%/*}" || return 0
 
-  read -r active_monitor current_scale width height refresh_rate < <(
-    hyprctl monitors -j | jq -er '.[] | select(.focused == true) | [.name, .scale, .width, .height, .refreshRate] | @tsv'
-  )
+  printf -v now '%(%Y-%m-%dT%H:%M:%S%z)T' -1
+  now=${now:0:-2}:${now: -2}
+  # A parent that has exited by now leaves blanks.
+  if read -r stat 2>/dev/null <"/proc/$PPID/stat"; then
+    read -r _ grandparent _ <<<"${stat##*) }"
+  fi
+  command_line "$PPID"
+  parent_line=$REPLY
+  command_line "$grandparent"
 
-  # active_monitor is written into the Lua string eval'd below, so only a plain
-  # connector name may pass; a hostile output name could execute otherwise.
-  if [[ ! $active_monitor =~ ^[A-Za-z0-9._-]+$ ]]; then
+  printf 'at=%s\trequested=%s\tcurrent=%s\tnew=%s\tmonitor=%s\tpid=%s\tppid=%s\tparent=%s\tgppid=%s\tgrandparent=%s\n' \
+    "$now" "$1" "$scale" "$2" "$monitor" "$$" "$PPID" "$parent_line" "$grandparent" "$REPLY" >>"$log"
+}
+
+set_scale() { # scale asked
+  local new gdk lua=$HOME/.config/hypr/monitors.lua
+
+  # The name goes into the Lua Hyprland runs, so only a plain connector name.
+  if [[ ! $monitor =~ ^[A-Za-z0-9._-]+$ ]]; then
     echo "Refusing unsafe monitor name" >&2
     exit 1
   fi
 
-  local new_scale new_gdk_scale
-  new_scale=$(clean_scale "$requested_scale" "$width" "$height")
-  # GTK only honors integer GDK_SCALE values, so persist the nearest whole
-  # factor even when the monitor scale itself is fractional.
-  new_gdk_scale=$(awk -v scale="$new_scale" 'BEGIN { printf "%d", int(scale + 0.5) }')
-  local monitor_lua="$HOME/.config/hypr/monitors.lua"
+  # GTK takes whole scales only, so GDK_SCALE is the nearest whole one.
+  new=$(awk -v asked="$1" -v width="$width" -v height="$height" "$usable_scale"'
+    BEGIN { s = sprintf("%g", usable(asked)); printf "%s %d\n", s, int(s + 0.5) }')
+  read -r new gdk <<<"$new"
 
-  hyprctl eval "hl.monitor({ output = \"$active_monitor\", mode = \"${width}x${height}@${refresh_rate}\", position = \"auto\", scale = $new_scale })" >/dev/null
-  audit_scale_change "$requested" "$active_monitor" "$current_scale" "$new_scale" || true
-  # A display with settings kept in Settings → Displays keeps this scale there
-  # too, or its rule would put the old one back at the next reload.
-  nova-monitor remember "$active_monitor" scale "$new_scale" 2>/dev/null || true
+  hyprctl eval "hl.monitor({ output = \"$monitor\", mode = \"${width}x${height}@${rate}\", position = \"auto\", scale = $new })" >/dev/null
+  log_change "$2" "$new" || true
+  # A display Settings → Displays keeps settings for keeps this scale there,
+  # or its rule would bring back the old one at the next reload.
+  nova-monitor remember "$monitor" scale "$new" 2>/dev/null || true
 
-  # Persist to monitors.lua if the user still has Nova's generic catch-all
-  # defaults, so the scale survives reboots.
-  if [[ -f $monitor_lua ]] && grep -q '^local nova_monitor_scale = ' "$monitor_lua"; then
+  # A monitors.lua still on Nova's catch-all rule takes the scale too, so it
+  # lasts past a restart.
+  [[ -f $lua ]] || return 0
+  if grep -q '^local nova_monitor_scale = ' "$lua"; then
     sed -i -E \
-      -e "s|^local nova_monitor_scale = .*|local nova_monitor_scale = ${new_scale}|" \
-      -e "s|^local nova_gdk_scale = .*|local nova_gdk_scale = ${new_gdk_scale}|" \
-      "$monitor_lua"
-  elif [[ -f $monitor_lua ]] && grep -Eq '^hl\.monitor\(\{ output = "", mode = "preferred", position = "auto", scale = ("auto"|[0-9.]+) \}\)' "$monitor_lua"; then
+      -e "s|^local nova_monitor_scale = .*|local nova_monitor_scale = $new|" \
+      -e "s|^local nova_gdk_scale = .*|local nova_gdk_scale = $gdk|" \
+      "$lua"
+  elif grep -Eq '^hl\.monitor\(\{ output = "", mode = "preferred", position = "auto", scale = ("auto"|[0-9.]+) \}\)' "$lua"; then
     sed -i -E \
-      -e "s|^(hl\.monitor\(\{ output = \"\", mode = \"preferred\", position = \"auto\", scale = )([^ ]+)( \}\))|\\1${new_scale}\\3|" \
-      -e 's|^hl\.env\("GDK_SCALE", ".*"\)|hl.env("GDK_SCALE", "'"$new_gdk_scale"'")|' \
-      "$monitor_lua"
+      -e 's|^(hl\.monitor\(\{ output = "", mode = "preferred", position = "auto", scale = )[^ ]+( \}\))|\1'"$new"'\2|' \
+      -e 's|^hl\.env\("GDK_SCALE", ".*"\)|hl.env("GDK_SCALE", "'"$gdk"'")|' \
+      "$lua"
   fi
 }
 
-scale_from_current() {
-  local direction="${1:-}"
-  local width="${2:-}"
-  local height="${3:-}"
-
-  awk -v direction="$direction" -v list="${SCALES[*]}" -v width="$width" -v height="$height" '
-    function gcd(a, b, t) { while (b) { t = a % b; a = b; b = t } return a }
-    function clean(scale,    g, k) {
-      g = gcd(width * 120, height * 120)
-      k = int(scale * 120 + 0.5)
-      if (k > g) k = g
-      while (g % k != 0) k++
-      return k / 120
-    }
-    NR == 1 { scale = $0; found = 1 }
-    END {
-      if (!found) exit 1
-
-      preset_count = split(list, presets, " ")
-      for (i = 1; i <= preset_count; i++) {
-        effective = clean(presets[i])
-        key = sprintf("%.8f", effective)
-        distance = presets[i] - effective
-        if (distance < 0) distance = -distance
-
-        # Multiple presets can collapse to the same clean scale. Keep only the
-        # closest label so stepping always moves to a distinct effective value.
-        if (!(key in effective_index)) {
-          effective_index[key] = ++n
-          effective_scales[n] = effective
-          scales[n] = presets[i]
-          distances[n] = distance
-        } else {
-          idx = effective_index[key]
-          if (distance < distances[idx]) {
-            scales[idx] = presets[i]
-            distances[idx] = distance
-          }
-        }
-      }
-
-      # Snap to the nearest effective scale first. Hyprland reports floating
-      # point values, so exact comparisons can otherwise get stuck.
-      best = 1; best_diff = 1e9
-      for (i = 1; i <= n; i++) {
-        diff = scale - effective_scales[i]; if (diff < 0) diff = -diff
-        if (diff < best_diff) { best_diff = diff; best = i }
-      }
-
-      if (direction == "next") {
-        print scales[(best < n ? best + 1 : n)]
-      } else if (direction == "previous") {
-        print scales[(best > 1 ? best - 1 : 1)]
-      } else {
-        print scales[best]
-      }
-    }'
-}
-
-# Move one preset up or down from the focused monitor's current scale.
-step_scale() {
-  local direction="$1" label="$2" scale width height next
-
-  read -r scale width height < <(
-    hyprctl monitors -j | jq -er '.[] | select(.focused == true) | [.scale, .width, .height] | @tsv'
-  )
-  next=$(scale_from_current "$direction" "$width" "$height" <<<"$scale")
-  set_scale "$next" "$label"
-}
-
-case "${1:-}" in
+case ${1:-} in
   "")
-    focused_monitor_scale | normalize_scale
+    hyprctl monitors -j | jq -er '.[] | select(.focused == true) | .scale' | awk 'NR == 1 { printf "%g\n", $0 }'
     ;;
-  -h | --help)
-    usage
-    ;;
-  up)
-    step_scale next up
-    ;;
-  down)
-    step_scale previous down
-    ;;
-  1 | 1.25 | 1.6 | 2 | 3 | 4)
-    set_scale "$1" "$1"
+  -h | --help) usage ;;
+  up | down)
+    focused
+    if [[ $1 == up ]]; then to=$(step_to next); else to=$(step_to previous); fi
+    set_scale "$to" "$1"
     ;;
   *)
-    if [[ $1 =~ ^[0-9]+([.][0-9]+)?$ ]] &&
-      awk -v scale="$1" 'BEGIN { exit !(scale >= 1 && scale <= 4) }'; then
-      set_scale "$1" "$1"
-    else
+    if [[ ! $1 =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk -v scale="$1" 'BEGIN { exit !(scale >= 1 && scale <= 4) }'; then
       usage >&2
       exit 1
     fi
+    focused
+    set_scale "$1" "$1"
     ;;
 esac

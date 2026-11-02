@@ -4,4 +4,6 @@
 
 set -euo pipefail
 
-nova-hyprland-toggle window-no-gaps
+# The shell watches the same file, and takes its own gaps and corners from the
+# windows'.
+exec nova-hyprland-toggle window-no-gaps

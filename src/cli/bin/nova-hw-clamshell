@@ -5,5 +5,5 @@
 
 set -euo pipefail
 
-# Clamshell = lid closed while driving one or more external monitors.
+# Docked: the lid shut, and a display plugged in to show the desktop instead.
 nova-hw-laptop-closed && nova-hw-external-monitors

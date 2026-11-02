@@ -5,11 +5,8 @@
 
 set -euo pipefail
 
-device=$(hyprctl devices -j | jq -r '[.mice[] | .name | select(test("touchpad|trackpad"; "i"))] | first // empty')
-
-# The exit status is the answer: the menu uses this as a presence check.
-if [[ -n $device ]]; then
-  echo "$device"
-else
-  exit 1
-fi
+# Hyprland lists touchpads among the mice; their names say what they are. The
+# menu shows its Touchpad switch on this command's success.
+name=$(hyprctl devices -j | jq -r 'first(.mice[].name | select(test("touchpad|trackpad"; "i"))) // empty')
+[[ -n $name ]] || exit 1
+printf '%s\n' "$name"

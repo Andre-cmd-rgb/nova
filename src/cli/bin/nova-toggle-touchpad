@@ -5,4 +5,5 @@
 
 set -euo pipefail
 
-exec nova-toggle-input-device touchpad "${1:-toggle}"
+# Toggles when given nothing, as the touchpad key does.
+exec nova-toggle-input-device touchpad "$@"

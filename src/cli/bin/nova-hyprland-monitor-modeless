@@ -5,19 +5,16 @@
 
 set -euo pipefail
 
-# A monitor powered off at boot answers with a partial EDID carrying no video
-# modes, so Hyprland brings it up at 0x0 and the screen stays black. Mirrors are
-# absent from plain `monitors`, hence `all` plus an explicit disabled filter.
+# A display that was off when the computer started can answer with part of its
+# EDID and no video modes, and Hyprland then runs it at 0x0: a black screen.
+# Plain `monitors` leaves out mirrors, so this asks for all of them and skips
+# the ones that are off.
 #
-# Exits 0 modeless, 1 not, 2 when the compositor cannot say. Nothing fires an
-# event for this state, so a caller that gave up on an unanswered query would
-# leave the screen black for good.
+# Exits 0 when one has no mode, 1 when none, 2 when Hyprland cannot say.
+# Nothing announces this state, so a caller treating "cannot say" as "none"
+# would leave the screen black for good.
 monitors=$(hyprctl monitors all -j 2>/dev/null) || exit 2
-
-state=$(jq 'if any(.[]; .disabled != true and (.width == 0 or .height == 0)) then 0 else 1 end' \
-  <<<"$monitors" 2>/dev/null || true)
-
-case $state in
-  0 | 1) exit "$state" ;;
-  *) exit 2 ;;
-esac
+answer=$(jq 'if any(.[]; .disabled != true and (.width == 0 or .height == 0)) then 0 else 1 end' \
+  <<<"$monitors" 2>/dev/null) || true
+[[ $answer == [01] ]] || answer=2
+exit "$answer"

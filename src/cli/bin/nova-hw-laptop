@@ -5,24 +5,18 @@
 
 set -euo pipefail
 
-lid_path="${NOVA_LID_PATH:-/proc/acpi/button/lid}"
-dmi_path="${NOVA_DMI_PATH:-/sys/class/dmi/id}"
-
-# A lid switch is the definitive signal for clamshell-capable hardware.
-for state in "$lid_path"/*/state; do
-  [[ -e $state ]] && exit 0
+# A lid switch settles it: only a laptop can be shut.
+for lid in "${NOVA_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
+  [[ ! -e $lid ]] || exit 0
 done
 
-# Fall back to the DMI chassis type for laptops that don't expose an ACPI lid
-# button. 8=Portable 9=Laptop 10=Notebook 14=Sub Notebook 30=Tablet
-# 31=Convertible 32=Detachable.
-chassis_type=""
-if [[ -r $dmi_path/chassis_type ]]; then
-  chassis_type=$(<"$dmi_path/chassis_type")
-fi
-
-case $chassis_type in
+# Some laptops have no ACPI lid button; their firmware still says what they
+# are. The SMBIOS chassis types of a portable computer: Portable, Laptop,
+# Notebook, Sub Notebook, Tablet, Convertible and Detachable.
+chassis=""
+dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+[[ ! -r $dmi/chassis_type ]] || chassis=$(<"$dmi/chassis_type")
+case $chassis in
   8 | 9 | 10 | 14 | 30 | 31 | 32) exit 0 ;;
+  *) exit 1 ;;
 esac
-
-exit 1

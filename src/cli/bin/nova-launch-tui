@@ -5,21 +5,21 @@
 
 set -euo pipefail
 
-if (($# == 0)); then
-  echo "Usage: nova-launch-tui [--app-id=<app-id>] <command> [args...]" >&2
-  exit 1
-fi
-
-if [[ $1 == --app-id=* ]]; then
-  APP_ID="${1#--app-id=}"
-  shift
-else
-  APP_ID="org.nova.$(basename "$1")"
-fi
-
-(($# > 0)) || {
+usage() {
   echo "Usage: nova-launch-tui [--app-id=<app-id>] <command> [args...]" >&2
   exit 1
 }
 
-exec setsid uwsm-app -- xdg-terminal-exec --app-id="$APP_ID" -e "$1" "${@:2}"
+(($# > 0)) || usage
+
+# The app id names the terminal's window, which window rules and
+# nova-launch-or-focus-tui find it by: org.nova.<command> unless given.
+if [[ $1 == --app-id=* ]]; then
+  app_id=${1#--app-id=}
+  shift
+  (($# > 0)) || usage
+else
+  app_id=org.nova.${1##*/}
+fi
+
+exec setsid uwsm-app -- xdg-terminal-exec --app-id="$app_id" -e "$@"

@@ -5,4 +5,6 @@
 
 set -euo pipefail
 
-hyprctl monitors all -j | jq -e '.[] | select(.name | test("^(eDP|LVDS|DSI)-") | not) | select(.disabled == false)' >/dev/null 2>&1
+# Any display on that is not the laptop's own panel (eDP, LVDS or DSI).
+hyprctl monitors all -j |
+  jq -e 'first(.[] | select(.disabled == false and (.name | test("^(eDP|LVDS|DSI)-") | not)))' >/dev/null 2>&1

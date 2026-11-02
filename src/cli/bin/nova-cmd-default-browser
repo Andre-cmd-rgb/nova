@@ -9,64 +9,87 @@
 
 set -euo pipefail
 
-# Read the http handler from the config-dir mimeapps.list files the way xdg-mime
-# does, desktop-specific list first, taking the first listed entry that is
-# installed. xdg-settings reaches the same answer through several shell scripts
-# in ~70ms, which every browser launch would otherwise pay.
+# Every browser launch asks this, and xdg-settings takes some 70 ms to answer,
+# through several shell scripts. The answer is nearly always in a
+# mimeapps.list of a config directory, which this reads as xdg-mime does, in
+# bash alone: the desktop's own list before the plain one, and the first entry
+# listed for http that is installed.
 IFS=: read -ra data_dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 IFS=: read -ra config_dirs <<<"${XDG_CONFIG_HOME:-$HOME/.config}:${XDG_CONFIG_DIRS:-/etc/xdg}"
 IFS=: read -ra desktops <<<"${XDG_CURRENT_DESKTOP:-}"
 
-want="id"
-[[ ${1:-} != --file ]] || want="file"
+print_file=false
+[[ ${1:-} != --file ]] || print_file=true
 
-# The entry the launchers read: the first of that ID in the data dirs.
-desktop_file() {
-  local data_dir
-
-  for data_dir in "${data_dirs[@]}"; do
-    [[ -r $data_dir/applications/$1 ]] || continue
-    echo "$data_dir/applications/$1"
-    return 0
+# The file of a desktop entry ID: the first in the data directories.
+entry_file() { # id
+  local dir
+  for dir in "${data_dirs[@]}"; do
+    if [[ -r $dir/applications/$1 ]]; then
+      printf '%s\n' "$dir/applications/$1"
+      return 0
+    fi
   done
-
   return 1
 }
 
-# Installed means the command of that entry still resolves: the first word of
-# its Exec line, which may be quoted.
-installed() {
-  local file command
-
-  file=$(desktop_file "$1") || return 1
-  command=$(awk '/^Exec=/ {
-    sub(/^Exec=/, "")
-    if (substr($0, 1, 1) == "\"") { rest = substr($0, 2); print substr(rest, 1, index(rest, "\"") - 1) } else print $1
-    exit
-  }' "$file")
-  [[ -n $command ]] && command -v "$command" >/dev/null
+# The program an entry runs: the first word of its first Exec line, quoted or
+# not. Empty when that cannot be told.
+entry_program() { # file
+  local line word
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ $line == Exec=* ]] || continue
+    line=${line#Exec=}
+    if [[ $line == '"'* ]]; then
+      line=${line:1}
+      [[ $line == *'"'* ]] && printf '%s\n' "${line%%'"'*}"
+    else
+      read -r word _ <<<"$line"
+      printf '%s\n' "$word"
+    fi
+    return 0
+  done <"$1"
 }
 
-answer() {
-  if [[ $want == file ]]; then
-    desktop_file "$1"
+# An entry is installed while its program is still there.
+installed() { # id
+  local file program
+  file=$(entry_file "$1") || return 1
+  program=$(entry_program "$file")
+  [[ -n $program ]] && command -v -- "$program" >/dev/null
+}
+
+# What a mimeapps.list names for http, under [Default Applications]: one line
+# of entries, each ending in a semicolon.
+http_entries() { # list
+  local line defaults=false
+  while IFS= read -r line || [[ -n $line ]]; do
+    case $line in
+      '[Default Applications]'*) defaults=true ;;
+      '['*) defaults=false ;;
+      x-scheme-handler/http=*)
+        if $defaults; then
+          printf '%s\n' "${line#*=}"
+          return 0
+        fi
+        ;;
+    esac
+  done <"$1"
+}
+
+answer() { # id
+  if $print_file; then
+    entry_file "$1"
   else
-    echo "$1"
+    printf '%s\n' "$1"
   fi
 }
 
 for config_dir in "${config_dirs[@]}"; do
   for desktop in "${desktops[@]}" ""; do
-    list="$config_dir/${desktop:+${desktop,,}-}mimeapps.list"
+    list=$config_dir/${desktop:+${desktop,,}-}mimeapps.list
     [[ -f $list ]] || continue
-
-    entries=$(awk '
-      /^\[Default Applications\]/ { section = 1; next }
-      /^\[/ { section = 0 }
-      !found && section && index($0, "x-scheme-handler/http=") == 1 { print substr($0, 23); found = 1 }
-    ' "$list")
-
-    IFS=';' read -ra entries <<<"$entries"
+    IFS=';' read -ra entries <<<"$(http_entries "$list")"
     for entry in "${entries[@]}"; do
       if [[ -n $entry ]] && installed "$entry"; then
         answer "$entry"
@@ -76,15 +99,10 @@ for config_dir in "${config_dirs[@]}"; do
   done
 done
 
-# Nothing set in a config dir: let xdg-settings search the data dirs and caches.
-# It consults $BROWSER too, which the session may point back at
-# nova-launch-browser, so hide it.
-browser=$(env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings get default-web-browser 2>/dev/null || true)
-if [[ -z $browser ]]; then
-  browser=$(env XDG_CURRENT_DESKTOP= xdg-mime query default x-scheme-handler/https 2>/dev/null || true)
-fi
-
-if [[ -z $browser ]]; then
-  exit 1
-fi
+# No config directory names one: xdg-settings searches the data directories
+# and their caches too. It would consult $BROWSER first, which the session may
+# point at nova-launch-browser, so it goes without.
+browser=$(env -u BROWSER XDG_CURRENT_DESKTOP= xdg-settings get default-web-browser 2>/dev/null) || true
+[[ -n $browser ]] || browser=$(env XDG_CURRENT_DESKTOP= xdg-mime query default x-scheme-handler/https 2>/dev/null) || true
+[[ -n $browser ]] || exit 1
 answer "$browser"

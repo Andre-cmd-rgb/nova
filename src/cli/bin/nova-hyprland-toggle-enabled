@@ -11,4 +11,5 @@ if (($# != 1)); then
   exit 2
 fi
 
-[[ -f "$HOME/.local/state/nova/toggles/hypr/$1.lua" ]]
+# On while nova-hyprland-toggle has left its file among the toggles.
+[[ -f $HOME/.local/state/nova/toggles/hypr/$1.lua ]]

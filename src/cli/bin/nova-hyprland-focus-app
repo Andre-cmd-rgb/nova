@@ -5,26 +5,19 @@
 
 set -euo pipefail
 
-usage() {
+if [[ -z ${1:-} ]]; then
   echo "Usage: nova-hyprland-focus-app <app-name>" >&2
   exit 1
-}
+fi
 
-app=${1:-}
-[[ -n $app ]] || usage
-
-# Among several matches take the one focused last, which is also the window a
-# browser hands a new tab to. An unreachable compositor has no windows to focus,
-# which the check below reports.
-address=$(
-  { hyprctl clients -j 2>/dev/null || true; } |
-    jq -r --arg pattern "$app" \
-      'def matches($value): ($value // "") | test($pattern; "i");
-       sort_by(.focusHistoryID) |
-       first(.[] | select(matches(.class))).address // empty'
-)
-
+# The app name is a pattern for the window class, any case. Of several windows
+# that match, the one focused last: also the one a browser opens a new tab in.
+# A compositor that does not answer has no window to focus.
+address=$({ hyprctl clients -j 2>/dev/null || true; } | jq -r --arg app "$1" '
+  [.[] | select((.class // "") | test($app; "i"))] | min_by(.focusHistoryID) | .address // empty
+')
 [[ -n $address ]] || exit 1
 
-hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null 2>&1 ||
-  hyprctl dispatch focuswindow "address:$address" >/dev/null
+window="address:$address"
+hyprctl dispatch "hl.dsp.focus({ window = \"$window\" })" >/dev/null 2>&1 ||
+  hyprctl dispatch focuswindow "$window" >/dev/null

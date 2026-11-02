@@ -10,33 +10,37 @@ height=${2:-900}
 x=${3:-}
 y=${4:-}
 
-active=$(hyprctl activewindow -j)
-pinned=$(jq -r '.pinned // false' <<<"$active")
-addr=$(jq -r '.address // empty' <<<"$active")
-window="address:$addr"
+window=$(hyprctl activewindow -j)
+window=$(jq -r '[.pinned // false, .address // ""] | @tsv' <<<"$window")
+read -r pinned address <<<"$window"
+target="address:$address"
 
-hypr_dispatch() {
-  local lua="$1"
+# Each step as Hyprland's Lua dispatcher, and as the older dispatcher by name
+# where that one is refused.
+step() { # lua dispatcher [args...]
+  local lua=$1
   shift
-
   hyprctl dispatch "$lua" >/dev/null 2>&1 || hyprctl dispatch "$@" >/dev/null
 }
 
-if [[ $pinned == "true" ]]; then
-  hypr_dispatch "hl.dsp.window.pin({ window = \"$window\" })" pin "$window"
-  hypr_dispatch "hl.dsp.window.float({ window = \"$window\", action = \"toggle\" })" togglefloating "$window"
-  hypr_dispatch "hl.dsp.window.tag({ window = \"$window\", tag = \"-pop\" })" tagwindow -pop "$window"
-elif [[ -n $addr ]]; then
-  hypr_dispatch "hl.dsp.window.float({ window = \"$window\", action = \"toggle\" })" togglefloating "$window"
-  hypr_dispatch "hl.dsp.window.resize({ window = \"$window\", x = $width, y = $height })" resizeactive exact "$width" "$height" "$window"
-
-  if [[ -n $x && -n $y ]]; then
-    hypr_dispatch "hl.dsp.window.move({ window = \"$window\", x = $x, y = $y })" moveactive "$x" "$y" "$window"
-  else
-    hypr_dispatch "hl.dsp.window.center({ window = \"$window\" })" centerwindow "$window"
-  fi
-
-  hypr_dispatch "hl.dsp.window.pin({ window = \"$window\" })" pin "$window"
-  hypr_dispatch "hl.dsp.window.alter_zorder({ window = \"$window\", mode = \"top\" })" alterzorder top "$window"
-  hypr_dispatch "hl.dsp.window.tag({ window = \"$window\", tag = \"+pop\" })" tagwindow +pop "$window"
+# A popped window is the one pinned: it goes back into the tiling, and loses
+# the tag that marks it.
+if [[ $pinned == true ]]; then
+  step "hl.dsp.window.pin({ window = \"$target\" })" pin "$target"
+  step "hl.dsp.window.float({ window = \"$target\", action = \"toggle\" })" togglefloating "$target"
+  step "hl.dsp.window.tag({ window = \"$target\", tag = \"-pop\" })" tagwindow -pop "$target"
+  exit 0
 fi
+
+[[ -n $address ]] || exit 0
+
+step "hl.dsp.window.float({ window = \"$target\", action = \"toggle\" })" togglefloating "$target"
+step "hl.dsp.window.resize({ window = \"$target\", x = $width, y = $height })" resizeactive exact "$width" "$height" "$target"
+if [[ -n $x && -n $y ]]; then
+  step "hl.dsp.window.move({ window = \"$target\", x = $x, y = $y })" moveactive "$x" "$y" "$target"
+else
+  step "hl.dsp.window.center({ window = \"$target\" })" centerwindow "$target"
+fi
+step "hl.dsp.window.pin({ window = \"$target\" })" pin "$target"
+step "hl.dsp.window.alter_zorder({ window = \"$target\", mode = \"top\" })" alterzorder top "$target"
+step "hl.dsp.window.tag({ window = \"$target\", tag = \"+pop\" })" tagwindow +pop "$target"

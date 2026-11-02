@@ -5,20 +5,20 @@
 
 set -euo pipefail
 
-# The flag hides the bar, so "on" for the bar is "off" for the flag.
+# The bar is hidden while the flag bar-off is set: the bar on is the flag off.
 case ${1:-toggle} in
-  toggle) action=toggle ;;
-  on) action=off ;;
-  off) action=on ;;
+  toggle) flag=toggle ;;
+  on) flag=off ;;
+  off) flag=on ;;
   *)
     echo "Usage: nova-toggle-bar [toggle|on|off]" >&2
     exit 2
     ;;
 esac
-nova-toggle bar-off "$action"
+nova-toggle bar-off "$flag"
 
-# The shell's watch on the toggles directory can miss flag changes that land in
-# quick succession, stranding the bar off screen until the shell restarts.
-# Nudge the bar to re-read the flag; best effort, so the toggle still works
-# when the shell is not up.
+# The shell watches the toggles directory, but changes close together can slip
+# past it and leave the bar off screen until the shell restarts, so it is told
+# to look again. Without a shell running there is no one to tell, and the flag
+# is set all the same.
 nova-shell -q nova.bar syncHidden

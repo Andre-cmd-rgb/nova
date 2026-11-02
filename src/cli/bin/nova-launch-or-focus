@@ -10,13 +10,20 @@ if (($# == 0)); then
   exit 1
 fi
 
-WINDOW_PATTERN="$1"
-LAUNCH_COMMAND="${2:-"uwsm-app -- $WINDOW_PATTERN"}"
-WINDOW_ADDRESS=$(hyprctl clients -j | jq -r --arg p "$WINDOW_PATTERN" 'first(.[]|select((.class|test("\\b" + $p + "\\b";"i")) or (.title|test("\\b" + $p + "\\b";"i")))|.address)')
+pattern=$1
+command=${2:-"uwsm-app -- $pattern"}
 
-if [[ -n $WINDOW_ADDRESS ]]; then
-  hyprctl dispatch "hl.dsp.focus({ window = \"address:$WINDOW_ADDRESS\" })" >/dev/null 2>&1 || hyprctl dispatch focuswindow "address:$WINDOW_ADDRESS"
-else
-  # The launch command is a shell command line, so it is evaluated as one.
-  eval exec setsid "$LAUNCH_COMMAND"
+# The pattern is a regular expression for a whole word of the window's class
+# or title, any case; the first window in Hyprland's list that has one wins.
+address=$(hyprctl clients -j | jq -r --arg word "$pattern" '
+  first(.[] | select(any(.class, .title; test("\\b" + $word + "\\b"; "i")))) | .address
+')
+
+if [[ -n $address ]]; then
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null 2>&1 ||
+    hyprctl dispatch focuswindow "address:$address"
+  exit
 fi
+
+# The launch command is a command line, and runs as one.
+eval exec setsid "$command"

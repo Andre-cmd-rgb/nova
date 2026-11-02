@@ -12,23 +12,20 @@ usage() {
 }
 
 kind=${1:-}
-action=${2:-toggle}
 case $kind in
-  touchpad) label="Touchpad" icon="touchpad" ;;
-  touchscreen) label="Touchscreen" icon="touch" ;;
+  touchpad) label=Touchpad icon=touchpad ;;
+  touchscreen) label=Touchscreen icon=touch ;;
   *) usage ;;
 esac
 
-# The persisted disable is the device name stored as plain data; on every
-# reload hypr/disabled-input-device.lua reads it back and disables the device.
-# Names come from USB descriptors and must not be interpolated into shell or
-# Lua unescaped. The path is ~/.local/state like the other toggles, so it keeps
-# working when XDG_STATE_HOME diverges.
-name_file="$HOME/.local/state/nova/toggles/hypr/$kind-disabled-name"
-
+# A device turned off stays off: its name is kept, as text, where the Hyprland
+# config reads it back at every reload (data/hypr/toggles.lua). Names come
+# from the hardware, so one is never run as shell or Lua. ~/.local/state, as
+# for the other toggles, whatever XDG_STATE_HOME says.
+kept=$HOME/.local/state/nova/toggles/hypr/$kind-disabled-name
 device=$("nova-hw-$kind" || true)
 
-require_device() {
+usable_device() {
   if [[ -z $device ]]; then
     echo "No $kind device found" >&2
     exit 1
@@ -39,32 +36,33 @@ require_device() {
   fi
 }
 
-apply_device() {
-  local quoted=${device//\\/\\\\}
-  quoted=${quoted//\"/\\\"}
-  hyprctl eval "hl.device({ name = \"$quoted\", enabled = $1 })" >/dev/null
+# The name as a Lua string, its backslashes and quotes escaped.
+set_enabled() { # true|false
+  local name=${device//\\/\\\\}
+  name=${name//\"/\\\"}
+  hyprctl eval "hl.device({ name = \"$name\", enabled = $1 })" >/dev/null
 }
 
-enable() {
-  # Clear the persisted state before requiring a usable device, so a device
-  # that stops reporting a valid name can never wedge the disable in place.
-  rm -f "$name_file"
-  require_device
-  apply_device true
+turn_on() {
+  # Forgotten first, so a device whose name has since become unusable cannot
+  # keep the setting stuck off.
+  rm -f "$kept"
+  usable_device
+  set_enabled true
   nova-osd -i "$icon" -m "$label enabled" || true
 }
 
-disable() {
-  require_device
-  apply_device false
-  mkdir -p "${name_file%/*}"
-  printf '%s\n' "$device" >"$name_file"
+turn_off() {
+  usable_device
+  set_enabled false
+  mkdir -p "${kept%/*}"
+  printf '%s\n' "$device" >"$kept"
   nova-osd -i "$icon" -m "$label disabled" || true
 }
 
-case $action in
-  on) enable ;;
-  off) disable ;;
-  toggle) if [[ -f $name_file ]]; then enable; else disable; fi ;;
+case ${2:-toggle} in
+  on) turn_on ;;
+  off) turn_off ;;
+  toggle) if [[ -f $kept ]]; then turn_on; else turn_off; fi ;;
   *) usage ;;
 esac

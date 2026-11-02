@@ -6,27 +6,24 @@
 
 set -euo pipefail
 
-# Hyprland lets any client take over a held lock (misc:allow_session_lock_restore),
-# so a shell that recovers a lock it merely sees can take the live lock screen of
-# another shell, and strand it when it exits. A lock is stranded only while no
-# other Quickshell or hyprlock is running; until then the answer is undetermined,
-# so the caller keeps asking until that locker exits or it gives up.
+# Hyprland hands a held lock to any client that asks
+# (misc:allow_session_lock_restore), so a shell taking back every lock it sees
+# could take another shell's live lock screen, and strand it on exit. A lock is
+# stranded only once no other Quickshell or hyprlock runs; until then the
+# answer is "cannot tell", and the caller asks again until that locker exits or
+# it gives up.
 #
-# Exits 0 stranded, 1 unlocked, 2 undetermined. The caller passes its own pid,
-# as a crash re-execs the shell in place.
-own_pid=${1:-}
-if [[ -z $own_pid ]]; then
+# Exits 0 stranded, 1 unlocked, 2 when it cannot be told. The caller passes its
+# own pid: a shell that crashed starts again in the same process.
+if [[ -z ${1:-} ]]; then
   echo "Usage: nova-hyprland-session-lock-stranded <own-pid>" >&2
   exit 2
 fi
+own=$1
 
-# Not locked (1) and undetermined (2) pass straight through.
+# Unlocked, and cannot tell, are the answer as they are.
 nova-hyprland-session-locked || exit
 
-# Any locker other than the caller means the lock is not stranded yet. The pids
-# are captured and filtered in awk: a pgrep that finds none is not an error, and
-# grep -q would SIGPIPE it under pipefail.
-others=$(pgrep -u "$UID" -x 'quickshell|qs|hyprlock' || true)
-if awk -v own="$own_pid" '$0 != "" && $0 != own { found = 1 } END { exit !found }' <<<"$others"; then
-  exit 2
-fi
+while read -r pid; do
+  [[ $pid == "$own" ]] || exit 2
+done < <(pgrep -u "$UID" -x 'quickshell|qs|hyprlock')

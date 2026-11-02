@@ -5,28 +5,14 @@
 
 set -euo pipefail
 
-backlight_path="${NOVA_BACKLIGHT_PATH:-/sys/class/backlight}"
-
-# Start with the first possible output, then refine to the most likely given an
-# order heuristic. The globs are in the loop lists because [[ ]] does not do
-# pathname expansion.
-device=""
-for candidate in "$backlight_path"/*; do
-  if [[ -e $candidate ]]; then
-    device="${candidate##*/}"
-    break
+# The GPU's own backlight drives the panel where there is one, so AMD's and
+# Intel's come before the ACPI firmware's, and any backlight before none.
+# Each glob that matches nothing stays as written, and is passed over.
+backlights=${NOVA_BACKLIGHT_PATH:-/sys/class/backlight}
+for device in "$backlights"/amdgpu_bl* "$backlights"/intel_backlight "$backlights"/acpi_video* "$backlights"/*; do
+  if [[ -e $device ]]; then
+    printf '%s\n' "${device##*/}"
+    exit 0
   fi
 done
-
-for candidate in "$backlight_path"/amdgpu_bl* "$backlight_path"/intel_backlight "$backlight_path"/acpi_video*; do
-  if [[ -e $candidate ]]; then
-    device="${candidate##*/}"
-    break
-  fi
-done
-
-if [[ -n $device ]]; then
-  printf '%s\n' "$device"
-else
-  exit 1
-fi
+exit 1

@@ -4,4 +4,4 @@
 
 set -euo pipefail
 
-hyprctl monitors -j | jq -r '.[] | select(.focused == true).name'
+hyprctl monitors -j | jq -r '.[] | select(.focused == true) | .name'

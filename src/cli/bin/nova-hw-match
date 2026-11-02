@@ -11,7 +11,8 @@ if (($# != 1)); then
   exit 2
 fi
 
-dmi_path="${NOVA_DMI_PATH:-/sys/class/dmi/id}"
-
-grep -qi -- "$1" "$dmi_path/product_name" 2>/dev/null ||
-  grep -qi -- "$1" "$dmi_path/product_family" 2>/dev/null
+# The pattern is grep's. A model may be named in either field: some makers
+# put a part number in the name and the model in the family.
+dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+grep -qi -e "$1" -- "$dmi/product_name" 2>/dev/null ||
+  grep -qi -e "$1" -- "$dmi/product_family" 2>/dev/null

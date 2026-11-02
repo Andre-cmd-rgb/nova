@@ -10,14 +10,15 @@ if (($# == 0)); then
   exit 1
 fi
 
+# The terminal's window is found by the app id nova-launch-tui gives it, so
+# both name it the same way.
 if [[ $1 == --app-id=* ]]; then
-  APP_ID="${1#--app-id=}"
+  app_id=${1#--app-id=}
 else
-  APP_ID="org.nova.$(basename "$1")"
+  app_id=org.nova.${1##*/}
 fi
 
-# nova-launch-or-focus evaluates this as a command line, so keep each argument
-# intact by quoting it.
-printf -v LAUNCH_COMMAND 'nova-launch-tui %q ' "$@"
-
-exec nova-launch-or-focus "$APP_ID" "$LAUNCH_COMMAND"
+# nova-launch-or-focus runs the launch as a command line, so each word goes
+# in quoted, an --app-id too.
+printf -v words '%q ' "$@"
+exec nova-launch-or-focus "$app_id" "nova-launch-tui $words"

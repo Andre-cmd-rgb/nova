@@ -4,5 +4,7 @@
 
 set -euo pipefail
 
+# The bar shows Do Not Disturb among its indicators, which are told to look
+# again.
 nova-shell notifications toggleDnd >/dev/null
 nova-shell -q nova.indicators refresh

@@ -6,8 +6,8 @@
 
 set -euo pipefail
 
-for cmd in "$@"; do
-  command -v -- "$cmd" &>/dev/null || exit 1
+# False at the first name that is not a command; true when every one is, or
+# when none was given.
+for name; do
+  command -v -- "$name" >/dev/null 2>&1 || exit 1
 done
-
-exit 0

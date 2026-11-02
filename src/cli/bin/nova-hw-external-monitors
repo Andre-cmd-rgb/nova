@@ -5,12 +5,13 @@
 
 set -euo pipefail
 
-drm_path="${NOVA_DRM_PATH:-/sys/class/drm}"
-
-for status in "$drm_path"/card*-*/status; do
-  [[ -e $status ]] || continue
-  # Built-in panels do not count as external.
-  [[ $status =~ -(eDP|LVDS|DSI)-[^/]+/status$ ]] && continue
-  [[ $(<"$status") == "connected" ]] && exit 0
+# Each connector the kernel knows is a directory card<N>-<connector>. The
+# laptop's own panel, on eDP, LVDS or DSI, is not external.
+for connector in "${NOVA_DRM_PATH:-/sys/class/drm}"/card*-*; do
+  [[ -e $connector/status ]] || continue
+  if [[ ${connector##*/} =~ ^card[^-]*-(eDP|LVDS|DSI)-. ]]; then continue; fi
+  state=""
+  read -r state <"$connector/status" || true
+  [[ $state != connected ]] || exit 0
 done
 exit 1

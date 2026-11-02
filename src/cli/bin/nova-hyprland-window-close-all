@@ -4,10 +4,12 @@
 
 set -euo pipefail
 
-while read -r addr; do
-  # A window can close itself before its turn comes, which is not a failure.
-  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$addr\" })" >/dev/null || true
-done < <(hyprctl clients -j | jq -r ".[].address")
+# One window at a time, asked to close as its close button would. One that
+# went away with another before its turn is no failure.
+while read -r address; do
+  hyprctl dispatch "hl.dsp.window.close({ window = \"address:$address\" })" >/dev/null || true
+done < <(hyprctl clients -j | jq -r '.[].address')
 
-# Move to first workspace
-hyprctl dispatch 'hl.dsp.focus({ workspace = "1" })' >/dev/null 2>&1 || hyprctl dispatch workspace 1 >/dev/null
+# Back to the first workspace, for whatever opens next.
+hyprctl dispatch 'hl.dsp.focus({ workspace = "1" })' >/dev/null 2>&1 ||
+  hyprctl dispatch workspace 1 >/dev/null

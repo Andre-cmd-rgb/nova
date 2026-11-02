@@ -7,50 +7,40 @@ set -euo pipefail
 
 usage() {
   echo "Usage: nova-hyprland-toggle <flag-name> [on|off|toggle]" >&2
-}
-
-if (($# < 1)); then
-  usage
   exit 1
-fi
+}
 
-FLAG_NAME="$1"
-ACTION="${2:-toggle}"
-FLAG_FILE="$HOME/.local/state/nova/toggles/hypr/$FLAG_NAME.lua"
-FLAG_SOURCE="$NOVA_PATH/default/hypr/toggles/$FLAG_NAME.lua"
+(($# > 0)) || usage
 
-on() {
-  if [[ -f $FLAG_SOURCE ]]; then
-    mkdir -p "$(dirname "$FLAG_FILE")"
-    cp "$FLAG_SOURCE" "$FLAG_FILE"
-  else
-    echo "Flag not found: $FLAG_NAME" >&2
+# A setting that is on is a copy of Nova's Lua for it among the toggles, which
+# the Hyprland config loads last (data/hypr/toggles.lua); off, there is none.
+name=$1
+flag=$HOME/.local/state/nova/toggles/hypr/$name.lua
+shipped=$NOVA_PATH/default/hypr/toggles/$name.lua
+
+turn_on() {
+  if [[ ! -f $shipped ]]; then
+    echo "Flag not found: $name" >&2
     exit 1
   fi
+  mkdir -p "${flag%/*}"
+  cp "$shipped" "$flag"
 }
 
-off() {
-  rm -f "$FLAG_FILE"
-}
-
-toggle() {
-  if [[ -f $FLAG_FILE ]]; then
-    off
-    echo "off"
-  else
-    on
-    echo "on"
-  fi
-}
-
-case $ACTION in
-  on) on ;;
-  off) off ;;
-  toggle) toggle ;;
-  *)
-    usage
-    exit 1
+case ${2:-toggle} in
+  on) turn_on ;;
+  off) rm -f "$flag" ;;
+  # Toggling says which way it went, for the notification of the caller.
+  toggle)
+    if [[ -f $flag ]]; then
+      rm -f "$flag"
+      echo off
+    else
+      turn_on
+      echo on
+    fi
     ;;
+  *) usage ;;
 esac
 
 hyprctl reload >/dev/null

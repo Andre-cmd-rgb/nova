@@ -5,72 +5,66 @@
 
 set -euo pipefail
 
-TOGGLE="internal-monitor-mirror"
-TOGGLE_FLAG="$HOME/.local/state/nova/toggles/hypr/$TOGGLE.lua"
-DISABLE_TOGGLE="internal-monitor-disable"
+case ${1:-} in
+  on | off | toggle | recover) ;;
+  *)
+    echo "Usage: ${0##*/} {on|off|toggle|recover}" >&2
+    exit 1
+    ;;
+esac
 
-INTERNAL=$(nova-hyprland-monitor-laptop)
-# The first active external monitor
-EXTERNAL=$(hyprctl monitors -j | jq -r 'first(.[] | select(.name | test("^(eDP|LVDS|DSI)-") | not).name) // empty')
+# Mirroring is a toggle, a rule the Hyprland config loads at every reload: the
+# first external display that is on shows what the panel shows.
+toggle=internal-monitor-mirror
+flag=$HOME/.local/state/nova/toggles/hypr/$toggle.lua
+# Looked up whatever the action: one Hyprland cannot answer changes nothing.
+panel=$(nova-hyprland-monitor-laptop)
+external=$(hyprctl monitors -j | jq -r 'first(.[].name | select(test("^(eDP|LVDS|DSI)-") | not)) // empty')
 
-on() {
-  if [[ -z $EXTERNAL ]]; then
-    nova-notification-send -g 󰍹 "No external monitors found for mirror"
+notify() { nova-notification-send -g 󰍹 "$1"; }
+
+turn_on() {
+  if [[ -z $external ]]; then
+    notify "No external monitors found for mirror"
+    exit 1
+  fi
+  if [[ -z $panel ]]; then
+    notify "No laptop monitor found to mirror"
+    exit 1
+  fi
+  # Both names go into Lua the config runs, so only plain connector names: a
+  # headless output made by hand can be called anything.
+  if [[ ! $panel =~ ^[A-Za-z0-9._-]+$ || ! $external =~ ^[A-Za-z0-9._-]+$ ]]; then
+    notify "Refusing unsafe monitor name"
     exit 1
   fi
 
-  if [[ -z $INTERNAL ]]; then
-    nova-notification-send -g 󰍹 "No laptop monitor found to mirror"
-    exit 1
-  fi
-
-  # Both names are written into generated Lua below, so only plain connector
-  # names may pass; a user-created headless output can carry any name.
-  for output in "$INTERNAL" "$EXTERNAL"; do
-    if [[ ! $output =~ ^[A-Za-z0-9._-]+$ ]]; then
-      nova-notification-send -g 󰍹 "Refusing unsafe monitor name"
-      exit 1
-    fi
-  done
-
-  nova-hyprland-toggle "$DISABLE_TOGGLE" off
-
-  if nova-hyprland-toggle-disabled "$TOGGLE"; then
-    mkdir -p "$(dirname "$TOGGLE_FLAG")"
-    printf 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = 1, mirror = "%s" })\n' "$EXTERNAL" "$INTERNAL" >"$TOGGLE_FLAG"
-    nova-notification-send -g 󰍹 "Mirroring enabled ($EXTERNAL)"
+  # A panel that is off has nothing to mirror.
+  nova-hyprland-toggle internal-monitor-disable off
+  if nova-hyprland-toggle-disabled "$toggle"; then
+    mkdir -p "${flag%/*}"
+    printf 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = 1, mirror = "%s" })\n' \
+      "$external" "$panel" >"$flag"
+    notify "Mirroring enabled ($external)"
     hyprctl reload
   fi
 }
 
-off() {
-  if nova-hyprland-toggle-enabled "$TOGGLE"; then
-    nova-hyprland-toggle "$TOGGLE" off
-    nova-notification-send -g 󰍹 "Extended mode restored"
+turn_off() {
+  if nova-hyprland-toggle-enabled "$toggle"; then
+    nova-hyprland-toggle "$toggle" off
+    notify "Extended mode restored"
   fi
 }
 
-toggle() {
-  if nova-hyprland-toggle-enabled "$TOGGLE"; then
-    off
-  else
-    on
-  fi
-}
-
-recover() {
-  if ! nova-hyprland-monitor-external-active && nova-hyprland-toggle-enabled "$TOGGLE"; then
-    nova-hyprland-toggle "$TOGGLE" off
-  fi
-}
-
-case "${1:-}" in
-  on) on ;;
-  off) off ;;
-  toggle) toggle ;;
-  recover) recover ;;
-  *)
-    echo "Usage: $(basename "$0") {on|off|toggle|recover}" >&2
-    exit 1
+case $1 in
+  on) turn_on ;;
+  off) turn_off ;;
+  toggle) if nova-hyprland-toggle-enabled "$toggle"; then turn_off; else turn_on; fi ;;
+  # The display mirrored to is gone: the panel is the desktop again.
+  recover)
+    if ! nova-hyprland-monitor-external-active && nova-hyprland-toggle-enabled "$toggle"; then
+      nova-hyprland-toggle "$toggle" off
+    fi
     ;;
 esac

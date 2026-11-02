@@ -5,77 +5,71 @@
 
 set -euo pipefail
 
-TOGGLE="internal-monitor-disable"
-TOGGLE_FLAG="$HOME/.local/state/nova/toggles/hypr/$TOGGLE.lua"
-MIRROR_TOGGLE="internal-monitor-mirror"
+case ${1:-} in
+  on | off | toggle | recover) ;;
+  *)
+    echo "Usage: ${0##*/} {on|off|toggle|recover}" >&2
+    exit 1
+    ;;
+esac
 
-INTERNAL=$(nova-hyprland-monitor-laptop)
+# The panel off is a toggle of its own, a rule the Hyprland config loads at
+# every reload. Mirroring the panel is another, and needs it on.
+toggle=internal-monitor-disable
+flag=$HOME/.local/state/nova/toggles/hypr/$toggle.lua
+# Looked up whatever the action: one Hyprland cannot answer changes nothing.
+panel=$(nova-hyprland-monitor-laptop)
 
+notify() { nova-notification-send -g 󰍹 "$1"; }
+
+# Every display awake, the panel brought back included.
 wake() {
   hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1 || true
 }
 
-on() {
-  if nova-hyprland-toggle-enabled "$TOGGLE"; then
-    nova-hyprland-toggle "$TOGGLE" off
-    nova-notification-send -g 󰍹 "Laptop display enabled"
+turn_on() {
+  if nova-hyprland-toggle-enabled "$toggle"; then
+    nova-hyprland-toggle "$toggle" off
+    notify "Laptop display enabled"
   fi
-
   wake
 }
 
-off() {
-  if [[ -z $INTERNAL ]]; then
-    nova-notification-send -g 󰍹 "No laptop display found"
+turn_off() {
+  if [[ -z $panel ]]; then
+    notify "No laptop display found"
     exit 1
   fi
-
-  # The name is written into generated Lua below, so only a plain connector
-  # name may pass; anything else could execute on the next reload.
-  if [[ ! $INTERNAL =~ ^[A-Za-z0-9._-]+$ ]]; then
-    nova-notification-send -g 󰍹 "Refusing unsafe monitor name"
+  # The name goes into Lua the config runs, so only a plain connector name.
+  if [[ ! $panel =~ ^[A-Za-z0-9._-]+$ ]]; then
+    notify "Refusing unsafe monitor name"
     exit 1
   fi
-
   if ! nova-hyprland-monitor-external-active; then
-    nova-notification-send -g 󰍹 "Can't disable the only active display"
+    notify "Can't disable the only active display"
     exit 1
   fi
-
-  if nova-hyprland-toggle-disabled "$TOGGLE" && nova-hyprland-toggle-disabled "$MIRROR_TOGGLE"; then
-    mkdir -p "$(dirname "$TOGGLE_FLAG")"
-    printf 'hl.monitor({ output = "%s", disabled = true })\n' "$INTERNAL" >"$TOGGLE_FLAG"
-    nova-notification-send -g 󰍹 "Laptop display disabled"
+  if nova-hyprland-toggle-disabled "$toggle" && nova-hyprland-toggle-disabled internal-monitor-mirror; then
+    mkdir -p "${flag%/*}"
+    printf 'hl.monitor({ output = "%s", disabled = true })\n' "$panel" >"$flag"
+    notify "Laptop display disabled"
     hyprctl reload
   fi
 }
 
+# The panel back on once nothing else shows the desktop. The lid watcher asks
+# for this, so it does nothing else: a wake each time would undo the lock
+# screen's blanking, and race the modeset after a resume into a flash.
 recover() {
-  # Runs from the clamshell watcher every few seconds, so it must be a no-op
-  # unless it actually re-enables a display: an unconditional wake here undoes
-  # lock-screen blanking and races the resume modeset into a visible flash.
   nova-hyprland-monitor-external-active && return 0
-  nova-hyprland-toggle-enabled "$TOGGLE" || return 0
-
-  nova-hyprland-toggle "$TOGGLE" off
+  nova-hyprland-toggle-enabled "$toggle" || return 0
+  nova-hyprland-toggle "$toggle" off
   wake
 }
 
-toggle() {
-  if nova-hyprland-toggle-enabled "$TOGGLE"; then
-    on
-  else
-    off
-  fi
-}
-
-case "${1:-}" in
-  on) on ;;
-  off) off ;;
-  toggle) toggle ;;
+case $1 in
+  on) turn_on ;;
+  off) turn_off ;;
+  toggle) if nova-hyprland-toggle-enabled "$toggle"; then turn_on; else turn_off; fi ;;
   recover) recover ;;
-  *)
-    echo "Usage: $(basename "$0") {on|off|toggle|recover}" >&2
-    exit 1
-    ;;
 esac

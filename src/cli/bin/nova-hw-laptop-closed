@@ -5,11 +5,9 @@
 
 set -euo pipefail
 
-lid_path="${NOVA_LID_PATH:-/proc/acpi/button/lid}"
-
-for state in "$lid_path"/*/state; do
-  [[ -r $state ]] || continue
-  [[ $(<"$state") == *"closed"* ]] && exit 0
+# The kernel reports each lid as "state:      open" or "state:      closed".
+# A computer without one is never shut.
+for lid in "${NOVA_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
+  [[ -r $lid && $(<"$lid") == *closed* ]] && exit 0
 done
-
 exit 1

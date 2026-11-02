@@ -5,25 +5,26 @@
 
 set -euo pipefail
 
-on_temp=4000
-off_temp=6500
-# At or above this, the screen counts as not tinted. Keep in sync with the
-# shell's nightlight service.
-identity_temp=6000
+# The same temperatures as the shell's night light
+# (plugins/services/nightlight), which also counts the screen as tinted only
+# below 6000 K.
+night=4000
+day=6500
+untinted=6000
 
-current_temp() {
-  local output
-  output=$(hyprctl hyprsunset temperature 2>/dev/null) || return 0
-  [[ $output =~ ([0-9]+) ]] && printf '%s\n' "${BASH_REMATCH[1]}"
-  return 0
+# What hyprsunset is set to, in kelvin; nothing when it is not running.
+temperature() {
+  local answer
+  answer=$(hyprctl hyprsunset temperature 2>/dev/null) || return 0
+  if [[ $answer =~ [0-9]+ ]]; then printf '%s\n' "${BASH_REMATCH[0]}"; fi
 }
 
 if [[ ${1:-} == --status ]]; then
-  temp=$(current_temp)
-  enabled=false
-  if [[ -n $temp ]] && ((temp < identity_temp)); then enabled=true; fi
-  jq -cn --argjson enabled "$enabled" --arg temp "$temp" \
-    '{enabled:$enabled, temperature:(($temp | tonumber?) // null)}'
+  now=$(temperature)
+  tinted=false
+  if [[ -n $now ]] && ((now < untinted)); then tinted=true; fi
+  jq -cn --argjson enabled "$tinted" --arg temp "$now" \
+    '{enabled: $enabled, temperature: (($temp | tonumber?) // null)}'
   exit 0
 elif (($# > 0)); then
   echo "Usage: nova-toggle-nightlight [--status]" >&2
@@ -34,19 +35,18 @@ if ! pgrep -u "$UID" -x hyprsunset >/dev/null; then
   setsid uwsm-app -- hyprsunset >/dev/null 2>&1 &
 fi
 
-current=$(current_temp)
-if [[ -z $current || $current == "$off_temp" ]]; then
-  target=$on_temp
-else
-  target=$off_temp
-fi
+# Night from day, and from a hyprsunset that cannot say yet; day from any other
+# tint.
+now=$(temperature)
+target=$night
+if [[ -n $now && $now != "$day" ]]; then target=$day; fi
 
-# A freshly started hyprsunset applies its default temperature at the end of
-# its startup, overriding anything set before then, so resend until it sticks.
-for _ in {1..10}; do
+# A hyprsunset that has just started sets its own temperature at the end of
+# its start, over anything set before, so this sets it again until it holds.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
   hyprctl hyprsunset temperature "$target" >/dev/null 2>&1 || true
   sleep 0.2
-  [[ $(current_temp) == "$target" ]] && break
+  [[ $(temperature) != "$target" ]] || break
 done
 
 nova-shell -q nightlight refresh
