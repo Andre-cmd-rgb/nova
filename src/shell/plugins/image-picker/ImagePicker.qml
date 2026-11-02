@@ -6,39 +6,70 @@ import QtQuick.Effects
 import QtQuick.Shapes
 import qs.Commons
 import qs.Commons as Commons
-import "ImagePickerModel.js" as ImagePickerModel
+import "ImagePickerModel.js" as Model
 
+// The image picker: the images side by side as slanted slices, the chosen one
+// open in the middle, for nova-theme's backgrounds and themes or any folder of
+// pictures. A request comes through the shell's image-selector IPC target or
+// a summon: the images as rows (a path and its thumbnail's) or the folders to
+// list, the image to start on, and two files. The choice goes into the
+// selection file, then the done file is made, which is what the one asking
+// waits for; a request dismissed or replaced gets its done file alone.
 Item {
   id: root
 
-  // Injected by nova-shell; defaults to the session NOVA_PATH.
   property string novaPath: Quickshell.env("NOVA_PATH")
-  property string stateHome: Quickshell.env("HOME") + "/.local/state"
-  property string imageDirs: Quickshell.env("NOVA_IMAGE_SELECTOR_DIRS") || Quickshell.env("NOVA_IMAGE_SELECTOR_DIR") || Quickshell.env("NOVA_STOCK_BACKGROUNDS_DIR") || (stateHome + "/nova/current/theme/backgrounds")
-  property string imageRows: ""
-  property string loadedImageRows: ""
-  property string selectionFile: Quickshell.env("NOVA_IMAGE_SELECTOR_SELECTION_FILE") || Quickshell.env("NOVA_BACKGROUND_SELECTION_FILE")
+
+  // The request: where its images come from, which to start on, where the
+  // answer goes. A request with no done file has no one waiting on it.
+  property string imageDirs: Quickshell.env("NOVA_IMAGE_SELECTOR_DIRS") || Quickshell.env("NOVA_IMAGE_SELECTOR_DIR")
+    || Quickshell.env("NOVA_STOCK_BACKGROUNDS_DIR") || (Quickshell.env("HOME") + "/.local/state/nova/current/theme/backgrounds")
   property string selectedImage: Quickshell.env("NOVA_IMAGE_SELECTOR_SELECTED")
-  property int selectedIndex: 0
-  property bool imagesLoaded: false
-  property bool opened: false
+  property string selectionFile: Quickshell.env("NOVA_IMAGE_SELECTOR_SELECTION_FILE") || Quickshell.env("NOVA_BACKGROUND_SELECTION_FILE")
+  property string doneFile: ""
+  property bool waiting: false
   property bool showLabels: false
   property bool filterable: false
-  property bool layoutSettled: false
-  property bool requestActive: false
-  property int requestSerial: 0
-  property int applySerial: 0
-  property string doneFile: ""
+  // One more for every request, preload and close: what arrives for an older
+  // one (a folder's listing, rows parsed a turn later, a choice written) is
+  // let go.
+  property int serial: 0
+
+  // The images, the rows they were parsed from, the one chosen, the filter.
+  property var images: []
+  property string loadedRows: ""
+  property bool loaded: false
+  property int selectedIndex: 0
   property string filterText: ""
-  property var doneFilesToRelease: []
-  // Bound to the central [image-picker] section in shell.toml via Commons.Color.qml.
-  // `dimColor` tints unselected slices and text outlines on top of the scrim;
-  // it intentionally tracks the foundational background, not a surface role.
+  readonly property var positions: Model.positions(images, filterText)
+  readonly property int selectedPosition: positions[selectedIndex] >= 0 ? positions[selectedIndex] : 0
+
+  // Open, and laid out: the slices show once the images are in and placed.
+  property bool opened: false
+  property bool settled: false
+  onOpenedChanged: if (!opened) settled = false
+
+  // The picker stays loaded, so it opens at once, and with it every slice's
+  // decoded thumbnail and texture: some 30 screen-sized images, a lot to hold
+  // for a picker that is shut, on a 4 GB Raspberry Pi most of all. Shut for
+  // two minutes, it lets them go; the next open decodes the slices near the
+  // chosen one again.
+  property bool thumbnailsReleased: false
+  Timer {
+    interval: 120000
+    running: !root.opened && !root.thumbnailsReleased
+    onTriggered: root.thumbnailsReleased = true
+  }
+
+  // Colours from the [image-picker] section of the theme's shell.toml. The
+  // slices not chosen, and the outline of the words, are dimmed with the
+  // theme's background itself, not a surface's.
   property color dimColor: Commons.Color.background
   property color foreground: Commons.Color.imagePicker.text
   property color scrim: Commons.Color.imagePicker.scrim
   property color selectedBorder: Commons.Color.imagePicker.selectedBorder
   property color unselectedBorder: Commons.Color.imagePicker.unselectedBorder
+
   // The carousel at full size suits a screen some 770 px tall or more. On a
   // smaller one (a Raspberry Pi's 1024x600 panel) it shrinks, to about 60% of
   // the screen's height; the names and the filter under it keep their size.
@@ -55,327 +86,242 @@ Item {
   property int skewOffset: Math.round(28 * fit)
   property int bottomChromeHeight: showLabels ? (filterable ? 104 : 74) : (filterable ? 60 : 30)
 
-  onOpenedChanged: if (!opened) layoutSettled = false
-
-  // The picker stays loaded, so it opens at once, and with it every card's
-  // decoded thumbnail and texture: some 30 screen-sized images, a lot to hold
-  // for a picker that is shut, on a 4 GB Raspberry Pi most of all. Shut for a
-  // while, it lets them go; the next open decodes the cards near the selection
-  // again.
-  property bool thumbnailsReleased: false
-  Timer {
-    interval: 120000
-    running: !root.opened && !root.thumbnailsReleased
-    onTriggered: root.thumbnailsReleased = true
-  }
-
-  function scriptPath(name) {
-    return novaPath + "/shell/plugins/image-picker/" + name
-  }
-
-  function focusPicker() {
-    if (root.opened && root.imagesLoaded && root.layoutSettled)
-      carousel.forceActiveFocus()
-  }
-
-  function revealWhenSettled(serial) {
-    Qt.callLater(function() {
-      if (serial === root.requestSerial && root.opened && root.imagesLoaded && root.imageArray.length > 0) {
-        root.layoutSettled = true
-        root.focusPicker()
-      }
-    })
-  }
-
-  function currentPath() {
-    if (imageArray.length === 0 || !itemMatches(selectedIndex)) return ""
-    return imageArray[selectedIndex].filePath
-  }
-
-  function nameForPath(path) {
-    return ImagePickerModel.nameForPath(path)
-  }
-
-  function labelForPath(path) {
-    return ImagePickerModel.labelForPath(path)
-  }
-
-  function currentLabel() {
-    var path = currentPath()
-    if (!path) return filterText ? "No matches" : ""
-
-    return labelForPath(path)
-  }
-
-  function itemMatches(index) {
-    return ImagePickerModel.itemMatches(imageArray, index, filterText)
-  }
-
-  function firstMatchingIndex() {
-    return ImagePickerModel.firstMatchingIndex(imageArray, filterText)
-  }
-
-  function select(index, immediate) {
-    if (imageArray.length === 0) return
-    if (index < 0) index = 0
-    else if (index >= imageArray.length) index = imageArray.length - 1
-    if (!itemMatches(index)) return
-    if (index === selectedIndex && immediate !== true) return
-
-    selectedIndex = index
-  }
-
-  function selectAdjacent(direction) {
-    var count = imageArray.length
-    if (count === 0) return
-
-    var index = selectedIndex
-    for (var i = 0; i < count; i++) {
-      index = (index + direction + count) % count
-      if (itemMatches(index)) {
-        select(index)
-        return
-      }
-    }
-  }
-
-  function updateFilter(nextFilterText) {
-    filterText = nextFilterText
-
-    if (!itemMatches(selectedIndex)) {
-      var first = ImagePickerModel.nextSelectedIndexForFilter(imageArray, selectedIndex, filterText)
-      if (first >= 0) selectedIndex = first
-    }
-  }
-
-  function releaseNextDoneFile() {
-    if (releaseProc.running || doneFilesToRelease.length === 0) return
-
-    var path = doneFilesToRelease.shift()
-    releaseProc.command = ["bash", "-c", ": > " + Util.shellQuote(path)]
-    releaseProc.running = true
-  }
-
-  function finishDoneFile(path) {
-    if (!path) return
-    doneFilesToRelease.push(path)
-    releaseNextDoneFile()
-  }
-
-  function applySelected() {
-    var path = currentPath()
-    if (!path || !selectionFile) {
-      cancel()
-      return
-    }
-
-    var activeSelectionFile = selectionFile
-    var activeDoneFile = doneFile
-    applySerial = requestSerial
-    requestActive = false
-    selectionFile = ""
-    doneFile = ""
-
-    applyProc.command = ["bash", "-c", "printf '%s\\n' " + Util.shellQuote(path) + " > " + Util.shellQuote(activeSelectionFile) + "; : > " + Util.shellQuote(activeDoneFile)]
-    applyProc.running = true
-  }
-
-  function cancel() {
-    if (requestActive)
-      finishDoneFile(doneFile)
-
-    requestActive = false
-    selectionFile = ""
-    doneFile = ""
-    root.opened = false
-  }
-
-  function closeSelector(nextDoneFile) {
-    requestSerial += 1
-
-    if (requestActive)
-      finishDoneFile(doneFile)
-
-    if (nextDoneFile && nextDoneFile !== doneFile)
-      finishDoneFile(nextDoneFile)
-
-    requestActive = false
-    selectionFile = ""
-    doneFile = ""
-    filterText = ""
-    root.opened = false
-  }
-
-  function loadRows(rows, reveal) {
-    var newImages = ImagePickerModel.loadRows(rows)
-
-    root.loadedImageRows = rows
-    root.selectedIndex = root.indexForSelectedImage(newImages)
-    root.imageArray = newImages
-    root.imagesLoaded = true
-
-    if (reveal !== false) {
-      root.opened = true
-      root.revealWhenSettled(root.requestSerial)
-    }
-  }
-
-  function openSelector(nextImageDirs, nextImageRows, nextSelectedImage, nextSelectionFile, nextDoneFile, nextShowLabels, nextFilterable) {
-    if (requestActive && doneFile && doneFile !== nextDoneFile)
-      finishDoneFile(doneFile)
-
-    requestSerial += 1
-    thumbnailsReleased = false
-
-    imageDirs = nextImageDirs
-    imageRows = nextImageRows
-    selectedImage = nextSelectedImage
-    selectionFile = nextSelectionFile
-    doneFile = nextDoneFile
-    requestActive = !!doneFile
-    showLabels = nextShowLabels === true || nextShowLabels === "true"
-    filterable = nextFilterable === true || nextFilterable === "true"
-    filterText = ""
-    layoutSettled = false
-
-    if (imageRows && imageRows === loadedImageRows && imageArray.length > 0) {
-      root.select(root.selectedImageIndex(), true)
-      imagesLoaded = true
-      opened = true
-      root.revealWhenSettled(requestSerial)
-      return
-    }
-
-    if (imageRows) {
-      var rowsToLoad = imageRows
-      var rowsSerial = requestSerial
-      imageArray = []
-      selectedIndex = 0
-      imagesLoaded = true
-      opened = true
-      Qt.callLater(function() {
-        if (rowsSerial === root.requestSerial)
-          root.loadRows(rowsToLoad, true)
-      })
-      return
-    }
-
-    imageArray = []
-    selectedIndex = 0
-    imagesLoaded = false
-    opened = false
-    startImageScan(requestSerial, imageDirs)
-  }
-
-  property var imageArray: []
-  // Worked out once per filter for every slice to read: each image's place
-  // among those shown, -1 for one the filter drops, and the selected one's.
-  readonly property var filteredPositions: ImagePickerModel.filteredPositions(imageArray, filterText)
-  readonly property int selectedPosition: filteredPositions[selectedIndex] >= 0 ? filteredPositions[selectedIndex] : 0
-
-  function startImageScan(serial, dirs) {
-    if (loadImagesProc.running) {
-      loadImagesProc.queuedSerial = serial
-      loadImagesProc.queuedDirs = dirs
-      return
-    }
-
-    loadImagesProc.activeSerial = serial
-    loadImagesProc.queuedSerial = 0
-    loadImagesProc.queuedDirs = ""
-    loadImagesProc.command = [root.scriptPath("list.sh"), dirs]
-    loadImagesProc.running = true
-  }
-
-  function indexForSelectedImage(images) {
-    return ImagePickerModel.indexForSelectedImage(images, selectedImage)
-  }
-
-  function selectedImageIndex() {
-    return indexForSelectedImage(imageArray)
-  }
-
-  Process {
-    id: loadImagesProc
-    property int activeSerial: 0
-    property int queuedSerial: 0
-    property string queuedDirs: ""
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        if (loadImagesProc.activeSerial === root.requestSerial)
-          root.loadRows(String(text || ""), true)
-      }
-    }
-    onExited: {
-      var serial = queuedSerial
-      var dirs = queuedDirs
-      activeSerial = 0
-      queuedSerial = 0
-      queuedDirs = ""
-      if (serial > 0 && serial === root.requestSerial)
-        root.startImageScan(serial, dirs)
-    }
-  }
-
-  // Lifecycle hooks invoked by nova-shell summon/hide. shell.summon(id,
-  // payloadJson) hands the JSON to open() here; shell.hide(id) calls close().
-  // The shell host owns the stable `image-selector` IPC target and forwards
-  // those lower-level positional calls here.
+  // The shell's summon and hide; open() takes the request as JSON.
   function open(payload) {
-    var args = {}
-    if (payload) {
-      try { args = JSON.parse(payload) || {} } catch (e) { args = {} }
+    var request = {}
+    try {
+      request = JSON.parse(payload || "{}") || {}
+    } catch (e) {
+      request = {}
     }
-    var dirs = String(args.imageDirs || imageDirs)
-    var rows = String(args.imageRows || "")
-    var sel = String(args.selectedImage || selectedImage)
-    var selFile = String(args.selectionFile || "")
-    var doneF = String(args.doneFile || "")
-    var labels = args.showLabels === true || args.showLabels === "true"
-    var filter = args.filterable === true || args.filterable === "true"
-    openSelector(dirs, rows, sel, selFile, doneF, labels, filter)
+    begin(String(request.imageDirs || imageDirs), String(request.imageRows || ""), String(request.selectedImage || selectedImage),
+      String(request.selectionFile || ""), String(request.doneFile || ""), isTrue(request.showLabels), isTrue(request.filterable))
   }
 
   function close() {
     cancel()
   }
 
-  function preloadRows(nextImageRows, nextSelectedImage, nextShowLabels, nextFilterable) {
-    // Theme/background set hooks can warm selector rows after a picker was
-    // dismissed. Ignore those preloads while a user-visible request is open;
-    // otherwise the preload resets layoutSettled without revealing again,
-    // leaving only the fullscreen scrim.
-    if (opened || requestActive) return
-
-    requestSerial += 1
+  // From the image-selector target: rows a theme or background change has
+  // just made, parsed now so the next open is at once. While a request is
+  // open they would reset it, so they wait for the next.
+  function preloadRows(rows, startOn, labels, filter) {
+    if (opened || waiting) return
+    serial++
     thumbnailsReleased = false
-    imageRows = nextImageRows
-    selectedImage = nextSelectedImage
-    showLabels = nextShowLabels === true || nextShowLabels === "true"
-    filterable = nextFilterable === true || nextFilterable === "true"
+    selectedImage = startOn
+    showLabels = isTrue(labels)
+    filterable = isTrue(filter)
     filterText = ""
-    layoutSettled = false
-
-    if (imageRows && imageRows === loadedImageRows && imageArray.length > 0) {
-      selectedIndex = selectedImageIndex()
-      imagesLoaded = true
-    } else if (imageRows) {
-      loadRows(imageRows, false)
+    settled = false
+    if (rows && rows === loadedRows && images.length > 0) {
+      selectedIndex = Model.indexOf(images, selectedImage)
+      loaded = true
+    } else if (rows) {
+      load(rows, false)
     }
   }
 
+  // From the image-selector target: the one asking gave up, or the shell is
+  // closing the picker. Its done file, and the open request's, are made.
+  function closeSelector(otherDoneFile) {
+    serial++
+    if (waiting) release(doneFile)
+    if (otherDoneFile && otherDoneFile !== doneFile) release(otherDoneFile)
+    forget()
+    filterText = ""
+    opened = false
+  }
+
+  function isTrue(value) {
+    return value === true || value === "true"
+  }
+
+  // A new request, over whatever was open: one still waiting gets its done
+  // file. Rows already parsed show at once; new rows a turn later, the window
+  // up meanwhile; folders when they are listed.
+  function begin(dirs, rows, startOn, selection, done, labels, filter) {
+    if (waiting && doneFile && doneFile !== done) release(doneFile)
+    serial++
+    thumbnailsReleased = false
+    imageDirs = dirs
+    selectedImage = startOn
+    selectionFile = selection
+    doneFile = done
+    waiting = !!done
+    showLabels = labels
+    filterable = filter
+    filterText = ""
+    settled = false
+
+    if (rows && rows === loadedRows && images.length > 0) {
+      selectedIndex = Model.indexOf(images, selectedImage)
+      loaded = true
+      opened = true
+      settle(serial)
+    } else if (rows) {
+      var forSerial = serial
+      images = []
+      selectedIndex = 0
+      loaded = true
+      opened = true
+      Qt.callLater(function () {
+        if (forSerial === root.serial) root.load(rows, true)
+      })
+    } else {
+      images = []
+      selectedIndex = 0
+      loaded = false
+      opened = false
+      list(serial, dirs)
+    }
+  }
+
+  function load(rows, reveal) {
+    var parsed = Model.parse(rows)
+    loadedRows = rows
+    selectedIndex = Model.indexOf(parsed, selectedImage)
+    images = parsed
+    loaded = true
+    if (reveal) {
+      opened = true
+      settle(serial)
+    }
+  }
+
+  // The slices show, and take the keys, a turn after the images are in, once
+  // laid out, if the request is still the same.
+  function settle(forSerial) {
+    Qt.callLater(function () {
+      if (forSerial === root.serial && root.opened && root.loaded && root.images.length > 0) {
+        root.settled = true
+        root.takeKeys()
+      }
+    })
+  }
+
+  function takeKeys() {
+    if (opened && loaded && settled) carousel.forceActiveFocus()
+  }
+
+  // The chosen image, or "" when the filter hides it.
+  function chosenPath() {
+    if (images.length === 0 || !keeps(selectedIndex)) return ""
+    return images[selectedIndex].path
+  }
+
+  function caption() {
+    var path = chosenPath()
+    if (!path) return filterText ? "No matches" : ""
+    return Model.captionOf(path)
+  }
+
+  function keeps(index) {
+    return index >= 0 && index < images.length && Model.keeps(images[index], filterText)
+  }
+
+  function choose(index) {
+    if (images.length === 0) return
+    index = Math.max(0, Math.min(images.length - 1, index))
+    if (keeps(index)) selectedIndex = index
+  }
+
+  // The next image the filter keeps, one way or the other, round the end.
+  function step(direction) {
+    var count = images.length
+    var index = selectedIndex
+    for (var i = 0; i < count; i++) {
+      index = (index + direction + count) % count
+      if (keeps(index)) {
+        choose(index)
+        return
+      }
+    }
+  }
+
+  // A new filter; if it hides the chosen image, the first it keeps is chosen.
+  function setFilter(text) {
+    filterText = text
+    if (keeps(selectedIndex)) return
+    var first = Model.firstKept(images, filterText)
+    if (first >= 0) selectedIndex = first
+  }
+
+  // The chosen image is the answer: written, then the done file made, and the
+  // picker shut once both are, unless another request came meanwhile.
+  function accept() {
+    var path = chosenPath()
+    if (!path || !selectionFile) {
+      cancel()
+      return
+    }
+    answer.forSerial = serial
+    answer.command = ["bash", "-c", "printf '%s\\n' \"$1\" >\"$2\"; : >\"$3\"", "answer", path, selectionFile, doneFile]
+    waiting = false
+    selectionFile = ""
+    doneFile = ""
+    answer.running = true
+  }
+
+  function cancel() {
+    if (waiting) release(doneFile)
+    forget()
+    opened = false
+  }
+
+  function forget() {
+    waiting = false
+    selectionFile = ""
+    doneFile = ""
+  }
+
+  // Makes a done file, for a request that ends without a choice.
+  function release(path) {
+    if (path) Quickshell.execDetached(["bash", "-c", ": >\"$1\"", "release", path])
+  }
+
+  // The folders' images, listed by list.sh. A listing asked for while one
+  // runs waits for it, and only the latest waits.
+  function list(forSerial, dirs) {
+    if (listing.running) {
+      listing.nextSerial = forSerial
+      listing.nextDirs = dirs
+      return
+    }
+    listing.forSerial = forSerial
+    listing.nextSerial = 0
+    listing.nextDirs = ""
+    listing.command = [novaPath + "/shell/plugins/image-picker/list.sh", dirs]
+    listing.running = true
+  }
+
   Process {
-    id: applyProc
+    id: listing
+    property int forSerial: 0
+    property int nextSerial: 0
+    property string nextDirs: ""
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (listing.forSerial === root.serial) root.load(String(text || ""), true)
+      }
+    }
     onExited: {
-      if (root.applySerial === root.requestSerial)
-        root.opened = false
+      var queued = nextSerial
+      var dirs = nextDirs
+      forSerial = 0
+      nextSerial = 0
+      nextDirs = ""
+      if (queued > 0 && queued === root.serial) root.list(queued, dirs)
     }
   }
 
   Process {
-    id: releaseProc
-    onExited: root.releaseNextDoneFile()
+    id: answer
+    property int forSerial: 0
+    onExited: {
+      if (forSerial === root.serial) root.opened = false
+    }
   }
 
   PanelWindow {
@@ -386,229 +332,231 @@ Item {
     color: "transparent"
     WlrLayershell.namespace: "nova-image-selector"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: root.opened && root.imagesLoaded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.keyboardFocus: root.opened && root.loaded ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
     Rectangle {
       anchors.fill: parent
-      visible: root.opened && root.imagesLoaded
+      visible: root.opened && root.loaded
       color: root.scrim
     }
 
+    // A click outside the carousel dismisses it.
     MouseArea {
       anchors.fill: parent
-      enabled: root.opened && root.imagesLoaded
+      enabled: root.opened && root.loaded
       onClicked: root.cancel()
     }
 
     Item {
       id: card
-      visible: root.opened && root.imagesLoaded && root.layoutSettled && root.imageArray.length > 0
+      visible: root.opened && root.loaded && root.settled && root.images.length > 0
       width: Math.min(parent.width - 80, root.expandedWidth + 13 * (root.sliceWidth + root.sliceSpacing) + 40)
       height: root.expandedHeight + Style.space(30) + root.bottomChromeHeight
       anchors.centerIn: parent
 
-        MouseArea { anchors.fill: parent; onClicked: {} }
+      MouseArea { anchors.fill: parent; onClicked: {} }
 
-        Item {
-          id: carousel
-          anchors.top: parent.top
-          anchors.topMargin: Style.space(30)
-          anchors.bottom: parent.bottom
-          anchors.bottomMargin: root.bottomChromeHeight
-          anchors.horizontalCenter: parent.horizontalCenter
-          width: root.expandedWidth + 13 * (root.sliceWidth + root.sliceSpacing)
-          clip: false
-          focus: true
+      Item {
+        id: carousel
+        anchors.top: parent.top
+        anchors.topMargin: Style.space(30)
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: root.bottomChromeHeight
+        anchors.horizontalCenter: parent.horizontalCenter
+        width: root.expandedWidth + 13 * (root.sliceWidth + root.sliceSpacing)
+        focus: true
+        Component.onCompleted: forceActiveFocus()
 
-          readonly property real itemStep: root.sliceWidth + root.sliceSpacing
-          readonly property real previewX: (width - root.expandedWidth) / 2
+        // Where the open slice starts, and from one slice to the next.
+        readonly property real openX: (width - root.expandedWidth) / 2
+        readonly property real pitch: root.sliceWidth + root.sliceSpacing
 
-          Keys.priority: Keys.BeforeItem
-          Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_Escape) {
-              if (root.filterText) {
-                root.updateFilter("")
-              } else {
-                root.cancel()
-              }
-              event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              root.applySelected()
-              event.accepted = true
-            } else if (root.filterable && Util.editsFilter(event, root.filterText)) {
-              root.updateFilter(Util.editedFilter(event, root.filterText))
-              event.accepted = true
-            } else if (event.key === Qt.Key_Left || (event.key === Qt.Key_Tab && event.modifiers & Qt.ShiftModifier) || event.key === Qt.Key_Backtab) {
-              root.selectAdjacent(-1)
-              event.accepted = true
-            } else if (event.key === Qt.Key_Right || event.key === Qt.Key_Tab) {
-              root.selectAdjacent(1)
-              event.accepted = true
-            } else if (root.filterable && event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
-              root.updateFilter(root.filterText + event.text)
-              event.accepted = true
-            }
+        // Escape clears the filter, then closes; Return takes the image; the
+        // arrows and Tab go round the images. With a filter, typing is the
+        // filter, edited as everywhere in the shell.
+        Keys.priority: Keys.BeforeItem
+        Keys.onPressed: function (event) {
+          var key = event.key
+          var typed = event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127
+            && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)
+          if (key === Qt.Key_Escape) {
+            if (root.filterText) root.setFilter("")
+            else root.cancel()
+          } else if (key === Qt.Key_Return || key === Qt.Key_Enter) {
+            root.accept()
+          } else if (root.filterable && Util.editsFilter(event, root.filterText)) {
+            root.setFilter(Util.editedFilter(event, root.filterText))
+          } else if (key === Qt.Key_Left || key === Qt.Key_Backtab || (key === Qt.Key_Tab && (event.modifiers & Qt.ShiftModifier))) {
+            root.step(-1)
+          } else if (key === Qt.Key_Right || key === Qt.Key_Tab) {
+            root.step(1)
+          } else if (root.filterable && typed) {
+            root.setFilter(root.filterText + event.text)
+          } else {
+            return
           }
+          event.accepted = true
+        }
 
-          Component.onCompleted: forceActiveFocus()
+        Repeater {
+          model: root.images.length
 
-          Repeater {
-            model: root.imageArray.length
+          delegate: Item {
+            id: slice
+            required property int index
 
-            delegate: Item {
-              id: item
-              required property int index
+            readonly property var image: root.images[index]
+            readonly property string thumbnail: image ? image.thumbnail : ""
+            readonly property bool kept: root.positions[index] >= 0
+            readonly property bool chosen: kept && index === root.selectedIndex
+            // Where it is from the chosen one, among the images the filter
+            // keeps: slices more than 16 away are not drawn.
+            readonly property int offset: root.positions[index] - root.selectedPosition
+            readonly property bool nearby: kept && Math.abs(offset) <= 16
 
-              readonly property var imageData: root.imageArray[index]
-              readonly property string filePath: imageData ? imageData.filePath : ""
-              readonly property string fileName: imageData ? imageData.fileName : ""
-              readonly property string thumbnailPath: imageData ? imageData.thumbnailPath : ""
-
-              readonly property bool matched: root.filteredPositions[index] >= 0
-              readonly property int relativeIndex: root.filteredPositions[index] - root.selectedPosition
-              readonly property bool selected: matched && index === root.selectedIndex
-              readonly property bool nearby: matched && Math.abs(relativeIndex) <= 16
-              property bool sourceActivated: nearby
-              onNearbyChanged: if (nearby) sourceActivated = true
-              Connections {
-                target: root
-                function onThumbnailsReleasedChanged() {
-                  if (root.thumbnailsReleased) item.sourceActivated = item.nearby
-                }
+            // A slice loads its thumbnail once it is near the chosen one, and
+            // then keeps it, so moving through the carousel does not make Qt
+            // drop and decode textures again, until the picker lets them go.
+            property bool sourceActivated: nearby
+            onNearbyChanged: if (nearby) sourceActivated = true
+            Connections {
+              target: root
+              function onThumbnailsReleasedChanged() {
+                if (root.thumbnailsReleased) slice.sourceActivated = slice.nearby
               }
+            }
 
-              visible: nearby
-              x: selected ? carousel.previewX : (relativeIndex < 0 ? carousel.previewX + relativeIndex * carousel.itemStep : carousel.previewX + root.expandedWidth + root.sliceSpacing + (relativeIndex - 1) * carousel.itemStep)
-              width: selected ? root.expandedWidth : root.sliceWidth
-              height: selected ? root.expandedHeight : root.sliceHeight
-              y: selected ? 0 : (root.expandedHeight - root.sliceHeight) / 2
-              z: selected ? 100 : 50 - Math.min(Math.abs(relativeIndex), 40)
+            visible: nearby
+            x: chosen ? carousel.openX
+              : offset < 0 ? carousel.openX + offset * carousel.pitch
+              : carousel.openX + root.expandedWidth + root.sliceSpacing + (offset - 1) * carousel.pitch
+            width: chosen ? root.expandedWidth : root.sliceWidth
+            height: chosen ? root.expandedHeight : root.sliceHeight
+            y: chosen ? 0 : (root.expandedHeight - root.sliceHeight) / 2
+            z: chosen ? 100 : 50 - Math.min(Math.abs(offset), 40)
 
-              readonly property real skAbs: Math.abs(root.skewOffset)
-              readonly property real topLeft: root.skewOffset >= 0 ? skAbs : 0
-              readonly property real topRight: root.skewOffset >= 0 ? width : width - skAbs
-              readonly property real bottomRight: root.skewOffset >= 0 ? width - skAbs : width
-              readonly property real bottomLeft: root.skewOffset >= 0 ? 0 : skAbs
+            // The slice's corners: a parallelogram leaning by skewOffset.
+            readonly property real lean: Math.abs(root.skewOffset)
+            readonly property real topLeft: root.skewOffset >= 0 ? lean : 0
+            readonly property real topRight: root.skewOffset >= 0 ? width : width - lean
+            readonly property real bottomRight: root.skewOffset >= 0 ? width - lean : width
+            readonly property real bottomLeft: root.skewOffset >= 0 ? 0 : lean
 
-              Item {
-                id: maskShape
-                anchors.fill: parent
-                visible: false
-                layer.enabled: true
-
-                Shape {
-                  anchors.fill: parent
-                  antialiasing: true
-                  preferredRendererType: Shape.CurveRenderer
-                  ShapePath {
-                    fillColor: "white"
-                    strokeColor: "transparent"
-                    startX: item.topLeft; startY: 0
-                    PathLine { x: item.topRight; y: 0 }
-                    PathLine { x: item.bottomRight; y: item.height }
-                    PathLine { x: item.bottomLeft; y: item.height }
-                    PathLine { x: item.topLeft; y: 0 }
-                  }
-                }
-              }
-
-              Item {
-                anchors.fill: parent
-                layer.enabled: true
-                layer.smooth: true
-                layer.effect: MultiEffect {
-                  maskEnabled: true
-                  maskSource: maskShape
-                  maskThresholdMin: 0.3
-                  maskSpreadAtMin: 0.3
-                }
-
-                Image {
-                  id: image
-                  anchors.fill: parent
-                  // Load only the initial/visited nearby images, but keep the
-                  // source once activated so Qt does not tear textures down as
-                  // selection moves through the carousel.
-                  source: !root.thumbnailsReleased && item.sourceActivated && item.thumbnailPath
-                    ? Util.fileUrl(item.thumbnailPath) : ""
-                  // Decoded at the open card's size, the largest any card is
-                  // shown, so moving the selection reloads none: the 1536x864
-                  // thumbnails are made for a 2x screen, and a picture with no
-                  // thumbnail is the original, which may be a 50-megapixel
-                  // photo.
-                  sourceSize: Qt.size(root.expandedWidth, root.expandedHeight)
-                  fillMode: Image.PreserveAspectCrop
-                  asynchronous: false
-                  cache: true
-                  smooth: true
-                }
-
-                Rectangle {
-                  anchors.fill: parent
-                  color: Util.alpha(root.dimColor, item.selected ? 0 : 0.42)
-                }
-              }
+            Item {
+              id: outline
+              anchors.fill: parent
+              visible: false
+              layer.enabled: true
 
               Shape {
                 anchors.fill: parent
                 antialiasing: true
                 preferredRendererType: Shape.CurveRenderer
                 ShapePath {
-                  fillColor: "transparent"
-                  strokeColor: item.selected ? root.selectedBorder : root.unselectedBorder
-                  strokeWidth: item.selected ? 3 : 1
-                  startX: item.topLeft; startY: 0
-                  PathLine { x: item.topRight; y: 0 }
-                  PathLine { x: item.bottomRight; y: item.height }
-                  PathLine { x: item.bottomLeft; y: item.height }
-                  PathLine { x: item.topLeft; y: 0 }
+                  fillColor: "white"
+                  strokeColor: "transparent"
+                  startX: slice.topLeft; startY: 0
+                  PathLine { x: slice.topRight; y: 0 }
+                  PathLine { x: slice.bottomRight; y: slice.height }
+                  PathLine { x: slice.bottomLeft; y: slice.height }
+                  PathLine { x: slice.topLeft; y: 0 }
                 }
               }
+            }
 
-              MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: item.selected ? root.applySelected() : root.select(index)
+            Item {
+              anchors.fill: parent
+              layer.enabled: true
+              layer.smooth: true
+              layer.effect: MultiEffect {
+                maskEnabled: true
+                maskSource: outline
+                maskThresholdMin: 0.3
+                maskSpreadAtMin: 0.3
               }
+
+              Image {
+                anchors.fill: parent
+                source: !root.thumbnailsReleased && slice.sourceActivated && slice.thumbnail ? Util.fileUrl(slice.thumbnail) : ""
+                // Decoded at the open slice's size, the largest any slice is
+                // shown, so moving the selection reloads none: the 1536x864
+                // thumbnails are made for a 2x screen, and a picture with no
+                // thumbnail is the original, which may be a 50-megapixel
+                // photo.
+                sourceSize: Qt.size(root.expandedWidth, root.expandedHeight)
+                fillMode: Image.PreserveAspectCrop
+                asynchronous: false
+                cache: true
+                smooth: true
+              }
+
+              Rectangle {
+                anchors.fill: parent
+                color: Util.alpha(root.dimColor, slice.chosen ? 0 : 0.42)
+              }
+            }
+
+            Shape {
+              anchors.fill: parent
+              antialiasing: true
+              preferredRendererType: Shape.CurveRenderer
+              ShapePath {
+                fillColor: "transparent"
+                strokeColor: slice.chosen ? root.selectedBorder : root.unselectedBorder
+                strokeWidth: slice.chosen ? 3 : 1
+                startX: slice.topLeft; startY: 0
+                PathLine { x: slice.topRight; y: 0 }
+                PathLine { x: slice.bottomRight; y: slice.height }
+                PathLine { x: slice.bottomLeft; y: slice.height }
+                PathLine { x: slice.topLeft; y: 0 }
+              }
+            }
+
+            // A click opens a slice; on the open one, takes it.
+            MouseArea {
+              anchors.fill: parent
+              cursorShape: Qt.PointingHandCursor
+              onClicked: slice.chosen ? root.accept() : root.choose(slice.index)
             }
           }
         }
+      }
 
-        Text {
-          id: selectedLabel
-          textFormat: Text.PlainText
-          visible: root.showLabels
-          anchors.top: carousel.bottom
-          anchors.topMargin: Style.space(16)
-          anchors.horizontalCenter: carousel.horizontalCenter
-          width: root.expandedWidth
-          text: root.currentLabel()
-          color: root.foreground
-          style: Text.Outline
-          styleColor: Util.alpha(root.dimColor, 0.7)
-          font.pixelSize: Style.font.display
-          font.weight: Font.DemiBold
-          horizontalAlignment: Text.AlignHCenter
-          elide: Text.ElideRight
-        }
+      Text {
+        id: captionText
+        textFormat: Text.PlainText
+        visible: root.showLabels
+        anchors.top: carousel.bottom
+        anchors.topMargin: Style.space(16)
+        anchors.horizontalCenter: carousel.horizontalCenter
+        width: root.expandedWidth
+        text: root.caption()
+        color: root.foreground
+        style: Text.Outline
+        styleColor: Util.alpha(root.dimColor, 0.7)
+        font.pixelSize: Style.font.display
+        font.weight: Font.DemiBold
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
 
-        Text {
-          textFormat: Text.PlainText
-          visible: root.filterable && root.filterText
-          anchors.top: selectedLabel.bottom
-          anchors.topMargin: Style.space(8)
-          anchors.horizontalCenter: carousel.horizontalCenter
-          width: root.expandedWidth
-          text: root.filterText
-          color: root.foreground
-          opacity: 0.85
-          style: Text.Outline
-          styleColor: Util.alpha(root.dimColor, 0.7)
-          font.pixelSize: Style.font.title
-          horizontalAlignment: Text.AlignHCenter
-          elide: Text.ElideRight
-        }
+      Text {
+        textFormat: Text.PlainText
+        visible: root.filterable && root.filterText
+        anchors.top: captionText.bottom
+        anchors.topMargin: Style.space(8)
+        anchors.horizontalCenter: carousel.horizontalCenter
+        width: root.expandedWidth
+        text: root.filterText
+        color: root.foreground
+        opacity: 0.85
+        style: Text.Outline
+        styleColor: Util.alpha(root.dimColor, 0.7)
+        font.pixelSize: Style.font.title
+        horizontalAlignment: Text.AlignHCenter
+        elide: Text.ElideRight
+      }
     }
   }
 }

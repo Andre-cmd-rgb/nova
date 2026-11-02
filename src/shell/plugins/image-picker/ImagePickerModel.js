@@ -1,92 +1,70 @@
-function nameForPath(path) {
+// The image picker's list: the images a request brings, what each is called,
+// and which of them a filter keeps.
+
+// "/w/tokyo-night.png" is named "tokyo-night" and captioned "Tokyo Night".
+function nameOf(path) {
   return String(path || "").split("/").pop().replace(/\.[^/.]+$/, "")
 }
 
-function labelForPath(path) {
-  return nameForPath(path).replace(/[-_]+/g, " ").replace(/\b\w/g, function(match) { return match.toUpperCase() })
+function captionOf(path) {
+  return nameOf(path).replace(/[-_]+/g, " ").replace(/\b\w/g, function (letter) { return letter.toUpperCase() })
 }
 
-function loadRows(rows) {
+// The images in <text>, a line each: the image's path and, after a tab, its
+// thumbnail's, or the image's own path for one without. Of images with the
+// same file name, in two folders, the first is kept. Each carries its caption,
+// and its name and caption lower-cased for the filter.
+function parse(text) {
   var images = []
   var seen = {}
-  var paths = String(rows || "").split("\n")
-
-  for (var i = 0; i < paths.length; i++) {
-    var row = paths[i]
-    if (!row) continue
-
-    var columns = row.split("\t")
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var columns = lines[i].split("\t")
     var path = columns[0]
     if (!path) continue
-
     var fileName = path.split("/").pop()
-    if (seen[fileName]) continue
+    if (seen[fileName] === true) continue
     seen[fileName] = true
-
+    var caption = captionOf(path)
     images.push({
-      filePath: path,
-      fileName: fileName,
-      thumbnailPath: columns[1] || path
+      path: path,
+      thumbnail: columns[1] || path,
+      caption: caption,
+      name: nameOf(path).toLowerCase(),
+      words: caption.toLowerCase()
     })
   }
-
   return images
 }
 
-function itemMatches(images, index, filterText) {
-  if (!Array.isArray(images) || index < 0 || index >= images.length) return false
-  var needle = String(filterText || "").toLowerCase()
-  if (!needle) return true
-
-  var path = String(images[index].filePath || "")
-  return nameForPath(path).toLowerCase().indexOf(needle) !== -1
-      || labelForPath(path).toLowerCase().indexOf(needle) !== -1
+// Whether <filter> keeps <image>: what is typed, lower-cased, found in its
+// name or its caption, so "lake at" finds lake_at_dawn.png. Everything is
+// kept with nothing typed.
+function keeps(image, filter) {
+  var needle = String(filter || "").toLowerCase()
+  return !needle || image.name.indexOf(needle) !== -1 || image.words.indexOf(needle) !== -1
 }
 
-function firstMatchingIndex(images, filterText) {
-  var values = Array.isArray(images) ? images : []
-  for (var i = 0; i < values.length; i++) {
-    if (itemMatches(values, i, filterText)) return i
-  }
+// Each image's place among those <filter> keeps, -1 for one it drops, all in
+// one pass.
+function positions(images, filter) {
+  var places = []
+  var next = 0
+  for (var i = 0; i < images.length; i++)
+    places.push(keeps(images[i], filter) ? next++ : -1)
+  return places
+}
 
+// The first image <filter> keeps, -1 if none.
+function firstKept(images, filter) {
+  for (var i = 0; i < images.length; i++)
+    if (keeps(images[i], filter)) return i
   return -1
 }
 
-// Each image's place among those the filter keeps, -1 for one it drops: one
-// pass over the images for all of them, where each asking for its own place
-// went over every image before it.
-function filteredPositions(images, filterText) {
-  var values = Array.isArray(images) ? images : []
-  var positions = []
-  var position = 0
-  for (var i = 0; i < values.length; i++)
-    positions.push(itemMatches(values, i, filterText) ? position++ : -1)
-  return positions
-}
-
-function indexForSelectedImage(images, selectedImage) {
-  var values = Array.isArray(images) ? images : []
-  for (var i = 0; i < values.length; i++) {
-    if (values[i].filePath === selectedImage) return i
-  }
-
+// Where the image at <path> is in <images>; the first for one not there.
+function indexOf(images, path) {
+  for (var i = 0; i < images.length; i++)
+    if (images[i].path === path) return i
   return 0
-}
-
-function nextSelectedIndexForFilter(images, selectedIndex, filterText) {
-  if (itemMatches(images, selectedIndex, filterText)) return selectedIndex
-  return firstMatchingIndex(images, filterText)
-}
-
-if (typeof module !== "undefined") {
-  module.exports = {
-    nameForPath: nameForPath,
-    labelForPath: labelForPath,
-    loadRows: loadRows,
-    itemMatches: itemMatches,
-    firstMatchingIndex: firstMatchingIndex,
-    filteredPositions: filteredPositions,
-    indexForSelectedImage: indexForSelectedImage,
-    nextSelectedIndexForFilter: nextSelectedIndexForFilter
-  }
 }

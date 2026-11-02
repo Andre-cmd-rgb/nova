@@ -4,7 +4,7 @@
   "name": "Image picker",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Image-grid selector overlay used for wallpapers, themes, and any other directory of images",
+  "description": "Pick an image from a carousel: a background, a theme, or any folder of pictures.",
   "kinds": [
     "overlay"
   ],
