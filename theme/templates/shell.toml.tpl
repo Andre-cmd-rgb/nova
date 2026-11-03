@@ -94,9 +94,6 @@ scale-with-font = true
 # panel-padding             = 18
 # popup-padding             = 14
 # dropdown-width            = 240
-# searchable-dropdown-width = 260
-# number-field-width        = 120
-# searchable-popup-min-height = 220
 
 [font]
 # base-size is the rem root for the type scale. Every Style.font.<token>
