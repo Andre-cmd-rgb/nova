@@ -32,8 +32,10 @@ ExecStopPost=-/usr/lib/nova/bin/nova-power daemon-stopped
 OOMScoreAdjust=-500
 Nice=-5
 
-# It writes four sysfs files, one proc file and reads /proc. Nothing else is
-# needed, and a governor that can be talked into writing elsewhere is a bad one.
+# It writes the package's power limits (both copies), intel_pstate's ceiling
+# and turbo, the iGPU's clocks and the fan level, and reads /proc. Nothing else
+# is needed, and a governor that can be talked into writing elsewhere is a bad
+# one.
 ProtectHome=yes
 PrivateTmp=yes
 NoNewPrivileges=yes

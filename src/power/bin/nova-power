@@ -742,6 +742,20 @@ RAPL=/sys/class/powercap/intel-rapl:0
 RAPL_PL1=$RAPL/constraint_0_power_limit_uw
 RAPL_WINDOW=$RAPL/constraint_0_time_window_us
 RAPL_STATE=/run/nova-power.rapl
+# The package's second copy of PL1, mapped into memory. The lower of the two
+# copies is the one in force, and on AC this firmware lowers this one to
+# 30 W after a minute of heavy load; nova-powerd puts it back.
+RAPL_MMIO_PL1=/sys/class/powercap/intel-rapl-mmio:0/constraint_0_power_limit_uw
+
+# The PL1 in force in µW: the lower of the two copies, or the MSR copy alone
+# where there is no second one. Fails when neither can be read.
+pl1_in_force() {
+  local msr mmio
+  msr=$(cat "$RAPL_PL1" 2>/dev/null) || return 1
+  mmio=$(cat "$RAPL_MMIO_PL1" 2>/dev/null) || mmio=''
+  [[ $mmio =~ ^[0-9]+$ ]] && ((mmio < msr)) && msr=$mmio
+  printf '%s' "$msr"
+}
 
 # PL2 is the other half, and the one you feel rather than measure. It governs
 # the short burst before PL1's average catches up — 135 W here against the
@@ -807,7 +821,7 @@ status_json() {
   if on_ac; then source=ac; else battery=$(cat "$BAT_POWER" 2>/dev/null); fi
   jq -cn --arg source "$source" --argjson running "$running" --arg mode "$mode" \
     --arg busy "$busy" --arg temp "$temp" --arg fans "$fan" --arg watts "$watts" \
-    --arg pl1 "$(cat "$RAPL_PL1" 2>/dev/null)" --arg pl2 "$(cat "$RAPL_PL2" 2>/dev/null)" \
+    --arg pl1 "$(pl1_in_force)" --arg pl2 "$(cat "$RAPL_PL2" 2>/dev/null)" \
     --arg ceiling "$(cat "$PSTATE_MAX" 2>/dev/null)" --arg noTurbo "$(cat "$PSTATE_NO_TURBO" 2>/dev/null)" \
     --arg rpm "$(awk '$1 == "speed:" { print $2 }' "$FAN_PROC" 2>/dev/null)" --arg battery "$battery" \
     --argjson boost "$([[ -e $BOOST_STATE ]] && echo true || echo false)" '
@@ -1041,10 +1055,11 @@ boot_timing() {
 
 pl1_now() {
   local uw window
-  uw=$(cat "$RAPL_PL1" 2>/dev/null) || { printf 'unavailable'; return 0; }
+  uw=$(pl1_in_force) || { printf 'unavailable'; return 0; }
   window=$(cat "$RAPL_WINDOW" 2>/dev/null)
   printf '%s W' "$((uw / 1000000))"
   [[ -n $window ]] && printf ' over %ss' "$((window / 1000000))"
+  [[ $uw == "$(cat "$RAPL_PL1" 2>/dev/null)" ]] || printf ", the firmware's copy"
   return 0
 }
 

@@ -867,6 +867,31 @@ options across files and `nvidia.conf` may belong to something else.
 needs a reboot** — the parameter is read when the driver loads, and the driver
 is exactly what cannot be unloaded.
 
+**50. On AC the firmware drops PL1 to 30 W behind the governor's back, in the
+second copy.** The package's limits live twice: in the MSR, which
+`intel-rapl:0` exposes and nova-powerd has always set, and in a memory-mapped
+copy, `intel-rapl-mmio:0`. The lower of the two is the one in force. Both boot
+at 109 W. Measured on 2026-11-03, plugged in, 16 threads of load:
+
+| t | package | clock | MMIO PL1 |
+|---|---|---|---|
+| 2 s | 83 W, 95 °C | 4.0 GHz | 109 W |
+| 30 s | 57 W, 94 °C | 3.5 GHz | 109 W |
+| 54 s | 47 W, 96 °C | 3.3 GHz | 109 W |
+| 60 s | 28 W, 79 °C | 2.7 GHz | **30 W** |
+
+Until the drop, heat is the only limit: the package sits at its TCC point (a
+TCC offset of 4, so 96 °C) with the EC's fans at about 3,940 rpm. The drop
+came at about the PL1 window (56 s), and the copy stayed at 30 W for minutes
+after the load had gone. A test suite and a smoke run were enough to set it
+off. `status -v` said 109 W throughout, as it read the MSR copy alone.
+
+So on AC nova-powerd now holds the MMIO copy at the firmware's own PL1, the
+value it boots with, checked every poll and written only when lowered; the
+package still guards itself at its TCC temperature. On battery the MSR tiers
+sit below it and it is left alone. `status -v` and Settings show the lower
+copy, and say when it is the firmware's.
+
 ## Working here
 
 - **CLI conventions.** Messages carry no `nova-power:` prefix: systemd

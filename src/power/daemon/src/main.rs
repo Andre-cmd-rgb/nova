@@ -13,11 +13,11 @@
 // does that, because it is a policy about *time*, and policies about time need
 // something awake to watch the clock. Hence a daemon.
 //
-// So: three tiers on battery, a dwell time before climbing, a longer one before
+// So: four tiers on battery, a dwell time before climbing, a longer one before
 // falling, and the fans kept off the case rather than curved. The temperature
 // guard outranks the load state, and the fan watchdog outranks everything —
 // if this process dies the EC has the fans back within thirty seconds without
-// anyone having to notice.
+// anyone having to notice. On AC, the firmware's full limits, held there.
 //
 // It owns PL1, PL2, max_perf_pct and the fans, and nothing else. EPP and the
 // platform profile belong to power-profiles-daemon (fact 4 in
@@ -57,6 +57,9 @@ extern "C" fn on_signal(sig: i32) {
 
 const CONFIG: &str = "/etc/nova/power.conf";
 const RAPL: &str = "/sys/class/powercap/intel-rapl:0";
+// The package's second copy of the same limits, mapped into memory; the lower
+// of the two copies is the one in force.
+const RAPL_MMIO: &str = "/sys/class/powercap/intel-rapl-mmio:0";
 const PSTATE_MAX: &str = "/sys/devices/system/cpu/intel_pstate/max_perf_pct";
 const PSTATE_MIN: &str = "/sys/devices/system/cpu/intel_pstate/min_perf_pct";
 const PSTATE_NO_TURBO: &str = "/sys/devices/system/cpu/intel_pstate/no_turbo";
@@ -701,6 +704,63 @@ impl Firmware {
     }
 }
 
+// ---------------------------------------------------------------- the second copy
+
+// On AC this machine's firmware lowers the MMIO copy of PL1 to 30 W after
+// about a minute of heavy load, and keeps it there for minutes after the load
+// has gone, whatever the MSR copy says. Measured on 2026-11-03, 16 threads on
+// AC: 83 W falling to 47 W at the package's 96 °C, then 28 W and 2.7 GHz once
+// the copy dropped. The package still guards itself at its TCC temperature,
+// so on AC the copy is held at the firmware's own PL1, the value it boots
+// with. On battery the MSR tiers sit below it, and it is left alone; at a stop
+// there is nothing to put back, as what it holds is the firmware's number.
+struct MmioPl1 {
+    path: PathBuf,
+    raised: u32,
+    said_at: Option<Instant>,
+}
+
+impl MmioPl1 {
+    fn find() -> Option<MmioPl1> {
+        let path = Path::new(RAPL_MMIO).join("constraint_0_power_limit_uw");
+        path.exists().then_some(MmioPl1 {
+            path,
+            raised: 0,
+            said_at: None,
+        })
+    }
+
+    // Read once a poll, written only when lowered. A line the first time and
+    // then at most every ten minutes, with the count, so a long build that
+    // the firmware keeps lowering does not fill the journal.
+    fn hold(&mut self, w: &mut Writer, pl1_uw: u64, now: Instant) {
+        let found = read_u64(&self.path);
+        if !lowered(found, pl1_uw) || !w.write(&self.path, &pl1_uw.to_string()) {
+            return;
+        }
+        self.raised += 1;
+        if self
+            .said_at
+            .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(600))
+        {
+            say!(
+                "ac: the firmware lowered the MMIO PL1 to {} W; back to {} W ({} since the last line)",
+                found.unwrap_or(0) / 1_000_000,
+                pl1_uw / 1_000_000,
+                self.raised
+            );
+            self.said_at = Some(now);
+            self.raised = 0;
+        }
+    }
+}
+
+// A copy below the firmware's PL1. One the firmware raised above it is left
+// as it is, and one that cannot be read is no reason to write.
+fn lowered(found: Option<u64>, pl1_uw: u64) -> bool {
+    found.is_some_and(|uw| uw < pl1_uw)
+}
+
 // ---------------------------------------------------------------- fans
 
 // The EC owns the fans unless told otherwise, and it takes them back on its own
@@ -1054,6 +1114,7 @@ fn main() {
     let mut gov = Governor::new(cfg.clone());
     let mut mains = Mains::new();
     let mut package = PackageTemp::new();
+    let mut mmio = MmioPl1::find();
     let mut last_ac = mains.on_ac();
     // Instant is CLOCK_MONOTONIC, which does not advance across S3, so the
     // dwell timers correctly ignore time spent asleep. That also means they
@@ -1120,6 +1181,9 @@ fn main() {
 
         let mode = gov.step(ac, busy, temp, now);
         gov.apply(&mut w, mode, fw, igpu.as_ref());
+        if let (Mode::Ac, Some(copy)) = (mode, mmio.as_mut()) {
+            copy.hold(&mut w, fw.pl1_uw, now);
+        }
 
         // Fans last, and temperature-first. The critical hand-back is checked
         // before the curve is consulted at all, so there is no arrangement of
@@ -1213,6 +1277,14 @@ mod tests {
             Duration::from_secs(1),
         );
         assert_eq!(w, Some(14.0));
+    }
+
+    #[test]
+    fn only_a_copy_below_the_firmware_pl1_is_raised() {
+        assert!(lowered(Some(30_000_000), 109_000_000));
+        assert!(!lowered(Some(109_000_000), 109_000_000));
+        assert!(!lowered(Some(120_000_000), 109_000_000));
+        assert!(!lowered(None, 109_000_000));
     }
 
     #[test]

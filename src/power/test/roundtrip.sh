@@ -111,6 +111,18 @@ power_limit ac
 chk "pl2 tolerates a short state"  "$(cat "$RAPL_PL1")"    "99000000"
 chk "pl2 left alone when unrecorded" "$(cat "$RAPL_PL2")"  "135000000"
 
+# The PL1 in force is the lower of the two copies, and status says which.
+RAPL_MMIO_PL1=$T/mmio-pl1
+echo 109000000 >"$RAPL_PL1"; echo 30000000 >"$RAPL_MMIO_PL1"
+chk "pl1 in force: the lower copy"   "$(pl1_in_force)" "30000000"
+chk "  and said to be the firmware's" "$(pl1_now)" "30 W over 55s, the firmware's copy"
+echo 109000000 >"$RAPL_MMIO_PL1"
+chk "pl1 in force: copies agree"      "$(pl1_now)" "109 W over 55s"
+echo 120000000 >"$RAPL_MMIO_PL1"
+chk "pl1 in force: the MSR when lower" "$(pl1_in_force)" "109000000"
+rm -f "$RAPL_MMIO_PL1"
+chk "pl1 in force: no second copy"    "$(pl1_in_force)" "109000000"
+
 # The frequency ceiling. Percent of the P-state range, and the driver rejects a
 # maximum below the minimum, so that has to be caught here rather than by a
 # write that fails silently.
