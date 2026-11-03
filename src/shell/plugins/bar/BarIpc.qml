@@ -1,112 +1,110 @@
 import QtQuick
 import Quickshell.Io
-import "BarModel.js" as Model
+import "BarModel.js" as BarModel
 
-// One set of targets for all bar surfaces. Slots register with the bar as
-// they appear and disappear, so unplugging a monitor leaves no stale routes.
+// The IPC targets of the widgets on the bar, one of each for all the
+// screens' bars: a call reaches the copy BarModel.pickPanelSlot picks, or
+// every copy where each must hear it. A target answers while some bar shows
+// its widget, which a widget names by its id or by its ipcTarget.
 Item {
-  id: root
+  id: ipc
 
   required property var bar
 
   function candidates(target) {
-    var slots = bar.moduleSlots
-    var rows = []
-    for (var i = 0; i < slots.length; i++) {
-      var slot = slots[i]
-      if (!slot || !slot.activeItem) continue
-      var id = slot.activeItem.ipcTarget || slot.moduleName
-      if (id !== target) continue
-      rows.push({ slot: slot, screenName: bar.slotScreenName(slot), opened: slot.activeItem.opened === true })
-    }
-    return rows
+    return bar.moduleSlots.filter(function(slot) {
+      return slot && slot.activeItem && (slot.activeItem.ipcTarget || slot.moduleName) === target
+    }).map(function(slot) {
+      return { slot: slot, screenName: bar.slotScreenName(slot), opened: slot.activeItem.opened === true }
+    })
   }
 
-  function focused(target) {
-    var slot = Model.pickPanelSlot(candidates(target), bar.focusedScreenName())
+  function chosen(target) {
+    var slot = BarModel.pickPanelSlot(candidates(target), bar.focusedScreenName())
     return slot ? slot.activeItem : null
   }
 
-  function callFocused(target, method, args) {
-    var item = focused(target)
-    if (item && typeof item[method] === "function") return item[method].apply(item, args || [])
-    return ""
+  // Calls `method` on the chosen copy, and answers with what it returns.
+  function callOne(target, method, args) {
+    var item = chosen(target)
+    return item && typeof item[method] === "function" ? item[method].apply(item, args || []) : ""
   }
 
-  function callAll(target, method) {
-    var rows = candidates(target)
-    var chosen = focused(target)
-    var result = ""
-    for (var i = 0; i < rows.length; i++) {
-      var item = rows[i].slot.activeItem
-      if (typeof item[method] !== "function") continue
+  // Calls `method` on every copy, and answers with the chosen copy's answer.
+  function callEach(target, method) {
+    var answer = ""
+    var one = chosen(target)
+    candidates(target).forEach(function(row) {
+      var item = row.slot.activeItem
+      if (typeof item[method] !== "function") return
       var value = item[method]()
-      if (item === chosen) result = value
-    }
-    return result
+      if (item === one) answer = value
+    })
+    return answer
   }
 
-  component PanelHandler: IpcHandler {
-    enabled: root.candidates(target).length > 0
+  // open, close and toggle, with show and hide as other names for the first
+  // two. The clock's and the weather's panel toggles are togglePanel: their
+  // toggle is the label's.
+  component PanelTarget: IpcHandler {
+    enabled: ipc.candidates(target).length > 0
 
-    function open(): void { root.callFocused(target, "open") }
-    function close(): void { root.callFocused(target, "close") }
-    function show(): void { root.callFocused(target, "open") }
-    function hide(): void { root.callFocused(target, "close") }
-    function toggle(): void {
-      root.callFocused(target, target === "nova.clock" || target === "nova.weather" ? "togglePanel" : "toggle")
-    }
+    function open(): void { ipc.callOne(target, "open") }
+    function close(): void { ipc.callOne(target, "close") }
+    function show(): void { ipc.callOne(target, "open") }
+    function hide(): void { ipc.callOne(target, "close") }
+    function toggle(): void { ipc.callOne(target, target === "nova.clock" || target === "nova.weather" ? "togglePanel" : "toggle") }
   }
 
-  PanelHandler { target: "nova.audio" }
-  PanelHandler { target: "nova.mobile-data" }
-  PanelHandler { target: "nova.batterylife.bar" }
+  PanelTarget { target: "nova.audio" }
+  PanelTarget { target: "nova.mobile-data" }
+  PanelTarget { target: "nova.batterylife.bar" }
 
-  // These change shared hardware or shell.json. Run the change once; the
-  // service signals and inline settings update every screen's copy.
-  PanelHandler {
+  // A switch of shared hardware or of shell.json is made once, by the chosen
+  // copy; the others follow the service or the settings it changed.
+  PanelTarget {
     target: "nova.bluetooth"
-    function toggleBluetooth(): void { root.callFocused(target, "toggleBluetooth") }
+    function toggleBluetooth(): void { ipc.callOne(target, "toggleBluetooth") }
   }
 
-  PanelHandler {
+  PanelTarget {
     target: "nova.network"
-    function toggleNetwork(): void { root.callFocused(target, "toggleNetwork") }
+    function toggleNetwork(): void { ipc.callOne(target, "toggleNetwork") }
   }
 
-  PanelHandler {
+  PanelTarget {
     target: "nova.power"
-    function togglePercentage(): void { root.callFocused(target, "togglePercentage") }
+    function togglePercentage(): void { ipc.callOne(target, "togglePercentage") }
   }
 
-  PanelHandler {
+  PanelTarget {
     target: "nova.monitor"
-    function brightness(percent: string): string { return root.callFocused(target, "brightnessIpc", [percent]) }
-    function state(): string { return root.callAll(target, "stateIpc") }
+    function brightness(percent: string): string { return ipc.callOne(target, "brightnessIpc", [percent]) }
+    function state(): string { return ipc.callEach(target, "stateIpc") }
   }
 
-  PanelHandler {
+  PanelTarget {
     target: "nova.clock"
-    function refresh(): void { root.callAll(target, "refresh") }
-    function cycleFormat(): void { root.callFocused(target, "cycleFormat") }
-    function toggleWeekStart(): void { root.callFocused(target, "toggleWeekStart") }
+    function refresh(): void { ipc.callEach(target, "refresh") }
+    function cycleFormat(): void { ipc.callOne(target, "cycleFormat") }
+    function toggleWeekStart(): void { ipc.callOne(target, "toggleWeekStart") }
   }
 
-  PanelHandler {
+  PanelTarget {
     target: "nova.weather"
-    function edit(): void { root.callFocused(target, "edit") }
+    function edit(): void { ipc.callOne(target, "edit") }
   }
 
   IpcHandler {
     target: "nova.indicators"
-    enabled: root.candidates(target).length > 0
-    function refresh(): void { root.callAll(target, "refresh") }
+    enabled: ipc.candidates(target).length > 0
+    function refresh(): void { ipc.callEach(target, "refresh") }
   }
 
   IpcHandler {
     target: "nova.system-update"
-    enabled: root.candidates(target).length > 0
-    function refresh(): void { root.callAll(target, "refresh") }
-    function clear(): void { root.callAll(target, "clear") }
+    enabled: ipc.candidates(target).length > 0
+    function refresh(): void { ipc.callEach(target, "refresh") }
+    function clear(): void { ipc.callEach(target, "clear") }
   }
 }

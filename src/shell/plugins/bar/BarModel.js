@@ -1,68 +1,77 @@
-function isPlainObject(value) {
-  return !!value && typeof value === "object" && !Array.isArray(value)
+.pragma library
+
+// The bar's rules, kept apart from its windows: what a layout entry says,
+// where the tray sits in a section, which copy of a widget a hotkey reaches,
+// where a dragged widget lands, and which edge a dragged bar goes to.
+
+var EDGES = ["top", "bottom", "left", "right"]
+
+// A number held between min and max; min for one that is not a number.
+function clamp(value, min, max) {
+  var n = Number(value)
+  return isFinite(n) ? Math.max(min, Math.min(max, n)) : min
 }
 
-function normalizePosition(value) {
-  var next = String(value || "").trim()
-  return /^(top|bottom|left|right)$/.test(next) ? next : "top"
+function isObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
-function entrySettings(entry) {
-  if (!isPlainObject(entry)) return {}
-  var copy = {}
-  for (var key in entry) {
-    if (key === "id") continue
-    copy[key] = entry[key]
-  }
-  return copy
+// The edge shell.json names, top for anything else.
+function edge(value) {
+  var name = String(value || "").trim()
+  return EDGES.indexOf(name) === -1 ? "top" : name
 }
 
+// A layout entry is a bare id or an object carrying one.
 function entryId(entry) {
   if (typeof entry === "string") return entry
-  if (isPlainObject(entry)) {
-    var id = entry["id"]
-    if (id !== undefined && id !== null && String(id) !== "") return String(id)
-  }
-  return ""
+  var id = isObject(entry) ? entry.id : undefined
+  return id === undefined || id === null ? "" : String(id)
 }
 
-function pinTrayToInner(entries, section) {
-  var trayEntry = null
-  var result = []
-  var values = Array.isArray(entries) ? entries : []
-  for (var i = 0; i < values.length; i++) {
-    if (entryId(values[i]) === "nova.tray") trayEntry = values[i]
-    else result.push(values[i])
+// The entry's settings: everything in it but its id.
+function entrySettings(entry) {
+  var settings = {}
+  if (!isObject(entry)) return settings
+  for (var key in entry) {
+    if (key !== "id") settings[key] = entry[key]
   }
-  if (trayEntry) {
-    if (section === "right") result.unshift(trayEntry)
-    else result.push(trayEntry)
-  }
-  return result
+  return settings
 }
 
-function moduleString(entry, key, fallback) {
-  var settings = entrySettings(entry)
-  var value = settings[key]
-  return value === undefined || value === null ? fallback : String(value)
-}
-
-function entryIndex(entries, name) {
+function indexOfId(entries, id) {
   if (!Array.isArray(entries)) return -1
   for (var i = 0; i < entries.length; i++) {
-    if (entryId(entries[i]) === name) return i
+    if (entryId(entries[i]) === id) return i
   }
   return -1
 }
 
-function entriesBefore(entries, name) {
-  var index = entryIndex(entries, name)
-  return index <= 0 ? [] : entries.slice(0, index)
+function before(entries, id) {
+  var at = indexOfId(entries, id)
+  return at > 0 ? entries.slice(0, at) : []
 }
 
-function entriesAfter(entries, name) {
-  var index = entryIndex(entries, name)
-  return index === -1 ? [] : entries.slice(index + 1)
+function after(entries, id) {
+  var at = indexOfId(entries, id)
+  return at === -1 ? [] : entries.slice(at + 1)
+}
+
+// The tray's drawer opens away from the screen's edge, so the tray goes to
+// the inner end of its section: first on the right, last on the left and in
+// the centre. A section listing it twice keeps the last.
+function trayInward(entries, section) {
+  var rest = []
+  var tray = null
+  ;(Array.isArray(entries) ? entries : []).forEach(function(entry) {
+    if (entryId(entry) === "nova.tray") tray = entry
+    else rest.push(entry)
+  })
+  if (tray) {
+    if (section === "right") rest.unshift(tray)
+    else rest.push(tray)
+  }
+  return rest
 }
 
 // The widget the centre is centred on, the rest hanging off its sides. One
@@ -72,175 +81,180 @@ function entriesAfter(entries, name) {
 // No anchor named at all is no anchor.
 function centerAnchor(configured, center) {
   var anchor = String(configured || "")
-  if (anchor === "" || entryIndex(center, anchor) !== -1) return anchor
-  return entryIndex(center, "nova.clock") !== -1 ? "nova.clock" : anchor
+  if (anchor === "" || indexOfId(center, anchor) !== -1) return anchor
+  return indexOfId(center, "nova.clock") === -1 ? anchor : "nova.clock"
 }
 
-// A shell.json write that only changes inline widget settings (the battery
-// percentage toggle, a clock format change) must not rebuild the bar.
-// Compare two normalized layouts: when the structure is unchanged — same
-// entry ids in the same order per region — return the settings-only changes
-// as {region, index, entry}. Return null when the change is structural, or
-// touches an entry a live settings push cannot safely reach: custom modules
-// read their entry directly rather than an injected settings property, and
-// a duplicated id makes the push ambiguous.
-function inlineSettingsDelta(current, next) {
-  if (!isPlainObject(current) || !isPlainObject(next)) return null
-  var regions = ["left", "center", "right"]
-  var counts = {}
-  for (var r = 0; r < regions.length; r++) {
-    var entries = Array.isArray(next[regions[r]]) ? next[regions[r]] : []
-    for (var i = 0; i < entries.length; i++) {
-      var id = entryId(entries[i])
-      counts[id] = (counts[id] || 0) + 1
-    }
-  }
+// A user's own widget: "command" (a program's output), "qml" (a file), or
+// "" for one of Nova's. An entry naming no type is a command when it has
+// one to run, and QML when it names a file.
+function customType(entry) {
+  var settings = entrySettings(entry)
+  var type = String(settings.type || "")
+  if (type) return type
+  if (settings.exec) return "command"
+  return settings.source ? "qml" : ""
+}
+
+// The file a QML widget is loaded from: its source, with ~ and $HOME
+// expanded, or <config>/bar/modules/<id>.qml for an id that stays in there.
+function customSource(entry, home, configDir) {
+  var source = String(entrySettings(entry).source || "")
+  if (source.indexOf("~/") === 0) return home + source.slice(1)
+  if (source.indexOf("$HOME/") === 0) return home + source.slice(5)
+  if (source) return source
+  var id = entryId(entry)
+  if (id === "" || id.indexOf("..") !== -1 || id[0] === "/") return ""
+  return String(configDir || "") + "/bar/modules/" + id + ".qml"
+}
+
+// What a shell.json write changed, when it only changed settings: the same
+// ids in the same order in every section, each changed entry as
+// { region, index, entry }. Null for any other change, and for a change to
+// a user's widget (which reads its entry, not settings pushed to it) or to
+// an id the layout holds twice (which a push could not tell apart). The bar
+// pushes settings in place rather than rebuild every widget on every screen.
+function settingsOnlyChanges(current, next) {
+  if (!isObject(current) || !isObject(next)) return null
+  var sections = ["left", "center", "right"]
+  var count = {}
+  sections.forEach(function(section) {
+    (Array.isArray(next[section]) ? next[section] : []).forEach(function(entry) {
+      var id = entryId(entry)
+      count[id] = (count[id] || 0) + 1
+    })
+  })
   var changes = []
-  for (var s = 0; s < regions.length; s++) {
-    var region = regions[s]
-    var a = Array.isArray(current[region]) ? current[region] : []
-    var b = Array.isArray(next[region]) ? next[region] : []
-    if (a.length !== b.length) return null
-    for (var j = 0; j < a.length; j++) {
-      if (entryId(a[j]) !== entryId(b[j])) return null
-      if (JSON.stringify(a[j]) === JSON.stringify(b[j])) continue
-      if (customModuleType(a[j]) || customModuleType(b[j])) return null
-      if (counts[entryId(b[j])] > 1) return null
-      changes.push({ region: region, index: j, entry: b[j] })
+  for (var s = 0; s < sections.length; s++) {
+    var was = Array.isArray(current[sections[s]]) ? current[sections[s]] : []
+    var now = Array.isArray(next[sections[s]]) ? next[sections[s]] : []
+    if (was.length !== now.length) return null
+    for (var i = 0; i < now.length; i++) {
+      var id = entryId(now[i])
+      if (entryId(was[i]) !== id) return null
+      if (JSON.stringify(was[i]) === JSON.stringify(now[i])) continue
+      if (customType(was[i]) || customType(now[i]) || count[id] > 1) return null
+      changes.push({ region: sections[s], index: i, entry: now[i] })
     }
   }
   return changes
 }
 
-function expandPath(value, home) {
-  var path = String(value || "")
-  if (path === "") return ""
-  if (path.indexOf("~/") === 0) return home + path.substring(1)
-  if (path.indexOf("$HOME/") === 0) return home + path.substring(5)
-  return path
+// Moves a widget in a shell.json being written: from its section to before
+// `beforeId` in `toRegion`, or to that section's end. False when nothing
+// moved. Sections the file lacks are made.
+function moveEntry(config, fromRegion, id, toRegion, beforeId) {
+  if (!isObject(config.bar)) config.bar = {}
+  if (!isObject(config.bar.layout)) config.bar.layout = {}
+  var layout = config.bar.layout
+  ;[fromRegion, toRegion].forEach(function(region) {
+    if (!Array.isArray(layout[region])) layout[region] = []
+  })
+  var from = layout[fromRegion]
+  var to = layout[toRegion]
+  var at = indexOfId(from, id)
+  if (at === -1) return false
+  var target = beforeId ? indexOfId(to, beforeId) : -1
+  if (target === -1) target = to.length
+  if (fromRegion === toRegion) {
+    // Taken out first, a widget moving right lands one place earlier.
+    if (at < target) target--
+    if (at === target) return false
+  }
+  to.splice(target, 0, from.splice(at, 1)[0])
+  return true
 }
 
-function customModuleSafeName(name) {
-  var value = String(name || "")
-  return value !== "" && value.indexOf("..") === -1 && value[0] !== "/"
-}
+// Of a widget's live copies, one per screen's bar, the one a hotkey acts
+// on. Candidates are { slot, screenName, opened }. An open copy comes first,
+// so hide and toggle reach the panel on screen wherever it was opened; then
+// the copies on the focused screen, or with none there those on the first
+// copy's screen. Of these, a copy that is drawn: a centre widget next to the
+// anchor is also mounted as a zero-size placeholder, which cannot anchor a
+// popup, and the order the two register in changes as the bar is rebuilt.
+function pickPanelSlot(candidates, focusedScreen) {
+  var rows = (Array.isArray(candidates) ? candidates : []).filter(function(row) { return !!row })
+  var open = rows.filter(function(row) { return row.opened === true })
+  if (open.length > 0) rows = open
+  var focused = String(focusedScreen || "")
+  var here = rows.filter(function(row) { return row.screenName === focused })
+  if (focused !== "" && here.length > 0) rows = here
+  else if (rows.length > 0) rows = rows.filter(function(row) { return row.screenName === rows[0].screenName })
 
-function customModuleType(entry) {
-  var settings = entrySettings(entry)
-  var type = String(settings.type || "")
-  if (type) return type
-  if (settings.exec) return "command"
-  if (settings.source) return "qml"
-  return ""
-}
-
-function customModulePath(entry, home, configDir) {
-  var settings = entrySettings(entry)
-  var name = entryId(entry)
-  var source = settings.source ? expandPath(settings.source, home) : ""
-  if (!source && customModuleSafeName(name))
-    source = String(configDir || "") + "/bar/modules/" + String(name) + ".qml"
-  return source
-}
-
-// A center module is mounted twice once an anchor is set: the copy that is
-// actually drawn, and a zero-size placeholder holding its place in the flow
-// beside the anchor. Panel routing has to pick the drawn one — it is the only
-// one that can anchor a popup, carry the open-panel mark, or be found again
-// by switchPanelFrom — and fall back to the placeholder only when nothing is
-// on screen. The order the two are registered in is not stable across a live
-// bar reconfiguration, so picking the first match is not good enough.
-function isDrawnSlot(slot) {
-  return !!slot && slot.visible === true && slot.width > 0 && slot.height > 0
-}
-
-function pickDrawnSlot(slots) {
   var placeholder = null
-  var list = slots || []
-  for (var i = 0; i < list.length; i++) {
-    if (!list[i]) continue
-    if (isDrawnSlot(list[i])) return list[i]
-    if (!placeholder) placeholder = list[i]
+  for (var i = 0; i < rows.length; i++) {
+    var slot = rows[i].slot
+    if (!slot) continue
+    if (isDrawn(slot)) return slot
+    if (!placeholder) placeholder = slot
   }
   return placeholder
 }
 
-// A bar surface is built per monitor, so a panel hotkey has several live
-// copies of the same widget to route to, and the panel opens on whichever
-// monitor's copy answers. Candidates are `{ slot, screenName, opened }`.
-//
-// An open copy wins first: hide and toggle have to reach the panel the user
-// can actually see, wherever it was opened from. Otherwise the focused
-// monitor's copy wins, so hotkeys act where the user is working; with no
-// matching output, the first bar's. Within that screen, prefer the drawn slot
-// over its zero-size placeholder.
-function pickPanelSlot(candidates, focusedScreen) {
-  var rows = Array.isArray(candidates) ? candidates : []
-  var pool = rows.filter(function(row) { return row && row.opened === true })
-  if (pool.length === 0) pool = rows.filter(function(row) { return !!row })
-
-  var focused = String(focusedScreen || "")
-  var onFocused = pool.filter(function(row) { return row.screenName === focused })
-  if (focused && onFocused.length > 0) {
-    pool = onFocused
-  } else if (pool.length > 0) {
-    var firstScreen = pool[0].screenName
-    pool = pool.filter(function(row) { return row.screenName === firstScreen })
-  }
-
-  return pickDrawnSlot(pool.map(function(row) { return row.slot }))
+function isDrawn(slot) {
+  return slot.visible === true && slot.width > 0 && slot.height > 0
 }
 
-// Resolve a pointer anywhere along the bar to the closest insertion edge.
-// Requiring the pointer to sit inside another widget makes the empty space
-// around a centered group a dead zone, even though it visually reads as the
-// most natural place to drop.
-function nearestDropTarget(candidates, point, vertical) {
-  var rows = Array.isArray(candidates) ? candidates : []
-  var axis = vertical ? Number(point && point.y) : Number(point && point.x)
-  if (!isFinite(axis)) return null
-
+// Where a dragged widget drops: before or after the widget whose near edge
+// is closest along the bar, so the empty bar around a centred group takes a
+// drop too. Candidates are { slot, x, y, width, height } in the window;
+// returns { slot, after }, or null.
+function dropPlace(candidates, point, vertical) {
+  var along = Number(point && (vertical ? point.y : point.x))
+  if (!isFinite(along)) return null
   var best = null
   var bestDistance = Infinity
-  for (var i = 0; i < rows.length; i++) {
-    var row = rows[i]
-    if (!row || !row.slot) continue
-
+  ;(Array.isArray(candidates) ? candidates : []).forEach(function(row) {
+    if (!row || !row.slot) return
     var start = Number(vertical ? row.y : row.x)
     var size = Number(vertical ? row.height : row.width)
-    if (!isFinite(start) || !isFinite(size) || size <= 0) continue
-
-    var beforeDistance = Math.abs(axis - start)
-    var afterDistance = Math.abs(axis - (start + size))
-    var after = afterDistance < beforeDistance
-    var distance = after ? afterDistance : beforeDistance
+    if (!isFinite(start) || !isFinite(size) || size <= 0) return
+    var toStart = Math.abs(along - start)
+    var toEnd = Math.abs(along - (start + size))
+    var distance = Math.min(toStart, toEnd)
     if (distance < bestDistance) {
-      best = { slot: row.slot, after: after }
       bestDistance = distance
+      best = { slot: row.slot, after: toEnd < toStart }
     }
-  }
+  })
   return best
 }
 
-if (typeof module !== "undefined") {
-  module.exports = {
-    isDrawnSlot: isDrawnSlot,
-    pickDrawnSlot: pickDrawnSlot,
-    pickPanelSlot: pickPanelSlot,
-    nearestDropTarget: nearestDropTarget,
-    normalizePosition: normalizePosition,
-    entrySettings: entrySettings,
-    entryId: entryId,
-    pinTrayToInner: pinTrayToInner,
-    moduleString: moduleString,
-    entryIndex: entryIndex,
-    entriesBefore: entriesBefore,
-    entriesAfter: entriesAfter,
-    centerAnchor: centerAnchor,
-    inlineSettingsDelta: inlineSettingsDelta,
-    expandPath: expandPath,
-    customModuleSafeName: customModuleSafeName,
-    customModuleType: customModuleType,
-    customModulePath: customModulePath
-  }
+// The edge a bar dragged to `point` goes to: the screen is cut along its
+// diagonals, measured in fractions of its size so a wide screen does not
+// favour its sides, and the quarter holding the pointer names the edge.
+function nearestEdge(point, width, height) {
+  var x = width > 0 ? clamp(point.x / width, 0, 1) : 0.5
+  var y = height > 0 ? clamp(point.y / height, 0, 1) : 0.5
+  var distances = { top: y, bottom: 1 - y, left: x, right: 1 - x }
+  var nearest = "top"
+  EDGES.forEach(function(name) {
+    if (distances[name] < distances[nearest]) nearest = name
+  })
+  return nearest
+}
+
+// A point in a bar window, on its screen: a bottom or right bar's window
+// starts that far from the screen's top or left.
+function onScreen(point, edgeName, screenWidth, screenHeight, windowWidth, windowHeight) {
+  var x = point ? point.x : 0
+  var y = point ? point.y : 0
+  if (edgeName === "bottom") y += Math.max(0, screenHeight - windowHeight)
+  else if (edgeName === "right") x += Math.max(0, screenWidth - windowWidth)
+  return { x: x, y: y }
+}
+
+// The line drawn where a dragged widget would land: across the bar, at the
+// start or the end of the widget at `point` with `width` and `height`.
+function dropMarker(point, width, height, after, vertical, thickness) {
+  if (vertical) return { x: point.x, y: point.y + (after ? height : 0) - thickness / 2, width: width, height: thickness }
+  return { x: point.x + (after ? width : 0) - thickness / 2, y: point.y, width: thickness, height: height }
+}
+
+// "#rrggbb" for channels from 0 to 1.
+function hex(red, green, blue) {
+  return "#" + [red, green, blue].map(function(channel) {
+    var byte = Math.round(clamp(channel, 0, 1) * 255)
+    return (byte < 16 ? "0" : "") + byte.toString(16)
+  }).join("")
 }
