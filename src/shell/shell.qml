@@ -342,7 +342,7 @@ ShellRoot {
 
   // Opens the plugin's panel, passing <payloadJson> to its open() once it
   // has loaded; a bar widget's panel takes none. False for a plugin that is
-  // unknown, switched off, or a widget not in the bar.
+  // unknown, switched off, a widget not in the bar, or has nothing to open.
   function summon(pluginId, payloadJson) {
     var id = String(pluginId || "")
     if (!id) return false
@@ -360,6 +360,12 @@ ShellRoot {
       var summoned = bar && typeof bar.summonBarWidget === "function" && bar.summonBarWidget(id)
       if (!summoned) console.warn("summon: no live bar widget for:", id)
       return summoned === true
+    }
+    // A plugin with no panel, overlay or menu (a service, the bar) has no
+    // loader either, and nothing would ever take the payload.
+    if (!panelKind(pluginRegistry.installedPlugins[id])) {
+      console.warn("summon: nothing to open for", id)
+      return false
     }
 
     var open = ({})
@@ -486,16 +492,20 @@ ShellRoot {
   // and menu that the plugin is.
   property var panelEntries: []
 
+  // The first of panel, overlay and menu that the plugin is, or "".
+  function panelKind(manifest) {
+    var kinds = manifest && Array.isArray(manifest.kinds) ? manifest.kinds : []
+    return kinds.indexOf("panel") >= 0 ? "panel"
+      : kinds.indexOf("overlay") >= 0 ? "overlay"
+      : kinds.indexOf("menu") >= 0 ? "menu" : ""
+  }
+
   function computePanelEntries() {
     var entries = []
     var plugins = pluginRegistry.installedPlugins
     for (var id in plugins) {
       var manifest = plugins[id]
-      if (!manifest || !Array.isArray(manifest.kinds)) continue
-      var kinds = manifest.kinds
-      var kind = kinds.indexOf("panel") >= 0 ? "panel"
-        : kinds.indexOf("overlay") >= 0 ? "overlay"
-        : kinds.indexOf("menu") >= 0 ? "menu" : ""
+      var kind = panelKind(manifest)
       if (!kind || !pluginRegistry.isEnabled(id)) continue
       entries.push({ id: id, manifest: manifest, kind: kind, keepLoaded: manifest.keepLoaded === true })
     }
