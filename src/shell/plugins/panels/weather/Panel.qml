@@ -301,6 +301,7 @@ Ui.Panel {
     saving = false
     savedFetchStarted = false
     suggestions = []
+    searchWanted = ""
     searchDelay.stop()
     Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
   }
@@ -356,15 +357,13 @@ Ui.Panel {
     }
   }
 
-  // Searches 300 ms after the last key, from two letters.
+  // Searches 300 ms after the last key, from two letters. Fewer wants no
+  // search, so that one still running, for more letters, shows nothing.
   function search() {
     var typed = placeField.text.trim()
-    if (typed.length < 2) {
-      suggestions = []
-      return
-    }
-    searchWanted = typed
-    if (!searchFetch.running) startSearch()
+    searchWanted = typed.length < 2 ? "" : typed
+    if (searchWanted === "") suggestions = []
+    else if (!searchFetch.running) startSearch()
   }
 
   function startSearch() {
@@ -378,9 +377,10 @@ Ui.Panel {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        root.suggestions = root.editing ? Model.suggestions(text) : []
+        var wanted = root.editing && root.searchWanted !== ""
+        root.suggestions = wanted ? Model.suggestions(text) : []
         root.suggestionIndex = 0
-        if (root.searchWanted !== root.searchRunning) Qt.callLater(root.startSearch)
+        if (wanted && root.searchWanted !== root.searchRunning) Qt.callLater(root.startSearch)
       }
     }
   }
