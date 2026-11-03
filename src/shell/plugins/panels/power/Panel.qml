@@ -67,7 +67,7 @@ Panel {
     if (read.names.length === 0) return
     modes = read.names
     activeMode = read.active
-    modeAt = Model.within(modeAt || 0, modes.length)
+    modeAt = Model.within(modeAt, modes.length)
     if (opened && !cursorActive && modes.indexOf(activeMode) >= 0) modeAt = modes.indexOf(activeMode)
   }
 
@@ -187,7 +187,6 @@ Panel {
     text: withNumber ? Math.round(root.level * 100) + "% " + root.icon : root.icon
     slotSize: Style.bar.iconSlot * (withNumber ? 2 : 1)
     onPressed: function(which) {
-      if (!root.present) return
       if (which === Qt.RightButton) root.togglePercentage()
       else root.toggle()
     }
@@ -215,7 +214,7 @@ Panel {
         else if (dx !== 0) root.stepMode(dx)
         else if (dy !== 0) root.stepMode(dy)
       }
-      onActivateRequested: if (root.cursorActive && root.modeAt >= 0 && root.modeAt < root.modes.length) root.setMode(root.modes[root.modeAt])
+      onActivateRequested: if (root.cursorActive) root.setMode(root.modes[root.modeAt])
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
@@ -368,7 +367,7 @@ Panel {
                 required property int index
                 readonly property string name: String(modelData)
 
-                width: root.modes.length > 0 ? (modeRow.width - modeRow.spacing * (root.modes.length - 1)) / root.modes.length : 0
+                width: (modeRow.width - modeRow.spacing * (root.modes.length - 1)) / root.modes.length
                 iconText: Model.modeIcon(name)
                 iconSize: Style.font.title
                 text: name.charAt(0).toUpperCase() + name.slice(1)
