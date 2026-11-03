@@ -3,69 +3,80 @@
 # nova:summary=Send a Nova desktop notification
 # nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]
 
+# A notification's text can come from anywhere, a web page's title say, so none
+# of it is ever taken for more than text: the headline and the description are
+# the first two words that are no option, and what a click runs is only the
+# words after --exec, which the shell runs as they are, never through a shell.
+
 set -euo pipefail
 
 usage() {
   echo "Usage: nova-notification-send [--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]" >&2
 }
 
+fail() {
+  echo "nova-notification-send: $1" >&2
+  exit 1
+}
+
 app_name=nova-action
-icon=""
-glyph=""
-image=""
+glyph=''
+icon=''
+image=''
 urgency=low
 expire=-1
 replaces=0
 print_id=false
 click=()
-clickable=false
+clicks=false
 
-# Takes the option at the front of the arguments, as "--name value" or
-# "--name=value", and leaves in $taken how many words it was; a word that is no
-# option returns 1.
-take_option() {
-  local name=$1 value=${2-}
-  taken=2
-  if [[ $name == --?*=* ]]; then
-    value=${name#*=} name=${name%%=*} taken=1
-  fi
-  case $name in
-    -p | --print-id)
-      print_id=true taken=1
-      return 0
-      ;;
-    -g | --glyph | -u | --urgency | --app-name | -i | --icon | --image | -r | --replace-id | -t | --expire-time) ;;
+# The variable an option with a value sets, into $setting.
+setting_of() {
+  case $1 in
+    -g | --glyph) setting=glyph ;;
+    -u | --urgency) setting=urgency ;;
+    --app-name) setting=app_name ;;
+    -i | --icon) setting=icon ;;
+    --image) setting=image ;;
+    -r | --replace-id) setting=replaces ;;
+    -t | --expire-time) setting=expire ;;
     *) return 1 ;;
-  esac
-  if ((taken == 2 && $# < 2)); then
-    echo "Missing value for $name" >&2
-    exit 1
-  fi
-  case $name in
-    -g | --glyph) glyph=$value ;;
-    -u | --urgency) urgency=$value ;;
-    --app-name) app_name=$value ;;
-    -i | --icon) icon=$value ;;
-    --image) image=$value ;;
-    -r | --replace-id)
-      if [[ ! $value =~ ^[0-9]+$ ]]; then
-        echo "Invalid $name value (numeric id expected): $value" >&2
-        exit 1
-      fi
-      replaces=$value
-      ;;
-    -t | --expire-time)
-      if [[ ! $value =~ ^-?[0-9]+$ ]]; then
-        echo "Invalid $name value (milliseconds expected): $value" >&2
-        exit 1
-      fi
-      expire=$value
-      ;;
   esac
 }
 
-# Options, up to the first word that is none: the headline.
-while (($#)) && take_option "$@"; do shift "$taken"; done
+# Whether a word is an option, or --exec.
+is_option() {
+  case $1 in
+    -p | --print-id | --exec) return 0 ;;
+    --?*=*) setting_of "${1%%=*}" ;;
+    *) setting_of "$1" ;;
+  esac
+}
+
+# Takes the option at the front of the arguments, as "--name value" or
+# "--name=value", and leaves in $used the words it took; returns 1 for a word
+# that is no option.
+take() {
+  local name=$1 value=${2-}
+  used=2
+  if [[ $name == --?*=* ]]; then
+    value=${name#*=} name=${name%%=*} used=1
+  fi
+  if [[ $name == -p || $name == --print-id ]]; then
+    print_id=true used=1
+    return 0
+  fi
+  setting_of "$name" || return 1
+  ((used == 1 || $# >= 2)) || fail "$name needs a value"
+  case $setting in
+    replaces) [[ $value =~ ^[0-9]+$ ]] || fail "$name takes a notification's id, not $value" ;;
+    expire) [[ $value =~ ^-?[0-9]+$ ]] || fail "$name takes milliseconds, not $value" ;;
+  esac
+  printf -v "$setting" '%s' "$value"
+}
+
+# Options, then the headline: the first word that is none.
+while (($#)) && take "$@"; do shift "$used"; done
 if (($# == 0)); then
   usage
   exit 1
@@ -73,75 +84,59 @@ fi
 headline=$1
 shift
 
-# The word after the headline is the description, though it starts with a dash
-# ("-50% off" is text), unless it is one of the options or --exec.
-description=""
-if (($#)); then
-  case $1 in
-    -g | --glyph | -u | --urgency | --app-name | -i | --icon | -t | --expire-time | --image | -r | --replace-id | -p | --print-id | --exec) ;;
-    --glyph=* | --urgency=* | --app-name=* | --icon=* | --expire-time=* | --image=* | --replace-id=*) ;;
-    *)
-      description=$1
-      shift
-      ;;
-  esac
+# The description is the next word, though it starts with a dash ("-50% off"),
+# unless it is an option or --exec.
+description=''
+if (($#)) && ! is_option "$1"; then
+  description=$1
+  shift
 fi
 
-# More options, then --exec and the command a click runs, one word each, to
-# the end. --exec is looked for only here, after the text, so a headline that
-# reads "--exec" stays a headline.
+# More options, then --exec and the command a click runs, a word each, to the
+# end. --exec counts only here, after the text, so a headline "--exec" is text.
 while (($#)); do
   if [[ $1 == --exec ]]; then
     shift
-    click=("$@")
-    clickable=true
+    click=("$@") clicks=true
     break
   fi
-  if ! take_option "$@"; then
-    echo "Unknown option: $1" >&2
+  if ! take "$@"; then
+    echo "nova-notification-send: $1 is no option, and the text is two words at most" >&2
     usage
     exit 1
   fi
-  shift "$taken"
+  shift "$used"
 done
 
 case $urgency in
   low) level=0 ;;
   normal) level=1 ;;
   critical) level=2 ;;
-  *)
-    echo "Unknown urgency: $urgency (use low, normal, or critical)" >&2
-    exit 1
-    ;;
+  *) fail "the urgency is low, normal or critical, not $urgency" ;;
 esac
 
-# The hints, a{sv}, as busctl writes them: a name, a type, a value.
+# The hints, an a{sv}, as busctl takes them: a name, a type and a value each.
 hints=(urgency y "$level")
-if [[ -n $glyph ]]; then hints+=(nova-glyph s "$glyph"); fi
-if [[ -n $image ]]; then hints+=(image-path s "$image"); fi
-if $clickable; then
-  if ((${#click[@]} == 0)) || [[ -z ${click[0]} ]]; then
-    echo "--exec needs a command: --exec <program> [args...]" >&2
-    exit 1
-  fi
-  # A command in one quoted word would run a program of that whole name. It
-  # is refused rather than split, as splitting it here would let its text
-  # become commands.
+[[ -z $glyph ]] || hints+=(nova-glyph s "$glyph")
+[[ -z $image ]] || hints+=(image-path s "$image")
+if $clicks; then
+  ((${#click[@]})) && [[ -n ${click[0]} ]] || fail "--exec needs the command a click runs"
+  # One word with a space in it is a whole command line, which would run a
+  # program of that name. Splitting it here would let its text become
+  # commands, so it is refused.
   if ((${#click[@]} == 1)) && [[ ${click[0]} == *[[:space:]]* ]]; then
-    echo "--exec takes the command as separate words, not one quoted string." >&2
-    echo "Write:  --exec ${click[0]}" >&2
-    exit 1
+    fail "--exec takes the command a word each, as in: --exec ${click[0]}"
   fi
-  # The shell runs the words as they are, never through a shell. They reach
-  # jq NUL-separated, so a newline or a lone "--" in one stays inside it.
+  # The words go to jq NUL-separated, so a newline or a lone "--" in one stays
+  # inside it.
   hints+=(nova-exec-argv s "$(printf '%s\0' "${click[@]}" | jq -Rsc 'split("\u0000")[:-1]')")
 fi
 
-# org.freedesktop.Notifications.Notify (susssasa{sv}i: app name, the id to
-# replace, icon, summary, body, actions, hints, timeout), called through busctl
-# rather than notify-send, which reads a headline such as "--hint=..." as one
-# of its options. busctl takes each value as one typed argument, and its "--"
-# keeps one that starts with a dash from being taken for an option of its own.
+# org.freedesktop.Notifications.Notify, susssasa{sv}i: the app's name, the id
+# it replaces, the icon, the headline, the description, the actions (none), the
+# hints and the timeout. busctl, not notify-send, as notify-send would read a
+# headline such as "--hint=..." as an option of its own; busctl takes each value
+# as one typed argument, and its "--" keeps one that starts with a dash a value.
 notify=(
   busctl --user -- call
   org.freedesktop.Notifications /org/freedesktop/Notifications
@@ -152,11 +147,11 @@ notify=(
   "$expire"
 )
 
-# -p prints the new notification's id, which -r can replace later; busctl
+# -p prints the new notification's id, for -r to replace it later; busctl
 # answers "u <id>".
 if $print_id; then
-  id=$("${notify[@]}")
-  echo "${id##* }"
+  answer=$("${notify[@]}")
+  echo "${answer##* }"
 else
   "${notify[@]}" >/dev/null
 fi
