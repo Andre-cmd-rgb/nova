@@ -6,10 +6,11 @@ import qs.Commons as Commons
 // caption, that opens the list below itself. The list is a DropdownPopup in
 // [popups]' background and border, not the platform's combo box. <options>
 // are strings, or { value, label } objects that show the label and choose
-// the value, or both; changed() sends the value chosen. <value> is the
-// owner's to set, as a ButtonGroup's is: a choice only sends changed(), so
-// a field bound to a setting keeps following it, and shows what the setting
-// holds when a change fails.
+// the value, or both; one with no label shows its value.
+//
+// <value> is the owner's to set, as a ButtonGroup's is: a choice only sends
+// changed() with the value chosen, so a field bound to a setting keeps
+// following it, and shows what the setting holds when a change fails.
 //
 // The field is a Tab stop; Return, Enter, Space or Down opens or closes the
 // list, Escape closes it, and so does a click. Its face is in the focus
@@ -49,7 +50,8 @@ Item {
   }
 
   function optionLabel(o) {
-    return o && typeof o === "object" ? String(o.label) : String(o)
+    if (!o || typeof o !== "object") return String(o)
+    return String(o.label !== undefined ? o.label : o.value)
   }
 
   // The chosen option's label, or the value itself when no option has it.

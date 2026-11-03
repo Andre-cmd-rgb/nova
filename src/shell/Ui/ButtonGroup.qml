@@ -4,8 +4,8 @@ import qs.Commons as Commons
 
 // A row of bordered buttons of which one is the chosen: the bar's position,
 // a display's scale. A click sends changed() with the option's value. An
-// option is a string, its own value and label, or an object with a value
-// and any of label, icon and tooltip.
+// option is a string, its own value and label, or a { value, label }
+// object; one with no label shows its value.
 //
 // The row is a single Tab stop. With the focus, Left and Right (h and l)
 // walk the buttons, from the chosen one, and Return, Enter or Space takes
@@ -41,15 +41,8 @@ Row {
   }
 
   function optionLabel(o) {
-    return String(_isEntry(o) && o.label !== undefined ? o.label : o)
-  }
-
-  function optionIcon(o) {
-    return _isEntry(o) && o.icon ? String(o.icon) : ""
-  }
-
-  function optionTooltip(o) {
-    return _isEntry(o) && o.tooltip ? String(o.tooltip) : ""
+    if (!_isEntry(o)) return String(o)
+    return String(o.label !== undefined ? o.label : o.value)
   }
 
   // The chosen option's place; -1 when <value> is none of them.
@@ -86,8 +79,6 @@ Row {
       required property int index
 
       text: group.optionLabel(modelData)
-      iconText: group.optionIcon(modelData)
-      tooltipText: group.optionTooltip(modelData)
       selected: group.optionValue(modelData) === group.value
       hasCursor: index === group.cursorIndex || (group.activeFocus && index === group._walked)
       bordered: true

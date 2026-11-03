@@ -4,7 +4,8 @@ import qs.Ui
 
 // A dropdown's value is its owner's: a choice sends changed() and leaves the
 // field showing what the owner holds, so a field bound to a setting shows a
-// change it refused as refused, and follows the setting after a choice.
+// change it refused as refused, and follows the setting after a choice. In a
+// dropdown and a button group alike, an option with no label shows its value.
 ShellRoot {
   id: test
 
@@ -30,6 +31,18 @@ ShellRoot {
       value: test.refused
       onChanged: function (value) { test.sent = test.sent.concat([value]) }
     }
+
+    Dropdown {
+      id: unlabelled
+      options: [{ value: "left-of" }, { value: "above", label: "Above" }, "below"]
+      value: "left-of"
+    }
+
+    ButtonGroup {
+      id: buttons
+      options: [{ value: "left-of" }, { value: "above", label: "Above" }, "below"]
+      value: "left-of"
+    }
   }
 
   Component.onCompleted: Qt.callLater(function () {
@@ -48,6 +61,11 @@ ShellRoot {
     refusing.choose(-1)
     refusing.choose(3)
     check(test.sent.length === 1, "an index outside the list sends nothing")
+
+    var labels = [0, 1, 2].map(function (i) { return unlabelled.optionLabel(unlabelled.options[i]) })
+    check(JSON.stringify(labels) === '["left-of","Above","below"]' && unlabelled.currentLabel() === "left-of", "a dropdown's option with no label shows its value")
+    labels = [0, 1, 2].map(function (i) { return buttons.optionLabel(buttons.options[i]) })
+    check(JSON.stringify(labels) === '["left-of","Above","below"]', "a button group's option with no label shows its value")
     console.log("DONE")
     Qt.quit()
   })
