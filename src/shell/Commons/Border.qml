@@ -3,10 +3,16 @@ import QtQuick
 import qs.Commons as Commons
 import "BorderGeometry.js" as Geometry
 
-// Central border-spec factory for shell surfaces and controls. A spec carries
-// color, optional gradient, and top/right/bottom/left widths so renderers can
-// choose the cheap Rectangle path or the Shape-ring path without duplicating
-// theme parsing logic.
+// Borders as the theme describes them, handed out as specs: { color, widths,
+// gradient }. BorderSurface draws a spec with Rectangle.border where it can
+// (one colour, one width) and with BorderOverlay where it cannot.
+//
+// A surface's border comes from its shell.toml section: <token> is the colour
+// or Hyprland-style gradient, or the name of another key ("hyprland.active-
+// border") to take it from, <token>-alpha its opacity, and <token>-width a
+// CSS-style width list with -top, -right, -bottom and -left to set one side.
+// A token other than "border" falls back on the section's border-width keys.
+// A control's border comes from [controls] the same way, per state.
 QtObject {
   id: root
 
@@ -22,29 +28,34 @@ QtObject {
     }
   }
 
+  // <section>.<key> from shell.toml, "" when it is not there.
   function value(section, key) {
-    var v = Commons.Color.shellValues[section + "." + key]
-    return (v === undefined || v === null) ? "" : v
+    var found = Commons.Color.shellValues[section + "." + key]
+    return found === undefined || found === null ? "" : found
   }
 
+  // The first of <keys> the section sets.
   function valueOr(section, keys) {
     for (var i = 0; i < keys.length; i++) {
-      var v = value(section, keys[i])
-      if (String(v).length > 0) return v
+      var found = value(section, keys[i])
+      if (String(found).length > 0) return found
     }
     return ""
   }
 
+  // A value that names another key ("hyprland.active-border") is that key's
+  // value, followed until it is not a name, names one that is not set, or
+  // comes round again.
   function resolveValueRef(raw) {
-    var s = String(raw || "").replace(/^\s+|\s+$/g, "")
-    var seen = {}
-    while (s.match(/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/) && !seen[s]) {
-      seen[s] = true
-      var next = Commons.Color.shellValues[s]
+    var current = String(raw || "").trim()
+    var visited = {}
+    while (/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(current) && !visited[current]) {
+      visited[current] = true
+      var next = Commons.Color.shellValues[current]
       if (next === undefined || next === null || String(next).length === 0) break
-      s = String(next).replace(/^\s+|\s+$/g, "")
+      current = String(next).trim()
     }
-    return s
+    return current
   }
 
   function alpha(section, key, fallback) {
@@ -54,121 +65,128 @@ QtObject {
     return isFinite(n) ? Geometry.clampAlpha(n) : fallback
   }
 
+  // A colour at <opacity> times its own alpha: a colour value, a palette role
+  // (foreground or text, accent, urgent, background), "transparent", or any
+  // form Geometry.canonicalColor reads. Anything else comes back as text.
   function cssColor(color, opacity) {
-    var a = opacity === undefined || opacity === null ? 1 : Geometry.clampAlpha(opacity)
-    if (color && typeof color === "object" && color.r !== undefined) {
-      if (typeof Qt !== "undefined" && Qt.rgba) {
-        return Qt.rgba(color.r, color.g, color.b, (color.a === undefined ? 1 : color.a) * a)
-      }
-      return "#"
-        + Geometry.padHex(color.r * 255)
-        + Geometry.padHex(color.g * 255)
-        + Geometry.padHex(color.b * 255)
-        + Geometry.padHex((color.a === undefined ? 1 : color.a) * a * 255)
-    }
+    var scale = opacity === undefined || opacity === null ? 1 : Geometry.clampAlpha(opacity)
+    if (color && typeof color === "object" && color.r !== undefined)
+      return Qt.rgba(color.r, color.g, color.b, (color.a === undefined ? 1 : color.a) * scale)
 
-    var s = String(color || "").replace(/^\s+|\s+$/g, "")
-    var role = s.toLowerCase()
-    if (role === "foreground" || role === "text") return cssColor(Commons.Color.foreground, a)
-    if (role === "accent") return cssColor(Commons.Color.accent, a)
-    if (role === "urgent") return cssColor(Commons.Color.urgent, a)
-    if (role === "background") return cssColor(Commons.Color.background, a)
-    if (role === "transparent") return "transparent"
-    return Geometry.canonicalColor(s, a)
+    var text = String(color || "").trim()
+    switch (text.toLowerCase()) {
+    case "foreground":
+    case "text":
+      return cssColor(Commons.Color.foreground, scale)
+    case "accent":
+      return cssColor(Commons.Color.accent, scale)
+    case "urgent":
+      return cssColor(Commons.Color.urgent, scale)
+    case "background":
+      return cssColor(Commons.Color.background, scale)
+    case "transparent":
+      return "transparent"
+    }
+    return Geometry.canonicalColor(text, scale)
   }
 
+  // A border value, read as a gradient: the colours at <opacity>, the last
+  // "<n>deg" its angle. With no colour in it, <fallbackColor>. Empty is no
+  // gradient at all.
   function resolvedGradient(raw, fallbackColor, opacity) {
-    var s = String(raw || "").replace(/^\s+|\s+$/g, "")
-    if (s.length === 0) return { colors: [], angle: 0, enabled: false }
+    var text = String(raw || "").trim()
+    if (text.length === 0) return { colors: [], angle: 0, enabled: false }
 
-    var parts = s.split(/\s+/)
     var colors = []
     var angle = 0
-    for (var i = 0; i < parts.length; i++) {
-      if (parts[i].match(/^-?\d+(?:\.\d+)?deg$/)) angle = Number(parts[i].replace(/deg$/, ""))
-      else colors.push(cssColor(parts[i], opacity))
-    }
+    text.split(/\s+/).forEach(function(part) {
+      if (/^-?\d+(?:\.\d+)?deg$/.test(part)) angle = Number(part.replace(/deg$/, ""))
+      else colors.push(cssColor(part, opacity))
+    })
     if (colors.length === 0) colors.push(cssColor(fallbackColor, opacity))
     return { colors: colors, angle: angle, enabled: colors.length > 1 }
   }
 
+  // Whether two colours, as values or text, are the same to the byte.
   function sameColor(a, b) {
-    if (typeof Qt === "undefined" || !Qt.color) return String(a) === String(b)
-    var ca = typeof a === "string" ? Qt.color(a) : a
-    var cb = typeof b === "string" ? Qt.color(b) : b
-    if (!ca || !cb || ca.r === undefined || cb.r === undefined) return String(a) === String(b)
-    return Math.round(ca.r * 255) === Math.round(cb.r * 255)
-      && Math.round(ca.g * 255) === Math.round(cb.g * 255)
-      && Math.round(ca.b * 255) === Math.round(cb.b * 255)
-      && Math.round((ca.a === undefined ? 1 : ca.a) * 255) === Math.round((cb.a === undefined ? 1 : cb.a) * 255)
+    var first = typeof a === "string" ? Qt.color(a) : a
+    var second = typeof b === "string" ? Qt.color(b) : b
+    if (!first || !second || first.r === undefined || second.r === undefined) return String(a) === String(b)
+    var bytes = function(c) {
+      return [c.r, c.g, c.b, c.a === undefined ? 1 : c.a].map(function(channel) { return Math.round(channel * 255) }).join()
+    }
+    return bytes(first) === bytes(second)
   }
 
+  // A control given a colour of its own draws a plain border in it; one left
+  // at the theme's <defaultColor> draws the section's border.
   function localOrSurfaceSpec(section, token, localColor, defaultColor, fallbackWidth, alphaKey) {
     if (!sameColor(localColor, defaultColor)) return flat(localColor, fallbackWidth)
     return surfaceSpec(section, token, localColor, fallbackWidth, alphaKey)
   }
 
-  function surfaceWidths(section, token, fallbackWidth) {
-    var base = valueOr(section, token === "border" ? ["border-width"] : [token + "-width", "border-width"])
-    var widths = Geometry.parseWidthSpec(base, fallbackWidth)
-    return Geometry.withSideOverrides(
-      widths,
-      valueOr(section, token === "border" ? ["border-width-top"] : [token + "-width-top", "border-width-top"]),
-      valueOr(section, token === "border" ? ["border-width-right"] : [token + "-width-right", "border-width-right"]),
-      valueOr(section, token === "border" ? ["border-width-bottom"] : [token + "-width-bottom", "border-width-bottom"]),
-      valueOr(section, token === "border" ? ["border-width-left"] : [token + "-width-left", "border-width-left"])
-    )
+  // The keys a token's widths come from: its own, then the section's border's.
+  function widthKeys(token, suffix) {
+    var names = token === "border" ? ["border"] : [token, "border"]
+    return names.map(function(name) { return name + "-width" + suffix })
   }
 
+  function surfaceWidths(section, token, fallbackWidth) {
+    return Geometry.withSideOverrides(
+      Geometry.parseWidthSpec(valueOr(section, widthKeys(token, "")), fallbackWidth),
+      valueOr(section, widthKeys(token, "-top")),
+      valueOr(section, widthKeys(token, "-right")),
+      valueOr(section, widthKeys(token, "-bottom")),
+      valueOr(section, widthKeys(token, "-left")))
+  }
+
+  // The colour and gradient of a border value, <fallbackColor> where it is
+  // empty. A one-colour value can still take its gradient from
+  // <legacyGradientRaw>, the separate *-gradient key of older configs.
   function borderValue(raw, fallbackColor, opacity, legacyGradientRaw) {
     var fallback = cssColor(fallbackColor, opacity)
-    var primaryRaw = String(raw || "").replace(/^\s+|\s+$/g, "")
-    var primary = resolvedGradient(primaryRaw.length > 0 ? primaryRaw : fallbackColor, fallbackColor, opacity)
-    var color = primary.colors.length > 0 ? primary.colors[0] : fallback
-    var gradient = primary.enabled ? primary : { colors: [], angle: 0, enabled: false }
+    var given = String(raw || "").trim()
+    var read = resolvedGradient(given.length > 0 ? given : fallbackColor, fallbackColor, opacity)
+    var color = read.colors.length > 0 ? read.colors[0] : fallback
+    var gradient = read.enabled ? read : { colors: [], angle: 0, enabled: false }
 
-    // Backward compatibility for existing configs written during the separate
-    // border-gradient experiment. New configs put solid colors and gradients in
-    // the same border token.
-    if (!gradient.enabled && String(legacyGradientRaw || "").replace(/^\s+|\s+$/g, "").length > 0) {
+    if (!gradient.enabled && String(legacyGradientRaw || "").trim().length > 0) {
       var legacy = resolvedGradient(legacyGradientRaw, color, opacity)
       if (legacy.enabled) gradient = legacy
     }
-
     return { color: color, gradient: gradient }
   }
 
   function surfaceSpec(section, token, fallbackColor, fallbackWidth, alphaKey) {
     var opacity = alpha(section, alphaKey || token + "-alpha", 1.0)
-    var legacyGradientRaw = valueOr(section, token === "border" ? ["border-gradient"] : [token + "-gradient", "border-gradient"])
-    var resolved = borderValue(resolveValueRef(value(section, token)), fallbackColor, opacity, legacyGradientRaw)
-
-    return {
-      color: resolved.color,
-      widths: surfaceWidths(section, token, fallbackWidth),
-      gradient: resolved.gradient,
-    }
+    var legacyGradient = valueOr(section, token === "border" ? ["border-gradient"] : [token + "-gradient", "border-gradient"])
+    var read = borderValue(resolveValueRef(value(section, token)), fallbackColor, opacity, legacyGradient)
+    return { color: read.color, widths: surfaceWidths(section, token, fallbackWidth), gradient: read.gradient }
   }
 
+  // The border Hyprland draws round the active window, from [hyprland]; a
+  // theme from before that section has it as the notifications' border.
   function hyprlandActiveSpec(fallbackColor, fallbackWidth) {
     var raw = value("hyprland", "active-border")
     var opacity = alpha("hyprland", "active-border-alpha", 1.0)
-
-    // Existing generated themes predate [hyprland] and already keep the active
-    // border under [notifications]. Use it as the compatibility source until
-    // the next theme refresh writes the shared token.
     if (String(raw).length === 0) {
       raw = value("notifications", "border")
       opacity = alpha("notifications", "border-alpha", opacity)
     }
-
-    var resolved = borderValue(resolveValueRef(raw), fallbackColor, opacity, "")
+    var read = borderValue(resolveValueRef(raw), fallbackColor, opacity, "")
     return {
-      color: resolved.color,
+      color: read.color,
       widths: Geometry.parseWidthSpec(value("hyprland", "active-border-width"), fallbackWidth),
-      gradient: resolved.gradient,
+      gradient: read.gradient,
     }
   }
+
+  // ------------------------------------------------------------ controls
+  //
+  // A control's state is normal, hover-cursor (also "hover" and "hot"),
+  // focus or selected; its keys in [controls] are <state>-border,
+  // <state>-border-gradient and <state>-border-width with its sides, and
+  // Style holds the colour, alpha and width each falls back on.
 
   function controlPrefix(state) {
     if (state === "hover" || state === "hot") return "hover-cursor"
@@ -176,38 +194,48 @@ QtObject {
   }
 
   function controlColor(prefix, foreground, accent, urgent) {
-    if (prefix === "focus") return Style.focusStateColor(foreground, accent, urgent)
-    if (prefix === "hover-cursor") return Style.hoverStateColor(foreground, accent, urgent)
-    if (prefix === "selected") return Style.selectedStateColor(foreground, accent, urgent)
+    switch (prefix) {
+    case "focus":
+      return Style.focusStateColor(foreground, accent, urgent)
+    case "hover-cursor":
+      return Style.hoverStateColor(foreground, accent, urgent)
+    case "selected":
+      return Style.selectedStateColor(foreground, accent, urgent)
+    }
     return Style.normalStateColor(foreground, accent, urgent)
   }
 
   function controlAlpha(prefix) {
-    if (prefix === "focus") return Style.focusBorderAlpha
-    if (prefix === "hover-cursor") return Style.hoverBorderAlpha
-    if (prefix === "selected") return Style.selectedBorderAlpha
+    switch (prefix) {
+    case "focus":
+      return Style.focusBorderAlpha
+    case "hover-cursor":
+      return Style.hoverBorderAlpha
+    case "selected":
+      return Style.selectedBorderAlpha
+    }
     return Style.normalBorderAlpha
   }
 
   function controlFallbackWidth(prefix) {
-    if (prefix === "focus") return Style.focusBorderWidth
-    if (prefix === "hover-cursor") return Style.hoverBorderWidth
-    if (prefix === "selected") return Style.selectedBorderWidth
+    switch (prefix) {
+    case "focus":
+      return Style.focusBorderWidth
+    case "hover-cursor":
+      return Style.hoverBorderWidth
+    case "selected":
+      return Style.selectedBorderWidth
+    }
     return Style.normalBorderWidth
   }
 
   function controlWidths(state) {
     var prefix = controlPrefix(state)
-    var fallbackWidth = controlFallbackWidth(prefix)
-    var base = Style.styleOverrides[prefix + "-border-width"]
-    var widths = Geometry.parseWidthSpec(base, fallbackWidth)
+    var keys = Style.styleOverrides
+    var key = prefix + "-border-width"
     return Geometry.withSideOverrides(
-      widths,
-      Style.styleOverrides[prefix + "-border-width-top"],
-      Style.styleOverrides[prefix + "-border-width-right"],
-      Style.styleOverrides[prefix + "-border-width-bottom"],
-      Style.styleOverrides[prefix + "-border-width-left"]
-    )
+      Geometry.parseWidthSpec(keys[key], controlFallbackWidth(prefix)),
+      keys[key + "-top"], keys[key + "-right"], keys[key + "-bottom"], keys[key + "-left"])
   }
 
   function controlHasWidth(state) {
@@ -216,15 +244,12 @@ QtObject {
 
   function controlSpec(state, foreground, accent, urgent) {
     var prefix = controlPrefix(state)
-    var resolved = borderValue(
-      Style.styleOverrides[prefix + "-border"],
-      controlColor(prefix, foreground, accent, urgent),
-      controlAlpha(prefix),
-      Style.styleOverrides[prefix + "-border-gradient"]
-    )
-
-    return { color: resolved.color, widths: controlWidths(prefix), gradient: resolved.gradient }
+    var read = borderValue(Style.styleOverrides[prefix + "-border"], controlColor(prefix, foreground, accent, urgent),
+      controlAlpha(prefix), Style.styleOverrides[prefix + "-border-gradient"])
+    return { color: read.color, widths: controlWidths(prefix), gradient: read.gradient }
   }
+
+  // ------------------------------------------------------------ reading specs
 
   function withWidth(spec, width) {
     if (!spec) return flat("transparent", 0)
@@ -238,6 +263,6 @@ QtObject {
   function right(spec) { return spec && spec.widths ? spec.widths.right : 0 }
   function bottom(spec) { return spec && spec.widths ? spec.widths.bottom : 0 }
   function left(spec) { return spec && spec.widths ? spec.widths.left : 0 }
-  function uniformWidth(spec) { return spec && spec.widths ? spec.widths.top : 0 }
+  function uniformWidth(spec) { return top(spec) }
   function color(spec) { return spec ? spec.color : "transparent" }
 }

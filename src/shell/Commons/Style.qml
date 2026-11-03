@@ -4,51 +4,41 @@ import qs.Commons as Commons
 import Quickshell
 import Quickshell.Io
 
-// Shared structural style tokens for the shell. Color is the palette
-// singleton; Style holds everything else themes can influence — corner
-// rounding, gap to screen edges, state affordances, spacing, typography
-// scale, and bar dimensions.
+// Everything about the shell's look but its colours: corners and the gap to
+// the screen's edge, which follow Hyprland, and from shell.toml the controls'
+// states, the spacing, the type sizes and the bar's size.
 //
-// `cornerRadius` mirrors Hyprland's `decoration:rounding`. `gapsOut` is
-// half of Hyprland's `general:gaps_out` — Hyprland's value works well as
-// a window-to-window gap but feels too cavernous when used as the
-// distance from a panel/notification to the screen edge, so the shell
-// halves it. Themes and user Hyprland config own those values; the
-// shell picks them up by re-running `hyprctl getoption` on startup and
-// after theme IPC applies a theme.
+// cornerRadius is Hyprland's decoration:rounding. gapsOut is half its
+// general:gaps_out: the full gap, right between windows, leaves a panel or a
+// notification too far from the screen's edge. Both are asked of hyprctl at
+// start, after a theme is applied, and when the window-gaps toggle changes.
 //
-// Typography, spacing, and bar size come from theme/shell.toml.
-// `[font] base-size` is the rem root; every `Style.font.<token>` derives
-// from it via the scale multipliers below unless the theme pins that
-// specific token. `[spacing] scale` multiplies shared margins, gaps,
-// padding, controls, and panel dimensions while preserving each component's
-// proportions; by default it also tracks `base-size`. `[bar]
-// size-horizontal` / `size-vertical` set the cross-axis dimension for
-// top/bottom and left/right bars at the default 12px font size; by default
-// those dimensions scale with `base-size` so larger fonts don't clip.
+// [font] base-size is the root of the type scale: every Style.font size is a
+// multiple of it unless shell.toml sets that size itself. [spacing] scale
+// multiplies every margin, gap, padding and control size, and by default
+// grows with base-size too, as do the bar's sizes ([bar] size-horizontal and
+// size-vertical, given for a 12px base).
 QtObject {
   id: root
 
   property int cornerRadius: 0
   property int gapsOut: 5
 
-  // ---------------------------------------------------------- state tokens
+  // ---------------------------------------------------------- control states
   //
-  // Shared interactive-state tokens for every reusable surface in the kit.
-  // The vocabulary:
-  //   normal       — idle control chrome
-  //   hover-cursor — mouse hover OR panel keyboard cursor (`hasCursor`)
-  //   selected     — persistent chosen/current state
-  //   focus        — actual Qt activeFocus, defaulting to hover-cursor
-  //
-  // Each state has a color token plus fill/border alphas. Color tokens
-  // may be palette roles (`foreground`, `accent`, `urgent`, `background`)
-  // or hex colors. Set a state's border width to 0 to drop that border.
+  // How a control looks in each state, from [controls] in shell.toml ([style]
+  // in older ones):
+  //   normal        at rest
+  //   hover-cursor  under the mouse, or under a panel's keyboard cursor
+  //   selected      chosen, or current
+  //   focus         holding Qt's keyboard focus; as hover-cursor unless set
+  // and pressed and selection, which are fills only. A state has a colour
+  // (<state>-color: a palette role or a hex colour), a fill alpha, and a
+  // border's alpha and width; a width of 0 draws no border.
   property var styleOverrides: ({})
 
   function styleRawNum(key) {
-    var v = styleOverrides[key]
-    var n = Number(v)
+    var n = Number(styleOverrides[key])
     return isFinite(n) ? n : null
   }
 
@@ -62,10 +52,14 @@ QtObject {
   }
 
   function styleString(key, fallback) {
-    var v = styleOverrides[key]
-    if (typeof v !== "string") return fallback
-    v = v.replace(/^\s+|\s+$/g, "")
-    return v.length > 0 ? v : fallback
+    var raw = styleOverrides[key]
+    if (typeof raw !== "string") return fallback
+    raw = raw.trim()
+    return raw.length > 0 ? raw : fallback
+  }
+
+  function styleWidth(key, fallback) {
+    return Math.max(0, Math.round(styleNum(key, fallback)))
   }
 
   readonly property string normalColorToken: styleString("normal-color", "foreground")
@@ -75,118 +69,115 @@ QtObject {
   readonly property string focusColorToken: styleString("focus-color", hoverColorToken)
   readonly property string selectionColorToken: styleString("selection-color", "foreground")
 
-  readonly property int normalBorderWidth: Math.max(0, Math.round(styleNum("normal-border-width", 1)))
-  readonly property int hoverBorderWidth: Math.max(0, Math.round(styleNum("hover-cursor-border-width", normalBorderWidth)))
-  readonly property int selectedBorderWidth: Math.max(0, Math.round(styleNum("selected-border-width", 0)))
-  readonly property int focusBorderWidth: Math.max(0, Math.round(styleNum("focus-border-width", hoverBorderWidth)))
+  readonly property int normalBorderWidth: styleWidth("normal-border-width", 1)
+  readonly property int hoverBorderWidth: styleWidth("hover-cursor-border-width", normalBorderWidth)
+  readonly property int selectedBorderWidth: styleWidth("selected-border-width", 0)
+  readonly property int focusBorderWidth: styleWidth("focus-border-width", hoverBorderWidth)
 
-  readonly property real normalFillAlpha:    styleAlpha("normal-fill-alpha", 0.04)
-  readonly property real hoverFillAlpha:     styleAlpha("hover-cursor-fill-alpha", 0.08)
-  readonly property real selectedFillAlpha:  styleAlpha("selected-fill-alpha", 0.18)
-  readonly property real pressedFillAlpha:   styleAlpha("pressed-fill-alpha", 0.22)
-  readonly property real focusFillAlpha:     styleAlpha("focus-fill-alpha", hoverFillAlpha)
+  readonly property real normalFillAlpha: styleAlpha("normal-fill-alpha", 0.04)
+  readonly property real hoverFillAlpha: styleAlpha("hover-cursor-fill-alpha", 0.08)
+  readonly property real selectedFillAlpha: styleAlpha("selected-fill-alpha", 0.18)
+  readonly property real pressedFillAlpha: styleAlpha("pressed-fill-alpha", 0.22)
+  readonly property real focusFillAlpha: styleAlpha("focus-fill-alpha", hoverFillAlpha)
   readonly property real selectionFillAlpha: styleAlpha("selection-fill-alpha", 0.35)
 
-  readonly property real normalBorderAlpha:   styleAlpha("normal-border-alpha", 0.4)
-  readonly property real hoverBorderAlpha:    styleAlpha("hover-cursor-border-alpha", 0.25)
+  readonly property real normalBorderAlpha: styleAlpha("normal-border-alpha", 0.4)
+  readonly property real hoverBorderAlpha: styleAlpha("hover-cursor-border-alpha", 0.25)
   readonly property real selectedBorderAlpha: styleAlpha("selected-border-alpha", 1.0)
-  readonly property real focusBorderAlpha:    styleAlpha("focus-border-alpha", hoverBorderAlpha)
+  readonly property real focusBorderAlpha: styleAlpha("focus-border-alpha", hoverBorderAlpha)
 
+  // "#rgb", "#rrggbb" or "#rrggbbaa" as a colour; anything else is <fallback>.
   function colorFromHex(value, fallback) {
-    var s = String(value || "").replace(/^\s+|\s+$/g, "")
-    var shortHex = s.match(/^#([0-9A-Fa-f]{3})$/)
-    if (shortHex) {
-      var sh = shortHex[1]
-      return Qt.rgba(
-        parseInt(sh.charAt(0) + sh.charAt(0), 16) / 255,
-        parseInt(sh.charAt(1) + sh.charAt(1), 16) / 255,
-        parseInt(sh.charAt(2) + sh.charAt(2), 16) / 255,
-        1)
-    }
-    var hex = s.match(/^#([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?$/)
-    if (!hex) return fallback
-    var h = hex[1]
-    return Qt.rgba(
-      parseInt(h.substr(0, 2), 16) / 255,
-      parseInt(h.substr(2, 2), 16) / 255,
-      parseInt(h.substr(4, 2), 16) / 255,
-      hex[2] ? parseInt(hex[2], 16) / 255 : 1)
+    var text = String(value || "").trim()
+    var three = text.match(/^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/)
+    var channel = function(digits) { return parseInt(digits, 16) / 255 }
+    if (three) return Qt.rgba(channel(three[1] + three[1]), channel(three[2] + three[2]), channel(three[3] + three[3]), 1)
+    var full = text.match(/^#([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})([0-9A-Fa-f]{2})?$/)
+    if (!full) return fallback
+    return Qt.rgba(channel(full[1]), channel(full[2]), channel(full[3]), full[4] ? channel(full[4]) : 1)
   }
 
+  // A state's colour token against a control's own colours: a role picks one
+  // of them (the palette's where the control has none), a hex colour is
+  // itself, and anything else is <fallback>.
   function resolveStateColor(token, foreground, accent, urgent, fallback) {
-    var fb = fallback || foreground || Commons.Color.foreground
-    var s = String(token || "").replace(/^\s+|\s+$/g, "")
-    var role = s.toLowerCase()
-    if (role === "foreground" || role === "text") return foreground || Commons.Color.foreground
-    if (role === "accent") return accent || Commons.Color.accent
-    if (role === "urgent") return urgent || Commons.Color.urgent
-    if (role === "background") return Commons.Color.background
-    if (role === "transparent") return Qt.rgba(0, 0, 0, 0)
-    return colorFromHex(s, fb)
+    var text = String(token || "").trim()
+    switch (text.toLowerCase()) {
+    case "foreground":
+    case "text":
+      return foreground || Commons.Color.foreground
+    case "accent":
+      return accent || Commons.Color.accent
+    case "urgent":
+      return urgent || Commons.Color.urgent
+    case "background":
+      return Commons.Color.background
+    case "transparent":
+      return Qt.rgba(0, 0, 0, 0)
+    }
+    return colorFromHex(text, fallback || foreground || Commons.Color.foreground)
   }
 
-  function normalStateColor(foreground, accent, urgent) {
-    return resolveStateColor(normalColorToken, foreground, accent, urgent, foreground || Commons.Color.foreground)
+  // A state's colour for a control drawn in <foreground>, <accent> and
+  // <urgent>. Where the state's token is neither a role nor a hex colour, it
+  // is the control's foreground; for pressed and focus, hover-cursor's
+  // colour, which focus also takes when its token is "hover", "hover-cursor"
+  // or "inherit".
+  function stateColor(state, foreground, accent, urgent) {
+    var resolve = function(token, fallback) { return resolveStateColor(token, foreground, accent, urgent, fallback) }
+    var own = foreground || Commons.Color.foreground
+    switch (state) {
+    case "hover-cursor":
+      return resolve(hoverColorToken, own)
+    case "selected":
+      return resolve(selectedColorToken, own)
+    case "selection":
+      return resolve(selectionColorToken, own)
+    case "pressed":
+      return resolve(pressedColorToken, stateColor("hover-cursor", foreground, accent, urgent))
+    case "focus":
+      var hover = stateColor("hover-cursor", foreground, accent, urgent)
+      if (["hover", "hover-cursor", "inherit"].indexOf(focusColorToken.trim().toLowerCase()) !== -1) return hover
+      return resolve(focusColorToken, hover)
+    }
+    return resolve(normalColorToken, own)
   }
 
-  function hoverStateColor(foreground, accent, urgent) {
-    return resolveStateColor(hoverColorToken, foreground, accent, urgent, foreground || Commons.Color.foreground)
-  }
+  function normalStateColor(foreground, accent, urgent) { return stateColor("normal", foreground, accent, urgent) }
+  function hoverStateColor(foreground, accent, urgent) { return stateColor("hover-cursor", foreground, accent, urgent) }
+  function selectedStateColor(foreground, accent, urgent) { return stateColor("selected", foreground, accent, urgent) }
+  function pressedStateColor(foreground, accent, urgent) { return stateColor("pressed", foreground, accent, urgent) }
+  function focusStateColor(foreground, accent, urgent) { return stateColor("focus", foreground, accent, urgent) }
+  function selectionStateColor(foreground, accent, urgent) { return stateColor("selection", foreground, accent, urgent) }
 
-  function selectedStateColor(foreground, accent, urgent) {
-    return resolveStateColor(selectedColorToken, foreground, accent, urgent, foreground || Commons.Color.foreground)
-  }
+  // The fills and borders of the states, each the state's colour at its alpha.
+  function normalFillFor(foreground, accent, urgent) { return Util.alpha(stateColor("normal", foreground, accent, urgent), normalFillAlpha) }
+  function hoverFillFor(foreground, accent, urgent) { return Util.alpha(stateColor("hover-cursor", foreground, accent, urgent), hoverFillAlpha) }
+  function selectedFillFor(foreground, accent, urgent) { return Util.alpha(stateColor("selected", foreground, accent, urgent), selectedFillAlpha) }
+  function pressedFillFor(foreground, accent, urgent) { return Util.alpha(stateColor("pressed", foreground, accent, urgent), pressedFillAlpha) }
+  function focusFillFor(foreground, accent, urgent) { return Util.alpha(stateColor("focus", foreground, accent, urgent), focusFillAlpha) }
+  function selectionFillFor(foreground, accent, urgent) { return Util.alpha(stateColor("selection", foreground, accent, urgent), selectionFillAlpha) }
 
-  function pressedStateColor(foreground, accent, urgent) {
-    return resolveStateColor(pressedColorToken, foreground, accent, urgent, hoverStateColor(foreground, accent, urgent))
-  }
+  function normalBorderFor(foreground, accent, urgent) { return Util.alpha(stateColor("normal", foreground, accent, urgent), normalBorderAlpha) }
+  function hoverBorderFor(foreground, accent, urgent) { return Util.alpha(stateColor("hover-cursor", foreground, accent, urgent), hoverBorderAlpha) }
+  function selectedBorderFor(foreground, accent, urgent) { return Util.alpha(stateColor("selected", foreground, accent, urgent), selectedBorderAlpha) }
+  function focusBorderFor(foreground, accent, urgent) { return Util.alpha(stateColor("focus", foreground, accent, urgent), focusBorderAlpha) }
 
-  function focusStateColor(foreground, accent, urgent) {
-    var role = String(focusColorToken || "").replace(/^\s+|\s+$/g, "").toLowerCase()
-    if (role === "hover" || role === "hover-cursor" || role === "inherit")
-      return hoverStateColor(foreground, accent, urgent)
-    return resolveStateColor(focusColorToken, foreground, accent, urgent, hoverStateColor(foreground, accent, urgent))
-  }
-
-  function selectionStateColor(foreground, accent, urgent) {
-    return resolveStateColor(selectionColorToken, foreground, accent, urgent, foreground || Commons.Color.foreground)
-  }
-
-  function normalFillFor(foreground, accent, urgent) { return Util.alpha(normalStateColor(foreground, accent, urgent), normalFillAlpha) }
-  function hoverFillFor(foreground, accent, urgent) { return Util.alpha(hoverStateColor(foreground, accent, urgent), hoverFillAlpha) }
-  function selectedFillFor(foreground, accent, urgent) { return Util.alpha(selectedStateColor(foreground, accent, urgent), selectedFillAlpha) }
-  function pressedFillFor(foreground, accent, urgent) { return Util.alpha(pressedStateColor(foreground, accent, urgent), pressedFillAlpha) }
-  function focusFillFor(foreground, accent, urgent) { return Util.alpha(focusStateColor(foreground, accent, urgent), focusFillAlpha) }
-  function selectionFillFor(foreground, accent, urgent) { return Util.alpha(selectionStateColor(foreground, accent, urgent), selectionFillAlpha) }
-
-  function normalBorderFor(foreground, accent, urgent) { return Util.alpha(normalStateColor(foreground, accent, urgent), normalBorderAlpha) }
-  function hoverBorderFor(foreground, accent, urgent) { return Util.alpha(hoverStateColor(foreground, accent, urgent), hoverBorderAlpha) }
-  function selectedBorderFor(foreground, accent, urgent) { return Util.alpha(selectedStateColor(foreground, accent, urgent), selectedBorderAlpha) }
-  function focusBorderFor(foreground, accent, urgent) { return Util.alpha(focusStateColor(foreground, accent, urgent), focusBorderAlpha) }
-
-  // Composite helpers for the focus > hover > normal priority chain used by
-  // every form control surface (TextField, NumberField, Dropdown, Toggle,
-  // etc.). Saves callers from re-writing the three-line ternary ladder for
-  // fill / border / border-width on every Rectangle background.
+  // A form control's fill, border and border width: focus first, then the
+  // pointer or the panel's cursor, then at rest.
   function controlFill(focused, hot, foreground, accent) {
-    if (focused) return focusFillFor(foreground, accent)
-    if (hot) return hoverFillFor(foreground, accent)
-    return normalFillFor(foreground, accent)
+    return focused ? focusFillFor(foreground, accent) : hot ? hoverFillFor(foreground, accent) : normalFillFor(foreground, accent)
   }
 
   function controlBorder(focused, hot, foreground, accent) {
-    if (focused) return focusBorderFor(foreground, accent)
-    if (hot) return hoverBorderFor(foreground, accent)
-    return normalBorderFor(foreground, accent)
+    return focused ? focusBorderFor(foreground, accent) : hot ? hoverBorderFor(foreground, accent) : normalBorderFor(foreground, accent)
   }
 
   function controlBorderWidth(focused, hot) {
-    if (focused) return focusBorderWidth
-    if (hot) return hoverBorderWidth
-    return normalBorderWidth
+    return focused ? focusBorderWidth : hot ? hoverBorderWidth : normalBorderWidth
   }
 
-  // Convenience colors resolved against the foundational palette.
+  // The states' colours for a control in the palette's own colours.
   readonly property color normalFill: normalFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
   readonly property color hoverFill: hoverFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
   readonly property color selectedFill: selectedFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
@@ -199,13 +190,11 @@ QtObject {
   readonly property color selectedAccentFill: Util.alpha(Commons.Color.accent, selectedFillAlpha)
   readonly property color selectionFill: selectionFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
 
-  // ---------------------------------------------------------- spacing
+  // ---------------------------------------------------------------- spacing
   //
-  // The spacing scale is the shell equivalent of rem for margins, gaps,
-  // and padding. Components keep their existing proportions by asking for
-  // the old pixel value through `Style.space(px)` (or `spaceReal(px)` for
-  // fractional geometry); themes can make the shell denser or roomier
-  // with `[spacing] scale`, or pin individual tokens.
+  // A component asks for the pixels it was drawn with at the default scale,
+  // space(px), and gets them scaled (spaceReal for fractions). Spacing tokens
+  // can each be pinned in shell.toml, in pixels, unscaled.
   property real spacingScale: 1.0
   property bool spacingScaleWithFont: true
   property var spacingOverrides: ({})
@@ -213,20 +202,18 @@ QtObject {
 
   function spaceReal(px) {
     var n = Number(px)
-    if (!isFinite(n) || n <= 0) return 0
-    return n * effectiveSpacingScale
+    return isFinite(n) && n > 0 ? n * effectiveSpacingScale : 0
   }
 
+  // Never rounded down to nothing: what asks for space gets at least a pixel.
   function space(px) {
     var n = spaceReal(px)
-    if (n <= 0) return 0
-    return Math.max(1, Math.round(n))
+    return n > 0 ? Math.max(1, Math.round(n)) : 0
   }
 
   function spacingToken(key, fallback) {
-    var v = spacingOverrides[key]
-    var n = Number(v)
-    return (isFinite(n) && n >= 0) ? Math.round(n) : space(fallback)
+    var n = Number(spacingOverrides[key])
+    return isFinite(n) && n >= 0 ? Math.round(n) : space(fallback)
   }
 
   readonly property QtObject spacing: QtObject {
@@ -261,22 +248,16 @@ QtObject {
     readonly property int popupPadding: root.spacingToken("popup-padding", 14)
   }
 
-  // ---------------------------------------------------------- typography
+  // ------------------------------------------------------------- typography
   //
-  // `fontFamily` defaults to "monospace" so the bar and every qs.Ui
-  // component follows the fontconfig alias `nova-font-set` writes.
-  // Themes can override per-token via [font] in shell.toml, but the
-  // family stays system-wide.
+  // The family is "monospace", the fontconfig alias `nova font set` points at
+  // the font chosen, so the shell follows it; a theme sets sizes, not the
+  // family. resolvedFontFamily is the family that alias stands for now, to
+  // show by name: bind font.family to fontFamily.
   property string fontFamily: "monospace"
-
-  // The concrete family `monospace` resolves to right now, e.g.
-  // "JetBrainsMono Nerd Font". Bind `font.family` to `fontFamily` (so the
-  // alias path keeps working when the user runs `nova font set`), but
-  // read `resolvedFontFamily` when you want to *display* what's drawing.
   property string resolvedFontFamily: "monospace"
 
-  // The only sanity floor is 1px. Themes and users can make this as large
-  // as they like; if the shell gets ridiculous, that's their call.
+  // At least 1px; past that, as large as a theme or its user likes.
   property int fontBaseSize: 12
 
   property var fontOverrides: ({})
@@ -289,35 +270,28 @@ QtObject {
   }
 
   function fontToken(key, fallback) {
-    var v = fontOverrides[key]
-    var n = Number(v)
-    return (isFinite(n) && n > 0) ? Math.round(n) : fallback
+    var n = Number(fontOverrides[key])
+    return isFinite(n) && n > 0 ? Math.round(n) : fallback
   }
 
   function barToken(key, fallback) {
-    var v = barOverrides[key]
-    var n = Number(v)
-    var base = (isFinite(n) && n > 0) ? n : fallback
-    if (barScaleWithFont) base *= fontScale
-    return Math.max(1, Math.round(base))
+    var n = Number(barOverrides[key])
+    var size = isFinite(n) && n > 0 ? n : fallback
+    return Math.max(1, Math.round(barScaleWithFont ? size * fontScale : size))
   }
 
+  // true/1/yes/on, false/0/no/off, in any case; anything else is <fallback>.
   function boolToken(value, fallback) {
     if (value === undefined || value === null) return fallback
-    var s = String(value).replace(/^\s+|\s+$/g, "").toLowerCase()
-    if (s === "true" || s === "1" || s === "yes" || s === "on") return true
-    if (s === "false" || s === "0" || s === "no" || s === "off") return false
+    var word = String(value).trim().toLowerCase()
+    if (["true", "1", "yes", "on"].indexOf(word) !== -1) return true
+    if (["false", "0", "no", "off"].indexOf(word) !== -1) return false
     return fallback
   }
 
-  // The menu, polkit, emojis, and clipboard surfaces honor an
-  // NOVA_MENU_FONT override for users who want a different family on the
-  // summoned popups than on the bar. Resolved once at startup; an empty env
-  // value falls back to the shared fontconfig alias.
-  readonly property string menuFontFamily: {
-    var override = Quickshell.env("NOVA_MENU_FONT")
-    return (override && override.length > 0) ? override : fontFamily
-  }
+  // NOVA_MENU_FONT, read at start, gives the summoned surfaces (the menu,
+  // polkit, emojis, the clipboard) a family of their own.
+  readonly property string menuFontFamily: Quickshell.env("NOVA_MENU_FONT") || fontFamily
 
   readonly property QtObject font: QtObject {
     readonly property string family: root.fontFamily
@@ -325,28 +299,86 @@ QtObject {
     readonly property string menuFamily: root.menuFontFamily
     readonly property int baseSize: root.fontBaseSize
 
-    readonly property int caption:      root.fontToken("caption",       root.fontPx(0.833))   // 10
-    readonly property int bodySmall:    root.fontToken("body-small",    root.fontPx(0.917))   // 11
-    readonly property int body:         root.fontToken("body",          root.fontPx(1.0))     // 12
-    readonly property int subtitle:     root.fontToken("subtitle",      root.fontPx(1.083))   // 13
-    readonly property int title:        root.fontToken("title",         root.fontPx(1.167))   // 14
-    readonly property int heading:      root.fontToken("heading",       root.fontPx(1.333))   // 16
-    readonly property int display:      root.fontToken("display",       root.fontPx(2.0))     // 24
-    readonly property int displayLarge: root.fontToken("display-large", root.fontPx(2.333))   // 28
+    // The sizes at the default base of 12 are in the comments.
+    readonly property int caption: root.fontToken("caption", root.fontPx(0.833)) // 10
+    readonly property int bodySmall: root.fontToken("body-small", root.fontPx(0.917)) // 11
+    readonly property int body: root.fontToken("body", root.fontPx(1.0)) // 12
+    readonly property int subtitle: root.fontToken("subtitle", root.fontPx(1.083)) // 13
+    readonly property int title: root.fontToken("title", root.fontPx(1.167)) // 14
+    readonly property int heading: root.fontToken("heading", root.fontPx(1.333)) // 16
+    readonly property int display: root.fontToken("display", root.fontPx(2.0)) // 24
+    readonly property int displayLarge: root.fontToken("display-large", root.fontPx(2.333)) // 28
 
-    readonly property int iconSmall:    root.fontToken("icon-small",    bodySmall)
-    readonly property int icon:         root.fontToken("icon",          title)
-    readonly property int iconLarge:    root.fontToken("icon-large",    root.fontPx(1.5))     // 18
+    readonly property int iconSmall: root.fontToken("icon-small", bodySmall)
+    readonly property int icon: root.fontToken("icon", title)
+    readonly property int iconLarge: root.fontToken("icon-large", root.fontPx(1.5)) // 18
   }
 
   readonly property QtObject bar: QtObject {
     readonly property int sizeHorizontal: root.barToken("size-horizontal", 26)
-    readonly property int sizeVertical:   root.barToken("size-vertical",   28)
-    readonly property int iconSlot:       root.barToken("icon-slot",       27)
-    readonly property int iconCanvas:     root.barToken("icon-canvas",     16)
-    readonly property int iconFont:       root.barToken("icon-font",       13)
-    readonly property int statusSlot:     root.barToken("status-slot",     21)
+    readonly property int sizeVertical: root.barToken("size-vertical", 28)
+    readonly property int iconSlot: root.barToken("icon-slot", 27)
+    readonly property int iconCanvas: root.barToken("icon-canvas", 16)
+    readonly property int iconFont: root.barToken("icon-font", 13)
+    readonly property int statusSlot: root.barToken("status-slot", 21)
   }
+
+  // Takes the [font], [bar], [spacing] and [controls] keys out of the
+  // shell.toml values Color has read; Color calls it on every load. A key
+  // that is not a number where one is wanted is left out.
+  function applyShellValues(values) {
+    var fontSizes = {}
+    var barSizes = {}
+    var controlKeys = {}
+    var pinnedSpacing = {}
+    var baseSize = 12
+    var scale = 1.0
+    var scaleWithFont = true
+    var barWithFont = true
+    var all = values || {}
+    for (var name in all) {
+      var dot = name.indexOf(".")
+      if (dot < 0) continue
+      var section = name.substr(0, dot)
+      var key = name.substr(dot + 1)
+      var raw = all[name]
+      if (section === "font") {
+        var px = parseInt(raw, 10)
+        if (!isFinite(px)) continue
+        if (key === "base-size") baseSize = px
+        else fontSizes[key] = px
+      } else if (section === "bar") {
+        if (key === "scale-with-font") {
+          barWithFont = boolToken(raw, barWithFont)
+        } else if (key === "size-horizontal" || key === "size-vertical") {
+          var size = parseInt(raw, 10)
+          if (isFinite(size)) barSizes[key] = size
+        }
+      } else if (section === "spacing") {
+        if (key === "scale-with-font") {
+          scaleWithFont = boolToken(raw, scaleWithFont)
+        } else {
+          var amount = parseFloat(raw)
+          if (!isFinite(amount)) continue
+          if (key === "scale") scale = amount
+          else pinnedSpacing[key] = amount
+        }
+      } else if (section === "controls" || section === "style") {
+        // Kept as text: styleNum and styleString read it as they need.
+        controlKeys[key] = raw
+      }
+    }
+    spacingScale = scale < 0 ? 1.0 : scale
+    spacingScaleWithFont = scaleWithFont
+    fontBaseSize = Math.max(1, baseSize)
+    fontOverrides = fontSizes
+    barOverrides = barSizes
+    barScaleWithFont = barWithFont
+    spacingOverrides = pinnedSpacing
+    styleOverrides = controlKeys
+  }
+
+  // ---------------------------------------------------------------- Hyprland
 
   function refresh() {
     hyprctlProc.running = true
@@ -357,91 +389,25 @@ QtObject {
     refreshTimer.restart()
   }
 
+  // Without Hyprland, or with an answer that is not one, what was there stays.
   function applyRoundingJson(raw) {
     try {
-      var json = JSON.parse(raw || "{}")
-      var n = Number(json.int)
+      var n = Number(JSON.parse(raw || "{}").int)
       if (isFinite(n) && n >= 0) cornerRadius = n
-    } catch (e) {
-      // hyprctl missing / Hyprland not running — leave the previous value.
-    }
+    } catch (e) {}
   }
 
+  // gaps_out is CSS-style, "top right bottom left"; the top is the gap.
   function applyGapsOutJson(raw) {
     try {
-      var json = JSON.parse(raw || "{}")
-      var css = String(json.css || "")
-      var parts = css.match(/-?\d+(?:\.\d+)?/g) || []
-      var n = parts.length > 0 ? Number(parts[0]) : Number(json.int)
+      var option = JSON.parse(raw || "{}")
+      var numbers = String(option.css || "").match(/-?\d+(?:\.\d+)?/g) || []
+      var n = numbers.length > 0 ? Number(numbers[0]) : Number(option.int)
       if (isFinite(n) && n >= 0) gapsOut = Math.max(0, Math.round(n / 2))
-    } catch (e) {
-      // hyprctl missing / Hyprland not running — leave the previous value.
-    }
-  }
-
-  // Pull typography, bar dimensions, state tokens, and spacing out of the
-  // shell.toml dict that Color already parsed. Called by Commons.Color.loadShell so
-  // a single parse pass feeds both singletons.
-  function applyShellValues(values) {
-    var fontOut = {}
-    var barOut = {}
-    var styleOut = {}
-    var spacingOut = {}
-    var nextBase = 12
-    var nextSpacingScale = 1.0
-    var nextSpacingScaleWithFont = true
-    var nextBarScaleWithFont = true
-    var v = values || {}
-    for (var fullKey in v) {
-      var dot = fullKey.indexOf(".")
-      if (dot < 0) continue
-      var section = fullKey.substr(0, dot)
-      var key = fullKey.substr(dot + 1)
-      var raw = v[fullKey]
-      if (section === "font") {
-        var ival = parseInt(raw, 10)
-        if (!isFinite(ival)) continue
-        if (key === "base-size") nextBase = ival
-        else fontOut[key] = ival
-      } else if (section === "bar") {
-        if (key === "scale-with-font") {
-          nextBarScaleWithFont = boolToken(raw, nextBarScaleWithFont)
-        } else if (key === "size-horizontal" || key === "size-vertical") {
-          var b = parseInt(raw, 10)
-          if (isFinite(b)) barOut[key] = b
-        }
-      } else if (section === "spacing") {
-        if (key === "scale-with-font") {
-          nextSpacingScaleWithFont = boolToken(raw, nextSpacingScaleWithFont)
-        } else {
-          var fval = parseFloat(raw)
-          if (!isFinite(fval)) continue
-          if (key === "scale") nextSpacingScale = fval
-          else spacingOut[key] = fval
-        }
-      } else if (section === "controls" || section === "style") {
-        // Strings are passed through; styleRawNum/styleString coerce on read.
-        // [style] is the legacy name for [controls].
-        styleOut[key] = raw
-      }
-    }
-    // Keep only a 1px sanity floor. Per-token overrides aren't clamped
-    // either — a theme that wants display-large = 64 should be allowed to
-    // ship it.
-    if (!isFinite(nextBase) || nextBase < 1) nextBase = 1
-    if (!isFinite(nextSpacingScale) || nextSpacingScale < 0) nextSpacingScale = 1.0
-    spacingScale = nextSpacingScale
-    spacingScaleWithFont = nextSpacingScaleWithFont
-    fontBaseSize = nextBase
-    fontOverrides = fontOut
-    barOverrides = barOut
-    barScaleWithFont = nextBarScaleWithFont
-    spacingOverrides = spacingOut
-    styleOverrides = styleOut
+    } catch (e) {}
   }
 
   property Process hyprctlProc: Process {
-    id: hyprctlProc
     command: ["hyprctl", "-j", "getoption", "decoration:rounding"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -450,7 +416,6 @@ QtObject {
   }
 
   property Process gapsOutProc: Process {
-    id: gapsOutProc
     command: ["hyprctl", "-j", "getoption", "general:gaps_out"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -458,15 +423,31 @@ QtObject {
     }
   }
 
-  // Resolve the fontconfig alias to a concrete family name. `nova font
-  // set <name>` rewrites ~/.config/fontconfig/fonts.conf and restarts the
-  // shell, but rerun on file change anyway so manual edits propagate too.
+  // Hyprland reloads its config by itself when a file it read changes, and a
+  // moment later: asked at once, it still answers with the old value.
+  property Timer refreshTimer: Timer {
+    interval: 200
+    repeat: false
+    onTriggered: root.refresh()
+  }
+
+  // `nova toggle window-gaps` writes and removes this file, one Hyprland reads.
+  property FileView windowNoGapsToggle: FileView {
+    path: Commons.Color.stateHome + "/nova/toggles/hypr/window-no-gaps.lua"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: root.scheduleRefresh()
+    onLoaded: root.scheduleRefresh()
+    onLoadFailed: root.scheduleRefresh()
+  }
+
+  // ------------------------------------------------------------- fontconfig
+
   function resolveFontFamily() {
     fcMatchProc.running = true
   }
 
   property Process fcMatchProc: Process {
-    id: fcMatchProc
     command: ["fc-match", "-f", "%{family[0]}", "monospace"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -477,6 +458,8 @@ QtObject {
     }
   }
 
+  // `nova font set` rewrites this and restarts the shell; an edit by hand is
+  // picked up too.
   property FileView fontconfigFile: FileView {
     path: Quickshell.env("HOME") + "/.config/fontconfig/fonts.conf"
     watchChanges: true
@@ -484,29 +467,6 @@ QtObject {
     onFileChanged: root.resolveFontFamily()
     onLoaded: root.resolveFontFamily()
     onLoadFailed: root.resolveFontFamily()
-  }
-
-  // Re-poll Hyprland a beat after either input file changes. Hyprland's
-  // auto-reload runs asynchronously when its sourced .lua files change,
-  // so racing it with an immediate hyprctl gives the old value. 200ms is
-  // generous enough for Hyprland to settle without being user-visible.
-  property Timer refreshTimer: Timer {
-    id: refreshTimer
-    interval: 200
-    repeat: false
-    onTriggered: root.refresh()
-  }
-
-  // `nova toggle window-gaps` creates/removes this flag file. Hyprland
-  // reloads its config when sourced files change, then hyprctl reflects
-  // the new effective value.
-  property FileView windowNoGapsToggle: FileView {
-    path: Commons.Color.stateHome + "/nova/toggles/hypr/window-no-gaps.lua"
-    watchChanges: true
-    printErrors: false
-    onFileChanged: refreshTimer.restart()
-    onLoaded: refreshTimer.restart()
-    onLoadFailed: refreshTimer.restart()
   }
 
   Component.onCompleted: {

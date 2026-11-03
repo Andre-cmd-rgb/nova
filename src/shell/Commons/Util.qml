@@ -2,15 +2,14 @@ pragma Singleton
 import Quickshell
 import QtQuick
 
-// Shared utility helpers used across plugins. Pure functions only — no
-// state. Anything stateful belongs on Color, Style, or a service.
+// Small helpers the plugins share. They keep no state: what has state is
+// Color, Style or a service.
 QtObject {
   id: root
 
   function clamp(value, min, max) {
     var n = Number(value)
-    if (!isFinite(n)) return min
-    return Math.max(min, Math.min(max, n))
+    return isFinite(n) ? Math.max(min, Math.min(max, n)) : min
   }
 
   function clampAlpha(value) {
@@ -24,48 +23,46 @@ QtObject {
     return Math.max(0, Math.min(count - 1, index + delta))
   }
 
+  // Whole steps of a wheel, 120 units each, and what is left over. A mouse
+  // notch is one step however large the delta it sends; a touchpad's small
+  // deltas add up, until it turns round, which starts again from nothing.
   function wheelSteps(accumulator, delta) {
-    // Some mouse/compositor combinations scale a single notch well beyond
-    // Qt's conventional 120 units. Keep one event to one step while still
-    // accumulating the smaller deltas emitted by touchpads.
     delta = Math.max(-120, Math.min(120, delta))
-    if (accumulator * delta < 0) accumulator = 0
-    var total = accumulator + delta
+    var total = (accumulator * delta < 0 ? 0 : accumulator) + delta
     var steps = total < 0 ? Math.ceil(total / 120) : Math.floor(total / 120)
     return { steps: steps, remainder: total - steps * 120 }
   }
 
-  // Compose a base color with an opacity. Accepts a color object or a hex
-  // string; null/undefined yields transparent black at the requested alpha.
+  // <c>, a colour or its text, at <opacity>; no colour is transparent black.
   function alpha(c, opacity) {
     var a = clampAlpha(opacity)
     if (!c) return Qt.rgba(0, 0, 0, a)
-    if (typeof c === "string") c = Qt.color(c)
-    return Qt.rgba(c.r, c.g, c.b, a)
+    var color = typeof c === "string" ? Qt.color(c) : c
+    return Qt.rgba(color.r, color.g, color.b, a)
   }
 
-  // file:// URL with each path segment percent-encoded so spaces and
-  // special chars in user paths don't break Image.source.
+  // A file:// URL for a path, each part of it escaped, so a space or a "#"
+  // in a file's name still reaches Image.source as part of the name.
   function fileUrl(path) {
-    if (!path) return ""
-    return "file://" + String(path).split("/").map(encodeURIComponent).join("/")
+    return path ? "file://" + String(path).split("/").map(encodeURIComponent).join("/") : ""
   }
 
-  // Single-quote a string for bash. The replace handles embedded single
-  // quotes by closing, escaping, and re-opening the literal.
+  // <value> in single quotes for bash, a quote in it closed, escaped and
+  // opened again.
   function shellQuote(value) {
     return "'" + String(value || "").replace(/'/g, "'\\''") + "'"
   }
 
+  // A bash command line, in a login shell, not waited for.
   function execDetached(command) {
     Quickshell.execDetached(["bash", "-lc", command])
   }
 
-  // Run an argv vector without a shell interpreting it: the constant `exec "$@"`
-  // means the args only ever land in positional parameters, which bash expands
-  // without re-tokenizing — so untrusted data ($(id), a filename) stays literal.
-  // The login shell (-l) keeps the PATH/session env GUI targets (satty, nautilus,
-  // xdg-open) need. Prefer this over execDetached for anything built from input.
+  // A command as its words, never parsed by a shell: bash's `exec "$@"` runs
+  // them as they are, so a name with $(...) or a quote in it stays a name.
+  // The login shell is for the session's PATH and environment, which an app
+  // opened this way (satty, nautilus, xdg-open) needs. Use this for anything
+  // with outside data in it.
   function execArgv(argv) {
     Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(argv))
   }
@@ -85,94 +82,83 @@ QtObject {
     return table
   }
 
-  // Best-effort base64 decode of UTF-8 text. Returns "" on parse failure
-  // rather than surfacing garbage downstream. Qt.atob on a string is
-  // deprecated, and warns each call; on an array of character codes it gives
-  // the bytes, which decodeURIComponent reads as UTF-8.
+  // Base64 of UTF-8 text, decoded; "" for anything that is not. Qt.atob
+  // given a string is deprecated and warns at every call; given the
+  // characters' codes it answers with bytes, which decodeURIComponent reads as
+  // UTF-8 once each is escaped.
   function decodeBase64(value) {
-    var s = String(value || "")
-    if (!s) return ""
+    var text = String(value || "")
+    if (!text) return ""
     try {
-      var codes = new Array(s.length)
-      for (var i = 0; i < s.length; i++) codes[i] = s.charCodeAt(i)
+      var codes = new Array(text.length)
+      for (var i = 0; i < text.length; i++) codes[i] = text.charCodeAt(i)
       var bytes = new Uint8Array(Qt.atob(codes))
       var escaped = new Array(bytes.length)
       for (var j = 0; j < bytes.length; j++) escaped[j] = percentBytes[bytes[j]]
       return decodeURIComponent(escaped.join(""))
-    } catch (e) { return "" }
+    } catch (e) {
+      return ""
+    }
   }
 
   function cloneJson(value) {
     return JSON.parse(JSON.stringify(value === undefined ? null : value))
   }
 
-  // Parse the last line of a custom-module / indicator process output as
-  // waybar-style JSON ({text, class, tooltip, ...}). Falls back to {text: raw}
-  // when the output isn't JSON, and {} for empty output.
+  // A status command's output, as Waybar's custom modules print it: the last
+  // line as JSON ({ text, class, tooltip, ... }), or all of it as { text }
+  // when that is not JSON; nothing is {}.
   function parseModuleJson(raw) {
     var text = String(raw || "").trim()
     if (!text) return {}
-    var lines = text.split("\n")
     try {
-      return JSON.parse(lines[lines.length - 1])
+      return JSON.parse(text.slice(text.lastIndexOf("\n") + 1))
     } catch (e) {
       return { text: text }
     }
   }
 
-  // Standard Qt text-editing keys shared by every searchable panel's filter:
-  //   Backspace       delete previous character
-  //   Ctrl+Backspace  delete previous word (Qt DeleteStartOfWord)
-  //   Ctrl+U          clear the whole field
-  // True only when the event would actually change the text, so an empty
-  // filter never swallows the key — panels keep their own empty-filter
-  // fallbacks (e.g. menu back-navigation) in later branches.
+  // Whether a key edits a search field's text, as Qt's line edits would:
+  // Backspace a character (with Shift too), Ctrl+Backspace a word, Ctrl+U
+  // all of it; Ctrl+Shift+U is left for typing a character by its code. A key
+  // that would change nothing, on an empty field, is not an edit, so the
+  // panel can give it its own meaning (Backspace for back, in the menu), and
+  // neither is anything with Alt or Super held.
   function editsFilter(event, text) {
-    if (!text) return false
-    // Alt/Meta-modified sequences belong to other shortcuts — never edit here.
-    if (event.modifiers & (Qt.AltModifier | Qt.MetaModifier)) return false
-    if (event.key === Qt.Key_U)                     // Ctrl+U only (not Ctrl+Shift+U → Unicode input)
-      return event.modifiers === Qt.ControlModifier
-    return event.key === Qt.Key_Backspace           // plain, Shift, or Ctrl Backspace
+    if (!text || (event.modifiers & (Qt.AltModifier | Qt.MetaModifier))) return false
+    if (event.key === Qt.Key_U) return event.modifiers === Qt.ControlModifier
+    return event.key === Qt.Key_Backspace
   }
 
-  // New filter text after applying an edit key. Assumes editsFilter(event, text).
+  // The text after an edit editsFilter has said yes to.
   function editedFilter(event, text) {
-    if (event.key === Qt.Key_U) return ""                        // Ctrl+U: clear
-    if (event.modifiers & Qt.ControlModifier)                    // Ctrl+Backspace: word
-      return text.replace(/\s+$/, "").replace(/\S+$/, "")
-    return text.slice(0, -1)                                     // Backspace: char
+    if (event.key === Qt.Key_U) return ""
+    if (event.modifiers & Qt.ControlModifier) return text.replace(/\s+$/, "").replace(/\S+$/, "")
+    return text.slice(0, -1)
   }
 
-  // Layout normalization shared by bar config consumers
-  // so the two never drift. Entries are deep-cloned to decouple from the
-  // input config; consumers can mutate without leaking back to shell.json.
+  // The bar's layout from shell.json, in a form its readers can trust: three
+  // lists of { id, ...settings }, each a copy, so changing one does not
+  // change the config. An entry may be a bare id; one with no id is dropped.
   function normalizeLayoutEntry(entry) {
     if (typeof entry === "string") return { id: canonicalWidgetId(entry) }
-    if (isPlainObject(entry) && entry.id) {
-      var copy = cloneJson(entry)
-      copy.id = canonicalWidgetId(copy.id)
-      return copy
-    }
-    return null
+    if (!isPlainObject(entry) || !entry.id) return null
+    var copy = cloneJson(entry)
+    copy.id = canonicalWidgetId(copy.id)
+    return copy
   }
 
   function normalizeLayoutSection(list) {
     if (!Array.isArray(list)) return []
-    var out = []
-    for (var i = 0; i < list.length; i++) {
-      var e = normalizeLayoutEntry(list[i])
-      if (e) out.push(e)
-    }
-    return out
+    return list.map(normalizeLayoutEntry).filter(function(entry) { return entry !== null })
   }
 
   function normalizeLayout(layout) {
-    var src = isPlainObject(layout) ? layout : {}
+    var sections = isPlainObject(layout) ? layout : {}
     return {
-      left:   normalizeLayoutSection(src.left),
-      center: normalizeLayoutSection(src.center),
-      right:  normalizeLayoutSection(src.right)
+      left: normalizeLayoutSection(sections.left),
+      center: normalizeLayoutSection(sections.center),
+      right: normalizeLayoutSection(sections.right)
     }
   }
 }
