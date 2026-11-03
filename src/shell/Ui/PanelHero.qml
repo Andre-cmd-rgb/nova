@@ -44,9 +44,11 @@ Item {
     spacing: Style.space(2)
 
     // The title takes what the tag leaves it, and elides; a spacer pushes
-    // the tag to the end of the line.
+    // the tag to the end of the line. The line is as tall as what it holds
+    // even when the title has no room at all, which a Row would pass over.
     Row {
       width: parent.width
+      height: Math.max(root.title !== "" ? titleText.implicitHeight : 0, tag.visible ? tag.implicitHeight : 0)
       visible: root.title !== "" || tag.visible
 
       Text {
