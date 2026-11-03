@@ -195,15 +195,18 @@ Panel {
     }
   }
 
-  // Section first, then index, as every change of the cursor goes.
+  // Each row the cursor lights is scrolled into view, so it moves in one
+  // step: from one section to another it passes through no row (index -2
+  // is none), and the pointer shows it only once it is where it points.
   function go(next) {
+    if (next.section !== focusSection) selectedIndex = -2
     focusSection = next.section
     selectedIndex = next.index
   }
 
   function point(section, index) {
-    cursorActive = true
     go(Model.at(section, index))
+    cursorActive = true
   }
 
   function moveCursor(delta) {
@@ -388,11 +391,7 @@ Panel {
                 checked: root.anyAudible
                 hasCursor: root.cursorActive && root.focusSection === "header"
                 foreground: root.bar.foreground
-                onHovered: function(on) {
-                  if (!on) return
-                  root.cursorActive = true
-                  root.go(Model.at("header", -1))
-                }
+                onHovered: function(on) { if (on) root.point("header", -1) }
                 onToggled: root.toggleAllMuted()
 
                 PanelToolTip {
