@@ -9,33 +9,32 @@ import QtQuick
 // binding (visible: shown && !remap.remapping) and is mapped afresh where
 // the monitor now is.
 Item {
-  id: root
+  id: remap
 
   required property var window
-  readonly property var screen: window ? window.screen : null
   property bool remapping: false
 
   visible: false
 
-  // A change of layout can move a monitor more than once; one remap, once
+  Connections {
+    target: remap.window ? remap.window.screen : null
+    function onXChanged() { still.restart() }
+    function onYChanged() { still.restart() }
+  }
+
+  // A change of layout can move a monitor more than once: one remap, once
   // it has been still for a fifth of a second.
   Timer {
-    id: settled
+    id: still
     interval: 200
-    onTriggered: root.remapping = true
+    onTriggered: remap.remapping = true
   }
 
   // Unmapped long enough for the compositor to see the unmap before the
   // map, rather than folding the two into nothing.
   Timer {
     interval: 50
-    running: root.remapping
-    onTriggered: root.remapping = false
-  }
-
-  Connections {
-    target: root.screen
-    function onXChanged() { settled.restart() }
-    function onYChanged() { settled.restart() }
+    running: remap.remapping
+    onTriggered: remap.remapping = false
   }
 }

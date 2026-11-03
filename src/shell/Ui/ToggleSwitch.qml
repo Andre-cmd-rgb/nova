@@ -2,32 +2,30 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// An on/off switch with no label: a track and a knob that slides along it.
-// Toggle puts one at the end of its row; a panel's header can take one by
-// itself.
+// An on/off switch with no words: a track in the selected state when on and
+// the normal one when off, and a knob that slides to the end that is on.
+// Toggle shows one at the end of its row; a panel's header can hold one
+// alone.
 //
-// The switch does not keep its own value: <checked> is bound to the real
-// state, and the caller changes that on toggled(). A service that already
-// holds the state it is moving to (Tailscale's, say) throws the knob at
-// once. <busy> means a change is under way: clicks do nothing, while hover,
-// cursor and tooltip carry on, so a refresh in the background does not make
-// the switch flicker.
+// It holds no value of its own: <checked> is bound to the real state, and
+// the caller changes that on toggled(), so a service that already has the
+// state it moves to (Tailscale's, say) throws the knob at once. While <busy>
+// a change is under way and clicks do nothing; the pointer, the cursor and
+// the tooltip carry on, so a refresh in the background does not flicker.
 //
-// The cursor is a ring round the track rather than a change of the track:
-// the theme's normal border is stronger than its hover-cursor one (0.4
-// against 0.25), right for controls with no border at rest but one that
-// would make a bordered track fade under the cursor. The ring goes with
-// <interactive>: where the row round the switch takes the click, the row
-// takes the cursor too. The switch is a pill when the theme's corners are
-// round, square when they are not.
+// The cursor is a hover-cursor ring round the track, <cursorPad> out, not a
+// change of the track: the theme's normal border is stronger than its
+// hover-cursor one (0.4 against 0.25), which suits controls with no border at
+// rest but would fade a bordered track under the cursor. Where the row round
+// the switch takes the click (<interactive> false) the row has the cursor
+// and the ring is off. The switch is a pill where the theme's corners are
+// round, square where they are not.
 Item {
-  id: root
+  id: toggleSwitch
 
   property bool checked: false
   property bool busy: false
-  // False where the row round the switch takes the click, as in Toggle.
   property bool interactive: true
-  // The panel cursor is on it, as Button's <hasCursor>.
   property bool hasCursor: false
   property bool cursorRing: interactive
   property int cursorPad: Style.space(6)
@@ -35,10 +33,9 @@ Item {
   property color foreground: Commons.Color.foreground
   property color accent: Commons.Color.accent
 
-  // <trackHeight> can be set for a smaller switch (one in a section's
-  // header): asked for at its size, rather than a big one scaled down, its
-  // edges land on whole pixels and stay sharp. The floors below only stop
-  // such a size going absurd; at the usual height every size is above them.
+  // A smaller switch (one in a section's header) sets <trackHeight>: drawn at
+  // its own size rather than scaled down, its edges stay on whole pixels.
+  // The floors only keep an odd size sane; the usual one is well above them.
   property int trackHeight: Math.max(22, Math.round(Style.spacing.controlHeight * 0.55))
   property int trackWidth: Math.round(trackHeight * 1.9)
   property int knobSize: Math.max(6, Math.round(trackHeight * 0.72))
@@ -46,42 +43,42 @@ Item {
 
   readonly property alias containsMouse: pointer.containsMouse
   readonly property bool hot: hasCursor || pointer.containsMouse
-  readonly property int _pad: cursorRing ? cursorPad : 0
+  readonly property int _ringRoom: cursorRing ? cursorPad : 0
 
   signal toggled()
   signal hovered(bool isHovered)
 
-  implicitWidth: trackWidth + _pad * 2
-  implicitHeight: trackHeight + _pad * 2
+  implicitWidth: trackWidth + 2 * _ringRoom
+  implicitHeight: trackHeight + 2 * _ringRoom
 
-  BorderSurface {
+  ControlFace {
     anchors.fill: parent
-    visible: root.cursorRing && root.hot
-    color: "transparent"
+    visible: toggleSwitch.cursorRing && toggleSwitch.hot
+    tint: toggleSwitch.foreground
+    tintAccent: toggleSwitch.accent
+    edgeState: "hover-cursor"
     radius: Style.cornerRadius
-    borderSpec: Border.controlSpec("hover-cursor", root.foreground, root.accent)
   }
 
-  BorderSurface {
+  ControlFace {
     id: track
     anchors.centerIn: parent
-    width: root.trackWidth
-    height: root.trackHeight
-    radius: root.rounded ? height / 2 : 0
-    color: root.checked ? Style.selectedFillFor(root.foreground, root.accent) : Style.normalFillFor(root.foreground, root.accent)
-    borderSpec: Border.controlSpec(root.checked ? "selected" : "normal", root.foreground, root.accent)
-
-    Behavior on color {
-      ColorAnimation { duration: 120 }
-    }
+    width: toggleSwitch.trackWidth
+    height: toggleSwitch.trackHeight
+    radius: toggleSwitch.rounded ? height / 2 : 0
+    tint: toggleSwitch.foreground
+    tintAccent: toggleSwitch.accent
+    fillState: toggleSwitch.checked ? "selected" : "normal"
+    edgeState: fillState
+    fade: 120
 
     Rectangle {
       anchors.verticalCenter: parent.verticalCenter
-      x: root.checked ? track.width - width - root.knobInset : root.knobInset
-      width: root.knobSize
-      height: root.knobSize
-      radius: root.rounded ? height / 2 : 0
-      color: root.checked ? Style.selectedStateColor(root.foreground, root.accent) : Qt.darker(root.foreground, 1.25)
+      x: toggleSwitch.checked ? track.width - width - toggleSwitch.knobInset : toggleSwitch.knobInset
+      width: toggleSwitch.knobSize
+      height: width
+      radius: toggleSwitch.rounded ? width / 2 : 0
+      color: toggleSwitch.checked ? Style.selectedStateColor(toggleSwitch.foreground, toggleSwitch.accent) : Qt.darker(toggleSwitch.foreground, 1.25)
 
       Behavior on x {
         NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
@@ -95,12 +92,10 @@ Item {
   MouseArea {
     id: pointer
     anchors.fill: parent
-    enabled: root.interactive
+    enabled: toggleSwitch.interactive
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onContainsMouseChanged: root.hovered(containsMouse)
-    onClicked: {
-      if (!root.busy) root.toggled()
-    }
+    onContainsMouseChanged: toggleSwitch.hovered(containsMouse)
+    onClicked: if (!toggleSwitch.busy) toggleSwitch.toggled()
   }
 }

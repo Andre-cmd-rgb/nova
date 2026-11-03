@@ -2,20 +2,20 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// A row that turns something on or off: a title, a description under it if
-// there is one, and a ToggleSwitch at the end. A click anywhere on the row,
-// or Return, Enter or Space with the focus on it, sends clicked(); the
-// caller changes <checked>, so the row works with any model behind it.
-// The cursor (<hasCursor> or the pointer) and the focus take the
-// hover-cursor and focus states, as every other control does; the switch is
-// a pill when the theme's corners are round, unless <rounded> says not.
-BorderSurface {
-  id: root
+// A row that turns one thing on or off: a bold title, a description under it
+// if there is one, and a ToggleSwitch at the end that only shows the state.
+// The row takes the click, and Return, Enter and Space while it has the
+// focus, and sends clicked(); the caller flips <checked>, whatever model is
+// behind it. Its face is in the focus state with the focus, in hover-cursor
+// under the pointer or the panel's cursor (<hasCursor>), else normal. The
+// switch is a pill where the theme's corners are round, unless <rounded> is
+// set false.
+ControlFace {
+  id: toggle
 
   property string label: ""
   property string description: ""
   property bool checked: false
-  // The panel cursor is on it, as Button's <hasCursor>.
   property bool hasCursor: false
   property bool rounded: Style.cornerRadius > 0
   property color foreground: Commons.Color.foreground
@@ -24,70 +24,70 @@ BorderSurface {
   property real titleSize: Style.font.subtitle
   property real descriptionSize: Style.font.caption
 
-  readonly property bool _hot: hasCursor || pointer.containsMouse
-  readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : _hot ? "hover-cursor" : "normal", foreground, accent)
+  readonly property string _state: activeFocus ? "focus" : hasCursor || pointer.containsMouse ? "hover-cursor" : "normal"
 
   signal clicked()
   signal hovered(bool isHovered)
 
-  implicitWidth: Style.space(240)
-  implicitHeight: Math.max(54, content.implicitHeight + Style.spacing.huge)
+  tint: foreground
+  tintAccent: accent
+  fade: 100
+  fillState: _state
+  edgeState: _state
   radius: Style.cornerRadius
-  color: Style.controlFill(activeFocus, _hot, foreground, accent)
-  borderSpec: _borderSpec
+  implicitWidth: Style.space(240)
+  implicitHeight: Math.max(54, line.implicitHeight + Style.spacing.huge)
 
   activeFocusOnTab: true
-  Keys.onReturnPressed: root.clicked()
-  Keys.onEnterPressed: root.clicked()
-  Keys.onSpacePressed: root.clicked()
-
-  Behavior on color {
-    ColorAnimation { duration: 100 }
+  Keys.onPressed: function (event) {
+    if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter && event.key !== Qt.Key_Space) return
+    event.accepted = true
+    toggle.clicked()
   }
 
   Row {
-    id: content
-    anchors.left: parent.left
-    anchors.right: parent.right
+    id: line
     anchors.verticalCenter: parent.verticalCenter
-    anchors.leftMargin: root.borderLeft + Style.spacing.rowPaddingX
-    anchors.rightMargin: root.borderRight + Style.spacing.rowPaddingX
+    x: toggle.borderLeft + Style.spacing.rowPaddingX
+    width: toggle.width - x - toggle.borderRight - Style.spacing.rowPaddingX
     spacing: Style.spacing.rowPaddingX
 
     Column {
       anchors.verticalCenter: parent.verticalCenter
-      width: parent.width - knob.width - parent.spacing
+      width: line.width - indicator.width - line.spacing
       spacing: Style.spacing.xs
 
       Text {
         width: parent.width
         textFormat: Text.PlainText
-        text: root.label
-        color: root.foreground
-        font { family: root.fontFamily; pixelSize: root.titleSize; bold: true }
+        text: toggle.label
+        color: toggle.foreground
+        font.family: toggle.fontFamily
+        font.pixelSize: toggle.titleSize
+        font.bold: true
         elide: Text.ElideRight
       }
 
       Text {
         width: parent.width
-        visible: root.description !== ""
+        visible: toggle.description !== ""
         textFormat: Text.PlainText
-        text: root.description
-        color: Qt.darker(root.foreground, 1.5)
-        font { family: root.fontFamily; pixelSize: root.descriptionSize }
+        text: toggle.description
+        color: Qt.darker(toggle.foreground, 1.5)
+        font.family: toggle.fontFamily
+        font.pixelSize: toggle.descriptionSize
         wrapMode: Text.WordWrap
       }
     }
 
-    // Only shown: the row takes the click.
     ToggleSwitch {
-      id: knob
+      id: indicator
       anchors.verticalCenter: parent.verticalCenter
       interactive: false
-      checked: root.checked
-      rounded: root.rounded
-      foreground: root.foreground
-      accent: root.accent
+      checked: toggle.checked
+      rounded: toggle.rounded
+      foreground: toggle.foreground
+      accent: toggle.accent
     }
   }
 
@@ -96,10 +96,10 @@ BorderSurface {
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
-    onClicked: root.clicked()
+    onClicked: toggle.clicked()
   }
 
   HoverHandler {
-    onHoveredChanged: root.hovered(hovered)
+    onHoveredChanged: toggle.hovered(hovered)
   }
 }

@@ -2,84 +2,57 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// A small icon button, 22 pixels square by default, for the actions at the
+// A small square icon button, 22 pixels by default, for the actions at the
 // end of a panel's row: forget a network, confirm a passphrase, unpair a
-// device. Under the pointer it takes the hover fill in <hoverColor>: the
-// foreground by default, the bar's urgent colour for an action that
-// destroys something. Disabled, it takes no clicks and its icon dims.
+// device. Lit (the pointer over it, or <hasCursor>) or with the focus, it
+// takes that state's fill in <hoverColor>: the foreground by default, the
+// bar's urgent colour for an action that destroys something; at rest it is
+// clear, with the normal border when <bordered>. Disabled, it is never lit
+// and its icon dims.
 //
-// The pointer over it moves no panel cursor: the row it sits in is what the
-// cursor is on. Where the button is the cursor's target itself, the panel
-// sets <hasCursor> to light it as the pointer would, and follows the
-// pointer through hovered(). <focusable> makes it a Tab stop with the focus
-// state, for forms walked with Tab; the actions on a row leave it off, as
-// the row's CursorSurface has the keyboard.
-BorderSurface {
-  id: root
+// The pointer over it moves no panel cursor: the row it sits in has the
+// cursor. Where the button is the cursor's target itself, the panel sets
+// <hasCursor> and follows the pointer through hovered(). <focusable> makes
+// it a Tab stop, for forms walked with Tab; on a row it stays off, as the
+// row's CursorSurface has the keyboard.
+Pressable {
+  id: action
 
-  property string iconText: ""
-  property string tooltipText: ""
   property color foreground: Commons.Color.foreground
   property color hoverColor: foreground
-  property string fontFamily: Style.font.family
   property real fontSize: Style.font.icon
   property real size: Math.max(Style.space(22), fontSize + Style.spacing.sm * 2)
-  property bool focusable: false
-  property bool hasCursor: false
-  property bool bordered: false
 
-  readonly property bool _showFocusRing: focusable && activeFocus
-  readonly property bool _hot: (pointer.containsMouse || hasCursor) && enabled
-  readonly property var _borderSpec: {
-    if (_showFocusRing) return Border.controlSpec("focus", hoverColor, hoverColor)
-    if (!bordered) return Border.none()
-    return _hot ? Border.controlSpec("hover-cursor", hoverColor, hoverColor) : Border.controlSpec("normal", foreground, Commons.Color.accent)
-  }
+  readonly property bool _lit: enabled && (_pointer.containsMouse || hasCursor)
 
-  signal clicked()
-  signal hovered(bool isHovered)
+  // Lit or with the focus, every colour comes from <hoverColor>; at rest
+  // the border is the foreground's, with the theme's accent.
+  tint: _lit || _ringed ? hoverColor : foreground
+  tintAccent: _lit || _ringed ? hoverColor : Commons.Color.accent
+  fade: 60
+  fillState: _ringed ? "focus" : _lit ? "hover-cursor" : ""
+  edgeState: _ringed ? "focus"
+    : !bordered ? ""
+    : _lit ? "hover-cursor"
+    : "normal"
 
   implicitWidth: size
   implicitHeight: size
-  radius: Style.cornerRadius
-  color: _showFocusRing ? Style.focusFillFor(hoverColor, hoverColor)
-    : _hot ? Style.hoverFillFor(hoverColor, hoverColor)
-    : "transparent"
-  borderSpec: _borderSpec
-
-  activeFocusOnTab: focusable
-  Keys.onReturnPressed: if (focusable) root.clicked()
-  Keys.onEnterPressed: if (focusable) root.clicked()
-  Keys.onSpacePressed: if (focusable) root.clicked()
-
-  Behavior on color {
-    ColorAnimation { duration: 60 }
-  }
+  // Disabled, it does not see the pointer at all: no hovered(), no tooltip.
+  // (Qt sends a disabled item the pointer's comings and goings.)
+  _pointer.enabled: enabled
 
   Text {
     anchors.centerIn: parent
     textFormat: Text.PlainText
-    text: root.iconText
-    color: !root.enabled ? Qt.darker(root.foreground, 2.0) : root._hot ? root.hoverColor : root.foreground
-    font { family: root.fontFamily; pixelSize: root.fontSize }
+    text: action.iconText
+    color: !action.enabled ? Qt.darker(action.foreground, 2.0) : action._lit ? action.hoverColor : action.foreground
+    font.family: action.fontFamily
+    font.pixelSize: action.fontSize
   }
 
-  MouseArea {
-    id: pointer
-    anchors.fill: parent
-    enabled: root.enabled
-    hoverEnabled: true
-    cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-    onContainsMouseChanged: root.hovered(containsMouse)
-    onClicked: {
-      if (root.focusable) root.forceActiveFocus()
-      root.clicked()
-    }
-  }
-
-  PanelToolTip {
-    visible: root.tooltipText !== "" && pointer.containsMouse
-    text: root.tooltipText
-    fontFamily: root.fontFamily
+  Connections {
+    target: action._pointer
+    function onContainsMouseChanged() { action.hovered(action._pointer.containsMouse) }
   }
 }

@@ -2,17 +2,17 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// A bar widget's button: a label in the bar's font and colour, the bar's
-// height across (its width when the bar stands upright), with a tooltip from
-// the bar and a click on any button. The bar keeps a list of its buttons so
-// a click on the bar under an open panel can still reach them.
+// A button on the bar: a label in the bar's font and colour, as tall as the
+// bar is (as wide, on a bar that stands upright), with the bar's tooltip
+// and a press from any mouse button. The bar keeps a list of its buttons, so
+// a click on the bar under an open panel still reaches the one beneath it.
 //
 // <active> paints the label in <activeColor> (the bar's urgent colour) when
-// <useActiveColor>; <dimmed> fades it, <concealed> hides it while keeping
-// its place, and <keepSpace> keeps the place of a button with nothing to
-// show. <fixedWidth> and <fixedHeight> above zero override the size.
+// <useActiveColor>. <dimmed> fades it, <concealed> hides it but keeps its
+// place, and <keepSpace> keeps the place of a button with nothing to show.
+// <fixedWidth> and <fixedHeight>, above zero, set the size.
 Item {
-  id: root
+  id: button
 
   property var bar: null
   property string text: ""
@@ -32,60 +32,76 @@ Item {
   property bool interactive: true
   property bool pressable: true
   property bool useActiveColor: true
+  // While the pointer is over a button with this set, <revealHost> keeps
+  // the bar's hidden indicators shown.
   property bool maintainIndicatorReveal: false
   property bool labelVisible: true
   property bool hasVisualContent: text !== ""
   property var revealHost: bar
   property string tooltipText: ""
-  property var registeredBar: null
 
   readonly property bool vertical: bar ? bar.vertical : false
   readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
-  readonly property real scaledHorizontalMargin: Style.spaceReal(horizontalMargin)
-  readonly property real scaledVerticalPadding: Style.spaceReal(verticalPadding)
   readonly property bool tooltipHovered: visible && interactive && !concealed && pointer.containsMouse
-  // The painted label's width, for bar chrome that lines up with the text
-  // rather than the slot round it; 0 on a button with no label.
+  // The drawn label's width, for bar chrome lined up with the words rather
+  // than the slot round them; 0 without a label.
   readonly property real labelWidth: label.visible ? label.implicitWidth : 0
+
+  // The colour of what the button shows.
+  readonly property color _ink: active && useActiveColor ? activeColor : foreground
+  // The bar this button is listed with, to take it off that list again.
+  property var _listedWith: null
 
   signal pressed(int button)
   signal wheelMoved(int delta)
 
-  // A press, from the pointer or from a click the bar passes on: the
-  // tooltip goes first.
-  function triggerPress(button) {
-    if (bar) bar.hideTooltip(root)
-    pressed(button)
+  // A press, the pointer's or one the bar passes on: the tooltip goes first.
+  function triggerPress(which) {
+    _hideTooltip()
+    pressed(which)
   }
 
-  function hideOwnTooltip() {
-    if (bar) bar.hideTooltip(root)
+  function _hideTooltip() {
+    if (bar) bar.hideTooltip(button)
   }
 
-  // Moves the button's place in the click list to its current bar.
-  function syncClickRegistration() {
-    if (registeredBar && registeredBar.unregisterClickTarget) registeredBar.unregisterClickTarget(root)
-    registeredBar = bar
-    if (registeredBar && registeredBar.registerClickTarget) registeredBar.registerClickTarget(root)
+  function _unlist() {
+    if (_listedWith && _listedWith.unregisterClickTarget) _listedWith.unregisterClickTarget(button)
+  }
+
+  function _relist() {
+    _unlist()
+    _listedWith = bar
+    if (_listedWith && _listedWith.registerClickTarget) _listedWith.registerClickTarget(button)
+  }
+
+  function _pointerOver(over) {
+    if (bar) {
+      if (over) bar.showTooltip(button, tooltipText)
+      else bar.hideTooltip(button)
+    }
+    if (maintainIndicatorReveal && revealHost && revealHost.setIndicatorItemHovered) revealHost.setIndicatorItemHovered(over)
   }
 
   visible: hasVisualContent || keepSpace
   opacity: !hasVisualContent || concealed ? 0 : dimmed ? 0.45 : 1
-  implicitWidth: fixedWidth > 0 ? fixedWidth
-    : vertical ? barSize
-    : Math.max(12, label.implicitWidth + scaledHorizontalMargin * 2)
-  implicitHeight: fixedHeight > 0 ? fixedHeight
-    : vertical ? Math.max(12, label.implicitHeight + scaledVerticalPadding * 2)
-    : barSize
-
-  onBarChanged: syncClickRegistration()
-  onVisibleChanged: if (!visible) hideOwnTooltip()
-  onInteractiveChanged: if (!interactive) hideOwnTooltip()
-  onConcealedChanged: if (concealed) hideOwnTooltip()
-  Component.onCompleted: syncClickRegistration()
-  Component.onDestruction: {
-    if (registeredBar && registeredBar.unregisterClickTarget) registeredBar.unregisterClickTarget(root)
+  implicitWidth: {
+    if (fixedWidth > 0) return fixedWidth
+    return vertical ? barSize : Math.max(12, label.implicitWidth + 2 * Style.spaceReal(horizontalMargin))
   }
+  implicitHeight: {
+    if (fixedHeight > 0) return fixedHeight
+    return vertical ? Math.max(12, label.implicitHeight + 2 * Style.spaceReal(verticalPadding)) : barSize
+  }
+
+  onBarChanged: _relist()
+  Component.onCompleted: _relist()
+  Component.onDestruction: _unlist()
+
+  // A button that hides, or stops taking the pointer, takes its tooltip.
+  onVisibleChanged: if (!visible) _hideTooltip()
+  onInteractiveChanged: if (!interactive) _hideTooltip()
+  onConcealedChanged: if (concealed) _hideTooltip()
 
   Behavior on opacity {
     NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
@@ -94,19 +110,20 @@ Item {
   Text {
     id: label
     anchors.centerIn: parent
-    visible: root.labelVisible
+    visible: button.labelVisible
+    rotation: button.textRotation
     textFormat: Text.PlainText
     renderType: Text.NativeRendering
     horizontalAlignment: Text.AlignHCenter
     verticalAlignment: Text.AlignVCenter
-    rotation: root.textRotation
-    text: root.text
-    color: root.active && root.useActiveColor ? root.activeColor : root.foreground
-    font { family: root.fontFamily; pixelSize: root.fontSize }
+    text: button.text
+    color: button._ink
+    font.family: button.fontFamily
+    font.pixelSize: button.fontSize
 
-    // The bar turns this off while it changes colour all at once.
+    // Off while the bar changes all its colours at once.
     Behavior on color {
-      enabled: !root.bar || root.bar.foregroundAnimationEnabled
+      enabled: !button.bar || button.bar.foregroundAnimationEnabled
       ColorAnimation { duration: 160 }
     }
   }
@@ -114,24 +131,15 @@ Item {
   MouseArea {
     id: pointer
     anchors.fill: parent
-    enabled: root.interactive
+    enabled: button.interactive
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-    cursorShape: root.pressable ? Qt.PointingHandCursor : Qt.ArrowCursor
-    // While the pointer is over the button, the reveal host keeps the
-    // hidden indicators shown.
-    readonly property bool revealing: root.maintainIndicatorReveal && !!root.revealHost && !!root.revealHost.setIndicatorItemHovered
-    onEntered: {
-      if (root.bar) root.bar.showTooltip(root, root.tooltipText)
-      if (revealing) root.revealHost.setIndicatorItemHovered(true)
+    cursorShape: button.pressable ? Qt.PointingHandCursor : Qt.ArrowCursor
+    onEntered: button._pointerOver(true)
+    onExited: button._pointerOver(false)
+    onClicked: function (mouse) {
+      if (button.pressable) button.triggerPress(mouse.button)
     }
-    onExited: {
-      if (root.bar) root.bar.hideTooltip(root)
-      if (revealing) root.revealHost.setIndicatorItemHovered(false)
-    }
-    onClicked: function(mouse) {
-      if (root.pressable) root.triggerPress(mouse.button)
-    }
-    onWheel: function(wheel) { root.wheelMoved(wheel.angleDelta.y) }
+    onWheel: function (wheel) { button.wheelMoved(wheel.angleDelta.y) }
   }
 }

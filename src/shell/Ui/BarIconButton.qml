@@ -2,24 +2,22 @@ import QtQuick
 import Quickshell
 import qs.Commons
 
-// A bar button that shows an icon: a glyph of the icon font, centred by its
-// ink in a square canvas, or <iconComponent> drawn in that canvas instead.
-// The slot it sits in is <slotSize> along the bar. NOVA_DEBUG_BAR_ICONS=1
-// outlines the slot in red and the canvas in blue, to line icons up by eye.
+// A bar button that shows an icon instead of a label: a glyph of the icon
+// font centred by its ink in a square canvas <opticalSize> across, or
+// <iconComponent> drawn in that canvas instead. Along the bar it takes a
+// slot <slotSize> long. NOVA_DEBUG_BAR_ICONS=1 outlines the slot in red and
+// the canvas in blue, to line the icons up by eye.
 WidgetButton {
-  id: root
+  id: iconButton
 
   property Component iconComponent: null
   property real slotSize: Style.bar.iconSlot
   property real opticalSize: Style.bar.iconCanvas
   property bool debugOpticalBounds: Quickshell.env("NOVA_DEBUG_BAR_ICONS") === "1"
 
-  // How the glyph sits, for tests and for the debug outlines; all 0 when
-  // the icon is a component.
-  readonly property real opticalCenterErrorX: glyph.visible ? glyph.paintedCenterX - canvas.width / 2 : 0
+  // How wide the glyph's ink is, for chrome lined up with it; 0 when the
+  // icon is a component.
   readonly property real glyphPaintedWidth: glyph.visible ? glyph.tightWidth : 0
-  readonly property real glyphBaselineY: glyph.visible ? glyph.baselineY : 0
-  readonly property int glyphFontSize: glyph.visible ? glyph.renderedFontSize : 0
 
   labelVisible: false
   hasVisualContent: text !== "" || iconComponent !== null
@@ -28,41 +26,36 @@ WidgetButton {
   fixedHeight: vertical ? slotSize : -1
 
   Item {
-    id: canvas
     anchors.centerIn: parent
-    width: root.opticalSize
-    height: root.opticalSize
+    width: iconButton.opticalSize
+    height: iconButton.opticalSize
 
     OpticalGlyph {
       id: glyph
       anchors.fill: parent
-      visible: root.iconComponent === null
-      rotation: root.textRotation
-      text: root.text
-      fontFamily: root.fontFamily
-      fontSize: root.fontSize
-      color: root.active && root.useActiveColor ? root.activeColor : root.foreground
-      debugBounds: root.debugOpticalBounds
+      visible: iconButton.iconComponent === null
+      rotation: iconButton.textRotation
+      text: iconButton.text
+      fontFamily: iconButton.fontFamily
+      fontSize: iconButton.fontSize
+      color: iconButton._ink
+      debugBounds: iconButton.debugOpticalBounds
     }
 
     Loader {
       anchors.fill: parent
-      visible: root.iconComponent !== null
-      sourceComponent: root.iconComponent
+      visible: iconButton.iconComponent !== null
+      sourceComponent: iconButton.iconComponent
     }
 
-    Rectangle {
-      anchors.fill: parent
-      visible: root.debugOpticalBounds && root.iconComponent !== null
-      color: "transparent"
-      border { width: 1; color: "#4488ff" }
+    DebugOutline {
+      visible: iconButton.debugOpticalBounds && iconButton.iconComponent !== null
+      tone: "#4488ff"
     }
   }
 
-  Rectangle {
-    anchors.fill: parent
-    visible: root.debugOpticalBounds
-    color: "transparent"
-    border { width: 1; color: "#ff4455" }
+  DebugOutline {
+    visible: iconButton.debugOpticalBounds
+    tone: "#ff4455"
   }
 }

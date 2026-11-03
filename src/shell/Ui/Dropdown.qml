@@ -2,35 +2,36 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// One choice from a list, in a field that opens a list under itself. The
-// list is a surface of the theme's popups, in [popups]' background and
-// border, rather than the platform's combo box. <options> are strings, or
-// { value, label } objects showing the label and choosing the value, or
-// both; changed() sends the value chosen.
+// One choice from a list: a field showing the chosen option, under a bold
+// caption, that opens the list below itself. The list is a DropdownPopup in
+// [popups]' background and border, not the platform's combo box. <options>
+// are strings, or { value, label } objects that show the label and choose
+// the value, or both; changed() sends the value chosen.
 //
-// Keys: Tab comes to the field; Return, Enter, Space or Down opens it; in
-// the list, Up and Down (or k and j) move and Return chooses; Escape closes.
+// The field is a Tab stop; Return, Enter, Space or Down opens or closes the
+// list, Escape closes it, and so does a click. Its face is in the focus
+// state with the focus, in hover-cursor under the pointer or the panel's
+// cursor (<hasCursor>), else normal. In the list, Up and Down (k and j)
+// move, Return and Enter choose, Escape closes.
 Item {
-  id: root
+  id: dropdown
 
   property string label: ""
   property string value: ""
   property var options: []
-
   property color foreground: Commons.Color.popups.text
   property color background: Commons.Color.popups.background
   property color popupBorder: Commons.Color.popups.border
   property color accent: Commons.Color.accent
-  readonly property var popupBorderSpec: Border.localOrSurfaceSpec("popups", "border", popupBorder, Commons.Color.popups.border, Style.normalBorderWidth)
   property string fontFamily: Style.font.family
   property int rowHeight: Style.spacing.controlHeight
   property int popupRowHeight: Style.spacing.popupRowHeight
   property bool showLabel: true
-  // The panel cursor is on the field.
   property bool hasCursor: false
 
-  // Whether the list is open, and so has the keys: a panel with its own
-  // key catcher stands it down meanwhile, or j and k would move both.
+  readonly property var popupBorderSpec: Border.localOrSurfaceSpec("popups", "border", popupBorder, Commons.Color.popups.border, Style.normalBorderWidth)
+  // While the list is open it has the keys: a panel with a key catcher of
+  // its own stands it down meanwhile, or j and k would move both.
   readonly property bool popupOpen: list.opened
 
   signal changed(string value)
@@ -38,10 +39,7 @@ Item {
 
   function open() { list.open() }
   function close() { list.close() }
-  function toggle() {
-    if (list.opened) list.close()
-    else list.open()
-  }
+  function toggle() { list.opened ? list.close() : list.open() }
 
   function optionValue(o) {
     return o && typeof o === "object" ? String(o.value) : String(o)
@@ -51,117 +49,119 @@ Item {
     return o && typeof o === "object" ? String(o.label) : String(o)
   }
 
-  // The chosen option's label; the value itself when no option has it.
+  // The chosen option's label, or the value itself when no option has it.
   function currentLabel() {
+    var at = indexOf(value)
+    return at < 0 ? value : optionLabel(options[at])
+  }
+
+  function indexOf(wanted) {
     for (var i = 0; i < options.length; i++) {
-      if (optionValue(options[i]) === value) return optionLabel(options[i])
+      if (optionValue(options[i]) === wanted) return i
     }
-    return value
+    return -1
+  }
+
+  // Takes the option at <index>: the field shows it, changed() sends it on,
+  // and the list closes.
+  function choose(index) {
+    if (index < 0 || index >= options.length) return
+    var chosen = optionValue(options[index])
+    value = chosen
+    changed(chosen)
+    list.close()
   }
 
   implicitWidth: Style.spacing.dropdownWidth
   implicitHeight: showLabel && label !== "" ? rowHeight + Style.spacing.huge : rowHeight
 
-  DropdownField {
-    id: face
+  Column {
     anchors.fill: parent
-    label: root.label
-    showLabel: root.showLabel
-    text: root.currentLabel()
-    foreground: root.foreground
-    accent: root.accent
-    fontFamily: root.fontFamily
-    rowHeight: root.rowHeight
-    hasCursor: root.hasCursor
-    popupItem: list
-    onHovered: function(isHovered) { root.hovered(isHovered) }
+    spacing: Style.spacing.labelGap
 
-    DropdownPopup {
-      id: list
-      x: 0
-      y: face.field.height + Style.spacing.xxs
-      width: face.field.width
-      // Eight rows at most; past that, the list scrolls.
-      implicitHeight: Math.min(root.options.length * root.popupRowHeight + Math.max(0, root.options.length - 1) * Style.spacing.labelGap + Style.spacing.xxs,
-        root.popupRowHeight * 8 + 7 * Style.spacing.labelGap + Style.spacing.xxs)
-      borderSpec: root.popupBorderSpec
-      fill: root.background
+    Text {
+      visible: dropdown.showLabel && dropdown.label !== ""
+      textFormat: Text.PlainText
+      text: dropdown.label
+      color: Qt.darker(dropdown.foreground, 1.4)
+      font.family: dropdown.fontFamily
+      font.pixelSize: Style.font.caption
+      font.bold: true
+    }
 
-      // The list opens on the chosen option.
-      onOpened: {
-        rows.currentIndex = Math.max(0, rows.indexOfValue(root.value))
-        rows.forceActiveFocus()
+    ControlFace {
+      id: field
+
+      readonly property string _state: activeFocus ? "focus" : hover.hovered || dropdown.hasCursor ? "hover-cursor" : "normal"
+
+      width: parent.width
+      height: dropdown.rowHeight
+      radius: Style.cornerRadius
+      tint: dropdown.foreground
+      tintAccent: dropdown.accent
+      fillState: _state
+      edgeState: _state
+
+      activeFocusOnTab: true
+      Keys.onPressed: function (event) {
+        switch (event.key) {
+        case Qt.Key_Return:
+        case Qt.Key_Enter:
+        case Qt.Key_Space:
+        case Qt.Key_Down:
+          dropdown.toggle()
+          break
+        case Qt.Key_Escape:
+          if (!list.opened) return
+          list.close()
+          break
+        default:
+          return
+        }
+        event.accepted = true
       }
 
-      contentItem: ListView {
-        id: rows
+      HoverHandler {
+        id: hover
+        onHoveredChanged: dropdown.hovered(hovered)
+      }
 
-        function indexOfValue(v) {
-          for (var i = 0; i < root.options.length; i++) {
-            if (root.optionValue(root.options[i]) === v) return i
-          }
-          return -1
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        x: field.borderLeft + Style.spacing.controlPaddingX
+        width: chevron.x - x - field.borderRight - Style.spacing.md
+        textFormat: Text.PlainText
+        text: dropdown.currentLabel()
+        color: dropdown.foreground
+        font.family: dropdown.fontFamily
+        font.pixelSize: Style.font.body
+        elide: Text.ElideRight
+      }
+
+      Text {
+        id: chevron
+        anchors.verticalCenter: parent.verticalCenter
+        x: field.width - width - field.borderRight - Style.spacing.controlGap
+        text: "\u{F0140}"
+        color: Qt.darker(dropdown.foreground, 1.2)
+        font.family: dropdown.fontFamily
+        font.pixelSize: Style.font.body
+      }
+
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: {
+          field.forceActiveFocus()
+          dropdown.toggle()
         }
+      }
 
-        function selectCurrent() {
-          if (currentIndex < 0 || currentIndex >= root.options.length) return
-          var chosen = root.optionValue(root.options[currentIndex])
-          root.value = chosen
-          root.changed(chosen)
-          list.close()
-        }
-
-        implicitHeight: contentHeight
-        spacing: Style.spacing.labelGap
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        model: root.options
-        currentIndex: -1
-
-        Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function(event) {
-          var key = event.key
-          if (key === Qt.Key_Escape) list.close()
-          else if (key === Qt.Key_Down || event.text === "j") rows.currentIndex = Math.min(root.options.length - 1, rows.currentIndex + 1)
-          else if (key === Qt.Key_Up || event.text === "k") rows.currentIndex = Math.max(0, rows.currentIndex - 1)
-          else if (key === Qt.Key_Return || key === Qt.Key_Enter) rows.selectCurrent()
-          else return
-          event.accepted = true
-        }
-
-        delegate: Rectangle {
-          id: row
-
-          required property var modelData
-          required property int index
-          readonly property bool lit: index === rows.currentIndex
-
-          width: rows.width
-          height: root.popupRowHeight
-          color: lit ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"
-
-          Text {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.leftMargin: Style.spacing.controlPaddingX
-            anchors.rightMargin: Style.spacing.controlPaddingX
-            textFormat: Text.PlainText
-            text: root.optionLabel(row.modelData)
-            color: row.lit ? Style.hoverStateColor(root.foreground, root.accent) : root.foreground
-            font { family: root.fontFamily; pixelSize: Style.font.body }
-            elide: Text.ElideRight
-          }
-
-          // The pointer moves the list's cursor; a click chooses.
-          MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onPositionChanged: rows.currentIndex = row.index
-            onClicked: rows.selectCurrent()
-          }
-        }
+      DropdownPopup {
+        id: list
+        owner: dropdown
+        y: field.height + Style.spacing.xxs
+        width: field.width
       }
     }
   }

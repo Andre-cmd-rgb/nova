@@ -1,16 +1,14 @@
 import QtQuick
-import qs.Commons
 import qs.Commons as Commons
 
-// What a plugin's popup panel is built on. A plugin often gives the bar a
-// button and a panel from one file; this holds the panel's opening and
-// closing, and the plugin its button, its keys and its content.
-Item {
-  id: root
+// A bar widget with a popup panel, for the plugins that give the bar a
+// button and a panel from one file: this holds whether the panel is open,
+// and the plugin brings its button, its keys and its content. A plugin may
+// give open() and close() of its own; toggle() and closeForPopoutSwitch()
+// go through them.
+BarWidget {
+  id: panel
 
-  property QtObject bar: null
-  property string moduleName: ""
-  property var settings: ({})
   property string ipcTarget: ""
   property alias controller: openState
   property bool popoutSwitching: false
@@ -21,28 +19,24 @@ Item {
 
   function open() { openState.show() }
   function close() { openState.hide() }
+
   function toggle() {
     if (opened) close()
     else open()
   }
 
-  // Closes the panel because another is opening in its place: for that one
-  // close, popoutSwitchClosing is set, so the panel can skip its fade.
+  // Closes for another panel opening in this one's place. For that one
+  // close <popoutSwitchClosing> holds, so the panel can skip its fade.
   function closeForPopoutSwitch() {
     popoutSwitchClosing = true
     close()
-    Qt.callLater(function() { popoutSwitchClosing = false })
+    Qt.callLater(function () { panel.popoutSwitchClosing = false })
   }
 
   // Hands over to the bar's next panel in <direction>; false with no bar.
   function switchPanel(direction) {
-    return bar && typeof bar.switchPanelFrom === "function" ? bar.switchPanelFrom(root, direction) : false
-  }
-
-  // The setting <name> from the panel's entry in shell.json, as BarWidget's.
-  function setting(name, fallback) {
-    var value = settings ? settings[name] : undefined
-    return value === undefined || value === null ? fallback : value
+    if (!bar || typeof bar.switchPanelFrom !== "function") return false
+    return bar.switchPanelFrom(panel, direction)
   }
 
   PanelController {

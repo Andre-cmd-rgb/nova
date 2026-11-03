@@ -1,12 +1,13 @@
 import QtQuick
 import qs.Commons
 
-// A Rectangle with a border from a Border spec. A flat border of one width
-// all round is the Rectangle's own, which costs nothing; a gradient, or
-// sides of different widths, is a BorderOverlay drawn over it. Content sits
-// inside the content insets: each side's border width plus its padding.
+// A Rectangle bordered by a Border spec ({ color, widths, gradient }). A
+// border of one colour and one width all round is the Rectangle's own, which
+// costs nothing; a gradient, or sides of different widths, is a BorderOverlay
+// laid over the Rectangle, made only for a spec that needs it. Content goes
+// inside the content insets: each side's border and its padding together.
 Rectangle {
-  id: root
+  id: surface
 
   property var borderSpec: Border.none()
   property real padding: 0
@@ -20,24 +21,24 @@ Rectangle {
   readonly property real borderBottom: Border.bottom(borderSpec)
   readonly property real borderLeft: Border.left(borderSpec)
 
-  readonly property real contentTopInset: topPadding + borderTop
-  readonly property real contentRightInset: rightPadding + borderRight
-  readonly property real contentBottomInset: bottomPadding + borderBottom
-  readonly property real contentLeftInset: leftPadding + borderLeft
+  readonly property real contentTopInset: borderTop + topPadding
+  readonly property real contentRightInset: borderRight + rightPadding
+  readonly property real contentBottomInset: borderBottom + bottomPadding
+  readonly property real contentLeftInset: borderLeft + leftPadding
 
   readonly property bool usesOverlayBorder: Border.needsOverlay(borderSpec)
+  // The Rectangle draws the border itself; with the overlay it draws none.
+  readonly property bool _ownBorder: Border.canUseNative(borderSpec)
 
-  border {
-    color: Border.canUseNative(borderSpec) ? Border.color(borderSpec) : "transparent"
-    width: Border.canUseNative(borderSpec) ? Border.uniformWidth(borderSpec) : 0
-  }
+  border.width: _ownBorder ? Border.uniformWidth(borderSpec) : 0
+  border.color: _ownBorder ? Border.color(borderSpec) : "transparent"
 
   Loader {
     anchors.fill: parent
-    active: root.usesOverlayBorder
+    active: surface.usesOverlayBorder
     sourceComponent: BorderOverlay {
-      radius: root.radius
-      borderSpec: root.borderSpec
+      borderSpec: surface.borderSpec
+      radius: surface.radius
     }
   }
 }

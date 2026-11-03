@@ -1,9 +1,10 @@
 import QtQuick
+import qs.Commons
 import qs.Commons as Commons
 
-// The one-pixel rule between a panel's sections: the foreground at
-// <strength>, faint enough to part the sections without pulling the eye
-// from the text and borders round it. It spans its parent.
+// The one-pixel rule between a panel's sections, as wide as its parent: the
+// foreground at <strength>, faint enough to part the sections without
+// pulling the eye from the words and borders round it.
 Rectangle {
   property color foreground: Commons.Color.foreground
   property real strength: 0.12
@@ -12,5 +13,5 @@ Rectangle {
   implicitHeight: 1
   width: parent ? parent.width : implicitWidth
   height: 1
-  color: Qt.rgba(foreground.r, foreground.g, foreground.b, strength)
+  color: Util.alpha(foreground, strength)
 }

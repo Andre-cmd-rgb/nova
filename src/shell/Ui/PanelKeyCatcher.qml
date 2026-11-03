@@ -6,11 +6,11 @@ import QtQuick
 //   KeyboardPanel {
 //     PanelKeyCatcher {
 //       anchors.fill: parent
-//       onMoveRequested: function(dx, dy) { root.moveCursor(dx, dy) }
+//       onMoveRequested: (dx, dy) => root.moveCursor(dx, dy)
 //       onActivateRequested: root.activateCursor()
 //       onCloseRequested: root.close()
 //       onDeleteRequested: root.deleteSelected()
-//       onTextKey: function(t) { if (t === "r") root.refresh() }
+//       onTextKey: t => { if (t === "r") root.refresh() }
 //
 //       Column { ... }
 //     }
@@ -26,7 +26,7 @@ import QtQuick
 // field to type in (network's passphrase) sets <blocked> while the field
 // has the focus: then every key goes to the field.
 Item {
-  id: root
+  id: catcher
 
   property bool blocked: false
 
@@ -38,36 +38,55 @@ Item {
   signal tabRequested(int direction)
   signal textKey(string text)
 
+  // Where each moving key points, by its key or by its letter.
+  readonly property var _steps: ({
+    [Qt.Key_Left]: [-1, 0],
+    [Qt.Key_Right]: [1, 0],
+    [Qt.Key_Up]: [0, -1],
+    [Qt.Key_Down]: [0, 1],
+    h: [-1, 0],
+    l: [1, 0],
+    k: [0, -1],
+    j: [0, 1]
+  })
+
+  // Sends what <event> asks for; false for a key that asks for nothing here.
+  function _answer(event) {
+    const step = _steps[event.key] ?? _steps[event.text]
+    if (step) {
+      moveRequested(step[0], step[1])
+      return true
+    }
+    switch (event.key) {
+    case Qt.Key_Escape:
+      closeRequested()
+      return true
+    case Qt.Key_Backtab:
+      tabRequested(-1)
+      return true
+    case Qt.Key_Tab:
+      tabRequested(event.modifiers & Qt.ShiftModifier ? -1 : 1)
+      return true
+    case Qt.Key_Return:
+    case Qt.Key_Enter:
+      returnRequested()
+      activateRequested()
+      return true
+    case Qt.Key_Space:
+      activateRequested()
+      return true
+    }
+    if (event.text !== "x" && event.text !== "X") return false
+    deleteRequested()
+    return true
+  }
+
   focus: true
 
   Keys.priority: Keys.BeforeItem
-  Keys.onPressed: function(event) {
+  Keys.onPressed: event => {
     if (blocked) return
-    var key = event.key
-    var text = event.text
-    if (key === Qt.Key_Escape) {
-      root.closeRequested()
-    } else if (key === Qt.Key_Tab || key === Qt.Key_Backtab) {
-      root.tabRequested(key === Qt.Key_Backtab || (event.modifiers & Qt.ShiftModifier) ? -1 : 1)
-    } else if (key === Qt.Key_Down || text === "j") {
-      root.moveRequested(0, 1)
-    } else if (key === Qt.Key_Up || text === "k") {
-      root.moveRequested(0, -1)
-    } else if (key === Qt.Key_Right || text === "l") {
-      root.moveRequested(1, 0)
-    } else if (key === Qt.Key_Left || text === "h") {
-      root.moveRequested(-1, 0)
-    } else if (key === Qt.Key_Return || key === Qt.Key_Enter) {
-      root.returnRequested()
-      root.activateRequested()
-    } else if (key === Qt.Key_Space) {
-      root.activateRequested()
-    } else if (text === "x" || text === "X") {
-      root.deleteRequested()
-    } else {
-      if (text && text.length === 1) root.textKey(text)
-      return
-    }
-    event.accepted = true
+    if (_answer(event)) event.accepted = true
+    else if (event.text.length === 1) textKey(event.text)
   }
 }

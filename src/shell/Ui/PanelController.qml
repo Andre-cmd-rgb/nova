@@ -1,11 +1,13 @@
 import QtQuick
 
-// Whether a panel is open, kept apart from the panel's own properties. Panel
-// holds one as its controller and opens and closes it.
+// Whether a panel is open, held apart from the panel itself: Panel keeps one
+// as its <controller>, and a plugin that opens its panel its own way calls
+// show() and hide() on it.
 QtObject {
   property bool open: false
 
-  // Opening an open panel leaves <open> alone, so a binding on it stays.
+  // Showing a panel that is open writes nothing, so a binding on <open>
+  // survives it.
   function show() {
     if (!open) open = true
   }

@@ -3,31 +3,36 @@ import QtQuick.Shapes
 import qs.Commons
 import "../Commons/BorderGeometry.js" as Geometry
 
-// A border drawn as a shape over its parent, for what a Rectangle's own
-// border cannot do: a gradient, or sides of different widths. The ring is
-// one path filled by winding, its corners following <radius>, and is filled
-// with the spec's gradient, or its colour from end to end. It draws nothing
-// else and takes no input.
+// The border BorderSurface cannot draw with its Rectangle: a gradient, or
+// sides of different widths. It lies over its parent and fills one ring, the
+// outline with its corners rounded by <radius> less the same outline moved
+// in by each side's width, with the spec's gradient or its one colour. It
+// draws nothing else and takes no input.
 Item {
-  id: root
+  id: overlay
 
   property var borderSpec: Border.none()
   property real radius: 0
 
-  readonly property var _widths: borderSpec && borderSpec.widths ? borderSpec.widths : Geometry.parseWidthSpec(0, 0)
-  readonly property bool hasBorder: Geometry.maxWidth(_widths) > 0
-  readonly property var _gradient: borderSpec && borderSpec.gradient ? borderSpec.gradient : ({ colors: [], angle: 0, enabled: false })
-  readonly property var _colors: _gradient.enabled ? _gradient.colors : [Border.color(borderSpec), Border.color(borderSpec)]
-  readonly property var _endpoints: Geometry.gradientEndpoints(width, height, _gradient.angle || 0)
-  readonly property string _path: Geometry.ringPath(width, height, radius, _widths)
+  readonly property bool hasBorder: Geometry.maxWidth(_sides) > 0
 
-  // The <index>th of the gradient's colours, at its place along it. A
-  // gradient has up to ten; past its last, a stop repeats the last.
-  component Stop: GradientStop {
-    property int index
-    property var colors: []
-    position: Geometry.stopPosition(colors, index)
-    color: Geometry.stopColor(colors, index)
+  readonly property var _sides: borderSpec && borderSpec.widths ? borderSpec.widths : Geometry.parseWidthSpec(0, 0)
+  // The colours the ring runs through: a gradient's own, or the one colour
+  // at both ends; and the angle it runs at.
+  readonly property var _ramp: {
+    var gradient = borderSpec && borderSpec.gradient
+    if (gradient && gradient.enabled) return gradient.colors
+    var only = Border.color(borderSpec)
+    return [only, only]
+  }
+  readonly property real _angle: borderSpec && borderSpec.gradient ? borderSpec.gradient.angle || 0 : 0
+  readonly property var _axis: Geometry.gradientEndpoints(width, height, _angle)
+
+  // A gradient carries ten stops; one past the ramp's last colour repeats it.
+  component RampStop: GradientStop {
+    required property int step
+    position: Geometry.stopPosition(overlay._ramp, step)
+    color: Geometry.stopColor(overlay._ramp, step)
   }
 
   anchors.fill: parent
@@ -42,24 +47,26 @@ Item {
       fillRule: ShapePath.WindingFill
       strokeWidth: 0
       fillGradient: LinearGradient {
-        x1: root._endpoints.x1
-        y1: root._endpoints.y1
-        x2: root._endpoints.x2
-        y2: root._endpoints.y2
+        x1: overlay._axis.x1
+        y1: overlay._axis.y1
+        x2: overlay._axis.x2
+        y2: overlay._axis.y2
 
-        Stop { index: 0; colors: root._colors }
-        Stop { index: 1; colors: root._colors }
-        Stop { index: 2; colors: root._colors }
-        Stop { index: 3; colors: root._colors }
-        Stop { index: 4; colors: root._colors }
-        Stop { index: 5; colors: root._colors }
-        Stop { index: 6; colors: root._colors }
-        Stop { index: 7; colors: root._colors }
-        Stop { index: 8; colors: root._colors }
-        Stop { index: 9; colors: root._colors }
+        RampStop { step: 0 }
+        RampStop { step: 1 }
+        RampStop { step: 2 }
+        RampStop { step: 3 }
+        RampStop { step: 4 }
+        RampStop { step: 5 }
+        RampStop { step: 6 }
+        RampStop { step: 7 }
+        RampStop { step: 8 }
+        RampStop { step: 9 }
       }
 
-      PathSvg { path: root._path }
+      PathSvg {
+        path: Geometry.ringPath(overlay.width, overlay.height, overlay.radius, overlay._sides)
+      }
     }
   }
 }

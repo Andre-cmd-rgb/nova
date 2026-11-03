@@ -2,19 +2,20 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// A question over its parent, which it dims: a card with <message> and two
+// A question over its parent, which it dims: a card with <message> over two
 // buttons, <cancelText> and <confirmText>, the second in the urgent colour
-// as it is the one that does something. A click on either sends canceled()
-// or confirmed(); one on the dimmed parent cancels. The host passes its keys
-// through handleKey() while the dialog is open.
+// as it is the one that does something. A click on one answers with
+// canceled() or confirmed(); a click on the dimmed parent cancels. The
+// button Return presses is <selectedIndex> (0 cancel, 1 confirm); the
+// pointer moves it. The host hands its keys to handleKey() while the dialog
+// is open.
 Item {
-  id: root
+  id: dialog
 
   property bool opened: false
   property string message: ""
   property string cancelText: "Cancel"
   property string confirmText: "Confirm"
-  // The button Return presses: 0 cancel, 1 confirm.
   property int selectedIndex: 1
   property color background: Commons.Color.background
   property color foreground: Commons.Color.foreground
@@ -27,125 +28,123 @@ Item {
   signal canceled()
   signal confirmed()
 
+  function _answer(index) {
+    if (index === 0) canceled()
+    else confirmed()
+  }
+
   // Escape cancels; Left, Right, Tab and Backtab go to the other button;
-  // Return and Enter press the chosen one. True when the key was the
-  // dialog's; while it is closed, none is.
+  // Return and Enter press the one chosen. True for a key the dialog took,
+  // which no key is while it is closed.
   function handleKey(event) {
     if (!opened) return false
     switch (event.key) {
     case Qt.Key_Escape:
       canceled()
-      return true
+      break
     case Qt.Key_Left:
     case Qt.Key_Right:
     case Qt.Key_Tab:
     case Qt.Key_Backtab:
-      root.selectedIndex = selectedIndex === 0 ? 1 : 0
-      return true
+      selectedIndex = selectedIndex === 0 ? 1 : 0
+      break
     case Qt.Key_Return:
     case Qt.Key_Enter:
-      if (selectedIndex === 0) canceled()
-      else confirmed()
-      return true
+      _answer(selectedIndex)
+      break
+    default:
+      return false
     }
-    return false
+    return true
+  }
+
+  // One of the two buttons: chosen, at full strength and filled; else only
+  // outlined, faintly.
+  component Choice: BorderSurface {
+    id: choice
+
+    required property int index
+    property string label
+    readonly property bool chosen: dialog.selectedIndex === index
+    readonly property bool urgent: index === 1
+    readonly property color _strong: urgent ? Commons.Color.urgent : dialog.selectedText
+
+    width: Style.space(88)
+    height: Style.space(34)
+    radius: 0
+    color: !chosen ? "transparent" : urgent ? Util.alpha(Commons.Color.urgent, 0.22) : dialog.selectedBackground
+    borderSpec: Border.flat(chosen ? _strong : Util.alpha(urgent ? Commons.Color.urgent : dialog.foreground, urgent ? 0.56 : 0.38),
+      Style.normalBorderWidth)
+
+    Text {
+      anchors.centerIn: parent
+      textFormat: Text.PlainText
+      text: choice.label
+      color: choice.chosen ? choice._strong : dialog.foreground
+      font.family: dialog.fontFamily
+      font.pixelSize: Style.font.caption
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: dialog.selectedIndex = choice.index
+      onClicked: dialog._answer(choice.index)
+    }
   }
 
   visible: opened
 
   Rectangle {
     anchors.fill: parent
-    color: root.scrim
+    color: dialog.scrim
 
     MouseArea {
       anchors.fill: parent
-      onClicked: root.canceled()
+      onClicked: dialog.canceled()
     }
 
+    // As tall as the wrapped message needs, so a narrow host (the menu's
+    // card) does not push the words into the buttons.
     BorderSurface {
       id: card
       anchors.centerIn: parent
       width: Math.min(parent.width - Style.space(32), Style.space(370))
-      // As tall as the wrapped message needs, so a narrow host (the menu's
-      // card) does not push the text into the buttons.
-      height: card.contentTopInset + card.contentBottomInset + question.implicitHeight + Style.space(20) + Style.space(34)
-      radius: root.cornerRadius
+      height: body.implicitHeight + contentTopInset + contentBottomInset
+      radius: dialog.cornerRadius
       padding: Style.space(18)
-      color: root.background
-      borderSpec: Border.flat(root.selectedText, Style.normalBorderWidth)
+      color: dialog.background
+      borderSpec: Border.flat(dialog.selectedText, Style.normalBorderWidth)
 
       // A click on the card is not one on the dimmed parent.
       MouseArea {
         anchors.fill: parent
-        onClicked: {}
       }
 
-      Item {
-        anchors.fill: parent
-        anchors.topMargin: card.contentTopInset
-        anchors.rightMargin: card.contentRightInset
-        anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
+      Column {
+        id: body
+        x: card.contentLeftInset
+        y: card.contentTopInset
+        width: card.width - card.contentLeftInset - card.contentRightInset
+        spacing: Style.space(20)
 
         Text {
-          id: question
-          anchors.top: parent.top
-          anchors.left: parent.left
-          anchors.right: parent.right
+          width: parent.width
           textFormat: Text.PlainText
-          text: root.message
-          color: root.foreground
-          font { family: root.fontFamily; pixelSize: Style.font.title }
+          text: dialog.message
+          color: dialog.foreground
+          font.family: dialog.fontFamily
+          font.pixelSize: Style.font.title
           wrapMode: Text.WordWrap
         }
 
         Row {
           anchors.right: parent.right
-          anchors.bottom: parent.bottom
           spacing: Style.space(10)
 
-          Repeater {
-            model: [root.cancelText, root.confirmText]
-
-            BorderSurface {
-              id: choice
-
-              required property int index
-              required property string modelData
-
-              readonly property bool selected: root.selectedIndex === index
-              readonly property bool destructive: index === 1
-              // Confirm is drawn in the urgent colour, cancel in the
-              // dialog's own; the chosen one at full strength.
-              readonly property color _mark: destructive ? Commons.Color.urgent : root.selectedText
-
-              width: Style.space(88)
-              height: Style.space(34)
-              radius: 0
-              color: !selected ? "transparent" : destructive ? Util.alpha(Commons.Color.urgent, 0.22) : root.selectedBackground
-              borderSpec: Border.flat(selected ? _mark : destructive ? Util.alpha(Commons.Color.urgent, 0.56) : Util.alpha(root.foreground, 0.38),
-                Style.normalBorderWidth)
-
-              Text {
-                anchors.centerIn: parent
-                textFormat: Text.PlainText
-                text: choice.modelData
-                color: choice.selected ? choice._mark : root.foreground
-                font { family: root.fontFamily; pixelSize: Style.font.caption }
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onEntered: root.selectedIndex = choice.index
-                onClicked: {
-                  if (choice.index === 0) root.canceled()
-                  else root.confirmed()
-                }
-              }
-            }
-          }
+          Choice { index: 0; label: dialog.cancelText }
+          Choice { index: 1; label: dialog.confirmText }
         }
       }
     }

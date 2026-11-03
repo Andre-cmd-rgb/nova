@@ -31,6 +31,9 @@ ToggleSwitch 1.0 ToggleSwitch.qml
 TouchpadScroll 1.0 TouchpadScroll.qml
 WidgetButton 1.0 WidgetButton.qml
 
-# Dropdown's parts, not for use outside it.
-internal DropdownField DropdownField.qml
+# The parts the components above are built from, not for use outside them.
+internal ControlFace ControlFace.qml
+internal DebugOutline DebugOutline.qml
 internal DropdownPopup DropdownPopup.qml
+internal PopupFace PopupFace.qml
+internal Pressable Pressable.qml
