@@ -3,30 +3,140 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
-import "MediaModel.js" as MediaModel
+import "MediaModel.js" as Media
 
+// The MPRIS players, and the one the media keys, the bar's media widget and
+// the audio panel act on: activePlayer. The keys reach it as
+// `nova-shell media <action>`, and each action shows on the on-screen
+// display.
 Item {
   id: root
 
   property var shell: null
-  property string preferredPlayerKey: ""
-  property var playerStartedAt: ({})
-  property var pendingTrackOsd: null
-  property int playSerial: 0
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
-  readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
-  readonly property var playbackStreams: {
-    var list = []
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i]
-      if (n && n.isStream && isPlaybackStream(n) && n.audio) list.push(n)
+
+  // ----- playing, heard, chosen -----
+
+  // When each player playing began to, as a count: { key: n }. The player
+  // playing longest is the one meant, so a second one starting does not
+  // take the keys from the first.
+  property var playerStartedAt: ({})
+  property int playSerial: 0
+
+  // The player chosen last, by its key: clicked in the widget's list, acted
+  // on, or switched to. It goes when its player does.
+  property string preferredPlayerKey: ""
+
+  function syncPlayingOrder() {
+    var started = {}
+    var present = {}
+    var serial = playSerial
+    for (var i = 0; i < players.length; i++) {
+      var key = Media.playerKey(players[i])
+      if (!key) continue
+      present[key] = true
+      if (!players[i].isPlaying) continue
+      if (playerStartedAt[key] === undefined) started[key] = ++serial
+      else started[key] = playerStartedAt[key]
     }
-    return list
+    if (preferredPlayerKey && !present[preferredPlayerKey]) preferredPlayerKey = ""
+    playSerial = serial
+    playerStartedAt = started
   }
-  readonly property var sourcePlayers: orderedSourcePlayers()
-  readonly property var sourceCyclePlayers: orderedCycleSourcePlayers()
-  readonly property var activePlayer: selectActivePlayer()
+
+  function startedAt(player, otherwise) {
+    var key = Media.playerKey(player)
+    var count = key ? playerStartedAt[key] : undefined
+    return count === undefined ? otherwise : count
+  }
+
+  Component.onCompleted: syncPlayingOrder()
+  onPlayersChanged: syncPlayingOrder()
+
+  Instantiator {
+    model: root.players
+    delegate: Connections {
+      required property var modelData
+      target: modelData
+      function onIsPlayingChanged() { root.syncPlayingOrder() }
+    }
+  }
+
+  // Pipewire's playback streams. A player with one is heard, which a player
+  // that only says it plays is not.
+  readonly property var playbackStreams: {
+    var nodes = Pipewire.nodes ? Pipewire.nodes.values : []
+    var streams = []
+    for (var i = 0; i < nodes.length; i++) {
+      if (Media.isPlaybackStream(nodes[i]) && nodes[i].audio) streams.push(nodes[i])
+    }
+    return streams
+  }
+  readonly property var streamKeys: playbackStreams.map(function(node) { return Media.nameKey(Media.streamName(node)) })
+
+  PwObjectTracker { objects: root.playbackStreams }
+
+  function isHeard(player) {
+    return Media.isHeard(player, streamKeys)
+  }
+
+  // The player playing longest, of those heard if `heard`. A proxy only when
+  // no player of its own plays.
+  function longestPlaying(heard) {
+    var own = null
+    var ownStart = 0
+    var proxy = null
+    var proxyStart = 0
+    for (var i = 0; i < players.length; i++) {
+      var player = players[i]
+      if (!player || !player.isPlaying) continue
+      if (heard && !isHeard(player)) continue
+      var start = startedAt(player, i + 1000)
+      if (!Media.isProxy(player)) {
+        if (!own || start < ownStart) {
+          own = player
+          ownStart = start
+        }
+      } else if (!proxy || start < proxyStart) {
+        proxy = player
+        proxyStart = start
+      }
+    }
+    return own || proxy || null
+  }
+
+  // ----- the players shown -----
+
+  // The one acted on. The player chosen, while it plays; else the one heard
+  // playing longest, the one playing longest, the one chosen if heard; and
+  // failing those, the first heard, the one chosen, the first with a track,
+  // the first that can be controlled, the first with a name. At each step
+  // a player of its own comes before a proxy.
+  readonly property var activePlayer: {
+    var preferred = null
+    // The first of each kind, [own, proxy]: heard, with a track,
+    // controllable, named. A player counts as its best kind only.
+    var first = [[null, null], [null, null], [null, null], [null, null]]
+    for (var i = 0; i < players.length; i++) {
+      var player = players[i]
+      if (!player) continue
+      if (preferredPlayerKey && Media.playerKey(player) === preferredPlayerKey && Media.isNamed(player)) preferred = player
+      var kind = isHeard(player) ? 0
+        : Media.hasTrack(player) ? 1
+        : Media.isControllable(player) ? 2
+        : Media.isNamed(player) ? 3
+        : -1
+      var proxy = Media.isProxy(player) ? 1 : 0
+      if (kind !== -1 && !first[kind][proxy]) first[kind][proxy] = player
+    }
+    if (preferred && preferred.isPlaying) return preferred
+    return longestPlaying(true) || longestPlaying(false)
+      || (preferred && isHeard(preferred) ? preferred : null)
+      || first[0][0] || first[0][1] || preferred
+      || first[1][0] || first[1][1] || first[2][0] || first[2][1] || first[3][0] || first[3][1] || null
+  }
+
   readonly property bool hasMedia: activePlayer !== null && (activePlayer.trackTitle || activePlayer.trackArtist)
   readonly property string title: activePlayer ? (activePlayer.trackTitle || "") : ""
   readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
@@ -34,273 +144,138 @@ Item {
   readonly property string artUrl: activePlayer && activePlayer.trackArtUrl ? activePlayer.trackArtUrl : ""
   readonly property string identity: activePlayer ? (activePlayer.identity || activePlayer.desktopEntry || "") : ""
 
-  function isProxyPlayer(player) {
-    return MediaModel.isProxyPlayer(player)
-  }
+  // The widget's list: every named player, those playing first, longest
+  // first, proxies after the rest, then by label.
+  readonly property var sourcePlayers: players.filter(Media.isNamed).sort(function(a, b) {
+    if (!!a.isPlaying !== !!b.isPlaying) return a.isPlaying ? -1 : 1
+    if (Media.isProxy(a) !== Media.isProxy(b)) return Media.isProxy(a) ? 1 : -1
+    if (a.isPlaying && b.isPlaying) {
+      var sooner = startedAt(a, 1000) - startedAt(b, 1000)
+      if (sooner !== 0) return sooner
+    }
+    return Media.label(a).localeCompare(Media.label(b))
+  })
 
-  function hasMetadata(player) {
-    return MediaModel.hasMetadata(player)
-  }
-
-  function hasTrackMetadata(player) {
-    return MediaModel.hasTrackMetadata(player)
-  }
-
-  function playerCanControl(player) {
-    return MediaModel.playerCanControl(player)
-  }
-
-  function canHandleAction(player, action) {
-    return MediaModel.canHandleAction(player, action)
-  }
-
-  function canCycleSource(player) {
-    return MediaModel.canCycleSource(player)
-  }
-
-  function nodeProps(node) {
-    return MediaModel.nodeProps(node)
-  }
-
-  function isPlaybackStream(node) {
-    return MediaModel.isPlaybackStream(node)
-  }
-
-  function streamLabelKey(label) {
-    return MediaModel.streamLabelKey(label)
-  }
-
-  function rawStreamLabel(node) {
-    return MediaModel.rawStreamLabel(node)
-  }
-
-  function playerAppLabel(player) {
-    return MediaModel.playerAppLabel(player)
-  }
-
-  function playerHasPlaybackStream(player) {
-    return MediaModel.playerHasPlaybackStream(player, playbackStreams)
-  }
+  // What the source keys step through, in a fixed order: proxies last, then
+  // by label.
+  readonly property var sourceCyclePlayers: players.filter(Media.isSource).sort(function(a, b) {
+    if (Media.isProxy(a) !== Media.isProxy(b)) return Media.isProxy(a) ? 1 : -1
+    return Media.label(a).localeCompare(Media.label(b))
+  })
 
   function playerKey(player) {
-    return MediaModel.playerKey(player)
+    return Media.playerKey(player)
   }
 
   function playerForKey(key) {
     if (!key) return null
     for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      if (playerKey(p) === key) return p
+      if (Media.playerKey(players[i]) === key) return players[i]
     }
     return null
   }
 
-  function playerOrder(player, fallback) {
-    var key = playerKey(player)
-    var value = key ? playerStartedAt[key] : undefined
-    return value === undefined ? fallback : value
-  }
-
-  function syncPlayingOrder() {
-    var next = {}
-    var alive = {}
-    var serial = playSerial
-
-    for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      var key = playerKey(p)
-      if (!key) continue
-
-      alive[key] = true
-      if (!p.isPlaying) continue
-
-      if (playerStartedAt[key] === undefined) {
-        serial += 1
-        next[key] = serial
-      } else {
-        next[key] = playerStartedAt[key]
-      }
-    }
-
-    if (preferredPlayerKey && !alive[preferredPlayerKey]) preferredPlayerKey = ""
-
-    playSerial = serial
-    playerStartedAt = next
-  }
-
-  function orderedSourcePlayers() {
-    var list = []
-    for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      if (hasMetadata(p)) list.push(p)
-    }
-
-    list.sort(function(a, b) {
-      if (!!a.isPlaying !== !!b.isPlaying) return a.isPlaying ? -1 : 1
-      if (isProxyPlayer(a) !== isProxyPlayer(b)) return isProxyPlayer(a) ? 1 : -1
-      if (a.isPlaying && b.isPlaying) {
-        var orderDelta = playerOrder(a, 1000) - playerOrder(b, 1000)
-        if (orderDelta !== 0) return orderDelta
-      }
-      return labelFor(a).localeCompare(labelFor(b))
-    })
-
-    return list
-  }
-
-  function orderedCycleSourcePlayers() {
-    var list = []
-    for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      if (canCycleSource(p)) list.push(p)
-    }
-
-    list.sort(function(a, b) {
-      if (isProxyPlayer(a) !== isProxyPlayer(b)) return isProxyPlayer(a) ? 1 : -1
-      return labelFor(a).localeCompare(labelFor(b))
-    })
-
-    return list
-  }
-
-  function oldestPlayingPlayer(requirePlaybackStream) {
-    var oldest = null
-    var oldestOrder = 0
-    var playingProxy = null
-    var proxyOrder = 0
-
-    for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      if (!p) continue
-
-      var proxyPlayer = isProxyPlayer(p)
-      if (p.isPlaying) {
-        if (requirePlaybackStream && !playerHasPlaybackStream(p)) continue
-
-        var order = playerOrder(p, i + 1000)
-        if (!proxyPlayer && (!oldest || order < oldestOrder)) {
-          oldest = p
-          oldestOrder = order
-        } else if (proxyPlayer && (!playingProxy || order < proxyOrder)) {
-          playingProxy = p
-          proxyOrder = order
-        }
-      }
-    }
-
-    return oldest || playingProxy || null
-  }
-
-  function selectActivePlayer() {
-    var preferred = null
-    var trackPlayer = null
-    var trackProxy = null
-    var streamPlayer = null
-    var streamProxy = null
-    var controllablePlayer = null
-    var controllableProxy = null
-    var identityPlayer = null
-    var identityProxy = null
-
-    for (var i = 0; i < players.length; i++) {
-      var p = players[i]
-      if (!p) continue
-
-      var proxy = isProxyPlayer(p)
-
-      if (preferredPlayerKey && playerKey(p) === preferredPlayerKey && hasMetadata(p)) preferred = p
-
-      if (playerHasPlaybackStream(p)) {
-        if (!proxy && !streamPlayer) streamPlayer = p
-        else if (proxy && !streamProxy) streamProxy = p
-      } else if (hasTrackMetadata(p)) {
-        if (!proxy && !trackPlayer) trackPlayer = p
-        else if (proxy && !trackProxy) trackProxy = p
-      } else if (playerCanControl(p)) {
-        if (!proxy && !controllablePlayer) controllablePlayer = p
-        else if (proxy && !controllableProxy) controllableProxy = p
-      } else if (hasMetadata(p)) {
-        if (!proxy && !identityPlayer) identityPlayer = p
-        else if (proxy && !identityProxy) identityProxy = p
-      }
-    }
-
-    if (preferred && preferred.isPlaying) return preferred
-    var streamCandidate = streamPlayer || streamProxy
-    var streamPreferred = preferred && playerHasPlaybackStream(preferred) ? preferred : null
-    return oldestPlayingPlayer(true) || oldestPlayingPlayer(false) || streamPreferred || streamCandidate || preferred || trackPlayer || trackProxy || controllablePlayer || controllableProxy || identityPlayer || identityProxy || null
-  }
-
-  function labelFor(player) {
-    return MediaModel.labelFor(player)
-  }
-
-  function osdMessage(player, fallback) {
-    return MediaModel.osdMessage(player, fallback)
-  }
-
-  function trackSignature(player) {
-    return MediaModel.trackSignature(player)
-  }
-
-  function showOsd(actionLabel, iconName, player) {
-    if (!shell) return
-    shell.summon("nova.osd", JSON.stringify({
-      icon: iconName || "media",
-      message: osdMessage(player || activePlayer, actionLabel)
-    }))
-  }
-
-  function scheduleOsd(actionLabel, iconName, player, waitForTrackChange, beforeTrackSignature) {
-    if (waitForTrackChange) {
-      pendingTrackOsd = {
-        actionLabel: actionLabel,
-        iconName: iconName,
-        player: player,
-        playerKey: playerKey(player),
-        before: beforeTrackSignature,
-        attempts: 0
-      }
-      trackOsdTimer.restart()
-    } else {
-      Qt.callLater(function() { root.showOsd(actionLabel, iconName, player) })
-    }
-  }
-
-  function flushPendingTrackOsd(force) {
-    var pending = pendingTrackOsd
-    if (!pending) return
-
-    var player = playerForKey(pending.playerKey) || pending.player
-    if (force || MediaModel.trackChanged(pending.before, player) || pending.attempts >= 10) {
-      pendingTrackOsd = null
-      trackOsdTimer.stop()
-      root.showOsd(pending.actionLabel, pending.iconName, player)
-      return
-    }
-
-    pending.attempts = pending.attempts + 1
-    pendingTrackOsd = pending
-    trackOsdTimer.restart()
-  }
-
+  // The widget's list, clicked: that player becomes the one acted on.
   function selectPlayer(key) {
     var player = playerForKey(key)
-    if (!player || !hasMetadata(player)) return false
-    preferredPlayerKey = playerKey(player)
+    if (!player || !Media.isNamed(player)) return false
+    preferredPlayerKey = Media.playerKey(player)
     return true
   }
 
-  function playPlayer(player) {
+  // ----- actions -----
+
+  // The player an action goes to: the one named by `targetKey`; for a pause,
+  // the one playing longest; else the active one if it can, the first in
+  // the list that can, or the active one all the same.
+  function playerForAction(action, targetKey) {
+    var named = playerForKey(targetKey)
+    if (named) return named
+    if (action === "pause" || action === "playPause") {
+      var playing = longestPlaying(true) || longestPlaying(false)
+      if (playing) return playing
+    }
+    if (Media.can(activePlayer, action)) return activePlayer
+    for (var i = 0; i < sourcePlayers.length; i++) {
+      if (Media.can(sourcePlayers[i], action)) return sourcePlayers[i]
+    }
+    return activePlayer
+  }
+
+  // playPause, play, pause, next or previous: true if a player took it. The
+  // player that did becomes the one chosen. With `showFeedback` (the default)
+  // the on-screen display says what was done, and after a skip, once the
+  // new track is there, what plays.
+  function runAction(action, showFeedback, targetKey) {
+    var player = playerForAction(action, targetKey)
+    var key = Media.playerKey(player)
+    var before = Media.trackSignature(player)
+    var playing = !!player && player.isPlaying
+    var done = false
+    var label = "Play/pause"
+    var icon = "media"
+
+    if (action === "next") {
+      label = "Next"
+      icon = "media-next"
+      if (player && player.canGoNext) {
+        player.next()
+        done = true
+      }
+    } else if (action === "previous") {
+      label = "Previous"
+      icon = "media-previous"
+      if (player && player.canGoPrevious) {
+        player.previous()
+        done = true
+      }
+    } else if (action === "play") {
+      label = "Play"
+      icon = "media-play"
+      done = play(player)
+    } else if (action === "pause") {
+      label = "Pause"
+      icon = "media-pause"
+      done = pause(player)
+    } else if (action === "playPause") {
+      label = playing ? "Pause" : "Play"
+      icon = playing ? "media-pause" : "media-play"
+      if (player && player.isPlaying && player.canPause) {
+        player.pause()
+        done = true
+      } else if (player && !player.isPlaying && player.canPlay) {
+        player.play()
+        done = true
+      } else if (player && player.canTogglePlaying) {
+        player.togglePlaying()
+        done = true
+      }
+    }
+
+    if (done && key) preferredPlayerKey = key
+    if (showFeedback !== false) {
+      if (done && (action === "next" || action === "previous")) awaitTrack(label, icon, player, before)
+      else Qt.callLater(function() { root.showOsd(label, icon, player) })
+    }
+    return done
+  }
+
+  // Play, or with only a toggle, start it.
+  function play(player) {
     if (!player) return false
     if (player.canPlay) {
       player.play()
       return true
     }
+    if (player.canTogglePlaying && !player.isPlaying) {
+      player.togglePlaying()
+      return true
+    }
     return false
   }
 
-  function pausePlayer(player) {
+  // Pause, or with only a toggle, stop it.
+  function pause(player) {
     if (!player) return false
     if (player.canPause) {
       player.pause()
@@ -313,211 +288,104 @@ Item {
     return false
   }
 
-  function switchSource(delta, transferPlayback, showFeedback) {
+  // The next or previous source by `step`, made the one chosen. With
+  // `takeOver`, it plays in place of the one that was playing, which pauses
+  // once it does.
+  function switchSource(step, takeOver) {
     var list = sourceCyclePlayers
-    if (!list || list.length === 0) return false
+    if (list.length === 0) return false
 
-    var activeKey = playerKey(activePlayer)
-    var index = 0
+    var current = activePlayer
+    var at = 0
     for (var i = 0; i < list.length; i++) {
-      if (playerKey(list[i]) === activeKey) {
-        index = i
+      if (Media.playerKey(list[i]) === Media.playerKey(current)) {
+        at = i
         break
       }
     }
+    var next = list[(at + step + list.length) % list.length]
+    var wasPlaying = current && current.isPlaying
+    preferredPlayerKey = Media.playerKey(next)
 
-    index = (index + delta + list.length) % list.length
-    var current = activePlayer
-    var next = list[index]
-    var currentWasPlaying = current && current.isPlaying
-    var currentKey = playerKey(current)
-    var nextKey = playerKey(next)
-
-    preferredPlayerKey = nextKey
-
-    if (transferPlayback && currentWasPlaying && next && nextKey !== currentKey) {
-      var nextWasPlaying = next.isPlaying
-      var nextStarted = nextWasPlaying || playPlayer(next)
-      if (nextStarted) pausePlayer(current)
+    if (takeOver && wasPlaying && next && Media.playerKey(next) !== Media.playerKey(current)) {
+      var playing = next.isPlaying || (next.canPlay && play(next))
+      if (playing) pause(current)
     }
-
-    if (showFeedback !== false) Qt.callLater(function() {
-      root.showOsd("Source", "media-source", next)
-    })
-
+    Qt.callLater(function() { root.showOsd("Source", "media-source", next) })
     return true
   }
 
-  function playerForAction(action, targetKey) {
-    var targeted = playerForKey(targetKey)
-    if (targeted) return targeted
+  // ----- the on-screen display -----
 
-    if (action === "pause" || action === "playPause") {
-      var oldest = oldestPlayingPlayer(true) || oldestPlayingPlayer(false)
-      if (oldest) return oldest
-    }
-
-    if (canHandleAction(activePlayer, action)) return activePlayer
-
-    var list = sourcePlayers
-    for (var i = 0; i < list.length; i++) {
-      if (canHandleAction(list[i], action)) return list[i]
-    }
-
-    return activePlayer
+  function showOsd(label, icon, player) {
+    if (!shell) return
+    shell.summon("nova.osd", JSON.stringify({
+      icon: icon || "media",
+      message: Media.osdMessage(player || activePlayer, label)
+    }))
   }
 
-  function runAction(action, showFeedback, targetKey) {
-    var player = playerForAction(action, targetKey)
-    var key = playerKey(player)
-    var actionLabel = "Play/pause"
-    var iconName = "media"
-    var beforeTrackSignature = trackSignature(player)
-    var handled = false
+  // After a skip, the display waits for the new track: up to ten looks, 120
+  // ms apart, then it shows what there is.
+  property var awaited: null
 
-    if (action === "next") {
-      actionLabel = "Next"
-      iconName = "media-next"
-      if (player && player.canGoNext) {
-        player.next()
-        handled = true
-      }
-    } else if (action === "previous") {
-      actionLabel = "Previous"
-      iconName = "media-previous"
-      if (player && player.canGoPrevious) {
-        player.previous()
-        handled = true
-      }
-    } else if (action === "play") {
-      actionLabel = "Play"
-      iconName = "media-play"
-      if (player && player.canPlay) {
-        player.play()
-        handled = true
-      } else if (player && player.canTogglePlaying && !player.isPlaying) {
-        player.togglePlaying()
-        handled = true
-      }
-    } else if (action === "pause") {
-      actionLabel = "Pause"
-      iconName = "media-pause"
-      if (player && player.canPause) {
-        player.pause()
-        handled = true
-      } else if (player && player.canTogglePlaying && player.isPlaying) {
-        player.togglePlaying()
-        handled = true
-      }
-    } else if (action === "playPause") {
-      actionLabel = player && player.isPlaying ? "Pause" : "Play"
-      iconName = player && player.isPlaying ? "media-pause" : "media-play"
-      if (player && player.isPlaying && player.canPause) {
-        player.pause()
-        handled = true
-      } else if (player && !player.isPlaying && player.canPlay) {
-        player.play()
-        handled = true
-      } else if (player && player.canTogglePlaying) {
-        player.togglePlaying()
-        handled = true
-      }
-    }
-
-    if (handled && key) preferredPlayerKey = key
-    if (showFeedback !== false)
-      scheduleOsd(actionLabel, iconName, player, handled && (action === "next" || action === "previous"), beforeTrackSignature)
-    return handled
-  }
-
-  // Recompute play-order reactively instead of polling every 500ms.
-  // syncPlayingOrder only depends on the set of players and each player's
-  // isPlaying state: onPlayersChanged covers players appearing/disappearing,
-  // and the Instantiator wires isPlayingChanged for each live player.
-  Component.onCompleted: root.syncPlayingOrder()
-  onPlayersChanged: root.syncPlayingOrder()
-
-  Instantiator {
-    model: root.players
-    delegate: Connections {
-      required property var modelData
-      target: modelData
-      function onIsPlayingChanged() { root.syncPlayingOrder() }
-    }
+  function awaitTrack(label, icon, player, before) {
+    awaited = { label: label, icon: icon, player: player, key: Media.playerKey(player), before: before, looks: 0 }
+    look.restart()
   }
 
   Timer {
-    id: trackOsdTimer
+    id: look
     interval: 120
-    repeat: false
-    onTriggered: root.flushPendingTrackOsd(false)
+    onTriggered: {
+      var wait = root.awaited
+      if (!wait) return
+      var player = root.playerForKey(wait.key) || wait.player
+      if (Media.trackSignature(player) !== String(wait.before || "") || wait.looks >= 10) {
+        root.awaited = null
+        root.showOsd(wait.label, wait.icon, player)
+        return
+      }
+      wait.looks++
+      look.restart()
+    }
   }
 
-  PwObjectTracker { objects: root.playbackStreams }
+  // ----- nova-shell media -----
 
   function statusJson() {
-    var p = activePlayer
+    var player = activePlayer
     return JSON.stringify({
-      hasPlayer: p !== null,
-      hasMedia: root.hasMedia,
-      playing: p ? !!p.isPlaying : false,
-      identity: p ? (p.identity || "") : "",
-      desktopEntry: p ? (p.desktopEntry || "") : "",
-      title: p ? (p.trackTitle || "") : "",
-      artist: p ? (p.trackArtist || "") : "",
-      album: p && p.trackAlbum ? p.trackAlbum : "",
-      artUrl: p && p.trackArtUrl ? p.trackArtUrl : "",
-      canGoNext: p ? !!p.canGoNext : false,
-      canGoPrevious: p ? !!p.canGoPrevious : false,
-      canTogglePlaying: p ? !!p.canTogglePlaying : false
+      hasPlayer: player !== null,
+      hasMedia: hasMedia,
+      playing: player ? !!player.isPlaying : false,
+      identity: player ? (player.identity || "") : "",
+      desktopEntry: player ? (player.desktopEntry || "") : "",
+      title: player ? (player.trackTitle || "") : "",
+      artist: player ? (player.trackArtist || "") : "",
+      album: player && player.trackAlbum ? player.trackAlbum : "",
+      artUrl: player && player.trackArtUrl ? player.trackArtUrl : "",
+      canGoNext: player ? !!player.canGoNext : false,
+      canGoPrevious: player ? !!player.canGoPrevious : false,
+      canTogglePlaying: player ? !!player.canTogglePlaying : false
     })
   }
 
   IpcHandler {
     target: "media"
 
-    function status(): string {
-      return root.statusJson()
-    }
-
-    function playPause(): string {
-      return root.runAction("playPause", true) ? "ok" : "unhandled"
-    }
-
-    function next(): string {
-      return root.runAction("next", true) ? "ok" : "unhandled"
-    }
-
-    function previous(): string {
-      return root.runAction("previous", true) ? "ok" : "unhandled"
-    }
-
-    function play(): string {
-      return root.runAction("play", true) ? "ok" : "unhandled"
-    }
-
-    function pause(): string {
-      return root.runAction("pause", true) ? "ok" : "unhandled"
-    }
-
-    function sourceNext(): string {
-      return root.switchSource(1, false, true) ? "ok" : "unhandled"
-    }
-
-    function sourcePrevious(): string {
-      return root.switchSource(-1, false, true) ? "ok" : "unhandled"
-    }
-
-    function sourceSwitch(): string {
-      return root.switchSource(1, true, true) ? "ok" : "unhandled"
-    }
-
-    function sourceSwitchPrevious(): string {
-      return root.switchSource(-1, true, true) ? "ok" : "unhandled"
-    }
-
-    function ping(): string {
-      return "ok"
-    }
+    function status(): string { return root.statusJson() }
+    function playPause(): string { return root.runAction("playPause") ? "ok" : "unhandled" }
+    function next(): string { return root.runAction("next") ? "ok" : "unhandled" }
+    function previous(): string { return root.runAction("previous") ? "ok" : "unhandled" }
+    function play(): string { return root.runAction("play") ? "ok" : "unhandled" }
+    function pause(): string { return root.runAction("pause") ? "ok" : "unhandled" }
+    // Step the chosen player through the sources.
+    function sourceNext(): string { return root.switchSource(1, false) ? "ok" : "unhandled" }
+    function sourcePrevious(): string { return root.switchSource(-1, false) ? "ok" : "unhandled" }
+    // The same, playback moving over: nova-audio-source-switch.
+    function sourceSwitch(): string { return root.switchSource(1, true) ? "ok" : "unhandled" }
+    function sourceSwitchPrevious(): string { return root.switchSource(-1, true) ? "ok" : "unhandled" }
+    function ping(): string { return "ok" }
   }
 }

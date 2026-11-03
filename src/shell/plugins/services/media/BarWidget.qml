@@ -4,6 +4,11 @@ import qs.Ui
 import qs.Commons
 import qs.Commons as Commons
 
+// What plays, on the bar: a play or pause glyph and the title and artist,
+// which scroll while they are too long and playing. A click plays or pauses,
+// a middle click skips, the wheel steps back or on; a right click opens a
+// card with the cover, the controls, and every player to choose from. All of
+// it through the media service (Service.qml).
 BarWidget {
   id: root
   moduleName: "nova.media"
@@ -11,71 +16,77 @@ BarWidget {
   readonly property var mediaService: bar?.shell?.serviceFor("nova.media")
   readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
   readonly property var sourcePlayers: mediaService ? mediaService.sourcePlayers : []
+  readonly property bool playing: !!activePlayer && activePlayer.isPlaying
 
   readonly property bool hasMedia: activePlayer !== null && (activePlayer.trackTitle || activePlayer.trackArtist)
-  readonly property string playIcon: activePlayer && activePlayer.isPlaying ? "󰏤" : "󰐊"
   readonly property string title: activePlayer ? (activePlayer.trackTitle || "") : ""
   readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
+  readonly property string playIcon: playing ? "󰏤" : "󰐊"
 
   property bool popupOpen: false
 
   function close() { popupOpen = false }
-  property real maxLabelWidth: 180
+
+  // The action, on the player the card shows if `shown`, else on the one
+  // the service picks for it. No on-screen display: the bar shows what
+  // changed.
+  function act(action, shown) {
+    if (mediaService) mediaService.runAction(action, false, shown ? mediaService.playerKey(activePlayer) : undefined)
+  }
 
   visible: hasMedia
-  implicitWidth: hasMedia ? row.implicitWidth + Style.space(14) : 0
+  implicitWidth: hasMedia ? line.implicitWidth + Style.space(14) : 0
   implicitHeight: barSize
 
   Row {
-    id: row
+    id: line
     anchors.centerIn: parent
     spacing: Style.space(6)
 
     Text {
       id: glyph
-      textFormat: Text.PlainText
       anchors.verticalCenter: parent.verticalCenter
       text: root.playIcon
-      color: activePlayer && activePlayer.isPlaying ? root.bar.barForeground : Qt.darker(root.bar.barForeground, 1.5)
+      textFormat: Text.PlainText
+      color: root.playing ? root.bar.barForeground : Qt.darker(root.bar.barForeground, 1.5)
       font.family: root.bar.fontFamily
       font.pixelSize: Style.font.body
+
       Behavior on color {
         enabled: !root.bar || root.bar.foregroundAnimationEnabled
         ColorAnimation { duration: 160 }
       }
     }
 
+    // Title and artist in at most 180 px; none on a side bar.
     Item {
-      id: scrollClip
-      width: Math.min(root.maxLabelWidth, labelText.implicitWidth)
+      id: trackClip
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.min(180, track.implicitWidth)
       height: glyph.height
       clip: true
-      anchors.verticalCenter: parent.verticalCenter
       visible: !root.bar.vertical && root.title !== ""
 
       Text {
-        id: labelText
-        textFormat: Text.PlainText
+        id: track
+        anchors.verticalCenter: parent.verticalCenter
         text: root.title + (root.artist ? "  ·  " + root.artist : "")
+        textFormat: Text.PlainText
         color: root.bar.barForeground
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.body
-        anchors.verticalCenter: parent.verticalCenter
 
-        property bool needsScroll: implicitWidth > scrollClip.width
-
-        // A frame at the display's rate for as long as it runs, so only
-        // while something plays on a bar that is on screen; stopped, the
-        // title sits at its start.
+        // Too long, it scrolls through, in from the right, while it plays
+        // on a bar on screen with the card closed: a frame each refresh,
+        // so only then. Stopped, it is back at its start.
         NumberAnimation on x {
-          id: scrollAnim
-          running: labelText.needsScroll && !root.popupOpen && !root.bar.vertical
-            && !root.bar.barHidden && !!root.activePlayer && root.activePlayer.isPlaying
-          onRunningChanged: if (!running) labelText.x = 0
+          running: track.implicitWidth > trackClip.width && !root.popupOpen && !root.bar.vertical
+            && !root.bar.barHidden && root.playing
+          onRunningChanged: if (!running) track.x = 0
           loops: Animation.Infinite
-          duration: Math.max(6000, labelText.implicitWidth * 25)
-          from: scrollClip.width
-          to: -labelText.implicitWidth
+          duration: Math.max(6000, track.implicitWidth * 25)
+          from: trackClip.width
+          to: -track.implicitWidth
           easing.type: Easing.Linear
         }
       }
@@ -90,40 +101,36 @@ BarWidget {
 
     onClicked: function(mouse) {
       if (!root.activePlayer) return
-      if (mouse.button === Qt.MiddleButton) {
-        if (root.mediaService) root.mediaService.runAction("next", false)
-      } else if (mouse.button === Qt.RightButton) {
-        root.popupOpen = !root.popupOpen
-      } else {
-        if (root.mediaService) root.mediaService.runAction("playPause", false)
-      }
+      if (mouse.button === Qt.RightButton) root.popupOpen = !root.popupOpen
+      else root.act(mouse.button === Qt.MiddleButton ? "next" : "playPause")
     }
     onWheel: function(wheel) {
       if (!root.activePlayer) return
-      if (wheel.angleDelta.y > 0 && root.mediaService) root.mediaService.runAction("previous", false)
-      else if (wheel.angleDelta.y < 0 && root.mediaService) root.mediaService.runAction("next", false)
+      if (wheel.angleDelta.y > 0) root.act("previous")
+      else if (wheel.angleDelta.y < 0) root.act("next")
     }
-    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? (root.title + (root.artist ? " — " + root.artist : "")) : "")
+    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? root.title + (root.artist ? " — " + root.artist : "") : "")
     onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 
   PopupCard {
-    id: popup
+    id: card
     anchorItem: root
     bar: root.bar
     owner: root
     open: root.popupOpen
-    contentWidth: popup.fittedContentWidth(Style.space(320))
-    contentHeight: popup.fittedContentHeight(column.implicitHeight)
+    contentWidth: card.fittedContentWidth(Style.space(320))
+    contentHeight: card.fittedContentHeight(cardColumn.implicitHeight)
 
     Column {
-      id: column
+      id: cardColumn
       anchors.fill: parent
       spacing: Style.space(10)
 
+      // The cover, or a note where there is none, and the track.
       Row {
-        spacing: Style.space(10)
         width: parent.width
+        spacing: Style.space(10)
 
         BorderSurface {
           width: Style.space(64)
@@ -138,7 +145,7 @@ BarWidget {
             fillMode: Image.PreserveAspectCrop
             asynchronous: true
             source: root.activePlayer && root.activePlayer.trackArtUrl ? root.activePlayer.trackArtUrl : ""
-            // Album art is often 1200 px square; it is shown at 64.
+            // Covers come as large as 1200 px square, for 64 here.
             sourceSize: Qt.size(width, height)
             visible: source !== ""
           }
@@ -154,87 +161,65 @@ BarWidget {
         }
 
         Column {
-          spacing: Style.space(4)
           width: parent.width - Style.space(74)
+          spacing: Style.space(4)
 
-          Text {
-            textFormat: Text.PlainText
+          Detail {
             text: root.title || "Nothing playing"
             color: root.bar.foreground
-            font.family: root.bar.fontFamily
             font.pixelSize: Style.font.subtitle
             font.bold: true
-            elide: Text.ElideRight
-            width: parent.width
           }
 
-          Text {
-            textFormat: Text.PlainText
+          Detail {
             text: root.artist
             color: Qt.darker(root.bar.foreground, 1.3)
-            font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
-            width: parent.width
-            visible: text !== ""
           }
 
-          Text {
-            textFormat: Text.PlainText
+          Detail {
             text: root.activePlayer && root.activePlayer.trackAlbum ? root.activePlayer.trackAlbum : ""
             color: Qt.darker(root.bar.foreground, 1.6)
-            font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-            width: parent.width
-            visible: text !== ""
           }
         }
       }
 
+      // Back, play or pause, on: for the player shown.
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(6)
 
-        Button {
+        TransportButton {
           iconText: "󰒮"
-          foreground: root.bar.foreground
-          horizontalPadding: Style.spacing.controlPaddingX
-          verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer && root.activePlayer.canGoPrevious
-          opacity: enabled ? 1.0 : 0.4
-          onClicked: if (root.mediaService) root.mediaService.runAction("previous", false, root.mediaService.playerKey(root.activePlayer))
+          onClicked: root.act("previous", true)
         }
 
-        Button {
-          iconText: root.activePlayer && root.activePlayer.isPlaying ? "󰏤" : "󰐊"
-          foreground: root.bar.foreground
+        TransportButton {
+          iconText: root.playIcon
           horizontalPadding: Style.spacing.panelGap
-          verticalPadding: Style.spacing.controlPaddingY
           iconSize: Style.font.iconLarge
           enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause)
-          opacity: enabled ? 1.0 : 0.4
-          onClicked: if (root.mediaService) root.mediaService.runAction("playPause", false, root.mediaService.playerKey(root.activePlayer))
+          onClicked: root.act("playPause", true)
         }
 
-        Button {
+        TransportButton {
           iconText: "󰒭"
-          foreground: root.bar.foreground
-          horizontalPadding: Style.spacing.controlPaddingX
-          verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer && root.activePlayer.canGoNext
-          opacity: enabled ? 1.0 : 0.4
-          onClicked: if (root.mediaService) root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
+          onClicked: root.act("next", true)
         }
       }
 
+      // With more than one player, each of them; a click makes it the one
+      // shown and played.
       PanelSeparator {
         visible: root.sourcePlayers.length > 1
         foreground: root.bar.foreground
       }
 
       Column {
-        id: sourceList
+        id: sources
         visible: root.sourcePlayers.length > 1
         width: parent.width
         spacing: Style.space(4)
@@ -243,66 +228,56 @@ BarWidget {
           model: root.sourcePlayers
 
           BorderSurface {
-            id: sourceRow
+            id: entry
+
             required property var modelData
+            readonly property bool selected: root.activePlayer && modelData
+              && root.mediaService.playerKey(root.activePlayer) === root.mediaService.playerKey(modelData)
 
-            readonly property var player: modelData
-            readonly property bool selected: root.activePlayer && player
-              && root.mediaService.playerKey(root.activePlayer) === root.mediaService.playerKey(player)
-            readonly property string sourceTitle: player ? (player.trackTitle || player.identity || player.desktopEntry || "Media source") : "Media source"
-            readonly property string sourceDetail: player && player.trackArtist ? player.trackArtist : (player && player.identity ? player.identity : "")
-
-            width: sourceList.width
-            height: sourceInner.implicitHeight + Style.space(10)
+            width: sources.width
+            height: sourceLine.implicitHeight + Style.space(10)
             radius: Style.spacing.labelGap
             color: selected ? Style.selectedFillFor(root.bar.foreground, Commons.Color.accent) : "transparent"
             borderSpec: selected ? Border.controlSpec("normal", root.bar.foreground, Commons.Color.accent) : Border.none()
 
             Row {
-              id: sourceInner
+              id: sourceLine
               anchors.left: parent.left
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: sourceRow.borderLeft + Style.space(8)
-              anchors.rightMargin: sourceRow.borderRight + Style.space(8)
+              anchors.leftMargin: entry.borderLeft + Style.space(8)
+              anchors.rightMargin: entry.borderRight + Style.space(8)
               spacing: Style.space(8)
 
               Text {
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(18)
+                horizontalAlignment: Text.AlignHCenter
+                text: entry.modelData && entry.modelData.isPlaying ? "󰏤" : "󰐊"
                 textFormat: Text.PlainText
-                text: sourceRow.player && sourceRow.player.isPlaying ? "󰏤" : "󰐊"
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.body
-                width: Style.space(18)
-                horizontalAlignment: Text.AlignHCenter
-                anchors.verticalCenter: parent.verticalCenter
               }
 
+              // Its track's title and artist, or its name.
               Column {
+                anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - Style.space(26)
                 spacing: Style.space(1)
-                anchors.verticalCenter: parent.verticalCenter
 
-                Text {
-                  textFormat: Text.PlainText
-                  text: sourceRow.sourceTitle
+                Detail {
+                  text: entry.modelData ? (entry.modelData.trackTitle || entry.modelData.identity || entry.modelData.desktopEntry || "Media source") : "Media source"
                   color: root.bar.foreground
-                  font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.bodySmall
-                  font.bold: sourceRow.selected
-                  elide: Text.ElideRight
-                  width: parent.width
+                  font.bold: entry.selected
                 }
 
-                Text {
-                  textFormat: Text.PlainText
-                  text: sourceRow.sourceDetail
+                Detail {
+                  text: entry.modelData && entry.modelData.trackArtist ? entry.modelData.trackArtist
+                    : (entry.modelData && entry.modelData.identity ? entry.modelData.identity : "")
                   color: Qt.darker(root.bar.foreground, 1.5)
-                  font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                  width: parent.width
-                  visible: text !== ""
                 }
               }
             }
@@ -311,11 +286,27 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: if (root.mediaService) root.mediaService.selectPlayer(root.mediaService.playerKey(sourceRow.player))
+              onClicked: if (root.mediaService) root.mediaService.selectPlayer(root.mediaService.playerKey(entry.modelData))
             }
           }
         }
       }
     }
+  }
+
+  // A line of the card, cut short at its width; none while empty.
+  component Detail: Text {
+    width: parent.width
+    visible: text !== ""
+    textFormat: Text.PlainText
+    elide: Text.ElideRight
+    font.family: root.bar.fontFamily
+  }
+
+  component TransportButton: Button {
+    foreground: root.bar.foreground
+    horizontalPadding: Style.spacing.controlPaddingX
+    verticalPadding: Style.spacing.controlPaddingY
+    opacity: enabled ? 1.0 : 0.4
   }
 }
