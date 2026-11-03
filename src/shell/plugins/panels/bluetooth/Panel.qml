@@ -117,23 +117,24 @@ Panel {
     ? Style.selectedFillFor(bar.foreground, Commons.Color.accent)
     : "transparent"
 
+  // The cursor reads the lists from deviceGroups itself. It is moved from
+  // handlers that run as deviceGroups changes, and connectedDevices, the
+  // other lists and visibleSections may not have caught up with it yet:
+  // read through them, a device that moved from one list to another was
+  // looked for in the new lists and clamped against the old.
   function sectionCount(section) {
-    if (section === "connected") return connectedDevices.length
-    if (section === "known") return knownDevices.length
-    if (section === "discovered") return discoveredDevices.length
-    return 0
+    return devicesForSection(section).length
+  }
+
+  function shownSections() {
+    return Model.visibleSections(deviceGroups, adapter && adapter.discovering)
   }
 
   function sectionVisible(section) {
-    if (section === "connected") return connectedDevices.length > 0
-    if (section === "known") return knownDevices.length > 0
-    if (section === "discovered") return adapter && adapter.discovering && discoveredDevices.length > 0
-    return false
+    return shownSections().indexOf(section) >= 0
   }
 
-  readonly property var visibleSections: {
-    return Model.visibleSections(deviceGroups, adapter && adapter.discovering)
-  }
+  readonly property var visibleSections: shownSections()
 
   function devicesForSection(section) {
     return Model.sectionDevices(deviceGroups, section)
@@ -331,7 +332,7 @@ Panel {
   // j/k navigates the hero toggle ("header") and the device sections
   // row-by-row.
   function moveCursor(delta) {
-    var sections = visibleSections
+    var sections = shownSections()
     if (focusSection === "header") {
       if (delta > 0 && sections && sections.length > 0) {
         focusSection = sections[0]; selectedIndex = 0; actionFocused = false
@@ -474,10 +475,12 @@ Panel {
   onConnectedDevicesChanged: { reselectFocusedDevice(); syncPendingActions() }
   onKnownDevicesChanged: { reselectFocusedDevice(); syncPendingActions() }
   onDiscoveredDevicesChanged: { reselectFocusedDevice(); syncPendingActions() }
-  onVisibleSectionsChanged: clampCursor()
+  // Whichever of these runs first finds the focused device before
+  // anything moves the cursor off it.
+  onVisibleSectionsChanged: reselectFocusedDevice()
 
   function clampCursor() {
-    var sections = visibleSections
+    var sections = shownSections()
     // "header" is virtual and never appears in visibleSections, so it has to
     // be let through: toggling the adapter empties and refills the device
     // lists, and clamping would knock the cursor off the hero switch every
