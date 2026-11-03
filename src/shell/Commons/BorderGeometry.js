@@ -1,339 +1,199 @@
 .pragma library
 
-// The arithmetic behind a border: colours as themes write them, width lists
-// as CSS writes them, and the outline of a border whose sides each have their
-// own width, round a box with rounded corners, as an SVG path for a Shape.
-//
-// Widths are { top, right, bottom, left }. A spec, as Border hands them out,
-// is { color, widths, gradient: { colors, angle, enabled } }.
+// The arithmetic of a border: a colour as a theme writes it, a width list as
+// CSS writes it, and the outline of a border round a box with rounded
+// corners, each side of its own width, as SVG path text for a Shape.
 
-function clamp(value, min, max) {
-  var n = Number(value)
-  return isFinite(n) ? Math.max(min, Math.min(max, n)) : min
+// ---------------------------------------------------------------- colours
+
+// The forms of a colour a theme can write, Hyprland's own among them, so a
+// border can be copied from the compositor's config as it is. Each reads a
+// match into channels of 0 to 255 and an opacity of 0 to 1.
+function hexPairs(digits) {
+  return [0, 2, 4].map(function(at) { return parseInt(digits.substr(at, 2), 16) })
 }
 
-function clampAlpha(value) {
-  return clamp(value, 0, 1)
+function byte(text) {
+  return Math.max(0, Math.min(255, Math.round(Number(text))))
 }
 
-// A channel of 0 to 255 as two hex digits.
-function padHex(value) {
-  var digits = clamp(Math.round(Number(value)), 0, 255).toString(16)
-  return digits.length === 1 ? "0" + digits : digits
-}
-
-// A colour from six hex digits, with or without "#", and an alpha of 0 to
-// 255. Outside QML, or with fewer than six digits, the colour as hex text.
-function qmlHexColor(rgb, alphaByte) {
-  var digits = String(rgb || "").replace(/^#/, "")
-  var alpha = clamp(Math.round(Number(alphaByte)), 0, 255)
-  if (typeof Qt !== "undefined" && Qt.rgba && digits.length >= 6) {
-    var channel = function(at) { return parseInt(digits.substring(at, at + 2), 16) / 255 }
-    return Qt.rgba(channel(0), channel(2), channel(4), alpha / 255)
-  }
-  var alphaDigits = padHex(alpha)
-  return alphaDigits === "ff" ? "#" + digits : "#" + digits + alphaDigits
-}
-
-// The ways a theme writes a colour, each read into hex digits and an alpha
-// byte with the caller's <scale> applied. Hyprland's own forms are among them,
-// so a border can be copied from the compositor's config as it is.
 var colorForms = [
-  // #rgb
-  [/^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/, function(m, scale) {
-    return qmlHexColor(m[1] + m[1] + m[2] + m[2] + m[3] + m[3], scale * 255)
-  }],
-  // #rrggbb, #rrggbbaa
-  [/^#([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?$/, function(m, scale) {
-    return qmlHexColor(m[1], (m[2] ? parseInt(m[2], 16) / 255 : 1) * scale * 255)
-  }],
-  // rgb(rrggbb)
-  [/^rgb\(([0-9A-Fa-f]{6})\)$/i, function(m, scale) {
-    return qmlHexColor(m[1], scale * 255)
-  }],
-  // rgba(rrggbbaa)
-  [/^rgba\(([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})\)$/i, function(m, scale) {
-    return qmlHexColor(m[1], (parseInt(m[2], 16) / 255) * scale * 255)
-  }],
-  // rgb(r,g,b)
-  [/^rgb\(([0-9]+),([0-9]+),([0-9]+)\)$/i, function(m, scale) {
-    return qmlHexColor(padHex(m[1]) + padHex(m[2]) + padHex(m[3]), scale * 255)
-  }],
-  // rgba(r,g,b,a), a from 0 to 1
-  [/^rgba\(([0-9]+),([0-9]+),([0-9]+),([0-9.]+)\)$/i, function(m, scale) {
-    return qmlHexColor(padHex(m[1]) + padHex(m[2]) + padHex(m[3]), clampAlpha(m[4]) * scale * 255)
-  }],
-  // 0xaarrggbb
-  [/^0x([0-9A-Fa-f]{2})([0-9A-Fa-f]{6})$/, function(m, scale) {
-    return qmlHexColor(m[2], (parseInt(m[1], 16) / 255) * scale * 255)
-  }]
+  { pattern: /^#([0-9A-Fa-f])([0-9A-Fa-f])([0-9A-Fa-f])$/,
+    read: function(m) { return [hexPairs(m[1] + m[1] + m[2] + m[2] + m[3] + m[3]), 1] } },
+  { pattern: /^#([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})?$/,
+    read: function(m) { return [hexPairs(m[1]), m[2] ? parseInt(m[2], 16) / 255 : 1] } },
+  { pattern: /^rgb\(([0-9A-Fa-f]{6})\)$/i,
+    read: function(m) { return [hexPairs(m[1]), 1] } },
+  { pattern: /^rgba\(([0-9A-Fa-f]{6})([0-9A-Fa-f]{2})\)$/i,
+    read: function(m) { return [hexPairs(m[1]), parseInt(m[2], 16) / 255] } },
+  { pattern: /^rgb\(([0-9]+),([0-9]+),([0-9]+)\)$/i,
+    read: function(m) { return [[byte(m[1]), byte(m[2]), byte(m[3])], 1] } },
+  { pattern: /^rgba\(([0-9]+),([0-9]+),([0-9]+),([0-9.]+)\)$/i,
+    read: function(m) { return [[byte(m[1]), byte(m[2]), byte(m[3])], unit(m[4])] } },
+  // Hyprland's 0xaarrggbb.
+  { pattern: /^0x([0-9A-Fa-f]{2})([0-9A-Fa-f]{6})$/,
+    read: function(m) { return [hexPairs(m[2]), parseInt(m[1], 16) / 255] } }
 ]
 
-// <value> as a colour, its alpha times <alpha> (1 when not given). What is
-// none of the forms above, a name or a role, comes back as it was, trimmed.
-function canonicalColor(value, alpha) {
-  var scale = alpha === undefined || alpha === null ? 1 : clampAlpha(alpha)
+// A number from 0 to 1; anything that is not a number is 0.
+function unit(value) {
+  var n = Number(value)
+  return isFinite(n) ? Math.max(0, Math.min(1, n)) : 0
+}
+
+// <value> as a colour, at its own opacity times <opacity> (1 when not
+// given), the alpha rounded to a byte. Text that is none of the forms, a
+// colour's name or a role, comes back as it was, trimmed.
+function canonicalColor(value, opacity) {
+  var scale = opacity === undefined || opacity === null ? 1 : unit(opacity)
   var text = String(value || "").trim()
   for (var i = 0; i < colorForms.length; i++) {
-    var m = text.match(colorForms[i][0])
-    if (m) return colorForms[i][1](m, scale)
+    var m = colorForms[i].pattern.exec(text)
+    if (!m) continue
+    var read = colorForms[i].read(m)
+    var rgb = read[0]
+    return Qt.rgba(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, byte(read[1] * scale * 255) / 255)
   }
   return text
 }
 
-// Widths from a CSS-style list: "all", "vertical horizontal", "top
-// horizontal bottom" or "top right bottom left". A number that is not above
-// zero is 0. No value, or one with no number in it, is <fallback> all round.
-function parseWidthSpec(value, fallback) {
-  var fallbackWidth = Number(fallback)
-  if (!isFinite(fallbackWidth) || fallbackWidth < 0) fallbackWidth = 0
-  if (value === undefined || value === null || value === "")
-    return { top: fallbackWidth, right: fallbackWidth, bottom: fallbackWidth, left: fallbackWidth }
+// ---------------------------------------------------------------- widths
 
-  var listed = (String(value).match(/-?\d+(?:\.\d+)?/g) || []).slice(0, 4).map(function(part) {
-    var n = Number(part)
+// Widths from a CSS-style list: "all", "vertical horizontal", "top
+// horizontal bottom" or "top right bottom left", each at least 0. No value,
+// or one with no number in it, is <fallback> all round.
+function parseWidthSpec(value, fallback) {
+  var spare = Number(fallback)
+  if (!isFinite(spare) || spare < 0) spare = 0
+  var given = value === undefined || value === null || value === "" ? [] : String(value).match(/-?\d+(?:\.\d+)?/g) || []
+  var list = given.slice(0, 4).map(function(word) {
+    var n = Number(word)
     return isFinite(n) && n > 0 ? n : 0
   })
-  if (listed.length === 0) listed = [fallbackWidth]
-  var top = listed[0]
-  var right = listed.length > 1 ? listed[1] : top
-  var bottom = listed.length > 2 ? listed[2] : top
-  var left = listed.length > 3 ? listed[3] : right
-  return { top: top, right: right, bottom: bottom, left: left }
-}
-
-// <widths> with each side given a value of its own replaced by it, at least
-// 0. A side given nothing (undefined, null, "") keeps its width.
-function withSideOverrides(widths, top, right, bottom, left) {
-  var base = widths || {}
-  function side(override, width) {
-    if (override === undefined || override === null || override === "") return Number(width) || 0
-    return Math.max(0, Number(override) || 0)
-  }
-  return {
-    top: side(top, base.top),
-    right: side(right, base.right),
-    bottom: side(bottom, base.bottom),
-    left: side(left, base.left),
-  }
-}
-
-function isUniform(widths) {
-  return !widths || (widths.top === widths.right && widths.top === widths.bottom && widths.top === widths.left)
+  if (list.length === 0) list = [spare]
+  var n = list.length
+  return { top: list[0], right: list[n > 1 ? 1 : 0], bottom: list[n > 2 ? 2 : 0], left: list[n > 3 ? 3 : n > 1 ? 1 : 0] }
 }
 
 function maxWidth(widths) {
-  if (!widths) return 0
-  return Math.max(widths.top || 0, widths.right || 0, widths.bottom || 0, widths.left || 0)
-}
-
-// Rectangle.border draws one colour at one width; anything more, a gradient or
-// sides of different widths, takes the drawn outline (BorderOverlay).
-function needsOverlay(spec) {
-  if (!spec || maxWidth(spec.widths) <= 0) return false
-  return !!(spec.gradient && spec.gradient.enabled) || !isUniform(spec.widths)
-}
-
-function canUseNative(spec) {
-  return !!spec && maxWidth(spec.widths) > 0 && !needsOverlay(spec)
+  return widths ? Math.max(widths.top || 0, widths.right || 0, widths.bottom || 0, widths.left || 0) : 0
 }
 
 // ---------------------------------------------------------------- outlines
 //
-// Corners are { rx, ry }. A box's outline is walked clockwise from its top
-// edge; side 0 is the top, 1 the right, 2 the bottom and 3 the left, and the
-// corner of a side is the one its edge runs into: the top's is the top right.
+// A box's corners go clockwise from the top right: 0 top right, 1 bottom
+// right, 2 bottom left, 3 top left. Side n runs into corner n: 0 is the top,
+// 1 the right, 2 the bottom and 3 the left. A corner's arc goes, clockwise,
+// from where the side before it ends to where the side after it starts.
 
-// The corner radii of <r> (tlrx, tlry, trrx, ... blry) for a <w> by <h> box:
-// none below 0, and all shrunk by one factor where two along an edge would
-// overlap, as CSS shrinks them.
-function normalizeRadii(w, h, r) {
-  function corner(rx, ry) { return { rx: Math.max(0, Number(rx) || 0), ry: Math.max(0, Number(ry) || 0) } }
-  var tl = corner(r.tlrx, r.tlry)
-  var tr = corner(r.trrx, r.trry)
-  var br = corner(r.brrx, r.brry)
-  var bl = corner(r.blrx, r.blry)
-
+// The corners of a <w> by <h> box at <x>, <y>, each [rx, ry] in <radii>
+// (clockwise from the top right), shrunk all by one factor where two along
+// a side would overlap, as CSS shrinks them.
+function corners(x, y, w, h, radii) {
+  var r = radii.map(function(pair) { return [Math.max(0, Number(pair[0]) || 0), Math.max(0, Number(pair[1]) || 0)] })
   var factor = 1
-  function fit(length, along) {
-    if (along > length && along > 0) factor = Math.min(factor, length / along)
-  }
-  fit(w, tl.rx + tr.rx)
-  fit(w, bl.rx + br.rx)
-  fit(h, tl.ry + bl.ry)
-  fit(h, tr.ry + br.ry)
-  if (factor < 1) {
-    ;[tl, tr, br, bl].forEach(function(c) { c.rx *= factor })
-    ;[tl, tr, br, bl].forEach(function(c) { c.ry *= factor })
-  }
-  return { tl: tl, tr: tr, br: br, bl: bl }
-}
-
-// An arc to <point>, or a straight line where the corner is square.
-function appendArc(path, rx, ry, sweep, point) {
-  if (rx > 0 && ry > 0) path.push("A", rx, ry, 0, 0, sweep, point.x, point.y)
-  else path.push("L", point.x, point.y)
-}
-
-// A box with rounded corners, <radii> as normalizeRadii takes them.
-function roundedRectPath(x, y, w, h, radii) {
-  if (w <= 0 || h <= 0) return ""
-  var box = borderBoundary(x, y, w, h, normalizeRadii(w, h, radii))
-  var path = ["M", box.start[0].x, box.start[0].y]
-  var horizontal = true
-  for (var side = 0; side < 4; side++) {
-    // Each edge runs along one axis, so its end shares a coordinate with
-    // where it starts: H or V gives the other.
-    path.push(horizontal ? "H" : "V", horizontal ? box.end[side].x : box.end[side].y)
-    appendForwardCorner(path, box, side)
-    horizontal = !horizontal
-  }
-  path.push("Z")
-  return path.join(" ")
-}
-
-// Where each side's straight edge of a box starts and ends, clockwise, and the
-// corner after each. <radii> is either normalizeRadii's answer or the radii it
-// takes.
-function borderBoundary(x, y, w, h, radii) {
-  var r = radii && radii.tl ? radii : normalizeRadii(w, h, radii)
+  ;[[w, r[3][0] + r[0][0]], [w, r[2][0] + r[1][0]], [h, r[3][1] + r[2][1]], [h, r[0][1] + r[1][1]]].forEach(function(side) {
+    if (side[1] > side[0] && side[1] > 0) factor = Math.min(factor, side[0] / side[1])
+  })
+  if (factor < 1) r = r.map(function(pair) { return [pair[0] * factor, pair[1] * factor] })
   var right = x + w
   var bottom = y + h
-  return {
-    start: [
-      { x: x + r.tl.rx, y: y },
-      { x: right, y: y + r.tr.ry },
-      { x: right - r.br.rx, y: bottom },
-      { x: x, y: bottom - r.bl.ry },
-    ],
-    end: [
-      { x: right - r.tr.rx, y: y },
-      { x: right, y: bottom - r.br.ry },
-      { x: x + r.bl.rx, y: bottom },
-      { x: x, y: y + r.tl.ry },
-    ],
-    corner: [r.tr, r.br, r.bl, r.tl],
-  }
+  return [
+    { rx: r[0][0], ry: r[0][1], from: [right - r[0][0], y], to: [right, y + r[0][1]] },
+    { rx: r[1][0], ry: r[1][1], from: [right, bottom - r[1][1]], to: [right - r[1][0], bottom] },
+    { rx: r[2][0], ry: r[2][1], from: [x + r[2][0], bottom], to: [x, bottom - r[2][1]] },
+    { rx: r[3][0], ry: r[3][1], from: [x, y + r[3][1]], to: [x + r[3][0], y] }
+  ]
 }
 
-// Clockwise round the corner after <side>, to where the next side starts.
-function appendForwardCorner(path, boundary, side) {
-  var corner = boundary.corner[side]
-  appendArc(path, corner.rx, corner.ry, 1, boundary.start[(side + 1) % 4])
+// Round <corner> to <point>, clockwise or back: an arc, or a straight line
+// where the corner is square.
+function turn(corner, clockwise, point) {
+  if (corner.rx > 0 && corner.ry > 0) return ["A", corner.rx, corner.ry, 0, 0, clockwise ? 1 : 0, point[0], point[1]]
+  return ["L", point[0], point[1]]
 }
 
-// Counter-clockwise round the corner after <side>, from the next side back to
-// where <side> ends.
-function appendReverseCorner(path, boundary, side) {
-  var corner = boundary.corner[side]
-  appendArc(path, corner.rx, corner.ry, 0, boundary.end[side])
+// The whole box, clockwise from the top side's start, the sides as H and V.
+function box(c) {
+  var path = ["M", c[3].to[0], c[3].to[1]]
+  c.forEach(function(corner, side) {
+    path = path.concat(side % 2 === 0 ? ["H", corner.from[0]] : ["V", corner.from[1]], turn(corner, true, corner.to))
+  })
+  return path.concat("Z")
 }
 
-// The box counter-clockwise from the top edge's start: inside a clockwise
-// outline, under winding fill, the hole of a ring.
-function reverseBoundaryPath(boundary) {
-  var path = ["M", boundary.start[0].x, boundary.start[0].y]
-  for (var side = 3; side >= 0; side--) {
-    appendReverseCorner(path, boundary, side)
-    path.push("L", boundary.start[side].x, boundary.start[side].y)
-  }
-  path.push("Z")
-  return path.join(" ")
+// Along <order>'s corners, clockwise: to each corner's start, and round it.
+function forward(c, order, lead) {
+  var path = []
+  order.forEach(function(n, i) { path = path.concat(i === 0 ? lead : "L", c[n].from, turn(c[n], true, c[n].to)) })
+  return path
 }
 
-// One closed band over <length> sides in a row from <start>: out along the
-// outer boundary, the corners at both ends included, and back along the inner.
-function runPath(outer, inner, start, length) {
-  var before = (start + 3) % 4
-  var after = (start + length) % 4
-  var path = ["M", outer.end[before].x, outer.end[before].y]
-  appendForwardCorner(path, outer, before)
-  for (var i = 0; i < length; i++) {
-    var side = (start + i) % 4
-    path.push("L", outer.end[side].x, outer.end[side].y)
-    appendForwardCorner(path, outer, side)
-  }
-  path.push("L", inner.start[after].x, inner.start[after].y)
-  for (var j = length - 1; j >= 0; j--) {
-    var back = (start + j) % 4
-    appendReverseCorner(path, inner, back)
-    path.push("L", inner.start[back].x, inner.start[back].y)
-  }
-  appendReverseCorner(path, inner, before)
-  path.push("Z")
-  return path.join(" ")
+// Along <order>'s corners, counter-clockwise: to each corner's end, and back
+// round it.
+function backward(c, order, lead) {
+  var path = []
+  order.forEach(function(n, i) { path = path.concat(i === 0 ? lead : "L", c[n].to, turn(c[n], false, c[n].from)) })
+  return path
 }
 
-// Whether radii (in normalizeRadii's input form) fit a <w> by <h> box as they
-// are, with no two along an edge overlapping.
-function radiiFit(w, h, r) {
-  return r.tlrx + r.trrx <= w && r.blrx + r.brrx <= w && r.tlry + r.blry <= h && r.trry + r.brry <= h
-}
-
-// The outline of a border <widths> wide round a <w> by <h> box with corners of
-// <radius>, as closed paths to fill with the winding rule. All four sides are
-// one path: the box, and inside it the inner edge reversed. Fewer are a band
-// for each run of sides in a row, so a side with no width has nothing drawn
-// along it, not even at a rounded corner. Where the inner edge cannot keep
-// its corners, the whole box is filled rather than risk painting outside it.
+// The outline of a border <widths> wide round a <w> by <h> box with corners
+// of <radius>, as closed paths to fill by winding. All four sides make one
+// path: the box, and the inner edge backwards inside it, which leaves the
+// hole. Fewer make a band for each run of sides in a row, so a side with no
+// width draws nothing along it, even at a rounded corner. Where the inner
+// edge cannot keep its corners inside the box, the box is filled whole
+// rather than risk painting outside it.
 function borderPaths(w, h, radius, widths) {
   w = Math.max(0, Number(w) || 0)
   h = Math.max(0, Number(h) || 0)
   radius = Math.max(0, Number(radius) || 0)
-  widths = widths || { top: 0, right: 0, bottom: 0, left: 0 }
-  if (w <= 0 || h <= 0) return []
+  var wide = widths || {}
+  var sides = [wide.top, wide.right, wide.bottom, wide.left].map(function(n) { return Math.max(0, Number(n) || 0) })
+  var drawn = sides.map(function(n) { return n > 0 })
+  if (w <= 0 || h <= 0 || drawn.indexOf(true) === -1) return []
 
-  var top = Math.max(0, Number(widths.top) || 0)
-  var right = Math.max(0, Number(widths.right) || 0)
-  var bottom = Math.max(0, Number(widths.bottom) || 0)
-  var left = Math.max(0, Number(widths.left) || 0)
-  var drawn = [top > 0, right > 0, bottom > 0, left > 0]
-  if (drawn.indexOf(true) === -1) return []
-
-  var outerRadii = normalizeRadii(w, h, {
-    tlrx: radius, tlry: radius, trrx: radius, trry: radius,
-    brrx: radius, brry: radius, blrx: radius, blry: radius,
-  })
-  var outerPath = roundedRectPath(0, 0, w, h, {
-    tlrx: outerRadii.tl.rx, tlry: outerRadii.tl.ry, trrx: outerRadii.tr.rx, trry: outerRadii.tr.ry,
-    brrx: outerRadii.br.rx, brry: outerRadii.br.ry, blrx: outerRadii.bl.rx, blry: outerRadii.bl.ry,
-  })
-
+  var outer = corners(0, 0, w, h, [[radius, radius], [radius, radius], [radius, radius], [radius, radius]])
+  var whole = box(corners(0, 0, w, h, outer.map(function(c) { return [c.rx, c.ry] }))).join(" ")
+  var top = sides[0], right = sides[1], bottom = sides[2], left = sides[3]
   var innerWidth = w - left - right
   var innerHeight = h - top - bottom
-  if (innerWidth <= 0 || innerHeight <= 0) return [outerPath]
+  if (innerWidth <= 0 || innerHeight <= 0) return [whole]
 
-  // An inner corner is the outer one less the two sides' widths.
-  var innerWanted = {
-    tlrx: Math.max(0, outerRadii.tl.rx - left), tlry: Math.max(0, outerRadii.tl.ry - top),
-    trrx: Math.max(0, outerRadii.tr.rx - right), trry: Math.max(0, outerRadii.tr.ry - top),
-    brrx: Math.max(0, outerRadii.br.rx - right), brry: Math.max(0, outerRadii.br.ry - bottom),
-    blrx: Math.max(0, outerRadii.bl.rx - left), blry: Math.max(0, outerRadii.bl.ry - bottom),
+  // An inner corner is the outer one less the widths of the sides it joins.
+  var cut = [[right, top], [right, bottom], [left, bottom], [left, top]]
+  var radii = outer.map(function(c, n) { return [Math.max(0, c.rx - cut[n][0]), Math.max(0, c.ry - cut[n][1])] })
+  var fits = radii[3][0] + radii[0][0] <= innerWidth && radii[2][0] + radii[1][0] <= innerWidth
+    && radii[3][1] + radii[2][1] <= innerHeight && radii[0][1] + radii[1][1] <= innerHeight
+  if (!fits) return [whole]
+  var inner = corners(left, top, innerWidth, innerHeight, radii)
+
+  if (drawn.indexOf(false) === -1) {
+    var hole = backward(inner, [3, 2, 1, 0], "M").concat("L", inner[3].to, "Z")
+    return [whole + " " + hole.join(" ")]
   }
-  // Shrunk to fit, an inner corner could start outside the outer edge.
-  if (!radiiFit(innerWidth, innerHeight, innerWanted)) return [outerPath]
 
-  var outer = borderBoundary(0, 0, w, h, outerRadii)
-  var inner = borderBoundary(left, top, innerWidth, innerHeight, normalizeRadii(innerWidth, innerHeight, innerWanted))
-  if (drawn.indexOf(false) === -1) return [outerPath + " " + reverseBoundaryPath(inner)]
-
-  var paths = []
+  // A run starts at a drawn side after one that is not, and takes in the
+  // corners on either side of it.
+  var bands = []
   for (var start = 0; start < 4; start++) {
-    // A run starts at a drawn side whose side before it is not drawn.
     if (!drawn[start] || drawn[(start + 3) % 4]) continue
-    var length = 1
-    while (length < 4 && drawn[(start + length) % 4]) length++
-    paths.push(runPath(outer, inner, start, length))
+    var order = [(start + 3) % 4]
+    for (var side = start; drawn[side % 4] && order.length < 5; side++) order.push(side % 4)
+    var band = forward(outer, order, "M").concat(backward(inner, order.slice().reverse(), "L"), "Z")
+    bands.push(band.join(" "))
   }
-  return paths
+  return bands
 }
 
 function ringPath(w, h, radius, widths) {
   return borderPaths(w, h, radius, widths).join(" ")
 }
 
-// The ends of a linear gradient at <angle> degrees across a <w> by <h> box,
-// through its centre and as long as the box is across in that direction, as
+// ---------------------------------------------------------------- gradients
+
+// The ends of a linear gradient at <angle> degrees across a <w> by <h> box:
+// through its centre, as long as the box is across in that direction, as
 // CSS draws one.
 function gradientEndpoints(w, h, angle) {
   w = Math.max(1, Number(w) || 1)
@@ -341,24 +201,20 @@ function gradientEndpoints(w, h, angle) {
   var radians = (Number(angle) || 0) * Math.PI / 180
   var dx = Math.cos(radians)
   var dy = Math.sin(radians)
-  var half = (Math.abs(w * dx) + Math.abs(h * dy)) / 2
-  return {
-    x1: w / 2 - dx * half,
-    y1: h / 2 - dy * half,
-    x2: w / 2 + dx * half,
-    y2: h / 2 + dy * half,
-  }
+  var reach = (Math.abs(w * dx) + Math.abs(h * dy)) / 2
+  return { x1: w / 2 - dx * reach, y1: h / 2 - dy * reach, x2: w / 2 + dx * reach, y2: h / 2 + dy * reach }
 }
 
-// A gradient has a fixed number of stops (BorderOverlay's ten); the colours
-// spread evenly over them, and the stops past the last colour repeat it.
+// A gradient's stops are fixed in number (BorderOverlay has ten): the
+// colours spread over the first of them, evenly, and the rest repeat the
+// last colour at the far end.
 function stopColor(colors, index) {
   if (!colors || colors.length === 0) return "transparent"
-  return index < colors.length ? colors[index] : colors[colors.length - 1]
+  return colors[Math.min(index, colors.length - 1)]
 }
 
 function stopPosition(colors, index) {
   var count = colors ? colors.length : 0
   if (count <= 1) return index === 0 ? 0 : 1
-  return index >= count ? 1 : index / (count - 1)
+  return Math.min(1, index / (count - 1))
 }
