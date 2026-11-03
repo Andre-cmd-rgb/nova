@@ -163,31 +163,15 @@ QtObject {
   function selectedBorderFor(foreground, accent, urgent) { return Util.alpha(stateColor("selected", foreground, accent, urgent), selectedBorderAlpha) }
   function focusBorderFor(foreground, accent, urgent) { return Util.alpha(stateColor("focus", foreground, accent, urgent), focusBorderAlpha) }
 
-  // A form control's fill, border and border width: focus first, then the
-  // pointer or the panel's cursor, then at rest.
+  // A form control's fill: focus first, then the pointer or the panel's
+  // cursor, then at rest.
   function controlFill(focused, hot, foreground, accent) {
     return focused ? focusFillFor(foreground, accent) : hot ? hoverFillFor(foreground, accent) : normalFillFor(foreground, accent)
   }
 
-  function controlBorder(focused, hot, foreground, accent) {
-    return focused ? focusBorderFor(foreground, accent) : hot ? hoverBorderFor(foreground, accent) : normalBorderFor(foreground, accent)
-  }
-
-  function controlBorderWidth(focused, hot) {
-    return focused ? focusBorderWidth : hot ? hoverBorderWidth : normalBorderWidth
-  }
-
   // The states' colours for a control in the palette's own colours.
-  readonly property color normalFill: normalFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
   readonly property color hoverFill: hoverFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
   readonly property color selectedFill: selectedFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color pressedFill: pressedFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color focusFillColor: focusFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color normalBorderColor: normalBorderFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color hoverBorderColor: hoverBorderFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color selectedBorderColor: selectedBorderFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color focusBorderColor: focusBorderFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color selectedAccentFill: Util.alpha(Commons.Color.accent, selectedFillAlpha)
   readonly property color selectionFill: selectionFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
 
   // ---------------------------------------------------------------- spacing
@@ -217,8 +201,6 @@ QtObject {
   }
 
   readonly property QtObject spacing: QtObject {
-    readonly property real scale: root.effectiveSpacingScale
-
     readonly property int hairline: root.space(1)
     readonly property int xxs: root.spacingToken("xxs", 2)
     readonly property int xs: root.spacingToken("xs", 3)
@@ -252,10 +234,8 @@ QtObject {
   //
   // The family is "monospace", the fontconfig alias `nova font set` points at
   // the font chosen, so the shell follows it; a theme sets sizes, not the
-  // family. resolvedFontFamily is the family that alias stands for now, to
-  // show by name: bind font.family to fontFamily.
+  // family.
   property string fontFamily: "monospace"
-  property string resolvedFontFamily: "monospace"
 
   // At least 1px; past that, as large as a theme or its user likes.
   property int fontBaseSize: 12
@@ -295,7 +275,6 @@ QtObject {
 
   readonly property QtObject font: QtObject {
     readonly property string family: root.fontFamily
-    readonly property string resolvedFamily: root.resolvedFontFamily
     readonly property string menuFamily: root.menuFontFamily
     readonly property int baseSize: root.fontBaseSize
 
@@ -441,36 +420,5 @@ QtObject {
     onLoadFailed: root.scheduleRefresh()
   }
 
-  // ------------------------------------------------------------- fontconfig
-
-  function resolveFontFamily() {
-    fcMatchProc.running = true
-  }
-
-  property Process fcMatchProc: Process {
-    command: ["fc-match", "-f", "%{family[0]}", "monospace"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var name = String(text || "").trim()
-        if (name.length > 0) root.resolvedFontFamily = name
-      }
-    }
-  }
-
-  // `nova font set` rewrites this and restarts the shell; an edit by hand is
-  // picked up too.
-  property FileView fontconfigFile: FileView {
-    path: Quickshell.env("HOME") + "/.config/fontconfig/fonts.conf"
-    watchChanges: true
-    printErrors: false
-    onFileChanged: root.resolveFontFamily()
-    onLoaded: root.resolveFontFamily()
-    onLoadFailed: root.resolveFontFamily()
-  }
-
-  Component.onCompleted: {
-    refresh()
-    resolveFontFamily()
-  }
+  Component.onCompleted: refresh()
 }

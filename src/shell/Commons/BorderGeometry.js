@@ -118,25 +118,6 @@ function withSideOverrides(widths, top, right, bottom, left) {
   }
 }
 
-// "<colour> <colour> ... [<angle>deg]", Hyprland's way of writing a gradient,
-// with every colour at <alpha>. With no colour in it, <fallbackColor> stands
-// alone, if there is one; one colour is not a gradient.
-function parseGradientSpec(value, fallbackColor, alpha) {
-  var text = String(value || "").trim()
-  var colors = []
-  var angle = 0
-  if (text.length > 0) {
-    text.split(/\s+/).forEach(function(part) {
-      var degrees = part.match(/^(-?\d+(?:\.\d+)?)deg$/)
-      if (degrees) angle = Number(degrees[1])
-      else colors.push(canonicalColor(part, alpha))
-    })
-  }
-  if (colors.length === 0 && fallbackColor !== undefined && fallbackColor !== null)
-    colors.push(canonicalColor(fallbackColor, alpha))
-  return { colors: colors, angle: isFinite(angle) ? angle : 0, enabled: colors.length > 1 }
-}
-
 function isUniform(widths) {
   return !widths || (widths.top === widths.right && widths.top === widths.bottom && widths.top === widths.left)
 }

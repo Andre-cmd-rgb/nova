@@ -173,23 +173,6 @@ QtObject {
     return { color: read.color, widths: surfaceWidths(section, token, fallbackWidth), gradient: read.gradient }
   }
 
-  // The border Hyprland draws round the active window, from [hyprland]; a
-  // theme from before that section has it as the notifications' border.
-  function hyprlandActiveSpec(fallbackColor, fallbackWidth) {
-    var raw = value("hyprland", "active-border")
-    var opacity = alpha("hyprland", "active-border-alpha", 1.0)
-    if (String(raw).length === 0) {
-      raw = value("notifications", "border")
-      opacity = alpha("notifications", "border-alpha", opacity)
-    }
-    var read = borderValue(resolveValueRef(raw), fallbackColor, opacity, "")
-    return {
-      color: read.color,
-      widths: Geometry.parseWidthSpec(value("hyprland", "active-border-width"), fallbackWidth),
-      gradient: read.gradient,
-    }
-  }
-
   // ------------------------------------------------------------ controls
   //
   // A control's state is normal, hover-cursor (also "hover" and "hot"),
@@ -260,12 +243,6 @@ QtObject {
 
   // ------------------------------------------------------------ reading specs
 
-  function withWidth(spec, width) {
-    if (!spec) return flat("transparent", 0)
-    return { color: spec.color, gradient: spec.gradient, widths: Geometry.parseWidthSpec(width, 0) }
-  }
-
-  function isNone(spec) { return !spec || Geometry.maxWidth(spec.widths) <= 0 }
   function needsOverlay(spec) { return Geometry.needsOverlay(spec) }
   function canUseNative(spec) { return Geometry.canUseNative(spec) }
   function top(spec) { return spec && spec.widths ? spec.widths.top : 0 }
