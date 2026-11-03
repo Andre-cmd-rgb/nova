@@ -7,45 +7,78 @@ import qs.Commons as Commons
 import qs.Ui
 import "OsdModel.js" as OsdModel
 
-// The on-screen display: a card above the bottom edge with an icon and a
-// level or a message, gone after its duration. `nova-osd` shows it through
-// the osd IPC target, the shell's keys and panels through summon.
+// The on-screen display: a card a little above the bottom of the screen,
+// for a moment, with an icon and a level (the volume, the brightness) or an
+// icon and a few words. nova-osd calls it up through the osd IPC target,
+// the keys and the panels through the shell's summon. It never takes a
+// click or a key.
 Item {
-  id: root
+  id: osd
 
   property bool opened: false
-  // What the card shows: OsdModel.parse's answer to the last request.
-  property var shown: OsdModel.parse({})
+  // The last request, as OsdModel.parse reads it.
+  property var face: OsdModel.parse({})
+  readonly property bool level: face.hasProgress
+  // A player's title gets more room than a message.
+  readonly property bool fromPlayer: /^(media|player)/.test(face.iconKey)
 
-  readonly property bool media: shown.iconKey.indexOf("media") === 0 || shown.iconKey.indexOf("player") === 0
+  // ---------------------------------------------------------------- sizes
 
-  // The card is sized by what it holds, with `pad` round it whatever the
-  // glyph and the text. A message grows with its text up to maxMessageWidth,
-  // a media title's further, and is cut short with an ellipsis beyond.
-  readonly property int pad: Style.space(16)
+  // The card is as wide as what it holds, with `padding` all round.
+  readonly property int padding: Style.space(16)
   readonly property int gap: Style.space(16)
-  // An icon next to text looks further from it than it measures, both
-  // falling away from their edges; text sits at two thirds of the gap, the
-  // bar, square-ended, at all of it.
-  readonly property int messageGap: Math.round(gap * 2 / 3)
+  // Words beside an icon look further from it than they are, as both fall
+  // away from their edges, so they sit two thirds of the gap off; the bar,
+  // square-ended, the whole gap.
+  readonly property int wordGap: Math.round(gap * 2 / 3)
   readonly property int barWidth: Style.space(142)
-  readonly property int maxMessageWidth: media ? Style.space(325) : Style.space(190)
+  readonly property int wordsMax: fromPlayer ? Style.space(325) : Style.space(190)
 
-  // Nerd Font glyphs draw outside their cell, so the icon's column is as
-  // wide as its ink. With a level it is as wide as the widest icon, and the
-  // readout as wide as "100%", so nothing moves as the level changes.
-  readonly property int iconInkWidth: Math.ceil(iconMetrics.tightBoundingRect.width)
-  readonly property int iconWidth: shown.hasProgress
-    ? Math.max(iconInkWidth, Math.ceil(widestIconMetrics.tightBoundingRect.width))
-    : iconInkWidth
-  readonly property int valueWidth: Math.ceil(Math.max(valueMetrics.advanceWidth, messageMetrics.advanceWidth))
-  readonly property int messageWidth: Math.min(Math.ceil(messageMetrics.advanceWidth), maxMessageWidth)
-  readonly property int contentWidth: shown.hasProgress
-    ? iconWidth + gap + barWidth + gap + valueWidth
-    : shown.message === "" ? iconWidth : iconWidth + messageGap + messageWidth
+  // The icon is measured by its ink, as Nerd Font glyphs spill out of their
+  // cells. Beside a level, the icon's column fits the widest speaker and
+  // the readout "100%", so the bar keeps its place as the level moves.
+  readonly property int ink: Math.ceil(glyph.tightBoundingRect.width)
+  readonly property int iconColumn: level ? Math.max(ink, Math.ceil(widestGlyph.tightBoundingRect.width)) : ink
+  readonly property int readoutWidth: Math.ceil(Math.max(fullReadout.advanceWidth, words.advanceWidth))
+  readonly property int wordsWidth: Math.min(Math.ceil(words.advanceWidth), wordsMax)
 
-  // The request as JSON: see OsdModel.parse. One that does not parse is
-  // dropped. A level shown while the card is up slides to its new place.
+  // Where each piece starts, from the icon's left edge.
+  readonly property int barX: iconColumn + gap
+  readonly property int wordsX: level ? barX + barWidth + gap : iconColumn + wordGap
+  readonly property int contentWidth: level ? wordsX + readoutWidth
+    : face.message === "" ? iconColumn : wordsX + wordsWidth
+
+  TextMetrics {
+    id: words
+    font.family: Style.font.family
+    font.bold: true
+    font.pixelSize: Style.font.title
+    text: osd.face.message
+  }
+
+  TextMetrics {
+    id: fullReadout
+    font: words.font
+    text: "100%"
+  }
+
+  TextMetrics {
+    id: glyph
+    font.family: Style.font.family
+    font.pixelSize: Style.font.displayLarge
+    text: osd.face.icon
+  }
+
+  TextMetrics {
+    id: widestGlyph
+    font: glyph.font
+    text: OsdModel.widestIcon
+  }
+
+  // ---------------------------------------------------------------- showing
+
+  // <requestJson> as OsdModel.parse takes it; one that is not JSON is
+  // dropped. The card goes after the request's duration, or stays for 0.
   function open(requestJson) {
     var next
     try {
@@ -53,9 +86,9 @@ Item {
     } catch (e) {
       return
     }
-    shown = next
+    face = next
     opened = true
-    if (shown.duration > 0) hideTimer.restart()
+    if (face.duration > 0) hideTimer.restart()
     else hideTimer.stop()
   }
 
@@ -65,52 +98,25 @@ Item {
 
   Timer {
     id: hideTimer
-    interval: root.shown.duration
-    onTriggered: root.opened = false
-  }
-
-  TextMetrics {
-    id: messageMetrics
-    font.family: Style.font.family
-    font.bold: true
-    font.pixelSize: Style.font.title
-    text: root.shown.message
-  }
-
-  TextMetrics {
-    id: valueMetrics
-    font: messageMetrics.font
-    text: "100%"
-  }
-
-  TextMetrics {
-    id: iconMetrics
-    font.family: Style.font.family
-    font.pixelSize: Style.font.displayLarge
-    text: root.shown.icon
-  }
-
-  TextMetrics {
-    id: widestIconMetrics
-    font: iconMetrics.font
-    text: OsdModel.widestIcon
+    interval: osd.face.duration
+    onTriggered: osd.opened = false
   }
 
   IpcHandler {
     target: "osd"
 
     function show(requestJson: string): string {
-      root.open(requestJson)
+      osd.open(requestJson)
       return "ok"
     }
 
     function close(): string {
-      root.close()
+      osd.close()
       return "ok"
     }
 
     function state(): string {
-      return root.opened ? "open" : "closed"
+      return osd.opened ? "open" : "closed"
     }
 
     function ping(): string {
@@ -118,11 +124,12 @@ Item {
     }
   }
 
-  // A window the card's size, not the screen's: a full-screen one was a
-  // screen-sized buffer to redraw at each step of a held key, and for
-  // Hyprland to fade.
+  // ---------------------------------------------------------------- the card
+
+  // The window is the card's size: a screen-sized one was a whole screen
+  // to redraw at each step of a held key, and for Hyprland to fade.
   PanelWindow {
-    visible: root.opened
+    visible: osd.opened
     anchors.bottom: true
     margins.bottom: Style.space(67)
     implicitWidth: card.width
@@ -132,71 +139,69 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
-    // Shown, never touched: clicks go through to what is under it.
+    // No input region: a click lands on whatever is under the card.
     mask: Region {}
 
     BorderSurface {
       id: card
-      padding: root.pad
-      width: contentLeftInset + root.contentWidth + contentRightInset
+      padding: osd.padding
+      width: contentLeftInset + osd.contentWidth + contentRightInset
       height: contentTopInset + Style.font.displayLarge + contentBottomInset
+      radius: Style.cornerRadius
       color: Util.alpha(Commons.Color.background, 0.97)
       borderSpec: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
-      radius: Style.cornerRadius
-      opacity: root.opened ? 1 : 0
+      opacity: osd.opened ? 1 : 0
 
-      Row {
+      // The pieces side by side, each at its own x.
+      Item {
         anchors.fill: parent
+        anchors.leftMargin: card.contentLeftInset
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
-        spacing: root.shown.hasProgress ? root.gap : root.messageGap
 
-        Item {
-          width: root.iconWidth
-          height: parent.height
-
-          // The glyph's ink, not its cell, centred in the column.
-          Text {
-            x: Math.round((root.iconWidth - root.iconInkWidth) / 2 - iconMetrics.tightBoundingRect.x)
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: root.shown.icon
-            font: iconMetrics.font
-            color: Commons.Color.popups.text
-          }
+        // The glyph's ink, not its cell, in the middle of its column.
+        Text {
+          x: Math.round((osd.iconColumn - osd.ink) / 2 - glyph.tightBoundingRect.x)
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: osd.face.icon
+          font: glyph.font
+          color: Commons.Color.popups.text
         }
 
+        // The level, which slides to a new one while the card is up.
         Rectangle {
-          visible: root.shown.hasProgress
-          width: root.barWidth
-          height: Math.max(Style.space(6), Style.spacing.sm)
+          visible: osd.level
+          x: osd.barX
           anchors.verticalCenter: parent.verticalCenter
+          width: osd.barWidth
+          height: Math.max(Style.space(6), Style.spacing.sm)
           color: Util.alpha(Commons.Color.popups.text, 0.45)
 
           Rectangle {
-            width: parent.width * (root.shown.hasProgress ? root.shown.value / root.shown.maxValue : 0)
+            width: parent.width * (osd.level ? osd.face.value / osd.face.maxValue : 0)
             height: parent.height
             color: Commons.Color.accent
 
             Behavior on width {
-              enabled: root.opened
+              enabled: osd.opened
               NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
             }
           }
         }
 
-        // A readout ends at the card's padding, its slack in the gap before
-        // it; a message starts after the icon.
+        // A readout ends at the padding, any room to spare in the gap before
+        // it; words start after the icon and stop short with an ellipsis.
         Text {
-          visible: root.shown.message !== ""
-          width: root.shown.hasProgress ? root.valueWidth : root.messageWidth
+          visible: osd.face.message !== ""
+          x: osd.wordsX
+          width: osd.level ? osd.readoutWidth : osd.wordsWidth
           anchors.verticalCenter: parent.verticalCenter
-          horizontalAlignment: root.shown.hasProgress ? Text.AlignRight : Text.AlignLeft
+          horizontalAlignment: osd.level ? Text.AlignRight : Text.AlignLeft
           textFormat: Text.PlainText
-          text: root.shown.message
-          font: messageMetrics.font
+          text: osd.face.message
+          font: words.font
           color: Commons.Color.popups.text
           elide: Text.ElideRight
           maximumLineCount: 1
