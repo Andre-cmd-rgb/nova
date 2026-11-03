@@ -1094,6 +1094,7 @@ Ui.Panel {
     onHovered: function(on) {
       if (!on) return
       root.pointAt("band")
+      root.bandAutoFocused = false
       root.bandIndex = pill.slot
     }
   }
