@@ -1,295 +1,358 @@
-// weather.json holds {"name": ..., "latitude": ..., "longitude": ...} (see
-// nova-weather-location, which owns the format). Missing, blank, or
-// unparseable means the location is auto-detected from the IP address.
-function parseLocationFile(raw) {
-  var unset = { name: "", latitude: null, longitude: null }
-  try {
-    var data = JSON.parse(String(raw || ""))
-    if (!data || typeof data !== "object") return unset
+.pragma library
+// The weather panel's rules, kept apart from its window and its fetches: the
+// place nova-weather-location keeps, what the two weather services answer,
+// the units, and the glyphs.
+//
+// wttr.in finds the place from this computer's address when none is set,
+// and gives the weather now and the days ahead. Open-Meteo answers sooner,
+// for a place's coordinates, and knows night from day. Both answers are read
+// into one shape: the weather now as { tempC, tempF, feelsC, feelsF,
+// windKmh, windMph, humidity, code, meteo, night }, where code is the
+// service's own condition code and meteo says whose; a day ahead as
+// { date, highC, lowC, highF, lowF, glyph }.
 
+function trimmed(value) {
+  return String(value || "").replace(/^\s+|\s+$/g, "")
+}
+
+// --------------------------------------------------------------- the place
+
+// weather.json, as nova-weather-location writes it: { name, latitude,
+// longitude }, the coordinates kept only as a pair. Missing or unreadable is
+// no place set, and the weather is for the address's town.
+function readPlace(text) {
+  var none = { name: "", latitude: null, longitude: null }
+  try {
+    var data = JSON.parse(String(text || ""))
+    if (!data || typeof data !== "object") return none
     var latitude = parseFloat(data.latitude)
     var longitude = parseFloat(data.longitude)
-    var hasCoordinates = !isNaN(latitude) && !isNaN(longitude)
+    var pair = !isNaN(latitude) && !isNaN(longitude)
     return {
-      name: typeof data.name === "string" ? data.name.replace(/^\s+|\s+$/g, "") : "",
-      latitude: hasCoordinates ? latitude : null,
-      longitude: hasCoordinates ? longitude : null
+      name: typeof data.name === "string" ? trimmed(data.name) : "",
+      latitude: pair ? latitude : null,
+      longitude: pair ? longitude : null
     }
-  } catch (e) {
-    return unset
+  } catch (unreadable) {
+    return none
   }
 }
 
-// wttr.in path segment for a configured location: exact coordinates when
-// both are present, the URL-encoded name as a fallback (hand-edited
-// weather.loc files may only carry a name), empty for IP auto-detect.
-function wttrLocationQuery(location, latitude, longitude) {
-  var lat = parseFloat(String(latitude))
-  var lon = parseFloat(String(longitude))
-  if (!isNaN(lat) && !isNaN(lon)) return lat + "," + lon
+function hasCoordinates(place) {
+  return !isNaN(parseFloat(String(place.latitude))) && !isNaN(parseFloat(String(place.longitude)))
+}
 
-  var name = String(location || "").replace(/^\s+|\s+$/g, "")
+// What wttr.in is asked for: the coordinates, else the name (a weather.json
+// written by hand may have only that), else nothing, for the address's town.
+function wttrQuery(place) {
+  var latitude = parseFloat(String(place.latitude))
+  var longitude = parseFloat(String(place.longitude))
+  if (!isNaN(latitude) && !isNaN(longitude)) return latitude + "," + longitude
+  var name = trimmed(place.name)
   return name === "" ? "" : encodeURIComponent(name)
 }
 
-// Open-Meteo geocoding response → suggestion rows for the location picker.
-function parseGeocodingResults(raw) {
-  try {
-    var data = JSON.parse(String(raw || "{}"))
-    var results = data.results
-    if (!results || !results.length) return []
+// Where Open-Meteo is asked about: the place set, else the area wttr.in
+// found, as { latitude, longitude }; null without a pair of numbers.
+function meteoPoint(place, area) {
+  var latitude = parseFloat(String(place.latitude))
+  var longitude = parseFloat(String(place.longitude))
+  if (isNaN(latitude) || isNaN(longitude)) {
+    if (!area) return null
+    latitude = parseFloat(String(area.latitude || ""))
+    longitude = parseFloat(String(area.longitude || ""))
+  }
+  return isNaN(latitude) || isNaN(longitude) ? null : { latitude: latitude, longitude: longitude }
+}
 
-    var out = []
+// The town wttr.in places the address in, from its "%l": "Town, Region"
+// gives the town. null for no answer.
+function detectedTown(text) {
+  var line = String(text || "").trim()
+  return line === "" ? null : line.split(",")[0]
+}
+
+// Open-Meteo's places for a search, as the suggestions under the field:
+// { name, description, latitude, longitude }, the description being the
+// region and country. Those without a name or coordinates are left out.
+function suggestions(text) {
+  try {
+    var results = JSON.parse(String(text || "{}")).results
+    if (!results || !results.length) return []
+    var found = []
     for (var i = 0; i < results.length; i++) {
-      var r = results[i]
-      if (!r || !r.name || r.latitude === undefined || r.longitude === undefined) continue
-      var region = [r.admin1, r.country].filter(function(part) { return !!part }).join(", ")
-      out.push({
-        name: String(r.name),
-        description: region,
-        latitude: r.latitude,
-        longitude: r.longitude
+      var result = results[i]
+      if (!result || !result.name || result.latitude === undefined || result.longitude === undefined) continue
+      found.push({
+        name: String(result.name),
+        description: [result.admin1, result.country].filter(function(part) { return !!part }).join(", "),
+        latitude: result.latitude,
+        longitude: result.longitude
       })
     }
-    return out
-  } catch (e) {
+    return found
+  } catch (unreadable) {
     return []
   }
 }
 
-function locationCommit(text, suggestions, selectedIndex) {
-  var name = String(text || "").replace(/^\s+|\s+$/g, "")
+// The place Enter sets: the suggestion picked, else the name typed without
+// coordinates; nothing typed sets no place.
+function chosenPlace(text, choices, index) {
+  var name = trimmed(text)
   if (name === "") return { name: "", latitude: null, longitude: null }
-
-  var choices = suggestions || []
-  var index = Math.max(0, Math.min(parseInt(selectedIndex, 10) || 0, choices.length - 1))
-  var suggestion = choices[index]
-  if (suggestion) return suggestion
-
-  return { name: name, latitude: null, longitude: null }
+  var list = choices || []
+  var picked = list[Math.max(0, Math.min(parseInt(index, 10) || 0, list.length - 1))]
+  return picked || { name: name, latitude: null, longitude: null }
 }
 
-function isFutureForecastDate(dateString, todayString) {
-  if (!dateString) return false
-  return String(dateString).slice(0, 10) > String(todayString || "")
+// ------------------------------------------------------------- the requests
+
+function wttrUrl(query) {
+  return "https://wttr.in/" + query + "?format=j1"
 }
 
-function roundedTemp(value) {
+function meteoUrl(point) {
+  return "https://api.open-meteo.com/v1/forecast"
+    + "?latitude=" + encodeURIComponent(String(point.latitude))
+    + "&longitude=" + encodeURIComponent(String(point.longitude))
+    + "&daily=weather_code,temperature_2m_max,temperature_2m_min"
+    + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day"
+    + "&forecast_days=4"
+    + "&timezone=auto"
+}
+
+function searchUrl(query) {
+  return "https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(query) + "&count=5&language=en&format=json"
+}
+
+// ------------------------------------------------------------- the weather
+
+// A reading as a whole number, as text; "" for none.
+function rounded(value) {
   if (value === undefined || value === null || value === "") return ""
-  var n = parseFloat(String(value))
-  return isNaN(n) ? "" : String(Math.round(n))
+  var number = parseFloat(String(value))
+  return isNaN(number) ? "" : String(Math.round(number))
 }
 
-function celsiusToFahrenheit(value) {
+function fahrenheit(celsius) {
+  if (celsius === undefined || celsius === null || celsius === "") return ""
+  var number = parseFloat(String(celsius))
+  return isNaN(number) ? "" : number * 9 / 5 + 32
+}
+
+// wttr.in's weather now, its readings as it gives them.
+function wttrNow(report) {
+  var now = report && report.current_condition && report.current_condition[0]
+  if (!now) return null
+  return {
+    tempC: now.temp_C,
+    tempF: now.temp_F,
+    feelsC: now.FeelsLikeC,
+    feelsF: now.FeelsLikeF,
+    windKmh: now.windspeedKmph,
+    windMph: now.windspeedMiles,
+    humidity: now.humidity,
+    code: now.weatherCode,
+    meteo: false,
+    night: false
+  }
+}
+
+// Open-Meteo's weather now, in Celsius and km/h, rounded and turned.
+function meteoNow(report) {
+  var now = report && report.current ? report.current : null
+  if (!now || now.temperature_2m === undefined || now.temperature_2m === null) return null
+  return {
+    tempC: rounded(now.temperature_2m),
+    tempF: rounded(fahrenheit(now.temperature_2m)),
+    feelsC: rounded(now.apparent_temperature),
+    feelsF: rounded(fahrenheit(now.apparent_temperature)),
+    windKmh: rounded(now.wind_speed_10m),
+    windMph: rounded(now.wind_speed_10m * 0.621371),
+    humidity: rounded(now.relative_humidity_2m),
+    code: now.weather_code,
+    meteo: true,
+    night: Number(now.is_day) === 0
+  }
+}
+
+// The weather now as the panel writes it: the temperature's number, then
+// the feel, the wind and the humidity with their units.
+function nowText(now, imperial) {
+  if (!now) return { temp: "", feels: "", wind: "", humidity: "" }
+  return {
+    temp: String(imperial ? now.tempF : now.tempC),
+    feels: withUnit(imperial ? now.feelsF : now.feelsC, imperial),
+    wind: imperial ? now.windMph + " mph" : now.windKmh + " km/h",
+    humidity: now.humidity + "%"
+  }
+}
+
+function withUnit(value, imperial) {
   if (value === undefined || value === null || value === "") return ""
-  var n = parseFloat(String(value))
-  return isNaN(n) ? "" : (n * 9 / 5) + 32
+  return value + "°" + (imperial ? "F" : "C")
 }
 
-function formatTemp(value, useImperial) {
+// A day's high or low, its unit left to the heading.
+function degrees(value) {
   if (value === undefined || value === null || value === "") return ""
-  return value + "°" + (useImperial ? "F" : "C")
+  return value + "°"
 }
 
-function normalizedUnit(value) {
-  return String(value || "").replace(/^\s+|\s+$/g, "").toLowerCase()
+// The bar's glyph for the weather now; `otherwise` when there is none.
+function nowGlyph(now, otherwise) {
+  if (!now || now.code === undefined || now.code === null) return otherwise || ""
+  return now.meteo ? meteoGlyph(now.code, now.night) : wttrGlyph(now.code, false)
 }
 
-function localeUsesImperial(localeName) {
-  var name = String(localeName || "").replace(".", "_")
+// Whether a day is after today; both as "yyyy-MM-dd".
+function ahead(date, today) {
+  if (!date) return false
+  return String(date).slice(0, 10) > String(today || "")
+}
+
+// The next three days. Open-Meteo's when it has them, else wttr.in's.
+function forecastDays(wttr, meteo, today) {
+  var days = meteoDays(meteo, today)
+  return days.length > 0 ? days : wttrDays(wttr, today)
+}
+
+function meteoDays(report, today) {
+  var daily = report && report.daily ? report.daily : null
+  if (!daily || !daily.time) return []
+  var days = []
+  for (var i = 0; i < daily.time.length && days.length < 3; i++) {
+    if (!ahead(daily.time[i], today)) continue
+    var high = daily.temperature_2m_max ? daily.temperature_2m_max[i] : ""
+    var low = daily.temperature_2m_min ? daily.temperature_2m_min[i] : ""
+    var code = daily.weather_code ? daily.weather_code[i] : null
+    days.push({
+      date: daily.time[i],
+      highC: rounded(high),
+      lowC: rounded(low),
+      highF: rounded(fahrenheit(high)),
+      lowF: rounded(fahrenheit(low)),
+      glyph: code === undefined || code === null ? "" : meteoGlyph(code, false)
+    })
+  }
+  return days
+}
+
+// wttr.in's days, their readings as it gives them; a day's glyph is that of
+// its hour nearest noon.
+function wttrDays(report, today) {
+  var all = report && report.weather ? report.weather : []
+  var days = []
+  for (var i = 0; i < all.length && days.length < 3; i++) {
+    var day = all[i]
+    if (!ahead(day.date, today)) continue
+    days.push({
+      date: day.date,
+      highC: day.maxtempC,
+      lowC: day.mintempC,
+      highF: day.maxtempF,
+      lowF: day.mintempF,
+      glyph: noonGlyph(day.hourly)
+    })
+  }
+  return days
+}
+
+function noonGlyph(hours) {
+  if (!hours || hours.length === 0) return ""
+  var noon = hours[0]
+  var nearest = 9999
+  for (var i = 0; i < hours.length; i++) {
+    var away = Math.abs(parseInt(String(hours[i].time || "0"), 10) - 1200)
+    if (away < nearest) {
+      nearest = away
+      noon = hours[i]
+    }
+  }
+  return wttrGlyph(noon.weatherCode, false)
+}
+
+// A day's name, at noon of its date: `format` names it, else English does.
+function dayName(date, format) {
+  if (!date) return ""
+  var noon = new Date(date + "T12:00:00")
+  if (isNaN(noon.getTime())) return ""
+  if (format) return format(noon)
+  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][noon.getDay()]
+}
+
+// --------------------------------------------------------------- the units
+
+// Fahrenheit and miles where the unit setting says imperial, else where the
+// country of the weather's place uses them, else where the locale does.
+function imperial(unit, locale, country) {
+  var chosen = trimmed(unit).toLowerCase()
+  if (chosen === "imperial") return true
+  if (chosen === "metric") return false
+  var byCountry = countryImperial(country)
+  return byCountry !== null ? byCountry : localeImperial(locale)
+}
+
+// Whether a country uses Fahrenheit, by its name as wttr.in gives it; null
+// for no country.
+function countryImperial(name) {
+  var country = trimmed(name).replace(/[._-]+/g, " ").toLowerCase()
+  if (!country) return null
+  return ["us", "usa", "united states", "united states of america", "liberia", "myanmar", "burma"].indexOf(country) !== -1
+}
+
+function localeImperial(locale) {
+  var name = String(locale || "").replace(".", "_")
   return /^en[_-]US($|[_.-])/.test(name) || /^en[_-]LR($|[_.-])/.test(name) || /^my($|[_.-])/.test(name)
 }
 
-function countryUsesImperial(countryName) {
-  var country = String(countryName || "")
-    .replace(/^\s+|\s+$/g, "")
-    .replace(/[._-]+/g, " ")
-    .toLowerCase()
-  if (!country) return null
-  if (country === "us" || country === "usa" || country === "united states" || country === "united states of america") return true
-  if (country === "liberia" || country === "myanmar" || country === "burma") return true
-  return false
+// -------------------------------------------------------------- the glyphs
+
+// A service's condition code as a number: none is 0.
+function codeOf(code) {
+  return parseInt(String(code || "0"), 10)
 }
 
-function shouldUseImperial(unitOverride, localeName, countryName) {
-  var unit = normalizedUnit(unitOverride)
-  if (unit === "imperial") return true
-  if (unit === "metric") return false
+// wttr.in's codes as nova-weather-icon draws them, by day and by night; a
+// code not listed is drawn as cloud.
+var CLOUD = ""
+var WTTR_GLYPHS = {}
+;[
+  [[113], "", ""],                                                             // clear
+  [[116], "", ""],                                                             // partly cloudy
+  [[119, 122], CLOUD, CLOUD],                                                    // cloudy, overcast
+  [[143, 248, 260], "", ""],                                                   // mist, fog
+  [[176, 263, 353], "", ""],                                                   // a little rain
+  [[179, 227, 230, 323, 326, 368], "", ""],                                    // a little snow, blowing snow
+  [[182, 185, 281, 284, 311, 314, 317, 320, 350, 362, 365, 374, 377], "", ""], // sleet, freezing rain, ice
+  [[200, 386, 389, 392, 395], "", ""],                                         // thunder
+  [[266, 293, 296, 299, 302, 305, 308, 356, 359], "", ""],                     // rain
+  [[329, 332, 335, 338, 371], "", ""]                                          // snow
+].forEach(function(entry) {
+  entry[0].forEach(function(code) { WTTR_GLYPHS[code] = { day: entry[1], night: entry[2] } })
+})
 
-  var countryPreference = countryUsesImperial(countryName)
-  if (countryPreference !== null) return countryPreference
-
-  return localeUsesImperial(localeName)
+function wttrGlyph(code, night) {
+  var glyphs = WTTR_GLYPHS[codeOf(code)]
+  if (!glyphs) return CLOUD
+  return night ? glyphs.night : glyphs.day
 }
 
-function dayName(dateString, formatter) {
-  if (!dateString) return ""
-  var d = new Date(dateString + "T12:00:00")
-  if (isNaN(d.getTime())) return ""
-  if (formatter) return formatter(d)
-  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][d.getDay()]
+// Open-Meteo's (WMO) codes, drawn as the wttr.in code nearest them; one not
+// listed as cloudy.
+var METEO_AS_WTTR = {
+  0: 113,
+  1: 116, 2: 116,
+  3: 119,
+  45: 143, 48: 143,
+  51: 266, 53: 266, 55: 266, 56: 266, 57: 266, 61: 266,
+  63: 308, 65: 308, 66: 308, 67: 308, 80: 308, 81: 308, 82: 308,
+  71: 338, 73: 338, 75: 338, 77: 338, 85: 338, 86: 338,
+  95: 389, 96: 389, 99: 389
 }
 
-function openMeteoForecastDays(dailyForecastReport, todayString) {
-  var daily = dailyForecastReport && dailyForecastReport.daily ? dailyForecastReport.daily : null
-  if (!daily || !daily.time) return []
-
-  var result = []
-  for (var i = 0; i < daily.time.length && result.length < 3; ++i) {
-    var date = daily.time[i]
-    if (!isFutureForecastDate(date, todayString)) continue
-
-    var maxC = daily.temperature_2m_max ? daily.temperature_2m_max[i] : ""
-    var minC = daily.temperature_2m_min ? daily.temperature_2m_min[i] : ""
-    result.push({
-      date: date,
-      maxtempC: roundedTemp(maxC),
-      mintempC: roundedTemp(minC),
-      maxtempF: roundedTemp(celsiusToFahrenheit(maxC)),
-      mintempF: roundedTemp(celsiusToFahrenheit(minC)),
-      openMeteoWeatherCode: daily.weather_code ? daily.weather_code[i] : null
-    })
-  }
-  return result
-}
-
-// Open-Meteo bundles current conditions with the daily forecast request and
-// answers far faster than wttr.in. Normalize them to wttr's
-// current_condition shape so the panel can use either source
-// interchangeably. Open-Meteo reports metric (°C, km/h).
-function openMeteoCurrentCondition(dailyForecastReport) {
-  var current = dailyForecastReport && dailyForecastReport.current ? dailyForecastReport.current : null
-  if (!current || current.temperature_2m === undefined || current.temperature_2m === null) return null
-  return {
-    temp_C: roundedTemp(current.temperature_2m),
-    temp_F: roundedTemp(celsiusToFahrenheit(current.temperature_2m)),
-    FeelsLikeC: roundedTemp(current.apparent_temperature),
-    FeelsLikeF: roundedTemp(celsiusToFahrenheit(current.apparent_temperature)),
-    windspeedKmph: roundedTemp(current.wind_speed_10m),
-    windspeedMiles: roundedTemp(current.wind_speed_10m * 0.621371),
-    humidity: roundedTemp(current.relative_humidity_2m),
-    openMeteoWeatherCode: current.weather_code,
-    isDay: current.is_day
-  }
-}
-
-function currentIcon(current, fallback) {
-  if (!current) return fallback || ""
-  if (current.openMeteoWeatherCode !== undefined && current.openMeteoWeatherCode !== null)
-    return iconForOpenMeteoCode(current.openMeteoWeatherCode, Number(current.isDay) === 0)
-  if (current.weatherCode !== undefined && current.weatherCode !== null)
-    return iconForCode(current.weatherCode, false)
-  return fallback || ""
-}
-
-// wttr.in has no day/night flag. Use its icon only to fill an empty initial
-// state, never to replace a day/night-aware icon resolved by Open-Meteo.
-function provisionalCurrentIcon(current, resolvedIcon) {
-  return resolvedIcon || currentIcon(current, "")
-}
-
-function weatherResponseCompletesSave(hasConfiguredCoordinates, source) {
-  return hasConfiguredCoordinates ? source === "open-meteo" : source === "wttr"
-}
-
-function wttrNextForecastDays(report, todayString) {
-  var days = report && report.weather ? report.weather : []
-  var result = []
-  for (var i = 0; i < days.length && result.length < 3; ++i) {
-    if (isFutureForecastDate(days[i].date, todayString)) result.push(days[i])
-  }
-  return result
-}
-
-function buildForecastDays(report, dailyForecastReport, todayString) {
-  var days = openMeteoForecastDays(dailyForecastReport, todayString)
-  return days.length > 0 ? days : wttrNextForecastDays(report, todayString)
-}
-
-function bareTempForDay(day, kind, useImperial) {
-  if (!day) return ""
-  var v = useImperial
-    ? (kind === "max" ? day.maxtempF : day.mintempF)
-    : (kind === "max" ? day.maxtempC : day.mintempC)
-  if (v === undefined || v === null || v === "") return ""
-  return v + "°"
-}
-
-function dayIcon(day) {
-  if (!day) return ""
-  if (day.openMeteoWeatherCode !== undefined && day.openMeteoWeatherCode !== null)
-    return iconForOpenMeteoCode(day.openMeteoWeatherCode)
-  if (!day.hourly || day.hourly.length === 0) return ""
-
-  var best = day.hourly[0]
-  var bestDist = 9999
-  for (var i = 0; i < day.hourly.length; ++i) {
-    var t = parseInt(String(day.hourly[i].time || "0"), 10)
-    var dist = Math.abs(t - 1200)
-    if (dist < bestDist) {
-      bestDist = dist
-      best = day.hourly[i]
-    }
-  }
-  return iconForCode(best.weatherCode, false)
-}
-
-function iconForOpenMeteoCode(code, night) {
-  var c = parseInt(String(code || "0"), 10)
-  if (c === 0) return iconForCode(113, night)
-  if (c === 1 || c === 2) return iconForCode(116, night)
-  if (c === 3) return iconForCode(119, night)
-  if (c === 45 || c === 48) return iconForCode(143, night)
-  if (c === 51 || c === 53 || c === 55 || c === 56 || c === 57 || c === 61) return iconForCode(266, night)
-  if (c === 63 || c === 65 || c === 66 || c === 67 || c === 80 || c === 81 || c === 82) return iconForCode(308, night)
-  if (c === 71 || c === 73 || c === 75 || c === 77 || c === 85 || c === 86) return iconForCode(338, night)
-  if (c === 95 || c === 96 || c === 99) return iconForCode(389, night)
-  return iconForCode(119, night)
-}
-
-function iconForCode(code, night) {
-  var c = parseInt(String(code || "0"), 10)
-  switch (c) {
-    case 113: return night ? "" : ""
-    case 116: return night ? "" : ""
-    case 119: case 122: return ""
-    case 143: case 248: case 260: return night ? "\ue346" : "\ue313"
-    case 176: case 263: case 353: return night ? "" : ""
-    case 179: case 227: case 230: case 323: case 326: case 368: return night ? "" : ""
-    case 182: case 185: case 281: case 284: case 311: case 314:
-    case 317: case 320: case 350: case 362: case 365: case 374: case 377: return ""
-    case 200: case 386: case 389: case 392: case 395: return ""
-    case 266: case 293: case 296: case 299: case 302: case 305: case 308: case 356: case 359: return ""
-    case 329: case 332: case 335: case 338: case 371: return ""
-    default: return ""
-  }
-}
-
-if (typeof module !== "undefined") {
-  module.exports = {
-    parseLocationFile: parseLocationFile,
-    wttrLocationQuery: wttrLocationQuery,
-    parseGeocodingResults: parseGeocodingResults,
-    locationCommit: locationCommit,
-    isFutureForecastDate: isFutureForecastDate,
-    roundedTemp: roundedTemp,
-    celsiusToFahrenheit: celsiusToFahrenheit,
-    formatTemp: formatTemp,
-    normalizedUnit: normalizedUnit,
-    localeUsesImperial: localeUsesImperial,
-    countryUsesImperial: countryUsesImperial,
-    shouldUseImperial: shouldUseImperial,
-    dayName: dayName,
-    openMeteoForecastDays: openMeteoForecastDays,
-    openMeteoCurrentCondition: openMeteoCurrentCondition,
-    currentIcon: currentIcon,
-    provisionalCurrentIcon: provisionalCurrentIcon,
-    weatherResponseCompletesSave: weatherResponseCompletesSave,
-    wttrNextForecastDays: wttrNextForecastDays,
-    buildForecastDays: buildForecastDays,
-    bareTempForDay: bareTempForDay,
-    dayIcon: dayIcon,
-    iconForOpenMeteoCode: iconForOpenMeteoCode,
-    iconForCode: iconForCode
-  }
+function meteoGlyph(code, night) {
+  var wttr = METEO_AS_WTTR[codeOf(code)]
+  return wttrGlyph(wttr === undefined ? 119 : wttr, night)
 }

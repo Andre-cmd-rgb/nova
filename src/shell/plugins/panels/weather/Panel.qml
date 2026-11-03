@@ -4,470 +4,262 @@ import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import qs.Ui as Ui
 import "Model.js" as Model
 
-Panel {
+// The weather's panel, under its bar widget (BarWidget.qml): the weather now
+// with its glyph, the place, and the next three days. A click on the place,
+// or Enter, opens a field to search for another; Enter or a click on a
+// suggestion sets it with nova-weather-location, and an empty field goes
+// back to the address's town.
+//
+// wttr.in and Open-Meteo are asked again every refreshMinutes (15 by
+// default), and three more times 2.5 s apart when one does not answer; the
+// last answers stay on show meanwhile. The rules are in Model.js.
+//
+// Ui.Panel is named with its module: qmllint cannot see qs.Ui, so a bare
+// Panel would be read as this file, which then holds itself through its
+// inline components without end.
+Ui.Panel {
   id: root
   moduleName: "nova.weather"
   ipcTarget: "nova.weather"
 
+  // Lent by the widget: the button the panel opens under, and the widget
+  // itself. The bar knows a panel by the widget in its slot, so the widget
+  // is who this panel is to the bar: the popout it holds, the dot under the
+  // widget, and the switch to the next panel.
   property var anchorItem: null
-  property bool openedFromHotkey: false
-
-  // The bar tracks the widget mounted in its slot — BarWidget.qml — not this
-  // nested panel. Everything the bar identifies a panel by has to be that
-  // widget: the popout coordinator (and with it the open-panel dot under the
-  // pill) compares against `slot.activeItem`, and switchPanelFrom looks the
-  // slot up the same way.
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
 
-  function open() {
-    openedFromHotkey = false
-    setCenterHoverRevealSuppressed(false)
-    root.controller.show()
-    locationFile.reload()
-    root.refresh()
+  // ------------------------------------------------------- open and close
+
+  // A click on the widget and the IPC open it this way: the bar's centre,
+  // which the panel sits over, keeps its peek shut while it is open. The
+  // hold is taken after the panel shows, because showing it closes the panel
+  // that was open, and that one lets go of the hold as it closes.
+  function summon() {
+    controller.show()
+    placeFile.reload()
+    refresh()
+    Qt.callLater(function() { if (root.opened) root.holdPeek(true) })
   }
 
-  function openFromHotkey() {
-    openedFromHotkey = true
-    root.controller.show()
-    locationFile.reload()
-    root.refresh()
-    // Set after showing, not before: showing hands the popout coordinator
-    // over, which closes whichever panel was open, and that close clears the
-    // shared flag. Deferring means the panel taking over always wins, while
-    // a handoff to a panel that does not manage the flag still leaves it
-    // cleared rather than stuck on.
-    Qt.callLater(function() {
-      if (root.opened) setCenterHoverRevealSuppressed(true)
-    })
+  function open() {
+    holdPeek(false)
+    controller.show()
+    placeFile.reload()
+    refresh()
   }
 
   function close() {
-    setCenterHoverRevealSuppressed(false)
-    if (root.editingLocation) root.cancelEditingLocation()
-    root.controller.hide()
+    holdPeek(false)
+    if (editing) cancelEditing()
+    controller.hide()
   }
 
   function toggle() {
-    if (root.opened) root.close()
-    else root.openFromHotkey()
+    if (opened) close()
+    else summon()
   }
 
   function switchPanel(direction) {
-    if (root.bar && typeof root.bar.switchPanelFrom === "function")
-      return root.bar.switchPanelFrom(root.barIdentity, direction)
+    if (bar && typeof bar.switchPanelFrom === "function") return bar.switchPanelFrom(barIdentity, direction)
     return false
   }
 
-  function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
-      root.bar.setCenterHoverRevealSuppressed(value)
-    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
-      root.bar.centerHoverRevealSuppressed = value
+  function holdPeek(shut) {
+    if (bar && typeof bar.setCenterHoverRevealSuppressed === "function") bar.setCenterHoverRevealSuppressed(shut)
   }
 
-  // Parsed wttr.in j1 response. Kept on failure so stale data stays visible.
-  property var report: null
-  property var dailyForecastReport: null
-  property string wttrLocation: ""
+  // --------------------------------------------------------------- the place
 
-  // Configured location, read from the weather.json state file (owned by
-  // nova-weather-location). The query is the wttr.in path segment
-  // (coordinates when stored, else the encoded name); empty means IP
-  // auto-detect. The watch makes hand edits take effect live.
-  property var configuredLocationState: ({ name: "", latitude: null, longitude: null })
-  readonly property string configuredLocation: configuredLocationState.name
-  readonly property string locationQuery: Model.wttrLocationQuery(configuredLocationState.name, configuredLocationState.latitude, configuredLocationState.longitude)
+  // The place set, from weather.json ({ name, latitude, longitude }), which
+  // nova-weather-location writes; watched, so that an edit by hand counts.
+  property var place: ({ name: "", latitude: null, longitude: null })
+  readonly property bool hasCoordinates: Model.hasCoordinates(place)
+  readonly property string query: Model.wttrQuery(place)
+  // The town wttr.in places the address in, while no place is set.
+  property string detectedPlace: ""
 
-  // Keep the previous report visible while the new location loads. The
-  // editor remains open with a spinner, so stale data is never presented
-  // under the newly configured location label.
-  onLocationQueryChanged: {
-    if (savingLocation) savingLocationQueryStarted = true
-    forecastRetries = 0
-    dailyForecastRetries = 0
-    forecastProc.running = false
-    dailyForecastProc.running = false
-    Qt.callLater(refresh)
+  // A new place is fetched at once, from scratch; the last weather stays on
+  // show meanwhile, and the field, its spinner turning, until it comes.
+  onQueryChanged: {
+    if (saving) savedFetchStarted = true
+    restartFetches()
   }
 
-  property FileView locationFile: FileView {
+  FileView {
+    id: placeFile
     path: Commons.Color.stateHome + "/nova/settings/weather.json"
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
-    onLoaded: root.configuredLocationState = Model.parseLocationFile(text())
-    onLoadFailed: root.configuredLocationState = Model.parseLocationFile("")
+    onLoaded: root.place = Model.readPlace(text())
+    onLoadFailed: root.place = Model.readPlace("")
   }
 
-  // The first read can race shell startup (observed sporadically), leaving a
-  // stored location unhonored until the next file write. One delayed reload
-  // self-corrects; if the first read was fine it's a no-op, since identical
-  // state doesn't change locationQuery and so triggers no refetch.
+  // The first read can come too early in the shell's start and miss the
+  // file; a second, a moment later, changes nothing when the first was right.
   Timer {
     interval: 1500
     running: true
-    onTriggered: locationFile.reload()
+    onTriggered: placeFile.reload()
   }
 
-  property int forecastRetries: 0
-  property int dailyForecastRetries: 0
+  // ------------------------------------------------------------- the weather
 
-  // Click-to-edit state for the location label.
-  property bool editingLocation: false
-  property bool savingLocation: false
-  property bool savingLocationQueryStarted: false
-  property var locationSuggestions: []
-  property int suggestionIndex: 0
-  property string geocodePendingQuery: ""
-  property string geocodeActiveQuery: ""
+  // The services' last answers, kept when a fetch fails.
+  property var wttr: null
+  property var meteo: null
+  // The glyph of the weather now, which is also the widget's.
+  property string glyph: ""
 
-  // Shared hero/bar icon state, updated with each successful weather response.
-  property string label: ""
-
-  // wttr's current conditions when available; open-meteo's (bundled with the
-  // much faster daily forecast fetch) fill the hero while wttr is in flight.
-  readonly property bool hasConfiguredCoordinates: !isNaN(parseFloat(String(configuredLocationState.latitude))) && !isNaN(parseFloat(String(configuredLocationState.longitude)))
-  readonly property var openMeteoCurrent: Model.openMeteoCurrentCondition(dailyForecastReport)
-  readonly property var current: (hasConfiguredCoordinates && openMeteoCurrent) ? openMeteoCurrent : ((report && report.current_condition && report.current_condition[0]) ? report.current_condition[0] : openMeteoCurrent)
-  readonly property var areaInfo: report && report.nearest_area && report.nearest_area[0] ? report.nearest_area[0] : null
-  readonly property var forecastDays: buildForecastDays()
-  readonly property string reportCountry: areaInfo && areaInfo.country && areaInfo.country[0] ? areaInfo.country[0].value : ""
-
-  readonly property bool useImperial: Model.shouldUseImperial(setting("unit", ""), Qt.locale().name, reportCountry)
-
-  // Auto-refresh interval in minutes; clamped to a sane minimum.
+  // With a place's coordinates, Open-Meteo's weather now; else wttr.in's,
+  // and Open-Meteo's until wttr.in, the slower, answers.
+  readonly property var meteoNow: Model.meteoNow(meteo)
+  readonly property var now: (hasCoordinates && meteoNow) || Model.wttrNow(wttr) || meteoNow
+  readonly property var area: wttr && wttr.nearest_area && wttr.nearest_area[0] ? wttr.nearest_area[0] : null
+  readonly property var days: Model.forecastDays(wttr, meteo, Qt.formatDate(new Date(), "yyyy-MM-dd"))
+  readonly property string country: area && area.country && area.country[0] ? area.country[0].value : ""
+  readonly property bool imperial: Model.imperial(setting("unit", ""), Qt.locale().name, country)
+  readonly property var nowText: Model.nowText(now, imperial)
+  readonly property string placeName: place.name || detectedPlace || (area && area.areaName && area.areaName[0] ? area.areaName[0].value : "")
   readonly property int refreshMinutes: Math.max(1, parseInt(setting("refreshMinutes", 15), 10) || 15)
 
-  readonly property string reportLocation:  configuredLocation || wttrLocation || (areaInfo && areaInfo.areaName && areaInfo.areaName[0] ? areaInfo.areaName[0].value : "")
-  readonly property string reportTempNum:   current ? String(useImperial ? current.temp_F : current.temp_C) : ""
-  readonly property string tempUnit:        "°" + (useImperial ? "F" : "C")
-  readonly property string reportFeels:     current ? formatTemp(useImperial ? current.FeelsLikeF : current.FeelsLikeC) : ""
-  readonly property string reportWind:      current ? (useImperial ? (current.windspeedMiles + " mph") : (current.windspeedKmph + " km/h")) : ""
-  readonly property string reportHumidity:  current ? (current.humidity + "%") : ""
+  // Each refresh starts with three tries for each service, so that a round
+  // that used them up (waking with the network still down) does not leave
+  // the next without.
+  property int wttrTries: 0
+  property int meteoTries: 0
 
   function refresh() {
-    // Each full refresh cycle gets a fresh retry budget, so an earlier
-    // exhausted round (e.g. waking with the network still down) doesn't
-    // starve retries for the rest of the session.
-    forecastRetries = 0
-    dailyForecastRetries = 0
-    if (!forecastProc.running) forecastProc.running = true
-    if (root.locationQuery === "" && !locationProc.running) locationProc.running = true
-    // With stored coordinates this fetches open-meteo right away — no need
-    // to wait for the slow wttr response. Without them it's a no-op until
-    // wttr reports the detected area.
-    refreshDailyForecast(null)
+    wttrTries = 0
+    meteoTries = 0
+    if (!wttrFetch.running) wttrFetch.running = true
+    if (query === "" && !townFetch.running) townFetch.running = true
+    // With the place's coordinates Open-Meteo is asked now, without waiting
+    // for wttr.in; without them, once wttr.in has found the area.
+    fetchMeteo(null)
   }
 
-  function refreshDailyForecast(sourceReport) {
-    if (dailyForecastProc.running) return
+  function restartFetches() {
+    wttrTries = 0
+    meteoTries = 0
+    wttrFetch.running = false
+    meteoFetch.running = false
+    Qt.callLater(refresh)
+  }
 
-    var lat = parseFloat(String(root.configuredLocationState.latitude))
-    var lon = parseFloat(String(root.configuredLocationState.longitude))
-    if (isNaN(lat) || isNaN(lon)) {
-      var area = sourceReport && sourceReport.nearest_area && sourceReport.nearest_area[0] ? sourceReport.nearest_area[0] : root.areaInfo
-      if (!area) return
-      lat = parseFloat(String(area.latitude || ""))
-      lon = parseFloat(String(area.longitude || ""))
+  // `answer` is wttr.in's latest, for its area; null takes the last one's.
+  function fetchMeteo(answer) {
+    if (meteoFetch.running) return
+    var point = Model.meteoPoint(place, answer && answer.nearest_area && answer.nearest_area[0] ? answer.nearest_area[0] : area)
+    if (!point) return
+    meteoFetch.command = ["curl", "-fsS", "--max-time", "5", Model.meteoUrl(point)]
+    meteoFetch.running = true
+  }
+
+  // wttr.in can be slow, above all for a place it has not been asked about
+  // before: three more tries before the refresh timer's turn.
+  function retryWttr() {
+    if (wttrTries >= 3) return
+    wttrTries++
+    wttrRetry.restart()
+  }
+
+  // With the place's coordinates, Open-Meteo alone sets the glyph, so an
+  // answer lost (waking before the network) tries again rather than leave
+  // an old glyph until the next refresh.
+  function retryMeteo() {
+    if (meteoTries >= 3) return
+    meteoTries++
+    meteoRetry.restart()
+  }
+
+  Process {
+    id: wttrFetch
+    command: ["curl", "-fsS", "--max-time", "10", Model.wttrUrl(root.query)]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.readWttr(text)
     }
-    if (isNaN(lat) || isNaN(lon)) return
-
-    var url = "https://api.open-meteo.com/v1/forecast"
-      + "?latitude=" + encodeURIComponent(String(lat))
-      + "&longitude=" + encodeURIComponent(String(lon))
-      + "&daily=weather_code,temperature_2m_max,temperature_2m_min"
-      + "&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code,is_day"
-      + "&forecast_days=4"
-      + "&timezone=auto"
-    dailyForecastProc.command = ["curl", "-fsS", "--max-time", "5", url]
-    dailyForecastProc.running = true
   }
 
-  // ---- Location editing. Clicking the location label swaps it for a search
-  //      field; picking a geocoded suggestion persists name + coordinates to
-  //      the module's shell.json entry. An empty commit returns to auto.
-  function startEditingLocation() {
-    editingLocation = true
-    savingLocation = false
-    savingLocationQueryStarted = false
-    locationSuggestions = []
-    suggestionIndex = 0
-    Qt.callLater(function() {
-      locationField.text = root.configuredLocation
-      locationField.selectAll()
-      locationField.forceActiveFocus()
-    })
-  }
-
-  function cancelEditingLocation() {
-    editingLocation = false
-    savingLocation = false
-    savingLocationQueryStarted = false
-    locationSuggestions = []
-    geocodeDebounce.stop()
-    Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
-  }
-
-  function commitLocation() {
-    var location = Model.locationCommit(locationField.text, locationSuggestions, suggestionIndex)
-    if (location.name === "") {
-      clearLocation()
+  function readWttr(text) {
+    var raw = String(text || "").trim()
+    var answer
+    try {
+      answer = JSON.parse(raw)
+    } catch (unreadable) {
+      retryWttr()
       return
     }
-    savingLocation = true
-    savingLocationQueryStarted = false
-    configuredLocationState = {
-      name: location.name,
-      latitude: location.latitude,
-      longitude: location.longitude
+    wttr = answer
+    // Without coordinates, wttr.in's answer gives the glyph until
+    // Open-Meteo's comes, and a null one is no answer.
+    if (!hasCoordinates) {
+      if (answer === null) {
+        retryWttr()
+        return
+      }
+      if (!glyph) glyph = Model.nowGlyph(Model.wttrNow(answer), "")
     }
-    persistLocation(location.name, location.latitude, location.longitude)
+    wttrTries = 0
+    if (hasCoordinates) return
+    savedFetched()
+    fetchMeteo(answer)
   }
 
-  function clearLocation() {
-    persistLocation("", null, null)
-    wttrLocation = ""
-    cancelEditingLocation()
-  }
-
-  function pickSuggestion(suggestion) {
-    if (!suggestion) return
-    savingLocation = true
-    savingLocationQueryStarted = false
-    configuredLocationState = {
-      name: suggestion.name,
-      latitude: suggestion.latitude,
-      longitude: suggestion.longitude
+  Process {
+    id: meteoFetch
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.readMeteo(text)
     }
-    persistLocation(suggestion.name, suggestion.latitude, suggestion.longitude)
   }
 
-  function finishSavingLocation() {
-    if (savingLocation && savingLocationQueryStarted) cancelEditingLocation()
-  }
-
-  function persistLocation(name, latitude, longitude) {
-    if (name && latitude !== null && longitude !== null)
-      locationSaveProc.command = ["nova-weather-location", "--set", name, latitude + "," + longitude]
-    else if (name)
-      locationSaveProc.command = ["nova-weather-location", "--set", name]
-    else
-      locationSaveProc.command = ["nova-weather-location", "--clear"]
-    locationSaveProc.running = true
-  }
-
-  // Debounced geocoding. Only one curl runs at a time; if the query moved on
-  // while a fetch was in flight, the latest query is fetched right after.
-  function requestGeocode() {
-    var query = locationField.text.trim()
-    if (query.length < 2) {
-      locationSuggestions = []
+  function readMeteo(text) {
+    var answer
+    try {
+      answer = JSON.parse(String(text || "").trim())
+    } catch (unreadable) {
+      retryMeteo()
       return
     }
-    geocodePendingQuery = query
-    if (!geocodeProc.running) startGeocode()
+    meteo = answer
+    glyph = Model.nowGlyph(Model.meteoNow(answer), glyph)
+    meteoTries = 0
+    if (hasCoordinates) savedFetched()
   }
 
-  function startGeocode() {
-    geocodeActiveQuery = geocodePendingQuery
-    geocodeProc.command = ["curl", "-fsS", "--max-time", "5",
-      "https://geocoding-api.open-meteo.com/v1/search?name=" + encodeURIComponent(geocodeActiveQuery) + "&count=5&language=en&format=json"]
-    geocodeProc.running = true
-  }
-
-  function buildForecastDays() {
-    return Model.buildForecastDays(report, dailyForecastReport, Qt.formatDate(new Date(), "yyyy-MM-dd"))
-  }
-
-  function openMeteoForecastDays() {
-    return Model.openMeteoForecastDays(dailyForecastReport, Qt.formatDate(new Date(), "yyyy-MM-dd"))
-  }
-
-  function wttrNextForecastDays() {
-    return Model.wttrNextForecastDays(report, Qt.formatDate(new Date(), "yyyy-MM-dd"))
-  }
-
-  function isFutureForecastDate(dateString) {
-    return Model.isFutureForecastDate(dateString, Qt.formatDate(new Date(), "yyyy-MM-dd"))
-  }
-
-  function roundedTemp(value) {
-    return Model.roundedTemp(value)
-  }
-
-  function celsiusToFahrenheit(value) {
-    return Model.celsiusToFahrenheit(value)
-  }
-
-  function formatTemp(value) {
-    return Model.formatTemp(value, useImperial)
-  }
-
-  function dayName(dateString) {
-    return Model.dayName(dateString, function(date) { return Qt.formatDate(date, "dddd") })
-  }
-
-  // Bare degree value (no unit letter), used in the forecast row.
-  function bareTempForDay(day, kind) {
-    return Model.bareTempForDay(day, kind, useImperial)
-  }
-
-  // Representative icon for a forecast day: the hourly entry nearest noon.
-  function dayIcon(day) {
-    return Model.dayIcon(day)
-  }
-
-  function iconForOpenMeteoCode(code) {
-    return Model.iconForOpenMeteoCode(code)
-  }
-
-  // Mirrors nova-weather-icon's wttr.in code → nerd-font glyph mapping.
-  function iconForCode(code, night) {
-    return Model.iconForCode(code, night)
-  }
-
+  // wttr.in's town for the address, asked while no place is set.
   Process {
-    id: forecastProc
-    command: ["curl", "-fsS", "--max-time", "10", "https://wttr.in/" + root.locationQuery + "?format=j1"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var raw = String(text || "").trim()
-        if (!raw) {
-          root.scheduleForecastRetry()
-          return
-        }
-        try {
-          var parsed = JSON.parse(raw)
-          root.report = parsed
-          if (!root.hasConfiguredCoordinates)
-            root.label = Model.provisionalCurrentIcon(parsed.current_condition && parsed.current_condition[0], root.label)
-          root.forecastRetries = 0
-          if (Model.weatherResponseCompletesSave(root.hasConfiguredCoordinates, "wttr"))
-            root.finishSavingLocation()
-          // Stored coordinates already drove the fast open-meteo fetch from
-          // refresh(); only auto-detect needs the area wttr reported.
-          if (isNaN(parseFloat(String(root.configuredLocationState.latitude))))
-            root.refreshDailyForecast(parsed)
-        } catch (e) {
-          // Keep last-good report visible, but try again shortly.
-          root.scheduleForecastRetry()
-        }
-      }
-    }
-  }
-
-  // wttr.in can be slow or flaky, especially for a location it hasn't
-  // cached yet. Retry a few times before leaving it to the refresh timer.
-  function scheduleForecastRetry() {
-    if (forecastRetries >= 3) return
-    forecastRetries++
-    forecastRetryTimer.restart()
-  }
-
-  Timer {
-    id: forecastRetryTimer
-    interval: 2500
-    onTriggered: if (!forecastProc.running) forecastProc.running = true
-  }
-
-  // With configured coordinates this fetch is the only thing that updates the
-  // bar icon, so a dropped response (e.g. waking before the network is back)
-  // must retry rather than wait out the refresh timer with a stale icon.
-  function scheduleDailyForecastRetry() {
-    if (dailyForecastRetries >= 3) return
-    dailyForecastRetries++
-    dailyForecastRetryTimer.restart()
-  }
-
-  Timer {
-    id: dailyForecastRetryTimer
-    interval: 2500
-    onTriggered: root.refreshDailyForecast(null)
-  }
-
-  Process {
-    id: dailyForecastProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var raw = String(text || "").trim()
-        if (!raw) {
-          root.scheduleDailyForecastRetry()
-          return
-        }
-        try {
-          var parsed = JSON.parse(raw)
-          var parsedCurrent = Model.openMeteoCurrentCondition(parsed)
-          root.dailyForecastReport = parsed
-          root.label = Model.currentIcon(parsedCurrent, root.label)
-          root.dailyForecastRetries = 0
-          if (Model.weatherResponseCompletesSave(root.hasConfiguredCoordinates, "open-meteo"))
-            root.finishSavingLocation()
-        } catch (e) {
-          // Keep last-good daily forecast visible, but try again shortly.
-          root.scheduleDailyForecastRetry()
-        }
-      }
-    }
-  }
-
-  Process {
-    id: geocodeProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        root.locationSuggestions = root.editingLocation ? Model.parseGeocodingResults(text) : []
-        root.suggestionIndex = 0
-        if (root.geocodePendingQuery !== root.geocodeActiveQuery) Qt.callLater(root.startGeocode)
-      }
-    }
-  }
-
-  Timer {
-    id: geocodeDebounce
-    interval: 300
-    onTriggered: root.requestGeocode()
-  }
-
-  Process {
-    id: locationSaveProc
-    onExited: function(exitCode) {
-      if (exitCode !== 0 || !root.savingLocation) return
-
-      // FileView handles changed locations. Explicitly refresh here too so
-      // saving the already-active location cannot strand the spinner.
-      locationFile.reload()
-      if (!root.savingLocationQueryStarted) {
-        root.savingLocationQueryStarted = true
-        root.forecastRetries = 0
-        root.dailyForecastRetries = 0
-        forecastProc.running = false
-        dailyForecastProc.running = false
-        Qt.callLater(root.refresh)
-      }
-    }
-  }
-
-  Process {
-    id: locationProc
+    id: townFetch
     command: ["curl", "-fsS", "--max-time", "4", "https://wttr.in/?format=%l"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var raw = String(text || "").trim()
-        if (!raw) return
-        root.wttrLocation = raw.split(",")[0]
+        var town = Model.detectedTown(text)
+        if (town !== null) root.detectedPlace = town
       }
     }
   }
 
   Timer {
-    id: refreshTimer
+    id: wttrRetry
+    interval: 2500
+    onTriggered: if (!wttrFetch.running) wttrFetch.running = true
+  }
+
+  Timer {
+    id: meteoRetry
+    interval: 2500
+    onTriggered: root.fetchMeteo(null)
+  }
+
+  Timer {
     interval: root.refreshMinutes * 60 * 1000
     running: true
     repeat: true
@@ -475,6 +267,134 @@ Panel {
     onTriggered: root.refresh()
   }
 
+  // ------------------------------------------------------- setting the place
+
+  // The search field in place of the place's name. While a place is being
+  // set (`saving`), the field waits, a spinner in place of its clear mark,
+  // until the weather for it comes: Open-Meteo's for a place with
+  // coordinates, else wttr.in's.
+  property bool editing: false
+  property bool saving: false
+  property bool savedFetchStarted: false
+  property var suggestions: []
+  property int suggestionIndex: 0
+  // The search wanted and the one running: one runs at a time, and the
+  // latest wanted follows when it is done.
+  property string searchWanted: ""
+  property string searchRunning: ""
+
+  function startEditing() {
+    editing = true
+    saving = false
+    savedFetchStarted = false
+    suggestions = []
+    suggestionIndex = 0
+    Qt.callLater(function() {
+      placeField.text = root.place.name
+      placeField.selectAll()
+      placeField.forceActiveFocus()
+    })
+  }
+
+  function cancelEditing() {
+    editing = false
+    saving = false
+    savedFetchStarted = false
+    suggestions = []
+    searchDelay.stop()
+    Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
+  }
+
+  // Enter: the suggestion picked, else the name typed; nothing typed goes
+  // back to the address's town.
+  function commit() {
+    var chosen = Model.chosenPlace(placeField.text, suggestions, suggestionIndex)
+    if (chosen.name === "") clearPlace()
+    else setPlace(chosen)
+  }
+
+  function setPlace(chosen) {
+    if (!chosen) return
+    saving = true
+    savedFetchStarted = false
+    place = { name: chosen.name, latitude: chosen.latitude, longitude: chosen.longitude }
+    savePlace(chosen.name, chosen.latitude, chosen.longitude)
+  }
+
+  function clearPlace() {
+    savePlace("", null, null)
+    detectedPlace = ""
+    cancelEditing()
+  }
+
+  // The weather for the place being set has come: the field closes.
+  function savedFetched() {
+    if (saving && savedFetchStarted) cancelEditing()
+  }
+
+  function savePlace(name, latitude, longitude) {
+    if (name && latitude !== null && longitude !== null)
+      placeSave.command = ["nova-weather-location", "--set", name, latitude + "," + longitude]
+    else if (name)
+      placeSave.command = ["nova-weather-location", "--set", name]
+    else
+      placeSave.command = ["nova-weather-location", "--clear"]
+    placeSave.running = true
+  }
+
+  // The file's watch picks the new place up. A place set again, the same
+  // as before, changes no query, so the fetch is started here too, or the
+  // spinner would turn for ever.
+  Process {
+    id: placeSave
+    onExited: function(exitCode) {
+      if (exitCode !== 0 || !root.saving) return
+      placeFile.reload()
+      if (root.savedFetchStarted) return
+      root.savedFetchStarted = true
+      root.restartFetches()
+    }
+  }
+
+  // Searches 300 ms after the last key, from two letters.
+  function search() {
+    var typed = placeField.text.trim()
+    if (typed.length < 2) {
+      suggestions = []
+      return
+    }
+    searchWanted = typed
+    if (!searchFetch.running) startSearch()
+  }
+
+  function startSearch() {
+    searchRunning = searchWanted
+    searchFetch.command = ["curl", "-fsS", "--max-time", "5", Model.searchUrl(searchRunning)]
+    searchFetch.running = true
+  }
+
+  Process {
+    id: searchFetch
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        root.suggestions = root.editing ? Model.suggestions(text) : []
+        root.suggestionIndex = 0
+        if (root.searchWanted !== root.searchRunning) Qt.callLater(root.startSearch)
+      }
+    }
+  }
+
+  Timer {
+    id: searchDelay
+    interval: 300
+    onTriggered: root.search()
+  }
+
+  // ------------------------------------------------------------- the panel
+
+  // Over the bar's centre. Enter opens the field; while it is open, it
+  // takes the keys.
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -484,377 +404,332 @@ Panel {
     centerOnBar: true
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(480))
-    contentHeight: panel.fittedContentHeight(weatherColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      blocked: root.editingLocation
-      onReturnRequested: root.startEditingLocation()
+      blocked: root.editing
+      onReturnRequested: root.startEditing()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
 
       Flickable {
-        id: weatherScroll
+        id: scroller
         anchors.fill: parent
         contentWidth: width
-        contentHeight: weatherColumn.implicitHeight
+        contentHeight: content.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height
 
         Column {
-          id: weatherColumn
-          width: weatherScroll.width
+          id: content
+          width: scroller.width
           spacing: Style.space(14)
 
-      // ---- Hero row: big icon + temp on the left; location and stats stacked on the right.
-      Item {
-        width: parent.width
-        height: Math.max(heroLeft.height, heroRight.height)
-
-        Row {
-          id: heroLeft
-          anchors.left: parent.left
-          anchors.leftMargin: Style.space(16)
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(16)
-
-          Text {
-            id: heroIcon
-            textFormat: Text.PlainText
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.verticalCenterOffset: 5
-            text: root.label || "—"
-            color: root.bar.foreground
-            font.family: root.bar.fontFamily
-            // Decorative condition emoji; intentionally larger than the
-            // Style.font.* scale's displayLarge (28).
-            font.pixelSize: 64
-          }
-
-          Row {
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(2)
-
-            Text {
-              id: tempBig
-              textFormat: Text.PlainText
-              text: root.reportTempNum || "—"
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              // Hero temperature read-out; deliberately oversized, outside
-              // the Style.font.* scale.
-              font.pixelSize: 56
-              font.bold: true
-            }
-            Text {
-              textFormat: Text.PlainText
-              text: root.current ? root.tempUnit : ""
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.display
-              anchors.top: tempBig.top
-              anchors.topMargin: Style.space(10)
-            }
-          }
-        }
-
-        Column {
-          id: heroRight
-          width: weatherStats.implicitWidth
-          anchors.right: parent.right
-          anchors.rightMargin: Style.space(20)
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(12)
-
-          Row {
-            visible: !root.editingLocation && root.reportLocation !== ""
-            spacing: Style.space(6)
-
-            TapHandler {
-              onTapped: root.startEditingLocation()
-            }
-            HoverHandler {
-              cursorShape: Qt.PointingHandCursor
-            }
-
-            Text {
-              text: ""  // nf-fa-map_marker
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-              anchors.verticalCenter: parent.verticalCenter
-            }
-            Text {
-              textFormat: Text.PlainText
-              text: (root.reportLocation || "").toUpperCase()
-              color: Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-              font.letterSpacing: 1
-              anchors.verticalCenter: parent.verticalCenter
-            }
-          }
-
-          Row {
-            visible: root.editingLocation
-            spacing: Style.space(6)
-
-            TextField {
-              id: locationField
-              width: Style.space(190)
-              enabled: !root.savingLocation
-              placeholderText: "Search city"
-              foreground: root.bar.foreground
-              font.family: root.bar.fontFamily
-
-              onTextChanged: if (root.editingLocation && !root.savingLocation) geocodeDebounce.restart()
-
-              Keys.onPressed: function(event) {
-                if (event.key === Qt.Key_Escape) {
-                  root.cancelEditingLocation()
-                  event.accepted = true
-                } else if (event.key === Qt.Key_Down) {
-                  if (root.suggestionIndex < root.locationSuggestions.length - 1) root.suggestionIndex++
-                  event.accepted = true
-                } else if (event.key === Qt.Key_Up) {
-                  if (root.suggestionIndex > 0) root.suggestionIndex--
-                  event.accepted = true
-                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-                  root.commitLocation()
-                  event.accepted = true
-                }
-              }
-            }
-
-            // Clear back to IP auto-detect. While a committed location is
-            // loading, this same compact affordance becomes a spinner.
-            Rectangle {
-              width: Style.space(18)
-              height: Style.space(18)
-              anchors.verticalCenter: parent.verticalCenter
-              radius: Math.min(4, Style.cornerRadius)
-              color: !root.savingLocation && clearLocationArea.containsMouse ? Style.hoverFillFor(root.bar.foreground, Commons.Color.accent) : "transparent"
-
-              Text {
-                textFormat: Text.PlainText
-                anchors.centerIn: parent
-                text: root.savingLocation ? "󰦖" : "✕"
-                font.family: root.bar.fontFamily
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.pixelSize: Style.font.bodySmall
-
-                RotationAnimator on rotation {
-                  running: root.savingLocation
-                  from: 0; to: 360
-                  duration: 800
-                  loops: Animation.Infinite
-                }
-              }
-
-              MouseArea {
-                id: clearLocationArea
-                anchors.fill: parent
-                enabled: !root.savingLocation
-                hoverEnabled: true
-                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: root.clearLocation()
-              }
-            }
-          }
-
-          Row {
-            id: weatherStats
-            visible: !!root.current
-            spacing: Style.space(36)
-
-            Column {
-              spacing: Style.space(5)
-              Text {
-                text: "FEELS"
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.letterSpacing: 1
-              }
-              Text {
-                textFormat: Text.PlainText
-                text: root.reportFeels
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-              }
-            }
-
-            Column {
-              spacing: Style.space(5)
-              Text {
-                text: "WIND"
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.letterSpacing: 1
-              }
-              Text {
-                textFormat: Text.PlainText
-                text: root.reportWind
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-              }
-            }
-
-            Column {
-              spacing: Style.space(5)
-              Text {
-                text: "HUMID"
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.letterSpacing: 1
-              }
-              Text {
-                textFormat: Text.PlainText
-                text: root.reportHumidity
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-              }
-            }
-          }
-        }
-      }
-
-      // ---- Geocoding suggestions while the location is being edited.
-      Column {
-        visible: root.editingLocation && !root.savingLocation && root.locationSuggestions.length > 0
-        width: parent.width
-        spacing: 0
-
-        Repeater {
-          model: root.locationSuggestions
-
-          Rectangle {
-            required property var modelData
-            required property int index
+          // The glyph and the temperature at the left; the place over the
+          // feel, wind and humidity at the right.
+          Item {
             width: parent.width
-            height: suggestionRow.implicitHeight + Style.space(12)
-            radius: Style.cornerRadius
-            color: index === root.suggestionIndex ? Style.hoverFillFor(root.bar.foreground, Commons.Color.accent) : "transparent"
+            height: Math.max(heroLeft.height, heroRight.height)
 
             Row {
-              id: suggestionRow
+              id: heroLeft
               anchors.left: parent.left
               anchors.leftMargin: Style.space(16)
               anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(8)
+              spacing: Style.space(16)
 
+              // Drawn larger than the type scale goes: it is the picture of
+              // the weather, not text.
               Text {
-                textFormat: Text.PlainText
-                text: modelData.name
-                color: index === root.suggestionIndex ? Style.hoverStateColor(root.bar.foreground, Commons.Color.accent) : root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.body
-              }
-              Text {
-                textFormat: Text.PlainText
-                visible: text !== ""
-                text: modelData.description
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.bodySmall
                 anchors.verticalCenter: parent.verticalCenter
-              }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onPositionChanged: root.suggestionIndex = index
-              onClicked: root.pickSuggestion(modelData)
-            }
-          }
-        }
-      }
-
-      Text {
-        visible: !root.current
-        text: "Fetching forecast…"
-        color: Qt.darker(root.bar.foreground, 1.5)
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        font.italic: true
-      }
-
-      // ---- Divider between current conditions and forecast.
-      Rectangle {
-        visible: root.forecastDays.length > 0
-        width: parent.width
-        height: Style.spacing.hairline
-        color: root.bar.foreground
-        opacity: 0.12
-      }
-
-      // ---- Forecast row: each cell has the day icon left of a day-name + hi/lo column.
-      //      Wrapped in an Item so the block of cells can be centered within the popup.
-      Item {
-        visible: root.forecastDays.length > 0
-        width: parent.width
-        height: forecastRow.height
-
-        Row {
-          id: forecastRow
-          anchors.horizontalCenter: parent.horizontalCenter
-          spacing: Style.space(44)
-
-          Repeater {
-            model: root.forecastDays
-
-            Row {
-              required property var modelData
-              required property int index
-              spacing: Style.space(10)
-
-              Text {
+                anchors.verticalCenterOffset: 5
                 textFormat: Text.PlainText
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.dayIcon(modelData)
+                text: root.glyph || "—"
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.display
+                font.pixelSize: 64
               }
 
-              Column {
+              Row {
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: Style.space(2)
 
                 Text {
+                  id: temperature
                   textFormat: Text.PlainText
-                  text: root.dayName(modelData.date).toUpperCase()
-                  color: Qt.darker(root.bar.foreground, 1.4)
+                  text: root.nowText.temp || "—"
+                  color: root.bar.foreground
                   font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.letterSpacing: 1
+                  font.pixelSize: 56
+                  font.bold: true
                 }
 
+                Text {
+                  anchors.top: temperature.top
+                  anchors.topMargin: Style.space(10)
+                  textFormat: Text.PlainText
+                  text: root.now ? "°" + (root.imperial ? "F" : "C") : ""
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.display
+                }
+              }
+            }
+
+            Column {
+              id: heroRight
+              width: readings.implicitWidth
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(20)
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(12)
+
+              Row {
+                visible: !root.editing && root.placeName !== ""
+                spacing: Style.space(6)
+
+                TapHandler { onTapped: root.startEditing() }
+                HoverHandler { cursorShape: Qt.PointingHandCursor }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: ""
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: root.placeName.toUpperCase()
+                  color: Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.letterSpacing: 1
+                }
+              }
+
+              // Down and Up walk the suggestions, Enter sets, Escape leaves.
+              Row {
+                visible: root.editing
+                spacing: Style.space(6)
+
+                TextField {
+                  id: placeField
+                  width: Style.space(190)
+                  enabled: !root.saving
+                  placeholderText: "Search city"
+                  foreground: root.bar.foreground
+                  font.family: root.bar.fontFamily
+
+                  onTextChanged: if (root.editing && !root.saving) searchDelay.restart()
+
+                  Keys.onPressed: function(event) {
+                    if (event.key === Qt.Key_Escape) {
+                      root.cancelEditing()
+                    } else if (event.key === Qt.Key_Down) {
+                      if (root.suggestionIndex < root.suggestions.length - 1) root.suggestionIndex++
+                    } else if (event.key === Qt.Key_Up) {
+                      if (root.suggestionIndex > 0) root.suggestionIndex--
+                    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
+                      root.commit()
+                    } else {
+                      return
+                    }
+                    event.accepted = true
+                  }
+                }
+
+                // Back to the address's town; while a place is being set,
+                // the spinner.
+                Rectangle {
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Style.space(18)
+                  height: Style.space(18)
+                  radius: Math.min(4, Style.cornerRadius)
+                  color: !root.saving && clearMouse.containsMouse ? Style.hoverFillFor(root.bar.foreground, Commons.Color.accent) : "transparent"
+
+                  Text {
+                    anchors.centerIn: parent
+                    textFormat: Text.PlainText
+                    text: root.saving ? "󰦖" : "✕"
+                    color: Qt.darker(root.bar.foreground, 1.4)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+
+                    RotationAnimator on rotation {
+                      running: root.saving
+                      from: 0
+                      to: 360
+                      duration: 800
+                      loops: Animation.Infinite
+                    }
+                  }
+
+                  MouseArea {
+                    id: clearMouse
+                    anchors.fill: parent
+                    enabled: !root.saving
+                    hoverEnabled: true
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: root.clearPlace()
+                  }
+                }
+              }
+
+              Row {
+                id: readings
+                visible: !!root.now
+                spacing: Style.space(36)
+
+                Reading { name: "FEELS"; value: root.nowText.feels }
+                Reading { name: "WIND"; value: root.nowText.wind }
+                Reading { name: "HUMID"; value: root.nowText.humidity }
+              }
+            }
+          }
+
+          // The places found for the search; the pointer picks as Down and
+          // Up do.
+          Column {
+            visible: root.editing && !root.saving && root.suggestions.length > 0
+            width: parent.width
+            spacing: 0
+
+            Repeater {
+              model: root.suggestions
+
+              Rectangle {
+                id: suggestion
+                required property var modelData
+                required property int index
+                readonly property bool picked: index === root.suggestionIndex
+                width: parent.width
+                height: suggestionText.implicitHeight + Style.space(12)
+                radius: Style.cornerRadius
+                color: picked ? Style.hoverFillFor(root.bar.foreground, Commons.Color.accent) : "transparent"
+
                 Row {
-                  spacing: Style.space(6)
+                  id: suggestionText
+                  anchors.left: parent.left
+                  anchors.leftMargin: Style.space(16)
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(8)
 
                   Text {
                     textFormat: Text.PlainText
-                    text: root.bareTempForDay(modelData, "max")
-                    color: root.bar.foreground
+                    text: suggestion.modelData.name
+                    color: suggestion.picked ? Style.hoverStateColor(root.bar.foreground, Commons.Color.accent) : root.bar.foreground
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
                   }
+
                   Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    visible: text !== ""
                     textFormat: Text.PlainText
-                    text: root.bareTempForDay(modelData, "min")
+                    text: suggestion.modelData.description
                     color: Qt.darker(root.bar.foreground, 1.5)
                     font.family: root.bar.fontFamily
-                    font.pixelSize: Style.font.body
+                    font.pixelSize: Style.font.bodySmall
+                  }
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onPositionChanged: root.suggestionIndex = suggestion.index
+                  onClicked: root.setPlace(suggestion.modelData)
+                }
+              }
+            }
+          }
+
+          Text {
+            visible: !root.now
+            textFormat: Text.PlainText
+            text: "Fetching forecast…"
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+            font.italic: true
+          }
+
+          Rectangle {
+            visible: root.days.length > 0
+            width: parent.width
+            height: Style.spacing.hairline
+            color: root.bar.foreground
+            opacity: 0.12
+          }
+
+          // The days ahead, centred: each one's glyph beside its name, high
+          // and low.
+          Item {
+            visible: root.days.length > 0
+            width: parent.width
+            height: daysRow.height
+
+            Row {
+              id: daysRow
+              anchors.horizontalCenter: parent.horizontalCenter
+              spacing: Style.space(44)
+
+              Repeater {
+                model: root.days
+
+                Row {
+                  id: day
+                  required property var modelData
+                  spacing: Style.space(10)
+
+                  Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: day.modelData.glyph
+                    color: root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.display
+                  }
+
+                  Column {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: Style.space(2)
+
+                    Text {
+                      textFormat: Text.PlainText
+                      text: Model.dayName(day.modelData.date, function(date) { return Qt.formatDate(date, "dddd") }).toUpperCase()
+                      color: Qt.darker(root.bar.foreground, 1.4)
+                      font.family: root.bar.fontFamily
+                      font.pixelSize: Style.font.caption
+                      font.letterSpacing: 1
+                    }
+
+                    Row {
+                      spacing: Style.space(6)
+
+                      Text {
+                        textFormat: Text.PlainText
+                        text: Model.degrees(root.imperial ? day.modelData.highF : day.modelData.highC)
+                        color: root.bar.foreground
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.body
+                      }
+
+                      Text {
+                        textFormat: Text.PlainText
+                        text: Model.degrees(root.imperial ? day.modelData.lowF : day.modelData.lowC)
+                        color: Qt.darker(root.bar.foreground, 1.5)
+                        font.family: root.bar.fontFamily
+                        font.pixelSize: Style.font.body
+                      }
+                    }
                   }
                 }
               }
@@ -864,7 +739,30 @@ Panel {
       }
     }
   }
-  }
-  }
 
+  // One of the weather now's readings: its name over its value.
+  component Reading: Column {
+    id: reading
+    property string name
+    property string value
+
+    spacing: Style.space(5)
+
+    Text {
+      textFormat: Text.PlainText
+      text: reading.name
+      color: Qt.darker(root.bar.foreground, 1.5)
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.bodySmall
+      font.letterSpacing: 1
+    }
+
+    Text {
+      textFormat: Text.PlainText
+      text: reading.value
+      color: root.bar.foreground
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.title
+    }
+  }
 }
