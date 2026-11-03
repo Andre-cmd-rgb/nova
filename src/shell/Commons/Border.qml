@@ -130,8 +130,12 @@ QtObject {
     var own = token === "border" ? ["border"] : [token, "border"]
     var alpha = sectionValue(section, [alphaKey || token + "-alpha"])
     var opacity = alpha !== "" && isFinite(Number(alpha)) ? Util.clampAlpha(Number(alpha)) : 1.0
-    var spec = paint(follow(sectionValue(section, [token])), fallbackColor, opacity,
+    var value = follow(sectionValue(section, [token]))
+    var spec = paint(value, fallbackColor, opacity,
       sectionValue(section, own.map(function(name) { return name + "-gradient" })))
+    // A border the section leaves unset is <fallbackColor>, the colour Color
+    // gives it, which already has the section's alpha.
+    if (value === "") spec.color = tint(asValue(fallbackColor), 1)
     spec.widths = measure(function(suffix) {
       return sectionValue(section, own.map(function(name) { return name + "-width" + suffix }))
     }, fallbackWidth)
