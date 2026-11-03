@@ -4,90 +4,94 @@ import qs.Ui
 import qs.Commons
 import qs.Commons as Commons
 
-// What plays, on the bar: a play or pause glyph and the title and artist,
-// which scroll while they are too long and playing. A click plays or pauses,
-// a middle click skips, the wheel steps back or on; a right click opens a
-// card with the cover, the controls, and every player to choose from. All of
-// it through the media service (Service.qml).
+// The bar's media widget: a play or pause mark and what plays, title and
+// artist, scrolling through while it plays and does not fit. A click plays or
+// pauses, a middle click skips on, the wheel goes back or on; a right click
+// opens a card with the cover, the transport and every player to pick from.
+// The media service (Service.qml) does the playing.
 BarWidget {
-  id: root
+  id: widget
   moduleName: "nova.media"
 
-  readonly property var mediaService: bar?.shell?.serviceFor("nova.media")
-  readonly property var activePlayer: mediaService ? mediaService.activePlayer : null
-  readonly property var sourcePlayers: mediaService ? mediaService.sourcePlayers : []
-  readonly property bool playing: !!activePlayer && activePlayer.isPlaying
-
-  readonly property bool hasMedia: activePlayer !== null && (activePlayer.trackTitle || activePlayer.trackArtist)
-  readonly property string title: activePlayer ? (activePlayer.trackTitle || "") : ""
-  readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
-  readonly property string playIcon: playing ? "󰏤" : "󰐊"
+  readonly property var media: bar?.shell?.serviceFor("nova.media")
+  readonly property var player: media ? media.activePlayer : null
+  readonly property var players: media ? media.sourcePlayers : []
+  readonly property bool playing: !!player && player.isPlaying
+  readonly property bool shown: media ? media.hasMedia : false
+  readonly property string title: player ? (player.trackTitle || "") : ""
+  readonly property string artist: player ? (player.trackArtist || "") : ""
   // The bar shows a tooltip only while its widget says the pointer is on it.
   readonly property bool tooltipHovered: visible && pointer.containsMouse
 
-  property bool popupOpen: false
+  property bool cardOpen: false
 
-  function close() { popupOpen = false }
+  function close() { cardOpen = false }
 
-  // The action, on the player the card shows if `shown`, else on the one
-  // the service picks for it. No on-screen display: the bar shows what
-  // changed.
-  function act(action, shown) {
-    if (mediaService) mediaService.runAction(action, false, shown ? mediaService.playerKey(activePlayer) : undefined)
+  // Pause while it plays, play while it does not.
+  function mark(isPlaying) {
+    return isPlaying ? "\u{F03E4}" : "\u{F040A}"
   }
 
-  visible: hasMedia
-  implicitWidth: hasMedia ? line.implicitWidth + Style.space(14) : 0
+  // <action> on the player the card shows when <onShown>, else on the one
+  // the service picks for it. No on-screen display: the bar shows the change.
+  function act(action, onShown) {
+    if (media) media.runAction(action, false, onShown ? media.playerKey(player) : undefined)
+  }
+
+  function isShown(candidate) {
+    return player && candidate && media.playerKey(player) === media.playerKey(candidate)
+  }
+
+  visible: shown
+  implicitWidth: shown ? onBar.implicitWidth + Style.space(14) : 0
   implicitHeight: barSize
 
   Row {
-    id: line
+    id: onBar
     anchors.centerIn: parent
     spacing: Style.space(6)
 
-    Text {
-      id: glyph
+    Glyph {
+      id: stateMark
       anchors.verticalCenter: parent.verticalCenter
-      text: root.playIcon
-      textFormat: Text.PlainText
-      color: root.playing ? root.bar.barForeground : Qt.darker(root.bar.barForeground, 1.5)
-      font.family: root.bar.fontFamily
+      text: widget.mark(widget.playing)
+      color: widget.playing ? widget.bar.barForeground : Qt.darker(widget.bar.barForeground, 1.5)
       font.pixelSize: Style.font.body
 
       Behavior on color {
-        enabled: !root.bar || root.bar.foregroundAnimationEnabled
+        enabled: !widget.bar || widget.bar.foregroundAnimationEnabled
         ColorAnimation { duration: 160 }
       }
     }
 
-    // Title and artist in at most 180 px; none on a side bar.
+    // Title and artist in 180 px at most, and none on a side bar. Too long,
+    // they scroll through, in from the right, while they play on a bar that
+    // shows with the card closed: a frame each refresh, so only then.
+    // Stopped, they are back at the start.
     Item {
-      id: trackClip
+      id: clipper
       anchors.verticalCenter: parent.verticalCenter
       width: Math.min(180, track.implicitWidth)
-      height: glyph.height
+      height: stateMark.height
       clip: true
-      visible: !root.bar.vertical && root.title !== ""
+      visible: !widget.bar.vertical && widget.title !== ""
 
       Text {
         id: track
         anchors.verticalCenter: parent.verticalCenter
-        text: root.title + (root.artist ? "  ·  " + root.artist : "")
+        text: widget.artist ? widget.title + "  ·  " + widget.artist : widget.title
         textFormat: Text.PlainText
-        color: root.bar.barForeground
-        font.family: root.bar.fontFamily
+        color: widget.bar.barForeground
+        font.family: widget.bar.fontFamily
         font.pixelSize: Style.font.body
 
-        // Too long, it scrolls through, in from the right, while it plays
-        // on a bar on screen with the card closed: a frame each refresh,
-        // so only then. Stopped, it is back at its start.
         NumberAnimation on x {
-          running: track.implicitWidth > trackClip.width && !root.popupOpen && !root.bar.vertical
-            && !root.bar.barHidden && root.playing
+          running: track.implicitWidth > clipper.width && !widget.cardOpen && !widget.bar.vertical
+            && !widget.bar.barHidden && widget.playing
           onRunningChanged: if (!running) track.x = 0
           loops: Animation.Infinite
           duration: Math.max(6000, track.implicitWidth * 25)
-          from: trackClip.width
+          from: clipper.width
           to: -track.implicitWidth
           easing.type: Easing.Linear
         }
@@ -95,44 +99,46 @@ BarWidget {
     }
   }
 
+  // A click puts the tooltip away, as on the bar's buttons.
   MouseArea {
     id: pointer
     anchors.fill: parent
     hoverEnabled: true
-    cursorShape: root.activePlayer ? Qt.PointingHandCursor : Qt.ArrowCursor
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+    cursorShape: widget.player ? Qt.PointingHandCursor : Qt.ArrowCursor
 
-    // A click puts the tooltip away, as on the bar's buttons.
+    onEntered: if (widget.bar) widget.bar.showTooltip(widget, widget.shown ? widget.title + (widget.artist ? " — " + widget.artist : "") : "")
+    onExited: if (widget.bar) widget.bar.hideTooltip(widget)
     onClicked: function(mouse) {
-      if (root.bar) root.bar.hideTooltip(root)
-      if (!root.activePlayer) return
-      if (mouse.button === Qt.RightButton) root.popupOpen = !root.popupOpen
-      else root.act(mouse.button === Qt.MiddleButton ? "next" : "playPause")
+      if (widget.bar) widget.bar.hideTooltip(widget)
+      if (!widget.player) return
+      switch (mouse.button) {
+      case Qt.RightButton: widget.cardOpen = !widget.cardOpen; break
+      case Qt.MiddleButton: widget.act("next"); break
+      default: widget.act("playPause")
+      }
     }
     onWheel: function(wheel) {
-      if (!root.activePlayer) return
-      if (wheel.angleDelta.y > 0) root.act("previous")
-      else if (wheel.angleDelta.y < 0) root.act("next")
+      if (!widget.player || wheel.angleDelta.y === 0) return
+      widget.act(wheel.angleDelta.y > 0 ? "previous" : "next")
     }
-    onEntered: if (root.bar) root.bar.showTooltip(root, root.hasMedia ? root.title + (root.artist ? " — " + root.artist : "") : "")
-    onExited: if (root.bar) root.bar.hideTooltip(root)
   }
 
   PopupCard {
     id: card
-    anchorItem: root
-    bar: root.bar
-    owner: root
-    open: root.popupOpen
+    anchorItem: widget
+    bar: widget.bar
+    owner: widget
+    open: widget.cardOpen
     contentWidth: card.fittedContentWidth(Style.space(320))
-    contentHeight: card.fittedContentHeight(cardColumn.implicitHeight)
+    contentHeight: card.fittedContentHeight(body.implicitHeight)
 
     Column {
-      id: cardColumn
+      id: body
       anchors.fill: parent
       spacing: Style.space(10)
 
-      // The cover, or a note where there is none, and the track.
+      // The cover, or a note where there is none, beside the track.
       Row {
         width: parent.width
         spacing: Style.space(10)
@@ -141,26 +147,25 @@ BarWidget {
           width: Style.space(64)
           height: Style.space(64)
           radius: Style.spacing.labelGap
-          color: Style.normalFillFor(root.bar.foreground, Commons.Color.accent)
-          borderSpec: Border.controlSpec("normal", root.bar.foreground, Commons.Color.accent)
+          color: Style.normalFillFor(widget.bar.foreground, Commons.Color.accent)
+          borderSpec: Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent)
 
           Image {
             anchors.fill: parent
             anchors.margins: Style.space(2)
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-            source: root.activePlayer && root.activePlayer.trackArtUrl ? root.activePlayer.trackArtUrl : ""
+            visible: source !== ""
+            source: widget.player && widget.player.trackArtUrl ? widget.player.trackArtUrl : ""
             // Covers come as large as 1200 px square, for 64 here.
             sourceSize: Qt.size(width, height)
-            visible: source !== ""
+            fillMode: Image.PreserveAspectCrop
+            asynchronous: true
           }
 
-          Text {
+          Glyph {
             anchors.centerIn: parent
-            visible: !root.activePlayer || !root.activePlayer.trackArtUrl
-            text: "󰝚"
-            color: root.bar.foreground
-            font.family: root.bar.fontFamily
+            visible: !widget.player || !widget.player.trackArtUrl
+            text: "\u{F075A}"
+            color: widget.bar.foreground
             font.pixelSize: Style.font.displayLarge
           }
         }
@@ -170,118 +175,108 @@ BarWidget {
           spacing: Style.space(4)
 
           Detail {
-            text: root.title || "Nothing playing"
-            color: root.bar.foreground
+            text: widget.title || "Nothing playing"
             font.pixelSize: Style.font.subtitle
             font.bold: true
           }
-
           Detail {
-            text: root.artist
-            color: Qt.darker(root.bar.foreground, 1.3)
+            text: widget.artist
+            darker: 1.3
             font.pixelSize: Style.font.bodySmall
           }
-
           Detail {
-            text: root.activePlayer && root.activePlayer.trackAlbum ? root.activePlayer.trackAlbum : ""
-            color: Qt.darker(root.bar.foreground, 1.6)
+            text: widget.player && widget.player.trackAlbum ? widget.player.trackAlbum : ""
+            darker: 1.6
             font.pixelSize: Style.font.caption
           }
         }
       }
 
-      // Back, play or pause, on: for the player shown.
+      // Back, play or pause, and on, for the player shown.
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(6)
 
-        TransportButton {
-          iconText: "󰒮"
-          enabled: root.activePlayer && root.activePlayer.canGoPrevious
-          onClicked: root.act("previous", true)
+        Transport {
+          iconText: "\u{F04AE}"
+          enabled: widget.player && widget.player.canGoPrevious
+          onClicked: widget.act("previous", true)
         }
-
-        TransportButton {
-          iconText: root.playIcon
-          horizontalPadding: Style.spacing.panelGap
+        Transport {
+          iconText: widget.mark(widget.playing)
           iconSize: Style.font.iconLarge
-          enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause)
-          onClicked: root.act("playPause", true)
+          horizontalPadding: Style.spacing.panelGap
+          enabled: widget.player && (widget.player.canTogglePlaying || widget.player.canPlay || widget.player.canPause)
+          onClicked: widget.act("playPause", true)
         }
-
-        TransportButton {
-          iconText: "󰒭"
-          enabled: root.activePlayer && root.activePlayer.canGoNext
-          onClicked: root.act("next", true)
+        Transport {
+          iconText: "\u{F04AD}"
+          enabled: widget.player && widget.player.canGoNext
+          onClicked: widget.act("next", true)
         }
       }
 
-      // With more than one player, each of them; a click makes it the one
+      // With more than one player, each of them: a click makes it the one
       // shown and played.
       PanelSeparator {
-        visible: root.sourcePlayers.length > 1
-        foreground: root.bar.foreground
+        visible: widget.players.length > 1
+        foreground: widget.bar.foreground
       }
 
       Column {
-        id: sources
-        visible: root.sourcePlayers.length > 1
+        id: playerList
+        visible: widget.players.length > 1
         width: parent.width
         spacing: Style.space(4)
 
         Repeater {
-          model: root.sourcePlayers
+          model: widget.players
 
           BorderSurface {
-            id: entry
+            id: choice
 
             required property var modelData
-            readonly property bool selected: root.activePlayer && modelData
-              && root.mediaService.playerKey(root.activePlayer) === root.mediaService.playerKey(modelData)
+            readonly property bool selected: widget.isShown(modelData)
 
-            width: sources.width
-            height: sourceLine.implicitHeight + Style.space(10)
+            width: playerList.width
+            height: line.implicitHeight + Style.space(10)
             radius: Style.spacing.labelGap
-            color: selected ? Style.selectedFillFor(root.bar.foreground, Commons.Color.accent) : "transparent"
-            borderSpec: selected ? Border.controlSpec("normal", root.bar.foreground, Commons.Color.accent) : Border.none()
+            color: selected ? Style.selectedFillFor(widget.bar.foreground, Commons.Color.accent) : "transparent"
+            borderSpec: selected ? Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent) : Border.none()
 
             Row {
-              id: sourceLine
+              id: line
+              anchors.verticalCenter: parent.verticalCenter
               anchors.left: parent.left
               anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: entry.borderLeft + Style.space(8)
-              anchors.rightMargin: entry.borderRight + Style.space(8)
+              anchors.leftMargin: choice.borderLeft + Style.space(8)
+              anchors.rightMargin: choice.borderRight + Style.space(8)
               spacing: Style.space(8)
 
-              Text {
+              Glyph {
                 anchors.verticalCenter: parent.verticalCenter
                 width: Style.space(18)
                 horizontalAlignment: Text.AlignHCenter
-                text: entry.modelData && entry.modelData.isPlaying ? "󰏤" : "󰐊"
-                textFormat: Text.PlainText
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
+                text: widget.mark(choice.modelData && choice.modelData.isPlaying)
+                color: widget.bar.foreground
                 font.pixelSize: Style.font.body
               }
 
-              // Its track's title and artist, or its name.
+              // Its track's title and artist, or what it calls itself.
               Column {
                 anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - Style.space(26)
                 spacing: Style.space(1)
 
                 Detail {
-                  text: entry.modelData ? (entry.modelData.trackTitle || entry.modelData.identity || entry.modelData.desktopEntry || "Media source") : "Media source"
-                  color: root.bar.foreground
+                  text: choice.modelData ? (choice.modelData.trackTitle || choice.modelData.identity || choice.modelData.desktopEntry || "Media source") : "Media source"
                   font.pixelSize: Style.font.bodySmall
-                  font.bold: entry.selected
+                  font.bold: choice.selected
                 }
-
                 Detail {
-                  text: entry.modelData && entry.modelData.trackArtist ? entry.modelData.trackArtist
-                    : (entry.modelData && entry.modelData.identity ? entry.modelData.identity : "")
-                  color: Qt.darker(root.bar.foreground, 1.5)
+                  text: choice.modelData && choice.modelData.trackArtist ? choice.modelData.trackArtist
+                    : (choice.modelData && choice.modelData.identity ? choice.modelData.identity : "")
+                  darker: 1.5
                   font.pixelSize: Style.font.caption
                 }
               }
@@ -291,7 +286,7 @@ BarWidget {
               anchors.fill: parent
               hoverEnabled: true
               cursorShape: Qt.PointingHandCursor
-              onClicked: if (root.mediaService) root.mediaService.selectPlayer(root.mediaService.playerKey(entry.modelData))
+              onClicked: if (widget.media) widget.media.selectPlayer(widget.media.playerKey(choice.modelData))
             }
           }
         }
@@ -299,17 +294,24 @@ BarWidget {
     }
   }
 
-  // A line of the card, cut short at its width; none while empty.
-  component Detail: Text {
-    width: parent.width
-    visible: text !== ""
+  // A mark in the bar's font.
+  component Glyph: Text {
     textFormat: Text.PlainText
-    elide: Text.ElideRight
-    font.family: root.bar.fontFamily
+    font.family: widget.bar.fontFamily
   }
 
-  component TransportButton: Button {
-    foreground: root.bar.foreground
+  // A line of the card in the bar's foreground, <darker> times darker, cut
+  // short at its width; none while empty.
+  component Detail: Glyph {
+    property real darker: 1
+    width: parent.width
+    visible: text !== ""
+    elide: Text.ElideRight
+    color: darker === 1 ? widget.bar.foreground : Qt.darker(widget.bar.foreground, darker)
+  }
+
+  component Transport: Button {
+    foreground: widget.bar.foreground
     horizontalPadding: Style.spacing.controlPaddingX
     verticalPadding: Style.spacing.controlPaddingY
     opacity: enabled ? 1.0 : 0.4
