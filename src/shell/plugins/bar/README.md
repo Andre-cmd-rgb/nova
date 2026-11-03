@@ -1,39 +1,40 @@
 # Nova bar
 
-This is the Quickshell implementation of the Nova status bar. It is
-shipped as a first-party plugin of [`nova-shell`](../../README.md), the
-long-running shell host. The bar is mounted at startup and lives inside
-the shell for its whole session.
+The bar is a plugin of [`nova-shell`](../../README.md) (`id: nova.bar`, kind
+`bar`), mounted when the shell starts and kept for the whole session, one copy
+on each screen.
 
-- `manifest.json` declares the plugin (`id: nova.bar`, `kind: bar`) and points
-  at `Bar.qml` as the entry point.
-- `Bar.qml` is Nova-owned bar engine code, loaded by the nova-shell host. Users
-  should not edit it directly.
-- `widgets/` holds simple first-party bar widgets with sibling manifests.
-- Feature plugins such as `../panels/audio/`, `../panels/network/` and
-  `../panels/power/` provide richer popup bar plugins.
-- The bar receives its config from the host shell as a `barConfig` property;
-  the host loads it from `~/.config/nova/shell.json` (or
-  `$NOVA_PATH/default/shell.json` when the user has no file).
-- `nova bar position` updates only the user shell.json file.
+- `Bar.qml` builds it from the `bar` part of the shell's config and lays out
+  its widgets; `BarModel.js` holds the layout logic it shares with the tests;
+  `BarIpc.qml` answers the `nova-shell` targets of its widgets
+  (`nova-shell nova.audio toggle`, `nova-shell nova.indicators refresh`).
+- `widgets/` holds the small widgets, each beside its manifest
+  (`Workspaces.qml`, `Workspaces.manifest.json`). The widgets with a panel are
+  plugins of their own, in `../panels/`; the media widget is the media
+  service's (`../services/media/`), and the menu's is the menu's.
+- `indicators/` holds the switches the Indicators widget shows.
 
-## Customizing
+## Where it is set
 
-The bar config lives under the `bar:` key of
-[`~/.config/nova/shell.json`](../../README.md#persisted-state). Out of the box
-the shell uses
-[`$NOVA_PATH/default/shell.json`](../../../../data/defaults/shell.json). Once
-you customize anything via the bar gestures, `nova bar ...`, or by editing
-shell.json directly, your file is the whole config, as the shell's README says.
+The config is the `bar` key of
+[`~/.config/nova/shell.json`](../../README.md#persisted-state). A user with no
+file of their own gets
+[`$NOVA_PATH/default/shell.json`](../../../../data/defaults/shell.json); once
+anything is changed (on the bar, with `nova bar`, in Settings, or by hand), the
+user's file is the whole config, as the shell's README says.
 
-The bar is configured directly on the bar itself: drag empty bar space (or
-click-and-hold) to move the bar to another screen edge, double-left-click empty
-center-bar space to toggle transparency, and drag widgets to reorder them. The
-`nova bar position`, `nova bar transparent`, `nova bar move`, and
-`nova bar set` commands do the same from scripts. Add or take off widgets with
-`nova bar put` and `nova bar remove`, or in Settings.
+Most of it is set on the bar itself:
 
-Example `shell.json` (bar subtree only shown):
+- drag its empty space, or press and hold it, to take the bar to another
+  edge;
+- double click its empty centre for a transparent bar;
+- drag a widget to another place.
+
+`nova bar position`, `nova bar transparent`, `nova bar move` and `nova bar set`
+do the same from a terminal; `nova bar put` and `nova bar remove`, or Settings,
+add and take off widgets. `nova bar position` writes only the user's file.
+
+The `bar` part of a `shell.json`:
 
 ```json
 {
@@ -61,59 +62,56 @@ Example `shell.json` (bar subtree only shown):
 }
 ```
 
-`centerAnchor` pins one center module to the exact horizontal/vertical center
-and flanks others around it. Set to an empty string to disable anchoring (the
-center list is centered as a group).
+`centerAnchor` names the centre widget held at the exact middle of the bar,
+the others of the centre to either side of it. An empty string centres them as
+one group instead.
 
-## Module catalogue
+## The widgets
 
-### First-party interactive widgets
-
-| Name | What it does | Interactions |
+| Widget | Shows | Pointer |
 |---|---|---|
-| `nova.menu` | Nova menu launcher | left = menu · right = terminal |
-| `nova.workspaces` | Hyprland workspace switcher | left = focus workspace |
-| `nova.clock` | Date/time label + popup with a month grid, ISO week numbers, and month stepping | left = popup · right = cycle label format · middle = timezone selector |
-| `nova.media` | MPRIS now-playing — scrolling track + artist, cover-art popup | left = play/pause · middle = next · scroll = prev/next · right = popup |
-| `nova.indicators` | Manual state indicators | left = indicator action |
-| `nova.system-update` | Available update indicator | left = update |
-| `nova.tray` | System tray | hover = reveal drawer · right on chevron = manage |
-| `nova.weather` | Weather icon + popup with forecast | left = popup · right = full notification |
-| `nova.microphone` | Mic icon + scroll volume | left = mute toggle · middle = audio panel · scroll = source volume |
-| `nova.keyboard-layout` | Current keyboard layout | left = next layout |
-| `nova.active-window` | Title of the focused window | — |
-| `nova.spacer` | Configurable blank space | — |
-| `nova.audio` | Volume icon + popup with master slider, output-device picker, per-app mixer | left = popup · right = mute · middle = popup · scroll = volume |
-| `nova.network` | Wi-Fi/Ethernet icon + popup with Wi-Fi scan, signal, connect, DNS provider selection | left = popup |
-| `nova.power` | Battery/AC icon + popup with battery stats, power profiles, and system info | left = popup · right = toggle percentage |
-| `nova.bluetooth` | Bluetooth icon + popup with device list, connect/disconnect, battery | left = popup · right = toggle radio |
-| `nova.monitor` | Brightness and laptop display controls | left = popup |
-| `nova.batterylife` | Battery glyph with measured time left | left = its history, in Settings |
-| `nova.screentime` | Today's screen time (off until you turn it on) | left = the breakdown, in Settings |
-| `nova.mobile-data` | WWAN signal, shown while a modem has a SIM | left = stats panel |
+| `nova.menu` | The Nova menu | click = menu · right = terminal |
+| `nova.workspaces` | Hyprland's workspaces | click = go to it |
+| `nova.clock` | Date and time; a card with the month, ISO weeks, and month steps | click = card · right = next format · middle = time zone |
+| `nova.media` | What plays (MPRIS), its title scrolling; a card with the cover | click = play/pause · middle = next · wheel = previous/next · right = card |
+| `nova.indicators` | Switches: recording, night light, do not disturb, Caffeine | click = switch it |
+| `nova.system-update` | A badge while a Nova or app update waits | click = updates, in Settings |
+| `nova.tray` | The system tray, the unpinned icons in a drawer | pointer on the chevron = drawer · right on the chevron = pin and hide · icon: click = app, middle = its second action, right = its menu |
+| `nova.weather` | Weather; a card with the forecast | click = card · right = full notification |
+| `nova.microphone` | The microphone, lit while recorded | click = mute · middle = audio panel · wheel = its volume |
+| `nova.keyboard-layout` | The keyboard layout, while there are two or more | click = next layout |
+| `nova.active-window` | The focused window's title | click = focus it · middle or right = close it |
+| `nova.spacer` | Empty room, `size` pixels | — |
+| `nova.audio` | Volume; a panel with the volume, the outputs and each app's | click = panel · right = mute · middle = panel · wheel = volume |
+| `nova.network` | Wi-Fi or Ethernet; a panel to scan, connect and pick a DNS provider | click = panel |
+| `nova.power` | Battery or AC; a panel with the battery, power modes and the system | click = panel · right = percentage |
+| `nova.bluetooth` | Bluetooth; a panel with the devices, to connect, and their batteries | click = panel · right = radio on or off |
+| `nova.monitor` | Brightness and the laptop screen | click = panel |
+| `nova.batterylife` | The battery and the time it has left, measured | click = its history, in Settings |
+| `nova.screentime` | Today's screen time (off until turned on) | click = the breakdown, in Settings |
+| `nova.mobile-data` | The mobile signal, while a modem has a SIM | click = its panel |
 
-The `nova.indicators` widget loads individual bar indicators from
-`indicators/`. Omit `items` (or set it to an empty array) to show all
-indicators in the default order, or set `items` to a subset of `Dnd`,
-`NightLight`, `Caffeine` and `ScreenRecording`, such as
-`["Dnd", "NightLight"]`. Set `alwaysShow` to `true` to keep inactive indicators
-visible instead of revealing them only on hover. Multiple `nova.indicators`
-instances are allowed, so different sections can show different subsets.
+`nova.indicators` shows the indicators in `indicators/`: all of them, in their
+order, when its `items` is missing or empty, else those it names, from `Dnd`,
+`NightLight`, `Caffeine` and `ScreenRecording` (`["Dnd", "NightLight"]`). Those
+that are off show only while the pointer is on them, or always with
+`"alwaysShow": true`. It can be on the bar more than once, a different set in
+each place.
 
-## Orientation
+## On a side
 
-All widgets work in `top`, `bottom`, `left`, and `right` positions. Popups
-anchor on the side opposite the bar edge, sliding into the workspace. Vertical
-bars use 28px width; widgets that show text fall back to compact icon-only
-forms (e.g. `media` hides its scrolling label).
+Every widget works on all four edges. Cards and panels open on the screen's
+side of the bar. A side bar is 28 px wide, a top or bottom one 26 px high
+(the theme can change both), and
+the widgets that show text keep to their icon there (the media widget drops
+its title, the active window goes).
 
-## Custom user modules
+## Your own widgets
 
-The schema accepts arbitrary module ids that you provide. Set `type` to
-`command` for shell-driven output or `qml` for a custom QML widget. Both still
-go under `bar.layout.<section>` in `shell.json`.
+Any id the bar does not know is the user's: a command whose output it shows,
+or a QML file. Both go in `bar.layout.<section>` like the others.
 
-Command module:
+A command, run every `interval` seconds (5 when not set):
 
 ```json
 {
@@ -130,13 +128,17 @@ Command module:
 }
 ```
 
-The command may print plain text or Waybar-style JSON, for example:
+It prints plain text, or JSON as Waybar takes it; a `class` of `active` draws
+it in the urgent colour:
 
 ```json
 {"text":"󰌆","tooltip":"Work VPN","class":"active"}
 ```
 
-QML module:
+`onClick`, `onMiddleClick` and `onRightClick` are run on a click. With no
+`type`, an entry with `exec` is a command and one with `source` a QML file.
+
+A QML file:
 
 ```json
 {
@@ -152,12 +154,10 @@ QML module:
 }
 ```
 
-Then create `~/.config/nova/bar/modules/gpu.qml`. If you want to store it
-elsewhere, add a `source` path.
-
-Custom QML modules should be an `Item` with `implicitWidth` and
-`implicitHeight`. They may optionally define these properties, which the bar
-fills after loading:
+The bar loads `~/.config/nova/bar/modules/gpu.qml`, or the file a `source`
+names (`~/` and `$HOME/` are the home folder). It is an `Item` with an
+`implicitWidth` and an `implicitHeight`; the bar sets its `bar`, `moduleName`
+and `settings` when it has them:
 
 ```qml
 import QtQuick
@@ -185,28 +185,26 @@ Item {
 }
 ```
 
-## Bar properties available to widgets
+## What a widget gets
 
-Widgets receive `bar` (the shell root), `moduleName` (string), and `settings`
-(object) injected at load time. The bar exposes:
+The bar sets each widget's `bar`, `moduleName` (its id) and `settings` (its
+entry in the layout). On `bar`:
 
-- `bar.foreground`, `bar.background`, `bar.urgent` — theme colors
-  (live-updated)
-- `bar.fontFamily` — current monospace family
-- `bar.position` — `"top" | "bottom" | "left" | "right"`
-- `bar.vertical` — boolean shortcut
-- `bar.barSize` — 26 horizontal / 28 vertical
-- `bar.run(command)` — fire-and-forget bash exec
-- `bar.shellQuote(value)` — safe shell-quote a string
-- `bar.showTooltip(target, text)` / `bar.hideTooltip(target)` — shared tooltip
-  popup
-- `bar.requestPopout(owner)` / `bar.releasePopout(owner)` — one-popup-at-a-time
-  coordinator
+- `foreground`, `background`, `urgent`: the theme's colours, kept current;
+  `barForeground`, the text colour on the bar as it is drawn, which follows
+  the wallpaper while the bar is transparent;
+- `fontFamily`: the monospace font;
+- `position` (`"top"`, `"bottom"`, `"left"` or `"right"`) and `vertical`;
+- `barSize`: 26, or 28 on a side;
+- `run(command)`: runs a command with bash and does not wait for it (quote
+  what goes into it with `Util.shellQuote` from `qs.Commons`);
+- `showTooltip(target, text)` and `hideTooltip(target)`: the bar's one
+  tooltip;
+- `requestPopout(owner)` and `releasePopout(owner)`: one card open at a time.
 
-Every bar widget is a plugin with a manifest. Simple widgets carry sibling
-manifests such as `widgets/Workspaces.manifest.json`; richer popup plugins live
-in feature directories such as `../panels/audio/` and `../panels/network/`; and
-feature plugins such as `nova.menu` and `nova.media` declare their bar-widget
-entry points in their own `manifest.json`. Layout ids are namespaced:
-`nova.audio`, `nova.network`, `nova.clock`. Put, move and remove widgets with
-`nova bar` (`nova bar put nova.weather --after nova.clock`).
+Every widget is a plugin with a manifest: the small ones beside their QML in
+`widgets/`, those with a panel in `../panels/`, and plugins that have a widget
+among other things, such as `nova.menu` and `nova.media`, in their own
+`manifest.json`. Ids carry the `nova.` prefix (`nova.audio`, `nova.clock`).
+`nova bar` puts, moves and takes them off
+(`nova bar put nova.weather --after nova.clock`).
