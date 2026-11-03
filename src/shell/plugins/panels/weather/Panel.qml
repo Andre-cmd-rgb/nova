@@ -554,10 +554,23 @@ Ui.Panel {
                   radius: Math.min(4, Style.cornerRadius)
                   color: !root.saving && clearMouse.containsMouse ? Style.hoverFillFor(root.bar.foreground, Commons.Color.accent) : "transparent"
 
+                  // Two glyphs, so that the ✕ stands upright: the spinner is
+                  // stopped wherever its turn is when the place is set.
                   Text {
                     anchors.centerIn: parent
+                    visible: !root.saving
                     textFormat: Text.PlainText
-                    text: root.saving ? "󰦖" : "✕"
+                    text: "✕"
+                    color: Qt.darker(root.bar.foreground, 1.4)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Text {
+                    anchors.centerIn: parent
+                    visible: root.saving
+                    textFormat: Text.PlainText
+                    text: "󰦖"
                     color: Qt.darker(root.bar.foreground, 1.4)
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.bodySmall
