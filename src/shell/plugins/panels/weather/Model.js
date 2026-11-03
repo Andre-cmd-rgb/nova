@@ -1,7 +1,7 @@
 .pragma library
-// The weather panel's rules, kept apart from its window and its fetches: the
-// place nova-weather-location keeps, what the two weather services answer,
-// the units, and the glyphs.
+// The weather's rules, kept apart from its fetches (Forecast.qml) and its
+// panel (Panel.qml): the place nova-weather-location keeps, what the two
+// weather services answer, the units, and the glyphs.
 //
 // wttr.in finds the place from this computer's address when none is set,
 // and gives the weather now and the days ahead. Open-Meteo answers sooner,
@@ -36,6 +36,13 @@ function readPlace(text) {
   } catch (unreadable) {
     return none
   }
+}
+
+// nova-weather-location's arguments to keep a place: its name and
+// coordinates, its name alone without them, and no name clears it.
+function keepArguments(name, latitude, longitude) {
+  if (!name) return ["--clear"]
+  return latitude !== null && longitude !== null ? ["--set", name, latitude + "," + longitude] : ["--set", name]
 }
 
 function hasCoordinates(place) {
@@ -112,11 +119,31 @@ function chosenPlace(text, choices, index) {
 
 // ------------------------------------------------------------- the requests
 
+// How often both services are asked, in minutes: the setting's, at least
+// one, and 15 for none.
+function refreshMinutes(setting) {
+  return Math.max(1, parseInt(setting, 10) || 15)
+}
+
+// An answer as JSON; undefined for one that is not, as a fetch failed or
+// stopped partway gives.
+function parsed(text) {
+  try {
+    return JSON.parse(String(text || "").trim())
+  } catch (unreadable) {
+    return undefined
+  }
+}
+
+var TOWN_URL = "https://wttr.in/?format=%l"
+
 function wttrUrl(query) {
   return "https://wttr.in/" + query + "?format=j1"
 }
 
+// "" for no point, which asks nothing.
 function meteoUrl(point) {
+  if (!point) return ""
   return "https://api.open-meteo.com/v1/forecast"
     + "?latitude=" + encodeURIComponent(String(point.latitude))
     + "&longitude=" + encodeURIComponent(String(point.longitude))
@@ -131,6 +158,17 @@ function searchUrl(query) {
 }
 
 // ------------------------------------------------------------- the weather
+
+// The area wttr.in placed its answer in, with its name, country and
+// coordinates; null for none.
+function areaOf(report) {
+  return report && report.nearest_area && report.nearest_area[0] ? report.nearest_area[0] : null
+}
+
+// wttr.in gives a name as a list of { value }: the first, or "".
+function named(list) {
+  return list && list[0] ? list[0].value : ""
+}
 
 // A reading as a whole number, as text; "" for none.
 function rounded(value) {

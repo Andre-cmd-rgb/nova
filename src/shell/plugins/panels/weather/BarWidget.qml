@@ -1,88 +1,101 @@
 import QtQuick
 import qs.Commons
 import qs.Ui
+import qs.Ui as Ui
+import "Model.js" as Model
 
-// The weather's bar widget: the glyph of the weather now, hidden until the
-// first answer, and its panel (Panel.qml). A click opens the panel, a middle
-// click asks for the weather again, and a right click sends it as a
-// notification.
-BarWidget {
-  id: root
+// The weather in the bar: the glyph of the weather now, hidden until the
+// first answer, and under it a panel with the rest (Panel.qml). A click
+// opens the panel, a middle click asks for the weather again, and a right
+// click sends it as a notification. The asking is the forecast's
+// (Forecast.qml), every refreshMinutes, 15 by default.
+//
+// Ui.Panel by its module: qmllint cannot see qs.Ui, and would take a bare
+// Panel for the Panel.qml beside this file.
+Ui.Panel {
+  id: weather
   moduleName: "nova.weather"
 
-  readonly property var panel: panelLoader.item
+  readonly property Forecast forecast: Forecast {
+    minutes: Model.refreshMinutes(weather.setting("refreshMinutes", 15))
+  }
 
-  visible: panel && panel.glyph !== ""
+  visible: forecast.glyph !== ""
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  // What the bar calls, through IPC and its popout switching, on the widget
-  // in its slot. Opening takes the panel's summon, so that the bar's centre
-  // keeps its peek shut, as it does for a click.
-  readonly property bool opened: panel ? panel.opened === true : false
-  readonly property bool popoutSwitchClosing: panel ? panel.popoutSwitchClosing === true : false
+  // ---- what the bar's IPC asks, beside open, close and the toggle
 
-  function open() {
-    if (panel) panel.summon()
-  }
-
-  function close() {
-    if (panel) panel.close()
-  }
-
+  // The toggle by its IPC name, which the clock's shares.
   function togglePanel() {
-    if (panel) panel.toggle()
+    toggle()
   }
 
-  function closeForPopoutSwitch() {
-    if (panel) panel.closeForPopoutSwitch()
-  }
-
-  function refresh() {
-    if (panel) panel.refresh()
-  }
-
-  // The IPC's edit: the panel, with the field for the place open.
+  // The panel, with the field for another place open.
   function edit() {
-    if (!panel) return
-    panel.summon()
-    panel.startEditing()
+    open()
+    view.item?.edit()
   }
 
-  // The panel takes the bar, its settings and its place from this widget.
-  function lend() {
-    if (!panel) return
-    panel.bar = bar
-    panel.settings = settings
-    panel.anchorItem = button
-    panel.hostWidget = root
+  // ---- the panel
+
+  // It opens on the place read again and the weather asked for again. The
+  // bar's centre, which the panel covers, keeps its peek shut while it is
+  // open; the hold is taken once the panel shows, as showing it closes the
+  // one open before, which lets go of the hold as it closes.
+  function open() {
+    controller.show()
+    forecast.reread()
+    forecast.refresh()
+    Qt.callLater(() => {
+      if (weather.opened) weather.holdPeek(true)
+    })
   }
 
-  onBarChanged: lend()
-  onSettingsChanged: lend()
+  // A field left open goes, and the place being set with it stops waiting.
+  function close() {
+    holdPeek(false)
+    if (view.item?.editing) view.item.leave()
+    controller.hide()
+  }
 
-  // Loaded by its file's address: by name, Panel would be qs.Ui's.
-  Loader {
-    id: panelLoader
-    source: Qt.resolvedUrl("Panel.qml")
-    visible: false
-    onLoaded: root.lend()
+  function holdPeek(held) {
+    bar?.setCenterHoverRevealSuppressed(held)
   }
 
   BarIconButton {
     id: button
     anchors.fill: parent
-    bar: root.bar
-    text: root.panel ? root.panel.glyph : ""
+    bar: weather.bar
+    text: weather.forecast.glyph
     slotSize: Style.bar.statusSlot
-    // The panel is the detail; a tooltip would only repeat the glyph.
-    tooltipText: ""
 
-    onPressed: function(which) {
-      if (!root.bar) return
-      if (which === Qt.RightButton) root.bar.run("nova-notification-send \"$(nova-weather-status)\"")
-      else if (which === Qt.MiddleButton) root.refresh()
-      else root.togglePanel()
+    onPressed: function (which) {
+      if (!weather.bar) return
+      if (which === Qt.RightButton) weather.bar.run("nova-notification-send \"$(nova-weather-status)\"")
+      else if (which === Qt.MiddleButton) weather.forecast.refresh()
+      else weather.toggle()
+    }
+  }
+
+  // Over the bar's centre, whichever widget it opens from.
+  KeyboardPanel {
+    id: popup
+    anchorItem: button
+    owner: weather
+    bar: weather.bar
+    open: weather.opened
+    centerOnBar: true
+    focusTarget: view.item
+    contentWidth: popup.fittedContentWidth(Style.space(480))
+    contentHeight: popup.fittedContentHeight(view.item ? view.item.implicitHeight : 0)
+
+    // What it shows, and its keys. Loaded by the file's address: by name,
+    // Panel would be qs.Ui's.
+    Loader {
+      id: view
+      anchors.fill: parent
+      Component.onCompleted: setSource(Qt.resolvedUrl("Panel.qml"), { weather: weather })
     }
   }
 }
