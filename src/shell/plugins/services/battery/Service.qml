@@ -4,67 +4,52 @@ import Quickshell.Io
 import Quickshell.Services.UPower
 import "BatteryModel.js" as BatteryModel
 
+// The battery's two jobs in the shell: a warning when it runs low, and the
+// power mode that follows the power source.
 Item {
   id: root
 
-  property var shell: null
-  property string novaPath: Quickshell.env("NOVA_PATH")
+  // Discharging at or under this percentage, the battery is low.
+  readonly property int lowLevel: 10
+  property bool restorePending: false
 
-  readonly property int batteryThreshold: 10
-
+  // Kept across a reload of the shell, which then does not warn again about
+  // the same low battery.
   PersistentProperties {
     id: persisted
     reloadableId: "nova-battery"
     property bool notifiedLowBattery: false
   }
 
-  function batteryPercentage() {
-    return BatteryModel.batteryPercentage(UPower.displayDevice)
-  }
-
-  function isDischarging() {
-    return BatteryModel.isDischarging(UPower.displayDevice, UPower.onBattery, UPowerDeviceState.Discharging)
-  }
-
+  // Looked at every 30 s and whenever the power source changes.
   function checkBattery() {
-    var state = BatteryModel.shouldWarnLowBattery(UPower.displayDevice, UPower.onBattery, UPowerDeviceState.Discharging, batteryThreshold, persisted.notifiedLowBattery)
-    persisted.notifiedLowBattery = state.notifiedLowBattery
-    if (state.notify) sendLowBatteryWarning(state.level)
+    var check = BatteryModel.shouldWarnLowBattery(UPower.displayDevice, UPower.onBattery, UPowerDeviceState.Discharging, lowLevel, persisted.notifiedLowBattery)
+    persisted.notifiedLowBattery = check.notifiedLowBattery
+    if (!check.notify || warning.running) return
+    warning.command = ["nova-battery-low", String(check.level)]
+    warning.running = true
   }
 
-  function sendLowBatteryWarning(level) {
-    if (warningProcess.running) return
-    warningProcess.command = [
-      "nova-battery-low",
-      String(level)
-    ]
-    warningProcess.running = true
-  }
-
-  Process { id: warningProcess }
-
-  // The power mode follows the power source: at login and on every plug and
-  // unplug, put back the one last chosen for it (nova-power-profile restore).
-  // A change that lands while a restore is still running gets one more run, so
-  // a quick unplug-replug ends on the right side.
-  property bool restorePending: false
-
+  // The power mode last chosen for the power source now in use, put back at
+  // login and at every plug and unplug (nova-power-profile restore). A change
+  // during a restore gets one more run after it, so a quick unplug and plug
+  // ends on the right side.
   function restoreProfile() {
-    if (profileProcess.running) restorePending = true
-    else profileProcess.running = true
+    if (profile.running) restorePending = true
+    else profile.running = true
   }
+
+  Process { id: warning }
 
   Process {
-    id: profileProcess
+    id: profile
     command: ["nova-power-profile", "restore"]
     onExited: {
       if (!root.restorePending) return
       root.restorePending = false
-      Qt.callLater(function() { profileProcess.running = true })
+      Qt.callLater(function() { profile.running = true })
     }
   }
-
-  Component.onCompleted: restoreProfile()
 
   Timer {
     interval: 30000
@@ -81,4 +66,6 @@ Item {
       root.restoreProfile()
     }
   }
+
+  Component.onCompleted: restoreProfile()
 }
