@@ -8,164 +8,181 @@ import qs.Commons as Commons
 import qs.Ui
 import "PolkitModel.js" as PolkitModel
 
-// The polkit agent: asks for the password, or the finger, when an app needs
-// root. One way at a time: the fingerprint while PAM waits on the reader,
-// which it does when /etc/pam.d/polkit-1 has it and the lid is open; the
-// password field as soon as PAM asks for a password, at once when the lid
-// is shut and Nova's lid check skips the reader.
+// Nova's polkit agent: when an app needs root, a card over the dimmed
+// screen asks for the password, or the finger. One at a time: the finger
+// while PAM waits on the reader, which it does when /etc/pam.d/polkit-1 has
+// it and the lid is open; the password field as soon as PAM asks for a
+// password, at once when the lid is shut and Nova's lid check skips the
+// reader.
+//
+// The password is only ever the field's text. It goes to PAM on Return and
+// is cleared then, and on Escape, on a wrong answer, when a request starts
+// and when one ends.
 Item {
-  id: root
+  id: agent
 
-  // The [polkit] colours of the theme's shell.toml.
-  property color accent: Commons.Color.polkit.accent
-  property color background: Commons.Color.polkit.background
-  property color foreground: Commons.Color.polkit.text
-  property color errorColor: Commons.Color.polkit.textError
-  property string fontFamily: Style.font.menuFamily
-  readonly property int fieldHeight: Math.max(Style.space(42), Style.spacing.controlHeight)
-  readonly property int contentMargin: Style.spacing.panelPadding
+  // The [polkit] section of the theme's shell.toml.
+  readonly property QtObject colors: Commons.Color.polkit
+  readonly property string family: Style.font.menuFamily
+  readonly property int lineHeight: Math.max(Style.space(42), Style.spacing.controlHeight)
+  readonly property int padding: Style.spacing.panelPadding
 
-  // The request's message, as polkit worded it.
-  property string message: ""
-  property bool responseRequired: false
-  property bool responseVisible: false
-  // A response went to PAM and has no answer yet.
-  property bool submitted: false
-  // A wrong password, shown in the error colours for a moment.
-  property bool errorFlash: false
-  // Answered or cancelled, and fading out: the dialog stays a moment.
-  property bool closing: false
-  property bool fingerprintConfigured: false
-  // Looked at for each request: with the lid shut the reader is out of reach.
-  property bool laptopClosed: false
-  property int shakeOffset: 0
+  // ---------------------------------------------------------------- state
 
-  readonly property bool dialogVisible: polkitAgent.isActive || closing
-  readonly property bool fingerprintMode: fingerprintConfigured && !laptopClosed && dialogVisible
-    && !responseRequired && !submitted && !errorFlash
-  readonly property int cardHeight: panel.height > 0
-    ? Math.min(fieldHeight + contentMargin * 2, panel.height - Style.gapsOut * 2)
-    : fieldHeight + contentMargin * 2
-  // A field for the password; a square round the sensor for the finger.
-  readonly property int cardWidth: fingerprintMode
+  // The request, copied from the flow, so that the card still reads the
+  // same while it lingers after the flow is gone.
+  property string requestMessage: ""
+  property bool awaitingAnswer: false
+  property bool echo: false
+  // A password went to PAM, and PAM has not answered yet.
+  property bool checking: false
+  // PAM said no: the card shows it in the error colours for a moment.
+  property bool wrong: false
+  // Answered or cancelled: the card stays up a moment longer.
+  property bool leaving: false
+  property bool readerInPam: false
+  // Asked again at each request: with the lid shut, the reader is out of
+  // reach.
+  property bool lidShut: false
+  property int shake: 0
+
+  readonly property bool shown: polkit.isActive || leaving
+  readonly property bool byFinger: readerInPam && !lidShut && shown && !awaitingAnswer && !checking && !wrong
+  readonly property color tint: wrong ? colors.textError : colors.accent
+  readonly property color ink: wrong ? colors.textError : colors.text
+
+  // The finger's card is a square round the sensor; the password's is
+  // wide enough for a field.
+  readonly property int cardHeight: surface.height > 0
+    ? Math.min(lineHeight + padding * 2, surface.height - Style.gapsOut * 2)
+    : lineHeight + padding * 2
+  readonly property int cardWidth: byFinger
     ? cardHeight
-    : Math.min(Style.space(312), Math.max(Style.space(260), panel.width - Style.gapsOut * 2))
+    : Math.min(Style.space(312), Math.max(Style.space(260), surface.width - Style.gapsOut * 2))
 
-  // The flow's state, copied: the dialog draws from these. A new question
-  // from PAM takes the "Checking..." off.
-  function sync() {
-    var flow = polkitAgent.flow
+  // ---------------------------------------------------------------- the request
+
+  // What the flow says now. A new question from PAM ends "Checking...".
+  function follow() {
+    var flow = polkit.flow
     if (!flow) return
-    message = String(flow.message || "Authentication is needed...")
-    responseRequired = !!flow.isResponseRequired
-    responseVisible = !!flow.responseVisible
-    if (responseRequired) submitted = false
+    requestMessage = String(flow.message || "Authentication is needed...")
+    awaitingAnswer = !!flow.isResponseRequired
+    echo = !!flow.responseVisible
+    if (awaitingAnswer) checking = false
   }
 
-  function begin() {
-    closeTimer.stop()
-    closing = false
-    submitted = false
-    passwordInput.text = ""
+  function start() {
+    lingering.stop()
+    leaving = false
+    checking = false
+    field.text = ""
     if (!lidCheck.running) lidCheck.running = true
-    sync()
-    Qt.callLater(refocus)
+    follow()
+    Qt.callLater(takeKeys)
   }
 
-  function clear() {
-    message = ""
-    responseRequired = false
-    responseVisible = false
-    submitted = false
-    errorFlash = false
-    passwordInput.text = ""
+  function forget() {
+    requestMessage = ""
+    awaitingAnswer = false
+    echo = false
+    checking = false
+    wrong = false
+    field.text = ""
   }
 
-  // The keys go to the field, or, with no field, to the card, for Escape.
-  function refocus() {
-    if (!dialogVisible) return
-    if (fingerprintMode) keyCatcher.forceActiveFocus()
-    else passwordInput.forceActiveFocus()
+  // The keys go to the field; with none, to the card, for Escape.
+  function takeKeys() {
+    if (!shown) return
+    if (byFinger) keyCatcher.forceActiveFocus()
+    else field.forceActiveFocus()
   }
 
-  function submit() {
-    var flow = polkitAgent.flow
+  // ---------------------------------------------------------------- the answer
+
+  function answer() {
+    var flow = polkit.flow
     if (!flow || !flow.isResponseRequired) return
-    submitted = true
-    errorFlash = false
-    flow.submit(passwordInput.text)
-    passwordInput.text = ""
+    checking = true
+    wrong = false
+    flow.submit(field.text)
+    field.text = ""
     keyCatcher.forceActiveFocus()
   }
 
   function cancel() {
-    var flow = polkitAgent.flow
-    passwordInput.text = ""
-    submitted = false
-    fadeOut()
+    var flow = polkit.flow
+    field.text = ""
+    checking = false
+    leave()
     if (flow) flow.cancelAuthenticationRequest()
   }
 
-  function fadeOut() {
-    closing = true
-    closeTimer.restart()
+  function leave() {
+    leaving = true
+    lingering.restart()
   }
 
-  function failed() {
-    submitted = false
-    errorFlash = true
-    passwordInput.text = ""
-    errorTimer.restart()
-    shake.restart()
-    Qt.callLater(refocus)
+  function refused() {
+    checking = false
+    wrong = true
+    field.text = ""
+    wrongFor.restart()
+    shaking.restart()
+    Qt.callLater(takeKeys)
   }
 
   Timer {
-    id: closeTimer
+    id: lingering
     interval: 300
     onTriggered: {
-      root.closing = false
-      root.clear()
+      agent.leaving = false
+      agent.forget()
     }
   }
 
   Timer {
-    id: errorTimer
+    id: wrongFor
     interval: 1200
-    onTriggered: root.errorFlash = false
+    onTriggered: agent.wrong = false
   }
 
+  // A shake of the head: left, right, and back.
   SequentialAnimation {
-    id: shake
-    NumberAnimation { target: root; property: "shakeOffset"; to: -8; duration: 35; easing.type: Easing.OutQuad }
-    NumberAnimation { target: root; property: "shakeOffset"; to: 8; duration: 50; easing.type: Easing.InOutQuad }
-    NumberAnimation { target: root; property: "shakeOffset"; to: 0; duration: 55; easing.type: Easing.OutQuad }
+    id: shaking
+    NumberAnimation { target: agent; property: "shake"; to: -8; duration: 35; easing.type: Easing.OutQuad }
+    NumberAnimation { target: agent; property: "shake"; to: 8; duration: 50; easing.type: Easing.InOutQuad }
+    NumberAnimation { target: agent; property: "shake"; to: 0; duration: 55; easing.type: Easing.OutQuad }
   }
+
+  // ---------------------------------------------------------------- the reader
 
   FileView {
     path: "/etc/pam.d/polkit-1"
     watchChanges: true
     printErrors: false
-    onLoaded: root.fingerprintConfigured = PolkitModel.fingerprintInPam(text())
-    onLoadFailed: root.fingerprintConfigured = false
+    onLoaded: agent.readerInPam = PolkitModel.fingerprintInPam(text())
+    onLoadFailed: agent.readerInPam = false
     onFileChanged: reload()
   }
 
   Process {
     id: lidCheck
     command: ["bash", "-c", "nova-hw-laptop-closed && echo closed || echo open"]
-    stdout: StdioCollector { id: lidState; waitForEnd: true }
-    onExited: root.laptopClosed = lidState.text.trim() === "closed"
+    stdout: StdioCollector { id: lidAnswer; waitForEnd: true }
+    onExited: agent.lidShut = lidAnswer.text.trim() === "closed"
   }
 
+  // ---------------------------------------------------------------- polkit
+
   PolkitAgent {
-    id: polkitAgent
+    id: polkit
     path: "/org/nova/PolkitAgent"
 
-    onAuthenticationRequestStarted: root.begin()
+    onAuthenticationRequestStarted: agent.start()
     onIsActiveChanged: {
-      if (isActive) root.sync()
-      else if (!root.closing) root.clear()
+      if (isActive) agent.follow()
+      else if (!agent.leaving) agent.forget()
     }
     onIsRegisteredChanged: {
       if (isRegistered) console.log("nova polkit agent registered")
@@ -174,28 +191,30 @@ Item {
   }
 
   Connections {
-    target: polkitAgent.flow
+    target: polkit.flow
 
     function onIsResponseRequiredChanged() {
-      root.sync()
-      if (!polkitAgent.flow || !polkitAgent.flow.isResponseRequired) passwordInput.text = ""
-      Qt.callLater(root.refocus)
+      agent.follow()
+      if (!polkit.flow || !polkit.flow.isResponseRequired) field.text = ""
+      Qt.callLater(agent.takeKeys)
     }
-    function onInputPromptChanged() { root.sync() }
-    function onResponseVisibleChanged() { root.sync() }
-    function onSupplementaryMessageChanged() { root.sync() }
-    function onFailedChanged() { root.sync() }
+    function onInputPromptChanged() { agent.follow() }
+    function onResponseVisibleChanged() { agent.follow() }
+    function onSupplementaryMessageChanged() { agent.follow() }
+    function onFailedChanged() { agent.follow() }
     function onAuthenticationFailed() {
-      root.sync()
-      root.failed()
+      agent.follow()
+      agent.refused()
     }
-    function onAuthenticationSucceeded() { root.fadeOut() }
-    function onAuthenticationRequestCancelled() { root.fadeOut() }
+    function onAuthenticationSucceeded() { agent.leave() }
+    function onAuthenticationRequestCancelled() { agent.leave() }
   }
 
+  // ---------------------------------------------------------------- the card
+
   PanelWindow {
-    id: panel
-    visible: root.dialogVisible
+    id: surface
+    visible: agent.shown
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "nova-polkit"
@@ -205,33 +224,35 @@ Item {
 
     Rectangle {
       anchors.fill: parent
-      color: Commons.Color.polkit.scrim
+      color: agent.colors.scrim
     }
 
-    // A click anywhere gives the keys back to the dialog; it does not cancel.
+    // A click anywhere gives the keys back to the card; it cancels nothing.
     MouseArea {
       anchors.fill: parent
-      onClicked: root.refocus()
+      onClicked: agent.takeKeys()
     }
 
     BorderSurface {
       id: card
       anchors.centerIn: parent
-      anchors.horizontalCenterOffset: root.shakeOffset
-      width: root.cardWidth
-      height: root.cardHeight
+      anchors.horizontalCenterOffset: agent.shake
+      width: agent.cardWidth
+      height: agent.cardHeight
       radius: Style.cornerRadius
-      color: root.background
-      borderSpec: Border.surfaceSpec("polkit", root.errorFlash ? "border-error" : "border",
-        root.errorFlash ? Commons.Color.polkit.borderError : Commons.Color.polkit.border,
-        Math.max(1, Style.space(2)), "border-alpha")
-      padding: root.contentMargin
+      color: agent.colors.background
+      borderSpec: agent.wrong
+        ? Border.surfaceSpec("polkit", "border-error", agent.colors.borderError, Math.max(1, Style.space(2)), "border-alpha")
+        : Border.surfaceSpec("polkit", "border", agent.colors.border, Math.max(1, Style.space(2)), "border-alpha")
+      padding: agent.padding
 
       MouseArea {
         anchors.fill: parent
-        onClicked: root.refocus()
+        onClicked: agent.takeKeys()
       }
 
+      // The card's own keys, when the field does not have them: Escape
+      // cancels, Return answers if PAM is asking.
       Item {
         id: keyCatcher
         anchors.fill: parent
@@ -239,136 +260,136 @@ Item {
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function (event) {
           if (event.key === Qt.Key_Escape) {
-            root.cancel()
-            event.accepted = true
+            agent.cancel()
           } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            if (root.responseRequired) root.submit()
-            event.accepted = true
+            if (agent.awaitingAnswer) agent.answer()
+          } else {
+            return
           }
+          event.accepted = true
         }
       }
 
-      // The finger: the sensor's glyph, alone in the square.
+      // The sensor's glyph, alone in its square.
       OpticalGlyph {
         anchors.centerIn: parent
-        width: Math.round(root.fieldHeight * 0.7)
+        width: Math.round(agent.lineHeight * 0.7)
         height: width
-        visible: root.fingerprintMode
+        visible: agent.byFinger
         text: "\u{F0237}"
-        fontFamily: root.fontFamily
-        fontSize: Math.round(root.fieldHeight * 0.7)
-        color: root.accent
+        fontFamily: agent.family
+        fontSize: Math.round(agent.lineHeight * 0.7)
+        color: agent.colors.accent
       }
 
-      // The password: a padlock, and the field.
+      // A padlock, and the password field.
       Row {
-        visible: !root.fingerprintMode
+        visible: !agent.byFinger
         anchors.fill: parent
+        anchors.leftMargin: card.contentLeftInset
         anchors.topMargin: card.contentTopInset
         anchors.rightMargin: card.contentRightInset
         anchors.bottomMargin: card.contentBottomInset
-        anchors.leftMargin: card.contentLeftInset
         spacing: Style.space(14)
 
         Text {
           width: Style.space(26)
-          height: root.fieldHeight
+          height: agent.lineHeight
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
           textFormat: Text.PlainText
-          text: ""
-          color: root.errorFlash ? root.errorColor : root.accent
-          font.family: root.fontFamily
+          text: "\u{F023}"
+          color: agent.tint
+          font.family: agent.family
           font.pixelSize: Style.font.iconLarge
         }
 
         Item {
           width: parent.width - Style.space(40)
-          height: root.fieldHeight
+          height: agent.lineHeight
 
+          // Dots, unless PAM asks for what is typed to show. Nothing can be
+          // typed while PAM checks, or while the card says it was wrong.
           TextInput {
-            id: passwordInput
+            id: field
             anchors.fill: parent
             verticalAlignment: TextInput.AlignVCenter
             activeFocusOnPress: true
             clip: true
-            enabled: root.dialogVisible
-            readOnly: root.submitted || root.errorFlash
-            echoMode: root.responseVisible ? TextInput.Normal : TextInput.Password
+            enabled: agent.shown
+            readOnly: agent.checking || agent.wrong
+            echoMode: agent.echo ? TextInput.Normal : TextInput.Password
             passwordCharacter: "•"
-            cursorVisible: activeFocus && !root.submitted && !root.errorFlash
-            color: root.errorFlash ? root.errorColor : root.foreground
-            selectionColor: Util.alpha(root.accent, 0.45)
-            selectedTextColor: root.foreground
-            font.family: root.fontFamily
+            cursorVisible: activeFocus && !agent.checking && !agent.wrong
+            color: agent.ink
+            selectionColor: Util.alpha(agent.colors.accent, 0.45)
+            selectedTextColor: agent.colors.text
+            font.family: agent.family
             font.pixelSize: Style.font.iconLarge
-            onAccepted: root.submit()
+            onAccepted: agent.answer()
             Keys.onPressed: function (event) {
-              if (event.key === Qt.Key_Escape) {
-                root.cancel()
-                event.accepted = true
-              }
+              if (event.key !== Qt.Key_Escape) return
+              agent.cancel()
+              event.accepted = true
             }
           }
 
-          // Where the field is at, while it is empty.
+          // The empty field says what it is for, or how the answer went.
           Text {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            visible: passwordInput.text.length === 0
+            visible: field.text.length === 0
             textFormat: Text.PlainText
-            text: root.errorFlash ? "Wrong" : root.submitted ? "Checking..." : "Enter password"
-            color: root.errorFlash ? root.errorColor : root.foreground
-            opacity: root.errorFlash ? 1 : 0.36
-            font.family: root.fontFamily
+            text: agent.wrong ? "Wrong" : agent.checking ? "Checking..." : "Enter password"
+            color: agent.ink
+            opacity: agent.wrong ? 1 : 0.36
+            font.family: agent.family
             font.pixelSize: Style.font.iconLarge
             elide: Text.ElideRight
           }
 
-          // A cursor of its own in the empty field, where the placeholder
-          // would hide TextInput's.
+          // The empty field's cursor, which the words above would cover.
           Rectangle {
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
             width: Math.max(1, Style.space(2))
             height: Style.space(24)
-            visible: passwordInput.visible && passwordInput.activeFocus && passwordInput.text.length === 0
-              && !root.submitted && !root.errorFlash
-            color: root.errorFlash ? root.errorColor : root.foreground
+            visible: field.visible && field.activeFocus && field.text.length === 0 && !agent.checking && !agent.wrong
+            color: agent.ink
           }
 
           MouseArea {
             anchors.fill: parent
             acceptedButtons: Qt.LeftButton
-            enabled: passwordInput.visible
-            onClicked: passwordInput.forceActiveFocus()
+            enabled: field.visible
+            onClicked: field.forceActiveFocus()
           }
         }
       }
     }
 
-    // What the request is for, above the card.
+    // What the request is for, on a tab above the card.
     Rectangle {
       anchors.horizontalCenter: card.horizontalCenter
       anchors.bottom: card.top
       anchors.bottomMargin: Style.space(10)
-      width: Math.min(requestText.implicitWidth + Style.space(24), panel.width - Style.gapsOut * 2)
+      width: Math.min(label.implicitWidth + Style.space(24), surface.width - Style.gapsOut * 2)
       height: Style.space(28)
       radius: Style.cornerRadius
-      color: root.background
+      color: agent.colors.background
 
       Text {
-        id: requestText
+        id: label
         anchors.fill: parent
         anchors.leftMargin: Style.space(12)
         anchors.rightMargin: Style.space(12)
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         textFormat: Text.PlainText
-        text: PolkitModel.requestLabel(root.message)
-        color: root.foreground
-        font.family: root.fontFamily
+        text: PolkitModel.requestLabel(agent.requestMessage)
+        color: agent.colors.text
+        font.family: agent.family
         font.pixelSize: Style.font.bodySmall
         elide: Text.ElideMiddle
       }
