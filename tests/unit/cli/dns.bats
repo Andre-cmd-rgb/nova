@@ -88,7 +88,7 @@ STUB
   chmod +x "$SCRATCH/bin/nmcli"
   export PATH="$SCRATCH/bin:$PATH"
   split_dns_servers '192.0.2.1,2001:db8::1'
-  set_connection_dns "$ipv4_dns" "$ipv6_dns"
+  profiles yes "$ipv4_dns" "$ipv6_dns"
   [ "$(wc -l <"$SCRATCH/nmcli-log")" -eq 2 ]
   [[ $(cat "$SCRATCH/nmcli-log") == *'ipv4.dns 192.0.2.1 ipv6.ignore-auto-dns yes ipv6.dns 2001:db8::1'* ]]
   [[ $(cat "$SCRATCH/nmcli-log") != *vpn-id* ]]
