@@ -1,17 +1,15 @@
 # Nova shell
 
-`nova-shell` is a single long-running [Quickshell](https://quickshell.org/)
-instance that hosts the Nova desktop. Hyprland's autostart launches one per
-session through `nova-launch-shell`; everything else (the bar, lock screen,
-notifications, panels, overlays) runs **inside** it as a plugin.
+The Nova desktop is one [Quickshell](https://quickshell.org/) process, the
+shell, which runs for the whole session: Hyprland starts it at login through
+`nova-launch-shell`. The bar, the lock screen, the notifications, the panels
+and the overlays are all plugins **inside** it. So:
 
-Hosting everything inside one shell means:
+- a service shared by plugins runs once, in one process;
+- opening a panel is an IPC call to a shell that is up already, with
+  nothing to start.
 
-- shared services live once, not once per process
-- summoning a panel is an IPC call into a process that is already running,
-  not a fresh `quickshell -p ...` cold start
-
-The runtime layout:
+What is installed under `$NOVA_PATH/shell`:
 
 ```
 shell/
@@ -69,32 +67,35 @@ used twice fails the build. The shell reads that one file at startup.
 | `menu`       | a summoned menu surface                            | `menu`       |
 | `service`    | a headless singleton                               | `service`    |
 
-Services and plugins that set `keepLoaded: true` are mounted at startup;
-other panels, overlays and menus load the first time they are summoned and
-stay loaded for the session.
+Services and plugins that set `keepLoaded: true` are loaded at startup.
+Other panels, overlays and menus load when they are summoned, and stay
+loaded until the shell hides them (`hide`, or `toggle` while open); one
+that closes its own window stays loaded.
 
 Entry points may declare `novaPath`, `shell`, `manifest`, `pluginRegistry`,
 `barWidgetRegistry` and, for a panel paired with a service, `service`; the
 shell sets each one it finds. Bar widgets get the bar as `bar`, and reach the
 shell's services with `bar.shell.serviceFor(id)`.
 
-## IPC contract
+## IPC
 
-The shell exposes a `shell` IPC target, plus whatever targets individual
-plugins register (the image picker's `image-selector`, the bar's `bar`).
-[`nova-shell`](../cli/bin/nova-shell) forwards calls to the running shell; it
-does not start one. `nova bar` and `nova menu` are built on these calls.
+The shell answers two IPC targets of its own: `shell`, below, and
+`image-selector`, through which the image selector opens the image picker
+(`open`, `preload`, `cancel`, `ping`). Plugins add theirs, such as the
+bar's `bar`. [`nova-shell`](../cli/bin/nova-shell) passes a call on to the
+shell that is running, and never starts one; `nova bar` and `nova menu`
+are made of these calls.
 
-| Method                                         | Returns          | Effect                                                    |
+| Call                                           | Answer           | What it does                                              |
 |------------------------------------------------|------------------|-----------------------------------------------------------|
-| `ping`                                         | `ok`             | health check                                              |
+| `ping`                                         | `ok`             | whether the shell answers                                 |
 | `summon <id> <payloadJson>`                    | `ok` / `unknown` | load and open a panel, overlay or menu                    |
 | `hide <id>`                                    | —                | close it                                                  |
-| `toggle <id> <payloadJson>`                    | —                | summon if closed, hide if open                            |
+| `toggle <id> <payloadJson>`                    | —                | hide it when open, summon it when not                     |
 | `togglePanelAt <section> <index>`              | id / `unknown`   | toggle the bar panel at that position                     |
 | `call <id> <method> <arg>`                     | string           | call a method on a loaded plugin                          |
 | `applyTheme <colorsB64> <shellB64>`            | `ok`             | restyle the shell (`nova theme` sends it)                 |
-| `reloadConfig`                                 | `ok`             | reload `~/.config/nova/shell.json`                        |
+| `reloadConfig`                                 | `ok`             | read `~/.config/nova/shell.json` again                    |
 | `setPluginEnabled <id> <true\|false>`          | `ok` / error     | switch a plugin on or off (only `"true"` enables)         |
 | `enablePlugin <id> <placementJson>`            | `ok` / error     | switch on, placing a widget                               |
 | `putBarWidget <id> <placementJson>`            | `ok` / error     | enable unless already on the bar                          |
@@ -103,10 +104,11 @@ does not start one. `nova bar` and `nova menu` are built on these calls.
 | `toggleBarTransparency`                        | `ok` / `no-bar`  |                                                           |
 | `listPlugins`                                  | JSON             | every plugin, sorted by name                              |
 | `listShellConfig`                              | JSON             | the effective `shell.json`                                |
+| `debugBarGeometry`                             | JSON             | where the bar's windows are, for debugging                |
 
 ```
-nova-shell shell ping
-nova-shell shell toggle nova.menu '{"menu":"root"}'
+nova-shell shell summon nova.settings '{"page":"updates"}'
+nova-shell shell setPluginEnabled nova.screentime true
 quickshell ipc -p $NOVA_PATH/shell call shell listPlugins
 ```
 
