@@ -4,6 +4,10 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
+// A badge while an update waits: Nova's, or only an app's (Chrome, VS Code).
+// nova-update-check answers every six hours, again as an update Settings ran
+// ends, and on nova-shell nova.system-update refresh; a click opens the
+// updates in Settings.
 BarWidget {
   id: root
   moduleName: "nova.system-update"
@@ -12,58 +16,61 @@ BarWidget {
   property string tooltip: "Pending Nova Updates"
 
   function refresh() {
-    if (!updateProc.running) updateProc.running = true
+    if (!check.running) check.running = true
   }
 
   function clear() { updateAvailable = false }
 
-  // Settings runs it, with a bar for how far it is and no terminal.
-  function runUpdate() {
-    if (root.bar) root.bar.run("nova-settings updates")
-  }
-
-  visible: updateAvailable
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
-
-  Process {
-    id: updateProc
-    // And a notification, once for each update found.
-    command: ["nova-update-check", "--notify"]
-    // "available <version>", "apps <name>..." when only Chrome or VS Code is
-    // behind, or "current"; nothing when offline, which keeps the badge as it
-    // was.
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var answer = String(text).trim()
-        if (answer.startsWith("available ")) {
-          root.tooltip = "Nova " + answer.slice(10) + " is available"
-          root.updateAvailable = true
-        } else if (answer.startsWith("apps ")) {
-          root.tooltip = "App updates are available"
-          root.updateAvailable = true
-        } else if (answer === "current") {
-          root.updateAvailable = false
-        }
-      }
+  // Its answer, one line: "available <version>", "apps <name>...", or
+  // "current". Nothing when offline, which leaves the badge as it was.
+  function answered(line) {
+    if (line.startsWith("available ")) {
+      tooltip = "Nova " + line.slice(10) + " is available"
+      updateAvailable = true
+    } else if (line.startsWith("apps ")) {
+      tooltip = "App updates are available"
+      updateAvailable = true
+    } else if (line === "current") {
+      updateAvailable = false
     }
   }
 
-  // An update Settings ran asks again as it ends, rather than in six hours.
-  // Watched once its folder exists: Quickshell sees a file appear in a folder
-  // that is there, not in one made after it started looking.
+  visible: updateAvailable
+  implicitWidth: badge.implicitWidth
+  implicitHeight: badge.implicitHeight
+
+  // --notify: a notification as well, once for each update it finds.
+  Process {
+    id: check
+    command: ["nova-update-check", "--notify"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.answered(String(text).trim())
+    }
+  }
+
+  Timer {
+    interval: 6 * 60 * 60 * 1000
+    running: true
+    repeat: true
+    triggeredOnStart: true
+    onTriggered: root.refresh()
+  }
+
+  // Settings writes status.json as its update runs. Quickshell sees a file
+  // appear only in a folder that was there when it began to look, so the
+  // folder is made first.
   readonly property string statusDir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/update"
-  property bool watching: false
+  property bool statusDirMade: false
 
   Process {
     command: ["mkdir", "-p", root.statusDir]
     running: true
-    onExited: root.watching = true
+    onExited: root.statusDirMade = true
   }
 
   FileView {
-    path: root.watching ? root.statusDir + "/status.json" : ""
+    path: root.statusDirMade ? root.statusDir + "/status.json" : ""
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
@@ -71,27 +78,20 @@ BarWidget {
       try {
         if (JSON.parse(text()).state === "done") root.refresh()
       } catch (e) {
-        // Written whole, then moved into place: a bad read is someone else's.
+        // Settings writes it whole and moves it into place: one that does
+        // not parse is not its, and is ignored.
       }
     }
   }
 
-  Timer {
-    interval: 21600000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: root.refresh()
-  }
-
   BarIconButton {
-    id: button
+    id: badge
     anchors.fill: parent
     bar: root.bar
-    text: "\uf021"
+    text: ""
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
     tooltipText: root.tooltip
-    onPressed: root.runUpdate()
+    onPressed: if (root.bar) root.bar.run("nova-settings updates")
   }
 }
