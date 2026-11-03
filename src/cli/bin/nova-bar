@@ -3,38 +3,41 @@
 # nova:summary=Configure the bar and its widget layout
 # nova:args=defaults | position [top|bottom|left|right] | transparent [true|false|toggle] | put <id> [placement] | remove <id> | move <id> [placement] | set <id> <key> <value> [--json] [placement]
 
+# The bar's edge and look are settings, changed in shell.json. Its widgets are
+# the shell's to place, as it holds the layout in memory: they are put, moved
+# and set by asking it, not by changing the file behind it.
+
 set -euo pipefail
 
 source nova-shell-config
 
 usage() {
-  cat <<USAGE
-Usage: nova bar <command> [args...]
+  cat <<'USAGE'
+Usage: nova bar <command> [arguments]
 
-  defaults                             Restore the default bar layout
-  position [top|bottom|left|right]     Show or set the bar position
-  transparent [true|false|toggle]      Show (on/off) or set bar transparency
-  put <id> [placement]                 Put a widget on the bar, leaving one
-                                       that is already there where it is
-  remove <id>                          Take a widget off the bar; one that is
-                                       off by default (Screen Time) stops too
-  move <id> [placement]                Move a widget within or between sections
-  set <id> <key> <value> [--json] [placement]
-                                       Set a per-widget option
+  defaults                          The bar as Nova ships it, again
+  position [top|bottom|left|right]  The edge the bar is on, or the one to put it on
+  transparent [true|false|toggle]   Whether the bar is see-through (on or off),
+                                    or make it so
+  put <id> [where]                  Put a widget on the bar; one on it already
+                                    stays where it is
+  remove <id>                       Take a widget off the bar; one off by default
+                                    (Screen Time) stops as well
+  move <id> [where]                 Move a widget, in its section or to another
+  set <id> <key> <value> [--json] [where]
+                                    Set one of a widget's options, the value as
+                                    JSON with --json
 
-Placement:
-  --section <left|center|right>        Target section
-  --index <n>                          Target index
-  --before <id>                        Insert before a widget
-  --after <id>                         Insert after a widget
-  --from-section <section>             Source section
-  --from-index <n>                     Source index
+Where:
+  left, center or right             A section, written first (put and move)
+  --section <left|center|right>     A section
+  --index <n>                       A place in the section, from 0
+  --before <id>, --after <id>       Beside a widget; put goes to the widget's own
+                                    place when the bar does not carry that one
+  --from-section <section>          Which of a widget's places, when it is on the
+  --from-index <n>                  bar more than once (move and set)
 
-'put' leaves a widget that is already on the bar where it is, and falls back to
-the widget's usual spot when --before / --after names a widget the bar does not
-carry.
-
-Examples:
+For example:
   nova bar position bottom
   nova bar put nova.keyboard-layout --after nova.clock
   nova bar remove nova.weather
@@ -44,48 +47,50 @@ Examples:
 USAGE
 }
 
-# The layout lives in the shell, which holds the settings in memory: widgets
-# are put, moved and set by asking it, not by changing the file behind it.
-# What the bar as a whole looks like is the settings', and changed there.
+a_section() { [[ $1 =~ ^(left|center|right)$ ]] || fail "a section is left, center or right, not '$1'"; }
+an_index() { [[ $1 =~ ^[0-9]+$ ]] || fail "an index is a whole number from 0, not '$1'"; }
 
-section() { # value
-  [[ $1 =~ ^(left|center|right)$ ]] || fail "section must be left, center, or right"
-}
-index() { # value
-  [[ $1 =~ ^[0-9]+$ ]] || fail "index must be a non-negative integer"
-}
-
-# Where a widget goes, and where from, from the placement options.
-to_section="" to_index="" before="" after="" from_section="" from_index=""
-placement() { # option...
+# Where a widget goes, and which of its places, from the options.
+to_section='' to_index='' before='' after='' from_section='' from_index=''
+where() { # option...
+  local name value
   while (($#)); do
-    case $1 in
-      --section) section "${2:-}" && to_section=$2 ;;
-      --index) index "${2:-}" && to_index=$2 ;;
-      --before)
-        before=${2:-}
-        [[ -n $before ]] || fail "--before requires a widget id"
-        ;;
-      --after)
-        after=${2:-}
-        [[ -n $after ]] || fail "--after requires a widget id"
-        ;;
-      --from-section) section "${2:-}" && from_section=$2 ;;
-      --from-index) index "${2:-}" && from_index=$2 ;;
+    name=$1 value=${2:-}
+    case $name in
       -h | --help)
         usage
         exit 0
         ;;
-      *) fail "unknown option: $1" ;;
+      --section) a_section "$value" && to_section=$value ;;
+      --index) an_index "$value" && to_index=$value ;;
+      --from-section) a_section "$value" && from_section=$value ;;
+      --from-index) an_index "$value" && from_index=$value ;;
+      --before | --after)
+        [[ -n $value ]] || fail "$name needs a widget's id"
+        printf -v "${name#--}" '%s' "$value"
+        ;;
+      *) fail "'$name' is no option here; nova bar --help lists them" ;;
     esac
     shift 2
   done
-  [[ -z $before || -z $after ]] || fail "use only one of --before or --after"
+  [[ -z $before || -z $after ]] || fail "--before and --after cannot both be given"
 }
 
-# The placement as the shell takes it: only what was given.
+# A section written first, as in "move nova.media left", in $first; the options
+# after it in $options.
+first='' options=()
+section_first() { # argument...
+  if (($#)) && [[ $1 != --* ]]; then
+    a_section "$1"
+    first=$1
+    shift
+  fi
+  options=("$@")
+}
+
+# Where, as the shell takes it: only what was given.
 # shellcheck disable=SC2016 # jq's own variables
-placement_json() {
+where_json() {
   jq -cn --arg section "$to_section" --arg index "$to_index" --arg before "$before" --arg after "$after" \
     --arg fromSection "$from_section" --arg fromIndex "$from_index" '
     $ARGS.named
@@ -94,154 +99,138 @@ placement_json() {
     | with_entries(select(.value != ""))'
 }
 
-# A section given before the options, as in "move nova.media left", in
-# $positional; the options after it in $rest.
-positional="" rest=()
-section_first() { # option...
-  positional=""
-  if (($#)) && [[ $1 != --* ]]; then
-    section "$1"
-    positional=$1
-    shift
-  fi
-  rest=("$@")
-}
-
 defaults() {
-  (($# == 0)) || fail "defaults does not take arguments"
-  # In one change to the file, which the shell's settings in memory cannot
-  # come between.
+  (($# == 0)) || fail "defaults takes nothing more"
+  # One change to the file, which the shell's settings in memory cannot come
+  # between.
   commit "$NORMALIZE | .bar = \$defaults[0].bar" --slurpfile defaults "$DEFAULTS_FILE"
-  echo "Restored the default Nova bar"
+  echo "The bar is as Nova ships it."
 }
 
-# Without a value, what it is: the menu reads it to tick its row.
+# Without an edge, the one it is on: the menu reads it to tick its row.
 position() {
-  (($# <= 1)) || fail "position takes a single value"
-  local position=${1:-}
-  if [[ -z $position ]]; then
+  (($# <= 1)) || fail "position takes one edge"
+  local edge=${1:-}
+  if [[ -z $edge ]]; then
     jq -r '.bar.position // "top"' "$(source_file)"
     return 0
   fi
-  [[ $position =~ ^(top|bottom|left|right)$ ]] || fail "position must be top, bottom, left, or right"
-  commit "$NORMALIZE | .bar.position = \$position" --arg position "$position"
-  echo "Bar position set to $position"
+  [[ $edge =~ ^(top|bottom|left|right)$ ]] || fail "the bar's edge is top, bottom, left or right, not '$edge'"
+  commit "$NORMALIZE | .bar.position = \$edge" --arg edge "$edge"
+  echo "The bar is on the $edge edge."
 }
 
-# Without a value, on or off, for the menu.
+# Without a value, on or off: the menu reads it to tick its row.
 transparent() {
-  (($# <= 1)) || fail "transparent takes a single value"
-  local transparent=${1:-}
-  case $transparent in
-    "")
+  (($# <= 1)) || fail "transparent takes one value"
+  case ${1:-} in
+    '')
       jq -r 'if .bar.transparent == true then "on" else "off" end' "$(source_file)"
+      return 0
       ;;
-    toggle)
-      commit "$NORMALIZE | .bar.transparent = (.bar.transparent != true)"
-      echo "Bar transparency toggled"
-      ;;
-    true | false)
-      commit "$NORMALIZE | .bar.transparent = \$transparent" --argjson transparent "$transparent"
-      echo "Bar transparency set to $transparent"
-      ;;
-    *) fail "transparent must be true, false, or toggle" ;;
+    toggle) commit "$NORMALIZE | .bar.transparent = (.bar.transparent != true)" ;;
+    true | false) commit "$NORMALIZE | .bar.transparent = \$see_through" --argjson see_through "$1" ;;
+    *) fail "transparent is true, false or toggle, not '$1'" ;;
   esac
+  if [[ $(jq -r '.bar.transparent' "$(source_file)") == true ]]; then
+    echo "The bar is see-through."
+  else
+    echo "The bar is solid."
+  fi
 }
 
-# Asks the shell to put a widget on the bar, in $answer, waiting for one that
-# is still coming up. 1 when there is no shell to ask.
-answer=""
-asked=false
-ask_to_put() { # id placement
-  local id=$1 attempt missing=0
-  for ((attempt = 0; attempt < ${NOVA_SHELL_READY_ATTEMPTS:-50}; attempt++)); do
+# Asks the shell to put a widget on the bar, its answer in $answer, waiting for
+# a shell still coming up. 1 when there is no shell to ask.
+answer=''
+put_on_bar() { # id where-json
+  local id=$1 tries absent=0 answered=false
+  for ((tries = 0; tries < ${NOVA_SHELL_READY_ATTEMPTS:-50}; tries++)); do
     if answer=$(nova-shell shell putBarWidget "$id" "$2" 2>&1); then
-      asked=true
+      answered=true
       [[ $answer == "not ready" ]] || return 0
     elif [[ $answer == *"not ready"* ]]; then
-      asked=true
+      answered=true
     elif [[ $answer == *"is not running"* ]]; then
-      # It answered, and has gone since: it stopped while it was asked.
-      if $asked; then fail "nova-shell did not become ready; $id was not put on the bar"; fi
-      # A shell just started has no socket yet, and nothing says that one is
-      # starting: it is given a few seconds to come.
-      if ((++missing >= ${NOVA_SHELL_ABSENT_ATTEMPTS:-30})); then
-        echo "nova-shell is not running; $id was not put on the bar" >&2
+      # It answered before and is gone now: it stopped while asked.
+      if $answered; then fail "the shell did not come up, so $id is not on the bar"; fi
+      # A shell just started has no socket yet, and nothing tells it is
+      # starting: it gets a few seconds to come.
+      if ((++absent >= ${NOVA_SHELL_ABSENT_ATTEMPTS:-30})); then
+        echo "nova-bar: the shell is not running, so $id is not on the bar" >&2
         return 1
       fi
     else
-      fail "could not put $id on the bar: $answer"
+      fail "$id could not be put on the bar: $answer"
     fi
     sleep 0.1
   done
-  fail "nova-shell did not become ready; $id was not put on the bar"
+  fail "the shell did not come up, so $id is not on the bar"
 }
 
 put() {
   local id=${1:-}
-  [[ -n $id ]] || fail "put requires a widget id"
+  [[ -n $id ]] || fail "put needs a widget's id"
   shift
   section_first "$@"
-  placement "${rest[@]}"
-  [[ -z $positional || -z $to_section ]] || fail "specify a section positionally or with --section, not both"
-  [[ -z $positional ]] || to_section=$positional
-  [[ -z $from_section && -z $from_index ]] || fail "put does not accept --from-section or --from-index"
+  where "${options[@]}"
+  [[ -z $first || -z $to_section ]] || fail "the section is written first or given with --section, not both"
+  to_section=${first:-$to_section}
+  [[ -z $from_section && -z $from_index ]] || fail "put takes no --from-section or --from-index"
 
-  ask_to_put "$id" "$(placement_json)" || return 0
-  [[ $answer != unknown ]] || fail "$id is not a known widget"
+  put_on_bar "$id" "$(where_json)" || return 0
+  [[ $answer != unknown ]] || fail "$id is no widget the shell knows"
   [[ $answer == ok ]] || fail "$answer"
-  # The same answer whether it was put there now or was there already.
+  # Put there now or there already, it is on the bar.
   echo "$id is on the bar"
 }
 
 remove() {
   local id=${1:-} answer
-  [[ -n $id ]] || fail "remove requires a widget id"
-  (($# == 1)) || fail "remove takes a widget id and nothing else"
+  [[ -n $id ]] || fail "remove needs a widget's id"
+  (($# == 1)) || fail "remove takes a widget's id and nothing more"
   answer=$(nova-shell shell setPluginEnabled "$id" false)
-  [[ $answer == ok ]] || fail "could not remove $id: $answer"
+  [[ $answer == ok ]] || fail "$id could not be taken off the bar: $answer"
   echo "$id is off the bar"
 }
 
 move() {
   local id=${1:-} answer
-  [[ -n $id ]] || fail "move requires a widget id"
+  [[ -n $id ]] || fail "move needs a widget's id"
   shift
   section_first "$@"
-  placement "${rest[@]}"
-  if [[ -n $positional ]]; then
-    [[ -z $to_section ]] || fail "specify a section positionally or with --section, not both"
-    [[ -z $to_index ]] || fail "specify a section positionally or use --index, not both"
-    [[ -z $before ]] || fail "specify a section positionally or use --before, not both"
-    [[ -z $after ]] || fail "specify a section positionally or use --after, not both"
-    to_section=$positional
+  where "${options[@]}"
+  if [[ -n $first ]]; then
+    # A section written first is the whole of where it goes.
+    [[ -z $to_section$to_index$before$after ]] ||
+      fail "a section written first takes no --section, --index, --before or --after"
+    to_section=$first
   fi
-  answer=$(nova-shell shell moveBarWidget "$id" "$(placement_json)")
+  answer=$(nova-shell shell moveBarWidget "$id" "$(where_json)")
   [[ $answer == ok ]] || fail "$answer"
-  echo "Moved $id"
+  echo "$id is moved"
 }
 
 set_option() {
   local id=${1:-} key=${2:-} value=${3:-} json=false value_json answer
-  [[ -n $id ]] || fail "set requires a widget id"
-  [[ -n $key ]] || fail "set requires a setting key"
-  (($# >= 3)) || fail "set requires a value"
+  [[ -n $id ]] || fail "set needs a widget's id"
+  [[ -n $key ]] || fail "set needs the option's name"
+  (($# >= 3)) || fail "set needs a value"
   shift 3
   if [[ ${1:-} == --json ]]; then
     json=true
     shift
   fi
-  placement "$@"
-  [[ -z $before && -z $after ]] || fail "set does not accept --before or --after"
+  where "$@"
+  [[ -z $before && -z $after ]] || fail "set takes no --before or --after"
   # shellcheck disable=SC2016 # jq's own variables
   if $json; then
-    value_json=$(jq -cn --argjson value "$value" '$value') || fail "invalid JSON value: $value"
+    value_json=$(jq -cn --argjson value "$value" '$value') || fail "the value is no JSON: $value"
   else
     value_json=$(jq -cn --arg value "$value" '$value')
   fi
-  answer=$(nova-shell shell setBarWidget "$id" "$key" "$value_json" "$(placement_json)")
+  answer=$(nova-shell shell setBarWidget "$id" "$key" "$value_json" "$(where_json)")
   [[ $answer == ok ]] || fail "$answer"
-  echo "Set $key on $id"
+  echo "$id's $key is set"
 }
 
 command=${1:-}
@@ -249,6 +238,6 @@ if (($#)); then shift; fi
 case $command in
   defaults | position | transparent | put | remove | move) "$command" "$@" ;;
   set) set_option "$@" ;;
-  -h | --help | help | "") usage ;;
-  *) fail "unknown command: $command" ;;
+  -h | --help | help | '') usage ;;
+  *) fail "'$command' is no command; nova bar --help lists them" ;;
 esac
