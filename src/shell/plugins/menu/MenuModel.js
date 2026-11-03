@@ -473,9 +473,16 @@ function withReaders(expression) {
   }, expression)
 }
 
+// A guard's line. Its expression runs by eval, so that one bash cannot read
+// fails alone, as a no, and does not end the script and every answer with
+// it. Its id is quoted, for the same reason: any id prints as it is.
 function guardLine(id, tag, expression) {
-  return "if { " + withReaders(expression) + "; } >/dev/null 2>&1; then echo "
-    + id + ":" + tag + ":1; else echo " + id + ":" + tag + ":0; fi\n"
+  var answer = quoted(id + ":" + tag + ":")
+  return "if eval " + quoted(withReaders(expression)) + " >/dev/null 2>&1; then echo " + answer + "1; else echo " + answer + "0; fi\n"
+}
+
+function quoted(text) {
+  return "'" + String(text).replace(/'/g, "'\\''") + "'"
 }
 
 // One bash script for every when: and checked: of the tree, printing
