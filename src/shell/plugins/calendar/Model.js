@@ -22,16 +22,19 @@ function pad2(n) {
   return n < 10 ? "0" + n : String(n)
 }
 
+// A day's first moment: its midnight, or the moment the clocks land on where
+// they skip it (Ical.localTime).
 function dayStart(time) {
   var t = new Date(time)
-  return new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime()
+  return Ical.localTime(t.getFullYear(), t.getMonth(), t.getDate())
 }
 
-// <n> days on, at the same time on the clock across a DST change.
+// <n> days on, at the same time on the clock across a DST change; from a
+// day's first moment, to that day's.
 function addDays(time, n) {
   var t = new Date(time)
-  t.setDate(t.getDate() + n)
-  return t.getTime()
+  if (time === dayStart(time)) return Ical.localTime(t.getFullYear(), t.getMonth(), t.getDate() + n)
+  return Ical.localTime(t.getFullYear(), t.getMonth(), t.getDate() + n, t.getHours(), t.getMinutes(), t.getSeconds(), t.getMilliseconds())
 }
 
 function daysBetween(a, b) {
@@ -43,12 +46,17 @@ function dayKey(time) {
   return t.getFullYear() + "-" + pad2(t.getMonth() + 1) + "-" + pad2(t.getDate())
 }
 
-// "2026-10-29" as its local midnight, or NaN.
+// The first moment of a date given by its numbers, or NaN for one there is
+// not (31 April). Noon tells, as no clock skips it.
+function dateStart(year, month, date) {
+  var noon = new Date(year, month, date, 12)
+  return noon.getMonth() === month && noon.getDate() === date ? Ical.localTime(year, month, date) : NaN
+}
+
+// "2026-10-29" as its day's first moment, or NaN.
 function parseDayKey(key) {
   var m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(key || ""))
-  if (!m) return NaN
-  var t = new Date(+m[1], +m[2] - 1, +m[3])
-  return t.getMonth() === +m[2] - 1 ? t.getTime() : NaN
+  return m ? dateStart(+m[1], +m[2] - 1, +m[3]) : NaN
 }
 
 // Minutes since the day's midnight, as the clock shows them.
@@ -59,8 +67,7 @@ function minutesInDay(time) {
 
 function atMinutes(day, minutes) {
   var t = new Date(day)
-  t.setHours(0, minutes, 0, 0)
-  return t.getTime()
+  return Ical.localTime(t.getFullYear(), t.getMonth(), t.getDate(), 0, minutes)
 }
 
 // The first day of the week <time> is in, a week starting on <weekStart>
@@ -73,7 +80,7 @@ function weekOf(time, weekStart) {
 // The weeks a month's grid shows, six of seven days each, from the week of
 // its first day.
 function monthWeeks(year, month, weekStart) {
-  var first = weekOf(new Date(year, month, 1).getTime(), weekStart)
+  var first = weekOf(new Date(year, month, 1, 12).getTime(), weekStart)
   var weeks = []
   for (var w = 0; w < 6; w++) {
     var days = []
@@ -111,15 +118,13 @@ function parseClock(text) {
 }
 
 // A day typed in: 2026-10-29, or 29/10/2026 and 29.10.2026, day first, as
-// the interface is English but not American. Its midnight, or NaN.
+// the interface is English but not American. Its first moment, or NaN.
 function parseDate(text) {
   var t = String(text || "").trim()
   var iso = parseDayKey(t)
   if (!isNaN(iso)) return iso
   var m = /^(\d{1,2})[\/.](\d{1,2})[\/.](\d{4})$/.exec(t)
-  if (!m) return NaN
-  var d = new Date(+m[3], +m[2] - 1, +m[1])
-  return d.getMonth() === +m[2] - 1 && d.getDate() === +m[1] ? d.getTime() : NaN
+  return m ? dateStart(+m[3], +m[2] - 1, +m[1]) : NaN
 }
 
 function formatClock(minutes) {
@@ -283,17 +288,17 @@ function items(root) {
 // ---- repeating
 
 // The days a period of the rule offers, in order, at the series' time of day.
+// A day is looked at by its noon, which is on it whatever the clocks do.
 function periodStarts(item, rule, k) {
   var first = new Date(item.start)
   var minutes = first.getHours() * 60 + first.getMinutes()
   var seconds = first.getSeconds()
   function at(y, m, d) {
-    var t = new Date(y, m, d, 0, minutes, seconds)
-    return t.getTime()
+    return Ical.localTime(y, m, d, 0, minutes, seconds)
   }
   var out = []
   if (rule.freq === "DAILY") {
-    var day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + k * rule.interval)
+    var day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + k * rule.interval, 12)
     var weekdays = rule.byday.map(function (b) { return b.day })
     if (!weekdays.length || weekdays.indexOf(day.getDay()) >= 0) out.push(at(day.getFullYear(), day.getMonth(), day.getDate()))
   } else if (rule.freq === "WEEKLY") {
@@ -305,9 +310,9 @@ function periodStarts(item, rule, k) {
       out.push(at(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + k * 7 * rule.interval + offsets[i]))
     }
   } else if (rule.freq === "MONTHLY") {
-    var month = new Date(first.getFullYear(), first.getMonth() + k * rule.interval, 1)
+    var month = new Date(first.getFullYear(), first.getMonth() + k * rule.interval, 1, 12)
     var y = month.getFullYear(), m = month.getMonth()
-    var length = new Date(y, m + 1, 0).getDate()
+    var length = new Date(y, m + 1, 0, 12).getDate()
     var dates = []
     if (rule.bymonthday.length) {
       rule.bymonthday.forEach(function (d) {
@@ -317,7 +322,7 @@ function periodStarts(item, rule, k) {
     } else if (rule.byday.length) {
       rule.byday.forEach(function (b) {
         var matches = []
-        for (var d = 1; d <= length; d++) if (new Date(y, m, d).getDay() === b.day) matches.push(d)
+        for (var d = 1; d <= length; d++) if (new Date(y, m, d, 12).getDay() === b.day) matches.push(d)
         if (b.n === 0) dates = dates.concat(matches)
         else {
           var pick = b.n > 0 ? matches[b.n - 1] : matches[matches.length + b.n]
@@ -331,7 +336,7 @@ function periodStarts(item, rule, k) {
     for (var j = 0; j < dates.length; j++) if (j === 0 || dates[j] !== dates[j - 1]) out.push(at(y, m, dates[j]))
   } else if (rule.freq === "YEARLY") {
     var year = first.getFullYear() + k * rule.interval
-    var candidate = new Date(year, first.getMonth(), first.getDate())
+    var candidate = new Date(year, first.getMonth(), first.getDate(), 12)
     if (candidate.getMonth() === first.getMonth()) out.push(at(year, first.getMonth(), first.getDate()))
   }
   return out

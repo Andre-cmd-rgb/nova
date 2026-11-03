@@ -219,17 +219,14 @@ Ui.Panel {
   readonly property real pickedDay: dayStart(pickedKey)
   // Read through `items`, so that they follow the calendar's changes.
   readonly property var busy: calendar && calendar.items ? calendar.busyDays(dayStart(weeks[0].days[0].key), dayStart(weeks[5].days[6].key, 1)) : ({})
-  readonly property var agenda: calendar && calendar.items ? calendar.agenda(pickedDay) : []
+  readonly property var agenda: calendar && calendar.items ? calendar.agenda(calendar.dayStart(pickedKey)) : []
   // The rows shown at most; past them, the last says how many more.
   readonly property int agendaRows: 6
 
-  // The local midnight of a day by its key, or of the day `after` days on,
-  // as the calendar counts days. Where the clocks skip that midnight
-  // (Santiago in September, Havana in March), the shell's engine puts it at
-  // 23:00 the day before, for the calendar as for this panel.
+  // The first moment of a day by its key, or of the day `after` days on,
+  // as the calendar counts them: what it is asked about. NaN without one.
   function dayStart(key, after) {
-    var part = String(key).split("-")
-    return new Date(Number(part[0]), Number(part[1]) - 1, Number(part[2]) + (after || 0)).getTime()
+    return calendar ? calendar.dayStart(key, after) : NaN
   }
 
   // A day by its key at noon, which is on that day wherever the clocks

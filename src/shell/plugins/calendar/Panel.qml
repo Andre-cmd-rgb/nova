@@ -176,7 +176,7 @@ Item {
   function step(delta) {
     if (page === "month") {
       var d = new Date(anchor)
-      anchor = new Date(d.getFullYear(), d.getMonth() + delta, 1).getTime()
+      anchor = Model.dayStart(new Date(d.getFullYear(), d.getMonth() + delta, 1, 12).getTime())
     } else {
       anchor = Model.addDays(anchor, 7 * delta)
     }

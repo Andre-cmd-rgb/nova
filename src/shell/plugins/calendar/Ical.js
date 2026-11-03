@@ -187,8 +187,20 @@ function pad(n, width) {
   return s
 }
 
-// A DATE or DATE-TIME property as { time, allDay }: a date is its local
-// midnight, a time ending in Z is UTC, and any other time is taken as local,
+// The instant a time on the local clock names. One the clocks skip, going
+// forward, is read with the offset before the skip, as RFC 5545 reads it:
+// Qt's engine reads it with the offset after, an hour early, which puts a
+// skipped midnight (Santiago's in September, Havana's in March) on the day
+// before. Read this way, it is the first moment of its own day.
+function localTime(year, month, date, hours, minutes, seconds, ms) {
+  var t = new Date(year, month, date, hours || 0, minutes || 0, seconds || 0, ms || 0)
+  var wanted = Date.UTC(year, month, date, hours || 0, minutes || 0, seconds || 0, ms || 0)
+  var read = t.getTime() - t.getTimezoneOffset() * 60000
+  return t.getTime() + Math.max(0, wanted - read)
+}
+
+// A DATE or DATE-TIME property as { time, allDay }: a date is its day's first
+// moment, a time ending in Z is UTC, and any other time is taken as local,
 // with or without a TZID (the calendar writes the system's own zone, which it
 // cannot convert from another). null when unreadable.
 function parseTime(p) {
@@ -196,8 +208,8 @@ function parseTime(p) {
   var m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z?))?$/.exec(String(p.value).trim())
   if (!m) return null
   var y = +m[1], mo = +m[2] - 1, d = +m[3]
-  if (m[4] === undefined || p.params.VALUE === "DATE") return { time: new Date(y, mo, d).getTime(), allDay: true }
-  var time = m[7] === "Z" ? Date.UTC(y, mo, d, +m[4], +m[5], +m[6]) : new Date(y, mo, d, +m[4], +m[5], +m[6]).getTime()
+  if (m[4] === undefined || p.params.VALUE === "DATE") return { time: localTime(y, mo, d), allDay: true }
+  var time = m[7] === "Z" ? Date.UTC(y, mo, d, +m[4], +m[5], +m[6]) : localTime(y, mo, d, +m[4], +m[5], +m[6])
   return { time: time, allDay: false }
 }
 

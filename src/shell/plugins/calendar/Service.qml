@@ -69,6 +69,12 @@ Item {
     return Model.agenda(Model.occurrences(storeItem.items, day, Model.addDays(day, 1)), day)
   }
 
+  // The first moment of a day by its key (2026-09-06), or of the day <after>
+  // days on, as the calendar counts days: what the clock asks about.
+  function dayStart(key, after) {
+    return Model.addDays(Model.parseDayKey(key), after || 0)
+  }
+
   function toggleTask(uid) {
     var task = storeItem.items.filter(function (i) { return i.uid === uid })[0]
     if (task) storeItem.updateTask(uid, { done: !task.done })
