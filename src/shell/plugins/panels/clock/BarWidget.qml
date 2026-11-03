@@ -122,25 +122,15 @@ Ui.Panel {
       else clock.toggle()
     }
 
-    // On a side bar the label is a stack, a line a glyph's height; a line
-    // of more than three characters a size smaller, to fit across the bar.
-    Column {
+    // On a side bar the label is a stack of its lines, in the button's
+    // face and ink.
+    Stack {
       visible: clock.vertical
       anchors.fill: parent
-
-      Repeater {
-        model: clock.lines
-
-        OpticalGlyph {
-          required property string modelData
-          width: button.width
-          height: Style.bar.iconSlot
-          text: modelData
-          fontFamily: button.fontFamily
-          fontSize: modelData.length > 3 ? button.fontSize * 0.9 : button.fontSize
-          color: button.foreground
-        }
-      }
+      lines: clock.lines
+      face: button.fontFamily
+      size: button.fontSize
+      ink: button.foreground
     }
   }
 
@@ -162,6 +152,32 @@ Ui.Panel {
       id: view
       anchors.fill: parent
       Component.onCompleted: setSource(Qt.resolvedUrl("Panel.qml"), { clock: clock })
+    }
+  }
+
+  // <lines> one under another, each a glyph's height; a line of more than
+  // three characters a size smaller, to fit across the bar.
+  component Stack: Column {
+    id: stack
+
+    property var lines: []
+    property string face
+    property real size
+    property color ink
+
+    Repeater {
+      model: stack.lines
+
+      OpticalGlyph {
+        required property string modelData
+
+        width: stack.width
+        height: Style.bar.iconSlot
+        text: modelData
+        fontFamily: stack.face
+        fontSize: modelData.length > 3 ? stack.size * 0.9 : stack.size
+        color: stack.ink
+      }
     }
   }
 }
