@@ -59,12 +59,17 @@ QtObject {
 
   // One colour for a value: the first of a gradient's, another key's for its
   // name, a palette colour for its role, or a colour as Geometry reads them.
-  // Anything else, a colour name included, is <fallback>.
+  // Anything else, a colour name or names that come round again included,
+  // is <fallback>.
   function flatColor(value, fallback) {
     var token = firstColorToken(value)
     var role = String(token || "").trim().toLowerCase()
-    var named = shellValues[role]
-    if (named && named !== token) return flatColor(named, fallback)
+    var followed = {}
+    while (shellValues[role] && shellValues[role] !== token && !followed[role]) {
+      followed[role] = true
+      token = firstColorToken(shellValues[role])
+      role = String(token || "").trim().toLowerCase()
+    }
     switch (role) {
     case "foreground":
     case "text":
