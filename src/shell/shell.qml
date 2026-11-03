@@ -58,10 +58,7 @@ ShellRoot {
   property var shellConfig: builtinShellConfig
 
   // A new config can switch plugins on or off.
-  onShellConfigChanged: {
-    pluginRegistry.registryRevision++
-    pluginRegistry.pluginsChanged()
-  }
+  onShellConfigChanged: pluginRegistry.pluginsChanged()
 
   // The config in effect is the user's shell.json when it is a valid one,
   // an object with version 1, and otherwise the defaults; the two are not
@@ -162,14 +159,11 @@ ShellRoot {
     persistShellConfig(draft)
   }
 
-  // Hands a plugin's item the shell and the shared services, for each
-  // property of these names it has.
+  // Hands a plugin's item the shell and its manifest, when it has a
+  // property of that name.
   function provideShared(item, manifest) {
-    if ("novaPath" in item) item.novaPath = shell.novaPath
     if ("shell" in item) item.shell = shell
     if ("manifest" in item) item.manifest = manifest
-    if ("barWidgetRegistry" in item) item.barWidgetRegistry = shell.barWidgetRegistry
-    if ("pluginRegistry" in item) item.pluginRegistry = shell.pluginRegistry
   }
 
   // The bar, once loaded, for the plugins that place themselves by it
@@ -182,7 +176,6 @@ ShellRoot {
     // this file's root, so the root goes in under another name.
     readonly property var host: shell
     sourceComponent: Bar {
-      novaPath: barLoader.host.novaPath
       barWidgetRegistry: barLoader.host.barWidgetRegistry
       barConfig: barLoader.host.barConfig
       shell: barLoader.host
@@ -271,7 +264,7 @@ ShellRoot {
   // only when an entry changes, so that a binding that keeps sending the
   // same settings does not keep rewriting the file.
   function updateEntryInline(moduleName, settings) {
-    var id = Util.canonicalWidgetId(moduleName)
+    var id = String(moduleName || "")
     var draft = JSON.parse(JSON.stringify(shellConfig || builtinShellConfig))
     if (!Util.isPlainObject(draft.bar)) draft.bar = { layout: { left: [], center: [], right: [] } }
     if (!Util.isPlainObject(draft.bar.layout)) draft.bar.layout = { left: [], center: [], right: [] }
@@ -291,7 +284,7 @@ ShellRoot {
     for (var s = 0; s < sections.length; s++) {
       var entries = draft.bar.layout[sections[s]] || []
       for (var i = 0; i < entries.length; i++) {
-        if (!entries[i] || Util.canonicalWidgetId(entries[i].id) !== id) continue
+        if (!entries[i] || String(entries[i].id || "") !== id) continue
         inLayout = true
         var entry = rewritten()
         if (JSON.stringify(entries[i]) === JSON.stringify(entry)) continue
@@ -338,7 +331,7 @@ ShellRoot {
   // has loaded; a bar widget's panel takes none. False for a plugin that is
   // unknown, switched off, or a widget not in the bar.
   function summon(pluginId, payloadJson) {
-    var id = Util.canonicalWidgetId(String(pluginId || ""))
+    var id = String(pluginId || "")
     if (!id) return false
     if (!pluginRegistry.installedPlugins[id]) {
       console.warn("summon: unknown plugin", id)
@@ -373,7 +366,7 @@ ShellRoot {
   }
 
   function hide(pluginId) {
-    var id = Util.canonicalWidgetId(String(pluginId || ""))
+    var id = String(pluginId || "")
     if (!id) return false
     if (isBarWidgetPanelPlugin(id)) {
       var hidden = bar && typeof bar.hideBarWidget === "function" && bar.hideBarWidget(id)
@@ -393,7 +386,7 @@ ShellRoot {
   // Whether the panel is open: as the plugin says, when it has loaded and
   // says (opened), and otherwise whether it was called up.
   function isPluginOpen(pluginId) {
-    var id = Util.canonicalWidgetId(String(pluginId || ""))
+    var id = String(pluginId || "")
     if (isBarWidgetPanelPlugin(id))
       return bar && typeof bar.isBarWidgetOpen === "function" ? bar.isBarWidgetOpen(id) : false
     var loader = panelLoaders[id]
@@ -402,7 +395,7 @@ ShellRoot {
   }
 
   function toggle(pluginId, payloadJson) {
-    var id = Util.canonicalWidgetId(String(pluginId || ""))
+    var id = String(pluginId || "")
     return isPluginOpen(id) ? hide(id) : summon(id, payloadJson)
   }
 
@@ -463,7 +456,7 @@ ShellRoot {
   // none, "unknown" when it has not loaded or has no such method, "error"
   // when it throws.
   function callIfLoaded(pluginId, method, arg) {
-    var id = Util.canonicalWidgetId(String(pluginId || ""))
+    var id = String(pluginId || "")
     var loader = panelLoaders[id]
     if (!loader || !loader.item || typeof loader.item[method] !== "function") return "unknown"
     try {
@@ -582,39 +575,11 @@ ShellRoot {
       enabled[key] = true
       var made = pluginWidgetComponents[key]
       var url = pluginRegistry.entryPointUrl(manifest, "barWidget")
-      if (!url) {
-        console.warn("Plugin " + manifest.id + " has no barWidget entry point")
-        continue
-      }
-      var declared = manifest.barWidget || {}
-      var meta = {
-        displayName: declared.displayName || manifest.name,
-        description: declared.description || manifest.description,
-        category: declared.category || "Plugin",
-        allowMultiple: declared.allowMultiple === true,
-        defaults: declared.defaults || {},
-        settingsForm: declared.settingsForm || "",
-        schema: declared.schema || [],
-        pluginId: manifest.id,
-        sourceDir: manifest.__sourceDir || "",
-        source: "plugin"
-      }
-
-      if (made && made.url === url) {
-        // Still loading: that load registers the widget when it is done. A
-        // second load would make a second component, and a slot given a new
-        // component makes its widget again, two of it running for a moment,
-        // each taking the widget's IPC target.
-        if (!made.component) continue
-        // Made already: the metadata is registered again all the same, as a
-        // manifest's schema, defaults or directory can change, and the
-        // settings read them from the registry.
-        if (barWidgetRegistry.has(key)) {
-          barWidgetRegistry.register(key, made.component, meta)
-          continue
-        }
-      }
-      loadPluginWidget(key, url, meta)
+      // Loading, or made and registered: a second load would make a second
+      // component, and a slot given a new component makes its widget again,
+      // two of it running for a moment, each taking the widget's IPC target.
+      if (made && made.url === url && (!made.component || barWidgetRegistry.has(key))) continue
+      loadPluginWidget(key, url)
     }
 
     // Widgets of plugins gone or switched off leave the registry.
@@ -639,7 +604,7 @@ ShellRoot {
 
   // Makes the widget's component from <url>, and registers it once it has
   // loaded.
-  function loadPluginWidget(registryKey, url, meta) {
+  function loadPluginWidget(registryKey, url) {
     // The key is taken before the component exists: Qt.createComponent
     // loads in the background, and the syncs while the shell starts could
     // not otherwise tell a load in progress from none.
@@ -648,7 +613,7 @@ ShellRoot {
     var component = Qt.createComponent(url, Component.Asynchronous)
     function settle() {
       if (component.status === Component.Ready) {
-        shell.barWidgetRegistry.register(registryKey, component, meta)
+        shell.barWidgetRegistry.register(registryKey, component)
         shell.setPluginWidgetComponent(registryKey, { url: url, component: component })
       } else if (component.status === Component.Error) {
         console.warn("Plugin widget " + registryKey + " failed: " + component.errorString())

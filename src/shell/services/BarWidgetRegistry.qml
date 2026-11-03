@@ -8,24 +8,17 @@ import QtQuick
 QtObject {
   id: registry
 
-  // { widgetId: { component: Component, metadata: var } }. Each change sets
-  // a new object, so that a binding reading it is told.
+  // { widgetId: { component: Component } }. Each change sets a new object,
+  // so that a binding reading it is told.
   property var widgets: ({})
-  property int revision: 0
 
-  // Sent after each register or unregister, once widgets and revision have
-  // their new values.
-  signal changed()
-
-  function register(id, component, metadata) {
+  function register(id, component) {
     var key = String(id)
     if (key.length === 0) return
     var next = {}
     for (var name in widgets) next[name] = widgets[name]
-    next[key] = { component: component, metadata: metadata || {} }
+    next[key] = { component: component }
     widgets = next
-    revision++
-    changed()
   }
 
   function unregister(id) {
@@ -36,13 +29,6 @@ QtObject {
       if (name !== key) next[name] = widgets[name]
     }
     widgets = next
-    revision++
-    changed()
-  }
-
-  function metadataFor(id) {
-    var widget = widgets[String(id)]
-    return widget ? widget.metadata : null
   }
 
   function availableIds() {

@@ -72,9 +72,8 @@ Other panels, overlays and menus load when they are summoned, and stay
 loaded until the shell hides them (`hide`, or `toggle` while open); one
 that closes its own window stays loaded.
 
-Entry points may declare `novaPath`, `shell`, `manifest`, `pluginRegistry`,
-`barWidgetRegistry` and, for a panel paired with a service, `service`; the
-shell sets each one it finds. Bar widgets get the bar as `bar`, and reach the
+Entry points may declare `shell`, `manifest` and, for a panel paired with a
+service, `service`; the shell sets each one it finds. Bar widgets get the bar as `bar`, and reach the
 shell's services with `bar.shell.serviceFor(id)`.
 
 ## IPC

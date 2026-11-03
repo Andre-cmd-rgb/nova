@@ -129,11 +129,6 @@ QtObject {
     return JSON.parse(JSON.stringify(value === undefined ? null : value))
   }
 
-  // A widget's id as the bar and the plugin registry key it.
-  function canonicalWidgetId(id) {
-    return String(id || "")
-  }
-
   // The bar's layout from shell.json, in a form its readers can trust: three
   // lists of { id, ...settings }, each a copy, so changing one does not
   // change the config. An entry may be a bare id; one with no id is dropped.
@@ -143,10 +138,10 @@ QtObject {
     ;["left", "center", "right"].forEach(function(part) {
       tidy[part] = (Array.isArray(given[part]) ? given[part] : []).reduce(function(entries, entry) {
         if (typeof entry === "string") {
-          entries.push({ id: canonicalWidgetId(entry) })
+          entries.push({ id: entry })
         } else if (isPlainObject(entry) && entry.id) {
           var copy = cloneJson(entry)
-          copy.id = canonicalWidgetId(copy.id)
+          copy.id = String(copy.id)
           entries.push(copy)
         }
         return entries

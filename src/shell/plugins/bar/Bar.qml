@@ -88,7 +88,7 @@ Item {
 
     var layout = Util.normalizeLayout(Util.isPlainObject(config.layout) ? config.layout : defaultConfig.layout)
     for (var region in layout) layout[region] = BarModel.trayInward(layout[region], region)
-    centerAnchor = BarModel.centerAnchor(Util.canonicalWidgetId(config.centerAnchor || ""), layout.center)
+    centerAnchor = BarModel.centerAnchor(config.centerAnchor, layout.center)
 
     // The sections' Repeaters take plain arrays, which QML cannot compare,
     // so a new layout builds every widget on every screen again. A write
@@ -1195,7 +1195,7 @@ Item {
     readonly property var registryComponent: {
       var widgets = root.barWidgetRegistry.widgets
       if (customType) return null
-      var registered = widgets[Util.canonicalWidgetId(moduleName)]
+      var registered = widgets[moduleName]
       return registered ? registered.component : null
     }
     readonly property bool fromFile: customType === "qml"

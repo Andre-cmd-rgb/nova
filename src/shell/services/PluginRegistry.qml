@@ -32,7 +32,6 @@ QtObject {
   // { pluginId: manifest }, each manifest with __sourceDir added: its
   // directory.
   property var installedPlugins: ({})
-  property int registryRevision: 0
   property bool loading: true
   // Why the last setEnabled said no, or "".
   property string lastEnableError: ""
@@ -67,20 +66,21 @@ QtObject {
   }
 
   // Whether the plugin's components load. An alwaysOn plugin is on whatever
-  // shell.json says; an id with no plugin is on while shell.json names it.
+  // shell.json says; an id with no plugin is off.
   function isEnabled(id) {
-    var key = Util.canonicalWidgetId(String(id))
+    var key = String(id)
     var manifest = installedPlugins[key]
     var config = shellConfigProvider ? shellConfigProvider() : null
-    if (manifest && alwaysOn(manifest)) return true
-    if (manifest && isDisabled(config, key)) return false
-    if (manifest && onByDefault(manifest)) return true
+    if (!manifest) return false
+    if (alwaysOn(manifest)) return true
+    if (isDisabled(config, key)) return false
+    if (onByDefault(manifest)) return true
     return findEntryLocation(config, key).found
   }
 
   function isDisabled(config, id) {
     if (!Util.isPlainObject(config) || !Array.isArray(config.disabledPlugins)) return false
-    return config.disabledPlugins.indexOf(Util.canonicalWidgetId(String(id))) >= 0
+    return config.disabledPlugins.indexOf(String(id)) >= 0
   }
 
   // Whether the widget sits in the bar. Not the same as isEnabled: a widget
@@ -101,7 +101,7 @@ QtObject {
   // The id of a bar layout entry, which is either { id, ...settings } or the
   // bare id.
   function barEntryId(entry) {
-    return Util.canonicalWidgetId(String(Util.isPlainObject(entry) ? entry.id : (entry || "")))
+    return String(Util.isPlainObject(entry) ? entry.id : (entry || ""))
   }
 
   // Where the widget is in the bar, looking only in <section> when one is
@@ -109,7 +109,7 @@ QtObject {
   function findBarLocation(config, id, section) {
     var layout = Util.isPlainObject(config) && Util.isPlainObject(config.bar) ? config.bar.layout : null
     if (!Util.isPlainObject(layout)) return { found: false }
-    var key = Util.canonicalWidgetId(String(id))
+    var key = String(id)
     var names = ["left", "center", "right"]
     for (var n = 0; n < names.length; n++) {
       if (section && section !== names[n]) continue
@@ -126,12 +126,12 @@ QtObject {
   // { found: true, kind: "plugin", index }, or { found: false }.
   function findEntryLocation(config, id) {
     if (!Util.isPlainObject(config)) return { found: false }
-    var key = Util.canonicalWidgetId(String(id))
+    var key = String(id)
     var inLayout = findBarLocation(config, key, "")
     if (inLayout.found || !Array.isArray(config.plugins)) return inLayout
     for (var i = 0; i < config.plugins.length; i++) {
       var named = config.plugins[i]
-      if (named && Util.canonicalWidgetId(named.id) === key) return { found: true, kind: "plugin", index: i }
+      if (named && String(named.id || "") === key) return { found: true, kind: "plugin", index: i }
     }
     return { found: false }
   }
@@ -201,7 +201,7 @@ QtObject {
   // is (in fromSection, if named). "" when done, else what was wrong, and
   // the layout as it was.
   function moveBarEntry(config, id, placement) {
-    var key = Util.canonicalWidgetId(String(id))
+    var key = String(id)
     var from
 
     if (placement.fromIndex !== undefined && placement.fromIndex !== null) {
@@ -240,7 +240,6 @@ QtObject {
       error = moveBarEntry(config, id, placement || {})
     })
     if (error) return error
-    registryRevision++
     pluginsChanged()
     return ""
   }
@@ -301,7 +300,6 @@ QtObject {
       else entry[String(key)] = value
     })
     if (error) return error
-    registryRevision++
     pluginsChanged()
     return ""
   }
@@ -339,7 +337,7 @@ QtObject {
   // default is named in plugins. Switched off, a widget leaves the bar, and
   // any other plugin that is on by default is listed in disabledPlugins.
   function setEnabled(id, value, placement) {
-    var key = Util.canonicalWidgetId(String(id))
+    var key = String(id)
     lastEnableError = ""
     if (loading) {
       lastEnableError = "not ready"
@@ -390,7 +388,6 @@ QtObject {
       if (isBarWidget && placement && Object.keys(placement).length > 0) moveBarEntry(config, key, placement)
     })
     if (lastEnableError) return false
-    registryRevision++
     pluginsChanged()
     return true
   }
@@ -414,7 +411,6 @@ QtObject {
       plugins[manifest.id] = manifest
     }
     installedPlugins = plugins
-    registryRevision++
     loading = false
     pluginsChanged()
   }
