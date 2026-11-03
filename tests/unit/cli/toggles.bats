@@ -60,6 +60,25 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   [ "$(cat "$HYPR/temperature")" = 6500 ]
 }
 
+@test "night light: on and off set night and day whatever the tint, and hold through a fresh hyprsunset" {
+  echo 5000 >"$HYPR/temperature"
+  nova-toggle-nightlight on
+  [ "$(cat "$HYPR/temperature")" = 4000 ]
+  nova-toggle-nightlight on
+  [ "$(cat "$HYPR/temperature")" = 4000 ]
+  nova-toggle-nightlight off
+  [ "$(cat "$HYPR/temperature")" = 6500 ]
+  nova-toggle-nightlight off
+  [ "$(cat "$HYPR/temperature")" = 6500 ]
+  echo 2 >"$HYPR/resets"
+  nova-toggle-nightlight on
+  [ "$(cat "$HYPR/temperature")" = 4000 ]
+  [ "$(grep -c '^nova-shell -q nightlight refresh' "$CALLS")" -eq 5 ]
+  run nova-toggle-nightlight sideways
+  [ "$status" -eq 2 ]
+  [ "$output" = "Usage: nova-toggle-nightlight [on|off|--status]" ]
+}
+
 @test "touchpad: off keeps its name for the config, on forgets it" {
   echo '{"mice": [{"name": "logitech-usb-receiver"}, {"name": "elan067a:00-04f3:3197-touchpad"}]}' >"$HYPR/devices.json"
   nova-toggle-touchpad
