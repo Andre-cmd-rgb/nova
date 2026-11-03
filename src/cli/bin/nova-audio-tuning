@@ -168,7 +168,7 @@ turn_on() {
     exit 1
   fi
   if ! find_tuning; then
-    echo "No speaker tuning matches this laptop."
+    echo "Nova has no speaker tuning for this laptop."
     exit 0
   fi
   rm -f "$turned_off"
@@ -193,18 +193,17 @@ turn_on() {
     sleep 0.5
   done
   if [[ -z $speakers ]]; then
-    echo "A tuning applies to this laptop but no sink matching $sink_pattern" >&2
-    echo "is present, so there is no audio server yet. Re-run after login:" >&2
-    echo "  nova audio tuning on" >&2
+    echo "The speakers, a sink matching $sink_pattern, are not there: no audio server yet." >&2
+    echo "Once logged in, run: nova audio tuning on" >&2
     exit 1
   fi
 
   if easyeffects_running; then
     cat >&2 <<'EOF'
-EasyEffects is running. It moves any stream that follows the default sink to its
-own sink, so a tuning installed now would be bypassed.
+EasyEffects is running, and it takes everything played to the default output
+into its own sink, past the tuning. Stop it, then turn the tuning on:
 
-Stop it first:  systemctl --user disable --now easyeffects.service
+  systemctl --user disable --now easyeffects.service
 EOF
     exit 1
   fi
@@ -223,7 +222,7 @@ EOF
     systemctl --user is-active --quiet "$unit" 2>/dev/null &&
     systemctl --user is-enabled --quiet "$unit" 2>/dev/null &&
     [[ $(tuning_plays_into) == "$speakers" ]]; then
-    echo "Speaker tuning already current: $description"
+    echo "The speaker tuning is up to date: $description"
     exit 0
   fi
 
@@ -239,7 +238,7 @@ EOF
     take_out
     exit 1
   fi
-  echo "Installed speaker tuning: $description"
+  echo "Speaker tuning installed: $description"
 
   for _ in {1..40}; do
     if tuning_up; then break; fi
@@ -247,8 +246,8 @@ EOF
   done
   if ! tuning_up; then
     take_out
-    echo "Tuning sink never appeared, so it was removed. Audio is untouched." >&2
-    echo "Check: systemctl --user status $unit" >&2
+    echo "The tuning's sink did not come up, so the tuning is taken out again and the" >&2
+    echo "audio left as it was. systemctl --user status $unit says why." >&2
     exit 1
   fi
 
@@ -261,9 +260,8 @@ EOF
   into=$(tuning_plays_into)
   if [[ $into != "$speakers" ]]; then
     take_out
-    echo "The tuning output linked to ${into:-nothing} instead of" >&2
-    echo "$speakers, so it was removed rather than left tuning the wrong" >&2
-    echo "device. Audio is untouched." >&2
+    echo "The tuning played into ${into:-nothing}, not the speakers ($speakers), so it is" >&2
+    echo "taken out again rather than left tuning another device, and the audio left as it was." >&2
     exit 1
   fi
 
@@ -271,7 +269,7 @@ EOF
   # or it would go on around the tuning until its app was restarted.
   pactl set-default-sink "$tuning_sink" >/dev/null 2>&1 || true
   move_streams_to "$tuning_sink"
-  echo "Speakers now play through the tuning."
+  echo "The speakers play through the tuning now."
 }
 
 case $action in
@@ -292,32 +290,25 @@ case $action in
     ;;
 
   status)
-    if [[ -r $graph ]]; then
-      echo "Installed:    yes ($graph)"
-    else
-      echo "Installed:    no"
-    fi
+    row() { printf '%-16s%s\n' "$1:" "$2"; }
+    if [[ -r $graph ]]; then row Installed "yes ($graph)"; else row Installed no; fi
     # is-active and is-enabled print their answer and fail when it is no, so
     # the answer is taken, not a fallback for the failure.
     state=$(systemctl --user is-active "$unit" 2>/dev/null || true)
     enabled=$(systemctl --user is-enabled "$unit" 2>/dev/null || true)
-    echo "Host service: ${state:-inactive} (${enabled:-disabled})"
-    if tuning_up; then
-      echo "Tuning sink:  present"
-    else
-      echo "Tuning sink:  absent"
-    fi
-    echo "Default sink: $(pactl get-default-sink 2>/dev/null || true)"
+    row Service "${state:-inactive}, ${enabled:-disabled}"
+    if tuning_up; then row "Tuning sink" up; else row "Tuning sink" "not there"; fi
+    row "Default output" "$(pactl get-default-sink 2>/dev/null || true)"
     if find_tuning; then
-      echo "Matches:      ${description:-?} (${tuning##*/})"
+      row "This laptop's" "${description:-?} (${tuning##*/})"
     else
-      echo "Matches:      nothing ships for this laptop"
+      row "This laptop's" "none, Nova ships no tuning for it"
     fi
     ;;
 
   off)
     if [[ ! -e $graph && ! -e $host ]]; then
-      echo "No speaker tuning installed."
+      echo "No speaker tuning is installed."
       exit 0
     fi
     speakers=""
@@ -339,7 +330,7 @@ case $action in
     fi
     mkdir -p "${turned_off%/*}"
     : >"$turned_off"
-    echo "Speaker tuning removed."
+    echo "The speaker tuning is taken out."
     ;;
 
   auto)
