@@ -112,7 +112,7 @@ Ui.Panel {
   }
 
   function copy(value) {
-    if (!value || !bar) return
+    if (!bar) return
     Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(value) + " | wl-copy"])
   }
 
@@ -154,7 +154,7 @@ Ui.Panel {
   // The panel stays open through the reconnect a pin causes: that is what
   // there is to watch.
   function setBand(band) {
-    if (!band || change.running) return
+    if (change.running) return
     pendingBand = band
     change.command = ["nova-network-band", band]
     change.running = true
@@ -185,7 +185,7 @@ Ui.Panel {
   // A preset is set and the panel closes; Custom opens the sheet for the
   // addresses.
   function setDns(provider) {
-    if (!bar || !provider || change.running || customDns.busy) return
+    if (!bar || change.running || customDns.busy) return
     customOpen = provider === "Custom"
     if (customOpen) return
     pendingDns = provider
@@ -211,7 +211,7 @@ Ui.Panel {
   }
 
   function rowIndex(ssid) {
-    for (var i = 0; i < rows.length; i++) if (rows[i] && rows[i].ssid === ssid) return i
+    for (var i = 0; i < rows.length; i++) if (rows[i].ssid === ssid) return i
     return -1
   }
 
@@ -306,7 +306,7 @@ Ui.Panel {
   }
 
   function forget(row) {
-    act("forget", row ? network(row.ssid) : null, function(each) { each.forget() })
+    act("forget", network(row.ssid), function(each) { each.forget() })
   }
 
   function openPasswordPrompt(ssid) {
@@ -471,18 +471,14 @@ Ui.Panel {
   }
 
   function moveRow(delta) {
-    if (rows.length === 0) {
-      selectedIndex = -1
-      return
-    }
-    selectedIndex = selectedIndex < 0 ? (delta > 0 ? 0 : rows.length - 1) : clamp(selectedIndex + delta, rows.length - 1)
+    selectedIndex = clamp(selectedIndex + delta, rows.length - 1)
     wifiActionFocused = false
   }
 
   // Right onto a row's Forget mark, where it has one; left back off it.
   function moveToForget(dx) {
     var row = rows[selectedIndex]
-    if (selectedIndex < 0 || !row) return
+    if (!row) return
     wifiActionFocused = Model.canForget(row) && dx > 0
   }
 
@@ -492,12 +488,12 @@ Ui.Panel {
       if (canToggleWifi) toggleNetwork()
     } else if (focusSection === "band") {
       if (bandAutoFocused) toggleAutomatic()
-      else if (bandIndex >= 0 && bandIndex < bands.length) setBand(bands[bandIndex])
+      else if (bandIndex < bands.length) setBand(bands[bandIndex])
     } else if (focusSection === "dns") {
-      if (dnsIndex >= 0 && dnsIndex < dnsChoices.length) setDns(dnsChoices[dnsIndex].name)
+      setDns(dnsChoices[dnsIndex].name)
     } else {
       var row = rows[selectedIndex]
-      if (busy || selectedIndex < 0 || !row) return
+      if (busy || !row) return
       if (wifiActionFocused && Model.canForget(row)) forget(row)
       else choose(row)
     }
@@ -1146,7 +1142,7 @@ Ui.Panel {
     readonly property string activity: {
       if (!net || asking) return ""
       if (acting) return root.actionKind === "connect" ? "Connecting…" : root.actionKind === "disconnect" ? "Disconnecting…" : "Forgetting…"
-      if (failed) return root.failureReason || "Failed"
+      if (failed) return root.failureReason
       if (net.connected) return Networking.connectivity === NetworkConnectivity.Portal ? "Sign in required" : "Connected"
       return ""
     }

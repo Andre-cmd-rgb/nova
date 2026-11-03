@@ -162,7 +162,6 @@ function readBands(text) {
 }
 
 function bandName(band) {
-  if (band === "auto") return "Auto"
   return band ? band + "ghz" : ""
 }
 
@@ -174,8 +173,7 @@ function bandHeading(selected, current) {
 }
 
 function bandHint(band) {
-  if (band === "auto") return "Let Wi-Fi pick the band"
-  return band ? "Stay on " + bandName(band) : ""
+  return "Stay on " + bandName(band)
 }
 
 // ---- The rows of networks
