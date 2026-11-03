@@ -5,81 +5,101 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
-import "MenuModel.js" as MenuModel
+import "MenuModel.js" as Model
 
+// Nova's menu: the apps, settings and commands of menu.jsonc on a card over
+// the screen, walked with the keys or the pointer and searched by typing.
+// It is also nova-menu-select's chooser, a list to pick from or a line to
+// type into. shell.qml keeps it loaded, calls open() with the payload of
+// `nova-shell shell summon nova.menu`, close() to hide it, and refresh() and
+// ping() for nova menu; it reads `opened` to toggle it.
 Item {
   id: root
 
-  // Injected by nova-shell when this plugin is summoned.
+  // Set by shell.qml once the plugin has loaded.
   property string novaPath: Quickshell.env("NOVA_PATH")
   property var shell: null
   property var manifest: null
 
-  // Plugin lifecycle hooks. The host calls open(payloadJson) after
-  // `nova-shell shell summon nova.menu ...` and close() when hidden.
-  property string pendingInitialMenu: "root"
+  // The installed apps, the shell's one AppLibrary.
+  readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
 
+  // -------------------------------------------------------------- the calls
+
+  // {"menu": route} (or "initialMenu") opens the menu at the route; a "mode"
+  // of "select" or "input" opens the chooser (openChooser). A "fontFamily"
+  // is the menu's font from then on.
   function open(payloadJson) {
     var payload = ({})
-    try { payload = JSON.parse(payloadJson || "{}") } catch (e) { payload = ({}) }
-
+    try { payload = JSON.parse(payloadJson || "{}") } catch (notJson) { payload = ({}) }
     if (payload.fontFamily) root.fontFamily = payload.fontFamily
-
-    if (payload.mode === "select" || payload.mode === "input") {
-      root.openDmenu(payload)
-    } else {
-      root.openRoute(payload.initialMenu || payload.menu || "root")
-    }
+    if (payload.mode === "select" || payload.mode === "input") root.openChooser(payload)
+    else root.openRoute(payload.initialMenu || payload.menu || "root")
   }
 
   function close() {
     root.cancel()
   }
 
+  // Reads both menu files again.
   function refresh() {
-    defaultMenuFile.reload()
-    userMenuFile.reload()
+    defaultFile.reload()
+    userFile.reload()
     return "ok"
   }
 
   function ping() { return "ok" }
 
-  property string fontFamily: Style.font.menuFamily
-  // JSONC menu definitions. The shell parses both at startup and merges
-  // the user file on top of the defaults, so the keybind → IPC → visible
-  // path doesn't have to shell out to bash + jq on every open.
-  property string defaultMenuPath: novaPath + "/default/menu.jsonc"
-  property string userMenuPath: Quickshell.env("HOME") + "/.config/nova/menu.jsonc"
-  property var defaultMenuItems: []
-  property var userMenuItems: []
+  // ------------------------------------------------------------------ state
+
   property bool opened: false
+  // "menu", or the chooser's "select" or "input".
   property string mode: "menu"
-  readonly property bool dmenuActive: mode === "select" || mode === "input"
-  property string dmenuPrompt: ""
-  property var dmenuOptions: []
-  property int dmenuWidth: 300
-  property int dmenuMaxHeight: 0
-  property bool rowsLoaded: false
-  property string activeMenu: "root"
-  property string filterText: ""
+  readonly property bool choosing: mode !== "menu"
+  // The menu shown, and those walked through to it, for Back.
+  property string current: "root"
+  property var trail: []
+  // What has been typed: a search, or the chooser's filter or line.
+  property string query: ""
   property int selectedIndex: 0
-  property bool cursorActive: false
-  property var items: ({})
-  property var itemOrder: []
-  property var navStack: []
+
+  // The menu's tree (MenuModel.js), from the two files' entries.
+  property var defaultEntries: []
+  property var userEntries: []
+  property var tree: ({ items: ({}), itemOrder: [] })
+  property bool loaded: false
+
+  // The last answers of the when: and checked: script, by id.
+  property var whenResults: ({})
+  property var checkedResults: ({})
+  property bool guardsPending: false
+
+  // The menus whose provider has filled them, by id; the bash providers
+  // waiting for providerRun; and the tree they were asked from, whose rows
+  // a provider that ends after the menu files are read again does not add.
   property var providersLoaded: ({})
   property var providerQueue: []
   property int providerRevision: 0
 
-  // Shared application engine (entries, hidden filters, icons, launch,
-  // removal), owned by the shell and also used by the standalone launcher.
-  readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
-  property bool deleteConfirmOpen: false
-  property var deleteTarget: null
-  onOpenedChanged: if (!opened) { deleteConfirmOpen = false; deleteTarget = null }
-  // Bound to the central [menu] section in shell.toml via Commons.Color.qml.
-  // Each color already includes its alpha companion (composed in the
-  // singleton), so consumers can drop them straight into a Rectangle.
+  // The chooser, and the nova-menu-select waiting on it, if one is.
+  property string chooserPrompt: ""
+  property var chooserOptions: []
+  property int chooserWidth: 300
+  property int chooserMaxHeight: 0
+  ChooserRequest { id: request }
+
+  // The app the uninstall question is about, { appId, label }, or null.
+  property var uninstalling: null
+  onOpenedChanged: if (!opened) uninstalling = null
+
+  // The rows the list shows, in the list's model too.
+  property var rows: []
+  ListModel { id: shown }
+
+  // ------------------------------------------------------------------- look
+
+  property string fontFamily: Style.font.menuFamily
+  // The [menu] colours of shell.toml, each with its alpha.
   property color background: Commons.Color.menu.background
   property color foreground: Commons.Color.menu.text
   property color border: Commons.Color.menu.border
@@ -89,167 +109,115 @@ Item {
   property color selectedText: Commons.Color.menu.selectedText
   property color selectedBorder: Commons.Color.menu.selectedBorder
   property var selectedBorderSpec: Border.surfaceSpec("menu", "selected-border", selectedBorder, 0)
-  readonly property real rowReservedBorderLeft: Border.left(selectedBorderSpec)
-  readonly property real rowReservedBorderRight: Border.right(selectedBorderSpec)
+  // Every row keeps room for the cursor's border, so the cursor moving
+  // shifts no text.
+  readonly property real rowBorderLeft: Border.left(selectedBorderSpec)
+  readonly property real rowBorderRight: Border.right(selectedBorderSpec)
   readonly property int cornerRadius: Style.cornerRadius
-  property int contentMargin: Style.spacing.panelPadding
-  property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
-  property int contentSpacing: Style.spacing.md
-  property int baseRowHeight: Math.max(Style.space(50), Style.font.body + Style.spacing.rowPaddingX * 2)
-  property int detailRowHeight: Math.max(Style.space(58), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)
-  // How much of the first hidden row stays visible at the fold — enough to
-  // read as a cut-off row rather than a bottom border.
-  property int rowPeek: Math.round(baseRowHeight * 0.55)
-  property int rowSpacing: Style.spacing.xs
-  property int dividerHeight: Style.space(17)
-  property bool searchDivider: false
-  property int layoutSerial: 0
-  property int cardWidth: Math.min(root.dmenuActive ? Style.space(root.dmenuWidth) : ((root.activeMenu === "capture.screenrecord" || root.activeMenu === "style.font") ? Style.space(520) : Style.space(300)), panel.width - Style.gapsOut * 2)
-  property int visibleRowsHeight: root.dmenuActive ? dmenuRowListHeight(layoutSerial, displayModel.count, filterText) : rowListHeight(layoutSerial, displayModel.count, filterText, searchDivider)
-  property int cardHeight: root.dmenuActive
-    ? Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
-    : Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
+  readonly property int contentMargin: Style.spacing.panelPadding
+  readonly property int headerHeight: Math.max(Style.space(34), Style.font.title + Style.spacing.controlPaddingY * 2)
+  readonly property int contentSpacing: Style.spacing.md
+  readonly property int baseRowHeight: Math.max(Style.space(50), Style.font.body + Style.spacing.rowPaddingX * 2)
+  readonly property int detailRowHeight: Math.max(Style.space(58), Style.font.body + Style.font.caption + Style.spacing.rowPaddingX * 2)
+  // How much of the first row below the fold shows: enough to read as a row
+  // cut short rather than a border.
+  readonly property int rowPeek: Math.round(baseRowHeight * 0.55)
+  readonly property int rowSpacing: Style.spacing.xs
+  readonly property int dividerHeight: Style.space(17)
 
-  // The nova-menu-select waiting on the chooser, if one is. With none,
-  // finishing only closes the menu.
-  ChooserRequest { id: request }
+  // Screen Recording's and Font's rows are long, and get a wider card.
+  readonly property var wideMenus: ["capture.screenrecord", "style.font"]
+  readonly property int cardWidth: Math.min(choosing ? Style.space(chooserWidth) : Style.space(wideMenus.indexOf(current) >= 0 ? 520 : 300), panel.width - Style.gapsOut * 2)
+  property int visibleRowsHeight: listHeight()
+  readonly property int cardHeight: Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
 
-  function finishRequest(selection) {
-    if (!request.finish(selection)) root.opened = false
+  // A row's line under the label shows while a search narrows the menu, and
+  // always in the chooser, where it is the caller's.
+  function rowHeight(detail) {
+    return (query || choosing) && detail ? detailRowHeight : baseRowHeight
   }
 
-  function runAction(action) {
-    var command = String(action || "")
-    if (!command) return
-
-    Util.execDetached(command)
-  }
-
-  // Menu rows only surface their detail while a search is narrowing them;
-  // dmenu rows carry caller-supplied subtext that must always be visible.
-  function rowHeightForDetail(detail) {
-    return (root.filterText || root.dmenuActive) && detail ? root.detailRowHeight : root.baseRowHeight
-  }
-
-  // Height the card can devote to rows before running off the screen — or
-  // past the frozen top edge once a search has pinned the card in place.
-  // Uses panel.cardTop rather than effectiveCardTop: the centered top is
-  // derived from the card height, which this value feeds.
+  // The room the rows have before the card runs off the screen, or past the
+  // top a search has pinned it at. It reads cardTop, not effectiveCardTop:
+  // the centred top comes from the card's height, which this decides.
   function availableRowsHeight() {
     var top = panel.cardTop >= 0 ? panel.cardTop : Style.gapsOut
-    var available = panel.height - top - Style.gapsOut - root.contentMargin * 2 - root.headerHeight - root.contentSpacing
-    // The starting menu sets the ceiling along with the offset: drilling into
-    // a longer submenu scrolls behind the fold instead of growing the card.
-    if (panel.maxRowsHeight >= 0) available = Math.min(available, panel.maxRowsHeight)
-    // A card that swallows the whole screen reads as a page, not a menu.
-    return Math.min(available, Math.round(panel.height * 0.7))
+    var room = panel.height - top - Style.gapsOut - contentMargin * 2 - headerHeight - contentSpacing
+    // The menu the card opened on sets the most it grows to: a longer menu
+    // walked into scrolls instead.
+    if (panel.maxRowsHeight >= 0) room = Math.min(room, panel.maxRowsHeight)
+    // A card taller than this reads as a page, not a menu.
+    return Math.min(room, Math.round(panel.height * 0.7))
   }
 
-  // When every row fits, the list gets its full height. When they don't,
-  // the card must end mid-row: a clipped row is what tells the eye there is
-  // more below the fold, so never come out even on a row boundary.
-  function foldedListHeight(totals, available) {
-    var count = totals.length
-    if (count === 0) return root.baseRowHeight
-    if (totals[count - 1] <= available) return totals[count - 1]
-
-    var peek = root.rowPeek
-    var full = 0
-    while (full < count && totals[full] <= available) full++
-    while (full > 1 && totals[full - 1] + root.rowSpacing + peek > available) full--
-    if (full < 1) return Math.max(available, root.baseRowHeight)
-
-    return totals[full - 1] + root.rowSpacing + peek
-  }
-
-  function rowListHeight(_serial, _count, _filter, _divider) {
-    if (displayModel.count === 0) return root.baseRowHeight
-
-    var totals = []
-    var total = 0
-    var previousSection = ""
-
-    for (var i = 0; i < displayModel.count; i++) {
-      var row = displayModel.get(i)
-      if (i > 0) total += root.rowSpacing
-      if (row.section === "drilldown" && previousSection !== "drilldown") total += root.dividerHeight
-      total += root.rowHeightForDetail(row.detail)
-      previousSection = row.section
-      totals.push(total)
-    }
-
-    return foldedListHeight(totals, availableRowsHeight())
-  }
-
-  function dmenuRowListHeight(_serial, _count, _filter) {
-    if (root.mode === "input") return 0
-    if (displayModel.count === 0) return root.baseRowHeight
-
-    var available = availableRowsHeight()
-    if (root.dmenuMaxHeight > 0) available = Math.min(available, Style.space(root.dmenuMaxHeight))
-
-    var totals = []
-    var total = 0
-    for (var i = 0; i < displayModel.count; i++) {
-      if (i > 0) total += root.rowSpacing
-      total += root.rowHeightForDetail(displayModel.get(i).detail)
-      totals.push(total)
-    }
-
-    return foldedListHeight(totals, available)
+  function listHeight() {
+    if (mode === "input") return 0
+    if (rows.length === 0) return baseRowHeight
+    var room = availableRowsHeight()
+    if (choosing && chooserMaxHeight > 0) room = Math.min(room, Style.space(chooserMaxHeight))
+    var withLine = query || choosing ? detailRowHeight : baseRowHeight
+    var bottoms = Model.rowBottoms(rows, baseRowHeight, withLine, rowSpacing, dividerHeight)
+    return Model.foldedHeight(bottoms, room, rowPeek, rowSpacing, baseRowHeight)
   }
 
   function item(id) {
-    return root.items[id] || null
+    return tree.items[id] || null
   }
 
-  // ------------------------------------------------------------------
-  // JSONC → normalized item array. Mirrors the bash bin's jq pipeline so
-  // the on-disk authoring format stays untouched.
-  // ------------------------------------------------------------------
+  // ------------------------------------------------------------- the files
 
-  function stripJsonc(raw) {
-    return MenuModel.stripJsonc(raw)
-  }
-
-  function normalizeAliases(value) {
-    return MenuModel.normalizeAliases(value)
-  }
-
-  function normalizeItem(id, raw) {
-    return MenuModel.normalizeItem(id, raw)
-  }
-
-  function parseMenuJsonc(raw) {
-    return MenuModel.parseMenuJsonc(raw)
-  }
-
-  // Merge defaults + user extension. Later entries override earlier ones
-  // on a per-key basis (so the user can tweak label/icon/action without
-  // re-declaring the whole row).
-  function rebuildItemsFromSources() {
-    var mergedMenu = MenuModel.mergeMenuSources(root.defaultMenuItems, root.userMenuItems)
-    root.providerRevision += 1
-    root.providersLoaded = ({})
-    root.providerQueue = []
-    root.items = mergedMenu.items
-    root.itemOrder = mergedMenu.itemOrder
-    root.rowsLoaded = true
-    root.evaluateGuards()
-    if (root.opened) {
-      root.rebuildDisplay()
-      if (!root.dmenuActive) {
-        if (root.filterText.trim()) root.loadProvidersForSearch()
-        else root.loadProviderForMenu(root.activeMenu)
-      }
+  // The default menu.jsonc and the user's, each read again when it changes;
+  // the user's is laid over the defaults a field at a time.
+  FileView {
+    id: defaultFile
+    path: root.novaPath + "/default/menu.jsonc"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      root.defaultEntries = Model.parseMenuJsonc(text())
+      root.rebuildTree()
     }
+    onFileChanged: reload()
   }
 
-  // Each known provider is a tiny bash one-liner that enumerates a list and
-  // emits one tab-delimited row per item: `label\tvalue\tcurrent`. The shell
-  // turns those into menu items children of `menuId`. A `volatile` provider
-  // re-runs every time its submenu is entered, so a font installed since the
-  // shell started shows up without restarting it.
+  FileView {
+    id: userFile
+    path: Quickshell.env("HOME") + "/.config/nova/menu.jsonc"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      root.userEntries = Model.parseMenuJsonc(text())
+      root.rebuildTree()
+    }
+    onLoadFailed: {
+      root.userEntries = []
+      root.rebuildTree()
+    }
+    onFileChanged: reload()
+  }
+
+  // A new tree drops every provider's rows, and a provider still running
+  // for the old one is not heard.
+  function rebuildTree() {
+    var next = Model.mergeMenuSources(defaultEntries, userEntries)
+    providerRevision += 1
+    providersLoaded = ({})
+    providerQueue = []
+    tree = next
+    loaded = true
+    evaluateGuards()
+    if (!opened) return
+    rebuildDisplay()
+    if (choosing) return
+    if (query.trim()) loadProvidersUnder()
+    else loadProvider(current)
+  }
+
+  // --------------------------------------------------------------- providers
+
+  // A bash provider prints a "label<TAB>value<TAB>current" line a row. One
+  // that is volatile runs again each time its menu is entered: a font
+  // installed since the shell started shows up.
   readonly property var providers: ({
     "fonts": {
       script: "current=$(nova-font-current 2>/dev/null); nova-font-list 2>/dev/null | while read -r f; do [[ -z $f ]] && continue; printf '%s\\t%s\\t%s\\n' \"$f\" \"$f\" \"$current\"; done",
@@ -259,732 +227,453 @@ Item {
     },
     "power-profiles": {
       script: "current=$(nova-power-profile get 2>/dev/null); nova-power-profile list 2>/dev/null | while read -r p; do [[ -z $p ]] && continue; printf '%s\\t%s\\t%s\\n' \"$p\" \"$p\" \"$current\"; done",
-      icon: "\udb81\udc0b",
+      icon: "󰐋",
       actionFor: function(value) { return "nova-power-profile set " + Util.shellQuote(value) }
     }
   })
 
-  function slugify(value) {
-    return MenuModel.slugify(value)
-  }
-
-  // The apps provider is QML-native: rows come from the shared AppLibrary
-  // (DesktopEntries) instead of a bash enumeration, so they carry image
-  // icons, launch feedback, and uninstall support like the launcher.
-  function mergeAppRows() {
-    if (!root.appLibrary) return
-
-    var rows = root.appLibrary.sortedEntries("")
-    var appRows = []
-    for (var j = 0; j < rows.length; j++) {
-      var entry = rows[j].entry
-      var appId = String(entry.id || "")
-      if (!appId) continue
-      var subtext = root.appLibrary.entrySubtext(entry)
-      var aliases = subtext ? [subtext] : []
-      try {
-        if (entry.keywords && typeof entry.keywords.join === "function") aliases = aliases.concat(entry.keywords)
-      } catch (e) { }
-      appRows.push({
-        id: "apps." + appId,
-        parent: "apps",
-        kind: "app",
-        icon: "",
-        appIcon: String(entry.icon || ""),
-        appId: appId,
-        label: root.appLibrary.entryName(entry),
-        title: "",
-        target: "",
-        description: subtext,
-        action: "",
-        provider: "",
-        aliases: aliases,
-        when: "",
-        checked: "",
-        order: 0
-      })
-    }
-
-    var merged = MenuModel.mergeAppRows(root.items, root.itemOrder, appRows)
-    root.items = merged.items
-    root.itemOrder = merged.itemOrder
-    if (root.opened) root.rebuildDisplay()
-  }
-
-  function startProviderForMenu(id) {
-    var entry = root.item(id)
-    if (!entry || !entry.provider || root.providersLoaded[id]) return
+  // Fills the menu <id> from its provider, once: the apps at once, from
+  // AppLibrary, which gives them their icons, their launch and their
+  // removal; a bash provider by providerRun, after the one running.
+  function loadProvider(id) {
+    var entry = item(id)
+    if (!entry || !entry.provider || providersLoaded[id]) return
     if (entry.provider === "apps") {
-      root.providersLoaded[id] = true
-      root.mergeAppRows()
-      return
+      providersLoaded[id] = true
+      addApps()
+    } else if (providerRun.running) {
+      if (providerQueue.indexOf(id) < 0) providerQueue = providerQueue.concat([id])
+    } else {
+      startProvider(id)
     }
-    var spec = root.providers[entry.provider]
+  }
+
+  // Each provider of a menu a search reaches: under the menu shown, or all.
+  function loadProvidersUnder() {
+    var menuId = item(current) ? current : "root"
+    for (var i = 0; i < tree.itemOrder.length; i++) {
+      var entry = item(tree.itemOrder[i])
+      if (!entry || !entry.provider || providersLoaded[entry.id]) continue
+      if (menuId !== "root" && entry.id !== menuId && !Model.isUnder(tree.items, entry.id, menuId)) continue
+      loadProvider(entry.id)
+    }
+  }
+
+  function startProvider(id) {
+    var entry = item(id)
+    var spec = entry ? providers[entry.provider] : null
     if (!spec) return
-
-    root.providersLoaded[id] = true
-    providerProc.menuId = id
-    providerProc.providerKey = entry.provider
-    providerProc.revision = root.providerRevision
-    providerProc.collected = ""
-    providerProc.command = ["bash", "-lc", spec.script]
-    providerProc.running = true
+    providersLoaded[id] = true
+    providerRun.menuId = id
+    providerRun.provider = entry.provider
+    providerRun.revision = providerRevision
+    providerRun.collected = ""
+    providerRun.command = ["bash", "-lc", spec.script]
+    providerRun.running = true
   }
 
-  function mergeProviderRows(rows, menuId, providerKey) {
-    var spec = root.providers[providerKey]
+  function startQueuedProvider() {
+    if (providerRun.running) return
+    while (providerQueue.length > 0) {
+      var id = providerQueue.shift()
+      var entry = item(id)
+      if (!entry || !entry.provider || providersLoaded[id]) continue
+      startProvider(id)
+      return
+    }
+  }
+
+  // Entering a menu is when a volatile list is run again: its last pick may
+  // have changed it. A search does not, or each key would start it over.
+  function forgetVolatile(id) {
+    var entry = item(id)
+    var spec = entry && entry.provider ? providers[entry.provider] : null
+    if (spec && spec.volatile) providersLoaded[id] = false
+  }
+
+  function addApps() {
+    if (!appLibrary) return
+    var apps = Model.appItems(appLibrary.sortedEntries(""), appLibrary.entryName, appLibrary.entrySubtext)
+    tree = Model.withApps(tree, apps)
+    if (opened) rebuildDisplay()
+  }
+
+  function addProviderRows(text, menuId, provider) {
+    var spec = providers[provider]
     if (!spec) return
-    var lines = String(rows || "").split("\n")
-    var providerRows = []
-    var takenIds = ({})
-    for (var i = 0; i < lines.length; i++) {
-      var line = lines[i].trim()
-      if (!line) continue
-      var parts = line.split("\t")
-      var label = parts[0] || ""
-      var value = parts[1] || parts[0] || ""
-      var current = parts[2] || ""
-      if (!label) continue
-      // Distinct values can slugify alike — Fira Code and Fira-Code both give
-      // fira-code — and a repeated id is dropped, which would silently lose a
-      // row from the list. Nudge it until it is the row's own.
-      var rowId = menuId + "." + root.slugify(value)
-      while (takenIds[rowId]) rowId += "-"
-      takenIds[rowId] = true
-
-      providerRows.push({
-        id: rowId,
-        parent: menuId,
-        kind: "action",
-        icon: (value === current) ? "✓" : (spec.icon || ""),
-        label: label,
-        title: "",
-        target: "",
-        description: "",
-        action: spec.actionFor(value),
-        provider: "",
-        aliases: [],
-        when: "",
-        checked: "",
-        order: 0
-      })
-    }
-    var merged = MenuModel.swapProviderRows(root.items, root.itemOrder, menuId, providerRows)
-    root.items = merged.items
-    root.itemOrder = merged.itemOrder
-    if (root.opened) root.rebuildDisplay()
-  }
-
-  function startNextProvider() {
-    if (providerProc.running) return
-
-    while (root.providerQueue.length > 0) {
-      var id = root.providerQueue.shift()
-      var entry = root.item(id)
-      if (!entry || !entry.provider || root.providersLoaded[id]) continue
-
-      root.startProviderForMenu(id)
-      return
-    }
-  }
-
-  // Entering a submenu is the one moment a volatile list is worth paying for
-  // again: it may have been reshaped by the last pick from it. Search doesn't
-  // invalidate, or every keystroke would restart the same enumeration.
-  function invalidateVolatileProvider(id) {
-    var entry = root.item(id)
-    var spec = entry && entry.provider ? root.providers[entry.provider] : null
-    if (spec && spec.volatile) root.providersLoaded[id] = false
-  }
-
-  function loadProviderForMenu(id) {
-    var entry = root.item(id)
-    if (!entry || !entry.provider || root.providersLoaded[id]) return
-
-    // Native providers don't touch providerProc, so they never need to queue.
-    if (entry.provider === "apps") {
-      root.startProviderForMenu(id)
-      return
-    }
-
-    if (providerProc.running) {
-      if (root.providerQueue.indexOf(id) < 0) root.providerQueue = root.providerQueue.concat([id])
-      return
-    }
-
-    root.startProviderForMenu(id)
-  }
-
-  function loadProvidersForSearch() {
-    var active = root.item(root.activeMenu) ? root.activeMenu : "root"
-
-    for (var i = 0; i < root.itemOrder.length; i++) {
-      var entry = root.item(root.itemOrder[i])
-      if (!entry || !entry.provider || root.providersLoaded[entry.id]) continue
-      if (active !== "root" && entry.id !== active && !root.isDescendantOf(entry.id, active)) continue
-
-      root.loadProviderForMenu(entry.id)
-    }
-  }
-
-  function depthFor(id) {
-    return MenuModel.depthFor(root.items, id)
-  }
-
-  function pathFor(id) {
-    return MenuModel.pathFor(root.items, id)
-  }
-
-  function parentPathFor(id) {
-    return MenuModel.parentPathFor(root.items, id)
-  }
-
-  function isDescendantOf(id, ancestorId) {
-    return MenuModel.isDescendantOf(root.items, id, ancestorId)
-  }
-
-  function childCount(id) {
-    return MenuModel.childCount(root.items, root.itemOrder, id)
-  }
-
-  // Guarded items are hidden when their `when:` evaluates false. Static
-  // submenus are also hidden when none of their descendants are visible;
-  // provider-backed menus stay visible because their rows load on demand.
-  function isVisible(entry) {
-    return MenuModel.isVisible(root.items, root.itemOrder, root.whenResults, entry)
-  }
-
-  // Label with the ✓ marker baked in when `checked:` evaluated truthy.
-  function labelFor(entry) {
-    return MenuModel.labelFor(entry, root.checkedResults)
-  }
-
-  function searchableToken(value) {
-    return MenuModel.searchableToken(value)
-  }
-
-  function leafIdFor(id) {
-    return MenuModel.leafIdFor(id)
-  }
-
-  function nameSearchText(entry) {
-    return MenuModel.nameSearchText(entry)
-  }
-
-  function termInSearchWords(term, text) {
-    return MenuModel.termInSearchWords(term, text)
-  }
-
-  function descriptionTextMatches(query, text) {
-    return MenuModel.descriptionTextMatches(query, text)
-  }
-
-  function matchesQuery(entry, query) {
-    return MenuModel.matchesQuery(entry, query, root.isVisible(entry))
-  }
-
-  function searchScore(entry, query) {
-    return MenuModel.searchScore(root.items, entry, query)
-  }
-
-  function displayRow(entry, detail, score, section) {
-    return MenuModel.displayRow(root.items, root.itemOrder, root.checkedResults, entry, detail, score, section)
-  }
-
-  function rebuildDmenuDisplay() {
-    displayModel.clear()
-    root.searchDivider = false
-
-    if (root.mode === "input") {
-      layoutSerial += 1
-      return
-    }
-
-    var query = root.filterText.trim().toLowerCase()
-    for (var i = 0; i < root.dmenuOptions.length; i++) {
-      // An option is "<label>", "<glyph>\t<label>", or
-      // "<glyph>\t<label>\t<subtext>". The glyph never comes back with the
-      // selection; the subtext renders under the label, filters alongside it,
-      // and returns with the selection as a stable key for same-named rows.
-      var parts = String(root.dmenuOptions[i] || "").split("\t")
-      var icon = parts.length > 1 ? parts.shift() : ""
-      var label = parts.shift() || ""
-      var detail = parts.join("\t")
-      if (query && label.toLowerCase().indexOf(query) < 0
-          && detail.toLowerCase().indexOf(query) < 0) continue
-      displayModel.append({
-        itemId: "dmenu." + i,
-        kind: "dmenu",
-        icon: icon,
-        iconFont: "",
-        appIcon: "",
-        appId: "",
-        label: label,
-        target: "",
-        detail: detail,
-        path: "",
-        childCount: 0,
-        action: "",
-        provider: "",
-        score: i,
-        section: ""
-      })
-    }
-
-    layoutSerial += 1
-
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
-
-    Qt.callLater(function() {
-      if (displayModel.count > 0) root.revealCursor()
-    })
-  }
-
-  function rebuildDisplay() {
-    if (root.dmenuActive) {
-      root.rebuildDmenuDisplay()
-      return
-    }
-
-    displayModel.clear()
-
-    if (!root.rowsLoaded) return
-
-    var active = root.item(root.activeMenu) ? root.activeMenu : "root"
-    root.activeMenu = active
-    var rows = []
-    var query = root.filterText.trim()
-    root.searchDivider = false
-
-    if (query) {
-      var currentRows = []
-      var drilldownRows = []
-
-      for (var i = 0; i < root.itemOrder.length; i++) {
-        var entry = root.item(root.itemOrder[i])
-        if (!entry || entry.id === "root") continue
-        if (!root.isDescendantOf(entry.id, active)) continue
-        if (!root.matchesQuery(entry, query)) continue
-
-        var detail = root.parentPathFor(entry.id)
-        var row = root.displayRow(entry, detail, root.searchScore(entry, query))
-        if (entry.parent === active) currentRows.push(row)
-        else drilldownRows.push(row)
-      }
-
-      var searchSort = function(a, b) {
-        if (a.score !== b.score) return a.score - b.score
-        return a.path.localeCompare(b.path)
-      }
-
-      currentRows.sort(searchSort)
-      drilldownRows.sort(searchSort)
-      root.searchDivider = currentRows.length > 0 && drilldownRows.length > 0
-      if (root.searchDivider) {
-        for (var d = 0; d < drilldownRows.length; d++) drilldownRows[d].section = "drilldown"
-      }
-      rows = currentRows.concat(drilldownRows)
-    } else {
-      for (var j = 0; j < root.itemOrder.length; j++) {
-        var child = root.item(root.itemOrder[j])
-        if (!child || child.parent !== active) continue
-        if (!root.isVisible(child)) continue
-        rows.push(root.displayRow(child, child.description, child.order))
-      }
-
-      // DesktopEntries can reorder its values when an application starts.
-      // Keep the Apps menu alphabetical independently of provider refreshes.
-      if (active === "apps") {
-        rows.sort(function(a, b) {
-          var aLabel = String(a.label || "").toLowerCase()
-          var bLabel = String(b.label || "").toLowerCase()
-          if (aLabel < bLabel) return -1
-          if (aLabel > bLabel) return 1
-          var aId = String(a.itemId || "")
-          var bId = String(b.itemId || "")
-          if (aId < bId) return -1
-          if (aId > bId) return 1
-          return 0
-        })
-      }
-    }
-
-    for (var k = 0; k < rows.length; k++) displayModel.append(rows[k])
-    layoutSerial += 1
-
-    if (displayModel.count === 0) selectedIndex = 0
-    else if (selectedIndex >= displayModel.count) selectedIndex = displayModel.count - 1
-    else if (selectedIndex < 0) selectedIndex = 0
-
-    Qt.callLater(function() {
-      if (displayModel.count > 0) root.revealCursor()
-    })
-  }
-
-  // Contain alone parks the cursor row flush with the viewport edge, hiding
-  // the neighbor entirely and losing the fold affordance. Keep the next
-  // hidden row peeking past the cursor in the direction of travel.
-  function revealCursor() {
-    if (displayModel.count === 0) return
-    resultList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
-
-    var item = resultList.itemAtIndex(root.selectedIndex)
-    if (!item) return
-
-    var reach = root.rowPeek + root.rowSpacing
-    if (root.selectedIndex < displayModel.count - 1) {
-      var maxY = Math.max(resultList.originY, resultList.originY + resultList.contentHeight - resultList.height)
-      var overhang = item.y + item.height + reach - (resultList.contentY + resultList.height)
-      if (overhang > 0) resultList.contentY = Math.min(resultList.contentY + overhang, maxY)
-    }
-    if (root.selectedIndex > 0) {
-      var underhang = resultList.contentY - (item.y - reach)
-      if (underhang > 0) resultList.contentY = Math.max(resultList.contentY - underhang, resultList.originY)
-    }
-  }
-
-  function select(delta) {
-    if (displayModel.count === 0) return
-
-    root.disarmPointer()
-    if (!cursorActive) {
-      cursorActive = true
-      selectedIndex = delta < 0 ? displayModel.count - 1 : 0
-    } else {
-      selectedIndex = Util.stepIndex(selectedIndex, delta, displayModel.count)
-    }
-    revealCursor()
-  }
-
-  function setFilter(nextFilter) {
-    panel.freezeCardTop()
-    root.filterText = nextFilter
-    root.selectedIndex = 0
-    root.cursorActive = root.mode !== "input"
-    root.disarmPointer()
-    if (!root.dmenuActive && root.filterText.trim()) root.loadProvidersForSearch()
-    root.rebuildDisplay()
-  }
-
-  function setActiveMenu(id, pushHistory, fromPointer) {
-    panel.freezeCardTop()
-    if (!root.item(id)) id = "root"
-    if (pushHistory && id !== root.activeMenu) root.navStack = root.navStack.concat([root.activeMenu])
-    root.activeMenu = id
-    root.filterText = ""
-    root.selectedIndex = 0
-    root.cursorActive = true
-    if (fromPointer) pointerGate.allowInitialSample()
-    else root.disarmPointer()
-    root.rebuildDisplay()
-    root.invalidateVolatileProvider(id)
-    root.loadProviderForMenu(id)
-  }
-
-  function goBack() {
-    if (root.activeMenu === "root") return false
-
-    if (root.navStack.length > 0) {
-      var previous = root.navStack[root.navStack.length - 1]
-      root.navStack = root.navStack.slice(0, root.navStack.length - 1)
-      root.setActiveMenu(previous, false)
-      return true
-    }
-
-    var active = root.item(root.activeMenu)
-    root.setActiveMenu((active && active.parent) ? active.parent : "root", false)
-    return true
-  }
-
-  function activateIndex(index, fromPointer) {
-    if (root.deleteConfirmOpen) return
-    if (root.dmenuActive) {
-      if (root.mode === "input") {
-        root.applyDmenuSelection(root.filterText)
-        return
-      }
-      if (index < 0 || index >= displayModel.count) return
-      var picked = displayModel.get(index)
-      root.applyDmenuSelection(picked.detail ? picked.label + "\t" + picked.detail : picked.label)
-      return
-    }
-
-    if (index < 0 || index >= displayModel.count) return
-
-    var row = displayModel.get(index)
-    if (row.kind === "menu" || row.kind === "link") {
-      root.setActiveMenu(row.target || row.itemId, true, fromPointer)
-    } else if (row.kind === "app") {
-      var appId = row.appId
-      var label = row.label
-      opened = false
-      filterText = ""
-      if (root.appLibrary) root.appLibrary.launch(appId, label)
-    } else {
-      root.applySelected(row.itemId, row.action)
-    }
-  }
-
-  function requestDeleteSelected() {
-    if (!root.cursorActive || root.selectedIndex < 0 || root.selectedIndex >= displayModel.count) return
-    var row = displayModel.get(root.selectedIndex)
-    if (!row || row.kind !== "app") return
-    root.deleteTarget = { appId: row.appId, label: row.label }
-    deleteConfirm.selectedIndex = 1
-    root.deleteConfirmOpen = true
-  }
-
-  function cancelDelete() {
-    root.deleteConfirmOpen = false
-    root.deleteTarget = null
-    deleteConfirm.selectedIndex = 1
-    root.disarmPointer()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-
-  function confirmDelete() {
-    var target = root.deleteTarget
-    root.deleteConfirmOpen = false
-    root.deleteTarget = null
-    if (!target) return
-    root.cancel()
-    if (root.appLibrary) root.appLibrary.remove(target.appId, target.label)
-  }
-
-  function applyDmenuSelection(value) {
-    opened = false
-    filterText = ""
-    root.finishRequest(value)
-  }
-
-  function applySelected(id, action) {
-    if (!id) { cancel(); return }
-
-    opened = false
-    filterText = ""
-    root.runAction(action)
-  }
-
-  function cancel() {
-    if (root.dmenuActive) root.finishRequest(null)
-    opened = false
-    filterText = ""
-  }
-
-  function openExistingMenu(initialMenu) {
-    request.release()
-    mode = "menu"
-    activeMenu = root.item(initialMenu) ? initialMenu : "root"
-    navStack = []
-    filterText = ""
-    selectedIndex = 0
-    cursorActive = true
-    root.disarmPointer()
-    root.evaluateGuards()
-    opened = true
-    rebuildDisplay()
-    invalidateVolatileProvider(activeMenu)
-    loadProviderForMenu(activeMenu)
-    // The shell may start before first-install packages have finished placing
-    // their icons. Refresh here even when the desktop entry list did not change.
-    if (root.appLibrary) root.appLibrary.refreshIcons()
-
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-
-  function openDmenu(payload) {
-    mode = payload.mode === "input" ? "input" : "select"
-    dmenuPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
-    dmenuOptions = Array.isArray(payload.options) ? payload.options : []
-    request.begin(String(payload.selectionFile || ""), String(payload.doneFile || ""))
-    dmenuWidth = Math.max(1, Number(payload.width || 300))
-    dmenuMaxHeight = Math.max(0, Number(payload.maxHeight || 0))
-    activeMenu = "root"
-    navStack = []
-    filterText = ""
-    selectedIndex = 0
-    cursorActive = mode !== "input"
-    root.disarmPointer()
-    opened = true
-    rebuildDisplay()
-
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-  ListModel { id: displayModel }
-
-  // ----------------------------------------------------------- route surface
-  //
-  // The menu is opened through the standard plugin lifecycle:
-  // `nova-shell shell summon nova.menu '{"menu":"system"}'`.
-  // Callers may pass a real id (`system`, `setup.power`) or an alias declared
-  // in JSONC (`power`, `reminder-set`). Unknown strings fall through to the
-  // id-as-route behavior so misspellings still attempt to open the literal id.
-  function resolveRoute(input) {
-    return MenuModel.resolveRoute(root.items, root.itemOrder, input)
-  }
-
-  function openRoute(initialMenu) {
-    var id = root.resolveRoute(initialMenu)
-    var entry = root.items[id]
-    // If the resolved id is an action (i.e. the user invoked an alias for
-    // a leaf, e.g. `nova menu summon screenrecord-stop`), run it directly
-    // instead of opening an action with no children.
-    if (entry && entry.kind === "action" && entry.action) {
-      root.cancel()
-      root.runAction(entry.action)
-      return "ok"
-    }
-    // If it's a link (a redirect to another menu), follow the link.
-    if (entry && entry.kind === "link" && entry.target) id = entry.target
-    root.pendingInitialMenu = id
-    root.openExistingMenu(id)
-    return "ok"
-  }
-
-  function disarmPointer() {
-    pointerGate.reset()
-  }
-
-  function selectFromPointer(index, item, mouse) {
-    if (!pointerGate.moved(item, mouse)) return
-    root.cursorActive = true
-    root.selectedIndex = index
+    tree = Model.withProviderRows(tree, menuId, Model.providerItems(menuId, text, spec.icon, spec.actionFor))
+    if (opened) rebuildDisplay()
   }
 
   Process {
-    id: providerProc
+    id: providerRun
     property string menuId: ""
-    property string providerKey: ""
+    property string provider: ""
     property string collected: ""
     property int revision: 0
     stdout: SplitParser {
-      onRead: function(data) { providerProc.collected += data + "\n" }
+      onRead: function(line) { providerRun.collected += line + "\n" }
     }
     onExited: {
-      if (providerProc.revision === root.providerRevision) {
-        root.mergeProviderRows(providerProc.collected, providerProc.menuId, providerProc.providerKey)
-        if (root.filterText.trim()) root.loadProvidersForSearch()
+      if (providerRun.revision === root.providerRevision) {
+        root.addProviderRows(providerRun.collected, providerRun.menuId, providerRun.provider)
+        if (root.query.trim()) root.loadProvidersUnder()
       }
-      root.startNextProvider()
+      root.startQueuedProvider()
     }
-  }
-
-
-  PointerMoveGate {
-    id: pointerGate
-    referenceItem: card
   }
 
   Connections {
     target: root.appLibrary
     function onAppsChanged() {
-      if (root.providersLoaded["apps"]) root.mergeAppRows()
+      if (root.providersLoaded["apps"]) root.addApps()
     }
   }
 
-  // The JSONC sources are watched so live edits to the default file (or the
-  // user extension at ~/.config/nova/menu.jsonc) take
-  // effect without restarting the shell.
-  FileView {
-    id: defaultMenuFile
-    path: root.defaultMenuPath
-    watchChanges: true
-    printErrors: false
-    onLoaded: { root.defaultMenuItems = root.parseMenuJsonc(text()); root.rebuildItemsFromSources() }
-    onFileChanged: reload()
-  }
+  // ------------------------------------------------------ when: and checked:
 
-  FileView {
-    id: userMenuFile
-    path: root.userMenuPath
-    watchChanges: true
-    printErrors: false
-    onLoaded: { root.userMenuItems = root.parseMenuJsonc(text()); root.rebuildItemsFromSources() }
-    onLoadFailed: { root.userMenuItems = []; root.rebuildItemsFromSources() }
-    onFileChanged: reload()
-  }
-
-  // ---------------------------------------------------------------- guards
-  //
-  // `when:` (visibility) and `checked:` (✓ marker) are bash expressions the
-  // shell wasn't allowed to evaluate before the perf rewrite. Now the shell
-  // batches them into one bash subprocess per (re)load so the open path
-  // never has to wait on them.
-
-  property var whenResults: ({})       // id → true|false (allow visibility)
-  property var checkedResults: ({})    // id → true|false (show ✓)
-  property bool guardsPending: false
-
+  // Every when: (does the row show) and checked: (does it have a ✓) is a
+  // bash expression, all of them run as one script (Model.guardScript)
+  // whenever the tree changes and each time the menu opens, which shows the
+  // last answers until the new ones come.
   function evaluateGuards() {
-    // Process ignores a command change while it is running, and `collected`
-    // belongs to the run in flight, so a second evaluation cannot overwrite
-    // the first: it would throw away the lines already read and never start.
-    // The surviving tail then lands as the whole answer, and every id lost
-    // with it goes back to showing, since a `when:` only hides on an explicit
-    // false. Wait for the run in flight and evaluate once it lands instead.
-    if (guardProc.running) {
-      root.guardsPending = true
+    // A run's command cannot change while it runs, and its output is the
+    // only answer for its rows: a second run started over it would never
+    // start, and keep the half the first had printed. It waits instead.
+    if (guardRun.running) {
+      guardsPending = true
       return
     }
-    root.guardsPending = false
-
-    var script = MenuModel.guardScript(root.items)
+    guardsPending = false
+    var script = Model.guardScript(tree.items)
     if (!script) {
-      root.whenResults = ({})
-      root.checkedResults = ({})
+      whenResults = ({})
+      checkedResults = ({})
       return
     }
-    guardProc.collected = ""
-    guardProc.command = ["bash", "-lc", script]
-    guardProc.running = true
+    guardRun.collected = ""
+    guardRun.command = ["bash", "-lc", script]
+    guardRun.running = true
   }
 
   Process {
-    id: guardProc
+    id: guardRun
     property string collected: ""
     stdout: SplitParser {
-      onRead: function(data) { guardProc.collected += data + "\n" }
+      onRead: function(line) { guardRun.collected += line + "\n" }
     }
     onExited: function(exitCode, exitStatus) {
-      // A batch that was killed rather than finished has only told us about
-      // the rows it reached, and a row whose `when:` went unanswered shows.
-      // Keep the last complete set rather than let a half-read one through.
-      // A signal leaves the exit code at 0, so the status is what tells us.
-      if (exitCode !== 0 || exitStatus !== 0) {
-        if (root.guardsPending) Qt.callLater(function() { root.evaluateGuards() })
-        return
+      // A run killed part way has answered only the rows it reached, and a
+      // row whose when: went unanswered shows: the last whole answers stand.
+      // A signal leaves the exit code at 0; the status tells.
+      if (exitCode === 0 && exitStatus === 0) {
+        var answers = Model.readGuards(guardRun.collected)
+        root.whenResults = answers.when
+        root.checkedResults = answers.checked
+        if (root.opened) root.rebuildDisplay()
       }
-
-      var nextWhen = ({})
-      var nextChecked = ({})
-      var lines = guardProc.collected.split("\n")
-      for (var i = 0; i < lines.length; i++) {
-        var line = lines[i].trim()
-        if (!line) continue
-        var colon = line.lastIndexOf(":")
-        if (colon < 0) continue
-        var value = line.substring(colon + 1) === "1"
-        var rest = line.substring(0, colon)
-        var tagAt = rest.lastIndexOf(":")
-        if (tagAt < 0) continue
-        var id = rest.substring(0, tagAt)
-        var tag = rest.substring(tagAt + 1)
-        if (tag === "w") nextWhen[id] = value
-        else if (tag === "c") nextChecked[id] = value
-      }
-      root.whenResults = nextWhen
-      root.checkedResults = nextChecked
-      if (root.opened) root.rebuildDisplay()
-      // Run the evaluation that had to stand aside. Deferred by a turn so the
-      // process is settled before its command is set again.
-      if (root.guardsPending) Qt.callLater(function() { root.evaluateGuards() })
+      // The run that waited, a turn later, once this one has settled.
+      if (root.guardsPending) Qt.callLater(root.evaluateGuards)
     }
   }
+
+  // ----------------------------------------------------------------- opening
+
+  // A route is an id or an alias (Model.resolveRoute). An action's route
+  // runs the action, and a link's opens the menu it points to.
+  function openRoute(route) {
+    var id = Model.resolveRoute(tree, route)
+    var entry = tree.items[id]
+    if (entry && entry.kind === "action" && entry.action) {
+      cancel()
+      run(entry.action)
+      return "ok"
+    }
+    if (entry && entry.kind === "link" && entry.target) id = entry.target
+    openMenu(id)
+    return "ok"
+  }
+
+  // A chooser still waiting is answered as cancelled: the menu takes its
+  // place.
+  function openMenu(id) {
+    request.release()
+    mode = "menu"
+    current = item(id) ? id : "root"
+    trail = []
+    query = ""
+    selectedIndex = 0
+    pointerGate.reset()
+    evaluateGuards()
+    opened = true
+    rebuildDisplay()
+    forgetVolatile(current)
+    loadProvider(current)
+    // Icons placed after the shell started (on a first install, for one)
+    // are found when the menu opens.
+    if (appLibrary) appLibrary.refreshIcons()
+    Qt.callLater(focusKeys)
+  }
+
+  // nova-menu-select's chooser: its "prompt", its "options" (Model.chooserRows)
+  // or, for "input", a line to type; the files the pick is written to
+  // ("selectionFile", "doneFile"); and its "width" and "maxHeight".
+  function openChooser(payload) {
+    mode = payload.mode === "input" ? "input" : "select"
+    chooserPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
+    chooserOptions = Array.isArray(payload.options) ? payload.options : []
+    request.begin(String(payload.selectionFile || ""), String(payload.doneFile || ""))
+    chooserWidth = Math.max(1, Number(payload.width || 300))
+    chooserMaxHeight = Math.max(0, Number(payload.maxHeight || 0))
+    current = "root"
+    trail = []
+    query = ""
+    selectedIndex = 0
+    pointerGate.reset()
+    opened = true
+    rebuildDisplay()
+    Qt.callLater(focusKeys)
+  }
+
+  function focusKeys() {
+    keyCatcher.forceActiveFocus()
+  }
+
+  // ----------------------------------------------------------------- the rows
+
+  // Lists the chooser's options, what a search finds, or the menu shown.
+  // The list empties first, so rows that cannot be worked out leave it
+  // empty rather than showing the last ones.
+  function rebuildDisplay() {
+    show([])
+    if (mode === "input" || (!choosing && !loaded)) return
+    var next
+    if (choosing) {
+      next = Model.chooserRows(chooserOptions, query)
+    } else {
+      current = item(current) ? current : "root"
+      var search = query.trim()
+      next = search ? Model.searchRows(tree, current, search, whenResults, checkedResults)
+        : Model.menuRows(tree, current, whenResults, checkedResults)
+    }
+    show(next)
+    selectedIndex = Math.max(0, Math.min(selectedIndex, next.length - 1))
+    Qt.callLater(revealCursor)
+  }
+
+  // The list starts again at its top. Rows put back into a list still
+  // scrolled are laid out from where it was scrolled to, and its origin
+  // would move that far on with each new list.
+  function show(next) {
+    rows = next
+    shown.clear()
+    list.contentY = list.originY
+    if (next.length > 0) shown.append(next)
+  }
+
+  // Scrolls the cursor's row into view with the next row peeking past it,
+  // the way it moves: a row flush with the edge hides the one beyond and the
+  // fold that says there is more.
+  function revealCursor() {
+    if (shown.count === 0) return
+    list.positionViewAtIndex(selectedIndex, ListView.Contain)
+    var at = list.itemAtIndex(selectedIndex)
+    if (!at) return
+    var reach = rowPeek + rowSpacing
+    if (selectedIndex < shown.count - 1) {
+      var lowest = Math.max(list.originY, list.originY + list.contentHeight - list.height)
+      var below = at.y + at.height + reach - (list.contentY + list.height)
+      if (below > 0) list.contentY = Math.min(list.contentY + below, lowest)
+    }
+    if (selectedIndex > 0) {
+      var above = list.contentY - (at.y - reach)
+      if (above > 0) list.contentY = Math.max(list.contentY - above, list.originY)
+    }
+  }
+
+  // ------------------------------------------------------------ moving about
+
+  // The cursor <delta> rows on: one row wraps round the ends, a page stops
+  // at them.
+  function move(delta) {
+    if (shown.count === 0) return
+    pointerGate.reset()
+    selectedIndex = Util.stepIndex(selectedIndex, delta, shown.count)
+    revealCursor()
+  }
+
+  function search(text) {
+    panel.freezeCardTop()
+    query = text
+    selectedIndex = 0
+    pointerGate.reset()
+    if (!choosing && query.trim()) loadProvidersUnder()
+    rebuildDisplay()
+  }
+
+  // Shows the menu <id> (the root for one that is not there), remembered
+  // for Back when <remember>. From the pointer, the row under it takes the
+  // cursor at once.
+  function enter(id, remember, fromPointer) {
+    panel.freezeCardTop()
+    if (!item(id)) id = "root"
+    if (remember && id !== current) trail = trail.concat([current])
+    current = id
+    query = ""
+    selectedIndex = 0
+    if (fromPointer) pointerGate.allowInitialSample()
+    else pointerGate.reset()
+    rebuildDisplay()
+    forgetVolatile(id)
+    loadProvider(id)
+  }
+
+  // Back to the menu before, or up to the parent of one opened by a route.
+  function goBack() {
+    if (current === "root") return
+    if (trail.length > 0) {
+      var previous = trail[trail.length - 1]
+      trail = trail.slice(0, -1)
+      enter(previous, false)
+      return
+    }
+    var entry = item(current)
+    enter(entry && entry.parent ? entry.parent : "root", false)
+  }
+
+  // Does what the row at <index> is for: enters a menu, launches an app,
+  // runs a command, or picks a chooser's option, its line too when it has
+  // one. In the chooser's input it gives the line typed.
+  function activate(index, fromPointer) {
+    if (uninstalling) return
+    if (mode === "input") {
+      choose(query)
+      return
+    }
+    if (index < 0 || index >= shown.count) return
+    var row = shown.get(index)
+    if (choosing) {
+      choose(row.detail ? row.label + "\t" + row.detail : row.label)
+    } else if (row.kind === "menu" || row.kind === "link") {
+      enter(row.target || row.itemId, true, fromPointer)
+    } else if (row.kind === "app") {
+      var appId = row.appId
+      var label = row.label
+      opened = false
+      query = ""
+      if (appLibrary) appLibrary.launch(appId, label)
+    } else if (!row.itemId) {
+      cancel()
+    } else {
+      opened = false
+      query = ""
+      run(row.action)
+    }
+  }
+
+  function run(action) {
+    var command = String(action || "")
+    if (command) Util.execDetached(command)
+  }
+
+  function choose(value) {
+    opened = false
+    query = ""
+    finish(value)
+  }
+
+  // Answers the chooser, with null as cancelled; with none waiting, closes.
+  function finish(value) {
+    if (!request.finish(value)) opened = false
+  }
+
+  function cancel() {
+    if (choosing) finish(null)
+    opened = false
+    query = ""
+  }
+
+  // ---------------------------------------------------------------- uninstall
+
+  // Delete asks to uninstall the app under the cursor, with Uninstall chosen.
+  function askUninstall() {
+    if (selectedIndex < 0 || selectedIndex >= shown.count) return
+    var row = shown.get(selectedIndex)
+    if (!row || row.kind !== "app") return
+    confirm.selectedIndex = 1
+    uninstalling = { appId: row.appId, label: row.label }
+  }
+
+  function keepApp() {
+    uninstalling = null
+    confirm.selectedIndex = 1
+    pointerGate.reset()
+    Qt.callLater(focusKeys)
+  }
+
+  function uninstall() {
+    var app = uninstalling
+    uninstalling = null
+    if (!app) return
+    cancel()
+    if (appLibrary) appLibrary.remove(app.appId, app.label)
+  }
+
+  // --------------------------------------------------------------------- keys
+
+  // Escape clears a search, or closes; Backspace and Left go back when
+  // nothing is typed; Up, Down, Page Up and Page Down move; Return, Enter
+  // and Right do what the row is for; Delete asks to uninstall an app; text
+  // searches. While the uninstall question is up, it has the keys.
+  function pressKey(event) {
+    if (uninstalling) return confirm.handleKey(event)
+    var key = event.key
+    var step = stepFor(key)
+    if (key === Qt.Key_Delete) askUninstall()
+    else if (key === Qt.Key_Escape) query ? search("") : cancel()
+    else if (Util.editsFilter(event, query)) search(Util.editedFilter(event, query))
+    else if ((key === Qt.Key_Backspace || key === Qt.Key_Left) && !query) goBack()
+    else if (step !== 0) move(step)
+    else if (key === Qt.Key_Return || key === Qt.Key_Enter || key === Qt.Key_Right) activate(selectedIndex)
+    else if (typed(event)) search(query + event.text)
+    else return false
+    return true
+  }
+
+  function stepFor(key) {
+    switch (key) {
+    case Qt.Key_Up: return -1
+    case Qt.Key_Down: return 1
+    case Qt.Key_PageUp: return -6
+    case Qt.Key_PageDown: return 6
+    }
+    return 0
+  }
+
+  // A character typed as itself, shifted or not.
+  function typed(event) {
+    var code = event.text && event.text.length === 1 ? event.text.charCodeAt(0) : 0
+    return code >= 32 && code !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)
+  }
+
+  // ------------------------------------------------------------------ pointer
+
+  // Rows slide under a pointer that stands still, which Qt reports as hover;
+  // only a real move takes the cursor.
+  PointerMoveGate {
+    id: pointerGate
+    referenceItem: card
+  }
+
+  function pointAt(index, row, mouse) {
+    if (pointerGate.moved(row, mouse)) selectedIndex = index
+  }
+
+  // ------------------------------------------------------------------- window
+
   PanelWindow {
     id: panel
-    visible: root.opened && root.rowsLoaded
+    visible: root.opened && root.loaded
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "nova-menu"
@@ -992,23 +681,26 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
-    // The card opens centered exactly as always. The first search keystroke
-    // or submenu move freezes the top line where it currently sits — from
-    // then on the card grows and shrinks downward instead of re-centering
-    // on every resize, which made the menu jump around. The rows height is
-    // frozen at the same moment, so the starting menu also caps how tall the
-    // card may grow from there. Closing unfreezes both.
+    // The card opens centred. The first search key or move pins its top
+    // where it is, and from then on it grows and shrinks downward instead of
+    // jumping to a new centre each time; the rows' height then is the most
+    // they grow to. Closing frees both.
     property int cardTop: -1
     property int maxRowsHeight: -1
     readonly property int centeredTop: Math.max(Style.gapsOut, Math.round((height - root.cardHeight) / 2))
     readonly property int effectiveCardTop: cardTop >= 0 ? cardTop : centeredTop
+
     function freezeCardTop() {
-      if (visible && cardTop < 0) {
-        cardTop = effectiveCardTop
-        maxRowsHeight = root.visibleRowsHeight
-      }
+      if (!visible || cardTop >= 0) return
+      cardTop = effectiveCardTop
+      maxRowsHeight = root.visibleRowsHeight
     }
-    onVisibleChanged: if (!visible) { cardTop = -1; maxRowsHeight = -1 }
+
+    onVisibleChanged: {
+      if (visible) return
+      cardTop = -1
+      maxRowsHeight = -1
+    }
 
     Rectangle {
       anchors.fill: parent
@@ -1031,66 +723,25 @@ Item {
       borderSpec: root.borderSpec
       padding: root.contentMargin
 
+      // A click on the card is not one on the scrim.
       MouseArea { anchors.fill: parent; onClicked: {} }
 
       Item {
         id: keyCatcher
         anchors.fill: parent
-        z: root.deleteConfirmOpen ? 20 : 0
+        z: root.uninstalling ? 20 : 0
         focus: true
-
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
-          if (root.deleteConfirmOpen) {
-            if (deleteConfirm.handleKey(event)) event.accepted = true
-            return
-          }
-
-          if (event.key === Qt.Key_Delete) {
-            root.requestDeleteSelected()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Escape) {
-            if (root.filterText) root.setFilter("")
-            else root.cancel()
-            event.accepted = true
-          } else if (Util.editsFilter(event, root.filterText)) {
-            root.setFilter(Util.editedFilter(event, root.filterText))
-            event.accepted = true
-          } else if ((event.key === Qt.Key_Backspace || event.key === Qt.Key_Left) && !root.filterText) {
-            root.goBack()
-            event.accepted = true
-          } else if (event.key === Qt.Key_Up) {
-            root.select(-1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Down) {
-            root.select(1)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageUp) {
-            root.select(-6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_PageDown) {
-            root.select(6)
-            event.accepted = true
-          } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter || event.key === Qt.Key_Right) {
-            if (root.dmenuActive) {
-              if (root.mode === "input") root.applyDmenuSelection(root.filterText)
-              else if (displayModel.count > 0) root.activateIndex(root.cursorActive ? root.selectedIndex : 0)
-            } else if (root.cursorActive) root.activateIndex(root.selectedIndex)
-            else if (displayModel.count > 0) root.cursorActive = true
-            event.accepted = true
-          } else if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && event.text.charCodeAt(0) !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)) {
-            root.setFilter(root.filterText + event.text)
-            event.accepted = true
-          }
+          if (root.pressKey(event)) event.accepted = true
         }
 
         ConfirmDialog {
-          id: deleteConfirm
-
+          id: confirm
           anchors.fill: parent
-          opened: root.deleteConfirmOpen
           z: 10
-          message: "Do you want to uninstall " + ((root.deleteTarget && root.deleteTarget.label) || "") + "?"
+          opened: root.uninstalling !== null
+          message: "Do you want to uninstall " + ((root.uninstalling && root.uninstalling.label) || "") + "?"
           confirmText: "Uninstall"
           background: root.background
           foreground: root.foreground
@@ -1099,8 +750,8 @@ Item {
           selectedText: root.selectedText
           fontFamily: root.fontFamily
           cornerRadius: root.cornerRadius
-          onCanceled: root.cancelDelete()
-          onConfirmed: root.confirmDelete()
+          onCanceled: root.keepApp()
+          onConfirmed: root.uninstall()
         }
       }
 
@@ -1112,25 +763,24 @@ Item {
         anchors.leftMargin: card.contentLeftInset
         spacing: root.contentSpacing
 
-        Rectangle {
+        // The search, or what is shown: the chooser's prompt, the menu's
+        // title or label.
+        Item {
           width: parent.width
           height: root.headerHeight
-          radius: root.cornerRadius
-          color: "transparent"
 
           Text {
-            textFormat: Text.PlainText
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.filterText || (root.dmenuActive ? (root.dmenuPrompt + "…") : ((root.item(root.activeMenu) ? (root.item(root.activeMenu).title || root.item(root.activeMenu).label) : "Go") + "…"))
+            textFormat: Text.PlainText
+            text: root.query || (root.choosing ? root.chooserPrompt : root.menuTitle()) + "…"
             color: root.foreground
-            opacity: root.filterText ? 1 : 0.58
+            opacity: root.query ? 1 : 0.58
             font.family: root.fontFamily
             font.pixelSize: Style.font.heading
             elide: Text.ElideRight
           }
-
         }
 
         Item {
@@ -1138,26 +788,26 @@ Item {
           height: root.visibleRowsHeight
 
           ListView {
-            id: resultList
+            id: list
             anchors.fill: parent
-            model: displayModel
+            model: shown
             clip: true
             spacing: root.rowSpacing
             boundsBehavior: Flickable.StopAtBounds
 
+            // A search's rows deeper than the menu, under a line.
             section.property: "section"
             section.criteria: ViewSection.FullString
             section.delegate: Item {
               required property string section
-
               width: ListView.view.width
               height: section === "drilldown" ? root.dividerHeight : 0
               visible: section === "drilldown"
 
               Rectangle {
                 anchors.left: parent.left
-                anchors.leftMargin: Style.space(4)
                 anchors.right: parent.right
+                anchors.leftMargin: Style.space(4)
                 anchors.rightMargin: Style.space(4)
                 anchors.verticalCenter: parent.verticalCenter
                 height: Style.spacing.hairline
@@ -1165,182 +815,27 @@ Item {
               }
             }
 
-            delegate: BorderSurface {
-              id: row
-              required property int index
-              required property string itemId
-              required property string kind
-              required property string icon
-              required property string iconFont
-              required property string appIcon
-              required property string appId
-              required property string label
-              required property string target
-              required property string detail
-              required property string path
-              required property string action
-              required property int childCount
-
-              readonly property bool hasCursor: root.cursorActive && row.index === root.selectedIndex
-              readonly property bool isApp: row.kind === "app"
-              readonly property bool hasIcon: row.icon.length > 0 || row.isApp
-
-              width: ListView.view.width
-              height: root.rowHeightForDetail(row.detail)
-              radius: root.cornerRadius
-              color: row.hasCursor ? root.selectedBackground : "transparent"
-              borderSpec: row.hasCursor ? root.selectedBorderSpec : Border.none()
-
-              Rectangle {
-                visible: false
-                width: Style.space(4)
-                height: parent.height - Style.space(18)
-                radius: Math.min(root.cornerRadius, Style.space(4))
-                color: root.selectedBackground
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8)
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: iconText
-                textFormat: Text.PlainText
-                visible: row.hasIcon && !row.isApp
-                text: row.icon
-                color: row.hasCursor ? root.selectedText : root.foreground
-                font.family: row.iconFont.length > 0 ? row.iconFont : root.fontFamily
-                font.pixelSize: Style.font.iconLarge
-                width: Style.space(36)
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8)
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-              }
-
-              Image {
-                id: appIconImage
-                visible: row.isApp
-                width: Style.font.iconLarge
-                height: Style.font.iconLarge
-                fillMode: Image.PreserveAspectFit
-                // Decode at physical pixels — a logical-size decode leaves
-                // PNG icons upscaled and blurry on HiDPI displays.
-                sourceSize.width: width * Screen.devicePixelRatio
-                sourceSize.height: height * Screen.devicePixelRatio
-                source: row.isApp && root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : ""
-                asynchronous: true
-                anchors.left: parent.left
-                anchors.leftMargin: root.rowReservedBorderLeft + Style.space(8) + (Style.space(36) - width) / 2
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-              }
-
-              Column {
-                id: contentColumn
-                anchors.left: row.hasIcon ? iconText.right : parent.left
-                anchors.leftMargin: row.hasIcon ? Style.space(6) : root.rowReservedBorderLeft + Style.space(18)
-                anchors.right: trail.left
-                anchors.rightMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(3)
-
-                Text {
-                  id: labelText
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: row.label
-                  color: row.hasCursor ? root.selectedText : root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.heading
-                  font.weight: Font.Medium
-                  elide: Text.ElideRight
-                }
-
-                Text {
-                  textFormat: Text.PlainText
-                  width: parent.width
-                  text: row.detail
-                  visible: (root.filterText || row.kind === "dmenu") && row.detail.length > 0
-                  color: root.foreground
-                  opacity: 0.52
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
-                }
-              }
-
-              Row {
-                id: trail
-                width: Style.space(14)
-                anchors.right: parent.right
-                anchors.rightMargin: root.rowReservedBorderRight + Style.space(8)
-                y: contentColumn.y + labelText.y + (labelText.height - height) / 2
-                spacing: 0
-
-                Text {
-                  textFormat: Text.PlainText
-                  visible: false
-                  text: row.childCount
-                  color: root.foreground
-                  opacity: 0.45
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.body
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-
-                Text {
-                  textFormat: Text.PlainText
-                  text: row.kind === "menu" || row.kind === "link" ? "›" : ""
-                  color: row.hasCursor ? root.selectedText : root.foreground
-                  opacity: row.kind === "menu" || row.kind === "link" ? 0.36 : 0
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.heading
-                  font.weight: Font.Normal
-                  anchors.verticalCenter: parent.verticalCenter
-                }
-              }
-
-              MouseArea {
-                id: mouseArea
-                anchors.fill: parent
-                hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onEntered: root.selectFromPointer(row.index, row, {
-                  x: mouseArea.mouseX,
-                  y: mouseArea.mouseY
-                })
-                onPositionChanged: function(mouse) {
-                  root.selectFromPointer(row.index, row, mouse)
-                }
-                onClicked: {
-                  root.cursorActive = true
-                  root.selectedIndex = row.index
-                  root.activateIndex(row.index, true)
-                }
-              }
-            }
+            delegate: MenuRow {}
           }
 
           // The touchpad scrolls the list as GTK does.
           TouchpadScroll {
-            anchors.fill: resultList
-            flickable: resultList
+            anchors.fill: list
+            flickable: list
           }
 
-          // Scroll scrims. The clipped row already marks the fold at rest;
-          // these keep both edges honest once the list has been scrolled,
-          // when content hides above the card top as well as below. Strength
-          // tracks the distance still hidden past each edge rather than
-          // animating on a clock, so a programmatic jump — wrapping from the
-          // last row back to the first — lands with the fade already applied.
+          // A fade at each edge the list has rows hidden past, as strong as
+          // how much is: at rest the row cut short marks the fold, and these
+          // follow the scroll, so a jump from the last row to the first
+          // lands faded already.
           Rectangle {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.top: parent.top
             height: Math.min(Style.space(28), parent.height / 2)
             visible: opacity > 0
-            opacity: resultList.contentHeight > resultList.height
-              ? Math.max(0, Math.min(1, (resultList.contentY - resultList.originY) / height))
+            opacity: list.contentHeight > list.height
+              ? Math.max(0, Math.min(1, (list.contentY - list.originY) / height))
               : 0
             gradient: Gradient {
               GradientStop { position: 0; color: root.background }
@@ -1354,8 +849,8 @@ Item {
             anchors.bottom: parent.bottom
             height: Math.min(Style.space(28), parent.height / 2)
             visible: opacity > 0
-            opacity: resultList.contentHeight > resultList.height
-              ? Math.max(0, Math.min(1, (resultList.originY + resultList.contentHeight - resultList.height - resultList.contentY) / height))
+            opacity: list.contentHeight > list.height
+              ? Math.max(0, Math.min(1, (list.originY + list.contentHeight - list.height - list.contentY) / height))
               : 0
             gradient: Gradient {
               GradientStop { position: 0; color: Util.alpha(root.background, 0) }
@@ -1366,35 +861,156 @@ Item {
           Column {
             anchors.centerIn: parent
             spacing: Style.space(8)
-            visible: displayModel.count === 0 && root.mode !== "input"
+            visible: shown.count === 0 && root.mode !== "input"
 
             Text {
+              width: Style.space(320)
               text: "󰈉"
               color: root.selectedText
               opacity: 0.8
               font.family: root.fontFamily
               font.pixelSize: Style.font.displayLarge
               horizontalAlignment: Text.AlignHCenter
-              width: Style.space(320)
             }
 
             Text {
+              width: Style.space(320)
               textFormat: Text.PlainText
-              text: root.filterText ? "No matches for “" + root.filterText + "”" : "Nothing here yet"
+              text: root.query ? "No matches for “" + root.query + "”" : "Nothing here yet"
               color: root.foreground
               opacity: 0.7
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
               horizontalAlignment: Text.AlignHCenter
-              width: Style.space(320)
             }
           }
         }
+      }
+    }
+  }
 
-        Item {
-          width: parent.width
-          height: 0
-        }
+  function menuTitle() {
+    var entry = item(current)
+    return entry ? entry.title || entry.label : "Go"
+  }
+
+  // A row of the list: its glyph or app icon, its label with the line under
+  // it, and a › on one that opens a menu.
+  component MenuRow: BorderSurface {
+    id: row
+    required property int index
+    required property string kind
+    required property string icon
+    required property string iconFont
+    required property string appIcon
+    required property string label
+    required property string detail
+
+    readonly property bool hasCursor: index === root.selectedIndex
+    readonly property bool isApp: kind === "app"
+    readonly property bool hasIcon: icon.length > 0 || isApp
+    readonly property color ink: hasCursor ? root.selectedText : root.foreground
+    // The glyph, the icon and the › are centred on the label's line.
+    readonly property real labelMiddle: lines.y + title.y + title.height / 2
+
+    width: ListView.view.width
+    height: root.rowHeight(detail)
+    radius: root.cornerRadius
+    color: hasCursor ? root.selectedBackground : "transparent"
+    borderSpec: hasCursor ? root.selectedBorderSpec : Border.none()
+
+    Text {
+      id: glyph
+      visible: row.hasIcon && !row.isApp
+      anchors.left: parent.left
+      anchors.leftMargin: root.rowBorderLeft + Style.space(8)
+      y: row.labelMiddle - height / 2
+      width: Style.space(36)
+      textFormat: Text.PlainText
+      text: row.icon
+      color: row.ink
+      font.family: row.iconFont.length > 0 ? row.iconFont : root.fontFamily
+      font.pixelSize: Style.font.iconLarge
+      horizontalAlignment: Text.AlignHCenter
+      verticalAlignment: Text.AlignVCenter
+    }
+
+    Image {
+      visible: row.isApp
+      anchors.left: parent.left
+      anchors.leftMargin: root.rowBorderLeft + Style.space(8) + (Style.space(36) - width) / 2
+      y: row.labelMiddle - height / 2
+      width: Style.font.iconLarge
+      height: Style.font.iconLarge
+      fillMode: Image.PreserveAspectFit
+      // Decoded at the screen's pixels: one decoded at the logical size is
+      // blurred when scaled up on a HiDPI screen.
+      sourceSize.width: width * Screen.devicePixelRatio
+      sourceSize.height: height * Screen.devicePixelRatio
+      source: row.isApp && root.appLibrary ? root.appLibrary.iconSource(row.appIcon) : ""
+      asynchronous: true
+    }
+
+    Column {
+      id: lines
+      anchors.left: row.hasIcon ? glyph.right : parent.left
+      anchors.leftMargin: row.hasIcon ? Style.space(6) : root.rowBorderLeft + Style.space(18)
+      anchors.right: chevron.left
+      anchors.rightMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(3)
+
+      Text {
+        id: title
+        width: parent.width
+        textFormat: Text.PlainText
+        text: row.label
+        color: row.ink
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.heading
+        font.weight: Font.Medium
+        elide: Text.ElideRight
+      }
+
+      Text {
+        width: parent.width
+        visible: (root.query || row.kind === "choice") && row.detail.length > 0
+        textFormat: Text.PlainText
+        text: row.detail
+        color: root.foreground
+        opacity: 0.52
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        elide: Text.ElideRight
+      }
+    }
+
+    Text {
+      id: chevron
+      visible: row.kind === "menu" || row.kind === "link"
+      anchors.right: parent.right
+      anchors.rightMargin: root.rowBorderRight + Style.space(8)
+      y: row.labelMiddle - height / 2
+      width: Style.space(14)
+      textFormat: Text.PlainText
+      text: "›"
+      color: row.ink
+      opacity: 0.36
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.heading
+      font.weight: Font.Normal
+    }
+
+    MouseArea {
+      id: pointer
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onEntered: root.pointAt(row.index, row, { x: pointer.mouseX, y: pointer.mouseY })
+      onPositionChanged: function(mouse) { root.pointAt(row.index, row, mouse) }
+      onClicked: {
+        root.selectedIndex = row.index
+        root.activate(row.index, true)
       }
     }
   }

@@ -1,50 +1,97 @@
-// Whole-line // comments out, and trailing commas outside strings: a label or
-// a command may hold ",}" of its own.
-function stripJsonc(raw) {
+.pragma library
+
+// The menu's rules, kept apart from its window: reading menu.jsonc into a
+// tree of items, the rows the apps and the providers add to it, routes, what
+// a menu and a search list, the list's height, and the one bash script that
+// answers every when: and checked:.
+//
+// A tree is { items: { id: item }, itemOrder: [id] }. Every change makes a
+// new one, and none of these functions writes into the tree it is handed:
+// the menu keeps its tree in a QML property, and a key written into an
+// object held there is now and then lost: an id left in the order with no
+// item behind it, or an app listed twice.
+
+// ---- menu.jsonc
+
+// JSONC as JSON: comment lines out, and a comma before a } or ] dropped, but
+// only outside strings, where a label or a command may hold ",}" of its own.
+function jsonText(raw) {
   var text = String(raw || "").replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
-  var out = []
-  var inString = false
-  for (var i = 0; i < text.length; i++) {
-    var c = text.charAt(i)
-    if (inString) {
-      if (c === "\\") {
-        out.push(c + text.charAt(i + 1))
-        i++
-        continue
-      }
-      if (c === '"') inString = false
-    } else if (c === '"') {
-      inString = true
-    } else if (c === ",") {
-      var next = i + 1
-      while (next < text.length && /\s/.test(text.charAt(next))) next++
-      if (text.charAt(next) === "}" || text.charAt(next) === "]") continue
-    }
-    out.push(c)
+  return text.replace(/"(?:[^"\\]|\\[\s\S])*"|,(?=\s*[}\]])/g, function(found) {
+    return found.charAt(0) === '"' ? found : ""
+  })
+}
+
+// The entries of a menu file as written, each an object with its id: [] for
+// a file that is empty or not JSON. The items may sit under "items". They
+// are made into items only once the two files are merged: a user's entry
+// names only what it changes, and the defaults filled in here would
+// overwrite the rest.
+function parseMenuJsonc(raw) {
+  var text = jsonText(raw)
+  if (!text.trim()) return []
+  var parsed
+  try {
+    parsed = JSON.parse(text)
+  } catch (notJson) {
+    return []
   }
-  return out.join("")
+  if (typeof parsed !== "object" || parsed === null) return []
+
+  var wrapped = parsed.items && typeof parsed.items === "object" && !Array.isArray(parsed.items)
+  var source = wrapped ? parsed.items : parsed
+  var entries = []
+  for (var id in source) {
+    var fields = source[id]
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) continue
+    var entry = { id: id }
+    for (var key in fields) if (key !== "id") entry[key] = fields[key]
+    entries.push(entry)
+  }
+  return entries
 }
 
-function normalizeAliases(value) {
-  if (Array.isArray(value)) return value.filter(function(v) { return v })
-  if (typeof value === "string" && value) return [value]
-  return []
+// The tree of the default file's entries with the user's on top, a field at
+// a time. An entry sits under the id its own id extends (capture.screenrecord
+// under capture), or under its parent when it names one; a root is added
+// when neither file has one. Each item's order is its place in itemOrder.
+function mergeMenuSources(defaults, user) {
+  var fields = {}
+  var order = []
+  ;[defaults || [], user || []].forEach(function(entries) {
+    entries.forEach(function(entry) {
+      if (!entry || !entry.id) return
+      if (!fields[entry.id]) order.push(entry.id)
+      var merged = {}
+      var before = fields[entry.id] || {}
+      for (var a in before) merged[a] = before[a]
+      for (var b in entry) merged[b] = entry[b]
+      merged.id = entry.id
+      fields[entry.id] = merged
+    })
+  })
+
+  var items = {}
+  order.forEach(function(id) { items[id] = menuItem(id, fields[id]) })
+  if (!items.root) {
+    items.root = searchable({ id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" })
+    order.unshift("root")
+  }
+  order.forEach(function(id, place) { items[id].order = place })
+  return { items: items, itemOrder: order }
 }
 
-function normalizeItem(id, raw) {
-  var value = raw || {}
-  var aliases = normalizeAliases(value.aliases)
+// An item from its merged fields. One with an action runs it, one with a
+// target opens that menu (a link), anything else is a menu of its own.
+function menuItem(id, fields) {
+  var value = fields || {}
   var parent = value.parent
-  if (parent === undefined)
-    parent = id.indexOf(".") >= 0 ? id.split(".").slice(0, -1).join(".") : "root"
+  if (parent === undefined) parent = id.indexOf(".") >= 0 ? id.slice(0, id.lastIndexOf(".")) : "root"
   if (id === "root") parent = ""
-
-  var kind = value.action ? "action" : (value.target ? "link" : "menu")
-
-  return {
+  return searchable({
     id: id,
     parent: parent,
-    kind: kind,
+    kind: value.action ? "action" : value.target ? "link" : "menu",
     icon: value.icon || "",
     iconFont: value.iconFont || "",
     label: value.label || id,
@@ -53,334 +100,223 @@ function normalizeItem(id, raw) {
     description: value.description || "",
     action: value.action || "",
     provider: value.provider || "",
-    aliases: aliases,
+    aliases: aliasList(value.aliases),
     when: value.when || "",
     checked: value.checked || ""
-  }
+  })
 }
 
-// The items of a menu file as written, each with its id. They are normalized
-// once merged: a user file's entry names only what it changes, and the
-// defaults normalizing fills in would overwrite the rest.
-function parseMenuJsonc(raw) {
-  var stripped = stripJsonc(raw)
-  if (!stripped.trim()) return []
-
-  var parsed
-  try {
-    parsed = JSON.parse(stripped)
-  } catch (e) {
-    return []
-  }
-  if (typeof parsed !== "object" || parsed === null) return []
-
-  var source = (parsed.items && typeof parsed.items === "object" && !Array.isArray(parsed.items))
-    ? parsed.items
-    : parsed
-  var out = []
-  for (var id in source) {
-    var entry = source[id]
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue
-    var item = { id: id }
-    for (var key in entry) if (key !== "id") item[key] = entry[key]
-    out.push(item)
-  }
-  return out
+// "aliases" as written: a list, or one name.
+function aliasList(value) {
+  if (Array.isArray(value)) return value.filter(function(alias) { return alias })
+  return typeof value === "string" && value ? [value] : []
 }
 
-function mergeMenuSources(defaultItems, userItems) {
-  var nextItems = ({})
-  var nextOrder = []
-  var sources = [defaultItems || [], userItems || []]
+// ---- Rows the providers add
 
-  for (var s = 0; s < sources.length; s++) {
-    var src = sources[s]
-    for (var i = 0; i < src.length; i++) {
-      var entry = src[i]
-      if (!entry || !entry.id) continue
-      if (!nextItems[entry.id]) nextOrder.push(entry.id)
-      var prior = nextItems[entry.id] || {}
-      var merged = {}
-      for (var k in prior) merged[k] = prior[k]
-      for (var k2 in entry) merged[k2] = entry[k2]
-      merged.id = entry.id
-      nextItems[entry.id] = merged
-    }
-  }
-  for (var n = 0; n < nextOrder.length; n++)
-    nextItems[nextOrder[n]] = normalizeItem(nextOrder[n], nextItems[nextOrder[n]])
-
-  if (!nextItems.root) {
-    nextItems.root = { id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" }
-    nextOrder.unshift("root")
-  }
-  for (var k3 = 0; k3 < nextOrder.length; k3++) nextItems[nextOrder[k3]].order = k3
-
-  return {
-    items: nextItems,
-    itemOrder: nextOrder
-  }
+// The Apps menu's rows for AppLibrary's sorted entries, with their names
+// and the lines under them as AppLibrary gives them. The line and the
+// entry's Keywords are what search finds an app by besides its name.
+function appItems(sorted, nameOf, subtextOf) {
+  var apps = []
+  sorted.forEach(function(row) {
+    var entry = row.entry
+    var appId = String(entry.id || "")
+    if (!appId) return
+    var subtext = subtextOf(entry)
+    var aliases = subtext ? [subtext] : []
+    try {
+      if (entry.keywords && typeof entry.keywords.join === "function") aliases = aliases.concat(entry.keywords)
+    } catch (unreadable) { }
+    apps.push(searchable({ id: "apps." + appId, parent: "apps", kind: "app", icon: "", appIcon: String(entry.icon || ""), appId: appId, label: nameOf(entry), title: "", target: "", description: subtext, action: "", provider: "", aliases: aliases, when: "", checked: "", order: 0 }))
+  })
+  return apps
 }
 
-// Both merges below return fresh items/itemOrder objects for the caller to
-// assign in one go. They must never write into the maps they are handed: those
-// live in QML `var` properties, and an in-place write into such an object is
-// occasionally dropped by the engine — the key lands with an undefined value.
-// A lost write used to leave an id in itemOrder with no item behind it, and
-// the next merge then kept that orphan and appended a second row for the same
-// app, so the launcher listed it twice (and again on every later rescan).
-
-// Swaps every app row for the current set. Rows keep the order they arrive in;
-// ids already claimed (including duplicate desktop ids) are listed once.
-function mergeAppRows(items, itemOrder, appRows) {
-  var source = items || ({})
-  var order = Array.isArray(itemOrder) ? itemOrder : []
-  var rows = Array.isArray(appRows) ? appRows : []
-  var nextItems = ({})
-  var nextOrder = []
-
-  for (var i = 0; i < order.length; i++) {
-    var id = order[i]
-    var existing = source[id]
-    // Orphans (an id with no item) are dropped rather than carried forward,
-    // so a single lost write cannot compound into a duplicate row.
-    if (!existing || existing.kind === "app") continue
-    nextItems[id] = existing
-    nextOrder.push(id)
-  }
-
-  for (var j = 0; j < rows.length; j++) {
-    var row = rows[j]
-    if (!row || !row.id || nextItems[row.id]) continue
-    row.order = nextOrder.length
-    nextItems[row.id] = row
-    nextOrder.push(row.id)
-  }
-
-  return { items: nextItems, itemOrder: nextOrder }
+// The tree with its apps swapped for <apps>, in the order given, each listed
+// once; every other item keeps its place. An id in the order with no item
+// is dropped rather than carried on.
+function withApps(tree, apps) {
+  return rebuilt(tree, function(item) { return item.kind === "app" }, apps)
 }
 
-// Swaps the rows one provider contributed, leaving every other item untouched.
-// Rows carry the id of the submenu that produced them, so a provider that runs
-// again drops its previous batch — a plugin that was just enabled disappears
-// from the Enable list — without disturbing static children declared in JSONC.
-function swapProviderRows(items, itemOrder, menuId, rows) {
-  var source = items || ({})
-  var order = Array.isArray(itemOrder) ? itemOrder : []
-  var incoming = Array.isArray(rows) ? rows : []
-  var nextItems = ({})
-  var nextOrder = []
-
-  for (var i = 0; i < order.length; i++) {
-    var id = order[i]
-    var existing = source[id]
-    if (!existing || existing.providerMenu === menuId) continue
-    nextItems[id] = existing
-    nextOrder.push(id)
-  }
-
-  for (var j = 0; j < incoming.length; j++) {
-    var row = incoming[j]
-    if (!row || !row.id || nextItems[row.id]) continue
-    row.providerMenu = menuId
-    row.order = nextOrder.length
-    nextItems[row.id] = row
-    nextOrder.push(row.id)
-  }
-
-  return { items: nextItems, itemOrder: nextOrder }
+// A bash provider's rows for the menu <menuId>, from what it printed: a
+// "label<TAB>value<TAB>current" line each. The row whose value is current
+// has a ✓ for its icon, and picking a row runs actionFor(value). Values
+// that make the same id (Fira Code and Fira-Code) get one each.
+function providerItems(menuId, text, icon, actionFor) {
+  var rows = []
+  var taken = {}
+  String(text || "").split("\n").forEach(function(line) {
+    var parts = line.trim().split("\t")
+    var label = parts[0] || ""
+    var value = parts[1] || label
+    if (!label) return
+    var id = menuId + "." + slugify(value)
+    while (taken[id]) id += "-"
+    taken[id] = true
+    rows.push(searchable({ id: id, parent: menuId, providerMenu: menuId, kind: "action", icon: value === (parts[2] || "") ? "✓" : icon || "", label: label, title: "", target: "", description: "", action: actionFor(value), provider: "", aliases: [], when: "", checked: "", order: 0 }))
+  })
+  return rows
 }
 
-function item(items, id) {
-  return items && items[id] ? items[id] : null
+// The tree with the rows the provider of <menuId> gave last time swapped for
+// <rows>, so that a provider run again drops the rows it no longer gives;
+// the menu's own items in menu.jsonc stay.
+function withProviderRows(tree, menuId, rows) {
+  return rebuilt(tree, function(item) { return item.providerMenu === menuId }, rows)
 }
 
-// Routes may name a real id (`system`, `setup.power`) or an alias declared in
-// JSONC (`power-menu`, `settings`). An exact id beats any alias, and app rows
-// are never routable: their aliases carry .desktop Keywords and GenericName
-// for search, so an installed application could otherwise shadow a menu route
-// (htop ships `Keywords=system;...`). Unknown strings fall through as the
-// literal input so misspellings still attempt to open that id.
-function resolveRoute(items, itemOrder, input) {
-  var raw = String(input || "").toLowerCase().replace(/_/g, "-")
-  if (!raw || raw === "go" || raw === "menu") return "root"
-  if (item(items, raw)) return raw
-  var order = Array.isArray(itemOrder) ? itemOrder : []
-  for (var i = 0; i < order.length; i++) {
-    var entry = item(items, order[i])
-    if (!entry || entry.kind === "app" || !entry.aliases) continue
-    for (var j = 0; j < entry.aliases.length; j++) {
-      var alias = String(entry.aliases[j] || "").toLowerCase().replace(/_/g, "-")
-      if (alias === raw) return entry.id
-    }
-  }
-  return raw
+// The tree without the items <dropped> picks, with <added> after the rest;
+// an added id already taken is left out.
+function rebuilt(tree, dropped, added) {
+  var items = {}
+  var order = []
+  tree.itemOrder.forEach(function(id) {
+    var item = tree.items[id]
+    if (!item || dropped(item)) return
+    items[id] = item
+    order.push(id)
+  })
+  added.forEach(function(row) {
+    if (!row || !row.id || items[row.id]) return
+    row.order = order.length
+    items[row.id] = row
+    order.push(row.id)
+  })
+  return { items: items, itemOrder: order }
 }
 
 function slugify(value) {
   return String(value || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "item"
 }
 
-function depthFor(items, id) {
-  var depth = 0
-  var current = item(items, id)
-  var guard = 0
+// ---- The tree
 
-  while (current && current.parent && current.parent !== "root" && guard < 32) {
-    depth += 1
-    current = item(items, current.parent)
-    guard += 1
-  }
-
-  return depth
+function item(items, id) {
+  return items && items[id] ? items[id] : null
 }
 
-function pathFor(items, id) {
-  var labels = []
-  var current = item(items, id)
-  var guard = 0
-
-  while (current && current.id !== "root" && guard < 32) {
-    labels.unshift(current.label)
-    current = item(items, current.parent)
-    guard += 1
+// What `nova menu <route>` opens: "go", "menu" and nothing are the root;
+// otherwise an id, else the first item with the route as an alias, case and
+// _ for - aside. Apps are never a route: their aliases are their Keywords,
+// and an app could take a menu's name (htop has "system"). Anything else is
+// tried as an id as it was written.
+function resolveRoute(tree, route) {
+  var name = String(route || "").toLowerCase().replace(/_/g, "-")
+  if (!name || name === "go" || name === "menu") return "root"
+  if (item(tree.items, name)) return name
+  for (var i = 0; i < tree.itemOrder.length; i++) {
+    var entry = item(tree.items, tree.itemOrder[i])
+    if (!entry || entry.kind === "app" || !entry.aliases) continue
+    for (var j = 0; j < entry.aliases.length; j++) {
+      if (String(entry.aliases[j] || "").toLowerCase().replace(/_/g, "-") === name) return entry.id
+    }
   }
+  return name
+}
 
+// How many menus down from the root's own items an item is. A walk up the
+// tree stops after 32 steps, for a user's menus that are each other's parent.
+function depth(items, id) {
+  var steps = 0
+  for (var at = item(items, id); at && at.parent && at.parent !== "root" && steps < 32; at = item(items, at.parent)) steps++
+  return steps
+}
+
+// "Update › Restart › Shell": the labels from the root down to the item.
+function path(items, id) {
+  var labels = []
+  for (var at = item(items, id); at && at.id !== "root" && labels.length < 32; at = item(items, at.parent)) labels.unshift(at.label)
   return labels.join(" › ")
 }
 
-function parentPathFor(items, id) {
-  var entry = item(items, id)
-  if (!entry || !entry.parent || entry.parent === "root") return ""
-  return pathFor(items, entry.parent)
-}
-
-function isDescendantOf(items, id, ancestorId) {
-  if (ancestorId === "root") return id !== "root"
-
-  var current = item(items, id)
-  var guard = 0
-  while (current && current.parent && guard < 32) {
-    if (current.parent === ancestorId) return true
-    current = item(items, current.parent)
-    guard += 1
+function isUnder(items, id, menuId) {
+  if (menuId === "root") return id !== "root"
+  var steps = 0
+  for (var at = item(items, id); at && at.parent && steps < 32; at = item(items, at.parent), steps++) {
+    if (at.parent === menuId) return true
   }
-
   return false
 }
 
-function childCount(items, itemOrder, id) {
-  var count = 0
-  var order = Array.isArray(itemOrder) ? itemOrder : []
-  for (var i = 0; i < order.length; i++) {
-    var entry = item(items, order[i])
-    if (entry && entry.parent === id) count += 1
-  }
-  return count
-}
-
-function isVisible(items, itemOrder, whenResults, entry, depth) {
+// Whether a row shows: not when its when: said no; a menu or a link only
+// with a row of its own to show, or a provider that fills it.
+function isShown(tree, whenResults, entry, steps) {
   if (!entry) return false
   if (entry.when && whenResults && whenResults[entry.id] === false) return false
   if (entry.kind !== "menu" && entry.kind !== "link") return true
   if (entry.provider) return true
-
-  var guard = depth || 0
-  if (guard >= 32) return false
-
-  var target = entry.kind === "link" ? entry.target : entry.id
-  var order = Array.isArray(itemOrder) ? itemOrder : []
-  for (var i = 0; i < order.length; i++) {
-    var child = item(items, order[i])
-    if (child && child.parent === target && isVisible(items, itemOrder, whenResults, child, guard + 1)) return true
+  var deeper = steps || 0
+  if (deeper >= 32) return false
+  var menuId = entry.kind === "link" ? entry.target : entry.id
+  for (var i = 0; i < tree.itemOrder.length; i++) {
+    var child = item(tree.items, tree.itemOrder[i])
+    if (child && child.parent === menuId && isShown(tree, whenResults, child, deeper + 1)) return true
   }
-
   return false
 }
 
-function labelFor(entry, checkedResults) {
-  if (!entry) return ""
-  if (entry.checked && checkedResults && checkedResults[entry.id]) return entry.label + " ✓"
-  return entry.label
+// ---- Search
+
+// What search reads of an item, made once with it: its label, the last part
+// of its id and its aliases as one text, with . _ and - as spaces; and the
+// words of its description, which match only whole.
+function searchable(entry) {
+  var aliases = (Array.isArray(entry.aliases) ? entry.aliases : []).map(spaced)
+  var leaf = String(entry.id || "").split(".").pop()
+  entry.searchName = [entry.label, spaced(leaf), aliases.join(" ")].join(" ").toLowerCase()
+  entry.searchWords = String(entry.description || "").toLowerCase().split(/\s+/)
+  return entry
 }
 
-function searchableToken(value) {
+function spaced(value) {
   return String(value || "").replace(/[._-]+/g, " ")
 }
 
-function leafIdFor(id) {
-  var parts = String(id || "").split(".")
-  return parts.length > 0 ? parts[parts.length - 1] : id
+function searchOf(query) {
+  var text = String(query || "").toLowerCase().trim()
+  return { text: text, terms: text.split(/\s+/).filter(function(term) { return term }) }
 }
 
-function nameSearchText(entry) {
-  if (!entry) return ""
-  var aliases = []
-  var values = Array.isArray(entry.aliases) ? entry.aliases : []
-  for (var i = 0; i < values.length; i++) aliases.push(searchableToken(values[i]))
-  return [entry.label, searchableToken(leafIdFor(entry.id)), aliases.join(" ")].join(" ").toLowerCase()
+// Every word of the search is in the item's name, or a word of its
+// description.
+function finds(entry, search) {
+  return search.terms.every(function(term) {
+    return entry.searchName.indexOf(term) >= 0 || entry.searchWords.indexOf(term) >= 0
+  })
 }
 
-function termInSearchWords(term, text) {
-  var words = String(text || "").toLowerCase().split(/\s+/)
-  for (var i = 0; i < words.length; i++) {
-    if (words[i] === term) return true
-  }
-  return false
-}
-
-function descriptionTextMatches(query, text) {
-  var terms = String(query || "").toLowerCase().trim().split(/\s+/)
-  for (var i = 0; i < terms.length; i++) {
-    if (terms[i] && !termInSearchWords(terms[i], text)) return false
-  }
-  return true
-}
-
-function matchesQuery(entry, query, visible) {
-  if (!entry || entry.id === "root") return false
-  if (!visible) return false
-
-  var nameText = nameSearchText(entry)
-  var descriptionText = String(entry.description || "").toLowerCase()
-  var terms = String(query || "").toLowerCase().trim().split(/\s+/)
-
-  for (var i = 0; i < terms.length; i++) {
-    if (!terms[i]) continue
-    if (nameText.indexOf(terms[i]) >= 0) continue
-    if (termInSearchWords(terms[i], descriptionText)) continue
-    return false
-  }
-
-  return true
-}
-
-function searchScore(items, entry, query) {
-  var needle = String(query || "").toLowerCase().trim()
+// A rank for a find, lower first: the label is the search, starts with it,
+// holds it, the name does, the description has every word; a menu a little
+// ahead of a command, and an app further, but within its tier. Then the
+// shallower first, then the order of menu.jsonc.
+function rank(items, entry, search) {
   var label = entry.label.toLowerCase()
-  var nameText = nameSearchText(entry)
-  var descriptionText = String(entry.description || "").toLowerCase()
-  var score = 80
+  var needle = search.text
+  var tier = 80
+  if (label === needle) tier = entry.parent === "root" ? 2 : 0
+  // An app whose name has the search as a word ("zen" in Zen Browser) is as
+  // good as an exact label, such as a menu's Zen.
+  else if (entry.kind === "app" && label.split(/\s+/).indexOf(needle) >= 0) tier = 0
+  else if (label.indexOf(needle) === 0) tier = 10
+  else if (label.indexOf(needle) >= 0) tier = 30
+  else if (entry.searchName.indexOf(needle) >= 0) tier = 40
+  else if (search.terms.every(function(term) { return entry.searchWords.indexOf(term) >= 0 })) tier = 60
 
-  if (label === needle) score = entry.parent === "root" ? 2 : 0
-  // An installed app whose name contains the query as a whole word ("zen"
-  // for Zen Browser) beats exact-labeled menu entries like Install > Zen.
-  else if (entry.kind === "app" && label.split(/\s+/).indexOf(needle) >= 0) score = 0
-  else if (label.indexOf(needle) === 0) score = 10
-  else if (label.indexOf(needle) >= 0) score = 30
-  else if (nameText.indexOf(needle) >= 0) score = 40
-  else if (descriptionTextMatches(needle, descriptionText)) score = 60
-
-  if (entry.kind === "menu" || entry.kind === "link") score -= 2
-  // App rows sort after all menu items, so they lose the tiebreak below to an
-  // equal match. Outrank those, but stay inside the tier so better ones win.
-  if (entry.kind === "app") score -= 5
-
-  return score * 1000 + depthFor(items, entry.id) * 25 + entry.order
+  if (entry.kind === "menu" || entry.kind === "link") tier -= 2
+  // Apps come after every menu item in the order, which a tie goes by; this
+  // puts them ahead of an equal find without passing a better one.
+  if (entry.kind === "app") tier -= 5
+  return tier * 1000 + depth(items, entry.id) * 25 + entry.order
 }
 
-function displayRow(items, itemOrder, checkedResults, entry, detail, score, section) {
-  var target = entry.kind === "link" ? entry.target : entry.id
+// ---- The list's rows
+
+// A row of the list, as its model holds it: the item, what it opens or runs,
+// and the line under it.
+function listRow(entry, checkedResults, detail, section) {
+  var checked = entry.checked && checkedResults && checkedResults[entry.id]
   return {
     itemId: entry.id,
     kind: entry.kind,
@@ -388,123 +324,182 @@ function displayRow(items, itemOrder, checkedResults, entry, detail, score, sect
     iconFont: entry.iconFont || "",
     appIcon: entry.appIcon || "",
     appId: entry.appId || "",
-    label: labelFor(entry, checkedResults),
-    target: target,
+    label: checked ? entry.label + " ✓" : entry.label,
+    target: entry.kind === "link" ? entry.target : entry.id,
     detail: detail || "",
-    path: pathFor(items, entry.id),
-    childCount: (entry.kind === "menu" || entry.kind === "link") ? childCount(items, itemOrder, target) : 0,
     action: entry.action || "",
-    provider: entry.provider || "",
-    score: score || 0,
     section: section || ""
   }
 }
 
-// Commands a `checked:` expression reads a value out of. Sibling rows ask the
-// same one -- Style > Menu Bar has two rows comparing against `nova-bar
-// position` -- so the batch runs it once and the rows read the captured answer.
-//
-// The capture has to be eager. These are read inside `$(...)`, and a value
-// cached while one expression runs lives in that subshell only, so a lazy
-// memo never survives to the expression after it.
-var GUARD_READERS = [
-  "nova-bar position",
-  "nova-bar transparent"
-]
-
-// Command presence is most of what the guards ask, and asked one at a time it
-// is almost all fork. Answer it inside the guard process instead. These shadow
-// the real commands for the batch only, so they have to agree with them,
-// including for no arguments at all (present is true of nothing, missing is
-// not).
-function guardHelpers() {
-  return 'nova-cmd-present() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 1; done; return 0; }\n'
-    + 'nova-cmd-missing() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 0; done; return 1; }\n'
+// The rows of the menu <menuId>, in the order of menu.jsonc; the apps by
+// name, whatever order DesktopEntries has them in now.
+function menuRows(tree, menuId, whenResults, checkedResults) {
+  var rows = []
+  tree.itemOrder.forEach(function(id) {
+    var entry = item(tree.items, id)
+    if (!entry || entry.parent !== menuId || !isShown(tree, whenResults, entry)) return
+    rows.push(listRow(entry, checkedResults, entry.description, ""))
+  })
+  if (menuId === "apps") rows.sort(byName)
+  return rows
 }
 
-// Substitute the captured answer into the expression rather than shadowing
-// the reader with a function. `$(reader)` and the variable holding what it
-// printed are interchangeable -- both strip trailing newlines, both split the
-// same way unquoted -- while a function would also catch `command -v reader`,
-// `VAR=x reader`, and every other form, and answer those wrong. Anything but
-// the plain substitution is left alone to run the real command.
-function guardPrelude(guards) {
-  var prelude = guardHelpers()
+function byName(a, b) {
+  var left = String(a.label || "").toLowerCase()
+  var right = String(b.label || "").toLowerCase()
+  if (left !== right) return left < right ? -1 : 1
+  var leftId = String(a.itemId || "")
+  var rightId = String(b.itemId || "")
+  return leftId < rightId ? -1 : leftId > rightId ? 1 : 0
+}
 
-  for (var i = 0; i < GUARD_READERS.length; i++) {
-    // The guards arrive already substituted, so what marks a reader as wanted
-    // is the slot standing in for it, not the call it replaced.
-    if (guards.indexOf(guardReaderSlot(i)) < 0) continue
-    // `|| :` so a reader that exits nonzero cannot take the batch down with
-    // it under a login shell that turned on errexit.
-    prelude += "__nova_read_" + i + "=$(" + GUARD_READERS[i] + " 2>/dev/null) || :\n"
+// What a search finds under the menu <menuId>, each row with the path of the
+// menu it is in: the menu's own items best first, then those deeper down
+// best first, under a divider when there are both.
+function searchRows(tree, menuId, query, whenResults, checkedResults) {
+  var search = searchOf(query)
+  var near = []
+  var deeper = []
+  tree.itemOrder.forEach(function(id) {
+    var entry = item(tree.items, id)
+    if (!entry || entry.id === "root" || !isUnder(tree.items, entry.id, menuId)) return
+    if (!finds(entry, search) || !isShown(tree, whenResults, entry)) return
+    var found = { entry: entry, rank: rank(tree.items, entry, search), path: path(tree.items, entry.id) }
+    if (entry.parent === menuId) near.push(found)
+    else deeper.push(found)
+  })
+  near.sort(bestFirst)
+  deeper.sort(bestFirst)
+  var section = near.length > 0 && deeper.length > 0 ? "drilldown" : ""
+  function row(found, under) {
+    var parent = found.entry.parent
+    var where = parent && parent !== "root" ? path(tree.items, parent) : ""
+    return listRow(found.entry, checkedResults, where, under)
   }
-
-  return prelude
+  return near.map(function(found) { return row(found, "") }).concat(deeper.map(function(found) { return row(found, section) }))
 }
 
-function guardReaderSlot(index) {
+function bestFirst(a, b) {
+  return a.rank !== b.rank ? a.rank - b.rank : a.path.localeCompare(b.path)
+}
+
+// The chooser's rows for its options, those that hold <query> in the label
+// or the line under it. An option is "label", "glyph<TAB>label" or
+// "glyph<TAB>label<TAB>line"; the glyph is drawn and never given back.
+function chooserRows(options, query) {
+  var needle = String(query || "").trim().toLowerCase()
+  var rows = []
+  options.forEach(function(option, index) {
+    var parts = String(option || "").split("\t")
+    var icon = parts.length > 1 ? parts.shift() : ""
+    var label = parts.shift() || ""
+    var line = parts.join("\t")
+    if (needle && label.toLowerCase().indexOf(needle) < 0 && line.toLowerCase().indexOf(needle) < 0) return
+    rows.push({ itemId: "choice." + index, kind: "choice", icon: icon, iconFont: "", appIcon: "", appId: "", label: label, target: "", detail: line, action: "", section: "" })
+  })
+  return rows
+}
+
+// ---- The list's height
+
+// Where each row ends, from the top of the list: <spacing> between rows, a
+// divider's height above the first of a search's deeper rows, and a row
+// <withLine> tall where it has a line under it, <plain> otherwise.
+function rowBottoms(rows, plain, withLine, spacing, divider) {
+  var bottoms = []
+  var bottom = 0
+  rows.forEach(function(row, i) {
+    if (i > 0) bottom += spacing
+    if (row.section === "drilldown" && (i === 0 || rows[i - 1].section !== "drilldown")) bottom += divider
+    bottom += row.detail ? withLine : plain
+    bottoms.push(bottom)
+  })
+  return bottoms
+}
+
+// The list's height in <room>: all of it when it fits. When it does not, the
+// list ends <peek> into a row, never on a row's edge: the row cut short is
+// what shows there is more below. A list cut above its first row's peek
+// takes the room, but never less than one row (<least>), which is also the
+// height of a list with no rows.
+function foldedHeight(bottoms, room, peek, spacing, least) {
+  var count = bottoms.length
+  if (count === 0) return least
+  if (bottoms[count - 1] <= room) return bottoms[count - 1]
+  var whole = 0
+  while (whole < count && bottoms[whole] <= room) whole++
+  while (whole > 1 && bottoms[whole - 1] + spacing + peek > room) whole--
+  if (whole < 1) return Math.max(room, least)
+  return bottoms[whole - 1] + spacing + peek
+}
+
+// ---- when: and checked:
+
+// Commands a `checked:` reads a value out of, which rows side by side ask
+// alike: Style > Menu Bar's two rows both compare `nova-bar position`. The
+// script runs each once, first, and the rows read what it printed. They are
+// read eagerly: an expression runs in `$(...)`, a subshell, and a value
+// kept there would be gone by the next.
+var GUARD_READERS = ["nova-bar position", "nova-bar transparent"]
+
+// Most guards ask whether commands are there, and a fork each is most of
+// what the script would cost. These answer it in the script's own shell,
+// and so must answer as the real commands do, with no arguments too: all of
+// none are present, and none of none is missing.
+var GUARD_HELPERS = 'nova-cmd-present() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 1; done; return 0; }\n'
+  + 'nova-cmd-missing() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 0; done; return 1; }\n'
+
+function readerSlot(index) {
   return "${__nova_read_" + index + "}"
 }
 
-function substituteGuardReaders(expression) {
-  for (var i = 0; i < GUARD_READERS.length; i++)
-    expression = expression.split("$(" + GUARD_READERS[i] + ")").join(guardReaderSlot(i))
-
-  return expression
+// A reader's `$(command)` in an expression is the variable holding what it
+// printed: both drop trailing newlines and split alike unquoted. Only that
+// form is: a function in its place would also answer `command -v reader`
+// or `VAR=x reader`, wrongly, which run the real command instead.
+function withReaders(expression) {
+  return GUARD_READERS.reduce(function(text, reader, index) {
+    return text.split("$(" + reader + ")").join(readerSlot(index))
+  }, expression)
 }
 
 function guardLine(id, tag, expression) {
-  return "if { " + substituteGuardReaders(expression) + "; } >/dev/null 2>&1; then echo "
+  return "if { " + withReaders(expression) + "; } >/dev/null 2>&1; then echo "
     + id + ":" + tag + ":1; else echo " + id + ":" + tag + ":0; fi\n"
 }
 
-// One bash script for every `when:` and `checked:` in the menu, reporting
-// `<id>:<w|c>:<0|1>` per line. Speed is the whole point: the menu opens on
-// the last evaluation's answers, so however long this takes is how long a row
-// can contradict the state it describes.
+// One bash script for every when: and checked: of the tree, printing
+// "<id>:<w|c>:<1|0>" for each, or "" for a tree with none. The menu opens on
+// the last answers, so the time this takes is how long a row can be wrong.
 function guardScript(items) {
-  var guards = ""
-  var ids = Object.keys(items || {})
-
-  for (var i = 0; i < ids.length; i++) {
-    var entry = items[ids[i]]
-    if (!entry) continue
-    if (entry.when) guards += guardLine(ids[i], "w", entry.when)
-    if (entry.checked) guards += guardLine(ids[i], "c", entry.checked)
-  }
-
-  return guards ? guardPrelude(guards) + guards : ""
+  var lines = ""
+  Object.keys(items || {}).forEach(function(id) {
+    var entry = items[id]
+    if (!entry) return
+    if (entry.when) lines += guardLine(id, "w", entry.when)
+    if (entry.checked) lines += guardLine(id, "c", entry.checked)
+  })
+  if (!lines) return ""
+  var readers = GUARD_READERS.map(function(reader, index) {
+    // `|| :` keeps a reader that fails from ending the script in a login
+    // shell that sets errexit.
+    return lines.indexOf(readerSlot(index)) < 0 ? "" : "__nova_read_" + index + "=$(" + reader + " 2>/dev/null) || :\n"
+  })
+  return GUARD_HELPERS + readers.join("") + lines
 }
 
-if (typeof module !== "undefined") {
-  module.exports = {
-    guardReaders: GUARD_READERS,
-    guardScript: guardScript,
-    stripJsonc: stripJsonc,
-    normalizeAliases: normalizeAliases,
-    normalizeItem: normalizeItem,
-    parseMenuJsonc: parseMenuJsonc,
-    mergeMenuSources: mergeMenuSources,
-    mergeAppRows: mergeAppRows,
-    swapProviderRows: swapProviderRows,
-    item: item,
-    resolveRoute: resolveRoute,
-    slugify: slugify,
-    depthFor: depthFor,
-    pathFor: pathFor,
-    parentPathFor: parentPathFor,
-    isDescendantOf: isDescendantOf,
-    childCount: childCount,
-    isVisible: isVisible,
-    labelFor: labelFor,
-    searchableToken: searchableToken,
-    leafIdFor: leafIdFor,
-    nameSearchText: nameSearchText,
-    termInSearchWords: termInSearchWords,
-    descriptionTextMatches: descriptionTextMatches,
-    matchesQuery: matchesQuery,
-    searchScore: searchScore,
-    displayRow: displayRow
-  }
+// The script's answers: { when: { id: bool }, checked: { id: bool } }. An id
+// may hold colons; the tag and the answer are the last two fields.
+function readGuards(text) {
+  var answers = { when: {}, checked: {} }
+  String(text || "").split("\n").forEach(function(line) {
+    var fields = line.trim().split(":")
+    if (fields.length < 3) return
+    var answer = fields.pop() === "1"
+    var tag = fields.pop()
+    if (tag === "w") answers.when[fields.join(":")] = answer
+    else if (tag === "c") answers.checked[fields.join(":")] = answer
+  })
+  return answers
 }
