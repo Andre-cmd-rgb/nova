@@ -13,13 +13,16 @@
 
 // ---- menu.jsonc
 
-// JSONC as JSON: comment lines out, and a comma before a } or ] dropped, but
-// only outside strings, where a label or a command may hold ",}" of its own.
+// JSONC as JSON: the comments out, // to the end of the line and /* to */,
+// then a comma before a } or ] dropped. Neither inside a string, where a
+// label or a command may hold "//", "/*" or ",}" of its own.
 function jsonText(raw) {
-  var text = String(raw || "").replace(/^\s*\/\/[^\n]*(\n|$)/gm, "")
-  return text.replace(/"(?:[^"\\]|\\[\s\S])*"|,(?=\s*[}\]])/g, function(found) {
-    return found.charAt(0) === '"' ? found : ""
-  })
+  var text = String(raw || "").replace(/"(?:[^"\\]|\\[\s\S])*"|\/\/[^\n]*|\/\*[\s\S]*?\*\//g, blankUnlessString)
+  return text.replace(/"(?:[^"\\]|\\[\s\S])*"|,(?=\s*[}\]])/g, blankUnlessString)
+}
+
+function blankUnlessString(found) {
+  return found.charAt(0) === '"' ? found : " "
 }
 
 // The entries of a menu file as written, each an object with its id: [] for
