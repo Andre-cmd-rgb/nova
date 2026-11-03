@@ -23,18 +23,17 @@ if (($# == 0)) || [[ $1 == -h || $1 == --help ]]; then
   cat <<'USAGE'
 Usage: nova-shell [-q] <target> <method> [args...]
 
-Forwards an IPC call to the running Nova shell. The shell is expected
-to already be running; this command does not start it.
+Calls a function of the running shell over its IPC: the shell's own (target
+shell) or a plugin's. It does not start the shell.
 
-Options:
-  -q  Quiet best-effort mode. Suppress output and return success even when
-      the shell, target, method, or arguments are unavailable.
+  -q  Print nothing and exit 0 whatever happens: for a caller that only
+      nudges the shell, and does not mind if it is not there.
 
-Examples:
+For example:
   nova-shell shell ping
-  nova-shell -q nova.indicators refresh
   nova-shell shell listPlugins
   nova-shell shell toggle nova.menu '{"menu":"root"}'
+  nova-shell -q nova.indicators refresh
 USAGE
   exit 0
 fi

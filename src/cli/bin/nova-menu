@@ -29,21 +29,21 @@ case $verb in
     ;;
   -h | --help | help)
     cat <<'USAGE'
-Usage: nova menu [verb] [route]
+Usage: nova menu [toggle|summon|close|refresh|ping] [route]
 
-Verbs:
-  toggle [route]   Open the menu at <route>, or close it if already open. Default verb.
-  summon [route]   Always open the menu (no close-if-visible toggle).
-  close            Close the menu if it is visible.
-  refresh          Re-parse the menu JSONC files.
-  ping             Health check.
+  toggle [route]  Open the menu at the route, or close it when it is open.
+                  What nova menu does with no verb.
+  summon [route]  Open the menu at the route, even when it is open already.
+  close           Close the menu.
+  refresh         Read the menu's files again.
+  ping            Answer "ok" when the menu is up.
 
-Route is an item id (e.g. setup.power) or alias (e.g. power). Defaults to
-"root", which opens the top-level menu.
+A route is an item's id (setup.power) or its alias (power); without one the
+menu opens at its top, root.
 USAGE
     ;;
   *)
-    echo "nova-menu: unknown verb '$verb'. Try 'nova menu --help'." >&2
+    echo "nova-menu: '$verb' is not a verb; nova menu --help lists them" >&2
     exit 2
     ;;
 esac
