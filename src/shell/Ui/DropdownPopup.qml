@@ -7,7 +7,7 @@ import qs.Commons
 // Eight rows show at most; past that the list scrolls. It opens on the
 // chosen option and takes the keys: Up and Down (k and j) move the lit row,
 // Return and Enter choose it, Escape closes. The pointer lights the row it
-// moves over, and a click chooses the lit row.
+// moves over, and a click chooses the row clicked.
 Popup {
   id: popup
 
@@ -90,7 +90,7 @@ Popup {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onPositionChanged: rows.currentIndex = option.index
-        onClicked: popup.owner.choose(rows.currentIndex)
+        onClicked: popup.owner.choose(option.index)
       }
     }
   }
