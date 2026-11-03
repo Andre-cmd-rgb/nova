@@ -24,8 +24,9 @@ Item {
   property int cursor: 0
 
   readonly property int cellSize: Math.max(Style.space(44), Style.font.display + Style.spacing.md)
-  // The grid's columns, for Up and Down.
-  readonly property int columns: Math.floor((picker.card.width - Style.spacing.panelPadding * 2) / cellSize)
+  // The grid's columns, for Up and Down: as many as GridView lays out in
+  // its width, one at least.
+  readonly property int columns: Math.max(1, Math.floor(grid.width / cellSize))
 
   // The shell's summon and hide.
   function open(payloadJson) {
