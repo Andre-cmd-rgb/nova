@@ -109,7 +109,9 @@ function friendlyStreamLabel(label) {
     "spotify": "Spotify"
   }
   var normalized = label.toLowerCase()
-  return known[normalized] || label
+  // Its own names only: "constructor" or "__proto__" would find what every
+  // object inherits, and the stream would show no name at all.
+  return Object.prototype.hasOwnProperty.call(known, normalized) ? known[normalized] : label
 }
 
 function streamLabelKey(label) {
