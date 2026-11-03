@@ -127,7 +127,9 @@ function fuzzyScore(entry, query) {
 // The entries to list for <query>, best first, as rows of { entry, score,
 // key, name } (key and name are both the lowercase name): those that match,
 // leaving out NoDisplay ones, nameless ones and any <isHidden> says to
-// hide. With no query, or among equal scores, by name.
+// hide. With no query, or among equal scores, by name; two of one name by
+// their desktop IDs, as the order the entries come in changes from one start
+// of the shell to the next.
 function sortedEntries(values, query, isHidden) {
   var searching = String(query || "").trim()
   var rows = []
@@ -139,6 +141,8 @@ function sortedEntries(values, query, isHidden) {
   }
   return rows.sort(function(a, b) {
     if (searching && a.score !== b.score) return b.score - a.score
-    return a.key < b.key ? -1 : a.key > b.key ? 1 : 0
+    if (a.key !== b.key) return a.key < b.key ? -1 : 1
+    var first = String(a.entry.id || ""), second = String(b.entry.id || "")
+    return first < second ? -1 : first > second ? 1 : 0
   })
 }
