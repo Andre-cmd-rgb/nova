@@ -69,7 +69,6 @@ function lists(devices) {
 // Quickshell crashes. The panel looks the device up by its address when a
 // row is acted on.
 function rowOf(d) {
-  if (!d) return null
   return {
     address: d.address || "",
     name: d.name || "",
@@ -85,24 +84,23 @@ function rowOf(d) {
 // The lists shown, top to bottom: the scan's only while it runs.
 function sections(groups, discovering) {
   var shown = []
-  if (groups && groups.connected && groups.connected.length > 0) shown.push("connected")
-  if (groups && groups.known && groups.known.length > 0) shown.push("known")
-  if (discovering && groups && groups.discovered && groups.discovered.length > 0) shown.push("discovered")
+  if (groups.connected.length > 0) shown.push("connected")
+  if (groups.known.length > 0) shown.push("known")
+  if (discovering && groups.discovered.length > 0) shown.push("discovered")
   return shown
 }
 
 function devicesIn(groups, section) {
-  if (!groups) return []
-  if (section === "connected") return groups.connected || []
-  if (section === "known") return groups.known || []
-  if (section === "discovered") return groups.discovered || []
+  if (section === "connected") return groups.connected
+  if (section === "known") return groups.known
+  if (section === "discovered") return groups.discovered
   return []
 }
 
 // The rows of <section>'s devices, each a copy of its device with the list
 // and its place in it.
 function rowsOf(devices, section) {
-  return (devices || []).map(function(d, i) { return { dev: rowOf(d), section: section, indexInSection: i } })
+  return devices.map(function(d, i) { return { dev: rowOf(d), section: section, indexInSection: i } })
 }
 
 // The scrolling list's rows: the paired devices, then the scan's while its
@@ -131,14 +129,13 @@ function titleAt(rows, index) {
 // ---------------------------------------------------------------- a row
 
 function stateOf(row) {
-  return row && row.state !== undefined ? row.state : -1
+  return row.state !== undefined ? row.state : -1
 }
 
 // The line under a device's name: what is being done to it (BlueZ's state
 // 2 is disconnecting, 3 connecting), or, connected, its battery. A row in
 // the paired list that is connected says so.
 function status(row, action, section) {
-  if (!row) return ""
   if (action === "forgetting") return "Forgetting…"
   if (action === "disconnecting" || stateOf(row) === 2) return "Disconnecting…"
   if (row.connected) {
@@ -151,7 +148,7 @@ function status(row, action, section) {
 
 // Shown at full strength: connected, or with something under way.
 function lively(row, action) {
-  if (row && row.connected) return true
+  if (row.connected) return true
   return action !== "" || stateOf(row) === 3 || row.pairing === true
 }
 
@@ -163,7 +160,6 @@ function forgettable(section) {
 
 // What a click on the row does.
 function clickHint(row, discovered) {
-  if (!row) return ""
   if (row.connected) return "Disconnect"
   return discovered ? "Pair" : "Connect"
 }
@@ -172,15 +168,13 @@ function clickHint(row, discovered) {
 
 // The action under way for <address>, "" for none.
 function actionFor(actions, address) {
-  return address && actions && actions[address] ? actions[address] : ""
+  return actions[address] || ""
 }
 
-// <actions> with <address>'s set to <action>, or cleared with none.
+// <actions> with <address>'s set to <action>.
 function withAction(actions, address, action) {
-  var next = Object.assign({}, actions || {})
-  if (!address) return next
-  if (action) next[address] = action
-  else delete next[address]
+  var next = Object.assign({}, actions)
+  next[address] = action
   return next
 }
 
@@ -200,7 +194,7 @@ function request(device, verb) {
 // is connected, a disconnect once it is not, a forget once it is gone or no
 // longer paired. <connected> lists the devices that have just connected.
 function settle(actions, devices) {
-  var next = Object.assign({}, actions || {})
+  var next = Object.assign({}, actions)
   var connected = []
   var changed = false
   Object.keys(next).forEach(function(address) {
@@ -289,8 +283,8 @@ function rowsIn(groups, section) {
 // j (<delta> 1) or k (-1): the next row down or up, crossing between lists,
 // with the switch above the first.
 function move(c, delta, shown, groups) {
-  if (c.section === "header") return delta > 0 && shown && shown.length > 0 ? cursor(shown[0], 0, false) : c
-  if (!shown || shown.length === 0) return cursor("header", c.index, false)
+  if (c.section === "header") return delta > 0 && shown.length > 0 ? cursor(shown[0], 0, false) : c
+  if (shown.length === 0) return cursor("header", c.index, false)
   var here = shown.indexOf(c.section)
   if (here < 0) return cursor(shown[0], 0, false)
   if (delta > 0) {
@@ -307,15 +301,10 @@ function move(c, delta, shown, groups) {
 // is: turning Bluetooth off and on empties the lists and fills them again.
 function clamp(c, shown, groups) {
   if (c.section === "header") return c
-  if (!shown || !shown.length) return cursor(c.section, 0, c.onForget)
+  if (!shown.length) return cursor(c.section, 0, c.onForget)
   var here = shown.indexOf(c.section)
   if (here < 0) return cursor(shown[0], 0, c.onForget)
-  var n = rowsIn(groups, c.section)
-  if (n === 0) {
-    var to = here > 0 ? shown[here - 1] : shown[0]
-    return cursor(to, Math.max(0, rowsIn(groups, to) - 1), c.onForget)
-  }
-  return cursor(c.section, Math.max(0, Math.min(n - 1, c.index)), c.onForget)
+  return cursor(c.section, Math.max(0, Math.min(rowsIn(groups, c.section) - 1, c.index)), c.onForget)
 }
 
 // Where the device at <address> is now among the lists shown, or null.

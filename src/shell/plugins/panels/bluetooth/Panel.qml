@@ -86,9 +86,7 @@ Panel {
 
   // The live device behind a row's copy of it, by its address.
   function liveDevice(copy) {
-    if (!copy) return null
-    var wanted = copy.address || ""
-    return Model.listOf(everyDevice).filter(function(d) { return (d.address || "") === wanted })[0] || null
+    return Model.listOf(everyDevice).filter(function(d) { return (d.address || "") === copy.address })[0] || null
   }
 
   onGroupsChanged: {
@@ -152,14 +150,12 @@ Panel {
     }
 
     onTriggered: {
-      if (!wanted) return
       var sink = Model.sinkFor(Pipewire.nodes ? Pipewire.nodes.values : [], wanted)
       if (sink) {
         Pipewire.preferredDefaultAudioSink = sink
         if (sink.id !== undefined && sink.name)
           Quickshell.execDetached(["nova-audio-output-set-default", String(sink.id), String(sink.name)])
         wanted = null
-        stop()
       } else if (++looks >= 8) {
         wanted = null
       } else {
@@ -294,7 +290,7 @@ Panel {
     // On the first device, from the connected down; on the switch with none.
     function home() {
       var g = bluetooth.groups
-      var first = ["connected", "known", "discovered"].filter(function(s) { return (g[s] || []).length > 0 })[0]
+      var first = ["connected", "known", "discovered"].filter(function(s) { return g[s].length > 0 })[0]
       put(first ? Model.cursor(first, 0, false) : Model.cursor("header", place.index, false))
       shown = false
     }
@@ -538,12 +534,12 @@ Panel {
     readonly property string list: modelData.section
     readonly property int slot: modelData.indexInSection
     readonly property bool canForget: Model.forgettable(list)
-    readonly property string doing: Model.actionFor(bluetooth.underway, device ? device.address : "")
+    readonly property string doing: Model.actionFor(bluetooth.underway, device.address)
     readonly property bool onRow: cursor.shown && cursor.place.section === list && cursor.place.index === slot
     readonly property color tone: Model.lively(device, doing) ? bluetooth.ink : bluetooth.faint
 
     hasCursor: onRow && !cursor.place.onForget
-    current: !!(device && device.connected)
+    current: device.connected
     foreground: bluetooth.ink
     implicitHeight: body.implicitHeight + Style.spacing.rowPaddingX
 
