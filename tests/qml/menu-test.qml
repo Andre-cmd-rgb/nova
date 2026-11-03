@@ -7,10 +7,11 @@ import "services/AppSearch.js" as AppSearch
 
 // The menu: a user file's entry changes only what it names, a comma inside a
 // string is the string's, comments may stand after entries, a label may be a
-// number, an id may be a name JavaScript objects have, a when: bash cannot
-// read hides only its own row, two apps of one name keep one order, and a
-// chooser still waiting when another
-// takes its place is answered as cancelled.
+// number, an id may be a name JavaScript objects have, a menu its when:
+// hides keeps what is under it out of search, a when: bash cannot read
+// hides only its own row, two apps of one name keep one order, and a
+// chooser still waiting when another takes its place is answered as
+// cancelled.
 ShellRoot {
   id: test
 
@@ -51,6 +52,15 @@ ShellRoot {
       "a label written as a number is shown and searched as its text, and spoils no other search")
     check(found("builder") === "constructor" && found("words") === "toString",
       "entries named constructor and toString are listed and found")
+
+    var nested = MenuModel.mergeMenuSources(MenuModel.parseMenuJsonc(
+      '{ "tools": { "label": "Tools", "when": "false" }, "tools.hammer": { "label": "Hammer", "action": "a" }, "tools.kit": { "label": "Kit" }, '
+      + '"tools.kit.saw": { "label": "Saw", "action": "b" }, "bench": { "label": "Bench" }, "bench.vise": { "label": "Vise", "action": "c" } }'), [])
+    function seek(menuId, query, when) { return MenuModel.searchRows(nested, menuId, query, when, {}).map(function(row) { return row.itemId }).join(",") }
+    check(seek("root", "hammer", { tools: false }) === "" && seek("root", "saw", { tools: false }) === "" && seek("root", "vise", { tools: false }) === "bench.vise",
+      "search finds nothing under a menu its when: hides, and the rest as before")
+    check(seek("root", "hammer", { tools: true }) === "tools.hammer" && seek("root", "saw", { tools: true }) === "tools.kit.saw" && seek("tools", "saw", { tools: false }) === "tools.kit.saw",
+      "search finds what is under a menu its when: shows, and within the menu itself")
 
     var files = [{ id: "org.b.Files", name: "Files" }, { id: "org.a.Files", name: "Files" }, { id: "org.c.Editor", name: "Editor" }]
     function order(entries, query) { return AppSearch.sortedEntries(entries, query, null).map(function(row) { return row.entry.id }).join(",") }

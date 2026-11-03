@@ -256,6 +256,17 @@ function isUnder(items, id, menuId) {
   return false
 }
 
+// Whether a menu between <menuId> and the entry said no in its when:, which
+// hides what is under it from search as well.
+function hiddenAbove(items, whenResults, entry, menuId) {
+  if (!whenResults) return false
+  var steps = 0
+  for (var at = item(items, entry.parent); at && at.id !== menuId && steps < 32; at = item(items, at.parent), steps++) {
+    if (at.when && whenResults[at.id] === false) return true
+  }
+  return false
+}
+
 // Whether a row shows: not when its when: said no; a menu or a link only
 // with a row of its own to show, or a provider that fills it.
 function isShown(tree, whenResults, entry, steps) {
@@ -380,7 +391,7 @@ function searchRows(tree, menuId, query, whenResults, checkedResults) {
   tree.itemOrder.forEach(function(id) {
     var entry = item(tree.items, id)
     if (!entry || entry.id === "root" || !isUnder(tree.items, entry.id, menuId)) return
-    if (!finds(entry, search) || !isShown(tree, whenResults, entry)) return
+    if (!finds(entry, search) || !isShown(tree, whenResults, entry) || hiddenAbove(tree.items, whenResults, entry, menuId)) return
     var found = { entry: entry, rank: rank(tree.items, entry, search), path: path(tree.items, entry.id) }
     if (entry.parent === menuId) near.push(found)
     else deeper.push(found)
