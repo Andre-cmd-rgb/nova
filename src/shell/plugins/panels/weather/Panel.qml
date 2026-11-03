@@ -162,18 +162,26 @@ Ui.Panel {
   }
 
   // wttr.in can be slow, above all for a place it has not been asked about
-  // before: three more tries before the refresh timer's turn.
+  // before: three more tries before the refresh timer's turn. A place being
+  // set without coordinates waits for wttr.in's answer until they are spent.
   function retryWttr() {
-    if (wttrTries >= 3) return
+    if (wttrTries >= 3) {
+      if (!hasCoordinates) savedFetched()
+      return
+    }
     wttrTries++
     wttrRetry.restart()
   }
 
   // With the place's coordinates, Open-Meteo alone sets the glyph, so an
   // answer lost (waking before the network) tries again rather than leave
-  // an old glyph until the next refresh.
+  // an old glyph until the next refresh. A place being set with coordinates
+  // waits for Open-Meteo's answer until they are spent.
   function retryMeteo() {
-    if (meteoTries >= 3) return
+    if (meteoTries >= 3) {
+      if (hasCoordinates) savedFetched()
+      return
+    }
     meteoTries++
     meteoRetry.restart()
   }
@@ -328,7 +336,8 @@ Ui.Panel {
     cancelEditing()
   }
 
-  // The weather for the place being set has come: the field closes.
+  // The weather for the place being set has come, or the tries for it are
+  // spent: the field closes, the place set, the last weather kept.
   function savedFetched() {
     if (saving && savedFetchStarted) cancelEditing()
   }
