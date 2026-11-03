@@ -1412,13 +1412,16 @@ Item {
     id: custom
 
     required property var entry
-    readonly property var settings: BarModel.entrySettings(entry)
+    // Read from its own entry. Not named `settings`: the slot hands a
+    // widget with that property its settings, which a read-only one
+    // refuses with an error.
+    readonly property var options: BarModel.entrySettings(entry)
     property string outputText: ""
     property string outputTooltip: ""
     property bool outputActive: false
 
     function setting(name, fallback) {
-      var value = settings ? settings[name] : undefined
+      var value = options ? options[name] : undefined
       return value === undefined || value === null ? fallback : value
     }
 
