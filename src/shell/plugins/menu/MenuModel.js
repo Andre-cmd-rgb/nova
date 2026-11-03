@@ -59,7 +59,7 @@ function parseMenuJsonc(raw) {
 // under capture), or under its parent when it names one; a root is added
 // when neither file has one. Each item's order is its place in itemOrder.
 function mergeMenuSources(defaults, user) {
-  var fields = {}
+  var fields = byId()
   var order = []
   ;[defaults || [], user || []].forEach(function(entries) {
     entries.forEach(function(entry) {
@@ -74,7 +74,7 @@ function mergeMenuSources(defaults, user) {
     })
   })
 
-  var items = {}
+  var items = byId()
   order.forEach(function(id) { items[id] = menuItem(id, fields[id]) })
   if (!items.root) {
     items.root = searchable({ id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" })
@@ -155,7 +155,7 @@ function withApps(tree, apps) {
 // that make the same id (Fira Code and Fira-Code) get one each.
 function providerItems(menuId, text, icon, actionFor) {
   var rows = []
-  var taken = {}
+  var taken = byId()
   String(text || "").split("\n").forEach(function(line) {
     var parts = line.trim().split("\t")
     var label = parts[0] || ""
@@ -179,7 +179,7 @@ function withProviderRows(tree, menuId, rows) {
 // The tree without the items <dropped> picks, with <added> after the rest;
 // an added id already taken is left out.
 function rebuilt(tree, dropped, added) {
-  var items = {}
+  var items = byId()
   var order = []
   tree.itemOrder.forEach(function(id) {
     var item = tree.items[id]
@@ -201,6 +201,13 @@ function slugify(value) {
 }
 
 // ---- The tree
+
+// A map by id that holds only what is put in it. A plain {} already has a
+// constructor, a toString and the rest, and an entry of one of those names
+// would be taken for one that is there, and never listed.
+function byId() {
+  return Object.create(null)
+}
 
 function item(items, id) {
   return items && items[id] ? items[id] : null
@@ -508,7 +515,7 @@ function guardScript(items) {
 // The script's answers: { when: { id: bool }, checked: { id: bool } }. An id
 // may hold colons; the tag and the answer are the last two fields.
 function readGuards(text) {
-  var answers = { when: {}, checked: {} }
+  var answers = { when: byId(), checked: byId() }
   String(text || "").split("\n").forEach(function(line) {
     var fields = line.trim().split(":")
     if (fields.length < 3) return

@@ -66,18 +66,18 @@ Item {
   // The menu's tree (MenuModel.js), from the two files' entries.
   property var defaultEntries: []
   property var userEntries: []
-  property var tree: ({ items: ({}), itemOrder: [] })
+  property var tree: ({ items: Model.byId(), itemOrder: [] })
   property bool loaded: false
 
   // The last answers of the when: and checked: script, by id.
-  property var whenResults: ({})
-  property var checkedResults: ({})
+  property var whenResults: Model.byId()
+  property var checkedResults: Model.byId()
   property bool guardsPending: false
 
   // The menus whose provider has filled them, by id; the bash providers
   // waiting for providerRun; and the tree they were asked from, whose rows
   // a provider that ends after the menu files are read again does not add.
-  property var providersLoaded: ({})
+  property var providersLoaded: Model.byId()
   property var providerQueue: []
   property int providerRevision: 0
 
@@ -203,7 +203,7 @@ Item {
   function rebuildTree() {
     var next = Model.mergeMenuSources(defaultEntries, userEntries)
     providerRevision += 1
-    providersLoaded = ({})
+    providersLoaded = Model.byId()
     providerQueue = []
     tree = next
     loaded = true
@@ -219,8 +219,9 @@ Item {
 
   // A bash provider prints a "label<TAB>value<TAB>current" line a row. One
   // that is volatile runs again each time its menu is entered: a font
-  // installed since the shell started shows up.
-  readonly property var providers: ({
+  // installed since the shell started shows up. Only these two are
+  // providers: a "provider" of another name, toString too, fills nothing.
+  readonly property var providers: Object.assign(Model.byId(), {
     "fonts": {
       script: "current=$(nova-font-current 2>/dev/null); nova-font-list 2>/dev/null | while read -r f; do [[ -z $f ]] && continue; printf '%s\\t%s\\t%s\\n' \"$f\" \"$f\" \"$current\"; done",
       icon: "",
@@ -349,8 +350,8 @@ Item {
     guardsPending = false
     var script = Model.guardScript(tree.items)
     if (!script) {
-      whenResults = ({})
-      checkedResults = ({})
+      whenResults = Model.byId()
+      checkedResults = Model.byId()
       return
     }
     guardRun.collected = ""
