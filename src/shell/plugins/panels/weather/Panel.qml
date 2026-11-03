@@ -139,11 +139,17 @@ Ui.Panel {
     fetchMeteo()
   }
 
-  // A fetch stopped here ends as one that failed, and asks for its retry:
-  // the retries go with it, as the refresh asks anew.
+  // A fetch stopped here runs on until its process ends, so the refresh
+  // cannot ask it anew: it asks again itself as it ends, at once, for the
+  // new place. Retries left from before go, as the refresh asks anew.
+  property bool wttrStopped: false
+  property bool meteoStopped: false
+
   function restartFetches() {
     wttrTries = 0
     meteoTries = 0
+    wttrStopped = wttrFetch.running
+    meteoStopped = meteoFetch.running
     wttrFetch.running = false
     meteoFetch.running = false
     wttrRetry.stop()
@@ -202,6 +208,11 @@ Ui.Panel {
   }
 
   function readWttr(text) {
+    if (wttrStopped) {
+      wttrStopped = false
+      Qt.callLater(askWttr)
+      return
+    }
     var raw = String(text || "").trim()
     var answer
     try {
@@ -236,6 +247,11 @@ Ui.Panel {
   }
 
   function readMeteo(text) {
+    if (meteoStopped) {
+      meteoStopped = false
+      Qt.callLater(fetchMeteo)
+      return
+    }
     var answer
     try {
       answer = JSON.parse(String(text || "").trim())
