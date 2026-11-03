@@ -6,394 +6,292 @@ import Quickshell.Services.SystemTray
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
-import "TrayModel.js" as TrayModel
 
+// The system tray. Pinned icons always show; the rest wait in a drawer behind
+// a chevron, which slides open while the pointer is on it. A right click on
+// the chevron lists every icon to pin or hide; on an icon, it opens the icon's
+// menu, drawn here with its submenus.
 BarWidget {
   id: root
   moduleName: "nova.tray"
 
-  property bool expanded: false
-  property bool managePopupOpen: false
-  property bool trayMenuOpen: false
-  property var activeTrayItem: null
-  property var activeTrayAnchor: null
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+
+  // ----- icons -----
+
+  // The ids pinned and hidden in the widget's settings.
   readonly property var pinnedIds: settings.pinned instanceof Array ? settings.pinned : []
   readonly property var hiddenIds: settings.hidden instanceof Array ? settings.hidden : []
-  readonly property var pinnedItems: bucket("pinned")
-  readonly property var drawerItems: bucket("drawer")
-  readonly property var allItems: bucket("all")
-  readonly property int drawerCount: drawerItems.length
-  readonly property int trayItemExtent: Style.bar.iconSlot
-  readonly property int trayItemGap: 0
-  readonly property int trayJoinGap: 0
-  readonly property int drawerExtent: drawerCount > 0 ? drawerCount * trayItemExtent + (drawerCount - 1) * trayItemGap : 0
-  // Match Waybar's group/tray-expander drawer transition-duration.
-  readonly property int animationDuration: 600
+
+  // Every icon shown somewhere, and those pinned, and those in the drawer.
+  readonly property var allItems: {
+    var items = SystemTray.items.values
+    var shown = []
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].status !== Status.Passive && !ownedByNova(items[i])) shown.push(items[i])
+    }
+    return shown
+  }
+  readonly property var pinnedItems: allItems.filter(function(item) { return placeOf(item) === "pinned" })
+  readonly property var drawerItems: allItems.filter(function(item) { return placeOf(item) === "drawer" })
+
+  // LocalSend's icon shows nothing, its menu has only Open and Quit, and a
+  // click on it does nothing: Share > Receive does all of it. It cannot be
+  // hidden by hand either, as it takes a new id each time it starts.
+  function ownedByNova(item) {
+    return [item.id, item.title, item.tooltipTitle].some(function(name) {
+      return String(name || "").toLowerCase().indexOf("localsend") !== -1
+    })
+  }
+
+  function placeOf(item) {
+    var id = String(item.id || "")
+    if (hiddenIds.indexOf(id) !== -1) return "hidden"
+    if (pinnedIds.indexOf(id) !== -1) return "pinned"
+    return "drawer"
+  }
+
+  // Pinning an icon shows it again if it was hidden, and hiding one unpins
+  // it.
+  function togglePin(id) {
+    var pinned = pinnedIds.slice()
+    var hidden = hiddenIds.slice()
+    if (pinned.indexOf(id) !== -1) {
+      pinned.splice(pinned.indexOf(id), 1)
+    } else {
+      pinned.push(id)
+      if (hidden.indexOf(id) !== -1) hidden.splice(hidden.indexOf(id), 1)
+    }
+    save(pinned, hidden)
+  }
+
+  function toggleHide(id) {
+    var pinned = pinnedIds.slice()
+    var hidden = hiddenIds.slice()
+    if (hidden.indexOf(id) !== -1) {
+      hidden.splice(hidden.indexOf(id), 1)
+    } else {
+      hidden.push(id)
+      if (pinned.indexOf(id) !== -1) pinned.splice(pinned.indexOf(id), 1)
+    }
+    save(pinned, hidden)
+  }
+
+  function save(pinned, hidden) {
+    if (!bar || !bar.shell || typeof bar.shell.updateEntryInline !== "function") return
+    var id = moduleName || "nova.tray"
+    bar.shell.updateEntryInline(id, { id: id, pinned: pinned, hidden: hidden })
+  }
+
+  // ----- the drawer -----
+
+  property bool expanded: false
+  readonly property int iconExtent: Style.bar.iconSlot
+  readonly property int drawerExtent: drawerItems.length * iconExtent
+  // How far the drawer is open, 0 to 1, over 600 ms as Waybar's
+  // tray-expander does.
   property real revealProgress: expanded ? 1 : 0
   readonly property real revealExtent: drawerExtent * revealProgress
 
-  // Submenu drill-down state. QsMenuEntry.display() renders a *platform* menu,
-  // which Quickshell refuses unless the shell root sets `//@ pragma
-  // UseQApplication` - nova's shell.qml does not, so every submenu click was
-  // a silent no-op ("Cannot display PlatformMenuEntry as quickshell was not
-  // started in QApplication mode" in the shell log) and apps whose whole UI is
-  // submenus, e.g. radiotray-ng's station list, were unusable. QsMenuEntry
-  // inherits QsMenuHandle, so a child entry can feed a nested QsMenuOpener and
-  // render inside this popup instead of going through the platform. Each level
-  // keeps its own live opener: a child entry is owned by its parent opener's
-  // model, so collapsing the stack to a single opener would destroy the very
-  // entry being displayed (submenu turns up empty).
-  property var submenuStack: []
-  readonly property int submenuDepth: submenuStack.length
-  readonly property string currentTitle: submenuDepth > 0 ? submenuStack[submenuDepth - 1].title : ""
-  readonly property var currentChildren: submenuDepth > 0
-    ? submenuStack[submenuDepth - 1].opener.children
-    : trayMenuOpener.children
-
-  // Changing level rebuilds the row delegates synchronously, so the next
-  // row lands under a cursor that hasn't moved. Submenu clicks used to be
-  // silent no-ops, which trained users to click them twice, and that second
-  // click would now fire whatever entry took the spot. Ignore row clicks for
-  // a beat after each level change; a deliberate follow-up click is slower.
-  property bool menuLevelSettling: false
-
-  Component {
-    id: submenuOpenerComponent
-    QsMenuOpener {}
+  Behavior on revealProgress {
+    NumberAnimation { duration: 600; easing.type: Easing.OutCubic }
   }
 
-  Timer {
-    id: menuLevelSettleTimer
-    interval: 250
-    onTriggered: root.menuLevelSettling = false
+  visible: pinnedItems.length > 0 || drawerItems.length > 0
+  clip: false
+  implicitWidth: vertical ? barSize : trayStrip.implicitWidth
+  implicitHeight: vertical ? trayStrip.implicitHeight : barSize
+
+  Loader {
+    id: trayStrip
+    anchors.fill: parent
+    sourceComponent: root.vertical ? sideStrip : flatStrip
   }
 
-  function settleMenuLevel() {
-    menuLevelSettling = true
-    menuLevelSettleTimer.restart()
+  Component { id: flatStrip; Strip { vertical: false } }
+  Component { id: sideStrip; Strip { vertical: true } }
+
+  // Along the bar: the chevron, the drawer it slides over, then the pinned
+  // icons. The chevron starts at the drawer's far end and moves back as the
+  // drawer opens.
+  component Strip: Item {
+    id: strip
+
+    required property bool vertical
+    readonly property int pinnedLength: vertical ? pinned.implicitHeight : pinned.implicitWidth
+    readonly property int drawerLength: root.allItems.length > 0 ? (vertical ? chevron.implicitHeight : chevron.implicitWidth) + root.drawerExtent : 0
+    readonly property real slide: root.drawerExtent - root.revealExtent
+
+    implicitWidth: vertical ? root.barSize : drawerLength + pinnedLength
+    implicitHeight: vertical ? drawerLength + pinnedLength : root.barSize
+
+    // The room a closed drawer keeps is not the tray's: the pointer there
+    // neither opens it nor stops a click going through.
+    containmentMask: QtObject {
+      function contains(point: point): bool {
+        var across = strip.vertical ? point.x : point.y
+        var along = strip.vertical ? point.y : point.x
+        if (across < 0 || across > (strip.vertical ? strip.width : strip.height)) return false
+        if (along >= strip.slide && along <= strip.drawerLength) return true
+        return along >= strip.drawerLength && along <= (strip.vertical ? strip.implicitHeight : strip.implicitWidth)
+      }
+    }
+
+    Item {
+      width: strip.vertical ? root.barSize : strip.drawerLength
+      height: strip.vertical ? strip.drawerLength : root.barSize
+      visible: root.allItems.length > 0
+
+      HoverHandler {
+        onHoveredChanged: root.expanded = hovered
+      }
+
+      BarIconButton {
+        id: chevron
+        bar: root.bar
+        width: implicitWidth
+        height: implicitHeight
+        x: strip.vertical ? 0 : strip.slide
+        y: strip.vertical ? strip.slide : 0
+        text: ""
+        textRotation: strip.vertical ? 90 : 0
+        onPressed: function(button) {
+          if (button === Qt.RightButton) root.managePopupOpen = !root.managePopupOpen
+        }
+      }
+
+      Item {
+        x: strip.vertical ? 0 : chevron.width
+        y: strip.vertical ? chevron.height : 0
+        width: strip.vertical ? root.barSize : root.drawerExtent
+        height: strip.vertical ? root.drawerExtent : root.barSize
+        clip: true
+
+        Grid {
+          rows: strip.vertical ? -1 : 1
+          columns: strip.vertical ? 1 : -1
+          anchors.left: strip.vertical ? undefined : parent.left
+          anchors.top: strip.vertical ? parent.top : undefined
+          anchors.leftMargin: strip.slide
+          anchors.topMargin: strip.slide
+          anchors.verticalCenter: strip.vertical ? undefined : parent.verticalCenter
+          anchors.horizontalCenter: strip.vertical ? parent.horizontalCenter : undefined
+          layer.enabled: true
+
+          Repeater {
+            model: root.drawerItems
+            TrayItem {}
+          }
+        }
+      }
+    }
+
+    Grid {
+      id: pinned
+      rows: strip.vertical ? -1 : 1
+      columns: strip.vertical ? 1 : -1
+      anchors.left: strip.vertical ? undefined : parent.left
+      anchors.top: strip.vertical ? parent.top : undefined
+      anchors.leftMargin: strip.drawerLength
+      anchors.topMargin: strip.drawerLength
+      anchors.verticalCenter: strip.vertical ? undefined : parent.verticalCenter
+      anchors.horizontalCenter: strip.vertical ? parent.horizontalCenter : undefined
+
+      Repeater {
+        model: root.pinnedItems
+        TrayItem {}
+      }
+    }
   }
 
-  function resetTrayMenu() {
-    menuLevelSettling = false
-    menuLevelSettleTimer.stop()
-    // Flickable keeps its offset across a model swap whenever the new content
-    // is still tall enough to hold it, so a menu dismissed while scrolled
-    // would otherwise reopen part-way down with its first entries off screen.
-    trayMenuFlick.contentY = 0
-    // Clear the reactive stack before tearing anything down, so no binding can
-    // read a partially-destroyed opener while this runs. Then destroy deepest
-    // first: an inner opener's menu entry is owned by its parent's children
-    // model, so destroying a parent first would invalidate an entry a still-
-    // live child opener references.
-    var openers = submenuStack
-    submenuStack = []
-    for (var i = openers.length - 1; i >= 0; i--) openers[i].opener.destroy()
+  // One icon. A click activates its app, a middle click does its second
+  // action, the wheel scrolls it; a right click opens its menu, as does a
+  // click on an icon that has only a menu.
+  component TrayItem: Item {
+    id: trayItem
+
+    required property var modelData
+    readonly property bool tooltipHovered: visible && opacity > 0 && pointer.containsMouse
+
+    visible: modelData.status !== Status.Passive
+    implicitWidth: visible ? root.iconExtent : 0
+    implicitHeight: visible ? root.iconExtent : 0
+
+    TrayIcon {
+      anchors.centerIn: parent
+      width: Style.space(12)
+      height: Style.space(12)
+      icon: trayItem.modelData.icon
+    }
+
+    MouseArea {
+      id: pointer
+      anchors.fill: parent
+      acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+
+      onEntered: if (root.bar) root.bar.showTooltip(trayItem, trayItem.modelData.tooltipTitle || trayItem.modelData.title || trayItem.modelData.id || "")
+      onExited: if (root.bar) root.bar.hideTooltip(trayItem)
+      onPressed: function(mouse) {
+        if (mouse.button === Qt.RightButton) {
+          root.openTrayMenu(trayItem.modelData, trayItem, mouse)
+          mouse.accepted = true
+        }
+      }
+      onClicked: function(mouse) {
+        if (mouse.button === Qt.RightButton) mouse.accepted = true
+        else if (mouse.button === Qt.MiddleButton) trayItem.modelData.secondaryActivate()
+        else if (trayItem.modelData.onlyMenu) root.openTrayMenu(trayItem.modelData, trayItem, mouse)
+        else trayItem.modelData.activate()
+      }
+      onWheel: function(wheel) {
+        trayItem.modelData.scroll(wheel.angleDelta.y, false)
+      }
+    }
   }
 
-  function enterSubmenu(entry, title) {
-    var opener = submenuOpenerComponent.createObject(root, { menu: entry })
-    if (!opener) return
-    var stack = submenuStack.slice()
-    stack.push({ opener: opener, title: title })
-    submenuStack = stack
-    settleMenuLevel()
+  // An icon from Quickshell's image:// URL, which already finds those an app
+  // keeps outside an icon theme. A symbolic one (named "-symbolic") is drawn
+  // in the bar's colour, as freedesktop means it to be: its own fill, often
+  // near white, would vanish on a light bar.
+  component TrayIcon: Item {
+    id: trayIcon
+
+    required property var icon
+    readonly property bool symbolic: String(icon || "").split("?")[0].slice(-9) === "-symbolic"
+
+    Image {
+      id: image
+      anchors.fill: parent
+      fillMode: Image.PreserveAspectFit
+      // At the screen's pixels: at the logical size, PNG icons blur on HiDPI.
+      sourceSize.width: Math.round(Math.min(width, height) * Screen.devicePixelRatio)
+      sourceSize.height: Math.round(Math.min(width, height) * Screen.devicePixelRatio)
+      source: String(trayIcon.icon || "")
+      // A symbolic one is drawn through the effect below, which reads it as
+      // a layer.
+      visible: !trayIcon.symbolic
+      layer.enabled: trayIcon.symbolic
+    }
+
+    MultiEffect {
+      anchors.fill: image
+      source: image
+      visible: trayIcon.symbolic
+      colorization: 1.0
+      colorizationColor: root.foreground
+    }
   }
 
-  function leaveSubmenu() {
-    if (submenuStack.length === 0) return
-    var stack = submenuStack.slice()
-    var top = stack.pop()
-    submenuStack = stack
-    top.opener.destroy()
-    settleMenuLevel()
-  }
+  // ----- pin and hide -----
+
+  property bool managePopupOpen: false
 
   function close() {
     managePopupOpen = false
     trayMenuOpen = false
-  }
-
-  function openTrayMenu(item, anchorItem, mouse) {
-    if (!item || !item.menu) {
-      var point = anchorItem.QsWindow.contentItem.mapFromItem(anchorItem, mouse.x, mouse.y)
-      item.display(anchorItem.QsWindow.window, point.x, point.y)
-      return
-    }
-
-    // Reset before switching items: trayMenuOpener.menu binds to
-    // activeTrayItem.menu, so assigning a new item invalidates the old root's
-    // children immediately, before any nested opener referencing them would
-    // otherwise get torn down.
-    resetTrayMenu()
-    activeTrayItem = item
-    activeTrayAnchor = anchorItem
-    trayMenuOpen = true
-  }
-
-  function trayIconSource(icon) {
-    // Quickshell already resolves the tray icon into a ready-to-use image://
-    // URL, including a "?path=" fallback search dir for apps that ship their
-    // tray icon outside a standard theme (e.g. Steam's flat public/ dir). Hand
-    // it straight to IconImage; guessing a theme sub-directory here only broke
-    // apps whose layout didn't match the guess.
-    return String(icon || "")
-  }
-
-  // Symbolic icons ship a fixed fill (often near-white) that the host is meant
-  // to recolor to its foreground; detect them by the freedesktop "-symbolic"
-  // name suffix so they can be tinted instead of rendered as-is.
-  function iconIsSymbolic(icon) {
-    var name = String(icon || "").split("?")[0]
-    return name.slice(-9) === "-symbolic"
-  }
-
-  function trayTooltip(item) {
-    return item.tooltipTitle || item.title || item.id || ""
-  }
-
-  function classifyItem(item) {
-    var iid = String(item.id || "")
-    if (hiddenIds.indexOf(iid) !== -1) return "hidden"
-    if (pinnedIds.indexOf(iid) !== -1) return "pinned"
-    return "drawer"
-  }
-
-  function ownedByNova(item) {
-    var layout = root.bar && root.bar.layoutConfig ? root.bar.layoutConfig : null
-    return TrayModel.ownedByNova(item, layout)
-  }
-
-  function bucket(category) {
-    var values = SystemTray.items.values
-    var result = []
-    for (var i = 0; i < values.length; i++) {
-      var item = values[i]
-      if (item.status === Status.Passive) continue
-      if (ownedByNova(item)) continue
-      if (category === "all") {
-        result.push(item)
-        continue
-      }
-      if (classifyItem(item) === category) result.push(item)
-    }
-    return result
-  }
-
-  function persistTrayState(pinned, hidden) {
-    if (!root.bar || !root.bar.shell || typeof root.bar.shell.updateEntryInline !== "function") return
-    var id = root.moduleName || "nova.tray"
-    root.bar.shell.updateEntryInline(id, { id: id, pinned: pinned, hidden: hidden })
-  }
-
-  function togglePin(iid) {
-    var p = pinnedIds.slice(), h = hiddenIds.slice()
-    var idx = p.indexOf(iid)
-    if (idx !== -1) p.splice(idx, 1)
-    else {
-      p.push(iid)
-      var hi = h.indexOf(iid)
-      if (hi !== -1) h.splice(hi, 1)
-    }
-    persistTrayState(p, h)
-  }
-
-  function toggleHide(iid) {
-    var p = pinnedIds.slice(), h = hiddenIds.slice()
-    var idx = h.indexOf(iid)
-    if (idx !== -1) h.splice(idx, 1)
-    else {
-      h.push(iid)
-      var pi = p.indexOf(iid)
-      if (pi !== -1) p.splice(pi, 1)
-    }
-    persistTrayState(p, h)
-  }
-
-  visible: pinnedItems.length > 0 || drawerCount > 0
-  clip: false
-  implicitWidth: root.vertical ? root.barSize : trayContent.implicitWidth
-  implicitHeight: root.vertical ? trayContent.implicitHeight : root.barSize
-
-  Behavior on revealProgress {
-    NumberAnimation { duration: root.animationDuration; easing.type: Easing.OutCubic }
-  }
-
-  Loader {
-    id: trayContent
-    anchors.fill: parent
-    sourceComponent: root.vertical ? verticalTray : horizontalTray
-  }
-
-  Component {
-    id: horizontalTray
-
-    Item {
-      id: horizontalTrayRoot
-
-      readonly property int pinnedWidth: pinnedRow.implicitWidth
-      readonly property int drawerBlockWidth: root.allItems.length > 0 ? expandIcon.implicitWidth + root.drawerExtent : 0
-
-      implicitWidth: pinnedWidth + drawerBlockWidth
-      implicitHeight: root.barSize
-
-      // Mask out the empty area the collapsed drawer reserves for its slide-in,
-      // so hovering it doesn't trigger expand and clicks pass through.
-      containmentMask: QtObject {
-        function contains(point: point): bool {
-          if (point.y < 0 || point.y > horizontalTrayRoot.height) return false
-          // Drawer reveals leftward; chevron sits at the right end when collapsed
-          // and slides left as it opens. The visible region starts at the chevron.
-          var chevronX = root.drawerExtent - root.revealExtent
-          if (point.x >= chevronX && point.x <= horizontalTrayRoot.drawerBlockWidth) return true
-          // Pinned items, placed to the right of the drawer block.
-          var pinnedStart = horizontalTrayRoot.drawerBlockWidth
-          return point.x >= pinnedStart && point.x <= horizontalTrayRoot.implicitWidth
-        }
-      }
-
-      Item {
-        id: drawerArea
-        x: 0
-        width: horizontalTrayRoot.drawerBlockWidth
-        height: root.barSize
-        visible: root.allItems.length > 0
-
-        HoverHandler {
-          onHoveredChanged: root.expanded = hovered
-        }
-
-        BarIconButton {
-          id: expandIcon
-          bar: root.bar
-          width: implicitWidth
-          height: implicitHeight
-          x: root.drawerExtent - root.revealExtent
-          text: "\uf053"
-          onPressed: function(button) {
-            if (button === Qt.RightButton) root.managePopupOpen = !root.managePopupOpen
-          }
-        }
-
-        Item {
-          id: trayClip
-          x: expandIcon.width
-          anchors.verticalCenter: parent.verticalCenter
-          width: root.drawerExtent
-          height: root.barSize
-          clip: true
-
-          Row {
-            id: trayIcons
-            x: root.drawerExtent - root.revealExtent
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: root.trayItemGap
-            layer.enabled: true
-
-            Repeater {
-              model: root.drawerItems
-              TrayItem {}
-            }
-          }
-        }
-      }
-
-      Row {
-        id: pinnedRow
-        x: drawerArea.x + horizontalTrayRoot.drawerBlockWidth
-        anchors.verticalCenter: parent.verticalCenter
-        spacing: root.trayItemGap
-        leftPadding: root.pinnedItems.length > 0 && root.allItems.length > 0 ? root.trayJoinGap : 0
-        Repeater {
-          model: root.pinnedItems
-          TrayItem {}
-        }
-      }
-    }
-  }
-
-  Component {
-    id: verticalTray
-
-    Item {
-      id: verticalTrayRoot
-
-      readonly property int pinnedHeight: pinnedCol.implicitHeight
-      readonly property int drawerBlockHeight: root.allItems.length > 0 ? expandIcon.implicitHeight + root.drawerExtent : 0
-
-      implicitWidth: root.barSize
-      implicitHeight: pinnedHeight + drawerBlockHeight
-
-      containmentMask: QtObject {
-        function contains(point: point): bool {
-          if (point.x < 0 || point.x > verticalTrayRoot.width) return false
-          var chevronY = root.drawerExtent - root.revealExtent
-          if (point.y >= chevronY && point.y <= verticalTrayRoot.drawerBlockHeight) return true
-          var pinnedStart = verticalTrayRoot.drawerBlockHeight
-          return point.y >= pinnedStart && point.y <= verticalTrayRoot.implicitHeight
-        }
-      }
-
-      Item {
-        id: drawerArea
-        y: 0
-        width: root.barSize
-        height: verticalTrayRoot.drawerBlockHeight
-        visible: root.allItems.length > 0
-
-        HoverHandler {
-          onHoveredChanged: root.expanded = hovered
-        }
-
-        BarIconButton {
-          id: expandIcon
-          bar: root.bar
-          width: implicitWidth
-          height: implicitHeight
-          y: root.drawerExtent - root.revealExtent
-          text: "\uf053"
-          textRotation: 90
-          onPressed: function(button) {
-            if (button === Qt.RightButton) root.managePopupOpen = !root.managePopupOpen
-          }
-        }
-
-        Item {
-          id: trayClip
-          y: expandIcon.height
-          anchors.horizontalCenter: parent.horizontalCenter
-          width: root.barSize
-          height: root.drawerExtent
-          clip: true
-
-          Column {
-            id: trayIcons
-            y: root.drawerExtent - root.revealExtent
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: root.trayItemGap
-            layer.enabled: true
-
-            Repeater {
-              model: root.drawerItems
-              TrayItem {}
-            }
-          }
-        }
-      }
-
-      Column {
-        id: pinnedCol
-        y: drawerArea.y + verticalTrayRoot.drawerBlockHeight
-        anchors.horizontalCenter: parent.horizontalCenter
-        spacing: root.trayItemGap
-        topPadding: root.pinnedItems.length > 0 && root.allItems.length > 0 ? root.trayJoinGap : 0
-        Repeater {
-          model: root.pinnedItems
-          TrayItem {}
-        }
-      }
-    }
   }
 
   PopupCard {
@@ -403,10 +301,10 @@ BarWidget {
     bar: root.bar
     open: root.managePopupOpen
     contentWidth: managePopup.fittedContentWidth(Style.space(300))
-    contentHeight: managePopup.fittedContentHeight(manageColumn.implicitHeight)
+    contentHeight: managePopup.fittedContentHeight(manageList.implicitHeight)
 
     Column {
-      id: manageColumn
+      id: manageList
       anchors.fill: parent
       spacing: Style.space(8)
 
@@ -419,12 +317,12 @@ BarWidget {
       }
 
       Text {
+        width: parent.width
         text: "Pinned icons stay visible. Hidden icons never show."
+        wrapMode: Text.WordWrap
         color: Qt.darker(root.foreground, 1.4)
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
-        wrapMode: Text.WordWrap
-        width: parent.width
       }
 
       Text {
@@ -438,198 +336,249 @@ BarWidget {
 
       Repeater {
         model: root.allItems
-        delegate: Item {
-          id: rowRoot
+
+        Item {
+          id: entry
+
           required property var modelData
-          required property int index
-          width: manageColumn.width
+          readonly property string itemId: String(modelData.id || "")
+          // Its title, or its tooltip's, or the last part of its id.
+          readonly property string name: {
+            var title = String(modelData.title || "").trim()
+            if (title) return title
+            var tooltip = String(modelData.tooltipTitle || "").trim()
+            if (tooltip) return tooltip
+            var slash = itemId.lastIndexOf("/")
+            return slash !== -1 ? itemId.substring(slash + 1) : (itemId || "Unknown")
+          }
+
+          width: manageList.width
           implicitHeight: 28
 
-          readonly property string itemId: String(modelData.id || "")
-          readonly property string displayName: {
-            var t = String(modelData.title || "").trim()
-            if (t) return t
-            var tt = String(modelData.tooltipTitle || "").trim()
-            if (tt) return tt
-            var id = String(modelData.id || "")
-            var slash = id.lastIndexOf("/")
-            return slash !== -1 ? id.substring(slash + 1) : (id || "Unknown")
-          }
-          readonly property bool isPinned: root.pinnedIds.indexOf(itemId) !== -1
-          readonly property bool isHidden: root.hiddenIds.indexOf(itemId) !== -1
-
           TrayIcon {
-            id: rowIcon
-            anchors.verticalCenter: parent.verticalCenter
+            id: entryIcon
             anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
             width: 16
             height: 16
-            icon: rowRoot.modelData.icon
+            icon: entry.modelData.icon
           }
 
           Text {
-            textFormat: Text.PlainText
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.left: rowIcon.right
+            anchors.left: entryIcon.right
             anchors.leftMargin: Style.space(10)
-            anchors.right: rowHideBtn.left
+            anchors.right: hideButton.left
             anchors.rightMargin: Style.space(8)
-            text: rowRoot.displayName
+            anchors.verticalCenter: parent.verticalCenter
+            text: entry.name
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
             color: root.foreground
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
-            elide: Text.ElideRight
           }
 
-          Button {
-            id: rowPinBtn
-            anchors.verticalCenter: parent.verticalCenter
+          EntryButton {
+            id: pinButton
             anchors.right: parent.right
-            iconText: "\uf08d"
-            text: rowRoot.isPinned ? "Unpin" : "Pin"
-            foreground: root.foreground
-            horizontalPadding: 8
-            verticalPadding: 3
-            iconSize: Style.font.bodySmall
-            fontSize: Style.font.bodySmall
-            onClicked: root.togglePin(rowRoot.itemId)
+            iconText: ""
+            text: root.pinnedIds.indexOf(entry.itemId) !== -1 ? "Unpin" : "Pin"
+            onClicked: root.togglePin(entry.itemId)
           }
 
-          Button {
-            id: rowHideBtn
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.right: rowPinBtn.left
+          EntryButton {
+            id: hideButton
+            anchors.right: pinButton.left
             anchors.rightMargin: Style.space(6)
-            iconText: "\uf06e"
-            text: rowRoot.isHidden ? "Show" : "Hide"
-            foreground: root.foreground
-            horizontalPadding: 8
-            verticalPadding: 3
-            iconSize: Style.font.bodySmall
-            fontSize: Style.font.bodySmall
-            onClicked: root.toggleHide(rowRoot.itemId)
+            iconText: ""
+            text: root.hiddenIds.indexOf(entry.itemId) !== -1 ? "Show" : "Hide"
+            onClicked: root.toggleHide(entry.itemId)
           }
         }
       }
     }
   }
 
+  component EntryButton: Button {
+    anchors.verticalCenter: parent.verticalCenter
+    foreground: root.foreground
+    horizontalPadding: 8
+    verticalPadding: 3
+    iconSize: Style.font.bodySmall
+    fontSize: Style.font.bodySmall
+  }
+
+  // ----- an icon's menu -----
+
+  property bool trayMenuOpen: false
+  property var activeTrayItem: null
+  property var activeTrayAnchor: null
+
+  // The submenus open, outermost first, each { opener, title }. A submenu is
+  // drawn here: QsMenuEntry.display() would hand it to Qt's own menus, which
+  // Quickshell refuses outside QApplication mode, which Nova's shell is not
+  // in, so the click did nothing and an app whose menu is all submenus
+  // (radiotray-ng's stations) could not be used. Each level keeps its own
+  // opener, as a submenu's entry belongs to its parent's: one opener for all
+  // would free the entry it shows.
+  property var submenuStack: []
+  readonly property int submenuDepth: submenuStack.length
+  readonly property string currentTitle: submenuDepth > 0 ? submenuStack[submenuDepth - 1].title : ""
+  readonly property var currentChildren: submenuDepth > 0 ? submenuStack[submenuDepth - 1].opener.children : menuOpener.children
+
+  // A new level is drawn at once, so its row under the pointer would take a
+  // second click meant for the row before it. Clicks wait 250 ms after each
+  // change of level.
+  property bool menuLevelSettling: false
+
+  function settleMenuLevel() {
+    menuLevelSettling = true
+    settling.restart()
+  }
+
+  // An app with no menu of its own draws one where it was clicked.
+  function openTrayMenu(item, anchor, mouse) {
+    if (!item.menu) {
+      var point = anchor.QsWindow.contentItem.mapFromItem(anchor, mouse.x, mouse.y)
+      item.display(anchor.QsWindow.window, point.x, point.y)
+      return
+    }
+    // Before the item changes: its menu's entries go with it, and the
+    // submenu openers hold some of them.
+    resetTrayMenu()
+    activeTrayItem = item
+    activeTrayAnchor = anchor
+    trayMenuOpen = true
+  }
+
+  function enterSubmenu(entry, title) {
+    var opener = openerComponent.createObject(root, { menu: entry })
+    if (!opener) return
+    submenuStack = submenuStack.concat([{ opener: opener, title: title }])
+    settleMenuLevel()
+  }
+
+  function leaveSubmenu() {
+    if (submenuStack.length === 0) return
+    var top = submenuStack[submenuStack.length - 1]
+    submenuStack = submenuStack.slice(0, -1)
+    top.opener.destroy()
+    settleMenuLevel()
+  }
+
+  // Back to the top of the menu's first level. The stack empties before an
+  // opener goes, so no binding reads one half freed, and the innermost goes
+  // first, as its entry belongs to the one outside it. The list scrolls back
+  // up too: a Flickable keeps its place across a new model that is tall
+  // enough, so a menu closed scrolled down would open scrolled down.
+  function resetTrayMenu() {
+    menuLevelSettling = false
+    settling.stop()
+    menuFlick.contentY = 0
+    var openers = submenuStack
+    submenuStack = []
+    for (var i = openers.length - 1; i >= 0; i--) openers[i].opener.destroy()
+  }
+
   QsMenuOpener {
-    id: trayMenuOpener
+    id: menuOpener
     menu: root.activeTrayItem ? root.activeTrayItem.menu : null
   }
 
+  Component {
+    id: openerComponent
+    QsMenuOpener {}
+  }
+
+  Timer {
+    id: settling
+    interval: 250
+    onTriggered: root.menuLevelSettling = false
+  }
+
   PopupCard {
-    id: trayMenuPopup
+    id: menuPopup
     anchorItem: root.activeTrayAnchor || root
     owner: root
     bar: root.bar
     open: root.trayMenuOpen
-    // The card fades out over 140ms (visible stays true for that whole time --
-    // see PopupCard's own visible: open || card.opacity > 0), so resetting on
-    // "open" would swap a live submenu for the root menu mid-fade: a visible
-    // flash, and a resize/reposition if the two have different geometry. Wait
-    // for the fade to actually finish. Switching to a different tray item
-    // still resets immediately, from openTrayMenu() itself.
-    onVisibleChanged: if (!visible) root.resetTrayMenu()
     padding: Style.space(8)
     borderColor: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.45)
-    contentWidth: trayMenuPopup.fittedContentWidth(Style.space(232))
-    contentHeight: trayMenuPopup.fittedContentHeight(menuHeaderHeight + trayMenuColumn.implicitHeight, Style.space(420))
+    contentWidth: menuPopup.fittedContentWidth(Style.space(232))
+    contentHeight: menuPopup.fittedContentHeight(headerHeight + menuRows.implicitHeight, Style.space(420))
 
-    // Column skips invisible children but keeps reporting their height, so
-    // read the header's extent through its own visibility.
-    readonly property int menuHeaderHeight: menuHeader.visible ? menuHeader.implicitHeight : 0
+    // A Column still counts a hidden child's height.
+    readonly property int headerHeight: header.visible ? header.implicitHeight : 0
+
+    // The card fades out over 140 ms, still visible: back to the first level
+    // once it has gone, as a submenu swapped for it mid-fade would flash and
+    // move. Another icon's menu resets at once, in openTrayMenu.
+    onVisibleChanged: if (!visible) root.resetTrayMenu()
 
     Column {
-      id: trayMenuLayout
+      id: menuLayout
       anchors.fill: parent
       spacing: 0
 
-      // Header for a drilled-into submenu: names where we are and walks back
-      // out. Pinned above the Flickable rather than scrolling with the rows,
-      // so the way back stays reachable in a submenu taller than the card.
-      // Only present below the root level, so the root menu is unchanged.
+      // In a submenu: its name, which leads back out. It stays above the
+      // rows rather than scrolling with them, so the way back is always
+      // there.
       Column {
-        id: menuHeader
+        id: header
         visible: root.submenuDepth > 0
-        width: trayMenuLayout.width
+        width: menuLayout.width
         spacing: 0
 
         Item {
-          id: menuBackRow
-          width: menuHeader.width
+          width: header.width
           implicitHeight: Style.space(30)
 
-          Rectangle {
-            anchors.fill: parent
-            radius: Math.max(2, Style.cornerRadius)
-            color: backMouse.containsMouse ? Style.hoverFillFor(root.foreground, root.foreground) : "transparent"
-          }
+          HoverFill { lit: back.containsMouse }
 
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
+          MenuText {
             anchors.left: parent.left
             width: Style.space(22)
             horizontalAlignment: Text.AlignHCenter
-            text: "\u2039"
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
+            text: "‹"
           }
 
-          Text {
-            textFormat: Text.PlainText
-            anchors.verticalCenter: parent.verticalCenter
+          MenuText {
             anchors.left: parent.left
             anchors.leftMargin: Style.space(28)
             anchors.right: parent.right
             anchors.rightMargin: Style.space(10)
             text: root.currentTitle
-            color: root.foreground
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight
           }
 
           MouseArea {
-            id: backMouse
+            id: back
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: {
               if (root.menuLevelSettling) return
-              // Reset before the model swap so the parent level shows from
-              // the top (same ordering as the row delegate below).
-              trayMenuFlick.contentY = 0
+              // Before the rows change, so the level shows from its top.
+              menuFlick.contentY = 0
               root.leaveSubmenu()
             }
           }
         }
 
         Item {
-          width: menuHeader.width
+          width: header.width
           implicitHeight: Style.space(11)
 
-          Rectangle {
-            anchors.left: parent.left
-            anchors.leftMargin: Style.space(10)
-            anchors.right: parent.right
-            anchors.rightMargin: Style.space(10)
-            anchors.verticalCenter: parent.verticalCenter
-            height: 1
-            color: Commons.Color.popups.border
-            opacity: 0.45
-          }
+          Rule {}
         }
       }
 
       Flickable {
-        id: trayMenuFlick
-        width: trayMenuLayout.width
-        height: trayMenuLayout.height - trayMenuPopup.menuHeaderHeight
+        id: menuFlick
+        width: menuLayout.width
+        height: menuLayout.height - menuPopup.headerHeight
         contentWidth: width
-        contentHeight: trayMenuColumn.implicitHeight
+        contentHeight: menuRows.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
@@ -638,122 +587,96 @@ BarWidget {
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
         Column {
-          id: trayMenuColumn
-          width: trayMenuFlick.width
+          id: menuRows
+          width: menuFlick.width
           spacing: 0
 
           Repeater {
             model: root.currentChildren
 
-            delegate: Item {
-              id: menuRow
+            Item {
+              id: row
+
               required property var modelData
               required property int index
+              readonly property string label: String(modelData.text || "")
+              readonly property bool separator: modelData.isSeparator
+              // At the first level, the entry that only repeats the app's
+              // name, and a separator at the top.
+              readonly property string appTitle: root.activeTrayItem ? String(root.activeTrayItem.title || root.activeTrayItem.id || "") : ""
+              readonly property bool skipped: root.submenuDepth === 0
+                && ((index === 0 && modelData.hasChildren && label.toLowerCase() === appTitle.toLowerCase())
+                  || (separator && index <= 1))
 
-              readonly property string rowText: String(modelData.text || "")
-              readonly property string activeTitle: root.activeTrayItem ? String(root.activeTrayItem.title || root.activeTrayItem.id || "") : ""
-              // Both only ever describe the root menu; inside a submenu the first
-              // rows are real entries and must not be swallowed.
-              readonly property bool atRoot: root.submenuDepth === 0
-              readonly property bool rootTitleEntry: atRoot && index === 0 && modelData.hasChildren && rowText.toLowerCase() === activeTitle.toLowerCase()
-              readonly property bool leadingSeparator: atRoot && modelData.isSeparator && index <= 1
-              readonly property bool hiddenRow: rootTitleEntry || leadingSeparator
-
-              visible: !hiddenRow
-              width: trayMenuColumn.width
-              implicitHeight: hiddenRow ? 0 : (modelData.isSeparator ? Style.space(11) : Style.space(30))
+              visible: !skipped
+              width: menuRows.width
+              implicitHeight: skipped ? 0 : (separator ? Style.space(11) : Style.space(30))
               opacity: modelData.enabled ? 1.0 : 0.45
 
-              Rectangle {
-                visible: menuRow.modelData.isSeparator
-                anchors.left: parent.left
-                anchors.leftMargin: Style.space(10)
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(10)
-                anchors.verticalCenter: parent.verticalCenter
-                height: 1
-                color: Commons.Color.popups.border
-                opacity: 0.45
+              Rule { visible: row.separator }
+
+              HoverFill {
+                visible: !row.separator
+                lit: rowArea.containsMouse && row.modelData.enabled
               }
 
-              Rectangle {
-                visible: !menuRow.modelData.isSeparator
-                anchors.fill: parent
-                radius: Math.max(2, Style.cornerRadius)
-                color: rowMouse.containsMouse && menuRow.modelData.enabled ? Style.hoverFillFor(root.foreground, root.foreground) : "transparent"
-              }
-
-              Text {
-                textFormat: Text.PlainText
-                visible: !menuRow.modelData.isSeparator && menuRow.modelData.buttonType !== QsMenuButtonType.None
-                anchors.verticalCenter: parent.verticalCenter
+              // The tick of a check or radio entry.
+              MenuText {
+                visible: !row.separator && row.modelData.buttonType !== QsMenuButtonType.None
                 anchors.left: parent.left
                 width: Style.space(22)
                 horizontalAlignment: Text.AlignHCenter
-                text: menuRow.modelData.checkState === Qt.Checked ? "\uf00c" : ""
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
+                text: row.modelData.checkState === Qt.Checked ? "" : ""
               }
 
               Image {
-                id: menuIcon
-                visible: !menuRow.modelData.isSeparator && String(menuRow.modelData.icon || "") !== ""
+                id: rowIcon
+                visible: !row.separator && String(row.modelData.icon || "") !== ""
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.left: parent.left
                 anchors.leftMargin: Style.space(24)
                 width: Style.space(16)
                 height: Style.space(16)
                 fillMode: Image.PreserveAspectFit
-                // Decode at physical pixels: IconImage uses the logical size,
-                // which leaves PNG icons upscaled and blurry on HiDPI displays.
+                // At the screen's pixels: at the logical size, PNG icons blur
+                // on HiDPI.
                 sourceSize.width: width * Screen.devicePixelRatio
                 sourceSize.height: height * Screen.devicePixelRatio
-                source: menuRow.modelData.icon
+                source: row.modelData.icon
               }
 
-              Text {
-                textFormat: Text.PlainText
-                visible: !menuRow.modelData.isSeparator
-                anchors.verticalCenter: parent.verticalCenter
+              MenuText {
+                visible: !row.separator
                 anchors.left: parent.left
-                anchors.leftMargin: menuIcon.visible ? Style.space(46) : Style.space(28)
-                anchors.right: submenuGlyph.left
+                anchors.leftMargin: rowIcon.visible ? Style.space(46) : Style.space(28)
+                anchors.right: arrow.left
                 anchors.rightMargin: Style.space(8)
-                text: menuRow.rowText
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
+                text: row.label
                 elide: Text.ElideRight
               }
 
-              Text {
-                id: submenuGlyph
-                visible: !menuRow.modelData.isSeparator && menuRow.modelData.hasChildren
-                anchors.verticalCenter: parent.verticalCenter
+              MenuText {
+                id: arrow
+                visible: !row.separator && row.modelData.hasChildren
                 anchors.right: parent.right
                 anchors.rightMargin: Style.space(10)
-                text: "\u203a"
-                color: root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.bodySmall
+                text: "›"
               }
 
               MouseArea {
-                id: rowMouse
+                id: rowArea
                 anchors.fill: parent
                 hoverEnabled: true
-                enabled: !menuRow.modelData.isSeparator && menuRow.modelData.enabled
+                enabled: !row.separator && row.modelData.enabled
                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
                 onClicked: {
                   if (root.menuLevelSettling) return
-                  if (menuRow.modelData.hasChildren) {
-                    // Reset scroll BEFORE swapping the model: the swap destroys
-                    // this delegate synchronously and ids stop resolving after.
-                    trayMenuFlick.contentY = 0
-                    root.enterSubmenu(menuRow.modelData, menuRow.rowText)
+                  if (row.modelData.hasChildren) {
+                    // Before the rows change: this one goes with them.
+                    menuFlick.contentY = 0
+                    root.enterSubmenu(row.modelData, row.label)
                   } else {
-                    menuRow.modelData.triggered()
+                    row.modelData.triggered()
                     root.close()
                   }
                 }
@@ -765,87 +688,30 @@ BarWidget {
     }
   }
 
-  // Renders a tray icon, recoloring symbolic icons to the bar foreground so
-  // they stay visible on any theme (a raw symbolic icon keeps its baked-in
-  // fill and disappears against a matching background).
-  component TrayIcon: Item {
-    id: trayIconRoot
-    required property var icon
-    readonly property bool symbolic: root.iconIsSymbolic(icon)
-
-    Image {
-      id: trayIconImage
-      anchors.fill: parent
-      fillMode: Image.PreserveAspectFit
-      // Decode at physical pixels: IconImage uses the logical size,
-      // which leaves PNG icons upscaled and blurry on HiDPI displays.
-      sourceSize.width: Math.round(Math.min(width, height) * Screen.devicePixelRatio)
-      sourceSize.height: Math.round(Math.min(width, height) * Screen.devicePixelRatio)
-      source: root.trayIconSource(trayIconRoot.icon)
-      // Kept as a hidden layer so the effect can sample it as a texture.
-      visible: !trayIconRoot.symbolic
-      layer.enabled: trayIconRoot.symbolic
-    }
-
-    MultiEffect {
-      anchors.fill: trayIconImage
-      source: trayIconImage
-      visible: trayIconRoot.symbolic
-      colorization: 1.0
-      colorizationColor: root.foreground
-    }
+  component MenuText: Text {
+    anchors.verticalCenter: parent.verticalCenter
+    textFormat: Text.PlainText
+    color: root.foreground
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
   }
 
-  component TrayItem: Item {
-    id: trayItemRoot
+  component HoverFill: Rectangle {
+    property bool lit: false
+    anchors.fill: parent
+    radius: Math.max(2, Style.cornerRadius)
+    color: lit ? Style.hoverFillFor(root.foreground, root.foreground) : "transparent"
+  }
 
-    required property var modelData
-
-    visible: modelData.status !== Status.Passive
-    implicitWidth: visible ? root.trayItemExtent : 0
-    implicitHeight: visible ? root.trayItemExtent : 0
-
-    function displayMenu(mouse) {
-      root.openTrayMenu(trayItemRoot.modelData, trayItemRoot, mouse)
-    }
-
-    TrayIcon {
-      anchors.centerIn: parent
-      width: Style.space(12)
-      height: Style.space(12)
-      icon: trayItemRoot.modelData.icon
-    }
-
-    MouseArea {
-      id: mouseArea
-      anchors.fill: parent
-      acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onEntered: if (root.bar) root.bar.showTooltip(trayItemRoot, root.trayTooltip(modelData))
-      onExited: if (root.bar) root.bar.hideTooltip(trayItemRoot)
-      onPressed: function(mouse) {
-        if (mouse.button === Qt.RightButton) {
-          trayItemRoot.displayMenu(mouse)
-          mouse.accepted = true
-        }
-      }
-      onClicked: function(mouse) {
-        if (mouse.button === Qt.RightButton) {
-          mouse.accepted = true
-        } else if (mouse.button === Qt.MiddleButton) {
-          trayItemRoot.modelData.secondaryActivate()
-        } else if (trayItemRoot.modelData.onlyMenu) {
-          trayItemRoot.displayMenu(mouse)
-        } else {
-          trayItemRoot.modelData.activate()
-        }
-      }
-      onWheel: function(wheel) {
-        trayItemRoot.modelData.scroll(wheel.angleDelta.y, false)
-      }
-    }
-
-    readonly property bool tooltipHovered: visible && opacity > 0 && mouseArea.containsMouse
+  // A separator's line.
+  component Rule: Rectangle {
+    anchors.left: parent.left
+    anchors.leftMargin: Style.space(10)
+    anchors.right: parent.right
+    anchors.rightMargin: Style.space(10)
+    anchors.verticalCenter: parent.verticalCenter
+    height: 1
+    color: Commons.Color.popups.border
+    opacity: 0.45
   }
 }
