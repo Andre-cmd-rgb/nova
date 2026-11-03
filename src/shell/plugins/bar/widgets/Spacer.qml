@@ -1,10 +1,11 @@
 import QtQuick
 import qs.Ui
 
-// Empty room along the bar: `size` pixels, 12 when it names none; none at all
-// at 0 or less.
+// Room along the bar and nothing in it: the entry's `size` in pixels, 12
+// when it names none, and none at all at 0 or less.
 BarWidget {
-  readonly property int length: settings && settings.size !== undefined ? Number(settings.size) : 12
+  readonly property var size: settings ? settings.size : undefined
+  readonly property int length: size === undefined ? 12 : Number(size)
 
   moduleName: "nova.spacer"
   visible: length > 0

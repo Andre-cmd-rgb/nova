@@ -1,14 +1,14 @@
 import QtQuick
 import qs.Ui
 
-// The night light, lit while the screen is warmed, and its switch.
+// Lit while the night light warms the screen; a click switches it.
 BarIndicator {
-  readonly property var nightlight: bar?.shell?.serviceFor("nova.nightlight")
+  readonly property var service: bar?.shell?.serviceFor("nova.nightlight")
 
-  active: nightlight ? nightlight.enabled : false
-  activeText: "󰔎"
+  active: !!service && service.enabled
+  activeText: "\u{F050E}"
   activeTooltipText: "Day Light"
   inactiveTooltipText: "Night Light"
 
-  onPressed: if (nightlight) nightlight.setNightlight(!active)
+  onPressed: if (service) service.setNightlight(!active)
 }
