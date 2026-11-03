@@ -11,8 +11,6 @@ ConfirmDialog 1.0 ConfirmDialog.qml
 CursorSurface 1.0 CursorSurface.qml
 Dropdown 1.0 Dropdown.qml
 KeyboardPanel 1.0 KeyboardPanel.qml
-MultiSelect 1.0 MultiSelect.qml
-NumberField 1.0 NumberField.qml
 OpticalGlyph 1.0 OpticalGlyph.qml
 Panel 1.0 Panel.qml
 PanelActionButton 1.0 PanelActionButton.qml
@@ -26,7 +24,6 @@ PanelToolTip 1.0 PanelToolTip.qml
 PointerMoveGate 1.0 PointerMoveGate.qml
 PopupCard 1.0 PopupCard.qml
 ScreenMoveRemap 1.0 ScreenMoveRemap.qml
-SearchableDropdown 1.0 SearchableDropdown.qml
 SinkAvailability 1.0 SinkAvailability.qml
 TextField 1.0 TextField.qml
 Toggle 1.0 Toggle.qml
@@ -34,6 +31,6 @@ ToggleSwitch 1.0 ToggleSwitch.qml
 TouchpadScroll 1.0 TouchpadScroll.qml
 WidgetButton 1.0 WidgetButton.qml
 
-# Shared by the dropdowns, not for use outside them.
+# Dropdown's parts, not for use outside it.
 internal DropdownField DropdownField.qml
 internal DropdownPopup DropdownPopup.qml

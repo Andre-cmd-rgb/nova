@@ -1,19 +1,18 @@
 import QtQuick
 import qs.Commons
 
-// The closed face of Dropdown, SearchableDropdown and MultiSelect: a bold
-// caption over a field that shows <text>, with a chevron at its end. The
-// popup, declared inside it, belongs to the field (<field>) and is
-// <popupItem>: a click on the field opens or closes it, and so do Return,
-// Enter, Space and Down while the field has the focus; Escape closes it.
-// The pointer, the focus and the panel cursor take the controls' states.
+// The closed face of Dropdown: a bold caption over a field that shows
+// <text>, with a chevron at its end. The popup, declared inside it, belongs
+// to the field (<field>) and is <popupItem>: a click on the field opens or
+// closes it, and so do Return, Enter, Space and Down while the field has
+// the focus; Escape closes it. The pointer, the focus and the panel cursor
+// take the controls' states.
 Column {
   id: root
 
   property string label: ""
   property bool showLabel: true
   property string text: ""
-  property color textColor: foreground
   property color foreground
   property color accent
   property string fontFamily
@@ -77,7 +76,7 @@ Column {
       anchors.rightMargin: field.borderRight + Style.spacing.md
       textFormat: Text.PlainText
       text: root.text
-      color: root.textColor
+      color: root.foreground
       font { family: root.fontFamily; pixelSize: Style.font.body }
       elide: Text.ElideRight
     }

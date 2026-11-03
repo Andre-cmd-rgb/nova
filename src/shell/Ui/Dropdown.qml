@@ -10,7 +10,6 @@ import qs.Commons as Commons
 //
 // Keys: Tab comes to the field; Return, Enter, Space or Down opens it; in
 // the list, Up and Down (or k and j) move and Return chooses; Escape closes.
-// SearchableDropdown is this with a filter to type in.
 Item {
   id: root
 

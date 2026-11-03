@@ -2,9 +2,9 @@ import QtQuick
 import QtQuick.Controls
 import qs.Commons
 
-// The open list of Dropdown, SearchableDropdown and MultiSelect: a popup in
-// <fill> with the border <borderSpec>, its content a hairline inside the
-// border. It takes the focus as it opens.
+// The open list of Dropdown: a popup in <fill> with the border
+// <borderSpec>, its content a hairline inside the border. It takes the
+// focus as it opens.
 Popup {
   id: root
 
