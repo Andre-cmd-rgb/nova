@@ -66,10 +66,14 @@ function meteoPoint(place, area) {
 }
 
 // The town wttr.in places the address in, from its "%l": "Town, Region"
-// gives the town. null for no answer.
+// gives the town. A place it has no name for it gives as "lat,lon", which
+// stays whole, as nova-weather-location keeps it. null for no answer.
+var COORDINATES = /^-?[0-9]+(\.[0-9]+)?,-?[0-9]+(\.[0-9]+)?$/
+
 function detectedTown(text) {
   var line = String(text || "").trim()
-  return line === "" ? null : line.split(",")[0]
+  if (line === "") return null
+  return COORDINATES.test(line) ? line : line.split(",")[0]
 }
 
 // Open-Meteo's places for a search, as the suggestions under the field:
