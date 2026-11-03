@@ -101,9 +101,13 @@ Ui.Panel {
 
   // ------------------------------------------------------------- the weather
 
-  // The services' last answers, kept when a fetch fails.
+  // The services' last answers, kept when a fetch fails, and the query
+  // wttr.in's is for, from the one asked: its area is the place's only
+  // while that is the query.
   property var wttr: null
   property var meteo: null
+  property string wttrFor: ""
+  property string wttrAsked: ""
   // The glyph of the weather now, which is also the widget's.
   property string glyph: ""
 
@@ -128,11 +132,11 @@ Ui.Panel {
   function refresh() {
     wttrTries = 0
     meteoTries = 0
-    if (!wttrFetch.running) wttrFetch.running = true
+    askWttr()
     if (query === "" && !townFetch.running) townFetch.running = true
     // With the place's coordinates Open-Meteo is asked now, without waiting
     // for wttr.in; without them, once wttr.in has found the area.
-    fetchMeteo(null)
+    fetchMeteo()
   }
 
   function restartFetches() {
@@ -143,10 +147,17 @@ Ui.Panel {
     Qt.callLater(refresh)
   }
 
-  // `answer` is wttr.in's latest, for its area; null takes the last one's.
-  function fetchMeteo(answer) {
+  function askWttr() {
+    if (wttrFetch.running) return
+    wttrAsked = query
+    wttrFetch.running = true
+  }
+
+  // About the place's coordinates, else the area wttr.in found for the
+  // place: never the one it found for the place before.
+  function fetchMeteo() {
     if (meteoFetch.running) return
-    var point = Model.meteoPoint(place, answer && answer.nearest_area && answer.nearest_area[0] ? answer.nearest_area[0] : area)
+    var point = Model.meteoPoint(place, wttrFor === query ? area : null)
     if (!point) return
     meteoFetch.command = ["curl", "-fsS", "--max-time", "5", Model.meteoUrl(point)]
     meteoFetch.running = true
@@ -196,6 +207,7 @@ Ui.Panel {
       return
     }
     wttr = answer
+    wttrFor = wttrAsked
     // Without coordinates, wttr.in's answer gives the glyph until
     // Open-Meteo's comes, and a null one is no answer.
     if (!hasCoordinates) {
@@ -208,7 +220,7 @@ Ui.Panel {
     wttrTries = 0
     if (hasCoordinates) return
     savedFetched()
-    fetchMeteo(answer)
+    fetchMeteo()
   }
 
   Process {
@@ -249,13 +261,13 @@ Ui.Panel {
   Timer {
     id: wttrRetry
     interval: 2500
-    onTriggered: if (!wttrFetch.running) wttrFetch.running = true
+    onTriggered: root.askWttr()
   }
 
   Timer {
     id: meteoRetry
     interval: 2500
-    onTriggered: root.fetchMeteo(null)
+    onTriggered: root.fetchMeteo()
   }
 
   Timer {
