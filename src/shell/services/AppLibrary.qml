@@ -27,9 +27,8 @@ Item {
   property var iconIndex: ({})
   property var pendingIconIndex: ({})
 
-  // The launch in progress: its number, and the windows there were when it
-  // started, to tell when its window has come.
-  property int launchSerial: 0
+  // The windows there were when the launch in progress started, to tell
+  // when its window has come.
   property int launchToplevelCount: 0
   property var launchActiveToplevel: null
   // Whether the launch OSD is up. It is shown with no time limit, so only
@@ -180,7 +179,6 @@ Item {
   // The OSD comes up when no window has opened or taken the focus within two
   // seconds of a launch, and goes down when one does, or after fifteen.
   function beginLaunchFeedback(name) {
-    launchSerial++
     launchToplevelCount = toplevelCount()
     launchActiveToplevel = ToplevelManager.activeToplevel
     launchOsdMessage = "Launching " + String(name || "application") + "…"
@@ -188,9 +186,8 @@ Item {
     launchTimeout.restart()
   }
 
-  // Ends launch <serial>'s feedback, if it is still the latest launch.
-  function closeLaunchFeedback(serial) {
-    if (serial !== launchSerial) return
+  // Ends the launch's feedback.
+  function closeLaunchFeedback() {
     launchDelay.stop()
     launchTimeout.stop()
     if (!launchOsdOpen) return
@@ -202,7 +199,7 @@ Item {
   function maybeFinishLaunchFeedback() {
     if (!launchDelay.running && !launchTimeout.running && !launchOsdOpen) return
     var windowCame = toplevelCount() > launchToplevelCount || ToplevelManager.activeToplevel !== launchActiveToplevel
-    if (windowCame) closeLaunchFeedback(launchSerial)
+    if (windowCame) closeLaunchFeedback()
   }
 
   // A scan asked for while one runs is made once it ends: the running scan
@@ -298,7 +295,7 @@ Item {
   Timer {
     id: launchTimeout
     interval: 15000
-    onTriggered: root.closeLaunchFeedback(root.launchSerial)
+    onTriggered: root.closeLaunchFeedback()
   }
 
   Connections {
