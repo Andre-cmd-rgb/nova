@@ -1,14 +1,15 @@
-// Temperatures below the identity point count as night light. Keep in sync
-// with bin/nova-toggle-nightlight, which applies the same threshold.
+// What hyprsunset's answer means. Below 6000 K the screen counts as tinted,
+// as nova-toggle-nightlight counts it.
 var IDENTITY_TEMPERATURE = 6000
 
+// The first number in `hyprctl hyprsunset temperature`'s answer, or null.
 function temperatureFromOutput(output) {
-  var match = String(output === undefined || output === null ? "" : output).match(/[0-9]+/)
-  return match ? Number(match[0]) : null
+  var number = String(output == null ? "" : output).match(/[0-9]+/)
+  return number ? Number(number[0]) : null
 }
 
 function isNightlight(temperature) {
-  return temperature !== null && temperature !== undefined && temperature < IDENTITY_TEMPERATURE
+  return temperature != null && temperature < IDENTITY_TEMPERATURE
 }
 
 if (typeof module !== "undefined") {

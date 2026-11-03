@@ -2,58 +2,48 @@ import QtQuick
 import Quickshell.Io
 import "NightlightModel.js" as NightlightModel
 
+// The night light: hyprsunset's colour temperature, which the bar's
+// indicator shows and switches. nova-toggle-nightlight does the switching
+// for the bar as for the keys and the menu, keeping it through a hyprsunset
+// that is still starting, and has this service look again when it is done.
 Item {
   id: root
 
-  // Injected by nova-shell (the first-party service loader).
-  property var shell: null
-
-  // Keep in sync with bin/nova-toggle-nightlight, which sets the same
-  // temperatures for callers outside the shell (keybindings, menu, ssh).
+  // nova-toggle-nightlight's night and day, shown at once while it sets them.
   readonly property int nightTemperature: 4000
   readonly property int dayTemperature: 6500
 
   property bool stateLoaded: false
+  // In kelvin; null while hyprsunset is not running or cannot say.
   property var temperature: null
   readonly property bool enabled: stateLoaded && NightlightModel.isNightlight(temperature)
 
-  property bool hasPendingTemperature: false
-  property int pendingTemperature: 0
+  // A switch asked for while another runs: "on", "off", or none. The last
+  // one asked for wins.
+  property string queued: ""
 
   function refresh() {
-    if (!statusProbe.running) statusProbe.running = true
+    if (!probe.running) probe.running = true
   }
 
-  function setNightlight(value) {
-    applyTemperature(value ? nightTemperature : dayTemperature)
+  function setNightlight(on) {
+    temperature = on ? nightTemperature : dayTemperature
+    stateLoaded = true
+    var state = on ? "on" : "off"
+    if (switcher.running) {
+      queued = state
+      return
+    }
+    switcher.command = ["nova-toggle-nightlight", state]
+    switcher.running = true
   }
 
   function toggle() {
     setNightlight(!enabled)
   }
 
-  function applyTemperature(temp) {
-    root.temperature = temp
-    root.stateLoaded = true
-
-    if (applyProcess.running) {
-      root.pendingTemperature = temp
-      root.hasPendingTemperature = true
-      return
-    }
-
-    runApply(temp)
-  }
-
-  function runApply(temp) {
-    applyProcess.command = ["bash", "-lc",
-      "pgrep -x hyprsunset >/dev/null || { setsid uwsm-app -- hyprsunset >/dev/null 2>&1 & sleep 1; }; " +
-      "hyprctl hyprsunset temperature " + Number(temp)]
-    applyProcess.running = true
-  }
-
   Process {
-    id: statusProbe
+    id: probe
     command: ["hyprctl", "hyprsunset", "temperature"]
     stdout: StdioCollector {
       waitForEnd: true
@@ -63,23 +53,22 @@ Item {
       }
     }
     onExited: function(exitCode) {
-      if (exitCode !== 0) {
-        root.temperature = null
-        root.stateLoaded = true
-      }
+      if (exitCode === 0) return
+      root.temperature = null
+      root.stateLoaded = true
     }
   }
 
   Process {
-    id: applyProcess
-    onExited: function() {
-      if (root.hasPendingTemperature) {
-        root.hasPendingTemperature = false
-        root.runApply(root.pendingTemperature)
+    id: switcher
+    onExited: {
+      if (!root.queued) {
+        root.refresh()
         return
       }
-
-      root.refresh()
+      command = ["nova-toggle-nightlight", root.queued]
+      root.queued = ""
+      running = true
     }
   }
 

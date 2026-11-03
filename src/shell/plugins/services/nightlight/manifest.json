@@ -4,7 +4,7 @@
   "name": "Night Light",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Owns the hyprsunset night light temperature for the bar indicator and CLI.",
+  "description": "The night light, hyprsunset's warmer screen, for the bar's switch.",
   "kinds": [
     "service"
   ],
