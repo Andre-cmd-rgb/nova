@@ -337,6 +337,11 @@ Ui.Panel {
     Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
   }
 
+  function showPrompt() {
+    var asking = rowIndex(passwordSsid)
+    if (asking >= 0) networkList.positionViewAtIndex(asking, ListView.Contain)
+  }
+
   // ---------------------------------------------------------------- scanning
 
   // The radio's scanner is the device's, shared by the bar on every screen
@@ -1044,10 +1049,16 @@ Ui.Panel {
             }
 
             NetworkRow {
+              id: networkRow
               width: parent.width
               net: entry.modelData
               index: entry.index
             }
+
+            // The passphrase opens under its row, which low in a long list
+            // puts it past the list's bottom: the list scrolls to show it.
+            // Once the entry has grown, so that the scroll takes its height.
+            onHeightChanged: if (networkRow.asking) Qt.callLater(root.showPrompt)
           }
 
           // The touchpad scrolls the list as GTK does.
