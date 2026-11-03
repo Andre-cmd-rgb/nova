@@ -6,7 +6,10 @@ import qs.Commons as Commons
 // caption, that opens the list below itself. The list is a DropdownPopup in
 // [popups]' background and border, not the platform's combo box. <options>
 // are strings, or { value, label } objects that show the label and choose
-// the value, or both; changed() sends the value chosen.
+// the value, or both; changed() sends the value chosen. <value> is the
+// owner's to set, as a ButtonGroup's is: a choice only sends changed(), so
+// a field bound to a setting keeps following it, and shows what the setting
+// holds when a change fails.
 //
 // The field is a Tab stop; Return, Enter, Space or Down opens or closes the
 // list, Escape closes it, and so does a click. Its face is in the focus
@@ -62,13 +65,10 @@ Item {
     return -1
   }
 
-  // Takes the option at <index>: the field shows it, changed() sends it on,
-  // and the list closes.
+  // Sends the option at <index> to the owner, and closes the list.
   function choose(index) {
     if (index < 0 || index >= options.length) return
-    var chosen = optionValue(options[index])
-    value = chosen
-    changed(chosen)
+    changed(optionValue(options[index]))
     list.close()
   }
 

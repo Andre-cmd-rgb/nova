@@ -158,15 +158,11 @@ Column {
         visible: section.d.enabled
         label: "Resolution"
         Dropdown {
-          id: resolutionChoice
           width: Style.spacing.dropdownWidth
           showLabel: false
           options: Model.resolutions(section.d.modes)
           value: section.resolution
           onChanged: function (value) {
-            // Choosing lets go of the binding; it follows the display again,
-            // so a change gone back shows as gone back.
-            resolutionChoice.value = Qt.binding(function () { return section.resolution })
             var mode = Model.modeAt(section.d.modes, value, section.d.refresh)
             if (mode !== "" && value !== section.resolution) root.set(section.d, "mode", mode)
           }
@@ -183,10 +179,7 @@ Column {
           showLabel: false
           options: Model.rates(section.d.modes, section.resolution)
           value: current
-          onChanged: function (value) {
-            rateChoice.value = Qt.binding(function () { return rateChoice.current })
-            if (value !== rateChoice.current) root.set(section.d, "mode", value)
-          }
+          onChanged: function (value) { if (value !== rateChoice.current) root.set(section.d, "mode", value) }
         }
       }
 
@@ -220,17 +213,13 @@ Column {
         Row {
           spacing: Style.space(8)
           Dropdown {
-            id: otherChoice
             anchors.verticalCenter: parent.verticalCenter
             visible: section.others.length > 1
             width: Style.spacing.dropdownWidth
             showLabel: false
             options: section.others.map(function (o) { return { value: o.name, label: root.labels[o.name] || o.name } })
             value: section.other ? section.other.name : ""
-            onChanged: function (value) {
-              section.otherName = value
-              otherChoice.value = Qt.binding(function () { return section.other ? section.other.name : "" })
-            }
+            onChanged: function (value) { section.otherName = value }
           }
           ButtonGroup {
             id: placeChoice
