@@ -277,13 +277,11 @@ function noonGlyph(hours) {
   return wttrGlyph(noon.weatherCode, false)
 }
 
-// A day's name, at noon of its date: `format` names it, else English does.
+// A day's name, at noon of its date, as `format` names it.
 function dayName(date, format) {
   if (!date) return ""
   var noon = new Date(date + "T12:00:00")
-  if (isNaN(noon.getTime())) return ""
-  if (format) return format(noon)
-  return ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][noon.getDay()]
+  return isNaN(noon.getTime()) ? "" : format(noon)
 }
 
 // --------------------------------------------------------------- the units

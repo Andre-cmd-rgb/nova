@@ -22,8 +22,6 @@ import "Model.js" as Model
 // inline components without end.
 Ui.Panel {
   id: root
-  moduleName: "nova.weather"
-  ipcTarget: "nova.weather"
 
   // Lent by the widget: the button the panel opens under, and the widget
   // itself. The bar knows a panel by the widget in its slot, so the widget
@@ -44,13 +42,6 @@ Ui.Panel {
     placeFile.reload()
     refresh()
     Qt.callLater(function() { if (root.opened) root.holdPeek(true) })
-  }
-
-  function open() {
-    holdPeek(false)
-    controller.show()
-    placeFile.reload()
-    refresh()
   }
 
   function close() {
@@ -323,7 +314,6 @@ Ui.Panel {
   }
 
   function setPlace(chosen) {
-    if (!chosen) return
     saving = true
     savedFetchStarted = false
     place = { name: chosen.name, latitude: chosen.latitude, longitude: chosen.longitude }
