@@ -1,102 +1,81 @@
 #!/bin/bash
+# The desktop entries this desktop does not list, one desktop ID a line: an
+# entry marked Hidden or NoDisplay, one whose OnlyShowIn names none of the
+# desktops in $1 (a colon-separated list, as XDG_CURRENT_DESKTOP), and one
+# whose NotShowIn names one of them. Only the [Desktop Entry] section counts.
+#
+# An ID is the file's path under its applications directory, with / as -.
+# The first directory to have it wins, whatever the later ones say: the
+# user's ~/.local/share, then $XDG_DATA_DIRS in order, then the Nix profile.
+# AppLibrary runs this whenever the installed apps change; one awk reads all
+# the files.
 
-desktop_names=${1:-}
+desktops=${1:-}
 
-declare -A seen_ids
+declare -A seen
+files=()
+ids=()
 
-desktop_matches() {
-  local list=$1
-  local desktop_name
-  local entry
-
-  IFS=":" read -ra desktop_parts <<< "$desktop_names"
-  IFS=";" read -ra entries <<< "$list"
-
-  for desktop_name in "${desktop_parts[@]}"; do
-    [[ -z $desktop_name ]] && continue
-
-    for entry in "${entries[@]}"; do
-      [[ -z $entry ]] && continue
-      [[ $entry == "$desktop_name" ]] && return 0
-    done
-  done
-
-  return 1
-}
-
-desktop_id_for_file() {
-  local dir=$1
-  local file=$2
-  local rel=${file#"$dir"/}
-
-  rel=${rel%.desktop}
-  printf '%s\n' "${rel//\//-}"
-}
-
-is_hidden_desktop_file() {
-  local file=$1
-  local in_desktop_entry=0
-  local hidden=false
-  local only_show_in=
-  local not_show_in=
-  local line key value
-
-  while IFS= read -r line || [[ -n $line ]]; do
-    line=${line%$'\r'}
-
-    if [[ $line =~ ^\[(.*)\]$ ]]; then
-      [[ ${BASH_REMATCH[1]} == "Desktop Entry" ]] && in_desktop_entry=1 || in_desktop_entry=0
-      continue
-    fi
-
-    (( in_desktop_entry )) || continue
-    [[ $line == *=* ]] || continue
-
-    key=${line%%=*}
-    value=${line#*=}
-
-    case $key in
-      Hidden|NoDisplay)
-        [[ $value == "true" ]] && hidden=true
-        ;;
-      OnlyShowIn)
-        only_show_in=$value
-        ;;
-      NotShowIn)
-        not_show_in=$value
-        ;;
-    esac
-  done < "$file"
-
-  [[ $hidden == "true" ]] && return 0
-  [[ -n $only_show_in ]] && ! desktop_matches "$only_show_in" && return 0
-  [[ -n $not_show_in ]] && desktop_matches "$not_show_in" && return 0
-
-  return 1
-}
-
-scan_dir() {
-  local dir=$1
-  local file id
-
+# The .desktop files under <dir>, in sorted order, whose ID no earlier file
+# has taken.
+collect() {
+  local dir=$1 file id
   [[ -d $dir ]] || return
-
   while IFS= read -r -d '' file; do
-    id=$(desktop_id_for_file "$dir" "$file")
-    [[ -n ${seen_ids[$id]+set} ]] && continue
-    seen_ids[$id]=1
-
-    if is_hidden_desktop_file "$file"; then
-      printf '%s\n' "$id"
-    fi
+    id=${file#"$dir"/}
+    id=${id%.desktop}
+    id=${id//\//-}
+    [[ -n ${seen[$id]+set} ]] && continue
+    seen[$id]=1
+    files+=("$file")
+    ids+=("$id")
   done < <(find "$dir" -type f -name '*.desktop' -print0 2>/dev/null | sort -z)
 }
 
-scan_dir "$HOME/.local/share/applications"
-
+collect "$HOME/.local/share/applications"
 IFS=":" read -ra data_dirs <<< "${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 for data_dir in "${data_dirs[@]}"; do
-  scan_dir "$data_dir/applications"
+  collect "$data_dir/applications"
 done
+collect "$HOME/.nix-profile/share/applications"
 
-scan_dir "$HOME/.nix-profile/share/applications"
+(( ${#files[@]} > 0 )) || exit 0
+
+# awk prints the place in the list of each hidden file, which gives its ID.
+# It reads the files itself with getline, all in BEGIN, so that a file it
+# cannot open is simply not hidden rather than the end of the scan.
+while IFS= read -r at; do
+  printf '%s\n' "${ids[at - 1]}"
+done < <(awk -v desktops="$desktops" '
+  # Whether the ;-separated <list> names one of the desktops.
+  function names_desktop(list,   count, entries, i, j) {
+    count = split(list, entries, ";")
+    for (i = 1; i <= ndesktops; i++) {
+      if (desktop[i] == "") continue
+      for (j = 1; j <= count; j++) if (entries[j] == desktop[i]) return 1
+    }
+    return 0
+  }
+  function is_hidden(file,   line, inside, hidden, only, notin, eq, key, value) {
+    while ((getline line < file) > 0) {
+      # NUL bytes are dropped, as bash does when it reads a line.
+      gsub(/\0/, "", line)
+      sub(/\r$/, "", line)
+      if (line ~ /^\[.*\]$/) { inside = line == "[Desktop Entry]"; continue }
+      eq = index(line, "=")
+      if (!inside || !eq) continue
+      key = substr(line, 1, eq - 1)
+      value = substr(line, eq + 1)
+      if (key == "Hidden" || key == "NoDisplay") { if (value == "true") hidden = 1 }
+      else if (key == "OnlyShowIn") only = value
+      else if (key == "NotShowIn") notin = value
+    }
+    close(file)
+    return hidden || (only != "" && !names_desktop(only)) || (notin != "" && names_desktop(notin))
+  }
+  BEGIN {
+    ndesktops = split(desktops, desktop, ":")
+    for (at = 1; at < ARGC; at++) if (is_hidden(ARGV[at])) print at
+    exit
+  }
+' "${files[@]}" 2>/dev/null)

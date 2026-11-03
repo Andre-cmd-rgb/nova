@@ -3,218 +3,234 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 
-// Instance, not a singleton — see BarWidgetRegistry for rationale.
+// The plugins and what is on: the installed plugins, read from the index the
+// package build writes (plugins/index.json, by tools/plugin-index), and the
+// verbs that switch a plugin on or off and place, move and set up bar
+// widgets in shell.json. Every plugin is Nova's own and ships in the
+// package, so the index is read once at startup; there is nothing to scan or
+// watch.
 //
-// Every plugin is Nova's own and ships in the package. The package build
-// collects their manifests into one file, plugins/index.json (tools/plugin-index),
-// and the registry reads it once at startup: no directory to scan, nothing to
-// watch, no plugin from anywhere else.
+// shell.qml makes one and hands it to the plugins that need it, like
+// BarWidgetRegistry and for the same reason.
 QtObject {
   id: registry
 
-  // Set by shell.qml once the user's shell.json has been read; the index loads
-  // then. Until it has, `loading` holds and every verb that writes shell.json
-  // answers "not ready", so nothing can write the defaults over a file that has
-  // not been read yet.
+  // The installed plugins' directory. shell.qml sets it once it has read the
+  // user's shell.json, and the index loads then; until it has, loading holds
+  // and every verb that writes shell.json answers "not ready", so that no
+  // default is written over a file not read yet.
   property string pluginsDir: ""
 
-  // Wired by shell.qml so the registry can read the canonical shell.json
-  // without owning file IO itself. shellConfigProvider returns the current
-  // effective shell config; shellConfigMutator takes a function that receives
-  // a deep-cloned config it can mutate in place and persists the result.
+  // Set by shell.qml, which owns shell.json: shellConfigProvider() gives the
+  // config in effect, shellConfigMutator(change) calls change(config) with a
+  // deep copy to edit in place and saves the result, and defaultsProvider()
+  // gives Nova's default shell.json (see defaultBarPlace).
   property var shellConfigProvider: null
   property var shellConfigMutator: null
-  // Nova's default shell.json, wired by the shell like the two above: where a
-  // widget turned back on without a place goes (defaultBarPlace).
   property var defaultsProvider: null
 
-  // { pluginId: manifest }, each with __sourceDir stamped in.
+  // { pluginId: manifest }, each manifest with __sourceDir added: its
+  // directory.
   property var installedPlugins: ({})
   property int registryRevision: 0
   property bool loading: true
+  // Why the last setEnabled said no, or "".
   property string lastEnableError: ""
 
+  // Sent after the index loads and after each verb that changed shell.json.
   signal pluginsChanged()
 
-  // ---------------------------------------------------------------- helpers
-
+  // The URL of the manifest's entry point for <kind>, or "" when it has none.
   function entryPointUrl(manifest, kind) {
-    var entry = Util.isPlainObject(manifest) && Util.isPlainObject(manifest.entryPoints)
-      ? manifest.entryPoints[kind] : ""
-    return entry && manifest.__sourceDir ? Util.fileUrl(manifest.__sourceDir + "/" + entry) : ""
+    var points = Util.isPlainObject(manifest) && Util.isPlainObject(manifest.entryPoints) ? manifest.entryPoints : null
+    var file = points ? points[kind] : ""
+    if (!file || !manifest.__sourceDir) return ""
+    return Util.fileUrl(manifest.__sourceDir + "/" + file)
   }
 
   function hasKind(manifest, kind) {
-    return !!manifest && manifest.kinds.indexOf(kind) !== -1
+    return Boolean(manifest) && manifest.kinds.indexOf(kind) >= 0
   }
 
-  // The bar and the lock have no off: the bar is the desktop, and autologin is
-  // only safe because the lock comes up first.
+  // A plugin that cannot be switched off: the bar, which is the desktop, and
+  // the lock, which autologin relies on coming up first.
   function alwaysOn(manifest) {
-    return !!manifest && manifest.alwaysOn === true
+    return Boolean(manifest) && manifest.alwaysOn === true
   }
 
-  // Enabled = the plugin's component loads. Everything is on by default, so
-  // shell.json only records the deviation: a switched-off plugin in
-  // `disabledPlugins[]`. A manifest that says "enabledByDefault": false
-  // (Screen Time) is the exception: it is on only while shell.json names it,
-  // in the bar layout or in `plugins[]`, so taking it off the bar switches it
-  // off entirely. An alwaysOn plugin is on whatever shell.json says.
+  // Plugins are on unless shell.json lists them in disabledPlugins. One whose
+  // manifest says "enabledByDefault": false (Screen Time) is on only while
+  // shell.json names it, in the bar layout or in plugins, so that taking it
+  // off the bar switches it off.
   function onByDefault(manifest) {
-    return !!manifest && manifest.enabledByDefault !== false
+    return Boolean(manifest) && manifest.enabledByDefault !== false
   }
 
+  // Whether the plugin's components load. An alwaysOn plugin is on whatever
+  // shell.json says; an id with no plugin is on while shell.json names it.
   function isEnabled(id) {
     var key = Util.canonicalWidgetId(String(id))
     var manifest = installedPlugins[key]
     var config = shellConfigProvider ? shellConfigProvider() : null
-    if (manifest) {
-      if (alwaysOn(manifest)) return true
-      if (isDisabled(config, key)) return false
-      if (onByDefault(manifest)) return true
-    }
+    if (manifest && alwaysOn(manifest)) return true
+    if (manifest && isDisabled(config, key)) return false
+    if (manifest && onByDefault(manifest)) return true
     return findEntryLocation(config, key).found
   }
 
   function isDisabled(config, id) {
-    return Util.isPlainObject(config) && Array.isArray(config.disabledPlugins)
-      && config.disabledPlugins.indexOf(Util.canonicalWidgetId(String(id))) !== -1
+    if (!Util.isPlainObject(config) || !Array.isArray(config.disabledPlugins)) return false
+    return config.disabledPlugins.indexOf(Util.canonicalWidgetId(String(id))) >= 0
   }
 
-  // A bar widget is on when it sits in the bar. That is a different question
-  // from isEnabled(), which decides whether the widget's component is loaded
-  // at all — a built-in stays loadable so it can be put back, and so a plugin
-  // that is both a widget and a menu (nova.menu) cannot be locked out of the
-  // shell by taking its button off the bar.
+  // Whether the widget sits in the bar. Not the same as isEnabled: a widget
+  // off the bar stays loadable so that it can be put back, and a plugin that
+  // is both a widget and something else (the menu) keeps working without its
+  // button.
   function inBar(id) {
     var config = shellConfigProvider ? shellConfigProvider() : null
     return findEntryLocation(config, id).kind === "bar"
   }
 
+  // The section the manifest asks for, or center.
   function defaultBarWidgetSection(manifest) {
-    var metadata = manifest && Util.isPlainObject(manifest.barWidget) ? manifest.barWidget : null
-    var section = metadata ? String(metadata.defaultSection || "") : ""
-    return ["left", "center", "right"].indexOf(section) !== -1 ? section : "center"
+    var wanted = manifest && Util.isPlainObject(manifest.barWidget) ? String(manifest.barWidget.defaultSection || "") : ""
+    return wanted === "left" || wanted === "center" || wanted === "right" ? wanted : "center"
   }
 
+  // The id of a bar layout entry, which is either { id, ...settings } or the
+  // bare id.
   function barEntryId(entry) {
-    return Util.canonicalWidgetId(String(Util.isPlainObject(entry) ? entry.id : entry || ""))
+    return Util.canonicalWidgetId(String(Util.isPlainObject(entry) ? entry.id : (entry || "")))
   }
 
+  // Where the widget is in the bar, looking only in <section> when one is
+  // given: { found: true, kind: "bar", section, index }, or { found: false }.
   function findBarLocation(config, id, section) {
-    if (!Util.isPlainObject(config) || !Util.isPlainObject(config.bar)
-        || !Util.isPlainObject(config.bar.layout)) return { found: false }
+    var layout = Util.isPlainObject(config) && Util.isPlainObject(config.bar) ? config.bar.layout : null
+    if (!Util.isPlainObject(layout)) return { found: false }
     var key = Util.canonicalWidgetId(String(id))
-    var sections = ["left", "center", "right"]
-    for (var s = 0; s < sections.length; s++) {
-      if (section && sections[s] !== section) continue
-      var entries = config.bar.layout[sections[s]]
+    var names = ["left", "center", "right"]
+    for (var n = 0; n < names.length; n++) {
+      if (section && section !== names[n]) continue
+      var entries = layout[names[n]]
       if (!Array.isArray(entries)) continue
       for (var i = 0; i < entries.length; i++) {
-        if (barEntryId(entries[i]) === key)
-          return { found: true, kind: "bar", section: sections[s], index: i }
+        if (barEntryId(entries[i]) === key) return { found: true, kind: "bar", section: names[n], index: i }
       }
     }
     return { found: false }
   }
 
+  // Where shell.json names the plugin: in the bar, else in plugins as
+  // { found: true, kind: "plugin", index }, or { found: false }.
   function findEntryLocation(config, id) {
     if (!Util.isPlainObject(config)) return { found: false }
     var key = Util.canonicalWidgetId(String(id))
-    var barLocation = findBarLocation(config, key, "")
-    if (barLocation.found) return barLocation
-    if (Array.isArray(config.plugins)) {
-      for (var j = 0; j < config.plugins.length; j++) {
-        if (config.plugins[j] && Util.canonicalWidgetId(config.plugins[j].id) === key) return { found: true, kind: "plugin", index: j }
-      }
+    var inLayout = findBarLocation(config, key, "")
+    if (inLayout.found || !Array.isArray(config.plugins)) return inLayout
+    for (var i = 0; i < config.plugins.length; i++) {
+      var named = config.plugins[i]
+      if (named && Util.canonicalWidgetId(named.id) === key) return { found: true, kind: "plugin", index: i }
     }
     return { found: false }
   }
 
+  // Where a placement puts a widget: { section, index }, or { error }. Next
+  // to the widget it names before or after, else at its index, else after
+  // the section's anchor widget, else at the end. Its section is the one it
+  // names, or <fallbackSection>, whose list this makes if the layout lacks
+  // it.
   function barTarget(config, placement, fallbackSection) {
     var target = placement || {}
-    var section = ["left", "center", "right"].indexOf(String(target.section || "")) !== -1
-      ? String(target.section) : fallbackSection
+    var named = String(target.section || "")
+    var section = named === "left" || named === "center" || named === "right" ? String(target.section) : fallbackSection
+
     var relativeId = String(target.before || target.after || "")
     if (relativeId) {
       var relative = findBarLocation(config, relativeId, section && target.section ? section : "")
       if (!relative.found) return { error: "could not find target widget " + relativeId }
-      return {
-        section: relative.section,
-        index: relative.index + (target.after ? 1 : 0)
-      }
+      return { section: relative.section, index: target.after ? relative.index + 1 : relative.index }
     }
 
-    if (!Array.isArray(config.bar.layout[section])) config.bar.layout[section] = []
-    if (target.index !== undefined && target.index !== null) {
-      var requested = Math.max(0, Math.floor(Number(target.index)))
-      return { section: section, index: Math.min(requested, config.bar.layout[section].length) }
-    }
+    var layout = config.bar.layout
+    if (!Array.isArray(layout[section])) layout[section] = []
+    var length = layout[section].length
+    if (target.index !== undefined && target.index !== null)
+      return { section: section, index: Math.min(Math.max(0, Math.floor(Number(target.index))), length) }
 
-    var anchors = { left: "nova.workspaces", center: "nova.weather", right: "nova.tray" }
-    var anchor = findBarLocation(config, anchors[section], section)
-    return {
-      section: section,
-      index: anchor.found ? anchor.index + 1 : config.bar.layout[section].length
-    }
+    var anchorIds = { left: "nova.workspaces", center: "nova.weather", right: "nova.tray" }
+    var anchor = findBarLocation(config, anchorIds[section], section)
+    return { section: section, index: anchor.found ? anchor.index + 1 : length }
   }
 
   // Whether a placement names a place at all; {} leaves it to the defaults.
   function namesPlace(placement) {
     if (!Util.isPlainObject(placement)) return false
-    return ["section", "index", "before", "after"].some(function(key) {
-      return placement[key] !== undefined && placement[key] !== null && placement[key] !== ""
-    })
+    var fields = ["section", "index", "before", "after"]
+    for (var i = 0; i < fields.length; i++) {
+      var value = placement[fields[i]]
+      if (value !== undefined && value !== null && value !== "") return true
+    }
+    return false
   }
 
-  // Where Nova's default layout keeps a widget: its section there, before the
-  // next of its neighbours there that this bar has, or else after the nearest
-  // one before it. Null for a widget the default layout does not have.
+  // Where Nova's default layout keeps a widget, in this bar: its section
+  // there, before the first of its later neighbours there that this bar has,
+  // or else after the nearest earlier one, or else at the section's end.
+  // Null for a widget the default layout does not have.
   function defaultBarPlace(config, key) {
     var defaults = defaultsProvider ? defaultsProvider() : null
     var home = findBarLocation(defaults, key, "")
     if (!home.found) return null
-    var entries = defaults.bar.layout[home.section]
-    var i, near
-    for (i = home.index + 1; i < entries.length; i++) {
-      near = findBarLocation(config, barEntryId(entries[i]), home.section)
+    var neighbours = defaults.bar.layout[home.section]
+    var near
+    for (var after = home.index + 1; after < neighbours.length; after++) {
+      near = findBarLocation(config, barEntryId(neighbours[after]), home.section)
       if (near.found) return { section: home.section, index: near.index }
     }
-    for (i = home.index - 1; i >= 0; i--) {
-      near = findBarLocation(config, barEntryId(entries[i]), home.section)
+    for (var before = home.index - 1; before >= 0; before--) {
+      near = findBarLocation(config, barEntryId(neighbours[before]), home.section)
       if (near.found) return { section: home.section, index: near.index + 1 }
     }
     return { section: home.section, index: config.bar.layout[home.section].length }
   }
 
+  // Moves the widget within <config> to where <placement> says (barTarget),
+  // from placement.fromSection[fromIndex] when given, else from wherever it
+  // is (in fromSection, if named). "" when done, else what was wrong, and
+  // the layout as it was.
   function moveBarEntry(config, id, placement) {
     var key = Util.canonicalWidgetId(String(id))
-    var source
+    var from
+
     if (placement.fromIndex !== undefined && placement.fromIndex !== null) {
       var fromSection = String(placement.fromSection || "")
       if (!fromSection) return "from-index requires from-section"
-      var entries = config.bar.layout[fromSection]
-      var fromIndex = Math.floor(Number(placement.fromIndex))
-      if (!Array.isArray(entries) || fromIndex < 0 || fromIndex >= entries.length)
-        return "no widget at " + fromSection + "[" + fromIndex + "]"
-      if (barEntryId(entries[fromIndex]) !== key)
-        return "widget at " + fromSection + "[" + fromIndex + "] is not " + key
-      source = { found: true, section: fromSection, index: fromIndex }
+      var at = Math.floor(Number(placement.fromIndex))
+      var list = config.bar.layout[fromSection]
+      if (!Array.isArray(list) || at < 0 || at >= list.length) return "no widget at " + fromSection + "[" + at + "]"
+      if (barEntryId(list[at]) !== key) return "widget at " + fromSection + "[" + at + "] is not " + key
+      from = { found: true, section: fromSection, index: at }
     } else {
-      source = findBarLocation(config, key, String(placement.fromSection || ""))
-      if (!source.found) return "could not find widget " + key
+      from = findBarLocation(config, key, String(placement.fromSection || ""))
+      if (!from.found) return "could not find widget " + key
     }
 
-    var entry = config.bar.layout[source.section][source.index]
-    config.bar.layout[source.section].splice(source.index, 1)
-    var target = barTarget(config, placement, source.section)
-    if (target.error) {
-      config.bar.layout[source.section].splice(source.index, 0, entry)
-      return target.error
+    var layout = config.bar.layout
+    var moving = layout[from.section][from.index]
+    layout[from.section].splice(from.index, 1)
+    var to = barTarget(config, placement, from.section)
+    if (to.error) {
+      layout[from.section].splice(from.index, 0, moving)
+      return to.error
     }
-    config.bar.layout[target.section].splice(target.index, 0, entry)
+    layout[to.section].splice(to.index, 0, moving)
     return ""
   }
+
+  // moveBarWidget, putBarWidget and setBarWidget, for IPC and settings,
+  // answer "" when done and what was wrong otherwise.
 
   function moveBarWidget(id, placement) {
     if (loading) return "not ready"
@@ -229,10 +245,11 @@ QtObject {
     return ""
   }
 
-  // put is the unattended verb: where enable errors, it falls back, and it
-  // leaves a widget that is already on the bar where its owner put it.
+  // The unattended verb: a widget already in the bar stays where its owner
+  // put it, and a placement next to a widget this bar lacks gives way to the
+  // default place.
   function putBarWidget(id, placement) {
-    // IPC answers before the index has loaded, and an id not read yet is not
+    // IPC can ask before the index has loaded, and an id not read yet is not
     // one that does not exist.
     if (loading) return "not ready"
     if (inBar(id)) return ""
@@ -243,49 +260,45 @@ QtObject {
       delete target.before
       delete target.after
     }
-    if (setEnabled(id, true, target)) return ""
-    return lastEnableError || "unknown"
+    return setEnabled(id, true, target) ? "" : (lastEnableError || "unknown")
   }
 
+  // Sets <key> to <value> in the widget's layout entry: the one at
+  // selector's (from)section[(from)index] when it gives an index, else the
+  // widget wherever it is (in that section, if named).
   function setBarWidget(id, key, value, selector) {
     if (loading) return "not ready"
     var error = ""
     shellConfigMutator(function(config) {
       ensureConfigShape(config)
-      var location
-      var requested = selector || {}
-      var section = String(requested.fromSection || requested.section || "")
-      var index = requested.fromIndex !== undefined && requested.fromIndex !== null
-        ? requested.fromIndex : requested.index
-      if (index !== undefined && index !== null) {
-        if (!section) {
-          error = "index requires section"
-          return
-        }
-        var entries = config.bar.layout[section]
-        var numericIndex = Math.floor(Number(index))
-        if (!Array.isArray(entries) || numericIndex < 0 || numericIndex >= entries.length) {
-          error = "no widget at " + section + "[" + numericIndex + "]"
-          return
-        }
-        location = { found: true, section: section, index: numericIndex }
+      var wanted = selector || {}
+      var section = String(wanted.fromSection || wanted.section || "")
+      var index = wanted.fromIndex !== undefined && wanted.fromIndex !== null ? wanted.fromIndex : wanted.index
+      var place
+
+      if (index === undefined || index === null) {
+        place = findBarLocation(config, id, section)
+      } else if (!section) {
+        error = "index requires section"
+        return
       } else {
-        location = findBarLocation(config, id, section)
+        var at = Math.floor(Number(index))
+        var list = config.bar.layout[section]
+        if (!Array.isArray(list) || at < 0 || at >= list.length) {
+          error = "no widget at " + section + "[" + at + "]"
+          return
+        }
+        place = { found: true, section: section, index: at }
       }
-      if (!location.found) {
+
+      if (!place.found) {
         error = "could not find widget " + id
         return
       }
-      if (barEntryId(config.bar.layout[location.section][location.index]) !== String(id)) {
-        error = "widget at " + location.section + "[" + location.index + "] is not " + id
-        return
-      }
-      var entry = config.bar.layout[location.section][location.index]
-      if (!Util.isPlainObject(entry)) {
-        error = "widget entry must be an object"
-        return
-      }
-      entry[String(key)] = value
+      var entry = config.bar.layout[place.section][place.index]
+      if (barEntryId(entry) !== String(id)) error = "widget at " + place.section + "[" + place.index + "] is not " + id
+      else if (!Util.isPlainObject(entry)) error = "widget entry must be an object"
+      else entry[String(key)] = value
     })
     if (error) return error
     registryRevision++
@@ -293,31 +306,38 @@ QtObject {
     return ""
   }
 
+  // Fills in what the verbs rely on: bar.layout with its three sections, and
+  // plugins.
   function ensureConfigShape(config) {
     if (!Util.isPlainObject(config.bar)) config.bar = { layout: { left: [], center: [], right: [] } }
     if (!Util.isPlainObject(config.bar.layout)) config.bar.layout = { left: [], center: [], right: [] }
-    var sections = ["left", "center", "right"]
-    for (var i = 0; i < sections.length; i++) {
-      if (!Array.isArray(config.bar.layout[sections[i]])) config.bar.layout[sections[i]] = []
-    }
+    var layout = config.bar.layout
+    if (!Array.isArray(layout.left)) layout.left = []
+    if (!Array.isArray(layout.center)) layout.center = []
+    if (!Array.isArray(layout.right)) layout.right = []
     if (!Array.isArray(config.plugins)) config.plugins = []
   }
 
+  // Takes <id> out of disabledPlugins, and the list out when it empties.
   function removeDisabled(config, id) {
     if (!Array.isArray(config.disabledPlugins)) return
-    config.disabledPlugins = config.disabledPlugins.filter(function(entry) { return entry !== id })
-    if (config.disabledPlugins.length === 0) delete config.disabledPlugins
+    var rest = config.disabledPlugins.filter(function(entry) { return entry !== id })
+    if (rest.length > 0) config.disabledPlugins = rest
+    else delete config.disabledPlugins
   }
 
   function addDisabled(config, id) {
     if (isDisabled(config, id)) return
-    if (!Array.isArray(config.disabledPlugins)) config.disabledPlugins = []
-    config.disabledPlugins.push(id)
+    if (Array.isArray(config.disabledPlugins)) config.disabledPlugins.push(id)
+    else config.disabledPlugins = [id]
   }
 
-  // A bar widget goes where the placement says; with none, where Nova's
-  // default layout has it, else to the section its manifest declares, else
-  // center. Anything else that is off by default goes into plugins[].
+  // Switches a plugin on or off; true when done, else false with the reason
+  // in lastEnableError. A bar widget switched on goes where <placement>
+  // says; with none, where Nova's default layout has it, else to the section
+  // its manifest declares, else center. Any other plugin that is off by
+  // default is named in plugins. Switched off, a widget leaves the bar, and
+  // any other plugin that is on by default is listed in disabledPlugins.
   function setEnabled(id, value, placement) {
     var key = Util.canonicalWidgetId(String(id))
     lastEnableError = ""
@@ -335,45 +355,39 @@ QtObject {
       return false
     }
     if (alwaysOn(manifest)) {
-      if (value) return true
-      lastEnableError = manifest.name + " cannot be switched off"
-      return false
+      if (!value) lastEnableError = manifest.name + " cannot be switched off"
+      return Boolean(value)
     }
+
     var isBarWidget = hasKind(manifest, "bar-widget")
     shellConfigMutator(function(config) {
       ensureConfigShape(config)
-
-      if (value && placement && (placement.before || placement.after)) {
-        var relativeId = String(placement.before || placement.after)
-        if (!findBarLocation(config, relativeId, String(placement.section || "")).found) {
-          lastEnableError = "could not find target widget " + relativeId
-          return
-        }
+      var relativeId = value && placement ? String(placement.before || placement.after || "") : ""
+      if (relativeId && !findBarLocation(config, relativeId, String(placement.section || "")).found) {
+        lastEnableError = "could not find target widget " + relativeId
+        return
       }
 
       var onDefault = onByDefault(manifest)
       var location = findEntryLocation(config, key)
-
-      if (value) {
-        removeDisabled(config, key)
-        if (!location.found && isBarWidget) {
-          var target = (namesPlace(placement) ? null : defaultBarPlace(config, key))
-            || barTarget(config, placement || {}, defaultBarWidgetSection(manifest))
-          config.bar.layout[target.section].splice(target.index, 0, { id: key })
-          return
-        }
-        if (!location.found && !onDefault) config.plugins.push({ id: key })
-        if (isBarWidget && placement && Object.keys(placement).length)
-          moveBarEntry(config, key, placement)
+      if (!value) {
+        if (location.kind === "bar") config.bar.layout[location.section].splice(location.index, 1)
+        else if (location.kind === "plugin") config.plugins.splice(location.index, 1)
+        // For a widget, leaving the layout is all there is to it; anything
+        // else built in loads unless it is listed as off.
+        if (onDefault && !isBarWidget) addDisabled(config, key)
         return
       }
 
-      if (location.kind === "bar") config.bar.layout[location.section].splice(location.index, 1)
-      else if (location.kind === "plugin") config.plugins.splice(location.index, 1)
-
-      // Dropping the layout entry is the whole story for a widget. Anything
-      // else built-in loads by default, so switching it off has to be stated.
-      if (onDefault && !isBarWidget) addDisabled(config, key)
+      removeDisabled(config, key)
+      if (!location.found && isBarWidget) {
+        var place = (namesPlace(placement) ? null : defaultBarPlace(config, key))
+          || barTarget(config, placement || {}, defaultBarWidgetSection(manifest))
+        config.bar.layout[place.section].splice(place.index, 0, { id: key })
+        return
+      }
+      if (!location.found && !onDefault) config.plugins.push({ id: key })
+      if (isBarWidget && placement && Object.keys(placement).length > 0) moveBarEntry(config, key, placement)
     })
     if (lastEnableError) return false
     registryRevision++
@@ -381,10 +395,9 @@ QtObject {
     return true
   }
 
-  // ---------------------------------------------------------------- loading
-
-  // index.json: [{ "dir": "<dir under plugins/>", "manifest": { ... } }, ...],
-  // validated when the package is built.
+  // Reads index.json, [{ "dir": "<dir under plugins/>", "manifest": {...} }],
+  // which the package build has checked. An entry without an id or a list
+  // of kinds is passed over.
   function load(text) {
     var entries = []
     try {
@@ -393,7 +406,8 @@ QtObject {
       console.warn("PluginRegistry: the plugin index is not JSON: " + e)
     }
     var plugins = ({})
-    for (var i = 0; Array.isArray(entries) && i < entries.length; i++) {
+    var count = Array.isArray(entries) ? entries.length : 0
+    for (var i = 0; i < count; i++) {
       var manifest = entries[i] ? entries[i].manifest : null
       if (!Util.isPlainObject(manifest) || !manifest.id || !Array.isArray(manifest.kinds)) continue
       manifest.__sourceDir = pluginsDir + "/" + String(entries[i].dir || "")
@@ -409,7 +423,8 @@ QtObject {
     path: registry.pluginsDir ? registry.pluginsDir + "/index.json" : ""
     printErrors: false
     onLoaded: registry.load(text())
-    // Without the index there is no lock, no polkit agent and no widgets.
+    // With no index there is no lock, no polkit agent and no widget, so this
+    // is an error, not a warning.
     onLoadFailed: function(error) {
       console.error("PluginRegistry: cannot read " + path + ": " + error)
       registry.load("")
