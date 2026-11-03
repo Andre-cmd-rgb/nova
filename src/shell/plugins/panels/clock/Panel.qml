@@ -223,16 +223,26 @@ Ui.Panel {
   // The rows shown at most; past them, the last says how many more.
   readonly property int agendaRows: 6
 
-  // The local midnight of a day by its key, or of the day `after` days on.
+  // The local midnight of a day by its key, or of the day `after` days on,
+  // as the calendar counts days. Where the clocks skip that midnight
+  // (Santiago in September, Havana in March), the shell's engine puts it at
+  // 23:00 the day before, for the calendar as for this panel.
   function dayStart(key, after) {
     var part = String(key).split("-")
     return new Date(Number(part[0]), Number(part[1]) - 1, Number(part[2]) + (after || 0)).getTime()
   }
 
-  function openCalendar(day) {
+  // A day by its key at noon, which is on that day wherever the clocks
+  // change: what the day is named by, and opened on.
+  function dayNoon(key) {
+    var part = String(key).split("-")
+    return new Date(Number(part[0]), Number(part[1]) - 1, Number(part[2]), 12)
+  }
+
+  function openCalendar(key) {
     if (!calendar) return
     close()
-    calendar.show(day)
+    calendar.show(dayNoon(key).getTime())
   }
 
   // What a row starts with: a task's time when it has one; an event's
@@ -276,7 +286,7 @@ Ui.Panel {
         case "{": root.stepYears(-1); break
         case "}": root.stepYears(1); break
         case "t": root.showToday(); break
-        case "c": root.openCalendar(root.pickedDay); break
+        case "c": root.openCalendar(root.pickedKey); break
         case "w": root.toggleWeekStart(); break
         }
       }
@@ -579,7 +589,7 @@ Ui.Panel {
                       TapHandler {
                         enabled: root.calendar !== null
                         onTapped: root.pickedKey = cell.modelData.key
-                        onDoubleTapped: root.openCalendar(root.dayStart(cell.modelData.key))
+                        onDoubleTapped: root.openCalendar(cell.modelData.key)
                       }
 
                       Text {
@@ -689,7 +699,7 @@ Ui.Panel {
                 Caption {
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.pickedKey === root.todayKey ? "TODAY" : Qt.formatDate(new Date(root.pickedDay), "ddd d MMMM").toUpperCase()
+                  text: root.pickedKey === root.todayKey ? "TODAY" : Qt.formatDate(root.dayNoon(root.pickedKey), "ddd d MMMM").toUpperCase()
                   color: Qt.darker(root.foreground, 1.4)
                 }
 
@@ -702,7 +712,7 @@ Ui.Panel {
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
-                  onClicked: root.openCalendar(root.pickedDay)
+                  onClicked: root.openCalendar(root.pickedKey)
                 }
               }
 
@@ -733,7 +743,7 @@ Ui.Panel {
                 color: Qt.darker(root.foreground, 1.6)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
-                TapHandler { onTapped: root.openCalendar(root.pickedDay) }
+                TapHandler { onTapped: root.openCalendar(root.pickedKey) }
               }
             }
           }
@@ -828,7 +838,7 @@ Ui.Panel {
     MouseArea {
       anchors.fill: parent
       cursorShape: Qt.PointingHandCursor
-      onClicked: root.openCalendar(root.pickedDay)
+      onClicked: root.openCalendar(root.pickedKey)
     }
 
     Row {
