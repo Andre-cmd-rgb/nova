@@ -272,9 +272,8 @@ Panel {
   // when the displays make the card taller than it may be.
   function ensureCursorVisible(item) {
     var flick = scrollArea.contentItem
-    if (!item || !flick || flick.contentY === undefined) return
-    var top = item.mapToItem(flick.contentItem || flick, 0, 0).y
-    var bottom = top + (item.height || 0)
+    var top = item.mapToItem(flick.contentItem, 0, 0).y
+    var bottom = top + item.height
     if (top < flick.contentY + 6) flick.contentY = Math.max(0, top - 6)
     else if (bottom > flick.contentY + flick.height - 6) flick.contentY = bottom + 6 - flick.height
   }

@@ -78,7 +78,7 @@ function snapScale(scale, width, height) {
 // <presets> as a display of <width> by <height> takes them: each scale it
 // ends up at once, by the preset closest to it, in the presets' order.
 function scalesFor(presets, width, height) {
-  if (!Array.isArray(presets) || Number(width) <= 0 || Number(height) <= 0) return presets || []
+  if (Number(width) <= 0 || Number(height) <= 0) return presets
   var best = {}
   presets.forEach(function(preset, index) {
     var asked = Number(preset)
@@ -98,7 +98,7 @@ function scalesFor(presets, width, height) {
 // the closest; -1 for none.
 function scaleIndex(scales, current, width, height) {
   var now = Number(current)
-  if (!Array.isArray(scales) || !isFinite(now)) return -1
+  if (!isFinite(now)) return -1
   var want = scaleText(now)
   var found = -1
   var nearest = Infinity
@@ -190,7 +190,6 @@ function at(section, index) {
 // j (<delta> 1) or k (-1): the next stop down or up, into the next section
 // at a section's end; the last display coming up into the displays.
 function move(cursor, delta, list, counts) {
-  if (!list || list.length === 0) return cursor
   var here = list.indexOf(cursor.section)
   if (here < 0) return at(list[0], entry(list[0]))
   var inside = !oneStop(cursor.section)
@@ -215,7 +214,6 @@ function along(index, delta, count) {
 
 // The cursor kept on something shown once sections or rows come or go.
 function clamp(cursor, list, counts) {
-  if (!list || list.length === 0) return cursor
   var here = list.indexOf(cursor.section)
   if (here < 0) return at(list[0], entry(list[0]))
   var count = rows(cursor.section, counts)
