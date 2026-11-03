@@ -1,22 +1,14 @@
 import QtQuick
-import qs.Commons
 import qs.Ui
 
+// Do not disturb: lit while notifications are held back, and the switch.
 BarIndicator {
-  id: root
+  readonly property var notifications: bar?.shell?.serviceFor("nova.notifications")
 
-  readonly property var notificationService: bar?.shell?.serviceFor("nova.notifications")
-  readonly property bool dnd: notificationService ? notificationService.doNotDisturb : false
-
-  active: dnd
+  active: notifications ? notifications.doNotDisturb : false
   activeText: "󰂛"
-  inactiveText: "󰂛"
   activeTooltipText: "Allow Notifications"
   inactiveTooltipText: "Silence Notifications"
 
-  onPressed: function() {
-    if (root.notificationService) {
-      root.notificationService.setDoNotDisturb(!root.notificationService.doNotDisturb)
-    }
-  }
+  onPressed: if (notifications) notifications.setDoNotDisturb(!notifications.doNotDisturb)
 }

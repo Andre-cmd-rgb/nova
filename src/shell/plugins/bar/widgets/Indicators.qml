@@ -1,306 +1,209 @@
 import QtQuick
-import Quickshell
-import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "../BarModel.js" as BarModel
 
+// Small switches: a screen recording, the night light, do not disturb,
+// Caffeine. Those that are on are lit, nearest the centre; those that are off
+// keep their room beside them, and show while the pointer is on the widget or
+// on the bar's centre. Each is a file in ../indicators, named in the widget's
+// `items` (or `indicators`, its older name), all of them when it names none.
 BarWidget {
   id: root
   moduleName: "nova.indicators"
 
-  readonly property var defaultIndicatorEntries: [ "ScreenRecording", "NightLight", "Dnd", "Caffeine" ]
+  readonly property var defaultIndicators: ["ScreenRecording", "NightLight", "Dnd", "Caffeine"]
   // Stay Awake and Lid Awake became one Caffeine indicator; a layout naming
   // either gets it.
-  readonly property var renamedIndicators: ({ "StayAwake": "Caffeine", "LidAwake": "Caffeine" })
-  readonly property var indicatorEntries: indicatorEntriesFromSettings(settings)
-  property var activeIndicatorIds: []
-  property var indicatorActiveStates: ({})
-  property bool indicatorAreaHovered: false
-  property bool indicatorItemHovered: false
-  readonly property bool alwaysShowIndicators: setting("alwaysShow", false) === true
-  readonly property bool revealInactiveIndicators: alwaysShowIndicators || indicatorAreaHovered || indicatorItemHovered || (bar && bar.centerSectionRevealHeld === true && bar.centerHoverRevealSuppressed !== true)
+  readonly property var renamed: ({ "StayAwake": "Caffeine", "LidAwake": "Caffeine" })
+  readonly property var indicatorEntries: entriesFrom(settings)
 
+  // The indicators that are on, in the order they are lit, and the model the
+  // lit block is built from: moved rather than rebuilt, so a lit indicator
+  // keeps its copy while another comes or goes.
+  property var activeIds: []
+  property var activeStates: ({})
+  ListModel { id: lit }
+
+  property bool areaHovered: false
+  property bool itemHovered: false
+  readonly property bool revealInactiveIndicators: setting("alwaysShow", false) === true || areaHovered || itemHovered
+    || (bar && bar.centerSectionRevealHeld === true && bar.centerHoverRevealSuppressed !== true)
+
+  // To the indicators that look for their state themselves (the recording):
+  // look now. nova-shell nova.indicators refresh.
   signal refreshRequested()
 
-  ListModel { id: activeIndicatorModel }
+  function refresh() { refreshRequested() }
 
-  function entryId(entry) {
-    if (typeof entry === "string") return entry
-    if (Util.isPlainObject(entry)) {
-      var id = entry["id"]
-      if (id !== undefined && id !== null && String(id) !== "") return String(id)
-    }
-    return ""
-  }
+  Component.onCompleted: refreshRequested()
 
-  function entrySettings(entry) {
-    if (!Util.isPlainObject(entry)) return {}
-    var copy = {}
-    for (var key in entry) {
-      if (key === "id") continue
-      copy[key] = entry[key]
-    }
-    return copy
-  }
-
-  function indicatorEntriesFromSettings(settings) {
-    var source = defaultIndicatorEntries
+  function entriesFrom(settings) {
+    var source = defaultIndicators
     if (settings.items && typeof settings.items.length === "number" && settings.items.length > 0) source = settings.items
     else if (settings.indicators && typeof settings.indicators.length === "number" && settings.indicators.length > 0) source = settings.indicators
 
     var result = []
     for (var i = 0; i < source.length; i++) {
-      var item = source[i]
-      if (typeof item !== "string" && item !== null && typeof item === "object") {
+      var entry = source[i]
+      if (entry !== null && typeof entry === "object") {
         try {
-          item = JSON.parse(JSON.stringify(item))
+          entry = JSON.parse(JSON.stringify(entry))
         } catch (error) {
         }
       }
-      var id = entryId(item)
-      if (renamedIndicators[id] !== undefined) {
-        id = renamedIndicators[id]
-        item = id
-        if (result.some(function(entry) { return entryId(entry) === id })) continue
+      var id = BarModel.entryId(entry)
+      if (renamed[id] !== undefined) {
+        id = renamed[id]
+        entry = id
+        if (result.some(function(other) { return BarModel.entryId(other) === id })) continue
       }
-      if (id !== "") result.push(item)
+      if (id !== "") result.push(entry)
     }
     return result
   }
 
-  function setIndicatorAreaHovered(hovered) {
-    indicatorAreaHovered = hovered
-    if (hovered) indicatorHideTimer.stop()
-    else indicatorHideTimer.restart()
-  }
-
-  function setIndicatorItemHovered(hovered) {
-    if (hovered) {
-      indicatorItemHovered = true
-      indicatorHideTimer.stop()
-    } else {
-      indicatorHideTimer.restart()
-    }
-  }
-
-  function hasIndicatorId(id) {
-    for (var i = 0; i < indicatorEntries.length; i++) {
-      if (entryId(indicatorEntries[i]) === id) return true
-    }
-    return false
+  function listed(id) {
+    return indicatorEntries.some(function(entry) { return BarModel.entryId(entry) === id })
   }
 
   function entryForId(id) {
     for (var i = 0; i < indicatorEntries.length; i++) {
-      var entry = indicatorEntries[i]
-      if (entryId(entry) === id) return entry
+      if (BarModel.entryId(indicatorEntries[i]) === id) return indicatorEntries[i]
     }
-
     return { id: id }
   }
 
-  function activeModelIndex(id) {
-    for (var i = 0; i < activeIndicatorModel.count; i++) {
-      if (activeIndicatorModel.get(i).activeId === id) return i
-    }
-    return -1
+  // Of `ids`, in their order, those listed and on.
+  function stillActive(states, ids) {
+    var kept = []
+    ids.forEach(function(id) {
+      if (kept.indexOf(id) === -1 && listed(id) && states[id] === true) kept.push(id)
+    })
+    return kept
   }
 
-  function copyActiveStates() {
-    var states = {}
-    for (var id in indicatorActiveStates) {
-      if (indicatorActiveStates[id] === true) states[id] = true
-    }
-    return states
-  }
-
-  function orderedActiveIds(states, preferredOrder) {
-    var ids = []
-
-    for (var i = 0; i < preferredOrder.length; i++) {
-      var id = preferredOrder[i]
-      if (ids.indexOf(id) === -1 && hasIndicatorId(id) && states[id] === true) ids.push(id)
-    }
-
-    return ids
-  }
-
-  function syncActiveIndicatorModel() {
-    for (var i = activeIndicatorModel.count - 1; i >= 0; i--) {
-      if (activeIndicatorIds.indexOf(activeIndicatorModel.get(i).activeId) === -1)
-        activeIndicatorModel.remove(i)
-    }
-
-    for (var j = 0; j < activeIndicatorIds.length; j++) {
-      var id = activeIndicatorIds[j]
-      var index = activeModelIndex(id)
-      if (index === -1) activeIndicatorModel.insert(j, { activeId: id })
-      else if (index !== j) activeIndicatorModel.move(index, j, 1)
-    }
-  }
-
+  // An indicator saying it is on or off. One that comes on goes first, the
+  // far side from the centre: added last it would push those lit sideways.
   function setIndicatorActive(entry, active) {
-    var id = entryId(entry)
+    var id = BarModel.entryId(entry)
     if (id === "") return
-
-    var states = copyActiveStates()
+    var states = {}
+    for (var key in activeStates) {
+      if (activeStates[key] === true) states[key] = true
+    }
     if (active) states[id] = true
     else delete states[id]
+    activeStates = states
 
-    indicatorActiveStates = states
-
-    var ids = orderedActiveIds(states, activeIndicatorIds)
-    // The active block sits closest to the clock, so newcomers go on the far
-    // side of it. Appending would shove everything already showing sideways.
-    if (active && ids.indexOf(id) === -1 && hasIndicatorId(id)) ids.unshift(id)
-    activeIndicatorIds = ids
-    syncActiveIndicatorModel()
+    var ids = stillActive(states, activeIds)
+    if (active && ids.indexOf(id) === -1 && listed(id)) ids.unshift(id)
+    activeIds = ids
+    syncLit()
   }
 
-  function syncActiveIndicatorOrder() {
-    activeIndicatorIds = orderedActiveIds(indicatorActiveStates, activeIndicatorIds)
-    syncActiveIndicatorModel()
+  onIndicatorEntriesChanged: {
+    activeIds = stillActive(activeStates, activeIds)
+    syncLit()
   }
 
-  function refresh() { root.refreshRequested() }
+  function syncLit() {
+    for (var i = lit.count - 1; i >= 0; i--) {
+      if (activeIds.indexOf(lit.get(i).activeId) === -1) lit.remove(i)
+    }
+    for (var j = 0; j < activeIds.length; j++) {
+      var at = -1
+      for (var k = 0; k < lit.count && at === -1; k++) {
+        if (lit.get(k).activeId === activeIds[j]) at = k
+      }
+      if (at === -1) lit.insert(j, { activeId: activeIds[j] })
+      else if (at !== j) lit.move(at, j, 1)
+    }
+  }
 
-  onIndicatorEntriesChanged: syncActiveIndicatorOrder()
+  // The off ones show while the pointer is on them, and for 120 ms after it
+  // leaves, so it can cross to one without them fading under it.
+  function setIndicatorAreaHovered(hovered) {
+    areaHovered = hovered
+    if (hovered) hideDelay.stop()
+    else hideDelay.restart()
+  }
 
-  // Only the tree for the current orientation exists (see orientationLoader
-  // below); its wrapper keeps the stock sizing expressions, so the root's
-  // implicit size still follows the blocks synchronously rather than waiting
-  // on a positioner's polish.
-  implicitWidth: orientationLoader.item ? orientationLoader.item.implicitWidth : 0
-  implicitHeight: orientationLoader.item ? orientationLoader.item.implicitHeight : 0
+  // WidgetButton's, for the off indicators it draws.
+  function setIndicatorItemHovered(hovered) {
+    if (!hovered) {
+      hideDelay.restart()
+      return
+    }
+    itemHovered = true
+    hideDelay.stop()
+  }
 
   Timer {
-    id: indicatorHideTimer
+    id: hideDelay
     interval: 120
-    onTriggered: {
-      if (!root.indicatorAreaHovered)
-        root.indicatorItemHovered = false
-    }
+    onTriggered: if (!root.areaHovered) root.itemHovered = false
   }
 
-  Component.onCompleted: root.refreshRequested()
+  implicitWidth: both.implicitWidth
+  implicitHeight: both.implicitHeight
 
-  // Instantiating both orientation trees and toggling `visible` doubled every
-  // indicator per bar (and every process an indicator spawns, once per
-  // monitor). Load only the tree that matches the bar orientation instead.
-  Loader {
-    id: orientationLoader
-    sourceComponent: root.vertical ? verticalIndicatorsTree : horizontalIndicatorsTree
-  }
+  // The off block, then the lit one, along the bar. The off indicators keep
+  // their room and only fade: room made on a hover would move the clock and
+  // everything beside it each time the pointer crossed the bar.
+  Item {
+    id: both
 
-  Component {
-    id: horizontalIndicatorsTree
+    implicitWidth: root.vertical ? Math.max(unlitArea.implicitWidth, litBlock.implicitWidth) : unlitArea.implicitWidth + litBlock.implicitWidth
+    implicitHeight: root.vertical ? unlitArea.implicitHeight + litBlock.implicitHeight : Math.max(unlitArea.implicitHeight, litBlock.implicitHeight)
+    width: implicitWidth
+    height: implicitHeight
 
     Item {
-      implicitWidth: activeHorizontalBlock.implicitWidth + inactiveHorizontalArea.implicitWidth
-      implicitHeight: Math.max(activeHorizontalBlock.implicitHeight, inactiveHorizontalArea.implicitHeight)
+      id: unlitArea
+
+      implicitWidth: root.vertical ? Math.max(unlitBlock.implicitWidth, root.barSize) : unlitBlock.implicitWidth
+      implicitHeight: root.vertical ? unlitBlock.implicitHeight : Math.max(unlitBlock.implicitHeight, root.barSize)
       width: implicitWidth
       height: implicitHeight
 
-      Row {
-        id: horizontalIndicators
+      Block {
+        id: unlitBlock
+        anchors.verticalCenter: root.vertical ? undefined : parent.verticalCenter
+        anchors.horizontalCenter: root.vertical ? parent.horizontalCenter : undefined
+        opacity: root.revealInactiveIndicators ? 1 : 0
+        enabled: root.revealInactiveIndicators
 
-        spacing: 0
+        Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
 
-        HoverHandler {
-          onHoveredChanged: root.setIndicatorAreaHovered(hovered)
-        }
+        Repeater {
+          model: root.indicatorEntries
 
-        // The indicators that are off keep their room, and only fade in on
-        // a hover: room made then would move the clock and everything else
-        // beside them, each time the pointer crossed the bar.
-        Item {
-          id: inactiveHorizontalArea
-
-          implicitWidth: inactiveHorizontalBlock.implicitWidth
-          implicitHeight: Math.max(inactiveHorizontalBlock.implicitHeight, root.barSize)
-          width: implicitWidth
-          height: implicitHeight
-
-          IndicatorBlock {
-            id: inactiveHorizontalBlock
-            anchors.verticalCenter: parent.verticalCenter
-            opacity: root.revealInactiveIndicators ? 1 : 0
-            enabled: root.revealInactiveIndicators
-            Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-            indicatorsModule: root
-            indicatorEntries: root.indicatorEntries
-            indicatorBlock: "inactive"
-            horizontal: true
-            reportActiveState: !root.vertical
+          Indicator {
+            required property var modelData
+            entry: modelData
+            block: "inactive"
           }
-
-          HoverHandler {
-            onHoveredChanged: root.setIndicatorAreaHovered(hovered)
-          }
-        }
-
-        ActiveIndicatorBlock {
-          id: activeHorizontalBlock
-          indicatorsModule: root
-          indicatorModel: activeIndicatorModel
-          horizontal: true
-          reportActiveState: !root.vertical
         }
       }
+
+      HoverHandler {
+        onHoveredChanged: root.setIndicatorAreaHovered(hovered)
+      }
     }
-  }
 
-  Component {
-    id: verticalIndicatorsTree
+    Block {
+      id: litBlock
+      x: root.vertical ? 0 : unlitArea.width
+      y: root.vertical ? unlitArea.height : 0
 
-    Item {
-      implicitWidth: Math.max(activeVerticalBlock.implicitWidth, inactiveVerticalArea.implicitWidth)
-      implicitHeight: activeVerticalBlock.implicitHeight + inactiveVerticalArea.implicitHeight
-      width: implicitWidth
-      height: implicitHeight
+      Repeater {
+        model: lit
 
-      Column {
-        id: verticalIndicators
-
-        spacing: 0
-
-        HoverHandler {
-          onHoveredChanged: root.setIndicatorAreaHovered(hovered)
-        }
-
-        // As in the horizontal tree: room kept, a fade on a hover.
-        Item {
-          id: inactiveVerticalArea
-
-          implicitWidth: Math.max(inactiveVerticalBlock.implicitWidth, root.barSize)
-          implicitHeight: inactiveVerticalBlock.implicitHeight
-          width: implicitWidth
-          height: implicitHeight
-
-          IndicatorBlock {
-            id: inactiveVerticalBlock
-            anchors.horizontalCenter: parent.horizontalCenter
-            opacity: root.revealInactiveIndicators ? 1 : 0
-            enabled: root.revealInactiveIndicators
-            Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-            indicatorsModule: root
-            indicatorEntries: root.indicatorEntries
-            indicatorBlock: "inactive"
-            horizontal: false
-            reportActiveState: root.vertical
-          }
-
-          HoverHandler {
-            onHoveredChanged: root.setIndicatorAreaHovered(hovered)
-          }
-        }
-
-        ActiveIndicatorBlock {
-          id: activeVerticalBlock
-          indicatorsModule: root
-          indicatorModel: activeIndicatorModel
-          horizontal: false
-          reportActiveState: root.vertical
+        Indicator {
+          required property string activeId
+          entry: root.entryForId(activeId)
+          block: "active"
         }
       }
     }
@@ -310,198 +213,76 @@ BarWidget {
     onHoveredChanged: root.setIndicatorAreaHovered(hovered)
   }
 
-  component ActiveIndicatorBlock: Item {
-    id: activeIndicatorBlockRoot
-
-    property var indicatorModel: null
-    property var indicatorsModule: null
-    property bool horizontal: true
-    property bool reportActiveState: false
-
-    implicitWidth: blockLoader.item ? blockLoader.item.implicitWidth : 0
-    implicitHeight: blockLoader.item ? blockLoader.item.implicitHeight : 0
-    width: implicitWidth
-    height: implicitHeight
-
-    Loader {
-      id: blockLoader
-
-      anchors.centerIn: parent
-      sourceComponent: activeIndicatorBlockRoot.horizontal ? horizontalActiveIndicatorBlock : verticalActiveIndicatorBlock
-    }
-
-    Component {
-      id: horizontalActiveIndicatorBlock
-
-      Row {
-        spacing: 0
-
-        Repeater {
-          model: activeIndicatorBlockRoot.indicatorModel
-
-          IndicatorLoader {
-            required property string activeId
-            indicatorsModule: activeIndicatorBlockRoot.indicatorsModule
-            entry: activeIndicatorBlockRoot.indicatorsModule.entryForId(activeId)
-            indicatorBlock: "active"
-            reportActiveState: activeIndicatorBlockRoot.reportActiveState
-          }
-        }
-      }
-    }
-
-    Component {
-      id: verticalActiveIndicatorBlock
-
-      Column {
-        spacing: 0
-
-        Repeater {
-          model: activeIndicatorBlockRoot.indicatorModel
-
-          IndicatorLoader {
-            required property string activeId
-            indicatorsModule: activeIndicatorBlockRoot.indicatorsModule
-            entry: activeIndicatorBlockRoot.indicatorsModule.entryForId(activeId)
-            indicatorBlock: "active"
-            reportActiveState: activeIndicatorBlockRoot.reportActiveState
-          }
-        }
-      }
-    }
+  // A row of indicators, or a column on a side bar.
+  component Block: Grid {
+    rows: root.vertical ? -1 : 1
+    columns: root.vertical ? 1 : -1
   }
 
-  component IndicatorBlock: Item {
-    id: indicatorBlockRoot
-
-    property var indicatorEntries: []
-    property var indicatorsModule: null
-    property string indicatorBlock: "active"
-    property bool horizontal: true
-    property bool reportActiveState: false
-
-    implicitWidth: blockLoader.item ? blockLoader.item.implicitWidth : 0
-    implicitHeight: blockLoader.item ? blockLoader.item.implicitHeight : 0
-    width: implicitWidth
-    height: implicitHeight
-
-    Loader {
-      id: blockLoader
-
-      anchors.centerIn: parent
-      sourceComponent: indicatorBlockRoot.horizontal ? horizontalIndicatorBlock : verticalIndicatorBlock
-    }
-
-    Component {
-      id: horizontalIndicatorBlock
-
-      Row {
-        spacing: 0
-
-        Repeater {
-          model: indicatorBlockRoot.indicatorEntries
-
-          IndicatorLoader {
-            required property var modelData
-            indicatorsModule: indicatorBlockRoot.indicatorsModule
-            entry: modelData
-            indicatorBlock: indicatorBlockRoot.indicatorBlock
-            reportActiveState: indicatorBlockRoot.reportActiveState
-          }
-        }
-      }
-    }
-
-    Component {
-      id: verticalIndicatorBlock
-
-      Column {
-        spacing: 0
-
-        Repeater {
-          model: indicatorBlockRoot.indicatorEntries
-
-          IndicatorLoader {
-            required property var modelData
-            indicatorsModule: indicatorBlockRoot.indicatorsModule
-            entry: modelData
-            indicatorBlock: indicatorBlockRoot.indicatorBlock
-            reportActiveState: indicatorBlockRoot.reportActiveState
-          }
-        }
-      }
-    }
-  }
-
-  component IndicatorLoader: Item {
-    id: indicatorSlot
+  // One indicator, loaded from its file. Every listed indicator has a copy
+  // in the off block, which hides itself while it is on, and one that is on
+  // has a second copy in the lit block. Both say when they change, which is
+  // how the lit block learns what to show.
+  component Indicator: Item {
+    id: indicator
 
     required property var entry
-    property var indicatorsModule: null
-    required property string indicatorBlock
-    property bool reportActiveState: false
-    property bool activeStateObserved: false
-    readonly property string indicatorId: root.entryId(entry)
-    readonly property var indicatorSettings: root.entrySettings(entry)
-    readonly property var barRef: root.bar
+    required property string block
+    readonly property string indicatorId: BarModel.entryId(entry)
+    readonly property var indicatorSettings: BarModel.entrySettings(entry)
+    readonly property var hostBar: root.bar
+    // A lit copy is made for an indicator that is on, and only once it has
+    // said so does its going off count: before, it is still loading.
+    property bool seenOn: false
 
-    implicitWidth: indicatorSource.item && indicatorSource.item.visible ? indicatorSource.item.implicitWidth : 0
-    implicitHeight: indicatorSource.item && indicatorSource.item.visible ? indicatorSource.item.implicitHeight : 0
+    implicitWidth: file.item && file.item.visible ? file.item.implicitWidth : 0
+    implicitHeight: file.item && file.item.visible ? file.item.implicitHeight : 0
     width: implicitWidth
     height: implicitHeight
+
     onEntryChanged: {
-      activeStateObserved = false
-      injectProps()
-      syncActiveState()
+      seenOn = false
+      hand()
+      report()
     }
-    onIndicatorBlockChanged: injectProps()
-    onIndicatorSettingsChanged: injectProps()
-    onIndicatorsModuleChanged: {
-      injectProps()
-      syncActiveState()
+    onIndicatorSettingsChanged: hand()
+    onHostBarChanged: hand()
+
+    function hand() {
+      var item = file.item
+      if (!item) return
+      if ("bar" in item) item.bar = root.bar
+      if ("moduleName" in item) item.moduleName = indicatorId
+      if ("settings" in item) item.settings = indicatorSettings
+      if ("indicatorBlock" in item) item.indicatorBlock = block
+      if ("indicatorHost" in item) item.indicatorHost = root
+      if ("activeOverride" in item) item.activeOverride = block === "active" ? true : null
     }
-    onReportActiveStateChanged: syncActiveState()
-    onBarRefChanged: injectProps()
+
+    function report() {
+      var on = !!file.item && file.item.active === true
+      if (block === "active") {
+        if (on) seenOn = true
+        else if (!seenOn) return
+      }
+      root.setIndicatorActive(entry, on)
+    }
 
     Loader {
-      id: indicatorSource
-
+      id: file
       anchors.fill: parent
-      source: indicatorSlot.indicatorId ? Qt.resolvedUrl("../indicators/" + indicatorSlot.indicatorId + ".qml") : ""
+      source: indicator.indicatorId ? Qt.resolvedUrl("../indicators/" + indicator.indicatorId + ".qml") : ""
       onLoaded: {
-        indicatorSlot.injectProps()
-        indicatorSlot.syncActiveState()
+        indicator.hand()
+        indicator.report()
       }
-      onStatusChanged: if (status === Loader.Error) console.warn("Indicator loader error", indicatorSlot.indicatorId, source)
+      onStatusChanged: if (status === Loader.Error) console.warn("Indicator loader error", indicator.indicatorId, source)
     }
 
     Connections {
-      target: indicatorSource.item
+      target: file.item
       ignoreUnknownSignals: true
-      function onActiveChanged() { indicatorSlot.syncActiveState() }
-    }
-
-    function injectProps() {
-      var target = indicatorSource.item
-      if (!target) return
-      if ("bar" in target) target.bar = root.bar
-      if ("moduleName" in target) target.moduleName = indicatorId
-      if ("settings" in target) target.settings = indicatorSettings
-      if ("indicatorBlock" in target) target.indicatorBlock = indicatorBlock
-      if ("indicatorHost" in target) target.indicatorHost = root
-      if ("activeOverride" in target) target.activeOverride = indicatorBlock === "active" ? true : null
-    }
-
-    function syncActiveState() {
-      if (!reportActiveState || !indicatorsModule || !indicatorsModule.setIndicatorActive) return
-
-      var active = !!indicatorSource.item && indicatorSource.item.active === true
-      if (indicatorBlock === "active") {
-        if (active) activeStateObserved = true
-        else if (!activeStateObserved) return
-      }
-
-      indicatorsModule.setIndicatorActive(entry, active)
+      function onActiveChanged() { indicator.report() }
     }
   }
 }
