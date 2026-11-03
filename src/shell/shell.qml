@@ -543,7 +543,13 @@ ShellRoot {
           // where a panel that will not open says nothing.
           var detail = sourceComponent ? sourceComponent.errorString() : ""
           console.warn("panel plugin " + panelEntry.pluginId + " failed to load:", detail)
-          shell.hide(panelEntry.pluginId)
+          // Hidden after this handler: a panel opened again after failing
+          // fails at once, while its <active> is still being set, and hiding
+          // it here would set <active> inside its own update, a binding
+          // loop. Each gets a closure of its own, as Qt.callLater runs a
+          // function given twice before it runs only once.
+          var id = panelEntry.pluginId
+          Qt.callLater(function () { shell.hide(id) })
         }
         Component.onDestruction: shell.unregisterPanelLoader(panelEntry.pluginId)
       }
