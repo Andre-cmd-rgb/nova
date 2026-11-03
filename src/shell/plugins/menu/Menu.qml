@@ -89,6 +89,8 @@ Item {
   ChooserRequest { id: request }
 
   // The app the uninstall question is about, { appId, label }, or null.
+  // Closing drops the question, and so does a menu or a chooser opened over
+  // it, which it would keep the keys from: Return would uninstall the app.
   property var uninstalling: null
   onOpenedChanged: if (!opened) uninstalling = null
 
@@ -398,6 +400,7 @@ Item {
   // place.
   function openMenu(id) {
     request.release()
+    uninstalling = null
     mode = "menu"
     current = item(id) ? id : "root"
     trail = []
@@ -419,6 +422,7 @@ Item {
   // or, for "input", a line to type; the files the pick is written to
   // ("selectionFile", "doneFile"); and its "width" and "maxHeight".
   function openChooser(payload) {
+    uninstalling = null
     mode = payload.mode === "input" ? "input" : "select"
     chooserPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
     chooserOptions = Array.isArray(payload.options) ? payload.options : []
