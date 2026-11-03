@@ -3,7 +3,6 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
-import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -433,7 +432,6 @@ Panel {
                   foreground: root.bar.foreground
                   fontFamily: root.bar.fontFamily
                   horizontalPadding: Style.spacing.sm
-                  verticalPadding: Style.spacing.controlPaddingY
                   bordered: true
                   active: root.activeScale === index
                   hasCursor: root.cursorActive && root.focusSection === "scale" && root.selectedIndex === index
