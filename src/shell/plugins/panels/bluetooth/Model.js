@@ -39,6 +39,11 @@ function named(device) {
   return name !== "" && !madeUpNames.some(function(re) { return re.test(name) })
 }
 
+// Paired, bonded or trusted: a device BlueZ remembers.
+function paired(device) {
+  return !!(device.paired || device.bonded || device.trusted)
+}
+
 function byLabel(list) {
   return list.sort(function(a, b) { return label(a).localeCompare(label(b)) })
 }
@@ -52,7 +57,7 @@ function lists(devices) {
   listOf(devices).forEach(function(d) {
     if (!d || !named(d)) return
     if (d.connected) connected.push(d)
-    else if (d.paired || d.bonded || d.trusted) known.push(d)
+    else if (paired(d)) known.push(d)
     else discovered.push(d)
   })
   return { connected: byLabel(connected), known: byLabel(known), discovered: byLabel(discovered) }
@@ -94,13 +99,17 @@ function devicesIn(groups, section) {
   return []
 }
 
-// The scrolling list's rows: the paired devices, then the scan's, each
-// with its list and its place in it.
-function scrollRows(known, discovered) {
-  var rows = []
-  known.forEach(function(d, i) { rows.push({ dev: rowOf(d), section: "known", indexInSection: i }) })
-  discovered.forEach(function(d, i) { rows.push({ dev: rowOf(d), section: "discovered", indexInSection: i }) })
-  return rows
+// The rows of <section>'s devices, each a copy of its device with the list
+// and its place in it.
+function rowsOf(devices, section) {
+  return (devices || []).map(function(d, i) { return { dev: rowOf(d), section: section, indexInSection: i } })
+}
+
+// The scrolling list's rows: the paired devices, then the scan's while its
+// list is among those <shown>.
+function scrollRows(groups, shown) {
+  var rows = rowsOf(groups.known, "known")
+  return shown.indexOf("discovered") < 0 ? rows : rows.concat(rowsOf(groups.discovered, "discovered"))
 }
 
 // Where <section>'s row <index> is among <rows>; -1 when it is not there.
@@ -146,6 +155,12 @@ function lively(row, action) {
   return action !== "" || stateOf(row) === 3 || row.pairing === true
 }
 
+// The lists whose rows have a forget button: a device the scan found is
+// not paired, and has nothing to forget.
+function forgettable(section) {
+  return section === "connected" || section === "known"
+}
+
 // What a click on the row does.
 function clickHint(row, discovered) {
   if (!row) return ""
@@ -169,6 +184,18 @@ function withAction(actions, address, action) {
   return next
 }
 
+// What nova-bluetooth-device is asked to do to <device> for <verb>
+// ("connect", "disconnect" or "forget"), and the word its row shows until
+// BlueZ catches up; null for nothing to do. A device not paired yet is
+// paired, which connects it too.
+function request(device, verb) {
+  if (!device || !device.address) return null
+  if (verb === "connect" && device.connected) return null
+  if (verb === "disconnect" && !device.connected) return null
+  if (verb === "connect" && !paired(device)) verb = "pair"
+  return { verb: verb, word: verb === "forget" ? "forgetting" : verb === "disconnect" ? "disconnecting" : "connecting" }
+}
+
 // The actions BlueZ has caught up with, taken off: a connect once the device
 // is connected, a disconnect once it is not, a forget once it is gone or no
 // longer paired. <connected> lists the devices that have just connected.
@@ -188,7 +215,7 @@ function settle(actions, devices) {
     var joined = action === "connecting" && found && found.connected
     if (joined
         || (action === "disconnecting" && found && !found.connected)
-        || (action === "forgetting" && (!found || (!found.paired && !found.bonded && !found.trusted)))) {
+        || (action === "forgetting" && (!found || !paired(found)))) {
       if (joined) connected.push(found)
       delete next[address]
       changed = true
