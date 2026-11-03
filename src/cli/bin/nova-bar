@@ -99,6 +99,17 @@ where_json() {
     | with_entries(select(.value != ""))'
 }
 
+# The settings the bar is drawn from, as the shell chooses them: the user's
+# where they are an object at version 1, Nova's defaults where not.
+in_force() {
+  local file
+  file=$(source_file)
+  if [[ $file != "$DEFAULTS_FILE" ]] && ! jq -e 'type == "object" and .version == 1' "$file" >/dev/null 2>&1; then
+    file=$DEFAULTS_FILE
+  fi
+  printf '%s\n' "$file"
+}
+
 defaults() {
   (($# == 0)) || fail "defaults takes nothing more"
   # One change to the file, which the shell's settings in memory cannot come
@@ -112,7 +123,7 @@ position() {
   (($# <= 1)) || fail "position takes one edge"
   local edge=${1:-}
   if [[ -z $edge ]]; then
-    jq -r '.bar.position // "top"' "$(source_file)"
+    jq -r '(.bar | objects | .position) // "top"' "$(in_force)"
     return 0
   fi
   [[ $edge =~ ^(top|bottom|left|right)$ ]] || fail "the bar's edge is top, bottom, left or right, not '$edge'"
@@ -125,7 +136,7 @@ transparent() {
   (($# <= 1)) || fail "transparent takes one value"
   case ${1:-} in
     '')
-      jq -r 'if .bar.transparent == true then "on" else "off" end' "$(source_file)"
+      jq -r 'if ((.bar | objects | .transparent) // false) == true then "on" else "off" end' "$(in_force)"
       return 0
       ;;
     toggle) commit "$NORMALIZE | .bar.transparent = (.bar.transparent != true)" ;;
