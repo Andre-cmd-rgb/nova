@@ -3,273 +3,250 @@ import Quickshell
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import qs.Ui as Ui
 import "Model.js" as Model
 
-// The clock's calendar popup: a month grid with ISO week numbers, built to
-// sit beside the weather panel — same hero-over-detail composition, same
-// spacing scale, same small-caps labels.
+// The clock's panel, under its bar widget (BarWidget.qml): today's date,
+// the share of the year gone, and a month with its ISO week numbers. The
+// chevrons, the wheel and the keys step through the months, and a click on
+// the date, or t, comes back to today's. The W heading switches the day
+// weeks start on.
 //
-// Chevrons, the scroll wheel, and the arrow keys step the month on screen.
-// With Nova's calendar on (plugins/calendar), the days with anything on them
-// have a dot, and under the grid is what a day has: today's, or the one
-// clicked. Its tasks are ticked off there; a double click on a day, or Open
-// Calendar, opens the calendar's window on it.
+// With Nova's calendar on (plugins/calendar), a day with something on it has
+// a dot, and under the month is what the day picked has, today's until a
+// click picks another: a task's box ticks the task, and a row, a double
+// click on a day, Open Calendar or c opens the calendar on the day.
 //
-// BarWidget.qml owns the bar label and hands this panel the button to
-// anchor against.
-Panel {
+// A double click on the year's rail asks for a year of birth and the years
+// to measure a life by; a second rail then shows the share lived, until a
+// double click on it puts it away. The rules are in Model.js.
+//
+// Ui.Panel is named with its module: qmllint cannot see qs.Ui, so a bare
+// Panel would be read as this file, which then holds itself through its
+// inline components without end.
+Ui.Panel {
   id: root
   moduleName: "nova.clock"
   ipcTarget: "nova.clock"
 
+  // Lent by the widget: the button the panel opens under, and the widget
+  // itself. The bar knows a panel by the widget in its slot, so the widget
+  // is who this panel is to the bar: the popout it holds, the dot under the
+  // widget, and the switch to the next panel.
   property var anchorItem: null
-
-  // The bar tracks the widget mounted in its slot — BarWidget.qml — not this
-  // nested panel. Everything the bar identifies a panel by has to be that
-  // widget: the popout coordinator (and with it the open-panel dot under the
-  // pill) compares against `slot.activeItem`, and switchPanelFrom looks the
-  // slot up the same way.
   property var hostWidget: null
   readonly property var barIdentity: hostWidget || root
 
-  // ---- Today. SystemClock keeps this honest across midnight so the
-  //      highlight rolls over without the panel being reopened.
-  property date today: new Date()
-  readonly property string todayKey: Model.keyForDate(today)
-
-  // The month on screen. Stepping moves this and nothing else.
-  property int viewYear: today.getFullYear()
-  property int viewMonth: today.getMonth()
-
-  // Local noon, so a first of the month with no midnight (Havana, April 2012)
-  // still names its own month; UTC would name the previous one west of Greenwich.
-  readonly property date viewDate: new Date(viewYear, viewMonth, 1, 12)
-  readonly property bool viewingCurrentMonth: viewYear === today.getFullYear() && viewMonth === today.getMonth()
-
-  // Pinned to today, not to the month being browsed — stepping through the
-  // calendar does not change how much of the year is gone.
-  readonly property real yearDone: Model.yearProgress(today.getFullYear(), today.getMonth(), today.getDate())
-  readonly property int yearDonePercent: Model.yearProgressPercent(today.getFullYear(), today.getMonth(), today.getDate())
-
-  // Memento mori, for anyone who goes looking: double-tapping the year bar
-  // asks for a birth year and a life expectancy, and a second bar tracks one
-  // against the other. A birth year rather than an age, so it keeps counting
-  // on its own. Without one the bar stays hidden.
-  readonly property int birthYear: Model.parseBirthYear(setting("birthYear", 0), today.getFullYear())
-  readonly property int age: Model.ageFromBirthYear(birthYear, today.getFullYear())
-  readonly property int lifeExpectancy: Model.parseLifeExpectancy(setting("lifeExpectancy", 0))
-  readonly property real lifeDone: Model.lifeProgress(age, lifeExpectancy)
-  readonly property int lifeDonePercent: Model.lifeProgressPercent(age, lifeExpectancy)
-  property bool editingLife: false
-
-  // Unset falls through to the locale's own first day, so a fresh install
-  // starts out matching the rest of the desktop rather than a hardcoded
-  // convention. Clicking the grid's "W" heading writes the choice back to
-  // shell.json.
-  readonly property int weekStart: Model.normalizedWeekStart(setting("weekStartDay", null), Qt.locale().firstDayOfWeek)
-  // The interface is English throughout, so day names are not taken from the
-  // system locale. Where the week starts still is: that is a regional
-  // convention rather than a translation, and it stays overridable above.
-  readonly property var labelLocale: Qt.locale("en_US")
-  readonly property string nextWeekStartLabel: labelLocale.dayName(Model.toggledWeekStart(weekStart), Locale.LongFormat)
-  readonly property var weekdays: Model.weekdayOrder(weekStart)
-  readonly property var weeks: Model.monthGrid(viewYear, viewMonth, weekStart, todayKey)
-
-  // Nova's calendar, looked up as the panel opens: `serviceFor` is a plain
-  // call, which a binding would not follow.
-  property var calendar: null
-  property string pickedKey: todayKey
-  readonly property real pickedDay: dayOf(pickedKey)
-  readonly property bool pickedToday: pickedKey === String(todayKey)
-  // Reading `items` is what has these follow the calendar as it changes.
-  readonly property var busy: calendar && calendar.items ? calendar.busyDays(dayOf(weeks[0].days[0].key), dayOf(weeks[5].days[6].key, 1)) : ({})
-  readonly property var picked: calendar && calendar.items ? calendar.agenda(pickedDay) : []
-  readonly property int agendaRows: 6
-
-
-  // Guarded so the widget renders before the bar is injected (the bar-widget
-  // contract instantiates it bare).
-  readonly property color contentForeground: bar ? bar.foreground : Commons.Color.foreground
-  readonly property string contentFontFamily: bar ? bar.fontFamily : Style.font.family
+  // The panel is made before the widget lends it the bar.
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
+  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property int cellWidth: Style.space(52)
   readonly property int cellHeight: Style.space(34)
-  readonly property int cellSpacing: Style.space(2)
-  readonly property int weekColumnWidth: Style.space(32)
+  readonly property int cellGap: Style.space(2)
+  readonly property int weekWidth: Style.space(32)
   readonly property int gutterWidth: Style.space(14)
 
+  // ------------------------------------------------------- open and close
+
+  // Opening comes back to today. The bar's centre, which the panel sits
+  // over, keeps its peek shut while it is open; the hold is taken after the
+  // panel shows, because showing it closes the panel that was open, and
+  // that one lets go of the hold as it closes.
   function open() {
     refresh()
-    root.controller.show()
-    // Set after showing, not before: showing hands the popout coordinator
-    // over, which closes whichever panel was open, and that close clears the
-    // shared flag. Deferring means the panel taking over always wins, while
-    // a handoff to a panel that does not manage the flag still leaves it
-    // cleared rather than stuck on.
-    Qt.callLater(function() {
-      if (root.opened) setCenterHoverRevealSuppressed(true)
-    })
+    controller.show()
+    Qt.callLater(function() { if (root.opened) root.holdPeek(true) })
   }
 
+  // An edit left open would be waiting, still open, the next time.
   function close() {
-    setCenterHoverRevealSuppressed(false)
-    // Dismissing the panel mid-edit would otherwise leave the inputs up,
-    // waiting behind a closed popup for the next time it opens.
-    if (root.editingLife) root.cancelEditingLife()
-    root.controller.hide()
+    holdPeek(false)
+    if (editingLife) stopEditingLife()
+    controller.hide()
   }
 
   function toggle() {
-    if (root.opened) root.close()
-    else root.open()
+    if (opened) close()
+    else open()
   }
 
   function switchPanel(direction) {
-    if (root.bar && typeof root.bar.switchPanelFrom === "function")
-      return root.bar.switchPanelFrom(root.barIdentity, direction)
+    if (bar && typeof bar.switchPanelFrom === "function") return bar.switchPanelFrom(barIdentity, direction)
     return false
   }
 
-  // Summoning by hotkey moves no pointer, so a hover the bar was still
-  // holding must not keep the center indicators revealed behind the panel.
-  function setCenterHoverRevealSuppressed(value) {
-    if (root.bar && typeof root.bar.setCenterHoverRevealSuppressed === "function")
-      root.bar.setCenterHoverRevealSuppressed(value)
-    else if (root.bar && "centerHoverRevealSuppressed" in root.bar)
-      root.bar.centerHoverRevealSuppressed = value
+  function holdPeek(shut) {
+    if (bar && typeof bar.setCenterHoverRevealSuppressed === "function") bar.setCenterHoverRevealSuppressed(shut)
   }
 
+  // Today, the month on show, and the calendar, looked up again: a call,
+  // which a binding would not follow.
   function refresh() {
-    root.today = new Date()
-    root.goToToday()
-    root.pickedKey = root.todayKey
-    if (root.bar && root.bar.shell && typeof root.bar.shell.serviceFor === "function")
-      root.calendar = root.bar.shell.serviceFor("nova.calendar")
+    today = new Date()
+    showToday()
+    pickedKey = todayKey
+    if (bar && bar.shell && typeof bar.shell.serviceFor === "function") calendar = bar.shell.serviceFor("nova.calendar")
   }
 
-  // A day's local midnight from its key, or <after> days on.
-  function dayOf(key, after) {
-    var p = String(key).split("-")
-    return new Date(Number(p[0]), Number(p[1]) - 1, Number(p[2]) + (after || 0)).getTime()
-  }
-
-  function openCalendar(day) {
-    if (!root.calendar) return
-    root.close()
-    root.calendar.show(day)
-  }
-
-  function agendaLead(occ) {
-    if (occ.item.kind === "task") return occ.item.dueTime ? root.calendar.clock(occ.start) : ""
-    if (occ.item.allDay) return "All day"
-    return occ.start < root.pickedDay ? "…" + root.calendar.clock(occ.end) : root.calendar.clock(occ.start)
-  }
-
-  function goToToday() {
-    root.viewYear = today.getFullYear()
-    root.viewMonth = today.getMonth()
-  }
-
-  function moveMonth(delta) {
-    var next = Model.stepMonth(viewYear, viewMonth, delta)
-    root.viewYear = next.year
-    root.viewMonth = next.month
-  }
-
-  function moveYear(delta) {
-    moveMonth(delta * 12)
-  }
-
-  // Applied locally first so the panel redraws on the click itself; the
-  // shell.json write comes back through the bar as the same value. With no
-  // writable entry (the widget is not in the layout) it stays a session-only
-  // preference rather than doing nothing. The host widget builds its own
-  // entry when the label format is cycled, so it has to be kept in step or
-  // it would write this key straight back out from a stale copy.
-  function persistSettings(values) {
-    var entry = { id: root.moduleName }
-    for (var existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
+  // The panel's settings, written to its entry in shell.json. They count at
+  // once, here and in the widget, whose own writes (the label's format) start
+  // from its copy; the write comes back from the bar the same. Without an
+  // entry to write (the widget is not in the layout) they last the session.
+  function saveSettings(values) {
+    var entry = { id: moduleName }
+    for (var kept in settings) if (kept !== "id") entry[kept] = settings[kept]
     for (var key in values) entry[key] = values[key]
-
-    root.settings = entry
-    if (root.hostWidget && "settings" in root.hostWidget) root.hostWidget.settings = entry
-    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-      root.bar.shell.updateEntryInline(root.moduleName, entry)
+    settings = entry
+    if (hostWidget && "settings" in hostWidget) hostWidget.settings = entry
+    if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function") bar.shell.updateEntryInline(moduleName, entry)
   }
 
-  function setWeekStart(day) {
-    var next = Model.normalizedWeekStart(day, root.weekStart)
-    if (next === root.weekStart) return
-    persistSettings({ weekStartDay: Model.weekStartSettingName(next) })
+  // ------------------------------------------------------------------ today
+
+  property date today: new Date()
+  readonly property string todayKey: Model.keyOf(today)
+
+  // Past midnight, the outline moves to the new day, and a month on show
+  // because it was today's moves with it.
+  SystemClock {
+    id: clock
+    precision: SystemClock.Minutes
+    onDateChanged: {
+      if (Model.keyOf(clock.date) === root.todayKey) return
+      var following = root.onThisMonth
+      root.today = clock.date
+      if (following) root.showToday()
+    }
   }
 
-  function startEditingLife() {
-    root.editingLife = true
+  // How much of the year is gone, by today: the month on show is not today.
+  readonly property real yearShare: Model.yearShare(today.getFullYear(), today.getMonth(), today.getDate())
+
+  // ------------------------------------------------------------ the month
+
+  property int shownYear: today.getFullYear()
+  property int shownMonth: today.getMonth()
+  // At noon: a 1st of the month without a midnight (Havana, April 2012) is
+  // still named for its month.
+  readonly property date shownFirst: new Date(shownYear, shownMonth, 1, 12)
+  readonly property bool onThisMonth: shownYear === today.getFullYear() && shownMonth === today.getMonth()
+
+  // The day weeks start on: the setting, else the locale's. Names of days are
+  // English, as all of Nova's text is; the first day is the region's custom,
+  // not a word.
+  readonly property int weekStart: Model.weekStart(setting("weekStartDay", null), Qt.locale().firstDayOfWeek)
+  readonly property var english: Qt.locale("en_US")
+  readonly property var weekdays: Model.weekdayOrder(weekStart)
+  readonly property var weeks: Model.monthGrid(shownYear, shownMonth, weekStart, todayKey)
+
+  function showToday() {
+    shownYear = today.getFullYear()
+    shownMonth = today.getMonth()
+  }
+
+  function stepMonths(delta) {
+    var next = Model.stepMonth(shownYear, shownMonth, delta)
+    shownYear = next.year
+    shownMonth = next.month
+  }
+
+  function stepYears(delta) {
+    stepMonths(delta * 12)
+  }
+
+  // Between Monday and Sunday; from any other start, to Monday.
+  function toggleWeekStart() {
+    saveSettings({ weekStartDay: Model.weekStartName(Model.otherWeekStart(weekStart)) })
+  }
+
+  function weekdayName(day) {
+    return String(english.dayName(day, Locale.ShortFormat)).toUpperCase()
+  }
+
+  // --------------------------------------------------------- memento mori
+
+  readonly property int born: Model.birthYear(setting("birthYear", 0), today.getFullYear())
+  readonly property int lifeSpan: Model.lifeSpan(setting("lifeExpectancy", 0))
+  readonly property real lifeShare: Model.lifeShare(Model.age(born, today.getFullYear()), lifeSpan)
+  property bool editingLife: false
+
+  function editLife() {
+    editingLife = true
     Qt.callLater(function() {
-      bornField.text = root.birthYear > 0 ? String(root.birthYear) : ""
-      expectancyField.text = String(root.lifeExpectancy)
+      bornField.text = root.born > 0 ? String(root.born) : ""
+      spanField.text = String(root.lifeSpan)
       bornField.selectAll()
       bornField.forceActiveFocus()
     })
   }
 
-  function cancelEditingLife() {
-    root.editingLife = false
-    Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
+  function stopEditingLife() {
+    editingLife = false
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
-  // Shared by both fields: Tab hops to the other one, Enter commits the pair,
-  // Escape drops the lot.
-  function handleLifeKey(event, other) {
-    if (event.key === Qt.Key_Escape) {
-      root.cancelEditingLife()
-      event.accepted = true
-    } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-      root.commitLife()
-      event.accepted = true
-    } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+  // A year that is not one is no year: the rail goes.
+  function saveLife() {
+    var year = Model.birthYear(bornField.text, today.getFullYear())
+    var span = Model.lifeSpan(spanField.text)
+    if (year !== born || span !== lifeSpan) saveSettings({ birthYear: year, lifeExpectancy: span })
+    stopEditingLife()
+  }
+
+  // The span stays in shell.json, for the next year of birth.
+  function forgetLife() {
+    if (born > 0) saveSettings({ birthYear: 0 })
+  }
+
+  // In either field: Tab goes to the other, Enter saves both, Escape
+  // neither.
+  function lifeKey(event, other) {
+    if (event.key === Qt.Key_Escape) stopEditingLife()
+    else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) saveLife()
+    else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
       other.selectAll()
       other.forceActiveFocus()
-      event.accepted = true
-    }
+    } else return
+    event.accepted = true
   }
 
-  // Double-tapping the life bar puts it away again. The expectancy stays in
-  // the config so setting a birth year again brings your own number back
-  // rather than the default.
-  function clearLife() {
-    if (root.birthYear <= 0) return
-    persistSettings({ birthYear: 0 })
+  // ---------------------------------------------------------- the calendar
+
+  property var calendar: null
+  // The day whose things are under the month, as its key.
+  property string pickedKey: todayKey
+  readonly property real pickedDay: dayStart(pickedKey)
+  // Read through `items`, so that they follow the calendar's changes.
+  readonly property var busy: calendar && calendar.items ? calendar.busyDays(dayStart(weeks[0].days[0].key), dayStart(weeks[5].days[6].key, 1)) : ({})
+  readonly property var agenda: calendar && calendar.items ? calendar.agenda(pickedDay) : []
+  // The rows shown at most; past them, the last says how many more.
+  readonly property int agendaRows: 6
+
+  // The local midnight of a day by its key, or of the day `after` days on.
+  function dayStart(key, after) {
+    var part = String(key).split("-")
+    return new Date(Number(part[0]), Number(part[1]) - 1, Number(part[2]) + (after || 0)).getTime()
   }
 
-  function commitLife() {
-    var born = Model.parseBirthYear(bornField.text, today.getFullYear())
-    var span = Model.parseLifeExpectancy(expectancyField.text)
-    if (born !== root.birthYear || span !== root.lifeExpectancy)
-      persistSettings({ birthYear: born, lifeExpectancy: span })
-    cancelEditingLife()
+  function openCalendar(day) {
+    if (!calendar) return
+    close()
+    calendar.show(day)
   }
 
-  function toggleWeekStart() {
-    setWeekStart(Model.toggledWeekStart(root.weekStart))
+  // What a row starts with: a task's time when it has one; an event's
+  // start, or "All day", or the end of one from the day before.
+  function lead(occurrence) {
+    if (occurrence.item.kind === "task") return occurrence.item.dueTime ? calendar.clock(occurrence.start) : ""
+    if (occurrence.item.allDay) return "All day"
+    return occurrence.start < pickedDay ? "…" + calendar.clock(occurrence.end) : calendar.clock(occurrence.start)
   }
 
-  // English short day names, matching the rest of the interface.
-  function weekdayLabel(weekday) {
-    return String(labelLocale.dayName(weekday, Locale.ShortFormat)).toUpperCase()
-  }
+  // ------------------------------------------------------------- the panel
 
-  SystemClock {
-    id: clock
-    precision: SystemClock.Minutes
-    onDateChanged: {
-      if (Model.keyForDate(clock.date) === String(root.todayKey)) return
-      var followToday = root.viewingCurrentMonth
-      root.today = clock.date
-      if (followToday) root.goToToday()
-    }
-  }
-
+  // Over the bar's centre. The arrows step a month left and right and a
+  // year up and down, as do [ ] { }; Enter or t comes back to today.
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -279,71 +256,65 @@ Panel {
     centerOnBar: true
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(560))
-    contentHeight: panel.fittedContentHeight(calendarColumn.implicitHeight)
+    contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
       blocked: root.editingLife
       onMoveRequested: function(dx, dy) {
-        if (dx !== 0) root.moveMonth(dx)
-        if (dy !== 0) root.moveYear(dy)
+        if (dx !== 0) root.stepMonths(dx)
+        if (dy !== 0) root.stepYears(dy)
       }
-      onActivateRequested: root.goToToday()
+      onActivateRequested: root.showToday()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
-      onTextKey: function(t) {
-        if (t === "[") root.moveMonth(-1)
-        else if (t === "]") root.moveMonth(1)
-        else if (t === "{") root.moveYear(-1)
-        else if (t === "}") root.moveYear(1)
-        else if (t === "t" || t === "T") root.goToToday()
-        else if (t === "c" || t === "C") root.openCalendar(root.pickedDay)
-        else if (t === "w" || t === "W") root.toggleWeekStart()
+      onTextKey: function(key) {
+        switch (key.toLowerCase()) {
+        case "[": root.stepMonths(-1); break
+        case "]": root.stepMonths(1); break
+        case "{": root.stepYears(-1); break
+        case "}": root.stepYears(1); break
+        case "t": root.showToday(); break
+        case "c": root.openCalendar(root.pickedDay); break
+        case "w": root.toggleWeekStart(); break
+        }
       }
 
       Flickable {
-        id: calendarScroll
+        id: scroller
         anchors.fill: parent
-        contentWidth: calendarColumn.width
-        contentHeight: calendarColumn.implicitHeight
+        contentWidth: content.width
+        contentHeight: content.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         interactive: contentHeight > height || contentWidth > width
 
         Column {
-          id: calendarColumn
-          // Never narrower than the grid. The popup width is capped to what
-          // the screen allows, and a fixed seven-column grid would otherwise
-          // lose its last days off the edge instead of scrolling.
-          width: Math.max(calendarScroll.width, gridColumn.width)
+          id: content
+          // As wide as the month at the least: on a narrow screen the panel
+          // scrolls rather than cut off the last days.
+          width: Math.max(scroller.width, month.width)
           spacing: Style.space(8)
 
-          // ---- Hero: today, centered. Once the view has stepped back
-          //      it is also the way home — clicking the date you are
-          //      looking for beats hunting for a reset button.
+          // Today, centred; a click on it comes back from another month.
           Item {
             width: parent.width
-            height: heroRow.height
+            height: hero.height
 
             Row {
-              id: heroRow
+              id: hero
               anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(22)
 
+              // On the date's baseline: centred, it would sit low beside a
+              // date with a descender. Larger than the type scale goes, to
+              // stand as tall as the date's capitals.
               Text {
-                // Baseline-aligned, not center-aligned: "July 26" carries a
-                // descender, so centering the two boxes leaves the icon
-                // sitting visibly low against the digits.
                 anchors.baseline: heroDate.baseline
                 text: "󰃭"
-                color: heroMouse.containsMouse
-                  ? Style.hoverStateColor(root.contentForeground, Commons.Color.accent)
-                  : root.contentForeground
-                font.family: root.contentFontFamily
-                // Decorative, and deliberately outside the Style.font.*
-                // scale. Sized so the glyph reads at the cap height of the
-                // date beside it rather than towering over it.
+                color: heroMouse.containsMouse ? Style.hoverStateColor(root.foreground, Commons.Color.accent) : root.foreground
+                font.family: root.fontFamily
                 font.pixelSize: 48
               }
 
@@ -352,10 +323,8 @@ Panel {
                 textFormat: Text.PlainText
                 anchors.verticalCenter: parent.verticalCenter
                 text: Qt.formatDate(root.today, "MMMM d")
-                color: heroMouse.containsMouse
-                  ? Style.hoverStateColor(root.contentForeground, Commons.Color.accent)
-                  : root.contentForeground
-                font.family: root.contentFontFamily
+                color: heroMouse.containsMouse ? Style.hoverStateColor(root.foreground, Commons.Color.accent) : root.foreground
+                font.family: root.fontFamily
                 font.pixelSize: 52
                 font.bold: true
               }
@@ -363,26 +332,25 @@ Panel {
 
             MouseArea {
               id: heroMouse
-              x: heroRow.x
-              y: heroRow.y
-              width: heroRow.width
-              height: heroRow.height
-              enabled: !root.viewingCurrentMonth
+              x: hero.x
+              y: hero.y
+              width: hero.width
+              height: hero.height
+              enabled: !root.onThisMonth
               hoverEnabled: enabled
               cursorShape: Qt.PointingHandCursor
-              onClicked: root.goToToday()
+              onClicked: root.showToday()
 
               PanelToolTip {
                 visible: heroMouse.containsMouse
                 text: "Back to today"
-                fontFamily: root.contentFontFamily
+                fontFamily: root.fontFamily
               }
             }
           }
 
-          // ---- Year progress, doubling as the rule under the hero:
-          //      a plain hairline said nothing, and whole days done
-          //      over days in the year says the same thing louder.
+          // The year's rail, which is also the rule under today. A double
+          // click asks for the life's, in its place.
           Item {
             width: parent.width
             height: yearBlock.y + yearBlock.height
@@ -391,27 +359,22 @@ Panel {
               id: yearBlock
               y: Style.space(6)
               anchors.horizontalCenter: parent.horizontalCenter
-              width: gridColumn.width
-              height: Math.max(yearLabel.implicitHeight, Style.space(10))
+              width: month.width
+              height: yearRail.implicitHeight
 
               TapHandler {
                 enabled: !root.editingLife
-                onDoubleTapped: root.startEditingLife()
+                onDoubleTapped: root.editLife()
               }
 
               Row {
                 visible: root.editingLife
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
+                anchors.centerIn: parent
                 spacing: Style.space(10)
 
-                Text {
+                Caption {
                   anchors.verticalCenter: parent.verticalCenter
                   text: "BORN"
-                  color: Qt.darker(root.contentForeground, 1.5)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.letterSpacing: 1
                 }
 
                 TextField {
@@ -419,144 +382,56 @@ Panel {
                   width: Style.space(70)
                   anchors.verticalCenter: parent.verticalCenter
                   placeholderText: "year"
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
+                  foreground: root.foreground
+                  font.family: root.fontFamily
                   inputMethodHints: Qt.ImhDigitsOnly
-
-                  Keys.onPressed: function(event) { root.handleLifeKey(event, expectancyField) }
+                  Keys.onPressed: function(event) { root.lifeKey(event, spanField) }
                 }
 
-                Text {
+                Caption {
                   anchors.verticalCenter: parent.verticalCenter
-                  anchors.verticalCenterOffset: 0
                   leftPadding: Style.space(6)
                   text: "LIVE TO"
-                  color: Qt.darker(root.contentForeground, 1.5)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.letterSpacing: 1
                 }
 
                 TextField {
-                  id: expectancyField
+                  id: spanField
                   width: Style.space(60)
                   anchors.verticalCenter: parent.verticalCenter
                   placeholderText: "90"
-                  foreground: root.contentForeground
-                  font.family: root.contentFontFamily
+                  foreground: root.foreground
+                  font.family: root.fontFamily
                   inputMethodHints: Qt.ImhDigitsOnly
-
-                  Keys.onPressed: function(event) { root.handleLifeKey(event, bornField) }
+                  Keys.onPressed: function(event) { root.lifeKey(event, bornField) }
                 }
               }
 
-              Text {
-                id: yearLabel
-                textFormat: Text.PlainText
+              Rail {
+                id: yearRail
+                anchors.fill: parent
                 visible: !root.editingLife
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.today.getFullYear()
-                color: Qt.darker(root.contentForeground, 1.5)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.letterSpacing: 1
-              }
-
-              Text {
-                id: yearPercent
-                textFormat: Text.PlainText
-                visible: !root.editingLife
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.yearDonePercent + "%"
-                color: root.contentForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              Rectangle {
-                id: yearTrack
-                visible: !root.editingLife
-                anchors.left: yearLabel.right
-                anchors.right: yearPercent.left
-                anchors.leftMargin: Style.space(12)
-                anchors.rightMargin: Style.space(12)
-                anchors.verticalCenter: parent.verticalCenter
-                height: Style.space(6)
-                radius: Style.cornerRadius > 0 ? height / 2 : 0
-                color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
-
-                Rectangle {
-                  width: Math.round(parent.width * root.yearDone)
-                  height: parent.height
-                  radius: parent.radius
-                  color: Style.selectedStateColor(root.contentForeground, Commons.Color.accent)
-
-                  Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-                }
+                name: String(root.today.getFullYear())
+                share: root.yearShare
               }
             }
           }
 
-          // ---- Memento mori. Only here once someone has gone looking and
-          //      given an age; the same rail as the year above it, measured
-          //      against a nominal lifetime.
+          // The life's rail, once there is a year of birth.
           Item {
-            visible: root.birthYear > 0
+            visible: root.born > 0
             width: parent.width
-            height: visible ? lifeBlock.height : 0
+            height: visible ? lifeRail.height : 0
 
-            Item {
-              id: lifeBlock
+            Rail {
+              id: lifeRail
               anchors.horizontalCenter: parent.horizontalCenter
-              width: gridColumn.width
-              height: Math.max(lifeLabel.implicitHeight, Style.space(10))
-
-              Text {
-                id: lifeLabel
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                text: "LIFE"
-                color: Qt.darker(root.contentForeground, 1.5)
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-                font.letterSpacing: 1
-              }
-
-              Text {
-                id: lifePercent
-                textFormat: Text.PlainText
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                text: root.lifeDonePercent + "%"
-                color: root.contentForeground
-                font.family: root.contentFontFamily
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              Rectangle {
-                anchors.left: lifeLabel.right
-                anchors.right: lifePercent.left
-                anchors.leftMargin: Style.space(12)
-                anchors.rightMargin: Style.space(12)
-                anchors.verticalCenter: parent.verticalCenter
-                height: Style.space(6)
-                radius: Style.cornerRadius > 0 ? height / 2 : 0
-                color: Qt.rgba(root.contentForeground.r, root.contentForeground.g, root.contentForeground.b, 0.12)
-
-                Rectangle {
-                  width: Math.round(parent.width * root.lifeDone)
-                  height: parent.height
-                  radius: parent.radius
-                  color: Style.selectedStateColor(root.contentForeground, Commons.Color.accent)
-
-                  Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
-                }
-              }
+              width: month.width
+              height: implicitHeight
+              name: "LIFE"
+              share: root.lifeShare
 
               TapHandler {
-                onDoubleTapped: root.clearLife()
+                onDoubleTapped: root.forgetLife()
               }
 
               MouseArea {
@@ -568,62 +443,50 @@ Panel {
                 PanelToolTip {
                   visible: lifeMouse.containsMouse
                   text: "Memento Mori"
-                  fontFamily: root.contentFontFamily
+                  fontFamily: root.fontFamily
                 }
               }
             }
           }
 
-          // ---- Month grid: week numbers down a gutter on the left, then
-          //      the seven day columns. Always six rows, so the popup is
-          //      exactly as tall in February as it is in August.
+          // The month: six weeks, so that the panel is as tall in any month,
+          // each with its ISO week at the left, past a gutter. The wheel
+          // steps a month.
           Item {
             width: parent.width
-            height: gridColumn.y + gridColumn.height
+            height: month.y + month.height
 
             WheelHandler {
               onWheel: function(event) {
-                // Horizontal wheels and touchpad side-scrolls report y === 0;
-                // without this they would every one read as "next month".
-                if (event.angleDelta.y === 0) return
-                root.moveMonth(event.angleDelta.y > 0 ? -1 : 1)
+                // A sideways scroll has no y: it would step forward.
+                if (event.angleDelta.y !== 0) root.stepMonths(event.angleDelta.y > 0 ? -1 : 1)
               }
             }
 
             Column {
-              id: gridColumn
-              // The meter above is a solid rule; the grid needs room to
-              // read as its own block rather than hanging off it.
+              id: month
+              // Apart from the rail above, which is solid.
               y: Style.space(18)
               anchors.horizontalCenter: parent.horizontalCenter
               spacing: Style.space(3)
 
               Row {
-                id: headerRow
-                spacing: root.cellSpacing
+                id: headings
+                spacing: root.cellGap
 
-                // The week-number heading doubles as the week-start toggle.
-                // It is the one control in the panel whose meaning is not
-                // self-evident, so it carries a tooltip naming the day the
-                // click will switch to.
+                // The W of the week numbers switches the week's start; its
+                // tooltip names the day it switches to, as nothing else says
+                // what it does.
                 Rectangle {
-                  width: root.weekColumnWidth
+                  width: root.weekWidth
                   height: Style.space(16)
                   radius: Style.cornerRadius
-                  color: weekStartMouse.containsMouse
-                    ? Style.hoverFillFor(root.contentForeground, Commons.Color.accent)
-                    : "transparent"
+                  color: weekStartMouse.containsMouse ? Style.hoverFillFor(root.foreground, Commons.Color.accent) : "transparent"
 
-                  Text {
+                  Heading {
                     anchors.centerIn: parent
                     text: "W"
-                    color: weekStartMouse.containsMouse
-                      ? Style.hoverStateColor(root.contentForeground, Commons.Color.accent)
-                      : Qt.darker(root.contentForeground, 1.9)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.letterSpacing: 1
-                    font.bold: true
+                    color: weekStartMouse.containsMouse ? Style.hoverStateColor(root.foreground, Commons.Color.accent) : Qt.darker(root.foreground, 1.9)
                   }
 
                   MouseArea {
@@ -636,8 +499,8 @@ Panel {
 
                   PanelToolTip {
                     visible: weekStartMouse.containsMouse
-                    text: "Start weeks on " + root.nextWeekStartLabel
-                    fontFamily: root.contentFontFamily
+                    text: "Start weeks on " + root.english.dayName(Model.otherWeekStart(root.weekStart), Locale.LongFormat)
+                    fontFamily: root.fontFamily
                   }
                 }
 
@@ -649,19 +512,14 @@ Panel {
                 Repeater {
                   model: root.weekdays
 
-                  Text {
-                    textFormat: Text.PlainText
+                  Heading {
                     required property var modelData
                     width: root.cellWidth
                     height: Style.space(16)
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    text: root.weekdayLabel(modelData)
-                    color: Qt.darker(root.contentForeground, 1.5)
-                    font.family: root.contentFontFamily
-                    font.pixelSize: Style.font.caption
-                    font.letterSpacing: 1
-                    font.bold: true
+                    text: root.weekdayName(modelData)
+                    color: Qt.darker(root.foreground, 1.5)
                   }
                 }
               }
@@ -670,18 +528,19 @@ Panel {
                 model: root.weeks
 
                 Row {
+                  id: week
                   required property var modelData
-                  spacing: root.cellSpacing
+                  spacing: root.cellGap
 
                   Text {
                     textFormat: Text.PlainText
-                    width: root.weekColumnWidth
+                    width: root.weekWidth
                     height: root.cellHeight
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
-                    text: modelData.week
-                    color: Qt.darker(root.contentForeground, 1.9)
-                    font.family: root.contentFontFamily
+                    text: week.modelData.week
+                    color: Qt.darker(root.foreground, 1.9)
+                    font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                   }
 
@@ -691,49 +550,48 @@ Panel {
                   }
 
                   Repeater {
-                    model: modelData.days
+                    model: week.modelData.days
 
+                    // Today outlined, as a filled cell would shout in so
+                    // quiet a grid; the day picked tinted.
                     Rectangle {
+                      id: cell
                       required property var modelData
-
                       width: root.cellWidth
                       height: root.cellHeight
                       radius: Style.cornerRadius
-                      // Today is outlined, not filled: a lit-up block shouts
-                      // over a grid this quiet. The day clicked is tinted.
-                      color: modelData.key === root.pickedKey && !modelData.today
-                        ? Style.hoverFillFor(root.contentForeground, Commons.Color.accent) : "transparent"
+                      color: modelData.key === root.pickedKey && !modelData.today ? Style.hoverFillFor(root.foreground, Commons.Color.accent) : "transparent"
                       border.width: modelData.today ? Style.spacing.hairline : 0
-                      border.color: Style.normalBorderFor(root.contentForeground, Commons.Color.accent)
+                      border.color: Style.normalBorderFor(root.foreground, Commons.Color.accent)
 
-                      // Something on this day.
+                      // Something on the day.
                       Rectangle {
-                        visible: root.busy[parent.modelData.key] === true
+                        visible: root.busy[cell.modelData.key] === true
                         anchors.horizontalCenter: parent.horizontalCenter
                         anchors.bottom: parent.bottom
                         anchors.bottomMargin: Style.space(4)
                         width: Style.space(4)
                         height: width
                         radius: width / 2
-                        color: Style.selectedStateColor(root.contentForeground, Commons.Color.accent)
+                        color: Style.selectedStateColor(root.foreground, Commons.Color.accent)
                       }
 
                       TapHandler {
                         enabled: root.calendar !== null
-                        onTapped: root.pickedKey = parent.modelData.key
-                        onDoubleTapped: root.openCalendar(root.dayOf(parent.modelData.key))
+                        onTapped: root.pickedKey = cell.modelData.key
+                        onDoubleTapped: root.openCalendar(root.dayStart(cell.modelData.key))
                       }
 
                       Text {
                         textFormat: Text.PlainText
                         anchors.centerIn: parent
-                        text: modelData.day
-                        color: modelData.inMonth
-                          ? (modelData.weekend ? Qt.darker(root.contentForeground, 1.45) : root.contentForeground)
-                          : Qt.darker(root.contentForeground, 2.2)
-                        font.family: root.contentFontFamily
+                        text: cell.modelData.day
+                        color: !cell.modelData.inMonth ? Qt.darker(root.foreground, 2.2)
+                          : cell.modelData.weekend ? Qt.darker(root.foreground, 1.45)
+                          : root.foreground
+                        font.family: root.fontFamily
                         font.pixelSize: Style.font.body
-                        font.bold: modelData.today
+                        font.bold: cell.modelData.today
                       }
                     }
                   }
@@ -741,61 +599,54 @@ Panel {
               }
             }
 
-            // Hairline down the week-number gutter, drawn only beside the
-            // day rows so it does not cut through the header band.
+            // The gutter's hairline, beside the weeks and not the headings.
             Rectangle {
-              x: gridColumn.x + root.weekColumnWidth + root.cellSpacing + Math.round((root.gutterWidth - width) / 2)
-              y: gridColumn.y + headerRow.height + gridColumn.spacing
+              x: month.x + root.weekWidth + root.cellGap + Math.round((root.gutterWidth - width) / 2)
+              y: month.y + headings.height + month.spacing
               width: Style.spacing.hairline
-              height: gridColumn.height - headerRow.height - gridColumn.spacing
-              color: root.contentForeground
+              height: month.height - headings.height - month.spacing
+              color: root.foreground
               opacity: 0.1
             }
           }
 
-          // ---- Month stepping, spanning the grid it drives. The chevrons
-          //      sit on the grid's outer bounds, the same edges the year
-          //      rail above uses, so the row reads as the panel's other
-          //      full-width rail instead of a cluster floating in space.
-          //      The label is centered and fixed-width, so it holds still
-          //      from "MAY" to "SEPTEMBER".
+          // The month's name between the chevrons, which stand at the month's
+          // edges, as the rails do. Its width is fixed, so that the chevrons
+          // stay put from MAY to SEPTEMBER.
           Item {
             width: parent.width
-            height: monthNav.height
+            height: monthBar.height
 
             Item {
-              id: monthNav
+              id: monthBar
               anchors.horizontalCenter: parent.horizontalCenter
-              width: gridColumn.width
-              height: monthLabel.implicitHeight + Style.space(10)
+              width: month.width
+              height: monthName.implicitHeight + Style.space(10)
 
               Text {
-                id: monthLabel
+                id: monthName
                 textFormat: Text.PlainText
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.verticalCenter: parent.verticalCenter
-                // Fixed width so the chevrons hold still between a
-                // "MAY 2026" and a "SEPTEMBER 2026".
+                anchors.centerIn: parent
                 width: Style.space(130)
                 horizontalAlignment: Text.AlignHCenter
-                text: Qt.formatDate(root.viewDate, "MMMM yyyy").toUpperCase()
-                color: Qt.darker(root.contentForeground, 1.4)
-                font.family: root.contentFontFamily
+                text: Qt.formatDate(root.shownFirst, "MMMM yyyy").toUpperCase()
+                color: Qt.darker(root.foreground, 1.4)
+                font.family: root.fontFamily
                 font.pixelSize: Style.font.body
                 font.letterSpacing: 1
               }
 
+              // Moved out by their padding, so that the glyphs, not the
+              // buttons, line up with the rails' ends.
               PanelActionButton {
-                // Pulled out by the button's own padding so the glyph, not
-                // its hit box, lines up with the "2026" on the year rail.
                 anchors.left: parent.left
                 anchors.leftMargin: -Style.space(8)
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "󰅁"
                 tooltipText: "Previous month"
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                onClicked: root.moveMonth(-1)
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.stepMonths(-1)
               }
 
               PanelActionButton {
@@ -804,16 +655,15 @@ Panel {
                 anchors.verticalCenter: parent.verticalCenter
                 iconText: "󰅂"
                 tooltipText: "Next month"
-                foreground: root.contentForeground
-                fontFamily: root.contentFontFamily
-                onClicked: root.moveMonth(1)
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.stepMonths(1)
               }
             }
           }
 
-          // ---- What the day has, from Nova's calendar: its all-day events,
-          //      the timed ones by their start, then its tasks, ticked off
-          //      here. A row opens the calendar on the day.
+          // The day picked, from Nova's calendar: its all-day events, the
+          // others by their start, then its tasks.
           Item {
             visible: root.calendar !== null
             width: parent.width
@@ -822,13 +672,13 @@ Panel {
             Column {
               id: agendaColumn
               anchors.horizontalCenter: parent.horizontalCenter
-              width: gridColumn.width
+              width: month.width
               spacing: Style.space(2)
 
               Rectangle {
                 width: parent.width
                 height: Style.spacing.hairline
-                color: root.contentForeground
+                color: root.foreground
                 opacity: 0.1
               }
 
@@ -836,15 +686,11 @@ Panel {
                 width: parent.width
                 height: openButton.implicitHeight + Style.space(8)
 
-                Text {
-                  textFormat: Text.PlainText
+                Caption {
                   anchors.left: parent.left
                   anchors.verticalCenter: parent.verticalCenter
-                  text: root.pickedToday ? "TODAY" : Qt.formatDate(new Date(root.pickedDay), "ddd d MMMM").toUpperCase()
-                  color: Qt.darker(root.contentForeground, 1.4)
-                  font.family: root.contentFontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.letterSpacing: 1
+                  text: root.pickedKey === root.todayKey ? "TODAY" : Qt.formatDate(new Date(root.pickedDay), "ddd d MMMM").toUpperCase()
+                  color: Qt.darker(root.foreground, 1.4)
                 }
 
                 Button {
@@ -853,116 +699,189 @@ Panel {
                   anchors.rightMargin: -Style.space(8)
                   anchors.verticalCenter: parent.verticalCenter
                   text: "Open Calendar"
-                  foreground: root.contentForeground
-                  fontFamily: root.contentFontFamily
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.openCalendar(root.pickedDay)
                 }
               }
 
               Text {
-                visible: root.picked.length === 0
+                visible: root.agenda.length === 0
                 textFormat: Text.PlainText
                 height: Style.space(24)
                 verticalAlignment: Text.AlignVCenter
                 text: "Nothing on this day"
-                color: Qt.darker(root.contentForeground, 1.9)
-                font.family: root.contentFontFamily
+                color: Qt.darker(root.foreground, 1.9)
+                font.family: root.fontFamily
                 font.pixelSize: Style.font.body
               }
 
               Repeater {
-                model: root.picked.slice(0, root.picked.length > root.agendaRows ? root.agendaRows - 1 : root.agendaRows)
+                model: root.agenda.length > root.agendaRows ? root.agenda.slice(0, root.agendaRows - 1) : root.agenda
 
-                Rectangle {
-                  id: agendaRow
-                  required property var modelData
-                  readonly property bool isTask: modelData.item.kind === "task"
-                  readonly property bool done: isTask && modelData.item.done
-                  width: parent.width
-                  height: Style.space(26)
-                  radius: Style.cornerRadius
-                  color: rowHover.hovered ? Style.hoverFillFor(root.contentForeground, Commons.Color.accent) : "transparent"
-
-                  HoverHandler { id: rowHover }
-                  MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.openCalendar(root.pickedDay)
-                  }
-
-                  Row {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.leftMargin: Style.space(6)
-                    anchors.rightMargin: Style.space(6)
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(10)
-
-                    Item {
-                      width: Style.space(64)
-                      height: Style.space(20)
-
-                      Text {
-                        visible: !agendaRow.isTask || agendaRow.modelData.item.dueTime
-                        anchors.verticalCenter: parent.verticalCenter
-                        anchors.left: parent.left
-                        anchors.leftMargin: agendaRow.isTask ? Style.space(24) : 0
-                        textFormat: Text.PlainText
-                        text: root.agendaLead(agendaRow.modelData)
-                        color: Qt.darker(root.contentForeground, 1.5)
-                        font.family: root.contentFontFamily
-                        font.pixelSize: Style.font.bodySmall
-                      }
-
-                      // The task's box, which ticks it and opens nothing.
-                      Text {
-                        visible: agendaRow.isTask
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: agendaRow.done ? "󰄵" : "󰄱"
-                        color: agendaRow.done ? Qt.darker(root.contentForeground, 1.9) : Style.selectedStateColor(root.contentForeground, Commons.Color.accent)
-                        font.family: root.contentFontFamily
-                        font.pixelSize: Style.font.icon
-                        MouseArea {
-                          anchors.fill: parent
-                          anchors.margins: -Style.space(4)
-                          cursorShape: Qt.PointingHandCursor
-                          onClicked: root.calendar.toggleTask(agendaRow.modelData.uid)
-                        }
-                      }
-                    }
-
-                    Text {
-                      width: parent.width - x
-                      anchors.verticalCenter: parent.verticalCenter
-                      textFormat: Text.PlainText
-                      text: (agendaRow.modelData.item.title || (agendaRow.isTask ? "Task" : "Event")) +
-                        (agendaRow.modelData.item.location ? "  ·  " + agendaRow.modelData.item.location : "")
-                      color: agendaRow.done ? Qt.darker(root.contentForeground, 1.9) : root.contentForeground
-                      font.family: root.contentFontFamily
-                      font.pixelSize: Style.font.body
-                      font.strikeout: agendaRow.done
-                      elide: Text.ElideRight
-                    }
-                  }
-                }
+                AgendaRow {}
               }
 
               Text {
-                visible: root.picked.length > root.agendaRows
+                visible: root.agenda.length > root.agendaRows
                 textFormat: Text.PlainText
                 height: Style.space(22)
                 leftPadding: Style.space(6)
                 verticalAlignment: Text.AlignVCenter
-                text: "+" + (root.picked.length - root.agendaRows + 1) + " more"
-                color: Qt.darker(root.contentForeground, 1.6)
-                font.family: root.contentFontFamily
+                text: "+" + (root.agenda.length - root.agendaRows + 1) + " more"
+                color: Qt.darker(root.foreground, 1.6)
+                font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
                 TapHandler { onTapped: root.openCalendar(root.pickedDay) }
               }
             }
           }
         }
+      }
+    }
+  }
+
+  // A label in small capitals, dimmer than what it labels.
+  component Caption: Text {
+    textFormat: Text.PlainText
+    color: Qt.darker(root.foreground, 1.5)
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.bodySmall
+    font.letterSpacing: 1
+  }
+
+  // A heading over the month's columns.
+  component Heading: Text {
+    textFormat: Text.PlainText
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    font.letterSpacing: 1
+    font.bold: true
+  }
+
+  // A share as a rail: its name at the left, its percentage at the right,
+  // and between them a track, filled as far as the share goes.
+  component Rail: Item {
+    id: rail
+    property string name
+    property real share
+
+    implicitHeight: Math.max(railName.implicitHeight, Style.space(10))
+
+    Caption {
+      id: railName
+      anchors.left: parent.left
+      anchors.verticalCenter: parent.verticalCenter
+      text: rail.name
+    }
+
+    Text {
+      id: railPercent
+      textFormat: Text.PlainText
+      anchors.right: parent.right
+      anchors.verticalCenter: parent.verticalCenter
+      text: Model.percent(rail.share) + "%"
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+
+    Rectangle {
+      anchors.left: railName.right
+      anchors.right: railPercent.left
+      anchors.leftMargin: Style.space(12)
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: parent.verticalCenter
+      height: Style.space(6)
+      radius: Style.cornerRadius > 0 ? height / 2 : 0
+      color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.12)
+
+      Rectangle {
+        width: Math.round(parent.width * rail.share)
+        height: parent.height
+        radius: parent.radius
+        color: Style.selectedStateColor(root.foreground, Commons.Color.accent)
+
+        Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+      }
+    }
+  }
+
+  // A thing the day picked has: its time, or a task's box, which ticks the
+  // task, then its title and place. A click elsewhere on it opens the
+  // calendar on the day.
+  component AgendaRow: Rectangle {
+    id: row
+    required property var modelData
+    readonly property var item: modelData.item
+    readonly property bool task: item.kind === "task"
+    readonly property bool done: task && item.done
+
+    width: parent.width
+    height: Style.space(26)
+    radius: Style.cornerRadius
+    color: rowHover.hovered ? Style.hoverFillFor(root.foreground, Commons.Color.accent) : "transparent"
+
+    HoverHandler { id: rowHover }
+
+    MouseArea {
+      anchors.fill: parent
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.openCalendar(root.pickedDay)
+    }
+
+    Row {
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.leftMargin: Style.space(6)
+      anchors.rightMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(10)
+
+      Item {
+        width: Style.space(64)
+        height: Style.space(20)
+
+        Text {
+          visible: !row.task || row.item.dueTime
+          anchors.left: parent.left
+          anchors.leftMargin: row.task ? Style.space(24) : 0
+          anchors.verticalCenter: parent.verticalCenter
+          textFormat: Text.PlainText
+          text: root.lead(row.modelData)
+          color: Qt.darker(root.foreground, 1.5)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+        }
+
+        Text {
+          visible: row.task
+          anchors.verticalCenter: parent.verticalCenter
+          text: row.done ? "󰄵" : "󰄱"
+          color: row.done ? Qt.darker(root.foreground, 1.9) : Style.selectedStateColor(root.foreground, Commons.Color.accent)
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.icon
+
+          MouseArea {
+            anchors.fill: parent
+            anchors.margins: -Style.space(4)
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.calendar.toggleTask(row.modelData.uid)
+          }
+        }
+      }
+
+      Text {
+        width: parent.width - x
+        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: (row.item.title || (row.task ? "Task" : "Event")) + (row.item.location ? "  ·  " + row.item.location : "")
+        color: row.done ? Qt.darker(root.foreground, 1.9) : root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        font.strikeout: row.done
+        elide: Text.ElideRight
       }
     }
   }

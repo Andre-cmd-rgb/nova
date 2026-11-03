@@ -4,109 +4,89 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Date/time label for the bar, and the host for the calendar popup.
-//
-// Left click reveals the calendar — asking "what is the date?" is what a
-// click on a clock means — right click walks the common label formats, and
-// middle click opens the timezone picker.
+// The clock in the bar: the date and time, in the format kept in shell.json,
+// and its panel (Panel.qml), the calendar. A click opens the panel, as a
+// clock is clicked to ask the date; a right click steps to the next format,
+// and a middle click asks for a timezone.
 BarWidget {
   id: root
   moduleName: "nova.clock"
 
+  readonly property var panel: panelLoader.item
+
+  // The minute shown, which the bar's refresh sets at once.
   property date displayDate: clock.date
 
-  readonly property string configuredFormat: vertical
-    ? setting("verticalFormat", "HH\n—\nmm")
-    : setting("format", "dddd HH:mm")
-  readonly property string configuredAltFormat: vertical
-    ? setting("verticalFormatAlt", "dd\nMMM\n'W'ww\n''yy")
-    : setting("formatAlt", "d MMMM 'W'ww yyyy")
+  // On a side bar the label is a stack of lines, with formats of its own.
+  readonly property string formatKey: vertical ? "verticalFormat" : "format"
+  readonly property string format: vertical ? setting("verticalFormat", "HH\n—\nmm") : setting("format", "dddd HH:mm")
+  readonly property string alternate: vertical ? setting("verticalFormatAlt", "dd\nMMM\n'W'ww\n''yy") : setting("formatAlt", "d MMMM 'W'ww yyyy")
+  readonly property var formats: Model.formatRing(format, alternate, Model.formats(vertical))
 
-  readonly property var formatRing: Model.clockFormatRing(configuredFormat, configuredAltFormat, Model.clockFormats(vertical))
-
-  // What the bar shows is what shell.json stores, so a cycled format is the
-  // format from then on rather than something that reverts on restart.
-  readonly property string activeFormat: configuredFormat
-  readonly property string displayText: formatted(displayDate)
-  readonly property var verticalLines: displayText.split("\n")
+  readonly property string label: Qt.formatDateTime(displayDate, Model.withWeek(format, displayDate.getFullYear(), displayDate.getMonth(), displayDate.getDate()))
+  readonly property var lines: label.split("\n")
 
   function refresh() {
     displayDate = new Date()
-    if (panelLoader.item && panelLoader.item.refresh) panelLoader.item.refresh()
+    if (panel) panel.refresh()
   }
 
+  // The next format is written to shell.json, so that the label shown is the
+  // one kept. It counts at once; the write comes back from the bar the same.
   function cycleFormat() {
-    var current = String(configuredFormat)
-    var next = Model.nextClockFormat(formatRing, current)
-    if (next === "" || next === current) return
-
-    var entry = { id: root.moduleName }
-    for (var key in root.settings) if (key !== "id") entry[key] = root.settings[key]
-    entry[vertical ? "verticalFormat" : "format"] = next
-
-    // Applied locally first so the label changes on the click itself; the
-    // shell.json write comes back through the bar as the same value.
-    root.settings = entry
-    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-      root.bar.shell.updateEntryInline(root.moduleName, entry)
+    var next = Model.nextFormat(formats, format)
+    if (next === "" || next === format) return
+    var entry = { id: moduleName }
+    for (var key in settings) if (key !== "id") entry[key] = settings[key]
+    entry[formatKey] = next
+    settings = entry
+    if (bar && bar.shell && typeof bar.shell.updateEntryInline === "function") bar.shell.updateEntryInline(moduleName, entry)
   }
 
-  function formatted(date) {
-    return Qt.formatDateTime(date, activeFormat.replace(/ww/g, Model.isoWeekLiteral(date.getFullYear(), date.getMonth(), date.getDate())))
-  }
-
-  // ---- Calendar popup. Shape contract for shell.summon/hide/toggle
-  //      routing: Bar.findPanelWidget requires open/close/opened on the
-  //      bar-widget root.
-  readonly property bool opened: panelLoader.item ? panelLoader.item.opened === true : false
+  // What the bar calls, through IPC and its popout switching, on the widget
+  // in its slot.
+  readonly property bool opened: panel ? panel.opened === true : false
+  readonly property bool popoutSwitchClosing: panel ? panel.popoutSwitchClosing === true : false
 
   function open() {
-    if (panelLoader.item) panelLoader.item.open()
+    if (panel) panel.open()
   }
 
   function close() {
-    if (panelLoader.item) panelLoader.item.close()
+    if (panel) panel.close()
   }
 
   function togglePanel() {
-    if (panelLoader.item) panelLoader.item.toggle()
+    if (panel) panel.toggle()
+  }
+
+  function closeForPopoutSwitch() {
+    if (panel) panel.closeForPopoutSwitch()
   }
 
   function toggleWeekStart() {
-    if (panelLoader.item) panelLoader.item.toggleWeekStart()
+    if (panel) panel.toggleWeekStart()
   }
 
-  // The clock fills more slot than it paints a mark for, at both
-  // orientations: horizontally it is a text label in a padded slot, so the
-  // dot takes the label width; vertically it is a stack of icon-sized lines,
-  // so the dot takes one line — the same mark every icon widget gets, rather
-  // than a rule running the height of the whole stack.
+  // The mark under an open panel: as wide as the label, or on a side bar as
+  // tall as one line, as an icon's is, not the whole stack.
   readonly property real openPanelIndicatorWidth: button.labelWidth
   readonly property real openPanelIndicatorHeight: Math.max(Style.space(10), Math.round(Style.bar.iconSlot * 0.55))
 
-  // Forwarded so this widget can stand in for the panel as the bar's popout
-  // identity: Bar.requestPopout prefers closeForPopoutSwitch over close, and
-  // KeyboardPanel reads popoutSwitchClosing back off its owner.
-  readonly property bool popoutSwitchClosing: panelLoader.item ? panelLoader.item.popoutSwitchClosing === true : false
-
-  function closeForPopoutSwitch() {
-    if (panelLoader.item) panelLoader.item.closeForPopoutSwitch()
+  // The panel takes the bar, its settings and its place from this widget.
+  function lend() {
+    if (!panel) return
+    panel.bar = bar
+    panel.settings = settings
+    panel.anchorItem = button
+    panel.hostWidget = root
   }
 
-  function injectPanel() {
-    var target = panelLoader.item
-    if (!target) return
-    if ("bar" in target) target.bar = root.bar
-    if ("settings" in target) target.settings = root.settings
-    if ("anchorItem" in target) target.anchorItem = button
-    if ("hostWidget" in target) target.hostWidget = root
-  }
+  onBarChanged: lend()
+  onSettingsChanged: lend()
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
-
-  onBarChanged: injectPanel()
-  onSettingsChanged: injectPanel()
 
   SystemClock {
     id: clock
@@ -114,40 +94,39 @@ BarWidget {
     onDateChanged: root.displayDate = date
   }
 
+  // Loaded by its file's address: by name, Panel would be qs.Ui's.
   Loader {
     id: panelLoader
-    active: true
     source: Qt.resolvedUrl("Panel.qml")
     visible: false
-    onLoaded: {
-      root.injectPanel()
-      Qt.callLater(root.injectPanel)
-    }
+    onLoaded: root.lend()
   }
 
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.vertical ? "" : root.displayText
+    text: root.vertical ? "" : root.label
     labelVisible: !root.vertical
-    hasVisualContent: root.vertical ? root.verticalLines.length > 0 : text !== ""
-    fixedHeight: root.vertical ? root.verticalLines.length * Style.bar.iconSlot : -1
+    hasVisualContent: root.vertical ? root.lines.length > 0 : text !== ""
+    fixedHeight: root.vertical ? root.lines.length * Style.bar.iconSlot : -1
     horizontalMargin: 8.75
     verticalPadding: 8.75
 
-    onPressed: function(b) {
-      if (b === Qt.RightButton) root.cycleFormat()
-      else if (b === Qt.MiddleButton) { if (root.bar) root.bar.run("nova-menu-timezone") }
+    onPressed: function(which) {
+      if (which === Qt.RightButton) root.cycleFormat()
+      else if (which === Qt.MiddleButton) { if (root.bar) root.bar.run("nova-menu-timezone") }
       else root.togglePanel()
     }
 
+    // A line a glyph's height each; one longer than three characters a size
+    // smaller, to fit the bar's width.
     Column {
       visible: root.vertical
       anchors.fill: parent
 
       Repeater {
-        model: root.verticalLines
+        model: root.lines
 
         OpticalGlyph {
           required property string modelData
@@ -155,9 +134,7 @@ BarWidget {
           height: Style.bar.iconSlot
           text: modelData
           fontFamily: button.fontFamily
-          fontSize: modelData.length > 3
-            ? button.fontSize * 0.9
-            : button.fontSize
+          fontSize: modelData.length > 3 ? button.fontSize * 0.9 : button.fontSize
           color: button.foreground
         }
       }

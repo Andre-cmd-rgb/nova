@@ -1,24 +1,23 @@
-// Pure date and format math for the clock widget and its calendar panel.
-// Everything here is locale- and Qt-free so it can be unit tested under node
-// (test/shell.d/clock-test.sh); the QML owns month/weekday naming through
-// Qt.locale().
+.pragma library
+// The clock's rules, kept apart from its label and its calendar: the formats
+// a right click walks, the ISO week, the share of the year and of a life
+// gone, the day weeks start on, and the month's grid. A date here is a year,
+// a month counted from 0 as Date counts them, and a day; the names of months
+// and days are the panel's, from Qt.
 
-var MS_PER_DAY = 86400000
+var DAY = 86400000
 
-// Weekday indices match both JS Date.getDay() and QML's Locale.Sunday…
-// Locale.Saturday, so a locale's firstDayOfWeek can be passed straight in.
-var WEEKDAY_NAMES = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
+// As Date.getDay() numbers the days, and Qt's Locale.Sunday to
+// Locale.Saturday do: a locale's firstDayOfWeek is one of these numbers.
+var WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"]
 
-// ---- Bar label formats. Right-clicking the clock walks these in order and
-//      writes the result back to shell.json, so the label the bar shows and
-//      the format the config stores are always the same thing.
-//
-// The locale-shaped time presets are each followed by their 12-hour twin, so
-// the walk from a 24-hour label to the same label in AM/PM is a single right
-// click rather than a lap of the ring. The ISO preset is deliberately left
-// without one: ISO 8601 writes time on a 24-hour clock, so an AM/PM variant
-// would contradict the only thing that format is for.
-var CLOCK_FORMATS = [
+// ---------------------------------------------------------------- the label
+
+// The label's formats, which a right click walks and writes to shell.json,
+// so that the label shown is the format kept. Each of the time formats is
+// followed by its 12-hour twin, one click away; the ISO one has none, since
+// ISO 8601 has a 24-hour clock only.
+var FORMATS = [
   "dddd HH:mm",
   "dddd h:mm AP",
   "HH:mm",
@@ -29,277 +28,219 @@ var CLOCK_FORMATS = [
   "yyyy-MM-dd HH:mm"
 ]
 
-// Vertical bars have room for a few stacked lines and nothing else, so the
-// ring stays short. AM/PM costs a fourth line, which is why only the plain
-// time carries it here.
-var VERTICAL_CLOCK_FORMATS = [
+// On a side bar each part of the label is a line of its own, and there is
+// room for a few: AM/PM, a fourth line, only on the plain time.
+var VERTICAL_FORMATS = [
   "HH\n—\nmm",
   "h\n—\nmm\nAP",
   "dd\nMMM\n'W'ww\n''yy",
   "HH\nmm"
 ]
 
-function clockFormats(vertical) {
-  return vertical ? VERTICAL_CLOCK_FORMATS.slice() : CLOCK_FORMATS.slice()
+function formats(vertical) {
+  return vertical ? VERTICAL_FORMATS : FORMATS
 }
 
-// The presets in a fixed order, plus the configured alternate and current
-// format when they are something else. The order must not depend on which
-// entry is current: cycling writes the result back to shell.json, and a ring
-// that reshuffled itself around the current value would bounce between two
-// entries instead of walking.
-function clockFormatRing(configured, configuredAlt, presets) {
+// The walk: the presets, then the configured alternate and format when they
+// are others, each once. Its order does not depend on the format in use, or
+// a step written back to shell.json would turn the walk into a swing
+// between two.
+function formatRing(configured, alternate, presets) {
   var ring = []
-  var candidates = (presets || []).concat([configuredAlt, configured])
-  for (var i = 0; i < candidates.length; i++) {
-    var format = String(candidates[i] === undefined || candidates[i] === null ? "" : candidates[i])
-    if (format === "" || ring.indexOf(format) !== -1) continue
-    ring.push(format)
-  }
+  ;(presets || []).concat([alternate, configured]).forEach(function(each) {
+    var format = each === undefined || each === null ? "" : String(each)
+    if (format !== "" && ring.indexOf(format) === -1) ring.push(format)
+  })
   return ring.length > 0 ? ring : ["HH:mm"]
 }
 
-// Next entry after `current`. An unknown current format (a hand-written one
-// that is not in the ring) starts the walk at the top.
-function nextClockFormat(ring, current) {
+// The format after `current`; after one the walk does not have (written by
+// hand), its first.
+function nextFormat(ring, current) {
   if (!ring || ring.length === 0) return ""
-  var index = ring.indexOf(String(current === undefined || current === null ? "" : current))
-  return ring[(index + 1) % ring.length]
+  return ring[(ring.indexOf(current === undefined || current === null ? "" : String(current)) + 1) % ring.length]
 }
 
-// Two-digit ISO week, substituted into a format's 'ww' token before Qt
-// formats it -- Qt has no ISO week specifier of its own.
-function isoWeekLiteral(year, month, day) {
-  return pad2(isoWeek(year, month, day))
+// Qt has no ISO week in its formats: "ww" is filled in with the date's,
+// two digits, before Qt formats the rest.
+function withWeek(format, year, month, day) {
+  return format.replace(/ww/g, twoDigits(isoWeek(year, month, day)))
 }
 
-function pad2(value) {
-  var n = Number(value)
-  return (n < 10 ? "0" : "") + n
+// ------------------------------------------------------------------ dates
+
+function twoDigits(value) {
+  var number = Number(value)
+  return (number < 10 ? "0" : "") + number
 }
 
-// Stable "yyyy-MM-dd" identity for a day, so a grid cell can be compared
-// against today without dragging Date objects through bindings.
-function dateKey(year, month, day) {
-  return year + "-" + pad2(Number(month) + 1) + "-" + pad2(day)
+// A day as "yyyy-MM-dd", which a grid cell is compared by.
+function dayKey(year, month, day) {
+  return year + "-" + twoDigits(Number(month) + 1) + "-" + twoDigits(day)
 }
 
-function keyForDate(date) {
-  return dateKey(date.getFullYear(), date.getMonth(), date.getDate())
+function keyOf(date) {
+  return dayKey(date.getFullYear(), date.getMonth(), date.getDate())
 }
 
-function coerceWeekStart(value) {
-  if (value === undefined || value === null) return null
-  if (typeof value === "number")
-    return isFinite(value) ? ((Math.round(value) % 7) + 7) % 7 : null
-
-  var text = String(value).replace(/^\s+|\s+$/g, "").toLowerCase()
-  if (text === "") return null
-
-  for (var i = 0; i < WEEKDAY_NAMES.length; i++)
-    if (WEEKDAY_NAMES[i] === text || WEEKDAY_NAMES[i].substr(0, 3) === text) return i
-
-  var parsed = parseInt(text, 10)
-  return isFinite(parsed) ? ((parsed % 7) + 7) % 7 : null
-}
-
-// Configured week start, falling back to the locale's own first day when
-// the setting is missing or nonsense.
-function normalizedWeekStart(value, fallback) {
-  var configured = coerceWeekStart(value)
-  if (configured !== null) return configured
-  var fallbackStart = coerceWeekStart(fallback)
-  return fallbackStart === null ? 1 : fallbackStart
-}
-
-function weekStartSettingName(index) {
-  return WEEKDAY_NAMES[normalizedWeekStart(index, 1)]
-}
-
-// The toggle flips between the two conventions people actually switch
-// between. A calendar configured to any other start (Saturday, say) is
-// shown as-is and lands on Monday the first time it is toggled.
-function toggledWeekStart(index) {
-  return normalizedWeekStart(index, 1) === 1 ? 0 : 1
-}
-
-function weekdayOrder(weekStart) {
-  var start = normalizedWeekStart(weekStart, 1)
-  var out = []
-  for (var i = 0; i < 7; i++) out.push((start + i) % 7)
-  return out
-}
-
-// ISO-8601 week number: the week owning the Thursday of that date's
-// Monday-based week. Mirrors the clock widget's 'ww' format token.
+// The ISO 8601 week: that of the Thursday in the date's week from Monday.
 function isoWeek(year, month, day) {
-  var date = new Date(Date.UTC(year, month, day))
-  var weekday = date.getUTCDay() || 7
-  date.setUTCDate(date.getUTCDate() + 4 - weekday)
-  var yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
-  return Math.ceil(((date.getTime() - yearStart.getTime()) / MS_PER_DAY + 1) / 7)
+  var thursday = new Date(Date.UTC(year, month, day))
+  thursday.setUTCDate(thursday.getUTCDate() + 4 - (thursday.getUTCDay() || 7))
+  var januaryFirst = Date.UTC(thursday.getUTCFullYear(), 0, 1)
+  return Math.ceil(((thursday.getTime() - januaryFirst) / DAY + 1) / 7)
 }
 
 function dayOfYear(year, month, day) {
-  return Math.round((Date.UTC(year, month, day) - Date.UTC(year, 0, 1)) / MS_PER_DAY) + 1
+  return Math.round((Date.UTC(year, month, day) - Date.UTC(year, 0, 1)) / DAY) + 1
 }
 
-function daysInYear(year) {
-  return dayOfYear(year, 11, 31)
+// The share of the year gone: the days over, out of all of it, so that 1
+// January is 0 and 31 December, 1 less a day.
+function yearShare(year, month, day) {
+  var days = dayOfYear(year, 11, 31)
+  if (days <= 0) return 0
+  return Math.max(0, Math.min(1, (dayOfYear(year, month, day) - 1) / days))
 }
 
-// Share of the year already behind you: whole days completed over days in
-// the year, so January 1 reads 0% and December 31 reads 100%.
-function yearProgress(year, month, day) {
-  var total = daysInYear(year)
-  if (total <= 0) return 0
-  return Math.max(0, Math.min(1, (dayOfYear(year, month, day) - 1) / total))
+function percent(share) {
+  return Math.round(share * 100)
 }
 
-function yearProgressPercent(year, month, day) {
-  return Math.round(yearProgress(year, month, day) * 100)
+// The month `delta` months on, as { year, month }. In UTC: a 1st without a
+// local midnight would otherwise read back as the month before.
+function stepMonth(year, month, delta) {
+  var first = new Date(Date.UTC(year, Number(month) + Number(delta), 1))
+  return { year: first.getUTCFullYear(), month: first.getUTCMonth() }
 }
 
-// Memento mori. The default span is a round number rather than anything from
-// an actuarial table: the point of the bar is the reminder, not the
-// arithmetic, and whoever wants a different number can say so.
-var DEFAULT_LIFE_EXPECTANCY = 90
+// ------------------------------------------------------------ memento mori
 
-// A birth year rather than an age, so the bar keeps counting on its own
-// instead of going stale the moment it is entered. 0 means "not set", which
-// is also what a blank, malformed, future, or implausibly distant year means.
-function parseBirthYear(value, currentYear) {
-  var now = Math.round(Number(currentYear))
+// Ninety: a round number to measure by, not a table's. Anyone may set
+// their own.
+var LIFE_SPAN = 90
+
+function trimmed(value) {
+  return String(value === undefined || value === null ? "" : value).replace(/^\s+|\s+$/g, "")
+}
+
+// The year of birth, which keeps the age right without being told again;
+// 0 for none, and for one that is not four digits, in the future, or more
+// than 120 years back.
+function birthYear(value, thisYear) {
+  var now = Math.round(Number(thisYear))
   if (!isFinite(now)) return 0
-  var text = String(value === undefined || value === null ? "" : value).replace(/^\s+|\s+$/g, "")
+  var text = trimmed(value)
   if (!/^\d{4}$/.test(text)) return 0
   var year = parseInt(text, 10)
-  if (!isFinite(year) || year > now || year < now - 120) return 0
-  return year
+  return year > now || year < now - 120 ? 0 : year
 }
 
-// Whole years, the way people say their age: born in 1979 makes you 47 for
-// all of 2026, whichever side of your birthday today falls.
-function ageFromBirthYear(birthYear, currentYear) {
-  var born = parseBirthYear(birthYear, currentYear)
-  if (born <= 0) return 0
-  return Math.round(Number(currentYear)) - born
+// The age as people say it: the years since the year of birth, whatever
+// side of the birthday today is.
+function age(born, thisYear) {
+  var year = birthYear(born, thisYear)
+  return year > 0 ? Math.round(Number(thisYear)) - year : 0
 }
 
-// 0 means "not set", which is also what a blank, negative, fractional, or
-// absurd entry means — the life bar simply stays hidden.
-function parseAge(value) {
-  var text = String(value === undefined || value === null ? "" : value).replace(/^\s+|\s+$/g, "")
-  if (!/^\d+$/.test(text)) return 0
+// The years to measure a life by; 90 for none, or for one that is not a
+// whole number from 1 to 150.
+function lifeSpan(value) {
+  var text = trimmed(value)
+  if (!/^\d+$/.test(text)) return LIFE_SPAN
   var years = parseInt(text, 10)
-  if (!isFinite(years) || years <= 0 || years > 120) return 0
-  return years
+  return years <= 0 || years > 150 ? LIFE_SPAN : years
 }
 
-// Unset or nonsense falls back to the default rather than to zero, so the
-// bar always has something to measure against.
-function parseLifeExpectancy(value) {
-  var text = String(value === undefined || value === null ? "" : value).replace(/^\s+|\s+$/g, "")
-  if (!/^\d+$/.test(text)) return DEFAULT_LIFE_EXPECTANCY
-  var years = parseInt(text, 10)
-  if (!isFinite(years) || years <= 0 || years > 150) return DEFAULT_LIFE_EXPECTANCY
-  return years
+// The share of the span lived; 0 without an age from 1 to 120.
+function lifeShare(years, span) {
+  var text = trimmed(years)
+  var lived = /^\d+$/.test(text) ? parseInt(text, 10) : 0
+  if (lived <= 0 || lived > 120) return 0
+  return Math.max(0, Math.min(1, lived / lifeSpan(span)))
 }
 
-function lifeProgress(age, expectancy) {
-  var years = parseAge(age)
-  var span = parseLifeExpectancy(expectancy)
-  if (years <= 0 || span <= 0) return 0
-  return Math.max(0, Math.min(1, years / span))
+// --------------------------------------------------------------- the week
+
+// A day of the week from a setting: its number (any whole number, taken
+// modulo 7), its name or its first three letters; null for none.
+function weekday(value) {
+  if (value === undefined || value === null) return null
+  if (typeof value === "number") return isFinite(value) ? ((Math.round(value) % 7) + 7) % 7 : null
+  var text = trimmed(value).toLowerCase()
+  if (text === "") return null
+  for (var i = 0; i < WEEKDAYS.length; i++)
+    if (WEEKDAYS[i] === text || WEEKDAYS[i].substr(0, 3) === text) return i
+  var number = parseInt(text, 10)
+  return isFinite(number) ? ((number % 7) + 7) % 7 : null
 }
 
-function lifeProgressPercent(age, expectancy) {
-  return Math.round(lifeProgress(age, expectancy) * 100)
+// The day weeks start on: the setting's, else `otherwise` (the locale's),
+// else Monday.
+function weekStart(value, otherwise) {
+  var set = weekday(value)
+  if (set !== null) return set
+  var fallback = weekday(otherwise)
+  return fallback === null ? 1 : fallback
 }
 
-// Always six rows of seven days. A fixed grid keeps the popup exactly the
-// same height in every month, so stepping through the year never makes the
-// panel jump under the pointer.
+// The setting's word for a start.
+function weekStartName(start) {
+  return WEEKDAYS[weekStart(start, 1)]
+}
+
+// The W heading switches between the two starts people switch between:
+// Monday, and Sunday. Any other goes to Monday.
+function otherWeekStart(start) {
+  return weekStart(start, 1) === 1 ? 0 : 1
+}
+
+// The days of a week from its start, as numbers.
+function weekdayOrder(start) {
+  var first = weekStart(start, 1)
+  var days = []
+  for (var i = 0; i < 7; i++) days.push((first + i) % 7)
+  return days
+}
+
+// --------------------------------------------------------------- the grid
+
+// A month as six weeks of seven days, whatever the month, so that the panel
+// is as tall in February as in August: [{ week, days: [{ key, year, month,
+// day, weekday, inMonth, weekend, today }] }], each week numbered by the
+// ISO week of its Thursday (which is the ISO week for a week from Monday,
+// and for another start the ISO week it shares Monday to Thursday with).
 //
-// Walked in UTC, where every day is 24 hours long. A local-midnight cursor has
-// to be resolved by the engine in zones that start DST at 00:00 -- Chile every
-// September, Cuba every March -- and V4 resolves the missing midnight backward
-// onto the previous day while V8 resolves it forward, so the local walk repeats
-// a date in the shell and not under the tests. A grid of civil dates never
-// needed a wall clock in the first place.
-function monthGrid(year, month, weekStart, todayKey) {
-  var start = normalizedWeekStart(weekStart, 1)
-  var leading = (new Date(Date.UTC(year, month, 1)).getUTCDay() - start + 7) % 7
-  var cursor = new Date(Date.UTC(year, month, 1 - leading))
+// Counted in UTC, where every day is 24 hours. Where summer time starts at
+// midnight (Chile in September, Cuba in March) that midnight does not
+// exist, and the shell's engine takes it back to the day before where
+// node's takes it on: a local count would show a day twice in the shell.
+function monthGrid(year, month, start, todayKey) {
+  var first = weekStart(start, 1)
+  var before = (new Date(Date.UTC(year, month, 1)).getUTCDay() - first + 7) % 7
+  var cursor = new Date(Date.UTC(year, month, 1 - before))
   var today = String(todayKey || "")
   var weeks = []
-
   for (var w = 0; w < 6; w++) {
     var days = []
     var thursday = null
     for (var d = 0; d < 7; d++) {
-      var cellYear = cursor.getUTCFullYear()
-      var cellMonth = cursor.getUTCMonth()
-      var cellDay = cursor.getUTCDate()
-      var weekday = cursor.getUTCDay()
-      var key = dateKey(cellYear, cellMonth, cellDay)
-      if (weekday === 4) thursday = { year: cellYear, month: cellMonth, day: cellDay }
-      days.push({
-        key: key,
-        year: cellYear,
-        month: cellMonth,
-        day: cellDay,
-        weekday: weekday,
-        inMonth: cellMonth === month && cellYear === year,
-        weekend: weekday === 0 || weekday === 6,
-        today: key === today
-      })
+      var cell = {
+        key: dayKey(cursor.getUTCFullYear(), cursor.getUTCMonth(), cursor.getUTCDate()),
+        year: cursor.getUTCFullYear(),
+        month: cursor.getUTCMonth(),
+        day: cursor.getUTCDate(),
+        weekday: cursor.getUTCDay()
+      }
+      cell.inMonth = cell.month === month && cell.year === year
+      cell.weekend = cell.weekday === 0 || cell.weekday === 6
+      cell.today = cell.key === today
+      if (cell.weekday === 4) thursday = cell
+      days.push(cell)
       cursor.setUTCDate(cursor.getUTCDate() + 1)
     }
-    // Number every row by the ISO week owning its Thursday. That is the
-    // definition itself for Monday-start weeks, and the only answer that
-    // stays stable for the other starts, where a row straddles two ISO
-    // weeks but shares all of Monday through Thursday with one of them.
     var anchor = thursday || days[0]
-    weeks.push({
-      week: isoWeek(anchor.year, anchor.month, anchor.day),
-      days: days
-    })
+    weeks.push({ week: isoWeek(anchor.year, anchor.month, anchor.day), days: days })
   }
   return weeks
-}
-
-// UTC for the same reason as the grid: the month is read back off the date, so
-// a first of the month that has no local midnight would step into the wrong one.
-function stepMonth(year, month, delta) {
-  var target = new Date(Date.UTC(year, Number(month) + Number(delta), 1))
-  return { year: target.getUTCFullYear(), month: target.getUTCMonth() }
-}
-
-if (typeof module !== "undefined") {
-  module.exports = {
-    dateKey: dateKey,
-    keyForDate: keyForDate,
-    normalizedWeekStart: normalizedWeekStart,
-    weekStartSettingName: weekStartSettingName,
-    toggledWeekStart: toggledWeekStart,
-    weekdayOrder: weekdayOrder,
-    isoWeek: isoWeek,
-    dayOfYear: dayOfYear,
-    daysInYear: daysInYear,
-    yearProgress: yearProgress,
-    yearProgressPercent: yearProgressPercent,
-    parseAge: parseAge,
-    parseBirthYear: parseBirthYear,
-    ageFromBirthYear: ageFromBirthYear,
-    parseLifeExpectancy: parseLifeExpectancy,
-    lifeProgress: lifeProgress,
-    lifeProgressPercent: lifeProgressPercent,
-    monthGrid: monthGrid,
-    stepMonth: stepMonth,
-    clockFormats: clockFormats,
-    clockFormatRing: clockFormatRing,
-    nextClockFormat: nextClockFormat,
-    isoWeekLiteral: isoWeekLiteral
-  }
 }
