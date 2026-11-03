@@ -200,12 +200,12 @@ Item {
 
   // The file's watch picks the place up. One set again, the same as before,
   // changes no query, so it is asked about here too, or the wait would not
-  // end.
+  // end; so too when keeping it failed, with nothing new in the file.
   Process {
     id: keeper
     onExited: code => {
-      if (code !== 0 || !forecast.waiting) return
-      placeFile.reload()
+      if (!forecast.waiting) return
+      if (code === 0) placeFile.reload()
       if (forecast.asked) return
       forecast.asked = true
       forecast.restart()
