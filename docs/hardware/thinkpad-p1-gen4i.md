@@ -386,7 +386,7 @@ The modem's `mhi_wwan_ctrl mhi0_MBIM: Failed to queue buffer` is loud — 114
 lines — but takes 90 ms, so it is noise, not latency.
 
 **28. The lock screen blanks after 5 s, by design.**
-`src/shell/plugins/lock/Service.qml` has `idleBlankTimer.interval: 5000`, which
+`src/shell/plugins/lock/Service.qml` has `blankTimer` at `interval: 5000`, which
 runs `nova-brightness-display off` (and the same for the keyboard backlight).
 It re-arms once across a resume, so it reads as ~10 s after opening the lid. It
 is a constant in that file, not a setting. It is only ever noticed when

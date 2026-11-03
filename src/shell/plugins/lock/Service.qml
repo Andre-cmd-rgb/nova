@@ -29,6 +29,8 @@ Item {
   // The lock as this shell asked for it, and as the compositor holds it.
   property bool lockRequested: false
   property bool pendingSessionLock: false
+  // While finishUnlock lets the compositor's lock go.
+  property bool unlocking: false
   readonly property bool locked: lockRequested || sessionLock.locked || sessionLock.secure
 
   property bool passwordPamConfigured: false
@@ -105,9 +107,9 @@ Item {
     return true
   }
 
-  // Screens come and go around a lid or a dock: the compositor is asked once
-  // they have been still for 500 ms, and then only with a real one, looked
-  // for every 100 ms.
+  // Screens come and go around a lid or a dock: the compositor is asked
+  // 500 ms after the lock starts, and then only with a real screen, looked
+  // for every 100 ms and whenever the screens change.
   function queueSessionLock() {
     pendingSessionLock = true
     if (!settleTimer.running) logEvent("lock-pending: screen-stabilizing")
@@ -140,12 +142,28 @@ Item {
     // but announces only secure=false, so `locked` would keep its true, and
     // the next lock be taken for one already up; lockRequested changing
     // after it makes `locked` look again.
+    unlocking = true
     sessionLock.locked = false
+    unlocking = false
     lockRequested = false
     stopPending()
     resetAuthentication()
     blankTimer.stop()
     logEvent("unlocked")
+    wake()
+  }
+
+  // The compositor ended the lock itself: Hyprland's forced unlock (from a
+  // TTY, to get past a lock screen that is broken), or a lock it refused.
+  // The session is unlocked then, so the lock is let go as an unlock would,
+  // and whoever needs one (the sleep lock, say) asks again.
+  function lockLost() {
+    if (!lockRequested || sessionLock.locked || sessionLock.secure) return
+    logEvent("lock-lost: ended by the compositor")
+    lockRequested = false
+    stopPending()
+    resetAuthentication()
+    blankTimer.stop()
     wake()
   }
 
@@ -315,7 +333,13 @@ Item {
 
     onSecureStateChanged: {
       root.logEvent("secure=" + secure)
-      if (!secure) return
+      if (!secure) {
+        // Not an unlock from here: the compositor ended the lock. Quickshell
+        // lets go of its side only after this signal, so that is looked at a
+        // turn later.
+        if (root.lockRequested && !root.unlocking) Qt.callLater(root.lockLost)
+        return
+      }
       root.stopPending()
       root.startFingerprint()
       // The boot's first lock may not be the autologin one (a stranded lock
@@ -323,17 +347,12 @@ Item {
       if (root.bootLock || !root.unlockedOnce) root.leaveBootSubmap()
     }
 
+    // Quickshell 0.3.2 announces only a lock taken; an end of the lock comes
+    // as secure=false.
     onLockStateChanged: {
       root.logEvent("session-locked=" + locked)
-      if (locked) {
-        root.stopPending()
-      } else if (root.lockRequested) {
-        // The compositor ended the lock without an unlock from here.
-        root.lockRequested = false
-        root.stopPending()
-        root.resetAuthentication()
-        root.wake()
-      }
+      if (locked) root.stopPending()
+      else if (root.lockRequested && !root.unlocking) Qt.callLater(root.lockLost)
     }
 
     WlSessionLockSurface {
@@ -454,10 +473,11 @@ Item {
         return
       }
       // abort() says nothing, so the scan is marked over here; one enrolled
-      // again under the same lock can then start.
+      // again under the same lock can then start, without the old backoff.
       fingerprintRetry.stop()
       if (fingerprintPam.active) fingerprintPam.abort()
       root.fingerprintAuthenticating = false
+      root.fingerprintQuickFailures = 0
     }
   }
 
