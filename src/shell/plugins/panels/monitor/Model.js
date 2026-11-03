@@ -37,6 +37,11 @@ function readDisplays(json) {
   return { displays: list, enabled: on }
 }
 
+// The icon of one display, and of two or more.
+function screensIcon(count) {
+  return count > 1 ? "󰍺" : "󰍹"
+}
+
 // A brightness the panel sets: a whole percent from 1 to 100; 1 for
 // anything not a number.
 function percent(value) {
