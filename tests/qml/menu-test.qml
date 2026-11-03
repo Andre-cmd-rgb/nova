@@ -63,9 +63,8 @@ ShellRoot {
       "search finds what is under a menu its when: shows, and within the menu itself")
 
     var files = [{ id: "org.b.Files", name: "Files" }, { id: "org.a.Files", name: "Files" }, { id: "org.c.Editor", name: "Editor" }]
-    function order(entries, query) { return AppSearch.sortedEntries(entries, query, null).map(function(row) { return row.entry.id }).join(",") }
-    check(order(files, "") === "org.c.Editor,org.a.Files,org.b.Files" && order(files.slice().reverse(), "") === order(files, "")
-      && order(files, "files") === "org.a.Files,org.b.Files" && order(files.slice().reverse(), "files") === order(files, "files"),
+    function order(entries) { return AppSearch.sortedEntries(entries, null).map(function(row) { return row.entry.id }).join(",") }
+    check(order(files) === "org.c.Editor,org.a.Files,org.b.Files" && order(files.slice().reverse()) === order(files),
       "two apps of one name are listed in one order, whatever order they come in")
 
     var guarded = MenuModel.mergeMenuSources(MenuModel.parseMenuJsonc(

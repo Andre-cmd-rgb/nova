@@ -19,7 +19,7 @@ shell/
     PluginRegistry.qml      reads the plugin index, answers what is enabled
     BarWidgetRegistry.qml   the bar widgets' components
     AppLibrary.qml          the installed apps, sorted, launched and removed, for the menu
-    AppSearch.js            how a search matches and ranks them
+    AppSearch.js            which of them the menu lists, and in what order
     hidden-entries.sh       the desktop entries hidden from this desktop
   Commons/  Ui/             shared singletons and controls
   plugins/

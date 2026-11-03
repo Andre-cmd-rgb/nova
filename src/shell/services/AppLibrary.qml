@@ -54,10 +54,10 @@ Item {
     return configuredHiddenEntryIds[id] === true || desktopHiddenEntryIds[id] === true
   }
 
-  // The rows to list for <query>, best first (AppSearch.sortedEntries).
-  function sortedEntries(query) {
+  // The rows to list, by name (AppSearch.sortedEntries).
+  function sortedEntries() {
     var entries = DesktopEntries.applications.values || []
-    return AppSearch.sortedEntries(entries, query, function(entry) { return root.isHiddenEntry(entry) })
+    return AppSearch.sortedEntries(entries, function(entry) { return root.isHiddenEntry(entry) })
   }
 
   // The icon to draw for an entry's Icon value: a URL or path as it is, else

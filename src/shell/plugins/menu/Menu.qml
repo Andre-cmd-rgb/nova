@@ -296,7 +296,7 @@ Item {
 
   function addApps() {
     if (!appLibrary) return
-    var apps = Model.appItems(appLibrary.sortedEntries(""), appLibrary.entryName, appLibrary.entrySubtext)
+    var apps = Model.appItems(appLibrary.sortedEntries(), appLibrary.entryName, appLibrary.entrySubtext)
     tree = Model.withApps(tree, apps)
     if (opened) rebuildDisplay()
   }
