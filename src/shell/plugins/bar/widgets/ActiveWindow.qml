@@ -14,6 +14,8 @@ BarWidget {
 
   readonly property var toplevel: ToplevelManager.activeToplevel
   readonly property string title: toplevel ? (toplevel.title || toplevel.appId || "") : ""
+  // The bar shows a tooltip only while its widget says the pointer is on it.
+  readonly property bool tooltipHovered: visible && pointer.containsMouse
 
   visible: title !== "" && !vertical
   implicitWidth: visible ? Math.min(Number(setting("maxWidth", 280)), label.implicitWidth) + Style.spacing.controlPaddingX * 2 : 0
@@ -43,12 +45,15 @@ BarWidget {
   }
 
   MouseArea {
+    id: pointer
     anchors.fill: parent
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
 
+    // A click puts the tooltip away, as on the bar's buttons.
     onClicked: function(mouse) {
+      if (root.bar) root.bar.hideTooltip(root)
       if (!root.toplevel) return
       if (mouse.button === Qt.LeftButton) root.toplevel.activate()
       else root.toplevel.close()

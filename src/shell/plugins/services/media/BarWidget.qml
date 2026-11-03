@@ -22,6 +22,8 @@ BarWidget {
   readonly property string title: activePlayer ? (activePlayer.trackTitle || "") : ""
   readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
   readonly property string playIcon: playing ? "󰏤" : "󰐊"
+  // The bar shows a tooltip only while its widget says the pointer is on it.
+  readonly property bool tooltipHovered: visible && pointer.containsMouse
 
   property bool popupOpen: false
 
@@ -94,12 +96,15 @@ BarWidget {
   }
 
   MouseArea {
+    id: pointer
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: root.activePlayer ? Qt.PointingHandCursor : Qt.ArrowCursor
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
 
+    // A click puts the tooltip away, as on the bar's buttons.
     onClicked: function(mouse) {
+      if (root.bar) root.bar.hideTooltip(root)
       if (!root.activePlayer) return
       if (mouse.button === Qt.RightButton) root.popupOpen = !root.popupOpen
       else root.act(mouse.button === Qt.MiddleButton ? "next" : "playPause")
