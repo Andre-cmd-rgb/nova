@@ -11,99 +11,216 @@ import qs.Commons as Commons
 import "Model.js" as Model
 import "../../settings" as Settings
 
-// Qualified: qmllint cannot see qs.Ui, so a bare Panel here would name this
-// file, and with the inline components below that sends it round forever.
+// The network's bar widget and its panel: the link the computer is on, its
+// traffic and ping, the Wi-Fi band, the DNS provider, and the networks in
+// reach to join, leave or forget.
+//
+// NetworkManager is read through Quickshell.Networking, and Wi-Fi is acted
+// on through it; nova-network-status reports the link, nova-network-band the
+// band, and nova-dns the DNS. One cursor runs through the panel, moved by
+// the keys and by the pointer alike, from the radio's switch down through
+// the band and the DNS to the networks.
+//
+// Ui.Panel is named with its module: qmllint cannot see qs.Ui, so a bare
+// Panel would be read as this file, which then holds itself through its
+// inline components without end.
 Ui.Panel {
   id: root
   moduleName: "nova.network"
   ipcTarget: "nova.network"
 
-  // Centralized close so callers can't forget to drop the passphrase prompt.
-  function close() {
-    root.controller.hide()
-    cancelPasswordPrompt()
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
+
+  // ---------------------------------------------------------- NetworkManager
+
+  readonly property bool managed: Networking.backend === NetworkBackendType.NetworkManager
+  readonly property var devices: Networking.devices ? Networking.devices.values : []
+  readonly property var radio: device(DeviceType.Wifi)
+  readonly property var port: device(DeviceType.Wired)
+  readonly property var inReach: radio && radio.networks ? radio.networks.values : []
+  readonly property var joined: inReach.find(function(network) { return network && network.connected }) || null
+
+  // Wired wins when both are up: it is the device the default route takes.
+  readonly property string kind: port && port.connected ? "ethernet" : joined ? "wifi" : "disconnected"
+  readonly property int strength: joined ? Math.round((joined.signalStrength || 0) * 100) : -1
+  readonly property string glyph: Model.linkGlyph(kind, strength)
+
+  // The radio's switch is there only when there is a radio: on a wired
+  // machine it would read "off" beside a live link.
+  readonly property bool canToggleWifi: managed && !!radio
+
+  // The device of a type, a connected one first: a machine may have an idle
+  // port beside the one in use, and the first listed may be the idle one.
+  function device(type) {
+    var idle = null
+    for (var i = 0; i < devices.length; i++) {
+      var each = devices[i]
+      if (!each || each.type !== type) continue
+      if (each.connected) return each
+      if (!idle) idle = each
+    }
+    return idle
   }
 
-  function cancelPasswordPrompt() {
-    passwordSsid = ""
-    passwordText = ""
-    identityText = ""
+  function network(ssid) {
+    return inReach.find(function(each) { return each && each.name === ssid }) || null
   }
 
-  // Live connection details from `ip` / /sys / iw.
-  property var info: ({})  // { iface, type, ip, prefix, gateway, speed, duplex, ssid, signal, freq, bitrate, rx_bytes, tx_bytes, router_ping_ms, internet_ping_ms }
+  function toggleNetwork() {
+    if (!managed) return
+    Networking.wifiEnabled = !Networking.wifiEnabled
+    Qt.callLater(function() { root.refresh(true) })
+  }
 
-  // Throughput tracking. Rates are computed as deltas between successive
-  // `nova-network-status --verbose` samples (~1.5s apart via detailsPoll).
-  // We hold "prev" alongside a timestamp so the first sample after open or
-  // after an interface switch doesn't manufacture a spike.
-  property real prevRxBytes: 0
-  property real prevTxBytes: 0
-  property real prevSampleTime: 0
-  property string prevIface: ""
-  property real downloadRate: 0  // bytes/sec
-  property real uploadRate: 0    // bytes/sec
-  property string pingIface: ""
-  property var routerPingSamples: []
-  property var internetPingSamples: []
-  property real routerPingLatency: -1
-  property real internetPingLatency: -1
-  property int internetPingPacketLoss: 0
-  readonly property int pingHistoryWindow: 24
-  readonly property int pingAverageWindow: 5
-  readonly property bool hasInternetPing: internetPingSamples.length > 0
-  // Every stat row stays mounted whether or not there is data behind it, so a
-  // sample arriving late never reflows the grid. This says whether the numbers
-  // are real yet or the row should read "--".
-  readonly property bool hasTransferStats: info.rx_bytes !== undefined
-  property int connectionPhraseIndex: 0
-  readonly property var connectionPhrases: [
-    "Wiring bits",
-    "Handling packets",
-    "Sorting frames",
-    "Hauling bytes",
-    "Routing crumbs",
-    "Counting collisions",
-    "Bending light",
-  ]
-  readonly property string connectionPhrase: connectionPhrases[connectionPhraseIndex % connectionPhrases.length]
-  readonly property bool networkManagerAvailable: Networking.backend === NetworkBackendType.NetworkManager
-  readonly property var networkDevices: Networking.devices ? Networking.devices.values : []
-  readonly property var wifiDevice: findDevice(DeviceType.Wifi)
-  readonly property var wifiNetworkObjects: wifiDevice && wifiDevice.networks ? wifiDevice.networks.values : []
-  readonly property var connectedWifiNetwork: findConnectedWifiNetwork()
-  property var wifiNetworks: []
-  property bool scanning: false
-  property bool wifiStationAvailable: false
-  property string dnsProvider: ""
-  property bool customDnsOpen: false
-  property string pendingDnsProvider: ""
-  // Wi-Fi band state from `nova-network-band`. `bandCurrent` is the band
-  // the radio is actually on; `bandSelected` is the pinned choice ("auto" when
-  // nothing is pinned), and the two differ whenever Auto is in effect.
+  // ---------------------------------------------------------------- the link
+
+  // nova-network-status's last reading: iface, type, ip, gateway, ssid,
+  // speed, the byte counters and the pings.
+  property var info: ({})
+  property var traffic: ({})
+  property var ping: ({ iface: "", samples: [] })
+  readonly property bool pinged: ping.samples.length > 0
+  readonly property real pingMs: Model.pingTime(ping.samples)
+  readonly property int pingLoss: Model.pingLoss(ping.samples)
+  // The rows below the title stay whether or not a reading is in, so that one
+  // coming in does not move the panel; "--" until then.
+  readonly property bool counted: info.rx_bytes !== undefined
+
+  // Under the title, while there is a link, a phrase that changes every few
+  // seconds.
+  readonly property var phrases: ["Wiring bits", "Handling packets", "Sorting frames", "Hauling bytes", "Routing crumbs", "Counting collisions", "Bending light"]
+  property int phrase: 0
+  readonly property bool linked: info.type === "ethernet" || (info.type === "wifi" && !!joined)
+
+  function read(text) {
+    var fields = Model.readFields(text)
+    // A band change takes the link down and up again, and in between there
+    // is no route to report. The last reading stands until the link is back,
+    // rather than the panel emptying mid-change; with no change asked for,
+    // a link gone is shown gone.
+    if (bandBusy && !fields.iface) return
+    info = fields
+    traffic = Model.traffic(traffic, fields, Date.now() / 1000)
+    ping = Model.pings(ping, fields)
+  }
+
+  onInfoChanged: {
+    if (linked) return
+    phraseSwap.stop()
+    meta.opacity = 1
+  }
+
+  function copy(value) {
+    if (!value || !bar) return
+    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(value) + " | wl-copy"])
+  }
+
+  // -------------------------------------------------------------- Wi-Fi band
+
+  // From nova-network-band: the band the radio is on, the one pinned
+  // ("auto" for none), and those the network answers on. While a pin is
+  // being made, the panel shows the one asked for; the command's answer
+  // decides what stays.
   property string bandCurrent: ""
   property string bandSelected: "auto"
-  property var bandAvailable: []
+  property var bands: []
   property string pendingBand: ""
+  readonly property bool bandBusy: pendingBand !== ""
+  readonly property string bandShown: bandBusy ? pendingBand : bandSelected
+  readonly property bool bandPinned: bandShown !== "auto"
+  // On Wi-Fi, with bands to choose from or a pin to undo. It stays through
+  // the reconnect a pin causes, when the link is briefly not Wi-Fi.
+  readonly property bool canSelectBand: (kind === "wifi" || bandBusy) && (bands.length > 1 || bandPinned)
+  // Under Automatic there is nothing to choose, and the pills fold away.
+  readonly property bool pillsShown: canSelectBand && bandPinned
 
-  // Per-row in-flight state. `actionSsid` flips on for the row whose action
-  // is currently running so it can render "Connecting…" / "Disconnecting…" /
-  // "Forgetting…". `passwordSsid` is the row currently expanded into
-  // password-entry mode; we keep it open across refresh cycles so a slow scan
-  // doesn't collapse the input the user is typing into. Rows must gate
-  // comparisons on the matching `*Kind`/`*Reason` being non-empty so a
-  // hidden-SSID row (ssid == "") doesn't collide with the "" defaults.
-  property string actionSsid: ""
-  property string actionKind: ""  // "connect" | "disconnect" | "forget"
-  property string failureSsid: ""
-  property string failureReason: ""
-  property string passwordSsid: ""
-  property string passwordText: ""
-  property string identityText: ""
+  function readBands(text) {
+    var status = Model.readBands(text)
+    // Mid-reconnect there is no network to read bands from; as with the
+    // link, the last answer stands.
+    if (bandBusy && status.available.length === 0) return
+    bandCurrent = status.band
+    bandSelected = status.selected
+    bands = status.available
+  }
 
-  // ConnectionFailReason values as a plain object, so Model.js helpers stay
-  // pure JS and Node-testable.
-  readonly property var connectionFailReasons: ({
+  function askBands() {
+    if (bandProbe.running) return
+    bandProbe.command = ["nova-network-band"]
+    bandProbe.running = true
+  }
+
+  // The panel stays open through the reconnect a pin causes: that is what
+  // there is to watch.
+  function setBand(band) {
+    if (!band || change.running) return
+    pendingBand = band
+    change.command = ["nova-network-band", band]
+    change.running = true
+  }
+
+  // Automatic off pins the band the radio is on, which the heading names.
+  function toggleAutomatic() {
+    if (bandSelected !== "auto") setBand("auto")
+    else if (bandCurrent !== "") setBand(bandCurrent)
+  }
+
+  // --------------------------------------------------------------------- DNS
+
+  readonly property var dnsChoices: [
+    { name: "DHCP", hint: "Use DNS from DHCP" },
+    { name: "Cloudflare", hint: "Set DNS to Cloudflare" },
+    { name: "Google", hint: "Set DNS to Google" },
+    { name: "Custom", hint: "Set custom DNS servers" }
+  ]
+  property string dnsProvider: ""
+  property string pendingDns: ""
+  property bool customOpen: false
+
+  function dnsCommand(provider) {
+    return provider ? "nova-dns " + Util.shellQuote(provider) : "nova-dns"
+  }
+
+  // A preset is set and the panel closes; Custom opens the sheet for the
+  // addresses.
+  function setDns(provider) {
+    if (!bar || !provider || change.running || customDns.busy) return
+    customOpen = provider === "Custom"
+    if (customOpen) return
+    pendingDns = provider
+    change.command = ["bash", "-c", dnsCommand(provider)]
+    change.running = true
+    close()
+  }
+
+  // ---------------------------------------------------------------- networks
+
+  // The networks in reach, as plain rows (Model.networkRow says why).
+  property var rows: []
+  property bool scanning: false
+
+  function syncRows() {
+    var next = []
+    inReach.forEach(function(each) {
+      if (!each) return
+      settle(each)
+      next.push(Model.networkRow(each))
+    })
+    rows = Model.sortRows(next)
+  }
+
+  function rowIndex(ssid) {
+    for (var i = 0; i < rows.length; i++) if (rows[i] && rows[i].ssid === ssid) return i
+    return -1
+  }
+
+  function asksForSecret(security) {
+    return Model.asksForSecret(security, WifiSecurityType.Open, WifiSecurityType.Owe)
+  }
+
+  // ConnectionFailReason's values by name, for the model.
+  readonly property var failReasons: ({
     NoSecrets: ConnectionFailReason.NoSecrets,
     WifiAuthTimeout: ConnectionFailReason.WifiAuthTimeout,
     WifiNetworkLost: ConnectionFailReason.WifiNetworkLost,
@@ -111,523 +228,85 @@ Ui.Panel {
     WifiClientFailed: ConnectionFailReason.WifiClientFailed
   })
 
-  // True while any wifi action is mid-flight. Rows
-  // disable themselves on this so clicks on the other rows don't silently
-  // no-op against runNetworkAction's serialized guard.
+  // One action on a network at a time: a connect, disconnect or forget. Its
+  // row says so while it runs, and says why if it fails. An SSID is matched
+  // only while there is an action or failure, so that a hidden network,
+  // whose SSID is "", never matches the empty defaults.
+  property string actionSsid: ""
+  property string actionKind: ""
+  property string failureSsid: ""
+  property string failureReason: ""
   readonly property bool busy: actionKind !== ""
 
-  // Index into `wifiNetworks` for keyboard navigation. -1 = no selection.
-  property int selectedIndex: -1
-  property bool wifiActionFocused: false
-  property bool cursorActive: false
+  // The row asking for a passphrase, kept open through scans, and what has
+  // been typed into it.
+  property string passwordSsid: ""
+  property string passwordText: ""
+  property string identityText: ""
 
-  // Keyboard focus zone for the panel. j/k crosses row boundaries:
-  // header actions ⇄ band ⇄ DNS row ⇄ Wi-Fi networks. h/l move
-  // within header actions, band pills, or DNS providers.
-  property string focusSection: "dns"  // "header" | "band" | "dns" | "wifi"
-  property int headerIndex: 0
-  readonly property bool canDisconnect: !!connectedWifiNetwork
-  readonly property bool headerHasDisconnect: false
-  // The hero switch is the Wi-Fi radio, so it only exists when there is a
-  // radio to switch. On a wired box it would otherwise sit there reading
-  // "off" beside a perfectly live Ethernet connection.
-  readonly property bool canToggleWifi: networkManagerAvailable && wifiStationAvailable
-  readonly property int toggleHeaderIndex: canToggleWifi ? 0 : -1
-  readonly property int headerActionCount: canToggleWifi ? 1 : 0
-  readonly property bool toggleHeaderHasCursor: cursorActive && focusSection === "header" && headerIndex === toggleHeaderIndex
-  readonly property string toggleHint: Networking.wifiEnabled ? "Turn Wi-Fi off" : "Turn Wi-Fi on"
-  readonly property var dnsProviders: ["DHCP", "Cloudflare", "Google", "Custom"]
-  property int dnsIndex: 0
-  // ["2.4", "5", ...], or empty when there is nothing to choose between.
-  // Wi-Fi only: on Ethernet the band of a secondary radio is not what the
-  // panel is describing.
-  // `bandBusy` keeps the section mounted across the reconnect a band change
-  // causes: `kind` stops being "wifi" for a second or two in the middle of it,
-  // and without this the whole segment would vanish and rebuild itself.
-  // Worth showing when there is a real choice, or when a pin is in force even
-  // though only one band answers right now -- otherwise the Automatic switch
-  // vanishes and the pin becomes unclearable from the panel.
-  readonly property bool canSelectBand: (kind === "wifi" || bandBusy)
-    && (bandAvailable.length > 1 || bandPinned)
-  // While a change is in flight, show the state that was asked for rather than
-  // the one still in force, so the row answers the click immediately instead of
-  // after the reconnect. actionProc puts it back if the change failed.
-  readonly property string bandEffective: pendingBand !== "" ? pendingBand : bandSelected
-  readonly property bool bandPinned: bandEffective !== "auto"
-  // Under Automatic there is nothing to pick, so the pills collapse away and
-  // the header states the live band instead.
-  readonly property bool bandPillsVisible: canSelectBand && bandPinned
-  readonly property string bandSectionTitle: Model.bandSectionTitle(bandEffective, bandCurrent)
-  readonly property bool bandBusy: pendingBand !== ""
-  // The speed test needs an interface to test, so its hero action only
-  // appears once there is one.
-  property int bandIndex: 0
-  // The band section has up to two cursor rows: the Automatic switch on the
-  // header line, then the pills. Same shape as wifiActionFocused.
-  property bool bandAutoFocused: true
-
-  onHeaderActionCountChanged: clampHeaderIndex()
-
-  // Availability shifts as scans land, so the option list can shrink out from
-  // under the cursor. Clamp the index and evacuate the section before it
-  // disappears, or the panel is left highlighting nothing.
-  onBandAvailableChanged: {
-    if (bandIndex > bandAvailable.length - 1) bandIndex = Math.max(0, bandAvailable.length - 1)
+  function act(kind, network, run) {
+    if (busy || !network) return
+    actionSsid = network.name || ""
+    actionKind = kind
+    failureSsid = ""
+    failureReason = ""
+    run(network)
+    // NetworkManager gives up on a wrong saved passphrase after 25 s, and that
+    // failure has to find the action still running, so the backstop for an
+    // answer that never comes is longer.
+    actionTimeout.restart()
   }
 
-  onCanSelectBandChanged: {
-    if (!canSelectBand && focusSection === "band") {
-      focusSection = "dns"
-      bandAutoFocused = true
-    }
+  // Ends the action once the network is where it was sent.
+  function settle(network) {
+    if (!network || !busy || actionSsid !== (network.name || "")) return
+    var done = actionKind === "connect" ? network.connected
+      : actionKind === "disconnect" ? !network.connected && !network.stateChanging
+      : !network.known && !network.stateChanging
+    if (!done) return
+    actionTimeout.stop()
+    if (actionKind === "connect") passwordSsid = ""
+    failureSsid = ""
+    failureReason = ""
+    actionSsid = ""
+    actionKind = ""
+    refresh()
   }
 
-  // Collapsing the pills out from under the cursor would leave it pointing at
-  // nothing, so send it up to the switch that is still on screen.
-  onBandPillsVisibleChanged: {
-    if (!bandPillsVisible) bandAutoFocused = true
+  function fail(network, reason) {
+    if (!network || !busy || actionSsid !== (network.name || "")) return
+    actionTimeout.stop()
+    failureSsid = actionSsid
+    failureReason = Model.failureText(reason, asksForSecret(network.security), failReasons)
+    actionSsid = ""
+    actionKind = ""
+    refresh()
   }
 
-  function clampHeaderIndex() {
-    var max = Math.max(0, headerActionCount - 1)
-    if (headerIndex > max) headerIndex = max
-    if (headerIndex < 0) headerIndex = 0
+  function connectTo(ssid) {
+    act("connect", network(ssid), function(each) { each.connect() })
   }
 
-  function selectHeaderByDelta(delta) {
-    headerIndex = Math.max(0, Math.min(headerActionCount - 1, headerIndex + delta))
+  function connectWithPassphrase(ssid, passphrase) {
+    act("connect", network(ssid), function(each) { each.connectWithPsk(passphrase) })
   }
 
-  function toggleNetwork() {
-    if (!networkManagerAvailable) return
-    Networking.wifiEnabled = !Networking.wifiEnabled
-    Qt.callLater(function() { root.refresh(true) })
+  function connectEnterprise(ssid, identity, passphrase) {
+    act("connect", network(ssid), function() {
+      enterprise.secret = passphrase
+      enterprise.command = ["bash", "-c", Model.ENTERPRISE_SCRIPT, "nmcli-eap", ssid, identity]
+      enterprise.running = true
+    })
   }
 
-  function activateHeader() {
-    if (headerIndex === toggleHeaderIndex) toggleNetwork()
+  // A row may outlive its network; one that no longer has it does nothing,
+  // rather than act on another.
+  function disconnectFrom(ssid) {
+    act("disconnect", network(ssid), function(each) { each.disconnect() })
   }
 
-  function setHeaderCursor(index) {
-    cursorActive = true
-    focusSection = "header"
-    headerIndex = index
-  }
-
-  function selectDnsByDelta(delta) {
-    dnsIndex = Math.max(0, Math.min(dnsProviders.length - 1, dnsIndex + delta))
-  }
-
-  function activateDns() {
-    if (dnsIndex < 0 || dnsIndex >= dnsProviders.length) return
-    setDns(dnsProviders[dnsIndex])
-  }
-
-  function selectBandByDelta(delta) {
-    bandIndex = Math.max(0, Math.min(bandAvailable.length - 1, bandIndex + delta))
-  }
-
-  function activateBand() {
-    if (bandAutoFocused) {
-      toggleBandAuto()
-      return
-    }
-    if (bandIndex < 0 || bandIndex >= bandAvailable.length) return
-    setBand(bandAvailable[bandIndex])
-  }
-
-  // Switching Automatic off has to commit to something, so it pins whatever
-  // band the radio already landed on -- the reading the pills are showing.
-  function toggleBandAuto() {
-    if (bandSelected !== "auto") {
-      setBand("auto")
-      return
-    }
-    if (bandCurrent === "") return
-    setBand(bandCurrent)
-  }
-
-  // Park the cursor on the pinned band, so opening the panel highlights the
-  // pill the user would expect. Under Automatic there are no pills, so the
-  // cursor belongs on the switch.
-  function syncBandIndex() {
-    var idx = bandAvailable.indexOf(bandSelected)
-    bandIndex = idx >= 0 ? idx : 0
-    bandAutoFocused = !bandPillsVisible
-  }
-
-  function bandLabel(band) {
-    return Model.bandLabel(band)
-  }
-
-  function bandTooltip(band) {
-    return Model.bandTooltip(band)
-  }
-
-  // Single cursor model: exactly one highlighted spot across the whole
-  // panel, located via `focusSection` + (`headerIndex` | `dnsIndex` |
-  // `selectedIndex`). Mouse hover and keyboard nav both mutate this state
-  // at the root; items never read containsMouse for visuals. See
-  // CursorSurface for the shared chrome shared by rows and pills.
-  readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Commons.Color.accent) : "transparent"
-  readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Commons.Color.accent) : "transparent"
-
-  // scannerEnabled lives on the shared WifiDevice, which has no reference
-  // counting, and a bar widget is instantiated once per monitor. Tracking the
-  // device this instance turned scanning on for keeps the release correct when
-  // the panel closes, the device is replaced, or the widget is destroyed —
-  // without a closed instance ever claiming the scanner.
-  property var scannerDevice: null
-
-  function setScannerEnabled(enabled) {
-    var nextDevice = opened ? wifiDevice : null
-
-    if (scannerDevice && scannerDevice !== nextDevice)
-      scannerDevice.scannerEnabled = false
-
-    scannerDevice = nextDevice
-
-    if (scannerDevice)
-      scannerDevice.scannerEnabled = enabled
-  }
-
-  Component.onDestruction: {
-    if (scannerDevice) scannerDevice.scannerEnabled = false
-  }
-
-  // KeyboardPanel primes layer-shell focus whenever the panel opens. That's
-  // what makes the SUPER+CTRL+W keybind land here with navigation ready.
-  onOpenedChanged: {
-    if (opened) {
-      refresh(true)
-      selectedIndex = wifiNetworks.length > 0 ? 0 : -1
-      wifiActionFocused = false
-      focusSection = wifiNetworks.length > 0 ? "wifi" : "dns"
-      var idx = dnsProviders.indexOf(dnsProvider)
-      dnsIndex = idx >= 0 ? idx : 0
-      syncBandIndex()
-      cursorActive = false
-    } else {
-      // Drop a restart armed by this open: without it a close/reopen inside
-      // the 100ms window reuses the running timer and re-enables the scanner
-      // almost immediately, undoing the deferral.
-      scanRestart.stop()
-      scanDone.stop()
-      scanning = false
-      // Reset throughput tracking so the next open doesn't compute a fake
-      // rate from a sample taken minutes ago.
-      prevSampleTime = 0
-      downloadRate = 0
-      uploadRate = 0
-      pingIface = ""
-      routerPingSamples = []
-      internetPingSamples = []
-      routerPingLatency = -1
-      internetPingLatency = -1
-      internetPingPacketLoss = 0
-      setScannerEnabled(false)
-    }
-  }
-
-  // When the passphrase prompt closes (Esc / Cancel / success) restore
-  // focus to the keyCatcher so j/k/Enter resume working without a click.
-  // The KeyboardPanel's focusTarget covers initial popup-open; this handles
-  // the inline-editor case where focus was handed off to a child.
-  onPasswordSsidChanged: {
-    if (passwordSsid === "" && opened) {
-      passwordText = ""
-      Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
-    }
-  }
-
-  // Keep selectedIndex valid as scans refresh the network list.
-  // If the list empties (station gone, e.g. wifi off), bounce the cursor
-  // back to the DNS row so the panel doesn't end up with no cursor at all.
-  onWifiNetworksChanged: {
-    if (wifiNetworks.length === 0) {
-      selectedIndex = -1
-      wifiActionFocused = false
-      if (focusSection === "wifi") focusSection = "dns"
-    } else if (passwordSsid !== "") {
-      var passwordIndex = wifiIndexForSsid(passwordSsid)
-      if (passwordIndex >= 0) {
-        selectedIndex = passwordIndex
-        focusSection = "wifi"
-      }
-    } else if (selectedIndex >= wifiNetworks.length) {
-      selectedIndex = wifiNetworks.length - 1
-    } else if (selectedIndex < 0 && opened) {
-      selectedIndex = 0
-    }
-
-    if (selectedIndex < 0 || selectedIndex >= wifiNetworks.length || !canForgetNetwork(wifiNetworks[selectedIndex])) {
-      wifiActionFocused = false
-    }
-  }
-
-  onWifiDeviceChanged: {
-    setScannerEnabled(true)
-    syncWifiNetworks()
-  }
-
-  onWifiNetworkObjectsChanged: {
-    syncWifiNetworks()
-    if (opened) bandSettle.restart()
-  }
-
-  function selectByDelta(delta) {
-    if (wifiNetworks.length === 0) { selectedIndex = -1; return }
-    if (selectedIndex < 0) selectedIndex = delta > 0 ? 0 : wifiNetworks.length - 1
-    else selectedIndex = Math.max(0, Math.min(wifiNetworks.length - 1, selectedIndex + delta))
-    wifiActionFocused = false
-  }
-
-  function canForgetNetwork(net) {
-    return Model.canForgetNetwork(net)
-  }
-
-  function selectWifiActionByDelta(delta) {
-    if (selectedIndex < 0 || selectedIndex >= wifiNetworks.length) return
-    if (!canForgetNetwork(wifiNetworks[selectedIndex])) {
-      wifiActionFocused = false
-      return
-    }
-    if (delta > 0) wifiActionFocused = true
-    else if (delta < 0) wifiActionFocused = false
-  }
-
-  // Enter/Space on the highlighted row. Mirrors row-click semantics:
-  // connected → disconnect, credentials-required/unknown → prompt,
-  // passwordless/known → connect.
-  function activateSelected() {
-    if (busy || selectedIndex < 0 || selectedIndex >= wifiNetworks.length) return
-    var net = wifiNetworks[selectedIndex]
-    if (!net) return
-    if (wifiActionFocused && canForgetNetwork(net)) { forget(net); return }
-    // Only act on a row that still resolves. disconnect() falls back to
-    // connectedWifiNetwork when handed null, so a row left stale by scan churn
-    // would otherwise tear down whatever is connected now instead.
-    if (net.connected) { disconnectRow(net.ssid); return }
-    if (requiresCredentials(net.security) && !net.known) { openPasswordPrompt(net.ssid); return }
-    connectDirectly(net.ssid)
-  }
-
-  // Bar pill state, derived from the native NetworkManager service so the
-  // icon reflects connection changes without polling. Wired is preferred
-  // when both are up, matching the default-route device.
-  readonly property var wiredDevice: findDevice(DeviceType.Wired)
-  readonly property string kind: {
-    if (wiredDevice && wiredDevice.connected) return "ethernet"
-    if (connectedWifiNetwork) return "wifi"
-    return "disconnected"
-  }
-  readonly property int signalStrength: connectedWifiNetwork
-    ? Math.round((connectedWifiNetwork.signalStrength || 0) * 100)
-    : -1
-
-  function copyToClipboard(value) {
-    if (!value || !root.bar) return
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(value) + " | wl-copy"])
-  }
-
-  readonly property string icon: Model.connectionIcon(kind, signalStrength)
-
-  function refresh(scanWifi) {
-    if (scanWifi === undefined) scanWifi = false
-    if (!detailsProc.running) detailsProc.running = true
-    if (!dnsProc.running) {
-      dnsProc.command = ["bash", "-c", root.dnsCommand("")]
-      dnsProc.running = true
-    }
-    probeBand()
-    // A closed panel has no nearby-network list to fill, and bare refresh()
-    // reaches here from action completion, timeouts and construction.
-    if (opened && wifiDevice) {
-      if (scanWifi) {
-        scanning = true
-        setScannerEnabled(false)
-        scanRestart.start()
-      } else {
-        setScannerEnabled(true)
-      }
-    }
-    syncWifiNetworks()
-  }
-
-  function formatHeaderSpeed(mbps) {
-    return Model.formatHeaderSpeed(mbps)
-  }
-
-  function formatHeaderFreq(mhz) {
-    return Model.formatHeaderFreq(mhz)
-  }
-
-  function headerDetail() {
-    return Model.headerDetail(info)
-  }
-
-  function updateDetails(raw) {
-    var next = Model.parseKeyValue(raw)
-
-    // A band change tears the link down and brings it back, and the status
-    // command reports nothing at all while there is no route. Publishing that
-    // would blank every stat and unmount the whole section mid-toggle, so the
-    // last good sample stands until the reconnect settles. A real disconnect is
-    // still reported, because nothing is in flight then.
-    if (bandBusy && !next.iface) return
-
-    info = next
-    updateThroughput(next)
-    updatePingLatency(next)
-  }
-
-  function updateThroughput(next) {
-    var state = Model.throughputState({
-      prevIface: prevIface,
-      prevRxBytes: prevRxBytes,
-      prevTxBytes: prevTxBytes,
-      prevSampleTime: prevSampleTime,
-      downloadRate: downloadRate,
-      uploadRate: uploadRate
-    }, next, Date.now() / 1000)
-
-    prevIface = state.prevIface
-    prevRxBytes = state.prevRxBytes
-    prevTxBytes = state.prevTxBytes
-    prevSampleTime = state.prevSampleTime
-    downloadRate = state.downloadRate
-    uploadRate = state.uploadRate
-  }
-
-  function updatePingLatency(next) {
-    var state = Model.pingLatencyState({
-      pingIface: pingIface,
-      routerPingSamples: routerPingSamples,
-      internetPingSamples: internetPingSamples
-    }, next, pingHistoryWindow, pingAverageWindow)
-
-    pingIface = state.pingIface
-    routerPingSamples = state.routerPingSamples
-    internetPingSamples = state.internetPingSamples
-    routerPingLatency = state.routerPingLatency
-    internetPingLatency = state.internetPingLatency
-    internetPingPacketLoss = state.internetPingPacketLoss
-  }
-
-  function formatBytes(bytes) {
-    return Model.formatBytes(bytes)
-  }
-
-  function formatRate(bytesPerSec) {
-    return Model.formatRate(bytesPerSec)
-  }
-
-  function formatPingLatency(ms) {
-    return Model.formatPingLatency(ms, hasInternetPing)
-  }
-
-  function formatPacketLoss(percent) {
-    return Model.formatPacketLoss(percent, hasInternetPing)
-  }
-
-  // Prefer a connected device: a machine can expose several NICs of the
-  // same type (e.g. an idle onboard port alongside the active adapter),
-  // and the first-enumerated one may be carrierless.
-  function findDevice(type) {
-    var devices = networkDevices || []
-    var fallback = null
-    for (var i = 0; i < devices.length; i++) {
-      var device = devices[i]
-      if (!device || device.type !== type) continue
-      if (device.connected) return device
-      if (!fallback) fallback = device
-    }
-    return fallback
-  }
-
-  function findConnectedWifiNetwork() {
-    var networks = wifiNetworkObjects || []
-    for (var i = 0; i < networks.length; i++) {
-      if (networks[i] && networks[i].connected) return networks[i]
-    }
-    return null
-  }
-
-  function syncWifiNetworks() {
-    var nets = []
-    var networks = wifiNetworkObjects || []
-
-    for (var i = 0; i < networks.length; i++) {
-      var network = networks[i]
-      if (!network) continue
-      checkActionCompletion(network)
-      var row = Model.wifiRow(network)
-      if (row) nets.push(row)
-    }
-    wifiNetworks = Model.sortWifiRows(nets)
-    wifiStationAvailable = !!wifiDevice
-  }
-
-  function wifiSectionTitle(index) {
-    return Model.wifiSectionTitle(wifiNetworks, index)
-  }
-
-  function wifiIconFor(strength) {
-    return Model.wifiIconFor(strength)
-  }
-
-  function updateDns(raw) {
-    var value = String(raw || "").trim()
-    dnsProvider = value || "DHCP"
-  }
-
-  function updateBand(raw) {
-    var status = Model.parseBandStatus(raw)
-
-    // Mid-reconnect there is no connected station, so the command reports
-    // nothing. Publishing that would empty the option list and unmount the
-    // section on every toggle -- same guard as updateDetails.
-    if (bandBusy && status.available.length === 0) return
-
-    bandCurrent = status.band
-    bandSelected = status.selected
-    bandAvailable = status.available
-  }
-
-  // Pinning a band reassociates, but the panel deliberately stays open: the
-  // reconnect is the thing you want to watch, and the details rows above
-  // report it as it happens.
-  function setBand(band) {
-    if (!band || actionProc.running) return
-
-    root.pendingBand = band
-    actionProc.command = ["nova-network-band", band]
-    actionProc.running = true
-  }
-
-  function dnsCommand(provider) {
-    var command = "nova-dns"
-    if (provider) command += " " + Util.shellQuote(provider)
-    return command
-  }
-
-  function setDns(provider) {
-    if (!root.bar || !provider || actionProc.running || customDns.busy) return
-
-    if (provider === "Custom") {
-      root.customDnsOpen = true
-      return
-    }
-
-    root.customDnsOpen = false
-    root.pendingDnsProvider = provider
-    actionProc.command = ["bash", "-c", root.dnsCommand(provider)]
-    actionProc.running = true
-    root.close()
-  }
-
-  function requiresCredentials(security) {
-    return Model.requiresCredentials(security, WifiSecurityType.Open, WifiSecurityType.Owe)
+  function forget(row) {
+    act("forget", row ? network(row.ssid) : null, function(each) { each.forget() })
   }
 
   function openPasswordPrompt(ssid) {
@@ -638,90 +317,299 @@ Ui.Panel {
     passwordSsid = ssid
   }
 
-  function networkForSsid(ssid) {
-    var networks = wifiNetworkObjects || []
-    for (var i = 0; i < networks.length; i++) {
-      if (networks[i] && networks[i].name === ssid) return networks[i]
+  function cancelPasswordPrompt() {
+    passwordSsid = ""
+    passwordText = ""
+    identityText = ""
+  }
+
+  // What a click on a row does: leave the network it is on, ask for a
+  // passphrase it has none for, or join.
+  function choose(row) {
+    if (row.connected) disconnectFrom(row.ssid)
+    else if (asksForSecret(row.security) && !row.known) openPasswordPrompt(row.ssid)
+    else connectTo(row.ssid)
+  }
+
+  onPasswordSsidChanged: {
+    if (passwordSsid !== "" || !opened) return
+    passwordText = ""
+    Qt.callLater(function() { if (keyCatcher) keyCatcher.forceActiveFocus() })
+  }
+
+  // ---------------------------------------------------------------- scanning
+
+  // The radio's scanner is the device's, shared by the bar on every screen
+  // and counted by none: each panel turns it on only while it is open, and
+  // turns off only the one it turned on, whichever device that was.
+  property var scannerOf: null
+
+  function scan(on) {
+    var next = opened ? radio : null
+    if (scannerOf && scannerOf !== next) scannerOf.scannerEnabled = false
+    scannerOf = next
+    if (scannerOf) scannerOf.scannerEnabled = on
+  }
+
+  Component.onDestruction: if (scannerOf) scannerOf.scannerEnabled = false
+
+  onRadioChanged: {
+    scan(true)
+    syncRows()
+  }
+
+  onInReachChanged: {
+    syncRows()
+    if (opened) bandSettle.restart()
+  }
+
+  // Asks every command again. With `rescan`, the scanner goes off and back on
+  // a beat later, so that the open panel lists what is in reach now: the
+  // beat lets the panel draw before NetworkManager's flood of networks.
+  function refresh(rescan) {
+    if (!status.running) status.running = true
+    if (!dnsProbe.running) {
+      dnsProbe.command = ["bash", "-c", dnsCommand("")]
+      dnsProbe.running = true
     }
-    return null
-  }
-
-  function wifiIndexForSsid(ssid) {
-    for (var i = 0; i < wifiNetworks.length; i++) {
-      if (wifiNetworks[i] && wifiNetworks[i].ssid === ssid) return i
+    askBands()
+    if (opened && radio) {
+      if (rescan) {
+        scanning = true
+        scan(false)
+        scanRestart.start()
+      } else {
+        scan(true)
+      }
     }
-    return -1
+    syncRows()
   }
 
-  function runNetworkAction(kind, network, callback) {
-    if (actionKind !== "" || !network) return
-    var ssid = network.name || ""
-    actionSsid = ssid
-    actionKind = kind
-    failureSsid = ""
-    failureReason = ""
-    callback(network)
-    // Safety net: if onExited never fires (process death, signal handler
-    // throws, etc.), clear the busy state so the row doesn't get stuck on
-    // "Connecting…" / "Disconnecting…" forever.
-    actionTimeout.restart()
+  Component.onCompleted: refresh()
+
+  // -------------------------------------------------------------- the cursor
+
+  // One spot lit at a time, the keys' and the pointer's alike: the radio's
+  // switch ("header"), the band (its Automatic switch, or the pill at
+  // bandIndex), the DNS pill at dnsIndex, or the row at selectedIndex (or its
+  // Forget mark). The pointer moves the cursor; the items paint it.
+  property bool cursorActive: false
+  property string focusSection: "dns"
+  property int bandIndex: 0
+  property bool bandAutoFocused: true
+  property int dnsIndex: 0
+  property int selectedIndex: -1
+  property bool wifiActionFocused: false
+
+  readonly property color hoverFill: bar ? Style.hoverFillFor(bar.foreground, Commons.Color.accent) : "transparent"
+  readonly property color selectedFill: bar ? Style.selectedFillFor(bar.foreground, Commons.Color.accent) : "transparent"
+
+  function clamp(value, last) {
+    return Math.max(0, Math.min(last, value))
   }
 
-  function clearNetworkAction() {
-    actionTimeout.stop()
-    if (actionKind === "connect") passwordSsid = ""
-    failureSsid = ""
-    failureReason = ""
-    actionSsid = ""
-    actionKind = ""
-    refresh()
+  function pointAt(section) {
+    cursorActive = true
+    focusSection = section
   }
 
-  function failNetworkAction(network, reason) {
-    if (!network || actionKind === "" || actionSsid !== (network.name || "")) return
-    actionTimeout.stop()
-    failureSsid = actionSsid
-    failureReason = networkFailureReason(reason, requiresCredentials(network.security))
-    actionSsid = ""
-    actionKind = ""
-    refresh()
+  // Up and down run switch, band, DNS, networks, skipping what is not
+  // there; the band is the Automatic switch then the pills, when they show.
+  function moveCursor(dx, dy) {
+    if (!cursorActive) {
+      cursorActive = true
+      if (dy >= 0) return
+    }
+    if (dy > 0) {
+      if (focusSection === "header") {
+        if (canSelectBand) {
+          focusSection = "band"
+          bandAutoFocused = true
+        } else {
+          focusSection = "dns"
+        }
+      } else if (focusSection === "band") {
+        if (bandAutoFocused && pillsShown) bandAutoFocused = false
+        else focusSection = "dns"
+      } else if (focusSection === "dns") {
+        if (rows.length > 0) {
+          focusSection = "wifi"
+          if (selectedIndex < 0) selectedIndex = 0
+        }
+      } else {
+        moveRow(dy)
+      }
+    } else if (dy < 0) {
+      if (focusSection === "band") {
+        if (!bandAutoFocused) bandAutoFocused = true
+        else if (canToggleWifi) focusSection = "header"
+      } else if (focusSection === "dns") {
+        if (canSelectBand) {
+          focusSection = "band"
+          bandAutoFocused = !pillsShown
+        } else if (canToggleWifi) {
+          focusSection = "header"
+        }
+      } else if (focusSection === "wifi") {
+        if (selectedIndex > 0) {
+          moveRow(dy)
+        } else {
+          focusSection = "dns"
+          wifiActionFocused = false
+        }
+      }
+    }
+    if (dx === 0) return
+    if (focusSection === "band" && !bandAutoFocused) bandIndex = clamp(bandIndex + dx, bands.length - 1)
+    else if (focusSection === "dns") dnsIndex = clamp(dnsIndex + dx, dnsChoices.length - 1)
+    else if (focusSection === "wifi") moveToForget(dx)
   }
 
-  function networkFailureReason(reason, needsCredentials) {
-    return Model.networkFailureReason(reason, needsCredentials, connectionFailReasons)
+  function moveRow(delta) {
+    if (rows.length === 0) {
+      selectedIndex = -1
+      return
+    }
+    selectedIndex = selectedIndex < 0 ? (delta > 0 ? 0 : rows.length - 1) : clamp(selectedIndex + delta, rows.length - 1)
+    wifiActionFocused = false
   }
 
-  function shouldRepromptPassphrase(reason, needsCredentials) {
-    return Model.shouldRepromptPassphrase(reason, needsCredentials, connectionFailReasons)
+  // Right onto a row's Forget mark, where it has one; left back off it.
+  function moveToForget(dx) {
+    var row = rows[selectedIndex]
+    if (selectedIndex < 0 || !row) return
+    wifiActionFocused = Model.canForget(row) && dx > 0
   }
 
-  function checkActionCompletion(network) {
-    if (!network || actionKind === "" || actionSsid !== (network.name || "")) return
-    if (actionKind === "connect" && network.connected) clearNetworkAction()
-    else if (actionKind === "disconnect" && !network.connected && !network.stateChanging) clearNetworkAction()
-    else if (actionKind === "forget" && !network.known && !network.stateChanging) clearNetworkAction()
+  function activateCursor() {
+    if (!cursorActive) return
+    if (focusSection === "header") {
+      if (canToggleWifi) toggleNetwork()
+    } else if (focusSection === "band") {
+      if (bandAutoFocused) toggleAutomatic()
+      else if (bandIndex >= 0 && bandIndex < bands.length) setBand(bands[bandIndex])
+    } else if (focusSection === "dns") {
+      if (dnsIndex >= 0 && dnsIndex < dnsChoices.length) setDns(dnsChoices[dnsIndex].name)
+    } else {
+      var row = rows[selectedIndex]
+      if (busy || selectedIndex < 0 || !row) return
+      if (wifiActionFocused && Model.canForget(row)) forget(row)
+      else choose(row)
+    }
   }
 
-  function connectDirectly(ssid) {
-    runNetworkAction("connect", networkForSsid(ssid), function(network) { network.connect() })
+  // The bands come and go with scans; the cursor keeps to what is there.
+  onBandsChanged: if (bandIndex > bands.length - 1) bandIndex = Math.max(0, bands.length - 1)
+  onCanSelectBandChanged: {
+    if (canSelectBand || focusSection !== "band") return
+    focusSection = "dns"
+    bandAutoFocused = true
+  }
+  onPillsShownChanged: if (!pillsShown) bandAutoFocused = true
+
+  // Likewise the rows: an empty list sends the cursor up to the DNS, and an
+  // open passphrase keeps it on its row.
+  onRowsChanged: {
+    if (rows.length === 0) {
+      selectedIndex = -1
+      wifiActionFocused = false
+      if (focusSection === "wifi") focusSection = "dns"
+    } else if (passwordSsid !== "") {
+      var asking = rowIndex(passwordSsid)
+      if (asking >= 0) {
+        selectedIndex = asking
+        focusSection = "wifi"
+      }
+    } else if (selectedIndex >= rows.length) {
+      selectedIndex = rows.length - 1
+    } else if (selectedIndex < 0 && opened) {
+      selectedIndex = 0
+    }
+    if (!Model.canForget(rows[selectedIndex])) wifiActionFocused = false
   }
 
-  function connectWithPassphrase(ssid, passphrase) {
-    runNetworkAction("connect", networkForSsid(ssid), function(network) { network.connectWithPsk(passphrase) })
+  // ------------------------------------------------------------- open, close
+
+  function close() {
+    controller.hide()
+    cancelPasswordPrompt()
   }
 
-  function connectEnterprise(ssid, identity, passphrase) {
-    runNetworkAction("connect", networkForSsid(ssid), function(network) {
-      enterpriseConnect.secret = passphrase
-      enterpriseConnect.command = ["bash", "-c", Model.enterpriseConnectScript, "nmcli-eap", ssid, identity]
-      enterpriseConnect.running = true
-    })
+  // The panel opens on the first network, or on the DNS with none; the
+  // cursor shows once a key or the pointer moves it.
+  onOpenedChanged: {
+    if (opened) {
+      refresh(true)
+      selectedIndex = rows.length > 0 ? 0 : -1
+      wifiActionFocused = false
+      focusSection = rows.length > 0 ? "wifi" : "dns"
+      dnsIndex = Math.max(0, dnsChoices.findIndex(function(choice) { return choice.name === dnsProvider }))
+      bandIndex = Math.max(0, bands.indexOf(bandSelected))
+      bandAutoFocused = !pillsShown
+      cursorActive = false
+      return
+    }
+    // A rescan asked for by this open goes with it, or a quick reopen would
+    // find the scanner already on.
+    scanRestart.stop()
+    scanDone.stop()
+    scanning = false
+    // So that the next open does not work out a rate from a reading taken
+    // long before.
+    traffic = {}
+    ping = { iface: "", samples: [] }
+    scan(false)
   }
 
-  // Creates and activates the 802.1X profile (see Model.enterpriseConnectScript).
-  // The password goes over stdin, never argv.
+  // --------------------------------------------------------------- processes
+
   Process {
-    id: enterpriseConnect
+    id: status
+    command: ["nova-network-status", "--verbose"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.read(text)
+    }
+  }
+
+  Process {
+    id: dnsProbe
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.dnsProvider = text.trim() || "DHCP"
+    }
+  }
+
+  Process {
+    id: bandProbe
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.readBands(text)
+    }
+  }
+
+  // A pin or a DNS preset. Its answer decides what the panel shows: a
+  // refused one leaves what is in force.
+  Process {
+    id: change
+    stdout: StdioCollector { waitForEnd: true }
+    stderr: StdioCollector { waitForEnd: true }
+    onExited: function(exitCode) {
+      if (root.pendingDns !== "") {
+        if (exitCode === 0) root.dnsProvider = root.pendingDns
+        root.pendingDns = ""
+      }
+      if (root.pendingBand !== "") {
+        if (exitCode === 0) root.bandSelected = root.pendingBand
+        root.pendingBand = ""
+        root.refresh()
+      }
+    }
+  }
+
+  // The WPA Enterprise join (Model.ENTERPRISE_SCRIPT), the password on stdin.
+  Process {
+    id: enterprise
     property string secret: ""
     stdinEnabled: true
     onStarted: {
@@ -730,214 +618,99 @@ Ui.Panel {
     }
   }
 
-  function disconnect(network) {
-    runNetworkAction("disconnect", network || connectedWifiNetwork, function(net) { net.disconnect() })
-  }
-
-  // Disconnect from a row's SSID. Rows are primitive snapshots that can outlive
-  // their WifiNetwork, and disconnect()'s null fallback targets whatever is
-  // connected now, so a stale row must do nothing rather than hit an unrelated
-  // network. Callers that mean "drop the current connection" call disconnect().
-  function disconnectRow(ssid) {
-    var network = networkForSsid(ssid)
-    if (network) disconnect(network)
-  }
-
-  function forget(net) {
-    runNetworkAction("forget", net ? networkForSsid(net.ssid) : null, function(network) { network.forget() })
-  }
-
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
-
-  Component.onCompleted: refresh()
-
-  // Pulls everything we want about the active route's interface in one shot.
-  Process {
-    id: detailsProc
-    command: ["nova-network-status", "--verbose"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateDetails(text)
-    }
+  // The link is read every 1.5 s while the panel is open, so the title
+  // follows NetworkManager as a connection comes up.
+  Timer {
+    interval: 1500
+    repeat: true
+    running: root.opened
+    onTriggered: if (!status.running) status.running = true
   }
 
   Timer {
     id: scanRestart
     interval: 100
-    repeat: false
     onTriggered: {
-      if (root.opened && root.wifiDevice) {
-        root.setScannerEnabled(true)
-        scanDone.start()
-      }
+      if (!root.opened || !root.radio) return
+      root.scan(true)
+      scanDone.start()
     }
   }
 
-  // The scan started by opening the panel: its header shows until then.
+  // "SCANNING WI-FI…" shows until the scan this open started is done.
   Timer {
     id: scanDone
     interval: 1500
-    repeat: false
     onTriggered: {
       root.scanning = false
-      root.syncWifiNetworks()
+      root.syncRows()
     }
   }
 
-  Process {
-    id: dnsProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateDns(text)
-    }
-  }
-
-  Process {
-    id: bandProc
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.updateBand(text)
-    }
-  }
-
-  function probeBand() {
-    if (bandProc.running) return
-    bandProc.command = ["nova-network-band"]
-    bandProc.running = true
-  }
-
-  // The bands on offer move only when the link does, or when a scan turns up
-  // an access point; nova-network-band starts nmcli several times, so it asks
-  // then, once things settle, and every 15 s besides for an access point the
-  // list does not show.
+  // The bands change with the link, or with a scan that finds the network
+  // on another; nova-network-band runs nmcli several times, so it is asked
+  // a second after either, and every 15 s besides.
   readonly property string bandLink: String(info.ssid || "") + "\t" + String(info.freq || "")
   onBandLinkChanged: if (opened) bandSettle.restart()
 
   Timer {
     id: bandSettle
     interval: 1000
-    onTriggered: if (root.opened) root.probeBand()
+    onTriggered: if (root.opened) root.askBands()
   }
 
   Timer {
-    id: bandPoll
     interval: 15000
     repeat: true
     running: root.opened
-    onTriggered: root.probeBand()
+    onTriggered: root.askBands()
   }
 
-  // Action runner for DNS provider changes. Wi-Fi actions use the
-  // Quickshell.Networking NetworkManager backend directly.
-  Process {
-    id: actionProc
-    stdout: StdioCollector { id: actionStdout; waitForEnd: true }
-    stderr: StdioCollector { id: actionStderr; waitForEnd: true }
-    onExited: function(exitCode) {
-      if (root.pendingDnsProvider !== "") {
-        if (exitCode === 0) root.dnsProvider = root.pendingDnsProvider
-        root.pendingDnsProvider = ""
-      }
-      if (root.pendingBand !== "") {
-        // A refused or reverted pin leaves bandSelected alone, so the pills
-        // keep showing what is actually in force rather than what was asked.
-        if (exitCode === 0) root.bandSelected = root.pendingBand
-        root.pendingBand = ""
-        // The panel stayed open through the reconnect, so pull fresh state now
-        // instead of leaving stale readings until the next poll tick.
-        root.refresh()
-      }
-    }
-  }
-
-  // Poll details while the panel is open so the IP/route header catches up
-  // as soon as NetworkManager finishes activating a connection.
-  Timer {
-    id: detailsPoll
-    interval: 1500
-    repeat: true
-    running: root.opened
-    onTriggered: if (!detailsProc.running) detailsProc.running = true
-  }
-
-  Timer {
-    id: connectionPhraseTimer
-    interval: 2800
-    running: root.opened && (root.info.type === "ethernet" || (root.info.type === "wifi" && root.canDisconnect))
-    repeat: true
-    onTriggered: connectionPhraseSwap.restart()
-  }
-
-  SequentialAnimation {
-    id: connectionPhraseSwap
-    PropertyAnimation {
-      target: heroMeta; property: "opacity"
-      to: 0.0; duration: 180; easing.type: Easing.OutQuad
-    }
-    ScriptAction {
-      script: root.connectionPhraseIndex = (root.connectionPhraseIndex + 1) % root.connectionPhrases.length
-    }
-    PropertyAnimation {
-      target: heroMeta; property: "opacity"
-      to: 1.0; duration: 260; easing.type: Easing.InQuad
-    }
-  }
-
-  Connections {
-    target: root
-    function onInfoChanged() {
-      if (!(root.info.type === "ethernet" || (root.info.type === "wifi" && root.canDisconnect))) {
-        connectionPhraseSwap.stop()
-        heroMeta.opacity = 1.0
-      }
-    }
-  }
-
+  // A network that never answers: its row says the action timed out.
   Timer {
     id: actionTimeout
-    // Must outlast NetworkManager's 25s supplicant timeout: a wrong saved
-    // PSK fails with WifiAuthTimeout at ~25s, and that failure has to land
-    // while the action is still tracked to show "Wrong password" and reopen
-    // the passphrase prompt.
     interval: 30000
-    repeat: false
     onTriggered: {
-      if (!root.actionKind) return
-      var reason
-      if (root.actionKind === "connect") reason = "Timed out connecting"
-      else if (root.actionKind === "disconnect") reason = "Timed out disconnecting"
-      else reason = "Timed out forgetting"
+      if (!root.busy) return
       root.failureSsid = root.actionSsid
-      root.failureReason = reason
+      root.failureReason = root.actionKind === "connect" ? "Timed out connecting"
+        : root.actionKind === "disconnect" ? "Timed out disconnecting" : "Timed out forgetting"
       root.actionSsid = ""
       root.actionKind = ""
       root.refresh()
     }
   }
 
+  Timer {
+    interval: 2800
+    repeat: true
+    running: root.opened && root.linked
+    onTriggered: phraseSwap.restart()
+  }
+
+  SequentialAnimation {
+    id: phraseSwap
+    PropertyAnimation { target: meta; property: "opacity"; to: 0; duration: 180; easing.type: Easing.OutQuad }
+    ScriptAction { script: root.phrase = (root.phrase + 1) % root.phrases.length }
+    PropertyAnimation { target: meta; property: "opacity"; to: 1; duration: 260; easing.type: Easing.InQuad }
+  }
+
+  // ----------------------------------------------------------------- the bar
+
+  // A click opens the panel; opening rescans, a beat after the panel shows.
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.icon
-
-    onPressed: function(b) {
+    text: root.glyph
+    onPressed: function(which) {
       if (root.opened) root.close()
-      // open() is enough: onOpenedChanged runs refresh(true), which defers the
-      // PHY scan past the first frame. The bare refresh() that used to follow
-      // took the no-scan branch and set scannerEnabled synchronously, undoing
-      // that deferral and stalling the open on NetworkManager's AP flood.
       else root.open()
     }
   }
 
-  // Keyboard-driven popup anchored to the bar widget icon. The shared
-  // KeyboardPanel handles the layer-shell PanelWindow scaffolding
-  // (focus priming on open, screen binding, anchored-to-icon positioning,
-  // outside-click via an overlay MouseArea + Region mask that lets the bar
-  // remain clickable, fade animation, popout coordination). What stays
-  // here is the wifi-specific UI inside.
+  // --------------------------------------------------------------- the panel
+
   KeyboardPanel {
     id: panel
     anchorItem: button
@@ -946,91 +719,17 @@ Ui.Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight)
+    contentHeight: panel.fittedContentHeight(content.implicitHeight)
 
-    // Catches all unhandled keys for keyboard navigation. AfterItem priority
-    // lets the passphrase TextField (a child via focus chain) get its keys
-    // first; only events the focused subtree ignores bubble back here.
+    // The keys: hjkl and the arrows move, Enter and Space act, r reads
+    // everything again, w switches the radio. A passphrase being typed
+    // takes them all.
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
-      // Freeze the cursor model while the inline password prompt is open;
-      // the TextField inside owns input until Esc/Enter/Cancel.
       blocked: root.passwordSsid !== ""
-
-      onMoveRequested: function(dx, dy) {
-        if (!root.cursorActive) {
-          root.cursorActive = true
-          if (dy >= 0) return
-        }
-        if (dy !== 0) {
-          // Vertical order is header ⇄ band ⇄ DNS ⇄ wifi, with the band section
-          // dropping out of the chain entirely when it isn't on screen.
-          if (root.focusSection === "header") {
-            if (dy > 0) {
-              if (root.canSelectBand) {
-                root.focusSection = "band"
-                root.bandAutoFocused = true
-              } else {
-                root.focusSection = "dns"
-              }
-            }
-          } else if (root.focusSection === "band") {
-            // Automatic on the header line, then the pills -- which collapse
-            // away under Automatic, leaving a single row to walk.
-            if (dy < 0) {
-              if (!root.bandAutoFocused) {
-                root.bandAutoFocused = true
-              } else if (root.headerActionCount > 0) {
-                root.focusSection = "header"
-                root.headerIndex = 0
-              }
-            } else if (root.bandAutoFocused && root.bandPillsVisible) {
-              root.bandAutoFocused = false
-            } else {
-              root.focusSection = "dns"
-            }
-          } else if (root.focusSection === "dns") {
-            // k from DNS moves up into the band section when it's on screen,
-            // then the disconnect button; otherwise stays put. j drops into the
-            // wifi list if there's anywhere to land.
-            if (dy < 0) {
-              if (root.canSelectBand) {
-                root.focusSection = "band"
-                root.bandAutoFocused = !root.bandPillsVisible
-              } else if (root.headerActionCount > 0) {
-                root.focusSection = "header"
-                root.headerIndex = 0
-              }
-            } else if (root.wifiNetworks.length > 0) {
-              root.focusSection = "wifi"
-              if (root.selectedIndex < 0) root.selectedIndex = 0
-            }
-          } else {  // wifi
-            // k from the top row escapes back up to the DNS row rather than
-            // wrapping around to the bottom of the list.
-            if (dy < 0 && root.selectedIndex <= 0) {
-              root.focusSection = "dns"
-              root.wifiActionFocused = false
-            }
-            else root.selectByDelta(dy)
-          }
-        }
-        if (dx !== 0) {
-          if (root.focusSection === "header") root.selectHeaderByDelta(dx)
-          else if (root.focusSection === "band") { if (!root.bandAutoFocused) root.selectBandByDelta(dx) }
-          else if (root.focusSection === "dns") root.selectDnsByDelta(dx)
-          else if (root.focusSection === "wifi") root.selectWifiActionByDelta(dx)
-        }
-      }
-      onActivateRequested: {
-        if (root.cursorActive) {
-          if (root.focusSection === "header") root.activateHeader()
-          else if (root.focusSection === "band") root.activateBand()
-          else if (root.focusSection === "dns") root.activateDns()
-          else root.activateSelected()
-        }
-      }
+      onMoveRequested: function(dx, dy) { root.moveCursor(dx, dy) }
+      onActivateRequested: root.activateCursor()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
@@ -1038,474 +737,361 @@ Ui.Panel {
         else if (t === "w" || t === "W") root.toggleNetwork()
       }
 
-    Column {
-      id: column
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.top: parent.top
-      spacing: Style.space(12)
+      Column {
+        id: content
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        spacing: Style.space(12)
 
-      // ---------- Hero: network icon · SSID + state · actions ----------
-      Item {
-        width: parent.width
-        implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, heroActions.implicitHeight)
+        // The link: its glyph, its name with the cable's speed, the phrase,
+        // and the radio's switch.
+        Item {
+          width: parent.width
+          implicitHeight: Math.max(heroGlyph.implicitHeight, heroText.implicitHeight, root.canToggleWifi ? radioSwitch.implicitHeight : 0)
 
-        // Status only — the switch owns toggling, mouse and keyboard alike.
-        Text {
-          id: heroIcon
-          textFormat: Text.PlainText
-          text: root.icon
-          color: root.bar.foreground
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.display
-          opacity: root.networkManagerAvailable ? 1.0 : 0.5
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-        }
-
-        // The Wi-Fi radio switch lives in the connected-network hero.
-        RowLayout {
-          id: heroActions
-          spacing: Style.space(8)
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
+          Text {
+            id: heroGlyph
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            textFormat: Text.PlainText
+            text: root.glyph
+            color: root.bar.foreground
+            opacity: root.managed ? 1 : 0.5
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.display
+          }
 
           ToggleSwitch {
-            id: powerSwitch
+            id: radioSwitch
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
             visible: root.canToggleWifi
             checked: Networking.wifiEnabled
-            hasCursor: root.toggleHeaderHasCursor
+            hasCursor: root.cursorActive && root.focusSection === "header" && root.canToggleWifi
             foreground: root.bar.foreground
-            Layout.alignment: Qt.AlignVCenter
-            onHovered: function(on) { if (on) root.setHeaderCursor(root.toggleHeaderIndex) }
+            onHovered: function(on) { if (on) root.pointAt("header") }
             onToggled: root.toggleNetwork()
 
             PanelToolTip {
-              visible: powerSwitch.containsMouse
-              text: root.toggleHint
+              visible: radioSwitch.containsMouse
+              text: Networking.wifiEnabled ? "Turn Wi-Fi off" : "Turn Wi-Fi on"
               fontFamily: root.bar.fontFamily
             }
           }
-        }
 
-        Column {
-          id: heroLabels
-          anchors.left: heroIcon.right
-          anchors.leftMargin: Style.space(14)
-          anchors.right: parent.right
-          anchors.rightMargin: heroActions.width > 0 ? heroActions.width + Style.space(12) : 0
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(2)
+          Column {
+            id: heroText
+            anchors.left: heroGlyph.right
+            anchors.leftMargin: Style.space(14)
+            anchors.right: parent.right
+            anchors.rightMargin: root.canToggleWifi ? radioSwitch.width + Style.space(12) : 0
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
 
-          // Link detail rides inline after the name — "Ethernet (2.5gbit)" —
-          // rather than in a pill, which crowded the on/off switch.
-          Text {
-            id: heroSsid
-            textFormat: Text.PlainText
-            width: parent.width
-
-            readonly property string title: {
-              if (root.info.type === "wifi") return root.info.ssid || "Wi-Fi"
-              if (root.info.type === "ethernet") return "Ethernet"
-              return root.info.iface || (root.kind === "disconnected" ? "Disconnected" : "No connection")
+            Text {
+              readonly property string name: root.info.type === "wifi" ? root.info.ssid || "Wi-Fi"
+                : root.info.type === "ethernet" ? "Ethernet"
+                : root.info.iface || (root.kind === "disconnected" ? "Disconnected" : "No connection")
+              readonly property string speed: Model.linkSpeed(root.info)
+              width: parent.width
+              textFormat: Text.PlainText
+              text: speed !== "" ? name + " (" + speed + ")" : name
+              color: root.bar.foreground
+              elide: Text.ElideRight
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.title
+              font.bold: true
             }
-            readonly property string detail: root.headerDetail()
 
-            text: heroSsid.detail !== "" ? heroSsid.title + " (" + heroSsid.detail + ")" : heroSsid.title
-            color: root.bar.foreground
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.title
-            font.bold: true
-            elide: Text.ElideRight
-          }
-
-          Text {
-            id: heroMeta
-            textFormat: Text.PlainText
-            width: parent.width
-            text: {
-              if (root.info.type === "wifi") {
-                if (root.canDisconnect) return root.connectionPhrase.toUpperCase()
-                if (root.kind === "disconnected") return "NOT CONNECTED"
-                return ""
-              }
-              if (root.info.type === "ethernet") return root.connectionPhrase.toUpperCase()
-              if (root.kind === "disconnected") return "NOT CONNECTED"
-              return ""
+            Text {
+              id: meta
+              width: parent.width
+              visible: text !== ""
+              textFormat: Text.PlainText
+              text: root.linked ? root.phrases[root.phrase % root.phrases.length].toUpperCase()
+                : root.kind === "disconnected" ? "NOT CONNECTED" : ""
+              color: Qt.darker(root.bar.foreground, 1.4)
+              elide: Text.ElideRight
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
             }
-            visible: text !== ""
-            color: Qt.darker(root.bar.foreground, 1.4)
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.caption
-            font.bold: true
-            font.letterSpacing: 1.2
-            elide: Text.ElideRight
           }
         }
 
-      }
-
-      // Connection details: transfer metrics first, then IP/Gateway.
-      Column {
-        visible: !!root.info.iface
-        width: parent.width
-        spacing: Style.spacing.labelGap
-
+        // Traffic and ping, then the addresses; the addresses copy on a click.
         GridLayout {
+          visible: !!root.info.iface
           width: parent.width
           columns: 4
           columnSpacing: Style.space(20)
           rowSpacing: Style.spacing.labelGap
 
-          // Always mounted: these two used to appear a beat after the panel
-          // opened, once the first probe returned, shoving everything below
-          // them down. They now hold their place and read "--" until there is
-          // a sample.
-          InfoLabel { text: "Ping" }
-          DetailValue {
-            text: root.formatPingLatency(root.internetPingLatency)
-            color: root.internetPingPacketLoss > 0 ? root.bar.urgent : root.bar.foreground
+          StatName { text: "Ping" }
+          StatValue {
+            text: Model.pingText(root.pingMs, root.pinged)
+            color: root.pingLoss > 0 ? root.bar.urgent : root.bar.foreground
           }
-          InfoLabel { text: "Packet Loss" }
-          DetailValue {
-            text: root.formatPacketLoss(root.internetPingPacketLoss)
-            color: root.internetPingPacketLoss > 0 ? root.bar.urgent : root.bar.foreground
+          StatName { text: "Packet Loss" }
+          StatValue {
+            text: Model.lossText(root.pingLoss, root.pinged)
+            color: root.pingLoss > 0 ? root.bar.urgent : root.bar.foreground
           }
 
-          InfoLabel { text: "Receiving" }
-          DetailValue { text: root.hasTransferStats ? root.formatRate(root.downloadRate) : "--" }
-          InfoLabel { text: "Sending" }
-          DetailValue { text: root.hasTransferStats ? root.formatRate(root.uploadRate) : "--" }
+          StatName { text: "Receiving" }
+          StatValue { text: root.counted ? Model.rateText(root.traffic.down) : "--" }
+          StatName { text: "Sending" }
+          StatValue { text: root.counted ? Model.rateText(root.traffic.up) : "--" }
 
-          InfoLabel { text: "Downloaded" }
-          DetailValue { text: root.hasTransferStats ? root.formatBytes(parseFloat(root.info.rx_bytes || "0")) : "--" }
-          InfoLabel { text: "Uploaded" }
-          DetailValue { text: root.hasTransferStats ? root.formatBytes(parseFloat(root.info.tx_bytes || "0")) : "--" }
+          StatName { text: "Downloaded" }
+          StatValue { text: root.counted ? Model.bytesText(parseFloat(root.info.rx_bytes || "0")) : "--" }
+          StatName { text: "Uploaded" }
+          StatValue { text: root.counted ? Model.bytesText(parseFloat(root.info.tx_bytes || "0")) : "--" }
 
-          InfoLabel { text: "IP Address" }
-          DetailValue {
-            text: root.info.ip || "--"
-            copyable: !!root.info.ip
-            tooltipText: "Copy IP"
-          }
-          InfoLabel { text: "Gateway" }
-          DetailValue {
-            text: root.info.gateway || "--"
-            copyable: !!root.info.gateway
-            tooltipText: "Copy gateway"
-          }
+          StatName { text: "IP Address" }
+          StatValue { text: root.info.ip || "--"; copyHint: root.info.ip ? "Copy IP" : "" }
+          StatName { text: "Gateway" }
+          StatValue { text: root.info.gateway || "--"; copyHint: root.info.gateway ? "Copy gateway" : "" }
         }
-      }
 
-      // Wi-Fi band selection. Only on Wi-Fi, and only when the network answers
-      // on more than one band -- a single-band AP has nothing to toggle.
-      PanelSeparator {
-        visible: root.canSelectBand
-        foreground: root.bar.foreground
-      }
+        PanelSeparator {
+          visible: root.canSelectBand
+          foreground: root.bar.foreground
+        }
 
-      Column {
-        visible: root.canSelectBand
-        width: parent.width
-        spacing: Style.space(10)
-
-        // "Automatic" rides on the header line rather than under the pills: it
-        // qualifies the whole row, and at header scale it reads as a modifier
-        // instead of competing with the band choices for attention.
-        Item {
+        // The band: its heading with the Automatic switch, then the pills.
+        Column {
+          visible: root.canSelectBand
           width: parent.width
-          implicitHeight: Math.max(bandHeader.implicitHeight, bandAutoRow.implicitHeight)
+          spacing: Style.space(10)
 
-          PanelSectionHeader {
-            id: bandHeader
-            text: root.bandSectionTitle
-            foreground: root.bar.foreground
-            fontFamily: root.bar.fontFamily
-            anchors.left: parent.left
-            anchors.verticalCenter: parent.verticalCenter
-          }
-
-          Row {
-            id: bandAutoRow
-            anchors.right: parent.right
-            anchors.verticalCenter: parent.verticalCenter
-            spacing: Style.space(6)
+          Item {
+            width: parent.width
+            implicitHeight: Math.max(bandHeading.implicitHeight, automatic.implicitHeight)
 
             PanelSectionHeader {
-              id: bandAutoLabel
-              text: "AUTOMATIC"
+              id: bandHeading
+              anchors.left: parent.left
+              anchors.verticalCenter: parent.verticalCenter
+              text: Model.bandHeading(root.bandShown, root.bandCurrent)
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
-              anchors.verticalCenter: parent.verticalCenter
             }
 
-            // Sized off the label rather than the theme's control height so it
-            // reads as part of the header, and centred on the label's *glyphs*:
-            // PanelSectionHeader carries topPadding to protect Nerd Font
-            // overshoot, which pushes its text below its own box centre, so a
-            // plain verticalCenter would sit the switch visibly high.
-            ToggleSwitch {
-              id: bandAutoSwitch
-              trackHeight: Math.round(bandAutoLabel.font.pixelSize * 1.2)
-              cursorPad: Style.space(3)
-              anchors.verticalCenter: bandAutoLabel.verticalCenter
-              anchors.verticalCenterOffset: Math.round(bandAutoLabel.topPadding / 2)
-              checked: !root.bandPinned
-              busy: root.bandBusy
-              hasCursor: root.cursorActive && root.focusSection === "band" && root.bandAutoFocused
-              foreground: root.bar.foreground
-              onToggled: root.toggleBandAuto()
+            Row {
+              id: automatic
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              spacing: Style.space(6)
 
-              onHovered: function(isHovered) {
-                if (!isHovered) return
-                root.cursorActive = true
-                root.focusSection = "band"
-                root.bandAutoFocused = true
-              }
-
-              PanelToolTip {
-                visible: bandAutoSwitch.containsMouse
-                text: root.bandPinned
-                  ? "Let Wi-Fi pick the band"
-                  : "Stay on " + root.bandLabel(root.bandCurrent)
+              PanelSectionHeader {
+                id: automaticLabel
+                anchors.verticalCenter: parent.verticalCenter
+                text: "AUTOMATIC"
+                foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
               }
+
+              // As tall as the heading's letters, and centred on them: the
+              // heading's top padding (room for Nerd Font glyphs) puts its
+              // letters below the middle of its box.
+              ToggleSwitch {
+                id: automaticSwitch
+                anchors.verticalCenter: automaticLabel.verticalCenter
+                anchors.verticalCenterOffset: Math.round(automaticLabel.topPadding / 2)
+                trackHeight: Math.round(automaticLabel.font.pixelSize * 1.2)
+                cursorPad: Style.space(3)
+                checked: !root.bandPinned
+                busy: root.bandBusy
+                hasCursor: root.cursorActive && root.focusSection === "band" && root.bandAutoFocused
+                foreground: root.bar.foreground
+                onToggled: root.toggleAutomatic()
+                onHovered: function(on) {
+                  if (!on) return
+                  root.pointAt("band")
+                  root.bandAutoFocused = true
+                }
+
+                PanelToolTip {
+                  visible: automaticSwitch.containsMouse
+                  text: root.bandPinned ? "Let Wi-Fi pick the band" : "Stay on " + Model.bandName(root.bandCurrent)
+                  fontFamily: root.bar.fontFamily
+                }
+              }
             }
           }
-        }
 
-        // Collapsing container: the pills animate their height so toggling
-        // Automatic slides the sections below into place instead of snapping.
-        // `visible` only drops at a real zero, which keeps the row rendered for
-        // the whole animation and takes it out of the Column's spacing once
-        // it's actually gone.
-        Item {
-          id: bandPillsClip
-          width: parent.width
-          clip: true
-          visible: height > 0
-          height: root.bandPillsVisible ? bandRow.implicitHeight : 0
-          opacity: root.bandPillsVisible ? 1 : 0
-
-          Behavior on height {
-            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-          }
-          Behavior on opacity {
-            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-          }
-
-          Row {
-            id: bandRow
+          // The pills fold away under Automatic, the rest of the panel
+          // sliding up after them; hidden once folded, the column's spacing
+          // goes with them.
+          Item {
             width: parent.width
-            spacing: Style.space(6)
+            height: root.pillsShown ? pills.implicitHeight : 0
+            visible: height > 0
+            opacity: root.pillsShown ? 1 : 0
+            clip: true
 
-            readonly property int count: Math.max(1, root.bandAvailable.length)
-            readonly property real cellWidth: (width - spacing * (count - 1)) / count
+            Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
+            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
 
-            // Wrapper takes modelData/index from the Repeater's delegate
-            // context, which doesn't bind into nested `component` declarations,
-            // and passes them down explicitly -- same shape as the network
-            // list delegate.
-            Repeater {
-              model: root.bandAvailable
+            Row {
+              id: pills
+              width: parent.width
+              spacing: Style.space(6)
 
-              delegate: Item {
-                required property var modelData
-                required property int index
-                width: bandRow.cellWidth
-                height: bandPill.implicitHeight
+              Repeater {
+                model: root.bands
 
                 BandPill {
-                  id: bandPill
+                  required property string modelData
+                  required property int index
                   band: modelData
                   slot: index
-                  width: parent.width
+                  width: (pills.width - pills.spacing * (Math.max(1, root.bands.length) - 1)) / Math.max(1, root.bands.length)
                 }
               }
             }
           }
         }
 
-      }
+        PanelSeparator {
+          foreground: root.bar.foreground
+        }
 
-      // DNS provider selection.
-      PanelSeparator {
-        foreground: root.bar.foreground
-      }
+        Column {
+          width: parent.width
+          spacing: Style.space(10)
 
-      Column {
-        width: parent.width
-        spacing: Style.space(10)
+          PanelSectionHeader {
+            text: "DNS PROVIDER"
+            foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+          }
+
+          Row {
+            id: dnsPills
+            width: parent.width
+            spacing: Style.space(6)
+
+            Repeater {
+              model: root.dnsChoices
+
+              DnsPill {
+                required property var modelData
+                required property int index
+                provider: modelData.name
+                tooltipText: modelData.hint
+                slot: index
+                width: (dnsPills.width - dnsPills.spacing * 3) / 4
+              }
+            }
+          }
+
+          Settings.DnsView {
+            id: customDns
+            visible: root.customOpen
+            title: ""
+            onApplied: root.refresh()
+          }
+        }
+
+        PanelSeparator {
+          visible: !!root.radio
+          foreground: root.bar.foreground
+        }
 
         PanelSectionHeader {
-          text: "DNS PROVIDER"
+          visible: !!root.radio && root.scanning
+          text: "SCANNING WI-FI…"
           foreground: root.bar.foreground
           fontFamily: root.bar.fontFamily
         }
 
-        Row {
-          id: dnsRow
+        // Held to 240 px, so that a crowded street does not run the panel off
+        // the screen; the keys scroll the row they reach into view.
+        ListView {
+          id: networkList
+          visible: !!root.radio
           width: parent.width
-          spacing: Style.space(6)
+          height: Math.min(contentHeight, Style.space(240))
+          spacing: Style.space(4)
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          interactive: contentHeight > height
+          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-          readonly property int count: 4
-          readonly property real cellWidth: (width - spacing * (count - 1)) / count
+          model: root.radio ? root.rows : []
+          currentIndex: root.selectedIndex
+          onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
 
-          DnsProviderPill {
-            provider: "DHCP"
-            index: 0
-            tooltipText: "Use DNS from DHCP"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-
-          DnsProviderPill {
-            provider: "Cloudflare"
-            index: 1
-            tooltipText: "Set DNS to Cloudflare"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-
-          DnsProviderPill {
-            provider: "Google"
-            index: 2
-            tooltipText: "Set DNS to Google"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-
-          DnsProviderPill {
-            provider: "Custom"
-            index: 3
-            tooltipText: "Set custom DNS servers"
-            width: dnsRow.cellWidth
-            onClicked: root.setDns(provider)
-          }
-        }
-        Settings.DnsView {
-          id: customDns
-          visible: root.customDnsOpen
-          title: ""
-          onApplied: root.refresh()
-        }
-      }
-
-
-      // Wi-Fi networks (only if a Wi-Fi station is available).
-      PanelSeparator {
-        visible: root.wifiStationAvailable
-        foreground: root.bar.foreground
-      }
-
-      PanelSectionHeader {
-        visible: root.wifiStationAvailable && root.scanning
-        text: "SCANNING WI-FI…"
-        foreground: root.bar.foreground
-        fontFamily: root.bar.fontFamily
-      }
-
-      // Scrollable network list — cap the height so a busy neighbourhood
-      // doesn't push the popup off-screen. ListView (vs Repeater+Column)
-      // gives us positionViewAtIndex for free, which is what keeps the
-      // keyboard-selected row scrolled into view as j/k walk past the
-      // visible window.
-      ListView {
-        id: networkList
-        visible: root.wifiStationAvailable
-        width: parent.width
-        height: Math.min(contentHeight, Style.space(240))
-        spacing: Style.space(4)
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        interactive: contentHeight > height
-
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-        model: root.wifiStationAvailable ? root.wifiNetworks : []
-        currentIndex: root.selectedIndex
-        onCurrentIndexChanged: if (currentIndex >= 0) positionViewAtIndex(currentIndex, ListView.Contain)
-
-        // Wrapper takes the required props from ListView's delegate context
-        // (which doesn't bind into nested `component` declarations like
-        // NetworkRow) and passes them down explicitly.
-        delegate: Item {
-          required property var modelData
-          required property int index
-          readonly property string sectionTitle: root.wifiSectionTitle(index)
-          width: ListView.view.width
-          height: delegateColumn.implicitHeight
-
-          Column {
-            id: delegateColumn
-            width: parent.width
+          // A Column leaves a hidden heading out; a height bound to its
+          // visibility as well would loop when the list hides a delegate.
+          delegate: Column {
+            id: entry
+            required property var modelData
+            required property int index
+            readonly property string heading: Model.rowHeading(root.rows, index)
+            width: ListView.view.width
             spacing: Style.space(4)
 
-            // A Column leaves out what is not visible; a height bound to
-            // visible as well loops when the list hides a delegate.
             PanelSectionHeader {
-              visible: sectionTitle !== ""
-              text: sectionTitle
+              visible: entry.heading !== ""
+              text: entry.heading
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
             }
 
             NetworkRow {
-              id: row
               width: parent.width
-              net: modelData
-              index: parent.parent.index
+              net: entry.modelData
+              index: entry.index
             }
           }
-        }
 
-        // The touchpad scrolls the list as GTK does.
-        TouchpadScroll { flickable: networkList }
+          // The touchpad scrolls the list as GTK does.
+          TouchpadScroll { flickable: networkList }
+        }
       }
-    }
     }
   }
 
-  // One Wi-Fi band pill. `active` (fill) is the band actually in use and
-  // `selected` (bold) is the pinned choice; with Automatic on nothing is
-  // pinned, so only the live band lights up and the two can no longer read as
-  // a contradiction. They land on the same pill once a band is pinned.
+  // ------------------------------------------------------------------ pieces
+
+  // A band. Filled is the band the radio is on; bold, the one pinned. Under
+  // Automatic only the live band is lit, and once one is pinned the two meet
+  // on the same pill.
   component BandPill: Button {
     id: pill
     required property string band
     required property int slot
 
-    text: root.bandLabel(band)
-    tooltipText: root.bandTooltip(band)
+    text: Model.bandName(band)
+    tooltipText: Model.bandHint(band)
     fontSize: Style.font.bodySmall
     foreground: root.bar.foreground
     fontFamily: root.bar.fontFamily
     horizontalPadding: Style.spacing.controlPaddingX
     verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
     bordered: true
-
     active: root.bandCurrent === band
-    selected: root.bandEffective === band
-    hasCursor: root.cursorActive && root.focusSection === "band"
-      && !root.bandAutoFocused && root.bandIndex === slot
+    selected: root.bandShown === band
+    hasCursor: root.cursorActive && root.focusSection === "band" && !root.bandAutoFocused && root.bandIndex === slot
 
     onClicked: root.setBand(band)
-
-    onHovered: function(isHovered) {
-      if (!isHovered) return
-      root.cursorActive = true
-      root.focusSection = "band"
+    onHovered: function(on) {
+      if (!on) return
+      root.pointAt("band")
       root.bandIndex = pill.slot
     }
   }
 
-  // One DNS provider pill. The cursor + current visuals come entirely from
-  // CursorSurface; this component just binds them to the panel's cursor
-  // state and renders the label/tooltip/click target.
-  component DnsProviderPill: Button {
+  // A DNS provider, filled while it is the one in use.
+  component DnsPill: Button {
     id: pill
     required property string provider
-    required property int index
+    required property int slot
 
     text: provider
     fontSize: Style.font.bodySmall
@@ -1514,301 +1100,260 @@ Ui.Panel {
     horizontalPadding: Style.spacing.controlPaddingX
     verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
     bordered: true
-
-    // Map the panel's domain semantics onto Button's structural props:
-    // `current DNS` is the pill's `active` fill; the keyboard cursor lights
-    // up `hasCursor`.
     active: root.dnsProvider === provider
-    hasCursor: root.cursorActive && root.focusSection === "dns" && root.dnsIndex === index
+    hasCursor: root.cursorActive && root.focusSection === "dns" && root.dnsIndex === slot
 
-    onHovered: function(isHovered) {
-      if (!isHovered) return
-      root.cursorActive = true
-      root.focusSection = "dns"
-      root.dnsIndex = pill.index
+    onClicked: root.setDns(provider)
+    onHovered: function(on) {
+      if (!on) return
+      root.pointAt("dns")
+      root.dnsIndex = pill.slot
     }
   }
 
-  // A single Wi-Fi network entry. Collapses to a one-line pill normally;
-  // expands inline to a passphrase prompt when the user picks a network that
-  // requires credentials we do not have. Clicking a connected row
-  // disconnects.
+  // A network in reach: its bars, its name and what it is doing, and at the
+  // right a lock for one that takes a secret, or a mark to forget a known
+  // one (shown on the pointer or the cursor, for one with a lock). A click
+  // leaves, joins, or opens the passphrase under the row.
   component NetworkRow: CursorSurface {
     id: row
     required property var net
     required property int index
 
-    readonly property bool isConnected: net && net.connected
-    readonly property bool isKnown: !!(net && net.known)
-    readonly property bool requiresCredentials: net ? root.requiresCredentials(net.security) : false
-    readonly property bool isEnterprise: net
-      ? (net.security === WifiSecurityType.Wpa2Eap || net.security === WifiSecurityType.WpaEap)
-      : false
-    readonly property bool canForget: root.canForgetNetwork(net)
-    readonly property bool isSelected: root.focusSection === "wifi" && root.selectedIndex === index
-    readonly property bool forgetFocused: isSelected && root.wifiActionFocused && canForget
-    readonly property bool forgetVisible: canForget && (!requiresCredentials || forgetFocused || rightMouse.containsMouse)
+    readonly property string ssid: net ? net.ssid : ""
+    readonly property bool asks: net ? root.asksForSecret(net.security) : false
+    readonly property bool enterprise: !!net && (net.security === WifiSecurityType.Wpa2Eap || net.security === WifiSecurityType.WpaEap)
+    readonly property bool forgettable: Model.canForget(net)
+    readonly property bool selected: root.focusSection === "wifi" && root.selectedIndex === index
+    readonly property bool forgetFocused: selected && root.wifiActionFocused && forgettable
+    readonly property bool forgetShown: forgettable && (!asks || forgetFocused || forgetMouse.containsMouse)
+    readonly property bool acting: root.busy && root.actionSsid === ssid
+    readonly property bool failed: root.failureReason !== "" && root.failureSsid === ssid
+    readonly property bool asking: root.passwordSsid !== "" && root.passwordSsid === ssid
 
-    hasCursor: root.cursorActive && isSelected && !root.wifiActionFocused
-    current: isConnected
+    readonly property string activity: {
+      if (!net || asking) return ""
+      if (acting) return root.actionKind === "connect" ? "Connecting…" : root.actionKind === "disconnect" ? "Disconnecting…" : "Forgetting…"
+      if (failed) return root.failureReason || "Failed"
+      if (net.connected) return Networking.connectivity === NetworkConnectivity.Portal ? "Sign in required" : "Connected"
+      return ""
+    }
+    readonly property color tone: failed ? root.bar.urgent
+      : acting || (net && net.connected) ? root.bar.foreground
+      : Qt.darker(root.bar.foreground, 1.5)
+
+    hasCursor: root.cursorActive && selected && !root.wifiActionFocused
+    current: !!net && net.connected
     foreground: root.bar.foreground
     fill: root.hoverFill
     currentFill: root.selectedFill
-    // Gate on the matching *Kind/*Reason being non-empty so a hidden-SSID
-    // row (ssid == "") doesn't match the "" defaults of actionSsid etc.
-    readonly property bool isBusy: root.actionKind !== "" && root.actionSsid === (net ? net.ssid : "")
-    readonly property bool isFailed: root.failureReason !== "" && root.failureSsid === (net ? net.ssid : "")
-    readonly property bool isPasswordOpen: root.passwordSsid !== "" && root.passwordSsid === (net ? net.ssid : "")
+    implicitHeight: body.implicitHeight + (asking ? prompt.implicitHeight + Style.spacing.md : 0)
 
-    function submitCredentials() {
+    function submit() {
       if (!net || root.busy || root.passwordText.length === 0) return
-      if (!isEnterprise) return root.connectWithPassphrase(net.ssid, root.passwordText)
-      if (root.identityText.length > 0) root.connectEnterprise(net.ssid, root.identityText, root.passwordText)
+      if (!enterprise) root.connectWithPassphrase(ssid, root.passwordText)
+      else if (root.identityText.length > 0) root.connectEnterprise(ssid, root.identityText, root.passwordText)
     }
 
+    function point(onForget) {
+      root.pointAt("wifi")
+      root.selectedIndex = row.index
+      root.wifiActionFocused = onForget
+    }
+
+    // The network's own news. A failure that is not this panel's connect
+    // (NetworkManager retrying on its own, say) opens no passphrase.
     Connections {
-      target: row.net ? root.networkForSsid(row.net.ssid) : null
+      target: row.net ? root.network(row.ssid) : null
       function onConnectionFailed(reason) {
-        // Background auto-connect retries fire this too; only reprompt for
-        // the connect started from this panel. Checked before
-        // failNetworkAction, which clears the action state.
-        var ours = root.actionKind === "connect" && root.actionSsid === (row.net.ssid || "")
-        root.failNetworkAction(root.networkForSsid(row.net.ssid), reason)
-        if (ours && root.shouldRepromptPassphrase(reason, row.requiresCredentials)) root.openPasswordPrompt(row.net.ssid)
+        var ours = root.actionKind === "connect" && root.actionSsid === (row.ssid || "")
+        root.fail(root.network(row.ssid), reason)
+        if (ours && Model.asksAgain(reason, row.asks, root.failReasons)) root.openPasswordPrompt(row.ssid)
       }
-      function onConnectedChanged() {
-        if (row.net) root.checkActionCompletion(root.networkForSsid(row.net.ssid))
-      }
-      function onKnownChanged() {
-        if (row.net) root.checkActionCompletion(root.networkForSsid(row.net.ssid))
-      }
-      function onStateChangingChanged() {
-        if (row.net) root.checkActionCompletion(root.networkForSsid(row.net.ssid))
-      }
+      function onConnectedChanged() { if (row.net) root.settle(root.network(row.ssid)) }
+      function onKnownChanged() { if (row.net) root.settle(root.network(row.ssid)) }
+      function onStateChangingChanged() { if (row.net) root.settle(root.network(row.ssid)) }
     }
 
-    readonly property string statusText: {
-      if (!net) return ""
-      if (isPasswordOpen) return ""
-      if (isBusy && root.actionKind === "connect") return "Connecting…"
-      if (isBusy && root.actionKind === "disconnect") return "Disconnecting…"
-      if (isBusy && root.actionKind === "forget") return "Forgetting…"
-      if (isFailed) return root.failureReason || "Failed"
-      if (isConnected) return Networking.connectivity === NetworkConnectivity.Portal ? "Sign in required" : "Connected"
-      return ""
-    }
-
-    readonly property color statusColor: {
-      if (isFailed) return root.bar.urgent
-      if (isBusy) return root.bar.foreground
-      if (isConnected) return root.bar.foreground
-      return Qt.darker(root.bar.foreground, 1.5)
-    }
-
-    implicitHeight: rowBody.implicitHeight + (isPasswordOpen ? passwordPanel.implicitHeight + Style.spacing.md : 0)
-
+    // The pointer moves the cursor here, and leaving does not take it away,
+    // so the keys carry on from the row last pointed at.
     MouseArea {
       id: rowMouse
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.top: parent.top
-      height: rowBody.implicitHeight
+      height: body.implicitHeight
       hoverEnabled: true
       acceptedButtons: Qt.LeftButton
       cursorShape: Qt.PointingHandCursor
       enabled: !root.busy
-
-      // Move the cursor here when the mouse enters; mouse leaving doesn't
-      // clear it (so the cursor stays where the mouse last was and
-      // subsequent j/k pick up from this row).
-      onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = false }
-
+      onContainsMouseChanged: if (containsMouse) row.point(false)
       onClicked: {
         if (!row.net) return
-        // Resync cursor in case keyboard nav moved it away while the mouse
-        // stayed parked on this row — the click target is unambiguously here.
-        root.cursorActive = true
-        root.focusSection = "wifi"
-        root.selectedIndex = row.index
-        root.wifiActionFocused = false
-        if (row.isConnected) {
-          root.disconnectRow(row.net.ssid)
-          return
-        }
-        if (row.requiresCredentials && !row.isKnown) {
-          root.openPasswordPrompt(row.net.ssid)
-          return
-        }
-        root.connectDirectly(row.net.ssid)
+        row.point(false)
+        root.choose(row.net)
       }
     }
 
     Item {
-      id: rowBody
+      id: body
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.top: parent.top
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
-      implicitHeight: Math.max(networkIcon.implicitHeight, networkInfo.implicitHeight, rightAction.implicitHeight) + Style.spacing.rowPaddingX
+      implicitHeight: Math.max(bars.implicitHeight, labels.implicitHeight, mark.implicitHeight) + Style.spacing.rowPaddingX
 
       Text {
-        id: networkIcon
-        textFormat: Text.PlainText
-        text: row.net ? root.wifiIconFor(row.net.signal) : ""
-        color: row.statusColor
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.title
+        id: bars
         anchors.left: parent.left
         anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: row.net ? Model.signalGlyph(row.net.signal) : ""
+        color: row.tone
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.title
       }
 
-      // The right edge shows a lock for networks that require credentials and
-      // reveals Forget on hover. Known passwordless networks show Forget
-      // directly rather than reserving an invisible or misleading target.
       Item {
-        id: rightAction
-        visible: row.requiresCredentials || row.canForget
-        width: Style.space(22)
-        implicitHeight: lockIndicator.implicitHeight
+        id: mark
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
+        visible: row.asks || row.forgettable
+        width: Style.space(22)
+        implicitHeight: markGlyph.implicitHeight
 
         Text {
-          id: lockIndicator
-          textFormat: Text.PlainText
-          visible: row.requiresCredentials || row.forgetVisible
-          width: parent.width
+          id: markGlyph
           anchors.verticalCenter: parent.verticalCenter
+          width: parent.width
+          visible: row.asks || row.forgetShown
           horizontalAlignment: Text.AlignHCenter
-          text: row.forgetVisible ? "󰅙" : "󰌾"
-          color: row.forgetVisible ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
+          textFormat: Text.PlainText
+          text: row.forgetShown ? "󰅙" : "󰌾"
+          color: row.forgetShown ? root.bar.urgent : Qt.darker(root.bar.foreground, 1.4)
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.subtitle
         }
 
         BorderSurface {
           anchors.fill: parent
+          z: -1
           visible: row.forgetFocused
           color: Style.hoverFillFor(root.bar.urgent, root.bar.urgent)
           borderSpec: Border.controlSpec("hover-cursor", root.bar.urgent, root.bar.urgent)
           radius: Style.cornerRadius
-          z: -1
         }
 
         MouseArea {
-          id: rightMouse
+          id: forgetMouse
           anchors.fill: parent
           hoverEnabled: true
           acceptedButtons: Qt.LeftButton
-          enabled: row.canForget && !root.busy
+          enabled: row.forgettable && !root.busy
           cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-          onContainsMouseChanged: if (containsMouse) { root.cursorActive = true; root.focusSection = "wifi"; root.selectedIndex = row.index; root.wifiActionFocused = true }
+          onContainsMouseChanged: if (containsMouse) row.point(true)
           onClicked: if (row.net) root.forget(row.net)
         }
 
         PanelToolTip {
-          visible: rightMouse.containsMouse || row.forgetFocused
+          visible: forgetMouse.containsMouse || row.forgetFocused
           text: "Forget network"
           fontFamily: root.bar.fontFamily
         }
       }
 
+      // The bars and the mark carry the signal and the lock, so the second
+      // line is only for what the row is doing; without it the row is one
+      // line.
       Column {
-        id: networkInfo
-        spacing: Style.space(1)
-        anchors.left: networkIcon.right
+        id: labels
+        anchors.left: bars.right
         anchors.leftMargin: Style.space(10)
-        anchors.right: rightAction.visible ? rightAction.left : parent.right
-        anchors.rightMargin: rightAction.visible ? Style.space(8) : 0
+        anchors.right: mark.visible ? mark.left : parent.right
+        anchors.rightMargin: mark.visible ? Style.space(8) : 0
         anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(1)
 
         Text {
+          width: parent.width
           textFormat: Text.PlainText
-          text: row.net ? (row.net.ssid || "Hidden") : ""
+          text: row.net ? (row.ssid || "Hidden") : ""
           color: root.bar.foreground
+          elide: Text.ElideRight
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body
-          elide: Text.ElideRight
-          width: parent.width
         }
+
         Text {
+          width: parent.width
+          visible: row.activity !== ""
           textFormat: Text.PlainText
-          // Signal strength is conveyed by the wifi-bars icon and the
-          // right-edge glyph/buttons carry protection or forget affordances,
-          // so the second line only carries action status (Connecting…,
-          // Connected, Failed, etc.). Hidden when empty, which the Column
-          // leaves out, so rows without status keep a tight one-line look.
-          text: row.statusText
-          visible: row.statusText !== ""
-          color: row.statusColor
+          text: row.activity
+          color: row.tone
+          elide: Text.ElideRight
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.caption
-          elide: Text.ElideRight
-          width: parent.width
         }
       }
     }
 
+    // A failure shows in the prompt for two seconds, then it asks again.
     Timer {
-      id: failureTimer
       interval: 2000
-      running: row.isFailed && row.isPasswordOpen
+      running: row.failed && row.asking
       onTriggered: {
         root.failureSsid = ""
         root.failureReason = ""
-        pwField.forceActiveFocus()
+        passphrase.forceActiveFocus()
       }
     }
 
-    // Inline passphrase prompt — shown when we hit a protected network we
-    // don't have saved credentials for, or when a connect fails because the
-    // saved passphrase is wrong. Submitting (Enter or the check button) fires
-    // connect; Esc cancels back to the row.
+    // The passphrase, and for WPA Enterprise the identity first: Enter or
+    // the tick joins, Escape puts it away.
     Item {
-      id: passwordPanel
-      visible: row.isPasswordOpen
+      id: prompt
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.top: rowMouse.bottom
       anchors.leftMargin: Style.space(10)
       anchors.rightMargin: Style.space(10)
       anchors.topMargin: Style.space(4)
-      implicitHeight: (idField.visible ? idField.implicitHeight + Style.space(4) : 0) + pwField.implicitHeight + Style.spacing.rowGap
+      visible: row.asking
+      implicitHeight: (identity.visible ? identity.implicitHeight + Style.space(4) : 0) + passphrase.implicitHeight + Style.spacing.rowGap
       height: implicitHeight
 
       TextField {
-        id: idField
-        visible: row.isEnterprise && !row.isBusy && !row.isFailed
+        id: identity
         anchors.left: parent.left
-        anchors.right: connectPwBtn.left
+        anchors.right: join.left
         anchors.top: parent.top
         anchors.rightMargin: Style.space(6)
+        visible: row.enterprise && !row.acting && !row.failed
+        enabled: !row.acting
         placeholderText: "Identity (user@domain)"
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         foreground: root.bar.foreground
         horizontalPadding: Style.spacing.controlGap
         verticalPadding: Style.spacing.controlPaddingY
-        enabled: !row.isBusy
-        text: row.isPasswordOpen ? root.identityText : ""
-
-        onAccepted: pwField.forceActiveFocus()
-        onTextChanged: if (row.isPasswordOpen && text !== root.identityText) root.identityText = text
+        text: row.asking ? root.identityText : ""
+        onTextChanged: if (row.asking && text !== root.identityText) root.identityText = text
+        onAccepted: passphrase.forceActiveFocus()
         Keys.onEscapePressed: root.cancelPasswordPrompt()
-
         onVisibleChanged: if (visible) Qt.callLater(forceActiveFocus)
         Component.onCompleted: if (visible) Qt.callLater(forceActiveFocus)
       }
 
       TextField {
-        id: pwField
-        visible: !row.isBusy && !row.isFailed
+        id: passphrase
         anchors.left: parent.left
-        anchors.right: connectPwBtn.left
+        anchors.right: join.left
         anchors.bottom: parent.bottom
         anchors.bottomMargin: Style.spacing.rowGap / 2
         anchors.rightMargin: Style.space(6)
+        visible: !row.acting && !row.failed
+        enabled: !row.acting
         password: true
         placeholderText: "Passphrase"
         font.family: Style.font.family
@@ -1816,84 +1361,53 @@ Ui.Panel {
         foreground: root.bar.foreground
         horizontalPadding: Style.spacing.controlGap
         verticalPadding: Style.spacing.controlPaddingY
-        enabled: !row.isBusy
-        text: row.isPasswordOpen ? root.passwordText : ""
-
-        onAccepted: row.submitCredentials()
-        onTextChanged: if (row.isPasswordOpen && text !== root.passwordText) root.passwordText = text
+        text: row.asking ? root.passwordText : ""
+        onTextChanged: if (row.asking && text !== root.passwordText) root.passwordText = text
+        onAccepted: row.submit()
         Keys.onEscapePressed: root.cancelPasswordPrompt()
-
-        onVisibleChanged: if (visible && !row.isEnterprise) Qt.callLater(forceActiveFocus)
-        Component.onCompleted: if (visible && !row.isEnterprise) Qt.callLater(forceActiveFocus)
+        onVisibleChanged: if (visible && !row.enterprise) Qt.callLater(forceActiveFocus)
+        Component.onCompleted: if (visible && !row.enterprise) Qt.callLater(forceActiveFocus)
       }
 
       BorderSurface {
-        id: statusMsgWrapper
-        visible: row.isBusy || row.isFailed
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
         height: Style.spacing.controlHeight
+        visible: row.acting || row.failed
         color: Style.normalFillFor(root.bar.foreground)
         borderSpec: Border.controlSpec("normal", root.bar.foreground, Commons.Color.accent)
         radius: Style.cornerRadius
 
         Text {
-          textFormat: Text.PlainText
           anchors.fill: parent
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
-          text: row.isFailed ? "Wrong password" : "Connecting..."
-          color: row.isFailed ? root.bar.urgent : root.bar.foreground
+          textFormat: Text.PlainText
+          text: row.failed ? "Wrong password" : "Connecting..."
+          color: row.failed ? root.bar.urgent : root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.bodySmall
         }
       }
 
-      // 22×22 right-anchored to line up with lockIndicator above. Esc closes
-      // the prompt (handled by pwField.Keys.onEscapePressed)
-      // so there's no separate cancel button.
+      // 22 px, under the lock above it.
       PanelActionButton {
-        id: connectPwBtn
-        visible: !row.isBusy && !row.isFailed
+        id: join
         anchors.right: parent.right
         anchors.verticalCenter: parent.verticalCenter
-        enabled: row.net && pwField.text.length > 0 && (!row.isEnterprise || idField.text.length > 0)
+        visible: !row.acting && !row.failed
+        enabled: row.net && passphrase.text.length > 0 && (!row.enterprise || identity.text.length > 0)
         iconText: "󰄬"
         tooltipText: "Connect"
         foreground: root.bar.foreground
         fontFamily: root.bar.fontFamily
-        onClicked: row.submitCredentials()
+        onClicked: row.submit()
       }
     }
   }
 
-
-  component DetailValue: InfoValue {
-    id: detailValue
-    property bool copyable: false
-    property string tooltipText: "Copy to clipboard"
-
-    Layout.fillWidth: true
-    horizontalAlignment: Text.AlignRight
-
-    MouseArea {
-      id: valueMouse
-      anchors.fill: parent
-      enabled: copyable && detailValue.text !== ""
-      hoverEnabled: enabled
-      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: root.copyToClipboard(detailValue.text)
-    }
-
-    PanelToolTip {
-      visible: valueMouse.enabled && valueMouse.containsMouse
-      text: tooltipText
-      fontFamily: root.bar.fontFamily
-    }
-  }
-
-  component InfoLabel: Text {
+  component StatName: Text {
     textFormat: Text.PlainText
     color: root.bar.foreground
     opacity: 0.6
@@ -1901,10 +1415,31 @@ Ui.Panel {
     font.pixelSize: Style.font.bodySmall
   }
 
-  component InfoValue: Text {
+  // A reading, right-aligned; with a copyHint, a click copies it.
+  component StatValue: Text {
+    id: value
+    property string copyHint: ""
+
+    Layout.fillWidth: true
+    horizontalAlignment: Text.AlignRight
     textFormat: Text.PlainText
     color: root.bar.foreground
     font.family: root.bar.fontFamily
     font.pixelSize: Style.font.bodySmall
+
+    MouseArea {
+      id: copyMouse
+      anchors.fill: parent
+      enabled: value.copyHint !== "" && value.text !== ""
+      hoverEnabled: enabled
+      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+      onClicked: root.copy(value.text)
+    }
+
+    PanelToolTip {
+      visible: copyMouse.enabled && copyMouse.containsMouse
+      text: value.copyHint
+      fontFamily: root.bar.fontFamily
+    }
   }
 }
