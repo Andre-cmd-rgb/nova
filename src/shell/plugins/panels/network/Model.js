@@ -2,8 +2,8 @@
 
 // The network panel's rules, kept apart from its windows and from
 // NetworkManager: the glyphs, what nova-network-status and nova-network-band
-// print, the traffic and ping worked out from their readings, and the words
-// for the rows of networks.
+// print, the traffic and ping worked out from their readings, the words for
+// the rows of networks, and the stops of the keys' cursor.
 
 // ---- Glyphs
 
@@ -61,6 +61,16 @@ function linkSpeed(fields) {
   if (!mbps || mbps < 0) return ""
   if (mbps < 1000) return mbps + "mbit"
   return (mbps / 1000).toFixed(mbps % 1000 === 0 ? 0 : 1) + "gbit"
+}
+
+// The panel's title: the network's name, or "Ethernet" with the cable's
+// speed; with no link, the interface, or what there is instead of one.
+function linkTitle(fields, kind) {
+  var name = fields.type === "wifi" ? fields.ssid || "Wi-Fi"
+    : fields.type === "ethernet" ? "Ethernet"
+    : fields.iface || (kind === "disconnected" ? "Disconnected" : "No connection")
+  var speed = linkSpeed(fields)
+  return speed === "" ? name : name + " (" + speed + ")"
 }
 
 // ---- Traffic
@@ -254,4 +264,23 @@ function failureText(reason, asks, reasons) {
 // then replaces the saved one.
 function asksAgain(reason, asks, reasons) {
   return asks && (reason === reasons.NoSecrets || reason === reasons.WifiAuthTimeout)
+}
+
+// What a row says while its network is joined, left or forgotten, and once
+// that has gone on too long.
+var UNDERWAY = { connect: "Connecting…", disconnect: "Disconnecting…", forget: "Forgetting…" }
+var TIMED_OUT = { connect: "Timed out connecting", disconnect: "Timed out disconnecting", forget: "Timed out forgetting" }
+
+// ---- The cursor
+
+// Its stops, top to bottom: the Wi-Fi switch, the band's Automatic switch,
+// the band pills, the DNS pills and the networks. `there` says which the
+// panel shows, and a step up or down passes over the rest. The stop a step
+// away, or the same one at either end.
+var STOPS = ["radio", "auto", "pills", "dns", "rows"]
+
+function beyond(stop, step, there) {
+  for (var i = STOPS.indexOf(stop) + step; i >= 0 && i < STOPS.length; i += step)
+    if (there[STOPS[i]]) return STOPS[i]
+  return stop
 }
