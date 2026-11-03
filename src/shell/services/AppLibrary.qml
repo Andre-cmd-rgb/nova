@@ -205,6 +205,13 @@ Item {
     if (windowCame) closeLaunchFeedback(launchSerial)
   }
 
+  // A scan asked for while one runs is made once it ends: the running scan
+  // may have read the entries before the change that asked for it.
+  function scan(process) {
+    if (process.running) process.again = true
+    else process.running = true
+  }
+
   // Both scans run bash without a login shell. A login shell reads the
   // user's profile, and a tool such as mise touches ~/.local/share when it
   // starts, which the desktop entry watcher sees: each scan would set off
@@ -213,17 +220,27 @@ Item {
     id: hiddenEntryScan
 
     property string collected: ""
+    property bool again: false
 
     command: ["bash", "-c", root.hiddenEntryScanCommand()]
     stdout: SplitParser {
       onRead: function(line) { hiddenEntryScan.collected += line + "\n" }
     }
     onStarted: collected = ""
-    onExited: root.loadDesktopHiddenEntries(collected)
+    onExited: {
+      root.loadDesktopHiddenEntries(collected)
+      if (again) {
+        again = false
+        running = true
+      }
+    }
   }
 
   Process {
     id: iconIndexScan
+
+    property bool again: false
+
     command: ["bash", "-c", root.iconIndexScanCommand()]
     stdout: SplitParser {
       onRead: function(line) { root.indexIconLine(line) }
@@ -231,14 +248,20 @@ Item {
     onStarted: root.pendingIconIndex = ({})
     // A new object, so that every iconSource() binding reads it again and
     // new icons show without the list being made again.
-    onExited: root.iconIndex = root.pendingIconIndex
+    onExited: {
+      root.iconIndex = root.pendingIconIndex
+      if (again) {
+        again = false
+        running = true
+      }
+    }
   }
 
   // An install changes many entries at once; this makes one scan of them.
   Timer {
     id: iconIndexDebounce
     interval: 750
-    onTriggered: root.refreshIcons()
+    onTriggered: root.scan(iconIndexScan)
   }
 
   FileView {
@@ -281,7 +304,7 @@ Item {
   Connections {
     target: DesktopEntries.applications
     function onValuesChanged() {
-      hiddenEntryScan.running = true
+      root.scan(hiddenEntryScan)
       iconIndexDebounce.restart()
       root.appsChanged()
     }
