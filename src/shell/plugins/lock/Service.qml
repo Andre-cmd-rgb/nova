@@ -449,8 +449,15 @@ Item {
     command: ["bash", "-c", "[[ -f /etc/pam.d/nova-lock-fingerprint ]] && command -v fprintd-list >/dev/null && fprintd-list \"$USER\" 2>/dev/null | grep -qE '^ *- #[0-9]+: '"]
     onExited: function(exitCode) {
       root.fingerprintConfigured = exitCode === 0
-      if (root.lockRequested && root.fingerprintConfigured) root.startFingerprint()
-      else if (!root.fingerprintConfigured && fingerprintPam.active) fingerprintPam.abort()
+      if (root.fingerprintConfigured) {
+        if (root.lockRequested) root.startFingerprint()
+        return
+      }
+      // abort() says nothing, so the scan is marked over here; one enrolled
+      // again under the same lock can then start.
+      fingerprintRetry.stop()
+      if (fingerprintPam.active) fingerprintPam.abort()
+      root.fingerprintAuthenticating = false
     }
   }
 
