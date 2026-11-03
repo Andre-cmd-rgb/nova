@@ -107,11 +107,23 @@ function percent(share) {
   return Math.round(share * 100)
 }
 
-// The month `delta` months on, as { year, month }. In UTC: a 1st without a
-// local midnight would otherwise read back as the month before.
-function stepMonth(year, month, delta) {
-  var first = new Date(Date.UTC(year, Number(month) + Number(delta), 1))
-  return { year: first.getUTCFullYear(), month: first.getUTCMonth() }
+// A month as one number, the months since the year 0, so that going some
+// months on is adding them; and that number back as { year, month }. No
+// date is made, so no clock change can move it.
+function monthCount(year, month) {
+  return year * 12 + month
+}
+
+function monthAt(count) {
+  var year = Math.floor(count / 12)
+  return { year: year, month: count - year * 12 }
+}
+
+// A day by its key, at noon: on that day wherever the clocks change, so
+// what the day is named by and opened on.
+function noonOf(key) {
+  var part = String(key).split("-")
+  return new Date(Number(part[0]), Number(part[1]) - 1, Number(part[2]), 12)
 }
 
 // ------------------------------------------------------------ memento mori
