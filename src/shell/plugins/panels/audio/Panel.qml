@@ -3,404 +3,121 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
-import qs.Ui
 import qs.Commons
 import qs.Commons as Commons
+import qs.Ui
 import "Model.js" as Model
 
+// The sound on the bar: the speaker's icon by its volume, the wheel over it
+// to change the volume, a right click to mute everything or unmute it. A
+// click opens the panel: a switch for all of it, the output's volume and
+// the outputs to choose from, the input's with its level and the inputs,
+// and each application playing, with its own volume. The pointer and the
+// keys share one cursor through it all.
 Panel {
   id: root
   moduleName: "nova.audio"
   ipcTarget: "nova.audio"
 
+  // ---------------------------------------------------------------- nodes
+
   readonly property var sink: Pipewire.defaultAudioSink
   readonly property var source: Pipewire.defaultAudioSource
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
   readonly property var mprisPlayers: Mpris.players ? Mpris.players.values : []
-  readonly property var mediaService: bar?.shell?.serviceFor("nova.media")
-  readonly property var activeMediaPlayer: mediaService ? mediaService.activePlayer : null
-
-  readonly property var candidateSinks: {
-    var list = []
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i]
-      if (n && n.isSink && !n.isStream) list.push(n)
-    }
-    return list
+  readonly property var activeMediaPlayer: {
+    var media = bar?.shell?.serviceFor("nova.media")
+    return media ? media.activePlayer : null
   }
 
-  readonly property var candidateSources: {
-    var list = []
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i]
-      if (n && !n.isSink && !n.isStream && isAudioSource(n)) {
-        var name = n.name || ""
-        if (name === "quickshell") continue
-        list.push(n)
-      }
-    }
-    return list
+  readonly property var everyOutput: Model.sinks(nodes)
+  readonly property var everyInput: Model.sources(nodes)
+  readonly property var streams: Model.streams(nodes)
+
+  // The outputs a cable or a card says are there, the default always; the
+  // inputs, the default first. A moment with none (PipeWire publishing its
+  // nodes anew) shows the last ones there were.
+  property var lastOutputs: []
+  property var lastInputs: []
+  readonly property var outputsNow: Model.withDefault(everyOutput.filter(sinkAvailable), sink)
+  readonly property var inputsNow: Model.withDefault(everyInput.slice(), source)
+  readonly property var outputs: outputsNow.length > 0 ? outputsNow : lastOutputs
+  readonly property var inputs: inputsNow.length > 0 ? inputsNow : lastInputs
+
+  onOutputsNowChanged: if (outputsNow.length > 0) lastOutputs = outputsNow
+  onInputsNowChanged: if (inputsNow.length > 0) lastInputs = inputsNow
+
+  function sinkAvailable(node) {
+    if (!node || !node.name || !sinkAvailability.loaded) return true
+    return sinkAvailability.plugged[String(node.name)] !== false
   }
 
-  readonly property var candidateStreams: {
-    var list = []
-    for (var i = 0; i < nodes.length; i++) {
-      var n = nodes[i]
-      if (!n || !n.isStream || !isPlaybackStream(n)) continue
-      // A tuning's output is a playback stream too, but it is the processing
-      // itself rather than an application, so it does not belong in the list.
-      if (String(n.name || "").indexOf("nova_speaker_tuning") === 0) continue
-      list.push(n)
-    }
-    return list
+  PwObjectTracker { objects: root.everyOutput }
+  PwObjectTracker { objects: root.everyInput }
+  PwObjectTracker { objects: root.streams }
+
+  SinkAvailability {
+    id: sinkAvailability
+    active: root.opened
   }
 
-  // Identify true playback streams without reading node.properties here:
-  // PwNode.properties is invalid until the node is bound, and reading it while
-  // capture streams are appearing (for example, when dictation starts recording)
-  // can destabilize Quickshell's Pipewire service. Quickshell versions differ
-  // in how `type` is exposed (media.class, enum name, or numeric enum), but
-  // playback streams consistently accept audio input from clients and publish
-  // `isSink: true`; capture streams publish as stream sources.
-  function isPlaybackStream(node) {
-    return Model.isPlaybackStream(node)
+  // The rows are made from copies of the lists, taken 75 ms after a change,
+  // and none while the panel is shut. PipeWire can take a node away while
+  // Quickshell is still announcing it, and a Repeater rebuilt on that
+  // announcement has crashed Quickshell's PipeWire service; the wait lets
+  // the change settle.
+  property var shownOutputs: []
+  property var shownInputs: []
+  property var shownStreams: []
+
+  function copyLists() {
+    if (!opened) return
+    shownOutputs = Model.copy(outputs)
+    shownInputs = Model.copy(inputs)
+    shownStreams = Model.copy(streams)
+    clampCursor()
   }
 
-  function isAudioSource(node) {
-    return Model.isAudioSource(node)
+  function copySoon() {
+    if (opened) copyTimer.restart()
   }
 
-  property var cachedAudioSinks: []
-  property var cachedAudioSources: []
+  onOutputsChanged: copySoon()
+  onInputsChanged: copySoon()
+  onStreamsChanged: copySoon()
 
-  readonly property var rawAudioSinks: {
-    var list = []
-    for (var i = 0; i < candidateSinks.length; i++)
-      if (sinkAvailable(candidateSinks[i])) list.push(candidateSinks[i])
-    if (sink && list.indexOf(sink) < 0) list.unshift(sink)
-    return list
+  Timer { id: copyTimer; interval: 75; onTriggered: root.copyLists() }
+
+  // ---------------------------------------------------------------- volume
+
+  // The output's volume lives on the sink the keys' service names: the
+  // physical one behind the default output, where that is a speaker tuning
+  // or EasyEffects (nova-audio-output-sink resolves it). The volume of such
+  // a sink sets the level going into its processing, so a slider on it
+  // would move while the speakers did not, and through a limiter change the
+  // tone too. The volume keys and the output switcher go by the same sink.
+  readonly property var volumeSink: {
+    var keys = bar?.shell?.serviceFor("nova.keys")
+    return keys ? keys.volumeSink : sink
   }
-
-  readonly property var rawAudioSources: {
-    var list = candidateSources.slice()
-    if (source && list.indexOf(source) < 0) list.unshift(source)
-    return list
-  }
-
-  readonly property var audioSinks: rawAudioSinks.length > 0 ? rawAudioSinks : cachedAudioSinks
-  readonly property var audioSources: rawAudioSources.length > 0 ? rawAudioSources : cachedAudioSources
-
-  readonly property var audioStreams: {
-    var list = []
-    for (var i = 0; i < candidateStreams.length; i++)
-      if (candidateStreams[i].audio) list.push(candidateStreams[i])
-    return list
-  }
-
-  // Feed Repeaters with panel-local snapshots instead of the live PipeWire
-  // model. PipeWire can remove nodes while Quickshell is dispatching the
-  // removal signal; rebuilding a Repeater from that signal path has crashed
-  // in Quickshell's PipeWire service. The snapshot timer lets that mutation
-  // settle first, and closed panels keep their repeaters detached entirely.
-  property var displayAudioSinks: []
-  property var displayAudioSources: []
-  property var displayAudioStreams: []
-
-  // A DSP sink -- a speaker tuning, or EasyEffects -- can be the selected output
-  // without being where loudness lives: changing its volume alters the level going
-  // *into* the processing, so the slider would move while the speakers did not,
-  // and on a chain with a limiter it would change the tone as well.
-  //
-  // nova-audio-output-sink resolves the *current* default output through any
-  // such sink to the physical one, which is the same definition the volume keys
-  // and the output switcher use. Resolving the default (rather than "whatever a
-  // tuning fronts") is what keeps this correct when headphones or HDMI are
-  // selected while a tuning still exists. The keys' service looks it up once
-  // for the shell.
-  readonly property var keysService: bar?.shell?.serviceFor("nova.keys")
-  readonly property var volumeSink: keysService ? keysService.volumeSink : sink
-
-  // Carry sub-notch touchpad deltas between wheel events.
-  property real wheelAccumulator: 0
 
   readonly property real outputVolume: volumeSink && volumeSink.audio ? volumeSink.audio.volume : 0
   readonly property bool outputMuted: volumeSink && volumeSink.audio ? volumeSink.audio.muted : false
   readonly property real inputVolume: source && source.audio ? source.audio.volume : 0
   readonly property bool inputMuted: source && source.audio ? source.audio.muted : false
 
-  onRawAudioSinksChanged: if (rawAudioSinks.length > 0) cachedAudioSinks = rawAudioSinks
-  onRawAudioSourcesChanged: if (rawAudioSources.length > 0) cachedAudioSources = rawAudioSources
-
-  // Single cursor model shared by keyboard and mouse. Sections:
-  //   "output"  — output slider + sink device list
-  //   "input"   — input slider + source device list
-  //   "streams" — per-app playback streams
-  // selectedIndex semantics within a section:
-  //   -1            → on the slider row (h/l adjusts volume, m/Enter mute)
-  //   0..N-1        → on the Nth device/stream row
-  // Visuals derive from hasCursor/current via CursorSurface, never
-  // from containsMouse — that's what keeps the highlight unique across
-  // keyboard + mouse like wifi does.
-  property string focusSection: "output"
-  property int selectedIndex: -1
-  property bool cursorActive: false
-
-  // "header" is a virtual section for the hero output mute toggle; it sits
-  // above the output section so the speaker can be muted from the keyboard.
-  readonly property bool headerHasCursor: cursorActive && focusSection === "header"
-  // Only channels that actually exist get a vote. A box with no default source
-  // would otherwise report "input unmuted" forever, leaving the hero switch
-  // able to mute but never to unmute.
+  // Only a channel there is counts: a machine with no input would otherwise
+  // read as an input unmuted for ever, and the switch could mute but never
+  // unmute.
   readonly property bool hasOutput: !!(volumeSink && volumeSink.audio)
   readonly property bool hasInput: !!(source && source.audio)
   readonly property bool anyAudible: (hasOutput && !outputMuted) || (hasInput && !inputMuted)
-  readonly property string toggleHint: anyAudible ? "Mute" : "Unmute"
 
-  readonly property color hoverFill: bar
-    ? Style.hoverFillFor(bar.foreground, Commons.Color.accent)
-    : "transparent"
-  readonly property color selectedFill: bar
-    ? Style.selectedFillFor(bar.foreground, Commons.Color.accent)
-    : "transparent"
-
-  function sectionCount(section) {
-    if (section === "output") return displayAudioSinks.length
-    if (section === "input") return displayAudioSources.length
-    if (section === "streams") return displayAudioStreams.length
-    return 0
-  }
-
-  function sectionVisible(section) {
-    if (section === "output") return true
-    if (section === "input") return displayAudioSources.length > 0 || !!source
-    if (section === "streams") return displayAudioStreams.length > 0
-    return false
-  }
-
-  function sectionHasSlider(section) {
-    if (section === "output") return true
-    if (section === "input") return !!source
-    return false  // stream rows carry their own sliders inline; not a section-level slider
-  }
-
-  // Order of visible sections, recomputed reactively so dropping a section
-  // (e.g. no input devices) doesn't leave the cursor pointing at it.
-  readonly property var visibleSections: {
-    var list = []
-    if (sectionVisible("output")) list.push("output")
-    if (sectionVisible("input")) list.push("input")
-    if (sectionVisible("streams")) list.push("streams")
-    return list
-  }
-
-  function moveCursor(delta) {
-    var sections = visibleSections
-    if (sections.length === 0) return
-    if (focusSection === "header") {
-      if (delta > 0) { focusSection = sections[0]; selectedIndex = sectionHasSlider(sections[0]) ? -1 : 0 }
-      return
-    }
-    var sIdx = sections.indexOf(focusSection)
-    if (sIdx < 0) { focusSection = sections[0]; selectedIndex = sectionHasSlider(focusSection) ? -1 : 0; return }
-
-    var idx = selectedIndex
-    var max = sectionCount(focusSection) - 1  // last device index
-    var hasSlider = sectionHasSlider(focusSection)
-    var floor = hasSlider ? -1 : 0  // -1 = slider row
-
-    if (delta > 0) {
-      if (idx < max) { selectedIndex = idx + 1; return }
-      // Fall through to next section.
-      if (sIdx < sections.length - 1) {
-        focusSection = sections[sIdx + 1]
-        selectedIndex = sectionHasSlider(focusSection) ? -1 : 0
-      }
-    } else {
-      if (idx > floor) { selectedIndex = idx - 1; return }
-      // Escape upward.
-      if (sIdx > 0) {
-        focusSection = sections[sIdx - 1]
-        var prevMax = sectionCount(focusSection) - 1
-        selectedIndex = prevMax >= 0 ? prevMax : (sectionHasSlider(focusSection) ? -1 : 0)
-      } else {
-        focusSection = "header"
-      }
-    }
-  }
-
-  function setHeaderCursor() {
-    cursorActive = true
-    focusSection = "header"
-    selectedIndex = -1
-  }
-
-  function moveSection(delta) {
-    var sections = visibleSections
-    if (sections.length === 0) return
-    var current = sections.indexOf(focusSection)
-    if (current < 0) current = delta > 0 ? -1 : 0
-    var next = (current + delta + sections.length) % sections.length
-    focusSection = sections[next]
-    selectedIndex = sectionHasSlider(focusSection) ? -1 : 0
-    cursorActive = true
-  }
-
-  // Adjust the slider associated with the focused section. Output and
-  // input sliders are real volume controls; on stream rows h/l adjusts
-  // that stream's volume (so keyboard parity with the inline slider).
-  // For device rows (selectedIndex >= 0 in output/input) h/l is a no-op
-  // — the cursor is on a discrete row, not on the slider, and silently
-  // moving the global slider would surprise the user.
-  function adjustVolume(delta) {
-    if (focusSection === "output" && selectedIndex === -1) {
-      setOutputVolume(outputVolume + delta)
-      return
-    }
-    if (focusSection === "input" && selectedIndex === -1) {
-      setInputVolume(inputVolume + delta)
-      return
-    }
-    if (focusSection === "streams" && selectedIndex >= 0 && selectedIndex < displayAudioStreams.length) {
-      var s = displayAudioStreams[selectedIndex]
-      if (s && s.audio) s.audio.volume = Math.max(0, Math.min(1.5, s.audio.volume + delta))
-    }
-  }
-
-  // Enter/Space: activate whatever the cursor is on.
-  function activateCursor() {
-    if (focusSection === "header") { toggleAllMuted(); return }
-    if (focusSection === "output") {
-      if (selectedIndex === -1) { toggleOutputMute(); return }
-      var sink = displayAudioSinks[selectedIndex]
-      if (sink) setDefaultSink(sink)
-      return
-    }
-    if (focusSection === "input") {
-      if (selectedIndex === -1) { toggleInputMute(); return }
-      var src = displayAudioSources[selectedIndex]
-      if (src) setDefaultSource(src)
-      return
-    }
-    if (focusSection === "streams" && selectedIndex >= 0) {
-      var st = displayAudioStreams[selectedIndex]
-      if (st && st.audio) st.audio.muted = !st.audio.muted
-    }
-  }
-
-  onOpenedChanged: {
-    if (opened) {
-      refreshDisplayAudioModels()
-      focusSection = "output"
-      selectedIndex = -1  // first keyboard cursor reveal starts on the output slider
-      cursorActive = false
-      Qt.callLater(resetScroll)
-    } else {
-      clearDisplayAudioModels()
-    }
-  }
-
-  // Clamp / repair the cursor whenever any list refreshes underneath us.
-  onAudioSinksChanged: scheduleDisplayAudioModelRefresh()
-  onAudioSourcesChanged: scheduleDisplayAudioModelRefresh()
-  onAudioStreamsChanged: scheduleDisplayAudioModelRefresh()
-
-  function listSnapshot(list) {
-    return Model.listSnapshot(list)
-  }
-
-  function refreshDisplayAudioModels() {
-    if (!opened) return
-    displayAudioSinks = listSnapshot(audioSinks)
-    displayAudioSources = listSnapshot(audioSources)
-    displayAudioStreams = listSnapshot(audioStreams)
-    clampCursor()
-  }
-
-  function scheduleDisplayAudioModelRefresh() {
-    if (!opened) return
-    audioModelRefreshTimer.restart()
-  }
-
-  function clearDisplayAudioModels() {
-    audioModelRefreshTimer.stop()
-    displayAudioSinks = []
-    displayAudioSources = []
-    displayAudioStreams = []
-  }
-
-  // Keep the keyboard-focused row inside the visible viewport of the
-  // ScrollView. Each cursor target (slider rows, SinkRow, SourceRow,
-  // StreamRow) calls this when it gains hasCursor. Without it, j/k can
-  // walk the selection off-screen — wifi uses ListView.positionViewAtIndex
-  // for this; we don't have that affordance with a multi-section Column.
-  function resetScroll() {
-    if (!scrollArea) return
-    var flick = scrollArea.contentItem
-    if (flick && flick.contentY !== undefined) flick.contentY = 0
-  }
-
-  function ensureCursorVisible(item) {
-    if (!item || !scrollArea) return
-    var flick = scrollArea.contentItem
-    if (!flick || flick.contentY === undefined) return
-    var margin = 6
-    var maxY = Math.max(0, (flick.contentHeight || 0) - flick.height)
-    if (maxY <= Style.space(24) || (root.focusSection === "output" && root.selectedIndex === -1)) {
-      flick.contentY = 0
-      return
-    }
-    var pt = item.mapToItem(flick.contentItem || flick, 0, 0)
-    var top = pt.y
-    var bottom = top + (item.height || 0)
-    var viewTop = flick.contentY
-    var viewBottom = viewTop + flick.height
-    if (top < viewTop + margin) flick.contentY = Math.max(0, Math.min(maxY, top - margin))
-    else if (bottom > viewBottom - margin)
-      flick.contentY = Math.max(0, Math.min(maxY, bottom + margin - flick.height))
-  }
-
-  function clampCursor() {
-    var sections = visibleSections
-    if (!sections || !sections.length) return
-    // "header" is virtual and never appears in visibleSections, so it has to
-    // be let through: muting republishes the PipeWire snapshot, and clamping
-    // would knock the cursor off the hero switch on every toggle.
-    if (focusSection === "header") return
-    if (sections.indexOf(focusSection) < 0) {
-      focusSection = visibleSections[0]
-      selectedIndex = sectionHasSlider(focusSection) ? -1 : 0
-      return
-    }
-    var count = sectionCount(focusSection)
-    var hasSlider = sectionHasSlider(focusSection)
-    var floor = hasSlider ? -1 : 0
-    if (selectedIndex > count - 1) selectedIndex = Math.max(floor, count - 1)
-    if (selectedIndex < floor) selectedIndex = floor
-  }
+  // Touchpad scrolling smaller than a notch, carried to the next event.
+  property real wheelRest: 0
 
   function outputIcon(volume) {
-    // Match the old Waybar pulseaudio glyph set. The Material Design speaker
-    // icons render visually smaller in JetBrainsMono Nerd Font.
-    if (!sink || !sink.audio) return ""
-    if (isHeadphones(sink)) return "󰋋"
-    if (outputMuted) return ""
-    var v = volume === undefined ? outputVolume : volume
-    if (v >= 0.67) return ""
-    if (v >= 0.34) return ""
-    if (v > 0) return ""
-    return ""
-  }
-
-  function inputIcon() {
-    if (!source || !source.audio) return "󰍭"
-    return inputMuted ? "󰍭" : "󰍬"
-  }
-
-  // Playful mood-name for a given output volume. Mirrors the brightness
-  // panel's brightnessName ladder; bands are wide enough that small
-  // tweaks don't rename the room you're in.
-  function outputVolumeName(volume, muted) {
-    return Model.outputVolumeName(volume, muted)
+    return Model.speakerIcon(sink, outputMuted, volume === undefined ? outputVolume : volume)
   }
 
   function setOutputVolume(v) {
@@ -410,17 +127,8 @@ Panel {
     return volume
   }
 
-  function showVolumeOsd(volume) {
-    if (!bar || !bar.shell) return
-    bar.shell.summon("nova.osd", JSON.stringify({
-      icon: outputIcon(volume),
-      value: Math.round(volume * 100)
-    }))
-  }
-
   function setInputVolume(v) {
-    if (!source || !source.audio) return
-    source.audio.volume = Math.max(0, Math.min(1, v))
+    if (source && source.audio) source.audio.volume = Math.max(0, Math.min(1, v))
   }
 
   function toggleOutputMute() {
@@ -431,163 +139,184 @@ Panel {
     if (source && source.audio) source.audio.muted = !source.audio.muted
   }
 
-  // The hero switch is the whole panel's on/off, so it carries both channels
-  // at once. It reads as on while anything is still audible, which keeps
-  // muting a single channel from the row below flipping the master switch.
+  // The switch, and the right click on the bar, mute both channels at once
+  // or unmute them. Anything still audible reads as on, so muting one
+  // channel from its slider does not flip it.
   function toggleAllMuted() {
     var mute = anyAudible
     if (hasOutput) volumeSink.audio.muted = mute
     if (hasInput) source.audio.muted = mute
   }
 
+  function toggleStreamMute(node) {
+    if (node && node.audio) node.audio.muted = !node.audio.muted
+  }
+
+  function showVolumeOsd(volume) {
+    if (!bar || !bar.shell) return
+    bar.shell.summon("nova.osd", JSON.stringify({ icon: outputIcon(volume), value: Math.round(volume * 100) }))
+  }
+
   function setDefaultSink(node) {
     if (!node) return
     Pipewire.preferredDefaultAudioSink = node
-    if (node.id !== undefined && node.name) {
-      Quickshell.execDetached([
-        "nova-audio-output-set-default",
-        String(node.id),
-        String(node.name)
-      ])
-    }
+    if (node.id !== undefined && node.name)
+      Quickshell.execDetached(["nova-audio-output-set-default", String(node.id), String(node.name)])
   }
 
   function setDefaultSource(node) {
     if (!node) return
     Pipewire.preferredDefaultAudioSource = node
-    if (node.id !== undefined && node.name) {
-      Quickshell.execDetached([
-        "nova-audio-input-set-default",
-        String(node.id),
-        String(node.name)
-      ])
-    }
+    if (node.id !== undefined && node.name)
+      Quickshell.execDetached(["nova-audio-input-set-default", String(node.id), String(node.name)])
   }
-
-  function sinkAvailable(node) {
-    if (!node || !node.name || !sinkAvailability.loaded) return true
-    return sinkAvailability.plugged[String(node.name)] !== false
-  }
-
-  function friendlyDeviceLabel(text) {
-    return Model.friendlyDeviceLabel(text)
-  }
-
-  function nodeLabel(node) {
-    return Model.nodeLabel(node)
-  }
-
-  function nodeProps(node) {
-    return Model.nodeProps(node)
-  }
-
-  function isHeadphones(node) {
-    return Model.isHeadphones(node)
-  }
-
-  function sinkGlyph(node) {
-    return Model.sinkGlyph(node)
-  }
-
-  function sourceGlyph(node) {
-    return Model.sourceGlyph(node)
-  }
-
-  function friendlyStreamLabel(label) {
-    return Model.friendlyStreamLabel(label)
-  }
-
-  function streamLabelKey(label) {
-    return Model.streamLabelKey(label)
-  }
-
-  function streamLabelIsGeneric(label) {
-    return Model.streamLabelIsGeneric(label)
-  }
-
-  function rawStreamLabel(node) {
-    return Model.rawStreamLabel(node)
-  }
-
-  function mprisPlayerLabel(player) {
-    return Model.mprisPlayerLabel(player)
-  }
-
-  function mprisPlayerIsProxy(player) {
-    return Model.mprisPlayerIsProxy(player)
-  }
-
-  function streamRepresentsMprisPlayer(streamLabel, playerLabel) {
-    return Model.streamRepresentsMprisPlayer(streamLabel, playerLabel)
-  }
-
-  function mprisLabelsFor(predicate) {
-    return Model.mprisLabelsFor(mprisPlayers, predicate)
-  }
-
-  function matchingMprisStreamLabel(label) {
-    return Model.matchingMprisStreamLabel(label, mprisPlayers)
-  }
-
-  function unmatchedMprisStreamLabel(label) {
-    // Spotify exposes its PipeWire stream as "audio-src". For generic stream
-    // names, use the one MPRIS player not already represented by another audio
-    // stream (e.g. Chromium, or ALSA apps like cliamp).
-    return Model.unmatchedMprisStreamLabel(label, mprisPlayers, displayAudioStreams)
-  }
-
-  function streamLabel(node) {
-    return Model.streamLabel(node, mprisPlayers, displayAudioStreams)
-  }
-
-  function streamRepresentsPlayer(node, player) {
-    return Model.streamRepresentsPlayer(node, player, mprisPlayers, displayAudioStreams)
-  }
-
-  implicitWidth: button.implicitWidth
-  implicitHeight: button.implicitHeight
-
-  PwObjectTracker { objects: root.candidateSinks }
-  PwObjectTracker { objects: root.candidateSources }
-  PwObjectTracker { objects: root.audioStreams }
 
   PwNodePeakMonitor {
-    id: inputPeakMonitor
+    id: inputPeak
     node: root.source
     enabled: root.opened && !!root.source
   }
 
-  SinkAvailability {
-    id: sinkAvailability
-    active: root.opened
+  // ---------------------------------------------------------------- cursor
+
+  // Shown once the pointer or a key has moved it. focusSection is "output",
+  // "input", "streams" or "header", the switch; selectedIndex -1 is a
+  // section's slider, 0 and on its rows.
+  property bool cursorActive: false
+  property string focusSection: "output"
+  property int selectedIndex: -1
+
+  function shape() {
+    return {
+      sinks: shownOutputs.length,
+      sources: shownInputs.length,
+      streams: shownStreams.length,
+      hasSource: !!source
+    }
   }
 
-  Timer {
-    id: audioModelRefreshTimer
-    interval: 75
-    repeat: false
-    onTriggered: root.refreshDisplayAudioModels()
+  // Section first, then index, as every change of the cursor goes.
+  function go(next) {
+    focusSection = next.section
+    selectedIndex = next.index
   }
+
+  function point(section, index) {
+    cursorActive = true
+    go(Model.at(section, index))
+  }
+
+  function moveCursor(delta) {
+    go(Model.move(Model.at(focusSection, selectedIndex), delta, shape()))
+  }
+
+  function clampCursor() {
+    go(Model.clamp(Model.at(focusSection, selectedIndex), shape()))
+  }
+
+  function onStream() {
+    return focusSection === "streams" && selectedIndex >= 0 && selectedIndex < shownStreams.length
+  }
+
+  // h and l: the slider the cursor is on, the output's or the input's, or
+  // the stream's on its row; nothing on a device's row.
+  function adjustVolume(delta) {
+    if (focusSection === "output" && selectedIndex === -1) {
+      setOutputVolume(outputVolume + delta)
+    } else if (focusSection === "input" && selectedIndex === -1) {
+      setInputVolume(inputVolume + delta)
+    } else if (onStream()) {
+      var s = shownStreams[selectedIndex]
+      if (s && s.audio) s.audio.volume = Math.max(0, Math.min(1.5, s.audio.volume + delta))
+    }
+  }
+
+  // Return or Space: the switch, a slider's mute, a device made the
+  // default, a stream's mute.
+  function activateCursor() {
+    if (focusSection === "header") {
+      toggleAllMuted()
+    } else if (focusSection === "output") {
+      if (selectedIndex === -1) toggleOutputMute()
+      else setDefaultSink(shownOutputs[selectedIndex])
+    } else if (focusSection === "input") {
+      if (selectedIndex === -1) toggleInputMute()
+      else setDefaultSource(shownInputs[selectedIndex])
+    } else if (focusSection === "streams" && selectedIndex >= 0) {
+      toggleStreamMute(shownStreams[selectedIndex])
+    }
+  }
+
+  // m: the stream the cursor is on, the input in its section, else the
+  // output.
+  function muteAtCursor() {
+    if (onStream()) toggleStreamMute(shownStreams[selectedIndex])
+    else if (focusSection === "input") toggleInputMute()
+    else toggleOutputMute()
+  }
+
+  function resetScroll() {
+    var flick = scrollArea.contentItem
+    if (flick && flick.contentY !== undefined) flick.contentY = 0
+  }
+
+  // The row the cursor lands on scrolled into view, 6 px clear of the edge.
+  // The top of the card stays in view while the cursor is on the output's
+  // slider, and a card that scrolls by less than 24 px does not scroll.
+  function ensureCursorVisible(item) {
+    var flick = scrollArea.contentItem
+    if (!item || !flick || flick.contentY === undefined) return
+    var maxY = Math.max(0, (flick.contentHeight || 0) - flick.height)
+    if (maxY <= Style.space(24) || (focusSection === "output" && selectedIndex === -1)) {
+      flick.contentY = 0
+      return
+    }
+    var top = item.mapToItem(flick.contentItem || flick, 0, 0).y
+    var bottom = top + (item.height || 0)
+    if (top < flick.contentY + 6) flick.contentY = Math.max(0, Math.min(maxY, top - 6))
+    else if (bottom > flick.contentY + flick.height - 6) flick.contentY = Math.max(0, Math.min(maxY, bottom + 6 - flick.height))
+  }
+
+  // Opened, the lists are read and the cursor (unshown) put on the output's
+  // slider; shut, the rows go.
+  onOpenedChanged: {
+    if (opened) {
+      copyLists()
+      go(Model.at("output", -1))
+      cursorActive = false
+      Qt.callLater(resetScroll)
+    } else {
+      copyTimer.stop()
+      shownOutputs = []
+      shownInputs = []
+      shownStreams = []
+    }
+  }
+
+  // ---------------------------------------------------------------- bar
+
+  implicitWidth: button.implicitWidth
+  implicitHeight: button.implicitHeight
 
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
     text: root.outputIcon()
-    onPressed: function(b) {
-      if (b === Qt.RightButton) root.toggleAllMuted()
+    onPressed: function(which) {
+      if (which === Qt.RightButton) root.toggleAllMuted()
       else root.toggle()
     }
-
     onWheelMoved: function(delta) {
       if (!root.hasOutput) return
-      var wheel = Util.wheelSteps(root.wheelAccumulator, delta)
-      root.wheelAccumulator = wheel.remainder
+      var wheel = Util.wheelSteps(root.wheelRest, delta)
+      root.wheelRest = wheel.remainder
       if (wheel.steps === 0) return
-      var volume = root.setOutputVolume(root.outputVolume + wheel.steps * 0.05)
-      root.showVolumeOsd(volume)
+      root.showVolumeOsd(root.setOutputVolume(root.outputVolume + wheel.steps * 0.05))
     }
   }
+
+  // ---------------------------------------------------------------- panel
 
   KeyboardPanel {
     id: panel
@@ -595,36 +324,26 @@ Panel {
     owner: root
     bar: root.bar
     open: root.opened
-    focusTarget: keyCatcher
+    focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(panelColumn.implicitHeight, Style.space(560))
+    contentHeight: panel.fittedContentHeight(content.implicitHeight, Style.space(560))
 
+    // j and k walk the switch, the sliders and the rows; h and l move the
+    // slider the cursor is on; Return or Space acts; m mutes. The first key
+    // only shows the cursor.
     PanelKeyCatcher {
-      id: keyCatcher
+      id: keys
       anchors.fill: parent
       onMoveRequested: function(dx, dy) {
-        if (!root.cursorActive) { root.cursorActive = true; return }
-        if (dy !== 0) root.moveCursor(dy)
+        if (!root.cursorActive) root.cursorActive = true
+        else if (dy !== 0) root.moveCursor(dy)
         else if (dx !== 0) root.adjustVolume(dx * 0.05)
       }
       onActivateRequested: if (root.cursorActive) root.activateCursor()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onTextKey: function(t) {
-        // 'm' mutes whatever the cursor is on: focused section's slider
-        // for output/input, the focused stream for streams.
-        if (t === "m" || t === "M") {
-          if (!root.cursorActive) return
-          if (root.focusSection === "streams" && root.selectedIndex >= 0
-              && root.selectedIndex < root.displayAudioStreams.length) {
-            var s = root.displayAudioStreams[root.selectedIndex]
-            if (s && s.audio) s.audio.muted = !s.audio.muted
-          } else if (root.focusSection === "input") {
-            root.toggleInputMute()
-          } else {
-            root.toggleOutputMute()
-          }
-        }
+        if ((t === "m" || t === "M") && root.cursorActive) root.muteAtCursor()
       }
 
       ScrollView {
@@ -632,246 +351,133 @@ Panel {
         anchors.fill: parent
         clip: true
         ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-        ScrollBar.vertical.policy: panelColumn.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: content.implicitHeight > height ? ScrollBar.AsNeeded : ScrollBar.AlwaysOff
+
+        // It scrolls only when there is more than fits.
         Binding {
           target: scrollArea.contentItem
           property: "interactive"
-          value: panelColumn.implicitHeight > scrollArea.height
+          value: content.implicitHeight > scrollArea.height
         }
 
         Column {
-          id: panelColumn
+          id: content
           width: scrollArea.availableWidth
           spacing: Style.space(14)
 
-          // ---------- Hero: speaker icon · title/status ----------
-          Item {
-            id: heroItem
-            width: parent.width
-            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, powerSwitch.implicitHeight)
-
-            // Status only — the switch owns muting, mouse and keyboard alike.
-            Text {
-              id: heroIcon
-              textFormat: Text.PlainText
-              text: root.outputIcon()
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.display
-              opacity: root.outputMuted ? 0.5 : 1.0
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-            }
-
-            // Compact on/off switch on the trailing edge of the hero, and the
-            // header's only cursor target. Checked means something is still
-            // audible, so muting everything reads as switching audio off.
-            ToggleSwitch {
-              id: powerSwitch
-              checked: root.anyAudible
-              hasCursor: root.headerHasCursor
-              foreground: root.bar.foreground
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              onHovered: function(on) { if (on) root.setHeaderCursor() }
-              onToggled: root.toggleAllMuted()
-
-              PanelToolTip {
-                visible: powerSwitch.containsMouse
-                text: root.toggleHint
-                fontFamily: root.bar.fontFamily
-              }
-            }
-
-            Column {
-              id: heroLabels
-              anchors.left: heroIcon.right
-              anchors.leftMargin: Style.space(14)
-              anchors.right: parent.right
-              anchors.rightMargin: powerSwitch.width + Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                text: "Audio"
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-                width: parent.width
-              }
-
-              Text {
-                id: heroLabel
-                textFormat: Text.PlainText
-                text: root.outputVolumeName(
-                  outputSlider.dragging ? outputSlider.liveValue : root.outputVolume,
-                  root.outputMuted
-                ).toUpperCase()
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-                elide: Text.ElideRight
-                width: parent.width
-              }
-            }
-          }
-
-          // ---- Output devices ----
-          PanelSeparator {
+          // The icon shows the output; the switch alone mutes, and is the
+          // cursor's stop above the output's slider. It reads on while
+          // anything can be heard, so muting all reads as audio off.
+          PanelHero {
+            title: "Audio"
+            meta: Model.mood(outputSlider.dragging ? outputSlider.liveValue : root.outputVolume, root.outputMuted)
             foreground: root.bar.foreground
+            fontFamily: root.bar.fontFamily
+            iconOpacity: root.outputMuted ? 0.5 : 1.0
+            iconComponent: Component {
+              Text {
+                textFormat: Text.PlainText
+                text: root.outputIcon()
+                color: root.bar.foreground
+                font { family: root.bar.fontFamily; pixelSize: Style.font.display }
+              }
+            }
+            trailingControl: Component {
+              ToggleSwitch {
+                id: powerSwitch
+                checked: root.anyAudible
+                hasCursor: root.cursorActive && root.focusSection === "header"
+                foreground: root.bar.foreground
+                onHovered: function(on) {
+                  if (!on) return
+                  root.cursorActive = true
+                  root.go(Model.at("header", -1))
+                }
+                onToggled: root.toggleAllMuted()
+
+                PanelToolTip {
+                  visible: powerSwitch.containsMouse
+                  text: root.anyAudible ? "Mute" : "Unmute"
+                  fontFamily: root.bar.fontFamily
+                }
+              }
+            }
           }
+
+          PanelSeparator { foreground: root.bar.foreground }
 
           Column {
             width: parent.width
             spacing: Style.space(6)
 
-            Item {
-              width: parent.width
-              implicitHeight: Math.max(outputHeader.implicitHeight, outputPercent.implicitHeight)
-
-              PanelSectionHeader {
-                id: outputHeader
-                text: "OUTPUT"
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: outputPercent
-                textFormat: Text.PlainText
-                text: Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100) + "%"
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-                opacity: root.outputMuted ? 0.5 : 1.0
-              }
+            Heading {
+              title: "OUTPUT"
+              reading: Math.round((outputSlider.dragging ? outputSlider.liveValue : root.outputVolume) * 100) + "%"
+              muted: root.outputMuted
             }
 
-            CursorSurface {
-              id: outputSliderRow
-              width: parent.width
+            SliderRow {
+              section: "output"
               height: outputSlider.implicitHeight + Style.spacing.controlGap
-              hasCursor: root.cursorActive && root.focusSection === "output" && root.selectedIndex === -1
-              onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(outputSliderRow)
-              foreground: root.bar.foreground
-              outline: true
 
               PanelSlider {
                 id: outputSlider
+                anchors { fill: parent; leftMargin: Style.space(6); rightMargin: Style.space(6) }
                 bar: root.bar
-                anchors.fill: parent
-                anchors.leftMargin: Style.space(6)
-                anchors.rightMargin: Style.space(6)
                 minimum: 0
                 maximum: 1
                 step: 0.05
                 value: root.outputVolume
                 opacity: root.outputMuted ? 0.5 : 1.0
                 enabled: !!root.sink
-
                 onMoved: function(v) { root.setOutputVolume(v) }
                 onRightClicked: root.toggleOutputMute()
-              }
-
-              HoverHandler {
-                onHoveredChanged: if (hovered) {
-                  root.cursorActive = true
-                  root.focusSection = "output"
-                  root.selectedIndex = -1
-                }
               }
             }
 
             Repeater {
-              model: root.displayAudioSinks
-
-              SinkRow {
-                required property var modelData
-                required property int index
-                width: panelColumn.width
-                node: modelData
-                rowIndex: index
-              }
+              model: root.shownOutputs
+              DeviceRow { section: "output"; width: content.width }
             }
           }
 
-          // ---- Input ----
           PanelSeparator {
-            visible: root.displayAudioSources.length > 0 || !!root.source
+            visible: root.shownInputs.length > 0 || !!root.source
             foreground: root.bar.foreground
           }
 
           Column {
+            visible: root.shownInputs.length > 0 || !!root.source
             width: parent.width
             spacing: Style.space(6)
-            visible: root.displayAudioSources.length > 0 || !!root.source
 
-            Item {
-              width: parent.width
-              implicitHeight: Math.max(microphoneHeader.implicitHeight, microphonePercent.implicitHeight)
-
-              PanelSectionHeader {
-                id: microphoneHeader
-                text: "INPUT"
-                foreground: root.bar.foreground
-                fontFamily: root.bar.fontFamily
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-              }
-
-              Text {
-                id: microphonePercent
-                textFormat: Text.PlainText
-                text: Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%"
-                color: Qt.darker(root.bar.foreground, 1.4)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(6)
-                anchors.verticalCenter: parent.verticalCenter
-                opacity: root.inputMuted ? 0.5 : 1.0
-              }
+            Heading {
+              title: "INPUT"
+              reading: Math.round((inputSlider.dragging ? inputSlider.liveValue : root.inputVolume) * 100) + "%"
+              muted: root.inputMuted
             }
 
-            CursorSurface {
-              id: inputSliderRow
+            // The input's slider, and under it the level coming in.
+            SliderRow {
               visible: !!root.source
-              width: parent.width
+              section: "input"
               height: inputControls.implicitHeight + Style.spacing.controlGap
-              hasCursor: root.cursorActive && root.focusSection === "input" && root.selectedIndex === -1
-              onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(inputSliderRow)
-              foreground: root.bar.foreground
-              outline: true
 
               Column {
                 id: inputControls
-                anchors.fill: parent
-                anchors.leftMargin: Style.space(6)
-                anchors.rightMargin: Style.space(6)
+                anchors { fill: parent; leftMargin: Style.space(6); rightMargin: Style.space(6) }
                 spacing: Style.space(5)
 
                 PanelSlider {
                   id: inputSlider
-                  bar: root.bar
                   width: parent.width
+                  bar: root.bar
                   minimum: 0
                   maximum: 1
                   step: 0.05
                   value: root.inputVolume
                   opacity: root.inputMuted ? 0.5 : 1.0
                   enabled: !!root.source
-
                   onMoved: function(v) { root.setInputVolume(v) }
                   onRightClicked: root.toggleInputMute()
                 }
@@ -883,46 +489,30 @@ Panel {
                   opacity: root.inputMuted ? 0.35 : 1.0
 
                   Rectangle {
+                    width: parent.width * Math.max(0, Math.min(1, inputPeak.peak))
                     height: parent.height
-                    width: parent.width * Math.max(0, Math.min(1, inputPeakMonitor.peak))
                     color: root.bar.foreground
                     Behavior on width { NumberAnimation { duration: 70 } }
                   }
                 }
               }
-
-              HoverHandler {
-                onHoveredChanged: if (hovered) {
-                  root.cursorActive = true
-                  root.focusSection = "input"
-                  root.selectedIndex = -1
-                }
-              }
             }
 
             Repeater {
-              model: root.displayAudioSources
-
-              SourceRow {
-                required property var modelData
-                required property int index
-                width: panelColumn.width
-                node: modelData
-                rowIndex: index
-              }
+              model: root.shownInputs
+              DeviceRow { section: "input"; width: content.width }
             }
           }
 
-          // ---- Per-app streams ----
           PanelSeparator {
-            visible: root.displayAudioStreams.length > 0
+            visible: root.shownStreams.length > 0
             foreground: root.bar.foreground
           }
 
           Column {
+            visible: root.shownStreams.length > 0
             width: parent.width
             spacing: Style.space(10)
-            visible: root.displayAudioStreams.length > 0
 
             PanelSectionHeader {
               text: "SOURCES"
@@ -931,15 +521,8 @@ Panel {
             }
 
             Repeater {
-              model: root.displayAudioStreams
-
-              StreamRow {
-                required property var modelData
-                required property int index
-                width: panelColumn.width
-                node: modelData
-                rowIndex: index
-              }
+              model: root.shownStreams
+              StreamRow { width: content.width }
             }
           }
         }
@@ -947,55 +530,87 @@ Panel {
     }
   }
 
-  // ---- Reusable inline components ----
+  // A section's name, and its volume at the far end, dimmed while muted.
+  component Heading: Item {
+    property alias title: label.text
+    property alias reading: readout.text
+    property bool muted: false
 
-  // Output device row — cursor target inside the "output" section. Mouse
-  // hover updates the panel cursor at the root; visuals come entirely
-  // from hasCursor/current via CursorSurface, never from containsMouse.
-  component SinkRow: CursorSurface {
-    id: sinkRow
-    required property var node
-    required property int rowIndex
+    width: parent.width
+    implicitHeight: Math.max(label.implicitHeight, readout.implicitHeight)
 
-    readonly property bool isActive: root.sink && node && root.sink.id === node.id
-    hasCursor: root.cursorActive && root.focusSection === "output" && root.selectedIndex === rowIndex
-    onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sinkRow)
+    PanelSectionHeader {
+      id: label
+      anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+      foreground: root.bar.foreground
+      fontFamily: root.bar.fontFamily
+    }
+
+    Text {
+      id: readout
+      anchors { right: parent.right; rightMargin: Style.space(6); verticalCenter: parent.verticalCenter }
+      textFormat: Text.PlainText
+      color: Qt.darker(root.bar.foreground, 1.4)
+      font { family: root.bar.fontFamily; pixelSize: Style.font.caption; bold: true }
+      opacity: parent.muted ? 0.5 : 1.0
+    }
+  }
+
+  // A section's slider, which the cursor lights as a whole at index -1.
+  component SliderRow: CursorSurface {
+    id: sliderRow
+    property string section
+
+    width: parent.width
+    hasCursor: root.cursorActive && root.focusSection === section && root.selectedIndex === -1
+    onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sliderRow)
+    foreground: root.bar.foreground
+
+    HoverHandler {
+      onHoveredChanged: if (hovered) root.point(sliderRow.section, -1)
+    }
+  }
+
+  // An output or an input: its icon and name, bold on the default. A click
+  // makes it the default.
+  component DeviceRow: CursorSurface {
+    id: device
+    required property var modelData
+    required property int index
+    property string section
+    readonly property bool output: section === "output"
+    readonly property var chosen: output ? root.sink : root.source
+    readonly property bool isActive: chosen && modelData && chosen.id === modelData.id
+
+    hasCursor: root.cursorActive && root.focusSection === section && root.selectedIndex === index
+    onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(device)
     current: isActive
     foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: sinkInner.implicitHeight + Style.spacing.xl
+    implicitHeight: inner.implicitHeight + Style.spacing.xl
 
     Row {
-      id: sinkInner
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
+      id: inner
+      anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: Style.space(6); rightMargin: Style.space(6) }
       spacing: Style.space(8)
 
       Text {
-        textFormat: Text.PlainText
-        text: root.sinkGlyph(sinkRow.node)
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.title
+        anchors.verticalCenter: parent.verticalCenter
         width: Style.space(22)
         horizontalAlignment: Text.AlignHCenter
-        anchors.verticalCenter: parent.verticalCenter
+        textFormat: Text.PlainText
+        text: device.output ? Model.sinkIcon(device.modelData) : Model.sourceIcon(device.modelData)
+        color: root.bar.foreground
+        font { family: root.bar.fontFamily; pixelSize: Style.font.title }
       }
 
       Text {
-        textFormat: Text.PlainText
-        text: root.nodeLabel(sinkRow.node)
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: sinkRow.isActive
-        elide: Text.ElideRight
-        width: parent.width - Style.space(22) - Style.space(8)
         anchors.verticalCenter: parent.verticalCenter
+        width: parent.width - Style.space(22) - Style.space(8)
+        textFormat: Text.PlainText
+        text: Model.deviceName(device.modelData)
+        color: root.bar.foreground
+        font { family: root.bar.fontFamily; pixelSize: Style.font.body; bold: device.isActive }
+        elide: Text.ElideRight
       }
     }
 
@@ -1003,104 +618,31 @@ Panel {
       anchors.fill: parent
       hoverEnabled: true
       cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) {
-        root.cursorActive = true
-        root.focusSection = "output"
-        root.selectedIndex = sinkRow.rowIndex
-      }
-      onClicked: root.setDefaultSink(sinkRow.node)
+      onContainsMouseChanged: if (containsMouse) root.point(device.section, device.index)
+      onClicked: device.output ? root.setDefaultSink(device.modelData) : root.setDefaultSource(device.modelData)
     }
   }
 
-  // Input device row — sibling of SinkRow for the "input" section.
-  component SourceRow: CursorSurface {
-    id: sourceRow
-    required property var node
-    required property int rowIndex
-
-    readonly property bool isActive: root.source && node && root.source.id === node.id
-    hasCursor: root.cursorActive && root.focusSection === "input" && root.selectedIndex === rowIndex
-    onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(sourceRow)
-    current: isActive
-    foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: sourceInner.implicitHeight + Style.spacing.xl
-
-    Row {
-      id: sourceInner
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
-      spacing: Style.space(8)
-
-      Text {
-        textFormat: Text.PlainText
-        text: root.sourceGlyph(sourceRow.node)
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.title
-        width: Style.space(22)
-        horizontalAlignment: Text.AlignHCenter
-        anchors.verticalCenter: parent.verticalCenter
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        text: root.nodeLabel(sourceRow.node)
-        color: root.bar.foreground
-        font.family: root.bar.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: sourceRow.isActive
-        elide: Text.ElideRight
-        width: parent.width - Style.space(22) - Style.space(8)
-        anchors.verticalCenter: parent.verticalCenter
-      }
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) {
-        root.cursorActive = true
-        root.focusSection = "input"
-        root.selectedIndex = sourceRow.rowIndex
-      }
-      onClicked: root.setDefaultSource(sourceRow.node)
-    }
-  }
-
-  // Per-app stream row — cursor target inside the "streams" section.
-  // The stream has its own slider inline, so h/l from the keyboard
-  // adjusts THIS stream's volume (not the global output) when the cursor
-  // sits on this row. Enter/Space mutes the stream.
+  // An application playing: its mute, its name (bold on the one the media
+  // widget shows) and volume, over a slider of its own, which h and l move
+  // too while the cursor is on the row. Up to 150%, as PipeWire allows.
   component StreamRow: CursorSurface {
-    id: streamRow
-    required property var node
-    required property int rowIndex
+    id: stream
+    required property var modelData
+    required property int index
+    readonly property real volume: modelData && modelData.audio ? modelData.audio.volume : 0
+    readonly property bool muted: modelData && modelData.audio ? modelData.audio.muted : false
+    readonly property bool isActive: Model.playsFor(modelData, root.activeMediaPlayer, root.mprisPlayers, root.shownStreams)
 
-    readonly property real streamVolume: node && node.audio ? node.audio.volume : 0
-    readonly property bool streamMuted: node && node.audio ? node.audio.muted : false
-    readonly property bool isActive: root.streamRepresentsPlayer(node, root.activeMediaPlayer)
-
-    hasCursor: root.cursorActive && root.focusSection === "streams" && root.selectedIndex === rowIndex
-    onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(streamRow)
+    hasCursor: root.cursorActive && root.focusSection === "streams" && root.selectedIndex === index
+    onHasCursorChanged: if (hasCursor) root.ensureCursorVisible(stream)
     current: isActive
     foreground: root.bar.foreground
-    fill: root.hoverFill
-    currentFill: root.selectedFill
-    implicitHeight: streamColumn.implicitHeight + Style.spacing.xl
+    implicitHeight: lines.implicitHeight + Style.spacing.xl
 
     Column {
-      id: streamColumn
-      anchors.left: parent.left
-      anchors.right: parent.right
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(6)
-      anchors.rightMargin: Style.space(6)
+      id: lines
+      anchors { left: parent.left; right: parent.right; verticalCenter: parent.verticalCenter; leftMargin: Style.space(6); rightMargin: Style.space(6) }
       spacing: Style.space(2)
 
       Row {
@@ -1108,83 +650,68 @@ Panel {
         spacing: Style.space(8)
 
         Text {
-          id: streamMuteIcon
-          textFormat: Text.PlainText
-          text: streamRow.streamMuted ? "󰝟" : "󰕾"
-          color: root.bar.foreground
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.title
+          id: muteIcon
+          anchors.verticalCenter: parent.verticalCenter
           width: Style.space(22)
           horizontalAlignment: Text.AlignHCenter
-          anchors.verticalCenter: parent.verticalCenter
-          opacity: streamRow.streamMuted ? 0.5 : 1.0
+          textFormat: Text.PlainText
+          text: stream.muted ? "󰝟" : "󰕾"
+          color: root.bar.foreground
+          font { family: root.bar.fontFamily; pixelSize: Style.font.title }
+          opacity: stream.muted ? 0.5 : 1.0
 
           MouseArea {
             anchors.fill: parent
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-              if (streamRow.node && streamRow.node.audio)
-                streamRow.node.audio.muted = !streamRow.node.audio.muted
-            }
+            onClicked: root.toggleStreamMute(stream.modelData)
           }
         }
 
         Text {
-          textFormat: Text.PlainText
-          text: root.streamLabel(streamRow.node)
-          color: root.bar.foreground
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: streamRow.isActive
-          elide: Text.ElideRight
-          width: parent.width - streamMuteIcon.width - streamPct.width - Style.space(16)
           anchors.verticalCenter: parent.verticalCenter
+          width: parent.width - muteIcon.width - percent.width - Style.space(16)
+          textFormat: Text.PlainText
+          text: Model.streamName(stream.modelData, root.mprisPlayers, root.shownStreams)
+          color: root.bar.foreground
+          font { family: root.bar.fontFamily; pixelSize: Style.font.body; bold: stream.isActive }
+          elide: Text.ElideRight
         }
 
         Text {
-          id: streamPct
-          textFormat: Text.PlainText
-          text: Math.round(streamRow.streamVolume * 100) + "%"
-          color: Qt.darker(root.bar.foreground, 1.5)
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.caption
-          font.bold: true
+          id: percent
+          anchors.verticalCenter: parent.verticalCenter
           width: Style.space(36)
           horizontalAlignment: Text.AlignRight
-          anchors.verticalCenter: parent.verticalCenter
-          opacity: streamRow.streamMuted ? 0.5 : 1.0
+          textFormat: Text.PlainText
+          text: Math.round(stream.volume * 100) + "%"
+          color: Qt.darker(root.bar.foreground, 1.5)
+          font { family: root.bar.fontFamily; pixelSize: Style.font.caption; bold: true }
+          opacity: stream.muted ? 0.5 : 1.0
         }
       }
 
       PanelSlider {
-        bar: root.bar
         width: parent.width
+        bar: root.bar
         minimum: 0
         maximum: 1.5
         step: 0.05
-        value: streamRow.streamVolume
-        opacity: streamRow.streamMuted ? 0.5 : 1.0
-
+        value: stream.volume
+        opacity: stream.muted ? 0.5 : 1.0
         onMoved: function(v) {
-          if (streamRow.node && streamRow.node.audio) streamRow.node.audio.volume = v
+          if (stream.modelData && stream.modelData.audio) stream.modelData.audio.volume = v
         }
-        onRightClicked: {
-          if (streamRow.node && streamRow.node.audio)
-            streamRow.node.audio.muted = !streamRow.node.audio.muted
-        }
+        onRightClicked: root.toggleStreamMute(stream.modelData)
       }
     }
 
+    // Hover only; clicks go through to the slider and the mute.
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
       propagateComposedEvents: true
-      onContainsMouseChanged: if (containsMouse) {
-        root.cursorActive = true
-        root.focusSection = "streams"
-        root.selectedIndex = streamRow.rowIndex
-      }
+      onContainsMouseChanged: if (containsMouse) root.point("streams", stream.index)
     }
   }
 }
