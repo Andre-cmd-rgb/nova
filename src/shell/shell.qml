@@ -514,7 +514,30 @@ ShellRoot {
 
   Connections {
     target: shell.pluginRegistry
-    function onPluginsChanged() { shell.panelEntries = shell.computePanelEntries() }
+    function onPluginsChanged() {
+      shell.panelEntries = shell.computePanelEntries()
+      shell.forgetSwitchedOffPanels()
+    }
+  }
+
+  // A panel switched off loses its loader, and with it whether it was
+  // called up and what was sent to it: switched back on, it stays closed
+  // until it is called up again.
+  function forgetSwitchedOffPanels() {
+    var present = ({})
+    panelEntries.forEach(function(entry) { present[entry.id] = true })
+    var open = ({}), queued = ({}), dropped = false
+    for (var id in openPanelIds) {
+      if (present[id]) open[id] = openPanelIds[id]
+      else dropped = true
+    }
+    for (var waiting in pendingPayloads) {
+      if (present[waiting]) queued[waiting] = pendingPayloads[waiting]
+      else dropped = true
+    }
+    if (!dropped) return
+    openPanelIds = open
+    pendingPayloads = queued
   }
 
   // A loader for each panel entry, active while its plugin is called up, or
