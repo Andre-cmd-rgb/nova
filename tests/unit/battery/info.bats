@@ -11,13 +11,14 @@ setup() {
   BAT=$NOVA_POWER_SUPPLY_PATH/BAT0
   mkdir -p "$BAT" "$SCRATCH/bin"
   # UPower with its own 75-80% preset, as it reports on a ThinkPad.
+  printf '%s\n' '  native-path:          BAT0' '    state:               charging' \
+    '    energy-full:         68 Wh' '    energy-rate:         20 W' '    percentage:          42%' \
+    '    charge-start-threshold:        75%' '    charge-end-threshold:          80%' >"$SCRATCH/report"
   cat >"$SCRATCH/bin/upower" <<'STUB'
 #!/bin/bash
 case $1 in
   -e) echo /org/freedesktop/UPower/devices/battery_BAT0 ;;
-  -i) printf '%s\n' '  native-path:          BAT0' '    state:               charging' \
-        '    energy-full:         68 Wh' '    energy-rate:         20 W' '    percentage:          42%' \
-        '    charge-start-threshold:        75%' '    charge-end-threshold:          80%' ;;
+  -i) cat "$SCRATCH/report" ;;
 esac
 STUB
   chmod +x "$SCRATCH/bin/upower"
@@ -48,4 +49,29 @@ info="$REPO_ROOT/src/cli/bin/nova-battery-info"
   run "$info" --shell
   [ "$status" -eq 0 ]
   [[ $output != *threshold* ]]
+}
+
+# UPower's time in each of its units: seconds under a minute, minutes under an
+# hour, hours under 60 hours, days after that.
+time_shown() {
+  sed -i '/time to/d' "$SCRATCH/report"
+  printf '    time to %s:       %s\n' "$1" "$2" >>"$SCRATCH/report"
+  "$info" --shell | sed -n 's/^time\t//p'
+}
+
+@test "the time left reads every unit UPower writes, to the nearest minute" {
+  [ "$(time_shown full '45 seconds')" = '<1m' ]
+  [ "$(time_shown full '5 seconds')" = '<1m' ]
+  [ "$(time_shown full '1.5 minutes')" = 2m ]
+  [ "$(time_shown empty '59.9 minutes')" = 1h ]
+  [ "$(time_shown empty '1.0 hours')" = 1h ]
+  [ "$(time_shown empty '1.2 hours')" = '1h 12m' ]
+  [ "$(time_shown empty '3.5 hours')" = '3h 30m' ]
+  [ "$(time_shown full '2.6 days')" = '62h 24m' ]
+}
+
+@test "the line says how long until full or empty" {
+  time_shown full '1.2 hours' >/dev/null
+  run "$info"
+  [ "$output" = 'Battery 42%  ·  1h 12m to full  ·  20W / 68Wh' ]
 }

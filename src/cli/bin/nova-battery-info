@@ -88,13 +88,18 @@ function word(name, n,   words) {
   return words[n]
 }
 
-# UPower writes a time in minutes under an hour and otherwise in hours: "3.2
-# hours" is "3h 12m".
-function duration(amount, unit,   hours, minutes) {
-  if (unit ~ /^minute/) return sprintf("%dm", amount)
-  hours = int(amount)
-  minutes = int((amount - hours) * 60)
-  return minutes > 0 ? sprintf("%dh %dm", hours, minutes) : sprintf("%dh", hours)
+# UPower writes a time in seconds under a minute, minutes under an hour, hours
+# under 60 hours and days after that. It is shown to the nearest minute, "3.2
+# hours" as "3h 12m", and under a minute as "<1m".
+function duration(amount, unit,   minutes) {
+  if (unit ~ /^second/) return "<1m"
+  if (unit ~ /^minute/) minutes = amount
+  else if (unit ~ /^hour/) minutes = amount * 60
+  else if (unit ~ /^day/) minutes = amount * 1440
+  else return ""
+  minutes = int(minutes + 0.5)
+  if (minutes < 60) return minutes "m"
+  return int(minutes / 60) "h" (minutes % 60 ? " " minutes % 60 "m" : "")
 }
 
 END {
