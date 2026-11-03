@@ -297,7 +297,10 @@ ShellRoot {
     for (var s = 0; s < sections.length; s++) {
       var entries = draft.bar.layout[sections[s]] || []
       for (var i = 0; i < entries.length; i++) {
-        if (!entries[i] || String(entries[i].id || "") !== id) continue
+        // An entry is { id, ...settings } or the bare id, which becomes the
+        // former.
+        var bare = typeof entries[i] === "string"
+        if (bare ? entries[i] !== id : !entries[i] || String(entries[i].id || "") !== id) continue
         inLayout = true
         var entry = rewritten()
         if (JSON.stringify(entries[i]) === JSON.stringify(entry)) continue
