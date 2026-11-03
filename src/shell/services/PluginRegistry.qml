@@ -15,10 +15,11 @@ import qs.Commons
 QtObject {
   id: registry
 
-  // The installed plugins' directory. shell.qml sets it once it has read the
-  // user's shell.json, and the index loads then; until it has, loading holds
-  // and every verb that writes shell.json answers "not ready", so that no
-  // default is written over a file not read yet.
+  // The installed plugins' directory. shell.qml sets it once it has read
+  // both shell.json files, the user's and Nova's, and the index loads then;
+  // until it has, loading holds and every verb that writes shell.json
+  // answers "not ready", so that nothing is written from a config made
+  // without them.
   property string pluginsDir: ""
 
   // Set by shell.qml, which owns shell.json: shellConfigProvider() gives the

@@ -93,7 +93,8 @@ ShellRoot {
       }
     }
     defaultsConfig = Util.isPlainObject(parsed) && parsed.version === 1 ? parsed : builtinShellConfig
-    applyShellConfig()
+    defaultsRead = true
+    configRead()
   }
 
   // Makes <nextConfig> the config in effect, and writes it to the user's
@@ -131,10 +132,22 @@ ShellRoot {
     onFileChanged: reload()
   }
 
-  // The user's shell.json has been read, or found missing. Only now does the
-  // plugin index load: before, the registry answers "not ready" to whatever
-  // would write shell.json, which would otherwise start from the defaults.
   function userConfigRead() {
+    userRead = true
+    configRead()
+  }
+
+  // Whether each shell.json has been read, or found missing or unreadable.
+  property bool defaultsRead: false
+  property bool userRead: false
+
+  // Once both shell.json files have been read, and again whenever one is
+  // read anew, the config in effect is worked out. Only then does the plugin
+  // index load: before, the registry answers "not ready" to whatever would
+  // write shell.json, which would otherwise start from a config made
+  // without them.
+  function configRead() {
+    if (!defaultsRead || !userRead) return
     applyShellConfig()
     pluginRegistry.pluginsDir = pluginsDir
   }
