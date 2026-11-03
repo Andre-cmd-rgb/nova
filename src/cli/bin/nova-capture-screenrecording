@@ -182,7 +182,8 @@ stop() {
   indicator
   if recording; then
     pkill -9 -f "^gpu-screen-recorder" || true
-    nova-notification-send -u critical -t 5000 "Screen recording error" "Recording process had to be force-killed. Video may be corrupted."
+    nova-notification-send -u critical -t 5000 -g  "The recording did not stop in time" \
+      "gpu-screen-recorder was killed after five seconds, so the video may be cut short or unplayable."
   else
     if [[ -r $current ]]; then IFS= read -r file <"$current" || true; fi
     finish "$file"
