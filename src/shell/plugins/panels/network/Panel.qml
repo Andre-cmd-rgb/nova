@@ -1369,6 +1369,8 @@ Ui.Panel {
         Component.onCompleted: if (visible && !row.enterprise) Qt.callLater(forceActiveFocus)
       }
 
+      // While the join runs, and for two seconds after it fails, with why:
+      // a wrong passphrase, or a network lost, refused or gone quiet.
       BorderSurface {
         anchors.left: parent.left
         anchors.right: parent.right
@@ -1384,7 +1386,7 @@ Ui.Panel {
           horizontalAlignment: Text.AlignHCenter
           verticalAlignment: Text.AlignVCenter
           textFormat: Text.PlainText
-          text: row.failed ? "Wrong password" : "Connecting..."
+          text: row.failed ? root.failureReason : "Connecting..."
           color: row.failed ? root.bar.urgent : root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.bodySmall
