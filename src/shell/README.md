@@ -80,11 +80,11 @@ shell's services with `bar.shell.serviceFor(id)`.
 ## IPC
 
 The shell answers two IPC targets of its own: `shell`, below, and
-`image-selector`, through which the image selector opens the image picker
-(`open`, `preload`, `cancel`, `ping`). Plugins add theirs, such as the
-bar's `bar`. [`nova-shell`](../cli/bin/nova-shell) passes a call on to the
-shell that is running, and never starts one; `nova bar` and `nova menu`
-are made of these calls.
+`image-selector`, whose `open` is how `nova theme` opens the image picker.
+Plugins add theirs, such as the bar's `bar`.
+[`nova-shell`](../cli/bin/nova-shell) passes a call on to the shell that is
+running, and never starts one; `nova bar` and `nova menu` are made of these
+calls.
 
 | Call                                           | Answer           | What it does                                              |
 |------------------------------------------------|------------------|-----------------------------------------------------------|
@@ -94,17 +94,12 @@ are made of these calls.
 | `toggle <id> <payloadJson>`                    | —                | hide it when open, summon it when not                     |
 | `togglePanelAt <section> <index>`              | id / `unknown`   | toggle the bar panel at that position                     |
 | `call <id> <method> <arg>`                     | string           | call a method on a loaded plugin                          |
-| `applyTheme <colorsB64> <shellB64>`            | `ok`             | restyle the shell (`nova theme` sends it)                 |
 | `reloadConfig`                                 | `ok`             | read `~/.config/nova/shell.json` again                    |
 | `setPluginEnabled <id> <true\|false>`          | `ok` / error     | switch a plugin on or off (only `"true"` enables)         |
-| `enablePlugin <id> <placementJson>`            | `ok` / error     | switch on, placing a widget                               |
 | `putBarWidget <id> <placementJson>`            | `ok` / error     | enable unless already on the bar                          |
 | `moveBarWidget <id> <placementJson>`           | `ok` / error     | move a widget within or between sections                  |
 | `setBarWidget <id> <key> <valueJson> <selectorJson>` | `ok` / error | set a widget entry's setting                             |
-| `toggleBarTransparency`                        | `ok` / `no-bar`  |                                                           |
 | `listPlugins`                                  | JSON             | every plugin, sorted by name                              |
-| `listShellConfig`                              | JSON             | the effective `shell.json`                                |
-| `debugBarGeometry`                             | JSON             | where the bar's windows are, for debugging                |
 
 ```
 nova-shell shell summon nova.settings '{"page":"updates"}'

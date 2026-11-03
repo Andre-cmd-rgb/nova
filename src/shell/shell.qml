@@ -4,7 +4,6 @@ import Quickshell
 import Quickshell.Io
 
 import qs.Commons
-import qs.Commons as Commons
 
 import "plugins/bar"
 import "services"
@@ -663,13 +662,7 @@ ShellRoot {
 
   // ------------------------------------------------------------- image picker
 
-  function imagePickerItem() {
-    var loader = panelLoaders["nova.image-picker"]
-    return loader && loader.item ? loader.item : null
-  }
-
-  // nova-image-selector's way in: opens the picker on its rows (base64),
-  // fills it ahead of time, or closes it.
+  // nova-theme's way in: opens the picker on its rows (base64).
   IpcHandler {
     target: "image-selector"
 
@@ -691,27 +684,6 @@ ShellRoot {
       }
       return shell.summon("nova.image-picker", JSON.stringify(request)) ? "ok" : "unknown"
     }
-
-    function preload(imageRowsB64: string,
-                     selectedImage: string,
-                     showLabels: string,
-                     filterable: string): string {
-      var picker = shell.imagePickerItem()
-      if (picker && typeof picker.preloadRows === "function")
-        picker.preloadRows(Util.decodeBase64(imageRowsB64), selectedImage, showLabels, filterable)
-      return "ok"
-    }
-
-    function cancel(doneFile: string): string {
-      var picker = shell.imagePickerItem()
-      if (picker && typeof picker.closeSelector === "function") picker.closeSelector(doneFile || "")
-      else shell.hide("nova.image-picker")
-      return "ok"
-    }
-
-    function ping(): string {
-      return "ok"
-    }
   }
 
   // -------------------------------------------------------------- shell IPC
@@ -725,37 +697,14 @@ ShellRoot {
       return "ok"
     }
 
-    // A theme change, as base64 of colors.toml and shell.toml.
-    function applyTheme(colorsB64: string, shellB64: string): string {
-      Commons.Color.loadColors(Util.decodeBase64(colorsB64))
-      Commons.Color.loadShell(Util.decodeBase64(shellB64))
-      Style.scheduleRefresh()
-      return "ok"
-    }
-
     function reloadConfig(): string {
       userConfigFile.reload()
-      return "ok"
-    }
-
-    function toggleBarTransparency(): string {
-      if (!shell.bar || typeof shell.bar.toggleTransparency !== "function") return "no-bar"
-      shell.bar.toggleTransparency()
       return "ok"
     }
 
     function setPluginEnabled(id: string, enabled: string): string {
       var done = shell.pluginRegistry.setEnabled(id, enabled === "true")
       return done ? "ok" : (shell.pluginRegistry.lastEnableError || "unknown")
-    }
-
-    function enablePlugin(id: string, placementJson: string): string {
-      try {
-        var done = shell.pluginRegistry.setEnabled(id, true, JSON.parse(placementJson || "{}"))
-        return done ? "ok" : (shell.pluginRegistry.lastEnableError || "unknown")
-      } catch (e) {
-        return "invalid placement: " + e
-      }
     }
 
     // Enables the widget, but leaves it where it is when it is on the bar
@@ -815,17 +764,6 @@ ShellRoot {
         return String(a.id).localeCompare(String(b.id))
       })
       return JSON.stringify(listed)
-    }
-
-    // The config in effect, as JSON: for the command line and for debugging,
-    // without loading it again.
-    function listShellConfig(): string {
-      return JSON.stringify(shell.shellConfig || {})
-    }
-
-    function debugBarGeometry(): string {
-      var bar = shell.bar
-      return JSON.stringify(bar && bar.debugBarGeometry ? bar.debugBarGeometry() : [])
     }
 
     function summon(id: string, payloadJson: string): string {

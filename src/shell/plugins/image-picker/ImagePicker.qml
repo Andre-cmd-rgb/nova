@@ -30,9 +30,8 @@ Item {
   property bool waiting: false
   property bool showLabels: false
   property bool filterable: false
-  // One more at every request, preload and close: what arrives for an
-  // older one (a folder's listing, rows parsed a turn later, an answer
-  // written) is let go.
+  // One more at every request: what arrives for an older one (a folder's
+  // listing, rows parsed a turn later, an answer written) is let go.
   property int serial: 0
 
   // The images, the rows they were parsed from, the one chosen, the filter.
@@ -77,37 +76,6 @@ Item {
     cancel()
   }
 
-  // From the image-selector target: rows a theme or background change has
-  // just made, parsed now so that the next open is at once. While a
-  // request is open they would reset it, so they wait for the next.
-  function preloadRows(rows, startOnImage, labels, filter) {
-    if (opened || waiting) return
-    serial++
-    thumbnailsReleased = false
-    startOn = startOnImage
-    showLabels = isTrue(labels)
-    filterable = isTrue(filter)
-    query = ""
-    settled = false
-    if (rows && rows === parsedRows && images.length > 0) {
-      chosen = Model.indexOf(images, startOn)
-      loaded = true
-    } else if (rows) {
-      useRows(rows, false)
-    }
-  }
-
-  // From the image-selector target: the one asking gave up, or the shell
-  // is closing the picker. Its done file, and the open request's, are made.
-  function closeSelector(otherDoneFile) {
-    serial++
-    if (waiting) markDone(doneFile)
-    if (otherDoneFile && otherDoneFile !== doneFile) markDone(otherDoneFile)
-    dropRequest()
-    query = ""
-    opened = false
-  }
-
   function isTrue(value) {
     return value === true || value === "true"
   }
@@ -141,7 +109,7 @@ Item {
       loaded = true
       opened = true
       Qt.callLater(function () {
-        if (forSerial === selector.serial) selector.useRows(rows, true)
+        if (forSerial === selector.serial) selector.useRows(rows)
       })
     } else {
       images = []
@@ -152,16 +120,14 @@ Item {
     }
   }
 
-  function useRows(rows, reveal) {
+  function useRows(rows) {
     var parsed = Model.parse(rows)
     parsedRows = rows
     chosen = Model.indexOf(parsed, startOn)
     images = parsed
     loaded = true
-    if (reveal) {
-      opened = true
-      settleFor(serial)
-    }
+    opened = true
+    settleFor(serial)
   }
 
   // The slices show, and take the keys, a turn after the images are in,
@@ -283,7 +249,7 @@ Item {
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        if (listing.forSerial === selector.serial) selector.useRows(String(text || ""), true)
+        if (listing.forSerial === selector.serial) selector.useRows(String(text || ""))
       }
     }
     onExited: {

@@ -331,32 +331,6 @@ Item {
       .map(function(slot) { return slot.activeItem })
   }
 
-  // Where each slot is drawn, for `nova-shell shell barGeometry`.
-  function debugBarGeometry() {
-    var out = []
-    moduleSlots.forEach(function(slot) {
-      if (!slot || !slot.activeItem) return
-      var point = { x: slot.x, y: slot.y }
-      try {
-        point = slot.mapToItem(null, 0, 0)
-      } catch (e) {
-      }
-      out.push({
-        id: slot.moduleName,
-        section: slot.region,
-        x: Math.round(point.x),
-        y: Math.round(point.y),
-        width: Math.round(slot.width),
-        height: Math.round(slot.height),
-        visible: slot.visible === true && slot.width > 0 && slot.height > 0,
-        itemVisible: slot.activeItem.visible === true,
-        itemWidth: Math.round(slot.activeItem.implicitWidth || 0),
-        itemHeight: Math.round(slot.activeItem.implicitHeight || 0)
-      })
-    })
-    return out
-  }
-
   // ---------------------------------------------------------------- panels
 
   function isPanel(item) {

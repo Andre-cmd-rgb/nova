@@ -82,8 +82,8 @@ Two ways to drive it:
 The selection round-trip remains file-based: callers create a
 `selection_file` and `done_file` (both `mktemp`), pass the paths, and
 poll `done_file` for existence. The plugin writes the chosen path into
-`selection_file` and touches `done_file` when it's done. `cancel` IPC
-clears it without writing a selection.
+`selection_file` and touches `done_file` when it's done; dismissed, it
+touches `done_file` alone.
 
 The plugin has `keepLoaded: true` so the layer-shell window survives
 between summons within a single shell session.

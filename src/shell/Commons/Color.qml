@@ -11,8 +11,8 @@ import "BorderGeometry.js" as Geometry
 // what neither sets is the palette's.
 //
 // The theme's files are read once, at start: `nova theme` sends a new theme's
-// over IPC (shell.qml's applyTheme). The user's file is watched. Style reads
-// its own sections of the same shell.toml from shellValues.
+// over IPC (the background's themeTransition). The user's file is watched.
+// Style reads its own sections of the same shell.toml from shellValues.
 QtObject {
   id: colors
 
