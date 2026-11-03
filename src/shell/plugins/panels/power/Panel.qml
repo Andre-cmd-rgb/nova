@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import Quickshell.Services.UPower
 import qs.Commons
@@ -23,7 +22,6 @@ Panel {
   readonly property bool present: !!(device && device.isPresent)
   readonly property var stateValues: ({
     Charging: UPowerDeviceState.Charging,
-    Discharging: UPowerDeviceState.Discharging,
     FullyCharged: UPowerDeviceState.FullyCharged,
     PendingCharge: UPowerDeviceState.PendingCharge
   })
@@ -188,7 +186,6 @@ Panel {
     readonly property bool withNumber: root.showPercentage && !vertical
     text: withNumber ? Math.round(root.level * 100) + "% " + root.icon : root.icon
     slotSize: Style.bar.iconSlot * (withNumber ? 2 : 1)
-    tooltipText: ""
     onPressed: function(which) {
       if (!root.present) return
       if (which === Qt.RightButton) root.togglePercentage()
@@ -304,7 +301,7 @@ Panel {
             Behavior on color { ColorAnimation { duration: 220 } }
 
             SequentialAnimation on opacity {
-              running: root.charging && !root.full && root.opened
+              running: root.charging && root.opened
               loops: Animation.Infinite
               alwaysRunToEnd: true
               NumberAnimation { from: 1.0; to: 0.55; duration: 950; easing.type: Easing.InOutSine }
@@ -378,7 +375,6 @@ Panel {
                 fontSize: Style.font.bodySmall
                 foreground: root.bar.foreground
                 fontFamily: root.bar.fontFamily
-                horizontalPadding: Style.spacing.controlPaddingX
                 verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
                 bordered: true
                 active: root.activeMode === modelData

@@ -23,8 +23,6 @@ function holding(device, onBattery, states) {
   var s = states || {}
   var charge = level(device)
   switch (device.state) {
-  case s.Discharging:
-    return false
   case s.PendingCharge:
     return true
   case s.FullyCharged:
@@ -46,12 +44,11 @@ function icon(device, onBattery, states) {
   return onBattery ? batteryIcons[tenth] : chargingIcons[tenth]
 }
 
-// The state in a word or two, for when no phrase turns.
+// The state in a word or two, for when no phrase turns: only while the
+// battery is plugged in and charges no more, held by its limit or full.
 function mode(device, onBattery, states) {
   if (!device || !device.isPresent) return ""
-  if (holding(device, onBattery, states)) return "Threshold"
-  if (onBattery) return "On battery"
-  return device.percentage >= 1 ? "Fully charged" : "Charging"
+  return holding(device, onBattery, states) ? "Threshold" : "Fully charged"
 }
 
 // nova-battery-info --shell: a field's name, a tab and its value, a line
