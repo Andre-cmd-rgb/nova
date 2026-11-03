@@ -8,7 +8,7 @@
 // ---------------------------------------------------------------- nodes
 
 function propsOf(node) {
-  return node && node.ready && node.properties ? node.properties : {}
+  return node.ready && node.properties ? node.properties : {}
 }
 
 // A stream an application plays into, told without its properties, which
@@ -19,13 +19,11 @@ function propsOf(node) {
 // playback stream takes audio in, and says so with isSink; a capture stream
 // is a source.
 function isPlayback(node) {
-  if (!node || !node.isStream) return false
   if (node.isSink === true) return true
   return /Output|AudioOutStream/.test(String(node.type || ""))
 }
 
 function isSource(node) {
-  if (!node) return false
   if (node.audio) return true
   return String(node.type || "").indexOf("Source") !== -1
 }
@@ -69,10 +67,6 @@ function withDefault(list, node) {
   return list
 }
 
-function copy(list) {
-  return list && list.slice ? list.slice() : []
-}
-
 // ---------------------------------------------------------------- devices
 
 // A device's name without what every device on the machine says.
@@ -103,7 +97,6 @@ function aboutNode(node, keys) {
 }
 
 function headphones(node) {
-  if (!node) return false
   var about = aboutNode(node, ["device.icon-name", "device.product.name", "node.description", "node.nick"])
   return /headphone|headset|earbud|earphone|airpod/.test(about)
 }
@@ -183,14 +176,13 @@ function rawName(node) {
 }
 
 function playerName(player) {
-  if (!player) return ""
   return appName(player.identity || player.desktopEntry || "")
 }
 
 // playerctld, which stands in for whichever player was last active.
 function isProxy(player) {
-  var bus = String(player && player.dbusName || "").toLowerCase()
-  var entry = String(player && player.desktopEntry || "").toLowerCase()
+  var bus = String(player.dbusName || "").toLowerCase()
+  var entry = String(player.desktopEntry || "").toLowerCase()
   return bus.indexOf("playerctld") !== -1 || entry === "playerctld"
 }
 
@@ -239,9 +231,8 @@ function matchingPlayer(label, players) {
 // For a stream called just "audio-src": the one player no other stream is.
 function unmatchedPlayer(label, players, all) {
   if (!generic(label)) return ""
-  var list = Array.isArray(all) ? all : []
   return onlyPlayer(players, function(name) {
-    return !list.some(function(stream) {
+    return !all.some(function(stream) {
       var other = rawName(stream)
       return !generic(other) && sameApp(other, name)
     })
@@ -291,8 +282,7 @@ function entry(section, shape) {
 function rows(section, shape) {
   if (section === "output") return shape.sinks
   if (section === "input") return shape.sources
-  if (section === "streams") return shape.streams
-  return 0
+  return shape.streams
 }
 
 function at(section, index) {

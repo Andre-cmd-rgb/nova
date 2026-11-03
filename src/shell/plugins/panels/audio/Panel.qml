@@ -166,7 +166,7 @@ Panel {
 
   // Any output counts until that is known.
   function plugged(node) {
-    if (!node || !node.name || !plugs.loaded) return true
+    if (!node.name || !plugs.loaded) return true
     return plugs.plugged[String(node.name)] !== false
   }
 
@@ -215,7 +215,7 @@ Panel {
 
   function takeRows() {
     if (!opened) return
-    rows = { outputs: Model.copy(outputsHeld.list), inputs: Model.copy(inputsHeld.list), streams: Model.copy(streamsAll) }
+    rows = { outputs: outputsHeld.list.slice(), inputs: inputsHeld.list.slice(), streams: streamsAll.slice() }
     cursor.keepIn()
   }
 
