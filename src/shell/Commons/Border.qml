@@ -140,13 +140,22 @@ QtObject {
       valueOr(section, widthKeys(token, "-left")))
   }
 
+  // A colour as a border value would write it. Qt writes a colour that is not
+  // opaque as #aarrggbb, and a border value's eight digits are #rrggbbaa, so
+  // the alpha moves to the end; text is left as it is.
+  function colorText(color) {
+    var text = String(color || "")
+    if (!color || typeof color !== "object" || color.r === undefined || !/^#[0-9A-Fa-f]{8}$/.test(text)) return text
+    return "#" + text.slice(3) + text.slice(1, 3)
+  }
+
   // The colour and gradient of a border value, <fallbackColor> where it is
   // empty. A one-colour value can still take its gradient from
   // <legacyGradientRaw>, the separate *-gradient key of older configs.
   function borderValue(raw, fallbackColor, opacity, legacyGradientRaw) {
     var fallback = cssColor(fallbackColor, opacity)
     var given = String(raw || "").trim()
-    var read = resolvedGradient(given.length > 0 ? given : fallbackColor, fallbackColor, opacity)
+    var read = resolvedGradient(given.length > 0 ? given : colorText(fallbackColor), fallbackColor, opacity)
     var color = read.colors.length > 0 ? read.colors[0] : fallback
     var gradient = read.enabled ? read : { colors: [], angle: 0, enabled: false }
 
