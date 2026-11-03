@@ -139,11 +139,15 @@ Ui.Panel {
     fetchMeteo()
   }
 
+  // A fetch stopped here ends as one that failed, and asks for its retry:
+  // the retries go with it, as the refresh asks anew.
   function restartFetches() {
     wttrTries = 0
     meteoTries = 0
     wttrFetch.running = false
     meteoFetch.running = false
+    wttrRetry.stop()
+    meteoRetry.stop()
     Qt.callLater(refresh)
   }
 
