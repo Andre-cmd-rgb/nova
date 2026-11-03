@@ -2,66 +2,54 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// Bare on/off switch: a track with a sliding knob and no label. This is the
-// switch `Toggle` parks at the end of its labeled row, factored out so panel
-// headers and other compact controls render the identical thing.
+// An on/off switch with no label: a track and a knob that slides along it.
+// Toggle puts one at the end of its row; a panel's header can take one by
+// itself.
 //
-// The caller owns the value: bind `checked` to real state and flip it in
-// response to `toggled()`. Services that already track a desired state
-// optimistically (see the Tailscale service's `_desired`) get an instant knob
-// throw for free, because `checked` is already the optimistic value.
+// The switch does not keep its own value: <checked> is bound to the real
+// state, and the caller changes that on toggled(). A service that already
+// holds the state it is moving to (Tailscale's, say) throws the knob at
+// once. <busy> means a change is under way: clicks do nothing, while hover,
+// cursor and tooltip carry on, so a refresh in the background does not make
+// the switch flicker.
 //
-// `busy` marks an operation in flight and swallows further clicks, but leaves
-// hover, cursor, and tooltips alone so the control does not flicker every time
-// a background refresh runs.
-//
-// The cursor is a ring drawn outside the track rather than a state on the
-// track itself: themes give normal chrome a stronger border than hover-cursor
-// (0.4 vs 0.25 by default), which is right for controls that are borderless at
-// rest but would make a bordered track go *fainter* under the cursor. On the
-// panel background the ring reads immediately. `cursorRing` follows
-// `interactive` — a switch whose surrounding row owns the click owns the
-// cursor too.
-//
-// `rounded` auto-detects from Style.cornerRadius so the switch follows the
-// theme: pill shape when Hyprland corners are rounded, square on sharp.
+// The cursor is a ring round the track rather than a change of the track:
+// the theme's normal border is stronger than its hover-cursor one (0.4
+// against 0.25), right for controls with no border at rest but one that
+// would make a bordered track fade under the cursor. The ring goes with
+// <interactive>: where the row round the switch takes the click, the row
+// takes the cursor too. The switch is a pill when the theme's corners are
+// round, square when they are not.
 Item {
   id: root
 
   property bool checked: false
   property bool busy: false
-
-  // Off when the surrounding row owns the click, as in `Toggle`.
+  // False where the row round the switch takes the click, as in Toggle.
   property bool interactive: true
-
-  // Panel-cursor flag. Same role as Button.hasCursor: panels with their own
-  // keyboard cursor bind this to drive the highlight separately from hover.
+  // The panel cursor is on it, as Button's <hasCursor>.
   property bool hasCursor: false
-
   property bool cursorRing: interactive
   property int cursorPad: Style.space(6)
   property bool rounded: Style.cornerRadius > 0
   property color foreground: Commons.Color.foreground
   property color accent: Commons.Color.accent
 
-  signal toggled()
-  signal hovered(bool isHovered)
-
-  readonly property alias containsMouse: mouse.containsMouse
-  readonly property bool hot: hasCursor || mouse.containsMouse
-
-  // `trackHeight` is settable so a compact placement — a switch riding a panel
-  // section header, say — can ask for a genuinely smaller control instead of
-  // scaling a big one down, which lands the track and knob on fractional pixels
-  // and blurs their edges. The derived sizes only carry floors low enough to
-  // stay out of an override's way; at the default track height each one is
-  // already above its floor, so nothing about the normal switch changes.
+  // <trackHeight> can be set for a smaller switch (one in a section's
+  // header): asked for at its size, rather than a big one scaled down, its
+  // edges land on whole pixels and stay sharp. The floors below only stop
+  // such a size going absurd; at the usual height every size is above them.
   property int trackHeight: Math.max(22, Math.round(Style.spacing.controlHeight * 0.55))
   property int trackWidth: Math.round(trackHeight * 1.9)
   property int knobSize: Math.max(6, Math.round(trackHeight * 0.72))
   property int knobInset: Math.max(1, Math.round((trackHeight - knobSize) / 2))
 
+  readonly property alias containsMouse: pointer.containsMouse
+  readonly property bool hot: hasCursor || pointer.containsMouse
   readonly property int _pad: cursorRing ? cursorPad : 0
+
+  signal toggled()
+  signal hovered(bool isHovered)
 
   implicitWidth: trackWidth + _pad * 2
   implicitHeight: trackHeight + _pad * 2
@@ -76,37 +64,43 @@ Item {
 
   BorderSurface {
     id: track
+    anchors.centerIn: parent
     width: root.trackWidth
     height: root.trackHeight
-    anchors.centerIn: parent
     radius: root.rounded ? height / 2 : 0
-    color: root.checked
-      ? Style.selectedFillFor(root.foreground, root.accent)
-      : Style.normalFillFor(root.foreground, root.accent)
+    color: root.checked ? Style.selectedFillFor(root.foreground, root.accent) : Style.normalFillFor(root.foreground, root.accent)
     borderSpec: Border.controlSpec(root.checked ? "selected" : "normal", root.foreground, root.accent)
 
-    Behavior on color { ColorAnimation { duration: 120 } }
+    Behavior on color {
+      ColorAnimation { duration: 120 }
+    }
 
     Rectangle {
+      anchors.verticalCenter: parent.verticalCenter
+      x: root.checked ? track.width - width - root.knobInset : root.knobInset
       width: root.knobSize
       height: root.knobSize
       radius: root.rounded ? height / 2 : 0
-      x: root.checked ? track.width - width - root.knobInset : root.knobInset
-      anchors.verticalCenter: parent.verticalCenter
       color: root.checked ? Style.selectedStateColor(root.foreground, root.accent) : Qt.darker(root.foreground, 1.25)
 
-      Behavior on x { NumberAnimation { duration: 120; easing.type: Easing.OutCubic } }
-      Behavior on color { ColorAnimation { duration: 120 } }
+      Behavior on x {
+        NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
+      }
+      Behavior on color {
+        ColorAnimation { duration: 120 }
+      }
     }
   }
 
   MouseArea {
-    id: mouse
+    id: pointer
     anchors.fill: parent
     enabled: root.interactive
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     onContainsMouseChanged: root.hovered(containsMouse)
-    onClicked: if (!root.busy) root.toggled()
+    onClicked: {
+      if (!root.busy) root.toggled()
+    }
   }
 }

@@ -1,13 +1,12 @@
 import QtQuick
 
-// Filters synthetic hover churn from moving delegates under a stationary
-// pointer. Call reset() after keyboard/list mutations, then moved() from a
-// row MouseArea's onPositionChanged before changing cursor selection. A
-// transition known to originate from the pointer can call allowInitialSample()
-// so the item under the stationary pointer remains selected.
+// Tells a real move of the pointer from the hover events Qt sends when rows
+// slide under a pointer that stands still. A row's MouseArea asks moved()
+// from onPositionChanged before it takes the cursor; a panel calls reset()
+// when the keyboard or the list moves the rows, and allowInitialSample()
+// when the pointer itself caused the change, so the row under it is taken
+// at once.
 QtObject {
-  id: root
-
   property Item referenceItem: null
   property real threshold: 1
   property bool primed: false
@@ -16,39 +15,38 @@ QtObject {
   property real lastY: 0
 
   function reset() {
-    root.primed = false
-    root.initialSampleAllowed = false
-    root.lastX = 0
-    root.lastY = 0
+    primed = false
+    initialSampleAllowed = false
+    lastX = 0
+    lastY = 0
   }
 
   function allowInitialSample() {
-    root.reset()
-    root.initialSampleAllowed = true
+    reset()
+    initialSampleAllowed = true
   }
 
+  // Whether the pointer at <mouse> over <item> has moved more than
+  // <threshold> since the last move taken, in <referenceItem>'s coordinates
+  // (the item's own when there is none). The first sample after a reset only
+  // counts when allowInitialSample() allowed it.
   function moved(item, mouse) {
     if (!item || !mouse) {
-      root.reset()
+      reset()
       return false
     }
-
-    var target = root.referenceItem || item
-    var point = item.mapToItem(target, mouse.x, mouse.y)
-    var firstSample = !root.primed
-    var didMove = !firstSample
-      ? Math.abs(point.x - root.lastX) > root.threshold || Math.abs(point.y - root.lastY) > root.threshold
-      : root.initialSampleAllowed
-
-    // Keep the previous accepted position while filtering jitter so slow,
-    // sub-threshold steps accumulate into deliberate pointer movement.
-    if (firstSample || didMove) {
-      root.lastX = point.x
-      root.lastY = point.y
+    var point = item.mapToItem(referenceItem || item, mouse.x, mouse.y)
+    var moving = primed
+      ? Math.abs(point.x - lastX) > threshold || Math.abs(point.y - lastY) > threshold
+      : initialSampleAllowed
+    // A step within the threshold is not taken, so the steps of a slow move
+    // add up until they cross it.
+    if (moving || !primed) {
+      lastX = point.x
+      lastY = point.y
     }
-    root.primed = true
-    root.initialSampleAllowed = false
-
-    return didMove
+    primed = true
+    initialSampleAllowed = false
+    return moving
   }
 }

@@ -2,58 +2,48 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// Labeled toggle row: title + optional description on the left, a
-// `ToggleSwitch` on the right. Clicking anywhere on the row emits `clicked()`;
-// consumers flip `checked` in response (the component is stateless about the
-// actual value so it composes cleanly with model-driven UI).
-//
-// Cursor and focus styling match the rest of the kit: hasCursor / mouse
-// hover and activeFocus share the hover-cursor defaults.
-//
-// `rounded` is forwarded to the switch, which auto-detects from
-// Style.cornerRadius: pill shape when Hyprland corners are rounded, square on
-// sharp. Callers can override per-instance.
+// A row that turns something on or off: a title, a description under it if
+// there is one, and a ToggleSwitch at the end. A click anywhere on the row,
+// or Return, Enter or Space with the focus on it, sends clicked(); the
+// caller changes <checked>, so the row works with any model behind it.
+// The cursor (<hasCursor> or the pointer) and the focus take the
+// hover-cursor and focus states, as every other control does; the switch is
+// a pill when the theme's corners are round, unless <rounded> says not.
 BorderSurface {
   id: root
 
   property string label: ""
   property string description: ""
   property bool checked: false
-
-  // Panel-cursor flag. Same role as Button.hasCursor:
-  // panels with their own keyboard cursor bind this to drive the highlight
-  // separately from activeFocus. Visuals use the same hover-cursor tokens.
+  // The panel cursor is on it, as Button's <hasCursor>.
   property bool hasCursor: false
-
-  // Switch shape follows the theme by default: pill on round, square on sharp.
-  // Override per-instance if a caller wants the opposite.
   property bool rounded: Style.cornerRadius > 0
-
   property color foreground: Commons.Color.foreground
   property color accent: Commons.Color.accent
   property string fontFamily: Style.font.family
   property real titleSize: Style.font.subtitle
   property real descriptionSize: Style.font.caption
 
+  readonly property bool _hot: hasCursor || pointer.containsMouse
+  readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : _hot ? "hover-cursor" : "normal", foreground, accent)
+
   signal clicked()
   signal hovered(bool isHovered)
+
+  implicitWidth: Style.space(240)
+  implicitHeight: Math.max(54, content.implicitHeight + Style.spacing.huge)
+  radius: Style.cornerRadius
+  color: Style.controlFill(activeFocus, _hot, foreground, accent)
+  borderSpec: _borderSpec
 
   activeFocusOnTab: true
   Keys.onReturnPressed: root.clicked()
   Keys.onEnterPressed: root.clicked()
   Keys.onSpacePressed: root.clicked()
 
-  implicitHeight: Math.max(54, content.implicitHeight + Style.spacing.huge)
-  implicitWidth: Style.space(240)
-  radius: Style.cornerRadius
-
-  readonly property bool _hot: hasCursor || mouse.containsMouse
-  readonly property var _borderSpec: Border.controlSpec(activeFocus ? "focus" : (_hot ? "hover-cursor" : "normal"), foreground, accent)
-
-  color: Style.controlFill(activeFocus, _hot, foreground, accent)
-  borderSpec: _borderSpec
-
-  Behavior on color { ColorAnimation { duration: 100 } }
+  Behavior on color {
+    ColorAnimation { duration: 100 }
+  }
 
   Row {
     id: content
@@ -65,47 +55,44 @@ BorderSurface {
     spacing: Style.spacing.rowPaddingX
 
     Column {
-      width: parent.width - track.width - parent.spacing
-      spacing: Style.spacing.xs
       anchors.verticalCenter: parent.verticalCenter
+      width: parent.width - knob.width - parent.spacing
+      spacing: Style.spacing.xs
 
       Text {
+        width: parent.width
         textFormat: Text.PlainText
         text: root.label
         color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: root.titleSize
-        font.bold: true
+        font { family: root.fontFamily; pixelSize: root.titleSize; bold: true }
         elide: Text.ElideRight
-        width: parent.width
       }
 
       Text {
-        textFormat: Text.PlainText
+        width: parent.width
         visible: root.description !== ""
+        textFormat: Text.PlainText
         text: root.description
         color: Qt.darker(root.foreground, 1.5)
-        font.family: root.fontFamily
-        font.pixelSize: root.descriptionSize
+        font { family: root.fontFamily; pixelSize: root.descriptionSize }
         wrapMode: Text.WordWrap
-        width: parent.width
       }
     }
 
-    // The row owns the click, so the switch is presentation only here.
+    // Only shown: the row takes the click.
     ToggleSwitch {
-      id: track
+      id: knob
+      anchors.verticalCenter: parent.verticalCenter
+      interactive: false
       checked: root.checked
       rounded: root.rounded
       foreground: root.foreground
       accent: root.accent
-      interactive: false
-      anchors.verticalCenter: parent.verticalCenter
     }
   }
 
   MouseArea {
-    id: mouse
+    id: pointer
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor

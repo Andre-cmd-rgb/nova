@@ -2,30 +2,22 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// Small-caps-style label that introduces a panel section ("DNS provider",
-// "Wi-Fi networks", "Output device", "Paired devices"). Sits between a
-// PanelSeparator and the content rows.
+// The bold caption over a panel's section ("Wi-Fi networks", "Output
+// device"), between a PanelSeparator and the section's rows.
 Text {
-  id: root
-
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.caption
 
-  // Callers bind `text` from outside this file, so the default has to be set
-  // here. AutoText would let a section title that happens to carry a device or
-  // network name promote itself to rich text.
+  // A caption can carry a network's or a device's name, which must not be
+  // read as markup; callers only set the text, so it is plain text here.
   textFormat: Text.PlainText
   color: Qt.darker(foreground, 1.4)
-  font.family: fontFamily
-  font.pixelSize: fontSize
-  font.bold: true
+  font { family: fontFamily; pixelSize: fontSize; bold: true }
 
-  // Glyphs can paint above the box Text reserves for them: JetBrainsMono Nerd
-  // Font's outlines run 10% of the em past its own ascent, and a patched or
-  // user-chosen family can be worse. That sliver is invisible in normal flow,
-  // but a header sitting at the top of a clipping list — bluetooth's device
-  // list, network's station list — loses it to the clip and renders beheaded.
-  // Reserve the overshoot here so every panel is covered at once.
+  // A glyph can rise above the line Text makes room for: the Nerd Font's by
+  // a tenth of its size, other fonts by more. A caption at the top of a list
+  // that clips (bluetooth's devices, network's stations) would lose the tops
+  // of its letters; this room above keeps them whole.
   topPadding: Math.ceil(fontSize * 0.15)
 }

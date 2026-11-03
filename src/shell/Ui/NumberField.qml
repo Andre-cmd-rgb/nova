@@ -3,6 +3,10 @@ import QtQuick.Controls as QQC
 import qs.Commons
 import qs.Commons as Commons
 
+// A whole number from <from> to <to>, in steps of <stepSize>: a caption over
+// a spin box that takes typing, the arrow keys and the wheel. It sends
+// modified() with the number when the user changes it, and hovered() as the
+// pointer comes and goes. <field> is the spin box itself.
 Column {
   id: root
 
@@ -18,7 +22,7 @@ Column {
   property real fieldWidth: Style.spacing.numberFieldWidth
   property bool hasCursor: false
   property bool _hovered: false
-  property alias field: spin
+  property alias field: box
 
   signal modified(int value)
   signal hovered(bool on)
@@ -26,16 +30,20 @@ Column {
   spacing: Style.spacing.md
 
   Text {
-    textFormat: Text.PlainText
     visible: root.label !== ""
+    textFormat: Text.PlainText
     text: root.label
     color: Qt.darker(root.foreground, 1.4)
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.bodySmall
+    font { family: root.fontFamily; pixelSize: Style.font.bodySmall }
   }
 
   QQC.SpinBox {
-    id: spin
+    id: box
+
+    readonly property bool _focused: activeFocus
+    readonly property bool _hot: root._hovered || root.hasCursor
+    readonly property var _borderSpec: Border.controlSpec(_focused ? "focus" : _hot ? "hover-cursor" : "normal", root.foreground, root.accent)
+
     width: root.fieldWidth
     implicitHeight: Math.max(Style.spacing.controlHeight, root.fontSize + Style.spacing.controlPaddingY * 2)
     from: root.from
@@ -43,24 +51,19 @@ Column {
     stepSize: root.stepSize
     value: root.value
     editable: true
-    font.family: root.fontFamily
-    font.pixelSize: root.fontSize
+    font { family: root.fontFamily; pixelSize: root.fontSize }
 
-    readonly property bool _focused: spin.activeFocus
-    readonly property bool _hot: root._hovered || root.hasCursor
-    readonly property var _borderSpec: Border.controlSpec(_focused ? "focus" : (_hot ? "hover-cursor" : "normal"), root.foreground, root.accent)
-
-    leftPadding: Border.left(_borderSpec) + Style.spacing.controlPaddingX
-    rightPadding: Border.right(_borderSpec) + Style.spacing.controlPaddingX
     topPadding: Border.top(_borderSpec)
+    rightPadding: Border.right(_borderSpec) + Style.spacing.controlPaddingX
     bottomPadding: Border.bottom(_borderSpec)
+    leftPadding: Border.left(_borderSpec) + Style.spacing.controlPaddingX
 
     onValueModified: root.modified(value)
 
     background: BorderSurface {
-      color: Style.controlFill(spin._focused, spin._hot, root.foreground, root.accent)
-      borderSpec: spin._borderSpec
       radius: Style.cornerRadius
+      color: Style.controlFill(box._focused, box._hot, root.foreground, root.accent)
+      borderSpec: box._borderSpec
 
       HoverHandler {
         onHoveredChanged: {
@@ -71,15 +74,15 @@ Column {
     }
 
     contentItem: TextInput {
-      text: spin.displayText
-      font: spin.font
+      text: box.displayText
+      font: box.font
       color: root.foreground
       selectionColor: Style.selectionFillFor(root.foreground, root.accent)
       selectedTextColor: root.foreground
       horizontalAlignment: Qt.AlignHCenter
       verticalAlignment: Qt.AlignVCenter
-      readOnly: !spin.editable
-      validator: spin.validator
+      readOnly: !box.editable
+      validator: box.validator
       inputMethodHints: Qt.ImhFormattedNumbersOnly
     }
   }

@@ -2,6 +2,10 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
+// One glyph centred by its ink rather than its advance. Icon fonts draw
+// many glyphs off the middle of their cell; the glyph is moved sideways by
+// the difference, and left on the line's baseline, so a row of icons keeps
+// one baseline. <debugBounds> outlines the box and marks the baseline.
 Item {
   id: root
 
@@ -12,43 +16,37 @@ Item {
   property bool debugBounds: false
 
   readonly property int renderedFontSize: Math.max(1, Math.round(fontSize))
-  readonly property real tightWidth: Math.max(1, glyphMetrics.tightBoundingRect.width)
-  readonly property real horizontalCorrection: glyph.implicitWidth / 2 - (glyphMetrics.tightBoundingRect.x + tightWidth / 2)
-  readonly property real paintedCenterX: glyph.x + glyphMetrics.tightBoundingRect.x + tightWidth / 2
+  readonly property real tightWidth: Math.max(1, ink.tightBoundingRect.width)
+  readonly property real horizontalCorrection: glyph.implicitWidth / 2 - (ink.tightBoundingRect.x + tightWidth / 2)
+  readonly property real paintedCenterX: glyph.x + ink.tightBoundingRect.x + tightWidth / 2
   readonly property real baselineY: glyph.y + glyph.baselineOffset
 
   TextMetrics {
-    id: glyphMetrics
-    font.family: root.fontFamily
-    font.pixelSize: root.renderedFontSize
+    id: ink
     text: root.text
+    font { family: root.fontFamily; pixelSize: root.renderedFontSize }
   }
 
   Text {
     id: glyph
-    textFormat: Text.PlainText
-    // Keep the shared line box and baseline intact. Correcting only the
-    // horizontal painted bounds avoids per-glyph vertical drift.
     anchors.centerIn: parent
     anchors.horizontalCenterOffset: root.horizontalCorrection
+    textFormat: Text.PlainText
+    renderType: Text.NativeRendering
     text: root.text
     color: root.color
-    font.family: root.fontFamily
-    font.pixelSize: root.renderedFontSize
-    renderType: Text.NativeRendering
+    font { family: root.fontFamily; pixelSize: root.renderedFontSize }
   }
 
   Rectangle {
-    visible: root.debugBounds
     anchors.fill: parent
+    visible: root.debugBounds
     color: "transparent"
-    border.width: 1
-    border.color: "#4488ff"
+    border { width: 1; color: "#4488ff" }
   }
 
   Rectangle {
     visible: root.debugBounds
-    x: 0
     y: Math.round(root.baselineY)
     width: parent.width
     height: 1

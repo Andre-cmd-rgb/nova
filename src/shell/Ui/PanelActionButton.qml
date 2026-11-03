@@ -2,29 +2,18 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// Small (22×22 by default) icon button used at the right edge of panel rows
-// for inline actions — forget network, confirm passphrase, unpair device,
-// etc. Two visual modes are supported via `hoverColor`:
-//   - default: hoverColor === foreground → subtle foreground-tint hover
-//   - urgent:  hoverColor === bar.urgent → red-tint hover for destructive
-//              actions like forget/unpair
+// A small icon button, 22 pixels square by default, for the actions at the
+// end of a panel's row: forget a network, confirm a passphrase, unpair a
+// device. Under the pointer it takes the hover fill in <hoverColor>: the
+// foreground by default, the bar's urgent colour for an action that
+// destroys something. Disabled, it takes no clicks and its icon dims.
 //
-// `enabled` gates clicks and dims the icon. The component owns its own
-// hover state visuals; mouse hover does NOT update any panel cursor state
-// here because action buttons are not cursor targets — the row they live
-// in is.
-//
-// Set `focusable: true` to make the button keyboard-tabbable with the
-// shared hover-cursor/focus tokens. Use this
-// in form contexts where Tab walks a list
-// of controls; leave it false for the right-edge actions on panel rows
-// where the row's CursorSurface owns the keyboard cursor.
-//
-// Set `hasCursor: true` to have the button render the same hover state as
-// mouse hover — so a panel's keyboard cursor lands on it identically.
-// Use this when a PanelActionButton is itself the cursor target (rather
-// than living inside a CursorSurface row). Emits `hovered(bool)` on
-// pointer enter/leave so the panel can update its cursor state to match.
+// The pointer over it moves no panel cursor: the row it sits in is what the
+// cursor is on. Where the button is the cursor's target itself, the panel
+// sets <hasCursor> to light it as the pointer would, and follows the
+// pointer through hovered(). <focusable> makes it a Tab stop with the focus
+// state, for forms walked with Tab; the actions on a row leave it off, as
+// the row's CursorSurface has the keyboard.
 BorderSurface {
   id: root
 
@@ -35,57 +24,52 @@ BorderSurface {
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.icon
   property real size: Math.max(Style.space(22), fontSize + Style.spacing.sm * 2)
-
   property bool focusable: false
   property bool hasCursor: false
   property bool bordered: false
 
+  readonly property bool _showFocusRing: focusable && activeFocus
+  readonly property bool _hot: (pointer.containsMouse || hasCursor) && enabled
+  readonly property var _borderSpec: {
+    if (_showFocusRing) return Border.controlSpec("focus", hoverColor, hoverColor)
+    if (!bordered) return Border.none()
+    return _hot ? Border.controlSpec("hover-cursor", hoverColor, hoverColor) : Border.controlSpec("normal", foreground, Commons.Color.accent)
+  }
+
   signal clicked()
   signal hovered(bool isHovered)
+
+  implicitWidth: size
+  implicitHeight: size
+  radius: Style.cornerRadius
+  color: _showFocusRing ? Style.focusFillFor(hoverColor, hoverColor)
+    : _hot ? Style.hoverFillFor(hoverColor, hoverColor)
+    : "transparent"
+  borderSpec: _borderSpec
 
   activeFocusOnTab: focusable
   Keys.onReturnPressed: if (focusable) root.clicked()
   Keys.onEnterPressed: if (focusable) root.clicked()
   Keys.onSpacePressed: if (focusable) root.clicked()
 
-  implicitWidth: size
-  implicitHeight: size
-  radius: Style.cornerRadius
-
-  readonly property bool _showFocusRing: focusable && activeFocus
-  readonly property bool _hot: (mouse.containsMouse || root.hasCursor) && root.enabled
-  readonly property var _borderSpec: _showFocusRing
-    ? Border.controlSpec("focus", hoverColor, hoverColor)
-    : (_hot && bordered
-      ? Border.controlSpec("hover-cursor", hoverColor, hoverColor)
-      : (bordered ? Border.controlSpec("normal", foreground, Commons.Color.accent) : Border.none()))
-
-  color: _showFocusRing
-    ? Style.focusFillFor(hoverColor, hoverColor)
-    : (_hot
-      ? Style.hoverFillFor(hoverColor, hoverColor)
-      : "transparent")
-  borderSpec: _borderSpec
-
-  Behavior on color { ColorAnimation { duration: 60 } }
+  Behavior on color {
+    ColorAnimation { duration: 60 }
+  }
 
   Text {
-    textFormat: Text.PlainText
     anchors.centerIn: parent
+    textFormat: Text.PlainText
     text: root.iconText
-    color: root.enabled
-      ? (root._hot ? root.hoverColor : root.foreground)
-      : Qt.darker(root.foreground, 2.0)
-    font.family: root.fontFamily
-    font.pixelSize: root.fontSize
+    color: !root.enabled ? Qt.darker(root.foreground, 2.0) : root._hot ? root.hoverColor : root.foreground
+    font { family: root.fontFamily; pixelSize: root.fontSize }
   }
 
   MouseArea {
-    id: mouse
+    id: pointer
     anchors.fill: parent
+    enabled: root.enabled
     hoverEnabled: true
     cursorShape: root.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-    enabled: root.enabled
     onContainsMouseChanged: root.hovered(containsMouse)
     onClicked: {
       if (root.focusable) root.forceActiveFocus()
@@ -94,7 +78,7 @@ BorderSurface {
   }
 
   PanelToolTip {
-    visible: root.tooltipText !== "" && mouse.containsMouse
+    visible: root.tooltipText !== "" && pointer.containsMouse
     text: root.tooltipText
     fontFamily: root.fontFamily
   }

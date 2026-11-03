@@ -3,9 +3,11 @@ import QtQuick.Shapes
 import qs.Commons
 import "../Commons/BorderGeometry.js" as Geometry
 
-// Visual-only border renderer. It draws closed side-run contours, or a
-// compound winding path for all four sides, so asymmetric/gradient borders
-// do not require touching odd-even paths. Flat uniform borders use Rectangle.border.
+// A border drawn as a shape over its parent, for what a Rectangle's own
+// border cannot do: a gradient, or sides of different widths. The ring is
+// one path filled by winding, its corners following <radius>, and is filled
+// with the spec's gradient, or its colour from end to end. It draws nothing
+// else and takes no input.
 Item {
   id: root
 
@@ -19,8 +21,17 @@ Item {
   readonly property var _endpoints: Geometry.gradientEndpoints(width, height, _gradient.angle || 0)
   readonly property string _path: Geometry.ringPath(width, height, radius, _widths)
 
-  visible: hasBorder && width > 0 && height > 0
+  // The <index>th of the gradient's colours, at its place along it. A
+  // gradient has up to ten; past its last, a stop repeats the last.
+  component Stop: GradientStop {
+    property int index
+    property var colors: []
+    position: Geometry.stopPosition(colors, index)
+    color: Geometry.stopColor(colors, index)
+  }
+
   anchors.fill: parent
+  visible: hasBorder && width > 0 && height > 0
   z: 100000
 
   Shape {
@@ -36,16 +47,16 @@ Item {
         x2: root._endpoints.x2
         y2: root._endpoints.y2
 
-        GradientStop { position: Geometry.stopPosition(root._colors, 0); color: Geometry.stopColor(root._colors, 0) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 1); color: Geometry.stopColor(root._colors, 1) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 2); color: Geometry.stopColor(root._colors, 2) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 3); color: Geometry.stopColor(root._colors, 3) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 4); color: Geometry.stopColor(root._colors, 4) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 5); color: Geometry.stopColor(root._colors, 5) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 6); color: Geometry.stopColor(root._colors, 6) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 7); color: Geometry.stopColor(root._colors, 7) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 8); color: Geometry.stopColor(root._colors, 8) }
-        GradientStop { position: Geometry.stopPosition(root._colors, 9); color: Geometry.stopColor(root._colors, 9) }
+        Stop { index: 0; colors: root._colors }
+        Stop { index: 1; colors: root._colors }
+        Stop { index: 2; colors: root._colors }
+        Stop { index: 3; colors: root._colors }
+        Stop { index: 4; colors: root._colors }
+        Stop { index: 5; colors: root._colors }
+        Stop { index: 6; colors: root._colors }
+        Stop { index: 7; colors: root._colors }
+        Stop { index: 8; colors: root._colors }
+        Stop { index: 9; colors: root._colors }
       }
 
       PathSvg { path: root._path }

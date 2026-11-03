@@ -3,19 +3,15 @@ import QtQuick.Controls
 import qs.Commons
 import qs.Commons as Commons
 
-// Styled wrapper around Qt Quick Controls ToolTip. Drop-in: declare inside
-// the hovered item and bind `visible` to the hover state, e.g.
+// A tooltip in the theme's [tooltip] colours, for anything in a panel.
+// Declared inside the item it explains, with <visible> bound to the
+// pointer being over it:
 //   PanelToolTip {
 //     visible: mouse.containsMouse
 //     text: "Forget network"
 //   }
-//
-// Defaults pull from [tooltip] in shell.toml via Commons.Color.tooltip.*. Override
-// the panel* properties per-instance only when you need a tooltip that
-// intentionally diverges from the theme.
-//
-// Property names are prefixed `panel*` to avoid clashing with ToolTip's
-// built-in `background`/`font` properties.
+// The panel* colours are for a tooltip that must differ from the theme; they
+// are named so because ToolTip has a background and a font of its own.
 ToolTip {
   id: root
 
@@ -31,20 +27,19 @@ ToolTip {
   padding: 0
 
   background: BorderSurface {
+    radius: Style.cornerRadius
     color: root.panelBackground
     borderSpec: root.panelBorderSpec
-    radius: Style.cornerRadius
   }
 
   contentItem: Text {
     textFormat: Text.PlainText
     text: root.text
     color: root.panelForeground
-    font.family: root.fontFamily
-    font.pixelSize: root.fontSize
-    leftPadding: Border.left(root.panelBorderSpec) + Style.spacing.controlPaddingX
-    rightPadding: Border.right(root.panelBorderSpec) + Style.spacing.controlPaddingX
+    font { family: root.fontFamily; pixelSize: root.fontSize }
     topPadding: Border.top(root.panelBorderSpec) + Style.spacing.controlPaddingY
+    rightPadding: Border.right(root.panelBorderSpec) + Style.spacing.controlPaddingX
     bottomPadding: Border.bottom(root.panelBorderSpec) + Style.spacing.controlPaddingY
+    leftPadding: Border.left(root.panelBorderSpec) + Style.spacing.controlPaddingX
   }
 }

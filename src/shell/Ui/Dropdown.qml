@@ -1,21 +1,16 @@
 import QtQuick
-import QtQuick.Controls
 import qs.Commons
 import qs.Commons as Commons
 
-// Themed single-select dropdown. Trigger row paints with the kit's focus
-// chrome; the popup anchors below and uses Commons.Color.popups.background +
-// Commons.Color.popups.border so it reads as a panel surface rather than the
-// platform-native ComboBox look.
+// One choice from a list, in a field that opens a list under itself. The
+// list is a surface of the theme's popups, in [popups]' background and
+// border, rather than the platform's combo box. <options> are strings, or
+// { value, label } objects showing the label and choosing the value, or
+// both; changed() sends the value chosen.
 //
-// `options` accepts either a plain string[] or an array of
-// { value, label } objects (label is what we render; value is what we
-// emit). Mixing is fine — each row is interpreted independently.
-//
-// Keyboard: Tab to focus the trigger, Enter/Space opens, Esc closes,
-// j/k or Up/Down walks options inside the open popup, Enter selects.
-// A sibling SearchableDropdown reuses the same visuals but adds an
-// embedded filter input — keep the two separate so each stays simple.
+// Keys: Tab comes to the field; Return, Enter, Space or Down opens it; in
+// the list, Up and Down (or k and j) move and Return chooses; Escape closes.
+// SearchableDropdown is this with a filter to type in.
 Item {
   id: root
 
@@ -32,31 +27,32 @@ Item {
   property int rowHeight: Style.spacing.controlHeight
   property int popupRowHeight: Style.spacing.popupRowHeight
   property bool showLabel: true
-
-  // Panel-cursor flag. When true, the trigger renders the shared
-  // hover-cursor state. Active Qt focus defaults to the same visuals.
-  // Emits `hovered(bool)` on pointer enter/leave so the panel can keep
-  // its cursor state in sync with the mouse.
+  // The panel cursor is on the field.
   property bool hasCursor: false
 
-  // popupOpen + open()/close()/toggle() let a parent panel know when the
-  // dropdown owns keys (its embedded ListView is active) and suspend its
-  // own keyCatcher so j/k inside the popup don't double-drive the panel
-  // cursor.
-  readonly property bool popupOpen: popup.opened
-  function open() { popup.open() }
-  function close() { popup.close() }
-  function toggle() { popup.opened ? popup.close() : popup.open() }
+  // Whether the list is open, and so has the keys: a panel with its own
+  // key catcher stands it down meanwhile, or j and k would move both.
+  readonly property bool popupOpen: list.opened
 
   signal changed(string value)
   signal hovered(bool isHovered)
 
+  function open() { list.open() }
+  function close() { list.close() }
+  function toggle() {
+    if (list.opened) list.close()
+    else list.open()
+  }
+
   function optionValue(o) {
-    return (o && typeof o === "object") ? String(o.value) : String(o)
+    return o && typeof o === "object" ? String(o.value) : String(o)
   }
+
   function optionLabel(o) {
-    return (o && typeof o === "object") ? String(o.label) : String(o)
+    return o && typeof o === "object" ? String(o.label) : String(o)
   }
+
+  // The chosen option's label; the value itself when no option has it.
   function currentLabel() {
     for (var i = 0; i < options.length; i++) {
       if (optionValue(options[i]) === value) return optionLabel(options[i])
@@ -67,176 +63,104 @@ Item {
   implicitWidth: Style.spacing.dropdownWidth
   implicitHeight: showLabel && label !== "" ? rowHeight + Style.spacing.huge : rowHeight
 
-  Column {
+  DropdownField {
+    id: face
     anchors.fill: parent
-    spacing: Style.spacing.labelGap
+    label: root.label
+    showLabel: root.showLabel
+    text: root.currentLabel()
+    foreground: root.foreground
+    accent: root.accent
+    fontFamily: root.fontFamily
+    rowHeight: root.rowHeight
+    hasCursor: root.hasCursor
+    popupItem: list
+    onHovered: function(isHovered) { root.hovered(isHovered) }
 
-    Text {
-      textFormat: Text.PlainText
-      visible: root.showLabel && root.label !== ""
-      text: root.label
-      color: Qt.darker(root.foreground, 1.4)
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.caption
-      font.bold: true
-    }
+    DropdownPopup {
+      id: list
+      x: 0
+      y: face.field.height + Style.spacing.xxs
+      width: face.field.width
+      // Eight rows at most; past that, the list scrolls.
+      implicitHeight: Math.min(root.options.length * root.popupRowHeight + Math.max(0, root.options.length - 1) * Style.spacing.labelGap + Style.spacing.xxs,
+        root.popupRowHeight * 8 + 7 * Style.spacing.labelGap + Style.spacing.xxs)
+      borderSpec: root.popupBorderSpec
+      fill: root.background
 
-    BorderSurface {
-      id: trigger
-      width: parent.width
-      height: root.rowHeight
-      radius: Style.cornerRadius
-
-      readonly property bool _focused: trigger.activeFocus
-      readonly property bool _hot: triggerHover.hovered || root.hasCursor
-      readonly property var _borderSpec: Border.controlSpec(trigger._focused ? "focus" : (trigger._hot ? "hover-cursor" : "normal"), root.foreground, root.accent)
-
-      color: Style.controlFill(trigger._focused, trigger._hot, root.foreground, root.accent)
-      borderSpec: _borderSpec
-
-      activeFocusOnTab: true
-
-      HoverHandler {
-        id: triggerHover
-        onHoveredChanged: root.hovered(hovered)
+      // The list opens on the chosen option.
+      onOpened: {
+        rows.currentIndex = Math.max(0, rows.indexOfValue(root.value))
+        rows.forceActiveFocus()
       }
 
-      Keys.onPressed: function(event) {
-        if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
-            || event.key === Qt.Key_Space || event.key === Qt.Key_Down) {
-          popup.opened ? popup.close() : popup.open()
+      contentItem: ListView {
+        id: rows
+
+        function indexOfValue(v) {
+          for (var i = 0; i < root.options.length; i++) {
+            if (root.optionValue(root.options[i]) === v) return i
+          }
+          return -1
+        }
+
+        function selectCurrent() {
+          if (currentIndex < 0 || currentIndex >= root.options.length) return
+          var chosen = root.optionValue(root.options[currentIndex])
+          root.value = chosen
+          root.changed(chosen)
+          list.close()
+        }
+
+        implicitHeight: contentHeight
+        spacing: Style.spacing.labelGap
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        model: root.options
+        currentIndex: -1
+
+        Keys.priority: Keys.BeforeItem
+        Keys.onPressed: function(event) {
+          var key = event.key
+          if (key === Qt.Key_Escape) list.close()
+          else if (key === Qt.Key_Down || event.text === "j") rows.currentIndex = Math.min(root.options.length - 1, rows.currentIndex + 1)
+          else if (key === Qt.Key_Up || event.text === "k") rows.currentIndex = Math.max(0, rows.currentIndex - 1)
+          else if (key === Qt.Key_Return || key === Qt.Key_Enter) rows.selectCurrent()
+          else return
           event.accepted = true
-        } else if (event.key === Qt.Key_Escape && popup.opened) {
-          popup.close(); event.accepted = true
-        }
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        anchors.left: parent.left
-        anchors.right: chevron.left
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.leftMargin: trigger.borderLeft + Style.spacing.controlPaddingX
-        anchors.rightMargin: trigger.borderRight + Style.spacing.md
-        text: root.currentLabel()
-        color: root.foreground
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        elide: Text.ElideRight
-      }
-
-      Text {
-        id: chevron
-        anchors.right: parent.right
-        anchors.verticalCenter: parent.verticalCenter
-        anchors.rightMargin: trigger.borderRight + Style.spacing.controlGap
-        text: "󰅀"
-        color: Qt.darker(root.foreground, 1.2)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-      }
-
-      MouseArea {
-        anchors.fill: parent
-        cursorShape: Qt.PointingHandCursor
-        onClicked: {
-          trigger.forceActiveFocus()
-          popup.opened ? popup.close() : popup.open()
-        }
-      }
-
-      Popup {
-        id: popup
-        x: 0
-        y: trigger.height + Style.spacing.xxs
-        width: trigger.width
-        implicitHeight: Math.min(root.options.length * root.popupRowHeight + Math.max(0, root.options.length - 1) * Style.spacing.labelGap + Style.spacing.xxs,
-                                 root.popupRowHeight * 8 + 7 * Style.spacing.labelGap + Style.spacing.xxs)
-        padding: Style.spacing.hairline
-        leftPadding: Border.left(root.popupBorderSpec) + Style.spacing.hairline
-        rightPadding: Border.right(root.popupBorderSpec) + Style.spacing.hairline
-        topPadding: Border.top(root.popupBorderSpec) + Style.spacing.hairline
-        bottomPadding: Border.bottom(root.popupBorderSpec) + Style.spacing.hairline
-        focus: true
-
-        background: BorderSurface {
-          color: root.background
-          borderSpec: root.popupBorderSpec
-          radius: Style.cornerRadius
         }
 
-        onOpened: {
-          optionList.currentIndex = Math.max(0, optionList.indexOfValue(root.value))
-          optionList.forceActiveFocus()
-        }
+        delegate: Rectangle {
+          id: row
 
-        contentItem: ListView {
-          id: optionList
-          spacing: Style.spacing.labelGap
+          required property var modelData
+          required property int index
+          readonly property bool lit: index === rows.currentIndex
 
-          Keys.priority: Keys.BeforeItem
-          Keys.onPressed: function(event) {
-            if (event.key === Qt.Key_Escape) { popup.close(); event.accepted = true }
-            else if (event.key === Qt.Key_Down || event.text === "j") {
-              optionList.currentIndex = Math.min(root.options.length - 1, optionList.currentIndex + 1)
-              event.accepted = true
-            } else if (event.key === Qt.Key_Up || event.text === "k") {
-              optionList.currentIndex = Math.max(0, optionList.currentIndex - 1)
-              event.accepted = true
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-              optionList.selectCurrent(); event.accepted = true
-            }
-          }
-          implicitHeight: contentHeight
-          clip: true
-          boundsBehavior: Flickable.StopAtBounds
-          model: root.options
-          currentIndex: -1
+          width: rows.width
+          height: root.popupRowHeight
+          color: lit ? Style.hoverFillFor(root.foreground, root.accent) : "transparent"
 
-          function indexOfValue(v) {
-            for (var i = 0; i < root.options.length; i++)
-              if (root.optionValue(root.options[i]) === v) return i
-            return -1
+          Text {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: Style.spacing.controlPaddingX
+            anchors.rightMargin: Style.spacing.controlPaddingX
+            textFormat: Text.PlainText
+            text: root.optionLabel(row.modelData)
+            color: row.lit ? Style.hoverStateColor(root.foreground, root.accent) : root.foreground
+            font { family: root.fontFamily; pixelSize: Style.font.body }
+            elide: Text.ElideRight
           }
 
-          function selectCurrent() {
-            if (currentIndex < 0 || currentIndex >= root.options.length) return
-            var v = root.optionValue(root.options[currentIndex])
-            root.value = v
-            root.changed(v)
-            popup.close()
-          }
-
-          delegate: Rectangle {
-            required property var modelData
-            required property int index
-            width: optionList.width
-            height: root.popupRowHeight
-            color: index === optionList.currentIndex
-              ? Style.hoverFillFor(root.foreground, root.accent)
-              : "transparent"
-
-            Text {
-              textFormat: Text.PlainText
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.leftMargin: Style.spacing.controlPaddingX
-              anchors.rightMargin: Style.spacing.controlPaddingX
-              text: root.optionLabel(modelData)
-              color: index === optionList.currentIndex ? Style.hoverStateColor(root.foreground, root.accent) : root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              elide: Text.ElideRight
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onPositionChanged: optionList.currentIndex = parent.index
-              onClicked: optionList.selectCurrent()
-            }
+          // The pointer moves the list's cursor; a click chooses.
+          MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onPositionChanged: rows.currentIndex = row.index
+            onClicked: rows.selectCurrent()
           }
         }
       }

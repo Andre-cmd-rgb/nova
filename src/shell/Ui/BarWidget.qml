@@ -1,14 +1,13 @@
 import QtQuick
 import qs.Commons
 
-// Base item every bar widget extends. Codifies the three properties the
-// bar host injects into each widget slot:
-//   bar         - the host Bar instance (foreground/background/run/etc).
-//   moduleName  - widget's canonical id, used by the host registry to look
-//                 up settings and to disambiguate inline IPC routes.
-//   settings    - per-widget overrides read from shell.json's layout entry.
-//
-// Widgets are free to add their own properties, signals, and child items.
+// What every bar widget is built on. The bar sets three properties on each
+// widget it places:
+//   bar         the Bar the widget sits in, with its colours and run()
+//   moduleName  the widget's name, by which the bar finds its settings and
+//               tells its IPC routes from another widget's
+//   settings    the widget's own entry from the layout in shell.json
+// A widget adds whatever else it needs.
 Item {
   id: root
 
@@ -16,25 +15,22 @@ Item {
   property string moduleName: ""
   property var settings: ({})
 
-  // Bar geometry, lifted off the host. Widgets read these constantly to pick
-  // between horizontal/vertical layouts; defining them on the base keeps the
-  // `bar ? bar.x : fallback` ternary out of every widget body.
+  // The bar's shape, read by most widgets to lay themselves out across or
+  // along it; a widget with no bar yet takes a horizontal one.
   readonly property bool vertical: bar ? bar.vertical : false
   readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
 
-  // Run `method` on every live instance of this widget, across all monitors.
+  // Calls <method> on every instance of this widget, on every monitor's bar.
   function broadcast(method) {
-    var items = bar && typeof bar.moduleWidgets === "function"
-      ? bar.moduleWidgets(moduleName) : [root]
-    for (var i = 0; i < items.length; i++) {
-      if (items[i] && typeof items[i][method] === "function") items[i][method]()
+    var widgets = bar && typeof bar.moduleWidgets === "function" ? bar.moduleWidgets(moduleName) : [root]
+    for (var i = 0; i < widgets.length; i++) {
+      var widget = widgets[i]
+      if (widget && typeof widget[method] === "function") widget[method]()
     }
   }
 
-  // Read a single value from this widget's inline shell.json entry, with a
-  // fallback for missing/null values. Every widget that takes user-tunable
-  // settings needs this; defining it once on the base keeps the wiring
-  // consistent.
+  // The setting <name> from the widget's entry, <fallback> when it is not
+  // there or is null.
   function setting(name, fallback) {
     var value = settings ? settings[name] : undefined
     return value === undefined || value === null ? fallback : value

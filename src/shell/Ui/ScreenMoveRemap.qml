@@ -1,34 +1,32 @@
 import QtQuick
 
-// Hyprland leaves an already-mapped layer surface at its old global position
-// when its monitor moves within the layout: undocking disables the internal
-// panel, the external monitor shifts to x=0, and long-lived surfaces such as
-// the bar and background keep rendering at the old offset — or entirely
-// off-screen — until they are unmapped and remapped. Watch the screen's
-// origin and pulse `remapping` when it moves; the owning window folds that
-// into its `visible` binding so the compositor re-places the surface at the
-// monitor's new origin.
+// When a monitor moves in the layout (undocking turns the laptop's panel
+// off, and the external monitor slides to x=0), Hyprland leaves a layer
+// surface that is already mapped where it was: the bar and the background
+// stay at the old offset, or off the screen, until they are mapped again.
+// This watches the screen of <window> and, once it has stopped moving,
+// sets <remapping> for a moment; the window folds it into its visible
+// binding (visible: shown && !remap.remapping) and is mapped afresh where
+// the monitor now is.
 Item {
   id: root
 
   required property var window
   readonly property var screen: window ? window.screen : null
-
-  // Fold into the window's binding: visible: <shown> && !guard.remapping
   property bool remapping: false
 
   visible: false
 
-  // A layout reshuffle can move the monitor more than once before it lands.
-  // Let the positions settle before the single remap pulse.
+  // A change of layout can move a monitor more than once; one remap, once
+  // it has been still for a fifth of a second.
   Timer {
-    id: settleTimer
+    id: settled
     interval: 200
     onTriggered: root.remapping = true
   }
 
-  // Hold the surface unmapped for a beat so the compositor processes the
-  // unmap before the remap instead of coalescing them into a no-op.
+  // Unmapped long enough for the compositor to see the unmap before the
+  // map, rather than folding the two into nothing.
   Timer {
     interval: 50
     running: root.remapping
@@ -37,7 +35,7 @@ Item {
 
   Connections {
     target: root.screen
-    function onXChanged() { settleTimer.restart() }
-    function onYChanged() { settleTimer.restart() }
+    function onXChanged() { settled.restart() }
+    function onYChanged() { settled.restart() }
   }
 }
