@@ -95,7 +95,14 @@ Ui.Panel {
     controller.hide()
   }
 
+  // The bar keeps one hold for the clock and the weather, so each lets go
+  // only of a hold it took: closing this one while the other is open, by
+  // IPC or by the shell, leaves the other's.
+  property bool holdsPeek: false
+
   function holdPeek(held) {
+    if (held === holdsPeek) return
+    holdsPeek = held
     bar?.setCenterHoverRevealSuppressed(held)
   }
 
