@@ -95,18 +95,24 @@ function menuItem(id, fields) {
     id: id,
     parent: parent,
     kind: value.action ? "action" : value.target ? "link" : "menu",
-    icon: value.icon || "",
-    iconFont: value.iconFont || "",
-    label: value.label || id,
-    title: value.title || "",
-    target: value.target || "",
-    description: value.description || "",
-    action: value.action || "",
-    provider: value.provider || "",
+    icon: asText(value.icon),
+    iconFont: asText(value.iconFont),
+    label: asText(value.label) || id,
+    title: asText(value.title),
+    target: asText(value.target),
+    description: asText(value.description),
+    action: asText(value.action),
+    provider: asText(value.provider),
     aliases: aliasList(value.aliases),
-    when: value.when || "",
-    checked: value.checked || ""
+    when: asText(value.when),
+    checked: asText(value.checked)
   })
+}
+
+// A field as text. JSON lets a label be 2048 or true, but the list's rows
+// and search take text.
+function asText(value) {
+  return value ? String(value) : ""
 }
 
 // "aliases" as written: a list, or one name.
