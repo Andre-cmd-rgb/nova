@@ -45,8 +45,8 @@ Panel {
     if (!stateProc.running) stateProc.running = true
   }
 
-  // The cursor is put back in bounds as the backlight changes and again as
-  // the displays do, in that order.
+  // Once the whole answer is in, and the sections and rows shown have
+  // followed it, the cursor is kept on one of them.
   function takeState(text) {
     var read = Model.readState(text)
     hasBacklight = read.hasBacklight
@@ -55,6 +55,7 @@ Panel {
     currentScale = read.scale
     displays = read.displays
     enabledCount = read.enabled
+    clampCursor()
   }
 
   Component.onCompleted: refresh()
@@ -277,9 +278,6 @@ Panel {
     if (top < flick.contentY + 6) flick.contentY = Math.max(0, top - 6)
     else if (bottom > flick.contentY + flick.height - 6) flick.contentY = bottom + 6 - flick.height
   }
-
-  onHasBacklightChanged: clampCursor()
-  onDisplaysChanged: clampCursor()
 
   onOpenedChanged: {
     if (!opened) return
