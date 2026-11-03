@@ -61,6 +61,7 @@ Item {
   function find() {
     found = EmojiSearch.search(all, query, 1000)
     cursor = Math.max(0, Math.min(cursor, found.length - 1))
+    pointerGate.reset()
     Qt.callLater(function () {
       if (emojis.found.length > 0) grid.positionViewAtIndex(emojis.cursor, GridView.Contain)
     })
@@ -70,7 +71,14 @@ Item {
   function moveTo(index) {
     if (found.length === 0) return
     cursor = Math.max(0, Math.min(index, found.length - 1))
+    pointerGate.reset()
     grid.positionViewAtIndex(cursor, GridView.Contain)
+  }
+
+  // The pointer takes the cursor only when it moves itself, not when the
+  // grid scrolls, or a search fills it again, under a pointer at rest.
+  function point(index, cell, mouse) {
+    if (pointerGate.moved(cell, mouse)) cursor = index
   }
 
   function insert(index) {
@@ -101,6 +109,11 @@ Item {
 
   // emojis.json is made by tools/emoji-list from Unicode's data: Emoji
   // 18.0's emoji-test.txt and CLDR 49's English annotations.
+  PointerMoveGate {
+    id: pointerGate
+    referenceItem: picker.card
+  }
+
   FileView {
     path: Quickshell.env("NOVA_PATH") + "/shell/plugins/emojis/emojis.json"
     onLoaded: {
@@ -160,7 +173,9 @@ Item {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onContainsMouseChanged: if (containsMouse) emojis.cursor = cell.index
+          onPositionChanged: function (mouse) {
+            emojis.point(cell.index, cell, mouse)
+          }
           onClicked: {
             emojis.cursor = cell.index
             emojis.insert(cell.index)
