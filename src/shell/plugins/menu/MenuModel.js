@@ -466,14 +466,14 @@ function foldedHeight(bottoms, room, peek, spacing, least) {
 // Commands a `checked:` reads a value out of, which rows side by side ask
 // alike: Style > Menu Bar's two rows both compare `nova-bar position`. The
 // script runs each once, first, and the rows read what it printed. They are
-// read eagerly: an expression runs in `$(...)`, a subshell, and a value
-// kept there would be gone by the next.
+// read eagerly: each guard runs in a subshell, and a value one kept there
+// would be gone by the next.
 var GUARD_READERS = ["nova-bar position", "nova-bar transparent"]
 
-// Most guards ask whether commands are there, and a fork each is most of
-// what the script would cost. These answer it in the script's own shell,
-// and so must answer as the real commands do, with no arguments too: all of
-// none are present, and none of none is missing.
+// Most guards ask whether commands are there, and starting a script each to
+// ask is most of what the script would cost. These answer it in the
+// script's own shell, and so must answer as the real commands do, with no
+// arguments too: all of none are present, and none of none is missing.
 var GUARD_HELPERS = 'nova-cmd-present() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 1; done; return 0; }\n'
   + 'nova-cmd-missing() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 0; done; return 1; }\n'
 
@@ -491,12 +491,14 @@ function withReaders(expression) {
   }, expression)
 }
 
-// A guard's line. Its expression runs by eval, so that one bash cannot read
-// fails alone, as a no, and does not end the script and every answer with
-// it. Its id is quoted, for the same reason: any id prints as it is.
+// A guard's line. Its expression runs by eval in a subshell of its own, so
+// that one bash cannot read fails alone, as a no, and one that exits, execs,
+// or changes the shell (cd, set, a variable) does so for itself, not for the
+// script and every answer after it. Its id is quoted, for the same reason:
+// any id prints as it is.
 function guardLine(id, tag, expression) {
   var answer = quoted(id + ":" + tag + ":")
-  return "if eval " + quoted(withReaders(expression)) + " >/dev/null 2>&1; then echo " + answer + "1; else echo " + answer + "0; fi\n"
+  return "if ( eval " + quoted(withReaders(expression)) + " ) >/dev/null 2>&1; then echo " + answer + "1; else echo " + answer + "0; fi\n"
 }
 
 function quoted(text) {

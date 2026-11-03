@@ -8,10 +8,10 @@ import "services/AppSearch.js" as AppSearch
 // The menu: a user file's entry changes only what it names, a comma inside a
 // string is the string's, comments may stand after entries, a label may be a
 // number, an id may be a name JavaScript objects have, a menu its when:
-// hides keeps what is under it out of search, a when: bash cannot read
-// hides only its own row, two apps of one name keep one order, and a
-// chooser still waiting when another takes its place is answered as
-// cancelled.
+// hides keeps what is under it out of search, a when: bash cannot read or
+// that exits answers only for its own row, two apps of one name keep one
+// order, and a chooser still waiting when another takes its place is
+// answered as cancelled.
 ShellRoot {
   id: test
 
@@ -69,7 +69,8 @@ ShellRoot {
       "two apps of one name are listed in one order, whatever order they come in")
 
     var guarded = MenuModel.mergeMenuSources(MenuModel.parseMenuJsonc(
-      '{ "on": { "label": "On", "when": "true", "action": "a" }, "broken": { "label": "Broken", "when": "((( ", "action": "b" }, "it\'s": { "label": "Quoted", "checked": "true", "action": "c" } }'), [])
+      '{ "leaving": { "label": "Leaving", "when": "exit 1", "action": "d" }, "staying": { "label": "Staying", "when": "left=1; exit 0", "action": "e" }, '
+      + '"here": { "label": "Here", "when": "[[ -z ${left-} ]]", "action": "f" }, "on": { "label": "On", "when": "true", "action": "a" }, "broken": { "label": "Broken", "when": "((( ", "action": "b" }, "it\'s": { "label": "Quoted", "checked": "true", "action": "c" } }'), [])
     guards.command = ["bash", "-c", MenuModel.guardScript(guarded.items)]
 
     // first: a menu takes its place. second: a chooser, third, which is
@@ -101,6 +102,8 @@ ShellRoot {
         var answers = MenuModel.readGuards(text)
         test.check(answers.when.on === true && answers.when.broken !== true && answers.checked["it's"] === true,
           "a when: bash cannot read hides its own row, and leaves the others their answers")
+        test.check(answers.when.leaving === false && answers.when.staying === true && answers.when.here === true,
+          "a when: that exits or sets a variable answers for its own row alone (" + JSON.stringify(answers.when) + ")")
         console.log("DONE")
         Qt.quit()
       }
