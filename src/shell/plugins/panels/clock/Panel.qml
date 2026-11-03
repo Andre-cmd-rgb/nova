@@ -27,7 +27,6 @@ import "Model.js" as Model
 Ui.Panel {
   id: root
   moduleName: "nova.clock"
-  ipcTarget: "nova.clock"
 
   // Lent by the widget: the button the panel opens under, and the widget
   // itself. The bar knows a panel by the widget in its slot, so the widget
