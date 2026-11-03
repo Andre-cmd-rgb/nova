@@ -9,33 +9,31 @@ import qs.Ui
 BarIndicator {
   id: indicator
 
-  property bool recording: false
+  // What pgrep found when it last looked.
+  property bool recorderFound: false
 
-  function refresh() {
+  function look() {
     if (bar && !pgrep.running) pgrep.running = true
   }
 
-  active: recording
+  active: recorderFound
   activeText: "\u{F0EC2}"
   activeTooltipText: "Stop recording"
   inactiveTooltipText: "Screen Recording"
 
-  onPressed: {
-    if (!bar) return
-    bar.run(recording ? "nova-capture-screenrecording --stop-recording" : "nova-menu toggle capture.screenrecord")
-  }
-  onBarChanged: refresh()
-  Component.onCompleted: refresh()
+  onPressed: if (bar) bar.run(recorderFound ? "nova-capture-screenrecording --stop-recording" : "nova-menu toggle capture.screenrecord")
+  onBarChanged: look()
+  Component.onCompleted: look()
 
   Process {
     id: pgrep
     command: ["pgrep", "--quiet", "-f", "^gpu-screen-recorder"]
-    onExited: function(exitCode) { indicator.recording = exitCode === 0 }
+    onExited: function(exitCode) { indicator.recorderFound = exitCode === 0 }
   }
 
   Connections {
     target: indicator.indicatorHost
     ignoreUnknownSignals: true
-    function onRefreshRequested() { indicator.refresh() }
+    function onRefreshRequested() { indicator.look() }
   }
 }
