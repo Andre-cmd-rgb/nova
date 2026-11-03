@@ -72,5 +72,5 @@ exec systemd-inhibit \
   --what=sleep \
   --mode=delay \
   --who=Nova \
-  --why="Lock screen before suspend" \
+  --why="Locking the screen before sleep" \
   "$here/nova-system-sleep-monitor" --inhibited

@@ -20,15 +20,14 @@ secured() {
   timeout 0.5s nova-shell lock status 2>/dev/null | jq -e '.secure == true' >/dev/null 2>&1
 }
 
-# Locking here rather than waiting for PrepareForSleep is what keeps the lock
-# off the critical path. logind's delay inhibitor is a timer that expires
-# whether or not the session is secure, so starting the lock the moment the lid
-# closes gives Quickshell a head start before logind even decides to suspend.
-# nova-system-sleep-lock then usually finds the session already secure.
+# The lock starts as the lid shuts, before logind has decided to suspend. The
+# delay logind grants before a suspend runs out whether or not the lock is up
+# by then, and nova-system-sleep-lock, which locks as the suspend begins, then
+# mostly finds it up already.
 #
-# A docked lid close does not suspend (HandleLidSwitchDocked defaults to
-# ignore), so it must not lock either: that is clamshell mode, still in use on
-# the external display.
+# With an external display, a shut lid suspends nothing (logind's
+# HandleLidSwitchDocked is ignore) and the computer is still in use on that
+# display, so nothing locks.
 if nova-hw-laptop-closed && ! nova-hw-external-monitors; then
   nova-system-lock >/dev/null 2>&1 || true
   # Plugged in with the lid set to lock (nova power lid lock), the computer

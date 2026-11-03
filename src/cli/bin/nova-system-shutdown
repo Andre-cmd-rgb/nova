@@ -2,36 +2,42 @@
 
 # nova:summary=Shut down after closing application windows
 # nova:args=[--inhibit|--inhibited]
+
+# Three steps, each this script run again:
 #
-# Runs itself in three stages: the caller schedules a transient user service
-# (closing the caller's terminal cannot cancel it), the service takes a sleep
-# and lid inhibitor, and inside it the windows close and the machine powers off.
+#   nova-system-shutdown              has the user's systemd run the rest, which
+#                                     closing the terminal it ran in cannot stop
+#   nova-system-shutdown --inhibit    keeps the machine from sleeping meanwhile,
+#                                     and says so when shutting down fails
+#   nova-system-shutdown --inhibited  closes the windows and powers off
 
 set -euo pipefail
 
 case ${1:-} in
-  --inhibited)
-    # Close windows in the background so they cannot delay power-off.
-    (
-      nova-osd -i shutdown -m "Shutting down" -d 5000 || true
-      nova-hyprland-window-close-all || true
-    ) &
-    sleep 2 # Let apps like Chrome shut down cleanly
-    systemctl poweroff --no-wall
+  '')
+    systemd-run --user --collect --quiet --property=Type=exec --property=RuntimeMaxSec=30s \
+      "$(readlink -f "${BASH_SOURCE[0]}")" --inhibit
     ;;
   --inhibit)
-    # Lid handling ignores high-level sleep inhibitors, so block it explicitly.
-    systemd-inhibit --what=sleep:idle:handle-lid-switch \
-      --who=Nova --why="Shutdown in progress" --mode=block \
-      "$0" --inhibited || {
+    # A lid closed now would still suspend the machine: logind's lid switch
+    # heeds only an inhibitor that names it.
+    systemd-inhibit --what=sleep:idle:handle-lid-switch --mode=block \
+      --who=Nova --why="Shutting down" "$0" --inhibited || {
       status=$?
-      nova-notification-send -u critical "Shutdown failed" "Could not complete shutdown. Please try again."
+      nova-notification-send -u critical -g 󰐥 "The computer did not shut down" \
+        "Something held it up. Shut down again."
       exit "$status"
     }
     ;;
-  "")
-    systemd-run --user --collect --quiet --property=Type=exec --property=RuntimeMaxSec=30s \
-      "$(readlink -f "${BASH_SOURCE[0]}")" --inhibit
+  --inhibited)
+    # The windows close alongside, so none can hold the power-off up; apps such
+    # as Chrome get two seconds to save their state.
+    {
+      nova-osd -i shutdown -m "Shutting down" -d 5000 || true
+      nova-hyprland-window-close-all || true
+    } &
+    sleep 2
+    systemctl poweroff --no-wall
     ;;
   *)
     echo "Usage: nova-system-shutdown" >&2
