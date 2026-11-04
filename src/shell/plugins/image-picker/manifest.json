@@ -3,7 +3,6 @@
   "id": "nova.image-picker",
   "name": "Image picker",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Pick an image from a carousel: a background, a theme, or any folder of pictures.",
   "kinds": [
     "overlay"

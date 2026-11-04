@@ -3,7 +3,6 @@
   "id": "nova.background",
   "name": "Background",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "The desktop background, and the reveal from one to the next.",
   "kinds": [
     "service"

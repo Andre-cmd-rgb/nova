@@ -3,7 +3,6 @@
   "id": "nova.workspaces",
   "name": "Workspaces",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Workspaces 1 to 10, the focused one a dot; a click goes to one",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "Workspaces",
     "description": "Workspaces 1 to 10, the focused one a dot; a click goes to one",
-    "category": "Compositor",
-    "allowMultiple": false,
     "defaultSection": "left"
   }
 }

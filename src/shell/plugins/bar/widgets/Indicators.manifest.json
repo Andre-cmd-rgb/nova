@@ -3,7 +3,6 @@
   "id": "nova.indicators",
   "name": "Indicators",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Recording, night light, do not disturb and Caffeine, lit while on",
   "kinds": [
     "bar-widget"
@@ -13,48 +12,6 @@
   },
   "barWidget": {
     "displayName": "Indicators",
-    "description": "Recording, night light, do not disturb and Caffeine, lit while on",
-    "category": "Status",
-    "allowMultiple": true,
-    "schema": [
-      {
-        "key": "items",
-        "type": "multiselect",
-        "label": "Indicators",
-        "description": "The indicators this copy of the widget shows; with none chosen, all of them.",
-        "noSelectionText": "All indicators",
-        "placeholderText": "Find an indicator...",
-        "emptyText": "No indicators",
-        "options": [
-          {
-            "value": "ScreenRecording",
-            "label": "Screen recording",
-            "description": "While the screen is being recorded"
-          },
-          {
-            "value": "NightLight",
-            "label": "Night light",
-            "description": "While the night light warms the screen"
-          },
-          {
-            "value": "Dnd",
-            "label": "Do not disturb",
-            "description": "While notifications wait in silence"
-          },
-          {
-            "value": "Caffeine",
-            "label": "Caffeine",
-            "description": "The screen stays on; a closed lid only turns it off"
-          }
-        ]
-      },
-      {
-        "key": "alwaysShow",
-        "type": "boolean",
-        "label": "Always Show",
-        "description": "Show the indicators that are off without the pointer on them.",
-        "defaultValue": false
-      }
-    ]
+    "description": "Recording, night light, do not disturb and Caffeine, lit while on"
   }
 }

@@ -3,7 +3,6 @@
   "id": "nova.clipboard",
   "name": "Clipboard",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "What was copied, text and images, to paste again.",
   "kinds": [
     "overlay"

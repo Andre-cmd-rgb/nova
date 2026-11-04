@@ -23,8 +23,8 @@ Panel {
   // anything unusual in the path.
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/mobile-data")).replace(/^file:\/\//, ""))
 
-  // Seconds between background polls. Declared in the manifest so the settings
-  // panel can offer it; the fallback here is what an entry without the key gets.
+  // Seconds between background polls: the bar entry's "interval", else 10,
+  // and never under 2.
   readonly property int pollInterval: {
     var seconds = Number(setting("interval", 10))
     return isFinite(seconds) && seconds > 0 ? Math.max(2, Math.round(seconds)) : 10

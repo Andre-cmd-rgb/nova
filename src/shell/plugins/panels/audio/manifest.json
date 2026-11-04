@@ -3,7 +3,6 @@
   "id": "nova.audio",
   "name": "Audio",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Volume slider, output picker, per-app mixer",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "Audio",
     "description": "Volume slider, output picker, per-app mixer",
-    "category": "Audio",
-    "allowMultiple": false,
     "defaultSection": "right"
   }
 }

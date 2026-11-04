@@ -3,7 +3,6 @@
   "id": "nova.keyboard-layout",
   "name": "Keyboard layout",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "The keyboard's layout as a short code; a click goes to the next",
   "kinds": [
     "bar-widget"
@@ -13,8 +12,6 @@
   },
   "barWidget": {
     "displayName": "Keyboard layout",
-    "description": "The keyboard's layout as a short code; a click goes to the next",
-    "category": "Compositor",
-    "allowMultiple": false
+    "description": "The keyboard's layout as a short code; a click goes to the next"
   }
 }

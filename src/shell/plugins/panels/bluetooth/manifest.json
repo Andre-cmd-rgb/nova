@@ -3,7 +3,6 @@
   "id": "nova.bluetooth",
   "name": "Bluetooth",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Bluetooth device list with connect/disconnect",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "Bluetooth",
     "description": "Bluetooth device list with connect/disconnect",
-    "category": "Network",
-    "allowMultiple": false,
     "defaultSection": "right"
   }
 }

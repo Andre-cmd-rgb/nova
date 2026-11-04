@@ -3,7 +3,6 @@
   "id": "nova.monitor",
   "name": "Display",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Brightness slider and laptop display controls",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "Display",
     "description": "Brightness slider and laptop display controls",
-    "category": "System",
-    "allowMultiple": false,
     "defaultSection": "right"
   }
 }

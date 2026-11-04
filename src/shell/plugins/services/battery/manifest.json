@@ -3,7 +3,6 @@
   "id": "nova.battery",
   "name": "Battery",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Low battery warning, and the power mode that follows the power source",
   "kinds": [
     "service"

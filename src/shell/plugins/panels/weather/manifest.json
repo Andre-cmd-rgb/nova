@@ -3,7 +3,6 @@
   "id": "nova.weather",
   "name": "Weather",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Weather pill with detail popup",
   "kinds": [
     "bar-widget"
@@ -13,9 +12,6 @@
   },
   "barWidget": {
     "displayName": "Weather",
-    "description": "Weather pill with detail popup",
-    "category": "Info",
-    "allowMultiple": false,
-    "settingsForm": "weatherSettings"
+    "description": "Weather pill with detail popup"
   }
 }

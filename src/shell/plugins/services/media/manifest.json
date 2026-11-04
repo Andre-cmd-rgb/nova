@@ -3,7 +3,6 @@
   "id": "nova.media",
   "name": "Media",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "MPRIS media control service",
   "kinds": [
     "service",
@@ -16,8 +15,6 @@
   },
   "barWidget": {
     "displayName": "Media",
-    "description": "MPRIS now-playing with playback controls",
-    "category": "Media",
-    "allowMultiple": false
+    "description": "MPRIS now-playing with playback controls"
   }
 }

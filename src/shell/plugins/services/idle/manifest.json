@@ -3,7 +3,6 @@
   "id": "nova.idle",
   "name": "Idle",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Starts the screensaver, then locks the screen, after a stretch of inactivity, unless Caffeine is on.",
   "kinds": [
     "service"

@@ -3,7 +3,6 @@
   "id": "nova.nightlight",
   "name": "Night Light",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "The night light, hyprsunset's warmer screen, for the bar's switch.",
   "kinds": [
     "service"

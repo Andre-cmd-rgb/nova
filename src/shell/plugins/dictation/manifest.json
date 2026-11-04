@@ -3,7 +3,6 @@
   "id": "nova.dictation",
   "name": "Dictation",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Hold Super+D and speak: the words are pasted where the cursor is, transcribed on this computer.",
   "kinds": [
     "panel"

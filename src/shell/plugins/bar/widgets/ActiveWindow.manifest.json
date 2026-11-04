@@ -3,7 +3,6 @@
   "id": "nova.active-window",
   "name": "Active window",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "The focused window's title; a click raises the window",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "Active window",
     "description": "The focused window's title; a click raises the window",
-    "category": "Compositor",
-    "allowMultiple": false,
     "defaultSection": "left"
   }
 }

@@ -3,7 +3,6 @@
   "id": "nova.network",
   "name": "Network",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Wi-Fi list and connection state",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "Network",
     "description": "Wi-Fi list and connection state",
-    "category": "Network",
-    "allowMultiple": false,
     "defaultSection": "right"
   }
 }

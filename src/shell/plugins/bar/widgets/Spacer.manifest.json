@@ -3,7 +3,6 @@
   "id": "nova.spacer",
   "name": "Spacer",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Empty room along the bar, as long as you set",
   "kinds": [
     "bar-widget"
@@ -13,9 +12,6 @@
   },
   "barWidget": {
     "displayName": "Spacer",
-    "description": "Empty room along the bar, as long as you set",
-    "category": "Layout",
-    "allowMultiple": true,
-    "settingsForm": "spacerSettings"
+    "description": "Empty room along the bar, as long as you set"
   }
 }

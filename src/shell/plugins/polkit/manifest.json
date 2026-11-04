@@ -3,7 +3,6 @@
   "id": "nova.polkit",
   "name": "Polkit Agent",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Asks for your password, or your finger, when an app needs root.",
   "kinds": [
     "service"

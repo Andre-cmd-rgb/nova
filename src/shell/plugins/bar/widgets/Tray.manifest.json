@@ -3,7 +3,6 @@
   "id": "nova.tray",
   "name": "System tray",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Apps' tray icons, with those not pinned in a drawer",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "System tray",
     "description": "Apps' tray icons, with those not pinned in a drawer",
-    "category": "Status",
-    "allowMultiple": false,
     "defaultSection": "right"
   }
 }

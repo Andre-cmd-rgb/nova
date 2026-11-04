@@ -3,7 +3,6 @@
   "id": "nova.lock",
   "name": "Lock Screen",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "The session lock, opened by the password or, after the first unlock of a boot, a fingerprint.",
   "alwaysOn": true,
   "kinds": [

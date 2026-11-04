@@ -3,7 +3,6 @@
   "id": "nova.power",
   "name": "Power",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Battery and power profile",
   "kinds": [
     "bar-widget"
@@ -14,8 +13,6 @@
   "barWidget": {
     "displayName": "Power",
     "description": "Battery and power profile",
-    "category": "System",
-    "allowMultiple": false,
     "defaultSection": "right"
   }
 }

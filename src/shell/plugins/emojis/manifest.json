@@ -3,7 +3,6 @@
   "id": "nova.emojis",
   "name": "Emojis",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "Find an emoji by name and put it where you were typing.",
   "kinds": [
     "overlay"
