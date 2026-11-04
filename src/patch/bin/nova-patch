@@ -61,13 +61,20 @@ says() { # <name>
 
 description() { sed -n 's/^description=//p' "$1/patch" 2>/dev/null | head -n 1; }
 
+# The patches' names, in byte order whatever the locale: of two that want the
+# same file, the first keeps it, and pkexec runs this with no locale at all.
+patch_names() {
+  find "$PATCHES" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n' 2>/dev/null | LC_ALL=C sort
+}
+
 list() {
   local folder name any=false
+  local -a names
   read_status
-  for folder in "$PATCHES"/*/; do
+  mapfile -t names < <(patch_names)
+  for name in "${names[@]}"; do
+    folder=$PATCHES/$name
     [[ -f $folder/patch ]] || continue
-    folder=${folder%/}
-    name=${folder##*/}
     any=true
     printf '%s, %s\n    %s\n' "$name" "$(says "$name")" "$(description "$folder")"
   done
@@ -128,7 +135,7 @@ add() { # <folder|zip>...
 export_zip() { # [zip]
   local zip=${1:-$HOME/nova-patches-$(uname -n).zip} names
   [[ $zip == *.zip ]] || die "export writes a zip: name it something.zip"
-  names=$(find "$PATCHES" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n' 2>/dev/null | sort | paste -sd ' ')
+  names=$(patch_names | paste -sd ' ')
   [[ -n $names ]] || die "there are no patches to export"
   bsdtar --format zip -cf "$zip.part" -C "${PATCHES%/*}" --exclude 'patches/.*' patches
   mv -f -- "$zip.part" "$zip"

@@ -54,6 +54,12 @@ usage() {
 valid_name() { [[ $1 =~ ^[a-z0-9]([a-z0-9-]{0,30}[a-z0-9])?$ ]]; }
 
 # A file's path under /etc, as a patch may hold one: no spaces, nothing odd.
+# The patches' names, in byte order whatever the locale: of two that want the
+# same file, the first keeps it, and pkexec runs this with no locale at all.
+patch_names() {
+  find "$PATCHES" -mindepth 1 -maxdepth 1 -type d ! -name '.*' -printf '%f\n' 2>/dev/null | LC_ALL=C sort
+}
+
 valid_path() { [[ $1 =~ ^[A-Za-z0-9_@+.-]+(/[A-Za-z0-9_@+.-]+)*$ && /$1/ != */../* ]]; }
 
 # This computer, as a patch's machine= names it: a digest of its board's and
@@ -150,6 +156,7 @@ apply() {
   local id='' folder name rel clash rebuild=false systemd=false udev=false
   local -a status=() changed=()
   local -A ours=() want=() owner=()
+  local -a names
 
   [[ -e $PORTABLE ]] || id=$(machine_id) || id=''
   if [[ -f $MANIFEST ]]; then
@@ -158,10 +165,9 @@ apply() {
     done <"$MANIFEST"
   fi
 
-  for folder in "$PATCHES"/*/; do
-    [[ -d $folder ]] || continue
-    folder=${folder%/}
-    name=${folder##*/}
+  mapfile -t names < <(patch_names)
+  for name in "${names[@]}"; do
+    folder=$PATCHES/$name
     if [[ -e $PORTABLE ]]; then
       status+=("$name	off	a portable Nova starts other computers, and takes no patches")
       continue
