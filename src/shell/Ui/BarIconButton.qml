@@ -4,8 +4,8 @@ import qs.Commons
 // A bar button with an icon for its label: a glyph of the icon font, centred
 // by its ink, or <iconComponent> drawn instead. The icon sits in a square of
 // the bar's icon size in the middle of the button, the same square on every
-// button so that their icons line up; along the bar the button is
-// <slotSize> long.
+// button so that their icons line up. The button is a slot <slotSize> long
+// along the bar and as thick as the bar, whatever the icon.
 WidgetButton {
   id: iconButton
 
@@ -19,8 +19,8 @@ WidgetButton {
   hasVisualContent: text !== "" || iconComponent !== null
   labelVisible: false
   fontSize: Style.bar.iconFont
-  fixedWidth: vertical ? -1 : slotSize
-  fixedHeight: vertical ? slotSize : -1
+  implicitWidth: vertical ? barSize : slotSize
+  implicitHeight: vertical ? slotSize : barSize
 
   Item {
     anchors.centerIn: parent
