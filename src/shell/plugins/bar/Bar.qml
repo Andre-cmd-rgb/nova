@@ -1025,6 +1025,9 @@ Item {
 
     HoverHandler {
       onHoveredChanged: root.setCenterSectionHovered(hovered)
+      // The bar dragged to a side, or its screen unplugged, is built anew
+      // with no leave.
+      Component.onDestruction: if (hovered) root.setCenterSectionHovered(false)
     }
 
     ModuleList {
