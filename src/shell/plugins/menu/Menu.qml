@@ -393,7 +393,7 @@ Item {
   }
 
   // A chooser still waiting is answered as cancelled: the menu takes its
-  // place.
+  // place. Opened over the menu, it opens centred as on a closed one.
   function openMenu(id) {
     request.release()
     uninstalling = null
@@ -403,6 +403,7 @@ Item {
     query = ""
     selectedIndex = 0
     pointerGate.reset()
+    panel.freeCardTop()
     evaluateGuards()
     opened = true
     rebuildDisplay()
@@ -430,6 +431,7 @@ Item {
     query = ""
     selectedIndex = 0
     pointerGate.reset()
+    panel.freeCardTop()
     opened = true
     rebuildDisplay()
     Qt.callLater(focusKeys)
@@ -678,7 +680,9 @@ Item {
     // The card opens centred. The first search key or move pins its top
     // where it is, and from then on it grows and shrinks downward instead of
     // jumping to a new centre each time; the rows' height then is the most
-    // they grow to. Closing frees both.
+    // they grow to. Closing frees both, and so does a menu or a chooser
+    // opened over the menu: else it would open where the last was pinned,
+    // its rows no taller than the last's.
     property int cardTop: -1
     property int maxRowsHeight: -1
     readonly property int centeredTop: Math.max(Style.gapsOut, Math.round((height - root.cardHeight) / 2))
@@ -690,11 +694,12 @@ Item {
       maxRowsHeight = root.visibleRowsHeight
     }
 
-    onVisibleChanged: {
-      if (visible) return
+    function freeCardTop() {
       cardTop = -1
       maxRowsHeight = -1
     }
+
+    onVisibleChanged: if (!visible) freeCardTop()
 
     Rectangle {
       anchors.fill: parent
