@@ -4,9 +4,9 @@
 the discrete GPU off the PCI bus on battery and brings it back plugged in; its
 continuous half, `nova-powerd`, sets the CPU's limits and the fans to the load
 (below). Settings → Performance shows what it is doing, and holds the switches.
-(The power mode follows the power source too, power-saver on battery and
-performance on AC until you pick another, but that is `nova-power-profile`'s,
-not the governor's.) It is part of the `nova` package; its tiers and limits
+Plugged in it is always full power; on battery the power mode chosen in the
+menu or Settings (saver, balanced or performance, `nova-power-profile`'s to
+set) decides how high the governor climbs. It is part of the `nova` package; its tiers and limits
 are measured on the ThinkPad P1 Gen 4i, and until another model's are, it is
 inert on any other computer. The top of
 [thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md) lists where each piece
@@ -117,13 +117,13 @@ PCI function of it somehow survived being removed.
 ```
 $ nova power status
 
-  power source   battery (power-saver)
+  power source   battery (balanced)
   discrete GPU   off
   draw           12.94 W
 
 $ nova power status -v
 
-  power source   battery (power-saver)
+  power source   battery (balanced)
   discrete GPU   off
   draw           12.94 W
 
@@ -347,6 +347,19 @@ build do not cost a re-ramp. Between the two thresholds nothing moves at all,
 which is what stops a load hovering on the line from oscillating. `iowait` is
 not counted as busy: a build waiting on the NVMe is not asking for frequency.
 
+**The battery's mode decides how much of the ladder there is.** The governor
+reads it from the platform profile power-profiles-daemon sets (the CPU's
+energy preference where there is none):
+
+| mode | tiers | climbing |
+|---|---|---|
+| saver | `light` only | never: battery first, and `nova power boost` for the job that needs more |
+| balanced | `light` to `turbo` | as above, about a minute to the top |
+| performance | `mid` to `turbo` | four times as fast: 2 s, then 4 s, then 6 s |
+
+A boost outranks the mode, and temperature outranks both: a package past
+85 °C steps down a tier, below the mode's floor too.
+
 **The ceiling is the lever; PL1 is the safety net.** Power goes roughly as
 *f·V²* and V tracks f, so the top of the frequency curve costs several times
 what it returns — 45% of 4.8 GHz is about 2.16 GHz, under the 2.5 GHz base
@@ -362,8 +375,13 @@ playing, the integrated GPU sat at 1100-1200 MHz against a 350 MHz floor — to
 stalling on a buffer boosts the GPU to `gt_boost_freq_mhz`, which ships at RP0.
 The governor caps both that and `gt_max_freq_mhz` on the lower tiers.
 
-On AC it restores the firmware's own numbers and gets out of the way. It owns
-exactly PL1, PL2, `max_perf_pct`, `no_turbo` and the iGPU clocks; EPP and the
+Plugged in there is one mode: everything, turbo and the whole frequency range,
+to Nova's own limits of 109 W sustained and 135 W in bursts, held in both
+copies of PL1 (fact 50 in the P1 Gen 4i notes). They are the firmware's own
+figures, and nothing lower would help: under a long load the package reaches
+its 96 °C at 50-60 W, so its heat is the limit plugged in, and the fans are
+what is worth having more of. It owns
+exactly PL1, PL2, `max_perf_pct`, `no_turbo`, the iGPU clocks and the fans; EPP and the
 platform profile stay with power-profiles-daemon, and the discrete GPU, Wi-Fi,
 ASPM and runtime PM stay with the edge policy. One writer per register, enforced
 by `/run/nova-powerd.owns-cpu`, which the bash half checks before touching
@@ -377,16 +395,36 @@ hardware profile writes to modprobe.d (`nova-hw-thinkpad-fan.conf`) and which
 needs a reboot. Until then it is a
 no-op with one line of explanation.
 
-The battery curve is deliberately lazier than the EC's below 70 C, because a
-warm chassis is cheaper than a spinning fan and the fan is most of a watt. Three
-things stand between that and a hot machine, in order:
+The fans follow Nova's own curves, not the EC's. The EC's stops at about
+3,600-4,000 rpm with the package held at its 96 °C, short of what the fans can
+do, and spins them at about 2,500 rpm on an idle desktop plugged in. Two curves,
+a level (0 to 7, then full speed) from the temperature it starts at:
 
-1. Above `GOVERNOR_TEMP_CRITICAL` the daemon hands the fans back to the EC
-   *before* the curve is consulted, so no arrangement of curve entries can hold
-   a low level on a hot package.
-2. systemd's `ExecStopPost` runs `nova power daemon-stopped`, for the case
+| | still to | 1 | 2 | 3 | 4 | 5 | 7 | full speed |
+|---|---|---|---|---|---|---|---|---|
+| plugged in | 55 °C | 55 | 62 | 68 | 74 | 79 | 84 | 88 |
+| on battery | 70 °C | 70 | 78 | | 84 | | 88 | 92 |
+
+Plugged in there is no battery to spare, and any load that lasts reaches full
+speed. On battery a warm chassis is cheaper than a spinning fan, which is most
+of a watt, and the tiers keep the package cooler anyway.
+
+The temperature is the hottest of the package and the EC's own sensors: the
+board, and the discrete GPU while it is awake. The EC reads the card without
+waking it, and has nothing for it while it sleeps, when it makes no heat. The
+curve reads an average of the last few seconds, the time the heatsink takes to
+follow, so the fans rise as heat builds and not at each one-second spike. They
+come down a level at a time, once 3 °C below where the level starts for 12 s,
+so a build's pauses do not set them hunting.
+
+Four things stand between that and a hot machine, in order:
+
+1. Anything at `GOVERNOR_TEMP_CRITICAL` (92 °C) for three polls, the package
+   or the GPU, has full speed at once, whatever the curve says.
+2. With no package temperature to go by, the fans go back to the EC.
+3. systemd's `ExecStopPost` runs `nova power daemon-stopped`, for the case
    where the daemon is killed outright and its own restore never runs.
-3. The EC's own watchdog, refreshed every ten seconds or so, takes the fans back
+4. The EC's own watchdog, refreshed every ten seconds or so, takes the fans back
    about thirty seconds after this process stops existing — needing nobody.
 
 The level is re-asserted on every watchdog refresh rather than only on change,

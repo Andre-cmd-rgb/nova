@@ -21,7 +21,7 @@ Everything ships in the `nova` package and is inert on any other computer.
 | `default/hypr/hardware/thinkpad-p1-gen4i.lua` | VA-API and GLX on the iGPU, direct scanout (fact 31) |
 | `data/hardware/thinkpad-p1-gen4i/etc/` | fan control, `nvidia-drm fbdev=0`, Bluetooth autosuspend off, NetworkManager's hands off the Wi-Fi power-save flag, and `rtc_cmos.use_acpi_alarm=1`; copied into `/etc` by `nova-hw-apply` from a pacman hook |
 | `/usr/lib/systemd/{logind,sleep}.conf.d/10-nova.conf` | suspend-then-hibernate on the lid, never hibernating on AC (facts 26, 30, 38), for every Nova machine |
-| `nova-power-profile` | power profiles, remembered per power source (fact 4); power-saver on battery by default |
+| `nova-power-profile` | the battery's power mode (fact 4), balanced by default; plugged in, always performance |
 | `nova power gpu` | the switch, `status` and `run` |
 
 `/etc/nova/power.conf` is optional and holds the tunables below
@@ -78,10 +78,11 @@ tests parse it and source it under `sh`. Keep it POSIX.
 **4. Power profiles have one owner, and it is not the governor.** The desktop
 once remembered a profile per power source and set it on every plug event,
 and the governor set profiles too; the last writer won, and the profiles were
-lost. Now `nova-power-profile` remembers one per source in
-`~/.local/state/nova/power-profile/`, and the shell's battery service puts it
-back at login and on every plug and unplug. **nova-power never sets a
-profile**, and leaves EPP and the platform profile to power-profiles-daemon.
+lost. Now `nova-power-profile` remembers the battery's in
+`~/.local/state/nova/power-profile/battery`, keeps performance plugged in,
+and the shell's battery service puts the right one back at login and on every
+plug and unplug. **nova-power never sets a profile**, and leaves EPP and the
+platform profile to power-profiles-daemon; nova-powerd only reads it (fact 51).
 
 **5. Do not order the unit `After=power-profiles-daemon.service`.** PPD is
 itself `After=multi-user.target`, so it closes a cycle and systemd breaks it by
@@ -538,15 +539,15 @@ and the fans. EPP and the platform profile are still power-profiles-daemon's
 `/run/nova-powerd.owns-cpu` exists, so there is one writer at a time — that
 marker is the whole coordination protocol.
 
-**Fans, and the three lines of defence.** `FAN_CONTROL` defaults on but is
+**Fans, and the lines of defence.** `FAN_CONTROL` defaults on but is
 gated on `thinkpad_acpi` having been loaded with `fan_control=1`, which
 `/etc/modprobe.d/nova-hw-thinkpad-fan.conf` sets and which is read only when
 the module loads; until then it is a no-op with one line of explanation rather
-than a knob nobody finds. The battery curve is deliberately *lazier* than the
-EC's below 70 C, because a warm chassis is cheaper than a spinning fan. Then:
-the daemon releases to `auto` above `GOVERNOR_TEMP_CRITICAL` before the curve
-is consulted at all, so no arrangement of curve entries can hold a low level on
-a hot package; systemd's `ExecStopPost` runs `nova power daemon-stopped` for
+than a knob nobody finds. The curves are Nova's, plugged in and on battery
+(fact 51). Then: anything at `GOVERNOR_TEMP_CRITICAL` for three polls gets full
+speed before the curve is consulted at all, so no arrangement of curve entries
+can hold a low level on a hot package; with no package temperature the fans go
+back to the EC; systemd's `ExecStopPost` runs `nova power daemon-stopped` for
 the kill -9 case; and the EC's own watchdog, refreshed every ~10 s, takes the
 fans back about thirty seconds after this process stops existing, needing
 nobody. The level is re-asserted on every watchdog refresh rather than only on
@@ -886,11 +887,48 @@ came at about the PL1 window (56 s), and the copy stayed at 30 W for minutes
 after the load had gone. A test suite and a smoke run were enough to set it
 off. `status -v` said 109 W throughout, as it read the MSR copy alone.
 
-So on AC nova-powerd now holds the MMIO copy at the firmware's own PL1, the
-value it boots with, checked every poll and written only when lowered; the
-package still guards itself at its TCC temperature. On battery the MSR tiers
-sit below it and it is left alone. `status -v` and Settings show the lower
-copy, and say when it is the firmware's.
+So on AC nova-powerd now holds the MMIO copy at its own AC PL1, the
+firmware's boot figure of 109 W, checked every poll and written only when
+lowered; the package still guards itself at its TCC temperature. On battery
+the MSR tiers sit below it and it is left alone. `status -v` and Settings show
+the lower copy, and say when it is the firmware's.
+
+**51. The EC's fan curve stops short, plugged in, and the fans are now Nova's.**
+With the package held at 95 °C under a minute of full load on AC, the EC's
+curve topped out at **3,989 rpm** (and at **3,620 rpm** after a repaste, with
+the package just as hot): it does not take the fans to full speed while the
+package sits at its TCC limit, where more air is the only thing left that buys
+clock. Idle on AC, at 47 °C and 1% busy, it spins them at about **2,500 rpm**.
+The platform profile was already `performance`, which is the EC's most
+generous mode. So nova-powerd now drives the fans on AC as on battery, with a
+curve of its own for each: still to 55 °C plugged in and full speed from
+88 °C, still to 70 °C on battery (docs/power.md has both).
+
+The temperature it reads is the hottest of the package and the EC's own
+sensors (`thinkpad` hwmon). `temp2` there is the **discrete GPU**: it reads the
+card while it is awake (35 °C, as `nvidia-smi` said at the same moment), and
+fails with `ENXIO` while it sleeps, **without waking it** — runtime status
+stayed `suspended` across the reads. That is the one safe way to watch the
+card: `nvidia-smi` and NVML wake it, which costs about 11 W while it stays up.
+A sleeping card makes no heat, so a failed read is nothing to cool. The EC is
+asked for each read, so they are made every 3 s.
+
+Not yet measured: the rpm of each level and of full speed, and what full
+speed buys over the EC's ~3,600-4,000 rpm in sustained clock. The kernel's
+own documentation warns that full speed (`disengaged`) is unregulated, as fast
+as the fan goes, so the curve reaches it only under load that lasts.
+
+The battery's three modes are the ladder's range (docs/power.md): saver stays on
+`light`, balanced climbs it all, performance starts at `mid` and climbs four
+times as fast. The governor reads the mode from the platform profile
+power-profiles-daemon writes, so the menu and Settings set it with nothing in
+between; fact 4 still holds, as it reads and never writes.
+
+The 5G modem is already as off as it goes unless mobile data is set up: the
+bar's mobile data widget parks a modem with no SIM or no ModemManager and
+soft-blocks its radio, and its PCI function runtime-suspends — 63 minutes of a
+64-minute boot. `lspci -vv` wakes it to read its config space, which is worth
+knowing before reading `runtime_status` after it.
 
 ## Working here
 

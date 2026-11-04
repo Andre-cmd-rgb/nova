@@ -9,12 +9,18 @@ var tiers = {
   turbo: "Turbo, for a long hard job"
 }
 
+// Whose the fans are: a level of Nova's curve, 0 (still) to 7 or full, or
+// the firmware's.
 var fanOwners = {
-  auto: "the firmware's curve",
-  held: "held quiet by the governor",
-  "ec/hot": "the firmware's, as the processor is hot",
+  full: "full speed, by Nova's curve",
   "ec/blind": "the firmware's, with no temperature to go by",
   ec: "the firmware's"
+}
+
+function fanOwner(fans) {
+  if (fans === "0") return "by Nova's curve"
+  if (/^[1-7]$/.test(String(fans))) return "level " + fans + " of 7, by Nova's curve"
+  return fanOwners[fans] || ""
 }
 
 function known(value) {
@@ -51,7 +57,7 @@ function fans(info) {
   var g = info.governor || {}
   var parts = []
   if (known(info.fanRpm)) parts.push(info.fanRpm > 0 ? info.fanRpm + " rpm" : "Still")
-  if (fanOwners[g.fans]) parts.push(fanOwners[g.fans])
+  if (fanOwner(g.fans)) parts.push(fanOwner(g.fans))
   return parts.join(", ")
 }
 

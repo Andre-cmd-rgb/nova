@@ -14,10 +14,12 @@
 // something awake to watch the clock. Hence a daemon.
 //
 // So: four tiers on battery, a dwell time before climbing, a longer one before
-// falling, and the fans kept off the case rather than curved. The temperature
-// guard outranks the load state, and the fan watchdog outranks everything —
-// if this process dies the EC has the fans back within thirty seconds without
-// anyone having to notice. On AC, the firmware's full limits, held there.
+// falling, and the battery's mode (saver, balanced, performance) deciding which
+// of them it may use. The temperature guard outranks the load state. On AC,
+// one mode: everything, to Nova's own limits, held there. The fans follow
+// Nova's own curves, one plugged in and one on battery, and the fan watchdog
+// outranks everything: if this process dies the EC has the fans back within
+// thirty seconds without anyone having to notice.
 //
 // It owns PL1, PL2, max_perf_pct and the fans, and nothing else. EPP and the
 // platform profile belong to power-profiles-daemon (fact 4 in
@@ -100,13 +102,15 @@ struct Config {
     fall_after: Duration,
     // Above this the load state stops mattering.
     temp_throttle: f64,
-    // Above this the fans go back to the EC, whatever the fan policy says.
+    // Above this for three polls the fans go to full speed, whatever the
+    // curve says.
     temp_critical: f64,
     fan_control: bool,
-    // Battery fan curve: (temp to switch this level on, level). The EC's own
-    // curve is the fallback and `auto` is always a legal level.
-    fan_curve: Vec<(f64, &'static str)>,
     fan_watchdog_secs: u64,
+    // Plugged in, in watts: the most the package may draw, held in both
+    // copies. Its heat, not these, is what limits it there.
+    ac_pl1_w: u64,
+    ac_pl2_w: u64,
     enabled: bool,
 }
 
@@ -179,16 +183,13 @@ impl Default for Config {
             // next boot this is a no-op with one line of explanation, which is
             // better than a knob that has to be found and turned on later.
             fan_control: true,
-            fan_curve: vec![
-                // Deliberately lazier than the EC below 70 C: on battery a
-                // warm chassis is cheaper than a spinning fan, and the fan
-                // itself is most of a watt.
-                (0.0, "0"),
-                (70.0, "1"),
-                (78.0, "2"),
-                (84.0, "auto"),
-            ],
             fan_watchdog_secs: 30,
+            // The firmware's own figures on this machine. Under a long load
+            // the package reaches its 96 °C first, at 50-60 W (fact 50), so
+            // anything lower would only take back the first seconds of a
+            // burst, and the cooling is what is worth having more of.
+            ac_pl1_w: 109,
+            ac_pl2_w: 135,
             enabled: true,
         }
     }
@@ -267,6 +268,13 @@ impl Config {
         if let Some(v) = num("FAN_WATCHDOG") {
             c.fan_watchdog_secs = v.clamp(5, 120);
         }
+        if let Some(v) = num("AC_PL1") {
+            c.ac_pl1_w = v.clamp(5, 200);
+        }
+        if let Some(v) = num("AC_PL2") {
+            c.ac_pl2_w = v.clamp(5, 250);
+        }
+        c.ac_pl2_w = c.ac_pl2_w.max(c.ac_pl1_w);
 
         // The tiers, each overridable on its own. A partial override is a
         // legitimate thing to want — the light ceiling is the one people
@@ -509,6 +517,120 @@ impl PackageTemp {
     }
 }
 
+// The EC's own sensors, as thinkpad_acpi lists them: the CPU as the EC sees
+// it, the discrete GPU, and the board. The GPU's reads fail while it sleeps
+// (a sleeping card makes no heat), and read the card as it is while it is
+// awake, without waking it: the one way to see it that nvidia-smi does not
+// spoil. Each read asks the EC, so they are read every few seconds, and the
+// hottest kept between.
+struct EcSensors {
+    inputs: Vec<PathBuf>,
+    hottest: Option<f64>,
+    read_at: Option<Instant>,
+}
+
+impl EcSensors {
+    fn find() -> EcSensors {
+        let mut inputs = Vec::new();
+        for e in fs::read_dir("/sys/class/hwmon")
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let p = e.path();
+            if read_trim(p.join("name")).as_deref() != Some("thinkpad") {
+                continue;
+            }
+            for i in 1..=16 {
+                let input = p.join(format!("temp{i}_input"));
+                if input.exists() {
+                    inputs.push(input);
+                }
+            }
+        }
+        EcSensors {
+            inputs,
+            hottest: None,
+            read_at: None,
+        }
+    }
+
+    fn hottest(&mut self, now: Instant) -> Option<f64> {
+        if self
+            .read_at
+            .is_none_or(|t| now.duration_since(t) >= Duration::from_secs(3))
+        {
+            self.read_at = Some(now);
+            self.hottest = self
+                .inputs
+                .iter()
+                .filter_map(|p| read_trim(p)?.parse::<i64>().ok())
+                .filter_map(ec_celsius)
+                .reduce(f64::max);
+        }
+        self.hottest
+    }
+}
+
+// A sensor the EC has nothing for reads 0, or -128 °C.
+fn ec_celsius(mc: i64) -> Option<f64> {
+    (mc > 0 && mc < 128_000).then(|| mc as f64 / 1000.0)
+}
+
+// ---------------------------------------------------------------- modes
+
+// The battery's three modes, as power-profiles-daemon sets them from the menu
+// and Settings: the platform profile it writes, or, without one, the CPU's
+// energy preference. Plugged in there is one mode, full power, and
+// nova-power-profile keeps the profile on performance there.
+const PLATFORM_PROFILE: &str = "/sys/firmware/acpi/platform_profile";
+const EPP: &str = "/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference";
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Saving {
+    Saver,
+    Balanced,
+    Performance,
+}
+
+impl Saving {
+    fn read() -> Saving {
+        Saving::from_profile(
+            read_trim(PLATFORM_PROFILE)
+                .or_else(|| read_trim(EPP))
+                .as_deref(),
+        )
+    }
+
+    fn from_profile(profile: Option<&str>) -> Saving {
+        match profile {
+            Some("low-power" | "quiet" | "cool" | "power") => Saving::Saver,
+            Some("performance") => Saving::Performance,
+            _ => Saving::Balanced,
+        }
+    }
+
+    // The tiers the mode climbs between, of tiers 0 to top. Saver stays on the
+    // lightest: battery first, and a boost for the job that needs more.
+    // Performance starts a rung up and never drops below it.
+    fn range(self, top: usize) -> (usize, usize) {
+        match self {
+            Saving::Saver => (0, 0),
+            Saving::Balanced => (0, top),
+            Saving::Performance => (1.min(top), top),
+        }
+    }
+
+    // How long the first rung's load has to last; each rung after takes as
+    // long again. Performance believes a load four times as soon.
+    fn climb_after(self, base: Duration) -> Duration {
+        match self {
+            Saving::Performance => base / 4,
+            _ => base,
+        }
+    }
+}
+
 // The integrated card's frequency knobs. cardN numbering is not stable across
 // boots — the same reason the compositor is pinned through a udev symlink
 // rather than a path — so the card is found by driver, not by number.
@@ -711,8 +833,8 @@ impl Firmware {
 // has gone, whatever the MSR copy says. Measured on 2026-11-03, 16 threads on
 // AC: 83 W falling to 47 W at the package's 96 °C, then 28 W and 2.7 GHz once
 // the copy dropped. The package still guards itself at its TCC temperature,
-// so on AC the copy is held at the firmware's own PL1, the value it boots
-// with. On battery the MSR tiers sit below it, and it is left alone; at a stop
+// so on AC the copy is held at the AC PL1, the firmware's own boot value
+// here. On battery the MSR tiers sit below it, and it is left alone; at a stop
 // there is nothing to put back, as what it holds is the firmware's number.
 struct MmioPl1 {
     path: PathBuf,
@@ -765,11 +887,10 @@ fn lowered(found: Option<u64>, pl1_uw: u64) -> bool {
 
 // The EC owns the fans unless told otherwise, and it takes them back on its own
 // if this process stops refreshing the watchdog. That ordering is the whole
-// safety argument: the failure mode of a dead governor is a machine that is
-// merely as loud as Lenovo intended, not one that cooks.
+// safety argument: the failure mode of a dead governor is a machine on the
+// EC's own curve, not one that cooks.
 struct Fans {
     available: bool,
-    engaged: bool,
     level: String,
     last_watchdog: Instant,
 }
@@ -784,7 +905,6 @@ impl Fans {
                 == Some("Y");
         Fans {
             available,
-            engaged: false,
             level: String::new(),
             last_watchdog: Instant::now() - Duration::from_secs(3600),
         }
@@ -812,12 +932,10 @@ impl Fans {
                 say!("fan level {level}");
             }
             self.level = level.to_string();
-            self.engaged = level != "auto";
         }
     }
 
-    // Unconditional hand-back, used on the way out and whenever the package is
-    // hotter than any curve should be arguing about.
+    // The fans back to the EC: on the way out, and with no temperature to go by.
     fn release(&mut self, w: &mut Writer) {
         if !self.available || self.level == "auto" {
             return;
@@ -825,22 +943,124 @@ impl Fans {
         if w.write(FAN, "level auto\n") {
             say!("fan level auto (released to the EC)");
             self.level = "auto".to_string();
-            self.engaged = false;
+        }
+    }
+}
+
+// A fan level as the EC takes it: 0, still, to 7, and full speed, past 7 and
+// unregulated, as fast as the fans go.
+const FULL: u8 = 8;
+
+fn level_name(level: u8) -> String {
+    if level >= FULL {
+        "full-speed".to_string()
+    } else {
+        level.to_string()
+    }
+}
+
+// Each level from the temperature it starts at. The EC's own curve stops at
+// about 3,600-4,000 rpm with the package held at its 96 °C, short of what the
+// fans can do (fact 51). Plugged in, there is no battery to spare: the fans
+// are still at rest and reach full speed under any load that lasts.
+const AC_CURVE: &[(f64, u8)] = &[
+    (55.0, 1),
+    (62.0, 2),
+    (68.0, 3),
+    (74.0, 4),
+    (79.0, 5),
+    (84.0, 7),
+    (88.0, FULL),
+];
+
+// On battery, still to 70 °C: a warm chassis is cheaper than a spinning fan,
+// which is most of a watt itself, and the tiers keep the package cooler.
+const BATTERY_CURVE: &[(f64, u8)] = &[(70.0, 1), (78.0, 2), (84.0, 4), (88.0, 7), (92.0, FULL)];
+
+fn curve_level(curve: &[(f64, u8)], temp: f64) -> u8 {
+    curve
+        .iter()
+        .take_while(|(at, _)| temp >= *at)
+        .last()
+        .map_or(0, |(_, level)| *level)
+}
+
+// The curve, read from the heat the fans can move rather than from every spike.
+// A burst takes the package to 90 °C for a second and the heatsink barely
+// notices, so the curve reads an average of the last few seconds (the heatsink
+// takes about that long to follow): the fans rise as heat builds, not at each
+// spike. They come down a level at a time, 3 °C below where the level starts
+// and 12 s later, so a build's pauses do not set them hunting. A package
+// at its critical temperature for three polls is not a spike: full speed at
+// once.
+struct FanCurve {
+    level: u8,
+    average: Option<f64>,
+    hot_polls: u32,
+    lower_since: Option<Instant>,
+}
+
+impl FanCurve {
+    const DOWN_AFTER: Duration = Duration::from_secs(12);
+    const DOWN_MARGIN: f64 = 3.0;
+
+    fn new() -> Self {
+        FanCurve {
+            level: 0,
+            average: None,
+            hot_polls: 0,
+            lower_since: None,
         }
     }
 
-    fn pick(curve: &[(f64, &'static str)], temp: f64) -> &'static str {
-        let mut chosen = "auto";
-        for (at, level) in curve {
-            if temp >= *at {
-                chosen = level;
-            }
+    // A resume, or fans the EC has had: start from the heat there is now.
+    fn forget(&mut self) {
+        self.level = 0;
+        self.average = None;
+        self.hot_polls = 0;
+        self.lower_since = None;
+    }
+
+    fn step(&mut self, curve: &[(f64, u8)], temp: f64, critical: f64, now: Instant) -> u8 {
+        let average = self.average.map_or(temp, |a| a + (temp - a) * 0.2);
+        self.average = Some(average);
+        self.hot_polls = if temp >= critical {
+            self.hot_polls + 1
+        } else {
+            0
+        };
+        if self.hot_polls >= 3 {
+            self.level = FULL;
+            self.lower_since = None;
+            return FULL;
         }
-        chosen
+        let want = curve_level(curve, average);
+        if want >= self.level || curve_level(curve, average + Self::DOWN_MARGIN) >= self.level {
+            self.level = self.level.max(want);
+            self.lower_since = None;
+            return self.level;
+        }
+        let since = *self.lower_since.get_or_insert(now);
+        if now.duration_since(since) >= Self::DOWN_AFTER {
+            // The curve's next level down, or still.
+            self.level = curve
+                .iter()
+                .map(|(_, level)| *level)
+                .filter(|level| *level < self.level)
+                .max()
+                .unwrap_or(0);
+            self.lower_since = Some(now);
+        }
+        self.level
     }
 }
 
 // ---------------------------------------------------------------- governor
+
+// PL1 is an average over this window. Plugged in, the PL1 it averages to is
+// never reached for long (the package's heat comes first), so this is only
+// Intel's own figure for the part.
+const AC_WINDOW_US: u64 = 28_000_000;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Mode {
@@ -875,24 +1095,33 @@ impl Governor {
     // rule. A spike does not climb: it has to hold above the threshold for
     // climb_after, which is longer than any interaction. Falling takes longer
     // still, so the gaps between files in a build do not cost a re-ramp.
-    fn step(&mut self, ac: bool, busy: f64, temp: Option<f64>, now: Instant) -> Mode {
+    fn step(
+        &mut self,
+        ac: bool,
+        saving: Saving,
+        boost: bool,
+        busy: f64,
+        temp: Option<f64>,
+        now: Instant,
+    ) -> Mode {
         if ac {
             self.above_since = None;
             self.below_since = None;
             return Mode::Ac;
         }
         // A boost is the user saying "I know what this is, leave it alone".
-        if boosting() {
+        if boost {
             self.above_since = None;
             self.below_since = None;
             return Mode::Battery(self.cfg.tiers.len() - 1);
         }
-        let top = self.cfg.tiers.len() - 1;
+        let (floor, top) = saving.range(self.cfg.tiers.len() - 1);
         let mut tier = match self.mode {
-            Mode::Battery(t) => t.min(top),
-            // Coming off AC always starts at the bottom. Anything else would
-            // hand a full tier to whatever happened to be running at unplug.
-            Mode::Ac => 0,
+            Mode::Battery(t) => t.clamp(floor, top),
+            // Coming off AC always starts at the mode's bottom. Anything else
+            // would hand a full tier to whatever happened to be running at
+            // unplug.
+            Mode::Ac => floor,
         };
 
         if busy >= self.cfg.busy_climb {
@@ -902,7 +1131,7 @@ impl Governor {
             // something: 8 s to leave light, 16 s more to reach full, 24 s more
             // to reach turbo — about a minute of unbroken load for the top,
             // which nothing but real work will ever produce.
-            let dwell = self.cfg.climb_after * (tier as u32 + 1);
+            let dwell = saving.climb_after(self.cfg.climb_after) * (tier as u32 + 1);
             if now.duration_since(since) >= dwell && tier < top {
                 tier += 1;
                 self.above_since = Some(now);
@@ -915,7 +1144,7 @@ impl Governor {
         } else if busy <= self.cfg.busy_fall {
             self.above_since = None;
             let since = *self.below_since.get_or_insert(now);
-            if now.duration_since(since) >= self.cfg.fall_after && tier > 0 {
+            if now.duration_since(since) >= self.cfg.fall_after && tier > floor {
                 tier -= 1;
                 self.below_since = Some(now);
             }
@@ -926,8 +1155,9 @@ impl Governor {
             self.below_since = None;
         }
 
-        // Temperature outranks load. A tier that cannot be cooled is not a
-        // tier that was earned, whatever the CPU is busy doing.
+        // Temperature outranks load, and the mode's floor. A tier that cannot
+        // be cooled is not a tier that was earned, whatever the CPU is busy
+        // doing.
         if let Some(t) = temp {
             if t >= self.cfg.temp_throttle && tier > 0 {
                 if !self.throttled {
@@ -945,14 +1175,14 @@ impl Governor {
 
     fn apply(&mut self, w: &mut Writer, mode: Mode, fw: Firmware, igpu: Option<&IGpu>) {
         let (pl1_uw, pl1_win, pl2_uw, max_pct, no_turbo, label) = match mode {
-            // "Restore everything" on AC means the firmware's own numbers, not
-            // a tier of ours that happens to be generous.
+            // Plugged in: everything, turbo and the whole range, to the
+            // limits that are Nova's for AC.
             Mode::Ac => (
-                fw.pl1_uw,
-                fw.pl1_window_us,
-                fw.pl2_uw,
-                fw.max_pct,
-                fw.no_turbo == 1,
+                self.cfg.ac_pl1_w * 1_000_000,
+                AC_WINDOW_US,
+                self.cfg.ac_pl2_w * 1_000_000,
+                100,
+                false,
                 "ac",
             ),
             Mode::Battery(t) => {
@@ -1114,6 +1344,8 @@ fn main() {
     let mut gov = Governor::new(cfg.clone());
     let mut mains = Mains::new();
     let mut package = PackageTemp::new();
+    let mut ec = EcSensors::find();
+    let mut curve = FanCurve::new();
     let mut mmio = MmioPl1::find();
     let mut last_ac = mains.on_ac();
     // Instant is CLOCK_MONOTONIC, which does not advance across S3, so the
@@ -1158,6 +1390,7 @@ fn main() {
             gov.below_since = None;
             fans.level.clear();
             fans.last_watchdog = Instant::now() - Duration::from_secs(3600);
+            curve.forget();
             // The counters did not advance while asleep, so the first sample
             // after a resume describes the moment before it. Throw it away.
             let _ = sampler.busy_pct();
@@ -1179,50 +1412,33 @@ fn main() {
             last_ac = ac;
         }
 
-        let mode = gov.step(ac, busy, temp, now);
+        let mode = gov.step(ac, Saving::read(), boosting(), busy, temp, now);
         gov.apply(&mut w, mode, fw, igpu.as_ref());
         if let (Mode::Ac, Some(copy)) = (mode, mmio.as_mut()) {
-            copy.hold(&mut w, fw.pl1_uw, now);
+            copy.hold(&mut w, cfg.ac_pl1_w * 1_000_000, now);
         }
 
-        // Fans last, and temperature-first. The critical hand-back is checked
-        // before the curve is consulted at all, so there is no arrangement of
-        // curve entries that can hold a low level on a hot package.
+        // Fans last. Without the package's own temperature there is nothing to
+        // go by, and the EC has its own sensors.
         let fan_label = if !cfg.fan_control || !fans.available {
-            "ec"
-        } else {
-            match (mode, temp) {
-                (_, Some(t)) if t >= cfg.temp_critical => {
-                    fans.release(&mut w);
-                    "ec/hot"
-                }
-                // On AC the EC's own curve is the right one: there is no
-                // battery to save and headroom is worth more than quiet. The
-                // fans are handed back once, not refreshed: with the EC on its
-                // own curve there is no watchdog to keep and nothing to lose
-                // if it takes them back.
-                (Mode::Ac, _) => {
-                    fans.release(&mut w);
-                    "auto"
-                }
-                (Mode::Battery(_), Some(t)) => {
-                    let level = Fans::pick(&cfg.fan_curve, t);
-                    fans.set(&mut w, level, cfg.fan_watchdog_secs);
-                    if level == "auto" {
-                        "auto"
-                    } else {
-                        "held"
-                    }
-                }
-                // No temperature is not a reason to guess.
-                (Mode::Battery(_), None) => {
-                    fans.release(&mut w);
-                    "ec/blind"
-                }
+            "ec".to_string()
+        } else if let Some(t) = temp {
+            let hottest = ec.hottest(now).map_or(t, |e| e.max(t));
+            let shape = if ac { AC_CURVE } else { BATTERY_CURVE };
+            let level = curve.step(shape, hottest, cfg.temp_critical, now);
+            fans.set(&mut w, &level_name(level), cfg.fan_watchdog_secs);
+            if level >= FULL {
+                "full".to_string()
+            } else {
+                level.to_string()
             }
+        } else {
+            fans.release(&mut w);
+            curve.forget();
+            "ec/blind".to_string()
         };
 
-        write_state(&cfg, mode, busy, temp, fan_label, watts);
+        write_state(&cfg, mode, busy, temp, &fan_label, watts);
     }
 
     // On the way out, put everything back. systemd also has an ExecStopPost for
@@ -1291,5 +1507,189 @@ mod tests {
     fn a_counter_that_went_back_without_a_range_is_no_reading() {
         assert_eq!(watts_between(5, 4, 0, Duration::from_secs(1)), None);
         assert_eq!(watts_between(1, 2, 0, Duration::ZERO), None);
+    }
+
+    // A governor stepped once a second for <secs> at <busy> percent, cool.
+    fn run(gov: &mut Governor, saving: Saving, busy: f64, secs: u64, from: Instant) -> Mode {
+        let mut mode = gov.mode;
+        for i in 0..secs {
+            mode = gov.step(
+                false,
+                saving,
+                false,
+                busy,
+                Some(60.0),
+                from + Duration::from_secs(i),
+            );
+            gov.mode = mode;
+        }
+        mode
+    }
+
+    #[test]
+    fn the_profile_names_the_battery_mode() {
+        assert_eq!(Saving::from_profile(Some("low-power")), Saving::Saver);
+        assert_eq!(Saving::from_profile(Some("power")), Saving::Saver);
+        assert_eq!(Saving::from_profile(Some("balanced")), Saving::Balanced);
+        assert_eq!(
+            Saving::from_profile(Some("balance_power")),
+            Saving::Balanced
+        );
+        assert_eq!(
+            Saving::from_profile(Some("performance")),
+            Saving::Performance
+        );
+        assert_eq!(Saving::from_profile(None), Saving::Balanced);
+    }
+
+    #[test]
+    fn saver_stays_light_under_any_load() {
+        let mut gov = Governor::new(Config::default());
+        assert_eq!(
+            run(&mut gov, Saving::Saver, 100.0, 300, Instant::now()),
+            Mode::Battery(0)
+        );
+    }
+
+    #[test]
+    fn balanced_climbs_the_whole_ladder_in_about_a_minute() {
+        let mut gov = Governor::new(Config::default());
+        let now = Instant::now();
+        assert_eq!(
+            run(&mut gov, Saving::Balanced, 100.0, 40, now),
+            Mode::Battery(2)
+        );
+        assert_eq!(
+            run(
+                &mut gov,
+                Saving::Balanced,
+                100.0,
+                40,
+                now + Duration::from_secs(40)
+            ),
+            Mode::Battery(3)
+        );
+    }
+
+    #[test]
+    fn performance_starts_a_rung_up_and_climbs_four_times_as_fast() {
+        let mut gov = Governor::new(Config::default());
+        let now = Instant::now();
+        assert_eq!(
+            run(&mut gov, Saving::Performance, 0.0, 120, now),
+            Mode::Battery(1)
+        );
+        // 4 s to full and 6 s more to turbo, against 16 and 24.
+        assert_eq!(
+            run(
+                &mut gov,
+                Saving::Performance,
+                100.0,
+                12,
+                now + Duration::from_secs(120)
+            ),
+            Mode::Battery(3)
+        );
+    }
+
+    #[test]
+    fn a_boost_and_ac_outrank_the_mode() {
+        let mut gov = Governor::new(Config::default());
+        let now = Instant::now();
+        assert_eq!(
+            gov.step(false, Saving::Saver, true, 0.0, Some(50.0), now),
+            Mode::Battery(3)
+        );
+        assert_eq!(
+            gov.step(true, Saving::Saver, false, 0.0, Some(50.0), now),
+            Mode::Ac
+        );
+    }
+
+    // A curve stepped once a second at each temperature in turn.
+    fn heat(curve: &mut FanCurve, shape: &[(f64, u8)], temps: &[f64], from: Instant) -> Vec<u8> {
+        temps
+            .iter()
+            .enumerate()
+            .map(|(i, t)| curve.step(shape, *t, 92.0, from + Duration::from_secs(i as u64)))
+            .collect()
+    }
+
+    #[test]
+    fn a_second_long_spike_does_not_spin_the_fans() {
+        let mut curve = FanCurve::new();
+        let levels = heat(
+            &mut curve,
+            AC_CURVE,
+            &[45.0, 45.0, 90.0, 45.0, 45.0],
+            Instant::now(),
+        );
+        assert_eq!(levels, [0, 0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn plugged_in_a_load_that_lasts_reaches_full_speed() {
+        let mut curve = FanCurve::new();
+        // Under critical: the average climbs, in about 17 s to where full
+        // speed starts. A package held at its 96 °C gets there in three.
+        let temps: Vec<f64> = [45.0].into_iter().chain([89.0; 20]).collect();
+        let levels = heat(&mut curve, AC_CURVE, &temps, Instant::now());
+        assert_eq!(levels[1], 0);
+        assert!(levels.windows(2).all(|w| w[1] >= w[0]), "{levels:?}");
+        assert_eq!(*levels.last().unwrap(), FULL);
+    }
+
+    #[test]
+    fn a_critical_package_for_three_polls_is_full_speed_at_once() {
+        let mut curve = FanCurve::new();
+        let levels = heat(
+            &mut curve,
+            BATTERY_CURVE,
+            &[40.0, 95.0, 95.0, 95.0],
+            Instant::now(),
+        );
+        assert_eq!(levels, [0, 0, 0, FULL]);
+    }
+
+    #[test]
+    fn the_fans_come_down_a_level_at_a_time_once_cool_for_twelve_seconds() {
+        let mut curve = FanCurve::new();
+        let now = Instant::now();
+        heat(&mut curve, AC_CURVE, &[95.0; 4], now);
+        assert_eq!(curve.level, FULL);
+        let levels = heat(
+            &mut curve,
+            AC_CURVE,
+            &[40.0; 40],
+            now + Duration::from_secs(4),
+        );
+        // The average takes a few seconds to fall past full's start, then 12 s
+        // a step: 7, then 5.
+        assert_eq!(levels[..10], [FULL; 10]);
+        assert!(levels.contains(&7) && levels.contains(&5), "{levels:?}");
+        assert_eq!(levels.iter().filter(|l| **l == 7).count(), 12);
+    }
+
+    #[test]
+    fn near_a_level_s_start_the_fans_hold() {
+        let mut curve = FanCurve::new();
+        let now = Instant::now();
+        heat(&mut curve, AC_CURVE, &[75.0; 30], now);
+        assert_eq!(curve.level, 4);
+        // 2 °C under where level 4 starts, for a minute: within the margin.
+        let levels = heat(
+            &mut curve,
+            AC_CURVE,
+            &[72.0; 60],
+            now + Duration::from_secs(30),
+        );
+        assert!(levels.iter().all(|l| *l == 4), "{levels:?}");
+    }
+
+    #[test]
+    fn the_ec_s_empty_sensors_are_no_reading() {
+        assert_eq!(ec_celsius(0), None);
+        assert_eq!(ec_celsius(-128_000), None);
+        assert_eq!(ec_celsius(41_000), Some(41.0));
     }
 }
