@@ -25,6 +25,13 @@ Item {
   property color colour: text
   property bool fades: true
 
+  // What picks the colour; tests/qml/see-through-test.qml sets its own.
+  property string pickCommand: "nova-bar-text-color"
+  // Asked again while the picker runs: what it is measuring may be gone by
+  // the time it answers, so that answer is dropped and it is asked again
+  // once it ends.
+  property bool stale: false
+
   visible: false
 
   // The bar's config says whether it is see-through: wanted, the colour is
@@ -47,6 +54,7 @@ Item {
   }
 
   function answered(line) {
+    if (stale) return
     var picked = String(line || "").trim()
     if (!/^#[0-9A-Fa-f]{6}$/.test(picked)) return
     fades = false
@@ -72,8 +80,12 @@ Item {
     id: soon
     interval: 120
     onTriggered: {
-      if (!seeThrough.wanted || picker.running) return
-      picker.command = ["nova-bar-text-color", seeThrough.edge, String(seeThrough.thickness),
+      if (!seeThrough.wanted) return
+      if (picker.running) {
+        seeThrough.stale = true
+        return
+      }
+      picker.command = [seeThrough.pickCommand, seeThrough.edge, String(seeThrough.thickness),
         BarModel.hex(seeThrough.text.r, seeThrough.text.g, seeThrough.text.b),
         BarModel.hex(seeThrough.backdrop.r, seeThrough.backdrop.g, seeThrough.backdrop.b)]
       picker.running = true
@@ -82,6 +94,11 @@ Item {
 
   Process {
     id: picker
+    onExited: {
+      if (!seeThrough.stale) return
+      seeThrough.stale = false
+      soon.restart()
+    }
     stdout: SplitParser {
       onRead: function(line) { seeThrough.answered(line) }
     }
