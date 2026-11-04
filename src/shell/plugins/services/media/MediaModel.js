@@ -1,114 +1,145 @@
 .pragma library
 
-// What the media service reads from an MPRIS player and from Pipewire, kept
-// apart from Qt.
+// The media service's reading of MPRIS players and Pipewire streams, and
+// what it does to a player, apart from Qt.
 
-// playerctld stands in for whichever player played last. A player of its own
-// is chosen over it.
-function isProxy(player) {
-  var bus = String(player && player.dbusName || "").toLowerCase()
-  var entry = String(player && player.desktopEntry || "").toLowerCase()
-  return bus.indexOf("playerctld") !== -1 || entry === "playerctld"
+// Whether the player has any of the properties named, set.
+function any(player, names) {
+  return !!player && names.some(name => !!player[name])
 }
 
-// Something to show: a track, or at least the player's name.
+var NAME = ["trackTitle", "trackArtist", "identity", "desktopEntry"]
+var TRACK = ["trackTitle", "trackArtist", "trackAlbum", "trackArtUrl"]
+
+// What each action needs the player to say it can do.
+var ABLE = {
+  next: ["canGoNext"],
+  previous: ["canGoPrevious"],
+  playPause: ["canTogglePlaying", "canPlay", "canPause"]
+}
+
+// Something to show for it: a track, or at least its name.
 function isNamed(player) {
-  return !!(player && (player.trackTitle || player.trackArtist || player.identity || player.desktopEntry))
+  return any(player, NAME)
 }
 
 function hasTrack(player) {
-  return !!(player && (player.trackTitle || player.trackArtist || player.trackAlbum || player.trackArtUrl))
+  return any(player, TRACK)
 }
 
 function isControllable(player) {
-  return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
+  return any(player, ABLE.next.concat(ABLE.previous, ABLE.playPause))
 }
 
-// Whether the player can do the action: playPause, next or previous.
 function can(player, action) {
-  if (!player) return false
-  switch (action) {
-  case "next": return !!player.canGoNext
-  case "previous": return !!player.canGoPrevious
-  case "playPause": return !!(player.canTogglePlaying || player.canPlay || player.canPause)
-  }
-  return false
+  return any(player, ABLE[action] || [])
 }
 
-// One the source keys step through: named, and playing or able to play.
+// playerctld, which stands in for whichever player played last.
+function isProxy(player) {
+  return /playerctld/.test(String(player && player.dbusName || "").toLowerCase())
+    || String(player && player.desktopEntry || "").toLowerCase() === "playerctld"
+}
+
+// A step of the source keys: named, and playing or able to.
 function isSource(player) {
-  return !!(player && isNamed(player) && (player.isPlaying || player.canPlay))
+  return isNamed(player) && any(player, ["isPlaying", "canPlay"])
 }
 
-// A stream that plays sound, rather than one that records it.
+// A Pipewire stream that plays, as against one that records.
 function isPlaybackStream(node) {
-  if (!node || !node.isStream) return false
-  if (node.isSink === true) return true
-  var kind = String(node.type || "")
-  return kind.indexOf("Output") !== -1 || kind.indexOf("AudioOutStream") !== -1
+  return !!node && !!node.isStream && (node.isSink === true || /Output|AudioOutStream/.test(String(node.type || "")))
 }
 
-// A name as letters and digits only, in lower case, to match a stream to
-// its player: "PipeWire ALSA [Spotify]" and "spotify" are both "spotify".
+// A name in lower-case letters and digits, ALSA's wrapping gone, for a
+// stream and a player to be matched: "PipeWire ALSA [Spotify]" and
+// "spotify" are both "spotify".
 function nameKey(name) {
   return String(name || "").toLowerCase()
-    .replace(/^pipewire alsa \[/, "")
-    .replace(/^alsa playback \[/, "")
+    .replace(/^(?:pipewire alsa \[)?(?:alsa playback \[)?/, "")
     .replace(/[^a-z0-9]+/g, "")
 }
 
-// The name a stream goes by: its program's, else its own.
-function streamName(node) {
+// A stream's: its program's name, or its own.
+function streamKey(node) {
   if (!node) return ""
   var props = node.ready && node.properties ? node.properties : {}
-  return props["application.name"] || node.description || props["media.name"] || props["node.name"] || node.name
+  return nameKey([props["application.name"], node.description, props["media.name"], props["node.name"]].find(Boolean) || node.name)
 }
 
-// The name a player goes by: its desktop entry, its own name, or its bus name
-// without the MPRIS prefix and the instance number.
-function playerName(player) {
-  if (!player) return ""
-  var bus = String(player.dbusName || "")
-    .replace(/^org\.mpris\.MediaPlayer2\./, "")
-    .replace(/\.instance[0-9]+$/, "")
-  return player.desktopEntry || player.identity || bus
-}
-
-// Whether one of the streams, by their nameKey, is the player's: the one name
-// holds the other.
-function isHeard(player, streamKeys) {
-  var key = nameKey(playerName(player))
-  if (!key) return false
-  for (var i = 0; i < streamKeys.length; i++) {
-    var stream = streamKeys[i]
-    if (stream && (stream.indexOf(key) !== -1 || key.indexOf(stream) !== -1)) return true
-  }
-  return false
+// Whether a stream, by its streamKey, is the player's, by its desktop entry,
+// its name, or its bus name less the MPRIS prefix and the instance: the one
+// name holding the other.
+function heardIn(player, streamKeys) {
+  if (!player) return false
+  var bus = String(player.dbusName || "").replace(/^org\.mpris\.MediaPlayer2\.|\.instance\d+$/g, "")
+  var own = nameKey(player.desktopEntry || player.identity || bus)
+  return own !== "" && streamKeys.some(stream => !!stream && (stream.includes(own) || own.includes(stream)))
 }
 
 // What the service knows a player by.
 function playerKey(player) {
-  if (!player) return ""
-  return String(player.dbusName || player.desktopEntry || player.identity || "")
+  return player ? String(player.dbusName || player.desktopEntry || player.identity || "") : ""
 }
 
-// The track as one string, to tell when it changes.
+// The track, to tell when a skip has brought the next one.
 function trackSignature(player) {
-  if (!player) return ""
-  return [player.trackTitle || "", player.trackArtist || "", player.trackAlbum || "", player.trackArtUrl || ""].join("\u001f")
+  return player ? JSON.stringify(TRACK.map(name => player[name] || "")) : ""
 }
 
-// A player in a list: its track's title, else its own name.
+// Its track's title, or its own name.
 function label(player) {
-  if (!player) return ""
-  return player.trackTitle || player.identity || player.desktopEntry || ""
+  return player ? player.trackTitle || player.identity || player.desktopEntry || "" : ""
 }
 
-// What the on-screen display says: "Title - Artist", the label alone, or
+// The on-screen display's words for it, "Title - Artist" or the label, and
 // failing both, what was done.
-function osdMessage(player, fallback) {
-  if (!player) return fallback
+function osdMessage(player, done) {
   var name = label(player)
-  if (name && player.trackArtist) return name + " - " + player.trackArtist
-  return name || fallback
+  if (!name) return done
+  return player.trackArtist ? name + " - " + player.trackArtist : name
+}
+
+// What the display says an action did, the player playing or not before it.
+function feedback(action, wasPlaying) {
+  if (action !== "playPause") return { words: action === "next" ? "Next" : "Previous", icon: "media-" + action }
+  return wasPlaying ? { words: "Pause", icon: "media-pause" } : { words: "Play", icon: "media-play" }
+}
+
+// Does the action to the player: true if it could. Play and pause go by
+// what it says it is doing; a player that only toggles is toggled.
+function apply(player, action) {
+  if (!player) return false
+  if (action !== "playPause") {
+    if (!can(player, action)) return false
+    player[action]()
+  } else if (player.isPlaying && player.canPause) {
+    player.pause()
+  } else if (!player.isPlaying && player.canPlay) {
+    player.play()
+  } else if (player.canTogglePlaying) {
+    player.togglePlaying()
+  } else {
+    return false
+  }
+  return true
+}
+
+// Stops a player playing, by a pause or else a toggle.
+function halt(player) {
+  if (player.canPause) player.pause()
+  else if (player.canTogglePlaying && player.isPlaying) player.togglePlaying()
+}
+
+// A sort by rank, a list each thing is ranked by in turn: numbers lower
+// first, strings in their language's order.
+function ranked(rank) {
+  return (a, b) => {
+    var x = rank(a), y = rank(b)
+    for (var i = 0; i < x.length; i++) {
+      if (x[i] === y[i]) continue
+      return typeof x[i] === "string" ? x[i].localeCompare(y[i]) : x[i] < y[i] ? -1 : 1
+    }
+    return 0
+  }
 }

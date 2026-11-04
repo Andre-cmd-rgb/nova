@@ -3,56 +3,56 @@ import Quickshell
 import qs.Ui
 import qs.Commons
 import qs.Commons as Commons
+import "MediaModel.js" as Media
 
 // The bar's media widget: a play or pause mark and what plays, title and
-// artist, scrolling through while it plays and does not fit. A click plays or
+// artist, running past while it plays and does not fit. A click plays or
 // pauses, a middle click skips on, the wheel goes back or on; a right click
 // opens a card with the cover, the transport and every player to pick from.
-// The media service (Service.qml) does the playing.
+// The media service plays.
 BarWidget {
   id: widget
   moduleName: "nova.media"
 
   readonly property var media: bar?.shell?.serviceFor("nova.media")
   readonly property var player: media ? media.activePlayer : null
-  readonly property var players: media ? media.sourcePlayers : []
+  readonly property var listed: media ? media.listed : []
   readonly property bool playing: !!player && player.isPlaying
-  readonly property bool shown: media ? media.hasMedia : false
-  readonly property string title: player ? (player.trackTitle || "") : ""
-  readonly property string artist: player ? (player.trackArtist || "") : ""
+  readonly property string title: player ? player.trackTitle || "" : ""
+  readonly property string artist: player ? player.trackArtist || "" : ""
+  // Shown for a track with a title or an artist.
+  readonly property bool shown: title !== "" || artist !== ""
   // The bar shows a tooltip only while its widget says the pointer is on it.
   readonly property bool tooltipHovered: visible && pointer.containsMouse
 
   property bool cardOpen: false
 
-  function close() { cardOpen = false }
+  function close() {
+    cardOpen = false
+  }
 
-  // Pause while it plays, play while it does not.
+  // A player playing shows pause, one stopped play.
   function mark(isPlaying) {
     return isPlaying ? "\u{F03E4}" : "\u{F040A}"
   }
 
-  // <action> on the player the card shows when <onShown>, else on the one
-  // the service picks for it. No on-screen display: the bar shows the change.
+  // The action on the player the card shows when `onShown`, else on the one
+  // the service picks; with no on-screen display, as the bar shows it.
   function act(action, onShown) {
-    if (media) media.runAction(action, false, onShown ? media.playerKey(player) : undefined)
-  }
-
-  function isShown(candidate) {
-    return player && candidate && media.playerKey(player) === media.playerKey(candidate)
+    if (media) media.press(action, true, onShown ? Media.playerKey(player) : "")
   }
 
   visible: shown
-  implicitWidth: shown ? onBar.implicitWidth + Style.space(14) : 0
+  implicitWidth: shown ? strip.implicitWidth + Style.space(14) : 0
   implicitHeight: barSize
 
   Row {
-    id: onBar
+    id: strip
     anchors.centerIn: parent
     spacing: Style.space(6)
 
-    Glyph {
-      id: stateMark
+    BarText {
+      id: playMark
       anchors.verticalCenter: parent.verticalCenter
       text: widget.mark(widget.playing)
       color: widget.playing ? widget.bar.barForeground : Qt.darker(widget.bar.barForeground, 1.5)
@@ -64,35 +64,33 @@ BarWidget {
       }
     }
 
-    // Title and artist in 180 px at most, and none on a side bar. Too long,
-    // they scroll through, in from the right, while they play on a bar that
-    // shows with the card closed: a frame each refresh, so only then.
-    // Stopped, they are back at the start.
+    // 180 px of title and artist, none on a side bar. Longer, they run past,
+    // in from the right, while they play on a bar that shows with the card
+    // closed: a frame each refresh, so only then. Stopped, they are back at
+    // the start.
     Item {
-      id: clipper
+      id: ticker
       anchors.verticalCenter: parent.verticalCenter
-      width: Math.min(180, track.implicitWidth)
-      height: stateMark.height
+      width: Math.min(180, tape.implicitWidth)
+      height: playMark.height
       clip: true
-      visible: !widget.bar.vertical && widget.title !== ""
+      visible: !widget.vertical && widget.title !== ""
 
-      Text {
-        id: track
+      BarText {
+        id: tape
         anchors.verticalCenter: parent.verticalCenter
-        text: widget.artist ? widget.title + "  ·  " + widget.artist : widget.title
-        textFormat: Text.PlainText
+        text: widget.title + (widget.artist ? "  ·  " + widget.artist : "")
         color: widget.bar.barForeground
-        font.family: widget.bar.fontFamily
         font.pixelSize: Style.font.body
 
         NumberAnimation on x {
-          running: track.implicitWidth > clipper.width && !widget.cardOpen && !widget.bar.vertical
+          running: tape.implicitWidth > ticker.width && !widget.cardOpen && !widget.vertical
             && !widget.bar.barHidden && widget.playing
-          onRunningChanged: if (!running) track.x = 0
+          onRunningChanged: if (!running) tape.x = 0
           loops: Animation.Infinite
-          duration: Math.max(6000, track.implicitWidth * 25)
-          from: clipper.width
-          to: -track.implicitWidth
+          duration: Math.max(6000, tape.implicitWidth * 25)
+          from: ticker.width
+          to: -tape.implicitWidth
           easing.type: Easing.Linear
         }
       }
@@ -112,15 +110,11 @@ BarWidget {
     onClicked: function(mouse) {
       if (widget.bar) widget.bar.hideTooltip(widget)
       if (!widget.player) return
-      switch (mouse.button) {
-      case Qt.RightButton: widget.cardOpen = !widget.cardOpen; break
-      case Qt.MiddleButton: widget.act("next"); break
-      default: widget.act("playPause")
-      }
+      if (mouse.button === Qt.RightButton) widget.cardOpen = !widget.cardOpen
+      else widget.act(mouse.button === Qt.MiddleButton ? "next" : "playPause")
     }
     onWheel: function(wheel) {
-      if (!widget.player || wheel.angleDelta.y === 0) return
-      widget.act(wheel.angleDelta.y > 0 ? "previous" : "next")
+      if (widget.player && wheel.angleDelta.y !== 0) widget.act(wheel.angleDelta.y > 0 ? "previous" : "next")
     }
   }
 
@@ -131,189 +125,188 @@ BarWidget {
     owner: widget
     open: widget.cardOpen
     contentWidth: card.fittedContentWidth(Style.space(320))
-    contentHeight: card.fittedContentHeight(body.implicitHeight)
+    contentHeight: card.fittedContentHeight(sheet.implicitHeight)
 
     Column {
-      id: body
+      id: sheet
       anchors.fill: parent
       spacing: Style.space(10)
 
-      // The cover, or a note where there is none, beside the track.
       Row {
         width: parent.width
         spacing: Style.space(10)
 
-        BorderSurface {
-          width: Style.space(64)
-          height: Style.space(64)
-          radius: Style.spacing.labelGap
-          color: Style.normalFillFor(widget.bar.foreground, Commons.Color.accent)
-          borderSpec: Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent)
-
-          Image {
-            anchors.fill: parent
-            anchors.margins: Style.space(2)
-            visible: source !== ""
-            source: widget.player && widget.player.trackArtUrl ? widget.player.trackArtUrl : ""
-            // Covers come as large as 1200 px square, for 64 here.
-            sourceSize: Qt.size(width, height)
-            fillMode: Image.PreserveAspectCrop
-            asynchronous: true
-          }
-
-          Glyph {
-            anchors.centerIn: parent
-            visible: !widget.player || !widget.player.trackArtUrl
-            text: "\u{F075A}"
-            color: widget.bar.foreground
-            font.pixelSize: Style.font.displayLarge
-          }
-        }
+        Cover {}
 
         Column {
           width: parent.width - Style.space(74)
           spacing: Style.space(4)
 
-          Detail {
+          CardLine {
             text: widget.title || "Nothing playing"
             font.pixelSize: Style.font.subtitle
             font.bold: true
           }
-          Detail {
+          CardLine {
             text: widget.artist
-            darker: 1.3
+            dim: 1.3
             font.pixelSize: Style.font.bodySmall
           }
-          Detail {
+          CardLine {
             text: widget.player && widget.player.trackAlbum ? widget.player.trackAlbum : ""
-            darker: 1.6
+            dim: 1.6
             font.pixelSize: Style.font.caption
           }
         }
       }
 
-      // Back, play or pause, and on, for the player shown.
+      // Back, play or pause, and on, for the player shown, each there when
+      // it says it can.
       Row {
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(6)
 
-        Transport {
-          iconText: "\u{F04AE}"
-          enabled: widget.player && widget.player.canGoPrevious
-          onClicked: widget.act("previous", true)
-        }
-        Transport {
-          iconText: widget.mark(widget.playing)
-          iconSize: Style.font.iconLarge
-          horizontalPadding: Style.spacing.panelGap
-          enabled: widget.player && (widget.player.canTogglePlaying || widget.player.canPlay || widget.player.canPause)
-          onClicked: widget.act("playPause", true)
-        }
-        Transport {
-          iconText: "\u{F04AD}"
-          enabled: widget.player && widget.player.canGoNext
-          onClicked: widget.act("next", true)
+        Repeater {
+          model: ["previous", "playPause", "next"]
+
+          Button {
+            required property string modelData
+            readonly property bool middle: modelData === "playPause"
+
+            foreground: widget.bar.foreground
+            iconText: middle ? widget.mark(widget.playing) : modelData === "next" ? "\u{F04AD}" : "\u{F04AE}"
+            iconSize: middle ? Style.font.iconLarge : Style.font.icon
+            horizontalPadding: middle ? Style.spacing.panelGap : Style.spacing.controlPaddingX
+            enabled: Media.can(widget.player, modelData)
+            opacity: enabled ? 1.0 : 0.4
+            onClicked: widget.act(modelData, true)
+          }
         }
       }
 
-      // With more than one player, each of them: a click makes it the one
-      // shown and played.
+      // Every player, with more than one: a click makes it the one shown
+      // and played.
       PanelSeparator {
-        visible: widget.players.length > 1
+        visible: widget.listed.length > 1
         foreground: widget.bar.foreground
       }
 
       Column {
-        id: playerList
-        visible: widget.players.length > 1
+        visible: widget.listed.length > 1
         width: parent.width
         spacing: Style.space(4)
 
         Repeater {
-          model: widget.players
-
-          BorderSurface {
-            id: choice
-
-            required property var modelData
-            readonly property bool selected: widget.isShown(modelData)
-
-            width: playerList.width
-            height: line.implicitHeight + Style.space(10)
-            radius: Style.spacing.labelGap
-            color: selected ? Style.selectedFillFor(widget.bar.foreground, Commons.Color.accent) : "transparent"
-            borderSpec: selected ? Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent) : Border.none()
-
-            Row {
-              id: line
-              anchors.verticalCenter: parent.verticalCenter
-              anchors.left: parent.left
-              anchors.right: parent.right
-              anchors.leftMargin: choice.borderLeft + Style.space(8)
-              anchors.rightMargin: choice.borderRight + Style.space(8)
-              spacing: Style.space(8)
-
-              Glyph {
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(18)
-                horizontalAlignment: Text.AlignHCenter
-                text: widget.mark(choice.modelData && choice.modelData.isPlaying)
-                color: widget.bar.foreground
-                font.pixelSize: Style.font.body
-              }
-
-              // Its track's title and artist, or what it calls itself.
-              Column {
-                anchors.verticalCenter: parent.verticalCenter
-                width: parent.width - Style.space(26)
-                spacing: Style.space(1)
-
-                Detail {
-                  text: choice.modelData ? (choice.modelData.trackTitle || choice.modelData.identity || choice.modelData.desktopEntry || "Media source") : "Media source"
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: choice.selected
-                }
-                Detail {
-                  text: choice.modelData && choice.modelData.trackArtist ? choice.modelData.trackArtist
-                    : (choice.modelData && choice.modelData.identity ? choice.modelData.identity : "")
-                  darker: 1.5
-                  font.pixelSize: Style.font.caption
-                }
-              }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: if (widget.media) widget.media.selectPlayer(widget.media.playerKey(choice.modelData))
-            }
-          }
+          model: widget.listed
+          delegate: PlayerChoice {}
         }
       }
     }
   }
 
-  // A mark in the bar's font.
-  component Glyph: Text {
+  // Text in the bar's font.
+  component BarText: Text {
     textFormat: Text.PlainText
     font.family: widget.bar.fontFamily
   }
 
-  // A line of the card in the bar's foreground, <darker> times darker, cut
+  // A line of the card in the bar's foreground, `dim` times darker, cut
   // short at its width; none while empty.
-  component Detail: Glyph {
-    property real darker: 1
+  component CardLine: BarText {
+    property real dim: 1
     width: parent.width
     visible: text !== ""
     elide: Text.ElideRight
-    color: darker === 1 ? widget.bar.foreground : Qt.darker(widget.bar.foreground, darker)
+    color: dim === 1 ? widget.bar.foreground : Qt.darker(widget.bar.foreground, dim)
   }
 
-  component Transport: Button {
-    foreground: widget.bar.foreground
-    horizontalPadding: Style.spacing.controlPaddingX
-    verticalPadding: Style.spacing.controlPaddingY
-    opacity: enabled ? 1.0 : 0.4
+  // The cover of the track shown, or a note where it has none.
+  component Cover: BorderSurface {
+    id: cover
+
+    readonly property string art: widget.player && widget.player.trackArtUrl ? widget.player.trackArtUrl : ""
+
+    width: Style.space(64)
+    height: width
+    radius: Style.spacing.labelGap
+    color: Style.normalFillFor(widget.bar.foreground, Commons.Color.accent)
+    borderSpec: Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent)
+
+    Image {
+      anchors.fill: parent
+      anchors.margins: Style.space(2)
+      visible: cover.art !== ""
+      source: cover.art
+      // Covers come as large as 1200 px square, for 64 here.
+      sourceSize: Qt.size(width, height)
+      fillMode: Image.PreserveAspectCrop
+      asynchronous: true
+    }
+
+    BarText {
+      anchors.centerIn: parent
+      visible: cover.art === ""
+      text: "\u{F075A}"
+      color: widget.bar.foreground
+      font.pixelSize: Style.font.displayLarge
+    }
+  }
+
+  // A player in the card's list: its mark, and its track's title and artist
+  // or its own name; the one shown stands out.
+  component PlayerChoice: BorderSurface {
+    id: choice
+
+    required property var modelData
+    readonly property bool selected: !!widget.player && Media.playerKey(modelData) === Media.playerKey(widget.player)
+
+    width: parent ? parent.width : 0
+    height: line.implicitHeight + Style.space(10)
+    radius: Style.spacing.labelGap
+    color: selected ? Style.selectedFillFor(widget.bar.foreground, Commons.Color.accent) : "transparent"
+    borderSpec: selected ? Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent) : Border.none()
+
+    Row {
+      id: line
+      anchors.verticalCenter: parent.verticalCenter
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.leftMargin: choice.borderLeft + Style.space(8)
+      anchors.rightMargin: choice.borderRight + Style.space(8)
+      spacing: Style.space(8)
+
+      BarText {
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(18)
+        horizontalAlignment: Text.AlignHCenter
+        text: widget.mark(choice.modelData.isPlaying)
+        color: widget.bar.foreground
+        font.pixelSize: Style.font.body
+      }
+
+      Column {
+        anchors.verticalCenter: parent.verticalCenter
+        width: parent.width - Style.space(26)
+        spacing: Style.space(1)
+
+        CardLine {
+          text: Media.label(choice.modelData) || "Media source"
+          font.pixelSize: Style.font.bodySmall
+          font.bold: choice.selected
+        }
+        CardLine {
+          text: choice.modelData.trackArtist || choice.modelData.identity || ""
+          dim: 1.5
+          font.pixelSize: Style.font.caption
+        }
+      }
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: if (widget.media) widget.media.choose(choice.modelData)
+    }
   }
 }
