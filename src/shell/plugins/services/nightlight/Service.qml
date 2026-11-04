@@ -1,75 +1,67 @@
 import QtQuick
 import Quickshell.Io
 
-// The night light: hyprsunset's colour temperature, which the bar's switch
-// shows and flips. nova-toggle-nightlight does the switching, for the bar as
-// for the keys and the menu: it waits out a hyprsunset still starting, and
-// has this service look again when it is done.
+// The night light, hyprsunset's warmer screen, for the bar's switch.
+// nova-toggle-nightlight does the switching, for the bar as for the keys and
+// the menu: it waits out a hyprsunset still starting, and then has this
+// service ask hyprsunset again (refresh).
 Item {
-  id: service
+  id: nightlight
 
-  // The script's night and day, shown at once while it sets them. Under
-  // 6000 K the screen counts as warmed, as the script counts it.
-  readonly property int nightTemperature: 4000
-  readonly property int dayTemperature: 6500
-  readonly property int warmBelow: 6000
+  // hyprsunset's colour temperature in kelvin, or what a switch is setting
+  // it to; null while hyprsunset is not running or cannot say. Under 6000 K
+  // the screen counts as warmed, as nova-toggle-nightlight counts it.
+  property var kelvin: null
+  readonly property bool enabled: kelvin != null && kelvin < 6000
 
-  // In kelvin; null while hyprsunset is not running or cannot say.
-  property var temperature: null
-  property bool known: false
-  readonly property bool enabled: known && temperature != null && temperature < warmBelow
+  // The state asked for while a switch runs, "on" or "off": the last one.
+  property string waiting: ""
 
-  // A switch asked for while one runs, "on" or "off"; the last one wins.
-  property string queued: ""
-
-  function show(kelvin) {
-    temperature = kelvin
-    known = true
+  // The bar's switch. It shows the night (4000 K) or the day (6500 K) at
+  // once, as nova-toggle-nightlight sets them.
+  function setNightlight(on) {
+    kelvin = on ? 4000 : 6500
+    var state = on ? "on" : "off"
+    if (switching.running) waiting = state
+    else switching.start(state)
   }
 
   function refresh() {
-    if (!probe.running) probe.running = true
+    if (!asking.running) asking.running = true
   }
 
-  function setNightlight(on) {
-    show(on ? nightTemperature : dayTemperature)
-    var state = on ? "on" : "off"
-    if (switcher.running) queued = state
-    else switcher.ask(state)
-  }
-
-  // `hyprctl hyprsunset temperature` answers with the number in some words;
-  // a failed call means no hyprsunset to ask.
+  // hyprsunset answers with the number among some words; a failed call
+  // means no hyprsunset to ask.
   Process {
-    id: probe
+    id: asking
     command: ["hyprctl", "hyprsunset", "temperature"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
-        var digits = /[0-9]+/.exec(String(text == null ? "" : text))
-        service.show(digits ? Number(digits[0]) : null)
+        var number = String(text == null ? "" : text).match(/\d+/)
+        nightlight.kelvin = number ? Number(number[0]) : null
       }
     }
-    onExited: function(exitCode) {
-      if (exitCode !== 0) service.show(null)
+    onExited: code => {
+      if (code !== 0) nightlight.kelvin = null
     }
   }
 
-  // One switch at a time; when it ends, the one queued meanwhile, or a look
-  // at what hyprsunset now says.
+  // When a switch ends: the one asked for meanwhile, or else a look at what
+  // hyprsunset now says.
   Process {
-    id: switcher
+    id: switching
 
-    function ask(state) {
+    function start(state) {
       command = ["nova-toggle-nightlight", state]
       running = true
     }
 
     onExited: {
-      var next = service.queued
-      service.queued = ""
-      if (next) ask(next)
-      else service.refresh()
+      var next = nightlight.waiting
+      nightlight.waiting = ""
+      if (next) start(next)
+      else nightlight.refresh()
     }
   }
 
@@ -79,7 +71,7 @@ Item {
     target: "nightlight"
 
     function refresh(): void {
-      service.refresh()
+      nightlight.refresh()
     }
   }
 }
