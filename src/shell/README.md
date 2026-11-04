@@ -48,14 +48,11 @@ directory):
   "version": "1.0.0",
   "kinds": ["bar-widget"],
   "entryPoints": { "barWidget": "BarWidget.qml" },
-  "barWidget": {
-    "displayName": "Clock",
-    "category": "Time",
-    "defaultSection": "center",
-    "defaults": { "format": "dddd HH:mm" }
-  }
+  "barWidget": { "displayName": "Clock", "description": "Date/time label with a calendar popup" }
 }
 ```
+
+What each field does is in [`plugins/README.md`](plugins/README.md).
 
 The build collects them into `plugins/index.json` with
 [`tools/plugin-index`](../../tools/plugin-index), which also checks them: a
@@ -147,8 +144,5 @@ anything, your file is authoritative and defaults are **not** merged back in.
    false` (Screen Time) is the other way round: on only while `shell.json`
    names it, in the bar or in `plugins[]`. One that says `"alwaysOn": true`
    (the bar, the lock) cannot be switched off.
-4. **Multiple instances** are allowed when a widget's manifest sets
-   `allowMultiple: true`: two clocks in different time zones are two
-   `nova.clock` entries with their own settings.
-5. **`idle.screensaver`** and **`idle.lock`** are the seconds unused before
+4. **`idle.screensaver`** and **`idle.lock`** are the seconds unused before
    the screensaver starts and before the screen locks; 0 is never.
