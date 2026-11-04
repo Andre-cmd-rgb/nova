@@ -243,14 +243,14 @@ BarWidget {
       onPressed: function(mouse) {
         if (root.bar) root.bar.hideTooltip(trayItem)
         if (mouse.button === Qt.RightButton) {
-          root.openTrayMenu(trayItem.modelData, trayItem, mouse)
+          root.openTrayMenu(trayItem.modelData, trayItem)
           mouse.accepted = true
         }
       }
       onClicked: function(mouse) {
         if (mouse.button === Qt.RightButton) mouse.accepted = true
         else if (mouse.button === Qt.MiddleButton) trayItem.modelData.secondaryActivate()
-        else if (trayItem.modelData.onlyMenu) root.openTrayMenu(trayItem.modelData, trayItem, mouse)
+        else if (trayItem.modelData.onlyMenu) root.openTrayMenu(trayItem.modelData, trayItem)
         else trayItem.modelData.activate()
       }
       onWheel: function(wheel) {
@@ -443,13 +443,10 @@ BarWidget {
     settling.restart()
   }
 
-  // An app with no menu of its own draws one where it was clicked.
-  function openTrayMenu(item, anchor, mouse) {
-    if (!item.menu) {
-      var point = anchor.QsWindow.contentItem.mapFromItem(anchor, mouse.x, mouse.y)
-      item.display(anchor.QsWindow.window, point.x, point.y)
-      return
-    }
+  // An icon with no menu has none to open: Quickshell shows only a menu an
+  // app hands over, and asked to show one anyway it logs an error.
+  function openTrayMenu(item, anchor) {
+    if (!item.menu) return
     // Before the item changes: its menu's entries go with it, and the
     // submenu openers hold some of them.
     resetTrayMenu()
