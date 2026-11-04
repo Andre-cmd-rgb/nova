@@ -2,7 +2,8 @@
 
 // The bar's rules, kept apart from its windows: what a layout entry says,
 // where the tray sits in a section, which copy of a widget a hotkey reaches,
-// where a dragged widget lands, and which edge a dragged bar goes to.
+// where a dragged widget lands, which edge a dragged bar goes to, and where
+// a tooltip goes.
 
 var EDGES = ["top", "bottom", "left", "right"]
 
@@ -169,9 +170,9 @@ function moveEntry(config, fromRegion, id, toRegion, beforeId) {
 // on. Candidates are { slot, screenName, opened }. An open copy comes first,
 // so hide and toggle reach the panel on screen wherever it was opened; then
 // the copies on the focused screen, or with none there those on the first
-// copy's screen. Of these, a copy that is drawn: a centre widget next to the
-// anchor is also mounted as a zero-size placeholder, which cannot anchor a
-// popup, and the order the two register in changes as the bar is rebuilt.
+// copy's screen. Of these, a copy that is drawn: a widget that hides itself
+// (the keyboard layout with one layout) keeps its slot at no size, which
+// cannot anchor a popup.
 function pickPanelSlot(candidates, focusedScreen) {
   var rows = (Array.isArray(candidates) ? candidates : []).filter(function(row) { return !!row })
   var open = rows.filter(function(row) { return row.opened === true })
@@ -193,6 +194,12 @@ function pickPanelSlot(candidates, focusedScreen) {
 
 function isDrawn(slot) {
   return slot.visible === true && slot.width > 0 && slot.height > 0
+}
+
+// Whether two screens are one: the same, or of the same name, as a screen
+// can be handed out anew while its output stays.
+function sameScreen(one, other) {
+  return !!one && !!other && (one === other || (!!one.name && one.name === other.name))
 }
 
 // Where a dragged widget drops: before or after the widget whose near edge
@@ -249,6 +256,17 @@ function onScreen(point, edgeName, screenWidth, screenHeight, windowWidth, windo
 function dropMarker(point, width, height, after, vertical, thickness) {
   if (vertical) return { x: point.x, y: point.y + (after ? height : 0) - thickness / 2, width: width, height: thickness }
   return { x: point.x + (after ? width : 0) - thickness / 2, y: point.y, width: thickness, height: height }
+}
+
+// Where a tooltip <width> by <height> goes beside a widget <widgetWidth> by
+// <widgetHeight> on a bar on <edgeName>, in the widget's coordinates: <gap>
+// off the widget on its side away from the edge, centred on it along the
+// bar.
+function tipCorner(edgeName, widgetWidth, widgetHeight, width, height, gap) {
+  if (edgeName === "left") return { x: widgetWidth + gap, y: widgetHeight / 2 - height / 2 }
+  if (edgeName === "right") return { x: -width - gap, y: widgetHeight / 2 - height / 2 }
+  var x = widgetWidth / 2 - width / 2
+  return edgeName === "bottom" ? { x: x, y: -height - gap } : { x: x, y: widgetHeight + gap }
 }
 
 // "#rrggbb" for channels from 0 to 1.
