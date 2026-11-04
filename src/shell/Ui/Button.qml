@@ -25,14 +25,8 @@ Pressable {
   property color accent: Commons.Color.accent
   property real fontSize: Style.font.body
   property real iconSize: Style.font.icon
-  property real iconRotation: 0
-  property bool iconSpinning: false
   property real horizontalPadding: Style.spacing.controlPaddingX
   property real verticalPadding: Style.spacing.controlPaddingY
-  property bool leftAlign: false
-  property color tooltipBackground: Commons.Color.tooltip.background
-  property color tooltipForeground: Commons.Color.tooltip.text
-  property color tooltipBorder: Commons.Color.tooltip.border
 
   readonly property bool hot: _pointer.containsMouse || hasCursor
 
@@ -73,19 +67,12 @@ Pressable {
   implicitHeight: content.implicitHeight + 2 * verticalPadding + _room.top + _room.bottom
 
   _buttons: Qt.LeftButton | Qt.RightButton
-  _tip.panelForeground: tooltipForeground
-  _tip.panelBackground: tooltipBackground
-  _tip.panelBorder: tooltipBorder
   _tip.cornerRadius: 0
   _tip.minimumBorderWidth: 1
 
-  // Centred, or from the left edge inside the room kept for the border.
   Row {
     id: content
-    anchors.verticalCenter: parent.verticalCenter
-    anchors.horizontalCenter: button.leftAlign ? undefined : parent.horizontalCenter
-    anchors.left: button.leftAlign ? parent.left : undefined
-    anchors.leftMargin: button._room.left + button.leftPadding
+    anchors.centerIn: parent
     spacing: Style.spacing.controlGap
 
     Text {
@@ -96,16 +83,6 @@ Pressable {
       color: button._ink
       font.family: button.fontFamily
       font.pixelSize: button.iconSize
-      rotation: button.iconSpinning ? 0 : button.iconRotation
-
-      // Spinning, it turns once every 0.9 s.
-      RotationAnimation on rotation {
-        running: button.iconSpinning
-        from: 0
-        to: 360
-        duration: 900
-        loops: Animation.Infinite
-      }
     }
 
     Text {

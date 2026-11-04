@@ -6,8 +6,8 @@ import qs.Commons as Commons
 import "Popups.js" as Popups
 
 // A card that pops up from a bar widget, on the side of the bar away from
-// the screen's edge and centred on the widget, or on the bar with
-// <centerOnBar>, kept <margin> from the bar's ends. It is a popup of the
+// the screen's edge and centred on the widget, kept <margin> from the bar's
+// ends. It is a popup of the
 // bar's window, so it takes keys only once the pointer has been in it;
 // KeyboardPanel is the one to use for a panel opened from the keyboard.
 //
@@ -27,7 +27,6 @@ PopupWindow {
   property color borderColor: Commons.Color.popups.border
   property var borderSpec: Border.localOrSurfaceSpec("popups", "border", borderColor, Commons.Color.popups.border, Math.max(1, Style.space(2)))
   property bool open: false
-  property bool centerOnBar: false
 
   default property alias contentItem: card.content
 
@@ -84,8 +83,7 @@ PopupWindow {
     rect.height: 1
 
     // The card's corner, in the bar window's coordinates: <margin> off the
-    // widget and centred on it, kept <margin> inside the bar's ends; with
-    // <centerOnBar>, <margin> off the bar window and centred on it.
+    // widget and centred on it, kept <margin> inside the bar's ends.
     onAnchoring: {
       const widget = root.anchorItem
       const barWindow = root.anchorWindow
@@ -96,11 +94,7 @@ PopupWindow {
       const h = root.implicitHeight
       const m = root.margin
       let spot
-      if (root.centerOnBar && across) {
-        spot = Qt.point(Popups.within(barWindow.width / 2 - w / 2, w, barWindow.width, m), side === "bottom" ? -h - m : barWindow.height + m)
-      } else if (root.centerOnBar) {
-        spot = Qt.point(side === "left" ? barWindow.width + m : -w - m, Popups.within(barWindow.height / 2 - h / 2, h, barWindow.height, m))
-      } else if (across) {
+      if (across) {
         spot = barWindow.contentItem.mapFromItem(widget, widget.width / 2 - w / 2, side === "bottom" ? -h - m : widget.height + m)
         spot.x = Popups.within(spot.x, w, barWindow.width, m)
       } else {

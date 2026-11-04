@@ -8,10 +8,8 @@ import qs.Commons as Commons
 // object; one with no label shows its value.
 //
 // The row is a single Tab stop. With the focus, Left and Right (h and l)
-// walk the buttons, from the chosen one, and Return, Enter or Space takes
-// the button walked to. A panel with a cursor of its own sets <cursorIndex>
-// and follows the pointer through hovered(). Either lights its button as
-// the pointer would.
+// walk the buttons, from the chosen one, lighting each as the pointer
+// would, and Return, Enter or Space takes the button walked to.
 Row {
   id: group
 
@@ -23,14 +21,11 @@ Row {
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.body
   property bool focusable: true
-  // The panel cursor's button; -1 for none.
-  property int cursorIndex: -1
 
   // The button the keys have walked to; -1 while the row has no focus.
   property int _walked: -1
 
   signal changed(string value)
-  signal hovered(int index, bool isHovered)
 
   function _isEntry(o) {
     return !!o && typeof o === "object"
@@ -80,7 +75,7 @@ Row {
 
       text: group.optionLabel(modelData)
       selected: group.optionValue(modelData) === group.value
-      hasCursor: index === group.cursorIndex || (group.activeFocus && index === group._walked)
+      hasCursor: group.activeFocus && index === group._walked
       bordered: true
       foreground: group.foreground
       background: group.background
@@ -89,7 +84,6 @@ Row {
       fontSize: group.fontSize
 
       onClicked: group.changed(group.optionValue(modelData))
-      onHovered: function (isHovered) { group.hovered(index, isHovered) }
     }
   }
 }

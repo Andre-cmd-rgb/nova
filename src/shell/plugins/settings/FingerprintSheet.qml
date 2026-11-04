@@ -128,7 +128,6 @@ SettingsSheet {
   }
   Dropdown {
     width: parent.width
-    showLabel: false
     visible: !root.enrolling && !root.completed
     options: root.available.map(function (finger) { return { value: finger, label: Fingerprints.label(finger) } })
     value: root.finger

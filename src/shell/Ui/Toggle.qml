@@ -7,16 +7,14 @@ import qs.Commons as Commons
 // The row takes the click, and Return, Enter and Space while it has the
 // focus, and sends clicked(); the caller flips <checked>, whatever model is
 // behind it. Its face is in the focus state with the focus, in hover-cursor
-// under the pointer or the panel's cursor (<hasCursor>), else normal. The
-// switch is a pill where the theme's corners are round, unless <rounded> is
-// set false.
+// under the pointer, else normal. The switch is a pill where the theme's
+// corners are round, unless <rounded> is set false.
 ControlFace {
   id: toggle
 
   property string label: ""
   property string description: ""
   property bool checked: false
-  property bool hasCursor: false
   property bool rounded: Style.cornerRadius > 0
   property color foreground: Commons.Color.foreground
   property color accent: Commons.Color.accent
@@ -24,10 +22,9 @@ ControlFace {
   property real titleSize: Style.font.subtitle
   property real descriptionSize: Style.font.caption
 
-  readonly property string _state: activeFocus ? "focus" : hasCursor || pointer.containsMouse ? "hover-cursor" : "normal"
+  readonly property string _state: activeFocus ? "focus" : pointer.containsMouse ? "hover-cursor" : "normal"
 
   signal clicked()
-  signal hovered(bool isHovered)
 
   tint: foreground
   tintAccent: accent
@@ -97,9 +94,5 @@ ControlFace {
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     onClicked: toggle.clicked()
-  }
-
-  HoverHandler {
-    onHoveredChanged: toggle.hovered(hovered)
   }
 }

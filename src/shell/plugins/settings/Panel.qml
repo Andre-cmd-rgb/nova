@@ -636,7 +636,6 @@ Item {
           detail: "Used by the bar, the menu, terminals and code."
           Dropdown {
             width: Style.spacing.dropdownWidth
-            showLabel: false
             options: root.options(root.appearance.fonts, root.appearance.font)
             value: root.appearance.font || ""
             onChanged: function (value) { root.run(["nova-font-set", value]) }
@@ -969,7 +968,6 @@ Item {
           detail: "Opens links."
           Dropdown {
             width: Style.spacing.dropdownWidth
-            showLabel: false
             options: root.options(root.apps.browsers, root.apps.browser)
             value: root.apps.browser || ""
             onChanged: function (value) { root.run(["nova-default-browser", value]) }
@@ -980,7 +978,6 @@ Item {
           detail: "Opens files and projects from Nova."
           Dropdown {
             width: Style.spacing.dropdownWidth
-            showLabel: false
             options: root.options(root.apps.editors, root.apps.editor === "zeditor" ? "zed" : root.apps.editor)
             value: root.apps.editor === "zeditor" ? "zed" : (root.apps.editor || "")
             onChanged: function (value) { root.run(["nova-default-editor", value]) }
@@ -990,7 +987,6 @@ Item {
           label: "Terminal"
           Dropdown {
             width: Style.spacing.dropdownWidth
-            showLabel: false
             options: root.options(root.apps.terminals, root.apps.terminal)
             value: root.apps.terminal || ""
             onChanged: function (value) { root.run(["nova-default-terminal", value]) }

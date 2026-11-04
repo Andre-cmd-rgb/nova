@@ -159,7 +159,6 @@ Column {
         label: "Resolution"
         Dropdown {
           width: Style.spacing.dropdownWidth
-          showLabel: false
           options: Model.resolutions(section.d.modes)
           value: section.resolution
           onChanged: function (value) {
@@ -176,7 +175,6 @@ Column {
           id: rateChoice
           readonly property string current: Model.rateValue(section.d.modes, section.resolution, section.d.refresh)
           width: Style.spacing.dropdownWidth
-          showLabel: false
           options: Model.rates(section.d.modes, section.resolution)
           value: current
           onChanged: function (value) { if (value !== rateChoice.current) root.set(section.d, "mode", value) }
@@ -216,7 +214,6 @@ Column {
             anchors.verticalCenter: parent.verticalCenter
             visible: section.others.length > 1
             width: Style.spacing.dropdownWidth
-            showLabel: false
             options: section.others.map(function (o) { return { value: o.name, label: root.labels[o.name] || o.name } })
             value: section.other ? section.other.name : ""
             onChanged: function (value) { section.otherName = value }

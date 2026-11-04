@@ -202,7 +202,7 @@ BarWidget {
       source: indicator.name ? Qt.resolvedUrl("../indicators/" + indicator.name + ".qml") : ""
       onItemChanged: {
         const has = { item: item }
-        if (item) ["bar", "moduleName", "settings", "indicatorBlock", "indicatorHost", "activeOverride"].forEach(name => has[name] = name in item)
+        if (item) ["bar", "indicatorBlock", "indicatorHost", "activeOverride"].forEach(name => has[name] = name in item)
         indicator.takes = has
       }
       onLoaded: indicator.report()
@@ -211,8 +211,6 @@ BarWidget {
 
     // What the file is handed, as the bar hands a widget its own.
     Hand { takes: indicator.takes; property: "bar"; value: host.bar }
-    Hand { takes: indicator.takes; property: "moduleName"; value: indicator.name }
-    Hand { takes: indicator.takes; property: "settings"; value: BarModel.entrySettings(indicator.entry) }
     Hand { takes: indicator.takes; property: "indicatorBlock"; value: indicator.block }
     Hand { takes: indicator.takes; property: "indicatorHost"; value: host }
     Hand { takes: indicator.takes; property: "activeOverride"; value: indicator.block === "active" ? true : null }

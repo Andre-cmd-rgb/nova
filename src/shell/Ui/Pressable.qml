@@ -2,8 +2,8 @@ import QtQuick
 import qs.Commons
 
 // What Button and PanelActionButton have in common: a ControlFace that is
-// clicked. The pointer clicks it, with the left button, and the right one
-// too where <_buttons> takes it, which sends rightClicked(). With
+// clicked. The left button clicks it; where <_buttons> takes the right one
+// too, a right press is the button's but clicks nothing. With
 // <focusable> it is a Tab stop: Return, Enter and Space click it, a click
 // gives it the focus, and <_ringed> says it shows the focus state.
 // <hasCursor> is the panel's cursor on it; <bordered> asks for the normal
@@ -24,7 +24,6 @@ ControlFace {
   property int _buttons: Qt.LeftButton
 
   signal clicked()
-  signal rightClicked()
   signal hovered(bool isHovered)
 
   radius: Style.cornerRadius
@@ -46,8 +45,7 @@ ControlFace {
     cursorShape: Qt.PointingHandCursor
     onClicked: function (mouse) {
       if (pressable.focusable) pressable.forceActiveFocus()
-      if (mouse.button === Qt.RightButton) pressable.rightClicked()
-      else pressable.clicked()
+      if (mouse.button !== Qt.RightButton) pressable.clicked()
     }
   }
 

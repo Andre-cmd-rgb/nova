@@ -327,7 +327,6 @@ Sheet {
     FieldLabel { text: "Repeats" }
     Dropdown {
       width: Style.space(220)
-      showLabel: false
       options: editor.repeat === "custom" ? Model.REPEATS.concat([{ value: "custom", label: "As Set Elsewhere" }]) : Model.REPEATS
       value: editor.repeat
       onChanged: function (value) { editor.repeat = value }
@@ -340,7 +339,6 @@ Sheet {
     FieldLabel { text: "Reminder" }
     Dropdown {
       width: Style.space(220)
-      showLabel: false
       options: Model.reminderOptions(editor.allDay, Model.reminderOffset(editor.reminder))
       value: editor.reminder
       onChanged: function (value) { editor.reminder = value }

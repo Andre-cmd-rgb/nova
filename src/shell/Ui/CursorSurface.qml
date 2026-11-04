@@ -9,11 +9,10 @@ import qs.Commons as Commons
 //
 // The row with the cursor takes <fill> and the hover-cursor border; the
 // current one (the network in use, say) <currentFill> and the selected
-// border; any other row is clear, with the normal border when <bordered>.
+// border; any other row is clear, with no border.
 ControlFace {
   property bool hasCursor: false
   property bool current: false
-  property bool bordered: false
   property color foreground: Commons.Color.foreground
   property color accent: Commons.Color.accent
   property color fill: Style.hoverFillFor(foreground, accent)
@@ -23,6 +22,6 @@ ControlFace {
   tintAccent: accent
   fade: 60
   restColor: hasCursor ? fill : current ? currentFill : "transparent"
-  edgeState: hasCursor ? "hover-cursor" : current ? "selected" : bordered ? "normal" : ""
+  edgeState: hasCursor ? "hover-cursor" : current ? "selected" : ""
   radius: Style.cornerRadius
 }

@@ -87,7 +87,6 @@ Column {
       label: "Play sound through"
       Dropdown {
         width: Style.spacing.dropdownWidth
-        showLabel: false
         options: root.outputs
         value: root.selected ? String(root.selected.name) : ""
         onChanged: function (value) {
@@ -128,7 +127,6 @@ Column {
       label: "Record sound from"
       Dropdown {
         width: Style.spacing.dropdownWidth
-        showLabel: false
         options: root.inputs
         value: root.source ? String(root.source.name) : ""
         onChanged: function (value) {

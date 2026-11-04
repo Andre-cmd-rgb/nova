@@ -8,8 +8,8 @@ import qs.Commons as Commons
 // accepted() and the rest are as Qt has them; a caller that wants the
 // pointer coming and going reads the inherited <hovered>, which a signal of
 // that name here would hide. Its face is in the focus state with the focus,
-// in hover-cursor under the pointer or the panel's cursor (<hasCursor>),
-// else normal, as Toggle's and Dropdown's are.
+// in hover-cursor under the pointer, else normal, as Toggle's and Dropdown's
+// are.
 //
 // Its height is the font and <verticalPadding>: a dialog's field by default,
 // and less padding for a field inside a row (network's passphrase).
@@ -22,7 +22,6 @@ TextField {
   property bool password: false
   property real horizontalPadding: Style.spacing.controlPaddingX
   property real verticalPadding: Style.spacing.inputPaddingY
-  property bool hasCursor: false
 
   echoMode: password ? TextInput.Password : TextInput.Normal
   color: foreground
@@ -40,7 +39,7 @@ TextField {
 
   background: ControlFace {
     id: face
-    readonly property string _state: field.activeFocus ? "focus" : field.hovered || field.hasCursor ? "hover-cursor" : "normal"
+    readonly property string _state: field.activeFocus ? "focus" : field.hovered ? "hover-cursor" : "normal"
     tint: field.foreground
     tintAccent: field.accent
     fillState: _state

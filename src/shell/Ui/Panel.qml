@@ -11,7 +11,6 @@ BarWidget {
 
   property string ipcTarget: ""
   property alias controller: openState
-  property bool popoutSwitching: false
   property bool popoutSwitchClosing: false
 
   readonly property bool opened: openState.open

@@ -8,8 +8,8 @@ import qs.Commons as Commons
 // a click on the bar under an open panel still reaches the one beneath it.
 //
 // <active> paints the label in <activeColor> (the bar's urgent colour) when
-// <useActiveColor>. <dimmed> fades it, <concealed> hides it but keeps its
-// place, and <keepSpace> keeps the place of a button with nothing to show.
+// <useActiveColor>. <concealed> hides it but keeps its place, and
+// <keepSpace> keeps the place of a button with nothing to show.
 // <fixedWidth> and <fixedHeight>, above zero, set the size.
 Item {
   id: button
@@ -27,10 +27,8 @@ Item {
   property real fixedHeight: -1
   property real textRotation: 0
   property bool keepSpace: false
-  property bool dimmed: false
   property bool concealed: false
   property bool interactive: true
-  property bool pressable: true
   property bool useActiveColor: true
   // While the pointer is over a button with this set, <revealHost> keeps
   // the bar's hidden indicators shown.
@@ -84,7 +82,7 @@ Item {
   }
 
   visible: hasVisualContent || keepSpace
-  opacity: !hasVisualContent || concealed ? 0 : dimmed ? 0.45 : 1
+  opacity: !hasVisualContent || concealed ? 0 : 1
   implicitWidth: {
     if (fixedWidth > 0) return fixedWidth
     return vertical ? barSize : Math.max(12, label.implicitWidth + 2 * Style.spaceReal(horizontalMargin))
@@ -134,12 +132,10 @@ Item {
     enabled: button.interactive
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
-    cursorShape: button.pressable ? Qt.PointingHandCursor : Qt.ArrowCursor
+    cursorShape: Qt.PointingHandCursor
     onEntered: button._pointerOver(true)
     onExited: button._pointerOver(false)
-    onClicked: function (mouse) {
-      if (button.pressable) button.triggerPress(mouse.button)
-    }
+    onClicked: function (mouse) { button.triggerPress(mouse.button) }
     onWheel: function (wheel) { button.wheelMoved(wheel.angleDelta.y) }
   }
 }

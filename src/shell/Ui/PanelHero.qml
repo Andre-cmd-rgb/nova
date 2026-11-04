@@ -3,17 +3,15 @@ import qs.Commons
 import qs.Commons as Commons
 
 // The head of a panel, as wide as its parent: a large icon, then a bold
-// title with an outlined <detail> tag at the far end of its line, and under
-// them a line of <meta> in small capitals. <trailingControl>, a ToggleSwitch
-// or a small button, sits at the very end, and the words leave it room. Every
-// part is centred on the head's height.
+// title, and under it a line of <meta> in small capitals. <trailingControl>,
+// a ToggleSwitch or a small button, sits at the very end, and the words leave
+// it room. Every part is centred on the head's height.
 Item {
   id: hero
 
   property Component iconComponent: null
   property string title: ""
   property string meta: ""
-  property string detail: ""
   property color foreground: Commons.Color.foreground
   property string fontFamily: Style.font.family
   property real iconOpacity: 1.0
@@ -40,18 +38,17 @@ Item {
     width: hero.width - x - hero.trailingInset
     spacing: Style.space(2)
 
-    // The title takes what the tag leaves it and elides. The line is as
-    // tall as what it holds even when the title has no room at all.
+    // The title elides. Its line is as tall as the title even when the
+    // title has no room at all, which the Column would pass over.
     Item {
       id: titleLine
       width: parent.width
-      height: Math.max(hero.title !== "" ? heading.implicitHeight : 0, hero.detail !== "" ? tag.implicitHeight : 0)
-      visible: hero.title !== "" || hero.detail !== ""
+      height: heading.implicitHeight
+      visible: hero.title !== ""
 
       Text {
         id: heading
-        width: Math.min(implicitWidth, Math.max(0, titleLine.width - (hero.detail !== "" ? tag.implicitWidth + Style.space(8) : 0)))
-        visible: hero.title !== ""
+        width: Math.min(implicitWidth, Math.max(0, titleLine.width))
         textFormat: Text.PlainText
         text: hero.title
         color: hero.foreground
@@ -59,29 +56,6 @@ Item {
         font.pixelSize: Style.font.title
         font.bold: true
         elide: Text.ElideRight
-      }
-
-      BorderSurface {
-        id: tag
-        anchors.verticalCenter: parent.verticalCenter
-        x: Math.max(heading.width, titleLine.width - implicitWidth)
-        visible: hero.detail !== ""
-        implicitWidth: tagWord.implicitWidth + Style.space(10)
-        implicitHeight: tagWord.implicitHeight + Style.space(4)
-        radius: Style.cornerRadius
-        color: "transparent"
-        borderSpec: Border.controlSpec("normal", hero.foreground, Commons.Color.accent)
-
-        Text {
-          id: tagWord
-          anchors.centerIn: parent
-          textFormat: Text.PlainText
-          text: hero.detail
-          color: hero.dim
-          font.family: hero.fontFamily
-          font.pixelSize: Style.font.body
-          font.bold: true
-        }
       }
     }
 

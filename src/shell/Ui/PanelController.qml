@@ -15,8 +15,4 @@ QtObject {
   function hide() {
     open = false
   }
-
-  function toggle() {
-    open = !open
-  }
 }

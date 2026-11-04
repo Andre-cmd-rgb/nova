@@ -10,22 +10,17 @@ import qs.Commons as Commons
 //     visible: pointer.containsMouse
 //     text: "Forget network"
 //   }
-// The panel* colours stand in for the theme's where a tooltip must differ;
-// ToolTip has a background and a font of its own, hence the prefix. Button's
-// tooltip is square (<cornerRadius> 0) and, where [tooltip] gives no border
-// width, keeps at least <minimumBorderWidth> of the controls' one.
+// Button's tooltip is square (<cornerRadius> 0) and, where [tooltip] gives
+// no border width, keeps at least <minimumBorderWidth> of the controls' one.
 ToolTip {
   id: tip
 
-  property color panelForeground: Commons.Color.tooltip.text
-  property color panelBackground: Commons.Color.tooltip.background
-  property color panelBorder: Commons.Color.tooltip.border
   property string fontFamily: Style.font.family
   property real fontSize: Style.font.bodySmall
   property real cornerRadius: Style.cornerRadius
   property int minimumBorderWidth: 0
 
-  readonly property var panelBorderSpec: Border.localOrSurfaceSpec("tooltip", "border", panelBorder, Commons.Color.tooltip.border,
+  readonly property var panelBorderSpec: Border.surfaceSpec("tooltip", "border", Commons.Color.tooltip.border,
     Math.max(minimumBorderWidth, Style.normalBorderWidth))
 
   // The words sit the controls' padding inside the border.
@@ -37,14 +32,14 @@ ToolTip {
 
   background: BorderSurface {
     radius: tip.cornerRadius
-    color: tip.panelBackground
+    color: Commons.Color.tooltip.background
     borderSpec: tip.panelBorderSpec
   }
 
   contentItem: Text {
     textFormat: Text.PlainText
     text: tip.text
-    color: tip.panelForeground
+    color: Commons.Color.tooltip.text
     font.family: tip.fontFamily
     font.pixelSize: tip.fontSize
   }
