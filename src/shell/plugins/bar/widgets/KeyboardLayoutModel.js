@@ -49,16 +49,10 @@ function shortLabel(description, briefs) {
 }
 
 // The keyboard an activelayout event names, its first field: Quickshell cuts
-// the event in two, so a layout with a comma in its name stays whole, and an
-// older one hands over the raw data. fcitx5's virtual keyboard names none.
+// the event in two, so a layout with a comma in its name stays whole.
+// fcitx5's virtual keyboard names none.
 function eventKeyboardName(event) {
-  var fields = null
-  try {
-    fields = event && event.parse ? event.parse(2) : null
-  } catch (error) {
-    fields = null
-  }
-  var name = String((fields || String(event && event.data ? event.data : "").split(","))[0] || "")
+  var name = String(event.parse(2)[0] || "")
   return name.indexOf("hl-virtual-keyboard") === 0 ? "" : name
 }
 

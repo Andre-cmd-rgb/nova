@@ -20,7 +20,7 @@ BarWidget {
   property string keymap: ""
   property var briefs: ({})
   readonly property string code: Keyboards.shortLabel(keymap, briefs)
-  // An older Hyprland lists no layouts: the code shows then.
+  // Whether the keyboard read has more than one layout to go round.
   property bool severalLayouts: true
 
   // What the last reading settled on: the keyboard a click switches, and
@@ -79,7 +79,7 @@ BarWidget {
     }
     devices = typed.length
     device = String(chosen.name || "")
-    severalLayouts = chosen.layout === undefined || String(chosen.layout).indexOf(",") !== -1
+    severalLayouts = String(chosen.layout).indexOf(",") !== -1
     keymap = chosen.active_keymap
   }
 
