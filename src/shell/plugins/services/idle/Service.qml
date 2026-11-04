@@ -63,11 +63,19 @@ Item {
     }
   }
 
+  // An IdleMonitor counts with the timeout it was enabled with, so each is
+  // off for a moment as its time changes (nova idle lock, a new shell.json):
+  // the new time counts from then.
   IdleMonitor {
     id: saverWatch
-    enabled: idle.minding && idle.saverAfter > 0
+    property bool retiming: false
+    enabled: idle.minding && idle.saverAfter > 0 && !retiming
     timeout: Math.max(1, idle.saverAfter)
     respectInhibitors: true
+    onTimeoutChanged: {
+      retiming = true
+      retiming = false
+    }
     onIsIdleChanged: {
       idle.log("screensaver-monitor", isIdle ? "idle" : "active")
       if (isIdle && idle.minding && idle.saverAfter > 0) {
@@ -83,9 +91,14 @@ Item {
 
   IdleMonitor {
     id: lockWatch
-    enabled: idle.minding && idle.lockAfter > 0
+    property bool retiming: false
+    enabled: idle.minding && idle.lockAfter > 0 && !retiming
     timeout: Math.max(1, idle.lockAfter)
     respectInhibitors: true
+    onTimeoutChanged: {
+      retiming = true
+      retiming = false
+    }
     onIsIdleChanged: {
       idle.log("lock-monitor", isIdle ? "idle" : "active")
       if (!isIdle || !idle.minding || idle.lockAfter <= 0) return
