@@ -234,7 +234,10 @@ BarWidget {
 
       onEntered: if (root.bar) root.bar.showTooltip(trayItem, trayItem.modelData.tooltipTitle || trayItem.modelData.title || trayItem.modelData.id || "")
       onExited: if (root.bar) root.bar.hideTooltip(trayItem)
+      // A press puts the tooltip away, as on the bar's buttons: left up, it
+      // sits over the menu the press opens.
       onPressed: function(mouse) {
+        if (root.bar) root.bar.hideTooltip(trayItem)
         if (mouse.button === Qt.RightButton) {
           root.openTrayMenu(trayItem.modelData, trayItem, mouse)
           mouse.accepted = true
