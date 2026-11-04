@@ -4,7 +4,7 @@
   "name": "Spacer",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Configurable blank space",
+  "description": "Empty room along the bar, as long as you set",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Spacer",
-    "description": "Configurable blank space",
+    "description": "Empty room along the bar, as long as you set",
     "category": "Layout",
     "allowMultiple": true,
     "settingsForm": "spacerSettings"

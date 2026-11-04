@@ -4,7 +4,7 @@
   "name": "Indicators",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Manual state indicators",
+  "description": "Recording, night light, do not disturb and Caffeine, lit while on",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Indicators",
-    "description": "Manual state indicators",
+    "description": "Recording, night light, do not disturb and Caffeine, lit while on",
     "category": "Status",
     "allowMultiple": true,
     "schema": [
@@ -21,25 +21,25 @@
         "key": "items",
         "type": "multiselect",
         "label": "Indicators",
-        "description": "Choose which indicators this widget instance should show. Leave empty to show all indicators.",
+        "description": "The indicators this copy of the widget shows; with none chosen, all of them.",
         "noSelectionText": "All indicators",
-        "placeholderText": "Search indicators...",
+        "placeholderText": "Find an indicator...",
         "emptyText": "No indicators",
         "options": [
           {
             "value": "ScreenRecording",
             "label": "Screen recording",
-            "description": "GPU screen recorder status"
+            "description": "While the screen is being recorded"
           },
           {
             "value": "NightLight",
             "label": "Night light",
-            "description": "Blue-light filter"
+            "description": "While the night light warms the screen"
           },
           {
             "value": "Dnd",
             "label": "Do not disturb",
-            "description": "Notification silencing"
+            "description": "While notifications wait in silence"
           },
           {
             "value": "Caffeine",
@@ -52,7 +52,7 @@
         "key": "alwaysShow",
         "type": "boolean",
         "label": "Always Show",
-        "description": "Show inactive indicators without waiting for hover.",
+        "description": "Show the indicators that are off without the pointer on them.",
         "defaultValue": false
       }
     ]

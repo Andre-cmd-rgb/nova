@@ -4,7 +4,7 @@
   "name": "Nova update",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Indicates available Nova and app updates",
+  "description": "A badge while a Nova or app update waits",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Nova update",
-    "description": "Indicates available Nova and app updates",
+    "description": "A badge while a Nova or app update waits",
     "category": "System",
     "allowMultiple": false
   }

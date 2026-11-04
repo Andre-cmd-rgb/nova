@@ -4,7 +4,7 @@
   "name": "Keyboard layout",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Current xkb layout, click cycles",
+  "description": "The keyboard's layout as a short code; a click goes to the next",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Keyboard layout",
-    "description": "Current xkb layout, click cycles",
+    "description": "The keyboard's layout as a short code; a click goes to the next",
     "category": "Compositor",
     "allowMultiple": false
   }

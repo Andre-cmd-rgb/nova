@@ -4,7 +4,7 @@
   "name": "Microphone",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Mic input state and mute toggle",
+  "description": "The default microphone, muted or live; a click mutes it",
   "kinds": [
     "bar-widget"
   ],
@@ -13,7 +13,7 @@
   },
   "barWidget": {
     "displayName": "Microphone",
-    "description": "Mic input state and mute toggle",
+    "description": "The default microphone, muted or live; a click mutes it",
     "category": "Audio",
     "allowMultiple": false,
     "defaultSection": "right"
