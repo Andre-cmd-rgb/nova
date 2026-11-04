@@ -1,76 +1,64 @@
 #!/bin/bash
 
-# nova:summary=Monitor sleep preparation and lock before suspend
+# nova:summary=Lock the session before the computer sleeps
 # nova:hidden=true
 #
-# It holds a logind delay inhibitor and watches for PrepareForSleep: as the
-# machine is about to suspend, nova-system-sleep-lock locks the session, and
-# then this exits, which releases the inhibitor. systemd starts it again for
-# the next suspend.
-#
-#   nova-system-sleep-monitor              takes the inhibitor, and runs
-#   nova-system-sleep-monitor --inhibited  under it, watching
-#   nova-system-sleep-monitor --consume    reads dbus-monitor's lines on stdin
+# logind says on the system bus as the machine is about to sleep
+# (PrepareForSleep true) and once it has woken (false). While the machine is
+# awake, this holds a delay inhibitor, so that logind waits, up to
+# InhibitDelayMaxSec, for nova-system-sleep-lock to lock the session; then it
+# lets it go, and the machine sleeps. logind takes a new inhibitor only once
+# it has said the machine woke, and it is taken again then.
 
 set -euo pipefail
 
-here=$(readlink -f "${BASH_SOURCE[0]}")
-here=${here%/*}
+unsecured=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/sleep-unsecured
 
-# At the first PrepareForSleep(true) as dbus-monitor prints it, the lock, and
-# done.
-consume() {
-  local line
-  while IFS= read -r line; do
-    if [[ $line == *"boolean true"* ]]; then
-      "$here/nova-system-sleep-lock" || true
-      return 0
-    fi
-  done
+# systemd-inhibit holds the inhibitor for as long as it runs, and its sleep
+# ends with it. One at a time: a new one takes the place of the last.
+inhibitor=""
+hold() {
+  let_go
+  systemd-inhibit --what=sleep --mode=delay --who=Nova \
+    --why="Locking the screen before sleep" sleep infinity &
+  inhibitor=$!
 }
 
-watcher=""
-stop_watching() {
-  kill "$watcher" 2>/dev/null || true
-  wait "$watcher" 2>/dev/null || true
+let_go() {
+  if [[ -z $inhibitor ]]; then return 0; fi
+  kill "$inhibitor" 2>/dev/null || true
+  wait "$inhibitor" 2>/dev/null || true
+  inhibitor=""
 }
 
-watch() {
-  local status=0
-  coproc events {
-    exec dbus-monitor --system \
-      "type='signal',sender='org.freedesktop.login1',interface='org.freedesktop.login1.Manager',member='PrepareForSleep'"
-  }
-  # shellcheck disable=SC2154 # set by coproc
-  watcher=$events_PID
-  trap stop_watching EXIT
-  consume <&"${events[0]}" || status=$?
-  stop_watching
-  trap - EXIT
-  return "$status"
+# Woken from a sleep the lock was not up for: the screens stay off, and the
+# lock is asked for again until it is (nova-system-sleep-lock --resumed).
+relock() {
+  if [[ -e $unsecured ]]; then
+    nova-system-sleep-lock --resumed </dev/null >/dev/null 2>&1 &
+  fi
 }
 
-case ${1:-} in
-  --consume)
-    consume
-    exit 0
-    ;;
-  --inhibited)
-    # The last suspend went without a secure lock: the screens stay off until
-    # it is up. systemd starts this again as the machine goes down, so it may
-    # run before the suspend or after it; --resumed holds on across it either
-    # way.
-    if [[ -e ${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/sleep-unsecured ]]; then
-      "$here/nova-system-sleep-lock" --resumed </dev/null >/dev/null 2>&1 &
-    fi
-    watch
-    exit 0
-    ;;
-esac
+trap let_go EXIT
+relock
 
-exec systemd-inhibit \
-  --what=sleep \
-  --mode=delay \
-  --who=Nova \
-  --why="Locking the screen before sleep" \
-  "$here/nova-system-sleep-monitor" --inhibited
+# gdbus says whose logind's name is once it watches for its signals, so a
+# sleep logind waits for is never one this has not heard of. A new owner, a
+# logind started again, gets an inhibitor of its own, in case the one held
+# before went with the last.
+while IFS= read -r line; do
+  case $line in
+    'The name org.freedesktop.login1 is owned by '*) hold ;;
+    *'.Manager.PrepareForSleep (true,)')
+      nova-system-sleep-lock || true
+      let_go
+      ;;
+    *'.Manager.PrepareForSleep (false,)')
+      relock
+      hold
+      ;;
+  esac
+done < <(gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1)
+
+echo "nova-system-sleep-monitor: gdbus stopped; no lock before sleep until it is back" >&2
+exit 1

@@ -84,10 +84,9 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   [ ! -s "$CALLS" ]
 }
 
-@test "the monitor starts the wake side once, when the marker says so" {
+@test "the wake side runs once at a time" {
   mkdir -p "${marker%/*}"
   : >"$marker"
-  grep -q 'sleep-unsecured' "$REPO_ROOT/src/cli/bin/nova-system-sleep-monitor"
   # Two at once: the second finds the first holding it.
   SECURE_AFTER=30 "$lock" --resumed &
   local first=$!
