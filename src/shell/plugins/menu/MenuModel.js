@@ -26,10 +26,9 @@ function blankUnlessString(found) {
 }
 
 // The entries of a menu file as written, each an object with its id: [] for
-// a file that is empty or not JSON. The items may sit under "items". They
-// are made into items only once the two files are merged: a user's entry
-// names only what it changes, and the defaults filled in here would
-// overwrite the rest.
+// a file that is empty or not JSON. They are made into items only once the
+// two files are merged: a user's entry names only what it changes, and the
+// defaults filled in here would overwrite the rest.
 function parseMenuJsonc(raw) {
   var text = jsonText(raw)
   if (!text.trim()) return []
@@ -41,11 +40,9 @@ function parseMenuJsonc(raw) {
   }
   if (typeof parsed !== "object" || parsed === null) return []
 
-  var wrapped = parsed.items && typeof parsed.items === "object" && !Array.isArray(parsed.items)
-  var source = wrapped ? parsed.items : parsed
   var entries = []
-  for (var id in source) {
-    var fields = source[id]
+  for (var id in parsed) {
+    var fields = parsed[id]
     if (!fields || typeof fields !== "object" || Array.isArray(fields)) continue
     var entry = { id: id }
     for (var key in fields) if (key !== "id") entry[key] = fields[key]
@@ -56,8 +53,8 @@ function parseMenuJsonc(raw) {
 
 // The tree of the default file's entries with the user's on top, a field at
 // a time. An entry sits under the id its own id extends (capture.screenrecord
-// under capture), or under its parent when it names one; a root is added
-// when neither file has one. Each item's order is its place in itemOrder.
+// under capture); a root is added when neither file has one. Each item's
+// order is its place in itemOrder.
 function mergeMenuSources(defaults, user) {
   var fields = byId()
   var order = []
@@ -77,30 +74,27 @@ function mergeMenuSources(defaults, user) {
   var items = byId()
   order.forEach(function(id) { items[id] = menuItem(id, fields[id]) })
   if (!items.root) {
-    items.root = searchable({ id: "root", parent: "", kind: "menu", icon: "", iconFont: "", label: "Go", title: "", target: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" })
+    items.root = searchable({ id: "root", parent: "", kind: "menu", icon: "", label: "Go", title: "", description: "", aliases: [], when: "", checked: "", action: "", provider: "" })
     order.unshift("root")
   }
   order.forEach(function(id, place) { items[id].order = place })
   return { items: items, itemOrder: order }
 }
 
-// An item from its merged fields. One with an action runs it, one with a
-// target opens that menu (a link), anything else is a menu of its own.
+// An item from its merged fields. One with an action runs it, anything else
+// is a menu of its own.
 function menuItem(id, fields) {
   var value = fields || {}
-  var parent = value.parent
-  if (parent === undefined) parent = id.indexOf(".") >= 0 ? id.slice(0, id.lastIndexOf(".")) : "root"
+  var parent = id.indexOf(".") >= 0 ? id.slice(0, id.lastIndexOf(".")) : "root"
   if (id === "root") parent = ""
   return searchable({
     id: id,
     parent: parent,
-    kind: value.action ? "action" : value.target ? "link" : "menu",
+    kind: value.action ? "action" : "menu",
     icon: asText(value.icon),
-    iconFont: asText(value.iconFont),
     label: asText(value.label) || id,
     title: asText(value.title),
-    target: asText(value.target),
-    description: asText(value.description),
+    description: "",
     action: asText(value.action),
     provider: asText(value.provider),
     aliases: aliasList(value.aliases),
@@ -115,10 +109,9 @@ function asText(value) {
   return value ? String(value) : ""
 }
 
-// "aliases" as written: a list, or one name.
+// "aliases" as written, a list.
 function aliasList(value) {
-  if (Array.isArray(value)) return value.filter(function(alias) { return alias })
-  return typeof value === "string" && value ? [value] : []
+  return Array.isArray(value) ? value.filter(function(alias) { return alias }) : []
 }
 
 // ---- Rows the providers add
@@ -137,7 +130,7 @@ function appItems(sorted, nameOf, subtextOf) {
     try {
       if (entry.keywords && typeof entry.keywords.join === "function") aliases = aliases.concat(entry.keywords)
     } catch (unreadable) { }
-    apps.push(searchable({ id: "apps." + appId, parent: "apps", kind: "app", icon: "", appIcon: String(entry.icon || ""), appId: appId, label: nameOf(entry), title: "", target: "", description: subtext, action: "", provider: "", aliases: aliases, when: "", checked: "", order: 0 }))
+    apps.push(searchable({ id: "apps." + appId, parent: "apps", kind: "app", icon: "", appIcon: String(entry.icon || ""), appId: appId, label: nameOf(entry), title: "", description: subtext, action: "", provider: "", aliases: aliases, when: "", checked: "", order: 0 }))
   })
   return apps
 }
@@ -164,7 +157,7 @@ function providerItems(menuId, text, icon, actionFor) {
     var id = menuId + "." + slugify(value)
     while (taken[id]) id += "-"
     taken[id] = true
-    rows.push(searchable({ id: id, parent: menuId, providerMenu: menuId, kind: "action", icon: value === (parts[2] || "") ? "✓" : icon || "", label: label, title: "", target: "", description: "", action: actionFor(value), provider: "", aliases: [], when: "", checked: "", order: 0 }))
+    rows.push(searchable({ id: id, parent: menuId, providerMenu: menuId, kind: "action", icon: value === (parts[2] || "") ? "✓" : icon || "", label: label, title: "", description: "", action: actionFor(value), provider: "", aliases: [], when: "", checked: "", order: 0 }))
   })
   return rows
 }
@@ -213,14 +206,14 @@ function item(items, id) {
   return items && items[id] ? items[id] : null
 }
 
-// What `nova menu <route>` opens: "go", "menu" and nothing are the root;
-// otherwise an id, else the first item with the route as an alias, case and
-// _ for - aside. Apps are never a route: their aliases are their Keywords,
-// and an app could take a menu's name (htop has "system"). Anything else is
-// tried as an id as it was written.
+// What `nova menu <route>` opens: nothing is the root; otherwise an id,
+// else the first item with the route as an alias, case and _ for - aside.
+// Apps are never a route: their aliases are their Keywords, and an app could
+// take a menu's name (htop has "system"). Anything else is tried as an id as
+// it was written, and opens the root when there is none.
 function resolveRoute(tree, route) {
   var name = String(route || "").toLowerCase().replace(/_/g, "-")
-  if (!name || name === "go" || name === "menu") return "root"
+  if (!name) return "root"
   if (item(tree.items, name)) return name
   for (var i = 0; i < tree.itemOrder.length; i++) {
     var entry = item(tree.items, tree.itemOrder[i])
@@ -267,19 +260,18 @@ function hiddenAbove(items, whenResults, entry, menuId) {
   return false
 }
 
-// Whether a row shows: not when its when: said no; a menu or a link only
-// with a row of its own to show, or a provider that fills it.
+// Whether a row shows: not when its when: said no; a menu only with a row of
+// its own to show, or a provider that fills it.
 function isShown(tree, whenResults, entry, steps) {
   if (!entry) return false
   if (entry.when && whenResults && whenResults[entry.id] === false) return false
-  if (entry.kind !== "menu" && entry.kind !== "link") return true
+  if (entry.kind !== "menu") return true
   if (entry.provider) return true
   var deeper = steps || 0
   if (deeper >= 32) return false
-  var menuId = entry.kind === "link" ? entry.target : entry.id
   for (var i = 0; i < tree.itemOrder.length; i++) {
     var child = item(tree.items, tree.itemOrder[i])
-    if (child && child.parent === menuId && isShown(tree, whenResults, child, deeper + 1)) return true
+    if (child && child.parent === entry.id && isShown(tree, whenResults, child, deeper + 1)) return true
   }
   return false
 }
@@ -331,7 +323,7 @@ function rank(items, entry, search) {
   else if (entry.searchName.indexOf(needle) >= 0) tier = 40
   else if (search.terms.every(function(term) { return entry.searchWords.indexOf(term) >= 0 })) tier = 60
 
-  if (entry.kind === "menu" || entry.kind === "link") tier -= 2
+  if (entry.kind === "menu") tier -= 2
   // Apps come after every menu item in the order, which a tie goes by; this
   // puts them ahead of an equal find without passing a better one.
   if (entry.kind === "app") tier -= 5
@@ -348,11 +340,9 @@ function listRow(entry, checkedResults, detail, section) {
     itemId: entry.id,
     kind: entry.kind,
     icon: entry.icon,
-    iconFont: entry.iconFont || "",
     appIcon: entry.appIcon || "",
     appId: entry.appId || "",
     label: checked ? entry.label + " ✓" : entry.label,
-    target: entry.kind === "link" ? entry.target : entry.id,
     detail: detail || "",
     action: entry.action || "",
     section: section || ""
@@ -423,7 +413,7 @@ function chooserRows(options, query) {
     var label = parts.shift() || ""
     var line = parts.join("\t")
     if (needle && label.toLowerCase().indexOf(needle) < 0 && line.toLowerCase().indexOf(needle) < 0) return
-    rows.push({ itemId: "choice." + index, kind: "choice", icon: icon, iconFont: "", appIcon: "", appId: "", label: label, target: "", detail: line, action: "", section: "" })
+    rows.push({ itemId: "choice." + index, kind: "choice", icon: icon, appIcon: "", appId: "", label: label, detail: line, action: "", section: "" })
   })
   return rows
 }
@@ -470,13 +460,6 @@ function foldedHeight(bottoms, room, peek, spacing, least) {
 // would be gone by the next.
 var GUARD_READERS = ["nova-bar position", "nova-bar transparent"]
 
-// Most guards ask whether commands are there, and starting a script each to
-// ask is most of what the script would cost. These answer it in the
-// script's own shell, and so must answer as the real commands do, with no
-// arguments too: all of none are present, and none of none is missing.
-var GUARD_HELPERS = 'nova-cmd-present() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 1; done; return 0; }\n'
-  + 'nova-cmd-missing() { local c; for c in "$@"; do command -v "$c" &>/dev/null || return 0; done; return 1; }\n'
-
 function readerSlot(index) {
   return "${__nova_read_" + index + "}"
 }
@@ -522,7 +505,7 @@ function guardScript(items) {
     // shell that sets errexit.
     return lines.indexOf(readerSlot(index)) < 0 ? "" : "__nova_read_" + index + "=$(" + reader + " 2>/dev/null) || :\n"
   })
-  return GUARD_HELPERS + readers.join("") + lines
+  return readers.join("") + lines
 }
 
 // The script's answers: { when: { id: bool }, checked: { id: bool } }. An id

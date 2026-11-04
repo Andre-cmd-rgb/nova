@@ -9,32 +9,29 @@ import "MenuModel.js" as Model
 
 // Nova's menu: the apps, settings and commands of menu.jsonc on a card over
 // the screen, walked with the keys or the pointer and searched by typing.
-// It is also nova-menu-select's chooser, a list to pick from or a line to
-// type into. shell.qml keeps it loaded, calls open() with the payload of
+// It is also nova-menu-select's chooser, a list to pick from. shell.qml
+// keeps it loaded, calls open() with the payload of
 // `nova-shell shell summon nova.menu`, close() to hide it, and refresh() and
 // ping() for nova menu; it reads `opened` to toggle it.
 Item {
   id: root
 
-  // Set by shell.qml once the plugin has loaded.
   property string novaPath: Quickshell.env("NOVA_PATH")
+  // Set by shell.qml once the plugin has loaded.
   property var shell: null
-  property var manifest: null
 
   // The installed apps, the shell's one AppLibrary.
   readonly property var appLibrary: root.shell ? root.shell.appLibrary : null
 
   // -------------------------------------------------------------- the calls
 
-  // {"menu": route} (or "initialMenu") opens the menu at the route; a "mode"
-  // of "select" or "input" opens the chooser (openChooser). A "fontFamily"
-  // is the menu's font from then on.
+  // {"menu": route} opens the menu at the route; a "mode" of "select" opens
+  // the chooser (openChooser).
   function open(payloadJson) {
     var payload = ({})
     try { payload = JSON.parse(payloadJson || "{}") } catch (notJson) { payload = ({}) }
-    if (payload.fontFamily) root.fontFamily = payload.fontFamily
-    if (payload.mode === "select" || payload.mode === "input") root.openChooser(payload)
-    else root.openRoute(payload.initialMenu || payload.menu || "root")
+    if (payload.mode === "select") root.openChooser(payload)
+    else root.openRoute(payload.menu || "root")
   }
 
   function close() {
@@ -53,13 +50,13 @@ Item {
   // ------------------------------------------------------------------ state
 
   property bool opened: false
-  // "menu", or the chooser's "select" or "input".
+  // "menu", or the chooser's "select".
   property string mode: "menu"
   readonly property bool choosing: mode !== "menu"
   // The menu shown, and those walked through to it, for Back.
   property string current: "root"
   property var trail: []
-  // What has been typed: a search, or the chooser's filter or line.
+  // What has been typed: a search, or the chooser's filter.
   property string query: ""
   property int selectedIndex: 0
 
@@ -100,7 +97,7 @@ Item {
 
   // ------------------------------------------------------------------- look
 
-  property string fontFamily: Style.font.menuFamily
+  readonly property string fontFamily: Style.font.menuFamily
   // The [menu] colours of shell.toml, each with its alpha.
   property color background: Commons.Color.menu.background
   property color foreground: Commons.Color.menu.text
@@ -131,7 +128,7 @@ Item {
   readonly property var wideMenus: ["capture.screenrecord", "style.font"]
   readonly property int cardWidth: Math.min(choosing ? Style.space(chooserWidth) : Style.space(wideMenus.indexOf(current) >= 0 ? 520 : 300), panel.width - Style.gapsOut * 2)
   property int visibleRowsHeight: listHeight()
-  readonly property int cardHeight: Math.min(contentMargin * 2 + headerHeight + (mode === "input" ? 0 : contentSpacing + visibleRowsHeight), panel.height - Style.gapsOut * 2)
+  readonly property int cardHeight: Math.min(contentMargin * 2 + headerHeight + contentSpacing + visibleRowsHeight, panel.height - Style.gapsOut * 2)
 
   // A row's line under the label shows while a search narrows the menu, and
   // always in the chooser, where it is the caller's.
@@ -153,7 +150,6 @@ Item {
   }
 
   function listHeight() {
-    if (mode === "input") return 0
     if (rows.length === 0) return baseRowHeight
     var room = availableRowsHeight()
     if (choosing && chooserMaxHeight > 0) room = Math.min(room, Style.space(chooserMaxHeight))
@@ -383,7 +379,7 @@ Item {
   // ----------------------------------------------------------------- opening
 
   // A route is an id or an alias (Model.resolveRoute). An action's route
-  // runs the action, and a link's opens the menu it points to.
+  // runs the action.
   function openRoute(route) {
     var id = Model.resolveRoute(tree, route)
     var entry = tree.items[id]
@@ -392,7 +388,6 @@ Item {
       run(entry.action)
       return "ok"
     }
-    if (entry && entry.kind === "link" && entry.target) id = entry.target
     openMenu(id)
     return "ok"
   }
@@ -419,13 +414,13 @@ Item {
     Qt.callLater(focusKeys)
   }
 
-  // nova-menu-select's chooser: its "prompt", its "options" (Model.chooserRows)
-  // or, for "input", a line to type; the files the pick is written to
-  // ("selectionFile", "doneFile"); and its "width" and "maxHeight".
+  // nova-menu-select's chooser: its "prompt", its "options" (Model.chooserRows),
+  // the files the pick is written to ("selectionFile", "doneFile"), and its
+  // "width" and "maxHeight".
   function openChooser(payload) {
     uninstalling = null
-    mode = payload.mode === "input" ? "input" : "select"
-    chooserPrompt = String(payload.prompt || (mode === "input" ? "Input" : "Select"))
+    mode = "select"
+    chooserPrompt = String(payload.prompt || "Select")
     chooserOptions = Array.isArray(payload.options) ? payload.options : []
     request.begin(String(payload.selectionFile || ""), String(payload.doneFile || ""))
     chooserWidth = Math.max(1, Number(payload.width || 300))
@@ -451,7 +446,7 @@ Item {
   // empty rather than showing the last ones.
   function rebuildDisplay() {
     show([])
-    if (mode === "input" || (!choosing && !loaded)) return
+    if (!choosing && !loaded) return
     var next
     if (choosing) {
       next = Model.chooserRows(chooserOptions, query)
@@ -548,27 +543,21 @@ Item {
 
   // Does what the row at <index> is for: enters a menu, launches an app,
   // runs a command, or picks a chooser's option, its line too when it has
-  // one. In the chooser's input it gives the line typed.
+  // one.
   function activate(index, fromPointer) {
     if (uninstalling) return
-    if (mode === "input") {
-      choose(query)
-      return
-    }
     if (index < 0 || index >= shown.count) return
     var row = shown.get(index)
     if (choosing) {
       choose(row.detail ? row.label + "\t" + row.detail : row.label)
-    } else if (row.kind === "menu" || row.kind === "link") {
-      enter(row.target || row.itemId, true, fromPointer)
+    } else if (row.kind === "menu") {
+      enter(row.itemId, true, fromPointer)
     } else if (row.kind === "app") {
       var appId = row.appId
       var label = row.label
       opened = false
       query = ""
       if (appLibrary) appLibrary.launch(appId, label)
-    } else if (!row.itemId) {
-      cancel()
     } else {
       opened = false
       query = ""
@@ -866,7 +855,7 @@ Item {
           Column {
             anchors.centerIn: parent
             spacing: Style.space(8)
-            visible: shown.count === 0 && root.mode !== "input"
+            visible: shown.count === 0
 
             Text {
               width: Style.space(320)
@@ -906,7 +895,6 @@ Item {
     required property int index
     required property string kind
     required property string icon
-    required property string iconFont
     required property string appIcon
     required property string label
     required property string detail
@@ -934,7 +922,7 @@ Item {
       textFormat: Text.PlainText
       text: row.icon
       color: row.ink
-      font.family: row.iconFont.length > 0 ? row.iconFont : root.fontFamily
+      font.family: root.fontFamily
       font.pixelSize: Style.font.iconLarge
       horizontalAlignment: Text.AlignHCenter
       verticalAlignment: Text.AlignVCenter
@@ -992,7 +980,7 @@ Item {
 
     Text {
       id: chevron
-      visible: row.kind === "menu" || row.kind === "link"
+      visible: row.kind === "menu"
       anchors.right: parent.right
       anchors.rightMargin: root.rowBorderRight + Style.space(8)
       y: row.labelMiddle - height / 2

@@ -5,7 +5,6 @@ import qs.Ui
 // closes it, and a right click opens a terminal.
 BarWidget {
   id: root
-  moduleName: "nova.menu"
 
   implicitWidth: star.implicitWidth
   implicitHeight: star.implicitHeight
