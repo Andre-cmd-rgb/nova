@@ -13,54 +13,56 @@ BarWidget {
   id: widget
   moduleName: "nova.active-window"
 
-  readonly property var focused: ToplevelManager.activeToplevel
-  readonly property string title: focused ? (focused.title || focused.appId || "") : ""
-  readonly property real widest: Number(setting("maxWidth", 280))
-  // The bar shows a tooltip only while its widget says the pointer is on it.
-  readonly property bool tooltipHovered: visible && hover.containsMouse
+  readonly property var window: ToplevelManager.activeToplevel
+  readonly property string title: window?.title || window?.appId || ""
+  // The bar shows the tooltip only while this holds.
+  readonly property bool tooltipHovered: visible && pointer.containsMouse
 
   visible: !vertical && title !== ""
   implicitHeight: barSize
-  implicitWidth: visible ? Math.min(widest, label.implicitWidth) + Style.spacing.controlPaddingX * 2 : 0
+  implicitWidth: visible ? Math.min(Number(setting("maxWidth", 280)), line.implicitWidth) + Style.spacing.controlPaddingX * 2 : 0
 
   Behavior on implicitWidth {
     NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
   }
 
-  // The title, in what is left 8 px in from each end.
-  Item {
-    anchors { fill: parent; leftMargin: Style.space(8); rightMargin: Style.space(8) }
-    clip: true
-
-    Text {
-      id: label
-      anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-      width: parent.width
-      text: widget.title
-      textFormat: Text.PlainText
-      elide: Text.ElideRight
-      opacity: 0.85
-      color: widget.bar ? widget.bar.barForeground : Commons.Color.foreground
-      font.family: widget.bar ? widget.bar.fontFamily : Style.font.family
-      font.pixelSize: Style.font.body
-    }
-  }
-
   MouseArea {
-    id: hover
+    id: pointer
     anchors.fill: parent
     hoverEnabled: true
     cursorShape: Qt.PointingHandCursor
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
 
-    onEntered: if (widget.bar) widget.bar.showTooltip(widget, widget.title)
-    onExited: if (widget.bar) widget.bar.hideTooltip(widget)
+    onEntered: widget.bar?.showTooltip(widget, widget.title)
+    onExited: widget.bar?.hideTooltip(widget)
     // A click puts the tooltip away, as on the bar's buttons.
-    onClicked: function(mouse) {
-      if (widget.bar) widget.bar.hideTooltip(widget)
-      if (!widget.focused) return
-      if (mouse.button === Qt.LeftButton) widget.focused.activate()
-      else widget.focused.close()
+    onClicked: mouse => {
+      widget.bar?.hideTooltip(widget)
+      if (mouse.button === Qt.LeftButton) widget.window?.activate()
+      else widget.window?.close()
+    }
+
+    // The title, cut to what is left 8 px in from each end: while the
+    // widget grows or shrinks to a new one, it does not spill out.
+    Item {
+      readonly property real inset: Style.space(8)
+
+      x: inset
+      width: pointer.width - 2 * inset
+      height: pointer.height
+      clip: true
+
+      Text {
+        id: line
+        width: parent.width
+        anchors.verticalCenter: parent.verticalCenter
+        text: widget.title
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        opacity: 0.85
+        color: widget.bar?.barForeground ?? Commons.Color.foreground
+        font { family: widget.bar?.fontFamily ?? Style.font.family; pixelSize: Style.font.body }
+      }
     }
   }
 }
