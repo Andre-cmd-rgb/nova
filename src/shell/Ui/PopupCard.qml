@@ -5,112 +5,108 @@ import qs.Commons
 import qs.Commons as Commons
 import "Popups.js" as Popups
 
-// A card that pops up from a bar widget, on the side of the bar away from
-// the screen's edge and centred on the widget, kept <margin> from the bar's
-// ends. It is a popup of the
-// bar's window, so it takes keys only once the pointer has been in it;
-// KeyboardPanel is the one to use for a panel opened from the keyboard.
+// A card that pops up from a bar widget: on the side of the bar away from
+// the screen's edge, a gap off the widget and centred on it, and never
+// nearer the bar's ends than that gap. It is a popup of the bar's window,
+// so it hears keys only once the pointer has been in it; KeyboardPanel is
+// the one for a panel opened from the keyboard.
 //
 // The bar shows one popup at a time: opening asks the bar for the place,
 // with <owner> (or the card itself) as its key, and closing hands it back.
-// A click anywhere outside the card and the bar closes it.
+// A click anywhere but the card and the bar closes it.
 PopupWindow {
-  id: root
+  id: popup
 
   required property Item anchorItem
   required property QtObject bar
   property var owner: null
-  property int margin: Style.gapsOut
-  property int padding: Style.spacing.popupPadding
+  property bool open: false
   property int contentWidth: Style.space(280)
   property int contentHeight: Style.space(200)
+  property int padding: Style.spacing.popupPadding
   property color borderColor: Commons.Color.popups.border
-  property var borderSpec: Border.localOrSurfaceSpec("popups", "border", borderColor, Commons.Color.popups.border, Math.max(1, Style.space(2)))
-  property bool open: false
 
   default property alias contentItem: card.content
 
-  readonly property var coordinatorKey: owner || root
-  readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
-  readonly property string _side: bar ? bar.position : ""
-  readonly property var _screen: anchorWindow ? anchorWindow.screen : null
+  // The bar's window, which the widget is in, and the screen it is on.
+  readonly property var _barWindow: anchorItem ? anchorItem.QsWindow.window : null
+  readonly property var _screen: _barWindow ? _barWindow.screen : null
 
-  // The room for the card: the screen, but for the bar across it and
-  // <margin> at each end.
-  readonly property real availableCardWidth: Popups.room(_screen ? _screen.width : 0,
-    (_side === "left" || _side === "right" ? anchorWindow?.width ?? 0 : 0) + margin, margin)
-  readonly property real availableCardHeight: Popups.room(_screen ? _screen.height : 0,
-    (_side === "top" || _side === "bottom" ? anchorWindow?.height ?? 0 : 0) + margin, margin)
-  readonly property real verticalContentInset: padding * 2 + card.borderTop + card.borderBottom
+  // The room for the card along each of the screen's sides: the screen,
+  // less the bar where it lies across that side, and a gap at either end.
+  function _room(screenLength, barDepth) {
+    return Popups.room(screenLength, barDepth + Style.gapsOut, Style.gapsOut)
+  }
 
   // A width for the card, no more than the room for it nor <cap>.
   function fittedContentWidth(width, cap) {
-    return Popups.cardWidth(width, availableCardWidth, cap)
+    const across = bar && (bar.position === "left" || bar.position === "right")
+    return Popups.cardWidth(width, _room(_screen ? _screen.width : 0, across ? _barWindow?.width ?? 0 : 0), cap)
   }
 
   // A height for the card round content <implicitHeight> high, no more
   // than the room for it nor <cap>.
   function fittedContentHeight(implicitHeight, cap) {
-    return Popups.cardHeight(implicitHeight, verticalContentInset, availableCardHeight, cap)
+    const across = bar && (bar.position === "top" || bar.position === "bottom")
+    return Popups.cardHeight(implicitHeight, card.verticalInset, _room(_screen ? _screen.height : 0, across ? _barWindow?.height ?? 0 : 0), cap)
   }
 
   function close() {
-    Popups.dismiss(root)
+    Popups.dismiss(popup)
   }
 
+  // Mapped through the fade out.
   visible: open || card.opacity > 0
   color: "transparent"
   implicitWidth: contentWidth
   implicitHeight: contentHeight
 
-  onOpenChanged: Popups.claim(bar, coordinatorKey, open)
+  onOpenChanged: Popups.claim(bar, owner || popup, open)
 
-  // Hyprland's focus grab sends the input to the card and the bar alone
-  // while it holds; a click anywhere else ends it, and the card closes.
+  // While Hyprland's focus grab holds, input goes to the card and the bar
+  // alone; a click anywhere else ends it, and the card closes.
   HyprlandFocusGrab {
-    active: root.open
-    windows: root.anchorWindow ? [root, root.anchorWindow] : [root]
-    onCleared: root.close()
+    active: popup.open
+    windows: popup._barWindow ? [popup, popup._barWindow] : [popup]
+    onCleared: popup.close()
   }
 
   anchor {
     id: placement
-    window: root.anchorWindow
+    window: popup._barWindow
     adjustment: PopupAdjustment.Slide
     edges: Edges.Top | Edges.Left
     gravity: Edges.Bottom | Edges.Right
     rect.width: 1
     rect.height: 1
 
-    // The card's corner, in the bar window's coordinates: <margin> off the
-    // widget and centred on it, kept <margin> inside the bar's ends.
+    // The card's corner in the bar window's coordinates.
     onAnchoring: {
-      const widget = root.anchorItem
-      const barWindow = root.anchorWindow
-      if (!widget || !root.bar || !barWindow) return
-      const side = root.bar.position
-      const across = side === "top" || side === "bottom"
-      const w = root.implicitWidth
-      const h = root.implicitHeight
-      const m = root.margin
-      let spot
-      if (across) {
-        spot = barWindow.contentItem.mapFromItem(widget, widget.width / 2 - w / 2, side === "bottom" ? -h - m : widget.height + m)
-        spot.x = Popups.within(spot.x, w, barWindow.width, m)
+      const widget = popup.anchorItem
+      const host = popup._barWindow
+      if (!widget || !popup.bar || !host) return
+      const side = popup.bar.position
+      const gap = Style.gapsOut
+      const size = Qt.size(popup.implicitWidth, popup.implicitHeight)
+      if (side === "top" || side === "bottom") {
+        const corner = host.contentItem.mapFromItem(widget, widget.width / 2 - size.width / 2,
+          side === "bottom" ? -size.height - gap : widget.height + gap)
+        placement.rect.x = Math.round(Popups.within(corner.x, size.width, host.width, gap))
+        placement.rect.y = Math.round(corner.y)
       } else {
-        spot = barWindow.contentItem.mapFromItem(widget, side === "left" ? widget.width + m : -w - m, widget.height / 2 - h / 2)
-        spot.y = Popups.within(spot.y, h, barWindow.height, m)
+        const corner = host.contentItem.mapFromItem(widget, side === "left" ? widget.width + gap : -size.width - gap,
+          widget.height / 2 - size.height / 2)
+        placement.rect.x = Math.round(corner.x)
+        placement.rect.y = Math.round(Popups.within(corner.y, size.height, host.height, gap))
       }
-      placement.rect.x = Math.round(spot.x)
-      placement.rect.y = Math.round(spot.y)
     }
   }
 
   PopupFace {
     id: card
     anchors.fill: parent
-    padding: root.padding
-    borderSpec: root.borderSpec
-    shown: root.open
+    padding: popup.padding
+    edgeColor: popup.borderColor
+    shown: popup.open
   }
 }
