@@ -1223,9 +1223,11 @@ Item {
       root.unregisterModuleSlot(slot)
     }
 
-    onActiveItemChanged: Qt.callLater(hand)
     onModuleSettingsChanged: hand()
 
+    // As the widget loads, and at once: a hand-off left for later can find
+    // the slot gone, when the layout changes twice in one turn (at startup,
+    // the fallback and then shell.json), and fail on it.
     function hand() {
       var item = activeItem
       if (!item) return
@@ -1256,7 +1258,7 @@ Item {
       opacity: slot.dragged ? 0.22 : 1.0
       sourceComponent: slot.registryComponent !== null ? slot.registryComponent
         : slot.customType === "command" ? commandWidget : nothing
-      onLoaded: slot.handTwice()
+      onLoaded: slot.hand()
     }
 
     // A QML widget of the user's, from its file.
@@ -1270,13 +1272,7 @@ Item {
         var path = BarModel.customSource(slot.entry, root.home, root.home + "/.config/nova")
         return path ? Util.fileUrl(path) : ""
       }
-      onLoaded: slot.handTwice()
-    }
-
-    // Now, and again once the widget's own bindings have settled.
-    function handTwice() {
-      hand()
-      Qt.callLater(hand)
+      onLoaded: slot.hand()
     }
 
     Component {
