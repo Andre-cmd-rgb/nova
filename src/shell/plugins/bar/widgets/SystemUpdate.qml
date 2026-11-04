@@ -4,48 +4,44 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// A badge while an update waits: Nova's, or only an app's (Chrome, VS Code).
-// nova-update-check answers every six hours, again as an update Settings ran
-// ends, and on nova-shell nova.system-update refresh; a click opens the
-// updates in Settings.
+// A badge while an update waits, a new Nova or app updates, with what it is
+// as its tooltip; a click opens Settings on Updates. It asks
+// nova-update-check every six hours, and again once an update run says it
+// is done. nova-shell nova.system-update refresh asks now, and clear puts
+// the badge away until the next answer.
 BarWidget {
   id: root
   moduleName: "nova.system-update"
 
-  property bool updateAvailable: false
-  property string tooltip: "Pending Nova Updates"
+  // What waits, in the tooltip's words; "" while nothing does.
+  property string waiting: ""
 
   function refresh() {
     if (!check.running) check.running = true
   }
 
-  function clear() { updateAvailable = false }
-
-  // Its answer, one line: "available <version>", "apps <name>...", or
-  // "current". Nothing when offline, which leaves the badge as it was.
-  function answered(line) {
-    if (line.startsWith("available ")) {
-      tooltip = "Nova " + line.slice(10) + " is available"
-      updateAvailable = true
-    } else if (line.startsWith("apps ")) {
-      tooltip = "App updates are available"
-      updateAvailable = true
-    } else if (line === "current") {
-      updateAvailable = false
-    }
+  function clear() {
+    waiting = ""
   }
 
-  visible: updateAvailable
+  // nova-update-check's answer, a line: "available <version>", "apps
+  // <count>", or "current". Another answer leaves the badge as it is.
+  function heard(answer) {
+    if (answer.startsWith("available ")) waiting = "Nova " + answer.slice(10) + " is available"
+    else if (answer.startsWith("apps ")) waiting = "App updates are available"
+    else if (answer === "current") waiting = ""
+  }
+
+  visible: waiting !== ""
   implicitWidth: badge.implicitWidth
   implicitHeight: badge.implicitHeight
 
-  // --notify: a notification as well, once for each update it finds.
   Process {
     id: check
     command: ["nova-update-check", "--notify"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.answered(String(text).trim())
+      onStreamFinished: root.heard(String(text).trim())
     }
   }
 
@@ -57,30 +53,31 @@ BarWidget {
     onTriggered: root.refresh()
   }
 
-  // Settings writes status.json as its update runs. Quickshell sees a file
-  // appear only in a folder that was there when it began to look, so the
-  // folder is made first.
-  readonly property string statusDir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/update"
-  property bool statusDirMade: false
+  // An update run keeps its state in $XDG_RUNTIME_DIR/nova/update/
+  // status.json. Its directory is made first, as a file can be watched only
+  // in a directory that is there.
+  readonly property string runDir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/update"
+  property string runState: ""
 
   Process {
-    command: ["mkdir", "-p", root.statusDir]
+    command: ["mkdir", "-p", root.runDir]
     running: true
-    onExited: root.statusDirMade = true
+    onExited: root.runState = root.runDir + "/status.json"
   }
 
   FileView {
-    path: root.statusDirMade ? root.statusDir + "/status.json" : ""
+    path: root.runState
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
     onLoaded: {
+      let state = ""
       try {
-        if (JSON.parse(text()).state === "done") root.refresh()
-      } catch (e) {
-        // Settings writes it whole and moves it into place: one that does
-        // not parse is not its, and is ignored.
+        state = JSON.parse(text()).state
+      } catch (error) {
+        return
       }
+      if (state === "done") root.refresh()
     }
   }
 
@@ -88,10 +85,10 @@ BarWidget {
     id: badge
     anchors.fill: parent
     bar: root.bar
-    text: ""
+    text: "\uf021"
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
-    tooltipText: root.tooltip
-    onPressed: if (root.bar) root.bar.run("nova-settings updates")
+    tooltipText: root.waiting
+    onPressed: root.bar?.run("nova-settings updates")
   }
 }
