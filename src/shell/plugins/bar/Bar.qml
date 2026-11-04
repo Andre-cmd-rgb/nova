@@ -1292,7 +1292,9 @@ Item {
       readonly property int inset: Style.space(2)
 
       visible: opacity > 0
-      opacity: root.activePopout === slot.activeItem && !slot.dragged ? 0.9 : 0
+      // A widget that did not load (a QML file missing) has no panel open,
+      // even while no panel at all is.
+      opacity: !!slot.activeItem && root.activePopout === slot.activeItem && !slot.dragged ? 0.9 : 0
       color: Commons.Color.accent
       radius: Math.min(width, height) / 2
       width: root.vertical ? Style.space(2) : slot.markLength
