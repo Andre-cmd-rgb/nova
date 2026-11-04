@@ -18,7 +18,7 @@ import "BarModel.js" as BarModel
 Item {
   id: root
 
-  // From the shell (shell.qml's bar Loader).
+  // From the shell (shell.qml).
   property string novaPath: Quickshell.env("NOVA_PATH")
   property var barWidgetRegistry: noRegistry
   property var barConfig: ({})

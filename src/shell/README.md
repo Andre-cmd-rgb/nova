@@ -13,11 +13,15 @@ What is installed under `$NOVA_PATH/shell`:
 
 ```
 shell/
-  shell.qml              entry point (ShellRoot): services, panels, IPC
+  shell.qml              entry point (ShellRoot): wires the parts below; IPC
   greeter.qml            the greeter's entry point
   services/
-    PluginRegistry.qml      reads the plugin index, answers what is enabled
-    BarWidgetRegistry.qml   the bar widgets' components
+    ShellJson.qml           shell.json, Nova's and the user's: the config in effect
+    PluginRegistry.qml      reads the plugin index, answers what is on, and the verbs
+    Layout.js               what the verbs do to shell.json's bar layout and lists
+    PluginServices.qml      a running object for each service that is on
+    Panels.qml              a loader for each panel, overlay and menu that is on
+    BarWidgets.qml          the bar widgets' components
     AppLibrary.qml          the installed apps, sorted, launched and removed, for the menu
     AppSearch.js            which of them the menu lists, and in what order
     hidden-entries.sh       the desktop entries hidden from this desktop
