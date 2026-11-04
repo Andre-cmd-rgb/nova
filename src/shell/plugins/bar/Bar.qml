@@ -1415,7 +1415,9 @@ Item {
       stdout: StdioCollector {
         waitForEnd: true
         onStreamFinished: {
-          var data = Util.parseModuleJson(text)
+          // JSON that is not an object (null, a number) is shown as printed.
+          var parsed = Util.parseModuleJson(text)
+          var data = parsed !== null && typeof parsed === "object" ? parsed : {}
           var kind = data.class || data.alt || ""
           custom.outputText = data.text || String(text || "").trim()
           custom.outputTooltip = data.tooltip || String(custom.setting("tooltip", ""))
