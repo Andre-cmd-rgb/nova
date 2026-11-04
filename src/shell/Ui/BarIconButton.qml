@@ -1,19 +1,16 @@
 import QtQuick
-import Quickshell
 import qs.Commons
 
 // A bar button that shows an icon instead of a label: a glyph of the icon
 // font centred by its ink in a square canvas <opticalSize> across, or
 // <iconComponent> drawn in that canvas instead. Along the bar it takes a
-// slot <slotSize> long. NOVA_DEBUG_BAR_ICONS=1 outlines the slot in red and
-// the canvas in blue, to line the icons up by eye.
+// slot <slotSize> long.
 WidgetButton {
   id: iconButton
 
   property Component iconComponent: null
   property real slotSize: Style.bar.iconSlot
   property real opticalSize: Style.bar.iconCanvas
-  property bool debugOpticalBounds: Quickshell.env("NOVA_DEBUG_BAR_ICONS") === "1"
 
   // How wide the glyph's ink is, for chrome lined up with it; 0 when the
   // icon is a component.
@@ -39,7 +36,6 @@ WidgetButton {
       fontFamily: iconButton.fontFamily
       fontSize: iconButton.fontSize
       color: iconButton._ink
-      debugBounds: iconButton.debugOpticalBounds
     }
 
     Loader {
@@ -47,15 +43,5 @@ WidgetButton {
       visible: iconButton.iconComponent !== null
       sourceComponent: iconButton.iconComponent
     }
-
-    DebugOutline {
-      visible: iconButton.debugOpticalBounds && iconButton.iconComponent !== null
-      tone: "#4488ff"
-    }
-  }
-
-  DebugOutline {
-    visible: iconButton.debugOpticalBounds
-    tone: "#ff4455"
   }
 }
