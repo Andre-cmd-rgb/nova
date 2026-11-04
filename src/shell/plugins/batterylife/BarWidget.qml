@@ -137,7 +137,7 @@ Panel {
   }
 
   function setProfile(name) {
-    // nova-powerd remembers the choice for the current power source.
+    // nova-power-profile remembers it as the battery's mode.
     profileProc.command = ["nova-power-profile", "set", String(name)]
     if (!profileProc.running) profileProc.running = true
   }
@@ -331,7 +331,7 @@ Panel {
           names.push(parts[0])
           if (parts[1] === "1") active = parts[0]
         }
-        if (names.length === 0) return
+        // Plugged in there are none: it is always full power.
         battery.profiles = names
         battery.activeProfile = active
       }

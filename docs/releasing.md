@@ -238,8 +238,9 @@ approving, or one to write down in the release notes.
   no keyring prompt; after that, the fingerprint unlocks, after suspend too.
 - **Sleep:** the lid suspends and the machine wakes to the lock screen;
   `systemctl hibernate` on AC resumes to the session.
-- **Power:** unplugged, the profile goes to power-saver and `nova power gpu
-  status` says off (P1 Gen 4i); plugged in, both come back. *Always Off* in
+- **Power:** unplugged, the profile goes to the battery's mode (balanced unless
+  one was chosen) and `nova power gpu status` says off (P1 Gen 4i); plugged in,
+  it is performance and the card comes back. *Always Off* in
   Settings keeps the card off. `nova battery limit` reads back what was set.
   On battery at idle, `src/power/test/watts.sh 300` is no worse than last time.
 - **Graphics:** native resolution and refresh rate (165 Hz with VRR on the

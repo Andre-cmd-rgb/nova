@@ -175,11 +175,13 @@ the shared folder also becomes the default for themes that have no pick of their
   Performance (the power mode, what the governor is doing right now, the
   discrete GPU and the undervolt) and Settings → Battery (the charge limit, the
   lid and the power button). Its manual is [power.md](power.md).
-- **Power profiles** belong to power-profiles-daemon. `nova-power-profile` sets one
-  and remembers it for the current power source; the shell's battery service runs
-  `nova-power-profile restore` at login and on every plug and unplug, which puts back
-  the remembered choice (performance on AC and power-saver on battery by default).
-  The governor never sets one.
+- **Power profiles** belong to power-profiles-daemon, and are the battery's:
+  plugged in it is always performance, with nothing to choose. `nova-power-profile`
+  sets one and remembers it as the battery's mode; the shell's battery service runs
+  `nova-power-profile restore` at login and on every plug and unplug, which puts
+  back performance plugged in and the battery's mode (balanced by default)
+  unplugged. The governor never sets one; on the P1 Gen 4i it reads it, as how
+  high to climb on battery.
 - **The governor** is two halves: `nova-power`, the policy, run on each plug and
   unplug, at boot and after resume (the dGPU off the PCI bus on battery, CPU and
   platform tunables, Wi-Fi power save, the hibernate rescan), and `nova-powerd`,
