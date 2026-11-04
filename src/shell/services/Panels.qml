@@ -93,13 +93,17 @@ QtObject {
     id = String(id || "")
     if (id === "") return false
     if (barOwns(id)) return askBar("hideBarWidget", id) || refuse("hide: no live bar widget for: " + id)
-    call(id, "close", null)
-    if (called[id]) {
-      var rest = Object.assign({}, called)
-      delete rest[id]
-      called = rest
-    }
+    invoke(id, "close", null)
+    forget(id)
     return true
+  }
+
+  // No longer called up: its loader unloads, unless it is kept loaded.
+  function forget(id) {
+    if (!called[id]) return
+    var rest = Object.assign({}, called)
+    delete rest[id]
+    called = rest
   }
 
   // Whether the panel is open: as its item says, when it has loaded and
@@ -118,9 +122,17 @@ QtObject {
 
   // The answer of the loaded item's <method>(arg), for the IPC: "ok" for
   // none, "unknown" when it has not loaded or has no such method, "error"
-  // when it throws.
+  // when it throws. A close asked for this way is forgotten as a hide's is,
+  // so that the shell knows the panel closed: Settings and the calendar keep
+  // no `opened`, and were left marked open, for the next toggle to "hide".
   function call(id, method, arg) {
     id = String(id || "")
+    var answer = invoke(id, method, arg)
+    if (method === "close" && answer !== "unknown") forget(id)
+    return answer
+  }
+
+  function invoke(id, method, arg) {
     var item = itemOf(id)
     if (!item || typeof item[method] !== "function") return "unknown"
     try {
