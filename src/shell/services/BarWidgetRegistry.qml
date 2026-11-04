@@ -34,8 +34,4 @@ QtObject {
   function availableIds() {
     return Object.keys(widgets)
   }
-
-  function has(id) {
-    return widgets[String(id)] !== undefined
-  }
 }

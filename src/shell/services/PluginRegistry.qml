@@ -71,7 +71,7 @@ QtObject {
   function isEnabled(id) {
     var key = String(id)
     var manifest = installedPlugins[key]
-    var config = shellConfigProvider ? shellConfigProvider() : null
+    var config = shellConfigProvider()
     if (!manifest) return false
     if (alwaysOn(manifest)) return true
     if (isDisabled(config, key)) return false
@@ -89,7 +89,7 @@ QtObject {
   // is both a widget and something else (the menu) keeps working without its
   // button.
   function inBar(id) {
-    var config = shellConfigProvider ? shellConfigProvider() : null
+    var config = shellConfigProvider()
     return findEntryLocation(config, id).kind === "bar"
   }
 
@@ -181,7 +181,7 @@ QtObject {
   // or else after the nearest earlier one, or else at the section's end.
   // Null for a widget the default layout does not have.
   function defaultBarPlace(config, key) {
-    var defaults = defaultsProvider ? defaultsProvider() : null
+    var defaults = defaultsProvider()
     var home = findBarLocation(defaults, key, "")
     if (!home.found) return null
     var neighbours = defaults.bar.layout[home.section]
@@ -253,7 +253,7 @@ QtObject {
     // one that does not exist.
     if (loading) return "not ready"
     if (inBar(id)) return ""
-    var config = shellConfigProvider ? shellConfigProvider() : null
+    var config = shellConfigProvider()
     var target = Util.isPlainObject(placement) ? Util.cloneJson(placement) : {}
     var relativeId = String(target.before || target.after || "")
     if (relativeId && !findBarLocation(config, relativeId, String(target.section || "")).found) {
@@ -342,10 +342,6 @@ QtObject {
     lastEnableError = ""
     if (loading) {
       lastEnableError = "not ready"
-      return false
-    }
-    if (!shellConfigMutator) {
-      console.warn("PluginRegistry.setEnabled called before shellConfigMutator wired")
       return false
     }
     var manifest = installedPlugins[key]

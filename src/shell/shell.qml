@@ -622,13 +622,11 @@ ShellRoot {
 
       var key = String(manifest.id)
       enabled[key] = true
-      var made = pluginWidgetComponents[key]
-      var url = pluginRegistry.entryPointUrl(manifest, "barWidget")
       // Loading, or made and registered: a second load would make a second
       // component, and a slot given a new component makes its widget again,
       // two of it running for a moment, each taking the widget's IPC target.
-      if (made && made.url === url && (!made.component || barWidgetRegistry.has(key))) continue
-      loadPluginWidget(key, url)
+      if (pluginWidgetComponents[key]) continue
+      loadPluginWidget(key, pluginRegistry.entryPointUrl(manifest, "barWidget"))
     }
 
     // Widgets of plugins gone or switched off leave the registry.
