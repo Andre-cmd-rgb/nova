@@ -25,10 +25,12 @@ BarWidget {
   implicitWidth: buttons.implicitWidth + gap
   implicitHeight: buttons.implicitHeight
 
+  // One row, or one column on a side bar. Only the columns are set: with the
+  // rows set too, the two change one after the other as the bar turns, and
+  // for that moment the grid has room for one button and warns.
   Grid {
     id: buttons
-    rows: widget.vertical ? -1 : 1
-    columns: widget.vertical ? 1 : -1
+    columns: widget.vertical ? 1 : widget.numbers.length
     rowSpacing: widget.vertical ? Style.space(2) : 0
     columnSpacing: widget.vertical ? 0 : Style.space(1)
 
