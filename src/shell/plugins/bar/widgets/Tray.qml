@@ -90,7 +90,6 @@ BarWidget {
   }
 
   visible: pinnedItems.length > 0 || drawerItems.length > 0
-  clip: false
   implicitWidth: vertical ? barSize : trayStrip.implicitWidth
   implicitHeight: vertical ? trayStrip.implicitHeight : barSize
 
@@ -209,9 +208,8 @@ BarWidget {
     required property var modelData
     readonly property bool tooltipHovered: visible && opacity > 0 && pointer.containsMouse
 
-    visible: modelData.status !== Status.Passive
-    implicitWidth: visible ? root.iconExtent : 0
-    implicitHeight: visible ? root.iconExtent : 0
+    implicitWidth: root.iconExtent
+    implicitHeight: root.iconExtent
 
     TrayIcon {
       anchors.centerIn: parent
@@ -233,13 +231,10 @@ BarWidget {
       // sits over the menu the press opens.
       onPressed: function(mouse) {
         if (root.bar) root.bar.hideTooltip(trayItem)
-        if (mouse.button === Qt.RightButton) {
-          root.openTrayMenu(trayItem.modelData, trayItem)
-          mouse.accepted = true
-        }
+        if (mouse.button === Qt.RightButton) root.openTrayMenu(trayItem.modelData, trayItem)
       }
       onClicked: function(mouse) {
-        if (mouse.button === Qt.RightButton) mouse.accepted = true
+        if (mouse.button === Qt.RightButton) return
         else if (mouse.button === Qt.MiddleButton) trayItem.modelData.secondaryActivate()
         else if (trayItem.modelData.onlyMenu) root.openTrayMenu(trayItem.modelData, trayItem)
         else trayItem.modelData.activate()
@@ -517,7 +512,6 @@ BarWidget {
     Column {
       id: menuLayout
       anchors.fill: parent
-      spacing: 0
 
       // In a submenu: its name, which leads back out. It stays above the
       // rows rather than scrolling with them, so the way back is always
@@ -526,7 +520,6 @@ BarWidget {
         id: header
         visible: root.submenuDepth > 0
         width: menuLayout.width
-        spacing: 0
 
         Item {
           width: header.width
@@ -588,7 +581,6 @@ BarWidget {
         Column {
           id: menuRows
           width: menuFlick.width
-          spacing: 0
 
           Repeater {
             model: root.currentChildren
