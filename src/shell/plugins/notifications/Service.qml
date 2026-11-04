@@ -4,122 +4,142 @@ import Quickshell.Io
 import Quickshell.Services.Notifications
 import qs.Commons
 import qs.Commons as Commons
-
-import "components"
-import "NotificationLogic.js" as NotificationLogic
+import "components" as Parts
+import "NotificationLogic.js" as Notes
 
 // Nova's notifications: the server on the session bus, and its toasts at the
-// top right of every screen. A toast goes after its lifetime (none for a
-// critical one) and is held while the pointer is on it; a click runs its
-// action, or brings its app forward, and a right click dismisses it.
+// top right of every screen. A toast goes after its lifetime (a critical one
+// never does) and waits while the pointer is on it; a click runs its action
+// or brings its app forward, a right click dismisses it.
 //
-// Do-not-disturb keeps the toasts off the screen and puts what they would
-// have said straight into the history, which keeps the last ten toasts gone
-// from the screen and replays them on request. The toasts on screen are kept
-// in files too, and come back when the shell restarts. All of it lives in
-// $XDG_STATE_HOME/nova: notifications.json for do-not-disturb, and
-// notifications/ (see files.sh).
+// Do-not-disturb keeps the toasts off the screen, and what they would have
+// said goes straight into the history: the last ten toasts gone, replayed on
+// request. The toasts on screen are kept in files too, and come back when the
+// shell restarts. All of it is in $XDG_STATE_HOME/nova: notifications.json
+// for do-not-disturb, and notifications/ (see files.sh and ToastFiles).
 Item {
-  id: service
+  id: notifications
 
   // Injected by the shell.
   property var shell: null
 
-  property string novaPath: Quickshell.env("NOVA_PATH")
-  readonly property string files: novaPath + "/shell/plugins/notifications/files.sh"
   readonly property string stateDir: Commons.Color.stateHome + "/nova/"
-  readonly property string settingsPath: stateDir + "notifications.json"
-  readonly property string toastDir: stateDir + "notifications/"
-  readonly property string historyDir: toastDir + "history/"
-  readonly property string imagesDir: toastDir + "images/"
-  readonly property int historyLimit: 10
 
-  // The toasts on screen, newest first, as rows of NotificationLogic.rowOf.
+  // The toasts on screen, newest first, as rows (Notes.rowOf).
   readonly property ListModel toasts: ListModel {}
 
-  // The Notification objects of the toasts and silenced notifications still
-  // held, by id. Kept here and not in the rows: the server frees an object when
-  // its notification goes, and a row holding it would crash the next read.
-  property var live: ({})
+  // The notifications of the toasts and of those silenced, by id, while the
+  // server holds them; the rows are copies, as the server frees a
+  // notification when it goes.
+  property var senders: ({})
 
-  // The rows restored from the shell before or replayed from the history, by
-  // file name. Their ids were handed out by a server since gone, and the new
-  // one counts from 1 again, so a notification arriving under one of them is
-  // not theirs, nor is a live object of that id.
-  property var restored: ({})
+  // The rows brought back from the shell before or replayed from the
+  // history, by file name. Another server handed their ids out, and this one
+  // counts from 1 again: a notification under one of them is not theirs.
+  property var fromBefore: ({})
 
-  // The toasts the pointer is on, by stem. Each screen shows every toast, and
-  // none of a toast's copies counts down while the pointer is on one of them.
+  // The toasts the pointer is on, by stem. Every screen shows every toast,
+  // and none of a toast's copies counts down while the pointer is on one.
   property var held: ({})
 
   function hold(stem, on) {
-    var next = ({})
-    for (var key in held) if (key !== stem) next[key] = true
+    var next = Object.assign({}, held)
     if (on) next[stem] = true
+    else delete next[stem]
     held = next
   }
 
-  function isRestored(row) {
-    return !!row && !!restored[NotificationLogic.fileName(row)]
+  function isFromBefore(row) {
+    return !!fromBefore[Notes.fileName(row)]
   }
 
-  // ---------------------------------------------------------- do-not-disturb
+  function senderOf(row) {
+    return isFromBefore(row) ? null : senders[row.originalId] || null
+  }
+
+  // The first toast that passes, by its place, or -1.
+  function indexWhere(test) {
+    for (var i = 0; i < toasts.count; i++) {
+      if (test(toasts.get(i))) return i
+    }
+    return -1
+  }
+
+  // The toasts that pass off the screen, each handed to `each` as it goes.
+  function pull(test, each) {
+    for (var i = toasts.count - 1; i >= 0; i--) {
+      var row = toasts.get(i)
+      if (!test(row)) continue
+      each(row)
+      toasts.remove(i)
+    }
+  }
+
+  Parts.ToastFiles {
+    id: files
+    script: Quickshell.env("NOVA_PATH") + "/shell/plugins/notifications/files.sh"
+    folder: notifications.stateDir + "notifications/"
+  }
+
+  // ------------------------------------------------------ do-not-disturb
 
   // Kept across the shell's reloads, and in notifications.json across its
-  // restarts: read once at the start, written 200 ms after it changes.
+  // restarts: read once as it starts, written 200 ms after a change.
   PersistentProperties {
-    id: persisted
+    id: memory
     reloadableId: "nova-notifications"
     property bool doNotDisturb: false
-    onDoNotDisturbChanged: if (!service.reading) service.saveSettings()
+    onDoNotDisturbChanged: if (!dndFile.applying) dndFile.save()
   }
 
-  readonly property alias doNotDisturb: persisted.doNotDisturb
-  property bool reading: false
-  property bool settingsRead: false
+  readonly property bool doNotDisturb: memory.doNotDisturb
 
-  // The bar's do-not-disturb button.
-  function setDoNotDisturb(value) {
-    persisted.doNotDisturb = !!value
+  // The bar's switch.
+  function setDoNotDisturb(on) {
+    memory.doNotDisturb = !!on
   }
 
   FileView {
-    id: settingsFile
-    path: service.settingsPath
+    id: dndFile
+
+    property bool read: false
+    property bool applying: false
+
+    path: notifications.stateDir + "notifications.json"
     watchChanges: false
     atomicWrites: true
     printErrors: false
-    onLoaded: service.readSettings(text())
-    // No file yet: still read, or nothing would ever write one.
-    onLoadFailed: service.readSettings("")
+    onLoaded: readOnce(text())
+    // No file yet: read all the same, or nothing would ever write one.
+    onLoadFailed: readOnce("")
+
+    // It can load twice as the shell starts: as its path is set, and when it
+    // is asked to.
+    function readOnce(content) {
+      if (read) return
+      var settings = Notes.parseSettings(content)
+      if (settings.problem) console.warn("notifications: settings parse failed:", settings.problem)
+      if (settings.dnd !== null) {
+        applying = true
+        memory.doNotDisturb = settings.dnd
+        applying = false
+      }
+      read = true
+      if (settings.legacy) save()
+    }
+
+    function save() {
+      if (read) dndWrite.restart()
+    }
   }
 
   Timer {
-    id: settingsSoon
+    id: dndWrite
     interval: 200
-    onTriggered: settingsFile.setText(JSON.stringify({ version: 3, dnd: persisted.doNotDisturb }, null, 2) + "\n")
+    onTriggered: dndFile.setText(JSON.stringify({ version: 3, dnd: memory.doNotDisturb }, null, 2) + "\n")
   }
 
-  function saveSettings() {
-    if (settingsRead) settingsSoon.restart()
-  }
-
-  // Once: the file can load twice as the shell starts, once as its path is
-  // set and once more when it is asked to.
-  function readSettings(text) {
-    if (settingsRead) return
-    var settings = NotificationLogic.parseSettings(text)
-    if (settings.error) console.warn("notifications: settings parse failed:", settings.errorMessage || "")
-    if (settings.dnd !== null) {
-      reading = true
-      persisted.doNotDisturb = settings.dnd
-      reading = false
-    }
-    settingsRead = true
-    if (settings.legacy) saveSettings()
-  }
-
-  // ---------------------------------------------------------- notifications
+  // --------------------------------------------------------------- arrivals
 
   NotificationServer {
     keepOnReload: false
@@ -128,71 +148,77 @@ Item {
     bodyMarkupSupported: true
     bodyHyperlinksSupported: true
     persistenceSupported: true
-    onNotification: function (notification) { service.receive(notification) }
+    onNotification: notification => notifications.arrive(notification)
   }
 
-  function receive(notification) {
-    // Held, or the server frees it as soon as this returns.
+  function arrive(notification) {
+    // Tracked, or the server frees it the moment this returns.
     notification.tracked = true
-    var row = NotificationLogic.rowOf(notification, Date.now())
+    var row = Notes.rowOf(notification, Date.now())
     var id = row.originalId
-    live[id] = notification
+    senders[id] = notification
     // Closed by its sender (CloseNotification), it leaves the screen, as the
-    // specification has it: what it said no longer holds, or it was one that
-    // never runs out. A newer notification may have taken the id meanwhile.
+    // specification has it: what it said holds no longer, or it was one that
+    // never runs out. A newer notification may have its id by then.
     var closedBySender = false
-    notification.closed.connect(function (reason) {
-      if (service.live[id] === notification) delete service.live[id]
+    notification.closed.connect(reason => {
+      if (notifications.senders[id] === notification) delete notifications.senders[id]
       if (reason !== NotificationCloseReason.CloseRequested) return
       closedBySender = true
-      service.takeDown(id, row.timestamp)
+      notifications.takeDown(id, row.timestamp)
     })
 
-    if (doNotDisturb && !NotificationLogic.breaksThroughDnd(notification)) {
-      if (NotificationLogic.passing(notification)) {
-        delete live[id]
-        notification.tracked = false
-      } else {
-        keepSilenced(notification, row)
+    if (doNotDisturb && !Notes.breaksThroughDnd(notification)) {
+      if (!Notes.passing(notification)) {
+        silence(notification, row)
+        return
       }
+      delete senders[id]
+      notification.tracked = false
       return
     }
 
-    show(row)
-    follow(notification, row)
-    // Later: changing the model while its Repeater makes a card crashes.
-    Qt.callLater(function () {
-      service.replace(id, NotificationLogic.fileName(row))
-      // Closed before it showed: its file goes to the history as it would.
+    files.write(row)
+    // Its sender may change it in place, a replacement under its id: the
+    // row is a copy, so it is copied again.
+    var redraw = () => notifications.redraw(notification, id, row.timestamp)
+    for (var name of Notes.WATCHED) {
+      var changed = notification[name + "Changed"]
+      if (changed && typeof changed.connect === "function") changed.connect(redraw)
+    }
+    // A turn later: a model changed while its Repeater makes a card crashes.
+    Qt.callLater(() => {
+      notifications.replace(id, Notes.fileName(row))
+      // Closed before it showed: to the history, as it would have gone.
       if (closedBySender) {
-        service.archive(row)
+        files.retire(row)
         return
       }
-      service.toasts.insert(0, row)
-      // An update that came before the row was there had no row to change,
+      notifications.toasts.insert(0, row)
+      // A change that came before the row was there found nothing to change,
       // and will not come again.
-      service.refresh(notification, id, row.timestamp)
+      redraw()
     })
   }
 
-  // A silenced notification, written into the history. It is let go only
-  // once its content is final: letting go tells the sender it closed (and
-  // Chromium deletes its picture), and an update to it comes to this object
-  // with no new notification; one that came while it was written is written
+  // A notification silenced, written into the history. It is let go only once
+  // what it says is final: letting go tells its sender it closed (and
+  // Chromium deletes its picture), and a change to it comes to this object,
+  // as no new notification. One that came while it was written is written
   // again, to the same file.
-  function keepSilenced(notification, row) {
-    record(row, function () {
-      var updated = null
+  function silence(notification, row) {
+    files.record(row, () => {
+      var now = null
       try {
-        updated = NotificationLogic.updatedRow(notification, row.originalId, row.timestamp)
+        now = Notes.rowOf(notification, row.timestamp, row.originalId)
       } catch (e) {
         // Freed by the server while the write waited.
       }
-      if (updated && NotificationLogic.differs(row, updated)) {
-        service.keepSilenced(notification, updated)
+      if (now && Notes.differs(row, now)) {
+        notifications.silence(notification, now)
         return
       }
-      if (service.live[row.originalId] === notification) delete service.live[row.originalId]
+      if (notifications.senders[row.originalId] === notification) delete notifications.senders[row.originalId]
       try {
         notification.tracked = false
       } catch (e) {
@@ -200,95 +226,65 @@ Item {
     })
   }
 
-  // A sender replacing its notification changes the object held, and no new
-  // notification comes: the toast's row is a copy, so it is copied again.
-  function follow(notification, row) {
-    var changes = ["summaryChanged", "bodyChanged", "appNameChanged", "appIconChanged",
-      "imageChanged", "urgencyChanged", "expireTimeoutChanged", "hintsChanged"]
-    var again = function () { service.refresh(notification, row.originalId, row.timestamp) }
-    for (var i = 0; i < changes.length; i++) {
-      var signal = notification[changes[i]]
-      if (signal && typeof signal.connect === "function") signal.connect(again)
-    }
-  }
-
-  // The toast of <id> and <timestamp> drawn again from its notification, and
-  // its file written again, to the same name: a restart restores what was
-  // shown last, and the history keeps it.
-  function refresh(notification, id, timestamp) {
-    // The id taken by a newer notification, or the toast gone.
-    if (live[id] !== notification) return
-    var updated
+  // The toast of `id` and `timestamp` drawn again from its notification, and
+  // its file written again under the same name: a restart brings back what
+  // was shown last, and the history keeps it.
+  function redraw(notification, id, timestamp) {
+    // Its id taken by a newer notification, or the toast gone.
+    if (senders[id] !== notification) return
+    var now
     try {
-      updated = NotificationLogic.updatedRow(notification, id, timestamp)
+      now = Notes.rowOf(notification, timestamp, id)
     } catch (e) {
       return
     }
-    var roles = NotificationLogic.shownRoles()
-    for (var i = 0; i < toasts.count; i++) {
-      var row = toasts.get(i)
-      if (!row || row.originalId !== id || row.timestamp !== timestamp) continue
-      if (!NotificationLogic.differs(row, updated)) return
-      for (var r = 0; r < roles.length; r++) toasts.setProperty(i, roles[r], updated[roles[r]])
-      show(updated)
-      return
-    }
+    var at = indexWhere(row => row.originalId === id && row.timestamp === timestamp)
+    if (at < 0 || !Notes.differs(toasts.get(at), now)) return
+    for (var role of Notes.SHOWN) toasts.setProperty(at, role, now[role])
+    files.write(now)
   }
 
-  // A notification under the id of a toast on screen replaces it: the toast
-  // goes, and its file with it, not to the history, as its sender means them
-  // as one. A restored toast stays, its id being another server's. <keep> is
-  // the new notification's own file, which has the old one's name when both
-  // came in one millisecond, and is already being written.
+  // A notification under the id of a toast on screen takes its place: the
+  // toast goes, and its file, not to the history, as its sender means the two
+  // as one. One from before stays, its id being another server's. `keep` is
+  // the new one's file, under the old one's name if both came in one
+  // millisecond, and already being written.
   function replace(id, keep) {
-    for (var i = toasts.count - 1; i >= 0; i--) {
-      var row = toasts.get(i)
-      if (!row || row.originalId !== id || isRestored(row)) continue
-      if (NotificationLogic.fileName(row) !== keep) forget(row)
-      toasts.remove(i)
-    }
+    pull(row => row.originalId === id && !isFromBefore(row), row => {
+      if (Notes.fileName(row) !== keep) files.drop(row)
+    })
   }
 
-  // The toast of <id> and <timestamp> off the screen, its sender having closed
-  // it, and its file into the history, as any toast gone. The sender is not
+  // The toast of `id` and `timestamp` off the screen, its sender having closed
+  // it, and its file into the history like any toast gone. The sender is not
   // told: it knows.
   function takeDown(id, timestamp) {
-    for (var i = toasts.count - 1; i >= 0; i--) {
-      var row = toasts.get(i)
-      if (!row || row.originalId !== id || row.timestamp !== timestamp || isRestored(row)) continue
-      archive(row)
-      toasts.remove(i)
-    }
+    pull(row => row.originalId === id && row.timestamp === timestamp && !isFromBefore(row), row => files.retire(row))
   }
 
-  // ------------------------------------------------------------------ toasts
+  // ---------------------------------------------------------------- toasts
 
   function dismiss(index) {
-    remove(index, "dismiss")
+    leave(index, false)
   }
 
   function expire(index) {
-    remove(index, "expire")
+    leave(index, true)
   }
 
-  // Toast <index> off the screen, its file into the history, and its
-  // notification told why it went. A restored toast has no notification here;
-  // looking its id up would find someone else's.
-  function remove(index, why) {
+  // Toast `index` off the screen, its file into the history, and its sender
+  // told whether it ran out or was dismissed.
+  function leave(index, ranOut) {
     if (index < 0 || index >= toasts.count) return
     var row = toasts.get(index)
-    var notification = row && !isRestored(row) && row.originalId >= 0 ? live[row.originalId] : null
-    if (row) {
-      archive(row)
-      delete restored[NotificationLogic.fileName(row)]
-    }
+    var notification = row.originalId >= 0 ? senderOf(row) : null
+    files.retire(row)
+    delete fromBefore[Notes.fileName(row)]
     toasts.remove(index)
-    if (!notification) return
     try {
-      if (notification.tracked) {
-        if (why === "expire" && typeof notification.expire === "function") notification.expire()
-        else notification.dismiss()
-      }
+      if (!notification || !notification.tracked) return
+      if (ranOut && typeof notification.expire === "function") notification.expire()
+      else notification.dismiss()
     } catch (e) {
       // Freed by the server.
     }
@@ -298,291 +294,175 @@ Item {
     while (toasts.count > 0) dismiss(0)
   }
 
-  // A click on toast <index>: the command it carries, run apart from the shell
-  // (an installer's restarts the shell), or its sender's default action, or
-  // else its app brought forward, as chat apps expect; then it goes. A
-  // restored toast has neither sender nor actions.
+  // A click on toast `index`: the command it carries, run apart from the
+  // shell (an installer's restarts it); else its sender's default action;
+  // else its app brought forward, as chat apps expect. Then it goes. One from
+  // before has neither sender nor actions.
   function invoke(index) {
     if (index < 0 || index >= toasts.count) return
     var row = toasts.get(index)
-    var argv = NotificationLogic.runnable(row ? row.execArgv : "")
-    if (argv) {
-      Util.execArgv(argv)
-      dismiss(index)
-      return
-    }
-    var notification = row && !isRestored(row) ? live[row.originalId] : null
-    var invoked = false
-    try {
-      for (var i = 0; notification && notification.actions && i < notification.actions.length; i++) {
-        var action = notification.actions[i]
-        if (action && action.identifier === "default") {
-          action.invoke()
-          invoked = true
-          break
-        }
-      }
-    } catch (e) {
-      console.warn("invoke default failed:", e)
-    }
-    if (!invoked && row && row.app) {
-      focusApp.command = ["nova-hyprland-focus-app", String(row.app)]
-      focusApp.running = true
-    }
+    var argv = Notes.runnable(row.execArgv)
+    if (argv) Util.execArgv(argv)
+    else if (!runDefault(senderOf(row)) && row.app) bringForward.start(row.app)
     dismiss(index)
   }
 
-  Process { id: focusApp }
-
-  // ------------------------------------------------------------------- files
-
-  // The jobs on the files, run one at a time, so that a run of updates does
-  // not race and a removal asked after a write comes after it. A history read
-  // takes its turn too: it sees the history as it was when asked for, and
-  // what is asked after it waits for it.
-  property var jobs: []
-  property var jobDone: null
-
-  function queue(job) {
-    jobs = jobs.concat([job])
-    next()
-  }
-
-  function next() {
-    if (fileJob.running || historyRead.running || jobs.length === 0) return
-    var job = jobs[0]
-    jobs = jobs.slice(1)
-    if (job.read) {
-      readQueued = false
-      historyRead.command = ["bash", files, "read", historyDir]
-      historyRead.running = true
-      return
+  // Its "default" action, if it has one: whether it ran.
+  function runDefault(notification) {
+    try {
+      var actions = notification && notification.actions ? notification.actions : []
+      for (var i = 0; i < actions.length; i++) {
+        if (!actions[i] || actions[i].identifier !== "default") continue
+        actions[i].invoke()
+        return true
+      }
+    } catch (e) {
+      console.warn("notifications: the default action failed:", e)
     }
-    jobDone = job.done || null
-    fileJob.command = ["bash", files].concat(job.args)
-    fileJob.running = true
+    return false
   }
 
   Process {
-    id: fileJob
-    onExited: {
-      var done = service.jobDone
-      service.jobDone = null
-      try {
-        if (done) done()
-      } catch (e) {
-        console.warn("notifications: file job callback failed:", e)
-      }
-      service.next()
+    id: bringForward
+
+    function start(app) {
+      command = ["nova-hyprland-focus-app", String(app)]
+      running = true
     }
   }
 
-  // Each with the copies of its pictures to make, made before the file that
-  // names them, while the sender's are still there.
-  function withCopies(args, copies) {
-    for (var i = 0; i < copies.length; i++) args.push(copies[i].from, copies[i].to)
-    return args
-  }
+  // --------------------------------------------------------------- history
 
-  function show(row) {
-    var disk = NotificationLogic.forDisk(row, imagesDir)
-    queue({ args: withCopies(["show", toastDir, imagesDir, NotificationLogic.fileName(row), NotificationLogic.line(disk.entry)], disk.copies) })
-  }
+  // A replay asked for and not yet read.
+  property bool replaying: false
 
-  function forget(row) {
-    queue({ args: ["forget", toastDir, imagesDir, NotificationLogic.stem(row)] })
-  }
-
-  function archive(row) {
-    queue({ args: ["archive", toastDir, historyDir, imagesDir, NotificationLogic.fileName(row), String(historyLimit)] })
-  }
-
-  // Straight into the history, as a toast gone would be. A silenced
-  // notification is let go at once, so an update its sender makes comes as a
-  // new notification, and is kept as one: nothing tells them apart, and
-  // guessing by app and summary would merge separate messages.
-  function record(row, done) {
-    var disk = NotificationLogic.forDisk(row, imagesDir)
-    queue({ args: withCopies(["record", historyDir, imagesDir, NotificationLogic.fileName(row), NotificationLogic.line(disk.entry),
-      String(historyLimit)], disk.copies), done: done })
-  }
-
-  // ----------------------------------------------------------------- history
-
-  property bool readQueued: false
-  // The toasts on screen as the replay was asked for: the replay sends them
-  // to the history after its read, so they are handed over as they are.
-  property var carried: []
-
+  // The history replayed as toasts, in place of those on screen; asked again
+  // while it reads, nothing more.
   function showHistory() {
-    if (historyRead.running || readQueued) return "ok"
-    var rows = []
+    if (replaying) return
+    replaying = true
+    // The toasts on screen go to the history after the read, so they come as
+    // they are, naming the copies of their pictures: their senders delete
+    // theirs as they go. Not the history's own "No recent notifications".
+    var onScreen = []
     for (var i = 0; i < toasts.count; i++) {
       var row = toasts.get(i)
-      // The history's "No recent notifications" is not a notification.
-      if (!row || row.originalId < 0) continue
-      // Their senders delete their pictures as they go: the copies are named.
-      rows.push(NotificationLogic.forDisk({
-        id: row.id, originalId: row.originalId, app: row.app, appIcon: row.appIcon, summary: row.summary, body: row.body,
-        image: row.image, glyph: row.glyph || "", execArgv: row.execArgv || "", urgency: row.urgency, timestamp: row.timestamp
-      }, imagesDir).entry)
+      if (row.originalId >= 0) onScreen.push(Notes.forDisk(Notes.plain(row), files.images).entry)
     }
-    carried = rows
-    readQueued = true
-    queue({ read: true })
-    return "ok"
-  }
-
-  Process {
-    id: historyRead
-    // The jobs after it go on, whatever the read did.
-    onExited: service.next()
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: service.replay(text)
-    }
-  }
-
-  function replay(text) {
-    var rows = NotificationLogic.replayRows(text, carried, historyLimit)
-    carried = []
-    // An empty history says so, or the key would seem dead; once, asked again
-    // it starts over.
-    if (rows.length === 0) {
-      for (var k = toasts.count - 1; k >= 0; k--)
-        if (toasts.get(k).originalId < 0) toasts.remove(k)
-      toasts.insert(0, {
-        id: -1, originalId: -1, app: "nova-action", appIcon: "", summary: "No recent notifications", body: "", image: "",
-        glyph: "\u{F009A}", execArgv: "", urgency: NotificationUrgency.Low, expireTimeout: 0, timestamp: Date.now()
-      })
-      return
-    }
-    dismissAll()
-    for (var i = 0; i < rows.length; i++) {
-      restored[NotificationLogic.fileName(rows[i])] = true
-      toasts.append(rows[i])
-    }
-  }
-
-  // --------------------------------------------------------------- restoring
-
-  Process {
-    id: restoreRead
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: service.restore(text)
-    }
-  }
-
-  // The toasts the shell before left on screen. One that would have run out
-  // by now goes to the history, as it would have; the others are shown for a
-  // whole lifetime again, a restart being rare and a toast back with a second
-  // left no use, and that is written down as a deadline, by which a second
-  // restart judges it.
-  function restore(text) {
-    var now = Date.now()
-    var back = []
-    var rows = NotificationLogic.parseFiles(text)
-    for (var i = 0; i < rows.length; i++) {
-      var row = rows[i]
-      var lifetime = NotificationLogic.lifetime(row.urgency, row.expireTimeout)
-      if (NotificationLogic.expired(row, lifetime, now)) {
-        archive(row)
-        continue
-      }
-      if (lifetime > 0) {
-        row.deadline = now + lifetime
-        show(row)
-        // Not a role: the rows of the model all have the same.
-        delete row.deadline
-      }
-      back.push(row)
-    }
-    if (back.length === 0) return
-    Qt.callLater(function () {
-      for (var j = 0; j < back.length; j++) {
-        // A notification that came while the files were read has its own
-        // file, and is this toast if its id and time are this one's. One
-        // with this id at another time may be its replacement or another
-        // server's id: both are shown, as a toast twice beats a critical
-        // one lost.
-        var shown = false
-        for (var k = 0; k < service.toasts.count && !shown; k++) {
-          var row = service.toasts.get(k)
-          shown = !!row && row.originalId === back[j].originalId && row.timestamp === back[j].timestamp
-        }
-        if (shown) continue
-        // Below what has just come, newest first.
-        service.restored[NotificationLogic.fileName(back[j])] = true
-        service.toasts.append(back[j])
-      }
+    files.readHistory(text => {
+      notifications.replaying = false
+      notifications.replay(Notes.replayRows(text, onScreen, files.keep))
     })
   }
 
-  Process {
-    id: makeDirs
-    command: ["mkdir", "-p", service.stateDir, service.toastDir, service.historyDir, service.imagesDir]
+  function replay(rows) {
+    if (rows.length > 0) {
+      dismissAll()
+      for (var row of rows) {
+        fromBefore[Notes.fileName(row)] = true
+        toasts.append(row)
+      }
+      return
+    }
+    // An empty history says so, or the key would seem dead; once: asked
+    // again, it says it anew.
+    pull(row => row.originalId < 0, () => {})
+    toasts.insert(0, Notes.historyRow({
+      id: -1, app: "nova-action", summary: "No recent notifications", glyph: "\u{F009A}", urgency: Notes.LOW, timestamp: Date.now()
+    }))
+  }
+
+  // ------------------------------------------------------------ restarting
+
+  // The toasts the shell before left on screen. One that would have run out
+  // by now goes to the history, as it would have; the others show for a
+  // whole lifetime again, a restart being rare and a toast back for a second
+  // no use, written down as a deadline a second restart judges them by.
+  function bringBack(text) {
+    var now = Date.now()
+    var back = Notes.parseFiles(text).filter(row => {
+      var lifetime = Notes.lifetime(row.urgency, row.expireTimeout)
+      if (Notes.expired(row, lifetime, now)) {
+        files.retire(row)
+        return false
+      }
+      if (lifetime > 0) files.write(Object.assign({}, row, { deadline: now + lifetime }))
+      // Not a role: the model's rows all have the same.
+      delete row.deadline
+      return true
+    })
+    if (back.length === 0) return
+    Qt.callLater(() => {
+      for (var row of back) {
+        // A notification that came while the files were read has a file of
+        // its own, and is this toast if its id and time are this one's. One
+        // with this id at another time may be its replacement or another
+        // server's id: both show, as a toast twice beats a critical one lost.
+        if (notifications.indexWhere(shown => shown.originalId === row.originalId && shown.timestamp === row.timestamp) >= 0) continue
+        // Below what has just come, newest first.
+        notifications.fromBefore[Notes.fileName(row)] = true
+        notifications.toasts.append(row)
+      }
+    })
   }
 
   Component.onCompleted: {
-    makeDirs.running = true
-    Qt.callLater(function () {
-      settingsFile.reload()
-      restoreRead.command = ["bash", service.files, "read", service.toastDir]
-      restoreRead.running = true
-      // Beside the read: the toasts it restores are written again with the
-      // copies they had, which the sweep keeps.
-      service.queue({ args: ["sweep", service.toastDir, service.historyDir, service.imagesDir] })
+    files.prepare(stateDir)
+    Qt.callLater(() => {
+      dndFile.reload()
+      files.readToasts(text => notifications.bringBack(text))
+      // After the read: the toasts it brings back are written again with
+      // the copies they had, which the sweep keeps.
+      files.sweep()
     })
   }
 
-  // --------------------------------------------------------------------- IPC
+  // ------------------------------------------------------------------- IPC
 
   IpcHandler {
     target: "notifications"
 
     function dndState(): string {
-      return service.doNotDisturb ? "on" : "off"
+      return notifications.doNotDisturb ? "on" : "off"
     }
 
     function toggleDnd(): string {
-      service.setDoNotDisturb(!service.doNotDisturb)
+      notifications.setDoNotDisturb(!notifications.doNotDisturb)
       return dndState()
     }
 
     function showHistory(): string {
-      return service.showHistory()
+      notifications.showHistory()
+      return "ok"
     }
 
     function dismissAll(): string {
-      service.dismissAll()
+      notifications.dismissAll()
       return "ok"
     }
 
     // The newest toast.
     function dismissOne(): string {
-      if (service.toasts.count === 0) return "none"
-      service.dismiss(0)
+      if (notifications.toasts.count === 0) return "none"
+      notifications.dismiss(0)
       return "ok"
     }
 
-    // The newest toast clicked.
+    // The newest toast, clicked.
     function invokeLast(): string {
-      if (service.toasts.count === 0) return "none"
-      service.invoke(0)
+      if (notifications.toasts.count === 0) return "none"
+      notifications.invoke(0)
       return "ok"
     }
   }
 
-  // ------------------------------------------------------------------ screens
-
   Variants {
     model: Quickshell.screens
 
-    ToastWindow {
+    Parts.ToastWindow {
       required property var modelData
       screen: modelData
-      notifications: service
+      service: notifications
     }
   }
 }

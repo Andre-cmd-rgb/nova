@@ -4,121 +4,163 @@ import Quickshell
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
-import "../NotificationLogic.js" as NotificationLogic
+import "../NotificationLogic.js" as Notes
 
-// A toast as it looks: its picture or glyph, its summary in bold and its body
-// below, three lines at most. A click is clicked(), a right click dismissed().
+// A toast, a row of the service's toasts: its picture or glyph, its summary
+// in bold and its body below, three lines at most. A click invokes it, a
+// right click dismisses it. It counts down its lifetime in one timer for
+// what is left, stopped while the pointer is on it on any screen, and starts
+// over when its sender changes what it says.
 BorderSurface {
-  id: root
+  id: toast
 
-  property string app: ""
-  property string appIcon: ""
-  property string summary: ""
-  property string body: ""
-  property string image: ""
-  // A Nerd Font glyph for a toast with no picture, as nova-notification-send's
-  // -g gives Nova's own toasts.
-  property string glyph: ""
-  property int cornerRadius: 0
-  // The bar's font, for the glyph.
-  property string fontFamily: ""
+  required property var service
 
-  readonly property bool hovered: pointer.hovered
+  required property int index
+  required property int originalId
+  required property double timestamp
+  required property string app
+  required property string appIcon
+  required property string summary
+  required property string body
+  required property string image
+  // A Nerd Font glyph, for a toast with no picture, as
+  // nova-notification-send's -g gives Nova's own.
+  required property string glyph
+  required property int urgency
+  required property double expireTimeout
 
-  signal clicked()
-  signal dismissed()
-
-  // The notification's own picture (an avatar, a photo), or its app's icon.
-  readonly property string picture: image.length > 0 ? image : iconUrl(appIcon)
-  readonly property bool hasPicture: picture.length > 0
-  readonly property bool hasGlyph: glyph.length > 0
-  readonly property string plainBody: NotificationLogic.shownBody(body, app, appIcon)
-  readonly property bool oneLine: plainBody.length === 0
-  // A one-line toast with a glyph and no picture has the glyph small, in line.
-  readonly property bool glyphInline: NotificationLogic.compactGlyph(glyph, picture, oneLine)
-  // A one-line toast whose summary starts with its own glyph has no icon.
-  readonly property bool noIcon: oneLine && !hasGlyph && NotificationLogic.startsWithGlyph(summary)
+  // Its own picture (an avatar, a photo), or its app's icon.
+  readonly property string picture: image !== "" ? image : iconSource(appIcon)
+  readonly property bool oneLine: Notes.shownBody(body, app, appIcon) === ""
+  // One line with a glyph and no picture: the glyph small, in line.
+  readonly property bool smallGlyph: glyph !== "" && picture === "" && oneLine
+  // One line whose summary starts with its own glyph: no icon.
+  readonly property bool bare: oneLine && glyph === "" && Notes.startsWithGlyph(summary)
   readonly property real margin: oneLine ? Style.space(7) : Style.space(10)
+  readonly property string glyphFont: service.shell && service.shell.bar ? service.shell.bar.fontFamily : ""
 
-  // An icon's name looked up in the theme, with `check` so that a name it
-  // does not have gives nothing rather than Qt's missing-image picture.
-  function iconUrl(icon) {
+  readonly property string stem: Notes.stem(toast)
+  readonly property real lifetime: Notes.lifetime(urgency, expireTimeout)
+  readonly property bool ticking: lifetime > 0 && !service.held[stem]
+  // A toast that goes with the pointer on it lets go of it.
+  property bool pointed: false
+
+  // An icon by its name, from the theme; `check`, so that a name it lacks
+  // gives nothing rather than Qt's missing-image picture.
+  function iconSource(icon) {
     var value = String(icon || "")
-    if (value.length === 0) return ""
-    if (value.indexOf("file://") === 0 || value.indexOf("image://") === 0) return value
-    if (value.charAt(0) === "/") return Util.fileUrl(value)
-    return Quickshell.iconPath(value, true)
+    if (value === "" || value.startsWith("file://") || value.startsWith("image://")) return value
+    return value.startsWith("/") ? Util.fileUrl(value) : Quickshell.iconPath(value, true)
+  }
+
+  onTickingChanged: ticking ? countdown.go() : countdown.hold()
+  onLifetimeChanged: {
+    countdown.hold()
+    countdown.go()
+  }
+  onSummaryChanged: countdown.anew()
+  onBodyChanged: countdown.anew()
+  onImageChanged: countdown.anew()
+  Component.onCompleted: countdown.go()
+  Component.onDestruction: if (pointed) service.hold(stem, false)
+
+  Timer {
+    id: countdown
+
+    // The share of the lifetime left, and when it last began counting.
+    property real left: 1.0
+    property real from: 0
+
+    function go() {
+      stop()
+      if (!toast.ticking) return
+      from = Date.now()
+      interval = Math.max(1, Math.round(left * toast.lifetime))
+      start()
+    }
+
+    function hold() {
+      if (!running) return
+      stop()
+      if (toast.lifetime > 0) left = Math.max(0, left - (Date.now() - from) / toast.lifetime)
+    }
+
+    function anew() {
+      left = 1.0
+      go()
+    }
+
+    onTriggered: {
+      left = 0
+      toast.service.expire(toast.index)
+    }
   }
 
   implicitWidth: Style.space(380)
-  implicitHeight: row.implicitHeight + margin * 2 + borderTop + borderBottom
-  radius: cornerRadius
+  implicitHeight: content.implicitHeight + margin * 2 + borderTop + borderBottom
+  radius: Style.cornerRadius
   color: Commons.Color.notifications.background
   borderSpec: Border.surfaceSpec("notifications", "border", Commons.Color.notifications.border, Math.max(1, Style.space(2)))
   clip: true
 
-  HoverHandler { id: pointer }
+  HoverHandler {
+    onHoveredChanged: {
+      toast.pointed = hovered
+      toast.service.hold(toast.stem, hovered)
+    }
+  }
 
   MouseArea {
     anchors.fill: parent
     cursorShape: Qt.PointingHandCursor
     acceptedButtons: Qt.LeftButton | Qt.RightButton
-    onClicked: function (mouse) {
-      if (mouse.button === Qt.RightButton) root.dismissed()
-      else root.clicked()
-    }
+    onClicked: mouse => mouse.button === Qt.RightButton ? toast.service.dismiss(toast.index) : toast.service.invoke(toast.index)
   }
 
   RowLayout {
-    id: row
+    id: content
     anchors.top: parent.top
     anchors.left: parent.left
     anchors.right: parent.right
-    anchors.topMargin: root.borderTop + root.margin
-    anchors.leftMargin: root.borderLeft + Style.space(12)
-    anchors.rightMargin: root.borderRight + Style.space(12)
-    spacing: root.noIcon ? 0 : root.glyphInline ? Style.space(8) : Style.space(12)
+    anchors.topMargin: toast.borderTop + toast.margin
+    anchors.leftMargin: toast.borderLeft + Style.space(12)
+    anchors.rightMargin: toast.borderRight + Style.space(12)
+    spacing: toast.bare ? 0 : toast.smallGlyph ? Style.space(8) : Style.space(12)
 
-    // The picture, or the glyph large when there is none or it will not load;
-    // with neither, or a picture that will not load and no glyph, no room.
+    // The picture, or the glyph large where there is none or it will not
+    // load; with neither, or a picture that will not load and no glyph, no
+    // room at all.
     Item {
-      id: icon
+      id: badge
       Layout.preferredWidth: visible ? Style.space(40) : 0
       Layout.preferredHeight: visible ? Style.space(40) : 0
       Layout.alignment: Qt.AlignVCenter
-      visible: !root.noIcon && !root.glyphInline && (root.hasPicture || root.hasGlyph)
-        && (root.hasGlyph || photo.status !== Image.Error)
+      visible: !toast.bare && !toast.smallGlyph && (toast.picture !== "" || toast.glyph !== "")
+        && (toast.glyph !== "" || photo.status !== Image.Error)
 
       Image {
         id: photo
         anchors.fill: parent
-        source: root.picture
-        sourceSize.width: icon.width * Screen.devicePixelRatio
-        sourceSize.height: icon.height * Screen.devicePixelRatio
+        source: toast.picture
+        sourceSize.width: badge.width * Screen.devicePixelRatio
+        sourceSize.height: badge.height * Screen.devicePixelRatio
         fillMode: Image.PreserveAspectFit
         asynchronous: true
         smooth: true
-        visible: !root.hasGlyph || status === Image.Ready
+        visible: toast.glyph === "" || status === Image.Ready
       }
 
-      Text {
-        textFormat: Text.PlainText
+      Glyph {
         anchors.centerIn: parent
-        visible: root.hasGlyph && photo.status !== Image.Ready
-        text: root.glyph
-        color: Commons.Color.notifications.text
-        font.family: root.fontFamily
+        visible: toast.glyph !== "" && photo.status !== Image.Ready
         font.pixelSize: Style.font.displayLarge
       }
     }
 
-    Text {
-      textFormat: Text.PlainText
+    Glyph {
       Layout.alignment: Qt.AlignVCenter
-      visible: root.glyphInline
-      text: root.glyph
-      color: Commons.Color.notifications.text
-      font.family: root.fontFamily
+      visible: toast.smallGlyph
       font.pixelSize: Style.font.icon
     }
 
@@ -127,37 +169,43 @@ BorderSurface {
       Layout.alignment: Qt.AlignVCenter
       spacing: Style.space(2)
 
-      // Plain text: the summary is one line of text by the specification,
-      // and anything richer could only come from a sender up to no good.
-      Text {
+      // Plain text: a summary is one line of text by the specification, and
+      // anything richer could only come from a sender up to no good.
+      Words {
         textFormat: Text.PlainText
-        Layout.fillWidth: true
-        visible: root.summary.length > 0
-        text: root.summary
-        font.family: Style.font.family
+        visible: toast.summary !== ""
+        text: toast.summary
         color: Commons.Color.notifications.text
-        font.pixelSize: Style.font.title
         font.bold: true
-        wrapMode: Text.WordWrap
-        elide: Text.ElideRight
         maximumLineCount: 2
       }
 
-      // StyledText, for the markup the server says it takes, its images
-      // dropped (see NotificationLogic.withoutImages).
-      Text {
-        Layout.fillWidth: true
+      // StyledText, the markup the server says it takes, without its images
+      // (see Notes.withoutImages).
+      Words {
         Layout.topMargin: Style.space(2)
-        visible: !root.oneLine
-        text: NotificationLogic.bodyMarkup(root.body, root.app, root.appIcon)
         textFormat: Text.StyledText
-        font.family: Style.font.family
+        visible: !toast.oneLine
+        text: Notes.bodyMarkup(toast.body, toast.app, toast.appIcon)
         color: Qt.darker(Commons.Color.notifications.text, 1.15)
-        font.pixelSize: Style.font.title
-        wrapMode: Text.WordWrap
-        elide: Text.ElideRight
         maximumLineCount: 3
       }
     }
+  }
+
+  // The toast's glyph, in the bar's font.
+  component Glyph: Text {
+    textFormat: Text.PlainText
+    text: toast.glyph
+    color: Commons.Color.notifications.text
+    font.family: toast.glyphFont
+  }
+
+  component Words: Text {
+    Layout.fillWidth: true
+    font.family: Style.font.family
+    font.pixelSize: Style.font.title
+    wrapMode: Text.WordWrap
+    elide: Text.ElideRight
   }
 }
