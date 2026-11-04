@@ -3,59 +3,52 @@ import Quickshell
 import Quickshell.Io
 import Quickshell.Services.UPower
 
-// What the shell does about the battery: a warning when it runs low, and the
+// The battery as the shell minds it: a warning when it runs low, and the
 // power mode that goes with the power source.
 Item {
-  id: service
+  id: battery
 
-  // Discharging at or under this percentage, the battery is low.
-  readonly property int lowLevel: 10
-
-  // Whether the battery was low at the last look, kept through a reload of
-  // the shell so the same low battery is not warned about twice.
+  // Whether it was low at the last look, so that it is warned of once each
+  // time it goes low; kept through a reload of the shell.
   PersistentProperties {
-    id: persisted
+    id: memory
     reloadableId: "nova-battery"
-    property bool notifiedLowBattery: false
+    property bool wasLow: false
   }
 
-  // UPower's display device is the battery as a whole; with none, there is
-  // nothing to warn about. A warning comes once each time it goes low.
-  function checkBattery() {
-    var device = UPower.displayDevice
-    var level = device && device.isPresent ? Math.round(Number(device.percentage || 0) * 100) : -1
-    var low = level >= 0 && UPower.onBattery && device.state === UPowerDeviceState.Discharging && level <= lowLevel
-    var warn = low && !persisted.notifiedLowBattery
-    persisted.notifiedLowBattery = low
-    if (warn && !warning.running) warning.warn(level)
+  // A look every 30 s, and as the power source changes. UPower's display
+  // device is the batteries as one, and there is none on a desktop; it is
+  // low draining at 10% or under.
+  function look() {
+    var pack = UPower.displayDevice
+    var charge = pack && pack.isPresent ? Math.round(Number(pack.percentage || 0) * 100) : -1
+    var low = charge >= 0 && charge <= 10 && UPower.onBattery && pack.state === UPowerDeviceState.Discharging
+    var news = low && !memory.wasLow
+    memory.wasLow = low
+    if (!news || warning.running) return
+    warning.command = ["nova-battery-low", String(charge)]
+    warning.running = true
   }
 
+  Process { id: warning }
+
+  // The power mode last chosen for the source in use, put back at login and
+  // at every plug and unplug. Asked again while it runs, it runs once more
+  // after, so a quick unplug and plug ends on the right side.
   Process {
-    id: warning
-
-    function warn(level) {
-      command = ["nova-battery-low", String(level)]
-      running = true
-    }
-  }
-
-  // The power mode last chosen for the source now in use, put back at login
-  // and at every plug and unplug. A change while that runs gets one more run
-  // after it, so a quick unplug and plug ends on the right side.
-  Process {
-    id: profile
+    id: powerMode
+    property bool askedAgain: false
     command: ["nova-power-profile", "restore"]
-    property bool again: false
 
     function restore() {
-      if (running) again = true
+      if (running) askedAgain = true
       else running = true
     }
 
     onExited: {
-      if (!again) return
-      again = false
-      Qt.callLater(function() { profile.running = true })
+      if (!askedAgain) return
+      askedAgain = false
+      Qt.callLater(() => powerMode.running = true)
     }
   }
 
@@ -64,16 +57,18 @@ Item {
     running: true
     repeat: true
     triggeredOnStart: true
-    onTriggered: service.checkBattery()
+    onTriggered: battery.look()
   }
 
+  // A plug or an unplug.
   Connections {
     target: UPower
+
     function onOnBatteryChanged() {
-      service.checkBattery()
-      profile.restore()
+      battery.look()
+      powerMode.restore()
     }
   }
 
-  Component.onCompleted: profile.restore()
+  Component.onCompleted: powerMode.restore()
 }
