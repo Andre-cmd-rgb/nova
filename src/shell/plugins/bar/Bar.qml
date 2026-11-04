@@ -19,7 +19,6 @@ Item {
   id: root
 
   // From the shell (shell.qml).
-  property string novaPath: Quickshell.env("NOVA_PATH")
   property var barWidgetRegistry: noRegistry
   property var barConfig: ({})
   property var shell: null
