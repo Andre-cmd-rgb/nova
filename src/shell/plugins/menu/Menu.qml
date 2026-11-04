@@ -646,10 +646,12 @@ Item {
     return 0
   }
 
-  // A character typed as itself, shifted or not.
+  // A character typed as itself, shifted or not, on the keyboard or its
+  // keypad: Qt marks a keypad key's digit, sign or point with the keypad
+  // modifier.
   function typed(event) {
     var code = event.text && event.text.length === 1 ? event.text.charCodeAt(0) : 0
-    return code >= 32 && code !== 127 && (event.modifiers === Qt.NoModifier || event.modifiers === Qt.ShiftModifier)
+    return code >= 32 && code !== 127 && (event.modifiers & ~(Qt.ShiftModifier | Qt.KeypadModifier)) === 0
   }
 
   // ------------------------------------------------------------------ pointer
