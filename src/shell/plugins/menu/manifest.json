@@ -4,7 +4,7 @@
   "name": "Nova menu",
   "version": "1.0.0",
   "author": "Nova",
-  "description": "Quickshell-powered Nova command menu",
+  "description": "Apps, settings and commands on a card over the screen, found by typing; and the list nova-menu-select picks from",
   "kinds": [
     "menu",
     "bar-widget"
@@ -16,7 +16,7 @@
   },
   "barWidget": {
     "displayName": "Nova menu",
-    "description": "Launches the Nova menu",
+    "description": "A star; a click opens the menu at its top, a right click a terminal",
     "category": "Compositor",
     "allowMultiple": false,
     "defaultSection": "left"
