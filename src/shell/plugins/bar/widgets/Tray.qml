@@ -117,22 +117,22 @@ BarWidget {
     implicitWidth: vertical ? root.barSize : drawerLength + pinnedLength
     implicitHeight: vertical ? drawerLength + pinnedLength : root.barSize
 
-    // The room a closed drawer keeps is not the tray's: the pointer there
-    // neither opens it nor stops a click going through.
-    containmentMask: QtObject {
-      function contains(point: point): bool {
-        var across = strip.vertical ? point.x : point.y
-        var along = strip.vertical ? point.y : point.x
-        if (across < 0 || across > (strip.vertical ? strip.width : strip.height)) return false
-        if (along >= strip.slide && along <= strip.drawerLength) return true
-        return along >= strip.drawerLength && along <= (strip.vertical ? strip.implicitHeight : strip.implicitWidth)
-      }
-    }
-
     Item {
       width: strip.vertical ? root.barSize : strip.drawerLength
       height: strip.vertical ? strip.drawerLength : root.barSize
       visible: root.allItems.length > 0
+
+      // The room a closed drawer keeps is not the tray's: the pointer there
+      // does not open it. The mask is on the hover handler's own item, the
+      // one item whose shape the handler asks about.
+      containmentMask: QtObject {
+        function contains(point: point): bool {
+          var across = strip.vertical ? point.x : point.y
+          var along = strip.vertical ? point.y : point.x
+          if (across < 0 || across > root.barSize) return false
+          return along >= strip.slide && along <= strip.drawerLength
+        }
+      }
 
       HoverHandler {
         onHoveredChanged: root.expanded = hovered
