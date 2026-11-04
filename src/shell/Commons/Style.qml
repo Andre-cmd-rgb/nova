@@ -142,7 +142,6 @@ QtObject {
     readonly property int display: style.typeSize("display", 2.0) // 24
     readonly property int displayLarge: style.typeSize("display-large", 2.333) // 28
 
-    readonly property int iconSmall: style.pixels("font.icon-small", bodySmall)
     readonly property int icon: style.pixels("font.icon", title)
     readonly property int iconLarge: style.typeSize("icon-large", 1.5) // 18
   }
@@ -204,10 +203,7 @@ QtObject {
     readonly property int xs: style.spacingToken("xs", 3)
     readonly property int sm: style.spacingToken("sm", 4)
     readonly property int md: style.spacingToken("md", 6)
-    readonly property int lg: style.spacingToken("lg", 8)
     readonly property int xl: style.spacingToken("xl", 10)
-    readonly property int xxl: style.spacingToken("xxl", 12)
-    readonly property int xxxl: style.spacingToken("xxxl", 14)
     readonly property int huge: style.spacingToken("huge", 18)
 
     readonly property int controlGap: style.spacingToken("control-gap", 8)
@@ -285,15 +281,15 @@ QtObject {
 
   readonly property int normalBorderWidth: states.normal.width
 
-  // A state's colour for a control drawn in <foreground>, <accent> and
-  // <urgent>: its token's role among those (the palette's where the control
-  // has none), the palette's background, nothing at all for "transparent",
-  // or the hex colour it is. Any other token is the control's foreground;
-  // pressed's and focus's are hover-cursor's colour, which focus also takes
-  // for "hover", "hover-cursor" and "inherit". An unknown state is normal.
-  function stateColor(name, foreground, accent, urgent) {
+  // A state's colour for a control drawn in <foreground> and <accent>: its
+  // token's role among those (the palette's where the control has none), the
+  // palette's urgent or background, nothing at all for "transparent", or the
+  // hex colour it is. Any other token is the control's foreground; pressed's
+  // and focus's are hover-cursor's colour, which focus also takes for
+  // "hover", "hover-cursor" and "inherit". An unknown state is normal.
+  function stateColor(name, foreground, accent) {
     var leans = name === "pressed" || name === "focus"
-    var otherwise = leans ? stateColor("hover-cursor", foreground, accent, urgent) : foreground || Commons.Color.foreground
+    var otherwise = leans ? stateColor("hover-cursor", foreground, accent) : foreground || Commons.Color.foreground
     var token = (states[name] || states.normal).color
     switch (token.toLowerCase()) {
     case "hover":
@@ -307,7 +303,7 @@ QtObject {
     case "accent":
       return accent || Commons.Color.accent
     case "urgent":
-      return urgent || Commons.Color.urgent
+      return Commons.Color.urgent
     case "background":
       return Commons.Color.background
     case "transparent":
@@ -317,22 +313,22 @@ QtObject {
     return typeof hex === "string" ? otherwise : hex
   }
 
-  function fill(name, foreground, accent, urgent) {
-    return Util.alpha(stateColor(name, foreground, accent, urgent), states[name].fill)
+  function fill(name, foreground, accent) {
+    return Util.alpha(stateColor(name, foreground, accent), states[name].fill)
   }
 
-  function hoverStateColor(foreground, accent, urgent) { return stateColor("hover-cursor", foreground, accent, urgent) }
-  function selectedStateColor(foreground, accent, urgent) { return stateColor("selected", foreground, accent, urgent) }
+  function hoverStateColor(foreground, accent) { return stateColor("hover-cursor", foreground, accent) }
+  function selectedStateColor(foreground, accent) { return stateColor("selected", foreground, accent) }
 
-  function normalFillFor(foreground, accent, urgent) { return fill("normal", foreground, accent, urgent) }
-  function hoverFillFor(foreground, accent, urgent) { return fill("hover-cursor", foreground, accent, urgent) }
-  function selectedFillFor(foreground, accent, urgent) { return fill("selected", foreground, accent, urgent) }
-  function pressedFillFor(foreground, accent, urgent) { return fill("pressed", foreground, accent, urgent) }
-  function focusFillFor(foreground, accent, urgent) { return fill("focus", foreground, accent, urgent) }
-  function selectionFillFor(foreground, accent, urgent) { return fill("selection", foreground, accent, urgent) }
+  function normalFillFor(foreground, accent) { return fill("normal", foreground, accent) }
+  function hoverFillFor(foreground, accent) { return fill("hover-cursor", foreground, accent) }
+  function selectedFillFor(foreground, accent) { return fill("selected", foreground, accent) }
+  function pressedFillFor(foreground, accent) { return fill("pressed", foreground, accent) }
+  function focusFillFor(foreground, accent) { return fill("focus", foreground, accent) }
+  function selectionFillFor(foreground, accent) { return fill("selection", foreground, accent) }
 
-  function normalBorderFor(foreground, accent, urgent) {
-    return Util.alpha(stateColor("normal", foreground, accent, urgent), states.normal.border)
+  function normalBorderFor(foreground, accent) {
+    return Util.alpha(stateColor("normal", foreground, accent), states.normal.border)
   }
 
   // A form control's fill: focused, then under the pointer or the panel's
@@ -342,7 +338,7 @@ QtObject {
   }
 
   // The fills of the states in the palette's own colours.
-  readonly property color hoverFill: hoverFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color selectedFill: selectedFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
-  readonly property color selectionFill: selectionFillFor(Commons.Color.foreground, Commons.Color.accent, Commons.Color.urgent)
+  readonly property color hoverFill: hoverFillFor(Commons.Color.foreground, Commons.Color.accent)
+  readonly property color selectedFill: selectedFillFor(Commons.Color.foreground, Commons.Color.accent)
+  readonly property color selectionFill: selectionFillFor(Commons.Color.foreground, Commons.Color.accent)
 }

@@ -193,7 +193,6 @@ QtObject {
     property color text: colors.ink("lock", "text", colors.foreground)
     property color placeholder: colors.flatColor(colors.shellValues["lock.placeholder"] || "", Util.alpha(colors.foreground, 0.66))
     property color textError: colors.ink("lock", "text-error", colors.urgent)
-    property color border: colors.paint("lock", "border", colors.foreground, 1.0)
     property color borderActive: colors.paint("lock", "border-active", colors.accent, 1.0, "border-alpha")
     property color borderError: colors.paint("lock", "border-error", colors.urgent, 1.0, "border-alpha")
     property color selection: colors.paint("lock", "selection", colors.accent, 0.45)

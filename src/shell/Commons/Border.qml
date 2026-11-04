@@ -185,10 +185,10 @@ QtObject {
     return Geometry.maxWidth(controlWidths(controlState(state))) > 0
   }
 
-  function controlSpec(state, foreground, accent, urgent) {
+  function controlSpec(state, foreground, accent) {
     var name = controlState(state)
     var drawn = drawnAs(name)
-    var spec = paint(Style.controls[name + "-border"], Style.stateColor(drawn, foreground, accent, urgent),
+    var spec = paint(Style.controls[name + "-border"], Style.stateColor(drawn, foreground, accent),
       Style.states[drawn].border, Style.controls[name + "-border-gradient"])
     spec.widths = controlWidths(name)
     return spec
