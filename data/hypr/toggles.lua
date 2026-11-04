@@ -13,15 +13,13 @@ local files = nova.lua_files({ toggles, layouts })
 -- or the laptop screen off.
 for _, path in ipairs(files[toggles]) do dofile(path) end
 
--- An input device turned off (nova-toggle-input-device). Its name comes from
--- the device, so it is kept as text, never run as Lua.
-for _, kind in ipairs({ "touchpad", "touchscreen" }) do
-  local file = io.open(toggles .. "/" .. kind .. "-disabled-name")
-  if file then
-    local name = file:read("l")
-    file:close()
-    if name and name ~= "" then hl.device({ name = name, enabled = false }) end
-  end
+-- The touchpad turned off (nova-toggle-touchpad). Its name comes from the
+-- device, so it is kept as text, never run as Lua.
+local touchpad = io.open(toggles .. "/touchpad-disabled-name")
+if touchpad then
+  local name = touchpad:read("l")
+  touchpad:close()
+  if name and name ~= "" then hl.device({ name = name, enabled = false }) end
 end
 
 -- Each workspace switched to the other layout (SUPER + L).

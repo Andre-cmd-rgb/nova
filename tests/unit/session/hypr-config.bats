@@ -55,12 +55,10 @@ hypr() { # lua
 }
 
 @test "a disabled device's name is only ever data" {
-  write_file "$TOGGLES/touchpad-disabled-name" 'ELAN067A:00 04F3:3197 Touchpad'
-  write_file "$TOGGLES/touchscreen-disabled-name" '") os.execute("touch '"$SCRATCH"'/ran") --'
+  write_file "$TOGGLES/touchpad-disabled-name" '") os.execute("touch '"$SCRATCH"'/ran") --'
   run hypr 'require("default.hypr.toggles")'
   [ "$status" -eq 0 ]
-  [ "${lines[0]}" = "device {enabled=false,name=ELAN067A:00 04F3:3197 Touchpad}" ]
-  [ "${lines[1]}" = 'device {enabled=false,name=") os.execute("touch '"$SCRATCH"'/ran") --}' ]
+  [ "$output" = 'device {enabled=false,name=") os.execute("touch '"$SCRATCH"'/ran") --}' ]
   [ ! -e "$SCRATCH/ran" ]
 }
 

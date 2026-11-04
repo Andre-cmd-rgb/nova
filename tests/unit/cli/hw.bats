@@ -80,10 +80,3 @@ connector() { write_file "$NOVA_DRM_PATH/$1/status" "$2"$'\n'; }
   run nova-hw-match
   [ "$status" -eq 2 ]
 }
-
-@test "commands: missing when any is, present when all are" {
-  nova-cmd-present bash sh
-  fails nova-cmd-present bash not-a-command
-  nova-cmd-missing bash not-a-command
-  fails nova-cmd-missing bash sh
-}

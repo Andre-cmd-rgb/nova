@@ -5,5 +5,56 @@
 
 set -euo pipefail
 
+usage() {
+  echo "Usage: nova-toggle-touchpad [on|off|toggle]" >&2
+  exit 2
+}
+
+# A touchpad turned off stays off: its name is kept, as text, where the
+# Hyprland config reads it back at every reload (data/hypr/toggles.lua). Names
+# come from the hardware, so one is never run as shell or Lua.
+kept=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/touchpad-disabled-name
+device=$(nova-hw-touchpad || true)
+
+usable_device() {
+  if [[ -z $device ]]; then
+    echo "No touchpad device found" >&2
+    exit 1
+  fi
+  if [[ $device == *[[:cntrl:]]* ]]; then
+    echo "Invalid touchpad device name" >&2
+    exit 1
+  fi
+}
+
+# The name as a Lua string, its backslashes and quotes escaped.
+set_enabled() { # true|false
+  local name=${device//\\/\\\\}
+  name=${name//\"/\\\"}
+  hyprctl eval "hl.device({ name = \"$name\", enabled = $1 })" >/dev/null
+}
+
+turn_on() {
+  # Forgotten first, so a touchpad whose name has since become unusable
+  # cannot keep the setting stuck off.
+  rm -f "$kept"
+  usable_device
+  set_enabled true
+  nova-osd -i touchpad -m "Touchpad enabled" || true
+}
+
+turn_off() {
+  usable_device
+  set_enabled false
+  mkdir -p "${kept%/*}"
+  printf '%s\n' "$device" >"$kept"
+  nova-osd -i touchpad -m "Touchpad disabled" || true
+}
+
 # Toggles when given nothing, as the touchpad key does.
-exec nova-toggle-input-device touchpad "$@"
+case ${1:-toggle} in
+  on) turn_on ;;
+  off) turn_off ;;
+  toggle) if [[ -f $kept ]]; then turn_on; else turn_off; fi ;;
+  *) usage ;;
+esac
