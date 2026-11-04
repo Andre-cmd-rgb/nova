@@ -19,8 +19,16 @@ setup_scratch() {
 # anywhere.
 fails() { if "$@"; then return 1; fi; }
 
+# Each gpg home a test made ($SCRATCH/gnupg, gnupg-other) has its agent
+# stopped, and the folder gpg made for its sockets in the runtime directory
+# goes with it.
 teardown_scratch() {
-  [[ ! -d ${SCRATCH:-}/gnupg ]] || gpgconf --homedir "$SCRATCH/gnupg" --kill all 2>/dev/null || true
+  local home
+  for home in "${SCRATCH:-}"/gnupg*/; do
+    [[ -d $home ]] || continue
+    gpgconf --homedir "${home%/}" --kill all 2>/dev/null || true
+    gpgconf --homedir "${home%/}" --remove-socketdir 2>/dev/null || true
+  done
   [[ -n ${SCRATCH:-} && -d $SCRATCH ]] && rm -rf -- "$SCRATCH"
   return 0
 }
