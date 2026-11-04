@@ -13,6 +13,10 @@ setup() {
   setup_scratch
   export HOME="$SCRATCH/home" XDG_RUNTIME_DIR="$SCRATCH/run" CALLS="$SCRATCH/calls" LIVE="$SCRATCH/live.json"
   export NOVA_LID_PATH="$SCRATCH/lid" NOVA_DRM_PATH="$SCRATCH/drm" NOVA_DMI_PATH="$SCRATCH/dmi"
+  # Nova's shipped files are the repo's, never those installed here.
+  export NOVA_PATH="$SCRATCH/nova"
+  mkdir -p "$NOVA_PATH/default/hypr"
+  ln -s "$REPO_ROOT/data/hypr/toggles" "$NOVA_PATH/default/hypr/toggles"
   unset HYPRLAND_INSTANCE_SIGNATURE XDG_STATE_HOME
   mkdir -p "$HOME" "$XDG_RUNTIME_DIR" "$SCRATCH/bin"
   # Without `all`, Hyprland leaves out the displays that are off or mirror

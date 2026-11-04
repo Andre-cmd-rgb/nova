@@ -16,7 +16,7 @@ usage() {
 # the Hyprland config loads last (data/hypr/toggles.lua); off, there is none.
 name=$1
 flag=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/$name.lua
-shipped=$NOVA_PATH/default/hypr/toggles/$name.lua
+shipped=${NOVA_PATH:-/usr/share/nova}/default/hypr/toggles/$name.lua
 
 turn_on() {
   if [[ ! -f $shipped ]]; then
