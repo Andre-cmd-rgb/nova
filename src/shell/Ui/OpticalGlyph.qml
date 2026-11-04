@@ -2,11 +2,11 @@ import QtQuick
 import qs.Commons
 import qs.Commons as Commons
 
-// One glyph, centred by its ink rather than by its advance. Icon fonts draw
-// many glyphs off the middle of their cell; the glyph is shifted sideways by
-// the difference and left on the line's baseline, so a row of icons keeps
-// one baseline. The font size is rounded to a whole pixel, which the ink is
-// measured at.
+// One glyph, centred by its ink rather than by its advance. Icon fonts set
+// many glyphs off the middle of their cell, so the glyph is moved sideways
+// by the distance between the two middles, and kept on the line's baseline
+// so that a row of icons shares one. The ink is measured at the size drawn,
+// <fontSize> rounded to a whole pixel.
 Item {
   id: optical
 
@@ -15,28 +15,28 @@ Item {
   property real fontSize: Style.font.body
   property color color: Commons.Color.foreground
 
-  readonly property int renderedFontSize: Math.max(1, Math.round(fontSize))
-  // The ink's box, at least a pixel wide, and how far its middle is from
-  // the middle of the glyph's advance.
-  readonly property real tightWidth: Math.max(1, ink.tightBoundingRect.width)
-  readonly property real horizontalCorrection: glyph.implicitWidth / 2 - (ink.tightBoundingRect.x + tightWidth / 2)
+  // How wide the ink is, never under a pixel.
+  readonly property real inkWidth: Math.max(1, measure.tightBoundingRect.width)
+  readonly property int _pixels: Math.max(1, Math.round(fontSize))
 
   TextMetrics {
-    id: ink
+    id: measure
     text: optical.text
     font.family: optical.fontFamily
-    font.pixelSize: optical.renderedFontSize
+    font.pixelSize: optical._pixels
   }
 
   Text {
-    id: glyph
+    // Where the ink's middle is, from the start of the advance.
+    readonly property real inkMiddle: measure.tightBoundingRect.x + optical.inkWidth / 2
+
     anchors.centerIn: parent
-    anchors.horizontalCenterOffset: optical.horizontalCorrection
+    anchors.horizontalCenterOffset: implicitWidth / 2 - inkMiddle
+    text: optical.text
     textFormat: Text.PlainText
     renderType: Text.NativeRendering
-    text: optical.text
-    color: optical.color
     font.family: optical.fontFamily
-    font.pixelSize: optical.renderedFontSize
+    font.pixelSize: optical._pixels
+    color: optical.color
   }
 }

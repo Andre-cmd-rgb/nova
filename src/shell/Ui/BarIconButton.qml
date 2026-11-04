@@ -1,31 +1,31 @@
 import QtQuick
 import qs.Commons
 
-// A bar button that shows an icon instead of a label: a glyph of the icon
-// font centred by its ink in a square canvas <opticalSize> across, or
-// <iconComponent> drawn in that canvas instead. Along the bar it takes a
-// slot <slotSize> long.
+// A bar button with an icon for its label: a glyph of the icon font, centred
+// by its ink, or <iconComponent> drawn instead. The icon sits in a square of
+// the bar's icon size in the middle of the button, the same square on every
+// button so that their icons line up; along the bar the button is
+// <slotSize> long.
 WidgetButton {
   id: iconButton
 
   property Component iconComponent: null
   property real slotSize: Style.bar.iconSlot
-  property real opticalSize: Style.bar.iconCanvas
 
-  // How wide the glyph's ink is, for chrome lined up with it; 0 when the
-  // icon is a component.
-  readonly property real glyphPaintedWidth: glyph.visible ? glyph.tightWidth : 0
+  // How wide the glyph's ink is, for chrome lined up with the icon rather
+  // than the slot; 0 while no glyph shows.
+  readonly property real glyphPaintedWidth: glyph.visible ? glyph.inkWidth : 0
 
-  labelVisible: false
   hasVisualContent: text !== "" || iconComponent !== null
+  labelVisible: false
   fontSize: Style.bar.iconFont
   fixedWidth: vertical ? -1 : slotSize
   fixedHeight: vertical ? slotSize : -1
 
   Item {
     anchors.centerIn: parent
-    width: iconButton.opticalSize
-    height: iconButton.opticalSize
+    width: Style.bar.iconCanvas
+    height: width
 
     OpticalGlyph {
       id: glyph
@@ -40,7 +40,7 @@ WidgetButton {
 
     Loader {
       anchors.fill: parent
-      visible: iconButton.iconComponent !== null
+      active: iconButton.iconComponent !== null
       sourceComponent: iconButton.iconComponent
     }
   }

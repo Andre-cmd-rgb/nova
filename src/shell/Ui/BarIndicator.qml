@@ -1,15 +1,18 @@
 import QtQuick
 import qs.Commons
 
-// A bar icon that says a state is on: Do Not Disturb, a screen recording,
-// night light, caffeine. On, it shows <activeText>; off, it hides but keeps
-// its place, unless its host reveals the indicators that are off, when it
-// shows faded.
+// A small bar icon that says a state is on: Do Not Disturb, a screen
+// recording, night light, caffeine. Lit, it shows <activeText>; off, it
+// keeps its place unseen, unless its host is revealing the indicators that
+// are off, when it shows faded. It is never drawn in the urgent colour.
 //
-// The Indicators widget places each indicator in one of its two blocks: in
-// the "active" block it is there only while on, in the "inactive" one only
-// while off. <activeOverride>, true or false, stands in for <active>.
+// The Indicators widget puts each one in one of two blocks: the "active"
+// block holds it while lit, the "inactive" block while off. Out of its
+// block it is gone. <activeOverride>, true or false, stands in for <active>.
+// While the pointer is on an off one, the host keeps revealing them all.
 BarIconButton {
+  id: indicator
+
   property string activeText: ""
   property string activeTooltipText: ""
   property string inactiveTooltipText: activeTooltipText
@@ -17,24 +20,24 @@ BarIconButton {
   property var indicatorHost: null
   property var activeOverride: null
 
-  readonly property bool effectiveActive: activeOverride === null || activeOverride === undefined ? active : activeOverride === true
-  readonly property bool belongsInBlock: indicatorBlock === "active" ? effectiveActive : !effectiveActive
-  readonly property bool inactiveRevealed: !effectiveActive && !!indicatorHost && indicatorHost.revealInactiveIndicators
+  readonly property bool _lit: activeOverride == null ? active : activeOverride === true
+  readonly property bool _inBlock: (indicatorBlock === "active") === _lit
+  readonly property bool _peeking: !_lit && !!(indicatorHost && indicatorHost.revealInactiveIndicators)
 
-  visible: belongsInBlock && (text !== "" || keepSpace)
-  // Out of its block it is gone; on, whole; off, faded while revealed.
-  opacity: !belongsInBlock ? 0 : effectiveActive ? 1 : inactiveRevealed ? 0.45 : 0
   text: activeText
-  tooltipText: effectiveActive ? activeTooltipText : inactiveTooltipText
-  keepSpace: true
-  concealed: !effectiveActive && !inactiveRevealed
-  interactive: belongsInBlock
-  useActiveColor: false
-  maintainIndicatorReveal: indicatorBlock === "inactive"
-  revealHost: indicatorHost
+  tooltipText: _lit ? activeTooltipText : inactiveTooltipText
+  _ink: foreground
   fontSize: Style.font.caption
-  horizontalMargin: 5
-  verticalPadding: 5
-  fixedWidth: vertical ? -1 : Style.bar.statusSlot
-  fixedHeight: vertical ? Style.bar.statusSlot : -1
+  slotSize: Style.bar.statusSlot
+
+  visible: _inBlock
+  keepSpace: true
+  interactive: _inBlock
+  concealed: !_lit && !_peeking
+  opacity: !_inBlock || concealed ? 0 : _lit ? 1 : 0.45
+
+  onCrossed: function (over) {
+    if (indicatorBlock === "inactive" && indicatorHost && indicatorHost.setIndicatorItemHovered)
+      indicatorHost.setIndicatorItemHovered(over)
+  }
 }

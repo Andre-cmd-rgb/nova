@@ -14,12 +14,11 @@ Item {
   property string moduleName: ""
   property var settings: ({})
 
-  readonly property bool vertical: bar ? bar.vertical : false
-  readonly property int barSize: bar ? bar.barSize : Style.bar.sizeHorizontal
+  readonly property bool vertical: bar?.vertical ?? false
+  readonly property int barSize: bar?.barSize ?? Style.bar.sizeHorizontal
 
-  // The setting <name> from the entry; <fallback> where it is missing or
-  // null.
+  // The entry's <name>, or <fallback> where it has none or null.
   function setting(name, fallback) {
-    return (settings ? settings[name] : undefined) ?? fallback
+    return settings?.[name] ?? fallback
   }
 }
