@@ -48,8 +48,10 @@ QtObject {
     var component = Qt.createComponent(url, Component.Asynchronous)
     function settle() {
       if (component.status === Component.Ready) {
-        barWidgets.widgets = Object.assign({}, barWidgets.widgets, { [id]: { component: component } })
         delete barWidgets.making[id]
+        // Switched off while it loaded: left out, as sync would have.
+        if (!barWidgets.registry.isOn(id)) return
+        barWidgets.widgets = Object.assign({}, barWidgets.widgets, { [id]: { component: component } })
       } else if (component.status === Component.Error) {
         console.warn("Plugin widget " + id + " failed: " + component.errorString())
         // Free for the next sync to try again.
