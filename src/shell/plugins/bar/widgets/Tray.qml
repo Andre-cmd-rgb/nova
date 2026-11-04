@@ -157,7 +157,11 @@ BarWidget {
         text: ""
         textRotation: strip.vertical ? 90 : 0
         onPressed: function(button) {
-          if (button === Qt.RightButton) root.managePopupOpen = !root.managePopupOpen
+          if (button !== Qt.RightButton) return
+          // One card at a time, as everywhere on the bar: an icon's menu
+          // closes before the list opens over it.
+          if (!root.managePopupOpen) root.trayMenuOpen = false
+          root.managePopupOpen = !root.managePopupOpen
         }
       }
 
@@ -451,6 +455,10 @@ BarWidget {
     resetTrayMenu()
     activeTrayItem = item
     activeTrayAnchor = anchor
+    // The list of icons closes first: both cards are the tray's, so the
+    // bar would not close one for the other, and the place the list gives
+    // back is the menu's to take.
+    managePopupOpen = false
     trayMenuOpen = true
   }
 
