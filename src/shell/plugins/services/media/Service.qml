@@ -138,11 +138,6 @@ Item {
   }
 
   readonly property bool hasMedia: activePlayer !== null && (activePlayer.trackTitle || activePlayer.trackArtist)
-  readonly property string title: activePlayer ? (activePlayer.trackTitle || "") : ""
-  readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
-  readonly property string album: activePlayer && activePlayer.trackAlbum ? activePlayer.trackAlbum : ""
-  readonly property string artUrl: activePlayer && activePlayer.trackArtUrl ? activePlayer.trackArtUrl : ""
-  readonly property string identity: activePlayer ? (activePlayer.identity || activePlayer.desktopEntry || "") : ""
 
   // The widget's list: every named player, those playing first, longest
   // first, proxies after the rest, then by label.
@@ -185,13 +180,13 @@ Item {
 
   // ----- actions -----
 
-  // The player an action goes to: the one named by `targetKey`; for a pause,
-  // the one playing longest; else the active one if it can, the first in
-  // the list that can, or the active one all the same.
+  // The player an action goes to: the one named by `targetKey`; for
+  // playPause, the one playing longest; else the active one if it can, the
+  // first in the list that can, or the active one all the same.
   function playerForAction(action, targetKey) {
     var named = playerForKey(targetKey)
     if (named) return named
-    if (action === "pause" || action === "playPause") {
+    if (action === "playPause") {
       var playing = longestPlaying(true) || longestPlaying(false)
       if (playing) return playing
     }
@@ -202,8 +197,8 @@ Item {
     return activePlayer
   }
 
-  // playPause, play, pause, next or previous: true if a player took it. The
-  // player that did becomes the one chosen. With `showFeedback` (the default)
+  // playPause, next or previous: true if a player took it. The player that
+  // did becomes the one chosen. With `showFeedback` (the default)
   // the on-screen display says what was done, and after a skip, once the
   // new track is there, what plays.
   function runAction(action, showFeedback, targetKey) {
@@ -229,14 +224,6 @@ Item {
         player.previous()
         done = true
       }
-    } else if (action === "play") {
-      label = "Play"
-      icon = "media-play"
-      done = play(player)
-    } else if (action === "pause") {
-      label = "Pause"
-      icon = "media-pause"
-      done = pause(player)
     } else if (action === "playPause") {
       label = playing ? "Pause" : "Play"
       icon = playing ? "media-pause" : "media-play"
@@ -288,10 +275,9 @@ Item {
     return false
   }
 
-  // The next or previous source by `step`, made the one chosen. With
-  // `takeOver`, it plays in place of the one that was playing, which pauses
-  // once it does.
-  function switchSource(step, takeOver) {
+  // The next or previous source by `step`, made the one chosen. It plays in
+  // place of the one that was playing, which pauses once it does.
+  function switchSource(step) {
     var list = sourceCyclePlayers
     if (list.length === 0) return false
 
@@ -307,7 +293,7 @@ Item {
     var wasPlaying = current && current.isPlaying
     preferredPlayerKey = Media.playerKey(next)
 
-    if (takeOver && wasPlaying && next && Media.playerKey(next) !== Media.playerKey(current)) {
+    if (wasPlaying && next && Media.playerKey(next) !== Media.playerKey(current)) {
       var playing = next.isPlaying || (next.canPlay && play(next))
       if (playing) pause(current)
     }
@@ -353,39 +339,14 @@ Item {
 
   // ----- nova-shell media -----
 
-  function statusJson() {
-    var player = activePlayer
-    return JSON.stringify({
-      hasPlayer: player !== null,
-      hasMedia: hasMedia,
-      playing: player ? !!player.isPlaying : false,
-      identity: player ? (player.identity || "") : "",
-      desktopEntry: player ? (player.desktopEntry || "") : "",
-      title: player ? (player.trackTitle || "") : "",
-      artist: player ? (player.trackArtist || "") : "",
-      album: player && player.trackAlbum ? player.trackAlbum : "",
-      artUrl: player && player.trackArtUrl ? player.trackArtUrl : "",
-      canGoNext: player ? !!player.canGoNext : false,
-      canGoPrevious: player ? !!player.canGoPrevious : false,
-      canTogglePlaying: player ? !!player.canTogglePlaying : false
-    })
-  }
-
   IpcHandler {
     target: "media"
 
-    function status(): string { return root.statusJson() }
     function playPause(): string { return root.runAction("playPause") ? "ok" : "unhandled" }
     function next(): string { return root.runAction("next") ? "ok" : "unhandled" }
     function previous(): string { return root.runAction("previous") ? "ok" : "unhandled" }
-    function play(): string { return root.runAction("play") ? "ok" : "unhandled" }
-    function pause(): string { return root.runAction("pause") ? "ok" : "unhandled" }
-    // Step the chosen player through the sources.
-    function sourceNext(): string { return root.switchSource(1, false) ? "ok" : "unhandled" }
-    function sourcePrevious(): string { return root.switchSource(-1, false) ? "ok" : "unhandled" }
-    // The same, playback moving over: nova-audio-source-switch.
-    function sourceSwitch(): string { return root.switchSource(1, true) ? "ok" : "unhandled" }
-    function sourceSwitchPrevious(): string { return root.switchSource(-1, true) ? "ok" : "unhandled" }
-    function ping(): string { return "ok" }
+    // The next or previous source, playback moving over: nova-audio-source-switch.
+    function sourceSwitch(): string { return root.switchSource(1) ? "ok" : "unhandled" }
+    function sourceSwitchPrevious(): string { return root.switchSource(-1) ? "ok" : "unhandled" }
   }
 }

@@ -37,8 +37,6 @@ Item {
     && UPower.displayDevice.isLaptopBattery && UPower.displayDevice.percentage <= 0.10
   // Started by this service since the last input, so input stops it again.
   property bool screensaverShown: false
-  property string lastEvent: "starting"
-  property string lastEventAt: ""
 
   function secondsFromConfig(value, fallback) {
     var n = Number(value)
@@ -48,9 +46,7 @@ Item {
 
   function logEvent(event, details) {
     var suffix = details === undefined || details === null || details === "" ? "" : ": " + String(details)
-    root.lastEventAt = new Date().toISOString()
-    root.lastEvent = event + suffix
-    console.log("nova idle " + root.lastEventAt + " " + root.lastEvent)
+    console.log("nova idle " + new Date().toISOString() + " " + event + suffix)
   }
 
   function run(process, what) {
@@ -105,21 +101,6 @@ Item {
       root.screensaverShown = false
       run(screensaverStopProcess, "screensaver-stop")
     }
-  }
-
-  function statusJson() {
-    return JSON.stringify({
-      enabled: root.idleEnabled,
-      caffeine: root.caffeine,
-      caffeineStateLoaded: root.caffeineStateLoaded,
-      caffeinePath: root.caffeinePath,
-      idle: lockMonitor.isIdle,
-      screensaver: root.screensaverTimeoutSeconds,
-      lock: root.lockTimeoutSeconds,
-      locking: lockProcess.running,
-      lastEvent: root.lastEvent,
-      lastEventAt: root.lastEventAt
-    })
   }
 
   IdleMonitor {
@@ -187,10 +168,6 @@ Item {
 
   IpcHandler {
     target: "idle"
-
-    function status(): string {
-      return root.statusJson()
-    }
 
     // nova caffeine, after it flips the switch.
     function refresh(): string {

@@ -13,7 +13,6 @@
 #   archive <dir> <history> <images> <name> <limit>      moved to the history
 #   record <history> <images> <name> <json> <limit> [<from> <to>]...
 #                                                        written there at once
-#   clear <history> <images>                             the history emptied
 #   sweep <dir> <history> <images>                       copies no file names
 #   read <dir>                                           the files, a line each
 
@@ -68,13 +67,6 @@ case $job in
     copy "$@"
     printf '%s\n' "$json" >"$history/$name" || exit 0
     trim "$history" "$images" "$limit"
-    ;;
-  clear)
-    for file in "$1"/*.json; do
-      [[ -e $file ]] || continue
-      name=${file##*/}
-      rm -f "$file" "$2/${name%.json}"-*
-    done
     ;;
   sweep)
     # A restart can end a job between its copies and its file; a copy cut

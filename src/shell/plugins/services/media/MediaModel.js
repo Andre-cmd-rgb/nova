@@ -24,15 +24,12 @@ function isControllable(player) {
   return !!(player && (player.canTogglePlaying || player.canPlay || player.canPause || player.canGoNext || player.canGoPrevious))
 }
 
-// Whether the player can do the action: playPause, play, pause, next or
-// previous.
+// Whether the player can do the action: playPause, next or previous.
 function can(player, action) {
   if (!player) return false
   switch (action) {
   case "next": return !!player.canGoNext
   case "previous": return !!player.canGoPrevious
-  case "play": return !!(player.canPlay || player.canTogglePlaying)
-  case "pause": return !!(player.canPause || player.canTogglePlaying)
   case "playPause": return !!(player.canTogglePlaying || player.canPlay || player.canPause)
   }
   return false

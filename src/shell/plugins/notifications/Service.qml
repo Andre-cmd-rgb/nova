@@ -407,10 +407,6 @@ Item {
       String(historyLimit)], disk.copies), done: done })
   }
 
-  function clearHistory() {
-    queue({ args: ["clear", historyDir, imagesDir] })
-  }
-
   // ----------------------------------------------------------------- history
 
   property bool readQueued: false
@@ -554,23 +550,8 @@ Item {
       return dndState()
     }
 
-    function setDnd(value: string): string {
-      service.setDoNotDisturb(["true", "1", "on", "yes"].indexOf(String(value || "").toLowerCase()) !== -1)
-      return dndState()
-    }
-
-    function isDnd(): string {
-      return dndState()
-    }
-
     function showHistory(): string {
       return service.showHistory()
-    }
-
-    // The history forgotten; the toasts on screen stay.
-    function clear(): string {
-      service.clearHistory()
-      return "ok"
     }
 
     function dismissAll(): string {
@@ -589,26 +570,6 @@ Item {
     function invokeLast(): string {
       if (service.toasts.count === 0) return "none"
       service.invoke(0)
-      return "ok"
-    }
-
-    // The toasts whose summary has <summary> in it: the first-run toasts go
-    // once their action has been taken.
-    function dismiss(summary: string): string {
-      var needle = String(summary || "")
-      if (!needle) return "none"
-      var found = false
-      for (var i = service.toasts.count - 1; i >= 0; i--) {
-        var row = service.toasts.get(i)
-        if (row && String(row.summary || "").indexOf(needle) !== -1) {
-          service.dismiss(i)
-          found = true
-        }
-      }
-      return found ? "ok" : "none"
-    }
-
-    function ping(): string {
       return "ok"
     }
   }

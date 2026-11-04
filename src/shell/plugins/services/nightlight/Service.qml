@@ -38,13 +38,6 @@ Item {
     else switcher.ask(state)
   }
 
-  // The other way from now; true when that is on.
-  function toggle() {
-    var on = !enabled
-    setNightlight(on)
-    return on
-  }
-
   // `hyprctl hyprsunset temperature` answers with the number in some words;
   // a failed call means no hyprsunset to ask.
   Process {
@@ -85,26 +78,8 @@ Item {
   IpcHandler {
     target: "nightlight"
 
-    function status(): string {
-      return JSON.stringify({ enabled: service.enabled, temperature: service.temperature })
-    }
-
     function refresh(): void {
       service.refresh()
-    }
-
-    function enable(): string {
-      service.setNightlight(true)
-      return "enabled"
-    }
-
-    function disable(): string {
-      service.setNightlight(false)
-      return "disabled"
-    }
-
-    function toggle(): string {
-      return service.toggle() ? "enabled" : "disabled"
     }
   }
 }

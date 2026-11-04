@@ -114,14 +114,6 @@ Item {
       osd.close()
       return "ok"
     }
-
-    function state(): string {
-      return osd.opened ? "open" : "closed"
-    }
-
-    function ping(): string {
-      return "ok"
-    }
   }
 
   // ---------------------------------------------------------------- the card
