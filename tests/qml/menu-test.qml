@@ -78,7 +78,7 @@ ShellRoot {
     request.release()
     begin("second")
     begin("third")
-    check(request.finish("b") && !request.active && !request.finish(null), "an answered request is answered once")
+    check(request.finish("b") && request.closedPath === "" && !request.finish(null), "an answered request is answered once")
     answers.running = true
   }
 

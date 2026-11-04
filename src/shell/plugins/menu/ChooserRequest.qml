@@ -1,38 +1,31 @@
 import QtQuick
 import Quickshell
 
-// The request of a nova-menu-select waiting on the chooser: the file its pick
-// goes to, and the one it waits for. A request another takes the place of is
-// answered as cancelled, or its caller would wait for as long as the shell
-// runs. Each answer is a process of its own, so that one and the new
-// request's own can be written at once.
+// The nova-menu-select waiting on the chooser, if one is. It reads the pick
+// from one file once the shell makes the other: one whose chooser another
+// takes the place of gets no pick, as cancelled, or it would wait for as
+// long as the shell runs. Each answer is written by a process of its own,
+// so that two can be at once.
 QtObject {
-  id: request
+  property string pickedPath: ""
+  property string closedPath: ""
 
-  property string selectionFile: ""
-  property string doneFile: ""
-  readonly property bool active: doneFile !== ""
-
-  function begin(selectionPath, donePath) {
+  // The caller now waiting, the one before answered as cancelled.
+  function begin(picked, closed) {
     release()
-    selectionFile = selectionPath
-    doneFile = donePath
+    pickedPath = picked
+    closedPath = closed
   }
 
-  // Answered with the pick, or with none as cancelled. False when there was
-  // no request to answer.
-  function finish(selection) {
-    if (!active) return false
-    var selectionPath = selectionFile
-    var donePath = doneFile
-    selectionFile = ""
-    doneFile = ""
-    if (selection === null || selection === undefined) {
-      Quickshell.execDetached(["bash", "-c", ': >"$1"', "bash", donePath])
-    } else {
-      Quickshell.execDetached(["bash", "-c", 'printf "%s\\n" "$1" >"$2"; : >"$3"', "bash",
-        String(selection), selectionPath, donePath])
-    }
+  // Gives the caller <pick>, or nothing for null, cancelled; false when no
+  // caller was waiting.
+  function finish(pick) {
+    if (closedPath === "") return false
+    const cancelled = pick === null || pick === undefined
+    const write = cancelled ? ': >"$3"' : 'printf "%s\\n" "$1" >"$2"; : >"$3"'
+    Quickshell.execDetached(["bash", "-c", write, "bash", cancelled ? "" : String(pick), pickedPath, closedPath])
+    pickedPath = ""
+    closedPath = ""
     return true
   }
 
