@@ -7,84 +7,80 @@ import qs.Commons as Commons
 // The row takes the click, and Return, Enter and Space while it has the
 // focus, and sends clicked(); the caller flips <checked>, whatever model is
 // behind it. Its face is in the focus state with the focus, in hover-cursor
-// under the pointer, else normal. The switch is a pill where the theme's
-// corners are round, unless <rounded> is set false.
+// under the pointer, else normal.
 ControlFace {
   id: toggle
 
   property string label: ""
   property string description: ""
   property bool checked: false
-  property bool rounded: Style.cornerRadius > 0
-  property color foreground: Commons.Color.foreground
-  property color accent: Commons.Color.accent
-  property string fontFamily: Style.font.family
-  property real titleSize: Style.font.subtitle
-  property real descriptionSize: Style.font.caption
 
-  readonly property string _state: activeFocus ? "focus" : pointer.containsMouse ? "hover-cursor" : "normal"
+  readonly property string _look: activeFocus ? "focus" : pointer.containsMouse ? "hover-cursor" : "normal"
 
   signal clicked()
 
-  tint: foreground
-  tintAccent: accent
+  fillState: _look
+  edgeState: _look
   fade: 100
-  fillState: _state
-  edgeState: _state
   radius: Style.cornerRadius
   implicitWidth: Style.space(240)
-  implicitHeight: Math.max(54, line.implicitHeight + Style.spacing.huge)
+  implicitHeight: Math.max(54, row.implicitHeight + Style.spacing.huge)
 
   activeFocusOnTab: true
   Keys.onPressed: function (event) {
-    if (event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter && event.key !== Qt.Key_Space) return
+    if ([Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space].indexOf(event.key) < 0) return
     event.accepted = true
     toggle.clicked()
   }
 
+  // The words, then the switch, between the borders and the row's padding.
   Row {
-    id: line
+    id: row
+
+    readonly property real inset: Style.spacing.rowPaddingX
+
     anchors.verticalCenter: parent.verticalCenter
-    x: toggle.borderLeft + Style.spacing.rowPaddingX
-    width: toggle.width - x - toggle.borderRight - Style.spacing.rowPaddingX
-    spacing: Style.spacing.rowPaddingX
+    x: toggle.borderLeft + inset
+    width: toggle.width - x - toggle.borderRight - inset
+    spacing: inset
 
     Column {
       anchors.verticalCenter: parent.verticalCenter
-      width: line.width - indicator.width - line.spacing
+      width: row.width - onOff.width - row.spacing
       spacing: Style.spacing.xs
 
       Text {
         width: parent.width
-        textFormat: Text.PlainText
         text: toggle.label
-        color: toggle.foreground
-        font.family: toggle.fontFamily
-        font.pixelSize: toggle.titleSize
-        font.bold: true
+        textFormat: Text.PlainText
         elide: Text.ElideRight
+        color: Commons.Color.foreground
+        font {
+          family: Style.font.family
+          pixelSize: Style.font.subtitle
+          bold: true
+        }
       }
 
       Text {
         width: parent.width
-        visible: toggle.description !== ""
-        textFormat: Text.PlainText
+        visible: text !== ""
         text: toggle.description
-        color: Qt.darker(toggle.foreground, 1.5)
-        font.family: toggle.fontFamily
-        font.pixelSize: toggle.descriptionSize
+        textFormat: Text.PlainText
         wrapMode: Text.WordWrap
+        color: Qt.darker(Commons.Color.foreground, 1.5)
+        font {
+          family: Style.font.family
+          pixelSize: Style.font.caption
+        }
       }
     }
 
     ToggleSwitch {
-      id: indicator
+      id: onOff
       anchors.verticalCenter: parent.verticalCenter
       interactive: false
       checked: toggle.checked
-      rounded: toggle.rounded
-      foreground: toggle.foreground
-      accent: toggle.accent
     }
   }
 

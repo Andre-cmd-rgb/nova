@@ -63,8 +63,7 @@ Pressable {
   implicitHeight: content.implicitHeight + 2 * verticalPadding + _room.top + _room.bottom
 
   _buttons: Qt.LeftButton | Qt.RightButton
-  _tip.cornerRadius: 0
-  _tip.minimumBorderWidth: 1
+  _tip.square: true
 
   Row {
     id: content

@@ -17,9 +17,14 @@ import qs.Commons as Commons
 // change of the track: the theme's normal border is stronger than its
 // hover-cursor one (0.4 against 0.25), which suits controls with no border at
 // rest but would fade a bordered track under the cursor. Where the row round
-// the switch takes the click (<interactive> false) the row has the cursor
-// and the ring is off. The switch is a pill where the theme's corners are
-// round, square where they are not.
+// the switch takes the click (<interactive> false) the row has the cursor,
+// and the switch has no ring nor room for one. The switch is a pill where
+// the theme's corners are round, square where they are not.
+//
+// A smaller switch (one in a section's header) sets <trackHeight>: drawn at
+// its own size rather than scaled down, its edges stay on whole pixels. The
+// track is 1.9 times as long, the knob 0.72 times as high; the floors only
+// keep an odd size sane.
 Item {
   id: toggleSwitch
 
@@ -27,35 +32,29 @@ Item {
   property bool busy: false
   property bool interactive: true
   property bool hasCursor: false
-  property bool cursorRing: interactive
   property int cursorPad: Style.space(6)
-  property bool rounded: Style.cornerRadius > 0
-  property color foreground: Commons.Color.foreground
-  property color accent: Commons.Color.accent
-
-  // A smaller switch (one in a section's header) sets <trackHeight>: drawn at
-  // its own size rather than scaled down, its edges stay on whole pixels.
-  // The floors only keep an odd size sane; the usual one is well above them.
   property int trackHeight: Math.max(22, Math.round(Style.spacing.controlHeight * 0.55))
-  property int trackWidth: Math.round(trackHeight * 1.9)
-  property int knobSize: Math.max(6, Math.round(trackHeight * 0.72))
-  property int knobInset: Math.max(1, Math.round((trackHeight - knobSize) / 2))
+  property color foreground: Commons.Color.foreground
 
   readonly property alias containsMouse: pointer.containsMouse
-  readonly property bool hot: hasCursor || pointer.containsMouse
-  readonly property int _ringRoom: cursorRing ? cursorPad : 0
+
+  readonly property int _trackLength: Math.round(trackHeight * 1.9)
+  readonly property int _knob: Math.max(6, Math.round(trackHeight * 0.72))
+  readonly property int _knobGap: Math.max(1, Math.round((trackHeight - _knob) / 2))
+  readonly property bool _pill: Style.cornerRadius > 0
+  readonly property int _ringRoom: interactive ? cursorPad : 0
 
   signal toggled()
   signal hovered(bool isHovered)
 
-  implicitWidth: trackWidth + 2 * _ringRoom
+  implicitWidth: _trackLength + 2 * _ringRoom
   implicitHeight: trackHeight + 2 * _ringRoom
 
+  // The cursor's ring, the whole switch round.
   ControlFace {
     anchors.fill: parent
-    visible: toggleSwitch.cursorRing && toggleSwitch.hot
+    visible: toggleSwitch.interactive && (toggleSwitch.hasCursor || toggleSwitch.containsMouse)
     tint: toggleSwitch.foreground
-    tintAccent: toggleSwitch.accent
     edgeState: "hover-cursor"
     radius: Style.cornerRadius
   }
@@ -63,22 +62,21 @@ Item {
   ControlFace {
     id: track
     anchors.centerIn: parent
-    width: toggleSwitch.trackWidth
+    width: toggleSwitch._trackLength
     height: toggleSwitch.trackHeight
-    radius: toggleSwitch.rounded ? height / 2 : 0
+    radius: toggleSwitch._pill ? height / 2 : 0
     tint: toggleSwitch.foreground
-    tintAccent: toggleSwitch.accent
     fillState: toggleSwitch.checked ? "selected" : "normal"
     edgeState: fillState
     fade: 120
 
     Rectangle {
       anchors.verticalCenter: parent.verticalCenter
-      x: toggleSwitch.checked ? track.width - width - toggleSwitch.knobInset : toggleSwitch.knobInset
-      width: toggleSwitch.knobSize
+      x: toggleSwitch.checked ? track.width - width - toggleSwitch._knobGap : toggleSwitch._knobGap
+      width: toggleSwitch._knob
       height: width
-      radius: toggleSwitch.rounded ? width / 2 : 0
-      color: toggleSwitch.checked ? Style.selectedStateColor(toggleSwitch.foreground, toggleSwitch.accent) : Qt.darker(toggleSwitch.foreground, 1.25)
+      radius: toggleSwitch._pill ? width / 2 : 0
+      color: toggleSwitch.checked ? Style.selectedStateColor(toggleSwitch.foreground, Commons.Color.accent) : Qt.darker(toggleSwitch.foreground, 1.25)
 
       Behavior on x {
         NumberAnimation { duration: 120; easing.type: Easing.OutCubic }

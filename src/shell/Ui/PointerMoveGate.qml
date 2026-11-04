@@ -9,40 +9,39 @@ import QtQuick
 QtObject {
   // Whose coordinates the pointer is followed in; the row's own without one.
   property Item referenceItem: null
-  // How far the pointer must go, across or down, to have moved.
-  property real threshold: 1
 
-  // The last point taken as a move, or null since a reset.
-  property var _last: null
-  // Whether the first point after a reset counts as a move.
-  property bool _firstCounts: false
+  // Where the pointer last moved to, or null since a reset, and whether the
+  // first point after the reset is a move.
+  property var _from: null
+  property bool _firstMoves: false
 
-  function reset() {
-    _last = null
-    _firstCounts = false
+  function _restart(firstMoves) {
+    _from = null
+    _firstMoves = firstMoves
   }
 
-  function allowInitialSample() {
-    _last = null
-    _firstCounts = true
-  }
+  function reset() { _restart(false) }
 
-  // Whether the pointer at <mouse> over <item> has moved since the last
-  // move taken. The first point after a reset only sets where it stands,
-  // unless allowInitialSample() let it count.
+  function allowInitialSample() { _restart(true) }
+
+  // Whether the pointer at <mouse> over <item> has moved, more than a pixel
+  // across or down, from where it last moved to. The first point after a
+  // reset only marks where it stands, unless allowInitialSample() made it a
+  // move. A smaller step does not mark the spot, so the steps of a slow
+  // move add up until they cross the pixel.
   function moved(item, mouse) {
     if (!item || !mouse) {
       reset()
       return false
     }
     const at = item.mapToItem(referenceItem || item, mouse.x, mouse.y)
-    const first = _last === null
-    const far = !first && (Math.abs(at.x - _last.x) > threshold || Math.abs(at.y - _last.y) > threshold)
-    // A step within the threshold is not taken, so the steps of a slow move
-    // add up until they cross it.
-    if (first || far) _last = at
-    const counts = first ? _firstCounts : far
-    _firstCounts = false
-    return counts
+    let moves = _firstMoves
+    if (_from === null) _from = at
+    else {
+      moves = Math.abs(at.x - _from.x) > 1 || Math.abs(at.y - _from.y) > 1
+      if (moves) _from = at
+    }
+    _firstMoves = false
+    return moves
   }
 }

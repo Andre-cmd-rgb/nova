@@ -3,20 +3,19 @@ import qs.Commons
 import qs.Commons as Commons
 
 // A question over its parent, which it dims: a card with <message> over two
-// buttons, <cancelText> and <confirmText>, the second in the urgent colour
-// as it is the one that does something. A click on one answers with
-// canceled() or confirmed(); a click on the dimmed parent cancels. The
-// button Return presses is <selectedIndex> (0 cancel, 1 confirm); the
-// pointer moves it. The host hands its keys to handleKey() while the dialog
-// is open.
+// answers, Cancel and <confirmText>, the second in the urgent colour as it
+// is the one that does something. A click on an answer gives it, canceled()
+// or confirmed(); a click on the dimmed parent cancels. <selectedIndex> is
+// the answer Return gives (0 cancel, 1 confirm), and the pointer moves it.
+// The host hands its keys to handleKey() while the dialog is open.
 Item {
   id: dialog
 
   property bool opened: false
   property string message: ""
-  property string cancelText: "Cancel"
   property string confirmText: "Confirm"
   property int selectedIndex: 1
+
   property color background: Commons.Color.background
   property color foreground: Commons.Color.foreground
   property color scrim: Util.alpha(Commons.Color.background, 0.7)
@@ -28,74 +27,27 @@ Item {
   signal canceled()
   signal confirmed()
 
-  function _answer(index) {
-    if (index === 0) canceled()
+  function _give(answer) {
+    if (answer === 0) canceled()
     else confirmed()
   }
 
-  // Escape cancels; Left, Right, Tab and Backtab go to the other button;
-  // Return and Enter press the one chosen. True for a key the dialog took,
+  // Escape cancels; Left, Right, Tab and Backtab go to the other answer;
+  // Return and Enter give the one chosen. True for a key the dialog took,
   // which no key is while it is closed.
   function handleKey(event) {
     if (!opened) return false
-    switch (event.key) {
-    case Qt.Key_Escape:
-      canceled()
-      break
-    case Qt.Key_Left:
-    case Qt.Key_Right:
-    case Qt.Key_Tab:
-    case Qt.Key_Backtab:
-      selectedIndex = selectedIndex === 0 ? 1 : 0
-      break
-    case Qt.Key_Return:
-    case Qt.Key_Enter:
-      _answer(selectedIndex)
-      break
-    default:
-      return false
-    }
+    const key = event.key
+    if (key === Qt.Key_Escape) canceled()
+    else if ([Qt.Key_Left, Qt.Key_Right, Qt.Key_Tab, Qt.Key_Backtab].indexOf(key) >= 0) selectedIndex = selectedIndex === 0 ? 1 : 0
+    else if (key === Qt.Key_Return || key === Qt.Key_Enter) _give(selectedIndex)
+    else return false
     return true
-  }
-
-  // One of the two buttons: chosen, at full strength and filled; else only
-  // outlined, faintly.
-  component Choice: BorderSurface {
-    id: choice
-
-    required property int index
-    property string label
-    readonly property bool chosen: dialog.selectedIndex === index
-    readonly property bool urgent: index === 1
-    readonly property color _strong: urgent ? Commons.Color.urgent : dialog.selectedText
-
-    width: Style.space(88)
-    height: Style.space(34)
-    radius: 0
-    color: !chosen ? "transparent" : urgent ? Util.alpha(Commons.Color.urgent, 0.22) : dialog.selectedBackground
-    borderSpec: Border.flat(chosen ? _strong : Util.alpha(urgent ? Commons.Color.urgent : dialog.foreground, urgent ? 0.56 : 0.38),
-      Style.normalBorderWidth)
-
-    Text {
-      anchors.centerIn: parent
-      textFormat: Text.PlainText
-      text: choice.label
-      color: choice.chosen ? choice._strong : dialog.foreground
-      font.family: dialog.fontFamily
-      font.pixelSize: Style.font.caption
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onEntered: dialog.selectedIndex = choice.index
-      onClicked: dialog._answer(choice.index)
-    }
   }
 
   visible: opened
 
+  // The dimmed parent: a click on it cancels.
   Rectangle {
     anchors.fill: parent
     color: dialog.scrim
@@ -106,7 +58,7 @@ Item {
     }
 
     // As tall as the wrapped message needs, so a narrow host (the menu's
-    // card) does not push the words into the buttons.
+    // card) does not push the words into the answers.
     BorderSurface {
       id: card
       anchors.centerIn: parent
@@ -131,20 +83,58 @@ Item {
 
         Text {
           width: parent.width
-          textFormat: Text.PlainText
           text: dialog.message
+          textFormat: Text.PlainText
+          wrapMode: Text.WordWrap
           color: dialog.foreground
           font.family: dialog.fontFamily
           font.pixelSize: Style.font.title
-          wrapMode: Text.WordWrap
         }
 
         Row {
           anchors.right: parent.right
           spacing: Style.space(10)
 
-          Choice { index: 0; label: dialog.cancelText }
-          Choice { index: 1; label: dialog.confirmText }
+          Repeater {
+            model: ["Cancel", dialog.confirmText]
+
+            // An answer: the chosen one at full strength and filled, the
+            // other only outlined, faintly. Confirm's strength is the
+            // urgent colour.
+            BorderSurface {
+              id: answer
+
+              required property int index
+              required property string modelData
+              readonly property bool chosen: dialog.selectedIndex === index
+              readonly property color strong: index === 1 ? Commons.Color.urgent : dialog.selectedText
+              readonly property color faint: index === 1 ? Util.alpha(Commons.Color.urgent, 0.56) : Util.alpha(dialog.foreground, 0.38)
+              readonly property color filled: index === 1 ? Util.alpha(Commons.Color.urgent, 0.22) : dialog.selectedBackground
+
+              width: Style.space(88)
+              height: Style.space(34)
+              radius: 0
+              color: chosen ? filled : "transparent"
+              borderSpec: Border.flat(chosen ? strong : faint, Style.normalBorderWidth)
+
+              Text {
+                anchors.centerIn: parent
+                text: answer.modelData
+                textFormat: Text.PlainText
+                color: answer.chosen ? answer.strong : dialog.foreground
+                font.family: dialog.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onEntered: dialog.selectedIndex = answer.index
+                onClicked: dialog._give(answer.index)
+              }
+            }
+          }
         }
       }
     }
