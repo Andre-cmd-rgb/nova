@@ -125,10 +125,6 @@ QtObject {
     return value !== null && typeof value === "object" && !Array.isArray(value)
   }
 
-  function cloneJson(value) {
-    return JSON.parse(JSON.stringify(value === undefined ? null : value))
-  }
-
   // The bar's layout from shell.json, in a form its readers can trust: three
   // lists of { id, ...settings }, each a copy, so changing one does not
   // change the config. An entry may be a bare id; one with no id is dropped.
@@ -140,7 +136,7 @@ QtObject {
         if (typeof entry === "string") {
           entries.push({ id: entry })
         } else if (isPlainObject(entry) && entry.id) {
-          var copy = cloneJson(entry)
+          var copy = JSON.parse(JSON.stringify(entry))
           copy.id = String(copy.id)
           entries.push(copy)
         }
