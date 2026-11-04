@@ -3,8 +3,9 @@
 # nova:summary=Shared helpers for editing ~/.config/nova/shell.json (source this, don't run it)
 # nova:hidden=true
 
-# For the commands that change the shell's settings (nova bar, nova idle):
-#   source_file      the settings to start from: the user's, or Nova's defaults
+# For the commands that read or change the shell's settings (nova bar, nova
+# idle, nova settings):
+#   in_effect        the settings in effect, as JSON
 #   commit PROGRAM   PROGRAM (jq, with any jq options after it) run on them,
 #                    written as the user's, and the shell told to read them
 #   fail MESSAGE     the message, after the command's name, and exit 1
@@ -22,12 +23,13 @@ fail() {
   exit 1
 }
 
-source_file() {
-  if [[ -s $shell_config ]]; then
-    printf '%s\n' "$shell_config"
-  else
-    printf '%s\n' "$DEFAULTS_FILE"
-  fi
+# As the shell works them out (services/ShellJson.qml): the user's where
+# they are an object at version 1, else Nova's; and where they have no bar,
+# Nova's bar, the one the shell draws for them.
+in_effect() {
+  local file=$shell_config
+  if ! jq -e 'type == "object" and .version == 1' "$file" >/dev/null 2>&1; then file=$DEFAULTS_FILE; fi
+  jq -c --slurpfile nova "$DEFAULTS_FILE" 'if (.bar | type) == "object" then . else .bar = $nova[0].bar end' "$file"
 }
 
 # An object at version 1, with a bar, its layout's three sections, and the
@@ -59,7 +61,7 @@ commit() { # program [jq option...]
   shift
   mkdir -p "${shell_config%/*}"
   shell_config_next=$(mktemp "$shell_config.XXXXXX")
-  jq -S -e "$@" "$program" "$(source_file)" >"$shell_config_next" || fail "could not update shell config"
+  in_effect | jq -S -e "$@" "$program" >"$shell_config_next" || fail "could not update shell config"
   mv "$shell_config_next" "$shell_config"
   shell_config_next=""
   nova-shell -q shell reloadConfig

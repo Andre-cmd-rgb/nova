@@ -15,7 +15,7 @@ source nova-shell-config
 case ${1:-} in
   "")
     (($# == 0)) || fail "usage: nova idle screensaver [minutes|never]"
-    seconds=$(jq -r 'if (.idle.screensaver | type) == "number" then .idle.screensaver else 180 end' "$(source_file)")
+    seconds=$(in_effect | jq -r 'if (.idle.screensaver | type) == "number" then .idle.screensaver else 180 end')
     if ((seconds <= 0)); then
       echo "never"
     else

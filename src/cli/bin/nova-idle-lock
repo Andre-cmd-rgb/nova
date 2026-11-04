@@ -14,7 +14,7 @@ source nova-shell-config
 case ${1:-} in
   "")
     (($# == 0)) || fail "usage: nova idle lock [minutes|never]"
-    seconds=$(jq -r 'if (.idle.lock | type) == "number" then .idle.lock else 300 end' "$(source_file)")
+    seconds=$(in_effect | jq -r 'if (.idle.lock | type) == "number" then .idle.lock else 300 end')
     if ((seconds <= 0)); then
       echo "never"
     else

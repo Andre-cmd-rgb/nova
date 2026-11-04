@@ -59,6 +59,13 @@ settings() { jq -cS "$1" "$HOME/.config/nova/shell.json"; }
   [ "$(nova-bar transparent)" = on ]
 }
 
+@test "settings without a bar have Nova's, and a change keeps its widgets" {
+  echo '{"version":1,"idle":{"lock":600}}' >"$HOME/.config/nova/shell.json"
+  nova-bar position bottom
+  [ "$(settings '[.bar.position, .idle.lock]')" = '["bottom",600]' ]
+  [ "$(settings .bar.layout)" = "$(jq -cS .bar.layout "$NOVA_PATH/default/shell.json")" ]
+}
+
 @test "defaults puts back the bar Nova ships, and the rest of the settings stay" {
   echo '{"version":1,"idle":{"lock":60},"bar":{"position":"left"}}' >"$HOME/.config/nova/shell.json"
   nova-bar defaults

@@ -5,12 +5,16 @@ import Quickshell.Io
 // shell.json, the two of it: Nova's, in $NOVA_PATH/default, and the user's,
 // in ~/.config/nova. The config in effect is the user's when it is an object
 // with version 1, else Nova's when that is one, else the fallback below;
-// they are never merged. It is worked out once both files have been read
-// (or found missing or unreadable), and again each time one is read anew.
+// they are never merged, but for the bar: a config without one has Nova's,
+// which is the bar drawn, and so the one the verbs change. It is worked out
+// once both files have been read (or found missing or unreadable), and again
+// each time one is read anew. The CLI works it out the same way
+// (nova-shell-config's in_effect).
 QtObject {
   id: shellJson
 
-  readonly property string defaultsPath: Quickshell.env("NOVA_PATH") + "/default/shell.json"
+  // Not read-only, for tests/qml/shell-json-test.qml.
+  property string defaultsPath: Quickshell.env("NOVA_PATH") + "/default/shell.json"
   readonly property string userPath: Quickshell.env("HOME") + "/.config/nova/shell.json"
 
   // What the shell has when Nova's shell.json cannot be read: enough for a
@@ -61,10 +65,17 @@ QtObject {
   // Makes <config>, at version 1, the config in effect, and writes it to
   // the user's shell.json.
   function save(config) {
-    var saved = JSON.parse(JSON.stringify(config))
+    var saved = withBar(JSON.parse(JSON.stringify(config)))
     saved.version = 1
     current = saved
     userFile.setText(JSON.stringify(saved, null, 2) + "\n")
+  }
+
+  // <config>, or a copy of it with Nova's bar where it has none.
+  function withBar(config) {
+    if (isObject(config.bar)) return config
+    var bar = isObject(defaults.bar) ? defaults.bar : fallback.bar
+    return Object.assign({}, config, { bar: JSON.parse(JSON.stringify(bar)) })
   }
 
   function readDefaults(text) {
@@ -89,7 +100,7 @@ QtObject {
 
   function settle() {
     if (!defaultsSeen || !userSeen) return
-    current = chosen()
+    current = withBar(chosen())
     ready = true
   }
 
@@ -106,12 +117,16 @@ QtObject {
       return defaults
     }
     if (isConfig(user)) return user
-    if (user && typeof user === "object" && !Array.isArray(user)) console.warn("shell.json missing version: 1, using defaults")
+    if (isObject(user)) console.warn("shell.json missing version: 1, using defaults")
     return defaults
   }
 
+  function isObject(value) {
+    return !!value && typeof value === "object" && !Array.isArray(value)
+  }
+
   function isConfig(value) {
-    return !!value && typeof value === "object" && !Array.isArray(value) && value.version === 1
+    return isObject(value) && value.version === 1
   }
 
   property FileView defaultsFile: FileView {

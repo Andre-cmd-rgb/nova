@@ -16,6 +16,10 @@ DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 DEVICETREE=${NOVA_DEVICETREE_PATH:-/proc/device-tree}
 CPUINFO=${NOVA_CPUINFO:-/proc/cpuinfo}
 RFKILL=${NOVA_RFKILL_PATH:-/sys/class/rfkill}
+# The shell's settings as the shell has them (in_effect): the same path the
+# shell reads, which is not under XDG_CONFIG_HOME.
+source nova-shell-config
+
 PAGES="wifi bluetooth mobile-data sound displays battery performance screentime appearance bar lock apps updates about"
 
 # Lines on stdin as a JSON array of strings.
@@ -99,18 +103,6 @@ radios_json() {
   cat "$RFKILL"/rfkill*/type 2>/dev/null | sort -u | lines_json
 }
 
-# The user's shell.json, or Nova's default when they have none (or a broken one).
-# The same path the shell reads, which is not under XDG_CONFIG_HOME.
-shell_config() {
-  local user=$HOME/.config/nova/shell.json config=
-  [[ -s $user ]] && config=$(json_or '' jq -c 'select(type == "object")' "$user")
-  if [[ -n $config ]]; then
-    printf '%s\n' "$config"
-  else
-    json_or '{}' jq -c . "$NOVA_PATH/default/shell.json"
-  fi
-}
-
 # Every bar widget Nova has, but the spacer (a layout tool) and Screen Time
 # (switched on its own page, since the widget is the switch for recording).
 widgets_json() {
@@ -191,7 +183,7 @@ about_json() {
 
 state() {
   local config
-  config=$(shell_config)
+  config=$(json_or '{}' in_effect)
   jq -nc \
     --arg theme "$(quiet nova-theme current)" \
     --argjson themes "$(themes_json)" \

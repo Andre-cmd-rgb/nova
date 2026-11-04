@@ -128,6 +128,15 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '[.lock.seconds, .bar.position]')" = '[300,"top"]' ]
 }
 
+@test "state and idle: the settings the shell has, Nova's where the user's lack a version, Nova's bar where they lack one" {
+  mkdir -p "$HOME/.config/nova"
+  echo '{"idle":{"lock":60},"bar":{"position":"bottom"}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state '[.lock.seconds, .bar.position]')" = '[300,"top"]' ]
+  [ "$(nova-idle-lock)" = "5 min" ]
+  echo '{"version":1,"idle":{"lock":600}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state '[.lock.seconds, .bar.position, .bar.shown[0]]')" = '[600,"top","nova.menu"]' ]
+}
+
 @test "state: bar widgets from their manifests, without the spacer and Screen Time" {
   mkdir -p "$NOVA_PATH/shell/plugins/bar/widgets" "$NOVA_PATH/shell/plugins/screentime" "$NOVA_PATH/shell/plugins/settings"
   cp "$REPO_ROOT"/src/shell/plugins/bar/widgets/{Tray,Spacer}.manifest.json "$NOVA_PATH/shell/plugins/bar/widgets/"

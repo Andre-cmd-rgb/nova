@@ -31,7 +31,7 @@ ShellRoot {
 
   // The config in effect, and its bar part.
   readonly property var shellConfig: shellJson.current
-  readonly property var barConfig: Util.isPlainObject(shellConfig && shellConfig.bar) ? shellConfig.bar : shellJson.fallback.bar
+  readonly property var barConfig: shellConfig.bar
 
   readonly property var bar: barItem
 
