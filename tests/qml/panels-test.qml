@@ -29,6 +29,7 @@ ShellRoot {
   FileView {
     id: fake
     path: test.fakePath
+    preload: false
     printErrors: false
     onSaved: test.begin()
   }
