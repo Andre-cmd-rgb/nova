@@ -3,9 +3,9 @@ import QtQml.Models
 import Quickshell
 
 // The panels, overlays and menus of the plugins that are on: a loader each,
-// active while its plugin is called up, or always for one kept loaded; the
-// item it holds keeps the plugin's window and state from one opening to the
-// next. A bar widget's panel (audio, network, power...) lives in the bar
+// active from the plugin's summon to its hide, or always for one kept
+// loaded, whose window and state then last from one opening to the next.
+// A bar widget's panel (audio, network, power...) lives in the bar
 // instead, which makes it again when it reloads, so the verbs pass those to
 // the bar of the moment.
 QtObject {
