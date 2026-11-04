@@ -224,7 +224,7 @@ MODPROBE_BLOCK=/run/modprobe.d/nova-power-nvidia.conf
 # first of the two.
 block_nvidia_autoload() {
   local module
-  mkdir -p /run/modprobe.d
+  mkdir -p "${MODPROBE_BLOCK%/*}"
   : >"$MODPROBE_BLOCK"
   for module in "${NVIDIA_MODULES[@]}"; do
     printf 'install %s /bin/false\n' "$module" >>"$MODPROBE_BLOCK"
