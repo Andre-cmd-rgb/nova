@@ -4,148 +4,154 @@ import Quickshell.Io
 import Quickshell.Services.UPower
 import Quickshell.Wayland
 
+// What happens when no one is at the computer: the screensaver after
+// idle.screensaver seconds without input (shell.json, 180 by default), the
+// lock after idle.lock (300), 0 for never; the lock plugin turns the screens
+// off and on again. Nothing of it while Caffeine is on. Each step goes to
+// the journal as "nova idle <time> <step>".
 Item {
-  id: root
+  id: idle
 
-  // Injected by nova-shell (the first-party service loader).
+  // Injected by the shell.
   property var shell: null
 
-  // Caffeine's switch (nova caffeine): while the file is there, nothing here
-  // starts the screensaver or locks. nova caffeine asks for a refresh when it
-  // flips it, and a slow look now and then catches one that could not reach
-  // the shell (a restart, say).
-  readonly property string caffeinePath: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/caffeine"
-  readonly property int defaultScreensaverSeconds: 180
-  readonly property int defaultLockSeconds: 300
-  readonly property var idleConfig: shell && shell.shellConfig && shell.shellConfig.idle
-    ? shell.shellConfig.idle : ({})
-  // idle.screensaver and idle.lock in shell.json: seconds unused before the
-  // screensaver starts and before the screen locks, and 0 for never. The lock
-  // plugin turns the displays off and back on.
-  readonly property int screensaverTimeoutSeconds: secondsFromConfig(idleConfig.screensaver, defaultScreensaverSeconds)
-  readonly property int lockTimeoutSeconds: secondsFromConfig(idleConfig.lock, defaultLockSeconds)
-  readonly property bool screensaverEnabled: screensaverTimeoutSeconds > 0
-  readonly property bool lockEnabled: lockTimeoutSeconds > 0
-  readonly property bool idleEnabled: caffeineStateLoaded && !caffeine
+  readonly property var times: shell && shell.shellConfig && shell.shellConfig.idle ? shell.shellConfig.idle : ({})
+  readonly property int saverAfter: seconds(times.screensaver, 180)
+  readonly property int lockAfter: seconds(times.lock, 300)
 
+  // Caffeine's switch, a file nova caffeine makes and removes and then asks
+  // for a refresh; a look every minute catches a refresh that could not
+  // reach the shell (a restart, say). The bar's cup shows `caffeine`.
+  readonly property string switchFile: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/caffeine"
   property bool caffeine: false
-  property bool caffeineStateLoaded: false
-  property bool caffeineProbeAgain: false
-  // Caffeine on battery lasts until the battery is low, so a laptop left
+  property bool switchRead: false
+  // Someone's absence counts: the switch read, and Caffeine off.
+  readonly property bool minding: switchRead && !caffeine
+
+  // The screensaver this service started since the last input, which input
+  // takes away again.
+  property bool saverUp: false
+
+  // Caffeine on battery lasts until the battery is low, so that a laptop left
   // with its lid shut does not run flat: then nova caffeine ends it.
   readonly property bool batteryLow: UPower.onBattery && !!UPower.displayDevice
     && UPower.displayDevice.isLaptopBattery && UPower.displayDevice.percentage <= 0.10
-  // Started by this service since the last input, so input stops it again.
-  property bool screensaverShown: false
+  onBatteryLowChanged: if (batteryLow && caffeine) caffeineEnds.go()
 
-  function secondsFromConfig(value, fallback) {
-    var n = Number(value)
-    if (!isFinite(n) || n < 0) return fallback
-    return Math.floor(n)
+  // Whole seconds from shell.json, or the default for what is not a number
+  // of them.
+  function seconds(value, otherwise) {
+    var count = Number(value)
+    return isFinite(count) && count >= 0 ? Math.floor(count) : otherwise
   }
 
-  function logEvent(event, details) {
-    var suffix = details === undefined || details === null || details === "" ? "" : ": " + String(details)
-    console.log("nova idle " + new Date().toISOString() + " " + event + suffix)
+  function log(step, detail) {
+    console.log("nova idle " + new Date().toISOString() + " " + step + (detail ? ": " + detail : ""))
   }
 
-  function run(process, what) {
-    if (process.running) {
-      logEvent(what + "-skip", "already running")
-      return
-    }
-    logEvent(what)
-    process.running = true
-  }
-
-  function handleScreensaverIdleChanged() {
-    logEvent("screensaver-monitor", screensaverMonitor.isIdle ? "idle" : "active")
-    if (screensaverMonitor.isIdle) {
-      if (!root.idleEnabled || !root.screensaverEnabled) return
-      root.screensaverShown = true
-      run(screensaverProcess, "screensaver")
-    } else if (root.screensaverShown) {
-      // A key ends the screensaver by itself; the mouse ends it here.
-      root.screensaverShown = false
-      run(screensaverStopProcess, "screensaver-stop")
-    }
-  }
-
-  function handleLockIdleChanged() {
-    logEvent("lock-monitor", lockMonitor.isIdle ? "idle" : "active")
-    if (root.idleEnabled && root.lockEnabled && lockMonitor.isIdle) {
-      root.screensaverShown = false
-      run(lockProcess, "lock-system")
-    }
-  }
-
-  // A request that arrives while a probe runs is answered by one more after
-  // it, since that probe may have read the switch before it flipped.
-  function refreshCaffeine() {
-    if (caffeineProbe.running) caffeineProbeAgain = true
-    else caffeineProbe.running = true
-  }
-
-  onBatteryLowChanged: if (batteryLow && caffeine) run(caffeineLowBatteryProcess, "caffeine-low-battery")
-
-  function applyCaffeine(on) {
-    var changed = !root.caffeineStateLoaded || root.caffeine !== on
-    root.caffeine = on
-    root.caffeineStateLoaded = true
-    if (!changed) return
-    logEvent("caffeine", on ? "on" : "off")
-    // Turned on, or found on at startup, with the battery already low: the
-    // battery going low, which ends it, has already happened, so it ends now.
-    if (on && root.batteryLow) run(caffeineLowBatteryProcess, "caffeine-low-battery")
-    if (on && root.screensaverShown) {
-      root.screensaverShown = false
-      run(screensaverStopProcess, "screensaver-stop")
+  function setCaffeine(on) {
+    if (switchRead && caffeine === on) return
+    caffeine = on
+    switchRead = true
+    log("caffeine", on ? "on" : "off")
+    if (!on) return
+    // The battery going low ends it, and that has already happened.
+    if (batteryLow) caffeineEnds.go()
+    if (saverUp) {
+      saverUp = false
+      saverOff.go()
     }
   }
 
   IdleMonitor {
-    id: screensaverMonitor
-    enabled: root.idleEnabled && root.screensaverEnabled
-    timeout: Math.max(1, root.screensaverTimeoutSeconds)
+    id: saverWatch
+    enabled: idle.minding && idle.saverAfter > 0
+    timeout: Math.max(1, idle.saverAfter)
     respectInhibitors: true
-    onIsIdleChanged: root.handleScreensaverIdleChanged()
+    onIsIdleChanged: {
+      idle.log("screensaver-monitor", isIdle ? "idle" : "active")
+      if (isIdle && idle.minding && idle.saverAfter > 0) {
+        idle.saverUp = true
+        saverOn.go()
+      } else if (!isIdle && idle.saverUp) {
+        // A key ends the screensaver by itself; the mouse ends it here.
+        idle.saverUp = false
+        saverOff.go()
+      }
+    }
   }
 
   IdleMonitor {
-    id: lockMonitor
-    enabled: root.idleEnabled && root.lockEnabled
-    timeout: Math.max(1, root.lockTimeoutSeconds)
+    id: lockWatch
+    enabled: idle.minding && idle.lockAfter > 0
+    timeout: Math.max(1, idle.lockAfter)
     respectInhibitors: true
-    onIsIdleChanged: root.handleLockIdleChanged()
+    onIsIdleChanged: {
+      idle.log("lock-monitor", isIdle ? "idle" : "active")
+      if (!isIdle || !idle.minding || idle.lockAfter <= 0) return
+      idle.saverUp = false
+      locking.go()
+    }
   }
 
-  // nova-screensaver auto leaves it be when the screen is locked or it is
-  // already showing.
-  Process {
-    id: screensaverProcess
+  // A command of the service's, logged as <step>; one still running is not
+  // started again.
+  component Step: Process {
+    required property string step
+
+    function go() {
+      if (running) {
+        idle.log(step + "-skip", "already running")
+        return
+      }
+      idle.log(step)
+      running = true
+    }
+  }
+
+  // nova-screensaver auto leaves it be under the lock, or while it shows.
+  Step {
+    id: saverOn
+    step: "screensaver"
     command: ["nova-screensaver", "auto"]
   }
 
-  Process {
-    id: screensaverStopProcess
+  Step {
+    id: saverOff
+    step: "screensaver-stop"
     command: ["nova-screensaver", "stop"]
   }
 
-  Process {
-    id: lockProcess
+  Step {
+    id: locking
+    step: "lock-system"
     command: ["nova-system-lock"]
-    onExited: function(exitCode, exitStatus) { root.logEvent("process-exit", "lock exitCode=" + exitCode + " status=" + exitStatus) }
+    onExited: (code, status) => idle.log("process-exit", "lock exitCode=" + code + " status=" + status)
   }
 
+  Step {
+    id: caffeineEnds
+    step: "caffeine-low-battery"
+    command: ["nova-caffeine", "low-battery"]
+  }
+
+  // Reads the switch. Asked while it reads, it reads once more after, as
+  // the switch may have flipped after it looked.
   Process {
-    id: caffeineProbe
-    command: ["test", "-f", root.caffeinePath]
-    onExited: function(exitCode) {
-      root.applyCaffeine(exitCode === 0)
-      if (root.caffeineProbeAgain) {
-        root.caffeineProbeAgain = false
-        running = true
-      }
+    id: switchProbe
+    property bool askedAgain: false
+    command: ["test", "-f", idle.switchFile]
+
+    function ask() {
+      if (running) askedAgain = true
+      else running = true
+    }
+
+    onExited: code => {
+      idle.setCaffeine(code === 0)
+      if (!askedAgain) return
+      askedAgain = false
+      running = true
     }
   }
 
@@ -153,17 +159,12 @@ Item {
     interval: 60000
     repeat: true
     running: true
-    onTriggered: root.refreshCaffeine()
-  }
-
-  Process {
-    id: caffeineLowBatteryProcess
-    command: ["nova-caffeine", "low-battery"]
+    onTriggered: switchProbe.ask()
   }
 
   Component.onCompleted: {
-    logEvent("service-ready")
-    refreshCaffeine()
+    log("service-ready")
+    switchProbe.ask()
   }
 
   IpcHandler {
@@ -171,7 +172,7 @@ Item {
 
     // nova caffeine, after it flips the switch.
     function refresh(): string {
-      root.refreshCaffeine()
+      switchProbe.ask()
       return "ok"
     }
   }
