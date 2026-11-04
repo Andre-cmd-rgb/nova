@@ -83,8 +83,8 @@ QtObject {
 
   // ------------------------------------------------------------- the verbs
   //
-  // Each answers "" when done and what was wrong otherwise. One that edits
-  // shell.json saves it even when it fails, the layout filled in.
+  // Each answers "" when done and what was wrong otherwise, and saves
+  // shell.json only when done.
 
   function move(id, placement) {
     if (!ready) return "not ready"
@@ -92,6 +92,7 @@ QtObject {
     settings.edit(function(config) {
       Layout.shape(config)
       error = Layout.move(config, id, placement || {})
+      return error === ""
     })
     return error
   }
@@ -119,6 +120,7 @@ QtObject {
     settings.edit(function(config) {
       Layout.shape(config)
       error = Layout.setOption(config, id, key, value, selector)
+      return error === ""
     })
     return error
   }
@@ -142,6 +144,7 @@ QtObject {
       Layout.shape(config)
       if (on) error = switchOn(config, key, manifest, placement)
       else switchOff(config, key, manifest)
+      return error === ""
     })
     return error
   }

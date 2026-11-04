@@ -32,15 +32,19 @@ ShellRoot {
     }
   })
   property bool ran: false
+  property int saves: 0
 
   property PluginRegistry registry: PluginRegistry {
     settings: QtObject {
       readonly property var current: test.config
       readonly property var defaults: test.defaults
+      // As ShellJson's: a change that answers false is not saved.
       function edit(change) {
         var copy = JSON.parse(JSON.stringify(test.config))
-        change(copy)
+        if (change(copy) === false) return false
         test.config = copy
+        test.saves++
+        return true
       }
     }
     onUpdated: if (ready && !test.ran) test.run()
@@ -88,9 +92,13 @@ ShellRoot {
       && ids("right") === "nova.tray nova.network nova.audio nova.power",
       "put falls back to the default place when its anchor is missing: " + ids("right"))
 
+    var saved = saves
     check(registry.setOn("nova.bluetooth", true, { before: "nova.nowhere" }) === "could not find target widget nova.nowhere"
       && !registry.inBar("nova.bluetooth"),
       "enable with a missing anchor fails and changes nothing")
+    check(registry.move("nova.nowhere", { section: "left" }) === "could not find widget nova.nowhere"
+      && registry.setOption("nova.clock", "format", "HH:mm", { section: "left" }) === "could not find widget nova.clock"
+      && saves === saved, "verbs that fail save nothing: " + (saves - saved) + " saves")
     check(registry.move("nova.weather", { section: "right", before: "nova.audio" }) === ""
       && ids("right") === "nova.tray nova.network nova.weather nova.audio nova.power"
       && ids("center") === "nova.indicators nova.clock", "move: " + ids("right"))
