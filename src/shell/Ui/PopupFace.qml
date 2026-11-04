@@ -25,7 +25,7 @@ BorderSurface {
   padding: Style.spacing.popupPadding
   radius: Style.cornerRadius
   color: Commons.Color.popups.background
-  borderSpec: Border.localOrSurfaceSpec("popups", "border", edgeColor, Commons.Color.popups.border, Math.max(1, Style.space(2)))
+  borderSpec: Border.popupSpec(edgeColor, Math.max(1, Style.space(2)))
   opacity: shown ? 1.0 : 0
 
   Behavior on opacity {

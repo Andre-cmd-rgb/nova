@@ -3,7 +3,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons as Commons
-import "BorderGeometry.js" as Geometry
+import "ColorText.js" as ColorText
 
 // The shell's look but for its colours. The corners and the gap to the
 // screen's edge follow Hyprland; the type scale, the spacing, the bar's size
@@ -309,7 +309,7 @@ QtObject {
     case "transparent":
       return Qt.rgba(0, 0, 0, 0)
     }
-    var hex = token.charAt(0) === "#" ? Geometry.canonicalColor(token, 1) : ""
+    var hex = token.charAt(0) === "#" ? ColorText.read(token, 1) : ""
     return typeof hex === "string" ? otherwise : hex
   }
 

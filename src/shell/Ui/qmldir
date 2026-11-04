@@ -3,7 +3,6 @@ module qs.Ui
 BarIconButton 1.0 BarIconButton.qml
 BarIndicator 1.0 BarIndicator.qml
 BarWidget 1.0 BarWidget.qml
-BorderOverlay 1.0 BorderOverlay.qml
 BorderSurface 1.0 BorderSurface.qml
 Button 1.0 Button.qml
 ButtonGroup 1.0 ButtonGroup.qml

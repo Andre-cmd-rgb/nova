@@ -25,8 +25,6 @@ Pressable {
   property color accent: Commons.Color.accent
   property real fontSize: Style.font.body
   property real iconSize: Style.font.icon
-  property real horizontalPadding: Style.spacing.controlPaddingX
-  property real verticalPadding: Style.spacing.controlPaddingY
 
   readonly property bool hot: _pointer.containsMouse || hasCursor
 
@@ -59,10 +57,8 @@ Pressable {
     : bordered ? "normal"
     : ""
 
-  topPadding: verticalPadding
-  rightPadding: horizontalPadding
-  bottomPadding: verticalPadding
-  leftPadding: horizontalPadding
+  horizontalPadding: Style.spacing.controlPaddingX
+  verticalPadding: Style.spacing.controlPaddingY
   implicitWidth: content.implicitWidth + 2 * horizontalPadding + _room.left + _room.right
   implicitHeight: content.implicitHeight + 2 * verticalPadding + _room.top + _room.bottom
 

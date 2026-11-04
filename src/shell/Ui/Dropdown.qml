@@ -30,7 +30,7 @@ Item {
   property int rowHeight: Style.spacing.controlHeight
   property int popupRowHeight: Style.spacing.popupRowHeight
 
-  readonly property var popupBorderSpec: Border.localOrSurfaceSpec("popups", "border", popupBorder, Commons.Color.popups.border, Style.normalBorderWidth)
+  readonly property var popupBorderSpec: Border.popupSpec(popupBorder, Style.normalBorderWidth)
 
   signal changed(string value)
 
