@@ -3,7 +3,6 @@
   "id": "nova.bar",
   "name": "Bar",
   "version": "1.0.0",
-  "author": "Nova",
   "description": "The bar along one edge of every screen, with the widgets of shell.json's layout, moved and set on the bar itself.",
   "alwaysOn": true,
   "kinds": [
