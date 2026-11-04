@@ -29,21 +29,12 @@ BarWidget {
     var items = SystemTray.items.values
     var shown = []
     for (var i = 0; i < items.length; i++) {
-      if (items[i].status !== Status.Passive && !ownedByNova(items[i])) shown.push(items[i])
+      if (items[i].status !== Status.Passive) shown.push(items[i])
     }
     return shown
   }
   readonly property var pinnedItems: allItems.filter(function(item) { return placeOf(item) === "pinned" })
   readonly property var drawerItems: allItems.filter(function(item) { return placeOf(item) === "drawer" })
-
-  // LocalSend's icon shows nothing, its menu has only Open and Quit, and a
-  // click on it does nothing: Share > Receive does all of it. It cannot be
-  // hidden by hand either, as it takes a new id each time it starts.
-  function ownedByNova(item) {
-    return [item.id, item.title, item.tooltipTitle].some(function(name) {
-      return String(name || "").toLowerCase().indexOf("localsend") !== -1
-    })
-  }
 
   function placeOf(item) {
     var id = String(item.id || "")
