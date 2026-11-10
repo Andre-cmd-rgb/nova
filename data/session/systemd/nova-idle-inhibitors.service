@@ -1,0 +1,17 @@
+[Unit]
+Description=Keep the screen awake while an app asks to
+Documentation=file:///usr/lib/nova/bin/nova-idle-inhibitors
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+# Ready once it owns org.freedesktop.ScreenSaver.
+Type=dbus
+BusName=org.freedesktop.ScreenSaver
+ExecStart=/usr/lib/nova/bin/nova-idle-inhibitors
+Restart=on-failure
+RestartSec=2
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target

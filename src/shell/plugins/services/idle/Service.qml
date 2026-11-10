@@ -25,8 +25,14 @@ Item {
   readonly property string switchFile: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/caffeine"
   property bool caffeine: false
   property bool switchRead: false
-  // Someone's absence counts: the switch read, and Caffeine off.
-  readonly property bool minding: switchRead && !caffeine
+  // The apps keeping the screen awake through org.freedesktop.ScreenSaver
+  // (nova-idle-inhibitors writes this file while any does, one
+  // "app<TAB>reason" a line, and asks for a refresh), as "app: reason".
+  readonly property string inhibitorsFile: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/idle-inhibitors"
+  property var inhibitors: []
+  // Someone's absence counts: the switch read, Caffeine off, and no app
+  // keeping the screen awake.
+  readonly property bool minding: switchRead && !caffeine && inhibitors.length === 0
 
   // The screensaver this service started since the last input, which input
   // takes away again.
@@ -43,6 +49,20 @@ Item {
   function seconds(value, otherwise) {
     var count = Number(value)
     return isFinite(count) && count >= 0 ? Math.floor(count) : otherwise
+  }
+
+  // The inhibitors file's text as "app: reason" entries.
+  function setInhibitors(text) {
+    var found = []
+    for (const line of String(text || "").split("\n")) {
+      const tab = line.indexOf("\t")
+      const app = (tab < 0 ? line : line.substring(0, tab)).trim()
+      const reason = tab < 0 ? "" : line.substring(tab + 1).trim()
+      if (app !== "") found.push(reason !== "" ? app + ": " + reason : app)
+    }
+    if (found.join("\n") === inhibitors.join("\n")) return
+    inhibitors = found
+    log("inhibitors", found.length > 0 ? found.join("; ") : "none")
   }
 
   function log(step, detail) {
@@ -168,11 +188,23 @@ Item {
     }
   }
 
+  FileView {
+    id: inhibitorsView
+    path: idle.inhibitorsFile
+    printErrors: false
+    onLoaded: idle.setInhibitors(text())
+    // No file: nothing is held.
+    onLoadFailed: idle.setInhibitors("")
+  }
+
   Timer {
     interval: 60000
     repeat: true
     running: true
-    onTriggered: switchProbe.ask()
+    onTriggered: {
+      switchProbe.ask()
+      inhibitorsView.reload()
+    }
   }
 
   Component.onCompleted: {
@@ -183,10 +215,17 @@ Item {
   IpcHandler {
     target: "idle"
 
-    // nova caffeine, after it flips the switch.
+    // nova caffeine, after it flips the switch, and nova-idle-inhibitors,
+    // after an app takes or lets go of the screen.
     function refresh(): string {
       switchProbe.ask()
+      inhibitorsView.reload()
       return "ok"
+    }
+
+    // What keeps the screen awake now, one a line: Caffeine, then the apps.
+    function inhibitors(): string {
+      return (idle.caffeine ? ["Caffeine"] : []).concat(idle.inhibitors).join("\n")
     }
   }
 }

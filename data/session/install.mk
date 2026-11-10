@@ -24,4 +24,5 @@ install-session:
 	# not something a user can forget to turn on.
 	install -d $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants $(DESTDIR)$(SYSTEMD_USER)/nova-unlocked.target.wants
 	ln -sf ../nova-session-guard.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-session-guard.service
+	ln -sf ../nova-idle-inhibitors.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-idle-inhibitors.service
 	ln -sf ../nova-keyring-migrate.service $(DESTDIR)$(SYSTEMD_USER)/nova-unlocked.target.wants/nova-keyring-migrate.service

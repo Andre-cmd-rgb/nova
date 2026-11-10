@@ -50,7 +50,8 @@ depends=(
   gnome-keyring
   libsecret
   polkit
-  python-dbus    # nova-keyring-migrate
+  python-dbus    # nova-keyring-migrate, nova-idle-inhibitors
+  python-gobject # nova-idle-inhibitors' main loop
 
   # Network, Bluetooth, power, backlight, removable disks
   networkmanager

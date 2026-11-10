@@ -1,0 +1,196 @@
+#!/usr/bin/python3
+# nova:summary=Keep the screen awake while an app asks to (org.freedesktop.ScreenSaver)
+# nova:hidden=true
+#
+# Video players, calls, games and file transfers ask the desktop to keep the
+# screen on through org.freedesktop.ScreenSaver: directly, or through the
+# desktop portal's Inhibit, which xdg-desktop-portal-gtk passes on to it. The
+# shell's idle timers only see Wayland's own idle inhibitors, so without this
+# service those requests failed, and the screensaver and the lock came up in
+# the middle of a film.
+#
+# It owns that name for the session (nova-idle-inhibitors.service) and keeps
+# the requests that are held: each until it is let go, or until the app that
+# asked leaves the bus, however it ends. While any is held, the file
+# $XDG_RUNTIME_DIR/nova/idle-inhibitors lists them, one "app<TAB>reason" a
+# line, and the shell's idle service counts no one away (nova-shell idle
+# refresh tells it to look). Lock locks the screen, as the interface has it.
+import os
+import subprocess
+import sys
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+
+NAME = "org.freedesktop.ScreenSaver"
+PATHS = ("/org/freedesktop/ScreenSaver", "/ScreenSaver")
+
+
+def on_signal(signal, handler):
+    """GLib's Unix signal source: GLibUnix in newer PyGObject, GLib before."""
+    try:
+        from gi.repository import GLibUnix
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, signal, handler)
+    except (ImportError, AttributeError):
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal, handler)
+
+
+def log(message):
+    print(f"nova-idle-inhibitors: {message}", file=sys.stderr, flush=True)
+
+
+def one_line(text, limit=120):
+    """An app's words as one plain line: no tabs, newlines or control codes."""
+    clean = "".join(c if c.isprintable() else " " for c in str(text))
+    return " ".join(clean.split())[:limit]
+
+
+class Held:
+    """The requests held now, by cookie, and the apps that hold them."""
+
+    def __init__(self, bus, path):
+        self.bus = bus
+        self.path = path
+        self.requests = {}  # cookie -> (sender, app, reason)
+        self.watches = {}  # sender -> its NameOwnerChanged match
+        self.cookie = 0
+
+    def add(self, sender, app, reason):
+        self.cookie = self.cookie % 0xFFFFFFFF + 1
+        while self.cookie in self.requests:
+            self.cookie = self.cookie % 0xFFFFFFFF + 1
+        self.requests[self.cookie] = (sender, one_line(app) or "an app", one_line(reason))
+        if sender not in self.watches:
+            self.watches[sender] = self.bus.watch_name_owner(
+                sender, lambda owner, sender=sender: owner or self.gone(sender))
+        log(f"held {self.cookie} for {self.requests[self.cookie][1]}: {self.requests[self.cookie][2]}")
+        self.publish()
+        return self.cookie
+
+    def remove(self, cookie, sender):
+        held = self.requests.get(cookie)
+        # Only the app that asked lets go of its own.
+        if held is None or held[0] != sender:
+            return
+        del self.requests[cookie]
+        log(f"let go {cookie} by {held[1]}")
+        self.unwatch(sender)
+        self.publish()
+
+    def gone(self, sender):
+        cookies = [c for c, held in self.requests.items() if held[0] == sender]
+        for cookie in cookies:
+            log(f"let go {cookie}: {self.requests.pop(cookie)[1]} left the bus")
+        self.unwatch(sender)
+        if cookies:
+            self.publish()
+
+    def unwatch(self, sender):
+        if any(held[0] == sender for held in self.requests.values()):
+            return
+        match = self.watches.pop(sender, None)
+        if match is not None:
+            match.cancel()
+
+    def publish(self):
+        lines = "".join(f"{app}\t{reason}\n" for _, app, reason in self.requests.values())
+        if lines:
+            temporary = f"{self.path}.{os.getpid()}"
+            with open(temporary, "w", encoding="utf-8") as out:
+                out.write(lines)
+            os.replace(temporary, self.path)
+        else:
+            try:
+                os.unlink(self.path)
+            except FileNotFoundError:
+                pass
+        # The shell looks again by itself every minute, should this not reach it.
+        try:
+            subprocess.Popen(["nova-shell", "-q", "idle", "refresh"], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
+
+
+class ScreenSaver(dbus.service.Object):
+    def __init__(self, bus, path, held):
+        super().__init__(bus, path)
+        self.held = held
+
+    @dbus.service.method(NAME, in_signature="ss", out_signature="u", sender_keyword="sender")
+    def Inhibit(self, app, reason, sender=None):
+        return dbus.UInt32(self.held.add(sender, app, reason))
+
+    @dbus.service.method(NAME, in_signature="u", out_signature="", sender_keyword="sender")
+    def UnInhibit(self, cookie, sender=None):
+        self.held.remove(int(cookie), sender)
+
+    @dbus.service.method(NAME, in_signature="", out_signature="")
+    def Lock(self):
+        subprocess.Popen(["nova-system-lock"], stdin=subprocess.DEVNULL)
+
+    # The rest of the interface, as a screensaver that is not showing: input
+    # is the shell's to see, and only the shell starts the screensaver.
+    @dbus.service.method(NAME, in_signature="", out_signature="b")
+    def GetActive(self):
+        return False
+
+    @dbus.service.method(NAME, in_signature="b", out_signature="b")
+    def SetActive(self, active):
+        return False
+
+    @dbus.service.method(NAME, in_signature="", out_signature="u")
+    def GetActiveTime(self):
+        return dbus.UInt32(0)
+
+    @dbus.service.method(NAME, in_signature="", out_signature="u")
+    def GetSessionIdleTime(self):
+        return dbus.UInt32(0)
+
+    @dbus.service.method(NAME, in_signature="", out_signature="")
+    def SimulateUserActivity(self):
+        pass
+
+    @dbus.service.signal(NAME, signature="b")
+    def ActiveChanged(self, active):
+        pass
+
+
+def main():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        log("XDG_RUNTIME_DIR is not set")
+        return 1
+    os.makedirs(os.path.join(runtime, "nova"), mode=0o700, exist_ok=True)
+    path = os.path.join(runtime, "nova", "idle-inhibitors")
+    # A file left by a run that ended holds nothing any more.
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        pass
+
+    DBusGMainLoop(set_as_default=True)
+    bus = dbus.SessionBus()
+    held = Held(bus, path)
+    objects = [ScreenSaver(bus, p, held) for p in PATHS]
+    try:
+        name = dbus.service.BusName(NAME, bus, do_not_queue=True)
+    except dbus.exceptions.NameExistsException:
+        log(f"{NAME} is another program's already")
+        return 1
+    log(f"serving {NAME}")
+    loop = GLib.MainLoop()
+    for signal in (2, 15):  # SIGINT, SIGTERM
+        on_signal(signal, loop.quit)
+    loop.run()
+    del objects, name
+    # Ended, it holds nothing: the shell counts idle time again.
+    held.requests.clear()
+    held.publish()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

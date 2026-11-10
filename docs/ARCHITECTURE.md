@@ -61,7 +61,7 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
   | User data | `~/.local/share/nova/calendar/calendar.ics` (the calendar); `~/.local/share/nova-dictation/` (the speech model, downloaded at dictation's first use) |
   | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files`; this computer's patches in `/etc/nova/patches/`, their `/etc` files listed in `/var/lib/nova/patch-files` |
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`; `patch-files`, and `patches`: whether each patch is on) |
-  | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets, `dictation/`'s recordings until they are read, a display change not kept yet, `power-profile`: the power mode chosen since the unplug) |
+  | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets, `dictation/`'s recordings until they are read, a display change not kept yet, `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves) |
 
 - **Identifiers:** shell plugin ids are `nova.<name>`; every plugin ships in the
   `nova` package and the shell loads no other (`plugins/index.json`, written at
