@@ -12,9 +12,12 @@ setup() {
   mkdir -p "$SCRATCH/lib" "$SCRATCH/bin"
   cp "$REPO_ROOT/src/cli/bin/nova-power-gpu" "$SCRATCH/lib/"
   stub lib/nova-hw-detect 'echo thinkpad-p1-gen4i'
+  # On battery a draw row follows the card's, after a slow read of the battery.
   stub lib/nova-power 'case $1 in
-    status) printf "\n  power source   AC\n  discrete GPU   %s\n" "$(cat "$CARD")"
-      [[ -z ${HELD:-} ]] || printf "  held by        %s\n" "$HELD"; echo ;;
+    status) printf "\n  power source   %s\n  discrete GPU   %s\n" "${SOURCE:-AC}" "$(cat "$CARD")"
+      [[ -z ${HELD:-} ]] || printf "  held by        %s\n" "$HELD"
+      [[ ${SOURCE:-AC} == AC ]] || { sleep 0.3; printf "  draw           9.00 W\n"; }
+      echo ;;
   esac'
   # The root half: off only when nothing holds the card.
   stub bin/nova-power-gpu-mode-apply 'if [[ $(cat "$CARD") == off ]]; then echo on >"$CARD"
@@ -64,4 +67,14 @@ toggle() { "$SCRATCH/lib/nova-power-gpu" toggle; }
   [ "$status" -eq 0 ]
   [ "$(cat "$CARD")" = off ]
   fails grep -q nova-notification-send "$CALLS"
+}
+
+@test "toggle: on battery, the row after the card's does not kill it" {
+  # awk leaving at the card's row closed the pipe; the draw row then died of
+  # SIGPIPE, and pipefail with set -e ended the toggle at 141 before pkexec.
+  echo on >"$CARD"
+  SOURCE="battery (power-saver)" run toggle
+  [ "$status" -eq 0 ]
+  grep -qx "pkexec $NOVA_POWER_GPU_APPLY toggle" "$CALLS"
+  [ "$(cat "$CARD")" = off ]
 }

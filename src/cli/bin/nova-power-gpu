@@ -19,10 +19,15 @@ APPLY=${NOVA_POWER_GPU_APPLY:-/usr/lib/nova/nova-power-gpu-mode-apply}
 usage() { echo "Usage: nova power gpu [status [-v] | mode [auto|off] | toggle | run <program> [args...]]" >&2; }
 
 # A row of nova power status: "on" or "off" for the card, or what holds it.
+# awk reads to the end. Leaving at the row it wants closed the pipe, and on
+# battery the row after the card's (the draw, behind a slow battery read) then
+# died of SIGPIPE; pipefail and set -e turned that into the whole toggle
+# exiting 141 before it switched anything, silently, from the menu.
 status_row() { # label
   "$bin/nova-power" status 2>/dev/null | awk -v label="$1" '
+    found { next }
     { line = $0; sub(/^ +/, "", line) }
-    index(line, label " ") == 1 { line = substr(line, length(label) + 1); sub(/^ +/, "", line); print line; exit }'
+    index(line, label " ") == 1 { line = substr(line, length(label) + 1); sub(/^ +/, "", line); print line; found = 1 }'
 }
 
 toggle() {
