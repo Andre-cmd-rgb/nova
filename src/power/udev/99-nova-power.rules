@@ -9,6 +9,8 @@ SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{[dmi/id]product_version}=="
 # there at the unplug (fact 54); nova-power checks the power source itself and
 # does nothing on AC. On bind, not add: the interfaces exist only by then, and
 # the classes on them decide the delay, or whether to touch it at all.
-ACTION=="bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+# A root hub (usb1, usb2, ...) is no device of that kind: its controller's
+# runtime PM is runtime_pm_battery's.
+ACTION=="bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", KERNEL=="*-*", \
   ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", \
   RUN+="/usr/lib/nova/bin/nova-power usb-added $kernel"

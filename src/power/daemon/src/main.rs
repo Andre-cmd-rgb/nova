@@ -678,7 +678,9 @@ impl IGpu {
     // Order matters when raising: the boost target cannot exceed the ceiling,
     // so the ceiling goes up first and comes down last.
     fn set(&self, w: &mut Writer, mhz: u64) {
-        let want = mhz.clamp(self.min_mhz, self.hw_max_mhz.max(mhz));
+        // Never below the hardware's floor. (A clamp to RP0 here panicked
+        // when RP0 could not be read and a tier asked for less than RPn.)
+        let want = mhz.max(self.min_mhz);
         let current = read_u64(&self.max).unwrap_or(0);
         if want >= current {
             w.write(&self.max, &want.to_string());
@@ -1114,9 +1116,14 @@ impl Governor {
             return Mode::Ac;
         }
         // A boost is the user saying "I know what this is, leave it alone".
+        // When it ends, the ladder starts again at the mode's floor, as after
+        // an unplug: kept, its turbo was clamped into balanced's and
+        // performance's range and stayed for as long as the load sat between
+        // busy_fall and busy_climb.
         if boost {
             self.above_since = None;
             self.below_since = None;
+            self.saving = None;
             return Mode::Battery(self.cfg.tiers.len() - 1);
         }
         let (floor, top) = saving.range(self.cfg.tiers.len() - 1);
@@ -1665,6 +1672,38 @@ mod tests {
         assert_eq!(
             gov.step(true, Saving::Saver, false, 0.0, Some(50.0), now),
             Mode::Ac
+        );
+    }
+
+    #[test]
+    fn the_end_of_a_boost_starts_at_the_mode_s_floor() {
+        let mut gov = Governor::new(Config::default());
+        let now = Instant::now();
+        assert_eq!(
+            run(&mut gov, Saving::Balanced, 40.0, 2, now),
+            Mode::Battery(0)
+        );
+        assert_eq!(
+            gov.step(
+                false,
+                Saving::Balanced,
+                true,
+                40.0,
+                Some(50.0),
+                now + Duration::from_secs(2)
+            ),
+            Mode::Battery(3)
+        );
+        // The load between busy_fall and busy_climb moves nothing either way.
+        assert_eq!(
+            run(
+                &mut gov,
+                Saving::Balanced,
+                40.0,
+                600,
+                now + Duration::from_secs(3)
+            ),
+            Mode::Battery(0)
         );
     }
 

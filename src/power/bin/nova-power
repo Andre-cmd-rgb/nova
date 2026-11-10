@@ -224,17 +224,34 @@ MODPROBE_BLOCK=/run/modprobe.d/nova-power-nvidia.conf
 # because it has to happen before the modules are unloaded, while dropping the
 # nodes has to happen after — and an unload that fails has to undo only the
 # first of the two.
+#
+# udevd loads modules itself, through a libkmod context it made at its start,
+# and that context reads only the config folders that existed then:
+# /run/modprobe.d comes later, made here, so udevd never saw the block. The
+# plug-in's rescan loaded nvidia twice regardless ("NVRM: No NVIDIA devices
+# probed", 2026-11-10), and a load from a udev worker still busy at boot could
+# come after the unload. A reload makes udevd build its context again, with
+# the block, or without it once it is lifted.
 block_nvidia_autoload() {
-  local module
-  mkdir -p "${MODPROBE_BLOCK%/*}"
-  : >"$MODPROBE_BLOCK"
+  local module want=''
   for module in "${NVIDIA_MODULES[@]}"; do
-    printf 'install %s /bin/false\n' "$module" >>"$MODPROBE_BLOCK"
+    want+="install $module /bin/false"$'\n'
   done
+  [[ -f $MODPROBE_BLOCK && $(<"$MODPROBE_BLOCK")$'\n' == "$want" ]] && return 0
+  mkdir -p "${MODPROBE_BLOCK%/*}"
+  printf '%s' "$want" >"$MODPROBE_BLOCK"
+  udev_reload
   return 0
 }
 
-unblock_nvidia_autoload() { rm -f "$MODPROBE_BLOCK"; }
+unblock_nvidia_autoload() {
+  [[ -e $MODPROBE_BLOCK ]] || return 0
+  rm -f "$MODPROBE_BLOCK"
+  udev_reload
+}
+
+# udevd's own module loading, with the config as it is now.
+udev_reload() { udevadm control --reload 2>/dev/null || true; }
 
 # For the paths that give up. A run that fails must never lift a block that
 # another run installed correctly: with the card off the bus, the block is the
@@ -272,7 +289,13 @@ stop_nvidia_services() {
 # Only Dynamic Boost comes back. persistenced is left down by design: it
 # exists to keep the driver resident, which is the thing we are trying not to
 # do, and CUDA works without it.
+#
+# NVIDIA's unit allows five starts a boot (StartLimitBurst=5 over an infinite
+# interval), and every off and on is a stop and a start: from the sixth
+# plug-in Dynamic Boost was refused until a restart. The count is cleared
+# first.
 start_nvidia_services() {
+  systemctl reset-failed nvidia-powerd 2>/dev/null
   systemctl start nvidia-powerd 2>/dev/null
   return 0
 }
@@ -468,7 +491,22 @@ gpu_wanted() { [[ $(gpu_mode) == auto ]] && on_ac; }
 # time can only be somebody asking for it. That is the whole detection — no
 # flag to pass, no second command to remember, and nothing to get out of step.
 # Plugging in clears it; the marker lives in /run, so a reboot forgets it too.
-GPU_MANUAL=/run/nova-power.gpu-manual
+GPU_MANUAL=${GPU_MANUAL:-/run/nova-power.gpu-manual}
+# The other hand: a card turned off while the policy wants it on stays off
+# until the next plug-in. Without it the retry timer put it back within two
+# minutes, and any resume on AC at once.
+GPU_MANUAL_OFF=${GPU_MANUAL_OFF:-/run/nova-power.gpu-manual-off}
+# The power source the policy last applied, so that `ac` can tell a plug-in
+# from the runs on AC that are none: every resume, a Mains uevent with no
+# change. Only a plug-in clears what a hand chose.
+POWER_SOURCE_STATE=${POWER_SOURCE_STATE:-/run/nova-power.source}
+
+source_applied() { # ac|battery -> whether that is a change from the last run
+  local last=''
+  [[ -r $POWER_SOURCE_STATE ]] && read -r last <"$POWER_SOURCE_STATE"
+  printf '%s\n' "$1" >"$POWER_SOURCE_STATE" 2>/dev/null
+  [[ $last != "$1" ]]
+}
 
 # The policy's own "turn it off", which declines when the user has said
 # otherwise. `gpu-off` by hand is the way to cancel that, and does.
@@ -477,6 +515,28 @@ gpu_policy_off() {
     note 'discrete GPU was turned on by hand; leaving it alone'
     return 0
   fi
+  gpu_off
+}
+
+# The card where the policy wants it, unless a hand has said otherwise since
+# the last plug-in.
+gpu_apply() {
+  if [[ -e $GPU_MANUAL ]]; then
+    note 'discrete GPU was turned on by hand; leaving it alone'
+    return 0
+  fi
+  if gpu_wanted && [[ ! -e $GPU_MANUAL_OFF ]]; then
+    gpu_on
+    return
+  fi
+  [[ ! -e $GPU_MANUAL_OFF ]] || note 'discrete GPU was turned off by hand; it comes back at the next plug-in'
+  gpu_off
+}
+
+# An explicit off: kept, where the policy would put the card back.
+gpu_hand_off() {
+  rm -f "$GPU_MANUAL"
+  if gpu_wanted; then : >"$GPU_MANUAL_OFF"; fi
   gpu_off
 }
 
@@ -516,6 +576,8 @@ gpu_on() {
   start_nvidia_services
 
   ((rescanned)) && log "dGPU back on the bus" || note "dGPU already on the bus"
+  # On is on: whatever a hand turned off before, this one asks for it.
+  rm -f "$GPU_MANUAL_OFF"
   if ! gpu_wanted; then
     : >"$GPU_MANUAL"
     log 'kept on until the charger is next plugged in, or run: nova power gpu-off'
@@ -664,17 +726,24 @@ usb_pm_battery() {
 # Port names are reused, so a line is put back only if the same device is
 # still at that port; another one plugged in there in the meantime keeps
 # whatever its own driver chose.
+#
+# usb-added appends to the file outside the lock, so it is moved aside before
+# it is read: a device bound as the charger goes in lands in a new file, which
+# the second pass puts back too, rather than in one about to be deleted.
 usb_pm_ac() {
   local name id delay dev
-  [[ -r $USB_PM_STATE ]] || return 0
-  while read -r name id delay; do
-    dev=$SYS_USB/$name
-    [[ -e $dev/idVendor ]] || continue
-    [[ $(<"$dev/idVendor"):$(<"$dev/idProduct") == "$id" ]] || continue
-    [[ $delay =~ ^-?[0-9]+$ ]] && echo "$delay" >"$dev/power/autosuspend_delay_ms" 2>/dev/null
-    echo on >"$dev/power/control" 2>/dev/null
-  done <"$USB_PM_STATE"
-  rm -f "$USB_PM_STATE"
+  for _ in 1 2; do
+    [[ -e $USB_PM_STATE ]] || return 0
+    mv -f "$USB_PM_STATE" "$USB_PM_STATE.ac" 2>/dev/null || return 0
+    while read -r name id delay; do
+      dev=$SYS_USB/$name
+      [[ -e $dev/idVendor ]] || continue
+      [[ $(<"$dev/idVendor"):$(<"$dev/idProduct") == "$id" ]] || continue
+      [[ $delay =~ ^-?[0-9]+$ ]] && echo "$delay" >"$dev/power/autosuspend_delay_ms" 2>/dev/null
+      echo on >"$dev/power/control" 2>/dev/null
+    done <"$USB_PM_STATE.ac"
+    rm -f "$USB_PM_STATE.ac"
+  done
   return 0
 }
 
@@ -1225,15 +1294,18 @@ esac
 
 case $cmd in
 battery)
+  source_applied battery || true
   gpu_policy_off
   extras battery
   ;;
 ac)
-  # Plugging in resets the override: carrying "leave it on" across a plug event
-  # would make the next unplug behave differently from the one before it for
-  # no visible reason.
-  rm -f "$GPU_MANUAL"
-  if gpu_wanted; then gpu_on; else gpu_off; fi
+  # Plugging in resets the overrides: carrying "leave it on" across a plug
+  # event would make the next unplug behave differently from the one before it
+  # for no visible reason. Only a plug-in does: this runs after every resume
+  # and on any Mains uevent too, and those kept neither a card turned on in
+  # Always Off nor one turned off on AC.
+  if source_applied ac; then rm -f "$GPU_MANUAL" "$GPU_MANUAL_OFF"; fi
+  gpu_apply
   extras ac
   ;;
 usb-added)
@@ -1308,7 +1380,20 @@ gpu-auto)
   # The GPU half alone. This is what the retry timer runs, so a manually
   # chosen power profile is never overwritten behind your back. A card still in
   # use is no failure: the log says who holds it, and the timer tries again.
-  if gpu_wanted; then gpu_on; else gpu_policy_off || true; fi
+  #
+  # It also catches a plug event that was lost: one that lands as an `auto`
+  # run finishes is merged into it by systemd and never applied, and then the
+  # whole policy, not the GPU alone, is on the wrong side until the next edge.
+  if on_ac; then source_now=ac; else source_now=battery; fi
+  source_last=''
+  [[ -r $POWER_SOURCE_STATE ]] && read -r source_last <"$POWER_SOURCE_STATE"
+  if [[ -n $source_last && $source_last != "$source_now" ]]; then
+    log "the $source_now policy was never applied; applying it now"
+    exec "$0" "$source_now"
+  fi
+  # A card that will not come on is a failure; one that will not go off yet,
+  # because something holds it, is not.
+  if gpu_wanted && [[ ! -e $GPU_MANUAL && ! -e $GPU_MANUAL_OFF ]]; then gpu_on; else gpu_apply || true; fi
   ;;
 gpu-mode)
   # Settings sets it through nova-power-gpu-mode-apply. The new mode takes
@@ -1321,7 +1406,7 @@ gpu-mode)
   mkdir -p "${GPU_MODE_FILE%/*}"
   printf '%s\n' "$2" >"$GPU_MODE_FILE.tmp"
   mv "$GPU_MODE_FILE.tmp" "$GPU_MODE_FILE"
-  rm -f "$GPU_MANUAL"
+  rm -f "$GPU_MANUAL" "$GPU_MANUAL_OFF"
   if gpu_wanted; then gpu_on; else gpu_off || log 'it goes off once nothing is using it'; fi
   ;;
 auto)
@@ -1366,17 +1451,9 @@ gpu-on) gpu_on ;;
 # An explicit off cancels an explicit on. Anything else would leave the override
 # in place with the card already gone, so the next manual on would be sticky for
 # a reason nobody could see.
-gpu-off)
-  rm -f "$GPU_MANUAL"
-  gpu_off
-  ;;
+gpu-off) gpu_hand_off ;;
 gpu-toggle)
-  if gpu_present; then
-    rm -f "$GPU_MANUAL"
-    gpu_off
-  else
-    gpu_on
-  fi
+  if gpu_present; then gpu_hand_off; else gpu_on; fi
   ;;
 status)
   # Read-only and side-effect free. Notably it does not call nvidia-smi: that
@@ -1415,6 +1492,8 @@ status)
     fi
     [[ -e $GPU_MANUAL ]] &&
       row '' 'on by hand — the policy will not switch it off'
+    [[ -e $GPU_MANUAL_OFF ]] &&
+      row '' 'off by hand — back on at the next plug-in'
   fi
 
   on_ac || row draw \

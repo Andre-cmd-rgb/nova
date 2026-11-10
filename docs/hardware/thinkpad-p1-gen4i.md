@@ -128,9 +128,11 @@ removed 11:09:05, `nvidia` loaded 11:09:18, panic 11:09:42. `gpu_off` now
 writes `install <module> /bin/false` into
 `/run/modprobe.d/nova-power-nvidia.conf` **before** unloading — the gap
 between unload and block is enough on its own — and deletes the nodes once the
-functions are gone. `gpu_on` lifts the block **before** the rescan, since the
-rescan is itself what makes udev try the driver. `/run` is a tmpfs, so a block
-can never survive into a boot where the card is back.
+functions are gone. `gpu_on` keeps the block through the rescan, which makes
+udev try the driver before the card can take it, and loads the modules itself
+once the card is back. udevd sees the block only after a reload (fact 55).
+`/run` is a tmpfs, so a block can never survive into a boot where the card is
+back.
 
 **11. `run` had no `die`.** It was called twice and never defined, and there is
 no `set -e`, so `nova power run` on battery printed `die: command not
@@ -1052,6 +1054,32 @@ see it:
 
 About 3 W at zero backlight is the 3840x2400 panel and the rest of what psys
 does not cover. That is the floor; PSR1 is already on (fact 17).
+
+**55. udevd never saw the modprobe block, and a hand's choice lasted two
+minutes.** udevd loads modules through a libkmod context made at its start,
+which watches only the config folders that existed then; `/run/modprobe.d` is
+made later, by `gpu_off`, so `install nvidia /bin/false` stopped `modprobe`
+and nvidia-modprobe but never udev. On 2026-11-10 the plug-in's rescan loaded
+`nvidia` twice with the block in force ("NVRM: No NVIDIA devices probed",
+22:41:07), and a udev worker still loading the softdeps at boot could put the
+driver back after `gpu_off`'s unload. The block, and its removal, now end with
+`udevadm control --reload`, which makes udevd build that context again.
+
+The same review found that a card turned off by hand on AC came back within
+two minutes (the retry timer) or at the next resume, and one turned on by
+hand in Always Off went off at the first resume on AC, though power.md promised
+both would last until the next plug-in. `ac` runs on every resume and on any
+Mains uevent, and cleared the hand's marker each time. `/run/nova-power.source`
+now records the source last applied, so only a real plug-in clears the markers,
+and `/run/nova-power.gpu-manual-off` keeps an off by hand. The retry timer also
+applies the whole policy when the recorded source is not the present one: a
+plug event landing as an `auto` run finishes is merged into it by systemd and
+was never applied. Smaller ones: `nvidia-powerd` allows five starts a boot, so
+from the sixth plug-in Dynamic Boost was refused (`reset-failed` first now);
+`usb-added` died on every root hub's bind; a device bound as the charger went
+in could be left at `auto`; and the end of a boost on battery kept its turbo
+tier in Balanced and Performance while the load sat between `busy_fall` and
+`busy_climb`.
 
 ## Working here
 

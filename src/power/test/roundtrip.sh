@@ -519,5 +519,32 @@ chk "usb ac clears state"                  "$([[ -e $USB_PM_STATE ]] && echo yes
 USB_AUTOSUSPEND_ON_BAT=no usb_pm_battery
 chk "usb autosuspend can be turned off"    "$(cat "$SYS_USB/3-1/power/control")" "on"
 
+# Fact 55: what a hand chose lasts until a plug-in, not until the next run on
+# AC (a resume, the retry timer). The card itself is stubbed: only the
+# decisions are under test.
+POWER_SOURCE_STATE=$T/source GPU_MANUAL_OFF=$T/gpu-manual-off
+rm -f "$GPU_MANUAL" "$GPU_MANUAL_OFF"
+AC=1 MODE=auto
+on_ac() { ((AC)); }
+gpu_mode() { echo "$MODE"; }
+gpu_on() { rm -f "$GPU_MANUAL_OFF"; gpu_wanted || : >"$GPU_MANUAL"; echo on; }
+gpu_off() { echo off; }
+source_applied ac
+chk "a first run is a change"              "$?" "0"
+source_applied ac
+chk "  the same source again is none"      "$?" "1"
+chk "off by hand on AC"                    "$(gpu_hand_off)" "off"
+chk "  is kept"                            "$([[ -e $GPU_MANUAL_OFF ]] && echo yes)" "yes"
+chk "  through a run on AC"                "$(QUIET=1 gpu_apply)" "off"
+source_applied battery; source_applied ac
+rm -f "$GPU_MANUAL" "$GPU_MANUAL_OFF"   # what `ac` does at a plug-in
+chk "  and gone at the next plug-in"       "$(gpu_apply)" "on"
+MODE=off
+gpu_on >/dev/null
+chk "on by hand in Always Off is kept"     "$([[ -e $GPU_MANUAL ]] && echo yes)" "yes"
+chk "  through a run on AC"                "$(QUIET=1 gpu_apply)" ""
+gpu_hand_off >/dev/null
+chk "  and an off by hand ends it"         "$([[ -e $GPU_MANUAL || -e $GPU_MANUAL_OFF ]] && echo left)" ""
+
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi
