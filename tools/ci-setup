@@ -76,6 +76,21 @@ tries() { # pacman's arguments
     sleep 30
   done
 }
+# A container newer than the pinned databases can hold packages they do not
+# have yet, and going down cannot replace those: on 2026-11-10 openssl 4.1
+# brought openssl-3, which owns the libcrypto.so.3 the snapshot's openssl
+# 3.6 brings back, and the move down failed on the conflict. They go first,
+# without their dependants, which the move down replaces by versions that
+# never knew them.
+if [[ $sync == -Syyuu ]]; then
+  tries -Syy
+  sync=-Suu
+fi
+mapfile -t newer < <(pacman -Qqm)
+if ((${#newer[@]})); then
+  echo "ci-setup: not in the pinned databases, removed first: ${newer[*]}" >&2
+  pacman -Rdd --noconfirm "${newer[@]}"
+fi
 tries "$sync" --noconfirm --needed git sudo "$@"
 if [[ -n ${cache:-} ]]; then
   mapfile -t native < <(pacman -Qqn)
