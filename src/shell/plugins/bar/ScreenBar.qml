@@ -55,10 +55,27 @@ Scope {
     Item {
       anchors.fill: parent
 
+      // The bar counts the pointer on each screen's strip once, on and off:
+      // a strip unmapped while it is on it (a move between screens) gets
+      // no leave, and its count stayed, holding the centre's peek for good.
       HoverHandler {
-        onHoveredChanged: screenBar.bar.pointerOnBar(hovered)
+        id: hover
+        property bool counted: false
+
+        function count(on) {
+          if (on === counted) return
+          counted = on
+          screenBar.bar.pointerOnBar(on)
+        }
+
+        onHoveredChanged: count(hovered && strip.visible)
         // A screen unplugged takes its bar with it, with no leave.
-        Component.onDestruction: if (hovered) screenBar.bar.pointerOnBar(false)
+        Component.onDestruction: count(false)
+      }
+
+      Connections {
+        target: strip
+        function onVisibleChanged() { hover.count(hover.hovered && strip.visible) }
       }
 
       Repeater {
