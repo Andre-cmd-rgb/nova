@@ -14,12 +14,13 @@ Everything ships in the `nova` package and is inert on any other computer.
 |---|---|
 | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd` | the policy and the governor |
 | `nova-power.service`, `nova-powerd.service`, `nova-power-gpu.timer` | enabled by the package, each with `ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")` |
-| `99-nova-power.rules` | plug and unplug re-apply the policy (DMI-matched) |
+| `99-nova-power.rules` | plug and unplug re-apply the policy; a USB device plugged in on battery may autosuspend (fact 54) (DMI-matched) |
 | `98-nova-igpu.rules` | `/dev/dri/igpu`, the colon-free name for the integrated card (fact 1) |
+| `72-nova-dgpu-no-seat.rules` | the discrete card's node is not the seat's, so the compositor cannot take it on hotplug (fact 53) |
 | `/usr/lib/systemd/system-sleep/nova-power` | the hibernate rescan (fact 29) |
 | `/usr/share/uwsm/env.d/20-nova-thinkpad-p1-gen4i` | the compositor pin and the hidden NVIDIA EGL vendor and Vulkan ICD (facts 1-3) |
 | `default/hypr/hardware/thinkpad-p1-gen4i.lua` | VA-API and GLX on the iGPU, direct scanout (fact 31) |
-| `data/hardware/thinkpad-p1-gen4i/etc/` | fan control, `nvidia-drm fbdev=0`, Bluetooth autosuspend off, NetworkManager's hands off the Wi-Fi power-save flag, and `rtc_cmos.use_acpi_alarm=1`; copied into `/etc` by `nova-hw-apply` from a pacman hook |
+| `data/hardware/thinkpad-p1-gen4i/etc/` | fan control, `nvidia-drm fbdev=0`, Bluetooth autosuspend off on AC (fact 54), NetworkManager's hands off the Wi-Fi power-save flag, and `rtc_cmos.use_acpi_alarm=1`; copied into `/etc` by `nova-hw-apply` from a pacman hook |
 | `/usr/lib/systemd/{logind,sleep}.conf.d/10-nova.conf` | suspend-then-hibernate on the lid, never hibernating on AC (facts 26, 30, 38), for every Nova machine |
 | `nova-power-profile` | the battery's power mode (fact 4): every unplug starts in saver, a mode chosen lasts until the next plug-in; plugged in, always performance |
 | `nova power gpu` | the switch, `status` and `run` |
@@ -229,7 +230,9 @@ package states. Here: xHCI at 499712 ns (about 500 µs) — the Bluetooth mouse
 (`8087:0032`, `btusb`, USB `3-14`) — and HD audio at 363520 ns, but only while
 something plays; `00:1f.3` is suspended otherwise. Neither is reclaimable
 without giving up the device. Package C2 sits above half of cumulative
-residency for that reason, not because something is set wrong.
+residency for that reason, not because something is set wrong. *(Wrong about
+xHCI, see fact 54: the LTR was not what kept the package out of PC10. The
+controller never sleeping was, and it can.)*
 
 Ruled out, so nobody re-tries them: **PSR is already on** (PSR1 enabled, IDLE;
 the panel reports `PSR = yes [0x01]` and no Panel Replay, so PSR2 is not
@@ -957,6 +960,98 @@ mode back a second or two later. The governor entered at performance's floor,
 so it fell at once (2 s on 11-08), but balanced's includes `mid`, which stayed
 until 25 s in a row under `busy_fall`. A change of mode now starts the ladder
 at the new mode's floor, as an unplug does.
+
+**53. After a plug-in in a session that started on battery, every later
+unplug left the card powered: the compositor took it on hotplug.** On
+2026-11-10 the session started on battery at 17:21, so the card was off the
+bus at login and aquamarine found only the iGPU. Plugged in at 18:50,
+nova-power rescanned it back. Unplugged at 20:10, every attempt since, every
+two minutes, has ended the same way:
+
+```
+nvidia_drm would not unload (refs: 1, held by -)
+held by 1 (systemd) 689 (systemd-logind) 1031 (Hyprland)
+leaving the dGPU powered
+```
+
+This time the holders are real. aquamarine's udev handler
+(`CSession::dispatchUdevEvents`, 0.15.1 and 0.16.0 alike) answers an `add` for
+a DRM card it does not know with `CBackend::onNewGpu`. That goes straight to
+`CDRMBackend::fromGpu` → `openIfKMS` → libseat → logind `TakeDevice`, and
+registers the card as a secondary GPU for the rest of the session. The path
+applies neither `AQ_DRM_DEVICES` nor the `ID_SEAT` check that the login-time
+enumeration does. With `fbdev=0` (fact 49) nothing else references
+`nvidia_drm`, so `refs: 1` is this open: logind opened the node once, and the
+four fds (Hyprland twice, logind, PID 1's fd store) are copies of that one open
+file. A module reference is per open file, not per fd, which is what fact 48's
+count of fds against the refcount missed.
+
+That is why it "worked before". Every mid-session removal in the journal
+(11-04 15:20 and 18:28, for instance) follows a login with the card already on
+the bus. There the login-time enumeration rejects it and lets it go. Every
+streak of declines (327 on 10-28, 165 on 11-09) follows a `dGPU back on the
+bus` inside a running session.
+
+`72-nova-dgpu-no-seat.rules` takes the `seat` and `master-of-seat` tags off the
+card node. Without the current `seat` tag logind does not track the device,
+and `TakeDevice` fails with `ENODEV` (`session_device_verify` →
+`manager_process_seat_device`, systemd 262). aquamarine then logs
+`libseat: Couldn't open device`, `onNewGpu` gives up, and the login-time
+enumeration skips the card the same way. The render node and `uaccess` are
+untouched, and PRIME offload uses those. The cost is that the compositor can
+never drive an output wired to the dGPU (`card0-DP-5`, `DP-6`, `HDMI-A-2`), which
+the `AQ_DRM_DEVICES` pin had already decided at every login. The hotplug was
+the only way that ever happened. `udevadm test` with the rule in `/run`:
+`card0` `CURRENT_TAGS=:uaccess:`, `card1` unchanged. It applies to a card node
+created after it is installed; a card already held stays held until logout.
+
+A card held this way still sits in runtime D3 while nothing renders on it (82
+min suspended against 4.5 active). So the cost is smaller than it looks,
+except when something reads its config space: `lspci` resumes it, and the
+first reading after this unplug, 18.6 W, was taken with it awake.
+
+**54. Package C10 had never been reached, and the blocker was two USB devices
+pinned awake, not the LTR table.** On 2026-11-10 the desktop sat idle on an
+empty workspace, on battery, in power-saver, backlight 180/600.
+`package_cstate_show` had PC10 at 0 since boot. Over 60 s: PC0 16%, PC2
+31%, PC8 50%, PC9 0.6%; the battery at 10.7-10.9 W (mean `power_now`), psys
+6.1-6.4 W, package 0.8-0.9 W. Fact 17 put it down to the LTRs, and
+`ltr_ignore` disproves that. Ignoring XHCI (500 µs), SOUTHPORT_B (646 µs) or
+both left PC10 at 0.
+
+What blocked it was the xHCI controller never suspending: `00:14.0` active,
+and `pch_ip_power_gating_status` showed `XHCI State: On`. Two devices on it sat
+at `power/control = on`, each with interrupt endpoints polled every 1 ms:
+`3-14` (8087:0032, the AX210's Bluetooth, pinned by this profile's
+`btusb enable_autosuspend=n`) and `3-1` (046d:c539, the G603's Lightspeed
+receiver, the kernel's default for a HID device).
+
+| idle, 50 s each | xHCI | PC10 | psys | battery |
+|---|---|---|---|---|
+| both pinned | active | 0% | 6.1-6.4 W | 10.7-10.9 W |
+| receiver allowed to sleep | active | 0% | 6.1 W | 10.7 W |
+| receiver and Bluetooth | suspended | 69% | 2.7 W | 8.5 W |
+
+Either one alone does nothing: the controller sleeps only once every device
+on it does. On battery nova-power now lets each USB device the kernel left at
+`on` autosuspend (`usb_pm_battery`), records it, and puts it back on AC. HID
+and Bluetooth get a 10 s delay instead of 2 s, because their cost is lag on
+the first movement after a pause. Audio is never touched. A device plugged in
+on battery is handled when it binds (`99-nova-power.rules`).
+`USB_AUTOSUSPEND_ON_BAT=no` in `/etc/nova/power.conf` turns it off. The btusb
+option stays, so on AC a Bluetooth mouse still never lags.
+
+With PC10 working, the backlight is most of what is left, and psys does not
+see it:
+
+| idle, PC10 ~70% | psys | battery |
+|---|---|---|
+| backlight 180/600 | 2.3 W | 7.7 W |
+| 60/600 | 2.2 W | 7.0 W |
+| 0/600 | 2.1 W | 5.2 W |
+
+About 3 W at zero backlight is the 3840x2400 panel and the rest of what psys
+does not cover. That is the floor; PSR1 is already on (fact 17).
 
 ## Working here
 

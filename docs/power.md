@@ -62,6 +62,14 @@ pin only when that card really drives a connected panel. If it does not,
 nothing is set and the session starts normally on both GPUs. The worst case is
 that the discrete card keeps being held open, never that you cannot log in.
 
+The pin covers only the cards present at login. A card that appears later,
+when a plug-in puts the dGPU back on the bus, goes down aquamarine's hotplug
+path, which ignores `AQ_DRM_DEVICES`. The compositor then held it for the
+rest of the session, and every unplug after that left it powered. So the
+discrete card's node is also kept off the seat (`72-nova-dgpu-no-seat.rules`):
+logind will not hand it to anyone, at login or on hotplug, and the render node
+that PRIME offload uses is untouched.
+
 ## The boot
 
 Two things are left out of every Nova boot: NVIDIA firmware in the initramfs
@@ -446,18 +454,26 @@ and which PCI devices never sleep. The LTR table is the useful part: an IP
 block advertising a short latency tolerance forbids the platform from entering
 its deep package states, and the table names it.
 
-On the P1 Gen 4i the answer was undramatic. xHCI advertises
-500 µs — that is the Bluetooth mouse. The audio controller advertises 364 µs,
-but only while something is playing; it is suspended otherwise. Panel Self
-Refresh was already enabled (PSR1; the panel does not support PSR2 or Panel
-Replay, so there is nothing further to switch on). Hardware video decode was
-already working. Package C2 sat above half the time not through
-misconfiguration but because a wireless mouse, a connected 5G modem, an NVMe
-and a Wi-Fi card were all in use.
+On the P1 Gen 4i the table pointed at the right device for the wrong
+reason. xHCI advertises 500 µs, and the first reading of that was "the
+Bluetooth mouse, in use, nothing to do". But ignoring the LTR changes nothing:
+the package still never reaches PC10. What blocks it is the USB controller
+never sleeping, because two devices on it were pinned awake and polled every
+millisecond: the Bluetooth controller (autosuspend off in the hardware
+profile, for mouse lag) and a mouse receiver (the kernel's default for HID).
+Let both autosuspend and the controller sleeps, PC10 goes from 0% to about
+70%, and the idle desktop drops from 10.7 W to 8.5 W. On battery nova-power
+now does that for every USB device the kernel left awake, with a 10 s delay
+for input devices and none at all for audio, and puts them back on AC.
+Panel Self Refresh was already enabled (PSR1; the panel does not support PSR2
+or Panel Replay, so there is nothing further to switch on). Hardware video
+decode was already working.
 
 That is the usual shape of this exercise: the large win is the discrete GPU,
-the second is the power limit under load, and the rest is a catalogue of
-things that are awake because you are using them.
+the second is the power limit under load, and after that, whichever single
+device keeps the platform out of its deepest idle state. The table names a
+suspect; `ltr_ignore` and the package C-state counters say whether it is
+really the culprit.
 
 ## Browsing and video
 

@@ -4,3 +4,11 @@
 # it to the one machine the policy is for (the unit checks again).
 SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", \
   RUN+="/usr/bin/systemctl --no-block start nova-power.service"
+
+# A USB device plugged in on battery is let autosuspend like the ones that were
+# there at the unplug (fact 54); nova-power checks the power source itself and
+# does nothing on AC. On bind, not add: the interfaces exist only by then, and
+# the classes on them decide the delay, or whether to touch it at all.
+ACTION=="bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", \
+  ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", \
+  RUN+="/usr/lib/nova/bin/nova-power usb-added $kernel"

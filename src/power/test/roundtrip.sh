@@ -14,7 +14,7 @@ TOOL=$HERE/../bin/nova-power
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 
 # Everything above the dispatch is the library half.
-sed '/^cmd=\${1:-auto}/,$d' "$TOOL" > "$T/lib.sh"
+sed '/^cmd=\${1:-/,$d' "$TOOL" > "$T/lib.sh"
 grep -q '^aspm()' "$T/lib.sh" || { echo "could not extract the library half of $TOOL"; exit 1; }
 CONFIG=/dev/null . "$T/lib.sh"
 
@@ -478,6 +478,46 @@ out=$(PSTATE_NO_TURBO=$T/gone/no_turbo governor_stopped)
 chk "a figure it never read stays"    "$(cat "$RAPL_PL2" "$DRM/card1/gt_max_freq_mhz" | paste -sd' ')" "135000000 1300"
 chk "a write that fails is said"      "$out" "governor stopped; fans restored, but some firmware limits could not be written back"
 unset -f on_ac
+
+# USB autosuspend (fact 54): what is pinned awake may sleep on battery, input
+# with the longer delay and audio not at all; AC puts back only what this
+# changed, and only on the device it changed.
+SYS_USB=$T/usb USB_PM_STATE=$T/usb-pm USB_INPUT_DELAY_MS=10000 USB_AUTOSUSPEND_ON_BAT=yes
+usbdev() { # name vendor product control delay interface-class...
+  local d=$SYS_USB/$1 c i=0
+  mkdir -p "$d/power"
+  echo "$2" >"$d/idVendor"; echo "$3" >"$d/idProduct"
+  echo "$4" >"$d/power/control"; echo "$5" >"$d/power/autosuspend_delay_ms"
+  shift 5
+  for c in "$@"; do
+    mkdir -p "$d/${d##*/}:1.$i"; echo "$c" >"$d/${d##*/}:1.$i/bInterfaceClass"; i=$((i + 1))
+  done
+}
+usbdev 3-1 046d c539 on 2000 03 03 03   # the G603's receiver
+usbdev 3-14 8087 0032 on 2000 e0 e0     # the Bluetooth controller
+usbdev 3-8 13d3 5271 auto 2000 0e 0e    # the camera, the hwdb's already
+usbdev 3-2 0d8c 0014 on 2000 01 01 03   # a USB DAC with volume buttons
+usbdev 3-3 0781 5583 on 2000 08         # a USB stick
+usb_pm_battery
+chk "usb battery: the receiver sleeps"     "$(cat "$SYS_USB/3-1/power/control")" "auto"
+chk "  after the input delay"              "$(cat "$SYS_USB/3-1/power/autosuspend_delay_ms")" "10000"
+chk "usb battery: Bluetooth counts as input" "$(cat "$SYS_USB/3-14/power/control" "$SYS_USB/3-14/power/autosuspend_delay_ms" | paste -sd' ')" "auto 10000"
+chk "usb battery: storage, the kernel delay" "$(cat "$SYS_USB/3-3/power/control" "$SYS_USB/3-3/power/autosuspend_delay_ms" | paste -sd' ')" "auto 2000"
+chk "usb battery: audio is left awake"     "$(cat "$SYS_USB/3-2/power/control")" "on"
+chk "usb battery: the hwdb's not recorded" "$(grep -c '^3-8 ' "$USB_PM_STATE")" "0"
+usb_pm_battery
+chk "usb battery idempotent"               "$(grep -c . "$USB_PM_STATE")" "3"
+chk "  and said so"                        "$(usb_pm_summary)" "3 devices set to auto"
+# Unplugged on battery and something else plugged into the same port.
+echo 0bda >"$SYS_USB/3-3/idVendor"
+usb_pm_ac
+chk "usb ac: the receiver is awake again"  "$(cat "$SYS_USB/3-1/power/control" "$SYS_USB/3-1/power/autosuspend_delay_ms" | paste -sd' ')" "on 2000"
+chk "usb ac: Bluetooth too"                "$(cat "$SYS_USB/3-14/power/control")" "on"
+chk "usb ac: another device on the port is left" "$(cat "$SYS_USB/3-3/power/control")" "auto"
+chk "usb ac: the camera keeps the hwdb's"  "$(cat "$SYS_USB/3-8/power/control")" "auto"
+chk "usb ac clears state"                  "$([[ -e $USB_PM_STATE ]] && echo yes || echo no)" "no"
+USB_AUTOSUSPEND_ON_BAT=no usb_pm_battery
+chk "usb autosuspend can be turned off"    "$(cat "$SYS_USB/3-1/power/control")" "on"
 
 echo
 if ((fail)); then echo "FAILURES"; exit 1; else echo "all pass"; fi

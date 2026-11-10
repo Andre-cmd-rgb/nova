@@ -83,6 +83,8 @@ usage: nova power [command] [args]
   gpu-toggle          whichever it is not
   gpu-mode [auto|off] print or set the policy for the card: auto puts it on
                       with AC and off on battery, off keeps it off on both
+  usb-added <dev>     on battery, let a USB device just plugged in autosuspend
+                      (udev runs this)
 
   -h, --help          this message
 
@@ -604,6 +606,85 @@ runtime_pm_ac() {
   return 0
 }
 
+# The same for USB, and on this machine it is worth more than everything above
+# it put together (fact 54). The kernel leaves a USB device at `on` unless its
+# driver or the hwdb says otherwise, and two were: the Bluetooth controller
+# (the hardware profile's btusb enable_autosuspend=n) and the G603's receiver.
+# Either one, polled every millisecond, keeps the xHCI controller awake, and an
+# awake xHCI keeps the package out of PC10 altogether. Idle, both pinned: PC10
+# 0%, 10.7 W. Both allowed to sleep: PC10 69%, 8.5 W.
+#
+# Input devices pay with a moment's lag on the first movement after a pause,
+# so they get ten seconds rather than the kernel's two: a mouse in use stays
+# awake, and one left alone while reading is asleep. Bluetooth counts as input
+# because that is what a Bluetooth mouse is. Audio is left alone: a DAC that
+# sleeps clicks when it wakes, and some never do. Recorded like runtime PM so
+# AC puts back exactly what this changed, and only on the same device.
+SYS_USB=${SYS_USB:-/sys/bus/usb/devices}
+USB_PM_STATE=${USB_PM_STATE:-/run/nova-power.usb-pm}
+USB_AUTOSUSPEND_ON_BAT=${USB_AUTOSUSPEND_ON_BAT:-yes}
+USB_INPUT_DELAY_MS=${USB_INPUT_DELAY_MS:-10000}
+
+# Interface classes, one per line: 01 audio, 03 HID, e0 wireless (Bluetooth).
+usb_classes() {
+  local f
+  for f in "$1"/*:*/bInterfaceClass; do
+    [[ -r $f ]] && cat "$f"
+  done
+  return 0
+}
+
+usb_pm_device() {
+  local dev=${1%/} classes delay
+  [[ -e $dev/idVendor && -w $dev/power/control ]] || return 0
+  [[ $(<"$dev/power/control") == on ]] || return 0
+  classes=$(usb_classes "$dev")
+  grep -qx 01 <<<"$classes" && return 0
+  delay=$(cat "$dev/power/autosuspend_delay_ms" 2>/dev/null)
+  if grep -qxE '03|e0' <<<"$classes"; then
+    echo "$USB_INPUT_DELAY_MS" >"$dev/power/autosuspend_delay_ms" 2>/dev/null
+  fi
+  if echo auto >"$dev/power/control" 2>/dev/null; then
+    printf '%s %s:%s %s\n' "${dev##*/}" "$(<"$dev/idVendor")" "$(<"$dev/idProduct")" "${delay:--}" \
+      >>"$USB_PM_STATE"
+  fi
+  return 0
+}
+
+usb_pm_battery() {
+  local dev
+  [[ $USB_AUTOSUSPEND_ON_BAT == yes ]] || return 0
+  touch "$USB_PM_STATE"
+  for dev in "$SYS_USB"/*/; do
+    usb_pm_device "$dev"
+  done
+  return 0
+}
+
+# Port names are reused, so a line is put back only if the same device is
+# still at that port; another one plugged in there in the meantime keeps
+# whatever its own driver chose.
+usb_pm_ac() {
+  local name id delay dev
+  [[ -r $USB_PM_STATE ]] || return 0
+  while read -r name id delay; do
+    dev=$SYS_USB/$name
+    [[ -e $dev/idVendor ]] || continue
+    [[ $(<"$dev/idVendor"):$(<"$dev/idProduct") == "$id" ]] || continue
+    [[ $delay =~ ^-?[0-9]+$ ]] && echo "$delay" >"$dev/power/autosuspend_delay_ms" 2>/dev/null
+    echo on >"$dev/power/control" 2>/dev/null
+  done <"$USB_PM_STATE"
+  rm -f "$USB_PM_STATE"
+  return 0
+}
+
+usb_pm_summary() {
+  local n=0
+  [[ -r $USB_PM_STATE ]] && n=$(grep -c . "$USB_PM_STATE" 2>/dev/null)
+  [[ $n =~ ^[0-9]+$ ]] || n=0
+  ((n > 0)) && printf '%s devices set to auto' "$n" || printf 'kernel defaults'
+}
+
 # The one knob here with a real failure mode. Forcing L0s/L1 on every link can
 # upset an NVMe or a wireless card that is merely tolerant of ASPM, and the
 # symptom is a hang — the last thing this machine needs. Off unless
@@ -1092,6 +1173,7 @@ extras() {
   battery)
     echo 1 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null
     runtime_pm_battery
+    usb_pm_battery
     wifi_powersave battery
     aspm battery
     nmi_watchdog battery
@@ -1101,6 +1183,7 @@ extras() {
   ac)
     echo 0 >/sys/module/snd_hda_intel/parameters/power_save 2>/dev/null
     runtime_pm_ac
+    usb_pm_ac
     wifi_powersave ac
     aspm ac
     nmi_watchdog ac
@@ -1131,6 +1214,12 @@ doctor)
   [[ $EUID -eq 0 ]] || die 'doctor needs root — try: sudo nova power doctor'
   ;;
 gpu-mode) [[ -z ${2:-} ]] || exclusive "$@" ;;
+usb-added)
+  # Outside the lock: udev runs this, and a udev worker must not sit behind a
+  # GPU switch-off that takes seconds. One line appended to the state file
+  # needs no lock.
+  [[ $EUID -eq 0 ]] || die 'usb-added requires root (udev runs it)'
+  ;;
 *) exclusive "$@" ;;
 esac
 
@@ -1146,6 +1235,13 @@ ac)
   rm -f "$GPU_MANUAL"
   if gpu_wanted; then gpu_on; else gpu_off; fi
   extras ac
+  ;;
+usb-added)
+  # A USB device plugged in on battery is treated like the ones that were there
+  # at the unplug (99-nova-power.rules, fact 54). Run on bind rather than add,
+  # because the interfaces, and with them the classes, exist only by then.
+  [[ ${2:-} =~ ^[0-9]+-[0-9.]+$ ]] || die "usb-added wants a USB device name like 3-1, not '${2:-}'"
+  on_ac || [[ $USB_AUTOSUSPEND_ON_BAT != yes ]] || usb_pm_device "$SYS_USB/$2"
   ;;
 boost)
   # The escape hatch for the CPU caps, and the reason a ceiling is tolerable at
@@ -1333,6 +1429,7 @@ status)
     fi
     row 'governor' "$(governor_now)"
     row 'runtime pm' "$(runtime_pm_summary)"
+    row 'usb pm' "$(usb_pm_summary)"
     row 'wifi ps' "$(wifi_powersave_now)"
     row 'pcie aspm' "$(aspm_policy)"
     row 'cpu pl1' "$(pl1_now)"
