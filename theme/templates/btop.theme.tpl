@@ -1,93 +1,53 @@
-# Main background, empty for terminal default, need to be empty if you want transparent background
+# btop in the theme's colours. nova-theme-apply links this as
+# ~/.config/btop/themes/nova.theme and tells a running btop to reload.
+#
+# Text and frames are the palette's plain text, muted and accent. Each meter
+# runs from calm to loud as it fills: load and heat end in red, what is free
+# or available stays in the cool colours.
+
 theme[main_bg]="{{ background }}"
-
-# Main text color
 theme[main_fg]="{{ foreground }}"
-
-# Title color for boxes
-theme[title]="{{ foreground }}"
-
-# Highlight color for keyboard shortcuts
+theme[title]="{{ bright_foreground }}"
 theme[hi_fg]="{{ accent }}"
+theme[selected_bg]="{{ lighter_background }}"
+theme[selected_fg]="{{ bright_foreground }}"
+theme[inactive_fg]="{{ dark_foreground }}"
+theme[graph_text]="{{ muted }}"
+theme[meter_bg]="{{ lighter_background }}"
+theme[proc_misc]="{{ accent }}"
+theme[div_line]="{{ lighter_background }}"
 
-# Background color of selected item in processes box
-theme[selected_bg]="{{ selection }}"
+theme[cpu_box]="{{ muted }}"
+theme[mem_box]="{{ muted }}"
+theme[net_box]="{{ muted }}"
+theme[proc_box]="{{ muted }}"
 
-# Foreground color of selected item in processes box
-theme[selected_fg]="{{ accent }}"
-
-# Color of inactive/disabled text
-theme[inactive_fg]="{{ muted }}"
-
-# Color of text appearing on top of graphs, i.e uptime and current network graph scaling
-theme[graph_text]="{{ light_foreground }}"
-
-# Background color of the percentage meters
-theme[meter_bg]="{{ selection }}"
-
-# Misc colors for processes box including mini cpu graphs, details memory graph and details status text
-theme[proc_misc]="{{ light_foreground }}"
-
-# CPU, Memory, Network, Proc box outline colors
-theme[cpu_box]="{{ magenta }}"
-theme[mem_box]="{{ green }}"
-theme[net_box]="{{ red }}"
-theme[proc_box]="{{ accent }}"
-
-# Box divider line and small boxes line color
-theme[div_line]="{{ muted }}"
-
-# Temperature graph color (Green -> Yellow -> Red)
-theme[temp_start]="{{ green }}"
+theme[cpu_start]="{{ green }}"
+theme[cpu_mid]="{{ yellow }}"
+theme[cpu_end]="{{ red }}"
+theme[temp_start]="{{ cyan }}"
 theme[temp_mid]="{{ yellow }}"
 theme[temp_end]="{{ red }}"
+theme[process_start]="{{ accent }}"
+theme[process_mid]="{{ yellow }}"
+theme[process_end]="{{ red }}"
 
-# CPU graph colors (Teal -> Blue -> Magenta)
-theme[cpu_start]="{{ cyan }}"
-theme[cpu_mid]="{{ blue }}"
-theme[cpu_end]="{{ magenta }}"
-
-# Mem/Disk free meter
-theme[free_start]="{{ magenta }}"
-theme[free_mid]="{{ blue }}"
+theme[used_start]="{{ yellow }}"
+theme[used_mid]="{{ orange }}"
+theme[used_end]="{{ red }}"
+theme[available_start]="{{ cyan }}"
+theme[available_mid]="{{ blue }}"
+theme[available_end]="{{ blue }}"
+theme[cached_start]="{{ blue }}"
+theme[cached_mid]="{{ magenta }}"
+theme[cached_end]="{{ magenta }}"
+theme[free_start]="{{ green }}"
+theme[free_mid]="{{ cyan }}"
 theme[free_end]="{{ cyan }}"
 
-# Mem/Disk cached meter
-theme[cached_start]="{{ blue }}"
-theme[cached_mid]="{{ cyan }}"
-theme[cached_end]="{{ magenta }}"
-
-# Mem/Disk available meter
-theme[available_start]="{{ yellow }}"
-theme[available_mid]="{{ red }}"
-theme[available_end]="{{ red }}"
-
-# Mem/Disk used meter (Green -> Teal -> Blue)
-theme[used_start]="{{ green }}"
-theme[used_mid]="{{ cyan }}"
-theme[used_end]="{{ blue }}"
-
-# Download graph colors
-theme[download_start]="{{ yellow }}"
-theme[download_mid]="{{ red }}"
-theme[download_end]="{{ red }}"
-
-# Upload graph colors (Green -> Teal -> Blue)
-theme[upload_start]="{{ green }}"
-theme[upload_mid]="{{ cyan }}"
-theme[upload_end]="{{ blue }}"
-
-# Process box color gradient for threads, mem and cpu usage
-theme[process_start]="{{ cyan }}"
-theme[process_mid]="{{ blue }}"
-theme[process_end]="{{ magenta }}"
-
-# Graph gradient colors (spectrum shades from background to foreground)
-theme[gradient_color_0]="{{ background }}"
-theme[gradient_color_1]="{{ lighter_background }}"
-theme[gradient_color_2]="{{ selection }}"
-theme[gradient_color_3]="{{ muted }}"
-theme[gradient_color_4]="{{ dark_foreground }}"
-theme[gradient_color_5]="{{ foreground }}"
-theme[gradient_color_6]="{{ light_foreground }}"
-theme[gradient_color_7]="{{ bright_foreground }}"
+theme[download_start]="{{ blue }}"
+theme[download_mid]="{{ cyan }}"
+theme[download_end]="{{ bright_cyan }}"
+theme[upload_start]="{{ magenta }}"
+theme[upload_mid]="{{ red }}"
+theme[upload_end]="{{ bright_red }}"

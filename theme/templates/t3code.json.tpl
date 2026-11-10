@@ -5,32 +5,31 @@
   "accent": "{{ accent }}",
   "colors": {
     "chrome": "{{ background }}",
+    "text": "{{ foreground }}",
+    "border": "{{ lighter_background }}",
+    "focus": "{{ accent }}",
+    "error": "{{ red }}",
+    "warning": "{{ yellow }}",
+
     "toolbar": "{{ background }}",
     "toolbarForeground": "{{ foreground }}",
-    "toolbarBorder": "{{ muted }}",
-
-    "text": "{{ foreground }}",
-    "border": "{{ muted }}",
-    "focus": "{{ accent }}",
+    "toolbarBorder": "{{ lighter_background }}",
 
     "sidebar": "{{ dark_background }}",
-    "sidebarForeground": "{{ foreground }}",
-    "sidebarBorder": "{{ muted }}",
-    "sidebarRowHover": "{{ mix dark_background foreground 6% }}",
-    "sidebarRowActive": "{{ mix dark_background accent 18% }}",
+    "sidebarForeground": "{{ light_foreground }}",
+    "sidebarBorder": "{{ lighter_background }}",
+    "sidebarRowHover": "{{ mix dark_background foreground 5% }}",
+    "sidebarRowActive": "{{ mix dark_background accent 15% }}",
     "sidebarRowSelected": "{{ selection }}",
-
-    "error": "{{ mix red foreground 35% }}",
-    "warning": "{{ mix yellow foreground 35% }}",
 
     "codeBackground": "{{ dark_background }}",
     "codeForeground": "{{ foreground }}",
 
     "terminalBackground": "{{ background }}",
     "terminalForeground": "{{ foreground }}",
-    "terminalCursor": "{{ bright_foreground }}",
-    "terminalSelection": "{{ selection }}",
-    "terminalScrollbar": "{{ muted }}",
-    "terminalScrollbarHover": "{{ dark_foreground }}"
+    "terminalCursor": "{{ cursor }}",
+    "terminalSelection": "{{ selection_background }}",
+    "terminalScrollbar": "{{ lighter_background }}",
+    "terminalScrollbarHover": "{{ muted }}"
   }
 }

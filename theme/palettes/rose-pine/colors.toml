@@ -3,8 +3,8 @@
 mode = "light"
 
 background = "#faf4ed"          # base
-dark_background = "#f2e9e1"     # overlay
-lighter_background = "#fffaf3"  # surface
+dark_background = "#f4ede8"     # highlight low
+lighter_background = "#f2e9e1"  # overlay
 selection = "#dfdad9"           # highlight med
 
 foreground = "#575279"          # text
