@@ -45,7 +45,7 @@ ShellRoot {
     check(Model.progress("progress 42") === 42 && Model.progress("progress 100\n") === 100, "the download's percent")
     check(Model.progress("checking") === -1 && Model.progress("progress") === -1 && Model.progress("") === -1, "anything else is not a percent")
 
-    check(Model.clock(0) === "0:00" && Model.clock(7.9) === "0:07" && Model.clock(102) === "1:42", "the hands-free clock")
+    check(Model.clock(0) === "0:00" && Model.clock(7.9) === "0:07" && Model.clock(102) === "1:42", "the pill's clock")
     console.log("DONE")
     Qt.quit()
   }

@@ -430,9 +430,10 @@ Item {
             }
           }
 
-          // Hands-free has no finger on the key, so it shows the time.
+          // How long it has listened, held or hands-free: the pill keeps one
+          // width from the press on, and a hold shows its time as a tap does.
           Text {
-            visible: root.look === "listening" && root.handsFree
+            visible: root.look === "listening"
             width: Math.ceil(clockMetrics.advanceWidth)
             anchors.verticalCenter: parent.verticalCenter
             textFormat: Text.PlainText

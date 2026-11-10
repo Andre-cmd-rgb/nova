@@ -69,7 +69,7 @@ function progress(line) {
   return m ? Math.min(100, parseInt(m[1], 10)) : -1
 }
 
-// Seconds as the hands-free pill's clock: 0:07, 1:42.
+// Seconds as the pill's clock while it listens: 0:07, 1:42.
 function clock(seconds) {
   var s = Math.max(0, Math.floor(Number(seconds) || 0))
   var rest = s % 60
