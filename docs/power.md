@@ -541,8 +541,11 @@ scaled outputs is not worth carrying.
 Chrome's Energy Saver does work on Linux: "Turn on when the computer is
 unplugged" (`performance_tuning.battery_saver_mode.state = 2` in Local State)
 sees the battery with no flag at all: started on battery, a page's
-`requestAnimationFrame` runs at 30 instead of 60. Video is untouched. Following
-a plug or unplug while Chrome runs is Chrome's design, not yet measured here. Nova turns it on once per profile at
+`requestAnimationFrame` runs at 30 instead of 60, and plugged in at 60. It
+follows the power source while Chrome runs: unplugged at 21:38:27, the page was
+at 30 within ten seconds, with no restart. Video is untouched. Chrome hides the
+section in its settings on Linux all the same, because it does not think the
+computer has a battery, so the setting has to be written into Local State. Nova turns it on once per profile at
 login (`nova-chrome-energy-saver`), while Chrome cannot yet be open to write
 its own copy back. After that it is Chrome's setting.
 
