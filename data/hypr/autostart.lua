@@ -10,6 +10,9 @@ hl.on("hyprland.start", function()
   -- Caffeine left on without its lid lock (by a user manager that restarted)
   -- is turned off.
   hl.exec_cmd("nova-caffeine reconcile")
+  -- Chrome's Energy Saver on whenever unplugged, set once per profile while
+  -- Chrome cannot be open yet; after that it is Chrome's own setting.
+  hl.exec_cmd("nova-chrome-energy-saver")
   hl.exec_cmd(nova.launch("nova-hyprland-monitor-watch"))
   hl.exec_cmd("sleep 2 && nova-hook post-boot")
 end)

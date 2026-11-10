@@ -1,0 +1,33 @@
+#!/bin/bash
+
+# nova:summary=Turn on Chrome's Energy Saver whenever the computer is unplugged, once per profile
+# nova:hidden=true
+#
+# Run at login (data/hypr/autostart.lua). Chrome's own setting (Settings,
+# Performance, Energy Saver, "Turn on when the computer is unplugged") lives
+# in Local State as performance_tuning.battery_saver_mode.state = 2. Chrome
+# sees the battery itself (no --force-device-has-battery needed). It halves
+# animations and scrolling to 30 fps on battery: one spinner on an otherwise
+# still page costs 4.5 W on this 4K panel, 0.6 W of which this gives back
+# (docs/power.md). Video plays as before.
+#
+# Once per profile, then it is Chrome's setting again: a choice made in
+# Chrome afterwards is never undone. Chrome rewrites Local State while it runs,
+# so nothing is written while it does, nor before it has made the file; the
+# next login tries again.
+
+set -euo pipefail
+
+local_state=${NOVA_CHROME_LOCAL_STATE:-${XDG_CONFIG_HOME:-$HOME/.config}/google-chrome/Local State}
+done_file=${XDG_STATE_HOME:-$HOME/.local/state}/nova/chrome-energy-saver
+
+[[ -e $done_file ]] && exit 0
+[[ -f $local_state ]] || exit 0
+pgrep -u "$UID" -x chrome >/dev/null 2>&1 && exit 0
+
+tmp=$(mktemp "$local_state.nova.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+jq '.performance_tuning.battery_saver_mode.state = 2' "$local_state" >"$tmp"
+mv "$tmp" "$local_state"
+mkdir -p "${done_file%/*}"
+: >"$done_file"

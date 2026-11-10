@@ -511,9 +511,40 @@ VP9 or h264ify would make things worse, not better.
 
 The browser itself is still the largest term. Chrome's GPU process alone held
 7.6% of a core continuously across six hours with 23 renderers open, before
-anything was playing. `chrome://settings/performance` has Memory Saver and
-Energy Saver, both at their defaults, and neither is something Nova can or
-should set.
+anything was playing.
+
+What a page costs is mostly whether anything on it moves. The panel does PSR1,
+self-refresh of the whole frame or nothing, so a single animated pixel takes
+it out of self-refresh, and the display engine reads the full 3840x2400 frame
+from memory sixty times a second. Measured on 2026-11-10, battery, power-saver,
+backlight 180/600, PC10 working (fact 54):
+
+| | battery |
+|---|---|
+| idle desktop | 7.7-8.5 W |
+| Chrome, a page of text | 8.7 W |
+| the same page with one 48 px spinner | 13.4 W |
+| the spinner, Energy Saver on (30 fps) | 12.7 W |
+| video, 2160p30 AV1, fullscreen | 15.0 W |
+| video, 1080p60 or 2160p60 AV1 | 17.0-17.7 W |
+
+Frame rate costs more than resolution: 1080p60 draws more than 2160p30,
+because each frame is composited twice at panel resolution, once by Chrome and
+once by the compositor. Tried during playback and worth nothing measurable:
+direct scanout itself (mpv at scale 1, the only way past the opaque check:
+17.6 W with it, 17.9 W without), Chrome's `WaylandOverlayDelegation` (it does
+clear Hyprland's `SURFACES` blocker), the iGPU cap at 500, 600 or 1100 MHz
+instead of 800 (lower drops frames and keeps the package awake longer), and
+the uncore capped at 2.0 or 1.4 GHz. So patching Hyprland's opaque check for
+scaled outputs is not worth carrying.
+
+Chrome's Energy Saver does work on Linux: "Turn on when the computer is
+unplugged" (`performance_tuning.battery_saver_mode.state = 2` in Local State)
+sees the battery with no flag at all: started on battery, a page's
+`requestAnimationFrame` runs at 30 instead of 60. Video is untouched. Following
+a plug or unplug while Chrome runs is Chrome's design, not yet measured here. Nova turns it on once per profile at
+login (`nova-chrome-energy-saver`), while Chrome cannot yet be open to write
+its own copy back. After that it is Chrome's setting.
 
 ## Undervolting
 
