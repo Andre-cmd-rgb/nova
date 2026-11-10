@@ -112,6 +112,20 @@ Ui.Panel {
     onDateChanged: clock.stamp = date
   }
 
+  // SystemClock waits on the monotonic clock, which stands still while the
+  // machine sleeps: after a wake the bar kept the minute it went to sleep
+  // with for up to a minute more. A look every ten seconds puts the wall
+  // clock's minute back.
+  Timer {
+    interval: 10000
+    repeat: true
+    running: true
+    onTriggered: {
+      const now = new Date()
+      if (Math.floor(now.getTime() / 60000) !== Math.floor(clock.stamp.getTime() / 60000)) clock.stamp = now
+    }
+  }
+
   WidgetButton {
     id: button
     anchors.fill: parent

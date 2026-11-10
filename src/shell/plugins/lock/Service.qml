@@ -148,8 +148,21 @@ Item {
 
   // A key or a touch under the lock: the screens come on, and the 5 s to dark
   // start again.
+  //
+  // Every pointer move and key comes here, and nova-system-wake is some eight
+  // processes (brightness, the keyboard's light, the clamshell's check): run
+  // at once after the lock darkened the screens, and otherwise at most every
+  // two seconds, which still wakes screens something else turned off.
+  property bool darkened: false
+  property double wokenAt: 0
+
   function wake() {
-    waker.run()
+    var now = Date.now()
+    if (darkened || now - wokenAt > 2000) {
+      darkened = false
+      wokenAt = now
+      waker.run()
+    }
     if (wanted) blankTimer.arm()
   }
 
@@ -169,7 +182,10 @@ Item {
       if (Date.now() - armedAt > interval + 2000) arm()
       // A password being checked keeps the screen on; the fingerprint's PAM
       // runs all through the lock, so it does not.
-      else if (service.wanted && !password.checking) blanker.run()
+      else if (service.wanted && !password.checking) {
+        service.darkened = true
+        blanker.run()
+      }
     }
   }
 

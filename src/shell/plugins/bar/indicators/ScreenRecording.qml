@@ -11,9 +11,14 @@ BarIndicator {
 
   // What pgrep found when it last looked.
   property bool recorderFound: false
+  // Asked while it looked: it looks once more after, as the recorder may
+  // have started or stopped after it did.
+  property bool askedAgain: false
 
   function look() {
-    if (bar && !pgrep.running) pgrep.running = true
+    if (!bar) return
+    if (pgrep.running) askedAgain = true
+    else pgrep.running = true
   }
 
   active: recorderFound
@@ -28,7 +33,21 @@ BarIndicator {
   Process {
     id: pgrep
     command: ["pgrep", "--quiet", "-f", "^gpu-screen-recorder"]
-    onExited: function(exitCode) { indicator.recorderFound = exitCode === 0 }
+    onExited: function(exitCode) {
+      indicator.recorderFound = exitCode === 0
+      if (!indicator.askedAgain) return
+      indicator.askedAgain = false
+      running = true
+    }
+  }
+
+  // A recorder that ends by itself (killed, out of memory, the disk full)
+  // asks nothing: while one is lit, the indicator looks every few seconds.
+  Timer {
+    interval: 4000
+    repeat: true
+    running: indicator.recorderFound
+    onTriggered: indicator.look()
   }
 
   Connections {

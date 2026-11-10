@@ -322,12 +322,25 @@ Item {
     return false
   }
 
+  // A click while one is focusing is kept, the latest, and done after it.
   Process {
     id: bringForward
+    property string next: ""
 
     function start(app) {
+      if (running) {
+        next = String(app)
+        return
+      }
       command = ["nova-hyprland-focus-app", String(app)]
       running = true
+    }
+
+    onExited: {
+      if (next === "") return
+      const app = next
+      next = ""
+      start(app)
     }
   }
 

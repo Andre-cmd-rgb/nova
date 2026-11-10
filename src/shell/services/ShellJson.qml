@@ -46,6 +46,13 @@ QtObject {
 
   property bool defaultsSeen: false
   property bool userSeen: false
+  // The user's file has something in it that is not a config Nova reads (a
+  // trailing comma, a version other than 1): the shell runs on Nova's, and
+  // saves nothing, since a save would write Nova's over the user's for good.
+  property bool userBroken: false
+  // Why a change is refused, or "" while the shell may save.
+  readonly property string blocked: userBroken
+    ? "~/.config/nova/shell.json is not a config Nova can read; fix it, or move it away, first" : ""
 
   // Reads the user's shell.json again.
   function reload() {
@@ -56,6 +63,10 @@ QtObject {
   // place, and saves the draft, unless change answers false. Whether it
   // saved.
   function edit(change) {
+    if (blocked) {
+      console.warn("shell.json not saved: " + blocked)
+      return false
+    }
     var draft = JSON.parse(JSON.stringify(current || fallback))
     if (change(draft) === false) return false
     save(draft)
@@ -65,6 +76,7 @@ QtObject {
   // Makes <config>, at version 1, the config in effect, and writes it to
   // the user's shell.json.
   function save(config) {
+    if (blocked) return
     var saved = withBar(JSON.parse(JSON.stringify(config)))
     saved.version = 1
     current = saved
@@ -108,16 +120,19 @@ QtObject {
   // JSON but not an object (null, a list) falls back without a word.
   function chosen() {
     var text = userFile.text() || ""
+    userBroken = false
     if (!text.trim()) return defaults
     var user
     try {
       user = JSON.parse(text)
     } catch (e) {
-      console.warn("shell.json parse failed, using defaults: " + e)
+      console.warn("shell.json parse failed, using defaults until it is fixed: " + e)
+      userBroken = true
       return defaults
     }
     if (isConfig(user)) return user
-    if (isObject(user)) console.warn("shell.json missing version: 1, using defaults")
+    if (isObject(user)) console.warn("shell.json missing version: 1, using defaults until it is fixed")
+    userBroken = true
     return defaults
   }
 

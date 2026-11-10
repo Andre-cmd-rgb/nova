@@ -88,6 +88,7 @@ QtObject {
 
   function move(id, placement) {
     if (!ready) return "not ready"
+    if (settings.blocked) return settings.blocked
     var error = ""
     settings.edit(function(config) {
       Layout.shape(config)
@@ -116,6 +117,7 @@ QtObject {
 
   function setOption(id, key, value, selector) {
     if (!ready) return "not ready"
+    if (settings.blocked) return settings.blocked
     var error = ""
     settings.edit(function(config) {
       Layout.shape(config)
@@ -132,6 +134,7 @@ QtObject {
   // other plugin on by default is listed in disabledPlugins.
   function setOn(id, on, placement) {
     if (!ready) return "not ready"
+    if (settings.blocked) return settings.blocked
     var key = String(id)
     var manifest = manifests[key]
     if (on && !manifest) {

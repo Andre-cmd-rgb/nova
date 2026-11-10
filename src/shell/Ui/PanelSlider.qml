@@ -151,6 +151,10 @@ Item {
     hoverEnabled: true
     acceptedButtons: Qt.LeftButton | Qt.RightButton
     cursorShape: Qt.PointingHandCursor
+    // A drag that drifts up or down stays the slider's: in Settings the page's
+    // Flickable took it, the release never came, and the knob stopped
+    // following anything until the next press.
+    preventStealing: true
 
     onPressed: function (mouse) {
       if (mouse.button !== Qt.LeftButton) return
@@ -162,6 +166,13 @@ Item {
     }
     onReleased: function (mouse) {
       if (mouse.button !== Qt.LeftButton) return
+      slider.dragging = false
+      slider._done(slider.liveValue)
+    }
+    // Whatever else takes the press (a popup closing under it, say) ends the
+    // drag where it was, as a release would.
+    onCanceled: {
+      if (!slider.dragging) return
       slider.dragging = false
       slider._done(slider.liveValue)
     }

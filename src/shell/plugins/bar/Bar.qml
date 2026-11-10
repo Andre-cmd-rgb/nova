@@ -152,11 +152,25 @@ Item {
   // surface (about 150 ms).
   readonly property string togglesDir: Commons.Color.stateHome + "/nova/toggles"
 
+  // Asked while it looks, it looks once more after: the flag may have
+  // flipped back after it looked (the bar off and on again in a moment).
   Process {
     id: flagLook
+    property bool askedAgain: false
     running: true
     command: ["test", "-f", root.togglesDir + "/bar-off"]
-    onExited: function(exitCode) { root.barHidden = exitCode === 0 }
+
+    function ask() {
+      if (running) askedAgain = true
+      else running = true
+    }
+
+    onExited: function(exitCode) {
+      root.barHidden = exitCode === 0
+      if (!askedAgain) return
+      askedAgain = false
+      running = true
+    }
   }
 
   // A file that is not there cannot be watched, so its folder is.
@@ -164,18 +178,16 @@ Item {
     path: root.togglesDir
     watchChanges: true
     printErrors: false
-    onFileChanged: flagLook.running = true
+    onFileChanged: flagLook.ask()
   }
 
   // That watch can stop for good after quick changes, which would leave the
-  // bar hidden until the shell restarts, so nova-toggle-bar asks as well. A
-  // look under way began after the flag changed and is let finish: stopped,
-  // its answer could be lost.
+  // bar hidden until the shell restarts, so nova-toggle-bar asks as well.
   IpcHandler {
     target: "nova.bar"
 
     function syncHidden(): void {
-      flagLook.running = true
+      flagLook.ask()
     }
   }
 
