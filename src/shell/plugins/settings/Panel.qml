@@ -818,7 +818,7 @@ Item {
         }
         Caption {
           width: parent.width
-          text: "Remembered separately on battery and plugged in."
+          text: "Every unplug starts in Saver, for the longest battery life. A mode chosen here lasts until you plug in; plugged in, it is always full power."
         }
       }
 

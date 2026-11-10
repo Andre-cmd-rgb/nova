@@ -137,7 +137,7 @@ Panel {
   }
 
   function setProfile(name) {
-    // nova-power-profile remembers it as the battery's mode.
+    // nova-power-profile keeps it until the next plug-in.
     profileProc.command = ["nova-power-profile", "set", String(name)]
     if (!profileProc.running) profileProc.running = true
   }

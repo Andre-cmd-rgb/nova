@@ -1,20 +1,25 @@
 #!/bin/bash
 
-# nova:summary=Show or set the battery's power mode; plugged in, it is always full power
+# nova:summary=Show or set the power mode on battery; plugged in, it is always full power
 # nova:args=get | list [--active-state] | set <profile> | restore
 #
-# Talks to power-profiles-daemon over D-Bus. The modes are for the battery:
-# plugged in there is no battery to spare, so it is always performance, and
-# there is nothing to choose (list offers nothing). `set` remembers the
-# battery's mode, and plugged in only remembers it; `restore` (run by the shell
-# on plug and unplug, and at login) puts back performance plugged in, and the
-# battery's mode, balanced until one is chosen, on battery. Where Nova's power
-# governor runs, the battery's mode is how high it climbs (docs/power.md).
+# Talks to power-profiles-daemon over D-Bus. Plugged in there is no battery to
+# spare, so it is always performance, and there is nothing to choose (list
+# offers nothing). On battery it is the battery first: every unplug, and every
+# start on battery, begins in power-saver. `set` changes the mode for this
+# stretch on battery only, until the next plug-in or restart, so a mode picked
+# for one job is not left draining the battery for days. `restore` (run by the
+# shell on plug and unplug, and at login) puts back performance plugged in,
+# and on battery the mode chosen since the unplug, or power-saver. Where Nova's
+# power governor runs, the mode is how high it climbs (docs/power.md).
 
 set -euo pipefail
 
-state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/nova/power-profile
+# The mode chosen on battery, kept in the runtime directory so that a restart
+# forgets it as a plug-in does.
+chosen=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/power-profile
 readonly ppd=(org.freedesktop.UPower.PowerProfiles /org/freedesktop/UPower/PowerProfiles org.freedesktop.UPower.PowerProfiles)
+readonly battery_default=power-saver
 
 usage() {
   echo "Usage: nova-power-profile get | list [--active-state] | set <profile> | restore" >&2
@@ -74,21 +79,23 @@ case ${1:-} in
   set)
     (($# == 2)) || usage
     available "$2" || { echo "nova-power-profile: no power mode '$2'" >&2; exit 1; }
-    mkdir -p "$state_dir"
-    printf '%s\n' "$2" >"$state_dir/battery"
     if [[ $(source_name) == ac ]]; then
-      echo "Plugged in, it is always full power: $2 is the battery's mode from now on."
-    else
-      apply "$2"
+      echo "Plugged in, it is always full power, and every unplug starts in $battery_default." >&2
+      exit 1
     fi
+    mkdir -p "${chosen%/*}"
+    printf '%s\n' "$2" >"$chosen"
+    apply "$2"
     ;;
   restore)
     (($# == 1)) || usage
     if [[ $(source_name) == ac ]]; then
+      # A plug-in ends the stretch on battery, and the mode chosen in it.
+      rm -f "$chosen"
       profile=performance
     else
-      profile=$(cat "$state_dir/battery" 2>/dev/null || true)
-      available "$profile" || profile=balanced
+      profile=$(cat "$chosen" 2>/dev/null || true)
+      available "$profile" || profile=$battery_default
     fi
     available "$profile" || exit 0
     [[ $(active || true) == "$profile" ]] || apply "$profile"

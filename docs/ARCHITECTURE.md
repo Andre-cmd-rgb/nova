@@ -57,11 +57,11 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
   | Kind | Location |
   |---|---|
   | User config | `~/.config/nova/` (`shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`); a plugin's own settings in `~/.config/nova-<plugin>/` (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
-  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `power-profile/`, `aur/`, `monitors.json`: the displays as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at); a plugin's history in `~/.local/state/nova-<plugin>/` |
+  | User state | `~/.local/state/nova/` (`current/`, `rendered/`, `backgrounds/`, `aur/`, `monitors.json`: the displays as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at); a plugin's history in `~/.local/state/nova-<plugin>/` |
   | User data | `~/.local/share/nova/calendar/calendar.ics` (the calendar); `~/.local/share/nova-dictation/` (the speech model, downloaded at dictation's first use) |
   | System config | `/etc/nova/power.conf` on a P1 Gen 4i (optional tunables); `/etc` drop-ins from the hardware profile, listed in `/var/lib/nova/hardware-files`; this computer's patches in `/etc/nova/patches/`, their `/etc` files listed in `/var/lib/nova/patch-files` |
   | System state | `/var/lib/nova/` (`greeter/`, the theme mirror owned by the user the installer created; `hardware-files`; `patch-files`, and `patches`: whether each patch is on) |
-  | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets, `dictation/`'s recordings until they are read, a display change not kept yet) |
+  | Runtime | `$XDG_RUNTIME_DIR/nova/` (`unlocked-once`, locks, sockets, `dictation/`'s recordings until they are read, a display change not kept yet, `power-profile`: the power mode chosen since the unplug) |
 
 - **Identifiers:** shell plugin ids are `nova.<name>`; every plugin ships in the
   `nova` package and the shell loads no other (`plugins/index.json`, written at
@@ -176,12 +176,13 @@ the shared folder also becomes the default for themes that have no pick of their
   discrete GPU and the undervolt) and Settings → Battery (the charge limit, the
   lid and the power button). Its manual is [power.md](power.md).
 - **Power profiles** belong to power-profiles-daemon, and are the battery's:
-  plugged in it is always performance, with nothing to choose. `nova-power-profile`
-  sets one and remembers it as the battery's mode; the shell's battery service runs
-  `nova-power-profile restore` at login and on every plug and unplug, which puts
-  back performance plugged in and the battery's mode (balanced by default)
-  unplugged. The governor never sets one; on the P1 Gen 4i it reads it, as how
-  high to climb on battery.
+  plugged in it is always performance, with nothing to choose. On battery every
+  unplug starts in power-saver; `nova-power-profile set` changes the mode until
+  the next plug-in or restart, kept in the runtime directory. The shell's battery
+  service runs `nova-power-profile restore` at login and on every plug and
+  unplug, which puts back performance plugged in and, unplugged, the mode chosen
+  since the unplug or power-saver. The governor never sets one; on the P1 Gen 4i
+  it reads it, as how high to climb on battery.
 - **The governor** is two halves: `nova-power`, the policy, run on each plug and
   unplug, at boot and after resume (the dGPU off the PCI bus on battery, CPU and
   platform tunables, Wi-Fi power save, the hibernate rescan), and `nova-powerd`,

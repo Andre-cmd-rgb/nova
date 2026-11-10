@@ -4,9 +4,10 @@
 the discrete GPU off the PCI bus on battery and brings it back plugged in; its
 continuous half, `nova-powerd`, sets the CPU's limits and the fans to the load
 (below). Settings → Performance shows what it is doing, and holds the switches.
-Plugged in it is always full power; on battery the power mode chosen in the
-menu or Settings (saver, balanced or performance, `nova-power-profile`'s to
-set) decides how high the governor climbs. It is part of the `nova` package; its tiers and limits
+Plugged in it is always full power. On battery it is the battery first: every
+unplug starts in saver, and a mode chosen in the menu or Settings (saver,
+balanced or performance, `nova-power-profile`'s to set) lasts until the next
+plug-in or restart, deciding how high the governor climbs meanwhile. It is part of the `nova` package; its tiers and limits
 are measured on the ThinkPad P1 Gen 4i, and until another model's are, it is
 inert on any other computer. The top of
 [thinkpad-p1-gen4i.md](hardware/thinkpad-p1-gen4i.md) lists where each piece
@@ -356,6 +357,12 @@ energy preference where there is none):
 | saver | `light` only | never: battery first, and `nova power boost` for the job that needs more |
 | balanced | `light` to `turbo` | as above, about a minute to the top |
 | performance | `mid` to `turbo` | four times as fast: 2 s, then 4 s, then 6 s |
+
+Saver is where every unplug starts, and where a restart on battery starts too:
+a mode chosen on battery lasts until the next plug-in. A performance chosen
+for one job and then forgotten stayed for a day and a half, and drew about
+30 W through a YouTube video (fact 52 in the P1 Gen 4i notes). A change of
+mode starts the ladder again at the new mode's bottom, as an unplug does.
 
 A boost outranks the mode, and temperature outranks both: a package past
 85 °C steps down a tier, below the mode's floor too.

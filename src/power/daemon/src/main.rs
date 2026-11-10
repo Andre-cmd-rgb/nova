@@ -1077,6 +1077,9 @@ struct Governor {
     below_since: Option<Instant>,
     applied: Option<(u64, u64, u64, bool)>,
     throttled: bool,
+    // The battery's mode at the last step on battery, so a change of mode is
+    // seen as one.
+    saving: Option<Saving>,
 }
 
 impl Governor {
@@ -1088,6 +1091,7 @@ impl Governor {
             below_since: None,
             applied: None,
             throttled: false,
+            saving: None,
         }
     }
 
@@ -1117,12 +1121,25 @@ impl Governor {
         }
         let (floor, top) = saving.range(self.cfg.tiers.len() - 1);
         let mut tier = match self.mode {
-            Mode::Battery(t) => t.clamp(floor, top),
+            Mode::Battery(t) if self.saving == Some(saving) => t.clamp(floor, top),
             // Coming off AC always starts at the mode's bottom. Anything else
             // would hand a full tier to whatever happened to be running at
             // unplug.
-            Mode::Ac => floor,
+            //
+            // So does a change of mode. Plugged in the profile is always
+            // performance, so at an unplug, and at a boot on battery while
+            // power-profiles-daemon still has the profile it saved plugged in,
+            // the first reading is performance, whose floor is mid, until the
+            // shell puts the battery's mode back a second or two later.
+            // Clamping mid into the new mode's range kept it there for as long
+            // as the load stayed above busy_fall (fact 52).
+            Mode::Battery(_) | Mode::Ac => {
+                self.above_since = None;
+                self.below_since = None;
+                floor
+            }
         };
+        self.saving = Some(saving);
 
         if busy >= self.cfg.busy_climb {
             self.below_since = None;
@@ -1589,6 +1606,51 @@ mod tests {
                 now + Duration::from_secs(120)
             ),
             Mode::Battery(3)
+        );
+    }
+
+    // Fact 52: unplugged, the profile reads performance (the one kept plugged
+    // in) until the shell puts the battery's back, and that must not leave
+    // performance's floor behind.
+    #[test]
+    fn a_change_of_mode_starts_at_the_new_mode_s_floor() {
+        let mut gov = Governor::new(Config::default());
+        let now = Instant::now();
+        assert_eq!(
+            run(&mut gov, Saving::Performance, 40.0, 2, now),
+            Mode::Battery(1)
+        );
+        // A load between busy_fall and busy_climb moves nothing: clamped, mid
+        // would have stayed for as long as it lasted.
+        assert_eq!(
+            run(
+                &mut gov,
+                Saving::Balanced,
+                40.0,
+                600,
+                now + Duration::from_secs(2)
+            ),
+            Mode::Battery(0)
+        );
+        assert_eq!(
+            run(
+                &mut gov,
+                Saving::Performance,
+                40.0,
+                1,
+                now + Duration::from_secs(602)
+            ),
+            Mode::Battery(1)
+        );
+        assert_eq!(
+            run(
+                &mut gov,
+                Saving::Saver,
+                40.0,
+                1,
+                now + Duration::from_secs(603)
+            ),
+            Mode::Battery(0)
         );
     }
 

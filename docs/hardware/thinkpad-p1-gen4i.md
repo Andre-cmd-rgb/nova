@@ -21,7 +21,7 @@ Everything ships in the `nova` package and is inert on any other computer.
 | `default/hypr/hardware/thinkpad-p1-gen4i.lua` | VA-API and GLX on the iGPU, direct scanout (fact 31) |
 | `data/hardware/thinkpad-p1-gen4i/etc/` | fan control, `nvidia-drm fbdev=0`, Bluetooth autosuspend off, NetworkManager's hands off the Wi-Fi power-save flag, and `rtc_cmos.use_acpi_alarm=1`; copied into `/etc` by `nova-hw-apply` from a pacman hook |
 | `/usr/lib/systemd/{logind,sleep}.conf.d/10-nova.conf` | suspend-then-hibernate on the lid, never hibernating on AC (facts 26, 30, 38), for every Nova machine |
-| `nova-power-profile` | the battery's power mode (fact 4), balanced by default; plugged in, always performance |
+| `nova-power-profile` | the battery's power mode (fact 4): every unplug starts in saver, a mode chosen lasts until the next plug-in; plugged in, always performance |
 | `nova power gpu` | the switch, `status` and `run` |
 
 `/etc/nova/power.conf` is optional and holds the tunables below
@@ -78,10 +78,10 @@ tests parse it and source it under `sh`. Keep it POSIX.
 **4. Power profiles have one owner, and it is not the governor.** The desktop
 once remembered a profile per power source and set it on every plug event,
 and the governor set profiles too; the last writer won, and the profiles were
-lost. Now `nova-power-profile` remembers the battery's in
-`~/.local/state/nova/power-profile/battery`, keeps performance plugged in,
-and the shell's battery service puts the right one back at login and on every
-plug and unplug. **nova-power never sets a profile**, and leaves EPP and the
+lost. Now `nova-power-profile` keeps performance plugged in and saver on
+battery, a mode chosen on battery lasting until the next plug-in (fact 52) in
+`$XDG_RUNTIME_DIR/nova/power-profile`, and the shell's battery service puts
+the right one back at login and on every plug and unplug. **nova-power never sets a profile**, and leaves EPP and the
 platform profile to power-profiles-daemon; nova-powerd only reads it (fact 51).
 
 **5. Do not order the unit `After=power-profiles-daemon.service`.** PPD is
@@ -920,7 +920,7 @@ as the fan goes, so the curve reaches it only under load that lasts.
 
 The battery's three modes are the ladder's range (docs/power.md): saver stays on
 `light`, balanced climbs it all, performance starts at `mid` and climbs four
-times as fast. The governor reads the mode from the platform profile
+times as fast. Every unplug starts in saver (fact 52). The governor reads the mode from the platform profile
 power-profiles-daemon writes, so the menu and Settings set it with nothing in
 between; fact 4 still holds, as it reads and never writes.
 
@@ -929,6 +929,34 @@ bar's mobile data widget parks a modem with no SIM or no ModemManager and
 soft-blocks its radio, and its PCI function runtime-suspends — 63 minutes of a
 64-minute boot. `lspci -vv` wakes it to read its config space, which is worth
 knowing before reading `runtime_status` after it.
+
+**52. A battery mode outlived the job it was picked for, and every unplug
+read performance first.** On 2026-11-10 the battery drew about **30 W**
+through a fullscreen YouTube video (UPower's 30 s rate, 17:30-17:54), and
+17-20 W before it. The governor's log said why: `mid` from the first second
+of the boot and never `light`, and a 4 s climb to `full` the day before,
+which only performance does. The battery's mode had been set to performance
+around 14:40 on 11-09, and the remembered mode put it back at every unplug
+and boot for a day and a half, until it was changed by hand. Now every unplug,
+and every start on battery, begins in saver, and a mode chosen on battery
+lasts until the next plug-in or restart.
+
+The same video, windowed, with only the profile changed (on AC, so the
+governor's AC limits held throughout; package power from RAPL, 25 s each):
+performance (EPP `performance`, EPB 0) **9.6 W**, balanced
+(`balance_performance`, EPB 6) **8.3 W**, power-saver (`power`, EPB 15,
+platform profile `low-power`) **6.4 W**, settling to 5.7 W. The panel, the
+memory and the rest come on top of that, and the tier's ceiling and PL1 on
+battery cut it further.
+
+The second half was the governor's. Plugged in the profile is performance,
+and power-profiles-daemon saves it, so at every unplug, and at a boot on
+battery, the first reading is performance until the shell puts the battery's
+mode back a second or two later. The governor entered at performance's floor,
+`mid`, and then clamped it into the new mode's range: saver's is `light` alone,
+so it fell at once (2 s on 11-08), but balanced's includes `mid`, which stayed
+until 25 s in a row under `busy_fall`. A change of mode now starts the ladder
+at the new mode's floor, as an unplug does.
 
 ## Working here
 
