@@ -3,10 +3,10 @@ Copyright (c) 2026 Andre-cmd-rgb. Licensed under the MIT License (see LICENSE).
 
 This project contains code derived from Omarchy 4.0.5 (https://github.com/basecamp/omarchy):
 the Quickshell shell (src/shell), many of the helper commands
-(src/cli/bin), the shell's defaults (data/defaults), the theme templates (theme/templates)
-and the theme palettes (theme/palettes). Nova's Hyprland defaults (data/hypr) are its own code, but
-keep Omarchy's key bindings, window rules and look. Omarchy's wallpapers and images are
-NOT included. Omarchy is distributed under the following license:
+(src/cli/bin) and the shell's defaults (data/defaults), each since rewritten. Nova's
+Hyprland defaults (data/hypr) are its own code, but keep Omarchy's key bindings, window
+rules and look. Omarchy's themes, wallpapers and images are NOT included. Omarchy is
+distributed under the following license:
 
   MIT License
 
@@ -30,9 +30,12 @@ NOT included. Omarchy is distributed under the following license:
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
 
-The palettes are ports of color schemes by their respective authors (Catppuccin,
-Everforest, Gruvbox, Kanagawa, Nord, Rose Pine, Tokyo Night, Flexoki and others), each
-under its own permissive license.
+The theme templates (theme/templates) and the palettes (theme/palettes) are Nova's own.
+Ten palettes take their colours from the color schemes their authors publish, each named
+with its source in its colors.toml: Tokyo Night (folke/tokyonight.nvim, Apache-2.0, after
+enkia's Tokyo Night), Catppuccin (MIT), Gruvbox Material and Everforest (sainnhe, MIT),
+Nord (Arctic Ice Studio, MIT), Kanagawa (rebelot/kanagawa.nvim, MIT), Rosé Pine (MIT),
+Flexoki (Steph Ango, MIT) and Miasma (xero, CC0-1.0).
 
 The emoji picker's list (src/shell/plugins/emojis/emojis.json) is made by tools/emoji-list
 from Unicode's data: emoji-test.txt of Emoji 18.0 and the English annotations of CLDR 49.
