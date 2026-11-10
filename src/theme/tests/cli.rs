@@ -253,10 +253,10 @@ fn resolves_colors_with_fallbacks() {
     let s = Sandbox::new();
     let file = s.root.join("share/themes/white/colors.toml");
     let file = file.to_str().unwrap();
-    assert_eq!(s.ok(&["color", "--file", file, "accent"]), "#6e6e6e\n");
+    assert_eq!(s.ok(&["color", "--file", file, "accent"]), "#575757\n");
     assert_eq!(
         s.ok(&["color", "--file", file, "nope", "accent"]),
-        "#6e6e6e\n"
+        "#575757\n"
     );
     assert_eq!(
         s.ok(&["color", "--file", file, "nope", "#123456"]),
@@ -281,7 +281,7 @@ fn lists_themes_with_their_colors() {
     assert!(
         colored
             .lines()
-            .any(|l| l == "white\t#ffffff\t#000000\t#6e6e6e"),
+            .any(|l| l == "white\t#ffffff\t#121212\t#575757"),
         "{colored}"
     );
     // The user's palette wins over Nova's.

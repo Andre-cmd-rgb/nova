@@ -1,31 +1,29 @@
+# Rosé Pine Dawn (MIT), the light Rosé Pine, with the terminal colours of
+# rose-pine/foot. Rosé Pine has no orange; gold stands in for it.
 mode = "light"
 
-accent = "#56949f"
-selection = "#dfdad9"
-muted = "#cecacd"
+background = "#faf4ed"          # base
+dark_background = "#f2e9e1"     # overlay
+lighter_background = "#fffaf3"  # surface
+selection = "#dfdad9"           # highlight med
 
-background = "#faf4ed"
-dark_background = "#ede7e1"
-darker_background = "#e1dbd5"
-lighter_background = "#f2e9e1"
+foreground = "#575279"          # text
+light_foreground = "#797593"    # subtle
+dark_foreground = "#9893a5"     # muted
+muted = "#9893a5"               # muted
 
-foreground = "#575279"
-dark_foreground = "#9893a5"
-light_foreground = "#6e6a86"
-bright_foreground = "#575279"
+accent = "#d7827e"              # rose
 
-red = "#b4637a"
-yellow = "#ea9d34"
-orange = "#cf8057"
-green = "#286983"
-cyan = "#d7827e"
-blue = "#56949f"
-magenta = "#907aa9"
-brown = "#67402b"
+red = "#b4637a"                 # love
+green = "#56949f"               # foam
+yellow = "#ea9d34"              # gold
+blue = "#286983"                # pine
+magenta = "#907aa9"             # iris
+cyan = "#d7827e"                # rose
 
-bright_red = "#b4637a"
-bright_yellow = "#ea9d34"
-bright_green = "#286983"
-bright_cyan = "#d7827e"
-bright_blue = "#56949f"
-bright_magenta = "#907aa9"
+bright_red = "#df8aa0"
+bright_green = "#7ebcc7"
+bright_yellow = "#ffc55c"
+bright_blue = "#538faa"
+bright_magenta = "#b8a1d2"
+bright_cyan = "#ffaaa5"

@@ -1,31 +1,30 @@
+# Catppuccin Latte (MIT), from the Catppuccin palette, with its terminal
+# colours as catppuccin/foot sets them. Mauve is Catppuccin's own accent.
 mode = "light"
 
-accent = "#1e66f5"
-selection = "#ccd0da"
-muted = "#acb0be"
+background = "#eff1f5"          # base
+dark_background = "#e6e9ef"     # mantle
+lighter_background = "#ccd0da"  # surface0
+selection = "#ccced7"           # catppuccin/foot's selection
 
-background = "#eff1f5"
-dark_background = "#e3e4e8"
-darker_background = "#d7d8dc"
-lighter_background = "#dce0e8"
+foreground = "#4c4f69"          # text
+light_foreground = "#5c5f77"    # subtext1
+dark_foreground = "#9ca0b0"     # overlay0
+muted = "#7c7f93"               # overlay2, Catppuccin's comments
 
-foreground = "#4c4f69"
-dark_foreground = "#9ca0b0"
-light_foreground = "#5c5f77"
-bright_foreground = "#4c4f69"
+accent = "#8839ef"              # mauve
+orange = "#fe640b"              # peach
 
 red = "#d20f39"
-yellow = "#df8e1d"
-orange = "#d84e2b"
 green = "#40a02b"
-cyan = "#179299"
+yellow = "#df8e1d"
 blue = "#1e66f5"
-magenta = "#ea76cb"
-brown = "#6c2715"
+magenta = "#ea76cb"             # pink
+cyan = "#179299"                # teal
 
 bright_red = "#d20f39"
-bright_yellow = "#df8e1d"
 bright_green = "#40a02b"
-bright_cyan = "#179299"
+bright_yellow = "#df8e1d"
 bright_blue = "#1e66f5"
 bright_magenta = "#ea76cb"
+bright_cyan = "#179299"

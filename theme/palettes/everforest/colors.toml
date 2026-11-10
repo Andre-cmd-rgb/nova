@@ -1,31 +1,30 @@
+# Everforest, dark, its medium background, from sainnhe/everforest (MIT).
+# Green is the colour its status line greets you with.
 mode = "dark"
 
-accent = "#7fbbb3"
-selection = "#3d484d"
-muted = "#475258"
+background = "#2d353b"          # bg0
+dark_background = "#232a2e"     # bg_dim
+lighter_background = "#343f44"  # bg1
+selection = "#543a48"           # bg_visual
 
-background = "#2d353b"
-dark_background = "#21272c"
-darker_background = "#181d20"
-lighter_background = "#343f44"
+foreground = "#d3c6aa"          # fg
+light_foreground = "#9da9a0"    # grey2
+dark_foreground = "#7a8478"     # grey0
+muted = "#859289"               # grey1, its comments
 
-foreground = "#d3c6aa"
-dark_foreground = "#4f585e"
-light_foreground = "#9da9a0"
-bright_foreground = "#d3c6aa"
+accent = "#a7c080"              # green
+orange = "#e69875"
 
 red = "#e67e80"
-yellow = "#dbbc7f"
-orange = "#e09d7f"
 green = "#a7c080"
-cyan = "#83c092"
+yellow = "#dbbc7f"
 blue = "#7fbbb3"
-magenta = "#d699b6"
-brown = "#704e3f"
+magenta = "#d699b6"             # purple
+cyan = "#83c092"                # aqua
 
 bright_red = "#e67e80"
-bright_yellow = "#dbbc7f"
 bright_green = "#a7c080"
-bright_cyan = "#83c092"
+bright_yellow = "#dbbc7f"
 bright_blue = "#7fbbb3"
 bright_magenta = "#d699b6"
+bright_cyan = "#83c092"

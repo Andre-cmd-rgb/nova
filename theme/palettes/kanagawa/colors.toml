@@ -1,31 +1,30 @@
+# Kanagawa, its "wave" style, from rebelot/kanagawa.nvim (MIT), by Tommaso
+# Laurenzi, with the terminal colours of its extras/kitty/kanagawa.conf.
 mode = "dark"
 
-accent = "#dcd7ba"
-selection = "#363646"
-muted = "#54546D"
+background = "#1f1f28"          # sumiInk3
+dark_background = "#16161d"     # sumiInk0
+lighter_background = "#2a2a37"  # sumiInk4
+selection = "#2d4f67"           # waveBlue2
 
-background = "#1f1f28"
-dark_background = "#17171e"
-darker_background = "#111116"
-lighter_background = "#223249"
+foreground = "#dcd7ba"          # fujiWhite
+light_foreground = "#c8c093"    # oldWhite
+dark_foreground = "#54546d"     # sumiInk6
+muted = "#727169"               # fujiGray, its comments
 
-foreground = "#dcd7ba"
-dark_foreground = "#727169"
-light_foreground = "#c8c093"
-bright_foreground = "#dcd7ba"
+accent = "#7e9cd8"              # crystalBlue
+orange = "#ffa066"              # surimiOrange
 
-red = "#c34043"
-yellow = "#c0a36e"
-orange = "#c17158"
-green = "#76946a"
-cyan = "#6a9589"
-blue = "#7e9cd8"
-magenta = "#957fb8"
-brown = "#60382c"
+red = "#c34043"                 # autumnRed
+green = "#76946a"               # autumnGreen
+yellow = "#c0a36e"              # boatYellow2
+blue = "#7e9cd8"                # crystalBlue
+magenta = "#957fb8"             # oniViolet
+cyan = "#6a9589"                # waveAqua1
 
-bright_red = "#e82424"
-bright_yellow = "#e6c384"
-bright_green = "#98bb6c"
-bright_cyan = "#7aa89f"
-bright_blue = "#7fb4ca"
-bright_magenta = "#938aa9"
+bright_red = "#e82424"          # samuraiRed
+bright_green = "#98bb6c"        # springGreen
+bright_yellow = "#e6c384"       # carpYellow
+bright_blue = "#7fb4ca"         # springBlue
+bright_magenta = "#938aa9"      # springViolet1
+bright_cyan = "#7aa89f"         # waveAqua2

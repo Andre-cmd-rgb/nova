@@ -1,31 +1,32 @@
+# Gruvbox Material, dark, its medium background and "material" foreground,
+# from sainnhe/gruvbox-material (MIT), a softer Gruvbox. Green is the colour
+# its status line greets you with.
 mode = "dark"
 
-accent = "#7daea3"
-selection = "#504945"
-muted = "#665c54"
+background = "#282828"          # bg0
+dark_background = "#1b1b1b"     # bg_dim
+lighter_background = "#32302f"  # bg1
+selection = "#45403d"           # bg3, its Visual
 
-background = "#282828"
-dark_background = "#1e1e1e"
-darker_background = "#161616"
-lighter_background = "#3c3836"
+foreground = "#d4be98"          # fg0
+bright_foreground = "#ddc7a1"   # fg1
+light_foreground = "#a89984"    # grey2
+dark_foreground = "#7c6f64"     # grey0
+muted = "#928374"               # grey1, its comments
 
-foreground = "#d4be98"
-dark_foreground = "#7c6f64"
-light_foreground = "#bdae93"
-bright_foreground = "#d4be98"
+accent = "#a9b665"              # green
+orange = "#e78a4e"
 
 red = "#ea6962"
-yellow = "#d8a657"
-orange = "#e1875c"
 green = "#a9b665"
-cyan = "#89b482"
+yellow = "#d8a657"
 blue = "#7daea3"
-magenta = "#d3869b"
-brown = "#70432e"
+magenta = "#d3869b"             # purple
+cyan = "#89b482"                # aqua
 
 bright_red = "#ea6962"
-bright_yellow = "#d8a657"
 bright_green = "#a9b665"
-bright_cyan = "#89b482"
+bright_yellow = "#d8a657"
 bright_blue = "#7daea3"
 bright_magenta = "#d3869b"
+bright_cyan = "#89b482"

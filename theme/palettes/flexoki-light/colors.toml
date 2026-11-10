@@ -1,31 +1,30 @@
+# Flexoki, light (MIT), by Steph Ango (kepano/flexoki): its paper, base and
+# 600 accents, with the terminal colours of its kitty theme.
 mode = "light"
 
-accent = "#205EA6"
-selection = "#CECDC3"
-muted = "#B7B5AC"
+background = "#fffcf0"          # paper, bg
+dark_background = "#f2f0e5"     # base-50, bg-2
+lighter_background = "#e6e4d9"  # base-100, ui
+selection = "#cecdc3"           # base-200, ui-3
 
-background = "#FFFCF0"
-dark_background = "#f2efe4"
-darker_background = "#e5e2d8"
-lighter_background = "#E6E4D9"
+foreground = "#100f0f"          # black, tx
+light_foreground = "#6f6e69"    # base-600, tx-2
+dark_foreground = "#b7b5ac"     # base-300, tx-3
+muted = "#6f6e69"               # the terminal's bright black
 
-foreground = "#100F0F"
-dark_foreground = "#878580"
-light_foreground = "#403E3C"
-bright_foreground = "#100F0F"
+accent = "#205ea6"              # blue-600
+orange = "#bc5215"              # orange-600
 
-red = "#D14D41"
-yellow = "#D0A215"
-orange = "#d0772b"
-green = "#879A39"
-cyan = "#3AA99F"
-blue = "#205EA6"
-magenta = "#CE5D97"
-brown = "#683b15"
+red = "#d14d41"
+green = "#879a39"
+yellow = "#d0a215"
+blue = "#4385be"
+magenta = "#ce5d97"
+cyan = "#3aa99f"
 
-bright_red = "#D14D41"
-bright_yellow = "#D0A215"
-bright_green = "#879A39"
-bright_cyan = "#3AA99F"
-bright_blue = "#4385BE"
-bright_magenta = "#CE5D97"
+bright_red = "#af3029"
+bright_green = "#66800b"
+bright_yellow = "#ad8301"
+bright_blue = "#205ea6"
+bright_magenta = "#a02f6f"
+bright_cyan = "#24837b"
