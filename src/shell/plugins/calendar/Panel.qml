@@ -105,6 +105,7 @@ Item {
       // An unparseable payload asks for nothing.
     }
     if (!service && shell && typeof shell.serviceFor === "function") service = shell.serviceFor(pluginId)
+    if (store) store.readZone()
     page = pages.some(function (p) { return p.id === payload.page }) ? payload.page : pages[0].id
     var day = Model.parseDayKey(payload.date)
     anchor = isNaN(day) ? today : day

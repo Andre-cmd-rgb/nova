@@ -15,8 +15,15 @@ Item {
   property var root: Model.parse("")
   property var items: []
   property bool loaded: false
-  // The system's time zone, which new events are written in.
+  // The system's time zone, which new events are written in. Read again each
+  // time the window opens (readZone), so a zone set since is the one written.
   property string zone: ""
+  property bool zoneAskedAgain: false
+
+  function readZone() {
+    if (zoneReader.running) zoneAskedAgain = true
+    else zoneReader.running = true
+  }
 
   function read(text) {
     root = Model.parse(text)
@@ -84,11 +91,21 @@ Item {
   }
 
   Process {
+    id: zoneReader
     running: true
     command: ["timedatectl", "show", "-p", "Timezone", "--value"]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: store.zone = /^[A-Za-z0-9_+\/-]+$/.test(String(text).trim()) ? String(text).trim() : ""
+      onStreamFinished: {
+        var name = String(text).trim()
+        // A zone that cannot be read keeps the one read before.
+        if (/^[A-Za-z0-9_+\/-]+$/.test(name)) store.zone = name
+      }
+    }
+    onExited: {
+      if (!store.zoneAskedAgain) return
+      store.zoneAskedAgain = false
+      running = true
     }
   }
 
