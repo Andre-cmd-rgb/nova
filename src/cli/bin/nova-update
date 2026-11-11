@@ -12,8 +12,9 @@
 #
 #   nova update                     update to the newest release
 #   nova update --version v1.0.0-beta.2
-#   nova update --check             print "available <version>", "apps <name>..." when
-#                                   only Chrome or VS Code is behind, or "current"
+#   nova update --check             print "available <version>", "unfinished <version>"
+#                                   for an update that did not finish, "apps <name>..."
+#                                   when only Chrome or VS Code is behind, or "current"
 #   nova update --dry-run           show what would change, change nothing
 #   nova update --check-boot        check the boot entries again, as an update ends:
 #                                   after repairing them, before restarting
