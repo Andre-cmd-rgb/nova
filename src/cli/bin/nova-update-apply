@@ -483,6 +483,8 @@ main() {
   label="nova update ${from:+$from -> }$tag" pre=''
   trap 'exec >>"$LOG" 2>&1; echo "==> the terminal closed; continuing here"' HUP
   trap '' PIPE
+  restore_on_exit=0
+  trap on_exit EXIT
   hold_shutdown
   if [[ $ARCH != x86_64 ]]; then
     # A Raspberry Pi has none to take: its root is ext4, and its firmware has
@@ -511,7 +513,7 @@ main() {
   fi
   # Until pacman starts, any error must put both pins back, including a
   # failed second write after the first file was replaced.
-  trap 'restore_config' EXIT
+  restore_on_exit=1
   write_config
 
   local -a pacman_args=(-Su)
@@ -524,7 +526,7 @@ main() {
   local -a keyrings=(archlinux-keyring nova-keyring)
   [[ $ARCH == x86_64 ]] || keyrings=(archlinuxarm-keyring nova-keyring)
   say "Updating the keyrings"
-  trap - EXIT
+  restore_on_exit=0
   "${env_skip[@]}" pacman -Syy --needed --noconfirm "${keyrings[@]}" || pacman_failed
   say "pacman ${pacman_args[*]}"
   # A line at a time, also into a pipe: Settings reads how far it is from it.
@@ -577,7 +579,9 @@ take_lock() {
 # Until this ends, the computer does not shut down or restart, from the menu,
 # the power key or systemctl: stopped in the middle, pacman would leave the
 # release half installed. logind lets go when this process ends, however it
-# ends. The scratch roots of the tests have no logind to ask.
+# ends: at once as it leaves (on_exit), and within the second tail takes to
+# see it gone had it been killed outright. The scratch roots of the tests have
+# no logind to ask.
 hold_shutdown() {
   [[ -z $ROOT ]] && command -v systemd-inhibit > /dev/null 2>&1 || return 0
   (
@@ -586,6 +590,26 @@ hold_shutdown() {
       --why="Installing Nova $tag; stopped now it would be left half done" \
       tail --pid=$$ -f /dev/null
   ) < /dev/null > /dev/null 2>&1 &
+  shutdown_hold=$!
+}
+
+# Waited for, so that a restart asked for the moment the update ends is not
+# refused in its name.
+release_shutdown() {
+  [[ -n ${shutdown_hold:-} ]] || return 0
+  kill "$shutdown_hold" 2> /dev/null || true
+  wait "$shutdown_hold" 2> /dev/null || true
+  shutdown_hold=''
+}
+
+# However the update ends: the pins back if it ends before pacman has them,
+# then the shutdown let go.
+on_exit() {
+  if (( ${restore_on_exit:-0} )); then
+    restore_on_exit=0
+    restore_config
+  fi
+  release_shutdown
 }
 
 finished() {

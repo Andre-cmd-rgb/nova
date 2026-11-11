@@ -115,6 +115,11 @@ main() {
       # This local manifest was checked with nova-usb's signature helper before
       # installation. Its repository is the previous release's public one.
       update_tries "$state/downgrade.log" --release-file "$state/previous.toml" --allow-downgrade --yes
+      # This release's own updater ran that one. A restart asked for the moment
+      # it ends, as the power off below is, must not be refused in its name.
+      check "the update let go of the shutdown as it ended" \
+        bash -c '! systemd-inhibit --list --no-legend | grep -F "nova update"'
+      checks_passed
       echo downgraded >"$state/stage"
       ;;
     downgraded)

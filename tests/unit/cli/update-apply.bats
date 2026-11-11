@@ -254,6 +254,19 @@ nova-boot-check status" ]
   [ ! -e "$ALARMFILE.nova-prev" ]
 }
 
+# tail sees the update gone within a second; a restart asked for in that
+# second, as a script's next line is, was refused in the update's name.
+@test "the hold on shutting down is let go as the update leaves, and waited for" {
+  sleep 30 3>&- &
+  local hold=$!
+  shutdown_hold=$hold
+  on_exit
+  ! kill -0 "$hold" 2>/dev/null
+  [ -z "$shutdown_hold" ]
+  # With none taken, as in a scratch root, leaving is all there is to do.
+  on_exit
+}
+
 @test "a Pi's update needs the release's Arch Linux ARM set" {
   on_a_pi
   run main --tag v1.1.0 --version 1.1.0 --arch-date 2026/10/19 --nova-repo https://example.org/repo
