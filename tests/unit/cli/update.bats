@@ -63,6 +63,17 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   ! grep -q nova-restart-shell "$CALLS"
 }
 
+@test "a screen locked meanwhile: the shell restarts once it is unlocked" {
+  stub nova-restart-shell 'exit 75'
+  stub systemctl 'exit 3'
+  stub systemd-run
+  run update
+  [ "$status" -eq 0 ]
+  grep -q '^systemd-run --user --collect --quiet --unit=nova-shell-restart-pending bash -c ' "$CALLS"
+  [[ $output == *"restarts on the new release once it is unlocked"* ]]
+  [[ $output != *"log out and back in"* ]]
+}
+
 @test "a shell that will not restart is a warning, not a failed update" {
   stub nova-restart-shell 'exit 1'
   run update

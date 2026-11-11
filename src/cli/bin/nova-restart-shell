@@ -41,13 +41,14 @@ lock_state() {
 # shell died, or came back after a crash without the lock) is behind that
 # failsafe already, with nothing to unlock it, and a restart that locks again
 # is the way out without a reboot. So the shell's lock is asked how it stands:
-# only one secure or on its way is kept.
+# only one secure or on its way is kept. That refusal exits 75 (try again
+# later), which nova update waits out: it restarts the shell after the unlock.
 relock=false
 if nova-hyprland-session-locked; then
   case $(lock_state) in
     secure | locking)
       echo "Refusing to restart Nova shell while the session is locked." >&2
-      exit 1
+      exit 75
       ;;
   esac
   relock=true

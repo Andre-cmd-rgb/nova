@@ -452,11 +452,30 @@ update_release() {
 # The running shell holds the old release's QML and would load the rest from
 # the new files as it needs them, half one release and half the other: move it
 # onto the new release, if one is running and nova changed.
+#
+# The screen locked meanwhile (an update from Settings outlasts the idle lock),
+# the lock screen is not restarted under the user: the restart waits for the
+# unlock, in a unit of its own, which outlives this and the Settings window.
 restart_shell() { # the nova pkgver before the update
   [[ $(installed_pkgver) != "$1" ]] || return 0
   nova-shell shell ping >/dev/null 2>&1 || return 0
   echo "Restarting the shell on the new release."
-  nova-restart-shell || warn "the shell did not restart; log out and back in to finish the update"
+  local status=0
+  nova-restart-shell || status=$?
+  case $status in
+    0) ;;
+    75)
+      if systemctl --user --quiet is-active nova-shell-restart-pending.service 2>/dev/null ||
+        systemd-run --user --collect --quiet --unit=nova-shell-restart-pending \
+          bash -c 'while :; do nova-restart-shell && exit 0; [[ $? == 75 ]] || exit 1; sleep 5; done' \
+          >/dev/null 2>&1; then
+        echo "The screen is locked: the shell restarts on the new release once it is unlocked."
+      else
+        warn "the screen is locked; log out and back in to finish the update"
+      fi
+      ;;
+    *) warn "the shell did not restart; log out and back in to finish the update" ;;
+  esac
 }
 
 # --- Settings ---------------------------------------------------------------------

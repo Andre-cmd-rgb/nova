@@ -49,3 +49,12 @@ restart() { "$REPO_ROOT/src/cli/bin/nova-restart-shell"; }
   [ "$status" -eq 0 ]
   grep -qF 'hyprctl dispatch hl.dsp.exec_cmd("nova-launch-shell")' "$CALLS"
 }
+
+@test "a lock screen up is never restarted, and the refusal says to try later" {
+  stub nova-hyprland-session-locked
+  stub nova-shell 'case $* in "lock status") echo "{\"secure\": true}" ;; esac'
+  run restart
+  [ "$status" -eq 75 ]
+  [[ $output == *"Refusing to restart"* ]]
+  fails grep -q "^quickshell kill" "$CALLS"
+}
