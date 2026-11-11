@@ -180,19 +180,21 @@ stop() {
     sleep 0.1
   done
   indicator
+  # Taken now, not once the file is finished: finishing takes a while, and a
+  # recording started meanwhile writes its own name here, which would go.
+  if [[ -r $current ]]; then IFS= read -r file <"$current" || true; fi
+  rm -f "$current"
   if recording; then
     pkill -9 -f "^gpu-screen-recorder" || true
     nova-notification-send -u critical -t 5000 -g  "The recording did not stop in time" \
       "gpu-screen-recorder was killed after five seconds, so the video may be cut short or unplayable."
   else
-    if [[ -r $current ]]; then IFS= read -r file <"$current" || true; fi
     finish "$file"
     if [[ -f $file ]]; then
       echo "$file"
       announce "$file"
     fi
   fi
-  rm -f "$current"
 }
 
 all_args=$*
