@@ -62,12 +62,20 @@ LOG=$ROOT/var/log/nova-update.log
 SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-root}
 
 die() {
-  printf 'nova update: %s\n' "$*" >&2
+  warn "$*"
   [[ -z ${staged:-} ]] || rm -rf -- "$staged"
   exit 1
 }
-warn() { printf 'nova update: %s\n' "$*" >&2; }
-say() { printf '==> %s\n' "$*"; }
+# A line on stdout (1) or stderr (2). Once what read them is gone (nova update
+# stopped, at a logout say, or a `| tee` did), a write fails, and from then on
+# both go to the log: an update that has begun goes on to its end.
+out() { # fd, line
+  printf '%s\n' "$2" >&"$1" && return 0
+  { exec >>"$LOG" 2>&1; } 2>/dev/null || exec >/dev/null 2>&1
+  printf '==> what read the output went away; continuing here\n%s\n' "$2" >&"$1" || true
+}
+warn() { out 2 "nova update: $*"; }
+say() { out 1 "==> $*"; }
 
 write_file() { # path; content on stdin. Atomic, so pacman never reads half a file.
   local path=$1 tmp
@@ -364,9 +372,13 @@ reboot_reason() {
   return 1
 }
 
-# pacman failed: the previous files back, the snapshot pair closed.
+# pacman failed: the previous files back, the snapshot pair closed, and
+# Hyprland reloading again (the hook that would have done it runs only after
+# a transaction that went through).
 pacman_failed() {
   restore_config
+  NOVA_HYPRLAND_RELOAD_GUARD_RUN_ROOT=$ROOT/run/user NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR=$ROOT/run/nova/hyprland-reload-guard \
+    "${0%/*}/nova-hyprland-reload-guard" resume 2>/dev/null || true
   if [[ -n $pre ]]; then
     snapshot "$label (pacman failed)" --type post --pre-number "$pre" > /dev/null ||
       warn "could not close snapshot $pre"
@@ -466,9 +478,12 @@ main() {
   fi
 
   # Read by pacman_failed. pacman finishes a transaction when the terminal
-  # closes; so does this, writing to the log instead.
+  # closes; so does this, writing to the log instead. With SIGPIPE ignored, a
+  # reader that goes away stops neither this nor pacman (out() above).
   label="nova update ${from:+$from -> }$tag" pre=''
   trap 'exec >>"$LOG" 2>&1; echo "==> the terminal closed; continuing here"' HUP
+  trap '' PIPE
+  hold_shutdown
   if [[ $ARCH != x86_64 ]]; then
     # A Raspberry Pi has none to take: its root is ext4, and its firmware has
     # no menu to start an older system from.
@@ -559,13 +574,27 @@ take_lock() {
   flock -n "$update_lock" || die "another Nova update is running"
 }
 
+# Until this ends, the computer does not shut down or restart, from the menu,
+# the power key or systemctl: stopped in the middle, pacman would leave the
+# release half installed. logind lets go when this process ends, however it
+# ends. The scratch roots of the tests have no logind to ask.
+hold_shutdown() {
+  [[ -z $ROOT ]] && command -v systemd-inhibit > /dev/null 2>&1 || return 0
+  (
+    trap '' HUP INT PIPE
+    exec systemd-inhibit --what=shutdown --mode=block --who="nova update" \
+      --why="Installing Nova $tag; stopped now it would be left half done" \
+      tail --pid=$$ -f /dev/null
+  ) < /dev/null > /dev/null 2>&1 &
+}
+
 finished() {
   drop_backup
   local reason
   if [[ -z $ROOT ]] && reason=$(reboot_reason); then
-    echo "$reason: restart to finish the update."
+    out 1 "$reason: restart to finish the update."
   fi
-  echo "Nova is now on $tag."
+  out 1 "Nova is now on $tag."
 }
 
 if [[ ${BASH_SOURCE[0]} == "$0" ]]; then

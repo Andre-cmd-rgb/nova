@@ -237,6 +237,23 @@ nova-boot-check status" ]
   [[ $output == *"Do not restart yet"* ]]
 }
 
+# nova update stopped, at a logout say, or a `| tee` ended: the rest of the
+# output finds no reader. Killed by SIGPIPE, the update used to stop between
+# pacman's two runs, its new pins in place and none of its checks done.
+@test "an update whose output's reader goes away goes on to its end, into the log" {
+  prepare_pi_update 0
+  printf '#!/bin/bash\necho "${0##*/} $*" >>"$SCRATCH/calls"\nsleep 0.3\n' >"$SCRATCH/bin/pacman"
+  mkdir -p "$NOVA_ROOT/var/log"
+  run_pi_update 2>&1 | head -n 1 >/dev/null
+  [ "${PIPESTATUS[0]}" -eq 0 ]
+  [ "$(cat "$SCRATCH/calls")" = "pacman -Syy --needed --noconfirm archlinuxarm-keyring nova-keyring
+pacman -Su --noconfirm
+nova-boot-check status" ]
+  grep -q "what read the output went away; continuing here" "$NOVA_ROOT/var/log/nova-update.log"
+  grep -q "Nova is now on v1.1.0." "$NOVA_ROOT/var/log/nova-update.log"
+  [ ! -e "$ALARMFILE.nova-prev" ]
+}
+
 @test "a Pi's update needs the release's Arch Linux ARM set" {
   on_a_pi
   run main --tag v1.1.0 --version 1.1.0 --arch-date 2026/10/19 --nova-repo https://example.org/repo

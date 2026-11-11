@@ -25,9 +25,10 @@ state=${NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR:-/run/nova/hyprland-reload-guard}
 hyprctl=${HYPRCTL:-/usr/bin/hyprctl}
 
 # hyprctl for one running Hyprland: a user's runtime directory and the
-# instance's signature.
+# instance's signature. hyprctl waits on a Hyprland that has stopped
+# answering, and this runs inside pacman's transaction, holding its lock.
 in_session() { # runtime-dir signature args...
-  XDG_RUNTIME_DIR=$1 "$hyprctl" --instance "$2" "${@:3}"
+  XDG_RUNTIME_DIR=$1 timeout 3 "$hyprctl" --instance "$2" "${@:3}"
 }
 
 # An option's true or false. An instance that has gone prints "Couldn't
