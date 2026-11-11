@@ -1,5 +1,5 @@
 #!/bin/bash
-# nova:summary=Print "available <version>" or "current" (for the shell's update badge)
+# nova:summary=Print "available <version>", "unfinished <version>", "apps <app>..." or "current" (for the shell's update badge)
 # nova:args=[--notify]
 #
 # A thin wrapper over `nova update --check`, which caches the answer for half an hour
@@ -51,6 +51,10 @@ case $answer in
   "available "*)
     nova-notification-send -g 󰚰 "Nova ${answer#available } is available" \
       "Settings → Updates installs it." "${open[@]}" >/dev/null || exit 0
+    ;;
+  "unfinished "*)
+    nova-notification-send -g 󰚰 "The update to Nova ${answer#unfinished } did not finish" \
+      "Settings → Updates finishes it." "${open[@]}" >/dev/null || exit 0
     ;;
   "apps "*)
     read -ra behind <<<"${answer#apps }"

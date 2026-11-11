@@ -24,10 +24,12 @@ BarWidget {
     waiting = ""
   }
 
-  // nova-update-check's answer, a line: "available <version>", "apps
-  // <count>", or "current". Another answer leaves the badge as it is.
+  // nova-update-check's answer, a line: "available <version>", "unfinished
+  // <version>", "apps <app>...", or "current". Another answer leaves the
+  // badge as it is.
   function heard(answer) {
     if (answer.startsWith("available ")) waiting = "Nova " + answer.slice(10) + " is available"
+    else if (answer.startsWith("unfinished ")) waiting = "The update to Nova " + answer.slice(11) + " did not finish"
     else if (answer.startsWith("apps ")) waiting = "App updates are available"
     else if (answer === "current") waiting = ""
   }

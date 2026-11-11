@@ -221,8 +221,18 @@ check_only() {
     fi
     rm -f "$tmp"
   fi
+  # An update that did not finish (stopped, or its boot entries did not check
+  # out) has the release it was for in the pins, and its packages may be in:
+  # Nova looks current, and is not.
+  # One running now has them too, and is not news.
+  local unfinished=''
+  if unfinished_update && ! pgrep -f -- '/nova-update-apply( |$)' >/dev/null 2>&1; then
+    unfinished=$(header_value "$REPOFILE" nova-release)
+  fi
   if [[ -n $tag && $(vercmp "$(tag_pkgver "$tag")" "$(installed_pkgver)") -gt 0 ]]; then
     echo "available ${tag#v}"
+  elif [[ $unfinished =~ ^v[0-9] ]]; then
+    echo "unfinished ${unfinished#v}"
   # A Chrome security fix is as urgent as a release; an AUR that does not
   # answer is not news.
   elif apps=$("$APPS" --check 2>/dev/null) && [[ $apps == "apps "* ]]; then

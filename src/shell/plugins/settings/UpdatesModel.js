@@ -38,6 +38,7 @@ function summary(status, check, alive) {
   var line = String(check || "")
   if (line === "") return { detail: "Checking for updates…", action: "" }
   if (line.indexOf("available ") === 0) return { detail: "Nova " + line.slice(10) + " is available.", action: "update" }
+  if (line.indexOf("unfinished ") === 0) return { detail: "The update to Nova " + line.slice(11) + " did not finish. Update again to finish it.", action: "update" }
   if (line.indexOf("apps ") === 0) return { detail: "Updates for " + appList(line.slice(5).split(" ")) + " are available.", action: "update" }
   if (line === "current") return { detail: "Nova and its apps are up to date.", action: "check" }
   return { detail: "Could not check for updates.", action: "check" }

@@ -123,6 +123,24 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [ "$output" = "available 1.0.0-beta.2" ]
 }
 
+@test "the check says an update that did not finish, unless a newer release is out" {
+  echo 1.0.0beta.2 >"$PKGVER"
+  export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_API=http://127.0.0.1:9
+  echo "$(date +%s) v1.0.0-beta.2" >"$NOVA_UPDATE_CACHE"
+  printf '# Managed by nova update; the next update rewrites this file.\n# nova-release: v1.0.0-beta.2\n' >"$NOVA_REPOFILE"
+  touch "$NOVA_REPOFILE.nova-prev"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$status" -eq 0 ]
+  [ "$output" = "unfinished 1.0.0-beta.2" ]
+  # While it runs, it is not unfinished.
+  stub pgrep
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$output" = "current" ]
+  echo "$(date +%s) v1.0.0-beta.3" >"$NOVA_UPDATE_CACHE"
+  run "$REPO_ROOT/src/cli/bin/nova-update" --check
+  [ "$output" = "available 1.0.0-beta.3" ]
+}
+
 @test "the badge's check says an update once, and again only after Nova was current" {
   export NOVA_UPDATE_CACHE="$SCRATCH/cache" NOVA_UPDATE_API=http://127.0.0.1:9 NOVA_UPDATE_NOTIFIED="$SCRATCH/state/notified"
   stub nova-notification-send
