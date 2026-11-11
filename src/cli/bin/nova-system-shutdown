@@ -1,31 +1,59 @@
 #!/bin/bash
 
-# nova:summary=Shut down after closing application windows
-# nova:args=[--inhibit|--inhibited]
+# nova:summary=Shut down, or restart, after closing application windows
+# nova:args=[--restart] [--inhibit|--inhibited]
 
 # Three steps, each this script run again:
 #
-#   nova-system-shutdown              has the user's systemd run the rest, which
-#                                     closing the terminal it ran in cannot stop
+#   nova-system-shutdown              asks logind whether anything holds a
+#                                     shutdown up, and says so if it does, before
+#                                     a window closes; if not, has the user's
+#                                     systemd run the rest, which closing the
+#                                     terminal it ran in cannot stop
 #   nova-system-shutdown --inhibit    keeps the machine from sleeping meanwhile,
 #                                     and says so when shutting down fails
 #   nova-system-shutdown --inhibited  closes the windows and powers off
+#
+# With --restart first (nova-system-reboot), each restarts instead.
 
 set -euo pipefail
 
+self=$(readlink -f "${BASH_SOURCE[0]}")
+action=poweroff osd=shutdown doing="Shutting down" verb="shut down" again="Shut down again."
+restart=()
+if [[ ${1:-} == --restart ]]; then
+  action=reboot osd=reboot doing="Restarting" verb="restart" again="Restart again."
+  restart=(--restart)
+  shift
+fi
+
+# The programs that asked logind to block a shutdown (nova update, while it
+# installs), each as "who: why". A restart is a shutdown to logind.
+holders() {
+  busctl --json=short call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager ListInhibitors 2>/dev/null |
+    jq -r '.data[0][] | select(.[3] == "block" and (.[0] | split(":") | index("shutdown"))) | "\(.[1]): \(.[2])"' \
+      2>/dev/null || true
+}
+
 case ${1:-} in
   '')
+    held=$(holders)
+    if [[ -n $held ]]; then
+      nova-notification-send -u critical -g 󰐥 "The computer will not $verb yet" "$held"
+      exit 1
+    fi
     systemd-run --user --collect --quiet --property=Type=exec --property=RuntimeMaxSec=30s \
-      "$(readlink -f "${BASH_SOURCE[0]}")" --inhibit
+      "$self" "${restart[@]}" --inhibit
     ;;
   --inhibit)
     # A lid closed now would still suspend the machine: logind's lid switch
     # heeds only an inhibitor that names it.
     systemd-inhibit --what=sleep:idle:handle-lid-switch --mode=block \
-      --who=Nova --why="Shutting down" "$0" --inhibited || {
+      --who=Nova --why="$doing" "$self" "${restart[@]}" --inhibited || {
       status=$?
-      nova-notification-send -u critical -g 󰐥 "The computer did not shut down" \
-        "Something held it up. Shut down again."
+      nova-notification-send -u critical -g 󰐥 "The computer did not $verb" \
+        "Something held it up. $again"
       exit "$status"
     }
     ;;
@@ -33,14 +61,14 @@ case ${1:-} in
     # The windows close alongside, so none can hold the power-off up; apps such
     # as Chrome get two seconds to save their state.
     {
-      nova-osd -i shutdown -m "Shutting down" -d 5000 || true
+      nova-osd -i "$osd" -m "$doing" -d 5000 || true
       nova-hyprland-window-close-all || true
     } &
     sleep 2
-    systemctl poweroff --no-wall
+    systemctl "$action" --no-wall
     ;;
   *)
-    echo "Usage: nova-system-shutdown" >&2
+    echo "Usage: nova-system-shutdown [--restart]" >&2
     exit 2
     ;;
 esac

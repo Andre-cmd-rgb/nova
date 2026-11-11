@@ -2,12 +2,6 @@
 
 # nova:summary=Reboot after closing application windows
 
-set -euo pipefail
-
-# Scheduled in the user manager, so closing the caller's scope cannot cancel it.
-systemd-run --user --collect --quiet --on-active=2s --timer-property=AccuracySec=100ms \
-  systemctl reboot --no-wall
-
-nova-osd -i reboot -m "Restarting" -d 5000 || true
-nova-hyprland-window-close-all || true
-sleep 1 # Let apps like Chrome shut down cleanly
+# As a shutdown is (nova-system-shutdown --restart): held up, it says so
+# before a window closes, and a restart that fails says so too.
+exec "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")/nova-system-shutdown" --restart "$@"
