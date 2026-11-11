@@ -69,8 +69,10 @@ architecture's components: x86_64 gets the boot chain, aarch64 the Raspberry Pi'
   `nova-<name>`. PAM services are `nova-lock-password`, `nova-lock-fingerprint`,
   `nova-greeter` and `nova-sudo`. User units are `nova-*.service`. polkit actions are
   `org.nova.*`.
-- **The project Nova derives from is named in `NOTICE` only**, as its license
-  asks. `make check-names` (run in CI) fails on the name anywhere else.
+- **The project Nova's shell began from is named nowhere.** `NOTICE` keeps its
+  license's copyright and permission notice, which is what the license asks for
+  as long as code that began there is here. `make check-names` (run in CI) fails
+  on the name anywhere.
 
 ## Session flow (boot to desktop)
 

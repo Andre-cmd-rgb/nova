@@ -1,12 +1,9 @@
 nova
 Copyright (c) 2026 Andre-cmd-rgb. Licensed under the MIT License (see LICENSE).
 
-This project contains code derived from Omarchy 4.0.5 (https://github.com/basecamp/omarchy):
-the Quickshell shell (src/shell), many of the helper commands
-(src/cli/bin) and the shell's defaults (data/defaults), each since rewritten. Nova's
-Hyprland defaults (data/hypr) are its own code, but keep Omarchy's key bindings, window
-rules and look. Omarchy's themes, wallpapers and images are NOT included. Omarchy is
-distributed under the following license:
+The Quickshell shell (src/shell), many of the helper commands (src/cli/bin) and the
+shell's defaults (data/defaults) began as code distributed under the following license,
+and have each been rewritten since. Its notice stays with them, as it asks:
 
   MIT License
 

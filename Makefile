@@ -52,13 +52,14 @@ lint-qml:
 lint-workflows:
 	actionlint
 
-# The project Nova derives from is named in NOTICE only, which its license
-# asks for (docs/ARCHITECTURE.md, Naming). The [m] keeps this line from
-# matching itself; git grep exits 1 for no match, and above that for an error.
+# The project Nova's shell began from is named nowhere; NOTICE keeps its
+# license's notice, which is what the license asks for (docs/ARCHITECTURE.md,
+# Naming). The [m] keeps this line from matching itself; git grep exits 1 for
+# no match, and above that for an error.
 check-names:
-	@status=0; git grep -n -i --untracked -e 'o[m]archy' -- ':!NOTICE' || status=$$?; \
+	@status=0; git grep -n -i --untracked -e 'o[m]archy' || status=$$?; \
 	if [ $$status -eq 0 ]; then \
-	  echo "a name from before Nova, listed above; only NOTICE keeps it" >&2; exit 1; \
+	  echo "a name from before Nova, listed above" >&2; exit 1; \
 	elif [ $$status -ne 1 ]; then exit $$status; fi
 
 test:
