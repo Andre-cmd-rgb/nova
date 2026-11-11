@@ -12,7 +12,9 @@
 set -euo pipefail
 
 # Long enough for the first start after an update, when Quickshell compiles its
-# QML cache; until then Hyprland sits in a submap with no binds.
+# QML cache; until then Hyprland sits in a submap with no binds. About 18
+# seconds while no shell runs; while one runs and does not answer yet, each
+# ask waits out its two seconds, so up to three minutes (the unit lets it).
 readonly attempts=75 interval=0.2
 
 if [[ ${NOVA_LOGIN:-} == password ]]; then

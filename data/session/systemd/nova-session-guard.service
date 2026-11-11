@@ -10,6 +10,10 @@ RemainAfterExit=yes
 # uwsm keeps XDG_SESSION_ID out of the user manager and writes it here instead.
 EnvironmentFile=-%t/uwsm/env_session.conf
 ExecStart=/usr/lib/nova/bin/nova-session-guard
+# The guard keeps its own time: 75 asks, each cut off after two seconds. A
+# start timeout killing it first (90 s, the default, while a shell that is up
+# but not answering yet takes up to 165) left the session running unguarded.
+TimeoutStartSec=infinity
 
 [Install]
 WantedBy=graphical-session.target
