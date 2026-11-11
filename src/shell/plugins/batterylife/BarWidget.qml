@@ -122,6 +122,10 @@ Panel {
 
   property var profiles: []
   property string activeProfile: ""
+  // A choice clicked while the one before is still being set, set after it:
+  // the last one clicked is the one kept.
+  property string profileWanted: ""
+  property bool profilesAskedAgain: false
 
   function profileIcon(name) {
     if (name === "power-saver") return "󰌪"
@@ -138,12 +142,21 @@ Panel {
 
   function setProfile(name) {
     // nova-power-profile keeps it until the next plug-in.
-    profileProc.command = ["nova-power-profile", "set", String(name)]
-    if (!profileProc.running) profileProc.running = true
+    profileWanted = String(name)
+    if (!profileProc.running) setWantedProfile()
   }
 
+  function setWantedProfile() {
+    profileProc.command = ["nova-power-profile", "set", profileWanted]
+    profileWanted = ""
+    profileProc.running = true
+  }
+
+  // Asked while a read runs, it reads again after: the one running may have
+  // started before the change it is asked for.
   function loadProfiles() {
-    if (!profilesProc.running) profilesProc.running = true
+    if (profilesProc.running) profilesAskedAgain = true
+    else profilesProc.running = true
   }
 
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -186,10 +199,22 @@ Panel {
     return battery.readouts.indexOf(value) >= 0 ? value : "Time left"
   }
 
+  // The readout clicked on to, until shell.json says it: a second click
+  // before then goes on from it, not from the one still shown.
+  property string readoutWanted: ""
+  property string readoutSetting: ""
+  onReadoutChanged: if (readout === readoutWanted) readoutWanted = ""
+
   function cycleReadout() {
-    var next = battery.readouts[(battery.readouts.indexOf(battery.readout) + 1) % battery.readouts.length]
-    setReadoutProc.command = ["nova", "bar", "set", battery.pluginId, "readout", next]
-    if (!setReadoutProc.running) setReadoutProc.running = true
+    var from = readoutWanted !== "" ? readoutWanted : battery.readout
+    readoutWanted = battery.readouts[(battery.readouts.indexOf(from) + 1) % battery.readouts.length]
+    if (!setReadoutProc.running) setWantedReadout()
+  }
+
+  function setWantedReadout() {
+    readoutSetting = readoutWanted
+    setReadoutProc.command = ["nova", "bar", "set", battery.pluginId, "readout", readoutSetting]
+    setReadoutProc.running = true
   }
 
   function formatDuration(seconds) {
@@ -319,6 +344,11 @@ Panel {
   Process {
     id: profilesProc
     command: ["nova-power-profile", "list", "--active-state"]
+    onExited: {
+      if (!battery.profilesAskedAgain) return
+      battery.profilesAskedAgain = false
+      running = true
+    }
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -340,9 +370,22 @@ Panel {
 
   Process {
     id: profileProc
-    onExited: battery.loadProfiles()
+    onExited: {
+      if (battery.profileWanted !== "") battery.setWantedProfile()
+      else battery.loadProfiles()
+    }
   }
-  Process { id: setReadoutProc; onExited: battery.refresh() }
+  Process {
+    id: setReadoutProc
+    onExited: function (exitCode) {
+      if (exitCode !== 0) battery.readoutWanted = ""
+      else if (battery.readoutWanted !== "" && battery.readoutWanted !== battery.readoutSetting) {
+        battery.setWantedReadout()
+        return
+      }
+      battery.refresh()
+    }
+  }
 
   // A read walks the whole history, so it is worth spending on a change and
   // not worth spending on a clock. These are the three changes that move a number
