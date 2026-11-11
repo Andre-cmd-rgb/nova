@@ -57,6 +57,7 @@ first_unlock() {
   dbus-run-session -- bash -c '
     printf "a login password" | gnome-keyring-daemon --login >/dev/null 2>&1
     gnome-keyring-daemon --start --components=secrets >/dev/null 2>&1
+    if [[ -n ${BEFORE:-} ]]; then python3 -I "$BEFORE" || exit; fi
     "$1" || exit
     python3 -I "$2"' _ "$REPO_ROOT/data/session/bin/nova-keyring-migrate" "$SCRATCH/lookup.py"
 }
@@ -79,4 +80,32 @@ first_unlock() {
   [ "$status" -eq 0 ]
   [[ $output != *moved* ]]
   [ -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
+}
+
+# The login keyring the default already, with a Chrome key newer than the
+# passwordless keyring's: the newer one is the one Chrome's passwords need.
+@test "a secret the login keyring has, newer than the moved one's, is kept" {
+  passwordless_keyring
+  echo login >"$XDG_DATA_HOME/keyrings/default"
+  cat >"$SCRATCH/newer.py" <<'EOF'
+import dbus
+bus = dbus.SessionBus()
+service = dbus.Interface(bus.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets"), "org.freedesktop.Secret.Service")
+_, session = service.OpenSession("plain", dbus.String("", variant_level=1))
+login = dbus.Interface(bus.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets/collection/login"), "org.freedesktop.Secret.Collection")
+properties = {
+    "org.freedesktop.Secret.Item.Label": "Chrome Safe Storage",
+    "org.freedesktop.Secret.Item.Attributes": dbus.Dictionary({"application": "chrome"}, signature="ss"),
+}
+secret = dbus.Struct((session, dbus.ByteArray(b""), dbus.ByteArray(b"newer-key"), "text/plain"), signature="oayays")
+login.CreateItem(properties, secret, False)
+EOF
+  : >"$XDG_STATE_HOME/nova/keyring-migrate-pending"
+  BEFORE=$SCRATCH/newer.py run first_unlock
+  [ "$status" -eq 0 ]
+  [[ $output == *"moved 0 secrets"* ]]
+  [[ $output == *"kept login's own 1"* ]]
+  [[ $output == *"chrome: /org/freedesktop/secrets/collection/login/"*" newer-key"* ]]
+  [[ $output != *"chrome-key"* ]]
+  [ ! -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
 }

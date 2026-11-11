@@ -82,12 +82,23 @@ def main():
     items = [str(i) for i in prop(bus, source, COLLECTION_IFACE, "Items")]
     secrets = service.GetSecrets(items, session) if items else {}
     moved = []
+    kept = 0
+    # Apps write to the keyring the default alias names. A secret the login
+    # keyring has as well is newer in the one moved while that is the one it
+    # names, and replaces login's then; otherwise login's is the newer, and
+    # stays: a stale Chrome key put over it would lose every saved password.
+    moved_is_default = str(service.ReadAlias("default")) == source
     for path in items:
         if path not in secrets:
             fail(f"could not read {path}")
         _, _, value, content_type = secrets[path]
         label = prop(bus, path, ITEM_IFACE, "Label")
         attributes = prop(bus, path, ITEM_IFACE, "Attributes")
+        # The same secret, whichever schema its keyring gave it.
+        same = {k: v for k, v in attributes.items() if k != "xdg:schema"}
+        if not moved_is_default and same and login.SearchItems(dbus.Dictionary(same, signature="ss")):
+            kept += 1
+            continue
         properties = {
             ITEM_IFACE + ".Label": label,
             ITEM_IFACE + ".Attributes": dbus.Dictionary(attributes, signature="ss"),
@@ -113,6 +124,8 @@ def main():
         fail(f"deleting '{keyring}' needs a prompt; it is kept")
     os.remove(marker)
     print(f"nova-keyring-migrate: moved {len(moved)} secrets from '{keyring}' into login")
+    if kept:
+        print(f"nova-keyring-migrate: kept login's own {kept}, which were newer than '{keyring}''s")
 
 
 if __name__ == "__main__":
