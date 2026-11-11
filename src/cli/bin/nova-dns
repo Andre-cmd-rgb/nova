@@ -152,21 +152,33 @@ EOF
 }
 
 # Every Wi-Fi and wired profile's own DNS: the servers given in place of
-# DHCP's (yes), or DHCP's again (no).
+# DHCP's (yes), or DHCP's again (no). Each family only where DHCP (or IPv6's
+# autoconfiguration) gives servers to replace: NetworkManager refuses servers
+# on a profile that is shared (a hotspot), link-local, ignored or disabled,
+# and that refusal used to stop the profiles after it from being set at all;
+# one set by hand keeps the servers typed into it. One that still fails is
+# said, and the rest are set.
 profiles() { # yes|no ipv4-servers ipv6-servers
-  local uuid type
+  local uuid type methods ipv4 ipv6
+  local -a fields
   while IFS=: read -r uuid type; do
     [[ -n $uuid ]] || continue
     case $type in
       802-11-wireless | 802-3-ethernet) ;;
       *) continue ;;
     esac
-    nmcli connection modify "$uuid" \
-      ipv4.ignore-auto-dns "$1" \
-      ipv4.dns "$2" \
-      ipv6.ignore-auto-dns "$1" \
-      ipv6.dns "$3" \
-      >/dev/null
+    methods=$(nmcli -g ipv4.method,ipv6.method connection show "$uuid" 2>/dev/null) || continue
+    { read -r ipv4 || true; read -r ipv6 || true; } <<<"$methods"
+    fields=()
+    case $ipv4 in
+      auto) fields+=(ipv4.ignore-auto-dns "$1" ipv4.dns "$2") ;;
+    esac
+    case $ipv6 in
+      auto | dhcp) fields+=(ipv6.ignore-auto-dns "$1" ipv6.dns "$3") ;;
+    esac
+    ((${#fields[@]})) || continue
+    nmcli connection modify "$uuid" "${fields[@]}" >/dev/null ||
+      echo "nova dns: NetworkManager's profile $uuid kept its own DNS servers" >&2
   done < <(nmcli -t -f UUID,TYPE connection show)
 }
 

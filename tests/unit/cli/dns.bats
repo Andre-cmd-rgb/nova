@@ -81,6 +81,8 @@ dns_command() {
 #!/bin/bash
 if [[ $* == '-t -f UUID,TYPE connection show' ]]; then
   printf 'wifi-id:802-11-wireless\nwired-id:802-3-ethernet\nvpn-id:vpn\n'
+elif [[ $1 == -g ]]; then
+  printf 'auto\nauto\n'
 else
   printf '%s\n' "$*" >>"$SCRATCH/nmcli-log"
 fi
@@ -109,4 +111,32 @@ STUB
   [ "$(cat "$SCRATCH/pkexec-args")" = $'/usr/lib/nova/bin/nova-dns\nCustom\n192.0.2.1\n::1' ]
   AUTH_STATUS=126 run "$REPO_ROOT/src/cli/bin/nova-dns" Custom ::1
   [ "$status" -eq 126 ]
+}
+
+# A hotspot (shared), a cable to another computer (set by hand, and
+# link-local), Wi-Fi with IPv6 ignored: NetworkManager refuses servers on all
+# but the hand-set one, which keeps its own, and one refused used to stop the
+# profiles after it from being set.
+@test "each family is set only where its method takes servers, and a refusal stops nothing" {
+  mkdir -p "$SCRATCH/bin"
+  cat >"$SCRATCH/bin/nmcli" <<'STUB'
+#!/bin/bash
+case $* in
+  '-t -f UUID,TYPE connection show')
+    printf 'home:802-11-wireless\nhotspot:802-11-wireless\ncable:802-3-ethernet\nbroken:802-3-ethernet\nlast:802-11-wireless\n' ;;
+  '-g ipv4.method,ipv6.method connection show home') printf 'auto\nignore\n' ;;
+  '-g ipv4.method,ipv6.method connection show hotspot') printf 'shared\nignore\n' ;;
+  '-g ipv4.method,ipv6.method connection show cable') printf 'manual\nlink-local\n' ;;
+  '-g ipv4.method,ipv6.method connection show broken' | '-g ipv4.method,ipv6.method connection show last') printf 'auto\nauto\n' ;;
+  *'modify broken'*) exit 4 ;;
+  *) printf '%s\n' "$*" >>"$SCRATCH/nmcli-log" ;;
+esac
+STUB
+  chmod +x "$SCRATCH/bin/nmcli"
+  export PATH="$SCRATCH/bin:$PATH"
+  run profiles yes 192.0.2.1 2001:db8::1
+  [ "$status" -eq 0 ]
+  [[ $output == *"profile broken kept its own DNS servers"* ]]
+  [ "$(cat "$SCRATCH/nmcli-log")" = "connection modify home ipv4.ignore-auto-dns yes ipv4.dns 192.0.2.1
+connection modify last ipv4.ignore-auto-dns yes ipv4.dns 192.0.2.1 ipv6.ignore-auto-dns yes ipv6.dns 2001:db8::1" ]
 }
