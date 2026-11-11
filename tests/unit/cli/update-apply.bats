@@ -212,7 +212,7 @@ prepare_pi_update() { # boot-check status
 run_pi_update() {
   PATH="$SCRATCH/bin:$PATH" NOVA_ARCH=aarch64 "$SCRATCH/lib/nova-update-apply" --tag v1.1.0 --version 1.1.0 \
     --arch-date 2026/10/19 --nova-repo https://example.org/repo \
-    --alarm-date 2026/10/20 --alarm-pool https://example.org/alarm/aarch64 --noconfirm
+    --alarm-date 2026/10/20 --alarm-pool https://example.org/alarm/aarch64 --noconfirm "$@"
 }
 
 pi_update() { # boot-check status
@@ -252,6 +252,83 @@ nova-boot-check status" ]
   grep -q "what read the output went away; continuing here" "$NOVA_ROOT/var/log/nova-update.log"
   grep -q "Nova is now on v1.1.0." "$NOVA_ROOT/var/log/nova-update.log"
   [ ! -e "$ALARMFILE.nova-prev" ]
+}
+
+# The move back from a snapshot that split a package in two, as openssl 4.1 did
+# on 2026-11-10: openssl-3 came in as a dependency and owns the libcrypto.so.3
+# the older openssl has itself. pacman answers as it would there; the app and
+# its helper built by hand were in no repository before either.
+prepare_move_back() { # status of pacman -R [how pacman -Qlq answers, asked what every package owns]
+  local all=${2-"printf '/%s\n' usr/ usr/lib/ usr/lib/libcrypto.so.3 usr/share/ usr/share/licenses/"}
+  prepare_pi_update 0
+  cat >"$SCRATCH/bin/pacman" <<STUB
+#!/bin/bash
+echo "pacman \$*" >>"$SCRATCH/calls"
+case "\$*" in
+  -Qqm) printf '%s\n' google-chrome chrome-helper ;;
+  -Qqdm) printf '%s\n' chrome-helper openssl-3 ;;
+  '-Qlq openssl-3') printf '/%s\n' usr/ usr/lib/ usr/lib/libcrypto.so.3 usr/share/ usr/share/licenses/ usr/share/licenses/openssl-3/ 'usr/share/licenses/openssl-3/LICENSE[1]' ;;
+  -Qlq) $all ;;
+  -R*) exit $1 ;;
+esac
+STUB
+  put "$NOVA_ROOT/usr/lib/libcrypto.so.3" 'the older openssl'
+  put "$NOVA_ROOT/usr/share/licenses/openssl-3/LICENSE[1]"
+  put "$NOVA_ROOT/usr/share/licenses/openssl/LICENSE"
+}
+
+@test "going back to an older release takes with it what only the newer one had" {
+  prepare_move_back 0
+  run run_pi_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/calls")" = "pacman -Qqm
+pacman -Syy --needed --noconfirm archlinuxarm-keyring nova-keyring
+pacman -Qqdm
+pacman -Qlq openssl-3
+pacman -Suu --noconfirm --overwrite usr/lib/libcrypto.so.3 --overwrite usr/share/licenses/openssl-3/LICENSE\\[1\\]
+pacman -R --dbonly --noconfirm openssl-3
+pacman -Qlq
+nova-boot-check status" ]
+  [[ $output == *"The older release has no openssl-3: taken out with the move"* ]]
+  # What the older packages own stays; what it alone owned is gone, folder too.
+  [ "$(cat "$NOVA_ROOT/usr/lib/libcrypto.so.3")" = 'the older openssl' ]
+  [ ! -e "$NOVA_ROOT/usr/share/licenses/openssl-3" ]
+  [ -e "$NOVA_ROOT/usr/share/licenses/openssl/LICENSE" ]
+}
+
+@test "one that something installed still needs stays, files and all, and the update goes on" {
+  prepare_move_back 1
+  run run_pi_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  [[ $output == *"openssl-3 could not be taken out"* ]]
+  [[ $output == *"Nova is now on v1.1.0."* ]]
+  [ -e "$NOVA_ROOT/usr/share/licenses/openssl-3/LICENSE[1]" ]
+  ! grep -qx 'pacman -Qlq' "$SCRATCH/calls"
+}
+
+# Every file would look like one nobody owns, the older openssl's library too.
+@test "with no list of what the packages own, no file is taken off the disk" {
+  local answer
+  for answer in 'exit 1' true; do
+    rm -f "$SCRATCH/calls"
+    prepare_move_back 0 "$answer"
+    run run_pi_update --allow-downgrade
+    [ "$status" -eq 0 ]
+    [[ $output == *"the files of openssl-3 stay where they are"* ]]
+    [ "$(cat "$NOVA_ROOT/usr/lib/libcrypto.so.3")" = 'the older openssl' ]
+    [ -e "$NOVA_ROOT/usr/share/licenses/openssl-3/LICENSE[1]" ]
+  done
+}
+
+@test "a move back with nothing of the newer release's alone is pacman -Suu as before" {
+  prepare_pi_update 0
+  run run_pi_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/calls")" = "pacman -Qqm
+pacman -Syy --needed --noconfirm archlinuxarm-keyring nova-keyring
+pacman -Qqdm
+pacman -Suu --noconfirm
+nova-boot-check status" ]
 }
 
 # tail sees the update gone within a second; a restart asked for in that

@@ -17,6 +17,8 @@
 #      snapshot.
 #   4. pacman -Su (-Suu with --allow-downgrade). A failed step puts the previous
 #      mirror and repository files back, and the databases that went with them.
+#      Going back to an older release takes with it the packages only the newer
+#      one had (left_behind, below).
 #   5. install anything the new release adds to this computer's hardware profile
 #   6. snapper post-snapshot
 #   7. check that every installed kernel still has a boot entry whose files exist
@@ -505,6 +507,10 @@ main() {
   # stop halfway: Ctrl+C still reaches pacman, which sets its own handler, and
   # stops it cleanly, and pacman_failed puts the old files back.
   trap '' INT
+  # Read before the pins change: what no repository has already (the apps
+  # built here, say) is not the move's to take out.
+  local -a foreign=()
+  (( ! downgrade )) || mapfile -t foreign < <(pacman -Qqm 2> /dev/null || true)
   backup_config
   if [[ $ARCH == x86_64 ]]; then
     say "Pointing pacman at Arch snapshot $arch_date and $tag"
@@ -528,9 +534,19 @@ main() {
   say "Updating the keyrings"
   restore_on_exit=0
   "${env_skip[@]}" pacman -Syy --needed --noconfirm "${keyrings[@]}" || pacman_failed
+  left=() left_files=()
+  local -a overwrite=()
+  if (( downgrade )); then
+    left_behind "${foreign[@]}"
+    if (( ${#left[@]} )); then
+      say "The older release has no ${left[*]}: taken out with the move"
+      mapfile -t overwrite < <(overwrite_flags)
+    fi
+  fi
   say "pacman ${pacman_args[*]}"
   # A line at a time, also into a pipe: Settings reads how far it is from it.
-  "${env_skip[@]}" stdbuf -oL pacman "${pacman_args[@]}" || pacman_failed
+  "${env_skip[@]}" stdbuf -oL pacman "${pacman_args[@]}" "${overwrite[@]}" || pacman_failed
+  (( ! ${#left[@]} )) || drop_left_behind "${env_skip[@]}"
   trap - INT
 
   install_hardware_packages "$noconfirm" "${env_skip[@]}"
@@ -574,6 +590,57 @@ take_lock() {
   mkdir -p "$ROOT/run"
   exec {update_lock}>"$ROOT/run/nova-update.lock"
   flock -n "$update_lock" || die "another Nova update is running"
+}
+
+# Going back to an older snapshot, a package the newer one brought in as a
+# dependency is in none of the databases any more, so pacman leaves it where it
+# is: and where it owns a file the older packages have themselves, the move
+# down stops on the conflict. On 2026-11-10 openssl 4.1 brought openssl-3,
+# which owns the libcrypto.so.3 that openssl 3.6 brings back. Such packages go
+# with the move: their files may be written over (overwrite_flags), and once
+# the older versions are in, they are taken out (drop_left_behind). Taken out
+# first, what still runs against them would be broken in between, pacman
+# itself among it. What was installed by hand stays: that was asked for.
+left_behind() { # the packages no repository had before the pins changed
+  mapfile -t left < <(LC_ALL=C comm -13 <(printf '%s\n' "$@" | LC_ALL=C sort -u) \
+    <(pacman -Qqdm 2> /dev/null | LC_ALL=C sort -u))
+  (( ${#left[@]} )) || return 0
+  mapfile -t left_files < <(pacman -Qlq "${left[@]}" | LC_ALL=C sort -u)
+}
+
+# pacman's --overwrite for each of their files, a pattern that matches that
+# file alone: no leading slash, and nothing in the name read as a wildcard.
+overwrite_flags() {
+  printf '%s\n' "${left_files[@]}" |
+    sed -n -e '/\/$/d' -e '/^$/d' -e 's|^/||' -e 's/[][\\*?]/\\&/g' -e 's/^/--overwrite\n/p'
+}
+
+# Out of pacman's books, and off the disk what they alone owned: pacman -R
+# would take the files the older packages now own as well. Not -dd: one that
+# something installed still needs stays, and pacman says which. A file goes
+# only when pacman has listed what every package owns and it is not there: with
+# no list to go by, all of them stay.
+drop_left_behind() { # then a command prefix for pacman
+  local path owned
+  if ! "$@" pacman -R --dbonly --noconfirm "${left[@]}" > /dev/null; then
+    warn "${left[*]} could not be taken out, which the older release does not have: pacman said why above"
+    return 0
+  fi
+  owned=$(mktemp)
+  if ! pacman -Qlq > "$owned" || [[ ! -s $owned ]]; then
+    warn "pacman did not list what the packages own, so the files of ${left[*]} stay where they are"
+    rm -f -- "$owned"
+    return 0
+  fi
+  while IFS= read -r path; do
+    [[ $path == /* ]] || continue
+    if [[ $path == */ ]]; then
+      rmdir -- "$ROOT$path" 2> /dev/null || true
+    else
+      rm -f -- "$ROOT$path" || true
+    fi
+  done < <(LC_ALL=C sort -u "$owned" | LC_ALL=C comm -23 <(printf '%s\n' "${left_files[@]}") - | LC_ALL=C sort -r)
+  rm -f -- "$owned"
 }
 
 # Until this ends, the computer does not shut down or restart, from the menu,
