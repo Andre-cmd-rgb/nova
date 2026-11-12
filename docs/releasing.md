@@ -22,7 +22,7 @@ named after the tag, served at `https://nova-packages.piserver.stream/<tag>`:
 | In the bucket | What reads it |
 |---|---|
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
-| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `ttfx` |
+| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `ttfx`, `whisper-cpp` |
 | `packages.txt`, the ISO's `.sha256`, and their `.sig` | `nova-usb`: the packages an install can need, to put on the stick for an offline install, and the checksum it checks the ISO with |
 | `nova-usb.sig`, the Pi image's `.sha256` and its `.sig` | people: the release notes link them |
 | `release.toml` and its `.sig` | a copy |

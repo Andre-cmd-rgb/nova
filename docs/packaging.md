@@ -13,7 +13,7 @@ a release pins, and nothing is built on a laptop except to test a PKGBUILD.
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
 | `ttfx` | `packaging/ttfx`, its release tag | the screensaver's text effects, in no Arch repository |
 | `mise` | `packaging/mise`, the project's own arm64 build | the developer tools' version manager, which Arch Linux ARM does not package (aarch64 only) |
-| `whisper-cpp` | `packaging/whisper-cpp`, its release tag | dictation's speech engine, which Arch Linux ARM does not package (aarch64 only, built for the Pi 5's CPU) |
+| `whisper-cpp` | `packaging/whisper-cpp`, its release tag | dictation's speech engine, with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on, and Arch Linux ARM does not package it |
 
 `nova`, `nova-keyring`, `ttfx`, `mise` and `whisper-cpp` are also built for
 aarch64, the Raspberry Pi 5, in Arch Linux ARM on arm64 runners, against the
@@ -103,13 +103,23 @@ generated at build time. To update: bump `pkgver`, then the checksum
 
 ## whisper-cpp
 
-On x86, Arch's own `extra/whisper-cpp`. Arch Linux ARM has neither it nor
-ggml, so the Pi gets a build of the same tag with ggml's own copy linked in,
-the CPU its only backend, and no ffmpeg, as dictation records WAV. It is built
-for the Pi 5's Cortex-A76 (`GGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16`), not
-for the CI machine: with `GGML_NATIVE` on, the build would use instructions
-the Pi lacks. To update: follow Arch's `pkgver`, then the checksum
-(`makepkg -g`).
+Built from the release tag with the copy of ggml the tag carries, the CPU its
+only backend, and no ffmpeg, as dictation records WAV. Arch's
+`extra/whisper-cpp` links Arch's own `ggml`, which is updated apart from it:
+ggml 0.29 (2026-11-08) stops whisper.cpp 1.9.5 as it loads the model, rebuilt
+or not, so on x86 too the `[nova]` build is the one installed, `[nova]` being
+first in `pacman.conf`.
+
+On the Pi it is built for the Pi 5's Cortex-A76
+(`GGML_CPU_ARM_ARCH=armv8.2-a+dotprod+fp16`), with ggml linked in, not for
+the CI machine: with `GGML_NATIVE` on, the build would use instructions the
+Pi lacks. On x86, where Nova also runs on CPUs older than x86-64-v3, ggml's
+CPU backend is built for every generation (`GGML_CPU_ALL_VARIANTS`) and the
+best the CPU has is loaded as it starts. Those are shared libraries, kept in
+`/usr/lib/whisper-cpp` and found there by `RUNPATH`, apart from Arch's ggml.
+
+To update: bump `pkgver` to a newer tag, then the checksum (`makepkg -g`);
+Arch's version no longer matters.
 
 ## nova-keyring
 

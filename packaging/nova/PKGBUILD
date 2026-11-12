@@ -42,7 +42,7 @@ depends=(
   pipewire-alsa
   pipewire-jack
   pipewire-audio # pw-record, for dictation
-  whisper-cpp    # parakeet-cli, dictation's speech engine (on the Pi, Nova's own build)
+  whisper-cpp    # parakeet-cli, dictation's speech engine (Nova's own build)
   wireplumber
   rtkit          # realtime scheduling for PipeWire's audio threads
 
