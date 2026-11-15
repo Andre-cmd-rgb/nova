@@ -120,6 +120,21 @@ firmware_write() {
   [ ! -e "$BAT/charge_control_start_threshold" ]
 }
 
+@test "set: every battery takes the limit, and status is the highest of theirs" {
+  thinkpad 0 100
+  local second=$NOVA_POWER_SUPPLY/BAT1
+  mkdir -p "$second"
+  echo 0 >"$second/charge_control_start_threshold"
+  echo 100 >"$second/charge_control_end_threshold"
+  main set 80
+  [ "$(<"$BAT/charge_control_end_threshold")" = 80 ]
+  [ "$(<"$second/charge_control_end_threshold")" = 80 ]
+  [ "$(<"$second/charge_control_start_threshold")" = 75 ]
+  [ "$(main status)" = '{"kind":"threshold","limit":80,"on":true}' ]
+  echo 100 >"$second/charge_control_end_threshold" # one of the two forgot
+  [ "$(main status)" = '{"kind":"threshold","limit":100,"on":false}' ]
+}
+
 @test "set: an end the battery refuses fails, and is not remembered" {
   thinkpad 0 100
   write() { return 1; }
