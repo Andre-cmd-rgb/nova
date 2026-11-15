@@ -1,0 +1,61 @@
+#!/bin/bash
+# release-notes: what changed in a release, for its page on GitHub, from the
+# commits since the release before it.
+#
+#   tools/release-notes <tag> <repository's address>
+#
+# GitHub's own notes are made from pull requests, and Nova's commits go to
+# main without one: for v1.0.0-rc.1 they listed the only two there ever were,
+# both months older than it. A commit's subject says what it changes, as
+# `type(part): sentence`, so the notes are those: what is new (feat), fixed
+# (fix) and faster (perf), each under its part of Nova. How the code is
+# arranged, the tests and the docs are behind the link to every commit.
+#
+# A candidate is compared with the tag before it, whichever that is. A final
+# release is compared with the final release before it: it is its last
+# candidate under another name, and people on final releases never saw the
+# candidates between. The first tag has nothing before it, and says so.
+set -euo pipefail
+
+tag=${1:-} repository=${2:-}
+[[ -n $tag && -n $repository ]] || { sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//' >&2; exit 2; }
+git rev-parse -q --verify "$tag^{commit}" >/dev/null || { echo "release-notes: no tag $tag" >&2; exit 1; }
+
+# The nearest tag before this one's commit: a final one only, for a final
+# release; and for a candidate, the final one's name where it and a candidate
+# are the same commit.
+before() { git describe --tags --abbrev=0 "$@" "$tag^" 2>/dev/null || true; }
+previous=$(before --exclude '*-*')
+if [[ $tag == *-* ]]; then
+  nearest=$(before)
+  [[ -n $previous && $(git rev-parse "$previous^{commit}") == "$(git rev-parse "${nearest:-$previous}^{commit}")" ]] ||
+    previous=$nearest
+fi
+
+if [[ -z $previous ]]; then
+  printf 'The first release in this numbering, so there is none before it to compare it with. What Nova is and does is in [the README](%s#readme).\n' \
+    "$repository"
+  exit 0
+fi
+
+# The subjects of one type, a list item each: "- **part:** sentence". The two
+# are told apart by a character no subject has, and not a tab: read takes
+# leading tabs off, and a subject without a part starts with one.
+changes() { # type
+  git log --no-merges --reverse --format=%s "$previous..$tag" |
+    sed -n -E "s/^$1(\(([^)]+)\))?!?: (.+)$/\2\x1f\3/p" |
+    while IFS=$'\x1f' read -r part sentence; do
+      if [[ -n $part ]]; then printf -- '- **%s:** %s\n' "$part" "$sentence"; else printf -- '- %s\n' "$sentence"; fi
+    done
+}
+
+printf '## What changed since %s\n' "$previous"
+listed=0
+while IFS=$'\t' read -r type title; do
+  list=$(changes "$type")
+  [[ -n $list ]] || continue
+  printf '\n### %s\n\n%s\n' "$title" "$list"
+  listed=1
+done <<<$'feat\tNew\nfix\tFixed\nperf\tFaster'
+((listed)) || printf '\nNothing a person using Nova would notice.\n'
+printf '\n[Every commit since %s](%s/compare/%s...%s)\n' "$previous" "$repository" "$previous" "$tag"

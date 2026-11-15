@@ -120,6 +120,8 @@ On the 1st and the 15th, `candidate.yml` runs CI on `main`, tags the commit it t
 6. installs from it in a KVM virtual machine with no questions asked, boots the result and checks it from inside (`tests/install/run`); the serial logs are kept as the run's `install-logs`. Beside it, `upgrade-test` installs the release before this one and moves it forward and back ([below](#the-upgrade-test));
 7. publishes it all as a pre-release, which only testers are offered: systems with Settings → Updates → Test Release Candidates on (`nova update --candidates on`), and those already on a candidate.
 
+The release's notes say what changed (`tools/release-notes`): the commits since the release before it whose subjects are a `feat`, a `fix` or a `perf`, each under its part of Nova, and a link to every commit. A candidate is compared with the tag before it, a final release with the final one before it. So a commit's subject is written for the person reading the notes: what Nova now does, not what the code was changed to.
+
 Cutting one at another time, and when a run fails:
 
 - **Nothing is built twice:** every build but `nova`'s own is kept under its snapshot and the files it is made from, so a run started again, and a promote, take the packages as they were built.
