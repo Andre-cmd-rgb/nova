@@ -6,12 +6,11 @@
 
 # One line, tab-separated: the kind of connection (wifi, ethernet or
 # disconnected), its network or device, and for Wi-Fi its signal and
-# frequency. With --verbose, for the network panel, a reading a line, its name
-# and value tab-separated: the route out, the counters, the link, and how long
-# a ping takes to the router and to the internet.
+# frequency. With --verbose, for Settings' Wi-Fi page, a reading a line, its
+# name and value tab-separated: the route out and the link.
 #
-# The panel reads this every 1.5 seconds while it is open, so it parses in
-# bash rather than starting an awk or a jq for each value.
+# The page reads this every 5 seconds while it is open, so it parses in bash
+# rather than starting an awk or a jq for each value.
 
 set -euo pipefail
 
@@ -24,7 +23,7 @@ case ${1:-} in
     ;;
 esac
 
-# The internet, as far as the route and the ping go.
+# The internet, as far as the route goes.
 internet=1.1.1.1
 
 # The route out: its device, gateway and address, from the first line ip
@@ -109,34 +108,6 @@ status() {
   printf 'wifi\t%s\t%s\t%s\n' "${network:-$iface}" "$quality" "$frequency"
 }
 
-# The time a ping takes, in milliseconds; nothing when none comes back.
-latency() { # host
-  local line
-  while read -r line; do
-    if [[ $line =~ time[=\<]([0-9.]+) ]]; then
-      printf '%s\n' "${BASH_REMATCH[1]}"
-      break
-    fi
-  done < <(LC_ALL=C ping -n -c 1 -W 1 "$1" 2>/dev/null || true)
-}
-
-# To the router and the internet at once: a ping not answered takes its whole
-# second.
-pings() { # gateway
-  local router="" outside="" router_fd outside_fd
-  command -v ping >/dev/null || return 0
-  if [[ -n $1 ]]; then exec {router_fd}< <(latency "$1"); fi
-  exec {outside_fd}< <(latency "$internet")
-  if [[ -n $1 ]]; then
-    read -r router <&"$router_fd" || router=""
-    exec {router_fd}<&-
-    printf 'router_ping_ms\t%s\n' "$router"
-  fi
-  read -r outside <&"$outside_fd" || outside=""
-  exec {outside_fd}<&-
-  printf 'internet_ping_ms\t%s\n' "$outside"
-}
-
 details() {
   local iface gateway source line prefix="" value sys
   local ssid signal frequency rate unit linked
@@ -156,8 +127,6 @@ details() {
   printf 'gateway\t%s\n' "$gateway"
 
   sys=/sys/class/net/$iface
-  if read -r value <"$sys/statistics/rx_bytes" 2>/dev/null; then printf 'rx_bytes\t%s\n' "$value"; fi
-  if read -r value <"$sys/statistics/tx_bytes" 2>/dev/null; then printf 'tx_bytes\t%s\n' "$value"; fi
 
   if [[ -d $sys/wireless ]]; then
     printf 'type\twifi\n'
@@ -175,8 +144,6 @@ details() {
     read -r value <"$sys/duplex" 2>/dev/null || value=""
     printf 'duplex\t%s\n' "$value"
   fi
-
-  pings "$gateway"
 }
 
 if $verbose; then

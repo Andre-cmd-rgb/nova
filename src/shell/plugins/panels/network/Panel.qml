@@ -1,7 +1,5 @@
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
-import Quickshell
 import Quickshell.Io
 import Quickshell.Networking
 import qs.Ui
@@ -9,19 +7,17 @@ import qs.Ui as Ui
 import qs.Commons
 import qs.Commons as Commons
 import "Model.js" as Model
-import "../../settings" as Settings
 
 // The network on the bar: its icon is the link the computer is on, Wi-Fi
-// with its bars, a cable, or none. A click opens the panel: the link with
-// its ping, traffic and addresses, the Wi-Fi band, the DNS provider, and the
-// networks in range, which a click joins or leaves; a known one can be
-// forgotten. w in the panel turns Wi-Fi on or off, as does
-// `nova-shell nova.network toggleNetwork`.
+// with its bars, a cable, or none. A click opens the panel: Wi-Fi's switch,
+// the networks in range, which a click joins or leaves (a known one can be
+// forgotten), and the way to Settings' Wi-Fi page, which has the rest: the
+// addresses, the band and the DNS. w in the panel turns Wi-Fi on or off, as
+// does `nova-shell nova.network toggleNetwork`.
 //
-// NetworkManager is read, and Wi-Fi acted on, through Quickshell.Networking;
-// nova-network-status reads the link, nova-network-band the band and
-// nova-dns the DNS. The keys and the pointer move one cursor, from the
-// Wi-Fi switch at the top down to the networks.
+// NetworkManager is read, and Wi-Fi acted on, through Quickshell.Networking.
+// The keys and the pointer move one cursor, from the Wi-Fi switch at the top
+// down to the networks and Settings.
 //
 // Ui.Panel rather than Panel: qmllint cannot see qs.Ui, takes a bare Panel
 // for this file, and then finds the file inside itself, through its
@@ -53,7 +49,7 @@ Ui.Panel {
   // A cable that is up wins over Wi-Fi: the default route takes it.
   readonly property string medium: wired && wired.connected ? "ethernet" : joined ? "wifi" : "disconnected"
   readonly property string glyph: Model.linkGlyph(medium, joined ? Model.signalOf(joined) : -1)
-  readonly property bool linked: reading.fields.type === "ethernet" || (reading.fields.type === "wifi" && !!joined)
+  readonly property bool portal: Networking.connectivity === NetworkConnectivity.Portal
   // A switch only for a radio there is: on a wired machine it would read
   // "off" beside a live link.
   readonly property bool switchable: nmRunning && !!wireless
@@ -75,162 +71,10 @@ Ui.Panel {
     Qt.callLater(function() { network.refresh(true) })
   }
 
-  // A click on an address puts it on the clipboard.
-  function copy(value) {
-    if (!bar) return
-    Quickshell.execDetached(["bash", "-c", "printf %s " + Util.shellQuote(value) + " | wl-copy"])
-  }
-
-  // What nova-network-status last read: the fields by key (iface, type, ip,
-  // gateway, ssid, freq, speed, the byte counters and a ping), the rates
-  // worked out from two readings' counters, and the pings kept on the
-  // interface.
-  QtObject {
-    id: reading
-    property var fields: ({})
-    property var rates: ({})
-    property var pings: ({ iface: "", samples: [] })
-    readonly property bool pinged: pings.samples.length > 0
-    readonly property real ms: Model.pingTime(pings.samples)
-    readonly property int loss: Model.pingLoss(pings.samples)
-    // The figures hold their place with "--" until there is a reading.
-    readonly property bool counted: fields.rx_bytes !== undefined
-
-    onFieldsChanged: if (!network.linked) motto.rest()
-
-    function take(next) {
-      fields = next
-      rates = Model.traffic(rates, next, Date.now() / 1000)
-      pings = Model.pings(pings, next)
-    }
-
-    function total(key) {
-      return Model.bytesText(parseFloat(fields[key] || "0"))
-    }
-
-    // So that the next open does not work a rate out from a reading taken
-    // long before.
-    function lapse() {
-      rates = {}
-      pings = { iface: "", samples: [] }
-    }
-  }
-
-  // A band change takes the link down and up again, with no route to report
-  // in between: the last reading stands until the link is back, rather than
-  // the panel emptying midway. With no change asked for, a link gone shows
-  // gone.
-  function heard(text) {
-    var fields = Model.readFields(text)
-    if (!band.busy || fields.iface) reading.take(fields)
-  }
-
-  // ---- the band and the DNS ------------------------------------------------
-
-  // From nova-network-band: the band the radio is on, the one pinned ("auto"
-  // for none), and those the network offers. While a pin is asked for, the
-  // panel shows it, and the command's answer decides whether it stays.
-  QtObject {
-    id: band
-    property string live: ""
-    property string pinned: "auto"
-    property var offers: []
-    property string asked: ""
-    readonly property bool busy: asked !== ""
-    readonly property string shown: busy ? asked : pinned
-    readonly property bool fixed: shown !== "auto"
-    // On Wi-Fi, with bands to choose from or a pin to undo, and through the
-    // reconnect a pin causes, when for a moment the link is not Wi-Fi.
-    readonly property bool offered: (network.medium === "wifi" || busy) && (offers.length > 1 || fixed)
-    // Under Automatic there is nothing to choose: the pills fold away.
-    readonly property bool pillsOut: offered && fixed
-    // The bands change with the link, or with a scan that finds the network
-    // on another one.
-    readonly property string tunedTo: String(reading.fields.ssid || "") + "\t" + String(reading.fields.freq || "")
-
-    onTunedToChanged: if (network.opened) bandWait.restart()
-    onOffersChanged: cursor.keepPill()
-    onOfferedChanged: cursor.keepBand()
-    onPillsOutChanged: cursor.keepBand()
-
-    function take(text) {
-      var heard = Model.readBands(text)
-      // Mid-reconnect there is no network to read bands from; as with the
-      // link, the last answer stands.
-      if (busy && heard.available.length === 0) return
-      live = heard.band
-      pinned = heard.selected
-      offers = heard.available
-    }
-
-    // The panel stays open through the reconnect a pin causes: that is what
-    // there is to watch.
-    function pin(choice) {
-      if (change.running) return
-      asked = choice
-      network.order(band, ["nova-network-band", choice])
-    }
-
-    function answer(ok) {
-      if (ok) pinned = asked
-      asked = ""
-      network.refresh()
-    }
-
-    // Automatic off pins the band the radio is on, which the heading names.
-    function flip() {
-      if (pinned !== "auto") pin("auto")
-      else if (live !== "") pin(live)
-    }
-  }
-
-  QtObject {
-    id: dns
-    readonly property var choices: [
-      { name: "DHCP", hint: "Use DNS from DHCP" },
-      { name: "Cloudflare", hint: "Set DNS to Cloudflare" },
-      { name: "Google", hint: "Set DNS to Google" },
-      { name: "Custom", hint: "Set custom DNS servers" }
-    ]
-    property string provider: ""
-    property string asked: ""
-    property bool customOpen: false
-
-    // A preset is set and the panel closes; Custom opens the sheet for the
-    // addresses instead.
-    function pick(name) {
-      if (!network.bar || change.running || customDns.busy) return
-      customOpen = name === "Custom"
-      if (customOpen) return
-      asked = name
-      network.order(dns, ["bash", "-c", "nova-dns " + Util.shellQuote(name)])
-      network.close()
-    }
-
-    function answer(ok) {
-      if (ok) provider = asked
-      asked = ""
-    }
-  }
-
-  // A band pin or a DNS preset, one at a time. The setting that asked hears
-  // whether it took: one refused leaves what is in force.
-  function order(asker, command) {
-    change.asker = asker
-    change.command = command
-    change.running = true
-  }
-
-  Process {
-    id: change
-    property QtObject asker: null
-    stdout: StdioCollector { waitForEnd: true }
-    stderr: StdioCollector { waitForEnd: true }
-    onExited: function(code) {
-      var who = change.asker
-      change.asker = null
-      if (who) who.answer(code === 0)
-    }
+  // Settings' Wi-Fi page, with what the panel leaves out.
+  function openSettings() {
+    close()
+    if (bar) bar.run("nova-settings wifi")
   }
 
   // ---- the networks in range -----------------------------------------------
@@ -389,18 +233,12 @@ Ui.Panel {
     syncRows()
   }
 
-  onInRangeChanged: {
-    syncRows()
-    if (opened) bandWait.restart()
-  }
+  onInRangeChanged: syncRows()
 
-  // Asks every command again. With `rescan` the scanner goes off, and on
+  // Reads the networks again. With `rescan` the scanner goes off, and on
   // again a beat later, so that the open panel lists what is in range now;
   // the beat lets it draw before NetworkManager's flood of networks.
   function refresh(rescan) {
-    readLink.ask()
-    readDns.ask()
-    readBand.ask()
     if (opened && wireless) {
       if (!rescan) {
         scanWith(true)
@@ -433,22 +271,19 @@ Ui.Panel {
     scanBeat.stop()
     scanWindow.stop()
     scanning = false
-    reading.lapse()
     scanWith(false)
   }
 
   // ---- the cursor ----------------------------------------------------------
 
   // One place lit at a time, for the keys and the pointer alike: a stop
-  // (Model.STOPS) and, where the stop has several, which one. The pointer
-  // moves it and the items paint it. Each stop remembers its pill or row
-  // while the cursor is elsewhere.
+  // (Model.STOPS) and, in the networks, which row. The pointer moves it and
+  // the items paint it. The networks remember their row while the cursor is
+  // elsewhere.
   QtObject {
     id: cursor
     property bool shown: false
-    property string stop: "dns"
-    property int pill: 0
-    property int provider: 0
+    property string stop: "rows"
     property int row: -1
     // On the row's forget cross rather than on the row.
     property bool atCross: false
@@ -464,49 +299,43 @@ Ui.Panel {
     function point(where, slot, forget) {
       shown = true
       stop = where
-      if (where === "pills") {
-        pill = slot
-      } else if (where === "dns") {
-        provider = slot
-      } else if (where === "rows") {
+      if (where === "rows") {
         row = slot
         atCross = forget
       }
     }
 
-    // The panel opens on the first network, or on the DNS with none; the
+    // The panel opens on the first network, or on Settings with none; the
     // cursor shows once a key or the pointer moves it.
     function home() {
       var any = network.rows.length > 0
       row = any ? 0 : -1
       atCross = false
-      stop = any ? "rows" : "dns"
-      provider = Math.max(0, dns.choices.findIndex(function(c) { return c.name === dns.provider }))
-      pill = Math.max(0, band.offers.indexOf(band.pinned))
+      stop = any ? "rows" : "more"
       shown = false
     }
 
     // The first key only shows the cursor, unless it is up. Down and up go
     // through the networks a row at a time, and between the other stops;
-    // left and right go along the pills, and onto a row's cross and off it.
+    // left and right go onto a row's cross and off it.
     function nudge(dx, dy) {
       if (!shown) {
         shown = true
         if (dy >= 0) return
       }
       var inRows = stop === "rows"
-      if (inRows && (dy > 0 || (dy < 0 && row > 0))) {
+      if (inRows && ((dy > 0 && row < network.rows.length - 1) || (dy < 0 && row > 0))) {
         stepRow(dy)
       } else if (dy !== 0) {
         stop = Model.beyond(stop, dy > 0 ? 1 : -1, {
           radio: network.switchable,
-          auto: band.offered,
-          pills: band.pillsOut,
-          dns: true,
-          rows: network.rows.length > 0
+          rows: network.rows.length > 0,
+          more: true
         })
         if (inRows && stop !== "rows") atCross = false
-        if (stop === "rows" && row < 0) row = 0
+        // Coming into the networks from above or below; at their end with
+        // no stop beyond, the cursor stays where it is.
+        if (stop === "rows" && !inRows) row = dy > 0 ? 0 : network.rows.length - 1
       }
       if (dx !== 0) aside(dx)
     }
@@ -518,9 +347,7 @@ Ui.Panel {
 
     function aside(dx) {
       var here = network.rows[row]
-      if (stop === "pills") pill = clamp(pill + dx, band.offers.length - 1)
-      else if (stop === "dns") provider = clamp(provider + dx, dns.choices.length - 1)
-      else if (stop === "rows" && here) atCross = Model.canForget(here) && dx > 0
+      if (stop === "rows" && here) atCross = Model.canForget(here) && dx > 0
     }
 
     // Return and Space act on what the cursor is on.
@@ -529,38 +356,22 @@ Ui.Panel {
       var here = network.rows[row]
       if (stop === "radio") {
         if (network.switchable) network.toggleNetwork()
-      } else if (stop === "auto") {
-        band.flip()
-      } else if (stop === "pills") {
-        if (pill < band.offers.length) band.pin(band.offers[pill])
-      } else if (stop === "dns") {
-        dns.pick(dns.choices[provider].name)
+      } else if (stop === "more") {
+        network.openSettings()
       } else if (here && !network.busy) {
         if (atCross && Model.canForget(here)) network.forget(here.ssid)
         else network.joinOrLeave(here)
       }
     }
 
-    // The bands come and go with scans, and the pills fold under Automatic:
-    // the cursor keeps to what is there.
-    function keepPill() {
-      var last = band.offers.length - 1
-      if (pill > last) pill = Math.max(0, last)
-    }
-
-    function keepBand() {
-      if (!band.offered && (stop === "auto" || stop === "pills")) stop = "dns"
-      else if (!band.pillsOut && stop === "pills") stop = "auto"
-    }
-
-    // Likewise the rows: with none the cursor goes up to the DNS, and an
-    // open passphrase keeps it on its row.
+    // The rows come and go with scans: with none the cursor goes down to
+    // Settings, and an open passphrase keeps it on its row.
     function keepRow() {
       var count = network.rows.length
       var asking = network.rowAt(ask.ssid)
       if (count === 0) {
         row = -1
-        if (stop === "rows") stop = "dns"
+        if (stop === "rows") stop = "more"
       } else if (ask.ssid !== "") {
         if (asking >= 0) {
           row = asking
@@ -575,24 +386,6 @@ Ui.Panel {
 
   // ---- what runs -----------------------------------------------------------
 
-  Probe {
-    id: readLink
-    command: ["nova-network-status", "--verbose"]
-    onAnswered: function(text) { network.heard(text) }
-  }
-
-  Probe {
-    id: readDns
-    command: ["bash", "-c", "nova-dns"]
-    onAnswered: function(text) { dns.provider = text.trim() || "DHCP" }
-  }
-
-  Probe {
-    id: readBand
-    command: ["nova-network-band"]
-    onAnswered: function(text) { band.take(text) }
-  }
-
   // The WPA Enterprise join (Model.ENTERPRISE_SCRIPT), the password on stdin.
   Process {
     id: enterprise
@@ -602,15 +395,6 @@ Ui.Panel {
       write(secret + "\n")
       secret = ""
     }
-  }
-
-  // While the panel is open the link is read every 1.5 s, so that the title
-  // follows a connection as it comes up.
-  Timer {
-    interval: 1500
-    repeat: true
-    running: network.opened
-    onTriggered: readLink.ask()
   }
 
   Timer {
@@ -633,21 +417,6 @@ Ui.Panel {
     }
   }
 
-  // nova-network-band runs nmcli several times: it is asked a second after
-  // the link or the networks in range change, and every 15 s besides.
-  Timer {
-    id: bandWait
-    interval: 1000
-    onTriggered: if (network.opened) readBand.ask()
-  }
-
-  Timer {
-    interval: 15000
-    repeat: true
-    running: network.opened
-    onTriggered: readBand.ask()
-  }
-
   // A network that never answers: its row says the action timed out.
   Timer {
     id: patience
@@ -658,14 +427,6 @@ Ui.Panel {
       network.doing = null
       network.refresh()
     }
-  }
-
-  // The phrase under the title turns while there is a link.
-  Timer {
-    interval: 2800
-    repeat: true
-    running: network.opened && network.linked
-    onTriggered: motto.next()
   }
 
   // ---- the bar -------------------------------------------------------------
@@ -694,7 +455,7 @@ Ui.Panel {
     wantHeight: stack.implicitHeight
 
     // hjkl and the arrows move the cursor, Return and Space act on it, r
-    // reads everything again and w turns Wi-Fi on or off. A passphrase being
+    // scans again and w turns Wi-Fi on or off. A passphrase being
     // typed takes every key.
     PanelKeys {
       id: keys
@@ -705,7 +466,7 @@ Ui.Panel {
       onActivated: cursor.press()
       onStruck: function(t) {
         var key = t.toLowerCase()
-        if (key === "r") network.refresh()
+        if (key === "r") network.refresh(true)
         else if (key === "w") network.toggleNetwork()
       }
 
@@ -714,22 +475,18 @@ Ui.Panel {
         anchors { left: parent.left; right: parent.right; top: parent.top }
         spacing: Style.space(12)
 
-        // The link: its glyph, its name and the phrase, and the Wi-Fi switch.
-        Item {
-          width: parent.width
-          implicitHeight: Math.max(bigGlyph.implicitHeight, heroLines.implicitHeight, network.switchable ? wifiSwitch.implicitHeight : 0)
+        // Wi-Fi, or Ethernet, and its state in a few words; the switch turns
+        // the radio on or off, and is the cursor's stop above the networks.
+        PanelHeader {
+          glyph: network.glyph
+          dimmed: !network.nmRunning || (network.switchable && !Networking.wifiEnabled)
+          title: Model.linkName(network.medium, !!network.wireless)
+          note: Model.linkNote(network.medium, Networking.wifiEnabled, !!network.wireless, network.portal)
+          ink: network.ink
+          family: network.typeface
 
-          Words {
-            id: bigGlyph
-            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-            text: network.glyph
-            opacity: network.nmRunning ? 1 : 0.5
-            font.pixelSize: Style.font.display
-          }
-
-          ToggleSwitch {
+          end: ToggleSwitch {
             id: wifiSwitch
-            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
             visible: network.switchable
             checked: Networking.wifiEnabled
             hasCursor: cursor.on("radio") && network.switchable
@@ -743,222 +500,9 @@ Ui.Panel {
               fontFamily: network.typeface
             }
           }
-
-          Column {
-            id: heroLines
-            anchors {
-              left: bigGlyph.right
-              leftMargin: Style.space(14)
-              right: parent.right
-              rightMargin: network.switchable ? wifiSwitch.width + Style.space(12) : 0
-              verticalCenter: parent.verticalCenter
-            }
-            spacing: Style.space(2)
-
-            Words {
-              width: parent.width
-              text: Model.linkTitle(reading.fields, network.medium)
-              elide: Text.ElideRight
-              font { pixelSize: Style.font.title; bold: true }
-            }
-
-            // While there is a link, a phrase that turns every few seconds.
-            Words {
-              id: motto
-              readonly property var sayings: [
-                "Wiring bits", "Handling packets", "Sorting frames", "Hauling bytes",
-                "Routing crumbs", "Counting collisions", "Bending light"
-              ]
-              property int turn: 0
-
-              function next() { fade.restart() }
-              // With no link there is no phrase to turn: the line stands.
-              function rest() {
-                fade.stop()
-                opacity = 1
-              }
-
-              width: parent.width
-              visible: text !== ""
-              text: network.linked ? sayings[turn % sayings.length].toUpperCase()
-                : network.medium === "disconnected" ? "NOT CONNECTED" : ""
-              color: network.dim
-              elide: Text.ElideRight
-              font { pixelSize: Style.font.caption; bold: true; letterSpacing: 1.2 }
-
-              SequentialAnimation {
-                id: fade
-                PropertyAnimation { target: motto; property: "opacity"; to: 0; duration: 180; easing.type: Easing.OutQuad }
-                ScriptAction { script: motto.turn = (motto.turn + 1) % motto.sayings.length }
-                PropertyAnimation { target: motto; property: "opacity"; to: 1; duration: 260; easing.type: Easing.InQuad }
-              }
-            }
-          }
         }
 
-        // The ping and its losses, the rates, the totals, then the addresses,
-        // which a click copies.
-        GridLayout {
-          visible: !!reading.fields.iface
-          width: parent.width
-          columns: 4
-          columnSpacing: Style.space(20)
-          rowSpacing: Style.spacing.labelGap
-
-          Measure { text: "Ping" }
-          Figure { text: Model.pingText(reading.ms, reading.pinged); alarm: reading.loss > 0 }
-          Measure { text: "Packet Loss" }
-          Figure { text: Model.lossText(reading.loss, reading.pinged); alarm: reading.loss > 0 }
-
-          Measure { text: "Receiving" }
-          Figure { text: reading.counted ? Model.rateText(reading.rates.down) : "--" }
-          Measure { text: "Sending" }
-          Figure { text: reading.counted ? Model.rateText(reading.rates.up) : "--" }
-
-          Measure { text: "Downloaded" }
-          Figure { text: reading.counted ? reading.total("rx_bytes") : "--" }
-          Measure { text: "Uploaded" }
-          Figure { text: reading.counted ? reading.total("tx_bytes") : "--" }
-
-          Measure { text: "IP Address" }
-          Figure { text: reading.fields.ip || "--"; copyAs: reading.fields.ip ? "Copy IP" : "" }
-          Measure { text: "Gateway" }
-          Figure { text: reading.fields.gateway || "--"; copyAs: reading.fields.gateway ? "Copy gateway" : "" }
-        }
-
-        Rule { visible: band.offered }
-
-        // The band: its heading and the Automatic switch, then the pills.
-        Column {
-          visible: band.offered
-          width: parent.width
-          spacing: Style.space(10)
-
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(bandTitle.implicitHeight, autoBox.implicitHeight)
-
-            Heading {
-              id: bandTitle
-              anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-              text: Model.bandHeading(band.shown, band.live)
-            }
-
-            Row {
-              id: autoBox
-              anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-              spacing: Style.space(6)
-
-              Heading {
-                id: autoLabel
-                anchors.verticalCenter: parent.verticalCenter
-                text: "AUTOMATIC"
-              }
-
-              // As tall as the label's letters, and centred on them: the
-              // label's top padding, room for Nerd Font glyphs, sets its
-              // letters below the middle of its box.
-              ToggleSwitch {
-                id: autoSwitch
-                anchors.verticalCenter: autoLabel.verticalCenter
-                anchors.verticalCenterOffset: Math.round(autoLabel.topPadding / 2)
-                size: Math.round(autoLabel.font.pixelSize * 1.2)
-                ringGap: Style.space(3)
-                checked: !band.fixed
-                busy: band.busy
-                hasCursor: cursor.on("auto")
-                foreground: network.ink
-                onToggled: band.flip()
-                onHovered: function(on) { if (on) cursor.point("auto") }
-
-                PanelToolTip {
-                  visible: autoSwitch.containsMouse
-                  text: band.fixed ? "Let Wi-Fi pick the band" : "Stay on " + Model.bandName(band.live)
-                  fontFamily: network.typeface
-                }
-              }
-            }
-          }
-
-          // Under Automatic the pills fold away, and the rest of the panel
-          // slides up after them; folded, they are hidden, and the column's
-          // spacing goes with them.
-          Item {
-            width: parent.width
-            height: band.pillsOut ? bandPills.implicitHeight : 0
-            visible: height > 0
-            opacity: band.pillsOut ? 1 : 0
-            clip: true
-
-            Behavior on height { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-            Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.OutCubic } }
-
-            PillRow {
-              id: bandPills
-              count: band.offers.length
-
-              Repeater {
-                model: band.offers
-
-                // Filled for the band the radio is on, bold for the one
-                // pinned: under Automatic only the first shows, and a pin
-                // puts the two on one pill.
-                Pill {
-                  required property string modelData
-                  required property int index
-                  width: bandPills.share
-                  text: Model.bandName(modelData)
-                  tooltipText: Model.bandHint(modelData)
-                  lit: band.live === modelData
-                  selected: band.shown === modelData
-                  hasCursor: cursor.on("pills") && cursor.pill === index
-                  onClicked: band.pin(modelData)
-                  onHovered: function(on) { if (on) cursor.point("pills", index) }
-                }
-              }
-            }
-          }
-        }
-
-        Rule {}
-
-        Column {
-          width: parent.width
-          spacing: Style.space(10)
-
-          Heading { text: "DNS PROVIDER" }
-
-          PillRow {
-            id: dnsPills
-            count: dns.choices.length
-
-            Repeater {
-              model: dns.choices
-
-              // Filled for the provider in use.
-              Pill {
-                required property var modelData
-                required property int index
-                width: dnsPills.share
-                text: modelData.name
-                tooltipText: modelData.hint
-                lit: dns.provider === modelData.name
-                hasCursor: cursor.on("dns") && cursor.provider === index
-                onClicked: dns.pick(modelData.name)
-                onHovered: function(on) { if (on) cursor.point("dns", index) }
-              }
-            }
-          }
-
-          Settings.DnsView {
-            id: customDns
-            visible: dns.customOpen
-            title: ""
-            onApplied: network.refresh()
-          }
-        }
-
-        Rule { visible: !!network.wireless }
+        Rule { visible: !!network.wireless && Networking.wifiEnabled }
 
         Heading {
           visible: !!network.wireless && network.scanning
@@ -1018,66 +562,21 @@ Ui.Panel {
           // The touchpad scrolls the list as GTK does.
           TouchpadScroll { flickable: nearby }
         }
+
+        Rule {}
+
+        MoreItem { width: parent.width }
       }
     }
   }
 
   // ---- pieces --------------------------------------------------------------
 
-  // A command whose whole output is its answer. It is asked again only once
-  // it has answered.
-  component Probe: Process {
-    id: probe
-    signal answered(string text)
-
-    function ask() {
-      if (!running) running = true
-    }
-
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: probe.answered(text)
-    }
-  }
-
   // Text in the panel's ink and typeface.
   component Words: Text {
     textFormat: Text.PlainText
     color: network.ink
     font.family: network.typeface
-  }
-
-  component Measure: Words {
-    opacity: 0.6
-    font.pixelSize: Style.font.bodySmall
-  }
-
-  // A figure, right-aligned, in the urgent colour while <alarm>; one with
-  // <copyAs> copies itself on a click.
-  component Figure: Words {
-    id: figure
-    property string copyAs: ""
-    property bool alarm: false
-
-    Layout.fillWidth: true
-    horizontalAlignment: Text.AlignRight
-    color: alarm ? network.urgent : network.ink
-    font.pixelSize: Style.font.bodySmall
-
-    MouseArea {
-      id: copier
-      anchors.fill: parent
-      enabled: figure.copyAs !== "" && figure.text !== ""
-      hoverEnabled: enabled
-      cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onClicked: network.copy(figure.text)
-    }
-
-    PanelToolTip {
-      visible: copier.enabled && copier.containsMouse
-      text: figure.copyAs
-      fontFamily: network.typeface
-    }
   }
 
   component Heading: PanelSectionHeader {
@@ -1089,23 +588,6 @@ Ui.Panel {
     foreground: network.ink
   }
 
-  // Pills that share a row's width evenly.
-  component PillRow: Row {
-    property int count: 1
-    readonly property real share: (width - spacing * (Math.max(1, count) - 1)) / Math.max(1, count)
-    width: parent.width
-    spacing: Style.space(6)
-  }
-
-  component Pill: Button {
-    fontSize: Style.font.bodySmall
-    foreground: network.ink
-    fontFamily: network.typeface
-    padX: Style.spacing.controlPaddingX
-    padY: Style.spacing.controlPaddingY + Style.space(2)
-    bordered: true
-  }
-
   // A field of a row's prompt; Escape puts the prompt away.
   component Field: TextField {
     tint: network.ink
@@ -1113,6 +595,42 @@ Ui.Panel {
     padX: Style.spacing.controlGap
     padY: Style.spacing.controlPaddingY
     Keys.onEscapePressed: ask.drop()
+  }
+
+  // The way to Settings' Wi-Fi page: the addresses, the band and the DNS.
+  component MoreItem: CursorSurface {
+    id: more
+    hasCursor: cursor.on("more")
+    foreground: network.ink
+    fill: network.rowFill
+    implicitHeight: moreRow.implicitHeight + Style.spacing.rowPaddingX
+
+    Row {
+      id: moreRow
+      anchors { left: parent.left; leftMargin: Style.space(10); verticalCenter: parent.verticalCenter }
+      spacing: Style.space(10)
+
+      Words {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "󰒓"
+        color: network.dim
+        font.pixelSize: Style.font.subtitle
+      }
+
+      Words {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "Wi-Fi Settings"
+        font.pixelSize: Style.font.body
+      }
+    }
+
+    MouseArea {
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onContainsMouseChanged: if (containsMouse) cursor.point("more")
+      onClicked: network.openSettings()
+    }
   }
 
   // A network in range: its bars, its name over what it is doing, and at the

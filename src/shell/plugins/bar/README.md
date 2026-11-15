@@ -100,7 +100,7 @@ centre, wherever the layout puts it (in the example, before the network).
 | `nova.active-window` | The focused window's title | click = focus it · middle or right = close it |
 | `nova.spacer` | Empty room, `size` pixels | — |
 | `nova.audio` | Volume; a panel with the volume, the outputs and each app's | click = panel · right = mute · middle = panel · wheel = volume |
-| `nova.network` | Wi-Fi or Ethernet; a panel to scan, connect and pick a DNS provider | click = panel |
+| `nova.network` | Wi-Fi or Ethernet; a panel with Wi-Fi's switch and the networks to join, and the way to Settings → Wi-Fi for the addresses, the band and the DNS | click = panel |
 | `nova.power` | Battery or AC; a panel with the battery, power modes and the system | click = panel · right = percentage |
 | `nova.bluetooth` | Bluetooth; a panel with the devices, to connect, and their batteries | click = panel · right = radio on or off |
 | `nova.monitor` | Brightness and the laptop screen | click = panel |

@@ -5,9 +5,11 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
-// Wi-Fi's page in Settings: the radio, the network it is on, and the others in
-// reach. The bar's Wi-Fi menu stays the quick way in, and joins the enterprise
-// (802.1X) networks this page leaves to it: those ask for an identity too.
+// Wi-Fi's page in Settings: the radio, the network it is on, the others in
+// reach, and below them the connection's addresses, its band and the DNS
+// (WifiLinkView). The bar's Wi-Fi menu stays the quick way in, and joins the
+// enterprise (802.1X) networks this page leaves to it: those ask for an
+// identity too.
 Column {
   id: root
   spacing: Style.space(22)
@@ -257,6 +259,9 @@ Column {
       text: root.rows.length === 0 ? "Looking for networks…" : "No other networks in reach."
     }
   }
+
+  // The addresses, the band and the DNS.
+  WifiLinkView { width: parent.width }
 
   Component {
     id: networkRow
