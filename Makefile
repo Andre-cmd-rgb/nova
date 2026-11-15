@@ -58,10 +58,13 @@ check-names:
 	  echo "a name from before Nova, listed above" >&2; exit 1; \
 	elif [ $$status -ne 1 ]; then exit $$status; fi
 
-# Side by side, as many at a time as there are CPUs, where GNU parallel is
-# there for bats to run them with (CI has it); one after another without it.
+# The test files side by side, as many at a time as there are CPUs, where GNU
+# parallel is there for bats to run them with (CI has it); one after another
+# without it. The tests of one file stay in a row: bats shares its jobs among
+# them by looking for a free one once a second, which on CI's four CPUs made
+# four jobs no faster than one.
 BATS_JOBS := $(shell parallel --version 2>/dev/null | grep -q 'GNU parallel' && nproc)
 
 test:
-	bats $(if $(BATS_JOBS),--jobs $(BATS_JOBS)) --recursive $(TEST_DIRS)
+	bats $(if $(BATS_JOBS),--jobs $(BATS_JOBS) --no-parallelize-within-files) --recursive $(TEST_DIRS)
 	@set -e; for t in $(TEST_SCRIPTS); do echo "$$t"; bash "$$t" >/dev/null; done
