@@ -7,8 +7,9 @@ import qs.Ui
 import "../NotificationLogic.js" as Notes
 
 // A toast, a row of the service's toasts: its picture or glyph, its summary
-// in bold and its body below, three lines at most. A click invokes it, a
-// right click dismisses it. It counts down its lifetime in one timer for
+// in bold and its body below, three lines at most, then the bar of a
+// transfer under way and its buttons, where it has them. A click invokes it,
+// a right click dismisses it, a button does what it says. It counts down its lifetime in one timer for
 // what is left, stopped while the pointer is on it on any screen, and starts
 // over when its sender changes what it says.
 BorderSurface {
@@ -29,9 +30,17 @@ BorderSurface {
   required property string glyph
   required property int urgency
   required property double expireTimeout
+  // Nova's own: its buttons (Notes.buttonsOf) and how far along it is, 0 to
+  // 100, or -1 for no bar.
+  required property string buttons
+  required property int progress
 
-  // Its own picture (an avatar, a photo), or its app's icon.
-  readonly property string picture: image !== "" ? image : iconSource(appIcon)
+  readonly property var answers: Notes.buttonsOf(buttons)
+  // Its own picture (an avatar, a photo), or its app's icon. A picture that
+  // is a file is read as one: through the icon theme's provider (as
+  // Quickshell hands an image-path on), one Qt cannot read would be its
+  // missing-image picture, rather than the glyph.
+  readonly property string picture: image !== "" ? pictureSource(image) : iconSource(appIcon)
   readonly property bool oneLine: Notes.shownBody(body, app, appIcon) === ""
   // One line with a glyph and no picture: the glyph small, in line.
   readonly property bool smallGlyph: glyph !== "" && picture === "" && oneLine
@@ -46,6 +55,11 @@ BorderSurface {
   readonly property bool ticking: lifetime > 0 && !service.held[stem]
   // A toast that goes with the pointer on it lets go of it.
   property bool pointed: false
+
+  function pictureSource(value) {
+    const path = Notes.localFile(value)
+    return path !== "" ? Util.fileUrl(path) : value
+  }
 
   // An icon by its name, from the theme; `check`, so that a name it lacks
   // gives nothing rather than Qt's missing-image picture.
@@ -190,6 +204,48 @@ BorderSurface {
         text: Notes.bodyMarkup(toast.body, toast.app, toast.appIcon)
         color: Qt.darker(toast.ink, 1.15)
         maximumLineCount: 3
+      }
+
+      // How far along it is.
+      Rectangle {
+        Layout.fillWidth: true
+        Layout.topMargin: Style.space(6)
+        visible: toast.progress >= 0
+        implicitHeight: Math.max(Style.space(4), 2)
+        radius: height / 2
+        color: Util.alpha(toast.ink, 0.25)
+
+        Rectangle {
+          width: parent.width * Math.max(0, Math.min(100, toast.progress)) / 100
+          height: parent.height
+          radius: parent.radius
+          color: Commons.Color.accent
+
+          Behavior on width {
+            NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
+          }
+        }
+      }
+
+      RowLayout {
+        Layout.alignment: Qt.AlignRight
+        Layout.topMargin: Style.space(8)
+        visible: toast.answers.length > 0
+        spacing: Style.space(8)
+
+        Repeater {
+          model: toast.answers
+
+          Button {
+            required property var modelData
+            required property int index
+            text: modelData.says
+            bordered: true
+            selected: modelData.main
+            foreground: toast.ink
+            onClicked: toast.service.press(toast.index, index)
+          }
+        }
       }
     }
   }

@@ -10,7 +10,9 @@ import "NotificationLogic.js" as Notes
 // Nova's notifications: the server on the session bus, and its toasts at the
 // top right of every screen. A toast goes after its lifetime (a critical one
 // never does) and waits while the pointer is on it; a click runs its action
-// or brings its app forward, a right click dismisses it.
+// or brings its app forward, a right click dismisses it. Nova's own may have
+// buttons (the nova-buttons hint: AirDrop's Decline and Accept) and a bar
+// (the value hint: a transfer under way).
 //
 // Do-not-disturb keeps the toasts off the screen, and what they would have
 // said goes straight into the history: the last ten toasts gone, replayed on
@@ -169,7 +171,8 @@ Item {
     })
 
     if (doNotDisturb && !Notes.breaksThroughDnd(notification)) {
-      if (!Notes.passing(notification)) {
+      // A question or a transfer under way would be stale in the history.
+      if (!Notes.passing(notification) && !Notes.moot(row)) {
         silence(notification, row)
         return
       }
@@ -191,7 +194,7 @@ Item {
       notifications.replace(id, Notes.fileName(row))
       // Closed before it showed: to the history, as it would have gone.
       if (closedBySender) {
-        files.retire(row)
+        notifications.retire(row)
         return
       }
       notifications.toasts.insert(0, row)
@@ -259,7 +262,14 @@ Item {
   // it, and its file into the history like any toast gone. The sender is not
   // told: it knows.
   function takeDown(id, timestamp) {
-    pull(row => row.originalId === id && row.timestamp === timestamp && !isFromBefore(row), row => files.retire(row))
+    pull(row => row.originalId === id && row.timestamp === timestamp && !isFromBefore(row), row => notifications.retire(row))
+  }
+
+  // A toast's file into the history as it goes, or away with its copies if
+  // what it said holds no longer (Notes.moot): an offer, a transfer under way.
+  function retire(row) {
+    if (Notes.moot(row)) files.drop(row)
+    else files.retire(row)
   }
 
   // ---------------------------------------------------------------- toasts
@@ -278,7 +288,7 @@ Item {
     if (index < 0 || index >= toasts.count) return
     var row = toasts.get(index)
     var notification = row.originalId >= 0 ? senderOf(row) : null
-    files.retire(row)
+    retire(row)
     delete fromBefore[Notes.fileName(row)]
     toasts.remove(index)
     try {
@@ -297,13 +307,25 @@ Item {
   // A click on toast `index`: the command it carries, run apart from the
   // shell (an installer's restarts it); else its sender's default action;
   // else its app brought forward, as chat apps expect. Then it goes. One from
-  // before has neither sender nor actions.
+  // before has neither sender nor actions. One with buttons and no command
+  // is answered with its buttons: a click beside them leaves it there.
   function invoke(index) {
     if (index < 0 || index >= toasts.count) return
     var row = toasts.get(index)
     var argv = Notes.runnable(row.execArgv)
+    if (!argv && Notes.buttonsOf(row.buttons).length > 0) return
     if (argv) Util.execArgv(argv)
     else if (!runDefault(senderOf(row)) && row.app) bringForward.start(row.app)
+    dismiss(index)
+  }
+
+  // Button `which` of toast `index` pressed: its command, run apart from the
+  // shell, and the toast goes.
+  function press(index, which) {
+    if (index < 0 || index >= toasts.count) return
+    var button = Notes.buttonsOf(toasts.get(index).buttons)[which]
+    if (!button) return
+    Util.execArgv(button.argv)
     dismiss(index)
   }
 
@@ -392,9 +414,15 @@ Item {
   function bringBack(text) {
     var now = Date.now()
     var back = Notes.parseFiles(text).filter(row => {
+      // An offer or a transfer under way was the shell before's to follow:
+      // its sender asks again if it still stands.
+      if (Notes.moot(row)) {
+        files.drop(row)
+        return false
+      }
       var lifetime = Notes.lifetime(row.urgency, row.expireTimeout)
       if (Notes.expired(row, lifetime, now)) {
-        files.retire(row)
+        notifications.retire(row)
         return false
       }
       if (lifetime > 0) files.write(Object.assign({}, row, { deadline: now + lifetime }))

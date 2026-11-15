@@ -113,15 +113,49 @@ function markedTransient(notification) {
 // "-", which would pass for an option. Only the form is checked: any program
 // on the session bus may send the hint, and could run anything anyway.
 function runnable(value) {
-  var argv
   try {
-    argv = JSON.parse(String(value || ""))
+    return command(JSON.parse(String(value || "")))
   } catch (e) {
     return null
   }
+}
+
+// A command as a list of words, the program first, or null.
+function command(argv) {
   var sound = Array.isArray(argv) && argv.length > 0 && argv.every(word => typeof word === "string")
     && argv[0] !== "" && !argv[0].startsWith("-")
   return sound ? argv : null
+}
+
+// The buttons of a toast, from its nova-buttons hint, which Nova's own set
+// (AirDrop's offer has Decline and Accept): a JSON array of at most three,
+// each what it `says`, the command a press runs (`argv`, as runnable takes
+// it), and whether it is the `main` one. Anything else is no buttons, and a
+// button with no words or no sound command is left out.
+function buttonsOf(value) {
+  var list
+  try {
+    list = JSON.parse(String(value || ""))
+  } catch (e) {
+    return []
+  }
+  if (!Array.isArray(list)) return []
+  return list.filter(button => button && typeof button.says === "string" && button.says.trim() !== "" && command(button.argv))
+    .slice(0, 3).map(button => ({ says: button.says.trim().slice(0, 40), argv: button.argv, main: button.main === true }))
+}
+
+// How far along a toast says it is, from 0 to 100, as the "value" hint says
+// it; -1 for a toast with no bar.
+function progressOf(value) {
+  var text = String(value === undefined || value === null ? "" : value).trim()
+  var number = Math.round(Number(text))
+  return text !== "" && isFinite(number) ? Math.max(0, Math.min(100, number)) : -1
+}
+
+// A toast that asked something or showed a transfer under way: once it is
+// gone, what it said holds no longer, and the history does not keep it.
+function moot(row) {
+  return buttonsOf((row || {}).buttons).length > 0 || Number((row || {}).progress) >= 0
 }
 
 // How long a toast stays, in ms: a critical one until it is closed (0), the
@@ -135,10 +169,10 @@ function lifetime(urgency, expireTimeout) {
 // ------------------------------------------------------------------- rows
 
 // A row's roles, in the order its file has them. The card draws those from
-// app to expireTimeout, so they are what an update changes.
-var ROLES = ["id", "originalId", "app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "urgency", "expireTimeout", "timestamp"]
-var SHOWN = ROLES.slice(2, 11)
-var TEXTS = ROLES.slice(2, 9)
+// app to progress, so they are what an update changes.
+var ROLES = ["id", "originalId", "app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "buttons", "urgency", "expireTimeout", "progress", "timestamp"]
+var SHOWN = ROLES.slice(2, 13)
+var TEXTS = ROLES.slice(2, 10)
 
 // A timeout or a time as a number: 0 for none, below nothing, or not a
 // number at all.
@@ -148,23 +182,25 @@ function amount(value) {
 }
 
 // A row as the history keeps it, from a file or a toast: each text "" at
-// worst, normal urgency for none, and no lifetime of its own.
+// worst, normal urgency for none, and no lifetime or bar of its own.
 function historyRow(value) {
   var kept = value || {}
   var row = { id: kept.id || 0, originalId: kept.originalId || kept.id || 0 }
   TEXTS.forEach(role => row[role] = kept[role] || "")
   row.urgency = typeof kept.urgency === "number" ? kept.urgency : NORMAL
   row.expireTimeout = 0
+  row.progress = -1
   row.timestamp = kept.timestamp || 0
   return row
 }
 
-// A row as a toast's file has it: its sender's timeout, and the deadline a
-// toast brought back after a restart was given, left out for none so that
-// the row has the same keys as a new one.
+// A row as a toast's file has it: its sender's timeout and bar, and the
+// deadline a toast brought back after a restart was given, left out for none
+// so that the row has the same keys as a new one.
 function toastRow(value) {
   var row = historyRow(value)
   row.expireTimeout = amount((value || {}).expireTimeout)
+  row.progress = progressOf((value || {}).progress)
   var deadline = amount((value || {}).deadline)
   if (deadline) row.deadline = deadline
   return row
@@ -183,10 +219,12 @@ function rowOf(notification, timestamp, id) {
     image: notification.image,
     glyph: hint(notification.hints, "nova-glyph"),
     execArgv: hint(notification.hints, "nova-exec-argv"),
+    buttons: hint(notification.hints, "nova-buttons"),
     timestamp: timestamp
   })
   row.urgency = notification.urgency
   row.expireTimeout = amount(notification.expireTimeout)
+  row.progress = progressOf(hint(notification.hints, "value"))
   return row
 }
 
@@ -304,12 +342,12 @@ function expired(row, duration, now) {
 // What the history replays, newest first, `limit` at most: the toasts on
 // screen as it was asked for, then the history's files. The toasts go to the
 // history meanwhile, so the read may have them or not; a file and a toast of
-// one name are one. Each replays for its urgency's lifetime, not what its
-// sender asked.
+// one name are one, and a moot one is none. Each replays for its urgency's
+// lifetime, not what its sender asked.
 function replayRows(raw, onScreen, limit) {
   var seen = {}
   return (onScreen || []).concat(parseFiles(raw)).filter(row => {
-    if (!row || seen[fileName(row)]) return false
+    if (!row || moot(row) || seen[fileName(row)]) return false
     seen[fileName(row)] = true
     return true
   }).map(historyRow).sort(newestFirst).slice(0, limit)
