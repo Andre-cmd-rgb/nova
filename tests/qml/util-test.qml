@@ -21,6 +21,23 @@ ShellRoot {
     check(Util.stepIndex(0, -1, 4) === 3 && Util.stepIndex(3, 1, 4) === 0, "an arrow wraps round the ends")
     check(Util.stepIndex(0, -6, 4) === 0 && Util.stepIndex(1, 6, 4) === 3 && Util.stepIndex(9, -6, 12) === 3,
       "a page stops at the ends")
+    // Hyprland's windows, as Quickshell lists them: the shell's own are
+    // org.quickshell's, told apart by their titles.
+    var here = { id: 2 }, there = { id: 5 }
+    var windows = [
+      { title: "Settings", wayland: { appId: "org.gnome.Settings" }, workspace: there },
+      { title: "Calendar", wayland: { appId: "org.quickshell" }, workspace: here },
+      { title: "Settings", wayland: null, lastIpcObject: { "class": "org.quickshell" }, workspace: there },
+      { title: "Clock", wayland: { appId: "org.quickshell" }, workspace: null },
+    ]
+    check(Util.onAnotherWorkspace(windows, "Settings", 2) && !Util.onAnotherWorkspace(windows, "Settings", 5),
+      "the shell's window on another workspace is told from one on this")
+    check(!Util.onAnotherWorkspace(windows, "Calendar", 2) && Util.onAnotherWorkspace(windows, "Calendar", 3),
+      "by its title and its workspace")
+    check(!Util.onAnotherWorkspace([windows[0]], "Settings", 2), "another program's window of the same title is not the shell's")
+    check(!Util.onAnotherWorkspace(windows, "Clock", 2) && !Util.onAnotherWorkspace(windows, "Settings", null)
+      && !Util.onAnotherWorkspace(undefined, "Settings", 2) && !Util.onAnotherWorkspace(windows, "Weather", 2),
+      "a workspace not known, none focused, no windows or no such window: it is here")
     console.log("DONE")
     Qt.quit()
   }

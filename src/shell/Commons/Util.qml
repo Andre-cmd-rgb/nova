@@ -130,6 +130,23 @@ QtObject {
     Quickshell.execDetached(["bash", "-lc", 'exec "$@"', "bash"].concat(words))
   }
 
+  // ------------------------------------------------------------ windows
+
+  // Whether a window of the shell's own (Settings, the Calendar), told by its
+  // title, is open on another workspace than the focused one, among
+  // Hyprland's windows as Quickshell lists them (Hyprland.toplevels.values).
+  // One whose workspace is not known counts as here, and with no focused
+  // workspace to compare with, so does every one.
+  function onAnotherWorkspace(toplevels, title, focusedId) {
+    if (focusedId === undefined || focusedId === null) return false
+    return Array.prototype.some.call(toplevels || [], function(toplevel) {
+      if (!toplevel || toplevel.title !== title) return false
+      const app = toplevel.wayland ? toplevel.wayland.appId : (toplevel.lastIpcObject || {})["class"]
+      if (app !== "org.quickshell") return false
+      return !!toplevel.workspace && toplevel.workspace.id !== focusedId
+    })
+  }
+
   // ----------------------------------------------------------- shell.json
 
   // An object read from JSON: not null, not a list.

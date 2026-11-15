@@ -111,6 +111,9 @@ Item {
     anchor = isNaN(day) ? today : day
     editor.opened = false
     scope.opened = false
+    // Open already, on another workspace: it comes to this one. A window is
+    // shown on the workspace it is opened on, so it is closed and opened anew.
+    if (window.visible && elsewhere()) close()
     if (!window.visible) measureRoom()
     window.visible = true
     Qt.callLater(focusKeys)
@@ -128,6 +131,14 @@ Item {
         return
       }
     }
+  }
+
+  function elsewhere() {
+    // Hyprland's to answer, and asked only where there is one: without,
+    // Quickshell warns that it has no Hyprland to connect to.
+    if (!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")) return false
+    var focused = Hyprland.focusedWorkspace
+    return focused !== null && Util.onAnotherWorkspace(Hyprland.toplevels.values, window.title, focused.id)
   }
 
   function close() {

@@ -161,7 +161,7 @@ The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget and 
 
 ## Settings
 
-Settings opens from the menu, or with `nova settings <page>`. A page shows only when the computer has what it needs: Wi-Fi, Bluetooth and Mobile Data need the radio, Battery a battery, and Performance power modes, a switchable discrete GPU or an Intel CPU.
+Settings opens from the menu, or with `nova settings <page>`. Asked for from another workspace than the one it is open on, it comes to yours, and so does the Calendar. A page shows only when the computer has what it needs: Wi-Fi, Bluetooth and Mobile Data need the radio, Battery a battery, and Performance power modes, a switchable discrete GPU or an Intel CPU.
 
 | Page | What is on it |
 |---|---|
