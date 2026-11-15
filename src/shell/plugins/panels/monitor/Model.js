@@ -107,11 +107,6 @@ function nearestIndex(list, offOf, none) {
   }, { index: none, off: Infinity }).index
 }
 
-// The line under "Display": the brightness, from 0 to 100.
-function note(value) {
-  return "Brightness " + Math.max(0, Math.min(100, Math.round(value))) + "%"
-}
-
 // The index of the stop in <stops> nearest <px>, the first on a tie; the
 // first for none.
 function nearestStop(stops, px) {

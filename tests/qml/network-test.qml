@@ -36,7 +36,7 @@ ShellRoot {
     check(same([1, 2, 3].map(r => Model.asksAgain(r, true, { NoSecrets: 1, WifiAuthTimeout: 2, WifiNetworkLost: 3, WifiClientDisconnected: 4, WifiClientFailed: 5 })).concat([Model.asksAgain(1, false, { NoSecrets: 1, WifiAuthTimeout: 2, WifiNetworkLost: 3, WifiClientDisconnected: 4, WifiClientFailed: 5 })]), [true,true,false,false]), "asked again")
     check(same([Model.UNDERWAY, Model.TIMED_OUT], [{"connect":"Connecting…","disconnect":"Disconnecting…","forget":"Forgetting…"},{"connect":"Timed out connecting","disconnect":"Timed out disconnecting","forget":"Timed out forgetting"}]), "what a row says meanwhile")
 
-    check(same([Model.beyond("radio", 1, { rows: true, more: true }), Model.beyond("radio", 1, { more: true }), Model.beyond("rows", 1, { radio: true, more: true }), Model.beyond("more", -1, { radio: true, rows: false }), Model.beyond("radio", -1, { rows: true }), Model.beyond("more", 1, { radio: true })], ["rows","more","more","radio","radio","more"]), "the cursor's stops")
+    check(same([Model.beyond("radio", 1, { rows: true }), Model.beyond("radio", 1, { rows: false }), Model.beyond("rows", -1, { radio: true }), Model.beyond("rows", -1, { radio: false }), Model.beyond("radio", -1, { rows: true }), Model.beyond("rows", 1, { radio: true })], ["rows","radio","radio","rows","radio","rows"]), "the cursor's stops: the switch above the networks")
 
     console.log("DONE")
     Qt.quit()

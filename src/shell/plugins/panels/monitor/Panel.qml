@@ -308,7 +308,8 @@ Panel {
           PanelHeader {
             glyph: Model.screensIcon(display.outputs.length)
             title: "Display"
-            note: display.lit ? Model.note(display.shownLevel) : "Fixed brightness"
+            // The slider under it says the brightness; with none, a line.
+            note: display.lit ? "" : "Fixed brightness"
             ink: display.bar.foreground
             family: display.bar.fontFamily
           }

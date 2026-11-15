@@ -71,12 +71,6 @@ Ui.Panel {
     Qt.callLater(function() { network.refresh(true) })
   }
 
-  // Settings' Wi-Fi page, with what the panel leaves out.
-  function openSettings() {
-    close()
-    if (bar) bar.run("nova-settings wifi")
-  }
-
   // ---- the networks in range -----------------------------------------------
 
   // As plain rows, never the networks themselves (Model.networkRow says why).
@@ -305,13 +299,13 @@ Ui.Panel {
       }
     }
 
-    // The panel opens on the first network, or on Settings with none; the
+    // The panel opens on the first network, or on the switch with none; the
     // cursor shows once a key or the pointer moves it.
     function home() {
       var any = network.rows.length > 0
       row = any ? 0 : -1
       atCross = false
-      stop = any ? "rows" : "more"
+      stop = any ? "rows" : "radio"
       shown = false
     }
 
@@ -329,8 +323,7 @@ Ui.Panel {
       } else if (dy !== 0) {
         stop = Model.beyond(stop, dy > 0 ? 1 : -1, {
           radio: network.switchable,
-          rows: network.rows.length > 0,
-          more: true
+          rows: network.rows.length > 0
         })
         if (inRows && stop !== "rows") atCross = false
         // Coming into the networks from above or below; at their end with
@@ -356,22 +349,20 @@ Ui.Panel {
       var here = network.rows[row]
       if (stop === "radio") {
         if (network.switchable) network.toggleNetwork()
-      } else if (stop === "more") {
-        network.openSettings()
       } else if (here && !network.busy) {
         if (atCross && Model.canForget(here)) network.forget(here.ssid)
         else network.joinOrLeave(here)
       }
     }
 
-    // The rows come and go with scans: with none the cursor goes down to
-    // Settings, and an open passphrase keeps it on its row.
+    // The rows come and go with scans: with none the cursor goes up to the
+    // switch, and an open passphrase keeps it on its row.
     function keepRow() {
       var count = network.rows.length
       var asking = network.rowAt(ask.ssid)
       if (count === 0) {
         row = -1
-        if (stop === "rows") stop = "more"
+        if (stop === "rows") stop = "radio"
       } else if (ask.ssid !== "") {
         if (asking >= 0) {
           row = asking
@@ -407,7 +398,7 @@ Ui.Panel {
     }
   }
 
-  // "SCANNING WI-FI…" stays up until the scan this open started is done.
+  // The rows are taken again once the scan this open started is done.
   Timer {
     id: scanWindow
     interval: 1500
@@ -504,11 +495,6 @@ Ui.Panel {
 
         Rule { visible: !!network.wireless && Networking.wifiEnabled }
 
-        Heading {
-          visible: !!network.wireless && network.scanning
-          text: "SCANNING WI-FI…"
-        }
-
         // Held to 240 px, so that a crowded street does not run the panel off
         // the screen; the cursor's row scrolls into view.
         ListView {
@@ -563,9 +549,15 @@ Ui.Panel {
           TouchpadScroll { flickable: nearby }
         }
 
-        Rule {}
-
-        MoreItem { width: parent.width }
+        // With no network in range, a line, as the Bluetooth panel has it.
+        Words {
+          visible: !!network.wireless && Networking.wifiEnabled && network.rows.length === 0
+          width: parent.width
+          text: "Scanning for networks…"
+          color: network.dim
+          font.pixelSize: Style.font.bodySmall
+          wrapMode: Text.WordWrap
+        }
       }
     }
   }
@@ -595,42 +587,6 @@ Ui.Panel {
     padX: Style.spacing.controlGap
     padY: Style.spacing.controlPaddingY
     Keys.onEscapePressed: ask.drop()
-  }
-
-  // The way to Settings' Wi-Fi page: the addresses, the band and the DNS.
-  component MoreItem: CursorSurface {
-    id: more
-    hasCursor: cursor.on("more")
-    foreground: network.ink
-    fill: network.rowFill
-    implicitHeight: moreRow.implicitHeight + Style.spacing.rowPaddingX
-
-    Row {
-      id: moreRow
-      anchors { left: parent.left; leftMargin: Style.space(10); verticalCenter: parent.verticalCenter }
-      spacing: Style.space(10)
-
-      Words {
-        anchors.verticalCenter: parent.verticalCenter
-        text: "󰒓"
-        color: network.dim
-        font.pixelSize: Style.font.subtitle
-      }
-
-      Words {
-        anchors.verticalCenter: parent.verticalCenter
-        text: "Wi-Fi Settings"
-        font.pixelSize: Style.font.body
-      }
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
-      onContainsMouseChanged: if (containsMouse) cursor.point("more")
-      onClicked: network.openSettings()
-    }
   }
 
   // A network in range: its bars, its name over what it is doing, and at the

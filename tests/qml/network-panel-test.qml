@@ -7,7 +7,7 @@ import "plugins/panels/network"
 // its keys and by a click. There is no system bus under the test, so
 // Quickshell.Networking reports no NetworkManager and no devices: the panel
 // is in the state of a computer with no network service, which is the one
-// whose header and Settings row it has to get right.
+// whose header it has to get right, with nothing under it to act on.
 ShellRoot {
   id: test
 
@@ -105,19 +105,10 @@ ShellRoot {
     check("r, w and other letters leave the panel open and run nothing", [panel.opened, fakeBar.ran], [true, []])
 
     keys.activated(Qt.Key_Return)
-    check("Return on Wi-Fi Settings: the panel closes", panel.opened, false)
-    check("Return on Wi-Fi Settings: Settings opens at Wi-Fi", fakeBar.ran, ["nova-settings wifi"])
+    check("Return with nothing under the cursor leaves the panel open and runs nothing", [panel.opened, fakeBar.ran], [true, []])
+    check("no row leads to Settings", rowArea("Wi-Fi Settings"), null)
+    check("no scanning heading", find(surface(), item => item.text === "SCANNING WI-FI…"), null)
 
-    fakeBar.ran = []
-    panel.open()
-    check("reopened: the surface is up", card.open, true)
-    const area = rowArea("Wi-Fi Settings")
-    check("the Wi-Fi Settings row is there to click", area !== null, true)
-    area.clicked(null)
-    check("a click on the Wi-Fi Settings row: the panel closes", panel.opened, false)
-    check("a click on the Wi-Fi Settings row: Settings opens at Wi-Fi", fakeBar.ran, ["nova-settings wifi"])
-
-    panel.open()
     card.close()
     check("the surface's own close closes the panel", panel.opened, false)
     check("closed: the bar's open panel is given back", fakeBar.popup, null)

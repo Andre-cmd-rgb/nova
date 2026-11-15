@@ -125,10 +125,10 @@ var TIMED_OUT = { connect: "Timed out connecting", disconnect: "Timed out discon
 
 // ---- The cursor
 
-// Its stops, top to bottom: the Wi-Fi switch, the networks and the way to
-// Settings. `there` says which the panel shows, and a step up or down passes
-// over the rest. The stop a step away, or the same one at either end.
-var STOPS = ["radio", "rows", "more"]
+// Its stops, top to bottom: the Wi-Fi switch and the networks. `there` says
+// which the panel shows, and a step up or down passes over the rest. The stop
+// a step away, or the same one at either end.
+var STOPS = ["radio", "rows"]
 
 function beyond(stop, step, there) {
   for (var i = STOPS.indexOf(stop) + step; i >= 0 && i < STOPS.length; i += step)

@@ -168,7 +168,7 @@ ShellRoot {
     // asked again until the new answer is in.
     until(() => { panel.refresh(); return panel.lit }, () => {
       panel.open()
-      check("with a backlight the note reads the brightness", headerOf(panel)?.note, "Brightness 60%")
+      check("with a backlight there is no note: the slider says the brightness", headerOf(panel)?.note, "")
       const keys = surfaceOf(panel).keys
       keys.stepped(1, 0)
       check("the first key only shows the cursor: the brightness stays", panel.level, 60)
@@ -177,7 +177,7 @@ ShellRoot {
       keys.stepped(-1, 0)
       keys.stepped(-1, 0)
       check("h lowers it by 5 a step", panel.level, 55)
-      check("the header's note follows it", headerOf(panel)?.note, "Brightness 55%")
+      check("and the note stays empty", headerOf(panel)?.note, "")
       until(() => { calls.reload(); return calls.text().indexOf("55%") >= 0 }, () => {
         check("the brightness is set through nova-brightness-display, on the focused screen",
           calls.text().trim().split("\n").pop(), "nova-brightness-display --no-osd --monitor eDP-1 55%")
