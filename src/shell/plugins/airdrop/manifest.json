@@ -1,0 +1,12 @@
+{
+  "id": "nova.airdrop",
+  "name": "AirDrop",
+  "description": "Receive from iPhones nearby: a card to say yes or no to what is offered, and to follow it in.",
+  "kinds": [
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "AirDrop.qml"
+  }
+}

@@ -1,0 +1,18 @@
+#!/bin/sh
+# `nova-airdrop` as AirDrop's card uses it. `watch` says the lines in
+# $HOME/airdrop-says, if the test wrote any, then nothing more for a while.
+# Every other call is noted in $HOME/stub-calls, as `record` notes one, and
+# `on` then fails with the words in $HOME/airdrop-refuses, if the test wrote
+# any.
+if [ "$1" = watch ]; then
+  cat "$HOME/airdrop-says" 2>/dev/null
+  sleep 5
+  exit 0
+fi
+printf 'nova-airdrop' >>"$HOME/stub-calls"
+for word in "$@"; do printf ' %s' "$word" >>"$HOME/stub-calls"; done
+printf '\n' >>"$HOME/stub-calls"
+if [ "$1" = on ] && [ -s "$HOME/airdrop-refuses" ]; then
+  cat "$HOME/airdrop-refuses" >&2
+  exit 1
+fi
