@@ -34,6 +34,7 @@ The adaptive theme takes its colors from your background, and changes with it.
 
 - **What the photo gives**: the tint of the surfaces and the text, the accent, the window border's two colors, how vivid the terminal's colors are, and whether the theme is dark or light.
 - **What it keeps**: how light each color is comes from its role, not the photo, so text reads on its surface whatever the photo is, and the terminal's red stays red.
+- **It sits with the photo**: the surfaces carry only a little of the photo's color, so the photo stays the colorful thing on the screen. Where the accent is near the surfaces' hue, as a dusk's pink is near its blue, the accent comes out between the two, a mauve rather than the loudest pink; a color across from it, as an orange sun is from blue water, keeps its own hue. The selection is a deeper shade of the surfaces.
 - **A pale photo gives a light theme.** To keep it dark or light whatever the photo, set Settings → Appearance → **Adaptive**, shown while an adaptive theme is in use, to Dark or Light. Auto follows the background again.
 - **With no photo**, on the wordmark, it has colors of its own, and the wordmark is drawn in them.
 

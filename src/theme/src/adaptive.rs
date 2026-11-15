@@ -6,6 +6,15 @@
 //! color the palette carries). Whether the theme is dark or light follows the
 //! photo's own lightness.
 //!
+//! The palette sits with the photo rather than repeating it. The surfaces
+//! carry little of the tint, so the photo stays the one colorful thing on the
+//! screen. Where the accent and the tint are kin (a dusk's pink over its
+//! blue), each leans toward the other, so the accent bridges them, as a
+//! lavender would, instead of the loudest pink; an accent across the circle
+//! from the tint (orange on blue) keeps its own hue, which is what makes it
+//! stand out. The selection is a deeper shade of the surfaces, not of the
+//! accent, which made a warm accent a muddy brown on blue.
+//!
 //! Lightness is not taken from the photo. Each role has its own, the same for
 //! every photo, so text reads on its surface whatever the photo is; the
 //! terminal's six colors keep their hues, since red has to stay red, and lean
@@ -205,6 +214,27 @@ fn readable(l: f64, c: f64, hue: f64, on: Rgb, ratio: f64, mode: Mode) -> Rgb {
     }
 }
 
+/// The most chroma the surfaces take from the photo.
+const WASH_MOST: f64 = 0.028;
+/// Accent and tint this many degrees apart or fewer are kin, and lean toward
+/// each other; farther, the accent is the tint's opposite and keeps its hue.
+const KIN: f64 = 120.0;
+
+/// The surfaces' hue and the accent's: where the two are kin, the surfaces
+/// turn a fifth of the way to the accent (20 degrees at most) and the accent
+/// three tenths of the way back (30 at most), so that each has a little of
+/// the other.
+fn leaned(tint: f64, accent: f64) -> (f64, f64) {
+    let turn = hue_turn(tint, accent);
+    if turn.abs() > KIN {
+        return (tint, accent);
+    }
+    (
+        tint + (turn * 0.2).clamp(-20.0, 20.0),
+        accent - (turn * 0.3).clamp(-30.0, 30.0),
+    )
+}
+
 /// The terminal's six, and orange: name, hue, and how much lighter than the
 /// rest it is drawn (yellow and green look dark at the lightness of a blue).
 const HUES: [(&str, f64, f64); 7] = [
@@ -231,51 +261,56 @@ impl Palette {
         let wash = if grey {
             0.0
         } else {
-            (0.012 + r.tint_chroma * 0.22).min(0.04)
+            (0.010 + r.tint_chroma * 0.16).min(WASH_MOST)
         };
         let v = r.vivid;
+        let (surface, accent_hue) = if grey {
+            (r.tint, r.accent)
+        } else {
+            leaned(r.tint, r.accent)
+        };
         let at = |l: f64, c: f64, h: f64| Oklch::new(l, c, h).to_rgb();
         let mut colors: Vec<(String, Rgb)> = Vec::new();
         let mut put = |name: &str, color: Rgb| colors.push((name.to_owned(), color));
 
         let (background, accent, second) = match mode {
             Mode::Dark => {
-                let background = at(0.215, wash, r.tint);
+                let background = at(0.215, wash, surface);
                 put("background", background);
-                put("dark_background", at(0.18, wash, r.tint));
-                put("lighter_background", at(0.29, wash * 1.25, r.tint));
-                put("selection", at(0.36, 0.035 + 0.045 * v, r.accent));
-                put("foreground", at(0.91, wash * 0.6, r.tint));
-                put("light_foreground", at(0.81, wash * 0.9, r.tint));
-                put("dark_foreground", at(0.5, wash * 1.1, r.tint));
+                put("dark_background", at(0.18, wash, surface));
+                put("lighter_background", at(0.29, wash * 1.25, surface));
+                put("selection", at(0.37, wash * 0.8 + 0.02 * v, surface));
+                put("foreground", at(0.91, wash * 0.6, surface));
+                put("light_foreground", at(0.81, wash * 0.9, surface));
+                put("dark_foreground", at(0.5, wash * 1.1, surface));
                 put(
                     "muted",
-                    readable(0.56, wash * 1.3, r.tint, background, 3.6, mode),
+                    readable(0.56, wash * 1.3, surface, background, 3.6, mode),
                 );
-                let chroma = 0.05 + 0.1 * v;
+                let chroma = 0.05 + 0.075 * v;
                 (
                     background,
-                    readable(0.79, chroma, r.accent, background, 6.5, mode),
+                    readable(0.79, chroma, accent_hue, background, 6.5, mode),
                     readable(0.75, chroma, r.second, background, 5.0, mode),
                 )
             }
             Mode::Light => {
-                let background = at(0.968, wash * 0.35, r.tint);
+                let background = at(0.968, wash * 0.35, surface);
                 put("background", background);
-                put("dark_background", at(0.94, wash * 0.45, r.tint));
-                put("lighter_background", at(0.885, wash * 0.6, r.tint));
-                put("selection", at(0.86, 0.02 + 0.03 * v, r.accent));
-                put("foreground", at(0.27, wash * 0.8, r.tint));
-                put("light_foreground", at(0.38, wash * 0.8, r.tint));
-                put("dark_foreground", at(0.68, wash * 0.7, r.tint));
+                put("dark_background", at(0.94, wash * 0.45, surface));
+                put("lighter_background", at(0.885, wash * 0.6, surface));
+                put("selection", at(0.87, wash * 0.6 + 0.016 * v, surface));
+                put("foreground", at(0.27, wash * 0.8, surface));
+                put("light_foreground", at(0.38, wash * 0.8, surface));
+                put("dark_foreground", at(0.68, wash * 0.7, surface));
                 put(
                     "muted",
-                    readable(0.58, wash * 0.8, r.tint, background, 3.6, mode),
+                    readable(0.58, wash * 0.8, surface, background, 3.6, mode),
                 );
-                let chroma = 0.06 + 0.12 * v;
+                let chroma = 0.06 + 0.09 * v;
                 (
                     background,
-                    readable(0.52, chroma, r.accent, background, 5.0, mode),
+                    readable(0.52, chroma, accent_hue, background, 5.0, mode),
                     readable(0.58, chroma, r.second, background, 3.6, mode),
                 )
             }
@@ -292,7 +327,7 @@ impl Palette {
             let lean = if grey {
                 0.0
             } else {
-                (hue_turn(hue, r.accent) * 0.25).clamp(-12.0, 12.0)
+                (hue_turn(hue, accent_hue) * 0.25).clamp(-12.0, 12.0)
             };
             let lift = match mode {
                 Mode::Dark => lift,
@@ -424,6 +459,61 @@ mod tests {
             let p = Palette::from_reading(&read(&field(0.5, 0.15, accent, 300), Some(Mode::Dark)));
             let red = Oklch::from_rgb(p.get("red").unwrap());
             assert!(hue_turn(red.h, 22.0).abs() <= 14.0, "red at {}", red.h);
+        }
+    }
+
+    #[test]
+    fn a_kin_accent_bridges_toward_the_tint_and_is_calmer() {
+        // The dusk's pink (345) over its blue (262): the accent turns toward
+        // the blue, a mauve rather than the pink itself, and the surfaces a
+        // little toward the pink.
+        let p = Palette::from_reading(&read(&dusk(), Some(Mode::Dark)));
+        let accent = Oklch::from_rgb(p.get("accent").unwrap());
+        let turned = hue_turn(345.0, accent.h);
+        assert!((-34.0..=-18.0).contains(&turned), "accent at {}", accent.h);
+        assert!(accent.c <= 0.14, "accent chroma {}", accent.c);
+        let surface = Oklch::from_rgb(p.get("background").unwrap());
+        assert!(hue_turn(262.0, surface.h) > 5.0, "surface at {}", surface.h);
+        assert!(
+            surface.c <= WASH_MOST + 0.003,
+            "surface chroma {}",
+            surface.c
+        );
+    }
+
+    #[test]
+    fn an_accent_opposite_the_tint_keeps_its_hue() {
+        // Blue water with an orange sun: the orange is what stands out.
+        let mut pixels = field(0.35, 0.09, 250.0, 700);
+        pixels.extend(field(0.72, 0.15, 60.0, 250));
+        let r = read(&pixels, Some(Mode::Dark));
+        let p = Palette::from_reading(&r);
+        let accent = Oklch::from_rgb(p.get("accent").unwrap());
+        assert!(
+            hue_turn(r.accent, accent.h).abs() < 4.0,
+            "accent at {}",
+            accent.h
+        );
+    }
+
+    #[test]
+    fn the_selection_is_a_shade_of_the_surfaces_not_of_the_accent() {
+        for mode in [Mode::Dark, Mode::Light] {
+            let p = Palette::from_reading(&read(&dusk(), Some(mode)));
+            let selection = Oklch::from_rgb(p.get("selection").unwrap());
+            let surface = Oklch::from_rgb(p.get("lighter_background").unwrap());
+            assert!(
+                hue_turn(surface.h, selection.h).abs() < 15.0,
+                "{mode:?} selection at {}, surfaces at {}",
+                selection.h,
+                surface.h
+            );
+            // Text still reads on it.
+            let text = p.get("foreground").unwrap();
+            assert!(
+                contrast(text, p.get("selection").unwrap()) >= 4.5,
+                "{mode:?}"
+            );
         }
     }
 
