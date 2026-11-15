@@ -274,12 +274,21 @@ install_apps() {
   fi
   say "Installing Chrome, VS Code, Claude Code and Codex"
   # makepkg installs through sudo, and the account has no password prompt to
-  # answer here, so pacman alone is allowed for the length of this step.
-  install -m 440 /dev/stdin "$rule" <<<"$user ALL=(root) NOPASSWD: /usr/bin/pacman"
+  # answer here, so pacman alone is allowed for the length of this step. The
+  # rule is a file of the live system's, in memory, mounted over an empty one
+  # of the new system's: should the power go now, the disk holds no such rule.
+  local held=/run/nova-install-apps.sudoers
+  install -m 440 /dev/stdin "$held" <<<"$user ALL=(root) NOPASSWD: /usr/bin/pacman"
+  install -m 440 /dev/null "$rule"
   CLEANUP+=("$rule")
-  as_user "$user" nova-apps-install --noconfirm ||
-    warn "Chrome or VS Code did not install; run nova apps install after the first login."
-  rm -f -- "$rule"
+  if mount --bind "$held" "$rule"; then
+    as_user "$user" nova-apps-install --noconfirm ||
+      warn "Chrome or VS Code did not install; run nova apps install after the first login."
+    umount -- "$rule" || true
+  else
+    warn "Chrome and VS Code are not installed; run nova apps install after the first login."
+  fi
+  rm -f -- "$rule" "$held"
   as_user "$user" mise install --yes ||
     warn "The mise tools did not install; run mise install after the first login."
 }

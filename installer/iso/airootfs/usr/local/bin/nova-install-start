@@ -52,6 +52,15 @@ has_link() {
   return 1
 }
 
+# Some interface is one a cable goes into: a device's, and not Wi-Fi's.
+has_wired() {
+  local dev
+  for dev in "$NET_DIR"/*; do
+    [[ -e $dev/device && ! -e $dev/wireless && ! -e $dev/phy80211 ]] && return 0
+  done
+  return 1
+}
+
 # The steps of an install, as every screen shows them: this program's own
 # two first (nova-install shows the rest, and is told these are done), then
 # nova-install's, as they usually are.
@@ -85,6 +94,8 @@ connect_wifi() { # device
   local dev=$1 networks=() options=() i ssid security verb hidden problem=''
   rfkill unblock wlan 2>/dev/null
   while :; do
+    # A cable plugged in since, or one whose link took its time: online by it.
+    if has_link && online; then return 0; fi
     screen Network
     ui_note "Looking for Wi-Fi networks..."
     iwctl station "$dev" scan >/dev/null 2>&1
@@ -130,19 +141,22 @@ connect_wifi() { # device
   done
 }
 
-# Online by cable already, or else Wi-Fi. A computer with no link at all
-# (most laptops, the ThinkPad P1 among them, have no Ethernet port) goes
-# straight to the networks, not after eight seconds of asking for an address
-# that cannot come; a cable's link, which comes up a second or two after its
-# driver, has three to show.
+# Online by cable already, or else Wi-Fi. A computer with nowhere to plug a
+# cable in (most laptops, the ThinkPad P1 among them, have no Ethernet port)
+# goes straight to the networks, with no waiting for an address that cannot
+# come; where there is somewhere, a cable's link, which comes up a second or
+# two after its driver, has three to show. One slower than that is taken up
+# from the list of networks (connect_wifi).
 get_online() {
   local dev i
   screen Network
   ui_note "Checking the network..."
-  for ((i = 0; i < 3; i++)); do
-    has_link && break
-    sleep 1
-  done
+  if has_wired; then
+    for ((i = 0; i < 3; i++)); do
+      has_link && break
+      sleep 1
+    done
+  fi
   if has_link; then wait_online 8 && return 0; fi
   dev=$(wifi_device)
   if [[ -n $dev ]]; then
@@ -183,6 +197,8 @@ run_install() {
   fi
   if ((status == 0)); then
     echo
+    # A key pressed while the install ran is not the answer to this.
+    while read -rs -t 0.05 -n 1 _ 2>/dev/null; do :; done
     ui_ask ui_confirm "$restart" && systemctl reboot
   elif ((status != 130 && status != 3)); then
     echo

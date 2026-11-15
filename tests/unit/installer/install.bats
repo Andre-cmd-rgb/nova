@@ -988,11 +988,32 @@ sda $((477 * GiB)) false false sata Samsung"
   [ "${PROGRESS_ROWS[*]}" = "Preparing the disk Installing the packages Setting up the system Installing the boot loader Finishing" ]
 }
 
+@test "progress: a view that is gone gets no more lines, and the screen has them again" {
+  LOG=$SCRATCH/log
+  : >"$LOG"
+  sleep 60 &
+  PROGRESS_PID=$!
+  kill "$PROGRESS_PID"
+  wait "$PROGRESS_PID" 2>/dev/null || true
+  seen() {
+    exec 7>"$SCRATCH/events" 8>"$SCRATCH/screen" 2>>"$LOG"
+    PROGRESS=1
+    # The line that finds the view gone is in the log, as the view's were;
+    # the ones after it are on the screen.
+    info "Copying"
+    info "Still installing"
+  }
+  run seen
+  [ ! -s "$SCRATCH/events" ]
+  grep -qx 'Copying' "$LOG"
+  grep -q 'Still installing' "$SCRATCH/screen"
+}
+
 @test "progress: steps, words and pacstrap's counts go to the view, and pacstrap's lines only into the log" {
   LOG=$SCRATCH/log
   : >"$LOG"
   exec 7>"$SCRATCH/events"
-  PROGRESS=1
+  PROGRESS=1 PROGRESS_PID=$$
   offline_repo_ready() { return 1; }
   step "Boot configuration" info "A 31 GiB swap file"
   printf '%s\n' ':: Synchronizing package databases...' ' core downloading...' 'Packages (2) acl-2.4.0-1  mesa-1:25.2.3-1' \

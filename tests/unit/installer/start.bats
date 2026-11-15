@@ -9,6 +9,9 @@ setup() {
   setup_scratch
   export NOVA_INSTALLER_SHARE="$REPO_ROOT/installer"
   export NOVA_IWD_DIR="$SCRATCH/iwd"
+  # No network interfaces but the tests' own, never this computer's.
+  export NOVA_NET_DIR="$SCRATCH/net"
+  mkdir -p "$NOVA_NET_DIR"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/installer/iso/airootfs/usr/local/bin/nova-install-start"
   sleep() { :; }
@@ -167,26 +170,37 @@ $'      eduroam                           8021x               **\n'
   [ "$(tail -n 1 "$SCRATCH/ran")" = "systemctl reboot" ]
 }
 
-@test "get_online: with no link, straight to Wi-Fi; with one, the address is waited for" {
-  export NOVA_NET_DIR=$SCRATCH/net
-  NET_DIR=$NOVA_NET_DIR
-  mkdir -p "$NET_DIR/lo" "$NET_DIR/enp1s0" "$NET_DIR/wlan0"
+@test "get_online: nowhere for a cable, straight to Wi-Fi; a cable has three seconds, and its address is waited for" {
+  mkdir -p "$NET_DIR/lo" "$NET_DIR/wlan0/device" "$NET_DIR/wlan0/wireless"
   echo 1 >"$NET_DIR/lo/carrier"
-  echo 0 >"$NET_DIR/enp1s0/carrier"
-  # A link that is down has no carrier to read.
   screen() { :; }
   ui_note() { :; }
+  sleep() { echo "slept $1"; }
   wifi_device() { echo wlan0; }
   connect_wifi() { echo "wifi $1"; }
   wait_online() { echo "waited $1"; return 1; }
   run get_online
   [ "$output" = "wifi wlan0" ]
+  # A socket with no cable in it: a link that is down has no carrier to read.
+  mkdir -p "$NET_DIR/enp1s0/device"
+  run get_online
+  [ "$output" = $'slept 1\nslept 1\nslept 1\nwifi wlan0' ]
   echo 1 >"$NET_DIR/enp1s0/carrier"
   run get_online
   [ "${lines[0]}" = "waited 8" ]
   [ "${lines[1]}" = "wifi wlan0" ]
   wait_online() { return 0; }
   run get_online
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
+@test "connect_wifi: a cable that came up since is taken, with no network asked for" {
+  mkdir -p "$NET_DIR/enp1s0/device"
+  echo 1 >"$NET_DIR/enp1s0/carrier"
+  online() { return 0; }
+  screen() { echo "asked"; }
+  run connect_wifi wlan0
   [ "$status" -eq 0 ]
   [ -z "$output" ]
 }

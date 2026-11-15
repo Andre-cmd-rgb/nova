@@ -981,7 +981,7 @@ progress_row() { # step label
     "Checking the packages") echo "Checking the packages" ;;
     "Partitioning and formatting" | "Subvolumes and swap file" | "Boot configuration") echo "Preparing the disk" ;;
     "Packages, in all") echo "Installing the packages" ;;
-    "System configuration" | Snapshots | Account | Fingerprint | "Your things") echo "Setting up the system" ;;
+    "System configuration" | Snapshots | Account | Fingerprint | "Your things" | Services) echo "Setting up the system" ;;
     "Boot loader") echo "Installing the boot loader" ;;
     Apps) echo "Installing the apps" ;;
     *) echo Finishing ;;
@@ -1000,6 +1000,14 @@ progress_rows() {
 
 progress_event() { # field...
   ((PROGRESS)) || return 0
+  # A view that is gone reads nothing: the pipe would fill, and the install
+  # wait at its next line for good. Its lines go to the screen again instead.
+  if ! kill -0 "$PROGRESS_PID" 2>/dev/null; then
+    PROGRESS=0
+    exec 2>&8 8>&- 7>&-
+    printf '\e[?25h\n' >&2
+    return 0
+  fi
   local IFS=$'\t' strip=$'\t\n'
   printf '%s\n' "${*//[$strip]/ }" >&7 2>/dev/null || true
 }
@@ -1147,10 +1155,10 @@ progress_view() {
 # The view, when there is a screen to draw it on; otherwise the Install
 # step's header and its title, and the install's lines under it.
 progress_start() {
-  local fifo
+  local fifo title
   if [[ ! -t 2 ]]; then
     screen Install
-    for fifo in "${PROGRESS_TITLE[@]}"; do info "$fifo"; done
+    for title in "${PROGRESS_TITLE[@]}"; do info "$title"; done
     return 0
   fi
   UI_AT=Install
@@ -1172,6 +1180,8 @@ progress_end() { # ok|fail
   ((PROGRESS && !BASH_SUBSHELL)) || return 0
   local i
   progress_event end "$1"
+  # Gone already, and the screen given back (progress_event).
+  ((PROGRESS)) || return 0
   PROGRESS=0
   for ((i = 0; i < 50; i++)); do
     kill -0 "$PROGRESS_PID" 2>/dev/null || break
@@ -1263,9 +1273,12 @@ create_subvolumes_and_mount() {
 }
 
 # Online, every package comes from the release's Arch snapshot and its own
-# repository. Both are asked for the whole set before the disk is erased, so
-# an outage of either stops the install with the disk as it was. Nothing is
-# installed from this, so signatures are left to pacstrap.
+# repository. Both are asked for their lists, and the whole set looked up in
+# them, before the disk is erased: an outage of either, or a package neither
+# has, stops the install with the disk as it was. The packages themselves are
+# fetched after, onto the new disk (there is nowhere else with room for
+# them), so a network that goes then leaves the install to be run again.
+# Nothing is installed from this, so signatures are left to pacstrap.
 packages_available() { # kernel profile arch_date nova_repo [package...]
   local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 dir status=0
   local -a packages
@@ -1302,15 +1315,18 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
   say "Installing packages (this is the long part)"
   mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
   info "${#packages[@]} packages, from $(offline_repo_ready && echo "the stick" || echo "the internet")"
-  # Output goes to the terminal as well as the log: this is minutes long and
-  # pacman's own progress is the progress bar. The kernels' boot check is
-  # skipped: Limine is not installed yet, and install_bootloader checks once it
-  # is. So are snap-pac's snapshots: snapper has no configuration until
-  # configure_snapper, and the first snapshot is the installed system's.
+  # pacstrap's lines go through pacstrap_feed: to the log, and as parts and
+  # counts to the progress view, or without one to the terminal. The kernels'
+  # boot check is skipped: Limine is not installed yet, and install_bootloader
+  # checks once it is. So are snap-pac's snapshots: snapper has no
+  # configuration until configure_snapper, and the first snapshot is the
+  # installed system's.
+  local status=0
   printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
   NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | pacstrap_feed ||
-    die "pacstrap failed; the log is in $LOG"
-  rm -rf -- "$hooks"
+    status=$?
+  rm -rf -- "$conf" "$hooks"
+  ((status == 0)) || die "pacstrap failed; the log is in $LOG"
 }
 
 # pacstrap's output, line by line: into the log, onto the terminal (or, under
@@ -1702,7 +1718,11 @@ leave() {
     echo >&2
     ui_error "nova-install: the install stopped. The log is in $LOG."
   fi
-  ((!${#CLEANUP[@]})) || rm -f -- "${CLEANUP[@]}"
+  local file
+  for file in "${CLEANUP[@]}"; do
+    umount -- "$file" 2>/dev/null || true # the apps' sudo rule is mounted over its file
+    rm -f -- "$file"
+  done
   ui_console_end
 }
 
@@ -1853,9 +1873,12 @@ main() {
   unset PASSWORD
   step "Fingerprint" copy_fingerprints "$ACCOUNT"
   step "Your things" restore_carry "$ACCOUNT"
+  # The services before the boot loader, and the apps after both: the apps
+  # are the long part with the most to go wrong (a network, the AUR), and
+  # the system that starts when they are cut short is whole without them.
+  step "Services" enable_services
   step "Boot loader" install_bootloader
   [[ $(answer_or apps yes) == no ]] || step "Apps" install_apps "$ACCOUNT"
-  step "Services" enable_services
   step "After script" run_after
   step "Finishing" finish
   progress_end ok
