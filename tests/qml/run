@@ -126,7 +126,7 @@ for test in "$here"/*-test.qml; do
   # The locale and window-mask lines are the offscreen platform's, not ours,
   # and the lines about a bus, a PipeWire daemon or a NetworkManager are
   # Quickshell's, saying there is none.
-  problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -vE 'Detected locale|window masks|Could not connect to DBus|Failed to connect pipewire context|Could not find an available backend' || true)
+  problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -vE 'Detected locale|window masks|Could not connect to DBus|Failed to (connect|create) pipewire context|Could not find an available backend' || true)
   if ((status != 0)) || [[ -n $problems ]] || ! grep -q 'DONE$' <<<"$log"; then
     echo "FAIL $name (exit $status)"
     grep -E '(ok|FAIL) ' <<<"$log" | sed -E 's/^.*(scene|qml): /  /' || true
