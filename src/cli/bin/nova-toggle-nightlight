@@ -40,8 +40,14 @@ case ${1:-} in
     ;;
 esac
 
+# One at a time: a second press as the first starts hyprsunset would find none
+# yet and start a second. It waits for the first, then toggles back.
+lock=${XDG_RUNTIME_DIR:-/tmp}/nova-nightlight.lock
+exec {held}>>"$lock"
+flock -w 5 "$held" || true
+
 if ! pgrep -u "$UID" -x hyprsunset >/dev/null; then
-  setsid uwsm-app -- hyprsunset >/dev/null 2>&1 &
+  setsid uwsm-app -- hyprsunset >/dev/null 2>&1 {held}>&- &
 fi
 
 # Toggled: night from day, and from a hyprsunset that cannot say yet; day

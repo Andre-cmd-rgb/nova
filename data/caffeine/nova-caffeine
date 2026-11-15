@@ -50,7 +50,8 @@ laptop() { nova-hw-laptop >/dev/null 2>&1; }
 # logind's own list is what settles whether the lid is held; a running unit
 # is not yet a lock.
 lid_lock_held() {
-  systemd-inhibit --list --no-legend 2>/dev/null | grep -q '^nova-caffeine .*handle-lid-switch'
+  # Read to the end: grep -q leaving early could fail the list with a broken pipe.
+  systemd-inhibit --list --no-legend 2>/dev/null | grep '^nova-caffeine .*handle-lid-switch' >/dev/null
 }
 
 # On is the switch, and on a laptop the lid lock with it: a switch that outlived
@@ -97,10 +98,13 @@ tell_shell() { nova-shell -q idle refresh >/dev/null 2>&1 || true; }
 
 # The lid: no suspend while closed, and the modem kept awake.
 hold_lid() { # why
-  local d waited=0
+  local d waited=0 was
   if d=$(modem) && modem_radio_on; then
-    # Its own setting, not "on" from a hold already taken.
-    [[ -f $PREV_MODEM ]] || cat "$d/power/control" >"$PREV_MODEM" 2>/dev/null || true
+    # Its own setting, not "on" from a hold already taken; none kept when it
+    # cannot be read, as an empty one could never be put back.
+    if [[ ! -f $PREV_MODEM ]] && was=$(cat -- "$d/power/control" 2>/dev/null) && [[ -n $was ]]; then
+      printf '%s\n' "$was" >"$PREV_MODEM"
+    fi
     modem_set on || echo "nova caffeine: could not keep the modem awake; it may still sleep" >&2
   fi
   if ! systemctl --user is-active --quiet "$UNIT.service"; then
@@ -142,7 +146,7 @@ release() {
   local ok=0
   systemctl --user stop "$UNIT.service" >/dev/null 2>&1 || true
   systemctl --user reset-failed "$UNIT.service" >/dev/null 2>&1 || true
-  if [[ -f $PREV_MODEM ]]; then
+  if [[ -s $PREV_MODEM ]]; then
     modem_set "$(<"$PREV_MODEM")" || ok=1
   fi
   dpms on
