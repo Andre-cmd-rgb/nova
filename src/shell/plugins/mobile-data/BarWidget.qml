@@ -102,6 +102,7 @@ Panel {
     case "disabled": return "Mobile data off"
     case "noprofile": return "No connection profile"
     case "absent": return "No modem"
+    case "noservice": return "ModemManager is not running"
     case "parked": return "Off — no SIM"
     default: return "Modem starting…"
     }
@@ -110,6 +111,7 @@ Panel {
   // One line, and only when something actually needs doing.
   readonly property string hintText: {
     if (lastError !== "") return lastError
+    if (wwanState === "noservice") return "Mobile data needs ModemManager. In a terminal:  sudo systemctl enable --now ModemManager.service"
     if (!hasProfile) return "No profile yet — run:  mobile-data setup <APN>"
     if (!managed) return "NetworkManager is not managing the modem."
     if (wwanState === "starting") return "The modem restarts itself after sleep — give it half a minute."
@@ -305,7 +307,8 @@ Panel {
     interval: Math.max(mobile.pollInterval, 10) * 1000
     // Not while the radio is blocked: messages arrive at the modem, so with
     // mobile data off there is nothing to find and no reason to keep looking.
-    running: mobile.smsNotifications && mobile.shown && mobile.wwanState !== "disabled"
+    // Nor without ModemManager, which is what would read them.
+    running: mobile.smsNotifications && mobile.shown && mobile.wwanState !== "disabled" && mobile.wwanState !== "noservice"
     repeat: true
     // So a message that arrived while the shell was down is announced when it
     // comes back up, rather than a poll interval later.
@@ -498,7 +501,7 @@ Panel {
           width: parent.width
           wrapMode: Text.WordWrap
           text: mobile.hintText
-          color: mobile.lastError !== "" ? mobile.urgent : mobile.dim
+          color: mobile.lastError !== "" || mobile.wwanState === "noservice" ? mobile.urgent : mobile.dim
           font.family: mobile.fontFamily
           font.pixelSize: Style.font.bodySmall
         }

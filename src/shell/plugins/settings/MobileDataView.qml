@@ -53,6 +53,7 @@ Column {
     case "nosim": return "There is no SIM in the slot."
     case "locked": return "The SIM is locked, and needs its PIN."
     case "disabled": return "Off."
+    case "noservice": return "Off: ModemManager, which runs the modem, is not running."
     default: return ""
     }
   }
@@ -142,6 +143,14 @@ Column {
       detail: root.busy ? (root.radioOn ? "Turning off…" : "Turning on…") : root.summary
       checked: root.radioOn
       onClicked: if (!root.busy) root.run(["nova-mobile-data", root.radioOn ? "off" : "on"])
+    }
+  }
+
+  Section {
+    visible: root.modem === "noservice"
+    Caption {
+      width: parent.width
+      text: "Start it, and have it start with the computer, in a terminal: sudo systemctl enable --now ModemManager.service"
     }
   }
 

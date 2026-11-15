@@ -1,11 +1,12 @@
-# Networking: the Wi-Fi rules of the computer's country, and name resolution
+# Networking: the Wi-Fi rules of the computer's country, ModemManager on
+# for a cellular modem, and name resolution
 # that finds printers through Avahi and answers nobody's LLMNR, and captive
 # portal checks. Tests live in tests/unit/network.
 
 NETWORK_SRC := data/network
 
 INSTALL_TARGETS += install-network
-SHELL_SOURCES   += $(NETWORK_SRC)/bin/nova-wireless-regdom $(NETWORK_SRC)/bin/nova-nsswitch-mdns
+SHELL_SOURCES   += $(NETWORK_SRC)/bin/nova-wireless-regdom $(NETWORK_SRC)/bin/nova-nsswitch-mdns $(NETWORK_SRC)/bin/nova-modemmanager
 
 .PHONY: install-network
 install-network:

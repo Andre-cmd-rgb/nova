@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# nova:summary=Turn ModemManager on, once, on a computer with a cellular modem
+# nova:hidden=true
+#
+# Mobile data goes through ModemManager: without it NetworkManager sees no
+# modem at all. The installer adds the package on a computer with a modem on
+# PCIe, but Arch enables no service a package brings, so it never ran. This
+# enables it, and starts it on a running system (not in the installer's
+# chroot, where there is nothing to start it in). It does so once: the marker
+# it leaves means a ModemManager somebody turned off afterwards stays off.
+# Run by the installer, and by a pacman hook, so a system installed before
+# this gets it too.
+#
+# NOVA_PCI_DEVICES, NOVA_STATE_DIR and NOVA_MM_UNIT exist for the tests.
+
+set -euo pipefail
+
+PCI_DEVICES=${NOVA_PCI_DEVICES:-/sys/bus/pci/devices}
+STATE_DIR=${NOVA_STATE_DIR:-/var/lib/nova}
+UNIT_FILE=${NOVA_MM_UNIT:-/usr/lib/systemd/system/ModemManager.service}
+MARKER=$STATE_DIR/modemmanager-enabled
+
+[[ ! -e $MARKER && -e $UNIT_FILE ]] || exit 0
+
+# A cellular modem: PCI class 0x0d40, as the installer looks for it.
+modem=0
+for class in "$PCI_DEVICES"/*/class; do
+  [[ -r $class && $(<"$class") == 0x0d40* ]] || continue
+  modem=1
+  break
+done
+((modem)) || exit 0
+
+systemctl enable ModemManager.service >/dev/null 2>&1 || {
+  echo "nova-modemmanager: could not enable ModemManager.service" >&2
+  exit 1
+}
+if [[ -d /run/systemd/system ]] && ! systemd-detect-virt --quiet --chroot 2>/dev/null; then
+  systemctl start --no-block ModemManager.service >/dev/null 2>&1 || true
+fi
+mkdir -p "$STATE_DIR"
+: >"$MARKER"

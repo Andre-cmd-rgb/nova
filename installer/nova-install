@@ -1544,6 +1544,9 @@ enable_services() {
     systemd-resolved.service systemd-timesyncd.service systemd-oomd.service \
     power-profiles-daemon.service fstrim.timer snapper-cleanup.timer limine-snapper-sync.service \
     avahi-daemon.service cups.socket btrfs-scrub@-.timer
+  # A cellular modem's ModemManager, which hardware_packages added: Arch
+  # enables nothing a package brings, and mobile data cannot work without it.
+  in_target /usr/lib/nova/bin/nova-modemmanager || warn "Could not turn on ModemManager; mobile data needs: sudo systemctl enable --now ModemManager.service"
 }
 
 finish() {

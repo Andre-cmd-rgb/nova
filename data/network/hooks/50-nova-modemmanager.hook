@@ -1,0 +1,13 @@
+# For systems whose modemmanager came without its service turned on. After
+# the transaction, so the unit is there when both come in one.
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = nova
+Target = modemmanager
+
+[Action]
+Description = Turning on ModemManager for the cellular modem...
+When = PostTransaction
+Exec = /usr/lib/nova/bin/nova-modemmanager

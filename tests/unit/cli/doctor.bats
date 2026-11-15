@@ -28,6 +28,7 @@ setup() {
     -T) shift; for p in "$@"; do [[ " ${NOT_INSTALLED:-} " != *" $p "* ]] || echo "$p"; done ;; esac'
   stub uname 'echo 6.17.0-nova1'
   stub systemctl 'case " $* " in
+    *" is-active "*"ModemManager"*) [[ -z ${MM_STOPPED:-} ]] ;;
     *" --user "*"--failed"*) [[ -z $USER_FAILED ]] || echo "$USER_FAILED loaded failed failed A unit" ;;
     *"--failed"*) [[ -z $SYSTEM_FAILED ]] || echo "$SYSTEM_FAILED loaded failed failed A unit" ;;
   esac'
@@ -400,6 +401,17 @@ working_laptop() {
   mkdir -p "$NOVA_SYS/class/ieee80211/phy0" "$NOVA_SYS/class/sound/card0"
   run doctor
   [[ $output != *"no Wi-Fi"* && $output != *"no sound card"* ]]
+}
+
+@test "parts: a cellular modem without ModemManager installed, or not running, warns" {
+  pci 0000:08:00.0 0x0d4000 0x105b 0xe0ab mhi-pci-generic
+  run doctor
+  [[ $output != *"ModemManager"* ]]
+  MM_STOPPED=1 run doctor
+  [[ $output == *"warn  ModemManager is not running, so mobile data cannot work"* ]]
+  [[ $output == *"sudo systemctl enable --now ModemManager.service"* ]]
+  NOT_INSTALLED=modemmanager run doctor
+  [[ $output == *"warn  the cellular modem has no ModemManager, so mobile data cannot work"* ]]
 }
 
 @test "parts: an Intel MIPI camera with no video device, or no libcamera for apps to see it" {

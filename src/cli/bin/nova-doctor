@@ -410,15 +410,17 @@ check_graphics() {
 
 # Wi-Fi or sound hardware with no Wi-Fi device or sound card at all: its driver
 # or its firmware did not load. Said only then, so a card that only looks like
-# one of these never raises it on a computer that works.
+# one of these never raises it on a computer that works. And a cellular modem
+# with no ModemManager running, without which mobile data cannot work.
 check_devices() {
-  local dev class wifi='' audio=0
+  local dev class wifi='' audio=0 modem=0
   for dev in "$SYS"/bus/pci/devices/*; do
     [[ -r $dev/class ]] || continue
     class=$(<"$dev/class")
     case $class in
       0x0280*) wifi+="${wifi:+, }$(vendor_name "$(<"$dev/vendor")") $(<"$dev/device")" ;;
       0x0401* | 0x0403*) audio=1 ;;
+      0x0d40*) modem=1 ;;
     esac
   done
   if [[ -n $wifi ]] && ! compgen -G "$SYS/class/ieee80211/*" >/dev/null; then
@@ -426,6 +428,11 @@ check_devices() {
   fi
   if ((audio)) && ! compgen -G "$SYS/class/sound/card*" >/dev/null; then
     report warn "no sound card: the sound hardware has no driver, or no firmware for it" "journalctl -k -b says which"
+  fi
+  if ((modem)) && [[ -n $(pacman -T modemmanager 2>/dev/null) ]]; then
+    report warn "the cellular modem has no ModemManager, so mobile data cannot work" "sudo pacman -S modemmanager"
+  elif ((modem)) && ! systemctl is-active --quiet ModemManager.service 2>/dev/null; then
+    report warn "ModemManager is not running, so mobile data cannot work" "sudo systemctl enable --now ModemManager.service"
   fi
 }
 

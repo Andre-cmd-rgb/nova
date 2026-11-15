@@ -31,9 +31,11 @@ rule, no systemd unit, no daemon of its own.
 | ModemManager (`mmcli`) | operator, technology, signal quality, SIM and modem state, text messages |
 | `rfkill`, `iproute2`, `iputils` | radio state, interface address, the panel's ping |
 
-The installer adds ModemManager when it finds a modem; anywhere else it is
-`pacman -S modemmanager`. The widget is in the default bar and stays hidden on
-a computer without a modem.
+The installer adds ModemManager when it finds a modem, and turns its service
+on; so does an update, once, on a system installed before (`nova-modemmanager`,
+from a pacman hook). Anywhere else it is `pacman -S modemmanager` and
+`sudo systemctl enable --now ModemManager.service`. The widget is in the
+default bar and stays hidden on a computer without a modem.
 
 ## First run
 
@@ -234,7 +236,14 @@ that cadence, which a laptop on battery will notice. Set `backgroundStats` to
 device and ModemManager sees no modem. Check with `nova mobile-data status` and
 `mmcli -L`.
 
-**"No connection profile".** Run `nova mobile-data setup <APN>`.
+**"ModemManager is not running".** The package is there but its service is
+not: NetworkManager then sees no modem at all, and nothing can turn it on.
+`sudo systemctl enable --now ModemManager.service` starts it, and has it start
+with the computer. `nova doctor` says so too.
+
+**"No connection profile".** Run `nova mobile-data setup <APN>`; with a `gsm`
+profile already there (one you made, say) it sets that one up rather than
+making a second.
 
 **"NetworkManager is not managing the modem".** Something else owns it —
 usually a leftover `systemd-networkd` or a `NetworkManager.conf` `unmanaged-devices`

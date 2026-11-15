@@ -301,6 +301,17 @@ radio_present() {
   [[ -n $(rf -n -o TYPE list wwan 2>/dev/null) ]]
 }
 
+# ModemManager installed but not on the system bus: its service was never
+# enabled (Arch enables nothing a package brings), or it has stopped. Then
+# NetworkManager sees no modem at all, and nothing here can reach one: `mmcli
+# -L` fails, where with ModemManager up and no modem it only finds none.
+MM_FIX="sudo systemctl enable --now ModemManager.service"
+
+mm_stopped() {
+  have mmcli || return 1
+  ! mm -L >/dev/null 2>&1
+}
+
 # A physical switch, and no amount of waiting or retrying will talk it round.
 radio_hard_blocked() {
   have rfkill || return 1
@@ -531,6 +542,8 @@ read_state() {
   if radio_blocked; then
     STATE=disabled
     HW=yes
+    # Off, and it could not come on: that is worth saying while it is off.
+    mm_stopped && STATE=noservice
     return 0
   fi
 
@@ -541,7 +554,11 @@ read_state() {
   # autoconnects on its own. Reporting that as "No modem" next to an unlit
   # switch is what makes people flip a switch that was never off.
   if ! load_dump; then
-    [[ -e $MODEM_SEEN ]] && STATE=starting
+    if [[ $HW == yes || -e $MODEM_SEEN ]] && mm_stopped; then
+      STATE=noservice HW=yes
+    elif [[ -e $MODEM_SEEN ]]; then
+      STATE=starting
+    fi
     return 0
   fi
   HW=yes
@@ -658,13 +675,16 @@ cmd_status() {
   read_state
   case $STATE in
   parked)
-    if [[ $(parked_reason) == no-modemmanager ]]; then
+    if [[ $(parked_reason) == no-modemmanager ]] && have mmcli; then
+      echo "Off: ModemManager is installed now. Start it ($MM_FIX), then: mobile-data check"
+    elif [[ $(parked_reason) == no-modemmanager ]]; then
       echo "Off: ModemManager is not installed (sudo pacman -S modemmanager), then: mobile-data check"
     else
       echo "Off: no SIM was found. Settings > Mobile Data, or mobile-data check, looks again."
     fi
     ;;
   absent) echo "No WWAN modem detected." ;;
+  noservice) echo "ModemManager is not running, so the modem cannot be used: $MM_FIX" ;;
   disabled) echo "Mobile data: off" ;;
   nosim) echo "No SIM." ;;
   locked) echo "SIM locked — PIN required." ;;
@@ -721,6 +741,7 @@ wait_for_state() {
 cmd_on() {
   [[ ! -e $PARKED ]] || die "the modem is off because no SIM was found — mobile-data check looks again"
   require_nmcli
+  ! mm_stopped || die "ModemManager is not running: $MM_FIX"
   local profile timeout deadline left reason=""
   profile=$(nm_profile)
   [[ -n $profile ]] || die "no gsm connection profile — run: mobile-data setup <APN>"
@@ -858,6 +879,9 @@ cmd_reset() {
 # back, and reads its slot about half a minute later.
 cmd_check() {
   local timeout deadline state sim
+  # Nothing to look with: refused before anything changes, and above all
+  # before an answer that never comes is taken for an empty slot.
+  ! mm_stopped || die "looking for a SIM needs ModemManager running: $MM_FIX"
   rm -f -- "$PARKED"
   if ! have mmcli; then
     park no-modemmanager
@@ -1207,7 +1231,11 @@ cmd_sms() {
 cmd_setup() {
   require_nmcli
   local apn=${1:-} profile metric
-  profile=$(get_cfg PROFILE mobile)
+  # The profile already driven (the configured one, or the first gsm profile
+  # NetworkManager has), so that one made by hand is set up, not a second
+  # one made beside it; `mobile` only when there is none.
+  profile=$(nm_profile)
+  [[ -n $profile ]] || profile=mobile
   metric=$(get_cfg ROUTE_METRIC 700)
   [[ $metric =~ ^[0-9]+$ ]] || metric=700
 

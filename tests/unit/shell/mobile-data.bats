@@ -102,6 +102,33 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [[ $output == *"ModemManager is not installed"* ]]
 }
 
+# ModemManager installed, and not running: mmcli finds nothing on the bus.
+stopped_modemmanager() {
+  stub mmcli 'echo "error: couldn'"'"'t find the ModemManager process in the bus" >&2; exit 1'
+}
+
+@test "ModemManager installed but not running: said so, with the command, and nothing is decided" {
+  stopped_modemmanager
+  [ "$(info state)" = noservice ]
+  [ ! -e "$state/parked" ]
+  [ "$(cat "$SCRATCH/wwan")" = unblocked ]
+  run "$helper" status
+  [[ $output == *"sudo systemctl enable --now ModemManager.service"* ]]
+  echo blocked >"$SCRATCH/wwan"
+  [ "$(info state)" = noservice ]
+}
+
+@test "ModemManager not running: on and check refuse at once, and check parks nothing" {
+  stopped_modemmanager
+  run "$helper" on
+  [ "$status" -ne 0 ]
+  [[ $output == *"ModemManager is not running"* ]]
+  run "$helper" check
+  [ "$status" -ne 0 ]
+  [[ $output == *"ModemManager running"* ]]
+  [ ! -e "$state/parked" ]
+}
+
 @test "a radio turned off by hand is no answer: nothing is decided" {
   empty_slot
   echo blocked >"$SCRATCH/wwan"
