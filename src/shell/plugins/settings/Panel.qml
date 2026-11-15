@@ -61,6 +61,7 @@ Item {
     { id: "wifi", label: "Wi-Fi", icon: "󰖩", radio: "wlan" },
     { id: "bluetooth", label: "Bluetooth", icon: "󰂯", radio: "bluetooth" },
     { id: "mobile-data", label: "Mobile Data", icon: "󰞃", radio: "wwan" },
+    { id: "airdrop", label: "AirDrop", icon: "󰀃" },
     { id: "sound", label: "Sound", icon: "󰕾", group: true },
     { id: "displays", label: "Displays", icon: "󰍹" },
     { id: "battery", label: "Battery", icon: "󰁹" },
@@ -78,6 +79,8 @@ Item {
   readonly property var pages: allPages.filter(function (p) {
     if (!root.loaded) return true
     if (p.id === "battery") return root.battery.present === true
+    // A Wi-Fi card that can do it (nova airdrop available).
+    if (p.id === "airdrop") return !!root.info.airdrop && root.info.airdrop.available === true
     // Power modes, a discrete GPU Nova switches, or an Intel CPU, which takes
     // an undervolt through its mailbox at all.
     if (p.id === "performance") return root.profiles.length > 0 || root.gpuSwitch || root.undervolt.intel === true
@@ -452,6 +455,7 @@ Item {
           sourceComponent: {
             switch (root.page) {
             case "wifi": return wifiPage
+            case "airdrop": return airdropPage
             case "bluetooth": return bluetoothPage
             case "mobile-data": return mobileDataPage
             case "sound": return soundPage
@@ -529,6 +533,19 @@ Item {
         width: p.inner
         le: root.info.bluetooth ? root.info.bluetooth.le === true : null
         onDiscoveryStarted: root.owesDiscoveryStop = true
+        onCommand: function (argv) { root.run(argv) }
+      }
+    }
+  }
+
+  Component {
+    id: airdropPage
+    Page {
+      id: p
+      title: "AirDrop"
+      AirDropView {
+        width: p.inner
+        bell: !!root.info.airdrop && root.info.airdrop.bell === true
         onCommand: function (argv) { root.run(argv) }
       }
     }

@@ -85,8 +85,9 @@ function gaveUp(state, now) {
 // Unix seconds. A face has a title, words under it, a dimmer note, a share
 // done (-1 for no bar), answers to give (each what it `does`, what it `says`,
 // and whether it is the `main` one), and how long it `stays` (0: until the
-// state changes).
-function face(state, now) {
+// state changes). `rung`: AirDrop was switched on for an iPhone's share
+// sheet, and goes off when it closes.
+function face(state, now, rung) {
   if (!state) return null
   var plain = { title: "AirDrop", words: "", note: "", share: -1, answers: [], stays: 0 }
   function with_(more) {
@@ -102,7 +103,8 @@ function face(state, now) {
     return with_({
       words: state.seen === true ? "An iPhone has " + (text(state.name) || "this computer") + " in its AirDrop list"
         : "Send from an iPhone to " + (text(state.name) || "this computer"),
-      note: "Wi-Fi is off meanwhile." + (left > 0 ? " Ends in " + clock(left) + "." : ""),
+      note: rung === true ? "Wi-Fi is off until the iPhone's share sheet closes."
+        : "Wi-Fi is off meanwhile." + (left > 0 ? " Ends in " + clock(left) + "." : ""),
       answers: [stop]
     })
   case "asked":
@@ -164,4 +166,20 @@ function arrival(state) {
     opens: paths[0].replace(/\/[^\/]*$/, "") || "/",
     browser: false
   }
+}
+
+// What AirDrop's doorbell asks of AirDrop now: "on", "off", or "" for
+// nothing. `s` says whether the iPhone the doorbell knows shows AirDrop in its
+// share sheet (`near`), whether the computer is `locked`, whether AirDrop is
+// `on` (or on its way), whether it was switched on for that sheet (`rung`),
+// whether that sheet has had its AirDrop already (`spent`: AirDrop went off
+// while it was open, whoever ended it; none again until it closes), and the
+// daemon's `state`.
+function doorbell(s) {
+  if (!s.on) return s.near && !s.locked && !s.spent ? "on" : ""
+  // An AirDrop switched on by hand is ended by hand, or by itself.
+  if (!s.rung) return ""
+  if (s.locked) return "off"
+  // The sheet closed: off, but not from under an offer or a transfer, which end by themselves.
+  return !s.near && s.state !== "asked" && s.state !== "receiving" ? "off" : ""
 }

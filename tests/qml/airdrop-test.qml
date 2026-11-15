@@ -17,6 +17,12 @@ ShellRoot {
   property var card: null
   property Item stage: Item {}
 
+  // The shell as far as the card asks it: the lock screen's service.
+  property QtObject lock: QtObject { property bool locked: false }
+  property QtObject fakeShell: QtObject {
+    function serviceFor(id) { return id === "nova.lock" ? test.lock : null }
+  }
+
   function check(name, got, want) {
     const same = JSON.stringify(got) === JSON.stringify(want)
     console.log((same ? "ok   " : "FAIL ") + name + (same ? "" : ": got " + JSON.stringify(got) + ", want " + JSON.stringify(want)))
@@ -110,6 +116,20 @@ ShellRoot {
       ["declined", "failed", "error", "ended"].map(state => Model.face({ state: state, why: "x" }, 0).stays > 0), [true, true, true, true])
     check("a failure says why, a start that failed too", [Model.face({ state: "failed", why: "The transfer stopped." }, 0).words,
       Model.face({ state: "error", why: "The Wi-Fi is switched off." }, 0).words], ["The transfer stopped.", "The Wi-Fi is switched off."])
+
+    // The doorbell: on for the iPhone's open share sheet while unlocked, once a sheet; off when it closes.
+    const bell = (more) => Model.doorbell(Object.assign({ near: false, locked: false, on: false, rung: false, spent: false, state: "off" }, more))
+    check("the iPhone shows AirDrop: on, but not while locked, and not again for a sheet that has had it",
+      [bell({ near: true }), bell({ near: true, locked: true }), bell({ near: true, spent: true }), bell({})], ["on", "", "", ""])
+    check("an AirDrop switched on by hand is not the doorbell's to end",
+      [bell({ on: true, state: "waiting" }), bell({ on: true, state: "waiting", locked: true })], ["", ""])
+    check("the sheet closed: off, but not from under an offer or a transfer",
+      [bell({ on: true, rung: true, state: "waiting" }), bell({ on: true, rung: true, state: "off" }), bell({ on: true, rung: true, state: "asked" }),
+        bell({ on: true, rung: true, state: "receiving" }), bell({ on: true, rung: true, state: "received" }), bell({ on: true, rung: true, near: true, state: "waiting" })],
+      ["off", "off", "", "", "off", ""])
+    check("locked, an AirDrop the doorbell switched on goes off", bell({ on: true, rung: true, near: true, locked: true, state: "asked" }), "off")
+    check("switched on for a share sheet, the card says the sheet's closing ends it",
+      Model.face({ state: "waiting", name: "Nova", seen: true, ends: 1120 }, 1000, true).note, "Wi-Fi is off until the iPhone's share sheet closes.")
 
     check("a daemon that was waiting gave up when its time had run out, not before",
       [Model.gaveUp({ state: "waiting", ends: 1000 }, 999), Model.gaveUp({ state: "waiting", ends: 1000 }, 900),
@@ -214,6 +234,64 @@ ShellRoot {
     check("a start that fails says why, in the command's own words", [card.shown && card.shown.state, card.look.title, card.look.words, card.opened],
       ["error", "AirDrop could not start", "The Wi-Fi is switched off. Switch it on and try again.", false])
     check("and it was the command that was asked", called().slice(3), ["nova-airdrop on"])
-    finish()
+    card.shell = fakeShell
+    // The iPhone's sheet shows AirDrop: on, to stay on after a transfer. This start is refused too.
+    card.bell = { state: "listening", phones: 1, near: true, learning: 0 }
+    check("the doorbell rings for the sheet", card.doorbell, "on")
+    later(800, eighth)
+  }
+
+  function eighth() {
+    check("asked for with --stay", called().slice(4), ["nova-airdrop on --stay"])
+    check("a start that failed leaves that sheet spent: no second try while it is open", [card.opened, card.rung, card.spent, card.doorbell], [false, false, true, ""])
+    card.bell = { state: "listening", phones: 1, near: false, learning: 0 }
+    check("the sheet closed, the next one may ring again", card.spent, false)
+
+    // Up for the sheet (as the watch would say), an offer; the sheet closes meanwhile.
+    card.rung = true
+    card.told(JSON.stringify({ state: "waiting", name: "Nova", seen: true, ends: 0 }))
+    card.bell = { state: "listening", phones: 1, near: true, learning: 0 }
+    check("on for the sheet, the card says until when", card.look.note, "Wi-Fi is off until the iPhone's share sheet closes.")
+    card.told(asked)
+    card.bell = { state: "listening", phones: 1, near: false, learning: 0 }
+    check("the sheet closing does not end an offer", card.doorbell, "")
+    card.told('{"state":"declined","sender":"Zoë\'s iPhone"}')
+    check("once it is over, it does", card.doorbell, "off")
+    later(50, function () {
+      card.told('{"state":"off"}')
+      check("and then it is off, nobody's", [card.opened, card.rung, card.spent], [false, false, false])
+      // Locked while on for the sheet: off; unlocked with the sheet still open: not again.
+      card.rung = true
+      card.told(JSON.stringify({ state: "waiting", name: "Nova", seen: false, ends: 0 }))
+      card.bell = { state: "listening", phones: 1, near: true, learning: 0 }
+      test.lock.locked = true
+      check("locked: off", card.doorbell, "off")
+      later(50, function () {
+        card.told('{"state":"off"}')
+        test.lock.locked = false
+        later(50, function () {
+          check("unlocked with the same sheet open: it has had its AirDrop", [card.spent, card.doorbell, card.starting], [true, "", false])
+          later(400, ninth)
+        })
+      })
+    })
+  }
+
+  function ninth() {
+    check("off was asked for twice, for the closed sheet and the lock, and nothing else", called().slice(5), ["nova-airdrop off", "nova-airdrop off"])
+    // The sheet closes while AirDrop is still starting for it: no off until the start is over.
+    test.lock.locked = false
+    card.bell = { state: "listening", phones: 1, near: false, learning: 0 }
+    card.rung = true
+    card.shown = { state: "starting" }
+    check("starting for a sheet that has closed: the doorbell says off", card.doorbell, "off")
+    later(100, function () {
+      check("but nothing is asked while the start is on its way", called().length, 7)
+      card.told(JSON.stringify({ state: "waiting", name: "Nova", seen: false, ends: 0 }))
+      later(100, function () {
+        check("once it is up, it is switched off", called().slice(7), ["nova-airdrop off"])
+        finish()
+      })
+    })
   }
 }

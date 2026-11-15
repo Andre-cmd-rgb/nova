@@ -1,9 +1,15 @@
 #!/bin/sh
 # `nova-airdrop` as AirDrop's card uses it. `watch` says the lines in
-# $HOME/airdrop-says, if the test wrote any, then nothing more for a while.
+# $HOME/airdrop-says, if the test wrote any, then nothing more for a while;
+# `bell watch` the same from $HOME/bell-says, and nothing more for longer
+# than a test runs (its end would be the doorbell's going).
 # Every other call is noted in $HOME/stub-calls, as `record` notes one, and
 # `on` then fails with the words in $HOME/airdrop-refuses, if the test wrote
 # any.
+if [ "$1 $2" = "bell watch" ]; then
+  cat "$HOME/bell-says" 2>/dev/null
+  exec sleep 60
+fi
 if [ "$1" = watch ]; then
   cat "$HOME/airdrop-says" 2>/dev/null
   sleep 5

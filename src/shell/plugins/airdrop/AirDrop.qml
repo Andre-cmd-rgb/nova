@@ -19,6 +19,12 @@ import "AirDropModel.js" as Model
 // each change as a line of JSON, for as long as the shell runs; on, off,
 // accept and decline are that command's too. The menu's AirDrop row toggles
 // this plugin, and the airdrop IPC target does the same from a key.
+//
+// AirDrop's doorbell, where it is switched on (Settings → AirDrop), is
+// Bluetooth listening for the user's iPhone: `nova airdrop bell watch` says
+// when its share sheet shows AirDrop and when it closes, and this switches
+// AirDrop on and off by that, while the computer is unlocked
+// (Model.doorbell).
 Item {
   id: airdrop
 
@@ -34,13 +40,24 @@ Item {
   property real now: Date.now() / 1000
   // Stop was asked for: the off that follows is no giving up.
   property bool stopping: false
-  readonly property var face: Model.face(shown, now)
+  readonly property var face: Model.face(shown, now, rung)
   // The last face, for the card to keep while it goes.
   property var look: ({ title: "", words: "", note: "", share: -1, answers: [], stays: 0 })
   // `nova airdrop on` is at work.
   readonly property bool starting: shown !== null && shown.state === "starting"
   // AirDrop is on, or on its way: what the shell's toggle goes by.
   readonly property bool opened: starting || said.state !== "off"
+
+  // What the doorbell last said; `near` while the iPhone it knows shows AirDrop.
+  property var bell: ({ state: "off" })
+  readonly property bool near: bell.near === true
+  // This AirDrop was switched on for the iPhone's share sheet.
+  property bool rung: false
+  // That sheet has had its AirDrop: none again until it closes.
+  property bool spent: false
+  readonly property var lockService: shell ? shell.serviceFor("nova.lock") : null
+  readonly property bool locked: !!lockService && lockService.locked
+  readonly property string doorbell: Model.doorbell({ near: near, locked: locked, on: opened, rung: rung, spent: spent, state: said.state })
 
   readonly property string command: "nova-airdrop"
   readonly property string glyph: "󰀃"
@@ -49,13 +66,35 @@ Item {
 
   onFaceChanged: if (face) look = face
   onShownChanged: {
-    var next = Model.face(shown, now)
+    var next = Model.face(shown, now, rung)
     away.stop()
     if (next && next.stays > 0) {
       away.interval = next.stays
       away.start()
     }
   }
+
+  // Acted on once what it says has settled: switching changes what it says.
+  // Looked at again when a start or a stop is over, which may change what
+  // can be done about it.
+  onDoorbellChanged: Qt.callLater(ring)
+  onStartingChanged: Qt.callLater(ring)
+  onStoppingChanged: Qt.callLater(ring)
+  function ring() {
+    if (doorbell === "on") {
+      rung = true
+      turnOn()
+    }
+    // Not while it is starting: an off then can come before the on and be
+    // lost, and AirDrop would stay on with the sheet closed. Once the start
+    // is over, this is looked at again.
+    else if (doorbell === "off" && !stopping && !starting) turnOff()
+  }
+  onOpenedChanged: if (!opened) {
+    if (near) spent = true
+    rung = false
+  }
+  onNearChanged: if (!near) spent = false
 
   // The shell's summon and hide: on and off.
   function open(payload) {
@@ -71,6 +110,8 @@ Item {
     starter.code = -1
     starter.words = null
     shown = { state: "starting" }
+    // For the iPhone's share sheet it stays on after a transfer: it is the sheet's closing that ends it.
+    starter.command = rung ? [command, "on", "--stay"] : [command, "on"]
     starter.running = true
   }
 
@@ -138,6 +179,15 @@ Item {
     starter.code = -1
     starter.words = null
     if (!starting) return
+    if (stopping) {
+      // Stopped on its way: a start that was cut short is no failure to
+      // show, and one the stop came too early for is stopped now. No line
+      // of the watch may ever say off to end the stopping.
+      stopping = false
+      if (code !== 0) shown = null
+      else turnOff()
+      return
+    }
     if (code !== 0) shown = { state: "error", why: why }
     // Up, and the watch says so in a moment; a watch that says nothing leaves no card behind.
     else if (said.state === "off") unheard.restart()
@@ -165,7 +215,6 @@ Item {
     id: starter
     property int code: -1
     property var words: null
-    command: [airdrop.command, "on"]
     stderr: StdioCollector {
       waitForEnd: true
       onStreamFinished: {
@@ -198,6 +247,33 @@ Item {
     onTriggered: {
       interval = Math.min(interval * 4, 300000)
       watcher.running = true
+    }
+  }
+
+  // The doorbell's watch, the same way. While the doorbell is off it says
+  // so once and waits.
+  Process {
+    id: bellWatcher
+    command: [airdrop.command, "bell", "watch"]
+    running: true
+    stdout: SplitParser {
+      onRead: function (line) {
+        var next = Model.parse(line)
+        if (next) airdrop.bell = next
+      }
+    }
+    onExited: {
+      airdrop.bell = { state: "off" }
+      bellAgain.start()
+    }
+  }
+
+  Timer {
+    id: bellAgain
+    interval: 5000
+    onTriggered: {
+      interval = Math.min(interval * 4, 300000)
+      bellWatcher.running = true
     }
   }
 
