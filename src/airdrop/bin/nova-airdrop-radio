@@ -76,7 +76,7 @@ check() {
   [[ $modes == *"* IBSS"* && $modes == *"* monitor"* ]] ||
     refuse "This computer's Wi-Fi card cannot do what AirDrop needs (an ad-hoc cell and a monitor interface)."
   local six
-  six=$(grep -E "\* $freq(\.0)? MHz \[6\]" <<<"$can" | head -n 1)
+  six=$(grep -E "\* $freq(\.0)? MHz \[6\]" <<<"$can" | head -n 1) || true
   [[ -n $six && $six != *disabled* && $six != *"no IR"* ]] ||
     refuse "This computer's Wi-Fi card may not send on channel 6 here, which AirDrop needs."
 }

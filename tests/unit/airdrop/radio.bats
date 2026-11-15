@@ -28,7 +28,9 @@ case "$*" in
   "phy phy0 info")
     printf '\tSupported interface modes:\n'
     for mode in ${MODES:-IBSS managed AP monitor}; do printf '\t\t * %s\n' "$mode"; done
-    printf '\tBand 1:\n\t\tFrequencies:\n\t\t\t* 2437.0 MHz [6] %s\n\tSupported commands:\n\t\t * monitor\n' "${SIX:-(22.0 dBm)}"
+    printf '\tBand 1:\n\t\tFrequencies:\n'
+    [[ -n ${NO_SIX:-} ]] || printf '\t\t\t* 2437.0 MHz [6] %s\n' "${SIX:-(22.0 dBm)}"
+    printf '\tSupported commands:\n\t\t * monitor\n'
     ;;
   "reg get") printf 'global\ncountry DE: DFS-ETSI\n\nphy#0 (self-managed)\ncountry IT: DFS-UNSET\n' ;;
   "phy phy0 interface add nova-cell type ibss") [[ -z ${NO_SECOND:-} ]] ;;
@@ -98,6 +100,10 @@ line() { grep -n -m1 -- "$1" "$CALLS" | cut -d: -f1; }
   [[ $output == *"cannot do what AirDrop needs"* ]]
 
   SIX="(disabled)" run radio check
+  [ "$status" -eq 1 ]
+  [[ $output == *"may not send on channel 6"* ]]
+  # A card with no channel 6 at all (5 GHz only) is told the same, not left silent.
+  NO_SIX=1 run radio check
   [ "$status" -eq 1 ]
   [[ $output == *"may not send on channel 6"* ]]
   # And none of it touched anything.
