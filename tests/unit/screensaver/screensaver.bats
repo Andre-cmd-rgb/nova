@@ -34,6 +34,18 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   chmod +x "$SCRATCH/bin/$1"
 }
 
+# What the terminal reads: nothing until the effect has started, then the key
+# given, or the end of its input. A key that comes sooner ends the screensaver
+# before the effect's call is logged.
+input() { # [key]
+  local _
+  for _ in {1..100}; do
+    if grep -q '^nova-screensaver-effect' "$CALLS" 2>/dev/null; then break; fi
+    sleep 0.05
+  done
+  printf '%s' "${1:-}"
+}
+
 @test "a terminal on each display, one at a time, then focus goes back" {
   run main auto
   [ "$status" -eq 0 ]
@@ -84,7 +96,7 @@ exec sleep 5'
 
 @test "the terminal: plays the wordmark in the theme's colors, and a key ends every screensaver" {
   stub nova-screensaver-effect 'exec sleep 5'
-  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" <<<q
+  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(input q)
   [ "$status" -eq 0 ]
   grep -qx "nova-screensaver-effect --colors #cba6ff,#12bff4 $NOVA_WORDMARK" "$CALLS"
   grep -q 'invisible = true' "$CALLS"
@@ -96,7 +108,7 @@ exec sleep 5'
   stub nova-screensaver-effect 'exec sleep 5'
   mkdir -p "$XDG_CONFIG_HOME/nova"
   echo hello >"$XDG_CONFIG_HOME/nova/screensaver.txt"
-  ACTIVE=org.nova.terminal run "$REPO_ROOT/data/screensaver/nova-screensaver-run" </dev/null
+  ACTIVE=org.nova.terminal run "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(input)
   [ "$status" -eq 0 ]
   grep -qx "nova-screensaver-effect --colors #cba6ff,#12bff4 $XDG_CONFIG_HOME/nova/screensaver.txt" "$CALLS"
   grep -qx 'pkill -f \[o\]rg.nova.screensaver' "$CALLS"
@@ -105,15 +117,15 @@ exec sleep 5'
 @test "the terminal: a theme with one color, or none to ask, leaves the rest to the effect" {
   stub nova-screensaver-effect 'exec sleep 5'
   stub nova-theme '[[ $2 == accent ]] && echo "#7aa2f7"'
-  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" <<<q
+  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(input q)
   grep -qx "nova-screensaver-effect --colors #7aa2f7 $NOVA_WORDMARK" "$CALLS"
   : >"$CALLS"
   stub nova-theme 'exit 1'
-  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" <<<q
+  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(input q)
   grep -qx "nova-screensaver-effect $NOVA_WORDMARK" "$CALLS"
   : >"$CALLS"
   stub nova-theme 'echo "rgb(1,2,3)"'
-  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" <<<q
+  run "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(input q)
   grep -qx "nova-screensaver-effect $NOVA_WORDMARK" "$CALLS"
 }
 

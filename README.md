@@ -75,7 +75,7 @@ The [install guide](docs/install.md) has the rest: each question, encryption, th
 
 ```sh
 make lint                              # shellcheck, luac, qmllint, actionlint, the name check
-make test                              # the unit tests
+make test                              # the unit tests (side by side with GNU parallel installed)
 cargo test                             # the Rust parts
 make DESTDIR=/tmp/nova-root install    # the nova package's files, into a scratch root
 ```

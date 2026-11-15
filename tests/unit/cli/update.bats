@@ -21,6 +21,9 @@ setup() {
   stub nova-shell
   stub nova-restart-shell
   stub nova-apps-install 'echo current'
+  # No update is running, whatever else is: the real pgrep would find another
+  # test's nova-update-apply, or this computer's own.
+  stub pgrep 'exit 1'
   export PATH="$SCRATCH/bin:$PATH"
 }
 

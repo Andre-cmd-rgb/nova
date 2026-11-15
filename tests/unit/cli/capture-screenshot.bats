@@ -13,7 +13,9 @@ setup() {
   mkdir -p "$SCRATCH/bin" "$HOME/.config"
   echo 'XDG_PICTURES_DIR="$HOME/Shots"' >"$HOME/.config/user-dirs.dirs"
   echo '10,10 300x200' >"$SCRATCH/region"
-  stub nova-capture-region 'sleep 30 & echo $! >"$SCRATCH/freezer"; echo $!; cat "$SCRATCH/region"; echo "region $*" >>"$CALLS"'
+  # The freeze writes nowhere, as the picker's does: holding the picker's
+  # output open, it would keep the command reading for a region until it ended.
+  stub nova-capture-region 'sleep 30 >/dev/null 2>&1 & echo $! >"$SCRATCH/freezer"; echo $!; cat "$SCRATCH/region"; echo "region $*" >>"$CALLS"'
   stub grim 'echo "grim $*" >>"$CALLS"; if [[ $3 == - ]]; then echo PNG; else echo PNG >"$3"; fi'
   stub wl-copy 'echo "wl-copy $* $(cat)" >>"$CALLS"'
   stub hyprctl 'case $1 in getoption) echo "{\"int\": 1}" ;; *) echo "hyprctl $*" >>"$CALLS" ;; esac'

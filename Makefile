@@ -58,6 +58,10 @@ check-names:
 	  echo "a name from before Nova, listed above" >&2; exit 1; \
 	elif [ $$status -ne 1 ]; then exit $$status; fi
 
+# Side by side, as many at a time as there are CPUs, where GNU parallel is
+# there for bats to run them with (CI has it); one after another without it.
+BATS_JOBS := $(shell parallel --version 2>/dev/null | grep -q 'GNU parallel' && nproc)
+
 test:
-	bats --recursive $(TEST_DIRS)
+	bats $(if $(BATS_JOBS),--jobs $(BATS_JOBS)) --recursive $(TEST_DIRS)
 	@set -e; for t in $(TEST_SCRIPTS); do echo "$$t"; bash "$$t" >/dev/null; done
