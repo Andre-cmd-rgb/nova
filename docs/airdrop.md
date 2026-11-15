@@ -19,6 +19,23 @@ What arrives goes to your downloads folder. Nothing there is ever replaced: a se
 
 The iPhone's own AirDrop setting (Contacts Only, Everyone) is about what the iPhone receives. It sends to the computer either way.
 
+### Switched on by your iPhone
+
+Settings → AirDrop → **Turn on for my iPhone**, or `nova airdrop bell on`. From then on there is nothing to switch: tap AirDrop in your iPhone's share sheet and the computer is in its list a few seconds later; close the sheet and AirDrop goes off, and the Wi-Fi comes back.
+
+- **It learns your iPhone once.** Switched on, it asks you to open Share → AirDrop on the iPhone beside the computer, within a minute. After that only that iPhone switches AirDrop on; somebody else's share sheet nearby does not. Forget, on the same page, unlearns it.
+- **Only while the computer is unlocked.** Locked, nothing happens, and an AirDrop it switched on goes off.
+- **Once a sheet.** An AirDrop that ends while the sheet is still open (Stop, two minutes with nothing sent) is not switched on again until the sheet has closed.
+- **It does not end after a transfer**, as one switched on by hand does: a second photo can follow from the same sheet. The sheet's closing ends it, or two minutes with nothing sent.
+
+**How it knows.** An iPhone announces itself over Bluetooth while its share sheet shows AirDrop, about five times a second, and stops when the sheet closes: it does not announce at Share alone, only once AirDrop is tapped, and goes on while the sheet stays open. Nova gives the Bluetooth controller a pattern of your iPhone's announcement, and the controller compares what it hears with it by itself: the computer is told only when it matches, and is not woken otherwise.
+
+**What it costs.** Measured on the ThinkPad P1's Intel AX210: in the 12 seconds before the sheet was opened, the computer was told nothing at all; with the sheet open, once a second; "gone" came 2.2 s after the sheet closed. What the controller's own listening draws has not been measured. A controller that cannot compare patterns by itself is not used: the kernel would then have to look at every Bluetooth advertisement nearby, awake, and the page says so.
+
+**What it keeps.** Four two-byte numbers from your iPhone's announcement, the ones that are the same from one share sheet to the next (the iPhone shuffles their order and changes the rest each time), in `~/.local/state/nova/airdrop/phones`, readable by you alone. Nothing of any other phone is kept or logged.
+
+Bluetooth must be on for it to hear anything; the page says when it cannot listen, and why.
+
 **Measured** on the ThinkPad P1 Gen 4i with an iPhone 15 Pro: the computer is in the iPhone's list 1.2 s after AirDrop is switched on, a 1.0 MB photo arrives in 2.3 s, and the Wi-Fi is connected again 4 s after AirDrop ends. The speed is the iPhone's timetable: it is on the computer's channel in five of its sixteen slots while it sends, and in one while it only looks.
 
 ### The command
@@ -27,10 +44,14 @@ The iPhone's own AirDrop setting (Contacts Only, Everyone) is about what the iPh
 |---|---|
 | `nova airdrop` | how it is, in a line |
 | `nova airdrop on`, `off`, `toggle` | switch it |
+| `nova airdrop on --stay` | on, and not ending after a transfer |
 | `nova airdrop accept`, `decline` | answer what is being offered |
 | `nova airdrop available` | whether this computer's card can do it, and why not |
 | `nova airdrop active` | succeeds while it is on (for scripts) |
 | `nova airdrop watch` | each change as a line of JSON (what the shell reads) |
+| `nova airdrop bell on`, `off` | the doorbell: your iPhone switches AirDrop on and off |
+| `nova airdrop bell learn`, `forget` | learn an iPhone in the next minute; know none |
+| `nova airdrop bell`, `bell watch` | how the doorbell is, in a line or as JSON |
 
 `nova airdrop off` waits until the Wi-Fi has been handed back and says how that went.
 
@@ -62,7 +83,7 @@ Cards with Linux's own Wi-Fi stack (mac80211) mostly can. **Only the Intel AX210
 - **What arrives is files and folders, in the downloads folder, and nothing else.** An archive's names that point outside it, its links and its device files are dropped; it may not be much larger than the sender said.
 - **The receiver is not root.** It runs as you, with one capability (to open its socket on the radio), which it gives up once it has the socket.
 - **AirDrop is all a phone can reach.** Its network lives in a namespace of its own, with one interface and one listening port: nothing else running on the computer (a printer queue, a login server, file sharing) is on that link.
-- **It is on only while you want it.** Nothing starts it at login.
+- **It is on only while you want it.** Nothing starts it at login. With the doorbell on, your iPhone's share sheet does, and nobody else's.
 
 ## How it is built
 
@@ -75,6 +96,8 @@ For those working on it. The code is in `src/airdrop/`, and the shell's card in 
 | `nova-airdrop-radio` (`bin/`, bash) | lends the Wi-Fi card (`up`) and takes it back (`down`), as root |
 | `nova-airdrop@.service` | runs `up`, then the daemon as the user who asked, then `down` however it ended |
 | `nova-airdrop-apply` and `org.nova.airdrop` | the root half of on and off, through pkexec, with no password for the person at the computer |
+| `nova-airdrop-bell` (`daemon/src/bin/`, Rust) | the doorbell: the Bluetooth controller listening for the user's iPhone |
+| `nova-airdrop-bell@.service` | runs it as the user, from each login to its end, once `nova airdrop bell on` has enabled it |
 
 **The radio.** `up` takes the Wi-Fi interface from NetworkManager and adds two interfaces to the card under one made-up address: `nova-cell`, an ad-hoc cell on channel 6 with AWDL's BSSID (`00:25:00:ff:94:73`), HT20, a beacon every ten seconds (an iPhone does not list a node whose cell beacons ten times a second); and `nova-mon`, a monitor interface. The cell is there for the card's hardware to acknowledge frames sent to that address. The frames themselves are heard and sent on the monitor.
 
@@ -87,6 +110,8 @@ For those working on it. The code is in `src/airdrop/`, and the shell's card in 
 **Nothing but the system's libraries.** The daemon has no dependencies in cargo. TLS is the system's OpenSSL, loaded when the daemon starts; unpacking is the system's zlib.
 
 **Talking to it** (`control.rs`). A socket in the user's runtime folder, `nova/airdrop.sock`. A client says one line (`watch`, `status`, `accept`, `decline`, `stop`); a watcher gets the state as a line of JSON at each change. The file's own comment has the states and their fields.
+
+**The doorbell** (`nova-airdrop-bell`). It talks to the kernel's Bluetooth management socket, the one `bluetoothd` uses, and not to BlueZ: BlueZ's own interface for advertisement monitors is experimental, and switching it on would switch on other experimental parts too. Binding that socket takes `CAP_NET_ADMIN`, which the unit gives it; the kernel decides at binding what a socket may do, so it gives up every capability right after. It puts one advertisement monitor in place per iPhone it knows: four patterns, one for each of the iPhone's numbers in the first place of the announcement, any of which matches (the first place always holds one of them; an iPhone with fewer numbers is looked for in every place). Thresholds: found at once above -85 dBm, gone after 3 s below -95 dBm or unheard, told once a second meanwhile. While learning, a fifth monitor matches any iPhone's announcement (`4c 00 05` in Apple's data), and an iPhone louder than -65 dBm is the one learned. While something searches for Bluetooth devices (Settings' Bluetooth page), the kernel reports what a monitor matches as any device found, and those reports count too; an iPhone unheard for six seconds is gone, whatever the kernel said. It notices Bluetooth switched off and on, the controller coming and going, and its monitors taken away, and puts them back; the monitors it put in place are noted in the runtime folder, so that a doorbell that died is tidied after. Its socket is `nova/airdrop-bell.sock` in the user's runtime folder: `watch`, `status`, `learn`, `forget`. The shell's AirDrop plugin does the rest (`Model.doorbell` in `AirDropModel.js`).
 
 ### Putting the Wi-Fi back
 
@@ -101,9 +126,10 @@ This is the part that must not fail, and `nova-airdrop-radio` is written round i
 
 ### Trying it without a phone
 
-- `cargo test -p nova-airdropd`: the frame formats against frames an iPhone answered, the unpackers, the HTTP reader, TLS against `openssl s_client`, the node against a made-up phone that keeps a timetable, the control socket.
+- `cargo test -p nova-airdropd`: the frame formats against frames an iPhone answered, the unpackers, the HTTP reader, TLS against `openssl s_client`, the node against a made-up phone that keeps a timetable, the control socket, the doorbell's reading of an announcement and its patterns.
 - `tests/unit/airdrop/radio.bats`: `nova-airdrop-radio` against stand-ins for `iw`, `ip` and `nmcli`, with a card that shows another address than its own.
-- `tests/qml/airdrop-test.qml`: the card against a stand-in for `nova airdrop`.
+- `tests/qml/airdrop-test.qml`: the card against a stand-in for `nova airdrop`, the doorbell's rule among it.
+- `tests/unit/airdrop/apply.bats`: the doorbell enabled for whoever asked, and nobody else.
 
 ### What is not there
 

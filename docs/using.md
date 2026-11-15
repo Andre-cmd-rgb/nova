@@ -180,7 +180,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Updates | Nova's and the apps' updates, device firmware, release candidates, Check for Problems and Restart to Recovery ([updates](updates.md)) |
 | About | the version and release, the computer, processor, memory, storage, name and kernel |
 
-The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `sound`, `displays`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
+The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `sound`, `displays`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
 
 [Battery Life](../src/shell/plugins/batterylife/README.md), [Screen Time](../src/shell/plugins/screentime/README.md) and [Mobile Data](../src/shell/plugins/mobile-data/README.md) have notes of their own.
 
@@ -215,6 +215,7 @@ Hold Super+D and speak: the words are pasted where the cursor is when you let go
 An iPhone can send photos, files and links to the computer with AirDrop, with nothing installed on it.
 
 - Switch it on in the menu (Toggle → AirDrop) or with `nova airdrop on`, then pick the computer in the iPhone's share sheet.
+- Or let your iPhone switch it: Settings → AirDrop → Turn on for my iPhone. Tapping AirDrop in its share sheet then switches AirDrop on, and closing the sheet switches it off.
 - A card under the bar asks before anything is taken, and shows it coming in. What arrives is in your downloads folder.
 - The Wi-Fi is off the network while AirDrop is on. It ends by itself, a moment after a transfer or after two minutes with none, and the Wi-Fi reconnects.
 
