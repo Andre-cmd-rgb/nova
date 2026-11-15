@@ -50,7 +50,7 @@ The [install guide](docs/install.md) has the rest: each question, encryption, th
 [Using Nova](docs/using.md) has every key, the menu, Settings page by page, and the rest of the desktop.
 
 <p>
-<img src="docs/images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Calendar, Settings, Update and System" width="49%">
+<img src="docs/images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, Update and System" width="49%">
 <img src="docs/images/calendar.jpg" alt="The calendar showing a week in November 2026, with events on Friday, Saturday and Sunday and an empty task list beside it" width="49%">
 </p>
 

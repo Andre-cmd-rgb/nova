@@ -131,7 +131,7 @@ The file has examples of a new key and of one removed.
 
 ## The menu
 
-<img src="images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Calendar, Settings, Update and System" width="720">
+<img src="images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, Update and System" width="720">
 
 Super+Space opens it. Type to search, or go down the list:
 
@@ -142,7 +142,6 @@ Super+Space opens it. Type to search, or go down the list:
 | Toggle | Caffeine, Do Not Disturb, Night Light, Screen Time, Menu Bar, Window Gaps; Laptop Display and Touchpad where there is one; Discrete GPU on a ThinkPad P1 Gen 4i |
 | Style | Theme, Background, Font, and the Menu Bar's place and transparency |
 | Power Mode | the battery's power modes, where the computer has them |
-| Calendar | the calendar |
 | Settings | Settings |
 | Update | Nova and Firmware (Settings → Updates), Restart (the shell, audio, Wi-Fi or Bluetooth), Timezone, Password |
 | System | Lock, Suspend, Hibernate (where the computer can), Log Out, Restart, Restart to Recovery, Shut Down |
@@ -189,7 +188,7 @@ The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `soun
 
 <img src="images/calendar.jpg" alt="The calendar showing a week in November 2026, with events on Friday, Saturday and Sunday and an empty task list beside it" width="720">
 
-Events and tasks, in a week or a month. Open it from the menu, from the clock's card, from a reminder, or with `nova calendar [week|month] [day]`, where the day is `2026-10-29`, `tomorrow` or `next friday`.
+Events and tasks, in a week or a month. Open it from the clock's card, from a reminder, or with `nova calendar [week|month] [day]`, where the day is `2026-10-29`, `tomorrow` or `next friday`.
 
 - **Events** move by dragging. An event's bottom edge, dragged, says when it ends; a drag over the empty hours makes a new one.
 - **Tasks** go onto a day, onto a time (then they are reminded of), or off their day into the list beside.
