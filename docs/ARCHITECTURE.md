@@ -13,6 +13,7 @@ This document is the contract every component follows. Read it before adding cod
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
 | `src/power/` | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd`, `nova-undervolt`, system units, udev rules, sleep hooks | Nova's power governor: the policy (bash) and the governor (Rust), tuned for and so far started only on the ThinkPad P1 Gen 4i; and the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
 | `src/patch/` | `/usr/lib/nova/bin/nova-patch`, `/usr/lib/nova/nova-patch-apply`, a polkit action, `nova-patch-ram.service` | Patches: fixes for one computer's faults (bad memory, a device's quirk), kept across reinstalls by export and add; see [patches.md](patches.md) |
+| `src/airdrop/` | `/usr/lib/nova/bin/nova-airdrop`, `/usr/lib/nova/nova-airdropd`, `nova-airdrop-radio`, `nova-airdrop-apply`, a polkit action, `nova-airdrop@.service` | AirDrop, receiving from iPhones nearby: the receiver and its command (Rust), and the helper that lends it the Wi-Fi card and takes it back ([airdrop.md](airdrop.md)) |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `src/screensaver/` | `/usr/lib/nova/bin/nova-screensaver-effect` | The screensaver's text effects (Rust): a text played in a terminal, one effect after another |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
@@ -61,7 +62,7 @@ How files reach a system:
 |---|---|---|
 | User config | `~/.config/nova/` | `shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/` |
 | | `~/.config/nova-<plugin>/` | a plugin's own settings (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
-| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at; `adaptive`: the adaptive theme's Auto, Dark or Light |
+| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at; `adaptive`: the adaptive theme's Auto, Dark or Light; `airdrop/`: the certificate the AirDrop receiver shows to senders, made at its first use |
 | | `~/.local/state/nova-<plugin>/` | a plugin's history |
 | User data | `~/.local/share/nova/calendar/calendar.ics` | the calendar |
 | | `~/.local/share/nova-dictation/` | the speech model, downloaded at dictation's first use |
@@ -70,7 +71,8 @@ How files reach a system:
 | | `/etc` drop-ins from the hardware profile | listed in `/var/lib/nova/hardware-files` |
 | | `/etc/nova/patches/` | this computer's patches; their `/etc` files are listed in `/var/lib/nova/patch-files` |
 | System state | `/var/lib/nova/` | `greeter/`, the theme mirror, owned by the user the installer created; `hardware-files`; `patch-files`; `patches`: whether each patch is on |
-| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves |
+| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves; `airdrop.sock`, where `nova airdrop` and the shell reach the AirDrop receiver while it runs |
+| | `/run/nova-airdrop/` | while AirDrop is on, what there is to put back of the Wi-Fi; afterwards, how putting it back went |
 
 ### Identifiers
 

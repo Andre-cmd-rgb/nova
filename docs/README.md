@@ -7,11 +7,12 @@ The pages below are split between using Nova and working on it.
 | Page | For |
 |---|---|
 | [Installing Nova](install.md) | the USB stick, the installer's questions, encryption, the offline stick, carrying files over, a portable Nova |
-| [Using Nova](using.md) | the keys, the menu, the bar, Settings page by page, the calendar, dictation, Caffeine, apps, the keyboard |
+| [Using Nova](using.md) | the keys, the menu, the bar, Settings page by page, the calendar, dictation, AirDrop, Caffeine, apps, the keyboard |
 | [Themes and backgrounds](themes.md) | themes, the adaptive theme, backgrounds, the see-through bar, the font, a theme of your own |
 | [Updates and going back](updates.md) | how updates work, release candidates, snapshots, when something goes wrong |
 | [Hardware support](hardware.md) | what Nova runs on, what the installer picks, what a laptop gets, what the P1 Gen 4i gets |
 | [Patches](patches.md) | fixes for one computer's faults, such as bad memory, kept across reinstalls |
+| [AirDrop](airdrop.md) | receiving from an iPhone: switching it on, why the Wi-Fi is off meanwhile, which cards can, what it lets in, how it is built |
 | [The power governor](power.md) | `nova power` on the ThinkPad P1 Gen 4i: the discrete GPU, the CPU's limits, the fans, the undervolt |
 
 ## Working on Nova

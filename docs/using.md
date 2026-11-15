@@ -1,6 +1,6 @@
 # Using Nova
 
-This page covers the keys, the menu, the bar, Settings page by page, and the parts of the desktop you meet every day: the calendar, dictation, Caffeine, the screensaver, the apps, the keyboard and languages.
+This page covers the keys, the menu, the bar, Settings page by page, and the parts of the desktop you meet every day: the calendar, dictation, AirDrop, Caffeine, the screensaver, the apps, the keyboard and languages.
 
 ## The first minutes
 
@@ -207,6 +207,16 @@ Hold Super+D and speak: the words are pasted where the cursor is when you let go
 - The speech model, 669 MB, is downloaded once, at the first press, when you say yes.
 
 `nova dictation` says whether it is ready.
+
+## AirDrop
+
+An iPhone can send photos, files and links to the computer with AirDrop, with nothing installed on it.
+
+- Switch it on in the menu (Toggle → AirDrop) or with `nova airdrop on`, then pick the computer in the iPhone's share sheet.
+- A card under the bar asks before anything is taken, and shows it coming in. What arrives is in your downloads folder.
+- The Wi-Fi is off the network while AirDrop is on. It ends by itself, a moment after a transfer or after two minutes with none, and the Wi-Fi reconnects.
+
+[AirDrop](airdrop.md) has the rest: why the Wi-Fi goes, which Wi-Fi cards can do it, and what it lets in.
 
 ## Caffeine
 
