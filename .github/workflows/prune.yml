@@ -1,0 +1,49 @@
+# Removes from the package bucket what no release in use reads any more:
+# Actions → prune → Run, with the releases to keep. It lists what would go, by
+# folder and size, and removes it only with "delete" ticked. The bucket's
+# token lives only in this repository's secrets, so this is where it is done.
+# The releases themselves, on GitHub, are removed by hand (gh release delete).
+# See docs/releasing.md, Removing old releases.
+name: prune
+
+on:
+  workflow_dispatch:
+    inputs:
+      keep:
+        description: The releases whose packages stay, e.g. v1.0.0 v1.0.1-rc.1
+        required: true
+      delete:
+        description: Remove them (unticked, it only lists what would go)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Never beside a release being built or published: a folder being filled is
+# no release yet, and would be listed to go.
+concurrency:
+  group: candidate
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Remove what no kept release reads
+        env:
+          R2_ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: nova-packages
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          ACCOUNT: ${{ vars.R2_ACCOUNT_ID }}
+          KEEP: ${{ inputs.keep }}
+          DELETE: ${{ inputs.delete }}
+        run: |
+          [[ -n $ACCOUNT ]] || { echo "::error::the R2_ACCOUNT_ID variable is not set"; exit 1; }
+          args=()
+          read -ra tags <<<"$KEEP"
+          for tag in "${tags[@]}"; do args+=(--keep "$tag"); done
+          [[ $DELETE != true ]] || args+=(--delete)
+          tools/packages-prune "${args[@]}"

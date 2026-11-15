@@ -8,9 +8,9 @@ next() { printf '%s\n' "$@" | "$REPO_ROOT/tools/release-next" --stdin; }
 next_minor() { printf '%s\n' "$@" | "$REPO_ROOT/tools/release-next" --minor --stdin; }
 next_major() { printf '%s\n' "$@" | "$REPO_ROOT/tools/release-next" --major --stdin; }
 
-@test "the first candidate is the first beta" {
-  [ "$(next)" = v1.0.0-beta.1 ]
-  [ "$(next not-a-version v2)" = v1.0.0-beta.1 ]
+@test "with no release yet, the first candidate is 1.0.0's" {
+  [ "$(next)" = v1.0.0-rc.1 ]
+  [ "$(next not-a-version v2)" = v1.0.0-rc.1 ]
 }
 
 @test "a beta or a release candidate is continued" {
@@ -49,7 +49,7 @@ next_major() { printf '%s\n' "$@" | "$REPO_ROOT/tools/release-next" --major --st
 
 @test "before the first final release, --minor and --major go on with its candidates" {
   [ "$(next_minor v1.0.0-beta.3)" = v1.0.0-beta.4 ]
-  [ "$(next_major)" = v1.0.0-beta.1 ]
+  [ "$(next_major)" = v1.0.0-rc.1 ]
 }
 
 @test "anything else is refused" {

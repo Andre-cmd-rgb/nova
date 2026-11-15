@@ -2,7 +2,7 @@
 
 A release is a git tag (`v1.0.0-beta.1`), built by CI into a GitHub release and a folder of Nova's package bucket. Nothing is built or published from a laptop.
 
-This page covers what a release contains, versions, the signing key and the package bucket (each set up once), the release twice a month with its hardware checklist, withdrawing a broken release, and the upgrade test.
+This page covers what a release contains, versions, the signing key and the package bucket (each set up once), the release twice a month with its hardware checklist, withdrawing a broken release, removing old ones, and the upgrade test.
 
 ## What a release contains
 
@@ -26,7 +26,6 @@ Everything else is in the `nova-packages` bucket on Cloudflare R2, in a folder n
 
 - **Every system stays on its release.** `release.toml` points pacman at the release's folder, and every system stays on its release's packages and Arch snapshot until `nova update` moves it to the next one.
 - **The bucket can move.** Since each release names its own folder, the bucket can move to another address at any release: `tools/release-pin --packages`.
-- **Older releases:** releases up to 1.0.0-beta.5 had everything on the GitHub release, and stay that way.
 - **Packages first, then the release.** The publish job puts the files in the bucket first and reads each back from the public address (`tools/packages-upload`), so a release never appears on GitHub before its packages can be downloaded.
 - **The ISO installs over the network.** GitHub limits a release asset to 2 GiB, so the ISO installs over the network rather than carrying every package (`nova usb` adds an offline copy to the stick).
 - **File names:** `tools/repo-build` stops on a package file name a URL or the stick's FAT would change (an epoch's `:`, a development build's `+`).
@@ -111,7 +110,7 @@ Nova follows Arch two weeks behind, tested: each release is a candidate first.
 
 ### 1. Candidate
 
-On the 1st and the 15th, `candidate.yml` runs CI on `main`, tags the commit it tested as the next candidate (`tools/release-next`: `v1.0.0-beta.N` before 1.0, then `vX.Y.0-rc.N`), and calls `release.yml`, which:
+On the 1st and the 15th, `candidate.yml` runs CI on `main`, tags the commit it tested as the next candidate (`tools/release-next`: `v1.0.0-rc.1` with no release yet, then the next `-rc.N`, and after a final release the next patch version's `-rc.1`), and calls `release.yml`, which:
 
 1. pins yesterday's Arch Linux Archive snapshot (`tools/release-pin --verify`);
 2. builds `linux-nova` against it, or reuses the build cached by the hash of `packaging/linux-nova` (an uncached build takes a few hours; `kernel-cache.yml` reads the cache every third day, since GitHub drops one nothing has read for a week);
@@ -178,6 +177,19 @@ A release that turns out broken is never deleted, and its files stay in the buck
 1. **Stop offering it:** `gh release edit <tag> --draft=true`. Drafts are in no list `nova update` reads, so no other system moves to it; for a final release, `/releases/latest` falls back to the one before. Note it in the tag's release notes before, so the reason stays with it.
 2. **Move the systems on it:** `nova update` never goes back to an older Arch snapshot unasked, so systems already on it stay there until a newer release. Cut the fix as the next candidate, from `main`, at once rather than at the next 1st or 15th; for a final release, a fixed version tagged by hand (above), its draft published once tested.
 3. **Until then**, on each system: boot the snapshot from before the update and restore it ([going back](updates.md#going-back-to-before-an-update)), or `nova update --version <the release before> --allow-downgrade`.
+
+### Removing old releases
+
+A release's packages can go once no system is on it: every system reads its own release's folder of the bucket until `nova update` moves it on, so a folder removed under a system leaves its pacman without the `[nova]` repository.
+
+1. **The packages:** Actions → prune → Run, with the releases to keep (`gh workflow run prune.yml -f keep='v1.0.0 v1.0.1-rc.1'`). It lists what would go, by folder and size, and removes nothing; with *delete* ticked (`-f delete=true`) it removes it, and reads the bucket again to see that only the kept releases' own files are left (`tools/packages-prune`). It runs there because the bucket's token lives only in the repository's secrets.
+2. **The release on GitHub:** `gh release delete <tag> --yes`, and its tag with `git push origin :refs/tags/<tag>`.
+
+- **Keep the newest release's tag.** The next candidate's number comes from the tags there are (`tools/release-next`); with none at all it is `v1.0.0-rc.1`.
+- **Going back needs the older release.** `nova update --version <tag> --allow-downgrade` reads that release's folder, and the upgrade test installs the release before the one being built: with it removed, the first is refused and the second passes with a notice.
+- **A snapshot does not.** The root snapshot `nova update` takes before it changes anything is on the computer's own disk.
+
+On 2026-11-15 every release up to v1.0.2 was removed this way, with the Raspberry Pi's packages (`alarm/` and each release's `aarch64/`): Nova had been written anew since, part by part, and the numbering began again at v1.0.0-rc.1. A system still on v1.0.2 moves to it with `nova update --version v1.0.0-rc.1 --allow-downgrade`, once, since 1.0.0 counts as older than 1.0.2.
 
 ### The upgrade test
 

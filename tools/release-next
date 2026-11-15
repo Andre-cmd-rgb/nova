@@ -10,7 +10,7 @@
 # --minor starts the next minor version instead (v1.1.0-rc.1), for new
 # features, and --major the next major one (v2.0.0-rc.1), each counted from
 # the newest final release: one already started is continued, and a smaller
-# one still open is left behind. With no tags at all, it is v1.0.0-beta.1. The
+# one still open is left behind. With no tags at all, it is v1.0.0-rc.1. The
 # tags come from `git tag`, or one per line on stdin with --stdin.
 set -euo pipefail
 
@@ -40,7 +40,7 @@ versions=$(awk '/^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$/ {
   }' <<<"$tags" | sort -k1,1n -k2,2n -k3,3n -k4,4n -k5,5n)
 
 if [[ -z $versions ]]; then
-  echo v1.0.0-beta.1
+  echo v1.0.0-rc.1
   exit 0
 fi
 read -r major minor patch stage n name <<<"$(tail -n 1 <<<"$versions")"

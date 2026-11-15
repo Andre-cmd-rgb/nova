@@ -1,0 +1,100 @@
+#!/bin/bash
+# packages-prune: remove from the nova-packages bucket what no release in use
+# reads any more.
+#
+#   tools/packages-prune --keep <tag>... [--delete]
+#
+# A release's packages are the files of its own folder (v1.0.0/nova.db,
+# v1.0.0/nova-1.0.0-1-x86_64.pkg.tar.zst and so on), and a system stays on
+# its release's folder until nova update moves it on: so a release goes from
+# the bucket only once no system is on it. Every --keep names a release whose
+# folder stays. Everything else is listed, by folder, with its size: other
+# releases' folders, and whatever lies deeper than a release's own files or
+# outside any release (the Raspberry Pi's packages, from when Nova had them).
+# With --delete it is then removed, and the bucket read again to see that
+# only what was kept is left. Without, nothing changes.
+#
+# Environment, as tools/packages-upload: R2_ENDPOINT, R2_BUCKET, and the
+# bucket's token as AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY. Needs the aws
+# CLI and jq. prune.yml runs it, since the token lives only in the
+# repository's secrets. See docs/releasing.md.
+set -euo pipefail
+
+die() { printf 'packages-prune: %s\n' "$*" >&2; exit 1; }
+
+keep=() delete=0
+while (($#)); do
+  case $1 in
+    --keep) keep+=("${2:?--keep needs a tag}"); shift 2 ;;
+    --delete) delete=1; shift ;;
+    -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+((${#keep[@]})) || die "name at least one release to keep (--keep <tag>): a bucket with none left serves no system"
+for tag in "${keep[@]}"; do
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$ ]] || die "$tag is not a release tag"
+done
+[[ -n ${R2_ENDPOINT:-} && -n ${R2_BUCKET:-} ]] || die "R2_ENDPOINT and R2_BUCKET must be set"
+[[ -n ${AWS_ACCESS_KEY_ID:-} && -n ${AWS_SECRET_ACCESS_KEY:-} ]] ||
+  die "the bucket's token is not set (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)"
+command -v aws >/dev/null && command -v jq >/dev/null || die "needs the aws CLI and jq"
+export AWS_DEFAULT_REGION=auto AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
+
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
+
+# Every object as "key<TAB>bytes"; the aws CLI reads every page of the list.
+objects() {
+  aws s3api list-objects-v2 --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" --output json |
+    jq -r '.Contents // [] | .[] | [.Key, .Size] | @tsv'
+}
+
+# What goes: every object that is not a file of a kept release's own folder.
+going() { # objects on stdin
+  awk -F'\t' -v kept="${keep[*]}" '
+    BEGIN { n = split(kept, tags, " "); for (i = 1; i <= n; i++) stays[tags[i]] = 1 }
+    {
+      slash = index($1, "/")
+      folder = slash ? substr($1, 1, slash - 1) : ""
+      rest = slash ? substr($1, slash + 1) : $1
+      if (!(folder in stays) || index(rest, "/") || rest == "") print
+    }'
+}
+
+objects >"$work/all" || die "could not list the bucket"
+going <"$work/all" >"$work/going"
+printf 'In the bucket: %d objects. Kept: %s.\n' "$(wc -l <"$work/all")" "${keep[*]}"
+if [[ ! -s $work/going ]]; then
+  echo "Nothing to remove."
+  exit 0
+fi
+# By folder: a release's name, or its name and the folder under it.
+awk -F'\t' '
+  {
+    n = split($1, part, "/")
+    folder = n == 1 ? "(no folder)" : n == 2 ? part[1] : part[1] "/" part[2]
+    count[folder]++; bytes[folder] += $2; total += $2
+  }
+  END {
+    for (folder in count) printf "  %-32s %5d objects %8.1f MiB\n", folder, count[folder], bytes[folder] / 1048576
+    printf "To remove: %d objects, %.1f MiB.\n", NR, total / 1048576
+  }' "$work/going" | sort
+if ((!delete)); then
+  echo "Nothing was removed: run again with --delete."
+  exit 0
+fi
+
+# A thousand at a time, the most one request takes.
+cut -f1 "$work/going" | split -l 1000 - "$work/batch."
+for batch in "$work"/batch.*; do
+  jq -Rn '{Objects: [inputs | {Key: .}], Quiet: true}' <"$batch" >"$batch.json"
+  failed=$(aws s3api delete-objects --endpoint-url "$R2_ENDPOINT" --bucket "$R2_BUCKET" \
+    --delete "file://$batch.json" --output json | jq -r '.Errors // [] | .[] | .Key') ||
+    die "the bucket refused to remove a batch"
+  [[ -z $failed ]] || die "not removed: $(head -n 3 <<<"$failed" | paste -sd' ')"
+done
+objects >"$work/after" || die "could not list the bucket again"
+going <"$work/after" >"$work/left"
+[[ ! -s $work/left ]] || die "$(wc -l <"$work/left") objects are still there, $(head -n 1 "$work/left" | cut -f1) among them"
+printf 'Removed. In the bucket now: %d objects.\n' "$(wc -l <"$work/after")"
