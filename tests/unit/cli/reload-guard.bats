@@ -24,7 +24,9 @@ fi
 EOF
   chmod +x "$HYPRCTL"
   : >"$SCRATCH/options"
-  mkdir -p "$SCRATCH/run/1000/hypr/abc_1"
+  # A runtime directory is named for the uid that owns it.
+  ME=$(id -u)
+  mkdir -p "$SCRATCH/run/$ME/hypr/abc_1"
 }
 
 teardown() { teardown_scratch; }
@@ -32,17 +34,17 @@ teardown() { teardown_scratch; }
 guard() { "$REPO_ROOT/src/cli/bin/nova-hyprland-reload-guard" "$@"; }
 
 @test "pause: auto-reload off and errors quiet in every session; resume reloads once and puts them back" {
-  mkdir -p "$SCRATCH/run/1001/hypr/def_2"
+  mkdir -p "$SCRATCH/run/$ME/hypr/def_2"
   guard pause
-  grep -qx "$SCRATCH/run/1000 abc_1 eval hl.config({ misc = { disable_autoreload = true }, debug = { suppress_errors = true } })" "$CALLS"
-  grep -qx "$SCRATCH/run/1001 def_2 eval hl.config({ misc = { disable_autoreload = true }, debug = { suppress_errors = true } })" "$CALLS"
+  grep -qx "$SCRATCH/run/$ME abc_1 eval hl.config({ misc = { disable_autoreload = true }, debug = { suppress_errors = true } })" "$CALLS"
+  grep -qx "$SCRATCH/run/$ME def_2 eval hl.config({ misc = { disable_autoreload = true }, debug = { suppress_errors = true } })" "$CALLS"
   guard paused
   : >"$CALLS"
   guard resume
   [ "$(grep -c ' reload$' "$CALLS")" -eq 2 ]
-  grep -qx "$SCRATCH/run/1000 abc_1 eval hl.config({ misc = { disable_autoreload = false }, debug = { suppress_errors = false } })" "$CALLS"
+  grep -qx "$SCRATCH/run/$ME abc_1 eval hl.config({ misc = { disable_autoreload = false }, debug = { suppress_errors = false } })" "$CALLS"
   # The reload comes before auto-reload is back, so it is the only one.
-  [ "$(grep '^[^ ]*/1000 ' "$CALLS" | grep -o 'reload$\|disable_autoreload = false' | paste -sd' ')" = "reload disable_autoreload = false" ]
+  [ "$(grep "^[^ ]*/$ME abc_1 " "$CALLS" | grep -o 'reload$\|disable_autoreload = false' | paste -sd' ')" = "reload disable_autoreload = false" ]
   fails guard paused
   [ ! -e "$NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR" ]
 }
@@ -54,11 +56,26 @@ guard() { "$REPO_ROOT/src/cli/bin/nova-hyprland-reload-guard" "$@"; }
   guard pause
   : >"$CALLS"
   guard resume
-  grep -qx "$SCRATCH/run/1000 abc_1 eval hl.config({ misc = { disable_autoreload = false }, debug = { suppress_errors = true } })" "$CALLS"
+  grep -qx "$SCRATCH/run/$ME abc_1 eval hl.config({ misc = { disable_autoreload = false }, debug = { suppress_errors = true } })" "$CALLS"
+}
+
+@test "a runtime directory not named for its owner is passed over" {
+  rm -r "$SCRATCH/run/$ME"
+  mkdir -p "$SCRATCH/run/$((ME + 1))/hypr/abc_1"
+  guard pause
+  [ ! -s "$CALLS" ]
+  fails guard paused
+}
+
+@test "what a session answers is kept only as true or false" {
+  echo 'debug.suppress_errors="x }) os.execute(\"id\") hl.config({ y = 1"' >"$SCRATCH/options"
+  guard pause
+  fails guard paused
+  [ "$(grep -c ' eval ' "$CALLS")" -eq 0 ]
 }
 
 @test "a session that is gone is passed over, and resume with nothing paused does nothing" {
-  mkdir -p "$SCRATCH/run/1000/hypr/dead"
+  mkdir -p "$SCRATCH/run/$ME/hypr/dead"
   guard pause
   [ -e "$NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR/abc_1" ]
   [ ! -e "$NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR/dead" ]
@@ -70,7 +87,7 @@ guard() { "$REPO_ROOT/src/cli/bin/nova-hyprland-reload-guard" "$@"; }
 
 @test "a session ended between the pause and the resume: nothing put back, and nothing kept" {
   guard pause
-  rm -r "$SCRATCH/run/1000"
+  rm -r "$SCRATCH/run/$ME"
   : >"$CALLS"
   guard resume
   [ ! -s "$CALLS" ]
