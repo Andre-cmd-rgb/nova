@@ -65,6 +65,7 @@ It warns first: packages newer than that release's Arch snapshot are downgraded.
 - **`nova doctor`** looks the system over and says how to fix what it finds. Settings → Updates → Check for Problems runs it too. `sudo nova doctor` also checks the boot menu's fallback entry, which only root can read.
 - **`nova recovery`** restarts into the boot menu: the last snapshots ([above](#going-back-to-before-an-update)), the fallback image, for a start after a hardware change, and the LTS kernel, for when a new kernel misbehaves.
 - **The boot entries don't check out after an update**: the update says what is missing. `sudo limine-update` writes them again, and `nova update --check-boot` looks again before you restart.
+- **The power went out in the middle of an update**: the next `nova update` takes away the lock pacman left behind (only one from before that start: one made since may be a pacman at work) and keeps what was there before the unfinished update to go back to.
 - **A part of the desktop stops working**: the menu's Update → Restart starts the shell, audio, Wi-Fi or Bluetooth again (`nova restart shell`, `audio`, `wifi`, `bluetooth`).
 - **The install stops**: [installing Nova](install.md#when-the-install-stops) says what to do.
 - **A fault of this one computer**, such as a bad memory cell or a device that needs a quirk, is fixed with a [patch](patches.md), which a reinstall keeps.

@@ -567,6 +567,20 @@ take_lock() {
   mkdir -p "$ROOT/run"
   exec {update_lock}>"$ROOT/run/nova-update.lock"
   flock -n "$update_lock" || die "another Nova update is running"
+  clear_stale_pacman_lock
+}
+
+# pacman's own lock, left by a computer that lost power in the middle of a
+# transaction, fails every update after it. One older than this boot can be
+# held by nothing that still runs; one made since may be a pacman's at work.
+clear_stale_pacman_lock() {
+  local lock=$ROOT/var/lib/pacman/db.lck booted made
+  [[ -e $lock ]] || return 0
+  booted=$(awk '$1 == "btime" { print $2 }' "${NOVA_PROC_STAT:-/proc/stat}" 2> /dev/null)
+  made=$(stat -c %Y -- "$lock" 2> /dev/null) || return 0
+  [[ $booted =~ ^[0-9]+$ ]] && (( made < booted )) || return 0
+  warn "pacman's lock was left by a computer that stopped in the middle of an update; it is taken away"
+  rm -f -- "$lock"
 }
 
 # Going back to an older snapshot, a package the newer one brought in as a

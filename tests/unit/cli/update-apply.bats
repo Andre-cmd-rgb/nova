@@ -111,6 +111,22 @@ check_boot_alone() { # fallback check's status
   [ "$status" -eq 1 ]
 }
 
+@test "pacman's lock left from before this boot is taken away; one made since is not" {
+  put "$SCRATCH/stat" "$(printf 'cpu 1 2 3\nbtime 2000000000\n')"
+  export NOVA_PROC_STAT=$SCRATCH/stat
+  put "$NOVA_ROOT/var/lib/pacman/db.lck"
+  touch -d @1999999000 "$NOVA_ROOT/var/lib/pacman/db.lck"
+  run take_lock
+  [ "$status" -eq 0 ]
+  [[ $output == *"pacman's lock was left by a computer that stopped"* ]]
+  [ ! -e "$NOVA_ROOT/var/lib/pacman/db.lck" ]
+  put "$NOVA_ROOT/var/lib/pacman/db.lck"
+  touch -d @2000000100 "$NOVA_ROOT/var/lib/pacman/db.lck"
+  run take_lock
+  [ "$status" -eq 0 ]
+  [ -e "$NOVA_ROOT/var/lib/pacman/db.lck" ]
+}
+
 @test "the update's snapshots are kept apart from the ones around every pacman run" {
   snapper() { echo "snapper $*"; }
   run snapshot "nova update v1.0.0 -> v1.1.0" --type pre
