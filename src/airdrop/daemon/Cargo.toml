@@ -1,0 +1,14 @@
+[package]
+name = "nova-airdropd"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's AirDrop: an AWDL node on a Wi-Fi card that is not Apple's, and the receiver on top of it"
+license = "MIT"
+
+# No crates, as everywhere in Nova. What a crate would be for comes from the
+# system instead: TLS from its OpenSSL, found when the daemon starts (so that
+# the daemon does not hang on one version of it), and inflate from its zlib.
+
+[[bin]]
+name = "nova-airdropd"
+path = "src/main.rs"

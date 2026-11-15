@@ -3,6 +3,10 @@
 version = 4
 
 [[package]]
+name = "nova-airdropd"
+version = "1.0.0"
+
+[[package]]
 name = "nova-powerd"
 version = "1.0.0"
 
