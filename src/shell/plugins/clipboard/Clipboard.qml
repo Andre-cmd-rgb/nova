@@ -160,7 +160,7 @@ Item {
     else if (row.kind === "image")
       Quickshell.execDetached(["nova-clipboard-paste-file"].concat(how === "copy" ? ["--copy-only"] : [], [row.mime, row.path]))
     else if (row.whole)
-      Quickshell.execDetached(["nova-clipboard-paste-text", how === "copy" ? "--copy-only" : "--shift-insert"].concat(which))
+      Quickshell.execDetached(["nova-clipboard-paste-text"].concat(how === "copy" ? ["--copy-only"] : [], which))
   }
 
   // The keys the search leaves: Delete, the arrows, Home and End, Return.

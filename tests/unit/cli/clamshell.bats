@@ -223,6 +223,8 @@ hyprctl dispatch hl.dsp.dpms({ action = "enable" })' ]
   run nova-hyprland-monitor-internal-mirror on
   [ "$status" -eq 0 ]
   [ "$(cat "$toggles/internal-monitor-mirror.lua")" = 'hl.monitor({ output = "DP-2", mode = "preferred", position = "auto", scale = 1, mirror = "eDP-1" })' ]
+  # One reload takes the rule up: the panel was on, so there was none to drop.
+  [ "$(grep -c '^hyprctl reload' "$CALLS")" -eq 1 ]
   grep -qF "Mirroring enabled (DP-2)" "$CALLS"
   run nova-hyprland-monitor-internal-mirror toggle
   [ ! -e "$toggles/internal-monitor-mirror.lua" ]

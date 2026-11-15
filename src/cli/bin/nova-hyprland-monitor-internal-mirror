@@ -39,8 +39,9 @@ turn_on() {
     exit 1
   fi
 
-  # A panel that is off has nothing to mirror.
-  nova-hyprland-toggle internal-monitor-disable off
+  # A panel that is off has nothing to mirror. Only where it is off: taking
+  # the rule away reloads the config, as the mirror's own rule does below.
+  ! nova-hyprland-toggle-enabled internal-monitor-disable || nova-hyprland-toggle internal-monitor-disable off
   if nova-hyprland-toggle-disabled "$toggle"; then
     mkdir -p "${flag%/*}"
     printf 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = 1, mirror = "%s" })\n' \

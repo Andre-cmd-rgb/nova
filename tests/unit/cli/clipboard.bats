@@ -41,26 +41,18 @@ stub() { # name body
 
 paste() { "$REPO_ROOT/src/cli/bin/nova-clipboard-paste-text" "$@"; }
 
-@test "paste: a text is copied, then typed out, or pasted with --shift-insert" {
-  stub wtype 'printf "wtype %s\n" "$*" >>"$CALLS"'
-  paste 'some text'
-  paste --shift-insert other
-  [ "$(cat "$CALLS")" = "$(printf '%s\n' 'wl-copy some text' 'wtype some text' 'wl-copy other' 'wtype -M shift -k Insert -m shift')" ]
-}
-
-@test "paste: a history entry is pasted, not typed, and --copy-only only copies" {
+@test "paste: a history entry is copied and pasted with Shift+Insert, and --copy-only only copies" {
   stub wtype 'printf "wtype %s\n" "$*" >>"$CALLS"'
   paste --history-index 1
-  paste --copy-only --shift-insert text
-  paste --shift-insert --copy-only text
-  [ "$(cat "$CALLS")" = "$(printf '%s\n' 'wl-copy picked' 'wtype -M shift -k Insert -m shift' 'wl-copy text' 'wl-copy text')" ]
+  paste --copy-only --history-index 0
+  [ "$(cat "$CALLS")" = "$(printf '%s\n' 'wl-copy picked' 'wtype -M shift -k Insert -m shift' 'wl-copy newer')" ]
 }
 
-@test "paste: nothing to paste, or no text entry there, fails with nothing copied" {
+@test "paste: no entry named, no text entry there, or a word it does not know fails with nothing copied" {
   stub wtype 'printf "wtype %s\n" "$*" >>"$CALLS"'
   jq -n '[{type: "image", path: "/tmp/x.png"}, {type: "text", text: 3}]' \
     >"$HOME/.local/state/nova/clipboard-history.json"
-  for args in "" "--shift-insert" "--history-index x" "--history-index 0" "--history-index 1" "--history-index 5" "--history-index"; do
+  for args in "" "--copy-only" "some text" "--history-index x" "--history-index 0" "--history-index 1" "--history-index 5" "--history-index"; do
     # shellcheck disable=SC2086 # the words of each case
     run paste $args
     [ "$status" -eq 1 ]
@@ -68,9 +60,9 @@ paste() { "$REPO_ROOT/src/cli/bin/nova-clipboard-paste-text" "$@"; }
   [ ! -e "$CALLS" ]
 }
 
-@test "paste: typing into nothing is no error" {
+@test "paste: pasting into nothing is no error" {
   stub wtype 'exit 1'
-  run paste text
+  run paste --history-index 1
   [ "$status" -eq 0 ]
 }
 

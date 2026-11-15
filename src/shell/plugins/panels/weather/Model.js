@@ -323,8 +323,8 @@ function codeOf(code) {
   return parseInt(String(code || "0"), 10)
 }
 
-// wttr.in's codes as nova-weather-icon draws them, by day and by night; a
-// code not listed is drawn as cloud.
+// wttr.in's codes as glyphs, by day and by night; a code not listed is
+// drawn as cloud.
 var CLOUD = ""
 var WTTR_GLYPHS = {}
 ;[
