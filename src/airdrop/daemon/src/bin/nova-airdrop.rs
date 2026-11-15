@@ -2,6 +2,8 @@
 //!
 //!   nova airdrop            how it is, in a line
 //!   nova airdrop on         this computer shows in the AirDrop list of iPhones nearby
+//!   nova airdrop on --stay  and does not end after a transfer: only when switched off, or
+//!                           when nobody has sent anything for two minutes
 //!   nova airdrop off
 //!   nova airdrop toggle
 //!   nova airdrop accept     yes to what is being offered
@@ -9,6 +11,14 @@
 //!   nova airdrop watch      how it is as lines of JSON, now and at each change (for the shell)
 //!   nova airdrop active     succeeds while it is on
 //!   nova airdrop available  succeeds if this computer's Wi-Fi card can do it, and says why not
+//!
+//!   nova airdrop bell       AirDrop's doorbell: how it is, in a line
+//!   nova airdrop bell on    Bluetooth listens for your iPhone's share sheet, from now and at
+//!                           each login, and the shell switches AirDrop on for it
+//!   nova airdrop bell off
+//!   nova airdrop bell learn listen for a minute for an iPhone to know
+//!   nova airdrop bell forget
+//!   nova airdrop bell watch how it is as lines of JSON (for the shell)
 //!
 //! While AirDrop is on the Wi-Fi is off the network: the card can be on an
 //! iPhone's channel or on the network's, not both. It ends by itself after a
@@ -18,6 +28,8 @@
 //! The work is nova-airdropd's, started as a service of the system's by
 //! nova-airdrop-apply (through pkexec: the person at the computer needs no
 //! password); this command talks to it over its socket (meet.rs, control.rs).
+//! The doorbell is nova-airdrop-bell, a service of the system's too, enabled
+//! for the user by the same helper.
 
 #[path = "../meet.rs"]
 mod meet;
@@ -58,7 +70,11 @@ fn helper(name: &str, variable: &str) -> PathBuf {
 
 /// Says one thing to the daemon and has its answer: None if no daemon is there.
 fn ask(what: &str) -> Option<String> {
-    let mut stream = UnixStream::connect(meet::socket()).ok()?;
+    ask_at(&meet::socket(), what)
+}
+
+fn ask_at(socket: &Path, what: &str) -> Option<String> {
+    let mut stream = UnixStream::connect(socket).ok()?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
     let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
     writeln!(stream, "{what}").ok()?;
@@ -103,13 +119,17 @@ fn status() -> String {
     }
 }
 
-fn on() -> ExitCode {
+fn on(stay: bool) -> ExitCode {
     if ask("status").is_some() {
         println!("AirDrop is already on.");
         return ExitCode::SUCCESS;
     }
     if !apply("on") {
         return ExitCode::FAILURE;
+    }
+    // Up means its socket is there: it is told before anybody could have sent anything.
+    if stay && ask("stay").as_deref() != Some("ok") {
+        eprintln!("nova airdrop: AirDrop is on, but would not stay on after a transfer");
     }
     println!("{}", status());
     ExitCode::SUCCESS
@@ -138,6 +158,29 @@ fn off() -> ExitCode {
     ExitCode::SUCCESS
 }
 
+fn bell_status() -> String {
+    ask_at(&meet::bell(), "status").unwrap_or_else(|| "AirDrop's doorbell is off.".into())
+}
+
+/// Switched on, it learns the first time: an iPhone shown AirDrop beside the computer in the
+/// minute after is the one it listens for.
+fn bell_on() -> ExitCode {
+    if !apply("bell-on") {
+        return ExitCode::FAILURE;
+    }
+    let bell = meet::bell();
+    waited(
+        || UnixStream::connect(&bell).is_ok(),
+        Duration::from_secs(5),
+    );
+    let knows_none = ask_at(&bell, "watch").is_some_and(|json| json.contains(r#""phones":0"#));
+    if knows_none {
+        ask_at(&bell, "learn");
+    }
+    println!("{}", bell_status());
+    ExitCode::SUCCESS
+}
+
 fn answer(what: &str) -> ExitCode {
     match ask(what).as_deref() {
         Some("ok") => ExitCode::SUCCESS,
@@ -153,7 +196,7 @@ fn answer(what: &str) -> ExitCode {
 }
 
 /// Waits until something is made in a folder, or for a second where that cannot be watched.
-fn something_new_in(folder: &Path) {
+fn something_new_in(folder: &Path, socket: &Path) {
     use std::os::fd::{AsRawFd, FromRawFd};
     let watch = || {
         let name = CString::new(folder.as_os_str().as_bytes()).ok()?;
@@ -170,7 +213,7 @@ fn something_new_in(folder: &Path) {
     };
     match watch() {
         // Looked again with the watch in place, so that a socket made in between is not waited for.
-        Some(mut events) if UnixStream::connect(meet::socket()).is_err() => {
+        Some(mut events) if UnixStream::connect(socket).is_err() => {
             let _ = events.read(&mut [0u8; 4096]);
         }
         Some(_) => {}
@@ -179,14 +222,13 @@ fn something_new_in(folder: &Path) {
 }
 
 /// The daemon's lines for as long as there is a daemon, `off` in between, and never an end: the
-/// shell reads this for as long as it runs.
-fn watch() -> ExitCode {
+/// shell reads this for as long as it runs. The same for the doorbell.
+fn watch(socket: PathBuf) -> ExitCode {
     use std::os::unix::fs::DirBuilderExt;
     // It has nothing to write, and so no way to notice, when whoever reads it has gone without a
     // word (a shell that crashed): it is ended with them.
     // SAFETY: no pointers.
     unsafe { prctl(PR_SET_PDEATHSIG, SIGTERM) };
-    let socket = meet::socket();
     let folder = socket.parent().unwrap_or(Path::new("/")).to_owned();
     let _ = std::fs::DirBuilder::new()
         .recursive(true)
@@ -224,7 +266,7 @@ fn watch() -> ExitCode {
             }
             told_off = true;
         }
-        something_new_in(&folder);
+        something_new_in(&folder, &socket);
     }
 }
 
@@ -245,11 +287,12 @@ fn main() -> ExitCode {
             println!("{}", status());
             ExitCode::SUCCESS
         }
-        ["on"] => on(),
+        ["on"] => on(false),
+        ["on", "--stay"] => on(true),
         ["off"] => off(),
         ["toggle"] => match ask("status") {
             Some(_) => off(),
-            None => on(),
+            None => on(false),
         },
         ["accept"] => answer("accept"),
         // A question's id is letters, digits and dashes: nothing that could be a second line.
@@ -259,7 +302,34 @@ fn main() -> ExitCode {
             answer(&format!("{word} {id}"))
         }
         ["decline"] => answer("decline"),
-        ["watch"] => watch(),
+        ["watch"] => watch(meet::socket()),
+        ["bell"] => {
+            println!("{}", bell_status());
+            ExitCode::SUCCESS
+        }
+        ["bell", "on"] => bell_on(),
+        ["bell", "off"] => {
+            if !apply("bell-off") {
+                return ExitCode::FAILURE;
+            }
+            println!("AirDrop's doorbell is off.");
+            ExitCode::SUCCESS
+        }
+        ["bell", word @ ("learn" | "forget")] => match ask_at(&meet::bell(), word).as_deref() {
+            Some("ok") => {
+                println!("{}", bell_status());
+                ExitCode::SUCCESS
+            }
+            Some(why) => {
+                eprintln!("nova airdrop bell: {why}");
+                ExitCode::FAILURE
+            }
+            None => {
+                eprintln!("nova airdrop bell: the doorbell is off (nova airdrop bell on)");
+                ExitCode::FAILURE
+            }
+        },
+        ["bell", "watch"] => watch(meet::bell()),
         ["active"] => match ask("status") {
             Some(_) => ExitCode::SUCCESS,
             None => ExitCode::FAILURE,

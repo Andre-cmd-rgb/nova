@@ -1,0 +1,46 @@
+[Unit]
+Description=AirDrop's doorbell: Bluetooth listening for the iPhone of user %i
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/airdrop.md
+# For as long as the user is logged in: its socket is in their runtime
+# folder, and the shell of their session is who listens to it.
+BindsTo=user@%i.service
+After=user@%i.service
+# A kernel without Bluetooth is not tried every ten seconds for good.
+StartLimitIntervalSec=5min
+StartLimitBurst=5
+
+[Service]
+# The user's own, as what it keeps (the iPhone it knows) is theirs. The one
+# capability is for its socket on the kernel's Bluetooth management, which it
+# gives up once the socket is open.
+User=%i
+AmbientCapabilities=CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_ADMIN
+NoNewPrivileges=yes
+Environment=XDG_RUNTIME_DIR=/run/user/%i
+ExecStart=/usr/lib/nova/nova-airdrop-bell
+Restart=on-failure
+RestartSec=10
+
+# It talks to the kernel's Bluetooth and to the user's shell, and keeps one
+# file in the user's state folder; nothing else of the system is its business.
+ProtectSystem=full
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictAddressFamilies=AF_BLUETOOTH AF_UNIX
+IPAddressDeny=any
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=user@%i.service

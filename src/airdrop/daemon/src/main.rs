@@ -26,7 +26,8 @@
 //!
 //! --give-up-after ends the daemon when nobody has asked for that long, and
 //! --once a moment after the first transfer has ended, either way: the Wi-Fi
-//! is off the network while this runs, and should not be for long.
+//! is off the network while this runs, and should not be for long. A client
+//! that says `stay` on the control socket takes --once back (control.rs).
 //!
 //! What it logs goes to standard error, a line an event.
 
@@ -344,7 +345,7 @@ fn run() -> Result<(), String> {
                 if control.happened(&happened) {
                     let now = started.elapsed().as_micros() as u64;
                     quiet_since.store(now, Ordering::SeqCst);
-                    if once {
+                    if once && !control.stays() {
                         ending.store(now + AFTER_THE_LAST, Ordering::SeqCst);
                     }
                 }
@@ -453,11 +454,12 @@ fn run() -> Result<(), String> {
                     .ends(unix + seconds - (elapsed - quiet).min(seconds * 1_000_000) / 1_000_000);
             }
         }
+        let once = once && !control.stays();
         if elapsed >= shown_until && !once {
             shown_until = u64::MAX;
             control.waiting();
         }
-        if elapsed >= ending.load(Ordering::SeqCst)
+        if (once && elapsed >= ending.load(Ordering::SeqCst))
             || o.give_up_after
                 .is_some_and(|seconds| elapsed >= quiet + seconds * 1_000_000 && !control.busy())
         {

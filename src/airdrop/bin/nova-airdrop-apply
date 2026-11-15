@@ -1,11 +1,15 @@
 #!/bin/bash
-# nova-airdrop-apply: the root half of `nova airdrop on` and `off`. Run
-# through pkexec (org.nova.airdrop lets the person at the computer switch it
-# without a password), so it takes one word and passes nothing else on.
+# nova-airdrop-apply: the root half of `nova airdrop on` and `off`, and of
+# `nova airdrop bell on` and `off`. Run through pkexec (org.nova.airdrop lets
+# the person at the computer switch it without a password), so it takes one
+# word and passes nothing else on.
 #
 # on starts nova-airdrop@<their number>.service: the daemon runs as whoever
 # asked, and what it receives is theirs. It comes back when the daemon is up
 # and in the air, or says why it is not.
+#
+# bell-on enables and starts nova-airdrop-bell@<their number>.service, which
+# then starts with each of their logins until bell-off.
 
 set -euo pipefail
 
@@ -15,6 +19,7 @@ uid=${PKEXEC_UID:-}
   exit 2
 }
 unit=nova-airdrop@$uid.service
+bell=nova-airdrop-bell@$uid.service
 radio=/usr/lib/nova/nova-airdrop-radio
 run=/run/nova-airdrop
 
@@ -43,8 +48,10 @@ case "$#:${1:-}" in
     fi
     ;;
   1:off) systemctl stop "$unit" ;;
+  1:bell-on) systemctl enable --now --quiet "$bell" ;;
+  1:bell-off) systemctl disable --now --quiet "$bell" ;;
   *)
-    echo "Usage: nova-airdrop-apply on|off" >&2
+    echo "Usage: nova-airdrop-apply on|off|bell-on|bell-off" >&2
     exit 2
     ;;
 esac

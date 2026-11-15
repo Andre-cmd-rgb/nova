@@ -8,9 +8,13 @@
 //!   accept [<id>]    yes to the question that is open (the one with that id)
 //!   decline [<id>]   no to it
 //!   stop             AirDrop ends
+//!   stay             it does not end after a transfer, only when told to
+//!                    stop or when nobody asks for long enough: the shell
+//!                    says it for an AirDrop it switched on for an iPhone's
+//!                    share sheet, which it switches off when the sheet closes
 //!
 //! and all but `watch` are answered with a line: `ok`, or why not. A watcher
-//! may say the last three too, and gets no answer but the change itself.
+//! may say the last four too, and gets no answer but the change itself.
 //!
 //! The lines of JSON all have a `state`, and with it:
 //!
@@ -31,7 +35,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -247,6 +251,8 @@ pub struct Control {
     path: OnceLock<PathBuf>,
     inner: Mutex<Inner>,
     answered: Condvar,
+    /// Told to stay on after a transfer.
+    stays: AtomicBool,
 }
 
 impl Control {
@@ -264,6 +270,7 @@ impl Control {
                 answer: None,
             }),
             answered: Condvar::new(),
+            stays: AtomicBool::new(false),
         })
     }
 
@@ -336,7 +343,11 @@ impl Control {
                     sys::stop();
                     "ok".into()
                 }
-                _ => "not understood: watch, status, accept, decline or stop".into(),
+                ("stay", None) => {
+                    self.stays.store(true, Ordering::SeqCst);
+                    "ok".into()
+                }
+                _ => "not understood: watch, status, accept, decline, stop or stay".into(),
             };
             if !watching {
                 let _ = writeln!(out, "{answer}");
@@ -387,6 +398,11 @@ impl Control {
 
     pub fn busy(&self) -> bool {
         self.inner.lock().unwrap().stage.busy()
+    }
+
+    /// Told to stay on after a transfer (`stay`).
+    pub fn stays(&self) -> bool {
+        self.stays.load(Ordering::SeqCst)
     }
 
     /// Puts an offer to the user and waits for the answer: no, if none comes in time, if the daemon
@@ -633,6 +649,9 @@ mod tests {
         assert!(say(&path, "status").starts_with("AirDrop is on: iPhones nearby"));
         assert_eq!(say(&path, "accept"), "nothing is being asked");
         assert!(say(&path, "dance").starts_with("not understood"));
+        assert!(!control.stays());
+        assert_eq!(say(&path, "stay"), "ok");
+        assert!(control.stays());
 
         let mut watcher = UnixStream::connect(&path).unwrap();
         writeln!(watcher, "watch").unwrap();
