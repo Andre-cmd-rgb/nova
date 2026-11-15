@@ -154,18 +154,25 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
   [ "$output" = "available 1.0.0-beta.2" ]
   [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 1 ]
-  # Current, then the apps behind: said, with no word for being current.
+  # Current, then the apps behind: neither is a notification. The badge and
+  # Settings say the apps.
   echo 1.0.0beta.2 >"$PKGVER"
   run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
   [ "$output" = current ]
   [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 1 ]
   stub nova-apps-install 'echo "apps google-chrome visual-studio-code-bin"'
   run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
-  grep -q '^nova-notification-send -g 󰚰 Chrome and VS Code can be updated Settings → Updates installs them. ' "$CALLS"
+  [ "$output" = "apps google-chrome visual-studio-code-bin" ]
+  [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 1 ]
+  # A release out after that is said again: Nova was current in between.
+  echo 1.0.0beta.1 >"$PKGVER"
+  run "$REPO_ROOT/src/cli/bin/nova-update-check" --notify
+  [ "$output" = "available 1.0.0-beta.2" ]
+  [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 2 ]
   # Without --notify, as Settings asks, nothing is said.
-  stub nova-apps-install 'echo "apps google-chrome"'
+  rm -f "$NOVA_UPDATE_NOTIFIED"
   run "$REPO_ROOT/src/cli/bin/nova-update-check"
-  [ "$output" = "apps google-chrome" ]
+  [ "$output" = "available 1.0.0-beta.2" ]
   [ "$(grep -c '^nova-notification-send' "$CALLS")" -eq 2 ]
 }
 
@@ -503,14 +510,15 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   fails grep -q nova-notification-send "$CALLS"
 }
 
-@test "Settings: with Nova current, an app updated is what it says" {
+@test "Settings: with Nova current, an app updated is in the state, and not a notification" {
   echo 1.0.0beta.2 >"$PKGVER"
   build_chrome
   stub pacman 'case $2 in google-chrome) echo "google-chrome 141.0-1" ;; *) echo "nova $(cat "$PKGVER")-1" ;; esac'
   stub nova-notification-send
   run settings_update
   [ "$(field state)" = '"done"' ]
-  [ "$(grep '^nova-notification-send' "$CALLS")" = 'nova-notification-send -g 󰚰 Chrome updated' ]
+  [ "$(field apps)" = '["google-chrome"]' ]
+  fails grep -q '^nova-notification-send' "$CALLS"
 }
 
 @test "Settings: Nova installed with no restart to wait for says nothing" {

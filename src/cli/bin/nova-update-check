@@ -7,9 +7,11 @@
 # Exit status is non-zero, with nothing on stdout, when the answer could not be had
 # (offline, rate limited): callers should keep showing the last state.
 #
-# With --notify, as the bar's badge asks, a notification says it too: once for
-# each answer with something to install, and again only after Nova was current
-# in between. Being current is never one. Each screen's bar asks: one at a time.
+# With --notify, as the bar's badge asks, a notification says it too when it
+# is about Nova itself: a release to install, or an update that did not
+# finish; once for each, and again only after Nova was current in between.
+# Being current is never one, and nor are apps that are behind: the badge
+# says those, and Settings. Each screen's bar asks: one at a time.
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
@@ -29,23 +31,6 @@ exec {lock}>"$NOTIFIED.lock"
 flock "$lock"
 [[ $(cat -- "$NOTIFIED" 2>/dev/null) != "$answer" ]] || exit 0
 
-apps() { # package...: their names, as Settings has them, "A, B and C"
-  local app name i=0
-  for app in "$@"; do
-    case $app in
-      google-chrome) name=Chrome ;;
-      visual-studio-code-bin) name="VS Code" ;;
-      *) name=$app ;;
-    esac
-    if ((++i == $#)) && ((i > 1)); then
-      printf ' and '
-    elif ((i > 1)); then
-      printf ', '
-    fi
-    printf '%s' "$name"
-  done
-}
-
 open=(--exec nova-shell shell summon nova.settings '{"page":"updates"}')
 case $answer in
   "available "*)
@@ -55,13 +40,6 @@ case $answer in
   "unfinished "*)
     nova-notification-send -g 󰚰 "The update to Nova ${answer#unfinished } did not finish" \
       "Settings → Updates finishes it." "${open[@]}" >/dev/null || exit 0
-    ;;
-  "apps "*)
-    read -ra behind <<<"${answer#apps }"
-    them=it
-    ((${#behind[@]} == 1)) || them=them
-    nova-notification-send -g 󰚰 "$(apps "${behind[@]}") can be updated" \
-      "Settings → Updates installs $them." "${open[@]}" >/dev/null || exit 0
     ;;
 esac
 printf '%s\n' "$answer" >"$NOTIFIED"
