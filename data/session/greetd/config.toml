@@ -13,8 +13,9 @@ switch = true
 # login keyring (pam_gnome_keyring) with the password that was just typed.
 service = "nova-greeter"
 
-# Autologin, once per boot: the disk is not encrypted, so the machine boots to the
-# lock screen instead of a login prompt. Every command greetd runs says how its user
+# Autologin, once per boot: the machine boots to the lock screen instead of a login
+# prompt (an encrypted disk asks for its passphrase first). Every command greetd runs
+# says how its user
 # got in: NOVA_LOGIN=autologin here, NOVA_LOGIN=password from the greeter. Only
 # "password" starts unlocked; anything else, or nothing, locks before it shows, and
 # nova-session-guard ends the session if the lock does not engage.

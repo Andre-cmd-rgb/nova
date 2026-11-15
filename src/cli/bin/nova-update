@@ -9,7 +9,7 @@
 # (nova apps update).
 #
 #   nova update                     update to the newest release
-#   nova update --version v1.0.0-beta.2
+#   nova update --version v1.0.0    move to that release
 #   nova update --check             print "available <version>", "unfinished <version>"
 #                                   for an update that did not finish, "apps <name>..."
 #                                   when only Chrome or VS Code is behind, or "current"

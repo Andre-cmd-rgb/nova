@@ -160,8 +160,6 @@ optdepends=(
   'modemmanager: mobile data, on laptops with a modem'
 )
 options=(!debug)
-# Moves what an upgrade renames out of the way (the power governor's).
-install=nova.install
 # Configuration under /etc: pacman keeps local edits across upgrades.
 backup=(
   etc/UPower/UPower.conf.d/10-nova.conf
