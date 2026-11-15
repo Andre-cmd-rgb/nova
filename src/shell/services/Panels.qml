@@ -98,8 +98,10 @@ QtObject {
     return true
   }
 
-  // No longer called up: its loader unloads, unless it is kept loaded.
+  // No longer called up: its loader unloads, unless it is kept loaded, and
+  // what was sent to it while it loaded goes, not to reach the next open.
   function forget(id) {
+    delete waiting[id]
     if (!called[id]) return
     var rest = Object.assign({}, called)
     delete rest[id]

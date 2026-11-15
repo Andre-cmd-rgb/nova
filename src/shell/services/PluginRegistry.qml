@@ -138,7 +138,7 @@ QtObject {
     var key = String(id)
     var manifest = manifests[key]
     if (on && !manifest) {
-      console.warn("PluginRegistry.setEnabled: unknown plugin " + key)
+      console.warn("PluginRegistry.setOn: unknown plugin " + key)
       return "unknown"
     }
     if (fixed(manifest)) return on ? "" : manifest.name + " cannot be switched off"

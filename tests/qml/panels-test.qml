@@ -57,6 +57,10 @@ ShellRoot {
     if (ran) return
     ran = true
     panels.sync()
+    // What a summon sent while the panel loaded, and the panel hidden first.
+    panels.waiting["nova.fake"] = ["stale"]
+    panels.forget("nova.fake")
+    check("hidden before it loaded, what was sent goes with it", panels.waiting["nova.fake"], undefined)
     check("summon answers yes", panels.summon("nova.fake", "{}"), true)
     whenLoaded(() => {
       check("summoned, the panel shows", item().shown, true)

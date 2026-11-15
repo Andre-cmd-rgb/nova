@@ -174,14 +174,6 @@ Item {
       background.bring("", path, path, false, false)
     }
 
-    function setInstant(path: string): void {
-      background.bring("", path, path, true, false)
-    }
-
-    function transition(fromPath: string, path: string): void {
-      background.bring(fromPath, path, path, false, false)
-    }
-
     function themeTransition(fromPath: string, path: string, finalPath: string, colorsB64: string, shellB64: string): void {
       background.bringWithTheme(fromPath, path, finalPath, colorsB64, shellB64)
     }
