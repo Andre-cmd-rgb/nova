@@ -10,5 +10,5 @@ BarIndicator {
   tipLit: "Day Light"
   tipDark: "Night Light"
 
-  onClicked: if (service) service.setNightlight(!active)
+  onClicked: if (service) service.setNightlight(!service.enabled)
 }

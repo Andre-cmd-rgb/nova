@@ -80,7 +80,7 @@ Item {
 
   // Whether <button> would take a click now.
   function takesClick(button) {
-    return !!button && button.visible !== false && button.opacity !== 0 && button.interactive !== false
+    return !!button && button.visible !== false && button.opacity !== 0
       && button.pressable !== false && button.veiled !== true && typeof button.click === "function"
   }
 

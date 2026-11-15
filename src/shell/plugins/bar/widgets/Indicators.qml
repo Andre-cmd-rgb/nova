@@ -180,7 +180,7 @@ BarWidget {
     height: implicitHeight
 
     function report() {
-      const on = file.item?.active === true
+      const on = file.item?.lit === true
       if (block === "active" && on) seenOn = true
       else if (block === "active" && !seenOn) return
       host.said(entry, on)
@@ -218,7 +218,7 @@ BarWidget {
     Connections {
       target: file.item
       ignoreUnknownSignals: true
-      function onActiveChanged() { indicator.report() }
+      function onLitChanged() { indicator.report() }
     }
   }
 
