@@ -814,8 +814,21 @@ impl Mains {
     }
 }
 
+/// A boost is on while its marker is there, until the time it holds: its
+/// expiry timer may run a moment late after a sleep, and nothing past that time
+/// is a boost any more.
 fn boosting() -> bool {
-    Path::new(BOOST).exists()
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    fs::read_to_string(BOOST).is_ok_and(|text| boost_live(&text, now))
+}
+
+fn boost_live(marker: &str, now: u64) -> bool {
+    marker
+        .trim()
+        .parse::<u64>()
+        .map_or(true, |until| now < until)
 }
 
 // ---------------------------------------------------------------- firmware
@@ -1584,6 +1597,14 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_boost_ends_at_its_time_though_its_marker_is_still_there() {
+        assert!(boost_live("1000\n", 999));
+        assert!(!boost_live("1000\n", 1000));
+        // A marker without a time, as an older nova-power wrote one, is a boost until it goes.
+        assert!(boost_live("", u64::MAX));
+    }
 
     #[test]
     fn watts_are_energy_over_time() {

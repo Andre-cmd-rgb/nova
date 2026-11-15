@@ -288,7 +288,7 @@ Four tiers on battery, and a ladder that gets harder to climb:
 |---|---|---|
 | saver | `light` only | never: battery first, and `nova power boost` for the job that needs more |
 | balanced | `light` to `turbo` | as above, about a minute to the top |
-| performance | `mid` to `turbo` | four times as fast: 2 s, then 4 s, then 6 s |
+| performance | `mid` to `turbo` | four times as fast: 4 s to `full`, then 6 s more to `turbo` |
 
 - **Saver is where every unplug starts**, and where a restart on battery starts too: a mode chosen on battery lasts until the next plug-in. A performance chosen for one job and then forgotten stayed for a day and a half, and drew about 30 W through a YouTube video (fact 52 in the P1 Gen 4i notes).
 - **A change of mode** starts the ladder again at the new mode's bottom, as an unplug does.

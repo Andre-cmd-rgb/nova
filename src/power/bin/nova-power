@@ -1357,8 +1357,13 @@ boost)
     exit 0
   fi
 
+  # By the wall clock, not --on-active: the monotonic clock stands still while
+  # the computer sleeps, and an hour's boost would outlast a night in a bag.
+  # A time that has passed during a sleep elapses as it wakes.
+  until=$(($(date +%s) + arg * 60))
   if command -v systemd-run >/dev/null 2>&1; then
-    systemd-run --quiet --unit="$BOOST_UNIT" --on-active="${arg}min" \
+    systemd-run --quiet --unit="$BOOST_UNIT" --on-calendar="@$until" \
+      --timer-property=AccuracySec=1s \
       --description="Restore nova power battery CPU caps" \
       --setenv=NOVA_POWER_BOOST_EXPIRY=1 "$0" boost off >/dev/null 2>&1 ||
       die "could not schedule the expiry; caps left in place"
@@ -1366,7 +1371,8 @@ boost)
     die 'systemd-run is missing, and an unbounded boost is not on offer'
   fi
 
-  date -d "+$arg minutes" +%s >"$BOOST_STATE" 2>/dev/null || : >"$BOOST_STATE"
+  # Its end, which the governor goes by too.
+  echo "$until" >"$BOOST_STATE"
   power_limit ac
   cpu_ceiling ac
   if on_ac; then
