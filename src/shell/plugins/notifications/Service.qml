@@ -282,6 +282,18 @@ Item {
     leave(index, true)
   }
 
+  // A toast's time is up. Every screen counts it down, and the first to end
+  // ends it, found by its stem: by the time another screen's count ends, the
+  // index it had is the next toast's.
+  function runOut(stem) {
+    for (var i = 0; i < toasts.count; i++) {
+      if (Notes.stem(toasts.get(i)) === stem) {
+        expire(i)
+        return
+      }
+    }
+  }
+
   // Toast `index` off the screen, its file into the history, and its sender
   // told whether it ran out or was dismissed.
   function leave(index, ranOut) {

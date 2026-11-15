@@ -108,7 +108,7 @@ BorderSurface {
 
     onTriggered: {
       left = 0
-      toast.service.expire(toast.index)
+      toast.service.runOut(toast.stem)
     }
   }
 
