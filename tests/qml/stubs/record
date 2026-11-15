@@ -1,0 +1,6 @@
+#!/bin/sh
+# Any command a test must see asked for and must not run: it appends its own
+# name and its arguments, a line a call, to $HOME/stub-calls.
+printf '%s' "$(basename "$0")" >>"$HOME/stub-calls"
+for word in "$@"; do printf ' %s' "$word" >>"$HOME/stub-calls"; done
+printf '\n' >>"$HOME/stub-calls"

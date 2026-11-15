@@ -1,0 +1,5 @@
+#!/bin/sh
+# `rfkill event` as the Bluetooth panel reads it: the lines in
+# $HOME/rfkill-event, if the test wrote any, then nothing more for a while.
+cat "$HOME/rfkill-event" 2>/dev/null
+sleep 5

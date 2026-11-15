@@ -7,6 +7,29 @@
 #   tests/qml/run --root <dir>
 #
 # --root is a `make install DESTDIR=<dir>` tree, the one tools/qml-smoke uses.
+#
+# A test asks for what it needs on lines of its own:
+#   // zone: America/Santiago        another time zone than Europe/Rome
+#   // stub: bin/nova-x nova-x       copies tests/qml/stubs/nova-x to
+#                                    <scratch>/bin/nova-x, executable, for
+#                                    this test only; the scratch's bin is on
+#                                    PATH, its home is $HOME, and the stub
+#                                    may read its answer from a file the test
+#                                    writes into $HOME
+#
+#   // platform: wayland             runs under a headless sway rather than
+#                                    offscreen, for a test that opens a bar
+#                                    panel (a layer-shell window, which
+#                                    offscreen has no backend for); sway is
+#                                    started once, in the scratch's own
+#                                    runtime dir; a machine without sway
+#                                    skips such a test, saying so, and one
+#                                    whose sway gives no display fails it
+#
+# No test reaches a bus: the system and session bus addresses point at
+# nothing, so that Quickshell's Bluetooth, Networking, PipeWire and UPower
+# report no devices on any machine, and nothing of the one it runs on is
+# touched.
 
 set -euo pipefail
 
@@ -24,7 +47,8 @@ root=$(cd "$root" && pwd)
 plugins=$root/usr/share/nova/shell/plugins
 
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+compositor=''
+trap '[[ -z $compositor ]] || kill "$compositor" 2>/dev/null; rm -rf "$work"' EXIT
 mkdir -p "$work/home" "$work/run" "$work/shell" "$work/bin"
 chmod 700 "$work/run"
 # No Hyprland here, on a desktop or in CI: what asks it (Style's rounding and
@@ -34,9 +58,58 @@ printf '#!/bin/sh\nexit 1\n' >"$work/bin/hyprctl"
 chmod +x "$work/bin/hyprctl"
 for d in Commons Ui services plugins; do ln -s "$root/usr/share/nova/shell/$d" "$work/shell/$d"; done
 
+# Starts sway on its headless backend, the way tools/shell-smoke does, and
+# sets <socket> to the display it opened; false when it gives none, and then
+# it is not asked again.
+socket='' no_display=0
+start_compositor() {
+  [[ -z $socket ]] || return 0
+  ((!no_display)) || return 1
+  printf 'output HEADLESS-1 resolution 1280x720\ndefault_border none\n' >"$work/sway.conf"
+  env -u WAYLAND_DISPLAY -u DISPLAY XDG_RUNTIME_DIR="$work/run" WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
+    sway -c "$work/sway.conf" >"$work/sway.log" 2>&1 &
+  compositor=$!
+  local i
+  for ((i = 0; i < 100; i++)); do
+    socket=$(find "$work/run" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' | head -n 1)
+    [[ -z $socket ]] || return 0
+    sleep 0.1
+  done
+  kill "$compositor" 2>/dev/null || true
+  compositor='' no_display=1
+  return 1
+}
+
 failed=0
 for test in "$here"/*-test.qml; do
   name=$(basename "$test" .qml)
+  platform=$(sed -n 's#^// platform: ##p' "$test" | head -n 1)
+  display=()
+  if [[ ${platform:-offscreen} == wayland ]]; then
+    if ! command -v sway >/dev/null; then
+      echo "skip $name (needs sway)"
+      continue
+    fi
+    if ! start_compositor; then
+      echo "FAIL $name (sway gave no display)"
+      tail -n 5 "$work/sway.log" | sed 's/^/  /'
+      failed=1
+      continue
+    fi
+    display=(QT_QPA_PLATFORM=wayland WAYLAND_DISPLAY="$socket" LIBGL_ALWAYS_SOFTWARE=1)
+  else
+    display=(QT_QPA_PLATFORM=offscreen)
+  fi
+  # Each test has a home of its own, empty but for what it writes there.
+  rm -rf "${work:?}/home"
+  mkdir -p "$work/home"
+  stubs=()
+  while read -r dest source; do
+    [[ $dest != /* && $dest != *..* && -f $here/stubs/$source ]] || { echo "FAIL $name (bad stub: $dest $source)"; failed=1; continue 2; }
+    mkdir -p "$(dirname "$work/$dest")"
+    install -m 755 "$here/stubs/$source" "$work/$dest"
+    stubs+=("$work/$dest")
+  done < <(sed -n 's#^// stub: ##p' "$test")
   cp "$test" "$work/shell/$name.qml"
   rm -rf "$work/run/quickshell"
   status=0
@@ -44,12 +117,16 @@ for test in "$here"/*-test.qml; do
   # across a change to or from it; a test names another on a line of its
   # own, as "// zone: America/Santiago".
   zone=$(sed -n 's#^// zone: ##p' "$test" | head -n 1)
-  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${zone:-Europe/Rome}" PATH="$work/bin:/usr/bin" QT_QPA_PLATFORM=offscreen \
+  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${zone:-Europe/Rome}" PATH="$work/bin:/usr/bin" "${display[@]}" \
+    DBUS_SYSTEM_BUS_ADDRESS="unix:path=$work/no-bus" DBUS_SESSION_BUS_ADDRESS="unix:path=$work/no-bus" \
     TEST_PLUGINS="$plugins" TEST_PLUGIN_COUNT="$(jq length "$plugins/index.json")" \
     timeout 60 qs --no-color -p "$work/shell/$name.qml" >/dev/null 2>&1 || status=$?
+  ((${#stubs[@]} == 0)) || rm -f "${stubs[@]}"
   log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$work/shell/$name.qml" 2>&1)
-  # The locale and window-mask lines are the offscreen platform's, not ours.
-  problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -vE 'Detected locale|window masks' || true)
+  # The locale and window-mask lines are the offscreen platform's, not ours,
+  # and the lines about a bus, a PipeWire daemon or a NetworkManager are
+  # Quickshell's, saying there is none.
+  problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -vE 'Detected locale|window masks|Could not connect to DBus|Failed to connect pipewire context|Could not find an available backend' || true)
   if ((status != 0)) || [[ -n $problems ]] || ! grep -q 'DONE$' <<<"$log"; then
     echo "FAIL $name (exit $status)"
     grep -E '(ok|FAIL) ' <<<"$log" | sed -E 's/^.*(scene|qml): /  /' || true

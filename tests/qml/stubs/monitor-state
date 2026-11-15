@@ -1,0 +1,5 @@
+#!/bin/sh
+# nova-monitor-state as the display panel reads it: the lines in
+# $HOME/monitor-state, which the test writes.
+cat "$HOME/monitor-state" 2>/dev/null
+exit 0

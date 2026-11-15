@@ -1,0 +1,16 @@
+#!/bin/sh
+# Nova's mobile-data helper as the widget's test needs it: `info` answers with
+# what the test wrote to $HOME/mobile-info, and `toggle` notes that it ran in
+# $HOME/mobile-ran, failing with the words in $HOME/mobile-fail when there
+# is such a file.
+case $1 in
+  info) cat "$HOME/mobile-info" 2>/dev/null ;;
+  toggle)
+    echo toggle >>"$HOME/mobile-ran"
+    if [ -f "$HOME/mobile-fail" ]; then
+      cat "$HOME/mobile-fail" >&2
+      exit 1
+    fi
+    ;;
+esac
+exit 0
