@@ -155,6 +155,17 @@ main() {
       [[ -r $STATE ]] || return 0
       value=$(<"$STATE")
       valid "$value" || die "ignoring $STATE: '$value' is not a limit"
+      # The battery may not be the kind the limit was set for (another
+      # battery, a firmware update): a switch takes a limit as on, and what
+      # this battery cannot take is passed over, not failed at every start.
+      case $(kind):$value in
+        switch:100) value=off ;;
+        switch:[0-9]*) value=on ;;
+        threshold:on | none:*)
+          echo "nova-battery-limit-apply: this battery cannot take the limit remembered ($value); left as it is" >&2
+          return 0
+          ;;
+      esac
       apply "$value"
       ;;
     *)

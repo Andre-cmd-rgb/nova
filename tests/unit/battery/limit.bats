@@ -182,6 +182,23 @@ firmware_write() {
   [ "$status" -eq 1 ]
 }
 
+@test "restore: a limit the battery of now cannot take is the nearest it can, or passed over" {
+  mkdir -p "${NOVA_BATTERY_LIMIT_STATE%/*}"
+  echo 80 >"$NOVA_BATTERY_LIMIT_STATE"
+  legion "[Standard] Long_Life"
+  main restore
+  [ "$(<"$BAT/charge_types")" = "Standard [Long_Life]" ]
+  echo on >"$NOVA_BATTERY_LIMIT_STATE"
+  rm -r "$BAT"
+  thinkpad 0 100
+  run main restore
+  [ "$status" -eq 0 ]
+  [ "$(<"$BAT/charge_control_end_threshold")" = 100 ]
+  rm -r "$BAT"
+  run main restore
+  [ "$status" -eq 0 ]
+}
+
 @test "set on no battery says so" {
   run main set 80
   [ "$status" -eq 1 ]
