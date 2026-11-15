@@ -65,14 +65,33 @@ valid_path() { [[ $1 =~ ^[A-Za-z0-9_@+.-]+(/[A-Za-z0-9_@+.-]+)*$ && /$1/ != */..
 # This computer, as a patch's machine= names it: a digest of its board's and
 # its maker's serial numbers, which a reinstall keeps and no other computer
 # has. Only root can read them.
+# A serial its maker left as it came ("To Be Filled By O.E.M.", "Default
+# string", a UUID of one digit over and over) is the same on every computer of
+# its kind: with nothing else, this one cannot be told from them. The fields
+# still all go into the hash, as they always have, so no computer's name for
+# itself changes.
+placeholder() { # text
+  local text=${1,,}
+  text=${text//[[:space:]]/}
+  case $text in
+    "" | none | n/a | na | unknown | invalid | oem | o.e.m. | empty | x.x | tobefilled* | defaultstring* | \
+      systemserialnumber* | notapplicable* | notspecified* | notavailable* | chassisserialnumber*) return 0 ;;
+  esac
+  # One character, repeated, dashes aside: 00000000-0000-..., FFFF..., 123456789?
+  text=${text//-/}
+  [[ -z ${text//${text:0:1}/} || $text == 123456789* ]]
+}
+
 machine_id() {
-  local file id=
+  local file id='' text real=0
   for file in class/dmi/id/product_uuid class/dmi/id/product_serial class/dmi/id/board_serial \
     firmware/devicetree/base/serial-number; do
-    if [[ -r $SYS/$file ]]; then id+=$(tr -d '\0\n' <"$SYS/$file"); fi
-    id+=/
+    text=''
+    if [[ -r $SYS/$file ]]; then text=$(tr -d '\0\n' <"$SYS/$file"); fi
+    placeholder "$text" || real=1
+    id+=$text/
   done
-  [[ $id =~ [^/[:space:]] ]] || return 1
+  ((real)) || return 1
   printf '%s' "$id" | sha256sum | cut -c1-16
 }
 

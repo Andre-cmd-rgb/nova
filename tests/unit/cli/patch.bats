@@ -342,3 +342,17 @@ tested_start() { # <KiB> [log line...]
   [ "$status" -eq 1 ]
   [[ $output == *"needs Limine's boot entries"* ]]
 }
+
+@test "serial numbers left as their maker shipped them tell no computer from another" {
+  write_file "$NOVA_SYS/class/dmi/id/product_uuid" $'00000000-0000-0000-0000-000000000000\n'
+  write_file "$NOVA_SYS/class/dmi/id/product_serial" $'To Be Filled By O.E.M.\n'
+  write_file "$NOVA_SYS/class/dmi/id/board_serial" $'Default string\n'
+  make_patch "$SCRATCH/mine/bluetooth" this modprobe.d/90-nova-patch-bluetooth.conf
+  run nova_patch add "$SCRATCH/mine/bluetooth"
+  [ "$status" -eq 1 ]
+  [[ $output == *"cannot tell this computer from another"* ]]
+  # One real serial among them is enough.
+  write_file "$NOVA_SYS/class/dmi/id/board_serial" $'L1HF1234567\n'
+  run nova_patch add "$SCRATCH/mine/bluetooth"
+  [ "$status" -eq 0 ]
+}
