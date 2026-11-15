@@ -602,15 +602,17 @@ impl Archive {
         Ok(())
     }
 
-    /// Where a name in the archive goes: under the root, or nowhere if it would leave it.
+    /// Where a name in the archive goes: under the root, or nowhere if it would leave it. What
+    /// a name holds that is not shown as itself is left out of it (hidden).
     fn place(&self, name: &str) -> Option<PathBuf> {
         let mut path = self.root.clone();
         let mut depth = 0;
         for part in name.split('/') {
-            match part {
+            let part: String = part.chars().filter(|&c| !hidden(c)).collect();
+            match part.as_str() {
                 "" | "." => {}
                 ".." => return None,
-                part if part.contains('\0') || depth >= 32 => return None,
+                _ if depth >= 32 => return None,
                 part => {
                     path.push(part);
                     depth += 1;
@@ -619,6 +621,13 @@ impl Archive {
         }
         (depth > 0 && !name.starts_with('/')).then_some(path)
     }
+}
+
+/// A character of a name a stranger gave that is not shown as itself: a control character, or
+/// one that turns the text around, with which "photo\u{202e}gpj.sh" reads as "photohs.jpg".
+pub fn hidden(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{200e}' | '\u{200f}' | '\u{061c}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 fn number(digits: &[u8], radix: u32) -> Option<u64> {
@@ -772,6 +781,21 @@ mod tests {
             names,
             ["IMG_0001 2.HEIC", "IMG_0001 3.HEIC", "IMG_0001.HEIC"]
         );
+        fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_name_that_turns_its_text_around_arrives_without_what_turns_it() {
+        let folder = scratch("bidi");
+        let archive = [
+            entry("./photo\u{202e}gpj.sh", 0o100644, b"#!/bin/sh\n"),
+            entry("./..\u{2066}/escape", 0o100644, b"x"),
+            entry("TRAILER!!!", 0, b""),
+        ]
+        .concat();
+        let (_, kept) = unpack(&folder, "application/x-cpio", &gzip(&archive), 11, 64).unwrap();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].file_name().unwrap(), "photogpj.sh");
         fs::remove_dir_all(&folder).unwrap();
     }
 

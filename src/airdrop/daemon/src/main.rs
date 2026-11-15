@@ -439,6 +439,7 @@ fn run() -> Result<(), String> {
             }
         }
         let elapsed = started.elapsed().as_micros() as u64;
+        // Stored by the receiver, it can be a moment newer than elapsed.
         let quiet = quiet_since.load(Ordering::SeqCst);
         if quiet != counted_from {
             // The count begins, or begins again after a transfer: those who show it are told when it runs out.
@@ -450,8 +451,10 @@ fn run() -> Result<(), String> {
                 let unix = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .map_or(0, |since| since.as_secs());
-                control
-                    .ends(unix + seconds - (elapsed - quiet).min(seconds * 1_000_000) / 1_000_000);
+                control.ends(
+                    unix + seconds
+                        - elapsed.saturating_sub(quiet).min(seconds * 1_000_000) / 1_000_000,
+                );
             }
         }
         let once = once && !control.stays();

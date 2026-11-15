@@ -114,10 +114,11 @@ fn failed(question: Option<u64>) -> impl Fn(std::io::Error) -> Failure {
     move |error| Failure(question, error.to_string())
 }
 
-/// A name a stranger gave, made fit to show: one line, no control characters, not endless.
+/// A name a stranger gave, made fit to show: one line, nothing that is not shown as itself
+/// (unpack::hidden), not endless.
 fn shown(text: &str) -> String {
     text.chars()
-        .filter(|c| !c.is_control())
+        .filter(|&c| !crate::unpack::hidden(c))
         .take(80)
         .collect::<String>()
         .trim()
@@ -477,6 +478,7 @@ mod tests {
         ]);
         let offered = offer(&asked);
         assert_eq!(offered.sender, "Zoë's iPhone");
+        assert_eq!(shown("photo\u{202e}gpj.sh\u{2069}"), "photogpj.sh");
         assert_eq!(offered.files[0], ("IMG_0001.HEIC".to_owned(), 1_044_468));
         assert_eq!((offered.files[1].0.len(), offered.files[1].1), (80, 0));
         assert_eq!(offered.files[2], ("?".to_owned(), 0));
