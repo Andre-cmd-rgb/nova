@@ -11,6 +11,12 @@
 # $XDG_RUNTIME_DIR, which is memory and private to you, deleted once it is
 # read; Parakeet (whisper-cpp's parakeet-cli) transcribes it on the CPU. The
 # network is used once, by `setup`, for the model.
+#
+# The shell does not wait for the end to start: while you speak it has the
+# recording so far transcribed every few seconds, from the first sentence
+# not yet settled, and keeps a sentence once two of these agree on it with
+# words heard after it. Letting go leaves only the last sentence or two to
+# hear, however long the dictation.
 
 set -euo pipefail
 
@@ -70,35 +76,138 @@ cmd_check() {
   fi
 }
 
-# Records 16 kHz mono, what Parakeet reads, into <file>. exec, so the shell's
-# SIGTERM reaches pw-record, which then finishes the file's header.
+# A recording is raw: 16 kHz mono 16-bit samples, what Parakeet reads, with
+# no header, so that a part of it can be read while it is still written.
+BYTES_PER_SECOND=32000
+
+# Records into <file>. exec, so the shell's SIGTERM reaches pw-record.
 cmd_record() {
-  local file=${1:?usage: dictation record <file.wav>}
+  local file=${1:?usage: dictation record <file.pcm>}
   (
     umask 077
     mkdir -p -- "$(dirname -- "$file")"
   )
-  exec pw-record --rate 16000 --channels 1 --format s16 -P '{ application.name = "Nova Dictation" }' "$file"
+  exec pw-record --raw --rate 16000 --channels 1 --format s16 -P '{ application.name = "Nova Dictation" }' "$file"
 }
 
-# Prints what was said in <file>, on one line, or nothing for silence, and
-# deletes the file whatever happens.
+# A WAV header for <bytes> of the recording's samples, as the engine wants.
+wav_header() {
+  local bytes=$1
+  le() { # <value> <width>: little-endian bytes
+    local i
+    for ((i = 0; i < $2; i++)); do
+      # shellcheck disable=SC2059 # the format is the byte
+      printf "\\x$(printf %02x $((($1 >> (8 * i)) & 255)))"
+    done
+  }
+  printf RIFF
+  le $((36 + bytes)) 4
+  printf 'WAVEfmt '
+  le 16 4                       # the format's size
+  le 1 2                        # PCM
+  le 1 2                        # mono
+  le 16000 4                    # samples a second
+  le "$BYTES_PER_SECOND" 4
+  le 2 2                        # bytes a sample
+  le 16 2                       # bits a sample
+  printf data
+  le "$bytes" 4
+}
+
+# The engine's words with their times (its -ps lines, on stdin) as what the
+# shell reads, <from> seconds into the recording:
+#   end <seconds>                 how much of the recording was heard
+#   piece <at> <kind> <text>      a part that ends at a sentence's end
+#                                 (kind sentence) or at a comma or an
+#                                 ellipsis (soft), and words follow it; <at>
+#                                 is the middle of the pause after it, where
+#                                 the recording can be cut
+#   rest <text>                   the words after the last piece
+# A part is cut only where words follow, and with a pause of 0.12 s or more
+# before them: "U.S." and "3.5" are not ends.
+pieces() { # <from> <end>
+  awk -v from="$1" -v end="$2" '
+    function trim(s) { sub(/^ +/, "", s); sub(/ +$/, "", s); return s }
+    function field(name,    at) {
+      if (!match($0, name "= *-?[0-9]+")) return -1
+      at = substr($0, RSTART, RLENGTH)
+      sub(/^[^=]*= */, "", at)
+      return at + 0
+    }
+    BEGIN { printf "end %.2f\n", end; text = ""; kind = "" }
+    /^ *\[ *[0-9]+\] id=/ {
+      t0 = field("t0"); t1 = field("t1")
+      at = index($0, "word_start=")
+      if (at == 0 || t0 < 0) next
+      rest = substr($0, at)
+      word = rest ~ /^word_start=true/
+      quote = index(rest, "\"")
+      token = substr(rest, quote + 1)
+      sub(/"$/, "", token)
+      gsub(/\xe2\x96\x81/, " ", token)
+      if (kind != "") {
+        if (word && t0 - after >= 12 && trim(text) != "") {
+          printf "piece %.2f %s %s\n", from + (after + t0) / 200, kind, trim(text)
+          text = ""
+        }
+        kind = ""
+      }
+      text = text token
+      if (token ~ /(\.\.\.|…)$/ || token ~ /,$/) { kind = "soft"; after = t1 }
+      else if (token ~ /[.?!]$/) { kind = "sentence"; after = t1 }
+    }
+    END { printf "rest %s\n", trim(text) }
+  '
+}
+
+# Prints what was said in <file> from <from> seconds on, to as far as it is
+# written, as pieces() does. With --last it is the dictation's end: the
+# engine runs on every core, and the recording is deleted whatever happens.
+# Otherwise it is a look while the shell still listens, on half the cores and
+# at a lower priority, so that it does not get in the way.
 cmd_transcribe() {
-  local file=${1:?usage: dictation transcribe <file.wav>} log text
-  log=$(mktemp)
+  local file='' from=0 last=false arg wav log size start length threads niceness
+  for arg; do
+    case $arg in
+    --last) last=true ;;
+    *) if [[ -z $file ]]; then file=$arg; else from=$arg; fi ;;
+    esac
+  done
+  [[ -n $file ]] || die "usage: dictation transcribe <recording> [<from seconds>] [--last]"
+  wav=$(mktemp --suffix=.wav) log=$(mktemp)
   # Quoted in now: the trap runs as the script ends, after these locals.
   # shellcheck disable=SC2064
-  trap "rm -f -- $(printf '%q ' "$file" "$log")" EXIT
+  if $last; then
+    trap "rm -f -- $(printf '%q ' "$file" "$wav" "$log")" EXIT
+  else
+    trap "rm -f -- $(printf '%q ' "$wav" "$log")" EXIT
+  fi
   [[ -f $MODEL ]] || die "there is no speech model; nova dictation setup downloads it"
   have "$ENGINE" || die "there is no speech engine: dictation needs whisper-cpp"
+  [[ $from =~ ^[0-9]+(\.[0-9]+)?$ ]] || die "not a time in seconds: $from"
+  size=$(stat -c %s -- "$file") || die "there is no recording: $file"
+  size=$((size / 2 * 2))
+  start=$(awk -v s="$from" 'BEGIN { printf "%d", s * 16000 }')
+  start=$((start * 2))
+  length=$((size - start))
+  # Less than a third of a second is not a word.
+  if ((length < BYTES_PER_SECOND / 3)); then
+    pieces "$from" "$(awk -v b="$size" 'BEGIN { printf "%.2f", b / 32000 }')" </dev/null
+    return 0
+  fi
+  wav_header "$length" >"$wav"
+  tail -c +$((start + 1)) -- "$file" | head -c "$length" >>"$wav"
+  threads=$(threads) niceness=0
+  $last || threads=$(((threads + 1) / 2)) niceness=10
   # pdeathsig: a dictation cancelled from the shell stops the engine with
   # this script, rather than leaving it to finish for nobody. -ng keeps it on
   # the CPU even where a ggml GPU backend is installed: a laptop's integrated
-  # one is slower (a P1 Gen 4i's takes 1.6 s where its CPU takes 0.4).
-  if ! text=$(setpriv --pdeathsig TERM -- "$ENGINE" -m "$MODEL" -f "$file" -t "$(threads)" -ng -np 2>"$log"); then
+  # one is slower (a P1 Gen 4i's takes 1.6 s where its CPU takes 0.4). -ps
+  # has it print each word with its time, which says where a sentence ends.
+  if ! setpriv --pdeathsig TERM -- nice -n "$niceness" "$ENGINE" -m "$MODEL" -f "$wav" -t "$threads" -ng -ps >/dev/null 2>"$log"; then
     die "the speech engine failed: $(tail -n 1 -- "$log")"
   fi
-  printf '%s\n' "$text"
+  pieces "$from" "$(awk -v b="$size" 'BEGIN { printf "%.2f", b / 32000 }')" <"$log"
 }
 
 # Pastes <text> where the cursor is, as SUPER + V does (default/hypr/keys/

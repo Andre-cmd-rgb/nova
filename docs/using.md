@@ -203,6 +203,8 @@ Hold Super+D and speak: the words are pasted where the cursor is when you let go
 
 - A tap instead of a hold listens until the next press.
 - Esc cancels.
+- It hears you while you speak, a sentence at a time, so a long dictation is in as soon as you let go: at once if you stopped a moment before, in about a second if not. A pause to think in the middle of a sentence does not end it.
+- "Uh", "um" and their Italian cousins are left out, and a word said twice by a stumble ("at at six") is written once.
 - It runs on your computer, with NVIDIA's Parakeet, in 25 European languages. Nothing you say leaves it.
 - The speech model, 669 MB, is downloaded once, at the first press, when you say yes.
 

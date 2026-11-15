@@ -11,9 +11,12 @@ import "DictationModel.js" as Model
 // Dictation. SUPER + D (default/hypr/keys/dictation.lua) calls press and
 // release here: a hold records until the release, a tap until the next press.
 // `nova dictation` (bin/dictation) turns the recording into text on this
-// computer and pastes it where the cursor is. The pill at the bottom of the
-// screen shows each step: the microphone's level while it listens, a wave
-// while the words are worked out, and a check once they are in.
+// computer and pastes it where the cursor is. It does not wait for the end:
+// while it listens, the recording so far is heard every few seconds and the
+// finished sentences are kept (Model.settle), so the end has only the last
+// of them to hear. The pill at the bottom of the screen is a wave, which
+// rises with the voice while it listens and runs on its own while the last
+// words are worked out, and a check once they are in.
 Item {
   id: root
 
@@ -46,8 +49,15 @@ Item {
   // The transcriber's text and its exit code, which arrive in either order.
   property var transcript: null
   property var transcribeCode: null
-  property var levels: []
+  // What is heard while it listens: Model.settle's { text, from, last, tail, until }.
+  property var heard: Model.unheard()
+  // How loud the voice is, 0 to 1, for the wave, and the second from the
+  // press it was last heard.
+  property real loud: 0
+  property real voiceAt: 0
   property real wave: 0
+  // How far the wave swings: with the voice while listening, on its own after.
+  readonly property real swing: look === "listening" ? 0.18 + 0.62 * loud : 0.45
 
   readonly property int barCount: 18
   readonly property int barWidth: Math.max(2, Style.space(3))
@@ -106,35 +116,58 @@ Item {
     }
     messageTimer.stop()
     doneTimer.stop()
-    recording = runtimeDir + "/" + Date.now() + ".wav"
+    recording = runtimeDir + "/" + Date.now() + ".pcm"
+    heard = Model.unheard()
+    voiceAt = 0
     // pdeathsig: should the shell die mid-dictation, the microphone closes.
     recordProc.command = ["setpriv", "--pdeathsig", "TERM", helper, "record", recording]
     recordProc.running = true
     handsFree = hands
     pressedAt = Date.now()
     elapsed = 0
-    levels = []
+    loud = 0
     phase = "listening"
+  }
+
+  // A look at the recording so far, from where the text not yet settled
+  // starts, once there are a few seconds of it: one at a time, a second and
+  // a half apart at least.
+  function hear() {
+    if (phase !== "listening" || hearProc.running || Date.now() - hearProc.startedAt < 1500) return
+    if ((Date.now() - pressedAt) / 1000 - heard.from < 4) return
+    hearProc.from = heard.from
+    hearProc.startedAt = Date.now()
+    hearProc.command = [helper, "transcribe", recording, heard.from.toFixed(2)]
+    hearProc.running = true
+  }
+
+  // A look that comes back after the dictation ended, from a place that has
+  // been settled since, cut short or failed, is no use.
+  function heardBack(output, from) {
+    if (phase !== "listening" || from !== heard.from) return
+    var look = Model.parseLook(output)
+    if (Model.useful(heard, look)) heard = Model.settle(heard, look)
   }
 
   function finish() {
     if (phase !== "listening") return
     transcript = null
     transcribeCode = null
-    phase = "transcribing"
-    // pw-record finishes the file's header on SIGTERM; the transcription
-    // starts once it has exited.
+    if (hearProc.running) hearProc.running = false
+    // The newest look heard it all: its words go in at once, and the
+    // recording is deleted as pw-record exits.
+    if (Model.heardAll(heard, voiceAt)) {
+      deliver(Model.join(heard.text, heard.tail))
+    } else {
+      // The last look starts once pw-record has exited, all of the
+      // recording written; it hears what one under way would have, and more.
+      phase = "transcribing"
+    }
     if (recordProc.running) recordProc.signal(15)
   }
 
-  function transcribed() {
-    if (transcript === null || transcribeCode === null || phase !== "transcribing") return
-    if (transcribeCode !== 0) {
-      say("󰀦", "Could not transcribe", "")
-      check()
-      return
-    }
-    var text = Model.clean(transcript)
+  function deliver(words) {
+    var text = Model.clean(words)
     if (text === "") {
       say("󰍬", "Nothing heard", "")
       return
@@ -144,6 +177,16 @@ Item {
     doneTimer.restart()
   }
 
+  function transcribed() {
+    if (transcript === null || transcribeCode === null || phase !== "transcribing") return
+    if (transcribeCode !== 0) {
+      say("󰀦", "Could not transcribe", "")
+      check()
+      return
+    }
+    deliver(Model.join(heard.text, Model.lookText(Model.parseLook(transcript))))
+  }
+
   function cancel() {
     startWhenChecked = false
     messageTimer.stop()
@@ -151,6 +194,7 @@ Item {
     phase = "idle"
     handsFree = false
     if (recordProc.running) recordProc.signal(15)
+    if (hearProc.running) hearProc.running = false
     if (transcribeProc.running) transcribeProc.running = false
     // The part downloaded so far is kept; the next setup carries on from it.
     if (setupProc.running) setupProc.running = false
@@ -237,7 +281,8 @@ Item {
     onExited: {
       var file = root.recording
       if (root.phase === "transcribing") {
-        transcribeProc.command = [root.helper, "transcribe", file]
+        // The rest, from the end of what was settled; it deletes the recording.
+        transcribeProc.command = [root.helper, "transcribe", file, root.heard.from.toFixed(2), "--last"]
         transcribeProc.running = true
         return
       }
@@ -246,7 +291,19 @@ Item {
     }
   }
 
-  // The helper deletes the recording, read or not.
+  // A look while it listens, at a lower priority; its answer is read only if
+  // it is still of use.
+  Process {
+    id: hearProc
+    property real from: 0
+    property real startedAt: 0
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.heardBack(text, hearProc.from)
+    }
+  }
+
+  // The last look; the helper deletes the recording, read or not.
   Process {
     id: transcribeProc
     stdout: StdioCollector {
@@ -295,7 +352,18 @@ Item {
     interval: 45
     repeat: true
     running: root.phase === "listening"
-    onTriggered: root.levels = Model.pushLevel(root.levels, Model.level(peakMonitor.peak), root.barCount)
+    onTriggered: {
+      var level = Model.level(peakMonitor.peak)
+      root.loud = Model.voice(root.loud, level)
+      if (level > Model.voiceLevel) root.voiceAt = (Date.now() - root.pressedAt) / 1000
+    }
+  }
+
+  Timer {
+    interval: 500
+    repeat: true
+    running: root.phase === "listening"
+    onTriggered: root.hear()
   }
 
   Timer {
@@ -313,7 +381,7 @@ Item {
     to: 2 * Math.PI
     duration: 1100
     loops: Animation.Infinite
-    running: root.phase === "transcribing"
+    running: root.phase === "listening" || root.phase === "transcribing"
   }
 
   IpcHandler {
@@ -324,13 +392,6 @@ Item {
     function cancel(): string { root.cancel(); return "ok" }
     function refresh(): string { root.check(); return "ok" }
     function state(): string { return root.phase }
-  }
-
-  TextMetrics {
-    id: clockMetrics
-    font.family: Style.font.family
-    font.pixelSize: Style.font.body
-    text: "0:00"
   }
 
   PanelWindow {
@@ -384,25 +445,8 @@ Item {
           height: root.rowHeight
           spacing: Style.space(9)
 
-          // Recording: a dot that breathes.
-          Rectangle {
-            visible: root.look === "listening"
-            width: Style.space(8)
-            height: width
-            radius: width / 2
-            anchors.verticalCenter: parent.verticalCenter
-            color: Commons.Color.urgent
-
-            SequentialAnimation on opacity {
-              running: root.phase === "listening"
-              loops: Animation.Infinite
-              NumberAnimation { to: 0.35; duration: 650; easing.type: Easing.InOutSine }
-              NumberAnimation { to: 1; duration: 650; easing.type: Easing.InOutSine }
-            }
-          }
-
-          // The microphone's level, newest on the right, while listening; a
-          // wave running through the same bars while the words are worked out.
+          // A wave running through the bars: as tall as the voice while it
+          // listens, and on its own while the last words are worked out.
           Item {
             visible: root.look === "listening" || root.look === "transcribing"
             width: root.barCount * root.barWidth + (root.barCount - 1) * root.barGap
@@ -414,32 +458,17 @@ Item {
               Rectangle {
                 id: bar
                 required property int index
-                readonly property real value: root.look === "transcribing"
-                  ? 0.15 + 0.45 * (0.5 + 0.5 * Math.sin(root.wave - bar.index * 0.55))
-                  : (root.levels[bar.index] || 0)
+                readonly property real value: 0.15 + root.swing * (0.5 + 0.5 * Math.sin(root.wave - bar.index * 0.55))
                 x: bar.index * (root.barWidth + root.barGap)
                 anchors.verticalCenter: parent.verticalCenter
                 width: root.barWidth
                 height: Math.max(root.barWidth, Math.round(bar.value * root.rowHeight))
                 radius: root.barWidth / 2
-                color: root.look === "transcribing" ? Commons.Color.accent : Commons.Color.popups.text
+                color: Commons.Color.accent
 
                 Behavior on height { NumberAnimation { duration: 90; easing.type: Easing.OutQuad } }
-                Behavior on color { ColorAnimation { duration: 200 } }
               }
             }
-          }
-
-          // How long it has listened, held or hands-free: the pill keeps one
-          // width from the press on, and a hold shows its time as a tap does.
-          Text {
-            visible: root.look === "listening"
-            width: Math.ceil(clockMetrics.advanceWidth)
-            anchors.verticalCenter: parent.verticalCenter
-            textFormat: Text.PlainText
-            text: Model.clock(root.elapsed)
-            font: clockMetrics.font
-            color: Util.alpha(Commons.Color.popups.text, 0.6)
           }
 
           // Square, the pill at its smallest.
