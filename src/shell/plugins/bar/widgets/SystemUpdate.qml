@@ -45,6 +45,17 @@ BarWidget {
       waitForEnd: true
       onStreamFinished: root.heard(String(text).trim())
     }
+    // No answer: offline, as a session often still is when its bar starts.
+    // Asked again in a few minutes, not at the next of the six-hourly checks.
+    onExited: function(exitCode) {
+      if (exitCode !== 0) again.restart()
+    }
+  }
+
+  Timer {
+    id: again
+    interval: 5 * 60 * 1000
+    onTriggered: root.refresh()
   }
 
   Timer {

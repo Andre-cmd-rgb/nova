@@ -116,8 +116,14 @@ Item {
     atomicWrites: true
     printErrors: false
     onLoaded: store.read(text())
-    // No file yet: an empty calendar, written at its first edit.
-    onLoadFailed: if (!store.loaded) store.read("")
+    // No file yet: an empty calendar, written at its first edit. A file that
+    // is there and cannot be read (its permissions, another program writing
+    // it) is no empty calendar: taken for one, the first edit would write
+    // over everything in it. The calendar stays unread, and takes no edits,
+    // until the file reads.
+    onLoadFailed: function(error) {
+      if (!store.loaded && error === FileViewError.FileNotFound) store.read("")
+    }
     onFileChanged: reload()
   }
 }

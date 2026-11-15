@@ -23,6 +23,8 @@ ShellRoot {
 
     sheet.open()
     sheet.busy = true
+    sheet.cancel()
+    check(sheet.opened && sheet.busy, "a change under way is not cancelled halfway")
     sheet.finish(1, '{"ok":false,"error":"The current password is not right."}')
     check(sheet.opened && !sheet.busy && sheet.error === "The current password is not right.", "a failed change stays in the sheet")
     sheet.busy = true

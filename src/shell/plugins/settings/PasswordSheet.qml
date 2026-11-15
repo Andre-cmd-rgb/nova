@@ -28,10 +28,11 @@ SettingsSheet {
     current.forceActiveFocus()
   }
 
+  // Not while the change is being made: stopped halfway, nobody could say
+  // which password the account and its keyring have.
   function cancel() {
+    if (busy) return
     opened = false
-    busy = false
-    changeProc.running = false
     wipe()
   }
 
@@ -120,7 +121,7 @@ SettingsSheet {
   Row {
     anchors.right: parent.right
     spacing: Style.space(10)
-    Button { text: "Cancel"; bordered: true; tabStop: true; onClicked: root.cancel() }
+    Button { text: "Cancel"; bordered: true; tabStop: true; enabled: !root.busy; opacity: enabled ? 1 : 0.5; onClicked: root.cancel() }
     Button { text: "Change"; bordered: true; tabStop: true; enabled: !root.busy; opacity: enabled ? 1 : 0.5; onClicked: root.submit() }
   }
 
