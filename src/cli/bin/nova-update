@@ -656,8 +656,8 @@ notify_result() {
           "Nova $st_version is installed." "${open[@]}"
       fi
       for app in "${st_held[@]}"; do
-        nova-notification-send -g 󰚰 "$(app_name "$app") is waiting for you" \
-          "Its recipe changed; Settings shows how." "${open[@]}"
+        nova-notification-send -g 󰚰 "$(app_name "$app")'s update needs your OK" \
+          "Its recipe on the AUR changed more than its version. Settings → Updates shows the change." "${open[@]}"
       done
       ;;
     failed) nova-notification-send -u normal -g 󰚰 "The update did not finish" "${st_error^}." "${open[@]}" ;;

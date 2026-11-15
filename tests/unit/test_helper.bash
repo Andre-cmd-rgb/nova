@@ -9,10 +9,21 @@ export FIXTURES
 # tool a scratch HOME would still have it read and write the real ones.
 unset XDG_STATE_HOME XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
 
-# Every test gets its own scratch directory, removed afterwards.
+# No test reaches the desktop it runs on. A command a test forgot to stub
+# would otherwise act on it: one test's "VS Code is waiting for you" was a
+# real notification at every run of the suite. The session's bus is one that
+# is not there, and the scratch has the runtime directory, where the shell's
+# and Hyprland's sockets would be.
+export DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent/nova-test-session-bus
+unset WAYLAND_DISPLAY DISPLAY HYPRLAND_INSTANCE_SIGNATURE
+
+# Every test gets its own scratch directory, removed afterwards, with its own
+# runtime directory in it.
 setup_scratch() {
   SCRATCH=$(mktemp -d "${BATS_TMPDIR:-/tmp}/nova-test.XXXXXX")
   export SCRATCH
+  mkdir -m 700 "$SCRATCH/xdg-runtime"
+  export XDG_RUNTIME_DIR="$SCRATCH/xdg-runtime"
 }
 
 # A bare `! cmd` fails a bats test only as its last line; this fails it

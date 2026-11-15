@@ -21,6 +21,8 @@ setup() {
   stub nova-shell
   stub nova-restart-shell
   stub nova-apps-install 'echo current'
+  # What it would say goes to $CALLS, never to this computer's notifications.
+  stub nova-notification-send
   # No update is running, whatever else is: the real pgrep would find another
   # test's nova-update-apply, or this computer's own.
   stub pgrep 'exit 1'
@@ -498,7 +500,7 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field state)" = '"done"' ]
   [ "$(field held)" = '["visual-studio-code-bin"]' ]
   fails grep -q pkexec "$CALLS"
-  grep -q '^nova-notification-send .*VS Code is waiting for you' "$CALLS"
+  grep -q "^nova-notification-send .*VS Code's update needs your OK" "$CALLS"
 }
 
 @test "Settings: Nova already current, with nothing else to do, says nothing" {
