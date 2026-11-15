@@ -342,6 +342,32 @@ secure_boot() { # 0|1
   [[ $output != *nova-offline* ]]
 }
 
+@test "pacstrap_conf: a directory of hooks after pacman's own, in its options" {
+  run pacstrap_conf 2026/10/19 https://example.org/repo /tmp/hooks
+  [[ $output == *$'ParallelDownloads = 5\nHookDir = /etc/pacman.d/hooks/\nHookDir = /tmp/hooks/\n\n[nova]'* ]]
+  run pacstrap_conf 2026/10/19 https://example.org/repo
+  [[ $output != *HookDir* ]]
+}
+
+@test "install_packages: pacstrap leaves the boot images and Limine to the boot loader step" {
+  LOG=$SCRATCH/log
+  : >"$LOG"
+  package_set() { echo base; }
+  pacstrap() { # -C conf -K target package...
+    local dir
+    dir=$(sed -n 's/^HookDir = \(\/tmp\/nova-pacstrap-hooks\..*\)\/$/\1/p' "$2")
+    echo "$dir" >"$SCRATCH/hookdir"
+    for hook in 90-mkinitcpio-install.hook 80-limine-efi-deploy.hook; do
+      [ "$(readlink "$dir/$hook")" = /dev/null ] || return 1
+    done
+    echo 'installing base...'
+  }
+  install_packages linux-nova '' 2026/10/19 https://example.org/repo 2>/dev/null
+  grep -qx 'installing base...' "$LOG"
+  # The masks go with pacstrap.
+  [ ! -e "$(cat "$SCRATCH/hookdir")" ]
+}
+
 @test "packages_available: both repositories are asked for the whole set before the erase" {
   LOG=$SCRATCH/log
   pacman() { # --config conf --dbpath db --logfile /dev/null operation...

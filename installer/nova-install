@@ -432,8 +432,11 @@ offline_repo_ready() {
 
 # The pacman.conf pacstrap uses. Offline, one repository on the stick holds
 # every package; online, the same repositories the installed system will use.
-pacstrap_conf() {
-  local arch_date=$1 nova_repo=$2
+# A directory of hooks, when given, comes after pacman's own: a hook there of
+# the same name as a package's replaces it, and one linked to /dev/null masks
+# it.
+pacstrap_conf() { # arch-date nova-repo [hook-directory]
+  local arch_date=$1 nova_repo=$2 hooks=${3:-}
   cat <<EOF
 [options]
 Architecture = auto
@@ -441,6 +444,7 @@ SigLevel = Required DatabaseOptional
 LocalFileSigLevel = Optional
 ParallelDownloads = 5
 EOF
+  [[ -z $hooks ]] || printf 'HookDir = /etc/pacman.d/hooks/\nHookDir = %s/\n' "$hooks"
   if offline_repo_ready; then
     printf '\n[nova-offline]\nServer = file://%s\n' "$OFFLINE_REPO"
   else
@@ -1277,10 +1281,24 @@ packages_available() { # kernel profile arch_date nova_repo [package...]
   return "$status"
 }
 
+# Hooks of the packages' that pacstrap leaves to install_bootloader, which
+# does what they do once, with everything in place. pacstrap runs pacman from
+# the live system, which takes the new system's hooks under /usr but not its
+# /etc/pacman.d/hooks, where limine-entry-tool replaces mkinitcpio's: so in
+# pacstrap mkinitcpio's own runs, and builds a plain initramfs for each
+# kernel, and copies each vmlinuz to /boot, that nothing boots and nothing
+# updates again. Limine boots the UKIs that limine-update builds in
+# install_bootloader, from /usr/lib/modules, and the installed system's
+# kernel updates run limine-entry-tool's. Limine's own deploys Limine and
+# adds its firmware entry, which limine-install does again there.
+PACSTRAP_MASKED=(90-mkinitcpio-install.hook 80-limine-efi-deploy.hook)
+
 install_packages() { # kernel profile arch_date nova_repo [package...]
-  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf
+  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf hooks hook
   conf=$(mktemp /tmp/nova-pacstrap.XXXXXX.conf)
-  pacstrap_conf "$arch_date" "$nova_repo" >"$conf"
+  hooks=$(mktemp -d /tmp/nova-pacstrap-hooks.XXXXXX)
+  for hook in "${PACSTRAP_MASKED[@]}"; do ln -s /dev/null "$hooks/$hook"; done
+  pacstrap_conf "$arch_date" "$nova_repo" "$hooks" >"$conf"
   say "Installing packages (this is the long part)"
   mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
   info "${#packages[@]} packages, from $(offline_repo_ready && echo "the stick" || echo "the internet")"
@@ -1292,6 +1310,7 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
   printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
   NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | pacstrap_feed ||
     die "pacstrap failed; the log is in $LOG"
+  rm -rf -- "$hooks"
 }
 
 # pacstrap's output, line by line: into the log, onto the terminal (or, under
@@ -1456,9 +1475,9 @@ configure_snapper() {
   echo 'SNAPPER_CONFIGS="root"' >"$TARGET/etc/conf.d/snapper"
 }
 
-# Written before pacstrap: the kernel's own install hooks build the boot
-# entries, and they need the root and resume arguments and the Limine header
-# already in place to get them right the first time.
+# Written before pacstrap, so that everything the boot loader step reads is
+# in place however the packages' hooks go: the root and resume arguments,
+# the keyboard layout an encrypted disk is opened with, the Limine header.
 prepare_boot_config() {
   local disk=$1 kernel=$2 root partuuid offset='' luks cmdline
   root=$(partition_path "$disk" 2)
@@ -1471,8 +1490,8 @@ prepare_boot_config() {
     [[ -n $luks ]] || die "could not read the LUKS UUID of $root"
     cmdline=$(install_cmdline "/dev/mapper/$BOOT_CRYPT_NAME" "$offset" "$luks")
     encrypt_mkinitcpio_conf | install -Dm644 /dev/stdin "$TARGET/etc/mkinitcpio.conf.d/20-nova-encrypt.conf"
-    # The kernels' install hooks build the initramfs, keyboard layout
-    # included, during pacstrap: the layout has to be there first.
+    # The initramfs opens the disk on the console, in the keyboard layout
+    # picked: it has to be there before any is built.
     write_keyboard "$KEYMAP"
   else
     partuuid=$(blkid -s PARTUUID -o value "$root")
