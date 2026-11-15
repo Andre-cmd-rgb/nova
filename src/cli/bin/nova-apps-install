@@ -156,9 +156,27 @@ changed_lines() { # dir base
 hex="['\"][0-9a-f]{32,}['\"]"
 bump="^[[:space:]]*(pkgver=[A-Za-z0-9._+~]+|pkgrel=[0-9]+(\\.[0-9]+)?|([a-z0-9]+sums(_[a-z0-9_]+)?=\\()?[[:space:]]*(${hex}[[:space:]]*)+\\)?)[[:space:]]*\$"
 
-only_new_version() { # lines on stdin
-  local line
-  while IFS= read -r line; do [[ $line =~ $bump ]] || return 1; done
+# The lines inside a checksum array in the PKGBUILD at each commit given. A
+# checksum on a line of its own passes only as one of them: the same line in
+# validpgpkeys is a new signing key, and in a function a command.
+sum_lines() { # dir commit...
+  local dir=$1 commit
+  shift
+  for commit; do git -C "$dir" show "$commit:PKGBUILD" 2>/dev/null; done |
+    LC_ALL=C awk '/^[[:space:]]*[a-z0-9]+sums(_[a-z0-9_]+)?=\(/ { inside = 1 }
+      inside { print }
+      inside && /\)/ { inside = 0 }'
+}
+
+only_new_version() { # dir base, lines on stdin
+  local line sums
+  sums=$(sum_lines "$1" "$2" HEAD)
+  while IFS= read -r line; do
+    [[ $line =~ $bump ]] || return 1
+    if [[ $line =~ ^[[:space:]]*[\'\"] ]] && ! grep -qxF -- "$line" <<<"$sums"; then
+      return 1
+    fi
+  done
 }
 
 # The recipe commit the app was last built from here, for the recipe cloned
@@ -212,7 +230,7 @@ approved() { # app dir
     return 0
   fi
   lines=$(changed_lines "$dir" "$base") || return 1
-  if [[ -z $lines ]] || only_new_version <<<"$lines"; then
+  if [[ -z $lines ]] || only_new_version "$dir" "$base" <<<"$lines"; then
     return 0
   fi
 

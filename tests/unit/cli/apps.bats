@@ -188,6 +188,35 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
   [[ $output == *"google-chrome: its AUR recipe changed more than the version"* ]]
 }
 
+@test "a signing key added to validpgpkeys waits, though its line looks like a checksum" {
+  local old new
+  old=$(printf 'a%.0s' {1..40}) new=$(printf 'b%.0s' {1..40})
+  recipe google-chrome 142.0 'validpgpkeys=(' "  '$old'" ')'
+  mkdir -p "$NOVA_AUR_STATE"
+  git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD >"$NOVA_AUR_STATE/google-chrome"
+  echo "google-chrome 142.0-1" >>"$INSTALLED"
+  recipe google-chrome 143.0 'validpgpkeys=(' "  '$old'" "  '$new'" ')'
+  aur google-chrome 143.0-1 visual-studio-code-bin 1.142.0-1
+  run apps --update --noconfirm
+  [ "$status" -eq 1 ]
+  [ -z "$(built)" ]
+  [[ $output == *"google-chrome: its AUR recipe changed more than the version"* ]]
+}
+
+@test "with a signing key that stayed, a new version alone still builds unasked" {
+  local old
+  old=$(printf 'a%.0s' {1..40})
+  recipe google-chrome 142.0 'validpgpkeys=(' "  '$old'" ')'
+  mkdir -p "$NOVA_AUR_STATE"
+  git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD >"$NOVA_AUR_STATE/google-chrome"
+  echo "google-chrome 142.0-1" >>"$INSTALLED"
+  recipe google-chrome 143.0 'validpgpkeys=(' "  '$old'" ')'
+  aur google-chrome 143.0-1 visual-studio-code-bin 1.142.0-1
+  run apps --update --noconfirm
+  [ "$status" -eq 0 ]
+  [ "$(built)" = "built google-chrome" ]
+}
+
 @test "a file other than the PKGBUILD that changed waits too, a binary one as well" {
   echo "google-chrome 141.0-1" >>"$INSTALLED"
   printf '\0\1\2' >"$NOVA_AUR/google-chrome.git/blob"
