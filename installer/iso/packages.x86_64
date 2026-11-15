@@ -14,6 +14,8 @@ btrfs-progs
 dosfstools
 gum
 jq
+# the console font the screens set for the screen's size (installer/ui.bash)
+terminus-font
 # the things nova usb carries: LUKS2, then compressed archives
 cryptsetup
 zstd

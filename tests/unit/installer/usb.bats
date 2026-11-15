@@ -423,6 +423,7 @@ wizard_setup() {
   echo todo >"$NOVA_USB_HOME/todo.txt"
   stub_gum 0 custom 'item:ssh\npath:Documents\npath:todo.txt' secret-pass secret-pass
   wizard 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "${ITEMS[*]}" = "ssh files" ]
   [ "${CARRIED[*]}" = "ssh files" ]
@@ -439,8 +440,8 @@ wizard_setup() {
   grep -q 'now holds sdx1' "$SCRATCH/screens"
   grep -Eq 'SSH keys +[0-9]+ B' "$SCRATCH/screens"
   grep -Eq 'Files and folders +[0-9]+ B' "$SCRATCH/screens"
-  grep -qx ' *~/Documents' "$SCRATCH/screens"
-  grep -qx ' *~/todo.txt' "$SCRATCH/screens"
+  grep -Eqx ' *│ +~/Documents +│' "$SCRATCH/screens"
+  grep -Eqx ' *│ +~/todo.txt +│' "$SCRATCH/screens"
 }
 
 @test "wizard: the summary names the first few files, then how many more" {
@@ -449,10 +450,11 @@ wizard_setup() {
   for i in 1 2 3 4 5 6 7; do echo "$i" >"$NOVA_USB_HOME/file$i.txt"; done
   stub_gum 0 custom 'path:file1.txt\npath:file2.txt\npath:file3.txt\npath:file4.txt\npath:file5.txt\npath:file6.txt\npath:file7.txt' pass-word pass-word
   wizard 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "${CARRIED[*]}" = files ]
-  grep -qx ' *~/file5.txt' "$SCRATCH/screens"
+  grep -Eqx ' *│ +~/file5.txt +│' "$SCRATCH/screens"
   fails grep -q 'file6.txt' "$SCRATCH/screens"
-  grep -qx ' *and 2 more' "$SCRATCH/screens"
+  grep -Eqx ' *│ +and 2 more +│' "$SCRATCH/screens"
 }
 
 @test "wizard: the checklist has the SSH keys ticked, and the top of the home with sizes" {
@@ -480,6 +482,7 @@ wizard_setup() {
   # typing; Enter on the checklist again; then the path.
   stub_gum 0 custom 'path:Music\nother' '!1' 'path:Music\nother' 'Projects/app, nowhere' pass-word pass-word
   wizard 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "${CARRIED[*]}" = files ]
   [ "$(tr '\0' ' ' <"$PLAN/files.list")" = "Music Projects/app " ]
@@ -521,6 +524,7 @@ wizard_setup() {
   DRY=0
   stub_gum 0 clean sdy sdx
   wizard 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   grep -q 'That is not sdx' "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   # Esc there goes back to the question before.
@@ -550,6 +554,7 @@ wizard_setup() {
   echo hi >"$NOVA_USB_HOME/Documents/a.txt"
   stub_gum 0 portable 'item:ssh\npath:Documents'
   wizard 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$MODE" = portable ]
   [ "${CARRIED[*]}" = "ssh files" ]
@@ -565,7 +570,7 @@ wizard_setup() {
   grep -q 'Erased     sdx  64.0 GB  Extreme' "$SCRATCH/screens"
   grep -q 'Nova       installed on it, from nova.iso' "$SCRATCH/screens"
   grep -q 'Brought .* of yours, into its home' "$SCRATCH/screens"
-  grep -qx ' *~/Documents' "$SCRATCH/screens"
+  grep -Eqx ' *│ +~/Documents +│' "$SCRATCH/screens"
   grep -q 'Asked next your name and password' "$SCRATCH/screens"
   grep -q 'Nova runs as fast as the stick' "$SCRATCH/screens"
 }
@@ -612,11 +617,13 @@ wizard_setup() {
   usb_speed() { echo 480; }
   stub_gum 0 portable ''
   wizard 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   grep -q 'sdx is connected at USB 2 speed' "$SCRATCH/screens"
   usb_speed() { echo 10000; }
   MODE='' STICK=''
   stub_gum 0 portable ''
   wizard 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   fails grep -q 'USB 2 speed' "$SCRATCH/screens"
 }
 

@@ -9,6 +9,9 @@
 # up) and LOG.
 
 KBD_MODEL_MAP=${NOVA_KBD_MODEL_MAP:-/usr/share/systemd/kbd-model-map}
+# Files to remove however the script ends, for its EXIT trap: it has one of
+# its own, for the console's colours.
+CLEANUP=()
 # Unless the disk is encrypted, this password is all that stands between the
 # computer and anyone at its lock screen or its sudo.
 MIN_PASSWORD=8
@@ -95,7 +98,7 @@ EOF
 choose_keymap() { # default
   local default=$1 line keymap problem=''
   while :; do
-    screen "keyboard"
+    screen Keyboard
     [[ -z $problem ]] || ui_warn "$problem"
     line=$({
       keymap_names | awk -F'\t' -v d="$default" '$2 == d { print $1 " (" $2 ")"; found = 1 }
@@ -119,7 +122,7 @@ choose_keymap() { # default
 }
 
 step_you() {
-  screen "you"
+  screen You
   while :; do
     ui_ask ui_input "Your full name" "${FULLNAME:-$(default_answer name)}" || return 1
     valid_fullname "$REPLY" && break
@@ -141,7 +144,7 @@ step_you() {
 }
 
 step_computer() {
-  screen "this computer"
+  screen Computer
   while :; do
     ui_ask ui_input "This computer's name" "${COMPUTER:-$(default_answer host)}" nova || return 1
     REPLY=${REPLY:-nova}
@@ -273,11 +276,10 @@ install_apps() {
   # makepkg installs through sudo, and the account has no password prompt to
   # answer here, so pacman alone is allowed for the length of this step.
   install -m 440 /dev/stdin "$rule" <<<"$user ALL=(root) NOPASSWD: /usr/bin/pacman"
-  trap 'rm -f -- "$rule"' EXIT
+  CLEANUP+=("$rule")
   as_user "$user" nova-apps-install --noconfirm ||
     warn "Chrome or VS Code did not install; run nova apps install after the first login."
   rm -f -- "$rule"
-  trap - EXIT
   as_user "$user" mise install --yes ||
     warn "The mise tools did not install; run mise install after the first login."
 }

@@ -1069,7 +1069,7 @@ stage_packages() { # urls
 copy_packages() { # source destination
   local package_files=("$1"/*) file i=0 total left
   total=${#package_files[@]}
-  left=$(ui_left "$((24 + 12 + ${#total} * 2))")
+  left=$(ui_margin)
   for file in "${package_files[@]}"; do
     cp -- "$file" "$2/" || return 1
     i=$((i + 1))

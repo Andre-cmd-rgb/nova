@@ -260,7 +260,7 @@ BITLOCKER_NOTE=$'A PC with Windows and BitLocker or Device Encryption asks for i
 # nova-install-start knows trying again as it is would not help.
 not_ready() { # setting what [note...]
   local note
-  if [[ -z $ANSWERS ]]; then screen "$1"; else echo >&2; fi
+  if [[ -z $ANSWERS ]]; then screen '' "$1"; else echo >&2; fi
   ui_error "$2"
   for note in "${@:3}"; do
     echo >&2
@@ -665,13 +665,30 @@ answers_from_file() {
 # One question a screen under the wordmark, as nova usb asks its own: Esc goes
 # back a step, Ctrl+C stops with nothing changed. Each step_ function returns 1
 # for Esc; the keyboard, you and this computer are installer/setup.bash's.
+#
+# The steps show above each question (UI_TRAIL, ui_trail): the ones
+# nova-install-start went through first (NOVA_TRAIL_BEFORE: the keyboard, the
+# network), then this installer's own, and the install. A portable install
+# says so above them.
 
-screen() { # [what this step is about]
+screen() { # [the step it is in] [what it is about]
+  UI_AT=${1:-}
   if ((PORTABLE)); then
-    ui_header "Portable Nova${1:+  ·  $1}"
+    ui_header "Portable Nova, onto a USB disk${2:+  ·  $2}"
   else
-    ui_header "Install Nova${1:+  ·  $1}"
+    ui_header "${2:-}"
   fi
+}
+
+# The step of the trail each question is in.
+trail_step() { # step_ name
+  case $1 in
+    keymap) echo Keyboard ;;
+    disk | encryption) echo Disk ;;
+    you | fingerprint) echo You ;;
+    computer) echo Computer ;;
+    summary) echo Review ;;
+  esac
 }
 
 step_keymap() {
@@ -680,21 +697,66 @@ step_keymap() {
   loadkeys "$KEYMAP" >/dev/null 2>&1 || true
 }
 
+# What a disk holds, for the list of disks: each partition's label, file
+# system and size, the largest first (on a Windows disk, Windows), the ones
+# with neither label nor file system left out. With a width, as many as fit,
+# and how many more there are.
+disk_held() { # disk [width]
+  local width=${2:-0} entries=() i out='' more
+  mapfile -t entries < <(disk_contents "$1" | awk '{
+      label = ""
+      if (match($0, /"[^"]*"$/)) label = substr($0, RSTART)
+      fs = ($3 == "no") ? "" : $3
+      if (fs == "" && label == "") next
+      entry = label
+      if (fs != "") entry = entry (entry == "" ? "" : " ") fs
+      print $2 "\t" entry " " $2
+    }' | sort -t $'\t' -k1,1hr -s | cut -f2-)
+  for i in "${!entries[@]}"; do
+    more=''
+    ((i + 1 == ${#entries[@]})) || more="  ·  +$((${#entries[@]} - i - 1)) more"
+    if ((width > 0 && ${#out} + (${#out} ? 5 : 0) + ${#entries[i]} + ${#more} > width)); then
+      # The largest alone, when there is room for nothing more.
+      if [[ -n $out ]]; then
+        out+="  ·  +$((${#entries[@]} - i)) more"
+      elif ((${#entries[i]} <= width)); then
+        out=${entries[i]}
+      else
+        out="${#entries[@]} partitions"
+      fi
+      break
+    fi
+    out+="${out:+  ·  }${entries[i]}"
+  done
+  printf '%s' "$out"
+}
+
 step_disk() {
-  local disks=() options=() i path size model held label selected='' problem=''
+  local disks=() options=() names=() sizes=() models=() i path size model held label selected='' problem=''
+  local name_width=0 size_width=0 model_width=0
   mapfile -t disks < <(candidate_disks)
   ((${#disks[@]})) || die "$(no_disk)"
   for i in "${!disks[@]}"; do
     IFS=$'\t' read -r path size model _ _ <<<"${disks[i]}"
     [[ $model != - ]] || model="unknown model"
-    held=$(disk_contents "$path" | awk '{ printf "%s%s", (NR > 1 ? "  ·  " : ""), $0 }')
-    label="${path#/dev/}  $(human_size "$size")  $model${held:+  ·  $held}"
+    names[i]=${path#/dev/} sizes[i]=$(human_size "$size") models[i]=$model
+    ((${#names[i]} <= name_width)) || name_width=${#names[i]}
+    ((${#sizes[i]} <= size_width)) || size_width=${#sizes[i]}
+    ((${#model} <= model_width)) || model_width=${#model}
+  done
+  # In columns: the name, the size and the model line up, then what is on it,
+  # as much as fits beside the cursor.
+  for i in "${!disks[@]}"; do
+    printf -v label '%-*s  %*s  %-*s' "$name_width" "${names[i]}" "$size_width" "${sizes[i]}" "$model_width" "${models[i]}"
+    held=$(disk_held "${disks[i]%%$'\t'*}" $(($(ui_frame_width) - 2 - ${#label} - 5)))
+    label="$label${held:+  ·  $held}"
     label=${label//[,$'\t']/ }
+    label=${label%"${label##*[! ]}"}
     options+=("$label"$'\t'"$i")
     [[ ${disks[i]} != "$DISK_LINE" ]] || selected=$label
   done
   while :; do
-    screen "the disk"
+    screen Disk
     [[ -z $problem ]] || ui_warn "$problem"
     ui_ask ui_choose "Which disk? Everything on it will be erased." "$selected" "${options[@]}" || return 1
     path=${disks[REPLY]%%$'\t'*}
@@ -712,7 +774,7 @@ step_disk() {
 # than a yes or no, so Esc goes back to the disk.
 step_encryption() {
   local off="No" on="Yes: a passphrase at every start"
-  screen "encryption"
+  screen Disk
   ui_ask ui_choose "Encrypt the disk?" "$([[ $ENCRYPT == yes ]] && echo "$on" || echo "$off")" \
     "$off"$'\t'no "$on"$'\t'yes || return 1
   ENCRYPT=$REPLY DISK_PASSPHRASE=''
@@ -725,7 +787,7 @@ step_encryption() {
 
 # Offered when the reader is one fprintd drives. Esc is No here.
 step_fingerprint() {
-  screen "fingerprint"
+  screen You
   if ! ui_ask ui_confirm "Unlock with your fingerprint too?"; then
     FINGERPRINT='' ENROLLED_FOR=''
     return 0
@@ -771,11 +833,28 @@ summary_lines() {
   fi
 }
 
-step_summary() {
-  local disk=${DISK_LINE%%$'\t'*} lines=()
-  mapfile -t lines < <(summary_lines)
-  screen "ready"
+# The summary in its box: each line's label in grey, and the disk that is
+# erased in the warning colour, so it is the first thing read.
+summary_box() {
+  local line lines=()
+  while IFS= read -r line; do
+    if [[ $line == Erased* ]]; then
+      lines+=("$(ui_sgr "$UI_WARN")${line:0:13}$(ui_sgr "$UI_BRIGHT")${line:13}")
+    elif [[ ${line:0:13} == *[![:space:]]* ]]; then
+      lines+=("$(ui_sgr "$UI_MUTED")${line:0:13}$(ui_sgr "$UI_TEXT")${line:13}")
+    else
+      lines+=("${line:0:13}$(ui_sgr "$UI_MUTED")${line:13}")
+    fi
+  done < <(summary_lines)
   ui_box "${lines[@]}"
+}
+
+step_summary() {
+  local disk=${DISK_LINE%%$'\t'*}
+  screen Review
+  summary_box
+  echo >&2
+  ui_note "Nothing has been changed yet."
   echo >&2
   while :; do
     ui_ask ui_input "Type erase to wipe ${disk#/dev/} and $( ((PORTABLE)) && echo "put Nova on it" || echo install), or Esc to go back" || return 1
@@ -788,14 +867,20 @@ step_summary() {
 # nova-install-start has not asked it already, and the disk only when nova usb
 # has not picked it (--portable <disk>).
 questions_on_screen() { # fingerprint(yes|no): whether to offer enrolling one
-  local steps=() i=0
+  local steps=() i=0 name trail=" ${NOVA_TRAIL_BEFORE:-} "
   KEYMAP=${NOVA_KEYMAP:-}
   steps=()
   valid_keymap "$KEYMAP" || steps+=(keymap)
   [[ -n $PORTABLE_DISK ]] || steps+=(disk)
-  steps+=(encryption you computer)
+  steps+=(encryption you)
   [[ $1 != yes ]] || steps+=(fingerprint)
-  steps+=(summary)
+  steps+=(computer summary)
+  for name in "${steps[@]}" install; do
+    name=$(trail_step "$name")
+    name=${name:-Install}
+    [[ $trail == *" $name "* ]] || trail+="$name "
+  done
+  read -r UI_TRAIL <<<"$trail"
   while ((i < ${#steps[@]})); do
     [[ -z $ENROLLED_FOR || $ENROLLED_FOR == "$ACCOUNT" ]] || FINGERPRINT='' ENROLLED_FOR=''
     if "step_${steps[i]}"; then
@@ -1205,7 +1290,7 @@ carry_unlock() {
   if [[ -n $ANSWERS ]]; then
     say "Your things are on this stick, encrypted"
   else
-    screen "your things"
+    screen Network "Your things"
     ui_note "What nova usb brought from your other computer is on this stick, encrypted."
     echo >&2
   fi
@@ -1302,6 +1387,20 @@ stopped() { # line command
   ui_error "nova-install: the install stopped at line $1 ($2)${STEP:+, in the step $STEP}. The log is in $LOG."
 }
 
+# What is left to undo whenever this ends: files to remove (CLEANUP, from
+# installer/setup.bash) and, on the console, its colours to give back.
+leave() {
+  ((!${#CLEANUP[@]})) || rm -f -- "${CLEANUP[@]}"
+  ui_console_end
+}
+
+# The screens on the console are in Nova's colours and a font for the screen
+# (ui_console_begin), unless nova-install-start has set them already.
+console_screens() {
+  ui_console_begin
+  trap leave EXIT
+}
+
 main() {
   case ${1:-} in
     -h | --help)
@@ -1314,12 +1413,14 @@ main() {
       ;;
     --unlock)
       ((EUID == 0)) || die "run me as root."
+      console_screens
       rm -f -- "$CARRY_DECLINED"
       carry_unlock || true
       return 0
       ;;
     --keymap)
       local status=0
+      console_screens
       choose_keymap "${2:-us}" || status=$?
       if ((status == 130)); then
         echo >&2
@@ -1346,6 +1447,8 @@ main() {
     *) die "unknown argument: $1 (try --help)" ;;
   esac
   ((EUID == 0)) || die "run me as root."
+  trap leave EXIT
+  [[ -n $ANSWERS ]] || console_screens
   computer_ready
   [[ -r $RELEASE_FILE ]] || die "no release file at $RELEASE_FILE"
   # A try after a stopped one keeps the stopped one's log beside it.
@@ -1400,7 +1503,7 @@ main() {
     [[ $(answer erase) == yes ]] || die "the answers file does not say erase=yes; nothing was changed."
   else
     questions_on_screen "$offer_fingerprint"
-    screen "installing"
+    screen Install
     if ((PORTABLE)); then
       info "Nova ${tag#v} onto ${DISK_LINE%%$'\t'*}, to carry around"
     else

@@ -331,7 +331,8 @@ The rest is in the release's folder of the `nova-packages` bucket on Cloudflare 
 | 1, `NOVA` | a FAT EFI partition holding the ISO's files, which archiso boots from as they are (it finds itself by a `/boot/<uuid>.uuid` file, not by the disk). With packages on the stick, `nova/repo/` holds every package any install can need (`packages.txt`, from `nova-install --list-packages`) and their signatures, as the `[nova-offline]` repository |
 | 2, `NOVA-DATA` | only when something is carried (the SSH keys, and the files and folders picked from the home): LUKS2, btrfs, and `carry/` with one `tar.zst` per item, `SHA256SUMS` and `manifest.json`. `nova-install --unlock` opens it before the questions; the install puts each item back into the new home once the account exists |
 
-- **One question per screen:** `nova usb` and the stick's installer ask with gum, under the wordmark. `installer/ui.bash` holds the prompts both use, and the glyphs stay within the Linux console's font.
+- **One question per screen:** `nova usb` and the stick's installer ask with gum, under the wordmark, in a column down the middle. `installer/ui.bash` holds the prompts both use, in the terminal's sixteen colours named by what they mean, and the glyphs stay within the console fonts' code page 437 set.
+- **The stick's console:** on a Linux console, and only there, the installer sets Nova's sixteen colours (`ESC ] P`) and a Terminus font sized to the screen, and gives the kernel's colours back as it leaves (`ESC ] R`). A terminal's colours are its owner's.
 - **One file:** the released `nova-usb` is one file, so `tools/inline-ui` writes `ui.bash` and the wordmark into it.
 - **memtest86+** is in a stick's boot menu.
 - **One root step:** everything that writes a disk runs in one root step (`nova-usb write`), which checks the device again before touching it. `tests/usb/stick-test` runs it against a loop device in CI.

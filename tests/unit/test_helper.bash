@@ -86,5 +86,8 @@ GUM
   export GUM_REPLIES="$SCRATCH/gum-replies" GUM_LOG="$SCRATCH/gum-log" PATH="$SCRATCH/gum-bin:$PATH"
 }
 
+# The screens a test saved, without their colours, to grep as they read.
+uncolour() { sed -i $'s/\e\\[[0-9;]*m//g' "$@"; }
+
 # The replies stub_gum has not given yet.
 gum_replies_left() { wc -l <"$GUM_REPLIES"; }

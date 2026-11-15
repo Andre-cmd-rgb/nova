@@ -574,6 +574,8 @@ answers() { # key=value...
 }
 
 # A live system with one disk, a few layouts and zones, and no carried things.
+plain() { sed $'s/\e\\[[0-9;]*m//g'; }
+
 questions_setup() {
   export NOVA_CARRY="$SCRATCH/carry"
   CARRY=$NOVA_CARRY
@@ -663,6 +665,7 @@ questions_setup() {
   NOVA_KEYMAP=es
   stub_gum 0 no "Ada Lovelace" "" short short s3cret-pass s3cret-pass "" Europe/Rome erase
   questions_on_screen no 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$PASSWORD" = s3cret-pass ]
   grep -q 'At least 8 characters.' "$SCRATCH/screens"
@@ -673,6 +676,7 @@ questions_setup() {
   NOVA_KEYMAP=es
   stub_gum 0 no "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome nope erase
   questions_on_screen no 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$KEYMAP" = es ]
   [ "${DISK_LINE%%$'\t'*}" = /dev/vda ]
@@ -680,7 +684,7 @@ questions_setup() {
   [ "$PASSWORD" = s3cret-pass ]
   [ "$COMPUTER" = nova ]
   [ "$TIMEZONE" = Europe/Rome ]
-  grep -q -- 'vda  85.9 GB  Disk  ·  vda1  80G  ext4  "old"' "$GUM_LOG"
+  grep -q -- 'vda  85.9 GB  Disk  ·  "old" ext4 80G' "$GUM_LOG"
   grep -q 'Erased       vda  85.9 GB  Disk' "$SCRATCH/screens"
   grep -q 'Account      ada (Ada Lovelace) on nova' "$SCRATCH/screens"
   grep -q 'Encryption   off: anyone with the disk can read it' "$SCRATCH/screens"
@@ -693,6 +697,7 @@ questions_setup() {
   NOVA_KEYMAP=es
   stub_gum 0 yes short short disk-secret disk-secret "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome erase
   questions_on_screen no 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$ENCRYPT" = yes ]
   [ "$DISK_PASSPHRASE" = disk-secret ]
@@ -732,6 +737,55 @@ questions_setup() {
   stub_gum "German (de)" '!1' '!1'
   run questions_on_screen no
   [ "$(sed -n 2p "$GUM_LOG" | cut -d' ' -f1)" = choose ]
+}
+
+@test "screens: the steps above each question, after nova-install-start's, the current one marked" {
+  questions_setup
+  NOVA_KEYMAP=es NOVA_TRAIL_BEFORE="Keyboard Network"
+  stub_gum 0 no '!130'
+  run questions_on_screen yes
+  [ "$status" -eq 130 ]
+  # The fingerprint is a question of You's, and the summary is Review.
+  [ "$(plain <<<"$output" | grep -m 1 Keyboard | sed 's/^ *//')" = "√ Keyboard   √ Network   » Disk   · You   · Computer   · Review   · Install" ]
+  # Without nova-install-start, the keyboard is a step of this one's.
+  NOVA_KEYMAP='' NOVA_TRAIL_BEFORE=''
+  loadkeys() { :; }
+  stub_gum '!130'
+  run questions_on_screen no
+  [ "$(plain <<<"$output" | grep -m 1 Keyboard | sed 's/^ *//')" = "» Keyboard   · Disk   · You   · Computer   · Review   · Install" ]
+}
+
+@test "disk list: the size and model in columns, then what is on it, the largest first, as much as fits" {
+  questions_setup
+  lsblk_disks() {
+    disks_json <<<"nvme0n1 $((953 * GiB)) false false nvme WD_BLACK
+sda $((477 * GiB)) false false sata Samsung"
+  }
+  disk_contents() {
+    case $1 in
+      /dev/nvme0n1) printf '%s\n' 'nvme0n1p1  260M  vfat  "SYSTEM"' 'nvme0n1p2  16M  no file system' 'nvme0n1p3  952.6G  ntfs  "Windows"' ;;
+      /dev/sda) echo 'sda1  476.9G  ext4' ;;
+    esac
+  }
+  [ "$(disk_held /dev/nvme0n1)" = '"Windows" ntfs 952.6G  ·  "SYSTEM" vfat 260M' ]
+  [ "$(disk_held /dev/nvme0n1 40)" = '"Windows" ntfs 952.6G  ·  +1 more' ]
+  [ "$(disk_held /dev/nvme0n1 25)" = '"Windows" ntfs 952.6G' ]
+  [ "$(disk_held /dev/nvme0n1 10)" = '2 partitions' ]
+  [ "$(disk_held /dev/sda)" = 'ext4 476.9G' ]
+  stub_gum 1
+  COLUMNS=100 step_disk 2>/dev/null
+  [ "${DISK_LINE%%$'\t'*}" = /dev/sda ]
+  grep -q -- 'nvme0n1    1.0 TB  WD_BLACK  ·  "Windows" ntfs 952.6G  ·  "SYSTEM" vfat 260M' "$GUM_LOG"
+  grep -q -- 'sda      512.2 GB  Samsung   ·  ext4 476.9G' "$GUM_LOG"
+}
+
+@test "summary: the disk that is erased in the warning colour, the labels in grey" {
+  questions_setup
+  DISK_LINE=$(candidate_disks) ENCRYPT=no ACCOUNT=ada FULLNAME=Ada COMPUTER=nova TIMEZONE=UTC KEYMAP=us
+  summary_box 2>"$SCRATCH/box"
+  grep -q $'\e\\[33mErased       \e\\[97mvda  85.9 GB  Disk' "$SCRATCH/box"
+  grep -q $'\e\\[90mKernel       \e\\[37mlinux-nova' "$SCRATCH/box"
+  grep -q $'             \e\\[90mnow holds vda1' "$SCRATCH/box"
 }
 
 @test "the keyboard layout: by name, the default on top, or typed in" {
@@ -791,6 +845,7 @@ questions_setup() {
   # (its name as offered), the zone, erase.
   stub_gum yes disk-pass1 disk-pass1 "Ada Lovelace" "" s3cret-pass s3cret-pass nova-usb Europe/Rome erase
   questions_on_screen no 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
   [ "$(gum_replies_left)" = 0 ]
   [ "$ENCRYPT" = yes ]
   [ "$DISK_PASSPHRASE" = disk-pass1 ]

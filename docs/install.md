@@ -57,18 +57,18 @@ On any other system, write the ISO as it is with `dd` or any USB writer. That st
 
 ## The questions
 
-The installer asks everything first, one question a screen, and touches no disk until you type `erase`. Esc goes back one question.
+The installer asks everything first, one question a screen, and touches no disk until you type `erase`. Esc goes back one question; Ctrl+C stops, with nothing changed. Across the top of each screen are the steps: the ones done ticked (√), this one marked (»), the ones to come dotted (·). On the stick's own console the screens are in Nova's colours, in a font sized to the screen, so the text is the same size on a 1080p and a 4K panel.
 
 1. **Keyboard layout.** A stick made by `nova-usb` offers the layout of the computer it was made on.
 2. **The passphrase of what the stick carries**, when it carries something. Enter installs without it.
 3. **Wi-Fi**, when there is no cable: pick a network and type its password, name a hidden one, or go on without a network (only a stick with every package installs without one).
 4. **Where Nova goes**, only when a USB disk of 32 GB or more is plugged in beside the stick: this computer's disk, or that USB disk ([portable](#a-portable-nova)).
-5. **The disk.** Everything on it is erased. Each disk is listed with what it holds now.
+5. **The disk.** Everything on it is erased. Each disk is listed with its size and model, and what it holds now: each partition's label, file system and size, the largest first.
 6. **Encryption**: no, or yes with a passphrase at every start ([below](#encryption)).
 7. **You**: your full name, a username (suggested from the name), and a password of 8 characters or more, for the lock screen and sudo.
-8. **This computer**: its name (`nova` unless you type another; `nova-usb` for a portable Nova) and its time zone (type a city).
-9. **A fingerprint**, when there is a reader Nova can drive: the right index finger, enrolled there and then. Settings → Lock Screen sets it up later too.
-10. **A summary** of what happens to which disk. Type `erase` to install.
+8. **A fingerprint**, when there is a reader Nova can drive: the right index finger, enrolled there and then. Settings → Lock Screen sets it up later too.
+9. **This computer**: its name (`nova` unless you type another; `nova-usb` for a portable Nova) and its time zone (type a city).
+10. **A summary** of what happens to which disk, the disk that is erased on top. Type `erase` to install.
 
 When it is done, take the stick out and restart. The computer starts into the lock screen.
 

@@ -41,7 +41,16 @@ wait_online() { # seconds
   return 1
 }
 
-screen() { ui_header "Install Nova${1:+  ·  $1}"; }
+# The steps of an install, as every screen shows them: this program's own
+# two first (nova-install shows the rest, and is told these are done), then
+# nova-install's, as they usually are.
+export UI_TRAIL="Keyboard Network Disk You Computer Review Install"
+export NOVA_TRAIL_BEFORE="Keyboard Network"
+
+screen() { # [the step it is in]
+  UI_AT=${1:-}
+  ui_header
+}
 
 # The networks iwd found, one "name<TAB>security" line each, as iwctl lists
 # them (strongest first). Only the ones a password or nothing joins: a network
@@ -65,7 +74,7 @@ connect_wifi() { # device
   local dev=$1 networks=() options=() i ssid security verb hidden problem=''
   rfkill unblock wlan 2>/dev/null
   while :; do
-    screen "network"
+    screen Network
     ui_note "Looking for Wi-Fi networks..."
     iwctl station "$dev" scan >/dev/null 2>&1
     sleep 3
@@ -78,7 +87,7 @@ connect_wifi() { # device
       options+=("$ssid"$'\t'"$i")
     done
     options+=("A hidden network"$'\t'hidden "Look again"$'\t'again "Without a network"$'\t'none)
-    screen "network"
+    screen Network
     [[ -z $problem ]] || ui_warn "$problem"
     ui_ask ui_choose "Which Wi-Fi network?" "" "${options[@]}" || return 1
     verb=connect hidden=''
@@ -112,7 +121,7 @@ connect_wifi() { # device
 
 get_online() {
   local dev
-  screen "network"
+  screen Network
   ui_note "Checking the network..."
   wait_online 8 && return 0
   dev=$(wifi_device)
@@ -131,7 +140,7 @@ WHERE=install
 where_nova_goes() {
   WHERE=install
   [[ -n $(nova-install --portable-disks 2>/dev/null) ]] || return 0
-  screen
+  screen Disk
   ui_ask ui_choose "Where does Nova go?" "" \
     "On this computer's disk"$'\t'install \
     "On the USB disk beside this stick, to start any PC from"$'\t'portable || return 1
@@ -179,6 +188,11 @@ main() {
     exit 0
   fi
 
+  # The console in Nova's colours and a font for the screen's size, for this
+  # and every screen nova-install shows; its own colours back at the end.
+  ui_console_begin
+  trap ui_console_end EXIT
+
   # The keyboard first: the passphrase and the Wi-Fi password below are typed
   # on it. nova usb leaves the layout of the computer it ran on as the default.
   keymap_default=$(cat "$STICK/nova/keymap" 2>/dev/null) || keymap_default=us
@@ -195,7 +209,7 @@ main() {
   nova-install --unlock || (($? != 130)) || exit 130
 
   if ! get_online; then
-    screen
+    screen Network
     if ! offline_repo; then
       ui_note $'Nova installs over the network, so it needs a connection first.\nConnect by hand with iwctl, then run nova-install-start again.'
       exit 0
