@@ -308,7 +308,7 @@ Panel {
           PanelHeader {
             glyph: Model.screensIcon(display.outputs.length)
             title: "Display"
-            note: display.lit ? Model.mood(display.shownLevel) : "Fixed brightness"
+            note: display.lit ? Model.note(display.shownLevel) : "Fixed brightness"
             ink: display.bar.foreground
             family: display.bar.fontFamily
           }

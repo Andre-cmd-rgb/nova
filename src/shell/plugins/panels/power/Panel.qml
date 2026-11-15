@@ -323,35 +323,13 @@ Panel {
     Behavior on color { ColorAnimation { duration: 200 } }
   }
 
-  // The line under "Battery". While the current flows its phrase turns every
-  // 2.8 s the panel is open, fading out and back in.
+  // The line under "Battery": charging, on battery, full.
   component Saying: Text {
-    id: saying
-    property int turn: 0
-    readonly property bool turning: Model.phrases(power.flow).length > 0
-
     textFormat: Text.PlainText
-    text: Model.line(power.flow, turn).toUpperCase()
+    text: Model.line(power.flow).toUpperCase()
     color: Qt.darker(power.bar.foreground, 1.4)
     font { family: power.bar.fontFamily; pixelSize: Style.font.caption; bold: true; letterSpacing: 1.2 }
     elide: Text.ElideRight
-
-    // Out of turning halfway through a fade, the line shows whole at once:
-    // "Fully charged" is not left dimmed.
-    onTurningChanged: {
-      if (turning) return
-      swap.stop()
-      opacity = 1
-    }
-
-    Timer { interval: 2800; running: power.opened && saying.turning; repeat: true; onTriggered: swap.restart() }
-
-    SequentialAnimation {
-      id: swap
-      PropertyAnimation { target: saying; property: "opacity"; to: 0.0; duration: 180; easing.type: Easing.OutQuad }
-      ScriptAction { script: saying.turn += 1 }
-      PropertyAnimation { target: saying; property: "opacity"; to: 1.0; duration: 260; easing.type: Easing.InQuad }
-    }
   }
 
   // A figure under the charge bar, a column wide: its name, dimmed, at the

@@ -330,35 +330,12 @@ Panel {
     }
   }
 
-  // ---- the phrase ---------------------------------------------------------
+  // ---- the note ----------------------------------------------------------
 
-  // Under the title, while the panel is open and Bluetooth is on, a word
-  // for the radio that changes every few seconds, faded out and in.
-  readonly property var phrases: ["Untangling wires", "Streaming vikings", "Pairing mysteries", "Herding headsets",
-    "Taming radios", "Summoning speakers", "Wrangling codecs", "Polishing packets"]
-  property int phraseAt: 0
-  readonly property string heroLine: !reachable ? "No adapter" : !live ? "Turned Off" : phrases[phraseAt % phrases.length]
-
-  // Turned off mid-fade, the line shows whole at once.
-  onLiveChanged: {
-    if (live) return
-    fade.stop()
-    head.noteOpacity = 1.0
-  }
-
-  Timer {
-    interval: 2800
-    repeat: true
-    running: bluetooth.opened && bluetooth.live
-    onTriggered: fade.restart()
-  }
-
-  SequentialAnimation {
-    id: fade
-    PropertyAnimation { target: head; property: "noteOpacity"; to: 0.0; duration: 180; easing.type: Easing.OutQuad }
-    ScriptAction { script: bluetooth.phraseAt = (bluetooth.phraseAt + 1) % bluetooth.phrases.length }
-    PropertyAnimation { target: head; property: "noteOpacity"; to: 1.0; duration: 260; easing.type: Easing.InQuad }
-  }
+  // Under the title: whether the radio is on, and how many devices are
+  // connected (they are listed just below).
+  readonly property string heroLine: !reachable ? "No adapter" : !live ? "Turned Off"
+    : connectedList.length > 0 ? connectedList.length + " connected" : "On"
 
   // ---- the bar ------------------------------------------------------------
 

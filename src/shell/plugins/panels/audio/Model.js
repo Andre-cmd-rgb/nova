@@ -121,15 +121,11 @@ function speakerIcon(sink, muted, volume) {
   return ""
 }
 
-// The volume in words, a band wide enough that a nudge keeps the word.
-var moods = [[100, "Concert hall"], [85, "Party mode"], [70, "Cranked up"], [50, "Steady groove"],
-  [30, "Easy listening"], [15, "Murmur"]]
-
-function mood(volume, muted) {
-  const percent = Math.round(volume * 100)
-  if (muted || percent === 0) return muted ? "Muted" : "Silenced"
-  const band = moods.find(([floor]) => percent >= floor)
-  return band ? band[1] : "Whisper"
+// The line under "Audio": muted, or the output it plays through (its
+// volume is just below, by the slider).
+function note(sink, muted) {
+  if (!sink) return "No output"
+  return muted ? "Muted" : deviceName(sink)
 }
 
 // ---------------------------------------------------------------- streams

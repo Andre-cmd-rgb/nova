@@ -394,7 +394,7 @@ Panel {
             glyph: sound.speakerGlyph
             dimmed: speaker.muted
             title: "Audio"
-            note: Model.mood(sound.outputLevel, speaker.muted)
+            note: Model.note(sound.defaultSink, speaker.muted)
             ink: sound.ink
             family: sound.typeface
 

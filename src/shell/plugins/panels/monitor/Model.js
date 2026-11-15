@@ -107,15 +107,9 @@ function nearestIndex(list, offOf, none) {
   }, { index: none, off: Infinity }).index
 }
 
-// A brightness in words, a band of ten to twenty points each, so a small
-// nudge keeps the word and a real change finds a new one.
-var moods = [[95, "Sun blast"], [80, "Solar flare"], [65, "Golden hour"], [45, "Even day"],
-  [30, "Soft glow"], [20, "Lamp light"], [10, "Candlelit"]]
-
-function mood(value) {
-  const percent = Math.round(value)
-  const band = moods.find(([floor]) => percent >= floor)
-  return band ? band[1] : "Night owl"
+// The line under "Display": the brightness, from 0 to 100.
+function note(value) {
+  return "Brightness " + Math.max(0, Math.min(100, Math.round(value))) + "%"
 }
 
 // The index of the stop in <stops> nearest <px>, the first on a tie; the

@@ -14,13 +14,7 @@ var TENTHS = {
 
 // While the current flows the line under "Battery" is a phrase, turned
 // every few seconds, from one set each way; else the state in a word or two.
-var PHRASES = {
-  charging: ["Pumping power", "Injecting electrons", "Pouring juice", "Amassing watts",
-    "Hoarding joules", "Sucking volts", "Topping reserves", "Soaking amps", "Inhaling kilowatts"],
-  spending: ["Slurping power", "Spending joules", "Draining watts", "Burning electrons",
-    "Sipping juice", "Spending coulombs", "Bleeding amps", "Guzzling volts", "Munching reserves"]
-}
-var STATES = { held: "Threshold", full: "Fully charged", topped: "Fully charged" }
+var STATES = { charging: "Charging", spending: "On battery", held: "At charge limit", full: "Fully charged", topped: "Fully charged" }
 
 // The charge from 0 to 1, or 0 with no battery.
 function level(device) {
@@ -62,14 +56,9 @@ function icon(flow, charge) {
   return TENTHS[flow === "held" || flow === "spending" ? "bare" : "bolt"][tenth]
 }
 
-function phrases(flow) {
-  return PHRASES[flow] || []
-}
-
-// The line under "Battery", <turn> phrases on.
-function line(flow, turn) {
-  var set = phrases(flow)
-  return set.length > 0 ? set[turn % set.length] : STATES[flow] || ""
+// The line under "Battery".
+function line(flow) {
+  return STATES[flow] || ""
 }
 
 // The figures under the charge bar, in reading order, each [name, value]
