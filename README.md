@@ -12,6 +12,7 @@ Nova is an Arch Linux desktop for x86-64 laptops and desktop PCs. It is Hyprland
 - **Settings** for Wi-Fi, Bluetooth, sound, displays, the battery, performance, the look, the bar, the lock screen and updates.
 - **A calendar** of events and tasks, kept in one file on your computer.
 - **Dictation**: hold Super+D and speak. It runs on your computer, and the speech model, 669 MB, is downloaded once, at the first use.
+- **AirDrop**: an iPhone sends photos and files to the computer, with nothing to install on it. The Wi-Fi is off the network for the seconds that takes.
 - **A release every two weeks**, tested before you get it, with a snapshot before each update to go back to.
 - **An installer stick** that can carry your files over, install without internet, or hold a whole Nova to start any PC from.
 

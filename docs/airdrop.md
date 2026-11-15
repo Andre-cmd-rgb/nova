@@ -4,7 +4,7 @@ Nova receives what an iPhone sends with AirDrop: photos, videos, files, links. I
 
 - **Receiving only, so far.** Sending from Nova to an iPhone is not there yet.
 - **While AirDrop is on, the Wi-Fi is off the network** ([why](#why-the-wi-fi-goes)). It ends by itself and the Wi-Fi reconnects.
-- **It needs a Wi-Fi card that can do two things** ([which](#which-cards)). It was built and measured on the Intel AX210.
+- **It needs a Wi-Fi card that can do two things** ([which](#which-cards)). It was built and measured on the Intel AX210, with an iPhone 15 Pro.
 
 ## Using it
 
@@ -17,7 +17,9 @@ What arrives goes to your downloads folder. Nothing there is ever replaced: a se
 
 **It ends by itself:** a moment after a transfer, whichever way it went, or after two minutes in which nobody offered anything. Stop on the card, the menu's row again, or `nova airdrop off` ends it sooner. The Wi-Fi is connected again four or five seconds later.
 
-If the computer does not appear on the iPhone, set the iPhone's own AirDrop to Everyone for 10 Minutes (Settings → General → AirDrop) and open the share sheet again: that is how it was tested.
+The iPhone's own AirDrop setting (Contacts Only, Everyone) is about what the iPhone receives. It sends to the computer either way.
+
+**Measured** on the ThinkPad P1 Gen 4i with an iPhone 15 Pro: the computer is in the iPhone's list 1.2 s after AirDrop is switched on, a 1.0 MB photo arrives in 2.3 s, and the Wi-Fi is connected again 4 s after AirDrop ends. The speed is the iPhone's timetable: it is on the computer's channel in five of its sixteen slots while it sends, and in one while it only looks.
 
 ### The command
 
