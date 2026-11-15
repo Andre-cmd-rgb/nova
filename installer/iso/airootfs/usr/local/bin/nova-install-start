@@ -41,6 +41,17 @@ wait_online() { # seconds
   return 1
 }
 
+# Some network interface has a link: a cable plugged in and up, or Wi-Fi
+# joined. Without one no address can come, however long it is waited for.
+NET_DIR=${NOVA_NET_DIR:-/sys/class/net}
+has_link() {
+  local dev
+  for dev in "$NET_DIR"/*; do
+    [[ ${dev##*/} != lo && $(cat -- "$dev/carrier" 2>/dev/null) == 1 ]] && return 0
+  done
+  return 1
+}
+
 # The steps of an install, as every screen shows them: this program's own
 # two first (nova-install shows the rest, and is told these are done), then
 # nova-install's, as they usually are.
@@ -119,11 +130,20 @@ connect_wifi() { # device
   done
 }
 
+# Online by cable already, or else Wi-Fi. A computer with no link at all
+# (most laptops, the ThinkPad P1 among them, have no Ethernet port) goes
+# straight to the networks, not after eight seconds of asking for an address
+# that cannot come; a cable's link, which comes up a second or two after its
+# driver, has three to show.
 get_online() {
-  local dev
+  local dev i
   screen Network
   ui_note "Checking the network..."
-  wait_online 8 && return 0
+  for ((i = 0; i < 3; i++)); do
+    has_link && break
+    sleep 1
+  done
+  if has_link; then wait_online 8 && return 0; fi
   dev=$(wifi_device)
   if [[ -n $dev ]]; then
     connect_wifi "$dev"

@@ -166,3 +166,27 @@ $'      eduroam                           8021x               **\n'
   run_install 2>/dev/null
   [ "$(tail -n 1 "$SCRATCH/ran")" = "systemctl reboot" ]
 }
+
+@test "get_online: with no link, straight to Wi-Fi; with one, the address is waited for" {
+  export NOVA_NET_DIR=$SCRATCH/net
+  NET_DIR=$NOVA_NET_DIR
+  mkdir -p "$NET_DIR/lo" "$NET_DIR/enp1s0" "$NET_DIR/wlan0"
+  echo 1 >"$NET_DIR/lo/carrier"
+  echo 0 >"$NET_DIR/enp1s0/carrier"
+  # A link that is down has no carrier to read.
+  screen() { :; }
+  ui_note() { :; }
+  wifi_device() { echo wlan0; }
+  connect_wifi() { echo "wifi $1"; }
+  wait_online() { echo "waited $1"; return 1; }
+  run get_online
+  [ "$output" = "wifi wlan0" ]
+  echo 1 >"$NET_DIR/enp1s0/carrier"
+  run get_online
+  [ "${lines[0]}" = "waited 8" ]
+  [ "${lines[1]}" = "wifi wlan0" ]
+  wait_online() { return 0; }
+  run get_online
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
