@@ -180,13 +180,13 @@ add_modem() { # a modem on mhi-pci-generic, its power/control set to $1
   fails grep -q 'action = "off"' "$CALLS"
 }
 
-@test "lid open: the panel comes back, with a reminder while still on" {
+@test "lid open: the panel comes back, and nothing is said" {
   main open
   fails grep -q nova-notification-send "$CALLS"
   main on >/dev/null
   main open
   grep -q 'action = "on", monitor = "eDP-1"' "$CALLS"
-  grep -q "nova-notification-send -g 󰅶 -u low Caffeine is still on" "$CALLS"
+  fails grep -q nova-notification-send "$CALLS"
 }
 
 @test "reconcile: a switch whose lid lock did not survive a restart is undone" {

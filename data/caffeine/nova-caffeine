@@ -196,14 +196,11 @@ on_close() {
   dpms off
 }
 
-# Hyprland's switch:off:Lid Switch.
+# Hyprland's switch:off:Lid Switch. Nothing is said: Caffeine is on because
+# it was meant to be, and the bar shows it.
 on_open() {
   dpms on
   nova-hyprland-monitor-clamshell || true
-  if armed; then
-    nova-notification-send -g 󰅶 -u low "Caffeine is still on" \
-      "Closing the lid will not sleep or lock. Turn it off in the bar, or: nova caffeine off" >/dev/null 2>&1 || true
-  fi
 }
 
 toggle() { if armed; then release; else arm; fi; }
