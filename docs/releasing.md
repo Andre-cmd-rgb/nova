@@ -147,7 +147,7 @@ gh workflow run promote.yml --ref <tag> -f candidate=<tag>
 ```
 
 - It tags the same commit with the final version (`v1.1.0-rc.2` becomes `v1.1.0`), builds it again on the candidate's own Arch snapshot, and publishes it as the latest release. Systems pick it up at their next update check.
-- Only `nova` is really built again, for its version: the other packages are the candidate's own builds, kept by GitHub for a week after the candidate's run (after that, they are built again too, from the same sources).
+- Only `nova` is really built again, for its version: the other packages are the candidate's own builds, which GitHub keeps for a week after they were last read (after that, they are built again too, from the same sources). The kernel's are kept longer: `kernel-cache.yml` reads them every three days.
 - A promote that failed after tagging runs again with the same input: it takes the final tag as it is, on the candidate's commit.
 - Only the newest published candidate of a version can be promoted: testers on a later one have a later Arch snapshot, which `nova update` never moves back from.
 - It runs from its tag because promote reads `release.yml` from where it runs, and every tool from the candidate's commit; from `main` it refuses once the workflows there have changed.
