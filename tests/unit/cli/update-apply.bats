@@ -341,6 +341,27 @@ STUB
   [ ! -e "$SCRATCH/calls" ]
 }
 
+@test "a copy of the pins that cannot be made stops the update before they change" {
+  put "$MIRRORLIST" 'old mirror'
+  put "$REPOFILE" 'old repo'
+  mkdir -p "$SCRATCH/bin"
+  cat >"$SCRATCH/bin/cp" <<'STUB'
+#!/bin/bash
+if [[ ${*: -1} == *.nova-prev.tmp ]]; then
+  echo 'cp: No space left on device' >&2
+  exit 1
+fi
+exec /usr/bin/cp "$@"
+STUB
+  chmod +x "$SCRATCH/bin/cp"
+  run whole_update
+  [ "$status" -ne 0 ]
+  [[ $output == *"No space left on device"* ]]
+  [ "$(cat "$MIRRORLIST")" = 'old mirror' ]
+  [ "$(cat "$REPOFILE")" = 'old repo' ]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
 @test "boot verification must finish before recovery copies are dropped" {
   put "$REPOFILE" 'old repo'
   uki "nova_linux-nova.efi" 7.2.10-arch1-1-nova
@@ -352,6 +373,31 @@ STUB
   [ "$status" -eq 0 ]
   [ ! -e "$REPOFILE.nova-prev" ]
   [ ! -e "$MIRRORLIST.nova-absent" ]
+}
+
+@test "--check-boot ends an update that only its boot entries held up, and no other" {
+  put "$REPOFILE" 'old repo'
+  uki "nova_linux-nova.efi" 7.2.10-arch1-1-nova
+  run whole_update
+  [ "$status" -eq 3 ]
+  # Not yet repaired: the copies stay.
+  run check_boot_alone 0
+  [ "$status" -eq 3 ]
+  [ "$(cat "$REPOFILE.nova-prev")" = 'old repo' ]
+  uki "nova_linux-nova.efi" "$kver"
+  run check_boot_alone 0
+  [ "$status" -eq 0 ]
+  [[ $output == *"The update is finished"* ]]
+  [ ! -e "$REPOFILE.nova-prev" ]
+  [ ! -e "$MIRRORLIST.nova-absent" ]
+  [ ! -e "$REPOFILE.nova-boot-unchecked" ]
+  # The copies of an update the power cut short say its packages may be half
+  # in: boot entries that check out do not end that one.
+  put "$REPOFILE.nova-prev" 'older repo'
+  run check_boot_alone 0
+  [ "$status" -eq 0 ]
+  [[ $output != *"The update is finished"* ]]
+  [ "$(cat "$REPOFILE.nova-prev")" = 'older repo' ]
 }
 
 @test "restoring a pin that did not exist removes the new file" {

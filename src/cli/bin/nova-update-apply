@@ -48,6 +48,11 @@ REPOFILE=$ROOT/etc/pacman.d/nova-repo
 SYNC_DIR=$ROOT/var/lib/pacman/sync
 LOG=$ROOT/var/log/nova-update.log
 SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-root}
+# There while an update's packages are all in and only its boot entries did
+# not check out: the one unfinished update that --check-boot may end. Copies
+# kept without it are of an update whose packages may be half in (the power
+# went), which boot entries that check out say nothing about.
+BOOT_UNCHECKED=$REPOFILE.nova-boot-unchecked
 
 die() {
   warn "$*"
@@ -99,7 +104,11 @@ backup_config() {
   for f in "$MIRRORLIST" "$REPOFILE"; do
     if [[ -e $f.nova-prev || -e $f.nova-absent ]]; then kept=1; continue; fi
     if [[ -e $f ]]; then
-      cp -p "$f" "$f.nova-prev.tmp" && mv -f "$f.nova-prev.tmp" "$f.nova-prev"
+      # Two commands, not one && the other, which would let a copy that
+      # fails (a full disk) pass: the update stops here, before the pins
+      # change with nothing to go back to.
+      cp -p "$f" "$f.nova-prev.tmp"
+      mv -f "$f.nova-prev.tmp" "$f.nova-prev"
     else
       touch "$f.nova-absent"
     fi
@@ -118,6 +127,7 @@ backup_config() {
 
 restore_config() {
   local f restored=0
+  rm -f "$BOOT_UNCHECKED"
   for f in "$MIRRORLIST" "$REPOFILE"; do
     if [[ -e $f.nova-prev ]]; then mv -f "$f.nova-prev" "$f"; restored=1; fi
     if [[ -e $f.nova-absent ]]; then rm -f "$f" "$f.nova-absent"; restored=1; fi
@@ -139,6 +149,7 @@ drop_backup() {
   local f
   for f in "$MIRRORLIST" "$REPOFILE"; do rm -f "$f.nova-prev" "$f.nova-absent"; done
   rm -rf "$SYNC_DIR.nova-prev"
+  rm -f "$BOOT_UNCHECKED"
 }
 
 snapshot() { # description, then extra snapper arguments; prints the snapshot number
@@ -404,6 +415,11 @@ check_boot() {
     return 3
   fi
   say "Boot entries look right"
+  # After the repair an update asked for (boot_advice): that update is done.
+  if [[ -e $BOOT_UNCHECKED ]]; then
+    drop_backup
+    say "The update is finished"
+  fi
 }
 
 # --- main -------------------------------------------------------------------------
@@ -537,6 +553,7 @@ main() {
     fi
     warn "the boot entries do NOT check out. Do not reboot yet."
     boot_advice "$pre"
+    : > "$BOOT_UNCHECKED"
     return 3
   fi
 
