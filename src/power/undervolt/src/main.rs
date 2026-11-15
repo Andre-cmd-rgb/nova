@@ -326,6 +326,11 @@ fn reapply(paths: &Paths, open: Open) -> io::Result<String> {
         Some((was, offsets)) if was == boot => offsets,
         _ => return Ok("not undervolted".into()),
     };
+    // Held and still armed: the offset would not come off. A sleep is no
+    // reason to put it back; it is taken off again instead.
+    if let Some(reason) = held(paths) {
+        return hold_off(paths, open(), &reason);
+    }
     let mut msr = match open_unlocked(paths, open) {
         Ok(msr) => msr,
         Err(reason) => return hold(paths, &reason),
@@ -347,9 +352,13 @@ fn message(record: &str) -> &str {
     text.lines().next().unwrap_or("")
 }
 
+/// The CPU's machine checks, not every "[Hardware Error]": the firmware's
+/// error source (GHES) says that too, of a PCIe link's corrected errors.
 fn machine_check(record: &str) -> Option<&str> {
     let line = message(record);
-    line.contains("[Hardware Error]").then_some(line)
+    (line.contains("[Hardware Error]")
+        && (line.contains("mce:") || line.to_ascii_lowercase().contains("machine check")))
+    .then_some(line)
 }
 
 /// Waits for a machine check while the offset is on. The first one takes it
@@ -811,6 +820,40 @@ mod tests {
         assert_eq!(m.run(reset), "the offset is off");
         assert_eq!(m.core(), 0.0);
         assert!(!m.paths.file("armed").exists());
+    }
+
+    #[test]
+    fn a_sleep_does_not_put_back_an_offset_that_is_held() {
+        let m = Machine::new();
+        m.set_offset("-80");
+        m.run(apply);
+        m.cpu.0.borrow_mut().discard = true;
+        let cpu = m.cpu.clone();
+        let mut open = move || Ok(Box::new(cpu.clone()) as Box<dyn Msr>);
+        let mut records = ["2,1,1,-;mce: [Hardware Error]: Machine check events logged"]
+            .into_iter()
+            .map(String::from);
+        assert!(watch(&m.paths, &mut open, &mut records).is_err());
+        assert!(m.paths.file("armed").exists());
+        // The CPU takes it off now: the resume does that, and applies nothing.
+        m.cpu.0.borrow_mut().discard = false;
+        assert!(m.run(reapply).starts_with("held: "));
+        assert_eq!(m.core(), 0.0);
+        assert!(!m.paths.file("armed").exists());
+    }
+
+    #[test]
+    fn a_corrected_pcie_error_from_the_firmware_is_no_machine_check() {
+        assert_eq!(
+            machine_check("4,1,1,-;{1}[Hardware Error]: Hardware error from APEI Generic Hardware Error Source: 0"),
+            None
+        );
+        assert!(
+            machine_check("2,2,2,-;mce: [Hardware Error]: Machine check events logged").is_some()
+        );
+        assert!(
+            machine_check("0,3,3,-;[Hardware Error]: CPU 0: Machine Check: 0 Bank 5").is_some()
+        );
     }
 
     #[test]
