@@ -155,12 +155,14 @@ ui_mark() { # columns
 # The steps of a setup, UI_TRAIL (one word each, in order), with the one this
 # screen is UI_AT: √ for those done, » for this one, · for those to come. Too
 # wide for the column, it is "Step 3 of 7  ·  Disk". A screen in none of the
-# steps (one saying this computer is not ready) has none.
+# steps (one saying this computer is not ready) has none; UI_AT='*' ticks
+# them all, once the last is done.
 ui_trail() { # columns
   local cols=$1 steps=() i at=-1 out='' mark colour gap=''
   read -ra steps <<<"${UI_TRAIL:-}"
   for i in "${!steps[@]}"; do [[ ${steps[i]} != "${UI_AT:-}" ]] || at=$i; done
-  ((at >= 0)) || return 0
+  [[ ${UI_AT:-} != '*' ]] || at=${#steps[@]}
+  ((at >= 0 && ${#steps[@]})) || return 0
   for i in "${!steps[@]}"; do
     if ((i < at)); then
       mark='√' colour=$UI_ACCENT
@@ -173,7 +175,8 @@ ui_trail() { # columns
     gap='   '
   done
   if (($(ui_width "$out") > $(ui_frame_width "$cols"))); then
-    out="$(ui_sgr "$UI_MUTED")Step $((at + 1)) of ${#steps[@]}  ·  $(ui_sgr "$UI_BRIGHT")${steps[at]}"$'\e[0m'
+    i=$((at < ${#steps[@]} ? at : ${#steps[@]} - 1))
+    out="$(ui_sgr "$UI_MUTED")Step $((i + 1)) of ${#steps[@]}  ·  $(ui_sgr "$UI_BRIGHT")${steps[i]}"$'\e[0m'
   fi
   ui_center "$cols" "$out"
 }

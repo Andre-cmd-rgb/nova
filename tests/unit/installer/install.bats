@@ -946,6 +946,97 @@ sda $((477 * GiB)) false false sata Samsung"
   [ "$output" = "$(printf '%s\n' 'Packages: keyring and lists' 'Packages: fetching' 'Packages: checking signatures' 'Packages: unpacking' 'Packages: hooks')" ]
 }
 
+@test "progress: each step is in one of the view's parts, which are only those this install has" {
+  [ "$(progress_row "Subvolumes and swap file")" = "Preparing the disk" ]
+  [ "$(progress_row "Packages, in all")" = "Installing the packages" ]
+  [ "$(progress_row Account)" = "Setting up the system" ]
+  [ "$(progress_row "After script")" = Finishing ]
+  offline_repo_ready() { return 1; }
+  progress_rows
+  [ "${PROGRESS_ROWS[0]}" = "Checking the packages" ]
+  [ "${PROGRESS_ROWS[5]}" = "Installing the apps" ]
+  # Offline, and with an answers file that says apps=no: neither.
+  offline_repo_ready() { return 0; }
+  answer_or() { echo no; }
+  progress_rows
+  [ "${PROGRESS_ROWS[*]}" = "Preparing the disk Installing the packages Setting up the system Installing the boot loader Finishing" ]
+}
+
+@test "progress: steps, words and pacstrap's counts go to the view, and pacstrap's lines only into the log" {
+  LOG=$SCRATCH/log
+  : >"$LOG"
+  exec 7>"$SCRATCH/events"
+  PROGRESS=1
+  offline_repo_ready() { return 1; }
+  step "Boot configuration" info "A 31 GiB swap file"
+  printf '%s\n' ':: Synchronizing package databases...' ' core downloading...' 'Packages (2) acl-2.4.0-1  mesa-1:25.2.3-1' \
+    ':: Retrieving packages...' ' acl-2.4.0-1-x86_64 downloading...' 'checking keyring...' \
+    ':: Processing package changes...' 'installing acl...' 'installing mesa...' \
+    ':: Running post-transaction hooks...' '( 5/36) Updating linux initcpios...' | pacstrap_feed 2>"$SCRATCH/terminal"
+  exec 7>&-
+  [ ! -s "$SCRATCH/terminal" ]
+  grep -qx 'installing mesa...' "$LOG"
+  run cat "$SCRATCH/events"
+  [ "${lines[0]}" = $'step\tBoot configuration' ]
+  [ "${lines[1]}" = $'info\tA 31 GiB swap file' ]
+  [[ ${lines[2]} == $'took\tBoot configuration\t'[0-9]*.[0-9] ]]
+  [ "${lines[3]}" = $'part\tDownloading\t2' ]
+  [ "${lines[4]}" = $'count\t1\t2\tacl-2.4.0-1-x86_64' ]
+  [ "${lines[5]}" = $'part\tChecking signatures' ]
+  [ "${lines[6]}" = $'part\tInstalling\t2' ]
+  [ "${lines[7]}" = $'count\t1\t2\tacl' ]
+  [ "${lines[8]}" = $'count\t2\t2\tmesa' ]
+  [ "${lines[9]}" = $'part\tRunning hooks' ]
+  [ "${lines[10]}" = $'count\t5\t36\tUpdating linux initcpios' ]
+}
+
+@test "progress: the view ticks each part with its time, and shows the one running with its bar" {
+  printf '%s\n' $'step\tPartitioning and formatting' $'took\tPartitioning and formatting\t62.4' \
+    $'step\tPackages, in all' $'part\tInstalling\t712' $'count\t312\t712\tmesa' $'warn\tThe theme did not apply.' >"$SCRATCH/events"
+  timeout 5 bash -c 'source "$1"; set +e; PROGRESS_ROWS=("Preparing the disk" "Installing the packages" Finishing)
+    PROGRESS_TITLE=("Nova 1.0.3 on a test computer"); UI_TRAIL="Disk Install" UI_AT=Install
+    { cat "$2"; sleep 1.2; printf "end\tok\n"; } | progress_view' _ "$REPO_ROOT/installer/nova-install" "$SCRATCH/events" 2>"$SCRATCH/view" || true
+  plain() { sed $'s/\e\\[[0-9;?]*[A-Za-z]//g'; }
+  plain <"$SCRATCH/view" >"$SCRATCH/plain"
+  grep -q 'Nova 1.0.3 on a test computer' "$SCRATCH/plain"
+  grep -Eq '√ Preparing the disk +1:02' "$SCRATCH/plain"
+  grep -Eq '» Installing the packages +0:0[0-9]' "$SCRATCH/plain"
+  grep -q '█* *Installing 312 of 712' <(sed 's/░/ /g' "$SCRATCH/plain")
+  grep -Eq '· Finishing *$' "$SCRATCH/plain"
+  grep -q 'The theme did not apply.' "$SCRATCH/plain"
+  # The last frame, at the end: every part and step ticked.
+  grep -Eq '√ Installing the packages +0:0[0-9]' "$SCRATCH/plain"
+  grep -q '√ Disk   √ Install' "$SCRATCH/plain"
+  grep -Eq 'In all +0:0[0-9]' "$SCRATCH/plain"
+}
+
+@test "progress: a failed install's view, then the log's last lines and where the whole log is" {
+  LOG=$SCRATCH/log
+  printf '%s\n' 'first' ':: nova-install step: Boot loader: 1.0 s' 'nova-boot-check: 1 problem' >"$LOG"
+  progress_tail 2>"$SCRATCH/tail"
+  grep -q "The log's last lines:" "$SCRATCH/tail"
+  grep -q '  nova-boot-check: 1 problem' "$SCRATCH/tail"
+  fails grep -q 'nova-install step' "$SCRATCH/tail"
+  grep -q "The whole log: $LOG" "$SCRATCH/tail"
+  # Off a screen: the install's lines under the Install step's header.
+  PROGRESS_TITLE=("Nova 1.0.3 on a test computer")
+  screen() { echo "screen $1" >&2; }
+  progress_start 2>"$SCRATCH/plain-start"
+  [ "$PROGRESS" = 0 ]
+  grep -q 'screen Install' "$SCRATCH/plain-start"
+  grep -q 'Nova 1.0.3 on a test computer' "$SCRATCH/plain-start"
+}
+
+@test "progress: m:ss, and h:mm:ss past an hour" {
+  local clock
+  progress_clock clock 624
+  [ "$clock" = 1:02 ]
+  progress_clock clock 37249
+  [ "$clock" = 1:02:04 ]
+  progress_clock clock 0
+  [ "$clock" = 0:00 ]
+}
+
 @test "the table of times: every step in the log's order, the packages' parts under them, and the whole install" {
   LOG=$SCRATCH/log
   printf '%s\n' 'pacman says' ':: nova-install step: Partitioning and formatting: 2.3 s' \

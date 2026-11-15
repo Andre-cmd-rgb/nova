@@ -70,6 +70,8 @@ The installer asks everything first, one question a screen, and touches no disk 
 9. **This computer**: its name (`nova` unless you type another; `nova-usb` for a portable Nova) and its time zone (type a city).
 10. **A summary** of what happens to which disk, the disk that is erased on top. Type `erase` to install.
 
+While it installs, one screen shows the install's parts: each ticked with its time once it is done, the one running with what it does now and its clock, and for the packages a bar, counting them as they download, install and run their hooks. What the commands print goes to the log, not the screen.
+
 When it is done, take the stick out and restart. The computer starts into the lock screen.
 
 ## What the installer sets up
@@ -158,7 +160,7 @@ It runs as fast as the stick does.
 
 ## When the install stops
 
-- **It says at which step.** The whole log is `/var/log/nova-install.log`, kept in memory until the installer restarts.
+- **It says at which step.** The part that stopped is marked on the install's screen, with the error under it, the log's last lines, and where the whole log is: `/var/log/nova-install.log`, kept in memory until the installer restarts.
 - **To try again from the start** without a restart, run `nova-install-start`. It keeps the stopped try's log as `nova-install.log.1`.
 - **No network, and no packages on the stick:** connect by hand with `iwctl`, then run `nova-install-start` again.
 - **A disk in use** by the live system (mounted, swap or LVM) is refused; pick another.

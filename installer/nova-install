@@ -126,15 +126,27 @@ else
   source "$SHARE/wifi.bash"
 fi
 
-say() { echo >&2; ui_title "$*"; }
-info() { ui_note "$*"; }
+# While the progress view is up, what is said goes into it, and into the log
+# as plain lines.
+say() {
+  if ((PROGRESS)); then printf '\n%s\n' "$*" >&2; else echo >&2; ui_title "$*"; fi
+  progress_event say "$*"
+}
+info() {
+  if ((PROGRESS)); then printf '%s\n' "$*" >&2; else ui_note "$*"; fi
+  progress_event info "$*"
+}
 warn() {
-  ui_warn "$*"
+  if ((PROGRESS)); then printf '%s\n' "$*" >&2; else ui_warn "$*"; fi
+  progress_event warn "$*"
   [[ -z ${UI_NOTES:-} ]] || printf '%s\n' "$*" >>"$UI_NOTES"
 }
 die() {
+  local shown=$PROGRESS
+  progress_end fail
   echo >&2
   ui_error "nova-install: $*"
+  ((!shown)) || progress_tail
   exit 1
 }
 
@@ -922,9 +934,11 @@ step() { # label command...
   INSTALL_STARTED=${INSTALL_STARTED:-$STEP_STARTED}
   shift
   printf '\n==> %s\n' "$STEP" >>"$LOG"
+  progress_event step "$STEP"
   "$@"
   local status=$?
   log_step "$STEP" "$STEP_STARTED"
+  progress_event took "$STEP" "$(seconds_since "$STEP_STARTED")"
   return "$status"
 }
 
@@ -939,6 +953,242 @@ step_table() {
     esac
   done < <(sed -n "s/^$STEP_LINE \\(.*\\): \\([0-9.]*\\) s\$/\\1\\t\\2/p" "$LOG")
   [[ -z $INSTALL_STARTED ]] || printf '  %-36s %7s s\n' "In all" "$(seconds_since "$INSTALL_STARTED")"
+}
+
+# ------------------------------------------------------------- the progress view
+#
+# On a screen, the install is one view while it runs, not every command's
+# output scrolling by: its parts, ticked with their times as each is done;
+# the one running with what it does now and its clock, and for the packages
+# a bar, as pacman counts them. What would have scrolled by goes to the log.
+# With an answers file, or no terminal, it is plain lines as before.
+#
+# One process draws the view (progress_view), the only one writing to the
+# screen, so its clocks run on while a command says nothing for minutes. The
+# install tells it what happens, a line at a time, over a pipe
+# (progress_event): step and took (step's), say, info and warn (a part's
+# words), part and count (pacstrap's), and end.
+
+PROGRESS=0 PROGRESS_PID='' PROGRESS_ROWS=() PROGRESS_TITLE=()
+
+# The part of the view a step is in.
+progress_row() { # step label
+  case $1 in
+    "Checking the packages") echo "Checking the packages" ;;
+    "Partitioning and formatting" | "Subvolumes and swap file" | "Boot configuration") echo "Preparing the disk" ;;
+    "Packages, in all") echo "Installing the packages" ;;
+    "System configuration" | Snapshots | Account | Fingerprint | "Your things") echo "Setting up the system" ;;
+    "Boot loader") echo "Installing the boot loader" ;;
+    Apps) echo "Installing the apps" ;;
+    *) echo Finishing ;;
+  esac
+}
+
+# The view's parts for this install: the packages are checked only online,
+# the apps installed only when the answers do not say apps=no.
+progress_rows() {
+  PROGRESS_ROWS=()
+  offline_repo_ready || PROGRESS_ROWS+=("Checking the packages")
+  PROGRESS_ROWS+=("Preparing the disk" "Installing the packages" "Setting up the system" "Installing the boot loader")
+  [[ $(answer_or apps yes) == no ]] || PROGRESS_ROWS+=("Installing the apps")
+  PROGRESS_ROWS+=(Finishing)
+}
+
+progress_event() { # field...
+  ((PROGRESS)) || return 0
+  local IFS=$'\t' strip=$'\t\n'
+  printf '%s\n' "${*//[$strip]/ }" >&7 2>/dev/null || true
+}
+
+# m:ss, or h:mm:ss, of a number of tenths of a second, into the variable named.
+progress_clock() { # variable tenths
+  local s=$(($2 / 10))
+  if ((s >= 3600)); then
+    printf -v "$1" '%d:%02d:%02d' $((s / 3600)) $((s / 60 % 60)) $((s % 60))
+  else
+    printf -v "$1" '%d:%02d' $((s / 60)) $((s % 60))
+  fi
+}
+
+# The view: the header of the Install step, PROGRESS_TITLE under it, then a
+# line for each part. Redrawn in place, never cleared, so it does not flicker;
+# every second for the clocks, and on the install's news, at most ten times a
+# second. It ends at the install's end event, with the view as it ended.
+progress_view() {
+  set +eu
+  trap - ERR
+  # Counted in characters, the √ and » too.
+  local LC_ALL=C.UTF-8
+  local cols rows hrows head kind a b c i at=-1 started now row_started last=0 detail='' part='' n=0 total=0 item=''
+  local -a secs=() warnings=()
+  local c_text c_bright c_muted c_accent c_warn c_error width margin
+  cols=$(ui_columns) rows=$(ui_rows)
+  # The view has to fit, or redrawing it in place would scroll: under 45
+  # rows, the wordmark is the name alone.
+  hrows=$rows
+  ((rows >= 45)) || hrows=33
+  width=$(ui_frame_width "$cols") margin=$(ui_margin "$cols")
+  c_text=$(ui_sgr "$UI_TEXT") c_bright=$(ui_sgr "$UI_BRIGHT") c_muted=$(ui_sgr "$UI_MUTED")
+  c_accent=$(ui_sgr "$UI_ACCENT") c_warn=$(ui_sgr "$UI_WARN") c_error=$(ui_sgr "$UI_ERROR")
+  head=$(COLUMNS=$cols LINES=$hrows UI_NOTES='' ui_header 2>&1)
+  started=${EPOCHREALTIME//[!0-9]/} row_started=$started
+  printf '\e[?25l\e[H\e[2J' >&2
+
+  # The row of a step, by its label.
+  row_of() {
+    local name i
+    name=$(progress_row "$1")
+    for i in "${!PROGRESS_ROWS[@]}"; do
+      [[ ${PROGRESS_ROWS[i]} != "$name" ]] || { echo "$i"; return; }
+    done
+    echo -1
+  }
+
+  # A line of the column: left-aligned text, and some at its right edge.
+  line() { # colour text [right]
+    local right=${3:-} text
+    text=${2:0:$((width - ${#right} - 1))}
+    printf -v line '%*s%s%s%s%*s\e[0m\e[K\n' "$margin" '' "$1" "$text" "$c_muted" $((width - ${#text})) "$right"
+    out+=$line
+  }
+
+  frame() { # [ok|fail]: the last one
+    local out='' i mark colour time label bar filled
+    now=${EPOCHREALTIME//[!0-9]/}
+    for label in "${PROGRESS_TITLE[@]}"; do line "$c_muted" "$label"; done
+    out+=$'\e[K\n'
+    for i in "${!PROGRESS_ROWS[@]}"; do
+      label=${PROGRESS_ROWS[i]} time=''
+      if ((i < at)); then
+        mark='√' colour=$c_accent
+        progress_clock time "${secs[i]:-0}"
+      elif ((i == at)); then
+        mark='»' colour=$c_bright
+        [[ ${1:-} != fail ]] || mark='x' colour=$c_error
+        progress_clock time $(((now - row_started) / 100000))
+      else
+        mark='·' colour=$c_muted
+      fi
+      line "$colour" "$mark $label" "$time"
+      ((i == at)) && [[ ${1:-} != ok ]] || continue
+      # What the part running does now, and for the packages how far.
+      if ((total > 0 && n > 0)); then
+        filled=$((n * 24 / total))
+        ((filled <= 24)) || filled=24
+        printf -v bar '%*s' "$filled" ''
+        printf -v time '%*s' $((24 - filled)) ''
+        line '' "    $c_accent${bar// /█}$c_muted${time// /░}$c_text  $part $n of $total"
+        [[ -z $item ]] || line "$c_muted" "    $item"
+      elif [[ -n $part ]]; then
+        line "$c_text" "    $part"
+        [[ -z $item ]] || line "$c_muted" "    $item"
+      elif [[ -n $detail && $detail != "$label" ]]; then
+        line "$c_muted" "    $detail"
+      fi
+    done
+    out+=$'\e[K\n'
+    progress_clock time $(((now - started) / 100000))
+    line "$c_muted" "In all" "$time"
+    if ((${#warnings[@]})); then
+      out+=$'\e[K\n'
+      # The last four.
+      i=$((${#warnings[@]} > 4 ? ${#warnings[@]} - 4 : 0))
+      for label in "${warnings[@]:i}"; do line "$c_warn" "$label"; done
+    fi
+    if [[ ${1:-} == ok ]]; then
+      # The last one under the steps all ticked.
+      UI_AT='*'
+      head=$(COLUMNS=$cols LINES=$hrows UI_NOTES='' ui_header 2>&1)
+    elif [[ ${1:-} == fail ]]; then
+      # Under the name alone, to leave room for the error and the log's
+      # last lines.
+      head=$(COLUMNS=$cols LINES=33 UI_NOTES='' ui_header 2>&1)
+      printf '\e[2J' >&2
+    fi
+    printf '\e[H%s\n\n%s\e[J' "$head" "$out" >&2
+    last=$now
+  }
+
+  while :; do
+    if IFS=$'\t' read -r -t 1 kind a b c; then
+      case $kind in
+        step)
+          i=$(row_of "$a")
+          if ((i >= 0 && i != at)); then
+            at=$i row_started=${EPOCHREALTIME//[!0-9]/} detail='' part='' n=0 total=0 item=''
+          fi
+          ;;
+        took)
+          i=$(row_of "$a")
+          ((i < 0)) || secs[i]=$((${secs[i]:-0} + ${b%.*} * 10 + ${b#*.}))
+          ;;
+        say | info) detail=$a part='' n=0 total=0 item='' ;;
+        warn) warnings+=("$a") ;;
+        part) part=$a n=0 total=${b:-0} item='' ;;
+        count) n=$a total=$b item=$c ;;
+        end)
+          [[ $a != ok ]] || at=${#PROGRESS_ROWS[@]}
+          frame "$a"
+          printf '\e[?25h' >&2
+          exit 0
+          ;;
+      esac
+      now=${EPOCHREALTIME//[!0-9]/}
+      ((now - last < 100000)) && continue
+    fi
+    frame
+  done
+}
+
+# The view, when there is a screen to draw it on; otherwise the Install
+# step's header and its title, and the install's lines under it.
+progress_start() {
+  local fifo
+  if [[ ! -t 2 ]]; then
+    screen Install
+    for fifo in "${PROGRESS_TITLE[@]}"; do info "$fifo"; done
+    return 0
+  fi
+  UI_AT=Install
+  fifo=$(mktemp -u /tmp/nova-progress.XXXXXX)
+  mkfifo -m 600 "$fifo"
+  # Read and write: the install never blocks opening it, and never dies of
+  # a closed pipe. The view stops at the end event, not at the pipe's end,
+  # since a program the install starts may keep it open.
+  exec 7<>"$fifo"
+  rm -f -- "$fifo"
+  progress_view <&7 &
+  PROGRESS_PID=$!
+  exec 8>&2 2>>"$LOG"
+  PROGRESS=1
+}
+
+# The view's last frame, and the screen back for the lines after it.
+progress_end() { # ok|fail
+  ((PROGRESS && !BASH_SUBSHELL)) || return 0
+  local i
+  progress_event end "$1"
+  PROGRESS=0
+  for ((i = 0; i < 50; i++)); do
+    kill -0 "$PROGRESS_PID" 2>/dev/null || break
+    sleep 0.1
+  done
+  kill "$PROGRESS_PID" 2>/dev/null || true
+  wait "$PROGRESS_PID" 2>/dev/null || true
+  exec 2>&8 8>&- 7>&-
+  printf '\e[?25h' >&2
+}
+
+# Under a failed install's view: the log's last lines, where what went wrong
+# usually is, and where the whole log is.
+progress_tail() {
+  local width
+  width=$(($(ui_frame_width) - 2))
+  echo >&2
+  ui_note "The log's last lines:"
+  ui_note "$(grep -v "^$STEP_LINE" "$LOG" | tail -n 12 | tr -d '\000-\010\013-\037' | cut -c "1-$width" | sed 's/^/  /')"
+  echo >&2
+  ui_note "The whole log: $LOG"
 }
 
 partition_and_format() {
@@ -1044,17 +1294,22 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
     die "pacstrap failed; the log is in $LOG"
 }
 
-# pacstrap's output, line by line: into the log, onto the terminal, and the
-# time of each of its parts into the log as steps of their own, from the
-# lines pacman starts each with (it flushes its output after every one):
-# the keyring and the package lists, fetching the packages (from the stick, or
-# the internet), checking their signatures, unpacking them, and the hooks.
+# pacstrap's output, line by line: into the log, onto the terminal (or, under
+# the progress view, its parts and counts into the view), and the time of
+# each of its parts into the log as steps of their own, from the lines pacman
+# starts each with (it flushes its output after every one): the keyring and
+# the package lists, fetching the packages (from the stick, or the internet),
+# checking their signatures, unpacking them, and the hooks. Its output is
+# not a terminal, so pacman draws no bars: it says "Packages (N)" once, then
+# a line as each package downloads, as each is unpacked ("installing mesa..."),
+# and as each hook runs ("( 5/36) Updating linux initcpios...").
 pacstrap_feed() {
-  local line part='Packages: keyring and lists' started next
+  local line part='Packages: keyring and lists' started next n=0 total=0 fetching=Downloading
   started=$(now_us)
+  offline_repo_ready && fetching="Reading from the stick"
   while IFS= read -r line; do
     printf '%s\n' "$line" >>"$LOG"
-    printf '%s\n' "$line" >&2
+    ((PROGRESS)) || printf '%s\n' "$line" >&2
     next=''
     case $line in
       ':: Retrieving packages...'*) next='Packages: fetching' ;;
@@ -1064,8 +1319,37 @@ pacstrap_feed() {
     esac
     if [[ -n $next && $next != "$part" ]]; then
       log_step "$part" "$started"
-      part=$next started=$(now_us)
+      part=$next started=$(now_us) n=0
+      case $part in
+        *fetching) progress_event part "$fetching" "$total" ;;
+        *signatures) progress_event part "Checking signatures" ;;
+        *unpacking) progress_event part Installing "$total" ;;
+        *hooks) progress_event part "Running hooks" ;;
+      esac
+      continue
     fi
+    ((PROGRESS)) || continue
+    case $part:$line in
+      *':Packages ('[0-9]*')'*)
+        total=${line#Packages (}
+        total=${total%%)*}
+        ;;
+      *fetching:*' downloading...')
+        ((n < total)) && n=$((n + 1))
+        line=${line% downloading...}
+        progress_event count "$n" "$total" "${line# }"
+        ;;
+      *unpacking:'installing '*)
+        n=$((n + 1))
+        line=${line#installing }
+        progress_event count "$n" "$total" "${line%...}"
+        ;;
+      *hooks:'('*'/'*') '*)
+        if [[ $line =~ ^\(\ *([0-9]+)/([0-9]+)\)\ (.*)$ ]]; then
+          progress_event count "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]%...}"
+        fi
+        ;;
+    esac
   done
   log_step "$part" "$started"
 }
@@ -1382,14 +1666,23 @@ usage() {
 # inherit the trap (set -E), so only the outermost shell speaks.
 stopped() { # line command
   ((BASH_SUBSHELL)) && return
+  local shown=$PROGRESS
   [[ -z $STEP ]] || printf '%s %s (stopped): %s s\n' "$STEP_LINE" "$STEP" "$(seconds_since "$STEP_STARTED")" >>"$LOG"
+  progress_end fail
   echo >&2
   ui_error "nova-install: the install stopped at line $1 ($2)${STEP:+, in the step $STEP}. The log is in $LOG."
+  ((!shown)) || progress_tail
 }
 
-# What is left to undo whenever this ends: files to remove (CLEANUP, from
-# installer/setup.bash) and, on the console, its colours to give back.
+# What is left to undo whenever this ends: the progress view, when it ended
+# some other way than the install's own (Ctrl+C), files to remove (CLEANUP,
+# from installer/setup.bash) and, on the console, its colours to give back.
 leave() {
+  if ((PROGRESS)); then
+    progress_end fail
+    echo >&2
+    ui_error "nova-install: the install stopped. The log is in $LOG."
+  fi
   ((!${#CLEANUP[@]})) || rm -f -- "${CLEANUP[@]}"
   ui_console_end
 }
@@ -1501,16 +1794,18 @@ main() {
     say "Ready to install"
     summary_lines | sed 's/^/  /'
     [[ $(answer erase) == yes ]] || die "the answers file does not say erase=yes; nothing was changed."
+    ((PORTABLE)) || [[ $kernel == linux-nova ]] || info "This CPU predates x86-64-v3, so Nova uses Arch's standard kernel."
   else
     questions_on_screen "$offer_fingerprint"
-    screen Install
     if ((PORTABLE)); then
-      info "Nova ${tag#v} onto ${DISK_LINE%%$'\t'*}, to carry around"
+      PROGRESS_TITLE=("Nova ${tag#v} onto ${DISK_LINE%%$'\t'*}, to carry around")
     else
-      info "Nova ${tag#v} on $(computer_model "this computer")${profile:+, which Nova knows}"
+      PROGRESS_TITLE=("Nova ${tag#v} on $(computer_model "this computer")${profile:+, which Nova knows}")
     fi
+    ((PORTABLE)) || [[ $kernel == linux-nova ]] || PROGRESS_TITLE+=("This CPU predates x86-64-v3, so Nova uses Arch's standard kernel.")
+    progress_rows
+    progress_start
   fi
-  ((PORTABLE)) || [[ $kernel == linux-nova ]] || info "This CPU predates x86-64-v3, so Nova uses Arch's standard kernel."
   loadkeys "$KEYMAP" >/dev/null 2>&1 || true
 
   local disk swap=0
@@ -1544,16 +1839,19 @@ main() {
   step "Services" enable_services
   step "After script" run_after
   step "Finishing" finish
+  progress_end ok
 
   if ((PORTABLE)); then
-    say "Nova is on the stick."
+    echo >&2
+    ui_good "Nova is on the stick."
     info "Start any PC from it: plug it in, and pick it in the PC's boot menu (F12 on"
     info "most, F9, F11 or Esc on some). Secure Boot has to be off, as for an install."
     info "$BITLOCKER_NOTE"
     ! secure_boot_on || info "This PC has Secure Boot on: it starts the stick once that is off."
     info "The install log is kept on it, at /var/log/nova-install.log."
   else
-    say "Nova is installed."
+    echo >&2
+    ui_good "Nova is installed."
     info "Take the stick out and restart: reboot"
     info "The install log is kept at /var/log/nova-install.log."
   fi

@@ -116,13 +116,17 @@ EOF
   grep -q $'\e\\[90m· You' "$SCRATCH/trail"
 }
 
-@test "trail: too wide for the column, the step's number; in no step, nothing" {
+@test "trail: too wide for the column, the step's number; in no step, nothing; at the end, all" {
   UI_TRAIL="Keyboard Network Disk You Computer Review Install" UI_AT=You
   [ "$(ui_trail 40 | plain)" = "$(printf '%10sStep 4 of 7  ·  You' '')" ]
   UI_AT=''
   [ -z "$(ui_trail 80)" ]
   UI_TRAIL='' UI_AT=You
   [ -z "$(ui_trail 80)" ]
+  # Once the last is done, all ticked.
+  UI_TRAIL="Disk You" UI_AT='*'
+  [ "$(ui_trail 80 | plain | sed 's/^ *//')" = '√ Disk   √ You' ]
+  [ "$(ui_trail 12 | plain | sed 's/^ *//')" = 'Step 2 of 2  ·  You' ]
 }
 
 @test "notes: multiline paragraphs keep the column's margin and stdout stays free" {
