@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- nova airdrop on, off: the person at the computer may switch AirDrop
+     without a password, as with the Wi-Fi itself. It borrows the Wi-Fi card,
+     which takes root; what it receives is theirs. -->
+<policyconfig>
+  <vendor>Nova</vendor>
+  <action id="org.nova.airdrop">
+    <description>Switch AirDrop on or off</description>
+    <message>Authentication is required to switch AirDrop on or off</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-airdrop-apply</annotate>
+  </action>
+</policyconfig>

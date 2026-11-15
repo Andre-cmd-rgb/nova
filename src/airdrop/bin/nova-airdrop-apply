@@ -1,0 +1,50 @@
+#!/bin/bash
+# nova-airdrop-apply: the root half of `nova airdrop on` and `off`. Run
+# through pkexec (org.nova.airdrop lets the person at the computer switch it
+# without a password), so it takes one word and passes nothing else on.
+#
+# on starts nova-airdrop@<their number>.service: the daemon runs as whoever
+# asked, and what it receives is theirs. It comes back when the daemon is up
+# and in the air, or says why it is not.
+
+set -euo pipefail
+
+uid=${PKEXEC_UID:-}
+[[ $uid =~ ^[1-9][0-9]*$ ]] || {
+  echo "nova-airdrop-apply: run it through pkexec, as yourself (nova airdrop on)" >&2
+  exit 2
+}
+unit=nova-airdrop@$uid.service
+radio=/usr/lib/nova/nova-airdrop-radio
+run=/run/nova-airdrop
+
+case "$#:${1:-}" in
+  1:on)
+    # What can be said before anything is touched is said here, in plain words.
+    "$radio" check
+    # One Wi-Fi card, one AirDrop: somebody else's is not taken from under them.
+    others=$(systemctl list-units --plain --no-legend --state=active,activating,deactivating 'nova-airdrop@*.service' |
+      awk -v mine="$unit" '$1 != mine { print $1 }')
+    if [[ -n $others ]]; then
+      echo "AirDrop is in use by another user of this computer." >&2
+      exit 1
+    fi
+    install -d -m 755 "$run"
+    rm -f "$run/why"
+    if ! systemctl start "$unit"; then
+      # The helper's own reason if it had one, else the service's last words.
+      if [[ -s $run/why ]]; then
+        cat "$run/why" >&2
+      else
+        echo "AirDrop did not start:" >&2
+        journalctl -u "$unit" -n 5 -o cat --no-pager >&2 || true
+      fi
+      exit 1
+    fi
+    ;;
+  1:off) systemctl stop "$unit" ;;
+  *)
+    echo "Usage: nova-airdrop-apply on|off" >&2
+    exit 2
+    ;;
+esac

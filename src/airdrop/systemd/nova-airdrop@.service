@@ -1,0 +1,57 @@
+[Unit]
+Description=AirDrop: receiving from iPhones nearby, for user %i
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/airdrop.md
+After=NetworkManager.service
+# Asleep, the card is nobody's: AirDrop ends before the computer sleeps, and
+# the Wi-Fi is the network's again when it wakes.
+Conflicts=sleep.target
+Before=sleep.target
+
+[Service]
+# Up is when the daemon says it is in the air: `nova airdrop on` waits for that.
+Type=notify
+NotifyAccess=main
+# The daemon is whoever asked for it (nova-airdrop-apply names their number),
+# and what it receives is theirs. The one capability is for its socket on the
+# monitor interface; it gives that up too once it has the socket.
+User=%i
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+NoNewPrivileges=yes
+Environment=XDG_RUNTIME_DIR=/run/user/%i
+# Written by `up`: the country whose radio rules the card is under.
+EnvironmentFile=-/run/nova-airdrop/env
+
+# The Wi-Fi card lent and given back, as root (+). ExecStopPost runs however
+# the daemon ended, and when it never started: the Wi-Fi comes back whatever
+# becomes of AirDrop. It waits for the network to be connected again, which is
+# what the stop timeout is for.
+ExecStartPre=+/usr/lib/nova/nova-airdrop-radio up
+# Ends by itself a moment after a transfer, and when nobody has asked for two
+# minutes: the Wi-Fi is off the network meanwhile.
+ExecStart=/usr/lib/nova/nova-airdropd --monitor nova-mon --once --give-up-after 120
+ExecStopPost=+/usr/lib/nova/nova-airdrop-radio down
+TimeoutStartSec=60
+TimeoutStopSec=40
+# A daemon that hangs would keep the Wi-Fi: it says it is alive every second,
+# and one that stops saying so is ended, which gives the Wi-Fi back.
+WatchdogSec=20
+
+# It hears whoever is in radio range. It makes its own network namespace (and
+# the user namespace that takes), an interface in it through /dev/net/tun, and
+# files in the user's folders; nothing else of the system is its business.
+ProtectSystem=full
+PrivateTmp=yes
+DevicePolicy=closed
+DeviceAllow=/dev/net/tun rw
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=user net
+RestrictAddressFamilies=AF_PACKET AF_INET6 AF_UNIX
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
