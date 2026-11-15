@@ -72,3 +72,13 @@ status() { "$REPO_ROOT/src/cli/bin/nova-network-status" "$@"; }
   run status --bogus
   [ "$status" -eq 2 ]
 }
+
+@test "a card iw says is not connected has no link to tell" {
+  [[ -n $wifi ]] || skip "no wireless interface on this computer"
+  route_via "$wifi"
+  stub iw 'echo "Not connected."'
+  run status --verbose
+  [ "$status" -eq 0 ]
+  [[ $output == *$'type\twifi'* ]]
+  [[ $output != *ssid* ]]
+}

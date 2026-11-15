@@ -51,8 +51,10 @@ read_link() { # device
   ssid="" signal="" frequency="" rate="" unit=""
   linked=false
   while IFS= read -r line; do
-    linked=true
     line=${line#"${line%%[![:space:]]*}"}
+    # iw's answer for a card on no network is a line too.
+    [[ $line != "Not connected."* ]] || break
+    linked=true
     case $line in
       "SSID: "*) [[ -n $ssid ]] || ssid=${line#SSID: } ;;
       "signal: "*)
