@@ -33,14 +33,45 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-// Three symbols, declared rather than depended on. Rust links libc on this
+// A few symbols, declared rather than depended on. Rust links libc on this
 // target anyway, so a crate for it would be a supply chain for nothing.
 extern "C" {
     fn signal(sig: i32, handler: usize) -> usize;
+    fn clock_gettime(clock: i32, time: *mut Timespec) -> i32;
 }
 const SIGTERM: i32 = 15;
 const SIGINT: i32 = 2;
 const SIGHUP: i32 = 1;
+
+// x86-64's struct timespec.
+#[repr(C)]
+struct Timespec {
+    seconds: i64,
+    nanoseconds: i64,
+}
+const CLOCK_MONOTONIC: i32 = 1;
+const CLOCK_BOOTTIME: i32 = 7;
+
+/// How long the computer has slept since it started: the boot clock goes on
+/// through a suspend, the monotonic one stands still. Unlike the wall clock,
+/// neither is moved by a time server.
+fn slept_so_far() -> Duration {
+    let read = |clock| {
+        let mut time = Timespec {
+            seconds: 0,
+            nanoseconds: 0,
+        };
+        // SAFETY: a valid pointer to a timespec, which is all it writes.
+        if unsafe { clock_gettime(clock, &mut time) } != 0 {
+            return Duration::ZERO;
+        }
+        Duration::new(
+            time.seconds.max(0) as u64,
+            time.nanoseconds.clamp(0, 999_999_999) as u32,
+        )
+    };
+    read(CLOCK_BOOTTIME).saturating_sub(read(CLOCK_MONOTONIC))
+}
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
 static RELOAD: AtomicBool = AtomicBool::new(false);
@@ -1470,7 +1501,7 @@ fn main() {
     // cannot see a resume — and firmware does reset RAPL across one, while the
     // EC takes the fans back. Wall clock against monotonic is the difference,
     // and a gap much larger than one poll is a suspend by definition.
-    let mut last_wall = std::time::SystemTime::now();
+    let mut last_slept = slept_so_far();
     // The first sample covers whatever happened since boot, which is not a
     // measurement of now. Discard it rather than letting it decide a tier.
     let _ = sampler.busy_pct();
@@ -1494,12 +1525,11 @@ fn main() {
 
         let now = Instant::now();
 
-        let wall = std::time::SystemTime::now();
-        let slept = wall
-            .duration_since(last_wall)
-            .map(|d| d > Duration::from_millis(cfg.poll_ms * 4))
-            .unwrap_or(false);
-        last_wall = wall;
+        // A sleep of any length, a second's as well as a night's: the
+        // firmware may have put its own limits back meanwhile.
+        let asleep = slept_so_far();
+        let slept = asleep.saturating_sub(last_slept) > Duration::from_millis(500);
+        last_slept = asleep;
         if slept {
             say!("resumed — re-asserting limits and fan level");
             gov.applied = None;
@@ -1597,6 +1627,13 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn awake_the_time_slept_stands_still() {
+        let before = slept_so_far();
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(slept_so_far().saturating_sub(before) < Duration::from_millis(500));
+    }
 
     #[test]
     fn a_boost_ends_at_its_time_though_its_marker_is_still_there() {

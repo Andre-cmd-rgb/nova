@@ -7,7 +7,7 @@ license = "MIT"
 
 # No dependencies, on purpose. This runs as root, writes registers that decide
 # how much power the package may draw, and is built by an installer that should
-# not need a network. Everything here is std plus three libc symbols.
+# not need a network. Everything here is std plus a few libc symbols.
 
 [[bin]]
 name = "nova-powerd"
