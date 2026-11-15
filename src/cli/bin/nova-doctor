@@ -1,0 +1,558 @@
+#!/bin/bash
+# nova:summary=Look this computer over for problems, and say how to fix each
+# nova:args=[--json]
+#
+# Read-only. Run as yourself it checks the system and your session; under sudo
+# it checks the system and the boot menu's fallback entry, which lives on the
+# EFI partition only root can read. Either way it looks this computer's parts
+# over, on any model: Secure Boot, the graphics cards' drivers, Wi-Fi, sound,
+# the camera, missing firmware, and sleep. Exits 1 when something is wrong;
+# warnings alone exit 0.
+#
+# NOVA_* variables point the checks at test fixtures (tests/unit/cli/doctor.bats).
+
+set -euo pipefail
+
+json=false
+case $#:${1:-} in
+  0:) ;;
+  1:--json) json=true ;;
+  *) echo 'Usage: nova doctor [--json]' >&2; exit 2 ;;
+esac
+reports=()
+
+# A service (or pkexec) runs it without HOME.
+: "${HOME:=$(getent passwd "$EUID" | cut -d: -f6)}"
+
+SYSFS_BTRFS=${NOVA_SYSFS_BTRFS:-/sys/fs/btrfs}
+PAM_DIR=${NOVA_PAM_DIR:-/etc/pam.d}
+MODULES_DIR=${NOVA_MODULES_DIR:-/usr/lib/modules}
+SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-/etc/snapper/configs/root}
+ESP=${NOVA_BOOT_ESP:-/boot}
+HARDWARE=${NOVA_HARDWARE:-/usr/share/nova/hardware}
+PATCH_STATUS=${NOVA_PATCH_STATUS:-/var/lib/nova/patches}
+RAM_TEST=${NOVA_RAM_TEST:-/etc/limine-entry-tool.d/85-nova-patch-ram-test.conf}
+SYS=${NOVA_SYS:-/sys}
+PROC=${NOVA_PROC:-/proc}
+PORTABLE_MARKER=${NOVA_PORTABLE_MARKER:-/etc/nova/portable}
+KEYRINGS=${XDG_DATA_HOME:-$HOME/.local/share}/keyrings
+STATE=${XDG_STATE_HOME:-$HOME/.local/state}/nova
+
+declare -A color=([ok]='' [warn]='' [FAIL]='' [--]='')
+reset=''
+if [[ -t 1 ]]; then
+  color=([ok]=$'\e[32m' [warn]=$'\e[33m' [FAIL]=$'\e[31m' [--]=$'\e[2m')
+  reset=$'\e[0m'
+fi
+
+failed=0
+report() { # ok|warn|FAIL|-- what [how...]
+  local level=$1 what=$2 how
+  if $json; then
+    reports+=("$(jq -cn --arg level "$level" --arg what "$what" --args \
+      '{level: $level, what: $what, how: $ARGS.positional}' -- "${@:3}")")
+  else
+    printf '%s%-4s%s  %s\n' "${color[$level]}" "$level" "$reset" "$what"
+    for how in "${@:3}"; do printf '      %s\n' "$how"; done
+  fi
+  [[ $level != FAIL ]] || failed=1
+}
+
+check_root_filesystem() {
+  local fstype options uuid file name value counted=0 errors='' total=0
+  read -r fstype options uuid < <(findmnt -rno FSTYPE,OPTIONS,UUID /)
+  if [[ ,$options, == *,ro,* ]]; then
+    report FAIL "/ is read-only: the filesystem stopped writing after an error" \
+      "journalctl -k -b says why. Back up what you can, then check it from the installer stick."
+    return
+  fi
+  if [[ $fstype != btrfs ]]; then
+    report ok "/ is writable ($fstype)"
+    return
+  fi
+  # The kernel's per-device counters, kept on the disk across boots.
+  for file in "$SYSFS_BTRFS/$uuid"/devinfo/*/error_stats; do
+    [[ -r $file ]] || continue
+    counted=1
+    while read -r name value; do
+      ((value > 0)) || continue
+      total=$((total + value))
+      errors+="${errors:+, }$name $value"
+    done <"$file"
+  done
+  if ((total > 0)); then
+    report FAIL "btrfs on / has recorded errors: $errors" \
+      "Back up now. sudo btrfs scrub start -B / finds what is damaged;" \
+      "once it is dealt with, sudo btrfs device stats -z / clears the count."
+  elif ((counted)); then
+    report ok "/ is writable btrfs, with no device errors"
+  else
+    report ok "/ is writable btrfs"
+  fi
+}
+
+check_disk_space() {
+  local used
+  used=$(df -P / | awk 'NR == 2 { sub("%", "", $5); print $5 + 0 }')
+  if ((used >= 95)); then
+    report FAIL "/ is ${used}% full" "Old snapshots keep deleted files: snapper list, then sudo snapper delete <number>."
+  elif ((used >= 90)); then
+    report warn "/ is ${used}% full" "Old snapshots keep deleted files: snapper list, then sudo snapper delete <number>."
+  else
+    report ok "/ is ${used}% full"
+  fi
+}
+
+check_package() {
+  local version checked missing unreadable
+  if ! version=$(pacman -Q nova 2>/dev/null); then
+    report warn "nova is not installed as a package"
+    return
+  fi
+  checked=$(LC_ALL=C pacman -Qk nova 2>&1 || true)
+  missing=$(sed -nE 's/.* ([0-9]+) missing files?$/\1/p' <<<"$checked")
+  # Run as a user, pacman cannot look into root-only directories
+  # (/etc/sudoers.d) and counts each file in them as missing.
+  unreadable=$(grep -c ' (Permission denied)$' <<<"$checked" || true)
+  missing=$((${missing:-0} - unreadable))
+  if ((missing > 0)); then
+    report FAIL "$missing of nova's files are missing" "sudo pacman -S nova puts them back."
+  else
+    report ok "$version, every file in place"
+  fi
+}
+
+check_kernel() {
+  local running
+  running=$(uname -r)
+  if [[ -d $MODULES_DIR/$running ]]; then
+    report ok "the running kernel is the installed one ($running)"
+  else
+    report warn "the kernel was updated since this boot" \
+      "Restart to use it; until then, a device plugged in now may not work."
+  fi
+}
+
+check_lock() {
+  if [[ -f $PAM_DIR/nova-lock-password ]]; then
+    report ok "the lock screen has its PAM service"
+  else
+    report FAIL "the lock screen has no PAM service, so it cannot lock" "sudo pacman -S nova puts it back."
+  fi
+}
+
+check_snapshots() {
+  local unit off=()
+  [[ -f $SNAPPER_CONFIG ]] || {
+    report warn "snapshots are not set up: there is no $SNAPPER_CONFIG"
+    return
+  }
+  for unit in snapper-cleanup.timer limine-snapper-sync.service; do
+    systemctl is-enabled --quiet "$unit" 2>/dev/null || off+=("$unit")
+  done
+  if ((${#off[@]} > 0)); then
+    report warn "snapshots are not looked after: ${off[*]} not enabled" "sudo systemctl enable --now ${off[*]}"
+  else
+    report ok "snapshots are taken, pruned and offered in the boot menu"
+  fi
+}
+
+check_clock() {
+  if [[ $(timedatectl show -p NTPSynchronized --value 2>/dev/null) == yes ]]; then
+    report ok "the clock is synchronised"
+  else
+    report warn "the clock is not synchronised" "It needs the network; systemctl status systemd-timesyncd says more."
+  fi
+}
+
+failed_units() { # [--user]
+  { systemctl "$@" --failed --plain --no-legend --no-pager 2>/dev/null || true; } | awk '{ print $1 }' | paste -sd' ' -
+}
+
+check_services() {
+  local system
+  system=$(failed_units)
+  if [[ -n $system ]]; then
+    report warn "failed system services: $system" "systemctl status <name> says why."
+  else
+    report ok "no failed system services"
+  fi
+}
+
+check_session() {
+  local user file name plaintext=() lines
+  user=$(failed_units --user)
+  if [[ -n $user ]]; then
+    report warn "failed services of yours: $user" "systemctl --user status <name> says why."
+  else
+    report ok "no failed services of yours"
+  fi
+
+  if [[ -n ${WAYLAND_DISPLAY:-} ]]; then
+    if nova-shell shell ping >/dev/null 2>&1; then
+      report ok "the shell is running"
+    else
+      report warn "the shell is not running" "nova restart shell starts it."
+    fi
+  fi
+
+  # Hyprland reports a config error as a red banner; a clean config reports one
+  # empty string.
+  if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+    local errors
+    if errors=$(hyprctl configerrors -j 2>/dev/null | jq -r '.[] | select(. != "")' 2>/dev/null); then
+      if [[ -z $errors ]]; then
+        report ok "Hyprland's config has no errors"
+      else
+        mapfile -t lines <<<"$errors"
+        report warn "Hyprland's config has errors, in ~/.config/hypr:" "${lines[@]}"
+      fi
+    fi
+  fi
+
+  # gnome-keyring writes a keyring without a password as plain text.
+  for file in "$KEYRINGS"/*.keyring; do
+    [[ -f $file && $(head -c 9 -- "$file") == '[keyring]' ]] || continue
+    name=${file##*/}
+    plaintext+=("${name%.keyring}")
+  done
+  if ((${#plaintext[@]} == 0)); then
+    report ok "no secrets stored unencrypted"
+  elif [[ -f $STATE/keyring-migrate-pending ]]; then
+    report -- "the passwordless keyring moves into your login keyring at the next unlock"
+  else
+    report warn "secrets stored unencrypted, in the keyring ${plaintext[*]}" \
+      "To move them into your login keyring:" \
+      "echo ${plaintext[0]} >$STATE/keyring-migrate-pending && /usr/lib/nova/bin/nova-keyring-migrate"
+  fi
+}
+
+check_boot_fallback() {
+  local out lines
+  if out=$(nova-boot-check status 2>&1); then
+    report ok "the boot menu has its fallback entry"
+    return
+  fi
+  # Below its heading line, nova-boot-check lists what is missing. A single
+  # line is an error of its own (it could not run), so show that instead.
+  if [[ $out == *$'\n'* ]]; then
+    mapfile -t lines < <(tail -n +2 <<<"$out")
+  else
+    lines=("$out")
+  fi
+  report FAIL "the boot menu's fallback is incomplete" "${lines[@]}"
+}
+
+check_undervolt() {
+  local undervolt state offset reason
+  undervolt=$(nova-power-undervolt status --json 2>/dev/null) || return 0
+  # A unit separator, not a tab: bash runs empty tab fields together.
+  IFS=$'\x1f' read -r state offset reason < <(jq -r '[.state,
+    (if .core == null then "" elif .core == .cache then "\(.core) mV" else "\(.core) mV on the core and \(.cache) mV on the cache" end),
+    (.reason // "")] | join("\u001f")' <<<"$undervolt")
+  case $state in
+    applied) report ok "the CPU is undervolted by $offset" ;;
+    held)
+      report warn "the CPU's undervolt is held: $reason" \
+        "nova power undervolt on applies it again; nova power undervolt set <mV> sets a smaller one"
+      ;;
+    pending) report warn "an undervolt of $offset is set but not on the CPU" "systemctl status nova-undervolt says why" ;;
+  esac
+}
+
+profile=''
+check_hardware() {
+  local list name missing
+  local -a wanted=()
+  if ! profile=$(nova-hw-detect 2>/dev/null); then
+    profile=''
+    report -- "no hardware profile for this model: the generic setup"
+    return 0
+  fi
+  report -- "hardware profile: $profile"
+
+  # What the profile adds (firmware, a driver, the speaker tuning's plugins)
+  # comes with nova update, so one missing is an update yet to run, or one
+  # that could not install it.
+  list=$HARDWARE/$profile/packages
+  [[ -r $list ]] || return 0
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name//[[:space:]]/}
+    [[ -n $name ]] || continue
+    # nvidia-open-nova is built for linux-nova; another kernel has Arch's.
+    if [[ $name == nvidia-open-nova ]] && ! pacman -T linux-nova >/dev/null 2>&1; then name=nvidia-open; fi
+    wanted+=("$name")
+  done <"$list"
+  ((${#wanted[@]})) || return 0
+  missing=$(pacman -T "${wanted[@]}" 2>/dev/null || true)
+  if [[ -n $missing ]]; then
+    report warn "packages this computer needs are not installed: ${missing//$'\n'/ }" "nova update installs them."
+  else
+    report ok "this computer's packages are installed"
+  fi
+}
+
+# --------------------------------------------------------- any computer's parts
+#
+# What any computer can be looked over for, read from sysfs as the user can
+# (never lspci, which wakes a sleeping GPU), each silent where it does not
+# apply: a desktop has no lid, a virtual machine no firmware to load.
+
+# Secure Boot on: Limine and the kernels are not signed for it. A computer that
+# started Nova with it on is letting them through, for now.
+check_secure_boot() {
+  local value
+  value=$(od -An -tu1 -j4 -N1 -- "$SYS/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c" 2>/dev/null) || return 0
+  [[ ${value//[[:space:]]/} == 1 ]] || return 0
+  report warn "Secure Boot is on, and Nova's boot loader is not signed for it" \
+    "This start got past it; the firmware may refuse the boot loader after an update." \
+    "Turn Secure Boot off in the firmware settings (the setup key as the computer starts)."
+}
+
+vendor_name() { # PCI vendor id
+  case $1 in
+    0x8086) echo Intel ;;
+    0x1002) echo AMD ;;
+    0x10de) echo NVIDIA ;;
+    *) echo "${1#0x}" ;;
+  esac
+}
+
+driver_of() { # PCI device directory
+  local link
+  link=$(readlink -- "$1/driver" 2>/dev/null) || return 0
+  echo "${link##*/}"
+}
+
+# The package of NVIDIA's open modules for the running kernel.
+nvidia_modules() {
+  case $(uname -r) in
+    *-nova*) echo nvidia-open-nova ;;
+    *-lts*) echo nvidia-open-lts ;;
+    *) echo nvidia-open ;;
+  esac
+}
+
+# Each graphics card and the driver it is on. NVIDIA's own drives cards from
+# Turing (device 0x1e00) on, as the installer and data/hypr/gpu.lua split them;
+# an older one runs on nouveau. The card the firmware drew its boot screen on
+# drives the display, NVIDIA's when none says so, as gpu.lua takes it.
+check_graphics() {
+  local dev vendor driver nvidia_dev='' nvidia_id=0 nvidia_boots=0 other_boots=0 igpu=0 status connected setting
+  local -a cards=() unbound=()
+  for dev in "$SYS"/bus/pci/devices/*; do
+    [[ -r $dev/class && $(<"$dev/class") == 0x03* ]] || continue
+    vendor=$(<"$dev/vendor")
+    driver=$(driver_of "$dev")
+    cards+=("$(vendor_name "$vendor") (${driver:-no driver})")
+    [[ -n $driver ]] || unbound+=("$dev")
+    if [[ $vendor == 0x10de ]]; then
+      nvidia_dev=$dev nvidia_id=$(($(<"$dev/device")))
+      [[ $(cat "$dev/boot_vga" 2>/dev/null) != 1 ]] || nvidia_boots=1
+    else
+      [[ $vendor != 0x8086 && $vendor != 0x1002 ]] || igpu=1
+      [[ $(cat "$dev/boot_vga" 2>/dev/null) != 1 ]] || other_boots=1
+    fi
+  done
+  ((${#cards[@]})) || return 0
+  report -- "graphics: $(printf '%s\n' "${cards[@]}" | paste -sd, - | sed 's/,/, /g')"
+  for dev in "${unbound[@]}"; do
+    if [[ $dev == "$nvidia_dev" ]] && ((nvidia_id >= 0x1e00)); then
+      report warn "the NVIDIA graphics card has no driver" \
+        "NVIDIA's driver for it: sudo pacman -S --needed $(nvidia_modules) nvidia-utils, then restart"
+    else
+      report warn "the $(vendor_name "$(<"$dev/vendor")") graphics card has no driver" "journalctl -k -b says why"
+    fi
+  done
+  [[ -n $nvidia_dev ]] || return 0
+  driver=$(driver_of "$nvidia_dev")
+
+  if [[ $driver == nouveau ]] && ((nvidia_id < 0x1e00)); then
+    report -- "the NVIDIA card predates NVIDIA's own driver (GTX 16 and RTX 20 on), so it runs on nouveau: fine for the desktop, slow for games"
+  fi
+  [[ $driver == nvidia ]] || return 0
+
+  # Driving the display, NVIDIA decodes the video (data/hypr/env.lua).
+  if ((nvidia_id >= 0x1e00 && (nvidia_boots || !other_boots))) &&
+    [[ -n $(pacman -T libva-nvidia-driver 2>/dev/null || true) ]]; then
+    report warn "video is decoded by the CPU: NVIDIA drives the display, and its VA-API driver is not installed" \
+      "sudo pacman -S libva-nvidia-driver"
+  fi
+
+  # A laptop with an iGPU beside it: the NVIDIA card should sleep while nothing
+  # uses it. The P1 Gen 4i's power governor takes it off the bus instead.
+  ((igpu)) && [[ $profile != thinkpad-p1-gen4i ]] && nova-hw-laptop 2>/dev/null || return 0
+  status=$(cat "$nvidia_dev/power/runtime_status" 2>/dev/null || echo unknown)
+  if [[ $status == suspended ]]; then
+    report ok "the NVIDIA card sleeps while nothing uses it"
+    return 0
+  fi
+  connected=0
+  for status in "$nvidia_dev"/drm/card*/card*-*/status; do
+    [[ -r $status && $(<"$status") == connected ]] && connected=1
+  done
+  ((!connected)) || return 0
+  # NVIDIA lets a laptop's card sleep by itself from Ampere (device 0x2200) on;
+  # a Turing one sleeps only when its driver is asked to, which neither NVIDIA
+  # nor Nova does unasked (data/hardware/udev/80-nova-nvidia-sleep.rules).
+  # Read from the module's parameters: asking the card itself would wake it.
+  setting=$(cat "$SYS/module/nvidia/parameters/NVreg_DynamicPowerManagement" 2>/dev/null || true)
+  if ((nvidia_id < 0x2200)) && [[ $setting == 3 || $setting == 0 ]]; then
+    report -- "the NVIDIA card stays awake while nothing uses it, which costs battery unplugged: a GTX 16 or RTX 20 sleeps only when its driver is asked to" \
+      "To ask it: echo 'options nvidia NVreg_DynamicPowerManagement=0x02' | sudo tee /etc/modprobe.d/nova-nvidia-sleep.conf, then restart." \
+      "If the card then misbehaves, delete that file and restart."
+  else
+    report -- "the NVIDIA card is awake with no display on it, which costs battery unplugged: a program is using it" \
+      "sudo fuser -v /dev/nvidia* names the programs"
+  fi
+}
+
+# Wi-Fi or sound hardware with no Wi-Fi device or sound card at all: its driver
+# or its firmware did not load. Said only then, so a card that only looks like
+# one of these never raises it on a computer that works.
+check_devices() {
+  local dev class wifi='' audio=0
+  for dev in "$SYS"/bus/pci/devices/*; do
+    [[ -r $dev/class ]] || continue
+    class=$(<"$dev/class")
+    case $class in
+      0x0280*) wifi+="${wifi:+, }$(vendor_name "$(<"$dev/vendor")") $(<"$dev/device")" ;;
+      0x0401* | 0x0403*) audio=1 ;;
+    esac
+  done
+  if [[ -n $wifi ]] && ! compgen -G "$SYS/class/ieee80211/*" >/dev/null; then
+    report warn "no Wi-Fi: the Wi-Fi card ($wifi) has no driver, or no firmware for it" "journalctl -k -b says which"
+  fi
+  if ((audio)) && ! compgen -G "$SYS/class/sound/card*" >/dev/null; then
+    report warn "no sound card: the sound hardware has no driver, or no firmware for it" "journalctl -k -b says which"
+  fi
+}
+
+# An Intel MIPI camera: an IPU6 or IPU7, by the device ids the kernel's
+# intel-ipu6 and intel-ipu7 drivers take (nova-install has the same list).
+# Apps reach it through PipeWire's libcamera plugin.
+IPU_IDS=" 0x9a19 0x4e19 0x465d 0x462e 0xa75d 0x7d19 0x645d 0xb05d "
+check_camera() {
+  local dev ipu='' missing
+  for dev in "$SYS"/bus/pci/devices/*; do
+    [[ -r $dev/vendor && $(<"$dev/vendor") == 0x8086 && $IPU_IDS == *" $(<"$dev/device") "* ]] && ipu=$dev
+  done
+  [[ -n $ipu ]] || return 0
+  if [[ -z $(find "$ipu/" -maxdepth 4 -path '*/video4linux/video*' -print -quit 2>/dev/null) ]]; then
+    report warn "the camera (Intel IPU) has no video device: its driver or firmware did not load" \
+      "journalctl -k -b | grep -i ipu says why"
+    return 0
+  fi
+  missing=$(pacman -T libcamera libcamera-ipa pipewire-libcamera 2>/dev/null || true)
+  if [[ -n $missing ]]; then
+    report warn "apps cannot see the camera: it needs libcamera, which is not installed" \
+      "sudo pacman -S libcamera libcamera-ipa pipewire-libcamera"
+  fi
+}
+
+# Firmware the kernel asked for this boot and did not find. iwlwifi asks for
+# the newest it knows first, down to the one installed, so its misses are left
+# out: a Wi-Fi card left with none has no Wi-Fi device, which check_devices
+# says.
+check_firmware() {
+  local log files
+  log=$(journalctl -k -b -q -o cat --no-pager 2>/dev/null || true)
+  # Outside the wheel and adm groups, none of the kernel's messages show.
+  [[ -n $log ]] || return 0
+  files=$(sed -nE 's/.*Direct firmware load for ([^ ]+) failed.*/\1/p; s/.*firmware: failed to load ([^ ]+).*/\1/p' <<<"$log" |
+    { grep -vE '(^|/)iwlwifi-' || true; } | sort -u | paste -sd, - | sed 's/,/, /g')
+  [[ -n $files ]] || return 0
+  report warn "the kernel asked for firmware that is not here: $files" \
+    "A device may not work fully without it. Some drivers ask for several versions and take the one there is."
+}
+
+# How this computer sleeps: the suspend the kernel uses, of those the firmware
+# offers, and hibernation. The lid, the suspend key and the menu's Suspend
+# hibernate after a while asleep; a computer that cannot only suspends, which
+# empties a battery in a few days.
+check_sleep() {
+  local offered chosen how lockdown swap=0 memory=0 reasons=()
+  [[ -r $SYS/power/mem_sleep ]] || return 0
+  offered=$(<"$SYS/power/mem_sleep")
+  chosen=$(sed -nE 's/.*\[([^]]+)\].*/\1/p' <<<"$offered")
+  offered=$(tr -d '[]' <<<"$offered")
+  how=${chosen:-$offered}
+  [[ $offered == "$how" ]] || how+=" (of ${offered// /, })"
+  if [[ -e $PORTABLE_MARKER ]]; then
+    report -- "sleep: $how; a portable Nova never hibernates"
+    return 0
+  fi
+  if nova-hibernation-available 2>/dev/null; then
+    report -- "sleep: $how, and hibernation"
+    return 0
+  fi
+
+  [[ " $(cat "$SYS/power/state" 2>/dev/null) " == *" disk "* ]] || reasons+=("The kernel offers no hibernation.")
+  lockdown=$(sed -nE 's/.*\[([^]]+)\].*/\1/p' "$SYS/kernel/security/lockdown" 2>/dev/null || true)
+  [[ -z $lockdown || $lockdown == none ]] || reasons+=("The kernel is locked down ($lockdown, with Secure Boot), which turns hibernation off.")
+  # zram is memory itself: an image has to go to a disk.
+  swap=$(awk 'NR > 1 && $1 !~ /zram/ { kb += $3 } END { print kb + 0 }' "$PROC/swaps" 2>/dev/null || echo 0)
+  memory=$(awk '/^MemTotal:/ { print $2; exit }' "$PROC/meminfo" 2>/dev/null || echo 0)
+  if ((swap == 0)); then
+    reasons+=("There is no swap on a disk to keep the memory in.")
+  elif ((swap < memory)); then
+    reasons+=("The swap ($(((swap + 524288) / 1048576)) GiB) is smaller than the memory ($(((memory + 524288) / 1048576)) GiB).")
+  fi
+  [[ " $(cat "$PROC/cmdline" 2>/dev/null) " == *" resume="* ]] || reasons+=("The boot line has no resume=, so a hibernated image may not be found.")
+  ((${#reasons[@]})) || reasons=("systemctl hibernate says why.")
+  if nova-hw-laptop 2>/dev/null; then
+    report warn "this computer cannot hibernate, so a closed lid only suspends, which empties the battery in a few days" "${reasons[@]}"
+  else
+    report -- "sleep: $how; no hibernation" "${reasons[@]}"
+  fi
+}
+
+# This computer's patches (nova patch), as nova-patch-apply last left them.
+check_patches() {
+  local name state reason
+  local -a on=() other=()
+  if [[ -r $PATCH_STATUS ]]; then
+    while IFS=$'\t' read -r name state reason; do
+      case $state in
+        on) on+=("$name") ;;
+        other) other+=("$name") ;;
+        bad) report warn "patch $name is off: $reason" "nova patch show $name shows it; nova patch remove $name takes it out" ;;
+      esac
+    done <"$PATCH_STATUS"
+  fi
+  ((${#on[@]} == 0)) || report -- "this computer's patches: ${on[*]}"
+  ((${#other[@]} == 0)) || report -- "patches made for another computer, so off here: ${other[*]}"
+  [[ ! -e $RAM_TEST ]] || report -- "the memory test runs at the next start (nova patch ram test)"
+}
+
+check_root_filesystem
+check_disk_space
+check_package
+check_kernel
+check_lock
+check_snapshots
+check_clock
+check_services
+if ((EUID == 0)); then
+  check_boot_fallback
+  report -- "your session's checks: run nova doctor without sudo"
+else
+  check_session
+  if [[ -r $ESP/limine.conf ]]; then
+    check_boot_fallback
+  else
+    report -- "the boot menu's fallback entry: sudo nova doctor checks it"
+  fi
+fi
+check_undervolt
+check_hardware
+check_secure_boot
+check_graphics
+check_devices
+check_camera
+check_firmware
+check_sleep
+check_patches
+if $json; then printf '%s\n' "${reports[@]}" | jq -s .; fi
+exit "$failed"

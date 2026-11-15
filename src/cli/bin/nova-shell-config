@@ -1,0 +1,68 @@
+#!/bin/bash
+
+# nova:summary=Shared helpers for editing ~/.config/nova/shell.json (source this, don't run it)
+# nova:hidden=true
+
+# For the commands that read or change the shell's settings (nova bar, nova
+# idle, nova settings):
+#   in_effect        the settings in effect, as JSON
+#   commit PROGRAM   PROGRAM (jq, with any jq options after it) run on them,
+#                    written as the user's, and the shell told to read them
+#   fail MESSAGE     the message, after the command's name, and exit 1
+#   NORMALIZE        a jq program giving the settings the shape every change
+#                    can count on, to start a change with
+
+set -euo pipefail
+
+shell_config=$HOME/.config/nova/shell.json
+# shellcheck disable=SC2034 # for the commands that source this
+DEFAULTS_FILE=$NOVA_PATH/default/shell.json
+
+fail() {
+  echo "${0##*/}: $*" >&2
+  exit 1
+}
+
+# As the shell works them out (services/ShellJson.qml): the user's where
+# they are an object at version 1, else Nova's; and where they have no bar,
+# Nova's bar, the one the shell draws for them.
+in_effect() {
+  local file=$shell_config
+  if ! jq -e 'type == "object" and .version == 1' "$file" >/dev/null 2>&1; then file=$DEFAULTS_FILE; fi
+  jq -c --slurpfile nova "$DEFAULTS_FILE" 'if (.bar | type) == "object" then . else .bar = $nova[0].bar end' "$file"
+}
+
+# An object at version 1, with a bar, its layout's three sections, and the
+# plugins, each made what it should be where it is anything else.
+# shellcheck disable=SC2034 # for the commands that source this
+NORMALIZE='
+  def object: if type == "object" then . else {} end;
+  def array: if type == "array" then . else [] end;
+  object
+  | .version = 1
+  | .bar = (.bar | object)
+  | .bar.layout = (.bar.layout | object)
+  | .bar.layout.left = (.bar.layout.left | array)
+  | .bar.layout.center = (.bar.layout.center | array)
+  | .bar.layout.right = (.bar.layout.right | array)
+  | .plugins = (.plugins | array)'
+
+# Written beside the settings and renamed over them, so that the shell never
+# reads them half written. A shell that is not running has nothing to read
+# again, and says nothing.
+shell_config_next=""
+shell_config_cleanup() {
+  if [[ -n $shell_config_next ]]; then rm -f "$shell_config_next"; fi
+}
+trap shell_config_cleanup EXIT
+
+commit() { # program [jq option...]
+  local program=$1
+  shift
+  mkdir -p "${shell_config%/*}"
+  shell_config_next=$(mktemp "$shell_config.XXXXXX")
+  in_effect | jq -S -e "$@" "$program" >"$shell_config_next" || fail "could not update shell config"
+  mv "$shell_config_next" "$shell_config"
+  shell_config_next=""
+  nova-shell -q shell reloadConfig
+}

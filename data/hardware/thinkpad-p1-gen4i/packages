@@ -1,0 +1,11 @@
+# What a ThinkPad P1 Gen 4i needs beyond what the installer finds by itself
+# (the microcode, the Intel and NVIDIA drivers, from the CPU and the PCI scan)
+# and what the nova package brings (sof-firmware): the installer adds these,
+# and nova update keeps them installed.
+#
+# The fingerprint reader: the installer adds fprintd when the live system's
+# finds a reader, and this one is known to be one it drives.
+fprintd
+# The speaker tuning's LV2 plugins: Calf's bass enhancer, LSP's limiter.
+calf
+lsp-plugins-lv2

@@ -1,0 +1,28 @@
+#!/bin/bash
+
+# nova:summary=Copy a file to the clipboard and paste it
+# nova:args=[--copy-only] <mime-type> <path>
+# nova:hidden=true
+
+set -euo pipefail
+
+copy_only=false
+if [[ ${1:-} == --copy-only ]]; then
+  copy_only=true
+  shift
+fi
+mime=${1:-}
+file=${2:-}
+if [[ -z $mime || -z $file ]]; then
+  echo "Usage: nova-clipboard-paste-file [--copy-only] <mime-type> <path>" >&2
+  exit 1
+fi
+[[ -r $file ]] || exit 1
+
+wl-copy --type "$mime" <"$file"
+if $copy_only; then exit 0; fi
+
+# A moment for the clipboard to have it. Pasted into nothing, with no text
+# field in focus, is no error.
+sleep 0.15
+wtype -M shift -k Insert -m shift 2>/dev/null || true

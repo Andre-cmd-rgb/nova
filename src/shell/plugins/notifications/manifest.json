@@ -1,0 +1,12 @@
+{
+  "id": "nova.notifications",
+  "name": "Notifications",
+  "description": "Notifications as toasts on every screen, with do-not-disturb and a history.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

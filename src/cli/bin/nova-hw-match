@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# nova:summary=Match against the computer's DMI product name or product family (case-insensitive)
+# nova:args=<pattern>
+# nova:hidden=true
+
+set -euo pipefail
+
+if (($# != 1)); then
+  echo "Usage: nova-hw-match <pattern>" >&2
+  exit 2
+fi
+
+# The pattern is grep's. A model may be named in either field: some makers
+# put a part number in the name and the model in the family.
+dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+grep -qi -e "$1" -- "$dmi/product_name" 2>/dev/null ||
+  grep -qi -e "$1" -- "$dmi/product_family" 2>/dev/null

@@ -1,0 +1,8 @@
+module qs.Commons
+
+# Nova imports these without a version, so they are listed without one.
+singleton Border Border.qml
+singleton Color Color.qml
+singleton Style Style.qml
+singleton Util Util.qml
+singleton Wake Wake.qml

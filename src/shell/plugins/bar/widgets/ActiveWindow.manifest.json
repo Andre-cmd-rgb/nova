@@ -1,0 +1,14 @@
+{
+  "id": "nova.active-window",
+  "name": "Active window",
+  "description": "The focused window's title; a click raises the window",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "ActiveWindow.qml"
+  },
+  "barWidget": {
+    "defaultSection": "left"
+  }
+}

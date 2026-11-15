@@ -1,0 +1,30 @@
+# Catppuccin Mocha (MIT), from the Catppuccin palette, with its terminal
+# colours as catppuccin/foot sets them. Mauve is Catppuccin's own accent.
+mode = "dark"
+
+background = "#1e1e2e"          # base
+dark_background = "#181825"     # mantle
+lighter_background = "#313244"  # surface0
+selection = "#414356"           # catppuccin/foot's selection
+
+foreground = "#cdd6f4"          # text
+light_foreground = "#bac2de"    # subtext1
+dark_foreground = "#6c7086"     # overlay0
+muted = "#9399b2"               # overlay2, Catppuccin's comments
+
+accent = "#cba6f7"              # mauve
+orange = "#fab387"              # peach
+
+red = "#f38ba8"
+green = "#a6e3a1"
+yellow = "#f9e2af"
+blue = "#89b4fa"
+magenta = "#f5c2e7"             # pink
+cyan = "#94e2d5"                # teal
+
+bright_red = "#f38ba8"
+bright_green = "#a6e3a1"
+bright_yellow = "#f9e2af"
+bright_blue = "#89b4fa"
+bright_magenta = "#f5c2e7"
+bright_cyan = "#94e2d5"

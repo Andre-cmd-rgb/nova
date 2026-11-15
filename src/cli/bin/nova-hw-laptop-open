@@ -1,0 +1,8 @@
+#!/bin/bash
+
+# nova:summary=Returns true unless the laptop lid is closed; a computer without one counts as open
+# nova:hidden=true
+
+set -euo pipefail
+
+! "${NOVA_HW_LAPTOP_CLOSED:-${0%/*}/nova-hw-laptop-closed}"

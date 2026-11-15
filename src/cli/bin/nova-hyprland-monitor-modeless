@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# nova:summary=Returns true when Hyprland has an enabled monitor with no mode
+# nova:hidden=true
+
+set -euo pipefail
+
+# A display that was off when the computer started can answer with part of its
+# EDID and no video modes, and Hyprland then runs it at 0x0: a black screen.
+# Plain `monitors` leaves out mirrors, so this asks for all of them and skips
+# the ones that are off.
+#
+# Exits 0 when one has no mode, 1 when none, 2 when Hyprland cannot say.
+# Nothing announces this state, so a caller treating "cannot say" as "none"
+# would leave the screen black for good.
+monitors=$(hyprctl monitors all -j 2>/dev/null) || exit 2
+answer=$(jq 'if any(.[]; .disabled != true and (.width == 0 or .height == 0)) then 0 else 1 end' \
+  <<<"$monitors" 2>/dev/null) || true
+[[ $answer == [01] ]] || answer=2
+exit "$answer"

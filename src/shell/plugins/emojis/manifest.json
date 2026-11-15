@@ -1,0 +1,12 @@
+{
+  "id": "nova.emojis",
+  "name": "Emojis",
+  "description": "Find an emoji by name and put it where you were typing.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Emojis.qml"
+  }
+}

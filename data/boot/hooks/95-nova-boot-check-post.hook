@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/modules/*/vmlinuz
+
+[Action]
+Description = Verifying the Limine fallback entry after the kernel update...
+When = PostTransaction
+Exec = /usr/lib/nova/bin/nova-boot-check post

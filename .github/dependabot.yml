@@ -1,0 +1,8 @@
+# The workflows pin each action to a commit, so a moved tag cannot change
+# what runs next to the signing key. Dependabot proposes the newer commits.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# nova:summary=Returns true when an external monitor is physically connected
+# nova:hidden=true
+
+set -euo pipefail
+
+# Each connector the kernel knows is a directory card<N>-<connector>. The
+# laptop's own panel, on eDP, LVDS or DSI, is not external.
+for connector in "${NOVA_DRM_PATH:-/sys/class/drm}"/card*-*; do
+  [[ -e $connector/status ]] || continue
+  if [[ ${connector##*/} =~ ^card[^-]*-(eDP|LVDS|DSI)-. ]]; then continue; fi
+  state=""
+  read -r state <"$connector/status" || true
+  [[ $state != connected ]] || exit 0
+done
+exit 1

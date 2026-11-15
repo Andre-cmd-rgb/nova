@@ -1,0 +1,31 @@
+# Nord (MIT), by Arctic Ice Studio: Polar Night, Snow Storm, Frost and
+# Aurora, with the terminal colours of nordtheme/alacritty. nord8 is the
+# accent Nord's own guide names first.
+mode = "dark"
+
+background = "#2e3440"          # nord0
+lighter_background = "#3b4252"  # nord1
+selection = "#434c5e"           # nord2
+
+foreground = "#d8dee9"          # nord4
+bright_foreground = "#eceff4"   # nord6
+light_foreground = "#a5abb6"    # the terminal's dim foreground
+dark_foreground = "#4c566a"     # nord3
+muted = "#616e88"               # nord3 brightened, Nord's comments
+
+accent = "#88c0d0"              # nord8
+orange = "#d08770"              # nord12
+
+red = "#bf616a"                 # nord11
+green = "#a3be8c"               # nord14
+yellow = "#ebcb8b"              # nord13
+blue = "#81a1c1"                # nord9
+magenta = "#b48ead"             # nord15
+cyan = "#88c0d0"                # nord8
+
+bright_red = "#bf616a"
+bright_green = "#a3be8c"
+bright_yellow = "#ebcb8b"
+bright_blue = "#81a1c1"
+bright_magenta = "#b48ead"
+bright_cyan = "#8fbcbb"         # nord7

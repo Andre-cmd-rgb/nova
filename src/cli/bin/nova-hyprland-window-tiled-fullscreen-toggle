@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# nova:summary=Toggle tiled fullscreen for the focused Hyprland window
+
+set -euo pipefail
+
+# The window is told it is fullscreen (client state 2) while Hyprland keeps it
+# in its tile (internal state 0), so a video or a game fills only that tile.
+window=$(hyprctl activewindow -j)
+told=$(jq -r '.fullscreenClient // 0' <<<"$window")
+client=2
+[[ $told != 2 ]] || client=0
+
+hyprctl dispatch "hl.dsp.window.fullscreen_state({ internal = 0, client = $client })" >/dev/null 2>&1 ||
+  hyprctl dispatch fullscreenstate 0 "$client" >/dev/null

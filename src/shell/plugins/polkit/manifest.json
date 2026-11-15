@@ -1,0 +1,12 @@
+{
+  "id": "nova.polkit",
+  "name": "Polkit Agent",
+  "description": "Asks for your password, or your finger, when an app needs root.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "PolkitAgent.qml"
+  }
+}

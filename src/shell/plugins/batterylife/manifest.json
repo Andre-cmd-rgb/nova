@@ -1,0 +1,17 @@
+{
+  "id": "nova.batterylife",
+  "name": "Battery Life",
+  "description": "What this battery actually gives you: measured runtime per discharge run, average draw, and a full-charge projection built from your own history rather than the instantaneous rate.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "description": "Battery glyph with measured time left, and a click for the history",
+    "defaultSection": "right"
+  }
+}

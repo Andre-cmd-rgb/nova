@@ -1,0 +1,13 @@
+{
+  "id": "nova.calendar",
+  "name": "Calendar",
+  "description": "Events and tasks on this computer, in a week or a month, moved by dragging; their reminders as notifications, and the day's in the bar's clock.",
+  "kinds": [
+    "service",
+    "panel"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "panel": "Panel.qml"
+  }
+}

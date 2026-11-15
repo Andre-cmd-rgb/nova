@@ -1,0 +1,101 @@
+#!/bin/bash
+# nova-bluetooth-le-apply: the root half of `nova bluetooth le`.
+#
+#   status   on or off, as main.conf has it
+#   on       Bluetooth LE and classic Bluetooth both, BlueZ's default
+#   off      classic Bluetooth only
+#
+# Off is for a controller whose LE side breaks classic audio: on the P1's
+# AX210, LE connection timeouts made headphones (an HD 450SE, AirPods)
+# stutter and drop, and classic alone plays them smoothly. A device that
+# speaks only LE, such as some mice and trackers, cannot connect while it is
+# off.
+#
+# BlueZ takes the mode from ControllerMode in /etc/bluetooth/main.conf, and
+# from nowhere else (it reads no drop-in directory), and applies it to every
+# controller it sets up, after a firmware reset too, which a runtime
+# `btmgmt le off` does not survive. The one line is set in place, so the
+# rest of the file stays as it was, and bluetoothd restarts to read it:
+# connected devices drop for a moment.
+#
+# Run through pkexec (org.nova.bluetooth-le lets the active user do it
+# without a password), so it trusts nothing it is given: on, off or status,
+# and it writes main.conf alone.
+
+set -euo pipefail
+
+CONF=${NOVA_BLUETOOTH_CONF:-/etc/bluetooth/main.conf}
+
+die() {
+  echo "nova-bluetooth-le-apply: $*" >&2
+  exit 1
+}
+
+# The mode main.conf sets in [General], or BlueZ's own, dual.
+mode() {
+  [[ -r $CONF ]] || { echo dual; return 0; }
+  awk '
+    /^[ \t]*\[/ { general = ($0 ~ /^[ \t]*\[General\][ \t]*$/); next }
+    general && /^[ \t]*ControllerMode[ \t]*=/ {
+      value = $0
+      sub(/^[^=]*=[ \t]*/, "", value)
+      sub(/[ \t]*(#.*)?$/, "", value)
+      mode = value
+    }
+    END { print mode == "" ? "dual" : mode }' "$CONF"
+}
+
+# main.conf on stdin with ControllerMode set to <mode> in [General]: in place
+# of the line there, commented out or not; else under the section's last
+# line; else in a [General] of its own at the end.
+with_mode() { # mode
+  awk -v mode="$1" '
+    function put() { print "ControllerMode = " mode; done = 1 }
+    /^[ \t]*\[/ {
+      if (general && !done) put()
+      general = ($0 ~ /^[ \t]*\[General\][ \t]*$/)
+      print
+      next
+    }
+    general && /^[ \t]*#?[ \t]*ControllerMode[ \t]*=/ {
+      if (!done) put()
+      else if ($0 !~ /^[ \t]*#/) next
+      else print
+      next
+    }
+    { print }
+    END {
+      if (general && !done) put()
+      if (!done) { print ""; print "[General]"; put() }
+    }'
+}
+
+set_mode() { # mode
+  local tmp
+  [[ $(mode) == "$1" ]] && return 0
+  [[ -f $CONF ]] || die "there is no $CONF: is BlueZ installed?"
+  tmp=$(mktemp "$CONF.XXXXXX")
+  if ! with_mode "$1" <"$CONF" >"$tmp" || ! chmod 644 "$tmp" || ! mv -f "$tmp" "$CONF"; then
+    rm -f "$tmp"
+    die "could not write $CONF"
+  fi
+  # Only a running bluetoothd needs telling; a stopped one reads it at start.
+  systemctl try-restart bluetooth.service
+}
+
+main() {
+  case ${1:-} in
+    status) [[ $(mode) == bredr ]] && echo off || echo on ;;
+    on) set_mode dual ;;
+    off) set_mode bredr ;;
+    *)
+      echo "Usage: nova-bluetooth-le-apply status | on | off" >&2
+      return 2
+      ;;
+  esac
+}
+
+# Sourced by the tests.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

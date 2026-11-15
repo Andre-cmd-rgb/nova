@@ -1,0 +1,14 @@
+[package]
+name = "nova-screensaver"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's screensaver: a text played through effects in a terminal"
+license = "MIT"
+rust-version = "1.89"
+
+# No dependencies, like the rest of Nova's Rust: the package builds offline, and
+# a terminal needs only escape sequences and one ioctl for its size.
+
+[[bin]]
+name = "nova-screensaver-effect"
+path = "src/main.rs"

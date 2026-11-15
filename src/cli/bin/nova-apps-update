@@ -1,0 +1,11 @@
+#!/bin/bash
+# nova:summary=Update Google Chrome and VS Code to their vendors' newest releases
+# nova:args=[--noconfirm]
+#
+# The installed ones only; `nova update` runs this after the system. See
+# nova-apps-install.
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+exec "$HERE/nova-apps-install" --update "$@"

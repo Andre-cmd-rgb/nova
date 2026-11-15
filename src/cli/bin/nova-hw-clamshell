@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# nova:summary=Returns true when clamshell mode is active
+# nova:hidden=true
+
+set -euo pipefail
+
+# Docked: the lid shut, and a display plugged in to show the desktop instead.
+nova-hw-laptop-closed && nova-hw-external-monitors

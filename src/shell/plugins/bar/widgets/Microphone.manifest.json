@@ -1,0 +1,14 @@
+{
+  "id": "nova.microphone",
+  "name": "Microphone",
+  "description": "The default microphone, muted or live; a click mutes it",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Microphone.qml"
+  },
+  "barWidget": {
+    "defaultSection": "right"
+  }
+}

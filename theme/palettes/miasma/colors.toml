@@ -1,0 +1,30 @@
+# Miasma (CC0), by xero (xero/miasma.nvim): earth and moss, with the
+# terminal colours of its extras/miasma.ghostty. A selection is moss under
+# dark text, as its Visual is.
+mode = "dark"
+
+background = "#222222"
+dark_background = "#1c1c1c"     # its CursorLine and Pmenu
+selection = "#78824b"
+selection_foreground = "#222222"
+
+foreground = "#c2c2b0"
+bright_foreground = "#d7c483"
+muted = "#666666"               # its comments
+
+accent = "#c9a554"
+orange = "#bb7744"
+
+red = "#685742"
+green = "#5f875f"
+yellow = "#b36d43"
+blue = "#78824b"
+magenta = "#bb7744"
+cyan = "#c9a554"
+
+bright_red = "#685742"
+bright_green = "#5f875f"
+bright_yellow = "#b36d43"
+bright_blue = "#78824b"
+bright_magenta = "#bb7744"
+bright_cyan = "#c9a554"

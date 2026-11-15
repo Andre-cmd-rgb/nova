@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# nova:summary=Enable, disable, toggle, or recover the internal laptop display
+# nova:args=<on|off|toggle|recover>
+
+set -euo pipefail
+
+case ${1:-} in
+  on | off | toggle | recover) ;;
+  *)
+    echo "Usage: ${0##*/} {on|off|toggle|recover}" >&2
+    exit 1
+    ;;
+esac
+
+# The panel off is a toggle of its own: a rule among the toggles, which the
+# Hyprland config loads at every reload, written here with the panel's name.
+# Mirroring the panel is another toggle, and needs it on.
+toggles=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr
+rule=$toggles/internal-monitor-disable.lua
+mirrored=$toggles/internal-monitor-mirror.lua
+# Looked up whatever the action: one Hyprland cannot answer changes nothing.
+panel=$(nova-hyprland-monitor-laptop)
+
+say() { nova-notification-send -g 󰍹 "$1"; }
+refuse() { say "$1"; exit 1; }
+
+# Every display awake, the panel brought back included.
+wake() { hyprctl dispatch 'hl.dsp.dpms({ action = "enable" })' >/dev/null 2>&1 || true; }
+
+# The rule gone, and Hyprland reloaded without it.
+drop_rule() { nova-hyprland-toggle internal-monitor-disable off; }
+
+panel_on() {
+  if [[ -f $rule ]]; then
+    drop_rule
+    say "Laptop display enabled"
+  fi
+  wake
+}
+
+# Never the only display on; and the name goes into Lua the config runs, so
+# only a plain connector name. Off already, or mirrored, it is left as it is.
+panel_off() {
+  [[ -n $panel ]] || refuse "No laptop display found"
+  [[ $panel =~ ^[A-Za-z0-9._-]+$ ]] || refuse "Refusing unsafe monitor name"
+  nova-hyprland-monitor-external-active || refuse "Can't disable the only active display"
+  [[ ! -f $rule && ! -f $mirrored ]] || return 0
+  mkdir -p "$toggles"
+  printf 'hl.monitor({ output = "%s", disabled = true })\n' "$panel" >"$rule"
+  say "Laptop display disabled"
+  hyprctl reload
+}
+
+# The panel back on once nothing else shows the desktop. The lid watcher asks
+# for this, so it does nothing else: a wake each time would undo the lock
+# screen's blanking, and race the modeset after a resume into a flash.
+panel_back() {
+  if [[ -f $rule ]] && ! nova-hyprland-monitor-external-active; then
+    drop_rule
+    wake
+  fi
+}
+
+case $1 in
+  on) panel_on ;;
+  off) panel_off ;;
+  toggle) if [[ -f $rule ]]; then panel_on; else panel_off; fi ;;
+  recover) panel_back ;;
+esac

@@ -1,0 +1,11 @@
+{
+  "id": "nova.indicators",
+  "name": "Indicators",
+  "description": "Recording, night light, do not disturb and Caffeine, lit while on",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Indicators.qml"
+  }
+}

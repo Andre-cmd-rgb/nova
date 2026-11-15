@@ -1,0 +1,139 @@
+#!/bin/bash
+
+# nova:summary=Watch Hyprland monitor events and recover monitor toggles when a monitor is removed
+# nova:hidden=true
+
+set -euo pipefail
+
+if [[ -z ${XDG_RUNTIME_DIR:-} || -z ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  echo "nova-hyprland-monitor-watch: not running inside a Hyprland session" >&2
+  exit 1
+fi
+
+events=$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock
+locks=$XDG_RUNTIME_DIR/nova
+mkdir -p "$locks"
+
+# One clamshell pass at a time: a pass asked for while one runs is that one.
+# A pass that fails leaves the watcher running, as nothing would start it
+# again; the passes after it try again.
+clamshell_pass() {
+  (
+    flock -n 9 || exit 0
+    nova-hyprland-monitor-clamshell || true
+  ) 9>"$locks/monitor-clamshell.lock"
+}
+
+# Hyprland announces each display twice (v1 and v2), and a dock brings several
+# at once. The first event of a burst runs a pass; one moments after another
+# leaves it to the passes 1, 3 and 7 seconds later, which start over from the
+# newest event. A pass they are in the middle of finishes.
+# EPOCHREALTIME has the locale's decimal separator, which is not always a dot.
+delayed="" last_event=0
+after_monitor_change() {
+  local now=${EPOCHREALTIME//[!0-9]/}
+  ((now - last_event < 500000)) || clamshell_pass
+  last_event=$now
+
+  if [[ -n $delayed ]]; then kill "$delayed" 2>/dev/null || true; fi
+  (
+    for pause in 1 3 7; do
+      sleep "$pause"
+      clamshell_pass
+    done
+  ) &
+  delayed=$!
+}
+
+# A display powered on after it was found fires no hotplug, and asking the
+# kernel to probe it again takes root: only a reload reads its EDID again, and
+# only the reload shows whether that worked. The machine can sit like this all
+# night, so the reloads back off, from 3 seconds to a minute. The lock keeps
+# one loop across the events that start one; its wait catches an event that
+# lands as a loop is ending, which might be the last to come.
+reload_while_modeless() {
+  (
+    flock -w 1 9 || exit 0
+    local pause=3 answer silent=0
+    while true; do
+      # Every display has a mode (1): done. Hyprland not saying (2) is no
+      # answer, and nothing else will ask again; but one that stays silent has
+      # gone, and the session, and the reason for this loop, with it.
+      answer=0
+      nova-hyprland-monitor-modeless || answer=$?
+      case $answer in
+        1) break ;;
+        2) silent=$((silent + 1)) ;;
+        *) silent=0 ;;
+      esac
+      ((silent <= 20)) || break
+      # No reload into an update's half-replaced files, which the reload guard
+      # holds back: only a reload counts towards the backing off.
+      if ((answer == 0)) && ! nova-hyprland-reload-guard paused; then
+        hyprctl reload >/dev/null 2>&1 || true
+        sleep "$pause"
+        pause=$((pause < 30 ? pause * 2 : 60))
+      else
+        sleep "$pause"
+      fi
+    done
+  ) 9>"$locks/monitor-modeless.lock" &
+}
+
+# Nearly always nothing has moved, and even a clamshell pass with nothing to
+# do is half a dozen processes. Every two seconds the poll reads the lid
+# itself, in bash, and runs a pass when it has moved since the last, or after
+# 30 seconds, for drift the lid does not show.
+poll_lid() {
+  local lid last="" polls=0 state word
+  while true; do
+    sleep 2
+    lid=""
+    for state in "${NOVA_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
+      [[ -r $state ]] && read -r _ word <"$state" && lid+=$word
+    done
+    polls=$((polls + 1))
+    if [[ $lid != "$last" ]] || ((polls >= 15)); then
+      clamshell_pass
+      last=$lid
+      polls=0
+    fi
+  done
+}
+
+# The panel goes off only on a laptop with another display on, so only then is
+# there anything for the poll to catch. Hyprland's lid switch binds handle the
+# lid itself; the poll catches what they miss, across a sleep and a wake.
+poller=""
+poll_while_docked() {
+  if nova-hw-laptop && nova-hyprland-monitor-external-active; then
+    if [[ -z $poller ]] || ! kill -0 "$poller" 2>/dev/null; then
+      poll_lid &
+      poller=$!
+    fi
+  elif [[ -n $poller ]]; then
+    kill "$poller" 2>/dev/null || true
+    poller=""
+  fi
+}
+
+# What a display coming or going sets off, and the start, which may follow
+# one this did not see.
+displays_changed() {
+  after_monitor_change
+  poll_while_docked
+  reload_while_modeless
+}
+
+# Hyprland's events read from a process substitution, not a pipe, so the loop
+# runs in this shell and can start and stop the poll. A reload while a display
+# is unpowered leaves it at 0x0, with no hotplug to tell, as at boot; the
+# loop's own reloads land there too, and change nothing while it holds the
+# lock.
+displays_changed
+while IFS= read -r event; do
+  case ${event%%>>*} in
+    monitoradded | monitoraddedv2 | monitorremoved | monitorremovedv2) displays_changed ;;
+    configreloaded) reload_while_modeless ;;
+  esac
+done < <(socat -U - "UNIX-CONNECT:$events")

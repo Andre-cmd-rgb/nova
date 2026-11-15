@@ -1,0 +1,79 @@
+#!/bin/bash
+
+# nova:summary=Send an IPC call to the running Nova shell
+# nova:args=[-q] <target> <method> [args...]
+
+set -euo pipefail
+
+# -q: for callers that only nudge the shell. Whatever goes wrong, nothing is
+# printed and the exit is 0.
+quiet=false
+if [[ ${1:-} == -q ]]; then
+  quiet=true
+  shift
+fi
+
+die() {
+  $quiet && exit 0
+  echo "$1" >&2
+  exit 1
+}
+
+if (($# == 0)) || [[ $1 == -h || $1 == --help ]]; then
+  cat <<'USAGE'
+Usage: nova-shell [-q] <target> <method> [args...]
+
+Calls a function of the running shell over its IPC: the shell's own (target
+shell) or a plugin's. It does not start the shell.
+
+  -q  Print nothing and exit 0 whatever happens: for a caller that only
+      nudges the shell, and does not mind if it is not there.
+
+For example:
+  nova-shell shell ping
+  nova-shell shell listPlugins
+  nova-shell shell toggle nova.menu '{"menu":"root"}'
+  nova-shell -q nova.indicators refresh
+USAGE
+  exit 0
+fi
+
+(($# >= 2)) || die "Usage: nova-shell <target> <method> [args...]"
+config=${NOVA_PATH:-/usr/share/nova}/shell
+[[ -f $config/shell.qml ]] || die "nova-shell config not found: $config/shell.qml"
+
+# qs finds the shell by its Wayland display. Run from outside the session
+# (over ssh, from a TTY: nova-restart-shell, and the migrations it runs), there
+# is none: it is the compositor's newest socket.
+newest_display() {
+  local socket newest=""
+  for socket in "${XDG_RUNTIME_DIR:-/run/user/$UID}"/wayland-[0-9]*; do
+    [[ -S $socket ]] || continue
+    [[ -n $newest && ! $socket -nt $newest ]] || newest=$socket
+  done
+  [[ -z $newest ]] || echo "${newest##*/}"
+}
+display=${WAYLAND_DISPLAY:-$(newest_display)}
+[[ -z $display ]] || export WAYLAND_DISPLAY=$display
+
+# A menu summoned or toggled without a payload gets an empty one.
+if (($# == 3)) && [[ $1 == shell && ($2 == summon || $2 == toggle) ]]; then
+  set -- "$@" "{}"
+fi
+
+# How it went, read from qs's exit and what it printed. qs fails only when it
+# reaches no shell; a shell that refuses the call (no such target or function,
+# the wrong arguments) says so on stdout, with a 0. A shell still starting
+# answers "Not ready", with a 0 too: a ping would count it up, and the next
+# call take its answer for a result. The -- keeps a function named like a qs
+# option (show) an argument.
+status=0
+reply=$(timeout --kill-after=1s "${NOVA_SHELL_IPC_TIMEOUT:-2s}" qs ipc -n -p "$config" call -- "$@" 2>/dev/null) || status=$?
+case $status:$reply in
+  0:"Target not found." | 0:"Function not found.") die "$reply" ;;
+  0:"Too few arguments provided"* | 0:"Too many arguments provided"*) die "$reply" ;;
+  0:"Not ready to accept queries yet"*) die "nova-shell is not ready" ;;
+  0:*) $quiet || [[ -z $reply ]] || echo "$reply" ;;
+  124:* | 137:*) die "nova-shell is not responding" ;;
+  *) die "nova-shell is not running" ;;
+esac

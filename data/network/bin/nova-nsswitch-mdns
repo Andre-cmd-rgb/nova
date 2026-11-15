@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# nova:summary=Let .local names (printers, scanners) resolve through Avahi
+# nova:hidden=true
+#
+# A printer found on the network is reached by its .local name, which only
+# Avahi answers, through nss-mdns's mdns_minimal in /etc/nsswitch.conf's hosts
+# line. That file is the filesystem package's, so Nova cannot ship it; pacman
+# keeps local edits to it. mdns_minimal goes first, before resolve, and
+# [NOTFOUND=return] stops a .local name it does not know there; a hosts line
+# that names mdns already is left alone. Run by a pacman hook after every
+# transaction with nova or filesystem.
+
+set -euo pipefail
+
+NSSWITCH=${NOVA_NSSWITCH:-/etc/nsswitch.conf}
+
+[[ -f $NSSWITCH ]] || exit 0
+grep -q '^hosts:' "$NSSWITCH" || exit 0
+! grep -q '^hosts:.*mdns' "$NSSWITCH" || exit 0
+sed -i -E 's/^hosts:([[:space:]]+)(mymachines[[:space:]]+)?/hosts:\1\2mdns_minimal [NOTFOUND=return] /' "$NSSWITCH"

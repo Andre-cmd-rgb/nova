@@ -1,0 +1,13 @@
+{
+  "id": "nova.lock",
+  "name": "Lock Screen",
+  "description": "The session lock, opened by the password or, after the first unlock of a boot, a fingerprint.",
+  "alwaysOn": true,
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

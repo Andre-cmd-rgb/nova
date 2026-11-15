@@ -1,0 +1,16 @@
+# The discrete card is not the seat's: the panel is on the iGPU and the
+# compositor is pinned to it (98-nova-igpu.rules, fact 1), so nothing on the
+# desktop should ever hold the card. Only its card node loses the tags; the
+# render node keeps them, and PRIME offload uses that and /dev/nvidia*.
+#
+# Without the "seat" tag logind does not track the node, and TakeDevice on it
+# fails with ENODEV. That is the point: aquamarine opens a GPU that appears
+# while the compositor runs through logind, ignoring AQ_DRM_DEVICES and the
+# seat, and keeps it until logout. One plug-in in a session that started on
+# battery was enough for every later unplug to leave the card powered (fact 53).
+#
+# After 71-seat.rules, which adds the tags.
+SUBSYSTEM=="drm", KERNEL=="card[0-9]*", ENV{DEVTYPE}=="drm_minor", \
+  SUBSYSTEMS=="pci", ATTRS{vendor}=="0x10de", \
+  ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", \
+  TAG-="seat", TAG-="master-of-seat"

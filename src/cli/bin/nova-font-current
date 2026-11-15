@@ -1,0 +1,9 @@
+#!/bin/bash
+
+# nova:summary=Show current monospace font
+
+set -euo pipefail
+
+# fontconfig is the source of truth. fc-match returns a comma-separated alias
+# list (e.g. "JetBrainsMono Nerd Font,JetBrainsMono NF"), so ask for the first.
+fc-match monospace -f '%{family[0]}\n'

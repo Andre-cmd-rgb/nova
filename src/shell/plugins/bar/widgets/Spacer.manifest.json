@@ -1,0 +1,11 @@
+{
+  "id": "nova.spacer",
+  "name": "Spacer",
+  "description": "Empty room along the bar, as long as you set",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Spacer.qml"
+  }
+}

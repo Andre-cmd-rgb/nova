@@ -1,0 +1,233 @@
+#!/bin/bash
+
+# nova:summary=Apply clamshell display state to Hyprland monitors
+# nova:hidden=true
+
+set -euo pipefail
+
+# Docked, with the lid shut and another display on, the laptop's panel is
+# turned off; undocked, it comes back, at the scale it is meant to have. The
+# lid, the monitor watcher and a wake from sleep all run this, and nearly
+# always nothing has moved, so it asks Hyprland once and does no more than
+# that answer calls for.
+
+toggles=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr
+clamshell_flag=$toggles/internal-monitor-clamshell.lua
+# The panel turned off by hand, and mirrored (nova-hyprland-monitor-internal
+# and -mirror).
+manual_flag=$toggles/internal-monitor-disable.lua
+mirror_flag=$toggles/internal-monitor-mirror.lua
+# The panel's scale when it last went off, for a config that sets none.
+scale_kept=$toggles/internal-monitor-scale
+monitors_lua=$HOME/.config/hypr/monitors.lua
+# What Settings → Displays keeps (nova monitor). Its rules load after
+# monitors.lua's, so they win.
+display_settings=${XDG_STATE_HOME:-$HOME/.local/state}/nova/monitors.json
+
+# Hyprland's displays in one line: whether a display other than the panel is
+# on, the panel's name, and its scale while it is on. `monitors all` lists the
+# panel when it is off too. Fields that can be empty come last, as read
+# merges tabs.
+displays() {
+  jq -r '
+    (first(.[].name | select(test("^(eDP|LVDS|DSI)-"))) // "") as $panel
+    | [any(.[]; .disabled == false and (.name | test("^(eDP|LVDS|DSI)-") | not)),
+       $panel,
+       (first(.[] | select(.name == $panel and .disabled != true)).scale // "")]
+    | @tsv'
+}
+
+# After a reload. A Hyprland that says nothing then means no other display,
+# and no scale; an answer that is not its list of displays stops the pass.
+look_again() {
+  local answer
+  answer=$({ hyprctl monitors all -j 2>/dev/null || true; } | displays)
+  IFS=$'\t' read -r other_on _ panel_scale <<<"$answer" || true
+}
+
+answer=$(hyprctl monitors all -j | displays)
+IFS=$'\t' read -r other_on panel panel_scale <<<"$answer" || true
+
+# The name goes into Lua the config runs, and into what Hyprland is told: a
+# headless output made by hand can be called anything.
+if [[ -n $panel && ! $panel =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "Refusing unsafe internal monitor name" >&2
+  exit 1
+fi
+
+is_scale() {
+  [[ $1 =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+same_scale() { # a b
+  is_scale "$1" && is_scale "$2" || return 1
+  awk -v a="$1" -v b="$2" 'BEGIN { d = a - b; exit !(d < 0.001 && d > -0.001) }'
+}
+
+# monitors.lua as written, and with its comments cut away: commented-out text
+# is neither a rule nor one of its keys. Read once, when first needed.
+config_raw=()
+config_code=()
+config_read=false
+read_config() {
+  local line kept block='--\[\[[^]]*\]\]'
+  $config_read && return 0
+  config_read=true
+  [[ -f $monitors_lua ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    config_raw+=("$line")
+    kept=""
+    while [[ $line =~ $block ]]; do
+      kept+=${line%%"${BASH_REMATCH[0]}"*}
+      line=${line#*"${BASH_REMATCH[0]}"}
+    done
+    line=$kept$line
+    config_code+=("${line%%--*}")
+  done <"$monitors_lua"
+}
+
+# The value of `local <name> = <value>` in monitors.lua, unquoted. Only a lone
+# value counts: an expression such as 1080 / 720 stays unresolved, so the
+# caller falls back rather than taking half of it.
+local_value() { # name → REPLY
+  local line assignment
+  REPLY=""
+  [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 0
+  assignment='^[[:space:]]*local[[:space:]]+'"$1"'[[:space:]]*=[[:space:]]*("[^"]*"|[^"[:space:]]+)[[:space:]]*(--.*)?$'
+  read_config
+  for line in "${config_raw[@]}"; do
+    [[ $line =~ $assignment ]] || continue
+    REPLY=${BASH_REMATCH[1]}
+    [[ $REPLY != \"*\" ]] || REPLY=${REPLY:1:-1}
+    return 0
+  done
+}
+
+# A key's value in the first monitors.lua rule for an output that sets it. A
+# key follows a separator, so a longer key cannot pass for it, and its value
+# is all up to the next one: anything else is an expression this cannot work
+# out. A quoted value is a Lua string; a bare word may name a local the rule
+# uses, as the shipped `scale = nova_monitor_scale` does, and one that names
+# none is kept as it is, to fail as a value.
+rule_value() { # output key → REPLY
+  local line word
+  local rule='^[[:space:]]*hl\.monitor\(\{.*output[[:space:]]*=[[:space:]]*"'"$1"'"'
+  local setting='.*[{,;[:space:]]'"$2"'[[:space:]]*=[[:space:]]*("[^"]*"|[^,;}[:space:]]+)[[:space:]]*([,;}].*)?$'
+  REPLY=""
+  read_config
+  for line in "${config_code[@]}"; do
+    [[ $line =~ $rule && $line =~ $setting ]] || continue
+    word=${BASH_REMATCH[1]}
+    if [[ $word == \"*\" ]]; then
+      REPLY=${word:1:-1}
+    else
+      local_value "$word"
+      REPLY=${REPLY:-$word}
+    fi
+    return 0
+  done
+}
+
+# The panel's setting for a key: Settings' when it keeps one, monitors.lua's
+# otherwise.
+panel_value() { # key → REPLY
+  REPLY=""
+  [[ -n $panel ]] || return 0
+  if [[ -f $display_settings ]]; then
+    REPLY=$(jq -r --arg name "$panel" --arg key "$1" '.[$name][$key] // empty | tostring' "$display_settings" 2>/dev/null) || true
+  fi
+  [[ -n $REPLY ]] || rule_value "$panel" "$1"
+}
+
+# The scale the config sets for the panel. A rule for the panel that names a
+# scale settles it, even one that comes to nothing usable; only without one
+# does the catch-all rule count, and without that Nova's own
+# nova_monitor_scale.
+configured_scale() { # → REPLY
+  panel_value scale
+  [[ -n $REPLY ]] || rule_value "" scale
+  [[ -n $REPLY ]] || local_value nova_monitor_scale
+}
+
+# The scale to bring the panel back at: the configured one, else the one it
+# had when it went off, else 2.
+scale_to_set() { # configured
+  local kept
+  if is_scale "$1"; then
+    echo "$1"
+  elif [[ -f $scale_kept ]] && kept=$(<"$scale_kept") && is_scale "$kept"; then
+    echo "$kept"
+  else
+    echo 2
+  fi
+}
+
+enable_panel_at() { # scale
+  local position=auto
+  panel_value position
+  [[ ! $REPLY =~ ^[-[:alnum:]_.+]+$ ]] || position=$REPLY
+  hyprctl eval "hl.monitor({ output = \"$panel\", mode = \"preferred\", position = \"$position\", scale = $1 })" >/dev/null 2>&1 || true
+}
+
+# A config with no number for the scale (the default "auto", or an expression
+# only Hyprland's Lua can work out) leaves it to Hyprland, so the scale a
+# panel that is on has is the one configured. Setting another would flip it
+# between the two at every wake. A panel that is still off gets one all the
+# same, from what it had.
+sync_panel_scale() {
+  local configured desired
+  [[ -n $panel ]] || return 0
+  configured_scale
+  configured=$REPLY
+  if ! is_scale "$configured" && is_scale "$panel_scale"; then return 0; fi
+  desired=$(scale_to_set "$configured")
+  if same_scale "$panel_scale" "$desired"; then return 0; fi
+  enable_panel_at "$desired"
+}
+
+panel_off() {
+  [[ -n $panel ]] || exit 0
+  # Off by hand already, which says more than the clamshell.
+  [[ ! -f $manual_flag ]] || return 0
+
+  mkdir -p "$toggles"
+  if is_scale "$panel_scale"; then printf '%s\n' "$panel_scale" >"$scale_kept"; fi
+
+  local rule="hl.monitor({ output = \"$panel\", disabled = true })"
+  if [[ ! -f $clamshell_flag || $(<"$clamshell_flag") != "$rule" ]]; then
+    printf '%s\n' "$rule" >"$clamshell_flag"
+    hyprctl reload >/dev/null 2>&1 || true
+  fi
+}
+
+panel_on() {
+  local reloaded=false
+  if [[ -f $clamshell_flag ]]; then
+    rm -f "$clamshell_flag"
+    hyprctl reload >/dev/null 2>&1 || true
+    reloaded=true
+    look_again
+  fi
+
+  # Off by hand stays off while there is another display to use.
+  if [[ -f $manual_flag && $other_on == true ]]; then return 0; fi
+  sync_panel_scale
+
+  if $reloaded && [[ -n $panel ]]; then
+    hyprctl dispatch "hl.dsp.dpms({ action = \"enable\", monitor = \"$panel\" })" >/dev/null 2>&1 || true
+  fi
+}
+
+# The panel off by hand, or mirrored, for a display that has gone. Each of
+# these acts only while its own flag is there, and may reload.
+if [[ -f $manual_flag || -f $mirror_flag ]]; then
+  if [[ -f $manual_flag ]]; then nova-hyprland-monitor-internal recover >/dev/null 2>&1 || true; fi
+  if [[ -f $mirror_flag ]]; then nova-hyprland-monitor-internal-mirror recover >/dev/null 2>&1 || true; fi
+  look_again
+fi
+
+if nova-hw-clamshell && [[ $other_on == true ]]; then
+  panel_off
+else
+  panel_on
+fi

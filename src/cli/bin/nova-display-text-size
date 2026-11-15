@@ -1,0 +1,113 @@
+#!/bin/bash
+
+# nova:summary=Scale text everywhere: the shell, GTK apps and the terminal
+# nova:args=[size|reset]
+# nova:examples=nova display text-size | nova display text-size 14 | nova display text-size reset
+#
+# One knob for apparent text size, anchored to the shell's default of 12 px:
+#   the shell's [font] base-size in ~/.config/nova/shell.toml (watched live)
+#   GTK's text-scaling-factor, 12 px = 1.0, quantized so the interface font
+#     lands on a whole point size (fractional sizes clip in GTK4 menus)
+#   foot's font size, 12 px = 9 pt
+# Sizes run from 9 to 20 px. Without a size, the size and GTK's factor.
+
+set -euo pipefail
+
+shell_config=$HOME/.config/nova/shell.toml
+foot_config=$HOME/.config/foot/foot.ini
+gtk=org.gnome.desktop.interface
+
+# The [font] section's base-size in shell.toml, its value alone.
+base_size() {
+  local line section=""
+  [[ -f $shell_config ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    if [[ $line =~ ^[[:space:]]*\[([^]]*)\]([[:space:]]|$) ]]; then
+      section=${BASH_REMATCH[1]}
+    elif [[ $section == font && $line =~ ^[[:space:]]*base-size[[:space:]]*=[[:space:]]*([^#[:space:]]*) ]]; then
+      echo "${BASH_REMATCH[1]}"
+      return
+    fi
+  done <"$shell_config"
+}
+
+# shell.toml with [font]'s base-size set, or taken out for none: in place of
+# the one there, else at the end of [font], else in a [font] of its own at
+# the end. Every other line stays as it is.
+set_base_size() { # [px]
+  local px=${1:-} line section="" text="" placed=false
+  place() {
+    if [[ -n $px ]]; then text+="base-size = $px"$'\n'; fi
+    placed=true
+  }
+  if [[ -f $shell_config ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      if [[ $line =~ ^[[:space:]]*\[([^]]*)\]([[:space:]]|$) ]]; then
+        if [[ $section == font ]] && ! $placed; then place; fi
+        section=${BASH_REMATCH[1]}
+      elif [[ $section == font && $line =~ ^[[:space:]]*base-size[[:space:]]*= ]]; then
+        $placed || place
+        continue
+      fi
+      text+=$line$'\n'
+    done <"$shell_config"
+  fi
+  if [[ $section == font ]] && ! $placed; then place; fi
+  if ! $placed && [[ -n $px ]]; then
+    text+=${text:+$'\n'}$'[font]\n'
+    place
+  fi
+  mkdir -p "${shell_config%/*}"
+  printf '%s' "$text" >"$shell_config.tmp"
+  mv "$shell_config.tmp" "$shell_config"
+}
+
+# foot reads its size as it starts, so the windows open keep theirs: one
+# notification says so, the one before replaced rather than another stacked
+# while a slider is dragged.
+set_foot_size() { # pt
+  local said=${XDG_RUNTIME_DIR:-/tmp}/nova/text-size.notification id="" new
+  local -a replacing=()
+  [[ -f $foot_config ]] || return 0
+  sed -i -E "s/^(font=[^:]*):size=[0-9.]+/\1:size=$1/" "$foot_config"
+  pgrep -u "$UID" -x foot >/dev/null || return 0
+  if [[ -f $said ]]; then read -r id <"$said" || true; fi
+  if [[ $id =~ ^[0-9]+$ ]]; then replacing=(-r "$id"); fi
+  new=$(nova-notification-send "New terminal windows use the new text size" "${replacing[@]}" -p 2>/dev/null || true)
+  if [[ $new =~ ^[0-9]+$ ]]; then
+    mkdir -p "${said%/*}"
+    echo "$new" >"$said"
+  fi
+}
+
+case ${1:-} in
+  "")
+    echo "text size: $(base_size) px"
+    echo "gtk text-scaling-factor: $(gsettings get "$gtk" text-scaling-factor 2>/dev/null || echo n/a)"
+    ;;
+  reset)
+    set_base_size
+    gsettings reset "$gtk" text-scaling-factor 2>/dev/null || true
+    set_foot_size 9
+    ;;
+  9 | 1[0-9] | 20)
+    px=$1
+    set_base_size "$px"
+    # GTK's interface font, at the size the factor makes of it, on a whole
+    # point: 11 pt where it cannot be read.
+    font=$(gsettings get "$gtk" font-name 2>/dev/null || true)
+    font=${font%\'}
+    font=${font##* }
+    [[ $font =~ ^[0-9]+(\.[0-9]+)?$ ]] || font=11
+    gsettings set "$gtk" text-scaling-factor "$(awk -v px="$px" -v pt="$font" 'BEGIN { printf "%.4f", int(pt * px / 12 + 0.5) / pt }')" 2>/dev/null || true
+    set_foot_size $(((px * 9 + 6) / 12))
+    ;;
+  *[!0-9]*)
+    echo "Usage: nova-display-text-size [size|reset]" >&2
+    exit 2
+    ;;
+  *)
+    echo "nova-display-text-size: size must be 9-20 px" >&2
+    exit 2
+    ;;
+esac

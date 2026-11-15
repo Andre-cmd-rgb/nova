@@ -1,0 +1,103 @@
+# Approving a candidate, by hand once it has been tested: Actions → promote →
+# Run, with the candidate's tag. The same commit is tagged as the final
+# version (v1.1.0-rc.2 becomes v1.1.0) and built again against the candidate's
+# own Arch snapshot, so the release is what was tested under its final name,
+# and published as the latest release. See docs/releasing.md.
+#
+# Run it from the candidate's tag (Use workflow from: Tags), or from a branch
+# whose workflows are still the candidate's: release.yml is read from where
+# promote runs, and every tool it runs from the candidate's commit.
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate:
+        description: The tested candidate, e.g. v1.1.0-rc.2
+        required: true
+
+permissions:
+  contents: read
+
+# Never beside a candidate's build: one published while this builds would be a
+# later candidate of the same version.
+concurrency:
+  group: candidate
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      arch_date: ${{ steps.tag.outputs.arch_date }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Before a tag exists: a promote that fails at signing or publishing
+      # leaves the final tag behind.
+      - name: The signing key and the bucket are set up
+        env:
+          NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCOUNT_ID: ${{ vars.R2_ACCOUNT_ID }}
+        run: |
+          [[ -n $NOVA_REPO_KEY && -f packaging/nova-keyring/nova.gpg ]] ||
+            { echo "::error::no signing key: see docs/releasing.md, The signing key"; exit 1; }
+          [[ -n $R2_ACCESS_KEY_ID && -n $R2_SECRET_ACCESS_KEY && -n $R2_ACCOUNT_ID ]] ||
+            { echo "::error::no bucket credentials: see docs/releasing.md, The package bucket"; exit 1; }
+      - id: tag
+        name: Tag the candidate's commit with its final version
+        env:
+          CANDIDATE: ${{ inputs.candidate }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ $CANDIDATE =~ ^v[0-9]+\.[0-9]+\.[0-9]+-(beta|rc)\.[0-9]+$ ]] ||
+            { echo "::error::$CANDIDATE is not a candidate tag"; exit 1; }
+          final=${CANDIDATE%%-*}
+          git diff --quiet "$CANDIDATE^{commit}" HEAD -- .github ||
+            { echo "::error::the workflows here are not $CANDIDATE's: run promote from its tag (Use workflow from: Tags, $CANDIDATE)"; exit 1; }
+          [[ $(gh release view "$final" --json isDraft --jq .isDraft 2>/dev/null) != false ]] ||
+            { echo "::error::$final is published already"; exit 1; }
+          # A re-run after the tag was pushed finds it on the candidate's
+          # commit; on any other, it is not this candidate's to publish.
+          tagged=no
+          if git rev-parse -q --verify "refs/tags/$final" >/dev/null; then
+            [[ $(git rev-parse "$final^{commit}") == "$(git rev-parse "$CANDIDATE^{commit}")" ]] ||
+              { echo "::error::$final exists already, on another commit than $CANDIDATE"; exit 1; }
+            tagged=yes
+          fi
+          [[ $(gh release view "$CANDIDATE" --json isDraft --jq .isDraft) == false ]] ||
+            { echo "::error::$CANDIDATE has no published release to have been tested"; exit 1; }
+          # Testers on a later candidate are on a later Arch snapshot, and nova
+          # update never moves a system back to an older one: they would be
+          # offered this release and then refused it.
+          newest=$(gh release list --limit 100 --json tagName,isDraft \
+            --jq ".[] | select(.isDraft | not) | .tagName | select(startswith(\"$final-\"))" | sort -V | tail -n 1)
+          [[ $newest == "$CANDIDATE" ]] ||
+            { echo "::error::$newest is a later candidate of $final; promote that one"; exit 1; }
+          arch_date=$(gh release download "$CANDIDATE" --pattern release.toml --output - |
+            sed -n 's/^arch_date = "\([0-9/]*\)"$/\1/p')
+          [[ -n $arch_date ]] || { echo "::error::$CANDIDATE's release.toml has no arch_date"; exit 1; }
+          if [[ $tagged == no ]]; then
+            git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+              tag -a "$final" -m "Nova ${final#v}" "$CANDIDATE^{commit}"
+            git push origin "refs/tags/$final"
+          fi
+          echo "tag=$final" >>"$GITHUB_OUTPUT"
+          echo "arch_date=$arch_date" >>"$GITHUB_OUTPUT"
+
+  release:
+    needs: tag
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+      arch_date: ${{ needs.tag.outputs.arch_date }}
+      candidate: ${{ inputs.candidate }}
+      publish: true
+    secrets: inherit

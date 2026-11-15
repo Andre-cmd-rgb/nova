@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# nova:summary=Control a Bluetooth device
+# nova:args=[pair|connect|disconnect|forget] <address>
+
+# The Bluetooth panel runs this, and nobody reads its errors: a pairing or a
+# connection that fails says so in a notification, or the panel's row would
+# just stop saying Connecting….
+
+set -euo pipefail
+
+action=${1:-} device=${2:-}
+case $action in
+  pair | connect | disconnect | forget) ;;
+  *) action="" ;;
+esac
+if [[ -z $action || ! $device =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
+  echo "Usage: nova-bluetooth-device [pair|connect|disconnect|forget] <address>" >&2
+  exit 1
+fi
+
+# bluetoothctl, given so long, its output kept and its failure no failure
+# here: what came of it is read afterwards.
+bt() { # seconds command [arg...]
+  local seconds=$1
+  shift
+  timeout "${seconds}s" bluetoothctl "$@" 2>&1 || true
+}
+
+# A test asked again, a pause after each no, ten times at most.
+again() { # pause test...
+  local pause=$1 tries=10
+  shift
+  while ((tries--)); do
+    "$@" && return 0
+    sleep "$pause"
+  done
+  return 1
+}
+
+adapter_says() { [[ $(bt 2 show) == *"$1"* ]]; }
+device_says() { [[ $(bt 2 info "$device") == *"$1"* ]]; }
+
+# Bluetooth is off by an rfkill block, which BlueZ cannot power an adapter up
+# through: nova-bluetooth-power lifts it.
+powered() { adapter_says "Powered: yes" || nova-bluetooth-power on || true; }
+
+# The device's name (its alias), or its address.
+name() {
+  local line
+  while IFS= read -r line; do
+    if [[ $line =~ ^[[:space:]]*Alias:\ (.*)$ ]]; then
+      printf '%s\n' "${BASH_REMATCH[1]:-$device}"
+      return
+    fi
+  done <<<"$(bt 2 info "$device")"
+  printf '%s\n' "$device"
+}
+
+failed() { # headline description
+  nova-notification-send -u normal -g 󰂯 "$1" "$2" || true
+  exit 1
+}
+
+# A connect can come back before the link is up (InProgress, where the device
+# asked first), so the link is given a few seconds.
+connect() { # what to say when it does not come up
+  bt 20 connect "$device" >/dev/null
+  again "${NOVA_BLUETOOTH_POLL:-0.3}" device_says "Connected: yes" || failed "Could not connect to $(name)" "$1"
+}
+
+case $action in
+  pair)
+    powered
+    # The agent that agrees to the pairing runs only while this does: BlueZ
+    # keeps the adapter pairable while any agent is there, and it would agree
+    # to any device that asked, not only the one picked here.
+    trap 'systemctl --user stop bt-agent.service >/dev/null 2>&1 || true' EXIT
+    systemctl --user start bt-agent.service >/dev/null 2>&1 || true
+    again 0.2 adapter_says "Pairable: yes" || true
+    # The agent answers with no screen or keyboard, so a device that asks for
+    # a PIN or a code to be typed is turned down. One paired already is
+    # connected.
+    said=$(timeout 20s bluetoothctl pair "$device" 2>&1) || [[ $said == *AlreadyExists* ]] ||
+      failed "Could not pair with $(name)" \
+        "Put it in pairing mode and try again. One that asks for a PIN or a code cannot pair yet."
+    bt 5 trust "$device" >/dev/null
+    connect "It is paired: try again once it is on and near."
+    ;;
+  connect)
+    powered
+    bt 5 trust "$device" >/dev/null
+    connect "Is it on and near? A device paired elsewhere since may need forgetting and pairing again."
+    ;;
+  disconnect) bt 10 disconnect "$device" >/dev/null ;;
+  forget)
+    powered
+    bt 10 disconnect "$device" >/dev/null
+    bt 10 remove "$device" >/dev/null
+    ;;
+esac

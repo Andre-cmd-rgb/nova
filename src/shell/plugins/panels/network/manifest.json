@@ -1,0 +1,14 @@
+{
+  "id": "nova.network",
+  "name": "Network",
+  "description": "Wi-Fi list and connection state",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "defaultSection": "right"
+  }
+}

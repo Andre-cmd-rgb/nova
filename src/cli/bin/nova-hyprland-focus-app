@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# nova:summary=Focus a Hyprland window by application identity
+# nova:args=<app-name>
+
+set -euo pipefail
+
+if [[ -z ${1:-} ]]; then
+  echo "Usage: nova-hyprland-focus-app <app-name>" >&2
+  exit 1
+fi
+
+# The app name is a pattern for the window class, any case. Of several windows
+# that match, the one focused last: also the one a browser opens a new tab in.
+# A compositor that does not answer has no window to focus.
+address=$({ hyprctl clients -j 2>/dev/null || true; } | jq -r --arg app "$1" '
+  [.[] | select((.class // "") | test($app; "i"))] | min_by(.focusHistoryID) | .address // empty
+')
+[[ -n $address ]] || exit 1
+
+window="address:$address"
+hyprctl dispatch "hl.dsp.focus({ window = \"$window\" })" >/dev/null 2>&1 ||
+  hyprctl dispatch focuswindow "$window" >/dev/null

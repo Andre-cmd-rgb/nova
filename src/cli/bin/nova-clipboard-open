@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# nova:summary=Open a clipboard history entry
+# nova:args=--history-index <index> [--history-md5 <md5>]
+# nova:hidden=true
+
+set -euo pipefail
+
+state=${XDG_STATE_HOME:-$HOME/.local/state}/nova
+history=$state/clipboard-history.json
+
+index=""
+md5=""
+while (($#)); do
+  case $1 in
+    --history-index)
+      index=${2:-}
+      shift 2
+      ;;
+    --history-md5)
+      md5=${2:-}
+      shift 2
+      ;;
+    *)
+      echo "Usage: nova-clipboard-open --history-index <index> [--history-md5 <md5>]" >&2
+      exit 1
+      ;;
+  esac
+done
+[[ $index =~ ^[0-9]+$ ]] || exit 1
+[[ -r $history ]] || exit 1
+
+# Only while it is still the entry picked: a copy since moves every entry down
+# one. The shell sends the md5 of its key, made as the clipboard's entryKey
+# makes it.
+# shellcheck disable=SC2016 # jq's own variables
+if [[ -n $md5 ]]; then
+  sum=$(jq -j --argjson index "$index" '.[$index] | if .type == "image" then "image:" + .path else "text:" + .text end' "$history" | md5sum) || exit 1
+  [[ $sum == "$md5  -" ]] || exit 1
+fi
+
+# Its kind on the first line, and what it holds after: an image's file, or
+# the text, its newlines at the end dropped. One without either is none.
+# shellcheck disable=SC2016 # jq's own variables
+entry=$(jq -er --argjson index "$index" '.[$index]
+  | if .type == "image" and .path then "image", .path
+    elif .type == "text" and .text then "text", .text
+    elif .type then "other"
+    else empty end' "$history") || exit 1
+kind=${entry%%$'\n'*}
+held=""
+if [[ $entry == *$'\n'* ]]; then held=${entry#*$'\n'}; fi
+
+# A web address in the text, the first there, or a text that is only a domain
+# with a path, is opened in the browser; any other text in the editor, from a
+# file of its own.
+web='https?://[^[:space:]"'\''<>]+'
+domain='^[[:space:]]*([[:alnum:]][[:alnum:].-]+\.[[:alpha:]]{2,})(/[^[:space:]]*)?[[:space:]]*$'
+case $kind in
+  image)
+    [[ -r $held ]] || exit 1
+    exec nova-image-edit "$held"
+    ;;
+  text)
+    if [[ $held =~ $web ]]; then
+      exec nova-launch-browser "${BASH_REMATCH[0]}"
+    elif [[ $held =~ $domain ]]; then
+      exec nova-launch-browser "https://${BASH_REMATCH[1]}${BASH_REMATCH[2]}"
+    fi
+    mkdir -p "$state/clipboard-open"
+    file=$(mktemp --tmpdir="$state/clipboard-open" clipboard.XXXXXX.txt) || exit 1
+    printf '%s' "$held" >"$file"
+    exec nova-launch-editor "$file"
+    ;;
+  *)
+    exit 1
+    ;;
+esac

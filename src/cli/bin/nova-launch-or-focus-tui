@@ -1,0 +1,24 @@
+#!/bin/bash
+
+# nova:summary=Launch a TUI or focus an existing terminal window for it
+# nova:args=[--app-id=<app-id>] <command> [args...]
+
+set -euo pipefail
+
+if (($# == 0)); then
+  echo "Usage: nova-launch-or-focus-tui [--app-id=<app-id>] <command> [args...]" >&2
+  exit 1
+fi
+
+# The terminal's window is found by the app id nova-launch-tui gives it, so
+# both name it the same way.
+if [[ $1 == --app-id=* ]]; then
+  app_id=${1#--app-id=}
+else
+  app_id=org.nova.${1##*/}
+fi
+
+# nova-launch-or-focus runs the launch as a command line, so each word goes
+# in quoted, an --app-id too.
+printf -v words '%q ' "$@"
+exec nova-launch-or-focus "$app_id" "nova-launch-tui $words"

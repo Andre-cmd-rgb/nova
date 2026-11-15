@@ -1,0 +1,14 @@
+{
+  "id": "nova.bluetooth",
+  "name": "Bluetooth",
+  "description": "Bluetooth device list with connect/disconnect",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "defaultSection": "right"
+  }
+}

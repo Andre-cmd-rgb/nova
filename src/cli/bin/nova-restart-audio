@@ -1,0 +1,27 @@
+#!/bin/bash
+
+# nova:summary=Restart PipeWire and WirePlumber
+
+set -euo pipefail
+
+# The speaker tuning is PartOf=pipewire.service, so it restarts with these.
+services=(pipewire.service pipewire-pulse.service wireplumber.service)
+
+if ! timeout 25s systemctl --user restart "${services[@]}"; then
+  # A daemon wedged in teardown never finishes restarting: kill it, start fresh.
+  systemctl --user kill --kill-whom=all --signal=KILL "${services[@]}" 2>/dev/null || true
+  systemctl --user reset-failed "${services[@]}" 2>/dev/null || true
+  timeout 25s systemctl --user start "${services[@]}" || true
+fi
+
+for _ in {1..20}; do
+  if timeout 2s wpctl status >/dev/null 2>&1; then
+    nova-notification-send -g 󰕾 "Audio restarted"
+    exit 0
+  fi
+  sleep 0.25
+done
+
+nova-notification-send -u critical -g 󰕾 "Audio did not come back" \
+  "PipeWire is not responding. A USB audio device may need replugging."
+exit 1

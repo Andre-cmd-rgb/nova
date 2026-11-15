@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# nova:summary=Make a microphone the default one, and move what is recording to it
+# nova:args=<node-id> <source-name>
+
+set -euo pipefail
+
+node=${1:-}
+source=${2:-}
+if [[ -z $node || -z $source ]]; then
+  echo "Usage: nova-audio-input-set-default <node-id> <source-name>" >&2
+  exit 1
+fi
+
+# WirePlumber and PulseAudio each get told; either may be missing, or the
+# device already gone, and one of them taking it is enough.
+wpctl set-default "$node" 2>/dev/null || true
+pactl set-default-source "$source" 2>/dev/null || true
+
+# Each recording stream, by the id that starts its line.
+while read -r stream _; do
+  pactl move-source-output "$stream" "$source" 2>/dev/null || true
+done < <(pactl list short source-outputs 2>/dev/null)

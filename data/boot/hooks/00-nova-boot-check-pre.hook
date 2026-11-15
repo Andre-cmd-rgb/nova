@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Path
+Target = usr/lib/modules/*/vmlinuz
+
+[Action]
+Description = Checking the Limine fallback entry before changing kernels...
+When = PreTransaction
+Exec = /usr/lib/nova/bin/nova-boot-check pre
+AbortOnFail

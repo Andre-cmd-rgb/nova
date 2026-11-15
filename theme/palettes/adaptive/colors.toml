@@ -1,0 +1,44 @@
+# Adaptive, Nova's own: its colours are taken from the background, and change
+# with it. The photo gives the tint of the surfaces and the text, the accent,
+# the window border's two colours, how vivid the terminal's colours are, and
+# whether the theme is dark or light (src/theme/src/adaptive.rs).
+# `nova theme palette <image>` prints what a photo gives.
+#
+# "auto" lets the photo decide between dark and light; "dark" or "light" keeps
+# the theme one of them. Settings → Appearance (`nova theme adaptive dark`)
+# chooses for every adaptive theme, over what is written here.
+adaptive = "auto"
+
+# The colours below are the theme's with no photo to take them from: with the
+# wordmark as the background, which is drawn in them.
+mode = "dark"
+
+background = "#151926"
+dark_background = "#0d111e"
+lighter_background = "#252a3c"
+selection = "#45325e"
+
+foreground = "#dde1ec"
+light_foreground = "#bbc0d1"
+dark_foreground = "#5d6275"
+muted = "#6d748a"
+
+accent = "#cba6ff"
+orange = "#fa9c75"
+
+red = "#f48e9f"
+green = "#71d69f"
+yellow = "#f2be62"
+blue = "#91adff"
+magenta = "#d198e5"
+cyan = "#46d1f2"
+
+bright_red = "#ffa8b5"
+bright_green = "#80ebb0"
+bright_yellow = "#ffd48a"
+bright_blue = "#acc2ff"
+bright_magenta = "#e6a9fc"
+bright_cyan = "#75e3ff"
+
+# The focused window's border runs from the accent to a second colour.
+hyprland_active_border = "#cba6ff #12bff4 45deg"

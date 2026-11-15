@@ -1,0 +1,182 @@
+#!/bin/bash
+
+# nova:summary=Lock before suspend and wait for the session lock to become secure
+# nova:hidden=true
+#
+#   nova-system-sleep-lock [budget-ms]   before suspend (nova-system-sleep-monitor)
+#   nova-system-sleep-lock --resumed     after it, when the lock was not up in time
+#
+# A lock slow to come up gets the screens turned off while it is waited for,
+# so the session is not on show. If logind suspends before it is secure, the
+# screens stay off after the machine wakes, and the lock is asked for again,
+# until it is up: only then do they come back on.
+
+set -euo pipefail
+
+# The time there is, in milliseconds. logind holds the suspend for a delay
+# inhibitor only so long, and then suspends with the lock half done: so every
+# step is cut short at the time left, and the deadline keeps itself, with no
+# guess at how long a step takes. Before suspend it is at most what Nova's
+# window leaves (see logind_budget); woken without a secure lock, two minutes.
+budget_max_ms=36000
+resumed_budget_ms=120000
+# Without a secure lock this long, the screens go off, and again every second
+# after, as a key press turns them on.
+blank_after_ms=2000
+blank_every_ms=1000
+unsecured=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/sleep-unsecured
+
+# The time now, in milliseconds, in $now. EPOCHREALTIME has the locale's
+# decimal separator, which a comma would turn into bash's comma operator, so
+# every character but the digits goes.
+clock() {
+  now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
+}
+
+# The budget logind's window leaves, asked of logind rather than assumed, as
+# Nova's drop-in counts only once logind has reloaded; unread, the window is
+# logind's default, 5 s. A fifth of it, and at least a second, is left for
+# logind to send PrepareForSleep and act on the release: 4 s of the default,
+# 36 s of Nova's 45 s. The most keeps a window raised by hand from holding a
+# closed laptop awake in a bag.
+logind_budget() {
+  local reply usec ms spare
+  reply=$(timeout --kill-after=0.1s 1s busctl get-property org.freedesktop.login1 \
+    /org/freedesktop/login1 org.freedesktop.login1.Manager InhibitDelayMaxUSec 2>/dev/null) || true
+  usec=${reply##* }
+  [[ $usec =~ ^[0-9]*[1-9][0-9]*$ ]] || usec=5000000
+  ms=$((10#$usec / 1000))
+  spare=$((ms / 5))
+  ((spare > 1000)) || spare=1000
+  ms=$((ms - spare))
+  echo $((ms < budget_max_ms ? ms : budget_max_ms))
+}
+
+resumed=false
+case ${1:-} in
+  --resumed)
+    # Only after a suspend without a secure lock, and only once at a time.
+    [[ -e $unsecured ]] || exit 0
+    exec {held}>>"$unsecured"
+    flock -n "$held" || exit 0
+    resumed=true
+    budget_ms=$resumed_budget_ms
+    ;;
+  *)
+    budget_ms=${1:-}
+    if [[ ! $budget_ms =~ ^[0-9]+$ ]] || ((budget_ms < 1 || budget_ms > budget_max_ms)); then
+      budget_ms=$(logind_budget)
+    fi
+    ;;
+esac
+clock
+started=$now
+deadline=$((now + budget_ms))
+
+# The shell asked, given at most limit-ms and never past the deadline: with no
+# time left, a 1 without asking.
+shell() { # limit-ms argument...
+  local limit=$1 seconds
+  shift
+  clock
+  ((limit < deadline - now)) || limit=$((deadline - now))
+  ((limit > 0)) || return 1
+  printf -v seconds '%d.%03d' $((limit / 1000)) $((limit % 1000))
+  NOVA_SHELL_IPC_TIMEOUT=$seconds timeout --kill-after=0.1s "$seconds" nova-shell "$@"
+}
+
+# The lock asked for, with a second to answer. The shell turns one down with
+# a zero exit, and says why: only that is looked for. Whether it locked is for
+# the status to say, and asking again does no harm.
+lock() {
+  local reply
+  reply=$(shell 1000 lock lock 2>/dev/null) || true
+  [[ $reply != missing-pam ]] || give_up "no lock screen is configured"
+}
+
+# How the lock stands, in two words as in nova-restart-shell: $secure once its
+# screen is up, $asked while the shell works on it. An answer that cannot be
+# read, or none in half a second, is neither, and the lock is asked again.
+lock_status() {
+  read -r secure asked < <(shell 500 lock status 2>/dev/null |
+    jq -r '"\(.secure == true) \(.requested == true)"' 2>/dev/null) || true
+  [[ ${secure:-} == true ]] || secure=false
+  [[ ${asked:-} == true ]] || asked=false
+}
+
+# Hyprland's IPC can stall as the lid moves: the lid's bind and the monitor
+# watcher see to clamshell too, so this need not succeed.
+clamshell() {
+  timeout --kill-after=0.1s 0.4s nova-hyprland-monitor-clamshell >/dev/null 2>&1 || true
+}
+
+# The screens off, as long as Hyprland's IPC, which is what stalls, allows.
+blank() {
+  timeout --kill-after=0.1s 0.4s nova-brightness-display off >/dev/null 2>&1 || true
+}
+
+blanked=0
+blank_while_waiting() {
+  clock
+  if $resumed || ((now - started >= blank_after_ms)); then
+    if ((now - blanked >= blank_every_ms)); then
+      blanked=$now
+      blank
+    fi
+  fi
+}
+
+# Secure: the screens it turned off come back on, on the lock screen.
+secured() {
+  if $resumed; then rm -f -- "$unsecured"; fi
+  if $resumed || ((blanked > 0)); then
+    timeout --kill-after=0.1s 1s nova-brightness-display on >/dev/null 2>&1 || true
+  fi
+  exit 0
+}
+
+# Woken, the clock has jumped by however long the machine slept: the time left
+# starts again from the wake.
+polled=$started
+woke() {
+  clock
+  if $resumed && ((now - polled > 5000)); then
+    deadline=$((now + budget_ms))
+    blanked=0
+  fi
+  polled=$now
+}
+
+# logind suspends whether this succeeded or not: then the machine sleeps with
+# the session open, but its screens off, and the lock asked for again as it
+# wakes (--resumed). The notification is on the screen it unlocks into.
+give_up() { # why
+  printf 'nova-system-sleep-lock: suspending without a secure lock (%s)\n' "$1" >&2
+  if $resumed; then
+    rm -f -- "$unsecured"
+    exit 1
+  fi
+  mkdir -p -- "${unsecured%/*}"
+  : >"$unsecured"
+  blank
+  nova-notification-send -u critical -g 󰌾 \
+    "Screen did not lock before suspend" \
+    "The screens stayed off until it locked ($1)." >/dev/null 2>&1 || true
+  exit 1
+}
+
+# The lock first, before anything to do with the monitors, so that a Hyprland
+# IPC call that hangs cannot use up the time before the shell has started to
+# lock. Then it is watched every tenth of a second, the last sleep going past
+# the deadline by one poll, well within what the budget leaves logind.
+lock
+clamshell
+while woke && ((now < deadline)); do
+  lock_status
+  if $secure; then secured; fi
+  $asked || lock
+  blank_while_waiting
+  sleep 0.1
+done
+
+give_up "the shell did not secure the session within ${budget_ms}ms"

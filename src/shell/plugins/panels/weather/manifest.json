@@ -1,0 +1,11 @@
+{
+  "id": "nova.weather",
+  "name": "Weather",
+  "description": "Weather pill with detail popup",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  }
+}

@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# nova:summary=Mirror the laptop screen on an external monitor, or stop
+# nova:args=<on|off|toggle|recover>
+
+set -euo pipefail
+
+case ${1:-} in
+  on | off | toggle | recover) ;;
+  *)
+    echo "Usage: ${0##*/} {on|off|toggle|recover}" >&2
+    exit 1
+    ;;
+esac
+
+# Mirroring is a toggle, a rule the Hyprland config loads at every reload: the
+# first external display that is on shows what the panel shows.
+toggle=internal-monitor-mirror
+flag=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr/$toggle.lua
+# Looked up whatever the action: one Hyprland cannot answer changes nothing.
+panel=$(nova-hyprland-monitor-laptop)
+external=$(hyprctl monitors -j | jq -r 'first(.[].name | select(test("^(eDP|LVDS|DSI)-") | not)) // empty')
+
+notify() { nova-notification-send -g 󰍹 "$1"; }
+
+turn_on() {
+  if [[ -z $external ]]; then
+    notify "No external monitors found for mirror"
+    exit 1
+  fi
+  if [[ -z $panel ]]; then
+    notify "No laptop monitor found to mirror"
+    exit 1
+  fi
+  # Both names go into Lua the config runs, so only plain connector names: a
+  # headless output made by hand can be called anything.
+  if [[ ! $panel =~ ^[A-Za-z0-9._-]+$ || ! $external =~ ^[A-Za-z0-9._-]+$ ]]; then
+    notify "Refusing unsafe monitor name"
+    exit 1
+  fi
+
+  # A panel that is off has nothing to mirror.
+  nova-hyprland-toggle internal-monitor-disable off
+  if nova-hyprland-toggle-disabled "$toggle"; then
+    mkdir -p "${flag%/*}"
+    printf 'hl.monitor({ output = "%s", mode = "preferred", position = "auto", scale = 1, mirror = "%s" })\n' \
+      "$external" "$panel" >"$flag"
+    notify "Mirroring enabled ($external)"
+    hyprctl reload
+  fi
+}
+
+turn_off() {
+  if nova-hyprland-toggle-enabled "$toggle"; then
+    nova-hyprland-toggle "$toggle" off
+    notify "Extended mode restored"
+  fi
+}
+
+case $1 in
+  on) turn_on ;;
+  off) turn_off ;;
+  toggle) if nova-hyprland-toggle-enabled "$toggle"; then turn_off; else turn_on; fi ;;
+  # The display mirrored to is gone: the panel is the desktop again.
+  recover)
+    if ! nova-hyprland-monitor-external-active && nova-hyprland-toggle-enabled "$toggle"; then
+      nova-hyprland-toggle "$toggle" off
+    fi
+    ;;
+esac

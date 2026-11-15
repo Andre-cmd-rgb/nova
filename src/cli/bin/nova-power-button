@@ -1,0 +1,37 @@
+#!/bin/bash
+
+# nova:summary=Choose what the power button does: open the system menu, sleep, or shut down
+# nova:args=[menu | sleep | off]
+#
+# Yours alone, so it asks for no password: logind leaves the key to the
+# session, whose binding runs `nova power button press`. Held down for a few
+# seconds the button still powers off in firmware, whatever is chosen. With
+# no argument it says which is set.
+
+set -euo pipefail
+
+CHOICE=${XDG_CONFIG_HOME:-$HOME/.config}/nova/power-button
+usage() { echo "Usage: nova power button [menu | sleep | off]" >&2; }
+
+current() {
+  local choice=''
+  [[ ! -r $CHOICE ]] || read -r choice <"$CHOICE" || true
+  case $choice in sleep | off) echo "$choice" ;; *) echo menu ;; esac
+}
+
+case "$#:${1:-}" in
+  0:) current ;;
+  1:menu) rm -f -- "$CHOICE" ;;
+  1:sleep | 1:off)
+    mkdir -p "${CHOICE%/*}"
+    printf '%s\n' "$1" >"$CHOICE"
+    ;;
+  1:press)
+    case $(current) in
+      sleep) exec systemctl sleep ;;
+      off) exec nova-system-shutdown ;;
+      *) exec nova-menu toggle system ;;
+    esac
+    ;;
+  *) usage; exit 2 ;;
+esac

@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# nova:summary=Set the default terminal used by xdg-terminal-exec
+# nova:args=[alacritty|foot|ghostty|kitty]
+
+set -euo pipefail
+
+# The terminals to choose from: the name given here, the desktop entry, and
+# the name the notification shows.
+terminals=(
+  "alacritty Alacritty.desktop Alacritty"
+  "foot foot.desktop Foot"
+  "ghostty com.mitchellh.ghostty.desktop Ghostty"
+  "kitty kitty.desktop Kitty"
+)
+
+# Without one, the terminal xdg-terminal-exec runs, by the name given here, or
+# its desktop entry (without an action after a colon) for one not among them.
+if (($# == 0)); then
+  current=$(xdg-terminal-exec --print-id 2>/dev/null || true)
+  current=${current%%:*}
+  for terminal in "${terminals[@]}"; do
+    read -r short entry _ <<<"$terminal"
+    if [[ $entry == "$current" ]]; then
+      echo "$short"
+      exit 0
+    fi
+  done
+  echo "$current"
+  exit 0
+fi
+
+for terminal in "${terminals[@]}"; do
+  read -r short entry name <<<"$terminal"
+  [[ $short != "$1" ]] || break
+done
+if [[ $short != "$1" ]]; then
+  echo "Usage: nova-default-terminal <alacritty|foot|ghostty|kitty>" >&2
+  exit 1
+fi
+
+# xdg-terminal-exec takes the first terminal in its list that is installed.
+mkdir -p ~/.config
+cat >~/.config/xdg-terminals.list <<EOF
+# Terminal emulator preference order for xdg-terminal-exec
+# The first found and valid terminal will be used
+$entry
+EOF
+nova-notification-send -g  "$name is now the default terminal"

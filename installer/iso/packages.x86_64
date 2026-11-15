@@ -1,0 +1,34 @@
+# The live system: only what nova-install and a rescue shell need. Everything
+# Nova itself is made of is downloaded by nova-install into the new system.
+base
+linux
+linux-firmware
+intel-ucode
+amd-ucode
+mkinitcpio
+mkinitcpio-archiso
+
+# nova-install, and gum for its screens
+arch-install-scripts
+btrfs-progs
+dosfstools
+gum
+jq
+# the things nova usb carries: LUKS2, then compressed archives
+cryptsetup
+zstd
+nova-keyring
+tzdata
+
+# Enrolling a fingerprint before the install
+fprintd
+
+# Getting online: Wi-Fi with iwd, addresses from systemd-networkd
+iw
+iwd
+wireless-regdb
+
+# A rescue shell, and a memory test in the boot menu
+less
+memtest86+-efi
+nano

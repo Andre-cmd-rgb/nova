@@ -1,0 +1,64 @@
+#!/bin/bash
+
+# nova:summary=Print this computer's Nova hardware profile, if it has one
+# nova:hidden=true
+#
+# Matches the computer's DMI fields (/sys/class/dmi/id) against the models list
+# in /usr/share/nova/hardware, whose header says how a line reads;
+# data/hypr/hardware.lua reads it the same way. Exits 1, printing nothing, on
+# a computer Nova has no profile for; that is not an error, just a machine
+# without extras. Exits 2 when no field can be read at all (a chroot without
+# /sys), which is not knowing.
+
+set -euo pipefail
+
+hardware=${NOVA_HARDWARE:-/usr/share/nova/hardware}
+dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+
+# The fields a line may name: those any user can read.
+fields=(sys_vendor product_name product_version product_family board_vendor board_name)
+
+declare -A value=()
+for field in "${fields[@]}"; do
+  [[ -r $dmi/$field ]] && text=$(<"$dmi/$field") || continue
+  value[$field]=${text%"${text##*[![:space:]]}"}
+done
+((${#value[@]})) || exit 2
+
+# A pattern from the list: `*` matches anything, and every other character
+# only itself.
+matches() { # value pattern
+  local glob='' i
+  for ((i = 0; i < ${#2}; i++)); do
+    if [[ ${2:i:1} == '*' ]]; then glob+='*'; else glob+="\\${2:i:1}"; fi
+  done
+  # shellcheck disable=SC2053 # a glob on purpose, made above
+  [[ $1 == $glob ]]
+}
+
+# One condition: field=pattern, or a bare pattern, which is product_version's.
+# A field the computer does not have matches nothing.
+holds() { # condition
+  local field=product_version pattern=$1
+  if [[ $1 =~ ^([a-z_]+)=(.*)$ && " ${fields[*]} " == *" ${BASH_REMATCH[1]} "* ]]; then
+    field=${BASH_REMATCH[1]} pattern=${BASH_REMATCH[2]}
+  fi
+  [[ -v value[$field] ]] && matches "${value[$field]}" "$pattern"
+}
+
+# One model per line: its conditions and the profile, separated by tabs. Every
+# condition has to hold; the first line whose do wins.
+while IFS=$'\t' read -r -a columns; do
+  ((${#columns[@]} >= 2)) && [[ ${columns[0]} != \#* ]] || continue
+  profile=${columns[-1]%%[[:space:]]*}
+  [[ -n $profile ]] || continue
+  every=1
+  for condition in "${columns[@]:0:${#columns[@]}-1}"; do
+    holds "$condition" || { every=0; break; }
+  done
+  if ((every)); then
+    echo "$profile"
+    exit 0
+  fi
+done <"$hardware/models"
+exit 1

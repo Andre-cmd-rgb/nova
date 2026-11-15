@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# nova:summary=Open, close or refresh the Nova menu
+# nova:args=[toggle|summon|close|refresh|ping] [route]
+
+set -euo pipefail
+
+# The menu is the shell's nova.menu plugin, and this speaks its IPC. A route,
+# the menu item to open at, goes as {"menu": route}.
+verb=${1-toggle}
+route=${2-root}
+
+case $verb in
+  toggle | summon)
+    # An item id needs no JSON escaping, which saves starting jq on every
+    # SUPER + SPACE; anything else goes through it.
+    if [[ $route =~ ^[A-Za-z0-9._-]*$ ]]; then
+      payload="{\"menu\":\"$route\"}"
+    else
+      payload=$(jq -nc --arg menu "$route" '{ menu: $menu }')
+    fi
+    exec nova-shell shell "$verb" nova.menu "$payload"
+    ;;
+  close)
+    exec nova-shell shell hide nova.menu
+    ;;
+  refresh | ping)
+    exec nova-shell shell call nova.menu "$verb" "{}"
+    ;;
+  -h | --help | help)
+    cat <<'USAGE'
+Usage: nova menu [toggle|summon|close|refresh|ping] [route]
+
+  toggle [route]  Open the menu at the route, or close it when it is open.
+                  What nova menu does with no verb.
+  summon [route]  Open the menu at the route, even when it is open already.
+  close           Close the menu.
+  refresh         Read the menu's files again.
+  ping            Answer "ok" when the menu is up.
+
+A route is an item's id (setup.power) or its alias (power); without one the
+menu opens at its top, root.
+USAGE
+    ;;
+  *)
+    echo "nova-menu: '$verb' is not a verb; nova menu --help lists them" >&2
+    exit 2
+    ;;
+esac

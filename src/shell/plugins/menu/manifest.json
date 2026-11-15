@@ -1,0 +1,18 @@
+{
+  "id": "nova.menu",
+  "name": "Nova menu",
+  "description": "Apps, settings and commands on a card over the screen, found by typing; and the list nova-menu-select picks from",
+  "kinds": [
+    "menu",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "menu": "Menu.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "description": "A star; a click opens the menu at its top, a right click a terminal",
+    "defaultSection": "left"
+  }
+}

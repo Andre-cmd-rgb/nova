@@ -1,0 +1,50 @@
+#!/bin/bash
+# nova-power-sleep-apply: the root half of `nova power lid` and `nova power
+# hibernate`. Run through pkexec (org.nova.power-sleep lets the person at the
+# computer choose without a password), so it takes a verb and a value and
+# passes nothing else on. Each choice is one drop-in over Nova's own policy
+# (/usr/lib/systemd/{logind,sleep}.conf.d/10-nova.conf); Nova's default is no
+# drop-in at all.
+#
+#   lid sleep|lock         plugged in, a closed lid sleeps, or locks and keeps running
+#   hibernate <N>h|never   asleep on battery, hibernate after N hours (1 to 24), or never
+
+set -euo pipefail
+
+LID=${NOVA_LID_DROPIN:-/etc/systemd/logind.conf.d/20-nova-lid.conf}
+HIBERNATE=${NOVA_HIBERNATE_DROPIN:-/etc/systemd/sleep.conf.d/20-nova-hibernate.conf}
+
+usage() {
+  echo "Usage: nova-power-sleep-apply lid sleep|lock | hibernate <N>h|never" >&2
+  exit 2
+}
+
+write() { # file text
+  mkdir -p "${1%/*}"
+  printf '%s' "$2" >"$1.tmp"
+  chmod 644 "$1.tmp"
+  mv -f -- "$1.tmp" "$1"
+}
+
+(($# == 2)) || usage
+case $1:$2 in
+  lid:sleep)
+    rm -f -- "$LID"
+    systemctl reload systemd-logind
+    ;;
+  lid:lock)
+    write "$LID" $'# nova power lid lock: plugged in, closing the lid locks and the computer keeps running.\n[Login]\nHandleLidSwitchExternalPower=lock\n'
+    systemctl reload systemd-logind
+    ;;
+  # Read at every sleep: nothing to reload. With suspend-then-hibernate not
+  # allowed, logind's SleepOperation falls through to plain suspend.
+  hibernate:never)
+    write "$HIBERNATE" $'# nova power hibernate never: asleep, it stays asleep.\n[Sleep]\nAllowSuspendThenHibernate=no\n'
+    ;;
+  hibernate:2h) rm -f -- "$HIBERNATE" ;;
+  hibernate:*)
+    [[ $2 =~ ^([1-9]|1[0-9]|2[0-4])h$ ]] || usage
+    write "$HIBERNATE" "# nova power hibernate $2: asleep on battery, it hibernates after $2."$'\n[Sleep]\n'"HibernateDelaySec=$2"$'\n'
+    ;;
+  *) usage ;;
+esac

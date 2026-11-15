@@ -1,0 +1,13 @@
+#!/bin/bash
+
+# nova:summary=Returns true when the laptop lid is closed
+# nova:hidden=true
+
+set -euo pipefail
+
+# The kernel reports each lid as "state:      open" or "state:      closed".
+# A computer without one is never shut.
+for lid in "${NOVA_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
+  [[ -r $lid && $(<"$lid") == *closed* ]] && exit 0
+done
+exit 1

@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# nova:summary=Mount removable drives as they are plugged in, or hold them
+# nova:args=on|off
+# nova:hidden=true
+#
+# Run by the lock screen: on once somebody has unlocked, off while it is
+# locked. Mounting a drive has the kernel read whatever file system is on it,
+# so a drive plugged into a locked computer waits for an unlock.
+#
+# udiskie (nova-automount.service) is frozen rather than stopped, because when
+# it starts it mounts every drive there is, those unmounted on purpose too;
+# thawed, it deals with the drives that came while it was frozen. Where it
+# cannot be frozen it is stopped: under the lock, nothing mounts either way.
+
+set -euo pipefail
+
+unit=nova-automount.service
+
+case ${1:-} in
+  on)
+    systemctl --user start "$unit"
+    systemctl --user thaw "$unit" 2>/dev/null || true
+    ;;
+  off)
+    systemctl --user freeze "$unit" 2>/dev/null || systemctl --user stop "$unit"
+    ;;
+  *)
+    echo "Usage: nova-automount on|off" >&2
+    exit 2
+    ;;
+esac

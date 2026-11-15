@@ -1,0 +1,11 @@
+{
+  "id": "nova.settings",
+  "name": "Settings",
+  "description": "Wi-Fi, Bluetooth, mobile data, sound and displays; battery and its history, performance, Screen Time; the look, the bar, the lock, default apps, updates and this computer: in one window.",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "Panel.qml"
+  }
+}

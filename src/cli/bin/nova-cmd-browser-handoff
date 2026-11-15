@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# nova:summary=Hand a command line to the running Chromium-based browser
+# nova:args=<browser-command> [browser-args...]
+# nova:hidden=true
+
+set -euo pipefail
+
+# Starting a browser of Chromium's family while one is running takes some
+# 165 ms, and all the new process does is pass its arguments to the running one
+# over the profile's singleton socket. This passes them itself. It fails
+# whenever it cannot be sure the running browser would do what a launch does,
+# and when no browser answers, so the caller launches one instead.
+
+config_home=${XDG_CONFIG_HOME:-$HOME/.config}
+
+# The browsers nova-default-browser offers of Chromium's family, by their own
+# binaries (a wrapper in a binary's place may pick another profile, or add
+# flags of its own): each one's profile directory and flags file.
+declare -A browsers=(
+  [/usr/bin/chromium]="chromium chromium-flags.conf"
+  [/usr/bin/google-chrome-stable]="google-chrome chrome-flags.conf"
+  [/usr/bin/brave]="BraveSoftware/Brave-Browser brave-flags.conf"
+  [/usr/bin/brave-origin]="BraveSoftware/Brave-Origin brave-origin-flags.conf"
+  [/usr/bin/microsoft-edge-stable]="microsoft-edge microsoft-edge-stable-flags.conf"
+)
+binary=$(type -P "${1:-}") || exit 1
+[[ -n ${browsers[$binary]:-} ]] || exit 1
+read -r profile flags <<<"${browsers[$binary]}"
+shift
+
+# A data directory from the environment or the arguments is another browser
+# than the one on the socket.
+[[ -z ${CHROME_USER_DATA_DIR:-}${CHROME_CONFIG_HOME:-} ]] || exit 1
+for arg; do
+  [[ $arg != --user-data-dir* ]] || exit 1
+done
+
+# The running browser started with the flags Nova puts in the flags file:
+# Wayland, the keyring, its features and extensions. Any other flag there may
+# be meant for every launch, which only a launch passes on. A # starts a
+# comment wherever it is.
+for file in "/etc/$flags" "$config_home/$flags"; do
+  [[ -f $file && -r $file ]] || continue
+  while IFS= read -r line || [[ -n $line ]]; do
+    read -r -a words <<<"${line%%#*}"
+    for flag in "${words[@]}"; do
+      case $flag in
+        --ozone-platform=* | --ozone-platform-hint=* | --password-store=* | --enable-features=* | --load-extension=*) ;;
+        --no-default-browser-check) ;;
+        *) exit 1 ;;
+      esac
+    done
+  done <"$file"
+done
+
+# The socket sits in a directory under /tmp, which another user could make
+# again once a crashed browser's is cleaned away: only a socket of our own is
+# told anything.
+socket=$config_home/$profile/SingletonSocket
+[[ -S $socket && -O $socket ]] || exit 1
+
+# What a second browser process sends, each part after a NUL but the first:
+# START, its directory, its name, then its arguments. ACK is the answer that
+# the browser took them.
+answer=$({
+  printf 'START\0%s\0browser' "$PWD"
+  printf '\0%s' "$@"
+} | socat -t2 - "UNIX-CONNECT:$socket" 2>/dev/null) || true
+[[ $answer == ACK ]]

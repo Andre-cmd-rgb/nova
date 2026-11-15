@@ -1,0 +1,13 @@
+#%PAM-1.0
+# Password login through the greeter (greetd general.service), and the stack for
+# the autologin session. The password typed here unlocks the encrypted login
+# keyring: pam_gnome_keyring takes it in auth, starts the daemon in session and
+# re-encrypts the keyring when the password changes.
+auth       include     system-local-login
+-auth      optional    pam_gnome_keyring.so
+account    include     system-local-login
+password   include     system-local-login
+-password  optional    pam_gnome_keyring.so
+session    optional    pam_keyinit.so force revoke
+session    include     system-local-login
+-session   optional    pam_gnome_keyring.so auto_start

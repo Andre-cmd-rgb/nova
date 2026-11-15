@@ -1,0 +1,11 @@
+#!/bin/sh
+# Installed at /usr/lib/systemd/system-sleep/. A hibernate is a power cycle,
+# and firmware may clear the CPU's voltage offset on a resume from suspend
+# too, so after every sleep nova-undervolt puts it back, while it is on in
+# this boot, and reads it back. It does nothing otherwise, and returns fast:
+# systemd freezes user.slice while these hooks run.
+
+[ "$1" = post ] || exit 0
+[ -x /usr/lib/nova/bin/nova-undervolt ] || exit 0
+[ -e /var/lib/nova/undervolt/armed ] || exit 0
+/usr/lib/nova/bin/nova-undervolt reapply || exit 0

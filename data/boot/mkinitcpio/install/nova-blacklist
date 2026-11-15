@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# nova-blacklist: an mkinitcpio hook, run right after autodetect. It takes the
+# modules modprobe's configuration blacklists out of what autodetect found.
+#
+# autodetect asks `modprobe -R` which module drives each device, and -R does
+# not look at the blacklist. So an NVIDIA card that is on the bus while the
+# image is built counts as nouveau's, although nvidia-utils blacklists nouveau,
+# and kms then adds nouveau with its firmware for every card NVIDIA has made:
+# 110 MB that Limine reads at every start, for a module the initramfs never
+# loads (modconf puts the same blacklist in the image). An image built with the
+# card off the bus was 29.6 MB, and with it on 141.5 MB; with this hook it is
+# the small one either way.
+#
+# Only what autodetect found is narrowed: a module named in MODULES is added
+# whatever is blacklisted, and an image built without autodetect, the fallback
+# and a portable install's, is left as it is.
+
+build() {
+    # _autodetect_cache is mkinitcpio's own, filled by its autodetect hook.
+    # shellcheck disable=SC2154
+    (( ${#_autodetect_cache[@]} )) || return 0
+
+    local module
+    while read -r module; do
+        unset "_autodetect_cache[${module//-/_}]"
+    done < <(modprobe -c | awk '$1 == "blacklist" { print $2 }')
+    return 0
+}
+
+help() {
+    cat <<HELPEOF
+Takes the modules that modprobe's configuration blacklists out of what the
+autodetect hook found, so the hooks after it add neither them nor their
+firmware. Put it right after autodetect.
+HELPEOF
+}

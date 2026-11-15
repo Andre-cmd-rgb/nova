@@ -1,0 +1,22 @@
+[Unit]
+Description=Apply the AC/battery power policy
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/hardware/thinkpad-p1-gen4i.md
+ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")
+# A portable Nova started on a P1 is a guest there: no model's tuning, and no
+# NVIDIA driver for this to manage (the card is on nouveau).
+ConditionPathExists=!/etc/nova/portable
+# Ordered after the sleep targets so the same unit re-applies the policy on
+# resume: the machine may have been unplugged while it was asleep, and the
+# GPU comes back on the bus regardless of how it went to sleep.
+# Deliberately NOT ordered against power-profiles-daemon: PPD is itself
+# After=multi-user.target, so an After= on it closes a cycle
+# (multi-user -> nova-power -> PPD -> multi-user) that systemd breaks by
+# dropping PPD's own start job. Profiles are the shell's business anyway.
+After=suspend.target hibernate.target suspend-then-hibernate.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/nova/bin/nova-power auto
+
+[Install]
+WantedBy=multi-user.target suspend.target hibernate.target suspend-then-hibernate.target

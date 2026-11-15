@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# nova:summary=Turn Bluetooth on or off, remembered across reboots
+# nova:args=<on|off|toggle|is-on>
+
+# Bluetooth is on or off by its rfkill soft block, and BlueZ follows that.
+# BlueZ never keeps an adapter's Powered across a reboot, so off through
+# bluetoothctl lasts until the next boot; systemd-rfkill keeps every block
+# (under /var/lib/systemd/rfkill) and puts it back early in the next boot, and
+# the block holds every Bluetooth radio, where bluetoothctl speaks to the
+# default one only. Taken off, bluetoothd powers the adapter up by itself
+# (AutoEnable, as shipped). Everything in Nova that turns Bluetooth on or off
+# does it here, as bluetoothctl cannot power an adapter up while it is blocked.
+
+set -euo pipefail
+
+# How long the adapters have to come up, in seconds.
+patience=${NOVA_BLUETOOTH_POWER_WAIT_SECONDS:-2}
+
+# BlueZ's adapters, a line each: the D-Bus path, and true or false for
+# whether it is powered. All of them, from one call: the block holds them
+# all, so a dongle powered behind the default adapter counts too.
+adapters() {
+  busctl --system --timeout=2 --json=short call org.bluez / org.freedesktop.DBus.ObjectManager GetManagedObjects 2>/dev/null |
+    jq -r '.data[0] | to_entries[] | select(.value["org.bluez.Adapter1"])
+      | "\(.key) \(.value["org.bluez.Adapter1"].Powered.data)"' 2>/dev/null || true
+}
+
+is_on() { [[ $(adapters) == *" true"* ]]; }
+
+# Until an adapter is on, or the time is up: with D-Bus stuck, each reading
+# can take its whole timeout, so the time counts, not the readings.
+came_up() {
+  local by=$((SECONDS + patience))
+  until is_on; do
+    ((SECONDS < by)) || return 1
+    sleep 0.2
+  done
+}
+
+turn_on() {
+  local path powered
+  rfkill unblock bluetooth
+  came_up && return
+  # bluetoothd powers the adapters up as the block goes, but not one powered
+  # down without it: those are powered up here.
+  while read -r path powered; do
+    [[ $powered == true ]] || busctl --system --timeout=5 set-property org.bluez "$path" org.bluez.Adapter1 Powered b true 2>/dev/null || true
+  done < <(adapters)
+  came_up && return
+  echo "nova-bluetooth-power: adapter did not come up" >&2
+  return 1
+}
+
+# Off is the block alone: it powers the adapters down too, and it lasts.
+case ${1:-} in
+  on) turn_on ;;
+  off) rfkill block bluetooth ;;
+  toggle) if is_on; then rfkill block bluetooth; else turn_on; fi ;;
+  is-on) is_on ;;
+  *)
+    echo "Usage: nova-bluetooth-power <on|off|toggle|is-on>" >&2
+    exit 1
+    ;;
+esac

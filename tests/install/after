@@ -1,0 +1,24 @@
+#!/bin/bash
+# The answers file's after= script in tests/install/run, run by nova-install in
+# the new system at the end of the install: the probe (tests/install/probe,
+# which run appends below) runs once, at the first boot.
+set -euo pipefail
+
+cat >/etc/systemd/system/nova-test-probe.service <<'UNIT'
+[Unit]
+Description=Nova install test: report on the first boot
+After=multi-user.target
+
+[Service]
+Type=exec
+ExecStart=/usr/local/lib/nova-test-probe
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl enable nova-test-probe.service
+
+# The kernel console is the serial port, so systemd starts a getty there. It
+# starts last (Type=idle) and its vhangup() cuts off the probe, which opened
+# the port first: every report line would be lost.
+systemctl mask serial-getty@ttyS0.service

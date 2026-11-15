@@ -1,0 +1,14 @@
+{
+  "id": "nova.tray",
+  "name": "System tray",
+  "description": "Apps' tray icons, with those not pinned in a drawer",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Tray.qml"
+  },
+  "barWidget": {
+    "defaultSection": "right"
+  }
+}

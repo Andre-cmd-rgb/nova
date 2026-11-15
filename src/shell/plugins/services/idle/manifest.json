@@ -1,0 +1,12 @@
+{
+  "id": "nova.idle",
+  "name": "Idle",
+  "description": "Starts the screensaver, then locks the screen, after a stretch of inactivity, unless Caffeine is on.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

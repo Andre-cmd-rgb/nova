@@ -1,0 +1,21 @@
+#!/bin/bash
+
+# nova:summary=Have passwd change the login keyring's password too
+# nova:hidden=true
+#
+# passwd (Menu → Update → Password) runs its own PAM stack, /etc/pam.d/passwd,
+# which shadow owns and Nova cannot ship. Without pam_gnome_keyring there, the
+# account's password changes and the login keyring stays locked with the old
+# one: after the next login Chrome and every app that keeps secrets asks for
+# the old password. One line lets the keyring follow. The file is one pacman
+# keeps local edits to, so a shadow upgrade leaves it (and writes a .pacnew).
+# Run by a pacman hook after every transaction that installs nova or shadow.
+
+set -euo pipefail
+
+PAM=${NOVA_PAM_PASSWD:-/etc/pam.d/passwd}
+
+[[ -f $PAM ]] || exit 0
+# Any pam_gnome_keyring line, Nova's or one written by hand, is left alone.
+! grep -q 'pam_gnome_keyring' "$PAM" || exit 0
+printf '%s\n' '-password  optional  pam_gnome_keyring.so' >>"$PAM"

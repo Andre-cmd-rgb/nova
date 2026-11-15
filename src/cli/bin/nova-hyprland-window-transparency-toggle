@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# nova:summary=Toggle transparency for the focused window
+
+set -euo pipefail
+
+addr=$(hyprctl activewindow -j | jq -r '.address // empty')
+[[ -n $addr ]] || exit 1
+hyprctl dispatch "hl.dsp.window.set_prop({ window = \"address:$addr\", prop = \"opaque\", value = \"toggle\" })" >/dev/null 2>&1 ||
+  hyprctl dispatch setprop "address:$addr" opaque toggle >/dev/null

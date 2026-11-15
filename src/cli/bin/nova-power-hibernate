@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# nova:summary=Choose how long the computer sleeps on battery before it hibernates, or never
+# nova:args=[<hours>h | never]
+#
+# Asleep on battery, the computer saves what is open to disk and turns off
+# after a while (2h unless you choose), so a weekend in a bag does not drain
+# it; the power button brings it all back. Plugged in it never hibernates.
+# never keeps it asleep until it is woken or the battery runs out. With no
+# argument it says which is set; setting it asks for no password. It fails
+# on a computer that cannot hibernate.
+
+set -euo pipefail
+
+APPLY=${NOVA_POWER_SLEEP_APPLY:-/usr/lib/nova/nova-power-sleep-apply}
+usage() { echo "Usage: nova power hibernate [<hours>h | never]" >&2; }
+
+can_hibernate() {
+  [[ $(busctl call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager CanHibernate 2>/dev/null) == 's "yes"' ]]
+}
+
+# The last word of the sleep configuration as systemd merges it, Nova's
+# own and any drop-in over it.
+current() {
+  systemd-analyze cat-config systemd/sleep.conf 2>/dev/null | awk -F= '
+    /^[[:space:]]*AllowSuspendThenHibernate[[:space:]]*=/ { allow = $2 }
+    /^[[:space:]]*HibernateDelaySec[[:space:]]*=/ { delay = $2 }
+    END {
+      gsub(/[[:space:]]/, "", allow); gsub(/[[:space:]]/, "", delay)
+      if (allow ~ /^(no|false|off|0)$/) print "never"
+      else print (delay == "" ? "2h" : delay)
+    }'
+}
+
+can_hibernate || { echo "nova power hibernate: this computer cannot hibernate" >&2; exit 1; }
+case "$#:${1:-}" in
+  0:) current ;;
+  1:never | 1:[1-9]h | 1:1[0-9]h | 1:2[0-4]h)
+    if ((EUID == 0)); then exec "$APPLY" hibernate "$1"; fi
+    exec pkexec "$APPLY" hibernate "$1"
+    ;;
+  *) usage; exit 2 ;;
+esac

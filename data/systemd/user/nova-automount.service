@@ -1,0 +1,12 @@
+[Unit]
+Description=Mount removable drives as they are plugged in
+Documentation=man:udiskie(8)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+# Nothing enables this: nova-automount starts it after the first unlock and
+# freezes it under the lock. No Restart=, since a udiskie started again under
+# the lock would mount every drive plugged in; one that died waits for the
+# next unlock.
+ExecStart=/usr/bin/udiskie --automount --no-notify --no-tray

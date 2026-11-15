@@ -1,0 +1,12 @@
+# Appended to the after= script by tests/install/run --encrypt. Nobody is
+# there at the first boot to type the disk's passphrase, so a key file the
+# initramfs carries opens it instead: systemd-cryptsetup looks for
+# /etc/cryptsetup-keys.d/<name>.key by itself. The boot still proves the
+# container, the root, the swap file and resume are where the command line and
+# the initramfs say; only the typing is not tried.
+device=$(cryptsetup status nova-root | awk '$1 == "device:" { print $2 }')
+install -d -m 700 /etc/cryptsetup-keys.d
+head -c 64 /dev/urandom | install -m 600 /dev/stdin /etc/cryptsetup-keys.d/nova-root.key
+printf '%s' 'nova-disk-test' | cryptsetup luksAddKey --key-file - "$device" /etc/cryptsetup-keys.d/nova-root.key
+echo 'FILES+=(/etc/cryptsetup-keys.d/nova-root.key)' >/etc/mkinitcpio.conf.d/90-nova-test-key.conf
+limine-update

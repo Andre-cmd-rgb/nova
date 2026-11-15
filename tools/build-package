@@ -1,0 +1,49 @@
+#!/bin/bash
+# Build one of packaging/*'s PKGBUILDs as the builder user (tools/ci-setup).
+#
+#   tools/build-package <packaging/name> <out dir> [makepkg option...]
+#
+# Builds in place, with sources and build trees under $NOVA_BUILD_ROOT (/tmp
+# if unset), and puts the packages in <out dir>. The PGP keys a PKGBUILD keeps
+# in keys/pgp (the kernel signers, for one) are imported first, so its sources
+# are verified. Set NOVA_SOURCE to pass it through to the nova PKGBUILD.
+# make uses every CPU: Arch's makepkg.conf leaves MAKEFLAGS unset, which builds
+# the kernel on one core, for longer than a CI job may run.
+set -euo pipefail
+
+die() { printf 'build-package: %s\n' "$*" >&2; exit 1; }
+
+(($# >= 2)) || die "usage: tools/build-package <packaging/name> <out dir> [makepkg option...]"
+dir=$(cd -- "$1" && pwd)
+out=$2
+shift 2
+[[ -f $dir/PKGBUILD ]] || die "no PKGBUILD in $dir"
+id builder >/dev/null 2>&1 || die "no builder user: run tools/ci-setup first"
+
+scratch=${NOVA_BUILD_ROOT:-/tmp}
+mkdir -p -- "$out" "$scratch/nova-srcdest" "$scratch/nova-builddir"
+out=$(cd -- "$out" && pwd)
+chown builder: -- "$out" "$scratch/nova-srcdest" "$scratch/nova-builddir"
+
+as_builder() { sudo -u builder -H -- "$@"; }
+
+if compgen -G "$dir/keys/pgp/*.asc" >/dev/null; then
+  as_builder gpg --batch --quiet --import "$dir"/keys/pgp/*.asc
+fi
+
+cd -- "$dir"
+# The archive is one server, and it stalls now and then. makepkg exits 8 when
+# the build dependencies did not install, which happens before anything is
+# built, so only that is tried again; pacman keeps what it fetched, but not a
+# download cut off halfway, which a mirror that cannot resume would fail again.
+for attempt in 1 2 3; do
+  status=0
+  as_builder env PKGDEST="$out" SRCDEST="$scratch/nova-srcdest" BUILDDIR="$scratch/nova-builddir" \
+    MAKEFLAGS="${MAKEFLAGS:--j$(nproc)}" \
+    ${NOVA_SOURCE:+NOVA_SOURCE="$NOVA_SOURCE"} \
+    makepkg --syncdeps --noconfirm --cleanbuild "$@" || status=$?
+  ((status == 8 && attempt < 3)) || exit "$status"
+  echo "build-package: the build dependencies did not install; trying again in 30 seconds" >&2
+  while read -r cache; do rm -f -- "${cache%/}"/*.part; done < <(pacman-conf CacheDir)
+  sleep 30
+done

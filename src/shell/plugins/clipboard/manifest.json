@@ -1,0 +1,12 @@
+{
+  "id": "nova.clipboard",
+  "name": "Clipboard",
+  "description": "What was copied, text and images, to paste again.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Clipboard.qml"
+  }
+}

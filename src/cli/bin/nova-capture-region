@@ -1,0 +1,302 @@
+#!/bin/bash
+
+# nova:summary=Pick a screen region over frozen screen content
+# nova:args=[region|windows|smart|fullscreen] [--keep-freeze] [--match-monitor] | --take-fullscreen | --take-window | --select-window <next|prev|left|right|up|down>
+# nova:hidden=true
+
+# The picker that screenshots and screen recordings share, so that both pick
+# alike. It prints the region picked as slurp does, "X,Y WxH", and exits 1
+# when the pick is given up.
+#
+#   region          drawn freely
+#   windows         a monitor or a window, as slurp offers them
+#   smart           drawn freely, the monitor and windows offered; a click (an
+#                   area under 20 square pixels) takes the one under it
+#   fullscreen      the focused monitor, without asking
+#
+#   --keep-freeze   the screen stays frozen (hyprpicker), its PID printed on a
+#                   line before the region (empty when nothing froze it); the
+#                   caller ends it
+#   --match-monitor "monitor:NAME" instead, for a region that is a monitor
+#
+# While slurp is up, its keys (data/hypr/keys/desktop.lua) run this again:
+# --take-window and --take-fullscreen end the pick with the highlighted window
+# or the screen, --select-window moves the highlight to another window.
+
+set -euo pipefail
+
+# What --take-window or --take-fullscreen meant, "window" or "fullscreen",
+# for the pick it ended.
+taken=${XDG_RUNTIME_DIR:-/tmp}/nova/capture-region-taken
+
+# A monitor's region in logical pixels, its width and height swapped when it
+# is turned a quarter round.
+# shellcheck disable=SC2016 # jq's own variables
+geo='def geo:
+  (.width / .scale | floor) as $w | (.height / .scale | floor) as $h
+  | if .transform == 1 or .transform == 3 then "\(.x),\(.y) \($h)x\($w)" else "\(.x),\(.y) \($w)x\($h)" end;'
+
+# What slurp is shown, a region a line after what it is: "focused" the focused
+# monitor; "monitor" the monitors on the focused workspace (that one); "window"
+# the windows there, but for those out of sight in a group, and one for those
+# at the same place: slurp could not tell them apart, and TAB would stop on the
+# first. Without a workspace in focus it fails; without Hyprland it fails as
+# hyprctl does.
+layout() {
+  # shellcheck disable=SC2016 # jq's own variables
+  { hyprctl monitors -j; hyprctl clients -j; } | jq -rs "$geo"'
+    if length == 0 then empty else
+      .[0] as $monitors | (.[1] // []) as $clients
+      | [$monitors[] | select(.focused == true) | .activeWorkspace.id]
+      | if length == 1 and (.[0] | type) == "number" then .[0] else error("no workspace in focus") end
+      | . as $workspace
+      | ($monitors[] | select(.focused == true) | "focused " + geo),
+        ($monitors[] | select(.activeWorkspace.id == $workspace) | "monitor " + geo),
+        ([$clients[] | select(.workspace.id == $workspace and .hidden != true) | "\(.at[0]),\(.at[1]) \(.size[0])x\(.size[1])"]
+          | unique[] | "window " + .)
+    end'
+}
+
+# Of a layout on stdin, the regions of these kinds, in its order.
+only() { # kind...
+  local kind rect want
+  while read -r kind rect; do
+    for want; do
+      if [[ $kind == "$want" ]]; then printf '%s\n' "$rect"; fi
+    done
+  done
+}
+
+focused_geo() {
+  hyprctl monitors -j | jq -r "$geo"' .[] | select(.focused == true) | geo'
+}
+
+# A region's left, top, width and height, in $x, $y, $w and $h: "X,Y WxH"
+# taken apart at its comma, space and x.
+bounds() { # region
+  local corner=${1% *} size=${1#* }
+  x=${corner%,*} y=${corner#*,} w=${size%x*} h=${size#*x}
+}
+
+# Of the regions given, the one slurp highlights at a point, in $found: the
+# smallest the point is in (a floating window over a tiled one, a window over
+# its monitor), the first of those the same size. 1 for none. A variable, not
+# output, so that trying point after point starts no process.
+under() { # x y region...
+  local px=$1 py=$2 rect x y w h least=-1
+  shift 2
+  found=""
+  for rect; do
+    bounds "$rect"
+    ((px >= x && px < x + w && py >= y && py < y + h)) || continue
+    ((least < 0 || w * h < least)) || continue
+    found=$rect least=$((w * h))
+  done
+  [[ -n $found ]]
+}
+
+# The pointer, in $px and $py, from Hyprland's "X, Y".
+pointer() {
+  local at
+  at=$(hyprctl cursorpos)
+  px=${at%,*} py=${at#*, }
+}
+
+# What slurp highlights under the pointer: a window, or as it is shown the
+# monitors too, the monitor in a gap or over the bar.
+highlighted() {
+  local layout px py
+  local -a windows monitors
+  layout=$(layout)
+  mapfile -t windows < <(only window <<<"$layout")
+  mapfile -t monitors < <(only monitor <<<"$layout")
+  pointer
+  if under "$px" "$py" "${windows[@]}" || under "$px" "$py" "${monitors[@]}"; then
+    echo "$found"
+  else
+    only focused <<<"$layout"
+  fi
+}
+
+# slurp's highlight moved to another window, by putting the pointer on it:
+# next and prev go round the windows in reading order, down the screen and
+# left to right; an arrow goes to the nearest window whose middle is that
+# way, a step aside counting double, the first in reading order of those
+# as near. Each from the window highlighted now, found as --take-window finds
+# it, so that the two never disagree; or from the pointer, where there is
+# none.
+select_window() { # next|prev|left|right|up|down
+  local px py ox oy rect p x y w h sx sy at n dx dy ux uy ahead aside score best=-1 current="" target=""
+  local -a windows rings=() points reading=()
+  local -A spot=() place=()
+  case $1 in
+    next | prev | left | right | up | down) ;;
+    *) exit 1 ;;
+  esac
+  mapfile -t windows < <(layout | only window)
+
+  # The pointer goes to a point of the window that slurp would highlight it
+  # at. Its middle will not do where a smaller window covers that, so points
+  # in eighths of its width and height are tried, nearest the middle first,
+  # across and then down at the same distance. A window with no such point
+  # is passed over, as hovering could not reach it either.
+  for p in {1..7}{1..7}; do rings[(${p:0:1} - 4) ** 2 + (${p:1} - 4) ** 2]+="$p "; done
+  read -r -a points <<<"${rings[*]}"
+  for rect in "${windows[@]}"; do
+    bounds "$rect"
+    for p in "${points[@]}"; do
+      sx=$((x + w * ${p:0:1} / 8)) sy=$((y + h * ${p:1} / 8))
+      if under "$sx" "$sy" "${windows[@]}" && [[ $found == "$rect" ]]; then
+        spot[$rect]="$sx $sy"
+        break
+      fi
+    done
+  done
+  ((${#spot[@]})) || return 0
+  mapfile -t reading < <(
+    for rect in "${!spot[@]}"; do
+      bounds "$rect"
+      echo "$y $x $rect"
+    done | sort -n -k1,1 -k2,2 | cut -d' ' -f3-
+  )
+  n=${#reading[@]}
+  for at in "${!reading[@]}"; do place[${reading[at]}]=$at; done
+
+  pointer
+  ox=$px oy=$py
+  if under "$px" "$py" "${windows[@]}"; then
+    current=$found
+    bounds "$current"
+    ox=$((x + w / 2)) oy=$((y + h / 2))
+  fi
+
+  case $1 in
+    next | prev)
+      # Without a window highlighted, next starts before the first and prev
+      # after the last.
+      if [[ -n $current && -v place[$current] ]]; then
+        at=${place[$current]}
+      elif [[ $1 == next ]]; then
+        at=-1
+      else
+        at=$n
+      fi
+      if [[ $1 == next ]]; then at=$((at + 1)); else at=$((at - 1)); fi
+      target=${reading[(at + n) % n]}
+      ;;
+    *)
+      # How far a window's middle is that way, and how far aside, from the
+      # direction's unit step.
+      case $1 in
+        left) ux=-1 uy=0 ;;
+        right) ux=1 uy=0 ;;
+        up) ux=0 uy=-1 ;;
+        down) ux=0 uy=1 ;;
+      esac
+      for rect in "${reading[@]}"; do
+        [[ $rect != "$current" ]] || continue
+        bounds "$rect"
+        dx=$((x + w / 2 - ox)) dy=$((y + h / 2 - oy))
+        ahead=$((ux * dx + uy * dy)) aside=$((uy * dx - ux * dy))
+        ((ahead > 0)) || continue
+        score=$((ahead + 2 * (aside < 0 ? -aside : aside)))
+        if ((best < 0 || score < best)); then best=$score target=$rect; fi
+      done
+      ;;
+  esac
+
+  [[ -n $target ]] || return 0
+  read -r sx sy <<<"${spot[$target]}"
+  hyprctl dispatch "hl.dsp.cursor.move({ x = $sx, y = $sy })" >/dev/null
+}
+
+# The keys act only while a pick is up: a mark left with none would end the
+# next pick before it began.
+case ${1:-} in
+  --take-window | --take-fullscreen)
+    pgrep -x slurp >/dev/null || exit 0
+    mkdir -p "${taken%/*}"
+    echo "${1#--take-}" >"$taken"
+    pkill -x slurp
+    exit 0
+    ;;
+  --select-window)
+    pgrep -x slurp >/dev/null || exit 0
+    select_window "${2:-}"
+    exit 0
+    ;;
+esac
+
+mode=smart
+keep_freeze=false
+match_monitor=false
+for arg; do
+  case $arg in
+    --keep-freeze) keep_freeze=true ;;
+    --match-monitor) match_monitor=true ;;
+    *) mode=$arg ;;
+  esac
+done
+
+# slurp, given its options and the regions it offers on stdin. A pick that a
+# key ended gives nothing, and the mark the key left says what it meant; a
+# pick given up gives nothing and leaves no mark. slurp fails either way, so
+# its status says nothing.
+pick() {
+  local picked meant=""
+  rm -f "$taken"
+  picked=$(slurp "$@" 2>/dev/null || true)
+  if [[ -z $picked && -e $taken ]]; then meant=$(<"$taken"); fi
+  rm -f "$taken"
+  case $meant in
+    window) highlighted ;;
+    fullscreen) focused_geo ;;
+    *) printf '%s' "$picked" ;;
+  esac
+}
+
+# hyprpicker shows a still of the screen over it, so that what is picked holds
+# still; it is given a moment to come up. It goes when this does, unless the
+# caller keeps it.
+freezer=""
+freeze() {
+  hyprpicker -r -z >/dev/null 2>&1 &
+  freezer=$!
+  sleep .1
+}
+trap '$keep_freeze || [[ -z $freezer ]] || kill "$freezer" 2>/dev/null || true' EXIT
+
+case $mode in
+  fullscreen) picked=$(focused_geo) ;;
+  region)
+    freeze
+    picked=$(pick)
+    ;;
+  windows)
+    freeze
+    picked=$(layout | only monitor window | pick -r)
+    ;;
+  *)
+    # smart, as is anything else. A click takes the region slurp highlighted
+    # under it, the window or, beside every window, the monitor: no captures
+    # of a pixel or two.
+    offered=$(layout | only monitor window)
+    freeze
+    picked=$(pick <<<"$offered")
+    if [[ $picked =~ ^(-?[0-9]+),(-?[0-9]+)\ ([0-9]+)x([0-9]+)$ ]] && ((BASH_REMATCH[3] * BASH_REMATCH[4] < 20)); then
+      mapfile -t regions <<<"$offered"
+      if under "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${regions[@]}"; then picked=$found; fi
+    fi
+    ;;
+esac
+
+if $keep_freeze; then echo "$freezer"; fi
+[[ -n $picked ]] || exit 1
+
+# A region that is a whole monitor, by the monitor's name.
+if $match_monitor; then
+  # shellcheck disable=SC2016 # jq's own variables
+  hyprctl monitors -j | jq -r --arg picked "$picked" "$geo"' first((.[] | select(geo == $picked) | "monitor:" + .name), $picked)'
+else
+  echo "$picked"
+fi

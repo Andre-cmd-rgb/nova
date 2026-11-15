@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# nova:summary=Toggle Nova features between enabled and disabled
+# nova:args=<flag-name> [toggle|on|off]
+#
+# A feature is on while its flag file exists; the shell watches the directory.
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: nova-toggle <flag-name> [toggle|on|off]" >&2
+  exit 2
+}
+
+(($# >= 1 && $# <= 2)) || usage
+[[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]] || usage
+
+flag="${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/$1"
+
+case ${2:-toggle} in
+  toggle) if [[ -f $flag ]]; then rm -f "$flag"; else mkdir -p "${flag%/*}" && touch "$flag"; fi ;;
+  on) mkdir -p "${flag%/*}" && touch "$flag" ;;
+  off) rm -f "$flag" ;;
+  *) usage ;;
+esac

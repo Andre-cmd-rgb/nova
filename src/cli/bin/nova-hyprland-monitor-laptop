@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# nova:summary=Print the name of the built-in laptop display, including disabled outputs
+# nova:hidden=true
+
+set -euo pipefail
+
+# The panel is on eDP, LVDS or DSI, and stays listed while it is off. Without
+# one this prints nothing, and still succeeds: callers test for a name.
+hyprctl monitors all -j | jq -r 'first(.[].name | select(test("^(eDP|LVDS|DSI)-"))) // empty'

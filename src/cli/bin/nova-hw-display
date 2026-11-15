@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# nova:summary=Print the most likely display backlight device
+# nova:hidden=true
+
+set -euo pipefail
+
+# The GPU's own backlight drives the panel where there is one, so AMD's and
+# Intel's come before the ACPI firmware's, and any backlight before none.
+# Each glob that matches nothing stays as written, and is passed over.
+backlights=${NOVA_BACKLIGHT_PATH:-/sys/class/backlight}
+for device in "$backlights"/amdgpu_bl* "$backlights"/intel_backlight "$backlights"/acpi_video* "$backlights"/*; do
+  if [[ -e $device ]]; then
+    printf '%s\n' "${device##*/}"
+    exit 0
+  fi
+done
+exit 1

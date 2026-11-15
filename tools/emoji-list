@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Make the emoji picker's list, src/shell/plugins/emojis/emojis.json, from
+Unicode's own data. The output is committed; run this only to move to a new
+version, after changing the pins below:
+
+    tools/emoji-list >src/shell/plugins/emojis/emojis.json
+
+The emoji are those of emoji-test.txt for Emoji 18.0, in its order: each
+fully-qualified one, but for the skin-tone variants, which the picker leaves
+to the base emoji. What the search matches, "k", is the emoji's name there
+and its English keywords from CLDR 49's annotations (annotationsDerived for
+sequences such as flags and keycaps), and for a country's flag its code,
+which its two letters spell ("de" for Germany's), all lower-cased, leaving
+out a word already found in those before it: the picker matches what is
+typed anywhere in "k", so it would find nothing more.
+
+Each file is checked against its SHA-256, so a pin always makes the same list.
+Unicode's data is under the Unicode License v3 (https://www.unicode.org/license.txt).
+"""
+import hashlib
+import json
+import sys
+import urllib.request
+import xml.etree.ElementTree as ET
+
+EMOJI_TEST = (
+    "https://www.unicode.org/Public/18.0.0/emoji/emoji-test.txt",
+    "8f3735cda1f92a779d78af67cf86066bb1f07143dc22f2ac29394d9bc57ab21a",
+)
+CLDR = "https://raw.githubusercontent.com/unicode-org/cldr/release-49/common/"
+ANNOTATIONS = (
+    CLDR + "annotations/en.xml",
+    "14d0e9bb5003c085250df4ac7bd7ba1e26d92e74174d7a3a2f42dc16e07fb155",
+)
+DERIVED = (
+    CLDR + "annotationsDerived/en.xml",
+    "a4a6c1a4c341d94179cb116623c5f44c47400a5bc55da483423ef7430ecf622e",
+)
+
+SKIN_TONES = set(chr(c) for c in range(0x1F3FB, 0x1F400))
+
+
+def fetch(pin):
+    url, sha256 = pin
+    with urllib.request.urlopen(url) as response:
+        data = response.read()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != sha256:
+        sys.exit(f"emoji-list: {url} is not the file pinned (sha256 {digest})")
+    return data
+
+
+# Emoji by CLDR's key for them, their code points without U+FE0F: the name
+# CLDR reads out and the keywords.
+def annotations(data, into):
+    for node in ET.fromstring(data).iter("annotation"):
+        entry = into.setdefault(node.get("cp"), {"name": "", "keywords": []})
+        if node.get("type") == "tts":
+            entry["name"] = node.text.strip()
+        else:
+            entry["keywords"] = [k.strip() for k in node.text.split("|") if k.strip()]
+    return into
+
+
+def emoji(data):
+    for line in data.decode("utf-8").splitlines():
+        if "; fully-qualified" not in line:
+            continue
+        points, comment = line.split(";", 1)[0], line.split("#", 1)[1]
+        text = "".join(chr(int(p, 16)) for p in points.split())
+        # "# 😀 E1.0 grinning face": the emoji, the version it came in, its name.
+        name = comment.strip().split(" ", 2)[2]
+        if not SKIN_TONES & set(text):
+            yield text, name
+
+
+# A country's flag is the two letters of its code, as regional indicators.
+def country_code(text):
+    if len(text) == 2 and all(0x1F1E6 <= ord(c) <= 0x1F1FF for c in text):
+        return "".join(chr(ord(c) - 0x1F1E6 + ord("a")) for c in text)
+    return ""
+
+
+def keywords(text, name, annotation):
+    found = name.lower()
+    for word in [annotation["name"]] + annotation["keywords"] + [country_code(text)]:
+        word = word.lower()
+        if word and word not in found:
+            found += " " + word
+    return found
+
+
+def main():
+    cldr = annotations(fetch(DERIVED), annotations(fetch(ANNOTATIONS), {}))
+    items = []
+    for text, name in emoji(fetch(EMOJI_TEST)):
+        annotation = cldr.get(text.replace("\ufe0f", ""), {"name": "", "keywords": []})
+        items.append({"e": text, "k": keywords(text, name, annotation)})
+    sys.stdout.write(json.dumps(items, separators=(",", ":")) + "\n")
+
+
+main()

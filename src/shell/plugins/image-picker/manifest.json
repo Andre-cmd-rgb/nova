@@ -1,0 +1,12 @@
+{
+  "id": "nova.image-picker",
+  "name": "Image picker",
+  "description": "Pick an image from a carousel: a background, a theme, or any folder of pictures.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "ImagePicker.qml"
+  }
+}

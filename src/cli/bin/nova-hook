@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# nova:summary=Run the hook ~/.config/nova/hooks/<name>, then each one in ~/.config/nova/hooks/<name>.d/
+# nova:args=<name> [args...]
+# nova:hidden=true
+
+set -euo pipefail
+
+if (($# == 0)); then
+  echo "Usage: nova-hook <name> [args...]" >&2
+  exit 1
+fi
+
+# Hooks are the user's own scripts, run with bash and the arguments that came
+# after the name. The .d directory's go in name order, its *.sample files
+# left out. One that fails is reported, and the rest run all the same.
+hook=$HOME/.config/nova/hooks/$1
+shift
+for script in "$hook" "$hook.d"/*; do
+  [[ -f $script && $script != "$hook.d"/*.sample ]] || continue
+  bash "$script" "$@" || echo "Hook failed: $script" >&2
+done

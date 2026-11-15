@@ -1,0 +1,20 @@
+#!/bin/bash
+
+# nova:summary=Type an emoji into the focused window
+# nova:args=<emoji>
+# nova:hidden=true
+
+set -euo pipefail
+
+[[ -n ${1:-} ]] || exit 0
+
+# wtype cannot type most emoji, so this pastes one. wl-copy holds it on the
+# clipboard while SHIFT + Insert pastes it, then lets go: in the foreground,
+# so that it can be stopped, and marked sensitive, so that clipboard history
+# leaves it out.
+printf '%s' "$1" | wl-copy --type text/plain --sensitive --foreground &
+holder=$!
+sleep 0.15
+wtype -M shift -k Insert -m shift 2>/dev/null || true
+sleep 0.2
+kill "$holder" 2>/dev/null || true

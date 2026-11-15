@@ -1,0 +1,29 @@
+# A laptop's NVIDIA card sleeps while nothing uses it. This is NVIDIA's own
+# setup for it (the driver's README, "PCI-Express Runtime D3 Power
+# Management"): the driver powers the card down only once the kernel may
+# suspend every function the card has. So the card itself is allowed to from
+# when the driver binds, and its sound, USB and USB-C functions from when they
+# appear.
+#
+# With that, a laptop's card from the RTX 30 series on sleeps by itself. A GTX
+# 16 or RTX 20 does only with NVreg_DynamicPowerManagement=0x02, which NVIDIA
+# leaves off for them and so does Nova: nova doctor says how to turn it on. A
+# card that drives a display stays awake either way.
+#
+# Laptops only, by the SMBIOS chassis types nova-hw-laptop knows: on a desktop,
+# a monitor plugged into a sleeping card is not found. And not the ThinkPad P1
+# Gen 4i, where Nova's power governor sets these itself and takes the card off
+# the bus on battery. Each line names every condition, so a computer whose
+# firmware gives no chassis type is left as it is.
+ACTION=="bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000|0x030200", \
+  ATTR{[dmi/id]chassis_type}=="8|9|10|14|30|31|32", ATTR{[dmi/id]product_version}!="ThinkPad P1 Gen 4i", \
+  TEST=="power/control", ATTR{power/control}="auto"
+# A card with no driver bound is not suspended by anyone: awake, as the kernel
+# has it from the start.
+ACTION=="unbind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x030000|0x030200", \
+  ATTR{[dmi/id]chassis_type}=="8|9|10|14|30|31|32", ATTR{[dmi/id]product_version}!="ThinkPad P1 Gen 4i", \
+  TEST=="power/control", ATTR{power/control}="on"
+# Its HDMI sound (0x0403), USB (0x0c03) and USB-C (0x0c80) functions.
+ACTION=="add|bind", SUBSYSTEM=="pci", ATTR{vendor}=="0x10de", ATTR{class}=="0x040300|0x0c0330|0x0c8000", \
+  ATTR{[dmi/id]chassis_type}=="8|9|10|14|30|31|32", ATTR{[dmi/id]product_version}!="ThinkPad P1 Gen 4i", \
+  TEST=="power/control", ATTR{power/control}="auto"

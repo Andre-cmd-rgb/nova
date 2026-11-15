@@ -1,0 +1,229 @@
+#!/bin/bash
+# screenshots: the pictures in the README and docs/, taken of the shell itself.
+#
+#   tools/screenshots --root <dir> [--out <dir>]
+#
+# --root is a `make install DESTDIR=<dir>` tree; the pictures go to docs/images
+# unless --out names another folder. The shell runs as tools/shell-smoke runs
+# it: under a headless sway, in a home, a runtime dir and a D-Bus session of
+# its own. It is given no system bus either, so nothing of the computer this
+# runs on (its networks, its battery, its name) is in a picture; what is in
+# them is made here: a calendar, a terminal's lines, and docs/images/dusk.svg,
+# the background drawn for them, which the adaptive theme takes its colours
+# from.
+#
+# sway has no Hyprland IPC, so a picture shows the shell as it is and the
+# windows as sway frames them: with a plain border in the theme's accent, not
+# Hyprland's gradient, and floating, where Nova tiles them.
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+
+here=$(cd "$(dirname "$0")/.." && pwd)
+root='' out=$here/docs/images
+while (($# > 0)); do
+  case $1 in
+    --root) root=${2:?}; shift 2 ;;
+    --out) out=${2:?}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+[[ -n $root && -f $root/usr/share/nova/shell/shell.qml ]] || { usage >&2; exit 2; }
+for tool in sway swaymsg qs dbus-run-session grim jq foot rsvg-convert vips; do
+  command -v "$tool" >/dev/null || { echo "screenshots: needs $tool" >&2; exit 1; }
+done
+root=$(cd "$root" && pwd)
+mkdir -p "$out"
+out=$(cd "$out" && pwd)
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/home/.config/nova" "$work/home/.config/foot" "$work/home/.local/share/nova/calendar" \
+  "$work/run" "$work/bin" "$work/shots"
+chmod 700 "$work/run"
+
+# What the shell and its helpers must not reach from in here: the session and
+# the system this runs on.
+for stub in systemctl dbus-update-activation-environment loginctl powerprofilesctl pkexec sudo \
+  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil udiskie hyprctl curl; do
+  printf '#!/bin/sh\nexit 0\n' >"$work/bin/$stub"
+  chmod +x "$work/bin/$stub"
+done
+
+rsvg-convert -w 3840 -o "$work/home/dusk.png" "$here/docs/images/dusk.svg"
+
+# The bar see-through, which Settings → Menu Bar turns on (a new install's is
+# solid), and without the widgets that would show this computer's own (the
+# weather where it is, its networks).
+jq '.bar.transparent = true
+  | .bar.layout.center |= map(select(.id != "nova.weather" and .id != "nova.system-update"))
+  | .bar.layout.right |= map(select(.id == "nova.audio" or .id == "nova.tray"))' \
+  "$root/usr/share/nova/default/shell.json" >"$work/home/.config/nova/shell.json"
+
+printf 'include=~/.config/foot/theme.ini\n[main]\nfont=JetBrainsMono Nerd Font:size=11\npad=14x14\n' \
+  >"$work/home/.config/foot/foot.ini"
+
+# A week with something in it, around today.
+event() { # days from today, start HH:MM, end HH:MM, summary
+  local day
+  day=$(date -d "today $1 days" +%Y%m%d)
+  printf 'BEGIN:VEVENT\r\nUID:%s-%s@nova\r\nDTSTAMP:%sT000000Z\r\nDTSTART:%sT%s00\r\nDTEND:%sT%s00\r\nSUMMARY:%s\r\nEND:VEVENT\r\n' \
+    "$day" "${2/:/}" "$day" "$day" "${2/:/}" "$day" "${3/:/}" "$4"
+}
+{
+  printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Nova//Calendar//EN\r\n'
+  event -1 09:30 10:15 'Stand-up'
+  event -1 14:00 16:00 'Kernel 7.3: try the candidate'
+  event 0 10:00 11:30 'Release notes'
+  event 0 13:00 13:45 'Lunch with Sam'
+  event 0 16:30 18:00 'Measure the idle draw'
+  event 1 09:00 12:00 'Theme work'
+  event 2 11:00 12:00 'Dentist'
+  event 2 15:00 17:30 'Hardware profile: Framework 13'
+  event 3 18:30 20:00 'Climbing'
+  printf 'END:VCALENDAR\r\n'
+} >"$work/home/.local/share/nova/calendar/calendar.ics"
+
+# What the terminal in the pictures shows.
+cat >"$work/bin/demo" <<'EOF'
+#!/bin/bash
+c() { printf '\e[%sm%s\e[0m' "$1" "$2"; }
+prompt() { printf '%s %s $ %s\n' "$(c '1;34' '~/Projects/nova')" "$(c 32 main)" "$1"; }
+prompt 'nova theme set adaptive'
+prompt 'git status --short'
+printf ' %s src/theme/src/adaptive.rs\n %s src/theme/src/bar.rs\n %s docs/themes.md\n' "$(c 32 A)" "$(c 32 A)" "$(c 33 M)"
+prompt 'ls'
+printf '%s  %s  %s  %s  %s  %s\n' "$(c '1;34' data)" "$(c '1;34' docs)" "$(c '1;34' src)" "$(c 36 'theme@')" "$(c '1;32' 'nova*')" "$(c 35 dusk.svg)"
+prompt 'git diff'
+printf '%s\n%s\n%s\n' "$(c 36 '@@ -12,3 +12,4 @@')" "$(c 31 '-    let accent = fixed();')" "$(c 32 '+    let accent = reading.accent;')"
+prompt 'nova theme palette dusk.svg | head -4'
+nova-theme palette "$HOME/dusk.png" | sed -n '3,6p'
+prompt ''
+exec sleep 3600
+EOF
+chmod +x "$work/bin/demo"
+
+# One session: sway, the shell and what is opened in it, in their own D-Bus
+# session, so that all of it ends together.
+session() {
+  set -euo pipefail
+  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 sway -c "$WORK/sway.conf" >"$WORK/sway.log" 2>&1 &
+  local sway=$! socket='' i answer=''
+  for ((i = 0; i < 100; i++)); do
+    socket=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' | head -1)
+    [[ -z $socket ]] || break
+    sleep 0.1
+  done
+  [[ -n $socket ]] || { echo "screenshots: sway did not start" >&2; cat "$WORK/sway.log" >&2; return 1; }
+  export WAYLAND_DISPLAY=$socket
+  SWAYSOCK=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'sway-ipc.*' | head -1)
+  export SWAYSOCK
+
+  nova-theme set adaptive >/dev/null 2>&1 || true
+  nova-theme bg set "$HOME/dusk.png" >/dev/null 2>&1 || true
+
+  QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 qs -n --no-color -p "$SHELL_DIR" >"$WORK/shell.log" 2>&1 &
+  local shell=$!
+  ipc() { qs ipc -p "$SHELL_DIR" call "$@" 2>/dev/null; }
+  for ((i = 0; i < 300; i++)); do
+    answer=$(ipc shell ping || true)
+    [[ $answer != ok ]] || break
+    sleep 0.1
+  done
+  [[ $answer == ok ]] || { echo "screenshots: the shell did not answer" >&2; return 1; }
+  shot() { sleep "${2:-1.5}"; grim "$WORK/shots/$1.png"; }
+  # sway's frame in the theme's accent, as Hyprland's border is.
+  frame() {
+    local accent muted
+    accent=$(nova-theme color accent) muted=$(nova-theme color muted)
+    swaymsg -q "client.focused $accent $accent $accent $accent $accent" || true
+    swaymsg -q "client.unfocused $muted $muted $muted $muted $muted" || true
+    swaymsg -q "client.focused_inactive $muted $muted $muted $muted $muted" || true
+  }
+  theme() { nova-theme set "$1" >/dev/null 2>&1 || true; sleep 1.2; frame; }
+
+  # A window of the shell's (Settings, the Calendar), as it is placed when
+  # it opens (sway.conf), resized and moved.
+  place() { # x, y, width, height
+    swaymsg -q "[app_id=\"^(?!foot\$).*\"] resize set $3 $4, move absolute position $1 $2" || true
+  }
+  settings() {
+    ipc shell hide nova.settings >/dev/null || true
+    sleep 0.4
+    ipc shell summon nova.settings '{"page":"appearance"}' >/dev/null
+  }
+
+  # The desktop: a terminal and Settings, in the adaptive theme. They float,
+  # to leave the background in the picture.
+  frame
+  foot demo >/dev/null 2>&1 &
+  sleep 1
+  settings
+  shot desktop 2.5
+
+  # The same in three more themes, for one picture of four. Settings is
+  # opened again for each: it reads the theme in use as it opens.
+  local name
+  for name in tokyo-night catppuccin-latte gruvbox; do
+    theme "$name"
+    settings
+    shot "theme-$name" 2
+  done
+  theme adaptive
+  ipc shell hide nova.settings >/dev/null || true
+
+  ipc shell summon nova.menu '{"menu":"root"}' >/dev/null
+  shot menu
+  ipc shell hide nova.menu >/dev/null || true
+
+  ipc shell summon nova.calendar '{"page":"week","date":""}' >/dev/null
+  sleep 1
+  place 560 150 1240 900
+  shot calendar 2
+  ipc shell hide nova.calendar >/dev/null || true
+
+  kill "$shell" "$sway" 2>/dev/null || true
+  wait 2>/dev/null || true
+}
+
+# Every window floats where the pictures want it: the terminal top left, the
+# shell's own windows over its corner, and the dusk to their right.
+cat >"$work/sway.conf" <<'EOF'
+output HEADLESS-1 resolution 1920x1200 scale 1
+default_border pixel 2
+default_floating_border pixel 2
+for_window [app_id="foot"] floating enable, resize set 720 440, move absolute position 44 76
+for_window [app_id="^(?!foot$).*"] floating enable, resize set 860 620, move absolute position 330 330
+EOF
+# sway draws with the GPU where there is one it may use, and WLR_RENDERER=pixman
+# has it draw without, as in CI; those two of the caller's settings go in.
+renderer=()
+for name in WLR_RENDERER WLR_RENDER_DRM_DEVICE LD_LIBRARY_PATH; do
+  [[ -z ${!name:-} ]] || renderer+=("$name=${!name}")
+done
+env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${TZ:-Europe/Rome}" \
+  PATH="$work/bin:$root/usr/lib/nova/bin:$root/usr/bin:$PATH" \
+  NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN=password \
+  DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/system-bus \
+  "${renderer[@]}" WORK="$work" SHELL_DIR="$root/usr/share/nova/shell" \
+  timeout 240 dbus-run-session -- bash -c "$(declare -f session); session"
+
+# Photographs of a screen are large as PNGs; as JPEGs at this quality they
+# are a tenth of that and look the same.
+save() { # shot, name
+  vips copy "$work/shots/$1.png" "$out/$2.jpg[Q=88,strip,optimize_coding]"
+}
+save desktop desktop
+save menu menu
+save calendar calendar
+# Four themes in one picture: the corner of each with the windows in it.
+corners=()
+for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
+  vips crop "$work/shots/$name.png" "$work/shots/$name-corner.png" 0 0 1216 760
+  corners+=("$work/shots/$name-corner.png")
+done
+vips arrayjoin "${corners[*]}" "$work/shots/themes.png" --across 2 --shim 16 --background "255 255 255"
+vips resize "$work/shots/themes.png" "$out/themes.jpg[Q=88,strip,optimize_coding]" 0.78125
+ls -l "$out"

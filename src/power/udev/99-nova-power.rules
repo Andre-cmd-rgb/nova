@@ -1,0 +1,20 @@
+# Re-apply the power policy whenever the mains adapter is plugged or unplugged.
+# The service reads the current state itself, so one rule covers both edges.
+# --no-block because a udev rule must not wait on anything. The DMI match keeps
+# it to the one machine the policy is for (the unit checks again).
+# The touch tells nova-powerd, which then reads the charger at its next poll
+# rather than asking the EC every second (fact 56). It goes first: the daemon
+# moves the power limits, the service takes seconds over the discrete GPU.
+SUBSYSTEM=="power_supply", ATTR{type}=="Mains", ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", \
+  RUN+="/usr/bin/touch /run/nova-powerd.mains", \
+  RUN+="/usr/bin/systemctl --no-block start nova-power.service"
+
+# A USB device plugged in on battery is let autosuspend like the ones that were
+# there at the unplug (fact 54); nova-power checks the power source itself and
+# does nothing on AC. On bind, not add: the interfaces exist only by then, and
+# the classes on them decide the delay, or whether to touch it at all.
+# A root hub (usb1, usb2, ...) is no device of that kind: its controller's
+# runtime PM is runtime_pm_battery's.
+ACTION=="bind", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", KERNEL=="*-*", \
+  ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", \
+  RUN+="/usr/lib/nova/bin/nova-power usb-added $kernel"

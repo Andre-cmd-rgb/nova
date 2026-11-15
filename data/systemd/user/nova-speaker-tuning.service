@@ -1,0 +1,22 @@
+[Unit]
+Description=This laptop's speaker tuning, as a PipeWire filter chain
+# WirePlumber links the chain to the speakers, which it has to have found first.
+After=pipewire.service wireplumber.service
+Requires=pipewire.service
+Wants=wireplumber.service
+# The chain is a client of PipeWire's: it goes, and comes back, with it.
+PartOf=pipewire.service
+
+[Service]
+Type=simple
+# A PipeWire client of its own, not a module in PipeWire's config (read only
+# as PipeWire starts), so nova-audio-tuning turns it on and off without
+# restarting the audio server, and every app's sound with it. A broken tuning
+# then stops this service, not PipeWire. Its config is not filter-chain.conf,
+# which would also load every filter in ~/.config/pipewire/filter-chain.conf.d.
+ExecStart=/usr/bin/pipewire -c nova-speaker-tuning.conf
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target

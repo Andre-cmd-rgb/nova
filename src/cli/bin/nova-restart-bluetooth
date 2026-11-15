@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# nova:summary=Bring Bluetooth back: lift its block, then restart bluetoothd
+
+set -euo pipefail
+
+# bluetoothd is a system service: polkit asks for the password to restart it.
+rfkill unblock bluetooth
+systemctl restart bluetooth.service
+nova-notification-send -g 󰂯 "Bluetooth restarted"

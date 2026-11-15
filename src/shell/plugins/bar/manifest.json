@@ -1,0 +1,12 @@
+{
+  "id": "nova.bar",
+  "name": "Bar",
+  "description": "The bar along one edge of every screen, with the widgets of shell.json's layout, moved and set on the bar itself.",
+  "alwaysOn": true,
+  "kinds": [
+    "bar"
+  ],
+  "entryPoints": {
+    "bar": "Bar.qml"
+  }
+}

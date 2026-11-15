@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# nova:summary=Print the detected Hyprland touchpad or trackpad device name
+# nova:hidden=true
+
+set -euo pipefail
+
+# Hyprland lists touchpads among the mice; their names say what they are. The
+# menu shows its Touchpad switch on this command's success.
+name=$(hyprctl devices -j | jq -r 'first(.mice[].name | select(test("touchpad|trackpad"; "i"))) // empty')
+[[ -n $name ]] || exit 1
+printf '%s\n' "$name"

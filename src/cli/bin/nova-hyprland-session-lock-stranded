@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# nova:summary=Returns true when the compositor holds a session lock no other locker is alive to own
+# nova:args=<own-pid>
+# nova:hidden=true
+
+set -euo pipefail
+
+# Hyprland hands a held lock to any client that asks
+# (misc:allow_session_lock_restore), so a shell taking back every lock it sees
+# could take another shell's live lock screen, and strand it on exit. A lock is
+# stranded only once no other Quickshell or hyprlock runs; until then the
+# answer is "cannot tell", and the caller asks again until that locker exits or
+# it gives up.
+#
+# Exits 0 stranded, 1 unlocked, 2 when it cannot be told. The caller passes its
+# own pid: a shell that crashed starts again in the same process.
+if [[ -z ${1:-} ]]; then
+  echo "Usage: nova-hyprland-session-lock-stranded <own-pid>" >&2
+  exit 2
+fi
+own=$1
+
+# Unlocked, and cannot tell, are the answer as they are.
+nova-hyprland-session-locked || exit
+
+while read -r pid; do
+  [[ $pid == "$own" ]] || exit 2
+done < <(pgrep -u "$UID" -x 'quickshell|qs|hyprlock')

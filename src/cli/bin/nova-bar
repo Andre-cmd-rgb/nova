@@ -1,0 +1,243 @@
+#!/bin/bash
+
+# nova:summary=Configure the bar and its widget layout
+# nova:args=defaults | position [top|bottom|left|right] | transparent [true|false|toggle] | put <id> [placement] | remove <id> | move <id> [placement] | set <id> <key> <value> [--json] [placement]
+
+# The bar's edge and look are settings, changed in shell.json. Its widgets are
+# the shell's to place, as it holds the layout in memory: they are put, moved
+# and set by asking it, not by changing the file behind it.
+
+set -euo pipefail
+
+source nova-shell-config
+
+usage() {
+  cat <<'USAGE'
+Usage: nova bar <command> [arguments]
+
+  defaults                          The bar as Nova ships it, again
+  position [top|bottom|left|right]  The edge the bar is on, or the one to put it on
+  transparent [true|false|toggle]   Whether the bar is see-through (on or off),
+                                    or make it so
+  put <id> [where]                  Put a widget on the bar; one on it already
+                                    stays where it is
+  remove <id>                       Take a widget off the bar; one off by default
+                                    (Screen Time) stops as well
+  move <id> [where]                 Move a widget, in its section or to another
+  set <id> <key> <value> [--json] [where]
+                                    Set one of a widget's options, the value as
+                                    JSON with --json
+
+Where:
+  left, center or right             A section, written first (put and move)
+  --section <left|center|right>     A section
+  --index <n>                       A place in the section, from 0
+  --before <id>, --after <id>       Beside a widget; put goes to the widget's own
+                                    place when the bar does not carry that one
+  --from-section <section>          Which of a widget's places, when it is on the
+  --from-index <n>                  bar more than once (move and set)
+
+For example:
+  nova bar position bottom
+  nova bar put nova.keyboard-layout --after nova.clock
+  nova bar remove nova.weather
+  nova bar move nova.media left
+  nova bar move nova.clock --section center --index 0
+  nova bar set nova.clock format HH:mm
+USAGE
+}
+
+a_section() { [[ $1 =~ ^(left|center|right)$ ]] || fail "a section is left, center or right, not '$1'"; }
+an_index() { [[ $1 =~ ^[0-9]+$ ]] || fail "an index is a whole number from 0, not '$1'"; }
+
+# Where a widget goes, and which of its places, from the options.
+to_section='' to_index='' before='' after='' from_section='' from_index=''
+where() { # option...
+  local name value
+  while (($#)); do
+    name=$1 value=${2:-}
+    case $name in
+      -h | --help)
+        usage
+        exit 0
+        ;;
+      --section) a_section "$value" && to_section=$value ;;
+      --index) an_index "$value" && to_index=$value ;;
+      --from-section) a_section "$value" && from_section=$value ;;
+      --from-index) an_index "$value" && from_index=$value ;;
+      --before | --after)
+        [[ -n $value ]] || fail "$name needs a widget's id"
+        printf -v "${name#--}" '%s' "$value"
+        ;;
+      *) fail "'$name' is no option here; nova bar --help lists them" ;;
+    esac
+    shift 2
+  done
+  [[ -z $before || -z $after ]] || fail "--before and --after cannot both be given"
+}
+
+# A section written first, as in "move nova.media left", in $first; the options
+# after it in $options.
+first='' options=()
+section_first() { # argument...
+  if (($#)) && [[ $1 != --* ]]; then
+    a_section "$1"
+    first=$1
+    shift
+  fi
+  options=("$@")
+}
+
+# Where, as the shell takes it: only what was given.
+# shellcheck disable=SC2016 # jq's own variables
+where_json() {
+  jq -cn --arg section "$to_section" --arg index "$to_index" --arg before "$before" --arg after "$after" \
+    --arg fromSection "$from_section" --arg fromIndex "$from_index" '
+    $ARGS.named
+    | .index |= (select(. != "") | tonumber)
+    | .fromIndex |= (select(. != "") | tonumber)
+    | with_entries(select(.value != ""))'
+}
+
+defaults() {
+  (($# == 0)) || fail "defaults takes nothing more"
+  # One change to the file, which the shell's settings in memory cannot come
+  # between.
+  commit "$NORMALIZE | .bar = \$defaults[0].bar" --slurpfile defaults "$DEFAULTS_FILE"
+  echo "The bar is as Nova ships it."
+}
+
+# Without an edge, the one it is on: the menu reads it to tick its row.
+position() {
+  (($# <= 1)) || fail "position takes one edge"
+  local edge=${1:-}
+  if [[ -z $edge ]]; then
+    in_effect | jq -r '(.bar | objects | .position) // "top"'
+    return 0
+  fi
+  [[ $edge =~ ^(top|bottom|left|right)$ ]] || fail "the bar's edge is top, bottom, left or right, not '$edge'"
+  commit "$NORMALIZE | .bar.position = \$edge" --arg edge "$edge"
+  echo "The bar is on the $edge edge."
+}
+
+# Without a value, on or off: the menu reads it to tick its row.
+transparent() {
+  (($# <= 1)) || fail "transparent takes one value"
+  case ${1:-} in
+    '')
+      in_effect | jq -r 'if ((.bar | objects | .transparent) // false) == true then "on" else "off" end'
+      return 0
+      ;;
+    toggle) commit "$NORMALIZE | .bar.transparent = (.bar.transparent != true)" ;;
+    true | false) commit "$NORMALIZE | .bar.transparent = \$see_through" --argjson see_through "$1" ;;
+    *) fail "transparent is true, false or toggle, not '$1'" ;;
+  esac
+  if [[ $(in_effect | jq -r '.bar.transparent') == true ]]; then
+    echo "The bar is see-through."
+  else
+    echo "The bar is solid."
+  fi
+}
+
+# Asks the shell to put a widget on the bar, its answer in $answer, waiting for
+# a shell still coming up. 1 when there is no shell to ask.
+answer=''
+put_on_bar() { # id where-json
+  local id=$1 tries absent=0 answered=false
+  for ((tries = 0; tries < ${NOVA_SHELL_READY_ATTEMPTS:-50}; tries++)); do
+    if answer=$(nova-shell shell putBarWidget "$id" "$2" 2>&1); then
+      answered=true
+      [[ $answer == "not ready" ]] || return 0
+    elif [[ $answer == *"not ready"* ]]; then
+      answered=true
+    elif [[ $answer == *"is not running"* ]]; then
+      # It answered before and is gone now: it stopped while asked.
+      if $answered; then fail "the shell did not come up, so $id is not on the bar"; fi
+      # A shell just started has no socket yet, and nothing tells it is
+      # starting: it gets a few seconds to come.
+      if ((++absent >= ${NOVA_SHELL_ABSENT_ATTEMPTS:-30})); then
+        echo "nova-bar: the shell is not running, so $id is not on the bar" >&2
+        return 1
+      fi
+    else
+      fail "$id could not be put on the bar: $answer"
+    fi
+    sleep 0.1
+  done
+  fail "the shell did not come up, so $id is not on the bar"
+}
+
+put() {
+  local id=${1:-}
+  [[ -n $id ]] || fail "put needs a widget's id"
+  shift
+  section_first "$@"
+  where "${options[@]}"
+  [[ -z $first || -z $to_section ]] || fail "the section is written first or given with --section, not both"
+  to_section=${first:-$to_section}
+  [[ -z $from_section && -z $from_index ]] || fail "put takes no --from-section or --from-index"
+
+  put_on_bar "$id" "$(where_json)" || return 0
+  [[ $answer != unknown ]] || fail "$id is no widget the shell knows"
+  [[ $answer == ok ]] || fail "$answer"
+  # Put there now or there already, it is on the bar.
+  echo "$id is on the bar"
+}
+
+remove() {
+  local id=${1:-} answer
+  [[ -n $id ]] || fail "remove needs a widget's id"
+  (($# == 1)) || fail "remove takes a widget's id and nothing more"
+  answer=$(nova-shell shell setPluginEnabled "$id" false)
+  [[ $answer == ok ]] || fail "$id could not be taken off the bar: $answer"
+  echo "$id is off the bar"
+}
+
+move() {
+  local id=${1:-} answer
+  [[ -n $id ]] || fail "move needs a widget's id"
+  shift
+  section_first "$@"
+  where "${options[@]}"
+  if [[ -n $first ]]; then
+    # A section written first is the whole of where it goes.
+    [[ -z $to_section$to_index$before$after ]] ||
+      fail "a section written first takes no --section, --index, --before or --after"
+    to_section=$first
+  fi
+  answer=$(nova-shell shell moveBarWidget "$id" "$(where_json)")
+  [[ $answer == ok ]] || fail "$answer"
+  echo "$id is moved"
+}
+
+set_option() {
+  local id=${1:-} key=${2:-} value=${3:-} json=false value_json answer
+  [[ -n $id ]] || fail "set needs a widget's id"
+  [[ -n $key ]] || fail "set needs the option's name"
+  (($# >= 3)) || fail "set needs a value"
+  shift 3
+  if [[ ${1:-} == --json ]]; then
+    json=true
+    shift
+  fi
+  where "$@"
+  [[ -z $before && -z $after ]] || fail "set takes no --before or --after"
+  # shellcheck disable=SC2016 # jq's own variables
+  if $json; then
+    value_json=$(jq -cn --argjson value "$value" '$value') || fail "the value is no JSON: $value"
+  else
+    value_json=$(jq -cn --arg value "$value" '$value')
+  fi
+  answer=$(nova-shell shell setBarWidget "$id" "$key" "$value_json" "$(where_json)")
+  [[ $answer == ok ]] || fail "$answer"
+  echo "$id's $key is set"
+}
+
+command=${1:-}
+if (($#)); then shift; fi
+case $command in
+  defaults | position | transparent | put | remove | move) "$command" "$@" ;;
+  set) set_option "$@" ;;
+  -h | --help | help | '') usage ;;
+  *) fail "'$command' is no command; nova bar --help lists them" ;;
+esac

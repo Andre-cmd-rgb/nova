@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# nova:summary=Reboot after closing application windows
+
+# As a shutdown is (nova-system-shutdown --restart): held up, it says so
+# before a window closes, and a restart that fails says so too.
+exec "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")/nova-system-shutdown" --restart "$@"

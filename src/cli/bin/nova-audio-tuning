@@ -1,0 +1,331 @@
+#!/bin/bash
+
+# nova:summary=Turn this laptop's speaker tuning on or off, or say how it stands
+# nova:args=<on|off|auto|status|match|fronted-sink> [--force]
+
+set -euo pipefail
+
+# A speaker tuning is a PipeWire filter-chain: a sink, nova_speaker_tuning, in
+# front of a laptop's own speakers, that corrects how they sound. Nova ships
+# one for each laptop it has one for, in $NOVA_PATH/default/audio/tunings/,
+# a directory each: the graph, filter-chain.conf, with @SPEAKER_SINK@ for the
+# speakers' sink, and tuning.conf, which says what it is for:
+#
+#   description    what it tunes, for status and the messages
+#   match_dmi      the laptops it fits, by their DMI names (one, or a list)
+#                  as nova-hw-match reads them
+#   sink_pattern   the speakers' sink, an awk regex
+#
+# The graph runs in a PipeWire client of its own, nova-speaker-tuning.service,
+# under its own config name: PipeWire's own filter-chain.conf would also load
+# every other fragment in filter-chain.conf.d. So it comes and goes without a
+# restart of the audio server, which drops every client, and some (Spotify)
+# never come back. The unit ships in /usr/lib/systemd/user and is only
+# enabled here.
+
+tunings=$NOVA_PATH/default/audio/tunings
+pipewire=${XDG_CONFIG_HOME:-$HOME/.config}/pipewire
+host=$pipewire/nova-speaker-tuning.conf
+host_shipped=$NOVA_PATH/default/audio/filter-chain-host.conf
+graph=$host.d/90-tuning.conf
+unit=nova-speaker-tuning.service
+tuning_sink=nova_speaker_tuning
+# off writes it and on removes it, so that auto leaves a tuning turned off by
+# hand off.
+turned_off=${XDG_STATE_HOME:-$HOME/.local/state}/nova/speaker-tuning-off
+
+action=${1:-status}
+force=false
+if [[ ${2:-} == --force ]]; then force=true; fi
+
+# The sinks there are, in $sinks, by name. No audio server yet (the first
+# login, the waits below) has none, and that is no error.
+read_sinks() {
+  local name
+  sinks=()
+  while read -r _ name _; do sinks+=("$name"); done < <(pactl list sinks short 2>/dev/null || true)
+}
+
+# Whether $sinks has this one.
+has_sink() {
+  local name
+  for name in "${sinks[@]}"; do
+    if [[ $name == "$1" ]]; then return 0; fi
+  done
+  return 1
+}
+
+tuning_up() {
+  read_sinks
+  has_sink "$tuning_sink"
+}
+
+tuning_gone() { ! tuning_up; }
+
+# A test tried again, a pause after each time it fails, until it holds: so
+# many times, then 1.
+again() { # times pause test...
+  local times=$1 pause=$2
+  shift 2
+  while ((times--)); do
+    "$@" && return 0
+    sleep "$pause"
+  done
+  return 1
+}
+
+# The first of $sinks that sink_pattern matches.
+speakers_in_sinks() {
+  ((${#sinks[@]})) || return 0
+  printf '%s\n' "${sinks[@]}" | awk -v pattern="$sink_pattern" '!found && $0 ~ pattern { print; found = 1 }'
+}
+
+# The tuning that fits this laptop, in $tuning, its tuning.conf's settings
+# set; 1 when none does. It goes by the hardware only, not by the sinks there
+# are: the install runs it in a chroot without an audio server, and must find
+# the tuning (and the LV2 plugins it needs) there too. A tuning without a
+# sink_pattern fits nothing, as its graph could not be made.
+find_tuning() {
+  local dir model
+  for dir in "$tunings"/*/; do
+    description="" match_dmi=() sink_pattern=""
+    # shellcheck source=/dev/null
+    source "$dir/tuning.conf" 2>/dev/null || continue
+    [[ -n $sink_pattern ]] || continue
+    for model in "${match_dmi[@]}"; do
+      nova-hw-match "$model" 2>/dev/null || continue
+      tuning=${dir%/}
+      return 0
+    done
+  done
+  return 1
+}
+
+# The sink the tuning plays into, as nova-audio-output-sink follows it.
+# WirePlumber could link it elsewhere when the speakers were missing as it
+# started; the graph's node.dont-fallback should stop that, but it is checked.
+tuning_plays_into() {
+  nova-audio-output-sink "$tuning_sink" 2>/dev/null
+}
+
+# Moves every application's stream to a sink. A filter's own output is a
+# stream too, without an application, and moving it would rewire the filter.
+move_streams_to() {
+  local stream
+  while read -r stream; do
+    pactl move-sink-input "$stream" "$1" 2>/dev/null || true
+  done < <({ pactl list sink-inputs 2>/dev/null || true; } | awk '
+    /^Sink Input #/ { stream = substr($3, 2) }
+    /application\.name = / && !/application\.name = "EasyEffects"$/ { print stream }')
+}
+
+# The LV2 plugins a graph names that no installed bundle has, a URI a line.
+# A bundle's manifest.ttl names its plugins whole (<http://...>), or by a
+# prefix (plug:limiter_stereo). PipeWire finds bundles where lilv does: in
+# LV2_PATH, or its default.
+missing_plugins() { # filter-chain.conf
+  local uri dir manifest have
+  local -a dirs
+  IFS=: read -r -a dirs <<<"${LV2_PATH:-$HOME/.lv2:/usr/local/lib/lv2:/usr/lib/lv2}"
+  while IFS= read -r uri; do
+    have=false
+    for dir in "${dirs[@]}"; do
+      for manifest in "$dir"/*/manifest.ttl; do
+        [[ -r $manifest ]] || continue
+        if awk -v uri="$uri" '
+          $1 == "@prefix" {
+            base = $3
+            gsub(/[<>]/, "", base)
+            if (base != "" && index(uri, base) == 1) prefixed[$2 substr(uri, length(base) + 1)] = 1
+            next
+          }
+          { for (i = 1; i <= NF; i++) if ($i == "<" uri ">" || ($i in prefixed)) { named = 1; exit } }
+          END { exit !named }' "$manifest"; then
+          have=true
+          break 2
+        fi
+      done
+    done
+    $have || printf '%s\n' "$uri"
+  done < <(sed -n -E 's/^[[:space:]]*plugin[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$1" | sort -u)
+}
+
+# Takes a tuning back out. Nothing here may fail: this runs on the way out of
+# a failure, and the unit may be gone already.
+take_out() {
+  systemctl --user disable --now "$unit" >/dev/null 2>&1 || true
+  rm -f "$graph" "$host"
+}
+
+turn_on() {
+  if [[ ! -d $tunings ]]; then
+    echo "No tunings shipped at $tunings" >&2
+    exit 1
+  fi
+  if ! find_tuning; then
+    echo "Nova has no speaker tuning for this laptop."
+    exit 0
+  fi
+  rm -f "$turned_off"
+
+  # A graph that names a plugin not installed fails to load, and the sink
+  # never comes. They come with this computer's hardware packages.
+  local missing
+  missing=$(missing_plugins "$tuning/filter-chain.conf")
+  if [[ -n $missing ]]; then
+    echo "The speaker tuning needs LV2 plugins that are not installed:" >&2
+    sed 's/^/  /' <<<"$missing" >&2
+    echo "nova update installs them, with the rest of this computer's packages." >&2
+    exit 1
+  fi
+
+  # At the first login the speakers' sink can come a moment after the session.
+  local speakers="" into
+  speakers_there() {
+    read_sinks
+    speakers=$(speakers_in_sinks)
+    [[ -n $speakers ]]
+  }
+  plays_into_speakers() { [[ $(tuning_plays_into) == "$speakers" ]]; }
+  if ! again 20 0.5 speakers_there; then
+    echo "The speakers, a sink matching $sink_pattern, are not there: no audio server yet." >&2
+    echo "Once logged in, run: nova audio tuning on" >&2
+    exit 1
+  fi
+
+  # EasyEffects moves every stream that follows the default output into its
+  # own sink, the tuning's too. Its sink there, it running, or its unit up
+  # each say it is in the way.
+  if has_sink easyeffects_sink || pgrep -u "$UID" -x easyeffects >/dev/null 2>&1 ||
+    systemctl --user is-active --quiet easyeffects.service 2>/dev/null; then
+    echo "EasyEffects is running, and it takes everything played to the default output" >&2
+    echo "into its own sink, past the tuning. Stop it, then turn the tuning on:" >&2
+    echo >&2
+    echo "  systemctl --user disable --now easyeffects.service" >&2
+    exit 1
+  fi
+
+  # Global, for the trap that removes it as the script exits.
+  rendered=$(mktemp)
+  trap 'rm -f "$rendered"' EXIT
+  sed "s|@SPEAKER_SINK@|$speakers|g" "$tuning/filter-chain.conf" >"$rendered"
+
+  # Current means all of it: the graph and the host config as shipped (an old
+  # host config would hide every later fix to it), the unit running and
+  # enabled (running but disabled, it is gone at the next login), and playing
+  # into the speakers.
+  if ! $force && [[ -r $graph ]] && cmp -s "$rendered" "$graph" &&
+    [[ -r $host ]] && cmp -s "$host_shipped" "$host" &&
+    systemctl --user is-active --quiet "$unit" 2>/dev/null &&
+    systemctl --user is-enabled --quiet "$unit" 2>/dev/null && plays_into_speakers; then
+    echo "The speaker tuning is up to date: $description"
+    exit 0
+  fi
+
+  install -Dm644 "$host_shipped" "$host"
+  install -Dm644 "$rendered" "$graph"
+  systemctl --user enable "$unit" >/dev/null 2>&1 || { echo "Could not enable $unit" >&2; take_out; exit 1; }
+  systemctl --user restart "$unit" >/dev/null 2>&1 || { echo "Could not start $unit" >&2; take_out; exit 1; }
+  echo "Speaker tuning installed: $description"
+
+  if ! again 40 0.25 tuning_up; then
+    take_out
+    echo "The tuning's sink did not come up, so the tuning is taken out again and the" >&2
+    echo "audio left as it was. systemctl --user status $unit says why." >&2
+    exit 1
+  fi
+
+  # Tuning the wrong device would be worse than none.
+  if ! again 20 0.25 plays_into_speakers; then
+    into=$(tuning_plays_into)
+    take_out
+    echo "The tuning played into ${into:-nothing}, not the speakers ($speakers), so it is" >&2
+    echo "taken out again rather than left tuning another device, and the audio left as it was." >&2
+    exit 1
+  fi
+
+  # A new default output takes new streams only: what is playing moves too,
+  # or it would go on around the tuning until its app was restarted.
+  pactl set-default-sink "$tuning_sink" >/dev/null 2>&1 || true
+  move_streams_to "$tuning_sink"
+  echo "The speakers play through the tuning now."
+}
+
+case $action in
+  match)
+    find_tuning
+    echo "$tuning"
+    ;;
+
+  fronted-sink)
+    # The speakers, while a tuning is in front of them: an output list leaves
+    # them out, as choosing them would leave the tuning out. Where the volume
+    # goes is nova-audio-output-sink's to say.
+    tuning_up || exit 1
+    find_tuning || exit 1
+    speakers=$(speakers_in_sinks)
+    [[ -n $speakers ]] || exit 1
+    echo "$speakers"
+    ;;
+
+  status)
+    row() { printf '%-16s%s\n' "$1:" "$2"; }
+    if [[ -r $graph ]]; then row Installed "yes ($graph)"; else row Installed no; fi
+    # is-active and is-enabled print their answer and fail when it is no, so
+    # the answer is taken, not a fallback for the failure.
+    state=$(systemctl --user is-active "$unit" 2>/dev/null || true)
+    enabled=$(systemctl --user is-enabled "$unit" 2>/dev/null || true)
+    row Service "${state:-inactive}, ${enabled:-disabled}"
+    if tuning_up; then row "Tuning sink" up; else row "Tuning sink" "not there"; fi
+    row "Default output" "$(pactl get-default-sink 2>/dev/null || true)"
+    if find_tuning; then
+      row "This laptop's" "${description:-?} (${tuning##*/})"
+    else
+      row "This laptop's" "none, Nova ships no tuning for it"
+    fi
+    ;;
+
+  off)
+    if [[ ! -e $graph && ! -e $host ]]; then
+      echo "No speaker tuning is installed."
+      exit 0
+    fi
+    speakers=""
+    if find_tuning; then
+      read_sinks
+      speakers=$(speakers_in_sinks)
+    fi
+    take_out
+    rmdir "${graph%/*}" 2>/dev/null || true
+    again 20 0.25 tuning_gone || true
+    # Streams left on the tuning's sink as it went play wherever PipeWire puts
+    # them, the speakers or not.
+    if [[ -n $speakers ]]; then
+      pactl set-default-sink "$speakers" >/dev/null 2>&1 || true
+      move_streams_to "$speakers"
+    fi
+    mkdir -p "${turned_off%/*}"
+    : >"$turned_off"
+    echo "The speaker tuning is taken out."
+    ;;
+
+  auto)
+    # At every login (nova-speaker-tuning-auto.service): the tuning the first
+    # time, and up to date after an update; a tuning turned off by hand stays
+    # off. Speakers not up yet, or EasyEffects in the way, are tried again at
+    # the next login rather than failing the unit. on runs as a process of its
+    # own, so that its errors end it as they would run alone.
+    find_tuning || exit 0
+    [[ ! -e $turned_off ]] || exit 0
+    "$0" on || echo "nova-audio-tuning: not applied; trying again at the next login" >&2
+    ;;
+
+  on)
+    turn_on
+    ;;
+
+  *)
+    echo "Usage: nova-audio-tuning <on|off|auto|status|match|fronted-sink> [--force]" >&2
+    exit 2
+    ;;
+esac

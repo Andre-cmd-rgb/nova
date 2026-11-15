@@ -1,0 +1,86 @@
+#!/bin/bash
+
+# nova:summary=Launch the Nova shell with its log kept in the journal
+# nova:hidden=true
+
+set -euo pipefail
+
+: "${NOVA_PATH:=/usr/share/nova}"
+
+# Quickshell starts itself again from its own signal handlers, but when its
+# Wayland connection fails Qt leaves through _exit(): no signal, no crash
+# report, no new shell, no bar. This stays to start one. A shell that exits
+# cleanly was stopped on purpose (nova-restart-shell starts the next one
+# itself). A signal to this means the session is ending, and goes on to the
+# shell, which it reached when this used to exec it.
+shell=""
+ending=0
+on_signal() {
+  ending=1
+  if [[ -n $shell ]]; then kill -TERM "$shell" 2>/dev/null || true; fi
+}
+trap on_signal HUP INT TERM
+
+# Runs the shell until it exits, and returns its status. Its log goes to the
+# journal, as nova-shell: Quickshell keeps its own on a tmpfs, so a reboot
+# would take the trail of what it did before it died. It runs in the
+# background because bash holds a trap until a foreground command returns, and
+# cuts a wait short; systemd-cat execs Quickshell, so the job is the shell.
+#
+# Quickshell's reload on file changes is off. An update rewriting
+# $NOVA_PATH/shell would reload it from a half-written tree, and that failed
+# reload leaves a second engine behind, which turns the next restart's IPC
+# kill into a crash. Nova restarts the shell itself instead.
+run_shell() {
+  local status
+  QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
+    systemd-cat -t nova-shell -- quickshell -n -p "$NOVA_PATH/shell" &
+  shell=$!
+  # A wait cut short by a signal returns as a shell killed by one does: the
+  # shell is gone once it can no longer be signalled.
+  while true; do
+    status=0
+    wait "$shell" || status=$?
+    kill -0 "$shell" 2>/dev/null || break
+  done
+  shell=""
+  return "$status"
+}
+
+# A compositor busy changing its outputs, which is when the shell tends to
+# die, can miss a query and still be there.
+compositor_running() {
+  local try
+  for try in 1 2 3; do
+    hyprctl -j monitors >/dev/null 2>&1 && return 0
+    ((try == 3)) || sleep 0.5
+  done
+  return 1
+}
+
+relaunches=0
+since=$SECONDS
+while true; do
+  # A signal during the pause at the end reaches the trap only after it.
+  ((!ending)) || exit 0
+  status=0
+  run_shell || status=$?
+  ((!ending && status != 0)) || exit 0
+
+  # Starting a shell into a session that is tearing down would only use up
+  # the relaunches.
+  compositor_running || exit 0
+
+  # Five relaunches a minute at most.
+  if ((SECONDS - since > 60)); then
+    relaunches=0
+    since=$SECONDS
+  fi
+  relaunches=$((relaunches + 1))
+  if ((relaunches > 5)); then
+    logger -t nova-shell "Giving up on the Nova shell after $relaunches relaunches in under a minute."
+    exit 1
+  fi
+  logger -t nova-shell "Nova shell exited with status $status; relaunching."
+  sleep 1
+done

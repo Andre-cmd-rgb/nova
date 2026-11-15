@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# nova:summary=Launch a TUI command in the default terminal with Nova styling
+# nova:args=[--app-id=<app-id>] <command> [args...]
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: nova-launch-tui [--app-id=<app-id>] <command> [args...]" >&2
+  exit 1
+}
+
+(($# > 0)) || usage
+
+# The app id names the terminal's window, which window rules and
+# nova-launch-or-focus-tui find it by: org.nova.<command> unless given.
+if [[ $1 == --app-id=* ]]; then
+  app_id=${1#--app-id=}
+  shift
+  (($# > 0)) || usage
+else
+  app_id=org.nova.${1##*/}
+fi
+
+exec setsid uwsm-app -- xdg-terminal-exec --app-id="$app_id" -e "$@"

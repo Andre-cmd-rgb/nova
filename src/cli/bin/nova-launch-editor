@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# nova:summary=Open the default editor
+# nova:args=[--inline] <path>
+
+# The editor nova-default-editor chose, VS Code where none was; nano, which
+# is always installed, where the chosen one is not. One that runs in a
+# terminal gets a terminal of its own, or with --inline the one this was
+# started from.
+
+set -euo pipefail
+
+inline=false
+if [[ ${1:-} == --inline ]]; then
+  inline=true
+  shift
+fi
+
+editor=code
+choice=${XDG_STATE_HOME:-$HOME/.local/state}/nova/defaults/editor
+if [[ -f $choice ]]; then read -r editor <"$choice" || editor=code; fi
+command -v -- "$editor" >/dev/null 2>&1 || editor=nano
+
+# The terminal editors among nova-default-editor's, and nano.
+case ${editor##*/} in
+  helix | vim | nvim | nano) ;;
+  *) exec setsid uwsm-app -- "$editor" -- "$@" ;;
+esac
+if $inline; then exec "$editor" -- "$@"; fi
+exec nova-launch-tui "$editor" -- "$@"

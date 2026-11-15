@@ -1,0 +1,11 @@
+{
+  "id": "nova.keyboard-layout",
+  "name": "Keyboard layout",
+  "description": "The keyboard's layout as a short code; a click goes to the next",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "KeyboardLayout.qml"
+  }
+}

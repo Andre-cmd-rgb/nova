@@ -1,0 +1,76 @@
+#!/bin/bash
+
+# nova:summary=Turn the discrete GPU on or off, choose when it is on, or run one program on it
+# nova:args=[status [-v] | mode [auto|off] | toggle | run <program> [args...]]
+#
+# On a ThinkPad P1 Gen 4i the desktop runs on the integrated GPU and the
+# discrete card is taken off the bus on battery. With no arguments this asks
+# whether to switch it; `toggle` switches it without asking, and says what it
+# did in a notification (the menu's Toggle, Discrete GPU); `mode` prints or
+# sets when it is on by itself (auto: plugged in only; off: never, for a
+# cooler machine at the desk); `run` starts
+# one program on it (a game, say), with the NVIDIA graphics drivers the
+# session hides put back for that program alone.
+
+set -euo pipefail
+
+bin=${0%/*}
+APPLY=${NOVA_POWER_GPU_APPLY:-/usr/lib/nova/nova-power-gpu-mode-apply}
+usage() { echo "Usage: nova power gpu [status [-v] | mode [auto|off] | toggle | run <program> [args...]]" >&2; }
+
+# A row of nova power status: "on" or "off" for the card, or what holds it.
+# awk reads to the end. Leaving at the row it wants closed the pipe, and on
+# battery the row after the card's (the draw, behind a slow battery read) then
+# died of SIGPIPE; pipefail and set -e turned that into the whole toggle
+# exiting 141 before it switched anything, silently, from the menu.
+status_row() { # label
+  "$bin/nova-power" status 2>/dev/null | awk -v label="$1" '
+    found { next }
+    { line = $0; sub(/^ +/, "", line) }
+    index(line, label " ") == 1 { line = substr(line, length(label) + 1); sub(/^ +/, "", line); print line; found = 1 }'
+}
+
+toggle() {
+  local before after held
+  before=$(status_row 'discrete GPU')
+  if ((EUID == 0)); then "$bin/nova-power" gpu-toggle || true
+  # Cancelled, it says nothing: nothing changed, as asked.
+  else pkexec "$APPLY" toggle || { (($? != 126)) || return 0; }
+  fi
+  after=$(status_row 'discrete GPU')
+  if [[ $after == on && $before != on ]]; then
+    nova-notification-send -g 󰢮 "The discrete GPU is on"
+  elif [[ $after == off && $before != off ]]; then
+    nova-notification-send -g 󰢮 "The discrete GPU is off"
+  elif [[ $after == on ]]; then
+    held=$(status_row 'held by')
+    nova-notification-send -u normal -g 󰢮 "The discrete GPU stays on" "${held:+In use by $held: close it first.}"
+  else
+    nova-notification-send -u normal -g 󰢮 "The discrete GPU did not switch on"
+  fi
+}
+if [[ $("$bin/nova-hw-detect" 2>/dev/null || true) != thinkpad-p1-gen4i ]]; then
+  echo "nova power gpu: this computer has no switchable discrete GPU" >&2
+  exit 1
+fi
+
+case ${1:-} in
+  "") exec "$bin/nova-power" switch ;;
+  status) exec "$bin/nova-power" "$@" ;;
+  mode)
+    case $#:${2:-} in
+      1:) exec "$bin/nova-power" gpu-mode ;;
+      2:auto | 2:off)
+        if ((EUID == 0)); then exec "$bin/nova-power" gpu-mode "$2"; fi
+        exec pkexec "$APPLY" "$2"
+        ;;
+      *) usage; exit 2 ;;
+    esac
+    ;;
+  toggle) toggle ;;
+  run)
+    (($# > 1)) || { usage; exit 2; }
+    exec "$bin/nova-power" "$@"
+    ;;
+  *) usage; exit 2 ;;
+esac

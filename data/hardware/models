@@ -1,0 +1,13 @@
+# The computers Nova has a profile for, by the DMI fields in /sys/class/dmi/id.
+# One per line: one or more conditions, then the profile directory next to this
+# file, each separated by a tab. A condition is field=pattern, the field one of
+# sys_vendor, product_name, product_version, product_family, board_vendor or
+# board_name; a bare pattern is product_version's, where Lenovo puts the
+# model's name (most makers put it in product_name, a desktop board's maker in
+# board_name). In a pattern `*` matches anything and every other character
+# only itself. Every condition on a line has to hold; the first line that does
+# wins. nova-hw-detect and data/hypr/hardware.lua read this.
+#
+#   ThinkPad P1 Gen 4i	thinkpad-p1-gen4i
+#   sys_vendor=Framework	product_name=Laptop 13 (AMD Ryzen 7040Series)	framework-13-amd
+ThinkPad P1 Gen 4i	thinkpad-p1-gen4i

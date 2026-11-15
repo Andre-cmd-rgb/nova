@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# nova:summary=Copy text to the clipboard and type or paste it
+# nova:args=[--shift-insert] [--copy-only] [--history-index <index> [--history-md5 <md5>]|<text>]
+# nova:hidden=true
+
+set -euo pipefail
+
+# What follows the copy: the text typed out, or pasted with Shift+Insert, or
+# with --copy-only nothing, whatever else is asked.
+after=typing
+index="" md5=""
+while (($#)); do
+  case $1 in
+    --shift-insert) [[ $after == nothing ]] || after=pasting ;;
+    --copy-only) after=nothing ;;
+    --history-index) index=${2:-}; shift ;;
+    --history-md5) md5=${2:-}; shift ;;
+    *) break ;;
+  esac
+  shift
+done
+
+# The text of entry $index of the clipboard's history, as it is, trailing
+# newlines and all. It fails where that entry is no text.
+history_text() {
+  # shellcheck disable=SC2016 # jq's own variables
+  jq -je --argjson index "$index" '.[$index] | select(.type == "text" and (.text | type == "string")) | .text' \
+    "${XDG_STATE_HOME:-$HOME/.local/state}/nova/clipboard-history.json"
+}
+
+text=""
+if [[ -n $index ]]; then
+  # Taken only while it is still the entry picked: a copy since moves every
+  # entry down one. The shell sends the md5 of its key, made as the
+  # clipboard's entryKey makes it. It is pasted, as typing it out could take
+  # long.
+  [[ $index =~ ^[0-9]+$ ]] || exit 1
+  if [[ -n $md5 ]]; then
+    sum=$({ printf 'text:' && history_text; } | md5sum) || exit 1
+    [[ $sum == "$md5  -" ]] || exit 1
+  else
+    history_text >/dev/null || exit 1
+  fi
+  history_text | wl-copy
+  [[ $after == nothing ]] || after=pasting
+else
+  text=${1:-}
+  [[ -n $text ]] || exit 1
+  printf '%s' "$text" | wl-copy
+fi
+
+case $after in
+  nothing) exit 0 ;;
+  pasting) set -- -M shift -k Insert -m shift ;;
+  typing) set -- "$text" ;;
+esac
+
+# A moment for the clipboard to have it. Typed or pasted into nothing, with no
+# text field in focus, is no error.
+sleep 0.15
+wtype "$@" 2>/dev/null || true

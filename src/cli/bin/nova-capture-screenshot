@@ -1,0 +1,71 @@
+#!/bin/bash
+
+# nova:summary=Take a screenshot
+# nova:args=[smart|region|windows|fullscreen] [slurp|copy|save] [--editor=<name>]
+# nova:aliases=screenshot
+
+# What is taken is picked by nova-capture-region, smart unless another mode
+# is named. slurp, the default, saves it to Pictures, puts it on the
+# clipboard and says so, in a notification that opens it to edit; copy puts
+# it on the clipboard alone; save saves it alone. A path saved to is printed.
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: nova-capture-screenshot [smart|region|windows|fullscreen] [slurp|copy|save] [--editor=<name>]" >&2
+  exit 1
+}
+
+editor=${NOVA_SCREENSHOT_EDITOR:-satty}
+words=()
+for arg; do
+  if [[ $arg == --editor=* ]]; then editor=${arg#*=}; else words+=("$arg"); fi
+done
+mode=${words[0]:-smart} action=${words[1]:-slurp}
+[[ $action == slurp || $action == copy || $action == save ]] || usage
+
+# PRINT pressed again while the picker is up puts it away.
+if pkill -x slurp; then exit 0; fi
+
+# Where Hyprland draws the cursor itself (a GPU without working hardware
+# cursors), grim takes it in every frame: hardware cursors, then, until the
+# picture is taken, and the setting as it was after.
+cursor_setting() { # 0|1
+  hyprctl eval "hl.config({ cursor = { no_hardware_cursors = $1 } })" &>/dev/null || true
+}
+was=$(hyprctl getoption cursor:no_hardware_cursors -j | jq '.int')
+
+# The picker leaves the screen frozen, its PID on a line before the region,
+# so that grim takes the still and not the screen moving as the freeze ends.
+# A pick given up gives no region.
+freezer="" region=""
+trap 'if [[ -n $freezer ]]; then kill "$freezer" 2>/dev/null || true; fi; cursor_setting "$was"' EXIT
+cursor_setting 0
+{ read -r freezer && read -r region; } < <(nova-capture-region "$mode" --keep-freeze) || true
+[[ -n $region ]] || exit 0
+
+if [[ $action == copy ]]; then
+  grim -g "$region" - | wl-copy --type image/png
+  exit
+fi
+
+# Pictures, or the folder the user's XDG settings name for it.
+if [[ -f ~/.config/user-dirs.dirs ]]; then
+  # shellcheck source=/dev/null
+  source ~/.config/user-dirs.dirs
+fi
+dir=${NOVA_SCREENSHOT_DIR:-${XDG_PICTURES_DIR:-$HOME/Pictures}}
+if [[ ! -d $dir ]]; then
+  mkdir -p "$dir"
+  nova-notification-send "Created screenshot directory: $dir" -t 2000
+fi
+file=$dir/screenshot-$(date +%Y-%m-%d_%H-%M-%S).png
+grim -g "$region" "$file" || exit 1
+echo "$file"
+[[ $action == slurp ]] || exit 0
+
+wl-copy --type image/png <"$file"
+# Saved and on the clipboard by now: a notification that fails does not make
+# the screenshot one.
+nova-notification-send "Screenshot saved to clipboard and file" "Edit with Super + Alt + , (or click this)" \
+  --image "$file" --exec nova-image-edit "$file" "$editor" || true

@@ -1,0 +1,29 @@
+[Unit]
+Description=Bluetooth pairing agent, for the pairing nova-bluetooth-device runs
+Documentation=man:bt-agent(1)
+ConditionPathIsDirectory=/sys/class/bluetooth
+# It registers with BlueZ over the system bus.
+After=dbus.socket
+Requires=dbus.socket
+
+[Service]
+Type=simple
+# No BlueZ running (no adapter, a virtual machine): nothing to register with,
+# so the unit is skipped rather than failed.
+ExecCondition=/usr/bin/systemctl is-active --quiet bluetooth.service
+# NoInputNoOutput accepts every pairing without asking, and BlueZ keeps the
+# adapter pairable for as long as an agent is registered: left running, any
+# device in range that knows the address could pair, a keyboard included.
+# So nothing enables this unit; nova-bluetooth-device starts it for the
+# pairing the user picked and stops it after, and timeout ends it after two
+# minutes in case that stop never comes.
+ExecStart=/usr/bin/timeout --signal=KILL 120 /usr/bin/bt-agent -c NoInputNoOutput
+# bt-agent can sit on SIGTERM, and with systemd's 90 s default it stayed
+# registered, saying yes to any pairing, that long after the one picked had
+# ended. So it is killed, at the stop and at the two minutes alike, and is
+# gone at once: BlueZ drops an agent when its connection to the bus closes.
+# Neither end is a failure. Stopped by a SIGTERM it outlasted, or by
+# RuntimeMaxSec, the unit ended "failed" after every pairing, and nova doctor
+# warned of a failed service from then on.
+KillSignal=SIGKILL
+SuccessExitStatus=SIGKILL 137

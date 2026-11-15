@@ -1,0 +1,14 @@
+{
+  "id": "nova.workspaces",
+  "name": "Workspaces",
+  "description": "Workspaces 1 to 10, the focused one a dot; a click goes to one",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Workspaces.qml"
+  },
+  "barWidget": {
+    "defaultSection": "left"
+  }
+}

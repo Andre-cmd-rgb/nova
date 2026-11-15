@@ -1,0 +1,291 @@
+#!/bin/bash
+
+# nova:summary=Search the keybindings and run the one picked
+# nova:args=[--print]
+
+# The keys are read from the Hyprland config itself: Lua runs it again, with a
+# stand-in for Hyprland's `hl` that writes down every key bound with a
+# description, which nova.bind gives each of Nova's. Hyprland cannot list them
+# usefully: hyprctl binds names a Lua bind's action only by a handle
+# (HL.Dispatcher(exec_cmd), 61) that nothing can run again.
+#
+# A pick sends Hyprland the dispatcher its key runs, as the Lua expression the
+# config made it with. A key that runs a Lua function of the config's own
+# (SUPER + C) is listed, but there is nothing to send for it.
+
+set -euo pipefail
+
+# One line a key, in the order the menu shows them: the line itself
+# ("SUPER + K  → Keybindings"), a tab, and the dispatcher, empty for a
+# function. The order is by rank, then as sort orders the lines in the
+# locale.
+bindings() {
+  lua - <<'LUA' | sort -k1,1n -k2,2 | cut -f2-
+-- Only the keys go to stdout: what the config prints itself goes nowhere, as
+-- in Hyprland.
+local out = io.stdout
+print = function() end
+
+-- The modifiers by their mask, as Hyprland counts them.
+local masks = {
+  SHIFT = 1, CAPS = 2, CTRL = 4, CONTROL = 4, ALT = 8, MOD1 = 8, MOD2 = 16,
+  MOD3 = 32, SUPER = 64, WIN = 64, LOGO = 64, MOD4 = 64, META = 64, MOD5 = 128,
+}
+
+-- "SUPER + SHIFT + B": the modifiers' mask, and the key.
+local function split(keys)
+  local mask, key = 0, ""
+  for word in tostring(keys):gmatch("[^+]+") do
+    local part = word:match("^%s*(.-)%s*$")
+    local bit = masks[part:upper()]
+    if bit then mask = mask | bit else key = part end
+  end
+  return mask, key
+end
+
+-- The modifiers as the menu writes them; a mask with any other than these
+-- four, as its number.
+local function modifiers(mask)
+  if mask & ~(64 | 1 | 4 | 8) ~= 0 then return tostring(mask) end
+  local names = {}
+  for _, modifier in ipairs({ { 64, "SUPER" }, { 1, "SHIFT" }, { 4, "CTRL" }, { 8, "ALT" } }) do
+    if mask & modifier[1] ~= 0 then names[#names + 1] = modifier[2] end
+  end
+  return table.concat(names, " ")
+end
+
+-- A keycode's symbol in the keymap xkbcli compiles, read once a code: key
+-- needs it. The number keys and a few others are known without it.
+local symbols
+local function symbol(code)
+  if not symbols then
+    symbols = {
+      ["10"] = "1", ["11"] = "2", ["12"] = "3", ["13"] = "4", ["14"] = "5", ["15"] = "6", ["16"] = "7",
+      ["17"] = "8", ["18"] = "9", ["19"] = "0", ["20"] = "MINUS", ["21"] = "EQUAL", ["59"] = "COMMA",
+      ["60"] = "PERIOD", ["61"] = "SLASH",
+    }
+    local codes, names, section = {}, {}, nil
+    local keymap = io.popen("xkbcli compile-keymap </dev/null")
+    for line in keymap:lines() do
+      if line:find("xkb_keycodes", 1, true) then
+        section = "codes"
+      elseif line:find("xkb_symbols", 1, true) then
+        section = "symbols"
+      elseif section == "codes" then
+        local name, number = line:match("<([%w_]+)>%s*=%s*(%d+)%s*;")
+        if name then codes[name] = number end
+      elseif section == "symbols" then
+        local name, first = line:match("key%s*<([%w_]+)>%s*{%s*%[%s*([^, %]]+)")
+        if name then names[name] = first end
+      end
+    end
+    keymap:close()
+    for name, number in pairs(codes) do
+      if names[name] and names[name] ~= "NoSymbol" then symbols[number] = names[name]:upper() end
+    end
+  end
+  return symbols[code]
+end
+
+local spelled = {
+  comma = "COMMA", period = "PERIOD", minus = "MINUS", equal = "EQUAL", slash = "SLASH",
+  ["mouse:272"] = "LEFT MOUSE BUTTON", ["mouse:273"] = "RIGHT MOUSE BUTTON", ["mouse:274"] = "MIDDLE MOUSE BUTTON",
+}
+
+local function key_name(key)
+  local code = key:match("^code:(%d+)$")
+  if code then return symbol(code) or key end
+  return spelled[key] or key
+end
+
+-- Most used first: the menus and the apps, then windows, workspaces and
+-- notifications, then everything else (50), the groups, and the media keys
+-- last. A line takes the rank of the last rule it matches; a third pattern is
+-- one that keeps the rule from matching.
+local ranks = {
+  { 0, "Keybindings" },
+  { 1, "Nova menu" },
+  { 2, "Terminal" },
+  { 3, "Browser", "Browser%s*%(" },
+  { 4, "File manager" },
+  { 6, "System menu" },
+  { 7, "Theme menu" },
+  { 8, "Full screen" },
+  { 9, "Full width" },
+  { 10, "Close window" },
+  { 11, "Close all windows" },
+  { 12, "Lock system" },
+  { 13, "Toggle window floating" },
+  { 14, "Toggle window split" },
+  { 15, "Pop window" },
+  { 16, "Universal" },
+  { 17, "Clipboard" },
+  { 21, "Emojis" },
+  { 22, "Color picker" },
+  { 23, "Screenshot" },
+  { 24, "Screenrecording" },
+  { 27, "SUPER SHIFT.*%+.*B.*→.*Browser" },
+  { 28, "File manager %(cwd%)" },
+  { 29, "Switch.*workspace" },
+  { 29, "Next.*workspace" },
+  { 29, "Former.*workspace" },
+  { 29, "Previous.*workspace" },
+  { 30, "Move window to workspace" },
+  { 31, "Move window silently to workspace" },
+  { 32, "Swap window" },
+  { 33, "Focus" },
+  { 34, "Move window$" },
+  { 35, "Resize window" },
+  { 36, "Expand window" },
+  { 37, "Shrink window" },
+  { 38, "scratchpad" },
+  { 39, "notification" },
+  { 40, "Toggle window transparency" },
+  { 42, "Toggle nightlight" },
+  { 94, "group" },
+  { 95, "Scroll active workspace" },
+  { 97, "Reveal active" },
+  { 99, "XF86" },
+}
+
+local function rank(line)
+  local found = 50
+  for _, rule in ipairs(ranks) do
+    if line:find(rule[2]) and not (rule[3] and line:find(rule[3])) then found = rule[1] end
+  end
+  return found
+end
+
+-- A string as a Lua literal, on one line.
+local function quote(text)
+  return '"' .. text:gsub('[%c"\\]', function(char)
+    if char == '"' or char == "\\" then return "\\" .. char end
+    return string.format("\\%03d", char:byte())
+  end) .. '"'
+end
+
+-- A dispatcher, as the expression that made it: hl.dsp.focus({ workspace = "1" }).
+local Dispatcher = {}
+
+local function literal(value)
+  local kind = type(value)
+  if kind == "string" then return quote(value) end
+  if kind == "number" or kind == "boolean" then return tostring(value) end
+  if kind ~= "table" then return "nil" end
+  if getmetatable(value) == Dispatcher then return value.expression end
+  -- The list first, then the fields by name.
+  local parts, fields, length = {}, {}, #value
+  for index = 1, length do parts[index] = literal(value[index]) end
+  for field in pairs(value) do
+    if not (math.type(field) == "integer" and field >= 1 and field <= length) then fields[#fields + 1] = field end
+  end
+  table.sort(fields, function(a, b) return tostring(a) < tostring(b) end)
+  for _, field in ipairs(fields) do
+    local name = type(field) == "string" and field:match("^[%a_][%w_]*$") or "[" .. literal(field) .. "]"
+    parts[#parts + 1] = name .. " = " .. literal(value[field])
+  end
+  return "{ " .. table.concat(parts, ", ") .. " }"
+end
+
+local function dispatchers(path)
+  return setmetatable({}, {
+    __index = function(_, name) return dispatchers(path .. "." .. tostring(name)) end,
+    __call = function(_, ...)
+      local args = table.pack(...)
+      for index = 1, args.n do args[index] = literal(args[index]) end
+      return setmetatable({ expression = path .. "(" .. table.concat(args, ", ", 1, args.n) .. ")" }, Dispatcher)
+    end,
+  })
+end
+
+-- What the rest of hl gives: anything called or looked up in it is it again,
+-- and it has no list to loop over.
+local nothing
+nothing = setmetatable({}, {
+  __index = function(_, name) if type(name) == "string" then return nothing end end,
+  __call = function() return nothing end,
+})
+
+local keys = {}
+
+hl = setmetatable({
+  dsp = dispatchers("hl.dsp"),
+  bind = function(combo, action, options)
+    local description = type(options) == "table" and options.description
+    if description == nil or description == false or description == "" then return nothing end
+    local entry = { live = true, description = (tostring(description):gsub("%c", " ")) }
+    entry.mask, entry.key = split(combo)
+    if getmetatable(action) == Dispatcher then
+      entry.dispatcher = action.expression
+    elseif type(action) == "string" and action ~= "" then
+      entry.dispatcher = "hl.dsp.exec_cmd(" .. quote(action) .. ")"
+    else
+      entry.dispatcher = ""
+    end
+    keys[#keys + 1] = entry
+    return { unbind = function() entry.live = false end }
+  end,
+  -- Every bind of the same modifiers and key, whichever case it is written in.
+  unbind = function(combo)
+    local mask, key = split(combo)
+    for _, entry in ipairs(keys) do
+      if entry.mask == mask and entry.key:upper() == key:upper() then entry.live = false end
+    end
+  end,
+  -- A submap's binds are made at once, and hyprctl binds lists them too.
+  define_submap = function(...)
+    for index = 1, select("#", ...) do
+      local make = select(index, ...)
+      if type(make) == "function" then make() end
+    end
+  end,
+  get_config = function() return nil end,
+}, { __index = function() return nothing end })
+
+-- Your config is run for the keys it binds. One that stops part-way has bound
+-- the keys before that, and they are listed; why it stopped is said on
+-- stderr, which a terminal shows and the menu does not.
+local config = os.getenv("HOME") .. "/.config/hypr/hyprland.lua"
+local run, problem = loadfile(config)
+local there = io.open(config)
+if there then
+  there:close()
+  local done = run ~= nil
+  if run then done, problem = pcall(run) end
+  if not done then io.stderr:write("nova-menu-keybindings: ", tostring(problem), "\n") end
+end
+
+-- The Copilot key (code:201) only repeats SUPER + SPACE.
+local seen = {}
+for _, entry in ipairs(keys) do
+  if entry.live and entry.key ~= "code:201" then
+    local combo = (modifiers(entry.mask) .. " + " .. key_name(entry.key)):gsub("^[ \t]*%+?[ \t]*", ""):gsub("[ \t]+$", "")
+    local line = combo .. string.rep(" ", 35 - (utf8.len(combo) or #combo)) .. " → " .. entry.description
+    local record = line .. "\t" .. entry.dispatcher
+    if not seen[record] then
+      seen[record] = true
+      out:write(rank(line), "\t", record, "\n")
+    end
+  end
+end
+LUA
+}
+
+records=$(bindings)
+# No keys at all is a config that did not load.
+[[ -n $records ]] || exit 1
+
+if [[ ${1:-} == --print || ${1:-} == -p ]]; then
+  cut -f1 <<<"$records"
+  exit 0
+fi
+
+picked=$(cut -f1 <<<"$records" | nova-menu-select 'Keybindings' -- --width 800 --height 500) || exit 0
+[[ -n $picked ]] || exit 0
+
+while IFS=$'\t' read -r line dispatcher; do
+  [[ $line == "$picked" ]] || continue
+  [[ -n $dispatcher ]] || exit 1
+  exec hyprctl dispatch "$dispatcher"
+done <<<"$records"
+exit 1

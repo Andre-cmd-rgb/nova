@@ -1,0 +1,106 @@
+#!/bin/bash
+
+# nova:summary=Print the sink whose volume and mute an output really goes by
+# nova:args=[sink-name]
+
+set -euo pipefail
+
+# An output can be a filter in front of the real one: a speaker tuning, or
+# EasyEffects. Its own volume is the level going into the filter, so turning
+# that changes the sound (a limiter's, a compressor's) more than how loud it
+# is. The loudness is the volume of the sink the filter plays into, and this
+# finds that one.
+#
+# The output is the default one unless named: headphones or a display chosen
+# answer themselves, never the speakers a tuning happens to be in front of.
+# The output switcher names the output it is about to switch to.
+#
+# Every lookup may fail, an audio server not up yet among them: what cannot be
+# followed answers the output itself.
+
+output=${1:-}
+[[ -n $output ]] || output=$(pactl get-default-sink 2>/dev/null || true)
+
+# The name of the sink with this number, or this name; nothing for none.
+sink_named() { # number-or-name
+  local id name
+  while read -r id name _; do
+    if [[ $id == "$1" || $name == "$1" ]]; then
+      echo "$name"
+      return
+    fi
+  done < <(pactl list sinks short 2>/dev/null || true)
+}
+
+# The number of the sink the filter's own stream plays into. A tuning's
+# effect_input.x plays through effect_output.x, other filters through a
+# stream whose name starts with theirs, EasyEffects through its
+# application's. The first named exactly so wins; one only named after the
+# filter does where none is.
+through_stream() {
+  local exact=$output loose=true line into="" name spare=""
+  if [[ $output == effect_input.* ]]; then
+    exact=effect_output.${output#effect_input.} loose=false
+  fi
+  while IFS= read -r line; do
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in
+      "Sink Input #"*) into="" ;;
+      "Sink: "*) into=${line#Sink: } ;;
+      'node.name = "'*'"')
+        [[ -n $into ]] || continue
+        name=${line#'node.name = "'} name=${name%'"'}
+        if [[ $name == "$exact" ]] || { $loose && [[ $name == "$output"* ]]; }; then
+          echo "$into"
+          return
+        fi
+        [[ -n $spare || $name != "$output"* ]] || spare=$into
+        ;;
+      'application.name = "EasyEffects"')
+        if [[ -n $into && $output == easyeffects_sink ]]; then
+          echo "$into"
+          return
+        fi
+        ;;
+    esac
+  done < <(pactl list sink-inputs 2>/dev/null || true)
+  echo "$spare"
+}
+
+# EasyEffects 8 has no such stream: its output node's ports are linked
+# straight to the sink's. Its sink is then the first sound card or Bluetooth
+# sink one of its ports (ee_*) plays into. pw-link -l gives a port on a line
+# of its own, and each link from it on an indented line after.
+through_links() {
+  local line port="" link
+  while IFS= read -r line; do
+    case $line in
+      [![:space:]]*) port=$line ;;
+      *'|-> '*)
+        link=${line#*'|-> '}
+        [[ $port == ee_* ]] || continue
+        if [[ $link == alsa_output.*:playback_* || $link == bluez_output.*:playback_* ]]; then
+          echo "${link%%:playback_*}"
+          return
+        fi
+        ;;
+    esac
+  done < <(pw-link -l 2>/dev/null || true)
+}
+
+# Idle, EasyEffects unlinks them: then the output its settings name.
+set_in_easyeffects() {
+  sed -n 's/^outputDevice=//p' "${XDG_CONFIG_HOME:-$HOME/.config}/easyeffects/db/easyeffectsrc" 2>/dev/null || true
+}
+
+# A sound card's own sink, or none, is where the loudness is. Under a filter,
+# the sink found under it, where one is to be found.
+under=""
+if [[ -n $output && $output != alsa_output.* ]]; then
+  under=$(sink_named "$(through_stream)")
+  if [[ -z $under && $output == easyeffects_sink ]]; then
+    under=$(through_links)
+    [[ -n $under ]] || under=$(sink_named "$(set_in_easyeffects)")
+  fi
+fi
+printf '%s\n' "${under:-$output}"

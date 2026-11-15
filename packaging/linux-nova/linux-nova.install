@@ -1,0 +1,27 @@
+# linux-nova is compiled for the x86-64-v3 baseline (AVX2, BMI1/2, FMA, MOVBE, ...).
+# On an older CPU it dies on its first AVX2 instruction, before any output. pacman
+# ignores the exit status of a pre_* scriptlet, so this can only warn; the `nova`
+# package ships a PreTransaction hook that refuses the transaction instead. Arch's
+# linux-lts stays installed as the fallback boot entry either way.
+
+_nova_check_cpu() {
+  local flags f missing=()
+  [[ -r /proc/cpuinfo ]] || return 0
+  flags=$(grep -m1 '^flags' /proc/cpuinfo) || return 0
+  for f in avx avx2 bmi1 bmi2 f16c fma abm movbe xsave; do
+    [[ " $flags " == *" $f "* ]] || missing+=("$f")
+  done
+  if (( ${#missing[@]} )); then
+    echo "==> WARNING: this CPU lacks x86-64-v3 features (${missing[*]})." >&2
+    echo "==> linux-nova will not boot here. Keep using linux-lts." >&2
+  fi
+  return 0
+}
+
+pre_install() {
+  _nova_check_cpu
+}
+
+pre_upgrade() {
+  _nova_check_cpu
+}

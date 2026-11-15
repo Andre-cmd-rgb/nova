@@ -1,0 +1,278 @@
+#!/bin/bash
+# nova:summary=Install Google Chrome and VS Code from their AUR recipes, or update them
+# nova:args=[--update | --check] [--noconfirm] [--build <folder>] | --review <app>
+#
+# Neither may be redistributed, so Nova builds them here from their AUR
+# recipes, which download the vendors' own releases from Google and Microsoft.
+# They are outside Nova's releases, so this is also how they are updated:
+# nova update runs it with --update. Run it as yourself: makepkg refuses root,
+# and asks for your password once it installs.
+#
+# A recipe is a script that runs as you, and the AUR is open to anyone. The
+# first one is taken as it is; after that, each one built here is remembered
+# (~/.local/state/nova/aur/), and a new release is built unasked only when its
+# recipe changed nothing but the version and the checksums. Any other change
+# is shown, and built only once you say so; with --noconfirm, or with nobody
+# to answer, that app waits.
+#
+#   nova apps install              install what is missing, update what is behind
+#   nova apps install --update     update only the ones installed (nova apps update)
+#   nova apps install --check      print "apps <name>..." for those behind, or
+#                                  "current"; a non-zero exit when the AUR cannot
+#                                  be reached
+#   --noconfirm                    ask nothing (the installer, nova update --yes)
+#
+# For Settings, which shows no terminal and asks for authentication once, the
+# building and the installing are two steps:
+#
+#   --build <folder>               build into the folder, install nothing, and
+#                                  list each app there in <folder>/result:
+#                                  "built <app> <commit> <file>", "held <app>",
+#                                  "failed <app>" or "unreachable <app>"
+#   --only <app>                   that app alone
+#   --approve <app>=<commit>       build that recipe commit, reviewed in Settings,
+#                                  even though it changed more than the version
+#   --review <app>                 print "commit <hash>", then what changed in the
+#                                  recipe since it was last built here
+#   --record <app> <commit>        remember the commit, once its package is in
+#
+# NOVA_AUR (the AUR's address) and NOVA_AUR_STATE are for tests.
+
+set -euo pipefail
+
+apps=(google-chrome visual-studio-code-bin)
+aur=${NOVA_AUR:-https://aur.archlinux.org}
+state=${NOVA_AUR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/nova/aur}
+
+usage() {
+  echo "Usage: nova apps install [--update | --check] [--noconfirm] [--build <folder>] [--only <app>] [--approve <app>=<commit>]" >&2
+  echo "       nova apps install --review <app> | --record <app> <commit>" >&2
+  exit 2
+}
+
+known_app() { [[ " ${apps[*]} " == *" $1 "* ]]; }
+
+mode=all
+confirm=() build='' only=''
+declare -A approve=()
+while (($#)); do
+  case $1 in
+    --update) mode=update ;;
+    --check) mode=check ;;
+    --noconfirm) confirm=(--noconfirm) ;;
+    --build) build=${2:-}; [[ -d $build ]] || usage; confirm=(--noconfirm); shift ;;
+    --only) only=${2:-}; known_app "$only" || usage; shift ;;
+    --approve)
+      [[ ${2:-} =~ ^([a-z0-9@._+-]+)=([0-9a-f]{40,64})$ ]] && known_app "${BASH_REMATCH[1]}" || usage
+      approve[${BASH_REMATCH[1]}]=${BASH_REMATCH[2]}
+      shift
+      ;;
+    --review) mode=review; only=${2:-}; known_app "$only" || usage; shift ;;
+    --record)
+      known_app "${2:-}" && [[ ${3:-} =~ ^[0-9a-f]{40,64}$ ]] || usage
+      mkdir -p "$state"
+      printf '%s\n' "$3" >"$state/$2"
+      exit 0
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+[[ -z $only ]] || apps=("$only")
+[[ $mode == check ]] || ((EUID != 0)) || { echo "nova apps install: run this as yourself, not root" >&2; exit 1; }
+
+# "name<TAB>version" for each app, as the AUR has it now.
+aur_versions() {
+  local query=() app
+  for app in "${apps[@]}"; do query+=("arg%5B%5D=$app"); done
+  curl -fsS --max-time 20 "$aur/rpc/v5/info?$(IFS='&'; echo "${query[*]}")" |
+    jq -er '.results[] | "\(.Name)\t\(.Version)"'
+}
+
+declare -A latest=()
+if [[ $mode == review ]]; then
+  :
+elif versions=$(aur_versions 2>/dev/null); then
+  while IFS=$'\t' read -r name version; do latest[$name]=$version; done <<<"$versions"
+elif [[ $mode == check ]]; then
+  exit 1
+else
+  echo "nova apps install: the AUR did not answer, so installed apps are left as they are" >&2
+fi
+
+todo=() behind=()
+[[ $mode != review ]] || todo=("$only")
+for app in "${apps[@]}"; do
+  [[ $mode != review ]] || break
+  have=$(pacman -Q "$app" 2>/dev/null) && have=${have#* } || have=''
+  if [[ -z $have ]]; then
+    [[ $mode != all ]] || todo+=("$app")
+  elif [[ -n ${latest[$app]:-} && $(vercmp "${latest[$app]}" "$have") -gt 0 ]]; then
+    behind+=("$app")
+    todo+=("$app")
+    [[ $mode == check ]] || echo "$app $have -> ${latest[$app]}"
+  elif [[ $mode != check ]]; then
+    echo "$app is up to date ($have)"
+  fi
+done
+
+if [[ $mode == check ]]; then
+  if ((${#behind[@]})); then echo "apps ${behind[*]}"; else echo current; fi
+  exit 0
+fi
+((${#todo[@]})) || exit 0
+
+# A system installed from a stick starts with none of its repositories' package
+# lists, so makepkg would find none of the recipes' dependencies. They are read
+# once first. The repositories are pinned to the release, so nothing installed
+# goes out of step with them.
+# A build for Settings checks no dependencies (the install resolves them) and
+# so needs none of this, which would ask for a password nobody can type.
+sync_dir=$(pacman-conf DBPath 2>/dev/null || echo /var/lib/pacman/)sync
+[[ -n $build || $mode == review ]] ||
+for repo in $(pacman-conf --repo-list 2>/dev/null); do
+  if [[ ! -e $sync_dir/$repo.db ]]; then
+    sudo pacman -Sy "${confirm[@]}" || true
+    break
+  fi
+done
+
+# What makepkg runs from a recipe: every file in it but .SRCINFO, which is
+# only the AUR's index of it.
+recipe=(-- . ':(exclude).SRCINFO')
+
+# Each line a recipe's change adds or removes, unprefixed; a binary file that
+# changed gives its "Binary files ... differ" line.
+changed_lines() { # dir base
+  git -C "$1" diff -U0 --no-color --no-ext-diff --no-textconv --no-renames "$2" HEAD "${recipe[@]}" |
+    LC_ALL=C awk '/^diff --git / { hunk = 0; next }
+      !hunk && /^Binary files / { print; next }
+      /^@@ / { hunk = 1; next }
+      hunk && /^[-+]/ { print substr($0, 2) }'
+}
+
+# A line a new release of the same recipe changes: pkgver, pkgrel, or
+# checksums, alone or in a checksum array.
+hex="['\"][0-9a-f]{32,}['\"]"
+bump="^[[:space:]]*(pkgver=[A-Za-z0-9._+~]+|pkgrel=[0-9]+(\\.[0-9]+)?|([a-z0-9]+sums(_[a-z0-9_]+)?=\\()?[[:space:]]*(${hex}[[:space:]]*)+\\)?)[[:space:]]*\$"
+
+only_new_version() { # lines on stdin
+  local line
+  while IFS= read -r line; do [[ $line =~ $bump ]] || return 1; done
+}
+
+# The recipe commit the app was last built from here, for the recipe cloned
+# into dir; or the empty tree, when that commit is not in the recipe's history
+# (it was deleted and submitted again, say) and all of it is new. Fails for an
+# app never built here.
+built_from() { # app dir
+  local app=$1 dir=$2 base='' have
+  if [[ -s $state/$app ]]; then
+    base=$(<"$state/$app")
+  elif have=$(pacman -Q "$app" 2>/dev/null); then
+    # Built before any was remembered: from the commit that brought the
+    # installed version, so whatever came after it is compared.
+    have=${have#* }
+    have=${have#*:}
+    have=${have%-*}
+    base=$(git -C "$dir" log --reverse --format=%H -G "^[[:space:]]*pkgver = ${have//./\\.}\$" -- .SRCINFO | awk 'NR == 1')
+  else
+    return 1
+  fi
+  if [[ ! $base =~ ^[0-9a-f]{40,64}$ ]] || ! git -C "$dir" cat-file -e "$base^{commit}" 2>/dev/null; then
+    base=$(git -C "$dir" hash-object -t tree /dev/null)
+  fi
+  printf '%s\n' "$base"
+}
+
+# What changed in the recipe cloned into dir since it was last built here, for
+# Settings to show: its commit first, which a build after the review must be.
+review() { # app dir
+  local app=$1 dir=$2 base
+  echo "commit $(git -C "$dir" rev-parse HEAD)"
+  if ! base=$(built_from "$app" "$dir"); then
+    echo "$app is built here for the first time: all of its recipe is new."
+    base=$(git -C "$dir" hash-object -t tree /dev/null)
+  fi
+  git -C "$dir" --no-pager log --format='%h %ad %an: %s' --date=short "$base..HEAD" 2>/dev/null || true
+  git -C "$dir" --no-pager diff --no-color --no-ext-diff --no-textconv "$base" HEAD "${recipe[@]}"
+}
+
+# Whether the recipe cloned into dir may be built.
+approved() { # app dir
+  local app=$1 dir=$2 base lines answer
+  # Reviewed in Settings: that commit, and no other.
+  if [[ -n ${approve[$app]:-} ]]; then
+    [[ $(git -C "$dir" rev-parse HEAD) == "${approve[$app]}" ]] && return 0
+    echo "$app: its recipe changed again since it was reviewed" >&2
+    return 1
+  fi
+  if ! base=$(built_from "$app" "$dir"); then
+    echo "$app: built for the first time here, from its AUR recipe as it is now"
+    return 0
+  fi
+  lines=$(changed_lines "$dir" "$base") || return 1
+  if [[ -z $lines ]] || only_new_version <<<"$lines"; then
+    return 0
+  fi
+
+  echo "$app: its AUR recipe changed more than the version since it was last built here."
+  if [[ -n $build ]]; then
+    echo "  Not built: Settings, Updates shows the change." >&2
+    return 1
+  elif ((${#confirm[@]})); then
+    echo "  Not built. Settings, Updates shows the change; so does nova apps update, in a terminal." >&2
+    return 1
+  fi
+  git -C "$dir" --no-pager log --format='  %h %ad %an: %s' --date=short "$base..HEAD" 2>/dev/null || true
+  git -C "$dir" --no-pager diff --no-ext-diff --no-textconv "$base" HEAD "${recipe[@]}"
+  # No answer at all (stdin closed) is a no.
+  read -rp "Build $app from this recipe? It runs as you. [y/N] " answer || return 1
+  [[ $answer == [yY]* ]]
+}
+
+work=$(mktemp -d "${TMPDIR:-/tmp}/nova-apps.XXXXXX")
+trap 'rm -rf -- "$work"' EXIT
+
+# A line of <folder>/result, for Settings.
+result() { [[ -z $build ]] || echo "$*" >>"$build/result"; }
+
+failed=() held=() unreachable=()
+for app in "${todo[@]}"; do
+  [[ $mode == review ]] || echo "==> $app"
+  dir=$work/$app
+  if ! git clone --quiet "$aur/$app.git" "$dir"; then
+    unreachable+=("$app")
+    result unreachable "$app"
+    continue
+  fi
+  if [[ $mode == review ]]; then
+    review "$app" "$dir"
+    exit 0
+  fi
+  approved "$app" "$dir" || { held+=("$app") && result held "$app" && continue; }
+  if [[ -n $build ]]; then
+    # The package alone, not a debug package beside it.
+    if (cd "$dir" && PKGDEST=$build makepkg --nodeps --clean --noconfirm >&2) &&
+      file=$(cd "$dir" && PKGDEST=$build makepkg --packagelist | grep -E "/$app-[^/]+\.pkg\.tar\.[a-z0-9]+\$" | grep -v -- "/$app-debug-" | head -n 1) &&
+      [[ -f $file ]]; then
+      result built "$app" "$(git -C "$dir" rev-parse HEAD)" "$file"
+    else
+      failed+=("$app")
+      result failed "$app"
+    fi
+  elif (cd "$dir" && makepkg --syncdeps --install --needed --clean "${confirm[@]}"); then
+    mkdir -p "$state"
+    git -C "$dir" rev-parse HEAD >"$state/$app"
+  else
+    failed+=("$app")
+  fi
+done
+
+((${#held[@]} == 0)) || echo "nova apps install: ${held[*]} not updated: the recipe changed beyond a new version" >&2
+((${#unreachable[@]} == 0)) ||
+  echo "nova apps install: could not download the recipe for ${unreachable[*]} from the AUR; run it again once online" >&2
+if ((${#failed[@]})); then
+  echo "nova apps install: could not build ${failed[*]}; run it again to retry" >&2
+fi
+((${#held[@]} + ${#failed[@]} + ${#unreachable[@]} == 0))

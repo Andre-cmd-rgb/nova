@@ -1,0 +1,8 @@
+# A stable, colon-free name for the P1's integrated card, so the session can
+# pin the compositor to it (/usr/share/uwsm/env.d/20-nova-thinkpad-p1-gen4i).
+# AQ_DRM_DEVICES splits its value on ":", so a /dev/dri/by-path/pci-0000:00:02.0-card
+# path is torn into three nonexistent paths, aquamarine matches none of them,
+# and the compositor exits with "Found no gpus to use", which costs the login.
+# cardN numbering is not stable across boots either, hence a symlink.
+KERNEL=="card*", SUBSYSTEM=="drm", KERNELS=="0000:00:02.0", SUBSYSTEMS=="pci", \
+  ATTR{[dmi/id]product_version}=="ThinkPad P1 Gen 4i", SYMLINK+="dri/igpu"

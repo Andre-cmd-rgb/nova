@@ -1,0 +1,12 @@
+{
+  "id": "nova.osd",
+  "name": "On-screen display",
+  "description": "A card for a moment: the volume or brightness as it changes, or a short message.",
+  "kinds": [
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Osd.qml"
+  }
+}

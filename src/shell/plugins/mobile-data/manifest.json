@@ -1,0 +1,15 @@
+{
+  "id": "nova.mobile-data",
+  "name": "Mobile Data",
+  "description": "Compact NetworkManager-based mobile broadband indicator: signal glyph in the bar, small stats panel.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "description": "WWAN signal glyph with a read-only stats panel",
+    "defaultSection": "right"
+  }
+}

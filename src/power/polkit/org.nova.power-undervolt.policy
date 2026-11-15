@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- nova power undervolt: the CPU's voltage. Unlike the GPU mode it always
+     takes an administrator's password, since a program that could set it
+     unasked could make the computer compute wrong answers or freeze. -->
+<policyconfig>
+  <vendor>Nova</vendor>
+  <action id="org.nova.power-undervolt">
+    <description>Change the CPU's voltage offset</description>
+    <message>Authentication is required to change the CPU's voltage</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-power-undervolt-apply</annotate>
+  </action>
+</policyconfig>

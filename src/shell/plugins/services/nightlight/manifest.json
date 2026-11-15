@@ -1,0 +1,11 @@
+{
+  "id": "nova.nightlight",
+  "name": "Night Light",
+  "description": "The night light, hyprsunset's warmer screen, for the bar's switch.",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# nova:hidden=true
+# nova:summary=The screensaver inside one of its terminals (nova screensaver opens them)
+#
+# nova-screensaver-effect plays the text, one effect after another, in the
+# theme's colors, until a key comes or the window loses focus to anything that
+# is not another screensaver; then every screensaver window closes, not only
+# this one.
+
+set -uo pipefail
+
+APP_ID=org.nova.screensaver
+TEXT=${XDG_CONFIG_HOME:-$HOME/.config}/nova/screensaver.txt
+[[ -s $TEXT ]] || TEXT=${NOVA_WORDMARK:-/usr/share/nova/wordmark/nova.txt}
+effect=''
+
+cursor() { # true|false: hidden
+  hyprctl eval "hl.config({ cursor = { invisible = $1 } })" >/dev/null 2>&1 || true
+}
+
+in_focus() { hyprctl activewindow -j 2>/dev/null | jq -e --arg id "$APP_ID" '.class == $id' >/dev/null; }
+
+# What the text runs between: the theme's accent, and the second color of its
+# window border where the theme has one (the effect finds a second for itself
+# otherwise). With no theme to ask, the effect plays in its own two.
+colors() {
+  local accent second=''
+  accent=$(nova-theme color accent 2>/dev/null) || return 0
+  [[ $accent =~ ^#[0-9a-fA-F]{6}$ ]] || return 0
+  read -r _ second _ < <(nova-theme color hyprland_active_border 2>/dev/null) || true
+  [[ $second =~ ^#[0-9a-fA-F]{6}$ ]] || second=''
+  printf '%s\n' --colors "$accent${second:+,$second}"
+}
+
+finish() {
+  trap - INT TERM HUP QUIT
+  cursor false
+  [[ -z $effect ]] || kill "$effect" 2>/dev/null
+  pkill -f '[o]rg.nova.screensaver'
+  exit 0
+}
+
+main() {
+  local -a colors=()
+  trap finish INT TERM HUP QUIT
+  cursor true
+  mapfile -t colors < <(colors)
+  nova-screensaver-effect "${colors[@]}" "$TEXT" &
+  effect=$!
+  # It plays until it is stopped, and stops by itself only when it cannot
+  # play: then the screensaver ends too, rather than leave a black window.
+  while kill -0 "$effect" 2>/dev/null; do
+    if read -rsn1 -t 1 || ! in_focus; then
+      break
+    fi
+  done
+  finish
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

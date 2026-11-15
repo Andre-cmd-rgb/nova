@@ -1,0 +1,11 @@
+{
+  "id": "nova.system-update",
+  "name": "Nova update",
+  "description": "A badge while a Nova or app update waits",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "SystemUpdate.qml"
+  }
+}

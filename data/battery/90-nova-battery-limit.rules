@@ -1,0 +1,2 @@
+# A battery appeared (at boot, or swapped in): put its charge limit back.
+SUBSYSTEM=="power_supply", ACTION=="add", ATTR{type}=="Battery", TAG+="systemd", ENV{SYSTEMD_WANTS}+="nova-battery-limit.service"

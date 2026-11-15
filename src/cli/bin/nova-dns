@@ -1,0 +1,294 @@
+#!/bin/bash
+
+# nova:summary=Show or configure the system DNS provider
+# nova:args=[Cloudflare|Google|DHCP|Custom [server...]]
+
+# Without an argument, the provider in use: Cloudflare, Google, DHCP (the
+# network's own), or Custom. With one, it is set, for NetworkManager (a global
+# drop-in, and every Wi-Fi and wired profile's own DNS) and for systemd-resolved
+# (resolved.conf). Custom takes one to four servers, or asks for them. Setting
+# needs root: it runs again as root, through polkit, from the packaged copy.
+
+set -euo pipefail
+
+# As root, every command this runs by name (install, tee, rm, nmcli,
+# systemctl and the like) is the system's: Arch keeps them all in /usr/bin,
+# which /bin, /sbin and /usr/sbin link to. Before that, the caller's PATH
+# finds pkexec.
+((EUID != 0)) || export PATH=/usr/bin
+
+nm_conf=/etc/NetworkManager/conf.d/20-nova-dns.conf
+resolved_conf=/etc/systemd/resolved.conf
+# Root runs the packaged copy, never the one that was called, which a user
+# could have written.
+packaged=/usr/lib/nova/bin/nova-dns
+
+# This again as root, with the arguments given, through polkit, which asks
+# for the password on screen, with or without a terminal.
+as_root() { ((EUID == 0)) || exec pkexec "$packaged" "$@"; }
+
+# The value of the first key=value line that the pattern matches, of a file,
+# passing over comments: of the [global-dns-domain-*] section only, for
+# NetworkManager's.
+setting() { # file key-pattern [section]
+  local line section="" wanted=${3:-}
+  [[ -r $1 ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    [[ ! $line =~ ^[[:space:]]*# ]] || continue
+    if [[ $line =~ ^[[:space:]]*\[ ]]; then
+      section=""
+      if [[ $line =~ ^[[:space:]]*\[global-dns-domain-\*\][[:space:]]*$ ]]; then section=global-dns-domain; fi
+      continue
+    fi
+    if [[ $section == "$wanted" && $line =~ ^[[:space:]]*$2[[:space:]]*= ]]; then
+      printf '%s\n' "${line#*=}"
+      return 0
+    fi
+  done <"$1"
+}
+
+# NetworkManager's servers where its drop-in has any, resolved's where not.
+provider() {
+  local servers
+  servers=$(setting "$nm_conf" servers global-dns-domain)
+  [[ -n ${servers//[[:space:],]/} ]] || servers=$(setting "$resolved_conf" DNS)
+  if [[ -z ${servers//[[:space:],]/} ]]; then
+    echo DHCP
+  elif [[ $servers == *cloudflare-dns.com* || $servers == *1.1.1.1* || $servers == *2606:4700:4700::1111* ]]; then
+    echo Cloudflare
+  elif [[ $servers == *dns.google* || $servers == *8.8.8.8* || $servers == *2001:4860:4860::8888* ]]; then
+    echo Google
+  else
+    echo Custom
+  fi
+}
+
+# Of one server as resolved.conf takes it, the address alone, which is all
+# NetworkManager's ipv4.dns and ipv6.dns take: without dns+tls:// or
+# dns+udp://, a #server-name for DNS over TLS, the brackets of an IPv6 address
+# before a port, or the :port. 1 for a port out of range.
+server_address() {
+  local address=${1%%#*}
+  address=${address#dns+tls://}
+  address=${address#dns+udp://}
+  if [[ $address =~ ^\[([0-9A-Fa-f:]+)\](:([0-9]{1,5}))?$ ]]; then
+    address=${BASH_REMATCH[1]}
+    [[ -z ${BASH_REMATCH[3]} ]] || ((10#${BASH_REMATCH[3]} <= 65535)) || return 1
+  elif [[ $address =~ ^([0-9.]+):([0-9]{1,5})$ ]]; then
+    address=${BASH_REMATCH[1]}
+    ((10#${BASH_REMATCH[2]} <= 65535)) || return 1
+  fi
+  printf '%s\n' "$address"
+}
+
+# Eight groups of up to four hex digits, or fewer with one :: for the rest.
+valid_ipv6() {
+  local address=$1 group groups=0
+  [[ $address =~ ^[0-9A-Fa-f:]+$ && $address == *:* ]] || return 1
+  # One :: at most, and no single colon at either end.
+  [[ $address != *:::* && ${address/::/} != *::* ]] || return 1
+  [[ $address != :[!:]* && $address != *[!:]: ]] || return 1
+  local IFS=:
+  for group in $address; do
+    [[ -n $group ]] || continue
+    ((${#group} <= 4)) || return 1
+    groups=$((groups + 1))
+  done
+  if [[ $address == *::* ]]; then ((groups <= 7)); else ((groups == 8)); fi
+}
+
+# One server as resolved.conf takes it: an IPv4 or IPv6 address (in brackets
+# when a port follows), an optional :port, an optional #server-name for DNS
+# over TLS.
+valid_server() {
+  local server=$1 address name='' octet
+  [[ $server == *'#'* ]] && name=${server#*#}
+  [[ -z $name || $name =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]] || return 1
+  address=$(server_address "$server") || return 1
+  if [[ $address =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]]; then
+    # No leading zeros, which inet_pton, and so NetworkManager, refuses.
+    for octet in ${address//./ }; do
+      [[ $octet == 0 || $octet != 0* ]] && ((10#$octet <= 255)) || return 1
+    done
+    return 0
+  fi
+  valid_ipv6 "$address"
+}
+
+# The addresses of servers given with commas or spaces between them, by their
+# family, in $ipv4_dns and $ipv6_dns, spaces between.
+split_dns_servers() { # servers
+  local server address
+  local -a servers=()
+  ipv4_dns=""
+  ipv6_dns=""
+  IFS=', ' read -ra servers <<<"$1"
+  for server in "${servers[@]}"; do
+    address=$(server_address "$server") || continue
+    [[ -n $address ]] || continue
+    if [[ $address == *:* ]]; then
+      ipv6_dns+=${ipv6_dns:+ }$address
+    else
+      ipv4_dns+=${ipv4_dns:+ }$address
+    fi
+  done
+}
+
+# NetworkManager's drop-in, its servers comma-separated: a line of data, which
+# nothing reads as a path or a command.
+nm_global() { # servers
+  install -d -m 0755 "${nm_conf%/*}"
+  cat >"$nm_conf" <<EOF
+# Written by nova dns. nova dns DHCP removes it, for the network's own DNS.
+[global-dns]
+
+[global-dns-domain-*]
+servers=$1
+EOF
+}
+
+# Every Wi-Fi and wired profile's own DNS: the servers given in place of
+# DHCP's (yes), or DHCP's again (no). Each family only where DHCP (or IPv6's
+# autoconfiguration) gives servers to replace: NetworkManager refuses servers
+# on a profile that is shared (a hotspot), link-local, ignored or disabled,
+# and that refusal used to stop the profiles after it from being set at all;
+# one set by hand keeps the servers typed into it. One that still fails is
+# said, and the rest are set.
+profiles() { # yes|no ipv4-servers ipv6-servers
+  local profile uuid methods
+  local -a method fields
+  # A UUID or a type has no space in it.
+  for profile in $(nmcli -g UUID,TYPE connection show); do
+    case $profile in
+      *:802-11-wireless | *:802-3-ethernet) uuid=${profile%%:*} ;;
+      *) continue ;;
+    esac
+    methods=$(nmcli -g ipv4.method,ipv6.method connection show "$uuid" 2>/dev/null) || continue
+    mapfile -t method <<<"$methods"
+    fields=()
+    [[ ${method[0]:-} != auto ]] || fields+=(ipv4.ignore-auto-dns "$1" ipv4.dns "$2")
+    [[ ${method[1]:-} != auto && ${method[1]:-} != dhcp ]] || fields+=(ipv6.ignore-auto-dns "$1" ipv6.dns "$3")
+    ((${#fields[@]})) || continue
+    nmcli connection modify "$uuid" "${fields[@]}" >/dev/null ||
+      echo "nova dns: NetworkManager's profile $uuid kept its own DNS servers" >&2
+  done
+}
+
+# resolved.conf, from stdin.
+resolved() {
+  tee "$resolved_conf" >/dev/null
+}
+
+# resolved's servers when the chosen ones do not answer: Quad9's.
+fallback='9.9.9.9#dns.quad9.net 149.112.112.112#dns.quad9.net 2620:fe::fe#dns.quad9.net 2620:fe::9#dns.quad9.net'
+
+# A provider's two IPv4 and two IPv6 servers. resolved speaks DNS over TLS to
+# them where it can, to the name their certificate is for.
+preset() { # tls-name ipv4 ipv4 ipv6 ipv6
+  local name=$1
+  shift
+  nm_global "$1,$2,$3,$4"
+  profiles yes "$1 $2" "$3 $4"
+  resolved <<EOF
+[Resolve]
+DNS=$1#$name $2#$name $3#$name $4#$name
+FallbackDNS=$fallback
+DNSOverTLS=opportunistic
+EOF
+}
+
+# The servers put to use. Where NetworkManager runs, its settings are read
+# again first, and each connected Wi-Fi and wired device is given its profile
+# again: reloading settings and DNS in one (conf,dns-full) hands out the DNS
+# it had, and the shell would show the choice before. Then resolved; then
+# NetworkManager's DNS once more, as resolved, reloaded, can leave a link's
+# DNS old or empty.
+apply() {
+  local nm=false device
+  if systemctl is-active --quiet NetworkManager.service 2>/dev/null; then nm=true; fi
+  if $nm; then
+    nmcli general reload conf >/dev/null 2>&1 || systemctl reload NetworkManager.service 2>/dev/null || true
+    # In English, as the state words are translated otherwise.
+    while IFS= read -r device; do
+      case $device in
+        *:wifi:connected | *:ethernet:connected) nmcli device reapply "${device%%:*}" >/dev/null 2>&1 || true ;;
+      esac
+    done < <(LC_ALL=C nmcli -g DEVICE,TYPE,STATE device status)
+  fi
+  systemctl reload systemd-resolved.service 2>/dev/null || systemctl restart systemd-resolved.service
+  if $nm; then nmcli general reload dns-full >/dev/null 2>&1 || true; fi
+}
+
+usage() {
+  echo "Usage: nova-dns [Cloudflare|Google|DHCP|Custom [server...]]" >&2
+  exit 1
+}
+
+if (($# == 0)); then
+  provider
+  exit 0
+fi
+
+case $1 in
+  Cloudflare | cloudflare) chosen=Cloudflare ;;
+  Google | google) chosen=Google ;;
+  DHCP | dhcp) chosen=DHCP ;;
+  Custom | custom) chosen=Custom ;;
+  *) usage ;;
+esac
+shift
+servers=("$@")
+
+# Servers are Custom's alone, given or asked for: one to four, two of each
+# family being what the presets have. Each is checked before the password is
+# asked for, and again as root, by the packaged copy.
+if [[ $chosen != Custom ]]; then
+  ((${#servers[@]} == 0)) || usage
+else
+  if ((${#servers[@]} == 0)); then
+    echo "Enter your DNS servers (one to four, space-separated):"
+    read -r typed || typed=''
+    # Commas, tabs and spaces between them; quotes as xargs takes them.
+    typed=$(tr ',\t\n' ' ' <<<"$typed" | xargs | tr ' ' ',')
+    IFS=, read -ra servers <<<"$typed"
+  fi
+  if ((${#servers[@]} < 1 || ${#servers[@]} > 4)); then
+    echo 'Error: Enter one to four DNS server addresses; nothing was changed.' >&2
+    exit 1
+  fi
+  for server in "${servers[@]}"; do
+    valid_server "$server" || {
+      echo "Error: '$server' is not a DNS server address; nothing was changed." >&2
+      exit 1
+    }
+  done
+fi
+as_root "$chosen" "${servers[@]}"
+
+case $chosen in
+  Cloudflare) preset cloudflare-dns.com 1.1.1.1 1.0.0.1 2606:4700:4700::1111 2606:4700:4700::1001 ;;
+  Google) preset dns.google 8.8.8.8 8.8.4.4 2001:4860:4860::8888 2001:4860:4860::8844 ;;
+  DHCP)
+    rm -f "$nm_conf"
+    profiles no "" ""
+    resolved <<'EOF'
+[Resolve]
+DNSOverTLS=no
+EOF
+    ;;
+  Custom)
+    # The servers as data, a line of them, commas between for NetworkManager
+    # and spaces for resolved.
+    joined=$(IFS=,; echo "${servers[*]}")
+    split_dns_servers "$joined"
+    nm_global "$joined"
+    profiles yes "$ipv4_dns" "$ipv6_dns"
+    resolved <<EOF
+[Resolve]
+DNS=${joined//,/ }
+FallbackDNS=$fallback
+EOF
+    ;;
+esac
+
+apply

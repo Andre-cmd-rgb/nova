@@ -1,0 +1,13 @@
+{
+  "id": "nova.keys",
+  "name": "Volume and brightness keys",
+  "description": "The volume, mute, brightness and keyboard backlight keys, as Hyprland's global shortcuts: the shell sets the volume over its own PipeWire connection and a backlight with one brightnessctl, and shows the OSD itself.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "alwaysOn": true,
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

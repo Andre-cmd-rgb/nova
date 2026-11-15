@@ -1,0 +1,14 @@
+{
+  "id": "nova.power",
+  "name": "Power",
+  "description": "Battery and power profile",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "defaultSection": "right"
+  }
+}

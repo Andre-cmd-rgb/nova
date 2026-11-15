@@ -1,0 +1,30 @@
+# Kanagawa, its "wave" style, from rebelot/kanagawa.nvim (MIT), by Tommaso
+# Laurenzi, with the terminal colours of its extras/kitty/kanagawa.conf.
+mode = "dark"
+
+background = "#1f1f28"          # sumiInk3
+dark_background = "#16161d"     # sumiInk0
+lighter_background = "#2a2a37"  # sumiInk4
+selection = "#2d4f67"           # waveBlue2
+
+foreground = "#dcd7ba"          # fujiWhite
+light_foreground = "#c8c093"    # oldWhite
+dark_foreground = "#54546d"     # sumiInk6
+muted = "#727169"               # fujiGray, its comments
+
+accent = "#7e9cd8"              # crystalBlue
+orange = "#ffa066"              # surimiOrange
+
+red = "#c34043"                 # autumnRed
+green = "#76946a"               # autumnGreen
+yellow = "#c0a36e"              # boatYellow2
+blue = "#7e9cd8"                # crystalBlue
+magenta = "#957fb8"             # oniViolet
+cyan = "#6a9589"                # waveAqua1
+
+bright_red = "#e82424"          # samuraiRed
+bright_green = "#98bb6c"        # springGreen
+bright_yellow = "#e6c384"       # carpYellow
+bright_blue = "#7fb4ca"         # springBlue
+bright_magenta = "#938aa9"      # springViolet1
+bright_cyan = "#7aa89f"         # waveAqua2

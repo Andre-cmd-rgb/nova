@@ -1,0 +1,18 @@
+{
+  "id": "nova.screentime",
+  "name": "Screen Time",
+  "description": "Where your time on this machine goes: a per-hour and per-day breakdown by application, on its page in Settings.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "description": "Today's total, and a click to open the breakdown",
+    "defaultSection": "right"
+  },
+  "enabledByDefault": false
+}

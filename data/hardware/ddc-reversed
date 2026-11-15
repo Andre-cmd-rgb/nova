@@ -1,0 +1,5 @@
+# Screens whose DDC/CI brightness runs backwards, 0 being their brightest.
+# nova-brightness-display-ddc flips Nova's numbers for them. One per line: the
+# maker and model from the screen's EDID, as `ddcutil detect` prints them.
+# A 1024x600 HDMI panel, sold for the Raspberry Pi.
+HCH:HETECH

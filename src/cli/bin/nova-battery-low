@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# nova:summary=Warn that the battery is low, and run the battery-low hooks
+# nova:args=<percentage>
+# nova:hidden=true
+
+set -euo pipefail
+
+if (($# != 1)); then
+  echo "Usage: nova-battery-low <percentage>" >&2
+  exit 1
+fi
+
+# The battery service in the shell runs this once the charge falls to its
+# threshold. The glyph is from the bar's battery set; the icon theme's
+# battery-caution is an old bitmap that looks blurred beside it.
+nova-notification-send -g 󰂃 -u critical "Time to recharge!" "Battery is down to $1%" -t 30000
+nova-hook battery-low "$1"

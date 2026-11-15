@@ -1,0 +1,5 @@
+#!/bin/bash
+
+# nova:summary=Open a Files window
+
+exec setsid uwsm-app -- nautilus --new-window

@@ -1,0 +1,143 @@
+#!/usr/bin/env bats
+
+# nova-theme-apply with gsettings stubbed: which icon set a theme gets, and
+# that no window has title-bar buttons.
+
+load ../test_helper
+
+setup() {
+  setup_scratch
+  export CALLS="$SCRATCH/calls" HOME="$SCRATCH/home"
+  export XDG_STATE_HOME="$SCRATCH/state" XDG_CONFIG_HOME="$SCRATCH/config"
+  export XDG_DATA_HOME="$SCRATCH/data" XDG_DATA_DIRS="$SCRATCH/share"
+  export DBUS_SESSION_BUS_ADDRESS=unix:path=/nonexistent
+  write_file "$XDG_STATE_HOME/nova/current/theme/colors.toml" 'background = "#ffffff"'
+  mkdir -p "$SCRATCH/bin" "$HOME"
+  stub nova-theme 'echo light'
+  stub gsettings
+  export PATH="$SCRATCH/bin:$PATH"
+}
+
+teardown() { teardown_scratch; }
+
+stub() { # name [body]: logs "name args" to $CALLS, then runs body
+  printf '#!/bin/bash\necho "%s $*" >>"$CALLS"\n%s\n' "$1" "${2:-exit 0}" >"$SCRATCH/bin/$1"
+  chmod +x "$SCRATCH/bin/$1"
+}
+
+icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \K.*' "$CALLS"; }
+
+@test "a theme without an icons.theme gets Adwaita" {
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ "$(icon_theme)" = Adwaita ]
+  grep -q 'color-scheme prefer-light' "$CALLS"
+}
+
+@test "a theme's icon set is used where it is installed" {
+  echo Yaru-sage >"$XDG_STATE_HOME/nova/current/theme/icons.theme"
+  write_file "$XDG_DATA_DIRS/icons/Yaru-sage/index.theme" '[Icon Theme]'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ "$(icon_theme)" = Yaru-sage ]
+}
+
+@test "the user's own icon directory counts as installed" {
+  echo Mine >"$XDG_STATE_HOME/nova/current/theme/icons.theme"
+  write_file "$XDG_DATA_HOME/icons/Mine/index.theme" '[Icon Theme]'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$(icon_theme)" = Mine ]
+}
+
+@test "an icon set that is not installed falls back to Adwaita" {
+  echo Yaru-sage >"$XDG_STATE_HOME/nova/current/theme/icons.theme"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ "$(icon_theme)" = Adwaita ]
+}
+
+@test "no window gets title-bar buttons" {
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  grep -qx "gsettings set org.gnome.desktop.wm.preferences button-layout :" "$CALLS"
+}
+
+@test "VS Code keeps the user's settings, with Nova's theme and no title bar of its own" {
+  mkdir -p "$HOME/.vscode/extensions"
+  write_file "$XDG_STATE_HOME/nova/current/theme/vscode-theme.json" '{}'
+  write_file "$XDG_CONFIG_HOME/Code/User/settings.json" '{"editor.fontSize": 15, "window.titleBarStyle": "custom"}'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  run jq -c . "$XDG_CONFIG_HOME/Code/User/settings.json"
+  [ "$output" = '{"editor.fontSize":15,"window.titleBarStyle":"native","workbench.colorTheme":"Nova","window.customTitleBarVisibility":"never"}' ]
+}
+
+@test "VS Code settings kept in a dotfiles repository stay a symlink, with their mode" {
+  mkdir -p "$HOME/.vscode/extensions" "$XDG_CONFIG_HOME/Code/User"
+  write_file "$XDG_STATE_HOME/nova/current/theme/vscode-theme.json" '{}'
+  write_file "$HOME/dotfiles/settings.json" '{"editor.fontSize": 15}'
+  chmod 640 "$HOME/dotfiles/settings.json"
+  ln -s "$HOME/dotfiles/settings.json" "$XDG_CONFIG_HOME/Code/User/settings.json"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [ -L "$XDG_CONFIG_HOME/Code/User/settings.json" ]
+  [ "$(jq -r '."workbench.colorTheme"' "$HOME/dotfiles/settings.json")" = Nova ]
+  [ "$(stat -c %a "$HOME/dotfiles/settings.json")" = 640 ]
+}
+
+@test "a VS Code extensions.json that does not parse is left alone, and the settings still change" {
+  mkdir -p "$HOME/.vscode/extensions"
+  write_file "$HOME/.vscode/extensions/extensions.json" '[{"broken"'
+  write_file "$XDG_STATE_HOME/nova/current/theme/vscode-theme.json" '{}'
+  write_file "$XDG_CONFIG_HOME/Code/User/settings.json" '{}'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [[ $output == *"does not parse"* ]]
+  [ "$(cat "$HOME/.vscode/extensions/extensions.json")" = '[{"broken"' ]
+  [ -z "$(find "$HOME/.vscode/extensions" -name 'extensions.json.*')" ]
+  [ "$(jq -r '."workbench.colorTheme"' "$XDG_CONFIG_HOME/Code/User/settings.json")" = Nova ]
+}
+
+@test "the starting VS Code settings agree with what each theme change enforces" {
+  run jq -r '[."workbench.colorTheme", ."window.titleBarStyle", ."window.customTitleBarVisibility"] | join(" ")' \
+    "$REPO_ROOT/data/skel/.config/Code/User/settings.json"
+  [ "$output" = "Nova native never" ]
+}
+
+# argv.json as VS Code reads it: its comments taken out, and the trailing
+# commas it allows.
+argv() { grep -vE '^[[:space:]]*//' "$1" | sed -E 's/,([[:space:]]*\})/\1/' | jq -r "$2"; }
+
+@test "VS Code is told the login keyring is gnome-keyring's, in the argv.json it wrote" {
+  mkdir -p "$HOME/.vscode"
+  printf '%s\n' '// This configuration file allows you to pass permanent command line arguments to VS Code.' \
+    '{' '	// "disable-hardware-acceleration": true,' '	"enable-crash-reporter": false,' \
+    '	"crash-reporter-id": "d9f40467"' '}' >"$HOME/.vscode/argv.json"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [ "$(argv "$HOME/.vscode/argv.json" '."password-store" + " " + ."crash-reporter-id"')" = "gnome-libsecret d9f40467" ]
+  grep -q 'disable-hardware-acceleration' "$HOME/.vscode/argv.json"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$(grep -c '"password-store"' "$HOME/.vscode/argv.json")" -eq 1 ]
+}
+
+@test "a keyring the user picked for VS Code is theirs" {
+  mkdir -p "$HOME/.vscode"
+  printf '{\n\t"password-store": "basic"\n}\n' >"$HOME/.vscode/argv.json"
+  cp "$HOME/.vscode/argv.json" "$SCRATCH/before"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  cmp "$SCRATCH/before" "$HOME/.vscode/argv.json"
+}
+
+@test "VS Code with no argv.json yet gets one, and VS Code never run gets none" {
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ ! -e "$HOME/.vscode" ]
+  mkdir -p "$HOME/.vscode"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" vscode
+  [ "$status" -eq 0 ]
+  [ "$(argv "$HOME/.vscode/argv.json" '."password-store"')" = gnome-libsecret ]
+}
+
+@test "the starting argv.json uses the login keyring, as each session start enforces" {
+  [ "$(argv "$REPO_ROOT/data/skel/.vscode/argv.json" '."password-store"')" = gnome-libsecret ]
+}

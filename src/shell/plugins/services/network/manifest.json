@@ -1,0 +1,11 @@
+{
+  "id": "nova.network-portal",
+  "name": "Network sign-in",
+  "description": "Sign in when Wi-Fi needs a captive portal",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+# nova:summary=Toggle single-window square aspect ratio
+
+set -euo pipefail
+
+# Said only once Hyprland has the new setting: a toggle that failed stops here.
+now=$(nova-hyprland-toggle single-window-aspect-ratio)
+case $now in
+  on) nova-notification-send -g  "Enable single-window square aspect ratio" ;;
+  off) nova-notification-send -g  "Disable single-window square aspect ratio" ;;
+esac

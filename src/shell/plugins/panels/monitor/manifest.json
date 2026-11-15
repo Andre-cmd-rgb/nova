@@ -1,0 +1,14 @@
+{
+  "id": "nova.monitor",
+  "name": "Display",
+  "description": "Brightness slider and laptop display controls",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "defaultSection": "right"
+  }
+}

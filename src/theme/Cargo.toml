@@ -1,0 +1,15 @@
+[package]
+name = "nova-theme"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's theme engine: palettes, templates, and atomic theme and background switching"
+license = "MIT"
+rust-version = "1.89"
+
+# No dependencies, on purpose. This runs on every theme switch and at login, the
+# package builds offline, and a flat palette file needs no TOML crate.
+
+[[bin]]
+name = "nova-theme"
+path = "src/main.rs"
+

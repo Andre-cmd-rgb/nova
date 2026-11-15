@@ -1,0 +1,115 @@
+# Every push and pull request: lint, the name check, the Rust checks, the unit
+# tests, a `make install` into a scratch root, the shell's windows opened
+# offscreen from it and the whole shell started under a headless sway, all in
+# a current Arch container, and nova usb's writer on a loop device.
+# candidate.yml runs it too, before cutting a release.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+# github.workflow is the caller's name when candidate.yml calls this, so a
+# candidate's run and a push's never cancel each other.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --cap-add=SYS_NICE # Arch's sway carries cap_sys_nice, and exec fails without it
+    timeout-minutes: 30
+    steps:
+      - name: Tools
+        run: |
+          pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats jq lua rust qt6-declarative \
+            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring python-dbus python-gobject libpulse tzdata
+          useradd -m builder
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Hand the checkout to the build user
+        run: chown -R builder:builder "$GITHUB_WORKSPACE"
+
+      - name: Shell lint
+        run: sudo -u builder -H make lint-shell
+
+      - name: Lua syntax
+        run: sudo -u builder -H make lint-lua
+
+      - name: Nova's names only
+        run: sudo -u builder -H make check-names
+
+      - name: QML lint
+        run: sudo -u builder -H make lint-qml
+
+      - name: Workflow lint
+        run: sudo -u builder -H make lint-workflows
+
+      - name: Rust
+        run: |
+          sudo -u builder -H cargo fmt --check
+          sudo -u builder -H cargo clippy --locked --all-targets -- -D warnings
+          sudo -u builder -H cargo test --locked
+
+      - name: Unit tests
+        run: sudo -u builder -H make test
+
+      - name: Install into a scratch root
+        run: |
+          sudo -u builder -H cargo build --locked --release
+          sudo -u builder -H make install DESTDIR=/tmp/nova-root
+          test -x /tmp/nova-root/usr/bin/nova
+
+      # What qmllint cannot see, run offscreen against the installed tree and
+      # failing on any QML warning: the shell's logic, then its windows.
+      - name: Shell logic, offscreen
+        run: sudo -u builder -H tests/qml/run --root /tmp/nova-root
+
+      - name: Shell windows, offscreen
+        run: sudo -u builder -H tools/qml-smoke --root /tmp/nova-root --shots /tmp/nova-shots
+
+      # The whole shell as a session starts it, the boot lock included; the
+      # container is thrown away, so the lock's PAM service can go into /etc.
+      - name: The whole shell, under a headless sway
+        run: |
+          install -Dm644 -t /etc/pam.d /tmp/nova-root/etc/pam.d/nova-lock-password
+          sudo -u builder -H tools/shell-smoke --root /tmp/nova-root --shots /tmp/nova-shots/shell
+
+      - name: Keep the window screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: shell-windows
+          path: /tmp/nova-shots
+          if-no-files-found: ignore
+          overwrite: true # a re-run of a failed attempt uploads again
+
+  # nova usb's writer needs root and a disk: here, a loop device on a
+  # throwaway runner. Partitions, encrypts and fills a stick image, reads it
+  # back, and restores it with the installer's own code.
+  stick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq --no-install-recommends xorriso cryptsetup dosfstools btrfs-progs zstd
+
+      - name: Write a stick, read it back, put it back
+        run: sudo tests/usb/stick-test

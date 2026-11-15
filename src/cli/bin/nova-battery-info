@@ -1,0 +1,145 @@
+#!/bin/bash
+
+# nova:summary=Print the battery charge, power draw and time left (for the power panel)
+# nova:hidden=true
+# nova:args=[--shell]
+
+# The battery in one line, as the battery notification shows it, or with
+# --shell as the power panel's fields, a name and a value a line. UPower names
+# the battery and gives its charge, size, state and time; the kernel gives the
+# power drawn right now, whether a charger is in, the charge limit nova battery
+# limit sets and the cycle count.
+
+set -euo pipefail
+
+supplies=${NOVA_POWER_SUPPLY_PATH:-/sys/class/power_supply}
+
+case ${1:-} in
+  '') fields=0 ;;
+  --shell) fields=1 ;;
+  *)
+    echo "Usage: nova-battery-info [--shell]" >&2
+    exit 2
+    ;;
+esac
+
+device=$(upower -e 2>/dev/null | grep -m1 BAT || true)
+[[ -n $device ]] || exit 0
+report=$(upower -i "$device")
+
+# The value of a file of the first battery that has it.
+first_battery() {
+  local file
+  for file in "$supplies"/BAT*/"$1"; do
+    if [[ -r $file ]]; then
+      printf '%s' "$(<"$file")"
+      return
+    fi
+  done
+}
+
+# The charge limit is the kernel's, not UPower's charge thresholds: those are
+# what UPower would set if asked, whether or not anything is set. An end of 100
+# is no limit.
+limit_start=$(first_battery charge_control_start_threshold)
+limit_end=$(first_battery charge_control_end_threshold)
+[[ $limit_end =~ ^[0-9]+$ ]] && ((limit_end < 100)) || limit_start='' limit_end=''
+cycles=$(first_battery cycle_count)
+
+# A charger is in when a mains supply is online.
+plugged=0
+for supply in "$supplies"/*; do
+  [[ -r $supply/type && -r $supply/online ]] || continue
+  [[ $(<"$supply/type") == Mains && $(<"$supply/online") == 1 ]] || continue
+  plugged=1
+  break
+done
+
+# The power drawn now. UPower's energy-rate lags the kernel's reading by tens of
+# seconds, and the open panel is there to watch it, so the kernel's comes first:
+# power_now in microwatts or, without it, current_now in microamps times
+# voltage_now in microvolts, of the battery UPower names.
+battery=''
+[[ $report =~ native-path:[[:blank:]]*([^[:space:]]+) ]] && battery=$supplies/${BASH_REMATCH[1]}
+microwatts='' microamps='' microvolts=''
+if [[ -n $battery && -r $battery/power_now ]]; then
+  microwatts=$(<"$battery/power_now")
+elif [[ -n $battery && -r $battery/current_now && -r $battery/voltage_now ]]; then
+  microamps=$(<"$battery/current_now") microvolts=$(<"$battery/voltage_now")
+fi
+
+# UPower's report has a line a field, "    time to empty:       3.2 hours";
+# the first line of a name is the one that counts.
+awk -F ':[[:blank:]]*' -v fields="$fields" -v plugged="$plugged" \
+  -v limit_start="$limit_start" -v limit_end="$limit_end" -v cycles="$cycles" \
+  -v microwatts="$microwatts" -v microamps="$microamps" -v microvolts="$microvolts" '
+{
+  name = $1
+  sub(/^[[:blank:]]+/, "", name)
+  if (name in report) next
+  report[name] = $2
+  if (time == "" && (name == "time to full" || name == "time to empty")) time = name
+}
+
+# A word of a field of the report: word("time to empty", 2) is "hours".
+function word(name, n,   words) {
+  if (!(name in report)) return ""
+  split(report[name], words, " ")
+  return words[n]
+}
+
+# UPower writes a time in seconds under a minute, minutes under an hour, hours
+# under 60 hours and days after that. It is shown to the nearest minute, "3.2
+# hours" as "3h 12m", and under a minute as "<1m".
+function duration(amount, unit,   minutes) {
+  if (unit ~ /^second/) return "<1m"
+  if (unit ~ /^minute/) minutes = amount
+  else if (unit ~ /^hour/) minutes = amount * 60
+  else if (unit ~ /^day/) minutes = amount * 1440
+  else return ""
+  minutes = int(minutes + 0.5)
+  if (minutes < 60) return minutes "m"
+  return int(minutes / 60) "h" (minutes % 60 ? " " minutes % 60 "m" : "")
+}
+
+END {
+  percent = word("percentage", 1)
+  if (percent != "") percent = int(percent)
+  size = word("energy-full", 1)
+  if (size != "") size = sprintf("%d", size)
+  state = word("state", 1)
+
+  left = time == "" ? "" : duration(word(time, 1), word(time, 2))
+
+  if (microwatts != "") rate = microwatts / 1e6
+  else if (microamps != "") rate = microamps * microvolts / 1e12
+  else rate = word("energy-rate", 1) + 0
+  watts = sprintf("%.1f", rate)
+  sub(/\.0$/, "", watts)
+
+  # Plugged in and kept from charging by the limit: UPower says pending-charge,
+  # or fully-charged short of full, or charging while nothing flows, once the
+  # limit is reached.
+  holding = 0
+  if (plugged && limit_end != "") {
+    if (state == "pending-charge") holding = 1
+    else if (state == "fully-charged" && percent + 0 < 99) holding = 1
+    else if (state == "charging" && rate <= 0.2 && limit_end + 0 < 99 && percent + 0 >= limit_end + 0) holding = 1
+  }
+  limit = limit_start != "" && limit_start "" != limit_end "" ? limit_start "-" limit_end : limit_end
+
+  if (fields) {
+    printf "percentage\t%s%%\nstate\t%s\nrate\t%sW\nsize\t%sWh\ntime\t%s\n", \
+      percent, holding ? "holding" : state, watts, size, left
+    if (cycles != "") printf "cycles\t%s\n", cycles
+    if (limit_end != "") printf "threshold\t%s%%\n", limit
+    exit
+  }
+
+  if (holding) detail = "Holding at " limit "%"
+  else if (state == "fully-charged") detail = "Fully charged"
+  else if (left == "") detail = toupper(substr(state, 1, 1)) substr(state, 2)
+  else if (state == "charging") detail = left " to full"
+  else detail = left " left"
+  printf "Battery %s%%  ·  %s  ·  %sW / %sWh\n", percent, detail, watts, size
+}' <<<"$report"

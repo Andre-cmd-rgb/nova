@@ -1,0 +1,7 @@
+# Packages an earlier Nova depended on and this one does not, one a line.
+# nova update removes one once the release that stopped needing it is
+# installed, and only where it is there for Nova's sake alone: pacman has it
+# as a dependency, and nothing installed needs it (nova-update-apply,
+# drop_retired). One you installed by name stays.
+ttfx    # played the screensaver's effects; Nova plays its own (src/screensaver)
+ggml    # came with Arch's whisper.cpp; Nova's whisper-cpp carries its own copy

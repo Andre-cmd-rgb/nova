@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# nova:summary=Open the default browser
+# nova:args=[url]
+
+set -euo pipefail
+
+# The [Desktop Entry] Exec line of a desktop file as words, quoted and escaped
+# as the Desktop Entry Specification says, without its field codes (%u, %U,
+# ...): the URLs go after the rest.
+exec_words() { # file
+  local line word='' have=0 quoted=0 escaped=0 c i
+  line=$(awk '/^\[/ { main = ($0 == "[Desktop Entry]") } main && /^Exec=/ { sub(/^Exec=/, ""); print; exit }' "$1")
+  for ((i = 0; i < ${#line}; i++)); do
+    c=${line:i:1}
+    if ((escaped)); then
+      word+=$c escaped=0
+      continue
+    fi
+    case $c in
+      \\) escaped=1 have=1 ;;
+      '"') quoted=$((!quoted)) have=1 ;;
+      ' ' | $'\t')
+        if ((quoted)); then
+          word+=$c
+        elif ((have)); then
+          [[ $word =~ ^%[fFuUdDnNickvm]$ ]] || printf '%s\0' "${word//%%/%}"
+          word='' have=0
+        fi
+        ;;
+      *) word+=$c have=1 ;;
+    esac
+  done
+  if ((have)) && [[ ! $word =~ ^%[fFuUdDnNickvm]$ ]]; then
+    printf '%s\0' "${word//%%/%}"
+  fi
+}
+
+# Pressed from a key or the menu, where nobody reads stderr; and a stick
+# that installed offline left no browser at all.
+browser_file=$(nova-cmd-default-browser --file) || {
+  echo "nova-launch-browser: no default browser is set" >&2
+  nova-notification-send -u normal -g 󰖟 "No web browser is installed" "Click to install Chrome." \
+    --exec nova-shell shell summon nova.settings '{"page":"updates","apps":"install"}' || true
+  exit 1
+}
+default_browser=${browser_file##*/}
+mapfile -d '' -t browser < <(exec_words "$browser_file")
+if ((${#browser[@]} == 0)); then
+  echo "nova-launch-browser: cannot find the command for $default_browser" >&2
+  exit 1
+fi
+browser_exec=${browser[0]}
+
+# Firefox and its forks open a private window with --private-window, Edge with
+# --inprivate, the rest of Chromium's family with --incognito. The names tell
+# which, the entry's and its command's (a Flatpak's command is flatpak):
+# asking the browser itself for its --help starts it every time, and Chrome
+# crashes on it.
+case "${default_browser%.desktop} ${browser_exec##*/}" in
+  *firefox* | *librewolf* | *zen* | *waterfox* | *floorp* | *mullvad* | *tor-browser* | *icecat*)
+    private_flag="--private-window" ;;
+  *edge*) private_flag="--inprivate" ;;
+  *) private_flag="--incognito" ;;
+esac
+
+# --private only where it is a whole argument: a URL may have it inside. The
+# first other argument is what is opened.
+words=() opened=""
+for word; do
+  if [[ $word == --private ]]; then
+    words+=("$private_flag")
+  else
+    words+=("$word")
+    opened=${opened:-$word}
+  fi
+done
+
+# Handed to the browser running, or else started in a unit of its own, so
+# that it outlives whatever started it.
+nova-cmd-browser-handoff "${browser[@]}" "${words[@]}" ||
+  systemd-run --user --quiet --collect --unit="nova-browser-$(date +%s%N)" \
+    --property=StandardOutput=null --property=StandardError=null \
+    uwsm-app -- "${browser[@]}" "${words[@]}"
+
+# Something opened is looked at: the browser's window comes to the front,
+# found by its class, which is its command's name without -stable.
+class=${browser_exec##*/}
+if [[ -n $opened && -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]]; then
+  nova-hyprland-focus-app "^${class%-stable}.*$" || true
+fi

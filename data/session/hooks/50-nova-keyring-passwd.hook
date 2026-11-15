@@ -1,0 +1,13 @@
+# After the transaction, so shadow's /etc/pam.d/passwd is there even when
+# pacstrap installs it beside nova.
+[Trigger]
+Type = Package
+Operation = Install
+Operation = Upgrade
+Target = nova
+Target = shadow
+
+[Action]
+Description = Letting passwd change the login keyring's password too...
+When = PostTransaction
+Exec = /usr/lib/nova/bin/nova-keyring-passwd

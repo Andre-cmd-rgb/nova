@@ -1,0 +1,104 @@
+#!/bin/bash
+
+# nova:summary=Show or set the power mode on battery; plugged in, it is always full power
+# nova:args=get | list [--active-state] | set <profile> | restore
+#
+# Talks to power-profiles-daemon over D-Bus. Plugged in there is no battery to
+# spare, so it is always performance, and there is nothing to choose (list
+# offers nothing). On battery it is the battery first: every unplug, and every
+# start on battery, begins in power-saver. `set` changes the mode for this
+# stretch on battery only, until the next plug-in or restart, so a mode picked
+# for one job is not left draining the battery for days. `restore` (run by the
+# shell on plug and unplug, and at login) puts back performance plugged in,
+# and on battery the mode chosen since the unplug, or power-saver. Where Nova's
+# power governor runs, the mode is how high it climbs (docs/power.md).
+
+set -euo pipefail
+
+# The mode chosen on battery, kept in the runtime directory so that a restart
+# forgets it as a plug-in does.
+chosen=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/power-profile
+readonly ppd=(org.freedesktop.UPower.PowerProfiles /org/freedesktop/UPower/PowerProfiles org.freedesktop.UPower.PowerProfiles)
+readonly battery_default=power-saver
+
+usage() {
+  echo "Usage: nova-power-profile get | list [--active-state] | set <profile> | restore" >&2
+  exit 2
+}
+
+profiles() {
+  busctl --system --json=short get-property "${ppd[@]}" Profiles 2>/dev/null |
+    jq -r '.data[].Profile.data'
+}
+
+active() {
+  busctl --system --json=short get-property "${ppd[@]}" ActiveProfile 2>/dev/null | jq -r '.data'
+}
+
+source_name() {
+  if [[ $(busctl --system get-property org.freedesktop.UPower /org/freedesktop/UPower \
+    org.freedesktop.UPower OnBattery 2>/dev/null || true) == "b true" ]]; then
+    echo battery
+  else
+    echo ac
+  fi
+}
+
+apply() {
+  busctl --system set-property "${ppd[@]}" ActiveProfile s "$1"
+}
+
+available() {
+  local want=$1 p
+  while IFS= read -r p; do [[ $p == "$want" ]] && return 0; done < <(profiles)
+  return 1
+}
+
+case ${1:-} in
+  get)
+    (($# == 1)) || usage
+    current=$(active) && [[ -n $current ]] || { echo "nova-power-profile: power-profiles-daemon is not running" >&2; exit 1; }
+    echo "$current"
+    ;;
+  list)
+    [[ $# == 1 || ($# == 2 && $2 == --active-state) ]] || usage
+    if [[ $(source_name) == ac ]]; then
+      echo "Plugged in, it is always full power: the modes are for the battery." >&2
+      exit 1
+    fi
+    list=$(profiles) && [[ -n $list ]] || { echo "nova-power-profile: power-profiles-daemon is not running" >&2; exit 1; }
+    if (($# == 2)); then
+      current=$(active || true)
+      while IFS= read -r p; do
+        if [[ $p == "$current" ]]; then printf '%s\t1\n' "$p"; else printf '%s\t0\n' "$p"; fi
+      done <<<"$list"
+    else
+      echo "$list"
+    fi
+    ;;
+  set)
+    (($# == 2)) || usage
+    available "$2" || { echo "nova-power-profile: no power mode '$2'" >&2; exit 1; }
+    if [[ $(source_name) == ac ]]; then
+      echo "Plugged in, it is always full power, and every unplug starts in $battery_default." >&2
+      exit 1
+    fi
+    mkdir -p "${chosen%/*}"
+    printf '%s\n' "$2" >"$chosen"
+    apply "$2"
+    ;;
+  restore)
+    (($# == 1)) || usage
+    if [[ $(source_name) == ac ]]; then
+      # A plug-in ends the stretch on battery, and the mode chosen in it.
+      rm -f "$chosen"
+      profile=performance
+    else
+      profile=$(cat "$chosen" 2>/dev/null || true)
+      available "$profile" || profile=$battery_default
+    fi
+    available "$profile" || exit 0
+    [[ $(active || true) == "$profile" ]] || apply "$profile"
+    ;;
+  *) usage ;;
+esac

@@ -1,0 +1,11 @@
+{
+  "id": "nova.clock",
+  "name": "Clock",
+  "description": "Date/time label with a calendar popup",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  }
+}

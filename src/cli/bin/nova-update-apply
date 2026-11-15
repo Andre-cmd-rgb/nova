@@ -1,0 +1,653 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Apply a Nova release as root (run by nova update through pkexec)
+# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url> [--package <file>]... | --packages-only --package <file>... | --check-boot
+#
+# The privileged half of `nova update`. One pkexec call runs all of it, so there is a
+# single authentication prompt and nothing privileged is left to the unprivileged side.
+#
+#   1. snapper pre-snapshot, taken first so rolling back to it restores the old
+#      mirror and repository files together with the old packages
+#   2. write /etc/pacman.d/nova-mirrorlist (Arch Linux Archive snapshot) and
+#      /etc/pacman.d/nova-repo (the release's [nova] server)
+#   3. the keyrings first (pacman -Syy archlinux-keyring nova-keyring), so a new
+#      packager key is trusted before the upgrade checks signatures. The databases
+#      are refreshed with -yy because pacman skips a database that is not newer
+#      than its local copy, which is exactly the case when moving to an older
+#      snapshot.
+#   4. pacman -Su (-Suu with --allow-downgrade). A failed step puts the previous
+#      mirror and repository files back, and the databases that went with them.
+#      Going back to an older release takes with it the packages only the newer
+#      one had (left_behind, below).
+#   5. install anything the new release adds to this computer's hardware profile
+#   6. snapper post-snapshot
+#   7. check that every installed kernel still has a boot entry whose files exist
+#      and hold that kernel
+#
+# The pair of snapshots is marked important, so the snapshots snap-pac takes
+# around later pacman runs do not push the way back out (NUMBER_LIMIT_IMPORTANT).
+# --check-boot runs step 7 alone, and the boot fallback's check, to look again
+# after a repair.
+#
+# --package installs a package built beforehand as the user (Chrome and VS Code,
+# by nova apps install --build), after step 5, so that an update from Settings
+# asks for authentication once. With --packages-only it installs those alone,
+# when only the apps are behind. It takes those two apps alone, from files of
+# the user who authenticated, and installs copies made as they were checked.
+#
+# Closing the terminal does not stop it: from then on its output goes to
+# /var/log/nova-update.log.
+#
+# Every argument is validated: this runs as root and its caller is merely whoever
+# polkit let through.
+set -euo pipefail
+
+ROOT=${NOVA_ROOT:-} # a test seam: prefix for every path; pkexec strips the environment
+MIRRORLIST=$ROOT/etc/pacman.d/nova-mirrorlist
+REPOFILE=$ROOT/etc/pacman.d/nova-repo
+SYNC_DIR=$ROOT/var/lib/pacman/sync
+LOG=$ROOT/var/log/nova-update.log
+SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-root}
+
+die() {
+  warn "$*"
+  [[ -z ${staged:-} ]] || rm -rf -- "$staged"
+  exit 1
+}
+# A line on stdout (1) or stderr (2). Once what read them is gone (nova update
+# stopped, at a logout say, or a `| tee` did), a write fails, and from then on
+# both go to the log: an update that has begun goes on to its end.
+out() { # fd, line
+  printf '%s\n' "$2" >&"$1" && return 0
+  { exec >>"$LOG" 2>&1; } 2>/dev/null || exec >/dev/null 2>&1
+  printf '==> what read the output went away; continuing here\n%s\n' "$2" >&"$1" || true
+}
+warn() { out 2 "nova update: $*"; }
+say() { out 1 "==> $*"; }
+
+write_file() { # path; content on stdin. Atomic, so pacman never reads half a file.
+  local path=$1 tmp
+  tmp=$(mktemp "$path.XXXXXX")
+  cat > "$tmp"
+  chmod 644 "$tmp"
+  mv -f "$tmp" "$path"
+}
+
+write_config() {
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\n' "$tag"
+    printf '# arch-date: %s\n' "$arch_date"
+    # shellcheck disable=SC2016 # $repo and $arch are for pacman to expand
+    printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$arch_date"
+  } | write_file "$MIRRORLIST"
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\n' "$tag"
+    printf 'Server = %s\n' "$nova_repo"
+  } | write_file "$REPOFILE"
+}
+
+# The sync databases go with the mirror files: put back without them, pacman
+# would read the new snapshot's packages from the old snapshot's server.
+# A copy already there is from an update that never finished (the power went,
+# say), and holds what was in place before it: it is kept rather than replaced
+# by what that update left half done. Each copy is made aside and renamed, so
+# one that is there is whole.
+backup_config() {
+  local f kept=0
+  for f in "$MIRRORLIST" "$REPOFILE"; do
+    if [[ -e $f.nova-prev || -e $f.nova-absent ]]; then kept=1; continue; fi
+    if [[ -e $f ]]; then
+      cp -p "$f" "$f.nova-prev.tmp" && mv -f "$f.nova-prev.tmp" "$f.nova-prev"
+    else
+      touch "$f.nova-absent"
+    fi
+  done
+  if [[ -d $SYNC_DIR.nova-prev ]]; then
+    kept=1
+  elif [[ -d $SYNC_DIR ]]; then
+    rm -rf "$SYNC_DIR.nova-prev.tmp"
+    cp -a "$SYNC_DIR" "$SYNC_DIR.nova-prev.tmp"
+    mv "$SYNC_DIR.nova-prev.tmp" "$SYNC_DIR.nova-prev"
+  fi
+  if (( kept )); then
+    warn "an earlier update did not finish; keeping the files from before it to go back to"
+  fi
+}
+
+restore_config() {
+  local f restored=0
+  for f in "$MIRRORLIST" "$REPOFILE"; do
+    if [[ -e $f.nova-prev ]]; then mv -f "$f.nova-prev" "$f"; restored=1; fi
+    if [[ -e $f.nova-absent ]]; then rm -f "$f" "$f.nova-absent"; restored=1; fi
+  done
+  if [[ -d $SYNC_DIR.nova-prev ]]; then
+    rm -rf "$SYNC_DIR.nova-old"
+    if [[ -d $SYNC_DIR ]]; then mv "$SYNC_DIR" "$SYNC_DIR.nova-old"; fi
+    mv "$SYNC_DIR.nova-prev" "$SYNC_DIR"
+    rm -rf "$SYNC_DIR.nova-old"
+  fi
+  if (( restored )); then
+    warn "put the previous mirror and repository files back"
+  else
+    warn "there were no previous mirror files to restore; the new ones stay, pacman.conf needs them"
+  fi
+}
+
+drop_backup() {
+  local f
+  for f in "$MIRRORLIST" "$REPOFILE"; do rm -f "$f.nova-prev" "$f.nova-absent"; done
+  rm -rf "$SYNC_DIR.nova-prev"
+}
+
+snapshot() { # description, then extra snapper arguments; prints the snapshot number
+  local desc=$1
+  shift
+  snapper -c "$SNAPPER_CONFIG" create "$@" --print-number \
+    --cleanup-algorithm number --userdata important=yes --description "$desc"
+}
+
+# Packages a release adds to this computer's hardware profile (new firmware, a driver)
+# arrive with the new nova package, so the list is read after the upgrade and the
+# missing ones go in a second transaction. A failure here leaves a working system on
+# the new release, so it warns rather than failing the update. A portable Nova
+# (/etc/nova/portable) takes none: the model it is updated on is only one of many it
+# starts, and a model's packages (NVIDIA's driver, linux-nova's modules) would not
+# start the others.
+install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pacman
+  local noconfirm=$1 profile list name
+  local -a wanted=() missing=() confirm=()
+  shift
+  [[ ! -e $ROOT/etc/nova/portable ]] || return 0
+  (( ! noconfirm )) || confirm=(--noconfirm)
+  profile=$(NOVA_HARDWARE=$ROOT/usr/share/nova/hardware "${0%/*}/nova-hw-detect" 2>/dev/null) || return 0
+  list=$ROOT/usr/share/nova/hardware/$profile/packages
+  [[ -r $list ]] || return 0
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name//[[:space:]]/}
+    [[ -n $name ]] || continue
+    [[ $name =~ ^[a-z0-9@._+-]+$ ]] || { warn "ignoring '$name' in $list"; continue; }
+    wanted+=("$name")
+  done < "$list"
+  (( ${#wanted[@]} )) || return 0
+  mapfile -t missing < <(pacman -T "${wanted[@]}" || true)
+  (( ${#missing[@]} )) || return 0
+  say "Installing for this computer: ${missing[*]}"
+  "$@" pacman -S --needed "${confirm[@]}" "${missing[@]}" ||
+    warn "could not install ${missing[*]}; try again with: sudo pacman -S ${missing[*]}"
+}
+
+# What an earlier Nova depended on and this one does not (the retired list):
+# with nothing to take it out, a package a release stops needing would stay
+# installed for good. Only where pacman has it as a dependency that nothing
+# installed needs (-Qdt), so one that was asked for by name, or that something
+# else uses, stays.
+drop_retired() { # a command prefix for pacman
+  local list=$ROOT/usr/share/nova/retired name
+  local -a unneeded=()
+  [[ -r $list ]] || return 0
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name//[[:space:]]/}
+    # A package's name, which never begins as an option does.
+    [[ $name =~ ^[a-z0-9][a-z0-9@._+-]*$ ]] || continue
+    [[ $(pacman -Qdtq "$name" 2> /dev/null) != "$name" ]] || unneeded+=("$name")
+  done < "$list"
+  (( ${#unneeded[@]} )) || return 0
+  say "Removing what Nova no longer needs: ${unneeded[*]}"
+  "$@" pacman -Rns --noconfirm "${unneeded[@]}" ||
+    warn "could not remove ${unneeded[*]}; try again with: sudo pacman -Rns ${unneeded[*]}"
+}
+
+# The apps nova apps install builds: the only packages --package takes.
+BUILT_APPS=(google-chrome visual-studio-code-bin)
+
+package_name() { # path
+  local name=${1##*/}
+  printf '%s\n' "${name%-*-*-*}"
+}
+
+# A package file as makepkg names one, name-version-release-arch.pkg.tar[.*],
+# of one of those apps, and the authenticating user's own.
+valid_package() { # path
+  [[ $1 == /* && -f $1 && ! -L $1 && ${1##*/} =~ ^[a-z0-9@._+-]+-[^/-]+-[^/-]+-(x86_64|any)\.pkg\.tar(\.[a-z0-9]+)?$ ]] || return 1
+  [[ " ${BUILT_APPS[*]} " == *" $(package_name "$1") "* ]] || return 1
+  [[ -z ${PKEXEC_UID:-} || $(stat -c %u -- "$1") == "$PKEXEC_UID" ]]
+}
+
+# Copied, as they are checked, to where only root writes: pacman reads them
+# long after, once the release is in, and reads the files that were checked.
+stage_packages() {
+  (( ${#packages[@]} )) || return 0
+  mkdir -p "$ROOT/var/tmp"
+  staged=$(mktemp -d -p "$ROOT/var/tmp" nova-update.XXXXXX)
+  local i copy
+  for i in "${!packages[@]}"; do
+    valid_package "${packages[i]}" || die "bad --package: ${packages[i]}"
+    copy=$staged/${packages[i]##*/}
+    cp -P -- "${packages[i]}" "$copy" && [[ -f $copy && ! -L $copy ]] || die "could not copy ${packages[i]}"
+    packages[i]=$copy
+  done
+}
+
+# A system installed offline starts with none of its repositories' package
+# lists, and pacman would find none of the apps' dependencies: they are read
+# once first. The repositories are pinned to the release, so nothing installed
+# goes out of step with them.
+read_missing_lists() {
+  local repo
+  for repo in $(pacman-conf --repo-list 2>/dev/null); do
+    if [[ ! -e $SYNC_DIR/$repo.db ]]; then
+      say "Reading the package lists"
+      pacman -Sy
+      return
+    fi
+  done
+}
+
+# The packages of --package. Failing leaves what came before in place, the
+# release among it, so the caller decides what that means.
+install_built_packages() { # then a command prefix for pacman
+  (( ${#packages[@]} )) || return 0
+  local -a names=()
+  local file status=0
+  for file in "${packages[@]}"; do names+=("$(package_name "$file")"); done
+  say "Installing ${names[*]}"
+  "$@" pacman -U --needed --noconfirm "${packages[@]}" || status=$?
+  rm -rf -- "$staged"
+  staged=''
+  (( status == 0 )) || warn "could not install ${names[*]}; nova apps install tries again"
+  return "$status"
+}
+
+# --- boot entry verification ------------------------------------------------------
+
+find_esp() {
+  local f esp
+  for f in "$ROOT/etc/default/limine" "$ROOT/etc/limine-entry-tool.conf" "$ROOT"/etc/limine-entry-tool.d/*.conf; do
+    [[ -r $f ]] || continue
+    esp=$(grep -h -E '^[[:space:]]*ESP_PATH=' "$f" | tail -n 1 | sed 's/^[^=]*=//' | tr -d "\"'" | sed 's/[[:space:]].*//')
+    if [[ -n $esp ]]; then
+      printf '%s' "$ROOT$esp"
+      return 0
+    fi
+  done
+  for esp in /efi /boot /boot/efi; do
+    if [[ -f $ROOT$esp/limine.conf ]]; then
+      printf '%s' "$ROOT$esp"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# True when the boot partition fstab names is not mounted: its directory is then an
+# empty one on the root filesystem, which the firmware never reads. The scratch
+# roots of the tests have no mounts to check.
+esp_unmounted() { # esp
+  [[ -z $ROOT ]] || return 1
+  findmnt -n -s -- "$1" > /dev/null 2>&1 && ! mountpoint -q -- "$1"
+}
+
+# Succeeds when limine.conf exists, names every installed kernel, and every file it
+# loads from the boot partition is there. Entries that live in a snapshot (written by
+# limine-snapper-sync) point into the root filesystem and cannot be checked from here.
+verify_boot_entries() {
+  local esp conf pkgbase_file pkgbase pattern kver uki line value rel ok=0
+  esp=$(find_esp) || { warn "no limine.conf found (looked at ESP_PATH, /efi, /boot, /boot/efi)"; return 1; }
+  if esp_unmounted "$esp"; then
+    warn "the boot partition is not mounted at $esp"
+    return 1
+  fi
+  conf=$esp/limine.conf
+  [[ -s $conf ]] || { warn "$conf is missing or empty"; return 1; }
+
+  for pkgbase_file in "$ROOT"/usr/lib/modules/*/pkgbase; do
+    [[ -r $pkgbase_file && -e ${pkgbase_file%pkgbase}vmlinuz ]] || continue
+    pkgbase=$(<"$pkgbase_file")
+    kver=${pkgbase_file%/pkgbase}
+    kver=${kver##*/}
+    # The name as a whole word, so linux is not found in linux-lts; still loose
+    # about how limine-entry-tool names the entry around it.
+    pattern=${pkgbase//./\\.}
+    pattern=${pattern//+/\\+}
+    # Not a pipe: grep -q stops at the first match, and pipefail would count
+    # the first grep's broken pipe on a long limine.conf as no match.
+    if ! grep -qE -- "(^|[^A-Za-z0-9+-])$pattern([^A-Za-z0-9+-]|$)" <<<"$(grep -v '^[[:space:]]*#' "$conf")"; then
+      warn "$conf has no boot entry for the installed kernel $pkgbase"
+      ok=1
+    fi
+    # An image the kernel hook did not rebuild boots the old kernel, whose
+    # modules this update removed. Each image carries its kernel's version.
+    for uki in "$esp"/EFI/Linux/*_"$pkgbase".efi "$esp"/EFI/Linux/*_"$pkgbase"-fallback.efi; do
+      [[ -f $uki ]] || continue
+      if ! LC_ALL=C grep -aqF -- "$kver" "$uki"; then
+        warn "${uki#"$esp"/} was not rebuilt for the installed $pkgbase ($kver)"
+        ok=1
+      fi
+    done
+  done
+
+  while IFS= read -r line; do
+    value=${line#*:}
+    value=${value#"${value%%[![:space:]]*}"} # ltrim
+    value=${value%%#*}                      # drop a #blake2b hash suffix
+    value=${value%"${value##*[![:space:]]}"} # rtrim
+    [[ $value =~ ^boot\(\):(/.+)$ ]] || continue
+    rel=${BASH_REMATCH[1]}
+    if [[ ! -e $esp$rel ]]; then
+      warn "$conf loads $rel but $esp$rel does not exist"
+      ok=1
+    fi
+  done < <(grep -E '^[[:space:]]*(path|kernel_path|module_path|image_path|dtb_path):' "$conf" || true)
+
+  return "$ok"
+}
+
+# Why this machine has to restart to run what was installed, if it has to.
+reboot_reason() {
+  local loaded installed
+  if [[ ! -d /usr/lib/modules/$(uname -r) ]]; then
+    echo "The running kernel was replaced"
+    return 0
+  fi
+  # NVIDIA's module and its libraries must be the same version; the loaded
+  # module stays the old one until a restart.
+  if [[ -r /sys/module/nvidia/version ]] && installed=$(pacman -Q nvidia-utils 2>/dev/null); then
+    read -r loaded </sys/module/nvidia/version || loaded=''
+    installed=${installed#* }
+    installed=${installed%-*}
+    installed=${installed#*:}
+    if [[ $loaded != "$installed" ]]; then
+      echo "The NVIDIA driver was updated"
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# pacman failed: the previous files back, the snapshot pair closed, and
+# Hyprland reloading again (the hook that would have done it runs only after
+# a transaction that went through).
+pacman_failed() {
+  restore_config
+  NOVA_HYPRLAND_RELOAD_GUARD_RUN_ROOT=$ROOT/run/user NOVA_HYPRLAND_RELOAD_GUARD_STATE_DIR=$ROOT/run/nova/hyprland-reload-guard \
+    "${0%/*}/nova-hyprland-reload-guard" resume 2>/dev/null || true
+  if [[ -n $pre ]]; then
+    snapshot "$label (pacman failed)" --type post --pre-number "$pre" > /dev/null ||
+      warn "could not close snapshot $pre"
+    warn "snapshot $pre was taken before the attempt"
+  fi
+  die "pacman failed; check its output above. The system is as pacman left it: run nova update again once the problem is fixed."
+}
+
+# What to do about boot entries that do not check out, after the update or a
+# check of them.
+boot_advice() { # [snapshot number]
+  local esp=''
+  esp=$(find_esp) || esp=/boot
+  if esp_unmounted "$esp"; then
+    warn "Mount the boot partition (sudo mount $esp), run sudo limine-update, then nova update --check-boot."
+  else
+    warn "Run sudo limine-update, then nova update --check-boot to look again."
+  fi
+  [[ -z ${1:-} ]] || warn "Snapshot $1 is the state before this update."
+}
+
+# The checks the update ends with, on their own.
+check_boot() {
+  if ! verify_boot_entries || ! "${0%/*}/nova-boot-check" status; then
+    warn "the boot entries do NOT check out. Do not reboot yet."
+    boot_advice
+    return 3
+  fi
+  say "Boot entries look right"
+}
+
+# --- main -------------------------------------------------------------------------
+
+main() {
+  local tag='' version='' arch_date='' nova_repo='' from='' snapshot=1 downgrade=0 noconfirm=0 only_boot=0 only_packages=0
+  packages=() staged=''
+  while (( $# )); do
+    case $1 in
+      --check-boot)      only_boot=1; shift ;;
+      --packages-only)   only_packages=1; shift ;;
+      --package)         packages+=("${2:?}"); shift 2 ;;
+      --tag)             tag=${2:?}; shift 2 ;;
+      --version)         version=${2:?}; shift 2 ;;
+      --arch-date)       arch_date=${2:?}; shift 2 ;;
+      --nova-repo)       nova_repo=${2:?}; shift 2 ;;
+      --from)            from=${2:?}; shift 2 ;;
+      --no-snapshot)     snapshot=0; shift ;;
+      --allow-downgrade) downgrade=1; shift ;;
+      --noconfirm)       noconfirm=1; shift ;;
+      *) die "unknown argument: $1" ;;
+    esac
+  done
+
+  (( EUID == 0 )) || [[ -n $ROOT ]] || die "this helper must run as root; use 'nova update'"
+  if (( only_boot )); then
+    take_lock
+    check_boot
+    return
+  fi
+  stage_packages
+  if (( only_packages )); then
+    (( ${#packages[@]} )) || die "--packages-only needs a --package"
+    take_lock
+    read_missing_lists
+    install_built_packages
+    return
+  fi
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --tag"
+  [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ && v$version == "$tag" ]] || die "bad --version"
+  [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "bad --arch-date"
+  [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "bad --nova-repo"
+  [[ -z $from || $from =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --from"
+
+  take_lock
+
+  # Kernel images written while the boot partition is not mounted land where
+  # the firmware never looks. Its pacman hook would refuse them anyway, after
+  # the pins had changed; better to stop before anything does.
+  local esp=''
+  if esp=$(find_esp) && esp_unmounted "$esp"; then
+    die "the boot partition is not mounted at $esp; mount it (sudo mount $esp) and try again. Nothing was changed."
+  fi
+
+  # Read by pacman_failed. pacman finishes a transaction when the terminal
+  # closes; so does this, writing to the log instead. With SIGPIPE ignored, a
+  # reader that goes away stops neither this nor pacman (out() above).
+  label="nova update ${from:+$from -> }$tag" pre=''
+  trap 'exec >>"$LOG" 2>&1; echo "==> the terminal closed; continuing here"' HUP
+  trap '' PIPE
+  restore_on_exit=0
+  trap on_exit EXIT
+  hold_shutdown
+  if (( snapshot )); then
+    say "Taking the pre-update snapshot"
+    pre=$(snapshot "$label" --type pre) ||
+      die "snapper could not take a snapshot, so nothing was changed (--no-snapshot goes on without one)"
+    [[ $pre =~ ^[0-9]+$ ]] || die "snapper printed '$pre' instead of a snapshot number; nothing was changed"
+    say "Snapshot $pre taken"
+  else
+    warn "continuing without snapshots, as asked"
+  fi
+
+  # Stopped between here and the end of pacman, the new mirror files would stay
+  # without the update they belong to. Like pacman's own commit, this does not
+  # stop halfway: Ctrl+C still reaches pacman, which sets its own handler, and
+  # stops it cleanly, and pacman_failed puts the old files back.
+  trap '' INT
+  # Read before the pins change: what no repository has already (the apps
+  # built here, say) is not the move's to take out.
+  local -a foreign=()
+  (( ! downgrade )) || mapfile -t foreign < <(pacman -Qqm 2> /dev/null || true)
+  backup_config
+  say "Pointing pacman at Arch snapshot $arch_date and $tag"
+  # Until pacman starts, any error must put both pins back, including a
+  # failed second write after the first file was replaced.
+  restore_on_exit=1
+  write_config
+
+  local -a pacman_args=(-Su)
+  (( ! downgrade )) || pacman_args=(-Suu)
+  (( ! noconfirm )) || pacman_args+=(--noconfirm)
+
+  # snap-pac would add a second pair of snapshots around the same transaction.
+  local -a env_skip=()
+  (( ! snapshot )) || env_skip=(env SNAP_PAC_SKIP=y)
+  say "Updating the keyrings"
+  restore_on_exit=0
+  "${env_skip[@]}" pacman -Syy --needed --noconfirm archlinux-keyring nova-keyring || pacman_failed
+  left=() left_files=()
+  local -a overwrite=()
+  if (( downgrade )); then
+    left_behind "${foreign[@]}"
+    if (( ${#left[@]} )); then
+      say "The older release has no ${left[*]}: taken out with the move"
+      mapfile -t overwrite < <(overwrite_flags)
+    fi
+  fi
+  say "pacman ${pacman_args[*]}"
+  # A line at a time, also into a pipe: Settings reads how far it is from it.
+  "${env_skip[@]}" stdbuf -oL pacman "${pacman_args[@]}" "${overwrite[@]}" || pacman_failed
+  (( ! ${#left[@]} )) || drop_left_behind "${env_skip[@]}"
+  trap - INT
+
+  install_hardware_packages "$noconfirm" "${env_skip[@]}"
+  install_built_packages "${env_skip[@]}" || true
+  drop_retired "${env_skip[@]}"
+
+  if [[ -n $pre ]]; then
+    say "Taking the post-update snapshot"
+    snapshot "$label" --type post --pre-number "$pre" > /dev/null ||
+      warn "could not take the post-update snapshot (pre-update snapshot is $pre)"
+  fi
+
+  say "Checking the boot entries"
+  if ! verify_boot_entries; then
+    if ! esp_unmounted "$esp" && command -v limine-update > /dev/null 2>&1; then
+      warn "regenerating boot entries with limine-update"
+      limine-update || warn "limine-update failed"
+      verify_boot_entries && { say "Boot entries repaired"; finished; return 0; }
+    fi
+    warn "the boot entries do NOT check out. Do not reboot yet."
+    boot_advice "$pre"
+    return 3
+  fi
+
+  say "Boot entries look right"
+  finished
+}
+
+# Pacman's lock starts too late to protect the pins and their backups.
+# /run is owned by root, so another account cannot supply this lock file.
+take_lock() {
+  mkdir -p "$ROOT/run"
+  exec {update_lock}>"$ROOT/run/nova-update.lock"
+  flock -n "$update_lock" || die "another Nova update is running"
+}
+
+# Going back to an older snapshot, a package the newer one brought in as a
+# dependency is in none of the databases any more, so pacman leaves it where it
+# is: and where it owns a file the older packages have themselves, the move
+# down stops on the conflict. On 2026-11-10 openssl 4.1 brought openssl-3,
+# which owns the libcrypto.so.3 that openssl 3.6 brings back. Such packages go
+# with the move: their files may be written over (overwrite_flags), and once
+# the older versions are in, they are taken out (drop_left_behind). Taken out
+# first, what still runs against them would be broken in between, pacman
+# itself among it. What was installed by hand stays: that was asked for.
+left_behind() { # the packages no repository had before the pins changed
+  mapfile -t left < <(LC_ALL=C comm -13 <(printf '%s\n' "$@" | LC_ALL=C sort -u) \
+    <(pacman -Qqdm 2> /dev/null | LC_ALL=C sort -u))
+  (( ${#left[@]} )) || return 0
+  mapfile -t left_files < <(pacman -Qlq "${left[@]}" | LC_ALL=C sort -u)
+}
+
+# pacman's --overwrite for each of their files, a pattern that matches that
+# file alone: no leading slash, and nothing in the name read as a wildcard.
+overwrite_flags() {
+  printf '%s\n' "${left_files[@]}" |
+    sed -n -e '/\/$/d' -e '/^$/d' -e 's|^/||' -e 's/[][\\*?]/\\&/g' -e 's/^/--overwrite\n/p'
+}
+
+# Out of pacman's books, and off the disk what they alone owned: pacman -R
+# would take the files the older packages now own as well. Not -dd: one that
+# something installed still needs stays, and pacman says which. A file goes
+# only when pacman has listed what every package owns and it is not there: with
+# no list to go by, all of them stay.
+drop_left_behind() { # then a command prefix for pacman
+  local path owned
+  if ! "$@" pacman -R --dbonly --noconfirm "${left[@]}" > /dev/null; then
+    warn "${left[*]} could not be taken out, which the older release does not have: pacman said why above"
+    return 0
+  fi
+  owned=$(mktemp)
+  if ! pacman -Qlq > "$owned" || [[ ! -s $owned ]]; then
+    warn "pacman did not list what the packages own, so the files of ${left[*]} stay where they are"
+    rm -f -- "$owned"
+    return 0
+  fi
+  while IFS= read -r path; do
+    [[ $path == /* ]] || continue
+    if [[ $path == */ ]]; then
+      rmdir -- "$ROOT$path" 2> /dev/null || true
+    else
+      rm -f -- "$ROOT$path" || true
+    fi
+  done < <(LC_ALL=C sort -u "$owned" | LC_ALL=C comm -23 <(printf '%s\n' "${left_files[@]}") - | LC_ALL=C sort -r)
+  rm -f -- "$owned"
+}
+
+# Until this ends, the computer does not shut down or restart, from the menu,
+# the power key or systemctl: stopped in the middle, pacman would leave the
+# release half installed. logind lets go when this process ends, however it
+# ends: at once as it leaves (on_exit), and within the second tail takes to
+# see it gone had it been killed outright. The scratch roots of the tests have
+# no logind to ask.
+hold_shutdown() {
+  [[ -z $ROOT ]] && command -v systemd-inhibit > /dev/null 2>&1 || return 0
+  (
+    trap '' HUP INT PIPE
+    exec systemd-inhibit --what=shutdown --mode=block --who="nova update" \
+      --why="Installing Nova $tag; stopped now it would be left half done" \
+      tail --pid=$$ -f /dev/null
+  ) < /dev/null > /dev/null 2>&1 &
+  shutdown_hold=$!
+}
+
+# Waited for, so that a restart asked for the moment the update ends is not
+# refused in its name.
+release_shutdown() {
+  [[ -n ${shutdown_hold:-} ]] || return 0
+  kill "$shutdown_hold" 2> /dev/null || true
+  wait "$shutdown_hold" 2> /dev/null || true
+  shutdown_hold=''
+}
+
+# However the update ends: the pins back if it ends before pacman has them,
+# then the shutdown let go.
+on_exit() {
+  if (( ${restore_on_exit:-0} )); then
+    restore_on_exit=0
+    restore_config
+  fi
+  release_shutdown
+}
+
+finished() {
+  drop_backup
+  local reason
+  if [[ -z $ROOT ]] && reason=$(reboot_reason); then
+    out 1 "$reason: restart to finish the update."
+  fi
+  out 1 "Nova is now on $tag."
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

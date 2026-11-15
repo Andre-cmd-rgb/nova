@@ -1,0 +1,29 @@
+#!/bin/bash
+
+# nova:summary=Launch an app or focus an existing window matching a pattern
+# nova:args=<window-pattern> <launch-command>
+
+set -euo pipefail
+
+if (($# == 0)); then
+  echo "Usage: nova-launch-or-focus <window-pattern> [launch-command]" >&2
+  exit 1
+fi
+
+pattern=$1
+command=${2:-"uwsm-app -- $pattern"}
+
+# The pattern is a regular expression for a whole word of the window's class
+# or title, any case; the first window in Hyprland's list that has one wins.
+address=$(hyprctl clients -j | jq -r --arg word "$pattern" '
+  first(.[] | select(any(.class, .title; test("\\b" + $word + "\\b"; "i")))) | .address
+')
+
+if [[ -n $address ]]; then
+  hyprctl dispatch "hl.dsp.focus({ window = \"address:$address\" })" >/dev/null 2>&1 ||
+    hyprctl dispatch focuswindow "address:$address"
+  exit
+fi
+
+# The launch command is a command line, and runs as one.
+eval exec setsid "$command"

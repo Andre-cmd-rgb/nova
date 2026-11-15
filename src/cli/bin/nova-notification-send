@@ -1,0 +1,157 @@
+#!/bin/bash
+
+# nova:summary=Send a Nova desktop notification
+# nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]
+
+# A notification's text can come from anywhere, a web page's title say, so none
+# of it is ever taken for more than text: the headline and the description are
+# the first two words that are no option, and what a click runs is only the
+# words after --exec, which the shell runs as they are, never through a shell.
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: nova-notification-send [--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]" >&2
+}
+
+fail() {
+  echo "nova-notification-send: $1" >&2
+  exit 1
+}
+
+app_name=nova-action
+glyph=''
+icon=''
+image=''
+urgency=low
+expire=-1
+replaces=0
+print_id=false
+click=()
+clicks=false
+
+# The variable an option with a value sets, into $setting.
+setting_of() {
+  case $1 in
+    -g | --glyph) setting=glyph ;;
+    -u | --urgency) setting=urgency ;;
+    --app-name) setting=app_name ;;
+    -i | --icon) setting=icon ;;
+    --image) setting=image ;;
+    -r | --replace-id) setting=replaces ;;
+    -t | --expire-time) setting=expire ;;
+    *) return 1 ;;
+  esac
+}
+
+# Whether a word is an option, or --exec.
+is_option() {
+  case $1 in
+    -p | --print-id | --exec) return 0 ;;
+    --?*=*) setting_of "${1%%=*}" ;;
+    *) setting_of "$1" ;;
+  esac
+}
+
+# Takes the option at the front of the arguments, as "--name value" or
+# "--name=value", and leaves in $used the words it took; returns 1 for a word
+# that is no option.
+take() {
+  local name=$1 value=${2-}
+  used=2
+  if [[ $name == --?*=* ]]; then
+    value=${name#*=} name=${name%%=*} used=1
+  fi
+  if [[ $name == -p || $name == --print-id ]]; then
+    print_id=true used=1
+    return 0
+  fi
+  setting_of "$name" || return 1
+  ((used == 1 || $# >= 2)) || fail "$name needs a value"
+  case $setting in
+    replaces) [[ $value =~ ^[0-9]+$ ]] || fail "$name takes a notification's id, not $value" ;;
+    expire) [[ $value =~ ^-?[0-9]+$ ]] || fail "$name takes milliseconds, not $value" ;;
+  esac
+  printf -v "$setting" '%s' "$value"
+}
+
+# Options, then the headline: the first word that is none.
+while (($#)) && take "$@"; do shift "$used"; done
+if (($# == 0)); then
+  usage
+  exit 1
+fi
+headline=$1
+shift
+
+# The description is the next word, though it starts with a dash ("-50% off"),
+# unless it is an option or --exec.
+description=''
+if (($#)) && ! is_option "$1"; then
+  description=$1
+  shift
+fi
+
+# More options, then --exec and the command a click runs, a word each, to the
+# end. --exec counts only here, after the text, so a headline "--exec" is text.
+while (($#)); do
+  if [[ $1 == --exec ]]; then
+    shift
+    click=("$@") clicks=true
+    break
+  fi
+  if ! take "$@"; then
+    echo "nova-notification-send: $1 is no option, and the text is two words at most" >&2
+    usage
+    exit 1
+  fi
+  shift "$used"
+done
+
+case $urgency in
+  low) level=0 ;;
+  normal) level=1 ;;
+  critical) level=2 ;;
+  *) fail "the urgency is low, normal or critical, not $urgency" ;;
+esac
+
+# The hints, an a{sv}, as busctl takes them: a name, a type and a value each.
+hints=(urgency y "$level")
+[[ -z $glyph ]] || hints+=(nova-glyph s "$glyph")
+[[ -z $image ]] || hints+=(image-path s "$image")
+if $clicks; then
+  ((${#click[@]})) && [[ -n ${click[0]} ]] || fail "--exec needs the command a click runs"
+  # One word with a space in it is a whole command line, which would run a
+  # program of that name. Splitting it here would let its text become
+  # commands, so it is refused.
+  if ((${#click[@]} == 1)) && [[ ${click[0]} == *[[:space:]]* ]]; then
+    fail "--exec takes the command a word each, as in: --exec ${click[0]}"
+  fi
+  # The words go to jq NUL-separated, so a newline or a lone "--" in one stays
+  # inside it.
+  hints+=(nova-exec-argv s "$(printf '%s\0' "${click[@]}" | jq -Rsc 'split("\u0000")[:-1]')")
+fi
+
+# org.freedesktop.Notifications.Notify, susssasa{sv}i: the app's name, the id
+# it replaces, the icon, the headline, the description, the actions (none), the
+# hints and the timeout. busctl, not notify-send, as notify-send would read a
+# headline such as "--hint=..." as an option of its own; busctl takes each value
+# as one typed argument, and its "--" keeps one that starts with a dash a value.
+notify=(
+  busctl --user -- call
+  org.freedesktop.Notifications /org/freedesktop/Notifications
+  org.freedesktop.Notifications Notify 'susssasa{sv}i'
+  "$app_name" "$replaces" "$icon" "$headline" "$description"
+  0
+  "$((${#hints[@]} / 3))" "${hints[@]}"
+  "$expire"
+)
+
+# -p prints the new notification's id, for -r to replace it later; busctl
+# answers "u <id>".
+if $print_id; then
+  answer=$("${notify[@]}")
+  echo "${answer##* }"
+else
+  "${notify[@]}" >/dev/null
+fi

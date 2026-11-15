@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# nova:summary=Returns true when running on a laptop (has a lid or laptop chassis)
+# nova:hidden=true
+
+set -euo pipefail
+
+# A lid switch settles it: only a laptop can be shut.
+for lid in "${NOVA_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
+  [[ ! -e $lid ]] || exit 0
+done
+
+# Some laptops have no ACPI lid button; their firmware still says what they
+# are. The SMBIOS chassis types of a portable computer: Portable, Laptop,
+# Notebook, Sub Notebook, Tablet, Convertible and Detachable.
+chassis=""
+dmi=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+[[ ! -r $dmi/chassis_type ]] || chassis=$(<"$dmi/chassis_type")
+case $chassis in
+  8 | 9 | 10 | 14 | 30 | 31 | 32) exit 0 ;;
+  *) exit 1 ;;
+esac

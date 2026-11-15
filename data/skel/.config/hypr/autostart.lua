@@ -1,0 +1,2 @@
+-- Programs to start with the session.
+-- nova.launch_on_start("my-program")

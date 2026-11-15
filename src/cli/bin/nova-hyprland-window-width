@@ -1,0 +1,91 @@
+#!/bin/bash
+
+# nova:summary=Save or restore the focused Hyprland window width
+# nova:args=<save|restore>
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: nova-hyprland-window-width save|restore" >&2
+  exit 1
+}
+
+action=${1:-}
+[[ $action == save || $action == restore ]] || usage
+
+# A width is kept for an app on a workspace. The app is its window class, or
+# the class it started with, or else its title. jq writes the fields as shell
+# assignments, each value quoted by @sh, so one run reads them all.
+window=$(hyprctl activewindow -j 2>/dev/null)
+window=$(jq -r '
+  @sh "app=\([.class, .initialClass, .title] | map(select(. != null and . != "")) | first // "")",
+  @sh "workspace=\(.workspace.id // .workspace.name // "")",
+  @sh "address=\(.address // "")",
+  @sh "width=\(.size[0] // "")"
+' <<<"$window")
+# Empty, should Hyprland have said nothing at all.
+app="" workspace="" address="" width=""
+eval "$window"
+[[ -n $app && -n $workspace ]] || exit 1
+
+name="workspace-$workspace-$app"
+name=${name//\//_}
+file=${XDG_STATE_HOME:-$HOME/.local/state}/nova/windows/${name//$'\n'/_}.width
+
+if [[ $action == save ]]; then
+  [[ -n $width ]] || exit 1
+  # Written whole or not at all, should another save land at the same time.
+  mkdir -p "${file%/*}"
+  part=$(mktemp "${file%/*}/.width.XXXXXX")
+  printf '%s\n' "$width" >"$part"
+  mv "$part" "$file"
+  nova-notification-send -g  "Saved width for $app on workspace $workspace" "Restore using Super + Home on this workspace."
+  echo "Saved width for $app on workspace $workspace"
+  exit 0
+fi
+
+if [[ ! -f $file ]]; then
+  nova-notification-send -g  "No saved width found for $app on workspace $workspace" "Use Super + Alt + Home to save one for this workspace."
+  exit 1
+fi
+saved=$(<"$file")
+[[ $saved =~ ^[0-9]+$ && -n $address ]] || exit 1
+
+current_width() {
+  hyprctl clients -j | jq -er --arg address "$address" '.[] | select(.address == $address) | .size[0]'
+}
+
+resize_by() { # pixels
+  local target="address:$address"
+  hyprctl dispatch "hl.dsp.window.resize({ window = \"$target\", x = $1, y = 0, relative = true })" >/dev/null 2>&1 ||
+    hyprctl dispatch resizeactive "$1" 0 "$target" >/dev/null
+}
+
+current=$(current_width)
+((current != saved)) || exit 0
+
+# Hyprland moves the edge a tiled window shares with its neighbour, and
+# whether the width grows or shrinks with it depends on which side the window
+# is on. A first nudge either way shows which; one that changes nothing means
+# the window cannot be resized.
+direction=0
+for nudge in 10 -10; do
+  resize_by "$nudge"
+  now=$(current_width)
+  if ((now != current)); then
+    direction=$(((now - current) * nudge > 0 ? 1 : -1))
+    current=$now
+    break
+  fi
+done
+((direction != 0)) || exit 1
+
+# Then straight for the saved width. Neighbours and minimum sizes can take a
+# step short, so a few more, until the width stops moving.
+for _ in 1 2 3 4 5 6; do
+  ((current != saved)) || break
+  resize_by $(((saved - current) * direction))
+  now=$(current_width)
+  ((now != current)) || break
+  current=$now
+done

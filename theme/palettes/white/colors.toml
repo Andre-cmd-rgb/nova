@@ -1,0 +1,31 @@
+# Nova's own: white paper and black ink, with greys in place of colours, so
+# nothing on screen but the photo behind it has a hue. Nova's default.
+mode = "light"
+
+background = "#ffffff"
+dark_background = "#f3f3f3"
+lighter_background = "#ebebeb"
+selection = "#d6d6d6"
+
+foreground = "#121212"
+light_foreground = "#4d4d4d"
+dark_foreground = "#a3a3a3"
+muted = "#8c8c8c"
+
+accent = "#575757"
+
+# The terminal's colours, each a grey of its own depth, all dark enough to
+# read on white.
+red = "#3d3d3d"
+green = "#474747"
+yellow = "#5c5c5c"
+blue = "#262626"
+magenta = "#333333"
+cyan = "#525252"
+
+bright_red = "#3d3d3d"
+bright_green = "#474747"
+bright_yellow = "#5c5c5c"
+bright_blue = "#262626"
+bright_magenta = "#333333"
+bright_cyan = "#525252"

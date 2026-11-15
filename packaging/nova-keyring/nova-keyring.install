@@ -1,0 +1,14 @@
+# Same as archlinux-keyring: trust the key once pacman's own keyring exists.
+# pacstrap -K and the live ISO's pacman-init create it before this runs.
+
+post_upgrade() {
+  if usr/bin/pacman-key -l >/dev/null 2>&1; then
+    usr/bin/pacman-key --populate nova
+  fi
+}
+
+post_install() {
+  if [ -x usr/bin/pacman-key ]; then
+    post_upgrade
+  fi
+}

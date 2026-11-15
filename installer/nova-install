@@ -1,0 +1,1384 @@
+#!/bin/bash
+#
+# nova-install: install Nova from the USB stick onto this computer's disk.
+#
+# Runs as root in the live system. Every question comes first, one a screen
+# (installer/ui.bash), then one summary, and only after "erase" is typed does
+# anything touch a disk. The whole disk is
+# used: a 2 GiB EFI system partition and one btrfs partition holding the
+# subvolumes that snapshots and rollback expect (@ @home @log @pkg @snapshots
+# @swap). The btrfs partition can be encrypted (LUKS2), when asked for.
+#
+# Packages come from the offline repository on the stick when there is one, and
+# otherwise from the pinned Arch snapshot and [nova] repository named in the
+# release file. Either way the installed system ends up pointed at the release
+# it was installed from, which is what `nova update` moves forward.
+#
+#   nova-install                  the interactive install
+#   nova-install --answers FILE   the same install with no questions, answered
+#                                 by FILE in key=value lines: keymap, disk,
+#                                 fullname, user, password (8 characters or
+#                                 more), hostname, timezone,
+#                                 passphrase (for things carried), erase=yes to
+#                                 go ahead, and optionally encrypt=yes with
+#                                 disk_passphrase (8 characters or more), apps=no and
+#                                 after=<script>, run in the new system at the
+#                                 end. tests/install/run uses it.
+#   nova-install --portable [disk]
+#                                 Nova onto a USB disk of 32 GB or more, to
+#                                 start any PC from: the disk given (nova usb
+#                                 picks it), or one asked for. portable=yes in
+#                                 an answers file does the same.
+#   nova-install --portable-disks the USB disks --portable would offer
+#   nova-install --unlock         open the things carried on the stick (nova usb)
+#   nova-install --keymap [km]    the keyboard layout screen, km first; prints
+#                                 the keymap chosen (km for Esc)
+#   nova-install --list-packages  every package an install on any computer can
+#                                 need: what nova usb puts on a stick
+#   nova-install --help           this text
+#
+# Exits 3, with nothing changed and before any question, on a computer that
+# has to be set otherwise first: started in legacy BIOS mode, or with Secure
+# Boot on, which would refuse to start the boot loader Nova installs.
+#
+# A portable install is the same Nova, made a guest on every computer it
+# starts: Arch's own kernel, which any 64-bit CPU runs; every computer's
+# microcode and video drivers; an initramfs for every computer rather than
+# this one; no swap file, since a hibernated image must never resume on
+# another computer; and no boot entry in any computer's firmware, now or
+# when Limine updates, since the stick starts from EFI/BOOT/BOOTX64.EFI.
+# /etc/nova/portable marks it, and what is tuned for one model (its /etc
+# files, its packages, an undervolt) stays off.
+#
+# NOVA_* variables override paths for testing; the functions are sourceable
+# (tests/unit/installer/install.bats) and `main` runs only when executed.
+
+set -euo pipefail
+
+SHARE=${NOVA_INSTALLER_SHARE:-/usr/share/nova-installer}
+TARGET=${NOVA_TARGET:-/mnt}
+STICK=${NOVA_STICK:-/run/archiso/bootmnt}
+OFFLINE_REPO=${NOVA_OFFLINE_REPO:-$STICK/nova/repo}
+RELEASE_FILE=${NOVA_RELEASE_FILE:-$SHARE/release.toml}
+CPUINFO=${NOVA_CPUINFO:-/proc/cpuinfo}
+MEMINFO=${NOVA_MEMINFO:-/proc/meminfo}
+PCI_DEVICES=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
+LOG=${NOVA_INSTALL_LOG:-/var/log/nova-install.log}
+CARRY=${NOVA_CARRY:-/run/nova-carry}
+DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
+EFI=${NOVA_EFI_PATH:-/sys/firmware/efi}
+FPRINT_DIR=${NOVA_FPRINT_DIR:-/var/lib/fprint}
+# The answers file, for an install with no questions (--answers).
+ANSWERS=''
+CARRY_MAPPER=nova-carry
+# Left by "Enter to install without them", so the passphrase is asked once.
+CARRY_DECLINED=$CARRY.declined
+
+ESP_MIB=2048
+MIN_DISK_BYTES=$((64 * 1024 * 1024 * 1024))
+BTRFS_OPTS=noatime,compress=zstd:1
+SUBVOLUMES=("@:/" "@home:/home" "@log:/var/log" "@pkg:/var/cache/pacman/pkg" "@snapshots:/.snapshots" "@swap:/swap")
+# The opened LUKS2 container of an encrypted install, as /dev/mapper/ names it
+# here (CRYPT_NAME) and in the new system's initramfs (BOOT_CRYPT_NAME). The
+# same but for a portable install, which may be made from a running Nova
+# whose own root already has the name.
+CRYPT_NAME=nova-root
+BOOT_CRYPT_NAME=nova-root
+
+# A portable install (--portable): onto a USB disk, of 32 GB or more, which a
+# "32 GB" stick is (about 29.8 GiB): the system, its apps and snapshots take
+# about 12 GB, and the rest is the home's.
+PORTABLE=0
+PORTABLE_DISK=''
+MIN_PORTABLE_BYTES=$((28 * 1024 * 1024 * 1024))
+PORTABLE_MARKER=/etc/nova/portable
+
+# What each kind of display controller needs beyond mesa, which has the AMD
+# video driver built in. hardware_packages picks this machine's; every_package
+# lists them all. NVK, Vulkan on nouveau, is for a portable install, which
+# drives NVIDIA cards with nouveau (portable_packages says why).
+GPU_INTEL=(intel-media-driver vulkan-intel)
+GPU_AMD=(vulkan-radeon)
+GPU_NOUVEAU=(vulkan-nouveau)
+
+# An Intel MIPI camera, an IPU6 or IPU7, by the device ids the kernel's
+# intel-ipu6 and intel-ipu7 drivers take (nova doctor has the same list).
+# Apps reach it through PipeWire's libcamera plugin, which WirePlumber leaves
+# a USB camera's to V4L2.
+IPU_IDS=" 0x9a19 0x4e19 0x465d 0x462e 0xa75d 0x7d19 0x645d 0xb05d "
+CAMERA_IPU=(libcamera libcamera-ipa pipewire-libcamera)
+
+# The setup screens' look, and the questions and account every Nova setup
+# shares: beside this file in the repository, in the share on the stick.
+if [[ -r ${BASH_SOURCE[0]%/*}/ui.bash ]]; then
+  # shellcheck source=installer/ui.bash
+  source "${BASH_SOURCE[0]%/*}/ui.bash"
+  # shellcheck source=installer/setup.bash
+  source "${BASH_SOURCE[0]%/*}/setup.bash"
+  # shellcheck source=installer/wifi.bash
+  source "${BASH_SOURCE[0]%/*}/wifi.bash"
+else
+  # shellcheck source=installer/ui.bash
+  source "$SHARE/ui.bash"
+  # shellcheck source=installer/setup.bash
+  source "$SHARE/setup.bash"
+  # shellcheck source=installer/wifi.bash
+  source "$SHARE/wifi.bash"
+fi
+
+say() { echo >&2; ui_title "$*"; }
+info() { ui_note "$*"; }
+warn() {
+  ui_warn "$*"
+  [[ -z ${UI_NOTES:-} ]] || printf '%s\n' "$*" >>"$UI_NOTES"
+}
+die() {
+  echo >&2
+  ui_error "nova-install: $*"
+  exit 1
+}
+
+# ------------------------------------------------------------------- the disk
+
+# The disk the live system booted from, so it is never offered. Empty when it
+# cannot be told (booted with copytoram, say); removable disks are left out
+# anyway.
+boot_disk() {
+  local src parent
+  src=$(findmnt -no SOURCE -- "$STICK" 2>/dev/null) || return 0
+  [[ -b $src ]] || return 0
+  parent=$(lsblk -no PKNAME -- "$src" 2>/dev/null | awk 'NR == 1')
+  if [[ -n $parent ]]; then echo "/dev/$parent"; else echo "$src"; fi
+}
+
+lsblk_disks() {
+  lsblk -J -b -d -o NAME,PATH,SIZE,MODEL,SERIAL,TYPE,RM,RO,TRAN
+}
+
+# One tab-separated line per disk Nova may go on: path, size in bytes, model,
+# serial, transport, with "-" for an unknown field so the columns never shift.
+# Left out: the stick it booted from, read-only, removable and USB disks,
+# virtual devices, and anything under 64 GiB. NOVA_ALLOW_USB=1 lets a USB disk
+# through, for installing onto an external drive on purpose.
+#
+# A portable install turns the rule around: only removable and USB disks, of
+# 32 GB or more. NOVA_ALLOW_ANY=1 lets any disk through, an image file on a
+# loop device too, the way nova usb's own NOVA_USB_ALLOW_ANY does for tests.
+candidate_disks() {
+  local boot min=$MIN_DISK_BYTES
+  boot=$(boot_disk)
+  ((!PORTABLE)) || min=$MIN_PORTABLE_BYTES
+  lsblk_disks | jq -r --arg boot "$boot" --argjson min "$min" --arg usb "${NOVA_ALLOW_USB:-0}" \
+    --arg portable "$PORTABLE" --arg any "${NOVA_ALLOW_ANY:-0}" '
+    def yes: . == true or . == "1" or . == 1;
+    def portable: $portable == "1";
+    .blockdevices[]
+    | select((.type == "disk" or (portable and $any == "1" and .type == "loop")) and .path != $boot)
+    | select(.ro | yes | not)
+    | if portable then select($any == "1" or (.rm | yes) or .tran == "usb")
+      else select($usb == "1" or ((.rm | yes | not) and .tran != "usb")) end
+    | select((.name | test("^(zram|sr|ram|fd)")) | not)
+    | select((.size | tonumber) >= $min)
+    | def field: (. // "") | tostring | gsub("^\\s+|\\s+$"; "") | if . == "" then "-" else . end;
+      [.path, (.size | tostring), (.model | field), (.serial | field), (.tran | field)]
+    | @tsv'
+}
+
+# Something on the live system is using the disk: a mounted partition, active
+# swap, or an LVM, RAID or dm-crypt device built on it.
+disk_in_use() {
+  local disk=$1
+  lsblk -nro MOUNTPOINTS -- "$disk" | grep -q . && return 0
+  lsblk -nro TYPE -- "$disk" | grep -Eq '^(lvm|crypt|raid[0-9]*|dm|md)$'
+}
+
+# What an install that stopped part-way left behind: its swap file in use and
+# the new system mounted at $TARGET. Both are let go before the disk is chosen,
+# or the disk would look in use by the live system and could not be picked.
+release_target() {
+  if swapon --noheadings --show=NAME 2>/dev/null | grep -qxF -- "$TARGET/swap/swapfile"; then
+    swapoff -- "$TARGET/swap/swapfile" || die "could not stop using the last try's swap file; restart and try again."
+  fi
+  if mountpoint -q -- "$TARGET"; then
+    info "Unmounting what the last try left at $TARGET"
+    umount -R -- "$TARGET" || die "something still uses $TARGET; restart and try again."
+  fi
+  if [[ -e /dev/mapper/$CRYPT_NAME ]]; then
+    cryptsetup close "$CRYPT_NAME" || die "could not close the last try's encrypted disk; restart and try again."
+  fi
+}
+
+# /dev/nvme0n1 -> /dev/nvme0n1p2, /dev/sda -> /dev/sda2
+partition_path() {
+  local disk=$1 number=$2
+  if [[ $disk =~ [0-9]$ ]]; then echo "${disk}p$number"; else echo "$disk$number"; fi
+}
+
+human_size() {
+  awk -v b="$1" 'BEGIN { split("B KB MB GB TB PB", u); i = 1; while (b >= 1000 && i < 6) { b /= 1000; i++ } printf (i > 3 ? "%.1f %s" : "%.0f %s"), b, u[i] }'
+}
+
+# Swap for hibernation: the size of RAM, so a full image always fits, rounded
+# up to a GiB and never more than an eighth of the disk.
+swap_gib() {
+  local disk_bytes=$1 ram_gib cap
+  ram_gib=$(awk '/^MemTotal:/ { printf "%d", ($2 + 1048575) / 1048576 }' "$MEMINFO")
+  cap=$((disk_bytes / 8 / 1024 / 1024 / 1024))
+  ((ram_gib > 0)) || ram_gib=8
+  if ((ram_gib > cap)); then echo "$cap"; else echo "$ram_gib"; fi
+}
+
+# ------------------------------------------------------------- the machine
+
+cpu_has_x86_64_v3() {
+  local flags f
+  flags=$(grep -m 1 '^flags' "$CPUINFO" 2>/dev/null) || return 1
+  for f in avx avx2 bmi1 bmi2 f16c fma abm movbe xsave; do
+    [[ " ${flags#*:} " == *" $f "* ]] || return 1
+  done
+}
+
+cpu_vendor() {
+  awk -F': ' '/^vendor_id/ { print $2; exit }' "$CPUINFO" 2>/dev/null
+}
+
+# Whether the firmware has Secure Boot on. Its SecureBoot variable is four
+# bytes of attributes and one of value, 1 when on. Firmware without it has no
+# Secure Boot to be on, and one that cannot be read counts as off: this stops
+# an install, so only a plain yes does.
+secure_boot_on() {
+  local value
+  value=$(od -An -tu1 -j4 -N1 -- "$EFI/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c" 2>/dev/null) || return 1
+  [[ ${value//[[:space:]]/} == 1 ]]
+}
+
+# What turning Secure Boot off costs a PC with Windows on it.
+BITLOCKER_NOTE=$'A PC with Windows and BitLocker or Device Encryption asks for its recovery\nkey at its next start once Secure Boot is off: have the key at hand first.'
+
+# This computer has to be set otherwise before Nova can go on it: said on a
+# screen of its own, before any question, with nothing changed. Exits 3, so
+# nova-install-start knows trying again as it is would not help.
+not_ready() { # setting what [note...]
+  local note
+  if [[ -z $ANSWERS ]]; then screen "$1"; else echo >&2; fi
+  ui_error "$2"
+  for note in "${@:3}"; do
+    echo >&2
+    ui_note "$note"
+  done
+  exit 3
+}
+
+# Nova goes only onto a computer that will start it: one that booted the stick
+# with UEFI, and with Secure Boot off, since Limine and the kernels Nova
+# installs are not signed for it. A portable install is made here and started
+# elsewhere, so this computer's settings are no matter to it; its last screen
+# says what the PCs it starts need.
+computer_ready() {
+  ((!PORTABLE)) || return 0
+  [[ -d $EFI ]] ||
+    not_ready UEFI "This computer started the stick in legacy BIOS mode; Nova needs UEFI." \
+      $'Turn on UEFI boot in the firmware settings, then start this stick again.\nNothing was changed.'
+  if secure_boot_on; then
+    not_ready "Secure Boot" "Secure Boot is on, so this computer would not start Nova once installed." \
+      $'Nova\'s boot loader is not signed for it. Turn Secure Boot off in the\nfirmware settings: restart, press the setup key as the computer starts (F2,\nF1, Del or Esc on most; Enter, then F1, on a ThinkPad), set Secure Boot to\nDisabled under Security or Boot, save, and start this stick again.\nNothing was changed.' \
+      "$BITLOCKER_NOTE"
+  fi
+}
+
+# The kernel Nova boots: linux-nova is built for x86-64-v3, so an older CPU
+# gets Arch's own kernel instead. linux-lts is installed either way as the
+# fallback entry. A portable install cannot know which CPU it will start on
+# next, so it always has Arch's.
+main_kernel() {
+  if ((!PORTABLE)) && cpu_has_x86_64_v3; then echo linux-nova; else echo linux; fi
+}
+
+# A portable install starts a different computer each time, so it has what any
+# of them needs: both microcodes (the initramfs loads the one that fits) and
+# the Intel and AMD video drivers. NVIDIA cards run on nouveau, with NVK for
+# Vulkan: NVIDIA's own driver blacklists nouveau and drives nothing older than
+# Turing, so on the computers it does not fit it would leave no driver at all.
+portable_packages() {
+  printf '%s\n' intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" "${GPU_NOUVEAU[@]}"
+}
+
+# Packages this hardware needs, from the CPU and the display controllers,
+# modem and camera in sysfs (never lspci, which wakes a sleeping GPU). The
+# model's own profile adds to this; see profile_packages. A portable install's
+# are portable_packages.
+hardware_packages() {
+  local kernel=$1 dev vendor device dgpu=0 igpu=0 modem=0 camera=0
+  if ((PORTABLE)); then
+    portable_packages
+    return 0
+  fi
+  case $(cpu_vendor) in
+    GenuineIntel) echo intel-ucode ;;
+    AuthenticAMD) echo amd-ucode ;;
+  esac
+  for dev in "$PCI_DEVICES"/*; do
+    [[ -r $dev/class ]] || continue
+    # A cellular modem on PCIe: ModemManager reads its SIM and runs it. With
+    # no SIM, Nova keeps it switched off (shell/plugins/mobile-data).
+    if [[ $(<"$dev/class") == 0x0d40* ]]; then modem=1; continue; fi
+    vendor=$(<"$dev/vendor")
+    if [[ $vendor == 0x8086 && $IPU_IDS == *" $(<"$dev/device") "* ]]; then camera=1; continue; fi
+    [[ $(<"$dev/class") == 0x03* ]] || continue
+    case $vendor in
+      0x8086) printf '%s\n' "${GPU_INTEL[@]}"; igpu=1 ;;
+      0x1002) printf '%s\n' "${GPU_AMD[@]}"; igpu=1 ;;
+      0x10de)
+        device=$(<"$dev/device")
+        # The open modules need GSP firmware, which starts with Turing. The
+        # LTS fallback kernel gets its own build, so it can drive the card too.
+        if ((device >= 0x1e00)); then
+          if [[ $kernel == linux-nova ]]; then echo nvidia-open-nova; else echo nvidia-open; fi
+          echo nvidia-open-lts
+          echo nvidia-utils
+          dgpu=1
+        fi
+        ;;
+    esac
+  done
+  # With an integrated GPU beside it, the desktop and the browser run on that
+  # one, and prime-run puts a game on the NVIDIA card. Whichever card drives
+  # the monitors decodes video, which the session decides as it starts
+  # (data/hypr/gpu.lua): a desktop with its iGPU on and its monitors on the
+  # NVIDIA card has VA-API pointed at NVIDIA's driver, so it is always there.
+  if ((dgpu && igpu)); then echo nvidia-prime; fi
+  if ((dgpu)); then echo libva-nvidia-driver; fi
+  if ((modem)); then echo modemmanager; fi
+  if ((camera)); then printf '%s\n' "${CAMERA_IPU[@]}"; fi
+}
+
+# This computer's model, as its maker names it; `fallback` when no DMI field
+# does.
+computer_model() { # fallback
+  NOVA_DMI_PATH=$DMI "$SHARE/hardware/nova-hw-model" 2>/dev/null || echo "$1"
+}
+
+# The model's profile, which a portable install never takes: the computer it
+# is made on is only the first of many.
+hardware_profile() {
+  ((!PORTABLE)) || return 0
+  NOVA_HARDWARE=$SHARE/hardware "$SHARE/hardware/nova-hw-detect" 2>/dev/null || true
+}
+
+# The model profile's package list. nvidia-open-nova only exists for linux-nova,
+# so an older CPU gets Arch's nvidia-open in its place.
+profile_packages() {
+  local profile=$1 kernel=$2 name
+  [[ -n $profile && -r $SHARE/hardware/$profile/packages ]] || return 0
+  while IFS= read -r name; do
+    name=${name%%#*}
+    name=${name//[[:space:]]/}
+    [[ -n $name ]] || continue
+    if [[ $name == nvidia-open-nova && $kernel != linux-nova ]]; then name=nvidia-open; fi
+    echo "$name"
+  done <"$SHARE/hardware/$profile/packages"
+}
+
+# Every package an install on any computer could ask for, for the offline
+# repository nova usb puts on a stick: one stick installs any machine.
+every_package() {
+  local list
+  {
+    grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
+    printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" "${GPU_NOUVEAU[@]}" \
+      nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver modemmanager "${CAMERA_IPU[@]}"
+    for list in "$SHARE"/hardware/*/packages; do
+      [[ -r $list ]] || continue
+      sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"
+    done
+  } | awk '!seen[$0]++'
+}
+
+# Everything pacstrap installs, one per line, without duplicates.
+package_set() { # kernel profile [package...]
+  local kernel=$1 profile=$2
+  {
+    grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
+    echo "$kernel"
+    echo linux-lts
+    hardware_packages "$kernel"
+    profile_packages "$profile" "$kernel"
+    printf '%s\n' "${@:3}"
+  } | awk 'NF && !seen[$0]++'
+}
+
+# --------------------------------------------------------- the release and repos
+
+# A string value from release.toml: key = "value"
+release_value() {
+  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\"[[:space:]]*\$/\\1/p" "$RELEASE_FILE" | awk 'NR == 1'
+}
+
+offline_repo_ready() {
+  [[ -r $OFFLINE_REPO/nova-offline.db ]]
+}
+
+# The pacman.conf pacstrap uses. Offline, one repository on the stick holds
+# every package; online, the same repositories the installed system will use.
+pacstrap_conf() {
+  local arch_date=$1 nova_repo=$2
+  cat <<EOF
+[options]
+Architecture = auto
+SigLevel = Required DatabaseOptional
+LocalFileSigLevel = Optional
+ParallelDownloads = 5
+EOF
+  if offline_repo_ready; then
+    printf '\n[nova-offline]\nServer = file://%s\n' "$OFFLINE_REPO"
+  else
+    printf '\n[nova]\nSigLevel = Required\nServer = %s\n' "$nova_repo"
+    local repo
+    for repo in core extra multilib; do
+      # shellcheck disable=SC2016 # $arch is pacman's to expand
+      printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$repo" "$arch_date"
+    done
+  fi
+}
+
+# ------------------------------------------------------------- the boot line
+
+# The machine-specific half of the kernel command line; the quiet-boot half is
+# in /etc/limine-entry-tool.d/10-nova.conf. zswap is off because zram does the
+# compressing. rootflags=subvol=@ is the form limine-snapper-sync rewrites to
+# boot a snapshot. root is PARTUUID=<the partition's>, or, encrypted,
+# /dev/mapper/nova-root, which rd.luks.name has the initramfs open with the
+# passphrase it asks for; the swap file, and so resume, is inside it. A
+# portable install has no swap file, so no resume either.
+install_cmdline() { # root resume-offset|"" [luks-uuid]
+  local root=$1 resume_offset=$2 luks=${3:-}
+  [[ -z $luks ]] || printf 'rd.luks.name=%s=%s ' "$luks" "$BOOT_CRYPT_NAME"
+  printf 'root=%s rootflags=subvol=@ rw rootfstype=btrfs zswap.enabled=0' "$root"
+  [[ -z $resume_offset ]] || printf ' resume=%s resume_offset=%s' "$root" "$resume_offset"
+}
+
+# An encrypted install's initramfs asks for the passphrase (sd-encrypt), in
+# the keyboard layout picked (sd-vconsole, from /etc/vconsole.conf): both put
+# into Nova's own HOOKS line, wherever a later Nova moves the rest of it.
+encrypt_mkinitcpio_conf() {
+  cat <<'CONF'
+# Written by nova-install: the root is encrypted. The initramfs asks for its
+# passphrase, in the keyboard layout of /etc/vconsole.conf.
+_nova_hooks=()
+for _nova_hook in "${HOOKS[@]}"; do
+  case $_nova_hook in
+    keyboard) _nova_hooks+=(keyboard sd-vconsole) ;;
+    block) _nova_hooks+=(block sd-encrypt) ;;
+    *) _nova_hooks+=("$_nova_hook") ;;
+  esac
+done
+HOOKS=("${_nova_hooks[@]}")
+unset _nova_hooks _nova_hook
+CONF
+}
+
+limine_install_conf() {
+  local cmdline=$1 kernel=$2
+  echo "# Written by nova-install for this machine's disk."
+  printf 'KERNEL_CMDLINE[default]+=" %s"\n' "$cmdline"
+  if [[ $kernel != linux-nova ]]; then
+    if ((PORTABLE)); then
+      echo "# Portable: Arch's kernel stands in for linux-nova, so any 64-bit CPU starts it."
+    else
+      echo "# This CPU predates x86-64-v3, so Arch's kernel stands in for linux-nova."
+    fi
+    echo "MKINITCPIO_FALLBACK=$kernel"
+    echo "BOOT_ORDER=\"$kernel, *fallback, linux-lts, *, Snapshots\""
+  fi
+  if ((PORTABLE)); then
+    # limine-install reads this at every run, the limine package's own hook
+    # after an update included, so the promise holds for as long as the stick
+    # is used, not only on the day it is made.
+    echo "# Portable: Limine starts from EFI/BOOT/BOOTX64.EFI on the stick, and no"
+    echo "# computer it meets gets a boot entry written into its firmware."
+    echo "SKIP_UEFI=yes"
+  fi
+}
+
+# The initramfs of a portable install is for every computer, not the one it
+# was built on: without autodetect it holds every disk, USB and keyboard
+# driver, so the stick starts, and its passphrase can be typed, anywhere.
+# Without kms, about a third of the size: kms would add every GPU driver and
+# its firmware, for the screen to change mode a second sooner. The video
+# driver then loads from the stick.
+portable_mkinitcpio_conf() {
+  cat <<'CONF'
+# Written by nova-install --portable: an initramfs for every computer this
+# stick starts, not only the one it was made on.
+_nova_hooks=()
+for _nova_hook in "${HOOKS[@]}"; do
+  case $_nova_hook in
+    autodetect | nova-blacklist | kms) ;;
+    *) _nova_hooks+=("$_nova_hook") ;;
+  esac
+done
+HOOKS=("${_nova_hooks[@]}")
+unset _nova_hooks _nova_hook
+CONF
+}
+
+# No hibernation on a portable install: there is no swap file to write memory
+# to, and an image written on one computer must never resume on another.
+portable_sleep_conf() {
+  cat <<'CONF'
+# Written by nova-install --portable: sleep is suspend alone. A hibernated
+# image must never resume on another computer, and there is no swap file to
+# write one to.
+[Sleep]
+AllowHibernation=no
+AllowSuspendThenHibernate=no
+AllowHybridSleep=no
+CONF
+}
+
+portable_marker() {
+  cat <<'MARKER'
+# Written by nova-install --portable. This Nova runs from a USB disk, on
+# whatever computer it is plugged into, so nothing tuned for one model applies:
+# nova-hw-apply puts no model's files in /etc, nova update adds no model's
+# packages, and nova power undervolt stays off.
+MARKER
+}
+
+# What makes a portable install one, written before pacstrap: the kernels'
+# install hooks build the initramfs with the mkinitcpio drop-in, and the nova
+# package's own hook (nova-hw-apply) reads the marker.
+write_portable_config() {
+  portable_marker | install -Dm644 /dev/stdin "$TARGET$PORTABLE_MARKER"
+  portable_mkinitcpio_conf | install -Dm644 /dev/stdin "$TARGET/etc/mkinitcpio.conf.d/30-nova-portable.conf"
+  portable_sleep_conf | install -Dm644 /dev/stdin "$TARGET/etc/systemd/sleep.conf.d/20-nova-portable.conf"
+}
+
+# Into portable mode, from --portable or an answers file's portable=yes. The
+# container is opened under a name of its own: nova usb runs this on a running
+# system, which may be a Nova with its own nova-root. Encryption starts ticked
+# on screen: a stick is easy to lose.
+portable_mode() {
+  PORTABLE=1
+  CRYPT_NAME=nova-usb-root
+  ENCRYPT=yes
+}
+
+# genfstab writes subvolid= next to subvol=, and a subvolid pins the mount to
+# one subvolume forever: rolling back to a snapshot would mount the old one.
+strip_subvolid() {
+  sed -E 's/,subvolid=[0-9]+//; s/subvolid=[0-9]+,//'
+}
+
+# ------------------------------------------------------------- the questions
+#
+# The questions themselves are installer/setup.bash's; these are the
+# installer's own.
+
+# An answer from the answers file: the last key=value line for the key.
+answer() { # key
+  sed -n "s/^$1=//p" "$ANSWERS" | tail -n 1
+}
+
+# The answers, asked on screen or read from the answers file.
+KEYMAP='' DISK_LINE='' FULLNAME='' ACCOUNT='' PASSWORD='' COMPUTER='' TIMEZONE='' FINGERPRINT=''
+ENCRYPT=no DISK_PASSPHRASE=''
+# Who FINGERPRINT was enrolled for: going back and changing the username
+# leaves the print behind.
+ENROLLED_FOR=''
+UI_STOPPED="The installer stopped; nothing was changed. nova-install-start starts it again."
+
+# What carried things say about the computer they came from, as defaults.
+carried_default() { # name|user|host|timezone
+  carry_ready || return 0
+  local value
+  value=$(carry_value ".source.$1")
+  case $1 in
+    name) valid_fullname "$value" || value= ;;
+    user) valid_username "$value" || value= ;;
+    # Only for this same computer; another one deserves its own name.
+    host) [[ -n $(machine_hash) && $(machine_hash) == "$(carry_value .source.machine)" ]] && valid_hostname "$value" || value= ;;
+    timezone) valid_timezone "$value" || value= ;;
+  esac
+  echo "$value"
+}
+
+# A portable install is a computer of its own, on every network it joins, so
+# it is not named after the one it is made on.
+default_answer() {
+  if ((PORTABLE)) && [[ $1 == host ]]; then
+    echo nova-usb
+    return 0
+  fi
+  carried_default "$1"
+}
+
+# Why no disk is offered.
+no_disk() {
+  if ((PORTABLE)); then
+    echo "no USB disk to put Nova on: it needs a USB stick or drive of 32 GB or more, besides the stick this runs from."
+  else
+    echo "no disk to install on: Nova needs an internal disk of at least 64 GiB."
+  fi
+}
+
+# --answers: every answer from the file, where a wrong one ends the install
+# rather than asking again.
+answers_from_file() {
+  local line
+  KEYMAP=$(answer keymap)
+  KEYMAP=${KEYMAP:-us}
+  valid_keymap "$KEYMAP" || die "the answers file: no keyboard layout called '$KEYMAP'."
+  local disks=()
+  mapfile -t disks < <(candidate_disks)
+  ((${#disks[@]})) || die "$(no_disk)"
+  DISK_LINE=''
+  for line in "${disks[@]}"; do
+    [[ ${line%%$'\t'*} == "$(answer disk)" ]] && DISK_LINE=$line
+  done
+  [[ -n $DISK_LINE ]] || die "the answers file names no disk this can install on (disk=$(answer disk))"
+  ! disk_in_use "${DISK_LINE%%$'\t'*}" || die "the answers file's disk is in use by the live system"
+  FULLNAME=$(answer_or fullname "$(carried_default name)")
+  valid_fullname "$FULLNAME" || die "the answers file: a name without : in it."
+  ACCOUNT=$(answer_or user "$(carried_default user)")
+  [[ -n $ACCOUNT ]] || ACCOUNT=$(suggested_username "$FULLNAME")
+  valid_username "$ACCOUNT" || die "the answers file: no account can be called '$ACCOUNT'."
+  PASSWORD=$(answer password)
+  [[ -n $PASSWORD ]] || die "the answers file has no password"
+  ((${#PASSWORD} >= MIN_PASSWORD)) || die "the answers file: a password of at least $MIN_PASSWORD characters."
+  COMPUTER=$(answer_or hostname nova)
+  valid_hostname "$COMPUTER" || die "the answers file: no computer can be called '$COMPUTER'."
+  TIMEZONE=$(answer_or timezone UTC)
+  valid_timezone "$TIMEZONE" || die "the answers file: no time zone called '$TIMEZONE'."
+  ENCRYPT=$(answer_or encrypt no)
+  [[ $ENCRYPT == yes || $ENCRYPT == no ]] || die "the answers file: encrypt=yes or encrypt=no."
+  DISK_PASSPHRASE=''
+  if [[ $ENCRYPT == yes ]]; then
+    DISK_PASSPHRASE=$(answer disk_passphrase)
+    ((${#DISK_PASSPHRASE} >= MIN_PASSWORD)) ||
+      die "the answers file: encrypt=yes needs a disk_passphrase of at least $MIN_PASSWORD characters."
+  fi
+}
+
+# ------------------------------------------------------------- the screens
+#
+# One question a screen under the wordmark, as nova usb asks its own: Esc goes
+# back a step, Ctrl+C stops with nothing changed. Each step_ function returns 1
+# for Esc; the keyboard, you and this computer are installer/setup.bash's.
+
+screen() { # [what this step is about]
+  if ((PORTABLE)); then
+    ui_header "Portable Nova${1:+  ·  $1}"
+  else
+    ui_header "Install Nova${1:+  ·  $1}"
+  fi
+}
+
+step_keymap() {
+  ui_ask choose_keymap "${KEYMAP:-us}" || return 1
+  KEYMAP=$REPLY
+  loadkeys "$KEYMAP" >/dev/null 2>&1 || true
+}
+
+step_disk() {
+  local disks=() options=() i path size model held label selected='' problem=''
+  mapfile -t disks < <(candidate_disks)
+  ((${#disks[@]})) || die "$(no_disk)"
+  for i in "${!disks[@]}"; do
+    IFS=$'\t' read -r path size model _ _ <<<"${disks[i]}"
+    [[ $model != - ]] || model="unknown model"
+    held=$(disk_contents "$path" | awk '{ printf "%s%s", (NR > 1 ? "  ·  " : ""), $0 }')
+    label="${path#/dev/}  $(human_size "$size")  $model${held:+  ·  $held}"
+    label=${label//[,$'\t']/ }
+    options+=("$label"$'\t'"$i")
+    [[ ${disks[i]} != "$DISK_LINE" ]] || selected=$label
+  done
+  while :; do
+    screen "the disk"
+    [[ -z $problem ]] || ui_warn "$problem"
+    ui_ask ui_choose "Which disk? Everything on it will be erased." "$selected" "${options[@]}" || return 1
+    path=${disks[REPLY]%%$'\t'*}
+    if ! disk_in_use "$path"; then
+      DISK_LINE=${disks[REPLY]}
+      return 0
+    fi
+    problem="${path#/dev/} is in use by the live system (mounted, swap or LVM). Pick another."
+  done
+}
+
+# Off unless asked for. On, the btrfs partition is LUKS2 and its passphrase is
+# asked at every start, before anything else; the EFI partition, which holds
+# the kernels, stays plain for the firmware to start them. A choice rather
+# than a yes or no, so Esc goes back to the disk.
+step_encryption() {
+  local off="No" on="Yes: a passphrase at every start"
+  screen "encryption"
+  ui_ask ui_choose "Encrypt the disk?" "$([[ $ENCRYPT == yes ]] && echo "$on" || echo "$off")" \
+    "$off"$'\t'no "$on"$'\t'yes || return 1
+  ENCRYPT=$REPLY DISK_PASSPHRASE=''
+  [[ $ENCRYPT == yes ]] || return 0
+  ui_answered Encryption on
+  ui_note "Without the passphrase nothing on the disk can be read, by anyone: keep it safe."
+  ui_ask ui_password "The disk's passphrase" "$MIN_PASSWORD" || return 1
+  DISK_PASSPHRASE=$REPLY
+}
+
+# Offered when the reader is one fprintd drives. Esc is No here.
+step_fingerprint() {
+  screen "fingerprint"
+  if ! ui_ask ui_confirm "Unlock with your fingerprint too?"; then
+    FINGERPRINT='' ENROLLED_FOR=''
+    return 0
+  fi
+  until enroll_fingerprint "$ACCOUNT"; do
+    ui_warn "That did not work."
+    if ! ui_ask ui_confirm "Try again?"; then
+      FINGERPRINT='' ENROLLED_FOR=''
+      ui_note "Settings, Lock Screen sets it up later."
+      return 0
+    fi
+  done
+  FINGERPRINT="right index finger" ENROLLED_FOR=$ACCOUNT
+}
+
+# What the install will do, one line each; the screens frame it, the answers
+# file's install logs it.
+summary_lines() {
+  local disk size model line
+  IFS=$'\t' read -r disk size model _ _ <<<"$DISK_LINE"
+  echo "Erased       ${disk#/dev/}  $(human_size "$size")$([[ $model == - ]] || echo "  $model")"
+  while IFS= read -r line; do
+    [[ -z $line ]] || echo "             now holds $line"
+  done < <(disk_contents "$disk")
+  if ((PORTABLE)); then
+    echo "Layout       2 GiB EFI partition, btrfs with snapshots, no swap file"
+    echo "Portable     starts any 64-bit PC from its boot menu, with what is on it"
+    echo "             now; no PC's firmware gets a boot entry, this one included"
+  else
+    echo "Layout       2 GiB EFI partition, btrfs with snapshots, $(swap_gib "$size") GiB swap file"
+  fi
+  if [[ $ENCRYPT == yes ]]; then
+    echo "Encryption   on: the passphrase at every start"
+  else
+    echo "Encryption   off: anyone with the disk can read it"
+  fi
+  echo "Kernel       $(main_kernel), with linux-lts as the fallback"
+  echo "Account      $ACCOUNT ($FULLNAME) on $COMPUTER"
+  echo "Time zone    $TIMEZONE, keyboard $KEYMAP"
+  [[ -z $FINGERPRINT ]] || echo "Fingerprint  $FINGERPRINT"
+  if carry_ready && [[ -n $(restorable_labels) ]]; then
+    echo "Your things  $(restorable_labels | paste -sd, - | sed 's/,/, /g') from $(carry_value .source.host)"
+  fi
+}
+
+step_summary() {
+  local disk=${DISK_LINE%%$'\t'*} lines=()
+  mapfile -t lines < <(summary_lines)
+  screen "ready"
+  ui_box "${lines[@]}"
+  echo >&2
+  while :; do
+    ui_ask ui_input "Type erase to wipe ${disk#/dev/} and $( ((PORTABLE)) && echo "put Nova on it" || echo install), or Esc to go back" || return 1
+    [[ $REPLY != erase ]] || return 0
+    ui_warn "That is not erase."
+  done
+}
+
+# The steps in order, Esc stepping back one. The layout is asked only when
+# nova-install-start has not asked it already, and the disk only when nova usb
+# has not picked it (--portable <disk>).
+questions_on_screen() { # fingerprint(yes|no): whether to offer enrolling one
+  local steps=() i=0
+  KEYMAP=${NOVA_KEYMAP:-}
+  steps=()
+  valid_keymap "$KEYMAP" || steps+=(keymap)
+  [[ -n $PORTABLE_DISK ]] || steps+=(disk)
+  steps+=(encryption you computer)
+  [[ $1 != yes ]] || steps+=(fingerprint)
+  steps+=(summary)
+  while ((i < ${#steps[@]})); do
+    [[ -z $ENROLLED_FOR || $ENROLLED_FOR == "$ACCOUNT" ]] || FINGERPRINT='' ENROLLED_FOR=''
+    if "step_${steps[i]}"; then
+      i=$((i + 1))
+    elif ((i > 0)); then
+      i=$((i - 1))
+    else
+      die "nothing was changed."
+    fi
+  done
+}
+
+# ------------------------------------------------------------- the install
+
+partition_and_format() {
+  local disk=$1 esp root
+  say "Partitioning $disk"
+  logged wipefs -af "$disk"
+  logged sfdisk --wipe always --wipe-partitions always "$disk" <<EOF
+label: gpt
+size=${ESP_MIB}MiB, type=uefi, name="NOVA-ESP"
+type=linux, name="nova"
+EOF
+  logged udevadm settle
+  esp=$(partition_path "$disk" 1)
+  root=$(partition_path "$disk" 2)
+  [[ -b $esp && -b $root ]] || die "the new partitions did not appear ($esp, $root)"
+  logged mkfs.fat -F 32 -n NOVA-ESP "$esp"
+  if [[ $ENCRYPT == yes ]]; then
+    say "Encrypting the btrfs partition"
+    # The passphrase on stdin, never on a command line. Discards pass
+    # through (the flag kept in the header), so fstrim still reaches the SSD.
+    printf '%s' "$DISK_PASSPHRASE" | logged cryptsetup luksFormat --type luks2 --batch-mode --label nova-crypt --key-file - "$root"
+    printf '%s' "$DISK_PASSPHRASE" | logged cryptsetup open --allow-discards --persistent --key-file - "$root" "$CRYPT_NAME"
+  fi
+  logged mkfs.btrfs -f -L nova "$(root_device "$disk")"
+}
+
+# Where the btrfs filesystem is: the partition, or the container opened on it.
+root_device() { # disk
+  if [[ $ENCRYPT == yes ]]; then
+    echo "/dev/mapper/$CRYPT_NAME"
+  else
+    partition_path "$1" 2
+  fi
+}
+
+create_subvolumes_and_mount() {
+  local disk=$1 swap=$2 esp root entry name mountpoint
+  esp=$(partition_path "$disk" 1)
+  root=$(root_device "$disk")
+  say "Creating the filesystem layout"
+  logged mount "$root" "$TARGET"
+  for entry in "${SUBVOLUMES[@]}"; do
+    logged btrfs subvolume create "$TARGET/${entry%%:*}"
+  done
+  logged umount "$TARGET"
+
+  logged mount -o "$BTRFS_OPTS,subvol=@" "$root" "$TARGET"
+  for entry in "${SUBVOLUMES[@]:1}"; do
+    name=${entry%%:*}
+    mountpoint=${entry#*:}
+    logged mkdir -p "$TARGET$mountpoint"
+    if [[ $name == @swap ]]; then
+      logged mount -o "noatime,subvol=$name" "$root" "$TARGET$mountpoint"
+    else
+      logged mount -o "$BTRFS_OPTS,subvol=$name" "$root" "$TARGET$mountpoint"
+    fi
+  done
+  logged chmod 750 "$TARGET/.snapshots"
+  logged mkdir -p "$TARGET/boot"
+  logged mount -o fmask=0077,dmask=0077 "$esp" "$TARGET/boot"
+
+  # None for a portable install (swap 0), which never hibernates; its
+  # subvolume stays, for a swap file made by hand later.
+  ((swap > 0)) || return 0
+  info "A ${swap} GiB swap file, for hibernation"
+  logged btrfs filesystem mkswapfile --size "${swap}g" --uuid clear "$TARGET/swap/swapfile"
+  logged swapon "$TARGET/swap/swapfile"
+}
+
+# Online, every package comes from the release's Arch snapshot and its own
+# repository. Both are asked for the whole set before the disk is erased, so
+# an outage of either stops the install with the disk as it was. Nothing is
+# installed from this, so signatures are left to pacstrap.
+packages_available() { # kernel profile arch_date nova_repo [package...]
+  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 dir status=0
+  local -a packages
+  offline_repo_ready && return 0
+  dir=$(mktemp -d /tmp/nova-preflight.XXXXXX)
+  mkdir "$dir/db"
+  pacstrap_conf "$arch_date" "$nova_repo" | sed 's/^SigLevel = .*/SigLevel = Never/' >"$dir/pacman.conf"
+  mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
+  logged pacman --config "$dir/pacman.conf" --dbpath "$dir/db" --logfile /dev/null -Sy &&
+    logged pacman --config "$dir/pacman.conf" --dbpath "$dir/db" --logfile /dev/null -Sp --print-format %n "${packages[@]}" ||
+    status=$?
+  rm -rf -- "$dir"
+  return "$status"
+}
+
+install_packages() { # kernel profile arch_date nova_repo [package...]
+  local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 conf
+  conf=$(mktemp /tmp/nova-pacstrap.XXXXXX.conf)
+  pacstrap_conf "$arch_date" "$nova_repo" >"$conf"
+  say "Installing packages (this is the long part)"
+  mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
+  info "${#packages[@]} packages, from $(offline_repo_ready && echo "the stick" || echo "the internet")"
+  # Output goes to the terminal as well as the log: this is minutes long and
+  # pacman's own progress is the progress bar. The kernels' boot check is
+  # skipped: Limine is not installed yet, and install_bootloader checks once it
+  # is. So are snap-pac's snapshots: snapper has no configuration until
+  # configure_snapper, and the first snapshot is the installed system's.
+  printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
+  NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | tee -a "$LOG" ||
+    die "pacstrap failed; the log is in $LOG"
+}
+
+write_system_config() {
+  local hostname=$1 timezone=$2 keymap=$3 arch_date=$4 nova_repo=$5 tag=$6
+  say "Configuring the system"
+  genfstab -U "$TARGET" | strip_subvolid >"$TARGET/etc/fstab"
+  # genfstab lists the swap file it saw active; make sure it is there.
+  if [[ -e $TARGET/swap/swapfile ]] && ! grep -q '/swap/swapfile' "$TARGET/etc/fstab"; then
+    echo '/swap/swapfile none swap defaults 0 0' >>"$TARGET/etc/fstab"
+  fi
+
+  write_names "$hostname" "$timezone"
+  sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' "$TARGET/etc/locale.gen"
+  in_target locale-gen
+  echo 'LANG=en_US.UTF-8' >"$TARGET/etc/locale.conf"
+  write_keyboard "$keymap"
+
+  install -Dm644 "$SHARE/pacman.conf" "$TARGET/etc/pacman.conf"
+  write_release_pins "$arch_date" "$nova_repo" "$tag"
+}
+
+# The same two files nova update rewrites for every release, so the installed
+# system starts on the release it was installed from.
+write_release_pins() {
+  local arch_date=$1 nova_repo=$2 tag=$3
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\n# arch-date: %s\n' "$tag" "$arch_date"
+    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+    printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$arch_date"
+  } >"$TARGET/etc/pacman.d/nova-mirrorlist"
+  {
+    echo '# Managed by nova update; the next update rewrites this file.'
+    printf '# nova-release: %s\nServer = %s\n' "$tag" "$nova_repo"
+  } >"$TARGET/etc/pacman.d/nova-repo"
+}
+
+# ------------------------------------------------------------------ fingerprint
+
+# Whether the live system's fprintd has a reader. It starts on this first call,
+# and sees only the readers libfprint can drive, which are the ones worth
+# setting up.
+fingerprint_reader() {
+  local devices
+  devices=$(busctl --system call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
+    net.reactivated.Fprint.Manager GetDevices 2>/dev/null) || return 1
+  [[ $devices == "ao "[1-9]* ]]
+}
+
+# One finger for the new account, enrolled here on the stick before anything
+# is installed; copy_fingerprints moves it into the new system. fprintd files
+# prints under a user name, so a stand-in for the account exists here too.
+enroll_fingerprint() { # user
+  local user=$1 line
+  id -u "$user" >/dev/null 2>&1 || useradd -M -s /usr/bin/nologin "$user" >/dev/null 2>&1 || return 1
+  info "Touch the reader with your right index finger, lift it, and again, until it says done."
+  { fprintd-enroll -f right-index-finger "$user" 2>&1 || true; } | while IFS= read -r line; do
+    case $line in
+      *enroll-stage-passed*) info "Got it. Again." ;;
+      *enroll-retry-scan* | *enroll-swipe-too-short* | *enroll-finger-not-centered* | *enroll-remove-and-retry*)
+        info "That did not read. Lift your finger and touch again."
+        ;;
+      *enroll-completed*) info "Done." ;;
+    esac
+  done
+  [[ -n $(find "$FPRINT_DIR/$user" -type f 2>/dev/null) ]]
+}
+
+copy_fingerprints() { # user
+  [[ -d $FPRINT_DIR/$1 ]] || return 0
+  install -d -m 700 "$TARGET/var/lib/fprint"
+  cp -a "$FPRINT_DIR/$1" "$TARGET/var/lib/fprint/"
+}
+
+# --------------------------------------------------------------- answers file
+
+answer_or() { # key default: the answer, or the default when there is none
+  local value=''
+  [[ -z $ANSWERS ]] || value=$(answer "$1")
+  echo "${value:-$2}"
+}
+
+# The answers file's after= script, run as root in the new system once the
+# install is done; a relative path is next to the answers file.
+run_after() {
+  local script
+  script=$(answer_or after '')
+  [[ -n $script ]] || return 0
+  [[ $script == /* ]] || script=${ANSWERS%/*}/$script
+  [[ -r $script ]] || die "the answers file's after= script is not there: $script"
+  say "Running $script"
+  install -m 700 "$script" "$TARGET/root/nova-after"
+  in_target /root/nova-after || die "$script failed; the log is in $LOG"
+  rm -f "$TARGET/root/nova-after"
+}
+
+configure_snapper() {
+  # What `snapper create-config` writes, without the .snapshots subvolume it
+  # would create: @snapshots is already mounted there, outside the root
+  # subvolume, so a rollback does not take the snapshots with it.
+  install -Dm644 "$TARGET/usr/share/snapper/config-templates/nova" "$TARGET/etc/snapper/configs/root"
+  echo 'SNAPPER_CONFIGS="root"' >"$TARGET/etc/conf.d/snapper"
+}
+
+# Written before pacstrap: the kernel's own install hooks build the boot
+# entries, and they need the root and resume arguments and the Limine header
+# already in place to get them right the first time.
+prepare_boot_config() {
+  local disk=$1 kernel=$2 root partuuid offset='' luks cmdline
+  root=$(partition_path "$disk" 2)
+  if ((!PORTABLE)); then
+    offset=$(btrfs inspect-internal map-swapfile -r "$TARGET/swap/swapfile")
+    [[ $offset =~ ^[0-9]+$ ]] || die "could not find the swap file's offset"
+  fi
+  if [[ $ENCRYPT == yes ]]; then
+    luks=$(cryptsetup luksUUID "$root")
+    [[ -n $luks ]] || die "could not read the LUKS UUID of $root"
+    cmdline=$(install_cmdline "/dev/mapper/$BOOT_CRYPT_NAME" "$offset" "$luks")
+    encrypt_mkinitcpio_conf | install -Dm644 /dev/stdin "$TARGET/etc/mkinitcpio.conf.d/20-nova-encrypt.conf"
+    # The kernels' install hooks build the initramfs, keyboard layout
+    # included, during pacstrap: the layout has to be there first.
+    write_keyboard "$KEYMAP"
+  else
+    partuuid=$(blkid -s PARTUUID -o value "$root")
+    [[ -n $partuuid ]] || die "could not read the PARTUUID of $root"
+    cmdline=$(install_cmdline "PARTUUID=$partuuid" "$offset")
+  fi
+  mkdir -p "$TARGET/etc/limine-entry-tool.d"
+  limine_install_conf "$cmdline" "$kernel" >"$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
+  ((!PORTABLE)) || write_portable_config
+  install -Dm644 "$SHARE/limine.conf" "$TARGET/boot/limine.conf"
+}
+
+install_bootloader() {
+  say "Installing the boot loader"
+  # --fallback also puts Limine at EFI/BOOT/BOOTX64.EFI, so the disk boots even
+  # if the firmware forgets its boot entries. A portable stick starts from
+  # there alone: its SKIP_UEFI=yes (limine_install_conf) already keeps this
+  # computer's firmware out of it, and --no-efi-register says so here too.
+  if ((PORTABLE)); then
+    in_target limine-install --fallback --no-efi-register
+  else
+    in_target limine-install --fallback
+  fi
+  in_target limine-update
+  # The same check nova update makes: every kernel has an entry, and every file
+  # an entry loads is on the ESP.
+  in_target /usr/lib/nova/bin/nova-boot-check post || die "the boot entries did not check out; the log is in $LOG"
+}
+
+enable_services() {
+  say "Enabling services"
+  iwd_to_networkmanager "$TARGET/etc/NetworkManager/system-connections"
+  in_target systemctl enable greetd.service NetworkManager.service bluetooth.service \
+    systemd-resolved.service systemd-timesyncd.service systemd-oomd.service \
+    power-profiles-daemon.service fstrim.timer snapper-cleanup.timer limine-snapper-sync.service \
+    avahi-daemon.service cups.socket btrfs-scrub@-.timer
+}
+
+finish() {
+  # arch-chroot binds the live system's resolv.conf over the target's while it
+  # runs, so the link to systemd-resolved is made from outside.
+  ln -sf ../run/systemd/resolve/stub-resolv.conf "$TARGET/etc/resolv.conf"
+  install -Dm600 "$LOG" "$TARGET/var/log/nova-install.log"
+  [[ ! -e $TARGET/swap/swapfile ]] || logged swapoff "$TARGET/swap/swapfile"
+  sync
+  logged umount -R "$TARGET"
+}
+
+# ------------------------------------------------- what nova usb carried
+#
+# A stick made by nova usb with things of yours on it has a second partition,
+# NOVA-DATA: LUKS2, then btrfs, then carry/ with one tar.zst per item, their
+# SHA-256 sums and manifest.json. It is opened read-only at $CARRY before the
+# questions, so the account can default to the old one's name, and the install
+# puts the SSH keys and the files back once the account exists.
+
+carry_ready() { [[ -r $CARRY/carry/manifest.json ]]; }
+
+# The stick's NOVA-DATA partition: on the disk the live system booted from
+# when that can be told, anywhere otherwise.
+carry_partition() {
+  local disk
+  disk=$(boot_disk)
+  if [[ -n $disk ]]; then
+    lsblk -nrpo PATH,PARTLABEL -- "$disk" 2>/dev/null
+  else
+    lsblk -nrpo PATH,PARTLABEL 2>/dev/null
+  fi | awk '$2 == "NOVA-DATA" { print $1; exit }'
+}
+
+carry_items() { # -> id, kind, file and label of each item, tab-separated
+  jq -r '.items[] | [.id, .kind, .file, (.label // .id)] | @tsv' "$CARRY/carry/manifest.json"
+}
+
+carry_value() { # jq path
+  jq -r "$1 // empty" "$CARRY/carry/manifest.json"
+}
+
+# This computer, hashed the way nova usb hashes the one it ran on.
+machine_hash() {
+  local id
+  id=$(cat "$DMI/product_uuid" "$DMI/product_serial" 2>/dev/null) || true
+  [[ -n $id ]] || return 0
+  printf '%s' "$id" | sha256sum | awk '{ print $1 }'
+}
+
+# Asks for the passphrase until it opens (or Enter skips), mounts the
+# partition and checks every archive against its sum. All or nothing: a stick
+# that reads back wrong carries nothing over.
+carry_unlock() {
+  carry_ready && return 0
+  local part pass tries
+  part=$(carry_partition)
+  [[ -n $part ]] || return 1
+  if [[ -n $ANSWERS ]]; then
+    say "Your things are on this stick, encrypted"
+  else
+    screen "your things"
+    ui_note "What nova usb brought from your other computer is on this stick, encrypted."
+    echo >&2
+  fi
+  for ((tries = 0; tries < 5; tries++)); do
+    if [[ -n $ANSWERS ]]; then
+      pass=$(answer passphrase)
+      tries=4
+    else
+      # Esc, or Enter on an empty field, installs without them.
+      ui_ask ui_secret "Its passphrase" "Enter to install without them" || REPLY=''
+      pass=$REPLY
+    fi
+    if [[ -z $pass ]]; then
+      : >"$CARRY_DECLINED"
+      return 1
+    fi
+    if printf '%s' "$pass" | cryptsetup open --readonly --key-file - "$part" "$CARRY_MAPPER" 2>/dev/null; then
+      mkdir -p "$CARRY"
+      mount -o ro "/dev/mapper/$CARRY_MAPPER" "$CARRY" || {
+        cryptsetup close "$CARRY_MAPPER"
+        warn "The partition opened but would not mount; installing without your things."
+        return 1
+      }
+      if ! (cd "$CARRY/carry" && sha256sum --quiet -c SHA256SUMS >&2); then
+        warn "Some of it does not read back as it was written (above); installing without your things."
+        umount "$CARRY"
+        cryptsetup close "$CARRY_MAPPER"
+        return 1
+      fi
+      info "$(carry_items | wc -l) things, from $(carry_value .source.host)"
+      return 0
+    fi
+    [[ -z $ANSWERS ]] || die "the answers file's passphrase does not open what this stick carries; nothing was changed."
+    warn "That is not the passphrase."
+  done
+  return 1
+}
+
+unpack() { # archive directory [tar options]
+  local archive=$1 dir=$2
+  shift 2
+  mkdir -p "$dir"
+  printf '+ unpack %s into %s\n' "$archive" "$dir" >>"$LOG"
+  zstd -dc "$CARRY/carry/$archive" 2>>"$LOG" | tar -x -C "$dir" "$@" >>"$LOG" 2>&1
+}
+
+target_ids() { # user -> uid:gid in the new system
+  awk -F: -v u="$1" '$1 == u { print $3 ":" $4 }' "$TARGET/etc/passwd"
+}
+
+# What this installer puts back: the SSH keys and the files picked. A stick
+# from an older nova usb may carry more (a browser, Wi-Fi networks, a package
+# list); that is left on the stick.
+restorable() { # id kind
+  [[ $1:$2 == ssh:home || $2 == folders || $2 == projects ]]
+}
+
+# The labels of what restore_carry puts back, one a line.
+restorable_labels() {
+  local id kind file label
+  while IFS=$'\t' read -r id kind file label; do
+    ! restorable "$id" "$kind" || echo "$label"
+  done < <(carry_items)
+}
+
+# Puts each carried item back into the new home, as it was in the old one,
+# and hands it all to the account.
+restore_carry() { # user
+  local user=$1 home=$TARGET/home/$1 id kind file label
+  carry_ready || return 0
+  say "Putting your things back"
+  while IFS=$'\t' read -r id kind file label; do
+    if ! restorable "$id" "$kind"; then
+      info "$label: left out, this installer brings back only SSH keys and files"
+      continue
+    fi
+    info "$label"
+    unpack "$file" "$home" || warn "$label did not unpack completely; the log is in $LOG"
+  done < <(carry_items)
+  chown -R "$(target_ids "$user")" "$home"
+}
+
+usage() {
+  sed -n '3,/^$/s/^# \{0,1\}//p' "$0"
+}
+
+# The ERR trap once the disk is being written: a step that fails ends the
+# install, and this says which instead of stopping without a word. Subshells
+# inherit the trap (set -E), so only the outermost shell speaks.
+stopped() { # line command
+  ((BASH_SUBSHELL)) && return
+  echo >&2
+  ui_error "nova-install: the install stopped at line $1 ($2). The log is in $LOG."
+}
+
+main() {
+  case ${1:-} in
+    -h | --help)
+      usage
+      return 0
+      ;;
+    --list-packages)
+      every_package
+      return 0
+      ;;
+    --unlock)
+      ((EUID == 0)) || die "run me as root."
+      rm -f -- "$CARRY_DECLINED"
+      carry_unlock || true
+      return 0
+      ;;
+    --keymap)
+      local status=0
+      choose_keymap "${2:-us}" || status=$?
+      if ((status == 130)); then
+        echo >&2
+        ui_note "$UI_STOPPED"
+        exit 130
+      fi
+      ((status == 0)) || echo "${2:-us}"
+      return 0
+      ;;
+    --answers)
+      ANSWERS=$(realpath -e -- "${2:?--answers needs a file}") || die "no answers file at $2"
+      [[ $(answer portable) != yes ]] || portable_mode
+      ;;
+    --portable)
+      portable_mode
+      PORTABLE_DISK=${2:-}
+      ;;
+    --portable-disks)
+      portable_mode
+      candidate_disks | cut -f1
+      return 0
+      ;;
+    "") ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+  ((EUID == 0)) || die "run me as root."
+  computer_ready
+  [[ -r $RELEASE_FILE ]] || die "no release file at $RELEASE_FILE"
+  # A try after a stopped one keeps the stopped one's log beside it.
+  [[ ! -s $LOG ]] || mv -f -- "$LOG" "$LOG.1"
+  : >"$LOG"
+
+  local tag arch_date nova_repo
+  tag=v$(release_value version)
+  arch_date=$(release_value arch_date)
+  nova_repo=$(release_value nova_repo)
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "the release file has no valid version"
+  [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "the release file has no valid arch_date"
+  [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "the release file has no valid nova_repo"
+  if ! offline_repo_ready && ! curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/; then
+    die "this stick has no offline packages and there is no internet connection. Connect with: iwctl"
+  fi
+
+  # Things carried on the stick: opened now (nova-install-start usually already
+  # has), put back once the account exists.
+  carry_ready || [[ -e $CARRY_DECLINED ]] || carry_unlock || true
+
+  local kernel profile
+  kernel=$(main_kernel)
+  profile=$(hardware_profile)
+  # Only a reader fprintd can drive gets fprintd in the new system, and the
+  # offer to enroll a finger; a print enrolled on one computer's reader is no
+  # use on the next one's, so a portable install offers none.
+  local extra=() offer_fingerprint=no
+  if ((!PORTABLE)) && fingerprint_reader; then
+    extra+=(fprintd)
+    offer_fingerprint=yes
+  fi
+  release_target
+
+  # nova usb has picked the disk already: it has to be one this would offer.
+  if [[ -n $PORTABLE_DISK && -z $ANSWERS ]]; then
+    DISK_LINE=$(candidate_disks | awk -F'\t' -v d="$PORTABLE_DISK" '$1 == d')
+    [[ -n $DISK_LINE ]] || die "$PORTABLE_DISK is not a USB disk of 32 GB or more; nothing was changed."
+    ! disk_in_use "$PORTABLE_DISK" || die "$PORTABLE_DISK is in use (mounted, swap or LVM); nothing was changed."
+  fi
+
+  if [[ -n $ANSWERS ]]; then
+    answers_from_file
+    say "Nova ${tag#v}"
+    if ((PORTABLE)); then
+      info "Portable, onto a USB disk"
+    else
+      info "Computer: $(computer_model unknown)${profile:+ (Nova knows this one)}"
+    fi
+    say "Ready to install"
+    summary_lines | sed 's/^/  /'
+    [[ $(answer erase) == yes ]] || die "the answers file does not say erase=yes; nothing was changed."
+  else
+    questions_on_screen "$offer_fingerprint"
+    screen "installing"
+    if ((PORTABLE)); then
+      info "Nova ${tag#v} onto ${DISK_LINE%%$'\t'*}, to carry around"
+    else
+      info "Nova ${tag#v} on $(computer_model "this computer")${profile:+, which Nova knows}"
+    fi
+  fi
+  ((PORTABLE)) || [[ $kernel == linux-nova ]] || info "This CPU predates x86-64-v3, so Nova uses Arch's standard kernel."
+  loadkeys "$KEYMAP" >/dev/null 2>&1 || true
+
+  local disk swap=0
+  disk=${DISK_LINE%%$'\t'*}
+  ((PORTABLE)) || swap=$(swap_gib "$(cut -f2 <<<"$DISK_LINE")")
+  # Minutes may have gone by since the disk was picked. The same disk, by size,
+  # model and serial, has to be there still, and free, before it is erased.
+  grep -qxF -- "$DISK_LINE" <<<"$(candidate_disks)" ||
+    die "$disk is no longer the disk that was picked (unplugged or swapped?); nothing was changed."
+  ! disk_in_use "$disk" || die "$disk is in use by the live system now; nothing was changed."
+  if ! offline_repo_ready; then
+    info "Checking that every package is there to download"
+    packages_available "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}" ||
+      die "the Arch snapshot of $arch_date or Nova's repository did not have every package; nothing was changed. Try again later; the log is in $LOG"
+  fi
+  set -E
+  trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
+  partition_and_format "$disk"
+  unset DISK_PASSPHRASE
+  create_subvolumes_and_mount "$disk" "$swap"
+  prepare_boot_config "$disk" "$kernel"
+  install_packages "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}"
+  write_system_config "$COMPUTER" "$TIMEZONE" "$KEYMAP" "$arch_date" "$nova_repo" "$tag"
+  configure_snapper
+  create_user "$ACCOUNT" "$FULLNAME" "$PASSWORD"
+  unset PASSWORD
+  copy_fingerprints "$ACCOUNT"
+  restore_carry "$ACCOUNT"
+  install_bootloader
+  [[ $(answer_or apps yes) == no ]] || install_apps "$ACCOUNT"
+  enable_services
+  run_after
+  finish
+
+  if ((PORTABLE)); then
+    say "Nova is on the stick."
+    info "Start any PC from it: plug it in, and pick it in the PC's boot menu (F12 on"
+    info "most, F9, F11 or Esc on some). Secure Boot has to be off, as for an install."
+    info "$BITLOCKER_NOTE"
+    ! secure_boot_on || info "This PC has Secure Boot on: it starts the stick once that is off."
+    info "The install log is kept on it, at /var/log/nova-install.log."
+  else
+    say "Nova is installed."
+    info "Take the stick out and restart: reboot"
+    info "The install log is kept at /var/log/nova-install.log."
+  fi
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

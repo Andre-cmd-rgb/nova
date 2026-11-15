@@ -1,0 +1,30 @@
+# Flexoki, light (MIT), by Steph Ango (kepano/flexoki): its paper, base and
+# 600 accents, with the terminal colours of its kitty theme.
+mode = "light"
+
+background = "#fffcf0"          # paper, bg
+dark_background = "#f2f0e5"     # base-50, bg-2
+lighter_background = "#e6e4d9"  # base-100, ui
+selection = "#cecdc3"           # base-200, ui-3
+
+foreground = "#100f0f"          # black, tx
+light_foreground = "#6f6e69"    # base-600, tx-2
+dark_foreground = "#b7b5ac"     # base-300, tx-3
+muted = "#6f6e69"               # the terminal's bright black
+
+accent = "#205ea6"              # blue-600
+orange = "#bc5215"              # orange-600
+
+red = "#d14d41"
+green = "#879a39"
+yellow = "#d0a215"
+blue = "#4385be"
+magenta = "#ce5d97"
+cyan = "#3aa99f"
+
+bright_red = "#af3029"
+bright_green = "#66800b"
+bright_yellow = "#ad8301"
+bright_blue = "#205ea6"
+bright_magenta = "#a02f6f"
+bright_cyan = "#24837b"

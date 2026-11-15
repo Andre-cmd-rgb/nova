@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# nova:summary=Set the default editor used by nova-launch-editor
+# nova:args=[code|cursor|zed|sublime_text|helix|vim|emacs|nvim]
+
+set -euo pipefail
+
+# Kept as the command, on the first line, for nova-launch-editor.
+choice=${XDG_STATE_HOME:-$HOME/.local/state}/nova/defaults/editor
+
+if (($# == 0)); then
+  editor=""
+  if [[ -f $choice ]]; then
+    read -r editor <"$choice" || editor=""
+  fi
+  echo "${editor:-code}"
+  exit 0
+fi
+
+# The command, the icon and the name the notification shows.
+case $1 in
+  code) set -- code  VSCode ;;
+  cursor) set -- cursor  Cursor ;;
+  zed | zeditor) set -- zeditor  Zed ;;
+  sublime_text) set -- sublime_text  "Sublime Text" ;;
+  helix) set -- helix  Helix ;;
+  vim) set -- vim  Vim ;;
+  emacs) set -- emacs  Emacs ;;
+  nvim) set -- nvim  Neovim ;;
+  *)
+    echo "Usage: nova-default-editor <code|cursor|zed|sublime_text|helix|vim|emacs|nvim>" >&2
+    exit 1
+    ;;
+esac
+
+mkdir -p "${choice%/*}"
+printf '%s\n' "$1" >"$choice"
+nova-notification-send -g "$2" "$3 is now the default editor"

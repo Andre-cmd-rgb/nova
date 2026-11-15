@@ -1,0 +1,139 @@
+#!/bin/bash
+
+# nova:summary=Show or pin the Wi-Fi band for the active connection
+# nova:args=[auto|2.4|5|6]
+
+# With no argument, for the shell's network panel, a line each, after a tab:
+#   band       the band the connection is on
+#   available  the bands its network answers on, low to high
+#   selected   the band its profile is pinned to, or auto
+# Nothing while no Wi-Fi is connected.
+#
+# The band is pinned on the connection's profile, not to one access point (a
+# BSSID): that goes on working when the access point changes its BSSIDs, and
+# roaming between access points goes on too.
+
+set -euo pipefail
+
+# The bands, low to high, with the value NetworkManager's
+# 802-11-wireless.band has for each (1.44 and later tell 6 GHz from 5) and
+# the frequencies each spans, in MHz, from the first up to the last. The
+# spans are those of the panel's formatHeaderFreq (Model.js), so that the two
+# never disagree.
+bands=(2.4 5 6)
+declare -A nm_band=([2.4]=bg [5]=a [6]=6GHz)
+declare -A spans=([2.4]="2400 2500" [5]="4900 5925" [6]="5925 7125")
+
+fail() {
+  echo "nova-network-band: $*" >&2
+  exit 1
+}
+
+# nmcli, read in English, as its state words are translated otherwise, and
+# with nothing escaped, as -g escapes : and \ and an SSID would then differ
+# from the one iw gives.
+nm() { LC_ALL=C nmcli -e no -g "$@" 2>/dev/null; }
+
+# The band a frequency is in, from the digits nmcli's "2412 MHz" or iw's
+# "5745.0" start with; nothing for one outside them all.
+band_at() { # frequency
+  local mhz=${1%%[!0-9]*} each from to
+  [[ -n $mhz ]] || return 0
+  for each in "${bands[@]}"; do
+    read -r from to <<<"${spans[$each]}"
+    if ((from <= mhz && mhz < to)); then
+      echo "$each"
+      return
+    fi
+  done
+}
+
+# What the Wi-Fi is connected to: $device and its $profile, from
+# NetworkManager; 1 when no Wi-Fi is. $network and $mhz, the SSID and the
+# frequency, from the link iw reads, which gives the SSID as the rest of its
+# line, colons and all.
+connected() {
+  local line
+  device="" profile="" network="" mhz=""
+  line=$(grep -m1 ':wifi:connected$' <<<"$(nm DEVICE,TYPE,STATE device status)") || return 1
+  device=${line%%:*}
+  profile=$(nm GENERAL.CONNECTION device show "$device") || true
+  while IFS= read -r line; do
+    line=${line#"${line%%[![:space:]]*}"}
+    case $line in
+      "SSID: "*) [[ -n $network ]] || network=${line#SSID: } ;;
+      "freq: "*) [[ -n $mhz ]] || mhz=${line#freq: } ;;
+    esac
+  done < <(iw dev "$device" link 2>/dev/null || true)
+}
+
+# The bands the network answers on, low to high, a space between: those
+# NetworkManager's last scan saw it on (--rescan no: the panel keeps that
+# fresh, a scan here would hold up each reading, and the kernel's own forgets
+# so soon that bands would come and go), and the one in use always, as many
+# a scan misses a weak radio. A band it does not answer on is never offered,
+# as pinning one would drop the connection with nothing to come back to.
+answers_on() { # band-in-use
+  local -A seen=()
+  local line each out=""
+  [[ -z $1 ]] || seen[$1]=1
+  # The SSID last, so that one with colons in it is whole after the first.
+  while IFS= read -r line; do
+    [[ $line == *:* && ${line#*:} == "$network" ]] || continue
+    each=$(band_at "${line%%:*}")
+    [[ -z $each ]] || seen[$each]=1
+  done < <(nm FREQ,SSID dev wifi list ifname "$device" --rescan no || true)
+  for each in "${bands[@]}"; do
+    [[ -z ${seen[$each]:-} ]] || out+=${out:+ }$each
+  done
+  echo "$out"
+}
+
+# The band a profile is pinned to, or auto.
+pinned() { # nm-value
+  local each
+  for each in "${bands[@]}"; do
+    [[ ${nm_band[$each]} != "$1" ]] || { echo "$each"; return; }
+  done
+  echo auto
+}
+
+show() {
+  local device profile network mhz in_use
+  connected || return 0
+  [[ -n $network ]] || return 0
+  in_use=$(band_at "$mhz")
+  printf 'band\t%s\n' "$in_use"
+  printf 'available\t%s\n' "$(answers_on "$in_use")"
+  [[ -z $profile ]] || printf 'selected\t%s\n' "$(pinned "$(nm 802-11-wireless.band connection show "$profile" || true)")"
+}
+
+pin() { # auto|2.4|5|6
+  local device profile network mhz wanted="" was
+  connected || fail "no Wi-Fi is connected"
+  [[ -n $profile ]] || fail "the Wi-Fi connection has no profile"
+  if [[ $1 != auto ]]; then
+    # The band in use counts though NetworkManager has not seen it.
+    [[ " $(answers_on "$(band_at "$mhz")") " == *" $1 "* ]] || fail "the network does not answer on $1 GHz"
+    wanted=${nm_band[$1]}
+  fi
+  was=$(nm 802-11-wireless.band connection show "$profile")
+  [[ $was != "$wanted" ]] || return 0
+
+  # The band takes effect as the connection comes up again; on one it will
+  # not come up on, the connection is brought up on the band it had.
+  nmcli connection modify "$profile" 802-11-wireless.band "$wanted" >/dev/null
+  nmcli connection up "$profile" >/dev/null 2>&1 && return
+  nmcli connection modify "$profile" 802-11-wireless.band "$was" >/dev/null
+  nmcli connection up "$profile" >/dev/null 2>&1 || true
+  fail "no connection with the band set to $1, so it is set back"
+}
+
+case $#:${1:-} in
+  0:) show ;;
+  1:auto | 1:2.4 | 1:5 | 1:6) pin "$1" ;;
+  *)
+    echo "Usage: nova-network-band [auto|2.4|5|6]" >&2
+    exit 1
+    ;;
+esac

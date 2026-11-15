@@ -1,0 +1,73 @@
+#!/bin/bash
+
+# nova:summary=Turn the output volume up or down, or mute it, and show it in the OSD
+# nova:args=<raise|lower|mute-toggle|+N|-N>
+
+# The volume keys from a terminal: the shell takes the keys themselves
+# (nova.keys, KeysModel.js), with the same steps on the same sink.
+
+set -euo pipefail
+
+fail() {
+  echo "$*" >&2
+  exit 1
+}
+
+# A step in percent, signed: raise and lower are the keys' 5.
+step=""
+case ${1:-} in
+  "") fail "Usage: nova-audio-output-volume <raise|lower|mute-toggle|+N|-N>" ;;
+  mute-toggle) ;;
+  raise) step=+5 ;;
+  lower) step=-5 ;;
+  *) [[ $1 =~ ^[+-][0-9]+$ ]] && step=$1 || fail "Unknown volume action: $1" ;;
+esac
+
+# The sink under any filter in front of the output (nova-audio-output-sink):
+# the volume moves how loud it is, and the filter keeps getting its input at
+# full scale.
+sink=$(nova-audio-output-sink)
+[[ -n $sink ]] || fail "Could not resolve an audio sink to control."
+
+# The volume in percent, the first pactl gives (its scale is wpctl's, so the
+# OSD reads the same either way); nothing when it cannot say.
+percent() {
+  local said
+  said=$(pactl get-sink-volume "$sink" 2>/dev/null) || return 0
+  if [[ $said =~ ([0-9]+)% ]]; then echo "${BASH_REMATCH[1]}"; fi
+}
+
+if [[ -z $step ]]; then
+  # A key that sends its press twice, within a quarter of a second, toggles
+  # once.
+  last_file=${XDG_RUNTIME_DIR:-/tmp}/nova/audio-mute-toggle.last
+  mkdir -p "${last_file%/*}"
+  now=$((10#${EPOCHREALTIME//[!0-9]/} / 1000))
+  last=0
+  if [[ -r $last_file ]]; then
+    read -r last <"$last_file" || last=0
+  fi
+  ((now - last >= 250)) || exit 0
+  echo "$now" >"$last_file"
+  pactl set-sink-mute "$sink" toggle
+else
+  was=$(percent)
+  [[ -n $was ]] || fail "Could not read volume for $sink."
+  # Up stops at 100%, even from above it, where something else set it; down
+  # at 0. A step is decimal, a leading zero and all. Changing it unmutes.
+  amount=$((10#${step:1}))
+  if [[ $step == +* ]]; then
+    level=$((was + amount > 100 ? 100 : was + amount))
+  else
+    level=$((was - amount < 0 ? 0 : was - amount))
+  fi
+  pactl set-sink-mute "$sink" 0
+  pactl set-sink-volume "$sink" "$level%"
+fi
+
+# The OSD as the keys show it: struck through when muted or silent.
+level=$(percent)
+level=${level:-0}
+icon=volume-high
+if [[ $(pactl get-sink-mute "$sink" 2>/dev/null || true) == *yes ]] || ((level == 0)); then icon=volume-muted; fi
+nova-osd -i "$icon" -p "$level"

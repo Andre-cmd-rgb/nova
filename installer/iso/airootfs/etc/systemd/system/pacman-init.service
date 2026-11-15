@@ -1,0 +1,17 @@
+# A fresh pacman keyring on every boot, trusting Arch's keys and Nova's
+# (nova-keyring), so nova-install can verify what it downloads. The key pairs
+# live in tmpfs and never touch the stick.
+[Unit]
+Description=Initialize the pacman keyring
+Requires=etc-pacman.d-gnupg.mount
+After=etc-pacman.d-gnupg.mount time-sync.target
+BindsTo=etc-pacman.d-gnupg.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/pacman-key --init
+ExecStart=/usr/bin/pacman-key --populate
+
+[Install]
+WantedBy=multi-user.target
