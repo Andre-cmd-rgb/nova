@@ -13,6 +13,7 @@ fi
 
 # The battery service in the shell runs this once the charge falls to its
 # threshold. The glyph is from the bar's battery set; the icon theme's
-# battery-caution is an old bitmap that looks blurred beside it.
-nova-notification-send -g 󰂃 -u critical "Time to recharge!" "Battery is down to $1%" -t 30000
+# battery-caution is an old bitmap that looks blurred beside it. The hooks run
+# whether or not the notification could be sent.
+nova-notification-send -g 󰂃 -u critical "Time to recharge!" "Battery is down to $1%" -t 30000 || true
 nova-hook battery-low "$1"

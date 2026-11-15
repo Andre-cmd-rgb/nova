@@ -75,3 +75,17 @@ time_shown() {
   run "$info"
   [ "$output" = 'Battery 42%  ·  1h 12m to full  ·  20W / 68Wh' ]
 }
+
+@test "the kernel's reading, unsigned and refused or not, else UPower's; the size rounded" {
+  sed -i 's/68 Wh/52.9 Wh/' "$SCRATCH/report"
+  printf '%s\n' -15000000 >"$BAT/power_now"
+  run "$info" --shell
+  [[ $output == *$'rate\t15W'* ]]
+  [[ $output == *$'size\t53Wh'* ]]
+  # A file that cannot be read, as some batteries refuse a moment's reading.
+  rm "$BAT/power_now"
+  mkdir "$BAT/power_now"
+  run "$info" --shell
+  [ "$status" -eq 0 ]
+  [[ $output == *$'rate\t20W'* ]]
+}

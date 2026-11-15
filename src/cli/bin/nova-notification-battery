@@ -5,4 +5,6 @@
 set -euo pipefail
 
 # nova-battery-info's one line, in a quiet notification with the bar's glyph.
-nova-notification-send -g 󰁹 -u low "$(nova-battery-info)"
+# A computer with no battery says so, not an empty line.
+line=$(nova-battery-info)
+nova-notification-send -g 󰁹 -u low "${line:-No battery}"

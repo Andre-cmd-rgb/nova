@@ -64,10 +64,13 @@ done
 battery=''
 [[ $report =~ native-path:[[:blank:]]*([^[:space:]]+) ]] && battery=$supplies/${BASH_REMATCH[1]}
 microwatts='' microamps='' microvolts=''
+# A reading the battery refuses for a moment (some do, as the charger changes)
+# leaves UPower's figure.
 if [[ -n $battery && -r $battery/power_now ]]; then
-  microwatts=$(<"$battery/power_now")
+  microwatts=$(cat -- "$battery/power_now" 2>/dev/null) || microwatts=''
 elif [[ -n $battery && -r $battery/current_now && -r $battery/voltage_now ]]; then
-  microamps=$(<"$battery/current_now") microvolts=$(<"$battery/voltage_now")
+  microamps=$(cat -- "$battery/current_now" 2>/dev/null) &&
+    microvolts=$(cat -- "$battery/voltage_now" 2>/dev/null) || microamps='' microvolts=''
 fi
 
 # UPower's report has a line a field, "    time to empty:       3.2 hours";
@@ -108,7 +111,7 @@ END {
   percent = word("percentage", 1)
   if (percent != "") percent = int(percent)
   size = word("energy-full", 1)
-  if (size != "") size = sprintf("%d", size)
+  if (size != "") size = sprintf("%.0f", size)
   state = word("state", 1)
 
   left = time == "" ? "" : duration(word(time, 1), word(time, 2))
@@ -116,6 +119,8 @@ END {
   if (microwatts != "") rate = microwatts / 1e6
   else if (microamps != "") rate = microamps * microvolts / 1e12
   else rate = word("energy-rate", 1) + 0
+  # A driver that signs its current gives a discharge below zero.
+  if (rate < 0) rate = -rate
   watts = sprintf("%.1f", rate)
   sub(/\.0$/, "", watts)
 
