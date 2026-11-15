@@ -25,6 +25,7 @@ Settings → AirDrop → **Turn on for my iPhone**, or `nova airdrop bell on`. F
 
 - **It learns your iPhone once.** Switched on, it asks you to open Share → AirDrop on the iPhone beside the computer, within a minute. After that only that iPhone switches AirDrop on; somebody else's share sheet nearby does not. Forget, on the same page, unlearns it.
 - **Only while the computer is unlocked.** Locked, nothing happens, and an AirDrop it switched on goes off.
+- **It never wakes the computer.** Before the computer sleeps the doorbell stops, which takes its pattern out of the Bluetooth controller; it starts again once the computer is awake.
 - **Once a sheet.** An AirDrop that ends while the sheet is still open (Stop, two minutes with nothing sent) is not switched on again until the sheet has closed.
 - **It does not end after a transfer**, as one switched on by hand does: a second photo can follow from the same sheet. The sheet's closing ends it, or two minutes with nothing sent.
 
@@ -97,7 +98,8 @@ For those working on it. The code is in `src/airdrop/`, and the shell's card in 
 | `nova-airdrop@.service` | runs `up`, then the daemon as the user who asked, then `down` however it ended |
 | `nova-airdrop-apply` and `org.nova.airdrop` | the root half of on and off, through pkexec, with no password for the person at the computer |
 | `nova-airdrop-bell` (`daemon/src/bin/`, Rust) | the doorbell: the Bluetooth controller listening for the user's iPhone |
-| `nova-airdrop-bell@.service` | runs it as the user, from each login to its end, once `nova airdrop bell on` has enabled it |
+| `nova-airdrop-bell@.service` | runs it as the user, from each login to its end, once `nova airdrop bell on` has enabled it; stops it before the computer sleeps |
+| `nova-airdrop-bell-wake@.service` | starts it again once the computer is awake |
 
 **The radio.** `up` takes the Wi-Fi interface from NetworkManager and adds two interfaces to the card under one made-up address: `nova-cell`, an ad-hoc cell on channel 6 with AWDL's BSSID (`00:25:00:ff:94:73`), HT20, a beacon every ten seconds (an iPhone does not list a node whose cell beacons ten times a second); and `nova-mon`, a monitor interface. The cell is there for the card's hardware to acknowledge frames sent to that address. The frames themselves are heard and sent on the monitor.
 

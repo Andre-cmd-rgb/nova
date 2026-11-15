@@ -5,6 +5,11 @@ Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/airdrop.md
 # folder, and the shell of their session is who listens to it.
 BindsTo=user@%i.service
 After=user@%i.service
+# It never wakes the computer: before it sleeps the doorbell stops, which takes
+# its patterns out of the Bluetooth controller, and nova-airdrop-bell-wake@
+# starts it again once the computer is awake.
+Conflicts=sleep.target
+Before=sleep.target
 # A kernel without Bluetooth is not tried every ten seconds for good.
 StartLimitIntervalSec=5min
 StartLimitBurst=5
@@ -44,3 +49,4 @@ SystemCallArchitectures=native
 
 [Install]
 WantedBy=user@%i.service
+Also=nova-airdrop-bell-wake@%i.service

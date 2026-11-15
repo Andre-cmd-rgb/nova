@@ -26,3 +26,4 @@ install-airdrop:
 	install -Dm644 $(AIRDROP_SRC)/polkit/org.nova.airdrop.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.nova.airdrop.policy
 	install -Dm644 $(AIRDROP_SRC)/systemd/nova-airdrop@.service $(DESTDIR)$(SYSTEMD_SYSTEM)/nova-airdrop@.service
 	install -Dm644 $(AIRDROP_SRC)/systemd/nova-airdrop-bell@.service $(DESTDIR)$(SYSTEMD_SYSTEM)/nova-airdrop-bell@.service
+	install -Dm644 $(AIRDROP_SRC)/systemd/nova-airdrop-bell-wake@.service $(DESTDIR)$(SYSTEMD_SYSTEM)/nova-airdrop-bell-wake@.service
