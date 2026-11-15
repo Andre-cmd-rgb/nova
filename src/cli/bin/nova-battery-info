@@ -25,7 +25,9 @@ esac
 
 device=$(upower -e 2>/dev/null | grep -m1 BAT || true)
 [[ -n $device ]] || exit 0
-report=$(upower -i "$device")
+# In no language but UPower's own: where numbers are written 3,2, "3,2 hours"
+# would be read as three.
+report=$(LC_ALL=C upower -i "$device")
 
 # The value of a file of the first battery that has it.
 first_battery() {
