@@ -1526,7 +1526,8 @@ status)
   echo
   ;;
 doctor)
-  # Read-only. The things that decide how much power this machine draws, in
+  # Changes nothing, but for mounting debugfs where it is not yet. The things
+  # that decide how much power this machine draws, in
   # one place: what is holding the package out of its deep C-states, whether
   # the panel is self-refreshing, and which devices never sleep.
   #
@@ -1562,7 +1563,7 @@ doctor)
   echo '  package c-state residency since boot'
   if [[ -r $pmc/package_cstate_show ]]; then
     awk -F: '/Package C/ { n = $1; sub(/^ +| +$/, "", n); v = $2 + 0; t += v; k[n] = v }
-             END { for (n in k) printf "    %-12s %5.1f%%\n", n, 100 * k[n] / t }' \
+             END { if (t > 0) for (n in k) printf "    %-12s %5.1f%%\n", n, 100 * k[n] / t }' \
       "$pmc/package_cstate_show" | sort
     echo '    (C2 high means the cores idle but something in the uncore does not)'
   fi
