@@ -9,7 +9,7 @@ import qs.Commons as Commons
 import "Model.js" as Model
 
 // The network on the bar: its icon is the link the computer is on, Wi-Fi
-// with its bars, a cable, or none. A click opens the panel: Wi-Fi's switch,
+// with its bars, a cable, or none; AirDrop's while AirDrop has the Wi-Fi. A click opens the panel: Wi-Fi's switch,
 // the networks in range, which a click joins or leaves (a known one can be
 // forgotten), and the way to Settings' Wi-Fi page, which has the rest: the
 // addresses, the band and the DNS. w in the panel turns Wi-Fi on or off, as
@@ -48,7 +48,11 @@ Ui.Panel {
   readonly property var joined: inRange.find(function(n) { return n && n.connected }) || null
   // A cable that is up wins over Wi-Fi: the default route takes it.
   readonly property string medium: wired && wired.connected ? "ethernet" : joined ? "wifi" : "disconnected"
-  readonly property string glyph: Model.linkGlyph(medium, joined ? Model.signalOf(joined) : -1)
+  // AirDrop has the Wi-Fi card while it is on, off the network: its icon
+  // stands in for the link's meanwhile.
+  readonly property var airdrop: bar?.shell?.serviceFor("nova.airdrop") ?? null
+  readonly property bool airdropOn: !!airdrop && airdrop.opened === true
+  readonly property string glyph: airdropOn ? Model.AIRDROP_GLYPH : Model.linkGlyph(medium, joined ? Model.signalOf(joined) : -1)
   readonly property bool portal: Networking.connectivity === NetworkConnectivity.Portal
   // A switch only for a radio there is: on a wired machine it would read
   // "off" beside a live link.
@@ -472,7 +476,7 @@ Ui.Panel {
           glyph: network.glyph
           dimmed: !network.nmRunning || (network.switchable && !Networking.wifiEnabled)
           title: Model.linkName(network.medium, !!network.wireless)
-          note: Model.linkNote(network.medium, Networking.wifiEnabled, !!network.wireless, network.portal)
+          note: Model.linkNote(network.medium, Networking.wifiEnabled, !!network.wireless, network.portal, network.airdropOn)
           ink: network.ink
           family: network.typeface
 

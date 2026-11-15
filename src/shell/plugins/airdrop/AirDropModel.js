@@ -1,13 +1,19 @@
 .pragma library
 
-// AirDrop's card: what `nova airdrop watch` says, and what the card shows for
-// it. The states are the daemon's (waiting, asked, receiving, received,
-// links, declined, failed, off) and three of the card's own: starting, while
-// `nova airdrop on` is at work; error, when that failed, with its words; and
-// ended, when the daemon gave up with nobody having sent anything.
+// AirDrop's rules: what `nova airdrop watch` says, and the notifications
+// made of it. The states are the daemon's (waiting, asked, receiving,
+// received, links, declined, failed, off). The notifications are as on a
+// Mac: an offer, with Decline and Accept; a transfer under way, with its
+// bar; what came in, which a click opens; a failure, in a sentence.
 //
 // Everything a sender says of itself (its name, its files' names, a link) is
-// text to show and nothing else.
+// text to show and nothing else: a notification's body is markup to the
+// notifications, so it goes in escaped, and the whole is sent with busctl,
+// where each word is one value and none can pass for an option.
+
+// Quickshell's NotificationUrgency, as the notifications have it.
+var NORMAL = 1
+var CRITICAL = 2
 
 // A line of the watch: the state it says, or null for anything else.
 function parse(line) {
@@ -34,6 +40,11 @@ function list(value) {
   return Array.isArray(value) ? value : []
 }
 
+// Text as the body's markup shows it, word for word.
+function escaped(value) {
+  return text(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
 // A size as people say it.
 function size(bytes) {
   var n = count(bytes)
@@ -43,22 +54,10 @@ function size(bytes) {
   return (n / 1e9).toFixed(2) + " GB"
 }
 
-// What is offered, in a few words: a file by its name, more by their number.
-function offered(state) {
-  var files = list(state.files), links = list(state.links)
-  if (files.length === 1) return text(files[0] && files[0].name) + " (" + size(state.bytes) + ")"
-  if (files.length > 1) return files.length + " files (" + size(state.bytes) + ")"
-  return links.length === 1 ? "a link" : links.length + " links"
-}
-
+// The sender by its name for itself, in quotes as a Mac has it.
 function sender(state) {
-  return text(state.sender) || "Somebody"
-}
-
-// Minutes and seconds left.
-function clock(seconds) {
-  var left = Math.max(0, Math.ceil(count(seconds)))
-  return Math.floor(left / 60) + ":" + String(left % 60).padStart(2, "0")
+  var name = text(state.sender)
+  return name !== "" ? "“" + name + "”" : "Someone"
 }
 
 // The last part of a path, and the folder it is in by its own name.
@@ -71,73 +70,64 @@ function folder(path) {
   return parts.length > 1 ? parts[parts.length - 2] : ""
 }
 
-// A state after which nothing more comes of this transfer.
-function over(state) {
-  return !!state && ["received", "links", "declined", "failed", "error", "ended"].indexOf(state.state) >= 0
+// A photo, a video, or any other file, by the end of its name.
+function kind(file) {
+  if (/\.(heic|heif|jpe?g|png|gif|webp|avif|dng|tiff?)$/i.test(file)) return "photo"
+  if (/\.(mov|mp4|m4v)$/i.test(file)) return "video"
+  return "file"
 }
 
-// Whether a daemon that was waiting and is gone gave up by itself: its time had run out.
-function gaveUp(state, now) {
-  return !!state && state.state === "waiting" && count(state.ends) > 0 && now >= count(state.ends) - 2
+// What is offered, in a few words: "a photo", "3 videos", "2 files", "a link".
+function what(state) {
+  var files = list(state.files).map(function (file) { return text(file && file.name) })
+  if (files.length === 0) return list(state.links).length > 1 ? list(state.links).length + " links" : "a link"
+  var kinds = files.map(kind)
+  var all = kinds.every(function (k) { return k === kinds[0] }) ? kinds[0] : "file"
+  return files.length === 1 ? "a " + all : files.length + " " + all + "s"
 }
 
-// What the card shows for a state: null when it shows nothing. `now` is in
-// Unix seconds. A face has a title, words under it, a dimmer note, a share
-// done (-1 for no bar), answers to give (each what it `does`, what it `says`,
-// and whether it is the `main` one), and how long it `stays` (0: until the
-// state changes). `rung`: AirDrop was switched on for an iPhone's share
-// sheet, and goes off when it closes.
-function face(state, now, rung) {
-  if (!state) return null
-  var plain = { title: "AirDrop", words: "", note: "", share: -1, answers: [], stays: 0 }
-  function with_(more) {
-    for (var key in more) plain[key] = more[key]
-    return plain
+// A picture Qt reads as it is, should no smaller copy be made of it.
+function readable(path) {
+  return /\.(png|jpe?g|gif)$/i.test(text(path))
+}
+
+// The offer: who wants to send what, and its two answers, the commands that
+// give them. It stays until answered: the daemon says no for itself before
+// the iPhone stops waiting.
+function offer(state, command) {
+  var files = list(state.files), links = list(state.links)
+  var detail = files.length === 1 ? text(files[0] && files[0].name) + ", " + size(state.bytes)
+    : files.length > 1 ? size(state.bytes)
+    : links.length > 0 ? text(links[0]) : ""
+  var id = text(state.id)
+  return {
+    summary: sender(state) + " wants to send you " + what(state),
+    body: escaped(detail),
+    urgency: CRITICAL,
+    buttons: [
+      { says: "Decline", argv: [command, "decline", id] },
+      { says: "Accept", argv: [command, "accept", id], main: true }
+    ]
   }
-  var stop = { does: "stop", says: "Stop", main: false }
-  switch (state.state) {
-  case "starting":
-    return with_({ words: "Getting the Wi-Fi card ready" })
-  case "waiting":
-    var left = count(state.ends) > 0 ? count(state.ends) - now : 0
-    return with_({
-      words: state.seen === true ? "An iPhone has " + (text(state.name) || "this computer") + " in its AirDrop list"
-        : "Send from an iPhone to " + (text(state.name) || "this computer"),
-      note: rung === true ? "Wi-Fi is off until the iPhone's share sheet closes."
-        : "Wi-Fi is off meanwhile." + (left > 0 ? " Ends in " + clock(left) + "." : ""),
-      answers: [stop]
-    })
-  case "asked":
-    return with_({
-      title: sender(state) + " wants to send",
-      words: offered(state),
-      answers: [{ does: "decline", says: "Decline", main: false }, { does: "accept", says: "Accept", main: true }]
-    })
-  case "receiving":
-    var all = count(state.bytes)
-    return with_({
-      title: "Receiving from " + sender(state),
-      words: offered(state),
-      note: size(Math.min(count(state.received), all || count(state.received))) + (all > 0 ? " of " + size(all) : ""),
-      share: all > 0 ? Math.min(1, count(state.received) / all) : 0,
-      answers: [stop]
-    })
-  case "declined":
-    return with_({ words: "Declined", stays: 2500 })
-  case "failed":
-    return with_({ title: "AirDrop did not finish", words: text(state.why) || "The transfer stopped", stays: 8000 })
-  case "error":
-    return with_({ title: "AirDrop could not start", words: text(state.why) || "It would not say why", stays: 9000 })
-  case "ended":
-    return with_({ words: "Off again: nobody sent anything", stays: 4000 })
-  }
-  return null
 }
 
-// The notification for what came in: its headline, its words, the picture to
-// show and what a click opens (a file, or the folder of several). Its words
-// begin with words of the card's own, so that no name of a sender's is ever
-// the first thing an option could be read from.
+// A transfer under way: from whom, what, and how far along, in steps of 5 %,
+// so that it is not drawn anew for every few bytes.
+function receiving(state) {
+  var all = count(state.bytes)
+  var share = all > 0 ? Math.min(1, count(state.received) / all) : 0
+  var files = list(state.files)
+  return {
+    summary: "Receiving from " + sender(state),
+    body: escaped(files.length === 1 ? text(files[0] && files[0].name) : what(state)),
+    urgency: CRITICAL,
+    progress: Math.floor(share * 20) * 5
+  }
+}
+
+// What came in: who sent it, where it is, and what a click opens (a file, the
+// folder of several, a web address in the browser); `picture` is the photo
+// it is, if one, for a smaller copy to be made of. Null for nothing.
 function arrival(state) {
   var from = "AirDrop from " + sender(state)
   if (state.state === "links") {
@@ -145,27 +135,67 @@ function arrival(state) {
     if (links.length === 0) return null
     // Only a web address opens at a click; anything else is shown.
     var web = /^https?:\/\/[^\s]+$/.test(links[0]) ? links[0] : ""
-    return { headline: from, words: "Link: " + links.join(" "), picture: "", opens: web, browser: true }
+    return { summary: from, body: escaped(links.join(" ")), urgency: NORMAL, picture: "", opens: web ? ["nova-launch-browser", web] : null }
   }
   var paths = list(state.paths).map(text).filter(function (path) { return path.charAt(0) === "/" })
   if (paths.length === 0) return null
   var where = folder(paths[0]) || "your files"
   if (paths.length === 1) {
     return {
-      headline: from,
-      words: "Saved " + name(paths[0]) + " in " + where + ". Click to open.",
-      picture: /\.(png|jpe?g|gif|webp|bmp|heic|heif|avif)$/i.test(paths[0]) ? paths[0] : "",
-      opens: paths[0],
-      browser: false
+      summary: from,
+      body: escaped("Saved " + name(paths[0]) + " in " + where),
+      urgency: NORMAL,
+      picture: kind(paths[0]) === "photo" ? paths[0] : "",
+      opens: ["xdg-open", paths[0]]
     }
   }
   return {
-    headline: from,
-    words: "Saved " + paths.length + " things in " + where + ". Click to see them.",
+    summary: from,
+    body: escaped("Saved " + paths.length + " things in " + where),
+    urgency: NORMAL,
     picture: "",
-    opens: paths[0].replace(/\/[^\/]*$/, "") || "/",
-    browser: false
+    opens: ["xdg-open", paths[0].replace(/\/[^\/]*$/, "") || "/"]
   }
+}
+
+// A transfer that did not finish, in the daemon's sentence.
+function failure(state) {
+  return { summary: "AirDrop didn’t finish", body: escaped(text(state.why) || "Nothing was saved."), urgency: NORMAL }
+}
+
+// AirDrop that would not come on, in the words of `nova airdrop on`.
+function refusal(why) {
+  return { summary: "AirDrop couldn’t start", body: escaped(text(why) || "It would not say why."), urgency: NORMAL }
+}
+
+// The notifications' service on the session bus.
+var BUS = ["busctl", "--user", "--", "call", "org.freedesktop.Notifications", "/org/freedesktop/Notifications", "org.freedesktop.Notifications"]
+
+// The command that shows a notification, in place of the one of id
+// `replaces` (0 for none), with `glyph` where it has no picture. busctl
+// answers "u <id>". Nova's own, "nova-action": it is let through
+// do-not-disturb, as what was just asked for.
+function notify(notice, replaces, glyph) {
+  var hints = [["urgency", "y", String(notice.urgency === CRITICAL ? CRITICAL : NORMAL)], ["nova-glyph", "s", text(glyph)]]
+  if (text(notice.picture) !== "") hints.push(["image-path", "s", notice.picture])
+  if (notice.opens) hints.push(["nova-exec-argv", "s", JSON.stringify(notice.opens)])
+  if (notice.buttons) hints.push(["nova-buttons", "s", JSON.stringify(notice.buttons)])
+  if (typeof notice.progress === "number" && notice.progress >= 0) hints.push(["value", "i", String(notice.progress)])
+  var argv = BUS.concat(["Notify", "susssasa{sv}i", "nova-action", String(Math.max(0, replaces | 0)), "", text(notice.summary), text(notice.body), "0", String(hints.length)])
+  hints.forEach(function (hint) { argv.push(hint[0], hint[1], hint[2]) })
+  argv.push("-1")
+  return argv
+}
+
+// The command that takes notification `id` away.
+function closing(id) {
+  return BUS.concat(["CloseNotification", "u", String(id)])
+}
+
+// The id in busctl's answer to Notify, "u 42"; 0 for none.
+function answered(output) {
+  var match = /^u (\d+)\s*$/.exec(text(output).trim())
+  return match ? Number(match[1]) : 0
 }
 
 // What AirDrop's doorbell asks of AirDrop now: "on", "off", or "" for

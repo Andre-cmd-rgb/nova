@@ -1,0 +1,23 @@
+#!/bin/sh
+# busctl as AirDrop's notifications call it: each call noted in
+# $HOME/stub-calls, a line a call, its words apart by tabs (a notification's
+# text has spaces), and Notify answered as the notifications' server would,
+# "u <id>": the id it replaces, or a new one, counting from 1.
+printf 'busctl' >>"$HOME/stub-calls"
+for word in "$@"; do printf '\t%s' "$word" >>"$HOME/stub-calls"; done
+printf '\n' >>"$HOME/stub-calls"
+# Notify, its signature, the app's name, then the id it replaces.
+after=0 replaces=''
+for word in "$@"; do
+  [ "$after" -eq 0 ] || after=$((after + 1))
+  [ "$after" -ne 4 ] || replaces=$word
+  [ "$word" != Notify ] || after=1
+done
+[ -n "$replaces" ] || exit 0
+if [ "$replaces" != 0 ]; then
+  echo "u $replaces"
+  exit 0
+fi
+id=$(($(cat "$HOME/busctl-ids" 2>/dev/null || echo 0) + 1))
+echo "$id" >"$HOME/busctl-ids"
+echo "u $id"

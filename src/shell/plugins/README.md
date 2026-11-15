@@ -131,7 +131,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Nova update | `nova.system-update` | widget `bar/widgets/SystemUpdate.qml` | a badge while an update waits |
 | System tray | `nova.tray` | widget `bar/widgets/Tray.qml` | the tray, pinned icons out and the rest in a drawer |
 | Workspaces | `nova.workspaces` | widget `bar/widgets/Workspaces.qml` | Hyprland's workspaces |
-| AirDrop | `nova.airdrop` | panel `airdrop/AirDrop.qml` | the card that asks before an iPhone's offer is taken, and shows it coming in (`nova airdrop`) |
+| AirDrop | `nova.airdrop` | service `airdrop/AirDrop.qml`, panel `airdrop/AirDropToggle.qml` | AirDrop in notifications: an iPhone's offer to accept or decline, a transfer's bar, what came in; the doorbell's switching; the menu's toggle (`nova airdrop`) |
 | [Battery Life](batterylife/README.md) | `nova.batterylife` | service `batterylife/Service.qml`, widget `batterylife/BarWidget.qml` | how long the battery lasts; its page is `settings/BatteryLifeView.qml` |
 | [Calendar](calendar/README.md) | `nova.calendar` | service `calendar/Service.qml`, panel `calendar/Panel.qml` | the calendar's events and tasks, behind its window and the clock's card (`nova calendar`) |
 | Clipboard | `nova.clipboard` | overlay `clipboard/Clipboard.qml` | the clipboard's history |

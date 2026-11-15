@@ -5,8 +5,8 @@ import qs.Ui
 
 // AirDrop's page in Settings: its doorbell. Switched on, Bluetooth listens
 // for the user's iPhone, and AirDrop goes on when that iPhone's share sheet
-// shows AirDrop and off when the sheet closes (the AirDrop card's plugin
-// does that). The iPhone is learned once, here. The menu's AirDrop row stays
+// shows AirDrop and off when the sheet closes (the AirDrop plugin does
+// that). The iPhone is learned once, here. The menu's AirDrop row stays
 // the way to switch AirDrop on by hand.
 Column {
   id: root

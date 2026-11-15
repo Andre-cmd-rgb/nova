@@ -216,7 +216,8 @@ An iPhone can send photos, files and links to the computer with AirDrop, with no
 
 - Switch it on in the menu (Toggle → AirDrop) or with `nova airdrop on`, then pick the computer in the iPhone's share sheet.
 - Or let your iPhone switch it: Settings → AirDrop → Turn on for my iPhone. Tapping AirDrop in its share sheet then switches AirDrop on, and closing the sheet switches it off.
-- A card under the bar asks before anything is taken, and shows it coming in. What arrives is in your downloads folder.
+- A notification asks before anything is taken, as on a Mac: Accept or Decline. What arrives is in your downloads folder, and a notification with its picture opens it at a click.
+- While AirDrop is on, the bar's Wi-Fi icon is AirDrop's.
 - The Wi-Fi is off the network while AirDrop is on. It ends by itself, a moment after a transfer or after two minutes with none, and the Wi-Fi reconnects.
 
 [AirDrop](airdrop.md) has the rest: why the Wi-Fi goes, which Wi-Fi cards can do it, and what it lets in.

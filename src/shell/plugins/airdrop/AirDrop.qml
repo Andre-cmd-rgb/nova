@@ -1,24 +1,20 @@
 import QtQuick
-import QtQuick.Layouts
 import Quickshell
 import Quickshell.Io
-import Quickshell.Wayland
-import qs.Commons
-import qs.Commons as Commons
-import qs.Ui
 import "AirDropModel.js" as Model
 
-// AirDrop's card, under the middle of the bar: up from the moment AirDrop is
-// switched on until it is off again, since the Wi-Fi is off the network
-// meanwhile and that should not go unseen. It says what is going on in a
-// line or two, asks yes or no when an iPhone offers something, and shows the
-// transfer coming in. What has come in is announced as any notification is,
-// with a click to open it, and the card goes.
+// AirDrop, in the background, said in notifications as on a Mac: an
+// iPhone's offer, with Decline and Accept; a transfer that takes a moment,
+// with its bar; what came in, with its picture, which a click opens; and a
+// failure, in a sentence. Nothing else: while AirDrop is on, the Wi-Fi is
+// off the network, and the bar's Wi-Fi icon is AirDrop's meanwhile (the
+// network widget reads `opened`).
 //
 // The work is nova-airdropd's (src/airdrop). `nova airdrop watch` tells this
 // each change as a line of JSON, for as long as the shell runs; on, off,
 // accept and decline are that command's too. The menu's AirDrop row toggles
-// this plugin, and the airdrop IPC target does the same from a key.
+// it (through AirDropToggle.qml), and the airdrop IPC target does the same
+// from a key.
 //
 // AirDrop's doorbell, where it is switched on (Settings → AirDrop), is
 // Bluetooth listening for the user's iPhone: `nova airdrop bell watch` says
@@ -31,21 +27,13 @@ Item {
   // Set by the shell.
   property var shell: null
 
-  // What the daemon last said, and what the card shows: the same while it
-  // waits, asks or receives; an end stays on the card for a moment after
-  // the daemon is off.
+  // What the daemon last said.
   property var said: ({ state: "off" })
-  property var shown: null
-  // In Unix seconds, kept going while there is a countdown to show.
-  property real now: Date.now() / 1000
-  // Stop was asked for: the off that follows is no giving up.
+  // `nova airdrop on` is at work, or done and the watch not yet saying so.
+  property bool starting: false
+  // Stop was asked for, and the off that ends it has not come yet.
   property bool stopping: false
-  readonly property var face: Model.face(shown, now, rung)
-  // The last face, for the card to keep while it goes.
-  property var look: ({ title: "", words: "", note: "", share: -1, answers: [], stays: 0 })
-  // `nova airdrop on` is at work.
-  readonly property bool starting: shown !== null && shown.state === "starting"
-  // AirDrop is on, or on its way: what the shell's toggle goes by.
+  // AirDrop is on, or on its way: what the menu's toggle and the bar go by.
   readonly property bool opened: starting || said.state !== "off"
 
   // What the doorbell last said; `near` while the iPhone it knows shows AirDrop.
@@ -61,18 +49,6 @@ Item {
 
   readonly property string command: "nova-airdrop"
   readonly property string glyph: "󰀃"
-  readonly property string glyphFont: shell && shell.bar ? shell.bar.fontFamily : Style.font.family
-  readonly property color ink: Commons.Color.notifications.text
-
-  onFaceChanged: if (face) look = face
-  onShownChanged: {
-    var next = Model.face(shown, now, rung)
-    away.stop()
-    if (next && next.stays > 0) {
-      away.interval = next.stays
-      away.start()
-    }
-  }
 
   // Acted on once what it says has settled: switching changes what it says.
   // Looked at again when a start or a stop is over, which may change what
@@ -96,79 +72,62 @@ Item {
   }
   onNearChanged: if (!near) spent = false
 
-  // The shell's summon and hide: on and off.
-  function open(payload) {
-    turnOn()
-  }
-
-  function close() {
-    turnOff()
-  }
-
   function turnOn() {
     if (opened) return
     starter.code = -1
     starter.words = null
-    shown = { state: "starting" }
+    starting = true
     // For the iPhone's share sheet it stays on after a transfer: it is the sheet's closing that ends it.
     starter.command = rung ? [command, "on", "--stay"] : [command, "on"]
     starter.running = true
   }
 
   function turnOff() {
-    if (!opened) {
-      shown = null
-      return
-    }
+    if (!opened) return
     stopping = true
     Quickshell.execDetached([command, "off"])
-  }
-
-  // An answer from the card: what one of the face's answers `does`.
-  function answer(does) {
-    if (does === "stop") turnOff()
-    else if ((does === "accept" || does === "decline") && shown && shown.state === "asked")
-      Quickshell.execDetached([command, does, Model.text(shown.id)])
   }
 
   // A line of the watch.
   function told(line) {
     var next = Model.parse(line)
     if (!next) return
-    var before = said
     said = next
-    now = Date.now() / 1000
+    if (next.state !== "off") starting = false
+    if (next.state !== "receiving") {
+      slow.stop()
+      slow.shown = false
+    }
     switch (next.state) {
-    case "off":
-      // An end stays its moment, and a start not yet up is not over.
-      if (!Model.over(shown) && !starting)
-        shown = !stopping && Model.gaveUp(before, now) ? { state: "ended" } : null
-      stopping = false
+    case "asked":
+      live = Model.offer(next, command)
+      break
+    case "receiving":
+      if (!slow.shown && !slow.running) slow.start()
+      // A photo is in before a bar would be any use: none for the first moment.
+      live = slow.shown ? Model.receiving(next) : null
       break
     case "received":
+      live = null
+      arrived(Model.arrival(next))
+      break
     case "links":
-      announce(next)
-      shown = null
+      live = null
+      tell(Model.arrival(next))
+      break
+    case "failed":
+      live = null
+      tell(Model.failure(next))
+      break
+    case "off":
+      live = null
+      stopping = false
       break
     default:
-      shown = next
+      // Waiting, or an offer declined (by the user, or by the daemon for
+      // want of an answer): nothing to show.
+      live = null
     }
-  }
-
-  // What came in, as a notification: a click opens it.
-  function announcement(state) {
-    var arrival = Model.arrival(state)
-    if (!arrival) return []
-    var words = ["nova-notification-send", "-u", "normal", "-g", glyph]
-    if (arrival.picture !== "") words.push("--image", arrival.picture)
-    words.push(arrival.headline, arrival.words)
-    if (arrival.opens !== "") words.push("--exec", arrival.browser ? "nova-launch-browser" : "xdg-open", arrival.opens)
-    return words
-  }
-
-  function announce(state) {
-    var words = announcement(state)
-    if (words.length > 0) Quickshell.execDetached(words)
   }
 
   // `nova airdrop on` is done when it has ended and its last words are in.
@@ -184,31 +143,36 @@ Item {
       // show, and one the stop came too early for is stopped now. No line
       // of the watch may ever say off to end the stopping.
       stopping = false
-      if (code !== 0) shown = null
-      else turnOff()
+      if (code !== 0) starting = false
+      else {
+        turnOff()
+        unheard.restart()
+      }
       return
     }
-    if (code !== 0) shown = { state: "error", why: why }
-    // Up, and the watch says so in a moment; a watch that says nothing leaves no card behind.
+    if (code !== 0) {
+      starting = false
+      tell(Model.refusal(why))
+    }
+    // Up, and the watch says so in a moment; a watch that says nothing leaves nothing on.
     else if (said.state === "off") unheard.restart()
-  }
-
-  Timer {
-    id: away
-    onTriggered: airdrop.shown = null
   }
 
   Timer {
     id: unheard
     interval: 4000
-    onTriggered: if (airdrop.starting) airdrop.shown = null
+    onTriggered: if (airdrop.said.state === "off") airdrop.starting = false
   }
 
+  // A transfer gets its bar once it has taken this long.
   Timer {
-    interval: 1000
-    repeat: true
-    running: !!airdrop.shown && airdrop.shown.state === "waiting"
-    onTriggered: airdrop.now = Date.now() / 1000
+    id: slow
+    property bool shown: false
+    interval: 800
+    onTriggered: {
+      shown = true
+      if (airdrop.said.state === "receiving") airdrop.live = Model.receiving(airdrop.said)
+    }
   }
 
   Process {
@@ -228,6 +192,139 @@ Item {
     }
   }
 
+  // ---- notifications ------------------------------------------------------
+
+  // The notification of what is under way, an offer or a transfer: `live` is
+  // what it should say, null for none. It is sent one call at a time, each
+  // in place of the last under its id, and what it says changes only as
+  // often as a call can go: the last word wins.
+  property var live: null
+  property int liveId: 0
+  property string liveSent: ""
+  // Notifications that stand on their own once sent, in order: what came in,
+  // a failure, a start refused. The first takes the live one's place. One
+  // whose photo's smaller copy is still being made is `waiting`: it, what
+  // comes after it and the live one, which it takes the place of, wait.
+  property var finals: []
+  // The copies, in the user's runtime folder, each under a name of its own
+  // (an image shown is cached by its name); the notifications keep a copy of
+  // their own, and those older than ten minutes go as the next is made.
+  readonly property string runtime: Quickshell.env("XDG_RUNTIME_DIR") || ""
+  readonly property string pictures: runtime + "/nova/airdrop-pictures"
+
+  onLiveChanged: Qt.callLater(post)
+
+  function tell(notice) {
+    if (!notice) return
+    finals = finals.concat([notice])
+    Qt.callLater(post)
+  }
+
+  // What came in, once its picture is ready.
+  function arrived(notice) {
+    if (!notice) return
+    if (notice.picture === "" || thumbnailer.running || runtime === "") {
+      notice.picture = Model.readable(notice.picture) ? notice.picture : ""
+      tell(notice)
+      return
+    }
+    notice.waiting = true
+    tell(notice)
+    var copy = pictures + "/" + Date.now() + ".jpg"
+    thumbnailer.notice = notice
+    thumbnailer.copy = copy
+    // The photo's own name stays one word: it is the sender's.
+    thumbnailer.command = ["sh", "-c",
+      'mkdir -p -m 700 -- "$1" && find "$1" -maxdepth 1 -name "*.jpg" -mmin +10 -delete;'
+      + ' VIPS_BLOCK_UNTRUSTED=1 exec timeout 10 vipsthumbnail "$2" --size 256x256 -o "$3[Q=85]" 2>/dev/null',
+      "sh", pictures, notice.picture, copy]
+    thumbnailer.running = true
+  }
+
+  // A photo's smaller copy made, or not: what came in is told either way.
+  Process {
+    id: thumbnailer
+    property var notice: null
+    property string copy: ""
+    onExited: function (exitCode) {
+      var notice = thumbnailer.notice
+      thumbnailer.notice = null
+      if (!notice) return
+      notice.picture = exitCode === 0 ? thumbnailer.copy : Model.readable(notice.picture) ? notice.picture : ""
+      notice.waiting = false
+      Qt.callLater(airdrop.post)
+    }
+  }
+
+  function post() {
+    if (notifier.running) return
+    if (finals.length > 0) {
+      if (finals[0].waiting) return
+      var next = finals[0]
+      finals = finals.slice(1)
+      notifier.isFinal = true
+      notifier.send(Model.notify(next, liveId, glyph))
+      return
+    }
+    var want = live ? JSON.stringify(live) : ""
+    if (want === liveSent) return
+    liveSent = want
+    if (want === "") {
+      var id = liveId
+      liveId = 0
+      if (id > 0) {
+        notifier.isFinal = false
+        notifier.send(Model.closing(id))
+      }
+      return
+    }
+    notifier.isFinal = false
+    notifier.send(Model.notify(live, liveId, glyph))
+  }
+
+  // One call to the notifications at a time. busctl answers Notify with the
+  // id it is under.
+  Process {
+    id: notifier
+    property bool isFinal: false
+    property int code: -1
+    property var output: null
+
+    function send(argv) {
+      code = -1
+      output = null
+      command = argv
+      running = true
+    }
+
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        notifier.output = text
+        airdrop.sent()
+      }
+    }
+    onExited: function (exitCode) {
+      notifier.code = exitCode
+      airdrop.sent()
+    }
+  }
+
+  function sent() {
+    if (notifier.code < 0 || notifier.output === null) return
+    var id = Model.answered(notifier.output)
+    notifier.code = -1
+    notifier.output = null
+    // A final notification is on its own now; a live one is replaced next time.
+    if (notifier.isFinal) {
+      liveId = 0
+      liveSent = ""
+    } else if (id > 0) liveId = id
+    Qt.callLater(post)
+  }
+
+  // ---- the watches ----------------------------------------------------------
+
   // The watch runs for as long as the shell does. Should it end, it is
   // started again, after longer each time: a command that is not there is
   // not asked for every few seconds for good.
@@ -238,7 +335,12 @@ Item {
     stdout: SplitParser {
       onRead: function (line) { airdrop.told(line) }
     }
-    onExited: again.start()
+    // What the live notification said can be neither answered nor followed
+    // now; the watch says how things are when it is back.
+    onExited: {
+      airdrop.live = null
+      again.start()
+    }
   }
 
   Timer {
@@ -286,133 +388,6 @@ Item {
       else airdrop.turnOn()
       return "ok"
     }
-    function state(): string { return airdrop.shown ? airdrop.shown.state : airdrop.said.state }
-  }
-
-  // The window is the card's size, below the bar where the bar is on top.
-  PanelWindow {
-    id: window
-
-    readonly property string barSide: airdrop.shell && airdrop.shell.barConfig ? String(airdrop.shell.barConfig.position || "top") : "top"
-    readonly property int barRoom: (airdrop.shell && airdrop.shell.bar && !airdrop.shell.bar.tucked ? Math.max(0, airdrop.shell.bar.thickness)
-      : Style.bar.sizeHorizontal) + Style.gapsOut
-
-    visible: airdrop.face !== null
-    anchors.top: true
-    margins.top: barSide === "top" ? barRoom : Style.gapsOut
-    implicitWidth: card.width
-    implicitHeight: card.height
-    color: "transparent"
-    WlrLayershell.namespace: "nova-airdrop"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
-    exclusionMode: ExclusionMode.Ignore
-
-    BorderSurface {
-      id: card
-
-      readonly property real margin: Style.space(12)
-
-      width: Style.space(380)
-      height: edge.top + margin + body.implicitHeight + margin + edge.bottom
-      radius: Style.cornerRadius
-      color: Commons.Color.notifications.background
-      frame: Border.surfaceSpec("notifications", "border", Commons.Color.notifications.border, Math.max(1, Style.space(2)))
-
-      RowLayout {
-        id: body
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.topMargin: card.edge.top + card.margin
-        anchors.leftMargin: card.edge.left + card.margin
-        anchors.rightMargin: card.edge.right + card.margin
-        spacing: Style.space(12)
-
-        Text {
-          Layout.alignment: Qt.AlignTop
-          textFormat: Text.PlainText
-          text: airdrop.glyph
-          color: airdrop.ink
-          font.family: airdrop.glyphFont
-          font.pixelSize: Style.font.displayLarge
-        }
-
-        ColumnLayout {
-          Layout.fillWidth: true
-          spacing: Style.space(2)
-
-          Words {
-            text: airdrop.look.title
-            font.bold: true
-            maximumLineCount: 2
-          }
-
-          Words {
-            visible: text !== ""
-            text: airdrop.look.words
-            maximumLineCount: 3
-          }
-
-          Words {
-            visible: text !== ""
-            text: airdrop.look.note
-            color: Qt.darker(airdrop.ink, 1.3)
-            font.pixelSize: Style.font.body
-            maximumLineCount: 2
-          }
-
-          // How much is in.
-          Rectangle {
-            Layout.fillWidth: true
-            Layout.topMargin: Style.space(6)
-            visible: airdrop.look.share >= 0
-            height: Math.max(Style.space(4), 2)
-            color: Util.alpha(airdrop.ink, 0.25)
-
-            Rectangle {
-              width: parent.width * Math.max(0, airdrop.look.share)
-              height: parent.height
-              color: Commons.Color.accent
-
-              Behavior on width {
-                NumberAnimation { duration: 250; easing.type: Easing.OutCubic }
-              }
-            }
-          }
-
-          RowLayout {
-            Layout.alignment: Qt.AlignRight
-            Layout.topMargin: Style.space(8)
-            visible: airdrop.look.answers.length > 0
-            spacing: Style.space(8)
-
-            Repeater {
-              model: airdrop.look.answers
-
-              Button {
-                required property var modelData
-                text: modelData.says
-                bordered: true
-                selected: modelData.main
-                foreground: airdrop.ink
-                onClicked: airdrop.answer(modelData.does)
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // Plain text: every word of these can be a sender's.
-  component Words: Text {
-    Layout.fillWidth: true
-    textFormat: Text.PlainText
-    color: airdrop.ink
-    font.family: Style.font.family
-    font.pixelSize: Style.font.title
-    wrapMode: Text.Wrap
-    elide: Text.ElideRight
+    function state(): string { return airdrop.starting && airdrop.said.state === "off" ? "starting" : airdrop.said.state }
   }
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# `nova-airdrop` as AirDrop's card uses it. `watch` says the lines in
+# `nova-airdrop` as the shell's AirDrop uses it. `watch` says the lines in
 # $HOME/airdrop-says, if the test wrote any, then nothing more for a while;
 # `bell watch` the same from $HOME/bell-says, and nothing more for longer
 # than a test runs (its end would be the doorbell's going).

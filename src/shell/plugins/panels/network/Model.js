@@ -13,6 +13,9 @@ function signalGlyph(strength) {
   return SIGNAL_GLYPHS[Math.max(0, Math.min(4, Math.ceil(strength / 20) - 1))]
 }
 
+// AirDrop's, for the bar while it has the Wi-Fi card.
+var AIRDROP_GLYPH = "\u{F0003}"
+
 // The bar's glyph for the link the computer is on: "wifi", "ethernet", or
 // none.
 function linkGlyph(kind, strength) {
@@ -28,10 +31,12 @@ function linkName(medium, hasRadio) {
   return medium === "ethernet" ? "Ethernet" : hasRadio ? "Wi-Fi" : "Network"
 }
 
-// The line under it, in a few plain words: the radio off, the link up (a
-// network with a sign-in page is up, but not yet through), or neither.
-function linkNote(medium, wifiOn, hasRadio, portal) {
+// The line under it, in a few plain words: the radio off or lent to
+// AirDrop, the link up (a network with a sign-in page is up, but not yet
+// through), or neither.
+function linkNote(medium, wifiOn, hasRadio, portal, airdrop) {
   if (medium === "ethernet") return "Connected"
+  if (hasRadio && airdrop) return "In use by AirDrop"
   if (hasRadio && !wifiOn) return "Turned Off"
   if (medium === "wifi") return portal ? "Sign in required" : "Connected"
   return "Not connected"
