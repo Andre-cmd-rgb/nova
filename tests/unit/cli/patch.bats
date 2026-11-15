@@ -286,6 +286,46 @@ tested_start() { # <KiB> [log line...]
   [ "$status" -eq 1 ]
 }
 
+@test "an address the computer's memory does not have is refused" {
+  printf '%s\n' '00001000-0009ffff : System RAM' '00100000-6fffffff : System RAM' \
+    '  01000000-02ffffff : Kernel code' 'e0000000-efffffff : PCI MMCONFIG' \
+    '100000000-87fffffff : System RAM' >"$NOVA_PROC/iomem"
+  run nova_patch ram 0
+  [ "$status" -eq 1 ]
+  [[ $output == *"'0' is in the first 1 MiB"* ]]
+  run nova_patch ram 0xfffffffff000
+  [ "$status" -eq 1 ]
+  [[ $output == *"past the end of this computer's memory, 0x880000000"* ]]
+  [ ! -e "$NOVA_ROOT/etc/limine-entry-tool.d/85-nova-patch-ram.conf" ]
+  run nova_patch ram 0x87ffff008
+  [ "$status" -eq 0 ]
+  [ "$(ram_conf | grep -v '^#')" = 'KERNEL_CMDLINE[default]+=" memmap=4K$0x87ffff000"' ]
+}
+
+@test "a patch that stops halfway is taken up again, and its files are still its own" {
+  make_patch "$SCRATCH/mine/wifi" this modprobe.d/90-nova-patch-wifi.conf one
+  write_file "$SCRATCH/mine/wifi/etc/udev/rules.d/90-nova-patch-wifi.rules" two
+  # The first file goes into /etc, the second does not: the disk is full, say.
+  printf '%s\n' '#!/bin/bash' 'echo x >>"$CALLS.install"' \
+    '[[ $* != */etc/* || -e $CALLS.fixed ]] || (($(wc -l <"$CALLS.install") != 2)) || exit 1' \
+    'exec /usr/bin/install "$@"' >"$SCRATCH/bin/install"
+  chmod +x "$SCRATCH/bin/install"
+  : >"$CALLS.install"
+  run apply add "$SCRATCH/mine/wifi"
+  [ "$status" -ne 0 ]
+  [ "$(find "$NOVA_ROOT/etc/modprobe.d" "$NOVA_ROOT/etc/udev" -type f 2>/dev/null | wc -l)" -eq 1 ]
+  : >"$CALLS.fixed"
+  run apply apply
+  [ "$status" -eq 0 ]
+  [ "$(etc modprobe.d/90-nova-patch-wifi.conf)" = one ]
+  [ "$(etc udev/rules.d/90-nova-patch-wifi.rules)" = two ]
+  run nova_patch
+  [[ ${lines[0]} == "wifi, on"* ]]
+  run nova_patch remove wifi
+  [ ! -e "$NOVA_ROOT/etc/modprobe.d/90-nova-patch-wifi.conf" ]
+  [ ! -e "$NOVA_ROOT/etc/udev/rules.d/90-nova-patch-wifi.rules" ]
+}
+
 @test "the memory patch is this computer's only" {
   nova_patch ram 0x1d4e1a008
   write_file "$NOVA_SYS/class/dmi/id/product_uuid" 'another'

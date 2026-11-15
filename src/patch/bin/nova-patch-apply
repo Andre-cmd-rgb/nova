@@ -123,11 +123,14 @@ patch_files() { # <folder> <name>
   if ((${#files[@]} > 64)); then problem="it holds over 64 files"; return 1; fi
 }
 
-# <file> with one line for each further argument, or empty.
+# <file> with one line for each further argument, or empty: written beside it,
+# put on the disk, and only then renamed over it, so that a start after the
+# power went finds the old file or the new one, never an empty one.
 write_lines() { # <file> [line...]
   local file=$1
   shift
   if (($#)); then printf '%s\n' "$@" >"$file.new"; else : >"$file.new"; fi
+  sync -- "$file.new" 2>/dev/null || true
   mv -f -- "$file.new" "$file"
 }
 
@@ -204,6 +207,13 @@ apply() {
     status+=("$name	on	")
   done
 
+  # The list first, of what was a patch's and what is about to be: a file
+  # that goes in is then known for a patch's own whatever stops the rest (a
+  # path that cannot be made, a full disk), and the next apply takes it up
+  # where this one left it, rather than finding a file "not from a patch".
+  mkdir -p -- "$STATE"
+  write_lines "$MANIFEST" "${!ours[@]}" "${!want[@]}"
+
   for rel in "${!ours[@]}"; do
     [[ -z ${want[$rel]:-} ]] || continue
     rm -f -- "$ROOT/etc/$rel"
@@ -217,7 +227,6 @@ apply() {
     changed+=("$rel")
   done
 
-  mkdir -p -- "$STATE"
   write_lines "$MANIFEST" "${!want[@]}"
   write_lines "$STATUS" "${status[@]}"
 
@@ -346,11 +355,10 @@ ram_write() { # <ranges> [note]
   done < <(grep . <<<"$ranges" || true)
   if ((count)); then
     mkdir -p -- "$RAM/${RAM_CONF%/*}"
-    {
-      echo "# Nova patch ram: memory this computer's RAM gets wrong, kept out of use from"
-      echo "# the kernel's start (memmap=<size>\$<address>). Made by nova patch ram."
-      printf '%s\n' "${lines[@]}"
-    } >"$RAM/$RAM_CONF"
+    write_lines "$RAM/$RAM_CONF" \
+      "# Nova patch ram: memory this computer's RAM gets wrong, kept out of use from" \
+      "# the kernel's start (memmap=<size>\$<address>). Made by nova patch ram." \
+      "${lines[@]}"
     parts+=("keeps $count bad $( ((count == 1)) && echo spot || echo spots) in memory ($(size "$(ram_kib <<<"$ranges")")) out of use")
   else
     rm -f -- "$RAM/$RAM_CONF"
@@ -472,16 +480,35 @@ ram_finish() {
   apply
 }
 
+# Where this computer's memory ends, from the kernel's map of it; nothing
+# where the map cannot be read.
+ram_top() {
+  local line end top=0
+  [[ -r $PROC/iomem ]] || return 0
+  while IFS= read -r line; do
+    [[ $line =~ ^[[:space:]]*[0-9a-f]+-([0-9a-f]+)\ :\ System\ RAM$ ]] || continue
+    end=$((16#${BASH_REMATCH[1]} + 1))
+    ((end <= top)) || top=$end
+  done <"$PROC/iomem"
+  ((top <= 1 << 20)) || echo "$top"
+}
+
 ram_set() { # <address>...
-  local arg start end merged
+  local arg start end merged top
   local -a added=()
   (($#)) || usage
+  top=$(ram_top)
   for arg; do
     [[ $arg =~ ^(0x)?([0-9a-fA-F]{1,12})(-(0x)?([0-9a-fA-F]{1,12}))?$ ]] ||
       die "'$arg' is not a memory address: one in hex, such as 0x7d4e1a008, or a range, such as 0x7d4e1a000-0x7d4e1bfff"
     start=$((16#${BASH_REMATCH[2]}))
     end=$((16#${BASH_REMATCH[5]:-${BASH_REMATCH[2]}}))
     ((end >= start)) || die "'$arg' ends before it starts"
+    # Either would only put a reservation of nothing on every start's
+    # command line: the kernel keeps the first 1 MiB to itself as it is.
+    ((start >= 1 << 20)) || die "'$arg' is in the first 1 MiB, which the kernel never uses"
+    [[ -z $top ]] || ((end < top)) ||
+      die "'$arg' is past the end of this computer's memory, $(printf '0x%x' "$top")"
     added+=("$start $((end + 1))")
   done
   ram_ready
