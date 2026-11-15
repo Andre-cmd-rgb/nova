@@ -7,7 +7,8 @@
 # idle, nova settings):
 #   in_effect        the settings in effect, as JSON
 #   commit PROGRAM   PROGRAM (jq, with any jq options after it) run on them,
-#                    written as the user's, and the shell told to read them
+#                    written as the user's, and the shell told to read them;
+#                    refused while the user's are there and cannot be read
 #   fail MESSAGE     the message, after the command's name, and exit 1
 #   NORMALIZE        a jq program giving the settings the shape every change
 #                    can count on, to start a change with
@@ -16,7 +17,7 @@ set -euo pipefail
 
 shell_config=$HOME/.config/nova/shell.json
 # shellcheck disable=SC2034 # for the commands that source this
-DEFAULTS_FILE=$NOVA_PATH/default/shell.json
+DEFAULTS_FILE=${NOVA_PATH:-/usr/share/nova}/default/shell.json
 
 fail() {
   echo "${0##*/}: $*" >&2
@@ -56,9 +57,17 @@ shell_config_cleanup() {
 }
 trap shell_config_cleanup EXIT
 
+# A file of the user's with something in it that is not settings the shell
+# reads (a trailing comma, no version 1) is never written over: the change
+# would be made to Nova's, and put those in place of the user's for good. The
+# shell refuses the same (ShellJson.qml's blocked).
 commit() { # program [jq option...]
   local program=$1
   shift
+  if grep -q '[^[:space:]]' "$shell_config" 2>/dev/null &&
+    ! jq -e 'type == "object" and .version == 1' "$shell_config" >/dev/null 2>&1; then
+    fail "$shell_config is not a config Nova can read; fix it, or move it away, first"
+  fi
   mkdir -p "${shell_config%/*}"
   shell_config_next=$(mktemp "$shell_config.XXXXXX")
   in_effect | jq -S -e "$@" "$program" >"$shell_config_next" || fail "could not update shell config"

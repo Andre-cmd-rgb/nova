@@ -59,6 +59,26 @@ settings() { jq -cS "$1" "$HOME/.config/nova/shell.json"; }
   [ "$(nova-bar transparent)" = on ]
 }
 
+@test "settings that cannot be read are never written over, and an empty file is" {
+  for broken in 'not json' '{"version":1,"idle":{"lock":600},}' '{"bar":{"position":"left"}}'; do
+    echo "$broken" >"$HOME/.config/nova/shell.json"
+    run nova-bar position bottom
+    [ "$status" -eq 1 ]
+    [[ $output == *"is not a config Nova can read"* ]]
+    [ "$(<"$HOME/.config/nova/shell.json")" = "$broken" ]
+  done
+  [ ! -e "$CALLS" ]
+  printf '\n' >"$HOME/.config/nova/shell.json"
+  nova-bar position bottom
+  [ "$(nova-bar position)" = bottom ]
+}
+
+@test "with no NOVA_PATH, Nova's settings are read from /usr/share/nova" {
+  run env -u NOVA_PATH bash -c 'source "$1"; echo "$DEFAULTS_FILE"' _ "$REPO_ROOT/src/cli/bin/nova-shell-config"
+  [ "$status" -eq 0 ]
+  [ "$output" = /usr/share/nova/default/shell.json ]
+}
+
 @test "settings without a bar have Nova's, and a change keeps its widgets" {
   echo '{"version":1,"idle":{"lock":600}}' >"$HOME/.config/nova/shell.json"
   nova-bar position bottom
