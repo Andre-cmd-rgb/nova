@@ -809,6 +809,52 @@ questions_on_screen() { # fingerprint(yes|no): whether to offer enrolling one
 }
 
 # ------------------------------------------------------------- the install
+#
+# Each step of the install is timed: its seconds go into the log as it ends,
+# as a line of its own (STEP_LINE), and the log ends with a table of them all
+# (step_table), so a slow install says where its time went.
+
+STEP_LINE=':: nova-install step:'
+STEP='' STEP_STARTED='' INSTALL_STARTED=''
+
+# Microseconds since the epoch, whatever the locale's decimal point.
+now_us() { echo "${EPOCHREALTIME//[!0-9]/}"; }
+
+# Seconds since a now_us, to a tenth.
+seconds_since() { # microseconds
+  local us=$(($(now_us) - $1))
+  printf '%d.%d' $((us / 1000000)) $((us / 100000 % 10))
+}
+
+log_step() { # label started-microseconds
+  printf '%s %s: %s s\n' "$STEP_LINE" "$1" "$(seconds_since "$2")" >>"$LOG"
+}
+
+# Runs one step and logs how long it took. A step that fails under set -e
+# ends the install where it is, and stopped (the ERR trap) names it.
+step() { # label command...
+  STEP=$1 STEP_STARTED=$(now_us)
+  INSTALL_STARTED=${INSTALL_STARTED:-$STEP_STARTED}
+  shift
+  printf '\n==> %s\n' "$STEP" >>"$LOG"
+  "$@"
+  local status=$?
+  log_step "$STEP" "$STEP_STARTED"
+  return "$status"
+}
+
+# Every step's time, as the log has it, and the whole install's.
+step_table() {
+  local label seconds
+  echo "The install's steps and their times:"
+  while IFS=$'\t' read -r label seconds; do
+    case $label in
+      Packages:*) printf '    %-34s %7s s\n' "${label#Packages: }" "$seconds" ;;
+      *) printf '  %-36s %7s s\n' "$label" "$seconds" ;;
+    esac
+  done < <(sed -n "s/^$STEP_LINE \\(.*\\): \\([0-9.]*\\) s\$/\\1\\t\\2/p" "$LOG")
+  [[ -z $INSTALL_STARTED ]] || printf '  %-36s %7s s\n' "In all" "$(seconds_since "$INSTALL_STARTED")"
+}
 
 partition_and_format() {
   local disk=$1 esp root
@@ -909,8 +955,34 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
   # is. So are snap-pac's snapshots: snapper has no configuration until
   # configure_snapper, and the first snapshot is the installed system's.
   printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
-  NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | tee -a "$LOG" ||
+  NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | pacstrap_feed ||
     die "pacstrap failed; the log is in $LOG"
+}
+
+# pacstrap's output, line by line: into the log, onto the terminal, and the
+# time of each of its parts into the log as steps of their own, from the
+# lines pacman starts each with (it flushes its output after every one):
+# the keyring and the package lists, fetching the packages (from the stick, or
+# the internet), checking their signatures, unpacking them, and the hooks.
+pacstrap_feed() {
+  local line part='Packages: keyring and lists' started next
+  started=$(now_us)
+  while IFS= read -r line; do
+    printf '%s\n' "$line" >>"$LOG"
+    printf '%s\n' "$line" >&2
+    next=''
+    case $line in
+      ':: Retrieving packages...'*) next='Packages: fetching' ;;
+      'checking keyring...'*) next='Packages: checking signatures' ;;
+      ':: Processing package changes...'*) next='Packages: unpacking' ;;
+      ':: Running post-transaction hooks...'*) next='Packages: hooks' ;;
+    esac
+    if [[ -n $next && $next != "$part" ]]; then
+      log_step "$part" "$started"
+      part=$next started=$(now_us)
+    fi
+  done
+  log_step "$part" "$started"
 }
 
 write_system_config() {
@@ -1074,8 +1146,12 @@ finish() {
   # arch-chroot binds the live system's resolv.conf over the target's while it
   # runs, so the link to systemd-resolved is made from outside.
   ln -sf ../run/systemd/resolve/stub-resolv.conf "$TARGET/etc/resolv.conf"
-  install -Dm600 "$LOG" "$TARGET/var/log/nova-install.log"
   [[ ! -e $TARGET/swap/swapfile ]] || logged swapoff "$TARGET/swap/swapfile"
+  sync
+  # The new system keeps the log, with the table of the steps' times so far:
+  # all but this last one, which only unmounts once the log is written.
+  step_table >>"$LOG"
+  install -Dm600 "$LOG" "$TARGET/var/log/nova-install.log"
   sync
   logged umount -R "$TARGET"
 }
@@ -1221,8 +1297,9 @@ usage() {
 # inherit the trap (set -E), so only the outermost shell speaks.
 stopped() { # line command
   ((BASH_SUBSHELL)) && return
+  [[ -z $STEP ]] || printf '%s %s (stopped): %s s\n' "$STEP_LINE" "$STEP" "$(seconds_since "$STEP_STARTED")" >>"$LOG"
   echo >&2
-  ui_error "nova-install: the install stopped at line $1 ($2). The log is in $LOG."
+  ui_error "nova-install: the install stopped at line $1 ($2)${STEP:+, in the step $STEP}. The log is in $LOG."
 }
 
 main() {
@@ -1343,27 +1420,27 @@ main() {
   ! disk_in_use "$disk" || die "$disk is in use by the live system now; nothing was changed."
   if ! offline_repo_ready; then
     info "Checking that every package is there to download"
-    packages_available "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}" ||
+    step "Checking the packages" packages_available "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}" ||
       die "the Arch snapshot of $arch_date or Nova's repository did not have every package; nothing was changed. Try again later; the log is in $LOG"
   fi
   set -E
   trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
-  partition_and_format "$disk"
+  step "Partitioning and formatting" partition_and_format "$disk"
   unset DISK_PASSPHRASE
-  create_subvolumes_and_mount "$disk" "$swap"
-  prepare_boot_config "$disk" "$kernel"
-  install_packages "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}"
-  write_system_config "$COMPUTER" "$TIMEZONE" "$KEYMAP" "$arch_date" "$nova_repo" "$tag"
-  configure_snapper
-  create_user "$ACCOUNT" "$FULLNAME" "$PASSWORD"
+  step "Subvolumes and swap file" create_subvolumes_and_mount "$disk" "$swap"
+  step "Boot configuration" prepare_boot_config "$disk" "$kernel"
+  step "Packages, in all" install_packages "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}"
+  step "System configuration" write_system_config "$COMPUTER" "$TIMEZONE" "$KEYMAP" "$arch_date" "$nova_repo" "$tag"
+  step "Snapshots" configure_snapper
+  step "Account" create_user "$ACCOUNT" "$FULLNAME" "$PASSWORD"
   unset PASSWORD
-  copy_fingerprints "$ACCOUNT"
-  restore_carry "$ACCOUNT"
-  install_bootloader
-  [[ $(answer_or apps yes) == no ]] || install_apps "$ACCOUNT"
-  enable_services
-  run_after
-  finish
+  step "Fingerprint" copy_fingerprints "$ACCOUNT"
+  step "Your things" restore_carry "$ACCOUNT"
+  step "Boot loader" install_bootloader
+  [[ $(answer_or apps yes) == no ]] || step "Apps" install_apps "$ACCOUNT"
+  step "Services" enable_services
+  step "After script" run_after
+  step "Finishing" finish
 
   if ((PORTABLE)); then
     say "Nova is on the stick."
@@ -1376,6 +1453,12 @@ main() {
     say "Nova is installed."
     info "Take the stick out and restart: reboot"
     info "The install log is kept at /var/log/nova-install.log."
+  fi
+  # With nobody there (tests/install/run), the times go onto its console,
+  # which the test keeps.
+  if [[ -n $ANSWERS ]]; then
+    echo >&2
+    step_table >&2
   fi
 }
 

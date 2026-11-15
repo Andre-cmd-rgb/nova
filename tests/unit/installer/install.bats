@@ -868,6 +868,42 @@ questions_setup() {
   [ "${lines[-3]}" = nova-theme ] && [ "${lines[-1]}" = white ]
 }
 
+@test "steps: each one's seconds go into the log, and a step that fails says so to its caller" {
+  LOG=$SCRATCH/log
+  : >"$LOG"
+  step "Partitioning and formatting" true
+  fails step "Checking the packages" false
+  grep -qx ':: nova-install step: Partitioning and formatting: [0-9]*\.[0-9] s' "$LOG"
+  grep -qx ':: nova-install step: Checking the packages: [0-9]*\.[0-9] s' "$LOG"
+  grep -qx '==> Partitioning and formatting' "$LOG"
+}
+
+@test "pacstrap's output: onto the terminal and into the log, and each of its parts timed" {
+  LOG=$SCRATCH/log
+  : >"$LOG"
+  printf '%s\n' '==> Creating install root at /mnt' ':: Synchronizing package databases...' \
+    ':: Retrieving packages...' ' acl-2.4.0-1-x86_64 downloading...' 'checking keyring...' \
+    'checking package integrity...' ':: Processing package changes...' 'installing acl...' \
+    ':: Running post-transaction hooks...' '(1/1) Arming ConditionNeedsUpdate...' | pacstrap_feed 2>"$SCRATCH/terminal"
+  grep -qx 'installing acl...' "$SCRATCH/terminal"
+  grep -qx 'installing acl...' "$LOG"
+  run sed -n 's/^:: nova-install step: \(.*\): [0-9.]* s$/\1/p' "$LOG"
+  [ "$output" = "$(printf '%s\n' 'Packages: keyring and lists' 'Packages: fetching' 'Packages: checking signatures' 'Packages: unpacking' 'Packages: hooks')" ]
+}
+
+@test "the table of times: every step in the log's order, the packages' parts under them, and the whole install" {
+  LOG=$SCRATCH/log
+  printf '%s\n' 'pacman says' ':: nova-install step: Partitioning and formatting: 2.3 s' \
+    ':: nova-install step: Packages: fetching: 41.2 s' ':: nova-install step: Packages, in all: 140.0 s' >"$LOG"
+  INSTALL_STARTED=$(now_us)
+  run step_table
+  [ "${lines[0]}" = "The install's steps and their times:" ]
+  [[ ${lines[1]} =~ ^\ \ Partitioning\ and\ formatting\ +2\.3\ s$ ]]
+  [[ ${lines[2]} =~ ^\ \ \ \ fetching\ +41\.2\ s$ ]]
+  [[ ${lines[3]} =~ ^\ \ Packages,\ in\ all\ +140\.0\ s$ ]]
+  [[ ${lines[4]} =~ ^\ \ In\ all\ +0\.[0-9]\ s$ ]]
+}
+
 @test "computer_model: the maker's name for it, or the fallback where the firmware gives none" {
   export NOVA_DMI_PATH=$SCRATCH/dmi
   DMI=$NOVA_DMI_PATH

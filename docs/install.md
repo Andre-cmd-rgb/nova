@@ -84,7 +84,7 @@ When it is done, take the stick out and restart. The computer starts into the lo
 | Account | yours, an administrator through sudo; root's password is locked |
 | Theme | white; Settings → Appearance changes it |
 | Apps | Chrome, VS Code, Claude Code and Codex, when online |
-| Log | `/var/log/nova-install.log`, kept on the new system |
+| Log | `/var/log/nova-install.log`, kept on the new system; it ends with a table of how long each step took |
 
 ## Encryption
 
