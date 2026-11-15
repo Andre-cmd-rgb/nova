@@ -4,17 +4,20 @@
 #   tools/screenshots --root <dir> [--out <dir>]
 #
 # --root is a `make install DESTDIR=<dir>` tree; the pictures go to docs/images
-# unless --out names another folder. The shell runs as tools/shell-smoke runs
-# it: under a headless sway, in a home, a runtime dir and a D-Bus session of
-# its own. It is given no system bus either, so nothing of the computer this
-# runs on (its networks, its battery, its name) is in a picture; what is in
-# them is made here: a calendar, a terminal's lines, and docs/images/dusk.svg,
-# the background drawn for them, which the adaptive theme takes its colours
-# from.
+# unless --out names another folder. The shell runs on a Hyprland of its own,
+# given Nova's look and window rules (data/hypr), so a picture shows the
+# windows as Nova draws them: round corners, the theme's border, the terminal
+# a little see-through. Hyprland draws to a screen or to a window, and has no
+# way to draw to neither; here it is a window of a headless labwc (sway offers
+# it too old an xdg-shell), in a home, a runtime dir and a D-Bus session of
+# their own. They are given no system bus either, so nothing of the computer
+# this runs on (its networks, its battery, its name) is in a picture; what is
+# in them is made here: a calendar, a terminal's lines, and
+# docs/images/dusk.svg, the background drawn for them, which the adaptive
+# theme takes its colours from.
 #
-# sway has no Hyprland IPC, so a picture shows the shell as it is and the
-# windows as sway frames them: with a plain border in the theme's accent, not
-# Hyprland's gradient, and floating, where Nova tiles them.
+# One thing is not as Nova has it: the windows float where the pictures want
+# them, to leave the background in view, where Nova tiles them.
 
 set -euo pipefail
 
@@ -31,7 +34,7 @@ while (($# > 0)); do
   esac
 done
 [[ -n $root && -f $root/usr/share/nova/shell/shell.qml ]] || { usage >&2; exit 2; }
-for tool in sway swaymsg qs dbus-run-session grim jq foot rsvg-convert vips; do
+for tool in labwc wlr-randr start-hyprland hyprctl qs dbus-run-session grim jq foot rsvg-convert vips; do
   command -v "$tool" >/dev/null || { echo "screenshots: needs $tool" >&2; exit 1; }
 done
 root=$(cd "$root" && pwd)
@@ -40,14 +43,17 @@ out=$(cd "$out" && pwd)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/home/.config/nova" "$work/home/.config/foot" "$work/home/.local/share/nova/calendar" \
-  "$work/run" "$work/bin" "$work/shots"
+mkdir -p "$work/home/.config/nova" "$work/home/.config/foot" "$work/home/.config/hypr" \
+  "$work/home/.config/labwc" "$work/home/.local/share/nova/calendar" "$work/run" "$work/bin" "$work/shots"
 chmod 700 "$work/run"
 
 # What the shell and its helpers must not reach from in here: the session and
-# the system this runs on.
+# the system this runs on. hyprctl is not among them: it looks for Hyprland in
+# the runtime dir, and this one's holds only the Hyprland started here. lspci
+# is: Hyprland lists the graphics cards with it as it starts, which wakes one
+# that sleeps.
 for stub in systemctl dbus-update-activation-environment loginctl powerprofilesctl pkexec sudo \
-  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil udiskie hyprctl curl; do
+  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil udiskie uwsm uwsm-app lspci curl; do
   printf '#!/bin/sh\nexit 0\n' >"$work/bin/$stub"
   chmod +x "$work/bin/$stub"
 done
@@ -105,27 +111,47 @@ exec sleep 3600
 EOF
 chmod +x "$work/bin/demo"
 
-# One session: sway, the shell and what is opened in it, in their own D-Bus
-# session, so that all of it ends together.
+# One session: labwc, Hyprland in it, the shell and what is opened on that, in
+# their own D-Bus session, so that all of it ends together.
 session() {
   set -euo pipefail
-  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 sway -c "$WORK/sway.conf" >"$WORK/sway.log" 2>&1 &
-  local sway=$! socket='' i answer=''
+  # However the session ends, what it started ends with it: Hyprland and what
+  # is on it first, then labwc under them.
+  labwc='' hyprland='' shell=''
+  trap 'kill $shell $hyprland 2>/dev/null; sleep 0.5; kill $labwc 2>/dev/null; wait 2>/dev/null' EXIT
+  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 labwc >"$WORK/labwc.log" 2>&1 &
+  labwc=$!
+  local outer='' inner='' lock='' i answer=''
   for ((i = 0; i < 100; i++)); do
-    socket=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' | head -1)
-    [[ -z $socket ]] || break
+    outer=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' | head -1)
+    [[ -z $outer ]] || break
     sleep 0.1
   done
-  [[ -n $socket ]] || { echo "screenshots: sway did not start" >&2; cat "$WORK/sway.log" >&2; return 1; }
-  export WAYLAND_DISPLAY=$socket
-  SWAYSOCK=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'sway-ipc.*' | head -1)
-  export SWAYSOCK
+  [[ -n $outer ]] || { echo "screenshots: labwc did not start" >&2; cat "$WORK/labwc.log" >&2; return 1; }
+  WAYLAND_DISPLAY=$outer wlr-randr --output HEADLESS-1 --custom-mode 1920x1200
+
+  # Hyprland writes its process and its socket to a lock file once it is up.
+  WAYLAND_DISPLAY=$outer start-hyprland -- --config "$HOME/.config/hypr/hyprland.lua" >"$WORK/hyprland.log" 2>&1 &
+  for ((i = 0; i < 100; i++)); do
+    lock=$(find "$XDG_RUNTIME_DIR/hypr" -mindepth 2 -maxdepth 2 -name hyprland.lock 2>/dev/null | head -1 || true)
+    [[ -z $lock ]] || { read -r hyprland && read -r inner; } <"$lock" || true
+    [[ -z $inner ]] || break
+    sleep 0.1
+  done
+  [[ -n $inner ]] || { echo "screenshots: Hyprland did not start" >&2; tail -30 "$WORK/hyprland.log" >&2; return 1; }
+  export WAYLAND_DISPLAY=$inner
+  HYPRLAND_INSTANCE_SIGNATURE=$(basename "$(dirname "$lock")")
+  export HYPRLAND_INSTANCE_SIGNATURE
+  # The shell follows Hyprland by its event socket, which Hyprland goes
+  # without when the path to it is longer than a socket's may be.
+  [[ -S $XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock ]] ||
+    { echo "screenshots: Hyprland has no event socket; is TMPDIR too long a path for one?" >&2; return 1; }
 
   nova-theme set adaptive >/dev/null 2>&1 || true
   nova-theme bg set "$HOME/dusk.png" >/dev/null 2>&1 || true
 
   QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 qs -n --no-color -p "$SHELL_DIR" >"$WORK/shell.log" 2>&1 &
-  local shell=$!
+  shell=$!
   ipc() { qs ipc -p "$SHELL_DIR" call "$@" 2>/dev/null; }
   for ((i = 0; i < 300; i++)); do
     answer=$(ipc shell ping || true)
@@ -134,30 +160,15 @@ session() {
   done
   [[ $answer == ok ]] || { echo "screenshots: the shell did not answer" >&2; return 1; }
   shot() { sleep "${2:-1.5}"; grim "$WORK/shots/$1.png"; }
-  # sway's frame in the theme's accent, as Hyprland's border is.
-  frame() {
-    local accent muted
-    accent=$(nova-theme color accent) muted=$(nova-theme color muted)
-    swaymsg -q "client.focused $accent $accent $accent $accent $accent" || true
-    swaymsg -q "client.unfocused $muted $muted $muted $muted $muted" || true
-    swaymsg -q "client.focused_inactive $muted $muted $muted $muted $muted" || true
-  }
-  theme() { nova-theme set "$1" >/dev/null 2>&1 || true; sleep 1.2; frame; }
-
-  # A window of the shell's (Settings, the Calendar), as it is placed when
-  # it opens (sway.conf), resized and moved.
-  place() { # x, y, width, height
-    swaymsg -q "[app_id=\"^(?!foot\$).*\"] resize set $3 $4, move absolute position $1 $2" || true
-  }
+  # A theme, and the borders it gives Hyprland's windows.
+  theme() { nova-theme set "$1" >/dev/null 2>&1 || true; sleep 1.2; }
   settings() {
     ipc shell hide nova.settings >/dev/null || true
     sleep 0.4
     ipc shell summon nova.settings '{"page":"appearance"}' >/dev/null
   }
 
-  # The desktop: a terminal and Settings, in the adaptive theme. They float,
-  # to leave the background in the picture.
-  frame
+  # The desktop: a terminal and Settings, in the adaptive theme.
   foot demo >/dev/null 2>&1 &
   sleep 1
   settings
@@ -179,31 +190,60 @@ session() {
   ipc shell hide nova.menu >/dev/null || true
 
   ipc shell summon nova.calendar '{"page":"week","date":""}' >/dev/null
-  sleep 1
-  place 560 150 1240 900
-  shot calendar 2
+  shot calendar 3
   ipc shell hide nova.calendar >/dev/null || true
-
-  kill "$shell" "$sway" 2>/dev/null || true
-  wait 2>/dev/null || true
 }
 
-# Every window floats where the pictures want it: the terminal top left, the
-# shell's own windows over its corner, and the dusk to their right.
-cat >"$work/sway.conf" <<'EOF'
-output HEADLESS-1 resolution 1920x1200 scale 1
-default_border pixel 2
-default_floating_border pixel 2
-for_window [app_id="foot"] floating enable, resize set 720 440, move absolute position 44 76
-for_window [app_id="^(?!foot$).*"] floating enable, resize set 860 620, move absolute position 330 330
+# labwc gives Hyprland the whole of its screen, with no frame of its own. It
+# has no way to go without X: while it runs it holds a free display number in
+# /tmp/.X11-unix, with no X server behind it.
+cat >"$work/home/.config/labwc/rc.xml" <<'EOF'
+<?xml version="1.0"?>
+<labwc_config>
+  <windowRules>
+    <windowRule identifier="*" serverDecoration="no">
+      <action name="ToggleFullscreen" />
+    </windowRule>
+  </windowRules>
+</labwc_config>
 EOF
-# sway draws with the GPU where there is one it may use, and WLR_RENDERER=pixman
-# has it draw without, as in CI; those two of the caller's settings go in.
+
+# Hyprland with Nova's look, behaviour and window rules and the theme's
+# borders, without Nova's keys, session and autostart. Every window floats
+# where the pictures want it: the terminal top left, the shell's own windows
+# over its corner, and the dusk to their right.
+cat >"$work/home/.config/hypr/hyprland.lua" <<'EOF'
+dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
+require("default.hypr.lib")
+require("default.hypr.look")
+require("default.hypr.behavior")
+require("default.hypr.rules")
+nova.run_if_present(nova.state .. "/current/theme/hyprland.lua")
+
+hl.monitor({ output = "", mode = "1920x1200", position = "0x0", scale = 1 })
+hl.config({
+  -- A picture is taken of windows at rest, not halfway through a fade.
+  animations = { enabled = false },
+  -- Nothing in the pictures is an X11 program.
+  xwayland = { enabled = false },
+  ecosystem = { no_update_news = true, no_donation_nag = true },
+})
+
+local shell_window = "^org\\.quickshell$"
+nova.window("foot", { float = true, size = { 720, 440 }, move = { 44, 76 } })
+nova.window({ class = shell_window, title = "^Settings$" }, { size = { 860, 620 }, move = { 330, 330 } })
+nova.window({ class = shell_window, title = "^Calendar$" }, { size = { 1240, 900 }, move = { 560, 150 } })
+EOF
+
+# labwc draws with the GPU where there is one it may use, and Hyprland with
+# the one labwc names it; those of the caller's settings go in. GIO is kept to
+# files and to memory: Hyprland's would otherwise start gvfs and dconf here.
 renderer=()
-for name in WLR_RENDERER WLR_RENDER_DRM_DEVICE LD_LIBRARY_PATH; do
+for name in WLR_RENDERER WLR_RENDER_DRM_DEVICE LD_LIBRARY_PATH __EGL_VENDOR_LIBRARY_FILENAMES; do
   [[ -z ${!name:-} ]] || renderer+=("$name=${!name}")
 done
 env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${TZ:-Europe/Rome}" \
+  GIO_USE_VFS=local GSETTINGS_BACKEND=memory \
   PATH="$work/bin:$root/usr/lib/nova/bin:$root/usr/bin:$PATH" \
   NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN=password \
   DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/system-bus \

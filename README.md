@@ -82,7 +82,7 @@ make DESTDIR=/tmp/nova-root install    # the nova package's files, into a scratc
 
 Packages and ISOs are built only by CI. Start with [the architecture](docs/ARCHITECTURE.md), the contract every component follows; [the documentation's index](docs/README.md) lists the rest.
 
-The pictures are of the shell itself, taken by `tools/screenshots` over a background drawn for them (`docs/images/dusk.svg`, by `tools/draw-dusk`). They run under a headless sway, so the windows float with a plain, square border where Nova tiles them and rounds their corners.
+The pictures are of the shell itself, taken by `tools/screenshots` over a background drawn for them (`docs/images/dusk.svg`, by `tools/draw-dusk`). They are taken off-screen on a Hyprland of their own, with Nova's look and window rules, so the windows are drawn as Nova draws them; they float, to leave the background in view, where Nova tiles them.
 
 ## License
 
