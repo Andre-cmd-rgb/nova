@@ -18,16 +18,21 @@ MIN_PASSWORD=8
 
 # ------------------------------------------------------------- the questions
 
-# Never root, the greeter or another system account: those exist in the new
-# system too, and useradd would fail there after the disk is already erased. An
-# ordinary account of that name on the live system (the fingerprint stand-in of
-# an earlier attempt) is fine.
+# Never root, the greeter or another system account, nor a system group's name
+# (audio, video, wheel...): those exist in the new system too, and useradd,
+# which makes the account a group of its own name, would fail there after the
+# disk is already erased. An ordinary account or group of that name on the live
+# system (the fingerprint stand-in of an earlier attempt) is fine.
 valid_username() {
   [[ $1 =~ ^[a-z_][a-z0-9_-]{0,31}$ && $1 != root && $1 != greeter ]] || return 1
-  local entry uid
+  local entry id
+  if entry=$(getent group "$1"); then
+    IFS=: read -r _ _ id _ <<<"$entry"
+    ((id >= 1000 && id != 65534)) || return 1
+  fi
   entry=$(getent passwd "$1") || return 0
-  IFS=: read -r _ _ uid _ <<<"$entry"
-  ((uid >= 1000 && uid != 65534))
+  IFS=: read -r _ _ id _ <<<"$entry"
+  ((id >= 1000 && id != 65534))
 }
 
 # What useradd takes as the comment: no : (the passwd file's separator), and

@@ -1321,12 +1321,21 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
   # checks once it is. So are snap-pac's snapshots: snapper has no
   # configuration until configure_snapper, and the first snapshot is the
   # installed system's.
-  local status=0
-  printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
-  NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | pacstrap_feed ||
-    status=$?
+  # A network that drops for a moment fails a download: pacstrap is run again,
+  # up to three times in all, and what it fetched is in the target's package
+  # cache already, so it carries on where it stopped.
+  local status try
+  for try in 1 2 3; do
+    status=0
+    printf '+ pacstrap -C %s -K %s %s\n' "$conf" "$TARGET" "${packages[*]}" >>"$LOG"
+    NOVA_BOOT_CHECK=skip SNAP_PAC_SKIP=y pacstrap -C "$conf" -K "$TARGET" "${packages[@]}" 2>&1 | pacstrap_feed ||
+      status=$?
+    ((status != 0 && try < 3)) || break
+    warn "pacstrap failed; trying again in $((try * 10)) seconds"
+    sleep "$((try * 10))"
+  done
   rm -rf -- "$conf" "$hooks"
-  ((status == 0)) || die "pacstrap failed; the log is in $LOG"
+  ((status == 0)) || die "pacstrap failed three times; the log is in $LOG. The disk is erased already: running the install again starts it over."
 }
 
 # pacstrap's output, line by line: into the log, onto the terminal (or, under

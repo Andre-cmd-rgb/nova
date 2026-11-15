@@ -368,6 +368,22 @@ secure_boot() { # 0|1
   [ ! -e "$(cat "$SCRATCH/hookdir")" ]
 }
 
+@test "install_packages: a pacstrap that fails is tried again, three times in all" {
+  LOG=$SCRATCH/log
+  : >"$LOG"
+  package_set() { echo base; }
+  sleep() { :; }
+  pacstrap() { echo try >>"$SCRATCH/tries"; [ "$(wc -l <"$SCRATCH/tries")" -ge 2 ]; }
+  install_packages linux-nova '' 2026/10/19 https://example.org/repo 2>/dev/null
+  [ "$(wc -l <"$SCRATCH/tries")" -eq 2 ]
+  : >"$SCRATCH/tries"
+  pacstrap() { echo try >>"$SCRATCH/tries"; return 1; }
+  run install_packages linux-nova '' 2026/10/19 https://example.org/repo
+  [ "$status" -eq 1 ]
+  [ "$(wc -l <"$SCRATCH/tries")" -eq 3 ]
+  [[ $output == *"The disk is erased already"* ]]
+}
+
 @test "packages_available: both repositories are asked for the whole set before the erase" {
   LOG=$SCRATCH/log
   pacman() { # --config conf --dbpath db --logfile /dev/null operation...
@@ -516,6 +532,9 @@ secure_boot() { # 0|1
   # System accounts exist in the new system too.
   fails valid_username bin
   fails valid_username nobody
+  # And so do system groups, which useradd's own group for the account would clash with.
+  if getent group audio >/dev/null && ! getent passwd audio >/dev/null; then fails valid_username audio; fi
+  fails valid_username wheel
 }
 
 @test "valid_fullname: anything useradd takes as the comment" {
