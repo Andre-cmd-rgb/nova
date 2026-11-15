@@ -492,7 +492,7 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field held)" = '["visual-studio-code-bin"]' ]
 }
 
-@test "Settings: an app whose recipe changed waits, and nothing else is asked" {
+@test "Settings: an app whose recipe changed waits, says nothing, and nothing else is asked" {
   echo 1.0.0beta.2 >"$PKGVER"
   stub nova-apps-install 'case $1 in --build) echo "held visual-studio-code-bin" >>"$2/result" ;; esac'
   stub nova-notification-send
@@ -500,7 +500,7 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field state)" = '"done"' ]
   [ "$(field held)" = '["visual-studio-code-bin"]' ]
   fails grep -q pkexec "$CALLS"
-  grep -q "^nova-notification-send .*VS Code's update needs your OK" "$CALLS"
+  fails grep -q nova-notification-send "$CALLS"
 }
 
 @test "Settings: Nova already current, with nothing else to do, says nothing" {

@@ -645,20 +645,16 @@ settings_update() {
 
 # For a window that may be closed by now: what is left to do. Nova installed
 # needs saying only when it waits for a restart, and Nova already current
-# never; nor do apps that were updated, which are simply newer.
+# never; nor do apps that were updated, which are simply newer, nor an app
+# held for a recipe that changed, which Settings → Updates shows.
 notify_result() {
   local -a open=(--exec nova-shell shell summon nova.settings '{"page":"updates"}')
-  local app
   case $st_state in
     done)
       if (( ${#release_flags[@]} && st_restart )) && [[ -n $st_version && $(installed_pkgver) == "$(tag_pkgver "$st_version")" ]]; then
         nova-notification-send -g 󰚰 "Restart to finish the update" \
           "Nova $st_version is installed." "${open[@]}"
       fi
-      for app in "${st_held[@]}"; do
-        nova-notification-send -g 󰚰 "$(app_name "$app")'s update needs your OK" \
-          "Its recipe on the AUR changed more than its version. Settings → Updates shows the change." "${open[@]}"
-      done
       ;;
     failed) nova-notification-send -u normal -g 󰚰 "The update did not finish" "${st_error^}." "${open[@]}" ;;
   esac >/dev/null 2>&1 || true
