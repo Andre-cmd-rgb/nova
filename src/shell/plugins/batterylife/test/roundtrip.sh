@@ -24,6 +24,8 @@ trap 'rm -rf -- "$FIXTURE"' EXIT
 export XDG_CONFIG_HOME="$FIXTURE/config"
 export XDG_STATE_HOME="$FIXTURE/state"
 export BATTERYLIFE_POWER_SUPPLY_DIR="$FIXTURE/power_supply"
+# UPower's settings, none at first: its own defaults then, 2 % kept back.
+export BATTERYLIFE_UPOWER_DIR="$FIXTURE/upower"
 DAYS="$XDG_STATE_HOME/nova-batterylife/days"
 
 pass=0
@@ -159,8 +161,36 @@ sort_history
 battery Discharging 4540000 20000000
 now=$($CLI json | jq -c '.now')
 ok "the drain is the battery's, not the gauge's" "20" "$(jq -r '.displayWatts | round' <<<"$now")"
+# 4.54 Wh at 20 W, less the 1.49 kept back for hibernating: about nine minutes.
 contains "and the time left is minutes, not hours" "true" \
-  "$(jq -r '.timeLeft > 600 and .timeLeft < 1200' <<<"$now")"
+  "$(jq -r '.timeLeft > 300 and .timeLeft < 1200' <<<"$now")"
+
+echo "== the time left is to the hibernate, not to empty =="
+# Half an hour at exactly 20 W (1 Wh each 180 s), down to half of 74.48 Wh:
+# 6703 s to empty.
+reset_history
+for i in $(seq 10 -1 0); do row $((i * 180)) D $((37240000 + i * 1000000)); done
+sort_history
+battery Discharging 37240000 20000000
+left() { $CLI json | jq -r '.now.timeLeft // "none"'; }
+near() { jq -n --argjson got "$2" --argjson want "$1" '($got - $want) | fabs <= 2'; }
+ok "UPower's own 2 %: 1.49 Wh less" "true" "$(near 6435 "$(left)")"
+mkdir -p -- "$BATTERYLIFE_UPOWER_DIR/UPower.conf.d"
+printf '[UPower]\nCriticalPowerAction=Hibernate\n' >"$BATTERYLIFE_UPOWER_DIR/UPower.conf.d/10-nova.conf"
+ok "Nova's policy keeps the same" "true" "$(near 6435 "$(left)")"
+printf '[UPower]\nPercentageAction=10\n' >"$BATTERYLIFE_UPOWER_DIR/UPower.conf.d/50-local.conf"
+ok "a later file's percentage wins" "true" "$(near 5362 "$(left)")"
+printf '[UPower]\nUsePercentageForPolicy=false\nTimeAction=300\n' >"$BATTERYLIFE_UPOWER_DIR/UPower.conf.d/50-local.conf"
+ok "by time, its seconds come off" "true" "$(near 6403 "$(left)")"
+printf '[UPower]\nCriticalPowerAction=Ignore\n' >"$BATTERYLIFE_UPOWER_DIR/UPower.conf.d/50-local.conf"
+ok "with no action, to empty" "true" "$(near 6703 "$(left)")"
+printf '[Other]\nPercentageAction=40\n' >"$BATTERYLIFE_UPOWER_DIR/UPower.conf"
+ok "another section's settings are not UPower's" "true" "$(near 6703 "$(left)")"
+rm -f -- "$BATTERYLIFE_UPOWER_DIR/UPower.conf" "$BATTERYLIFE_UPOWER_DIR/UPower.conf.d/50-local.conf"
+battery Discharging 1000000 20000000
+ok "below the reserve there is no time left to give" "0" "$(left)"
+ok "but a full charge still has its figure" "true" \
+  "$($CLI json | jq -r '.now.atRateSeconds > 13000')"
 
 echo "== a suspend in the middle =="
 # Same energy, same start and end, but two hours of nothing between.
@@ -247,6 +277,7 @@ ok "an untouched hour reads as untouched" "0" \
 
 echo "== settings =="
 ok "a default is returned" "300" "$($CLI config GAP_SECONDS)"
+ok "the estimate's half-life is five minutes" "300" "$($CLI config RESPONSE_SECONDS)"
 ok "a set value comes back" "120" "$($CLI set GAP_SECONDS 120 >/dev/null && $CLI config GAP_SECONDS)"
 ok "an unknown key is refused" "1" "$($CLI set NONSENSE 1 >/dev/null 2>&1; echo $?)"
 ok "a non-numeric value is refused" "1" "$($CLI set GAP_SECONDS abc >/dev/null 2>&1; echo $?)"

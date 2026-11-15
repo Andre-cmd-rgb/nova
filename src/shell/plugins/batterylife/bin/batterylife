@@ -113,7 +113,7 @@ setting_default() {
   TYPICAL_DAYS) printf '14' ;;
   # Half-life of the weighting behind the live estimate: how quickly it
   # follows a change in what the machine is doing.
-  RESPONSE_SECONDS) printf '60' ;;
+  RESPONSE_SECONDS) printf '300' ;;
   *) return 1 ;;
   esac
 }
@@ -520,11 +520,19 @@ days_tsv() {
 # remaining-time readout is not worth watching.
 #
 # But it does have to follow the machine. Writing in a terminal and watching a
-# video are twenty watts apart here, and an average over the last quarter hour
-# describes neither. So every interval is weighted by its age, halving every
-# RESPONSE_SECONDS: the last minute decides the number, the ten before it damp
-# the noise, and anything older is arithmetically irrelevant without needing a
-# cutoff to say so.
+# video are twenty watts apart here, and the average of a whole run describes
+# neither. So every interval is weighted by its age, halving every
+# RESPONSE_SECONDS: the last five minutes decide the number, the half hour
+# before them damps it, and anything older is arithmetically irrelevant
+# without needing a cutoff to say so.
+#
+# Five minutes was chosen against 74 days of a P1's own record (12 017
+# moments in 81 runs, each estimate held against the draw that actually
+# followed): it was the most accurate of the half-lives tried, a little ahead
+# of one minute (13.8 % median error against 14.5 %), and steadier by three
+# times (the reading moved 1.7 % from one minute to the next, not 5.4 %). The
+# runs' long average and the last two weeks' did worse: what is being done
+# now goes on long enough to matter more than what is done most days.
 RECENT_WINDOW=1800
 
 # "0", "0.00" and "" all mean no rate. Everything that produces one prints a
@@ -538,7 +546,7 @@ is_positive() { [[ -n ${1:-} && $1 != 0 && $1 != 0.0 && $1 != 0.00 ]]; }
 # Prints: drain_watts fill_watts
 recent_rates() {
   rows_for_span 2 | awk -v now="$(date +%s)" -v window="$RECENT_WINDOW" \
-    -v half="$(cfg_number RESPONSE_SECONDS 60)" \
+    -v half="$(cfg_number RESPONSE_SECONDS 300)" \
     -v gap="$(cfg_number GAP_SECONDS 300)" '
     BEGIN { ln2 = 0.6931471805599453 }
     function rate(wd, wt) {
@@ -580,6 +588,45 @@ recent_rates() {
   '
 }
 
+# The computer does not run to an empty battery: UPower acts first, which Nova
+# makes a hibernate (data/battery/upower.conf), once the charge is down to
+# PercentageAction, 2 % unless set otherwise, or, with UsePercentageForPolicy
+# off, once TimeAction seconds are left. The time left is the time to that
+# point. Read as UPower reads it: UPower.conf, then UPower.conf.d/*.conf in
+# order, a later file winning; a CriticalPowerAction of Ignore keeps nothing.
+#
+# Prints: reserve_percent reserve_seconds (one of them 0)
+UPOWER_DIR="${BATTERYLIFE_UPOWER_DIR:-/etc/UPower}"
+
+reserve() {
+  local files=() file
+  [[ -r $UPOWER_DIR/UPower.conf ]] && files+=("$UPOWER_DIR/UPower.conf")
+  for file in "$UPOWER_DIR"/UPower.conf.d/*.conf; do
+    [[ -r $file ]] && files+=("$file")
+  done
+  ((${#files[@]})) || files=(/dev/null)
+  awk '
+    BEGIN { percent = 2; seconds = 120; by_percent = 1; ignore = 0 }
+    FNR == 1 { section = "" }
+    /^[[:space:]]*\[/ { section = $0; gsub(/[][:space:][]/, "", section); next }
+    section != "UPower" || !/=/ { next }
+    {
+      key = substr($0, 1, index($0, "=") - 1); gsub(/[[:space:]]/, "", key)
+      value = substr($0, index($0, "=") + 1); gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+      if (key == "UsePercentageForPolicy") by_percent = (tolower(value) != "false")
+      else if (key == "PercentageAction" && value ~ /^[0-9]+([.][0-9]+)?$/) percent = value + 0
+      else if (key == "TimeAction" && value ~ /^[0-9]+$/) seconds = value + 0
+      else if (key == "CriticalPowerAction") ignore = (value == "Ignore")
+    }
+    END {
+      if (percent > 50) percent = 50
+      if (ignore) print "0 0"
+      else if (by_percent) printf "%.2f 0\n", percent
+      else printf "0 %d\n", seconds
+    }
+  ' "${files[@]}"
+}
+
 # The current discharge run, or nothing. Same columns as sessions_tsv.
 current_session() {
   sessions_cached | awk -F'\t' '$11 == 1' | tail -n1
@@ -594,7 +641,7 @@ current_session() {
 # "unknown" and says so.
 now_tsv() {
   local energy full design pct state power recent charge_rate rate
-  local typ_w typ_full runs sess
+  local typ_w typ_full runs sess reserve_pct reserve_s
 
   if ! find_battery; then
     printf 'present\t0\n'
@@ -607,6 +654,10 @@ now_tsv() {
 
   read -r recent charge_rate < <(recent_rates)
   read -r typ_w typ_full runs _ < <(typical_rate)
+  read -r reserve_pct reserve_s < <(reserve)
+  # What a full charge gives on the record's average, to the reserve as well.
+  typ_full=$(awk -v t="$typ_full" -v rp="$reserve_pct" -v rs="$reserve_s" \
+    'BEGIN { t = t * (1 - rp / 100) - rs; printf "%d", (t > 0) ? t : 0 }')
 
   # What the drain estimate divides by: what has just been measured, or
   # failing that what recent runs averaged.
@@ -629,7 +680,7 @@ now_tsv() {
   # Everything derived in one pass. A process per number is most of what a
   # panel refresh used to cost.
   awk -v e="$energy" -v f="$full" -v p="$power" -v st="$state" \
-    -v rate="$rate" -v crate="$charge_rate" '
+    -v rate="$rate" -v crate="$charge_rate" -v rp="$reserve_pct" -v rs="$reserve_s" '
     BEGIN {
       watts = p / 1000000
       # The instantaneous reading stands in only while nothing has been
@@ -650,15 +701,22 @@ now_tsv() {
         (st == "D") ? rate : ((st == "C") ? crate : watts)
       printf "displayLive\t%d\n", live
 
-      if (st == "D" && rate > 0)
-        printf "timeLeft\t%d\n", e / 1000000 / rate * 3600
+      # To the reserve the computer hibernates at (reserve), not to empty;
+      # absent once it is there, as there is nothing honest left to say.
+      reserved = f * rp / 100
+      if (st == "D" && rate > 0) {
+        t = (e - reserved) / 1000000 / rate * 3600 - rs
+        if (t > 0) printf "timeLeft\t%d\n", t
+      }
       if (st == "C" && crate > 0 && f > e)
         printf "timeToFull\t%d\n", (f - e) / 1000000 / crate * 3600
       # What a full charge would give at the drain rate in force right now.
       # Absent while charging with no drain history: how long this battery
       # lasts is not something a charging curve can answer.
-      if (f > 0 && rate > 0 && st != "C")
-        printf "atRateSeconds\t%d\n", f / 1000000 / rate * 3600
+      if (f > 0 && rate > 0 && st != "C") {
+        t = (f - reserved) / 1000000 / rate * 3600 - rs
+        if (t > 0) printf "atRateSeconds\t%d\n", t
+      }
     }
   '
 

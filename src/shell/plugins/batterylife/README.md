@@ -146,14 +146,24 @@ Tue 01 Sep 02:01   99% → 57 %  1h 27m    20.3 W   3h 39m
 | `GAP_SECONDS` | 300 | a quiet stretch longer than this counts as suspended |
 | `MIN_SESSION` | 600 | ignore discharge runs shorter than this |
 | `TYPICAL_DAYS` | 14 | days averaged into the full-charge projection |
-| `RESPONSE_SECONDS` | 60 | how fast the live estimate follows a change in load |
+| `RESPONSE_SECONDS` | 300 | how fast the live estimate follows a change in load |
 
 `RESPONSE_SECONDS` is the half-life of the weighting behind the live
 estimate. Every interval counts for half as much as one `RESPONSE_SECONDS`
-newer, so at the default the last minute decides the number and the ten
-before it only damp the noise. Raise it for a steadier reading, lower it to
-follow the machine more closely — though nothing can react faster than
-`SAMPLE_INTERVAL`, since that is how often there is anything new to react to.
+newer, so at the default the last five minutes decide the number and the
+half hour before them only damps it. Five minutes was the most accurate of
+the half-lives tried against 74 days of a P1's own record (each estimate held
+against the draw that actually followed), and three times steadier than one
+minute. Raise it for a steadier reading, lower it to follow the machine more
+closely — though nothing can react faster than `SAMPLE_INTERVAL`, since that
+is how often there is anything new to react to.
+
+The time left is to the point where the computer hibernates, not to an empty
+battery: UPower acts at `PercentageAction` (2 % unless set otherwise), or with
+`UsePercentageForPolicy=false` once `TimeAction` seconds are left, and that
+much is kept out of the figure. It is read from `/etc/UPower/UPower.conf` and
+`UPower.conf.d/` as UPower reads them; a `CriticalPowerAction` of `Ignore`
+keeps nothing back.
 
 `GAP_SECONDS` is the one worth understanding. It is how the plugin tells a
 suspend from a sample it simply missed. Too low and a busy moment that
