@@ -1,0 +1,39 @@
+# Keeps the kernel's build. release.yml builds linux-nova once and reuses the
+# build until packaging/linux-nova changes, but GitHub drops a cache nothing
+# has read for seven days, and releases are two weeks apart: without this, the
+# kernel would be built again at every candidate, for three hours and more.
+# Every third day this reads the build for packaging/linux-nova as it is on
+# main, which is all it takes to keep it.
+name: kernel cache
+
+on:
+  schedule:
+    - cron: '41 4 */3 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  keep:
+    runs-on: ubuntu-latest
+    # The container release.yml's kernel job saves it from: a cache is found
+    # again only by the same path, packed the same way.
+    container: archlinux:base-devel
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: kernel
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/kernel
+          key: linux-nova-${{ hashFiles('packaging/linux-nova/**') }}
+      - name: Say whether it is there
+        env:
+          KEPT: ${{ steps.kernel.outputs.cache-hit }}
+        run: |
+          if [[ $KEPT == true ]]; then
+            ls -l out/kernel
+          else
+            echo "::warning::No kernel build is kept for packaging/linux-nova as it is on main: the next release builds it, which takes a few hours."
+          fi

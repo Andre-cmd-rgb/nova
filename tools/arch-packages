@@ -1,0 +1,107 @@
+#!/bin/bash
+# arch-packages: fetch the packages of Arch's that an install of a release can
+# need, from the release's snapshot, before Nova's own packages are built.
+#
+#   tools/arch-packages --release <release.toml> [--list] <dir>
+#
+# The install tests (tests/install/run) put every package an install can need
+# on their stick, as nova usb does, and nova usb takes what pacman's cache
+# holds from there. Each test fetched the same 700 packages from the Arch
+# Linux Archive, which is one server: four and a half of a test's nine
+# minutes. release.yml runs this once instead, beside the package builds, and
+# gives the tests what it fetched for their pacman's cache.
+#
+# Nova's own packages are not built yet when this runs, so what they bring in
+# is read from their PKGBUILDs. A package this misses does no harm: the test
+# fetches it, as it did every one before. --list prints what would be fetched,
+# as "url<TAB>bytes", and fetches nothing.
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+# package_urls and download_packages: nova usb's own.
+# shellcheck source=installer/nova-usb
+source "$root/installer/nova-usb"
+
+die() { printf 'arch-packages: %s\n' "$*" >&2; exit 1; }
+
+release='' list=0
+while (($#)); do
+  case $1 in
+    --release) release=${2:?--release needs a file}; shift 2 ;;
+    --list) list=1; shift ;;
+    -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    -*) die "unknown option: $1" ;;
+    *) break ;;
+  esac
+done
+usage="usage: tools/arch-packages --release <release.toml> [--list] <dir>"
+[[ -r $release ]] || die "$usage"
+(($# == 1 || list)) || die "$usage"
+out=${1:-}
+arch_date=$(sed -n 's/^arch_date = "\(.*\)"$/\1/p' "$release")
+[[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "$release has no arch_date"
+
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
+
+# The installer's own list, from the files the ISO would carry it in, and what
+# Nova's packages depend on, without the versions they ask for.
+share=$work/share
+install -Dm644 "$root/installer/packages" "$share/packages"
+for packages in "$root"/data/hardware/*/packages; do
+  profile=${packages%/packages}
+  install -Dm644 "$packages" "$share/hardware/${profile##*/}/packages"
+done
+{
+  NOVA_INSTALLER_SHARE=$share "$root/installer/nova-install" --list-packages
+  for pkgbuild in "$root"/packaging/*/PKGBUILD; do
+    # shellcheck disable=SC2016 # the inner shell's own
+    bash -c 'source "$1" >/dev/null 2>&1; printf "%s\n" "${depends[@]}"' _ "$pkgbuild"
+  done
+} | sed 's/[<>=].*//' | sort -u >"$work/names"
+
+{
+  printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n'
+  for repo in core extra multilib; do
+    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+    printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$repo" "$arch_date"
+  done
+} >"$work/pacman.conf"
+mkdir -p "$work/db/cache"
+# pacman syncs only as root; anyone else's database here is as good.
+as_root=()
+((EUID == 0)) || as_root=(fakeroot --)
+"${as_root[@]}" pacman --config "$work/pacman.conf" --dbpath "$work/db" --logfile /dev/null -Sy >/dev/null ||
+  die "the snapshot of $arch_date did not answer"
+
+# Only what the snapshot has: Nova's own packages are in no Arch repository.
+# Together where they can be; a name pacman refuses beside the others (two that
+# conflict) is resolved alone, and one it cannot resolve at all is left out.
+pacman --config "$work/pacman.conf" --dbpath "$work/db" -Slq | sort -u >"$work/arch"
+mapfile -t names < <(comm -12 "$work/names" "$work/arch")
+((${#names[@]})) || die "none of the packages are in the snapshot of $arch_date"
+if ! package_urls "$work/pacman.conf" "$work/db" "${names[@]}" >"$work/urls"; then
+  : >"$work/urls"
+  for name in "${names[@]}"; do
+    package_urls "$work/pacman.conf" "$work/db" "$name" >>"$work/urls" || true
+  done
+fi
+sort -u -o "$work/urls" "$work/urls"
+[[ -s $work/urls ]] || die "nothing resolved against the snapshot of $arch_date"
+
+if ((list)); then
+  cat "$work/urls"
+  exit 0
+fi
+mkdir -p -- "$out"
+download_packages "$work/urls" "$out" || die "a package did not download"
+# download_packages names a file for a stick's FAT, which takes no ':'; in
+# pacman's cache a version with an epoch keeps its own.
+while IFS=$'\t' read -r url _; do
+  name=${url##*/}
+  name=$(printf '%b' "${name//%/\\x}")
+  [[ $name == *:* ]] || continue
+  mv -- "$out/${name//:/_}" "$out/$name"
+  mv -- "$out/${name//:/_}.sig" "$out/$name.sig"
+done <"$work/urls"
+printf 'arch-packages: %d packages in %s\n' "$(wc -l <"$work/urls")" "$out" >&2

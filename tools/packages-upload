@@ -39,19 +39,43 @@ folder=${BASH_REMATCH[1]}
 # not every one a newer aws CLI would add.
 export AWS_DEFAULT_REGION=auto AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required
 
-for file; do
-  [[ -f $file ]] || die "$file is not a file"
-  aws s3 cp --only-show-errors --endpoint-url "$R2_ENDPOINT" "$file" "s3://$R2_BUCKET/$folder/${file##*/}" ||
-    die "could not upload ${file##*/}"
-done
+# Six at a time: one after another, a release's 31 files took 80 seconds on a
+# good day and six minutes on a bad one.
+each() { # function file...: 1 when it failed for any of them
+  local run=$1 running=0 failed=0 file
+  shift
+  for file; do
+    "$run" "$file" &
+    if ((++running == 6)); then
+      wait -n || failed=1
+      running=5
+    fi
+  done
+  while ((running-- > 0)); do wait -n || failed=1; done
+  return "$failed"
+}
+
+put() { # file
+  aws s3 cp --only-show-errors --endpoint-url "$R2_ENDPOINT" "$1" "s3://$R2_BUCKET/$folder/${1##*/}" ||
+    die "could not upload ${1##*/}"
+}
+
 # A read cut off midway, as v1.0.0's first publish was, is tried again whole:
 # into a file, which curl starts over, where a pipe would keep the first part.
-back=$(mktemp)
-trap 'rm -f "$back"' EXIT
+check() { # file
+  local back
+  back=$(mktemp -p "$backs")
+  curl -fsSL --retry 3 --retry-all-errors --max-time 600 -o "$back" "$repo/${1##*/}" ||
+    die "$repo/${1##*/} cannot be read back"
+  [[ $(sha256sum <"$back") == "$(sha256sum <"$1")" ]] || die "$repo/${1##*/} is not what was uploaded"
+  rm -f -- "$back"
+}
+
 for file; do
-  sent=$(sha256sum <"$file")
-  curl -fsSL --retry 3 --retry-all-errors --max-time 600 -o "$back" "$repo/${file##*/}" ||
-    die "$repo/${file##*/} cannot be read back"
-  [[ $(sha256sum <"$back") == "$sent" ]] || die "$repo/${file##*/} is not what was uploaded"
+  [[ -f $file ]] || die "$file is not a file"
 done
+each put "$@" || exit 1
+backs=$(mktemp -d)
+trap 'rm -rf "$backs"' EXIT
+each check "$@" || exit 1
 printf 'packages-upload: %d files at %s\n' "$#" "$repo" >&2

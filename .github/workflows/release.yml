@@ -1,7 +1,7 @@
 # A release: pins an Arch Linux Archive snapshot (yesterday's, unless given),
-# builds every Nova package against it, signs them into the [nova] repository,
-# builds the installer ISO, installs from it in a virtual machine and boots the
-# result, and only then publishes it: the package repository to the
+# builds every Nova package against it, side by side, signs them into the
+# [nova] repository, builds the installer ISO, installs from it in a virtual
+# machine and boots the result, and only then publishes it: the package repository to the
 # nova-packages bucket on Cloudflare R2, then the GitHub release, which carries
 # only the ISO, nova-usb and release.toml. A draft when a tag is pushed by
 # hand, published when candidate.yml or promote.yml calls it. A tag with a "-"
@@ -69,6 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       arch_date: ${{ steps.pin.outputs.arch_date }}
+      snapshot: ${{ steps.pin.outputs.snapshot }} # the same date, as a cache's key names it: 2026-11-14
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -81,6 +82,7 @@ jobs:
           date=${ARCH_DATE:-$(date -u -d yesterday +%Y/%m/%d)}
           tools/release-pin --version "$TAG" --date "$date" --verify --out release.toml
           echo "arch_date=$date" >>"$GITHUB_OUTPUT"
+          echo "snapshot=${date//\//-}" >>"$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-toml
@@ -94,7 +96,8 @@ jobs:
       volumes:
         - /mnt:/mnt # the runner's scratch disk: a kernel build tree outgrows the root disk
     # A full kernel build takes hours on a hosted runner, so a build is reused
-    # until packaging/linux-nova changes.
+    # until packaging/linux-nova changes. kernel-cache.yml keeps it from being
+    # dropped between two releases.
     timeout-minutes: 350
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -115,11 +118,21 @@ jobs:
           name: kernel
           path: out/kernel/*.pkg.tar.zst
 
-  packages:
-    needs: [pin, kernel]
+  # Nova's other packages, in three jobs side by side: one after another they
+  # took 17 minutes of a release's 40. Each build is kept under the snapshot
+  # and the files it is made from, so a promote, which builds the candidate's
+  # commit on the candidate's snapshot, takes them as the candidate's run built
+  # them, and so does a run started again. Only nova is built every time: its
+  # version is the tag's.
+
+  # nova, and before it the three it depends on that no Arch repository has.
+  # Building it with --syncdeps also proves every other dependency exists in
+  # the pinned snapshot.
+  nova:
+    needs: pin
     runs-on: ubuntu-latest
     container: archlinux:base-devel
-    timeout-minutes: 120
+    timeout-minutes: 60
     steps:
       - name: Tools
         run: pacman -Syu --noconfirm --needed git
@@ -127,11 +140,14 @@ jobs:
         with:
           ref: ${{ env.TAG }}
           fetch-depth: 0 # the nova package's version comes from git describe
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - id: built
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          name: kernel
-          path: out/kernel
+          path: out/before
+          key: before-nova-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('packaging/nova-keyring/**', 'packaging/limine-entry-tool/**', 'packaging/limine-snapper-sync/**', 'tools/build-package', 'tools/ci-setup') }}
       - name: Build the packages
+        env:
+          BUILT: ${{ steps.built.outputs.cache-hit }}
         run: |
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
           chown -R builder:builder "$GITHUB_WORKSPACE"
@@ -140,31 +156,117 @@ jobs:
           retry() { "$@" || { sleep 30; "$@"; } || { sleep 30; "$@"; }; }
           test -f packaging/nova-keyring/nova.gpg ||
             { echo "::error::packaging/nova-keyring has no key yet; see docs/releasing.md"; exit 1; }
-          tools/build-package packaging/nova-keyring out/pkgs
-          tools/build-package packaging/limine-entry-tool out/pkgs
-          tools/build-package packaging/limine-snapper-sync out/pkgs
-          tools/build-package packaging/whisper-cpp out/pkgs
-          # nova depends on these three, which no Arch repository has. Building
-          # it with --syncdeps also proves every other dependency exists in the
-          # pinned snapshot.
-          retry pacman -U --noconfirm out/pkgs/nova-keyring-*.pkg.tar.zst \
-            out/pkgs/limine-entry-tool-*.pkg.tar.zst out/pkgs/limine-snapper-sync-*.pkg.tar.zst
+          if [[ $BUILT != true ]]; then
+            tools/build-package packaging/nova-keyring out/before
+            tools/build-package packaging/limine-entry-tool out/before
+            tools/build-package packaging/limine-snapper-sync out/before
+          fi
+          retry pacman -U --noconfirm out/before/*.pkg.tar.zst
           NOVA_SOURCE="git+file://$GITHUB_WORKSPACE#tag=$TAG" tools/build-package packaging/nova out/pkgs
+          cp out/before/*.pkg.tar.zst out/pkgs/
+          ls -l out/pkgs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-nova
+          path: out/pkgs/*.pkg.tar.zst
+
+  whisper-cpp:
+    needs: pin
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - id: built
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/pkgs
+          key: whisper-cpp-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('packaging/whisper-cpp/**', 'tools/build-package', 'tools/ci-setup') }}
+      - name: Build whisper-cpp
+        if: steps.built.outputs.cache-hit != 'true'
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          tools/build-package packaging/whisper-cpp out/pkgs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-whisper-cpp
+          path: out/pkgs/*.pkg.tar.zst
+
+  # The NVIDIA modules follow the snapshot's driver and this kernel.
+  nvidia:
+    needs: [pin, kernel]
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - id: built
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/pkgs
+          key: nvidia-open-nova-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('packaging/nvidia-open-nova/**', 'packaging/linux-nova/**', 'tools/build-package', 'tools/ci-setup') }}
+      - if: steps.built.outputs.cache-hit != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: kernel
+          path: out/kernel
+      - name: Build nvidia-open-nova
+        if: steps.built.outputs.cache-hit != 'true'
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          # pacman -U fetches dependencies from the archive, which stalls now and then.
+          retry() { "$@" || { sleep 30; "$@"; } || { sleep 30; "$@"; }; }
           retry pacman -U --noconfirm out/kernel/linux-nova-headers-*.pkg.tar.zst
-          # The NVIDIA modules follow the snapshot's driver and this kernel.
           nvidia=$(pacman -Si nvidia-open-dkms | sed -n 's/^Version *: \(.*\)-[^-]*$/\1/p')
           kernel=$(pacman -Q linux-nova-headers | awk '{ print $2 }')
           sed -i "s/^pkgver=.*/pkgver=${nvidia}_${kernel//-/_}/; s/^pkgrel=.*/pkgrel=1/" packaging/nvidia-open-nova/PKGBUILD
           tools/build-package packaging/nvidia-open-nova out/pkgs
-          cp out/kernel/*.pkg.tar.zst out/pkgs/
-          ls -l out/pkgs
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: packages
+          name: packages-nvidia
           path: out/pkgs/*.pkg.tar.zst
 
+  # Arch's own packages for the install tests, fetched once and beside the
+  # builds above: each test puts every package an install can need on its
+  # stick, and spent half its time fetching the same 700 from the archive.
+  arch-packages:
+    needs: pin
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 60
+    outputs:
+      key: ${{ steps.key.outputs.key }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-toml
+      - id: key
+        env:
+          KEY: arch-packages-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('installer/packages', 'installer/nova-install', 'installer/nova-usb', 'data/hardware/*/packages', 'packaging/*/PKGBUILD', 'tools/arch-packages') }}
+        run: echo "key=$KEY" >>"$GITHUB_OUTPUT"
+      - id: fetched
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/arch
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true # the tests read it, not this job
+      - name: Fetch them from the snapshot
+        if: steps.fetched.outputs.cache-hit != 'true'
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
+          tools/arch-packages --release release.toml out/arch
+
   repo:
-    needs: packages
+    needs: [kernel, nova, whisper-cpp, nvidia]
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
@@ -173,8 +275,13 @@ jobs:
           ref: ${{ env.TAG }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: packages
+          name: kernel
           path: out/pkgs
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: packages-*
+          path: out/pkgs
+          merge-multiple: true
       - name: Sign into the [nova] repository
         env:
           NOVA_REPO_KEY: ${{ secrets.NOVA_REPO_KEY }}
@@ -286,7 +393,7 @@ jobs:
   # The installer's two disks, each installed and booted: plain, Nova's
   # default, and encrypted.
   install-test:
-    needs: [pin, repo, iso]
+    needs: [pin, repo, iso, arch-packages]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -313,8 +420,15 @@ jobs:
         with:
           name: iso
           path: out/iso
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/arch
+          key: ${{ needs.arch-packages.outputs.key }}
       - name: Install it in QEMU, then boot it
         run: |
+          # Arch's packages, into pacman's cache: the stick is filled from there
+          # first, as nova usb fills one, and from the archive with the rest.
+          if [[ -d out/arch ]]; then mkdir -p /var/cache/pacman/pkg && cp -a out/arch/. /var/cache/pacman/pkg/ && rm -rf out/arch; fi
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-ui-gtk qemu-ui-opengl \
             qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl qemu-hw-display-virtio-vga \
             qemu-hw-display-virtio-vga-gl virglrenderer mesa xorg-server-xvfb edk2-ovmf mtools dosfstools libarchive
@@ -332,7 +446,7 @@ jobs:
   # An installed release must move forward and back before its successor is
   # published. This installs once, on a plain disk, beside the two install legs.
   upgrade-test:
-    needs: [pin, repo]
+    needs: [pin, repo, arch-packages]
     runs-on: ubuntu-latest
     container:
       image: archlinux:base-devel
@@ -351,10 +465,19 @@ jobs:
         with:
           name: repo
           path: out/repo
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/arch
+          key: ${{ needs.arch-packages.outputs.key }}
       - name: Install the previous release, update, downgrade, and restore
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          # This release's Arch packages, into pacman's cache: the release
+          # before is on an older snapshot, and takes from there what has not
+          # changed since (all of it, when this is its candidate under its
+          # final name).
+          if [[ -d out/arch ]]; then mkdir -p /var/cache/pacman/pkg && cp -a out/arch/. /var/cache/pacman/pkg/ && rm -rf out/arch; fi
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-ui-gtk qemu-ui-opengl \
             qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl qemu-hw-display-virtio-vga \
             qemu-hw-display-virtio-vga-gl virglrenderer mesa xorg-server-xvfb edk2-ovmf mtools dosfstools libarchive \
@@ -381,9 +504,24 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.TAG }}
+      # What it publishes, and not the run's other artifacts: the packages a
+      # second time, as the jobs built them, and the tests' logs.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          path: out
+          name: release-toml
+          path: out/release-toml
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: repo
+          path: out/repo
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: iso
+          path: out/iso
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signatures
+          path: out/signatures
       # A published release's files are never replaced: machines may already
       # have them, and a rebuild differs byte for byte. Only a draft, which
       # nothing reads, is filled in again by a re-run.

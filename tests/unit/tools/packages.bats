@@ -61,6 +61,23 @@ upload() { "$REPO_ROOT/tools/packages-upload" --release "$SCRATCH/release.toml" 
   grep -qE -- '^curl .*--retry-all-errors .*-o [^ ]+ https://packages.example.org/v1.0.0-beta.6/nova.db$' "$CALLS"
 }
 
+@test "upload: more files than go at a time all arrive, and one refused among them fails it" {
+  local n files=()
+  for n in {1..15}; do
+    echo "file $n" >"$SCRATCH/out/f$n"
+    files+=("$SCRATCH/out/f$n")
+  done
+  run upload "${files[@]}"
+  [ "$status" -eq 0 ]
+  [[ $output == *"15 files at https://packages.example.org/v1.0.0-beta.6"* ]]
+  for n in {1..15}; do [ "$(cat "$BUCKET/v1.0.0-beta.6/f$n")" = "file $n" ]; done
+  [ "$(grep -c '^curl ' "$CALLS")" -eq 15 ]
+  sed -i '2i [[ ${*: -2:1} != */f9 ]] || exit 1' "$SCRATCH/bin/aws"
+  run upload "${files[@]}"
+  [ "$status" -ne 0 ]
+  [[ $output == *"could not upload f9"* ]]
+}
+
 @test "upload: a file the address serves differently fails it" {
   cat >"$SCRATCH/bin/curl" <<'EOF'
 #!/bin/bash
