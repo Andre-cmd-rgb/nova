@@ -85,16 +85,19 @@ function parse(request) {
 //   ink, widestInk        the icon's ink, and the widest level icon's
 //   readout, words        the widest readout's advance, and the words'
 //   gap, bar, wordsMax    the gaps, the bar's length, the words' most room
+//   wordsGap              where the words start after the icon, if given
 // The icon sits in a column, as wide as its ink, or beside a level the
-// widest icon's. The bar starts a gap after it. Words beside an icon look
-// further from it than they are, as both fall away from their edges, so
-// they start two thirds of the gap after it, and stop at wordsMax; a
-// readout comes a gap after the bar and ends at the card's padding.
+// widest icon's. The bar starts a gap after it. Words beside a large icon
+// look further from it than they are, as both fall away from their edges, so
+// they start two thirds of the gap after it, or wordsGap after it, and stop
+// at wordsMax; a readout comes a gap after the bar and ends at the card's
+// padding.
 function layout(face, sizes) {
   var ink = Math.ceil(sizes.ink)
   var column = face.level ? Math.max(ink, Math.ceil(sizes.widestInk)) : ink
   var barX = column + sizes.gap
-  var textX = face.level ? barX + sizes.bar + sizes.gap : column + Math.round(sizes.gap * 2 / 3)
+  var wordsGap = sizes.wordsGap === undefined ? Math.round(sizes.gap * 2 / 3) : sizes.wordsGap
+  var textX = face.level ? barX + sizes.bar + sizes.gap : column + wordsGap
   var textWidth = face.level ? Math.ceil(Math.max(sizes.readout, sizes.words))
     : Math.min(Math.ceil(sizes.words), sizes.wordsMax)
   return {

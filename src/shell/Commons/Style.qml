@@ -220,6 +220,10 @@ QtObject {
     readonly property int panelGap: style.spacingToken("panel-gap", 14)
     readonly property int panelPadding: style.spacingToken("panel-padding", 18)
     readonly property int popupPadding: style.spacingToken("popup-padding", 14)
+    // The pill a little above the bottom of the screen, one row high: the
+    // dictation's, and the OSD's notices in words, which are one size.
+    readonly property int pillPadding: style.spacingToken("pill-padding", 10)
+    readonly property int pillRowHeight: style.spacingToken("pill-row-height", 22)
   }
 
   // ---------------------------------------------------------------- controls

@@ -53,6 +53,13 @@ ShellRoot {
     check(long.column === 21 && long.textX === 32 && long.textWidth === 190 && long.width === 222,
       "words two thirds of a gap after the icon, cut at their room")
     check(Face.layout(Face.parse({ icon: "keyboard", message: "" }), sizes).width === 21, "an icon alone: its ink")
+    sizes.ink = 12.2
+    sizes.words = 120
+    sizes.wordsGap = 9
+    var notice = Face.layout(message, sizes)
+    check(notice.column === 13 && notice.textX === 22 && notice.textWidth === 120 && notice.width === 142
+      && Face.layout(keys, sizes).textX === level.textX,
+      "a notice as the dictation pill has it: its words the pill's gap after the icon; a level as it was")
     console.log("DONE")
     Qt.quit()
   }

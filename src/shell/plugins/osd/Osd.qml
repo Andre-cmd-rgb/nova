@@ -9,18 +9,25 @@ import "OsdModel.js" as Face
 
 // The on-screen display: a card a little above the bottom of the screen,
 // for a moment, with an icon and a level (the volume, the brightness) or an
-// icon and a few words. nova-osd calls it up through the osd IPC target,
-// the keys and the panels through the shell's summon. It never takes a
-// click or a key.
+// icon and a few words ("Launching Files…"). nova-osd calls it up through
+// the osd IPC target, the keys and the panels through the shell's summon. It
+// never takes a click or a key.
+//
+// A notice in words is the size of the dictation's pill, the other card at
+// the bottom of the screen, and drawn as its messages are: the pill's
+// padding and row, the icon at title size and the words at body size. A
+// level keeps a larger card, its icon at display size.
 Item {
   id: osd
 
   // Up; the shell reads it to tell whether the plugin is open.
   property bool opened: false
   property var face: Face.parse({})
+  readonly property bool notice: !face.level
   // The card's two faces of type: the icon's, and the words'.
-  readonly property font glyphType: Qt.font({ family: Style.font.family, pixelSize: Style.font.displayLarge })
-  readonly property font wordsType: Qt.font({ family: Style.font.family, bold: true, pixelSize: Style.font.title })
+  readonly property font glyphType: Qt.font({ family: Style.font.family, pixelSize: notice ? Style.font.title : Style.font.displayLarge })
+  readonly property font wordsType: notice ? Qt.font({ family: Style.font.family, pixelSize: Style.font.body })
+    : Qt.font({ family: Style.font.family, bold: true, pixelSize: Style.font.title })
   readonly property var spots: Face.layout(face, {
     ink: iconInk.tightBoundingRect.width,
     widestInk: widestIconInk.tightBoundingRect.width,
@@ -28,7 +35,9 @@ Item {
     words: wordsRun.advanceWidth,
     gap: Style.space(16),
     bar: Style.space(142),
-    wordsMax: face.fromPlayer ? Style.space(325) : Style.space(190)
+    wordsMax: face.fromPlayer ? Style.space(325) : Style.space(190),
+    // The dictation pill's gap between its icon and its words.
+    wordsGap: notice ? Style.space(9) : undefined
   })
 
   // A request as Face.parse takes it, as JSON; one that is not JSON is
@@ -114,9 +123,9 @@ Item {
 
     BorderSurface {
       id: card
-      padding: Style.space(16)
+      padding: osd.notice ? Style.spacing.pillPadding : Style.space(16)
       width: inset.left + osd.spots.width + inset.right
-      height: inset.top + Style.font.displayLarge + inset.bottom
+      height: inset.top + (osd.notice ? Style.spacing.pillRowHeight : Style.font.displayLarge) + inset.bottom
       radius: Style.cornerRadius
       color: Util.alpha(Commons.Color.background, 0.97)
       frame: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))

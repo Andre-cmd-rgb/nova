@@ -52,7 +52,7 @@ Item {
   readonly property int barCount: 18
   readonly property int barWidth: Math.max(2, Style.space(3))
   readonly property int barGap: Math.max(2, Style.space(3))
-  readonly property int rowHeight: Style.space(22)
+  readonly property int rowHeight: Style.spacing.pillRowHeight
   readonly property bool shown: phase !== "idle"
   readonly property var source: Pipewire.defaultAudioSource
   readonly property var lockService: shell ? shell.serviceFor("nova.lock") : null
@@ -351,7 +351,7 @@ Item {
 
     BorderSurface {
       id: card
-      readonly property int pad: Style.space(10)
+      readonly property int pad: Style.spacing.pillPadding
       width: card.edge.left + card.pad * 2 + row.implicitWidth + card.edge.right
       height: card.edge.top + card.pad * 2 + root.rowHeight + card.edge.bottom
       anchors.horizontalCenter: parent.horizontalCenter
