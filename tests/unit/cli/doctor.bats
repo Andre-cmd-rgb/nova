@@ -476,3 +476,127 @@ working_laptop() {
   [[ $output == *"--    sleep: s2idle; a portable Nova never hibernates"* ]]
   [[ $output != *"cannot hibernate"* ]]
 }
+
+# --- --bundle --------------------------------------------------------------------
+
+# A world with something to hide in each place a report reads from: the
+# journal, the crashes, the firmware's serial numbers, AirDrop's phone.
+bundle_world() {
+  mkdir -p "$HOME/Fetched" "$HOME/.config"
+  # shellcheck disable=SC2016 # $HOME is user-dirs.dirs' own
+  printf 'XDG_DOWNLOAD_DIR="$HOME/Fetched"\n' >"$HOME/.config/user-dirs.dirs"
+  write_file "$XDG_STATE_HOME/nova/airdrop/phones" 'a1b2 c3d4 e5f6 0718'
+  write_file "$NOVA_PROC/sys/kernel/hostname" 'andres-p1'
+  export USER=andres
+  local field
+  for field in sys_vendor:LENOVO product_name:20Y4S34G33 "product_version:ThinkPad P1 Gen 4i" "bios_version:N40ET53W (1.35 )" \
+    product_serial:SERIAL-PRODUCT board_serial:SERIAL-BOARD product_uuid:4c4c4544-0042-3510-8051-b4c04f4b3732; do
+    write_file "$NOVA_SYS/class/dmi/id/${field%%:*}" "${field#*:}"
+  done
+  export SECRET_LINE="wlan0: a4:c3:f0:12:34:56 at 192.168.1.23 and fe80::1c2b:3cff:fe4d:5e6f, SSID 'HomeNet', $HOME/notes.txt, SerialNumber: ABC123, IMEI: 356938035643809, boot 0d3c1f5e-7a2b-4c9d-8e1f-2a3b4c5d6e7f, machine 4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c, phone A1B2, host Andres-P1.local, pam session for user \"andres\" on /run/media/andres/disk, this computer is \"Andre's ThinkPad\" to senders"
+  stub journalctl 'case " $* " in
+    *" -p warning "*) echo "2026-11-16T10:00:00+01:00 NetworkManager[700]: <warn> $SECRET_LINE" ;;
+    *" -k "*) ;;
+    *) printf "%s\n" \
+      "2026-11-16T10:00:01+01:00 kernel: usb 3-9: $SECRET_LINE" \
+      "2026-11-16T10:00:02+01:00 nova-powerd[900]: tier 2" \
+      "    and a line that goes with it" \
+      "2026-11-16T10:00:03+01:00 ModemManager[744]: <info> not Nova" \
+      "2026-11-16T10:00:04+01:00 systemd[1]: nova-power.service: Deactivated successfully." \
+      "2026-11-16T10:00:05+01:00 quickshell[1200]: the shell" ;;
+  esac'
+  stub coredumpctl 'echo "Sun 2026-11-16 10:00:00 CET 4242 1000 1000 SIGSEGV missing $HOME/bin/crashy"'
+  stub snapper 'echo "No permissions."'
+  stub lspci 'echo "00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection [8086:15fc] (rev 20)"'
+  stub lsusb 'echo "Bus 003 Device 008: ID 13d3:5271 IMC Networks Integrated RGB Camera"'
+  stub pacman 'case $1 in
+    -Qq) printf "%s\n" nova linux-nova hyprland quickshell firefox ;;
+    -Q) shift; if (($#)); then for p; do echo "$p 1.0-1"; done; else echo "nova 1.0.0beta.1-1"; fi ;;
+    -Qk) echo "nova: 1200 total files, 0 missing files" ;;
+  esac'
+}
+
+unpacked() { # the report, unpacked into $SCRATCH/report; prints its folder
+  mkdir -p "$SCRATCH/report"
+  tar -C "$SCRATCH/report" -xzf "$1"
+  echo "$SCRATCH/report"/nova-report-*
+}
+
+@test "--bundle: one file in the downloads folder, its path, then a line of what is in it" {
+  bundle_world
+  run doctor --bundle
+  [ "$status" -eq 0 ]
+  [[ ${lines[0]} =~ ^"$HOME/Fetched/nova-report-"[0-9-]+\.tar\.gz$ ]]
+  [[ ${lines[1]} == "Inside: this check, the journal of this start and the last"*", crashes, snapshots, package versions, no boot menu (sudo adds it), the model, and its PCI and USB devices. Masked: "* ]]
+  [ "${#lines[@]}" -eq 2 ]
+  [ "$(stat -c %a "${lines[0]}")" = 600 ]
+  local dir
+  dir=$(unpacked "${lines[0]}")
+  [ "$(cd "$dir" && ls | paste -sd' ')" = "boot-entries.txt crashes.txt doctor.txt journal-last-start-nova.txt journal-last-start-warnings.txt journal-this-start-nova.txt journal-this-start-warnings.txt model.txt packages.txt pci.txt snapshots.txt usb.txt" ]
+  grep -q '^ok    / is writable btrfs' "$dir/doctor.txt"
+  [ "$(cat "$dir/packages.txt")" = "nova 1.0-1
+linux-nova 1.0-1
+hyprland 1.0-1
+quickshell 1.0-1" ]
+  grep -qx 'product_version  ThinkPad P1 Gen 4i' "$dir/model.txt"
+  grep -q 'Intel Corporation Ethernet Connection \[8086:15fc\]' "$dir/pci.txt"
+  grep -q 'Integrated RGB Camera' "$dir/usb.txt"
+  grep -qx 'No permissions.' "$dir/snapshots.txt"
+  # Nova's own lines, the shell's and the kernel's, and nobody else's.
+  grep -q 'nova-powerd\[900\]: tier 2' "$dir/journal-this-start-nova.txt"
+  grep -qx '    and a line that goes with it' "$dir/journal-this-start-nova.txt"
+  grep -q 'systemd\[1\]: nova-power.service: Deactivated' "$dir/journal-this-start-nova.txt"
+  grep -q 'quickshell\[1200\]: the shell' "$dir/journal-this-start-nova.txt"
+  grep -q 'kernel: usb 3-9' "$dir/journal-this-start-nova.txt"
+  fails grep -q ModemManager "$dir/journal-this-start-nova.txt"
+  grep -q 'NetworkManager\[700\]' "$dir/journal-this-start-warnings.txt"
+}
+
+@test "--bundle: nothing in it says whose computer it is" {
+  bundle_world
+  run doctor --bundle
+  [ "$status" -eq 0 ]
+  local dir secret
+  dir=$(unpacked "${lines[0]}")
+  for secret in a4:c3:f0:12:34:56 192.168.1.23 fe80::1c2b 3cff:fe4d HomeNet "$HOME" ABC123 356938035643809 \
+    0d3c1f5e-7a2b 4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c "Andre's ThinkPad" andres-p1 SERIAL-PRODUCT SERIAL-BOARD 4c4c4544; do
+    fails grep -rqF -- "$secret" "$dir"
+  done
+  fails grep -rqiw a1b2 "$dir"
+  fails grep -rqiF andres "$dir"
+  grep -qF "XX:XX:XX:XX:XX:XX at <ip> and <ip>, SSID '<network>', ~/notes.txt, SerialNumber: <serial>, IMEI: <serial>, boot <uuid>, machine <id>, phone <phone>, host <computer>.local, pam session for user \"<user>\" on /run/media/<user>/disk, this computer is \"<name>\" to senders" "$dir/journal-this-start-warnings.txt"
+  grep -qF '~/bin/crashy' "$dir/crashes.txt"
+}
+
+@test "--bundle into a folder, or into a file named" {
+  bundle_world
+  mkdir -p "$SCRATCH/out"
+  run doctor --bundle "$SCRATCH/out"
+  [ "$status" -eq 0 ]
+  [[ ${lines[0]} =~ ^"$SCRATCH/out/nova-report-"[0-9-]+\.tar\.gz$ ]]
+  [ -f "${lines[0]}" ]
+  run doctor --bundle "$SCRATCH/out/mine.tar.gz"
+  [ "${lines[0]}" = "$SCRATCH/out/mine.tar.gz" ]
+  tar -tzf "$SCRATCH/out/mine.tar.gz" | grep -q '/doctor.txt$'
+  # No downloads folder: the home.
+  rm -rf "$HOME/Fetched" "$HOME/.config"
+  run doctor --bundle
+  [[ ${lines[0]} =~ ^"$HOME/nova-report-" ]]
+  run doctor --bundle a b
+  [ "$status" -eq 2 ]
+}
+
+@test "--bundle with the boot menu readable names its entries, never their command lines" {
+  bundle_world
+  write_file "$NOVA_BOOT_ESP/limine.conf" '/+Nova
+  comment: machine-id=4c1e2a7b9d3f4e5a8b6c7d8e9f0a1b2c
+  //linux-nova
+    cmdline: root=UUID=0d3c1f5e-7a2b-4c9d-8e1f-2a3b4c5d6e7f rw
+'
+  run doctor --bundle
+  [[ ${lines[1]} == *"the boot menu's entries"* ]]
+  local dir
+  dir=$(unpacked "${lines[0]}")
+  [ "$(cat "$dir/boot-entries.txt")" = "/+Nova
+//linux-nova" ]
+}

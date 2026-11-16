@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova:summary=Look this computer over for problems, and say how to fix each
-# nova:args=[--json]
+# nova:args=[--json | --bundle [path]]
 #
 # Read-only. Run as yourself it checks the system and your session; under sudo
 # it checks the system and the boot menu's fallback entry, which lives on the
@@ -9,15 +9,23 @@
 # the camera, missing firmware, and sleep. Exits 1 when something is wrong;
 # warnings alone exit 0.
 #
+# --bundle writes one .tar.gz to attach to a bug report, with this check and
+# what a bug needs besides (the journal, crashes, snapshots, versions, the
+# hardware), and nothing that says whose computer it is (bundle, below). It
+# goes into the downloads folder, or the folder or file given, and prints its
+# path, then a line of what is in it.
+#
 # NOVA_* variables point the checks at test fixtures (tests/unit/cli/doctor.bats).
 
 set -euo pipefail
 
-json=false
+json=false bundle=false bundle_to=''
 case $#:${1:-} in
   0:) ;;
   1:--json) json=true ;;
-  *) echo 'Usage: nova doctor [--json]' >&2; exit 2 ;;
+  1:--bundle) bundle=true ;;
+  2:--bundle) bundle=true bundle_to=$2 ;;
+  *) echo 'Usage: nova doctor [--json | --bundle [path]]' >&2; exit 2 ;;
 esac
 reports=()
 
@@ -549,6 +557,195 @@ check_patches() {
   ((${#other[@]} == 0)) || report -- "patches made for another computer, so off here: ${other[*]}"
   [[ ! -e $RAM_TEST ]] || report -- "the memory test runs at the next start (nova patch ram test)"
 }
+
+# ---------------------------------------------------------------------- --bundle
+#
+# A report for a bug: what a bug needs, and nothing that says whose computer it
+# is. Never read: Wi-Fi passwords and NetworkManager's connection files, the
+# firmware's serial numbers and UUID (product_serial, board_serial,
+# product_uuid), a USB device's serial, AirDrop's folder but for the numbers
+# to mask. Masked in what is read: MAC and IP addresses, UUIDs and 32-digit ids
+# (the machine's, a boot's), serial numbers the kernel logs and the modem's
+# IMEI and SIM's, Wi-Fi networks' names, the account's name and the
+# computer's, the name AirDrop gives senders, the home's path (~), and in the
+# journal the numbers AirDrop knows your iPhone by. The journal's lines go
+# without the computer's name as well.
+
+# The account the report is for: under sudo, the one who asked for it.
+report_home() {
+  if ((EUID == 0)) && [[ -n ${SUDO_USER:-} ]]; then
+    getent passwd "$SUDO_USER" | cut -d: -f6
+  else
+    echo "$HOME"
+  fi
+}
+
+# The downloads folder as user-dirs.dirs names it, else Downloads, else the home.
+downloads() { # home
+  local dir
+  dir=$(sed -n -E 's/^XDG_DOWNLOAD_DIR="?([^"]*)"?$/\1/p' "${XDG_CONFIG_HOME:-$1/.config}/user-dirs.dirs" 2>/dev/null | tail -n 1)
+  case $dir in
+    '$HOME/'?*) dir=$1/${dir#\$HOME/} ;;
+    /*) ;;
+    *) dir=$1/Downloads ;;
+  esac
+  [[ -d $dir ]] || dir=$1
+  echo "$dir"
+}
+
+# A boot's journal: warnings and worse from everything (warnings), or every
+# line of Nova's own, the shell's and the kernel's (nova). The newest 200,000
+# lines: one service in a loop (ModemManager wrote 216,000 warnings in one
+# day here) makes a file nobody reads.
+journal() { # boot (0, -1) warnings|nova
+  if [[ $2 == warnings ]]; then
+    journalctl -b "$1" -p warning -n 200000 --no-pager --no-hostname -o short-iso 2>&1 || true
+    return
+  fi
+  { journalctl -b "$1" --no-pager --no-hostname -o short-iso 2>&1 || true; } |
+    awk '/^[^ ]/ { keep = $2 ~ /^(kernel|quickshell|qs|nova-[^[]*)(\[[0-9]+\])?:$/ || $3 ~ /^nova-[^ ]*\.(service|timer|path|target|socket):$/ }
+      keep' | tail -n 200000
+}
+
+# The versions of Nova's packages, the kernels, the drivers, Hyprland and the shell.
+packages() {
+  local -a names=()
+  mapfile -t names < <(pacman -Qq 2>/dev/null | grep -xE 'nova(-.+)?|linux(-.+)?|nvidia(-.+)?|limine(-.+)?|mesa|hyprland|quickshell|whisper-cpp' || true)
+  ((${#names[@]})) || { echo "pacman lists none of them"; return 0; }
+  pacman -Q "${names[@]}" 2>&1 || true
+}
+
+# The boot menu's entries, by name: never their command lines.
+boot_entries() {
+  if [[ -r $ESP/limine.conf ]]; then
+    grep -E '^[[:space:]]*/' "$ESP/limine.conf" | sed 's/^[[:space:]]*//' || true
+  else
+    echo "Only root can read the boot menu: sudo nova doctor --bundle adds it."
+  fi
+}
+
+model() {
+  local field
+  for field in sys_vendor product_name product_version bios_version; do
+    printf '%-16s %s\n' "$field" "$(cat -- "$SYS/class/dmi/id/$field" 2>/dev/null)"
+  done
+}
+
+# lsusb's list, or the same read from sysfs where usbutils is not installed.
+usb_devices() {
+  local dev
+  if command -v lsusb >/dev/null 2>&1; then
+    lsusb 2>&1 || true
+    return
+  fi
+  for dev in "$SYS"/bus/usb/devices/*; do
+    [[ -r $dev/idVendor ]] || continue
+    printf '%s ID %s:%s %s %s\n' "${dev##*/}" "$(<"$dev/idVendor")" "$(<"$dev/idProduct")" \
+      "$(cat -- "$dev/manufacturer" 2>/dev/null)" "$(cat -- "$dev/product" 2>/dev/null)"
+  done
+}
+
+# A command's output, or that it is not there.
+output_of() { # command...
+  if command -v "$1" >/dev/null 2>&1; then
+    "$@" 2>&1 || true
+  else
+    echo "$1 is not installed"
+  fi
+}
+
+# Whatever would say whose computer this is, masked in a file, in place.
+mask() { # file [id...]: the ids are AirDrop's numbers for your iPhone
+  local file=$1 id name mark edge='[^[:alnum:]_-]' octet='(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])' hex='[0-9A-Fa-f]'
+  local -a script=(
+    -e "s/\\b($hex{2}[:-]){5}$hex{2}\\b/XX:XX:XX:XX:XX:XX/g"
+    -e "s/\\b$hex{8}-$hex{4}-$hex{4}-$hex{4}-$hex{12}\\b/<uuid>/g"
+    -e "s/\\b$hex{32}\\b/<id>/g"
+    -e "s/\\b($hex{1,4}:){7}$hex{1,4}\\b/<ip>/g"
+    -e "s/\\b$hex{1,4}(:$hex{1,4})*::($hex{1,4}(:$hex{1,4})*)?/<ip>/g"
+    -e "s/\\b($octet\\.){3}$octet\\b/<ip>/g"
+    -e "s/((SerialNumber|[Ss]erial[ _-]?[Nn]umber|[Ss]erial)[:=] *)[^ ,;)]+/\\1<serial>/g"
+    -e "s/((IMEI|IMSI|ICCID|imei|imsi|iccid|[Ee]quipment [Ii]dentifier)[^0-9]{0,4})[0-9]{6,}/\\1<serial>/g"
+    -e "s/((SSID|ssid|connection|access point|network) ['\"])[^'\"]*(['\"])/\\1<network>\\3/g"
+    -e "s/(this computer is \")[^\"]*(\" to senders)/\\1<name>\\2/g"
+  )
+  if [[ -n $home && $home != / ]]; then
+    script+=(-e "s#$(literal "$home")#~#g")
+  fi
+  # The account's name and the computer's, whole: a computer called thinkpad-p1
+  # stays in thinkpad-p1-gen4i, the hardware profile's. Not root or nova, which
+  # say nothing, nor a name too short to tell from a word.
+  for name in "user:$user" "computer:$host"; do
+    mark=${name%%:*} name=${name#*:}
+    ((${#name} >= 3)) && [[ $name != root && $name != nova && $name != localhost ]] || continue
+    script+=(-e "s/(^|$edge)$(literal "$name")($edge|\$)/\\1<$mark>\\2/gI")
+  done
+  shift
+  for id; do
+    [[ $id =~ ^[0-9A-Fa-f]+$ ]] && script+=(-e "s/\\b$id\\b/<phone>/gI")
+  done
+  sed -E -i "${script[@]}" -- "$file"
+}
+
+# A string as sed -E reads it literally.
+literal() { printf '%s' "$1" | sed -E 's/[][\\/.*^$#|+?(){}]/\\&/g'; }
+
+bundle_work=''
+bundle() {
+  local stamp name out dir boot file home user host
+  local -a phones=()
+  # mask reads these three.
+  home=$(report_home) user=${SUDO_USER:-${USER:-$(id -un)}} host=$(cat -- "$PROC/sys/kernel/hostname" 2>/dev/null || true)
+  stamp=$(date +%Y-%m-%d-%H%M%S)
+  name=nova-report-$stamp
+  if [[ -z $bundle_to ]]; then
+    out=$(downloads "$home")/$name.tar.gz
+  elif [[ -d $bundle_to ]]; then
+    out=${bundle_to%/}/$name.tar.gz
+  else
+    out=$bundle_to
+  fi
+  [[ $out == /* ]] || out=$PWD/$out
+  # Readable by its owner alone until it is sent: it is still about them.
+  umask 077
+  bundle_work=$(mktemp -d)
+  trap 'rm -rf -- "$bundle_work"' EXIT
+  dir=$bundle_work/$name
+  mkdir -- "$dir"
+
+  "${BASH_SOURCE[0]}" >"$dir/doctor.txt" 2>&1 || true
+  journal 0 warnings >"$dir/journal-this-start-warnings.txt"
+  journal 0 nova >"$dir/journal-this-start-nova.txt"
+  journal -1 warnings >"$dir/journal-last-start-warnings.txt"
+  journal -1 nova >"$dir/journal-last-start-nova.txt"
+  output_of coredumpctl list --no-pager >"$dir/crashes.txt"
+  output_of snapper list >"$dir/snapshots.txt"
+  packages >"$dir/packages.txt"
+  boot_entries >"$dir/boot-entries.txt"
+  model >"$dir/model.txt"
+  output_of lspci -nn >"$dir/pci.txt"
+  usb_devices >"$dir/usb.txt"
+
+  # Four numbers, which nothing else may show of the phone.
+  read -r -a phones 2>/dev/null <"${XDG_STATE_HOME:-$home/.local/state}/nova/airdrop/phones" || true
+  for file in "$dir"/*; do
+    if [[ $file == */journal-* ]]; then mask "$file" "${phones[@]}"; else mask "$file"; fi
+  done
+
+  tar -C "$bundle_work" -czf "$out.part" -- "$name" || { echo "nova doctor: could not write $out" >&2; return 1; }
+  mv -f -- "$out.part" "$out"
+  if ((EUID == 0)) && [[ -n ${SUDO_UID:-} ]]; then chown -- "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$out"; fi
+
+  boot="the boot menu's entries"
+  [[ -r $ESP/limine.conf ]] || boot="no boot menu (sudo adds it)"
+  echo "$out"
+  echo "Inside: this check, the journal of this start and the last (warnings, and all of Nova's, the shell's and the kernel's), crashes, snapshots, package versions, $boot, the model, and its PCI and USB devices. Masked: MAC and IP addresses, serial numbers, UUIDs, Wi-Fi names, your account's name and the computer's, AirDrop's numbers for your iPhone and your home's path."
+}
+
+if $bundle; then
+  bundle
+  exit
+fi
 
 check_root_filesystem
 check_disk_space

@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -11,6 +12,32 @@ Column {
   property var results: []
   property string failure: ""
   readonly property bool busy: doctor.running
+  // Where nova doctor --bundle put the report, in a few words, or why not.
+  property string saved: ""
+  readonly property bool saving: bundle.running
+
+  // nova doctor --bundle prints the report's path, then what is in it.
+  function readSaved(text, code, home) {
+    var path = String(text || "").split("\n")[0].trim()
+    if (code !== 0 || path === "") {
+      saved = "Could not save the report."
+      return
+    }
+    if (home && path.indexOf(home + "/") === 0) path = "~" + path.slice(home.length)
+    saved = "Saved as " + path + ". It leaves out your name, addresses and serial numbers."
+  }
+
+  function save() {
+    if (saving) return
+    saved = ""
+    bundle.running = true
+  }
+  Process {
+    id: bundle
+    command: ["nova-doctor", "--bundle"]
+    stdout: StdioCollector { id: bundleOutput }
+    onExited: function (code) { root.readSaved(bundleOutput.text, code, Quickshell.env("HOME")) }
+  }
 
   function readResults(text, code) {
     try {
@@ -75,5 +102,10 @@ Column {
     }
   }
   Caption { width: parent.width; visible: text.length > 0; text: root.failure }
-
+  // One file to attach to a bug report: this check, the journal and the rest.
+  Line {
+    label: "Report for a Bug"
+    detail: root.saved !== "" ? root.saved : "One file with what a bug report needs, saved in Downloads."
+    Button { text: root.saving ? "Saving…" : "Save a Report"; bordered: true; enabled: !root.saving; onClicked: root.save() }
+  }
 }
