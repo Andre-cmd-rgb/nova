@@ -81,55 +81,63 @@ reload_while_modeless() {
 }
 
 # Nearly always nothing has moved, and even a clamshell pass with nothing to
-# do is half a dozen processes. Every two seconds the poll reads the lid
-# itself, in bash, and runs a pass when it has moved since the last, or after
-# 30 seconds, for drift the lid does not show.
-poll_lid() {
-  local lid last="" polls=0 state word
+# do is half a dozen processes. logind says when the lid moves (its LidClosed
+# changes, and the system bus carries that to anyone listening), and a pass
+# runs then; and after five minutes without a word, for drift the lid does
+# not show. A bus that goes away is listened to again after a pause.
+watch_lid() {
+  local line answer monitor=""
+  trap 'kill "$monitor" 2>/dev/null; exit 0' TERM
   while true; do
-    sleep 2
-    lid=""
-    for state in "${NOVA_LID_PATH:-/proc/acpi/button/lid}"/*/state; do
-      [[ -r $state ]] && read -r _ word <"$state" && lid+=$word
-    done
-    polls=$((polls + 1))
-    if [[ $lid != "$last" ]] || ((polls >= 15)); then
-      clamshell_pass
-      last=$lid
-      polls=0
-    fi
+    while true; do
+      monitor=$!
+      answer=0
+      IFS= read -r -t 300 line || answer=$?
+      if ((answer > 128)); then
+        clamshell_pass
+        continue
+      fi
+      ((answer == 0)) || break
+      [[ $line != *"'LidClosed'"* ]] || clamshell_pass
+    done < <(exec gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1 2>/dev/null)
+    sleep 5
   done
 }
 
 # The panel goes off only on a laptop with another display on, so only then is
-# there anything for the poll to catch. Hyprland's lid switch binds handle the
-# lid itself; the poll catches what they miss, across a sleep and a wake.
-poller=""
-poll_while_docked() {
+# there anything for the watch to catch. Hyprland's lid switch binds handle the
+# lid itself; the watch catches what they miss, across a sleep and a wake.
+lid_watch=""
+watch_lid_while_docked() {
   if nova-hw-laptop && nova-hyprland-monitor-external-active; then
-    if [[ -z $poller ]] || ! kill -0 "$poller" 2>/dev/null; then
-      poll_lid &
-      poller=$!
+    if [[ -z $lid_watch ]] || ! kill -0 "$lid_watch" 2>/dev/null; then
+      watch_lid &
+      lid_watch=$!
     fi
-  elif [[ -n $poller ]]; then
-    kill "$poller" 2>/dev/null || true
-    poller=""
+  else
+    stop_lid_watch
   fi
+}
+
+stop_lid_watch() {
+  if [[ -n $lid_watch ]]; then kill "$lid_watch" 2>/dev/null || true; fi
+  lid_watch=""
 }
 
 # What a display coming or going sets off, and the start, which may follow
 # one this did not see.
 displays_changed() {
   after_monitor_change
-  poll_while_docked
+  watch_lid_while_docked
   reload_while_modeless
 }
 
 # Hyprland's events read from a process substitution, not a pipe, so the loop
-# runs in this shell and can start and stop the poll. A reload while a display
-# is unpowered leaves it at 0x0, with no hotplug to tell, as at boot; the
-# loop's own reloads land there too, and change nothing while it holds the
-# lock.
+# runs in this shell and can start and stop the lid's watch, which ends with
+# it. A reload while a display is unpowered leaves it at 0x0, with no hotplug
+# to tell, as at boot; the loop's own reloads land there too, and change
+# nothing while it holds the lock.
+trap stop_lid_watch EXIT
 displays_changed
 while IFS= read -r event; do
   case ${event%%>>*} in

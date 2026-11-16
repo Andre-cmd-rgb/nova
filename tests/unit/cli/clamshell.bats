@@ -315,6 +315,34 @@ watch() {
   fails grep -q '^hyprctl reload' "$CALLS"
 }
 
+@test "watch: docked, the lid moving as logind says is a pass, and the lid's watch ends with the watcher" {
+  export HYPRLAND_INSTANCE_SIGNATURE=test
+  stub nova-hw-laptop
+  stub nova-hyprland-monitor-external-active
+  stub nova-hyprland-monitor-clamshell
+  stub nova-hyprland-monitor-modeless 'exit 1'
+  stub sleep 'exit 1'
+  # logind on the system bus: a change that is not the lid, the lid shut, and
+  # then nothing, for as long as it is listened to.
+  cat >"$SCRATCH/login1" <<'END'
+/org/freedesktop/login1: org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Manager', {'IdleHint': <true>}, @as [])
+/org/freedesktop/login1: org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Manager', {'LidClosed': <true>}, @as [])
+END
+  stub gdbus 'cat "$SCRATCH/login1"; echo $$ >"$SCRATCH/gdbus.pid"; exec /usr/bin/sleep 30'
+  # Hyprland's events end once the lid's pass is in, and the watcher with them.
+  stub socat 'for _ in {1..50}; do (($(grep -c ^nova-hyprland-monitor-clamshell "$CALLS") >= 2)) && exit 0; /usr/bin/sleep 0.1; done'
+  run nova-hyprland-monitor-watch
+  [ "$status" -eq 0 ]
+  grep -qx "gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1" "$CALLS"
+  # The start's pass and the lid's, and none for the change that was not it.
+  [ "$(grep -c '^nova-hyprland-monitor-clamshell' "$CALLS")" -eq 2 ]
+  # Nothing is left listening.
+  local pid
+  pid=$(cat "$SCRATCH/gdbus.pid")
+  for _ in {1..20}; do kill -0 "$pid" 2>/dev/null || break; /usr/bin/sleep 0.1; done
+  fails kill -0 "$pid"
+}
+
 @test "watch: outside a Hyprland session it says so" {
   run nova-hyprland-monitor-watch
   [ "$status" -eq 1 ]
