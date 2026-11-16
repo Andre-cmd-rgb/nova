@@ -1,6 +1,7 @@
 //! HTTP/1.1, as much of it as AirDrop speaks: a sender posts to three paths
 //! on one connection, with bodies in chunks or of a stated length, and is
-//! answered with a status and a small body.
+//! answered with a status and a small body. Both sides: this computer is the
+//! receiver, and the sender.
 //!
 //! Bodies are read as they come and never gathered here: the third path's is
 //! the upload itself.
@@ -16,12 +17,40 @@ pub struct Head {
     headers: Vec<(String, String)>,
 }
 
+/// A request's head or an answer's: what says how long the body after it is.
+pub trait Headed {
+    fn header(&self, name: &str) -> Option<&str>;
+}
+
+fn find<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.as_str())
+}
+
+impl Headed for Head {
+    fn header(&self, name: &str) -> Option<&str> {
+        find(&self.headers, name)
+    }
+}
+
+/// An answer's first line and headers, for this computer as a sender.
+#[derive(Debug)]
+pub struct Reply {
+    pub status: u16,
+    headers: Vec<(String, String)>,
+}
+
+impl Headed for Reply {
+    fn header(&self, name: &str) -> Option<&str> {
+        find(&self.headers, name)
+    }
+}
+
 impl Head {
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case(name))
-            .map(|(_, value)| value.as_str())
+        find(&self.headers, name)
     }
 
     /// The sender waits to be told to send the body.
@@ -72,6 +101,28 @@ impl<S: Read + Write> Connection<S> {
 
     pub fn stream(&mut self) -> &mut S {
         &mut self.stream
+    }
+
+    /// Whether the other end has said something not read yet: what is read already, or one read
+    /// of the stream, within its timeout. Waits for an answer a little at a time, and nothing of it
+    /// is lost between the waits. An error for a stream closed.
+    pub fn arrived(&mut self) -> io::Result<bool> {
+        if self.at < self.buffer.len() {
+            return Ok(true);
+        }
+        match self.fill() {
+            Ok(true) => Ok(true),
+            Ok(false) => Err(io::ErrorKind::UnexpectedEof.into()),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// Reads more from the sender; false when it has closed the connection.
@@ -136,31 +187,91 @@ impl<S: Read + Write> Connection<S> {
         if !version.starts_with("HTTP/1.") {
             return Err(bad("not HTTP/1.1"));
         }
-        let mut head = Head {
+        Ok(Some(Head {
             method: method.to_owned(),
             path: path.to_owned(),
-            headers: Vec::new(),
-        };
-        let mut size = first.len();
+            headers: self.headers(first.len())?,
+        }))
+    }
+
+    /// The header lines up to the empty one, after a first line this long.
+    fn headers(&mut self, mut size: usize) -> io::Result<Vec<(String, String)>> {
+        let mut headers = Vec::new();
         loop {
             let line = self.line(HEAD_LIMIT)?;
             if line.is_empty() {
-                return Ok(Some(head));
+                return Ok(headers);
             }
             size += line.len();
-            if size > HEAD_LIMIT || head.headers.len() >= 64 {
-                return Err(bad("the request's headers are too long"));
+            if size > HEAD_LIMIT || headers.len() >= 64 {
+                return Err(bad("the headers are too long"));
             }
             let line = String::from_utf8_lossy(&line);
             if let Some((name, value)) = line.split_once(':') {
-                head.headers
-                    .push((name.trim().to_owned(), value.trim().to_owned()));
+                headers.push((name.trim().to_owned(), value.trim().to_owned()));
             }
         }
     }
 
-    /// The body that follows a head.
-    pub fn body(&mut self, head: &Head) -> io::Result<Body<'_, S>> {
+    /// The answer to what this computer asked, past any "go on" (1xx) before it.
+    pub fn reply(&mut self) -> io::Result<Reply> {
+        loop {
+            let first = String::from_utf8_lossy(&self.line(HEAD_LIMIT)?).into_owned();
+            let mut words = first.split(' ');
+            let (Some(version), Some(status)) = (words.next(), words.next()) else {
+                return Err(bad("not an HTTP answer"));
+            };
+            let status: u16 = status.parse().map_err(|_| bad("not an HTTP answer"))?;
+            if !version.starts_with("HTTP/1.") {
+                return Err(bad("not HTTP/1.1"));
+            }
+            let headers = self.headers(first.len())?;
+            if !(100..200).contains(&status) {
+                return Ok(Reply { status, headers });
+            }
+        }
+    }
+
+    /// A request with its whole body, of the type AirDrop's bodies are.
+    pub fn post(&mut self, path: &str, host: &str, body: &[u8], close: bool) -> io::Result<()> {
+        let mut request = format!(
+            "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: {}\r\nAccept: */*\r\nUser-Agent: AirDrop/1.0\r\nAccept-Language: en-us\r\n\r\n",
+            body.len(),
+            if close { "close" } else { "keep-alive" }
+        )
+        .into_bytes();
+        request.extend_from_slice(body);
+        self.stream.write_all(&request)?;
+        self.stream.flush()
+    }
+
+    /// A request whose body follows in pieces (chunk, then finish).
+    pub fn post_in_pieces(&mut self, path: &str, host: &str, kind: &str) -> io::Result<()> {
+        let request = format!(
+            "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: {kind}\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: AirDrop/1.0\r\nAccept-Language: en-us\r\n\r\n"
+        );
+        self.stream.write_all(request.as_bytes())
+    }
+
+    /// A piece of a body sent in pieces: none for nothing.
+    pub fn chunk(&mut self, data: &[u8]) -> io::Result<()> {
+        if data.is_empty() {
+            return Ok(());
+        }
+        let mut piece = format!("{:x}\r\n", data.len()).into_bytes();
+        piece.extend_from_slice(data);
+        piece.extend_from_slice(b"\r\n");
+        self.stream.write_all(&piece)
+    }
+
+    /// The end of a body sent in pieces.
+    pub fn finish(&mut self) -> io::Result<()> {
+        self.stream.write_all(b"0\r\n\r\n")?;
+        self.stream.flush()
+    }
+
+    /// The body that follows a head, a request's or an answer's.
+    pub fn body(&mut self, head: &dyn Headed) -> io::Result<Body<'_, S>> {
         let state = if head
             .header("transfer-encoding")
             .is_some_and(|value| value.to_ascii_lowercase().contains("chunked"))
@@ -402,6 +513,45 @@ mod tests {
                 b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
             );
         }
+    }
+
+    #[test]
+    fn as_a_sender_it_asks_and_reads_the_answers() {
+        let answers = b"HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 5\r\n\r\nhelloHTTP/1.1 403 Forbidden\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nno\r\n0\r\n\r\n";
+        for step in [1, 3, 4096] {
+            let mut c = connection(answers, step);
+            c.post("/Ask", "zoes-phone.local:8770", b"bplist", false)
+                .unwrap();
+            let reply = c.reply().unwrap();
+            assert_eq!(reply.status, 200);
+            assert_eq!(c.body(&reply).unwrap().all(100).unwrap(), b"hello");
+            c.post_in_pieces("/Upload", "zoes-phone.local:8770", "application/x-cpio")
+                .unwrap();
+            c.chunk(b"0123456789abcdef0").unwrap();
+            c.chunk(b"").unwrap();
+            c.finish().unwrap();
+            let reply = c.reply().unwrap();
+            assert_eq!(reply.status, 403);
+            assert_eq!(c.body(&reply).unwrap().all(100).unwrap(), b"no");
+            assert!(c.reply().is_err(), "nothing more was said");
+            let said = String::from_utf8(c.stream().heard.clone()).unwrap();
+            assert!(said.starts_with("POST /Ask HTTP/1.1\r\nHost: zoes-phone.local:8770\r\nContent-Type: application/octet-stream\r\nContent-Length: 6\r\nConnection: keep-alive\r\n"));
+            assert!(said.contains("User-Agent: AirDrop/1.0\r\n"));
+            assert!(said.contains("\r\n\r\nbplistPOST /Upload HTTP/1.1\r\n"));
+            assert!(said.ends_with("Content-Type: application/x-cpio\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\nAccept: */*\r\nUser-Agent: AirDrop/1.0\r\nAccept-Language: en-us\r\n\r\n11\r\n0123456789abcdef0\r\n0\r\n\r\n"));
+            // What this side writes, the receiving side reads.
+            let mut back = connection(said.as_bytes(), step);
+            let ask = back.head().unwrap().unwrap();
+            assert_eq!(back.body(&ask).unwrap().all(100).unwrap(), b"bplist");
+            let upload = back.head().unwrap().unwrap();
+            assert_eq!(upload.header("content-type"), Some("application/x-cpio"));
+            assert_eq!(
+                back.body(&upload).unwrap().all(100).unwrap(),
+                b"0123456789abcdef0"
+            );
+        }
+        assert!(connection(b"SPDY/3 200 OK\r\n\r\n", 5).reply().is_err());
+        assert!(connection(b"HTTP/1.1 fine\r\n\r\n", 5).reply().is_err());
     }
 
     #[test]

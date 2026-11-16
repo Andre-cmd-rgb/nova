@@ -10,7 +10,9 @@
 //! A receiver presents a certificate it signed itself. A sender shows a
 //! receiver that is not in its contacts whatever certificate it has, so
 //! nothing is proven by it either way; it is what makes the link private
-//! against the others in range.
+//! against the others in range. Sending, this computer is the client: it
+//! takes the receiver's certificate as it comes, for the same reason, and
+//! shows its own if the receiver asks for one.
 
 use std::ffi::{c_char, c_int, c_long, c_void, CStr, CString};
 use std::io::{self, Read, Write};
@@ -31,6 +33,7 @@ type Ssl = *mut c_void;
 /// The functions of OpenSSL this uses, as its headers declare them.
 struct Library {
     tls_server_method: unsafe extern "C" fn() -> *const c_void,
+    tls_client_method: unsafe extern "C" fn() -> *const c_void,
     ssl_ctx_new: unsafe extern "C" fn(*const c_void) -> Ctx,
     ssl_ctx_free: unsafe extern "C" fn(Ctx),
     ssl_ctx_ctrl: unsafe extern "C" fn(Ctx, c_int, c_long, *mut c_void) -> c_long,
@@ -40,6 +43,7 @@ struct Library {
     ssl_free: unsafe extern "C" fn(Ssl),
     ssl_set_fd: unsafe extern "C" fn(Ssl, c_int) -> c_int,
     ssl_accept: unsafe extern "C" fn(Ssl) -> c_int,
+    ssl_connect: unsafe extern "C" fn(Ssl) -> c_int,
     ssl_read: unsafe extern "C" fn(Ssl, *mut c_void, c_int) -> c_int,
     ssl_write: unsafe extern "C" fn(Ssl, *const c_void, c_int) -> c_int,
     ssl_shutdown: unsafe extern "C" fn(Ssl) -> c_int,
@@ -81,6 +85,7 @@ impl Library {
         }
         Ok(Library {
             tls_server_method: symbol!("TLS_server_method"),
+            tls_client_method: symbol!("TLS_client_method"),
             ssl_ctx_new: symbol!("SSL_CTX_new"),
             ssl_ctx_free: symbol!("SSL_CTX_free"),
             ssl_ctx_ctrl: symbol!("SSL_CTX_ctrl"),
@@ -90,6 +95,7 @@ impl Library {
             ssl_free: symbol!("SSL_free"),
             ssl_set_fd: symbol!("SSL_set_fd"),
             ssl_accept: symbol!("SSL_accept"),
+            ssl_connect: symbol!("SSL_connect"),
             ssl_read: symbol!("SSL_read"),
             ssl_write: symbol!("SSL_write"),
             ssl_shutdown: symbol!("SSL_shutdown"),
@@ -126,19 +132,19 @@ impl Library {
     }
 }
 
-/// This computer as a TLS server: the library and its certificate.
-pub struct Server {
+/// The library and a context with this computer's certificate in it: a server's or a client's.
+struct Context {
     library: Library,
     context: Ctx,
 }
 
 // OpenSSL's contexts may be shared between threads; each connection is used by one.
-unsafe impl Send for Server {}
-unsafe impl Sync for Server {}
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
 
-impl Server {
+impl Context {
     /// With the certificate and key in two PEM files.
-    pub fn new(certificate: &Path, key: &Path) -> Result<Server, String> {
+    fn new(server: bool, certificate: &Path, key: &Path) -> Result<Context, String> {
         let library = Library::load()?;
         let path = |path: &Path| {
             CString::new(path.to_string_lossy().as_bytes())
@@ -147,12 +153,17 @@ impl Server {
         let (certificate, key) = (path(certificate)?, path(key)?);
         // SAFETY: every call is given what its declaration asks for; the context is checked before it is used and freed if setting it up fails.
         unsafe {
-            let context = (library.ssl_ctx_new)((library.tls_server_method)());
+            let method = if server {
+                (library.tls_server_method)()
+            } else {
+                (library.tls_client_method)()
+            };
+            let context = (library.ssl_ctx_new)(method);
             if context.is_null() {
                 return Err(format!("OpenSSL would not start: {}", library.complaint()));
             }
-            let server = Server { library, context };
-            let l = &server.library;
+            let made = Context { library, context };
+            let l = &made.library;
             if (l.ssl_ctx_ctrl)(
                 context,
                 SSL_CTRL_SET_MIN_PROTO_VERSION,
@@ -164,13 +175,13 @@ impl Server {
             {
                 return Err(format!("the certificate would not load: {}", l.complaint()));
             }
-            Ok(server)
+            Ok(made)
         }
     }
 
-    /// The handshake with a sender that has connected. The stream's own
+    /// The handshake on a connection, from the side this context is for. The stream's own
     /// timeouts bound it, and everything after.
-    pub fn accept(&self, stream: TcpStream) -> io::Result<Stream<'_>> {
+    fn handshake(&self, stream: TcpStream, server: bool) -> io::Result<Stream<'_>> {
         let l = &self.library;
         // SAFETY: the context is alive as long as self; the connection is freed by Stream's drop, or here if the handshake fails.
         unsafe {
@@ -179,11 +190,17 @@ impl Server {
                 return Err(io::Error::other(l.complaint()));
             }
             let connection = Stream {
-                server: self,
+                library: l,
                 ssl,
                 stream,
             };
-            if (l.ssl_set_fd)(ssl, connection.stream.as_raw_fd()) != 1 || (l.ssl_accept)(ssl) != 1 {
+            let done = (l.ssl_set_fd)(ssl, connection.stream.as_raw_fd()) == 1
+                && if server {
+                    (l.ssl_accept)(ssl) == 1
+                } else {
+                    (l.ssl_connect)(ssl) == 1
+                };
+            if !done {
                 return Err(io::Error::other(format!(
                     "the handshake failed: {}",
                     l.complaint()
@@ -194,16 +211,46 @@ impl Server {
     }
 }
 
-impl Drop for Server {
+impl Drop for Context {
     fn drop(&mut self) {
         // SAFETY: made by SSL_CTX_new, freed once.
         unsafe { (self.library.ssl_ctx_free)(self.context) };
     }
 }
 
-/// A sender's connection, decrypted.
+/// This computer as a TLS server: the library and its certificate.
+pub struct Server(Context);
+
+impl Server {
+    /// With the certificate and key in two PEM files.
+    pub fn new(certificate: &Path, key: &Path) -> Result<Server, String> {
+        Context::new(true, certificate, key).map(Server)
+    }
+
+    /// The handshake with a sender that has connected. The stream's own
+    /// timeouts bound it, and everything after.
+    pub fn accept(&self, stream: TcpStream) -> io::Result<Stream<'_>> {
+        self.0.handshake(stream, true)
+    }
+}
+
+/// This computer as a TLS client, sending: the same certificate, shown to a receiver that asks.
+pub struct Client(Context);
+
+impl Client {
+    pub fn new(certificate: &Path, key: &Path) -> Result<Client, String> {
+        Context::new(false, certificate, key).map(Client)
+    }
+
+    /// The handshake with a receiver this computer has connected to.
+    pub fn connect(&self, stream: TcpStream) -> io::Result<Stream<'_>> {
+        self.0.handshake(stream, false)
+    }
+}
+
+/// A connection, decrypted: a sender's, or one to a receiver.
 pub struct Stream<'a> {
-    server: &'a Server,
+    library: &'a Library,
     ssl: Ssl,
     // Closed when this is dropped, after the TLS connection is freed.
     stream: TcpStream,
@@ -218,17 +265,20 @@ impl Stream<'_> {
     }
 
     fn failed(&self, result: c_int) -> io::Error {
-        let l = &self.server.library;
+        let l = self.library;
         // SAFETY: the connection is alive and `result` is what the failed call returned.
         match unsafe { (l.ssl_get_error)(self.ssl, result) } {
             // Nothing came or went within the socket's timeout.
-            2 | 3 => io::Error::new(io::ErrorKind::TimedOut, "nothing from the sender in time"),
+            2 | 3 => io::Error::new(
+                io::ErrorKind::TimedOut,
+                "nothing from the other end in time",
+            ),
             // The socket itself: its error if it has one, else the sender went away without a word.
             5 => match io::Error::last_os_error() {
                 error if error.raw_os_error().unwrap_or(0) != 0 && result < 0 => error,
                 _ => io::Error::new(
                     io::ErrorKind::UnexpectedEof,
-                    "the sender closed the connection",
+                    "the other end closed the connection",
                 ),
             },
             _ => io::Error::other(l.complaint()),
@@ -241,7 +291,7 @@ impl Read for Stream<'_> {
         if buffer.is_empty() {
             return Ok(0);
         }
-        let l = &self.server.library;
+        let l = self.library;
         // SAFETY: the buffer is as long as the length passed.
         let got = unsafe {
             (l.ssl_read)(
@@ -268,7 +318,7 @@ impl Write for Stream<'_> {
         }
         // SAFETY: the buffer is as long as the length passed.
         let sent = unsafe {
-            (self.server.library.ssl_write)(
+            (self.library.ssl_write)(
                 self.ssl,
                 buffer.as_ptr().cast(),
                 buffer.len().min(1 << 30) as c_int,
@@ -290,8 +340,8 @@ impl Drop for Stream<'_> {
     fn drop(&mut self) {
         // SAFETY: made by SSL_new, freed once, before the socket under it is closed.
         unsafe {
-            (self.server.library.ssl_shutdown)(self.ssl);
-            (self.server.library.ssl_free)(self.ssl);
+            (self.library.ssl_shutdown)(self.ssl);
+            (self.library.ssl_free)(self.ssl);
         }
     }
 }
@@ -374,6 +424,40 @@ mod tests {
         assert_eq!(said, "and from the receiver\n");
         client.wait().unwrap();
         std::fs::remove_dir_all(certificate.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn this_computer_as_a_client_talks_to_a_receiver_with_a_certificate_of_its_own() {
+        let (theirs, their_key) = identity("theirs");
+        let (ours, our_key) = identity("ours");
+        let server = Server::new(&theirs, &their_key).unwrap();
+        let client = Client::new(&ours, &our_key).unwrap();
+        let listener = TcpListener::bind("[::1]:0").unwrap();
+        let at = listener.local_addr().unwrap();
+        let receiving = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut tls = server.accept(stream).unwrap();
+            let mut heard = [0u8; 64];
+            let size = tls.read(&mut heard).unwrap();
+            tls.write_all(&heard[..size]).unwrap();
+        });
+        let stream = TcpStream::connect(at).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        // The receiver's certificate is its own making, and taken as it is.
+        let mut tls = client.connect(stream).unwrap();
+        tls.write_all(b"POST /Discover").unwrap();
+        let mut echoed = [0u8; 64];
+        let size = tls.read(&mut echoed).unwrap();
+        assert_eq!(&echoed[..size], b"POST /Discover");
+        receiving.join().unwrap();
+        for folder in [&theirs, &ours] {
+            std::fs::remove_dir_all(folder.parent().unwrap()).unwrap();
+        }
     }
 
     #[test]

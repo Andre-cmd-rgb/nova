@@ -12,9 +12,13 @@
 //!                    stop or when nobody asks for long enough: the shell
 //!                    says it for an AirDrop it switched on for an iPhone's
 //!                    share sheet, which it switches off when the sheet closes
+//!   send             with files passed alongside, open (SCM_RIGHTS): this
+//!                    computer sends them; the connection is the send's from
+//!                    then on (send.rs has what is said over it)
 //!
-//! and all but `watch` are answered with a line: `ok`, or why not. A watcher
-//! may say the last four too, and gets no answer but the change itself.
+//! and all but `watch` and `send` are answered with a line: `ok`, or why not.
+//! A watcher may say the four before `send` too, and gets no answer but the
+//! change itself.
 //!
 //! The lines of JSON all have a `state`, and with it:
 //!
@@ -32,6 +36,7 @@
 //! and has been cleaned of control characters where it came in (receiver.rs).
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -80,7 +85,7 @@ pub enum Stage {
 }
 
 /// A string as JSON has it.
-fn quoted(text: &str) -> String {
+pub(crate) fn quoted(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);
     out.push('"');
     for c in text.chars() {
@@ -98,7 +103,7 @@ fn quoted(text: &str) -> String {
     out
 }
 
-fn list(items: impl Iterator<Item = String>) -> String {
+pub(crate) fn list(items: impl Iterator<Item = String>) -> String {
     format!("[{}]", items.collect::<Vec<_>>().join(","))
 }
 
@@ -253,7 +258,12 @@ pub struct Control {
     answered: Condvar,
     /// Told to stay on after a transfer.
     stays: AtomicBool,
+    /// Where a client that asks to send is handed: it takes the connection and the files, or
+    /// says why not.
+    sends: OnceLock<Box<Send>>,
 }
+
+type Send = dyn Fn(UnixStream, Vec<OwnedFd>) -> Result<(), String> + std::marker::Send + Sync;
 
 impl Control {
     /// How things stand, with nobody told yet: for a daemon nobody can ask, and before `listen`.
@@ -271,7 +281,13 @@ impl Control {
             }),
             answered: Condvar::new(),
             stays: AtomicBool::new(false),
+            sends: OnceLock::new(),
         })
+    }
+
+    /// Clients that ask to send are handed to `start` (send.rs).
+    pub fn on_send(&self, start: Box<Send>) {
+        let _ = self.sends.set(start);
     }
 
     /// Opens the socket and starts answering on it. A socket left by a daemon that died is taken
@@ -315,7 +331,26 @@ impl Control {
         let Ok(mut out) = stream.try_clone() else {
             return;
         };
-        let mut lines = BufReader::new(stream.take(4096)).lines();
+        // The first words as they came, with what was passed with them: files, for `send`.
+        let mut first = vec![0u8; 4096];
+        let Ok((size, files)) = sys::receive_with_files(stream.as_raw_fd(), &mut first) else {
+            return;
+        };
+        first.truncate(size);
+        if first.strip_suffix(b"\n").unwrap_or(&first).trim_ascii() == b"send" {
+            let refused = match self.sends.get() {
+                Some(start) => match start(stream, files) {
+                    Ok(()) => return,
+                    Err(why) => why,
+                },
+                None => "This AirDrop does not send.".into(),
+            };
+            let _ = writeln!(out, r#"{{"state":"failed","why":{}}}"#, quoted(&refused));
+            return;
+        }
+        drop(files);
+        let mut lines =
+            BufReader::new(std::io::Cursor::new(first).chain(stream.take(4096))).lines();
         let mut watching = false;
         while let Some(Ok(line)) = lines.next() {
             let mut words = line.split_whitespace();
@@ -347,7 +382,7 @@ impl Control {
                     self.stays.store(true, Ordering::SeqCst);
                     "ok".into()
                 }
-                _ => "not understood: watch, status, accept, decline, stop or stay".into(),
+                _ => "not understood: watch, status, accept, decline, stop, stay or send".into(),
             };
             if !watching {
                 let _ = writeln!(out, "{answer}");
@@ -638,6 +673,48 @@ mod tests {
         several.files.clear();
         several.links = vec!["https://example.org/".into()];
         assert_eq!(offered(&several), "a link");
+    }
+
+    #[test]
+    fn a_client_that_asks_to_send_is_handed_over_with_its_files() {
+        let path = socket("sends");
+        let control = Control::new("Nova");
+        control.listen(&path).unwrap();
+        let file = std::fs::File::open("/proc/self/stat").unwrap();
+        let send = |words: &[u8]| {
+            let stream = UnixStream::connect(&path).unwrap();
+            crate::sys::tests::send_with_files(
+                stream.as_raw_fd(),
+                words,
+                &[file.as_raw_fd(), file.as_raw_fd()],
+            );
+            stream
+        };
+        // Nothing to hand it to: said so, in the send's own words.
+        assert_eq!(
+            line(&mut send(b"send\n")),
+            r#"{"state":"failed","why":"This AirDrop does not send."}"#
+        );
+        let (handed, taken) = std::sync::mpsc::channel();
+        control.on_send(Box::new(move |mut stream, files| {
+            if files.len() == 1 {
+                return Err("One is not enough.".into());
+            }
+            writeln!(stream, "handed {} files", files.len()).unwrap();
+            handed.send(files.len()).unwrap();
+            Ok(())
+        }));
+        assert_eq!(line(&mut send(b"send\n")), "handed 2 files");
+        assert_eq!(taken.recv().unwrap(), 2);
+        let mut one = UnixStream::connect(&path).unwrap();
+        crate::sys::tests::send_with_files(one.as_raw_fd(), b"send\n", &[file.as_raw_fd()]);
+        assert_eq!(
+            line(&mut one),
+            r#"{"state":"failed","why":"One is not enough."}"#
+        );
+        // Files passed with anything else are let go, and the words answered as ever.
+        assert!(line(&mut send(b"status\n")).starts_with("AirDrop is on"));
+        close(&control);
     }
 
     #[test]

@@ -1,5 +1,5 @@
 [Unit]
-Description=AirDrop: receiving from iPhones nearby, for user %i
+Description=AirDrop: receiving from and sending to iPhones nearby, for user %i
 Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/airdrop.md
 After=NetworkManager.service
 # Asleep, the card is nobody's: AirDrop ends before the computer sleeps, and
@@ -12,11 +12,13 @@ Before=sleep.target
 Type=notify
 NotifyAccess=main
 # The daemon is whoever asked for it (nova-airdrop-apply names their number),
-# and what it receives is theirs. The one capability is for its socket on the
-# monitor interface; it gives that up too once it has the socket.
+# and what it receives is theirs, and what it sends theirs to send. The two
+# capabilities are for its socket on the monitor interface and the one on
+# Bluetooth's management (which, while it sends, announces what wakes an
+# iPhone's AirDrop); it gives them up once it has the sockets.
 User=%i
-AmbientCapabilities=CAP_NET_RAW
-CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
+CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN
 NoNewPrivileges=yes
 Environment=XDG_RUNTIME_DIR=/run/user/%i
 # Written by `up`: the country whose radio rules the card is under.
@@ -39,7 +41,8 @@ WatchdogSec=20
 
 # It hears whoever is in radio range. It makes its own network namespace (and
 # the user namespace that takes), an interface in it through /dev/net/tun, and
-# files in the user's folders; nothing else of the system is its business.
+# files in the user's folders, and tells Bluetooth what to announce; nothing
+# else of the system is its business.
 ProtectSystem=full
 PrivateTmp=yes
 DevicePolicy=closed
@@ -49,7 +52,7 @@ ProtectKernelLogs=yes
 ProtectControlGroups=yes
 ProtectClock=yes
 RestrictNamespaces=user net
-RestrictAddressFamilies=AF_PACKET AF_INET6 AF_UNIX
+RestrictAddressFamilies=AF_PACKET AF_INET6 AF_UNIX AF_BLUETOOTH
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
 LockPersonality=yes

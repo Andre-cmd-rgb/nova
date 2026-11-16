@@ -293,6 +293,132 @@ pub fn asks_for_airdrop(message: &[u8]) -> bool {
         && message[12..].windows(9).any(|at| at == b"\x08_airdrop")
 }
 
+/// The mDNS question a sender asks: which AirDrop receivers are there?
+pub fn browse() -> Vec<u8> {
+    let mut message = vec![0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+    name(&mut message, AIRDROP);
+    message.extend_from_slice(&[0, 12, 0, 1]);
+    message
+}
+
+/// An AirDrop receiver an mDNS answer told of: its instance (the first label of its name), the
+/// host it says it is and the port it listens on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Receiver {
+    pub instance: String,
+    pub host: String,
+    pub port: u16,
+}
+
+/// A name in a DNS message at `at`, following its pointers (a bounded number of them), as dotted
+/// labels; and where the name ends where it stands.
+fn read_name(message: &[u8], mut at: usize) -> Option<(String, usize)> {
+    let mut labels: Vec<String> = Vec::new();
+    let mut end = None;
+    for _ in 0..64 {
+        let size = *message.get(at)? as usize;
+        match size {
+            0 => {
+                return Some((labels.join("."), end.unwrap_or(at + 1)));
+            }
+            0xc0.. => {
+                let to = ((size & 0x3f) << 8) | *message.get(at + 1)? as usize;
+                end.get_or_insert(at + 2);
+                // Only backwards: a pointer that goes forward could go round.
+                if to >= at {
+                    return None;
+                }
+                at = to;
+            }
+            1..=63 => {
+                let label = message.get(at + 1..at + 1 + size)?;
+                labels.push(String::from_utf8_lossy(label).into_owned());
+                at += 1 + size;
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
+/// The mDNS question that asks where one receiver is: its SRV record.
+pub fn resolve(instance: &str) -> Vec<u8> {
+    let mut message = vec![0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0];
+    name(&mut message, &format!("{instance}.{AIRDROP}"));
+    message.extend_from_slice(&[0, 33, 0, 1]);
+    message
+}
+
+/// What an mDNS answer tells of AirDrop receivers: those it names a host and port for (SRV), and
+/// the instances it only lists (PTR), which are asked about next. Nothing, for anything else.
+pub fn receivers(message: &[u8]) -> (Vec<Receiver>, Vec<String>) {
+    let (mut found, mut listed) = (Vec::new(), Vec::new());
+    if message.len() < 12 || message[2] & 0x80 == 0 {
+        return (found, listed);
+    }
+    let count = |at: usize| u16::from_be_bytes([message[at], message[at + 1]]) as usize;
+    let (questions, records) = (count(4), count(6) + count(8) + count(10));
+    let mut at = 12;
+    for _ in 0..questions.min(64) {
+        let Some((_, end)) = read_name(message, at) else {
+            return (found, listed);
+        };
+        at = end + 4;
+    }
+    let suffix = format!(".{AIRDROP}");
+    // The instance a full service name is of, if it is AirDrop's.
+    let instance = |full: &str| {
+        let lower = full.to_ascii_lowercase();
+        (lower.ends_with(&suffix) && full.len() > suffix.len())
+            .then(|| full[..full.len() - suffix.len()].to_owned())
+    };
+    for _ in 0..records.min(256) {
+        let Some((owner, end)) = read_name(message, at) else {
+            break;
+        };
+        let Some(fixed) = message.get(end..end + 10) else {
+            break;
+        };
+        let kind = u16::from_be_bytes([fixed[0], fixed[1]]);
+        let size = u16::from_be_bytes([fixed[8], fixed[9]]) as usize;
+        let data = end + 10;
+        if message.len() < data + size {
+            break;
+        }
+        match kind {
+            // PTR: the service's full name.
+            12 if owner.eq_ignore_ascii_case(AIRDROP) => {
+                if let Some(listed_as) =
+                    read_name(message, data).and_then(|(full, _)| instance(&full))
+                {
+                    if !listed.contains(&listed_as) && listed.len() < 32 {
+                        listed.push(listed_as);
+                    }
+                }
+            }
+            // SRV: priority, weight, port, the host.
+            33 if size >= 7 => {
+                let port = u16::from_be_bytes([message[data + 4], message[data + 5]]);
+                if let (Some(instance), Some((host, _))) =
+                    (instance(&owner), read_name(message, data + 6))
+                {
+                    if port != 0 && !found.iter().any(|r: &Receiver| r.instance == instance) {
+                        found.push(Receiver {
+                            instance,
+                            host,
+                            port,
+                        });
+                    }
+                }
+            }
+            _ => {}
+        }
+        at = data + size;
+    }
+    listed.retain(|name| !found.iter().any(|r| &r.instance == name));
+    (found, listed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -363,6 +489,71 @@ mod tests {
         other.extend_from_slice(&[0, 12, 0, 1]);
         assert!(!asks_for_airdrop(&other));
         assert!(!asks_for_airdrop(&[0; 5]));
+    }
+
+    #[test]
+    fn a_sender_asks_for_receivers_and_reads_where_they_are() {
+        let question = browse();
+        assert!(asks_for_airdrop(&question));
+        assert_eq!(
+            receivers(&question),
+            (vec![], vec![]),
+            "a question is no answer"
+        );
+        // This computer's own answer, as a receiver: all four records, no pointers.
+        let answer = service("0123456789ab", "nova-012345", 8771, &link_local(&US), 137);
+        assert_eq!(
+            receivers(&answer),
+            (
+                vec![Receiver {
+                    instance: "0123456789ab".into(),
+                    host: "nova-012345.local".into(),
+                    port: 8771
+                }],
+                vec![]
+            )
+        );
+        // As mDNS responders write it, the names pointing back at each other: a question kept in
+        // the answer, the list (PTR), and where it is (SRV) with its host after a pointer.
+        let mut message = vec![0, 0, 0x84, 0, 0, 1, 0, 2, 0, 0, 0, 0];
+        name(&mut message, AIRDROP); // at 12: _airdrop._tcp.local
+        message.extend_from_slice(&[0, 12, 0, 1]);
+        let ptr = message.len();
+        message.extend_from_slice(&[0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 120, 0, 15]);
+        let full = message.len();
+        message.extend_from_slice(b"\x0cabcdef012345");
+        message.extend_from_slice(&[0xc0, 12]);
+        assert_eq!(read_name(&message, ptr).unwrap().0, AIRDROP);
+        message.extend_from_slice(&[0xc0, full as u8, 0, 33, 0x80, 1, 0, 0, 0, 120, 0, 19]);
+        message.extend_from_slice(&[0, 0, 0, 0, 0x22, 0x42]);
+        message.extend_from_slice(b"\x0aZoes-Phone");
+        message.extend_from_slice(&[0xc0, 26]); // "local", inside the first name
+        let (found, listed) = receivers(&message);
+        assert_eq!(
+            found,
+            vec![Receiver {
+                instance: "abcdef012345".into(),
+                host: "Zoes-Phone.local".into(),
+                port: 8770
+            }]
+        );
+        assert!(listed.is_empty(), "listed and found: nothing more to ask");
+        // Only listed: its whereabouts are asked for.
+        message[7] = 1;
+        let (found, listed) = receivers(&message);
+        assert_eq!((found, listed), (vec![], vec!["abcdef012345".to_owned()]));
+        let asked = resolve("abcdef012345");
+        assert_eq!(
+            read_name(&asked, 12).unwrap().0,
+            "abcdef012345._airdrop._tcp.local"
+        );
+        assert_eq!(&asked[asked.len() - 4..], &[0, 33, 0, 1]);
+        // Pointers that go forward, or round, and a message cut short: nothing, and no panic.
+        assert_eq!(read_name(&[0xc0, 0x00], 0), None);
+        assert_eq!(read_name(&[0, 0, 0xc0, 0x05, 0, 0xc0, 2], 5), None);
+        for at in 0..message.len() {
+            let _ = receivers(&message[..at]);
+        }
     }
 
     #[test]

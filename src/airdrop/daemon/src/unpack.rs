@@ -49,12 +49,12 @@ impl std::fmt::Display for Error {
 // zlib's stream, as its header lays it out for 64-bit Linux, and the four
 // functions inflating needs. libz.so.1 has had this shape since the nineties.
 #[repr(C)]
-struct ZStream {
-    next_in: *const u8,
-    avail_in: u32,
+pub(crate) struct ZStream {
+    pub(crate) next_in: *const u8,
+    pub(crate) avail_in: u32,
     total_in: u64,
-    next_out: *mut u8,
-    avail_out: u32,
+    pub(crate) next_out: *mut u8,
+    pub(crate) avail_out: u32,
     total_out: u64,
     msg: *const c_char,
     state: *mut c_void,

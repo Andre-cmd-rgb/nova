@@ -38,11 +38,17 @@
 
 #[path = "../meet.rs"]
 mod meet;
+#[path = "../mgmt.rs"]
+mod mgmt;
 
-use std::collections::{HashMap, VecDeque};
-use std::ffi::{c_int, c_ulong, c_void};
+use std::collections::HashMap;
+#[cfg(test)]
+use std::collections::VecDeque;
+use std::ffi::c_int;
 use std::io::{self, Read, Write};
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::fd::AsRawFd;
+#[cfg(test)]
+use std::os::fd::OwnedFd;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
@@ -50,12 +56,7 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[repr(C)]
-struct PollFd {
-    fd: c_int,
-    events: i16,
-    revents: i16,
-}
+use mgmt::{status_words, wait, Mgmt, HCI_DEV_NONE, POWERED, READ_INDEX_LIST, READ_INFO};
 
 #[repr(C)]
 struct CapHeader {
@@ -71,41 +72,17 @@ struct CapData {
     inheritable: u32,
 }
 
-#[repr(C)]
-struct SockaddrHci {
-    family: u16,
-    device: u16,
-    channel: u16,
-}
-
 extern "C" {
-    fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
-    fn bind(fd: c_int, address: *const c_void, length: u32) -> c_int;
-    fn recv(fd: c_int, buffer: *mut c_void, length: usize, flags: c_int) -> isize;
-    fn send(fd: c_int, buffer: *const c_void, length: usize, flags: c_int) -> isize;
-    fn poll(fds: *mut PollFd, count: c_ulong, timeout: c_int) -> c_int;
     fn capset(header: *mut CapHeader, data: *const CapData) -> c_int;
     fn signal(signal: c_int, handler: usize) -> usize;
 }
 
-const AF_BLUETOOTH: c_int = 31;
-const SOCK_RAW: c_int = 3;
-const SOCK_NONBLOCK: c_int = 0o4000;
-const SOCK_CLOEXEC: c_int = 0o2000000;
-const BTPROTO_HCI: c_int = 1;
-const HCI_DEV_NONE: u16 = 0xffff;
-const HCI_CHANNEL_CONTROL: u16 = 3;
-const POLLIN: i16 = 1;
 const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 
 // The kernel's management commands and events this uses (include/net/bluetooth/mgmt.h).
-const READ_INDEX_LIST: u16 = 0x0003;
-const READ_INFO: u16 = 0x0004;
 const READ_MONITOR_FEATURES: u16 = 0x0051;
 const REMOVE_MONITOR: u16 = 0x0053;
 const ADD_PATTERNS_MONITOR_RSSI: u16 = 0x0056;
-const EV_COMPLETE: u16 = 0x0001;
-const EV_STATUS: u16 = 0x0002;
 const EV_INDEX_ADDED: u16 = 0x0004;
 const EV_INDEX_REMOVED: u16 = 0x0005;
 const EV_NEW_SETTINGS: u16 = 0x0006;
@@ -113,7 +90,6 @@ const EV_DEVICE_FOUND: u16 = 0x0012;
 const EV_MONITOR_REMOVED: u16 = 0x002c;
 const EV_MONITOR_FOUND: u16 = 0x002f;
 const EV_MONITOR_LOST: u16 = 0x0030;
-const POWERED: u32 = 1;
 /// The controller compares the patterns itself (Microsoft's extension, which Intel's and others' have).
 const OFFLOADED: u32 = 1;
 
@@ -268,96 +244,6 @@ fn write_phones(path: &Path, phones: &[Phone]) -> io::Result<()> {
 
 // ------------------------------------------------------------------ the kernel
 
-/// The kernel's Bluetooth management, for every controller at once.
-struct Mgmt {
-    fd: OwnedFd,
-    /// Events that came while an answer was waited for.
-    early: VecDeque<Vec<u8>>,
-}
-
-impl Mgmt {
-    fn open() -> io::Result<Mgmt> {
-        // SAFETY: no pointers.
-        let fd = unsafe {
-            socket(
-                AF_BLUETOOTH,
-                SOCK_RAW | SOCK_NONBLOCK | SOCK_CLOEXEC,
-                BTPROTO_HCI,
-            )
-        };
-        if fd < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: just made, and nobody else's.
-        let fd = unsafe { OwnedFd::from_raw_fd(fd) };
-        let address = SockaddrHci {
-            family: AF_BLUETOOTH as u16,
-            device: HCI_DEV_NONE,
-            channel: HCI_CHANNEL_CONTROL,
-        };
-        // SAFETY: the address lives across the call and its size is its own.
-        let bound = unsafe {
-            bind(
-                fd.as_raw_fd(),
-                (&address as *const SockaddrHci).cast(),
-                std::mem::size_of::<SockaddrHci>() as u32,
-            )
-        };
-        if bound != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(Mgmt {
-            fd,
-            early: VecDeque::new(),
-        })
-    }
-
-    /// The next event, if one is there.
-    fn read(&mut self) -> Option<Vec<u8>> {
-        if let Some(event) = self.early.pop_front() {
-            return Some(event);
-        }
-        let mut buffer = [0u8; 1024];
-        // SAFETY: the buffer is as long as said.
-        let size = unsafe { recv(self.fd.as_raw_fd(), buffer.as_mut_ptr().cast(), 1024, 0) };
-        (size >= 6).then(|| buffer[..size as usize].to_vec())
-    }
-
-    /// A command's status and answer; 0xff when none came.
-    fn ask(&mut self, opcode: u16, index: u16, params: &[u8]) -> (u8, Vec<u8>) {
-        let mut packet = Vec::with_capacity(6 + params.len());
-        packet.extend_from_slice(&opcode.to_le_bytes());
-        packet.extend_from_slice(&index.to_le_bytes());
-        packet.extend_from_slice(&(params.len() as u16).to_le_bytes());
-        packet.extend_from_slice(params);
-        // SAFETY: the packet is as long as said.
-        let sent = unsafe { send(self.fd.as_raw_fd(), packet.as_ptr().cast(), packet.len(), 0) };
-        if sent != packet.len() as isize {
-            return (0xff, Vec::new());
-        }
-        let until = Instant::now() + Duration::from_secs(3);
-        while let Some(left) = until.checked_duration_since(Instant::now()) {
-            wait(&[self.fd.as_raw_fd()], left);
-            let mut buffer = [0u8; 1024];
-            // SAFETY: as in read.
-            let size = unsafe { recv(self.fd.as_raw_fd(), buffer.as_mut_ptr().cast(), 1024, 0) };
-            if size < 6 {
-                continue;
-            }
-            let event = &buffer[..size as usize];
-            let kind = u16::from_le_bytes([event[0], event[1]]);
-            if matches!(kind, EV_COMPLETE | EV_STATUS)
-                && event.len() >= 9
-                && u16::from_le_bytes([event[6], event[7]]) == opcode
-            {
-                return (event[8], event[9..].to_vec());
-            }
-            self.early.push_back(event.to_vec());
-        }
-        (0xff, Vec::new())
-    }
-}
-
 /// Gives up every capability, for good. The management socket keeps what it was let do.
 fn give_up_capabilities() -> io::Result<()> {
     let mut header = CapHeader {
@@ -376,39 +262,10 @@ fn give_up_capabilities() -> io::Result<()> {
     Ok(())
 }
 
-fn wait(fds: &[RawFd], at_most: Duration) {
-    let mut polled: Vec<PollFd> = fds
-        .iter()
-        .map(|fd| PollFd {
-            fd: *fd,
-            events: POLLIN,
-            revents: 0,
-        })
-        .collect();
-    let timeout = at_most.as_millis().min(60_000) as c_int;
-    // SAFETY: as many descriptors as counted.
-    unsafe { poll(polled.as_mut_ptr(), polled.len() as c_ulong, timeout) };
-}
-
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_signal(_: c_int) {
     STOPPING.store(true, Ordering::SeqCst);
-}
-
-fn status_words(status: u8) -> &'static str {
-    match status {
-        0x01 => "unknown command",
-        0x03 => "failed",
-        0x07 => "no resources",
-        0x0c => "not supported",
-        0x0d => "invalid parameters",
-        0x0f => "not powered",
-        0x11 => "invalid index",
-        0x14 => "permission denied",
-        0xff => "no answer",
-        _ => "refused",
-    }
 }
 
 fn log(line: &str) {
@@ -1159,6 +1016,5 @@ mod tests {
     fn thresholds_are_laid_out_as_the_kernel_reads_them() {
         // high threshold (s8), its timeout (le16), low threshold (s8), its timeout (le16), sampling (u8)
         assert_eq!(THRESHOLDS, [0xab, 0, 0, 0xa1, 3, 0, 10]);
-        assert_eq!(std::mem::size_of::<SockaddrHci>(), 6);
     }
 }

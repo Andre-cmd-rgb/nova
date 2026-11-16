@@ -13,16 +13,19 @@
 //!                 [--control <socket>] [--accept-all]
 //!                 [--once] [--give-up-after <seconds>]
 //!
-//! It runs as the person whose files they will be, with one capability
-//! (CAP_NET_RAW, for the socket on the monitor interface), and gives that up
-//! with everything else of the system's network when it has the socket: see
-//! sys.rs. Its certificate is its own, made on the first run and kept in
-//! --identity (by default nova/airdrop under the user's state folder).
+//! It runs as the person whose files they will be, with two capabilities
+//! (CAP_NET_RAW, for the socket on the monitor interface, and CAP_NET_ADMIN,
+//! for the one on Bluetooth's management that wakes an iPhone when it sends),
+//! and gives them up with everything else of the system's network when it has
+//! the sockets: see sys.rs. Its certificate is its own, made on the first run
+//! and kept in --identity (by default nova/airdrop under the user's state
+//! folder).
 //!
 //! The name is the computer's, the folder the user's downloads, the country
 //! NOVA_AIRDROP_COUNTRY's, unless it is told otherwise. What is offered is put
 //! to the user over the control socket (control.rs; `nova airdrop` and the
-//! shell are at its other end), and taken unasked with --accept-all.
+//! shell are at its other end), and taken unasked with --accept-all. It sends
+//! too, what a client hands it over that socket (send.rs).
 //!
 //! --give-up-after ends the daemon when nobody has asked for that long, and
 //! --once a moment after the first transfer has ended, either way: the Wi-Fi
@@ -35,13 +38,18 @@ mod control;
 mod defaults;
 mod http;
 mod meet;
+mod mgmt;
 mod node;
+mod pack;
 mod packet;
 mod plist;
 mod receiver;
+mod send;
+mod sender;
 mod sys;
 mod tls;
 mod unpack;
+mod wake;
 mod wire;
 
 use std::io::Write;
@@ -268,9 +276,13 @@ fn run() -> Result<(), String> {
         ),
         _ => unreachable!(),
     };
+    // Bluetooth's management socket, while the capability to bind it is there: it wakes an iPhone
+    // when this computer sends (wake.rs). Without it, a send says why.
+    let wake = wake::Wake::open();
     // The certificate while the files of the system are still as they were named, and systemd's ear.
     let (certificate, key) = identity(&o.identity)?;
     let tls = tls::Server::new(&certificate, &key)?;
+    let client = tls::Client::new(&certificate, &key)?;
     let notify = sys::Notify::connect();
     // A daemon that takes everything can do without anybody to ask.
     let asks = match meeting_place(&o.control) {
@@ -285,6 +297,7 @@ fn run() -> Result<(), String> {
         sys::own_namespace().map_err(|e| e.to_string())?;
     }
     let tap = sys::Tap::open(&o.tap, &address, MTU).map_err(|e| e.to_string())?;
+    let scope = sys::interface_index(tap.name());
     let listener = TcpListener::bind(("::", PORT)).map_err(|e| format!("port {PORT}: {e}"))?;
     sys::stop_on_signals();
     let control = Control::new(&o.name);
@@ -327,6 +340,43 @@ fn run() -> Result<(), String> {
     let ending = Arc::new(AtomicU64::new(u64::MAX));
     let quiet_since = Arc::new(AtomicU64::new(0));
     let (accept_all, once) = (o.accept_all, o.once);
+    // A send's start and end count as a transfer's for when this ends by itself.
+    let sent_since = Arc::new(AtomicU64::new(0));
+    let sending = send::Sending::new(
+        sender::Sender {
+            tls: client,
+            name: o.name.clone(),
+            model: o.model.clone(),
+            id: settings.instance.clone(),
+        },
+        scope,
+        wake,
+        {
+            let (ending, sent_since, control) =
+                (ending.clone(), sent_since.clone(), control.clone());
+            Box::new(move |told| {
+                let now = started.elapsed().as_micros() as u64;
+                match told {
+                    send::Told::Began => {
+                        sent_since.store(now, Ordering::SeqCst);
+                        log("sending: Bluetooth says so, and the air is asked who receives".into());
+                    }
+                    send::Told::Ended { transfer } => {
+                        sent_since.store(now, Ordering::SeqCst);
+                        if transfer && once && !control.stays() {
+                            ending.store(now + AFTER_THE_LAST, Ordering::SeqCst);
+                        }
+                        log("the send is over".into());
+                    }
+                    send::Told::Log(line) => log(format!("sending: {line}")),
+                }
+            })
+        },
+    );
+    {
+        let sending = sending.clone();
+        control.on_send(Box::new(move |stream, files| sending.start(stream, files)));
+    }
     let receiver = Arc::new(Receiver {
         tls,
         name: o.name.clone(),
@@ -412,6 +462,7 @@ fn run() -> Result<(), String> {
     let mut noted = 0u32;
     while !sys::stopping() {
         let now = clock();
+        node.browsing = sending.browsing();
         let next = node.tick(now);
         while let Some(frame) = node.for_air() {
             dropped += u64::from(!air.send(&frame));
@@ -420,6 +471,12 @@ fn run() -> Result<(), String> {
             tap.receive(&frame);
         }
         while let Some(event) = node.events.pop_front() {
+            // What a send needs to hear, whatever is logged.
+            match &event {
+                Event::Receiver { peer, receiver } => sending.heard_on_air(*peer, receiver.clone()),
+                Event::Lost(peer) => sending.gone(*peer),
+                _ => {}
+            }
             noted += 1;
             if noted > MOST_NOTED {
                 continue;
@@ -436,6 +493,8 @@ fn run() -> Result<(), String> {
                     text(&peer),
                     channels.map(|channel| channel.to_string()).join(" ")
                 )),
+                // Said once a second while it is asked; the send logs those it lists.
+                Event::Receiver { .. } => {}
             }
         }
         let elapsed = started.elapsed().as_micros() as u64;
@@ -463,8 +522,11 @@ fn run() -> Result<(), String> {
             control.waiting();
         }
         if (once && elapsed >= ending.load(Ordering::SeqCst))
-            || o.give_up_after
-                .is_some_and(|seconds| elapsed >= quiet + seconds * 1_000_000 && !control.busy())
+            || o.give_up_after.is_some_and(|seconds| {
+                elapsed >= quiet.max(sent_since.load(Ordering::SeqCst)) + seconds * 1_000_000
+                    && !control.busy()
+                    && !sending.busy()
+            })
         {
             break;
         }
@@ -518,6 +580,8 @@ fn run() -> Result<(), String> {
         }
     }
     log("stopping".into());
+    // A send that was going on says so to its client.
+    sending.finish(std::time::Duration::from_secs(2));
     control::close(&control);
     // A transfer cut off by the end leaves nothing half-unpacked behind.
     unpack::sweep(&o.folder);

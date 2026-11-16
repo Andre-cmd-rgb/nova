@@ -53,6 +53,11 @@ const ENGAGED_FOR: u64 = 15_000_000;
 /// The service is said aloud at most this often when nobody asked, and answered at most that often.
 const SERVICE_EVERY: u64 = 1_000_000;
 const ANSWER_EVERY: u64 = 200_000;
+/// While this computer sends, it asks who receives AirDrop this often, aloud and of each peer in
+/// its slot; and aloud again, at most that often, when a peer comes back.
+const BROWSE_EVERY: u64 = 1_000_000;
+/// A peer heard this recently is asked in its slot.
+const ASKED_WHILE: u64 = 3_000_000;
 const FORGET_AFTER: u64 = 60_000_000;
 const MOST_PEERS: usize = 64;
 /// A peer not heard for this long gives up its place when the table is full, whatever it was doing:
@@ -87,6 +92,11 @@ pub enum Event {
         here: usize,
     },
     Lost(Mac),
+    /// A peer's mDNS answer named an AirDrop receiver: while this computer sends.
+    Receiver {
+        peer: Mac,
+        receiver: packet::Receiver,
+    },
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -101,6 +111,7 @@ pub struct Counts {
     pub pings: u64,
     pub pings_answered: u64,
     pub service_said: u64,
+    pub browsed: u64,
     pub dropped: u64,
 }
 
@@ -193,6 +204,10 @@ pub struct Node {
     next_mif: u64,
     service_said: u64,
     answered: u64,
+    /// Asking who receives AirDrop, for a send (set from outside).
+    pub browsing: bool,
+    next_browse: u64,
+    asked: u64,
     serial: u16,
     peers: HashMap<Mac, Peer>,
     air: VecDeque<Vec<u8>>,
@@ -225,6 +240,9 @@ impl Node {
             next_mif: now + 300_000,
             service_said: 0,
             answered: 0,
+            browsing: false,
+            next_browse: 0,
+            asked: 0,
             serial: 0,
             peers: HashMap::new(),
             air: VecDeque::new(),
@@ -267,6 +285,41 @@ impl Node {
         self.send(&packet::MDNS_MAC, &datagram);
         self.service_said = now;
         self.counts.service_said += 1;
+    }
+
+    /// An mDNS question, aloud: to everybody on the channel now.
+    fn ask_aloud(&mut self, now: u64, question: &[u8]) {
+        let datagram = packet::udp6(&self.ip, &packet::MDNS_GROUP, packet::MDNS_PORT, question);
+        self.send(&packet::MDNS_MAC, &datagram);
+        self.asked = now;
+        self.counts.browsed += 1;
+    }
+
+    /// Who receives AirDrop, asked aloud, and of each peer heard lately in a slot of its own, where
+    /// it is sure to be listening: the same question, to its address alone.
+    fn browse(&mut self, now: u64) {
+        let datagram = packet::udp6(
+            &self.ip,
+            &packet::MDNS_GROUP,
+            packet::MDNS_PORT,
+            &packet::browse(),
+        );
+        self.ask_aloud(now, &packet::browse());
+        let near: Vec<Mac> = self
+            .peers
+            .iter()
+            .filter(|(_, peer)| {
+                peer.last_heard != 0 && now.saturating_sub(peer.last_heard) < ASKED_WHILE
+            })
+            .map(|(mac, _)| *mac)
+            .collect();
+        for mac in near {
+            let peer = self.peers.get_mut(&mac).unwrap();
+            if peer.waiting.len() < MOST_WAITING {
+                peer.waiting.push_back((now, datagram.clone()));
+            }
+            self.release(now, mac);
+        }
     }
 
     /// The peer of this address, made if there is room for one more.
@@ -382,6 +435,9 @@ impl Node {
             if now.saturating_sub(self.service_said) >= SERVICE_EVERY {
                 self.say_service(now);
             }
+            if self.browsing && now.saturating_sub(self.asked) >= ANSWER_EVERY {
+                self.ask_aloud(now, &packet::browse());
+            }
         }
         self.release(now, frame.from);
     }
@@ -405,6 +461,21 @@ impl Node {
                 if now.saturating_sub(self.answered) >= ANSWER_EVERY {
                     self.answered = now;
                     self.say_service(now);
+                }
+            } else if self.browsing {
+                // An answer, while this computer looks for receivers: what it names, and where
+                // what it only lists is, asked next.
+                let (found, listed) = packet::receivers(message);
+                for receiver in found {
+                    self.events.push_back(Event::Receiver {
+                        peer: carried.from,
+                        receiver,
+                    });
+                }
+                if let Some(instance) = listed.first() {
+                    if now.saturating_sub(self.asked) >= ANSWER_EVERY {
+                        self.ask_aloud(now, &packet::resolve(instance));
+                    }
                 }
             }
             return;
@@ -542,7 +613,14 @@ impl Node {
                 self.next_mif + MIF_EVERY
             };
         }
+        if self.browsing && now >= self.next_browse {
+            self.browse(now);
+            self.next_browse = now + BROWSE_EVERY;
+        }
         let mut next = self.next_psf.min(self.next_mif);
+        if self.browsing {
+            next = next.min(self.next_browse);
+        }
 
         let addresses: Vec<Mac> = self.peers.keys().copied().collect();
         for address in addresses {
@@ -914,6 +992,74 @@ mod tests {
         assert!(sent
             .iter()
             .any(|(_, carried)| packet::view(carried).unwrap().mdns() == Some(&said[..])));
+    }
+
+    #[test]
+    fn while_it_sends_it_asks_who_receives_and_hears_the_answers() {
+        let mut node = node();
+        let mut phone = Phone::new([6; 16], 0);
+        let questions = |sent: &[(Mac, Vec<u8>)]| {
+            sent.iter()
+                .filter(|(_, carried)| {
+                    packet::view(carried)
+                        .and_then(|view| view.mdns().map(|m| m.to_vec()))
+                        .is_some_and(|m| m == packet::browse())
+                })
+                .map(|(to, _)| *to)
+                .collect::<Vec<Mac>>()
+        };
+        node.heard(1_000_000, &phone.announces(1_000_000));
+        node.tick(1_000_000);
+        assert!(
+            questions(&aired(&mut node)).is_empty(),
+            "nothing asked while it only receives"
+        );
+
+        node.browsing = true;
+        node.tick(1_100_000);
+        assert_eq!(
+            questions(&aired(&mut node)),
+            vec![packet::MDNS_MAC, PHONE],
+            "aloud, and of the phone heard lately"
+        );
+        node.tick(1_500_000);
+        assert!(questions(&aired(&mut node)).is_empty(), "once a second");
+        // The phone back after a while away: asked aloud at once.
+        node.heard(1_700_000, &phone.announces(1_700_000));
+        assert_eq!(questions(&aired(&mut node)), vec![packet::MDNS_MAC]);
+
+        // Its answer names its receiver.
+        let answer = packet::service(
+            "abcdef012345",
+            "Zoes-Phone",
+            8770,
+            &packet::link_local(&PHONE),
+            1019,
+        );
+        let datagram = packet::udp6(
+            &packet::link_local(&PHONE),
+            &packet::MDNS_GROUP,
+            packet::MDNS_PORT,
+            &answer,
+        );
+        node.events.clear();
+        node.heard(1_750_000, &phone.sends(&packet::MDNS_MAC, &datagram));
+        assert_eq!(
+            node.events.pop_front(),
+            Some(Event::Receiver {
+                peer: PHONE,
+                receiver: packet::Receiver {
+                    instance: "abcdef012345".into(),
+                    host: "Zoes-Phone.local".into(),
+                    port: 8770
+                }
+            })
+        );
+        assert_eq!(node.for_kernel(), None, "the kernel is not told of mDNS");
+        // Not looked for, not heard.
+        node.browsing = false;
+        node.heard(1_800_000, &phone.sends(&packet::MDNS_MAC, &datagram));
+        assert!(node.events.is_empty());
     }
 
     #[test]

@@ -457,6 +457,88 @@ pub fn wait(first: RawFd, second: RawFd, microseconds: u64) {
 
 // --------------------------------------------------------------- sockets
 
+#[repr(C)]
+struct IoVec {
+    base: *mut c_void,
+    length: usize,
+}
+
+#[repr(C)]
+struct MsgHdr {
+    name: *mut c_void,
+    name_length: u32,
+    io: *mut IoVec,
+    io_length: usize,
+    control: *mut c_void,
+    control_length: usize,
+    flags: c_int,
+}
+
+extern "C" {
+    fn recvmsg(fd: c_int, message: *mut MsgHdr, flags: c_int) -> isize;
+}
+
+const SCM_RIGHTS: c_int = 1;
+const MSG_CMSG_CLOEXEC: c_int = 0x4000_0000;
+/// The most descriptors the kernel passes in one message.
+pub const MOST_FILES: usize = 253;
+
+/// Reads what a client said, and the files it passed with it (SCM_RIGHTS): `nova airdrop send`
+/// hands over the files it was given open, so that this reads what the user could, wherever it is.
+pub fn receive_with_files(fd: RawFd, buffer: &mut [u8]) -> io::Result<(usize, Vec<OwnedFd>)> {
+    // A header of 16 bytes, then the descriptors, four bytes each: room for as many as can come.
+    let mut control = vec![0u64; (16 + MOST_FILES * 4).div_ceil(8)];
+    let mut io = IoVec {
+        base: buffer.as_mut_ptr().cast(),
+        length: buffer.len(),
+    };
+    let mut message = MsgHdr {
+        name: std::ptr::null_mut(),
+        name_length: 0,
+        io: &mut io,
+        io_length: 1,
+        control: control.as_mut_ptr().cast(),
+        control_length: control.len() * 8,
+        flags: 0,
+    };
+    // SAFETY: the message describes a buffer and room for its control data, both alive across the call.
+    let size = unsafe { recvmsg(fd, &mut message, MSG_CMSG_CLOEXEC) };
+    if size < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut files = Vec::new();
+    // SAFETY: the kernel wrote message.control_length bytes of control data into `control`, which
+    // outlives this view of it.
+    let bytes = unsafe {
+        std::slice::from_raw_parts(control.as_ptr().cast::<u8>(), message.control_length)
+    };
+    let mut at = 0;
+    while at + 16 <= bytes.len() {
+        let length = usize::from_ne_bytes(bytes[at..at + 8].try_into().unwrap());
+        let level = c_int::from_ne_bytes(bytes[at + 8..at + 12].try_into().unwrap());
+        let kind = c_int::from_ne_bytes(bytes[at + 12..at + 16].try_into().unwrap());
+        if length < 16 || at + length > bytes.len() {
+            break;
+        }
+        if level == SOL_SOCKET && kind == SCM_RIGHTS {
+            for raw in bytes[at + 16..at + length].as_chunks::<4>().0 {
+                // SAFETY: the kernel gave this process these descriptors, and nothing else has them.
+                files.push(unsafe { OwnedFd::from_raw_fd(c_int::from_ne_bytes(*raw)) });
+            }
+        }
+        at += length.div_ceil(8) * 8;
+    }
+    Ok((size as usize, files))
+}
+
+/// The number of an interface in this namespace (a link-local address's scope); 0 if none.
+pub fn interface_index(name: &str) -> u32 {
+    CString::new(name).map_or(0, |name| {
+        // SAFETY: a NUL-terminated name, alive across the call.
+        unsafe { if_nametoindex(name.as_ptr()) }
+    })
+}
+
 /// Room for a whole burst of a sender: it sends for a tenth of a second at a
 /// time, megabytes a second, and what does not fit waits a second for the next.
 pub fn roomy(socket: &impl AsRawFd) {
@@ -473,8 +555,75 @@ pub fn acknowledge_at_once(socket: RawFd) {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+
+    extern "C" {
+        fn sendmsg(fd: c_int, message: *const MsgHdr, flags: c_int) -> isize;
+    }
+
+    /// What `nova airdrop send` does: words, with files passed alongside.
+    pub fn send_with_files(fd: RawFd, words: &[u8], files: &[RawFd]) -> isize {
+        let mut control = vec![0u64; (16 + files.len() * 4).div_ceil(8)];
+        let length = 16 + files.len() * 4;
+        let bytes: &mut [u8] =
+            // SAFETY: a view of the buffer just made, as bytes.
+            unsafe { std::slice::from_raw_parts_mut(control.as_mut_ptr().cast(), control.len() * 8) };
+        bytes[..8].copy_from_slice(&length.to_ne_bytes());
+        bytes[8..12].copy_from_slice(&SOL_SOCKET.to_ne_bytes());
+        bytes[12..16].copy_from_slice(&SCM_RIGHTS.to_ne_bytes());
+        for (i, file) in files.iter().enumerate() {
+            bytes[16 + i * 4..20 + i * 4].copy_from_slice(&file.to_ne_bytes());
+        }
+        let mut io = IoVec {
+            base: words.as_ptr() as *mut c_void,
+            length: words.len(),
+        };
+        let message = MsgHdr {
+            name: std::ptr::null_mut(),
+            name_length: 0,
+            io: &mut io,
+            io_length: 1,
+            control: control.as_mut_ptr().cast(),
+            control_length: if files.is_empty() {
+                0
+            } else {
+                control.len() * 8
+            },
+            flags: 0,
+        };
+        // SAFETY: the message describes buffers alive across the call.
+        unsafe { sendmsg(fd, &message, 0) }
+    }
+
+    #[test]
+    fn files_passed_with_words_arrive_open() {
+        let (ours, theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        let path = std::env::temp_dir().join(format!("nova-airdrop-fds-{}", std::process::id()));
+        fs::write(&path, b"what the user picked").unwrap();
+        let file = File::open(&path).unwrap();
+        assert_eq!(
+            send_with_files(
+                ours.as_raw_fd(),
+                b"send\n",
+                &[file.as_raw_fd(), file.as_raw_fd()]
+            ),
+            5
+        );
+        let mut buffer = [0u8; 64];
+        let (size, files) = receive_with_files(theirs.as_raw_fd(), &mut buffer).unwrap();
+        assert_eq!((&buffer[..size], files.len()), (&b"send\n"[..], 2));
+        let mut got = String::new();
+        File::from(files.into_iter().next().unwrap())
+            .read_to_string(&mut got)
+            .unwrap();
+        assert_eq!(got, "what the user picked");
+        // Words alone.
+        (&ours).write_all(b"status\n").unwrap();
+        let (size, files) = receive_with_files(theirs.as_raw_fd(), &mut buffer).unwrap();
+        assert_eq!((&buffer[..size], files.len()), (&b"status\n"[..], 0));
+        fs::remove_file(&path).unwrap();
+    }
 
     #[test]
     fn interface_requests_are_laid_out_as_the_kernel_reads_them() {

@@ -116,7 +116,7 @@ fn failed(question: Option<u64>) -> impl Fn(std::io::Error) -> Failure {
 
 /// A name a stranger gave, made fit to show: one line, nothing that is not shown as itself
 /// (unpack::hidden), not endless.
-fn shown(text: &str) -> String {
+pub(crate) fn shown(text: &str) -> String {
     text.chars()
         .filter(|&c| !crate::unpack::hidden(c))
         .take(80)
@@ -125,7 +125,7 @@ fn shown(text: &str) -> String {
         .to_owned()
 }
 
-fn offer(asked: &Value) -> Offer {
+pub(crate) fn offer(asked: &Value) -> Offer {
     let files: Vec<(String, u64)> = asked
         .get("Files")
         .map(Value::list)
@@ -215,9 +215,7 @@ impl Receiver {
             }
             let (receiver, open) = (self.clone(), open.clone());
             std::thread::spawn(move || {
-                if let Err(Failure(question, why)) = receiver.connection(stream) {
-                    (receiver.tell)(Happened::Failed { question, why });
-                }
+                receiver.serve_one(stream);
                 let mut open = open.lock().unwrap();
                 if let Some(theirs) = open.get_mut(&from) {
                     *theirs -= 1;
@@ -226,6 +224,13 @@ impl Receiver {
                     }
                 }
             });
+        }
+    }
+
+    /// One connection a sender made, whatever came of it told.
+    pub fn serve_one(&self, stream: TcpStream) {
+        if let Err(Failure(question, why)) = self.connection(stream) {
+            (self.tell)(Happened::Failed { question, why });
         }
     }
 
