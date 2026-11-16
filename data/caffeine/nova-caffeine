@@ -169,12 +169,11 @@ reconcile() {
 
 # The battery is low, on battery power (the shell's idle service): Caffeine
 # ends, and a lid closed meanwhile does what a lid close does, lock and sleep,
-# rather than leave the computer running flat in a bag.
+# rather than leave the computer running flat in a bag. It says nothing of its
+# own: the battery's warning has just come, and the bar's cup goes.
 low_battery() {
   armed || return 0
   release >/dev/null || true
-  nova-notification-send -g 󰅶 -u critical "Caffeine is off: the battery is low" \
-    "The computer sleeps and locks when unused again, and when its lid closes." >/dev/null 2>&1 || true
   if laptop && nova-hw-laptop-closed && ! nova-hw-external-monitors; then
     nova-system-lid-close || true
     systemctl sleep

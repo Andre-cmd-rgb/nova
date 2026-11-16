@@ -12,8 +12,11 @@ if (($# != 1)); then
 fi
 
 # The battery service in the shell runs this once the charge falls to its
-# threshold. The glyph is from the bar's battery set; the icon theme's
-# battery-caution is an old bitmap that looks blurred beside it. The hooks run
-# whether or not the notification could be sent.
-nova-notification-send -g 󰂃 -u critical "Time to recharge!" "Battery is down to $1%" -t 30000 || true
+# threshold. It says so once and goes by itself: a critical notification
+# would stay up until clicked, long after the charger is in, and the bar shows
+# the charge all along. Nova's own notifications come through Do Not Disturb.
+# The glyph is from the bar's battery set; the icon theme's battery-caution is
+# an old bitmap that looks blurred beside it. The hooks run whether or not the
+# notification could be sent.
+nova-notification-send -g 󰂃 -u normal "Battery low" "$1% left. Plug in the charger soon." -t 15000 || true
 nova-hook battery-low "$1"

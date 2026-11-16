@@ -130,7 +130,7 @@ add_modem() { # a modem on mhi-pci-generic, its power/control set to $1
   [ "$status" -eq 0 ]
   fails armed
   [ ! -e "$SWITCH" ]
-  grep -q 'nova-notification-send -g 󰅶 -u critical Caffeine is off: the battery is low' "$CALLS"
+  fails grep -q 'nova-notification-send' "$CALLS"
   grep -qx 'nova-system-lid-close ' "$CALLS"
   grep -qx 'systemctl sleep' "$CALLS"
 }
