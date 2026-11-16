@@ -645,6 +645,19 @@ usb_devices() {
   done
 }
 
+# The PCI devices as the kernel keeps them, never lspci: lspci reads each
+# device's configuration, which wakes a graphics card left asleep, where
+# these few attributes are kept in memory.
+pci_devices() {
+  local dev driver
+  for dev in "$SYS"/bus/pci/devices/*; do
+    [[ -r $dev/vendor ]] || continue
+    driver=$(readlink -- "$dev/driver" 2>/dev/null) && driver=${driver##*/} || driver=none
+    printf '%s class %s id %s:%s driver %s\n' "${dev##*/}" "$(<"$dev/class")" \
+      "$(<"$dev/vendor")" "$(<"$dev/device")" "$driver"
+  done
+}
+
 # A command's output, or that it is not there.
 output_of() { # command...
   if command -v "$1" >/dev/null 2>&1; then
@@ -723,7 +736,7 @@ bundle() {
   packages >"$dir/packages.txt"
   boot_entries >"$dir/boot-entries.txt"
   model >"$dir/model.txt"
-  output_of lspci -nn >"$dir/pci.txt"
+  pci_devices >"$dir/pci.txt"
   usb_devices >"$dir/usb.txt"
 
   # Four numbers, which nothing else may show of the phone.

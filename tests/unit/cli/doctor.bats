@@ -507,7 +507,13 @@ bundle_world() {
   esac'
   stub coredumpctl 'echo "Sun 2026-11-16 10:00:00 CET 4242 1000 1000 SIGSEGV missing $HOME/bin/crashy"'
   stub snapper 'echo "No permissions."'
-  stub lspci 'echo "00:1f.6 Ethernet controller [0200]: Intel Corporation Ethernet Connection [8086:15fc] (rev 20)"'
+  # lspci would wake a sleeping graphics card: the devices come from sysfs.
+  stub lspci 'echo "lspci ran" >>"$SCRATCH/lspci-ran"'
+  write_file "$NOVA_SYS/bus/pci/devices/0000:00:1f.6/vendor" 0x8086
+  write_file "$NOVA_SYS/bus/pci/devices/0000:00:1f.6/device" 0x15fc
+  write_file "$NOVA_SYS/bus/pci/devices/0000:00:1f.6/class" 0x020000
+  mkdir -p "$NOVA_SYS/bus/pci/drivers/e1000e"
+  ln -s ../../drivers/e1000e "$NOVA_SYS/bus/pci/devices/0000:00:1f.6/driver"
   stub lsusb 'echo "Bus 003 Device 008: ID 13d3:5271 IMC Networks Integrated RGB Camera"'
   stub pacman 'case $1 in
     -Qq) printf "%s\n" nova linux-nova hyprland quickshell firefox ;;
@@ -539,7 +545,8 @@ linux-nova 1.0-1
 hyprland 1.0-1
 quickshell 1.0-1" ]
   grep -qx 'product_version  ThinkPad P1 Gen 4i' "$dir/model.txt"
-  grep -q 'Intel Corporation Ethernet Connection \[8086:15fc\]' "$dir/pci.txt"
+  grep -qx '0000:00:1f.6 class 0x020000 id 0x8086:0x15fc driver e1000e' "$dir/pci.txt"
+  [ ! -e "$SCRATCH/lspci-ran" ]
   grep -q 'Integrated RGB Camera' "$dir/usb.txt"
   grep -qx 'No permissions.' "$dir/snapshots.txt"
   # Nova's own lines, the shell's and the kernel's, and nobody else's.
