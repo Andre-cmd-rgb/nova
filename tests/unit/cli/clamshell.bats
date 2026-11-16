@@ -354,8 +354,8 @@ END
   # Nothing is left listening.
   local pid
   pid=$(cat "$SCRATCH/gdbus.pid")
-  for _ in {1..20}; do kill -0 "$pid" 2>/dev/null || break; /usr/bin/sleep 0.1; done
-  fails kill -0 "$pid"
+  for _ in {1..20}; do running "$pid" || break; /usr/bin/sleep 0.1; done
+  fails running "$pid"
 }
 
 @test "watch: outside a Hyprland session it says so" {

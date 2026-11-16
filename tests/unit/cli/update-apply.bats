@@ -413,8 +413,8 @@ STUB
   fails grep -q sleep "$SCRATCH/inhibit"
   kill -0 "$hold"
   kill -KILL "$update"
-  for _ in {1..30}; do kill -0 "$hold" 2>/dev/null || break; sleep 0.1; done
-  fails kill -0 "$hold" 2>/dev/null
+  for _ in {1..30}; do running "$hold" || break; sleep 0.1; done
+  fails running "$hold"
 }
 
 @test "a failed second pin write restores both pins before any pacman runs" {

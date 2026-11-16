@@ -531,6 +531,8 @@ bundle_world() {
   printf 'XDG_DOWNLOAD_DIR="$HOME/Fetched"\n' >"$HOME/.config/user-dirs.dirs"
   write_file "$XDG_STATE_HOME/nova/airdrop/phones" 'a1b2 c3d4 e5f6 0718'
   write_file "$NOVA_PROC/sys/kernel/hostname" 'andres-p1'
+  # The report of a user's own run: not under sudo, as CI runs the tests.
+  unset SUDO_USER SUDO_UID SUDO_GID
   export USER=andres
   local field
   for field in sys_vendor:LENOVO product_name:20Y4S34G33 "product_version:ThinkPad P1 Gen 4i" "bios_version:N40ET53W (1.35 )" \

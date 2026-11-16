@@ -30,6 +30,16 @@ setup_scratch() {
 # anywhere.
 fails() { if "$@"; then return 1; fi; }
 
+# Whether the process <pid> runs: there, and not a zombie. kill -0 finds a
+# zombie too, and where the first process reaps nothing (a container's, as
+# GitHub's is) an orphan that ended stays one.
+running() { # pid
+  local stat
+  stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 1
+  stat=${stat##*) }
+  [[ ${stat%% *} != Z ]]
+}
+
 # Each gpg home a test made ($SCRATCH/gnupg, gnupg-other) has its agent
 # stopped, and the folder gpg made for its sockets in the runtime directory
 # goes with it.
