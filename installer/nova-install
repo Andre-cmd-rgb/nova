@@ -186,13 +186,13 @@ usage() {
 # The ERR trap once the disk is being written: a step that fails ends the
 # install, and this says which instead of stopping without a word. Subshells
 # inherit the trap (set -E), so only the outermost shell speaks.
-stopped() { # line command
+stopped() { # file:line command
   ((BASH_SUBSHELL)) && return
   local shown=$PROGRESS
   [[ -z $STEP ]] || printf '%s %s (stopped): %s s\n' "$STEP_LINE" "$STEP" "$(seconds_since "$STEP_STARTED")" >>"$LOG"
   progress_end fail
   echo >&2
-  ui_error "nova-install: the install stopped at line $1 ($2)${STEP:+, in the step $STEP}. The log is in $LOG."
+  ui_error "nova-install: the install stopped at $1 ($2)${STEP:+, in the step $STEP}. The log is in $LOG."
   ((!shown)) || progress_tail
 }
 
@@ -348,7 +348,8 @@ main() {
       die "the Arch snapshot of $arch_date or Nova's repository did not have every package; nothing was changed. Try again later; the log is in $LOG"
   fi
   set -E
-  trap 'stopped "$LINENO" "$BASH_COMMAND"' ERR
+  # The file as well as the line: the stages are files of their own.
+  trap 'stopped "${BASH_SOURCE[0]##*/}:$LINENO" "$BASH_COMMAND"' ERR
   step "Partitioning and formatting" partition_and_format "$disk"
   unset DISK_PASSPHRASE
   step "Subvolumes and swap file" create_subvolumes_and_mount "$disk" "$swap"
