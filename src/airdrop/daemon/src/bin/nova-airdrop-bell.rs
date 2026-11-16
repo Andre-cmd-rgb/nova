@@ -91,7 +91,10 @@ const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 const READ_MONITOR_FEATURES: u16 = 0x0051;
 const REMOVE_MONITOR: u16 = 0x0053;
 const ADD_PATTERNS_MONITOR_RSSI: u16 = 0x0056;
+const READ_DEF_SYSTEM_CONFIG: u16 = 0x004b;
 const SET_DEF_SYSTEM_CONFIG: u16 = 0x004c;
+/// The kernel's answer to taking away a monitor it does not have (-ENOENT).
+const NO_SUCH_MONITOR: u8 = 0x11;
 /// The kernel's passive scan while a monitor is in place, in its 0.625 ms units: a 30 ms window
 /// (0x0030) every 120 ms (0x00c0), a quarter of the radio's time where the kernel's own is a 30 ms
 /// window every 60 ms, half of it. An iPhone showing AirDrop announces itself about every 187 ms,
@@ -127,6 +130,8 @@ const STALE: Duration = Duration::from_secs(6);
 /// was busy on channel 6) and is back in a tenth of a second, the iPhone heard again at once.
 /// Gone it may still be: unheard for STALE, it is.
 const RESET_GRACE: Duration = Duration::from_secs(5);
+/// How often a monitor the controller did not say it took away is tried again.
+const RETRY_REMOVING: Duration = Duration::from_secs(10);
 const MOST_CLIENTS: usize = 16;
 const CLIENT_SAYS_WITHIN: Duration = Duration::from_secs(5);
 
@@ -321,6 +326,12 @@ struct Bell {
     resting: bool,
     /// Whether the scan was set lower, so that it is set once a controller.
     scan_set: Option<u16>,
+    /// The controller's scan entries as they were before, to set back when nothing listens.
+    scan_was: Vec<u8>,
+    /// Monitors of this one's that the controller did not say it took away (no answer in its
+    /// reset, say): tried again, as one left in place keeps the radio scanning.
+    unremoved: Vec<u16>,
+    tried_removing: Option<Instant>,
 }
 
 impl Bell {
@@ -334,18 +345,32 @@ impl Bell {
     }
 
     fn note(&self) {
-        let words: Vec<String> = self.monitors.iter().map(u16::to_string).collect();
+        let words: Vec<String> = self
+            .monitors
+            .iter()
+            .chain(&self.unremoved)
+            .map(u16::to_string)
+            .collect();
         let _ = std::fs::write(&self.monitors_path, words.join(" "));
     }
 
+    /// Takes a monitor of this one's away. Unless the controller says it did, or that it had no
+    /// such monitor, it is kept in `unremoved` (and noted) to be tried again.
     fn remove(&mut self, handle: u16) {
         if let Some(index) = self.index {
-            self.mgmt.ask(REMOVE_MONITOR, index, &handle.to_le_bytes());
+            let (status, _) = self.mgmt.ask(REMOVE_MONITOR, index, &handle.to_le_bytes());
             // Its own taking away is no news to this.
             self.mgmt.early.retain(|event| {
                 !(u16::from_le_bytes([event[0], event[1]]) == EV_MONITOR_REMOVED
                     && event.get(6..8) == Some(&handle.to_le_bytes()[..]))
             });
+            if !matches!(status, 0 | NO_SUCH_MONITOR) && !self.unremoved.contains(&handle) {
+                log(&format!(
+                    "a monitor stays in place for now: {}",
+                    status_words(status)
+                ));
+                self.unremoved.push(handle);
+            }
         }
         self.monitors.retain(|mine| *mine != handle);
         if self.any == Some(handle) {
@@ -363,6 +388,8 @@ impl Bell {
             (0, answer) if answer.len() >= 2 => {
                 let handle = u16::from_le_bytes([answer[0], answer[1]]);
                 self.monitors.push(handle);
+                // A number the kernel gives anew is not the one it did not take away.
+                self.unremoved.retain(|old| *old != handle);
                 Ok(handle)
             }
             (status, _) => Err(format!(
@@ -415,6 +442,9 @@ impl Bell {
         let present = in_place(&answer);
         let mut stale = self.noted();
         stale.extend(self.monitors.iter().copied());
+        stale.append(&mut self.unremoved);
+        stale.sort_unstable();
+        stale.dedup();
         for handle in stale {
             if present.contains(&handle) {
                 self.remove(handle);
@@ -423,14 +453,26 @@ impl Bell {
         self.monitors.clear();
         self.any = None;
         if self.resting {
+            self.scan_back();
             self.note();
             return;
         }
         if self.scan_set != Some(index) && (!self.phones.is_empty() || self.learning.is_some()) {
             // Before the monitors, whose coming starts the scan. Not set, the doorbell listens
-            // all the same, at the kernel's half of the radio's time.
+            // all the same, at the kernel's half of the radio's time. What it was is kept, to be
+            // set back when the doorbell stops listening: the setting is the controller's, for
+            // every monitor.
+            let (status, answer) = self.mgmt.ask(READ_DEF_SYSTEM_CONFIG, index, &[]);
+            let was = if status == 0 {
+                scan_entries(&answer)
+            } else {
+                Vec::new()
+            };
             match self.mgmt.ask(SET_DEF_SYSTEM_CONFIG, index, &scan_config()) {
-                (0, _) => self.scan_set = Some(index),
+                (0, _) => {
+                    self.scan_set = Some(index);
+                    self.scan_was = was;
+                }
                 (status, _) => log(&format!(
                     "the scan stays the kernel's: {}",
                     status_words(status)
@@ -448,9 +490,29 @@ impl Bell {
                 Err(why) => self.why = Some(why),
             }
         }
+        if self.monitors.is_empty() {
+            self.scan_back();
+        }
         self.note();
         if let Some(why) = &self.why {
             log(&format!("cannot listen: {why}"));
+        }
+    }
+
+    /// The controller's scan as it was before the doorbell set it, once nothing of the
+    /// doorbell's listens. A controller gone has its own anew when it comes back.
+    fn scan_back(&mut self) {
+        let Some(index) = self.scan_set.take() else {
+            return;
+        };
+        let was = std::mem::take(&mut self.scan_was);
+        if self.index == Some(index) && !was.is_empty() {
+            if let (status @ 1.., _) = self.mgmt.ask(SET_DEF_SYSTEM_CONFIG, index, &was) {
+                log(&format!(
+                    "the scan could not be set back: {}",
+                    status_words(status)
+                ));
+            }
         }
     }
 
@@ -479,7 +541,13 @@ impl Bell {
         self.monitors.iter().all(|mine| present.contains(mine))
     }
 
-    fn learn(&mut self) {
+    /// Listening for a minute for an iPhone to know; not while resting, when nothing listens.
+    fn learn(&mut self) -> Result<(), &'static str> {
+        if self.resting {
+            return Err(
+                "AirDrop's doorbell rests while the screen is locked: unlock it, then learn.",
+            );
+        }
         self.learning = Some((Instant::now() + LEARN_FOR, unix_now() + LEARN_FOR.as_secs()));
         if self.any.is_none() && self.why.is_none() {
             if let Some(index) = self.index {
@@ -490,6 +558,7 @@ impl Bell {
                 self.note();
             }
         }
+        Ok(())
     }
 
     fn stop_learning(&mut self) {
@@ -535,8 +604,11 @@ impl Bell {
             // Its controller gone: so are its monitors, and their numbers may be anybody's next.
             EV_INDEX_REMOVED if Some(index) == self.index => {
                 self.reset = Some(Instant::now());
-                // A controller that comes back is the kernel's anew, with its own scan.
+                // A controller that comes back is the kernel's anew, with its own scan and no
+                // monitors.
                 self.scan_set = None;
+                self.scan_was.clear();
+                self.unremoved.clear();
                 self.monitors.clear();
                 self.any = None;
                 self.note();
@@ -617,6 +689,20 @@ impl Bell {
             self.stop_learning();
         }
         self.near.retain(|_, heard| heard.elapsed() < STALE);
+        if !self.unremoved.is_empty()
+            && self
+                .tried_removing
+                .is_none_or(|at| at.elapsed() >= RETRY_REMOVING)
+        {
+            self.tried_removing = Some(Instant::now());
+            for handle in std::mem::take(&mut self.unremoved) {
+                // A number the kernel has since given to one of this one's is that one.
+                if !self.monitors.contains(&handle) {
+                    self.remove(handle);
+                }
+            }
+            self.note();
+        }
     }
 
     fn json(&self) -> String {
@@ -651,7 +737,6 @@ impl Bell {
     }
 }
 
-/// The monitors in place, from the answer to READ_MONITOR_FEATURES.
 /// SET_DEF_SYSTEM_CONFIG's parameters for the monitor's scan: two type, length, value entries.
 fn scan_config() -> Vec<u8> {
     let mut out = Vec::with_capacity(10);
@@ -663,6 +748,25 @@ fn scan_config() -> Vec<u8> {
     out
 }
 
+/// From the answer to READ_DEF_SYSTEM_CONFIG, the monitor's scan entries (types 0x0013 and 0x0014)
+/// as they are, to be given back to SET_DEF_SYSTEM_CONFIG.
+fn scan_entries(answer: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(head) = answer.get(at..at + 3) {
+        let kind = u16::from_le_bytes([head[0], head[1]]);
+        let Some(entry) = answer.get(at..at + 3 + usize::from(head[2])) else {
+            break;
+        };
+        if matches!(kind, 0x0013 | 0x0014) {
+            out.extend_from_slice(entry);
+        }
+        at += entry.len();
+    }
+    out
+}
+
+/// The monitors in place, from the answer to READ_MONITOR_FEATURES.
 fn in_place(answer: &[u8]) -> Vec<u16> {
     let Some(count) = answer.get(11..13) else {
         return Vec::new();
@@ -731,10 +835,10 @@ fn answer(bell: &mut Bell, client: &mut Client) -> bool {
             bell.json()
         }
         "status" => bell.words(),
-        "learn" => {
-            bell.learn();
-            "ok".into()
-        }
+        "learn" => match bell.learn() {
+            Ok(()) => "ok".into(),
+            Err(why) => why.into(),
+        },
         "forget" => {
             bell.forget();
             "ok".into()
@@ -817,6 +921,9 @@ fn run() -> Result<(), String> {
         reset: None,
         resting: false,
         scan_set: None,
+        scan_was: Vec::new(),
+        unremoved: Vec::new(),
+        tried_removing: None,
     };
     bell.setup();
     log(&format!(
@@ -874,10 +981,18 @@ fn run() -> Result<(), String> {
             told = now;
         }
     }
-    for handle in bell.monitors.clone() {
+    // Each tried once more: one that fails now stays noted rather than holding the stop up.
+    let earlier = std::mem::take(&mut bell.unremoved);
+    for handle in bell.monitors.clone().into_iter().chain(earlier) {
         bell.remove(handle);
     }
-    let _ = std::fs::remove_file(&bell.monitors_path);
+    bell.scan_back();
+    // What could still not be taken away stays noted, for the next bell to tidy after.
+    if bell.unremoved.is_empty() {
+        let _ = std::fs::remove_file(&bell.monitors_path);
+    } else {
+        bell.note();
+    }
     let _ = std::fs::remove_file(&control);
     Ok(())
 }
@@ -1021,6 +1136,9 @@ mod tests {
             reset: None,
             resting: false,
             scan_set: None,
+            scan_was: Vec::new(),
+            unremoved: Vec::new(),
+            tried_removing: None,
         }
     }
 
@@ -1127,6 +1245,107 @@ mod tests {
             bell.words(),
             "AirDrop's doorbell rests while the screen is locked."
         );
+    }
+
+    /// A doorbell whose kernel is the other end of its socket: what the kernel is to answer is
+    /// put there before it is asked, and what it was asked is read there after.
+    fn bell_and_kernel() -> (Bell, std::os::unix::net::UnixDatagram) {
+        let (end, kernel) = std::os::unix::net::UnixDatagram::pair().unwrap();
+        // As the kernel's socket is opened: a read with nothing there comes back at once.
+        end.set_nonblocking(true).unwrap();
+        let mut bell = bell();
+        bell.mgmt = Mgmt {
+            fd: OwnedFd::from(end),
+            early: VecDeque::new(),
+        };
+        kernel.set_nonblocking(true).unwrap();
+        (bell, kernel)
+    }
+
+    fn complete(opcode: u16, status: u8, params: &[u8]) -> Vec<u8> {
+        let mut body = opcode.to_le_bytes().to_vec();
+        body.push(status);
+        body.extend_from_slice(params);
+        event(mgmt::EV_COMPLETE, &body)
+    }
+
+    #[test]
+    fn a_monitor_not_taken_away_is_tried_again_until_it_is() {
+        let folder =
+            std::env::temp_dir().join(format!("nova-bell-unremoved-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let mut bell = bell();
+        bell.monitors_path = folder.join("monitors");
+        // No answer (the controller in one of its resets): kept, and noted for a bell after.
+        bell.remove(1);
+        bell.note();
+        assert!(bell.monitors.is_empty());
+        assert_eq!(bell.unremoved, [1]);
+        assert_eq!(bell.noted(), [1]);
+        bell.tick();
+        assert_eq!(bell.unremoved, [1]);
+        // Not again within RETRY_REMOVING; after it, the kernel has no such monitor: done with.
+        let (with_kernel, kernel) = bell_and_kernel();
+        bell.mgmt = with_kernel.mgmt;
+        kernel
+            .send(&complete(REMOVE_MONITOR, NO_SUCH_MONITOR, &[1, 0]))
+            .unwrap();
+        bell.tick();
+        assert_eq!(bell.unremoved, [1]);
+        bell.tried_removing = Some(Instant::now() - RETRY_REMOVING);
+        bell.tick();
+        assert!(bell.unremoved.is_empty());
+        assert!(bell.noted().is_empty());
+        // A number the kernel gives one of this one's anew is no longer the one left behind.
+        bell.unremoved = vec![2];
+        kernel
+            .send(&complete(ADD_PATTERNS_MONITOR_RSSI, 0, &[2, 0]))
+            .unwrap();
+        assert_eq!(bell.add(0, &[any_iphone()]), Ok(2));
+        assert!(bell.unremoved.is_empty());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn the_scan_is_set_back_as_it_was_when_nothing_listens() {
+        // The kernel's answer: other entries around the monitor's interval and window.
+        let answer = [
+            0x01, 0, 2, 0x10, 0, 0x13, 0, 2, 0x60, 0, 0x14, 0, 2, 0x30, 0, 0x1d, 0, 1, 5,
+        ];
+        let was = [0x13, 0, 2, 0x60, 0, 0x14, 0, 2, 0x30, 0];
+        assert_eq!(scan_entries(&answer), was);
+        assert_eq!(scan_entries(&answer[..12]), was[..5]);
+        assert!(scan_entries(&[]).is_empty());
+        let (mut bell, kernel) = bell_and_kernel();
+        bell.scan_set = Some(0);
+        bell.scan_was = was.to_vec();
+        kernel
+            .send(&complete(SET_DEF_SYSTEM_CONFIG, 0, &[]))
+            .unwrap();
+        bell.scan_back();
+        let mut asked = [0u8; 64];
+        let size = kernel.recv(&mut asked).unwrap();
+        assert_eq!(&asked[..2], &SET_DEF_SYSTEM_CONFIG.to_le_bytes());
+        assert_eq!(&asked[6..size], &was);
+        assert_eq!(bell.scan_set, None);
+        // Once only; and a controller gone and back has its own, with nothing to set back.
+        bell.scan_back();
+        assert!(kernel.recv(&mut asked).is_err());
+        bell.scan_set = Some(0);
+        bell.scan_was = was.to_vec();
+        // Asked again which controllers there are, the kernel says none.
+        kernel.send(&complete(READ_INDEX_LIST, 0, &[0, 0])).unwrap();
+        bell.heard(&event(EV_INDEX_REMOVED, &[]));
+        assert_eq!(bell.scan_set, None);
+        assert!(bell.scan_was.is_empty());
+    }
+
+    #[test]
+    fn it_does_not_learn_while_it_rests() {
+        let mut bell = bell();
+        bell.rest(true);
+        assert!(bell.learn().is_err());
+        assert!(bell.learning.is_none() && bell.any.is_none());
     }
 
     #[test]
