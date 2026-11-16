@@ -71,7 +71,7 @@ How files reach a system:
 | | `/etc` drop-ins from the hardware profile | listed in `/var/lib/nova/hardware-files` |
 | | `/etc/nova/patches/` | this computer's patches; their `/etc` files are listed in `/var/lib/nova/patch-files` |
 | System state | `/var/lib/nova/` | `greeter/`, the theme mirror, owned by the user the installer created; `hardware-files`; `patch-files`; `patches`: whether each patch is on |
-| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves; `airdrop.sock`, where `nova airdrop` and the shell reach the AirDrop receiver while it runs |
+| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `nightlight-turn`: the last turn the night light's schedule made, so that a restarted shell does not make it again; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves; `airdrop.sock`, where `nova airdrop` and the shell reach the AirDrop receiver while it runs |
 | | `/run/nova-airdrop/` | while AirDrop is on, what there is to put back of the Wi-Fi; afterwards, how putting it back went |
 
 ### Identifiers

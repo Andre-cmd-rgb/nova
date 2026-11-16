@@ -7,8 +7,11 @@ set -euo pipefail
 
 # The same temperatures as the shell's night light
 # (plugins/services/nightlight), which also counts the screen as tinted only
-# below 6000 K.
-night=4000
+# below 6000 K. The night's is the warmth chosen in Settings → Displays (nova
+# nightlight warmth), else 4000 K.
+source nova-shell-config
+night=$(in_effect 2>/dev/null | jq '.nightlight.temperature | if type == "number" and . >= 2500 and . <= 5500 then floor else 4000 end' 2>/dev/null) ||
+  night=4000
 day=6500
 untinted=6000
 
@@ -45,6 +48,13 @@ esac
 lock=${XDG_RUNTIME_DIR:-/tmp}/nova-nightlight.lock
 exec {held}>>"$lock"
 flock -w 5 "$held" || true
+
+# Off with no hyprsunset is off already: none is started for it, as the
+# schedule's sunrise would otherwise have done at every login by day.
+if [[ $target == "$day" ]] && ! pgrep -u "$UID" -x hyprsunset >/dev/null; then
+  nova-shell -q nightlight refresh
+  exit 0
+fi
 
 if ! pgrep -u "$UID" -x hyprsunset >/dev/null; then
   setsid uwsm-app -- hyprsunset >/dev/null 2>&1 {held}>&- &

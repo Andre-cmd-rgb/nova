@@ -156,7 +156,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Idle | `nova.idle` | service `services/idle/Service.qml` | the screensaver and the lock after `idle` in `shell.json`, and Caffeine |
 | Volume and brightness keys | `nova.keys` | service `services/keys/Service.qml` | the volume, brightness and keyboard backlight keys |
 | Media | `nova.media` | service `services/media/Service.qml`, widget `services/media/BarWidget.qml` | the MPRIS players, and what plays |
-| Night Light | `nova.nightlight` | service `services/nightlight/Service.qml` | hyprsunset's colour temperature |
+| Night Light | `nova.nightlight` | service `services/nightlight/Service.qml` | hyprsunset's colour temperature, and its schedule; its section is `settings/NightLightView.qml` |
 | Network sign-in | `nova.network-portal` | service `services/network/Service.qml` | a notification when a network asks to sign in |
 | Settings | `nova.settings` | panel `settings/Panel.qml` | Settings' window |
 

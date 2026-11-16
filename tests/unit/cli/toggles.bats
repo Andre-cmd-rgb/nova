@@ -8,9 +8,10 @@ load ../test_helper
 
 setup() {
   setup_scratch
-  export HOME="$SCRATCH/home" CALLS="$SCRATCH/calls" HYPR="$SCRATCH/hypr"
+  export HOME="$SCRATCH/home" CALLS="$SCRATCH/calls" HYPR="$SCRATCH/hypr" NOVA_PATH="$SCRATCH/nova"
   unset HYPRLAND_INSTANCE_SIGNATURE
-  mkdir -p "$HOME" "$SCRATCH/bin" "$HYPR"
+  mkdir -p "$HOME" "$SCRATCH/bin" "$HYPR" "$NOVA_PATH/default"
+  cp "$REPO_ROOT/data/defaults/shell.json" "$NOVA_PATH/default/shell.json"
   # hyprsunset's temperature is $HYPR/temperature; one just started sets its
   # own back $HYPR/resets times.
   stub hyprctl '
@@ -77,6 +78,25 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   run nova-toggle-nightlight sideways
   [ "$status" -eq 2 ]
   [ "$output" = "Usage: nova-toggle-nightlight [on|off|--status]" ]
+}
+
+@test "night light: the night is the warmth chosen in Settings, and 4000 K for one out of range" {
+  mkdir -p "$HOME/.config/nova"
+  echo '{"version":1,"nightlight":{"temperature":3400}}' >"$HOME/.config/nova/shell.json"
+  nova-toggle-nightlight on
+  [ "$(cat "$HYPR/temperature")" = 3400 ]
+  [ "$(nova-toggle-nightlight --status)" = '{"enabled":true,"temperature":3400}' ]
+  echo '{"version":1,"nightlight":{"temperature":1000}}' >"$HOME/.config/nova/shell.json"
+  nova-toggle-nightlight on
+  [ "$(cat "$HYPR/temperature")" = 4000 ]
+}
+
+@test "night light: off with no hyprsunset starts none, and the shell looks again" {
+  stub pgrep 'exit 1'
+  stub setsid
+  nova-toggle-nightlight off
+  ! grep -qE '^(setsid|hyprctl)' "$CALLS"
+  grep -qx "nova-shell -q nightlight refresh" "$CALLS"
 }
 
 @test "touchpad: off keeps its name for the config, on forgets it" {

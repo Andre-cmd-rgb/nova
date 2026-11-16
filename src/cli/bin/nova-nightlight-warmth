@@ -1,0 +1,26 @@
+#!/bin/bash
+
+# nova:summary=Show or set how warm the night light makes the screen
+# nova:args=[kelvin]
+# nova:examples=nova nightlight warmth | nova nightlight warmth 3400
+#
+# nightlight.temperature in ~/.config/nova/shell.json, from 2500 K, the
+# warmest, to 5500 K; 4000 K unless set. A night light on takes it at once.
+
+set -euo pipefail
+
+source nova-shell-config
+
+case ${1:-} in
+  "")
+    (($# == 0)) || fail "usage: nova nightlight warmth [kelvin]"
+    in_effect | jq -r '.nightlight.temperature | if type == "number" and . >= 2500 and . <= 5500 then floor else 4000 end | "\(.) K"'
+    ;;
+  *)
+    if ! [[ $# == 1 && $1 =~ ^[0-9]{4}$ ]] || ((10#$1 < 2500 || 10#$1 > 5500)); then
+      fail "usage: nova nightlight warmth [kelvin], from 2500 (the warmest) to 5500"
+    fi
+    commit '.nightlight = (.nightlight | objects // {}) + {temperature: $kelvin}' --argjson kelvin "$((10#$1))"
+    if [[ $(nova-toggle-nightlight --status | jq -r .enabled) == true ]]; then nova-toggle-nightlight on; fi
+    ;;
+esac

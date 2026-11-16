@@ -1,12 +1,28 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
+import qs.Commons
+import "Schedule.js" as Schedule
 
-// The night light, hyprsunset's warmer screen, for the bar's switch.
-// nova-toggle-nightlight does the switching, for the bar as for the keys and
-// the menu: it waits out a hyprsunset still starting, and then has this
-// service ask hyprsunset again (refresh).
+// The night light, hyprsunset's warmer screen: the bar's switch, and the
+// schedule that switches it by itself, from sunset to sunrise or at set
+// hours (shell.json's nightlight, which nova nightlight schedule and
+// warmth set). nova-toggle-nightlight does the switching, for the bar as
+// for the keys, the menu and the schedule: it waits out a hyprsunset still
+// starting, and then has this service ask hyprsunset again (refresh).
 Item {
   id: nightlight
+
+  // Injected by the shell.
+  property var shell: null
+
+  readonly property var settings: shell && shell.shellConfig && shell.shellConfig.nightlight ? shell.shellConfig.nightlight : ({})
+  // How warm the night is, in kelvin.
+  readonly property int night: Schedule.warmth(settings.temperature)
+  // "sunset", "hours" or "off".
+  readonly property string schedule: settings.schedule === "sunset" || settings.schedule === "hours" ? settings.schedule : "off"
+  readonly property int from: Util.minutesOf(settings.from, 22 * 60)
+  readonly property int to: Util.minutesOf(settings.to, 7 * 60)
 
   // hyprsunset's colour temperature in kelvin, or what a switch is setting
   // it to; null while hyprsunset is not running or cannot say. Under 6000 K
@@ -17,10 +33,10 @@ Item {
   // The state asked for while a switch runs, "on" or "off": the last one.
   property string waiting: ""
 
-  // The bar's switch. It shows the night (4000 K) or the day (6500 K) at
-  // once, as nova-toggle-nightlight sets them.
+  // The bar's switch, and the schedule's. It shows the night or the day
+  // (6500 K) at once, as nova-toggle-nightlight sets them.
   function setNightlight(on) {
-    kelvin = on ? 4000 : 6500
+    kelvin = on ? night : 6500
     var state = on ? "on" : "off"
     if (switching.running) waiting = state
     else switching.start(state)
@@ -65,7 +81,128 @@ Item {
     }
   }
 
-  Component.onCompleted: refresh()
+  // ------------------------------------------------------------ schedule
+
+  // Where the sun is reckoned for, { latitude, longitude, name }, from
+  // nova-nightlight-place: the weather's place, else the time zone's. Null
+  // while it is not known, or there is none (UTC).
+  property var place: null
+
+  // The schedule's last turn at <now>: { on, since }; null with no
+  // schedule, or no sun to go by.
+  function turnAt(now) {
+    if (schedule === "hours") return Util.lastTurn(now, from, to)
+    if (schedule === "sunset" && place) return Schedule.lastTurn(now, place.latitude, place.longitude)
+    return null
+  }
+
+  // Sunrise and sunset on the day of <now> where the place is, for
+  // Settings: { rise, set }, or null.
+  function sun(now) {
+    return place ? Schedule.sun(now, place.latitude, place.longitude) : null
+  }
+
+  // Each turn is made once, and a switch by hand lasts until the next, as
+  // on a Mac. The time of the last one made is kept in the runtime
+  // directory: a shell started again does not make it again, and a new
+  // session, whose night light starts off, does.
+  property real made: -1
+
+  FileView {
+    id: madeFile
+
+    property bool read: false
+
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/nightlight-turn"
+    printErrors: false
+    onLoaded: readOnce(text())
+    onLoadFailed: readOnce("")
+
+    function readOnce(content) {
+      if (read) return
+      var since = Number(String(content).trim())
+      nightlight.made = content !== "" && isFinite(since) ? since : -1
+      read = true
+      // Not while the load is still ending: a write started in its
+      // handler leaves the load dropped.
+      Qt.callLater(nightlight.follow)
+    }
+  }
+
+  function follow() {
+    if (!madeFile.read) return
+    var turn = turnAt(Date.now())
+    if (!turn || turn.since === made) return
+    made = turn.since
+    madeFile.setText(String(made) + "\n")
+    setNightlight(turn.on)
+  }
+
+  // The place, looked up again whenever it may have moved: as the schedule
+  // turns to the sun, after a sleep, when the clock's offset changes, which
+  // a new time zone does, and as Settings shows it.
+  property int offset: new Date().getTimezoneOffset()
+
+  function locate() {
+    if (schedule !== "sunset") return
+    if (placing.running) placing.again = true
+    else placing.running = true
+  }
+
+  Process {
+    id: placing
+    property bool again: false
+    command: ["nova-nightlight-place"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var found = null
+        try {
+          found = JSON.parse(String(text))
+        } catch (e) {
+          // No place: UTC, or no zone tables.
+        }
+        var known = !!found && typeof found.latitude === "number" && typeof found.longitude === "number"
+        if (!known) found = null
+        if (JSON.stringify(found) !== JSON.stringify(nightlight.place)) nightlight.place = found
+      }
+    }
+    onExited: {
+      if (!again) return
+      again = false
+      running = true
+    }
+  }
+
+  onScheduleChanged: {
+    locate()
+    follow()
+  }
+  onFromChanged: follow()
+  onToChanged: follow()
+  onPlaceChanged: follow()
+
+  // The wall clock, every ten seconds: a Timer would stand still through a
+  // sleep, and come back with the night light as it went.
+  Connections {
+    target: Wake
+    function onLooked() {
+      var offset = new Date().getTimezoneOffset()
+      if (offset !== nightlight.offset) {
+        nightlight.offset = offset
+        nightlight.locate()
+      }
+      nightlight.follow()
+    }
+    function onWoke() {
+      nightlight.locate()
+    }
+  }
+
+  Component.onCompleted: {
+    refresh()
+    locate()
+  }
 
   IpcHandler {
     target: "nightlight"

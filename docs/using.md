@@ -169,7 +169,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Bluetooth | the radio on or off; Bluetooth LE, off for headphones that stutter; your devices and those nearby |
 | Mobile Data | the modem on or off; the network, signal, address and data used this month |
 | Sound | the output and its volume; the input and its volume |
-| Displays | each display's resolution, refresh rate, scale, rotation and place; a change goes back by itself after 15 seconds unless you keep it |
+| Displays | each display's resolution, refresh rate, scale, rotation and place; a change goes back by itself after 15 seconds unless you keep it; the [night light](#night-light)'s schedule and warmth |
 | Keyboard & Mouse | the keyboard's layouts, in order, and the keys that go to the next; the key repeat; the pointer's speed; natural scrolling with a mouse and on the touchpad, and tap to click |
 | Battery | its measured life and history, its health, the charge limit, the lid and the power button, and when it hibernates |
 | Performance | the power mode on battery, what the power manager is doing, the discrete GPU's mode, and the undervolt |
@@ -231,6 +231,17 @@ Caffeine keeps the screen on: no screensaver, no lock when unused, and on a lapt
 - It lasts until you turn it off or log out.
 - On battery it also ends when the battery is down to 10%. A lid closed after that locks and sleeps.
 - Lock and Suspend, chosen by hand, still lock and suspend.
+
+## Night light
+
+The night light makes the screen's colors warmer, for the evening.
+
+- Switch it with Super+Ctrl+N, the menu's Toggle → Night Light, `nova toggle nightlight`, or its switch among the bar's indicators.
+- **Settings → Displays** turns it on by itself: from sunset to sunrise, or at set hours every day. `nova nightlight schedule sunset` or `nova nightlight schedule 22:00 07:00` does the same.
+- **Sunset and sunrise** are reckoned on the computer, with no network: for the weather's place, when it is set with its coordinates in the weather's card, else for the city the time zone is named for.
+- It keeps to the clock through a sleep and a change of time zone.
+- A switch by hand lasts until the next sunset or sunrise, or the next of the set hours.
+- **Warmth**, on the same page or with `nova nightlight warmth 3400`, goes from 2500 K, the warmest, to 5500 K.
 
 ## Screensaver and lock
 

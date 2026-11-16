@@ -14,8 +14,8 @@ import qs.Ui
 // put, ...), and the window reads the state back afterwards, so what it shows
 // is what is set. Wi-Fi, Bluetooth, Mobile Data and Sound have the bar's quick
 // menus too; here they have a page each, and Screen Time and Battery Life live
-// on theirs rather than in windows of their own. Displays is nova monitor's,
-// Keyboard & Mouse nova input's.
+// on theirs rather than in windows of their own. Displays is nova monitor's
+// and nova nightlight's, Keyboard & Mouse nova input's.
 //
 // Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
 // and Battery Life's, "today" or "week", and `apps` "install" has Updates
@@ -585,6 +585,12 @@ Item {
         listing: root.info.displays || ({})
         onCommand: function (argv) { root.run(argv) }
         onExpired: root.load()
+      }
+      NightLightView {
+        width: p.inner
+        shell: root.shell
+        settings: root.info.nightlight || ({})
+        onCommand: function (argv) { root.run(argv) }
       }
     }
   }

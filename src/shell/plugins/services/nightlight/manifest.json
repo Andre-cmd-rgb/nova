@@ -1,7 +1,7 @@
 {
   "id": "nova.nightlight",
   "name": "Night Light",
-  "description": "The night light, hyprsunset's warmer screen, for the bar's switch.",
+  "description": "The night light, hyprsunset's warmer screen, for the bar's switch, and its schedule.",
   "kinds": [
     "service"
   ],

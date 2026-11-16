@@ -41,6 +41,36 @@ QtObject {
     return Qt.rgba(base.r, base.g, base.b, clampAlpha(opacity))
   }
 
+  // ------------------------------------------------------------ set hours
+  //
+  // A switch that a schedule turns on and off at set hours every day: the
+  // night light's.
+
+  // A time of day, "22:00", as minutes into the day; <otherwise> for
+  // anything else.
+  function minutesOf(text, otherwise) {
+    const time = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(text))
+    return time ? Number(time[1]) * 60 + Number(time[2]) : otherwise
+  }
+
+  // The last turn, at or before <now> (ms), of a switch on every day from
+  // <from> to <to>, in minutes into the day, on the clock of that day:
+  // { on, since }, with the time of the turn. Null with the two the same,
+  // which is no hours at all. The clock is read as it is at <now>, so a time
+  // zone changed meanwhile moves the turns with it.
+  function lastTurn(now, from, to) {
+    if (from === to) return null
+    const today = new Date(now)
+    let last = null
+    for (const back of [1, 0]) {
+      for (const turn of [{ on: true, at: from }, { on: false, at: to }]) {
+        const since = new Date(today.getFullYear(), today.getMonth(), today.getDate() - back, Math.floor(turn.at / 60), turn.at % 60).getTime()
+        if (since <= now && (!last || since > last.since)) last = { on: turn.on, since: since }
+      }
+    }
+    return last
+  }
+
   // ------------------------------------------------------- text and paths
 
   // A file:// URL for a path, each of its parts escaped, so that a space or

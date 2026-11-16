@@ -1,0 +1,43 @@
+#!/bin/bash
+
+# nova:summary=Print the place the night light's sunset and sunrise are for
+# nova:hidden=true
+#
+# The weather's place where it has coordinates (nova weather location), else
+# the place the time zone is named for, from the time zone tables:
+# {"latitude": 41.9, "longitude": 12.4833, "name": "Rome"}. Nothing, and a
+# failure, with neither: a zone such as UTC is no place.
+
+set -euo pipefail
+
+weather=${XDG_STATE_HOME:-$HOME/.local/state}/nova/settings/weather.json
+zoneinfo=${NOVA_ZONEINFO:-/usr/share/zoneinfo}
+localtime=${NOVA_LOCALTIME:-/etc/localtime}
+
+if jq -e '(.latitude | type) == "number" and (.longitude | type) == "number"
+    and (.latitude | fabs) <= 90 and (.longitude | fabs) <= 180' "$weather" >/dev/null 2>&1; then
+  jq -c '{latitude, longitude, name: (.name | strings // "")}' "$weather"
+  exit 0
+fi
+
+# The zone's name is where /etc/localtime points, after the zoneinfo folder
+# and the posix/ or right/ some links go through.
+zone=$(readlink "$localtime") || exit 1
+zone=${zone##*/zoneinfo/}
+zone=${zone#posix/}
+zone=${zone#right/}
+
+# Its coordinates, as the tables write them: +DDMM+DDDMM, or +DDMMSS+DDDMMSS.
+# zone1970.tab has the zones in use; zone.tab has the older names too.
+coordinates=$(awk -F '\t' -v zone="$zone" '!/^#/ && $3 == zone { print $2; exit }' \
+  "$zoneinfo/zone1970.tab" "$zoneinfo/zone.tab" 2>/dev/null || true)
+[[ -n $coordinates ]] || exit 1
+
+jq -nc --arg coordinates "$coordinates" --arg zone "$zone" '
+  def degrees($sign; $degrees; $minutes; $seconds):
+    ($degrees | tonumber) + ($minutes | tonumber) / 60 + ($seconds // "0" | tonumber) / 3600
+    | if $sign == "-" then -. else . end | . * 10000 | round / 10000;
+  $coordinates
+  | capture("^(?<ns>[+-])(?<lat>[0-9]{2})(?<latm>[0-9]{2})(?<lats>[0-9]{2})?(?<ew>[+-])(?<lon>[0-9]{3})(?<lonm>[0-9]{2})(?<lons>[0-9]{2})?$")
+  | {latitude: degrees(.ns; .lat; .latm; .lats), longitude: degrees(.ew; .lon; .lonm; .lons),
+     name: ($zone | split("/") | last | gsub("_"; " "))}'

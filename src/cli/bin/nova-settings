@@ -208,6 +208,7 @@ state() {
       airdrop: $airdrop,
       displays: $displays,
       input: $input,
+      nightlight: ($config.nightlight | objects // {}),
       screenTime: $screenTime,
       bar: {position: ($config.bar.position // "top"), transparent: ($config.bar.transparent == true),
             widgets: $widgets,

@@ -144,3 +144,7 @@ anything, your file is authoritative and defaults are **not** merged back in.
    (the bar, the lock) cannot be switched off.
 4. **`idle.screensaver`** and **`idle.lock`** are the seconds unused before
    the screensaver starts and before the screen locks; 0 is never.
+5. **`nightlight`** is the night light's schedule and warmth, which `nova
+   nightlight schedule` and `nova nightlight warmth` set: `schedule` is
+   `"off"`, `"sunset"` or `"hours"`, `from` and `to` the hours as `"22:00"`,
+   `temperature` the night's kelvin, 2500 to 5500 (4000 unless set).

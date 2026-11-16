@@ -153,6 +153,15 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '[.lock.seconds, .bar.position]')" = '[300,"top"]' ]
 }
 
+@test "state: the night light's schedule and warmth as shell.json has them, or nothing set" {
+  [ "$(state .nightlight)" = '{}' ]
+  mkdir -p "$HOME/.config/nova"
+  echo '{"version":1,"nightlight":{"schedule":"hours","from":"21:00","to":"06:30","temperature":3400}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state .nightlight)" = '{"schedule":"hours","from":"21:00","to":"06:30","temperature":3400}' ]
+  echo '{"version":1,"nightlight":"sunset"}' >"$HOME/.config/nova/shell.json"
+  [ "$(state .nightlight)" = '{}' ]
+}
+
 @test "state and idle: the settings the shell has, Nova's where the user's lack a version, Nova's bar where they lack one" {
   mkdir -p "$HOME/.config/nova"
   echo '{"idle":{"lock":60},"bar":{"position":"bottom"}}' >"$HOME/.config/nova/shell.json"

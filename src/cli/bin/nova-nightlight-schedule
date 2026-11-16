@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# nova:summary=Show or set when the night light comes on and goes off by itself
+# nova:args=[off | sunset | hours | <from> <to>]
+# nova:examples=nova nightlight schedule | nova nightlight schedule sunset | nova nightlight schedule 22:00 07:00
+#
+# nightlight in ~/.config/nova/shell.json, which the shell's night light
+# follows: from sunset to sunrise, by the sun where the weather's place is,
+# else where the time zone is; or at set hours every day, on the clock.
+# `hours` alone takes the hours set before, 22:00 to 07:00 at first. A switch
+# by hand, from the bar, the keys or the menu, lasts until the next turn.
+
+set -euo pipefail
+
+source nova-shell-config
+
+usage="usage: nova nightlight schedule [off|sunset|hours|<from> <to>], the times as 22:00"
+
+# A time of day as HH:MM, or nothing for anything else.
+time_of_day() {
+  [[ $1 =~ ^([01]?[0-9]|2[0-3]):([0-5][0-9])$ ]] || return 1
+  printf '%02d:%s\n' "$((10#${BASH_REMATCH[1]}))" "${BASH_REMATCH[2]}"
+}
+
+said() {
+  in_effect | jq -r '.nightlight | objects // {} |
+    if .schedule == "sunset" then "From sunset to sunrise."
+    elif .schedule == "hours" then "From \(.from // "22:00") to \(.to // "07:00"), every day."
+    else "Off: the night light comes on only by hand." end'
+}
+
+case ${1:-} in
+  "")
+    (($# == 0)) || fail "$usage"
+    said
+    ;;
+  off | sunset | hours)
+    (($# == 1)) || fail "$usage"
+    commit '.nightlight = (.nightlight | objects // {}) + {schedule: $schedule}' --arg schedule "$1"
+    said
+    ;;
+  *)
+    (($# == 2)) && from=$(time_of_day "$1") && to=$(time_of_day "$2") || fail "$usage"
+    [[ $from != "$to" ]] || fail "the night light's hours start and end at different times"
+    commit '.nightlight = (.nightlight | objects // {}) + {schedule: "hours", from: $from, to: $to}' --arg from "$from" --arg to "$to"
+    said
+    ;;
+esac
