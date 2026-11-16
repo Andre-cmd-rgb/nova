@@ -1,0 +1,206 @@
+#!/bin/bash
+
+# nova:summary=Keyboard and mouse: layouts, key repeat, pointer speed, scrolling and tapping
+# nova:args=[--json | layouts <layout[:variant]>... | switch <alts|alt-shift|ctrl-shift|none> | repeat <ms> <per-second> | speed <-1 to 1> | natural-scroll <mouse|touchpad> <on|off> | tap-to-click <on|off>]
+#
+# What Settings → Keyboard & Mouse changes, and how it is kept. A change is
+# ~/.local/state/nova/input.json, written out as Hyprland settings in
+# toggles/hypr/input-settings.lua, which loads after ~/.config/hypr/input.lua
+# and so wins over it for what was set here; Hyprland then reads its config
+# again, which applies it. With no arguments, what is in effect.
+#
+#   nova input layouts us de:nodeadkeys   US, then German without dead keys
+#   nova input switch alt-shift           Alt+Shift goes to the next layout
+#   nova input repeat 300 30              a held key repeats after 300 ms, 30 a second
+#   nova input speed -0.3                 a slower pointer
+#   nova input natural-scroll mouse on    a mouse wheel moves the page as fingers do
+#   nova input tap-to-click off           only a press on the touchpad clicks
+#
+# Layouts and variants are xkb's: localectl list-x11-keymap-layouts lists
+# them, and localectl list-x11-keymap-variants <layout> a layout's variants.
+
+set -euo pipefail
+
+STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/nova
+SAVED=$STATE_DIR/input.json
+RULES=$STATE_DIR/toggles/hypr/input-settings.lua
+XKB_RULES=${NOVA_XKB_RULES:-/usr/share/X11/xkb/rules/evdev.lst}
+
+die() {
+  echo "nova input: $*" >&2
+  exit 1
+}
+
+usage() { sed -n '3,/^$/s/^# \{0,1\}//p' "$0"; }
+
+# The keys that switch layouts, by the names Settings and this command use,
+# as xkb's options.
+SWITCHES='{"alts": "grp:alts_toggle", "alt-shift": "grp:alt_shift_toggle", "ctrl-shift": "grp:ctrl_shift_toggle", "none": ""}'
+
+saved() {
+  jq -c 'if type == "object" then . else {} end' "$SAVED" 2>/dev/null || echo '{}'
+}
+
+# The Lua for what is kept. Only the shapes this command writes are written
+# out; anything else in the file is left out, as Hyprland would run it.
+write_rules() {
+  local tmp
+  mkdir -p "$(dirname "$RULES")"
+  tmp=$(mktemp "$RULES.XXXXXX")
+  {
+    echo "-- Written by nova input (Settings → Keyboard & Mouse) from $SAVED; changed there, not here."
+    jq -r --argjson switches "$SWITCHES" '
+      def number($low; $high): type == "number" and . >= $low and . <= $high;
+      def flag: type == "boolean";
+      def words: "{ " + (map("\"" + . + "\"") | join(", ")) + " }";
+      (if (.repeat.delay | number(100; 2000)) and (.repeat.rate | number(1; 100))
+       then "hl.config({ input = { repeat_delay = \(.repeat.delay | floor), repeat_rate = \(.repeat.rate | floor) } })" else empty end),
+      (if .speed | number(-1; 1) then "hl.config({ input = { sensitivity = \(.speed) } })" else empty end),
+      (if .naturalScroll.mouse | flag then "hl.config({ input = { natural_scroll = \(.naturalScroll.mouse) } })" else empty end),
+      (if .naturalScroll.touchpad | flag then "hl.config({ input = { touchpad = { natural_scroll = \(.naturalScroll.touchpad) } } })" else empty end),
+      (if .tapToClick | flag then "hl.config({ input = { touchpad = { tap_to_click = \(.tapToClick) } } })" else empty end),
+      (if (.layouts | type) == "array" and (.layouts | length >= 1 and length <= 4)
+         and all(.layouts[]; type == "string" and test("^[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)?$"))
+       then (.layouts | map(split(":"))) as $pairs
+         | (.switch as $name | if ($name | type) == "string" and ($switches | has($name)) then "\"" + $switches[$name] + "\"" else "nil" end) as $switch
+         | "hl.config({ input = require(\"default.hypr.keyboard\").chosen(\($pairs | map(.[0]) | words), \($pairs | map(.[1] // "") | words), \($switch)) })"
+       else empty end)
+    ' "$SAVED"
+  } >"$tmp"
+  mv "$tmp" "$RULES"
+}
+
+# <program>, jq with its options after it, run on what is kept; kept, written
+# out, and applied.
+change() { # program [jq option...]
+  local program=$1 next tmp
+  shift
+  next=$(saved | jq -c "$program" "$@")
+  mkdir -p "$STATE_DIR"
+  tmp=$(mktemp "$SAVED.XXXXXX")
+  printf '%s\n' "$next" >"$tmp"
+  mv "$tmp" "$SAVED"
+  write_rules
+  hyprctl reload >/dev/null
+}
+
+# Whether xkb has <layout>, or <variant> of it.
+known() { # layout [variant]
+  awk -v layout="$1" -v variant="${2:-}" '
+    /^! / { section = $2; next }
+    variant == "" && section == "layout" && $1 == layout { found = 1; exit }
+    variant != "" && section == "variant" && $1 == variant && $2 == layout ":" { found = 1; exit }
+    END { exit !found }' "$XKB_RULES"
+}
+
+on_off() { # word
+  case $1 in
+    on) echo true ;;
+    off) echo false ;;
+    *) return 1 ;;
+  esac
+}
+
+# What is in effect: Hyprland's settings as it has them now, else what is
+# kept here, else Nova's; and whether there is a touchpad.
+cmd_json() {
+  local live touchpad=false option asked=()
+  for option in kb_layout kb_variant kb_options repeat_delay repeat_rate sensitivity natural_scroll touchpad:natural_scroll touchpad:tap_to_click; do
+    asked+=("getoption input:$option")
+  done
+  live=$(IFS=';' && hyprctl -j --batch "${asked[*]}" 2>/dev/null |
+    jq -sc 'map({key: .option, value: (if has("str") then .str elif has("int") then .int elif has("float") then .float else .bool end)}) | from_entries' 2>/dev/null) ||
+    live='{}'
+  [[ -n $live ]] || live='{}'
+  nova-hw-touchpad >/dev/null 2>&1 && touchpad=true
+  jq -nc --argjson live "$live" --argjson saved "$(saved)" --argjson switches "$SWITCHES" --argjson touchpad "$touchpad" '
+    def either($key; $kept; $kind; $fallback): if $live | has($key) then $live[$key] elif ($kept | type) == $kind then $kept else $fallback end;
+    ($live["input:kb_layout"] // "" | split(",")) as $layouts
+    | ($live["input:kb_variant"] // "" | split(",")) as $variants
+    | {
+        layouts: (if $live | has("input:kb_layout")
+                  then [range($layouts | length) as $i | $layouts[$i] + (if ($variants[$i] // "") != "" then ":" + $variants[$i] else "" end)]
+                  elif ($saved.layouts | type) == "array" then $saved.layouts else [] end),
+        switch: (if $live | has("input:kb_options")
+                 then ($live["input:kb_options"] | split(",") | map(select(startswith("grp:"))) | first // "") as $on
+                   | ($switches | to_entries | map(select(.value == $on)) | first.key // "other")
+                 else $saved.switch // "none" end),
+        repeat: {delay: either("input:repeat_delay"; $saved.repeat.delay; "number"; 250),
+                 rate: either("input:repeat_rate"; $saved.repeat.rate; "number"; 40)},
+        speed: (either("input:sensitivity"; $saved.speed; "number"; 0) * 100 | round / 100),
+        naturalScroll: {mouse: either("input:natural_scroll"; $saved.naturalScroll.mouse; "boolean"; false),
+                        touchpad: either("input:touchpad:natural_scroll"; $saved.naturalScroll.touchpad; "boolean"; true)},
+        tapToClick: either("input:touchpad:tap_to_click"; $saved.tapToClick; "boolean"; true),
+        touchpad: $touchpad
+      }'
+}
+
+cmd_show() {
+  cmd_json | jq -r '
+    def onoff: if . then "on" else "off" end;
+    "Layouts: \(.layouts | join(", ") | if . == "" then "none known" else . end), switched with \(.switch)",
+    "Key repeat: after \(.repeat.delay) ms, \(.repeat.rate) a second",
+    "Pointer speed: \(.speed)",
+    "Natural scrolling: mouse \(.naturalScroll.mouse | onoff), touchpad \(.naturalScroll.touchpad | onoff)",
+    "Tap to click: \(.tapToClick | onoff)"'
+}
+
+cmd_layouts() {
+  local word
+  (($# >= 1 && $# <= 4)) || die "one layout to four: nova input layouts us de:nodeadkeys"
+  for word in "$@"; do
+    [[ $word =~ ^([A-Za-z0-9_-]+)(:([A-Za-z0-9_-]+))?$ ]] || die "no layout '$word'"
+    known "${BASH_REMATCH[1]}" || die "xkb has no layout '${BASH_REMATCH[1]}'; localectl list-x11-keymap-layouts lists them"
+    [[ -z ${BASH_REMATCH[3]} ]] || known "${BASH_REMATCH[1]}" "${BASH_REMATCH[3]}" ||
+      die "xkb has no variant '${BASH_REMATCH[3]}' of '${BASH_REMATCH[1]}'; localectl list-x11-keymap-variants ${BASH_REMATCH[1]} lists them"
+  done
+  [[ $(printf '%s\n' "$@" | sort | uniq -d) == "" ]] || die "a layout is named twice"
+  change '.layouts = $ARGS.positional' --args "$@"
+}
+
+cmd_switch() {
+  jq -e --arg name "${1:-}" 'has($name)' <<<"$SWITCHES" >/dev/null || die "switch takes alts, alt-shift, ctrl-shift or none"
+  change '.switch = $name' --arg name "$1"
+}
+
+cmd_repeat() {
+  [[ ${1:-} =~ ^[0-9]{3,4}$ && ${2:-} =~ ^[0-9]{1,3}$ ]] && ((10#$1 >= 100 && 10#$1 <= 2000 && 10#$2 >= 1 && 10#$2 <= 100)) ||
+    die "repeat takes the wait in ms, 100 to 2000, and the keys a second, 1 to 100: nova input repeat 250 40"
+  change '.repeat = {delay: $delay, rate: $rate}' --argjson delay "$((10#$1))" --argjson rate "$((10#$2))"
+}
+
+cmd_speed() {
+  [[ ${1:-} =~ ^-?(0(\.[0-9]{1,2})?|1(\.0{1,2})?)$ ]] || die "speed takes -1 (slowest) to 1 (fastest), 0 as the device comes"
+  change '.speed = ($speed | tonumber | . * 100 | round / 100)' --arg speed "$1"
+}
+
+cmd_natural_scroll() {
+  local on
+  [[ ${1:-} == mouse || ${1:-} == touchpad ]] && on=$(on_off "${2:-}") || die "natural-scroll takes mouse or touchpad, and on or off"
+  change '.naturalScroll[$device] = $on' --arg device "$1" --argjson on "$on"
+}
+
+cmd_tap_to_click() {
+  local on
+  on=$(on_off "${1:-}") || die "tap-to-click takes on or off"
+  change '.tapToClick = $on' --argjson on "$on"
+}
+
+main() {
+  case ${1:-} in
+    '') cmd_show ;;
+    --json) cmd_json ;;
+    layouts) cmd_layouts "${@:2}" ;;
+    switch) cmd_switch "${@:2}" ;;
+    repeat) cmd_repeat "${@:2}" ;;
+    speed) cmd_speed "${@:2}" ;;
+    natural-scroll) cmd_natural_scroll "${@:2}" ;;
+    tap-to-click) cmd_tap_to_click "${@:2}" ;;
+    -h | --help | help) usage ;;
+    *) die "no command '$1'; try nova input --help" ;;
+  esac
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

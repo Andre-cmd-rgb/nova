@@ -170,6 +170,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Mobile Data | the modem on or off; the network, signal, address and data used this month |
 | Sound | the output and its volume; the input and its volume |
 | Displays | each display's resolution, refresh rate, scale, rotation and place; a change goes back by itself after 15 seconds unless you keep it |
+| Keyboard & Mouse | the keyboard's layouts, in order, and the keys that go to the next; the key repeat; the pointer's speed; natural scrolling with a mouse and on the touchpad, and tap to click |
 | Battery | its measured life and history, its health, the charge limit, the lid and the power button, and when it hibernates |
 | Performance | the power mode on battery, what the power manager is doing, the discrete GPU's mode, and the undervolt |
 | Screen Time | on or off, and where your time went, per app; `nova screentime forget` deletes it |
@@ -180,7 +181,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Updates | Nova's and the apps' updates, device firmware, release candidates, Check for Problems and Restart to Recovery ([updates](updates.md)) |
 | About | the version and release, the computer, processor, memory, storage, name and kernel |
 
-The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `sound`, `displays`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
+The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `sound`, `displays`, `keyboard`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
 
 [Battery Life](../src/shell/plugins/batterylife/README.md), [Screen Time](../src/shell/plugins/screentime/README.md) and [Mobile Data](../src/shell/plugins/mobile-data/README.md) have notes of their own.
 
@@ -262,9 +263,10 @@ These come installed:
 
 - **Caps Lock is the Compose key**: Compose, then `'`, then `e` types é.
 - **Both Shifts together are Caps Lock**; the next Shift alone turns it off.
-- **The layout** is the one picked at install. The bar shows it while there are two or more, and a click goes to the next.
+- **The layout** is the one picked at install. Settings → Keyboard & Mouse adds more, puts them in order and picks the keys that go to the next: Left Alt + Right Alt, Alt+Shift or Ctrl+Shift. The bar shows the layout in use while there are two or more, and a click goes to the next.
+- **The login screen** types on the layout picked at install, whatever Settings has; the lock screen on the one in use.
 - **A layout without Latin letters**, such as Russian or Greek, comes second to US, so the letter keys work; Left Alt + Right Alt switches between them.
-- **More layouts, the key repeat, the pointer speed and the scrolling direction** are in `~/.config/hypr/input.lua`, with examples. There is no Settings page for them yet.
+- **The key repeat, the pointer's speed, the scrolling direction and tap to click** are on the same page, and `nova input` sets them too. What they set is kept over `~/.config/hypr/input.lua`, where the rest of Hyprland's input settings go.
 
 On a touchpad, content follows your fingers, and one, two and three fingers click left, right and middle anywhere on it.
 

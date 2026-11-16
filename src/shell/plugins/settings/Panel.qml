@@ -14,7 +14,8 @@ import qs.Ui
 // put, ...), and the window reads the state back afterwards, so what it shows
 // is what is set. Wi-Fi, Bluetooth, Mobile Data and Sound have the bar's quick
 // menus too; here they have a page each, and Screen Time and Battery Life live
-// on theirs rather than in windows of their own. Displays is nova monitor's.
+// on theirs rather than in windows of their own. Displays is nova monitor's,
+// Keyboard & Mouse nova input's.
 //
 // Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
 // and Battery Life's, "today" or "week", and `apps` "install" has Updates
@@ -64,6 +65,7 @@ Item {
     { id: "airdrop", label: "AirDrop", icon: "󰀃" },
     { id: "sound", label: "Sound", icon: "󰕾", group: true },
     { id: "displays", label: "Displays", icon: "󰍹" },
+    { id: "keyboard", label: "Keyboard & Mouse", icon: "󰌌" },
     { id: "battery", label: "Battery", icon: "󰁹" },
     { id: "performance", label: "Performance", icon: "󰓅" },
     { id: "screentime", label: "Screen Time", icon: "󰥔" },
@@ -460,6 +462,7 @@ Item {
             case "mobile-data": return mobileDataPage
             case "sound": return soundPage
             case "displays": return displaysPage
+            case "keyboard": return keyboardPage
             case "bar": return barPage
             case "battery": return batteryPage
             case "performance": return performancePage
@@ -582,6 +585,20 @@ Item {
         listing: root.info.displays || ({})
         onCommand: function (argv) { root.run(argv) }
         onExpired: root.load()
+      }
+    }
+  }
+
+  Component {
+    id: keyboardPage
+    Page {
+      id: p
+      title: "Keyboard & Mouse"
+      KeyboardView {
+        width: p.inner
+        input: root.info.input || ({})
+        overlayParent: keys
+        onCommand: function (argv) { root.run(argv) }
       }
     }
   }

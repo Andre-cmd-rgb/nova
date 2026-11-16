@@ -2,6 +2,9 @@
 -- (/usr/share/nova/default/hypr/input.lua); each line below is one change to
 -- uncomment. https://wiki.hypr.land/Configuring/Basics/Variables/#input
 --
+-- Settings → Keyboard & Mouse sets the layouts, the key repeat, the pointer's
+-- speed, the scrolling and tapping, and what it sets wins over this file.
+--
 -- The keyboard layout comes from /etc/vconsole.conf (XKBLAYOUT), which the
 -- installer set, so the lock screen and the console agree with the desktop.
 

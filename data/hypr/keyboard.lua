@@ -1,6 +1,7 @@
 -- The keyboard layout, from /etc/vconsole.conf, where the installer writes
 -- XKBLAYOUT and XKBVARIANT. The session (input.lua) and the login greeter
--- both read it here, so a password is typed on the same keys at both.
+-- both read it here, so a password is typed on the same keys at both. The
+-- layouts chosen in Settings are the session's alone (M.chosen).
 
 local M = {}
 
@@ -36,6 +37,34 @@ function M.layout()
     return { layout = "us," .. layout, variant = "," .. variant, options = "grp:alts_toggle" }
   end
   return { layout = layout, variant = variant, options = "" }
+end
+
+-- The layouts chosen in Settings → Keyboard & Mouse (nova input), as a list
+-- of layouts and one of their variants, and the grp: option that switches
+-- between them, "" for none and nil for what is set already: Hyprland's
+-- input settings for them. A non-Latin layout first gets US ahead of it, as
+-- above. The options set so far, Nova's and yours, are kept, all but their
+-- switch; with no switch set anywhere, two layouts or more get both Alts.
+function M.chosen(layouts, variants, switch)
+  if non_latin[layouts[1]] then
+    table.insert(layouts, 1, "us")
+    table.insert(variants, 1, "")
+  end
+  local options, kept = {}, nil
+  for option in tostring(hl.get_config("input.kb_options") or ""):gmatch("[^,]+") do
+    if option:match("^grp:") then
+      kept = kept or option
+    else
+      options[#options + 1] = option
+    end
+  end
+  if switch == nil then switch = kept or "grp:alts_toggle" end
+  if switch ~= "" and #layouts > 1 then options[#options + 1] = switch end
+  return {
+    kb_layout = table.concat(layouts, ","),
+    kb_variant = table.concat(variants, ","),
+    kb_options = table.concat(options, ","),
+  }
 end
 
 return M

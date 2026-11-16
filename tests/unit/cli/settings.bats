@@ -67,6 +67,12 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state .displays)" = '{"displays":[{"name":"eDP-1"}],"pending":{"until":99}}' ]
 }
 
+@test "state: the keyboard and the pointer as nova input has them, or nothing where it cannot say" {
+  [ "$(state .input)" = '{}' ]
+  stub nova-input '[[ $* == "--json" ]] && echo "{\"layouts\":[\"us\",\"de\"],\"touchpad\":true}"'
+  [ "$(state .input)" = '{"layouts":["us","de"],"touchpad":true}' ]
+}
+
 @test "state: whether this system tests release candidates" {
   stub nova-update '[[ $* == --candidates ]] && echo on'
   [ "$(state .updates.candidates)" = true ]

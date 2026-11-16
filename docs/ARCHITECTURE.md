@@ -62,7 +62,7 @@ How files reach a system:
 |---|---|---|
 | User config | `~/.config/nova/` | `shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/` |
 | | `~/.config/nova-<plugin>/` | a plugin's own settings (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
-| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at; `adaptive`: the adaptive theme's Auto, Dark or Light; `airdrop/`: the certificate the AirDrop receiver shows to senders, made at its first use |
+| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `input.json`: the keyboard's layouts and the pointer as Settings keeps them; `calendar.json`: how far the calendar's reminders have been looked at; `adaptive`: the adaptive theme's Auto, Dark or Light; `airdrop/`: the certificate the AirDrop receiver shows to senders, made at its first use |
 | | `~/.local/state/nova-<plugin>/` | a plugin's history |
 | User data | `~/.local/share/nova/calendar/calendar.ics` | the calendar |
 | | `~/.local/share/nova-dictation/` | the speech model, downloaded at dictation's first use |

@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 
 # data/hypr/keyboard.lua, which the session's input.lua and the login greeter
-# both take the keyboard layout from, against a scratch vconsole.conf.
+# both take the keyboard layout from, against a scratch vconsole.conf; and
+# the layouts Settings keeps, against a stand-in for Hyprland's options.
 
 load ../test_helper
 
@@ -37,6 +38,32 @@ layout() {
 
 @test "no vconsole.conf: US" {
   [ "$(layout)" = "us||" ]
+}
+
+# M.chosen, for the layouts Settings keeps (nova input): <lua lists and
+# switch>, with the options Hyprland has so far as <options>.
+chosen() { # options args
+  KEYBOARD="$SCRATCH/keyboard.lua" OPTIONS="$1" lua -e '
+    hl = { get_config = function(key) if key == "input.kb_options" then return os.getenv("OPTIONS") end end }
+    local k = dofile(os.getenv("KEYBOARD")).chosen('"$2"')
+    io.write(k.kb_layout, "|", k.kb_variant, "|", k.kb_options)' </dev/null
+}
+
+@test "Settings' layouts: the options set so far kept, their switch replaced by the one chosen" {
+  [ "$(chosen 'compose:caps,grp:alts_toggle,shift:both_capslock_cancel' '{ "us", "de" }, { "", "nodeadkeys" }, "grp:alt_shift_toggle"')" = \
+    "us,de|,nodeadkeys|compose:caps,shift:both_capslock_cancel,grp:alt_shift_toggle" ]
+  [ "$(chosen 'compose:caps,grp:alts_toggle' '{ "us", "de" }, { "", "" }, ""')" = "us,de|,|compose:caps" ]
+  [ "$(chosen 'compose:caps' '{ "de" }, { "" }, "grp:alts_toggle"')" = "de||compose:caps" ]
+}
+
+@test "Settings' layouts with no switch chosen: the one set so far, else both Alts" {
+  [ "$(chosen 'compose:caps,grp:ctrl_shift_toggle' '{ "us", "de" }, { "", "" }, nil')" = "us,de|,|compose:caps,grp:ctrl_shift_toggle" ]
+  [ "$(chosen 'compose:caps' '{ "us", "de" }, { "", "" }, nil')" = "us,de|,|compose:caps,grp:alts_toggle" ]
+  [ "$(chosen '' '{ "fr" }, { "" }, nil')" = "fr||" ]
+}
+
+@test "Settings' layouts: a non-Latin one first gets US ahead of it" {
+  [ "$(chosen 'compose:caps' '{ "ru", "de" }, { "phonetic", "" }, ""')" = "us,ru,de|,phonetic,|compose:caps" ]
 }
 
 @test "the greeter takes its layout from the same file, and starts without it" {
