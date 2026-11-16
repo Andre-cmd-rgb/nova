@@ -5,9 +5,11 @@
 # nova doctor lists the services that failed when it is asked; this says so
 # unasked. nova-doctor-services.timer runs it a minute after login, which is
 # when what failed as the computer started shows, and every ten minutes after,
-# for what fails later. Each failure is said once: not at every run, and not
-# again at the next login of the same boot. A unit that fails again later is
-# a new failure, and is said again.
+# for what fails later. Each unit is said once a boot: not at every run, nor
+# at the next login. A unit that tries again by itself and fails each time
+# (the GPU's retry, every two minutes) is one failure, not one a run; once it
+# has been seen running, or stopped after a run that went well, a failure
+# after is new, and is said again.
 #
 # What it looks at: Nova's own units, the system's and this user's, in the
 # failed state. A unit stopped, disabled or masked is not failed, so a service
@@ -44,17 +46,27 @@ name_of() { # unit
   esac
 }
 
-# "<unit> <invocation>" for each of Nova's units that has failed, the system's
-# and this user's. The invocation tells one failure of a unit from the next.
+# "<scope> <unit>" for each of Nova's units that has failed, the system's and
+# this user's.
 failed() {
   local scope unit
   for scope in --system --user; do
     while read -r unit _; do
       [[ $unit == nova-* && $unit != nova-airdrop@* && $unit != nova-doctor-services.* ]] || continue
       [[ $(systemctl "$scope" show --property=Transient --value -- "$unit" 2>/dev/null) != yes ]] || continue
-      printf '%s %s\n' "$unit" "$(systemctl "$scope" show --property=InvocationID --value -- "$unit" 2>/dev/null)"
+      printf '%s %s\n' "$scope" "$unit"
     done < <(systemctl "$scope" list-units --state=failed --plain --no-legend --no-pager 'nova-*' 2>/dev/null || true)
   done
+}
+
+# Whether a unit said before is still in the same failure: failed, or on its
+# way to another try (activating, as a Restart= waits, or a run under way),
+# which may fail the same way. Only one seen running or stopped has recovered.
+still_failing() { # scope unit
+  case $(systemctl "$1" show --property=ActiveState --value -- "$2" 2>/dev/null) in
+    failed | activating | deactivating | reloading | refreshing) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
 # "a", "a and b", "a, b and c"
@@ -69,33 +81,49 @@ in_words() {
   printf '%s' "$out"
 }
 
+# One notification for the units newly failed; fails when it could not be sent.
+say() { # "<scope> <unit>"...
+  local entry title
+  local -a names=()
+  for entry; do names+=("$(name_of "${entry#* }")"); done
+  title="$(in_words "${names[@]}") stopped"
+  nova-notification-send -u normal -g 󰀦 "${title^}" "Settings → Updates → Check for Problems has more." \
+    --exec nova-shell shell summon nova.settings '{"page":"updates"}' >/dev/null 2>&1
+}
+
 main() {
-  local boot unit invocation title
-  local -a told=() new=() names=()
-  local -A seen=()
+  local boot scope unit entry
+  local -a told=() now=() kept=() new=()
+  local -A failing=() said=()
   boot=$(<"$BOOT_ID")
   mkdir -p -- "${TOLD%/*}"
   # Two at once (a login while the timer runs) would both say it.
   exec {lock}>"$TOLD.lock"
   flock "$lock"
-  # "boot <id>", then the failures said in that boot, a line each.
+  # "boot <id>", then the units said in that boot and failing since, a line
+  # each ("<scope> <unit>").
   if [[ $(head -n 1 -- "$TOLD" 2>/dev/null) == "boot $boot" ]]; then
     mapfile -t told < <(tail -n +2 -- "$TOLD")
   fi
-  for unit in "${told[@]}"; do seen[$unit]=1; done
-  while read -r unit invocation; do
-    [[ -z ${seen["$unit $invocation"]:-} ]] || continue
-    seen["$unit $invocation"]=1
-    new+=("$unit $invocation")
-    names+=("$(name_of "$unit")")
-  done < <(failed)
-  ((${#new[@]})) || return 0
-
-  title="$(in_words "${names[@]}") stopped"
+  mapfile -t now < <(failed)
+  for entry in "${now[@]}"; do failing[$entry]=1; done
+  # A unit said before stays said while it fails; one that has recovered is
+  # let go of, so that its next failure is said.
+  for entry in "${told[@]}"; do
+    [[ -n $entry ]] || continue
+    read -r scope unit <<<"$entry"
+    if [[ -n ${failing[$entry]:-} ]] || still_failing "$scope" "$unit"; then
+      kept+=("$entry")
+      said[$entry]=1
+    fi
+  done
+  for entry in "${now[@]}"; do
+    [[ -n ${said[$entry]:-} ]] || new+=("$entry")
+  done
   # Not sent (no shell to show it): said at the next run instead.
-  nova-notification-send -u normal -g 󰀦 "${title^}" "Settings → Updates → Check for Problems has more." \
-    --exec nova-shell shell summon nova.settings '{"page":"updates"}' >/dev/null 2>&1 || return 0
-  { echo "boot $boot"; printf '%s\n' "${told[@]}" "${new[@]}"; } >"$TOLD.part"
+  if ((${#new[@]})) && say "${new[@]}"; then kept+=("${new[@]}"); fi
+  [[ ${kept[*]} != "${told[*]}" ]] || return 0
+  { echo "boot $boot"; ((${#kept[@]} == 0)) || printf '%s\n' "${kept[@]}"; } >"$TOLD.part"
   mv -f -- "$TOLD.part" "$TOLD"
 }
 

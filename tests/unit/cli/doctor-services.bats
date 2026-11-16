@@ -12,15 +12,18 @@ setup() {
   echo 1111 >"$NOVA_BOOT_ID"
   mkdir -p "$SCRATCH/bin" "$HOME"
   # list-units answers from $SCRATCH/<scope>-failed, a unit a line; show
-  # from $SCRATCH/transient (the transient units) and $SCRATCH/invocations
-  # ("<unit> <id>").
+  # from $SCRATCH/transient (the transient units) and, for a unit's state,
+  # $SCRATCH/states ("<unit> <state>"), then whether it is in the failed list.
   stub systemctl 'scope=$1; shift
     case $1 in
       list-units) cat "$SCRATCH/${scope#--}-failed" 2>/dev/null ;;
       show)
         case $2 in
           --property=Transient) if grep -qx -- "${!#}" "$SCRATCH/transient" 2>/dev/null; then echo yes; else echo no; fi ;;
-          --property=InvocationID) awk -v u="${!#}" '"'"'$1 == u { print $2 }'"'"' "$SCRATCH/invocations" 2>/dev/null ;;
+          --property=ActiveState)
+            state=$(awk -v u="${!#}" '"'"'$1 == u { print $2 }'"'"' "$SCRATCH/states" 2>/dev/null)
+            if [[ -z $state ]] && grep -q "^${!#} " "$SCRATCH/${scope#--}-failed" 2>/dev/null; then state=failed; fi
+            echo "${state:-inactive}" ;;
         esac ;;
     esac'
   stub nova-notification-send
@@ -34,13 +37,17 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   chmod +x "$SCRATCH/bin/$1"
 }
 
-failing() { # scope unit...: those units failed, each with an invocation of its own
+failing() { # scope unit...: those units failed
   local scope=$1 unit
   shift
   for unit; do
     printf '%s loaded failed failed A unit\n' "$unit" >>"$SCRATCH/$scope-failed"
-    echo "$unit inv-$unit-$RANDOM" >>"$SCRATCH/invocations"
   done
+}
+
+recovered() { # scope unit: no longer in the failed list, and in the state given
+  sed -i "/^$2 /d" "$SCRATCH/$1-failed"
+  echo "$2 ${3:-inactive}" >>"$SCRATCH/states"
 }
 
 told() { grep -c '^nova-notification-send' "$CALLS" 2>/dev/null || true; }
@@ -68,16 +75,50 @@ services() { "$REPO_ROOT/src/cli/bin/nova-doctor-services"; }
   [ "$(told)" = 1 ]
 }
 
-@test "the next boot says what still fails, and a new failure of the unit is said again" {
+@test "the next boot says what still fails, and a unit that fails again after it worked is said again" {
   failing system nova-undervolt.service
   services
   echo 2222 >"$NOVA_BOOT_ID"
   services
   [ "$(told)" = 2 ]
-  # Started again, and failed again: another invocation.
-  sed -i 's/^nova-undervolt.service .*/nova-undervolt.service inv-again/' "$SCRATCH/invocations"
+  # Started again, worked, and failed again later.
+  recovered system nova-undervolt.service
+  services
+  [ "$(told)" = 2 ]
+  : >"$SCRATCH/states"
+  failing system nova-undervolt.service
   services
   [ "$(told)" = 3 ]
+}
+
+@test "a unit that tries again by itself and fails each time, as the GPU's retry does, is said once" {
+  failing system nova-power-gpu.service
+  services
+  [ "$(told)" = 1 ]
+  # A look as the next try runs: on its way to failing again, not recovered.
+  recovered system nova-power-gpu.service activating
+  services
+  : >"$SCRATCH/states"
+  failing system nova-power-gpu.service
+  services
+  services
+  [ "$(told)" = 1 ]
+  # And once a try has worked, the next failure is new.
+  recovered system nova-power-gpu.service
+  services
+  : >"$SCRATCH/states"
+  failing system nova-power-gpu.service
+  services
+  [ "$(told)" = 2 ]
+  [ "$(grep -c "The graphics card's power setting stopped" "$CALLS")" = 2 ]
+}
+
+@test "the system's unit and the user's of one name are two" {
+  failing system nova-twin.service
+  services
+  failing user nova-twin.service
+  services
+  [ "$(told)" = 2 ]
 }
 
 @test "two at once, the system's and yours, are one notification" {
