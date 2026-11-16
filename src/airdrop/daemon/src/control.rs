@@ -84,24 +84,7 @@ pub enum Stage {
     },
 }
 
-/// A string as JSON has it.
-pub(crate) fn quoted(text: &str) -> String {
-    let mut out = String::with_capacity(text.len() + 2);
-    out.push('"');
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            c if (c as u32) < 0x20 || c == '\u{2028}' || c == '\u{2029}' => {
-                out.push_str(&format!("\\u{:04x}", c as u32))
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
+pub(crate) use crate::meet::{quoted, size};
 
 pub(crate) fn list(items: impl Iterator<Item = String>) -> String {
     format!("[{}]", items.collect::<Vec<_>>().join(","))
@@ -114,16 +97,6 @@ fn files(offer: &Offer) -> String {
             .iter()
             .map(|(name, bytes)| format!(r#"{{"name":{},"bytes":{bytes}}}"#, quoted(name))),
     )
-}
-
-/// A size as people say it.
-pub fn size(bytes: u64) -> String {
-    match bytes {
-        0..=999 => format!("{bytes} bytes"),
-        1_000..=999_999 => format!("{:.0} kB", bytes as f64 / 1e3),
-        1_000_000..=999_999_999 => format!("{:.1} MB", bytes as f64 / 1e6),
-        _ => format!("{:.2} GB", bytes as f64 / 1e9),
-    }
 }
 
 /// What is offered, in a few words: a file by its name, more by their number.
@@ -333,7 +306,8 @@ impl Control {
         };
         // The first words as they came, with what was passed with them: files, for `send`.
         let mut first = vec![0u8; 4096];
-        let Ok((size, files)) = sys::receive_with_files(stream.as_raw_fd(), &mut first) else {
+        let Ok((size, files)) = crate::meet::receive_with_files(stream.as_raw_fd(), &mut first)
+        else {
             return;
         };
         first.truncate(size);
@@ -683,7 +657,7 @@ mod tests {
         let file = std::fs::File::open("/proc/self/stat").unwrap();
         let send = |words: &[u8]| {
             let stream = UnixStream::connect(&path).unwrap();
-            crate::sys::tests::send_with_files(
+            crate::meet::send_with_files(
                 stream.as_raw_fd(),
                 words,
                 &[file.as_raw_fd(), file.as_raw_fd()],
@@ -707,7 +681,7 @@ mod tests {
         assert_eq!(line(&mut send(b"send\n")), "handed 2 files");
         assert_eq!(taken.recv().unwrap(), 2);
         let mut one = UnixStream::connect(&path).unwrap();
-        crate::sys::tests::send_with_files(one.as_raw_fd(), b"send\n", &[file.as_raw_fd()]);
+        crate::meet::send_with_files(one.as_raw_fd(), b"send\n", &[file.as_raw_fd()]);
         assert_eq!(
             line(&mut one),
             r#"{"state":"failed","why":"One is not enough."}"#
