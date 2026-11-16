@@ -7,7 +7,8 @@ import "MenuModel.js" as MenuModel
 // Where the menu's items come from: Nova's menu.jsonc with the user's laid
 // over it, each read again when it changes; the apps of the shell's
 // library and the rows of the two bash providers, added to a menu as it is
-// first shown or searched; and the answers of every when: and checked:.
+// first shown or searched; the answers of every when: and checked:; and the
+// home's files a search finds.
 Item {
   id: source
 
@@ -223,6 +224,55 @@ Item {
       }
       // The run that waited, a turn later, once this one has settled.
       if (source.askAgain) Qt.callLater(source.askGuards)
+    }
+  }
+
+  // ---------------------------------------------------------------- files
+
+  // files.sh, beside this file, wherever the plugin is. Decoded, because
+  // resolvedUrl percent-encodes.
+  readonly property string filesScript: decodeURIComponent(String(Qt.resolvedUrl("files.sh")).replace(/^file:\/\//, ""))
+  // What the last search of the files printed (MenuModel.fileRows reads it).
+  property string filesFound: ""
+
+  // The list of the home's files made again, as the menu opens; files.sh
+  // leaves one made in the last 30 s as it is.
+  function listFiles() {
+    filesFound = ""
+    Quickshell.execDetached([filesScript, "list"])
+  }
+
+  // The files for <query>. One asked for while a search runs waits for it,
+  // and only the latest waits.
+  function findFiles(query) {
+    if (finder.running) {
+      finder.next = query
+      return
+    }
+    finder.next = ""
+    finder.printed = ""
+    finder.command = [filesScript, "find", query]
+    finder.running = true
+  }
+
+  function findWaiting() {
+    if (finder.next && !finder.running) findFiles(finder.next)
+  }
+
+  Process {
+    id: finder
+    property string printed: ""
+    property string next: ""
+    stdout: SplitParser {
+      onRead: line => finder.printed += line + "\n"
+    }
+    onExited: function(code, status) {
+      if (code === 0 && status === 0) {
+        source.filesFound = finder.printed
+        source.updated()
+      }
+      // The search that waited, a turn later, once this one has settled.
+      if (finder.next) Qt.callLater(source.findWaiting)
     }
   }
 }

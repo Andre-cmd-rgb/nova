@@ -168,14 +168,15 @@ PanelWindow {
           spacing: window.look.rowGap
           boundsBehavior: Flickable.StopAtBounds
 
-          // A search's rows deeper than the menu, under a line.
+          // A search's rows deeper than the menu, and its files, each under
+          // a line.
           section.property: "section"
           section.criteria: ViewSection.FullString
           section.delegate: Item {
             required property string section
             width: ListView.view.width
-            height: section === "deeper" ? window.look.dividerHeight : 0
-            visible: section === "deeper"
+            height: section ? window.look.dividerHeight : 0
+            visible: section !== ""
 
             Rectangle {
               x: Style.space(4)

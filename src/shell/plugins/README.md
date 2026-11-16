@@ -205,3 +205,8 @@ expression, and all of them run as one script whenever the menu changes and
 each time it opens. A row's `action:` runs in bash as a login shell. The menu
 is kept loaded, so opening it is an IPC call to the running shell with
 nothing to start.
+
+A search from the root finds the home's files too, from its third letter:
+`menu/files.sh` lists them as the menu opens (at most every 30 s, into
+`$XDG_RUNTIME_DIR/nova/menu-files`), and each search reads that list. A file
+opens with `uwsm-app -- xdg-open`, its folder too.
