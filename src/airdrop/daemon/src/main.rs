@@ -348,6 +348,7 @@ fn run() -> Result<(), String> {
             name: o.name.clone(),
             model: o.model.clone(),
             id: settings.instance.clone(),
+            limits: sender::Limits::default(),
         },
         scope,
         wake,

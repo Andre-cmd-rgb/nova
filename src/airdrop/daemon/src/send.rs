@@ -52,6 +52,10 @@ const RETRY_AT_MOST: Duration = Duration::from_secs(10);
 const ASK_AGAIN: Duration = Duration::from_secs(5);
 /// How often the progress is told.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+/// The most receivers a send keeps, and of one peer: a phone has one, and what changes its
+/// instance on the air takes no more room than two.
+const MOST_RECEIVERS: usize = 16;
+const MOST_PER_PEER: usize = 2;
 
 /// A receiver the node heard of: whose it is on the air, its instance, and where it listens.
 #[derive(Debug, Clone, PartialEq)]
@@ -120,7 +124,8 @@ impl Client {
         let (said, picks) = mpsc::channel();
         let gone = Arc::new(AtomicBool::new(false));
         let going = gone.clone();
-        std::thread::spawn(move || {
+        let reader = std::thread::Builder::new().name("airdrop-client".into());
+        let started = reader.spawn(move || {
             for line in BufReader::new(reading).lines() {
                 let Ok(line) = line else { break };
                 match line.split_whitespace().collect::<Vec<_>>().as_slice() {
@@ -133,6 +138,7 @@ impl Client {
             }
             going.store(true, Ordering::SeqCst);
         });
+        started.ok()?;
         Some(Client {
             out: Mutex::new(stream),
             picks,
@@ -248,10 +254,17 @@ impl Sending {
     /// A receiver the node heard of, from where the node heard it.
     pub fn heard_on_air(&self, peer: Mac, receiver: packet::Receiver) {
         let address = std::net::Ipv6Addr::from(packet::link_local(&peer));
+        // The name it gave goes into the Host of what it is asked: nothing but what a host name has.
+        let host: String = receiver
+            .host
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '.'))
+            .take(255)
+            .collect();
         self.heard(Found {
             peer,
             at: SocketAddr::V6(SocketAddrV6::new(address, receiver.port, 0, self.scope)),
-            host: format!("{}:{}", receiver.host, receiver.port),
+            host: format!("{host}:{}", receiver.port),
             instance: receiver.instance,
         });
     }
@@ -314,7 +327,8 @@ impl Sending {
             return Err("The send could not be started.".into());
         };
         let sending = self.clone();
-        std::thread::spawn(move || {
+        let session = std::thread::Builder::new().name("airdrop-send".into());
+        let started = session.spawn(move || {
             (sending.tell)(Told::Began);
             let (last, transfer) = sending.session(&client, items);
             sending.quiet();
@@ -323,6 +337,10 @@ impl Sending {
             *sending.inner.lock().unwrap() = Inner::default();
             (sending.tell)(Told::Ended { transfer });
         });
+        if started.is_err() {
+            *self.inner.lock().unwrap() = Inner::default();
+            return Err("The send could not be started.".into());
+        }
         Ok(())
     }
 
@@ -332,8 +350,10 @@ impl Sending {
             .iter()
             .map(|item| (item.name.clone(), item.size))
             .collect();
-        let (results, discovered) = mpsc::channel::<(usize, Result<Listing, String>)>();
+        let (results, discovered) = mpsc::channel::<(usize, Mac, Result<Listing, String>)>();
         let mut candidates: Vec<Candidate> = Vec::new();
+        // The peers a /Discover is on its way to, one at a time each.
+        let mut asking: Vec<Mac> = Vec::new();
         let (mut numbered, mut told) = (0usize, String::new());
         let chosen = loop {
             if client.gone() {
@@ -351,39 +371,56 @@ impl Sending {
                 )
             };
             for found in found {
-                match candidates
+                if let Some(known) = candidates
                     .iter_mut()
                     .find(|c| c.found.peer == found.peer && c.found.instance == found.instance)
                 {
-                    Some(known) => known.found = found,
-                    None => {
-                        numbered += 1;
-                        (self.tell)(Told::Log(format!(
-                            "a receiver, {}, at {}",
-                            found.instance, found.at
-                        )));
-                        candidates.push(Candidate {
-                            id: numbered,
-                            found,
-                            listing: None,
-                            trying: false,
-                            next: now,
-                            failures: 0,
-                        });
-                    }
+                    known.found = found;
+                    continue;
                 }
-            }
-            candidates.retain(|c| !gone.contains(&c.found.peer));
-            // Who each is, asked of each on a thread of its own: a phone may take seconds to answer.
-            for candidate in candidates.iter_mut().filter(|c| !c.trying && now >= c.next) {
-                candidate.trying = true;
-                let (sending, results) = (self.clone(), results.clone());
-                let (id, found) = (candidate.id, candidate.found.clone());
-                std::thread::spawn(move || {
-                    let _ = results.send((id, sending.sender.discover(&found.at, &found.host)));
+                if !room(&mut candidates, &found.peer) {
+                    continue;
+                }
+                numbered += 1;
+                (self.tell)(Told::Log(format!(
+                    "a receiver, {:?}, at {}",
+                    found.instance, found.at
+                )));
+                candidates.push(Candidate {
+                    id: numbered,
+                    found,
+                    listing: None,
+                    trying: false,
+                    next: now,
+                    failures: 0,
                 });
             }
-            while let Ok((id, result)) = discovered.try_recv() {
+            candidates.retain(|c| !gone.contains(&c.found.peer));
+            // Who each is, asked on a thread of its own: a phone may take seconds to answer. One
+            // question at a time to a peer, and no more at once than there may be receivers.
+            for candidate in candidates.iter_mut().filter(|c| !c.trying && now >= c.next) {
+                let peer = candidate.found.peer;
+                if asking.contains(&peer) || asking.len() >= MOST_RECEIVERS {
+                    continue;
+                }
+                let (sending, results) = (self.clone(), results.clone());
+                let (id, found) = (candidate.id, candidate.found.clone());
+                let discovering = std::thread::Builder::new().name("airdrop-discover".into());
+                let started = discovering.spawn(move || {
+                    let listing = sending.sender.discover(&found.at, &found.host);
+                    let _ = results.send((id, peer, listing));
+                });
+                match started {
+                    Ok(_) => {
+                        candidate.trying = true;
+                        asking.push(peer);
+                    }
+                    // Asked again later, as one that did not answer.
+                    Err(_) => candidate.next = now + RETRY_AT_MOST,
+                }
+            }
+            while let Ok((id, peer, result)) = discovered.try_recv() {
+                asking.retain(|asked| *asked != peer);
                 let Some(candidate) = candidates.iter_mut().find(|c| c.id == id) else {
                     continue;
                 };
@@ -392,7 +429,7 @@ impl Sending {
                     Ok(listing) => {
                         if candidate.listing.as_ref() != Some(&listing) {
                             (self.tell)(Told::Log(format!(
-                                "{} is {:?}, and {}",
+                                "{:?} is {:?}, and {}",
                                 candidate.found.instance,
                                 listing.name,
                                 if listing.accepts {
@@ -414,7 +451,7 @@ impl Sending {
                         candidate.next =
                             now + (Duration::from_secs(2) * candidate.failures).min(RETRY_AT_MOST);
                         (self.tell)(Told::Log(format!(
-                            "{} would not say who it is: {why}",
+                            "{:?} would not say who it is: {why}",
                             candidate.found.instance
                         )));
                     }
@@ -452,10 +489,12 @@ impl Sending {
             "asking {to:?} whether it wants {} file(s)",
             offered.len()
         )));
-        // Bluetooth keeps saying it while the receiver is asked and sent to.
-        let stop = || {
+        // Bluetooth keeps saying it while the receiver is asked and sent to; this is looked at by
+        // the thread that watches the connection, too, which shuts it at once.
+        let gone = client.gone.clone();
+        let stop = move || {
             self.announce();
-            client.gone() || sys::stopping()
+            gone.load(Ordering::SeqCst) || sys::stopping()
         };
         let mut connection = match self.sender.ask(&at, &host, &offered, &stop) {
             Err(_) if stop() => return (interrupted(client), true),
@@ -543,15 +582,46 @@ fn failed(why: &str) -> String {
     format!(r#"{{"state":"failed","why":{}}}"#, quoted(why))
 }
 
-/// The receivers as the client is told of them: those that said who they are, a phone that comes
-/// back under a new address shown once.
+/// Makes room for a receiver of `peer`'s, if there may be one: a peer's third takes the place of
+/// its oldest; with the most there may be, one that never said who it is goes. False if none can.
+fn room(candidates: &mut Vec<Candidate>, peer: &Mac) -> bool {
+    let of_peer: Vec<usize> = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.found.peer == *peer)
+        .map(|(at, _)| at)
+        .collect();
+    if of_peer.len() >= MOST_PER_PEER {
+        candidates.remove(of_peer[0]);
+        return true;
+    }
+    if candidates.len() < MOST_RECEIVERS {
+        return true;
+    }
+    match candidates
+        .iter()
+        .position(|c| c.listing.is_none() && c.failures > 0)
+    {
+        Some(at) => {
+            candidates.remove(at);
+            true
+        }
+        None => false,
+    }
+}
+
+/// The receivers as the client is told of them: those that said who they are. A peer that comes
+/// under a new instance is listed as its newest self; another peer of the same name is another
+/// device, and is listed too, until the node no longer hears it: a name is anybody's to give.
 fn looking(candidates: &[Candidate], bluetooth: &str) -> String {
     let mut shown: Vec<(&Candidate, &Listing)> = Vec::new();
     for candidate in candidates.iter().rev() {
         let Some(listing) = &candidate.listing else {
             continue;
         };
-        if !listing.name.is_empty() && shown.iter().any(|(_, seen)| seen.name == listing.name) {
+        if shown.iter().any(|(seen, said)| {
+            seen.found.peer == candidate.found.peer && said.name == listing.name
+        }) {
             continue;
         }
         shown.push((candidate, listing));
@@ -673,9 +743,11 @@ mod tests {
             Some("AirDrop is sending something already.".into())
         );
 
+        // What it calls itself on the air goes into the log quoted: a line of its own, or a
+        // terminal's escapes, are not the log's.
         sending.heard(Found {
             peer: [2, 0, 0, 0, 0, 1],
-            instance: "abcdef012345".into(),
+            instance: "abc\ndef\u{1b}[2J".into(),
             at,
             host: "Zoes-Phone.local:8770".into(),
         });
@@ -699,6 +771,9 @@ mod tests {
         // The daemon was told it began and ended, with a transfer.
         std::thread::sleep(Duration::from_millis(50));
         let told = told.lock().unwrap();
+        assert!(told.contains(&Told::Log(
+            r#"a receiver, "abc\ndef\u{1b}[2J", at [::1]:"#.to_owned() + &at.port().to_string()
+        )));
         assert_eq!(told.first(), Some(&Told::Began));
         assert_eq!(told.last(), Some(&Told::Ended { transfer: true }));
         assert!(!sending.browsing() && !sending.busy());
@@ -774,7 +849,8 @@ mod tests {
             r#"{"state":"nobody","refused":[""]}"#
         );
         assert!(ended(&[candidate(1, 1, Some(listing("Zoë", true)))]).contains("went off"));
-        // A phone back under a new address is listed once, as its newest self.
+        // Two peers of one name are two devices: both listed, while both are heard. One peer under
+        // a new instance is listed once, as its newest self.
         let twice = [
             candidate(1, 1, Some(listing("Zoë", true))),
             candidate(2, 2, None),
@@ -782,8 +858,50 @@ mod tests {
         ];
         assert_eq!(
             looking(&twice, ""),
-            r#"{"state":"looking","receivers":[{"id":"3","name":"Zoë","model":"","accepts":true}],"bluetooth":""}"#
+            r#"{"state":"looking","receivers":[{"id":"1","name":"Zoë","model":"","accepts":true},{"id":"3","name":"Zoë","model":"","accepts":true}],"bluetooth":""}"#
+        );
+        let renamed = [
+            candidate(1, 1, Some(listing("Zoë", true))),
+            candidate(4, 1, Some(listing("Zoë", true))),
+        ];
+        assert_eq!(
+            looking(&renamed, ""),
+            r#"{"state":"looking","receivers":[{"id":"4","name":"Zoë","model":"","accepts":true}],"bluetooth":""}"#
         );
         assert_eq!(someone(""), "the iPhone");
+    }
+
+    #[test]
+    fn a_crowd_or_a_liar_gets_no_more_room_than_a_few() {
+        let candidate = |id, peer: u8, listed: bool, failures| Candidate {
+            id,
+            found: Found {
+                peer: [2, 0, 0, 0, 0, peer],
+                instance: format!("{id}"),
+                at: "[::1]:1".parse().unwrap(),
+                host: String::new(),
+            },
+            listing: listed.then(|| Listing {
+                name: format!("{id}"),
+                model: String::new(),
+                accepts: true,
+            }),
+            trying: false,
+            next: Instant::now(),
+            failures,
+        };
+        // A peer's third instance takes the place of its oldest.
+        let mut candidates = vec![candidate(1, 1, true, 0), candidate(2, 1, true, 0)];
+        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 1]));
+        assert_eq!(candidates.iter().map(|c| c.id).collect::<Vec<_>>(), [2]);
+        // Full: one that never said who it is makes room; with none, nobody new is taken.
+        let mut candidates: Vec<Candidate> = (0..MOST_RECEIVERS)
+            .map(|n| candidate(n, n as u8 + 10, n != 7, u32::from(n == 7)))
+            .collect();
+        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 99]));
+        assert_eq!(candidates.len(), MOST_RECEIVERS - 1);
+        assert!(!candidates.iter().any(|c| c.id == 7));
+        candidates.push(candidate(99, 99, true, 0));
+        assert!(!room(&mut candidates, &[2, 0, 0, 0, 0, 98]));
     }
 }

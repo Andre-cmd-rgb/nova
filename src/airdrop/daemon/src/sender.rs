@@ -13,7 +13,9 @@
 //! What a receiver answers is read as a stranger's: bounded, and only its
 //! name taken from it, cleaned as a sender's is.
 
-use std::net::{SocketAddr, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::http::Connection;
@@ -30,8 +32,17 @@ const CONNECT_WITHIN: Duration = Duration::from_secs(15);
 const ANSWER_WITHIN: Duration = Duration::from_secs(15);
 /// How long the person at the receiver may take to decide: longer than an iPhone shows the offer.
 pub const DECIDE_WITHIN: Duration = Duration::from_secs(150);
-/// A write the receiver takes nothing of for this long: it has stopped.
+/// Files that make no progress for this long: the receiver has stopped taking them.
 const STALLED: Duration = Duration::from_secs(30);
+/// The connection, the handshake and /Discover, all of it: a receiver that answers a byte at a
+/// time is not waited for without end.
+const DISCOVER_WITHIN: Duration = Duration::from_secs(20);
+/// After the last of the files, for the receiver to say it has them all.
+const FINISH_WITHIN: Duration = Duration::from_secs(30);
+/// How often a watch looks.
+const WATCH_EVERY: Duration = Duration::from_millis(100);
+/// The files go in parts of this much, each a step of progress.
+const PART: usize = 64 << 10;
 
 /// This computer as a sender.
 pub struct Sender {
@@ -41,6 +52,7 @@ pub struct Sender {
     pub name: String,
     pub model: String,
     pub id: String,
+    pub limits: Limits,
 }
 
 /// What a receiver said of itself.
@@ -134,15 +146,142 @@ fn words(error: impl std::fmt::Display) -> String {
     error.to_string()
 }
 
+/// How long each part of a send may take: the defaults, or a test's.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// For a receiver to be connected to, through the handshake, and to say who it is.
+    pub discover: Duration,
+    /// For the person at the receiver to decide, from the connection on.
+    pub decide: Duration,
+    /// For the files to make no progress at all, while they go.
+    pub stall: Duration,
+    /// For the receiver to say it has everything, once the last of it has gone.
+    pub finish: Duration,
+}
+
+impl Default for Limits {
+    fn default() -> Limits {
+        Limits {
+            discover: DISCOVER_WITHIN,
+            decide: CONNECT_WITHIN + DECIDE_WITHIN + ANSWER_WITHIN,
+            stall: STALLED,
+            finish: FINISH_WITHIN,
+        }
+    }
+}
+
+/// What ends an exchange with a receiver from outside it: its deadline, its progress stalling,
+/// or the user. Each shuts the connection, which ends whatever read or write it is blocked in.
+pub struct Watch {
+    socket: TcpStream,
+    began: Instant,
+    /// Microseconds from `began`: when it must be over (u64::MAX for no deadline), and when it
+    /// last made progress.
+    by: AtomicU64,
+    moved: AtomicU64,
+    stall: Option<Duration>,
+    done: AtomicBool,
+    why: Mutex<Option<&'static str>>,
+}
+
+impl Watch {
+    fn micros(&self, at: Instant) -> u64 {
+        at.saturating_duration_since(self.began).as_micros() as u64
+    }
+
+    /// It must be over by then.
+    pub fn by(&self, deadline: Instant) {
+        self.by.store(self.micros(deadline), Ordering::SeqCst);
+    }
+
+    /// It made progress.
+    pub fn moved(&self) {
+        self.moved
+            .store(self.micros(Instant::now()), Ordering::SeqCst);
+    }
+
+    /// Why it was ended from outside, if it was.
+    fn why(&self) -> Option<&'static str> {
+        *self.why.lock().unwrap()
+    }
+
+    fn look(&self, cancelled: &(dyn Fn() -> bool + Sync)) -> Option<&'static str> {
+        let now = self.micros(Instant::now());
+        if cancelled() {
+            Some("cancelled")
+        } else if now >= self.by.load(Ordering::SeqCst) {
+            Some("it took too long")
+        } else if self.stall.is_some_and(|stall| {
+            now >= self.moved.load(Ordering::SeqCst) + stall.as_micros() as u64
+        }) {
+            Some("it stopped taking the files")
+        } else {
+            None
+        }
+    }
+}
+
+/// Runs `work` on a connection to a receiver while a thread of its own watches it (Watch), from
+/// now until `deadline`. Its error, if the watch ended it, is why.
+fn watched<T>(
+    socket: &TcpStream,
+    deadline: Option<Instant>,
+    stall: Option<Duration>,
+    cancelled: &(dyn Fn() -> bool + Sync),
+    work: impl FnOnce(&Watch) -> Result<T, String>,
+) -> Result<T, String> {
+    let watch = Watch {
+        socket: socket.try_clone().map_err(words)?,
+        began: Instant::now(),
+        by: AtomicU64::new(u64::MAX),
+        moved: AtomicU64::new(0),
+        stall,
+        done: AtomicBool::new(false),
+        why: Mutex::new(None),
+    };
+    if let Some(deadline) = deadline {
+        watch.by(deadline);
+    }
+    std::thread::scope(|scope| {
+        let watching = std::thread::Builder::new()
+            .name("airdrop-watch".into())
+            .spawn_scoped(scope, || {
+                while !watch.done.load(Ordering::SeqCst) {
+                    if let Some(why) = watch.look(cancelled) {
+                        *watch.why.lock().unwrap() = Some(why);
+                        let _ = watch.socket.shutdown(Shutdown::Both);
+                        return;
+                    }
+                    std::thread::sleep(WATCH_EVERY);
+                }
+            });
+        if watching.is_err() {
+            return Err("this computer could not start another thread".into());
+        }
+        let result = work(&watch);
+        watch.done.store(true, Ordering::SeqCst);
+        // Ended from outside, the connection is shut, whatever the work made of it.
+        match watch.why() {
+            Some(why) => Err(why.into()),
+            None => result,
+        }
+    })
+}
+
 impl Sender {
-    /// A connection to a receiver, through the handshake.
-    fn open(&self, at: &SocketAddr) -> Result<Connection<tls::Stream<'_>>, String> {
-        let stream = TcpStream::connect_timeout(at, CONNECT_WITHIN)
+    /// A connection to a receiver, not yet through the handshake.
+    fn connect(at: &SocketAddr, within: Duration) -> Result<TcpStream, String> {
+        let stream = TcpStream::connect_timeout(at, within.min(CONNECT_WITHIN))
             .map_err(|error| format!("no connection: {error}"))?;
         let _ = stream.set_nodelay(true);
         let _ = stream.set_read_timeout(Some(ANSWER_WITHIN));
         let _ = stream.set_write_timeout(Some(STALLED));
         sys::roomy(&stream);
+        Ok(stream)
+    }
+
+    /// The handshake, on a connection that is watched.
+    fn handshake(&self, stream: TcpStream) -> Result<Connection<tls::Stream<'_>>, String> {
         let tls = self
             .tls
             .connect(stream)
@@ -150,134 +289,149 @@ impl Sender {
         Ok(Connection::new(tls))
     }
 
-    /// Asks a receiver who it is, and whether it takes AirDrop from this computer.
+    /// Asks a receiver who it is, and whether it takes AirDrop from this computer: all of it,
+    /// the connection and the handshake too, within the limit.
     pub fn discover(&self, at: &SocketAddr, host: &str) -> Result<Listing, String> {
-        let mut connection = self.open(at)?;
-        connection
-            .post(
-                "/Discover",
-                host,
-                &plist::write(&Value::Dict(Vec::new())),
-                true,
-            )
-            .map_err(words)?;
-        connection.within(Some(ANSWER_WITHIN));
-        let reply = connection.reply().map_err(words)?;
-        let body = connection
-            .body(&reply)
-            .and_then(|mut body| body.all(1 << 20))
-            .map_err(words)?;
-        match reply.status {
-            200 => Ok(listing(&body)),
-            // Turned away outright: listed as one that does not take it.
-            status @ 400..=499 => Ok(Listing {
-                name: format!("a receiver that answered {status}"),
-                model: String::new(),
-                accepts: false,
-            }),
-            status => Err(format!("it answered {status}")),
-        }
+        let deadline = Instant::now() + self.limits.discover;
+        let stream = Self::connect(at, self.limits.discover)?;
+        watched(&stream, Some(deadline), None, &|| false, |_| {
+            let mut connection = self.handshake(stream.try_clone().map_err(words)?)?;
+            connection
+                .post(
+                    "/Discover",
+                    host,
+                    &plist::write(&Value::Dict(Vec::new())),
+                    true,
+                )
+                .map_err(words)?;
+            connection.within(Some(ANSWER_WITHIN));
+            let reply = connection.reply().map_err(words)?;
+            let body = connection
+                .body(&reply)
+                .and_then(|mut body| body.all(1 << 20))
+                .map_err(words)?;
+            match reply.status {
+                200 => Ok(listing(&body)),
+                // Turned away outright: listed as one that does not take it.
+                status @ 400..=499 => Ok(Listing {
+                    name: format!("a receiver that answered {status}"),
+                    model: String::new(),
+                    accepts: false,
+                }),
+                status => Err(format!("it answered {status}")),
+            }
+        })
     }
 
-    /// Offers the files, and waits for the person at the receiver to decide, or for `cancelled`.
+    /// Offers the files, and waits for the person at the receiver to decide, or for `cancelled`:
+    /// all of it within the limit.
     pub fn ask(
         &self,
         at: &SocketAddr,
         host: &str,
         files: &[(String, u64)],
-        cancelled: &dyn Fn() -> bool,
+        cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Answer<'_>, String> {
-        let mut connection = self.open(at)?;
-        connection
-            .post("/Ask", host, &question(self, files), false)
-            .map_err(words)?;
-        let _ = connection
-            .stream()
-            .socket()
-            .set_read_timeout(Some(Duration::from_millis(250)));
-        let asked = Instant::now();
-        loop {
-            if cancelled() {
-                return Err("cancelled".into());
+        let deadline = Instant::now() + self.limits.decide;
+        let stream = Self::connect(at, self.limits.decide)?;
+        watched(&stream, Some(deadline), None, cancelled, |_| {
+            let mut connection = self.handshake(stream.try_clone().map_err(words)?)?;
+            connection
+                .post("/Ask", host, &question(self, files), false)
+                .map_err(words)?;
+            let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
+            loop {
+                if cancelled() {
+                    return Err("cancelled".into());
+                }
+                if connection
+                    .arrived()
+                    .map_err(|_| "it went away without an answer")?
+                {
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    return Err("nobody answered".into());
+                }
             }
-            if connection
-                .arrived()
-                .map_err(|_| "it went away without an answer")?
-            {
-                break;
-            }
-            if asked.elapsed() >= DECIDE_WITHIN {
-                return Err("nobody answered".into());
-            }
-        }
-        let _ = connection
-            .stream()
-            .socket()
-            .set_read_timeout(Some(ANSWER_WITHIN));
-        connection.within(Some(ANSWER_WITHIN));
-        let reply = connection.reply().map_err(words)?;
-        let _ = connection
-            .body(&reply)
-            .and_then(|mut body| body.all(1 << 20));
-        connection.within(None);
-        Ok(match reply.status {
-            200 => Answer::Yes(connection),
-            status => Answer::No(status),
+            let _ = stream.set_read_timeout(Some(ANSWER_WITHIN));
+            connection.within(Some(ANSWER_WITHIN));
+            let reply = connection.reply().map_err(words)?;
+            let _ = connection
+                .body(&reply)
+                .and_then(|mut body| body.all(1 << 20));
+            connection.within(None);
+            Ok(match reply.status {
+                200 => Answer::Yes(connection),
+                status => Answer::No(status),
+            })
+        })
+        .map_err(|why| match why.as_str() {
+            // The deadline is the decision's: nobody decided in time.
+            "it took too long" => "nobody answered".into(),
+            _ => why,
         })
     }
 
     /// The files, on the connection the yes came on; `sent` is told how many bytes of them have
-    /// gone, as they go.
+    /// gone, as they go. It ends when they make no progress for the limit's while, when the
+    /// receiver does not say it has them all in time after the last, and at `cancelled`.
     pub fn upload(
         &self,
         connection: &mut Connection<tls::Stream<'_>>,
         host: &str,
         pack: &mut Pack,
         sent: &mut dyn FnMut(u64),
-        cancelled: &dyn Fn() -> bool,
+        cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<(), String> {
-        connection
-            .post_in_pieces("/Upload", host, "application/x-cpio")
-            .map_err(words)?;
-        while let Some(piece) = pack.piece().map_err(words)? {
-            if cancelled() {
-                return Err("cancelled".into());
+        let socket = connection.stream().socket().try_clone().map_err(words)?;
+        watched(&socket, None, Some(self.limits.stall), cancelled, |watch| {
+            watch.moved();
+            connection
+                .post_in_pieces("/Upload", host, "application/x-cpio")
+                .map_err(words)?;
+            while let Some(piece) = pack.piece().map_err(words)? {
+                if cancelled() {
+                    return Err("cancelled".into());
+                }
+                // A piece in parts, each progress: a receiver that takes a few bytes now and then
+                // is caught by its stall, not let take a piece at a time.
+                for part in piece.chunks(PART) {
+                    connection.chunk(part).map_err(|error| {
+                        format!(
+                            "it stopped taking the files after {} bytes: {error}",
+                            pack.read
+                        )
+                    })?;
+                    watch.moved();
+                }
+                sent(pack.read);
             }
-            connection.chunk(&piece).map_err(|error| {
-                format!(
-                    "it stopped taking the files after {} bytes: {error}",
-                    pack.read
-                )
-            })?;
-            sent(pack.read);
-        }
-        connection.finish().map_err(words)?;
-        // The receiver answers once it has unpacked the last of it.
-        let _ = connection
-            .stream()
-            .socket()
-            .set_read_timeout(Some(Duration::from_millis(250)));
-        let finished = Instant::now();
-        while !connection
-            .arrived()
-            .map_err(|_| "it went away before it said it had everything")?
-        {
-            if cancelled() {
-                return Err("cancelled".into());
+            connection.finish().map_err(words)?;
+            // The receiver answers once it has unpacked the last of it: by then, and with nothing
+            // but its answer, however it trickles it or says to go on.
+            let finished = Instant::now();
+            watch.by(finished + self.limits.finish);
+            let _ = socket.set_read_timeout(Some(Duration::from_millis(250)));
+            while !connection
+                .arrived()
+                .map_err(|_| "it went away before it said it had everything")?
+            {
+                if cancelled() {
+                    return Err("cancelled".into());
+                }
+                if finished.elapsed() >= self.limits.finish {
+                    return Err("it never said it had everything".into());
+                }
             }
-            if finished.elapsed() >= STALLED {
-                return Err("it never said it had everything".into());
+            let _ = socket.set_read_timeout(Some(ANSWER_WITHIN));
+            connection.within(Some(self.limits.finish.saturating_sub(finished.elapsed())));
+            let reply = connection.reply().map_err(words)?;
+            match reply.status {
+                200 => Ok(()),
+                status => Err(format!("it answered {status} to the files")),
             }
-        }
-        let _ = connection
-            .stream()
-            .socket()
-            .set_read_timeout(Some(ANSWER_WITHIN));
-        let reply = connection.reply().map_err(words)?;
-        match reply.status {
-            200 => Ok(()),
-            status => Err(format!("it answered {status} to the files")),
-        }
+        })
     }
 }
 
@@ -335,6 +489,7 @@ pub mod tests {
             name: "Zoë's Nova".into(),
             model: "Nova".into(),
             id: "0123456789ab".into(),
+            limits: Limits::default(),
         }
     }
 
@@ -523,6 +678,168 @@ pub mod tests {
         );
         assert_eq!(kind("a.JPG"), "public.jpeg");
         assert_eq!(kind("film.mov"), "com.apple.quicktime-movie");
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    /// A receiver that takes the TLS handshake and then does as `act` says with the connection.
+    fn hostile(
+        folder: &Path,
+        act: impl Fn(&mut Connection<tls::Stream<'_>>) + Send + Sync + 'static,
+    ) -> SocketAddr {
+        let (certificate, key) = identity(&folder.join("theirs"));
+        let server = Arc::new(tls::Server::new(&certificate, &key).unwrap());
+        let act = Arc::new(act);
+        let listener = TcpListener::bind("[::1]:0").unwrap();
+        let at = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let (server, act) = (server.clone(), act.clone());
+                std::thread::spawn(move || {
+                    if let Ok(tls) = server.accept(stream.unwrap()) {
+                        act(&mut Connection::new(tls));
+                    }
+                });
+            }
+        });
+        at
+    }
+
+    /// Yes to the question, and then nothing read of what follows, ever.
+    fn yes_and_then_nothing(connection: &mut Connection<tls::Stream<'_>>) {
+        let Ok(Some(head)) = connection.head() else {
+            return;
+        };
+        let _ = connection
+            .body(&head)
+            .and_then(|mut body| body.all(1 << 20));
+        let _ = connection.respond(200, b"", false);
+        std::thread::sleep(Duration::from_secs(20));
+    }
+
+    /// Files that do not get smaller packed.
+    fn noise(folder: &Path, bytes: usize) -> Pack {
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let data: Vec<u8> = (0..bytes)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state as u8
+            })
+            .collect();
+        Pack::new(vec![item(folder, "noise.bin", &data)]).unwrap()
+    }
+
+    fn quick(folder: &Path) -> Sender {
+        let mut sender = sender(folder);
+        sender.limits = Limits {
+            discover: Duration::from_secs(1),
+            decide: Duration::from_secs(5),
+            stall: Duration::from_secs(1),
+            finish: Duration::from_secs(1),
+        };
+        sender
+    }
+
+    #[test]
+    fn a_receiver_that_never_finishes_its_handshake_is_not_waited_for_past_the_limit() {
+        let folder = scratch("silent");
+        let listener = TcpListener::bind("[::1]:0").unwrap();
+        let at = listener.local_addr().unwrap();
+        // It takes the connection and says nothing: each read's own timeout is longer than this.
+        std::thread::spawn(move || {
+            let _held: Vec<_> = listener.incoming().take(1).collect();
+            std::thread::sleep(Duration::from_secs(20));
+        });
+        let began = Instant::now();
+        assert_eq!(
+            quick(&folder).discover(&at, "h").err().as_deref(),
+            Some("it took too long")
+        );
+        assert!(
+            began.elapsed() < Duration::from_secs(3),
+            "{:?}",
+            began.elapsed()
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_receiver_that_says_go_on_for_ever_after_the_files_is_not_waited_for_past_the_limit() {
+        let folder = scratch("go-on");
+        let at = hostile(&folder, |connection| {
+            for _ in 0..2 {
+                let Ok(Some(head)) = connection.head() else {
+                    return;
+                };
+                let _ = connection
+                    .body(&head)
+                    .and_then(|mut body| body.all(64 << 20));
+                if head.path == "/Ask" {
+                    let _ = connection.respond(200, b"", false);
+                }
+            }
+            for _ in 0..400 {
+                if connection.go_on().is_err() {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+        let sender = quick(&folder);
+        let Ok(Answer::Yes(mut connection)) = sender.ask(&at, "h", &[("a".into(), 5)], &|| false)
+        else {
+            panic!("it said yes");
+        };
+        let mut pack = Pack::new(vec![item(&folder, "a", b"hello")]).unwrap();
+        let began = Instant::now();
+        let result = sender.upload(&mut connection, "h", &mut pack, &mut |_| {}, &|| false);
+        assert!(result.is_err(), "{result:?}");
+        assert!(
+            began.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            began.elapsed()
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn files_a_receiver_stops_taking_end_after_the_stall_and_at_cancel_at_once() {
+        let folder = scratch("stall");
+        let at = hostile(&folder, yes_and_then_nothing);
+        let sender = quick(&folder);
+        let Ok(Answer::Yes(mut connection)) = sender.ask(&at, "h", &[("n".into(), 1)], &|| false)
+        else {
+            panic!("it said yes");
+        };
+        let mut pack = noise(&folder, 32 << 20);
+        let began = Instant::now();
+        let result = sender.upload(&mut connection, "h", &mut pack, &mut |_| {}, &|| false);
+        assert_eq!(result.err().as_deref(), Some("it stopped taking the files"));
+        assert!(
+            began.elapsed() < Duration::from_secs(8),
+            "{:?}",
+            began.elapsed()
+        );
+
+        // Cancelled while a write is blocked: the connection is shut, and that is the end.
+        drop(connection);
+        let mut patient = sender;
+        patient.limits.stall = Duration::from_secs(60);
+        let Ok(Answer::Yes(mut connection)) = patient.ask(&at, "h", &[("n".into(), 1)], &|| false)
+        else {
+            panic!("it said yes");
+        };
+        let mut pack = noise(&folder, 32 << 20);
+        let began = Instant::now();
+        let cancelled = || began.elapsed() >= Duration::from_secs(2);
+        let result = patient.upload(&mut connection, "h", &mut pack, &mut |_| {}, &cancelled);
+        assert_eq!(result.err().as_deref(), Some("cancelled"));
+        assert!(
+            began.elapsed() < Duration::from_secs(4),
+            "{:?}",
+            began.elapsed()
+        );
         std::fs::remove_dir_all(&folder).unwrap();
     }
 }

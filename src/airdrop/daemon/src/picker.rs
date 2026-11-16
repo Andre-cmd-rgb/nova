@@ -254,6 +254,13 @@ pub struct Step {
     pub end: Option<End>,
 }
 
+/// What a name given with --to comes to among those listed.
+enum Named {
+    Nobody,
+    One(Listed),
+    More,
+}
+
 pub struct Picker {
     pub listed: Vec<Listed>,
     /// The name it was given (--to), to pick by itself.
@@ -318,21 +325,22 @@ impl Picker {
         }
     }
 
-    /// The receiver --to names, if it is listed: the one of that name, else the only one whose
-    /// name begins so.
-    fn named(&self) -> Option<&Listed> {
-        let wanted = plain(self.to.as_deref()?);
-        let here: Vec<&Listed> = self.listed.iter().filter(|l| l.here).collect();
-        here.iter()
-            .find(|l| plain(&l.name) == wanted)
-            .or_else(|| {
-                let starting: Vec<&&Listed> = here
-                    .iter()
-                    .filter(|l| plain(&l.name).starts_with(&wanted))
-                    .collect();
-                (starting.len() == 1).then(|| starting[0])
-            })
-            .copied()
+    /// What --to names among those listed: the one of that name, else the only one whose name
+    /// begins so; or that more than one could be meant. A name is anybody's to give.
+    fn named(&self) -> Named {
+        let Some(wanted) = self.to.as_deref().map(plain) else {
+            return Named::Nobody;
+        };
+        let here = || self.listed.iter().filter(|l| l.here);
+        let exactly: Vec<&Listed> = here().filter(|l| plain(&l.name) == wanted).collect();
+        let starting: Vec<&Listed> = here()
+            .filter(|l| plain(&l.name).starts_with(&wanted))
+            .collect();
+        match (exactly.as_slice(), starting.as_slice()) {
+            ([one], _) | ([], [one]) => Named::One((*one).clone()),
+            ([], []) => Named::Nobody,
+            _ => Named::More,
+        }
     }
 
     fn line(&mut self, words: &str) -> String {
@@ -407,13 +415,21 @@ impl Picker {
                     step.say += &self.line(bluetooth);
                 }
                 if !self.picked {
-                    if let Some(named) = self.named().cloned() {
-                        if named.accepts {
+                    match self.named() {
+                        Named::One(named) if named.accepts => {
                             self.picked = true;
                             step.tell = Some(format!("to {}", named.id));
-                        } else {
-                            step.say += &self.contacts_only(&named.name);
                         }
+                        Named::One(named) => step.say += &self.contacts_only(&named.name),
+                        // Not picked for the user: which is theirs is theirs to say, by number.
+                        Named::More => {
+                            let name = self.to.take().unwrap_or_default();
+                            step.say += &self.line(&format!(
+                                "More than one iPhone nearby goes by {}: type the number of yours.",
+                                quote(&name)
+                            ));
+                        }
+                        Named::Nobody => {}
                     }
                 }
             }
@@ -513,7 +529,7 @@ impl Picker {
             return String::new();
         }
         let wanted = match &self.to {
-            Some(name) if self.named().is_none() => quote(name),
+            Some(name) if matches!(self.named(), Named::Nobody) => quote(name),
             Some(_) => return String::new(),
             None if self.listed.iter().any(|l| l.here && l.accepts) => return String::new(),
             None => "an iPhone".into(),
@@ -717,12 +733,32 @@ mod tests {
         let mut picker = Picker::new(Some("zoë's iphone".into()), false, began);
         assert_eq!(picker.opening(), "Looking for “zoë's iphone” nearby…\n");
         assert_eq!(picker.told(LOOKING).tell.as_deref(), Some("to 1"));
-        // A beginning that is one name's only, too; none that is two names'.
+        // A beginning that is one name's only, too; none that is two names', which is said.
         let mut picker = Picker::new(Some("zo".into()), false, began);
         assert_eq!(picker.told(LOOKING).tell.as_deref(), Some("to 1"));
         let two = LOOKING.replace("\"Bob\"", "\"Zoe's iPad\"");
         let mut picker = Picker::new(Some("zo".into()), false, began);
-        assert_eq!(picker.told(&two).tell, None);
+        let step = picker.told(&two);
+        assert_eq!(step.tell, None);
+        assert!(step
+            .say
+            .ends_with("More than one iPhone nearby goes by “zo”: type the number of yours.\n"));
+        // Two of the very name, as another device may call itself: neither is picked for the
+        // user, who picks by number, whichever came first.
+        let twins = LOOKING
+            .replace("\"Bob\"", "\"zoë’s iPhone\"")
+            .replace("false", "true");
+        let mut picker = Picker::new(Some("Zoë's iPhone".into()), false, began);
+        let step = picker.told(&twins);
+        assert_eq!(step.tell, None);
+        assert!(step
+            .say
+            .contains("More than one iPhone nearby goes by “Zoë's iPhone”"));
+        assert_eq!(picker.typed("2").tell.as_deref(), Some("to 2"));
+        // One listed first, and its twin after: by then the first was picked, as it was alone.
+        let mut picker = Picker::new(Some("Zoë's iPhone".into()), false, began);
+        let one = r#"{"state":"looking","receivers":[{"id":"1","name":"Zoë’s iPhone","model":"","accepts":true}],"bluetooth":""}"#;
+        assert_eq!(picker.told(one).tell.as_deref(), Some("to 1"));
         // One that takes AirDrop from its contacts only is waited for, and said so once.
         let mut picker = Picker::new(Some("Bob".into()), false, began);
         let step = picker.told(LOOKING);

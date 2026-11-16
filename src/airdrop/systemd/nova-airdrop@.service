@@ -38,6 +38,9 @@ TimeoutStopSec=40
 # A daemon that hangs would keep the Wi-Fi: it says it is alive every second,
 # and one that stops saying so is ended, which gives the Wi-Fi back.
 WatchdogSec=20
+# Its threads are counted (senders and receivers nearby each get a few, up to
+# a limit of the daemon's own); this is the ceiling should that count be wrong.
+TasksMax=128
 
 # It hears whoever is in radio range. It makes its own network namespace (and
 # the user namespace that takes), an interface in it through /dev/net/tun, and
