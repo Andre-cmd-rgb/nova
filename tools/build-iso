@@ -9,11 +9,12 @@
 # names. The build host's pacman must already trust the Nova key: CI installs
 # nova-keyring from the same repository first.
 #
-# Assembles a copy of installer/iso with nova-install and the look of its
-# screens (ui.bash, the wordmark), the release's files and the hardware
-# profiles' package lists, then runs mkarchiso on it, so it needs
-# root and the archiso package. Writes nova-<version>-x86_64.iso and its
-# .sha256, nova-usb and the offline package list (packages.txt) to --out.
+# Assembles a copy of installer/iso with nova-install, its stages
+# (install-*.bash) and the look of its screens (ui.bash, the wordmark), the
+# release's files and the hardware profiles' package lists, then runs
+# mkarchiso on it, so it needs root and the archiso package. Writes
+# nova-<version>-x86_64.iso and its .sha256, nova-usb and the offline package
+# list (packages.txt) to --out.
 set -euo pipefail
 
 die() { printf 'build-iso: %s\n' "$*" >&2; exit 1; }
@@ -59,6 +60,9 @@ install -Dm755 "$root/installer/nova-install" "$airootfs/usr/local/bin/nova-inst
 install -Dm644 "$root/installer/ui.bash" "$share/ui.bash"
 install -Dm644 "$root/installer/setup.bash" "$share/setup.bash"
 install -Dm644 "$root/installer/wifi.bash" "$share/wifi.bash"
+for stage in "$root"/installer/install-*.bash; do
+  install -Dm644 "$stage" "$share/${stage##*/}"
+done
 install -Dm644 "$root/theme/wordmark/nova.txt" "$share/nova.txt"
 install -Dm644 "$release" "$share/release.toml"
 install -Dm644 "$root/installer/packages" "$share/packages"
