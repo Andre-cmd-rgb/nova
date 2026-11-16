@@ -32,6 +32,8 @@
 //!   nova airdrop bell learn listen for a minute for an iPhone to know
 //!   nova airdrop bell forget
 //!   nova airdrop bell watch how it is as lines of JSON (for the shell)
+//!   nova airdrop bell rest  stop listening until `wake` (the shell, while locked)
+//!   nova airdrop bell wake  listen again
 //!
 //! While AirDrop is on the Wi-Fi is off the network: the card can be on an
 //! iPhone's channel or on the network's, not both. It ends by itself after a
@@ -657,20 +659,22 @@ fn main() -> ExitCode {
             println!("AirDrop's doorbell is off.");
             ExitCode::SUCCESS
         }
-        ["bell", word @ ("learn" | "forget")] => match ask_at(&meet::bell(), word).as_deref() {
-            Some("ok") => {
-                println!("{}", bell_status());
-                ExitCode::SUCCESS
+        ["bell", word @ ("learn" | "forget" | "rest" | "wake")] => {
+            match ask_at(&meet::bell(), word).as_deref() {
+                Some("ok") => {
+                    println!("{}", bell_status());
+                    ExitCode::SUCCESS
+                }
+                Some(why) => {
+                    eprintln!("nova airdrop bell: {why}");
+                    ExitCode::FAILURE
+                }
+                None => {
+                    eprintln!("nova airdrop bell: the doorbell is off (nova airdrop bell on)");
+                    ExitCode::FAILURE
+                }
             }
-            Some(why) => {
-                eprintln!("nova airdrop bell: {why}");
-                ExitCode::FAILURE
-            }
-            None => {
-                eprintln!("nova airdrop bell: the doorbell is off (nova airdrop bell on)");
-                ExitCode::FAILURE
-            }
-        },
+        }
         ["bell", "watch"] => watch(meet::bell()),
         ["send", rest @ ..] => send(rest),
         ["active"] => match ask("status") {

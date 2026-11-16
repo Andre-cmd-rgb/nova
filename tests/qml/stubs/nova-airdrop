@@ -19,9 +19,9 @@ if [ "$1" = watch ]; then
   sleep 5
   exit 0
 fi
-printf 'nova-airdrop' >>"$HOME/stub-calls"
-for word in "$@"; do printf ' %s' "$word" >>"$HOME/stub-calls"; done
-printf '\n' >>"$HOME/stub-calls"
+# One write a call, so that two at once (an off and the doorbell's rest, at a
+# lock) do not interleave their words.
+printf '%s\n' "nova-airdrop $*" >>"$HOME/stub-calls"
 if [ "$1" = on ] && [ -s "$HOME/airdrop-refuses" ]; then
   cat "$HOME/airdrop-refuses" >&2
   exit 1

@@ -90,7 +90,12 @@ ShellRoot {
 
   // What was asked of nova-airdrop.
   function asks() {
-    return called().filter(line => line.startsWith("nova-airdrop "))
+    return called().filter(line => line.startsWith("nova-airdrop ") && !line.startsWith("nova-airdrop bell "))
+  }
+
+  // What the doorbell was told: to rest at the lock, to wake at the unlock.
+  function bellAsks() {
+    return called().filter(line => line.startsWith("nova-airdrop bell "))
   }
 
   // The notifications, from busctl's calls: each Notify as the id it
@@ -365,6 +370,7 @@ ShellRoot {
 
   function twelfth() {
     const before = asks().length
+    const bellBefore = bellAsks().length
     // Up for the sheet (as the watch would say), an offer; the sheet closes meanwhile.
     airdrop.rung = true
     airdrop.told(JSON.stringify({ state: "waiting", name: "Nova", seen: true, ends: 0 }))
@@ -390,6 +396,7 @@ ShellRoot {
           check("unlocked with the same sheet open: it has had its AirDrop", [airdrop.spent, airdrop.doorbell, airdrop.starting], [true, "", false])
           later(400, function () {
             check("off was asked for twice, for the closed sheet and the lock, and nothing else", asks().slice(before), ["nova-airdrop off", "nova-airdrop off"])
+            check("the doorbell rested while locked, and woke at the unlock", bellAsks().slice(bellBefore), ["nova-airdrop bell rest", "nova-airdrop bell wake"])
             thirteenth()
           })
         })

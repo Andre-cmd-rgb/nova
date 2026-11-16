@@ -73,6 +73,21 @@ Item {
     // is over, this is looked at again.
     else if (doorbell === "off" && !stopping && !starting) turnOff()
   }
+  // The doorbell rests while the screen is locked: AirDrop does not come on
+  // for the iPhone then (Model.doorbell), and resting, it has no monitor in
+  // place, so the Bluetooth radio does not scan for the iPhone at all. Told
+  // at each lock and unlock, and whenever its watch comes up: a doorbell that
+  // has just started knows nothing of the lock.
+  onLockedChanged: tellBell()
+  function tellBell() {
+    if (bell.state === "off") return
+    if (bellRest.running) {
+      bellRest.again = true
+      return
+    }
+    bellRest.command = [airdrop.command, "bell", locked ? "rest" : "wake"]
+    bellRest.running = true
+  }
   onOpenedChanged: if (!opened) {
     if (near) spent = true
     rung = false
@@ -497,12 +512,27 @@ Item {
     stdout: SplitParser {
       onRead: function (line) {
         var next = Model.parse(line)
-        if (next) airdrop.bell = next
+        if (!next) return
+        var was = airdrop.bell.state
+        airdrop.bell = next
+        if (was === "off" && next.state !== "off") airdrop.tellBell()
       }
     }
     onExited: {
       airdrop.bell = { state: "off" }
       bellAgain.start()
+    }
+  }
+
+  // `bell rest` or `bell wake`, one at a time: asked again meanwhile, it says
+  // what is the case once the first is done.
+  Process {
+    id: bellRest
+    property bool again: false
+    onExited: {
+      if (!bellRest.again) return
+      bellRest.again = false
+      airdrop.tellBell()
     }
   }
 

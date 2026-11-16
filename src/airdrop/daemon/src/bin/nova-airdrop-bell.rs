@@ -22,6 +22,8 @@
 //!   status   the same in plain words, once
 //!   learn    listen for a minute for an iPhone to know
 //!   forget   know no iPhone any more
+//!   rest     stop listening until `wake` (the shell, while the screen is locked)
+//!   wake     listen again
 //!
 //! and all but `watch` are answered with a line. The JSON has `state`
 //! (`listening`, or `deaf` and `why`, a sentence for the user), `phones` (how
@@ -32,6 +34,12 @@
 //! controller if the process had CAP_NET_ADMIN when it bound the socket. The
 //! unit gives it that one capability, and it is given up as soon as the
 //! socket is bound.
+//!
+//! Listening is the controller's own, but the controller still has to scan
+//! for it, and the kernel's scan for a monitor is 30 ms of every 60, half
+//! the radio's time, around the clock. That is what the doorbell sets lower
+//! (SCAN_INTERVAL), and it does not listen at all while it rests: AirDrop
+//! only comes on for an iPhone while the computer is unlocked anyway.
 //!
 //! What it logs goes to standard error: that it started, learned, and why it
 //! cannot listen, when it cannot.
@@ -83,6 +91,17 @@ const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 const READ_MONITOR_FEATURES: u16 = 0x0051;
 const REMOVE_MONITOR: u16 = 0x0053;
 const ADD_PATTERNS_MONITOR_RSSI: u16 = 0x0056;
+const SET_DEF_SYSTEM_CONFIG: u16 = 0x004c;
+/// The kernel's passive scan while a monitor is in place, in its 0.625 ms units: a 30 ms window
+/// (0x0030) every 120 ms (0x00c0), a quarter of the radio's time where the kernel's own is a 30 ms
+/// window every 60 ms, half of it. An iPhone showing AirDrop announces itself about every 187 ms,
+/// so by arithmetic (not measured) a window meets one within about three quarters of a second on
+/// average, against about a third: the doorbell rings that much later, and the radio scans half
+/// as long all day.
+/// The values are the kernel's own Default System Configuration types 0x0013 and 0x0014 (LE scan
+/// interval and window for advertisement monitoring), read back on the P1 as 0x0060 and 0x0030.
+const SCAN_INTERVAL: u16 = 0x00c0;
+const SCAN_WINDOW: u16 = 0x0030;
 const EV_INDEX_ADDED: u16 = 0x0004;
 const EV_INDEX_REMOVED: u16 = 0x0005;
 const EV_NEW_SETTINGS: u16 = 0x0006;
@@ -298,6 +317,10 @@ struct Bell {
     near: HashMap<[u8; 6], Instant>,
     /// When the controller last went off or away.
     reset: Option<Instant>,
+    /// Told to rest (the screen is locked): no monitors in place, so the radio does not scan.
+    resting: bool,
+    /// Whether the scan was set lower, so that it is set once a controller.
+    scan_set: Option<u16>,
 }
 
 impl Bell {
@@ -399,6 +422,21 @@ impl Bell {
         }
         self.monitors.clear();
         self.any = None;
+        if self.resting {
+            self.note();
+            return;
+        }
+        if self.scan_set != Some(index) && (!self.phones.is_empty() || self.learning.is_some()) {
+            // Before the monitors, whose coming starts the scan. Not set, the doorbell listens
+            // all the same, at the kernel's half of the radio's time.
+            match self.mgmt.ask(SET_DEF_SYSTEM_CONFIG, index, &scan_config()) {
+                (0, _) => self.scan_set = Some(index),
+                (status, _) => log(&format!(
+                    "the scan stays the kernel's: {}",
+                    status_words(status)
+                )),
+            }
+        }
         for phone in self.phones.clone() {
             if let Err(why) = self.add(index, &phone.patterns()) {
                 self.why = Some(why);
@@ -462,6 +500,24 @@ impl Bell {
         }
     }
 
+    /// Resting or listening again. Resting forgets the iPhone near: the shell turns AirDrop off at
+    /// the lock as it is, and a share sheet open at the unlock is heard again within a second.
+    fn rest(&mut self, resting: bool) {
+        if self.resting == resting {
+            return;
+        }
+        self.resting = resting;
+        if resting {
+            self.learning = None;
+            self.near.clear();
+            for handle in self.monitors.clone() {
+                self.remove(handle);
+            }
+            self.note();
+        }
+        self.setup();
+    }
+
     fn forget(&mut self) {
         self.phones.clear();
         if let Err(error) = write_phones(&self.phones_path, &self.phones) {
@@ -479,6 +535,8 @@ impl Bell {
             // Its controller gone: so are its monitors, and their numbers may be anybody's next.
             EV_INDEX_REMOVED if Some(index) == self.index => {
                 self.reset = Some(Instant::now());
+                // A controller that comes back is the kernel's anew, with its own scan.
+                self.scan_set = None;
                 self.monitors.clear();
                 self.any = None;
                 self.note();
@@ -581,6 +639,9 @@ impl Bell {
         if self.learning.is_some() {
             return "Learning: on the iPhone, Share, then AirDrop, beside this computer.".into();
         }
+        if self.resting {
+            return "AirDrop's doorbell rests while the screen is locked.".into();
+        }
         match (self.phones.len(), self.near.is_empty()) {
             (0, _) => "AirDrop's doorbell knows no iPhone yet: nova airdrop bell learn.".into(),
             (_, false) => "Your iPhone is showing AirDrop.".into(),
@@ -591,6 +652,17 @@ impl Bell {
 }
 
 /// The monitors in place, from the answer to READ_MONITOR_FEATURES.
+/// SET_DEF_SYSTEM_CONFIG's parameters for the monitor's scan: two type, length, value entries.
+fn scan_config() -> Vec<u8> {
+    let mut out = Vec::with_capacity(10);
+    for (kind, value) in [(0x0013u16, SCAN_INTERVAL), (0x0014, SCAN_WINDOW)] {
+        out.extend_from_slice(&kind.to_le_bytes());
+        out.push(2);
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
 fn in_place(answer: &[u8]) -> Vec<u16> {
     let Some(count) = answer.get(11..13) else {
         return Vec::new();
@@ -667,7 +739,15 @@ fn answer(bell: &mut Bell, client: &mut Client) -> bool {
             bell.forget();
             "ok".into()
         }
-        _ => "not understood: watch, status, learn or forget".into(),
+        "rest" => {
+            bell.rest(true);
+            "ok".into()
+        }
+        "wake" => {
+            bell.rest(false);
+            "ok".into()
+        }
+        _ => "not understood: watch, status, learn, forget, rest or wake".into(),
     };
     writeln!(client.stream, "{reply}").is_ok() && client.watching
 }
@@ -735,6 +815,8 @@ fn run() -> Result<(), String> {
         learning: None,
         near: HashMap::new(),
         reset: None,
+        resting: false,
+        scan_set: None,
     };
     bell.setup();
     log(&format!(
@@ -937,6 +1019,8 @@ mod tests {
             learning: None,
             near: HashMap::new(),
             reset: None,
+            resting: false,
+            scan_set: None,
         }
     }
 
@@ -1010,6 +1094,39 @@ mod tests {
         bell.heard(&found(7, [0x1111, 0x2222, 0x3333, 0x4444]));
         bell.heard(&event(EV_MONITOR_LOST, &[1, 0, 7, 0, 0, 0, 0, 0, 1]));
         assert!(bell.near.is_empty());
+    }
+
+    #[test]
+    fn the_scan_is_set_as_the_kernel_reads_its_default_system_configuration() {
+        // type (le16), length (u8), value (le16): the monitor's interval, then its window.
+        assert_eq!(scan_config(), [0x13, 0, 2, 0xc0, 0, 0x14, 0, 2, 0x30, 0]);
+        // A quarter of the radio's time, where the kernel's own is half.
+        assert_eq!(SCAN_INTERVAL, 4 * SCAN_WINDOW);
+    }
+
+    #[test]
+    fn resting_puts_no_monitor_in_place_and_forgets_the_iphone_near() {
+        let mut bell = bell();
+        bell.heard(&found(7, [0x1111, 0x2222, 0x3333, 0x4444]));
+        bell.learning = Some((Instant::now() + LEARN_FOR, 0));
+        bell.rest(true);
+        assert!(bell.resting);
+        assert!(bell.monitors.is_empty());
+        assert!(bell.near.is_empty() && bell.learning.is_none());
+        // Here no controller answers; with one that did, this is what it says.
+        bell.why = None;
+        assert_eq!(
+            bell.words(),
+            "AirDrop's doorbell rests while the screen is locked."
+        );
+        // Told twice, nothing more happens; woken, it listens (here, to no controller).
+        bell.rest(true);
+        bell.rest(false);
+        assert!(!bell.resting);
+        assert_ne!(
+            bell.words(),
+            "AirDrop's doorbell rests while the screen is locked."
+        );
     }
 
     #[test]
