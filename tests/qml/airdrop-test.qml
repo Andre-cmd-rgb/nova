@@ -485,6 +485,40 @@ ShellRoot {
     })
   }
 
+  function looking(ids) {
+    const names = { "1": "Ann", "2": "Bea", "3": "Cy", "4": "Dee" }
+    return JSON.stringify({ state: "looking", receivers: ids.map(id => ({ id: id, name: names[id], model: "", accepts: true })), bluetooth: "" })
+  }
+
+  // The one the arrows are on is the one Return sends to, however the list changes under it.
+  function sixteenth() {
+    sendSays.setText(looking(["1", "2", "3"]) + "\n")
+    sendAfter.setText("")
+    later(300, function () {
+      const before = asks().length
+      airdrop.send(["/home/zoe/notes.txt"])
+      later(500, function () {
+        const window = airdrop.sendWindow
+        check("the first to show is the one chosen", [window.chosenId, window.chosen], ["1", 0])
+        window.move(1)
+        check("the arrows move a row", [window.chosenId, window.chosen], ["2", 1])
+        // The daemon's next lists: one gone and one new above the one chosen; then that one gone.
+        airdrop.sendTold(looking(["4", "3", "2"]))
+        check("the one chosen stays chosen in its new row", [window.chosenId, window.chosen], ["2", 2])
+        airdrop.sendTold(looking(["4", "3"]))
+        check("one that goes is not replaced by whichever is in its row", window.chosen, -1)
+        window.enter()
+        airdrop.sendTold(looking(["4", "3", "2"]))
+        check("and back, it is chosen again", window.chosen, 2)
+        window.enter()
+        later(500, function () {
+          check("Return sends to the one chosen, and to nobody while none is", asks().slice(before + 1), ["nova-airdrop told to 2"])
+          finish()
+        })
+      })
+    })
+  }
+
   // Cancelled while it looks; ended with nobody; ended without a word.
   function fifteenth() {
     sendSays.setText(JSON.stringify({ state: "looking", receivers: [], bluetooth: "Bluetooth is off. It wakes the iPhone's AirDrop: switch it on." }) + "\n")
@@ -513,7 +547,7 @@ ShellRoot {
                   later(900, function () {
                     check("a send that ends without a word has failed", [lastNote().summary, lastNote().body, airdrop.sendEnded],
                       ["AirDrop couldn’t send", "It would not say why.", true])
-                    finish()
+                    sixteenth()
                   })
                 })
               })

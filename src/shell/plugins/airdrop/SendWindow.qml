@@ -8,7 +8,10 @@ import "AirDropModel.js" as Model
 
 // Send with AirDrop: a card over the dimmed screen, in the menu's colours,
 // with the iPhones nearby as they appear, one a row. A click on one, or
-// Return on the one the arrows moved to, sends it the files (picked); one
+// Return on the one the arrows moved to, sends it the files (picked): the
+// one chosen is kept by its id, so that the list changing under it does not
+// move Return to another, and one that goes is not replaced by whichever
+// comes to its row. One
 // that takes AirDrop from its contacts only is listed, dimmed, with what it
 // needs. While there is nobody to send to, it says what makes an iPhone
 // show. Escape, Cancel and a click beside the card stop the send
@@ -25,8 +28,12 @@ PanelWindow {
   property string bluetooth: ""
   // AirDrop is being switched on for the send.
   property bool starting: false
-  // The row the arrows are on.
-  property int chosen: 0
+  // The receiver the arrows, or the pointer, are on: its id, and its row (-1 for none).
+  property string chosenId: ""
+  readonly property int chosen: {
+    for (var i = 0; i < receivers.length; i++) if (receivers[i].id === chosenId) return i
+    return -1
+  }
 
   readonly property bool anyone: receivers.some(function (r) { return r.accepts })
   readonly property int rowHeight: Math.max(Style.space(36), Style.font.title + Style.spacing.controlPaddingY * 2)
@@ -39,11 +46,27 @@ PanelWindow {
     if (receiver && receiver.accepts) picked(receiver.id)
   }
 
+  function choose(at) {
+    if (at >= 0 && at < receivers.length) chosenId = receivers[at].id
+  }
+
+  // The arrows: a row up or down from the one chosen; from none, the first.
+  function move(by) {
+    choose(chosen < 0 ? 0 : Math.max(0, Math.min(receivers.length - 1, chosen + by)))
+  }
+
+  // Return: the one chosen, if there is one.
+  function enter() {
+    if (chosen >= 0) pick(chosen)
+  }
+
   onOpenedChanged: if (opened) {
-    chosen = 0
+    chosenId = ""
+    choose(0)
     keyCatcher.forceActiveFocus()
   }
-  onReceiversChanged: chosen = Math.max(0, Math.min(chosen, receivers.length - 1))
+  // The first to show is chosen, until another is.
+  onReceiversChanged: if (chosenId === "") choose(0)
 
   visible: opened
   anchors { top: true; bottom: true; left: true; right: true }
@@ -89,15 +112,15 @@ PanelWindow {
           break
         case Qt.Key_Up:
         case Qt.Key_Backtab:
-          window.chosen = Math.max(0, window.chosen - 1)
+          window.move(-1)
           break
         case Qt.Key_Down:
         case Qt.Key_Tab:
-          window.chosen = Math.min(window.receivers.length - 1, window.chosen + 1)
+          window.move(1)
           break
         case Qt.Key_Return:
         case Qt.Key_Enter:
-          window.pick(window.chosen)
+          window.enter()
           break
         default:
           return
@@ -181,7 +204,7 @@ PanelWindow {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: row.modelData.accepts ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onEntered: window.chosen = row.index
+            onEntered: window.choose(row.index)
             onClicked: window.pick(row.index)
           }
         }
