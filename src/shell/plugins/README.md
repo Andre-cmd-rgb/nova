@@ -206,7 +206,8 @@ each time it opens. A row's `action:` runs in bash as a login shell. The menu
 is kept loaded, so opening it is an IPC call to the running shell with
 nothing to start.
 
-A search from the root finds the home's files too, from its third letter:
-`menu/files.sh` lists them as the menu opens (at most every 30 s, into
-`$XDG_RUNTIME_DIR/nova/menu-files`), and each search reads that list. A file
+A search from the root finds the home's files too, once a word of it has
+three letters and the keys have rested 80 ms: `menu/files.sh` reads its list
+of them (`$XDG_RUNTIME_DIR/nova/menu-files`), made by the first search and
+again behind one once it is five minutes old, one walk at a time. A file
 opens with `uwsm-app -- xdg-open`, its folder too.

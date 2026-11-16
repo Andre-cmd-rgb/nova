@@ -235,16 +235,30 @@ Item {
   // What the last search of the files printed (MenuModel.fileRows reads it).
   property string filesFound: ""
 
-  // The list of the home's files made again, as the menu opens; files.sh
-  // leaves one made in the last 30 s as it is.
-  function listFiles() {
+  // A menu opened anew shows none of the last opening's files.
+  function forgetFiles() {
     filesFound = ""
-    Quickshell.execDetached([filesScript, "list"])
+    asked.stop()
+    finder.next = ""
   }
 
-  // The files for <query>. One asked for while a search runs waits for it,
-  // and only the latest waits.
+  // The files for <query>, once the keys have rested 80 ms: a word typed
+  // fast is one search, not one a letter. One asked for while a search runs
+  // waits for it, and only the latest waits. files.sh lists the home again
+  // behind a search when its list is five minutes old, and never otherwise.
   function findFiles(query) {
+    asked.query = query
+    asked.restart()
+  }
+
+  Timer {
+    id: asked
+    property string query: ""
+    interval: 80
+    onTriggered: source.find(query)
+  }
+
+  function find(query) {
     if (finder.running) {
       finder.next = query
       return
@@ -256,7 +270,7 @@ Item {
   }
 
   function findWaiting() {
-    if (finder.next && !finder.running) findFiles(finder.next)
+    if (finder.next && !finder.running) find(finder.next)
   }
 
   Process {

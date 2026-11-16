@@ -7,10 +7,11 @@ import "plugins/menu"
 import "plugins/menu/MenuModel.js" as MenuModel
 
 // The menu's file search: the rows the found files make, their glyphs, the
-// folder under each and what opens them; and the real menu, with files.sh on
-// a home made here, searched from the root, a file opened with Return and its
-// folder with Ctrl+Return, through uwsm-app (a stub that notes what it is
-// asked).
+// folder under each and what opens them, and the searches that look; and
+// the real menu, with files.sh on a home made here: opened without walking
+// it, searched from the root, the cursor kept on its file as files come in
+// another order, a file opened with Return and its folder with Ctrl+Return,
+// through uwsm-app (a stub that notes what it is asked).
 ShellRoot {
   id: test
 
@@ -81,8 +82,9 @@ ShellRoot {
       "under a divider after other rows, and none when they are all there is")
     check(MenuModel.fileRows(printed, "TAX 20", home, false).map(row => row.label).join() === "Tax 2025.pdf",
       "an earlier search's files show while the next is asked, those that still hold every word")
-    check(MenuModel.findsFiles("root", " tax ") && !MenuModel.findsFiles("root", "ta") && !MenuModel.findsFiles("style", "taxes"),
-      "files are found from the root alone, from the third letter")
+    check(MenuModel.findsFiles("root", " tax ") && MenuModel.findsFiles("root", "a tax") && !MenuModel.findsFiles("root", "ta")
+      && !MenuModel.findsFiles("root", "a b") && !MenuModel.findsFiles("root", "ab cd") && !MenuModel.findsFiles("style", "taxes"),
+      "files are found from the root alone, once a word has three letters")
     const size = { row: 10, tall: 20, gap: 1, divider: 5, peek: 3 }
     check(MenuModel.listHeight([{ line: "", section: "" }, { line: "~", section: "files" }, { line: "~", section: "files" }], 1000, size) === 10 + 1 + 5 + 20 + 1 + 20,
       "the files' divider has its room, once")
@@ -99,6 +101,20 @@ ShellRoot {
 
   function search() {
     menu.open("{}")
+    listed.running = true
+  }
+
+  // Whether the home has been listed: not as the menu opens.
+  Process {
+    id: listed
+    command: ["bash", "-c", '[ -e "$XDG_RUNTIME_DIR/nova/menu-files" ]']
+    onExited: function(code) {
+      test.check(code !== 0, "opening the menu walks no files")
+      test.searchFiles()
+    }
+  }
+
+  function searchFiles() {
     menu.filter("ta")
     check(!menu.rows.some(row => row.kind === "file"), "two letters find no files")
     menu.filter("tax")
@@ -108,7 +124,13 @@ ShellRoot {
   function found() {
     const labels = menu.rows.map(row => row.label).join(",")
     check(labels === "taxi.png,Tax Return.pdf", "the shallower first, and nothing hidden (" + labels + ")")
+    // Files that come in another order: the cursor stays on its file.
     menu.cursor = 1
+    let source = null
+    for (let i = 0; i < menu.data.length; i++) if (menu.data[i].filesFound !== undefined) source = menu.data[i]
+    source.filesFound = "f\t" + test.home + "/Documents/Tax Return.pdf\nf\t" + test.home + "/taxi.png\n"
+    source.updated()
+    check(menu.rows[0].label === "Tax Return.pdf" && menu.cursor === 0, "files that come in another order keep the cursor on its file")
     menu.press({ key: Qt.Key_Return, modifiers: Qt.ControlModifier, text: "\r" })
     when(() => test.calls().length === 1, folder, "Ctrl+Return opens the file's folder")
   }

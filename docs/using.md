@@ -146,7 +146,7 @@ Super+Space opens it. Type to search, or go down the list:
 | Update | Nova and Firmware (Settings → Updates), Restart (the shell, audio, Wi-Fi or Bluetooth), Timezone, Password |
 | System | Lock, Suspend, Hibernate (where the computer can), Log Out, Restart, Restart to Recovery, Shut Down |
 
-From the third letter, a search of the whole menu shows the files and folders in your home whose names match, below the rest. Return opens one with its app, and Ctrl+Return opens the folder it is in. Hidden folders, caches, `.git` and `node_modules` stay out, and so does anything more than five folders down. The menu lists your files again as it opens, at most every 30 seconds, and never in the background.
+Once a word of it has three letters, a search of the whole menu shows the files and folders in your home whose names match, below the rest. Return opens one with its app, and Ctrl+Return opens the folder it is in. Hidden folders, caches, `.git`, `node_modules` and drives mounted inside your home stay out, and so does anything more than five folders down. The search reads a list of your files, made again behind a search once it is five minutes old, so a new file shows from then; nothing lists them on a clock or as the menu opens.
 
 `nova menu toggle <entry>` opens it at an entry, such as `nova menu toggle capture`. Entries in `~/.config/nova/menu.jsonc` override Nova's, key by key.
 

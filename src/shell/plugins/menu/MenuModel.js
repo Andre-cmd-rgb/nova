@@ -281,10 +281,11 @@ function hiddenBetween(catalog, menus, menuId, answers) {
 // --------------------------------------------------------------------- files
 
 // Whether a search of <query> in the menu <menuId> looks among the home's
-// files: from the root alone, and from the third letter, as fewer find
-// thousands of names and none of them the one meant.
+// files: from the root alone, and once a word of it has three letters, as
+// shorter ones find thousands of names ("a b" all but every one) and none of
+// them the one meant.
 function findsFiles(menuId, query) {
-  return menuId === "root" && String(query).trim().length >= 3
+  return menuId === "root" && String(query).split(/\s+/).some(word => word.length >= 3)
 }
 
 // A file's glyph by its kind, which its extension tells: a picture, a video,

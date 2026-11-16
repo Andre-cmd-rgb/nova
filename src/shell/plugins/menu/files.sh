@@ -1,37 +1,66 @@
 #!/bin/bash
 # files.sh: the files of the home folder that the menu's search finds.
 #
-#   files.sh list           list the home's files again, unless that was done
-#                           in the last 30 s; the menu runs this as it opens
 #   files.sh find <words>   the best five whose names hold every word: "d"
 #                           for a folder or "f" for a file, a tab, and the
 #                           path, a line each
+#   files.sh list           list the home's files again now, unless that was
+#                           done in the last five minutes
 #
-# Nothing walks the home on a clock: the list is made as the menu opens, and
-# a search reads it, in some 20 ms for 200,000 names; the first search ever,
-# with no list yet, makes one first. Five folders down, and none hidden
-# (.git, .cache, .config and every other), nor what builds fill: node_modules,
+# Nothing walks the home on a clock, nor as the menu opens: a search reads
+# the list, in some 10 ms for 36,000 names, and a list older than five minutes
+# is made again behind it, for the searches after; a new file is found from
+# then. The first search, with no list yet, waits for one, and so does one
+# that comes while a walk is going. Five folders down, and none hidden (.git,
+# .cache, .config and every other), nor what builds fill: node_modules,
 # __pycache__, and the inside of a folder tagged as a cache (CACHEDIR.TAG, as
-# Cargo's target and ccache's are). The list is in the session's runtime
-# folder, the user's alone, and gone at logout.
+# Cargo's target and ccache's are); nor anything mounted under the home, which
+# may be a network's, and hang the walk if it is gone. The list is in the
+# session's runtime folder, the user's alone, and gone at logout.
 
 LIST=${XDG_RUNTIME_DIR:-/tmp}/nova/menu-files
-FRESH=30
+MOUNTS=${NOVA_MOUNTS:-/proc/self/mounts}
+FRESH=300
 SHOWN=5
+
+fresh() {
+  local made
+  made=$(stat -c %Y "$LIST" 2>/dev/null) && ((EPOCHSECONDS - made < FRESH))
+}
+
+# A path as find's -path takes it: its own wildcards and backslashes as
+# themselves.
+literal() {
+  sed 's/[][*?\\]/\\&/g' <<<"$1"
+}
+
+# What is mounted below the home, from the mount table, whose spaces, tabs,
+# newlines and backslashes it writes as octal escapes. Not -xdev, which
+# would pass by a Btrfs subvolume too, and those are no mounts.
+mounts_below_home() {
+  local point
+  while read -r _ point _; do
+    point=${point//\\040/ } point=${point//\\011/$'\t'} point=${point//\\012/$'\n'} point=${point//\\134/\\}
+    [[ $point == "$HOME"/* ]] && printf '%s\n' "$point"
+  done <"$MOUNTS"
+}
 
 # A line a file: its type (d, f, l...), how deep, its name and its folder.
 # The cache folders found are kept beside it, for the next walk to pass by:
 # ccache's alone held 170,000 files, and taking them out after a walk that
-# went in took a second each time.
-make_list() {
+# went in took a second each time. One walk at a time: <wait> is flock's say
+# on one already going (-n: leave it to that one), and a list made while
+# this waited is the one.
+make_list() { # wait
   mkdir -p "${LIST%/*}" || return 1
   (
-    flock -w 5 9 || exit 0
-    local caches=() folder
+    flock "$@" 9 || exit 0
+    fresh && exit 0
+    local skip=() folder
     while IFS= read -r folder; do
-      [[ -d $folder ]] && caches+=(-o -path "$(sed 's/[][*?\\]/\\&/g' <<<"$folder")")
-    done < <(cat "$LIST.caches" 2>/dev/null)
-    find "$HOME" -mindepth 1 -maxdepth 5 \( -name '.*' -o -name node_modules -o -name __pycache__ "${caches[@]}" \) -prune \
+      [[ -d $folder ]] && skip+=(-o -path "$(literal "$folder")")
+    done < <(cat "$LIST.caches" 2>/dev/null; mounts_below_home)
+    find "$HOME" -mindepth 1 -maxdepth 5 \( -name '.*' -o -name node_modules -o -name __pycache__ "${skip[@]}" \) -prune \
       -o -printf '%y\t%d\t%f\t%h\n' 2>/dev/null >"$LIST.new"
     if grep -q $'\tCACHEDIR.TAG\t' "$LIST.new"; then
       awk -F '\t' -v caches="$LIST.caches" '
@@ -41,12 +70,6 @@ make_list() {
     fi
     mv -f "$LIST.new" "$LIST"
   ) 9>"$LIST.lock"
-}
-
-cmd_list() {
-  local made
-  made=$(stat -c %Y "$LIST" 2>/dev/null) && ((EPOCHSECONDS - made < FRESH)) && return 0
-  make_list
 }
 
 # How good a find is, lower first: 0 for a name that is the search, with or
@@ -61,8 +84,13 @@ cmd_find() {
   read -ra terms <<<"$*"
   for term in "${terms[@]}"; do ((${#term} > ${#longest})) && longest=$term; done
   [[ -n $longest ]] || return 0
-  [[ -s $LIST ]] || make_list
-  name=$(sed 's/[][\.*^$]/\\&/g' <<<"$longest")
+  if [[ ! -s $LIST ]]; then
+    make_list -w 120
+  elif ! fresh; then
+    make_list -n </dev/null >/dev/null 2>&1 &
+    disown
+  fi
+  name=$(literal "$longest")
   grep -i -e $'^[^\t]*\t[^\t]*\t[^\t]*'"$name" "$LIST" 2>/dev/null | QUERY="$*" awk '
     BEGIN {
       FS = "\t"
@@ -86,7 +114,7 @@ cmd_find() {
 }
 
 case ${1:-} in
-  list) cmd_list ;;
   find) shift; cmd_find "$@" ;;
+  list) make_list -w 120 ;;
   *) sed -n '2,/^$/s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
 esac

@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 
 # The menu's file search (plugins/menu/files.sh), on a home made here: what
-# it lists and leaves out, how it ranks what it finds, and that it lists
-# again only as the menu opens, and not twice in 30 s.
+# it lists and leaves out, how it ranks what it finds, and that it lists the
+# home again only behind a search whose list is five minutes old, one walk
+# at a time.
 
 load ../test_helper
 
@@ -64,10 +65,20 @@ find_() { "$files" find "$@" | sed "s#$HOME/##"; }
   [ "$output" = "$(printf 'd\tnotes\nf\tapp/notes.md')" ]
   # The cache found is passed by on the next walk.
   grep -qx "$HOME/app/target" "$XDG_RUNTIME_DIR/nova/menu-files.caches"
-  put app/target/release/notes.d
-  touch -d '-1 min' "$XDG_RUNTIME_DIR/nova/menu-files"
+  put app/target/release/notes.d app/fresh.md
+  touch -d '-6 min' "$XDG_RUNTIME_DIR/nova/menu-files"
   "$files" list
+  grep -q $'\tfresh.md\t' "$XDG_RUNTIME_DIR/nova/menu-files"
   fails grep -q target "$XDG_RUNTIME_DIR/nova/menu-files"
+}
+
+@test "nothing mounted under the home is walked, whatever its name" {
+  put Remote\ Drive/notes.txt Projects/notes.md
+  # The mount table writes a space as \040.
+  export NOVA_MOUNTS=$SCRATCH/mounts
+  printf '%s\n' "/dev/root / btrfs rw 0 0" "server:/srv $HOME/Remote\\040Drive nfs4 rw 0 0" >"$NOVA_MOUNTS"
+  run find_ notes
+  [ "$output" = $'f\tProjects/notes.md' ]
 }
 
 @test "five folders down, and no more" {
@@ -76,18 +87,36 @@ find_() { "$files" find "$@" | sed "s#$HOME/##"; }
   [ "$output" = $'f\ta/b/c/d/report.txt' ]
 }
 
-@test "listed again as the menu opens, not twice in 30 s; the first search lists itself" {
+@test "the first search lists the home; one five minutes on answers from the old list and lists it again behind" {
+  local list=$XDG_RUNTIME_DIR/nova/menu-files
   put old.txt
   run find_ old
   [ "$output" = $'f\told.txt' ]
   put new.txt
-  "$files" list
   run find_ new
   [ -z "$output" ]
-  touch -d '-31 sec' "$XDG_RUNTIME_DIR/nova/menu-files"
-  "$files" list
+  touch -d '-6 min' "$list"
+  run find_ new
+  [ -z "$output" ]
+  for _ in {1..50}; do grep -q $'\tnew.txt\t' "$list" && break; sleep 0.1; done
   run find_ new
   [ "$output" = $'f\tnew.txt' ]
+}
+
+@test "a search while the home is being walked waits for that walk, and takes its list without walking again" {
+  local list=$XDG_RUNTIME_DIR/nova/menu-files
+  mkdir -p "${list%/*}"
+  # Another walk, slow, whose list has a file not on the disk: one walked
+  # again would not.
+  (
+    flock 9
+    sleep 1
+    printf 'f\t1\tghost.txt\t%s\n' "$HOME" >"$list"
+  ) 9>"$list.lock" &
+  sleep 0.2
+  run find_ ghost
+  wait
+  [ "$output" = $'f\tghost.txt' ]
 }
 
 @test "nothing searched, nothing found; anything else is how to use it" {

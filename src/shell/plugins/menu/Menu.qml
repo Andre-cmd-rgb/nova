@@ -106,7 +106,7 @@ Item {
     gate.rowsMoved()
     window.unpin()
     source.askGuards()
-    source.listFiles()
+    source.forgetFiles()
     opened = true
     relist()
     source.refill(here)
@@ -141,8 +141,11 @@ Item {
 
   // Lists the chooser's options, what a search finds, or the menu shown;
   // nothing until a menu file is read. Rows that cannot be worked out leave
-  // the list empty rather than showing the last.
-  function relist() {
+  // the list empty rather than showing the last. With <stay>, for rows that
+  // came by themselves (files found, answers), the cursor stays on its row
+  // where that is still listed: Return then does what was lit.
+  function relist(stay) {
+    const lit = stay && rows[cursor] ? rows[cursor].key : ""
     let next = []
     try {
       if (choosing) {
@@ -158,7 +161,8 @@ Item {
       window.show(next)
     }
     if (!choosing && !ready) return
-    cursor = Math.max(0, Math.min(cursor, next.length - 1))
+    const still = lit ? next.findIndex(row => row.key === lit) : -1
+    cursor = still >= 0 ? still : Math.max(0, Math.min(cursor, next.length - 1))
     Qt.callLater(window.reveal)
   }
 
@@ -168,14 +172,14 @@ Item {
     // A new catalog has none of the providers' rows the last had.
     function onReread() {
       if (!plugin.opened) return
-      plugin.relist()
+      plugin.relist(true)
       if (plugin.choosing) return
       if (plugin.typed.trim()) source.fillUnder(plugin.here)
       else source.fill(plugin.here)
     }
 
     function onUpdated() {
-      if (plugin.opened) plugin.relist()
+      if (plugin.opened) plugin.relist(true)
     }
 
     function onProviderDone() {
