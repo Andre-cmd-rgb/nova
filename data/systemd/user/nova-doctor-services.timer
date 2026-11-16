@@ -1,0 +1,15 @@
+[Unit]
+Description=Look for failed Nova services
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Timer]
+# A minute after login, when what failed as the computer started has failed
+# and the shell is up to show it; then every ten minutes, for what fails
+# later. A look is two systemctl calls.
+OnActiveSec=1min
+OnUnitActiveSec=10min
+AccuracySec=1min
+
+[Install]
+WantedBy=graphical-session.target

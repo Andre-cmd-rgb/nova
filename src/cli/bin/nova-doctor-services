@@ -1,0 +1,102 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Say in a notification when one of Nova's services has failed
+#
+# nova doctor lists the services that failed when it is asked; this says so
+# unasked. nova-doctor-services.timer runs it a minute after login, which is
+# when what failed as the computer started shows, and every ten minutes after,
+# for what fails later. Each failure is said once: not at every run, and not
+# again at the next login of the same boot. A unit that fails again later is
+# a new failure, and is said again.
+#
+# What it looks at: Nova's own units, the system's and this user's, in the
+# failed state. A unit stopped, disabled or masked is not failed, so a service
+# turned off on purpose is never said. Nor are the units a command starts for a
+# moment (transient ones: an update, Caffeine's hold on the lid), nor AirDrop's
+# receiver, which the person who just turned AirDrop on hears about from
+# AirDrop itself: each of those says how it went.
+#
+# NOVA_BOOT_ID stands in for the kernel's boot id in the tests.
+set -euo pipefail
+
+TOLD=${XDG_STATE_HOME:-$HOME/.local/state}/nova/services-told
+BOOT_ID=${NOVA_BOOT_ID:-/proc/sys/kernel/random/boot_id}
+
+# What a unit does, in words that "stopped" can follow.
+name_of() { # unit
+  case $1 in
+    nova-powerd.service) echo "Nova's power manager" ;;
+    nova-power.service) echo "Nova's power settings" ;;
+    nova-power-gpu.service) echo "the graphics card's power setting" ;;
+    nova-undervolt.service) echo "the CPU's undervolt" ;;
+    nova-battery-limit.service) echo "the battery's charge limit" ;;
+    nova-browser-theme.service) echo "Chrome's theme color" ;;
+    nova-patch-ram.service) echo "the memory patch" ;;
+    nova-airdrop-bell@*) echo "AirDrop's listening for your iPhone" ;;
+    nova-sleep-lock.service) echo "the lock before sleep" ;;
+    nova-idle-inhibitors.service) echo "keeping the screen awake for apps" ;;
+    nova-automount.service) echo "mounting drives as they are plugged in" ;;
+    nova-speaker-tuning.service | nova-speaker-tuning-auto.service) echo "the speaker tuning" ;;
+    nova-keyring-migrate.service) echo "moving your secrets into the login keyring" ;;
+    nova-session-guard.service) echo "the session's guard" ;;
+    nova-recover-internal-monitor.service) echo "turning the laptop's display back on" ;;
+    *) echo "Nova's service ${1%.*}" ;;
+  esac
+}
+
+# "<unit> <invocation>" for each of Nova's units that has failed, the system's
+# and this user's. The invocation tells one failure of a unit from the next.
+failed() {
+  local scope unit
+  for scope in --system --user; do
+    while read -r unit _; do
+      [[ $unit == nova-* && $unit != nova-airdrop@* && $unit != nova-doctor-services.* ]] || continue
+      [[ $(systemctl "$scope" show --property=Transient --value -- "$unit" 2>/dev/null) != yes ]] || continue
+      printf '%s %s\n' "$unit" "$(systemctl "$scope" show --property=InvocationID --value -- "$unit" 2>/dev/null)"
+    done < <(systemctl "$scope" list-units --state=failed --plain --no-legend --no-pager 'nova-*' 2>/dev/null || true)
+  done
+}
+
+# "a", "a and b", "a, b and c"
+in_words() {
+  local out=$1
+  shift
+  while (($# > 1)); do
+    out+=", $1"
+    shift
+  done
+  (($# == 0)) || out+=" and $1"
+  printf '%s' "$out"
+}
+
+main() {
+  local boot unit invocation title
+  local -a told=() new=() names=()
+  local -A seen=()
+  boot=$(<"$BOOT_ID")
+  mkdir -p -- "${TOLD%/*}"
+  # Two at once (a login while the timer runs) would both say it.
+  exec {lock}>"$TOLD.lock"
+  flock "$lock"
+  # "boot <id>", then the failures said in that boot, a line each.
+  if [[ $(head -n 1 -- "$TOLD" 2>/dev/null) == "boot $boot" ]]; then
+    mapfile -t told < <(tail -n +2 -- "$TOLD")
+  fi
+  for unit in "${told[@]}"; do seen[$unit]=1; done
+  while read -r unit invocation; do
+    [[ -z ${seen["$unit $invocation"]:-} ]] || continue
+    seen["$unit $invocation"]=1
+    new+=("$unit $invocation")
+    names+=("$(name_of "$unit")")
+  done < <(failed)
+  ((${#new[@]})) || return 0
+
+  title="$(in_words "${names[@]}") stopped"
+  # Not sent (no shell to show it): said at the next run instead.
+  nova-notification-send -u normal -g 󰀦 "${title^}" "Settings → Updates → Check for Problems has more." \
+    --exec nova-shell shell summon nova.settings '{"page":"updates"}' >/dev/null 2>&1 || return 0
+  { echo "boot $boot"; printf '%s\n' "${told[@]}" "${new[@]}"; } >"$TOLD.part"
+  mv -f -- "$TOLD.part" "$TOLD"
+}
+
+main "$@"
