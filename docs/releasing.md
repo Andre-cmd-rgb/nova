@@ -82,6 +82,8 @@ The release workflow checks that the secret's key is the one in `nova-keyring/no
 
 **Replacing the key (expiry, or a leak) takes a transition release.** pacman checks every signature before any package's install script runs, so a system has to trust the new key before it sees anything signed with it.
 
+**CI says when.** The key is made to last three years. From 180 days before it expires, CI's check job fails (`tools/keyring-check`, at every push and every candidate) until `nova-keyring` holds a trusted key with longer to go, which step 1 puts there. Once the key has expired, pacman refuses everything it signed.
+
 1. Make the new key. Append its public key to `nova.gpg` and its `FINGERPRINT:4:` line to `nova-trusted`, and release, still signing with the **old** key. Systems that update now trust both.
 2. In a later release, run `tools/keyring-export <new> <old>`, which trusts only the new key and lists the old one in `nova-revoked`, put the new key in `NOVA_REPO_KEY`, and release.
 

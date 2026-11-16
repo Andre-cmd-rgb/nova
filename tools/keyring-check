@@ -1,0 +1,80 @@
+#!/bin/bash
+# keyring-check: fail while every key packaging/nova-keyring trusts expires
+# within 180 days, so the signing key is replaced before it runs out.
+#
+#   tools/keyring-check [--days <n>] [--keyring <dir>]
+#
+# The key was made to last three years. Once it has expired, pacman refuses
+# what it signed, and no Nova system can install or update anything from the
+# [nova] repository. Replacing it takes a transition release, which systems
+# have to update to before the new key signs anything (docs/releasing.md,
+# Replacing the key), so this fails half a year ahead, at every push and every
+# candidate (ci.yml's check job). It passes again once nova.gpg holds a
+# trusted key with longer to go: during the transition the old key still
+# signs, beside the new one. A key that never expires lasts.
+#
+# --days changes the 180, --keyring the directory (nova.gpg and nova-trusted)
+# it reads. Under GitHub Actions the failure is an error annotation as well.
+set -euo pipefail
+
+usage() { sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//' >&2; exit 2; }
+
+days=180
+dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../packaging/nova-keyring" && pwd)
+while (($#)); do
+  case $1 in
+    --days) days=${2:?--days needs a number}; shift 2 ;;
+    --keyring) dir=${2:?--keyring needs a directory}; shift 2 ;;
+    *) usage ;;
+  esac
+done
+[[ $days =~ ^[0-9]+$ ]] || usage
+
+fail() {
+  printf 'keyring-check: %s\n' "$*" >&2
+  [[ ${GITHUB_ACTIONS:-} != true ]] || printf '::error::%s\n' "$*"
+  exit 1
+}
+
+[[ -r $dir/nova.gpg && -r $dir/nova-trusted ]] || fail "no nova.gpg and nova-trusted in $dir"
+
+# gpg reads the keys without importing them, in a home of its own.
+GNUPGHOME=$(mktemp -d)
+export GNUPGHOME
+trap 'gpgconf --kill all 2>/dev/null || true; rm -rf -- "$GNUPGHOME"' EXIT
+
+# Each primary key in nova.gpg: its fingerprint and when it expires (empty for
+# never), in seconds since the epoch. The primary key is the one that counts:
+# Nova's signs with it, and every subkey ends when it does.
+keys=$(gpg --batch --quiet --with-colons --fixed-list-mode --show-keys -- "$dir/nova.gpg" 2>/dev/null |
+  awk -F: '$1 == "pub" { expires = $7; primary = 1; next }
+    $1 == "fpr" && primary { print $10 ":" expires; primary = 0 }
+    $1 != "fpr" { primary = 0 }') || true
+[[ -n $keys ]] || fail "$dir/nova.gpg holds no key gpg can read"
+
+now=$(date +%s)
+limit=$((now + days * 86400))
+lasting='' expiring=()
+while IFS=: read -r fpr _; do
+  [[ -n $fpr ]] || continue
+  expires=$(awk -F: -v fpr="$fpr" '$1 == fpr { print $2; found = 1; exit } END { exit !found }' <<<"$keys") || {
+    expiring+=("$fpr, which nova-trusted lists, is not in nova.gpg")
+    continue
+  }
+  if [[ -z $expires ]]; then
+    lasting="$fpr never expires"
+  elif ((expires > limit)); then
+    lasting="$fpr lasts until $(date -u -d "@$expires" +%F), $(((expires - now) / 86400)) days from now"
+  elif ((expires > now)); then
+    expiring+=("$fpr expires on $(date -u -d "@$expires" +%F), in $(((expires - now) / 86400)) days")
+  else
+    expiring+=("$fpr expired on $(date -u -d "@$expires" +%F)")
+  fi
+done <"$dir/nova-trusted"
+
+if [[ -n $lasting ]]; then
+  echo "keyring-check: $lasting"
+  exit 0
+fi
+((${#expiring[@]})) || fail "nova-trusted lists no key"
+fail "Nova's signing key runs out: $(printf '%s; ' "${expiring[@]}" | sed 's/; $//'). Once it has expired, pacman refuses everything it signed. Replace it now, with a transition release: docs/releasing.md, \"Replacing the key\"."

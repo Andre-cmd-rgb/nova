@@ -1,7 +1,8 @@
 # Every push and pull request: lint, the name check, the Rust checks, the unit
 # tests, a `make install` into a scratch root, the shell's windows opened
-# offscreen from it and the whole shell started under a headless sway, all in
-# a current Arch container, and nova usb's writer on a loop device.
+# offscreen from it and the whole shell started under a headless sway, and
+# the signing key's expiry, all in a current Arch container, and nova usb's
+# writer on a loop device.
 # candidate.yml runs it too, before cutting a release.
 name: ci
 
@@ -88,6 +89,14 @@ jobs:
         run: |
           install -Dm644 -t /etc/pam.d /tmp/nova-root/etc/pam.d/nova-lock-password
           sudo -u builder -H tools/shell-smoke --root /tmp/nova-root --shots /tmp/nova-shots/shell
+
+      # From half a year before the signing key expires, until a trusted key
+      # with longer to go is in packaging/nova-keyring: replacing it takes a
+      # release of its own (docs/releasing.md, Replacing the key). Last, so
+      # the other checks still say how they went; candidate.yml runs this job
+      # too, so it is seen twice a month without a push.
+      - name: The signing key lasts half a year more
+        run: tools/keyring-check
 
       - name: Keep the window screenshots
         if: always()
