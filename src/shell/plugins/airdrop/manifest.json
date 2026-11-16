@@ -1,7 +1,7 @@
 {
   "id": "nova.airdrop",
   "name": "AirDrop",
-  "description": "Receive from iPhones nearby, as on a Mac: an offer to accept or decline, and what came in, as notifications.",
+  "description": "Receive from iPhones nearby and send to them, as on a Mac: an offer to accept or decline, what came in, and how a send went, as notifications; a window lists the iPhones to send to.",
   "kinds": [
     "service",
     "panel"

@@ -10,7 +10,8 @@ import "plugins/airdrop/AirDropModel.js" as Model
 
 // AirDrop in the shell: what it makes of each line of `nova airdrop watch`,
 // the notifications it sends for it, and what it asks of the command in
-// return. nova-airdrop is a stub: its watch says what the test wrote for it,
+// return; and a send's window, picks and notifications, from the lines of
+// `nova airdrop send --json`. nova-airdrop is a stub: its watch says what the test wrote for it,
 // and its other calls are noted, as are busctl's (the notifications) and
 // vipsthumbnail's (a photo's smaller copy). No radio, no daemon, no bus.
 ShellRoot {
@@ -206,6 +207,31 @@ ShellRoot {
       ["off", "off", "", "", "off", ""])
     check("locked, an AirDrop the doorbell switched on goes off", bell({ on: true, rung: true, near: true, locked: true, state: "asked" }), "off")
 
+    // Sending.
+    check("the IPC's list, percent-encoded as nova airdrop send --window gives it; anything else is nothing",
+      [Model.sendable("%5B%22/a%20b/c%2Cd.jpg%22%2C%22/%C3%A9%25%22%5D"), Model.sendable("%5B"), Model.sendable("%7B%7D"), Model.sendable("%E0%A4%A")],
+      [["/a b/c,d.jpg", "/é%"], null, null, null])
+    check("only whole paths are sent", Model.files(["/a/b.jpg", "c.jpg", 7, null, "/d"]), ["/a/b.jpg", "/d"])
+    check("what is sent, in a few words", [Model.sending(["/a/IMG_1.JPG"]), Model.sending(["/a/1.jpg", "/a/2.png"]), Model.sending(["/a/1.jpg", "/a/n.pdf"])],
+      ["IMG_1.JPG", "2 photos", "2 files"])
+    check("the receivers listed: an id that is a number, a name, and whether it takes AirDrop from this computer",
+      Model.receivers({ receivers: [{ id: "1", name: "Zoë’s iPhone", accepts: true }, { id: "2", name: "", accepts: false }, { id: "x", name: "No" }, null, "1"] }),
+      [{ id: "1", name: "Zoë’s iPhone", accepts: true }, { id: "2", name: "iPhone", accepts: false }])
+    const waiting = Model.sendLive({ state: "asking", to: "Zoë’s iPhone" }, ["/a/<b>.jpg"], ["c"])
+    check("waiting for an answer, with Cancel, until it comes", [waiting.summary, waiting.body, waiting.urgency, waiting.buttons],
+      ["Waiting for “Zoë’s iPhone” to accept", "&lt;b&gt;.jpg", 2, [{ says: "Cancel", argv: ["c"] }]])
+    check("sending, its bar in steps of 5", [Model.sendLive({ state: "sending", to: "", sent: 3, bytes: 10 }, [], ["c"]).summary,
+      Model.sendLive({ state: "sending", sent: 3, bytes: 10 }, [], ["c"]).progress, Model.sendLive({ state: "looking" }, [], ["c"])],
+      ["Sending to the iPhone", 30, null])
+    const ends = ["sent", "declined", "failed", "cancelled"].map(state => Model.sendEnd({ state: state, to: "Bob", why: "It broke." }, ["/a/b.jpg"]))
+    check("how a send ended, each on its own; nothing for one the user stopped",
+      ends.map(end => end && [end.summary, end.body, end.sends]),
+      [["Sent to “Bob”", "b.jpg", true], ["“Bob” declined", "b.jpg", true], ["AirDrop couldn’t send", "It broke.", true], null])
+    check("nobody nearby: what the iPhone needs, and who takes AirDrop from its contacts only",
+      [Model.sendEnd({ state: "nobody", refused: [] }, []).body, Model.sendEnd({ state: "nobody", refused: ["Bob"] }, []).body,
+        Model.sendEnd({ state: "declined" }, []).summary, Model.sendEnd({ state: "failed" }, []).body],
+      [Model.EVERYONE, "“Bob” takes AirDrop from its contacts only. " + Model.EVERYONE, "The iPhone declined", "It would not say why."])
+
     says.setText(JSON.stringify({ state: "waiting", name: "Nova", seen: false, ends: 0 }) + "\n")
   }
 
@@ -386,7 +412,106 @@ ShellRoot {
         toggle.close()
         later(100, function () {
           check("and the menu's toggle switches it off as well", asks().slice(before + 1), ["nova-airdrop off"])
-          finish()
+          fourteenth()
+        })
+      })
+    })
+  }
+
+  readonly property string zoe: "Zoë’s iPhone"
+  readonly property string listing: JSON.stringify({ state: "looking", receivers: [{ id: "1", name: zoe, model: "iPhone15,2", accepts: true },
+    { id: "2", name: "Bob", model: "", accepts: false }], bluetooth: "" })
+  readonly property string cancelling: JSON.stringify(["nova-shell", "-q", "airdrop", "cancelSend"])
+
+  FileView {
+    id: sendSays
+    path: test.home + "/send-says"
+    printErrors: false
+  }
+
+  FileView {
+    id: sendAfter
+    path: test.home + "/send-after"
+    printErrors: false
+  }
+
+  // Sending from Files: the window, a pick, and the notifications after it.
+  function fourteenth() {
+    airdrop.told('{"state":"off"}')
+    sendSays.setText('{"state":"starting"}\n' + listing + "\n")
+    sendAfter.setText([JSON.stringify({ state: "asking", to: zoe }), "pause",
+      JSON.stringify({ state: "sending", to: zoe, sent: 1000000, bytes: 2000000 }), "pause",
+      JSON.stringify({ state: "sent", to: zoe, bytes: 2000000, seconds: 2 })].join("\n") + "\n")
+    later(300, function () {
+      check("what is not a whole path is not sent", airdrop.send(["IMG_0001.JPG"]), "Nothing to send: give whole paths.")
+      const before = asks().length
+      check("a send starts", airdrop.send(["/home/zoe/IMG_0001.JPG", "/home/zoe/IMG_0002.JPG"]), "ok")
+      check("and its window is up at once, saying what it sends", [airdrop.picking, airdrop.sendWindow.visible, airdrop.sendWindow.what], [true, true, "2 photos"])
+      later(600, function () {
+        check("it is the command's send, the files after its --", asks().slice(before),
+          ["nova-airdrop send --json -- /home/zoe/IMG_0001.JPG /home/zoe/IMG_0002.JPG"])
+        check("the window lists those nearby, and who takes AirDrop from its contacts only", airdrop.sendWindow.receivers,
+          [{ id: "1", name: zoe, accepts: true }, { id: "2", name: "Bob", accepts: false }])
+        check("one send at a time", airdrop.send(["/home/zoe/a.jpg"]), "AirDrop is sending something already.")
+        // Bob takes AirDrop from his contacts only: picking him does nothing.
+        airdrop.sendWindow.pick(1)
+        airdrop.sendWindow.pick(0)
+        later(500, function () {
+          check("the one clicked is the one asked", asks().slice(before + 1), ["nova-airdrop told to 1"])
+          check("and the window goes", [airdrop.picking, airdrop.sendWindow.visible], [false, false])
+          const asking = lastNote()
+          check("waiting for the answer is a notification that stays, with Cancel", [asking.summary, asking.body, asking.hints.urgency, asking.hints["nova-buttons"]],
+            ["Waiting for “" + zoe + "” to accept", "2 photos", "2", JSON.stringify([{ says: "Cancel", argv: JSON.parse(cancelling) }])])
+          later(1000, function () {
+            const going = lastNote()
+            check("sending, with its bar, in the same place", [going.summary, going.hints.value, going.replaces > 0, going.replaces === airdrop.sendLiveId],
+              ["Sending to “" + zoe + "”", "50", true, true])
+            later(1200, function () {
+              const sent = lastNote()
+              check("sent, on its own, in the sending's place", [sent.summary, sent.body, sent.hints.urgency, sent.replaces === going.replaces, airdrop.sendLiveId],
+                ["Sent to “" + zoe + "”", "2 photos", "1", true, 0])
+              fifteenth()
+            })
+          })
+        })
+      })
+    })
+  }
+
+  // Cancelled while it looks; ended with nobody; ended without a word.
+  function fifteenth() {
+    sendSays.setText(JSON.stringify({ state: "looking", receivers: [], bluetooth: "Bluetooth is off. It wakes the iPhone's AirDrop: switch it on." }) + "\n")
+    sendAfter.setText("")
+    later(300, function () {
+      const before = asks().length, noted = notes().length
+      airdrop.send(["/home/zoe/notes.txt"])
+      later(500, function () {
+        check("with nobody to send to, the window says what the iPhone needs, and why Bluetooth cannot wake it",
+          [airdrop.sendWindow.anyone, airdrop.sendWindow.bluetooth], [false, "Bluetooth is off. It wakes the iPhone's AirDrop: switch it on."])
+        airdrop.sendWindow.dismissed()
+        later(500, function () {
+          check("Escape or Cancel stops the send", asks().slice(before + 1), ["nova-airdrop told cancel"])
+          check("and nothing is said of what the user did", [notes().length, airdrop.picking, airdrop.sending], [noted, false, false])
+          sendSays.setText(JSON.stringify({ state: "looking", receivers: [], bluetooth: "" }) + "\n" + JSON.stringify({ state: "nobody", refused: ["Bob"] }) + "\n")
+          later(300, function () {
+            airdrop.send(["/home/zoe/notes.txt"])
+            later(600, function () {
+              check("nobody to send to: said, with what the iPhone needs", [lastNote().summary, lastNote().body, airdrop.picking],
+                ["No one nearby", "“Bob” takes AirDrop from its contacts only. " + Model.EVERYONE, false])
+              sendSays.setText(listing + "\n")
+              later(300, function () {
+                airdrop.send(["/home/zoe/notes.txt"])
+                later(400, function () {
+                  airdrop.pick("1")
+                  later(900, function () {
+                    check("a send that ends without a word has failed", [lastNote().summary, lastNote().body, airdrop.sendEnded],
+                      ["AirDrop couldn’t send", "It would not say why.", true])
+                    finish()
+                  })
+                })
+              })
+            })
+          })
         })
       })
     })

@@ -21,6 +21,13 @@ import "AirDropModel.js" as Model
 // when its share sheet shows AirDrop and when it closes, and this switches
 // AirDrop on and off by that, while the computer is unlocked
 // (Model.doorbell).
+//
+// Sending: Files' Open With → AirDrop (`nova airdrop send --window`) calls
+// the IPC's send with the files, and a window lists the iPhones nearby as
+// `nova airdrop send --json` says they appear (SendWindow.qml). The one
+// clicked is asked to take the files; waiting for its answer, the sending
+// and how it ended are notifications, the first two with Cancel. The command
+// switches AirDrop on for the send if it is off, and off again after.
 Item {
   id: airdrop
 
@@ -192,19 +199,130 @@ Item {
     }
   }
 
+  // ---- sending ----------------------------------------------------------------
+
+  // The files of the send under way, whole paths.
+  property var sendPaths: []
+  // What the send last said.
+  property var sendSaid: ({ state: "off" })
+  // The window is up: the send is looking for someone to send to.
+  property bool picking: false
+  // The receivers its last looking line listed, and why Bluetooth cannot wake an iPhone ("" while it does).
+  property var receivers: []
+  property string bluetooth: ""
+  // The send has said how it ended.
+  property bool sendEnded: true
+  readonly property bool sending: sender.running
+  readonly property var cancelling: ["nova-shell", "-q", "airdrop", "cancelSend"]
+
+  // A send of these files: "ok", or why not.
+  function send(paths) {
+    var files = Model.files(paths)
+    if (files.length === 0) return "Nothing to send: give whole paths."
+    if (sender.running) {
+      // Over, but the AirDrop it switched on is still going off, the Wi-Fi coming back.
+      if (sendEnded) return "AirDrop is still switching off after the last send: try again in a moment."
+      if (sendSaid.state === "looking" || sendSaid.state === "starting") picking = true
+      return "AirDrop is sending something already."
+    }
+    sendPaths = files
+    sendSaid = { state: "starting" }
+    receivers = []
+    bluetooth = ""
+    sendEnded = false
+    sendLive = null
+    sender.command = [command, "send", "--json", "--"].concat(files)
+    sender.running = true
+    picking = true
+    return "ok"
+  }
+
+  // The receiver picked in the window.
+  function pick(id) {
+    if (!sender.running || !picking) return
+    picking = false
+    sender.write("to " + id + "\n")
+  }
+
+  // Stopped: from the window, or the notification's Cancel.
+  function cancelSend() {
+    picking = false
+    if (sender.running) sender.write("cancel\n")
+  }
+
+  // A line of the send.
+  function sendTold(line) {
+    var next = Model.parse(line)
+    if (!next) return
+    sendSaid = next
+    switch (next.state) {
+    case "starting":
+      break
+    case "looking":
+      receivers = Model.receivers(next)
+      bluetooth = Model.text(next.bluetooth)
+      break
+    case "asking":
+    case "sending":
+      picking = false
+      sendLive = Model.sendLive(next, sendPaths, cancelling)
+      break
+    default:
+      // Its end, whichever.
+      picking = false
+      sendEnded = true
+      sendLive = null
+      tell(Model.sendEnd(next, sendPaths))
+    }
+  }
+
+  Process {
+    id: sender
+    stdinEnabled: true
+    stdout: SplitParser {
+      onRead: function (line) { airdrop.sendTold(line) }
+    }
+    // Its last line may come in a moment after: a send that ends without
+    // one is said to have failed only then.
+    onExited: unended.restart()
+  }
+
+  Timer {
+    id: unended
+    interval: 400
+    onTriggered: if (!airdrop.sendEnded && !sender.running) airdrop.sendTold('{"state":"failed","why":""}')
+  }
+
+  property alias sendWindow: sendWindow
+  SendWindow {
+    id: sendWindow
+    opened: airdrop.picking
+    what: Model.sending(airdrop.sendPaths)
+    receivers: airdrop.receivers
+    bluetooth: airdrop.bluetooth
+    starting: airdrop.sendSaid.state === "starting"
+    onPicked: function (id) { airdrop.pick(id) }
+    onDismissed: airdrop.cancelSend()
+  }
+
   // ---- notifications ------------------------------------------------------
 
   // The notification of what is under way, an offer or a transfer: `live` is
   // what it should say, null for none. It is sent one call at a time, each
   // in place of the last under its id, and what it says changes only as
-  // often as a call can go: the last word wins.
+  // often as a call can go: the last word wins. A send has one of its own
+  // (sendLive), beside it.
   property var live: null
   property int liveId: 0
   property string liveSent: ""
+  property var sendLive: null
+  property int sendLiveId: 0
+  property string sendLiveSent: ""
   // Notifications that stand on their own once sent, in order: what came in,
-  // a failure, a start refused. The first takes the live one's place. One
-  // whose photo's smaller copy is still being made is `waiting`: it, what
-  // comes after it and the live one, which it takes the place of, wait.
+  // a failure, a start refused, how a send ended. The first takes the live
+  // one's place (the send's, for a send's: `sends`). One whose photo's
+  // smaller copy is still being made is `waiting`: it, what comes after it
+  // and the live ones wait.
   property var finals: []
   // The copies, in the user's runtime folder, each under a name of its own
   // (an image shown is cached by its name); the notifications keep a copy of
@@ -213,6 +331,7 @@ Item {
   readonly property string pictures: runtime + "/nova/airdrop-pictures"
 
   onLiveChanged: Qt.callLater(post)
+  onSendLiveChanged: Qt.callLater(post)
 
   function tell(notice) {
     if (!notice) return
@@ -263,23 +382,35 @@ Item {
       var next = finals[0]
       finals = finals.slice(1)
       notifier.isFinal = true
-      notifier.send(Model.notify(next, liveId, glyph))
+      notifier.sends = next.sends === true
+      notifier.send(Model.notify(next, notifier.sends ? sendLiveId : liveId, glyph))
       return
     }
     var want = live ? JSON.stringify(live) : ""
-    if (want === liveSent) return
-    liveSent = want
-    if (want === "") {
-      var id = liveId
-      liveId = 0
-      if (id > 0) {
-        notifier.isFinal = false
-        notifier.send(Model.closing(id))
-      }
+    if (want !== liveSent) {
+      liveSent = want
+      update(false, want, live, liveId)
       return
     }
+    want = sendLive ? JSON.stringify(sendLive) : ""
+    if (want !== sendLiveSent) {
+      sendLiveSent = want
+      update(true, want, sendLive, sendLiveId)
+    }
+  }
+
+  // A live notification, the receiver's or the send's (`sends`), as it is to be now.
+  function update(sends, want, notice, id) {
     notifier.isFinal = false
-    notifier.send(Model.notify(live, liveId, glyph))
+    notifier.sends = sends
+    if (want !== "") {
+      notifier.send(Model.notify(notice, id, glyph))
+      return
+    }
+    if (sends) sendLiveId = 0
+    else liveId = 0
+    if (id > 0) notifier.send(Model.closing(id))
+    else post()
   }
 
   // One call to the notifications at a time. busctl answers Notify with the
@@ -287,6 +418,7 @@ Item {
   Process {
     id: notifier
     property bool isFinal: false
+    property bool sends: false
     property int code: -1
     property var output: null
 
@@ -316,10 +448,14 @@ Item {
     notifier.code = -1
     notifier.output = null
     // A final notification is on its own now; a live one is replaced next time.
-    if (notifier.isFinal) {
+    if (notifier.isFinal && notifier.sends) {
+      sendLiveId = 0
+      sendLiveSent = ""
+    } else if (notifier.isFinal) {
       liveId = 0
       liveSent = ""
-    } else if (id > 0) liveId = id
+    } else if (id > 0 && notifier.sends) sendLiveId = id
+    else if (id > 0) liveId = id
     Qt.callLater(post)
   }
 
@@ -389,5 +525,13 @@ Item {
       return "ok"
     }
     function state(): string { return airdrop.starting && airdrop.said.state === "off" ? "starting" : airdrop.said.state }
+    // The files to send, a JSON list of whole paths, percent-encoded (qs's
+    // command line would take a comma or brackets in it for a list of its
+    // own): the window that lists the iPhones nearby.
+    function send(paths: string): string {
+      var files = Model.sendable(paths)
+      return files === null ? "send wants a JSON list of paths, percent-encoded" : airdrop.send(files)
+    }
+    function cancelSend(): string { airdrop.cancelSend(); return "ok" }
   }
 }

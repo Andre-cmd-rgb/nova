@@ -4,7 +4,8 @@
 // made of it. The states are the daemon's (waiting, asked, receiving,
 // received, links, declined, failed, off). The notifications are as on a
 // Mac: an offer, with Decline and Accept; a transfer under way, with its
-// bar; what came in, which a click opens; a failure, in a sentence.
+// bar; what came in, which a click opens; a failure, in a sentence. A send's
+// are at the end.
 //
 // Everything a sender says of itself (its name, its files' names, a link) is
 // text to show and nothing else: a notification's body is markup to the
@@ -212,4 +213,93 @@ function doorbell(s) {
   if (s.locked) return "off"
   // The sheet closed: off, but not from under an offer or a transfer, which end by themselves.
   return !s.near && s.state !== "asked" && s.state !== "receiving" ? "off" : ""
+}
+
+// ---- sending ---------------------------------------------------------------
+//
+// `nova airdrop send --json` says a send's lines (the daemon's, src/airdrop
+// send.rs): starting, while it switches AirDrop on; looking, with the
+// receivers nearby; asking, sending; and its end: sent, declined, failed,
+// nobody or cancelled. The window lists the receivers; the rest is said in
+// notifications, as a Mac's share sheet says it under the iPhone.
+
+// The one setting of an iPhone's that takes AirDrop from this computer, which
+// is nobody's contact.
+var EVERYONE = "On the iPhone, choose Everyone for 10 Minutes (Settings, General, AirDrop)."
+
+// The IPC's send: a JSON list, percent-encoded. Null for anything else.
+function sendable(words) {
+  try {
+    var paths = JSON.parse(decodeURIComponent(text(words)))
+    return Array.isArray(paths) ? paths : null
+  } catch (e) {
+    return null
+  }
+}
+
+// What can be sent: paths, whole ones.
+function files(paths) {
+  return list(paths).filter(function (path) { return typeof path === "string" && path.charAt(0) === "/" })
+}
+
+// What is sent, in a few words: a file by its name, more as "3 photos".
+function sending(paths) {
+  var names = list(paths).map(name).filter(function (file) { return file !== "" })
+  if (names.length === 1) return names[0]
+  return what({ files: names.map(function (file) { return { name: file } }) })
+}
+
+// A receiver by its name, in quotes as a Mac has it.
+function receiver(to) {
+  var name = text(to)
+  return name !== "" ? "“" + name + "”" : "the iPhone"
+}
+
+// The receivers of a looking line, for the window: each its id, its name, and
+// whether it takes AirDrop from this computer (one that takes it from its
+// contacts only does not).
+function receivers(state) {
+  return list(state && state.receivers).filter(function (r) {
+    return r && typeof r === "object" && /^[0-9]+$/.test(text(r.id))
+  }).map(function (r) {
+    return { id: text(r.id), name: text(r.name) || "iPhone", accepts: r.accepts === true }
+  })
+}
+
+// The send under way, a notification with Cancel (`cancel`, the command that
+// stops it): waiting for the person there to accept, then sending, with its
+// bar in steps of 5 %. Null for anything else.
+function sendLive(state, files, cancel) {
+  var buttons = [{ says: "Cancel", argv: cancel }]
+  var body = escaped(sending(files))
+  if (state.state === "asking") {
+    return { summary: "Waiting for " + receiver(state.to) + " to accept", body: body, urgency: CRITICAL, buttons: buttons }
+  }
+  if (state.state === "sending") {
+    var all = count(state.bytes)
+    var share = all > 0 ? Math.min(1, count(state.sent) / all) : 0
+    return { summary: "Sending to " + receiver(state.to), body: body, urgency: CRITICAL, buttons: buttons, progress: Math.floor(share * 20) * 5 }
+  }
+  return null
+}
+
+// How a send ended, a notification that stands on its own (`sends`: it takes
+// the place of the send's live one); null for a send the user stopped.
+function sendEnd(state, files) {
+  var body = escaped(sending(files))
+  switch (state.state) {
+  case "sent":
+    return { summary: "Sent to " + receiver(state.to), body: body, urgency: NORMAL, sends: true }
+  case "declined":
+    var who = receiver(state.to)
+    return { summary: who.charAt(0).toUpperCase() + who.slice(1) + " declined", body: body, urgency: NORMAL, sends: true }
+  case "nobody":
+    var refused = list(state.refused).map(text).filter(function (name) { return name !== "" })
+    var why = refused.length > 0 ? receiver(refused[0]) + " takes AirDrop from its contacts only. " + EVERYONE : EVERYONE
+    return { summary: "No one nearby", body: escaped(why.charAt(0).toUpperCase() + why.slice(1)), urgency: NORMAL, sends: true }
+  case "cancelled":
+    return null
+  default:
+    return { summary: "AirDrop couldn’t send", body: escaped(text(state.why) || "It would not say why."), urgency: NORMAL, sends: true }
+  }
 }

@@ -1,11 +1,15 @@
-# AirDrop: receiving from iPhones nearby (docs/airdrop.md). nova-airdropd is
-# the receiver, an AWDL node on the air and AirDrop's HTTPS on top;
-# nova-airdrop is `nova airdrop`, which switches it and answers what it asks;
+# AirDrop: receiving from iPhones nearby and sending to them (docs/airdrop.md).
+# nova-airdropd is the receiver and the sender, an AWDL node on the air and
+# AirDrop's HTTPS on top; nova-airdrop is `nova airdrop`, which switches it,
+# answers what it asks and hands it what to send;
 # nova-airdrop-radio lends it the Wi-Fi card and takes it back, as root, around
 # nova-airdrop@.service; nova-airdrop-apply is the root half of on and off,
 # through pkexec. nova-airdrop-bell is AirDrop's doorbell, Bluetooth listening
 # for the user's iPhone, in nova-airdrop-bell@.service. The three programs are
-# built by the root cargo workspace.
+# built by the root cargo workspace. nova-airdrop.desktop puts AirDrop in
+# Files' Open With for photos, videos and music: the types Nova gives an app
+# of its own (data/mime/mimeapps.list), so that AirDrop is never what opens a
+# file; and not in the launcher.
 #
 # The service is started for whoever asks and enabled for nobody: AirDrop is
 # on while it is wanted, since the Wi-Fi is off the network meanwhile. The
@@ -27,3 +31,4 @@ install-airdrop:
 	install -Dm644 $(AIRDROP_SRC)/systemd/nova-airdrop@.service $(DESTDIR)$(SYSTEMD_SYSTEM)/nova-airdrop@.service
 	install -Dm644 $(AIRDROP_SRC)/systemd/nova-airdrop-bell@.service $(DESTDIR)$(SYSTEMD_SYSTEM)/nova-airdrop-bell@.service
 	install -Dm644 $(AIRDROP_SRC)/systemd/nova-airdrop-bell-wake@.service $(DESTDIR)$(SYSTEMD_SYSTEM)/nova-airdrop-bell-wake@.service
+	install -Dm644 $(AIRDROP_SRC)/nova-airdrop.desktop $(DESTDIR)$(PREFIX)/share/applications/nova-airdrop.desktop

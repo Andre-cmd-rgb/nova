@@ -6,6 +6,10 @@
 # Every other call is noted in $HOME/stub-calls, as `record` notes one, and
 # `on` then fails with the words in $HOME/airdrop-refuses, if the test wrote
 # any.
+# `send --json` says the lines in $HOME/send-says, then notes each line it
+# is told (`nova-airdrop told …`): to `cancel` it says cancelled, to `to <id>`
+# the lines in $HOME/send-after, a second's wait for each that is `pause`;
+# either is its end, as is a last line among the first.
 if [ "$1 $2" = "bell watch" ]; then
   cat "$HOME/bell-says" 2>/dev/null
   exec sleep 60
@@ -20,5 +24,28 @@ for word in "$@"; do printf ' %s' "$word" >>"$HOME/stub-calls"; done
 printf '\n' >>"$HOME/stub-calls"
 if [ "$1" = on ] && [ -s "$HOME/airdrop-refuses" ]; then
   cat "$HOME/airdrop-refuses" >&2
+  exit 1
+fi
+if [ "$1 $2" = "send --json" ]; then
+  cat "$HOME/send-says" 2>/dev/null
+  if grep -Eq '"state":"(sent|declined|failed|nobody|cancelled)"' "$HOME/send-says" 2>/dev/null; then
+    exit 1
+  fi
+  while IFS= read -r line; do
+    printf 'nova-airdrop told %s\n' "$line" >>"$HOME/stub-calls"
+    case $line in
+      cancel)
+        echo '{"state":"cancelled"}'
+        exit 1
+        ;;
+      "to "*)
+        [ -f "$HOME/send-after" ] || exit 0
+        while IFS= read -r said; do
+          if [ "$said" = pause ]; then sleep 1; else printf '%s\n' "$said"; fi
+        done <"$HOME/send-after"
+        exit 0
+        ;;
+    esac
+  done
   exit 1
 fi

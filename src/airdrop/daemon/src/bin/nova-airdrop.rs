@@ -422,6 +422,19 @@ fn beside(name: &str) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
+/// What the shell's IPC is given: a JSON list, percent-encoded, as qs's command line takes a
+/// comma or brackets in an argument for a list of its own.
+fn encoded(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                char::from(b).to_string()
+            }
+            b => format!("%{b:02X}"),
+        })
+        .collect()
+}
+
 /// The files in the shell's window: Files' Open With has no terminal.
 fn window(files: &[PathBuf]) -> ExitCode {
     let here = std::env::current_dir().unwrap_or_default();
@@ -441,7 +454,7 @@ fn window(files: &[PathBuf]) -> ExitCode {
         };
         paths.push(meet::quoted(path));
     }
-    let paths = format!("[{}]", paths.join(","));
+    let paths = encoded(&format!("[{}]", paths.join(",")));
     match Command::new(beside("nova-shell"))
         .args(["airdrop", "send", &paths])
         .stdout(Stdio::null())
@@ -723,6 +736,14 @@ mod tests {
         assert_eq!(
             opened(Path::new("/dev/null")).unwrap_err(),
             "/dev/null is not a file."
+        );
+    }
+
+    #[test]
+    fn the_shell_is_given_its_list_with_nothing_qs_would_split() {
+        assert_eq!(
+            encoded(r#"["/a b/c,d.jpg","/é%"]"#),
+            "%5B%22/a%20b/c%2Cd.jpg%22%2C%22/%C3%A9%25%22%5D"
         );
     }
 }
