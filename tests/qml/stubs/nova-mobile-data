@@ -1,0 +1,23 @@
+#!/bin/sh
+# nova-mobile-data as Settings' Mobile Data page needs it: `info` answers with
+# what the test wrote to $HOME/md-info; every other command is noted in
+# $HOME/md-ran, a line each, `pin` with what came on its standard input; and
+# `on` fails with the status in $HOME/md-on-status, when it holds one, and
+# the words in $HOME/md-on-error.
+case $1 in
+  info) cat "$HOME/md-info" 2>/dev/null ;;
+  pin)
+    IFS= read -r pin
+    echo "$* stdin=$pin" >>"$HOME/md-ran"
+    ;;
+  on)
+    echo "$*" >>"$HOME/md-ran"
+    status=$(cat "$HOME/md-on-status" 2>/dev/null)
+    if [ -n "$status" ]; then
+      cat "$HOME/md-on-error" >&2
+      exit "$status"
+    fi
+    ;;
+  *) echo "$*" >>"$HOME/md-ran" ;;
+esac
+exit 0

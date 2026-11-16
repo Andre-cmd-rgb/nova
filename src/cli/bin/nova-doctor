@@ -454,11 +454,41 @@ check_devices() {
   if ((audio)) && ! compgen -G "$SYS/class/sound/card*" >/dev/null; then
     report warn "no sound card: the sound hardware has no driver, or no firmware for it" "journalctl -k -b says which"
   fi
-  if ((modem)) && [[ -n $(pacman -T modemmanager 2>/dev/null) ]]; then
-    report warn "the cellular modem has no ModemManager, so mobile data cannot work" "sudo pacman -S modemmanager"
-  elif ((modem)) && ! systemctl is-active --quiet ModemManager.service 2>/dev/null; then
+  if ((modem)) && ! systemctl is-active --quiet ModemManager.service 2>/dev/null; then
     report warn "ModemManager is not running, so mobile data cannot work" "sudo systemctl enable --now ModemManager.service"
   fi
+}
+
+# A cellular modem its maker locked (an FCC lock), which cannot be turned on
+# until something unlocks it. Nova turns on every unlock ModemManager ships
+# (data/network/install.mk); a modem it has none for, or one whose unlock no
+# longer works on newer firmware, needs its maker's own tool, which Nova does
+# not ship: Lenovo's for the modems in its laptops. Said while ModemManager's
+# last try to power it up, this boot, failed as a lock does ("Invalid
+# transition"), from its journal: nothing at all when that cannot be read.
+check_modem_unlock() {
+  local dev id last how
+  local mine=${NOVA_FCC_ADMIN:-/etc/ModemManager/fcc-unlock.d} shipped=${NOVA_FCC_PACKAGE:-/usr/lib/ModemManager/fcc-unlock.d}
+  local available=${NOVA_FCC_AVAILABLE:-/usr/share/ModemManager/fcc-unlock.available.d}
+  for dev in "$SYS"/bus/pci/devices/*; do
+    [[ -r $dev/class && $(<"$dev/class") == 0x0d40* ]] || continue
+    id=$(<"$dev/vendor"):$(<"$dev/device")
+    id=${id//0x/}
+    last=$(journalctl -b -u ModemManager.service -q --no-pager -o cat \
+      -g "couldn't enable interface: 'Invalid transition'|state changed \(enabling -> enabled\)" 2>/dev/null | tail -n 1)
+    [[ $last == *"Invalid transition"* ]] || continue
+    how="its maker's unlock tool turns it on"
+    [[ $(cat "$SYS/class/dmi/id/sys_vendor" 2>/dev/null) != LENOVO ]] ||
+      how="Lenovo's unlock tool turns it on: https://github.com/lenovo/lenovo-wwan-unlock"
+    if [[ ! -e $mine/$id && ! -e $shipped/$id && -e $available/$id ]]; then
+      report warn "the cellular modem ($id) is locked by its maker, and ModemManager's unlock for it is not turned on" \
+        "sudo ln -s $available/$id $mine/"
+    elif [[ -e $mine/$id || -e $shipped/$id ]]; then
+      report warn "the cellular modem ($id) is locked by its maker, and ModemManager's unlock for it did not work" "$how"
+    else
+      report warn "the cellular modem ($id) is locked by its maker, and ModemManager has no unlock for it" "$how"
+    fi
+  done
 }
 
 # An Intel MIPI camera: an IPU6 or IPU7, by the device ids the kernel's
@@ -784,6 +814,7 @@ check_hardware
 check_secure_boot
 check_graphics
 check_devices
+check_modem_unlock
 check_camera
 check_firmware
 check_sleep

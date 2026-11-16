@@ -956,8 +956,8 @@ power-profiles-daemon writes, so the menu and Settings set it with nothing in
 between; fact 4 still holds, as it reads and never writes.
 
 The 5G modem is already as off as it goes unless mobile data is set up: the
-bar's mobile data widget parks a modem with no SIM or no ModemManager and
-soft-blocks its radio, and its PCI function runtime-suspends — 63 minutes of a
+bar's mobile data widget parks a modem with no SIM, or stops one that cannot be
+turned on, and soft-blocks its radio, and its PCI function runtime-suspends — 63 minutes of a
 64-minute boot. `lspci -vv` wakes it to read its config space, which is worth
 knowing before reading `runtime_status` after it.
 

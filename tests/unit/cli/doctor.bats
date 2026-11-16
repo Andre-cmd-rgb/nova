@@ -426,15 +426,57 @@ working_laptop() {
   [[ $output != *"no Wi-Fi"* && $output != *"no sound card"* ]]
 }
 
-@test "parts: a cellular modem without ModemManager installed, or not running, warns" {
+@test "parts: a cellular modem with ModemManager not running warns" {
   pci 0000:08:00.0 0x0d4000 0x105b 0xe0ab mhi-pci-generic
   run doctor
   [[ $output != *"ModemManager"* ]]
   MM_STOPPED=1 run doctor
   [[ $output == *"warn  ModemManager is not running, so mobile data cannot work"* ]]
   [[ $output == *"sudo systemctl enable --now ModemManager.service"* ]]
-  NOT_INSTALLED=modemmanager run doctor
-  [[ $output == *"warn  the cellular modem has no ModemManager, so mobile data cannot work"* ]]
+}
+
+# ModemManager's journal this boot, as $SCRATCH/mm-journal holds it; the
+# stub greps it the way journalctl -g would.
+mm_journal() { # line...
+  printf '%s\n' "$@" >"$SCRATCH/mm-journal"
+  stub journalctl 'for a; do [[ $prev == -g ]] && grep -E -- "$a" "$SCRATCH/mm-journal"; prev=$a; done; exit 0'
+}
+
+@test "parts: a modem locked by its maker, with no unlock or one that failed, is said, Lenovo's with its tool" {
+  export NOVA_FCC_ADMIN="$SCRATCH/fcc-admin" NOVA_FCC_PACKAGE="$SCRATCH/fcc-package" NOVA_FCC_AVAILABLE="$SCRATCH/fcc-available"
+  mkdir -p "$NOVA_FCC_ADMIN" "$NOVA_FCC_PACKAGE" "$NOVA_FCC_AVAILABLE" "$NOVA_SYS/class/dmi/id"
+  pci 0000:08:00.0 0x0d4000 0x14c3 0x4d75 mtk_t7xx
+  echo LENOVO >"$NOVA_SYS/class/dmi/id/sys_vendor"
+  mm_journal "[modem0] state changed (disabled -> enabling)" "[modem0] couldn't enable interface: 'Invalid transition'"
+  run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"warn  the cellular modem (14c3:4d75) is locked by its maker, and ModemManager has no unlock for it"* ]]
+  [[ $output == *"https://github.com/lenovo/lenovo-wwan-unlock"* ]]
+  touch "$SCRATCH/unlock" && ln -sfn "$SCRATCH/unlock" "$NOVA_FCC_PACKAGE/14c3:4d75"
+  run doctor
+  [[ $output == *"warn  the cellular modem (14c3:4d75) is locked by its maker, and ModemManager's unlock for it did not work"* ]]
+}
+
+@test "parts: a locked modem whose unlock ModemManager ships, not turned on, is said with the link that turns it on" {
+  export NOVA_FCC_ADMIN="$SCRATCH/fcc-admin" NOVA_FCC_PACKAGE="$SCRATCH/fcc-package" NOVA_FCC_AVAILABLE="$SCRATCH/fcc-available"
+  mkdir -p "$NOVA_FCC_ADMIN" "$NOVA_FCC_PACKAGE" "$NOVA_FCC_AVAILABLE"
+  pci 0000:08:00.0 0x0d4000 0x105b 0xe0ab mhi-pci-generic
+  touch "$NOVA_FCC_AVAILABLE/105b:e0ab"
+  mm_journal "[modem0] couldn't enable interface: 'Invalid transition'"
+  run doctor
+  [[ $output == *"warn  the cellular modem (105b:e0ab) is locked by its maker, and ModemManager's unlock for it is not turned on"* ]]
+  [[ $output == *"sudo ln -s $NOVA_FCC_AVAILABLE/105b:e0ab $NOVA_FCC_ADMIN/"* ]]
+  [[ $output != *"lenovo-wwan-unlock"* ]]
+}
+
+@test "parts: a modem that came on after a failed try, or never failed, says nothing" {
+  pci 0000:08:00.0 0x0d4000 0x105b 0xe0ab mhi-pci-generic
+  mm_journal "[modem0] couldn't enable interface: 'Invalid transition'" "[modem0] state changed (enabling -> enabled)"
+  run doctor
+  [[ $output != *"locked by its maker"* ]]
+  mm_journal "[modem0] state changed (enabling -> enabled)"
+  run doctor
+  [[ $output != *"locked by its maker"* ]]
 }
 
 @test "parts: an Intel MIPI camera with no video device, or no libcamera for apps to see it" {

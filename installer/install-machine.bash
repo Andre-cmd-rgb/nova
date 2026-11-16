@@ -79,12 +79,12 @@ portable_packages() {
   printf '%s\n' intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" "${GPU_NOUVEAU[@]}"
 }
 
-# Packages this hardware needs, from the CPU and the display controllers,
-# modem and camera in sysfs (never lspci, which wakes a sleeping GPU). The
+# Packages this hardware needs, from the CPU, and the display controllers
+# and camera in sysfs (never lspci, which wakes a sleeping GPU). The
 # model's own profile adds to this; see profile_packages. A portable install's
 # are portable_packages.
 hardware_packages() {
-  local kernel=$1 dev vendor device dgpu=0 igpu=0 modem=0 camera=0
+  local kernel=$1 dev vendor device dgpu=0 igpu=0 camera=0
   if ((PORTABLE)); then
     portable_packages
     return 0
@@ -95,9 +95,6 @@ hardware_packages() {
   esac
   for dev in "$PCI_DEVICES"/*; do
     [[ -r $dev/class ]] || continue
-    # A cellular modem on PCIe: ModemManager reads its SIM and runs it. With
-    # no SIM, Nova keeps it switched off (shell/plugins/mobile-data).
-    if [[ $(<"$dev/class") == 0x0d40* ]]; then modem=1; continue; fi
     vendor=$(<"$dev/vendor")
     if [[ $vendor == 0x8086 && $IPU_IDS == *" $(<"$dev/device") "* ]]; then camera=1; continue; fi
     [[ $(<"$dev/class") == 0x03* ]] || continue
@@ -124,7 +121,6 @@ hardware_packages() {
   # NVIDIA card has VA-API pointed at NVIDIA's driver, so it is always there.
   if ((dgpu && igpu)); then echo nvidia-prime; fi
   if ((dgpu)); then echo libva-nvidia-driver; fi
-  if ((modem)); then echo modemmanager; fi
   if ((camera)); then printf '%s\n' "${CAMERA_IPU[@]}"; fi
 }
 
@@ -162,7 +158,7 @@ every_package() {
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
     printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" "${GPU_NOUVEAU[@]}" \
-      nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver modemmanager "${CAMERA_IPU[@]}"
+      nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver "${CAMERA_IPU[@]}"
     for list in "$SHARE"/hardware/*/packages; do
       [[ -r $list ]] || continue
       sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"

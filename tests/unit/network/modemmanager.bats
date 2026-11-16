@@ -45,3 +45,16 @@ modem() {
   "$helper"
   [ ! -e "$CALLS" ]
 }
+
+@test "every FCC unlock ModemManager ships is turned on, by vid:pid, and none of its vendor scripts" {
+  local available=$SCRATCH/available root=$SCRATCH/root enabled
+  mkdir -p "$available"
+  printf '#!/bin/sh\n' >"$available/105b"
+  ln -s 105b "$available/105b:e0ab"
+  ln -s 105b "$available/105b:e0c3"
+  (cd "$REPO_ROOT" && make -s install-network DESTDIR="$root" MM_FCC_AVAILABLE="$available" >/dev/null)
+  enabled=$root/usr/lib/ModemManager/fcc-unlock.d
+  [ "$(find "$enabled" -mindepth 1 -printf '%f\n' | sort | paste -sd ' ')" = "105b:e0ab 105b:e0c3" ]
+  # Pointing where the scripts are on the computer it is installed on.
+  [ "$(readlink "$enabled/105b:e0ab")" = /usr/share/ModemManager/fcc-unlock.available.d/105b:e0ab ]
+}

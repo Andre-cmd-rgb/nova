@@ -24,8 +24,15 @@ MODEM_SEEN="$STATE_DIR/seen"
 SIM_SEEN="$STATE_DIR/sim-seen"
 # A modem that has never had a SIM is switched off and left out of the bar,
 # for the power it saves, until `check` (Settings > Mobile Data) finds one.
-# The file holds why: nosim, or no-modemmanager when nothing can ask.
+# The file holds why: nosim.
 PARKED="$STATE_DIR/parked"
+# Mobile data switched off here because the modem could not be turned on, so
+# that nothing asks it again every two seconds (watch_enabling). The file
+# holds why; the switch tries again.
+STOPPED="$STATE_DIR/stopped"
+# Since when, and when last, the modem was seen on its way up and not getting
+# there: "<since> <last>", in seconds of the epoch.
+TRYING="$STATE_DIR/trying"
 # Text messages, once they are off the modem and safely somewhere else.
 INBOX="$STATE_DIR/inbox"
 SMS_LOCK="$STATE_DIR/.sms.lock"
@@ -38,8 +45,12 @@ LEGACY_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/nova-mobile"
 # Testing seam; there is no reason to set this in normal use.
 NET_DIR="${NOVA_MOBILE_NET_DIR:-/sys/class/net}"
 
+# Testing seam, as is NOVA_MOBILE_NOW for the clock.
+PROVIDERS="${NOVA_MOBILE_PROVIDERS:-/usr/share/mobile-broadband-provider-info/serviceproviders.xml}"
+
 DUMP="" IDX=""
 STATE=absent HW=no MANAGED=no PROFILE_NAME=""
+MODEM_STATE="" DEVICE_STATE="" WHY="" UNLOCK="" PIN_TRIES=""
 OPERATOR="" TECH="" SIGNAL=0 IFACE="" IPADDR=""
 USED_BYTES=0 PERIOD_START="" PERIOD_NEXT=""
 
@@ -192,15 +203,63 @@ parked_reason() {
 }
 
 # The first start decides, once, and only for a modem that has never had a
-# SIM: no SIM in the slot, or no ModemManager to ask, and it is switched off.
-# A radio somebody turned off is no answer, and nor is a modem still on its
-# way up. A SIM seen once means the decision is never made again.
+# SIM: no SIM in the slot, and it is switched off. A radio somebody turned off
+# is no answer, and nor is a modem still on its way up. A SIM seen once means
+# the decision is never made again.
 decide_first_start() {
   [[ -e $SIM_SEEN || $HW != yes ]] && return 0
-  case $STATE in
-  nosim) park nosim ;;
-  absent | starting) have mmcli || park no-modemmanager ;;
-  esac
+  [[ $STATE != nosim ]] || park nosim
+  return 0
+}
+
+# A modem ModemManager cannot power up falls back to disabled, with its radio
+# on. NetworkManager takes that for somebody turning it off, so it counts no
+# failure and asks again at once: every two seconds for as long as the radio
+# is on (an FCC lock nothing unlocked did that on a P1 all day, 65,000 times).
+# A modem seen like that for a minute is switched off here, the way the
+# switch does it, and said to be one that could not be turned on; the switch
+# tries again. A gap of minutes between two looks (a sleep, a shell that was
+# not running) starts the minute again.
+ENABLE_GRACE=60
+watch_enabling() {
+  local since=0 last=0 now=${NOVA_MOBILE_NOW:-$EPOCHSECONDS}
+  # On its way up and not there, while NetworkManager has it with the radio
+  # on, which is what keeps asking.
+  if [[ $MODEM_STATE != disabled && $MODEM_STATE != enabling ]] ||
+    [[ -z $DEVICE_STATE || ${DEVICE_STATE%% *} == unavailable || ${DEVICE_STATE%% *} == unmanaged ]]; then
+    rm -f -- "$TRYING"
+    return 0
+  fi
+  [[ -r $TRYING ]] && read -r since last <"$TRYING"
+  [[ $since =~ ^[0-9]+$ && $last =~ ^[0-9]+$ ]] || since=0 last=0
+  ((since > 0 && now - last <= 300)) || since=$now
+  if ((now - since >= ENABLE_GRACE)); then
+    stop_trying noenable
+    return 0
+  fi
+  mkdir -p -- "$STATE_DIR" 2>/dev/null && printf '%s %s\n' "$since" "$now" >"$TRYING" 2>/dev/null
+  return 0
+}
+
+# Mobile data off, as the switch turns it off, and kept so with why.
+stop_trying() { # why
+  mkdir -p -- "$STATE_DIR" 2>/dev/null && printf '%s\n' "$1" >"$STOPPED" 2>/dev/null
+  rm -f -- "$TRYING"
+  if ! nm radio wwan off >/dev/null 2>&1; then
+    have rfkill && rf block wwan >/dev/null 2>&1
+  fi
+  STATE=failed WHY=$1
+  return 0
+}
+
+# ModemManager asked to power the modem up, as NetworkManager asks it. No
+# when it answers that it cannot: "Invalid transition" is how it words the
+# refusal of a modem its maker locked (an FCC lock) that it has no unlock
+# for, over MBIM and QMI alike. Anything else is not this one's to judge.
+modem_powers_up() {
+  local said
+  said=$(mm -m "$IDX" --enable --timeout=30 2>&1) && return 0
+  [[ $said == *"Invalid transition"* || $said == *"power-up"* || $said == *"power up"* ]] && return 1
   return 0
 }
 
@@ -269,7 +328,7 @@ tech_label() {
 
 signal_icon() {
   case $STATE in
-  absent | disabled | locked | searching | nosim | noprofile)
+  absent | disabled | locked | searching | nosim | noprofile | failed | denied)
     printf '\U000F08BF'
     ;;
   *)
@@ -520,16 +579,16 @@ meter_update() {
 read_state() {
   STATE=absent HW=no MANAGED=unknown
   OPERATOR="" TECH="" SIGNAL=0 IFACE="" IPADDR=""
+  MODEM_STATE="" WHY="" UNLOCK="" PIN_TRIES=""
 
   PROFILE_NAME=$(nm_profile)
 
   # Only a device NetworkManager can see but refuses to drive is a problem
   # worth reporting. While the modem is away there is no device at all, and
   # calling that "unmanaged" turns a normal thirty seconds into an alarm.
-  local device_state
-  device_state=$(nm_gsm_device_state)
-  if [[ -n $device_state ]]; then
-    if [[ ${device_state%% *} == unmanaged ]]; then MANAGED=no; else MANAGED=yes; fi
+  DEVICE_STATE=$(nm_gsm_device_state)
+  if [[ -n $DEVICE_STATE ]]; then
+    if [[ ${DEVICE_STATE%% *} == unmanaged ]]; then MANAGED=no; else MANAGED=yes; fi
   fi
 
   if radio_present; then HW=yes; fi
@@ -537,6 +596,17 @@ read_state() {
   if [[ -e $PARKED ]]; then
     STATE=parked
     return 0
+  fi
+
+  # Switched off here because it could not be turned on: said so while it is
+  # off. Turned on since by something else (airplane mode going off, say), it
+  # is a fresh try.
+  if [[ -e $STOPPED ]]; then
+    if radio_blocked; then
+      STATE=failed HW=yes WHY=$(<"$STOPPED")
+      return 0
+    fi
+    rm -f -- "$STOPPED"
   fi
 
   if radio_blocked; then
@@ -577,16 +647,21 @@ read_state() {
     fi
   done < <(kv_list "modem.generic.ports")
 
-  local modem_state sim
-  modem_state=$(kv modem.generic.state)
+  local sim
+  MODEM_STATE=$(kv modem.generic.state)
   sim=$(kv modem.generic.sim)
 
-  case $modem_state in
+  case $MODEM_STATE in
   locked) STATE=locked ;;
-  # An empty slot is where ModemManager gives up on a modem: "failed", with
-  # the reason beside it.
+  # An empty slot, or an eSIM with no plan on it, is where ModemManager gives
+  # up on a modem: "failed", with the reason beside it. So is a SIM it could
+  # not read, and a modem it could not set up.
   failed)
-    if [[ $(kv modem.generic.state-failed-reason) == sim-missing ]]; then STATE=nosim; else STATE=disabled; fi
+    WHY=$(kv modem.generic.state-failed-reason)
+    case $WHY in
+    sim-missing | esim-without-profiles) STATE=nosim ;;
+    *) STATE=failed ;;
+    esac
     ;;
   disabled | disabling) STATE=disabled ;;
   initializing | enabling) STATE=starting ;;
@@ -610,7 +685,22 @@ read_state() {
     STATE=nosim
   fi
 
-  # Nothing to connect with — say so rather than offering a dead switch.
+  # Locked: by its PIN, or after three wrong ones by its PUK, and how many
+  # tries are left, as "sim-pin (3)".
+  if [[ $STATE == locked ]]; then
+    UNLOCK=$(kv modem.generic.unlock-required)
+    local retry
+    while IFS= read -r retry; do
+      [[ $retry =~ ^"$UNLOCK "\(([0-9]+)\)$ ]] && PIN_TRIES=${BASH_REMATCH[1]}
+    done < <(kv_list "modem.generic.unlock-retries")
+  fi
+
+  # On, and turned away by every network it found: the SIM is barred.
+  if [[ $STATE == searching && $(kv modem.3gpp.registration-state) == denied ]]; then
+    STATE=denied
+  fi
+
+  # Nothing to connect with yet: the switch sets it up.
   if [[ -z $PROFILE_NAME && $STATE == disconnected ]]; then
     STATE=noprofile
   fi
@@ -627,6 +717,7 @@ read_state() {
 cmd_info() {
   read_state
   decide_first_start
+  watch_enabling
   # Kept off: airplane mode going off, say, unblocks every radio at once.
   if [[ $STATE == parked ]] && ! radio_blocked; then
     have rfkill && rf block wwan >/dev/null 2>&1
@@ -635,8 +726,13 @@ cmd_info() {
 
   printf 'hw=%s\n' "$HW"
   printf 'state=%s\n' "$STATE"
-  # Why it is off, while it is kept off: nosim or no-modemmanager.
+  # Why it is off, while it is kept off: nosim.
   [[ $STATE != parked ]] || printf 'parked=%s\n' "$(parked_reason)"
+  # Why it failed: noenable (it could not be turned on), or ModemManager's
+  # reason, sim-error say.
+  [[ $STATE != failed ]] || printf 'why=%s\n' "$WHY"
+  # Locked: sim-pin or sim-puk, and the tries left.
+  [[ $STATE != locked ]] || printf 'unlock=%s\npin_tries=%s\n' "$UNLOCK" "$PIN_TRIES"
   printf 'managed=%s\n' "$MANAGED"
   printf 'profile=%s\n' "$PROFILE_NAME"
   printf 'operator=%s\n' "$OPERATOR"
@@ -674,21 +770,27 @@ cmd_info() {
 cmd_status() {
   read_state
   case $STATE in
-  parked)
-    if [[ $(parked_reason) == no-modemmanager ]] && have mmcli; then
-      echo "Off: ModemManager is installed now. Start it ($MM_FIX), then: mobile-data check"
-    elif [[ $(parked_reason) == no-modemmanager ]]; then
-      echo "Off: ModemManager is not installed (sudo pacman -S modemmanager), then: mobile-data check"
-    else
-      echo "Off: no SIM was found. Settings > Mobile Data, or mobile-data check, looks again."
-    fi
-    ;;
+  parked) echo "Off: no SIM was found. Settings > Mobile Data, or mobile-data check, looks again." ;;
   absent) echo "No WWAN modem detected." ;;
   noservice) echo "ModemManager is not running, so the modem cannot be used: $MM_FIX" ;;
   disabled) echo "Mobile data: off" ;;
   nosim) echo "No SIM." ;;
-  locked) echo "SIM locked — PIN required." ;;
-  noprofile) echo "No gsm connection profile — run: mobile-data setup <APN>" ;;
+  failed)
+    if [[ $WHY == sim-error ]]; then
+      echo "The SIM could not be read."
+    else
+      echo "The modem could not be turned on, so mobile data is off; nova doctor says why. mobile-data on tries again."
+    fi
+    ;;
+  locked)
+    if [[ $UNLOCK == sim-puk ]]; then
+      echo "The SIM is blocked after three wrong PINs: it needs the PUK from your carrier."
+    else
+      echo "The SIM needs its PIN${PIN_TRIES:+ ($PIN_TRIES tries left)}: Settings > Mobile Data, or mobile-data pin."
+    fi
+    ;;
+  denied) echo "The network refused this SIM." ;;
+  noprofile) echo "Not set up yet: mobile-data on sets it up and connects." ;;
   starting) echo "Modem starting — it comes back about half a minute after sleep." ;;
   searching) echo "Searching for a network…" ;;
   connecting) echo "Connecting…" ;;
@@ -707,9 +809,12 @@ require_nmcli() {
 
 # NetworkManager can call the device "disconnected" while the modem behind it
 # is still enabling, searching for a network, or registering. Activating then
-# is a guaranteed refusal, so wait for the modem's own state as well.
+# is a guaranteed refusal, so wait for the modem's own state as well. Not
+# powered up yet, it is asked to, once, and a modem that cannot be is said
+# at once (2), as are a locked SIM (3) and a modem ModemManager gave up on
+# (4), rather than waited out to the end of the budget.
 wait_for_modem() {
-  local timeout=$1 deadline state
+  local timeout=$1 deadline state asked=0
   have mmcli || return 0
   deadline=$((SECONDS + timeout))
   while :; do
@@ -717,6 +822,14 @@ wait_for_modem() {
       state=$(kv modem.generic.state)
       case $state in
       registered | connected | connecting) return 0 ;;
+      locked) return 3 ;;
+      failed) return 4 ;;
+      disabled | enabling)
+        if ((!asked)); then
+          asked=1
+          modem_powers_up || return 2
+        fi
+        ;;
       esac
     fi
     ((SECONDS < deadline)) || return 1
@@ -738,13 +851,16 @@ wait_for_state() {
   done
 }
 
+NO_POWER_UP="the modem could not be turned on, so mobile data is off again; nova doctor says why"
+
 cmd_on() {
   [[ ! -e $PARKED ]] || die "the modem is off because no SIM was found — mobile-data check looks again"
   require_nmcli
   ! mm_stopped || die "ModemManager is not running: $MM_FIX"
-  local profile timeout deadline left reason=""
+  local profile timeout deadline left reason="" ready=0
+  # A try of its own, whatever stopped the last.
+  rm -f -- "$STOPPED" "$TRYING"
   profile=$(nm_profile)
-  [[ -n $profile ]] || die "no gsm connection profile — run: mobile-data setup <APN>"
 
   radio_hard_blocked && die "the WWAN radio is off at the hardware switch"
 
@@ -781,7 +897,31 @@ cmd_on() {
   # NetworkManager calls the device disconnected as soon as it exists, while
   # the modem behind it may still be enabling or searching. Activating then is
   # a refusal every time, so wait for the modem to reach the network first.
-  wait_for_modem $((deadline - SECONDS)) || true
+  wait_for_modem $((deadline - SECONDS)) || ready=$?
+  case $ready in
+  2)
+    stop_trying noenable
+    die "$NO_POWER_UP"
+    ;;
+  3) die "the SIM needs its PIN: Settings > Mobile Data asks for it" ;;
+  4)
+    read_state
+    [[ $STATE != nosim ]] || die "there is no SIM in the slot"
+    die "the SIM could not be read"
+    ;;
+  esac
+
+  # Nothing to connect with yet: made now, as a phone does it, with the APN
+  # looked up for the SIM. NetworkManager may take it up by itself, at once.
+  if [[ -z $profile ]]; then
+    cmd_setup >/dev/null || die "could not set mobile data up"
+    profile=$(nm_profile)
+    sleep 1
+    if [[ $(nm_gsm_device_state) == connecting* ]]; then
+      wait_for_state "connected disconnected" $((deadline - SECONDS)) || true
+    fi
+    [[ $(nm_gsm_device_state) == connected ]] && return 0
+  fi
 
   while :; do
     left=$((deadline - SECONDS))
@@ -801,8 +941,14 @@ cmd_on() {
   read_state
   case $STATE in
   nosim) die "there is no SIM in the slot" ;;
-  locked) die "the SIM is locked and needs its PIN" ;;
+  locked) die "the SIM needs its PIN: Settings > Mobile Data asks for it" ;;
   esac
+  # Never powered up: no retry here mends that, and NetworkManager's would
+  # go on for ever.
+  if [[ $MODEM_STATE == disabled || $MODEM_STATE == enabling ]]; then
+    stop_trying noenable
+    die "$NO_POWER_UP"
+  fi
 
   local registration
   registration=$(kv modem.3gpp.registration-state)
@@ -820,7 +966,27 @@ cmd_on() {
     die "the modem refused the connection ($reason); it needs a power cycle: mobile-data reset"
     ;;
   esac
+  # The APN, or the plan behind it: what Settings asks for an APN at (exit 3).
+  local apn
+  apn=$(profile_apn "$profile")
+  case ${reason,,} in
+  *apn* | *accessstring* | *"access string"*)
+    die_apn "the network does not know the APN${apn:+ \"$apn\"}: Settings > Mobile Data takes another"
+    ;;
+  *authentication*)
+    die_apn "the network refused the APN's user name or password: Settings > Mobile Data takes another APN"
+    ;;
+  *subscribed*)
+    die_apn "the network refused data for this SIM: it has no data plan, or needs another APN (Settings > Mobile Data)"
+    ;;
+  esac
   die "could not bring up '$profile'${reason:+ ($reason)}"
+}
+
+# A refusal Settings answers with a field for the APN.
+die_apn() {
+  printf 'mobile-data: %s\n' "$*" >&2
+  exit 3
 }
 
 # `nmcli radio wwan off` is the honest off switch: it soft-blocks the radio, so
@@ -881,12 +1047,9 @@ cmd_check() {
   local timeout deadline state sim
   # Nothing to look with: refused before anything changes, and above all
   # before an answer that never comes is taken for an empty slot.
+  have mmcli || die "looking for a SIM needs ModemManager"
   ! mm_stopped || die "looking for a SIM needs ModemManager running: $MM_FIX"
   rm -f -- "$PARKED"
-  if ! have mmcli; then
-    park no-modemmanager
-    die "looking for a SIM needs ModemManager: sudo pacman -S modemmanager"
-  fi
   radio_hard_blocked && die "the WWAN radio is off at the hardware switch"
   have rfkill && rf unblock wwan >/dev/null 2>&1
   have nmcli && nm radio wwan on >/dev/null 2>&1
@@ -1228,9 +1391,77 @@ cmd_sms() {
 
 # -------------------------------------------------------------------- setup
 
+# The APN for the SIM in the modem, as GNOME's assistant finds one: in
+# mobile-broadband-provider-info, by the network the SIM belongs to (its MCC
+# and MNC, which ModemManager reads off it), else by the network it is on.
+# "apn<US>user<US>password" (US the unit separator, as a user or password
+# may be empty), or nothing when the database has none.
+lookup_apn() {
+  local sim code codes=()
+  load_dump || return 1
+  sim=$(kv modem.generic.sim)
+  if [[ -n $sim && $sim != / ]]; then
+    codes+=("$(mm -i "$sim" -K 2>/dev/null | sed -n 's/^sim\.properties\.operator-code *: *\([0-9]*\)$/\1/p')")
+  fi
+  codes+=("$(kv modem.3gpp.operator-code)")
+  for code in "${codes[@]}"; do
+    [[ $code =~ ^[0-9]{5,6}$ ]] || continue
+    apn_for "${code:0:3}" "${code:3}" && return 0
+  done
+  return 1
+}
+
+# The first APN for the internet of the provider with the network <mcc>
+# <mnc>: the one marked primary, else the only one. Carriers that share a
+# network with others (Vodafone's, under a dozen brands of their own) have no
+# APN to guess, and get the network's own. An APN that says nothing of what
+# it is for counts as the internet's.
+apn_for() { # mcc mnc
+  [[ -r $PROVIDERS ]] || return 1
+  local found
+  found=$(awk -v mcc="$1" -v mnc="$2" '
+    function attr(name,   rest) {
+      rest = $0
+      if (!sub(".*[ \t]" name "=\"", "", rest)) return ""
+      sub("\".*", "", rest)
+      return rest
+    }
+    function text(tag,   rest) {
+      rest = $0
+      sub(".*<" tag ">", "", rest)
+      sub("</" tag ">.*", "", rest)
+      return rest
+    }
+    /<provider[ >]/ { primary = ($0 ~ /primary="true"/); ours = 0; pick = ""; inapn = 0 }
+    /<network-id / && attr("mcc") == mcc && attr("mnc") == mnc { ours = 1 }
+    /<apn value=/ { inapn = 1; apn = attr("value"); use = ""; user = ""; pass = "" }
+    inapn && /<usage type=/ { use = attr("type") }
+    inapn && /<username>/ { user = text("username") }
+    inapn && /<password>/ { pass = text("password") }
+    # An APN with nothing in it closes itself: <apn value="internet"/>.
+    /<\/apn>/ || /<apn value=[^>]*\/>/ {
+      if (inapn && pick == "" && (use == "" || use == "internet")) pick = apn "\037" user "\037" pass
+      inapn = 0
+    }
+    /<\/provider>/ && ours && pick != "" {
+      if (primary) { first = pick; count = 1; exit }
+      if (first == "") first = pick
+      count++
+    }
+    END { if (count == 1) print first }
+  ' "$PROVIDERS")
+  [[ -n $found ]] || return 1
+  printf '%s\n' "$found"
+}
+
+# The APN the profile is set to, "" for the network's own.
+profile_apn() { # profile
+  nm -g gsm.apn connection show "$1" 2>/dev/null | head -n1
+}
+
 cmd_setup() {
   require_nmcli
-  local apn=${1:-} profile metric
+  local apn=${1:-} profile metric found user="" pass=""
   # The profile already driven (the configured one, or the first gsm profile
   # NetworkManager has), so that one made by hand is set up, not a second
   # one made beside it; `mobile` only when there is none.
@@ -1256,15 +1487,16 @@ cmd_setup() {
     ipv6.route-metric "$metric" >/dev/null ||
     die "could not configure '$profile'"
 
-  if [[ -n $apn ]]; then
-    nm connection modify "$profile" gsm.auto-config no gsm.apn "$apn" >/dev/null ||
-      die "could not set the APN"
-    echo "APN: $apn"
-  else
-    nm connection modify "$profile" gsm.auto-config yes >/dev/null ||
-      die "could not enable APN auto-configuration"
-    echo "APN: auto-detected from the SIM"
+  # Named, it is that one. Not, it is looked up for the SIM; and with none to
+  # be found, the network's own, which most of them give a SIM that asks for
+  # none. Settings asks for one only if the network then says no.
+  if [[ -z $apn ]] && found=$(lookup_apn); then
+    IFS=$'\037' read -r apn user pass <<<"$found"
   fi
+  nm connection modify "$profile" gsm.auto-config no gsm.apn "$apn" \
+    gsm.username "$user" gsm.password "$pass" >/dev/null ||
+    die "could not set the APN"
+  if [[ -n $apn ]]; then echo "APN: $apn"; else echo "APN: none, the network gives its own"; fi
 
   set_cfg PROFILE "$profile" || die "could not write $CONFIG"
   echo "Done. Autoconnect is on and the route metric is $metric."
@@ -1288,15 +1520,48 @@ cmd_profile() {
   echo "Now driving the '$name' profile."
 }
 
+# With no APN, the one set now ("" for the network's own); with one, that
+# one, on the profile made for it if there is none yet.
 cmd_apn() {
   require_nmcli
   local apn=${1:-} profile
-  [[ -n $apn ]] || die "usage: mobile-data apn <APN>"
   profile=$(nm_profile)
-  [[ -n $profile ]] || die "no gsm connection profile — run: mobile-data setup <APN>"
-  nm connection modify "$profile" gsm.auto-config no gsm.apn "$apn" >/dev/null ||
+  if [[ -z $apn ]]; then
+    [[ -z $profile ]] || profile_apn "$profile"
+    return 0
+  fi
+  if [[ -z $profile ]]; then
+    cmd_setup "$apn" >/dev/null || exit 1
+    profile=$(nm_profile)
+  fi
+  nm connection modify "$profile" gsm.auto-config no gsm.apn "$apn" \
+    gsm.username "" gsm.password "" >/dev/null ||
     die "could not set the APN"
   echo "APN set to $apn on '$profile'."
+}
+
+# The SIM's PIN, from the standard input rather than the arguments, where any
+# process could read it; mmcli takes it as an argument for the moment it runs.
+# Then mobile data comes on, as NetworkManager gave up asking for the PIN
+# itself.
+cmd_pin() {
+  local pin said sim
+  IFS= read -r pin || true
+  [[ $pin =~ ^[0-9]{4,8}$ ]] || die "a PIN is 4 to 8 digits"
+  load_dump || die "the modem is not there"
+  sim=$(kv modem.generic.sim)
+  [[ -n $sim && $sim != / ]] || die "there is no SIM in the slot"
+  if ! said=$(mm -i "$sim" --pin="$pin" 2>&1); then
+    read_state
+    if [[ $UNLOCK == sim-puk ]]; then
+      die "the SIM is blocked after three wrong PINs: it needs the PUK from your carrier"
+    elif [[ $said == *[Ii]ncorrect* || $said == *[Ww]rong* ]]; then
+      die "that is not the PIN${PIN_TRIES:+: $PIN_TRIES tries left}"
+    fi
+    die "the SIM did not take the PIN"
+  fi
+  echo "The SIM is unlocked."
+  cmd_on
 }
 
 cmd_reset_day() {
@@ -1334,9 +1599,11 @@ Usage:
   mobile-data reset              power-cycle a modem that refuses to connect
   mobile-data check              switch on a modem kept off for want of a SIM,
                                  and look for one again
+  mobile-data pin                unlock the SIM with the PIN on standard input,
+                                 then turn mobile data on
   mobile-data setup [APN]        create or refresh the NetworkManager profile
   mobile-data profile [name]     show or choose the NetworkManager profile
-  mobile-data apn <APN>          change the APN on the profile
+  mobile-data apn [APN]          show or change the APN on the profile
   mobile-data reset-day <1-31>   billing day for the usage counter
   mobile-data version            print the plugin version
 
@@ -1376,6 +1643,7 @@ off | disable) cmd_off ;;
 toggle) cmd_toggle ;;
 reset) cmd_reset ;;
 check) cmd_check ;;
+pin) cmd_pin ;;
 setup) cmd_setup "${1:-}" ;;
 profile) cmd_profile "${1:-}" ;;
 apn) cmd_apn "${1:-}" ;;

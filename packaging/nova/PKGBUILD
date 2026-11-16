@@ -54,6 +54,8 @@ depends=(
 
   # Network, Bluetooth, power, backlight, removable disks, firmware
   networkmanager
+  modemmanager   # mobile data, and the FCC unlocks Nova turns on (data/network)
+  mobile-broadband-provider-info # the APN for a SIM, looked up the first time
   bluez
   bluez-utils
   bluez-tools    # bt-agent
@@ -157,7 +159,6 @@ optdepends=(
   'gpu-screen-recorder: screen recording'
   'ffmpeg: trimming screen recordings'
   'tesseract-data-eng: copy text from a screen region'
-  'modemmanager: mobile data, on laptops with a modem'
 )
 options=(!debug)
 # Configuration under /etc: pacman keeps local edits across upgrades.
@@ -217,6 +218,10 @@ check() {
 package() {
   cd nova
   make DESTDIR="$pkgdir" install
+  # The FCC unlocks are linked from the modemmanager installed here: a
+  # package without one would leave every locked modem off, saying nothing.
+  compgen -G "$pkgdir/usr/lib/ModemManager/fcc-unlock.d/*:*" >/dev/null ||
+    { echo "no FCC unlock was linked: is modemmanager installed?" >&2; return 1; }
 
   install -Dm644 LICENSE NOTICE -t "$pkgdir/usr/share/licenses/$pkgname/"
 }

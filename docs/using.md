@@ -167,7 +167,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 |---|---|
 | Wi-Fi | the radio on or off; the network in use, the known ones and the others |
 | Bluetooth | the radio on or off; Bluetooth LE, off for headphones that stutter; your devices and those nearby |
-| Mobile Data | the modem on or off; the network, signal, address and data used this month |
+| Mobile Data | mobile data on or off, set up with the SIM's APN the first time; the SIM's PIN when it asks for one; the network, signal, address and data used this month |
 | Notifications | [Do Not Disturb](#do-not-disturb), and the hours it holds by itself every day |
 | Sound | the output and its volume; the input and its volume |
 | Displays | each display's resolution, refresh rate, scale, rotation and place; a change goes back by itself after 15 seconds unless you keep it; the [night light](#night-light)'s schedule and warmth |

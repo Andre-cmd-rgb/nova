@@ -31,25 +31,29 @@ rule, no systemd unit, no daemon of its own.
 | ModemManager (`mmcli`) | operator, technology, signal quality, SIM and modem state, text messages |
 | `rfkill`, `iproute2`, `iputils` | radio state, interface address, the panel's ping |
 
-The installer adds ModemManager when it finds a modem, and turns its service
-on; so does an update, once, on a system installed before (`nova-modemmanager`,
-from a pacman hook). Anywhere else it is `pacman -S modemmanager` and
-`sudo systemctl enable --now ModemManager.service`. The widget is in the
-default bar and stays hidden on a computer without a modem.
+ModemManager comes with Nova, with every FCC unlock it ships turned on
+([hardware](../../../../docs/hardware.md#a-cellular-modem)), and its service
+is turned on, once, on a computer with a modem: by the installer, and on a
+system installed before by an update (`nova-modemmanager`, from a pacman
+hook). The widget is in the default bar and stays hidden on a computer
+without a modem.
 
 ## First run
 
-If you have never used mobile data on this machine, create the connection
-profile once:
+Turn it on. The first time, the switch sets mobile data up: a NetworkManager
+`gsm` profile called `mobile`, on autoconnect, with route metric 700 — above
+Nova's Wi-Fi (600), so mobile data carries traffic only when nothing better
+has a default route — and the APN mobile-broadband-provider-info has for the
+network the SIM belongs to. A network shared by several carriers, none of
+them its owner, has no APN to guess, and the network's own is asked for. Only
+if the network turns the APN down does Settings → Mobile Data ask for one.
+
+The same by hand:
 
 ```bash
-nova mobile-data setup            # APN auto-detected from the SIM
+nova mobile-data setup            # the APN looked up for the SIM
 nova mobile-data setup iliad      # or name the APN yourself
 ```
-
-That creates a NetworkManager `gsm` profile called `mobile`, turns autoconnect
-on, and gives it route metric 700 — above Nova's Wi-Fi (600), so mobile data
-carries traffic only when nothing better has a default route.
 
 Then tell the counter when your plan renews:
 
@@ -75,6 +79,18 @@ hardware.
 Off means off: the switch soft-blocks the radio (`nmcli radio wwan off`) rather
 than dropping the connection, because NetworkManager would otherwise
 autoconnect straight around a plain disconnect.
+
+**When it cannot come on, it stops trying.** A modem ModemManager cannot power
+up (an FCC lock with no unlock for it, most often) falls back to disabled, and
+NetworkManager takes that for somebody turning it off: it counts no failure,
+and asks again at once, every two seconds for as long as the radio is on. On a
+P1 that was 65,000 tries in a day and more CPU than the whole shell. So a
+modem seen like that for a minute is switched off as the switch would, and the
+bar and Settings say "The modem could not be turned on"; the switch tries
+again, and `on` asks ModemManager outright, so it says so at once rather than
+after its 90 s. The other states that no retry mends are said plainly too: no
+SIM, a SIM that needs its PIN (Settings asks for it), and a network that
+refuses the SIM or its APN.
 
 ## Configuration
 
@@ -133,9 +149,11 @@ nova mobile-data enable | disable   aliases for on and off
 nova mobile-data reset              power-cycle a modem that refuses to connect
 nova mobile-data check              switch on a modem kept off for want of a SIM,
                                     and look for one again
+nova mobile-data pin                unlock the SIM with the PIN on standard
+                                    input, then turn mobile data on
 nova mobile-data setup [APN]        create or refresh the NetworkManager profile
 nova mobile-data profile [name]     show or choose the NetworkManager profile
-nova mobile-data apn <APN>          change the APN on the profile
+nova mobile-data apn [APN]          show or change the APN on the profile
 nova mobile-data reset-day <1-31>   billing day for the usage counter
 nova mobile-data version            print the plugin version
 
@@ -241,9 +259,18 @@ not: NetworkManager then sees no modem at all, and nothing can turn it on.
 `sudo systemctl enable --now ModemManager.service` starts it, and has it start
 with the computer. `nova doctor` says so too.
 
-**"No connection profile".** Run `nova mobile-data setup <APN>`; with a `gsm`
-profile already there (one you made, say) it sets that one up rather than
-making a second.
+**"The modem could not be turned on".** ModemManager could not power it up, and
+mobile data was switched off so that nothing asks it again every two seconds.
+Almost always it is the modem's maker's lock: `nova doctor` says whether
+ModemManager has an unlock for it, and names the tool that unlocks it if not.
+The switch tries again.
+
+**"The SIM needs its PIN".** Settings → Mobile Data asks for it, and turns
+mobile data on once the SIM takes it. After three wrong PINs the SIM wants the
+PUK from your carrier: `mmcli -i any --puk=<PUK> --pin=<new PIN>`.
+
+**`setup` with a profile already there** (one you made, say) sets that one up
+rather than making a second.
 
 **"NetworkManager is not managing the modem".** Something else owns it —
 usually a leftover `systemd-networkd` or a `NetworkManager.conf` `unmanaged-devices`

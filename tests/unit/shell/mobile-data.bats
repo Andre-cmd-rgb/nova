@@ -93,15 +93,6 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [ -e "$state/sim-seen" ]
 }
 
-@test "first start without ModemManager: nothing can ask for a SIM, so it is off" {
-  if command -v mmcli >/dev/null; then skip "this system has ModemManager"; fi
-  [ "$(info state)" = parked ]
-  [ "$(cat "$state/parked")" = no-modemmanager ]
-  [ "$(info parked)" = no-modemmanager ]
-  run "$helper" status
-  [[ $output == *"ModemManager is not installed"* ]]
-}
-
 # ModemManager installed, and not running: mmcli finds nothing on the bus.
 stopped_modemmanager() {
   stub mmcli 'echo "error: couldn'"'"'t find the ModemManager process in the bus" >&2; exit 1'
@@ -245,4 +236,288 @@ esac'
   printf '%s\r\n' "PROFILE = first" " PROFILE =  Last One  " "PROFILE_X=no" >"$CONFIG"
   [ "$(get_cfg PROFILE)" = "Last One" ]
   [ "$(get_cfg APN fallback)" = fallback ]
+}
+
+# NetworkManager with a gsm device in the state $SCRATCH/device says (prepare
+# by default, as while it keeps asking) and the profiles in $SCRATCH/profiles;
+# `connection up` exits with $SCRATCH/up-status. The radio goes off and on
+# as rfkill's does. Every call is noted.
+network_manager() {
+  printf '%s\n' "${1:-connecting (prepare)}" >"$SCRATCH/device"
+  [[ -e $SCRATCH/profiles ]] || : >"$SCRATCH/profiles"
+  stub nmcli '
+echo "nmcli $*" >>"$CALLS"
+case "$*" in
+  "-t -f TYPE,DEVICE,STATE device status") echo "gsm:wwan0mbim0:$(cat "$SCRATCH/device")" ;;
+  "-t -f TYPE,NAME connection show") sed "s/^/gsm:/" "$SCRATCH/profiles" ;;
+  "-t -f NAME connection show") cat "$SCRATCH/profiles" ;;
+  "radio wwan off") echo blocked >"$SCRATCH/wwan" ;;
+  "radio wwan on") echo unblocked >"$SCRATCH/wwan" ;;
+  "connection add "*) echo mobile >>"$SCRATCH/profiles" ;;
+  "-g gsm.apn connection show "*) cat "$SCRATCH/apn" 2>/dev/null ;;
+  *"connection up "*) exit "$(cat "$SCRATCH/up-status" 2>/dev/null || echo 0)" ;;
+esac
+exit 0'
+}
+
+# A modem ModemManager cannot power up: `--enable` answers as it does for a
+# modem its maker locked.
+locked_by_maker() {
+  modem "modem.generic.state                              : enabling" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  stub mmcli '
+case "$*" in
+  -L) echo "    /org/freedesktop/ModemManager1/Modem/0 [foxconn] T99W175" ;;
+  "-m 0 -K") cat "$SCRATCH/dump" ;;
+  "-m 0 --enable --timeout=30") echo "mmcli -m 0 --enable" >>"$CALLS"
+    echo "error: couldn'"'"'t enable the modem: '"'"'GDBus.Error:org.freedesktop.ModemManager1.Error.Core.Retry: Invalid transition'"'"'" >&2; exit 1 ;;
+  *) exit 1 ;;
+esac'
+}
+
+@test "a modem that cannot be powered up: a minute of it, and mobile data is off, said why" {
+  echo x >"$state/sim-seen"
+  locked_by_maker
+  network_manager
+  NOVA_MOBILE_NOW=1000 info state >/dev/null
+  [ "$(NOVA_MOBILE_NOW=1030 info state)" = starting ]
+  [ "$(cat "$SCRATCH/wwan")" = unblocked ]
+  [ "$(NOVA_MOBILE_NOW=1060 info state)" = failed ]
+  [ "$(cat "$SCRATCH/wwan")" = blocked ]
+  grep -qx "nmcli radio wwan off" "$CALLS"
+  [ "$(cat "$state/stopped")" = noenable ]
+  [ "$(info why)" = noenable ]
+  run "$helper" status
+  [[ $output == *"could not be turned on"* ]]
+}
+
+@test "a modem slow to come up, or seen again after a sleep, is given its minute afresh" {
+  echo x >"$state/sim-seen"
+  locked_by_maker
+  network_manager
+  NOVA_MOBILE_NOW=1000 info state >/dev/null
+  # Hours later: a sleep in between, and the minute starts again.
+  [ "$(NOVA_MOBILE_NOW=20000 info state)" = starting ]
+  [ "$(NOVA_MOBILE_NOW=20050 info state)" = starting ]
+  # Up at last: nothing is kept of the wait.
+  modem "modem.generic.state                              : registered" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  NOVA_MOBILE_NOW=20055 info state >/dev/null
+  [ ! -e "$state/trying" ] && [ ! -e "$state/stopped" ]
+  [ "$(cat "$SCRATCH/wwan")" = unblocked ]
+}
+
+@test "a modem NetworkManager is not asking, its radio off, is not the loop" {
+  echo x >"$state/sim-seen"
+  locked_by_maker
+  network_manager unavailable
+  NOVA_MOBILE_NOW=1000 info state >/dev/null
+  [ "$(NOVA_MOBILE_NOW=1100 info state)" = starting ]
+  [ ! -e "$state/stopped" ]
+}
+
+@test "stopped, and turned on by something else: a fresh try, not still failed" {
+  echo x >"$state/sim-seen"
+  locked_by_maker
+  network_manager
+  echo noenable >"$state/stopped"
+  echo blocked >"$SCRATCH/wwan"
+  [ "$(info state)" = failed ]
+  echo unblocked >"$SCRATCH/wwan"
+  [ "$(NOVA_MOBILE_NOW=1000 info state)" = starting ]
+  [ ! -e "$state/stopped" ]
+}
+
+@test "on: a modem that cannot be powered up is said at once, and left off" {
+  echo x >"$state/sim-seen"
+  echo very >"$SCRATCH/profiles"
+  locked_by_maker
+  network_manager disconnected
+  echo blocked >"$SCRATCH/wwan"
+  run "$helper" on
+  [ "$status" -eq 1 ]
+  [[ $output == *"the modem could not be turned on, so mobile data is off again; nova doctor says why"* ]]
+  grep -qx "mmcli -m 0 --enable" "$CALLS"
+  [ "$(cat "$state/stopped")" = noenable ]
+  [ "$(cat "$SCRATCH/wwan")" = blocked ]
+  fails grep -q "connection up" "$CALLS"
+}
+
+@test "on: a locked SIM is said at once, and so is one ModemManager could not read" {
+  echo very >"$SCRATCH/profiles"
+  network_manager disconnected
+  modem "modem.generic.state                              : locked" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  run "$helper" on
+  [ "$status" -eq 1 ]
+  [[ $output == *"the SIM needs its PIN: Settings > Mobile Data asks for it"* ]]
+  modem "modem.generic.state                              : failed" \
+    "modem.generic.state-failed-reason               : sim-error" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  run "$helper" on
+  [[ $output == *"the SIM could not be read"* ]]
+  [ "$(info state)" = failed ] && [ "$(info why)" = sim-error ]
+}
+
+@test "an eSIM with no plan on it is no SIM" {
+  modem "modem.generic.state                              : failed" \
+    "modem.generic.state-failed-reason               : esim-without-profiles" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  echo x >"$state/sim-seen"
+  [ "$(info state)" = nosim ]
+}
+
+# A locked SIM, whose mmcli takes 1234 for its PIN and counts down otherwise.
+sim_pin() {
+  echo 3 >"$SCRATCH/tries"
+  modem "modem.generic.state                              : locked" \
+    "modem.generic.unlock-required                    : sim-pin" \
+    "modem.generic.unlock-retries.length              : 2" \
+    "modem.generic.unlock-retries.value[1]            : sim-pin (3)" \
+    "modem.generic.unlock-retries.value[2]            : sim-puk (10)" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  stub mmcli '
+echo "mmcli $*" >>"$CALLS"
+case "$*" in
+  -L) echo "    /org/freedesktop/ModemManager1/Modem/0 [foxconn] T99W175" ;;
+  "-m 0 -K") cat "$SCRATCH/dump" ;;
+  "-i /org/freedesktop/ModemManager1/SIM/0 --pin=1234") exit 0 ;;
+  "-i /org/freedesktop/ModemManager1/SIM/0 --pin="*)
+    tries=$(( $(cat "$SCRATCH/tries") - 1 )); echo "$tries" >"$SCRATCH/tries"
+    sed -i "s/sim-pin ([0-9]*)/sim-pin ($tries)/" "$SCRATCH/dump"
+    echo "error: couldn'"'"'t send PIN code to the SIM: '"'"'GDBus.Error:org.freedesktop.ModemManager1.Error.MobileEquipment.IncorrectPassword: Incorrect password'"'"'" >&2
+    exit 1 ;;
+  *) exit 1 ;;
+esac'
+}
+
+@test "a SIM that needs its PIN: what it needs and the tries left, and a wrong PIN counts down" {
+  network_manager disconnected
+  sim_pin
+  [ "$(info state)" = locked ]
+  [ "$(info unlock)" = sim-pin ]
+  [ "$(info pin_tries)" = 3 ]
+  run "$helper" pin <<<"0000"
+  [ "$status" -eq 1 ]
+  [[ $output == *"that is not the PIN: 2 tries left"* ]]
+  run "$helper" pin <<<"12"
+  [[ $output == *"a PIN is 4 to 8 digits"* ]]
+  # Never in the helper's own arguments: on its standard input.
+  fails grep -q "pin 0000" "$CALLS"
+}
+
+@test "the right PIN unlocks the SIM, and mobile data comes on" {
+  echo very >"$SCRATCH/profiles"
+  network_manager connected
+  sim_pin
+  run "$helper" pin <<<"1234"
+  [ "$status" -eq 0 ]
+  [[ $output == *"The SIM is unlocked."* ]]
+  grep -qx "mmcli -i /org/freedesktop/ModemManager1/SIM/0 --pin=1234" "$CALLS"
+  grep -qx "nmcli radio wwan on" "$CALLS"
+}
+
+# mobile-broadband-provider-info, three networks: one with a carrier alone,
+# its APN with a user and no password; one shared by two, neither primary;
+# one shared, one of them primary.
+providers() {
+  export NOVA_MOBILE_PROVIDERS=$SCRATCH/providers.xml
+  cat >"$NOVA_MOBILE_PROVIDERS" <<'XML'
+<serviceproviders format="2.0">
+<country code="it">
+	<provider>
+		<name>Alone</name>
+		<gsm>
+			<network-id mcc="222" mnc="88"/>
+			<apn value="mms.alone">
+				<usage type="mms"/>
+			</apn>
+			<apn value="web.alone">
+				<usage type="internet"/>
+				<username>web</username>
+			</apn>
+		</gsm>
+	</provider>
+	<provider>
+		<name>Big</name>
+		<gsm>
+			<network-id mcc="222" mnc="10"/>
+			<apn value="big.it"/>
+		</gsm>
+	</provider>
+	<provider>
+		<name>Small</name>
+		<gsm>
+			<network-id mcc="222" mnc="10"/>
+			<apn value="small.it"/>
+		</gsm>
+	</provider>
+	<provider>
+		<name>Brand</name>
+		<gsm>
+			<network-id mcc="222" mnc="01"/>
+			<apn value="brand.it"/>
+		</gsm>
+	</provider>
+	<provider primary="true">
+		<name>Owner</name>
+		<gsm>
+			<network-id mcc="222" mnc="01"/>
+			<apn value="owner.it"><usage type="internet"/></apn>
+		</gsm>
+	</provider>
+</country>
+</serviceproviders>
+XML
+}
+
+lib() {
+  sed '/^usage() {/,$d' "$helper" >"$SCRATCH/mobile-data.sh"
+  # shellcheck source=/dev/null
+  source "$SCRATCH/mobile-data.sh"
+}
+
+@test "the APN for a SIM: its carrier's, the primary one's of a shared network, none for an unclear one" {
+  providers
+  lib
+  [ "$(apn_for 222 88 | tr '\037' '|')" = "web.alone|web|" ]
+  [ "$(apn_for 222 01 | tr '\037' '|')" = "owner.it||" ]
+  fails apn_for 222 10
+  fails apn_for 999 99
+}
+
+@test "on, with no profile yet: one is made with the APN looked up for the SIM's own network" {
+  providers
+  network_manager disconnected
+  modem "modem.generic.state                              : registered" \
+    "modem.3gpp.operator-code                         : 22210" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  stub mmcli '
+case "$*" in
+  -L) echo "    /org/freedesktop/ModemManager1/Modem/0 [foxconn] T99W175" ;;
+  "-m 0 -K") cat "$SCRATCH/dump" ;;
+  "-i /org/freedesktop/ModemManager1/SIM/0 -K") echo "sim.properties.operator-code                    : 22288" ;;
+  *) exit 1 ;;
+esac'
+  run "$helper" on
+  [ "$status" -eq 0 ]
+  grep -q "nmcli connection add type gsm ifname \* con-name mobile connection.autoconnect yes" "$CALLS"
+  grep -qx "nmcli connection modify mobile gsm.auto-config no gsm.apn web.alone gsm.username web gsm.password " "$CALLS"
+  grep -q "connection up mobile" "$CALLS"
+}
+
+@test "on: the network refusing the APN exits 3, for Settings to ask for one" {
+  echo very >"$SCRATCH/profiles"
+  echo internet.it >"$SCRATCH/apn"
+  echo 4 >"$SCRATCH/up-status"
+  echo ON_TIMEOUT=1 >"$SCRATCH/config.tmp"
+  mkdir -p "$XDG_CONFIG_HOME/nova-mobile-data" && mv "$SCRATCH/config.tmp" "$XDG_CONFIG_HOME/nova-mobile-data/config"
+  network_manager disconnected
+  modem "modem.generic.state                              : registered" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  stub journalctl 'echo "Nov 16 ModemManager[1]: <wrn> [modem0] connection attempt #1 failed: Missing or unknown APN"'
+  stub sleep 'exit 0'
+  run "$helper" on
+  [ "$status" -eq 3 ]
+  [[ $output == *'the network does not know the APN "internet.it": Settings > Mobile Data takes another'* ]]
 }

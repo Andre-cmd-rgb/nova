@@ -5,9 +5,10 @@ import qs.Commons as Commons
 import qs.Ui
 
 // Compact mobile-broadband widget: one signal glyph in the bar, and a narrow
-// panel holding an on/off switch and read-only stats. APN, billing day and
-// profile setup live on the `mobile-data` CLI so the panel stays a single
-// column of numbers.
+// panel holding an on/off switch and read-only stats. The switch sets mobile
+// data up the first time; the APN and the SIM's PIN are asked for in Settings,
+// and the billing day lives on the `mobile-data` CLI, so the panel stays a
+// single column of numbers.
 Panel {
   id: mobile
   widgetId: "nova.mobile-data"
@@ -49,7 +50,6 @@ Panel {
   // again), so out of the bar altogether.
   readonly property bool parked: wwanState === "parked"
   readonly property bool shown: hwPresent && !parked
-  readonly property bool hasProfile: (info.profile || "") !== ""
   readonly property bool managed: info.managed !== "no"
   readonly property bool connected: wwanState === "connected"
   // The radio is on and something is under way: the modem is booting after a
@@ -98,9 +98,11 @@ Panel {
     case "disconnected": return (info.operator || "Registered") + " — not connected"
     case "searching": return "Searching for network"
     case "nosim": return "No SIM"
-    case "locked": return "SIM locked — PIN required"
+    case "locked": return info.unlock === "sim-puk" ? "The SIM is blocked" : "The SIM needs its PIN"
+    case "failed": return info.why === "sim-error" ? "The SIM could not be read" : "The modem could not be turned on"
+    case "denied": return "The network refused the SIM"
     case "disabled": return "Mobile data off"
-    case "noprofile": return "No connection profile"
+    case "noprofile": return "Not set up yet"
     case "absent": return "No modem"
     case "noservice": return "ModemManager is not running"
     case "parked": return "Off — no SIM"
@@ -112,7 +114,8 @@ Panel {
   readonly property string hintText: {
     if (lastError !== "") return lastError
     if (wwanState === "noservice") return "Mobile data needs ModemManager. In a terminal:  sudo systemctl enable --now ModemManager.service"
-    if (!hasProfile) return "No profile yet — run:  mobile-data setup <APN>"
+    if (wwanState === "locked") return info.unlock === "sim-puk" ? "It needs the PUK from your carrier." : "Settings → Mobile Data asks for it."
+    if (wwanState === "failed" && info.why === "noenable") return "Mobile data is off, so it stops trying. The switch tries again; nova doctor says why."
     if (!managed) return "NetworkManager is not managing the modem."
     if (wwanState === "starting") return "The modem restarts itself after sleep — give it half a minute."
     return ""
@@ -231,7 +234,7 @@ Panel {
   }
 
   function toggleData() {
-    if (busy || !hasProfile) return
+    if (busy) return
     lastError = ""
     actionStderr = ""
     desired = !live
@@ -441,7 +444,6 @@ Panel {
           family: mobile.fontFamily
 
           end: ToggleSwitch {
-            visible: mobile.hasProfile
             checked: mobile.switchChecked
             busy: mobile.busy || mobile.pending
             foreground: mobile.textColour
@@ -501,7 +503,7 @@ Panel {
           width: parent.width
           wrapMode: Text.WordWrap
           text: mobile.hintText
-          color: mobile.lastError !== "" || mobile.wwanState === "noservice" ? mobile.urgent : mobile.dim
+          color: mobile.lastError !== "" || mobile.wwanState === "noservice" || mobile.wwanState === "failed" ? mobile.urgent : mobile.dim
           font.family: mobile.fontFamily
           font.pixelSize: Style.font.bodySmall
         }

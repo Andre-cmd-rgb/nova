@@ -5,9 +5,10 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
-// Mobile Data's page in Settings: the modem's state and its switch, and the
-// one way back for a modem kept off since it found no SIM at its first start
-// (`nova mobile-data check`).
+// Mobile Data's page in Settings: the modem's state and its switch, the SIM's
+// PIN while it is locked, the APN when the network did not take the one
+// looked up, and the one way back for a modem kept off since it found no SIM
+// at its first start (`nova mobile-data check`).
 Column {
   id: root
   spacing: Style.space(22)
@@ -16,11 +17,16 @@ Column {
   property var info: ({})
   property bool loaded: false
   property string failure: ""
+  // The network did not take the APN: the switch's `on` said so (exit 3).
+  property bool askApn: false
+  // What runs after the action running now, if it goes well.
+  property var afterwards: null
 
   readonly property string modem: info.state || ""
   readonly property bool parked: modem === "parked"
-  readonly property bool radioOn: ["connected", "connecting", "disconnected", "searching", "noprofile", "starting"].indexOf(modem) >= 0
-  readonly property bool busy: actionProc.running
+  // Not set up yet is off: the switch sets it up.
+  readonly property bool radioOn: ["connected", "connecting", "disconnected", "searching", "starting"].indexOf(modem) >= 0
+  readonly property bool busy: actionProc.running || pinProc.running
 
   Component.onCompleted: load()
 
@@ -28,11 +34,27 @@ Column {
     if (!infoProc.running) infoProc.running = true
   }
 
-  function run(argv) {
-    if (actionProc.running) return
+  function run(argv, after) {
+    if (busy) return
     failure = ""
+    afterwards = after || null
     actionProc.command = argv
     actionProc.running = true
+  }
+
+  // The PIN goes in on the standard input, never in the arguments.
+  function unlock(pin) {
+    if (busy || !/^[0-9]{4,8}$/.test(pin)) return
+    failure = ""
+    pinProc.secret = pin
+    pinProc.running = true
+  }
+
+  // A sentence from the helper's last line: "mobile-data: the SIM ..." as
+  // "The SIM ....".
+  function sentence(text) {
+    var message = String(text || "").trim().split("\n").pop().replace(/^mobile-data: /, "")
+    return message.length > 0 ? message.charAt(0).toUpperCase() + message.slice(1) + "." : "That did not work."
   }
 
   function bytes(value) {
@@ -49,9 +71,12 @@ Column {
     case "disconnected": return "On " + (info.operator || "the network") + ", not connected."
     case "searching": return "Searching for a network…"
     case "starting": return "The modem is starting."
-    case "noprofile": return "There is no connection profile yet: nova mobile-data setup <APN> makes one."
+    case "noprofile": return "Not set up yet: turning it on sets it up, with the APN for the SIM."
     case "nosim": return "There is no SIM in the slot."
-    case "locked": return "The SIM is locked, and needs its PIN."
+    case "locked": return info.unlock === "sim-puk" ? "The SIM is blocked after three wrong PINs." : "The SIM needs its PIN."
+    case "failed": return info.why === "sim-error" ? "The SIM could not be read."
+      : "Off: the modem could not be turned on, so it stopped trying. Turning it on tries again; Check for Problems, in Updates, says why."
+    case "denied": return "The network refused the SIM."
     case "disabled": return "Off."
     case "noservice": return "Off: ModemManager, which runs the modem, is not running."
     default: return ""
@@ -91,9 +116,31 @@ Column {
       waitForEnd: true
     }
     onExited: function (exitCode) {
-      var message = String(actionErrors.text || "").trim().split("\n").pop().replace(/^mobile-data: /, "")
-      if (exitCode !== 0)
-        root.failure = message.length > 0 ? message.charAt(0).toUpperCase() + message.slice(1) + "." : "That did not work."
+      var after = root.afterwards
+      root.afterwards = null
+      root.askApn = exitCode === 3
+      if (exitCode !== 0) root.failure = root.sentence(actionErrors.text)
+      else if (after) Qt.callLater(() => root.run(after))
+      root.load()
+    }
+  }
+
+  Process {
+    id: pinProc
+    property string secret: ""
+    command: ["nova-mobile-data", "pin"]
+    stdinEnabled: true
+    onStarted: {
+      write(pinProc.secret + "\n")
+      pinProc.secret = ""
+    }
+    stderr: StdioCollector {
+      id: pinErrors
+      waitForEnd: true
+    }
+    onExited: function (exitCode) {
+      root.askApn = exitCode === 3
+      if (exitCode !== 0) root.failure = root.sentence(pinErrors.text)
       root.load()
     }
   }
@@ -112,16 +159,14 @@ Column {
     }
   }
 
-  // Kept off since its first start found no SIM, or nothing to read one with.
+  // Kept off since its first start found no SIM.
   Section {
     visible: root.parked
     Line {
       label: "Mobile Data"
-      detail: root.info.parked === "no-modemmanager"
-        ? "Off: ModemManager, which reads the SIM, is not installed."
-        : "Off: there was no SIM when the modem first started. It stays off, and out of the menu bar, to save power."
+      detail: "Off: there was no SIM when the modem first started. It stays off, and out of the menu bar, to save power."
       Button {
-        text: root.busy ? "Checking…" : root.info.parked === "no-modemmanager" ? "Check Again" : "Check for a SIM"
+        text: root.busy ? "Checking…" : "Check for a SIM"
         bordered: true
         enabled: !root.busy
         onClicked: root.run(["nova-mobile-data", "check"])
@@ -129,9 +174,7 @@ Column {
     }
     Caption {
       width: parent.width
-      text: root.info.parked === "no-modemmanager"
-        ? "Install it first, in a terminal: sudo pacman -S modemmanager"
-        : "Put the SIM in first. Checking switches the modem on and waits up to a minute and a half for it; with a SIM, mobile data stays on for good."
+      text: "Put the SIM in first. Checking switches the modem on and waits up to a minute and a half for it; with a SIM, mobile data stays on for good."
     }
   }
 
@@ -143,6 +186,74 @@ Column {
       detail: root.busy ? (root.radioOn ? "Turning off…" : "Turning on…") : root.summary
       checked: root.radioOn
       onClicked: if (!root.busy) root.run(["nova-mobile-data", root.radioOn ? "off" : "on"])
+    }
+  }
+
+  // The SIM's PIN, while it asks for one; after three wrong ones only the
+  // carrier's PUK unblocks it, which is no field here.
+  Section {
+    title: "PIN"
+    visible: root.modem === "locked" && root.info.unlock !== "sim-puk"
+    Row {
+      spacing: Style.space(8)
+      TextField {
+        id: pinField
+        width: Style.space(160)
+        echoMode: TextInput.Password
+        inputMethodHints: Qt.ImhDigitsOnly
+        validator: RegularExpressionValidator { regularExpression: /[0-9]{0,8}/ }
+        placeholderText: "SIM PIN"
+        enabled: !root.busy
+        onAccepted: root.unlock(text)
+        onVisibleChanged: text = ""
+      }
+      Button {
+        text: pinProc.running ? "Unlocking…" : "Unlock"
+        bordered: true
+        enabled: !root.busy && pinField.text.length >= 4
+        onClicked: root.unlock(pinField.text)
+      }
+    }
+    Caption {
+      width: parent.width
+      visible: Number(root.info.pin_tries || 0) > 0
+      text: root.info.pin_tries === "1" ? "One try left before the SIM is blocked." : root.info.pin_tries + " tries left."
+    }
+  }
+
+  Section {
+    visible: root.modem === "locked" && root.info.unlock === "sim-puk"
+    Caption {
+      width: parent.width
+      text: "The PUK is on the card the SIM came on, or your carrier has it. In a terminal: mmcli -i any --puk=<PUK> --pin=<new PIN>"
+    }
+  }
+
+  // The network did not take the APN looked up for the SIM, or the one
+  // given: another, which mobile data is turned on with.
+  Section {
+    title: "APN"
+    visible: root.askApn
+    Row {
+      spacing: Style.space(8)
+      TextField {
+        id: apn
+        width: Style.space(220)
+        placeholderText: "The APN your carrier gives"
+        enabled: !root.busy
+        onAccepted: if (text.trim()) root.run(["nova-mobile-data", "apn", text.trim()], ["nova-mobile-data", "on"])
+        onVisibleChanged: text = ""
+      }
+      Button {
+        text: "Connect"
+        bordered: true
+        enabled: !root.busy && apn.text.trim().length > 0
+        onClicked: root.run(["nova-mobile-data", "apn", apn.text.trim()], ["nova-mobile-data", "on"])
+      }
+    }
+    Caption {
+      width: parent.width
+      text: "Your carrier's website lists it."
     }
   }
 

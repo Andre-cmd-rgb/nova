@@ -225,6 +225,26 @@ ShellRoot {
     check("starting: the meta line says the modem is starting", widget.metaText, "Modem starting…")
     check("starting: the hint says to wait", widget.hintText.indexOf("half a minute") >= 0, true)
     check("starting: the switch shows it is under way rather than off", widget.pending, true)
+    feed(info("failed", "why=noenable\n"), "failed", failed)
+  }
+
+  function failed() {
+    check("failed: the meta line says the modem could not be turned on", widget.metaText, "The modem could not be turned on")
+    check("failed: the hint says it stopped trying, and what tries again", widget.hintText.indexOf("stops trying") >= 0, true)
+    feed(info("locked", "unlock=sim-pin\npin_tries=3\n"), "locked", locked)
+  }
+
+  function locked() {
+    check("locked: the meta line says the SIM needs its PIN", widget.metaText, "The SIM needs its PIN")
+    check("locked: the hint says where it is asked for", widget.hintText, "Settings → Mobile Data asks for it.")
+    feed("hw=yes\nstate=noprofile\nmanaged=yes\nprofile=\n", "noprofile", noprofile)
+  }
+
+  function noprofile() {
+    check("not set up: the meta line says so", widget.metaText, "Not set up yet")
+    widget.open()
+    check("not set up: the switch is there, off, to set it up", [toggleSwitch()?.visible, toggleSwitch()?.checked], [true, false])
+    widget.close()
     feed(info("parked"), "parked", parked)
   }
 

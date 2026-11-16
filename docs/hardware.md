@@ -21,7 +21,7 @@ A fault of one computer is never fixed in a profile, and a model's setting is ne
 
 ## What the installer picks
 
-The installer looks at the CPU, the graphics, a modem, a fingerprint reader and the camera, and adds what they need:
+The installer looks at the CPU, the graphics, a fingerprint reader and the camera, and adds what they need:
 
 | Your computer has | Nova installs |
 |---|---|
@@ -31,11 +31,18 @@ The installer looks at the CPU, the graphics, a modem, a fingerprint reader and 
 | NVIDIA graphics, GTX 16 or RTX 20 series and newer | NVIDIA's open modules, for the main kernel and the fallback, `nvidia-utils`, and `libva-nvidia-driver`, so the card can decode video |
 | NVIDIA graphics beside Intel or AMD graphics | also `nvidia-prime`: the desktop runs on the integrated graphics, and `prime-run` puts a game on the NVIDIA card |
 | NVIDIA graphics older than the GTX 16 and RTX 20 series | nothing more: they run on the open nouveau driver, since NVIDIA's own modules start with those |
-| a cellular modem | `modemmanager` |
 | a fingerprint reader Nova can drive | `fprintd`, and the offer to enroll a finger |
 | an Intel MIPI camera (IPU6 or IPU7), as recent thin laptops have | `libcamera`, `libcamera-ipa` and `pipewire-libcamera`, so apps can use it |
 
 Every computer also gets `linux-firmware`, the sound firmware of recent Intel and AMD laptops, and `linux-lts` as the fallback kernel.
+
+### A cellular modem
+
+Mobile data comes with Nova: ModemManager is part of every install, and is turned on where there is a modem.
+
+- **Its maker's lock.** Many laptop modems are locked by their maker (an FCC lock) until something unlocks them, and until then cannot be turned on at all. ModemManager has an unlock for the modems it knows, and turns on none by itself; Nova turns on every one it has, in `/usr/lib/ModemManager/fcc-unlock.d`. An unlock of your own in `/etc/ModemManager/fcc-unlock.d` goes first.
+- **A modem none of them unlocks**, some newer ones in Lenovo laptops among them, needs its maker's own tool, which Nova does not ship: `nova doctor` says so, and names Lenovo's.
+- **The rest is a switch**: Mobile Data in the bar and in Settings. The first time, it sets mobile data up with the APN for the SIM, and asks for one only if the network turns that down.
 
 Video is decoded on the card that drives the screen: the integrated one where there is one, and the NVIDIA card where it is the only one or the monitors are plugged into it.
 
