@@ -672,6 +672,27 @@ questions_setup() {
   [[ $output == *"encrypt=yes or encrypt=no"* ]]
 }
 
+@test "answers: QEMU's NVMe disk, as the install test's NVMe run has it, is p1 and p2 through to the boot line" {
+  questions_setup
+  lsblk_disks() { disks_json <<<"nvme0n1 $((80 * GiB)) false false nvme QEMU NVMe Ctrl"; }
+  answers disk=/dev/nvme0n1 user=ada password=s3cret-pass
+  answers_from_file
+  [ "${DISK_LINE%%$'\t'*}" = /dev/nvme0n1 ]
+  [ "$(root_device /dev/nvme0n1)" = /dev/nvme0n1p2 ]
+  export NOVA_TARGET=$SCRATCH/mnt
+  TARGET=$NOVA_TARGET
+  mkdir -p "$TARGET/swap"
+  printf 'cfg\n' >"$NOVA_INSTALLER_SHARE/limine.conf"
+  btrfs() { echo 1941442; }
+  blkid() { [[ ${*: -1} == /dev/nvme0n1p2 ]] && echo abcd-1234; }
+  cryptsetup() { [[ $* == "luksUUID /dev/nvme0n1p2" ]] && echo 1111-2222; }
+  prepare_boot_config /dev/nvme0n1 linux-nova
+  grep -q 'root=PARTUUID=abcd-1234 ' "$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
+  ENCRYPT=yes KEYMAP=us
+  prepare_boot_config /dev/nvme0n1 linux-nova
+  grep -q '" rd.luks.name=1111-2222=nova-root root=/dev/mapper/nova-root ' "$TARGET/etc/limine-entry-tool.d/90-nova-install.conf"
+}
+
 @test "answers: a wrong answer ends the install instead of asking again" {
   questions_setup
   answers keymap=xx disk=/dev/vda password=s3cret-pass

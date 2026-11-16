@@ -3,9 +3,9 @@
 # nova usb would, then boots what was installed and checks it.
 #
 #   tests/install/run --iso <file> --repo <dir> --release <release.toml>
-#                     --packages <packages.txt> [--logs <dir>] [--encrypt]
+#                     --packages <packages.txt> [--logs <dir>] [--encrypt] [--nvme]
 #
-#   tests/install/run --upgrade --repo <dir> --release <release.toml> [--logs <dir>]
+#   tests/install/run --upgrade --repo <dir> --release <release.toml> [--logs <dir>] [--nvme]
 #
 # --upgrade installs the newest published release older than --release, from
 # its signed ISO and its own packages. Four boots check it, update to --release,
@@ -14,6 +14,10 @@
 #
 # --encrypt installs onto an encrypted disk (encrypt=yes), opened at the first
 # boot by a key file the test leaves in the initramfs (tests/install/after-encrypted).
+#
+# --nvme puts the disk on an NVMe controller, as most laptops have it: the
+# installer is told /dev/nvme0n1, whose partitions are nvme0n1p1 and p2,
+# rather than virtio's /dev/vda.
 #
 # The stick is a disk image laid out the way nova usb lays one out: a FAT
 # partition with the ISO's files and every package an install can need, the
@@ -42,7 +46,7 @@ source "$root/installer/nova-usb"
 die() { printf 'install-test: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 
-iso='' repo='' release='' packages='' logs='' encrypt=0 upgrade=0
+iso='' repo='' release='' packages='' logs='' encrypt=0 upgrade=0 nvme=0
 while (($#)); do
   case $1 in
     --iso) iso=${2:?}; shift 2 ;;
@@ -51,6 +55,7 @@ while (($#)); do
     --packages) packages=${2:?}; shift 2 ;;
     --logs) logs=${2:?}; shift 2 ;;
     --encrypt) encrypt=1; shift ;;
+    --nvme) nvme=1; shift ;;
     --upgrade) upgrade=1; shift ;;
     -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
@@ -58,6 +63,13 @@ while (($#)); do
 done
 [[ -r $repo/nova.db && -r $release ]] || die "needs --repo <dir> and --release <release.toml>"
 repo=$(realpath -- "$repo")
+# The disk the install goes onto, as the installer names it and as QEMU
+# attaches it. QEMU's NVMe controller needs a serial number.
+if ((nvme)); then
+  install_disk=/dev/nvme0n1 disk_device=nvme,drive=disk,serial=nova-test,bootindex=1
+else
+  install_disk=/dev/vda disk_device=virtio-blk-pci,drive=disk,bootindex=1
+fi
 
 MiB=$((1024 * 1024))
 work=$(mktemp -d "${TMPDIR:-/var/tmp}/nova-install-test.XXXXXX")
@@ -139,10 +151,10 @@ make_offline_repo "$stick/nova/repo" || die "could not index the packages"
 echo "$(wc -l <"$work/urls") packages"
 
 step "The stick: answers, so nobody has to be there"
-cat >"$stick/nova/answers" <<'ANSWERS'
+cat >"$stick/nova/answers" <<ANSWERS
 console=/dev/ttyS0
 keymap=us
-disk=/dev/vda
+disk=$install_disk
 fullname=Nova Test
 user=nova
 password=nova-install-test
@@ -196,7 +208,7 @@ machine() { # minutes serial-log [qemu options...]
     qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
     -drive if=pflash,format=raw,unit=0,readonly=on,file="$ovmf/OVMF_CODE.4m.fd" \
     -drive if=pflash,format=raw,unit=1,file="$work/vars.fd" \
-    -drive file="$work/disk.img",format=raw,if=none,id=disk,cache=unsafe -device virtio-blk-pci,drive=disk,bootindex=1 \
+    -drive file="$work/disk.img",format=raw,if=none,id=disk,cache=unsafe -device "$disk_device" \
     -netdev user,id=net -device virtio-net-pci,netdev=net,romfile= \
     -device virtio-vga-gl -display gtk,gl=on -serial file:"$log" -no-reboot "$@"
 }
@@ -235,5 +247,5 @@ else
   machine 20 "$work/boot.log" || die "the installed system did not power off by itself within 20 minutes; the log is boot.log"
   report_boot "$work/boot.log" ''
   echo
-  echo "ok   installed from the stick$( ((encrypt)) && echo " onto an encrypted disk"), booted locked, and nova doctor is content"
+  echo "ok   installed from the stick$( ((encrypt)) && echo " onto an encrypted disk")$( ((nvme)) && echo " on NVMe"), booted locked, and nova doctor is content"
 fi
