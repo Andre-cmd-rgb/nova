@@ -561,15 +561,31 @@ pacman -Su --noconfirm
 pacman -U --needed --noconfirm $NOVA_ROOT/var/tmp/nova-update."[A-Za-z0-9]+"/visual-studio-code-bin-1.106.0-1-x86_64.pkg.tar.zst"$ ]]
 }
 
-@test "an app that will not go in leaves the release installed" {
+@test "an app that will not go in leaves the release installed, which ends with problems" {
   prepare_update
   printf '#!/bin/bash\necho "${0##*/} $*" >>"$SCRATCH/calls"\n[[ $1 != -U ]]\n' >"$SCRATCH/bin/pacman"
   local chrome
   chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
   run run_update --package "$chrome"
-  [ "$status" -eq 0 ]
+  [ "$status" -eq 4 ]
   [[ $output == *"could not install google-chrome; nova apps install tries again"* ]]
+  [[ $output == *"Boot entries look right"* ]]
   [[ $output == *"Nova is now on v1.1.0."* ]]
+  [ ! -e "$MIRRORLIST.nova-prev" ]
+  # The boot entries outweigh it.
+  uki "nova_linux-nova.efi" 7.2.10-arch1-1-nova
+  run run_update --package "$chrome"
+  [ "$status" -eq 3 ]
+}
+
+@test "the apps alone, one of which will not go in, end with problems too" {
+  prepare_update
+  lists_read
+  printf '#!/bin/bash\n[[ $1 != -U ]]\n' >"$SCRATCH/bin/pacman"
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
+  run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --packages-only --package "$chrome"
+  [ "$status" -eq 4 ]
 }
 
 @test "anything but a package file is refused before anything changes" {

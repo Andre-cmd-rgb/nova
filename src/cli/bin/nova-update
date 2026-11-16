@@ -36,6 +36,11 @@
 #                                   with nova apps install's --only and --approve)
 #   --apps-install                  the apps that are missing too
 #
+# Exit status: 0 done; 4 finished with problems: Nova is updated, and Chrome
+# or VS Code could not be (which one is said, and how to try again); 3 Nova is
+# installed but its boot entries do not check out; 2 declined; 1 failed.
+# Settings' runs end the same, and their state says it ("problems").
+#
 # A system on a candidate follows candidates anyway, until a final release.
 # Everything that needs root runs as one step through pkexec (nova-update-apply).
 # Packages held back with IgnorePkg stay held back, and nothing is ever downgraded
@@ -306,7 +311,10 @@ main() {
 }
 
 # Chrome and VS Code come from their vendors through AUR recipes, outside the
-# release: the installed ones are brought up to date after it.
+# release: the installed ones are brought up to date after it. One that could
+# not be built, or whose recipe could not be had, is said by name, and the run
+# ends with problems (4). One held for a recipe that changed waits for a yes,
+# which is no problem.
 update_apps() {
   local behind
   if (( dry )); then
@@ -314,9 +322,19 @@ update_apps() {
     [[ $behind != "apps "* ]] || echo "Apps to update: ${behind#apps }"
     return 0
   fi
-  local -a flags=(--update)
+  local -a flags=(--update --result "$tmp/apps") missed=()
   (( ! assume_yes )) || flags+=(--noconfirm)
-  "$APPS" "${flags[@]}" || warn "Chrome or VS Code did not update; nova apps update tries again"
+  local status=0 kind app
+  "$APPS" "${flags[@]}" || status=$?
+  (( status )) || return 0
+  if [[ -r $tmp/apps ]]; then
+    while read -r kind app; do
+      [[ $kind == held ]] || missed+=("$app")
+    done <"$tmp/apps"
+    (( ${#missed[@]} )) || return 0
+  fi
+  warn "$(app_list "${missed[@]}") could not be updated; nova apps update tries again"
+  return 4
 }
 
 update_release() {
@@ -471,9 +489,10 @@ restart_shell() { # the nova pkgver before the update
 # --- Settings ---------------------------------------------------------------------
 #
 # --status F: the same update, for Settings. F says, in JSON, what it is doing
-# (state "running", then "done", "failed" or "cancelled", and a few words), how
-# far it is (percent, or -1 while that is unknown), what came of it, and where
-# the whole output is.
+# (state "running", then "done", "problems" when Nova is updated and an app in
+# failed is not, "failed" or "cancelled", and a few words), how far it is
+# (percent, or -1 while that is unknown), what came of it, and where the whole
+# output is.
 
 st_state=running st_text='' st_progress=-1 st_version='' st_error='' st_restart=0
 st_held=() st_apps=() st_failed=()
@@ -517,6 +536,20 @@ app_name() {
     visual-studio-code-bin) echo "VS Code" ;;
     *) echo "$1" ;;
   esac
+}
+
+# "Chrome", "Chrome and VS Code"; with none named, either of them.
+app_list() { # package...
+  (($#)) || { echo "Chrome or VS Code"; return; }
+  local out
+  out=$(app_name "$1")
+  shift
+  while (($# > 1)); do
+    out+=", $(app_name "$1")"
+    shift
+  done
+  (($# == 0)) || out+=" and $(app_name "$1")"
+  echo "$out"
 }
 
 # Copies nova-update-apply's output into the log, and reads from it how far it
@@ -617,8 +650,9 @@ settings_update() {
     progress -1 "Waiting for authentication"
     pkexec "$APPLY" "${root[@]}" 2>&1 | track || status=$?
   fi
+  # 4: the release went in, and an app did not (it is among st_failed below).
   case $status in
-    0) st_state='done' ;;
+    0 | 4) st_state='done' ;;
     126) st_state=cancelled ;;
     127) st_state=failed st_error="not authorized to install updates" ;;
     3) st_state=failed st_error="installed, but the boot entries did not check out; do not restart yet" ;;
@@ -631,29 +665,51 @@ settings_update() {
     if [[ $(pacman -Q "$app" 2>/dev/null) == "$app $(package_version "$app" "$file")" ]]; then
       "$APPS" --record "$app" "$commit"
       st_apps+=("$app")
-    elif (( status == 0 )); then
+    elif [[ $st_state == 'done' ]]; then
       st_failed+=("$app")
     fi
   done
-  (( status != 0 )) || st_progress=100
+  # Nova done, and an app not built or not in: finished with problems.
+  [[ $st_state != 'done' ]] || (( ${#st_failed[@]} == 0 )) || st_state=problems
+  [[ $st_state != 'done' && $st_state != problems ]] || st_progress=100
   status_write
   notify_result
   notified=1
   # Last: a restart that takes long, or fails, changes nothing of the above.
   restart_shell "$cur_pkgver"
+  case $st_state in
+    done) return 0 ;;
+    problems) return 4 ;;
+    cancelled) return 2 ;;
+    *) return $(( status ? status : 1 )) ;;
+  esac
 }
 
 # For a window that may be closed by now: what is left to do. Nova installed
 # needs saying only when it waits for a restart, and Nova already current
 # never; nor do apps that were updated, which are simply newer, nor an app
-# held for a recipe that changed, which Settings → Updates shows.
+# held for a recipe that changed, which Settings → Updates shows. An app that
+# could not be updated is said, and how to try again.
 notify_result() {
   local -a open=(--exec nova-shell shell summon nova.settings '{"page":"updates"}')
+  local restart=0
+  if (( ${#release_flags[@]} && st_restart )) && [[ -n $st_version && $(installed_pkgver) == "$(tag_pkgver "$st_version")" ]]; then
+    restart=1
+  fi
   case $st_state in
     done)
-      if (( ${#release_flags[@]} && st_restart )) && [[ -n $st_version && $(installed_pkgver) == "$(tag_pkgver "$st_version")" ]]; then
-        nova-notification-send -g 󰚰 "Restart to finish the update" \
-          "Nova $st_version is installed." "${open[@]}"
+      (( ! restart )) || nova-notification-send -g 󰚰 "Restart to finish the update" \
+        "Nova $st_version is installed." "${open[@]}"
+      ;;
+    problems)
+      local apps
+      apps=$(app_list "${st_failed[@]}")
+      if (( restart )); then
+        nova-notification-send -u normal -g 󰚰 "$apps could not be updated" \
+          "Nova $st_version is installed: restart to finish it. Settings → Updates tries $apps again." "${open[@]}"
+      else
+        nova-notification-send -u normal -g 󰚰 "$apps could not be updated" \
+          "Settings → Updates tries again." "${open[@]}"
       fi
       ;;
     failed) nova-notification-send -u normal -g 󰚰 "The update did not finish" "${st_error^}." "${open[@]}" ;;

@@ -127,6 +127,19 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
   [[ $output == *"could not build google-chrome visual-studio-code-bin"* ]]
 }
 
+@test "--result lists, for nova update, the apps that did not build and those that wait" {
+  stub makepkg 'exit 1'
+  run apps --noconfirm --result "$SCRATCH/result"
+  [ "$status" -eq 1 ]
+  [ "$(cat "$SCRATCH/result")" = "failed google-chrome
+failed visual-studio-code-bin" ]
+  stub git 'exit 128'
+  rm "$SCRATCH/result"
+  run apps --noconfirm --result "$SCRATCH/result"
+  [ "$(cat "$SCRATCH/result")" = "unreachable google-chrome
+unreachable visual-studio-code-bin" ]
+}
+
 @test "a recipe that cannot be downloaded is not called a failed build" {
   stub git 'exit 128'
   run apps --noconfirm

@@ -90,7 +90,8 @@ BarWidget {
       } catch (error) {
         return
       }
-      if (state === "done") root.refresh()
+      // Nova updated, with or without an app that could not be.
+      if (state === "done" || state === "problems") root.refresh()
     }
   }
 

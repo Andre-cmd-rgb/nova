@@ -89,7 +89,7 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   run update
   [ "$status" -eq 0 ]
   [ "$(grep -oE '^(nova-update-apply|nova-apps-install)' "$CALLS" | paste -sd' ')" = "nova-update-apply nova-apps-install" ]
-  grep -qx 'nova-apps-install --update --noconfirm' "$CALLS"
+  grep -qE '^nova-apps-install --update --result [^ ]+ --noconfirm$' "$CALLS"
 }
 
 @test "with Nova already current, the apps are still updated" {
@@ -97,7 +97,7 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   run update
   [ "$status" -eq 0 ]
   fails grep -q nova-update-apply "$CALLS"
-  grep -qx 'nova-apps-install --update --noconfirm' "$CALLS"
+  grep -qE '^nova-apps-install --update --result [^ ]+ --noconfirm$' "$CALLS"
 }
 
 @test "a failed update leaves the apps alone" {
@@ -107,11 +107,24 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   ! grep -q nova-apps-install "$CALLS"
 }
 
-@test "apps that will not build are a warning, not a failed update" {
+@test "an app that will not build: Nova updated, the app named, and the run ends with problems" {
+  stub nova-apps-install '[[ $2 != --result ]] || echo "failed google-chrome" >>"$3"; exit 1'
+  run update
+  [ "$status" -eq 4 ]
+  grep -q '^nova-update-apply --tag v1.0.0-beta.2' "$CALLS"
+  [[ $output == *"nova update: Chrome could not be updated; nova apps update tries again"* ]]
+  # Nothing to say which: either.
   stub nova-apps-install 'exit 1'
   run update
+  [ "$status" -eq 4 ]
+  [[ $output == *"Chrome or VS Code could not be updated; nova apps update tries again"* ]]
+}
+
+@test "an app held for a recipe that changed waits, and is no problem" {
+  stub nova-apps-install '[[ $2 != --result ]] || echo "held visual-studio-code-bin" >>"$3"; exit 1'
+  run update
   [ "$status" -eq 0 ]
-  [[ $output == *"nova apps update tries again"* ]]
+  [[ $output != *"could not be updated"* ]]
 }
 
 @test "the check names the apps that are behind when Nova is current" {
@@ -542,13 +555,41 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   fails grep -q -- '--tag' "$CALLS"
 }
 
-@test "Settings: an app that did not go in is not remembered as built" {
+@test "Settings: an app that did not go in is not remembered as built, and the run has problems" {
   build_chrome
-  stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"'
+  stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"; exit 4'
   run settings_update
-  [ "$(field state)" = '"done"' ]
+  [ "$status" -eq 4 ]
+  [ "$(field state)" = '"problems"' ]
   [ "$(field failed)" = '["google-chrome"]' ]
+  [ "$(field progress)" = 100 ]
   fails grep -q -- '--record' "$CALLS"
+  grep -qx "nova-notification-send -u normal -g 󰚰 Chrome could not be updated Settings → Updates tries again. --exec nova-shell shell summon nova.settings {\"page\":\"updates\"}" "$CALLS"
+}
+
+@test "Settings: an app that did not build, beside a release that waits for a restart, says both" {
+  stub nova-apps-install 'case $1 in --build) echo "failed visual-studio-code-bin" >>"$2/result" ;; esac'
+  stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"
+    echo "The running kernel was replaced: restart to finish the update."'
+  run settings_update
+  [ "$status" -eq 4 ]
+  [ "$(field state)" = '"problems"' ]
+  [ "$(field restart)" = true ]
+  grep -q '^nova-notification-send -u normal -g 󰚰 VS Code could not be updated Nova 1.0.0-beta.2 is installed: restart to finish it. Settings → Updates tries VS Code again.' "$CALLS"
+  # Nova itself is in: the shell moves onto it all the same.
+  [ "$(tail -n 1 "$CALLS")" = 'nova-restart-shell ' ]
+}
+
+@test "Settings: a run that ends ends as nova update would in a terminal" {
+  run settings_update
+  [ "$status" -eq 0 ]
+  echo 1.0.0beta.1 >"$PKGVER"
+  stub nova-update-apply 'exit 3'
+  run settings_update
+  [ "$status" -eq 3 ]
+  stub pkexec 'exit 126'
+  run settings_update
+  [ "$status" -eq 2 ]
 }
 
 @test "Settings: how far it is follows the steps and pacman's packages" {

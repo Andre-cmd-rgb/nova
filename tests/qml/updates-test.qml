@@ -17,8 +17,11 @@ ShellRoot {
     var running = { state: "running", text: "Downloading", progress: 22 }
     var building = { state: "running", text: "Building Chrome", progress: -1 }
     var restart = { state: "done", restart: true, progress: 100, failed: [] }
-    var done = { state: "done", restart: false, progress: 100, failed: ["google-chrome", "visual-studio-code-bin"] }
+    var done = { state: "done", restart: false, progress: 100, failed: [] }
+    var problems = { state: "problems", restart: false, progress: 100, failed: ["google-chrome", "visual-studio-code-bin"] }
+    var problemsRestart = { state: "problems", restart: true, progress: 100, failed: ["visual-studio-code-bin"] }
     var failed = { state: "failed", error: "cannot reach GitHub", progress: 40 }
+    var failedApps = { state: "failed", error: "pacman failed", progress: 60, failed: ["google-chrome"] }
 
     check(Model.summary(none, "", true).detail === "Checking for updates…" && Model.summary(none, "", true).action === "", "asked, not answered yet")
     check(JSON.stringify(Model.summary(none, "available 1.0.0-beta.11", true)) === '{"detail":"Nova 1.0.0-beta.11 is available.","action":"update"}', "a release")
@@ -32,7 +35,10 @@ ShellRoot {
     check(Model.summary(failed, "", true).detail === "The update did not finish: cannot reach GitHub." && Model.summary(failed, "", true).action === "retry", "a failure says why, and offers another try")
     check(Model.summary(restart, "current", true).action === "restart", "installed, a restart to finish")
     check(Model.summary(done, "current", true).detail === "Nova and its apps are up to date.", "done: the check speaks again")
-    check(Model.leftOver(done, true) === "Chrome and VS Code were not updated." && Model.leftOver(running, true) === "", "apps left undone, once it ended")
+    check(JSON.stringify(Model.summary(problems, "apps google-chrome visual-studio-code-bin", true)) === '{"detail":"Chrome and VS Code could not be updated.","action":"retry"}', "finished with problems: the apps named, and another try")
+    check(JSON.stringify(Model.summary(problemsRestart, "current", true)) === '{"detail":"Restart to finish the update. VS Code could not be updated.","action":"restart"}', "with problems and a restart to finish, the restart first")
+    check(Model.summary({ state: "problems" }, "", true).detail === "An app could not be updated.", "problems with no app named")
+    check(Model.leftOver(failedApps, true) === "Chrome was not updated." && Model.leftOver(problems, true) === "" && Model.leftOver(running, true) === "", "apps left undone by a failed run; one with problems says them itself")
 
     check(Model.availableVersion("available 1.1.0") === "1.1.0" && Model.availableVersion("current") === "", "the release for its notes")
     var sha = "0123456789abcdef0123456789abcdef01234567"

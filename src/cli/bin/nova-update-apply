@@ -35,6 +35,11 @@
 # asks for authentication once. With --packages-only it installs those alone,
 # when only the apps are behind. It takes those two apps alone, from files of
 # the user who authenticated, and installs copies made as they were checked.
+# One that will not go in leaves the release in, and the update goes on to its
+# end: it then ends with 4, finished with problems.
+#
+# Exit status: 0 done; 3 installed, but the boot entries do not check out
+# (which outweighs an app); 4 finished, but an app did not go in; 1 failed.
 #
 # Closing the terminal does not stop it: from then on its output goes to
 # /var/log/nova-update.log.
@@ -522,7 +527,7 @@ main() {
     (( ${#packages[@]} )) || die "--packages-only needs a --package"
     take_lock
     read_missing_lists
-    install_built_packages
+    install_built_packages || return 4
     return
   fi
   [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "bad --tag"
@@ -603,7 +608,9 @@ main() {
   trap - INT
 
   install_hardware_packages "$noconfirm" "${env_skip[@]}"
-  install_built_packages "${env_skip[@]}" || true
+  # An app that will not go in is said, and the rest goes on.
+  local apps=0
+  install_built_packages "${env_skip[@]}" || apps=4
   drop_retired "${env_skip[@]}"
 
   if [[ -n $pre ]]; then
@@ -617,7 +624,7 @@ main() {
     if ! esp_unmounted "$esp" && command -v limine-update > /dev/null 2>&1; then
       warn "regenerating boot entries with limine-update"
       limine-update || warn "limine-update failed"
-      verify_boot_entries && { say "Boot entries repaired"; finished; return 0; }
+      verify_boot_entries && { say "Boot entries repaired"; finished; return "$apps"; }
     fi
     warn "the boot entries do NOT check out. Do not reboot yet."
     boot_advice "$pre"
@@ -627,6 +634,7 @@ main() {
 
   say "Boot entries look right"
   finished
+  return "$apps"
 }
 
 # Pacman's lock starts too late to protect the pins and their backups.

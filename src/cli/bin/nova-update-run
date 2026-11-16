@@ -6,7 +6,10 @@
 # As a user service of its own, so that it outlives the Settings window that
 # started it and the shell it restarts on the new release. How far it is, is in
 # $XDG_RUNTIME_DIR/nova/update/status.json (nova update --status), and its
-# output beside it. One at a time: while one runs, this does nothing.
+# output beside it. How it ended is the state there, "done", "problems" (Nova
+# updated, Chrome or VS Code not), "failed" or "cancelled", and the service's
+# exit status, as nova update's (0, 4, 1 or 3, 2). One at a time: while one
+# runs, this does nothing.
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)

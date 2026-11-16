@@ -43,7 +43,7 @@ Column {
 
   readonly property string state: Model.state(status, alive)
   readonly property bool running: state === "running"
-  readonly property bool ended: state === "failed" || state === "stopped"
+  readonly property bool ended: state === "failed" || state === "stopped" || state === "problems"
   readonly property var summary: Model.summary(status, check, alive)
   readonly property real fraction: Model.fraction(status)
   readonly property string available: running ? "" : Model.availableVersion(check)
@@ -53,7 +53,7 @@ Column {
   Component.onCompleted: checkProc.running = true
 
   onStateChanged: {
-    if (lastState === "running" && (state === "done" || state === "failed")) {
+    if (lastState === "running" && (state === "done" || state === "problems" || state === "failed")) {
       if (!checkProc.running) checkProc.running = true
       root.finished()
     }

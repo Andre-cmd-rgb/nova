@@ -2,6 +2,8 @@
 // <version>", "apps <name>...", "current", or "" while it is asked, "error"
 // when it could not be) and the run's status.json ({state, text, progress,
 // version, error, restart, held, apps, failed}), and the button beside it.
+// A run's state is "running", then "done", "problems" (Nova updated, an app
+// not: those in failed), "failed" or "cancelled".
 
 var names = { "google-chrome": "Chrome", "visual-studio-code-bin": "VS Code" }
 
@@ -33,6 +35,12 @@ function summary(status, check, alive) {
   if (s === "running") return { detail: (status.text || "Updating") + "…", action: "" }
   if (s === "failed") return { detail: "The update did not finish: " + (status.error || "it failed") + ".", action: "retry" }
   if (s === "stopped") return { detail: "The update stopped before it finished.", action: "retry" }
+  if (s === "problems") {
+    var apps = appList(status.failed) || "An app"
+    var left = apps + " could not be updated."
+    if (status.restart === true) return { detail: "Restart to finish the update. " + left, action: "restart" }
+    return { detail: left, action: "retry" }
+  }
   if (s === "done" && status.restart === true) return { detail: "Restart to finish the update.", action: "restart" }
 
   var line = String(check || "")
@@ -50,10 +58,10 @@ function fraction(status) {
   return isFinite(p) && p >= 0 ? Math.min(1, p / 100) : -1
 }
 
-// What a run left undone, after it ended: apps that did not build or go in.
+// What a failed run left undone besides: apps that did not build or go in.
+// One with problems says them in its summary.
 function leftOver(status, alive) {
-  var s = state(status, alive)
-  if (s !== "done" && s !== "failed") return ""
+  if (state(status, alive) !== "failed") return ""
   var failed = status.failed || []
   return failed.length > 0 ? appList(failed) + (failed.length > 1 ? " were" : " was") + " not updated." : ""
 }

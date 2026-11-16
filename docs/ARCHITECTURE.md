@@ -385,6 +385,7 @@ Pre-releases (the candidates) reach only systems that opted in (`nova update --c
 Chrome and VS Code are built on the machine from their AUR recipes, which download from the vendors (`nova apps install`).
 
 - They are outside the release, so `nova update` ends by rebuilding whichever is behind the AUR (`nova apps update`). The bar's update badge shows when one is, with a notification once.
+- One that will not build or go in leaves Nova updated: the update finishes with problems (status 4, state `problems` for Settings), naming the app.
 - A recipe runs as the user and anyone can push to the AUR, so the commit each was built from is kept in `~/.local/state/nova/aur/`.
 - A new release is built unasked only when its recipe changed nothing but `pkgver`, `pkgrel` and checksums.
 - Any other change is shown in the terminal and built only on a yes; under `--yes` that app waits.

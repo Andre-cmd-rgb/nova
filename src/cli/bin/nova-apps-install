@@ -21,6 +21,9 @@
 #                                  "current"; a non-zero exit when the AUR cannot
 #                                  be reached
 #   --noconfirm                    ask nothing (the installer, nova update --yes)
+#   --result <file>                list how each app went in the file, as
+#                                  --build does (nova update, to say which
+#                                  could not be updated)
 #
 # For Settings, which shows no terminal and asks for authentication once, the
 # building and the installing are two steps:
@@ -45,7 +48,7 @@ aur=${NOVA_AUR:-https://aur.archlinux.org}
 state=${NOVA_AUR_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/nova/aur}
 
 usage() {
-  echo "Usage: nova apps install [--update | --check] [--noconfirm] [--build <folder>] [--only <app>] [--approve <app>=<commit>]" >&2
+  echo "Usage: nova apps install [--update | --check] [--noconfirm] [--build <folder> | --result <file>] [--only <app>] [--approve <app>=<commit>]" >&2
   echo "       nova apps install --review <app> | --record <app> <commit>" >&2
   exit 2
 }
@@ -53,14 +56,15 @@ usage() {
 known_app() { [[ " ${apps[*]} " == *" $1 "* ]]; }
 
 mode=all
-confirm=() build='' only=''
+confirm=() build='' only='' listed=''
 declare -A approve=()
 while (($#)); do
   case $1 in
     --update) mode=update ;;
     --check) mode=check ;;
     --noconfirm) confirm=(--noconfirm) ;;
-    --build) build=${2:-}; [[ -d $build ]] || usage; confirm=(--noconfirm); shift ;;
+    --build) build=${2:-}; [[ -d $build ]] || usage; confirm=(--noconfirm); listed=$build/result; shift ;;
+    --result) listed=${2:-}; [[ -n $listed ]] || usage; shift ;;
     --only) only=${2:-}; known_app "$only" || usage; shift ;;
     --approve)
       [[ ${2:-} =~ ^([a-z0-9@._+-]+)=([0-9a-f]{40,64})$ ]] && known_app "${BASH_REMATCH[1]}" || usage
@@ -252,8 +256,8 @@ approved() { # app dir
 work=$(mktemp -d "${TMPDIR:-/tmp}/nova-apps.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
 
-# A line of <folder>/result, for Settings.
-result() { [[ -z $build ]] || echo "$*" >>"$build/result"; }
+# A line of <folder>/result, for Settings, or of --result's file.
+result() { [[ -z $listed ]] || echo "$*" >>"$listed"; }
 
 failed=() held=() unreachable=()
 for app in "${todo[@]}"; do
@@ -284,6 +288,7 @@ for app in "${todo[@]}"; do
     git -C "$dir" rev-parse HEAD >"$state/$app"
   else
     failed+=("$app")
+    result failed "$app"
   fi
 done
 
