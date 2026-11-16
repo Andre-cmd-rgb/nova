@@ -580,6 +580,8 @@ unpacked() { # the report, unpacked into $SCRATCH/report; prints its folder
   [[ ${lines[1]} == "Inside: this check, the journal of this start and the last"*", crashes, snapshots, package versions, no boot menu (sudo adds it), the model, and its PCI and USB devices. Masked: "* ]]
   [ "${#lines[@]}" -eq 2 ]
   [ "$(stat -c %a "${lines[0]}")" = 600 ]
+  # Run by you, not under sudo: written as a .part beside it, then renamed.
+  [ "$(ls -A "$HOME/Fetched")" = "${lines[0]##*/}" ]
   local dir
   dir=$(unpacked "${lines[0]}")
   [ "$(cd "$dir" && ls | paste -sd' ')" = "boot-entries.txt crashes.txt doctor.txt journal-last-start-nova.txt journal-last-start-warnings.txt journal-this-start-nova.txt journal-this-start-warnings.txt model.txt packages.txt pci.txt snapshots.txt usb.txt" ]

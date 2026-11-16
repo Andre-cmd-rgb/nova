@@ -797,9 +797,20 @@ bundle() {
     if [[ $file == */journal-* ]]; then mask "$file" "${phones[@]}"; else mask "$file"; fi
   done
 
-  tar -C "$bundle_work" -czf "$out.part" -- "$name" || { echo "nova doctor: could not write $out" >&2; return 1; }
-  mv -f -- "$out.part" "$out"
-  if ((EUID == 0)) && [[ -n ${SUDO_UID:-} ]]; then chown -- "$SUDO_UID:${SUDO_GID:-$SUDO_UID}" "$out"; fi
+  # Under sudo the report goes into a folder of whoever asked, so they write
+  # it, and root makes nothing there and follows no link left there: tar would
+  # write through one at the .part, a name known to the second, to /etc/shadow.
+  if ((EUID == 0)) && [[ -n ${SUDO_UID:-} ]]; then
+    if ! tar -C "$bundle_work" -czf "$bundle_work/$name.tar.gz" -- "$name" ||
+      ! setpriv --reuid="$SUDO_UID" --regid="${SUDO_GID:-$SUDO_UID}" --init-groups \
+        bash -c 'umask 077 && cat >"$1.part" && mv -f -- "$1.part" "$1"' bash "$out" <"$bundle_work/$name.tar.gz"; then
+      echo "nova doctor: could not write $out" >&2
+      return 1
+    fi
+  else
+    tar -C "$bundle_work" -czf "$out.part" -- "$name" || { echo "nova doctor: could not write $out" >&2; return 1; }
+    mv -f -- "$out.part" "$out"
+  fi
 
   boot="the boot menu's entries"
   [[ -r $ESP/limine.conf ]] || boot="no boot menu (sudo adds it)"
