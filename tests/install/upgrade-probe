@@ -36,6 +36,37 @@ update_snapshot() { # update-log
   printf '%s\n' "$number"
 }
 
+# The boot menu's entry for a snapshot, as limine-snapper-sync writes it into
+# limine.conf: under the Snapshots entry, an entry titled by its date alone
+# (SNAPSHOT_FORMAT_CHOICE=5) whose command line boots the snapshot's own
+# subvolume, subvol=/@snapshots/<number>/snapshot. That line is the one place
+# the number is, and how limine-snapper-sync itself tells which snapshot an
+# entry boots. Nova's boot partition is /boot (10-nova.conf).
+snapshot_entry() { # number [limine.conf]
+  local number=$1 conf=${2:-/boot/limine.conf}
+  [[ $number =~ ^[0-9]+$ ]] || return 1
+  awk -v number="$number" '
+    { line = $0; sub(/^[[:space:]]+/, "", line) }
+    # An entry one or two deep (/Nova, //linux-nova, //Snapshots) starts or
+    # ends the Snapshots menu; deeper ones are in it.
+    line ~ /^\// {
+      if (match(line, /[^\/]/) - 1 <= 2) {
+        menu = (tolower(line) ~ /^\/+[+-]?snapshots[[:space:]]*$/)
+        menus += menu
+      }
+      next
+    }
+    menu && line ~ /^(kernel_)?cmdline:/ {
+      if (line ~ ("subvol=[^[:space:],]*/" number "/snapshot([[:space:],]|$)")) found = 1
+      else if (match(line, /subvol=[^[:space:],]*/)) seen = seen " " substr(line, RSTART, RLENGTH)
+    }
+    # What there is instead, for the serial log of a run that fails here.
+    END {
+      if (!found) print (menus ? "under Snapshots:" (seen == "" ? " no snapshot" : seen) : "no Snapshots entry")
+      exit !found
+    }' "$conf"
+}
+
 # A failed check is a report, so all the useful diagnostics still make it to
 # the serial log. Never start the next operation after one has failed.
 checks_passed() { ((probe_failures == 0)); }
@@ -111,6 +142,8 @@ main() {
       ;;
     upgraded)
       release_checks "$state/candidate.toml" update
+      # The way back the boot menu offers after an update.
+      check "the snapshot from before the update is in the boot menu" snapshot_entry "$(cat "$state/snapshot")"
       checks_passed
       # This local manifest was checked with nova-usb's signature helper before
       # installation. Its repository is the previous release's public one.

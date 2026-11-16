@@ -192,3 +192,53 @@ releases() { # tag...; all published, candidates included
   [ "$status" -eq 0 ]
   [[ $output == *'nova-update-apply --check-boot'* ]]
 }
+
+@test "the snapshot from before the update is found in the boot menu by the command line that boots it" {
+  source "$REPO_ROOT/tests/install/upgrade-probe"
+  # limine.conf as limine-entry-tool and limine-snapper-sync write it: the
+  # snapshots' entries are titled by their date alone, and only their command
+  # line has the number.
+  cat >"$SCRATCH/limine.conf" <<'CONF'
+timeout: 1
+default_entry: 2
+
+/+Nova
+comment: machine-id=0123456789abcdef0123456789abcdef
+  //linux-nova
+  protocol: efi
+  path: boot():/EFI/Linux/nova_linux-nova.efi
+  cmdline: quiet root=PARTUUID=1234 rootflags=subvol=@ rw rootfstype=btrfs
+  comment: a snapshot named here is no entry: subvol=/@snapshots/18/snapshot
+  //linux-lts
+  protocol: efi
+  path: boot():/EFI/Linux/nova_linux-lts.efi
+  //Snapshots
+  comment: 2/3 snapshots
+     ///2026-11-16 08:00:01
+     comment: nova update v1.0.0-rc.1 -> v1.0.0-rc.2
+          ////linux-nova
+          protocol: efi
+          path: boot():/0123456789abcdef0123456789abcdef/limine_history/nova_linux-nova.efi_sha256_abcd
+          cmdline: quiet root=PARTUUID=1234 rootflags=subvol=/@snapshots/17/snapshot rw rootfstype=btrfs
+     ///2026-11-15 08:00:01
+          ////linux-nova
+          protocol: efi
+          path: boot():/0123456789abcdef0123456789abcdef/limine_history/nova_linux-nova.efi_sha256_ef01
+          kernel_cmdline: root=PARTUUID=1234 rootflags=subvol=/@snapshots/117/snapshot,compress=zstd rw
+CONF
+  snapshot_entry 17 "$SCRATCH/limine.conf"
+  snapshot_entry 117 "$SCRATCH/limine.conf"
+  run snapshot_entry 7 "$SCRATCH/limine.conf"
+  [ "$status" -eq 1 ]
+  # What the menu has instead, for the log.
+  [ "$output" = "under Snapshots: subvol=/@snapshots/17/snapshot subvol=/@snapshots/117/snapshot" ]
+  fails snapshot_entry 1 "$SCRATCH/limine.conf"
+  fails snapshot_entry 18 "$SCRATCH/limine.conf"
+  fails snapshot_entry '' "$SCRATCH/limine.conf"
+  fails snapshot_entry 17 "$SCRATCH/missing.conf"
+  # The same entry outside the Snapshots menu is no snapshot's.
+  sed -i 's|^  //Snapshots$|  //Older|' "$SCRATCH/limine.conf"
+  run snapshot_entry 17 "$SCRATCH/limine.conf"
+  [ "$status" -eq 1 ]
+  [ "$output" = "no Snapshots entry" ]
+}

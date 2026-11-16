@@ -200,7 +200,7 @@ On 2026-11-15 every release up to v1.0.2 was removed this way, with the Raspberr
 Before anything is published, CI installs the release before this one and takes it forward and back (`tests/install/run --upgrade`, the `upgrade-test` job), in four starts of one virtual machine:
 
 1. It installs the newest published release older than this one, candidates included, from that release's own ISO and packages, each checked against Nova's key by `nova-usb`'s own code. With none older, it passes with a notice.
-2. That system's own `nova update` moves it to this release. After a restart, the version, the pins, the boot entries, the desktop and `nova doctor` are checked.
+2. That system's own `nova update` moves it to this release. After a restart, the version, the pins, the boot entries, the desktop and `nova doctor` are checked, and that the boot menu has the snapshot `nova update` took before it: limine-snapper-sync's entry under Snapshots in `limine.conf`, the one whose command line boots that snapshot.
 3. This release's `nova update --allow-downgrade` takes it back, and after a restart the older release is checked again.
 4. The snapshot `nova update` took before step 2 replaces the root, as `limine-snapper-restore` does. After a restart, the older version, every one of its packages and its pins are back, byte for byte.
 
@@ -209,4 +209,4 @@ How the guest reaches a release not yet published:
 - This release's `[nova]` repository is not published yet, so the guest reads it from the runner, at QEMU's address for the host, over HTTPS with a certificate from a CA made for the run and trusted by that guest alone, and through the `--release-file` option `nova update` already has.
 - pacman checks every signature as it always does, and nothing in `nova update` or its root helper changes for the test.
 
-Choosing the snapshot in the boot menu, its overlay and the notification's **Restore now** are not in it: those are on the hardware checklist. The serial logs are kept as the run's `upgrade-logs`.
+Choosing the snapshot's entry in the boot menu, its overlay and the notification's **Restore now** are not in it: those are on the hardware checklist. The serial logs are kept as the run's `upgrade-logs`.
