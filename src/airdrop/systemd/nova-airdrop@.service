@@ -13,9 +13,10 @@ Type=notify
 NotifyAccess=main
 # The daemon is whoever asked for it (nova-airdrop-apply names their number),
 # and what it receives is theirs, and what it sends theirs to send. The two
-# capabilities are for its socket on the monitor interface and the one on
-# Bluetooth's management (which, while it sends, announces what wakes an
-# iPhone's AirDrop); it gives them up once it has the sockets.
+# capabilities are for its socket on the monitor interface, and for the one on
+# Bluetooth's management, which a process of its own forked first binds and
+# keeps, to announce what wakes an iPhone's AirDrop while it sends; both give
+# them up at once, before anything else runs.
 User=%i
 AmbientCapabilities=CAP_NET_RAW CAP_NET_ADMIN
 CapabilityBoundingSet=CAP_NET_RAW CAP_NET_ADMIN

@@ -1,7 +1,8 @@
 //! The kernel's Bluetooth management socket, the one `bluetoothd` uses:
 //! commands to a controller and their answers, and the events in between.
-//! AirDrop's doorbell listens with it (nova-airdrop-bell) and the daemon
-//! announces itself with it while it sends (wake.rs); each uses some of it.
+//! AirDrop's doorbell listens with it (nova-airdrop-bell) and the daemon's
+//! announcer announces this computer with it while it sends (announcer.rs,
+//! wake.rs); each uses some of it.
 //!
 //! The kernel lets such a socket do more than read if the process had
 //! CAP_NET_ADMIN when it bound it, and decides that once, at binding: both

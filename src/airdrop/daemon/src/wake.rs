@@ -12,20 +12,30 @@
 //! computer has no Apple ID and gives none (zeros). An iPhone set to
 //! Everyone for 10 Minutes wakes for any sender.
 //!
+//! The advertisement goes out from the controller's own address. The kernel
+//! gives an advertisement a random one only when it cannot be connected to,
+//! or when Bluetooth privacy is on (`Privacy=device` in bluetoothd's
+//! main.conf, for the whole controller); this one counts as connectable
+//! whenever the controller is, as bluetoothd has it, and no flag of the
+//! management interface asks otherwise (net/bluetooth/hci_sync.c). So while
+//! it sends, whoever listens nearby hears this computer's Bluetooth address,
+//! the one it has for good, unless privacy is on: that is the user's to
+//! choose, and is not changed from here.
+//!
 //! It is given to the controller through the kernel's Bluetooth management
 //! (mgmt.rs), as an advertisement of the computer's own, not through BlueZ's
 //! LEAdvertisingManager1. That could carry it as well, but it calls back into
 //! an object the advertiser serves on the system bus, and Nova's Rust has no
 //! D-Bus to serve one with; the management socket is what the doorbell
-//! already speaks. It costs the capability to bind that socket (CAP_NET_ADMIN,
-//! given up with the rest when the daemon leaves for its own namespace), and
+//! already speaks. It costs the capability to bind that socket (CAP_NET_ADMIN),
+//! which is why this runs in a process of its own (announcer.rs), and
 //! bluetoothd does not know of the advertisement: it takes the highest
-//! number free, where bluetoothd hands out the lowest, and says it again
+//! number free, where bluetoothd hands out the lowest, and is said again
 //! every few seconds, which brings it back should anything have taken it
 //! away. The kernel ends it by itself a little after that: a daemon that
 //! died leaves nothing announcing.
 
-use std::time::{Duration, Instant};
+use std::os::fd::{AsRawFd, RawFd};
 
 use crate::mgmt::{self, Mgmt};
 
@@ -34,9 +44,8 @@ const ADD_ADVERTISING: u16 = 0x003e;
 const REMOVE_ADVERTISING: u16 = 0x003f;
 
 /// How long the controller announces after it was last told to: a little longer than between
-/// two tellings.
+/// two tellings (announcer.rs).
 const LASTS: u16 = 20;
-pub const AGAIN_AFTER: Duration = Duration::from_secs(8);
 
 /// What the controller is given to announce: the flags an iPhone gives its own, and Apple's
 /// manufacturer data with message 0x05 in it, 18 bytes: eight of nothing, the message's version
@@ -77,12 +86,11 @@ fn free_instance(features: &[u8]) -> Option<u8> {
     (1..=most).rev().find(|instance| !taken.contains(instance))
 }
 
-/// The Bluetooth half of sending.
+/// The Bluetooth half of sending, in the announcer's process.
 pub struct Wake {
     mgmt: Mgmt,
     /// (controller, the advertisement's number) while it is announcing.
     on: Option<(u16, u8)>,
-    said: Option<Instant>,
 }
 
 impl Wake {
@@ -91,19 +99,27 @@ impl Wake {
         Ok(Wake {
             mgmt: Mgmt::open().map_err(|error| format!("Bluetooth: {error}"))?,
             on: None,
-            said: None,
         })
+    }
+
+    /// The descriptor the management socket's events come on.
+    pub fn events(&self) -> RawFd {
+        self.mgmt.fd.as_raw_fd()
+    }
+
+    /// Reads and lets go of the events that came, none of which this needs: a queue nobody reads
+    /// fills, and then the answers are dropped too. How many there were.
+    pub fn drain(&mut self) -> usize {
+        let mut drained = 0;
+        while self.mgmt.read().is_some() {
+            drained += 1;
+        }
+        drained
     }
 
     /// Announces, or says again what it announces; why not, in a sentence for the user, when it
     /// cannot.
     pub fn announce(&mut self) -> Result<(), String> {
-        if self
-            .said
-            .is_some_and(|said| said.elapsed() < AGAIN_AFTER && self.on.is_some())
-        {
-            return Ok(());
-        }
         // What the kernel told meanwhile is nothing this needs.
         self.mgmt.early.clear();
         let Some((index, powered)) = self.mgmt.controller() else {
@@ -138,7 +154,6 @@ impl Wake {
             ));
         }
         self.on = Some((index, instance));
-        self.said = Some(Instant::now());
         Ok(())
     }
 
@@ -148,7 +163,6 @@ impl Wake {
             self.mgmt.ask(REMOVE_ADVERTISING, index, &[instance]);
             self.mgmt.early.clear();
         }
-        self.said = None;
     }
 }
 
@@ -163,7 +177,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_announcement_is_apples_airdrop_message_with_no_identity() {
+    fn the_announcement_is_apples_airdrop_message_with_no_apple_id_in_it() {
         let data = announcement();
         assert_eq!(data.len(), 27, "within an advertisement's 31 bytes");
         assert_eq!(&data[..3], &[0x02, 0x01, 0x1a]);

@@ -13,11 +13,13 @@
 //!                 [--control <socket>] [--accept-all]
 //!                 [--once] [--give-up-after <seconds>]
 //!
-//! It runs as the person whose files they will be, with two capabilities
-//! (CAP_NET_RAW, for the socket on the monitor interface, and CAP_NET_ADMIN,
-//! for the one on Bluetooth's management that wakes an iPhone when it sends),
-//! and gives them up with everything else of the system's network when it has
-//! the sockets: see sys.rs. Its certificate is its own, made on the first run
+//! It runs as the person whose files they will be, with two capabilities:
+//! CAP_NET_RAW, for the socket on the monitor interface, and CAP_NET_ADMIN,
+//! for that socket's buffers and for the one on Bluetooth's management that
+//! wakes an iPhone when it sends. That one is bound and kept by a process of
+//! its own, forked first (announcer.rs); the daemon gives up both as soon as
+//! it has its socket on the radio, before it runs anything, and leaves the
+//! system's network for a namespace of its own: see sys.rs. Its certificate is its own, made on the first run
 //! and kept in --identity (by default nova/airdrop under the user's state
 //! folder).
 //!
@@ -38,6 +40,7 @@
 //!
 //! What it logs goes to standard error, a line an event.
 
+mod announcer;
 mod control;
 mod defaults;
 mod http;
@@ -305,7 +308,11 @@ fn run() -> Result<(), String> {
         );
     };
 
-    // The socket on the monitor interface first: it stays in the namespace the card is in.
+    // What wakes an iPhone when this computer sends, in a process of its own that keeps the
+    // capability to tell Bluetooth what to announce, and nothing else: forked before anything is
+    // open (announcer.rs). Without it, a send says why.
+    let announcer = announcer::Announcer::fork();
+    // The socket on the monitor interface: it stays in the namespace the card is in.
     let (air, address) = match (&o.monitor, o.air_fd) {
         (Some(interface), _) => {
             let address = match o.address {
@@ -323,9 +330,8 @@ fn run() -> Result<(), String> {
         ),
         _ => unreachable!(),
     };
-    // Bluetooth's management socket, while the capability to bind it is there: it wakes an iPhone
-    // when this computer sends (wake.rs). Without it, a send says why.
-    let wake = wake::Wake::open();
+    // That was all the capabilities were for: none for openssl, or for anything a phone could reach.
+    sys::give_up_capabilities().map_err(|e| e.to_string())?;
     // The certificate while the files of the system are still as they were named, and systemd's ear.
     let (certificate, key) = identity(&o.identity)?;
     let tls = tls::Server::new(&certificate, &key)?;
@@ -402,7 +408,7 @@ fn run() -> Result<(), String> {
             limits: sender::Limits::default(),
         },
         scope,
-        wake,
+        announcer,
         {
             let (ending, sent_since) = (ending.clone(), sent_since.clone());
             Box::new(move |told| {

@@ -8,7 +8,7 @@
 //! AirDrop on until it is over (control.rs).
 //!
 //! Meanwhile Bluetooth announces that this computer wants to send
-//! (wake.rs), which is what wakes an iPhone's AirDrop; the node asks on the
+//! (wake.rs, through announcer.rs), which is what wakes an iPhone's AirDrop; the node asks on the
 //! air who receives (node.rs), and each receiver it hears of is asked who it
 //! is (/Discover, sender.rs), and listed. Picked, it is asked whether its
 //! person wants the files (/Ask), and sent them (/Upload).
@@ -40,12 +40,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
+use crate::announcer::Announcer;
 use crate::control::{list, quoted};
 use crate::pack::{self, Item, Pack};
 use crate::packet;
 use crate::sender::{Answer, Listing, Sender};
 use crate::sys;
-use crate::wake::Wake;
 use crate::wire::Mac;
 
 /// The most files one send takes.
@@ -98,7 +98,7 @@ pub struct Sending {
     sender: Sender,
     /// awdl0's number: the scope of a receiver's link-local address.
     scope: u32,
-    wake: Mutex<Result<Wake, String>>,
+    wake: Mutex<Result<Announcer, String>>,
     inner: Mutex<Inner>,
     tell: Box<dyn Fn(Told) + Send + Sync>,
     /// Whether AirDrop stays on once a send lets go of it.
@@ -219,7 +219,7 @@ impl Sending {
     pub fn new(
         sender: Sender,
         scope: u32,
-        wake: Result<Wake, String>,
+        wake: Result<Announcer, String>,
         tell: Box<dyn Fn(Told) + Send + Sync>,
         stays: Box<dyn Fn() -> bool + Send + Sync>,
     ) -> Arc<Sending> {

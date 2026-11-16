@@ -174,6 +174,48 @@ impl Notify {
     }
 }
 
+// ------------------------------------------------------------ capabilities
+
+#[repr(C)]
+struct CapHeader {
+    version: u32,
+    pid: c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CapData {
+    effective: u32,
+    permitted: u32,
+    inheritable: u32,
+}
+
+extern "C" {
+    fn capset(header: *mut CapHeader, data: *const CapData) -> c_int;
+}
+
+const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
+
+/// Gives up every capability, for good, and with them the ambient ones a program it runs would
+/// be given: the sockets already bound keep what they were let do. A user namespace it makes
+/// later is its own, with what it takes to set up a network in it.
+pub fn give_up_capabilities() -> io::Result<()> {
+    let mut header = CapHeader {
+        version: CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let none = [CapData {
+        effective: 0,
+        permitted: 0,
+        inheritable: 0,
+    }; 2];
+    // SAFETY: the header and the two data the third version takes live across the call.
+    if unsafe { capset(&mut header, none.as_ptr()) } != 0 {
+        return failed("giving up its capabilities");
+    }
+    Ok(())
+}
+
 // --------------------------------------------------------------- namespace
 
 /// Leaves for a network namespace of this process's own. As root that is all
