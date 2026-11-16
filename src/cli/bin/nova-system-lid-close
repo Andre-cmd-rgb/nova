@@ -20,6 +20,13 @@ secured() {
   timeout 0.5s nova-shell lock status 2>/dev/null | jq -e '.secure == true' >/dev/null 2>&1
 }
 
+# Whether something holds logind off the lid, so that a shut lid sleeps
+# nothing: an update, which keeps going in a bag (nova-update-apply).
+lid_held() {
+  # Read to the end: grep -q leaving early could fail the list with a broken pipe.
+  systemd-inhibit --list --no-legend 2>/dev/null | grep 'handle-lid-switch' >/dev/null
+}
+
 # The lock starts as the lid shuts, before logind has decided to suspend. The
 # delay logind grants before a suspend runs out whether or not the lock is up
 # by then, and nova-system-sleep-lock, which locks as the suspend begins, then
@@ -30,10 +37,11 @@ secured() {
 # display, so nothing locks.
 if nova-hw-laptop-closed && ! nova-hw-external-monitors; then
   nova-system-lock >/dev/null 2>&1 || true
-  # Plugged in with the lid set to lock (nova power lid lock), the computer
-  # keeps running: once the lock is drawn the panel goes dark, as under
-  # Caffeine, and opening the lid lights it again (nova caffeine open).
-  if plugged_in && [[ $(nova-power-lid 2>/dev/null) == lock ]]; then
+  # Plugged in with the lid set to lock (nova power lid lock), or with the lid
+  # held while an update runs, the computer keeps running: once the lock is
+  # drawn the panel goes dark, as under Caffeine, and opening the lid lights
+  # it again (nova caffeine open).
+  if { plugged_in && [[ $(nova-power-lid 2>/dev/null) == lock ]]; } || lid_held; then
     for _ in {1..50}; do
       secured && break
       sleep 0.1

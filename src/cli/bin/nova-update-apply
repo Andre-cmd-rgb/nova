@@ -555,7 +555,7 @@ main() {
   trap '' PIPE
   restore_on_exit=0
   trap on_exit EXIT
-  hold_shutdown
+  hold_power
   if (( snapshot )); then
     say "Taking the pre-update snapshot"
     pre=$(snapshot "$label" --type pre) ||
@@ -712,38 +712,46 @@ drop_left_behind() { # then a command prefix for pacman
 
 # Until this ends, the computer does not shut down or restart, from the menu,
 # the power key or systemctl: stopped in the middle, pacman would leave the
-# release half installed. logind lets go when this process ends, however it
-# ends: at once as it leaves (on_exit), and within the second tail takes to
-# see it gone had it been killed outright. The scratch roots of the tests have
-# no logind to ask.
-hold_shutdown() {
+# release half installed. Nor does closing the lid put it to sleep, in a bag
+# say, where the update would wait until it was opened: logind leaves the lid
+# alone while a handle-lid-switch hold is there, as under Caffeine, and Nova's
+# lid binding (nova-system-lid-close) sees the hold and locks and darkens the
+# panel instead. Only the lid: a Suspend from the menu still sleeps, and so
+# does UPower at the battery's end, which a sleep hold would refuse; pacman
+# goes on after the wake. Once the update is over with the lid still shut,
+# logind sleeps as it would have.
+#
+# logind lets go when this process ends, however it ends: at once as it
+# leaves (on_exit), and within the second tail takes to see it gone had it
+# been killed outright. The scratch roots of the tests have no logind to ask.
+hold_power() {
   [[ -z $ROOT ]] && command -v systemd-inhibit > /dev/null 2>&1 || return 0
   (
     trap '' HUP INT PIPE
-    exec systemd-inhibit --what=shutdown --mode=block --who="nova update" \
+    exec systemd-inhibit --what=shutdown:handle-lid-switch --mode=block --who="nova update" \
       --why="Installing Nova $tag; stopped now it would be left half done" \
       tail --pid=$$ -f /dev/null
   ) < /dev/null > /dev/null 2>&1 &
-  shutdown_hold=$!
+  power_hold=$!
 }
 
 # Waited for, so that a restart asked for the moment the update ends is not
 # refused in its name.
-release_shutdown() {
-  [[ -n ${shutdown_hold:-} ]] || return 0
-  kill "$shutdown_hold" 2> /dev/null || true
-  wait "$shutdown_hold" 2> /dev/null || true
-  shutdown_hold=''
+release_power() {
+  [[ -n ${power_hold:-} ]] || return 0
+  kill "$power_hold" 2> /dev/null || true
+  wait "$power_hold" 2> /dev/null || true
+  power_hold=''
 }
 
 # However the update ends: the pins back if it ends before pacman has them,
-# then the shutdown let go.
+# then the shutdown and the lid let go.
 on_exit() {
   if (( ${restore_on_exit:-0} )); then
     restore_on_exit=0
     restore_config
   fi
-  release_shutdown
+  release_power
 }
 
 finished() {

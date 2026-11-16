@@ -255,6 +255,7 @@ Every write is read back, and only a verified value counts as success.
 ### Sleep
 
 - **The lid, the suspend key and the menu's Suspend** all `sleep`. logind turns that into suspend-then-hibernate (hibernating after 2 h, and never on AC), or plain suspend on a machine that cannot hibernate.
+- **While an update installs**, it holds logind off shutting down and off the lid (`shutdown:handle-lid-switch`, never `sleep`, which would refuse the menu's Suspend and UPower's hibernate too). The lid binding (`nova-system-lid-close`) sees a held lid and locks and turns the panel off, as for `lid lock`.
 - **Settings → Battery chooses three things over that**, each through a `nova power` command:
   - `lid`: what a closed lid does plugged in: sleep, or lock and keep running with the panel dark;
   - `button`: what the power button does: the system menu, sleep or shut down; the session's, so no root;

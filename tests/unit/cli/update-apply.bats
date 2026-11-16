@@ -379,12 +379,42 @@ pacman -Suu --noconfirm" ]
 @test "the hold on shutting down is let go as the update leaves, and waited for" {
   sleep 30 3>&- &
   local hold=$!
-  shutdown_hold=$hold
+  power_hold=$hold
   on_exit
   ! kill -0 "$hold" 2>/dev/null
-  [ -z "$shutdown_hold" ]
+  [ -z "$power_hold" ]
   # With none taken, as in a scratch root, leaving is all there is to do.
   on_exit
+}
+
+# An update with logind to ask (no scratch root), whose systemd-inhibit is a
+# stub that writes down what it was asked and runs the command it holds for.
+@test "the update holds off shutting down and the lid, not sleep, until it is killed outright" {
+  mkdir -p "$SCRATCH/bin"
+  cat >"$SCRATCH/bin/systemd-inhibit" <<'STUB'
+#!/bin/bash
+args=()
+while [[ $1 == --* ]]; do args+=("$1"); shift; done
+printf '%s\n' "${args[@]}" >"$SCRATCH/inhibit"
+exec "$@"
+STUB
+  chmod +x "$SCRATCH/bin/systemd-inhibit"
+  PATH="$SCRATCH/bin:$PATH" NOVA_ROOT='' bash -c '
+    source "$1"
+    tag=v1.1.0
+    hold_power
+    echo "$power_hold" >"$SCRATCH/hold"
+    exec sleep 30' _ "$REPO_ROOT/src/cli/bin/nova-update-apply" 3>&- &
+  local update=$! hold
+  for _ in {1..50}; do [[ -s $SCRATCH/hold && -s $SCRATCH/inhibit ]] && break; sleep 0.1; done
+  hold=$(cat "$SCRATCH/hold")
+  grep -qx -- '--what=shutdown:handle-lid-switch' "$SCRATCH/inhibit"
+  grep -qx -- '--mode=block' "$SCRATCH/inhibit"
+  fails grep -q sleep "$SCRATCH/inhibit"
+  kill -0 "$hold"
+  kill -KILL "$update"
+  for _ in {1..30}; do kill -0 "$hold" 2>/dev/null || break; sleep 0.1; done
+  fails kill -0 "$hold" 2>/dev/null
 }
 
 @test "a failed second pin write restores both pins before any pacman runs" {

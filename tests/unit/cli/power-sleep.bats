@@ -156,6 +156,8 @@ lid_close() {
   stub nova-shell 'echo "{\"secure\":true}"'
   stub hyprctl
   stub nova-power-lid "echo $1"
+  # logind's holds: this computer's own never count here.
+  [[ -x $SCRATCH/bin/systemd-inhibit ]] || stub systemd-inhibit
   mkdir -p "$SCRATCH/supply/AC"
   echo Mains >"$SCRATCH/supply/AC/type"
   echo "$2" >"$SCRATCH/supply/AC/online"
@@ -175,5 +177,18 @@ lid_close() {
   fails grep -q hyprctl "$CALLS"
   : >"$CALLS"
   lid_close sleep 1
+  fails grep -q hyprctl "$CALLS"
+}
+
+@test "lid close during an update, on battery: locked, then the panel dark, as the update goes on" {
+  stub systemd-inhibit 'printf "%s\n" "nova update 0 root 4242 systemd-inhibit shutdown:handle-lid-switch Installing Nova v1.1.0 block"'
+  lid_close sleep 0
+  grep -qx 'nova-system-lock ' "$CALLS"
+  grep -qx 'systemd-inhibit --list --no-legend' "$CALLS"
+  grep -qx 'hyprctl dispatch hl.dsp.dpms({ action = "off", monitor = "eDP-1" })' "$CALLS"
+  # A hold on shutting down alone leaves the lid to sleep.
+  : >"$CALLS"
+  stub systemd-inhibit 'echo "nova update 0 root 4242 systemd-inhibit shutdown Installing block"'
+  lid_close sleep 0
   fails grep -q hyprctl "$CALLS"
 }
