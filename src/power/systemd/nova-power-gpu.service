@@ -8,6 +8,7 @@ ConditionPathExists=!/etc/nova/portable
 
 [Service]
 Type=oneshot
-# Fires every two minutes; a run with nothing to do should not say so.
+# A retry often finds the card already where it should be, and a run with
+# nothing to do should not say so.
 Environment=QUIET=1
 ExecStart=/usr/lib/nova/bin/nova-power gpu-auto

@@ -30,6 +30,8 @@ DAEMON_STATE=$T/dstate
 GPU_MANUAL=$T/gpu-manual
 GPU_MODE_FILE=$T/gpu-mode
 RUNTIME_PM_STATE=$T/runtime-pm
+# The retry timer is noted, never started.
+gpu_retry_later() { echo retry >>"$T/retry"; }
 
 fail=0
 chk() {
@@ -436,7 +438,9 @@ sleep() { :; }
 gpu_on >/dev/null 2>&1
 chk "a failed rescan asks for one"      "$(cat "$T/pci/rescan" 2>/dev/null)" "1"
 chk "  and keeps the driver blocked"    "$([[ -s $MODPROBE_BLOCK ]] && echo yes || echo no)" "yes"
+chk "  and is tried again later"        "$(cat "$T/retry" 2>/dev/null)" "retry"
 unset -f sleep
+rm -f "$T/retry"
 
 # Settings' readout, from the same files.
 RAPL_PL1=$T/pl1 RAPL_PL2=$T/pl2 PSTATE_MAX=$T/max PSTATE_NO_TURBO=$T/no-turbo
@@ -518,6 +522,16 @@ chk "usb ac: the camera keeps the hwdb's"  "$(cat "$SYS_USB/3-8/power/control")"
 chk "usb ac clears state"                  "$([[ -e $USB_PM_STATE ]] && echo yes || echo no)" "no"
 USB_AUTOSUSPEND_ON_BAT=no usb_pm_battery
 chk "usb autosuspend can be turned off"    "$(cat "$SYS_USB/3-1/power/control")" "on"
+
+# Only a card that would not go off has the retry timer started; one that
+# went, or was gone, leaves it be, and nothing wakes for it after.
+gpu_take_off() { return 1; }
+gpu_off
+chk "a card that would not go off is tried again later" "$(cat "$T/retry" 2>/dev/null)" "retry"
+rm -f "$T/retry"
+gpu_take_off() { return 0; }
+gpu_off
+chk "  and one that went is not"           "$(cat "$T/retry" 2>/dev/null)" ""
 
 # Fact 55: what a hand chose lasts until a plug-in, not until the next run on
 # AC (a resume, the retry timer). The card itself is stubbed: only the

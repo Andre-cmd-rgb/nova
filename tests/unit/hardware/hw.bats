@@ -214,6 +214,13 @@ picks() { # profile|-
   done
 }
 
+@test "the P1's GPU retry timer is enabled by nothing: nova-power starts it when there is something to retry" {
+  fails grep -q '^\[Install\]' "$REPO_ROOT/src/power/systemd/nova-power-gpu.timer"
+  fails grep -q 'OnUnitActiveSec\|OnBootSec' "$REPO_ROOT/src/power/systemd/nova-power-gpu.timer"
+  fails grep -q 'nova-power-gpu.timer' "$REPO_ROOT/src/power/install.mk"
+  grep -q 'systemctl restart --no-block nova-power-gpu.timer' "$REPO_ROOT/src/power/bin/nova-power"
+}
+
 @test "apply --remove: takes everything back off" {
   model "ThinkPad P1 Gen 4i"
   "$apply"

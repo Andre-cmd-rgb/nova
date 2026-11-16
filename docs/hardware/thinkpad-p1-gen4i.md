@@ -39,7 +39,8 @@ Everything ships in the `nova` package and is inert on any other computer.
 | | |
 |---|---|
 | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd` | the policy and the governor |
-| `nova-power.service`, `nova-powerd.service`, `nova-power-gpu.timer` | enabled by the package, each with `ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")` |
+| `nova-power.service`, `nova-powerd.service` | enabled by the package, each with `ConditionFirmware=smbios-field(product_version $= "ThinkPad P1 Gen 4i")` |
+| `nova-power-gpu.timer` | the GPU retry, started by `nova-power` when there is something to retry (fact 7), and DMI-guarded the same way |
 | `99-nova-power.rules` | plug and unplug re-apply the policy; a USB device plugged in on battery may autosuspend (fact 54) (DMI-matched) |
 | `98-nova-igpu.rules` | `/dev/dri/igpu`, the colon-free name for the integrated card (fact 1) |
 | `72-nova-dgpu-no-seat.rules` | the discrete card's node is not the seat's, so the compositor cannot take it on hotplug (fact 53) |
@@ -126,8 +127,10 @@ shown by the model (`nova-hw-detect`), not by counting GPUs: a count with
 **7. The policy is edge-triggered and can legitimately decline.** `gpu_off`
 refuses while anything holds the card, rather than pulling it from under a
 running program. A plug event is one edge that never repeats, so
-`nova-power-gpu.timer` retries every 2 min, GPU only, never touching the
-profile.
+`nova-power-gpu.timer` retries 2 min later, GPU only, never touching the
+profile, and again after each retry that fails; also once 2 min after every
+run of the whole policy, which finds a plug event merged into that run. It
+used to fire every 2 min all day, the card in place or not.
 
 **8. Use `nova power run`, not `prime-run`.** The session hides the NVIDIA
 EGL vendor and Vulkan ICD; `prime-run` does not know to restore them. Steam

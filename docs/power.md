@@ -90,7 +90,7 @@ usage: nova power [command] [args]
 - **Privileges:** `status`, `switch`, `run` and a bare `gpu-mode` need none; everything else requires root.
 - **`status` is side-effect free.** In particular it does not call `nvidia-smi`, which would wake the card out of P8 just to answer.
 - **`status` answers in three lines; `-v` adds the diagnostics.** Rows that have nothing to say are left out: `held by` appears only when something is actually holding the card, and `left on bus` only if a PCI function of it somehow survived being removed.
-- **The policy is applied** on plug and unplug, at boot, after resume, and by a retry timer every two minutes.
+- **The policy is applied** on plug and unplug, at boot and after resume. A card it could not move (held by a program, or not back on a rescan) is tried again two minutes later, and again until it goes; so is the GPU once more after each plug, boot and resume, for a plug event lost in the run before. Nothing runs on a clock when the card is where it should be.
 
 ```
 $ nova power status

@@ -8,13 +8,12 @@ ConditionPathExists=!/etc/nova/portable
 
 # Unplugging while something still has the GPU open leaves it powered: the
 # policy declines rather than pulling the card out from under a running
-# program, and a plug event is a single edge that never comes again. This
-# retries until the card is where the power source says it should be — which
+# program, and a plug event is a single edge that never comes again. So
+# nova-power starts this when the card did not go where it was sent, and
+# after each run of the whole policy, for a plug event merged into one: it
+# fires once, two minutes on, and a retry that fails starts it again. That
 # is also what catches the gap between logging out and logging back in.
+# Nothing enables it: a card where it should be has nothing waking for it.
 [Timer]
-OnBootSec=2min
-OnUnitActiveSec=2min
+OnActiveSec=2min
 AccuracySec=30s
-
-[Install]
-WantedBy=timers.target

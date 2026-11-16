@@ -43,8 +43,9 @@ PROC_MODULES=${PROC_MODULES:-/proc/modules}
 
 # systemd already stamps the unit name on every line, so the messages carry no
 # prefix of their own. `note` is for the things that happened not to need
-# doing: the retry timer fires every two minutes and a no-op is not news, so
-# the timer unit sets QUIET=1 and manual runs stay talkative.
+# doing: the retry timer's run often finds the card already where it should
+# be, and a no-op is not news, so the timer unit sets QUIET=1 and manual runs
+# stay talkative.
 log() { printf '%s\n' "$*"; }
 note() { [[ -n ${QUIET:-} ]] || log "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
@@ -91,7 +92,8 @@ usage: nova power [command] [args]
 status, switch, run and a bare gpu-mode need no privileges; every other
 command requires root.
 The policy is applied on plug and unplug, at boot, after resume, and by a
-retry timer every two minutes.
+retry timer two minutes after each of those and after a card that would not
+go where it was sent, until it does.
 USAGE
 }
 
@@ -430,7 +432,23 @@ unload_nvidia_modules() {
   return 1
 }
 
+# A card that did not go where it was sent, held by a program or not back on
+# a rescan, is tried again two minutes on, by nova-power-gpu.timer: nothing
+# else would, as a plug event is a single edge and a card let go of is no
+# event at all. The timer fires once; a retry that fails starts it again, and
+# one that does not leaves it be, so a card where it should be has nothing
+# waking for it. A restart, as a timer that has fired stays started.
+gpu_retry_later() {
+  systemctl restart --no-block nova-power-gpu.timer >/dev/null 2>&1 || true
+}
+
 gpu_off() {
+  gpu_take_off && return 0
+  gpu_retry_later
+  return 1
+}
+
+gpu_take_off() {
   [[ -n $NVIDIA_PCI ]] || { note "no discrete GPU found"; return 0; }
 
   if ! gpu_present; then
@@ -560,6 +578,7 @@ gpu_on() {
       # it is all that keeps nvidia-modprobe off the bus (see above).
       block_nvidia_autoload
       log "dGPU did not come back on rescan"
+      gpu_retry_later
       return 1
     fi
   fi
@@ -1427,6 +1446,10 @@ auto)
     if on_ac; then source_now=ac; else source_now=battery; fi
     [[ $source_now != "$source_was" ]] || break
   done
+  # And a look two minutes on, which gpu-auto makes: a plug event that lands
+  # as this run ends is merged into it all the same, too late to be read, and
+  # only that look finds its source never applied.
+  gpu_retry_later
   exit "$status"
   ;;
 post-hibernate)

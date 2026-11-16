@@ -24,8 +24,7 @@ POWER_WANTS := multi-user.target:nova-power.service \
                hibernate.target:nova-power.service \
                suspend-then-hibernate.target:nova-power.service \
                multi-user.target:nova-powerd.service \
-               multi-user.target:nova-undervolt.service \
-               timers.target:nova-power-gpu.timer
+               multi-user.target:nova-undervolt.service
 
 .PHONY: install-power
 install-power:
