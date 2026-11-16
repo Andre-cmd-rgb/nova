@@ -37,8 +37,11 @@ const STALLED: Duration = Duration::from_secs(30);
 /// The connection, the handshake and /Discover, all of it: a receiver that answers a byte at a
 /// time is not waited for without end.
 const DISCOVER_WITHIN: Duration = Duration::from_secs(20);
-/// After the last of the files, for the receiver to say it has them all.
-const FINISH_WITHIN: Duration = Duration::from_secs(30);
+/// After the last of the files, for the receiver to say it has them all. Nova's own receiver says
+/// so the moment the last byte is in; how long an iPhone takes with a video of several gigabytes
+/// is not measured, and a send that arrived must not be called failed: two minutes, which a
+/// receiver that never answers holds the Wi-Fi for at most.
+const FINISH_WITHIN: Duration = Duration::from_secs(120);
 /// How often a watch looks.
 const WATCH_EVERY: Duration = Duration::from_millis(100);
 /// The files go in parts of this much, each a step of progress.
