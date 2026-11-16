@@ -619,6 +619,32 @@ quickshell 1.0-1" ]
   grep -qF '~/bin/crashy' "$dir/crashes.txt"
 }
 
+@test "--bundle: BlueZ's MACs, USB network names, any SSID, phone numbers, S/N, the owner's name and every iPhone masked; versions, ids and times not" {
+  bundle_world
+  write_file "$XDG_STATE_HOME/nova/airdrop/phones" $'a1b2 c3d4 e5f6 0718\n9abc def0 1234 5678'
+  stub getent 'if [[ $1 == passwd && $2 == andres ]]; then echo "andres:x:1000:1000:Andre Sample,,,:/home/andres:/bin/bash"; else exec /usr/bin/getent "$@"; fi'
+  stub journalctl 'case " $* " in
+    *" -p warning "*) printf "%s\n" \
+      "2026-11-16T10:00:06+01:00 wireplumber[1300]: /org/bluez/hci0/dev_A4_83_E7_11_22_33 and bluez_output.A4_83_E7_11_22_33.1" \
+      "2026-11-16T10:00:07+01:00 NetworkManager[700]: device (enx001122334455): SSID='"'"'Cafe'"'"' then ssid: Hotel Lobby" \
+      "2026-11-16T10:00:08+01:00 ModemManager[744]: own numbers: +4915112345678, and a call from +1 (555) 123-4567" \
+      "2026-11-16T10:00:09+01:00 kernel: usb 3-9: S/N: QX7781" \
+      "2026-11-16T10:00:10+01:00 nova-shell[1200]: Andre Sample, andres:andres, phone 9ABC" \
+      "2026-11-16T10:00:11+01:00 kernel: Linux version 7.2.11-arch1-1-nova, 0000:00:14.0 [8086:a0f0], +12.5 ms, firmware 1.0+20251111" ;;
+  esac'
+  run doctor --bundle
+  [ "$status" -eq 0 ]
+  local dir
+  dir=$(unpacked "${lines[0]}")
+  [ "$(cut -d' ' -f2- "$dir/journal-this-start-warnings.txt")" = "wireplumber[1300]: /org/bluez/hci0/dev_XX:XX:XX:XX:XX:XX and bluez_output.XX:XX:XX:XX:XX:XX.1
+NetworkManager[700]: device (enxXXXXXXXXXXXX): SSID='<network>' then ssid: <network>
+ModemManager[744]: own numbers: <number>, and a call from <number>
+kernel: usb 3-9: S/N: <serial>
+nova-shell[1200]: <name> <name>, <user>:<user>, phone <phone>
+kernel: Linux version 7.2.11-arch1-1-nova, 0000:00:14.0 [8086:a0f0], +12.5 ms, firmware 1.0+20251111" ]
+  grep -q '^2026-11-16T10:00:11+01:00 ' "$dir/journal-this-start-warnings.txt"
+}
+
 @test "--bundle into a folder, or into a file named" {
   bundle_world
   mkdir -p "$SCRATCH/out"
