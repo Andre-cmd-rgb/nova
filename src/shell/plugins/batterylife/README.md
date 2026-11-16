@@ -158,6 +158,14 @@ minute. Raise it for a steadier reading, lower it to follow the machine more
 closely — though nothing can react faster than `SAMPLE_INTERVAL`, since that
 is how often there is anything new to react to.
 
+Below 15 % the same weighting is given to the battery's own power readings
+instead of its energy steps. A gauge counts the last few watt-hours coarsely
+and corrects them as it goes, and in the last quarter of a charge the
+readings were the better guide: 11 % median error instead of 14 % on the same
+record. A pull towards the draw usual at that time of day, or the last two
+weeks', did no better than the five minutes alone on runs they were not tuned
+on.
+
 The time left is to the point where the computer hibernates, not to an empty
 battery: UPower acts at `PercentageAction` (2 % unless set otherwise), or with
 `UsePercentageForPolicy=false` once `TimeAction` seconds are left, and that
@@ -200,7 +208,7 @@ level glyph rather than a bolt, because no current is flowing.
 bash test/roundtrip.sh
 ```
 
-51 checks against a fake battery and a written history, in a temporary tree —
+67 checks against a fake battery and a written history, in a temporary tree —
 the real machine is never touched. That is what makes the awkward cases
 testable: a battery cannot be asked to be at 3% and charging on demand, and a
 suspend cannot be arranged to order. Covered: energy- and charge-reporting

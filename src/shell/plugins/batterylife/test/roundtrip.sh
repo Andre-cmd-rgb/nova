@@ -192,6 +192,25 @@ ok "below the reserve there is no time left to give" "0" "$(left)"
 ok "but a full charge still has its figure" "true" \
   "$($CLI json | jq -r '.now.atRateSeconds > 13000')"
 
+echo "== near the end, the gauge's readings decide =="
+# Half an hour of 1 Wh each 180 s (20 W by the energy steps) while the gauge
+# reads 15 W, ending at 10 % and at 50 %. To UPower's 2 %, 1.49 Wh less.
+reset_history
+for i in $(seq 10 -1 0); do row $((i * 180)) D $((7448000 + i * 1000000)) 15000000; done
+sort_history
+battery Discharging 7448000 15000000
+ok "at 10 %, at the readings' 15 W" "true" "$(near 1430 "$(left)")"
+reset_history
+for i in $(seq 10 -1 0); do row $((i * 180)) D $((37240000 + i * 1000000)) 15000000; done
+sort_history
+battery Discharging 37240000 15000000
+ok "at 50 %, at the energy's 20 W" "true" "$(near 6435 "$(left)")"
+reset_history
+for i in $(seq 10 -1 0); do row $((i * 180)) D $((7448000 + i * 1000000)) 0; done
+sort_history
+battery Discharging 7448000 0
+ok "a gauge with no readings: the energy's" "true" "$(near 1072 "$(left)")"
+
 echo "== a suspend in the middle =="
 # Same energy, same start and end, but two hours of nothing between.
 reset_history

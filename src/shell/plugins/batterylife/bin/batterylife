@@ -532,8 +532,18 @@ days_tsv() {
 # of one minute (13.8 % median error against 14.5 %), and steadier by three
 # times (the reading moved 1.7 % from one minute to the next, not 5.4 %). The
 # runs' long average and the last two weeks' did worse: what is being done
-# now goes on long enough to matter more than what is done most days.
+# now goes on long enough to matter more than what is done most days. So did,
+# held against the same record on its newer runs only, a pull towards the
+# draw usual at that time of day, and a fit of every average together.
+#
+# Except near the end. Below GAUGE_BELOW percent the gauge's own power
+# readings, weighed the same way, predict the rest better than its energy
+# steps do: on the same record the error in the last quarter of a charge went
+# from 14 % to 11 % (median) and 20 % to 16 % (mean), on the older runs and
+# the newer ones alike. A gauge counts the last few watt-hours coarsely and
+# corrects them as it goes; the readings are watts as they are drawn.
 RECENT_WINDOW=1800
+GAUGE_BELOW=15
 
 # "0", "0.00" and "" all mean no rate. Everything that produces one prints a
 # fixed two-decimal number, so this needs no arithmetic and no fork.
@@ -541,9 +551,10 @@ is_positive() { [[ -n ${1:-} && $1 != 0 && $1 != 0.0 && $1 != 0.00 ]]; }
 
 # Age-weighted watts over recent intervals, drain and fill, from one walk.
 # Charging moves energy the other way; the magnitude is the rate either way,
-# so both are accumulated in the same pass rather than in two.
+# so both are accumulated in the same pass rather than in two. The drain's
+# power readings are weighed alongside, for the end of a charge.
 #
-# Prints: drain_watts fill_watts
+# Prints: drain_watts fill_watts drain_watts_from_the_readings
 recent_rates() {
   rows_for_span 2 | awk -v now="$(date +%s)" -v window="$RECENT_WINDOW" \
     -v half="$(cfg_number RESPONSE_SECONDS 300)" \
@@ -575,7 +586,10 @@ recent_rates() {
           if (age < 0) age = 0
           w = exp(-ln2 * age / half)
           if ($2 == "C") { cd += w * de; ct += w * dt }
-          else           { dd += w * de; dt_ += w * dt }
+          else {
+            dd += w * de; dt_ += w * dt
+            if (p > 0 && pp > 0) { gw += w * dt * (p + pp) / 2; gt += w * dt }
+          }
         }
       }
       # Keyed on the state, so a row either side of a plug event never pairs
@@ -584,7 +598,10 @@ recent_rates() {
       next
     }
     { have = "" }
-    END { printf "%.2f %.2f\n", rate(dd, dt_), rate(cd, ct) }
+    END {
+      printf "%.2f %.2f %.2f\n", rate(dd, dt_), rate(cd, ct),
+        (gt < 30 || gw <= 0) ? 0 : gw / gt / 1000000
+    }
   '
 }
 
@@ -641,7 +658,7 @@ current_session() {
 # "unknown" and says so.
 now_tsv() {
   local energy full design pct state power recent charge_rate rate
-  local typ_w typ_full runs sess reserve_pct reserve_s
+  local typ_w typ_full runs sess reserve_pct reserve_s gauge
 
   if ! find_battery; then
     printf 'present\t0\n'
@@ -652,16 +669,18 @@ now_tsv() {
   state=$(battery_state)
   power=$(battery_power) || power=0
 
-  read -r recent charge_rate < <(recent_rates)
+  read -r recent charge_rate gauge < <(recent_rates)
   read -r typ_w typ_full runs _ < <(typical_rate)
   read -r reserve_pct reserve_s < <(reserve)
   # What a full charge gives on the record's average, to the reserve as well.
   typ_full=$(awk -v t="$typ_full" -v rp="$reserve_pct" -v rs="$reserve_s" \
     'BEGIN { t = t * (1 - rp / 100) - rs; printf "%d", (t > 0) ? t : 0 }')
 
-  # What the drain estimate divides by: what has just been measured, or
-  # failing that what recent runs averaged.
+  # What the drain estimate divides by: what has just been measured (near
+  # the end, as the gauge reads it; see RECENT_WINDOW), or failing that what
+  # recent runs averaged.
   rate=$recent
+  if is_positive "$gauge" && ((${pct%.*} <= GAUGE_BELOW)); then rate=$gauge; fi
   is_positive "$rate" || rate=$typ_w
 
   printf 'present\t1\n'
