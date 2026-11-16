@@ -1,8 +1,8 @@
 # AirDrop
 
-Nova receives what an iPhone sends with AirDrop: photos, videos, files, links. It is real AirDrop, spoken over Apple's own radio link, so the iPhone needs nothing installed and no network in common with the computer.
+Nova receives what an iPhone sends with AirDrop: photos, videos, files, links. And it sends files to an iPhone. It is real AirDrop, spoken over Apple's own radio link, so the iPhone needs nothing installed and no network in common with the computer.
 
-- **Receiving only, so far.** Sending from Nova to an iPhone is not there yet.
+- **Sending takes an iPhone set to Everyone for 10 Minutes** ([why](#sending)). Sending is new: it was tried against Nova's own receiver, not yet with an iPhone.
 - **While AirDrop is on, the Wi-Fi is off the network** ([why](#why-the-wi-fi-goes)). It ends by itself and the Wi-Fi reconnects.
 - **It needs a Wi-Fi card that can do two things** ([which](#which-cards)). It was built and measured on the Intel AX210, with an iPhone 15 Pro.
 
@@ -41,6 +41,22 @@ Bluetooth must be on for it to hear anything; the page says when it cannot liste
 
 **Measured** on the ThinkPad P1 Gen 4i with an iPhone 15 Pro: the computer is in the iPhone's list 1.2 s after AirDrop is switched on, a 1.0 MB photo arrives in 2.3 s, and the Wi-Fi is connected again 4 s after AirDrop ends. The speed is the iPhone's timetable: it is on the computer's channel in five of its sixteen slots while it sends, and in one while it only looks.
 
+## Sending
+
+1. **In Files:** select photos, videos or music, then right-click → Open With… → **AirDrop**. Any other file: `nova airdrop send <file>...` in a terminal.
+2. **On the iPhone:** unlock it, and choose **Everyone for 10 Minutes** (Settings → General → AirDrop, or in Control Center: hold the network tile, then AirDrop).
+3. **Pick it:** a window lists the iPhones nearby as they appear, by their names. Click one, or move to it with the arrows and press Return.
+4. **It is asked, then sent:** a notification says it is waiting for the person there to accept, then shows the sending's bar, each with Cancel; then **Sent**, or that they declined.
+
+AirDrop is switched on for the send if it was off, and off again after it: the Wi-Fi is off the network meanwhile, as when receiving. Bluetooth must be on: it is what wakes the iPhone's AirDrop.
+
+**Why Everyone for 10 Minutes.** An iPhone set to Contacts Only takes AirDrop from its contacts alone, and checks who a sender is with an identity Apple issues to its own devices, which a PC cannot have. So it is not listed at all, or is listed as taking AirDrop from its contacts only and cannot be picked; the window and the command say what it needs. Everyone lasts ten minutes, then the iPhone goes back to Contacts Only by itself, so it is chosen again for each send. While no iPhone shows, the window says so.
+
+- **Files, not folders**, up to 200 at a time, each under 8 GB. Not links or text.
+- **Files' Open With has AirDrop for photos, videos and music**, the kinds Nova gives an app of its own: that way AirDrop is offered beside it and never becomes what opens a file. It is not in the launcher.
+- **Escape, Cancel or a click beside the window stops it**, and so does Cancel on the notification, until the files have gone.
+- **Nobody, two minutes on:** the send ends, and a notification says no one was nearby and what the iPhone needs.
+
 ### The command
 
 | | |
@@ -50,13 +66,16 @@ Bluetooth must be on for it to hear anything; the page says when it cannot liste
 | `nova airdrop on --stay` | on, and not ending after a transfer |
 | `nova airdrop accept`, `decline` | answer what is being offered |
 | `nova airdrop available` | whether this computer's card can do it, and why not |
+| `nova airdrop send <file>...` | send to an iPhone nearby: those that show are numbered as they appear; type one's number |
+| `nova airdrop send --to <name> <file>...` | send to the iPhone of that name (or the only one whose name begins so) as soon as it shows |
+| `nova airdrop send --json`, `--window` | the same as lines of JSON, with `to <id>` or `cancel` on its input (what the shell runs); or in the shell's window (what Files runs) |
 | `nova airdrop active` | succeeds while it is on (for scripts) |
 | `nova airdrop watch` | each change as a line of JSON (what the shell reads) |
 | `nova airdrop bell on`, `off` | the doorbell: your iPhone switches AirDrop on and off |
 | `nova airdrop bell learn`, `forget` | learn an iPhone in the next minute; know none |
 | `nova airdrop bell`, `bell watch` | how the doorbell is, in a line or as JSON |
 
-`nova airdrop off` waits until the Wi-Fi has been handed back and says how that went.
+`nova airdrop off` waits until the Wi-Fi has been handed back and says how that went, and so does `nova airdrop send` when it switched AirDrop on. Ctrl+C stops a send; it says Sent, declined, why it failed, or that no one was nearby, and succeeds only for Sent.
 
 ## Why the Wi-Fi goes
 
@@ -84,24 +103,26 @@ Cards with Linux's own Wi-Fi stack (mac80211) mostly can. **Only the Intel AX210
 - **One offer at a time.** A second sender is declined while one is being asked or received.
 - **The name shown** is the computer's (`hostnamectl --pretty`, else its host name).
 - **What arrives is files and folders, in the downloads folder, and nothing else.** An archive's names that point outside it, its links and its device files are dropped; it may not be much larger than the sender said.
-- **The receiver is not root.** It runs as you, with one capability (to open its socket on the radio), which it gives up once it has the socket.
+- **The receiver is not root.** It runs as you, with two capabilities (to open its socket on the radio, and Bluetooth's management socket, for the announcement that wakes an iPhone when it sends), which it gives up once it has the sockets.
+- **A send tells the iPhones nearby that this computer wants to send**, over Bluetooth, for as long as it looks and sends: an announcement with no name or number in it. Which iPhone it goes to is the one picked; what it sends is only what was given, read with your own rights (the command hands the daemon the files open).
 - **AirDrop is all a phone can reach.** Its network lives in a namespace of its own, with one interface and one listening port: nothing else running on the computer (a printer queue, a login server, file sharing) is on that link.
 - **It is on only while you want it.** Nothing starts it at login. With the doorbell on, your iPhone's share sheet does, and nobody else's.
 
 ## How it is built
 
-For those working on it. The code is in `src/airdrop/`, and the shell's part (its notifications, the doorbell's rule) in `src/shell/plugins/airdrop/`.
+For those working on it. The code is in `src/airdrop/`, and the shell's part (its notifications, the doorbell's rule, the send's window) in `src/shell/plugins/airdrop/`.
 
 | Part | Is |
 |---|---|
-| `nova-airdropd` (`daemon/`, Rust) | the receiver: an AWDL node on the air, and AirDrop's HTTPS on top |
-| `nova-airdrop` (`daemon/src/bin/`, Rust) | `nova airdrop`: switches it, answers it, watches it |
+| `nova-airdropd` (`daemon/`, Rust) | the receiver and the sender: an AWDL node on the air, and AirDrop's HTTPS on top |
+| `nova-airdrop` (`daemon/src/bin/`, Rust) | `nova airdrop`: switches it, answers it, watches it, hands it what to send |
 | `nova-airdrop-radio` (`bin/`, bash) | lends the Wi-Fi card (`up`) and takes it back (`down`), as root |
 | `nova-airdrop@.service` | runs `up`, then the daemon as the user who asked, then `down` however it ended |
 | `nova-airdrop-apply` and `org.nova.airdrop` | the root half of on and off, through pkexec, with no password for the person at the computer |
 | `nova-airdrop-bell` (`daemon/src/bin/`, Rust) | the doorbell: the Bluetooth controller listening for the user's iPhone |
 | `nova-airdrop-bell@.service` | runs it as the user, from each login to its end, once `nova airdrop bell on` has enabled it; stops it before the computer sleeps |
 | `nova-airdrop-bell-wake@.service` | starts it again once the computer is awake |
+| `nova-airdrop.desktop` | AirDrop in Files' Open With: `nova airdrop send --window` |
 
 **The radio.** `up` takes the Wi-Fi interface from NetworkManager and adds two interfaces to the card under one made-up address: `nova-cell`, an ad-hoc cell on channel 6 with AWDL's BSSID (`00:25:00:ff:94:73`), HT20, a beacon every ten seconds (an iPhone does not list a node whose cell beacons ten times a second); and `nova-mon`, a monitor interface. The cell is there for the card's hardware to acknowledge frames sent to that address. The frames themselves are heard and sent on the monitor.
 
@@ -113,7 +134,15 @@ For those working on it. The code is in `src/airdrop/`, and the shell's part (it
 
 **Nothing but the system's libraries.** The daemon has no dependencies in cargo. TLS is the system's OpenSSL, loaded when the daemon starts; unpacking is the system's zlib.
 
-**Talking to it** (`control.rs`). A socket in the user's runtime folder, `nova/airdrop.sock`. A client says one line (`watch`, `status`, `accept`, `decline`, `stop`); a watcher gets the state as a line of JSON at each change. The file's own comment has the states and their fields.
+**Talking to it** (`control.rs`). A socket in the user's runtime folder, `nova/airdrop.sock`. A client says one line (`watch`, `status`, `accept`, `decline`, `stop`); a watcher gets the state as a line of JSON at each change. The file's own comment has the states and their fields. `send` comes with the files to send passed open alongside it (`SCM_RIGHTS`, `meet.rs`), so the daemon reads what the user could and nothing else; the connection is that send's from then on (`send.rs` has its lines).
+
+**Sending** (`send.rs`, `wake.rs`, `sender.rs`, `pack.rs`). A send runs in three steps, all while the receiver goes on as before:
+
+- **Waking the iPhone.** An iPhone keeps its AirDrop off the air until it hears, over Bluetooth, a device nearby announce that it wants to send: Apple's manufacturer data (`4c 00`), message `05`, the one the doorbell hears from an iPhone's share sheet. Its eighteen bytes carry four short hashes of the sender's Apple ID, phone number and addresses, for an iPhone set to Contacts Only to look up; Nova has none and sends zeros, which is why only Everyone works. The daemon gives the controller that advertisement while it looks and sends, and takes it away after.
+- **Finding receivers.** While it sends, the node asks the air for `_airdrop._tcp` each second (mDNS, sent to the AWDL peers heard lately), reads where each receiver listens from the answers (`packet.rs`), and asks each `/Discover` who it is (`sender.rs`): its name, its model, and whether it takes AirDrop from this computer (a refusal there is a receiver that takes it from its contacts only). Those are the lines the window lists.
+- **Asking and sending.** Picked, a receiver gets `/Ask`: a binary property list of the sender's name, model and id and each file's name, type and size. It answers when its person decides, up to two and a half minutes later: 200 is yes, anything else no. Then `/Upload` on the same connection: the files as one cpio archive (the old portable format), gzip'd as it goes (`pack.rs`), in chunks. The client side of TLS is the system's OpenSSL, as the server's, with the same certificate.
+
+**Why Bluetooth's management socket, and not BlueZ, for the announcement.** BlueZ has a stable D-Bus interface for this, `LEAdvertisingManager1`, which can carry the bytes; it is not experimental and needs no capability. But it calls back into an object the advertiser serves on the system bus, and the daemon has no D-Bus: it would take a D-Bus library, or one written for it. The management socket (`MGMT_OP_ADD_ADVERTISING`, `mgmt.rs`, shared with the doorbell) needs `CAP_NET_ADMIN` at binding, given up with the rest at once, and `bluetoothd` does not know of the advertisement: the daemon takes the highest instance number free (`bluetoothd` hands out the lowest), and the advertisement lasts twenty seconds and is given again every eight, which also puts it back if anything took it away. A daemon that died leaves nothing announcing for longer than that.
 
 **The notifications** (`src/shell/plugins/airdrop/`). The shell watches the daemon and sends Nova's notifications itself, with busctl: each word of what a sender calls itself and its files is one value there, never an option, and goes into the body escaped. The offer carries its Decline and Accept as the `nova-buttons` hint, commands the notifications run as they are; a transfer its bar as the standard `value` hint, in place under one id. A photo that came in gets a 256-pixel copy for its picture, made with `vipsthumbnail` with untrusted loaders blocked (`VIPS_BLOCK_UNTRUSTED`), since Qt reads no HEIC; one that cannot be made leaves the AirDrop glyph. The iPhone also sends a small picture with its offer, as JPEG 2000; it is not shown, since it would be decoding a stranger's file before the user said yes.
 
@@ -132,13 +161,15 @@ This is the part that must not fail, and `nova-airdrop-radio` is written round i
 
 ### Trying it without a phone
 
-- `cargo test -p nova-airdropd`: the frame formats against frames an iPhone answered, the unpackers, the HTTP reader, TLS against `openssl s_client`, the node against a made-up phone that keeps a timetable, the control socket, the doorbell's reading of an announcement and its patterns.
+- `cargo test -p nova-airdropd`: the frame formats against frames an iPhone answered, the unpackers, the HTTP reader, TLS against `openssl s_client`, the node against a made-up phone that keeps a timetable, the control socket, the doorbell's reading of an announcement and its patterns. For sending: the wake-up announcement's bytes; the mDNS question and the reading of its answers; the node asking while it sends and hearing a made-up receiver answer; the sender against Nova's own receiver on the loopback (TLS both ways, `/Discover`, `/Ask`, `/Upload`, and the archive unpacked by the receiver's own code, byte for byte); a declined and an unreachable receiver; a whole send, from the files handed over to Sent, over a socket pair; and the command's picker and its words.
 - `tests/unit/airdrop/radio.bats`: `nova-airdrop-radio` against stand-ins for `iw`, `ip` and `nmcli`, with a card that shows another address than its own.
-- `tests/qml/airdrop-test.qml`: the shell's part against stand-ins for `nova airdrop`, the notifications (busctl) and `vipsthumbnail`, the doorbell's rule among it.
+- `tests/qml/airdrop-test.qml`: the shell's part against stand-ins for `nova airdrop`, the notifications (busctl) and `vipsthumbnail`, the doorbell's rule and the send's window, picks and notifications among it.
 - `tests/unit/airdrop/apply.bats`: the doorbell enabled for whoever asked, and nobody else.
 
 ### What is not there
 
-- **Sending.** It takes Bluetooth announcements to wake the iPhone's AirDrop, and AirDrop's client side.
+- **Sending to an iPhone set to Contacts Only.** It takes an Apple identity.
+- **Sending links, text or a folder**, and AirDrop in Files' Open With for documents.
+- **Sending, measured.** It has been tried against Nova's own receiver only.
 - **The 5 GHz channels.** An iPhone spends most of its slots on channel 44; Intel cards may not send there. Channel 6 is where every card may.
 - **A picture of your own in the iPhone's list.** The iPhone draws the picture from the kind of computer the receiver says it is; a photo is shown only for a contact with an Apple identity.
