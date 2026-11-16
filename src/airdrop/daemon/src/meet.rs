@@ -38,6 +38,12 @@ pub fn bell() -> PathBuf {
 
 // ------------------------------------------------- what both say
 
+/// The daemon's answer to `hold` and `stay` once it has decided to end: whoever asked waits for it
+/// to go, and starts it again (control.rs). A `send` is told so with a line of its own.
+pub const GOING_OFF: &str = "AirDrop is going off.";
+/// Its answer to `stop` while a send is going on: the send holds AirDrop on until it is over.
+pub const AFTER_THE_SEND: &str = "AirDrop goes off when the send is over.";
+
 /// A string as JSON has it.
 pub fn quoted(text: &str) -> String {
     let mut out = String::with_capacity(text.len() + 2);

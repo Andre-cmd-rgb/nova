@@ -49,7 +49,7 @@ Bluetooth must be on for it to hear anything; the page says when it cannot liste
 3. **Pick it:** a window lists the iPhones nearby as they appear, by their names. Click one, or move to it with the arrows and press Return.
 4. **It is asked, then sent:** a notification says it is waiting for the person there to accept, then shows the sending's bar, each with Cancel; then **Sent**, or that they declined.
 
-AirDrop is switched on for the send if it was off, and off again after it: the Wi-Fi is off the network meanwhile, as when receiving. Bluetooth must be on: it is what wakes the iPhone's AirDrop.
+AirDrop is switched on for the send if it was off, and goes off again after it, unless it was switched on meanwhile (from the menu, `nova airdrop on`, or for your iPhone's share sheet): the Wi-Fi is off the network meanwhile, as when receiving. Switched off during a send, it goes off when the send is over; the send's own Cancel ends it sooner. Bluetooth must be on: it is what wakes the iPhone's AirDrop.
 
 **Why Everyone for 10 Minutes.** An iPhone set to Contacts Only takes AirDrop from its contacts alone, and checks who a sender is with an identity Apple issues to its own devices, which a PC cannot have. So it is not listed at all, or is listed as taking AirDrop from its contacts only and cannot be picked; the window and the command say what it needs. Everyone lasts ten minutes, then the iPhone goes back to Contacts Only by itself, so it is chosen again for each send. While no iPhone shows, the window says so.
 
@@ -135,7 +135,9 @@ For those working on it. The code is in `src/airdrop/`, and the shell's part (it
 
 **Nothing but the system's libraries.** The daemon has no dependencies in cargo. TLS is the system's OpenSSL, loaded when the daemon starts; unpacking is the system's zlib.
 
-**Talking to it** (`control.rs`). A socket in the user's runtime folder, `nova/airdrop.sock`. A client says one line (`watch`, `status`, `accept`, `decline`, `stop`); a watcher gets the state as a line of JSON at each change. The file's own comment has the states and their fields. `send` comes with the files to send passed open alongside it (`SCM_RIGHTS`, `meet.rs`), so the daemon reads what the user could and nothing else; the connection is that send's from then on (`send.rs` has its lines).
+**Talking to it** (`control.rs`). A socket in the user's runtime folder, `nova/airdrop.sock`. A client says one line (`watch`, `status`, `accept`, `decline`, `hold`, `stay`, `stop`); a watcher gets the state as a line of JSON at each change. The file's own comment has the states and their fields. `send` comes with the files to send passed open alongside it (`SCM_RIGHTS`, `meet.rs`), so the daemon reads what the user could and nothing else; the connection is that send's from then on (`send.rs` has its lines).
+
+**Who holds it on** is the daemon's to know, and nobody else's word switches it off from under the rest. `nova airdrop on` says `hold` (the user's, used up when a transfer to the computer ends), the shell says `stay` for the doorbell (until `stop`), and a send holds it until it is over. `stop` lets go of the first two; a send under way keeps it on, and the answer says so. Started as the unit starts it (`--once`), it ends a moment after the last lets go, never while a transfer or a send is under way, and 15 seconds after it starts if nobody takes hold of it at all (a command killed while it switched AirDrop on). A send's last line says whether AirDrop stays on after it. Once the daemon has decided to end it answers `hold`, `stay` and `send` that it is going off, and the command waits for it to go and starts it again. Ending is the daemon's own exit either way, so the Wi-Fi comes back as always: one `down`, from the unit's `ExecStopPost`.
 
 **Sending** (`send.rs`, `wake.rs`, `sender.rs`, `pack.rs`). A send runs in three steps, all while the receiver goes on as before:
 

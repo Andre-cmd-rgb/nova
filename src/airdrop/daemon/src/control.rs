@@ -7,18 +7,28 @@
 //!   status           the same in plain words, once
 //!   accept [<id>]    yes to the question that is open (the one with that id)
 //!   decline [<id>]   no to it
-//!   stop             AirDrop ends
-//!   stay             it does not end after a transfer, only when told to
-//!                    stop or when nobody asks for long enough: the shell
-//!                    says it for an AirDrop it switched on for an iPhone's
-//!                    share sheet, which it switches off when the sheet closes
+//!   hold             the user holds AirDrop on (`nova airdrop on`): until a
+//!                    transfer to this computer is over, or stop
+//!   stay             the doorbell holds it on, until stop: the shell says it
+//!                    for an AirDrop it switched on for an iPhone's share
+//!                    sheet, and stop when the sheet closes
+//!   stop             what the user and the doorbell held is let go; a send
+//!                    that is going on keeps AirDrop on until it is over, and
+//!                    the answer says so
 //!   send             with files passed alongside, open (SCM_RIGHTS): this
 //!                    computer sends them; the connection is the send's from
-//!                    then on (send.rs has what is said over it)
+//!                    then on (send.rs has what is said over it), and the send
+//!                    holds AirDrop on until it is over
 //!
 //! and all but `watch` and `send` are answered with a line: `ok`, or why not.
-//! A watcher may say the four before `send` too, and gets no answer but the
+//! A watcher may say the others before `send` too, and gets no answer but the
 //! change itself.
+//!
+//! Who holds AirDrop on is the daemon's to know: it ends when the last lets
+//! go (main.rs), and nobody else's word switches it off from under the rest.
+//! Once it has decided to end, `hold` and `stay` are answered that it is going
+//! off, and `send` with a line that says so (`{"state":"closing"}`): whoever
+//! asked waits for it to go and starts it again.
 //!
 //! The lines of JSON all have a `state`, and with it:
 //!
@@ -40,7 +50,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -85,6 +95,7 @@ pub enum Stage {
 }
 
 pub(crate) use crate::meet::{quoted, size};
+use crate::meet::{AFTER_THE_SEND, GOING_OFF};
 
 pub(crate) fn list(items: impl Iterator<Item = String>) -> String {
     format!("[{}]", items.collect::<Vec<_>>().join(","))
@@ -209,6 +220,30 @@ impl Stage {
     }
 }
 
+/// Who holds AirDrop on, besides a send.
+#[derive(Default)]
+struct Holds {
+    /// The user's on (`hold`): until a transfer to this computer is over.
+    user: bool,
+    /// The doorbell's (`stay`).
+    stays: bool,
+    /// Stop was asked for since: it ends once no send holds it.
+    released: bool,
+    /// It has decided to end: nobody takes hold of it any more.
+    closing: bool,
+}
+
+/// Who holds AirDrop on, as the daemon's end is decided by it.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Held {
+    /// The user's on, or the doorbell's stay.
+    pub held: bool,
+    /// Stop was asked for since.
+    pub released: bool,
+    /// A send is going on.
+    pub sending: bool,
+}
+
 struct Inner {
     stage: Stage,
     /// The receiver's number for the question the stage is about, while it is about one: what
@@ -229,14 +264,18 @@ pub struct Control {
     path: OnceLock<PathBuf>,
     inner: Mutex<Inner>,
     answered: Condvar,
-    /// Told to stay on after a transfer.
-    stays: AtomicBool,
-    /// Where a client that asks to send is handed: it takes the connection and the files, or
-    /// says why not.
-    sends: OnceLock<Box<Send>>,
+    holds: Mutex<Holds>,
+    sends: OnceLock<Sends>,
 }
 
-type Send = dyn Fn(UnixStream, Vec<OwnedFd>) -> Result<(), String> + std::marker::Send + Sync;
+/// Where a client that asks to send is handed (`start`: it takes the connection and the files, or
+/// says why not), and whether a send is going on (`on`): send.rs.
+pub struct Sends {
+    pub start: Box<Start>,
+    pub on: Box<dyn Fn() -> bool + Send + Sync>,
+}
+
+type Start = dyn Fn(UnixStream, Vec<OwnedFd>) -> Result<(), String> + Send + Sync;
 
 impl Control {
     /// How things stand, with nobody told yet: for a daemon nobody can ask, and before `listen`.
@@ -253,14 +292,18 @@ impl Control {
                 answer: None,
             }),
             answered: Condvar::new(),
-            stays: AtomicBool::new(false),
+            holds: Mutex::default(),
             sends: OnceLock::new(),
         })
     }
 
-    /// Clients that ask to send are handed to `start` (send.rs).
-    pub fn on_send(&self, start: Box<Send>) {
-        let _ = self.sends.set(start);
+    /// Clients that ask to send are handed to `sends` (send.rs).
+    pub fn on_send(&self, sends: Sends) {
+        let _ = self.sends.set(sends);
+    }
+
+    fn sending(&self) -> bool {
+        self.sends.get().is_some_and(|sends| (sends.on)())
     }
 
     /// Opens the socket and starts answering on it. A socket left by a daemon that died is taken
@@ -313,10 +356,19 @@ impl Control {
         first.truncate(size);
         if first.strip_suffix(b"\n").unwrap_or(&first).trim_ascii() == b"send" {
             let refused = match self.sends.get() {
-                Some(start) => match start(stream, files) {
-                    Ok(()) => return,
-                    Err(why) => why,
-                },
+                Some(sends) => {
+                    // Started with the holds' lock held: the daemon does not decide to end in the
+                    // middle of it, and one that has decided starts no send.
+                    let holds = self.holds.lock().unwrap();
+                    if holds.closing || sys::stopping() {
+                        let _ = writeln!(out, r#"{{"state":"closing"}}"#);
+                        return;
+                    }
+                    match (sends.start)(stream, files) {
+                        Ok(()) => return,
+                        Err(why) => why,
+                    }
+                }
                 None => "This AirDrop does not send.".into(),
             };
             let _ = writeln!(out, r#"{{"state":"failed","why":{}}}"#, quoted(&refused));
@@ -348,15 +400,11 @@ impl Control {
                 }
                 ("accept", id) => self.answer(id, true),
                 ("decline", id) => self.answer(id, false),
-                ("stop", None) => {
-                    sys::stop();
-                    "ok".into()
-                }
-                ("stay", None) => {
-                    self.stays.store(true, Ordering::SeqCst);
-                    "ok".into()
-                }
-                _ => "not understood: watch, status, accept, decline, stop, stay or send".into(),
+                ("hold", None) => self.hold(false),
+                ("stay", None) => self.hold(true),
+                ("stop", None) => self.stop(),
+                _ => "not understood: watch, status, accept, decline, hold, stay, stop or send"
+                    .into(),
             };
             if !watching {
                 let _ = writeln!(out, "{answer}");
@@ -367,6 +415,62 @@ impl Control {
             let mut inner = self.inner.lock().unwrap();
             inner.watchers.retain(|(watcher, _)| *watcher != number);
         }
+    }
+
+    /// The user (`hold`) or the doorbell (`stay`) holds AirDrop on.
+    fn hold(&self, stay: bool) -> String {
+        let mut holds = self.holds.lock().unwrap();
+        if holds.closing || sys::stopping() {
+            return GOING_OFF.into();
+        }
+        if stay {
+            holds.stays = true;
+        } else {
+            holds.user = true;
+        }
+        holds.released = false;
+        "ok".into()
+    }
+
+    /// What the user and the doorbell held is let go: the daemon ends, once a send that holds it
+    /// is over (main.rs looks).
+    fn stop(&self) -> String {
+        let mut holds = self.holds.lock().unwrap();
+        *holds = Holds {
+            released: true,
+            closing: holds.closing,
+            ..Holds::default()
+        };
+        if self.sending() {
+            AFTER_THE_SEND.into()
+        } else {
+            "ok".into()
+        }
+    }
+
+    /// The user's on, or the doorbell's stay, holds AirDrop on.
+    pub fn held(&self) -> bool {
+        let holds = self.holds.lock().unwrap();
+        holds.user || holds.stays
+    }
+
+    /// A transfer to this computer is over, whichever way: what the user switched AirDrop on for.
+    pub fn used(&self) {
+        self.holds.lock().unwrap().user = false;
+    }
+
+    /// Whether the daemon ends now, as `ends` decides given who holds it: decided with nobody
+    /// taking hold of it meanwhile, and once decided, nobody can.
+    pub fn close_if(&self, ends: impl FnOnce(Held) -> bool) -> bool {
+        let mut holds = self.holds.lock().unwrap();
+        if !holds.closing {
+            holds.closing = ends(Held {
+                held: holds.user || holds.stays,
+                released: holds.released,
+                sending: self.sending(),
+            });
+        }
+        holds.closing
     }
 
     fn answer(&self, id: Option<&str>, yes: bool) -> String {
@@ -407,11 +511,6 @@ impl Control {
 
     pub fn busy(&self) -> bool {
         self.inner.lock().unwrap().stage.busy()
-    }
-
-    /// Told to stay on after a transfer (`stay`).
-    pub fn stays(&self) -> bool {
-        self.stays.load(Ordering::SeqCst)
     }
 
     /// Puts an offer to the user and waits for the answer: no, if none comes in time, if the daemon
@@ -670,14 +769,17 @@ mod tests {
             r#"{"state":"failed","why":"This AirDrop does not send."}"#
         );
         let (handed, taken) = std::sync::mpsc::channel();
-        control.on_send(Box::new(move |mut stream, files| {
-            if files.len() == 1 {
-                return Err("One is not enough.".into());
-            }
-            writeln!(stream, "handed {} files", files.len()).unwrap();
-            handed.send(files.len()).unwrap();
-            Ok(())
-        }));
+        control.on_send(Sends {
+            start: Box::new(move |mut stream, files| {
+                if files.len() == 1 {
+                    return Err("One is not enough.".into());
+                }
+                writeln!(stream, "handed {} files", files.len()).unwrap();
+                handed.send(files.len()).unwrap();
+                Ok(())
+            }),
+            on: Box::new(|| false),
+        });
         assert_eq!(line(&mut send(b"send\n")), "handed 2 files");
         assert_eq!(taken.recv().unwrap(), 2);
         let mut one = UnixStream::connect(&path).unwrap();
@@ -688,6 +790,69 @@ mod tests {
         );
         // Files passed with anything else are let go, and the words answered as ever.
         assert!(line(&mut send(b"status\n")).starts_with("AirDrop is on"));
+        // A daemon that has decided to end starts no send, and says so in a line of its own.
+        assert!(control.close_if(|_| true));
+        assert_eq!(line(&mut send(b"send\n")), r#"{"state":"closing"}"#);
+        close(&control);
+    }
+
+    #[test]
+    fn airdrop_is_held_on_by_whoever_asked_and_ends_when_the_last_lets_go() {
+        let path = socket("holds");
+        let control = Control::new("Nova");
+        control.listen(&path).unwrap();
+        let sending = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let on = sending.clone();
+        control.on_send(Sends {
+            start: Box::new(|_, _| Err("not in this test".into())),
+            on: Box::new(move || on.load(Ordering::SeqCst)),
+        });
+        let held = || {
+            let mut seen = Held::default();
+            assert!(!control.close_if(|held| {
+                seen = held;
+                false
+            }));
+            seen
+        };
+        assert_eq!(held(), Held::default());
+        // The user's on holds it until a transfer to this computer is over.
+        assert_eq!(say(&path, "hold"), "ok");
+        assert!(control.held() && held().held);
+        control.used();
+        assert!(!control.held());
+        // The doorbell's stay, until stop; a transfer is not the end of it.
+        assert_eq!(say(&path, "stay"), "ok");
+        control.used();
+        assert!(control.held());
+        // Stop while a send is going on: what the user and the doorbell held is let go, and the
+        // send keeps it on until it is over.
+        sending.store(true, Ordering::SeqCst);
+        assert_eq!(say(&path, "hold"), "ok");
+        assert_eq!(say(&path, "stop"), AFTER_THE_SEND);
+        assert_eq!(
+            held(),
+            Held {
+                held: false,
+                released: true,
+                sending: true
+            }
+        );
+        // Held again: the stop is over.
+        assert_eq!(say(&path, "hold"), "ok");
+        assert_eq!(
+            held(),
+            Held {
+                held: true,
+                released: false,
+                sending: true
+            }
+        );
+        // Decided: nobody takes hold of it any more, and it stays decided.
+        assert!(control.close_if(|_| true));
+        assert_eq!(say(&path, "hold"), GOING_OFF);
+        assert_eq!(say(&path, "stay"), GOING_OFF);
+        assert!(control.close_if(|_| false));
         close(&control);
     }
 
@@ -700,9 +865,6 @@ mod tests {
         assert!(say(&path, "status").starts_with("AirDrop is on: iPhones nearby"));
         assert_eq!(say(&path, "accept"), "nothing is being asked");
         assert!(say(&path, "dance").starts_with("not understood"));
-        assert!(!control.stays());
-        assert_eq!(say(&path, "stay"), "ok");
-        assert!(control.stays());
 
         let mut watcher = UnixStream::connect(&path).unwrap();
         writeln!(watcher, "watch").unwrap();

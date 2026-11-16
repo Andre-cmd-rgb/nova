@@ -4,7 +4,8 @@
 //! this reads what the user could, wherever it is) and the session is that
 //! client's from then on: it is told, a line of JSON at each change, who can
 //! be sent to, and then how the sending goes; it says which receiver, or to
-//! stop. Its going away stops it too. One send at a time.
+//! stop. Its going away stops it too. One send at a time, which holds
+//! AirDrop on until it is over (control.rs).
 //!
 //! Meanwhile Bluetooth announces that this computer wants to send
 //! (wake.rs), which is what wakes an iPhone's AirDrop; the node asks on the
@@ -26,7 +27,10 @@
 //!              those that take AirDrop from their contacts only
 //!   cancelled
 //!
-//! The client says `to <id>` or `cancel`.
+//! and the last of them, whichever it is, `stays` too: whether AirDrop stays
+//! on after the send, as somebody else holds it; if not, it goes off a moment
+//! after. The client says `to <id>` or `cancel`. Before any of it, a daemon
+//! that has decided to end says `closing` (control.rs).
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Shutdown, SocketAddr, SocketAddrV6};
@@ -97,6 +101,8 @@ pub struct Sending {
     wake: Mutex<Result<Wake, String>>,
     inner: Mutex<Inner>,
     tell: Box<dyn Fn(Told) + Send + Sync>,
+    /// Whether AirDrop stays on once a send lets go of it.
+    stays: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
 #[derive(Clone)]
@@ -215,6 +221,7 @@ impl Sending {
         scope: u32,
         wake: Result<Wake, String>,
         tell: Box<dyn Fn(Told) + Send + Sync>,
+        stays: Box<dyn Fn() -> bool + Send + Sync>,
     ) -> Arc<Sending> {
         Arc::new(Sending {
             sender,
@@ -222,7 +229,13 @@ impl Sending {
             wake: Mutex::new(wake),
             inner: Mutex::default(),
             tell,
+            stays,
         })
+    }
+
+    /// A send is going on, from the client's handing it over to its last line.
+    pub fn on(&self) -> bool {
+        self.inner.lock().unwrap().on
     }
 
     /// The node asks who receives while this is true.
@@ -332,7 +345,7 @@ impl Sending {
             (sending.tell)(Told::Began);
             let (last, transfer) = sending.session(&client, items);
             sending.quiet();
-            client.say(&last);
+            client.say(&afterwards(&last, (sending.stays)()));
             client.close();
             *sending.inner.lock().unwrap() = Inner::default();
             (sending.tell)(Told::Ended { transfer });
@@ -582,6 +595,14 @@ fn failed(why: &str) -> String {
     format!(r#"{{"state":"failed","why":{}}}"#, quoted(why))
 }
 
+/// A send's last line, with whether AirDrop stays on after it.
+fn afterwards(last: &str, stays: bool) -> String {
+    match last.strip_suffix('}') {
+        Some(open) => format!(r#"{open},"stays":{stays}}}"#),
+        None => last.into(),
+    }
+}
+
 /// Makes room for a receiver of `peer`'s, if there may be one: a peer's third takes the place of
 /// its oldest; with the most there may be, one that never said who it is goes. False if none can.
 fn room(candidates: &mut Vec<Candidate>, peer: &Mac) -> bool {
@@ -700,6 +721,7 @@ mod tests {
             0,
             Err("no Bluetooth in a test".into()),
             Box::new(move |said| keep.lock().unwrap().push(said)),
+            Box::new(|| false),
         );
         (sending, told)
     }
@@ -725,8 +747,9 @@ mod tests {
                 .err(),
             Some("picked is a folder: only files can be sent.".into())
         );
-        assert!(!sending.browsing());
+        assert!(!sending.browsing() && !sending.on());
         sending.start(theirs, files).unwrap();
+        assert!(sending.on());
 
         let first = line(&mut ours);
         assert!(
@@ -776,7 +799,8 @@ mod tests {
         )));
         assert_eq!(told.first(), Some(&Told::Began));
         assert_eq!(told.last(), Some(&Told::Ended { transfer: true }));
-        assert!(!sending.browsing() && !sending.busy());
+        assert!(sent.ends_with(r#","stays":false}"#), "{sent}");
+        assert!(!sending.browsing() && !sending.busy() && !sending.on());
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
@@ -801,7 +825,10 @@ mod tests {
         writeln!(ours, "to 9").unwrap();
         writeln!(ours, "to 1").unwrap();
         until(&mut ours, r#"{"state":"asking""#);
-        assert_eq!(line(&mut ours), r#"{"state":"declined","to":"Elsewhere"}"#);
+        assert_eq!(
+            line(&mut ours),
+            r#"{"state":"declined","to":"Elsewhere","stays":false}"#
+        );
 
         // The client stops a send while it looks.
         std::thread::sleep(Duration::from_millis(50));
@@ -811,7 +838,7 @@ mod tests {
             .unwrap();
         line(&mut ours);
         writeln!(ours, "cancel").unwrap();
-        assert_eq!(line(&mut ours), r#"{"state":"cancelled"}"#);
+        assert_eq!(line(&mut ours), r#"{"state":"cancelled","stays":false}"#);
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(
             told.lock().unwrap().last(),
@@ -869,6 +896,10 @@ mod tests {
             r#"{"state":"looking","receivers":[{"id":"4","name":"Zoë","model":"","accepts":true}],"bluetooth":""}"#
         );
         assert_eq!(someone(""), "the iPhone");
+        assert_eq!(
+            afterwards(r#"{"state":"cancelled"}"#, true),
+            r#"{"state":"cancelled","stays":true}"#
+        );
     }
 
     #[test]

@@ -37,9 +37,11 @@
 //!
 //! While AirDrop is on the Wi-Fi is off the network: the card can be on an
 //! iPhone's channel or on the network's, not both. It ends by itself after a
-//! transfer, or when nobody has sent anything for two minutes, and the Wi-Fi
-//! connects again. A send switches it on if it is off, and off again at its
-//! end.
+//! transfer to this computer, or when nobody has sent anything for two
+//! minutes, and the Wi-Fi connects again. A send switches it on if it is off,
+//! and it goes off at the send's end unless it was switched on meanwhile: the
+//! daemon knows who holds it on, and ends when the last lets go. Off lets go
+//! of what on held; a send that is going on keeps it on until it is over.
 //!
 //! The work is nova-airdropd's, started as a service of the system's by
 //! nova-airdrop-apply (through pkexec: the person at the computer needs no
@@ -61,6 +63,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{mpsc, Mutex};
 use std::time::{Duration, Instant};
 
 use picker::{End, Picker};
@@ -174,54 +177,73 @@ fn status() -> String {
 }
 
 fn on(stay: bool) -> ExitCode {
-    if ask("status").is_some() {
-        println!("AirDrop is already on.");
-        return ExitCode::SUCCESS;
+    // The daemon is told who holds it on: the user, or (--stay) the doorbell, for the shell.
+    let word = if stay { "stay" } else { "hold" };
+    let mut started = false;
+    // One on its way out is waited for, and started again.
+    for _ in 0..3 {
+        match ask(word).as_deref() {
+            Some("ok") if started => {
+                println!("{}", status());
+                return ExitCode::SUCCESS;
+            }
+            Some("ok") => {
+                println!("AirDrop is already on.");
+                return ExitCode::SUCCESS;
+            }
+            Some(meet::GOING_OFF) => {
+                waited(|| ask("status").is_none(), Duration::from_secs(10));
+            }
+            Some(why) => {
+                eprintln!("nova airdrop: {why}");
+                return ExitCode::FAILURE;
+            }
+            None => {}
+        }
+        // Up means its socket is there: it is told before anybody could have sent anything.
+        if !apply("on") {
+            return ExitCode::FAILURE;
+        }
+        started = true;
     }
-    if !apply("on") {
-        return ExitCode::FAILURE;
-    }
-    // Up means its socket is there: it is told before anybody could have sent anything.
-    if stay && ask("stay").as_deref() != Some("ok") {
-        eprintln!("nova airdrop: AirDrop is on, but would not stay on after a transfer");
-    }
-    println!("{}", status());
-    ExitCode::SUCCESS
+    eprintln!("nova airdrop: AirDrop went off as soon as it came on: try again");
+    ExitCode::FAILURE
 }
 
 fn off() -> ExitCode {
-    match stop(false, false) {
-        None => ExitCode::FAILURE,
-        Some(verdict) if verdict.is_empty() => {
-            println!("AirDrop is off.");
-            ExitCode::SUCCESS
-        }
-        Some(verdict) => {
-            println!("AirDrop is off. {verdict}");
-            ExitCode::SUCCESS
-        }
-    }
-}
-
-/// Ends AirDrop and waits for the Wi-Fi to be handed back: how that went, as the radio's helper
-/// says it ("" for nothing to say), or None if it could not be stopped. `ours` is for an AirDrop
-/// this command switched on: one that ended by itself meanwhile still has its say.
-fn stop(ours: bool, keep: bool) -> Option<String> {
     let borrowed = || Path::new(BORROWED).exists();
-    let asked = ask("stop").is_some();
-    if !asked && !borrowed() && !ours {
-        return Some(String::new());
+    let answer = ask("stop");
+    match answer.as_deref() {
+        // A send holds it on: it goes off by itself when the send is over.
+        Some(meet::AFTER_THE_SEND) => {
+            println!("{}", meet::AFTER_THE_SEND);
+            return ExitCode::SUCCESS;
+        }
+        None if !borrowed() => {
+            println!("AirDrop is off.");
+            return ExitCode::SUCCESS;
+        }
+        _ => {}
     }
     // The daemon ends by itself when asked. One that does not, and one that is not up yet, is the
     // system's to stop; so is waiting for a Wi-Fi that is being put back already.
-    let ended = asked && waited(|| ask("status").is_none(), Duration::from_secs(3));
-    if !ended && (asked || borrowed()) && applied("off", keep).is_err() {
-        return None;
+    let ended = answer.is_some() && waited(|| ask("status").is_none(), Duration::from_secs(3));
+    if !ended && !apply("off") {
+        return ExitCode::FAILURE;
     }
-    // The helper says how handing the Wi-Fi back went when it is done with it: that is the end of this.
-    waited(|| !borrowed(), Duration::from_secs(40));
+    println!("{}", handed_back());
+    ExitCode::SUCCESS
+}
+
+/// Waits for the radio's helper to hand the Wi-Fi back, which it says it has done when it is done
+/// with it, and says how that went.
+fn handed_back() -> String {
+    waited(|| !Path::new(BORROWED).exists(), Duration::from_secs(40));
     let verdict = std::fs::read_to_string(VERDICT).unwrap_or_default();
-    Some(verdict.trim().to_owned())
+    match verdict.trim() {
+        "" => "AirDrop is off.".into(),
+        verdict => format!("AirDrop is off. {verdict}"),
+    }
 }
 
 fn bell_status() -> String {
@@ -397,8 +419,11 @@ fn opened(path: &Path) -> Result<File, String> {
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 /// The daemon's socket while a send is going on: a signal says cancel to it.
 static CANCEL_TO: AtomicI32 = AtomicI32::new(-1);
+/// The same, where the shell's words go (--json).
+static TO_DAEMON: Mutex<Option<UnixStream>> = Mutex::new(None);
 
-// Async-signal-safe: a flag, and a write. The second time, it is the end at once.
+// Async-signal-safe: a flag, and a write. The second time, it is the end at once: the daemon lets
+// go of AirDrop when the send's connection closes, or nobody takes hold of the one just started.
 extern "C" fn on_stop(_: c_int) {
     if CANCELLED.swap(true, Ordering::SeqCst) {
         // SAFETY: no pointers; it does not return.
@@ -508,108 +533,134 @@ fn send(words: &[&str]) -> ExitCode {
             prctl(PR_SET_PDEATHSIG, SIGTERM);
         }
     }
-    let ours = ask("status").is_none();
-    if ours {
-        if json {
-            println!(r#"{{"state":"starting"}}"#);
-        } else {
-            println!("Switching AirDrop on: the Wi-Fi is off the network until it is done.");
-        }
-        if let Err(why) = applied("on", json) {
-            return if json {
-                failed(
-                    json,
-                    if why.is_empty() {
-                        "AirDrop did not start."
-                    } else {
-                        &why
-                    },
-                )
-            } else {
-                ExitCode::FAILURE
-            };
-        }
-    }
-    let end = if cancelled() {
-        if json {
-            println!(r#"{{"state":"cancelled"}}"#);
-        } else {
-            println!("Cancelled.");
-        }
-        End::NotSent
-    } else {
-        sending(&asked, &files)
-    };
-    drop(files);
-    if ours {
-        if !json {
-            println!("Switching AirDrop off…");
-        }
-        match stop(true, json) {
-            Some(verdict) if !json => match verdict.as_str() {
-                "" => println!("AirDrop is off."),
-                verdict => println!("AirDrop is off. {verdict}"),
-            },
-            Some(_) => {}
-            None => {
-                if !json {
-                    eprintln!("nova airdrop: AirDrop would not go off (nova airdrop off)");
+    let typed = listen(json);
+    let terminal = std::io::stdout().is_terminal();
+    let mut picker = Picker::new(asked.to.clone(), terminal, Instant::now());
+    // Switched on for the send if it is off; one on its way out is waited for, and asked again.
+    let (mut ours, mut end) = (false, End::Again);
+    for _ in 0..3 {
+        if ask("status").is_none() {
+            if cancelled() {
+                if json {
+                    println!(r#"{{"state":"cancelled"}}"#);
+                } else {
+                    println!("Cancelled.");
+                }
+                end = End::NotSent;
+                break;
+            }
+            if !ours {
+                if json {
+                    println!(r#"{{"state":"starting"}}"#);
+                } else {
+                    println!(
+                        "Switching AirDrop on: the Wi-Fi is off the network until it is done."
+                    );
                 }
             }
+            ours = true;
+            if let Err(why) = applied("on", json) {
+                return if json {
+                    failed(
+                        json,
+                        if why.is_empty() {
+                            "AirDrop did not start."
+                        } else {
+                            &why
+                        },
+                    )
+                } else {
+                    ExitCode::FAILURE
+                };
+            }
+        }
+        end = sending(json, &files, &mut picker, &typed);
+        if end != End::Again {
+            break;
+        }
+        waited(|| ask("status").is_none(), Duration::from_secs(10));
+    }
+    drop(files);
+    if end == End::Again {
+        let _ = failed(json, picker::WENT_OFF);
+        end = End::NotSent;
+    }
+    // The daemon ends by itself once nobody holds AirDrop on: the shell's watch says so, and the
+    // command at a terminal says how handing the Wi-Fi back went.
+    if !json {
+        match picker.stays {
+            Some(false) => {
+                println!("Switching AirDrop off…");
+                if waited(|| ask("status").is_none(), Duration::from_secs(10)) {
+                    println!("{}", handed_back());
+                } else {
+                    println!("{}", status());
+                }
+            }
+            Some(true) if ours => println!("AirDrop stays on, as it was switched on meanwhile."),
+            Some(true) => {}
+            None if ours && ask("status").is_none() && Path::new(BORROWED).exists() => {
+                println!("{}", handed_back());
+            }
+            None => {}
         }
     }
     match end {
         End::Sent => ExitCode::SUCCESS,
-        End::NotSent => ExitCode::FAILURE,
+        End::NotSent | End::Again => ExitCode::FAILURE,
     }
 }
 
-/// The send itself, once AirDrop is on: the files handed to the daemon, and the conversation.
-fn sending(asked: &Asked, files: &[File]) -> End {
-    let json = asked.json;
-    let said_off = |why: &str| {
-        let _ = failed(json, why);
-        End::NotSent
-    };
+/// What the user, or the shell, says, a line at a time: at a terminal for the picker, and from the
+/// shell (--json) for the send that is going on; a cancel before there is one is kept for it.
+fn listen(json: bool) -> mpsc::Receiver<String> {
+    let (typing, typed) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines() {
+            let Ok(line) = line else { break };
+            let words = line.trim();
+            if !json {
+                if typing.send(line).is_err() {
+                    break;
+                }
+            } else if picker::passable(words) {
+                let to = TO_DAEMON.lock().unwrap();
+                match to.as_ref() {
+                    Some(mut stream) => {
+                        let _ = writeln!(stream, "{words}");
+                    }
+                    None if words == "cancel" => CANCELLED.store(true, Ordering::SeqCst),
+                    None => {}
+                }
+            }
+        }
+    });
+    typed
+}
+
+/// The send itself, once AirDrop is on: the files handed to the daemon, and the conversation. Again
+/// if the daemon was not there to take them, or was on its way out.
+fn sending(json: bool, files: &[File], picker: &mut Picker, typed: &mpsc::Receiver<String>) -> End {
     let Ok(stream) = UnixStream::connect(meet::socket()) else {
-        return said_off(picker::WENT_OFF);
+        return End::Again;
     };
     let fds: Vec<RawFd> = files.iter().map(AsRawFd::as_raw_fd).collect();
     if meet::send_with_files(stream.as_raw_fd(), b"send\n", &fds) != 5 {
-        return said_off(picker::WENT_OFF);
+        return End::Again;
     }
     CANCEL_TO.store(stream.as_raw_fd(), Ordering::SeqCst);
-    // A signal that came before there was a socket to tell.
+    *TO_DAEMON.lock().unwrap() = stream.try_clone().ok();
+    // A signal, or the shell's cancel, that came before there was a socket to tell.
     if cancelled() {
         let _ = (&stream).write_all(b"cancel\n");
-    }
-    // What the user, or the shell, says, a line at a time.
-    let (typing, typed) = std::sync::mpsc::channel();
-    {
-        let stream = stream.try_clone().ok();
-        std::thread::spawn(move || {
-            for line in std::io::stdin().lock().lines() {
-                let Ok(line) = line else { break };
-                if !json {
-                    if typing.send(line).is_err() {
-                        break;
-                    }
-                } else if picker::passable(line.trim()) {
-                    if let Some(mut stream) = stream.as_ref() {
-                        let _ = writeln!(stream, "{}", line.trim());
-                    }
-                }
-            }
-        });
     }
     let mut out = std::io::stdout().lock();
     let end = if json {
         picker::pass_on(&stream, &mut out)
     } else {
-        let terminal = std::io::stdout().is_terminal();
-        let mut picker = Picker::new(asked.to.clone(), terminal, Instant::now());
-        picker::converse(&stream, &mut picker, &typed, &mut out)
+        picker::converse(&stream, picker, typed, &mut out)
     };
+    *TO_DAEMON.lock().unwrap() = None;
     CANCEL_TO.store(-1, Ordering::SeqCst);
     end
 }

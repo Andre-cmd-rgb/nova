@@ -28,9 +28,13 @@
 //! too, what a client hands it over that socket (send.rs).
 //!
 //! --give-up-after ends the daemon when nobody has asked for that long, and
-//! --once a moment after the first transfer has ended, either way: the Wi-Fi
-//! is off the network while this runs, and should not be for long. A client
-//! that says `stay` on the control socket takes --once back (control.rs).
+//! --once when nobody holds it on any more: the Wi-Fi is off the network while
+//! this runs, and should not be for long. Who does is said on the control
+//! socket (control.rs): the user's on holds it until a transfer to this
+//! computer has ended, either way, a send until it is over, and the doorbell
+//! until it is stopped; it ends a moment after the last lets go, or after it
+//! starts if nobody takes hold of it at all, but not while a transfer or a
+//! send is under way.
 //!
 //! What it logs goes to standard error, a line an event.
 
@@ -70,6 +74,9 @@ const PORT: u16 = 8771;
 const MTU: u32 = 1450;
 /// How long after a transfer's end --once ends the daemon: the sender has its answer by then.
 const AFTER_THE_LAST: u64 = 2_000_000;
+/// How long --once waits, from the start, for somebody to take hold of the daemon: whoever started
+/// it says so at once, unless they were killed meanwhile.
+const UNCLAIMED_FOR: u64 = 15_000_000;
 /// How long what happened to a transfer is shown before a daemon that stays on says it waits again.
 const SHOWN_FOR: u64 = 8_000_000;
 /// How many of the peers' comings and goings are logged in a second.
@@ -246,6 +253,46 @@ fn meeting_place(socket: &std::path::Path) -> Result<(), String> {
         })
 }
 
+/// How things stand at a turn of the daemon's loop, for its own end.
+#[derive(Debug, Clone, Copy)]
+struct Turn {
+    /// Microseconds since the start.
+    now: u64,
+    /// --once: it ends when nobody holds it on.
+    once: bool,
+    /// A question, a transfer, or a send's asking and sending, under way.
+    busy: bool,
+    /// Nobody has asked for as long as --give-up-after says.
+    given_up: bool,
+    held: control::Held,
+}
+
+/// Whether the daemon ends at this turn. `ending` is when it was to, if it was (u64::MAX if not):
+/// a moment after a transfer or a send has ended, or after it started. Something under way puts
+/// it off, and is looked at again a moment later; somebody holding AirDrop on puts it away.
+fn ends_now(turn: Turn, ending: &mut u64) -> bool {
+    let control::Held {
+        held,
+        released,
+        sending,
+    } = turn.held;
+    if (released && !sending) || turn.given_up {
+        return true;
+    }
+    if !turn.once || turn.now < *ending {
+        return false;
+    }
+    if turn.busy {
+        *ending = turn.now + AFTER_THE_LAST;
+        false
+    } else if held || sending {
+        *ending = u64::MAX;
+        false
+    } else {
+        true
+    }
+}
+
 fn run() -> Result<(), String> {
     let o = options()?;
     let started = Instant::now();
@@ -337,7 +384,11 @@ fn run() -> Result<(), String> {
 
     // When this ends by itself: a moment after a transfer has (--once), or when nobody has asked
     // for long enough (--give-up-after), counted from the start and from each transfer's end.
-    let ending = Arc::new(AtomicU64::new(u64::MAX));
+    let ending = Arc::new(AtomicU64::new(if o.once {
+        UNCLAIMED_FOR
+    } else {
+        u64::MAX
+    }));
     let quiet_since = Arc::new(AtomicU64::new(0));
     let (accept_all, once) = (o.accept_all, o.once);
     // A send's start and end count as a transfer's for when this ends by itself.
@@ -353,8 +404,7 @@ fn run() -> Result<(), String> {
         scope,
         wake,
         {
-            let (ending, sent_since, control) =
-                (ending.clone(), sent_since.clone(), control.clone());
+            let (ending, sent_since) = (ending.clone(), sent_since.clone());
             Box::new(move |told| {
                 let now = started.elapsed().as_micros() as u64;
                 match told {
@@ -364,19 +414,30 @@ fn run() -> Result<(), String> {
                     }
                     send::Told::Ended { transfer } => {
                         sent_since.store(now, Ordering::SeqCst);
-                        if transfer && once && !control.stays() {
+                        // The send lets go of AirDrop: whether anybody else holds it is the loop's to see.
+                        if once {
                             ending.store(now + AFTER_THE_LAST, Ordering::SeqCst);
                         }
-                        log("the send is over".into());
+                        log(match transfer {
+                            true => "the send is over".into(),
+                            false => "the send is over: nobody was asked".into(),
+                        });
                     }
                     send::Told::Log(line) => log(format!("sending: {line}")),
                 }
             })
         },
+        {
+            let control = control.clone();
+            Box::new(move || !once || control.held())
+        },
     );
     {
-        let sending = sending.clone();
-        control.on_send(Box::new(move |stream, files| sending.start(stream, files)));
+        let (starting, on) = (sending.clone(), sending.clone());
+        control.on_send(control::Sends {
+            start: Box::new(move |stream, files| starting.start(stream, files)),
+            on: Box::new(move || on.on()),
+        });
     }
     let receiver = Arc::new(Receiver {
         tls,
@@ -391,12 +452,14 @@ fn run() -> Result<(), String> {
             let (ending, quiet_since, control) =
                 (ending.clone(), quiet_since.clone(), control.clone());
             Box::new(move |happened| {
-                // The end of the question that was open, whichever way, starts the count to this
-                // daemon's own end; what another sender's connection came to meanwhile does not.
+                // The end of the question that was open, whichever way, is what the user's on was
+                // for, and starts the count to this daemon's own end; what another sender's
+                // connection came to meanwhile does not.
                 if control.happened(&happened) {
                     let now = started.elapsed().as_micros() as u64;
                     quiet_since.store(now, Ordering::SeqCst);
-                    if once && !control.stays() {
+                    control.used();
+                    if once {
                         ending.store(now + AFTER_THE_LAST, Ordering::SeqCst);
                     }
                 }
@@ -517,18 +580,32 @@ fn run() -> Result<(), String> {
                 );
             }
         }
-        let once = once && !control.stays();
-        if elapsed >= shown_until && !once {
+        if elapsed >= shown_until {
             shown_until = u64::MAX;
             control.waiting();
         }
-        if (once && elapsed >= ending.load(Ordering::SeqCst))
-            || o.give_up_after.is_some_and(|seconds| {
+        let busy = control.busy() || sending.busy();
+        let given_up = !busy
+            && o.give_up_after.is_some_and(|seconds| {
                 elapsed >= quiet.max(sent_since.load(Ordering::SeqCst)) + seconds * 1_000_000
-                    && !control.busy()
-                    && !sending.busy()
-            })
-        {
+            });
+        let armed = ending.load(Ordering::SeqCst);
+        let mut then = armed;
+        let ends = control.close_if(|held| {
+            let turn = Turn {
+                now: elapsed,
+                once,
+                busy,
+                given_up,
+                held,
+            };
+            ends_now(turn, &mut then)
+        });
+        // Unless a transfer or a send has ended meanwhile, which says when for itself.
+        if then != armed {
+            let _ = ending.compare_exchange(armed, then, Ordering::SeqCst, Ordering::SeqCst);
+        }
+        if ends {
             break;
         }
         // Once a second, how the link is doing, while it is doing anything.
@@ -581,7 +658,8 @@ fn run() -> Result<(), String> {
         }
     }
     log("stopping".into());
-    // A send that was going on says so to its client.
+    // Whatever is under way ends with the daemon: a send that was looking says so to its client.
+    sys::stop();
     sending.finish(std::time::Duration::from_secs(2));
     control::close(&control);
     // A transfer cut off by the end leaves nothing half-unpacked behind.
@@ -596,5 +674,83 @@ fn main() -> ExitCode {
             let _ = writeln!(std::io::stderr(), "nova-airdropd: {why}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use control::Held;
+
+    #[test]
+    fn the_daemon_ends_when_nobody_holds_it_and_nothing_is_under_way() {
+        let turn = |now, busy, held| Turn {
+            now,
+            once: true,
+            busy,
+            given_up: false,
+            held,
+        };
+        let nobody = Held::default();
+        let sending = Held {
+            sending: true,
+            ..Held::default()
+        };
+        let user = Held {
+            held: true,
+            ..Held::default()
+        };
+        // Nobody took hold of it after it started: it ends, but not before it was to.
+        let mut ending = UNCLAIMED_FOR;
+        assert!(!ends_now(
+            turn(UNCLAIMED_FOR - 1, false, nobody),
+            &mut ending
+        ));
+        assert!(ends_now(turn(UNCLAIMED_FOR, false, nobody), &mut ending));
+        // A stranger's question ended while a send was going on: the send holds it on.
+        let mut ending = 5_000_000;
+        assert!(!ends_now(turn(5_000_000, false, sending), &mut ending));
+        assert_eq!(ending, u64::MAX);
+        // And while the send asks or sends, nothing ends it: it is looked at again a moment later,
+        // until the send is over and lets go.
+        let mut ending = 5_000_000;
+        assert!(!ends_now(turn(6_000_000, true, sending), &mut ending));
+        assert_eq!(ending, 6_000_000 + AFTER_THE_LAST);
+        // A send ended while a transfer to this computer was under way: not from under it.
+        let mut ending = 5_000_000;
+        assert!(!ends_now(turn(5_000_000, true, nobody), &mut ending));
+        assert!(!ends_now(turn(ending - 1, false, nobody), &mut ending));
+        assert!(ends_now(turn(ending, false, nobody), &mut ending));
+        // The user's on holds it after a send.
+        let mut ending = 5_000_000;
+        assert!(!ends_now(turn(5_000_000, false, user), &mut ending));
+        assert_eq!(ending, u64::MAX);
+        assert!(!ends_now(turn(u64::MAX - 1, false, user), &mut ending));
+        // Stop: at once, unless a send holds it, until it is over.
+        let released = Held {
+            released: true,
+            ..Held::default()
+        };
+        let mut ending = u64::MAX;
+        assert!(ends_now(turn(1, true, released), &mut ending));
+        let released_sending = Held {
+            released: true,
+            sending: true,
+            ..Held::default()
+        };
+        assert!(!ends_now(turn(1, false, released_sending), &mut ending));
+        // Given up, held or not.
+        let given_up = Turn {
+            given_up: true,
+            ..turn(1, false, user)
+        };
+        assert!(ends_now(given_up, &mut ending));
+        // Without --once it ends when it is stopped, or gives up.
+        let without = Turn {
+            once: false,
+            ..turn(10_000_000, false, nobody)
+        };
+        let mut ending = 0;
+        assert!(!ends_now(without, &mut ending));
     }
 }

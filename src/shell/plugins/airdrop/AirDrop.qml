@@ -27,7 +27,8 @@ import "AirDropModel.js" as Model
 // `nova airdrop send --json` says they appear (SendWindow.qml). The one
 // clicked is asked to take the files; waiting for its answer, the sending
 // and how it ended are notifications, the first two with Cancel. The command
-// switches AirDrop on for the send if it is off, and off again after.
+// switches AirDrop on for the send if it is off, and the daemon ends it after
+// unless somebody else holds it on (control.rs).
 Item {
   id: airdrop
 

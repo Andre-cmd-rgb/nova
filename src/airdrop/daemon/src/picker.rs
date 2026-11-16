@@ -238,11 +238,13 @@ pub struct Listed {
     pub here: bool,
 }
 
-/// How a send ended, for the exit status.
+/// How a send ended, for the exit status; or that it never began, as AirDrop was on its way out
+/// (`closing`), which is for the command to start again and ask again.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum End {
     Sent,
     NotSent,
+    Again,
 }
 
 /// What a line of the daemon's, or one the user typed, comes to: words for the user (whole
@@ -277,6 +279,9 @@ pub struct Picker {
     /// The progress line is on the screen, and wants ending.
     drawn: bool,
     sending_said: bool,
+    opened: bool,
+    /// What the last line said of AirDrop after the send: whether it stays on.
+    pub stays: Option<bool>,
 }
 
 /// A name as people type it: no matter the case, or which apostrophe.
@@ -312,11 +317,16 @@ impl Picker {
             terminal,
             drawn: false,
             sending_said: false,
+            opened: false,
+            stays: None,
         }
     }
 
-    /// What it says first.
-    pub fn opening(&self) -> String {
+    /// What it says first: once, however many times the send is asked for.
+    pub fn opening(&mut self) -> String {
+        if std::mem::replace(&mut self.opened, true) {
+            return String::new();
+        }
         match &self.to {
             Some(name) => format!("Looking for {} nearby…\n", quote(name)),
             None => "Looking for iPhones nearby. Type the number of the one to send to, and \
@@ -372,7 +382,11 @@ impl Picker {
         };
         let to = said.text("to").to_owned();
         let mut step = Step::default();
+        if said.get("stays").is_some() {
+            self.stays = Some(said.flag("stays"));
+        }
         match said.text("state") {
+            "closing" => step.end = Some(End::Again),
             "looking" => {
                 for listed in &mut self.listed {
                     listed.here = false;
@@ -614,11 +628,15 @@ pub fn pass_on(stream: &UnixStream, out: &mut dyn Write) -> End {
             let _ = out.flush();
             return End::NotSent;
         };
+        let state = Json::parse(&line).map(|said| said.text("state").to_owned());
+        // Not one of the send's lines: for the command to ask again.
+        if state.as_deref() == Some("closing") {
+            return End::Again;
+        }
         if writeln!(out, "{line}").and_then(|_| out.flush()).is_err() {
             // Nobody reads it any more: the send is not theirs to see through.
             let _ = (&*stream).write_all(b"cancel\n");
         }
-        let state = Json::parse(&line).map(|said| said.text("state").to_owned());
         match state.as_deref() {
             Some("sent") => return End::Sent,
             Some("declined" | "failed" | "nobody" | "cancelled") => return End::NotSent,
@@ -823,6 +841,27 @@ mod tests {
         );
         assert_eq!(picker.told(r#"{"state":"cancelled"}"#).say, "Cancelled.\n");
         assert_eq!(picker.told("not json"), Step::default());
+        // The last line says whether AirDrop stays on after the send.
+        assert_eq!(picker.stays, None);
+        picker.told(r#"{"state":"cancelled","stays":true}"#);
+        assert_eq!(picker.stays, Some(true));
+        picker.told(r#"{"state":"declined","to":"Bob","stays":false}"#);
+        assert_eq!(picker.stays, Some(false));
+    }
+
+    #[test]
+    fn a_daemon_on_its_way_out_is_asked_again_with_nothing_said_twice() {
+        let mut picker = Picker::new(None, false, Instant::now());
+        assert!(picker.opening().starts_with("Looking for iPhones nearby."));
+        let closing = picker.told(r#"{"state":"closing"}"#);
+        assert_eq!((closing.say.as_str(), closing.end), ("", Some(End::Again)));
+        // Asked of the next daemon, it does not say it looks a second time.
+        assert_eq!(picker.opening(), "");
+        let (ours, mut daemon) = UnixStream::pair().unwrap();
+        writeln!(daemon, r#"{{"state":"closing"}}"#).unwrap();
+        let mut out = Vec::new();
+        assert_eq!(pass_on(&ours, &mut out), End::Again);
+        assert!(out.is_empty(), "the shell is not told of it");
     }
 
     #[test]
