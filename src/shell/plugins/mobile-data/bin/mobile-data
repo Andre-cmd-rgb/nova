@@ -1557,7 +1557,7 @@ cmd_apn() {
 # rather than mmcli, which takes it as an argument any process could read
 # while it runs. An error is its D-Bus name and message, as mmcli says it.
 send_pin() { # sim path
-  python3 -c '
+  python3 -I -c '
 import sys, dbus
 pin = sys.stdin.readline().strip()
 sim = dbus.SystemBus().get_object("org.freedesktop.ModemManager1", sys.argv[1])
