@@ -16,9 +16,9 @@ Item {
     property bool wasLow: false
   }
 
-  // A look every 30 s, and as the power source changes. UPower's display
-  // device is the batteries as one, and there is none on a desktop; it is
-  // low draining at 10% or under.
+  // A look as UPower's numbers change, and as the power source does. Its
+  // display device is the batteries as one, and there is none on a desktop;
+  // it is low draining at 10% or under.
   function look() {
     var pack = UPower.displayDevice
     var charge = pack && pack.isPresent ? Math.round(Number(pack.percentage || 0) * 100) : -1
@@ -52,12 +52,14 @@ Item {
     }
   }
 
-  Timer {
-    interval: 30000
-    running: true
-    repeat: true
-    triggeredOnStart: true
-    onTriggered: battery.look()
+  // The charge, draining or not, and a battery put in or taken out: UPower
+  // says each as it changes, so nothing here asks on a clock.
+  Connections {
+    target: UPower.displayDevice
+
+    function onPercentageChanged() { battery.look() }
+    function onStateChanged() { battery.look() }
+    function onIsPresentChanged() { battery.look() }
   }
 
   // A plug or an unplug.
@@ -70,5 +72,8 @@ Item {
     }
   }
 
-  Component.onCompleted: powerMode.restore()
+  Component.onCompleted: {
+    look()
+    powerMode.restore()
+  }
 }
