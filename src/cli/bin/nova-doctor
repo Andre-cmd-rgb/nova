@@ -92,7 +92,7 @@ check_root_filesystem() {
 }
 
 check_disk_space() {
-  local used
+  local used mounted
   used=$(df -P / | awk 'NR == 2 { sub("%", "", $5); print $5 + 0 }')
   if ((used >= 95)); then
     report FAIL "/ is ${used}% full" "Old snapshots keep deleted files: snapper list, then sudo snapper delete <number>."
@@ -100,6 +100,23 @@ check_disk_space() {
     report warn "/ is ${used}% full" "Old snapshots keep deleted files: snapper list, then sudo snapper delete <number>."
   else
     report ok "/ is ${used}% full"
+  fi
+
+  # The boot partition, 2 GiB, where each update writes its kernels' images
+  # again, beside the old ones (nova-update-apply's check_space). The fallback
+  # image alone is about 220 MB: from 80% full the next update may not find
+  # room for them all, and from 90% (205 MiB free) not for that one. The
+  # images are root's to read, so here it is the share full that counts.
+  read -r used mounted < <(df -P -- "$ESP" 2>/dev/null | awk 'NR == 2 { sub("%", "", $5); print $5 + 0, $6 }') || return 0
+  [[ -n $mounted && $mounted != / ]] || return 0
+  if ((used >= 90)); then
+    report FAIL "the boot partition is ${used}% full, too full for an update's boot images" \
+      "Each snapshot in the boot menu keeps images there: snapper list, then sudo snapper delete <number> takes an old one's away."
+  elif ((used >= 80)); then
+    report warn "the boot partition is ${used}% full: an update's boot images may not fit" \
+      "Each snapshot in the boot menu keeps images there: snapper list, then sudo snapper delete <number> takes an old one's away."
+  else
+    report ok "the boot partition is ${used}% full"
   fi
 }
 

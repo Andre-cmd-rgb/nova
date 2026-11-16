@@ -198,6 +198,12 @@ prepare_update() {
   cp "$SCRATCH/bin/pacman" "$SCRATCH/bin/limine-update"
   printf '#!/bin/bash\necho 7\n' >"$SCRATCH/bin/snapper"
   chmod +x "$SCRATCH"/lib/* "$SCRATCH"/bin/*
+  room 100000 100000
+}
+
+room() { # MiB free on /, then on the boot partition
+  export NOVA_FREE_SPACE=$SCRATCH/free
+  printf '%s %s\n' "$NOVA_ROOT/" "$1" "$NOVA_ROOT/boot" "$2" >"$NOVA_FREE_SPACE"
 }
 
 run_update() {
@@ -219,6 +225,53 @@ pacman -Su --noconfirm" ]
   [[ $output == *"Arch snapshot 2026/10/19 and v1.1.0"* ]]
   [[ $output == *"Boot entries look right"* ]]
   [[ $output == *"Nova is now on v1.1.0."* ]]
+}
+
+@test "a disk too full for an update stops it before anything changes, and says so" {
+  prepare_update
+  room 900 100000
+  run run_update --no-snapshot
+  [ "$status" -eq 1 ]
+  [[ $output == *"the disk is too full to update: / has 900 MiB free, and an update needs 4 GiB, so nothing was changed."* ]]
+  [[ $output == *"sudo pacman -Sc deletes old downloads"* ]]
+  [ ! -e "$SCRATCH/calls" ]
+  [ ! -e "$MIRRORLIST" ]
+}
+
+@test "a boot partition without room for its images once more stops it too" {
+  prepare_update
+  # The fallback: 300 MiB, and the main image's few bytes, rounded up.
+  truncate -s 300M "$NOVA_ROOT/boot/EFI/Linux/nova_linux-nova-fallback.efi"
+  room 100000 364
+  run run_update
+  [ "$status" -eq 1 ]
+  [[ $output == *"the boot partition is too full to update: it has 364 MiB free, and the boot images the update writes need 365 MiB, so nothing was changed."* ]]
+  [[ $output == *"snapper delete <number>"* ]]
+  [[ $output != *"Snapshot 7 taken"* ]]
+  [ ! -e "$SCRATCH/calls" ]
+  room 100000 365
+  run run_update
+  [[ $output != *"too full"* ]]
+  grep -q '^pacman -Su' "$SCRATCH/calls"
+}
+
+@test "the boot check and the apps alone change no release, and need no room" {
+  prepare_update
+  room 0 0
+  run check_boot_alone 0
+  [ "$status" -eq 0 ]
+  lists_read
+  local chrome
+  chrome=$(built_package google-chrome-141.0-1-x86_64.pkg.tar.zst)
+  run env PATH="$SCRATCH/bin:$PATH" "$SCRATCH/lib/nova-update-apply" --packages-only --package "$chrome"
+  [ "$status" -eq 0 ]
+}
+
+@test "the room is read from the file system itself, without the seam" {
+  unset NOVA_FREE_SPACE
+  run free_mib /
+  [ "$status" -eq 0 ]
+  [[ $output =~ ^[0-9]+$ ]]
 }
 
 @test "an update whose boot entries limine-update cannot repair says so" {

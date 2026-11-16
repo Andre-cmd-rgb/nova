@@ -6,6 +6,7 @@
 # The privileged half of `nova update`. One pkexec call runs all of it, so there is a
 # single authentication prompt and nothing privileged is left to the unprivileged side.
 #
+#   0. room enough on / and on the boot partition, or nothing begins
 #   1. snapper pre-snapshot, taken first so rolling back to it restores the old
 #      mirror and repository files together with the old packages
 #   2. write /etc/pacman.d/nova-mirrorlist (Arch Linux Archive snapshot) and
@@ -53,6 +54,8 @@ SNAPPER_CONFIG=${NOVA_SNAPPER_CONFIG:-root}
 # kept without it are of an update whose packages may be half in (the power
 # went), which boot entries that check out say nothing about.
 BOOT_UNCHECKED=$REPOFILE.nova-boot-unchecked
+# The room an update needs on / (check_space says why), in MiB.
+ROOT_NEED_MIB=4096
 
 die() {
   warn "$*"
@@ -422,6 +425,70 @@ check_boot() {
   fi
 }
 
+# --- room -------------------------------------------------------------------------
+
+# MiB free on the file system a path is on. NOVA_FREE_SPACE, a test seam, is a
+# file of "<path> <MiB>" lines read instead, as NOVA_PROC_STAT is for /proc/stat.
+free_mib() { # path
+  if [[ -n ${NOVA_FREE_SPACE:-} ]]; then
+    awk -v path="$1" '$1 == path { print $2; found = 1; exit } END { exit !found }' "$NOVA_FREE_SPACE"
+    return
+  fi
+  stat -f -c '%a %S' -- "$1" | awk '{ printf "%d\n", $1 * $2 / 1048576 }'
+}
+
+# MiB of the images on the boot partition that pacman's kernel hook writes
+# again: each installed kernel's, and its fallback.
+images_mib() { # esp
+  local pkgbase_file pkgbase image bytes=0
+  for pkgbase_file in "$ROOT"/usr/lib/modules/*/pkgbase; do
+    [[ -r $pkgbase_file && -e ${pkgbase_file%pkgbase}vmlinuz ]] || continue
+    pkgbase=$(<"$pkgbase_file")
+    for image in "$1"/EFI/Linux/*_"$pkgbase".efi "$1"/EFI/Linux/*_"$pkgbase"-fallback.efi; do
+      [[ -f $image ]] || continue
+      bytes=$((bytes + $(stat -c %s -- "$image")))
+    done
+  done
+  echo $(((bytes + 1048575) / 1048576))
+}
+
+in_words() { # MiB
+  if (($1 >= 1024)); then
+    awk -v mib="$1" 'BEGIN { s = sprintf("%.1f", mib / 1024); sub(/\.0$/, "", s); print s " GiB" }'
+  else
+    echo "$1 MiB"
+  fi
+}
+
+# A full disk stops pacman halfway, the system half one release and half the
+# other, with a message that never says the disk is full. So the room is
+# looked at before anything changes.
+#
+# On /: the update's downloads, and its packages unpacked. Every file pacman
+# replaces stays in the pre-update snapshot, so nothing it replaces frees room
+# while it runs, which pacman's own CheckSpace counts on. The biggest two weeks
+# on the P1 Gen 4i so far were 0.7 GiB downloaded and 1.9 GiB unpacked (81
+# packages, 2026-11-11); ROOT_NEED_MIB leaves room for a release that moves
+# further, or a computer that skipped one.
+#
+# On the boot partition: the images the kernel hook writes again. mkinitcpio
+# builds each in /tmp, and limine-entry-tool copies it in beside the one it
+# replaces, which a snapshot's boot entry may keep: room for what they take
+# now, once more, and a little for one that grows.
+check_space() { # esp, or nothing
+  local free need
+  if free=$(free_mib "$ROOT/") && ((free < ROOT_NEED_MIB)); then
+    die "the disk is too full to update: / has $(in_words "$free") free, and an update needs $(in_words "$ROOT_NEED_MIB"), so nothing was changed." \
+      "Old snapshots keep deleted files (snapper list, then sudo snapper delete <number>), and sudo pacman -Sc deletes old downloads"
+  fi
+  [[ -n $1 ]] || return 0
+  need=$(($(images_mib "$1") + 64))
+  if free=$(free_mib "$1") && ((free < need)); then
+    die "the boot partition is too full to update: it has $(in_words "$free") free, and the boot images the update writes need $(in_words "$need"), so nothing was changed." \
+      "Each snapshot in the boot menu keeps images there; deleting old ones (snapper list, then sudo snapper delete <number>) takes theirs away"
+  fi
+}
+
 # --- main -------------------------------------------------------------------------
 
 main() {
@@ -473,6 +540,7 @@ main() {
   if esp=$(find_esp) && esp_unmounted "$esp"; then
     die "the boot partition is not mounted at $esp; mount it (sudo mount $esp) and try again. Nothing was changed."
   fi
+  check_space "$esp"
 
   # Read by pacman_failed. pacman finishes a transaction when the terminal
   # closes; so does this, writing to the log instead. With SIGPIPE ignored, a

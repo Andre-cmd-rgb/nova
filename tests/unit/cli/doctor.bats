@@ -101,6 +101,29 @@ doctor() { "$REPO_ROOT/src/cli/bin/nova-doctor" "$@"; }
   [[ $output == *"FAIL  / is 96% full"* ]]
 }
 
+@test "the boot partition: room for an update's images is ok, too little warns, none fails" {
+  stub df 'if [[ ${!#} == "$NOVA_BOOT_ESP" ]]; then
+      printf "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/y 100 1 1 %s%% /boot\n" "$ESP_USED"
+    else
+      printf "Filesystem 1024-blocks Used Available Capacity Mounted on\n/dev/x 100 1 1 41%% /\n"
+    fi'
+  ESP_USED=40 run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"ok    the boot partition is 40% full"* ]]
+  ESP_USED=85 run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"warn  the boot partition is 85% full: an update's boot images may not fit"* ]]
+  ESP_USED=92 run doctor
+  [ "$status" -eq 1 ]
+  [[ $output == *"FAIL  the boot partition is 92% full, too full for an update's boot images"* ]]
+  [[ $output == *"sudo snapper delete <number>"* ]]
+}
+
+@test "a boot partition that is / itself is not counted twice" {
+  run doctor
+  [[ $output != *"boot partition is"* ]]
+}
+
 @test "missing package files fail" {
   MISSING=3 run doctor
   [ "$status" -eq 1 ]

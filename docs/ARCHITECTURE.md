@@ -376,7 +376,7 @@ An encrypted one is opened as `nova-usb-root` while it is made, since the comput
 2. It updates the keyrings.
 3. It runs `pacman -Su`, with a snapper snapshot before and after.
 
-A failed step puts the old files and package databases back. Afterwards it checks that every kernel's boot image was rebuilt.
+A failed step puts the old files and package databases back. Afterwards it checks that every kernel's boot image was rebuilt. Before any of it, it makes sure `/` and the boot partition have room for the update, which a full disk would stop halfway.
 
 Pre-releases (the candidates) reach only systems that opted in (`nova update --candidates on`) or are already on one.
 
