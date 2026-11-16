@@ -120,6 +120,18 @@ stopped_modemmanager() {
   [ ! -e "$state/parked" ]
 }
 
+@test "kept off by an older Nova for want of ModemManager, which is here now: brought back" {
+  with_sim
+  echo no-modemmanager >"$state/parked"
+  echo blocked >"$SCRATCH/wwan"
+  [ "$(info state)" = disabled ]
+  [ ! -e "$state/parked" ]
+  [ "$(cat "$SCRATCH/wwan")" = unblocked ]
+  # A park for want of a SIM is no such thing: it stays.
+  echo nosim >"$state/parked"
+  [ "$(info state)" = parked ]
+}
+
 @test "a radio turned off by hand is no answer: nothing is decided" {
   empty_slot
   echo blocked >"$SCRATCH/wwan"
@@ -336,7 +348,7 @@ esac'
   echo blocked >"$SCRATCH/wwan"
   run "$helper" on
   [ "$status" -eq 1 ]
-  [[ $output == *"the modem could not be turned on, so mobile data is off again; nova doctor says why"* ]]
+  [[ $output == *"the modem could not be turned on, so mobile data is off again"* ]]
   grep -qx "mmcli -m 0 --enable" "$CALLS"
   [ "$(cat "$state/stopped")" = noenable ]
   [ "$(cat "$SCRATCH/wwan")" = blocked ]
@@ -367,28 +379,26 @@ esac'
   [ "$(info state)" = nosim ]
 }
 
-# A locked SIM, whose mmcli takes 1234 for its PIN and counts down otherwise.
+# A locked SIM with <tries> left (3), which takes 1234 for its PIN and
+# counts down otherwise. The PIN goes to it over the bus, from python's
+# standard input: the stand-in notes its arguments and what came in.
 sim_pin() {
-  echo 3 >"$SCRATCH/tries"
+  echo "${1:-3}" >"$SCRATCH/tries"
   modem "modem.generic.state                              : locked" \
     "modem.generic.unlock-required                    : sim-pin" \
     "modem.generic.unlock-retries.length              : 2" \
-    "modem.generic.unlock-retries.value[1]            : sim-pin (3)" \
+    "modem.generic.unlock-retries.value[1]            : sim-pin (${1:-3})" \
     "modem.generic.unlock-retries.value[2]            : sim-puk (10)" \
     "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
-  stub mmcli '
-echo "mmcli $*" >>"$CALLS"
-case "$*" in
-  -L) echo "    /org/freedesktop/ModemManager1/Modem/0 [foxconn] T99W175" ;;
-  "-m 0 -K") cat "$SCRATCH/dump" ;;
-  "-i /org/freedesktop/ModemManager1/SIM/0 --pin=1234") exit 0 ;;
-  "-i /org/freedesktop/ModemManager1/SIM/0 --pin="*)
-    tries=$(( $(cat "$SCRATCH/tries") - 1 )); echo "$tries" >"$SCRATCH/tries"
-    sed -i "s/sim-pin ([0-9]*)/sim-pin ($tries)/" "$SCRATCH/dump"
-    echo "error: couldn'"'"'t send PIN code to the SIM: '"'"'GDBus.Error:org.freedesktop.ModemManager1.Error.MobileEquipment.IncorrectPassword: Incorrect password'"'"'" >&2
-    exit 1 ;;
-  *) exit 1 ;;
-esac'
+  stub python3 '
+IFS= read -r pin
+echo "python3 args: $1 ${*:3}" >>"$CALLS"
+echo "send-pin ${*: -1} stdin=$pin" >>"$CALLS"
+[[ $pin == 1234 ]] && exit 0
+tries=$(( $(cat "$SCRATCH/tries") - 1 )); echo "$tries" >"$SCRATCH/tries"
+sed -i "s/sim-pin ([0-9]*)/sim-pin ($tries)/" "$SCRATCH/dump"
+echo "org.freedesktop.ModemManager1.Error.MobileEquipment.IncorrectPassword: Incorrect password" >&2
+exit 1'
 }
 
 @test "a SIM that needs its PIN: what it needs and the tries left, and a wrong PIN counts down" {
@@ -402,8 +412,22 @@ esac'
   [[ $output == *"that is not the PIN: 2 tries left"* ]]
   run "$helper" pin <<<"12"
   [[ $output == *"a PIN is 4 to 8 digits"* ]]
-  # Never in the helper's own arguments: on its standard input.
-  fails grep -q "pin 0000" "$CALLS"
+  # On standard input all the way to the bus, never among any arguments.
+  grep -qx "send-pin /org/freedesktop/ModemManager1/SIM/0 stdin=0000" "$CALLS"
+  fails grep -q "0000" <(grep -v "stdin=" "$CALLS")
+}
+
+@test "one try left: the PIN is not sent unless it is the last try given knowingly" {
+  echo very >"$SCRATCH/profiles"
+  network_manager connected
+  sim_pin 1
+  run "$helper" pin <<<"0000"
+  [ "$status" -eq 1 ]
+  [[ $output == *"one try is left, and a wrong PIN blocks the SIM"* ]]
+  fails grep -q "send-pin" "$CALLS"
+  run "$helper" pin --last-try <<<"1234"
+  [ "$status" -eq 0 ]
+  grep -qx "send-pin /org/freedesktop/ModemManager1/SIM/0 stdin=1234" "$CALLS"
 }
 
 @test "the right PIN unlocks the SIM, and mobile data comes on" {
@@ -413,7 +437,7 @@ esac'
   run "$helper" pin <<<"1234"
   [ "$status" -eq 0 ]
   [[ $output == *"The SIM is unlocked."* ]]
-  grep -qx "mmcli -i /org/freedesktop/ModemManager1/SIM/0 --pin=1234" "$CALLS"
+  grep -qx "send-pin /org/freedesktop/ModemManager1/SIM/0 stdin=1234" "$CALLS"
   grep -qx "nmcli radio wwan on" "$CALLS"
 }
 

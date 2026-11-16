@@ -5,9 +5,11 @@ import Quickshell.Io
 import "plugins/settings" as Settings
 
 // Settings → Mobile Data against a stub of nova-mobile-data: the SIM's PIN
-// goes to `pin` on its standard input and never among its arguments, a
-// network that refuses the APN (exit 3) has the page ask for one, and the
-// APN given is set and then mobile data turned on, in that order.
+// goes to `pin` on its standard input and never among its arguments, and
+// leaves the field as it goes, so that Return does not send it again; the
+// last try is given only at the second Unlock; a network that refuses the
+// APN (exit 3) has the page ask for one, and the APN given is set and then
+// mobile data turned on, in that order.
 ShellRoot {
   id: test
 
@@ -78,18 +80,51 @@ ShellRoot {
     when(() => page.modem === "locked", locked, "the page reads a locked SIM")
   })
 
+  // The first Item under <item> for which <test> holds, or null.
+  function find(item, test) {
+    const below = item.contentItem ? [item.contentItem] : item.children
+    for (const child of below) {
+      if (test(child)) return child
+      const deeper = find(child, test)
+      if (deeper) return deeper
+    }
+    return null
+  }
+
+  property var pinField: null
+
   function locked() {
     check(page.summary === "The SIM needs its PIN.", "a locked SIM: the page says it needs its PIN")
     page.unlock("12")
     check(!page.busy, "a PIN of two digits is not sent")
-    page.unlock("1234")
+    pinField = find(page, item => item.placeholderText === "SIM PIN")
+    pinField.text = "1234"
+    pinField.accepted()
+    check(pinField.text === "", "the field is emptied as the PIN goes")
     when(() => !page.busy && ran()[0] !== "", unlocked, "the PIN is sent and done")
   }
 
   function unlocked() {
     check(JSON.stringify(ran()) === JSON.stringify(["pin stdin=1234"]), "the PIN goes on the standard input, not among the arguments")
-    write(onError, "mobile-data: the network does not know the APN \"internet.it\": Settings > Mobile Data takes another\n",
-      () => write(onStatus, "3\n", refuse))
+    pinField.accepted()
+    check(!page.busy && ran().length === 1, "Return again sends nothing")
+    write(infoFile, "hw=yes\nstate=locked\nunlock=sim-pin\npin_tries=1\nmanaged=yes\nprofile=very\n", () => {
+      page.load()
+      when(() => page.lastTry, lastTry, "the page reads the last try")
+    })
+  }
+
+  function lastTry() {
+    pinField.text = "4321"
+    pinField.accepted()
+    check(!page.busy && ran().length === 1 && page.lastTryWarned && pinField.text === "4321",
+      "the last try: the first Unlock only says what a wrong PIN does")
+    pinField.accepted()
+    when(() => !page.busy && ran().length === 2, () => {
+      check(ran()[1] === "pin --last-try stdin=4321" && !page.lastTryWarned, "the second gives it, as the last try")
+      write(onError, "mobile-data: the network does not know the APN \"internet.it\": Settings > Mobile Data takes another\n",
+        () => write(onStatus, "3\n", refuse))
+    }, "the last try is given")
   }
 
   function refuse() {
@@ -102,13 +137,13 @@ ShellRoot {
     check(page.failure === "The network does not know the APN \"internet.it\": Settings > Mobile Data takes another.", "and says why, as a sentence")
     write(onStatus, "", () => {
       page.run(["nova-mobile-data", "apn", "web.it"], ["nova-mobile-data", "on"])
-      when(() => ran().length >= 4 && !page.busy, chained, "the APN is set and mobile data turned on")
+      when(() => ran().length >= 5 && !page.busy, chained, "the APN is set and mobile data turned on")
     })
   }
 
   function chained() {
     const lines = ran()
-    check(lines[2] === "apn web.it" && lines[3] === "on", "the APN given is set first, and then mobile data turned on")
+    check(lines[3] === "apn web.it" && lines[4] === "on", "the APN given is set first, and then mobile data turned on")
     check(!page.askApn && page.failure === "", "connected: the APN is asked for no more")
     finish()
   }

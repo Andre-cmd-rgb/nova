@@ -126,7 +126,8 @@ cfg_number() {
 }
 
 # Carry 2.x state forward on first run. Copies rather than moves, so rolling
-# back to the old plugin finds everything where it left it.
+# back to the old plugin finds everything where it left it. And a park made
+# for want of ModemManager is undone (forget_old_park).
 migrate_legacy_state() {
   if [[ ! -e $CONFIG && -r $LEGACY_CONFIG ]]; then
     mkdir -p -- "$CONFIG_DIR" 2>/dev/null &&
@@ -143,7 +144,7 @@ migrate_legacy_state() {
         cat -- "$LEGACY_STATE_DIR/$file" >"$STATE_DIR/$file" 2>/dev/null
     done
   fi
-  return 0
+  forget_old_park
 }
 
 # -------------------------------------------------------------------- modem
@@ -202,6 +203,16 @@ parked_reason() {
   printf '%s' "${reason:-nosim}"
 }
 
+# A modem kept off by a release before ModemManager came with Nova, for want
+# of it (no-modemmanager): ModemManager is here now, so that is undone, its
+# radio too, and the first start decides again.
+forget_old_park() {
+  [[ -e $PARKED && $(parked_reason) == no-modemmanager ]] && have mmcli || return 0
+  rm -f -- "$PARKED"
+  have rfkill && rf unblock wwan >/dev/null 2>&1
+  return 0
+}
+
 # The first start decides, once, and only for a modem that has never had a
 # SIM: no SIM in the slot, and it is switched off. A radio somebody turned off
 # is no answer, and nor is a modem still on its way up. A SIM seen once means
@@ -253,13 +264,14 @@ stop_trying() { # why
 }
 
 # ModemManager asked to power the modem up, as NetworkManager asks it. No
-# when it answers that it cannot: "Invalid transition" is how it words the
-# refusal of a modem its maker locked (an FCC lock) that it has no unlock
-# for, over MBIM and QMI alike. Anything else is not this one's to judge.
+# when it answers as it does for a modem its maker locked (an FCC lock) that
+# it has no unlock for: "Invalid transition", from the modem's own
+# OperationNotAllowed, over MBIM and QMI alike. Anything else, a slow
+# power-up among them, is not this one's to judge.
 modem_powers_up() {
   local said
   said=$(mm -m "$IDX" --enable --timeout=30 2>&1) && return 0
-  [[ $said == *"Invalid transition"* || $said == *"power-up"* || $said == *"power up"* ]] && return 1
+  [[ $said == *"Invalid transition"* || $said == *OperationNotAllowed* ]] && return 1
   return 0
 }
 
@@ -851,7 +863,7 @@ wait_for_state() {
   done
 }
 
-NO_POWER_UP="the modem could not be turned on, so mobile data is off again; nova doctor says why"
+NO_POWER_UP="the modem could not be turned on, so mobile data is off again"
 
 cmd_on() {
   [[ ! -e $PARKED ]] || die "the modem is off because no SIM was found — mobile-data check looks again"
@@ -1540,10 +1552,26 @@ cmd_apn() {
   echo "APN set to $apn on '$profile'."
 }
 
-# The SIM's PIN, from the standard input rather than the arguments, where any
-# process could read it; mmcli takes it as an argument for the moment it runs.
-# Then mobile data comes on, as NetworkManager gave up asking for the PIN
-# itself.
+# The PIN to the SIM <path> over the system bus, read from the standard
+# input: python's D-Bus, which Nova has for its keyring and idle helpers,
+# rather than mmcli, which takes it as an argument any process could read
+# while it runs. An error is its D-Bus name and message, as mmcli says it.
+send_pin() { # sim path
+  python3 -c '
+import sys, dbus
+pin = sys.stdin.readline().strip()
+sim = dbus.SystemBus().get_object("org.freedesktop.ModemManager1", sys.argv[1])
+try:
+    sim.SendPin(pin, dbus_interface="org.freedesktop.ModemManager1.Sim", timeout=30)
+except dbus.exceptions.DBusException as error:
+    sys.exit("%s: %s" % (error.get_dbus_name(), error.get_dbus_message()))
+' "$1"
+}
+
+# The SIM's PIN, from the standard input, never in any process's arguments.
+# The last try is given only with --last-try: a wrong PIN then blocks the SIM
+# until the carrier's PUK. Then mobile data comes on, as NetworkManager gave
+# up asking for the PIN itself.
 cmd_pin() {
   local pin said sim
   IFS= read -r pin || true
@@ -1551,7 +1579,10 @@ cmd_pin() {
   load_dump || die "the modem is not there"
   sim=$(kv modem.generic.sim)
   [[ -n $sim && $sim != / ]] || die "there is no SIM in the slot"
-  if ! said=$(mm -i "$sim" --pin="$pin" 2>&1); then
+  read_state
+  [[ $PIN_TRIES != 1 || ${1:-} == --last-try ]] ||
+    die "one try is left, and a wrong PIN blocks the SIM: mobile-data pin --last-try gives it"
+  if ! said=$(send_pin "$sim" <<<"$pin" 2>&1); then
     read_state
     if [[ $UNLOCK == sim-puk ]]; then
       die "the SIM is blocked after three wrong PINs: it needs the PUK from your carrier"
@@ -1599,8 +1630,9 @@ Usage:
   mobile-data reset              power-cycle a modem that refuses to connect
   mobile-data check              switch on a modem kept off for want of a SIM,
                                  and look for one again
-  mobile-data pin                unlock the SIM with the PIN on standard input,
-                                 then turn mobile data on
+  mobile-data pin [--last-try]   unlock the SIM with the PIN on standard input,
+                                 then turn mobile data on; the last try only
+                                 with --last-try
   mobile-data setup [APN]        create or refresh the NetworkManager profile
   mobile-data profile [name]     show or choose the NetworkManager profile
   mobile-data apn [APN]          show or change the APN on the profile
@@ -1643,7 +1675,7 @@ off | disable) cmd_off ;;
 toggle) cmd_toggle ;;
 reset) cmd_reset ;;
 check) cmd_check ;;
-pin) cmd_pin ;;
+pin) cmd_pin "${1:-}" ;;
 setup) cmd_setup "${1:-}" ;;
 profile) cmd_profile "${1:-}" ;;
 apn) cmd_apn "${1:-}" ;;

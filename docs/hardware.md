@@ -41,7 +41,7 @@ Every computer also gets `linux-firmware`, the sound firmware of recent Intel an
 Mobile data comes with Nova: ModemManager is part of every install, and is turned on where there is a modem.
 
 - **Its maker's lock.** Many laptop modems are locked by their maker (an FCC lock) until something unlocks them, and until then cannot be turned on at all. ModemManager has an unlock for the modems it knows, and turns on none by itself; Nova turns on every one it has, in `/usr/lib/ModemManager/fcc-unlock.d`. An unlock of your own in `/etc/ModemManager/fcc-unlock.d` goes first.
-- **A modem none of them unlocks**, some newer ones in Lenovo laptops among them, needs its maker's own tool, which Nova does not ship: `nova doctor` says so, and names Lenovo's.
+- **A modem none of them unlocks**, some newer ones in Lenovo laptops among them, needs its maker's own unlock script, which Nova does not ship: `nova doctor` says so, and names Lenovo's. Put the script in `/etc/ModemManager/fcc-unlock.d`, named by the modem's vid:pid, and not in `/usr/lib`, whose names belong to Nova's package.
 - **The rest is a switch**: Mobile Data in the bar and in Settings. The first time, it sets mobile data up with the APN for the SIM, and asks for one only if the network turns that down.
 
 Video is decoded on the card that drives the screen: the integrated one where there is one, and the NVIDIA card where it is the only one or the monitors are plugged into it.

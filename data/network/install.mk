@@ -17,7 +17,11 @@ SHELL_SOURCES   += $(NETWORK_SRC)/bin/nova-wireless-regdom $(NETWORK_SRC)/bin/no
 # these. Nova turns every one of them on, linked by name as ModemManager's
 # documentation does it. The links are made from the modemmanager installed
 # where the package is built (a dependency, so always there), so a new
-# release of ModemManager's list is Nova's at its next build.
+# release of ModemManager's list is Nova's at its next build. /usr/lib is
+# right for them: ModemManager's documentation gives that directory to the
+# distribution, and Arch's modemmanager owns it with nothing in it. A
+# maker's own script goes in /etc instead (nova doctor says so): put in
+# /usr/lib under a name Nova links, it would be a pacman conflict.
 MM_FCC_AVAILABLE ?= /usr/share/ModemManager/fcc-unlock.available.d
 MM_FCC_TARGET    := /usr/share/ModemManager/fcc-unlock.available.d
 MM_FCC_ENABLED   := $(PREFIX)/lib/ModemManager/fcc-unlock.d

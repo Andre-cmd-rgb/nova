@@ -42,11 +42,24 @@ Column {
     actionProc.running = true
   }
 
-  // The PIN goes in on the standard input, never in the arguments.
+  // The SIM's last try before its PUK: the first Unlock says so, and only
+  // the next gives it (`pin --last-try`).
+  readonly property bool lastTry: modem === "locked" && info.pin_tries === "1"
+  property bool lastTryWarned: false
+
+  // The PIN goes in on the standard input, never in the arguments. The field
+  // is emptied as it goes, so that Return after a wrong PIN sends nothing.
   function unlock(pin) {
     if (busy || !/^[0-9]{4,8}$/.test(pin)) return
+    if (lastTry && !lastTryWarned) {
+      lastTryWarned = true
+      return
+    }
     failure = ""
+    pinProc.command = ["nova-mobile-data", "pin"].concat(lastTry ? ["--last-try"] : [])
     pinProc.secret = pin
+    pinField.text = ""
+    lastTryWarned = false
     pinProc.running = true
   }
 
@@ -128,7 +141,6 @@ Column {
   Process {
     id: pinProc
     property string secret: ""
-    command: ["nova-mobile-data", "pin"]
     stdinEnabled: true
     onStarted: {
       write(pinProc.secret + "\n")
@@ -205,7 +217,10 @@ Column {
         placeholderText: "SIM PIN"
         enabled: !root.busy
         onAccepted: root.unlock(text)
-        onVisibleChanged: text = ""
+        onVisibleChanged: {
+          text = ""
+          root.lastTryWarned = false
+        }
       }
       Button {
         text: pinProc.running ? "Unlocking…" : "Unlock"
@@ -217,7 +232,10 @@ Column {
     Caption {
       width: parent.width
       visible: Number(root.info.pin_tries || 0) > 0
-      text: root.info.pin_tries === "1" ? "One try left before the SIM is blocked." : root.info.pin_tries + " tries left."
+      color: root.lastTryWarned ? Commons.Color.urgent : Commons.Color.foreground
+      opacity: root.lastTryWarned ? 1 : 0.6
+      text: root.lastTryWarned ? "Last try: a wrong PIN locks the SIM. Unlock again to use it."
+        : root.lastTry ? "Last try: a wrong PIN locks the SIM." : root.info.pin_tries + " tries left."
     }
   }
 

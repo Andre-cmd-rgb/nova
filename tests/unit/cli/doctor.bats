@@ -452,6 +452,8 @@ mm_journal() { # line...
   [ "$status" -eq 0 ]
   [[ $output == *"warn  the cellular modem (14c3:4d75) is locked by its maker, and ModemManager has no unlock for it"* ]]
   [[ $output == *"https://github.com/lenovo/lenovo-wwan-unlock"* ]]
+  # Where ModemManager looks first, and no package's file is.
+  [[ $output == *"Lenovo's unlock script turns it on, put in $NOVA_FCC_ADMIN/14c3:4d75"* ]]
   touch "$SCRATCH/unlock" && ln -sfn "$SCRATCH/unlock" "$NOVA_FCC_PACKAGE/14c3:4d75"
   run doctor
   [[ $output == *"warn  the cellular modem (14c3:4d75) is locked by its maker, and ModemManager's unlock for it did not work"* ]]

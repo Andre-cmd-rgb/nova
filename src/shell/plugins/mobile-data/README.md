@@ -149,8 +149,9 @@ nova mobile-data enable | disable   aliases for on and off
 nova mobile-data reset              power-cycle a modem that refuses to connect
 nova mobile-data check              switch on a modem kept off for want of a SIM,
                                     and look for one again
-nova mobile-data pin                unlock the SIM with the PIN on standard
-                                    input, then turn mobile data on
+nova mobile-data pin [--last-try]   unlock the SIM with the PIN on standard
+                                    input, then turn mobile data on; the
+                                    last try only with --last-try
 nova mobile-data setup [APN]        create or refresh the NetworkManager profile
 nova mobile-data profile [name]     show or choose the NetworkManager profile
 nova mobile-data apn [APN]          show or change the APN on the profile
@@ -261,13 +262,17 @@ with the computer. `nova doctor` says so too.
 
 **"The modem could not be turned on".** ModemManager could not power it up, and
 mobile data was switched off so that nothing asks it again every two seconds.
-Almost always it is the modem's maker's lock: `nova doctor` says whether
-ModemManager has an unlock for it, and names the tool that unlocks it if not.
-The switch tries again.
+Almost always it is the modem's maker's lock: `nova doctor` (Settings →
+Updates → Check for Problems) says whether ModemManager has an unlock for it,
+and names the maker's unlock script if not, which goes in
+`/etc/ModemManager/fcc-unlock.d`. The switch tries again.
 
 **"The SIM needs its PIN".** Settings → Mobile Data asks for it, and turns
-mobile data on once the SIM takes it. After three wrong PINs the SIM wants the
-PUK from your carrier: `mmcli -i any --puk=<PUK> --pin=<new PIN>`.
+mobile data on once the SIM takes it. The PIN goes to the SIM over the system
+bus from the helper's standard input, in no process's arguments. With one try
+left, Settings says so and gives it only at a second Unlock. After three
+wrong PINs the SIM wants the PUK from your carrier:
+`mmcli -i any --puk=<PUK> --pin=<new PIN>`.
 
 **`setup` with a profile already there** (one you made, say) sets that one up
 rather than making a second.
