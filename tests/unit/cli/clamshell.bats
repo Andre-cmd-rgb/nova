@@ -90,6 +90,21 @@ hyprctl eval hl.monitor({ output = "eDP-1", mode = "preferred", position = "0x0"
 hyprctl dispatch hl.dsp.dpms({ action = "enable", monitor = "eDP-1" })' ]
 }
 
+@test "clamshell: undocked with the lid still shut, the panel is not lit: it is the lid shutting now" {
+  # An update or Caffeine holding the lid keeps logind from sleeping, and the
+  # lid did not move, so no bind runs: the pass runs the lid bind's command.
+  stub nova-caffeine
+  write_file "$toggles/internal-monitor-clamshell.lua" "$panel_rule"$'\n'
+  displays "$(display eDP-1 2 off)"
+  after_reload "$(display eDP-1 2 on)"
+  lid closed
+  clamshell
+  [ "$status" -eq 0 ]
+  [ ! -e "$toggles/internal-monitor-clamshell.lua" ]
+  grep -qx "nova-caffeine close" "$CALLS"
+  fails grep -q 'action = "enable"' "$CALLS"
+}
+
 @test "clamshell: what Settings keeps for the panel wins over monitors.lua" {
   write_file "$HOME/.config/hypr/monitors.lua" $'hl.monitor({ output = "eDP-1", mode = "preferred", position = "0x0", scale = 1.5 })\n'
   write_file "$HOME/.local/state/nova/monitors.json" '{"eDP-1": {"scale": 1.25, "position": "1920x0"}}'

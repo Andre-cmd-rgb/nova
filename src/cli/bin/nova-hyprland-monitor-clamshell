@@ -6,7 +6,8 @@
 set -euo pipefail
 
 # Docked, with the lid shut and another display on, the laptop's panel is
-# turned off; undocked, it comes back, at the scale it is meant to have. The
+# turned off; undocked, it comes back, at the scale it is meant to have, or,
+# the lid still shut, is left to what a lid shutting does (panel_on). The
 # lid, the monitor watcher and a wake from sleep all run this, and nearly
 # always nothing has moved, so it asks Hyprland once and does no more than
 # that answer calls for.
@@ -214,6 +215,11 @@ panel_on() {
   sync_panel_scale
 
   if $reloaded && [[ -n $panel ]]; then
+    # Undocked with the lid still shut. The lid did not move, so Hyprland's lid
+    # bind never fires; logind sleeps now, unless something holds the lid (an
+    # update, Caffeine), and then the computer would stay up in a bag, unlocked
+    # and its panel lit. So this is the lid shutting now, as the bind has it.
+    if nova-hw-laptop-closed; then exec nova-caffeine close; fi
     hyprctl dispatch "hl.dsp.dpms({ action = \"enable\", monitor = \"$panel\" })" >/dev/null 2>&1 || true
   fi
 }
