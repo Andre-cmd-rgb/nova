@@ -162,6 +162,13 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state .nightlight)" = '{}' ]
 }
 
+@test "state: Do Not Disturb's hours as shell.json has them, or nothing set" {
+  [ "$(state .doNotDisturb)" = '{}' ]
+  mkdir -p "$HOME/.config/nova"
+  echo '{"version":1,"doNotDisturb":{"schedule":"hours","from":"22:00","to":"07:00"}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state .doNotDisturb)" = '{"schedule":"hours","from":"22:00","to":"07:00"}' ]
+}
+
 @test "state and idle: the settings the shell has, Nova's where the user's lack a version, Nova's bar where they lack one" {
   mkdir -p "$HOME/.config/nova"
   echo '{"idle":{"lock":60},"bar":{"position":"bottom"}}' >"$HOME/.config/nova/shell.json"

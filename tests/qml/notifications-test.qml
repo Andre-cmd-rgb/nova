@@ -85,6 +85,9 @@ ShellRoot {
     check(Notes.readSettings("{\"dnd\":false,\"pending\":[]}").legacy && Notes.readSettings("{\"version\":3,\"dnd\":true}").dnd === true
       && Notes.readSettings("").dnd === null && Notes.readSettings("").problem === "" && Notes.readSettings("{").problem !== ""
       && Notes.readSettings("null").dnd === null, "notifications.json, and the old one with the history in it")
+    check(Notes.readSettings("{\"version\":3,\"dnd\":true,\"turn\":1763326800000}").turn === 1763326800000
+      && Notes.readSettings("{\"version\":3,\"dnd\":true}").turn === -1 && Notes.readSettings("{\"turn\":\"soon\"}").turn === -1
+      && Notes.readSettings("{").turn === -1, "and the schedule's last turn made in it, or none")
 
     var sent = { id: 7, appName: "Mail", appIcon: "", summary: 5, body: "b", image: "", urgency: 0, expireTimeout: -3,
       hints: { "nova-glyph": "g", "nova-exec-argv": "[\"x\"]" } }

@@ -91,6 +91,8 @@ Item {
     id: memory
     reloadableId: "nova-notifications"
     property bool doNotDisturb: false
+    // When the schedule last turned it on or off: Util.lastTurn's since.
+    property real turn: -1
     onDoNotDisturbChanged: if (!dndFile.applying) dndFile.save()
   }
 
@@ -126,8 +128,10 @@ Item {
         memory.doNotDisturb = settings.dnd
         applying = false
       }
+      memory.turn = settings.turn
       read = true
       if (settings.legacy) save()
+      notifications.followSchedule()
     }
 
     function save() {
@@ -138,7 +142,39 @@ Item {
   Timer {
     id: dndWrite
     interval: 200
-    onTriggered: dndFile.setText(JSON.stringify({ version: 3, dnd: memory.doNotDisturb }, null, 2) + "\n")
+    onTriggered: dndFile.setText(JSON.stringify({ version: 3, dnd: memory.doNotDisturb, turn: memory.turn }, null, 2) + "\n")
+  }
+
+  // Do-not-disturb at set hours every day: shell.json's doNotDisturb, which
+  // nova notification schedule sets. Each turn is made once, and a switch by
+  // hand lasts until the next, as on a Mac. The time of the last one made is
+  // kept with do-not-disturb, so that neither a restart nor a reboot makes
+  // it again, and a turn missed while the computer was off is made as the
+  // shell starts. The wall clock is read every ten seconds (Wake), which a
+  // sleep or a new time zone does not stop.
+  readonly property var dndSchedule: shell && shell.shellConfig && shell.shellConfig.doNotDisturb ? shell.shellConfig.doNotDisturb : ({})
+  readonly property bool dndScheduled: dndSchedule.schedule === "hours"
+  readonly property int dndFrom: Util.minutesOf(dndSchedule.from, 22 * 60)
+  readonly property int dndTo: Util.minutesOf(dndSchedule.to, 7 * 60)
+
+  function followSchedule() {
+    if (!dndFile.read || !dndScheduled) return
+    var turn = Util.lastTurn(Date.now(), dndFrom, dndTo)
+    if (!turn || turn.since === memory.turn) return
+    memory.turn = turn.since
+    memory.doNotDisturb = turn.on
+    dndFile.save()
+  }
+
+  onDndScheduledChanged: followSchedule()
+  onDndFromChanged: followSchedule()
+  onDndToChanged: followSchedule()
+
+  Connections {
+    target: Wake
+    function onLooked() {
+      notifications.followSchedule()
+    }
   }
 
   // --------------------------------------------------------------- arrivals

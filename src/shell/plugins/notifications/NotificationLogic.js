@@ -353,20 +353,22 @@ function replayRows(raw, onScreen, limit) {
   }).map(historyRow).sort(newestFirst).slice(0, limit)
 }
 
-// notifications.json, {"version": 3, "dnd": true}: do-not-disturb, null when
-// it says nothing, and whether it is an older one that kept the history too
-// (as pending, past or entries), to be written again without. `problem` says
-// why it does not parse.
+// notifications.json, {"version": 3, "dnd": true, "turn": 1763326800000}:
+// do-not-disturb, null when it says nothing; when its schedule last turned
+// it on or off (Util.lastTurn's since), -1 for never; and whether it is an
+// older one that kept the history too (as pending, past or entries), to be
+// written again without. `problem` says why it does not parse.
 function readSettings(raw) {
   var text = String(raw || "").trim()
   try {
     var json = text ? JSON.parse(text) : {}
     return {
       dnd: json && typeof json.dnd === "boolean" ? json.dnd : null,
+      turn: json && typeof json.turn === "number" && isFinite(json.turn) ? json.turn : -1,
       legacy: !!json && ["pending", "past", "entries"].some(key => !!json[key]),
       problem: ""
     }
   } catch (e) {
-    return { dnd: null, legacy: false, problem: String(e) }
+    return { dnd: null, turn: -1, legacy: false, problem: String(e) }
   }
 }

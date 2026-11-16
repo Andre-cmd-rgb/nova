@@ -1,7 +1,7 @@
 {
   "id": "nova.settings",
   "name": "Settings",
-  "description": "Wi-Fi, Bluetooth, mobile data, sound, displays and the night light, the keyboard and the mouse; battery and its history, performance, Screen Time; the look, the bar, the lock, default apps, updates and this computer: in one window.",
+  "description": "Wi-Fi, Bluetooth, mobile data, notifications, sound, displays and the night light, the keyboard and the mouse; battery and its history, performance, Screen Time; the look, the bar, the lock, default apps, updates and this computer: in one window.",
   "kinds": [
     "panel"
   ],

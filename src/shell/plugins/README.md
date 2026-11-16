@@ -141,7 +141,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Lock Screen | `nova.lock` | service `lock/Service.qml` | the lock screen (below) |
 | Nova menu | `nova.menu` | menu `menu/Menu.qml`, widget `menu/BarWidget.qml` | the menu and its button (below) |
 | [Mobile Data](mobile-data/README.md) | `nova.mobile-data` | widget `mobile-data/BarWidget.qml` | the mobile broadband signal, and its panel |
-| Notifications | `nova.notifications` | service `notifications/Service.qml` | the notification server and its toasts |
+| Notifications | `nova.notifications` | service `notifications/Service.qml` | the notification server and its toasts, and do not disturb's hours; its page is `settings/NotificationsView.qml` |
 | On-screen display | `nova.osd` | panel `osd/Osd.qml` | the card for volume, brightness and messages |
 | Audio | `nova.audio` | widget `panels/audio/Panel.qml` | the volume, and its panel |
 | Bluetooth | `nova.bluetooth` | widget `panels/bluetooth/Panel.qml` | Bluetooth, and its panel |

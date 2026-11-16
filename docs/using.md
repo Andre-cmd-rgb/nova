@@ -168,6 +168,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Wi-Fi | the radio on or off; the network in use, the known ones and the others |
 | Bluetooth | the radio on or off; Bluetooth LE, off for headphones that stutter; your devices and those nearby |
 | Mobile Data | the modem on or off; the network, signal, address and data used this month |
+| Notifications | [Do Not Disturb](#do-not-disturb), and the hours it holds by itself every day |
 | Sound | the output and its volume; the input and its volume |
 | Displays | each display's resolution, refresh rate, scale, rotation and place; a change goes back by itself after 15 seconds unless you keep it; the [night light](#night-light)'s schedule and warmth |
 | Keyboard & Mouse | the keyboard's layouts, in order, and the keys that go to the next; the key repeat; the pointer's speed; natural scrolling with a mouse and on the touchpad, and tap to click |
@@ -181,7 +182,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Updates | Nova's and the apps' updates, device firmware, release candidates, Check for Problems and Restart to Recovery ([updates](updates.md)) |
 | About | the version and release, the computer, processor, memory, storage, name and kernel |
 
-The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `sound`, `displays`, `keyboard`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
+The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `notifications`, `sound`, `displays`, `keyboard`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
 
 [Battery Life](../src/shell/plugins/batterylife/README.md), [Screen Time](../src/shell/plugins/screentime/README.md) and [Mobile Data](../src/shell/plugins/mobile-data/README.md) have notes of their own.
 
@@ -242,6 +243,15 @@ The night light makes the screen's colors warmer, for the evening.
 - It keeps to the clock through a sleep and a change of time zone.
 - A switch by hand lasts until the next sunset or sunrise, or the next of the set hours.
 - **Warmth**, on the same page or with `nova nightlight warmth 3400`, goes from 2500 K, the warmest, to 5500 K.
+
+## Do Not Disturb
+
+Do Not Disturb keeps notifications off the screen. What they say goes to the history (Super+Shift+Alt+comma).
+
+- Switch it with Super+Ctrl+comma, the menu's Toggle → Do Not Disturb, or its switch among the bar's indicators.
+- **Settings → Notifications** turns it on by itself at set hours every day. `nova notification schedule 22:00 07:00` does the same.
+- A switch by hand lasts until the next of those hours. It keeps to the clock through a sleep and a change of time zone, and catches up with an hour that passed while the computer was off.
+- It still lets through Nova's answers to what you just did, and urgent notifications sent by scripts (`notify-send -u critical`). Calendar reminders wait in the history.
 
 ## Screensaver and lock
 

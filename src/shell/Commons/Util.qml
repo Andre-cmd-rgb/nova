@@ -44,7 +44,7 @@ QtObject {
   // ------------------------------------------------------------ set hours
   //
   // A switch that a schedule turns on and off at set hours every day: the
-  // night light's.
+  // night light's, and do-not-disturb's.
 
   // A time of day, "22:00", as minutes into the day; <otherwise> for
   // anything else.

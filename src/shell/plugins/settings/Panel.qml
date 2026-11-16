@@ -15,7 +15,8 @@ import qs.Ui
 // is what is set. Wi-Fi, Bluetooth, Mobile Data and Sound have the bar's quick
 // menus too; here they have a page each, and Screen Time and Battery Life live
 // on theirs rather than in windows of their own. Displays is nova monitor's
-// and nova nightlight's, Keyboard & Mouse nova input's.
+// and nova nightlight's, Keyboard & Mouse nova input's, Notifications nova
+// notification schedule's.
 //
 // Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
 // and Battery Life's, "today" or "week", and `apps` "install" has Updates
@@ -63,7 +64,8 @@ Item {
     { id: "bluetooth", label: "Bluetooth", icon: "󰂯", radio: "bluetooth" },
     { id: "mobile-data", label: "Mobile Data", icon: "󰞃", radio: "wwan" },
     { id: "airdrop", label: "AirDrop", icon: "󰀃" },
-    { id: "sound", label: "Sound", icon: "󰕾", group: true },
+    { id: "notifications", label: "Notifications", icon: "󰂚", group: true },
+    { id: "sound", label: "Sound", icon: "󰕾" },
     { id: "displays", label: "Displays", icon: "󰍹" },
     { id: "keyboard", label: "Keyboard & Mouse", icon: "󰌌" },
     { id: "battery", label: "Battery", icon: "󰁹" },
@@ -86,6 +88,8 @@ Item {
     // Power modes, a discrete GPU Nova switches, or an Intel CPU, which takes
     // an undervolt through its mailbox at all.
     if (p.id === "performance") return root.profiles.length > 0 || root.gpuSwitch || root.undervolt.intel === true
+    // Nova's notifications, unless switched off for another server.
+    if (p.id === "notifications") return !root.shell || !!root.shell.serviceFor("nova.notifications")
     if (p.radio) return (root.info.radios || []).indexOf(p.radio) >= 0
     return true
   })
@@ -460,6 +464,7 @@ Item {
             case "airdrop": return airdropPage
             case "bluetooth": return bluetoothPage
             case "mobile-data": return mobileDataPage
+            case "notifications": return notificationsPage
             case "sound": return soundPage
             case "displays": return displaysPage
             case "keyboard": return keyboardPage
@@ -560,6 +565,20 @@ Item {
       id: p
       title: "Mobile Data"
       MobileDataView { width: p.inner }
+    }
+  }
+
+  Component {
+    id: notificationsPage
+    Page {
+      id: p
+      title: "Notifications"
+      NotificationsView {
+        width: p.inner
+        shell: root.shell
+        settings: root.info.doNotDisturb || ({})
+        onCommand: function (argv) { root.run(argv) }
+      }
     }
   }
 

@@ -148,3 +148,6 @@ anything, your file is authoritative and defaults are **not** merged back in.
    nightlight schedule` and `nova nightlight warmth` set: `schedule` is
    `"off"`, `"sunset"` or `"hours"`, `from` and `to` the hours as `"22:00"`,
    `temperature` the night's kelvin, 2500 to 5500 (4000 unless set).
+6. **`doNotDisturb`** is the hours do not disturb holds every day, which `nova
+   notification schedule` sets: `schedule` is `"off"` or `"hours"`, `from`
+   and `to` the hours as `"22:00"`.
