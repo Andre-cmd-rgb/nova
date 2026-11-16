@@ -568,7 +568,7 @@ fn send(words: &[&str]) -> ExitCode {
 fn sending(asked: &Asked, files: &[File]) -> End {
     let json = asked.json;
     let said_off = |why: &str| {
-        failed(json, why);
+        let _ = failed(json, why);
         End::NotSent
     };
     let Ok(stream) = UnixStream::connect(meet::socket()) else {
