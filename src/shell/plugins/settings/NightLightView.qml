@@ -61,7 +61,7 @@ Section {
     visible: root.schedule === "hours"
     from: root.settings.from || "22:00"
     to: root.settings.to || "07:00"
-    onPicked: function (from, to) { root.command(["nova-nightlight-schedule", from, to]) }
+    onPicked: function (end, time) { root.command(["nova-nightlight-schedule", end, time]) }
   }
 
   Line {

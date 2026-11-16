@@ -71,6 +71,14 @@ QtObject {
     return last
   }
 
+  // A turn as a schedule keeps it once made: on or off, and the day it falls
+  // on, "on 2026-11-16"; "" for none. By the day and not the minute, so that
+  // a sunset that moves a few minutes, as its place is looked up again, is
+  // still the turn made, and a switch by hand since still holds.
+  function turnName(turn) {
+    return turn ? (turn.on ? "on " : "off ") + Qt.formatDate(new Date(turn.since), "yyyy-MM-dd") : ""
+  }
+
   // ------------------------------------------------------- text and paths
 
   // A file:// URL for a path, each of its parts escaped, so that a space or

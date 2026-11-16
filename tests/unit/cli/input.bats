@@ -10,9 +10,10 @@ load ../test_helper
 setup() {
   setup_scratch
   export HOME="$SCRATCH/home" XDG_STATE_HOME="$SCRATCH/state" CALLS="$SCRATCH/calls" LIVE="$SCRATCH/live"
-  export NOVA_XKB_RULES="$SCRATCH/evdev.lst"
-  mkdir -p "$HOME" "$SCRATCH/bin"
-  printf '%s\n' '! layout' '  us              English (US)' '  de              German' '  ru              Russian' '' \
+  export NOVA_XKB_RULES="$SCRATCH/evdev.lst" XDG_RUNTIME_DIR="$SCRATCH/run" NOVA_PATH="$SCRATCH/nova"
+  mkdir -p "$HOME" "$SCRATCH/bin" "$XDG_RUNTIME_DIR" "$NOVA_PATH/default/hypr"
+  ln -s "$REPO_ROOT/data/hypr/keyboard.lua" "$NOVA_PATH/default/hypr/keyboard.lua"
+  printf '%s\n' '! layout' '  us              English (US)' '  de              German' '  fr              French' '  ru              Russian' '' \
     '! variant' '  intl            us: English (US, intl., with dead keys)' '  nodeadkeys      de: German (no dead keys)' '' \
     '! option' '  grp:alts_toggle      Both Alts together' >"$NOVA_XKB_RULES"
   # Each getoption asked for, answered from $LIVE ("option<TAB>json"), in
@@ -54,7 +55,7 @@ live_p1() {
   live_p1
   run cmd_json
   [ "$status" -eq 0 ]
-  [ "$output" = '{"layouts":["us","de:nodeadkeys"],"switch":"alt-shift","repeat":{"delay":250,"rate":40},"speed":-0.3,"naturalScroll":{"mouse":false,"touchpad":true},"tapToClick":true,"touchpad":true}' ]
+  [ "$(jq -c "del(.nonLatin)" <<<"$output")" = '{"layouts":["us","de:nodeadkeys"],"switch":"alt-shift","repeat":{"delay":250,"rate":40},"speed":-0.3,"naturalScroll":{"mouse":false,"touchpad":true},"tapToClick":true,"touchpad":true}' ]
 }
 
 @test "json: a switch Settings does not offer is another one; none is none" {
@@ -67,9 +68,9 @@ live_p1() {
 
 @test "json: with no Hyprland to ask, what is kept, else Nova's, and no touchpad found" {
   stub nova-hw-touchpad 'exit 1'
-  [ "$(cmd_json)" = '{"layouts":[],"switch":"none","repeat":{"delay":250,"rate":40},"speed":0,"naturalScroll":{"mouse":false,"touchpad":true},"tapToClick":true,"touchpad":false}' ]
+  [ "$(cmd_json | jq -c "del(.nonLatin)")" = '{"layouts":[],"switch":"none","repeat":{"delay":250,"rate":40},"speed":0,"naturalScroll":{"mouse":false,"touchpad":true},"tapToClick":true,"touchpad":false}' ]
   write_file "$saved" '{"layouts":["de"],"switch":"alts","speed":0.5,"naturalScroll":{"touchpad":false},"tapToClick":false}'
-  [ "$(cmd_json)" = '{"layouts":["de"],"switch":"alts","repeat":{"delay":250,"rate":40},"speed":0.5,"naturalScroll":{"mouse":false,"touchpad":false},"tapToClick":false,"touchpad":false}' ]
+  [ "$(cmd_json | jq -c "del(.nonLatin)")" = '{"layouts":["de"],"switch":"alts","repeat":{"delay":250,"rate":40},"speed":0.5,"naturalScroll":{"mouse":false,"touchpad":false},"tapToClick":false,"touchpad":false}' ]
 }
 
 @test "each change is kept, written out as Lua after the user's input.lua, and applied with a reload" {
@@ -114,6 +115,45 @@ hl.config({ input = require("default.hypr.keyboard").chosen({ "us", "de" }, { ""
   [ ! -e "$saved" ]
   [ ! -e "$rules" ]
   [ ! -e "$CALLS" ]
+}
+
+@test "layouts: four at most with the US a non-Latin first one gets, which keyboard.lua names" {
+  run cmd_layouts ru de fr de:nodeadkeys
+  [ "$status" -eq 1 ]
+  [[ $output == *"ru first gets US ahead of it, and xkb takes four layouts at most"* ]]
+  [ ! -e "$saved" ]
+  cmd_layouts ru de fr us:intl
+  cmd_layouts ru de fr
+  cmd_layouts de fr ru us
+  [ "$(jq -c .layouts "$saved")" = '["de","fr","ru","us"]' ]
+  [ "$(cmd_json | jq -c '[(.nonLatin | index("ru") != null), (.nonLatin | index("de") != null)]')" = '[true,false]' ]
+}
+
+@test "with no Hyprland to tell, a change is kept all the same, and said to wait for it" {
+  stub hyprctl 'exit 1'
+  run cmd_speed 0.5
+  [ "$status" -eq 0 ]
+  [[ $output == *"kept; Hyprland takes it as it starts"* ]]
+  [ "$(jq -c .speed "$saved")" = 0.5 ]
+  grep -qF 'sensitivity = 0.5' "$rules"
+}
+
+@test "one change at a time: each waits for another under way, and none is lost" {
+  local held
+  exec {held}>>"$XDG_RUNTIME_DIR/nova-input.lock"
+  flock "$held"
+  "$REPO_ROOT/src/cli/bin/nova-input" speed 0.5 {held}>&- &
+  sleep 0.5
+  [ ! -e "$saved" ]
+  exec {held}>&-
+  wait
+  [ "$(jq -c .speed "$saved")" = 0.5 ]
+  for change in "switch none" "repeat 300 30" "speed -0.2" "natural-scroll mouse on" "natural-scroll touchpad off" "tap-to-click off"; do
+    # shellcheck disable=SC2086 # the words are the arguments
+    "$REPO_ROOT/src/cli/bin/nova-input" $change &
+  done
+  wait
+  [ "$(jq -c '[.switch, .repeat.delay, .speed, .naturalScroll.mouse, .naturalScroll.touchpad, .tapToClick]' "$saved")" = '["none",300,-0.2,true,false,false]' ]
 }
 
 @test "the rest refuse what is not theirs" {

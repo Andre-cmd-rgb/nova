@@ -54,7 +54,24 @@ settings() { jq -c "$1" "$HOME/.config/nova/shell.json"; }
   run nova-nightlight-schedule 7:00 07:00
   [ "$status" -eq 1 ]
   [[ $output == *"start and end at different times"* ]]
+  for wrong in "from" "from 25:00" "to 7" "from 21:00 22:00" "at 21:00"; do
+    # shellcheck disable=SC2086 # the words are the arguments
+    run nova-nightlight-schedule $wrong
+    [ "$status" -eq 1 ]
+  done
+  run nova-nightlight-schedule from 7:00
+  [[ $output == *"start and end at different times"* ]]
   [ "$(settings .nightlight)" = '{"from":"22:00","schedule":"hours","to":"07:00"}' ]
+}
+
+@test "schedule: one end at a time, the other as kept, as Settings sends two picks in a row" {
+  [ "$(nova-nightlight-schedule to 06:30)" = "From 22:00 to 06:30, every day." ]
+  nova-nightlight-schedule sunset
+  nova-nightlight-schedule from 21:00
+  nova-nightlight-schedule to 6:00
+  [ "$(settings .nightlight)" = '{"from":"21:00","schedule":"hours","to":"06:00"}' ]
+  echo '{"version":1,"nightlight":{"schedule":"hours","from":"soon","to":7}}' >"$HOME/.config/nova/shell.json"
+  [ "$(nova-nightlight-schedule from 23:00)" = "From 23:00 to 07:00, every day." ]
 }
 
 @test "warmth: 4000 K at first, set in kelvin, kept beside the schedule, and taken at once by a night light on" {

@@ -5,28 +5,33 @@ import Quickshell.Io
 import "plugins/services/nightlight" as NightLight
 
 // The night light's schedule in the shell: set hours that hold now turn it
-// on, once; a switch by hand stays until the next turn; new hours that do
-// not hold now turn it off; and a shell started again in the same session
-// makes no turn already made. nova-toggle-nightlight is a stub that notes
-// each call.
+// on, once; a switch by hand stays until the next turn, also when the turn
+// moves a few minutes, as a sunset does when its place is looked up again;
+// new hours that do not hold now turn it off; the schedule switched off ends
+// a night it turned on, leaves one turned on by hand, and forgets its last
+// turn, so that switched on again it makes it again; and a shell started
+// again in the same session makes no turn already made.
+// nova-toggle-nightlight is a stub that notes each call.
 ShellRoot {
   id: test
 
   readonly property string home: Quickshell.env("HOME")
   readonly property int minute: new Date().getHours() * 60 + new Date().getMinutes()
 
-  // From an hour ago to an hour from now; or from one hour on to two.
+  // From <fromNow> minutes from now to <toNow>, as shell.json has them.
   function hours(fromNow, toNow) {
     const time = minutes => {
       const at = (test.minute + minutes + 1440) % 1440
       return String(Math.floor(at / 60)).padStart(2, "0") + ":" + String(at % 60).padStart(2, "0")
     }
-    return { shellConfig: { nightlight: { schedule: "hours", from: time(fromNow), to: time(toNow) } } }
+    return { nightlight: { schedule: "hours", from: time(fromNow), to: time(toNow) } }
   }
 
-  property var shellNow: hours(-60, 60)
+  // An hour ago, moved five minutes the way that keeps it on the same day.
+  readonly property int moved: new Date(Date.now() - 55 * 60000).getDate() === new Date(Date.now() - 60 * 60000).getDate() ? -55 : -65
+
   property QtObject fakeShell: QtObject {
-    property var shellConfig: test.shellNow.shellConfig
+    property var shellConfig: test.hours(-60, 60)
     function serviceFor(id) { return null }
   }
 
@@ -40,10 +45,17 @@ ShellRoot {
     console.log((same ? "ok   " : "FAIL ") + name + (same ? "" : ": got " + JSON.stringify(got) + ", want " + JSON.stringify(want)))
   }
 
+  // The calls to the switch so far, "on" and "off".
   function made() {
     calls.reload()
     calls.waitForJob()
-    return String(calls.text()).trim().split("\n").filter(line => line.startsWith("nova-toggle-nightlight"))
+    return String(calls.text()).trim().split("\n").filter(line => line.startsWith("nova-toggle-nightlight")).map(line => line.split(" ")[1])
+  }
+
+  function kept() {
+    turn.reload()
+    turn.waitForJob()
+    return String(turn.text()).trim()
   }
 
   FileView {
@@ -75,23 +87,39 @@ ShellRoot {
   function go() {
     step += 1
     if (step === 1) {
-      check("hours that hold now: on", made(), ["nova-toggle-nightlight on"])
-      turn.reload()
-      turn.waitForJob()
-      check("the turn made is kept for the session", Number(String(turn.text()).trim()) > 0, true)
-      first.follow()
+      check("hours that hold now: on", made(), ["on"])
+      check("the turn made is kept for the session, by its day", /^on \d{4}-\d\d-\d\d$/.test(kept()), true)
       first.setNightlight(false)
+      fakeShell.shellConfig = hours(moved, 60)
     } else if (step === 2) {
-      check("followed again, and switched off by hand: nothing more from the schedule", made(), ["nova-toggle-nightlight on", "nova-toggle-nightlight off"])
-      first.follow()
-      test.shellNow = hours(60, 120)
+      check("off by hand, and the turn five minutes earlier: still off", made(), ["on", "off"])
+      fakeShell.shellConfig = hours(60, 120)
     } else if (step === 3) {
-      check("hours that no longer hold now: off", made().length, 3)
-      first.destroy()
+      check("hours that no longer hold now: off", made(), ["on", "off", "off"])
+      fakeShell.shellConfig = hours(-60, 60)
     } else if (step === 4) {
+      check("and that hold again: on", made().slice(3), ["on"])
+      fakeShell.shellConfig = { nightlight: { schedule: "off" } }
+    } else if (step === 5) {
+      check("the schedule off ends the night it turned on, and forgets the turn", [made().slice(4), kept()], [["off"], ""])
+      fakeShell.shellConfig = hours(-60, 60)
+    } else if (step === 6) {
+      check("on again, the same hours turn it on again", made().slice(5), ["on"])
+      first.setNightlight(false)
+      first.setNightlight(true)
+    } else if (step === 7) {
+      check("off and on by hand", made().slice(6), ["off", "on"])
+      fakeShell.shellConfig = { nightlight: { schedule: "off" } }
+    } else if (step === 8) {
+      check("the schedule off leaves a night turned on by hand", made().length, 8)
+      fakeShell.shellConfig = hours(-60, 60)
+    } else if (step === 9) {
+      check("on again: its turn, though the night is on already", made().slice(8), ["on"])
+      first.destroy()
+    } else if (step === 10) {
       second = service.createObject(stage, { shell: fakeShell })
     } else {
-      check("a shell started again makes no turn made already", made().length, 3)
+      check("a shell started again makes no turn made already", made().length, 9)
       console.log("DONE")
       Qt.quit()
       return

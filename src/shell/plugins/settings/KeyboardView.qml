@@ -22,15 +22,36 @@ Column {
   // A `nova input` command, which the window runs and then reads the state.
   signal command(var argv)
 
-  readonly property var layouts: input.layouts || []
+  readonly property var layouts: sent || input.layouts || []
   readonly property var repeat: input.repeat || ({ delay: 250, rate: 40 })
   readonly property var scrolling: input.naturalScroll || ({})
+  // The layouts keyboard.lua puts US ahead of.
+  readonly property var nonLatin: input.nonLatin || []
 
   // xkb's layouts and their variants, by name, read once.
   property var known: []
 
+  // The layouts as last sent, as Hyprland will have them, shown ahead of the
+  // state: Settings reads it back only once every change has run, and a
+  // second change before then builds on the first, not on the layouts from
+  // before it. Dropped as the state has them, or after three seconds
+  // without (a change refused), as a slider's knob goes back.
+  property var sent: null
+
   function setLayouts(list) {
-    if (list.length > 0) command(["nova-input", "layouts"].concat(list))
+    var next = Model.ahead(list, nonLatin)
+    if (next.length === 0) return
+    sent = next
+    settle.restart()
+    command(["nova-input", "layouts"].concat(next))
+  }
+
+  onInputChanged: if (sent && JSON.stringify(input.layouts || []) === JSON.stringify(sent)) sent = null
+
+  Timer {
+    id: settle
+    interval: 3000
+    onTriggered: root.sent = null
   }
 
   FileView {
@@ -87,13 +108,13 @@ Column {
     Item {
       width: parent.width
       height: add.height
-      // xkb takes four at most.
+      // xkb takes four at most, the US a non-Latin first one gets among them.
       Button {
         id: add
         anchors.right: parent.right
         text: "Add Layout…"
         bordered: true
-        visible: root.layouts.length < 4
+        visible: Model.room(root.layouts, root.nonLatin) > 0
         onClicked: sheet.open()
       }
     }
@@ -133,7 +154,9 @@ Column {
         wheelStep: 1
         whole: true
         value: Math.round(Number(root.repeat.delay) / 50)
-        onLetGo: at => root.command(["nova-input", "repeat", String(Math.round(at) * 50), String(root.repeat.rate)])
+        // With the rate where its knob is, not as the state had it: Settings
+        // reads the state back only once every change has run.
+        onLetGo: at => root.command(["nova-input", "repeat", String(Math.round(at) * 50), String(Math.round(rate.knobAt))])
       }
     }
 
@@ -148,7 +171,7 @@ Column {
         wheelStep: 5
         whole: true
         value: Number(root.repeat.rate)
-        onLetGo: at => root.command(["nova-input", "repeat", String(root.repeat.delay), String(Math.round(at))])
+        onLetGo: at => root.command(["nova-input", "repeat", String(delay.knobAt === delay.value ? root.repeat.delay : Math.round(delay.knobAt) * 50), String(Math.round(at))])
       }
     }
   }

@@ -54,6 +54,15 @@ ShellRoot {
     check(spring && spring.on && new Date(spring.since).getDate() === 29 && spring.since < new Date(2026, 2, 29, 3).getTime(),
       "a turn in the hour the clocks skip is still made that night: " + said(spring))
 
+    // Looked up again, the weather's place a little west of the time zone's
+    // city: the sunset some minutes later, the same turn.
+    const evening = new Date(2026, 5, 21, 23).getTime()
+    const there = Schedule.lastTurn(evening, london[0], london[1]), west = Schedule.lastTurn(evening, london[0], london[1] - 1.5)
+    check(there.since !== west.since && Util.turnName(there) === Util.turnName(west) && Util.turnName(there) === "on 2026-06-21",
+      "a turn kept by its day, which a sunset some minutes later is still: " + Util.turnName(west))
+    check(Util.turnName(Util.lastTurn(new Date(2026, 10, 17, 3).getTime(), 22 * 60, 7 * 60)) === "on 2026-11-16" && Util.turnName(null) === "",
+      "and an evening's turn by the evening's day, past midnight")
+
     check(Util.minutesOf("22:00", -1) === 1320 && Util.minutesOf("7:05", -1) === 425, "a time of day in minutes")
     check(Util.minutesOf("24:00", -1) === -1 && Util.minutesOf("", 5) === 5 && Util.minutesOf(undefined, 5) === 5, "and anything else is the default")
 

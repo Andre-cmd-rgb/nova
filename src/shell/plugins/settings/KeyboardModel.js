@@ -59,6 +59,22 @@ function moved(list, index, step) {
   return next
 }
 
+// <list> as Hyprland takes it (keyboard.lua's chosen): with a layout of
+// <nonLatin> first, the US among them moved ahead of it, else a US put
+// there; so that the page shows at once what it will have.
+function ahead(list, nonLatin) {
+  const next = (list || []).slice()
+  if (next.length === 0 || (nonLatin || []).indexOf(next[0].split(":")[0]) < 0) return next
+  const us = next.findIndex(value => value.split(":")[0] === "us")
+  const first = us < 0 ? "us" : next.splice(us, 1)[0]
+  return [first].concat(next)
+}
+
+// How many more layouts <list> takes, as ahead() has it: xkb takes four.
+function room(list, nonLatin) {
+  return 4 - ahead(list, nonLatin).length
+}
+
 // The keys that go to the next layout, as nova input names them. One set by
 // hand in input.lua that is none of them is shown as such.
 function switches(current) {

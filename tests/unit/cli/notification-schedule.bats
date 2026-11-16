@@ -32,6 +32,13 @@ settings() { jq -c "$1" "$HOME/.config/nova/shell.json"; }
   [ "$(settings .bar.position)" = '"top"' ]
 }
 
+@test "one end at a time, the other as kept, as Settings sends two picks in a row" {
+  nova-notification-schedule from 21:00
+  nova-notification-schedule to 06:00
+  [ "$(settings .doNotDisturb)" = '{"from":"21:00","schedule":"hours","to":"06:00"}' ]
+  [ "$(nova-notification-schedule)" = "From 21:00 to 06:00, every day." ]
+}
+
 @test "hours that are no times, or the same time twice, are refused and nothing is written" {
   nova-notification-schedule 22:00 07:00
   for wrong in "22:00 24:00" "22:00" "10pm 7am" "sunset" "off now" "22:00 07:00 08:00"; do
@@ -43,5 +50,9 @@ settings() { jq -c "$1" "$HOME/.config/nova/shell.json"; }
   run nova-notification-schedule 07:00 7:00
   [ "$status" -eq 1 ]
   [[ $output == *"start and end at different times"* ]]
+  run nova-notification-schedule to 22:00
+  [[ $output == *"start and end at different times"* ]]
+  run nova-notification-schedule from
+  [ "$status" -eq 1 ]
   [ "$(settings .doNotDisturb)" = '{"from":"22:00","schedule":"hours","to":"07:00"}' ]
 }

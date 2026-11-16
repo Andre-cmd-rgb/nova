@@ -42,7 +42,7 @@ Section {
     visible: root.scheduled
     from: root.settings.from || "22:00"
     to: root.settings.to || "07:00"
-    onPicked: function (from, to) { root.command(["nova-notification-schedule", from, to]) }
+    onPicked: function (end, time) { root.command(["nova-notification-schedule", end, time]) }
   }
 
   Caption {

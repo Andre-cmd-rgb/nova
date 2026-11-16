@@ -64,6 +64,8 @@ chosen() { # options args
 
 @test "Settings' layouts: a non-Latin one first gets US ahead of it" {
   [ "$(chosen 'compose:caps' '{ "ru", "de" }, { "phonetic", "" }, ""')" = "us,ru,de|,phonetic,|compose:caps" ]
+  # The US among them moved up, with its variant, rather than a second one.
+  [ "$(chosen '' '{ "ru", "de", "us", "fr" }, { "", "", "intl", "" }, ""')" = "us,ru,de,fr|intl,,,|" ]
 }
 
 @test "the greeter takes its layout from the same file, and starts without it" {

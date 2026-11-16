@@ -85,9 +85,11 @@ ShellRoot {
     check(Notes.readSettings("{\"dnd\":false,\"pending\":[]}").legacy && Notes.readSettings("{\"version\":3,\"dnd\":true}").dnd === true
       && Notes.readSettings("").dnd === null && Notes.readSettings("").problem === "" && Notes.readSettings("{").problem !== ""
       && Notes.readSettings("null").dnd === null, "notifications.json, and the old one with the history in it")
-    check(Notes.readSettings("{\"version\":3,\"dnd\":true,\"turn\":1763326800000}").turn === 1763326800000
-      && Notes.readSettings("{\"version\":3,\"dnd\":true}").turn === -1 && Notes.readSettings("{\"turn\":\"soon\"}").turn === -1
-      && Notes.readSettings("{").turn === -1, "and the schedule's last turn made in it, or none")
+    const turned = Notes.readSettings("{\"version\":3,\"dnd\":true,\"turn\":\"on 2026-11-16\",\"bySchedule\":true}")
+    check(turned.turn === "on 2026-11-16" && turned.bySchedule === true
+      && Notes.readSettings("{\"version\":3,\"dnd\":true}").turn === "" && Notes.readSettings("{\"turn\":\"soon\",\"bySchedule\":true}").bySchedule === false
+      && Notes.readSettings("{\"turn\":1763326800000}").turn === "" && Notes.readSettings("{").turn === "",
+      "and the schedule's last turn made in it, by its day, and whether Do Not Disturb is as it left it; or none")
 
     var sent = { id: 7, appName: "Mail", appIcon: "", summary: 5, body: "b", image: "", urgency: 0, expireTimeout: -3,
       hints: { "nova-glyph": "g", "nova-exec-argv": "[\"x\"]" } }

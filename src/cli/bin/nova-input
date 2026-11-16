@@ -25,6 +25,9 @@ STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/nova
 SAVED=$STATE_DIR/input.json
 RULES=$STATE_DIR/toggles/hypr/input-settings.lua
 XKB_RULES=${NOVA_XKB_RULES:-/usr/share/X11/xkb/rules/evdev.lst}
+# Where US is put ahead of a non-Latin first layout (chosen), and which
+# layouts those are (its NON_LATIN line).
+KEYBOARD=${NOVA_PATH:-/usr/share/nova}/default/hypr/keyboard.lua
 
 die() {
   echo "nova input: $*" >&2
@@ -72,16 +75,28 @@ write_rules() {
 
 # <program>, jq with its options after it, run on what is kept; kept, written
 # out, and applied.
+#
+# One change at a time: another read between this one's read and its write
+# would be lost. A Hyprland that cannot be told (none running, as on a
+# console) reads it all the same as it starts.
 change() { # program [jq option...]
-  local program=$1 next tmp
+  local program=$1 next tmp held
   shift
-  next=$(saved | jq -c "$program" "$@")
   mkdir -p "$STATE_DIR"
+  exec {held}>>"${XDG_RUNTIME_DIR:-$STATE_DIR}/nova-input.lock"
+  flock -w 10 "$held" || die "another change is still being made; try again"
+  next=$(saved | jq -c "$program" "$@")
   tmp=$(mktemp "$SAVED.XXXXXX")
   printf '%s\n' "$next" >"$tmp"
   mv "$tmp" "$SAVED"
   write_rules
-  hyprctl reload >/dev/null
+  exec {held}>&-
+  hyprctl reload >/dev/null 2>&1 || echo "nova input: kept; Hyprland takes it as it starts" >&2
+}
+
+# The layouts keyboard.lua counts as non-Latin, a word each.
+non_latin() {
+  sed -n 's/^local NON_LATIN = "\(.*\)"$/\1/p' "$KEYBOARD" 2>/dev/null || true
 }
 
 # Whether xkb has <layout>, or <variant> of it.
@@ -102,7 +117,8 @@ on_off() { # word
 }
 
 # What is in effect: Hyprland's settings as it has them now, else what is
-# kept here, else Nova's; and whether there is a touchpad.
+# kept here, else Nova's; whether there is a touchpad; and the layouts
+# keyboard.lua puts US ahead of, for Settings to do as it does.
 cmd_json() {
   local live touchpad=false option asked=()
   for option in kb_layout kb_variant kb_options repeat_delay repeat_rate sensitivity natural_scroll touchpad:natural_scroll touchpad:tap_to_click; do
@@ -113,7 +129,8 @@ cmd_json() {
     live='{}'
   [[ -n $live ]] || live='{}'
   nova-hw-touchpad >/dev/null 2>&1 && touchpad=true
-  jq -nc --argjson live "$live" --argjson saved "$(saved)" --argjson switches "$SWITCHES" --argjson touchpad "$touchpad" '
+  jq -nc --argjson live "$live" --argjson saved "$(saved)" --argjson switches "$SWITCHES" --argjson touchpad "$touchpad" \
+    --arg nonLatin "$(non_latin)" '
     def either($key; $kept; $kind; $fallback): if $live | has($key) then $live[$key] elif ($kept | type) == $kind then $kept else $fallback end;
     ($live["input:kb_layout"] // "" | split(",")) as $layouts
     | ($live["input:kb_variant"] // "" | split(",")) as $variants
@@ -131,7 +148,8 @@ cmd_json() {
         naturalScroll: {mouse: either("input:natural_scroll"; $saved.naturalScroll.mouse; "boolean"; false),
                         touchpad: either("input:touchpad:natural_scroll"; $saved.naturalScroll.touchpad; "boolean"; true)},
         tapToClick: either("input:touchpad:tap_to_click"; $saved.tapToClick; "boolean"; true),
-        touchpad: $touchpad
+        touchpad: $touchpad,
+        nonLatin: ($nonLatin | split(" ") | map(select(. != "")))
       }'
 }
 
@@ -155,6 +173,12 @@ cmd_layouts() {
       die "xkb has no variant '${BASH_REMATCH[3]}' of '${BASH_REMATCH[1]}'; localectl list-x11-keymap-variants ${BASH_REMATCH[1]} lists them"
   done
   [[ $(printf '%s\n' "$@" | sort | uniq -d) == "" ]] || die "a layout is named twice"
+  # xkb's four at most is with the US that a non-Latin first one gets ahead
+  # of it, when there is none among them to move up.
+  if [[ $# == 4 && " $(non_latin) " == *" ${1%%:*} "* ]]; then
+    for word in "$@"; do [[ ${word%%:*} != us ]] || break; done
+    [[ ${word%%:*} == us ]] || die "${1%%:*} first gets US ahead of it, and xkb takes four layouts at most: name three, or US among the four"
+  fi
   change '.layouts = $ARGS.positional' --args "$@"
 }
 

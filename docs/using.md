@@ -243,7 +243,7 @@ The night light makes the screen's colors warmer, for the evening.
 - **Settings → Displays** turns it on by itself: from sunset to sunrise, or at set hours every day. `nova nightlight schedule sunset` or `nova nightlight schedule 22:00 07:00` does the same.
 - **Sunset and sunrise** are reckoned on the computer, with no network: for the weather's place, when it is set with its coordinates in the weather's card, else for the city the time zone is named for.
 - It keeps to the clock through a sleep and a change of time zone.
-- A switch by hand lasts until the next sunset or sunrise, or the next of the set hours.
+- A switch by hand lasts until the next sunset or sunrise, or the next of the set hours. Turning the schedule off ends a night light it turned on, and leaves one you turned on.
 - **Warmth**, on the same page or with `nova nightlight warmth 3400`, goes from 2500 K, the warmest, to 5500 K.
 
 ## Do Not Disturb
@@ -252,7 +252,7 @@ Do Not Disturb keeps notifications off the screen. What they say goes to the his
 
 - Switch it with Super+Ctrl+comma, the menu's Toggle → Do Not Disturb, or its switch among the bar's indicators.
 - **Settings → Notifications** turns it on by itself at set hours every day. `nova notification schedule 22:00 07:00` does the same.
-- A switch by hand lasts until the next of those hours. It keeps to the clock through a sleep and a change of time zone, and catches up with an hour that passed while the computer was off.
+- A switch by hand lasts until the next of those hours. Turning the schedule off ends a Do Not Disturb it turned on, and leaves one you turned on. It keeps to the clock through a sleep and a change of time zone, and catches up with an hour that passed while the computer was off.
 - It still lets through Nova's answers to what you just did, and urgent notifications sent by scripts (`notify-send -u critical`). Calendar reminders wait in the history.
 
 ## Screensaver and lock
@@ -286,9 +286,9 @@ These come installed:
 
 - **Caps Lock is the Compose key**: Compose, then `'`, then `e` types é.
 - **Both Shifts together are Caps Lock**; the next Shift alone turns it off.
-- **The layout** is the one picked at install. Settings → Keyboard & Mouse adds more, puts them in order and picks the keys that go to the next: Left Alt + Right Alt, Alt+Shift or Ctrl+Shift. The bar shows the layout in use while there are two or more, and a click goes to the next.
+- **The layout** is the one picked at install. Settings → Keyboard & Mouse adds more, up to four, puts them in order and picks the keys that go to the next: Left Alt + Right Alt, Alt+Shift or Ctrl+Shift. The bar shows the layout in use while there are two or more, and a click goes to the next.
 - **The login screen** types on the layout picked at install, whatever Settings has; the lock screen on the one in use.
-- **A layout without Latin letters**, such as Russian or Greek, comes second to US, so the letter keys work; Left Alt + Right Alt switches between them.
+- **A layout without Latin letters**, such as Russian or Greek, comes second to US, so the letter keys work; Left Alt + Right Alt switches between them. That US counts among the four.
 - **The key repeat, the pointer's speed, the scrolling direction and tap to click** are on the same page, and `nova input` sets them too. What they set is kept over `~/.config/hypr/input.lua`, where the rest of Hyprland's input settings go.
 
 On a touchpad, content follows your fingers, and one, two and three fingers click left, right and middle anywhere on it.

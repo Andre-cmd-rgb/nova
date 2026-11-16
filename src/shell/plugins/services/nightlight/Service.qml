@@ -33,9 +33,14 @@ Item {
   // The state asked for while a switch runs, "on" or "off": the last one.
   property string waiting: ""
 
-  // The bar's switch, and the schedule's. It shows the night or the day
-  // (6500 K) at once, as nova-toggle-nightlight sets them.
+  // The switch by hand, the bar's and Settings'. It shows the night or the
+  // day (6500 K) at once, as nova-toggle-nightlight sets them.
   function setNightlight(on) {
+    bySchedule = false
+    switchTo(on)
+  }
+
+  function switchTo(on) {
     kelvin = on ? night : 6500
     var state = on ? "on" : "off"
     if (switching.running) waiting = state
@@ -56,6 +61,10 @@ Item {
       onStreamFinished: {
         var number = String(text == null ? "" : text).match(/\d+/)
         nightlight.kelvin = number ? Number(number[0]) : null
+        // Not as the last turn left it: switched by the keys or the menu,
+        // whose nova-toggle-nightlight asks for this look when it is done.
+        if (nightlight.kelvin != null && nightlight.made !== "" && nightlight.enabled !== nightlight.made.startsWith("on "))
+          nightlight.bySchedule = false
       }
     }
     onExited: code => {
@@ -103,10 +112,13 @@ Item {
   }
 
   // Each turn is made once, and a switch by hand lasts until the next, as
-  // on a Mac. The time of the last one made is kept in the runtime
+  // on a Mac. The last one made (Util.turnName) is kept in the runtime
   // directory: a shell started again does not make it again, and a new
   // session, whose night light starts off, does.
-  property real made: -1
+  property string made: ""
+  // Whether the night light is as the last turn left it, with no switch by
+  // hand since: the schedule switched off ends a night it turned on.
+  property bool bySchedule: false
 
   FileView {
     id: madeFile
@@ -120,8 +132,8 @@ Item {
 
     function readOnce(content) {
       if (read) return
-      var since = Number(String(content).trim())
-      nightlight.made = content !== "" && isFinite(since) ? since : -1
+      nightlight.made = /^(on|off) \d{4}-\d\d-\d\d$/.test(String(content).trim()) ? String(content).trim() : ""
+      nightlight.bySchedule = nightlight.made !== ""
       read = true
       // Not while the load is still ending: a write started in its
       // handler leaves the load dropped.
@@ -132,10 +144,22 @@ Item {
   function follow() {
     if (!madeFile.read) return
     var turn = turnAt(Date.now())
-    if (!turn || turn.since === made) return
-    made = turn.since
-    madeFile.setText(String(made) + "\n")
-    setNightlight(turn.on)
+    if (!turn || Util.turnName(turn) === made) return
+    made = Util.turnName(turn)
+    madeFile.setText(made + "\n")
+    bySchedule = true
+    switchTo(turn.on)
+  }
+
+  // Switched off, the schedule ends a night it turned on, and leaves one
+  // turned on by hand; and it forgets its last turn, so that it makes it
+  // again when it is switched back on.
+  function stop() {
+    if (!madeFile.read || made === "") return
+    if (bySchedule && made.startsWith("on ")) switchTo(false)
+    made = ""
+    bySchedule = false
+    madeFile.setText("")
   }
 
   // The place, looked up again whenever it may have moved: as the schedule
@@ -174,12 +198,15 @@ Item {
     }
   }
 
+  // A turn later, once the schedule and its hours are all the new ones: a
+  // change from off to set hours would otherwise see the hours from before.
   onScheduleChanged: {
+    if (schedule === "off") stop()
     locate()
-    follow()
+    Qt.callLater(follow)
   }
-  onFromChanged: follow()
-  onToChanged: follow()
+  onFromChanged: Qt.callLater(follow)
+  onToChanged: Qt.callLater(follow)
   onPlaceChanged: follow()
 
   // The wall clock, every ten seconds: a Timer would stand still through a

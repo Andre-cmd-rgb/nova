@@ -5,11 +5,13 @@ import Quickshell.Io
 import "plugins/notifications" as Notifications
 
 // Do Not Disturb at set hours, in the notifications' service: hours that
-// hold now turn it on, once; a switch by hand stays until the next turn;
-// new hours that do not hold now turn it off; and the turn made is kept in
-// notifications.json with Do Not Disturb, so that a shell started again,
-// as after a reboot, keeps a switch by hand. No bus: the service's server
-// has no one to serve.
+// hold now turn it on, once; a switch by hand stays until the next turn,
+// also when the hours move a few minutes; new hours that do not hold now
+// turn it off; the schedule switched off ends a Do Not Disturb it turned
+// on, leaves one turned on by hand, and forgets its last turn; and the turn
+// made is kept in notifications.json with Do Not Disturb, so that a shell
+// started again, as after a reboot, keeps a switch by hand. No bus: the
+// service's server has no one to serve.
 ShellRoot {
   id: test
 
@@ -24,6 +26,9 @@ ShellRoot {
     }
     return { doNotDisturb: { schedule: "hours", from: time(fromNow), to: time(toNow) } }
   }
+
+  // An hour ago, moved five minutes the way that keeps it on the same day.
+  readonly property int moved: new Date(Date.now() - 55 * 60000).getDate() === new Date(Date.now() - 60 * 60000).getDate() ? -55 : -65
 
   property QtObject fakeShell: QtObject {
     property var shellConfig: test.hours(-60, 60)
@@ -76,24 +81,41 @@ ShellRoot {
     if (step === 1) {
       check("hours that hold now: on", first.doNotDisturb, true)
       const saved = kept()
-      check("kept with the turn made", [saved.dnd, saved.turn > 0], [true, true])
+      check("kept with the turn made, by its day", [saved.dnd, /^on \d{4}-\d\d-\d\d$/.test(saved.turn), saved.bySchedule], [true, true, true])
       first.setDoNotDisturb(false)
-      first.followSchedule()
+      fakeShell.shellConfig = hours(moved, 60)
     } else if (step === 2) {
-      check("switched off by hand, and followed again: still off", [first.doNotDisturb, kept().dnd], [false, false])
+      check("off by hand, and the hours five minutes earlier: still off", [first.doNotDisturb, kept().dnd], [false, false])
       first.setDoNotDisturb(true)
       fakeShell.shellConfig = hours(60, 120)
     } else if (step === 3) {
-      check("hours that no longer hold now: off", first.doNotDisturb, false)
-      first.setDoNotDisturb(true)
+      check("on by hand, then hours that do not hold now: off", first.doNotDisturb, false)
+      fakeShell.shellConfig = hours(-60, 60)
     } else if (step === 4) {
-      check("on by hand again, and kept", kept().dnd, true)
-      first.destroy()
+      check("and that hold again: on", first.doNotDisturb, true)
+      fakeShell.shellConfig = { doNotDisturb: { schedule: "off" } }
     } else if (step === 5) {
+      const saved = kept()
+      check("the schedule off ends the Do Not Disturb it turned on, and forgets the turn", [first.doNotDisturb, saved.dnd, saved.turn], [false, false, ""])
+      fakeShell.shellConfig = hours(-60, 60)
+    } else if (step === 6) {
+      check("on again, the same hours turn it on again", first.doNotDisturb, true)
+      first.setDoNotDisturb(false)
+      first.setDoNotDisturb(true)
+      fakeShell.shellConfig = { doNotDisturb: { schedule: "off" } }
+    } else if (step === 7) {
+      check("the schedule off leaves one turned on by hand", [first.doNotDisturb, kept().dnd], [true, true])
+      fakeShell.shellConfig = hours(-60, 60)
+    } else if (step === 8) {
+      check("on again: its turn made, though Do Not Disturb is on already", kept().turn !== "", true)
+      first.setDoNotDisturb(false)
+    } else if (step === 9) {
+      check("then off by hand, and kept", [first.doNotDisturb, kept().dnd], [false, false])
+      first.destroy()
+    } else if (step === 10) {
       second = service.createObject(stage, { shell: fakeShell })
     } else {
-      check("a shell started again keeps the switch by hand", second.doNotDisturb, true)
-      fakeShell.shellConfig = {}
+      check("a shell started again keeps the switch by hand", second.doNotDisturb, false)
       console.log("DONE")
       Qt.quit()
       return

@@ -20,9 +20,10 @@ local function vconsole(name)
   return set
 end
 
--- Layouts that cannot type Latin letters.
+-- Layouts that cannot type Latin letters. nova input reads this line too.
+local NON_LATIN = "af am ara bd bg by et ge gr il in iq ir kg kh kz la lk mk mm mn mv np rs ru sy th tj ua"
 local non_latin = {}
-for code in ("af am ara bd bg by et ge gr il in iq ir kg kh kz la lk mk mm mn mv np rs ru sy th tj ua"):gmatch("%S+") do
+for code in NON_LATIN:gmatch("%S+") do
   non_latin[code] = true
 end
 
@@ -43,12 +44,23 @@ end
 -- of layouts and one of their variants, and the grp: option that switches
 -- between them, "" for none and nil for what is set already: Hyprland's
 -- input settings for them. A non-Latin layout first gets US ahead of it, as
--- above. The options set so far, Nova's and yours, are kept, all but their
--- switch; with no switch set anywhere, two layouts or more get both Alts.
+-- above: the US among them, moved up, else one more (nova input keeps the
+-- whole to four, xkb's most). The options set so far, Nova's and yours, are
+-- kept, all but their switch; with no switch set anywhere, two layouts or
+-- more get both Alts.
 function M.chosen(layouts, variants, switch)
   if non_latin[layouts[1]] then
+    local at
+    for i, layout in ipairs(layouts) do
+      if layout == "us" then
+        at = i
+        break
+      end
+    end
+    local variant = at and table.remove(variants, at) or ""
+    if at then table.remove(layouts, at) end
     table.insert(layouts, 1, "us")
-    table.insert(variants, 1, "")
+    table.insert(variants, 1, variant)
   end
   local options, kept = {}, nil
   for option in tostring(hl.get_config("input.kb_options") or ""):gmatch("[^,]+") do
