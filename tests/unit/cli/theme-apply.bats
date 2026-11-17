@@ -113,6 +113,16 @@ gtk_theme() { grep -oP '^gsettings set org.gnome.desktop.interface gtk-theme \K.
   [ "$(cat "$XDG_CONFIG_HOME/gtk-4.0/nova.css")" = four ]
 }
 
+@test "X11 apps are told the theme, where there is an X server" {
+  stub nova-hyprland-x11-scale
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  fails grep -q '^nova-hyprland-x11-scale' "$CALLS"
+  DISPLAY=:9 run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  # After GSettings has the theme, which it reads.
+  [ "$(tail -n 1 "$CALLS")" = "nova-hyprland-x11-scale " ]
+}
+
 @test "Flatpak apps are shown GTK's two folders, read-only, once" {
   export FLATPAK_USER_DIR=$SCRATCH/flatpak
   stub flatpak "mkdir -p \"\$FLATPAK_USER_DIR/overrides\"

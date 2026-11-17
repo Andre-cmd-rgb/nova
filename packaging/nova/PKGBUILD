@@ -33,8 +33,8 @@ depends=(
   xdg-utils
   hyprpicker
   hyprsunset
-  xsettingsd     # X11 apps' scale, as XSETTINGS (nova-hyprland-x11-scale)
-  xorg-xrdb      # and as Xft.dpi, in XWayland's resources
+  xsettingsd     # X11 apps' scale and theme, as XSETTINGS (nova-hyprland-x11-scale)
+  xorg-xrdb      # and the scale as Xft.dpi, in XWayland's resources
   adw-gtk-theme  # GTK 3 apps in the theme's colors, drawn as libadwaita's (nova-theme-apply)
 
   # Audio

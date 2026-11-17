@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Tell X11 apps the scale of the displays: XWayland's XSETTINGS and Xft.dpi, and Hyprland's xwayland:scale
+# nova:summary=Tell X11 apps the scale of the displays and the theme: XWayland's XSETTINGS and Xft.dpi, and Hyprland's xwayland:scale
 # nova:hidden=true
 
 set -euo pipefail
@@ -28,55 +28,113 @@ set -euo pipefail
 # that option (Arch's, or the one still running after an update brought Nova's,
 # until the next login) shows X11 windows at each display's own resolution:
 # the scale is then the built-in panel's while it is on, else the largest
-# display's, to the nearest whole number. NOVA_X11_SCALE sets it by hand. Run
-# at the start, when displays come and go and when a scale changes; xsettingsd
-# is told only when the scale is a new one.
+# display's, to the nearest whole number. NOVA_X11_SCALE sets it by hand.
+#
+# The XSETTINGS carry the theme too, as GSettings holds it for Wayland apps
+# (nova-theme-apply sets it, and runs this after): the GTK theme, the icons,
+# the cursor, the interface font and how it is drawn, and the title-bar
+# buttons (none), as GNOME's own settings daemon gives them. Without them an
+# X11 GTK app, in a Flatpak too, is Adwaita in light, in "Sans 10", with
+# buttons on its title bar. The text size (nova-display-text-size, which runs
+# this too) reaches GTK as the unscaled DPI.
+#
+# Run at the start, when displays come and go, when a scale changes, and when
+# the theme or the text size does; xsettingsd is told only when something in
+# it is new.
 #
 # A GDK_SCALE set by you (monitors.lua, or the environment the session started
-# in) leaves all of this off, and GTK, Chrome and Java follow it as they did:
+# in) leaves the scale off, and GTK, Chrome and Java follow it as they did:
 # GTK takes a GDK_SCALE over the XSETTINGS, and its text then from Xft.dpi,
-# twice its size, and Chrome four times.
+# twice its size, and Chrome four times. The theme is told all the same.
 
-[[ -n ${DISPLAY:-} && -z ${GDK_SCALE:-} ]] || exit 0
-
-# Arch's Hyprland answers "no such option", and not as JSON.
-shrinks=false
-if hyprctl getoption xwayland:scale -j 2>/dev/null | jq -e 'has("float")' >/dev/null 2>&1; then
-  shrinks=true
-fi
-
-if [[ ${NOVA_X11_SCALE:-} =~ ^[1-9]$ ]]; then
-  scale=$NOVA_X11_SCALE
-else
-  # Hyprland's scales are floats (1.6 comes as 1.600000023841858): rounded up
-  # from hundredths, so a scale a hair over a whole number is that number.
-  scale=$(hyprctl monitors -j | jq -r --argjson shrinks "$shrinks" '
-    [.[] | select(.disabled != true)] as $on
-    | if $shrinks then ([$on[].scale] | max // 1) * 100 | round / 100 | ceil
-      else (first($on[] | select(.name | test("^(eDP|LVDS|DSI)-")) | .scale) // ([$on[].scale] | max) // 1) | . + 0.5 | floor
-      end
-    | if . < 1 then 1 else . end')
-fi
-[[ $scale =~ ^[1-9]$ ]] || exit 1
+[[ -n ${DISPLAY:-} ]] || exit 0
 
 dir=$XDG_RUNTIME_DIR/nova
 config=$dir/xsettingsd.conf
 mkdir -p "$dir"
-# First, so the X11 windows keep their size on the displays while the toolkits
-# take the new scale. Hyprland does nothing when it has the scale already.
-if [[ $shrinks == true ]]; then
-  hyprctl eval "hl.config({ xwayland = { scale = $scale } })" >/dev/null
-  printf '%s\n' "$scale" >"$dir/x11-scale.new"
-  mv -f "$dir/x11-scale.new" "$dir/x11-scale"
+
+scale=''
+if [[ -z ${GDK_SCALE:-} ]]; then
+  # Arch's Hyprland answers "no such option", and not as JSON.
+  shrinks=false
+  if hyprctl getoption xwayland:scale -j 2>/dev/null | jq -e 'has("float")' >/dev/null 2>&1; then
+    shrinks=true
+  fi
+
+  if [[ ${NOVA_X11_SCALE:-} =~ ^[1-9]$ ]]; then
+    scale=$NOVA_X11_SCALE
+  else
+    # Hyprland's scales are floats (1.6 comes as 1.600000023841858): rounded up
+    # from hundredths, so a scale a hair over a whole number is that number.
+    scale=$(hyprctl monitors -j | jq -r --argjson shrinks "$shrinks" '
+      [.[] | select(.disabled != true)] as $on
+      | if $shrinks then ([$on[].scale] | max // 1) * 100 | round / 100 | ceil
+        else (first($on[] | select(.name | test("^(eDP|LVDS|DSI)-")) | .scale) // ([$on[].scale] | max) // 1) | . + 0.5 | floor
+        end
+      | if . < 1 then 1 else . end')
+  fi
+  [[ $scale =~ ^[1-9]$ ]] || exit 1
+
+  # First, so the X11 windows keep their size on the displays while the
+  # toolkits take the new scale. Hyprland does nothing when it has the scale
+  # already.
+  if [[ $shrinks == true ]]; then
+    hyprctl eval "hl.config({ xwayland = { scale = $scale } })" >/dev/null
+    printf '%s\n' "$scale" >"$dir/x11-scale.new"
+    mv -f "$dir/x11-scale.new" "$dir/x11-scale"
+  fi
 fi
-# xsettingsd takes a DPI in 1024ths.
-settings=$(printf 'Gdk/WindowScalingFactor %d\nGdk/UnscaledDPI %d' "$scale" $((96 * 1024)))
+
+# The theme, from GSettings: `gsettings list-recursively` lines, "schema key
+# value", a string value in single quotes. Nothing without a session bus.
+look() {
+  local key value
+  declare -A g=()
+  while read -r _ key value; do
+    value=${value#\'}
+    value=${value%\'}
+    g[$key]=${value//\"/\\\"}
+  done < <(
+    gsettings list-recursively org.gnome.desktop.interface 2>/dev/null || true
+    gsettings list-recursively org.gnome.desktop.wm.preferences 2>/dev/null | grep ' button-layout ' || true
+  )
+  [[ -n ${g[gtk-theme]:-} ]] || return 0
+  printf 'Net/ThemeName "%s"\n' "${g[gtk-theme]}"
+  printf 'Net/IconThemeName "%s"\n' "${g[icon-theme]:-Adwaita}"
+  printf 'Gtk/CursorThemeName "%s"\n' "${g[cursor-theme]:-default}"
+  [[ ! ${g[cursor-size]:-} =~ ^[0-9]+$ ]] || printf 'Gtk/CursorThemeSize %d\n' "${g[cursor-size]}"
+  [[ -z ${g[font-name]:-} ]] || printf 'Gtk/FontName "%s"\n' "${g[font-name]}"
+  [[ -z ${g[button-layout]+set} ]] || printf 'Gtk/DecorationLayout "%s"\n' "${g[button-layout]}"
+  case ${g[font-antialiasing]:-grayscale} in
+    none) printf 'Xft/Antialias 0\nXft/RGBA "none"\n' ;;
+    rgba) printf 'Xft/Antialias 1\nXft/RGBA "%s"\n' "${g[font-rgba-order]:-rgb}" ;;
+    *) printf 'Xft/Antialias 1\nXft/RGBA "none"\n' ;;
+  esac
+  case ${g[font-hinting]:-slight} in
+    none) printf 'Xft/Hinting 0\nXft/HintStyle "hintnone"\n' ;;
+    *) printf 'Xft/Hinting 1\nXft/HintStyle "hint%s"\n' "${g[font-hinting]:-slight}" ;;
+  esac
+  # xsettingsd takes a DPI in 1024ths; 96 is GTK's own, times the text size.
+  [[ -z $scale ]] ||
+    awk -v f="${g[text-scaling-factor]:-1}" \
+      'BEGIN { if (f + 0 < 0.5 || f + 0 > 3) f = 1; printf "Gdk/UnscaledDPI %d\n", 96 * 1024 * f + 0.5 }'
+}
+
+settings=$(
+  [[ -z $scale ]] || printf 'Gdk/WindowScalingFactor %d\n' "$scale"
+  look
+)
+# The text size's DPI with the scale, or GTK's own without the theme.
+if [[ -n $scale && $settings != *Gdk/UnscaledDPI* ]]; then
+  settings+=$'\n'"Gdk/UnscaledDPI $((96 * 1024))"
+fi
+[[ -n $settings ]] || exit 0
 if [[ ! -f $config || $(<"$config") != "$settings" ]] || ! systemctl --user -q is-active nova-xsettings.service; then
   printf '%s\n' "$settings" >"$config.new"
   mv -f "$config.new" "$config"
-  # Started with the first scale, and told each one after.
+  # Started with the first settings, and told each change after.
   systemctl --user --no-block reload-or-restart nova-xsettings.service
 fi
 # Every pass, as an XWayland started again begins with none; merged, so
 # whatever else is in the resources stays.
-printf 'Xft.dpi:\t%d\n' $((96 * scale)) | xrdb -nocpp -merge
+[[ -z $scale ]] || printf 'Xft.dpi:\t%d\n' $((96 * scale)) | xrdb -nocpp -merge

@@ -2,7 +2,8 @@
 
 # nova-hyprland-x11-scale: the scale X11 apps draw at, told to XWayland as
 # XSETTINGS (nova-xsettings.service, xsettingsd) and as Xft.dpi in the X
-# resources, and to Nova's Hyprland as xwayland:scale. Hyprland answers
+# resources, and to Nova's Hyprland as xwayland:scale; and the theme, from
+# GSettings, as XSETTINGS. Hyprland answers
 # `monitors -j` from $LIVE, and `getoption xwayland:scale` as Nova's build
 # when $SCRATCH/shrinks exists, else as Arch's; systemctl, xrdb and the
 # service are stubs that log each call, xrdb with what it was given.
@@ -32,6 +33,10 @@ case $* in
   *reload-or-restart*) touch "$SCRATCH/active" ;;
 esac'
   stub xrdb 'cat >>"$CALLS"'
+  # GSettings as `list-recursively` prints it, from $SCRATCH/<schema>; none
+  # when there is no such file. Not logged.
+  printf '#!/bin/bash\n[[ $1 == list-recursively ]] && cat "$SCRATCH/$2" 2>/dev/null\nexit 0\n' >"$SCRATCH/bin/gsettings"
+  chmod +x "$SCRATCH/bin/gsettings"
   : >"$CALLS"
   export PATH="$SCRATCH/bin:$REPO_ROOT/src/cli/bin:/usr/bin"
   config=$XDG_RUNTIME_DIR/nova/xsettingsd.conf
@@ -173,6 +178,80 @@ hyprland_told() { # scale
   [ ! -s "$CALLS" ]
   [ ! -e "$config" ]
   [ ! -e "$XDG_RUNTIME_DIR/nova/x11-scale" ]
+}
+
+# GSettings as Nova's theme leaves it, a dark one.
+theme_settings() {
+  cat >"$SCRATCH/org.gnome.desktop.interface" <<'EOF'
+org.gnome.desktop.interface color-scheme 'prefer-dark'
+org.gnome.desktop.interface cursor-size 24
+org.gnome.desktop.interface cursor-theme 'default'
+org.gnome.desktop.interface font-antialiasing 'grayscale'
+org.gnome.desktop.interface font-hinting 'slight'
+org.gnome.desktop.interface font-name 'Adwaita Sans 11'
+org.gnome.desktop.interface font-rgba-order 'rgb'
+org.gnome.desktop.interface gtk-theme 'adw-gtk3-dark'
+org.gnome.desktop.interface icon-theme 'Adwaita'
+org.gnome.desktop.interface text-scaling-factor 1.0
+EOF
+  cat >"$SCRATCH/org.gnome.desktop.wm.preferences" <<'EOF'
+org.gnome.desktop.wm.preferences action-double-click-titlebar 'toggle-maximize'
+org.gnome.desktop.wm.preferences button-layout ':'
+EOF
+}
+
+@test "X11 apps are told the theme with the scale: GTK theme, icons, cursor, font and its drawing, and no title-bar buttons" {
+  theme_settings
+  displays eDP-1:2
+  nova-hyprland-x11-scale
+  [ "$(cat "$config")" = 'Gdk/WindowScalingFactor 2
+Net/ThemeName "adw-gtk3-dark"
+Net/IconThemeName "Adwaita"
+Gtk/CursorThemeName "default"
+Gtk/CursorThemeSize 24
+Gtk/FontName "Adwaita Sans 11"
+Gtk/DecorationLayout ":"
+Xft/Antialias 1
+Xft/RGBA "none"
+Xft/Hinting 1
+Xft/HintStyle "hintslight"
+Gdk/UnscaledDPI 98304' ]
+}
+
+@test "a new theme alone is told to xsettingsd; the text size reaches GTK as its DPI" {
+  theme_settings
+  displays eDP-1:2
+  nova-hyprland-x11-scale
+  : >"$CALLS"
+  sed -i "s/'adw-gtk3-dark'/'adw-gtk3'/; s/text-scaling-factor 1.0/text-scaling-factor 1.25/" "$SCRATCH/org.gnome.desktop.interface"
+  nova-hyprland-x11-scale
+  grep -q reload-or-restart "$CALLS"
+  grep -qx 'Net/ThemeName "adw-gtk3"' "$config"
+  grep -qx "Gdk/UnscaledDPI $((96 * 1024 * 5 / 4))" "$config"
+}
+
+@test "fonts drawn as GSettings says: subpixel in its order, or without antialiasing or hinting" {
+  theme_settings
+  sed -i "s/'grayscale'/'rgba'/; s/'rgb'/'bgr'/; s/'slight'/'none'/" "$SCRATCH/org.gnome.desktop.interface"
+  displays eDP-1:1
+  nova-hyprland-x11-scale
+  grep -qx 'Xft/Antialias 1' "$config"
+  grep -qx 'Xft/RGBA "bgr"' "$config"
+  grep -qx 'Xft/Hinting 0' "$config"
+  grep -qx 'Xft/HintStyle "hintnone"' "$config"
+}
+
+@test "with a GDK_SCALE of yours, X11 apps are told the theme and nothing of the scale" {
+  theme_settings
+  displays eDP-1:2
+  touch "$SCRATCH/shrinks"
+  GDK_SCALE=2 run nova-hyprland-x11-scale
+  [ "$status" -eq 0 ]
+  grep -qx 'Net/ThemeName "adw-gtk3-dark"' "$config"
+  fails grep -q '^Gdk/' "$config"
+  fails grep -q -e '^hyprctl' -e '^Xft.dpi' "$CALLS"
+  [ ! -e "$XDG_RUNTIME_DIR/nova/x11-scale" ]
+  grep -qx 'systemctl --user --no-block reload-or-restart nova-xsettings.service' "$CALLS"
 }
 
 @test "Hyprland not answering changes nothing" {

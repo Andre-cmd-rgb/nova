@@ -9,6 +9,7 @@
 #   GTK's text-scaling-factor, 12 px = 1.0, quantized so the interface font
 #     lands on a whole point size (fractional sizes clip in GTK4 menus)
 #   foot's font size, 12 px = 9 pt
+#   X11 GTK apps' DPI, from GTK's factor (nova-hyprland-x11-scale)
 # Sizes run from 9 to 20 px. Without a size, the size and GTK's factor.
 
 set -euo pipefail
@@ -80,6 +81,11 @@ set_foot_size() { # pt
   fi
 }
 
+# X11 apps take GTK's factor as XSETTINGS, which the scale's helper writes.
+x11_text() {
+  [[ -z ${DISPLAY:-} ]] || nova-hyprland-x11-scale >/dev/null 2>&1 || true
+}
+
 case ${1:-} in
   "")
     echo "text size: $(base_size) px"
@@ -89,6 +95,7 @@ case ${1:-} in
     set_base_size
     gsettings reset "$gtk" text-scaling-factor 2>/dev/null || true
     set_foot_size 9
+    x11_text
     ;;
   9 | 1[0-9] | 20)
     px=$1
@@ -101,6 +108,7 @@ case ${1:-} in
     [[ $font =~ ^[0-9]+(\.[0-9]+)?$ ]] || font=11
     gsettings set "$gtk" text-scaling-factor "$(awk -v px="$px" -v pt="$font" 'BEGIN { printf "%.4f", int(pt * px / 12 + 0.5) / pt }')" 2>/dev/null || true
     set_foot_size $(((px * 9 + 6) / 12))
+    x11_text
     ;;
   *[!0-9]*)
     echo "Usage: nova-display-text-size [size|reset]" >&2

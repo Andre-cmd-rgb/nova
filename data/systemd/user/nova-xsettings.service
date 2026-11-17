@@ -1,6 +1,6 @@
 [Unit]
-Description=XSETTINGS for X11 apps: the scale XWayland's apps draw at
-# Started and told each new scale by nova-hyprland-x11-scale, which writes the
+Description=XSETTINGS for X11 apps: the scale XWayland's apps draw at, and the theme
+# Started and told each change by nova-hyprland-x11-scale, which writes the
 # settings; it ends with the session.
 PartOf=graphical-session.target
 ConditionPathExists=%t/nova/xsettingsd.conf

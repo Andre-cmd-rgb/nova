@@ -73,7 +73,8 @@ gtk_css() { # rendered file, GTK's folder
 # icons.theme names the icon set it was made with (Yaru's colours, from the
 # AUR); without that set installed, Adwaita, which GTK itself depends on. No
 # window has title-bar buttons: an empty button-layout clears them from GTK,
-# libadwaita and Chrome alike.
+# libadwaita and Chrome alike. X11 apps get all of this as XSETTINGS
+# (nova-hyprland-x11-scale).
 apply_gtk() {
   gtk_css "$theme/gtk4.css" "$config_home/gtk-4.0"
   gtk_css "$theme/gtk3.css" "$config_home/gtk-3.0"
@@ -91,6 +92,7 @@ apply_gtk() {
   fi
   gsettings set org.gnome.desktop.interface icon-theme "$icons"
   gsettings set org.gnome.desktop.wm.preferences button-layout ':'
+  [[ -z ${DISPLAY:-} ]] || nova-hyprland-x11-scale || true
 }
 
 # Flatpak apps are shown ~/.config/gtk-3.0 and gtk-4.0, read-only, for the
