@@ -89,3 +89,33 @@ time_shown() {
   [ "$status" -eq 0 ]
   [[ $output == *$'rate\t20W'* ]]
 }
+
+# UPower's state and percentage, with a charger in or not.
+reads() { # state percent plugged(0|1)
+  sed -i -E "s/(state: +).*/\1$1/; s/(percentage: +).*/\1$2%/" "$SCRATCH/report"
+  mkdir -p "$NOVA_POWER_SUPPLY_PATH/AC"
+  echo Mains >"$NOVA_POWER_SUPPLY_PATH/AC/type"
+  echo "$3" >"$NOVA_POWER_SUPPLY_PATH/AC/online"
+  "$info" --shell | sed -n 's/^percentage\t//p'
+}
+
+@test "plugged in with its charge done and no limit, a battery at 95% or more reads full, as on the bar" {
+  echo 0 >"$BAT/charge_control_start_threshold"
+  echo 100 >"$BAT/charge_control_end_threshold"
+  [ "$(reads fully-charged 99 1)" = 100% ]
+  [ "$(reads fully-charged 95 1)" = 100% ]
+  run "$info"
+  [[ $output == 'Battery 100%  ·  Fully charged  ·  '* ]]
+  # Short of 95% a charge that stopped is no rest, nor is one still under way;
+  # and unplugged the battery reads its own.
+  [ "$(reads fully-charged 94 1)" = 94% ]
+  [ "$(reads charging 99 1)" = 99% ]
+  [ "$(reads fully-charged 99 0)" = 99% ]
+  [ "$(reads discharging 99 0)" = 99% ]
+}
+
+@test "a battery a charge limit holds reads what it holds" {
+  echo 91 >"$BAT/charge_control_start_threshold"
+  echo 96 >"$BAT/charge_control_end_threshold"
+  [ "$(reads fully-charged 96 1)" = 96% ]
+}

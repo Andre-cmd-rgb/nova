@@ -11,7 +11,9 @@ setup() {
   echo Mains >"$NOVA_POWER_SUPPLY/AC/type"
   # The CLI goes through pkexec, which here just runs the helper.
   printf '#!/bin/bash\nexec "$@"\n' >"$SCRATCH/bin/pkexec"
-  chmod +x "$SCRATCH/bin/pkexec"
+  # The running shell is told of a new limit; here its calls are noted.
+  printf '#!/bin/bash\necho "$*" >>"$SCRATCH/shell-calls"\n' >"$SCRATCH/bin/nova-shell"
+  chmod +x "$SCRATCH/bin/pkexec" "$SCRATCH/bin/nova-shell"
   export PATH="$SCRATCH/bin:$PATH"
   # shellcheck source=/dev/null
   source "$NOVA_BATTERY_LIMIT_APPLY"
@@ -205,20 +207,32 @@ firmware_write() {
   [[ $output == *"no battery charge limit"* ]]
 }
 
-@test "the CLI sets, reads back and describes the limit" {
+@test "the CLI sets, reads back and describes the limit, and tells the shell of each change" {
   thinkpad 0 100
   run "$cli" 80
   [ "$status" -eq 0 ]
   [ "$output" = "Charging stops at 80%." ]
+  [ "$(cat "$SCRATCH/shell-calls")" = "-q battery limitChanged" ]
   run "$cli" --json
   [ "$output" = '{"kind":"threshold","limit":80,"on":true}' ]
+  [ "$(wc -l <"$SCRATCH/shell-calls")" -eq 1 ]
   run "$cli" off
   [[ $output == "No charge limit"* ]]
+  [ "$(wc -l <"$SCRATCH/shell-calls")" -eq 2 ]
+}
+
+@test "with no shell running, a limit is set all the same" {
+  thinkpad 0 100
+  printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/bin/nova-shell"
+  run "$cli" 80
+  [ "$status" -eq 0 ]
+  [ "$output" = "Charging stops at 80%." ]
 }
 
 @test "the CLI reports a failed write and refuses extra arguments" {
   run "$cli" 30
   [ "$status" -eq 1 ]
+  [ ! -e "$SCRATCH/shell-calls" ]
   run "$cli" 80 90
   [ "$status" -eq 2 ]
   run "$cli" --bogus

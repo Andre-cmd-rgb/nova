@@ -78,9 +78,8 @@ Panel {
   // are live and cost nothing, while everything *measured* still comes from
   // the CLI and still reads the same number the terminal would print.
   //
-  // `percentage` is 0..1 here, not 0..100. That is the one trap in it, and it
-  // is why this goes through the same Math.round(x * 100) the stock battery
-  // service uses rather than being read straight out.
+  // The percentage is Charge's, the one every widget shows: UPower's, but
+  // 100% while the battery rests full after its charge (ChargeRule.js).
   readonly property var device: UPower.displayDevice
   readonly property bool deviceReady: device !== null && device.isPresent === true
 
@@ -101,9 +100,7 @@ Panel {
   readonly property string chargeState: liveState !== "" ? liveState : String(now.state || "U")
   readonly property bool discharging: chargeState === "D"
   readonly property bool charging: chargeState === "C"
-  readonly property real percent: deviceReady
-    ? Math.round(Number(device.percentage || 0) * 100)
-    : Number(now.percent || 0)
+  readonly property real percent: deviceReady ? Commons.Charge.percent : Number(now.percent || 0)
   readonly property real fraction: Math.max(0, Math.min(1, percent / 100))
   // displayWatts, not rateWatts: the CLI keeps the drain estimate and the
   // number to show apart, so a charging battery is never labelled with the

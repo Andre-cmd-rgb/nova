@@ -135,6 +135,11 @@ END {
   }
   limit = limit_start != "" && limit_start "" != limit_end "" ? limit_start "-" limit_end : limit_end
 
+  # Plugged in, its charge done and no limit on, a battery at 95% or more is
+  # resting full: the charger tops it up only once it falls a few percent. It
+  # reads 100%, as on the bar (ChargeRule.js in the shell).
+  if (plugged && limit_end == "" && state == "fully-charged" && percent != "" && percent >= 95) percent = 100
+
   if (fields) {
     printf "percentage\t%s%%\nstate\t%s\nrate\t%sW\nsize\t%sWh\ntime\t%s\n", \
       percent, holding ? "holding" : state, watts, size, left

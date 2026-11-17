@@ -42,6 +42,9 @@ if [[ -n $value ]]; then
   else
     pkexec "$APPLY" set "$value"
   fi
+  # The bar shows a battery resting full as 100% only with no limit on; the
+  # shell reads the limit again.
+  nova-shell -q battery limitChanged >/dev/null 2>&1 || true
 fi
 
 status=$("$APPLY" status)

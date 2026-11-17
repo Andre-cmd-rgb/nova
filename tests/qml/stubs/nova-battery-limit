@@ -1,0 +1,9 @@
+#!/bin/sh
+# `nova-battery-limit --json` as the shell's Charge reads it: what the test
+# wrote to $HOME/battery-limit.json, else no limit. Every call is noted in
+# $HOME/stub-calls, as `record` notes one.
+printf 'nova-battery-limit %s\n' "$*" >>"$HOME/stub-calls"
+if [ "$1" = --json ] && [ -f "$HOME/battery-limit.json" ]; then
+  exec cat "$HOME/battery-limit.json"
+fi
+echo '{"kind":"threshold","limit":100,"on":false}'

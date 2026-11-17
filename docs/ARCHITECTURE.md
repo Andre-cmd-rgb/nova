@@ -256,6 +256,10 @@ Charge limits are reported as a capability:
 
 Every write is read back, and only a verified value counts as success.
 
+### The charge shown
+
+A charger fills the battery, then lets it rest: plugged in again at 96-99%, it waits for the charge to fall a few percent before it tops it up, which spares the battery. So plugged in with its charge done (UPower's fully-charged) and no limit on, a battery at 95% or more shows as 100%, as on a Mac. Under a limit it shows what it holds, and below 95% a stopped charge (a charger too weak, a battery too warm) shows as it is. The shell's widgets take the rule from `Commons/Charge.qml` (`ChargeRule.js`), which reads the limit from `nova battery limit --json` and is told of a new one by `nova-shell battery limitChanged`; `nova-battery-info`, behind the battery notification, has the same rule. The battery's record (`nova battery`) keeps the battery's own figures.
+
 ### Sleep
 
 - **The lid, the suspend key and the menu's Suspend** all `sleep`. logind turns that into suspend-then-hibernate (hibernating after 2 h, and never on AC), or plain suspend on a machine that cannot hibernate.

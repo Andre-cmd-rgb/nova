@@ -24,7 +24,8 @@ Panel {
   readonly property var device: UPower.displayDevice
   readonly property bool present: !!(device && device.isPresent)
   readonly property bool unplugged: present && UPower.onBattery
-  readonly property real level: Model.level(device)
+  // The charge as every widget shows it, 0 to 1 (Charge.qml).
+  readonly property real level: Commons.Charge.level
   // UPower's state in the rules' words.
   readonly property string upowerState: {
     switch (device?.state) {
@@ -34,7 +35,7 @@ Panel {
     }
     return ""
   }
-  readonly property string flow: Model.flow(device, unplugged, upowerState)
+  readonly property string flow: Model.flow(device, unplugged, upowerState, level, Commons.Charge.limited)
   readonly property string glyph: Model.icon(flow, level)
 
   readonly property bool percentShown: setting("showPercentage") === true

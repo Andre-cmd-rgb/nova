@@ -14,33 +14,32 @@ var TENTHS = {
 
 // While the current flows the line under "Battery" is a phrase, turned
 // every few seconds, from one set each way; else the state in a word or two.
-var STATES = { charging: "Charging", spending: "On battery", held: "At charge limit", full: "Fully charged", topped: "Fully charged" }
+var STATES = { charging: "Charging", spending: "On battery", held: "At charge limit", stopped: "Not charging", full: "Fully charged", topped: "Fully charged" }
 
-// The charge from 0 to 1, or 0 with no battery.
-function level(device) {
-  if (!device || !device.isPresent) return 0
-  return Math.max(0, Math.min(1, device.percentage))
-}
-
-// Kept short of full by a charge limit, asked while it is plugged in.
-// UPower says so in three ways: pending-charge; fully-charged below 99%; or
-// charging below 99% with next to nothing flowing in (0.2 W at most, or
-// eight hours or more to go).
-function held(device, state) {
-  var short = level(device) < 0.99
+// Kept short of full by a charge limit, asked while it is plugged in: a
+// limit is on (Charge.limited), and UPower says it holds in one of three
+// ways: pending-charge; fully-charged below 99%; or charging below 99% with
+// next to nothing flowing in (0.2 W at most, or eight hours or more to go).
+// The charger's own rest after a full charge is no limit's, and Charge reads
+// it as full. <level> is Charge's, 0 to 1.
+function held(device, state, level, limited) {
+  if (!limited) return false
+  var short = level < 0.99
   var trickle = Number(device.changeRate || 0) <= 0.2 || Number(device.timeToFull || 0) >= 8 * 60 * 60
   return state === "pending" || (state === "full" && short) || (state === "charging" && short && trickle)
 }
 
 // What the battery is doing: "none" without one; "held" by its limit;
 // "full" by UPower's word; "spending" on the battery; and plugged in,
-// "topped" at 100%, else "charging".
-function flow(device, onBattery, state) {
+// "stopped" when UPower says pending-charge with no limit on (a charger too
+// weak, a battery too warm), "topped" at 100%, else "charging".
+function flow(device, onBattery, state, level, limited) {
   if (!device || !device.isPresent) return "none"
-  if (!onBattery && held(device, state)) return "held"
+  if (!onBattery && held(device, state, level, limited)) return "held"
   if (state === "full") return "full"
   if (onBattery) return "spending"
-  return level(device) >= 1 ? "topped" : "charging"
+  if (state === "pending") return "stopped"
+  return level >= 1 ? "topped" : "charging"
 }
 
 // Full, and taking nothing in.
@@ -49,11 +48,12 @@ function still(flow) {
 }
 
 // The battery at its tenth of <charge>: with a bolt while it charges or is
-// full, without on the battery or held by its limit, which charges no more.
+// full, without on the battery or held by its limit or stopped, which
+// charge no more.
 function icon(flow, charge) {
   if (flow === "none") return ""
   var tenth = flow === "full" ? 9 : Math.max(0, Math.min(9, Math.floor(charge * 10)))
-  return TENTHS[flow === "held" || flow === "spending" ? "bare" : "bolt"][tenth]
+  return TENTHS[flow === "held" || flow === "spending" || flow === "stopped" ? "bare" : "bolt"][tenth]
 }
 
 // The line under "Battery".
@@ -65,7 +65,7 @@ function line(flow) {
 // from what nova-battery-info printed. Held by its limit, the limit and
 // "Holding" stand where the time and the current would.
 function figures(facts, flow, onBattery) {
-  var quiet = still(flow)
+  var quiet = still(flow) || flow === "stopped"
   var limited = flow === "held"
   return [
     ["Battery size", facts.size || ""],
