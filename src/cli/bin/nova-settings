@@ -119,6 +119,14 @@ airdrop_json() {
   printf '{"available":%s,"bell":%s}\n' "$available" "$bell"
 }
 
+# iPhone notifications: whether this user switched them on (nova notification
+# iphone on). How the iPhone is, Settings reads from the service itself.
+iphone_json() {
+  local on=false
+  systemctl --user is-enabled --quiet nova-iphone-notifications.service 2>/dev/null && on=true
+  printf '{"on":%s}\n' "$on"
+}
+
 installed() { # name:command...: the names whose command exists
   local pair
   for pair in "$@"; do
@@ -190,6 +198,7 @@ state() {
     --argjson radios "$(radios_json)" \
     --argjson bluetooth "$(json_or null nova-bluetooth-le --json)" \
     --argjson airdrop "$(airdrop_json)" \
+    --argjson iphone "$(iphone_json)" \
     --argjson displays "$(json_or '{"displays":[],"pending":null}' nova-monitor list --json)" \
     --argjson input "$(json_or '{}' nova-input --json)" \
     --argjson screenTime "$(nova-screentime enabled >/dev/null 2>&1 && echo true || echo false)" \
@@ -207,6 +216,7 @@ state() {
       radios: $radios,
       bluetooth: $bluetooth,
       airdrop: $airdrop,
+      iphone: $iphone,
       displays: $displays,
       input: $input,
       nightlight: ($config.nightlight | objects // {}),

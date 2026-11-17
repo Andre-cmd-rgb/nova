@@ -6,9 +6,9 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 
-// Bluetooth's page in Settings: the radio, the devices paired with this
-// computer, and, while the page is open, the ones nearby that could be. The
-// bar's Bluetooth menu stays the quick way in.
+// Bluetooth's page in Settings: the radio, iPhone notifications, the devices
+// paired with this computer, and, while the page is open, the ones nearby
+// that could be. The bar's Bluetooth menu stays the quick way in.
 Column {
   id: root
   spacing: Style.space(22)
@@ -35,6 +35,8 @@ Column {
   // Whether Bluetooth LE is on, as `nova bluetooth le` has it; null where it
   // cannot say. Its switch runs through Settings, which reads it back.
   property var le: null
+  // Whether iPhone notifications are switched on (nova notification iphone).
+  property bool iphone: false
   signal command(var argv)
 
   // Each scan this page asks for. Settings ends it once the page is gone: the
@@ -164,6 +166,14 @@ Column {
     }
   }
 
+  IphoneNotifications {
+    id: phoneNotes
+    visible: root.available
+    on: root.iphone
+    powered: root.powered
+    onCommand: function (argv) { root.command(argv) }
+  }
+
   Section {
     title: "MY DEVICES"
     visible: root.powered
@@ -199,6 +209,10 @@ Column {
       id: entry
       required property var modelData
       readonly property string busy: root.pending[modelData.address] || ""
+      // An iPhone whose notifications show here comes back by itself; a
+      // connection from here would be over classic Bluetooth, as its
+      // headset.
+      readonly property bool notifying: phoneNotes.addresses.indexOf(modelData.address) >= 0
       label: modelData.name
       detail: {
         if (entry.busy === "connecting") return modelData.paired ? "Connecting…" : "Pairing…"
@@ -221,6 +235,7 @@ Column {
           onClicked: root.act("forget", entry.modelData, "forgetting")
         }
         Button {
+          visible: !entry.notifying
           text: entry.modelData.connected ? "Disconnect" : entry.modelData.paired ? "Connect" : "Pair"
           bordered: true
           onClicked: {

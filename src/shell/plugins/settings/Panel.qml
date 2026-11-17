@@ -483,6 +483,7 @@ Item {
       BluetoothView {
         width: p.inner
         le: root.info.bluetooth ? root.info.bluetooth.le === true : null
+        iphone: !!root.info.iphone && root.info.iphone.on === true
         onDiscoveryStarted: root.owesDiscoveryStop = true
         onCommand: function (argv) { root.run(argv) }
       }
