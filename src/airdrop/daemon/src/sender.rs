@@ -42,6 +42,13 @@ const DISCOVER_WITHIN: Duration = Duration::from_secs(20);
 /// is not measured, and a send that arrived must not be called failed: two minutes, which a
 /// receiver that never answers holds the Wi-Fi for at most.
 const FINISH_WITHIN: Duration = Duration::from_secs(120);
+/// The least the files may go at, on average, in bytes a second, beside a minute's slack: a
+/// receiver that takes a few bytes now and then, never stalling, is not let hold the Wi-Fi for
+/// ever. Not measured with an iPhone as the receiver: one sent a 1.0 MB photo to this computer in
+/// 2.3 s while on its channel in five slots of sixteen; in one of sixteen, its timetable while it
+/// only looks, that would be about 90 kB/s, and the least is under that.
+const LEAST_RATE: u64 = 64 << 10;
+const RATE_SLACK: Duration = Duration::from_secs(60);
 /// How often a watch looks.
 const WATCH_EVERY: Duration = Duration::from_millis(100);
 /// The files go in parts of this much, each a step of progress.
@@ -158,6 +165,10 @@ pub struct Limits {
     pub decide: Duration,
     /// For the files to make no progress at all, while they go.
     pub stall: Duration,
+    /// The least the files may go at, on average, in bytes a second, and the time beside it:
+    /// they must have gone by `slack` + their bytes at `rate`.
+    pub rate: u64,
+    pub slack: Duration,
     /// For the receiver to say it has everything, once the last of it has gone.
     pub finish: Duration,
 }
@@ -168,6 +179,8 @@ impl Default for Limits {
             discover: DISCOVER_WITHIN,
             decide: CONNECT_WITHIN + DECIDE_WITHIN + ANSWER_WITHIN,
             stall: STALLED,
+            rate: LEAST_RATE,
+            slack: RATE_SLACK,
             finish: FINISH_WITHIN,
         }
     }
@@ -388,7 +401,14 @@ impl Sender {
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<(), String> {
         let socket = connection.stream().socket().try_clone().map_err(words)?;
-        watched(&socket, None, Some(self.limits.stall), cancelled, |watch| {
+        // At the least rate on average, beside the slack, as well as never stalling; once the last
+        // of it has gone, the receiver's answer has its own limit.
+        let at_least = Duration::from_secs_f64(pack.bytes as f64 / self.limits.rate.max(1) as f64);
+        let (deadline, stall) = (
+            Instant::now().checked_add(self.limits.slack + at_least),
+            Some(self.limits.stall),
+        );
+        watched(&socket, deadline, stall, cancelled, |watch| {
             watch.moved();
             connection
                 .post_in_pieces("/Upload", host, "application/x-cpio")
@@ -739,6 +759,8 @@ pub mod tests {
             discover: Duration::from_secs(1),
             decide: Duration::from_secs(5),
             stall: Duration::from_secs(1),
+            rate: LEAST_RATE,
+            slack: Duration::from_secs(1),
             finish: Duration::from_secs(1),
         };
         sender
@@ -802,6 +824,58 @@ pub mod tests {
             began.elapsed() < Duration::from_secs(4),
             "{:?}",
             began.elapsed()
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn files_a_receiver_takes_too_slowly_end_at_the_least_rate_however_it_keeps_taking() {
+        let folder = scratch("trickle");
+        let at = hostile(&folder, |connection| {
+            // Yes to the question; then the files taken a little at a time, never stopping.
+            let Ok(Some(head)) = connection.head() else {
+                return;
+            };
+            let _ = connection
+                .body(&head)
+                .and_then(|mut body| body.all(1 << 20));
+            let _ = connection.respond(200, b"", false);
+            let Ok(Some(head)) = connection.head() else {
+                return;
+            };
+            let Ok(mut body) = connection.body(&head) else {
+                return;
+            };
+            let (mut buffer, mut taken) = ([0u8; 16 << 10], 0);
+            loop {
+                match std::io::Read::read(&mut body, &mut buffer) {
+                    Ok(0) | Err(_) => return,
+                    Ok(read) => taken += read,
+                }
+                if taken >= 64 << 10 {
+                    taken = 0;
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            }
+        });
+        // Never stopping for as long as the stall (the kernel wakes a blocked write only once
+        // much of its buffer is free, which takes a while at this pace).
+        let mut sender = quick(&folder);
+        sender.limits.stall = Duration::from_secs(10);
+        sender.limits.rate = 8 << 20;
+        let Ok(Answer::Yes(mut connection)) = sender.ask(&at, "h", &[("n".into(), 1)], &|| false)
+        else {
+            panic!("it said yes");
+        };
+        let mut pack = noise(&folder, 16 << 20);
+        let began = Instant::now();
+        let result = sender.upload(&mut connection, "h", &mut pack, &mut |_| {}, &|| false);
+        assert_eq!(result.err().as_deref(), Some("it took too long"));
+        // A second's slack, and two for 16 MB at 8 MB a second.
+        let took = began.elapsed();
+        assert!(
+            took >= Duration::from_millis(2900) && took < Duration::from_secs(5),
+            "{took:?}"
         );
         std::fs::remove_dir_all(&folder).unwrap();
     }

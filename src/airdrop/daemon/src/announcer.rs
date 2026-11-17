@@ -272,6 +272,23 @@ impl Announcer {
         }
     }
 
+    /// The daemon's side of an announcer that said it was ready and answers nothing after, as one
+    /// whose Bluetooth hangs: each request is given up on after `within`. Its other end, kept.
+    #[cfg(test)]
+    pub fn unanswering(within: Duration) -> (Announcer, OwnedFd) {
+        let mut fds = [-1 as c_int; 2];
+        // SAFETY: two descriptors' room, as the call fills.
+        assert_eq!(
+            unsafe { socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, fds.as_mut_ptr()) },
+            0
+        );
+        // SAFETY: just made, and nobody else's.
+        let (ours, theirs) =
+            unsafe { (OwnedFd::from_raw_fd(fds[0]), OwnedFd::from_raw_fd(fds[1])) };
+        assert!(say(theirs.as_raw_fd(), b"ready"));
+        (Announcer::over(ours, within).unwrap(), theirs)
+    }
+
     /// Announces, or says again what it announces, if it has not lately; why not, in a sentence
     /// for the user, when it cannot.
     pub fn announce(&mut self) -> Result<(), String> {

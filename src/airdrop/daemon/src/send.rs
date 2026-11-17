@@ -11,7 +11,9 @@
 //! (control.rs).
 //!
 //! Meanwhile Bluetooth announces that this computer wants to send
-//! (wake.rs, through announcer.rs), which is what wakes an iPhone's AirDrop; the node asks on the
+//! (wake.rs, through announcer.rs), which is what wakes an iPhone's AirDrop:
+//! on a thread of its own, the herald, so that a Bluetooth slow to answer
+//! holds up neither the looking nor any deadline. The node asks on the
 //! air who receives (node.rs), and each receiver it hears of is asked who it
 //! is (/Discover, sender.rs), and listed. Picked, it is asked whether its
 //! person wants the files (/Ask), and sent them (/Upload).
@@ -41,6 +43,7 @@ use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::announcer::Announcer;
@@ -59,6 +62,12 @@ const RETRY_AT_MOST: Duration = Duration::from_secs(10);
 const ASK_AGAIN: Duration = Duration::from_secs(5);
 /// How often the progress is told.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+/// How often the herald asks Bluetooth to say it again: the announcer itself says it again only
+/// every few seconds (announcer.rs), and answers this at once meanwhile.
+const HERALD_EVERY: Duration = Duration::from_millis(500);
+/// What the looking lines say when the herald could not be started.
+const NO_HERALD: &str =
+    "Bluetooth could not be used to wake the iPhone's AirDrop (no thread could be started for it).";
 /// The most receivers a send keeps, and of one peer: a phone has one, and what changes its
 /// instance on the air takes no more room than two.
 const MOST_RECEIVERS: usize = 16;
@@ -95,6 +104,9 @@ struct Inner {
     busy: bool,
     /// Set when its client has gone.
     left: Option<Arc<AtomicBool>>,
+    /// What Bluetooth came to when the herald last asked: "" while it says this computer wants
+    /// to send, else why not; None before its first answer.
+    bluetooth: Option<String>,
     found: Vec<Found>,
     gone: Vec<Mac>,
 }
@@ -324,6 +336,38 @@ impl Sending {
         }
     }
 
+    /// The herald: Bluetooth says this computer wants to send, on a thread of its own, until the
+    /// sender handed back is dropped, and is quiet after. The announcer may take its time to
+    /// answer (13 s at most), and nothing of the send waits for it: the looking lines say what it
+    /// came to last, and the watch on a receiver looks at flags alone. None if no thread could
+    /// be started, which the looking lines say.
+    fn herald(self: &Arc<Self>) -> Option<(mpsc::Sender<()>, JoinHandle<()>)> {
+        let (over, until) = mpsc::channel::<()>();
+        let sending = self.clone();
+        let started = std::thread::Builder::new()
+            .name("airdrop-herald".into())
+            .spawn(move || {
+                loop {
+                    let said = sending.announce();
+                    sending.inner.lock().unwrap().bluetooth = Some(said);
+                    if !matches!(
+                        until.recv_timeout(HERALD_EVERY),
+                        Err(mpsc::RecvTimeoutError::Timeout)
+                    ) {
+                        break;
+                    }
+                }
+                sending.quiet();
+            });
+        match started {
+            Ok(herald) => Some((over, herald)),
+            Err(_) => {
+                self.inner.lock().unwrap().bluetooth = Some(NO_HERALD.into());
+                None
+            }
+        }
+    }
+
     /// The files a client handed over, looked at before anything else, with no lock of the
     /// daemon's held (a file on a mount that went with the Wi-Fi may take its time): the send, for
     /// control.rs to claim and start, or why not.
@@ -366,10 +410,16 @@ impl Sending {
         let session = std::thread::Builder::new().name("airdrop-send".into());
         let started = session.spawn(move || {
             (sending.tell)(Told::Began);
+            let herald = sending.herald();
             let (last, transfer) = sending.session(&client, items);
-            sending.quiet();
+            // Told first: a Bluetooth slow to go quiet holds up nobody's last line.
             client.say(&afterwards(&last, (sending.stays)()));
             client.close();
+            // Quiet before another send may start: this one's announcement does not outlast it.
+            if let Some((over, herald)) = herald {
+                drop(over);
+                let _ = herald.join();
+            }
             *sending.inner.lock().unwrap() = Inner::default();
             (sending.tell)(Told::Ended { transfer });
         });
@@ -502,11 +552,14 @@ impl Sending {
             }) {
                 break chosen.clone();
             }
-            let bluetooth = self.announce();
-            let line = looking(&candidates, &bluetooth);
-            if line != told {
-                client.say(&line);
-                told = line;
+            // Said once the herald has Bluetooth's first answer, with what it came to last.
+            let bluetooth = self.inner.lock().unwrap().bluetooth.clone();
+            if let Some(bluetooth) = bluetooth {
+                let line = looking(&candidates, &bluetooth);
+                if line != told {
+                    client.say(&line);
+                    told = line;
+                }
             }
             std::thread::sleep(Duration::from_millis(100));
         };
@@ -523,13 +576,11 @@ impl Sending {
             "asking {to:?} whether it wants {} file(s)",
             offered.len()
         )));
-        // Bluetooth keeps saying it while the receiver is asked and sent to; this is looked at by
-        // the thread that watches the connection, too, which shuts it at once.
+        // Looked at by the thread that watches the connection, too, which shuts it at once: flags
+        // alone, so that no deadline waits for Bluetooth (the herald goes on telling it while the
+        // receiver is asked and sent to).
         let gone = client.gone.clone();
-        let stop = move || {
-            self.announce();
-            gone.load(Ordering::SeqCst) || sys::stopping()
-        };
+        let stop = move || gone.load(Ordering::SeqCst) || sys::stopping();
         let mut connection = match self.sender.ask(&at, &host, &offered, &stop) {
             Err(_) if stop() => return (interrupted(client), true),
             Err(why) => {
@@ -853,6 +904,65 @@ mod tests {
         assert_eq!(told.last(), Some(&Told::Ended { transfer: true }));
         assert!(sent.ends_with(r#","stays":false}"#), "{sent}");
         assert!(!sending.browsing() && !sending.busy() && !sending.on());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_bluetooth_that_does_not_answer_holds_up_nothing_of_a_send() {
+        let folder = scratch("session-slow-bluetooth");
+        let (at, _) = receiving(&folder, "Zoë's iPhone", true);
+        // Each request to it is given up on after three seconds, and asked again.
+        let (announcer, _hung) = Announcer::unanswering(Duration::from_secs(3));
+        let sending = Sending::new(
+            sender(&folder),
+            0,
+            Ok(announcer),
+            Box::new(|_| {}),
+            Box::new(|| false),
+        );
+        let (mut ours, theirs) = UnixStream::pair().unwrap();
+        sending
+            .start(theirs, vec![opened(&folder, "a.jpg", &[7u8; 200_000])])
+            .unwrap();
+        // The first looking line waits for its first answer, which is that there was none.
+        let first = line(&mut ours);
+        assert!(
+            first.contains("Bluetooth did not answer in time"),
+            "{first}"
+        );
+        // Asked again meanwhile, it holds up neither the list nor the asking and the sending,
+        // nor the watch on them: each is over long before Bluetooth gives up again.
+        let began = Instant::now();
+        sending.heard(Found {
+            peer: [2, 0, 0, 0, 0, 1],
+            instance: "0000000000ab".into(),
+            at,
+            host: "h:1".into(),
+        });
+        until(&mut ours, r#"{"state":"looking","receivers":[{"#);
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            began.elapsed()
+        );
+        let began = Instant::now();
+        writeln!(ours, "to 1").unwrap();
+        let (sent, _) = until(&mut ours, r#"{"state":"sent""#);
+        assert!(
+            began.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(sent.ends_with(r#","stays":false}"#), "{sent}");
+        // The last line is not held up either; the herald goes quiet after it, and only then may
+        // another send start.
+        assert_eq!(line(&mut ours), "");
+        assert!(sending.inner.lock().unwrap().on);
+        let began = Instant::now();
+        while sending.inner.lock().unwrap().on && began.elapsed() < Duration::from_secs(10) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(!sending.inner.lock().unwrap().on);
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
