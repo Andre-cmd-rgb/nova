@@ -6,7 +6,8 @@ import qs.Ui
 // The night light's part of the Displays page: its switch, the schedule
 // that switches it by itself, and how warm it makes the screen. The
 // schedule and the warmth are nova nightlight's, kept in shell.json; the
-// shell's night light service follows them, and does the switching.
+// shell's night light service follows them, and does the switching. A
+// switch by hand holds until the schedule's next turn.
 Section {
   id: root
 
@@ -38,18 +39,18 @@ Section {
   Toggle {
     width: parent.width
     label: "Night Light"
-    detail: "A warmer screen, easier on the eyes at night."
     checked: !!root.service && root.service.enabled
     onClicked: if (root.service) root.service.setNightlight(!root.service.enabled)
   }
 
   Line {
     label: "Schedule"
-    detail: root.schedule === "off" ? "It comes on only by hand."
-      : root.schedule === "hours" ? "Every day, by the clock."
-      : !root.place ? "No place to go by: choose the weather's place, in its card in the bar."
-      : !root.sun ? "The sun does not set and rise in " + root.place.name + " today."
-      : "Today the sun rises at " + root.clock(root.sun.rise) + " and sets at " + root.clock(root.sun.set) + " in " + root.place.name + "."
+    // Sunset to Sunrise: today's, where the weather's place is, or the time
+    // zone's city.
+    detail: root.schedule !== "sunset" ? ""
+      : !root.place ? "No location. Set one in the weather card."
+      : !root.sun ? "No sunset or sunrise in " + root.place.name + " today"
+      : root.clock(root.sun.set) + " to " + root.clock(root.sun.rise) + " in " + root.place.name
     ButtonGroup {
       options: [{ value: "off", label: "Off" }, { value: "sunset", label: "Sunset to Sunrise" }, { value: "hours", label: "Set Hours" }]
       value: root.schedule
@@ -78,11 +79,5 @@ Section {
       value: (5500 - root.night) / 100
       onLetGo: at => root.command(["nova-nightlight-warmth", String(5500 - Math.round(at) * 100)])
     }
-  }
-
-  Caption {
-    width: parent.width
-    visible: root.schedule !== "off"
-    text: "Switched by hand, from the bar, the keys or the menu, it stays so until the schedule's next turn."
   }
 }

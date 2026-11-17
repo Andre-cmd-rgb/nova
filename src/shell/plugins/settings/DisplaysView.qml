@@ -82,7 +82,7 @@ Column {
   Caption {
     width: parent.width
     visible: root.displays.length === 0
-    text: "No displays: Hyprland did not answer."
+    text: "No displays found"
   }
 
   Section {
