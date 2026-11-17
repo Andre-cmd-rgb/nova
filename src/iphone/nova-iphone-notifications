@@ -202,7 +202,8 @@ def text(raw, limit=None):
 def name_text(value):
     """A name, an app's or a device's, as one line of text."""
     raw = value if isinstance(value, (bytes, bytearray)) else str(value or "").encode("utf-8", "replace")
-    return " ".join(text(raw, NAME_LIMIT).split("\n"))
+    # Cut only past the limit: no one cut it short at exactly that length.
+    return " ".join(text(raw, NAME_LIMIT if len(raw) > NAME_LIMIT else None).split("\n"))
 
 
 def app_fallback(app):
@@ -260,6 +261,8 @@ REPLY_SECONDS = seconds("REPLY", 5)
 # a sleep of a minute): notifications that came meanwhile are shown, a few.
 MISSED_SECONDS = seconds("MISSED", 300)
 MISSED_MOST = 5
+# Those it had then and not before the drop whose dates are looked at.
+MISSED_ASKED_MOST = 20
 CALL_TIMEOUT = 10
 # A flood of events (an iPhone gone wrong, or anything else on the link) is
 # not followed past these: the notifications waiting to be asked about and
@@ -534,6 +537,7 @@ class Phone:
         self.dropped_at = 0.0
         self.dropped_wall = 0.0
         self.missed_left = MISSED_MOST
+        self.missed_asked = 0
         self.apps = {}  # identifier (bytes) → name
         self.waiting = {}  # identifier → uids waiting for its name
         self.subscribing = False
@@ -618,6 +622,7 @@ class Phone:
         else:
             log(f"{self.name} connected")
         self.missed_left = MISSED_MOST
+        self.missed_asked = 0
         self.refused = False
         self.tries = 0
         self.asked.clear()
@@ -643,6 +648,8 @@ class Phone:
         self.waiting.clear()
         self.give_up_current()
         self.subscribing = False
+        # What the link before had in flight is answered for no link now.
+        self.link_number += 1
         if self.retry:
             GLib.source_remove(self.retry)
             self.retry = None
@@ -651,6 +658,7 @@ class Phone:
     def gone(self):
         """Its device is no more (forgotten, or BlueZ ended)."""
         self.connected = False
+        self.link_number += 1
         self.queue.clear()
         self.pending.clear()
         self.waiting.clear()
@@ -751,13 +759,16 @@ class Phone:
 
     def missed(self, uid):
         """A notification the iPhone had when the link came back, which it
-        did not have when the link dropped a moment before: it came in the
-        gap. Not after a longer absence (a night asleep): those are old."""
+        did not have when the link dropped a moment before: it may have come
+        in the gap, which its date tells (noted). Not after a longer absence
+        (a night asleep): those are old. A few are looked at; one older than
+        the drop (the iPhone numbered them anew, or more than KNOWN_MOST were
+        listed) does not count against the few shown."""
         if self.before is None or uid in self.before or self.missed_left <= 0:
             return False
-        if now_boot() - self.dropped_at > MISSED_SECONDS:
+        if self.missed_asked >= MISSED_ASKED_MOST or now_boot() - self.dropped_at > MISSED_SECONDS:
             return False
-        self.missed_left -= 1
+        self.missed_asked += 1
         return True
 
     def fetch(self, event, replace=False, missed=False):
@@ -861,9 +872,11 @@ class Phone:
         if found is None:
             self.pending.pop(uid, None)
             return
-        if info["missed"] and not arrived_while_away(found.get(DATE, b""), self.dropped_wall, time.time()):
-            self.pending.pop(uid, None)
-            return
+        if info["missed"]:
+            if self.missed_left <= 0 or not arrived_while_away(found.get(DATE, b""), self.dropped_wall, time.time()):
+                self.pending.pop(uid, None)
+                return
+            self.missed_left -= 1
         info.update({"app": bytes(found.get(APP_IDENTIFIER, b"")), "title": text(found.get(TITLE, b""), LIMITS[TITLE]),
                      "subtitle": text(found.get(SUBTITLE, b""), LIMITS[SUBTITLE]),
                      "message": text(found.get(MESSAGE, b""), LIMITS[MESSAGE])})
@@ -901,6 +914,11 @@ class Phone:
             # Shown for a link gone since: the iPhone may have given its uid
             # to another notification by now.
             if number != self.link_number:
+                return
+            # A change to one dismissed while it was on its way, which the
+            # shell then showed anew: dismissed it stays.
+            if replaces and self.shown.get(uid, (None,))[0] != replaces:
+                self.service.close(note)
                 return
             # Removed on the iPhone while the shell was showing it.
             if self.connected and uid not in self.known:
@@ -983,6 +1001,9 @@ class Service:
     # -- BlueZ coming and going
 
     def bluez_owner(self, owner):
+        # A pairing question was the BlueZ before's to answer, and its toast
+        # goes: the new one asks anew.
+        self.withdraw_question("BlueZ restarted")
         self.bluez = str(owner)
         # A reply from the BlueZ before, come late, says nothing of this one.
         self.generation += 1

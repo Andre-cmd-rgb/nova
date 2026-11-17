@@ -153,6 +153,11 @@ class Texts(unittest.TestCase):
         self.assertEqual(d.name_text(chr(0x202E) + "x" * 100), "x" * 61 + "…")
         self.assertEqual(d.name_text(b"WhatsApp"), "WhatsApp")
         self.assertEqual(d.name_text(None), "")
+        # Exactly the limit is whole; one byte more is cut.
+        self.assertEqual(d.name_text("y" * 64), "y" * 64)
+        self.assertEqual(d.name_text("y" * 65), "y" * 64 + "…")
+        # A text the iPhone sends at exactly its limit was cut by the iPhone.
+        self.assertEqual(d.text(b"z" * 128, 128), "z" * 128 + "…")
 
     def test_an_answer_longer_than_any_asked_for_does_not_fit(self):
         answer = d.Answer(NOTE[:5], WANTED)

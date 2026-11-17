@@ -151,8 +151,11 @@ class Notifications(dbus.service.Object):
         self.fake = fake
         self.next = 0
 
-    @dbus.service.method(NOTIFICATIONS, in_signature="susssasa{sv}i", out_signature="u")
-    def Notify(self, app, replaces, icon, summary, body, actions, hints, timeout):
+    # A new id each time, as for a replacement of one closed already. With
+    # the fake's hold_notify, the reply waits in held_notes.
+    @dbus.service.method(NOTIFICATIONS, in_signature="susssasa{sv}i", out_signature="u",
+                         async_callbacks=("ok", "fail"))
+    def Notify(self, app, replaces, icon, summary, body, actions, hints, timeout, ok=None, fail=None):
         self.next += 1
         note = {"id": self.next, "app": str(app), "replaces": int(replaces), "summary": str(summary),
                 "body": str(body), "actions": [str(a) for a in actions],
@@ -161,7 +164,10 @@ class Notifications(dbus.service.Object):
                 "buttons": json.loads(str(hints.get("nova-buttons", "[]")))}
         self.fake.notes.append(note)
         say("notify:", json.dumps(note, ensure_ascii=False, sort_keys=True))
-        return dbus.UInt32(self.next)
+        if self.fake.hold_notify:
+            self.fake.held_notes.append(lambda: ok(dbus.UInt32(note["id"])))
+            return
+        ok(dbus.UInt32(note["id"]))
 
     @dbus.service.method(NOTIFICATIONS, in_signature="u", out_signature="")
     def CloseNotification(self, note):
@@ -198,6 +204,8 @@ class Fake:
         self.env = {}
         self.notes = []
         self.closed = []
+        self.hold_notify = False
+        self.held_notes = []
         self.writes = []  # each command written, hex
         self.subscriptions = []
         self.pair_answer = None
@@ -616,6 +624,73 @@ def reused(f):
     yield until(lambda: "02 05 00 00 00 01" in f.writes[count:], "the new one dismissed is cleared on the iPhone")
 
 
+def changing(f):
+    f.add_phone(paired=True, connected=True)
+    yield until(lambda: f.state().get("state") == "connected", "connected")
+    f.note(5, b"net.whatsapp.WhatsApp", b"Anna", b"First")
+    f.event(0, 16, 4, 5)
+    yield until(lambda: note_for(f, "WhatsApp · Anna"), "a notification shown")
+    old = note_for(f, "WhatsApp · Anna")
+    # It changes on the iPhone; the change is on its way to the shell when
+    # the toast is dismissed.
+    f.hold_notify = True
+    f.note(5, b"net.whatsapp.WhatsApp", b"Anna", b"Changed")
+    f.event(1, 16, 4, 5)
+    yield until(lambda: f.held_notes, "the change on its way to the shell")
+    changed = f.notes[-1]
+    check(changed["replaces"] == old["id"], "a change replaces the toast shown")
+    count = len(f.writes)
+    f.close_note(old["id"], 2)
+    yield until(lambda: "02 05 00 00 00 01" in f.writes[count:], "dismissed meanwhile: cleared on the iPhone")
+    f.hold_notify = False
+    f.held_notes.pop()()
+    yield until(lambda: changed["id"] in f.closed, "the change, shown anew by the shell, is closed: dismissed, it stays so")
+
+
+def evicted(f):
+    f.add_phone(paired=True, connected=True)
+    yield until(lambda: f.state().get("state") == "connected", "connected")
+    # More than the service remembers of what the iPhone has (1000): the six
+    # listed first fall out, and look new when the link is back.
+    listed = list(range(1000, 2006))
+    for uid in listed:
+        f.event(0, 4, 4, uid)
+    for uid in listed[:6]:
+        f.note(uid, b"com.apple.MobileSMS", f"Old {uid}".encode(), b"old", date=b"20200101T000000")
+    yield 1
+    f.connect(False)
+    yield until(lambda: f.state().get("state") == "waiting", "the link drops")
+    f.note(3000, b"com.apple.MobileSMS", b"Cat", b"in the gap")
+    f.connect(True)
+    yield until(lambda: f.state().get("state") == "connected", "back a moment later")
+    for uid in listed + [3000]:
+        f.event(0, 4, 4, uid)
+    yield until(lambda: note_for(f, "Messages · Cat"), "the one that came in the gap is shown, the six old ones looked at first", 20)
+    check(not any(n["summary"].startswith("Messages · Old") for n in f.notes), "the old ones are not")
+
+
+def asking(f):
+    yield until(lambda: f.state().get("state") == "no-iphone", "no iPhone at first")
+    f.call_daemon("Pair", "b", [False])
+    yield until(lambda: f.agent is not None, "the window opens, with an agent")
+    f.add(STRANGER, {DEVICE: {"Address": "AA:BB:CC:DD:EE:02", "Alias": "Test iPhone", "Paired": b(False),
+                              "Bonded": b(False), "Trusted": b(False), "Connected": b(True),
+                              "UUIDs": dbus.Array([], signature="s")}})
+    f.pair(STRANGER, "confirm")
+    yield until(lambda: any(n["buttons"] for n in f.notes), "the code is shown to compare")
+    first = next(n for n in f.notes if n["buttons"])
+    # BlueZ restarts while the question is open, and forgets its agents.
+    bus.release_name("org.bluez")
+    f.agent = None
+    bus.request_name("org.bluez")
+    yield until(lambda: first["id"] in f.closed and f.pairings, "BlueZ gone: the question withdrawn, its toast closed")
+    check(f.pairings[-1] == (STRANGER, "refused, org.bluez.Error.Rejected"), "the pairing it was about turned down")
+    yield until(lambda: f.agent is not None, "the agent registered with the BlueZ back, the window still open")
+    f.pair(STRANGER, "confirm")
+    yield until(lambda: len([n for n in f.notes if n["buttons"]]) == 2,
+                "a pairing the BlueZ back asks about is asked, not turned down as a second one")
+
+
 def hostile(f):
     # An iPhone, or what passes for one, that keeps to no limit.
     f.apps[b"com.example.loud"] = (chr(0x2066) + "Loud" + chr(0x2069) + "x" * 100).encode()
@@ -757,7 +832,8 @@ def restarts(f):
 
 
 SCENARIOS = {"pairing": pairing, "declined": declined, "strangers": strangers, "notifications": notifications,
-             "reused": reused, "hostile": hostile, "reconnect": reconnect, "restarts": restarts, "late": late,
+             "reused": reused, "changing": changing, "evicted": evicted, "asking": asking, "hostile": hostile,
+             "reconnect": reconnect, "restarts": restarts, "late": late,
              "taken": taken}
 # A pairing window short enough to see it close; a fast phase that outlasts
 # the wait after a refusal.

@@ -54,6 +54,19 @@ scenario() { # name
   scenario reused
 }
 
+@test "a toast dismissed while its change is on the way stays dismissed, and is cleared on the iPhone" {
+  scenario changing
+}
+
+@test "after a link back, old ones that only look new do not use up the few that came in the gap" {
+  scenario evicted
+}
+
+@test "BlueZ restarting while a pairing is asked about: the question withdrawn, and the BlueZ back asked anew" {
+  scenario asking
+  [[ $output == *"pairing question withdrawn: BlueZ restarted"* ]]
+}
+
 @test "an iPhone that keeps to no limit: texts cut and cleaned, an answer too long given up on, a flood followed to fifty" {
   scenario hostile
   [[ $output == *"an answer that does not fit: an answer of more than 8192 bytes"* ]]
