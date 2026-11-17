@@ -55,6 +55,9 @@ pub const EV_COMPLETE: u16 = 0x0001;
 pub const EV_STATUS: u16 = 0x0002;
 /// The controller's "powered" setting, in READ_INFO's settings and in New Settings.
 pub const POWERED: u32 = 1;
+/// Its "low energy" one: Bluetooth Low Energy, which AirDrop's announcement and the doorbell's
+/// listening both are, off where the user switched it off (Settings → Bluetooth).
+pub const LE: u32 = 1 << 9;
 
 /// The kernel's Bluetooth management, for every controller at once.
 pub struct Mgmt {
@@ -145,18 +148,23 @@ impl Mgmt {
         (0xff, Vec::new())
     }
 
-    /// The first controller there is, and whether it is on.
-    pub fn controller(&mut self) -> Option<(u16, bool)> {
+    /// The first controller there is, and its settings (none, when it would not say).
+    pub fn controller(&mut self) -> Option<(u16, u32)> {
         let (status, answer) = self.ask(READ_INDEX_LIST, HCI_DEV_NONE, &[]);
         if status != 0 || answer.len() < 4 || u16::from_le_bytes([answer[0], answer[1]]) == 0 {
             return None;
         }
         let index = u16::from_le_bytes([answer[2], answer[3]]);
         let (status, answer) = self.ask(READ_INFO, index, &[]);
-        let powered = status == 0
-            && answer.len() >= 17
-            && u32::from_le_bytes([answer[13], answer[14], answer[15], answer[16]]) & POWERED != 0;
-        Some((index, powered))
+        Some((index, settings(status, &answer)))
+    }
+}
+
+/// The current settings in an answer to READ_INFO: none, when it is no answer.
+pub fn settings(status: u8, answer: &[u8]) -> u32 {
+    match answer.get(13..17) {
+        Some(bytes) if status == 0 => u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+        _ => 0,
     }
 }
 
@@ -181,10 +189,12 @@ pub fn status_words(status: u8) -> &'static str {
         0x03 => "failed",
         0x07 => "no resources",
         0x0a => "busy",
+        0x0b => "rejected",
         0x0c => "not supported",
         0x0d => "invalid parameters",
         0x0f => "not powered",
         0x11 => "invalid index",
+        0x12 => "blocked by the radio switch",
         0x14 => "permission denied",
         0xff => "no answer",
         _ => "refused",

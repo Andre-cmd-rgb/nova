@@ -557,14 +557,14 @@ ShellRoot {
 
   // Cancelled while it looks; ended with nobody; ended without a word.
   function fifteenth() {
-    sendSays.setText(JSON.stringify({ state: "looking", receivers: [], bluetooth: "Bluetooth is off. It wakes the iPhone's AirDrop: switch it on." }) + "\n")
+    sendSays.setText(JSON.stringify({ state: "looking", receivers: [], bluetooth: "Bluetooth is off. Turn it on to send to an iPhone." }) + "\n")
     sendAfter.setText("")
     later(300, function () {
       const before = asks().length, noted = notes().length
       airdrop.send(["/home/zoe/notes.txt"])
       later(500, function () {
         check("with nobody to send to, the window says what the iPhone needs, and why Bluetooth cannot wake it",
-          [airdrop.sendWindow.anyone, airdrop.sendWindow.bluetooth], [false, "Bluetooth is off. It wakes the iPhone's AirDrop: switch it on."])
+          [airdrop.sendWindow.anyone, airdrop.sendWindow.bluetooth], [false, "Bluetooth is off. Turn it on to send to an iPhone."])
         airdrop.sendWindow.dismissed()
         later(500, function () {
           check("Escape or Cancel stops the send", asks().slice(before + 1), ["nova-airdrop told cancel"])

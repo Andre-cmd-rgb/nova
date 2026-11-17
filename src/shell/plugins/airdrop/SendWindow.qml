@@ -45,6 +45,8 @@ PanelWindow {
 
   signal picked(string id)
   signal dismissed()
+  // Settings → Bluetooth, where Bluetooth and its Low Energy are switched on.
+  signal bluetoothSettings()
 
   function pick(at) {
     var receiver = receivers[at]
@@ -278,6 +280,34 @@ PanelWindow {
       Item {
         width: parent.width
         height: cancel.height
+
+        BorderSurface {
+          id: toSettings
+          visible: window.bluetooth !== ""
+          anchors.right: cancel.left
+          anchors.rightMargin: Style.space(8)
+          width: Style.space(150)
+          height: Style.space(34)
+          color: settingsHover.containsMouse ? Commons.Color.menu.selectedBackground : "transparent"
+          frame: Border.flat(settingsHover.containsMouse ? Commons.Color.menu.selectedText : Util.alpha(Commons.Color.menu.text, 0.38), Style.normalBorderWidth)
+
+          Text {
+            anchors.centerIn: parent
+            text: "Bluetooth Settings"
+            textFormat: Text.PlainText
+            color: settingsHover.containsMouse ? Commons.Color.menu.selectedText : Commons.Color.menu.text
+            font.family: Style.font.menuFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          MouseArea {
+            id: settingsHover
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: window.bluetoothSettings()
+          }
+        }
 
         BorderSurface {
           id: cancel

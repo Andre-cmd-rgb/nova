@@ -348,6 +348,7 @@ Item {
     starting: airdrop.sendSaid.state === "starting"
     onPicked: function (id) { airdrop.pick(id) }
     onDismissed: airdrop.cancelSend()
+    onBluetoothSettings: Quickshell.execDetached(["nova-settings", "bluetooth"])
   }
 
   // ---- notifications ------------------------------------------------------

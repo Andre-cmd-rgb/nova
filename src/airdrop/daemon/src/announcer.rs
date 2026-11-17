@@ -367,9 +367,7 @@ mod tests {
             std::thread::sleep(self.slow);
             self.seen.announced.fetch_add(1, Ordering::SeqCst);
             if self.seen.off.load(Ordering::SeqCst) {
-                return Err(
-                    "Bluetooth is off. It wakes the iPhone's AirDrop: switch it on.".into(),
-                );
+                return Err(crate::wake::OFF.into());
             }
             Ok(())
         }
@@ -464,10 +462,7 @@ mod tests {
         // Why not, as Bluetooth says it.
         seen.off.store(true, Ordering::SeqCst);
         announcer.said = None;
-        assert_eq!(
-            announcer.announce(),
-            Err("Bluetooth is off. It wakes the iPhone's AirDrop: switch it on.".into())
-        );
+        assert_eq!(announcer.announce(), Err(crate::wake::OFF.into()));
         announcer.quiet();
         assert_eq!(seen.quieted.load(Ordering::SeqCst), 1);
         // The daemon gone, it is quiet, and ends.

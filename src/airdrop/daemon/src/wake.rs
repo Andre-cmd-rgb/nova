@@ -43,6 +43,11 @@ const READ_ADV_FEATURES: u16 = 0x003d;
 const ADD_ADVERTISING: u16 = 0x003e;
 const REMOVE_ADVERTISING: u16 = 0x003f;
 
+/// Why it cannot announce, as the send window and `nova airdrop send` say it.
+pub const OFF: &str = "Bluetooth is off. Turn it on to send to an iPhone.";
+pub const NO_LE: &str =
+    "Bluetooth Low Energy is off. Turn it on in Settings → Bluetooth to send to an iPhone.";
+
 /// How long the controller announces after it was last told to: a little longer than between
 /// two tellings (announcer.rs).
 const LASTS: u16 = 20;
@@ -122,13 +127,18 @@ impl Wake {
     pub fn announce(&mut self) -> Result<(), String> {
         // What the kernel told meanwhile is nothing this needs.
         self.mgmt.early.clear();
-        let Some((index, powered)) = self.mgmt.controller() else {
+        let Some((index, settings)) = self.mgmt.controller() else {
             self.on = None;
-            return Err("This computer has no Bluetooth, which wakes the iPhone's AirDrop.".into());
+            return Err("This computer has no Bluetooth, which sending to an iPhone needs.".into());
         };
-        if !powered {
+        if settings & mgmt::POWERED == 0 {
             self.on = None;
-            return Err("Bluetooth is off. It wakes the iPhone's AirDrop: switch it on.".into());
+            return Err(OFF.into());
+        }
+        // Switched off by the user, the kernel refuses the announcement as "rejected": said so.
+        if settings & mgmt::LE == 0 {
+            self.on = None;
+            return Err(NO_LE.into());
         }
         let instance = match self.on {
             Some((on, instance)) if on == index => instance,

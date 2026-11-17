@@ -64,7 +64,7 @@ use std::process::ExitCode;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use mgmt::{status_words, wait, Mgmt, HCI_DEV_NONE, POWERED, READ_INDEX_LIST, READ_INFO};
+use mgmt::{status_words, wait, Mgmt, HCI_DEV_NONE, LE, POWERED, READ_INDEX_LIST, READ_INFO};
 
 #[repr(C)]
 struct CapHeader {
@@ -312,6 +312,8 @@ struct Bell {
     phones: Vec<Phone>,
     index: Option<u16>,
     powered: bool,
+    /// Whether Bluetooth Low Energy is on, which listening is made of.
+    le: bool,
     /// Why it cannot listen, while it cannot.
     why: Option<String>,
     monitors: Vec<u16>,
@@ -418,11 +420,16 @@ impl Bell {
             return;
         };
         let (status, answer) = self.mgmt.ask(READ_INFO, index, &[]);
-        self.powered = status == 0
-            && answer.len() >= 17
-            && u32::from_le_bytes([answer[13], answer[14], answer[15], answer[16]]) & POWERED != 0;
+        let settings = mgmt::settings(status, &answer);
+        self.powered = settings & POWERED != 0;
+        self.le = settings & LE != 0;
         if !self.powered {
             self.deaf("Bluetooth is off.");
+            return;
+        }
+        // The kernel takes a monitor with it off, and the controller then hears nothing.
+        if !self.le {
+            self.deaf("Bluetooth Low Energy is off.");
             return;
         }
         let (status, answer) = self.mgmt.ask(READ_MONITOR_FEATURES, index, &[]);
@@ -617,10 +624,10 @@ impl Bell {
             // Another controller: the one it listens with is not changed for it.
             EV_INDEX_ADDED if self.index.is_none() || self.why.is_some() => self.setup(),
             EV_NEW_SETTINGS if Some(index) == self.index && body.len() >= 4 => {
-                let powered =
-                    u32::from_le_bytes([body[0], body[1], body[2], body[3]]) & POWERED != 0;
-                if powered != self.powered {
-                    if !powered {
+                let settings = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+                let (powered, le) = (settings & POWERED != 0, settings & LE != 0);
+                if powered != self.powered || le != self.le {
+                    if !powered || !le {
                         self.reset = Some(Instant::now());
                     }
                     self.setup();
@@ -913,6 +920,7 @@ fn run() -> Result<(), String> {
         monitors_path: folder.join("airdrop-bell.monitors"),
         index: None,
         powered: false,
+        le: false,
         why: None,
         monitors: Vec::new(),
         any: None,
@@ -1128,6 +1136,7 @@ mod tests {
             phones: vec![Phone::of(&[0x1111, 0x2222, 0x3333, 0x4444]).unwrap()],
             index: Some(0),
             powered: true,
+            le: true,
             why: None,
             monitors: vec![1],
             any: None,
@@ -1338,6 +1347,29 @@ mod tests {
         bell.heard(&event(EV_INDEX_REMOVED, &[]));
         assert_eq!(bell.scan_set, None);
         assert!(bell.scan_was.is_empty());
+    }
+
+    #[test]
+    fn with_low_energy_off_it_says_so_and_puts_no_monitor_in_place() {
+        let (mut bell, kernel) = bell_and_kernel();
+        bell.monitors.clear();
+        // One controller, powered, with Bluetooth Low Energy switched off; then on.
+        let info = |settings: u32| {
+            let mut answer = vec![0u8; 13];
+            answer.extend_from_slice(&settings.to_le_bytes());
+            complete(READ_INFO, 0, &answer)
+        };
+        kernel
+            .send(&complete(READ_INDEX_LIST, 0, &[1, 0, 0, 0]))
+            .unwrap();
+        kernel.send(&info(POWERED)).unwrap();
+        bell.setup();
+        assert_eq!(bell.why.as_deref(), Some("Bluetooth Low Energy is off."));
+        assert!(bell.monitors.is_empty());
+        // Switched on, it is set up again: asked which controllers there are, the kernel says none.
+        kernel.send(&complete(READ_INDEX_LIST, 0, &[0, 0])).unwrap();
+        bell.heard(&event(EV_NEW_SETTINGS, &(POWERED | LE).to_le_bytes()));
+        assert_eq!(bell.why.as_deref(), Some("This computer has no Bluetooth."));
     }
 
     #[test]
