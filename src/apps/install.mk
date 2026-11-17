@@ -7,7 +7,8 @@
 # (nova-apps-run, nova-apps-job); nova-apps-apply is the root half of an
 # install from Arch's repositories, through pkexec. featured is the front
 # page, chosen by hand; flathub.flatpakrepo adds Flathub with its key, from
-# this package rather than from the network.
+# this package rather than from the network. nova-app-store.desktop puts the
+# store in the launcher, and opens Flathub's appstream:// links.
 
 APPS_SRC := src/apps
 
@@ -23,3 +24,5 @@ install-apps:
 	install -Dm644 $(APPS_SRC)/polkit/org.nova.apps.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.nova.apps.policy
 	install -Dm644 $(APPS_SRC)/data/featured $(DESTDIR)$(NOVA_SHARE)/apps/featured
 	install -Dm644 $(APPS_SRC)/data/flathub.flatpakrepo $(DESTDIR)$(NOVA_SHARE)/apps/flathub.flatpakrepo
+	install -Dm644 $(APPS_SRC)/data/nova-app-store.desktop $(DESTDIR)$(PREFIX)/share/applications/nova-app-store.desktop
+	install -Dm644 $(APPS_SRC)/data/nova-app-store.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/nova-app-store.svg

@@ -160,6 +160,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Network sign-in | `nova.network-portal` | service `services/network/Service.qml` | a notification when a network asks to sign in |
 | Settings | `nova.settings` | panel `settings/Panel.qml` | Settings' window |
 | Welcome | `nova.welcome` | panel `settings/Welcome.qml` | a new account's welcome, made of Settings' parts (below) |
+| App Store | `nova.store` | panel `store/Panel.qml` | the App Store's window, over `nova apps`' helpers (`nova apps store`; [apps.md](../../../docs/apps.md)) |
 
 Three have to do with the battery: Battery is the service behind the warning
 and the power mode, Power the bar's button and panel, and Battery Life the

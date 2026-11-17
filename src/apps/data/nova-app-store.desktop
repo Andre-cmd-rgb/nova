@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=App Store
+GenericName=Apps
+Comment=Find apps, install them and remove them
+Keywords=install;remove;software;flathub;flatpak;package;
+Icon=nova-app-store
+Exec=nova apps store %u
+TryExec=nova
+Terminal=false
+StartupNotify=false
+Categories=System;PackageManager;
+MimeType=x-scheme-handler/appstream;

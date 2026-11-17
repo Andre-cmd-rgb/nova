@@ -1,0 +1,11 @@
+{
+  "id": "nova.store",
+  "name": "App Store",
+  "description": "Find apps, install them, open and remove them: from Nova's own builds, Arch Linux's repositories and Flathub, in one window.",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "Panel.qml"
+  }
+}

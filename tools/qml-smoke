@@ -39,6 +39,7 @@ windows=(
   "settings:wifi bluetooth mobile-data airdrop notifications sound displays keyboard battery performance screentime appearance bar lock apps updates about"
   "settings/Welcome:welcome wifi look nightlight apps keys"
   "calendar:week month"
+  "store:discover create installed"
 )
 
 work=$(mktemp -d)
@@ -80,6 +81,11 @@ cat >"$work/stub/nova-input" <<'EOF'
 [ "$1" = --json ] || exit 0
 echo '{"layouts":["us","de:nodeadkeys"],"switch":"alts","repeat":{"delay":250,"rate":40},"speed":0,"naturalScroll":{"mouse":false,"touchpad":true},"tapToClick":true,"touchpad":true}'
 EOF
+# The App Store with the catalog its window test has, rather than this
+# computer's apps, and Flathub not asked for its own.
+for helper in catalog installed refresh run shots size; do
+  install -m 755 "$repo/tests/qml/stubs/apps" "$work/stub/nova-apps-$helper"
+done
 chmod +x "$work/stub/hyprctl" "$work/stub/nova-mobile-data" "$work/stub/nova-airdrop" "$work/stub/systemctl" "$work/stub/nova-input"
 # Screen Time on, with a day recorded, so its page draws the chart and the
 # apps rather than only its switch.
