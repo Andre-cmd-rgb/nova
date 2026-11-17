@@ -88,9 +88,13 @@ nova.window({ tag = "floating-window" }, {
   size = { "(min(875, monitor_w*0.94))", "(min(600, monitor_h*0.86))" },
 })
 nova.window(
-  "(org.nova.btop|org.nova.terminal|org.nova.bash|org.codeberg.dnkl.foot|org.gnome.NautilusPreviewer|org.gnome.Evince|TUI.float|imv|mpv|org.gnome.Loupe)",
+  "(org.nova.btop|org.nova.terminal|org.nova.bash|org.codeberg.dnkl.foot|org.gnome.Evince|TUI.float|imv|mpv|org.gnome.Loupe)",
   { tag = "+floating-window" }
 )
+-- Quick Look (sushi, which Files opens with Space): floating in the middle of
+-- the screen at the size it asks for, which it makes the size of what it
+-- shows, as on a Mac.
+nova.window("org.gnome.NautilusPreviewer", { float = true, center = true })
 -- Every window of the GTK portal is a dialog: a file picker, a screen to
 -- share, a permission to give.
 nova.window("xdg-desktop-portal-gtk", { tag = "+floating-window" })

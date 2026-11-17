@@ -89,6 +89,7 @@ depends=(
   gvfs-gphoto2
   gvfs-afc       # iPhones
   gvfs-smb       # Windows shares
+  sushi          # Quick Look: Space on a file in Files
   loupe          # photos
   mpv            # video and music
 
