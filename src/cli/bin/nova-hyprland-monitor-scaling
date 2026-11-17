@@ -115,7 +115,8 @@ set_scale() { # scale asked
     exit 1
   fi
 
-  # GTK takes whole scales only, so GDK_SCALE is the nearest whole one.
+  # GTK takes whole scales only, so a GDK_SCALE kept in monitors.lua (below)
+  # is the nearest whole one.
   new=$(awk -v asked="$1" -v width="$width" -v height="$height" "$usable_scale"'
     BEGIN { s = sprintf("%g", usable(asked)); printf "%s %d\n", s, int(s + 0.5) }')
   read -r new gdk <<<"$new"
@@ -125,6 +126,8 @@ set_scale() { # scale asked
   # A display Settings → Displays keeps settings for keeps this scale there,
   # or its rule would bring back the old one at the next reload.
   nova-monitor remember "$monitor" scale "$new" 2>/dev/null || true
+  # X11 apps follow, now.
+  nova-hyprland-x11-scale 2>/dev/null || true
 
   # A monitors.lua still on Nova's catch-all rule takes the scale too, so it
   # lasts past a restart.

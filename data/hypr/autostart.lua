@@ -1,25 +1,31 @@
 -- What the session starts, in order, once Hyprland is up.
 
--- X11 programs draw at 1x and scale themselves (env.lua), GTK's and Java's by
--- GDK_SCALE, a whole number. Unless the session has one already (your
--- monitors.lua, or the environment it started in), it is the scale the
--- displays came up at, which Settings → Displays and monitors.lua decide: the
--- built-in panel's while it is on, else the largest. Rounded, as
--- nova-hyprland-monitor-scaling rounds it, and set only from 2 up: 1 is GTK's
--- own. The displays are up by the first frame, which is when this runs.
+-- X11 programs draw at the displays' resolution and scale themselves
+-- (env.lua). Most read the scale from the X server, which
+-- nova-hyprland-x11-scale tells (the monitor watch runs it); Java reads only
+-- its environment, J2D_UISCALE, a whole number. It is the X11 scale of the
+-- displays the session came up with, which Settings → Displays and
+-- monitors.lua decide: the built-in panel's while it is on, else the largest,
+-- rounded as nova-hyprland-x11-scale rounds it, or NOVA_X11_SCALE. Set only
+-- from 2 up, as 1 is Java's own, and not over a J2D_UISCALE or a GDK_SCALE of
+-- yours: Java takes J2D_UISCALE first. The displays are up by the first frame,
+-- which is when this runs.
 local function x11_scale()
-  if (os.getenv("GDK_SCALE") or "") ~= "" then return end
-  local panel, largest
-  for _, monitor in ipairs(hl.get_monitors()) do
-    local scale = tonumber(monitor.scale)
-    if monitor.enabled ~= false and scale then
-      local name = monitor.name or ""
-      if name:match("^eDP%-") or name:match("^LVDS%-") or name:match("^DSI%-") then panel = scale end
-      if not largest or scale > largest then largest = scale end
+  if (os.getenv("J2D_UISCALE") or "") ~= "" or (os.getenv("GDK_SCALE") or "") ~= "" then return end
+  local whole = tonumber((os.getenv("NOVA_X11_SCALE") or ""):match("^[1-9]$"))
+  if not whole then
+    local panel, largest
+    for _, monitor in ipairs(hl.get_monitors()) do
+      local scale = tonumber(monitor.scale)
+      if monitor.enabled ~= false and scale then
+        local name = monitor.name or ""
+        if name:match("^eDP%-") or name:match("^LVDS%-") or name:match("^DSI%-") then panel = scale end
+        if not largest or scale > largest then largest = scale end
+      end
     end
+    whole = math.floor((panel or largest or 1) + 0.5)
   end
-  local whole = math.floor((panel or largest or 1) + 0.5)
-  if whole >= 2 then hl.env("GDK_SCALE", tostring(whole)) end
+  if whole >= 2 then hl.env("J2D_UISCALE", tostring(whole)) end
 end
 
 hl.on("hyprland.start", function()

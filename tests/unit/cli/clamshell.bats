@@ -4,8 +4,9 @@
 # turns it off with the lid shut on a dock and brings it back at its scale,
 # nova-hyprland-monitor-internal and -mirror turn it off or mirror it by hand,
 # and nova-hyprland-monitor-watch runs a clamshell pass when displays come and
-# go. Hyprland is a stub that answers `monitors` from $LIVE and logs every
-# call; the lid and the DRM connectors are directories.
+# go, and tells X11 apps the scale after it. Hyprland is a stub that answers
+# `monitors` from $LIVE and logs every call; the lid and the DRM connectors
+# are directories.
 
 load ../test_helper
 
@@ -266,6 +267,7 @@ hyprctl dispatch hl.dsp.dpms({ action = "enable" })' ]
   export HYPRLAND_INSTANCE_SIGNATURE=test
   stub socat
   stub nova-hyprland-monitor-clamshell
+  stub nova-hyprland-x11-scale
   stub nova-hyprland-monitor-modeless 'exit 1'
   # The passes after a pause never come: the pause fails.
   stub sleep 'exit 1'
@@ -283,6 +285,7 @@ watch() {
   [[ -e $SCRATCH/events ]] || : >"$SCRATCH/events"
   stub socat 'cat "$SCRATCH/events"'
   stub nova-hyprland-monitor-clamshell
+  stub nova-hyprland-x11-scale
   stub nova-hw-laptop 'exit 1'
   stub nova-hyprland-monitor-modeless 'answer=$(head -n 1 "$SCRATCH/modes" 2>/dev/null) || true
     sed -i 1d "$SCRATCH/modes" 2>/dev/null || true
@@ -299,11 +302,15 @@ watch() {
   # The start counts as the first event of the burst.
   [ "$(grep -c '^nova-hyprland-monitor-clamshell' "$CALLS")" -eq 1 ]
   [ "$(grep -c '^nova-hyprland-monitor-modeless' "$CALLS")" -eq 4 ]
+  # X11 apps are told the scale after the pass, and again after the reload.
+  [ "$(grep -e '^nova-hyprland-monitor-clamshell' -e '^nova-hyprland-x11-scale' "$CALLS" | cut -d' ' -f1 | paste -sd,)" = \
+    "nova-hyprland-monitor-clamshell,nova-hyprland-x11-scale,nova-hyprland-x11-scale" ]
 }
 
 @test "watch: the passes after a burst come 1, 3 and 7 seconds later" {
   watch
   [ "$(grep -c '^nova-hyprland-monitor-clamshell' "$CALLS")" -eq 4 ]
+  [ "$(grep -c '^nova-hyprland-x11-scale' "$CALLS")" -eq 4 ]
   [ "$(grep '^sleep' "$CALLS" | paste -sd,)" = "sleep 1,sleep 3,sleep 7" ]
 }
 
@@ -335,6 +342,7 @@ watch() {
   stub nova-hw-laptop
   stub nova-hyprland-monitor-external-active
   stub nova-hyprland-monitor-clamshell
+  stub nova-hyprland-x11-scale
   stub nova-hyprland-monitor-modeless 'exit 1'
   stub sleep 'exit 1'
   # logind on the system bus: a change that is not the lid, the lid shut, and

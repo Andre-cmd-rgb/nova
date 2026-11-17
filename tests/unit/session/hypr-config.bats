@@ -207,40 +207,55 @@ session_start() { # display...
     start()' </dev/null
 }
 
-@test "start: X11 programs get the built-in panel's scale before anything is started with the environment" {
-  unset GDK_SCALE
+# Java reads its scale from J2D_UISCALE alone; the other X11 toolkits read the
+# X server's, which nova-hyprland-x11-scale tells. GDK_SCALE is not set: GTK
+# would take it over the X server's, and draw its text twice as large.
+@test "start: Java gets the built-in panel's scale before anything is started with the environment, and GTK no GDK_SCALE" {
+  unset GDK_SCALE J2D_UISCALE NOVA_X11_SCALE
   run session_start eDP-1:2 DP-1:1
   [ "$status" -eq 0 ]
-  [ "${lines[0]}" = "env GDK_SCALE=2" ]
+  [ "${lines[0]}" = "env J2D_UISCALE=2" ]
   [[ ${lines[1]} == "exec systemctl --user import-environment "* ]]
   [ "${lines[3]}" = "exec nova-launch-shell" ]
+  [[ $output != *GDK_SCALE* ]]
 }
 
 @test "start: the scale is rounded, set only from 2, and the largest display's without a panel on" {
-  unset GDK_SCALE
+  unset GDK_SCALE J2D_UISCALE NOVA_X11_SCALE
   run session_start eDP-1:1.6
-  [ "${lines[0]}" = "env GDK_SCALE=2" ]
+  [ "${lines[0]}" = "env J2D_UISCALE=2" ]
   run session_start eDP-1:1.5 DP-1:3
-  [ "${lines[0]}" = "env GDK_SCALE=2" ]
+  [ "${lines[0]}" = "env J2D_UISCALE=2" ]
   run session_start eDP-1:1.25 DP-1:2
-  [[ $output != *GDK_SCALE* ]]
+  [[ $output != *J2D_UISCALE* ]]
   run session_start DP-1:1 HDMI-A-1:1.5
-  [ "${lines[0]}" = "env GDK_SCALE=2" ]
+  [ "${lines[0]}" = "env J2D_UISCALE=2" ]
   run session_start eDP-1:2:off DP-1:1
-  [[ $output != *GDK_SCALE* ]]
+  [[ $output != *J2D_UISCALE* ]]
   run session_start DP-1:1
-  [[ $output != *GDK_SCALE* ]]
+  [[ $output != *J2D_UISCALE* ]]
   run session_start
-  [[ $output != *GDK_SCALE* ]]
+  [[ $output != *J2D_UISCALE* ]]
 }
 
-@test "start: a GDK_SCALE the session already has is kept, and a failure finding the scale costs nothing else" {
+@test "start: NOVA_X11_SCALE is the scale, a J2D_UISCALE or GDK_SCALE of yours is kept, and a failure finding the scale costs nothing else" {
+  unset GDK_SCALE J2D_UISCALE
+  NOVA_X11_SCALE=3 run session_start eDP-1:2
+  [ "${lines[0]}" = "env J2D_UISCALE=3" ]
+  NOVA_X11_SCALE=1 run session_start eDP-1:2
+  [[ $output != *J2D_UISCALE* ]]
+  # Not a whole number from 1 to 9: the displays' then.
+  NOVA_X11_SCALE=1.5 run session_start eDP-1:2
+  [ "${lines[0]}" = "env J2D_UISCALE=2" ]
+  unset NOVA_X11_SCALE
+  J2D_UISCALE=1 run session_start eDP-1:2
+  [[ $output != *"env J2D_UISCALE"* ]]
   GDK_SCALE=1 run session_start eDP-1:2
+  [[ $output != *"env J2D_UISCALE"* ]]
   [[ $output != *"env GDK_SCALE"* ]]
   [[ $output == *"exec nova-launch-shell"* ]]
-  unset GDK_SCALE
   BROKEN=1 run session_start eDP-1:2
   [ "$status" -eq 0 ]
-  [[ $output != *"env GDK_SCALE"* ]]
+  [[ $output != *"env J2D_UISCALE"* ]]
   [[ $output == *"exec nova-launch-shell"* ]]
 }

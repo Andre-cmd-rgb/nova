@@ -16,11 +16,13 @@ mkdir -p "$locks"
 
 # One clamshell pass at a time: a pass asked for while one runs is that one.
 # A pass that fails leaves the watcher running, as nothing would start it
-# again; the passes after it try again.
+# again; the passes after it try again. X11 apps then take the scale of the
+# displays the pass left on.
 clamshell_pass() {
   (
     flock -n 9 || exit 0
     nova-hyprland-monitor-clamshell || true
+    nova-hyprland-x11-scale || true
   ) 9>"$locks/monitor-clamshell.lock"
 }
 
@@ -142,6 +144,11 @@ displays_changed
 while IFS= read -r event; do
   case ${event%%>>*} in
     monitoradded | monitoraddedv2 | monitorremoved | monitorremovedv2) displays_changed ;;
-    configreloaded) reload_while_modeless ;;
+    # A reload may bring other scales (monitors.lua, Settings putting one
+    # back).
+    configreloaded)
+      reload_while_modeless
+      nova-hyprland-x11-scale || true
+      ;;
   esac
 done < <(socat -U - "UNIX-CONNECT:$events")

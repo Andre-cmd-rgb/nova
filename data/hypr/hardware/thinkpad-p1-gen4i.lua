@@ -17,5 +17,5 @@ hl.config({ render = { direct_scanout = 1 } })
 
 -- The 16" 3840x2400 panel at 2x. A rule naming the output wins over the
 -- catch-all in ~/.config/hypr/monitors.lua; X11 apps get the same scale, as on
--- every computer (autostart.lua).
+-- every computer (nova-hyprland-x11-scale).
 hl.monitor({ output = "eDP-1", mode = "preferred", position = "auto", scale = 2 })

@@ -58,9 +58,9 @@ end
 require("default.hypr.hardware")
 
 hl.config({
-  -- X11 programs draw at the display's resolution and scale themselves
-  -- (GDK_SCALE, set as the session starts in autostart.lua), rather than being
-  -- stretched blurry by Hyprland.
+  -- X11 programs draw at the display's resolution and scale themselves (by
+  -- what nova-hyprland-x11-scale tells the X server, and Java by J2D_UISCALE,
+  -- set in autostart.lua), rather than being stretched blurry by Hyprland.
   xwayland = { force_zero_scaling = true },
   -- Hyprland is updated with Nova, so no news window of its own after one.
   ecosystem = { no_update_news = true },

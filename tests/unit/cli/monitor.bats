@@ -16,6 +16,7 @@ setup() {
   stub hyprctl '[[ $1 == monitors ]] && cat "$LIVE"; true'
   stub setsid
   stub nova-hyprland-monitor-internal
+  stub nova-hyprland-x11-scale
   export PATH="$SCRATCH/bin:$PATH"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/src/cli/bin/nova-monitor"
@@ -67,6 +68,8 @@ live_two() {
   run cmd_set DP-2 mode 2560x1440@120.00
   [ "$status" -eq 0 ]
   grep -qF 'hyprctl eval hl.monitor({ output = "desc:Dell Inc. DELL U2724D 7XQ1234", mode = "2560x1440@120.00", position = "1920x0", scale = 1, transform = 0 })' "$CALLS"
+  # X11 apps are told the displays as they are after the change.
+  [ "$(grep -e '^hyprctl eval' -e '^nova-hyprland-x11-scale' "$CALLS" | cut -d' ' -f1 | paste -sd,)" = "hyprctl,nova-hyprland-x11-scale" ]
   grep -q "^setsid -f .*nova-monitor revert --stamp $(jq -r .stamp "$pending") --after 15$" "$CALLS"
   [ "$(jq -r '.until - now | . > 0 and . <= 15' "$pending")" = true ]
   [ ! -e "$saved" ]
@@ -87,6 +90,7 @@ live_two() {
   [ "$status" -eq 1 ]
   [[ $output == *"did not take the change"* ]]
   grep -qx 'hyprctl reload' "$CALLS"
+  fails grep -q '^nova-hyprland-x11-scale' "$CALLS"
   ! grep -q '^setsid' "$CALLS"
   [ ! -e "$pending" ]
 }

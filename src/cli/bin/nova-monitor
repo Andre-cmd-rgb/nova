@@ -166,6 +166,9 @@ propose() { # <candidate json> <live json> <name>...
     cmd_revert --stamp "$stamp" || true
     die "Hyprland did not take the change"
   fi
+  # X11 apps take a new scale at once; one put back comes with the reload,
+  # which the monitor watch follows.
+  nova-hyprland-x11-scale 2>/dev/null || true
   setsid -f "$SELF" revert --stamp "$stamp" --after "$REVERT_AFTER" </dev/null >/dev/null 2>&1
 }
 

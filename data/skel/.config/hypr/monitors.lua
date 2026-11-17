@@ -10,6 +10,6 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" 
 -- Rotated (transform: 1 = 90°, 3 = 270°):
 -- hl.monitor({ output = "DP-2", mode = "preferred", position = "auto", scale = 1, transform = 1 })
 
--- X11 programs take the built-in display's scale, whole, as the session
--- starts (or the largest display's, with none built in). Another one:
--- hl.env("GDK_SCALE", "2")
+-- X11 programs take the built-in display's scale, whole (or the largest
+-- display's, with none built in), and follow it when it changes. Another one:
+-- hl.env("NOVA_X11_SCALE", "2")

@@ -49,9 +49,13 @@ Video is decoded on the card that drives the screen: the integrated one where th
 ## A sharp display
 
 - **Wayland apps** draw at the display's scale, which Settings → Displays sets.
-- **X11 apps** (Steam, JetBrains' IDEs and the like) take a whole-number scale at login: the built-in display's, or the largest display's on a desktop, from 2x up.
-- A scale changed in Settings → Displays reaches X11 apps at the next login.
-- `hl.env("GDK_SCALE", "2")` in `~/.config/hypr/monitors.lua` sets that scale yourself.
+- **X11 apps**, through XWayland (JetBrains' IDEs, a Flatpak without Wayland), draw at the display's own resolution and scale themselves, by a whole number: the built-in display's scale while it is on, else the largest display's. Nova tells XWayland that scale, as GNOME and KDE do: GTK apps read it from XSETTINGS, Chrome and Electron apps through GTK, Qt, SDL and JetBrains' IDEs from `Xft.dpi`, and other Java apps from `J2D_UISCALE`, set at login.
+- **When the scale changes**, in Settings → Displays, with the scale keys, or as a display comes or goes, GTK apps follow at once, and every X11 app started after it takes the new one. A Qt, Chrome or Electron app open through the change may need a restart to be drawn at it.
+- One X server serves every display: beside the 2x panel, an X11 app on a 1x monitor is drawn at 2x there too.
+- `hl.env("NOVA_X11_SCALE", "1")` in `~/.config/hypr/monitors.lua` sets the scale yourself, from the next login.
+- A `GDK_SCALE` you set turns this off: GTK, Chrome and Java follow it, and Qt apps stay at 1x. GTK would take it over XWayland's scale, and draw its text twice as large.
+- Apps that read none of these stay sharp but small: Wine (it has its own DPI, in `winecfg`), old Motif and Tk apps, and games that ignore the scale SDL reports. A Qt 5 app that does not turn on Qt's own scaling gets text of the right size, with its icons and spacing at 1x.
+- An app's own scale setting multiplies Nova's: a `QT_SCALE_FACTOR=2` set for a Qt app draws it at 4x.
 
 ## A laptop other than the P1
 

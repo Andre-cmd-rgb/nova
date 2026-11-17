@@ -15,6 +15,7 @@ setup() {
   mkdir -p "$HOME" "$SCRATCH/bin"
   stub hyprctl '[[ $1 != monitors ]] || cat "$LIVE"'
   stub nova-monitor
+  stub nova-hyprland-x11-scale
   : >"$CALLS"
   export PATH="$SCRATCH/bin:$REPO_ROOT/src/cli/bin:/usr/bin"
   focused eDP-1 2880 1800 1.25
@@ -50,6 +51,8 @@ set_to() { # scale as Hyprland is told it
   [ "$status" -eq 0 ]
   set_to 1.6
   grep -qx "nova-monitor remember eDP-1 scale 1.6" "$CALLS"
+  # X11 apps are told the new scale, once it is the display's.
+  [ "$(grep -e '^hyprctl eval' -e '^nova-hyprland-x11-scale' "$CALLS" | cut -d' ' -f1 | paste -sd,)" = "hyprctl,nova-hyprland-x11-scale" ]
   : >"$CALLS"
   focused eDP-1 2880 1800 1
   run nova-hyprland-monitor-scaling down

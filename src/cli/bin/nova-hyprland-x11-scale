@@ -1,0 +1,56 @@
+#!/bin/bash
+
+# nova:summary=Tell X11 apps the scale of the displays: XWayland's XSETTINGS and Xft.dpi
+# nova:hidden=true
+
+set -euo pipefail
+
+# X11 apps draw at the displays' own resolution (env.lua's force_zero_scaling)
+# and scale themselves, each toolkit by what it reads from the X server:
+#   GTK its scale from XSETTINGS' Gdk/WindowScalingFactor and its text from
+#     Gdk/UnscaledDPI, both followed at once; Chrome and Electron take theirs
+#     through GTK, as they start;
+#   Qt, 5 and 6, as it starts, from Xft.dpi in the X resources, as SDL and
+#     JetBrains' Java do; other Java reads J2D_UISCALE (autostart.lua).
+# xsettingsd (nova-xsettings.service) holds the XSETTINGS, and xrdb puts
+# Xft.dpi in the resources. Qt would follow an Xft/DPI in the XSETTINGS, but
+# draws a window open through the change wrong until it is restarted (Qt
+# 6.12): left out, a running Qt app keeps the scale it started with.
+#
+# One X server serves every display, so the scale is one: the built-in
+# panel's while it is on, else the largest display's, to the nearest whole
+# number (GTK takes no other), or NOVA_X11_SCALE when the session has one. Run
+# at the start, when displays come and go and when a scale changes; xsettingsd
+# is told only when the scale is a new one.
+#
+# A GDK_SCALE set by you (monitors.lua, or the environment the session started
+# in) leaves all of this off, and GTK, Chrome and Java follow it as they did:
+# GTK takes a GDK_SCALE over the XSETTINGS, and its text then from Xft.dpi,
+# twice its size, and Chrome four times.
+
+[[ -n ${DISPLAY:-} && -z ${GDK_SCALE:-} ]] || exit 0
+
+if [[ ${NOVA_X11_SCALE:-} =~ ^[1-9]$ ]]; then
+  scale=$NOVA_X11_SCALE
+else
+  scale=$(hyprctl monitors -j | jq -r '
+    [.[] | select(.disabled != true)] as $on
+    | (first($on[] | select(.name | test("^(eDP|LVDS|DSI)-")) | .scale) // ([$on[].scale] | max) // 1)
+    | (. + 0.5 | floor) | if . < 1 then 1 else . end')
+fi
+[[ $scale =~ ^[1-9]$ ]] || exit 1
+
+dir=$XDG_RUNTIME_DIR/nova
+config=$dir/xsettingsd.conf
+mkdir -p "$dir"
+# xsettingsd takes a DPI in 1024ths.
+settings=$(printf 'Gdk/WindowScalingFactor %d\nGdk/UnscaledDPI %d' "$scale" $((96 * 1024)))
+if [[ ! -f $config || $(<"$config") != "$settings" ]] || ! systemctl --user -q is-active nova-xsettings.service; then
+  printf '%s\n' "$settings" >"$config.new"
+  mv -f "$config.new" "$config"
+  # Started with the first scale, and told each one after.
+  systemctl --user --no-block reload-or-restart nova-xsettings.service
+fi
+# Every pass, as an XWayland started again begins with none; merged, so
+# whatever else is in the resources stays.
+printf 'Xft.dpi:\t%d\n' $((96 * scale)) | xrdb -nocpp -merge
