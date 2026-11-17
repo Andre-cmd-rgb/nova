@@ -8,7 +8,9 @@ import qs.Ui
 // Mobile Data's page in Settings: the modem's state and its switch, the SIM's
 // PIN while it is locked, the APN when the network did not take the one
 // looked up, and the one way back for a modem kept off since it found no SIM
-// at its first start (`nova mobile-data check`).
+// at its first start (`nova mobile-data check`), which switches the modem on
+// and waits up to a minute and a half for it; with a SIM, mobile data stays
+// on for good.
 Column {
   id: root
   spacing: Style.space(22)
@@ -77,21 +79,29 @@ Column {
     return Math.round(n / 1e3) + " kB"
   }
 
+  // "2026-12-01" as "Dec 1", as the bar's card has it.
+  function day(iso) {
+    var d = new Date(String(iso || "") + "T00:00:00")
+    return isNaN(d.getTime()) ? "" : Qt.formatDate(d, "MMM d")
+  }
+
   readonly property string summary: {
+    // The network, its technology and the rest are in the Connection rows.
     switch (modem) {
-    case "connected": return "Connected to " + (info.operator || "the network") + (info.tech ? ", on " + info.tech : "") + "."
+    case "connected": return "Connected"
     case "connecting": return "Connecting…"
-    case "disconnected": return "On " + (info.operator || "the network") + ", not connected."
-    case "searching": return "Searching for a network…"
-    case "starting": return "The modem is starting."
-    case "noprofile": return "Not set up yet: turning it on sets it up, with the APN for the SIM."
-    case "nosim": return "There is no SIM in the slot."
-    case "locked": return info.unlock === "sim-puk" ? "The SIM is blocked after three wrong PINs." : "The SIM needs its PIN."
-    case "failed": return info.why === "sim-error" ? "The SIM could not be read."
-      : "Off: the modem could not be turned on, so it stopped trying. Turning it on tries again; Check for Problems, in Updates, says why."
+    case "disconnected": return "Not connected"
+    case "searching": return "Searching…"
+    case "starting": return "Starting…"
+    // Turning it on sets it up, with the APN for the SIM.
+    case "noprofile": return "Not set up"
+    case "nosim": return "No SIM"
+    case "locked": return info.unlock === "sim-puk" ? "SIM blocked" : "SIM locked"
+    // Off, and no longer trying: turning it on tries again, and Check for
+    // Problems says why.
+    case "failed": return info.why === "sim-error" ? "Could not read the SIM." : "Could not start the modem. Try again."
     case "denied": return "The network refused the SIM."
-    case "disabled": return "Off."
-    case "noservice": return "Off: ModemManager, which runs the modem, is not running."
+    case "noservice": return "The modem service is not running."
     default: return ""
     }
   }
@@ -160,33 +170,30 @@ Column {
   Caption {
     width: parent.width
     visible: !root.loaded
-    text: "Asking the modem…"
+    text: "Checking the modem…"
   }
 
   Section {
     visible: root.loaded && root.modem === "absent"
     Caption {
       width: parent.width
-      text: "This computer has no mobile broadband modem."
+      text: "No modem found"
     }
   }
 
-  // Kept off since its first start found no SIM.
+  // Kept off, and out of the menu bar, to save power, since its first start
+  // found no SIM.
   Section {
     visible: root.parked
     Line {
       label: "Mobile Data"
-      detail: "Off: there was no SIM when the modem first started. It stays off, and out of the menu bar, to save power."
+      detail: "No SIM. Insert one, then check."
       Button {
         text: root.busy ? "Checking…" : "Check for a SIM"
         bordered: true
         enabled: !root.busy
         onClicked: root.run(["nova-mobile-data", "check"])
       }
-    }
-    Caption {
-      width: parent.width
-      text: "Put the SIM in first. Checking switches the modem on and waits up to a minute and a half for it; with a SIM, mobile data stays on for good."
     }
   }
 
@@ -234,8 +241,8 @@ Column {
       visible: Number(root.info.pin_tries || 0) > 0
       color: root.lastTryWarned ? Commons.Color.urgent : Commons.Color.foreground
       opacity: root.lastTryWarned ? 1 : 0.6
-      text: root.lastTryWarned ? "Last try: a wrong PIN locks the SIM. Unlock again to use it."
-        : root.lastTry ? "Last try: a wrong PIN locks the SIM." : root.info.pin_tries + " tries left."
+      text: root.lastTryWarned ? "Last try: a wrong PIN blocks the SIM. Unlock again to use it."
+        : root.lastTry ? "Last try: a wrong PIN blocks the SIM." : root.info.pin_tries + " tries left"
     }
   }
 
@@ -243,7 +250,7 @@ Column {
     visible: root.modem === "locked" && root.info.unlock === "sim-puk"
     Caption {
       width: parent.width
-      text: "The PUK is on the card the SIM came on, or your carrier has it. In a terminal: mmcli -i any --puk=<PUK> --pin=<new PIN>"
+      text: "Unblock it with the PUK from your carrier."
     }
   }
 
@@ -257,7 +264,7 @@ Column {
       TextField {
         id: apn
         width: Style.space(220)
-        placeholderText: "The APN your carrier gives"
+        placeholderText: "From your carrier"
         enabled: !root.busy
         onAccepted: if (text.trim()) root.run(["nova-mobile-data", "apn", text.trim()], ["nova-mobile-data", "on"])
         onVisibleChanged: text = ""
@@ -269,18 +276,6 @@ Column {
         onClicked: root.run(["nova-mobile-data", "apn", apn.text.trim()], ["nova-mobile-data", "on"])
       }
     }
-    Caption {
-      width: parent.width
-      text: "Your carrier's website lists it."
-    }
-  }
-
-  Section {
-    visible: root.modem === "noservice"
-    Caption {
-      width: parent.width
-      text: "Start it, and have it start with the computer, in a terminal: sudo systemctl enable --now ModemManager.service"
-    }
   }
 
   Section {
@@ -291,8 +286,8 @@ Column {
         { label: "Network", value: root.info.operator || "" },
         { label: "Technology", value: root.info.tech || "" },
         { label: "Signal", value: Number(root.info.signal || 0) > 0 ? root.info.signal + "%" : "" },
-        { label: "Address", value: root.info.ip || "" },
-        { label: "Used this month", value: root.bytes(root.info.used_bytes) + (root.info.next_reset ? ", counted again from " + root.info.next_reset : "") }
+        { label: "IP address", value: root.info.ip || "" },
+        { label: "Used this month", value: root.bytes(root.info.used_bytes) + (root.day(root.info.next_reset) ? "  ·  resets " + root.day(root.info.next_reset) : "") }
       ]
       delegate: Line {
         required property var modelData

@@ -94,7 +94,7 @@ ShellRoot {
   property var pinField: null
 
   function locked() {
-    check(page.summary === "The SIM needs its PIN.", "a locked SIM: the page says it needs its PIN")
+    check(page.summary === "SIM locked", "a locked SIM: the page says it is locked")
     page.unlock("12")
     check(!page.busy, "a PIN of two digits is not sent")
     pinField = find(page, item => item.placeholderText === "SIM PIN")
