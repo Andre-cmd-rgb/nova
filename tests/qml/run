@@ -17,6 +17,11 @@
 #                                    may read its answer from a file the test
 #                                    writes into $HOME
 #
+#   // warns: <words>                a warning with these words in it is
+#                                    one the test sets out to cause (a
+#                                    command that cannot start), not a
+#                                    problem
+#
 #   // platform: wayland             runs under a headless sway rather than
 #                                    offscreen, for a test that opens a bar
 #                                    panel (a layer-shell window, which
@@ -127,6 +132,9 @@ for test in "$here"/*-test.qml; do
   # and the lines about a bus, a PipeWire daemon or a NetworkManager are
   # Quickshell's, saying there is none.
   problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -vE 'Detected locale|window masks|Could not connect to DBus|Failed to (connect|create) pipewire context|Could not find an available backend' || true)
+  while IFS= read -r words; do
+    [[ -z $words || -z $problems ]] || problems=$(grep -vF -e "$words" <<<"$problems" || true)
+  done < <(sed -n 's#^// warns: ##p' "$test")
   if ((status != 0)) || [[ -n $problems ]] || ! grep -q 'DONE$' <<<"$log"; then
     echo "FAIL $name (exit $status)"
     grep -E '(ok|FAIL) ' <<<"$log" | sed -E 's/^.*(scene|qml): /  /' || true

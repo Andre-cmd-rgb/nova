@@ -99,7 +99,7 @@ Column {
           text: "Apply"
           bordered: true
           selected: true
-          onClicked: root.command(Model.applyCommand(root.wantCore, root.wantCache))
+          onClicked: root.command(Model.applyCommand(root.wantCore, root.wantCache), null)
         }
       }
     }

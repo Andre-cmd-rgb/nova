@@ -1,4 +1,5 @@
 // stub: bin/nova-settings nova-settings
+// warns: Process failed to start, likely because the binary could not be found. Command: QList("nova-no-such-command")
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -7,8 +8,10 @@ import "plugins/settings" as Settings
 // What Settings shows while a change runs: what the change sets, at once,
 // laid over what was read, and the rest of the state the very objects read;
 // what was read again once its command is done, which for a command that
-// failed is the state as it was, its failure said; and a change still shown
-// when a read that began before its command was done comes back.
+// failed is the state as it was, its failure said; a change still shown
+// when a read that began before its command was done comes back; a command
+// that cannot start, said, and the changes after it run all the same; and
+// a read that fails, which keeps a change that took and not one that failed.
 ShellRoot {
   id: test
 
@@ -135,8 +138,45 @@ ShellRoot {
     same(state.info.bar.position, "left", "and the change is still shown over it")
     when(settled, () => {
       same(state.info.bar.position, "top", "once its command is done and read again, what is set is shown")
-      finish()
+      cannotStart()
     }, "the change runs and the state is read again")
+  }
+
+  function cannotStart() {
+    state.run(["nova-no-such-command"], { "bar.transparent": false })
+    state.run(["sh", "-c", "printf '%s' '" + JSON.stringify({ bar: { transparent: true, position: "bottom" }, lock: { seconds: 300 } })
+      + "' >\"$HOME/settings-state.json\""], { "bar.position": "bottom" })
+    same(state.info.bar.transparent, false, "a change whose command cannot start is shown at once too")
+    when(settled, () => {
+      same(state.info.bar.transparent, true, "a command that cannot start: the state as it was")
+      same(state.failure, "Could not run nova-no-such-command.", "and that it could not run is said")
+      same(state.info.bar.position, "bottom", "the change after it runs all the same")
+      failedRead()
+    }, "a command that cannot start does not hold up the ones after it")
+  }
+
+  // Nothing running and nothing waiting; something may still be laid over.
+  function idle() {
+    return !state.actionProc.running && !state.stateProc.running && state.queue.length === 0
+  }
+
+  function failedRead() {
+    stateFile.setText("{broken")
+    state.run(["sh", "-c", "exit 1"], { "lock.seconds": 60 })
+    when(() => idle() && state.done === state.numbered, () => {
+      same(state.info.lock.seconds, 300, "a change that failed, read back broken: the state as last read")
+      same(state.failure, "That did not work (exit 1).", "and its failure is said")
+      state.run(["sh", "-c", "true"], { "lock.seconds": 120 })
+      when(() => idle() && state.done === state.numbered, () => {
+        same(state.info.lock.seconds, 120, "a change that took, read back broken: still shown")
+        stateFile.setText(first)
+        state.load()
+        when(settled, () => {
+          same(state.info.lock.seconds, 300, "read again: what is set is shown")
+          finish()
+        }, "the state is read again")
+      }, "the change that takes runs")
+    }, "the failing change runs")
   }
 
   // A turn later: Quickshell takes Qt.quit() only once the shell is up.

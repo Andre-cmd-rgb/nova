@@ -13,7 +13,9 @@ import "Asked.js" as Asked
 // state, "bar.transparent": true) is laid over what was read, so that a
 // switch moves as it is clicked, not a command and a read later. It stays
 // laid over until a read begun after its command was done comes back, which
-// has it as it is: set, or, for a command that failed, as it was.
+// has it as it is; a read that fails keeps what is on screen. A change
+// whose command failed, or could not start, goes at once, with its failure
+// said, and the read after has it as it is.
 QtObject {
   id: settings
 
@@ -65,8 +67,23 @@ QtObject {
     var change = next.shift()
     actionProc.command = change.argv
     actionProc.number = change.number
+    actionProc.over = false
     queue = next
     actionProc.running = true
+  }
+
+  // The change running is done: exited with <code>, or never started, with
+  // <message> then.
+  function finished(code, message) {
+    var number = actionProc.number
+    actionProc.over = true
+    done = number
+    if (code !== 0) {
+      failure = message
+      asked = asked.filter(function (change) { return change.number !== number })
+    }
+    if (queue.length > 0) pump()
+    else load()
   }
 
   property Process stateProc: Process {
@@ -96,18 +113,19 @@ QtObject {
 
   property Process actionProc: Process {
     property int number: 0
+    // Whether the change running is done with: a command that cannot start
+    // is never heard to exit, only to stop running.
+    property bool over: true
     stderr: StdioCollector {
       id: actionErrors
       waitForEnd: true
     }
     onExited: function (exitCode) {
-      settings.done = number
-      if (exitCode !== 0) {
-        var message = String(actionErrors.text || "").trim().split("\n").pop()
-        settings.failure = message.length > 0 ? message : "That did not work (exit " + exitCode + ")."
-      }
-      if (settings.queue.length > 0) settings.pump()
-      else settings.load()
+      var message = String(actionErrors.text || "").trim().split("\n").pop()
+      settings.finished(exitCode, message.length > 0 ? message : "That did not work (exit " + exitCode + ").")
+    }
+    onRunningChanged: {
+      if (!running && !over) settings.finished(-1, "Could not run " + command[0] + ".")
     }
   }
 }
