@@ -682,13 +682,8 @@ Item {
             }
           }
         }
-        Caption {
-          width: parent.width
-          text: "Adaptive takes its colors from the background, and changes with it."
-        }
         Line {
-          label: "Adaptive"
-          detail: "Auto follows the background: a pale photo makes the theme light."
+          label: "Adaptive theme"
           visible: (root.appearance.adaptive || "") !== ""
           ButtonGroup {
             options: [{ value: "auto", label: "Auto" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]
@@ -703,7 +698,6 @@ Item {
         title: "BACKGROUND"
         Line {
           label: "Background"
-          detail: "Each theme has its own; your photos in ~/.config/nova/backgrounds are offered with every theme."
           Row {
             spacing: Style.space(8)
             Button { text: "Next"; bordered: true; onClicked: root.run(["nova-theme", "bg", "next"]) }
@@ -717,7 +711,6 @@ Item {
         title: "TEXT"
         Line {
           label: "Font"
-          detail: "Used by the bar, the menu, terminals and code."
           Dropdown {
             options: root.options(root.appearance.fonts, root.appearance.font)
             value: root.appearance.font || ""
@@ -726,7 +719,7 @@ Item {
         }
         Line {
           label: "Text size"
-          detail: textSize.knobAt + " px, in the shell, apps and terminals"
+          detail: textSize.knobAt + " px"
           LevelSlider {
             id: textSize
             width: Style.space(220)
@@ -762,7 +755,6 @@ Item {
         Toggle {
           width: parent.width
           label: "Transparent"
-          detail: "Let the background show through the bar."
           checked: root.bar.transparent === true
           onClicked: root.run(["nova", "bar", "transparent", checked ? "false" : "true"])
         }
@@ -777,7 +769,6 @@ Item {
             required property var modelData
             width: parent.width
             label: modelData.name
-            detail: modelData.description
             checked: (root.bar.shown || []).indexOf(modelData.id) >= 0
             onClicked: root.run(["nova", "bar", checked ? "remove" : "put", modelData.id])
           }

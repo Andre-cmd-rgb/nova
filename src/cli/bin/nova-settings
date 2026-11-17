@@ -106,7 +106,7 @@ radios_json() {
 widgets_json() {
   find "$NOVA_PATH/shell/plugins" \( -name manifest.json -o -name '*.manifest.json' \) -print0 2>/dev/null |
     xargs -0 -r jq -c 'select((.kinds // []) | index("bar-widget"))
-      | {id, name: (.barWidget.displayName // .name), description: (.barWidget.description // .description // "")}' 2>/dev/null |
+      | {id, name: (.barWidget.displayName // .name)}' 2>/dev/null |
     jq -sc 'map(select(.id != "nova.spacer" and .id != "nova.screentime")) | sort_by(.name | ascii_downcase)'
 }
 

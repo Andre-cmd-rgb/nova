@@ -162,7 +162,7 @@ Nova's themes live in `/usr/share/nova/themes/`. A theme of the same name in `~/
 The adaptive theme takes its colors from the background instead of a fixed palette.
 
 - **What marks one:** a `colors.toml` with `adaptive = "auto"` (or `"dark"`, `"light"`). The colors in it are for when there is no photo, the wordmark being drawn in the theme's own.
-- **The mode chosen in Settings:** `nova theme adaptive auto|dark|light` (Settings → Appearance → Adaptive) keeps a choice in `~/.local/state/nova/adaptive`, for every adaptive theme, over the `adaptive` word in its `colors.toml`, and sets the theme in use again. With no argument it prints the choice in effect.
+- **The mode chosen in Settings:** `nova theme adaptive auto|dark|light` (Settings → Appearance → Adaptive theme) keeps a choice in `~/.local/state/nova/adaptive`, for every adaptive theme, over the `adaptive` word in its `colors.toml`, and sets the theme in use again. With no argument it prints the choice in effect.
 - **When it reads the photo:** on `nova theme set`, and on every `bg set` while such a theme is in use.
 - **How:** the engine has `vipsthumbnail` shrink the photo to a PPM, and reads three things from it in OKLCH (`src/theme/src/adaptive.rs`): the hue of the parts the surfaces will stand in for (the darker ones for a dark theme), the hue that stands out, and how vivid it is.
 - **Lightness comes from the role, not the photo**, so text reads on its surface whatever the photo is, and the terminal's red stays red.
