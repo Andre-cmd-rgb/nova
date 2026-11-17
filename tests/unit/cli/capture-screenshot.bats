@@ -2,8 +2,8 @@
 
 # nova-capture-screenshot: where a screenshot goes for each action, the
 # notification that opens it to edit, hardware cursors while it is taken, and
-# the freeze ended after. nova-capture-region, grim, wl-copy, hyprctl, pkill
-# and the notification are stubs that log; the picker's freeze is a sleep.
+# the freeze ended after. nova-capture-region, grim, wl-copy, hyprctl, pidof,
+# pkill and the notification are stubs that log; the picker's freeze is a sleep.
 
 load ../test_helper
 
@@ -19,6 +19,7 @@ setup() {
   stub grim 'echo "grim $*" >>"$CALLS"; if [[ $3 == - ]]; then echo PNG; else echo PNG >"$3"; fi'
   stub wl-copy 'echo "wl-copy $* $(cat)" >>"$CALLS"'
   stub hyprctl 'case $1 in getoption) echo "{\"int\": 1}" ;; *) echo "hyprctl $*" >>"$CALLS" ;; esac'
+  stub pidof '[[ $* == "-q slurp" && -e $SCRATCH/slurp-up ]]'
   stub pkill '[[ -e $SCRATCH/slurp-up ]] && echo "pkill $*" >>"$CALLS"'
   stub nova-notification-send 'echo "notify $*" >>"$CALLS"'
   export PATH="$SCRATCH/bin:$PATH"

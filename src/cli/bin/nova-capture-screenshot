@@ -24,8 +24,12 @@ done
 mode=${words[0]:-smart} action=${words[1]:-slurp}
 [[ $action == slurp || $action == copy || $action == save ]] || usage
 
-# PRINT pressed again while the picker is up puts it away.
-if pkill -x slurp; then exit 0; fi
+# PRINT pressed again while the picker is up puts it away. pidof asks, in a
+# fifth of the time pkill takes, as every screenshot asks before it starts.
+if pidof -q slurp; then
+  pkill -x slurp || true
+  exit 0
+fi
 
 # Where Hyprland draws the cursor itself (a GPU without working hardware
 # cursors), grim takes it in every frame: hardware cursors, then, until the

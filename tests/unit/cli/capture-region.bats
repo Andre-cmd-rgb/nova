@@ -19,9 +19,11 @@ setup() {
   "monitors -j") cat "$SCRATCH/monitors" ;;
   "clients -j") cat "$SCRATCH/clients" ;;
   "cursorpos ") cat "$SCRATCH/pointer" ;;
+  "layers -j") if [[ -e $SCRATCH/frozen ]]; then echo "{\"namespace\": \"hyprpicker\"}"; else echo "{}"; fi ;;
   *) [[ $* =~ x\ =\ (-?[0-9]+),\ y\ =\ (-?[0-9]+) ]] && echo "move ${BASH_REMATCH[1]} ${BASH_REMATCH[2]}" >>"$CALLS" ;;
 esac'
-  stub hyprpicker 'sleep 5'
+  # The still is on screen as hyprpicker starts.
+  stub hyprpicker 'touch "$SCRATCH/frozen"; exec sleep 5'
   stub pgrep 'exit 0'
   stub pkill 'echo "pkill $*" >>"$CALLS"'
   export PATH="$SCRATCH/bin:$PATH"
@@ -56,6 +58,25 @@ click() { # x y
 @test "a dragged region stays as it was drawn" {
   stub slurp "cat >/dev/null; echo '10,10 300x300'"
   run region smart
+  [ "$output" = '10,10 300x300' ]
+}
+
+@test "slurp comes up once the still of the screen is on it, and not before" {
+  stub hyprpicker 'sleep 0.3; touch "$SCRATCH/frozen"; exec sleep 5'
+  stub slurp 'if [[ -e $SCRATCH/frozen ]]; then echo after >"$SCRATCH/slurp-when"; else echo before >"$SCRATCH/slurp-when"; fi; cat >/dev/null; echo "10,10 300x300"'
+  for mode in smart region windows; do
+    rm -f "$SCRATCH/frozen" "$SCRATCH/slurp-when"
+    run region "$mode"
+    [ "$output" = '10,10 300x300' ]
+    [ "$(cat "$SCRATCH/slurp-when")" = after ]
+  done
+}
+
+@test "a hyprpicker that cannot start holds nothing up" {
+  stub hyprpicker 'exit 1'
+  stub slurp 'cat >/dev/null; echo "10,10 300x300"'
+  run region smart
+  [ "$status" -eq 0 ]
   [ "$output" = '10,10 300x300' ]
 }
 

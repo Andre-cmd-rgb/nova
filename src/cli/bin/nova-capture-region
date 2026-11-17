@@ -256,32 +256,48 @@ pick() {
 }
 
 # hyprpicker shows a still of the screen over it, so that what is picked holds
-# still; it is given a moment to come up. It goes when this does, unless the
-# caller keeps it.
+# still. It is started first, and what slurp is offered is found while it
+# comes up. It goes when this does, unless the caller keeps it.
 freezer=""
 freeze() {
   hyprpicker -r -z >/dev/null 2>&1 &
   freezer=$!
-  sleep .1
 }
 trap '$keep_freeze || [[ -z $freezer ]] || kill "$freezer" 2>/dev/null || true' EXIT
+
+# slurp comes up once the still is on screen, hyprpicker's layer mapped, some
+# 20 ms after it starts: slurp mapped first would be under it. Not past half
+# a second, and not at all for a hyprpicker that is gone (without a pointer,
+# it will not start).
+frozen() {
+  local until=$((${EPOCHREALTIME/./} + 500000))
+  while ((${EPOCHREALTIME/./} < until)); do
+    hyprctl layers -j 2>/dev/null | grep -q '"namespace": *"hyprpicker"' && return 0
+    kill -0 "$freezer" 2>/dev/null || return 0
+    sleep 0.005
+  done
+}
 
 case $mode in
   fullscreen) picked=$(focused_geo) ;;
   region)
     freeze
+    frozen
     picked=$(pick)
     ;;
   windows)
     freeze
-    picked=$(layout | only monitor window | pick -r)
+    offered=$(layout | only monitor window)
+    frozen
+    picked=$(pick -r <<<"$offered")
     ;;
   *)
     # smart, as is anything else. A click takes the region slurp highlighted
     # under it, the window or, beside every window, the monitor: no captures
     # of a pixel or two.
-    offered=$(layout | only monitor window)
     freeze
+    offered=$(layout | only monitor window)
+    frozen
     picked=$(pick <<<"$offered")
     if [[ $picked =~ ^(-?[0-9]+),(-?[0-9]+)\ ([0-9]+)x([0-9]+)$ ]] && ((BASH_REMATCH[3] * BASH_REMATCH[4] < 20)); then
       mapfile -t regions <<<"$offered"
