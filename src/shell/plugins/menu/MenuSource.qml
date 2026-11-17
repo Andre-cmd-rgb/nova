@@ -2,13 +2,14 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import "Calculator.js" as Calculator
 import "MenuModel.js" as MenuModel
 
 // Where the menu's items come from: Nova's menu.jsonc with the user's laid
 // over it, each read again when it changes; the apps of the shell's
 // library and the rows of the two bash providers, added to a menu as it is
-// first shown or searched; the answers of every when: and checked:; and the
-// home's files a search finds.
+// first shown or searched; the answers of every when: and checked:; the
+// home's files a search finds; and qalc's answer to a sum typed.
 Item {
   id: source
 
@@ -235,11 +236,13 @@ Item {
   // What the last search of the files printed (MenuModel.fileRows reads it).
   property string filesFound: ""
 
-  // A menu opened anew shows none of the last opening's files.
+  // A menu opened anew shows none of the last opening's files, nor its
+  // answer.
   function forgetFiles() {
     filesFound = ""
     asked.stop()
     finder.next = ""
+    calculate("")
   }
 
   // The files for <query>, once the keys have rested 80 ms: a word typed
@@ -288,5 +291,100 @@ Item {
       // The search that waited, a turn later, once this one has settled.
       if (finder.next) Qt.callLater(source.findWaiting)
     }
+  }
+
+  // --------------------------------------------------------------- answers
+
+  // The sum the search is ("" for none: Calculator.js); qalc's answers to
+  // the sums typed since the search became one, { sum: answer }, an answer
+  // being { label, copy }, or null for none; and the answer shown last.
+  property string sum: ""
+  property var worked: ({})
+  property var shown: null
+  // A sum asked and not answered yet.
+  readonly property bool calculating: sum !== "" && !worked.hasOwnProperty(sum)
+
+  // The answer to <query>, once the keys have rested 50 ms: qalc takes some
+  // 30 ms, and a sum typed fast is one run, not one a key. One asked for
+  // while qalc runs waits for it, and only the latest waits. Nothing is run
+  // for a search that is not a sum, as an app's name is not, and a search
+  // that stops being one drops the answers.
+  function calculate(query) {
+    const next = Calculator.expression(query)
+    if (next === sum) return
+    sum = next
+    pondered.stop()
+    calculator.next = ""
+    if (!sum) {
+      worked = {}
+      shown = null
+    } else if (worked.hasOwnProperty(sum)) {
+      shown = worked[sum]
+    } else {
+      pondered.restart()
+    }
+  }
+
+  // The answer while <query> is the sum. While a sum typed since is worked
+  // out, the one shown stays, so that the row does not blink at each key;
+  // Return waits for the new one (Menu.qml).
+  function answerFor(query) {
+    if (!sum || Calculator.expression(query) !== sum) return null
+    return worked.hasOwnProperty(sum) ? worked[sum] : shown
+  }
+
+  Timer {
+    id: pondered
+    interval: 50
+    onTriggered: source.ask(source.sum)
+  }
+
+  function ask(sum) {
+    if (calculator.running) {
+      calculator.next = sum
+      return
+    }
+    calculator.next = ""
+    calculator.sum = sum
+    calculator.printed = ""
+    calculator.command = Calculator.command(sum)
+    calculator.running = true
+  }
+
+  function askWaiting() {
+    if (calculator.next && !calculator.running) ask(calculator.next)
+  }
+
+  // An answer that comes once the search is no longer a sum is dropped.
+  function settle(sum, found) {
+    if (!sum || !source.sum || worked.hasOwnProperty(sum)) return
+    const next = Object.assign({}, worked)
+    next[sum] = found || null
+    worked = next
+    if (sum === source.sum) shown = next[sum]
+    updated()
+  }
+
+  // qalc in English with a dot for decimals, whatever the locale, as the
+  // sums are typed so; and with its settings and history in the runtime
+  // folder, gone at logout, rather than in the home.
+  Process {
+    id: calculator
+    property string sum: ""
+    property string printed: ""
+    property string next: ""
+    environment: ({ LC_ALL: "C.UTF-8", QALCULATE_USER_DIR: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/calculator" })
+    stdout: SplitParser {
+      onRead: line => calculator.printed += line + "\n"
+    }
+    onExited: function(code, status) {
+      source.settle(calculator.sum, code === 0 && status === 0 ? Calculator.answer(calculator.printed, calculator.sum) : null)
+    }
+    // One that never started (no qalc) answers nothing, a turn later, once
+    // an exit has had its say; then the sum that waited.
+    onRunningChanged: if (!running) Qt.callLater(function() {
+      source.settle(calculator.sum, null)
+      source.askWaiting()
+    })
   }
 }

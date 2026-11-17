@@ -1,0 +1,17 @@
+#!/bin/sh
+# qalc, for the menu's calculator: notes each run, a line a run, in
+# $HOME/qalc-calls (the expression, its locale and where qalc may write),
+# and answers a few as qalc 5 does; anything else as a word it does not
+# know. The expression is the last word, after qalc's options.
+for last; do :; done
+printf '%s|%s|%s\n' "$last" "$LC_ALL" "$QALCULATE_USER_DIR" >>"$HOME/qalc-calls"
+case $last in
+  "2*(3+4)") echo "2 × (3 + 4) = 14" ;;
+  "12*3") echo "12 × 3 = 36" ;;
+  "5 km to -miles") echo "5 kilometers ≈ 3.106855961 mi" ;;
+  " -5 - 2") echo "(−5) − 2 = −7" ;;
+  *)
+    echo "error: \"$last\" is not a valid variable/function/unit."
+    echo "0 = 0"
+    ;;
+esac

@@ -3,8 +3,8 @@
 // What the menu knows, apart from how it is drawn: menu.jsonc read into a
 // catalog of items, the rows the apps and the providers add to it, routes,
 // the rows a menu, a search and the chooser list, the files a search finds,
-// the list's height, and the one bash script that answers every when: and
-// checked:.
+// a sum's answer, the list's height, and the one bash script that answers
+// every when: and checked:.
 //
 // A catalog is { items, kids }: items a Map from id to item, in the order
 // the items came (the default file's, the user's new ones, then the rows
@@ -339,6 +339,18 @@ function folderCommand(row) {
 // A path opened by the app it goes with, as the session opens apps.
 function opener(path) {
   return "uwsm-app -- xdg-open " + quoted(path)
+}
+
+// ------------------------------------------------------------------- answers
+
+// The answer to a sum (Calculator.answer), as the row that goes before a
+// search's others, or none: the answer by a calculator, and Return copies it.
+function answerRows(answer) {
+  if (!answer || !answer.label) return []
+  return [{
+    key: "answer", kind: "answer", glyph: "\u{F00EC}", appIcon: "", appId: "", label: answer.label,
+    line: "", command: "wl-copy -- " + quoted(answer.copy), section: ""
+  }]
 }
 
 // ----------------------------------------------------------- the list's rows

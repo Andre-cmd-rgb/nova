@@ -5,7 +5,7 @@
   // IDs are object keys, and dotted IDs define the tree: capture.screenrecord.stop
   // belongs under capture.screenrecord. An entry with `action` runs it, an entry
   // with `provider` fills its submenu from a provider in Menu.qml, anything else is
-  // a submenu.
+  // a submenu. Entries under an action (settings.wifi) are found by a search only.
   // Optional fields:
   //   aliases   extra names for `nova-menu toggle <name>`, also matched by search
   //   title     header shown while the submenu is open (defaults to label)
@@ -73,4 +73,25 @@
   "system.reboot": {"icon":"󰜉","label":"Restart","action":"nova-system-reboot"},
   "system.recovery": {"icon":"󰁯","label":"Restart to Recovery","action":"nova-recovery"},
   "system.shutdown": {"icon":"󰐥","label":"Shut Down","action":"nova-system-shutdown"},
+
+  // Settings' pages, which a search finds under Settings (where Return on
+  // Settings itself opens it at its first page), each where this computer
+  // has the page
+  "settings.wifi": {"icon":"󰖩","label":"Wi-Fi","aliases":["wireless","network","internet"],"when":"grep -qsx wlan /sys/class/rfkill/*/type","action":"nova-settings wifi"},
+  "settings.bluetooth": {"icon":"󰂯","label":"Bluetooth","aliases":["pairing"],"when":"grep -qsx bluetooth /sys/class/rfkill/*/type","action":"nova-settings bluetooth"},
+  "settings.mobile-data": {"icon":"󰞃","label":"Mobile Data","aliases":["cellular","modem","sim","apn","5g","lte"],"when":"grep -qsx wwan /sys/class/rfkill/*/type","action":"nova-settings mobile-data"},
+  "settings.airdrop": {"icon":"󰀃","label":"AirDrop","when":"nova-airdrop available","action":"nova-settings airdrop"},
+  "settings.notifications": {"icon":"󰂚","label":"Notifications","aliases":["do not disturb","dnd","alerts"],"action":"nova-settings notifications"},
+  "settings.sound": {"icon":"󰕾","label":"Sound","aliases":["audio","volume","speakers","headphones","microphone"],"action":"nova-settings sound"},
+  "settings.displays": {"icon":"󰍹","label":"Displays","aliases":["monitor","screen","resolution","scale","night light"],"action":"nova-settings displays"},
+  "settings.keyboard": {"icon":"󰌌","label":"Keyboard & Mouse","aliases":["touchpad","trackpad","layout","input","scrolling"],"action":"nova-settings keyboard"},
+  "settings.battery": {"icon":"󰁹","label":"Battery","aliases":["charge","lid","hibernate","power button"],"when":"grep -qsx Battery /sys/class/power_supply/BAT*/type","action":"nova-settings battery"},
+  "settings.performance": {"icon":"󰓅","label":"Performance","aliases":["undervolt","gpu","cpu"],"when":"grep -qm1 GenuineIntel /proc/cpuinfo || nova-power-profile list","action":"nova-settings performance"},
+  "settings.screentime": {"icon":"󰥔","label":"Screen Time","aliases":["usage"],"action":"nova-settings screentime"},
+  "settings.appearance": {"icon":"󰸌","label":"Appearance","aliases":["dark mode","light mode","text size","fonts"],"action":"nova-settings appearance"},
+  "settings.bar": {"icon":"󰍜","label":"Menu Bar","aliases":["widgets"],"action":"nova-settings bar"},
+  "settings.lock": {"icon":"󰌾","label":"Lock Screen","aliases":["password","screensaver","fingerprint"],"action":"nova-settings lock"},
+  "settings.apps": {"icon":"󰀻","label":"Default Apps","aliases":["browser","editor","terminal"],"action":"nova-settings apps"},
+  "settings.updates": {"icon":"󰚰","label":"Updates","aliases":["upgrade"],"action":"nova-settings updates"},
+  "settings.about": {"icon":"󰋼","label":"About","aliases":["version","computer","hostname"],"action":"nova-settings about"},
 }

@@ -130,6 +130,7 @@ depends=(
   jq
   libnotify      # notify-send
   libpulse       # pactl
+  libqalculate   # qalc, the sums and conversions in the menu's search
   libxkbcommon   # xkbcli, for the keyboard layout widget
   mise
   perl           # nova-menu-select, clipboard capture

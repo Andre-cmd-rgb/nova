@@ -230,4 +230,16 @@ A search from the root finds the home's files too, once a word of it has
 three letters and the keys have rested 80 ms: `menu/files.sh` reads its list
 of them (`$XDG_RUNTIME_DIR/nova/menu-files`), made by the first search and
 again behind one once it is five minutes old, one walk at a time. A file
-opens with `uwsm-app -- xdg-open`, its folder too.
+opens with `uwsm-app -- xdg-open`, its folder too. The files opened lately,
+which GTK's apps note in `recently-used.xbel`, are read at each search and
+go first.
+
+Settings' pages are the `settings.*` entries of `menu.jsonc`, under an
+action, so a search finds them and the list does not show them. A search
+from the root that reads as a sum or a conversion (`menu/Calculator.js`
+says which, and turns "in" into qalc's "to") goes to `qalc` once the keys
+have rested 50 ms, one run at a time, and without currencies, whose rates
+would need the network; qalc keeps its settings in
+`$XDG_RUNTIME_DIR/nova/calculator`. Its answer is the first row, and Return
+copies it with `wl-copy`. While the next sum is worked out, the last answer
+stays, and Return waits for the new one.

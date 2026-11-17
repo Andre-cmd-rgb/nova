@@ -6,8 +6,8 @@ import "MenuModel.js" as MenuModel
 
 // Nova's menu: the apps, settings and commands of menu.jsonc on a card over
 // the screen, walked with the keys or the pointer and searched by typing,
-// the home's files found too; and nova-menu-select's chooser, a list to pick
-// from. The shell keeps it
+// the home's files found too, and a sum or a conversion typed answered; and
+// nova-menu-select's chooser, a list to pick from. The shell keeps it
 // loaded: `nova-shell shell summon nova.menu` hands open() its payload, hide
 // calls close(), nova menu's refresh and ping call refresh() and ping(), and
 // toggle reads opened.
@@ -51,6 +51,12 @@ Item {
 
   property bool opened: false
   readonly property bool ready: source.ready
+  // A sum typed whose answer has not come yet: the card does not say there
+  // are no matches meanwhile.
+  readonly property bool calculating: source.calculating
+  // Return on an answer while the sum typed since is worked out: the row
+  // still shows the answer before, and the new one is taken once it comes.
+  property bool answerAwaited: false
   // The chooser, while it is up: its prompt, its options, and the card's
   // width and the rows' most height it asked for.
   property bool choosing: false
@@ -65,9 +71,13 @@ Item {
   property var rows: []
   // The app the uninstall question asks about, { appId, label }, or null.
   // Closing drops the question, and so does a menu or a chooser opened over
-  // it: it would keep the keys, and Return would uninstall the app.
+  // it: it would keep the keys, and Return would uninstall the app. Closing
+  // drops an answer awaited too.
   property var asking: null
-  onOpenedChanged: if (!opened) asking = null
+  onOpenedChanged: if (!opened) {
+    asking = null
+    answerAwaited = false
+  }
 
   // What the card's head shows with nothing typed in a menu: its title, or
   // its label.
@@ -140,10 +150,12 @@ Item {
   // ------------------------------------------------------------- the rows
 
   // Lists the chooser's options, what a search finds, or the menu shown;
-  // nothing until a menu file is read. Rows that cannot be worked out leave
-  // the list empty rather than showing the last. With <stay>, for rows that
-  // came by themselves (files found, answers), the cursor stays on its row
-  // where that is still listed: Return then does what was lit.
+  // nothing until a menu file is read. A sum's answer goes first. Rows that
+  // cannot be worked out leave the list empty rather than showing the last.
+  // With <stay>, for rows that came by themselves (files found, answers), the
+  // cursor stays on its row where that is still listed: Return then does
+  // what was lit. An answer that comes takes the cursor from the top row,
+  // though: Return after a sum is meant for its answer.
   function relist(stay) {
     const lit = stay && rows[cursor] ? rows[cursor].key : ""
     let next = []
@@ -154,6 +166,7 @@ Item {
         if (!source.catalog.items.has(here)) here = "root"
         next = typed.trim() ? MenuModel.searchRows(source.catalog, here, typed, source.answers)
           : MenuModel.menuRows(source.catalog, here, source.answers, typed !== "")
+        if (calculates()) next = MenuModel.answerRows(source.answerFor(typed)).concat(next)
         if (searchesFiles()) next = next.concat(MenuModel.fileRows(source.filesFound, typed, home, next.length > 0))
       }
     } finally {
@@ -161,7 +174,8 @@ Item {
       window.show(next)
     }
     if (!choosing && !ready) return
-    const still = lit ? next.findIndex(row => row.key === lit) : -1
+    const answered = cursor === 0 && next.length > 0 && next[0].kind === "answer"
+    const still = lit && !answered ? next.findIndex(row => row.key === lit) : -1
     cursor = still >= 0 ? still : Math.max(0, Math.min(cursor, next.length - 1))
     Qt.callLater(window.reveal)
   }
@@ -179,7 +193,11 @@ Item {
     }
 
     function onUpdated() {
-      if (plugin.opened) plugin.relist(true)
+      if (!plugin.opened) return
+      plugin.relist(true)
+      if (!plugin.answerAwaited || plugin.calculating) return
+      plugin.answerAwaited = false
+      if (plugin.rows.length > 0 && plugin.rows[0].kind === "answer") plugin.take(0)
     }
 
     function onProviderDone() {
@@ -200,19 +218,25 @@ Item {
 
   // What is typed is now <text>: the search, or the chooser's filter. A
   // search runs the providers of every menu it reaches, and one from the
-  // root looks among the home's files too.
+  // root looks among the home's files too, and works out a sum.
   function filter(text) {
     window.pin()
     typed = text
+    answerAwaited = false
     cursor = 0
     gate.rowsMoved()
     if (!choosing && typed.trim()) source.fillUnder(here)
     if (searchesFiles()) source.findFiles(typed.trim())
+    source.calculate(calculates() ? typed : "")
     relist()
   }
 
   function searchesFiles() {
     return !choosing && MenuModel.findsFiles(here, typed)
+  }
+
+  function calculates() {
+    return !choosing && here === "root"
   }
 
   // Into the menu <id> (the root for one that is not there), remembered for
@@ -226,6 +250,7 @@ Item {
     typed = ""
     cursor = 0
     gate.rowsMoved(byPointer)
+    source.calculate("")
     relist()
     source.refill(into)
   }
@@ -245,7 +270,8 @@ Item {
 
   // Does what the row at <index> is for: picks the chooser's option, its
   // line too when it has one; enters a menu; launches an app; runs a
-  // command, which for a file opens it.
+  // command, which for a file opens it and for an answer copies it, once
+  // the answer is the sum's typed.
   function take(index, byPointer) {
     const row = rows[index]
     if (asking || !row) return
@@ -253,6 +279,8 @@ Item {
       answer(row.line ? row.label + "\t" + row.line : row.label)
     } else if (row.kind === "menu") {
       go(row.key, true, byPointer)
+    } else if (row.kind === "answer" && calculating) {
+      answerAwaited = true
     } else {
       opened = false
       typed = ""

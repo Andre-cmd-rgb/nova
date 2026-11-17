@@ -208,7 +208,8 @@ PanelWindow {
           anchors.centerIn: parent
           width: Style.space(320)
           spacing: Style.space(8)
-          visible: shown.count === 0
+          // Not while a sum's answer is coming, a moment later.
+          visible: shown.count === 0 && !window.menu.calculating
 
           Text {
             width: parent.width

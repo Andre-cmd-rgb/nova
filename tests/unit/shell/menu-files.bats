@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 
 # The menu's file search (plugins/menu/files.sh), on a home made here: what
-# it lists and leaves out, how it ranks what it finds, and that it lists the
-# home again only behind a search whose list is five minutes old, one walk
-# at a time.
+# it lists and leaves out, how it ranks what it finds, the files opened
+# lately first, and that it lists the home again only behind a search whose
+# list is five minutes old, one walk at a time.
 
 load ../test_helper
 
@@ -12,6 +12,7 @@ files="$REPO_ROOT/src/shell/plugins/menu/files.sh"
 setup() {
   setup_scratch
   export HOME=$SCRATCH/home XDG_RUNTIME_DIR=$SCRATCH/run
+  unset XDG_DATA_HOME
   mkdir -p "$HOME" "$XDG_RUNTIME_DIR"
 }
 
@@ -126,4 +127,56 @@ find_() { "$files" find "$@" | sed "s#$HOME/##"; }
   run "$files" sideways
   [ "$status" -eq 2 ]
   [[ $output == *"files.sh find <words>"* ]]
+}
+
+# Files opened at <when>, noted in recently-used.xbel as GTK writes it: a
+# bookmark a file, its href a URI written in XML, an application's own
+# modified time inside it.
+opened() { # when uri-path...
+  local when=$1 bookmarks=$SCRATCH/bookmarks uri
+  shift
+  for uri; do
+    printf '  <bookmark href="file://%s" added="%s" modified="%s" visited="%s">\n' "$HOME/$uri" "$when" "$when" "$when"
+    printf '    <info><metadata owner="http://freedesktop.org"><bookmark:applications>\n'
+    printf '      <bookmark:application name="loupe" exec="&apos;loupe %%u&apos;" modified="2020-01-01T00:00:00Z" count="1"/>\n'
+    printf '    </bookmark:applications></metadata></info>\n  </bookmark>\n'
+  done >>"$bookmarks"
+  mkdir -p "$HOME/.local/share"
+  { printf '<?xml version="1.0" encoding="UTF-8"?>\n<xbel version="1.0">\n'; cat "$bookmarks"; printf '</xbel>\n'; } \
+    >"$HOME/.local/share/recently-used.xbel"
+}
+
+@test "files opened lately come first, the newest first, wherever they are in the home" {
+  put Documents/tax/ Documents/taxes.pdf "Old/Tax Return 2019.pdf" .notes/tax-notes.md "a/b/c/d/e/tax deep.txt" \
+    Projects/syntax.txt Mount/tax-remote.pdf
+  opened 2026-11-01T09:00:00Z "Old/Tax%20Return%202019.pdf" .notes/tax-notes.md
+  opened 2026-11-10T09:00:00Z "a/b/c/d/e/tax%20deep.txt" Projects/syntax.txt Gone/taxman.pdf Mount/tax-remote.pdf
+  export NOVA_MOUNTS=$SCRATCH/mounts
+  printf '%s\n' "/dev/root / btrfs rw 0 0" "server:/srv $HOME/Mount nfs4 rw 0 0" >"$NOVA_MOUNTS"
+  run find_ tax
+  # Hidden and six folders down are found too. A name that only holds the
+  # word (syntax) gets no lift; one gone, or below a mount, is not shown.
+  [ "${lines[0]}" = $'f\ta/b/c/d/e/tax deep.txt' ]
+  [ "${lines[1]}" = $'f\tOld/Tax Return 2019.pdf' ]
+  [ "${lines[2]}" = $'f\t.notes/tax-notes.md' ]
+  [ "${lines[3]}" = $'d\tDocuments/tax' ]
+  [ "${lines[4]}" = $'f\tDocuments/taxes.pdf' ]
+  [ "${#lines[@]}" -eq 5 ]
+}
+
+@test "a file opened lately is listed once, the better match first, its name read whole" {
+  put "Notes & Ideas/plan.txt" "it's a plan.md" "caffè plan.txt"
+  opened 2026-11-01T09:00:00Z "Notes%20&amp;%20Ideas/plan.txt" "it&apos;s%20a%20plan.md" "caff%C3%A8%20plan.txt"
+  run find_ plan
+  [ "$output" = "$(printf 'f\t%s\n' "Notes & Ideas/plan.txt" "it's a plan.md" "caffè plan.txt")" ]
+}
+
+@test "no recently-used.xbel, or one that is not one: the home's files as ever" {
+  put plans.txt
+  run find_ plan
+  [ "$output" = $'f\tplans.txt' ]
+  mkdir -p "$HOME/.local/share"
+  printf 'not xml at all\n<bookmark href="file://\n' >"$HOME/.local/share/recently-used.xbel"
+  run find_ plan
+  [ "$output" = $'f\tplans.txt' ]
 }
