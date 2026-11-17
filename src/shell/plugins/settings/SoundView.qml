@@ -84,7 +84,7 @@ Column {
   Section {
     title: "OUTPUT"
     Line {
-      label: "Play sound through"
+      label: "Device"
       Dropdown {
         options: root.outputs
         value: root.selected ? String(root.selected.name) : ""
@@ -95,8 +95,8 @@ Column {
     }
     Line {
       label: "Volume"
-      detail: !root.output || !root.output.audio ? "No output."
-        : root.output.audio.muted ? "Muted." : Math.round(outputSlider.knobAt * 100) + "%"
+      detail: !root.output || !root.output.audio ? "No output"
+        : root.output.audio.muted ? "Muted" : Math.round(outputSlider.knobAt * 100) + "%"
       Row {
         spacing: Style.space(12)
         LevelSlider {
@@ -120,7 +120,7 @@ Column {
   Section {
     title: "INPUT"
     Line {
-      label: "Record sound from"
+      label: "Device"
       Dropdown {
         options: root.inputs
         value: root.source ? String(root.source.name) : ""
@@ -130,9 +130,9 @@ Column {
       }
     }
     Line {
-      label: "Input volume"
-      detail: !root.source || !root.source.audio ? "No microphone."
-        : root.source.audio.muted ? "Muted: nothing records you." : Math.round(inputSlider.knobAt * 100) + "%"
+      label: "Volume"
+      detail: !root.source || !root.source.audio ? "No microphone"
+        : root.source.audio.muted ? "Muted" : Math.round(inputSlider.knobAt * 100) + "%"
       Row {
         spacing: Style.space(12)
         LevelSlider {

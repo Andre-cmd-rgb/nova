@@ -4,6 +4,9 @@ import qs.Ui
 // The Notifications page: do-not-disturb's switch, and the hours it holds by
 // itself every day. The hours are nova notification schedule's, kept in
 // shell.json; the shell's notifications follow them, and do the switching.
+// Nova's answers to what you just did still show, and so do urgent
+// notifications sent by scripts; a switch by hand holds until the schedule's
+// next turn.
 Section {
   id: root
 
@@ -23,14 +26,12 @@ Section {
   Toggle {
     width: parent.width
     label: "Do Not Disturb"
-    detail: "Notifications go to the history without showing."
     checked: !!root.service && root.service.doNotDisturb
     onClicked: if (root.service) root.service.setDoNotDisturb(!root.service.doNotDisturb)
   }
 
   Line {
     label: "Schedule"
-    detail: root.scheduled ? "Every day, by the clock." : "It comes on only by hand."
     ButtonGroup {
       options: [{ value: "off", label: "Off" }, { value: "hours", label: "Set Hours" }]
       value: root.scheduled ? "hours" : "off"
@@ -43,11 +44,5 @@ Section {
     from: root.settings.from || "22:00"
     to: root.settings.to || "07:00"
     onPicked: function (end, time) { root.command(["nova-notification-schedule", end, time]) }
-  }
-
-  Caption {
-    width: parent.width
-    text: "Nova's answers to what you just did still show, and so do urgent notifications sent by scripts."
-      + (root.scheduled ? " Switched by hand, from the bar, the keys or the menu, it stays so until the schedule's next turn." : "")
   }
 }
