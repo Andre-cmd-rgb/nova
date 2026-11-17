@@ -15,6 +15,9 @@ pub const EVERYONE: &str =
     "On the iPhone, choose Everyone for 10 Minutes (Settings, General, AirDrop).";
 /// How long it looks before it says what the iPhone needs.
 pub const HINT_AFTER: Duration = Duration::from_secs(10);
+/// How long the one --to names must have been the only one of that name before it is picked: a
+/// name is anybody's to give, and another device of the same name nearby may show a moment after.
+pub const SETTLE: Duration = Duration::from_secs(5);
 
 /// The last words of a send that ended without any of the daemon's.
 pub const WENT_OFF: &str = "AirDrop went off before anything was sent.";
@@ -267,8 +270,12 @@ pub struct Picker {
     pub listed: Vec<Listed>,
     /// The name it was given (--to), to pick by itself.
     to: Option<String>,
-    /// A receiver was picked: the list is over.
+    /// A receiver was picked: the list is over, unless the daemon says it has gone.
     picked: bool,
+    /// The id of the one picked.
+    picked_id: Option<String>,
+    /// The one --to names, and since when it has been the only one of that name.
+    settling: Option<(String, Instant)>,
     began: Instant,
     hinted: bool,
     bluetooth_said: bool,
@@ -310,6 +317,8 @@ impl Picker {
             listed: Vec::new(),
             to,
             picked: false,
+            picked_id: None,
+            settling: None,
             began,
             hinted: false,
             bluetooth_said: false,
@@ -351,6 +360,13 @@ impl Picker {
             ([], []) => Named::Nobody,
             _ => Named::More,
         }
+    }
+
+    /// The receiver of this id picked: what to tell the daemon.
+    fn pick(&mut self, id: &str) -> Option<String> {
+        self.picked = true;
+        self.picked_id = Some(id.to_owned());
+        Some(format!("to {id}"))
     }
 
     fn line(&mut self, words: &str) -> String {
@@ -428,22 +444,41 @@ impl Picker {
                     self.bluetooth_said = true;
                     step.say += &self.line(bluetooth);
                 }
+                // The one picked went before it could be asked: said, and the list again.
+                let gone = said.text("gone");
+                if self.picked && !gone.is_empty() && self.picked_id.as_deref() == Some(gone) {
+                    self.picked = false;
+                    self.picked_id = None;
+                    self.settling = None;
+                    let name = self.listed.iter().find(|l| l.id == gone);
+                    let name = quote(name.map_or("", |l| l.name.as_str()));
+                    step.say += &self.line(&format!("{name} is not nearby any more."));
+                    let here: Vec<String> = (self.listed.iter().enumerate())
+                        .filter(|(_, l)| l.here)
+                        .map(|(at, l)| format!("  {}. {}", at + 1, l.name))
+                        .collect();
+                    for words in here {
+                        step.say += &self.line(&words);
+                    }
+                }
                 if !self.picked {
                     match self.named() {
-                        Named::One(named) if named.accepts => {
-                            self.picked = true;
-                            step.tell = Some(format!("to {}", named.id));
+                        // Picked once it has been the only one of that name for a while (tick).
+                        Named::One(named) if named.accepts => {}
+                        Named::One(named) => {
+                            self.settling = None;
+                            step.say += &self.contacts_only(&named.name);
                         }
-                        Named::One(named) => step.say += &self.contacts_only(&named.name),
                         // Not picked for the user: which is theirs is theirs to say, by number.
                         Named::More => {
+                            self.settling = None;
                             let name = self.to.take().unwrap_or_default();
                             step.say += &self.line(&format!(
                                 "More than one iPhone nearby goes by {}: type the number of yours.",
                                 quote(&name)
                             ));
                         }
-                        Named::Nobody => {}
+                        Named::Nobody => self.settling = None,
                     }
                 }
             }
@@ -530,26 +565,46 @@ impl Picker {
                 ..Step::default()
             };
         }
-        self.picked = true;
         Step {
-            tell: Some(format!("to {}", listed.id)),
+            tell: self.pick(&listed.id),
             ..Step::default()
         }
     }
 
-    /// Time going by: once, a while into looking with nobody to send to, what the iPhone needs.
-    pub fn tick(&mut self, now: Instant) -> String {
-        if self.picked || self.hinted || now < self.began + HINT_AFTER {
-            return String::new();
+    /// Time going by: the one --to names picked once it has been the only one of that name for a
+    /// while; and once, a while into looking with nobody to send to, what the iPhone needs.
+    pub fn tick(&mut self, now: Instant) -> Step {
+        let mut step = Step::default();
+        if self.picked {
+            return step;
+        }
+        if let Named::One(named) = self.named() {
+            if named.accepts {
+                let since = match &self.settling {
+                    Some((id, since)) if *id == named.id => *since,
+                    _ => {
+                        self.settling = Some((named.id.clone(), now));
+                        now
+                    }
+                };
+                if now >= since + SETTLE {
+                    step.tell = self.pick(&named.id);
+                    return step;
+                }
+            }
+        }
+        if self.hinted || now < self.began + HINT_AFTER {
+            return step;
         }
         let wanted = match &self.to {
             Some(name) if matches!(self.named(), Named::Nobody) => quote(name),
-            Some(_) => return String::new(),
-            None if self.listed.iter().any(|l| l.here && l.accepts) => return String::new(),
+            Some(_) => return step,
+            None if self.listed.iter().any(|l| l.here && l.accepts) => return step,
             None => "an iPhone".into(),
         };
         self.hinted = true;
-        self.line(&format!("No sign of {wanted} yet. {EVERYONE}"))
+        step.say = self.line(&format!("No sign of {wanted} yet. {EVERYONE}"));
+        step
     }
 }
 
@@ -610,8 +665,11 @@ pub fn converse(
                 let _ = writeln!(writer, "{words}");
             }
         }
-        let hint = picker.tick(Instant::now());
-        say(out, &hint);
+        let step = picker.tick(Instant::now());
+        say(out, &step.say);
+        if let Some(words) = step.tell {
+            let _ = writeln!(writer, "{words}");
+        }
     }
 }
 
@@ -716,6 +774,17 @@ mod tests {
             "“Zoë’s iPhone” is not nearby any more.\n"
         );
         assert_eq!(picker.typed("2").tell.as_deref(), Some("to 2"));
+        // Bob went too, before it could be asked: the daemon says so, and it is said, with the
+        // list as it is; another may be picked then.
+        let without_bob = r#"{"state":"looking","receivers":[{"id":"3","name":"Ann","model":"","accepts":true}],"bluetooth":"","gone":"2"}"#;
+        assert_eq!(
+            picker.told(without_bob).say,
+            "“Bob” is not nearby any more.\n  3. Ann\n"
+        );
+        // Another's going is not this one's.
+        assert_eq!(picker.typed("3").tell.as_deref(), Some("to 3"));
+        let other = without_bob.replace(r#""gone":"2""#, r#""gone":"7""#);
+        assert_eq!(picker.told(&other), Step::default());
         // Picked: the rest of what is typed is nobody's business.
         assert_eq!(picker.typed("1"), Step::default());
         assert_eq!(
@@ -745,15 +814,27 @@ mod tests {
         assert_eq!(declined.end, Some(End::NotSent));
     }
 
+    /// What a name given comes to once the list has stood for as long as it must.
+    fn settled(picker: &mut Picker, began: Instant) -> Option<String> {
+        assert_eq!(picker.tick(began).tell, None);
+        picker.tick(began + SETTLE).tell
+    }
+
     #[test]
     fn a_name_given_picks_by_itself_whatever_the_apostrophe_and_case() {
         let began = Instant::now();
         let mut picker = Picker::new(Some("zoë's iphone".into()), false, began);
         assert_eq!(picker.opening(), "Looking for “zoë's iphone” nearby…\n");
-        assert_eq!(picker.told(LOOKING).tell.as_deref(), Some("to 1"));
+        // Not at once: once it has been the only one of that name for a while.
+        assert_eq!(picker.told(LOOKING).tell, None);
+        assert_eq!(picker.tick(began).tell, None);
+        assert_eq!(picker.tick(began + SETTLE / 2).tell, None);
+        assert_eq!(picker.tick(began + SETTLE).tell.as_deref(), Some("to 1"));
+        assert_eq!(picker.tick(began + SETTLE * 2).tell, None);
         // A beginning that is one name's only, too; none that is two names', which is said.
         let mut picker = Picker::new(Some("zo".into()), false, began);
-        assert_eq!(picker.told(LOOKING).tell.as_deref(), Some("to 1"));
+        picker.told(LOOKING);
+        assert_eq!(settled(&mut picker, began).as_deref(), Some("to 1"));
         let two = LOOKING.replace("\"Bob\"", "\"Zoe's iPad\"");
         let mut picker = Picker::new(Some("zo".into()), false, began);
         let step = picker.told(&two);
@@ -761,6 +842,7 @@ mod tests {
         assert!(step
             .say
             .ends_with("More than one iPhone nearby goes by “zo”: type the number of yours.\n"));
+        assert_eq!(settled(&mut picker, began), None);
         // Two of the very name, as another device may call itself: neither is picked for the
         // user, who picks by number, whichever came first.
         let twins = LOOKING
@@ -772,11 +854,36 @@ mod tests {
         assert!(step
             .say
             .contains("More than one iPhone nearby goes by “Zoë's iPhone”"));
+        assert_eq!(settled(&mut picker, began), None);
         assert_eq!(picker.typed("2").tell.as_deref(), Some("to 2"));
-        // One listed first, and its twin after: by then the first was picked, as it was alone.
+        // One listed first, and its twin a moment after: neither is picked for the user.
         let mut picker = Picker::new(Some("Zoë's iPhone".into()), false, began);
         let one = r#"{"state":"looking","receivers":[{"id":"1","name":"Zoë’s iPhone","model":"","accepts":true}],"bluetooth":""}"#;
-        assert_eq!(picker.told(one).tell.as_deref(), Some("to 1"));
+        assert_eq!(picker.told(one).tell, None);
+        assert_eq!(picker.tick(began).tell, None);
+        let step = picker.told(&twins);
+        assert!(step.say.contains("More than one iPhone nearby goes by"));
+        assert_eq!(picker.tick(began + SETTLE).tell, None);
+        // One that went and came back under another id waits as long again.
+        let mut picker = Picker::new(Some("Zoë's iPhone".into()), false, began);
+        picker.told(one);
+        assert_eq!(picker.tick(began).tell, None);
+        picker.told(&one.replace(r#""id":"1""#, r#""id":"5""#));
+        assert_eq!(picker.tick(began + SETTLE).tell, None);
+        assert_eq!(
+            picker.tick(began + SETTLE * 2).tell.as_deref(),
+            Some("to 5")
+        );
+        // Picked, and gone before it was asked: it is said, and picked again when it is back.
+        let gone = r#"{"state":"looking","receivers":[],"bluetooth":"","gone":"5"}"#;
+        assert_eq!(
+            picker.told(gone).say,
+            "“Zoë’s iPhone” is not nearby any more.\n"
+        );
+        picker.told(&one.replace(r#""id":"1""#, r#""id":"6""#));
+        let back = began + SETTLE * 3;
+        assert_eq!(picker.tick(back).tell, None);
+        assert_eq!(picker.tick(back + SETTLE).tell.as_deref(), Some("to 6"));
         // One that takes AirDrop from its contacts only is waited for, and said so once.
         let mut picker = Picker::new(Some("Bob".into()), false, began);
         let step = picker.told(LOOKING);
@@ -785,35 +892,31 @@ mod tests {
             "“Bob” takes AirDrop from its contacts only. {EVERYONE}\n"
         )));
         assert!(!picker.told(LOOKING).say.contains("contacts"));
-        assert_eq!(
-            picker
-                .told(&LOOKING.replace("false", "true"))
-                .tell
-                .as_deref(),
-            Some("to 2")
-        );
+        assert_eq!(settled(&mut picker, began), None);
+        picker.told(&LOOKING.replace("false", "true"));
+        assert_eq!(settled(&mut picker, began).as_deref(), Some("to 2"));
     }
 
     #[test]
     fn a_while_with_nobody_says_what_the_iphone_needs_once() {
         let began = Instant::now();
         let mut picker = Picker::new(None, false, began);
-        assert_eq!(picker.tick(began + Duration::from_secs(3)), "");
+        assert_eq!(picker.tick(began + Duration::from_secs(3)), Step::default());
         let later = began + HINT_AFTER;
         assert_eq!(
-            picker.tick(later),
+            picker.tick(later).say,
             format!("No sign of an iPhone yet. {EVERYONE}\n")
         );
-        assert_eq!(picker.tick(later), "");
+        assert_eq!(picker.tick(later), Step::default());
         // With one to send to, nothing.
         let mut picker = Picker::new(None, false, began);
         picker.told(LOOKING);
-        assert_eq!(picker.tick(later), "");
+        assert_eq!(picker.tick(later), Step::default());
         // A name not seen is the one waited for.
         let mut picker = Picker::new(Some("Ann".into()), false, began);
         picker.told(LOOKING);
         assert_eq!(
-            picker.tick(later),
+            picker.tick(later).say,
             format!("No sign of “Ann” yet. {EVERYONE}\n")
         );
         // Bluetooth that cannot wake an iPhone is said, once.

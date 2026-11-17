@@ -266,6 +266,14 @@ function receivers(state) {
   })
 }
 
+// What the window says when the one picked went before it could be asked:
+// `receivers` as the window listed them, `id` the one picked.
+function went(receivers, id) {
+  var gone = list(receivers).filter(function (r) { return r && r.id === id })[0]
+  var name = gone ? text(gone.name) : ""
+  return (name !== "" ? "“" + name + "”" : "The iPhone") + " is not nearby any more."
+}
+
 // The send under way, a notification with Cancel (`cancel`, the command that
 // stops it): waiting for the person there to accept, then sending, with its
 // bar in steps of 5 %. Null for anything else.

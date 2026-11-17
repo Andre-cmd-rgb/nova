@@ -18,8 +18,9 @@
 //!
 //!   nova airdrop send [--to <name>] <file>...
 //!                           send files to an iPhone nearby: those that show are numbered as
-//!                           they appear, and the one whose number is typed (or that is named)
-//!                           is asked to take them. Only an iPhone set to Everyone for 10
+//!                           they appear, and the one whose number is typed (or that is named,
+//!                           once it has been the only one of that name for five seconds) is
+//!                           asked to take them. Only an iPhone set to Everyone for 10
 //!                           Minutes takes them (Settings, General, AirDrop): this computer is
 //!                           nobody's contact
 //!   nova airdrop send --json <file>...

@@ -239,6 +239,10 @@ Item {
   property string bluetooth: ""
   // The send has said how it ended.
   property bool sendEnded: true
+  // The receiver picked in the window, until the send says it is asked; and
+  // what the window says when it went before it could be (Model.went).
+  property string pickedId: ""
+  property string went: ""
   readonly property bool sending: sender.running
   readonly property var cancelling: ["nova-shell", "-q", "airdrop", "cancelSend"]
 
@@ -256,6 +260,8 @@ Item {
     sendSaid = { state: "starting" }
     receivers = []
     bluetooth = ""
+    pickedId = ""
+    went = ""
     sendEnded = false
     sendLive = null
     sender.command = [command, "send", "--json", "--"].concat(files)
@@ -268,6 +274,8 @@ Item {
   function pick(id) {
     if (!sender.running || !picking) return
     picking = false
+    pickedId = String(id)
+    went = ""
     sender.write("to " + id + "\n")
   }
 
@@ -282,15 +290,24 @@ Item {
     var next = Model.parse(line)
     if (!next) return
     sendSaid = next
+    // The one picked went before it could be asked (`gone`): the window is
+    // back, with those still there, and says so.
+    var gone = next.state === "looking" && pickedId !== "" && Model.text(next.gone) === pickedId
     switch (next.state) {
     case "starting":
       break
     case "looking":
+      if (gone) went = Model.went(receivers, pickedId)
       receivers = Model.receivers(next)
       bluetooth = Model.text(next.bluetooth)
+      if (gone) {
+        pickedId = ""
+        picking = true
+      }
       break
     case "asking":
     case "sending":
+      pickedId = ""
       picking = false
       sendLive = Model.sendLive(next, sendPaths, cancelling)
       break
@@ -327,6 +344,7 @@ Item {
     what: Model.sending(airdrop.sendPaths)
     receivers: airdrop.receivers
     bluetooth: airdrop.bluetooth
+    went: airdrop.went
     starting: airdrop.sendSaid.state === "starting"
     onPicked: function (id) { airdrop.pick(id) }
     onDismissed: airdrop.cancelSend()

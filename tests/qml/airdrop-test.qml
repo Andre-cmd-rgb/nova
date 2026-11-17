@@ -516,7 +516,40 @@ ShellRoot {
         window.enter()
         later(500, function () {
           check("Return sends to the one chosen, and to nobody while none is", asks().slice(before + 1), ["nova-airdrop told to 2"])
-          finish()
+          seventeenth()
+        })
+      })
+    })
+  }
+
+  // The pointer chooses a row only when it moves; and the one picked, gone
+  // before it could be asked, brings the window back, saying so.
+  function seventeenth() {
+    sendSays.setText(looking(["1", "2"]) + "\n")
+    sendAfter.setText(JSON.stringify({ state: "looking", receivers: [{ id: "2", name: "Bea", model: "", accepts: true }], bluetooth: "", gone: "1" }) + "\nmore\n")
+    later(300, function () {
+      const before = asks().length
+      airdrop.send(["/home/zoe/notes.txt"])
+      later(500, function () {
+        const window = airdrop.sendWindow
+        check("the window opens on the first to show", [window.visible, window.chosenId, window.went], [true, "1", ""])
+        window.hovered(1, Qt.point(40, 60))
+        check("where the pointer is first seen chooses nothing", window.chosenId, "1")
+        window.hovered(1, Qt.point(40, 60))
+        check("nor does a row the list moved under a pointer that stays still", window.chosenId, "1")
+        window.hovered(1, Qt.point(40, 64))
+        check("a pointer that moves chooses the row it is on", window.chosenId, "2")
+        window.pick(0)
+        later(600, function () {
+          check("the one picked went before it was asked: the window is back, saying so, with those still there",
+            [asks().slice(before + 1), airdrop.picking, window.visible, window.went, window.receivers.map(r => r.id), window.chosenId],
+            [["nova-airdrop told to 1"], true, true, "“Ann” is not nearby any more.", ["2"], "2"])
+          window.pick(0)
+          later(400, function () {
+            check("and another can be picked, which clears it", [asks().slice(before + 2), airdrop.went, airdrop.picking], [["nova-airdrop told to 2"], "", false])
+            airdrop.cancelSend()
+            later(300, finish)
+          })
         })
       })
     })

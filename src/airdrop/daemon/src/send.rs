@@ -22,7 +22,9 @@
 //!
 //!   looking    `receivers` (each an `id`, its `name`, `model`, and `accepts`:
 //!              false for one that takes AirDrop from its contacts only),
-//!              `bluetooth` (why it cannot wake an iPhone; "" while it does)
+//!              `bluetooth` (why it cannot wake an iPhone; "" while it does);
+//!              and `gone`, the id of one the client picked that is not
+//!              listed any more, in a line said at once in answer to it
 //!   asking     `to`: waiting for the person there to decide
 //!   sending    `to`, `sent`, `bytes`
 //!   sent       `to`, `bytes`, `seconds`
@@ -136,6 +138,8 @@ pub struct Sending {
 struct Candidate {
     id: usize,
     found: Found,
+    /// When the node last heard of it.
+    heard: Instant,
     listing: Option<Listing>,
     trying: bool,
     next: Instant,
@@ -439,6 +443,8 @@ impl Sending {
         // The peers a /Discover is on its way to, one at a time each.
         let mut asking: Vec<Mac> = Vec::new();
         let (mut numbered, mut told) = (0usize, String::new());
+        // A pick of one that is not listed any more, to be answered.
+        let mut went: Option<String> = None;
         let chosen = loop {
             if client.gone() {
                 return (r#"{"state":"cancelled"}"#.into(), false);
@@ -447,6 +453,15 @@ impl Sending {
                 return (ended(&candidates), false);
             }
             let now = Instant::now();
+            // What the client picked, read first: the one it picked keeps its room below.
+            let mut picked = None;
+            while let Ok(id) = client.picks.try_recv() {
+                picked = Some(id);
+            }
+            let keep = picked
+                .as_deref()
+                .and_then(|id| candidates.iter().find(|c| c.id.to_string() == id))
+                .map(|c| c.id);
             let (found, gone) = {
                 let mut inner = self.inner.lock().unwrap();
                 (
@@ -460,9 +475,10 @@ impl Sending {
                     .find(|c| c.found.peer == found.peer && c.found.instance == found.instance)
                 {
                     known.found = found;
+                    known.heard = now;
                     continue;
                 }
-                if !room(&mut candidates, &found.peer) {
+                if !room(&mut candidates, &found.peer, keep) {
                     continue;
                 }
                 numbered += 1;
@@ -473,6 +489,7 @@ impl Sending {
                 candidates.push(Candidate {
                     id: numbered,
                     found,
+                    heard: now,
                     listing: None,
                     trying: false,
                     next: now,
@@ -541,22 +558,26 @@ impl Sending {
                     }
                 }
             }
-            let mut picked = None;
-            while let Ok(id) = client.picks.try_recv() {
-                picked = Some(id);
-            }
-            if let Some(chosen) = picked.and_then(|id| {
-                candidates.iter().find(|c| {
-                    c.id.to_string() == id && c.listing.as_ref().is_some_and(|l| l.accepts)
-                })
-            }) {
-                break chosen.clone();
+            if let Some(id) = picked {
+                let listed = |c: &&Candidate| c.id.to_string() == id && c.listing.is_some();
+                match candidates.iter().find(listed) {
+                    Some(chosen) if chosen.listing.as_ref().is_some_and(|l| l.accepts) => {
+                        break chosen.clone();
+                    }
+                    // One that takes AirDrop from its contacts only: no client picks it.
+                    Some(_) => {}
+                    // Gone before it could be asked: the client is told so, with the list.
+                    None => went = Some(id),
+                }
             }
             // Said once the herald has Bluetooth's first answer, with what it came to last.
             let bluetooth = self.inner.lock().unwrap().bluetooth.clone();
             if let Some(bluetooth) = bluetooth {
-                let line = looking(&candidates, &bluetooth);
-                if line != told {
+                let line = looking(&candidates, &bluetooth, None);
+                if let Some(id) = went.take() {
+                    client.say(&looking(&candidates, &bluetooth, Some(&id)));
+                    told = line;
+                } else if line != told {
                     client.say(&line);
                     told = line;
                 }
@@ -707,25 +728,33 @@ fn afterwards(last: &str, stays: bool) -> String {
 }
 
 /// Makes room for a receiver of `peer`'s, if there may be one: a peer's third takes the place of
-/// its oldest; with the most there may be, one that never said who it is goes. False if none can.
-fn room(candidates: &mut Vec<Candidate>, peer: &Mac) -> bool {
-    let of_peer: Vec<usize> = candidates
+/// its oldest; with the most there may be, the one the node heard of least lately goes, one that
+/// would not say who it is before any other, so that a crowd that went quiet keeps nobody out.
+/// Never the one the client picked (`keep`). False if none can go.
+fn room(candidates: &mut Vec<Candidate>, peer: &Mac, keep: Option<usize>) -> bool {
+    let kept = |c: &Candidate| Some(c.id) == keep;
+    let oldest_of_peer = candidates
         .iter()
         .enumerate()
         .filter(|(_, c)| c.found.peer == *peer)
-        .map(|(at, _)| at)
-        .collect();
-    if of_peer.len() >= MOST_PER_PEER {
-        candidates.remove(of_peer[0]);
-        return true;
+        .map(|(at, c)| (at, kept(c)))
+        .collect::<Vec<_>>();
+    if oldest_of_peer.len() >= MOST_PER_PEER {
+        if let Some(&(at, _)) = oldest_of_peer.iter().find(|(_, kept)| !kept) {
+            candidates.remove(at);
+            return true;
+        }
     }
     if candidates.len() < MOST_RECEIVERS {
         return true;
     }
-    match candidates
+    let quietest = candidates
         .iter()
-        .position(|c| c.listing.is_none() && c.failures > 0)
-    {
+        .enumerate()
+        .filter(|(_, c)| !kept(c))
+        .min_by_key(|(_, c)| (!(c.listing.is_none() && c.failures > 0), c.heard))
+        .map(|(at, _)| at);
+    match quietest {
         Some(at) => {
             candidates.remove(at);
             true
@@ -737,7 +766,8 @@ fn room(candidates: &mut Vec<Candidate>, peer: &Mac) -> bool {
 /// The receivers as the client is told of them: those that said who they are. A peer that comes
 /// under a new instance is listed as its newest self; another peer of the same name is another
 /// device, and is listed too, until the node no longer hears it: a name is anybody's to give.
-fn looking(candidates: &[Candidate], bluetooth: &str) -> String {
+/// With `gone`, the id of one picked that is not among them any more.
+fn looking(candidates: &[Candidate], bluetooth: &str, gone: Option<&str>) -> String {
     let mut shown: Vec<(&Candidate, &Listing)> = Vec::new();
     for candidate in candidates.iter().rev() {
         let Some(listing) = &candidate.listing else {
@@ -751,8 +781,9 @@ fn looking(candidates: &[Candidate], bluetooth: &str) -> String {
         shown.push((candidate, listing));
     }
     shown.reverse();
+    let gone = gone.map_or(String::new(), |id| format!(r#","gone":{}"#, quoted(id)));
     format!(
-        r#"{{"state":"looking","receivers":{},"bluetooth":{}}}"#,
+        r#"{{"state":"looking","receivers":{},"bluetooth":{}{gone}}}"#,
         list(shown.iter().map(|(candidate, listing)| format!(
             r#"{{"id":"{}","name":{},"model":{},"accepts":{}}}"#,
             candidate.id,
@@ -983,8 +1014,12 @@ mod tests {
             host: "h:1".into(),
         });
         until(&mut ours, r#"{"state":"looking","receivers":[{"#);
-        // An id that is not one listed is not taken.
+        // An id that is not one listed (any more) is not taken: the list is said again at once,
+        // with the id that is gone.
         writeln!(ours, "to 9").unwrap();
+        let (again, _) = until(&mut ours, r#"{"state":"looking""#);
+        assert!(again.ends_with(r#","gone":"9"}"#), "{again}");
+        assert!(again.contains(r#""name":"Elsewhere""#), "{again}");
         writeln!(ours, "to 1").unwrap();
         until(&mut ours, r#"{"state":"asking""#);
         assert_eq!(
@@ -1053,6 +1088,7 @@ mod tests {
                 at: "[::1]:1".parse().unwrap(),
                 host: String::new(),
             },
+            heard: Instant::now(),
             listing: listed,
             trying: false,
             next: Instant::now(),
@@ -1075,7 +1111,7 @@ mod tests {
             candidate(3, 3, Some(listing("Zoë", true))),
         ];
         assert_eq!(
-            looking(&twice, ""),
+            looking(&twice, "", None),
             r#"{"state":"looking","receivers":[{"id":"1","name":"Zoë","model":"","accepts":true},{"id":"3","name":"Zoë","model":"","accepts":true}],"bluetooth":""}"#
         );
         let renamed = [
@@ -1083,8 +1119,12 @@ mod tests {
             candidate(4, 1, Some(listing("Zoë", true))),
         ];
         assert_eq!(
-            looking(&renamed, ""),
+            looking(&renamed, "", None),
             r#"{"state":"looking","receivers":[{"id":"4","name":"Zoë","model":"","accepts":true}],"bluetooth":""}"#
+        );
+        assert_eq!(
+            looking(&renamed, "", Some("3")),
+            r#"{"state":"looking","receivers":[{"id":"4","name":"Zoë","model":"","accepts":true}],"bluetooth":"","gone":"3"}"#
         );
         assert_eq!(someone(""), "the iPhone");
         assert_eq!(
@@ -1095,6 +1135,7 @@ mod tests {
 
     #[test]
     fn a_crowd_or_a_liar_gets_no_more_room_than_a_few() {
+        let began = Instant::now();
         let candidate = |id, peer: u8, listed: bool, failures| Candidate {
             id,
             found: Found {
@@ -1103,6 +1144,8 @@ mod tests {
                 at: "[::1]:1".parse().unwrap(),
                 host: String::new(),
             },
+            // Heard of in the order they came, one a second.
+            heard: began + Duration::from_secs(id as u64),
             listing: listed.then(|| Listing {
                 name: format!("{id}"),
                 model: String::new(),
@@ -1112,18 +1155,29 @@ mod tests {
             next: Instant::now(),
             failures,
         };
-        // A peer's third instance takes the place of its oldest.
+        let ids = |candidates: &[Candidate]| candidates.iter().map(|c| c.id).collect::<Vec<_>>();
+        // A peer's third instance takes the place of its oldest, unless that is the one picked.
         let mut candidates = vec![candidate(1, 1, true, 0), candidate(2, 1, true, 0)];
-        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 1]));
-        assert_eq!(candidates.iter().map(|c| c.id).collect::<Vec<_>>(), [2]);
-        // Full: one that never said who it is makes room; with none, nobody new is taken.
+        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 1], None));
+        assert_eq!(ids(&candidates), [2]);
+        let mut candidates = vec![candidate(1, 1, true, 0), candidate(2, 1, true, 0)];
+        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 1], Some(1)));
+        assert_eq!(ids(&candidates), [1]);
+        // Full: one that never said who it is makes room first, wherever it is.
         let mut candidates: Vec<Candidate> = (0..MOST_RECEIVERS)
             .map(|n| candidate(n, n as u8 + 10, n != 7, u32::from(n == 7)))
             .collect();
-        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 99]));
+        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 99], None));
         assert_eq!(candidates.len(), MOST_RECEIVERS - 1);
         assert!(!candidates.iter().any(|c| c.id == 7));
+        // Then the one heard of least lately, listed or not: a crowd that went quiet keeps
+        // nobody new out. Never the one picked.
         candidates.push(candidate(99, 99, true, 0));
-        assert!(!room(&mut candidates, &[2, 0, 0, 0, 0, 98]));
+        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 98], Some(0)));
+        assert!(candidates.iter().any(|c| c.id == 0) && !candidates.iter().any(|c| c.id == 1));
+        candidates.push(candidate(98, 98, true, 0));
+        candidates[0].heard = began + Duration::from_secs(1000);
+        assert!(room(&mut candidates, &[2, 0, 0, 0, 0, 97], None));
+        assert!(candidates.iter().any(|c| c.id == 0) && !candidates.iter().any(|c| c.id == 2));
     }
 }

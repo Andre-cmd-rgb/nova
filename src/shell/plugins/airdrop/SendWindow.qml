@@ -11,11 +11,14 @@ import "AirDropModel.js" as Model
 // Return on the one the arrows moved to, sends it the files (picked): the
 // one chosen is kept by its id, so that the list changing under it does not
 // move Return to another, and one that goes is not replaced by whichever
-// comes to its row. One
-// that takes AirDrop from its contacts only is listed, dimmed, with what it
-// needs. While there is nobody to send to, it says what makes an iPhone
-// show. Escape, Cancel and a click beside the card stop the send
-// (dismissed). How the send goes after the pick is said in notifications.
+// comes to its row. The pointer chooses a row only when it moves onto it,
+// not when the list moves a row under a pointer that stays still. One that
+// takes AirDrop from its contacts only is listed, dimmed, with what it
+// needs. One picked that went before it could be asked brings the window
+// back, saying so (went). While there is nobody to send to, it says what
+// makes an iPhone show. Escape, Cancel and a click beside the card stop the
+// send (dismissed). How the send goes after the pick is said in
+// notifications.
 PanelWindow {
   id: window
 
@@ -28,6 +31,8 @@ PanelWindow {
   property string bluetooth: ""
   // AirDrop is being switched on for the send.
   property bool starting: false
+  // The one picked went before it could be asked: said so ("" for nothing).
+  property string went: ""
   // The receiver the arrows, or the pointer, are on: its id, and its row (-1 for none).
   property string chosenId: ""
   readonly property int chosen: {
@@ -60,8 +65,20 @@ PanelWindow {
     if (chosen >= 0) pick(chosen)
   }
 
+  // Where the pointer was over the rows, in the window, when last seen
+  // (null: not since the window opened): a row is chosen by the pointer
+  // only when it has moved, as a hover is also said when a row moves under
+  // it. The first seen is only where it is.
+  property var pointer: null
+  function hovered(at, point) {
+    var moved = pointer !== null && (point.x !== pointer.x || point.y !== pointer.y)
+    pointer = Qt.point(point.x, point.y)
+    if (moved) choose(at)
+  }
+
   onOpenedChanged: if (opened) {
     chosenId = ""
+    pointer = null
     choose(0)
     keyCatcher.forceActiveFocus()
   }
@@ -146,6 +163,17 @@ PanelWindow {
         font.pixelSize: Style.font.heading
       }
 
+      Text {
+        width: parent.width
+        visible: window.went !== ""
+        text: window.went
+        textFormat: Text.PlainText
+        wrapMode: Text.WordWrap
+        color: Commons.Color.urgent
+        font.family: Style.font.menuFamily
+        font.pixelSize: Style.font.body
+      }
+
       Repeater {
         model: window.receivers
 
@@ -204,7 +232,7 @@ PanelWindow {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: row.modelData.accepts ? Qt.PointingHandCursor : Qt.ArrowCursor
-            onEntered: window.choose(row.index)
+            onPositionChanged: function (mouse) { window.hovered(row.index, mapToItem(null, mouse.x, mouse.y)) }
             onClicked: window.pick(row.index)
           }
         }

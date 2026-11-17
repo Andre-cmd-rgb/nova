@@ -9,7 +9,8 @@
 # `send --json` says the lines in $HOME/send-says, then notes each line it
 # is told (`nova-airdrop told …`): to `cancel` it says cancelled, to `to <id>`
 # the lines in $HOME/send-after, a second's wait for each that is `pause`;
-# either is its end, as is a last line among the first.
+# either is its end, as is a last line among the first, unless send-after
+# has a line `more`: then it goes on reading what it is told.
 if [ "$1 $2" = "bell watch" ]; then
   cat "$HOME/bell-says" 2>/dev/null
   exec sleep 60
@@ -40,10 +41,15 @@ if [ "$1 $2" = "send --json" ]; then
         ;;
       "to "*)
         [ -f "$HOME/send-after" ] || exit 0
+        more=''
         while IFS= read -r said; do
-          if [ "$said" = pause ]; then sleep 1; else printf '%s\n' "$said"; fi
+          case $said in
+            pause) sleep 1 ;;
+            more) more=1 ;;
+            *) printf '%s\n' "$said" ;;
+          esac
         done <"$HOME/send-after"
-        exit 0
+        [ -n "$more" ] || exit 0
         ;;
     esac
   done
