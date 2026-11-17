@@ -149,7 +149,8 @@ Nova's themes live in `/usr/share/nova/themes/`. A theme of the same name in `~/
 4. **Tell the shell:** a `themeTransition` IPC fades to the new background and recolors the shell in one step.
 5. **Apply** (`nova-theme-apply`, in parallel):
    - `hyprctl reload`;
-   - GTK3/GTK4 `gtk.css` and color-scheme (Qt follows GTK);
+   - GTK: the palette as `nova.css` in `~/.config/gtk-3.0` and `gtk-4.0`, which `gtk.css` links to; color-scheme; the GTK 3 theme `adw-gtk3` or `adw-gtk3-dark`, which draws with the palette's colors (Qt follows GTK 3);
+   - Flatpak: an override of the user's that shows every app those two folders, read-only, set once;
    - foot: new windows read `theme.ini`, open ones get OSC escapes;
    - btop, VS Code, Claude Code, T3 Code;
    - the greeter mirror in `/var/lib/nova/greeter/`, from which a root path unit sets Chrome's color policy.

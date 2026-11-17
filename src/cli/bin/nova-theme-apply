@@ -38,38 +38,73 @@ apply_hyprland() {
   hyprctl reload >/dev/null
 }
 
-# True when GTK would find the named icon theme where it looks for them.
-icon_theme_installed() {
+# True when GTK would find <kind>/<name>/<file> where it looks: ~/.<kind>
+# (~/.icons, ~/.themes), then the data folders.
+data_installed() { # kind name file
   local dir dirs
   IFS=: read -ra dirs <<<"${XDG_DATA_HOME:-$HOME/.local/share}:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
-  [[ -f $HOME/.icons/$1/index.theme ]] && return 0
+  [[ -f $HOME/.$1/$2/$3 ]] && return 0
   for dir in "${dirs[@]}"; do
-    [[ -f $dir/icons/$1/index.theme ]] && return 0
+    [[ -f $dir/$1/$2/$3 ]] && return 0
   done
   return 1
 }
 
-# libadwaita follows color-scheme live; the palette in gtk.css reaches windows
-# opened after the change. A theme's icons.theme names the icon set it was made
-# with (Yaru's colours, from the AUR); without that set installed, Adwaita,
-# which GTK itself depends on. No window has title-bar buttons: an empty
-# button-layout clears them from GTK, libadwaita and Chrome alike.
+# The palette goes to GTK as nova.css in ~/.config/gtk-3.0 and gtk-4.0, which
+# gtk.css links to beside it: a Flatpak app, shown those two folders
+# (apply_flatpak), finds it there, where a link into ~/.local/state would
+# point at nothing it can see. A real gtk.css is the user's; it can
+# @import url("nova.css") to keep the theme under its own rules.
+gtk_css() { # rendered file, GTK's folder
+  [[ -f $1 ]] || return 0
+  mkdir -p "$2"
+  cp -- "$1" "$2/.nova.css.tmp"
+  mv -f -- "$2/.nova.css.tmp" "$2/nova.css"
+  link_config nova.css "$2/gtk.css"
+}
+
+# GTK reads the palette as an app starts. libadwaita, and GTK 4 without it,
+# follow color-scheme at once: gtk4.css holds its colors to the theme's own
+# light or dark. GTK 3 apps draw with adw-gtk3, libadwaita's look made for
+# GTK 3, which takes its colors from the names gtk3.css sets; GTK 3's own
+# Adwaita has its colors built in, and no dark variant without
+# gnome-themes-extra. Flatpak apps fetch the adw-gtk3 that matches, an
+# org.gtk.Gtk3theme extension, as they are installed or updated. A theme's
+# icons.theme names the icon set it was made with (Yaru's colours, from the
+# AUR); without that set installed, Adwaita, which GTK itself depends on. No
+# window has title-bar buttons: an empty button-layout clears them from GTK,
+# libadwaita and Chrome alike.
 apply_gtk() {
-  link_config "$theme/gtk4.css" "$config_home/gtk-4.0/gtk.css"
-  link_config "$theme/gtk3.css" "$config_home/gtk-3.0/gtk.css"
+  gtk_css "$theme/gtk4.css" "$config_home/gtk-4.0"
+  gtk_css "$theme/gtk3.css" "$config_home/gtk-3.0"
   [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
-  local icons=Adwaita
+  local icons=Adwaita gtk_theme=adw-gtk3
   [[ ! -f $theme/icons.theme ]] || icons=$(<"$theme/icons.theme")
-  icon_theme_installed "$icons" || icons=Adwaita
+  data_installed icons "$icons" index.theme || icons=Adwaita
+  data_installed themes "$gtk_theme" gtk-3.0/gtk.css || gtk_theme=Adwaita
   if [[ $mode == light ]]; then
     gsettings set org.gnome.desktop.interface color-scheme prefer-light
-    gsettings set org.gnome.desktop.interface gtk-theme Adwaita
+    gsettings set org.gnome.desktop.interface gtk-theme "$gtk_theme"
   else
     gsettings set org.gnome.desktop.interface color-scheme prefer-dark
-    gsettings set org.gnome.desktop.interface gtk-theme Adwaita-dark
+    gsettings set org.gnome.desktop.interface gtk-theme "$gtk_theme-dark"
   fi
   gsettings set org.gnome.desktop.interface icon-theme "$icons"
   gsettings set org.gnome.desktop.wm.preferences button-layout ':'
+}
+
+# Flatpak apps are shown ~/.config/gtk-3.0 and gtk-4.0, read-only, for the
+# palette in them, by an override of the user's for every app; set once. A
+# choice of the user's about either folder (`flatpak override --user
+# --nofilesystem=xdg-config/gtk-4.0`) is theirs.
+apply_flatpak() {
+  command -v flatpak >/dev/null || return 0
+  local global=${FLATPAK_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/flatpak}/overrides/global folder
+  local -a show=()
+  for folder in xdg-config/gtk-3.0 xdg-config/gtk-4.0; do
+    grep -qsF "$folder" "$global" || show+=("--filesystem=$folder:ro")
+  done
+  (( ${#show[@]} == 0 )) || flatpak override --user "${show[@]}"
 }
 
 # New terminals read foot.ini; running ones get the palette as OSC sequences on
@@ -220,7 +255,7 @@ apply_greeter() {
   fi
 }
 
-apps=(hyprland gtk foot btop vscode claude t3code greeter)
+apps=(hyprland gtk flatpak foot btop vscode claude t3code greeter)
 if (( $# > 0 )); then
   for app in "$@"; do
     [[ " ${apps[*]} " == *" $app "* ]] || { echo "nova-theme-apply: unknown app '$app' (${apps[*]})" >&2; exit 2; }

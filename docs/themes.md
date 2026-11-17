@@ -20,13 +20,25 @@ A theme reaches every part of the desktop at once:
 
 - the shell: the bar, menu, panels, notifications and lock screen;
 - Hyprland's window borders;
-- GTK 3 and GTK 4 apps, light or dark, and Qt apps, which follow GTK;
+- apps: GTK 4 and libadwaita, GTK 3 and Qt, in its colors, light or dark;
 - foot, open windows included;
 - btop, VS Code, Claude Code and T3 Code;
-- Chrome's toolbar;
+- Chrome: its toolbar, and light or dark;
 - the login screen after a logout.
 
 Nothing before the lock screen is themed: the boot menu keeps its own colors.
+
+### Apps
+
+- **GTK 4 and libadwaita apps** (Files, Image Viewer and most new apps) take the theme's colors as they start.
+- **GTK 3 apps** look like libadwaita's, in the theme's colors: Nova draws them with `adw-gtk3`.
+- **Qt apps** take the colors through GTK 3, in Qt's own style.
+- **Flatpak apps** get the same. A GTK 3 one draws with Flathub's `org.gtk.Gtk3theme.adw-gtk3` or `adw-gtk3-dark`, whichever the theme in use calls for, which Flatpak fetches with the next update (`nova update`) or install; until then, it is plain Adwaita.
+- **Apps that draw themselves**, such as Flutter apps (LocalSend), Electron apps, slicers and Java apps, follow light or dark at most, in their own colors.
+
+**When the theme changes**, foot, the shell, Chrome and VS Code change at once. An open GTK 4 or libadwaita app follows a change between light and dark at once, in libadwaita's own colors, and has the new theme's colors when it is opened again. An open GTK 3 or Qt app keeps the theme it started with until it is opened again.
+
+`~/.config/gtk-3.0/gtk.css` and `gtk-4.0/gtk.css` are links to `nova.css` beside them, rewritten on each theme change. To add CSS of your own, replace a link with a file of yours that starts with `@import url("nova.css");`.
 
 ## The adaptive theme
 

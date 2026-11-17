@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 
-# nova-theme-apply with gsettings stubbed: which icon set a theme gets, and
-# that no window has title-bar buttons.
+# nova-theme-apply with gsettings stubbed: which icon set and GTK theme a
+# theme gets, the palette's files for GTK, that no window has title-bar
+# buttons, and Flatpak apps shown GTK's folders.
 
 load ../test_helper
 
@@ -59,6 +60,79 @@ icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \
 @test "no window gets title-bar buttons" {
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
   grep -qx "gsettings set org.gnome.desktop.wm.preferences button-layout :" "$CALLS"
+}
+
+gtk_theme() { grep -oP '^gsettings set org.gnome.desktop.interface gtk-theme \K.*' "$CALLS"; }
+
+@test "GTK 3 apps draw with adw-gtk3, light or dark as the theme is, where it is installed" {
+  write_file "$XDG_DATA_DIRS/themes/adw-gtk3/gtk-3.0/gtk.css"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ "$(gtk_theme)" = adw-gtk3 ]
+  : >"$CALLS"
+  stub nova-theme 'echo dark'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$(gtk_theme)" = adw-gtk3-dark ]
+  grep -q 'color-scheme prefer-dark' "$CALLS"
+}
+
+@test "without adw-gtk3, GTK's own Adwaita" {
+  stub nova-theme 'echo dark'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ "$(gtk_theme)" = Adwaita-dark ]
+}
+
+# A Flatpak app is shown ~/.config/gtk-4.0 and nothing in ~/.local/state, so
+# the palette is a file in the folder, not a link out of it.
+@test "GTK's gtk.css links to nova.css beside it, a copy of the theme's palette" {
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk3.css" 'three'
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk4.css" 'four'
+  # A link Nova made before, into the state folder.
+  mkdir -p "$XDG_CONFIG_HOME/gtk-4.0"
+  ln -s "$XDG_STATE_HOME/nova/current/theme/gtk4.css" "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  for v in 3 4; do
+    [ "$(readlink "$XDG_CONFIG_HOME/gtk-$v.0/gtk.css")" = nova.css ]
+    [ ! -L "$XDG_CONFIG_HOME/gtk-$v.0/nova.css" ]
+  done
+  [ "$(cat "$XDG_CONFIG_HOME/gtk-3.0/gtk.css")" = three ]
+  [ "$(cat "$XDG_CONFIG_HOME/gtk-4.0/gtk.css")" = four ]
+  [ -z "$(find "$XDG_CONFIG_HOME" -name '.nova.css.tmp')" ]
+}
+
+@test "a gtk.css of the user's own stays, and nova.css is there for it to import" {
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk4.css" 'four'
+  write_file "$XDG_STATE_HOME/nova/current/theme/gtk3.css" 'three'
+  write_file "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" '@import url("nova.css"); window { padding: 1px; }'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ ! -L "$XDG_CONFIG_HOME/gtk-4.0/gtk.css" ]
+  grep -q 'padding' "$XDG_CONFIG_HOME/gtk-4.0/gtk.css"
+  [ "$(cat "$XDG_CONFIG_HOME/gtk-4.0/nova.css")" = four ]
+}
+
+@test "Flatpak apps are shown GTK's two folders, read-only, once" {
+  export FLATPAK_USER_DIR=$SCRATCH/flatpak
+  stub flatpak "mkdir -p \"\$FLATPAK_USER_DIR/overrides\"
+printf '[Context]\nfilesystems=xdg-config/gtk-3.0:ro;xdg-config/gtk-4.0:ro;\n' >\"\$FLATPAK_USER_DIR/overrides/global\""
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" flatpak
+  [ "$status" -eq 0 ]
+  grep -qx 'flatpak override --user --filesystem=xdg-config/gtk-3.0:ro --filesystem=xdg-config/gtk-4.0:ro' "$CALLS"
+  : >"$CALLS"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" flatpak
+  [ "$status" -eq 0 ]
+  fails grep -q '^flatpak' "$CALLS"
+}
+
+@test "a folder the user kept from Flatpak apps stays kept" {
+  export FLATPAK_USER_DIR=$SCRATCH/flatpak
+  write_file "$FLATPAK_USER_DIR/overrides/global" $'[Context]\nfilesystems=!xdg-config/gtk-4.0;\n'
+  stub flatpak
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" flatpak
+  [ "$status" -eq 0 ]
+  grep -qx 'flatpak override --user --filesystem=xdg-config/gtk-3.0:ro' "$CALLS"
 }
 
 @test "VS Code keeps the user's settings, with Nova's theme and no title bar of its own" {
