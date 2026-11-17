@@ -51,10 +51,7 @@ Column {
   Section {
     Toggle {
       width: parent.width
-      label: "Turn on for my iPhone"
-      detail: root.bell
-        ? "AirDrop goes on when you tap AirDrop in your iPhone's share sheet, and off when the sheet closes. Only while this computer is unlocked."
-        : "Off. AirDrop is switched on from the menu."
+      label: "Let my iPhone turn on AirDrop"
       checked: root.bell
       onClicked: root.command(["nova-airdrop", "bell", checked ? "off" : "on"])
     }
@@ -66,16 +63,15 @@ Column {
 
     Line {
       label: root.live.state === "deaf" ? "Not listening"
-        : !root.listening ? "Starting"
+        : !root.listening ? "Starting…"
         : root.learningLeft > 0 ? "Learning your iPhone"
-        : root.phones === 0 ? "No iPhone yet"
+        : root.phones === 0 ? "No iPhone"
         : root.phones === 1 ? "Your iPhone" : root.phones + " iPhones"
       detail: root.live.state === "deaf" ? String(root.live.why || "")
         : !root.listening ? ""
-        : root.learningLeft > 0 ? "On your iPhone: Share, then AirDrop, beside this computer. " + root.clock(root.learningLeft) + " left."
-        : root.phones === 0 ? "Learn it once, and only that iPhone switches AirDrop on."
-        : root.live.near === true ? "Showing AirDrop now."
-        : "Known. Only it switches AirDrop on."
+        : root.learningLeft > 0 ? "On your iPhone nearby: Share, then AirDrop. " + root.clock(root.learningLeft) + " left"
+        : root.live.near === true ? "Showing AirDrop now"
+        : ""
 
       Button {
         visible: root.listening && root.learningLeft <= 0

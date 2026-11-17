@@ -21,7 +21,7 @@ The iPhone's own AirDrop setting (Contacts Only, Everyone) is about what the iPh
 
 ### Switched on by your iPhone
 
-Settings → AirDrop → **Turn on for my iPhone**, or `nova airdrop bell on`. From then on there is nothing to switch: tap AirDrop in your iPhone's share sheet and the computer is in its list a few seconds later; close the sheet and AirDrop goes off, and the Wi-Fi comes back. Not if you switched it on yourself meanwhile, or a send is going on: then it is theirs, and ends as they do.
+Settings → AirDrop → **Let my iPhone turn on AirDrop**, or `nova airdrop bell on`. From then on there is nothing to switch: tap AirDrop in your iPhone's share sheet and the computer is in its list a few seconds later; close the sheet and AirDrop goes off, and the Wi-Fi comes back. Not if you switched it on yourself meanwhile, or a send is going on: then it is theirs, and ends as they do.
 
 - **It learns your iPhone once.** Switched on, it asks you to open Share → AirDrop on the iPhone beside the computer, within a minute. After that only that iPhone switches AirDrop on; somebody else's share sheet nearby does not. Forget, on the same page, unlearns it.
 - **Only while the computer is unlocked.** Locked, nothing happens, and an AirDrop it switched on goes off.

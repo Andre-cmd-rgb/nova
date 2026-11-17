@@ -151,18 +151,14 @@ Column {
     Toggle {
       width: parent.width
       label: "Bluetooth"
-      detail: !root.available ? "This computer has no Bluetooth."
-        : !root.powered ? "Off."
-        : "On. While this page is open, it looks for devices nearby."
+      detail: root.available ? "" : "Not available"
       checked: root.powered
       onClicked: if (root.available) Quickshell.execDetached(["nova-bluetooth-power", root.powered ? "off" : "on"])
     }
     Toggle {
       width: parent.width
       visible: root.available && root.le !== null
-      label: "Bluetooth LE"
-      detail: root.le ? "On. Off can help headphones that stutter."
-        : "Off: classic Bluetooth only. Devices that speak only LE cannot connect."
+      label: "Bluetooth Low Energy"
       checked: root.le === true
       onClicked: root.command(["nova-bluetooth-le", checked ? "off" : "on"])
     }
@@ -178,7 +174,7 @@ Column {
     Caption {
       width: parent.width
       visible: root.mine.length === 0
-      text: "No devices yet. Put one in pairing mode and it appears below."
+      text: "No devices"
     }
   }
 
@@ -192,7 +188,7 @@ Column {
     Caption {
       width: parent.width
       visible: root.nearby.length === 0
-      text: "Looking for devices…"
+      text: "Searching…"
     }
   }
 
@@ -208,7 +204,8 @@ Column {
         if (entry.busy === "connecting") return modelData.paired ? "Connecting…" : "Pairing…"
         if (entry.busy === "disconnecting") return "Disconnecting…"
         if (entry.busy === "forgetting") return "Forgetting…"
-        var parts = [modelData.connected ? "Connected" : modelData.paired ? "Not connected" : "Not paired"]
+        // Nearby devices are not paired: their section says so.
+        var parts = modelData.connected ? ["Connected"] : modelData.paired ? ["Not connected"] : []
         if (modelData.battery >= 0) parts.push(modelData.battery + "% battery")
         return parts.join("  ·  ")
       }

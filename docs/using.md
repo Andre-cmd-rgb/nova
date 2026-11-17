@@ -168,7 +168,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Page | What is on it |
 |---|---|
 | Wi-Fi | the radio on or off; the network in use, the known ones and the others |
-| Bluetooth | the radio on or off; Bluetooth LE, off for headphones that stutter; your devices and those nearby |
+| Bluetooth | the radio on or off; Bluetooth Low Energy, off for headphones that stutter; your devices and those nearby |
 | Mobile Data | mobile data on or off, set up with the SIM's APN the first time; the SIM's PIN when it asks for one; the network, signal, address and data used this month |
 | Notifications | [Do Not Disturb](#do-not-disturb), and the hours it holds by itself every day |
 | Sound | the output and its volume; the input and its volume |
@@ -219,7 +219,7 @@ Hold Super+D and speak: the words are pasted where the cursor is when you let go
 An iPhone can send photos, files and links to the computer with AirDrop, with nothing installed on it.
 
 - Switch it on in the menu (Toggle → AirDrop) or with `nova airdrop on`, then pick the computer in the iPhone's share sheet.
-- Or let your iPhone switch it: Settings → AirDrop → Turn on for my iPhone. Tapping AirDrop in its share sheet then switches AirDrop on, and closing the sheet switches it off.
+- Or let your iPhone switch it: Settings → AirDrop → Let my iPhone turn on AirDrop. Tapping AirDrop in its share sheet then switches AirDrop on, and closing the sheet switches it off.
 - A notification asks before anything is taken, as on a Mac: Accept or Decline. What arrives is in your downloads folder, and a notification with its picture opens it at a click.
 - While AirDrop is on, the bar's Wi-Fi icon is AirDrop's.
 - The Wi-Fi is off the network while AirDrop is on. It ends by itself, a moment after a transfer or after two minutes with none, and the Wi-Fi reconnects.
