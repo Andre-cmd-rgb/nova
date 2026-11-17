@@ -24,21 +24,46 @@ Item {
   property bool opened: false
   property var face: Face.parse({})
   readonly property bool notice: !face.level
-  // The card's two faces of type: the icon's, and the words'.
-  readonly property font glyphType: Qt.font({ family: Style.font.family, pixelSize: notice ? Style.font.title : Style.font.displayLarge })
-  readonly property font wordsType: notice ? Qt.font({ family: Style.font.family, pixelSize: Style.font.body })
-    : Qt.font({ family: Style.font.family, bold: true, pixelSize: Style.font.title })
+  // The card's two faces of type, the icon's and the words', a notice's and
+  // a level's.
+  readonly property font noticeGlyph: Qt.font({ family: Style.font.family, pixelSize: Style.font.title })
+  readonly property font levelGlyph: Qt.font({ family: Style.font.family, pixelSize: Style.font.displayLarge })
+  readonly property font noticeWords: Qt.font({ family: Style.font.family, pixelSize: Style.font.body })
+  readonly property font levelWords: Qt.font({ family: Style.font.family, bold: true, pixelSize: Style.font.title })
+  readonly property font glyphType: notice ? noticeGlyph : levelGlyph
+  readonly property font wordsType: notice ? noticeWords : levelWords
+  // A notice's padding is the dictation pill's; its words start the pill's gap
+  // after the icon, and have the most room beside a player's icon. An icon's
+  // ink is given at most twice its type's size (the widest Nerd Font glyphs
+  // take about one and a half).
+  readonly property real noticePad: Style.spacing.pillPadding
+  readonly property real levelPad: Style.space(16)
+  readonly property real gap: Style.space(16)
+  readonly property real barLength: Style.space(142)
+  readonly property real noticeWordsGap: Style.space(9)
+  readonly property real mostWords: Style.space(325)
   readonly property var spots: Face.layout(face, {
     ink: iconInk.tightBoundingRect.width,
     widestInk: widestIconInk.tightBoundingRect.width,
+    inkMax: 2 * glyphType.pixelSize,
     readout: widestReadout.advanceWidth,
     words: wordsRun.advanceWidth,
-    gap: Style.space(16),
-    bar: Style.space(142),
-    wordsMax: face.fromPlayer ? Style.space(325) : Style.space(190),
-    // The dictation pill's gap between its icon and its words.
-    wordsGap: notice ? Style.space(9) : undefined
+    gap: gap,
+    bar: barLength,
+    wordsMax: face.fromPlayer ? mostWords : Style.space(190),
+    wordsGap: notice ? noticeWordsGap : undefined
   })
+
+  // The window: room for the largest card any face makes, with the card at
+  // its foot, in the middle. A window the card's own size took a new size
+  // with each face, and Hyprland could draw a face into the size of the one
+  // before it: "Microphone on" in the room of "Microphone muted", the card's
+  // right edge smeared over the rest as a lavender block.
+  readonly property real roomWidth: card.edge.left + card.edge.right + Face.room(
+    { pad: noticePad, inkMax: 2 * Style.font.title, wordsGap: noticeWordsGap, wordsMax: mostWords },
+    { pad: levelPad, inkMax: 2 * Style.font.displayLarge, gap: gap, bar: barLength, readout: levelReadout.advanceWidth })
+  readonly property real roomHeight: card.edge.top + card.edge.bottom
+    + Math.max(2 * noticePad + Style.spacing.pillRowHeight, 2 * levelPad + Style.font.displayLarge)
 
   // A request as Face.parse takes it, as JSON; one that is not JSON is
   // dropped. The card goes after the request's duration, or stays for 0.
@@ -105,14 +130,20 @@ Item {
     text: Face.widestReadout
   }
 
-  // The window is the card's size: a screen-sized one was a whole screen
-  // to redraw at each step of a held key, and for Hyprland to fade.
+  TextMetrics {
+    id: levelReadout
+    font: osd.levelWords
+    text: Face.widestReadout
+  }
+
+  // The window is the room for a card: a screen-sized one was a whole
+  // screen to redraw at each step of a held key, and for Hyprland to fade.
   PanelWindow {
     visible: osd.opened
     anchors.bottom: true
     margins.bottom: Style.space(67)
-    implicitWidth: card.width
-    implicitHeight: card.height
+    implicitWidth: Math.ceil(osd.roomWidth)
+    implicitHeight: Math.ceil(osd.roomHeight)
     color: "transparent"
     WlrLayershell.namespace: "nova-osd"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -123,7 +154,9 @@ Item {
 
     BorderSurface {
       id: card
-      padding: osd.notice ? Style.spacing.pillPadding : Style.space(16)
+      anchors.horizontalCenter: parent.horizontalCenter
+      anchors.bottom: parent.bottom
+      padding: osd.notice ? osd.noticePad : osd.levelPad
       width: inset.left + osd.spots.width + inset.right
       height: inset.top + (osd.notice ? Style.spacing.pillRowHeight : Style.font.displayLarge) + inset.bottom
       radius: Style.cornerRadius
@@ -149,7 +182,7 @@ Item {
         LevelBar {
           visible: osd.face.level
           x: osd.spots.barX
-          width: Style.space(142)
+          width: osd.barLength
         }
 
         // A readout ends at the padding, any room to spare in the gap

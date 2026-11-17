@@ -60,6 +60,24 @@ ShellRoot {
     check(notice.column === 13 && notice.textX === 22 && notice.textWidth === 120 && notice.width === 142
       && Face.layout(keys, sizes).textX === level.textX,
       "a notice as the dictation pill has it: its words the pill's gap after the icon; a level as it was")
+
+    // The window keeps one size, so no face is wider than the room: an icon's
+    // ink stops at inkMax, and a level's readout is the widest readout's.
+    sizes.words = 500
+    check(Face.layout(keys, sizes).textWidth === 41, "a level's readout as wide as the widest, whatever it says")
+    sizes.inkMax = 24
+    sizes.ink = 40
+    check(Face.layout(message, sizes).column === 24 && Face.layout(keys, sizes).column === 24,
+      "an icon's ink no wider than its most")
+    var notices = { pad: 10, inkMax: 40, wordsGap: 9, wordsMax: 325 }
+    var levels = { pad: 16, inkMax: 80, gap: 16, bar: 142, readout: 40.5 }
+    check(Face.room(notices, levels) === 394 && Face.room(notices, Object.assign({}, levels, { bar: 300 })) === 485,
+      "the room is the wider of the widest notice and the widest level")
+    sizes = { ink: 20, widestInk: 25, inkMax: 40, readout: 40.5, words: 9999, gap: 16, bar: 142, wordsMax: 325, wordsGap: 9 }
+    check(Face.layout(message, sizes).width <= Face.room(notices, levels) - 2 * notices.pad
+      && Face.layout(keys, Object.assign({}, sizes, { inkMax: 80, wordsGap: undefined, wordsMax: 190 })).width
+        <= Face.room(notices, levels) - 2 * levels.pad,
+      "no face is wider than the room")
     console.log("DONE")
     Qt.quit()
   }

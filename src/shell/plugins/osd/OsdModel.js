@@ -83,22 +83,24 @@ function parse(request) {
 // Where the card's pieces go, from its content's left edge, for a face of
 // parse() and what the card measured of it:
 //   ink, widestInk        the icon's ink, and the widest level icon's
+//   inkMax                the most ink an icon is given, if set
 //   readout, words        the widest readout's advance, and the words'
 //   gap, bar, wordsMax    the gaps, the bar's length, the words' most room
 //   wordsGap              where the words start after the icon, if given
 // The icon sits in a column, as wide as its ink, or beside a level the
-// widest icon's. The bar starts a gap after it. Words beside a large icon
-// look further from it than they are, as both fall away from their edges, so
-// they start two thirds of the gap after it, or wordsGap after it, and stop
-// at wordsMax; a readout comes a gap after the bar and ends at the card's
-// padding.
+// widest icon's, and no wider than inkMax. The bar starts a gap after it.
+// Words beside a large icon look further from it than they are, as both
+// fall away from their edges, so they start two thirds of the gap after it,
+// or wordsGap after it, and stop at wordsMax; a readout comes a gap after
+// the bar, as wide as the widest readout, and ends at the card's padding.
 function layout(face, sizes) {
-  var ink = Math.ceil(sizes.ink)
-  var column = face.level ? Math.max(ink, Math.ceil(sizes.widestInk)) : ink
+  var most = sizes.inkMax === undefined ? Infinity : sizes.inkMax
+  var ink = Math.min(Math.ceil(sizes.ink), most)
+  var column = face.level ? Math.min(Math.max(ink, Math.ceil(sizes.widestInk)), most) : ink
   var barX = column + sizes.gap
   var wordsGap = sizes.wordsGap === undefined ? Math.round(sizes.gap * 2 / 3) : sizes.wordsGap
   var textX = face.level ? barX + sizes.bar + sizes.gap : column + wordsGap
-  var textWidth = face.level ? Math.ceil(Math.max(sizes.readout, sizes.words))
+  var textWidth = face.level ? Math.ceil(sizes.readout)
     : Math.min(Math.ceil(sizes.words), sizes.wordsMax)
   return {
     ink: ink,
@@ -108,4 +110,14 @@ function layout(face, sizes) {
     textWidth: textWidth,
     width: face.level || face.words !== "" ? textX + textWidth : column
   }
+}
+
+// The widest a card can be inside its frame, for any face: a notice's (its
+// padding each side, an icon of <notice>.inkMax, its words' gap and their
+// most room) or a level's (its padding, an icon of <level>.inkMax, the bar
+// between two gaps, the widest readout). The window holds that much whatever
+// it shows, so that it keeps its size.
+function room(notice, level) {
+  return Math.max(2 * notice.pad + notice.inkMax + notice.wordsGap + notice.wordsMax,
+    2 * level.pad + level.inkMax + level.gap + level.bar + level.gap + Math.ceil(level.readout))
 }
