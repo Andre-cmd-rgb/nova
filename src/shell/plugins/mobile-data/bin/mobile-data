@@ -201,6 +201,28 @@ sim_blank() { # path
   [[ $numbers == "|" ]]
 }
 
+# Whether the SIM at this path is an eSIM with no plan on it, as a modem
+# switched off has it: ModemManager says so, or nothing on it is there to
+# read while the chip itself answers, with its EID. A card that a modem
+# reads only while it is on says nothing while it is off, its EID neither
+# (a card has none), and is not taken for none.
+esim_without_plan() { # path
+  local dump line iccid="" imsi="" eid="" status=""
+  dump=$(mm -i "${1##*/}" -K 2>/dev/null) || return 1
+  [[ $dump == *sim.properties.* ]] || return 1
+  while IFS= read -r line; do
+    case $line in
+    sim.properties.iccid*) iccid=${line#*:} ;;
+    sim.properties.imsi*) imsi=${line#*:} ;;
+    sim.properties.eid*) eid=${line#*:} ;;
+    sim.properties.esim-status*) status=${line#*:} ;;
+    esac
+  done <<<"$dump"
+  [[ ${status//[[:space:]]/} != no-profiles ]] || return 0
+  iccid=${iccid//[[:space:]-]/} imsi=${imsi//[[:space:]-]/} eid=${eid//[[:space:]-]/}
+  [[ -z $iccid && -z $imsi && -n $eid ]]
+}
+
 # The SIM at this path, as a short hash of its ICCID, else its IMSI; nothing,
 # and a failure, for one with neither or one that does not answer. A hash,
 # so that the state folder does not keep the SIM's number.
@@ -216,7 +238,9 @@ sim_id() { # path
 # Whether the modem's slot holds a SIM, from its dump: "yes" for one that says
 # what it is (or that the modem could not read), "no" for an empty slot or an
 # eSIM with nothing on it, and nothing while the modem is still reading its
-# slot or the SIM does not answer.
+# slot or the SIM does not answer. Switched off, a modem may keep its slot to
+# itself, a card's numbers too: only an eSIM with no plan on it is no SIM
+# then, and an empty slot or a blank card says nothing.
 sim_in_slot() {
   local state sim
   state=$(kv modem.generic.state) sim=$(kv modem.generic.sim)
@@ -231,9 +255,11 @@ sim_in_slot() {
     ;;
   esac
   if [[ -z $sim || $sim == "/" ]]; then
-    echo no
+    [[ $state == disabled || $state == disabling ]] || echo no
   elif sim_id "$sim" >/dev/null; then
     echo yes
+  elif [[ $state == disabled || $state == disabling ]]; then
+    ! esim_without_plan "$sim" || echo no
   elif sim_blank "$sim"; then
     echo no
   fi
@@ -307,21 +333,39 @@ look_while_parked() {
 # The APN looked up for a SIM, once it is on a network: for one new in the
 # slot, as a phone does, and for one with no profile yet. A SIM already set up
 # before this was kept is taken as the one the profile is for, so an APN set
-# by hand stays.
+# by hand stays. One that could not be set up is tried again a minute later,
+# not at every look; and one look at a time sets up, so that the bar's and
+# Settings' at once do not make a profile each.
+SETUP_RETRY=60
 set_up_for_sim() {
   [[ $STATE == disconnected || $STATE == noprofile ]] || return 0
-  local sim id kept=""
+  local sim id kept="" tried="" at=0 now=${NOVA_MOBILE_NOW:-$EPOCHSECONDS} lock=""
   sim=$(kv modem.generic.sim)
   [[ -n $sim && $sim != "/" ]] && id=$(sim_id "$sim") || return 0
   [[ -r $SIM_SET_UP ]] && kept=$(<"$SIM_SET_UP")
   [[ $id != "$kept" ]] || return 0
   if [[ $STATE == noprofile || -n $kept ]]; then
+    [[ -r $SIM_SET_UP.tried ]] && read -r tried at <"$SIM_SET_UP.tried"
+    [[ $tried == "$id" && $at =~ ^[0-9]+$ ]] && ((now - at < SETUP_RETRY)) && return 0
+    mkdir -p -- "$STATE_DIR" 2>/dev/null
+    { exec {lock}>"$STATE_DIR/.setup.lock"; } 2>/dev/null || return 0
+    flock -n "$lock" 2>/dev/null || {
+      exec {lock}>&-
+      return 0
+    }
     # In a subshell: what fails in it dies there, not the info it is part of.
-    (cmd_setup) >/dev/null 2>&1 || return 0
+    if ! (cmd_setup) >/dev/null 2>&1; then
+      printf '%s %s\n' "$id" "$now" >"$SIM_SET_UP.tried" 2>/dev/null
+      exec {lock}>&-
+      return 0
+    fi
+    rm -f -- "$SIM_SET_UP.tried"
     PROFILE_NAME=$(nm_profile)
     [[ -n $PROFILE_NAME ]] && STATE=disconnected
   fi
   mkdir -p -- "$STATE_DIR" 2>/dev/null && printf '%s\n' "$id" >"$SIM_SET_UP" 2>/dev/null
+  # Held until the SIM is noted, so a look waiting on it finds it set up.
+  [[ -z $lock ]] || exec {lock}>&-
   return 0
 }
 
@@ -796,9 +840,12 @@ read_state() {
   # An eSIM built into the modem, with no plan on it and no card in the slot,
   # has a path all the same, and some modems are then on and searching, or
   # switched off, not "failed": with nothing on it to read, it is no SIM
-  # either.
+  # either. Switched off, that is only so where the eSIM answers as one with
+  # no plan (esim_without_plan): a card can say nothing then too.
   if [[ -n $sim && $sim != "/" ]]; then
-    if [[ $STATE == searching || $STATE == disabled ]] && sim_blank "$sim"; then
+    if [[ $STATE == searching ]] && sim_blank "$sim"; then
+      STATE=nosim
+    elif [[ $STATE == disabled ]] && esim_without_plan "$sim"; then
       STATE=nosim
     fi
   elif [[ $STATE != disabled && $STATE != starting ]]; then

@@ -1,6 +1,8 @@
 #!/bin/sh
 # `gdbus monitor` as the mobile data widget reads it while its modem is
-# parked: one line, as ModemManager probing the modem afresh when a SIM goes
-# in, then nothing more for a while.
+# parked: gdbus's own lines, then one signal, as ModemManager probing the
+# modem afresh when a SIM goes in, then nothing more for a while.
+echo "Monitoring signals from all objects owned by org.freedesktop.ModemManager1"
+echo "The name org.freedesktop.ModemManager1 is owned by :1.5"
 echo "/org/freedesktop/ModemManager1: org.freedesktop.DBus.ObjectManager.InterfacesAdded (objectpath '/org/freedesktop/ModemManager1/Modem/1', {})"
 sleep 10

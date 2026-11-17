@@ -370,12 +370,14 @@ Panel {
   // is heard here, and `info` looks at the slot a few seconds later, once the
   // probe has settled, and half a minute later. A SIM there brings the modem
   // back. ModemManager says nothing more of a modem in low power, so this
-  // costs nothing while the slot stays empty.
+  // costs nothing while the slot stays empty. Its signals are the lines that
+  // begin with the object's path; gdbus starts with lines of its own.
   Process {
     command: ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.ModemManager1"]
     running: mobile.parked
     stdout: SplitParser {
-      onRead: {
+      onRead: function (line) {
+        if (String(line).charAt(0) !== "/") return
         plugSoon.restart()
         if (!plugLater.running) plugLater.start()
       }
