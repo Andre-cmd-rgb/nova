@@ -5,6 +5,10 @@
 [colors-dark]
 background={{ background_strip }}
 foreground={{ foreground_strip }}
+# The background a fifth see-through, over the blur Hyprland draws behind a
+# terminal (data/hypr/rules.lua). Only cells in the default background are:
+# text, and cells a program colours, stay solid.
+alpha=0.8
 
 regular0={{ color0_strip }}
 regular1={{ color1_strip }}

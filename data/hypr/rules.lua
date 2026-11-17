@@ -113,8 +113,12 @@ nova.window(
 -- square (looknfeel.lua, or no gaps), to tell it apart.
 nova.window({ tag = "pop" }, { rounding = 8 })
 
--- The screensaver (nova screensaver): a window on each display, over everything.
-nova.window("org.nova.screensaver", { fullscreen = true, float = true, animation = "slide" })
+-- The screensaver (nova screensaver): a window on each display, over
+-- everything, and black through and through.
+nova.window(
+  "org.nova.screensaver",
+  { fullscreen = true, float = true, animation = "slide", tag = "-default-opacity", opacity = "1 1" }
+)
 
 -- Tag a window noidle, in rules of your own, and the screen stays on while
 -- it is open.
@@ -130,3 +134,10 @@ nova.window(
 
 -- Whatever still has the tag is a little see-through: 0.985 focused, 0.96 not.
 nova.window({ tag = "default-opacity" }, { opacity = "0.985 0.96" })
+
+-- Blur behind terminals, the screensaver aside, and behind nothing else:
+-- every window is a little see-through, and blur behind each would cost GPU
+-- work for all of them, for a difference too faint to see.
+nova.window(".*", { no_blur = true })
+nova.window({ tag = "terminal" }, { no_blur = false })
+nova.window("org.nova.screensaver", { no_blur = true })

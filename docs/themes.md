@@ -1,6 +1,6 @@
 # Themes and backgrounds
 
-This page covers choosing a theme, the adaptive theme that takes its colors from your background, backgrounds, the see-through bar, the font and text size, and making a theme of your own.
+This page covers choosing a theme, the adaptive theme that takes its colors from your background, backgrounds, the see-through bar and terminal, the font and text size, and making a theme of your own.
 
 <img src="images/themes.jpg" alt="Four copies of the same desktop, a terminal and Settings at Appearance, each in another theme: adaptive, Tokyo Night, Catppuccin Latte with light windows, and Gruvbox" width="100%">
 
@@ -91,6 +91,17 @@ The bar stays readable on any photo:
 - its text takes whichever of the theme's two colors, the text's or the background's, reads on the photo under it;
 - over a dark sky, that is all;
 - where the photo is bright or busy, a soft shade of the other color sits behind the text, and fades out below it rather than ending in a line.
+
+## A see-through terminal
+
+The terminal's background is a fifth see-through, over a blur of what is behind it, and its text stays solid. Hyprland blurs behind terminals and nothing else. For a solid terminal, add this to `~/.config/foot/foot.ini`:
+
+```ini
+[colors-dark]
+alpha=1.0
+```
+
+Super+Backspace makes any other window solid, or see-through again; it does not reach a terminal's own background.
 
 ## Font and text size
 
