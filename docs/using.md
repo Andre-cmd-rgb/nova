@@ -290,6 +290,8 @@ These come installed:
 | Loupe, mpv | photos; video and music |
 | Papers | PDFs and other documents |
 | fastfetch | a summary of the system |
+| cava | the sound playing, as bars |
+| cmatrix | falling code |
 | Claude Code, Codex | coding agents in the terminal, through `mise` |
 
 - Settings → Default Apps picks another browser, editor or terminal, among those installed.

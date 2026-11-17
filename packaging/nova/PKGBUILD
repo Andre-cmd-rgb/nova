@@ -93,6 +93,10 @@ depends=(
   sushi          # Quick Look: Space on a file in Files
   loupe          # photos
   mpv            # video and music
+  btop           # the Activity window (Super+Ctrl+T), in the theme's colors
+  fastfetch      # a summary of the system, in a terminal
+  cava           # the sound playing, as bars, in a terminal
+  cmatrix        # falling code, in a terminal
 
   # The App Store (docs/apps.md)
   flatpak        # Flathub's apps, in each user's own installation
@@ -164,7 +168,6 @@ optdepends=(
   'intel-ucode: Intel CPU microcode updates'
   'linux-firmware: firmware for Wi-Fi, GPUs and other hardware'
   'fprintd: fingerprint unlock'
-  'btop: system monitor, themed by nova theme set'
   'gpu-screen-recorder: screen recording'
   'ffmpeg: trimming screen recordings'
   'tesseract-data-eng: copy text from a screen region'
