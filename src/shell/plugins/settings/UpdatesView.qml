@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -12,8 +11,8 @@ import "UpdatesModel.js" as Model
 // apps together. An app whose AUR recipe changed beyond a new version waits
 // here, to be read before it is built.
 //
-// nova update --status writes how far it is to status.json, which this only
-// reads: closed and opened again, the page finds the run where it is.
+// UpdateRun follows the run: closed and opened again, the page finds it where
+// it is.
 Column {
   id: root
 
@@ -26,26 +25,22 @@ Column {
   // Check was pressed: Settings looks for firmware too.
   signal checking()
 
-  readonly property string dir: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/update"
   readonly property string releases: "https://github.com/Andre-cmd-rgb/nova/releases/tag/v"
-  property var status: ({})
-  property bool alive: true
-  property bool aliveAsked: false
   property string check: ""
   property bool details: false
   property string logText: ""
   property string reviewing: ""
   property string reviewText: ""
   property string lastState: ""
-  // Watched once it exists: Quickshell sees a file appear in a folder that
-  // is there, not in one made after it started looking.
-  property bool watching: false
 
-  readonly property string state: Model.state(status, alive)
-  readonly property bool running: state === "running"
+  UpdateRun { id: run }
+  readonly property var status: run.status
+  readonly property bool alive: run.alive
+  readonly property string state: run.state
+  readonly property bool running: run.running
   readonly property bool ended: state === "failed" || state === "stopped" || state === "problems"
   readonly property var summary: Model.summary(status, check, alive)
-  readonly property real fraction: Model.fraction(status)
+  readonly property real fraction: run.fraction
   readonly property string available: running ? "" : Model.availableVersion(check)
 
   spacing: Style.space(8)
@@ -61,10 +56,9 @@ Column {
   }
 
   function start(args) {
-    alive = true
     details = false
     reviewing = ""
-    Util.execArgv(["nova-update-run"].concat(args))
+    run.start(args)
   }
 
   function act(action) {
@@ -84,36 +78,9 @@ Column {
     reviewProc.running = true
   }
 
-  Process {
-    command: ["mkdir", "-p", root.dir]
-    running: true
-    onExited: root.watching = true
-  }
-
-  FileView {
-    path: root.watching ? root.dir + "/status.json" : ""
-    watchChanges: true
-    printErrors: false
-    onLoaded: {
-      try {
-        var parsed = JSON.parse(text())
-        if (parsed && typeof parsed === "object") root.status = parsed
-      } catch (e) {
-        // Written whole, then moved into place: a bad read is someone else's.
-      }
-      // One stopped from outside left "running" behind it.
-      if (root.status.state === "running" && !root.aliveAsked) {
-        root.aliveAsked = true
-        aliveProc.running = true
-      }
-    }
-    onLoadFailed: root.status = ({})
-    onFileChanged: reload()
-  }
-
   FileView {
     id: logFile
-    path: root.details ? root.dir + "/status.log" : ""
+    path: root.details ? run.dir + "/status.log" : ""
     watchChanges: true
     printErrors: false
     onLoaded: root.logText = Model.tail(text(), 200)
@@ -125,12 +92,6 @@ Column {
     id: logTimer
     interval: 500
     onTriggered: logFile.reload()
-  }
-
-  Process {
-    id: aliveProc
-    command: ["systemctl", "--user", "--quiet", "is-active", "nova-update.service"]
-    onExited: function (exitCode) { root.alive = exitCode === 0 }
   }
 
   Process {

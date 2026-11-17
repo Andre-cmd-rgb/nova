@@ -14,7 +14,10 @@ Column {
   id: root
   spacing: Style.space(22)
 
-  readonly property var devices: Networking.devices ? Networking.devices.values : []
+  // Below the networks, the connection's addresses, band and DNS.
+  property bool details: true
+
+  readonly property var devices:Networking.devices ? Networking.devices.values : []
   readonly property var device: {
     var fallback = null
     for (var i = 0; i < devices.length; i++) {
@@ -258,8 +261,13 @@ Column {
     }
   }
 
-  // The addresses, the band and the DNS.
-  WifiLinkView { width: parent.width }
+  // The addresses, the band and the DNS, which the welcome leaves out.
+  Loader {
+    width: parent.width
+    active: root.details
+    visible: active
+    sourceComponent: WifiLinkView {}
+  }
 
   Component {
     id: networkRow

@@ -3,7 +3,6 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Bluetooth
 import Quickshell.Hyprland
-import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -32,17 +31,17 @@ Item {
   readonly property string pluginId: "nova.settings"
 
   property bool closingFromHost: false
-  // `info`, not `data`: `data` is QQuickItem's default property.
-  property var info: ({})
-  property bool loaded: false
   property string page: "wifi"
   property string range: "today"
-  property bool reloadWanted: false
-  property var queue: []
-  property string failure: ""
   property bool confirmRecovery: false
   // Updates offers Chrome and VS Code (opened so by nova-launch-browser).
   property bool offerApps: false
+
+  // What the window shows, and the changes it runs.
+  SettingsState { id: settingsState }
+  readonly property var info: settingsState.info
+  readonly property bool loaded: settingsState.loaded
+  readonly property string failure: settingsState.failure
 
   readonly property var appearance: info.appearance || ({})
   readonly property var battery: info.battery || ({})
@@ -177,26 +176,13 @@ Item {
   }
 
   function load() {
-    if (stateProc.running) reloadWanted = true
-    else stateProc.running = true
+    settingsState.load()
   }
 
   // Changes run one at a time, in order, and the window reloads once the
   // last one is done.
   function run(argv) {
-    failure = ""
-    var next = queue.slice()
-    next.push(argv)
-    queue = next
-    pump()
-  }
-
-  function pump() {
-    if (actionProc.running || queue.length === 0) return
-    var next = queue.slice()
-    actionProc.command = next.shift()
-    queue = next
-    actionProc.running = true
+    settingsState.run(argv)
   }
 
   function step(delta) {
@@ -230,49 +216,6 @@ Item {
     var list = (values || []).slice()
     if (current && list.indexOf(current) < 0) list.unshift(current)
     return list.map(function (v) { return { value: v, label: root.nameOf(v) } })
-  }
-
-  // ---- processes ----------------------------------------------------------
-
-  Process {
-    id: stateProc
-    command: ["nova-settings", "state"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        try {
-          var parsed = JSON.parse(String(text))
-          if (parsed && typeof parsed === "object") {
-            root.info = parsed
-            root.loaded = true
-          }
-        } catch (e) {
-          // A truncated read keeps what is on screen.
-        }
-      }
-    }
-    onExited: {
-      if (root.reloadWanted) {
-        root.reloadWanted = false
-        running = true
-      }
-    }
-  }
-
-  Process {
-    id: actionProc
-    stderr: StdioCollector {
-      id: actionErrors
-      waitForEnd: true
-    }
-    onExited: function (exitCode) {
-      if (exitCode !== 0) {
-        var message = String(actionErrors.text || "").trim().split("\n").pop()
-        root.failure = message.length > 0 ? message : "That did not work (exit " + exitCode + ")."
-      }
-      if (root.queue.length > 0) root.pump()
-      else root.load()
-    }
   }
 
   // ---- Bluetooth's scan ------------------------------------------------------
@@ -504,7 +447,7 @@ Item {
           wrapMode: Text.WordWrap
           textFormat: Text.PlainText
         }
-        TapHandler { onTapped: root.failure = "" }
+        TapHandler { onTapped: settingsState.failure = "" }
       }
     }
   }
@@ -634,76 +577,10 @@ Item {
       id: p
       title: "Appearance"
 
-      Section {
+      ThemeView {
         width: p.inner
-        title: "THEME"
-        Flow {
-          width: parent.width
-          spacing: Style.space(10)
-          Repeater {
-            model: root.appearance.themes || []
-            delegate: Rectangle {
-              id: swatch
-              required property var modelData
-              readonly property bool current: root.appearance.theme === modelData.name
-              width: Style.space(118)
-              height: Style.space(70)
-              radius: Math.max(4, Style.cornerRadius)
-              color: modelData.background || Commons.Color.background
-              border.width: current ? 2 : 1
-              border.color: current ? Commons.Color.accent : Qt.alpha(Commons.Color.foreground, 0.15)
-
-              Rectangle {
-                anchors.left: parent.left
-                anchors.top: parent.top
-                anchors.margins: Style.space(10)
-                width: Style.space(26)
-                height: Style.space(6)
-                radius: height / 2
-                color: swatch.modelData.accent || Commons.Color.accent
-              }
-              Text {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.margins: Style.space(10)
-                text: swatch.modelData.name.replace(/-/g, " ")
-                color: swatch.modelData.foreground || Commons.Color.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.bodySmall
-                // Two words that do not fit on one line ("catppuccin latte")
-                // take two, which the tile has room for.
-                wrapMode: Text.Wrap
-                maximumLineCount: 2
-                elide: Text.ElideRight
-                textFormat: Text.PlainText
-              }
-              TapHandler { onTapped: if (!swatch.current) root.run(["nova-theme", "set", swatch.modelData.name]) }
-            }
-          }
-        }
-        Line {
-          label: "Adaptive theme"
-          visible: (root.appearance.adaptive || "") !== ""
-          ButtonGroup {
-            options: [{ value: "auto", label: "Auto" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]
-            value: root.appearance.adaptive || "auto"
-            onChanged: function (value) { root.run(["nova-theme", "adaptive", value]) }
-          }
-        }
-      }
-
-      Section {
-        width: p.inner
-        title: "BACKGROUND"
-        Line {
-          label: "Background"
-          Row {
-            spacing: Style.space(8)
-            Button { text: "Next"; bordered: true; onClicked: root.run(["nova-theme", "bg", "next"]) }
-            Button { text: "Choose…"; bordered: true; onClicked: root.run(["nova-theme", "bg", "pick"]) }
-          }
-        }
+        appearance: root.appearance
+        onCommand: function (argv) { root.run(argv) }
       }
 
       Section {
