@@ -6,8 +6,8 @@
 <policyconfig>
   <vendor>Nova</vendor>
   <action id="org.nova.bluetooth-le">
-    <description>Turn Bluetooth LE on or off</description>
-    <message>Authentication is required to turn Bluetooth LE on or off</message>
+    <description>Turn Bluetooth Low Energy on or off</description>
+    <message>Authentication is required to turn Bluetooth Low Energy on or off</message>
     <defaults>
       <allow_any>auth_admin</allow_any>
       <allow_inactive>auth_admin</allow_inactive>
