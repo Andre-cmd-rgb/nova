@@ -9,8 +9,9 @@ import Quickshell.Io
 // block powered the controller down and it comes back (a ThinkPad's does);
 // the rest of the time it shows BlueZ's. nova-bluetooth-power does the
 // asking, one call at a time: asked again while one runs, the last asked
-// for runs after it. One that fails, or that BlueZ never follows, goes back
-// to BlueZ's.
+// for runs after it. A switch that BlueZ has not followed a moment after
+// the call is done goes back to BlueZ's, the call failed or not: one that
+// gives up on an adapter slow to come back may see it come yet.
 QtObject {
   id: power
 
@@ -56,7 +57,6 @@ QtObject {
     onExited: function (exitCode) {
       heard = true
       if (power.asked !== null && power.asked !== want) go()
-      else if (exitCode !== 0) power.asked = null
       else {
         power.settle()
         if (power.asked !== null) power.late.restart()

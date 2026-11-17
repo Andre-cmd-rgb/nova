@@ -242,7 +242,7 @@ session_start() { # display...
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "env J2D_UISCALE=2" ]
   [[ ${lines[1]} == "exec systemctl --user import-environment "* ]]
-  [ "${lines[3]}" = "exec timeout 15 nova-theme refresh; exec nova-launch-shell" ]
+  [ "${lines[3]}" = "exec timeout -k 2 15 nova-theme refresh; exec nova-launch-shell" ]
   [[ $output != *GDK_SCALE* ]]
 }
 

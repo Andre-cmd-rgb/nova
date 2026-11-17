@@ -353,6 +353,12 @@ set_up_for_sim() {
       exec {lock}>&-
       return 0
     }
+    # Set up by another look while this one came to the lock.
+    [[ -r $SIM_SET_UP ]] && kept=$(<"$SIM_SET_UP")
+    if [[ $id == "$kept" ]]; then
+      exec {lock}>&-
+      return 0
+    fi
     # In a subshell: what fails in it dies there, not the info it is part of.
     if ! (cmd_setup) >/dev/null 2>&1; then
       printf '%s %s\n' "$id" "$now" >"$SIM_SET_UP.tried" 2>/dev/null
@@ -364,7 +370,7 @@ set_up_for_sim() {
     [[ -n $PROFILE_NAME ]] && STATE=disconnected
   fi
   mkdir -p -- "$STATE_DIR" 2>/dev/null && printf '%s\n' "$id" >"$SIM_SET_UP" 2>/dev/null
-  # Held until the SIM is noted, so a look waiting on it finds it set up.
+  # Held until the SIM is noted, so that a look taking it next finds it so.
   [[ -z $lock ]] || exec {lock}>&-
   return 0
 }

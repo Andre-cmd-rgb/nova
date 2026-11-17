@@ -6,8 +6,8 @@ import qs.Commons
 
 // Bluetooth on or off as its switches show it (BluetoothPower): what was
 // asked, at once; asked again while a call runs, the last asked for after
-// it; back to BlueZ's for a call that fails, and for one BlueZ never
-// follows. There is no bus under the test, so BlueZ has no adapter, and
+// it; back to BlueZ's a moment after a call that BlueZ never follows,
+// failed or not. There is no bus under the test, so BlueZ has no adapter, and
 // Bluetooth is off as BlueZ has it; nova-bluetooth-power is a stub.
 ShellRoot {
   id: test
@@ -99,7 +99,7 @@ ShellRoot {
   }
 
   function failed() {
-    same(BluetoothPower.on, false, "a call that failed: back to BlueZ's")
+    same(BluetoothPower.on, false, "a call that failed, BlueZ not following: back to BlueZ's")
     exitCode.setText("0\n")
     BluetoothPower.toggle()
     when(() => !BluetoothPower.runner.running, () => {
