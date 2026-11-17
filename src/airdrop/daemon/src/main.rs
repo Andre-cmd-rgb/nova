@@ -446,8 +446,8 @@ fn run() -> Result<(), String> {
     {
         let (preparing, on) = (sending.clone(), sending.clone());
         control.on_send(control::Sends {
-            prepare: Box::new(move |files| {
-                let ready: Box<dyn control::Ready> = Box::new(preparing.prepare(files)?);
+            prepare: Box::new(move |files, icon| {
+                let ready: Box<dyn control::Ready> = Box::new(preparing.prepare(files, icon)?);
                 Ok(ready)
             }),
             on: Box::new(move || on.on()),

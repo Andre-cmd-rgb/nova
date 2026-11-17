@@ -432,6 +432,83 @@ fn opened(path: &Path) -> Result<File, String> {
     Ok(file)
 }
 
+/// Files a picture for the offer is made of, by their ending: photos, with vips (Nova's own), and
+/// films, a frame at their first second with ffmpeg, where it is installed, and then vips.
+const PHOTOS: &[&str] = &[
+    "jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "tif", "tiff", "avif", "bmp", "jxl",
+];
+const FILMS: &[&str] = &["mov", "mp4", "m4v", "mkv", "webm", "avi"];
+/// How long each step of making it may take: the send does not wait longer.
+const PICTURE_WITHIN: Duration = Duration::from_secs(5);
+
+/// The picture an iPhone shows with the offer, of this file: JPEG 2000 of at most 540 pixels a
+/// side, as an iPhone sends its own; open, its name already gone. None for a file that is no photo
+/// or film, or one it could not be made of in time: the offer goes without one. The file is read
+/// through the descriptor already open, so that no name of the user's is taken for an option.
+fn picture(file: &File) -> Option<File> {
+    let path = PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+    let name = std::fs::read_link(&path).ok()?;
+    let ending = name.extension()?.to_str()?.to_ascii_lowercase();
+    let folder = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let stem = folder.join(format!("nova-airdrop-picture-{}", std::process::id()));
+    let (frame, made) = (stem.with_extension("png"), stem.with_extension("jp2"));
+    let reading = || File::open(&path).ok().map(Stdio::from);
+    let made_well = if PHOTOS.contains(&ending.as_str()) {
+        finished(
+            Command::new("vips")
+                .arg("thumbnail")
+                .arg("/proc/self/fd/0")
+                .arg(format!("{}[Q=40]", made.display()))
+                .args(["540", "--height", "540"])
+                .stdin(reading()?),
+        )
+    } else if FILMS.contains(&ending.as_str()) {
+        let framed = finished(
+            Command::new("ffmpeg")
+                .args(["-v", "quiet", "-y", "-ss", "1", "-i", "/proc/self/fd/0"])
+                .args(["-frames:v", "1"])
+                .arg(&frame)
+                .stdin(reading()?),
+        );
+        framed
+            && finished(
+                Command::new("vips")
+                    .arg("thumbnail")
+                    .arg(&frame)
+                    .arg(format!("{}[Q=40]", made.display()))
+                    .args(["540", "--height", "540"])
+                    .stdin(Stdio::null()),
+            )
+    } else {
+        false
+    };
+    let _ = std::fs::remove_file(&frame);
+    let picture = made_well.then(|| File::open(&made).ok()).flatten();
+    let _ = std::fs::remove_file(&made);
+    picture
+}
+
+/// Runs it with nothing said out, and whether it succeeded in time: one that takes longer is ended.
+fn finished(command: &mut Command) -> bool {
+    let Ok(mut child) = command.stdout(Stdio::null()).stderr(Stdio::null()).spawn() else {
+        return false;
+    };
+    let until = Instant::now() + PICTURE_WITHIN;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if Instant::now() < until => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
+        }
+    }
+}
+
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 /// The daemon's socket while a send is going on: a signal says cancel to it.
 static CANCEL_TO: AtomicI32 = AtomicI32::new(-1);
@@ -540,6 +617,8 @@ fn send(words: &[&str]) -> ExitCode {
     if files.len() > 200 {
         return failed(json, "AirDrop sends up to 200 files at a time.");
     }
+    // What the iPhone shows with the offer, made from the first file while it is easy to.
+    let icon = files.first().and_then(picture);
     // SAFETY: the handler is async-signal-safe; no pointers.
     unsafe {
         signal(2, on_stop as *const () as usize);
@@ -590,13 +669,14 @@ fn send(words: &[&str]) -> ExitCode {
                 };
             }
         }
-        end = sending(json, &files, &mut picker, &typed);
+        end = sending(json, &files, icon.as_ref(), &mut picker, &typed);
         if end != End::Again {
             break;
         }
         waited(|| ask("status").is_none(), Duration::from_secs(10));
     }
     drop(files);
+    drop(icon);
     if end == End::Again {
         let _ = failed(json, picker::WENT_OFF);
         end = End::NotSent;
@@ -656,12 +736,24 @@ fn listen(json: bool) -> mpsc::Receiver<String> {
 
 /// The send itself, once AirDrop is on: the files handed to the daemon, and the conversation. Again
 /// if the daemon was not there to take them, or was on its way out.
-fn sending(json: bool, files: &[File], picker: &mut Picker, typed: &mpsc::Receiver<String>) -> End {
+fn sending(
+    json: bool,
+    files: &[File],
+    icon: Option<&File>,
+    picker: &mut Picker,
+    typed: &mpsc::Receiver<String>,
+) -> End {
     let Ok(stream) = UnixStream::connect(meet::socket()) else {
         return End::Again;
     };
-    let fds: Vec<RawFd> = files.iter().map(AsRawFd::as_raw_fd).collect();
-    if meet::send_with_files(stream.as_raw_fd(), b"send\n", &fds) != 5 {
+    // The picture goes last, and the first words say it is there.
+    let fds: Vec<RawFd> = files.iter().chain(icon).map(AsRawFd::as_raw_fd).collect();
+    let words: &[u8] = if icon.is_some() {
+        b"send icon\n"
+    } else {
+        b"send\n"
+    };
+    if meet::send_with_files(stream.as_raw_fd(), words, &fds) != words.len() as isize {
         return End::Again;
     }
     CANCEL_TO.store(stream.as_raw_fd(), Ordering::SeqCst);
@@ -770,6 +862,43 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_photo_gets_a_picture_for_the_offer_and_other_files_none() {
+        // vips is Nova's own; a machine without it makes no picture, and that is all.
+        if Command::new("vips").arg("--version").output().is_err() {
+            return;
+        }
+        let folder = std::env::temp_dir().join(format!("nova-picture-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        // A name vips would read options from, were it given the name.
+        let photo = folder.join("a photo [Q=1].png");
+        assert!(Command::new("vips")
+            .arg("black")
+            .arg(folder.join("black.png"))
+            .args(["1200", "900", "--bands", "3"])
+            .status()
+            .unwrap()
+            .success());
+        std::fs::rename(folder.join("black.png"), &photo).unwrap();
+        let mut made = Vec::new();
+        picture(&File::open(&photo).unwrap())
+            .expect("a picture")
+            .read_to_end(&mut made)
+            .unwrap();
+        assert!(made.starts_with(&[0, 0, 0, 0x0c, b'j', b'P', b' ', b' ']));
+        assert!(made.len() < 512 << 10);
+        std::fs::write(folder.join("notes.txt"), "hello").unwrap();
+        assert!(picture(&File::open(folder.join("notes.txt")).unwrap()).is_none());
+        // Nothing of it is left behind.
+        let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        assert!(!runtime
+            .join(format!("nova-airdrop-picture-{}.jp2", std::process::id()))
+            .exists());
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
 
     #[test]
     fn send_reads_its_options_and_files() {

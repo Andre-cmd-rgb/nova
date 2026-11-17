@@ -111,8 +111,9 @@ pub fn kind(name: &str) -> &'static str {
 }
 
 /// The question: who asks, and each file by its name, kind and size, at the path it has in the
-/// archive.
-pub fn question(sender: &Sender, files: &[(String, u64)]) -> Vec<u8> {
+/// archive; and the picture the receiver shows with the offer, when there is one (JPEG 2000, as an
+/// iPhone sends its own).
+pub fn question(sender: &Sender, files: &[(String, u64)], icon: Option<&[u8]>) -> Vec<u8> {
     let files = files
         .iter()
         .map(|(name, bytes)| {
@@ -126,7 +127,7 @@ pub fn question(sender: &Sender, files: &[(String, u64)]) -> Vec<u8> {
             ])
         })
         .collect();
-    plist::write(&Value::Dict(vec![
+    let mut asked = vec![
         (
             "SenderComputerName".into(),
             Value::Text(sender.name.clone()),
@@ -137,7 +138,65 @@ pub fn question(sender: &Sender, files: &[(String, u64)]) -> Vec<u8> {
         ("ConvertMediaFormats".into(), Value::Bool(false)),
         ("Items".into(), Value::List(Vec::new())),
         ("Files".into(), Value::List(files)),
-    ]))
+    ];
+    if let Some(icon) = icon {
+        asked.push(("FileIcon".into(), Value::Data(icon.to_vec())));
+    }
+    plist::write(&Value::Dict(asked))
+}
+
+extern "C" {
+    fn getsockopt(
+        fd: std::ffi::c_int,
+        level: std::ffi::c_int,
+        name: std::ffi::c_int,
+        value: *mut std::ffi::c_void,
+        length: *mut u32,
+    ) -> std::ffi::c_int;
+}
+
+/// What the kernel's TCP says of a connection, for the log: what the receiver has acknowledged of
+/// what went, what was sent again, what is in flight, the round trip, and when it was last heard
+/// (struct tcp_info, include/uapi/linux/tcp.h).
+fn tcp_said(socket: &TcpStream) -> Option<String> {
+    use std::os::fd::AsRawFd;
+    let mut info = [0u8; 232];
+    let mut length = info.len() as u32;
+    // SAFETY: the buffer is as long as said, and the kernel writes no more than that.
+    let asked = unsafe {
+        getsockopt(
+            socket.as_raw_fd(),
+            6,
+            11,
+            info.as_mut_ptr().cast(),
+            &mut length,
+        )
+    };
+    let length = length as usize;
+    if asked != 0 || length < 220 {
+        return None;
+    }
+    let u32_at = |at: usize| u32::from_ne_bytes(info[at..at + 4].try_into().unwrap());
+    let u64_at = |at: usize| u64::from_ne_bytes(info[at..at + 8].try_into().unwrap());
+    let window = if length >= 232 {
+        format!(", its window {} B", u32_at(228))
+    } else {
+        String::new()
+    };
+    Some(format!(
+        "TCP: {} B acknowledged of {} B sent ({} B again), {} segments in flight, {} lost, \
+         window {}, round trip {} ms, timeout {} ms, backed off {}, last heard {} ms ago{window}",
+        u64_at(120),
+        u64_at(200),
+        u64_at(208),
+        u32_at(24),
+        u32_at(32),
+        u32_at(80),
+        u32_at(68) / 1000,
+        u32_at(8) / 1000,
+        info[4],
+        u32_at(56),
+    ))
 }
 
 /// What a receiver's answer to /Discover says of it.
@@ -339,8 +398,8 @@ impl Sender {
         })
     }
 
-    /// Offers the files, and waits for the person at the receiver to decide, or for `cancelled`:
-    /// all of it within the limit.
+    /// The same with no picture, for the tests.
+    #[cfg(test)]
     pub fn ask(
         &self,
         at: &SocketAddr,
@@ -348,12 +407,25 @@ impl Sender {
         files: &[(String, u64)],
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Answer<'_>, String> {
+        self.offer(at, host, files, None, cancelled)
+    }
+
+    /// Offers the files, with their picture if there is one, and waits for the person at the
+    /// receiver to decide, or for `cancelled`: all of it within the limit.
+    pub fn offer(
+        &self,
+        at: &SocketAddr,
+        host: &str,
+        files: &[(String, u64)],
+        icon: Option<&[u8]>,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Answer<'_>, String> {
         let deadline = Instant::now() + self.limits.decide;
         let stream = Self::connect(at, self.limits.decide)?;
         watched(&stream, Some(deadline), None, cancelled, |_| {
             let mut connection = self.handshake(stream.try_clone().map_err(words)?)?;
             connection
-                .post("/Ask", host, &question(self, files), false)
+                .post("/Ask", host, &question(self, files, icon), false)
                 .map_err(words)?;
             let _ = stream.set_read_timeout(Some(Duration::from_millis(250)));
             loop {
@@ -390,17 +462,60 @@ impl Sender {
     }
 
     /// The files, on the connection the yes came on; `sent` is told how many bytes of them have
-    /// gone, as they go. It ends when they make no progress for the limit's while, when the
-    /// receiver does not say it has them all in time after the last, and at `cancelled`.
+    /// gone, as they go, and `log` each second what TCP says of the connection while it changes.
+    /// It ends when they make no progress for the limit's while, when the receiver does not say it
+    /// has them all in time after the last, and at `cancelled`.
     pub fn upload(
         &self,
         connection: &mut Connection<tls::Stream<'_>>,
         host: &str,
         pack: &mut Pack,
         sent: &mut dyn FnMut(u64),
+        log: &(dyn Fn(&str) + Sync),
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<(), String> {
         let socket = connection.stream().socket().try_clone().map_err(words)?;
+        let done = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let _ = std::thread::Builder::new()
+                .name("airdrop-tcp".into())
+                .spawn_scoped(scope, || {
+                    let mut last = String::new();
+                    while !done.load(Ordering::SeqCst) {
+                        for _ in 0..10 {
+                            std::thread::sleep(Duration::from_millis(100));
+                            if done.load(Ordering::SeqCst) {
+                                return;
+                            }
+                        }
+                        if let Some(said) = tcp_said(&socket).filter(|said| *said != last) {
+                            log(&said);
+                            last = said;
+                        }
+                    }
+                });
+            let result = self.uploading(connection, host, pack, sent, cancelled, &socket);
+            done.store(true, Ordering::SeqCst);
+            if let Err(why) = &result {
+                log(&format!(
+                    "{why}; at the end, {}",
+                    tcp_said(&socket).unwrap_or_else(|| "TCP said nothing".into())
+                ));
+            }
+            result
+        })
+    }
+
+    fn uploading(
+        &self,
+        connection: &mut Connection<tls::Stream<'_>>,
+        host: &str,
+        pack: &mut Pack,
+        sent: &mut dyn FnMut(u64),
+        cancelled: &(dyn Fn() -> bool + Sync),
+        socket: &TcpStream,
+    ) -> Result<(), String> {
+        let socket = socket.try_clone().map_err(words)?;
         // At the least rate on average, beside the slack, as well as never stalling; once the last
         // of it has gone, the receiver's answer has its own limit.
         let at_least = Duration::from_secs_f64(pack.bytes as f64 / self.limits.rate.max(1) as f64);
@@ -594,6 +709,7 @@ pub mod tests {
                 "nova-abcdef.local",
                 &mut pack,
                 &mut |bytes| progress.push(bytes),
+                &|_| {},
                 &|| false,
             )
             .unwrap();
@@ -672,14 +788,38 @@ pub mod tests {
     }
 
     #[test]
+    fn tcp_says_how_a_connection_goes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut ours = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut theirs, _) = listener.accept().unwrap();
+        std::io::Write::write_all(&mut ours, b"hello").unwrap();
+        let mut got = [0u8; 5];
+        std::io::Read::read_exact(&mut theirs, &mut got).unwrap();
+        // Acknowledged soon after it came.
+        let mut said = String::new();
+        for _ in 0..50 {
+            said = tcp_said(&ours).unwrap();
+            if said.contains(" of 5 B sent") && !said.contains(" 0 B acknowledged") {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(said.starts_with("TCP: "), "{said}");
+        assert!(said.contains(" of 5 B sent (0 B again)"), "{said}");
+        assert!(said.contains("its window "), "{said}");
+    }
+
+    #[test]
     fn the_question_names_each_file_as_a_receiver_reads_it() {
         let folder = scratch("question");
         let sender = sender(&folder);
         let asked = plist::parse(&question(
             &sender,
             &[("IMG_0001.HEIC".into(), 1_044_468), ("notes".into(), 5)],
+            None,
         ))
         .unwrap();
+        assert_eq!(asked.get("FileIcon"), None);
         let offer = crate::receiver::offer(&asked);
         assert_eq!(offer.sender, "Zoë's Nova");
         assert_eq!(
@@ -701,6 +841,12 @@ pub mod tests {
         );
         assert_eq!(kind("a.JPG"), "public.jpeg");
         assert_eq!(kind("film.mov"), "com.apple.quicktime-movie");
+        // With a picture: as it was given.
+        let icon = [
+            0, 0, 0, 0x0c, b'j', b'P', b' ', b' ', 0x0d, 0x0a, 0x87, 0x0a,
+        ];
+        let asked = plist::parse(&question(&sender, &[("a.jpg".into(), 3)], Some(&icon))).unwrap();
+        assert_eq!(asked.get("FileIcon"), Some(&Value::Data(icon.to_vec())));
         std::fs::remove_dir_all(&folder).unwrap();
     }
 
@@ -818,7 +964,14 @@ pub mod tests {
         };
         let mut pack = Pack::new(vec![item(&folder, "a", b"hello")]).unwrap();
         let began = Instant::now();
-        let result = sender.upload(&mut connection, "h", &mut pack, &mut |_| {}, &|| false);
+        let result = sender.upload(
+            &mut connection,
+            "h",
+            &mut pack,
+            &mut |_| {},
+            &|_| {},
+            &|| false,
+        );
         assert!(result.is_err(), "{result:?}");
         assert!(
             began.elapsed() < Duration::from_secs(4),
@@ -869,7 +1022,14 @@ pub mod tests {
         };
         let mut pack = noise(&folder, 16 << 20);
         let began = Instant::now();
-        let result = sender.upload(&mut connection, "h", &mut pack, &mut |_| {}, &|| false);
+        let result = sender.upload(
+            &mut connection,
+            "h",
+            &mut pack,
+            &mut |_| {},
+            &|_| {},
+            &|| false,
+        );
         assert_eq!(result.err().as_deref(), Some("it took too long"));
         // A second's slack, and two for 16 MB at 8 MB a second.
         let took = began.elapsed();
@@ -891,7 +1051,14 @@ pub mod tests {
         };
         let mut pack = noise(&folder, 32 << 20);
         let began = Instant::now();
-        let result = sender.upload(&mut connection, "h", &mut pack, &mut |_| {}, &|| false);
+        let result = sender.upload(
+            &mut connection,
+            "h",
+            &mut pack,
+            &mut |_| {},
+            &|_| {},
+            &|| false,
+        );
         assert_eq!(result.err().as_deref(), Some("it stopped taking the files"));
         assert!(
             began.elapsed() < Duration::from_secs(8),
@@ -910,7 +1077,14 @@ pub mod tests {
         let mut pack = noise(&folder, 32 << 20);
         let began = Instant::now();
         let cancelled = || began.elapsed() >= Duration::from_secs(2);
-        let result = patient.upload(&mut connection, "h", &mut pack, &mut |_| {}, &cancelled);
+        let result = patient.upload(
+            &mut connection,
+            "h",
+            &mut pack,
+            &mut |_| {},
+            &|_| {},
+            &cancelled,
+        );
         assert_eq!(result.err().as_deref(), Some("cancelled"));
         assert!(
             began.elapsed() < Duration::from_secs(4),

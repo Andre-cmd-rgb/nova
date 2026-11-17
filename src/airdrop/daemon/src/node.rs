@@ -691,7 +691,7 @@ mod tests {
     /// A frame as the monitor interface hands it over.
     fn monitored(sent: &[u8]) -> Vec<u8> {
         let mut packet = vec![0, 0, 9, 0, 0x20, 0, 0, 0, 0xe4];
-        packet.extend_from_slice(&sent[9..]);
+        packet.extend_from_slice(wire::sent_frame(sent));
         packet
     }
 
@@ -760,7 +760,7 @@ mod tests {
     fn aired(node: &mut Node) -> Vec<(Mac, Vec<u8>)> {
         let mut out = Vec::new();
         while let Some(sent) = node.for_air() {
-            let frame = wire::frame(&sent[9..]).unwrap();
+            let frame = wire::frame(wire::sent_frame(&sent)).unwrap();
             let carried: Vec<Packet> = frame.packets();
             out.push((
                 frame.to,
@@ -780,7 +780,7 @@ mod tests {
         while now < 3_000_000 {
             let next = node.tick(now);
             while let Some(sent) = node.for_air() {
-                let frame = wire::frame(&sent[9..]).unwrap();
+                let frame = wire::frame(wire::sent_frame(&sent)).unwrap();
                 let said = frame.announcement().unwrap();
                 assert_eq!(
                     said.position(),
@@ -833,7 +833,7 @@ mod tests {
         node.heard(600_000, &phone.announces(600_000));
         node.tick(600_000);
         let sent = node.for_air().unwrap();
-        let election = wire::frame(&sent[9..])
+        let election = wire::frame(wire::sent_frame(&sent))
             .unwrap()
             .announcement()
             .unwrap()

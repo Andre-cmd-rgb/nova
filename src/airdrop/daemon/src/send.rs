@@ -39,7 +39,7 @@
 //! after. The client says `to <id>` or `cancel`. Before any of it, a daemon
 //! that has decided to end says `closing` (control.rs).
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{Shutdown, SocketAddr, SocketAddrV6};
 use std::os::fd::{AsRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
@@ -58,6 +58,12 @@ use crate::wire::Mac;
 
 /// The most files one send takes.
 pub const MOST_FILES: usize = 200;
+/// The most a picture for the offer may be: an iPhone's own are some tens of kB.
+const PICTURE_MOST: u64 = 512 << 10;
+/// What a picture for the offer starts with: JPEG 2000's signature, as an iPhone sends its own.
+const JPEG_2000: [u8; 12] = [
+    0, 0, 0, 0x0c, b'j', b'P', b' ', b' ', 0x0d, 0x0a, 0x87, 0x0a,
+];
 /// How often a receiver that would not say who it is is asked again, at the most, and one that
 /// takes AirDrop from its contacts only: its owner may be switching it to Everyone.
 const RETRY_AT_MOST: Duration = Duration::from_secs(10);
@@ -374,8 +380,18 @@ impl Sending {
 
     /// The files a client handed over, looked at before anything else, with no lock of the
     /// daemon's held (a file on a mount that went with the Wi-Fi may take its time): the send, for
-    /// control.rs to claim and start, or why not.
-    pub fn prepare(self: &Arc<Self>, files: Vec<OwnedFd>) -> Result<Prepared, String> {
+    /// control.rs to claim and start, or why not. With `icon`, the last of them is the picture for
+    /// the offer (`send icon`).
+    pub fn prepare(
+        self: &Arc<Self>,
+        mut files: Vec<OwnedFd>,
+        icon: bool,
+    ) -> Result<Prepared, String> {
+        let icon = if icon {
+            files.pop().and_then(picture)
+        } else {
+            None
+        };
         if files.is_empty() {
             return Err("Nothing was given to send.".into());
         }
@@ -395,19 +411,25 @@ impl Sending {
         Ok(Prepared {
             sending: self.clone(),
             items,
+            icon,
         })
     }
 
     /// The same, claimed and started in one go, for the tests.
     #[cfg(test)]
     pub fn start(self: &Arc<Self>, stream: UnixStream, files: Vec<OwnedFd>) -> Result<(), String> {
-        let mut send = Box::new(self.prepare(files)?);
+        let mut send = Box::new(self.prepare(files, false)?);
         send.claim()?;
         send.start(stream)
     }
 
     /// A claimed send, started: the session is its client's from now on.
-    fn begin(self: &Arc<Self>, stream: UnixStream, items: Vec<Item>) -> Result<(), String> {
+    fn begin(
+        self: &Arc<Self>,
+        stream: UnixStream,
+        items: Vec<Item>,
+        icon: Option<Vec<u8>>,
+    ) -> Result<(), String> {
         let client = Client::new(stream).ok_or("The send could not be started.")?;
         self.inner.lock().unwrap().left = Some(client.gone.clone());
         let sending = self.clone();
@@ -415,7 +437,7 @@ impl Sending {
         let started = session.spawn(move || {
             (sending.tell)(Told::Began);
             let herald = sending.herald();
-            let (last, transfer) = sending.session(&client, items);
+            let (last, transfer) = sending.session(&client, items, icon);
             // Told first: a Bluetooth slow to go quiet holds up nobody's last line.
             client.say(&afterwards(&last, (sending.stays)()));
             client.close();
@@ -433,7 +455,12 @@ impl Sending {
     }
 
     /// The send, from the looking to its end: the last line, and whether a receiver was asked.
-    fn session(self: &Arc<Self>, client: &Client, items: Vec<Item>) -> (String, bool) {
+    fn session(
+        self: &Arc<Self>,
+        client: &Client,
+        items: Vec<Item>,
+        icon: Option<Vec<u8>>,
+    ) -> (String, bool) {
         let offered: Vec<(String, u64)> = items
             .iter()
             .map(|item| (item.name.clone(), item.size))
@@ -602,7 +629,10 @@ impl Sending {
         // receiver is asked and sent to).
         let gone = client.gone.clone();
         let stop = move || gone.load(Ordering::SeqCst) || sys::stopping();
-        let mut connection = match self.sender.ask(&at, &host, &offered, &stop) {
+        let mut connection = match self
+            .sender
+            .offer(&at, &host, &offered, icon.as_deref(), &stop)
+        {
             Err(_) if stop() => return (interrupted(client), true),
             Err(why) => {
                 (self.tell)(Told::Log(format!("asking {to:?} failed: {why}")));
@@ -622,6 +652,7 @@ impl Sending {
             }
             Ok(Answer::Yes(connection)) => connection,
         };
+        (self.tell)(Told::Log(format!("{to:?} said yes")));
         let mut pack = match Pack::new(items) {
             Ok(pack) => pack,
             Err(why) => return (failed(&format!("{why}.")), true),
@@ -645,6 +676,7 @@ impl Sending {
                     client.say(&progress(sent));
                 }
             },
+            &|line| (self.tell)(Told::Log(format!("sending to {to:?}: {line}"))),
             &stop,
         );
         let seconds = began.elapsed().as_secs_f64();
@@ -679,6 +711,7 @@ impl Sending {
 pub struct Prepared {
     sending: Arc<Sending>,
     items: Vec<Item>,
+    icon: Option<Vec<u8>>,
 }
 
 impl Ready for Prepared {
@@ -696,14 +729,31 @@ impl Ready for Prepared {
     }
 
     fn start(self: Box<Self>, stream: UnixStream) -> Result<(), String> {
-        let Prepared { sending, items } = *self;
-        let started = sending.begin(stream, items);
+        let Prepared {
+            sending,
+            items,
+            icon,
+        } = *self;
+        let started = sending.begin(stream, items, icon);
         // Nothing of a send that did not start is left: not its looking either.
         if started.is_err() {
             *sending.inner.lock().unwrap() = Inner::default();
         }
         started
     }
+}
+
+/// The picture `nova airdrop send` made for the offer: a file, small, and JPEG 2000; else none, and
+/// the offer goes without one.
+fn picture(fd: OwnedFd) -> Option<Vec<u8>> {
+    let mut file = std::fs::File::from(fd);
+    if !file.metadata().ok()?.is_file() {
+        return None;
+    }
+    file.seek(SeekFrom::Start(0)).ok()?;
+    let mut picture = Vec::new();
+    file.take(PICTURE_MOST + 1).read_to_end(&mut picture).ok()?;
+    (picture.len() as u64 <= PICTURE_MOST && picture.starts_with(&JPEG_2000)).then_some(picture)
 }
 
 /// The last line of a send stopped on its way: by its client, or by AirDrop's end.

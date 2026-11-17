@@ -25,9 +25,17 @@ const OUI: [u8; 3] = [0x00, 0x17, 0xf2];
 pub const LLC: [u8; 8] = [0xaa, 0xaa, 0x03, 0x00, 0x17, 0xf2, 0x08, 0x00];
 pub const ETHERTYPE_IPV6: u16 = 0x86dd;
 
-/// Radiotap before a frame that is sent: no field but the rate, 6 Mbit/s,
-/// which every 802.11 radio on 2.4 and 5 GHz understands.
+/// Radiotap before an announcement: no field but the rate, 6 Mbit/s, which
+/// every 802.11 radio on 2.4 and 5 GHz understands, for every node in reach.
 const RADIOTAP_TX: [u8; 9] = [0, 0, 9, 0, 0x04, 0, 0, 0, 12];
+/// Radiotap before a data frame, which goes to one peer, close by: the rate,
+/// 24 Mbit/s, a quarter of the time on the air at 6 for a full frame, so that
+/// more of them fit in the peer's slot and fewer run past its end; and how
+/// often the card sends it again when the peer does not acknowledge it (data
+/// retries, field 17), as it would a frame of its own. A frame given with a
+/// rate and no retries is sent once (net/mac80211/tx.c): one the peer missed
+/// was then TCP's to send again, a second or more later.
+const RADIOTAP_DATA: [u8; 10] = [0, 0, 10, 0, 0x04, 0, 0x02, 0, 48, 4];
 
 pub const PSF: u8 = 0; // periodic synchronization frame, every 110 TU
 pub const MIF: u8 = 3; // master indication frame, every second or so
@@ -573,6 +581,12 @@ impl Speaker {
     }
 }
 
+/// A frame that is sent, without its radiotap.
+#[cfg(test)]
+pub fn sent_frame(sent: &[u8]) -> &[u8] {
+    &sent[usize::from(u16::from_le_bytes([sent[2], sent[3]]))..]
+}
+
 fn header(out: &mut Vec<u8>, control: [u8; 2], to: &Mac, from: &Mac, number: u16) {
     out.extend_from_slice(&control);
     out.extend_from_slice(&[0, 0]);
@@ -586,8 +600,8 @@ fn header(out: &mut Vec<u8>, control: [u8; 2], to: &Mac, from: &Mac, number: u16
 /// ready for the monitor interface. `number` is the 802.11 sequence number,
 /// `count` AWDL's own.
 pub fn data(to: &Mac, from: &Mac, number: u16, count: u16, packet: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(9 + 26 + 16 + packet.len());
-    out.extend_from_slice(&RADIOTAP_TX);
+    let mut out = Vec::with_capacity(RADIOTAP_DATA.len() + 26 + 16 + packet.len());
+    out.extend_from_slice(&RADIOTAP_DATA);
     header(&mut out, [0x88, 0x00], to, from, number);
     out.extend_from_slice(&[0, 0]);
     out.extend_from_slice(&LLC);
@@ -633,7 +647,7 @@ mod tests {
         let now = (300 * 64 + 20) * TU + 17;
         for subtype in [PSF, MIF] {
             let sent = speaker().announce(subtype, now, 77);
-            let packet = monitored(&sent[9..]);
+            let packet = monitored(sent_frame(&sent));
             let (radio, wifi) = heard(&packet).unwrap();
             assert_eq!(
                 radio,
@@ -643,7 +657,7 @@ mod tests {
                     aggregated: false
                 }
             );
-            assert_eq!(wifi, &sent[9..]);
+            assert_eq!(wifi, sent_frame(&sent));
             let frame = frame(wifi).unwrap();
             assert_eq!(
                 (
@@ -698,7 +712,7 @@ mod tests {
             ..speaker()
         };
         let sent = phone.announce(PSF, (8 * 64 + 5) * TU, 1);
-        let said = frame(&sent[9..]).unwrap().announcement().unwrap();
+        let said = frame(sent_frame(&sent)).unwrap().announcement().unwrap();
         assert_eq!(said.channels(), Some(plan));
         assert_eq!(said.position(), Some(8 * 64 + 5));
     }
@@ -707,7 +721,7 @@ mod tests {
     fn a_data_frame_gives_its_packet_back() {
         let packet = [0x60u8; 60];
         let sent = data(&THEM, &US, 5, 9, &packet);
-        let frame = frame(&sent[9..]).unwrap();
+        let frame = frame(sent_frame(&sent)).unwrap();
         assert_eq!(
             (frame.kind, frame.subtype, frame.stream()),
             (Kind::Data, 8, 0)
@@ -770,7 +784,7 @@ mod tests {
         header(&mut null, [0xc8, 0x00], &US, &THEM, 3);
         null.extend_from_slice(&[0, 0]);
         assert!(frame(&null).unwrap().packets().is_empty());
-        let mut other = data(&US, &THEM, 1, 1, &[0x60; 48])[9..].to_vec();
+        let mut other = sent_frame(&data(&US, &THEM, 1, 1, &[0x60; 48])).to_vec();
         other[16] ^= 1;
         assert!(frame(&other).unwrap().packets().is_empty());
         assert!(frame(&wifi[..20]).is_none());

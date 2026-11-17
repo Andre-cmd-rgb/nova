@@ -16,7 +16,8 @@
 //!   stop             the user's off: AirDrop ends now, whatever holds it, and
 //!                    a send that is going on ends with it
 //!   send             with files passed alongside, open (SCM_RIGHTS): this
-//!                    computer sends them; the connection is the send's from
+//!                    computer sends them (`send icon`: the last is a picture
+//!                    for the offer, JPEG 2000); the connection is the send's from
 //!                    then on (send.rs has what is said over it), and the send
 //!                    holds AirDrop on until it is over, or its client goes
 //!
@@ -278,7 +279,8 @@ pub struct Sends {
     pub on: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
-type Prepare = dyn Fn(Vec<OwnedFd>) -> Result<Box<dyn Ready>, String> + Send + Sync;
+/// The files, and whether the last of them is the picture for the offer.
+type Prepare = dyn Fn(Vec<OwnedFd>, bool) -> Result<Box<dyn Ready>, String> + Send + Sync;
 
 /// A send whose files have been looked at.
 pub trait Ready {
@@ -374,12 +376,18 @@ impl Control {
             return;
         };
         first.truncate(size);
-        if first.strip_suffix(b"\n").unwrap_or(&first).trim_ascii() == b"send" {
+        let words = first.strip_suffix(b"\n").unwrap_or(&first).trim_ascii();
+        let icon = match words {
+            b"send" => Some(false),
+            b"send icon" => Some(true),
+            _ => None,
+        };
+        if let Some(icon) = icon {
             let refused = match self.sends.get() {
                 None => "This AirDrop does not send.".into(),
                 // The files are looked at first, with no lock held: one on a mount that went with
                 // the Wi-Fi may take its time, and the daemon's loop waits for nothing of the sort.
-                Some(sends) => match (sends.prepare)(files) {
+                Some(sends) => match (sends.prepare)(files, icon) {
                     Err(why) => why,
                     Ok(mut send) => {
                         // Claimed with the holds' lock held, and nothing else done under it: the
@@ -830,7 +838,7 @@ mod tests {
         }
         let (handed, taken) = std::sync::mpsc::channel();
         control.on_send(Sends {
-            prepare: Box::new(move |files| {
+            prepare: Box::new(move |files, _| {
                 if files.len() == 1 {
                     return Err("One is not enough.".into());
                 }
@@ -908,7 +916,7 @@ mod tests {
         let sending = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let on = sending.clone();
         control.on_send(Sends {
-            prepare: Box::new(|_| Err("not in this test".into())),
+            prepare: Box::new(|_, _| Err("not in this test".into())),
             on: Box::new(move || on.load(Ordering::SeqCst)),
         });
         let held = || {
