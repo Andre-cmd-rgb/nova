@@ -174,6 +174,23 @@ load_dump() {
   return 0
 }
 
+# Whether the SIM at this path has nothing on it to read, neither its ICCID
+# nor its IMSI: asked only of a modem that is on and searching.
+sim_blank() { # path
+  local dump line iccid="" imsi=""
+  # No answer says nothing about the SIM.
+  dump=$(mm -i "${1##*/}" -K 2>/dev/null) || return 1
+  [[ $dump == *sim.properties.* ]] || return 1
+  while IFS= read -r line; do
+    case $line in
+    sim.properties.iccid*) iccid=${line#*:} ;;
+    sim.properties.imsi*) imsi=${line#*:} ;;
+    esac
+  done <<<"$dump"
+  iccid=${iccid//[[:space:]-]/} imsi=${imsi//[[:space:]-]/}
+  [[ -z $iccid && -z $imsi ]]
+}
+
 mark_modem_seen() {
   [[ -e $MODEM_SEEN ]] && return 0
   mkdir -p -- "$STATE_DIR" 2>/dev/null && : >"$MODEM_SEEN" 2>/dev/null
@@ -691,8 +708,15 @@ read_state() {
   # An empty slot reports the path "/". A modem still starting has not read
   # its slot yet, and no path then says nothing about the SIM: taken as an
   # empty slot, the first start would switch off a modem that has one.
+  # An eSIM built into the modem, with no plan on it and no card in the slot,
+  # has a path all the same, and some modems are then on and searching, not
+  # "failed": with nothing on it to read, it is no SIM either.
   if [[ -n $sim && $sim != "/" ]]; then
-    mark_sim_seen
+    if [[ $STATE == searching ]] && sim_blank "$sim"; then
+      STATE=nosim
+    else
+      mark_sim_seen
+    fi
   elif [[ $STATE != disabled && $STATE != starting ]]; then
     STATE=nosim
   fi

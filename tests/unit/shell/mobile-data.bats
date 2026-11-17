@@ -37,13 +37,15 @@ stub() { # name body
   chmod +x "$SCRATCH/bin/$1"
 }
 
-# ModemManager, with one modem whose `mmcli -K` dump is these lines.
+# ModemManager, with one modem whose `mmcli -K` dump is these lines; its SIM's
+# is in $SCRATCH/sim, when there is one.
 modem() { # line...
   printf '%s\n' "$@" >"$SCRATCH/dump"
   stub mmcli '
 case "$*" in
   -L) echo "    /org/freedesktop/ModemManager1/Modem/0 [Foxconn] T99W175" ;;
   "-m 0 -K") cat "$SCRATCH/dump" ;;
+  "-i 0 -K") [ -e "$SCRATCH/sim" ] && cat "$SCRATCH/sim" || exit 1 ;;
   *) exit 1 ;;
 esac'
 }
@@ -377,6 +379,35 @@ esac'
     "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
   echo x >"$state/sim-seen"
   [ "$(info state)" = nosim ]
+}
+
+@test "a modem on and searching with a built-in eSIM that has no plan: no SIM" {
+  modem "modem.generic.state                              : enabled" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  printf '%s\n' "sim.dbus-path                 : /org/freedesktop/ModemManager1/SIM/0" \
+    "sim.properties.active         : yes" \
+    "sim.properties.imsi           : --" \
+    "sim.properties.iccid          : --" \
+    "sim.properties.eid            : 89033023424310000000001374222805" >"$SCRATCH/sim"
+  # Never had a SIM: the first start switches it off, as for an empty slot.
+  [ "$(info state)" = parked ]
+  [ "$(cat "$state/parked")" = nosim ]
+  [ ! -e "$state/sim-seen" ]
+  # One that had a SIM once is only said to have none.
+  rm -f -- "$state/parked"
+  echo unblocked >"$SCRATCH/wwan"
+  echo x >"$state/sim-seen"
+  [ "$(info state)" = nosim ]
+}
+
+@test "a modem searching with a SIM on it, or one that will not say: still searching" {
+  echo x >"$state/sim-seen"
+  modem "modem.generic.state                              : enabled" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  [ "$(info state)" = searching ]
+  printf '%s\n' "sim.properties.imsi           : --" \
+    "sim.properties.iccid          : 8949020000012345678" >"$SCRATCH/sim"
+  [ "$(info state)" = searching ]
 }
 
 # A locked SIM with <tries> left (3), which takes 1234 for its PIN and
