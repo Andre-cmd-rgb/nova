@@ -28,7 +28,9 @@ Column {
 
   // A `nova-power-undervolt` command, which the window runs and then reads
   // the state.
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
 
   function revert() {
     wantCore = Qt.binding(function () { return root.isSet ? root.undervolt.core : 0 })
@@ -64,13 +66,13 @@ Column {
           visible: root.undervolt.state === "held" || root.undervolt.state === "pending"
           text: "Apply Again"
           bordered: true
-          onClicked: root.command(["nova-power-undervolt", "on"])
+          onClicked: root.command(["nova-power-undervolt", "on"], null)
         }
         Button {
           visible: root.isSet
           text: "Turn Off"
           bordered: true
-          onClicked: root.command(["nova-power-undervolt", "off"])
+          onClicked: root.command(["nova-power-undervolt", "off"], null)
         }
       }
     }

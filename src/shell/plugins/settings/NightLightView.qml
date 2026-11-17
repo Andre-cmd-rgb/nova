@@ -16,7 +16,9 @@ Section {
   property var settings: ({})
   // A `nova nightlight` command, which the window runs and then reads the
   // state.
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
 
   readonly property var service: shell ? shell.serviceFor("nova.nightlight") : null
   readonly property string schedule: settings.schedule === "sunset" || settings.schedule === "hours" ? settings.schedule : "off"
@@ -54,7 +56,7 @@ Section {
     ButtonGroup {
       options: [{ value: "off", label: "Off" }, { value: "sunset", label: "Sunset to Sunrise" }, { value: "hours", label: "Set Hours" }]
       value: root.schedule
-      onChanged: function (value) { if (value !== root.schedule) root.command(["nova-nightlight-schedule", value]) }
+      onChanged: function (value) { if (value !== root.schedule) root.command(["nova-nightlight-schedule", value], { schedule: value }) }
     }
   }
 
@@ -62,7 +64,7 @@ Section {
     visible: root.schedule === "hours"
     from: root.settings.from || "22:00"
     to: root.settings.to || "07:00"
-    onPicked: function (end, time) { root.command(["nova-nightlight-schedule", end, time]) }
+    onPicked: function (end, time) { root.command(["nova-nightlight-schedule", end, time], null) }
   }
 
   Line {
@@ -77,7 +79,7 @@ Section {
       wheelStep: 1
       whole: true
       value: (5500 - root.night) / 100
-      onLetGo: at => root.command(["nova-nightlight-warmth", String(5500 - Math.round(at) * 100)])
+      onLetGo: at => root.command(["nova-nightlight-warmth", String(5500 - Math.round(at) * 100)], { temperature: 5500 - Math.round(at) * 100 })
     }
   }
 }

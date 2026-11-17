@@ -16,7 +16,9 @@ Column {
   // there is no other background to change to.
   property bool background: true
   // A nova-theme command, which the window runs and then reads the state.
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
 
   Section {
     title: "THEME"
@@ -61,7 +63,7 @@ Column {
             elide: Text.ElideRight
             textFormat: Text.PlainText
           }
-          TapHandler { onTapped: if (!swatch.current) root.command(["nova-theme", "set", swatch.modelData.name]) }
+          TapHandler { onTapped: if (!swatch.current) root.command(["nova-theme", "set", swatch.modelData.name], { theme: swatch.modelData.name }) }
         }
       }
     }
@@ -71,7 +73,7 @@ Column {
       ButtonGroup {
         options: [{ value: "auto", label: "Auto" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]
         value: root.appearance.adaptive || "auto"
-        onChanged: function (value) { root.command(["nova-theme", "adaptive", value]) }
+        onChanged: function (value) { root.command(["nova-theme", "adaptive", value], { adaptive: value }) }
       }
     }
   }
@@ -83,8 +85,8 @@ Column {
       label: "Background"
       Row {
         spacing: Style.space(8)
-        Button { text: "Next"; bordered: true; onClicked: root.command(["nova-theme", "bg", "next"]) }
-        Button { text: "Choose…"; bordered: true; onClicked: root.command(["nova-theme", "bg", "pick"]) }
+        Button { text: "Next"; bordered: true; onClicked: root.command(["nova-theme", "bg", "next"], null) }
+        Button { text: "Choose…"; bordered: true; onClicked: root.command(["nova-theme", "bg", "pick"], null) }
       }
     }
   }

@@ -39,7 +39,9 @@ Column {
   // and whether their service ran when Settings read its state.
   property bool iphone: false
   property bool iphoneRunning: false
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
 
   // Each scan this page asks for. Settings ends it once the page is gone: the
   // page cannot, as BlueZ may confirm the scan only after that.
@@ -164,7 +166,7 @@ Column {
       visible: root.available && root.le !== null
       label: "Bluetooth Low Energy"
       checked: root.le === true
-      onClicked: root.command(["nova-bluetooth-le", checked ? "off" : "on"])
+      onClicked: root.command(["nova-bluetooth-le", checked ? "off" : "on"], { "bluetooth.le": !checked })
     }
   }
 
@@ -174,7 +176,7 @@ Column {
     on: root.iphone
     running: root.iphoneRunning
     powered: root.powered
-    onCommand: function (argv) { root.command(argv) }
+    onCommand: function (argv) { root.command(argv, null) }
   }
 
   Section {

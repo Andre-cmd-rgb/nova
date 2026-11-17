@@ -22,7 +22,9 @@ Column {
   // Where the sheet that adds a layout opens: the window.
   property Item overlayParent: null
   // A `nova input` command, which the window runs and then reads the state.
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
 
   readonly property var layouts: sent || input.layouts || []
   readonly property var repeat: input.repeat || ({ delay: 250, rate: 40 })
@@ -45,7 +47,7 @@ Column {
     if (next.length === 0) return
     sent = next
     settle.restart()
-    command(["nova-input", "layouts"].concat(next))
+    command(["nova-input", "layouts"].concat(next), null)
   }
 
   onInputChanged: if (sent && JSON.stringify(input.layouts || []) === JSON.stringify(sent)) sent = null
@@ -128,7 +130,7 @@ Column {
         options: Model.switches(root.input.switch)
         value: root.input.switch || "none"
         onChanged: function (value) {
-          if (value !== "other" && value !== root.input.switch) root.command(["nova-input", "switch", value])
+          if (value !== "other" && value !== root.input.switch) root.command(["nova-input", "switch", value], { switch: value })
         }
       }
     }
@@ -151,7 +153,8 @@ Column {
         value: Math.round(Number(root.repeat.delay) / 50)
         // With the rate where its knob is, not as the state had it: Settings
         // reads the state back only once every change has run.
-        onLetGo: at => root.command(["nova-input", "repeat", String(Math.round(at) * 50), String(Math.round(rate.knobAt))])
+        onLetGo: at => root.command(["nova-input", "repeat", String(Math.round(at) * 50), String(Math.round(rate.knobAt))],
+          { "repeat.delay": Math.round(at) * 50, "repeat.rate": Math.round(rate.knobAt) })
       }
     }
 
@@ -166,7 +169,8 @@ Column {
         wheelStep: 5
         whole: true
         value: Number(root.repeat.rate)
-        onLetGo: at => root.command(["nova-input", "repeat", String(delay.knobAt === delay.value ? root.repeat.delay : Math.round(delay.knobAt) * 50), String(Math.round(at))])
+        onLetGo: at => root.command(["nova-input", "repeat", String(delay.knobAt === delay.value ? root.repeat.delay : Math.round(delay.knobAt) * 50), String(Math.round(at))],
+          { "repeat.rate": Math.round(at) })
       }
     }
   }
@@ -187,7 +191,7 @@ Column {
         whole: true
         notches: 3
         value: Math.round(Number(root.input.speed || 0) * 10)
-        onLetGo: at => root.command(["nova-input", "speed", String(Math.round(at) / 10)])
+        onLetGo: at => root.command(["nova-input", "speed", String(Math.round(at) / 10)], { speed: Math.round(at) / 10 })
       }
     }
 
@@ -195,7 +199,7 @@ Column {
       width: parent.width
       label: "Natural scrolling with a mouse"
       checked: root.scrolling.mouse === true
-      onClicked: root.command(["nova-input", "natural-scroll", "mouse", checked ? "off" : "on"])
+      onClicked: root.command(["nova-input", "natural-scroll", "mouse", checked ? "off" : "on"], { "naturalScroll.mouse": !checked })
     }
   }
 
@@ -207,14 +211,14 @@ Column {
       width: parent.width
       label: "Natural scrolling"
       checked: root.scrolling.touchpad !== false
-      onClicked: root.command(["nova-input", "natural-scroll", "touchpad", checked ? "off" : "on"])
+      onClicked: root.command(["nova-input", "natural-scroll", "touchpad", checked ? "off" : "on"], { "naturalScroll.touchpad": !checked })
     }
 
     Toggle {
       width: parent.width
       label: "Tap to click"
       checked: root.input.tapToClick !== false
-      onClicked: root.command(["nova-input", "tap-to-click", checked ? "off" : "on"])
+      onClicked: root.command(["nova-input", "tap-to-click", checked ? "off" : "on"], { tapToClick: !checked })
     }
   }
 

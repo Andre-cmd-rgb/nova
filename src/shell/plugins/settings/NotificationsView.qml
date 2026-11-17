@@ -15,7 +15,9 @@ Section {
   property var settings: ({})
   // A `nova notification schedule` command, which the window runs and then
   // reads the state.
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
 
   readonly property var service: shell ? shell.serviceFor("nova.notifications") : null
   readonly property bool scheduled: settings.schedule === "hours"
@@ -35,7 +37,7 @@ Section {
     ButtonGroup {
       options: [{ value: "off", label: "Off" }, { value: "hours", label: "Set Hours" }]
       value: root.scheduled ? "hours" : "off"
-      onChanged: function (value) { if (value !== (root.scheduled ? "hours" : "off")) root.command(["nova-notification-schedule", value]) }
+      onChanged: function (value) { if (value !== (root.scheduled ? "hours" : "off")) root.command(["nova-notification-schedule", value], { schedule: value }) }
     }
   }
 
@@ -43,6 +45,6 @@ Section {
     visible: root.scheduled
     from: root.settings.from || "22:00"
     to: root.settings.to || "07:00"
-    onPicked: function (end, time) { root.command(["nova-notification-schedule", end, time]) }
+    onPicked: function (end, time) { root.command(["nova-notification-schedule", end, time], null) }
   }
 }

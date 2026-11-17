@@ -6,6 +6,7 @@ import Quickshell.Hyprland
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "Asked.js" as Asked
 
 // Settings: one window over the commands Nova already has. It owns no
 // settings of its own. `nova-settings state` fills it, every change runs the
@@ -180,9 +181,10 @@ Item {
   }
 
   // Changes run one at a time, in order, and the window reloads once the
-  // last one is done.
-  function run(argv) {
-    settingsState.run(argv)
+  // last one is done. <changes>, what a change sets by its path in the state
+  // ({ "bar.transparent": true }), shows at once (SettingsState).
+  function run(argv, changes) {
+    settingsState.run(argv, changes)
   }
 
   function step(delta) {
@@ -486,7 +488,7 @@ Item {
         iphone: !!root.info.iphone && root.info.iphone.on === true
         iphoneRunning: !!root.info.iphone && root.info.iphone.active === true
         onDiscoveryStarted: root.owesDiscoveryStop = true
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, changes) }
       }
     }
   }
@@ -499,7 +501,7 @@ Item {
       AirDropView {
         width: p.inner
         bell: !!root.info.airdrop && root.info.airdrop.bell === true
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, changes) }
       }
     }
   }
@@ -522,7 +524,7 @@ Item {
         width: p.inner
         shell: root.shell
         settings: root.info.doNotDisturb || ({})
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, Asked.under("doNotDisturb", changes)) }
       }
     }
   }
@@ -547,14 +549,14 @@ Item {
       DisplaysView {
         width: p.inner
         listing: root.info.displays || ({})
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, Asked.under("displays", changes)) }
         onExpired: root.load()
       }
       NightLightView {
         width: p.inner
         shell: root.shell
         settings: root.info.nightlight || ({})
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, Asked.under("nightlight", changes)) }
       }
     }
   }
@@ -568,7 +570,7 @@ Item {
         width: p.inner
         input: root.info.input || ({})
         overlayParent: keys
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, Asked.under("input", changes)) }
       }
     }
   }
@@ -582,7 +584,7 @@ Item {
       ThemeView {
         width: p.inner
         appearance: root.appearance
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, Asked.under("appearance", changes)) }
       }
 
       Section {
@@ -593,7 +595,7 @@ Item {
           Dropdown {
             options: root.options(root.appearance.fonts, root.appearance.font)
             value: root.appearance.font || ""
-            onChanged: function (value) { root.run(["nova-font-set", value]) }
+            onChanged: function (value) { root.run(["nova-font-set", value], { "appearance.font": value }) }
           }
         }
         Line {
@@ -608,7 +610,7 @@ Item {
             whole: true
             notches: 12
             value: Number(root.appearance.textSize || 12)
-            onLetGo: at => root.run(["nova-display-text-size", String(Math.round(at))])
+            onLetGo: at => root.run(["nova-display-text-size", String(Math.round(at))], { "appearance.textSize": Math.round(at) })
           }
         }
       }
@@ -628,14 +630,14 @@ Item {
           ButtonGroup {
             options: ["top", "bottom", "left", "right"].map(function (v) { return { value: v, label: root.nameOf(v) } })
             value: root.bar.position || "top"
-            onChanged: function (value) { root.run(["nova", "bar", "position", value]) }
+            onChanged: function (value) { root.run(["nova", "bar", "position", value], { "bar.position": value }) }
           }
         }
         Toggle {
           width: parent.width
           label: "Transparent"
           checked: root.bar.transparent === true
-          onClicked: root.run(["nova", "bar", "transparent", checked ? "false" : "true"])
+          onClicked: root.run(["nova", "bar", "transparent", checked ? "false" : "true"], { "bar.transparent": !checked })
         }
       }
 
@@ -649,7 +651,11 @@ Item {
             width: parent.width
             label: modelData.name
             checked: (root.bar.shown || []).indexOf(modelData.id) >= 0
-            onClicked: root.run(["nova", "bar", checked ? "remove" : "put", modelData.id])
+            onClicked: {
+              const shown = (root.bar.shown || []).filter(id => id !== modelData.id)
+              root.run(["nova", "bar", checked ? "remove" : "put", modelData.id],
+                { "bar.shown": checked ? shown : shown.concat([modelData.id]) })
+            }
           }
         }
       }
@@ -688,7 +694,8 @@ Item {
           visible: root.limit.kind === "threshold" || root.limit.kind === "switch"
           label: "Limit charging"
           checked: root.limit.on === true
-          onClicked: root.run(["nova-battery-limit", checked ? "off" : (root.limit.kind === "switch" ? "on" : "80")])
+          onClicked: root.run(["nova-battery-limit", checked ? "off" : (root.limit.kind === "switch" ? "on" : "80")],
+            { "battery.limit.on": !checked })
         }
         Line {
           visible: root.limit.kind === "threshold" && root.limit.on === true
@@ -703,7 +710,7 @@ Item {
             whole: true
             notches: 11
             value: Number(root.limit.limit || 80)
-            onLetGo: at => root.run(["nova-battery-limit", String(Math.round(at))])
+            onLetGo: at => root.run(["nova-battery-limit", String(Math.round(at))], { "battery.limit.limit": Math.round(at) })
           }
         }
         Caption {
@@ -722,7 +729,7 @@ Item {
           ButtonGroup {
             options: [{ value: "sleep", label: "Sleep" }, { value: "lock", label: "Lock, Keep Running" }]
             value: root.battery.lid || ""
-            onChanged: function (value) { root.run(["nova-power-lid", value]) }
+            onChanged: function (value) { root.run(["nova-power-lid", value], { "battery.lid": value }) }
           }
         }
         Line {
@@ -730,7 +737,7 @@ Item {
           ButtonGroup {
             options: [{ value: "menu", label: "Menu" }, { value: "sleep", label: "Sleep" }, { value: "off", label: "Shut Down" }]
             value: root.battery.powerButton || "menu"
-            onChanged: function (value) { root.run(["nova-power-button", value]) }
+            onChanged: function (value) { root.run(["nova-power-button", value], { "battery.powerButton": value }) }
           }
         }
         Line {
@@ -739,7 +746,7 @@ Item {
           ButtonGroup {
             options: [{ value: "1h", label: "1 Hour" }, { value: "2h", label: "2 Hours" }, { value: "4h", label: "4 Hours" }, { value: "never", label: "Never" }]
             value: root.battery.hibernate || ""
-            onChanged: function (value) { root.run(["nova-power-hibernate", value]) }
+            onChanged: function (value) { root.run(["nova-power-hibernate", value], { "battery.hibernate": value }) }
           }
         }
       }
@@ -760,7 +767,10 @@ Item {
           readonly property var active: root.profiles.filter(function (x) { return x.active })
           options: root.profiles.map(function (x) { return { value: x.name, label: root.nameOf(x.name) } })
           value: active.length > 0 ? active[0].name : ""
-          onChanged: function (value) { root.run(["nova-power-profile", "set", value]) }
+          onChanged: function (value) {
+            root.run(["nova-power-profile", "set", value],
+              { "performance.profiles": root.profiles.map(x => Object.assign({}, x, { active: x.name === value })) })
+          }
         }
       }
 
@@ -775,7 +785,7 @@ Item {
         ButtonGroup {
           options: [{ value: "auto", label: "On When Plugged In" }, { value: "off", label: "Always Off" }]
           value: root.performance.gpu || ""
-          onChanged: function (value) { root.run(["nova-power-gpu", "mode", value]) }
+          onChanged: function (value) { root.run(["nova-power-gpu", "mode", value], { "performance.gpu": value }) }
         }
       }
 
@@ -783,7 +793,7 @@ Item {
         width: p.inner
         visible: root.undervolt.intel === true
         undervolt: root.undervolt
-        onCommand: function (argv) { root.run(argv) }
+        onCommand: function (argv, changes) { root.run(argv, Asked.under("performance.undervolt", changes)) }
       }
     }
   }
@@ -800,7 +810,7 @@ Item {
           width: parent.width
           label: "Screen Time"
           checked: root.info.screenTime === true
-          onClicked: root.run(["nova-screentime", checked ? "off" : "on"])
+          onClicked: root.run(["nova-screentime", checked ? "off" : "on"], { "screenTime": !checked })
         }
       }
 
@@ -851,7 +861,7 @@ Item {
             { value: "5", label: "5 min" }, { value: "10", label: "10 min" }, { value: "never", label: "Never" }
           ]
           value: seconds <= 0 ? "never" : String(Math.ceil(seconds / 60))
-          onChanged: function (value) { root.run(["nova-idle-screensaver", value]) }
+          onChanged: function (value) { root.run(["nova-idle-screensaver", value], { "lock.screensaver": value === "never" ? 0 : Number(value) * 60 }) }
         }
       }
 
@@ -866,7 +876,7 @@ Item {
             { value: "never", label: "Never" }
           ]
           value: seconds <= 0 ? "never" : String(Math.ceil(seconds / 60))
-          onChanged: function (value) { root.run(["nova-idle-lock", value]) }
+          onChanged: function (value) { root.run(["nova-idle-lock", value], { "lock.seconds": value === "never" ? 0 : Number(value) * 60 }) }
         }
       }
 
@@ -891,7 +901,7 @@ Item {
           Dropdown {
             options: root.options(root.apps.browsers, root.apps.browser)
             value: root.apps.browser || ""
-            onChanged: function (value) { root.run(["nova-default-browser", value]) }
+            onChanged: function (value) { root.run(["nova-default-browser", value], { "apps.browser": value }) }
           }
         }
         Line {
@@ -899,7 +909,7 @@ Item {
           Dropdown {
             options: root.options(root.apps.editors, root.apps.editor === "zeditor" ? "zed" : root.apps.editor)
             value: root.apps.editor === "zeditor" ? "zed" : (root.apps.editor || "")
-            onChanged: function (value) { root.run(["nova-default-editor", value]) }
+            onChanged: function (value) { root.run(["nova-default-editor", value], { "apps.editor": value }) }
           }
         }
         Line {
@@ -907,7 +917,7 @@ Item {
           Dropdown {
             options: root.options(root.apps.terminals, root.apps.terminal)
             value: root.apps.terminal || ""
-            onChanged: function (value) { root.run(["nova-default-terminal", value]) }
+            onChanged: function (value) { root.run(["nova-default-terminal", value], { "apps.terminal": value }) }
           }
         }
       }
@@ -942,7 +952,7 @@ Item {
           width: parent.width
           label: "Test release candidates"
           checked: root.updates.candidates === true
-          onClicked: root.run(["nova-update", "--candidates", checked ? "off" : "on"])
+          onClicked: root.run(["nova-update", "--candidates", checked ? "off" : "on"], { "updates.candidates": !checked })
         }
       }
 

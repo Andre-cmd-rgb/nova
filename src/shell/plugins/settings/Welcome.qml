@@ -9,6 +9,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "WelcomeModel.js" as Model
 import "UpdatesModel.js" as Updates
+import "Asked.js" as Asked
 
 // The welcome: what an install cannot set, since it runs before there is a
 // desktop, a page each. A new account's first unlock opens it (nova welcome
@@ -365,7 +366,7 @@ Item {
         width: p.inner
         appearance: root.info.appearance || ({})
         background: Number((root.info.appearance || {}).backgrounds) > 1
-        onCommand: function (argv) { settingsState.run(argv) }
+        onCommand: function (argv, changes) { settingsState.run(argv, Asked.under("appearance", changes)) }
       }
     }
   }
@@ -382,7 +383,7 @@ Item {
         title: ""
         shell: root.shell
         settings: root.info.nightlight || ({})
-        onCommand: function (argv) { settingsState.run(argv) }
+        onCommand: function (argv, changes) { settingsState.run(argv, Asked.under("nightlight", changes)) }
       }
     }
   }

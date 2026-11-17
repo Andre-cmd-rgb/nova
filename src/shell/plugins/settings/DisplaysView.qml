@@ -21,7 +21,9 @@ Column {
   readonly property var labels: Model.labels(displays)
 
   // A `nova monitor` command, which the window runs and then reads the state.
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
   // The clock ran out and the change went back by itself: the window reads
   // the state again.
   signal expired()
@@ -51,7 +53,7 @@ Column {
     var argv = ["nova-monitor", "set", display.name, setting]
     if (value !== undefined) argv.push(value)
     if (other !== undefined) argv.push(other)
-    command(argv)
+    command(argv, null)
   }
 
   Rectangle {
@@ -73,8 +75,8 @@ Column {
       detail: Model.countdown(root.secondsLeft)
       Row {
         spacing: Style.space(8)
-        Button { text: "Go Back"; bordered: true; onClicked: root.command(["nova-monitor", "revert"]) }
-        Button { text: "Keep"; bordered: true; selected: true; onClicked: root.command(["nova-monitor", "keep"]) }
+        Button { text: "Go Back"; bordered: true; onClicked: root.command(["nova-monitor", "revert"], null) }
+        Button { text: "Keep"; bordered: true; selected: true; onClicked: root.command(["nova-monitor", "keep"], null) }
       }
     }
   }
@@ -230,7 +232,7 @@ Column {
       Line {
         visible: section.d.saved
         label: "Defaults"
-        Button { text: "Restore"; bordered: true; onClicked: root.command(["nova-monitor", "reset", section.d.name]) }
+        Button { text: "Restore"; bordered: true; onClicked: root.command(["nova-monitor", "reset", section.d.name], null) }
       }
     }
   }

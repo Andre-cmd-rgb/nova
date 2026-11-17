@@ -14,7 +14,9 @@ Column {
 
   // Whether the doorbell is switched on, as Settings' state has it.
   property bool bell: false
-  signal command(var argv)
+  // <changes>: what it sets, by its path in what this view was given, which
+  // Settings shows at once (SettingsState); null for none.
+  signal command(var argv, var changes)
 
   // What the doorbell says while this page is open (`nova airdrop bell watch`).
   property var live: ({ state: "off" })
@@ -53,7 +55,7 @@ Column {
       width: parent.width
       label: "Let my iPhone turn on AirDrop"
       checked: root.bell
-      onClicked: root.command(["nova-airdrop", "bell", checked ? "off" : "on"])
+      onClicked: root.command(["nova-airdrop", "bell", checked ? "off" : "on"], { "airdrop.bell": !checked })
     }
   }
 
@@ -77,7 +79,7 @@ Column {
         visible: root.listening && root.learningLeft <= 0
         text: root.phones === 0 ? "Learn" : "Forget"
         bordered: true
-        onClicked: root.command(["nova-airdrop", "bell", root.phones === 0 ? "learn" : "forget"])
+        onClicked: root.command(["nova-airdrop", "bell", root.phones === 0 ? "learn" : "forget"], null)
       }
     }
   }
