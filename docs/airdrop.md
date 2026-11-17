@@ -15,13 +15,13 @@ Nova receives what an iPhone sends with AirDrop: photos, videos, files, links. A
 
 What arrives goes to your downloads folder. Nothing there is ever replaced: a second `IMG_0412.HEIC` becomes `IMG_0412 2.HEIC`.
 
-**It ends by itself:** a moment after a transfer, whichever way it went, or after two minutes in which nobody offered anything. The menu's row again, or `nova airdrop off`, ends it sooner. The Wi-Fi is connected again four or five seconds later.
+**It ends by itself:** a moment after a transfer, whichever way it went, or after two minutes in which nobody offered anything. The menu's row again, or `nova airdrop off`, ends it sooner, and a send that is going on with it. The Wi-Fi is connected again four or five seconds later.
 
 The iPhone's own AirDrop setting (Contacts Only, Everyone) is about what the iPhone receives. It sends to the computer either way.
 
 ### Switched on by your iPhone
 
-Settings → AirDrop → **Turn on for my iPhone**, or `nova airdrop bell on`. From then on there is nothing to switch: tap AirDrop in your iPhone's share sheet and the computer is in its list a few seconds later; close the sheet and AirDrop goes off, and the Wi-Fi comes back.
+Settings → AirDrop → **Turn on for my iPhone**, or `nova airdrop bell on`. From then on there is nothing to switch: tap AirDrop in your iPhone's share sheet and the computer is in its list a few seconds later; close the sheet and AirDrop goes off, and the Wi-Fi comes back. Not if you switched it on yourself meanwhile, or a send is going on: then it is theirs, and ends as they do.
 
 - **It learns your iPhone once.** Switched on, it asks you to open Share → AirDrop on the iPhone beside the computer, within a minute. After that only that iPhone switches AirDrop on; somebody else's share sheet nearby does not. Forget, on the same page, unlearns it.
 - **Only while the computer is unlocked.** Locked, nothing happens, and an AirDrop it switched on goes off.
@@ -49,14 +49,14 @@ Bluetooth must be on for it to hear anything; the page says when it cannot liste
 3. **Pick it:** a window lists the iPhones nearby as they appear, by their names. Click one, or move to it with the arrows and press Return.
 4. **It is asked, then sent:** a notification says it is waiting for the person there to accept, then shows the sending's bar, each with Cancel; then **Sent**, or that they declined.
 
-AirDrop is switched on for the send if it was off, and goes off again after it, unless it was switched on meanwhile (from the menu, `nova airdrop on`, or for your iPhone's share sheet): the Wi-Fi is off the network meanwhile, as when receiving. Switched off during a send, it goes off when the send is over; the send's own Cancel ends it sooner. Bluetooth must be on: it is what wakes the iPhone's AirDrop.
+AirDrop is switched on for the send if it was off, and goes off again after it, unless it was switched on meanwhile (from the menu, `nova airdrop on`, or for your iPhone's share sheet): the Wi-Fi is off the network meanwhile, as when receiving. Switched off during a send (the menu's row, `nova airdrop off`), it goes off at once and the send ends with it; the send's own Cancel ends just the send. Your iPhone's share sheet closing does not end a send. Bluetooth must be on: it is what wakes the iPhone's AirDrop.
 
 **Why Everyone for 10 Minutes.** An iPhone set to Contacts Only takes AirDrop from its contacts alone, and checks who a sender is with an identity Apple issues to its own devices, which a PC cannot have. So it is not listed at all, or is listed as taking AirDrop from its contacts only and cannot be picked; the window and the command say what it needs. Everyone lasts ten minutes, then the iPhone goes back to Contacts Only by itself, so it is chosen again for each send. While no iPhone shows, the window says so.
 
 - **Files, not folders**, up to 200 at a time, each under 8 GB. Not links or text.
 - **Files' Open With has AirDrop for photos, videos and music**, the kinds Nova gives an app of its own: that way AirDrop is offered beside it and never becomes what opens a file. It is not in the launcher.
 - **Escape, Cancel or a click beside the window stops it**, and so does Cancel on the notification, until the files have gone.
-- **Nobody, two minutes on:** the send ends, and a notification says no one was nearby and what the iPhone needs.
+- **Nothing picked, two minutes on:** AirDrop goes off, as it does after two minutes in which nothing was offered or sent, and the send ends with it, whoever switched AirDrop on. A notification says no one was nearby and what the iPhone needs, or, if an iPhone that could take the files was listed, that AirDrop went off before anything was sent. An iPhone being asked or sent to keeps it on.
 
 ### The command
 
@@ -64,7 +64,7 @@ AirDrop is switched on for the send if it was off, and goes off again after it, 
 |---|---|
 | `nova airdrop` | how it is, in a line |
 | `nova airdrop on`, `off`, `toggle` | switch it |
-| `nova airdrop on --stay` | on, and not ending after a transfer |
+| `nova airdrop on --stay`, `off --stay` | on, and not ending after a transfer; and letting go of that on alone, which ends it only if nothing else holds it on (what the shell does for your iPhone's share sheet) |
 | `nova airdrop accept`, `decline` | answer what is being offered |
 | `nova airdrop available` | whether this computer's card can do it, and why not |
 | `nova airdrop send <file>...` | send to an iPhone nearby: those that show are numbered as they appear; type one's number |
@@ -135,9 +135,9 @@ For those working on it. The code is in `src/airdrop/`, and the shell's part (it
 
 **Nothing but the system's libraries.** The daemon has no dependencies in cargo. TLS is the system's OpenSSL, loaded when the daemon starts; unpacking is the system's zlib.
 
-**Talking to it** (`control.rs`). A socket in the user's runtime folder, `nova/airdrop.sock`. A client says one line (`watch`, `status`, `accept`, `decline`, `hold`, `stay`, `stop`); a watcher gets the state as a line of JSON at each change. The file's own comment has the states and their fields. `send` comes with the files to send passed open alongside it (`SCM_RIGHTS`, `meet.rs`), so the daemon reads what the user could and nothing else; the connection is that send's from then on (`send.rs` has its lines).
+**Talking to it** (`control.rs`). A socket in the user's runtime folder, `nova/airdrop.sock`. A client says one line (`watch`, `status`, `accept`, `decline`, `hold`, `stay`, `unstay`, `stop`); a watcher gets the state as a line of JSON at each change. The file's own comment has the states and their fields. `send` comes with the files to send passed open alongside it (`SCM_RIGHTS`, `meet.rs`), so the daemon reads what the user could and nothing else; the connection is that send's from then on (`send.rs` has its lines).
 
-**Who holds it on** is the daemon's to know, and nobody else's word switches it off from under the rest. `nova airdrop on` says `hold` (the user's, used up when a transfer to the computer ends), the shell says `stay` for the doorbell (until `stop`), and a send holds it until it is over. `stop` lets go of the first two; a send under way keeps it on, and the answer says so. Started as the unit starts it (`--once`), it ends a moment after the last lets go, never while a transfer or a send is under way, and 15 seconds after it starts if nobody takes hold of it at all (a command killed while it switched AirDrop on). A send's last line says whether AirDrop stays on after it. Once the daemon has decided to end it answers `hold`, `stay` and `send` that it is going off, and the command waits for it to go and starts it again. Ending is the daemon's own exit either way, so the Wi-Fi comes back as always: one `down`, from the unit's `ExecStopPost`.
+**Who holds it on** is the daemon's to know. `nova airdrop on` says `hold` (the user's, used up when a transfer to the computer ends), the shell says `stay` for the doorbell and `unstay` when the sheet closes (`nova airdrop on --stay`, `off --stay`), and a send holds it until it is over, or until its client has gone: a send cancelled while it is caught in something no shut connection ends (a file read from a network mount that went with the Wi-Fi) holds nothing. The doorbell's `unstay` lets go of its own hold and no more. `stop` is the user's off (`nova airdrop off`, the menu's row): the daemon ends at once whatever holds it, and a send under way ends with it, its client told. A daemon that is to end always can, as its own exit is what gives the Wi-Fi back. Started as the unit starts it (`--once`), it ends a moment after the last lets go, never while a transfer or a send is under way, and 15 seconds after it is up (its socket listening) if nobody takes hold of it at all (a command killed while it switched AirDrop on). Two minutes with nothing offered or sent (`--give-up-after`, counted again from each offer's end and each send's start and end) end it whoever holds it, and a send that is still looking with it; one that is asking or sending keeps it on until it is over. A send's last line says whether AirDrop stays on after it, which it never does once the daemon is ending. Once the daemon has decided to end it answers `hold`, `stay` and `send` that it is going off, and the command waits for it to go and starts it again. Ending is the daemon's own exit either way, so the Wi-Fi comes back as always: one `down`, from the unit's `ExecStopPost`.
 
 **Sending** (`send.rs`, `wake.rs`, `sender.rs`, `pack.rs`). A send runs in three steps, all while the receiver goes on as before:
 

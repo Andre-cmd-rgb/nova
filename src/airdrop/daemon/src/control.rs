@@ -8,27 +8,29 @@
 //!   accept [<id>]    yes to the question that is open (the one with that id)
 //!   decline [<id>]   no to it
 //!   hold             the user holds AirDrop on (`nova airdrop on`): until a
-//!                    transfer to this computer is over, or stop
-//!   stay             the doorbell holds it on, until stop: the shell says it
-//!                    for an AirDrop it switched on for an iPhone's share
-//!                    sheet, and stop when the sheet closes
-//!   stop             what the user and the doorbell held is let go; a send
-//!                    that is going on keeps AirDrop on until it is over, and
-//!                    the answer says so
+//!                    transfer to this computer is over
+//!   stay             the doorbell holds it on: the shell says it for an
+//!                    AirDrop it switched on for an iPhone's share sheet
+//!   unstay           the doorbell lets go, as the sheet closes: AirDrop ends
+//!                    if nothing else holds it
+//!   stop             the user's off: AirDrop ends now, whatever holds it, and
+//!                    a send that is going on ends with it
 //!   send             with files passed alongside, open (SCM_RIGHTS): this
 //!                    computer sends them; the connection is the send's from
 //!                    then on (send.rs has what is said over it), and the send
-//!                    holds AirDrop on until it is over
+//!                    holds AirDrop on until it is over, or its client goes
 //!
 //! and all but `watch` and `send` are answered with a line: `ok`, or why not.
 //! A watcher may say the others before `send` too, and gets no answer but the
 //! change itself.
 //!
-//! Who holds AirDrop on is the daemon's to know: it ends when the last lets
-//! go (main.rs), and nobody else's word switches it off from under the rest.
-//! Once it has decided to end, `hold` and `stay` are answered that it is going
-//! off, and `send` with a line that says so (`{"state":"closing"}`): whoever
-//! asked waits for it to go and starts it again.
+//! Who holds AirDrop on is the daemon's to know: it ends a moment after the
+//! last lets go (main.rs), and the doorbell's going does not switch it off
+//! from under the user or a send. The user's stop ends it whatever holds it:
+//! a daemon that is to end always can, as its own end is what gives the Wi-Fi
+//! back. Once it has decided to end, `hold` and `stay` are answered that it is
+//! going off, and `send` with a line that says so (`{"state":"closing"}`):
+//! whoever asked waits for it to go and starts it again.
 //!
 //! The lines of JSON all have a `state`, and with it:
 //!
@@ -94,8 +96,8 @@ pub enum Stage {
     },
 }
 
+use crate::meet::GOING_OFF;
 pub(crate) use crate::meet::{quoted, size};
-use crate::meet::{AFTER_THE_SEND, GOING_OFF};
 
 pub(crate) fn list(items: impl Iterator<Item = String>) -> String {
     format!("[{}]", items.collect::<Vec<_>>().join(","))
@@ -225,10 +227,11 @@ impl Stage {
 struct Holds {
     /// The user's on (`hold`): until a transfer to this computer is over.
     user: bool,
-    /// The doorbell's (`stay`).
+    /// The doorbell's (`stay`, until `unstay`).
     stays: bool,
-    /// Stop was asked for since: it ends once no send holds it.
-    released: bool,
+    /// How many times it has been taken hold of (`hold`, `stay`, a send): one that has let go
+    /// again before the daemon's loop looked still counts.
+    claims: u64,
     /// It has decided to end: nobody takes hold of it any more.
     closing: bool,
 }
@@ -238,10 +241,10 @@ struct Holds {
 pub struct Held {
     /// The user's on, or the doorbell's stay.
     pub held: bool,
-    /// Stop was asked for since.
-    pub released: bool,
-    /// A send is going on.
+    /// A send is going on, and its client is there.
     pub sending: bool,
+    /// How many times it has been taken hold of.
+    pub claims: u64,
 }
 
 struct Inner {
@@ -383,8 +386,12 @@ impl Control {
                         // daemon does not decide to end in the middle of it, and one that has
                         // decided takes no send.
                         let claimed = {
-                            let holds = self.holds.lock().unwrap();
-                            (!holds.closing && !sys::stopping()).then(|| send.claim())
+                            let mut holds = self.holds.lock().unwrap();
+                            (!holds.closing && !sys::stopping()).then(|| {
+                                let claimed = send.claim();
+                                holds.claims += u64::from(claimed.is_ok());
+                                claimed
+                            })
                         };
                         match claimed {
                             None => {
@@ -431,8 +438,10 @@ impl Control {
                 ("decline", id) => self.answer(id, false),
                 ("hold", None) => self.hold(false),
                 ("stay", None) => self.hold(true),
+                ("unstay", None) => self.unstay(),
                 ("stop", None) => self.stop(),
-                _ => "not understood: watch, status, accept, decline, hold, stay, stop or send"
+                _ => "not understood: watch, status, accept, decline, hold, stay, unstay, stop or \
+                      send"
                     .into(),
             };
             if !watching {
@@ -457,24 +466,29 @@ impl Control {
         } else {
             holds.user = true;
         }
-        holds.released = false;
+        holds.claims += 1;
         "ok".into()
     }
 
-    /// What the user and the doorbell held is let go: the daemon ends, once a send that holds it
-    /// is over (main.rs looks).
+    /// The doorbell lets go: AirDrop ends a moment later if nothing else holds it (main.rs).
+    fn unstay(&self) -> String {
+        self.holds.lock().unwrap().stays = false;
+        "ok".into()
+    }
+
+    /// The user's off: the daemon ends at its loop's next turn, whatever holds it, and a send
+    /// going on ends with it.
     fn stop(&self) -> String {
-        let mut holds = self.holds.lock().unwrap();
-        *holds = Holds {
-            released: true,
-            closing: holds.closing,
+        *self.holds.lock().unwrap() = Holds {
+            closing: true,
             ..Holds::default()
         };
-        if self.sending() {
-            AFTER_THE_SEND.into()
-        } else {
-            "ok".into()
-        }
+        "ok".into()
+    }
+
+    /// It has decided to end.
+    pub fn closing(&self) -> bool {
+        self.holds.lock().unwrap().closing
     }
 
     /// The user's on, or the doorbell's stay, holds AirDrop on.
@@ -495,8 +509,8 @@ impl Control {
         if !holds.closing {
             holds.closing = ends(Held {
                 held: holds.user || holds.stays,
-                released: holds.released,
                 sending: self.sending(),
+                claims: holds.claims,
             });
         }
         holds.closing
@@ -831,8 +845,18 @@ mod tests {
             }),
             on: Box::new(|| false),
         });
+        let claims = || {
+            let mut seen = 0;
+            assert!(!control.close_if(|held| {
+                seen = held.claims;
+                false
+            }));
+            seen
+        };
         assert_eq!(line(&mut send(b"send\n")), "handed 2 files");
         assert_eq!(taken.recv().unwrap(), 2);
+        // Taking hold of AirDrop, however short: the daemon's loop knows it was held.
+        assert_eq!(claims(), 1);
         let mut one = UnixStream::connect(&path).unwrap();
         crate::meet::send_with_files(one.as_raw_fd(), b"send\n", &[file.as_raw_fd()]);
         assert_eq!(
@@ -847,6 +871,7 @@ mod tests {
             &[file.as_raw_fd(), file.as_raw_fd(), file.as_raw_fd()],
         );
         assert_eq!(line(&mut three), r#"{"state":"failed","why":"Taken."}"#);
+        assert_eq!(claims(), 1);
         // They are looked at with no lock held: the daemon's loop is not kept waiting meanwhile.
         let fd = file.as_raw_fd();
         let slow = {
@@ -897,41 +922,37 @@ mod tests {
         assert_eq!(held(), Held::default());
         // The user's on holds it until a transfer to this computer is over.
         assert_eq!(say(&path, "hold"), "ok");
-        assert!(control.held() && held().held);
+        assert!(control.held() && held().held && held().claims == 1);
         control.used();
         assert!(!control.held());
-        // The doorbell's stay, until stop; a transfer is not the end of it.
+        // The doorbell's stay, until it lets go; a transfer is not the end of it.
         assert_eq!(say(&path, "stay"), "ok");
         control.used();
         assert!(control.held());
-        // Stop while a send is going on: what the user and the doorbell held is let go, and the
-        // send keeps it on until it is over.
+        assert_eq!(say(&path, "unstay"), "ok");
+        assert!(!control.held());
+        // Its letting go is its own: the user's on, and a send, go on holding it.
         sending.store(true, Ordering::SeqCst);
         assert_eq!(say(&path, "hold"), "ok");
-        assert_eq!(say(&path, "stop"), AFTER_THE_SEND);
-        assert_eq!(
-            held(),
-            Held {
-                held: false,
-                released: true,
-                sending: true
-            }
-        );
-        // Held again: the stop is over.
-        assert_eq!(say(&path, "hold"), "ok");
+        assert_eq!(say(&path, "stay"), "ok");
+        assert_eq!(say(&path, "unstay"), "ok");
         assert_eq!(
             held(),
             Held {
                 held: true,
-                released: false,
-                sending: true
+                sending: true,
+                claims: 4
             }
         );
-        // Decided: nobody takes hold of it any more, and it stays decided.
-        assert!(control.close_if(|_| true));
+        // The user's stop: decided at once, whatever holds it, and it stays decided; nobody takes
+        // hold of it any more.
+        assert!(!control.closing());
+        assert_eq!(say(&path, "stop"), "ok");
+        assert!(control.closing() && control.close_if(|_| false));
+        assert!(!control.held());
         assert_eq!(say(&path, "hold"), GOING_OFF);
         assert_eq!(say(&path, "stay"), GOING_OFF);
-        assert!(control.close_if(|_| false));
+        assert_eq!(say(&path, "unstay"), "ok");
         close(&control);
     }
 

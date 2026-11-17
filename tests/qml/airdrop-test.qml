@@ -395,7 +395,7 @@ ShellRoot {
         later(50, function () {
           check("unlocked with the same sheet open: it has had its AirDrop", [airdrop.spent, airdrop.doorbell, airdrop.starting], [true, "", false])
           later(400, function () {
-            check("off was asked for twice, for the closed sheet and the lock, and nothing else", asks().slice(before), ["nova-airdrop off", "nova-airdrop off"])
+            check("the doorbell let go twice, for the closed sheet and the lock, and nothing else", asks().slice(before), ["nova-airdrop off --stay", "nova-airdrop off --stay"])
             check("the doorbell rested while locked, and woke at the unlock", bellAsks().slice(bellBefore), ["nova-airdrop bell rest", "nova-airdrop bell wake"])
             thirteenth()
           })
@@ -415,10 +415,13 @@ ShellRoot {
       check("but nothing is asked while the start is on its way", asks().length, before)
       airdrop.told(JSON.stringify({ state: "waiting", name: "Nova", seen: false, ends: 0 }))
       later(100, function () {
-        check("once it is up, it is switched off", asks().slice(before), ["nova-airdrop off"])
+        check("once it is up, the doorbell lets go of it, and only that", asks().slice(before), ["nova-airdrop off --stay"])
+        // Held on otherwise (switched on by hand meanwhile, or a send), it stays on: it is
+        // theirs now, and the doorbell asks nothing more of it.
+        check("then it is nobody's to ring off", [airdrop.rung, airdrop.doorbell, airdrop.opened], [false, "", true])
         toggle.close()
         later(100, function () {
-          check("and the menu's toggle switches it off as well", asks().slice(before + 1), ["nova-airdrop off"])
+          check("the menu's toggle is the user's off, which ends it", asks().slice(before + 1), ["nova-airdrop off"])
           fourteenth()
         })
       })

@@ -33,10 +33,11 @@
 //! --once when nobody holds it on any more: the Wi-Fi is off the network while
 //! this runs, and should not be for long. Who does is said on the control
 //! socket (control.rs): the user's on holds it until a transfer to this
-//! computer has ended, either way, a send until it is over, and the doorbell
-//! until it is stopped; it ends a moment after the last lets go, or after it
-//! starts if nobody takes hold of it at all, but not while a transfer or a
-//! send is under way.
+//! computer has ended, either way, the doorbell until it lets go, and a send
+//! until it is over or its client has gone; it ends a moment after the last
+//! lets go, or 15 seconds after it is up if nobody takes hold of it at all,
+//! but not while a transfer or a send is under way. The user's stop ends it
+//! at once, whatever holds it.
 //!
 //! What it logs goes to standard error, a line an event.
 
@@ -77,8 +78,8 @@ const PORT: u16 = 8771;
 const MTU: u32 = 1450;
 /// How long after a transfer's end --once ends the daemon: the sender has its answer by then.
 const AFTER_THE_LAST: u64 = 2_000_000;
-/// How long --once waits, from the start, for somebody to take hold of the daemon: whoever started
-/// it says so at once, unless they were killed meanwhile.
+/// How long --once waits, from when it is up (its socket listens), for somebody to take hold of
+/// the daemon: whoever started it says so at once, unless they were killed meanwhile.
 const UNCLAIMED_FOR: u64 = 15_000_000;
 /// How long what happened to a transfer is shown before a daemon that stays on says it waits again.
 const SHOWN_FOR: u64 = 8_000_000;
@@ -270,30 +271,42 @@ struct Turn {
     held: control::Held,
 }
 
-/// Whether the daemon ends at this turn. `ending` is when it was to, if it was (u64::MAX if not):
-/// a moment after a transfer or a send has ended, or after it started. Something under way puts
-/// it off, and is looked at again a moment later; somebody holding AirDrop on puts it away.
-fn ends_now(turn: Turn, ending: &mut u64) -> bool {
-    let control::Held {
-        held,
-        released,
-        sending,
-    } = turn.held;
-    if (released && !sending) || turn.given_up {
+/// What the loop keeps of its own end from one turn to the next.
+#[derive(Debug, Default)]
+struct Ending {
+    /// Since when nobody has held AirDrop on and nothing has been under way, if so.
+    free_since: Option<u64>,
+    /// Somebody has held it, or something has been under way, since it was up.
+    claimed: bool,
+    /// The holds' count of claims (control.rs) at the last turn: one that came and went between
+    /// two turns is a letting go too.
+    claims: u64,
+}
+
+/// Whether the daemon ends at this turn: given up, at once; with --once, a moment after nobody
+/// holds AirDrop on and nothing is under way any more, or a while after it is up if nobody ever
+/// takes hold of it (its loop's first turn is when it is up).
+fn ends_now(turn: Turn, ending: &mut Ending) -> bool {
+    if turn.given_up {
         return true;
     }
-    if !turn.once || turn.now < *ending {
+    let held = turn.held;
+    if turn.busy || held.held || held.sending || held.claims != ending.claims {
+        ending.claimed = true;
+        ending.claims = held.claims;
+        ending.free_since = None;
         return false;
     }
-    if turn.busy {
-        *ending = turn.now + AFTER_THE_LAST;
-        false
-    } else if held || sending {
-        *ending = u64::MAX;
-        false
-    } else {
-        true
+    if !turn.once {
+        return false;
     }
+    let since = *ending.free_since.get_or_insert(turn.now);
+    let wait = if ending.claimed {
+        AFTER_THE_LAST
+    } else {
+        UNCLAIMED_FOR
+    };
+    turn.now >= since + wait
 }
 
 fn run() -> Result<(), String> {
@@ -388,13 +401,8 @@ fn run() -> Result<(), String> {
         o.folder.display()
     ));
 
-    // When this ends by itself: a moment after a transfer has (--once), or when nobody has asked
-    // for long enough (--give-up-after), counted from the start and from each transfer's end.
-    let ending = Arc::new(AtomicU64::new(if o.once {
-        UNCLAIMED_FOR
-    } else {
-        u64::MAX
-    }));
+    // When nobody has asked for long enough (--give-up-after), counted from the start and from each
+    // transfer's end; when it ends otherwise, the loop sees (ends_now).
     let quiet_since = Arc::new(AtomicU64::new(0));
     let (accept_all, once) = (o.accept_all, o.once);
     // A send's start and end count as a transfer's for when this ends by itself.
@@ -410,7 +418,7 @@ fn run() -> Result<(), String> {
         scope,
         announcer,
         {
-            let (ending, sent_since) = (ending.clone(), sent_since.clone());
+            let sent_since = sent_since.clone();
             Box::new(move |told| {
                 let now = started.elapsed().as_micros() as u64;
                 match told {
@@ -420,10 +428,6 @@ fn run() -> Result<(), String> {
                     }
                     send::Told::Ended { transfer } => {
                         sent_since.store(now, Ordering::SeqCst);
-                        // The send lets go of AirDrop: whether anybody else holds it is the loop's to see.
-                        if once {
-                            ending.store(now + AFTER_THE_LAST, Ordering::SeqCst);
-                        }
                         log(match transfer {
                             true => "the send is over".into(),
                             false => "the send is over: nobody was asked".into(),
@@ -433,9 +437,10 @@ fn run() -> Result<(), String> {
                 }
             })
         },
+        // AirDrop stays on after a send if somebody else holds it, and it is not on its way out.
         {
             let control = control.clone();
-            Box::new(move || !once || control.held())
+            Box::new(move || !sys::stopping() && !control.closing() && (!once || control.held()))
         },
     );
     {
@@ -458,19 +463,13 @@ fn run() -> Result<(), String> {
             Box::new(move |question, offer| control.ask(question, offer, accept_all))
         },
         tell: {
-            let (ending, quiet_since, control) =
-                (ending.clone(), quiet_since.clone(), control.clone());
+            let (quiet_since, control) = (quiet_since.clone(), control.clone());
             Box::new(move |happened| {
                 // The end of the question that was open, whichever way, is what the user's on was
-                // for, and starts the count to this daemon's own end; what another sender's
-                // connection came to meanwhile does not.
+                // for; what another sender's connection came to meanwhile is not.
                 if control.happened(&happened) {
-                    let now = started.elapsed().as_micros() as u64;
-                    quiet_since.store(now, Ordering::SeqCst);
+                    quiet_since.store(started.elapsed().as_micros() as u64, Ordering::SeqCst);
                     control.used();
-                    if once {
-                        ending.store(now + AFTER_THE_LAST, Ordering::SeqCst);
-                    }
                 }
                 match happened {
                     Happened::Listed => log(
@@ -536,6 +535,7 @@ fn run() -> Result<(), String> {
     let (mut counted_from, mut shown_until) = (u64::MAX, u64::MAX);
     // Comings and goings logged this second: anybody in range can make them, and not a log of them.
     let mut noted = 0u32;
+    let mut ending = Ending::default();
     while !sys::stopping() {
         let now = clock();
         node.browsing = sending.browsing();
@@ -601,8 +601,6 @@ fn run() -> Result<(), String> {
             && o.give_up_after.is_some_and(|seconds| {
                 elapsed >= quiet.max(sent_since.load(Ordering::SeqCst)) + seconds * 1_000_000
             });
-        let armed = ending.load(Ordering::SeqCst);
-        let mut then = armed;
         let ends = control.close_if(|held| {
             let turn = Turn {
                 now: elapsed,
@@ -611,12 +609,8 @@ fn run() -> Result<(), String> {
                 given_up,
                 held,
             };
-            ends_now(turn, &mut then)
+            ends_now(turn, &mut ending)
         });
-        // Unless a transfer or a send has ended meanwhile, which says when for itself.
-        if then != armed {
-            let _ = ending.compare_exchange(armed, then, Ordering::SeqCst, Ordering::SeqCst);
-        }
         if ends {
             break;
         }
@@ -712,57 +706,74 @@ mod tests {
             held: true,
             ..Held::default()
         };
-        // Nobody took hold of it after it started: it ends, but not before it was to.
-        let mut ending = UNCLAIMED_FOR;
+        // Up at 3 s (a slow start), and nobody takes hold of it: it ends 15 s on from then.
+        let up = 3_000_000;
+        let mut ending = Ending::default();
+        assert!(!ends_now(turn(up, false, nobody), &mut ending));
         assert!(!ends_now(
-            turn(UNCLAIMED_FOR - 1, false, nobody),
+            turn(up + UNCLAIMED_FOR - 1, false, nobody),
             &mut ending
         ));
-        assert!(ends_now(turn(UNCLAIMED_FOR, false, nobody), &mut ending));
-        // A stranger's question ended while a send was going on: the send holds it on.
-        let mut ending = 5_000_000;
-        assert!(!ends_now(turn(5_000_000, false, sending), &mut ending));
-        assert_eq!(ending, u64::MAX);
-        // And while the send asks or sends, nothing ends it: it is looked at again a moment later,
-        // until the send is over and lets go.
-        let mut ending = 5_000_000;
-        assert!(!ends_now(turn(6_000_000, true, sending), &mut ending));
-        assert_eq!(ending, 6_000_000 + AFTER_THE_LAST);
-        // A send ended while a transfer to this computer was under way: not from under it.
-        let mut ending = 5_000_000;
-        assert!(!ends_now(turn(5_000_000, true, nobody), &mut ending));
-        assert!(!ends_now(turn(ending - 1, false, nobody), &mut ending));
-        assert!(ends_now(turn(ending, false, nobody), &mut ending));
-        // The user's on holds it after a send.
-        let mut ending = 5_000_000;
-        assert!(!ends_now(turn(5_000_000, false, user), &mut ending));
-        assert_eq!(ending, u64::MAX);
-        assert!(!ends_now(turn(u64::MAX - 1, false, user), &mut ending));
-        // Stop: at once, unless a send holds it, until it is over.
-        let released = Held {
-            released: true,
+        assert!(ends_now(
+            turn(up + UNCLAIMED_FOR, false, nobody),
+            &mut ending
+        ));
+        // A send holds it, whatever else ends meanwhile (a stranger's question); once it is over,
+        // or its client has gone, AirDrop ends a moment after.
+        let mut ending = Ending::default();
+        assert!(!ends_now(turn(1, false, sending), &mut ending));
+        assert!(!ends_now(turn(9_000_000, false, sending), &mut ending));
+        assert!(!ends_now(turn(10_000_000, false, nobody), &mut ending));
+        assert!(!ends_now(
+            turn(10_000_000 + AFTER_THE_LAST - 1, false, nobody),
+            &mut ending
+        ));
+        assert!(ends_now(
+            turn(10_000_000 + AFTER_THE_LAST, false, nobody),
+            &mut ending
+        ));
+        // Nothing ends it while a transfer or a send is under way, and the moment counts from the
+        // end of it: a send's end does not end a transfer to this computer, nor the other way.
+        let mut ending = Ending::default();
+        assert!(!ends_now(turn(1, true, nobody), &mut ending));
+        assert!(!ends_now(turn(60_000_000, true, nobody), &mut ending));
+        assert!(!ends_now(turn(61_000_000, false, nobody), &mut ending));
+        assert!(ends_now(
+            turn(61_000_000 + AFTER_THE_LAST, false, nobody),
+            &mut ending
+        ));
+        // A send that came and went between two turns, too quick for the loop to see it on: its
+        // end is the moment's start all the same, and not a while after the daemon was up.
+        let mut ending = Ending::default();
+        assert!(!ends_now(turn(1, false, nobody), &mut ending));
+        let came_and_went = Held {
+            claims: 1,
             ..Held::default()
         };
-        let mut ending = u64::MAX;
-        assert!(ends_now(turn(1, true, released), &mut ending));
-        let released_sending = Held {
-            released: true,
-            sending: true,
-            ..Held::default()
-        };
-        assert!(!ends_now(turn(1, false, released_sending), &mut ending));
+        assert!(!ends_now(turn(500_000, false, came_and_went), &mut ending));
+        assert!(!ends_now(turn(600_000, false, came_and_went), &mut ending));
+        assert!(ends_now(
+            turn(600_000 + AFTER_THE_LAST, false, came_and_went),
+            &mut ending
+        ));
+        // The user's on holds it for as long as it is held.
+        let mut ending = Ending::default();
+        assert!(!ends_now(turn(1, false, user), &mut ending));
+        assert!(!ends_now(turn(1 << 40, false, user), &mut ending));
         // Given up, held or not.
         let given_up = Turn {
             given_up: true,
             ..turn(1, false, user)
         };
         assert!(ends_now(given_up, &mut ending));
-        // Without --once it ends when it is stopped, or gives up.
-        let without = Turn {
-            once: false,
-            ..turn(10_000_000, false, nobody)
-        };
-        let mut ending = 0;
-        assert!(!ends_now(without, &mut ending));
+        // Without --once only giving up ends it (and the user's stop, which is the control's).
+        let mut ending = Ending::default();
+        for now in [1, 1 << 40] {
+            let without = Turn {
+                once: false,
+                ..turn(now, false, nobody)
+            };
+            assert!(!ends_now(without, &mut ending));
+        }
     }
 }

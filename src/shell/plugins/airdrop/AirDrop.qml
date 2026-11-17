@@ -20,7 +20,9 @@ import "AirDropModel.js" as Model
 // Bluetooth listening for the user's iPhone: `nova airdrop bell watch` says
 // when its share sheet shows AirDrop and when it closes, and this switches
 // AirDrop on and off by that, while the computer is unlocked
-// (Model.doorbell).
+// (Model.doorbell). Its off lets go of the AirDrop it switched on and no
+// more (`off --stay`): one switched on by hand meanwhile, or a send, keeps
+// it on. The menu's off is the user's, and ends it, a send with it.
 //
 // Sending: Files' Open With → AirDrop (`nova airdrop send --window`) calls
 // the IPC's send with the files, and a window lists the iPhones nearby as
@@ -72,7 +74,7 @@ Item {
     // Not while it is starting: an off then can come before the on and be
     // lost, and AirDrop would stay on with the sheet closed. Once the start
     // is over, this is looked at again.
-    else if (doorbell === "off" && !stopping && !starting) turnOff()
+    else if (doorbell === "off" && !stopping && !starting) letGo()
   }
   // The doorbell rests while the screen is locked: AirDrop does not come on
   // for the iPhone then (Model.doorbell), and resting, it has no monitor in
@@ -105,10 +107,19 @@ Item {
     starter.running = true
   }
 
+  // The user's off: AirDrop ends, whatever holds it on.
   function turnOff() {
     if (!opened) return
     stopping = true
     Quickshell.execDetached([command, "off"])
+  }
+
+  // The doorbell's: it lets go of the AirDrop it switched on, which ends
+  // unless somebody else holds it on (switched on by hand meanwhile, or a
+  // send). If so, it is theirs from now on, to end by hand or by itself.
+  function letGo() {
+    rung = false
+    Quickshell.execDetached([command, "off", "--stay"])
   }
 
   // A line of the watch.

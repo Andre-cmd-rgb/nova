@@ -5,7 +5,10 @@
 //! client's from then on: it is told, a line of JSON at each change, who can
 //! be sent to, and then how the sending goes; it says which receiver, or to
 //! stop. Its going away stops it too. One send at a time, which holds
-//! AirDrop on until it is over (control.rs).
+//! AirDrop on until it is over, or until its client has gone: a send whose
+//! thread is caught in something no shut connection ends (a file read from a
+//! mount that went with the Wi-Fi) holds nothing once it is cancelled
+//! (control.rs).
 //!
 //! Meanwhile Bluetooth announces that this computer wants to send
 //! (wake.rs, through announcer.rs), which is what wakes an iPhone's AirDrop; the node asks on the
@@ -90,8 +93,20 @@ struct Inner {
     browsing: bool,
     /// A receiver is being asked or sent to: not the time for the daemon to give up.
     busy: bool,
+    /// Set when its client has gone.
+    left: Option<Arc<AtomicBool>>,
     found: Vec<Found>,
     gone: Vec<Mac>,
+}
+
+impl Inner {
+    /// Its client is there: a send whose client has gone holds nothing, whatever it is caught in.
+    fn there(&self) -> bool {
+        !self
+            .left
+            .as_ref()
+            .is_some_and(|left| left.load(Ordering::SeqCst))
+    }
 }
 
 pub struct Sending {
@@ -233,9 +248,11 @@ impl Sending {
         })
     }
 
-    /// A send is going on, from the client's handing it over to its last line.
+    /// A send is going on, and its client is there: from the client's handing it over to its
+    /// last line, or to the client's going.
     pub fn on(&self) -> bool {
-        self.inner.lock().unwrap().on
+        let inner = self.inner.lock().unwrap();
+        inner.on && inner.there()
     }
 
     /// The node asks who receives while this is true.
@@ -243,15 +260,16 @@ impl Sending {
         self.inner.lock().unwrap().browsing
     }
 
-    /// A receiver is being asked, or sent to.
+    /// A receiver is being asked, or sent to, for a client that is there.
     pub fn busy(&self) -> bool {
-        self.inner.lock().unwrap().busy
+        let inner = self.inner.lock().unwrap();
+        inner.busy && inner.there()
     }
 
     /// Waits a moment for a send that is ending to tell its client so, as the daemon ends.
     pub fn finish(&self, at_most: Duration) {
         let until = Instant::now() + at_most;
-        while self.inner.lock().unwrap().on && Instant::now() < until {
+        while self.on() && Instant::now() < until {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
@@ -343,6 +361,7 @@ impl Sending {
     /// A claimed send, started: the session is its client's from now on.
     fn begin(self: &Arc<Self>, stream: UnixStream, items: Vec<Item>) -> Result<(), String> {
         let client = Client::new(stream).ok_or("The send could not be started.")?;
+        self.inner.lock().unwrap().left = Some(client.gone.clone());
         let sending = self.clone();
         let session = std::thread::Builder::new().name("airdrop-send".into());
         let started = session.spawn(move || {
@@ -876,6 +895,35 @@ mod tests {
         assert_eq!(
             told.lock().unwrap().last(),
             Some(&Told::Ended { transfer: false })
+        );
+        std::fs::remove_dir_all(&folder).unwrap();
+    }
+
+    #[test]
+    fn a_send_whose_client_has_gone_holds_nothing_whatever_it_is_caught_in() {
+        let folder = scratch("session-left");
+        let (sending, _) = sending(&folder);
+        let left = Arc::new(AtomicBool::new(false));
+        // As a session caught in a read that nothing ends would leave it: asking, sending, on.
+        *sending.inner.lock().unwrap() = Inner {
+            on: true,
+            busy: true,
+            left: Some(left.clone()),
+            ..Inner::default()
+        };
+        assert!(sending.on() && sending.busy());
+        left.store(true, Ordering::SeqCst);
+        assert!(!sending.on() && !sending.busy());
+        let began = Instant::now();
+        sending.finish(Duration::from_secs(2));
+        assert!(began.elapsed() < Duration::from_millis(100));
+        // It is still the one send, though: another waits until its thread is over.
+        let (_, theirs) = UnixStream::pair().unwrap();
+        assert_eq!(
+            sending
+                .start(theirs, vec![opened(&folder, "a", b"a")])
+                .err(),
+            Some("AirDrop is sending something already.".into())
         );
         std::fs::remove_dir_all(&folder).unwrap();
     }

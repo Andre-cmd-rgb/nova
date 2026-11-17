@@ -4,8 +4,11 @@
 //!   nova airdrop            how it is, in a line
 //!   nova airdrop on         this computer shows in the AirDrop list of iPhones nearby
 //!   nova airdrop on --stay  and does not end after a transfer: only when switched off, or
-//!                           when nobody has sent anything for two minutes
-//!   nova airdrop off
+//!                           when nobody has sent anything for two minutes (the shell, for
+//!                           your iPhone's share sheet)
+//!   nova airdrop off        ends it now, and a send that is going on with it
+//!   nova airdrop off --stay lets go of what on --stay held: it ends unless switched on
+//!                           otherwise, or sending (the shell, as the share sheet closes)
 //!   nova airdrop toggle
 //!   nova airdrop accept     yes to what is being offered
 //!   nova airdrop decline    no to it
@@ -40,8 +43,8 @@
 //! transfer to this computer, or when nobody has sent anything for two
 //! minutes, and the Wi-Fi connects again. A send switches it on if it is off,
 //! and it goes off at the send's end unless it was switched on meanwhile: the
-//! daemon knows who holds it on, and ends when the last lets go. Off lets go
-//! of what on held; a send that is going on keeps it on until it is over.
+//! daemon knows who holds it on, and ends when the last lets go. Off ends it
+//! whatever holds it on, and a send that is going on with it.
 //!
 //! The work is nova-airdropd's, started as a service of the system's by
 //! nova-airdrop-apply (through pkexec: the person at the computer needs no
@@ -213,26 +216,38 @@ fn on(stay: bool) -> ExitCode {
 fn off() -> ExitCode {
     let borrowed = || Path::new(BORROWED).exists();
     let answer = ask("stop");
-    match answer.as_deref() {
-        // A send holds it on: it goes off by itself when the send is over.
-        Some(meet::AFTER_THE_SEND) => {
-            println!("{}", meet::AFTER_THE_SEND);
-            return ExitCode::SUCCESS;
-        }
-        None if !borrowed() => {
-            println!("AirDrop is off.");
-            return ExitCode::SUCCESS;
-        }
-        _ => {}
+    if answer.is_none() && !borrowed() {
+        println!("AirDrop is off.");
+        return ExitCode::SUCCESS;
     }
-    // The daemon ends by itself when asked. One that does not, and one that is not up yet, is the
+    // The daemon ends by itself when asked, whatever holds it on, once a send going on has told
+    // its client (two seconds at most). One that does not, and one that is not up yet, is the
     // system's to stop; so is waiting for a Wi-Fi that is being put back already.
-    let ended = answer.is_some() && waited(|| ask("status").is_none(), Duration::from_secs(3));
+    let ended = answer.is_some() && waited(|| ask("status").is_none(), Duration::from_secs(5));
     if !ended && !apply("off") {
         return ExitCode::FAILURE;
     }
     println!("{}", handed_back());
     ExitCode::SUCCESS
+}
+
+/// The doorbell's off: what `on --stay` held is let go, and AirDrop ends a moment later unless it
+/// was switched on otherwise meanwhile, or is sending.
+fn unstay() -> ExitCode {
+    match ask("unstay").as_deref() {
+        Some("ok") => {
+            println!("AirDrop goes off, unless it was switched on otherwise or is sending.");
+            ExitCode::SUCCESS
+        }
+        Some(why) => {
+            eprintln!("nova airdrop: {why}");
+            ExitCode::FAILURE
+        }
+        None => {
+            println!("AirDrop is off.");
+            ExitCode::SUCCESS
+        }
+    }
 }
 
 /// Waits for the radio's helper to hand the Wi-Fi back, which it says it has done when it is done
@@ -685,6 +700,7 @@ fn main() -> ExitCode {
         ["on"] => on(false),
         ["on", "--stay"] => on(true),
         ["off"] => off(),
+        ["off", "--stay"] => unstay(),
         ["toggle"] => match ask("status") {
             Some(_) => off(),
             None => on(false),
