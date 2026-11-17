@@ -974,10 +974,6 @@ Item {
           value: seconds <= 0 ? "never" : String(Math.ceil(seconds / 60))
           onChanged: function (value) { root.run(["nova-idle-screensaver", value]) }
         }
-        Caption {
-          width: parent.width
-          text: "Any key or the mouse ends it. To see it now: nova screensaver"
-        }
       }
 
       Section {
@@ -992,10 +988,6 @@ Item {
           ]
           value: seconds <= 0 ? "never" : String(Math.ceil(seconds / 60))
           onChanged: function (value) { root.run(["nova-idle-lock", value]) }
-        }
-        Caption {
-          width: parent.width
-          text: "Caffeine, in the bar's indicators (or Super+Ctrl+I), pauses both for as long as it is on."
         }
       }
 
@@ -1017,7 +1009,6 @@ Item {
         width: p.inner
         Line {
           label: "Web browser"
-          detail: "Opens links."
           Dropdown {
             options: root.options(root.apps.browsers, root.apps.browser)
             value: root.apps.browser || ""
@@ -1026,7 +1017,6 @@ Item {
         }
         Line {
           label: "Code editor"
-          detail: "Opens files and projects from Nova."
           Dropdown {
             options: root.options(root.apps.editors, root.apps.editor === "zeditor" ? "zed" : root.apps.editor)
             value: root.apps.editor === "zeditor" ? "zed" : (root.apps.editor || "")

@@ -86,7 +86,6 @@ Section {
 
   Line {
     label: "Unlock with your fingerprint"
-    detail: "After the first unlock with your password, which also opens your keyring."
     Button {
       text: root.enrolled.length ? "Add a Finger…" : "Set Up…"
       bordered: true
