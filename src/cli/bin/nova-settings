@@ -164,8 +164,9 @@ candidates_json() { [[ $(quiet nova-update --candidates) == on ]] && echo true |
 # fprintd if it is not running, which it leaves again once idle: a third of a
 # second, and the reader woken, every time Settings reads its state. So the
 # answer is kept for this boot in the runtime folder, for as long as the same
-# USB devices are plugged in (a reader is one, or built in); no answer from
-# fprintd is not kept.
+# USB devices are plugged in (a reader is one, or built in): a reader for all
+# that time, none for a minute of it, as an fprintd only just started may not
+# have found its reader yet. No answer from fprintd is not kept.
 fingerprint_reader() {
   local devices plugged="" vendor kept=${XDG_RUNTIME_DIR:-}/nova/fingerprint-reader
   command -v fprintd-enroll >/dev/null || return 1
@@ -173,7 +174,7 @@ fingerprint_reader() {
     [[ -r $vendor ]] && plugged+="$(<"$vendor"):$(<"${vendor%/*}/idProduct") "
   done
   if [[ -n ${XDG_RUNTIME_DIR:-} && -r $kept ]] && { IFS= read -r devices && IFS= read -r found; } <"$kept" &&
-    [[ $devices == "${plugged:-none}" ]]; then
+    [[ $devices == "${plugged:-none}" ]] && { [[ $found == yes ]] || [[ -n $(find "$kept" -newermt '-1 minute' 2>/dev/null) ]]; }; then
     [[ $found == yes ]]
     return
   fi
@@ -213,7 +214,9 @@ about_json() {
 
 # Each part is read at once, all of them side by side, into a file of its own:
 # the whole takes as long as the slowest part (xdg-terminal-exec, a tenth of
-# a second), not as long as all of them one after another.
+# a second), not as long as all of them one after another. A part runs
+# without errexit, as a command substitution would: one that stumbles
+# halfway gives what it has, never an empty file that breaks the whole.
 state() {
   local dir
   dir=$(mktemp -d)
@@ -222,7 +225,10 @@ state() {
   part() { # name command...
     local name=$1
     shift
-    "$@" >"$dir/$name" 2>/dev/null &
+    (
+      set +e
+      "$@"
+    ) >"$dir/$name" 2>/dev/null &
   }
   part config json_or '{}' in_effect
   part theme quiet nova-theme current

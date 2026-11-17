@@ -232,12 +232,22 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state .lock.fingerprint)" = true ]
   [ "$(state .lock.fingerprint)" = true ]
   [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 1 ]
+  touch -d '2 hours ago' "$XDG_RUNTIME_DIR/nova/fingerprint-reader"
+  [ "$(state .lock.fingerprint)" = true ]
+  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 1 ]
   # A reader taken away: another device list, asked again.
   stub busctl 'echo asked >>"$SCRATCH/busctl-calls"; echo "ao 0"'
   rm -r "$NOVA_USB_PATH/1-1"
   [ "$(state .lock.fingerprint)" = false ]
   [ "$(state .lock.fingerprint)" = false ]
   [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 2 ]
+  # None is kept for a minute: fprintd only just started may not have found
+  # its reader yet.
+  touch -d '2 minutes ago' "$XDG_RUNTIME_DIR/nova/fingerprint-reader"
+  [ "$(state .lock.fingerprint)" = false ]
+  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 3 ]
+  [ "$(state .lock.fingerprint)" = false ]
+  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 3 ]
   # No answer from fprintd is not kept.
   stub busctl 'echo asked >>"$SCRATCH/busctl-calls"; exit 1'
   mkdir -p "$NOVA_USB_PATH/1-2"
@@ -245,7 +255,7 @@ state() { nova-settings state | jq -c "$1"; }
   echo 0002 >"$NOVA_USB_PATH/1-2/idProduct"
   [ "$(state .lock.fingerprint)" = false ]
   [ "$(state .lock.fingerprint)" = false ]
-  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 4 ]
+  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 5 ]
 }
 
 @test "state: this computer, named the way its maker names it" {
@@ -261,6 +271,14 @@ state() { nova-settings state | jq -c "$1"; }
   echo A6 >"$NOVA_DMI_PATH/product_version"
   echo "Laptop 13 (AMD Ryzen 7040Series)" >"$NOVA_DMI_PATH/product_name"
   [ "$(state .about.model)" = '"Laptop 13 (AMD Ryzen 7040Series)"' ]
+}
+
+@test "state: a part that stumbles halfway still gives what it has, and the rest is whole" {
+  stub df 'exit 1'
+  echo "ThinkPad P1 Gen 4i" >"$NOVA_DMI_PATH/product_version"
+  echo LENOVO >"$NOVA_DMI_PATH/sys_vendor"
+  [ "$(state .about.model)" = '"ThinkPad P1 Gen 4i"' ]
+  [ "$(state .bar.position)" = '"top"' ]
 }
 
 @test "state: the radios, once each, switched off or not" {
