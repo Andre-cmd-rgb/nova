@@ -1,0 +1,8 @@
+#!/bin/sh
+# `nova-settings state` as Settings and the welcome read it: what the test
+# wrote to $HOME/settings-state.json. Every other call is noted in
+# $HOME/stub-calls, as `record` notes one.
+if [ "$1" = state ]; then
+  exec cat "$HOME/settings-state.json"
+fi
+printf 'nova-settings %s\n' "$*" >>"$HOME/stub-calls"

@@ -1,0 +1,11 @@
+{
+  "id": "nova.welcome",
+  "name": "Welcome",
+  "description": "A new account's first minutes: a Wi-Fi network where there is none, the theme, the night light, Chrome and VS Code where the install could not build them, and the keys to know.",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "Welcome.qml"
+  }
+}

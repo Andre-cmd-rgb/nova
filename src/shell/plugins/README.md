@@ -159,6 +159,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Night Light | `nova.nightlight` | service `services/nightlight/Service.qml` | hyprsunset's colour temperature, and its schedule; its section is `settings/NightLightView.qml` |
 | Network sign-in | `nova.network-portal` | service `services/network/Service.qml` | a notification when a network asks to sign in |
 | Settings | `nova.settings` | panel `settings/Panel.qml` | Settings' window |
+| Welcome | `nova.welcome` | panel `settings/Welcome.qml` | a new account's welcome, made of Settings' parts (below) |
 
 Three have to do with the battery: Battery is the service behind the warning
 and the power mode, Power the bar's button and panel, and Battery Life the
@@ -195,6 +196,25 @@ before anything shows, which is why the lock has no off.
 When an app needs root, a card over the dimmed screen asks for the password,
 or for a finger while PAM waits on the reader, through Quickshell's polkit
 agent (`Quickshell.Services.Polkit`).
+
+### Welcome
+
+A new account's welcome is a second plugin in Settings' directory
+(`settings/Welcome.manifest.json`), so that its pages are Settings' own
+parts (`WifiView`, `ThemeView`, `NightLightView`) and its changes Settings'
+commands, run and read back by the same `SettingsState`; Chrome and VS Code
+go in through nova update, followed by the same `UpdateRun` as Settings →
+Updates. `WelcomeModel.js` says which pages come: each only where it
+matters, judged as the page before is left, and nothing the installer has
+asked (the keyboard, the account, the computer's name and time zone, a
+fingerprint).
+
+It opens at the first unlock of each start while the account has
+`~/.local/state/nova/welcome-pending`, which comes with a new account from
+Nova's skel (`nova welcome first`, from `nova-session-first-unlock`), and
+takes the marker away as it closes, on any page (`nova welcome done`). So an
+account made before the welcome existed never sees it, and one whose session
+ended with it open sees it again. `nova welcome` opens it at any time.
 
 ### Nova menu
 

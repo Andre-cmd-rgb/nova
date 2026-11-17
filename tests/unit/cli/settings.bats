@@ -41,7 +41,7 @@ state() { nova-settings state | jq -c "$1"; }
 @test "state: everything missing still makes a whole answer" {
   run nova-settings state
   [ "$status" -eq 0 ]
-  [ "$(jq -c .appearance <<<"$output")" = '{"theme":"","themes":[],"background":"","font":"","fonts":[],"textSize":12,"adaptive":""}' ]
+  [ "$(jq -c .appearance <<<"$output")" = '{"theme":"","themes":[],"background":"","backgrounds":0,"font":"","fonts":[],"textSize":12,"adaptive":""}' ]
   [ "$(jq -c .battery <<<"$output")" = '{"present":false}' ]
   [ "$(jq -c .screenTime <<<"$output")" = false ]
   [ "$(jq -c .lock <<<"$output")" = '{"seconds":300,"screensaver":180,"fingerprint":false}' ]
@@ -82,12 +82,15 @@ state() { nova-settings state | jq -c "$1"; }
   stub nova-theme 'case "$*" in
     "list --colors") printf "white\t#ffffff\t#000000\t#6e6e6e\nnord\t#2e3440\t#d8dee9\t#88c0d0\n" ;;
     current) echo white ;;
+    "bg list") printf "/s/current/theme/backgrounds/nova.svg\n/h/.config/nova/backgrounds/lake.jpg\n" ;;
     *) exit 1 ;;
   esac'
   [ "$(state '.appearance.theme')" = '"white"' ]
   [ "$(state '.appearance.themes[1]')" = '{"name":"nord","background":"#2e3440","foreground":"#d8dee9","accent":"#88c0d0"}' ]
   # Not an adaptive theme: nothing to choose between.
   [ "$(state '.appearance.adaptive')" = '""' ]
+  # The wordmark and a photo: one other to change to (the welcome offers it).
+  [ "$(state '.appearance.backgrounds')" = 2 ]
 }
 
 @test "state: whether an adaptive theme is dark, light or as its background is" {

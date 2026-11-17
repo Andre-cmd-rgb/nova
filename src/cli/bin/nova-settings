@@ -180,6 +180,7 @@ state() {
     --arg theme "$(quiet nova-theme current)" \
     --argjson themes "$(themes_json)" \
     --arg background "$(quiet nova-theme bg current)" \
+    --argjson backgrounds "$(quiet nova-theme bg list | grep -c . || true)" \
     --arg adaptive "$(quiet nova-theme adaptive)" \
     --arg font "$(quiet nova-font-current)" \
     --argjson fonts "$(quiet nova-font-list | lines_json)" \
@@ -199,7 +200,7 @@ state() {
     --argjson about "$(about_json)" \
     --argjson candidates "$([[ $(quiet nova-update --candidates) == on ]] && echo true || echo false)" \
     --argjson firmware "$(command -v fwupdmgr >/dev/null && echo true || echo false)" \
-    '{appearance: {theme: $theme, themes: $themes, background: $background,
+    '{appearance: {theme: $theme, themes: $themes, background: $background, backgrounds: $backgrounds,
                    font: $font, fonts: $fonts, textSize: $textSize, adaptive: $adaptive},
       battery: $battery,
       performance: $performance,

@@ -5,7 +5,14 @@ This page covers the keys, the menu, the bar, Settings page by page, and the par
 ## The first minutes
 
 - The computer starts into the lock screen. The first unlock after each start takes your password; after that, a fingerprint unlocks too, if you enrolled one.
-- After your first unlock, a notification lists the few keys that lead to everything else. Click it for every key.
+- After your first unlock, the welcome sets what the installer could not, a page each, and only the pages that matter on your computer:
+  - **Wi-Fi**, when the computer has a card and no connection, and on a laptop still on the cable it was installed on, for when it is not;
+  - **Appearance**: the theme (a new account starts in white), and the background once there is more than one;
+  - **Night Light**: on by hand, from sunset to sunrise, or at set hours;
+  - **Apps**: Chrome and VS Code, when the install could not build them (an install without internet) and the computer is online now;
+  - **Keyboard Shortcuts**: the few keys that lead to everything else.
+
+  Continue passes a page by, and Return is Continue. Closing it, on any page, is the end of it; until then it comes back at each start. `nova welcome` opens it again.
 - `nova help` lists every command, and `nova help <group>` one group's, such as `nova help theme`.
 
 ## Keys

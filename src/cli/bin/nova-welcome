@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# nova:summary=Show the welcome a new account sees after its first unlock
+# nova:args=[first | done]
+#
+# The welcome is a window of the shell's (shell/plugins/settings/Welcome.qml):
+# a page each for what the installer cannot set, since it runs before there is
+# a desktop. A new account comes with a marker, welcome-pending, from Nova's
+# skel, so an account made before the welcome existed is never shown it, nor
+# one an upgrade finds. The first unlock of each start
+# (nova-session-first-unlock) opens it while the marker is there, and the
+# window takes the marker away as it closes, on whichever page: an account
+# that has not closed it yet sees it again at the next start.
+#
+#   nova welcome          open it, marker or not
+#   nova welcome first    open it while this account has the marker
+#   nova welcome done     take the marker away (the window, as it closes)
+
+set -euo pipefail
+
+marker=${XDG_STATE_HOME:-$HOME/.local/state}/nova/welcome-pending
+
+# The shell answers ok, or unknown for a plugin switched off.
+summon() {
+  [[ $(nova-shell shell summon nova.welcome '{}') == ok ]] ||
+    { echo "nova-welcome: could not open the welcome; is the shell running?" >&2; exit 1; }
+}
+
+case ${1:-} in
+  "") summon ;;
+  first) [[ ! -e $marker ]] || summon ;;
+  done) rm -f -- "$marker" ;;
+  -h | --help) echo "Usage: nova welcome [first | done]" ;;
+  *)
+    echo "Usage: nova welcome [first | done]" >&2
+    exit 2
+    ;;
+esac

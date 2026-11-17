@@ -44,11 +44,11 @@ hl.layer_rule({
   no_anim = true,
   animation = "none",
 })
--- Settings and the Calendar, the shell's windows, float in the middle of the
--- screen at the size they ask for, opaque: they draw in the theme's own
--- background, and text behind would show through.
+-- Settings, the Calendar and the welcome, the shell's windows, float in the
+-- middle of the screen at the size they ask for, opaque: they draw in the
+-- theme's own background, and text behind would show through.
 nova.window(
-  { class = "^org\\.quickshell$", title = "^(Settings|Calendar)$" },
+  { class = "^org\\.quickshell$", title = "^(Settings|Calendar|Welcome to Nova)$" },
   { float = true, center = true, tag = "-default-opacity" }
 )
 

@@ -33,6 +33,9 @@ probe() {
   check "the shell answers" test "$(shell shell ping)" = ok
   check "greetd is running" systemctl is-active greetd
   check "the lock screen can count wrong passwords" test "$(stat -c %U "/run/faillock/$user" 2>/dev/null)" = "$user"
+  # Nobody has unlocked yet: the welcome waits for the first unlock.
+  check "the new account's welcome waits for its first unlock" \
+    test "$(stat -c %U "/home/$user/.local/state/nova/welcome-pending" 2>/dev/null)" = "$user"
 
   # An encrypted install: the root came out of the LUKS2 container, as the
   # initramfs opened it.

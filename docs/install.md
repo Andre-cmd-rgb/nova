@@ -84,7 +84,7 @@ When it is done, take the stick out and restart. The computer starts into the lo
 | Drivers | the microcode, firmware and graphics drivers this computer needs ([hardware](hardware.md#what-the-installer-picks)) |
 | Model | the computer's [hardware profile](hardware.md#hardware-profiles), when Nova has one for it |
 | Account | yours, an administrator through sudo; root's password is locked |
-| Theme | white; Settings → Appearance changes it |
+| Theme | white; the welcome after your first unlock, and Settings → Appearance, change it |
 | Apps | Chrome, VS Code, Claude Code and Codex, when online |
 | Log | `/var/log/nova-install.log`, kept on the new system; it ends with a table of how long each step took |
 
@@ -115,7 +115,7 @@ Answer yes to **Every package on the stick too?** in `nova-usb`. The stick then 
 
 - Making it needs `pacman` and `fakeroot` on the system that makes it.
 - The packages download to that computer before the stick is erased, or straight to the stick when there is no room.
-- Chrome, VS Code, Claude Code and Codex need the network: an offline install says so. Once online, `nova apps install; mise install` adds them.
+- Chrome, VS Code, Claude Code and Codex need the network: an offline install says so. The welcome after your first unlock joins a Wi-Fi network and then installs Chrome and VS Code; `nova apps install; mise install` adds all four.
 
 ## A portable Nova
 

@@ -62,7 +62,7 @@ How files reach a system:
 |---|---|---|
 | User config | `~/.config/nova/` | `shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/` |
 | | `~/.config/nova-<plugin>/` | a plugin's own settings (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
-| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `input.json`: the keyboard's layouts and the pointer as Settings keeps them; `notifications.json`: Do Not Disturb, and its schedule's last turn; `calendar.json`: how far the calendar's reminders have been looked at; `adaptive`: the adaptive theme's Auto, Dark or Light; `airdrop/`: the certificate the AirDrop receiver shows to senders, made at its first use |
+| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `input.json`: the keyboard's layouts and the pointer as Settings keeps them; `notifications.json`: Do Not Disturb, and its schedule's last turn; `calendar.json`: how far the calendar's reminders have been looked at; `adaptive`: the adaptive theme's Auto, Dark or Light; `airdrop/`: the certificate the AirDrop receiver shows to senders, made at its first use; `welcome-pending`: a new account's, from Nova's skel, until it closes the welcome |
 | | `~/.local/state/nova-<plugin>/` | a plugin's history |
 | User data | `~/.local/share/nova/calendar/calendar.ics` | the calendar |
 | | `~/.local/share/nova-dictation/` | the speech model, downloaded at dictation's first use |
@@ -107,6 +107,7 @@ How files reach a system:
 7. **The first unlock after boot needs the password.**
    - `nova-lock-password` ends with `pam_gnome_keyring`, which unlocks the login keyring with the password during auth. The password never leaves PAM.
    - `nova-session-first-unlock` writes `$XDG_RUNTIME_DIR/nova/unlocked-once` and starts `nova-unlocked.target`, which brings up keyring users such as the migration of a passwordless keyring (`nova doctor` offers it).
+   - It opens the welcome while the account has the marker its skel gave it (`welcome-pending`), which the welcome takes away as it closes.
    - A greeter login does the same through the guard: the greeter's PAM stack has already unlocked the keyring.
    - Fingerprint unlock is offered only once `unlocked-once` exists.
    - polkit's prompts and sudo take a finger from the start: neither needs the password for the keyring. Nova's `/etc/pam.d/polkit-1` shadows polkit's own, and `/etc/sudoers.d/20-nova-pam` points sudo at `nova-sudo`; both put `pam_fprintd` ahead of the stack they wrap, and skip it while the lid is shut.
