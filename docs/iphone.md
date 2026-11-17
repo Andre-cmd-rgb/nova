@@ -1,0 +1,148 @@
+# iPhone notifications
+
+Nova shows your iPhone's notifications (Messages, WhatsApp, Mail, the calendar) as its own, the way a watch gets them: through Apple's Notification Center Service (ANCS), over Bluetooth Low Energy. Nothing is installed on the iPhone, and no iCloud account is involved.
+
+- **Off until you switch it on:** Settings → Bluetooth → iPhone notifications, or `nova notification iphone on`.
+- **It needs Bluetooth Low Energy** (Settings → Bluetooth → Bluetooth Low Energy).
+- **It has been tried against a fake iPhone only** (below, [Tests](#tests)). The first real pairing is in [Trying it](#trying-it-the-first-time).
+
+## Using it
+
+### Pairing, once
+
+1. **Switch it on:** Settings → Bluetooth → iPhone notifications. With no iPhone paired yet, the computer can be paired for three minutes, and the page counts them down.
+2. **On the iPhone:** Settings → Bluetooth. The computer is listed under Other Devices by its Bluetooth name, which the page gives. Tap it.
+3. **Compare the code:** the iPhone shows a six-digit code and asks to pair; the computer shows a notification, *Pair with “Anna's iPhone”?*, with the same code. If they match, Pair on both.
+4. **Allow notifications:** the iPhone asks whether the computer may receive its notifications. Allow.
+5. The page says **Connected**.
+
+Missed step 4: on the iPhone, Settings → Bluetooth → ⓘ beside the computer → **Share System Notifications**. The page says so while it is off.
+
+To pair again, or another iPhone: Pair on the same page when it says No iPhone; an iPhone paired before is forgotten under My Devices first.
+
+### Every day
+
+There is nothing to do. The iPhone connects by itself whenever it is near with Bluetooth on: after the computer has slept, after you come back with it, after Bluetooth restarts. Under My Devices it has Forget and no Connect: it is the one that connects.
+
+| On the iPhone | Here |
+|---|---|
+| A new notification | a notification: the app and the title in bold (*WhatsApp · Anna*), the message under it, a glyph for its kind (a message, a mail, the calendar) |
+| One delivered quietly (a Focus, Deliver Quietly) | the history only, no toast |
+| One already there when the iPhone connects | nothing: it is on the iPhone already |
+| One that came while the link was down for a moment (under five minutes) | shown when it is back, five at most |
+| A call | nothing, ever |
+| A missed call, a voicemail | a notification, like any |
+| One taken away (read, cleared) | its notification goes too |
+
+**Dismissed here, cleared there.** A notification you dismiss on the computer (a click, a right click, the keys) is cleared on the iPhone too, as a watch does: you have seen it. One that runs out by itself stays on the iPhone, as a Mac's banner goes to the Notification Center and is not cleared.
+
+**Do Not Disturb** holds them as it holds every notification: into the history, no toast. Do Not Disturb sends nothing to the iPhone: a notification it holds is not cleared there.
+
+**Locked**, nothing shows: Nova's lock screen shows no notifications, the iPhone's no more than any other. What came stays in the history (Super+Shift+Alt+comma), which keeps the last ten notifications of every kind.
+
+### The command
+
+| | |
+|---|---|
+| `nova notification iphone` | how it is, in a line |
+| `nova notification iphone on`, `off` | switch it, for you alone; on opens the pairing window when no iPhone is paired |
+| `nova notification iphone pair` | open the pairing window: three minutes |
+| `nova notification iphone --json` | how it is, as the service wrote it |
+
+## How it works
+
+### Who connects to whom
+
+An iPhone keeps ANCS for accessories it is bonded with, and it is the one that connects: the computer advertises, and an iPhone bonded with it connects as soon as it hears that. This is how watches stay connected, and others who have built ANCS on Linux report the iPhone back over LE a few seconds after the advertising starts again.
+
+The other way round, the computer connecting to the iPhone, would have the computer listen for the iPhone's advertisements, which change their address every few minutes: that listening is **scanning**, and scanning is what crashes the Bluetooth firmware of the ThinkPad P1's Intel AX210 ("Hardware error 0x0c": 43 resets in 22 hours with AirDrop's doorbell scanning, none in 15 hours without). So the computer never scans for the iPhone. It only advertises, and only while a paired iPhone is away:
+
+| When | Advertising | Its share of the radio's time |
+|---|---|---|
+| The iPhone connected | none | 0 |
+| No iPhone paired, not pairing | none | 0 |
+| For 30 s after the link drops, after a wake, after Bluetooth or its controller comes back | every 20-30 ms | about 6% |
+| Then, until the iPhone is back | every 1285 ms | about 0.1% |
+| The pairing window | every 100-150 ms, discoverable, with the computer's name | about 1%, for three minutes |
+
+The intervals are Apple's: its accessory guidelines ask for 20 ms for the first 30 seconds, then one of a list of longer intervals, chosen not to fall in step with how an iPhone listens. 1285 ms is the longest of them, and a whole number of milliseconds, which is what BlueZ takes. The shares are by arithmetic: an advertising event is three short packets and a moment to hear a reply, about 1.5 ms of the radio. For comparison, the kernel's own listening for devices to connect is 30 ms of every 60 (read on the P1 with `btmgmt read-sysconfig`), and AirDrop's doorbell 30 ms of every 120. The kernel's default advertising interval on the P1 is 1.28 s.
+
+**The connection's own cost** is the iPhone's to choose, as the one that connects: how often the two radios meet (the interval), how many meetings the computer may skip (the latency). BlueZ reports them; the service writes them into the journal at each connection, and they are in `nova notification iphone --json` as `link`. They have not been measured with a real iPhone yet.
+
+**Sleep:** the kernel drops the connection and stops advertising as the computer goes to sleep. Nothing here wakes it. After the wake (logind's PrepareForSleep), it advertises fast again.
+
+**BlueZ restarting, the controller resetting:** BlueZ forgets what was registered with it and lets the advertisement go; the service registers it again as soon as BlueZ or the controller is back. A registration BlueZ refuses is tried again after 5 s, then 10, doubling up to five minutes, so a controller that will not take it is not asked forever.
+
+**What it keeps across a blip:** the notifications the iPhone had when the link dropped. A notification it has when the link comes back, under five minutes later, that was not among them and is dated after the drop, came in the gap and is shown. After a longer absence, a night asleep, those that came meanwhile are on the iPhone, and nothing is shown for them.
+
+### Pairing, and what it lets in
+
+- **A window, three minutes,** opened on request. Only then is the computer listed in the iPhone's Settings: the advertisement is discoverable, with its name. Bluetooth itself is not made discoverable, so BlueZ marks the advertisement Bluetooth LE only, and the iPhone pairs over LE.
+- **Only then is there a pairing agent** with BlueZ, and with none BlueZ lets nothing pair. The agent says it has a display and a yes/no, so the iPhone and the computer compare a code (LE Secure Connections' numeric comparison) rather than pairing unseen. The agent says yes to nothing by itself: a notification asks, with the code, and the buttons answer. Unanswered, the pairing ends with the iPhone's own 30 seconds.
+- **The iPhone is never trusted.** Pairing over LE may give both sides a key for classic Bluetooth too, and an iPhone may then try the computer as a headset or a speaker: BlueZ asks the agent before it lets an untrusted device's audio or calls in, and the agent, while there is one, says no; with none, BlueZ says no itself. Calls stay on the iPhone.
+- **One subscription is what asks to pair.** The service subscribes to ANCS only on an iPhone already paired, or during the window: the iPhone answers a subscription from a stranger by asking to pair.
+
+### ANCS
+
+The service subscribes to the iPhone's Data Source, then its Notification Source, as Apple's specification has it; the iPhone then lists the notifications it has (marked pre-existing) and each new one as it comes. For each new one it asks the Control Point for the app, the title, the subtitle and the message, at most 128, 128 and 320 bytes, the most two lines of title and three of message can show; and once per app, the app's name. The answers come back on the Data Source in pieces, which are put back together. One question is asked at a time, each given 5 seconds to be answered after the iPhone took it: a notification the iPhone has removed meanwhile is refused, and the next one goes on.
+
+A notification here has a default action, so that a click is a dismissal: there is no window to bring forward for an iPhone's app.
+
+**Quietly delivered** ones carry the iPhone's silent flag, and go to the shell with Nova's `nova-quiet` hint: the history, no toast. **Dismissed** ones (the shell says so when it closes a notification) are cleared on the iPhone with the notification's negative action, where the iPhone offers one. The shell closes a notification as *expired* when it ran out, went straight to the history under Do Not Disturb, or left the screen for the history's replay: none of those clears it on the iPhone.
+
+## Privacy
+
+- **What a notification says goes to the shell alone.** The service logs that something was shown, never what.
+- **The history** keeps the last ten notifications gone, the iPhone's as any app's, in `~/.local/state/nova/notifications/`.
+- **The service's state** (the iPhone's name and Bluetooth address, for Settings) is in `$XDG_RUNTIME_DIR/nova/iphone-notifications.json`, readable by you alone and gone at logout.
+- **Everything goes over the Bluetooth link**, encrypted with the key of the pairing.
+
+## What it costs
+
+- **Memory:** a Python process with D-Bus and GLib: about 10 MB, 2 MB of them its own (as measured on Nova's other such service, nova-idle-inhibitors).
+- **The radio:** the table above. Nothing runs on a clock: it waits for BlueZ, the shell and logind to say something changed.
+- **Built in Python**, as nova-idle-inhibitors: python-dbus and python-gobject are already Nova's, and Nova's Rust uses no crates, which would have meant writing D-Bus anew.
+
+## Trying it the first time
+
+After installing a Nova with it:
+
+1. Settings → Bluetooth: Bluetooth on, Bluetooth Low Energy on, then **iPhone notifications** on.
+2. On the iPhone: Settings → Bluetooth. Find the computer under Other Devices, by the name the page gives, and tap it.
+3. Compare the codes and Pair on both; Allow notifications on the iPhone.
+4. Send yourself a message from another phone, or have someone send one: it shows at the top right.
+5. Then, one at a time, and look whether it comes back by itself (the page says Connected): lock the computer and unlock it; put it to sleep for a minute and wake it; turn the iPhone's Bluetooth off and on in its Settings (not the Control Center, which only disconnects for a while); walk away with the iPhone and come back.
+
+Each step, if it does not do what it should, the journal says why:
+
+```
+journalctl --user -u nova-iphone-notifications -b
+```
+
+| The journal says | It means |
+|---|---|
+| `advertising (pairing, every 100-150 ms)` | the window is open: the computer should be in the iPhone's list |
+| `could not advertise: …` | BlueZ refused the advertisement (Bluetooth LE off, no controller) |
+| `pairing agreed to`, `pairing turned down` | the notification's buttons |
+| `… did not pair (…)` | the pairing failed or was cancelled |
+| `… connected: interval 30 ms, latency 0, supervision timeout 720 ms` | the iPhone connected, and the radio's cost of it |
+| `could not subscribe to …` | connected, but no notifications shared: Share System Notifications on the iPhone |
+| `notification 1234 shown`, `… shown quietly` | one came, and went to the shell (what it says is not logged) |
+| `notification 1234 dismissed here: cleared on the iPhone` | dismissed on the computer |
+| `… went away` then `advertising (fast, …)` | the link dropped, and it waits for the iPhone |
+
+And whether the Bluetooth chip resets itself, which is what to keep an eye on with it on all day:
+
+```
+journalctl -k -b | grep -c 'Hardware error'
+```
+
+Should the iPhone never come back by itself, `sudo btmon` while it should shows whether the computer advertises and whether the iPhone tries at all; its output holds both devices' addresses, so it is not one to share.
+
+## Tests
+
+`tests/unit/iphone/`:
+
+- **ANCS byte for byte** (`ancs_test.py`): the events, the three commands and the answers, from fixtures built from Apple's specification, none from a phone; answers in pieces of every size, with the end of an answer given up on in front; texts cut in the middle of a character.
+- **The service** (`fake_bluez.py`, through `daemon.bats`): the real service on a D-Bus of its own, against a fake BlueZ with a fake iPhone behind it and a fake notification server. Pairing (the advertisement, the agent, the code in a notification, the answer coming after the notification closed, a code turned down and not asked again), new, quiet, removed, dismissed and expired notifications, calls, a refused command, a link back after a blip, BlueZ restarting, the controller resetting, Bluetooth off, Bluetooth LE off.
+- **The command** (`cli.bats`), and Settings' switch and line (`tests/qml/iphone-settings-test.qml`).

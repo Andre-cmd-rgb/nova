@@ -1,6 +1,6 @@
 # Using Nova
 
-This page covers the keys, the menu, the bar, Settings page by page, and the parts of the desktop you meet every day: the calendar, dictation, AirDrop, Caffeine, the screensaver, the apps, the keyboard and languages.
+This page covers the keys, the menu, the bar, Settings page by page, and the parts of the desktop you meet every day: the calendar, dictation, AirDrop, iPhone notifications, Caffeine, the screensaver, the apps, the keyboard and languages.
 
 ## The first minutes
 
@@ -181,7 +181,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Page | What is on it |
 |---|---|
 | Wi-Fi | the radio on or off; the network in use, the known ones and the others |
-| Bluetooth | the radio on or off; Bluetooth Low Energy, off for headphones that stutter; your devices and those nearby |
+| Bluetooth | the radio on or off; Bluetooth Low Energy, off for headphones that stutter; [iPhone notifications](#iphone-notifications); your devices and those nearby |
 | Mobile Data | mobile data on or off, set up with the SIM's APN the first time; the SIM's PIN when it asks for one; the network, signal, address and data used this month |
 | Notifications | [Do Not Disturb](#do-not-disturb), and the hours it holds by itself every day |
 | Sound | the output and its volume; the input and its volume |
@@ -238,6 +238,17 @@ An iPhone can send photos, files and links to the computer with AirDrop, with no
 - The Wi-Fi is off the network while AirDrop is on. It ends by itself, a moment after a transfer or after two minutes with none, and the Wi-Fi reconnects.
 
 [AirDrop](airdrop.md) has the rest: why the Wi-Fi goes, which Wi-Fi cards can do it, and what it lets in.
+
+## iPhone notifications
+
+Your iPhone's notifications can show on the computer, as on a watch, with nothing installed on the iPhone.
+
+- Switch them on in Settings → Bluetooth → iPhone notifications, or with `nova notification iphone on`. They are off until then.
+- Pair once: for three minutes the computer is listed in the iPhone's Settings → Bluetooth. Tap it, compare the code with the notification the computer shows, Pair on both, and Allow notifications on the iPhone.
+- From then on the iPhone connects by itself whenever it is near.
+- A notification dismissed on the computer is cleared on the iPhone too; one that runs out stays there. Calls are never shown, and what the iPhone delivers quietly goes to the history alone.
+
+[iPhone notifications](iphone.md) has the rest: how it stays connected without wearing on the Bluetooth chip, what it lets in, and what the journal says when it does not work.
 
 ## Caffeine
 

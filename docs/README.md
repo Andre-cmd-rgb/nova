@@ -14,6 +14,7 @@ The pages below are split between using Nova and working on it.
 | [Hardware support](hardware.md) | what Nova runs on, what the installer picks, what a laptop gets, what the P1 Gen 4i gets |
 | [Patches](patches.md) | fixes for one computer's faults, such as bad memory, kept across reinstalls |
 | [AirDrop](airdrop.md) | receiving from an iPhone: switching it on, why the Wi-Fi is off meanwhile, which cards can, what it lets in, how it is built |
+| [iPhone notifications](iphone.md) | an iPhone's notifications on the computer: pairing, what shows and what does not, how it stays connected without scanning, what the journal says |
 | [The power governor](power.md) | `nova power` on the ThinkPad P1 Gen 4i: the discrete GPU, the CPU's limits, the fans, the undervolt |
 
 ## Working on Nova
