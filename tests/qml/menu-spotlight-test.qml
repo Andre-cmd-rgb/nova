@@ -127,6 +127,17 @@ ShellRoot {
     check(wrong.length === 0, "a search for a page's name or another word for it offers that Settings page first (" + wrong.map(query => query + " → " + first(query)).join("; ") + ")")
     check(first("bluetooth", { "settings.bluetooth": false }) === "update.restart.bluetooth|Update › Restart",
       "a page this computer has not got is not offered")
+    // Limine's snapshot restore has "subvolume" among its keywords.
+    const restore = { id: "limine-snapper-restore", keywords: ["snapshot", "restore", "btrfs", "subvolume"], icon: "" }
+    const library = {
+      sortedEntries: () => [{ entry: restore }],
+      entrySubtext: entry => "",
+      entryName: entry => "Limine-snapper-restore"
+    }
+    const withRestore = MenuModel.withApps(catalog, MenuModel.appItems(library))
+    const top = MenuModel.searchRows(withRestore, "root", "volume", MenuModel.noAnswers())
+    check(top.length > 1 && top[0].key === "settings.sound" && top.some(row => row.key === "apps.limine-snapper-restore"),
+      "a word for a page goes ahead of an app that has it only inside a word of its own (" + top.map(row => row.key).join(", ") + ")")
     check(catalog.items.get("settings.wifi").command === "nova-settings wifi" && MenuModel.menuRows(catalog, "root", MenuModel.noAnswers(), false).every(row => !row.key.startsWith("settings.")),
       "a page opens Settings at it, and the menu itself lists none of them")
 

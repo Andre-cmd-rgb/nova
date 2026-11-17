@@ -224,10 +224,12 @@ function searchable(item) {
 }
 
 // How good a find is, lower first. Its tier: the label is the search,
-// starts with it or holds it; the haystack holds it; the line has each of
-// its words. A menu goes a little ahead within its tier and an app further,
-// as the apps come after every entry of menu.jsonc, which a tie goes by.
-// Then the shallower, then the earlier.
+// starts with it or holds it; the haystack has it at the start of a word,
+// or inside one; the line has each of its words. A menu goes a little ahead
+// within its tier and an app further, as the apps come after every entry of
+// menu.jsonc, which a tie goes by. Then the shallower, then the earlier.
+// "volume" is Sound's word, and only inside a word of Limine's restore
+// ("subvolume"), which no app's lead may bring ahead of it.
 function rank(item, wanted, terms, depth) {
   const label = item.label.toLowerCase()
   const tiers = [
@@ -238,7 +240,8 @@ function rank(item, wanted, terms, depth) {
     [item.kind === "app" && label.split(/\s+/).includes(wanted), 0],
     [label.startsWith(wanted), 10],
     [label.includes(wanted), 30],
-    [item.haystack.includes(wanted), 40],
+    [(" " + item.haystack).includes(" " + wanted), 40],
+    [item.haystack.includes(wanted), 50],
     [terms.every(term => item.words.includes(term)), 60],
     [true, 80]
   ]
