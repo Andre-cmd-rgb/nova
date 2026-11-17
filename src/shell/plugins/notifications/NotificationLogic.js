@@ -106,6 +106,17 @@ function markedTransient(notification) {
   }
 }
 
+// One its sender sends to the history with no toast, as do-not-disturb
+// would (the nova-quiet hint): an iPhone's notification that the iPhone
+// itself delivered quietly.
+function quiet(notification) {
+  try {
+    return !!notification.hints?.["nova-quiet"]
+  } catch (gone) {
+    return false
+  }
+}
+
 // The command a click on the toast runs, from its nova-exec-argv hint, which
 // nova-notification-send sets and the toast's file keeps, so that a toast
 // back after a restart still runs it: a JSON array of strings, the program

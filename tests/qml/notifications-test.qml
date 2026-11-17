@@ -49,6 +49,9 @@ ShellRoot {
       && !Notes.breaksThroughDnd({ appName: "Slack", urgency: 2 })
       && Notes.passing({ appName: "Slack", hints: { transient: true } }) && !Notes.passing({ appName: "Slack", hints: {} }),
       "what do-not-disturb lets through, and what it does not keep")
+    check(Notes.quiet({ hints: { "nova-quiet": true } }) && !Notes.quiet({ hints: {} }) && !Notes.quiet({})
+      && !Notes.quiet({ get hints() { throw new Error("gone") } }),
+      "one sent with nova-quiet goes to the history alone")
     check(Notes.lifetime(2, 99999) === 0 && Notes.lifetime(0, 0) === 5000 && Notes.lifetime(1, -1) === 8000
       && Notes.lifetime(1, 12000.4) === 12000 && Notes.lifetime(1, 60000) === 30000,
       "a toast stays 5 s low, 8 s normal, longer if asked up to 30 s, and a critical one until closed")

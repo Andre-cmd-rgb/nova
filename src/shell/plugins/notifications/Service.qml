@@ -15,7 +15,8 @@ import "NotificationLogic.js" as Notes
 // (the value hint: a transfer under way).
 //
 // Do-not-disturb keeps the toasts off the screen, and what they would have
-// said goes straight into the history: the last ten toasts gone, replayed on
+// said goes straight into the history, as does a notification sent with the
+// nova-quiet hint: the last ten toasts gone, replayed on
 // request. The toasts on screen are kept in files too, and come back when the
 // shell restarts. All of it is in $XDG_STATE_HOME/nova: notifications.json
 // for do-not-disturb, and notifications/ (see files.sh and ToastFiles).
@@ -226,14 +227,14 @@ Item {
       notifications.takeDown(id, row.timestamp)
     })
 
-    if (doNotDisturb && !Notes.breaksThroughDnd(notification)) {
+    if (doNotDisturb && !Notes.breaksThroughDnd(notification) || Notes.quiet(notification)) {
       // A question or a transfer under way would be stale in the history.
       if (!Notes.passing(notification) && !Notes.moot(row)) {
         silence(notification, row)
         return
       }
       delete senders[id]
-      notification.tracked = false
+      notification.expire()
       return
     }
 
@@ -278,8 +279,10 @@ Item {
         return
       }
       if (notifications.senders[row.originalId] === notification) delete notifications.senders[row.originalId]
+      // Let go as run out: nobody dismissed it, and a sender may do more on
+      // a dismissal (an iPhone's notification is cleared on the iPhone).
       try {
-        notification.tracked = false
+        notification.expire()
       } catch (e) {
       }
     })
@@ -458,7 +461,9 @@ Item {
 
   function replay(rows) {
     if (rows.length > 0) {
-      dismissAll()
+      // Off the screen into the history, not dismissed: they are in the
+      // replay.
+      while (toasts.count > 0) leave(0, true)
       for (var row of rows) {
         fromBefore[Notes.fileName(row)] = true
         toasts.append(row)
