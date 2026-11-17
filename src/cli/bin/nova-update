@@ -1,12 +1,12 @@
 #!/bin/bash
-# nova:summary=Update Nova to the newest release, and Chrome and VS Code
+# nova:summary=Update Nova to the newest release, and the apps outside it: Chrome, VS Code and Flathub's
 # nova:args=[--version <tag>] [--check] [--dry-run] [--yes] | --check-boot | --candidates [on|off] | --status <file> [--apps-only | --apps-install]
 #
 # Moves this system to a Nova release: the Arch packages are taken from the Arch Linux
 # Archive snapshot the release was tested against, the nova packages from the release's
 # own signed repository, with a snapper snapshot before and after. Then it brings
-# Chrome and VS Code up to date, which come from their vendors outside the release
-# (nova apps update).
+# Chrome and VS Code up to date, which come from their vendors outside the release,
+# and the apps from Flathub (nova apps update).
 #
 #   nova update                     update to the newest release
 #   nova update --version v1.0.0    move to that release
@@ -311,15 +311,17 @@ main() {
 }
 
 # Chrome and VS Code come from their vendors through AUR recipes, outside the
-# release: the installed ones are brought up to date after it. One that could
-# not be built, or whose recipe could not be had, is said by name, and the run
-# ends with problems (4). One held for a recipe that changed waits for a yes,
-# which is no problem.
+# release: the installed ones are brought up to date after it, and then the
+# apps from Flathub. One that could not be built, or whose recipe could not
+# be had, is said by name, and so are Flathub's apps when flatpak could not
+# update them; the run then ends with problems (4). One held for a recipe that
+# changed waits for a yes, which is no problem.
 update_apps() {
   local behind
   if (( dry )); then
-    behind=$("$APPS" --check 2>/dev/null) || return 0
+    behind=$("$APPS" --check 2>/dev/null) || behind=''
     [[ $behind != "apps "* ]] || echo "Apps to update: ${behind#apps }"
+    flatpak_updates_said
     return 0
   fi
   # makepkg builds as the one who runs it, never as root. Run as root (sudo
@@ -333,17 +335,65 @@ update_apps() {
   fi
   local -a flags=(--update --result "$tmp/apps") missed=()
   (( ! assume_yes )) || flags+=(--noconfirm)
-  local status=0 kind app
+  local status=0 kind app missing=0 flathub=0 names
   "$APPS" "${flags[@]}" || status=$?
-  (( status )) || return 0
-  if [[ -r $tmp/apps ]]; then
-    while read -r kind app; do
-      [[ $kind == held ]] || missed+=("$app")
-    done <"$tmp/apps"
-    (( ${#missed[@]} )) || return 0
+  if (( status )); then
+    missing=1
+    if [[ -r $tmp/apps ]]; then
+      while read -r kind app; do
+        [[ $kind == held ]] || missed+=("$app")
+      done <"$tmp/apps"
+      (( ${#missed[@]} )) || missing=0
+    fi
   fi
-  warn "$(app_list "${missed[@]}") could not be updated; nova apps update tries again"
+  if have_flatpaks; then
+    echo "Updating the apps from Flathub."
+    update_flatpaks || flathub=1
+  fi
+  (( missing || flathub )) || return 0
+  # The apps by name; one of Chrome and VS Code, when the build did not say
+  # which.
+  if (( flathub )); then
+    if (( missing && ${#missed[@]} == 0 )); then names="$(app_list) and $(app_name flathub)"
+    else names=$(app_list "${missed[@]}" flathub); fi
+  else
+    names=$(app_list "${missed[@]}")
+  fi
+  warn "$names could not be updated; nova apps update tries again"
   return 4
+}
+
+# Flathub's apps, and the runtimes they run on, in the user's installation
+# and in the system's: flatpak's own update, which asks for nothing (the
+# system's is allowed to whoever sits at the computer). Not in the badge's
+# check: they come with each update, and with nova apps update.
+FLATPAK=${NOVA_UPDATE_FLATPAK:-flatpak}
+
+# The installations with anything in them.
+flatpak_scopes() {
+  command -v "$FLATPAK" >/dev/null 2>&1 || return 0
+  local scope
+  for scope in user system; do
+    [[ -z $("$FLATPAK" list "--$scope" --columns=ref 2>/dev/null) ]] || echo "$scope"
+  done
+}
+
+have_flatpaks() { [[ -n $(flatpak_scopes) ]]; }
+
+update_flatpaks() {
+  local scope status=0
+  for scope in $(flatpak_scopes); do
+    "$FLATPAK" update "--$scope" -y --noninteractive </dev/null || status=1
+  done
+  return "$status"
+}
+
+flatpak_updates_said() {
+  local scope list
+  for scope in $(flatpak_scopes); do
+    list=$("$FLATPAK" remote-ls "--$scope" --updates --app --columns=application 2>/dev/null | paste -sd' ') || continue
+    [[ -z $list ]] || echo "Flathub apps to update ($scope): $list"
+  done
 }
 
 update_release() {
@@ -543,6 +593,7 @@ app_name() {
   case $1 in
     google-chrome) echo Chrome ;;
     visual-studio-code-bin) echo "VS Code" ;;
+    flathub) echo "Flathub's apps" ;;
     *) echo "$1" ;;
   esac
 }
@@ -678,6 +729,12 @@ settings_update() {
       st_failed+=("$app")
     fi
   done
+  # Flathub's apps last, once the rest is in: with no root step, and no
+  # telling how far it is.
+  if [[ $st_state == 'done' ]] && have_flatpaks; then
+    progress -1 "Updating the apps from Flathub"
+    update_flatpaks || st_failed+=(flathub)
+  fi
   # Nova done, and an app not built or not in: finished with problems.
   [[ $st_state != 'done' ]] || (( ${#st_failed[@]} == 0 )) || st_state=problems
   [[ $st_state != 'done' && $st_state != problems ]] || st_progress=100

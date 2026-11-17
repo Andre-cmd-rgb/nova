@@ -5,7 +5,9 @@
 // A run's state is "running", then "done", "problems" (Nova updated, an app
 // not: those in failed), "failed" or "cancelled".
 
-var names = { "google-chrome": "Chrome", "visual-studio-code-bin": "VS Code" }
+// "flathub" stands for the apps from Flathub, which nova update brings up to
+// date together after the rest.
+var names = { "google-chrome": "Chrome", "visual-studio-code-bin": "VS Code", "flathub": "Flathub's apps" }
 
 function appName(pkg) {
   return names[pkg] || String(pkg)

@@ -26,6 +26,12 @@ setup() {
   # No update is running, whatever else is: the real pgrep would find another
   # test's nova-update-apply, or this computer's own.
   stub pgrep 'exit 1'
+  # No Flathub apps, unless a test lists some in $SCRATCH/flatpak-user or
+  # -system: flatpak is never this computer's, which would update its apps.
+  export NOVA_UPDATE_FLATPAK="$SCRATCH/bin/flatpak"
+  printf '#!/bin/bash\nif [[ $1 == list ]]; then cat "$SCRATCH/flatpak-${2#--}" 2>/dev/null; exit 0; fi\necho "flatpak $*" >>"$CALLS"\nexit "$(cat "$SCRATCH/flatpak-status" 2>/dev/null || echo 0)"\n' \
+    >"$SCRATCH/bin/flatpak"
+  chmod +x "$SCRATCH/bin/flatpak"
   export PATH="$SCRATCH/bin:$PATH"
 }
 
@@ -136,6 +142,43 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   stub nova-apps-install 'exit 1'
   run update
   [ "$status" -eq 0 ]
+}
+
+@test "Flathub's apps are updated after Chrome and VS Code, where there are any" {
+  echo app/org.gimp.GIMP/x86_64/stable >"$SCRATCH/flatpak-user"
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output == *"Updating the apps from Flathub."* ]]
+  [ "$(grep -oE '^(nova-update-apply|nova-apps-install|flatpak update)' "$CALLS" | paste -sd' ')" = "nova-update-apply nova-apps-install flatpak update" ]
+  grep -qx 'flatpak update --user -y --noninteractive' "$CALLS"
+  fails grep -q -- '--system' "$CALLS"
+}
+
+@test "with no Flathub apps, flatpak updates nothing" {
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output != *"Flathub"* ]]
+  fails grep -q '^flatpak' "$CALLS"
+}
+
+@test "Flathub's apps that will not update: Nova updated, and the run ends with problems" {
+  echo app/org.gimp.GIMP/x86_64/stable >"$SCRATCH/flatpak-system"
+  echo 1 >"$SCRATCH/flatpak-status"
+  run update
+  [ "$status" -eq 4 ]
+  grep -qx 'flatpak update --system -y --noninteractive' "$CALLS"
+  [[ $output == *"nova update: Flathub's apps could not be updated; nova apps update tries again"* ]]
+  stub nova-apps-install '[[ $2 != --result ]] || echo "failed google-chrome" >>"$3"; exit 1'
+  run update
+  [[ $output == *"nova update: Chrome and Flathub's apps could not be updated; nova apps update tries again"* ]]
+}
+
+@test "nova apps update: Chrome and VS Code, then Flathub's apps" {
+  echo app/org.gimp.GIMP/x86_64/stable >"$SCRATCH/flatpak-user"
+  run "$REPO_ROOT/src/cli/bin/nova-apps-update" --noconfirm
+  [ "$status" -eq 0 ]
+  [ "$(grep -oE '^(nova-apps-install|flatpak update)' "$CALLS" | paste -sd' ')" = "nova-apps-install flatpak update" ]
+  grep -qx 'nova-apps-install --update --noconfirm' "$CALLS"
 }
 
 @test "an app held for a recipe that changed waits, and is no problem" {
@@ -552,6 +595,17 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field state)" = '"done"' ]
   [ "$(field apps)" = '["google-chrome"]' ]
   fails grep -q '^nova-notification-send' "$CALLS"
+}
+
+@test "Settings: Flathub's apps updated last, and named when they could not be" {
+  echo app/org.gimp.GIMP/x86_64/stable >"$SCRATCH/flatpak-user"
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  grep -qx 'flatpak update --user -y --noninteractive' "$CALLS"
+  echo 1 >"$SCRATCH/flatpak-status"
+  run settings_update
+  [ "$(field state)" = '"problems"' ]
+  [ "$(field failed)" = '["flathub"]' ]
 }
 
 @test "Settings: Nova installed with no restart to wait for says nothing" {

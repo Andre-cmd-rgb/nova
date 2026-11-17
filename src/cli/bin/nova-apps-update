@@ -1,11 +1,24 @@
 #!/bin/bash
-# nova:summary=Update Google Chrome and VS Code to their vendors' newest releases
+# nova:summary=Update the apps outside Nova's release: Chrome and VS Code, and Flathub's
 # nova:args=[--noconfirm]
 #
-# The installed ones only; `nova update` runs this after the system. See
-# nova-apps-install.
+# The installed ones only: Chrome and VS Code built anew from their makers'
+# newest releases (nova-apps-install), then Flathub's apps and their
+# runtimes, in the user's installation and the system's. `nova update` does
+# the same after the system.
 
 set -euo pipefail
 
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-exec "$HERE/nova-apps-install" --update "$@"
+# Both halves are nova update's own: $APPS, nova-apps-install, and
+# update_flatpaks.
+# shellcheck source=src/cli/bin/nova-update
+source "$HERE/nova-update"
+
+status=0
+"$APPS" --update "$@" || status=$?
+if have_flatpaks; then
+  echo "Updating the apps from Flathub."
+  update_flatpaks || { warn "Flathub's apps could not be updated; run nova apps update again"; status=1; }
+fi
+exit "$status"
