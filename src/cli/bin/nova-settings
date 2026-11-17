@@ -120,11 +120,13 @@ airdrop_json() {
 }
 
 # iPhone notifications: whether this user switched them on (nova notification
-# iphone on). How the iPhone is, Settings reads from the service itself.
+# iphone on), and whether the service runs. How the iPhone is, Settings reads
+# from the service itself.
 iphone_json() {
-  local on=false
-  systemctl --user is-enabled --quiet nova-iphone-notifications.service 2>/dev/null && on=true
-  printf '{"on":%s}\n' "$on"
+  local on=false active=false unit=nova-iphone-notifications.service
+  systemctl --user is-enabled --quiet "$unit" 2>/dev/null && on=true
+  systemctl --user is-active --quiet "$unit" 2>/dev/null && active=true
+  printf '{"on":%s,"active":%s}\n' "$on" "$active"
 }
 
 installed() { # name:command...: the names whose command exists

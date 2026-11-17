@@ -35,8 +35,10 @@ Column {
   // Whether Bluetooth LE is on, as `nova bluetooth le` has it; null where it
   // cannot say. Its switch runs through Settings, which reads it back.
   property var le: null
-  // Whether iPhone notifications are switched on (nova notification iphone).
+  // Whether iPhone notifications are switched on (nova notification iphone),
+  // and whether their service ran when Settings read its state.
   property bool iphone: false
+  property bool iphoneRunning: false
   signal command(var argv)
 
   // Each scan this page asks for. Settings ends it once the page is gone: the
@@ -170,6 +172,7 @@ Column {
     id: phoneNotes
     visible: root.available
     on: root.iphone
+    running: root.iphoneRunning
     powered: root.powered
     onCommand: function (argv) { root.command(argv) }
   }

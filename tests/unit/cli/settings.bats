@@ -52,14 +52,17 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c .displays <<<"$output")" = '{"displays":[],"pending":null}' ]
   [ "$(jq -c .bluetooth <<<"$output")" = null ]
   [ "$(jq -c .airdrop <<<"$output")" = '{"available":false,"bell":false}' ]
-  [ "$(jq -c .iphone <<<"$output")" = '{"on":false}' ]
+  [ "$(jq -c .iphone <<<"$output")" = '{"on":false,"active":false}' ]
 }
 
-@test "state: iPhone notifications as systemd has them for this user" {
+@test "state: iPhone notifications as systemd has them for this user: switched on, and running" {
+  stub systemctl '[[ $* == "--user is-enabled --quiet nova-iphone-notifications.service" || $* == "--user is-active --quiet nova-iphone-notifications.service" ]]'
+  [ "$(state .iphone)" = '{"on":true,"active":true}' ]
+  # On, but stopped (crashed, or failing to start).
   stub systemctl '[[ $* == "--user is-enabled --quiet nova-iphone-notifications.service" ]]'
-  [ "$(state .iphone)" = '{"on":true}' ]
+  [ "$(state .iphone)" = '{"on":true,"active":false}' ]
   stub systemctl 'exit 1'
-  [ "$(state .iphone)" = '{"on":false}' ]
+  [ "$(state .iphone)" = '{"on":false,"active":false}' ]
 }
 
 @test "state: AirDrop where the Wi-Fi card can, and its doorbell as systemd has it for this user" {

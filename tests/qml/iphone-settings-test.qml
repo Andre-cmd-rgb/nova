@@ -1,3 +1,4 @@
+// stub: bin/systemctl systemctl
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -8,7 +9,8 @@ import "plugins/settings" as Settings
 // and shows what Settings' state says, not what was clicked; the line under
 // it says how the iPhone is, counts the pairing window down, and offers Pair
 // only with no iPhone paired; the iPhones it serves are handed to the
-// devices' list.
+// devices' list. A service that is not running (systemctl, stubbed, says so)
+// says so, whatever a state file left behind says.
 ShellRoot {
   id: test
 
@@ -20,8 +22,13 @@ ShellRoot {
   Settings.IphoneNotifications {
     id: page
     width: 600
+    running: true
     onCommand: function (argv) { test.commands = test.commands.concat([argv.join(" ")]) }
   }
+
+  // What the stubbed systemctl answers to is-active.
+  FileView { id: unitFile; path: Quickshell.env("HOME") + "/systemctl-active"; printErrors: false }
+  function unitIs(state) { unitFile.setText(state + "\n") }
 
   // The first item under <item> that passes.
   function find(item, pass) {
@@ -85,8 +92,13 @@ ShellRoot {
   Process {
     running: true
     command: ["mkdir", "-p", test.runtime + "/nova"]
-    onExited: test.off()
+    onExited: {
+      test.unitIs("active")
+      test.off()
+    }
   }
+
+  Process { id: remover; command: ["rm", "-f", test.runtime + "/nova/iphone-notifications.json"] }
 
   function off() {
     check(page.status === "off" && !line().visible && !toggle().checked, "off: the switch alone")
@@ -133,6 +145,36 @@ ShellRoot {
     check(line().label === "Needs Bluetooth Low Energy" && line().detail === "", "LE off: it says it needs it")
     page.powered = false
     check(!line().visible, "Bluetooth off: nothing to say under the switch")
+    page.powered = true
+    // The service stops on an error: its state file goes with it, and
+    // systemd says it is not running.
+    unitIs("failed")
+    remover.running = true
+    when(() => page.status === "stopped", stopped, "a service that stopped is noticed")
+  }
+
+  function stopped() {
+    check(line().visible && line().label === "Not running" && line().detail === "Switch it off and on to start it again"
+      && page.addresses.length === 0, "stopped: it says so, and hands no iPhones to the list")
+    // Back (systemd started it again): what it writes is read.
+    unitIs("active")
+    write({ state: "waiting", name: "Nova", phones: [{ address: "AA:BB:CC:DD:EE:01", name: "Test iPhone", connected: false, state: "waiting" }] },
+      () => when(() => page.status === "waiting", back, "the service back is noticed"))
+  }
+
+  function back() {
+    check(line().label === "Test iPhone" && line().detail === "Not connected", "back: the iPhone, not connected")
+    // Settings read the service as not running, and a state file is there
+    // (a run that ended without its cleanup): it is not believed.
+    unitIs("inactive")
+    write({ state: "connected", name: "Nova", phones: [{ address: "AA:BB:CC:DD:EE:01", name: "Test iPhone", connected: true, state: "connected" }] }, () => {
+      page.running = false
+      when(() => page.status === "stopped", leftBehind, "a state file left behind is not believed")
+    })
+  }
+
+  function leftBehind() {
+    check(line().label === "Not running" && page.addresses.length === 0, "a state file left behind: not running, no iPhones for the list")
     toggle().clicked()
     check(commands[commands.length - 1] === "nova-notification-iphone off", "on, the switch runs off")
     page.on = false

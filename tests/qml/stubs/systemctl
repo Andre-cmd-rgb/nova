@@ -1,0 +1,11 @@
+#!/bin/sh
+# systemctl as Settings asks it whether a user service runs: `is-active`
+# answers as $HOME/systemctl-active says ("active" or anything else), and
+# each call is noted in $HOME/stub-calls. Anything else does nothing.
+printf 'systemctl' >>"$HOME/stub-calls"
+for word in "$@"; do printf ' %s' "$word" >>"$HOME/stub-calls"; done
+printf '\n' >>"$HOME/stub-calls"
+case " $* " in
+  *" is-active "*) [ "$(cat "$HOME/systemctl-active" 2>/dev/null)" = active ] ;;
+  *) exit 0 ;;
+esac
