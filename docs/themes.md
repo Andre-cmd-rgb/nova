@@ -137,6 +137,8 @@ Then edit `~/.config/nova/themes/my-theme/colors.toml`, and run `nova theme set 
 
 Your own templates go in `~/.config/nova/templates/` as `<file>.tpl`, and are rendered with the palette before Nova's of the same name. Nova's are in `/usr/share/nova/templates/`.
 
+A session starts with `nova theme refresh`, which renders the theme in use again when a template or a theme file has changed since it was set: an update of Nova's reaches your theme without picking it again. Run it yourself after editing a template.
+
 ### A theme from someone else
 
 A palette is safe: its values may hold only hex colors, `rgb()`, words, numbers and a few separators, so a `colors.toml` cannot put code into the files it is rendered into.

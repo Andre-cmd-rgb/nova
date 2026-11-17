@@ -196,6 +196,48 @@ fn sets_a_theme_atomically_and_tells_the_shell() {
 }
 
 #[test]
+fn refresh_renders_the_theme_again_only_when_a_template_changed() {
+    let s = Sandbox::new();
+    // No theme set: nothing to do.
+    s.ok(&["refresh"]);
+    assert_eq!(s.log("nova-theme-apply"), "");
+
+    s.ok(&["set", "nord"]);
+    s.ok(&["refresh"]);
+    assert_eq!(
+        s.log("nova-theme-apply").lines().count(),
+        1,
+        "refreshed a render up to date"
+    );
+
+    // An update brings a new template.
+    let foot = s.root.join("share/templates/foot.ini.tpl");
+    let mut text = fs::read_to_string(&foot).unwrap();
+    text.push_str("# new in this update\n");
+    fs::write(&foot, text).unwrap();
+    s.ok(&["refresh"]);
+    assert_eq!(s.log("nova-theme-apply").lines().count(), 2);
+    let rendered = fs::read_to_string(s.state().join("current/theme/foot.ini")).unwrap();
+    assert!(rendered.contains("# new in this update"));
+    assert_eq!(s.ok(&["current"]), "nord\n");
+    s.ok(&["refresh"]);
+    assert_eq!(s.log("nova-theme-apply").lines().count(), 2);
+
+    // A render from before Nova kept what it was made from is made again, once.
+    fs::remove_file(s.state().join("current/theme/.made-from")).unwrap();
+    s.ok(&["refresh"]);
+    s.ok(&["refresh"]);
+    assert_eq!(s.log("nova-theme-apply").lines().count(), 3);
+
+    // A theme of the user's own, changed, is too.
+    let mine = s.root.join("home/.config/nova/themes/nord");
+    fs::create_dir_all(&mine).unwrap();
+    fs::write(mine.join("btop.theme"), "theme[main_bg]=\"#000000\"\n").unwrap();
+    s.ok(&["refresh"]);
+    assert_eq!(s.log("nova-theme-apply").lines().count(), 4);
+}
+
+#[test]
 fn rejects_bad_and_unknown_names() {
     let s = Sandbox::new();
     assert_eq!(s.run(&["set", "../x"]).status.code(), Some(2));

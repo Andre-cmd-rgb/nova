@@ -361,6 +361,7 @@ pub fn set(paths: &Paths, requested: &str) -> Result<()> {
     }
     adapt(paths, &name, &stage.path)?;
     render_dir(&stage.path, &templates(paths))?;
+    write_atomic(&stage.path.join(MADE_FROM), made_from(paths, &name))?;
     let backgrounds = stage.path.join("backgrounds");
     fs::create_dir_all(&backgrounds).context(backgrounds.display())?;
     let wordmark = stage.path.join("nova.svg");
@@ -428,6 +429,70 @@ pub fn set(paths: &Paths, requested: &str) -> Result<()> {
         Ok(_) => bail!("theme '{name}' is set, but some apps could not be updated"),
         Err(e) => bail!("theme '{name}' is set, but nova-theme-apply did not run: {e}"),
     }
+}
+
+/// The file in a render that says what it was made from (`made_from`).
+const MADE_FROM: &str = ".made-from";
+
+/// What a render of the theme `name` is made from, a line for each file with
+/// its size and when it last changed: the templates, the user's and Nova's,
+/// and the theme's own files, Nova's and the user's. Nova's change with every
+/// update of Nova.
+fn made_from(paths: &Paths, name: &str) -> String {
+    let mut files = templates(paths);
+    for dir in sources(paths, name) {
+        files_under(&dir, &mut files);
+    }
+    files
+        .iter()
+        .map(|file| match fs::metadata(file) {
+            Ok(m) => format!(
+                "{}\t{}\t{}.{:09}\n",
+                file.display(),
+                m.len(),
+                m.mtime(),
+                m.mtime_nsec()
+            ),
+            Err(_) => format!("{}\n", file.display()),
+        })
+        .collect()
+}
+
+/// Every file under `dir`, in order of name; a folder linked in is not
+/// followed.
+fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
+    let mut entries: Vec<fs::DirEntry> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        if entry.file_type().is_ok_and(|t| t.is_dir()) {
+            files_under(&entry.path(), out);
+        } else {
+            out.push(entry.path());
+        }
+    }
+}
+
+/// The theme in use, rendered and applied again when what it is made from
+/// has changed since: Nova's templates or the theme after an update of Nova,
+/// or the user's own. Run as the session starts (data/hypr/autostart.lua), so
+/// that a new template reaches a theme set before it. With no theme set, a
+/// theme no longer installed, or a render up to date, nothing is done.
+pub fn refresh(paths: &Paths) -> Result<()> {
+    let Some(name) = current(paths) else {
+        return Ok(());
+    };
+    if sources(paths, &name).is_empty() {
+        return Ok(());
+    }
+    let kept = fs::read_to_string(paths.theme().join(MADE_FROM)).unwrap_or_default();
+    if kept == made_from(paths, &name) {
+        return Ok(());
+    }
+    set(paths, &name)
 }
 
 /// The background in use before a switch, for the shell to cross-fade from.

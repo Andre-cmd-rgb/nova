@@ -49,7 +49,10 @@ hl.on("hyprland.start", function()
   hl.exec_cmd("systemctl --user import-environment $(env | cut -d'=' -f 1)")
   hl.exec_cmd("dbus-update-activation-environment --systemd --all")
 
-  hl.exec_cmd("nova-launch-shell")
+  -- The theme rendered and applied again first if an update of Nova changed
+  -- what it is made from (nova-theme refresh, a moment's look otherwise),
+  -- so that the shell starts in it.
+  hl.exec_cmd("nova-theme refresh; exec nova-launch-shell")
   -- Caffeine left on without its lid lock (by a user manager that restarted)
   -- is turned off.
   hl.exec_cmd("nova-caffeine reconcile")

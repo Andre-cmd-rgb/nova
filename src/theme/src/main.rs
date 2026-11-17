@@ -25,6 +25,8 @@ const USAGE: &str = "\
 Usage: nova-theme <command> [args]
 
   set <theme>               apply a theme
+  refresh                   render and apply the theme in use again, if Nova's
+                            templates or the theme's files changed since
   list [--colors]           list the installed themes; --colors adds each one's
                             background, foreground and accent, tab-separated
   current                   print the current theme
@@ -94,6 +96,7 @@ fn run(args: &[&str]) -> Result<()> {
             let paths = Paths::from_env()?;
             match args {
                 ["set", name] => theme::set(&paths, name),
+                ["refresh"] => theme::refresh(&paths),
                 ["list"] => print_lines(theme::list(&paths)),
                 ["list", "--colors"] => print_lines(theme::list_colors(&paths)),
                 ["current"] => print_lines(theme::current(&paths)),
