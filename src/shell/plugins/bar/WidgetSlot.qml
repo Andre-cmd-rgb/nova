@@ -36,12 +36,13 @@ Item {
     return made ? made.component : nothing
   }
 
-  // A user's QML widget, from its file; made once for the slot.
+  // A user's QML widget, from its file; made once for the slot, and the
+  // slot's, so that the garbage collector leaves it (BarWidgets.make).
   readonly property Component userFile: {
     if (kind !== "qml") return null
     const home = Quickshell.env("HOME")
     const file = BarModel.customSource(entry, home, home + "/.config/nova")
-    return file ? Qt.createComponent(Util.fileUrl(file)) : null
+    return file ? Qt.createComponent(Util.fileUrl(file), Component.PreferSynchronous, slot) : null
   }
 
   // How long the mark of an open panel is along the bar: what the widget

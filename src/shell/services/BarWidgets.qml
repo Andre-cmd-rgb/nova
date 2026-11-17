@@ -42,10 +42,14 @@ QtObject {
 
   // Qt.createComponent loads in the background; the widget is in `making`
   // until it has, so that the syncs while the shell starts do not load it
-  // twice.
+  // twice. The component is this object's child: one without a parent is
+  // the garbage collector's, and once a slot that had loaded it was gone it
+  // collected it, while `widgets` still named it. Every slot built after
+  // that (the bar remapped after a scale change, a layout changed) loaded
+  // nothing, without a word, and the bar was left with the slots it kept.
   function make(id, url) {
     making[id] = url
-    var component = Qt.createComponent(url, Component.Asynchronous)
+    var component = Qt.createComponent(url, Component.Asynchronous, barWidgets)
     function settle() {
       if (component.status === Component.Ready) {
         delete barWidgets.making[id]

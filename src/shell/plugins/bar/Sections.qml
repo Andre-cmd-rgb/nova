@@ -119,8 +119,12 @@ Item {
     rows: sections.standing ? -1 : 1
     columns: sections.standing ? 1 : -1
 
+    // By <shown>, not by being visible: a run is not visible while its
+    // window is unmapped for a moment (Remap, after a scale change), and
+    // building every widget again for that lost what they held, an open
+    // panel among it.
     Repeater {
-      model: run.visible ? run.entries : []
+      model: run.shown ? run.entries : []
 
       WidgetSlot {
         required property var modelData
