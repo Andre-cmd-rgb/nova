@@ -118,7 +118,7 @@ jobs:
           name: kernel
           path: out/kernel/*.pkg.tar.zst
 
-  # Nova's other packages, in three jobs side by side: one after another they
+  # Nova's other packages, in jobs side by side: one after another they
   # took 17 minutes of a release's 40. Each build is kept under the snapshot
   # and the files it is made from, so a promote, which builds the candidate's
   # commit on the candidate's snapshot, takes them as the candidate's run built
@@ -195,6 +195,44 @@ jobs:
           name: packages-whisper-cpp
           path: out/pkgs/*.pkg.tar.zst
 
+  # Hyprland with Nova's patch, at Arch's pkgrel and Nova's revision of it
+  # (packaging/hyprland). Built only while the snapshot's Hyprland is the
+  # version the patch is for: a newer one is released as Arch's, without
+  # xwayland:scale, until the patch is moved onto it, rather than holding the
+  # release up. 45 CPU-minutes, some 15 to 20 on a hosted runner, once per snapshot.
+  hyprland:
+    needs: pin
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - id: built
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/pkgs
+          key: hyprland-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('packaging/hyprland/**', 'tools/build-package', 'tools/ci-setup') }}
+      - name: Build hyprland
+        if: steps.built.outputs.cache-hit != 'true'
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          arch=$(pacman -Si hyprland | sed -n 's/^Version *: //p')
+          ours=$(sed -n 's/^pkgver=//p' packaging/hyprland/PKGBUILD)
+          if [[ ${arch%-*} != "$ours" || ! ${arch##*-} =~ ^[0-9]+$ ]]; then
+            echo "::warning::Arch's Hyprland is $arch and packaging/hyprland is for $ours: this release has Arch's, without xwayland:scale, until the patch is moved onto it (docs/packaging.md)"
+            exit 0
+          fi
+          sed -i "s/^pkgrel=[0-9]*\./pkgrel=${arch##*-}./" packaging/hyprland/PKGBUILD
+          tools/build-package packaging/hyprland out/pkgs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-hyprland
+          path: out/pkgs/*.pkg.tar.zst
+          if-no-files-found: ignore # a newer Hyprland in Arch: none built
+
   # The NVIDIA modules follow the snapshot's driver and this kernel.
   nvidia:
     needs: [pin, kernel]
@@ -266,7 +304,7 @@ jobs:
           tools/arch-packages --release release.toml out/arch
 
   repo:
-    needs: [kernel, nova, whisper-cpp, nvidia]
+    needs: [kernel, nova, whisper-cpp, hyprland, nvidia]
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:

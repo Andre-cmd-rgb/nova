@@ -5,13 +5,17 @@
 -- nova-hyprland-x11-scale tells (the monitor watch runs it); Java reads only
 -- its environment, J2D_UISCALE, a whole number. It is the X11 scale of the
 -- displays the session came up with, which Settings → Displays and
--- monitors.lua decide: the built-in panel's while it is on, else the largest,
--- rounded as nova-hyprland-x11-scale rounds it, or NOVA_X11_SCALE. Set only
--- from 2 up, as 1 is Java's own, and not over a J2D_UISCALE or a GDK_SCALE of
--- yours: Java takes J2D_UISCALE first. The displays are up by the first frame,
--- which is when this runs.
+-- monitors.lua decide, chosen as nova-hyprland-x11-scale chooses it: with
+-- Nova's Hyprland, which shrinks X11 windows on displays of a lower scale
+-- (xwayland.scale, set here too, before anything starts), the largest
+-- display's rounded up; with another, the built-in panel's while it is on,
+-- else the largest, to the nearest; or NOVA_X11_SCALE. J2D_UISCALE is set only
+-- from 2 up, as 1 is Java's own, and not over a J2D_UISCALE of yours: Java
+-- takes it first. A GDK_SCALE of yours leaves both alone. The displays are up
+-- by the first frame, which is when this runs.
 local function x11_scale()
-  if (os.getenv("J2D_UISCALE") or "") ~= "" or (os.getenv("GDK_SCALE") or "") ~= "" then return end
+  if (os.getenv("GDK_SCALE") or "") ~= "" then return end
+  local shrinks = hl.get_config("xwayland.scale") ~= nil
   local whole = tonumber((os.getenv("NOVA_X11_SCALE") or ""):match("^[1-9]$"))
   if not whole then
     local panel, largest
@@ -23,9 +27,16 @@ local function x11_scale()
         if not largest or scale > largest then largest = scale end
       end
     end
-    whole = math.floor((panel or largest or 1) + 0.5)
+    if shrinks then
+      -- Hyprland's scales are floats (1.6 is 1.600000023841858): rounded up
+      -- from hundredths, so a scale a hair over a whole number is that number.
+      whole = math.max(1, math.ceil(math.floor((largest or 1) * 100 + 0.5) / 100))
+    else
+      whole = math.max(1, math.floor((panel or largest or 1) + 0.5))
+    end
   end
-  if whole >= 2 then hl.env("J2D_UISCALE", tostring(whole)) end
+  if shrinks then hl.config({ xwayland = { scale = whole } }) end
+  if whole >= 2 and (os.getenv("J2D_UISCALE") or "") == "" then hl.env("J2D_UISCALE", tostring(whole)) end
 end
 
 hl.on("hyprland.start", function()

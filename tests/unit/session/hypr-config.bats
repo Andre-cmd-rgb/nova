@@ -184,6 +184,7 @@ hypr() { # lua
 
 # The session's start (autostart.lua), with the displays Hyprland came up with,
 # each name:scale or name:scale:off: prints what it sets and runs, in order.
+# With SHRINKS set, Hyprland is Nova's, which has xwayland.scale.
 session_start() { # display...
   DISPLAYS="$*" HOME=$SCRATCH/home NOVA_PATH=$SCRATCH/nova lua -e '
     local displays = {}
@@ -198,6 +199,10 @@ session_start() { # display...
         if os.getenv("BROKEN") then error("no monitors today") end
         return displays
       end,
+      get_config = function(key)
+        if key == "xwayland.scale" and os.getenv("SHRINKS") then return 0 end
+      end,
+      config = function(values) print("config xwayland.scale=" .. tostring(values.xwayland.scale)) end,
       env = function(name, value) print("env " .. name .. "=" .. value) end,
       exec_cmd = function(command) print("exec " .. command) end,
     }
@@ -258,4 +263,65 @@ session_start() { # display...
   [ "$status" -eq 0 ]
   [[ $output != *"env J2D_UISCALE"* ]]
   [[ $output == *"exec nova-launch-shell"* ]]
+}
+
+# Nova's Hyprland shrinks X11 windows on displays of a lower scale, so they
+# draw at the largest display's, rounded up, and Hyprland is told it first.
+@test "start: with Nova's Hyprland the scale is the largest display's rounded up, and xwayland.scale is set to it" {
+  unset GDK_SCALE J2D_UISCALE NOVA_X11_SCALE
+  export SHRINKS=1
+  run session_start eDP-1:2 DP-1:1.5
+  [ "${lines[0]}" = "config xwayland.scale=2" ]
+  [ "${lines[1]}" = "env J2D_UISCALE=2" ]
+  run session_start eDP-1:1 DP-1:1.5
+  [ "${lines[0]}" = "config xwayland.scale=2" ]
+  run session_start eDP-1:1.25
+  [ "${lines[0]}" = "config xwayland.scale=2" ]
+  run session_start eDP-1:2:off DP-1:3
+  [ "${lines[0]}" = "config xwayland.scale=3" ]
+  run session_start eDP-1:1 DP-1:1.0000001
+  [ "${lines[0]}" = "config xwayland.scale=1" ]
+  [[ $output != *J2D_UISCALE* ]]
+  run session_start
+  [ "${lines[0]}" = "config xwayland.scale=1" ]
+  NOVA_X11_SCALE=3 run session_start eDP-1:2
+  [ "${lines[0]}" = "config xwayland.scale=3" ]
+  # A J2D_UISCALE of yours is Java's alone; a GDK_SCALE of yours leaves X11 to you.
+  J2D_UISCALE=1 run session_start eDP-1:2 DP-1:1.5
+  [ "${lines[0]}" = "config xwayland.scale=2" ]
+  [[ $output != *"env J2D_UISCALE"* ]]
+  GDK_SCALE=2 run session_start eDP-1:2 DP-1:1.5
+  [[ $output != *xwayland* ]]
+  [[ $output != *"env J2D_UISCALE"* ]]
+}
+
+# env.lua: the scale nova-hyprland-x11-scale last chose survives a reload, on
+# a Hyprland that has the option.
+@test "a reload keeps xwayland.scale from the runtime directory, only on Nova's Hyprland" {
+  run_env() {
+    XDG_RUNTIME_DIR=$SCRATCH/run HOME=$SCRATCH/home NOVA_PATH=$SCRATCH/nova lua -e '
+      hl = setmetatable({
+        get_config = function(key) if key == "xwayland.scale" and os.getenv("SHRINKS") then return 0 end end,
+        config = function(values)
+          if values.xwayland and values.xwayland.scale then print("xwayland.scale=" .. values.xwayland.scale) end
+        end,
+      }, { __index = function() return function() end end })
+      dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
+      require("default.hypr.lib")
+      require("default.hypr.env")' </dev/null
+  }
+  mkdir -p "$SCRATCH/run/nova"
+  run run_env
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  echo 2 >"$SCRATCH/run/nova/x11-scale"
+  SHRINKS=1 run run_env
+  [ "$status" -eq 0 ]
+  [ "$output" = "xwayland.scale=2" ]
+  run run_env
+  [ -z "$output" ]
+  echo 'nonsense' >"$SCRATCH/run/nova/x11-scale"
+  SHRINKS=1 run run_env
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }

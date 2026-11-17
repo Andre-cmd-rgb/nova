@@ -15,6 +15,7 @@ Every package Nova publishes has its PKGBUILD under `packaging/`.
 | `nvidia-open-nova` | Arch's `nvidia-open` packaging | NVIDIA's open modules prebuilt for `linux-nova`, so no DKMS on the laptop |
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
 | `whisper-cpp` | `packaging/whisper-cpp`, its release tag | dictation's speech engine, with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on |
+| `hyprland` | Arch's `hyprland` packaging, plus one patch | `xwayland:scale`: X11 apps the same size on every display, which Hyprland does not have yet |
 
 The kernels a system boots:
 
@@ -76,6 +77,24 @@ To update: take the new AUR PKGBUILD, compare it with ours, pin the commit behin
 - **Every CPU generation:** Nova also runs on CPUs older than x86-64-v3, so ggml's CPU backend is built for every generation (`GGML_CPU_ALL_VARIANTS`) and the best the CPU has is loaded as it starts. Those are shared libraries, kept in `/usr/lib/whisper-cpp` and found there by `RUNPATH`, apart from Arch's ggml.
 
 To update: bump `pkgver` to a newer tag, then the checksum (`makepkg -g`). Arch's version no longer matters.
+
+## hyprland
+
+**Arch's Hyprland with `xwayland-scale.patch`**, which adds the option `xwayland:scale`: X11 windows drawn at one scale on every display, 1:1 on a display of that scale and shrunk on one of a lower scale. `nova-hyprland-x11-scale` sets it to the largest display's scale, rounded up ([hardware](hardware.md#a-sharp-display)).
+
+- **Why Nova's own:** one X server serves every display, so an X11 app draws at one scale, and Hyprland shows it at each display's own resolution: drawn for a 2x panel, it is twice its size on a 1x monitor. The patch is offered to Hyprland (`packaging/hyprland/UPSTREAM.md`); once a Hyprland release has the option, this package goes and Arch's comes back.
+- **The PKGBUILD is Arch's**, at the packaging commit its header names, with the patch applied in `prepare()`, `hyprland` alone (Arch's `hyprpm` works with it), and no debug package.
+- **Its pkgrel is Arch's, a dot, and Nova's revision of the patch:** `0.57.2-1.1`. pacman takes a package from the first repository that has it, and `[nova]` is first, so it is the one installed. Newer than Arch's build of the same pkgrel (`vercmp 0.57.2-1.1 0.57.2-1` is 1), it replaces Arch's on a system that had it as an ordinary update; going back to a release without it, `nova update`'s downgrade (`-Suu`) puts Arch's back.
+- **The release workflow** writes Arch's pkgrel from the snapshot (Arch raises it when a library Hyprland links changes its soname, and the build must link the snapshot's), and builds it once per snapshot, 45 CPU-minutes, some 15 to 20 on a hosted runner, beside the other builds. It builds it only while the snapshot's Hyprland is the `pkgver` here: a newer Hyprland in Arch is released as Arch's, unpatched, with a warning on the run, and X11 apps go back to the rule for Arch's Hyprland until the patch is moved onto it.
+
+To move the patch onto a new Hyprland:
+
+1. Take Arch's new `PKGBUILD` (`https://gitlab.archlinux.org/archlinux/packaging/packages/hyprland`) and carry over the three changes above; note its packaging commit in the header. Set `pkgrel=1.1`: the `1` is replaced by Arch's in CI.
+2. Unpack the new release's source tarball twice, apply the patch to one copy (`patch -Np1 -d hyprland-source -i …/xwayland-scale.patch`), and fix what does not apply: the places it changes are those that read `xwayland:force_zero_scaling`, plus the option's definition (`ConfigValues.cpp`), its refresh (`PropRefresher`) and `MonitorPositionController`'s test. A place the new Hyprland reads `force_zero_scaling` that the patch does not know must ask `xwaylandScale()` too: `grep -rn force_zero_scaling src`.
+3. Write the patch again from the two copies: the description at its top, then `diff -u` of each changed file, named `a/…` and `b/…`. Update `sha256sums` (`updpkgsums`).
+4. Build it, with `-DWITH_TESTS=ON` once to run `hyprland_gtests`, and check X11 apps on two displays of different scales in a nested Hyprland: their size on each, the pointer, and menus.
+
+A new patch on the same Hyprland raises Nova's revision instead (`1.2`).
 
 ## nova-keyring
 

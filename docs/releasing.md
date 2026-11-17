@@ -19,7 +19,7 @@ Everything else is in the `nova-packages` bucket on Cloudflare R2, in a folder n
 | In the bucket | What reads it |
 |---|---|
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
-| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `whisper-cpp` |
+| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `whisper-cpp`, `hyprland` |
 | `packages.txt`, the ISO's `.sha256`, and their `.sig` | `nova-usb`: the packages an install can need, to put on the stick for an offline install, and the checksum it checks the ISO with |
 | `nova-usb.sig` | people: the release notes link it |
 | `release.toml` and its `.sig` | a copy |
@@ -116,7 +116,7 @@ On the 1st and the 15th, `candidate.yml` runs CI on `main`, tags the commit it t
 
 1. pins yesterday's Arch Linux Archive snapshot (`tools/release-pin --verify`);
 2. builds `linux-nova` against it, or reuses the build cached by the hash of `packaging/linux-nova` (an uncached build takes a few hours; `kernel-cache.yml` reads the cache every third day, since GitHub drops one nothing has read for a week);
-3. builds the other packages on the same snapshot, in three jobs side by side (`nova` with the three it depends on, `whisper-cpp`, and `nvidia-open-nova` at the snapshot's driver version), and meanwhile fetches Arch's packages for the install tests, once for all of them (`tools/arch-packages`);
+3. builds the other packages on the same snapshot, in four jobs side by side (`nova` with the three it depends on, `whisper-cpp`, `hyprland` while the snapshot's Hyprland is the version Nova's patch is for, and `nvidia-open-nova` at the snapshot's driver version), and meanwhile fetches Arch's packages for the install tests, once for all of them (`tools/arch-packages`);
 4. signs them into the repository (`tools/repo-build`);
 5. builds the ISO (`tools/build-iso`), and signs `release.toml`, the ISO's `.sha256`, `packages.txt` and `nova-usb` with the repository key;
 6. installs from it in a KVM virtual machine with no questions asked, boots the result and checks it from inside (`tests/install/run`), three times: onto a plain disk and an encrypted one on virtio, and onto a plain one on NVMe; the serial logs are kept as the run's `install-logs`. Beside it, `upgrade-test` installs the release before this one and moves it forward and back ([below](#the-upgrade-test));

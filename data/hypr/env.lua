@@ -65,3 +65,16 @@ hl.config({
   -- Hyprland is updated with Nova, so no news window of its own after one.
   ecosystem = { no_update_news = true },
 })
+
+-- Nova's Hyprland draws X11 windows at one scale on every display, shrunk on
+-- those of a lower one (xwayland.scale), which nova-hyprland-x11-scale sets
+-- and writes down: a reload keeps it, rather than putting each display's own
+-- back until the next pass. Arch's Hyprland has no such option.
+local x11_scale = io.open((os.getenv("XDG_RUNTIME_DIR") or "") .. "/nova/x11-scale")
+if x11_scale then
+  local scale = tonumber(x11_scale:read("l") or "")
+  x11_scale:close()
+  if scale and scale >= 1 and scale <= 9 and hl.get_config("xwayland.scale") ~= nil then
+    hl.config({ xwayland = { scale = scale } })
+  end
+end

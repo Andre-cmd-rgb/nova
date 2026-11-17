@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# nova:summary=Tell X11 apps the scale of the displays: XWayland's XSETTINGS and Xft.dpi
+# nova:summary=Tell X11 apps the scale of the displays: XWayland's XSETTINGS and Xft.dpi, and Hyprland's xwayland:scale
 # nova:hidden=true
 
 set -euo pipefail
@@ -17,9 +17,18 @@ set -euo pipefail
 # draws a window open through the change wrong until it is restarted (Qt
 # 6.12): left out, a running Qt app keeps the scale it started with.
 #
-# One X server serves every display, so the scale is one: the built-in
-# panel's while it is on, else the largest display's, to the nearest whole
-# number (GTK takes no other), or NOVA_X11_SCALE when the session has one. Run
+# One X server serves every display, so the scale is one, a whole number (GTK
+# takes no other). Nova's Hyprland (packaging/hyprland) draws every X11 window
+# at that scale on every display, 1:1 on a display of that scale and shrunk to
+# its size on one of a lower scale (xwayland:scale), as GNOME and KDE do: the
+# scale is the largest display's, rounded up (beside a 2x panel, or alone, a
+# 1.5x monitor shows X11 windows drawn at 2 shrunk to 0.75, never enlarged and
+# blurry), and Hyprland is told it, and keeps it across a reload
+# ($XDG_RUNTIME_DIR/nova/x11-scale, which env.lua reads). A Hyprland without
+# that option (Arch's, or the one still running after an update brought Nova's,
+# until the next login) shows X11 windows at each display's own resolution:
+# the scale is then the built-in panel's while it is on, else the largest
+# display's, to the nearest whole number. NOVA_X11_SCALE sets it by hand. Run
 # at the start, when displays come and go and when a scale changes; xsettingsd
 # is told only when the scale is a new one.
 #
@@ -30,19 +39,36 @@ set -euo pipefail
 
 [[ -n ${DISPLAY:-} && -z ${GDK_SCALE:-} ]] || exit 0
 
+# Arch's Hyprland answers "no such option", and not as JSON.
+shrinks=false
+if hyprctl getoption xwayland:scale -j 2>/dev/null | jq -e 'has("float")' >/dev/null 2>&1; then
+  shrinks=true
+fi
+
 if [[ ${NOVA_X11_SCALE:-} =~ ^[1-9]$ ]]; then
   scale=$NOVA_X11_SCALE
 else
-  scale=$(hyprctl monitors -j | jq -r '
+  # Hyprland's scales are floats (1.6 comes as 1.600000023841858): rounded up
+  # from hundredths, so a scale a hair over a whole number is that number.
+  scale=$(hyprctl monitors -j | jq -r --argjson shrinks "$shrinks" '
     [.[] | select(.disabled != true)] as $on
-    | (first($on[] | select(.name | test("^(eDP|LVDS|DSI)-")) | .scale) // ([$on[].scale] | max) // 1)
-    | (. + 0.5 | floor) | if . < 1 then 1 else . end')
+    | if $shrinks then ([$on[].scale] | max // 1) * 100 | round / 100 | ceil
+      else (first($on[] | select(.name | test("^(eDP|LVDS|DSI)-")) | .scale) // ([$on[].scale] | max) // 1) | . + 0.5 | floor
+      end
+    | if . < 1 then 1 else . end')
 fi
 [[ $scale =~ ^[1-9]$ ]] || exit 1
 
 dir=$XDG_RUNTIME_DIR/nova
 config=$dir/xsettingsd.conf
 mkdir -p "$dir"
+# First, so the X11 windows keep their size on the displays while the toolkits
+# take the new scale. Hyprland does nothing when it has the scale already.
+if [[ $shrinks == true ]]; then
+  hyprctl eval "hl.config({ xwayland = { scale = $scale } })" >/dev/null
+  printf '%s\n' "$scale" >"$dir/x11-scale.new"
+  mv -f "$dir/x11-scale.new" "$dir/x11-scale"
+fi
 # xsettingsd takes a DPI in 1024ths.
 settings=$(printf 'Gdk/WindowScalingFactor %d\nGdk/UnscaledDPI %d' "$scale" $((96 * 1024)))
 if [[ ! -f $config || $(<"$config") != "$settings" ]] || ! systemctl --user -q is-active nova-xsettings.service; then
