@@ -28,6 +28,16 @@ Chrome and VS Code update with Nova. Neither may be redistributed, so each is bu
 - Any other change to a recipe is shown first: Settings shows it and builds it once you have read it, and a terminal asks.
 - One that cannot be built or installed does not stop the update: Nova is updated all the same, and then the update says which app was left behind. Settings → Updates says it with **Try Again**, and so does a notification; `nova update` says it last, with `nova apps update` to try again, and ends with status 4, finished with problems.
 
+### Flathub's apps
+
+Apps from Flathub, installed with the [App Store](apps.md) or with `flatpak`, update with Nova too, after Chrome and VS Code: in your own installation and the system's, with `flatpak update`, which asks for no password.
+
+- When they cannot be updated, Nova is updated all the same, and the update says so as it says it for Chrome.
+- `nova apps update` updates them, and Chrome and VS Code, alone.
+- The badge does not light for them alone: their updates come with Nova's.
+
+Apps from Arch Linux's repositories are part of the system, and move with each release.
+
 Claude Code and Codex come through `mise`: `mise up` updates them.
 
 ### Device firmware

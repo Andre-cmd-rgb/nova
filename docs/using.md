@@ -294,6 +294,7 @@ These come installed:
 
 - Settings → Default Apps picks another browser, editor or terminal, among those installed.
 - Chrome and VS Code are built on your computer from their AUR recipes; `nova apps install` installs them again if they are missing.
+- The **App Store**, in the menu and the launcher, finds and installs more, from Arch Linux's repositories and from Flathub, and removes them: [The App Store](apps.md).
 - Printing goes through CUPS: Print Settings is in the apps.
 - **Quick Look**: in Files, Space shows the selected file, a picture, a video, a document or text, in a window the size of what it shows. Space again closes it.
 - When a crash takes an app away, a notification says so ("Bambu Studio quit unexpectedly"), with Reopen. A crash that leaves its windows open, such as a browser tab's, is the app's own to show; `coredumpctl` lists them all.
