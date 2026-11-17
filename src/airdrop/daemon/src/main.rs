@@ -19,9 +19,9 @@
 //! wakes an iPhone when it sends. That one is bound and kept by a process of
 //! its own, forked first (announcer.rs); the daemon gives up both as soon as
 //! it has its socket on the radio, before it runs anything, and leaves the
-//! system's network for a namespace of its own: see sys.rs. Its certificate is its own, made on the first run
-//! and kept in --identity (by default nova/airdrop under the user's state
-//! folder).
+//! system's network for a namespace of its own: see sys.rs. Its certificate
+//! is its own, made on the first run and kept in --identity (by default
+//! nova/airdrop under the user's state folder).
 //!
 //! The name is the computer's, the folder the user's downloads, the country
 //! NOVA_AIRDROP_COUNTRY's, unless it is told otherwise. What is offered is put
@@ -439,9 +439,12 @@ fn run() -> Result<(), String> {
         },
     );
     {
-        let (starting, on) = (sending.clone(), sending.clone());
+        let (preparing, on) = (sending.clone(), sending.clone());
         control.on_send(control::Sends {
-            start: Box::new(move |stream, files| starting.start(stream, files)),
+            prepare: Box::new(move |files| {
+                let ready: Box<dyn control::Ready> = Box::new(preparing.prepare(files)?);
+                Ok(ready)
+            }),
             on: Box::new(move || on.on()),
         });
     }
@@ -518,7 +521,10 @@ fn run() -> Result<(), String> {
         },
         questions: AtomicU64::new(0),
     });
-    std::thread::spawn(move || receiver.serve(listener));
+    std::thread::Builder::new()
+        .name("airdrop-receiver".into())
+        .spawn(move || receiver.serve(listener))
+        .map_err(|e| format!("the receiver: {e}"))?;
     notify.ready("In the air: senders nearby can see this computer");
 
     // The node's clock: microseconds, from somewhere a phone cannot guess.

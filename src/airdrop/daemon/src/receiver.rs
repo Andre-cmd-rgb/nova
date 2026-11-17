@@ -213,9 +213,7 @@ impl Receiver {
                 }
                 *theirs += 1;
             }
-            let (receiver, open) = (self.clone(), open.clone());
-            std::thread::spawn(move || {
-                receiver.serve_one(stream);
+            let let_go = move |open: &Mutex<HashMap<Ipv6Addr, usize>>| {
                 let mut open = open.lock().unwrap();
                 if let Some(theirs) = open.get_mut(&from) {
                     *theirs -= 1;
@@ -223,7 +221,17 @@ impl Receiver {
                         open.remove(&from);
                     }
                 }
+            };
+            let (receiver, counted) = (self.clone(), open.clone());
+            let connection = std::thread::Builder::new().name("airdrop-sender".into());
+            let started = connection.spawn(move || {
+                receiver.serve_one(stream);
+                let_go(&counted);
             });
+            // One this computer cannot give a thread to is let go, as one over the most.
+            if started.is_err() {
+                let_go(&open);
+            }
         }
     }
 

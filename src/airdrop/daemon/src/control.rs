@@ -268,14 +268,23 @@ pub struct Control {
     sends: OnceLock<Sends>,
 }
 
-/// Where a client that asks to send is handed (`start`: it takes the connection and the files, or
-/// says why not), and whether a send is going on (`on`): send.rs.
+/// Where a client that asks to send is handed (send.rs): `prepare` looks at the files it passed
+/// (the send, ready, or why not), and `on` says whether a send is going on.
 pub struct Sends {
-    pub start: Box<Start>,
+    pub prepare: Box<Prepare>,
     pub on: Box<dyn Fn() -> bool + Send + Sync>,
 }
 
-type Start = dyn Fn(UnixStream, Vec<OwnedFd>) -> Result<(), String> + Send + Sync;
+type Prepare = dyn Fn(Vec<OwnedFd>) -> Result<Box<dyn Ready>, String> + Send + Sync;
+
+/// A send whose files have been looked at.
+pub trait Ready {
+    /// Taken as the send going on, or why not: quick, as nothing else is, as it is done while the
+    /// daemon cannot decide to end.
+    fn claim(&mut self) -> Result<(), String>;
+    /// Started on its client's connection, once claimed; why not, with the claim let go.
+    fn start(self: Box<Self>, stream: UnixStream) -> Result<(), String>;
+}
 
 impl Control {
     /// How things stand, with nobody told yet: for a daemon nobody can ask, and before `listen`.
@@ -318,7 +327,10 @@ impl Control {
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(said)?;
         let _ = self.path.set(path.to_owned());
         let serving = self.clone();
-        std::thread::spawn(move || serving.serve(listener));
+        std::thread::Builder::new()
+            .name("airdrop-control".into())
+            .spawn(move || serving.serve(listener))
+            .map_err(said)?;
         Ok(())
     }
 
@@ -332,11 +344,16 @@ impl Control {
                 continue;
             }
             number += 1;
-            let (control, open, number) = (self.clone(), open.clone(), number);
-            std::thread::spawn(move || {
+            let (control, counted, number) = (self.clone(), open.clone(), number);
+            let client = std::thread::Builder::new().name("airdrop-client".into());
+            let started = client.spawn(move || {
                 control.client(stream, number);
-                open.fetch_sub(1, Ordering::SeqCst);
+                counted.fetch_sub(1, Ordering::SeqCst);
             });
+            // One this computer cannot give a thread to is let go unanswered, as one over the most.
+            if started.is_err() {
+                open.fetch_sub(1, Ordering::SeqCst);
+            }
         }
     }
 
@@ -356,20 +373,32 @@ impl Control {
         first.truncate(size);
         if first.strip_suffix(b"\n").unwrap_or(&first).trim_ascii() == b"send" {
             let refused = match self.sends.get() {
-                Some(sends) => {
-                    // Started with the holds' lock held: the daemon does not decide to end in the
-                    // middle of it, and one that has decided starts no send.
-                    let holds = self.holds.lock().unwrap();
-                    if holds.closing || sys::stopping() {
-                        let _ = writeln!(out, r#"{{"state":"closing"}}"#);
-                        return;
-                    }
-                    match (sends.start)(stream, files) {
-                        Ok(()) => return,
-                        Err(why) => why,
-                    }
-                }
                 None => "This AirDrop does not send.".into(),
+                // The files are looked at first, with no lock held: one on a mount that went with
+                // the Wi-Fi may take its time, and the daemon's loop waits for nothing of the sort.
+                Some(sends) => match (sends.prepare)(files) {
+                    Err(why) => why,
+                    Ok(mut send) => {
+                        // Claimed with the holds' lock held, and nothing else done under it: the
+                        // daemon does not decide to end in the middle of it, and one that has
+                        // decided takes no send.
+                        let claimed = {
+                            let holds = self.holds.lock().unwrap();
+                            (!holds.closing && !sys::stopping()).then(|| send.claim())
+                        };
+                        match claimed {
+                            None => {
+                                let _ = writeln!(out, r#"{{"state":"closing"}}"#);
+                                return;
+                            }
+                            Some(Err(why)) => why,
+                            Some(Ok(())) => match send.start(stream) {
+                                Ok(()) => return,
+                                Err(why) => why,
+                            },
+                        }
+                    }
+                },
             };
             let _ = writeln!(out, r#"{{"state":"failed","why":{}}}"#, quoted(&refused));
             return;
@@ -768,15 +797,37 @@ mod tests {
             line(&mut send(b"send\n")),
             r#"{"state":"failed","why":"This AirDrop does not send."}"#
         );
+        struct Handed {
+            files: usize,
+            handed: std::sync::mpsc::Sender<usize>,
+        }
+        impl Ready for Handed {
+            fn claim(&mut self) -> Result<(), String> {
+                match self.files {
+                    3 => Err("Taken.".into()),
+                    _ => Ok(()),
+                }
+            }
+            fn start(self: Box<Self>, mut stream: UnixStream) -> Result<(), String> {
+                writeln!(stream, "handed {} files", self.files).unwrap();
+                self.handed.send(self.files).unwrap();
+                Ok(())
+            }
+        }
         let (handed, taken) = std::sync::mpsc::channel();
         control.on_send(Sends {
-            start: Box::new(move |mut stream, files| {
+            prepare: Box::new(move |files| {
                 if files.len() == 1 {
                     return Err("One is not enough.".into());
                 }
-                writeln!(stream, "handed {} files", files.len()).unwrap();
-                handed.send(files.len()).unwrap();
-                Ok(())
+                // Files that take their time to look at, as on a mount that has gone away.
+                if files.len() == 4 {
+                    std::thread::sleep(Duration::from_millis(600));
+                }
+                Ok(Box::new(Handed {
+                    files: files.len(),
+                    handed: handed.clone(),
+                }))
             }),
             on: Box::new(|| false),
         });
@@ -788,6 +839,34 @@ mod tests {
             line(&mut one),
             r#"{"state":"failed","why":"One is not enough."}"#
         );
+        // One whose claim is refused (another send going on) is told why.
+        let mut three = UnixStream::connect(&path).unwrap();
+        crate::meet::send_with_files(
+            three.as_raw_fd(),
+            b"send\n",
+            &[file.as_raw_fd(), file.as_raw_fd(), file.as_raw_fd()],
+        );
+        assert_eq!(line(&mut three), r#"{"state":"failed","why":"Taken."}"#);
+        // They are looked at with no lock held: the daemon's loop is not kept waiting meanwhile.
+        let fd = file.as_raw_fd();
+        let slow = {
+            let path = path.clone();
+            std::thread::spawn(move || {
+                let mut four = UnixStream::connect(&path).unwrap();
+                crate::meet::send_with_files(four.as_raw_fd(), b"send\n", &[fd, fd, fd, fd]);
+                line(&mut four)
+            })
+        };
+        std::thread::sleep(Duration::from_millis(150));
+        let began = Instant::now();
+        assert!(!control.close_if(|_| false));
+        assert!(
+            began.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            began.elapsed()
+        );
+        assert_eq!(slow.join().unwrap(), "handed 4 files");
+        assert_eq!(taken.recv().unwrap(), 4);
         // Files passed with anything else are let go, and the words answered as ever.
         assert!(line(&mut send(b"status\n")).starts_with("AirDrop is on"));
         // A daemon that has decided to end starts no send, and says so in a line of its own.
@@ -804,7 +883,7 @@ mod tests {
         let sending = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let on = sending.clone();
         control.on_send(Sends {
-            start: Box::new(|_, _| Err("not in this test".into())),
+            prepare: Box::new(|_| Err("not in this test".into())),
             on: Box::new(move || on.load(Ordering::SeqCst)),
         });
         let held = || {

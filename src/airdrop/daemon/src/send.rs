@@ -41,7 +41,7 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::announcer::Announcer;
-use crate::control::{list, quoted};
+use crate::control::{list, quoted, Ready};
 use crate::pack::{self, Item, Pack};
 use crate::packet;
 use crate::sender::{Answer, Listing, Sender};
@@ -306,8 +306,10 @@ impl Sending {
         }
     }
 
-    /// A client asked to send these files: the session is its from now on. Why not, if it cannot be.
-    pub fn start(self: &Arc<Self>, stream: UnixStream, files: Vec<OwnedFd>) -> Result<(), String> {
+    /// The files a client handed over, looked at before anything else, with no lock of the
+    /// daemon's held (a file on a mount that went with the Wi-Fi may take its time): the send, for
+    /// control.rs to claim and start, or why not.
+    pub fn prepare(self: &Arc<Self>, files: Vec<OwnedFd>) -> Result<Prepared, String> {
         if files.is_empty() {
             return Err("Nothing was given to send.".into());
         }
@@ -324,21 +326,23 @@ impl Sending {
         for (item, name) in items.iter_mut().zip(names) {
             item.name = name;
         }
-        {
-            let mut inner = self.inner.lock().unwrap();
-            if inner.on {
-                return Err("AirDrop is sending something already.".into());
-            }
-            *inner = Inner {
-                on: true,
-                browsing: true,
-                ..Inner::default()
-            };
-        }
-        let Some(client) = Client::new(stream) else {
-            self.inner.lock().unwrap().on = false;
-            return Err("The send could not be started.".into());
-        };
+        Ok(Prepared {
+            sending: self.clone(),
+            items,
+        })
+    }
+
+    /// The same, claimed and started in one go, for the tests.
+    #[cfg(test)]
+    pub fn start(self: &Arc<Self>, stream: UnixStream, files: Vec<OwnedFd>) -> Result<(), String> {
+        let mut send = Box::new(self.prepare(files)?);
+        send.claim()?;
+        send.start(stream)
+    }
+
+    /// A claimed send, started: the session is its client's from now on.
+    fn begin(self: &Arc<Self>, stream: UnixStream, items: Vec<Item>) -> Result<(), String> {
+        let client = Client::new(stream).ok_or("The send could not be started.")?;
         let sending = self.clone();
         let session = std::thread::Builder::new().name("airdrop-send".into());
         let started = session.spawn(move || {
@@ -350,11 +354,9 @@ impl Sending {
             *sending.inner.lock().unwrap() = Inner::default();
             (sending.tell)(Told::Ended { transfer });
         });
-        if started.is_err() {
-            *self.inner.lock().unwrap() = Inner::default();
-            return Err("The send could not be started.".into());
-        }
-        Ok(())
+        started
+            .map(|_| ())
+            .map_err(|_| "The send could not be started.".into())
     }
 
     /// The send, from the looking to its end: the last line, and whether a receiver was asked.
@@ -579,6 +581,37 @@ impl Sending {
                 )
             }
         }
+    }
+}
+
+/// A send whose files have been looked at: claimed as the one going on, then started (control.rs).
+pub struct Prepared {
+    sending: Arc<Sending>,
+    items: Vec<Item>,
+}
+
+impl Ready for Prepared {
+    fn claim(&mut self) -> Result<(), String> {
+        let mut inner = self.sending.inner.lock().unwrap();
+        if inner.on {
+            return Err("AirDrop is sending something already.".into());
+        }
+        *inner = Inner {
+            on: true,
+            browsing: true,
+            ..Inner::default()
+        };
+        Ok(())
+    }
+
+    fn start(self: Box<Self>, stream: UnixStream) -> Result<(), String> {
+        let Prepared { sending, items } = *self;
+        let started = sending.begin(stream, items);
+        // Nothing of a send that did not start is left: not its looking either.
+        if started.is_err() {
+            *sending.inner.lock().unwrap() = Inner::default();
+        }
+        started
     }
 }
 
