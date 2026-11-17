@@ -93,9 +93,10 @@ Item {
     return total + "s"
   }
 
+  // As the Performance page has them: a decimal under ten watts.
   function formatWatts(value) {
     var w = Number(value || 0)
-    return (w >= 10 ? w.toFixed(1) : w.toFixed(2)) + " W"
+    return (w >= 10 ? w.toFixed(0) : w.toFixed(1)) + " W"
   }
 
   // "14:03" for a run that started today, "Mon 20:16" for one that did not.
@@ -118,14 +119,13 @@ Item {
   }
 
   readonly property string subtitle: {
-    if (atRate <= 0 && !haveHistory)
-      return "nothing recorded yet — this fills in once the machine runs on battery"
+    if (atRate <= 0 && !haveHistory) return "No history yet"
     var parts = []
     // While charging there is no drain to quote, so the live figure describes
     // the fill instead of pretending to describe a battery that is not
     // draining.
-    if (charging && nowWatts > 0) parts.push("charging at " + formatWatts(nowWatts))
-    else if (atRate > 0) parts.push("at " + formatWatts(nowWatts) + (onBattery ? " right now" : ""))
+    if (charging && nowWatts > 0) parts.push("Charging at " + formatWatts(nowWatts))
+    else if (atRate > 0) parts.push("At " + formatWatts(nowWatts) + (onBattery ? " right now" : ""))
     if (haveHistory) parts.push(formatDuration(typicalSeconds) + " typical")
     return parts.join("  ·  ")
   }
@@ -354,9 +354,7 @@ Item {
         width: parent.width - Style.space(40)
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
-        text: root.weekly
-          ? "No time on battery in the last week."
-          : "Nothing on battery today yet — the chart fills in as soon as this machine is unplugged."
+        text: root.weekly ? "Not on battery in the last 7 days" : "Not on battery today"
         color: Commons.Color.foreground
         opacity: 0.5
         font.family: Style.font.family
@@ -431,7 +429,7 @@ Item {
         visible: root.sessions.length === 0
         width: parent.width
         wrapMode: Text.WordWrap
-        text: "No discharge runs yet. One appears here after ten minutes on battery."
+        text: "No runs on battery yet"
         color: Commons.Color.foreground
         opacity: 0.5
         font.family: Style.font.family

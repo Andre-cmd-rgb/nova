@@ -796,8 +796,8 @@ Item {
         Line {
           label: "Battery health"
           detail: root.battery.health !== null && root.battery.health !== undefined
-            ? root.battery.health + "% of its original capacity, after " + (root.battery.cycles || 0) + " charge cycles"
-            : "This battery does not report its health."
+            ? root.battery.health + "% of original capacity, " + (root.battery.cycles || 0) + " cycles"
+            : "Not reported"
         }
       }
 
@@ -808,9 +808,6 @@ Item {
           width: parent.width
           visible: root.limit.kind === "threshold" || root.limit.kind === "switch"
           label: "Limit charging"
-          detail: root.limit.kind === "switch"
-            ? "Stops charging below full, at a level set by the battery's firmware. Keeps the battery healthy when the computer stays plugged in."
-            : "Stops charging at the level below, and starts again 5% under it. Keeps the battery healthy when the computer stays plugged in."
           checked: root.limit.on === true
           onClicked: root.run(["nova-battery-limit", checked ? "off" : (root.limit.kind === "switch" ? "on" : "80")])
         }
@@ -833,7 +830,7 @@ Item {
         Caption {
           width: parent.width
           visible: root.limit.kind !== "threshold" && root.limit.kind !== "switch"
-          text: "This battery has no charge limit Nova can set."
+          text: "Not supported by this battery"
         }
       }
 
@@ -865,10 +862,6 @@ Item {
             value: root.battery.hibernate || ""
             onChanged: function (value) { root.run(["nova-power-hibernate", value]) }
           }
-        }
-        Caption {
-          width: parent.width
-          text: "On battery a closed lid always sleeps. Hibernating saves what is open to disk and turns the computer off, so a weekend in a bag does not drain it; the power button brings it all back. Plugged in it never hibernates."
         }
       }
     }
