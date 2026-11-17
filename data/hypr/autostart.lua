@@ -51,8 +51,9 @@ hl.on("hyprland.start", function()
 
   -- The theme rendered and applied again first if an update of Nova changed
   -- what it is made from (nova-theme refresh, a moment's look otherwise),
-  -- so that the shell starts in it.
-  hl.exec_cmd("nova-theme refresh; exec nova-launch-shell")
+  -- so that the shell starts in it; never for long, as a theme-set hook of
+  -- the user's that hangs would hold the shell back.
+  hl.exec_cmd("timeout 15 nova-theme refresh; exec nova-launch-shell")
   -- Caffeine left on without its lid lock (by a user manager that restarted)
   -- is turned off.
   hl.exec_cmd("nova-caffeine reconcile")
