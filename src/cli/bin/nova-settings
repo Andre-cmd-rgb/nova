@@ -14,6 +14,7 @@ NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
 SUPPLY=${NOVA_POWER_SUPPLY:-/sys/class/power_supply}
 DMI=${NOVA_DMI_PATH:-/sys/class/dmi/id}
 RFKILL=${NOVA_RFKILL_PATH:-/sys/class/rfkill}
+USB=${NOVA_USB_PATH:-/sys/bus/usb/devices}
 # The shell's settings as the shell has them (in_effect): the same path the
 # shell reads, which is not under XDG_CONFIG_HOME.
 source nova-shell-config
@@ -149,14 +150,41 @@ defaults_json() {
       browsers: $browsers, editors: $editors, terminals: $terminals}'
 }
 
+# How many lines a command prints; 0 when it fails.
+count_lines() { "$@" 2>/dev/null | grep -c . || true; }
+
+# true or false, as a command succeeds or not.
+yes_no() { if "$@" >/dev/null 2>&1; then echo true; else echo false; fi; }
+
+fonts_json() { quiet nova-font-list | lines_json; }
+
+candidates_json() { [[ $(quiet nova-update --candidates) == on ]] && echo true || echo false; }
+
 # Fingerprint setup needs fprintd and a reader it can drive. Asking starts
-# fprintd if it is not running.
+# fprintd if it is not running, which it leaves again once idle: a third of a
+# second, and the reader woken, every time Settings reads its state. So the
+# answer is kept for this boot in the runtime folder, for as long as the same
+# USB devices are plugged in (a reader is one, or built in); no answer from
+# fprintd is not kept.
 fingerprint_reader() {
-  local devices
+  local devices plugged="" vendor kept=${XDG_RUNTIME_DIR:-}/nova/fingerprint-reader
   command -v fprintd-enroll >/dev/null || return 1
+  for vendor in "$USB"/*/idVendor; do
+    [[ -r $vendor ]] && plugged+="$(<"$vendor"):$(<"${vendor%/*}/idProduct") "
+  done
+  if [[ -n ${XDG_RUNTIME_DIR:-} && -r $kept ]] && { IFS= read -r devices && IFS= read -r found; } <"$kept" &&
+    [[ $devices == "${plugged:-none}" ]]; then
+    [[ $found == yes ]]
+    return
+  fi
   devices=$(busctl --system call net.reactivated.Fprint /net/reactivated/Fprint/Manager \
     net.reactivated.Fprint.Manager GetDevices 2>/dev/null) || return 1
-  [[ $devices == "ao "[1-9]* ]]
+  found=no
+  [[ $devices != "ao "[1-9]* ]] || found=yes
+  if [[ -n ${XDG_RUNTIME_DIR:-} ]] && mkdir -p "${kept%/*}" 2>/dev/null; then
+    printf '%s\n%s\n' "${plugged:-none}" "$found" >"$kept.$$" 2>/dev/null && mv -f "$kept.$$" "$kept" 2>/dev/null
+  fi
+  [[ $found == yes ]]
 }
 
 header_value() { # file key: a "# key: value" line nova update writes
@@ -183,33 +211,67 @@ about_json() {
       disk: ($disk | split("\t") | {size: ((.[0] // "0") | tonumber), free: ((.[1] // "0") | tonumber)})}'
 }
 
+# Each part is read at once, all of them side by side, into a file of its own:
+# the whole takes as long as the slowest part (xdg-terminal-exec, a tenth of
+# a second), not as long as all of them one after another.
 state() {
-  local config
-  config=$(json_or '{}' in_effect)
+  local dir
+  dir=$(mktemp -d)
+  # shellcheck disable=SC2064 # the folder made now
+  trap "rm -rf -- '$dir'" EXIT
+  part() { # name command...
+    local name=$1
+    shift
+    "$@" >"$dir/$name" 2>/dev/null &
+  }
+  part config json_or '{}' in_effect
+  part theme quiet nova-theme current
+  part themes themes_json
+  part background quiet nova-theme bg current
+  part backgrounds count_lines nova-theme bg list
+  part adaptive quiet nova-theme adaptive
+  part font quiet nova-font-current
+  part fonts fonts_json
+  part textSize text_size
+  part battery battery_json
+  part performance performance_json
+  part radios radios_json
+  part bluetooth json_or null nova-bluetooth-le --json
+  part airdrop airdrop_json
+  part iphone iphone_json
+  part displays json_or '{"displays":[],"pending":null}' nova-monitor list --json
+  part input json_or '{}' nova-input --json
+  part screenTime yes_no nova-screentime enabled
+  part widgets widgets_json
+  part fingerprint yes_no fingerprint_reader
+  part defaults defaults_json
+  part about about_json
+  part candidates candidates_json
+  wait
   jq -nc \
-    --arg theme "$(quiet nova-theme current)" \
-    --argjson themes "$(themes_json)" \
-    --arg background "$(quiet nova-theme bg current)" \
-    --argjson backgrounds "$(quiet nova-theme bg list | grep -c . || true)" \
-    --arg adaptive "$(quiet nova-theme adaptive)" \
-    --arg font "$(quiet nova-font-current)" \
-    --argjson fonts "$(quiet nova-font-list | lines_json)" \
-    --argjson textSize "$(text_size)" \
-    --argjson battery "$(battery_json)" \
-    --argjson performance "$(performance_json)" \
-    --argjson radios "$(radios_json)" \
-    --argjson bluetooth "$(json_or null nova-bluetooth-le --json)" \
-    --argjson airdrop "$(airdrop_json)" \
-    --argjson iphone "$(iphone_json)" \
-    --argjson displays "$(json_or '{"displays":[],"pending":null}' nova-monitor list --json)" \
-    --argjson input "$(json_or '{}' nova-input --json)" \
-    --argjson screenTime "$(nova-screentime enabled >/dev/null 2>&1 && echo true || echo false)" \
-    --argjson config "$config" \
-    --argjson widgets "$(widgets_json)" \
-    --argjson fingerprint "$(fingerprint_reader && echo true || echo false)" \
-    --argjson defaults "$(defaults_json)" \
-    --argjson about "$(about_json)" \
-    --argjson candidates "$([[ $(quiet nova-update --candidates) == on ]] && echo true || echo false)" \
+    --arg theme "$(<"$dir/theme")" \
+    --argjson themes "$(<"$dir/themes")" \
+    --arg background "$(<"$dir/background")" \
+    --argjson backgrounds "$(<"$dir/backgrounds")" \
+    --arg adaptive "$(<"$dir/adaptive")" \
+    --arg font "$(<"$dir/font")" \
+    --argjson fonts "$(<"$dir/fonts")" \
+    --argjson textSize "$(<"$dir/textSize")" \
+    --argjson battery "$(<"$dir/battery")" \
+    --argjson performance "$(<"$dir/performance")" \
+    --argjson radios "$(<"$dir/radios")" \
+    --argjson bluetooth "$(<"$dir/bluetooth")" \
+    --argjson airdrop "$(<"$dir/airdrop")" \
+    --argjson iphone "$(<"$dir/iphone")" \
+    --argjson displays "$(<"$dir/displays")" \
+    --argjson input "$(<"$dir/input")" \
+    --argjson screenTime "$(<"$dir/screenTime")" \
+    --argjson config "$(<"$dir/config")" \
+    --argjson widgets "$(<"$dir/widgets")" \
+    --argjson fingerprint "$(<"$dir/fingerprint")" \
+    --argjson defaults "$(<"$dir/defaults")" \
+    --argjson about "$(<"$dir/about")" \
+    --argjson candidates "$(<"$dir/candidates")" \
     --argjson firmware "$(command -v fwupdmgr >/dev/null && echo true || echo false)" \
     '{appearance: {theme: $theme, themes: $themes, background: $background, backgrounds: $backgrounds,
                    font: $font, fonts: $fonts, textSize: $textSize, adaptive: $adaptive},

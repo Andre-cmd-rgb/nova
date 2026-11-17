@@ -61,7 +61,7 @@ JQ_LIB='
   # A scale Hyprland takes for a mode: one that divides it into whole logical
   # pixels, in steps of 1/120 (nova-hyprland-monitor-scaling rounds the same way).
   def clean($w; $h): (gcd($w * 120; $h * 120)) as $g | ((. * 120 + 0.5) | floor) as $k0 |
-    ([$k0, $g] | min) as $k | [range($k; $g + 1)] | map(select($g % . == 0)) | first / 120;
+    ([$k0, $g] | min) as $k | first(range($k; $g + 1) | select($g % . == 0)) / 120;
   def logical: (if (.transform % 2) == 1 then [.height, .width] else [.width, .height] end) as [$w, $h] |
     {w: ($w / .scale | round), h: ($h / .scale | round)};
   # Its match in a rule: the description for a display plugged in, which

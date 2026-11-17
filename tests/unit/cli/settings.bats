@@ -9,6 +9,8 @@ setup() {
   export NOVA_POWER_SUPPLY="$SCRATCH/power_supply"
   export NOVA_DMI_PATH="$SCRATCH/dmi"
   export NOVA_RFKILL_PATH="$SCRATCH/rfkill"
+  export NOVA_USB_PATH="$SCRATCH/usb" XDG_RUNTIME_DIR="$SCRATCH/run"
+  mkdir -p "$NOVA_USB_PATH" "$XDG_RUNTIME_DIR"
   mkdir -p "$HOME" "$NOVA_PATH/default" "$NOVA_PATH/shell/plugins" "$NOVA_POWER_SUPPLY" "$NOVA_DMI_PATH" "$SCRATCH/bin" "$SCRATCH/sys"
   cp "$REPO_ROOT/data/defaults/shell.json" "$NOVA_PATH/default/"
   # Only the tools the commands need, so whatever this machine has installed
@@ -219,6 +221,31 @@ state() { nova-settings state | jq -c "$1"; }
   rm "$SCRATCH/bin/fprintd-enroll"
   stub busctl 'echo "ao 1 \"/net/reactivated/Fprint/Device/0\""'
   [ "$(state .lock.fingerprint)" = false ]
+}
+
+@test "state: fprintd is asked once while the same USB devices are plugged in, and again when one comes" {
+  stub fprintd-enroll
+  stub busctl 'echo asked >>"$SCRATCH/busctl-calls"; echo "ao 1 \"/net/reactivated/Fprint/Device/0\""'
+  mkdir -p "$NOVA_USB_PATH/1-1"
+  echo 06cb >"$NOVA_USB_PATH/1-1/idVendor"
+  echo 00f9 >"$NOVA_USB_PATH/1-1/idProduct"
+  [ "$(state .lock.fingerprint)" = true ]
+  [ "$(state .lock.fingerprint)" = true ]
+  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 1 ]
+  # A reader taken away: another device list, asked again.
+  stub busctl 'echo asked >>"$SCRATCH/busctl-calls"; echo "ao 0"'
+  rm -r "$NOVA_USB_PATH/1-1"
+  [ "$(state .lock.fingerprint)" = false ]
+  [ "$(state .lock.fingerprint)" = false ]
+  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 2 ]
+  # No answer from fprintd is not kept.
+  stub busctl 'echo asked >>"$SCRATCH/busctl-calls"; exit 1'
+  mkdir -p "$NOVA_USB_PATH/1-2"
+  echo 1d6b >"$NOVA_USB_PATH/1-2/idVendor"
+  echo 0002 >"$NOVA_USB_PATH/1-2/idProduct"
+  [ "$(state .lock.fingerprint)" = false ]
+  [ "$(state .lock.fingerprint)" = false ]
+  [ "$(wc -l <"$SCRATCH/busctl-calls")" -eq 4 ]
 }
 
 @test "state: this computer, named the way its maker names it" {
