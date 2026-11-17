@@ -18,6 +18,7 @@ import sys
 import time
 
 import dbus
+import dbus.bus
 import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
@@ -41,6 +42,7 @@ CP = "69d1d8f3-45e1-49a8-9821-9bbdfdaad9d9"
 DS = "22eac6e9-24d6-4bb5-be44-b36ace7c7bfb"
 ADAPTER_PATH = "/org/bluez/hci0"
 PHONE = ADAPTER_PATH + "/dev_AA_BB_CC_DD_EE_01"
+STRANGER = ADAPTER_PATH + "/dev_AA_BB_CC_DD_EE_02"
 
 DBusGMainLoop(set_as_default=True)
 bus = dbus.SessionBus()
@@ -92,13 +94,19 @@ class Node(dbus.service.Object):
     def UnregisterAdvertisement(self, path):
         self.fake.unregister()
 
+    # As BlueZ has it, an agent registered is one pairing may ask (the
+    # default, or after it), whether or not it was made the default.
     @dbus.service.method(AGENT_MANAGER, in_signature="os", out_signature="", sender_keyword="sender")
     def RegisterAgent(self, path, capability, sender=None):
         self.fake.agent = (str(sender), str(path))
+        self.fake.registrations += 1
         say("agent registered:", capability)
 
     @dbus.service.method(AGENT_MANAGER, in_signature="o", out_signature="")
     def RequestDefaultAgent(self, path):
+        if self.fake.fail_default:
+            say("agent not made the default")
+            raise dbus.DBusException("Does Not Exist", name="org.bluez.Error.DoesNotExist")
         say("agent made the default")
 
     @dbus.service.method(AGENT_MANAGER, in_signature="o", out_signature="")
@@ -181,7 +189,13 @@ class Fake:
         self.server = Notifications(self)
         self.adverts = []  # each registration's properties
         self.advertising = None
+        self.hold = False  # registrations left unanswered, for a reply that comes late
+        self.held = []
         self.agent = None
+        self.registrations = 0
+        self.fail_default = False
+        self.pairings = []  # (device, how it ended) for each pairing a device began
+        self.env = {}
         self.notes = []
         self.closed = []
         self.writes = []  # each command written, hex
@@ -255,21 +269,40 @@ class Fake:
             ok()
             return
         # Not paired: the iPhone answers Insufficient Authentication, and
-        # BlueZ pairs, asking the default agent.
-        sender, path = self.agent
+        # pairs, BlueZ asking an agent.
 
-        def agreed(*_):
-            say("pairing: agreed")
+        def agreed():
             phone.update(DEVICE, Paired=b(True), Bonded=b(True), UUIDs=dbus.Array([ANCS], signature="s"))
             node.update(GATT_CHARACTERISTIC, Notifying=b(True))
             ok()
 
-        def refused(error):
-            say("pairing: refused,", error.get_dbus_name())
-            fail(dbus.DBusException("Not paired", name="org.bluez.Error.Failed"))
+        self.pair(PHONE, "confirm", agreed, lambda: fail(dbus.DBusException("Not paired", name="org.bluez.Error.Failed")))
 
-        bus.call_async(sender, path, "org.bluez.Agent1", "RequestConfirmation", "ou",
-                       [dbus.ObjectPath(PHONE), dbus.UInt32(123456)], agreed, refused, timeout=30)
+    def pair(self, device, how, agreed=None, refused=None):
+        """A pairing <device> begins, as BlueZ answers it: with no agent
+        registered BlueZ clears the controller's bondable setting (unless
+        main.conf's AlwaysPairable, which Nova leaves off), and the kernel
+        turns the pairing down; with one, a code to compare is asked with
+        RequestConfirmation, and a pairing with none (Just Works) with
+        RequestAuthorization."""
+        def ended(result):
+            say(f"pairing: {result}")
+            self.pairings.append((device, result))
+            if result == "agreed":
+                (agreed or (lambda: None))()
+            else:
+                (refused or (lambda: None))()
+
+        if self.agent is None:
+            ended("refused, not bondable: no agent")
+            return
+        sender, path = self.agent
+        if how == "confirm":
+            method, signature, args = "RequestConfirmation", "ou", [dbus.ObjectPath(device), dbus.UInt32(123456)]
+        else:
+            method, signature, args = "RequestAuthorization", "o", [dbus.ObjectPath(device)]
+        bus.call_async(sender, path, "org.bluez.Agent1", method, signature, args, lambda *_: ended("agreed"),
+                       lambda error: ended("refused, " + error.get_dbus_name()), timeout=30)
 
     def write(self, node, value, options):
         self.writes.append(value.hex(" "))
@@ -303,6 +336,11 @@ class Fake:
     # -- advertising
 
     def register(self, sender, path, ok, fail):
+        if self.hold:
+            self.held.append((ok, fail))
+            say("advertise: held, unanswered")
+            return
+
         def got(properties):
             advert = {str(k): (list(map(str, v)) if isinstance(v, dbus.Array) else
                                bool(v) if isinstance(v, dbus.Boolean) else
@@ -425,6 +463,65 @@ def declined(f):
           "not paired, and the window still open for another try")
 
 
+def strangers(f):
+    yield until(lambda: f.state().get("state") == "no-iphone", "no iPhone at first")
+    # The pairing agent BlueZ will not make the default: registered, it would
+    # still be asked, so it is unregistered, and the window closes.
+    f.fail_default = True
+    f.call_daemon("Pair", "b", [False])
+    yield until(lambda: f.registrations == 1 and f.agent is None, "an agent not made the default is unregistered")
+    yield until(lambda: f.state().get("state") == "no-iphone", "and the window closes")
+    check(f.advertising is None, "with nothing advertised")
+    f.fail_default = False
+
+    # A device with a name of its choosing: bidirectional characters, too long.
+    name = chr(0x202E) + "enohPi" + chr(0x2066) + " " + "x" * 80
+    f.add(STRANGER, {DEVICE: {"Address": "AA:BB:CC:DD:EE:02", "Alias": name, "Paired": b(False), "Bonded": b(False),
+                              "Trusted": b(False), "Connected": b(True), "UUIDs": dbus.Array([], signature="s")}})
+    f.pair(STRANGER, "confirm")
+    yield until(lambda: len(f.pairings) == 1, "a pairing it begins outside the window")
+    check(f.pairings[-1][1] == "refused, not bondable: no agent" and not f.notes,
+          "outside the window there is no agent: BlueZ turns the pairing down, and nothing is asked")
+
+    f.call_daemon("Pair", "b", [False])
+    yield until(lambda: f.agent is not None, "the window opens, with an agent")
+    f.pair(STRANGER, "justworks")
+    yield until(lambda: len(f.pairings) == 2, "a pairing with no code to compare")
+    check(f.pairings[-1][1] == "refused, org.bluez.Error.Rejected" and not f.notes,
+          "with no code to compare (Just Works): turned down, nothing asked")
+
+    # Anyone on the bus may call the agent: only BlueZ is answered.
+    other = dbus.bus.BusConnection(os.environ["DBUS_SESSION_BUS_ADDRESS"])
+    answers = []
+    other.call_async(f.agent[0], f.agent[1], "org.bluez.Agent1", "RequestConfirmation", "ou",
+                     [dbus.ObjectPath(STRANGER), dbus.UInt32(111111)], lambda *_: answers.append("agreed"),
+                     lambda error: answers.append(error.get_dbus_name()))
+    yield until(lambda: answers, "an agent's question from another program")
+    check(answers == ["org.bluez.Error.Rejected"] and not f.notes, "from another program than BlueZ: turned down, nothing asked")
+
+    f.pair(STRANGER, "confirm")
+    yield until(lambda: any(n["buttons"] for n in f.notes), "the code is shown to compare")
+    ask = next(n for n in f.notes if n["buttons"])
+    check(ask["summary"] == "Pair with “enohPi " + "x" * 51 + "…”?",
+          "the device's name as plain text: no bidirectional characters, cut short")
+
+    # An iPhone asking meanwhile is turned down; the first question stands.
+    f.add_phone(paired=False, connected=True)
+    yield until(lambda: len(f.pairings) == 3, "a second pairing while the first is asked about")
+    check(f.pairings[-1] == (PHONE, "refused, org.bluez.Error.Rejected"), "the second one is turned down")
+    check(ask["id"] not in f.closed and len([n for n in f.notes if n["buttons"]]) == 1,
+          "the first question stays, and no second is asked")
+    f.call_daemon("Answer", "b", [True])
+    yield until(lambda: len(f.pairings) == 4, "the first question answered")
+    check(f.pairings[-1] == (STRANGER, "agreed"), "the answer goes to the first one")
+
+    # The window over, the agent goes, and BlueZ lets nothing pair.
+    yield until(lambda: f.state().get("state") != "pairing" and f.agent is None, "the window closes", 20)
+    f.pair(STRANGER, "confirm")
+    yield until(lambda: len(f.pairings) == 5, "a pairing begun after the window")
+    check(f.pairings[-1][1] == "refused, not bondable: no agent", "after the window: no agent, nothing pairs")
+
+
 def notifications(f):
     f.note(1, b"net.whatsapp.WhatsApp", b"Old", b"Old message")
     f.add_phone(paired=True, connected=True)
@@ -493,6 +590,100 @@ def notifications(f):
     check(note_for(f, "Messages · Eve")["body"] == "Re: plans\nAfter a refusal"
           and note_for(f, "Messages · Eve")["glyph"] == "U+F01EE", "the subtitle above the message; mail's glyph")
     check(not note_for(f, "WhatsApp · ") and all("9" not in n["summary"] for n in f.notes), "nothing shown for the refused one")
+
+
+def reused(f):
+    f.add_phone(paired=True, connected=True)
+    yield until(lambda: f.state().get("state") == "connected", "connected")
+    f.note(5, b"net.whatsapp.WhatsApp", b"Anna", b"Before the drop")
+    f.event(0, 16, 4, 5)
+    yield until(lambda: note_for(f, "WhatsApp · Anna"), "a notification shown")
+    old = note_for(f, "WhatsApp · Anna")
+    f.connect(False)
+    yield until(lambda: f.state().get("state") == "waiting", "the link drops, its toast still on screen")
+    f.connect(True)
+    yield until(lambda: f.state().get("state") == "connected", "back")
+    # The iPhone numbers its notifications anew: uid 5 is another one now.
+    f.note(5, b"net.whatsapp.WhatsApp", b"Bea", b"After the drop")
+    f.event(0, 16, 4, 5)
+    yield until(lambda: note_for(f, "WhatsApp · Bea"), "a new notification under the same uid")
+    new = note_for(f, "WhatsApp · Bea")
+    count = len(f.writes)
+    f.close_note(old["id"], 2)
+    yield 0.5
+    check(len(f.writes) == count, "the old toast dismissed: nothing cleared on the iPhone, where its uid is another's")
+    f.close_note(new["id"], 2)
+    yield until(lambda: "02 05 00 00 00 01" in f.writes[count:], "the new one dismissed is cleared on the iPhone")
+
+
+def hostile(f):
+    # An iPhone, or what passes for one, that keeps to no limit.
+    f.apps[b"com.example.loud"] = (chr(0x2066) + "Loud" + chr(0x2069) + "x" * 100).encode()
+    f.add_phone(paired=True, connected=True)
+    yield until(lambda: f.state().get("state") == "connected", "connected")
+    f.note(1, b"com.example.loud", (chr(0x202E) + "A" * 1000).encode(), b"B" * 3000,
+           subtitle=(chr(0x200B) + "Sub" + chr(0x200D) + "title").encode())
+    f.event(0, 16, 4, 1)
+    yield until(lambda: any(n["summary"].startswith("Loud") for n in f.notes), "the oversize one is shown")
+    shown = next(n for n in f.notes if n["summary"].startswith("Loud"))
+    check(shown["app"] == "Loud" + "x" * 54 + "…" and shown["summary"] == shown["app"] + " · " + "A" * 125 + "…",
+          "the app's name and the title cut at their limits, the bidirectional characters gone")
+    check(shown["body"] == "Sub" + chr(0x200D) + "title\n" + "B" * 320 + "…",
+          "the message cut at its limit; format characters gone but the joiner")
+
+    # An answer longer than any asked for is given up on, and the next one
+    # is read past what is left of it.
+    f.note(2, b"com.apple.MobileSMS", b"Big", b"C" * 9000)
+    f.event(0, 16, 4, 2)
+    f.note(3, b"com.apple.MobileSMS", b"After", b"the big one")
+    f.event(0, 16, 4, 3)
+    yield until(lambda: note_for(f, "Messages · After"), "the next one is shown")
+    check(not note_for(f, "Messages · Big"), "the one with the long answer is not")
+
+    # A flood: two hundred at once. Fifty are followed, the rest passed over.
+    before = len(f.notes)
+    for uid in range(100, 300):
+        f.note(uid, b"com.apple.MobileSMS", f"Flood {uid}".encode(), b"x")
+        f.event(0, 16, 4, uid)
+    yield until(lambda: len(f.notes) - before >= 50, "the flood's first fifty shown", 20)
+    yield 1
+    flood = [n for n in f.notes[before:] if n["summary"].startswith("Messages · Flood")]
+    check(len(flood) == 50 and flood[0]["summary"] == "Messages · Flood 100" and flood[-1]["summary"] == "Messages · Flood 149",
+          "of a flood, the first fifty only")
+    f.note(400, b"com.apple.MobileSMS", b"Later", b"after the flood")
+    f.event(0, 16, 4, 400)
+    yield until(lambda: note_for(f, "Messages · Later"), "after the flood, a new one is shown")
+
+
+def late(f):
+    # BlueZ restarts while a registration waits for its answer. The new BlueZ
+    # refuses the registration asked of it; then the answer of the one
+    # before comes, a yes, which is no longer true of anything.
+    f.hold = True
+    f.add_phone(paired=True, connected=False)
+    yield until(lambda: len(f.held) == 1, "a registration BlueZ has not answered")
+    bus.release_name("org.bluez")
+    bus.request_name("org.bluez")
+    yield until(lambda: len(f.held) == 2, "BlueZ back, and asked again")
+    _, refuse = f.held[1]
+    refuse(dbus.DBusException("Failed", name="org.bluez.Error.Failed"))
+    yield 0.3
+    ok, _ = f.held[0]
+    ok()
+    f.hold = False
+    yield 0.5
+    check(f.state().get("advertising") == "", "the answer of the BlueZ before counts for nothing")
+    yield until(advertising(f, "fast"), "after its wait, it asks the new BlueZ again, as nothing is advertised", 10)
+
+
+def taken(f):
+    yield until(lambda: f.state().get("state") == "no-iphone", "the service runs")
+    second = subprocess.run([sys.executable, "-B", "-I", DAEMON], env=f.env, capture_output=True, text=True, timeout=30)
+    say(second.stderr.strip())
+    check(second.returncode == 3, f"a second one, its name taken, ends with 3 ({second.returncode})")
+    with open(DAEMON + ".service", encoding="utf-8") as unit:
+        check("\nRestartPreventExitStatus=3\n" in unit.read(), "which its unit does not start again")
+    check(f.state().get("state") == "no-iphone", "and the running one's state is left alone")
 
 
 def reconnect(f):
@@ -565,7 +756,12 @@ def restarts(f):
     check(f.advertising is None, "and advertises nothing")
 
 
-SCENARIOS = {"pairing": pairing, "declined": declined, "notifications": notifications, "reconnect": reconnect, "restarts": restarts}
+SCENARIOS = {"pairing": pairing, "declined": declined, "strangers": strangers, "notifications": notifications,
+             "reused": reused, "hostile": hostile, "reconnect": reconnect, "restarts": restarts, "late": late,
+             "taken": taken}
+# A pairing window short enough to see it close; a fast phase that outlasts
+# the wait after a refusal.
+ENVIRONMENTS = {"strangers": {"NOVA_IPHONE_PAIR_SECONDS": "10"}, "late": {"NOVA_IPHONE_FAST_SECONDS": "60"}}
 
 
 def main():
@@ -574,9 +770,15 @@ def main():
     os.makedirs(os.path.join(SCRATCH, "run"), mode=0o700, exist_ok=True)
     with open(os.path.join(SCRATCH, "main.conf"), "w") as conf:
         conf.write("[General]\n#ControllerMode = dual\n")
+    # A state file a run before left behind, which this one is not to believe.
+    os.makedirs(os.path.join(SCRATCH, "run", "nova"), mode=0o700, exist_ok=True)
+    with open(os.path.join(SCRATCH, "run", "nova", "iphone-notifications.json"), "w") as left:
+        left.write('{"state": "stale"}\n')
     env = dict(os.environ, NOVA_IPHONE_BUS="session", NOVA_IPHONE_FAST_SECONDS="1", NOVA_IPHONE_PAIR_SECONDS="30",
                NOVA_IPHONE_REPLY_SECONDS="1", NOVA_BLUETOOTH_CONF=os.path.join(SCRATCH, "main.conf"),
                XDG_RUNTIME_DIR=os.path.join(SCRATCH, "run"))
+    env.update(ENVIRONMENTS.get(SCENARIO, {}))
+    fake.env = env
     daemon = subprocess.Popen([sys.executable, "-B", "-I", DAEMON], env=env, stdout=sys.stdout, stderr=sys.stdout)
     loop = GLib.MainLoop()
     steps = SCENARIOS[SCENARIO](fake)

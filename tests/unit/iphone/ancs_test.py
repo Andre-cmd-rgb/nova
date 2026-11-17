@@ -125,11 +125,41 @@ class Texts(unittest.TestCase):
         self.assertEqual(d.text(b"short", 128), "short")
 
     def test_emoji_sequences_stay_whole(self):
-        family = "\U0001F468‍\U0001F469‍\U0001F467"
+        joiner = chr(0x200D)
+        family = "\U0001F468" + joiner + "\U0001F469" + joiner + "\U0001F467"
         self.assertEqual(d.text(family.encode()), family)
 
     def test_line_separators_become_lines(self):
-        self.assertEqual(d.text("one two".encode()), "one\ntwo")
+        self.assertEqual(d.text(("one" + chr(0x2028) + "two" + chr(0x2029) + "three").encode()), "one\ntwo\nthree")
+
+    def test_format_characters_go_but_the_joiners(self):
+        # U+202E turns what follows around: "exe.txt" would read "txt.exe".
+        spoof = "invoice" + chr(0x202E) + "txt.exe"
+        self.assertEqual(d.text(spoof.encode()), "invoicetxt.exe")
+        hidden = chr(0x2066) + "a" + chr(0x2069) + chr(0x200B) + "b" + chr(0xFEFF) + chr(0x00AD) + "c" + chr(0x200E)
+        self.assertEqual(d.text(hidden.encode()), "abc")
+        joined = "a" + chr(0x200C) + "b" + chr(0x200D) + "c"
+        self.assertEqual(d.text(joined.encode()), joined)
+
+    def test_more_than_the_limit_is_cut_here(self):
+        # An iPhone keeps to the lengths asked for; text past them is cut all
+        # the same, before it is decoded.
+        self.assertEqual(d.text(b"A" * 5000, 128), "A" * 128 + "…")
+        self.assertEqual(d.text(("é" * 3000).encode(), 128), "é" * 64 + "…")
+        self.assertEqual(d.text((chr(0x202E) + "B" * 400).encode(), 320), "B" * 317 + "…")
+
+    def test_names_are_one_line_and_short(self):
+        self.assertEqual(d.name_text("Anna's\niPhone"), "Anna's iPhone")
+        self.assertEqual(d.name_text(chr(0x202E) + "x" * 100), "x" * 61 + "…")
+        self.assertEqual(d.name_text(b"WhatsApp"), "WhatsApp")
+        self.assertEqual(d.name_text(None), "")
+
+    def test_an_answer_longer_than_any_asked_for_does_not_fit(self):
+        answer = d.Answer(NOTE[:5], WANTED)
+        oversize = NOTE[:5] + bytes([0]) + (60000).to_bytes(2, "little")
+        self.assertIsNone(answer.feed(oversize + b"x" * 4000))
+        with self.assertRaises(ValueError):
+            answer.feed(b"x" * 5000)
 
     def test_summary_and_body(self):
         self.assertEqual(d.toast_text("WhatsApp", "Anna", "", "Ciao <3 & more"),

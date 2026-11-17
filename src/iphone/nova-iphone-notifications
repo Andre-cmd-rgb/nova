@@ -74,8 +74,18 @@ DISPLAY_NAME = 0
 POSITIVE, NEGATIVE = 0, 1
 
 # The most of each text asked for, in bytes: a toast shows two lines of title
-# and three of message, and every byte asked for crosses the radio.
+# and three of message, and every byte asked for crosses the radio. The
+# iPhone keeps to them; one that did not would be cut here all the same.
 LIMITS = {TITLE: 128, SUBTITLE: 128, MESSAGE: 320}
+# A name, an app's or a device's, is cut at this many bytes.
+NAME_LIMIT = 64
+# An answer is a few hundred bytes; one longer than this is not one asked for.
+ANSWER_MOST = 8192
+# Format characters (Unicode's Cf) are taken out of what the iPhone sends:
+# the bidirectional ones can make a text read other than it is (U+202E turns
+# what follows around). The two joiners stay, which emoji and some scripts
+# need, and which move nothing.
+JOINERS = {"\u200c", "\u200d"}
 
 # A glyph for each category, as the iPhone's apps have no icon here.
 GLYPHS = {
@@ -143,6 +153,8 @@ class Answer:
             self.buffer = self.buffer[-keep:] if keep else b""
             return None
         self.buffer = self.buffer[at:]
+        if len(self.buffer) > ANSWER_MOST:
+            raise ValueError(f"an answer of more than {ANSWER_MOST} bytes")
         found = {}
         position = len(self.start)
         while len(found) < len(self.wanted):
@@ -158,24 +170,45 @@ class Answer:
         return found
 
 
+def character(c):
+    """A character of a text as shown: a control character a space, a
+    format character nothing."""
+    kind = unicodedata.category(c)
+    if kind == "Cc" and c != "\n":
+        return " "
+    if kind == "Cf" and c not in JOINERS:
+        return ""
+    return c
+
+
 def text(raw, limit=None):
-    """An attribute as text: UTF-8, its control characters spaces, its lines
-    without runs of space and none of them empty. Cut short by the iPhone at
-    <limit> bytes, half a character is dropped and it ends in an ellipsis."""
-    value = bytes(raw).decode("utf-8", "replace")
+    """An attribute as text: UTF-8, its control characters spaces, its
+    format characters gone, its lines without runs of space and none of them
+    empty. At <limit> bytes, where the iPhone cuts it short (and here, past
+    them), half a character is dropped and it ends in an ellipsis."""
+    raw = bytes(raw)
     cut = limit is not None and len(raw) >= limit
     if cut:
-        value = value.rstrip("�")
-    value = value.replace(" ", "\n").replace(" ", "\n")
-    value = "".join(" " if c != "\n" and unicodedata.category(c) == "Cc" else c for c in value)
+        raw = raw[:limit]
+    value = raw.decode("utf-8", "replace")
+    if cut:
+        value = value.rstrip("\ufffd")
+    value = value.replace("\u2028", "\n").replace("\u2029", "\n")
+    value = "".join(map(character, value))
     value = "\n".join(line for line in (" ".join(part.split()) for part in value.split("\n")) if line)
     return value + "…" if cut and value else value
+
+
+def name_text(value):
+    """A name, an app's or a device's, as one line of text."""
+    raw = value if isinstance(value, (bytes, bytearray)) else str(value or "").encode("utf-8", "replace")
+    return " ".join(text(raw, NAME_LIMIT).split("\n"))
 
 
 def app_fallback(app):
     """An app's name when the iPhone does not give it: the last part of its
     identifier (net.whatsapp.WhatsApp is WhatsApp)."""
-    name = text(app).rsplit(".", 1)[-1]
+    name = name_text(app).rsplit(".", 1)[-1]
     return name or "iPhone"
 
 
@@ -228,6 +261,15 @@ REPLY_SECONDS = seconds("REPLY", 5)
 MISSED_SECONDS = seconds("MISSED", 300)
 MISSED_MOST = 5
 CALL_TIMEOUT = 10
+# A flood of events (an iPhone gone wrong, or anything else on the link) is
+# not followed past these: the notifications waiting to be asked about and
+# shown, the commands waiting, and the notifications the iPhone is known to
+# have (it may well have hundreds; this many integers are nothing).
+PENDING_MOST = 50
+QUEUE_MOST = 2 * PENDING_MOST
+KNOWN_MOST = 1000
+# The shell's notifications remembered, to tell the iPhone of a dismissal.
+NOTES_MOST = 500
 
 BLUEZ = "org.bluez"
 ADAPTER = "org.bluez.Adapter1"
@@ -251,6 +293,8 @@ AGENT_PATH = "/org/nova/iphone/agent"
 
 # NotificationClosed's reasons
 EXPIRED, DISMISSED, CLOSED = 1, 2, 3
+# The exit status when another program owns NAME.
+NAME_TAKEN = 3
 
 
 def log(message):
@@ -381,31 +425,46 @@ class Advertisement(dbus.service.Object):
     def Get(self, interface, name):
         return self.GetAll(interface)[name]
 
-    @dbus.service.method(ADVERTISEMENT, in_signature="", out_signature="")
-    def Release(self):
-        self.service.advertisement_released()
+    @dbus.service.method(ADVERTISEMENT, in_signature="", out_signature="", sender_keyword="sender")
+    def Release(self, sender=None):
+        if self.service.bluez and sender == self.service.bluez:
+            self.service.advertisement_released()
 
 
 class Agent(dbus.service.Object):
     """The pairing agent, there only while the pairing window is open. It
     answers nothing by itself: a code is compared and agreed to by the user,
-    and a profile is never let in."""
+    and a profile is never let in. It answers BlueZ alone: anyone on the
+    system bus could call it."""
 
     def __init__(self, bus, service):
         super().__init__(bus, AGENT_PATH)
         self.service = service
 
-    @dbus.service.method(AGENT, in_signature="ou", out_signature="", async_callbacks=("ok", "fail"))
-    def RequestConfirmation(self, device, passkey, ok, fail):
+    def check(self, sender):
+        if not self.service.bluez or sender != self.service.bluez:
+            raise Rejected("only BlueZ asks this")
+
+    # An iPhone pairs with LE Secure Connections and a code to compare
+    # (numeric comparison): both sides have a display and a yes or no.
+    @dbus.service.method(AGENT, in_signature="ou", out_signature="", sender_keyword="sender",
+                         async_callbacks=("ok", "fail"))
+    def RequestConfirmation(self, device, passkey, sender=None, ok=None, fail=None):
+        self.check(sender)
         self.service.ask(str(device), int(passkey), ok, fail)
 
-    @dbus.service.method(AGENT, in_signature="o", out_signature="", async_callbacks=("ok", "fail"))
-    def RequestAuthorization(self, device, ok, fail):
-        self.service.ask(str(device), None, ok, fail)
+    # Pairing with no code to compare (Just Works), which an iPhone does not
+    # ask for: a device that does is not let pair unseen.
+    @dbus.service.method(AGENT, in_signature="o", out_signature="", sender_keyword="sender")
+    def RequestAuthorization(self, device, sender=None):
+        self.check(sender)
+        log(f"turned down a pairing with no code to compare ({device})")
+        raise Rejected("a pairing needs a code to compare")
 
     # The iPhone's audio and calls stay on the iPhone.
-    @dbus.service.method(AGENT, in_signature="os", out_signature="")
-    def AuthorizeService(self, device, uuid):
+    @dbus.service.method(AGENT, in_signature="os", out_signature="", sender_keyword="sender")
+    def AuthorizeService(self, device, uuid, sender=None):
+        self.check(sender)
         log(f"turned down a profile ({uuid}) of {device}")
         raise Rejected("iPhone notifications let no profile in")
 
@@ -425,12 +484,14 @@ class Agent(dbus.service.Object):
     def DisplayPinCode(self, device, code):
         pass
 
-    @dbus.service.method(AGENT, in_signature="", out_signature="")
-    def Cancel(self):
+    @dbus.service.method(AGENT, in_signature="", out_signature="", sender_keyword="sender")
+    def Cancel(self, sender=None):
+        self.check(sender)
         self.service.withdraw_question("cancelled by BlueZ")
 
-    @dbus.service.method(AGENT, in_signature="", out_signature="")
-    def Release(self):
+    @dbus.service.method(AGENT, in_signature="", out_signature="", sender_keyword="sender")
+    def Release(self, sender=None):
+        self.check(sender)
         self.service.agent_released()
 
 
@@ -467,7 +528,8 @@ class Phone:
         self.current = None  # (kind, key, Answer or None, timer)
         self.pending = {}  # uid → what is known of a notification to show
         self.shown = {}  # uid → (notification id, flags)
-        self.known = set()
+        self.known = {}  # the uids the iPhone has, oldest first (a set in order)
+        self.flooded = False
         self.before = None
         self.dropped_at = 0.0
         self.dropped_wall = 0.0
@@ -493,7 +555,8 @@ class Phone:
 
     @property
     def name(self):
-        return self.prop(DEVICE, "Alias") or self.prop(DEVICE, "Name") or "iPhone"
+        # The iPhone's own name: what it sends is shown as plain text.
+        return name_text(self.prop(DEVICE, "Alias") or self.prop(DEVICE, "Name")) or "iPhone"
 
     def le_connected(self):
         # The LE link itself: a dual-mode iPhone may be connected over
@@ -560,9 +623,14 @@ class Phone:
         self.asked.clear()
         self.link_number += 1
         self.turned_down = False
+        self.flooded = False
         # Ids under which the shell showed notifications before: the iPhone
         # may number them anew, so a dismissal now clears nothing there.
+        self.forget_shown()
+
+    def forget_shown(self):
         self.shown.clear()
+        self.service.forget_notes(self.path)
 
     def disconnect(self):
         log(f"{self.name} went away")
@@ -585,7 +653,9 @@ class Phone:
         self.connected = False
         self.queue.clear()
         self.pending.clear()
+        self.waiting.clear()
         self.give_up_current()
+        self.forget_shown()
         if self.retry:
             GLib.source_remove(self.retry)
             self.retry = None
@@ -656,12 +726,15 @@ class Phone:
             return
         uid = event.uid
         if event.kind == REMOVED:
-            self.known.discard(uid)
-            self.pending.pop(uid, None)
+            self.known.pop(uid, None)
+            if self.pending.pop(uid, None) is not None and ("note", uid) in self.queue:
+                self.queue.remove(("note", uid))
             if uid in self.shown:
                 self.service.close(self.shown.pop(uid)[0])
             return
-        self.known.add(uid)
+        self.known[uid] = None
+        if len(self.known) > KNOWN_MOST:
+            del self.known[next(iter(self.known))]
         # Calls stay on the iPhone.
         if event.category == INCOMING_CALL:
             return
@@ -688,6 +761,16 @@ class Phone:
         return True
 
     def fetch(self, event, replace=False, missed=False):
+        # Asked about already: once is enough.
+        if event.uid in self.pending:
+            return
+        if not self.pending:
+            self.flooded = False
+        if len(self.pending) >= PENDING_MOST or len(self.queue) >= QUEUE_MOST:
+            if not self.flooded:
+                log(f"more than {PENDING_MOST} notifications at once from {self.name}: the rest passed over")
+                self.flooded = True
+            return
         self.pending[event.uid] = {"flags": event.flags, "category": event.category,
                                    "replace": replace, "missed": missed}
         self.queue.append(("note", event.uid))
@@ -795,7 +878,7 @@ class Phone:
             self.queue.appendleft(("app", app))
 
     def named(self, app, found):
-        name = text(found.get(DISPLAY_NAME, b"")) if found else ""
+        name = name_text(found.get(DISPLAY_NAME, b"")) if found else ""
         if len(self.apps) > 200:
             self.apps.clear()
         self.apps[app] = name or app_fallback(app)
@@ -812,28 +895,37 @@ class Phone:
         summary, body = toast_text(app, info["title"], info["subtitle"], info["message"])
         replaces = self.shown[uid][0] if info["replace"] else 0
         flags = info["flags"]
+        number = self.link_number
 
         def shown(note):
+            # Shown for a link gone since: the iPhone may have given its uid
+            # to another notification by now.
+            if number != self.link_number:
+                return
             # Removed on the iPhone while the shell was showing it.
             if self.connected and uid not in self.known:
                 self.service.close(note)
                 return
             self.shown[uid] = (note, flags)
-            self.service.notes[note] = (self.path, uid)
+            self.service.remember(note, self.path, uid)
 
         # That it came, never what it says.
         log(f"notification {uid} {'changed' if replaces else 'shown'}{' quietly' if flags & SILENT else ''}")
         self.service.notify(app, summary, body, GLYPHS.get(info["category"], PHONE_GLYPH),
                             quiet=bool(flags & SILENT), replaces=replaces, then=shown)
 
-    def closed(self, uid, reason):
-        """The shell's notification of <uid> went: dismissed here, it is
-        cleared on the iPhone too, as a watch does; run out, or silenced by
-        Do Not Disturb, it stays there."""
-        entry = self.shown.pop(uid, None)
-        if entry is None or reason != DISMISSED or uid not in self.known or not self.connected:
+    def closed(self, note, uid, reason):
+        """The shell's notification <note>, of <uid>, went: dismissed here,
+        it is cleared on the iPhone too, as a watch does; run out, or
+        silenced by Do Not Disturb, it stays there. Only the notification
+        shown for <uid> now counts: an older one's uid may be another's."""
+        entry = self.shown.get(uid)
+        if entry is None or entry[0] != note:
             return
-        if entry[1] & NEGATIVE_ACTION:
+        del self.shown[uid]
+        if reason != DISMISSED or uid not in self.known or not self.connected:
+            return
+        if entry[1] & NEGATIVE_ACTION and len(self.queue) < QUEUE_MOST:
             log(f"notification {uid} dismissed here: cleared on the iPhone")
             self.queue.appendleft(("clear", uid))
             self.pump()
@@ -858,6 +950,7 @@ class Service:
         self.advertising = None  # the mode registered with BlueZ
         self.advertised_at = 0.0
         self.agent_registered = False
+        self.generation = 0  # counts BlueZ's starts
         self.busy = False
         self.again = False
         self.blocked_until = 0.0
@@ -891,6 +984,8 @@ class Service:
 
     def bluez_owner(self, owner):
         self.bluez = str(owner)
+        # A reply from the BlueZ before, come late, says nothing of this one.
+        self.generation += 1
         # Bluetooth LE is switched by restarting BlueZ.
         self.le = le_enabled(self.conf)
         self.objects = Objects()
@@ -904,10 +999,13 @@ class Service:
             log("BlueZ is not running")
             self.update()
             return
-        self.call("/", OBJECT_MANAGER, "GetManagedObjects", "", [], self.loaded,
+        generation = self.generation
+        self.call("/", OBJECT_MANAGER, "GetManagedObjects", "", [], lambda managed: self.loaded(generation, managed),
                   lambda error: log(f"could not read BlueZ's objects: {error.get_dbus_message()}"))
 
-    def loaded(self, managed):
+    def loaded(self, generation, managed):
+        if generation != self.generation:
+            return
         self.objects.load(managed)
         self.fresh_start()
         self.update()
@@ -1060,15 +1158,21 @@ class Service:
 
     def ask(self, device, passkey, ok, fail):
         """BlueZ asks whether a device may pair: the user answers on a
-        notification, with the code to compare when there is one."""
+        notification, with the code to compare. One question at a time: a
+        second device asking meanwhile is turned down, and the first one's
+        question stands."""
         if not self.pairing_open():
             fail(Rejected("not pairing now"))
             return
-        self.withdraw_question("another came")
-        name = self.objects.get(device, DEVICE, "Alias") or "an iPhone"
+        if self.question is not None:
+            log(f"turned down a second pairing while one is asked about ({device})")
+            fail(Rejected("another pairing is being asked about"))
+            return
+        # The device's own name: what it sends is shown as plain text.
+        name = name_text(self.objects.get(device, DEVICE, "Alias")) or "an iPhone"
         question = {"ok": ok, "fail": fail, "note": None, "grace": None}
         self.question = question
-        body = f"Check that your iPhone shows {passkey:06d}." if passkey is not None else ""
+        body = f"Check that your iPhone shows {passkey:06d}."
         buttons = [{"says": "Cancel", "argv": ["nova-notification-iphone", "answer", "no"]},
                    {"says": "Pair", "argv": ["nova-notification-iphone", "answer", "yes"], "main": True}]
 
@@ -1079,7 +1183,7 @@ class Service:
                 self.close(note)
 
         self.notify("nova-action", f"Pair with “{name}”?", html.escape(body, quote=False), BLUETOOTH_GLYPH,
-                    urgency=2, buttons=buttons, actions=False, then=shown)
+                    urgency=2, buttons=buttons, iphone=False, then=shown)
 
     def answer(self, yes):
         question, self.question = self.question, None
@@ -1127,17 +1231,24 @@ class Service:
     # -- notifications
 
     def notify(self, app, summary, body, glyph, quiet=False, replaces=0, urgency=1, buttons=None,
-               actions=True, then=None):
+               iphone=True, then=None):
+        """A notification to the shell: an iPhone's, or with <iphone> false
+        Nova's own (the pairing question)."""
         hints = {"urgency": dbus.Byte(urgency), "nova-glyph": dbus.String(glyph)}
         if quiet:
             hints["nova-quiet"] = dbus.Boolean(True)
         if buttons:
             hints["nova-buttons"] = dbus.String(json.dumps(buttons))
+        if iphone:
+            # The app is the iPhone's: a click on it, also in the history
+            # after the notification is gone, does not bring forward an app
+            # of this computer that has the same name.
+            hints["nova-iphone"] = dbus.Boolean(True)
         # A default action, so that a click is a dismissal: there is no
         # window here to bring forward for an iPhone's app.
         self.call(NOTIFICATIONS_PATH, NOTIFICATIONS, "Notify", "susssasa{sv}i",
                   [app, dbus.UInt32(replaces), "", summary, body,
-                   dbus.Array(["default", "Show"] if actions else [], signature="s"),
+                   dbus.Array(["default", "Show"] if iphone else [], signature="s"),
                    dbus.Dictionary(hints, signature="sv"), dbus.Int32(-1)],
                   lambda note: then and then(int(note)),
                   lambda error: log(f"could not show a notification: {error.get_dbus_message()}"),
@@ -1155,7 +1266,16 @@ class Service:
             return
         entry = self.notes.pop(note, None)
         if entry and entry[0] in self.phones:
-            self.phones[entry[0]].closed(entry[1], reason)
+            self.phones[entry[0]].closed(note, entry[1], reason)
+
+    def remember(self, note, path, uid):
+        self.notes[note] = (path, uid)
+        if len(self.notes) > NOTES_MOST:
+            del self.notes[next(iter(self.notes))]
+
+    def forget_notes(self, path):
+        """Those of an iPhone's link gone: a dismissal of one clears nothing."""
+        self.notes = {note: entry for note, entry in self.notes.items() if entry[0] != path}
 
     def notifications_owner(self, owner):
         # Another server counts its ids from 1 again: the old ones mean
@@ -1201,11 +1321,12 @@ class Service:
         if want == self.advertising:
             return
         adapter = self.adapter()
+        generation = self.generation
         if self.advertising is not None:
             self.busy = True
             self.call(adapter or "/org/bluez/hci0", ADVERTISING_MANAGER, "UnregisterAdvertisement", "o",
-                      [dbus.ObjectPath(ADVERTISEMENT_PATH)], lambda *_: self.done_unregistering(),
-                      lambda *_: self.done_unregistering())
+                      [dbus.ObjectPath(ADVERTISEMENT_PATH)], lambda *_: self.done_unregistering(generation),
+                      lambda *_: self.done_unregistering(generation))
             return
         if time.monotonic() < self.blocked_until or adapter is None:
             return
@@ -1213,18 +1334,23 @@ class Service:
         self.busy = True
         self.call(adapter, ADVERTISING_MANAGER, "RegisterAdvertisement", "oa{sv}",
                   [dbus.ObjectPath(ADVERTISEMENT_PATH), dbus.Dictionary({}, signature="sv")],
-                  lambda *_: self.registered(want, None), lambda error: self.registered(want, error))
+                  lambda *_: self.registered(generation, want, None),
+                  lambda error: self.registered(generation, want, error))
 
     def settle(self):
         self.busy = False
         self.again = False
         self.update()
 
-    def done_unregistering(self):
+    def done_unregistering(self, generation):
+        if generation != self.generation:
+            return
         self.advertising = None
         self.settle()
 
-    def registered(self, mode, error):
+    def registered(self, generation, mode, error):
+        if generation != self.generation:
+            return
         if error is None:
             self.advertising = mode
             self.advertised_at = time.monotonic()
@@ -1261,25 +1387,36 @@ class Service:
         self.busy = True
         manager = "/org/bluez"
         path = dbus.ObjectPath(AGENT_PATH)
+        generation = self.generation
         if not register:
             def unregistered(*_):
+                if generation != self.generation:
+                    return
                 self.agent_registered = False
                 log("pairing agent gone")
                 self.settle()
             self.call(manager, AGENT_MANAGER, "UnregisterAgent", "o", [path], unregistered, unregistered)
             return
 
+        # Failed at either step, the window closes; registered, the agent is
+        # then unregistered by the reconciling that follows.
         def failed(error):
-            log(f"could not register the pairing agent: {error.get_dbus_message()}")
+            if generation != self.generation:
+                return
+            log(f"could not make the pairing agent BlueZ's: {error.get_dbus_message()}")
             self.close_pairing()
             self.settle()
 
         def made_default(*_):
-            self.agent_registered = True
+            if generation != self.generation:
+                return
             log("pairing agent ready")
             self.settle()
 
         def registered(*_):
+            if generation != self.generation:
+                return
+            self.agent_registered = True
             self.call(manager, AGENT_MANAGER, "RequestDefaultAgent", "o", [path], made_default, failed)
 
         self.call(manager, AGENT_MANAGER, "RegisterAgent", "os", [path, "DisplayYesNo"], registered, failed)
@@ -1358,13 +1495,21 @@ def main():
     os.makedirs(os.path.join(runtime, "nova"), mode=0o700, exist_ok=True)
     DBusGMainLoop(set_as_default=True)
     session = dbus.SessionBus()
-    system = session if os.environ.get("NOVA_IPHONE_BUS") == "session" else dbus.SystemBus()
-    service = Service(system, session, runtime, os.environ.get("NOVA_BLUETOOTH_CONF", "/etc/bluetooth/main.conf"))
     try:
         name = dbus.service.BusName(NAME, session, do_not_queue=True)
     except dbus.exceptions.NameExistsException:
+        # Starting again would not change that (the unit's
+        # RestartPreventExitStatus).
         log(f"{NAME} is another program's already")
-        return 1
+        return NAME_TAKEN
+    # What a run before left, if it ended without a word (a crash, a kill):
+    # its state is not this one's.
+    try:
+        os.unlink(os.path.join(runtime, "nova", "iphone-notifications.json"))
+    except FileNotFoundError:
+        pass
+    system = session if os.environ.get("NOVA_IPHONE_BUS") == "session" else dbus.SystemBus()
+    service = Service(system, session, runtime, os.environ.get("NOVA_BLUETOOTH_CONF", "/etc/bluetooth/main.conf"))
     loop = GLib.MainLoop()
     for number in (2, 15):  # SIGINT, SIGTERM
         on_signal(number, loop.quit)

@@ -43,6 +43,31 @@ scenario() { # name
   [[ $output == *"pairing: refused, org.bluez.Error.Rejected"* ]]
 }
 
+@test "pairing asked of it by others: no agent outside the window, an agent BlueZ would not make the default unregistered, no Just Works, BlueZ alone answered, one question at a time, a name as plain text" {
+  scenario strangers
+  [[ $output == *"agent not made the default"*"agent unregistered"* ]]
+  [[ $output == *"turned down a pairing with no code to compare"* ]]
+  [[ $output == *"turned down a second pairing while one is asked about"* ]]
+}
+
+@test "a toast from before a drop, dismissed, clears nothing on the iPhone, which has given its uid to another" {
+  scenario reused
+}
+
+@test "an iPhone that keeps to no limit: texts cut and cleaned, an answer too long given up on, a flood followed to fifty" {
+  scenario hostile
+  [[ $output == *"an answer that does not fit: an answer of more than 8192 bytes"* ]]
+  [ "$(grep -c "more than 50 notifications at once" <<<"$output")" -eq 1 ]
+}
+
+@test "an answer of the BlueZ before a restart, come late, counts for nothing" {
+  scenario late
+}
+
+@test "its name taken: it ends with 3, which its unit does not restart" {
+  scenario taken
+}
+
 @test "notifications: new ones shown with their app, calls and old ones left out, removed and cleared both ways" {
   scenario notifications
   [[ $output == *"write: 02 05 00 00 00 01"* ]]

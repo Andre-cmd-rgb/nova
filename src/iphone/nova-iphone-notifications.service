@@ -12,17 +12,35 @@ ConditionPathIsDirectory=/sys/class/bluetooth
 Type=dbus
 BusName=org.nova.iPhoneNotifications
 ExecStart=/usr/lib/nova/nova-iphone-notifications
+# Its state goes with it however it ends, a crash too, so that Settings never
+# reads an iPhone connected from a run that is over.
+ExecStopPost=-/usr/bin/rm -f %t/nova/iphone-notifications.json
 Restart=on-failure
 RestartSec=5
+# 3: its bus name is another program's, which starting again would not change.
+RestartPreventExitStatus=3
 Slice=background.slice
-# It talks to BlueZ and to the shell over D-Bus, and writes one file in the
-# runtime folder; nothing else is its business.
+
+# It talks to BlueZ and to the shell over D-Bus, through the buses' sockets
+# in the file system, reads /etc/bluetooth/main.conf, and writes one file in
+# the runtime folder; nothing else is its business.
+RuntimeDirectory=nova
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+UMask=0077
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateNetwork=yes
+CapabilityBoundingSet=
 NoNewPrivileges=yes
 RestrictAddressFamilies=AF_UNIX
 RestrictNamespaces=yes
 RestrictRealtime=yes
+RestrictSUIDSGID=yes
 LockPersonality=yes
 SystemCallArchitectures=native
+SystemCallFilter=@system-service
 
 [Install]
 WantedBy=graphical-session.target
