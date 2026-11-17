@@ -1,0 +1,195 @@
+#!/bin/bash
+# nova:summary=Say when an app quits unexpectedly, with a button that opens it again
+# nova:hidden=true
+#
+# As a Mac does: an app whose windows a crash took away is named in a
+# notification, "Bambu Studio quit unexpectedly", with Reopen. A crash that
+# leaves the app's windows open (a browser's tab, a helper process) is the
+# app's own to show, and is not said; nor is one that comes after its window
+# was closed, as an app that crashes on its way out does.
+#
+# Two things are watched, as one stream of lines: Hyprland's windows, from its
+# event socket, each with its process; and this user's crashes, which
+# systemd-coredump writes into the journal. A window whose process had ended,
+# or was dumping its core, when the window closed went with its process; a
+# crash of that process, in either order and within a minute, is said. Each
+# crash once, and an app that crashes at every start once a minute.
+#
+# autostart.lua starts it with the session; it ends with Hyprland.
+#
+# For the tests: NOVA_CRASH_EVENTS, a file of the stream's lines ("hypr
+# <event>", "core <pid>"), stands in for both, and NOVA_PROC for /proc.
+
+set -euo pipefail
+
+# systemd-coredump's message: a process has crashed.
+CRASH=fc2e22bc6ee647b6b90729ab34a250b1
+# How long a crash and its windows' closing wait for each other, in seconds.
+WITHIN=60
+PROC=${NOVA_PROC:-/proc}
+
+declare -A pid_of=() class_of=() # the windows open, by address
+declare -A gone=() gone_at=()    # processes whose window went with them: class, when
+declare -A crashed=()            # processes that crashed, when
+declare -A told=() app_told=()   # what was said, and when
+
+# Hyprland's windows: address (without 0x), process and class, from its list.
+windows() {
+  local address pid class
+  pid_of=() class_of=()
+  while IFS=$'\t' read -r address pid class; do
+    [[ $pid =~ ^[0-9]+$ ]] || continue
+    pid_of[$address]=$pid class_of[$address]=$class
+  done < <(hyprctl -j clients 2>/dev/null |
+    jq -r '.[]? | [(.address | ltrimstr("0x")), (.pid | tostring), (if (.class // "") != "" then .class else .initialClass // "" end)] | @tsv' 2>/dev/null || true)
+}
+
+# Whether process <pid> has ended, or is ending in a crash: gone, a zombie, or
+# writing its core. One still running closed its window itself.
+ended() { # pid
+  local status
+  { status=$(<"$PROC/$1/status"); } 2>/dev/null || return 0
+  [[ $status == *$'\nState:\tZ'* || $status == *$'\nCoreDumping:\t1'* ]]
+}
+
+# The desktop entries' folders, the user's first, as XDG has them.
+entry_folders() {
+  local folder folders
+  IFS=: read -ra folders <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+  for folder in "${folders[@]}"; do [[ -z $folder ]] || printf '%s\n' "$folder/applications"; done
+}
+
+# The desktop entry of a window's class, as a file: one named after it (any
+# case), one whose StartupWMClass it is, or a reverse-DNS one whose last part
+# it is (com.bambulab.BambuStudio for BambuStudio). Hidden entries are none.
+entry_of() { # class
+  local class=$1 lower=${1,,} folder file id pass
+  local -a folders
+  mapfile -t folders < <(entry_folders)
+  for pass in name wmclass last; do
+    for folder in "${folders[@]}"; do
+      for file in "$folder"/*.desktop; do
+        [[ -f $file ]] || continue
+        id=${file##*/} id=${id%.desktop}
+        case $pass in
+          name) [[ ${id,,} == "$lower" ]] || continue ;;
+          wmclass) grep -qxF "StartupWMClass=$class" -- "$file" 2>/dev/null || continue ;;
+          last) [[ ${id,,} == *".$lower" ]] || continue ;;
+        esac
+        grep -qx 'Hidden=true' -- "$file" 2>/dev/null && continue
+        printf '%s\n' "$file"
+        return 0
+      done
+    done
+  done
+  return 1
+}
+
+# A key's value in an entry's [Desktop Entry] group.
+entry_value() { # file key
+  awk -v key="$2" '
+    /^\[/ { group = $0; next }
+    group == "[Desktop Entry]" && index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }
+  ' "$1"
+}
+
+# What opens an entry again, as the menu opens it (AppSearch.launchWords).
+launch_words() { # desktop id
+  if [[ $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]*$ ]]; then
+    printf '%s\n' uwsm-app -- "$1.desktop"
+  else
+    printf '%s\n' uwsm-app -- gtk-launch "$1.desktop"
+  fi
+}
+
+# Says that the app of process <pid> quit, once, and once a minute an app.
+tell() { # pid
+  local pid=$1 class=${gone[$1]} file id name icon
+  local -a reopen
+  told[$pid]=$EPOCHSECONDS
+  [[ -n $class ]] || return 0
+  ((EPOCHSECONDS - ${app_told[$class]:-0} >= WITHIN)) || return 0
+  app_told[$class]=$EPOCHSECONDS
+  local -a notice=(-u normal -g 󰀦)
+  if file=$(entry_of "$class"); then
+    id=${file##*/} id=${id%.desktop}
+    name=$(entry_value "$file" Name) icon=$(entry_value "$file" Icon)
+    mapfile -t reopen < <(launch_words "$id")
+    [[ -z $icon ]] || notice+=(-i "$icon")
+    notice+=(--button Reopen "${name:-$class} quit unexpectedly" --exec "${reopen[@]}")
+  else
+    notice+=("$class quit unexpectedly")
+  fi
+  # A shell that is not there to show it (the shell itself went) leaves the
+  # watcher running.
+  nova-notification-send "${notice[@]}" >/dev/null 2>&1 || true
+}
+
+# A window closed: if its process went with it, a crash of that process says so.
+closed() { # address
+  local address=$1 pid class
+  pid=${pid_of[$address]:-}
+  [[ -n $pid ]] || return 0
+  class=${class_of[$address]}
+  unset 'pid_of[$address]' 'class_of[$address]'
+  [[ -z ${told[$pid]:-} ]] && ended "$pid" || return 0
+  gone[$pid]=$class gone_at[$pid]=$EPOCHSECONDS
+  [[ -z ${crashed[$pid]:-} ]] || tell "$pid"
+}
+
+# A process crashed: said if its windows went with it.
+crash() { # pid
+  local pid=$1
+  [[ $pid =~ ^[0-9]+$ && -z ${told[$pid]:-} ]] || return 0
+  crashed[$pid]=$EPOCHSECONDS
+  [[ -z ${gone[$pid]:-} ]] || tell "$pid"
+}
+
+# What is older than a minute waits no longer.
+forget() {
+  local pid
+  for pid in "${!gone_at[@]}"; do
+    ((EPOCHSECONDS - gone_at[$pid] < WITHIN)) || unset 'gone[$pid]' 'gone_at[$pid]'
+  done
+  for pid in "${!crashed[@]}"; do
+    ((EPOCHSECONDS - crashed[$pid] < WITHIN)) || unset 'crashed[$pid]'
+  done
+  for pid in "${!told[@]}"; do
+    ((EPOCHSECONDS - told[$pid] < WITHIN)) || unset 'told[$pid]'
+  done
+}
+
+# Hyprland's events and the crashes, a line each. Each source writes whole
+# lines, so their lines come whole. The journal is read until Hyprland ends.
+stream() {
+  if [[ -n ${NOVA_CRASH_EVENTS:-} ]]; then
+    cat -- "$NOVA_CRASH_EVENTS"
+    return 0
+  fi
+  local journal
+  journalctl -f -n 0 -q -o json "MESSAGE_ID=$CRASH" "COREDUMP_UID=$UID" --output-fields=COREDUMP_PID \
+    > >(jq --unbuffered -r '"core \(.COREDUMP_PID // "")"') &
+  journal=$!
+  socat -u "UNIX-CONNECT:$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock" - | sed -u 's/^/hypr /' || true
+  kill "$journal" 2>/dev/null || true
+}
+
+main() {
+  if [[ -z ${NOVA_CRASH_EVENTS:-} && (-z ${XDG_RUNTIME_DIR:-} || -z ${HYPRLAND_INSTANCE_SIGNATURE:-}) ]]; then
+    echo "nova-crash-watch: not running inside a Hyprland session" >&2
+    exit 1
+  fi
+  local line
+  windows
+  while IFS= read -r line; do
+    case $line in
+      'hypr openwindow>>'*) windows ;;
+      'hypr closewindow>>'*) closed "${line#hypr closewindow>>}" ;;
+      'core '*) crash "${line#core }" ;;
+    esac
+    forget
+  done < <(stream)
+}
+
+main "$@"

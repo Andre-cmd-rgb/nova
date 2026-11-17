@@ -281,6 +281,7 @@ These come installed:
 - Settings → Default Apps picks another browser, editor or terminal, among those installed.
 - Chrome and VS Code are built on your computer from their AUR recipes; `nova apps install` installs them again if they are missing.
 - Printing goes through CUPS: Print Settings is in the apps.
+- When a crash takes an app away, a notification says so ("Bambu Studio quit unexpectedly"), with Reopen. A crash that leaves its windows open, such as a browser tab's, is the app's own to show; `coredumpctl` lists them all.
 
 ## Keyboard
 

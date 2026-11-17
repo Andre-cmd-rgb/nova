@@ -57,5 +57,7 @@ hl.on("hyprland.start", function()
   -- Chrome cannot be open yet; after that it is Chrome's own setting.
   hl.exec_cmd("nova-chrome-energy-saver")
   hl.exec_cmd(nova.launch("nova-hyprland-monitor-watch"))
+  -- An app a crash takes away is named, with Reopen, as on a Mac.
+  hl.exec_cmd(nova.launch("nova-crash-watch"))
   hl.exec_cmd("sleep 2 && nova-hook post-boot")
 end)
