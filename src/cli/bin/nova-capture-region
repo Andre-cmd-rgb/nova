@@ -270,8 +270,8 @@ trap '$keep_freeze || [[ -z $freezer ]] || kill "$freezer" 2>/dev/null || true' 
 # a second, and not at all for a hyprpicker that is gone (without a pointer,
 # it will not start).
 frozen() {
-  local until=$((${EPOCHREALTIME/./} + 500000))
-  while ((${EPOCHREALTIME/./} < until)); do
+  local until=$((${EPOCHREALTIME//[!0-9]/} + 500000))
+  while ((${EPOCHREALTIME//[!0-9]/} < until)); do
     hyprctl layers -j 2>/dev/null | grep -q '"namespace": *"hyprpicker"' && return 0
     kill -0 "$freezer" 2>/dev/null || return 0
     sleep 0.005
