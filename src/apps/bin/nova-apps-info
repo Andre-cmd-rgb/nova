@@ -1,0 +1,34 @@
+#!/bin/bash
+# nova:summary=Show what the App Store knows of an app
+# nova:args=<app>
+#
+# <app> is its ID, its package or its name (nova apps search finds it).
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=src/apps/bin/nova-apps-common
+source "$HERE/nova-apps-common"
+
+(($# == 1)) || { echo "Usage: nova apps info <app>" >&2; exit 2; }
+catalog=$(apps_catalog) || { echo "nova apps: the App Store's catalog could not be made" >&2; exit 1; }
+app=$(apps_one "$catalog" "$1")
+installed=$(nova-apps-installed)
+
+jq -r --argjson have "$installed" '
+  def names: {nova: "Nova, built here from the maker'"'"'s release", arch: "Arch Linux", flathub: "Flathub"};
+  def version: if .version then " \(.version)" else "" end;
+  def where($have):
+    first(.sources[] as $s
+      | if $s.kind == "flathub" then
+          ($have.flatpak[] | select(.app == $s.app) | "Flathub \(.version) (\(.installation))")
+        elif $have.pacman[$s.package // ""] then "\(names[$s.kind] | split(",")[0]) \($have.pacman[$s.package])"
+        else empty end) // "no";
+  def line($k; $v): if ($v // "") == "" then empty else "\($k)\t\($v)" end;
+  .name, (.summary // empty), "",
+  line("ID"; .id),
+  line("From"; [.sources[] | names[.kind] + version] | join("; or ")),
+  line("Installed"; where($have)),
+  line("Developer"; .developer),
+  line("License"; .license),
+  line("Website"; .homepage)' <<<"$app" | awk -F'\t' 'NF == 2 { printf "%-11s %s\n", $1, $2; next } { print }'

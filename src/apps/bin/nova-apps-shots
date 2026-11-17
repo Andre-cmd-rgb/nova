@@ -1,0 +1,50 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Download an app's screenshots into the cache, for the App Store's page
+# nova:args=<url>...
+#
+# Prints "<url><TAB><file>" for each picture there is now, in the order
+# asked, so that the shell draws files and never reaches the network
+# itself. Flathub's pictures are its thumbnails, drawn as they are; any
+# other (Arch's catalog points at the makers' own) is made a PNG 1248
+# pixels wide, which Qt draws whatever it was. Kept in
+# ~/.cache/nova/apps/shots, by the address's hash.
+
+set -euo pipefail
+
+(($#)) || { echo "Usage: nova-apps-shots <url>..." >&2; exit 2; }
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/nova/apps/shots
+mkdir -p "$cache"
+
+file_for() { # url
+  local hash ext
+  hash=$(printf '%s' "$1" | sha256sum | cut -c1-32)
+  ext=png
+  [[ $1 =~ ^https://dl\.flathub\.org/.*\.(png|jpg|jpeg)$ ]] && ext=${BASH_REMATCH[1]}
+  printf '%s/%s.%s\n' "$cache" "$hash" "$ext"
+}
+
+fetch() { # url file
+  local tmp
+  tmp=$(mktemp "$2.XXXXXX")
+  if curl -fsSL --proto '=https' --max-time 30 --max-filesize 20000000 -o "$tmp" -- "$1"; then
+    if [[ $2 == *.png && ! $1 =~ ^https://dl\.flathub\.org/ ]]; then
+      vipsthumbnail "$tmp" --size 1248x -o "$2.made.png" >/dev/null 2>&1 && mv -f "$2.made.png" "$2"
+    else
+      mv -f "$tmp" "$2"
+    fi
+  fi
+  rm -f -- "$tmp" "$2.made.png"
+}
+
+for url in "$@"; do
+  [[ $url == https://* ]] || continue
+  file=$(file_for "$url")
+  [[ -s $file ]] || fetch "$url" "$file" &
+done
+wait
+for url in "$@"; do
+  [[ $url == https://* ]] || continue
+  file=$(file_for "$url")
+  [[ ! -s $file ]] || printf '%s\t%s\n' "$url" "$file"
+done

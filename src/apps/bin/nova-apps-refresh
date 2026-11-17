@@ -1,0 +1,36 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Fetch Flathub's catalog again once it is a day old (the App Store, as it opens)
+# nova:args=[--force]
+#
+# Into the user's own Flatpak installation, which the App Store installs
+# into: Flathub is added to it first, from the file Nova ships with
+# Flathub's key in it, so that nothing about Flathub is taken from the
+# network unchecked. Prints "updated" once it fetched one, and nothing when
+# the one there is less than a day old; fails when Flathub cannot be
+# reached, and the catalog there stays as it is.
+
+set -euo pipefail
+
+NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
+force=0
+case ${1:-} in
+  "") ;;
+  --force) force=1 ;;
+  *) echo "Usage: nova-apps-refresh [--force]" >&2; exit 2 ;;
+esac
+
+command -v flatpak >/dev/null || exit 0
+dir=${FLATPAK_USER_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/flatpak}
+stamp=$dir/appstream/flathub/$(uname -m)/.timestamp
+if ((!force)) && [[ -e $stamp ]] && (($(date +%s) - $(stat -c %Y -- "$stamp") < 86400)); then
+  exit 0
+fi
+flatpak remote-add --user --if-not-exists flathub "$NOVA_PATH/apps/flathub.flatpakrepo" >/dev/null
+flatpak update --user --appstream flathub >/dev/null 2>&1 || {
+  echo "nova-apps-refresh: could not reach Flathub" >&2
+  exit 1
+}
+# The catalog takes the new one in.
+nova-apps-catalog >/dev/null
+echo updated

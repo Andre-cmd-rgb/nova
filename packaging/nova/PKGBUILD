@@ -93,13 +93,17 @@ depends=(
   loupe          # photos
   mpv            # video and music
 
+  # The App Store (docs/apps.md)
+  flatpak        # Flathub's apps, in each user's own installation
+  archlinux-appstream-data # what Arch's repositories hold: names, icons, pictures
+
   # Capture, clipboard and backgrounds
   grim
   slurp
   wl-clipboard
   satty          # marking up screenshots
   wtype          # paste into the focused window
-  libvips        # vipsthumbnail, for the background and theme pickers
+  libvips        # vipsthumbnail, for the background and theme pickers and the App Store's icons
 
   # Boot chain and snapshots
   btrfs-progs

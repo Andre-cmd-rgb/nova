@@ -1,0 +1,15 @@
+#!/bin/bash
+# nova:summary=Remove an app installed from the App Store, or with nova apps install
+# nova:args=<app>
+#
+# From wherever it is installed. A Flathub app's settings and files stay in
+# ~/.var/app, as a Mac keeps an app's, so that installing it again finds
+# them; the runtimes no app uses any more go with it. One from Arch's
+# repositories asks for a password or a finger, and takes with it what
+# only it needed. Nova's own parts are not removed.
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+(($# == 1)) || { echo "Usage: nova apps remove <app>" >&2; exit 2; }
+exec "$HERE/nova-apps-job" remove "$1"

@@ -1,0 +1,22 @@
+{"format":1,"built":1,"flathub":true,"arch":true,
+ "runtimes":{"org.gnome.Platform/x86_64/48":{"download":300000000,"installed":900000000}},
+ "apps":[
+  {"id":"org.gimp.GIMP","name":"GNU Image Manipulation Program","summary":"Create images and edit photographs","developer":"The GIMP team","category":"create","keywords":"GIMP photoshop","license":"GPL-3.0+","homepage":"https://www.gimp.org/",
+   "sources":[{"kind":"arch","package":"gimp","repo":"extra","version":"3.0.4-1","desktop":"gimp.desktop"},{"kind":"flathub","app":"org.gimp.GIMP","ref":"app/org.gimp.GIMP/x86_64/stable","version":"3.0.4","download":100000000,"installed":300000000,"runtime":"org.gnome.Platform/x86_64/48","verified":true}],
+   "featured":"create","position":0,"rank":1085},
+  {"id":"com.github.PintaProject.Pinta","name":"Pinta","summary":"Edit images and paint digitally","category":"create",
+   "sources":[{"kind":"flathub","app":"com.github.PintaProject.Pinta","ref":"app/com.github.PintaProject.Pinta/x86_64/stable","version":"3.0","download":20000000,"installed":60000000}],
+   "featured":"create","position":1,"rank":1010},
+  {"id":"tuxpaint.desktop","name":"Tux Paint","summary":"A drawing program for children","category":"create",
+   "sources":[{"kind":"arch","package":"tuxpaint","repo":"extra","version":"0.9.35-1","desktop":"tuxpaint.desktop"}],
+   "rank":25},
+  {"id":"com.google.Chrome","name":"Google Chrome","summary":"The browser built by Google","developer":"Google","category":"internet","desktop":"google-chrome.desktop",
+   "sources":[{"kind":"nova","package":"google-chrome","maker":"Google"}],
+   "featured":"internet","position":0,"rank":1060},
+  {"id":"com.google.ChromeDev","name":"Google Chrome (unstable)","summary":"The browser built by Google, early","category":"internet",
+   "sources":[{"kind":"flathub","app":"com.google.ChromeDev","ref":"app/com.google.ChromeDev/x86_64/unstable"}],
+   "rank":20},
+  {"id":"org.mozilla.firefox","name":"Firefox","summary":"Fast, private and safe web browser","category":"internet","homepage":"https://www.firefox.com/",
+   "sources":[{"kind":"arch","package":"firefox","repo":"extra","version":"145.0-1","desktop":"firefox.desktop"},{"kind":"flathub","app":"org.mozilla.firefox","ref":"app/org.mozilla.firefox/x86_64/stable","version":"145.0","download":90000000,"installed":250000000,"verified":true}],
+   "featured":"internet","position":1,"rank":1065}
+ ]}

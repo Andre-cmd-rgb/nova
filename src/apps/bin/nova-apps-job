@@ -1,0 +1,338 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Install or remove an App Store app (nova apps install and remove, and the App Store)
+# nova:args=install|remove <app> [--from nova|arch|flathub] [--status]
+#
+# <app> is a word the catalog knows an app by: its ID, its package, or its
+# name. An app is installed from the first place the catalog offers it from
+# (Nova's own build, then Arch's repositories, then Flathub), or from the one
+# --from names; and removed from wherever it is.
+#
+#   Flathub    into the user's own installation: no password, and nothing of
+#              it in the system's snapshots. Removing keeps the app's data
+#              (~/.var/app), as a Mac keeps an app's, and takes the runtimes
+#              no app uses any more.
+#   Arch       through pkexec nova-apps-apply: one password or finger, a
+#              snapshot before and after, and never a partial upgrade.
+#   Nova       Chrome and VS Code, built here from their makers' releases by
+#              nova apps install, then installed as an update installs them.
+#
+# In a terminal it shows what flatpak and pacman print. With --status, as the
+# App Store runs it (nova-apps-run), it keeps how far it is in
+# $XDG_RUNTIME_DIR/nova/apps/status.json, under the app's ID: {action,
+# source, state, progress, text, error, log}, the state "waiting" while
+# another goes first, then "running", and "done", "failed" or "cancelled";
+# its output goes to the log beside it. One at a time: pacman takes one
+# transaction, and Flathub's downloads are quicker one after another.
+#
+# Exit status: 0 done, or nothing to do; 1 failed; 2 cancelled or bad
+# arguments.
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=src/apps/bin/nova-apps-common
+source "$HERE/nova-apps-common"
+
+NOVA_PATH=${NOVA_PATH:-/usr/share/nova}
+APPLY=${NOVA_APPS_APPLY:-/usr/lib/nova/nova-apps-apply}
+RUN_DIR=${XDG_RUNTIME_DIR:?}/nova/apps
+STATUS=''
+
+usage() {
+  echo "Usage: nova apps install <app> [--from nova|arch|flathub] | nova apps remove <app>" >&2
+  exit 2
+}
+
+action=${1:-} word=${2:-} from=''
+[[ $action == install || $action == remove ]] && [[ -n $word ]] || usage
+shift 2
+while (($#)); do
+  case $1 in
+    --from) from=${2:-}; [[ $from == nova || $from == arch || $from == flathub ]] || usage; shift ;;
+    --status) STATUS=$RUN_DIR/status.json ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+# --- what the App Store reads -------------------------------------------------
+
+# Under the word it was asked for until the catalog names the app: the
+# App Store asks by ID, and reads it there.
+id=$word st_state='' st_progress=-1 st_text='' st_source='' LOG='' build=''
+
+# This app's entry in status.json, the rest left as it is. Every job writes
+# there, so one at a time, under a lock.
+status() { # state progress text [error]
+  [[ -n $STATUS ]] || return 0
+  [[ $1 != "$st_state" || $2 != "$st_progress" || $3 != "$st_text" || -n ${4:-} ]] || return 0
+  st_state=$1 st_progress=$2 st_text=$3
+  mkdir -p "$RUN_DIR"
+  (
+    flock 9
+    local now
+    now=$(date +%s)
+    { cat "$STATUS" 2>/dev/null || echo '{}'; } |
+      jq --arg id "$id" --arg action "$action" --arg source "$st_source" --arg state "$1" \
+        --argjson progress "$2" --arg text "$3" --arg error "${4:-}" --arg log "$LOG" --argjson time "$now" \
+        '(if type == "object" then . else {} end)
+         | .[$id] = {action: $action, source: $source, state: $state, progress: $progress,
+                     text: $text, error: $error, log: $log, time: $time}' >"$STATUS.part"
+    mv -f "$STATUS.part" "$STATUS"
+  ) 9>"$STATUS.lock"
+}
+
+finish_failed() { # message
+  echo "nova apps: $1" >&2
+  status failed -1 "" "$1"
+  exit 1
+}
+
+finish_cancelled() {
+  status cancelled -1 ""
+  exit 2
+}
+
+# However it ends before it is through, the App Store hears of it.
+on_exit() {
+  local code=$?
+  [[ -z $build ]] || rm -rf -- "$build"
+  [[ -n $STATUS ]] || return 0
+  case $st_state in
+    done | failed | cancelled) return 0 ;;
+  esac
+  status failed -1 "" "it stopped before it was done (status $code)"
+}
+trap on_exit EXIT
+
+# Nothing to do: said, and done.
+finish_done() { # message
+  echo "$1"
+  status "done" 100 ""
+  exit 0
+}
+
+# --- the app ---------------------------------------------------------------------
+
+catalog=$(apps_catalog) || finish_failed "the App Store's catalog could not be made"
+app=$(apps_one "$catalog" "$word") || finish_failed "no app is called $word"
+id=$(jq -r .id <<<"$app")
+name=$(jq -r .name <<<"$app")
+installed=$(nova-apps-installed)
+
+# Where it is installed: "flatpak <installation> <app>", "pacman <package>",
+# or nothing.
+where_installed() {
+  local line
+  line=$(jq -r --argjson have "$installed" '
+    .sources[] as $s
+    | if $s.kind == "flathub" then
+        ($have.flatpak[] | select(.app == $s.app) | "flatpak \(.installation) \(.app)")
+      elif $have.pacman[$s.package // ""] then "pacman \($s.package)"
+      else empty end' <<<"$app" | head -n 1)
+  printf '%s\n' "$line"
+}
+
+# The source to install from: the one asked for, else the first.
+source_json() {
+  if [[ -n $from ]]; then
+    jq -c --arg k "$from" '[.sources[] | select(.kind == $k)][0] // empty' <<<"$app"
+  else
+    jq -c '.sources[0] // empty' <<<"$app"
+  fi
+}
+
+# --- running it ----------------------------------------------------------------
+
+# A terminal sees the tools as they are. For the App Store their output goes
+# to the log, and how far they are is read from it.
+run() { # parser command...
+  local parser=$1
+  shift
+  if [[ -z $STATUS ]]; then
+    "$@"
+    return
+  fi
+  local code=0
+  "$@" 2>&1 | tee -a "$LOG" | "$parser" || code=${PIPESTATUS[0]}
+  return "$code"
+}
+
+# The last line of the log that says what went wrong.
+last_error() {
+  [[ -n $LOG && -r $LOG ]] || return 0
+  grep -E '^(error|nova-apps-apply|nova apps|nova update|nova-update|warning: could not)' "$LOG" | tail -n 1 | sed -E 's/^(error|nova-apps-apply|nova apps|nova update|nova-update): ?//'
+}
+
+# What went wrong, in a sentence, from the log's last error.
+plain() { # what failed
+  local line
+  line=$(last_error)
+  case ${line,,} in
+    *"could not resolve"* | *"couldn't resolve"* | *"could not connect"* | *"couldn't connect"* | *timeout* | *"timed out"* | \
+      *"failed retrieving file"* | *"network"* | *"unable to load summary"*)
+      echo "could not download it; check the connection and try again" ;;
+    *"no space left"* | *"not enough free disk space"* | *"not enough disk space"*)
+      echo "there is not enough room on the disk" ;;
+    *"breaks dependency"* | *"required by"*)
+      echo "another app needs it: ${line#*required by }" ;;
+    "") echo "$1" ;;
+    *) echo "$line" ;;
+  esac
+}
+
+# flatpak's "Installing 2/3… ███▌ 45%  2.1 MB/s" lines, as one bar for all of
+# them.
+flatpak_progress() {
+  local line step=1 steps=1 pct verb=Downloading
+  while IFS= read -r line; do
+    [[ $line =~ ^(Installing|Updating|Uninstalling) ]] || continue
+    [[ ${BASH_REMATCH[1]} == Uninstalling ]] && verb=Removing || verb=Downloading
+    if [[ $line =~ ([0-9]+)/([0-9]+) ]]; then
+      step=${BASH_REMATCH[1]} steps=${BASH_REMATCH[2]}
+    fi
+    pct=0
+    if [[ $line =~ ([0-9]+)% ]]; then pct=${BASH_REMATCH[1]}; fi
+    ((steps > 0)) || steps=1
+    status running $(((100 * (step - 1) + pct) / steps)) "$verb"
+  done
+}
+
+# pacman's lines, through nova-apps-apply: the packages as they download,
+# then as they go in or out, then its hooks.
+pacman_progress() {
+  local line total=1 done_dl=0 done_in=0 phase=''
+  while IFS= read -r line; do
+    if [[ $line =~ ^Packages\ \(([0-9]+)\) ]]; then
+      total=${BASH_REMATCH[1]}
+      phase=download
+      status running 2 "Downloading"
+    elif [[ $line =~ ^\ ?[^\ ]+\ downloading\.\.\.$ ]]; then
+      ((done_dl < total)) && done_dl=$((done_dl + 1))
+      status running $((2 + 48 * done_dl / total)) "Downloading"
+    elif [[ $line =~ ^(installing|upgrading|reinstalling|removing)\ [^\ ]+\.\.\.$ ]]; then
+      ((done_in < total)) && done_in=$((done_in + 1))
+      [[ ${BASH_REMATCH[1]} == removing ]] && phase=Removing || phase=Installing
+      status running $((50 + 40 * done_in / total)) "$phase"
+    elif [[ $line == ':: Running post-transaction hooks...' ]]; then
+      status running 92 "Finishing"
+    fi
+  done
+}
+
+build_progress() {
+  local line
+  while IFS= read -r line; do
+    [[ $line != '==> Making package:'* ]] || status running -1 "Building"
+  done
+}
+
+# Runs pkexec nova-apps-apply, and says how it ended in words.
+apply() { # action target
+  local code=0
+  status running -1 "Waiting for authentication"
+  run pacman_progress pkexec "$APPLY" "$1" "$2" || code=$?
+  case $code in
+    0) return 0 ;;
+    126) finish_cancelled ;;
+    127) finish_failed "not allowed: it takes an administrator's password" ;;
+    75) finish_failed "Nova is installing an update or another app; try again once it is done" ;;
+    *) finish_failed "$(plain "pacman could not $1 it")" ;;
+  esac
+}
+
+flathub_remote() {
+  flatpak remote-add --user --if-not-exists flathub "$NOVA_PATH/apps/flathub.flatpakrepo" >/dev/null
+}
+
+install_flathub() { # source json
+  local ref code=0
+  ref=$(jq -r .ref <<<"$1")
+  flathub_remote || finish_failed "could not add Flathub"
+  status running 0 "Downloading"
+  run flatpak_progress flatpak install --user -y flathub "$ref" </dev/null || code=$?
+  ((code == 0)) || finish_failed "$(plain "Flathub could not install it")"
+}
+
+install_arch() { # source json
+  apply install "$(jq -r .package <<<"$1")"
+}
+
+install_nova() { # source json
+  local package cache result kind commit file
+  package=$(jq -r .package <<<"$1")
+  cache=${XDG_CACHE_HOME:-$HOME/.cache}/nova
+  mkdir -p "$cache"
+  # Gone as this ends (on_exit).
+  build=$(mktemp -d "$cache/apps-build.XXXXXX")
+  status running -1 "Building"
+  run build_progress nova-apps-install --build "$build" --only "$package" || true
+  result=$(cat "$build/result" 2>/dev/null || true)
+  read -r kind _ commit file <<<"$result" || true
+  case $kind in
+    built) ;;
+    held) finish_failed "its recipe changed since Nova last built it; nova apps install, in a terminal, shows the change" ;;
+    unreachable) finish_failed "could not reach the AUR; check the connection and try again" ;;
+    *) finish_failed "it could not be built" ;;
+  esac
+  apply built "$file"
+  nova-apps-install --record "$package" "$commit"
+}
+
+remove_it() { # where
+  local how scope target code=0
+  read -r how scope target <<<"$1"
+  case $how in
+    flatpak)
+      status running 0 "Removing"
+      run flatpak_progress flatpak uninstall "--$scope" -y --noninteractive "$target" </dev/null || code=$?
+      ((code == 0)) || finish_failed "$(plain "Flathub could not remove it")"
+      # The runtimes no app needs any more, which are most of the room.
+      flatpak uninstall "--$scope" -y --noninteractive --unused >/dev/null 2>&1 || true
+      ;;
+    pacman) apply remove "$scope" ;;
+  esac
+}
+
+# --- main ----------------------------------------------------------------------
+
+where=$(where_installed)
+if [[ $action == install ]]; then
+  [[ -z $where ]] || finish_done "$name is installed already."
+  source=$(source_json)
+  [[ -n $source ]] || finish_failed "$name does not come from $(apps_source_name "${from:-anywhere}")"
+  kind=$(jq -r .kind <<<"$source")
+else
+  [[ -n $where ]] || finish_done "$name is not installed."
+  case $where in
+    flatpak*) kind=flathub ;;
+    pacman*) kind=$(jq -r --arg p "${where#pacman }" '[.sources[] | select(.package == $p) | .kind][0] // "arch"' <<<"$app") ;;
+  esac
+fi
+st_source=$kind
+
+if [[ -n $STATUS ]]; then
+  mkdir -p "$RUN_DIR"
+  LOG=$RUN_DIR/$id.log
+  : >"$LOG"
+  exec >>"$LOG" 2>&1
+fi
+
+# One at a time; the next waits its turn.
+status waiting -1 "Waiting"
+mkdir -p "$RUN_DIR"
+exec {work}>"$RUN_DIR/work.lock"
+flock "$work"
+
+[[ -z $STATUS ]] || echo "==> $action $id from $kind"
+if [[ $action == install ]]; then
+  case $kind in
+    flathub) install_flathub "$source" ;;
+    arch) install_arch "$source" ;;
+    nova) install_nova "$source" ;;
+  esac
+else
+  remove_it "$where"
+fi
+status "done" 100 ""

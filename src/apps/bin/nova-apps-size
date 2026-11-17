@@ -1,0 +1,26 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Print what installing a package from Arch's repositories would add, in bytes
+# nova:args=<package>
+#
+# "<download> <installed>": the package and whatever it needs that is not
+# installed yet, as pacman would install them now. The App Store's page
+# shows it as the app's size. Reads the package lists, and changes nothing.
+
+set -euo pipefail
+
+package=${1:-}
+[[ $package =~ ^[a-z0-9@_+][a-z0-9@._+-]*$ ]] || { echo "Usage: nova-apps-size <package>" >&2; exit 2; }
+
+mapfile -t names < <(LC_ALL=C pacman -Sp --print-format '%n' -- "$package" 2>/dev/null)
+((${#names[@]})) || { echo "0 0"; exit 0; }
+LC_ALL=C pacman -Si -- "${names[@]}" 2>/dev/null | awk '
+  function bytes(n, unit) {
+    if (unit == "KiB") return n * 1024
+    if (unit == "MiB") return n * 1048576
+    if (unit == "GiB") return n * 1073741824
+    return n
+  }
+  /^Download Size/ { split($0, f, ":"); split(f[2], v, " "); down += bytes(v[1], v[2]) }
+  /^Installed Size/ { split($0, f, ":"); split(f[2], v, " "); disk += bytes(v[1], v[2]) }
+  END { printf "%d %d\n", down, disk }'

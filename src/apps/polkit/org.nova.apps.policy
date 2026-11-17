@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- The App Store's root half: an app from Arch's repositories goes in as
+     root, so each install and removal takes an administrator's password or
+     finger, as an update does. Flathub's apps go into the user's own
+     installation and ask for nothing. -->
+<policyconfig>
+  <vendor>Nova</vendor>
+  <action id="org.nova.apps">
+    <description>Install or remove an app</description>
+    <message>Authentication is required to install or remove an app</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/nova/nova-apps-apply</annotate>
+  </action>
+</policyconfig>

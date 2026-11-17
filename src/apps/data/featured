@@ -1,0 +1,61 @@
+# The App Store's front page: a few good apps for each category, in the order
+# they are shown. "category id": the category's key (create, work, play,
+# develop, internet, media, learn, utilities) and the app's AppStream ID. An
+# app missing from the catalog is left out; a category's page shows these
+# first, then the rest of it.
+
+create org.gimp.GIMP
+create org.inkscape.Inkscape
+create org.kde.krita
+create org.darktable.Darktable
+create org.blender.Blender
+create com.github.PintaProject.Pinta
+
+work org.libreoffice.LibreOffice
+work md.obsidian.Obsidian
+work org.onlyoffice.desktopeditors
+work org.zotero.Zotero
+work com.github.johnfactotum.Foliate
+work org.gnome.Papers
+
+play com.valvesoftware.Steam
+play com.heroicgameslauncher.hgl
+play net.lutris.Lutris
+play org.prismlauncher.PrismLauncher
+play net.supertuxkart.SuperTuxKart
+play com.play0ad.zeroad
+
+develop com.visualstudio.code
+develop dev.zed.Zed
+develop io.podman_desktop.PodmanDesktop
+develop io.dbeaver.DBeaverCommunity
+develop com.usebruno.Bruno
+develop org.gnome.meld
+
+internet com.google.Chrome
+internet org.mozilla.firefox
+internet org.mozilla.Thunderbird
+internet org.signal.Signal
+internet com.discordapp.Discord
+internet org.localsend.localsend_app
+
+media org.videolan.VLC
+media com.obsproject.Studio
+media org.kde.kdenlive
+media org.audacityteam.Audacity
+media com.spotify.Client
+media fr.handbrake.ghb
+
+learn net.ankiweb.Anki
+learn org.stellarium.Stellarium
+learn org.geogebra.GeoGebra
+learn org.kde.kstars
+learn org.gnome.Maps
+learn org.kde.marble
+
+utilities io.missioncenter.MissionCenter
+utilities com.bitwarden.desktop
+utilities org.keepassxc.KeePassXC
+utilities com.github.tchx84.Flatseal
+utilities io.gitlab.adhami3310.Impression
+utilities org.gnome.baobab

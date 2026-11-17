@@ -1,0 +1,38 @@
+#!/bin/bash
+# nova:summary=Look for apps to install, as the App Store does
+# nova:args=<words>...
+#
+# The best matches first, as the App Store lists them: by how well the name,
+# a keyword, the summary or the ID matches every word, and then by the
+# store's own order. Each with where it comes from, the first being the one
+# nova apps install takes, and whether it is installed.
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=src/apps/bin/nova-apps-common
+source "$HERE/nova-apps-common"
+
+(($#)) || { echo "Usage: nova apps search <words>..." >&2; exit 2; }
+catalog=$(apps_catalog) || { echo "nova apps: the App Store's catalog could not be made" >&2; exit 1; }
+installed=$(nova-apps-installed)
+
+found=$(jq -r --arg q "$*" --argjson have "$installed" "$APPS_SCORE"'
+  def names: {nova: "Nova", arch: "Arch Linux", flathub: "Flathub"};
+  def is_installed($have):
+    any(.sources[]; (.kind == "flathub" and (.app as $a | any($have.flatpak[]; .app == $a)))
+      or (.kind != "flathub" and ($have.pacman[.package // ""] != null)));
+  ($q | ascii_downcase | split(" ") | map(select(. != ""))) as $words
+  | [.apps[] | {app: ., order: order($words)} | select(.order > 0)]
+  | sort_by(-.order, (.app.name | ascii_downcase))
+  | .[:20][] | .app
+  | [.name, .id, ([.sources[].kind | names[.]] | join(", ")), (if is_installed($have) then "installed" else "" end), (.summary // "")]
+  | join("\u001f")' "$catalog")
+
+[[ -n $found ]] || { echo "Nothing found for: $*"; exit 1; }
+# Split at a character no name has, and not at tabs, which read takes
+# together, so that an empty field would be lost.
+while IFS=$'\x1f' read -r name id sources state summary; do
+  printf '%s  %s  (%s)%s\n' "$name" "$id" "$sources" "${state:+  $state}"
+  [[ -z $summary ]] || printf '    %s\n' "$summary"
+done <<<"$found"

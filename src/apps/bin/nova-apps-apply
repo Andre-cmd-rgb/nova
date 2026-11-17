@@ -1,0 +1,142 @@
+#!/bin/bash
+# nova-apps-apply: the root half of installing and removing an app from
+# Arch's repositories, for the App Store and `nova apps` (through pkexec, as
+# org.nova.apps).
+#
+#   install <package>   install an app Arch's catalog lists
+#   remove <package>    remove an installed app, and what it alone needed
+#   built <file>        install Chrome or VS Code, built by nova apps install
+#                       (nova-update-apply checks and installs it)
+#
+# Never a partial upgrade. Nova pins Arch's repositories to the snapshot the
+# release was tested against, and nova update reads their package lists and
+# brings every package to them in one step, so on a system that is up to
+# date the lists and the packages are the same snapshot, and an app goes in
+# from it as it was tested. This never reads newer lists (no -y, which would
+# leave everything else behind them): only lists that are missing, as on a
+# system installed from a stick, which the pins make the same snapshot.
+# And it installs nothing on a system whose packages are behind its lists,
+# as an update that did not finish leaves it (pacman -Qu): an app from
+# newer lists could bring a library newer than what uses it. Packages held
+# back with IgnorePkg are the owner's choice, and do not count.
+#
+# Nothing here runs while nova update does, nor the other way round: both
+# take /run/nova-update.lock. snap-pac takes a snapshot before and after, as
+# for any pacman transaction.
+#
+# Exit status: 0 done; 1 failed; 2 bad arguments; 3 refused, the system not
+# up to date (said why); 75 an update or another install is running.
+#
+# Run through pkexec, so it trusts nothing it is given.
+
+set -euo pipefail
+
+ROOT=${NOVA_ROOT:-} # a test seam; pkexec strips the environment
+MIRRORLIST=$ROOT/etc/pacman.d/nova-mirrorlist
+REPOFILE=$ROOT/etc/pacman.d/nova-repo
+SYNC_DIR=$ROOT/var/lib/pacman/sync
+SWCATALOG=$ROOT/usr/share/swcatalog
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+say() { printf '==> %s\n' "$*"; }
+die() {
+  printf 'nova-apps-apply: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+usage() { die "usage: nova-apps-apply install|remove <package> | built <file>" 2; }
+
+(($# == 2)) || usage
+action=$1 target=$2
+case $action in
+  install | remove)
+    # A package's name, which never begins as an option does.
+    [[ $target =~ ^[a-z0-9@_+][a-z0-9@._+-]*$ ]] || usage
+    ;;
+  built) ;;
+  *) usage ;;
+esac
+((EUID == 0)) || [[ -n $ROOT ]] || die "this runs as root; use nova apps or the App Store"
+
+mkdir -p "$ROOT/run"
+exec {lock}>"$ROOT/run/nova-update.lock"
+flock -n "$lock" || die "Nova is installing an update or another app; try again once it is done" 75
+
+if [[ $action == built ]]; then
+  # Under the lock nova-update-apply takes too: it is let go first.
+  exec {lock}>&-
+  exec "${NOVA_UPDATE_APPLY:-$HERE/bin/nova-update-apply}" --packages-only --package "$target"
+fi
+
+# An update that stopped before its end leaves the pins of the release it was
+# for beside copies of the ones before it.
+unfinished() {
+  local f
+  for f in "$MIRRORLIST" "$REPOFILE" "$SYNC_DIR"; do
+    [[ ! -e $f.nova-prev && ! -e $f.nova-absent ]] || return 0
+  done
+  [[ ! -e $REPOFILE.nova-boot-unchecked ]] || return 0
+  return 1
+}
+
+# Whether Arch's catalog lists the package as an app: what this installs.
+an_app() { # package
+  local file
+  for file in "$SWCATALOG"/xml/*.xml.gz; do
+    [[ -e $file ]] || continue
+    zgrep -qF "<pkgname>$1</pkgname>" "$file" && return 0
+  done
+  return 1
+}
+
+# The package lists a system installed from a stick has none of. The pins
+# make them the release's snapshot, the one the packages are from.
+read_missing_lists() {
+  local repo
+  for repo in $(pacman-conf --repo-list 2>/dev/null); do
+    if [[ ! -e $SYNC_DIR/$repo.db ]]; then
+      say "Reading the package lists"
+      pacman -Sy --noconfirm
+      return
+    fi
+  done
+}
+
+install_app() {
+  local behind
+  if unfinished; then
+    die "the last update did not finish: Settings, Updates finishes it, and then the app can be installed" 3
+  fi
+  an_app "$target" || die "$target is not an app in Arch's catalog"
+  read_missing_lists
+  pacman -Si -- "$target" >/dev/null 2>&1 || die "$target is not in the release's repositories"
+  behind=$(pacman -Qu 2>/dev/null | grep -v '\[ignored\]$' | awk '{ print $1 }' | paste -sd' ' || true)
+  [[ -z $behind ]] || die "this computer's packages are older than its package lists ($behind): update Nova first, in Settings, Updates" 3
+  say "Installing $target"
+  stdbuf -oL pacman -S --needed --noconfirm -- "$target"
+}
+
+remove_app() {
+  local owner
+  pacman -Q -- "$target" >/dev/null 2>&1 || die "$target is not installed"
+  case $target in
+    nova | nova-*) die "$target is part of Nova" ;;
+  esac
+  # An app: it has a launcher entry. Not a library or a tool, which other
+  # things use.
+  pacman -Qlq -- "$target" 2>/dev/null | grep -qE '^/usr/share/applications/[^/]+\.desktop$' ||
+    die "$target is not an app"
+  # Nova needs it.
+  owner=$(LC_ALL=C pacman -Qi nova 2>/dev/null | awk '/^Depends On/ { on = 1; sub(/^[^:]*:/, ""); print; next } on && /^ / { print; next } { on = 0 }' |
+    tr -s ' ' '\n' | sed -E 's/[<>=].*//' | grep -cx -- "$target" || true)
+  ((owner == 0)) || die "$target is part of Nova"
+  say "Removing $target"
+  # pacman refuses a removal that would break anything installed, and says
+  # what; what nothing else needs goes with it.
+  stdbuf -oL pacman -Rns --noconfirm -- "$target"
+}
+
+case $action in
+  install) install_app ;;
+  remove) remove_app ;;
+esac

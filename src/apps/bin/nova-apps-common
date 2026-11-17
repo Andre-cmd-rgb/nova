@@ -1,0 +1,84 @@
+# shellcheck shell=bash
+# nova:hidden=true
+# nova:summary=What the App Store's commands share (sourced, not run)
+#
+# The catalog (nova-apps-catalog), finding an app in it by a word, the
+# names of the places an app comes from, and how each is searched: the
+# order here is the App Store's own (StoreModel.js), so that `nova apps
+# search` and the window list alike.
+
+# The catalog's file, made first if what it is made from changed.
+apps_catalog() {
+  local path
+  path=$(nova-apps-catalog) || return 1
+  [[ -s $path ]] || return 1
+  printf '%s\n' "$path"
+}
+
+# Every app the word names, as JSON lines: one whose ID is it (with or
+# without the .desktop an older ID ends in), else one with that package or
+# Flathub ID, else one of that name, else one with the word in its name or
+# at the end of its ID, the front page's if one of them is on it ("chrome"
+# is Google Chrome, not Google Chrome (unstable)); case aside.
+apps_find() { # catalog word
+  jq -c --arg q "$2" '
+    ($q | ascii_downcase) as $w
+    | [.apps[] | select((.id | ascii_downcase) as $i | $i == $w or ($i | rtrimstr(".desktop")) == $w)] as $by_id
+    | [.apps[] | select(any(.sources[]; (.package // "") == $q or ((.app // "") | ascii_downcase) == $w))] as $by_package
+    | [.apps[] | select((.name | ascii_downcase) == $w)] as $by_name
+    | [.apps[] | select((.name | ascii_downcase | split(" ") | index($w)) or (.id | ascii_downcase | split(".") | last) == $w)] as $by_word
+    | [$by_word[] | select(.featured)] as $featured
+    | (if ($by_id | length) > 0 then $by_id elif ($by_package | length) > 0 then $by_package
+       elif ($by_name | length) > 0 then $by_name elif ($featured | length) == 1 then $featured else $by_word end)[]' "$1"
+}
+
+# The one app the word names, as JSON; or, on stderr, that none or more
+# than one does, and a failure.
+apps_one() { # catalog word
+  local found count
+  found=$(apps_find "$1" "$2")
+  count=$(grep -c . <<<"$found" || true)
+  if ((count == 0)); then
+    echo "nova apps: no app called '$2'; nova apps search $2 looks for it" >&2
+    return 1
+  elif ((count > 1)); then
+    echo "nova apps: more than one app is called '$2'; name one by its ID:" >&2
+    jq -r '"  \(.id)  \(.name)"' <<<"$found" >&2
+    return 1
+  fi
+  printf '%s\n' "$found"
+}
+
+# What the store calls each place an app comes from.
+apps_source_name() { # kind
+  case $1 in
+    nova) echo "Nova" ;;
+    arch) echo "Arch Linux" ;;
+    flathub) echo "Flathub" ;;
+    *) echo "$1" ;;
+  esac
+}
+
+# jq's half of the search: how well an app matches the words, 0 for not at
+# all. Each word must match its name, a keyword, its summary or its ID; a
+# match at the start of the name counts most. A match is then ordered by
+# that and a quarter of the app's rank, so that an app of the front page
+# that matches at all comes before one that only has the word for a name.
+# The App Store's StoreModel.js orders the same.
+# shellcheck disable=SC2016,SC2034 # jq's $ variables; used by what sources this
+APPS_SCORE='
+  def word_score($w):
+    (.name | ascii_downcase) as $n
+    | if $n == $w then 100
+      elif ($n | startswith($w)) then 80
+      elif ($n | split(" ") | any(startswith($w))) then 60
+      elif ((.keywords // "") | ascii_downcase | split(" ") | any(startswith($w))) then 40
+      elif ((.summary // "") | ascii_downcase | contains($w)) then 20
+      elif (.id | ascii_downcase | contains($w)) then 10
+      else 0 end;
+  def score($words):
+    [$words[] as $w | word_score($w)] as $s
+    | if ($s | length) == 0 or ($s | any(. == 0)) then 0 else ($s | add) end;
+  def order($words):
+    score($words) as $s | if $s == 0 then 0 else $s + ((.rank // 0) / 4 | floor) end;
+'

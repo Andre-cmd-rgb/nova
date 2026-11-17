@@ -1,0 +1,32 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Print what is installed, as JSON, for the App Store
+#
+# One object: "flatpak", each Flathub app installed and in which
+# installation, the user's or the system's; "runtimes", the runtimes there;
+# "pacman", each package and its version; "explicit", the ones installed by
+# name; and "nova", the ones the nova package needs, which are part of Nova
+# and are not removed. The App Store matches its catalog against it; nothing
+# here reaches the network.
+
+set -euo pipefail
+
+flatpaks='[]' runtimes='[]'
+if command -v flatpak >/dev/null; then
+  flatpaks=$(flatpak list --app --columns=application,installation,version 2>/dev/null |
+    jq -Rc 'split("\t") | select(length >= 2 and .[0] != "") | {app: .[0], installation: .[1], version: (.[2] // "")}' |
+    jq -sc .) || flatpaks='[]'
+  runtimes=$(flatpak list --runtime --columns=ref 2>/dev/null | jq -Rc 'select(. != "")' | jq -sc .) || runtimes='[]'
+fi
+
+packages=$(LC_ALL=C pacman -Q 2>/dev/null | jq -Rc 'split(" ") | select(length == 2) | {(.[0]): .[1]}' | jq -sc 'add // {}') || packages='{}'
+explicit=$(LC_ALL=C pacman -Qqe 2>/dev/null | jq -Rc 'select(. != "")' | jq -sc .) || explicit='[]'
+# "Depends On : a  b>=1  c", over as many lines as it takes.
+nova=$(LC_ALL=C pacman -Qi nova 2>/dev/null |
+  awk '/^Depends On/ { on = 1; sub(/^[^:]*:/, ""); print; next } on && /^ / { print; next } { on = 0 }' |
+  tr -s ' ' '\n' | sed -E 's/[<>=].*//' | grep -vx -e '' -e None |
+  jq -Rc . | jq -sc .) || nova='[]'
+
+jq -nc --argjson flatpak "$flatpaks" --argjson runtimes "$runtimes" --argjson pacman "$packages" \
+  --argjson explicit "$explicit" --argjson nova "$nova" \
+  '{flatpak: $flatpak, runtimes: $runtimes, pacman: $pacman, explicit: $explicit, nova: $nova}'

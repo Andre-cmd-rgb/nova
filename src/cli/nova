@@ -11,9 +11,11 @@ set -euo pipefail
 readonly bin=${NOVA_BIN:-/usr/lib/nova/bin}
 
 # Compiled helpers cannot carry a summary comment, or a hidden one: "" keeps
-# one out of the help. nova-undervolt is nova power undervolt's own half.
+# one out of the help. nova-undervolt is nova power undervolt's own half,
+# nova-apps-catalog the App Store's list of apps.
 declare -A compiled=(
   [nova-airdrop]="Send to and receive from iPhones nearby with AirDrop"
+  [nova-apps-catalog]=""
   [nova-theme]="Switch themes and backgrounds, and read theme colors"
   [nova-undervolt]=""
 )

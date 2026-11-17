@@ -1,0 +1,14 @@
+[package]
+name = "nova-apps"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's App Store catalog: Flathub's, Arch's and Nova's own apps, each once"
+license = "MIT"
+rust-version = "1.89"
+
+# No dependencies, like the rest of Nova's Rust: AppStream needs only enough
+# XML to read a catalog, and gzip and the image conversion are the system's.
+
+[[bin]]
+name = "nova-apps-catalog"
+path = "src/main.rs"

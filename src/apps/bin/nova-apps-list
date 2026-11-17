@@ -1,0 +1,27 @@
+#!/bin/bash
+# nova:summary=List the apps installed, as the App Store's Installed page does
+#
+# Every app of the App Store's catalog that is installed, by name, with where
+# it came from; the ones that are part of Nova are said to be.
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=src/apps/bin/nova-apps-common
+source "$HERE/nova-apps-common"
+
+(($# == 0)) || { echo "Usage: nova apps list" >&2; exit 2; }
+catalog=$(apps_catalog) || { echo "nova apps: the App Store's catalog could not be made" >&2; exit 1; }
+installed=$(nova-apps-installed)
+
+jq -r --argjson have "$installed" '
+  def names: {nova: "Nova", arch: "Arch Linux", flathub: "Flathub"};
+  .apps[] as $app
+  | first($app.sources[] as $s
+      | if $s.kind == "flathub" then
+          ($have.flatpak[] | select(.app == $s.app) | "Flathub")
+        elif $have.pacman[$s.package // ""] then
+          names[$s.kind] + (if ($have.nova | index($s.package)) then ", part of Nova" else "" end)
+        else empty end)
+  | "\($app.name)\t\(.)\t\($app.id)"' "$catalog" |
+  LC_ALL=C sort -f | awk -F'\t' '{ printf "%-36s %-24s %s\n", $1, $2, $3 }'

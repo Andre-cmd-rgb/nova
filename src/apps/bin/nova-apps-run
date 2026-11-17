@@ -1,0 +1,30 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=Start installing or removing an app for the App Store, out of sight
+# nova:args=install|remove <app-id> [--from nova|arch|flathub]
+#
+# As a user service of its own (nova-apps-<id>), so that it goes on with the
+# App Store's window closed. How far it is, is in
+# $XDG_RUNTIME_DIR/nova/apps/status.json (nova-apps-job --status). One per
+# app: while one runs for it, this does nothing.
+
+set -euo pipefail
+
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+
+action=${1:-} id=${2:-}
+[[ ($action == install || $action == remove) && $id =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] || {
+  echo "Usage: nova-apps-run install|remove <app-id> [--from nova|arch|flathub]" >&2
+  exit 2
+}
+shift 2
+case "$*" in
+  "" | "--from nova" | "--from arch" | "--from flathub") ;;
+  *) echo "nova-apps-run: unknown arguments: $*" >&2; exit 2 ;;
+esac
+
+unit=nova-apps-$(systemd-escape -- "$id")
+! systemctl --user --quiet is-active "$unit.service" || exit 0
+mkdir -p "${XDG_RUNTIME_DIR:?}/nova/apps"
+exec systemd-run --user --quiet --collect --unit="$unit" --service-type=exec \
+  --setenv=PATH="$PATH" -- "$HERE/nova-apps-job" "$action" "$id" "$@" --status

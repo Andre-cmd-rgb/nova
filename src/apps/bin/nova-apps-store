@@ -1,0 +1,25 @@
+#!/bin/bash
+# nova:summary=Open the App Store, on an app's page or a search
+# nova:args=[<app> | --search <words>...]
+#
+#   nova apps store                 its front page
+#   nova apps store org.gimp.GIMP   an app's page, by its ID (an appstream://
+#                                   link, as a web page offers one, too)
+#   nova apps store --search paint  what a search finds
+
+set -euo pipefail
+
+payload='{}'
+case ${1:-} in
+  "") ;;
+  --search)
+    shift
+    payload=$(jq -nc --arg q "$*" '{search: $q}')
+    ;;
+  -*) echo "Usage: nova apps store [<app> | --search <words>...]" >&2; exit 2 ;;
+  *)
+    (($# == 1)) || { echo "Usage: nova apps store [<app> | --search <words>...]" >&2; exit 2; }
+    payload=$(jq -nc --arg app "${1#appstream:}" '{app: ($app | ltrimstr("//"))}')
+    ;;
+esac
+exec nova-shell shell summon nova.store "$payload"
