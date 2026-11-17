@@ -10,7 +10,8 @@ import "NotificationLogic.js" as Notes
 // Nova's notifications: the server on the session bus, and its toasts at the
 // top right of every screen. A toast goes after its lifetime (a critical one
 // never does) and waits while the pointer is on it; a click runs its action
-// or brings its app forward, a right click dismisses it. Nova's own may have
+// or brings its app forward (not an iPhone's: the nova-iphone hint), a right
+// click dismisses it. Nova's own may have
 // buttons (the nova-buttons hint: AirDrop's Decline and Accept) and a bar
 // (the value hint: a transfer under way).
 //
@@ -234,7 +235,11 @@ Item {
         return
       }
       delete senders[id]
-      notification.expire()
+      try {
+        notification.expire()
+      } catch (e) {
+        // Freed by the server.
+      }
       return
     }
 
@@ -377,16 +382,17 @@ Item {
 
   // A click on toast `index`: the command it carries, run apart from the
   // shell (an installer's restarts it); else its sender's default action;
-  // else its app brought forward, as chat apps expect. Then it goes. One from
-  // before has neither sender nor actions. One with buttons and no command
-  // is answered with its buttons: a click beside them leaves it there.
+  // else its app brought forward, as chat apps expect, but for an iPhone's,
+  // whose app is not this computer's. Then it goes. One from before has
+  // neither sender nor actions. One with buttons and no command is answered
+  // with its buttons: a click beside them leaves it there.
   function invoke(index) {
     if (index < 0 || index >= toasts.count) return
     var row = toasts.get(index)
     var argv = Notes.runnable(row.execArgv)
     if (!argv && Notes.buttonsOf(row.buttons).length > 0) return
     if (argv) Util.execArgv(argv)
-    else if (!runDefault(senderOf(row)) && row.app) bringForward.start(row.app)
+    else if (!runDefault(senderOf(row)) && row.app && !row.iphone) bringForward.start(row.app)
     dismiss(index)
   }
 

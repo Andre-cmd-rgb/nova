@@ -52,6 +52,12 @@ ShellRoot {
     check(Notes.quiet({ hints: { "nova-quiet": true } }) && !Notes.quiet({ hints: {} }) && !Notes.quiet({})
       && !Notes.quiet({ get hints() { throw new Error("gone") } }),
       "one sent with nova-quiet goes to the history alone")
+    check(Notes.fromIphone({ hints: { "nova-iphone": true } }) && !Notes.fromIphone({ hints: { "nova-iphone": "false" } })
+      && !Notes.fromIphone({}) && !Notes.fromIphone({ get hints() { throw new Error("gone") } })
+      && Notes.rowOf({ id: 4, appName: "WhatsApp", hints: { "nova-iphone": true } }, 1).iphone === true
+      && Notes.historyRow({ iphone: true }).iphone === true && Notes.historyRow({}).iphone === false
+      && Notes.parseFiles(Notes.line({ id: 4, app: "WhatsApp", timestamp: 1, iphone: true }))[0].iphone === true,
+      "one from an iPhone (nova-iphone) is marked so in its row, and its file keeps the mark")
     check(Notes.lifetime(2, 99999) === 0 && Notes.lifetime(0, 0) === 5000 && Notes.lifetime(1, -1) === 8000
       && Notes.lifetime(1, 12000.4) === 12000 && Notes.lifetime(1, 60000) === 30000,
       "a toast stays 5 s low, 8 s normal, longer if asked up to 30 s, and a critical one until closed")
@@ -68,7 +74,7 @@ ShellRoot {
       && JSON.stringify(byPath.copies) === JSON.stringify([{ from: "/tmp/chrome/p.png", to: "/s/5-3-image" }]),
       "a picture sent by its path is copied too, an icon's name is not")
     check(Notes.line({ id: 3, originalId: 3, app: "a", timestamp: 5, deadline: 9, extra: 1 })
-      === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"deadline\":9}",
+      === "{\"id\":3,\"originalId\":3,\"app\":\"a\",\"appIcon\":\"\",\"summary\":\"\",\"body\":\"\",\"image\":\"\",\"glyph\":\"\",\"execArgv\":\"\",\"buttons\":\"\",\"urgency\":1,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":5,\"iphone\":false,\"deadline\":9}",
       "a toast's file: one line, its keys in order")
 
     var raw = "{\"id\":1,\"timestamp\":10}\n{\"id\":2,\"summary\":\"Torn\n{\"id\":3,\"timestamp\":30,\"expireTimeout\":-4}\n"
@@ -97,7 +103,7 @@ ShellRoot {
     var sent = { id: 7, appName: "Mail", appIcon: "", summary: 5, body: "b", image: "", urgency: 0, expireTimeout: -3,
       hints: { "nova-glyph": "g", "nova-exec-argv": "[\"x\"]" } }
     var row = Notes.rowOf(sent, 50)
-    check(JSON.stringify(row) === "{\"id\":7,\"originalId\":7,\"app\":\"Mail\",\"appIcon\":\"\",\"summary\":\"5\",\"body\":\"b\",\"image\":\"\",\"glyph\":\"g\",\"execArgv\":\"[\\\"x\\\"]\",\"buttons\":\"\",\"urgency\":0,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":50}"
+    check(JSON.stringify(row) === "{\"id\":7,\"originalId\":7,\"app\":\"Mail\",\"appIcon\":\"\",\"summary\":\"5\",\"body\":\"b\",\"image\":\"\",\"glyph\":\"g\",\"execArgv\":\"[\\\"x\\\"]\",\"buttons\":\"\",\"urgency\":0,\"expireTimeout\":0,\"progress\":-1,\"timestamp\":50,\"iphone\":false}"
       && Notes.rowOf(sent, 50, 3).id === 3 && Notes.rowOf(sent, 50, 3).originalId === 3,
       "a notification's row: its roles in the file's order, low urgency kept, under the toast's own id when given")
     var transfer = Notes.rowOf({ id: 8, appName: "nova-action", summary: "s", urgency: 2, hints: { "nova-buttons": buttons, "value": 35 } }, 60)

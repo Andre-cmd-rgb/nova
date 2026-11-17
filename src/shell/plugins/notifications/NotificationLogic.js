@@ -110,8 +110,20 @@ function markedTransient(notification) {
 // would (the nova-quiet hint): an iPhone's notification that the iPhone
 // itself delivered quietly.
 function quiet(notification) {
+  return flagged(notification, "nova-quiet")
+}
+
+// One from an iPhone (the nova-iphone hint, nova-iphone-notifications'): its
+// app is the iPhone's, and a click brings forward no app of this computer's
+// that has the same name.
+function fromIphone(notification) {
+  return flagged(notification, "nova-iphone")
+}
+
+// Whether the notification has hint <name>, true; asking one gone may throw.
+function flagged(notification, name) {
   try {
-    return !!notification.hints?.["nova-quiet"]
+    return notification.hints?.[name] === true
   } catch (gone) {
     return false
   }
@@ -180,8 +192,9 @@ function lifetime(urgency, expireTimeout) {
 // ------------------------------------------------------------------- rows
 
 // A row's roles, in the order its file has them. The card draws those from
-// app to progress, so they are what an update changes.
-var ROLES = ["id", "originalId", "app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "buttons", "urgency", "expireTimeout", "progress", "timestamp"]
+// app to progress, so they are what an update changes. `iphone` is whether
+// it came from an iPhone (fromIphone), which a click looks at.
+var ROLES = ["id", "originalId", "app", "appIcon", "summary", "body", "image", "glyph", "execArgv", "buttons", "urgency", "expireTimeout", "progress", "timestamp", "iphone"]
 var SHOWN = ROLES.slice(2, 13)
 var TEXTS = ROLES.slice(2, 10)
 
@@ -202,6 +215,7 @@ function historyRow(value) {
   row.expireTimeout = 0
   row.progress = -1
   row.timestamp = kept.timestamp || 0
+  row.iphone = kept.iphone === true
   return row
 }
 
@@ -231,7 +245,8 @@ function rowOf(notification, timestamp, id) {
     glyph: hint(notification.hints, "nova-glyph"),
     execArgv: hint(notification.hints, "nova-exec-argv"),
     buttons: hint(notification.hints, "nova-buttons"),
-    timestamp: timestamp
+    timestamp: timestamp,
+    iphone: fromIphone(notification)
   })
   row.urgency = notification.urgency
   row.expireTimeout = amount(notification.expireTimeout)
