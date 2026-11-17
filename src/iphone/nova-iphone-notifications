@@ -1,0 +1,1379 @@
+#!/usr/bin/python3
+# nova:summary=Show an iPhone's notifications on this computer
+# nova:hidden=true
+#
+# iPhone notifications: the computer takes the iPhone's notifications as a
+# watch does, through Apple's Notification Center Service (ANCS), and shows
+# them as Nova's own (docs/iphone.md has the why of each choice).
+#
+# - The iPhone is the one that connects, over Bluetooth Low Energy: the
+#   computer advertises, and an iPhone it is bonded with comes back to it by
+#   itself. The computer never scans, which is what crashes the Bluetooth of
+#   some Intel cards (the AX210's among them). After every loss of the link
+#   it advertises fast (20 ms) for half a minute, as Apple's accessory
+#   guidelines ask, then slowly (1285 ms, one of the intervals they name);
+#   while the iPhone is connected it does not advertise at all.
+# - Pairing is a window opened on request (`nova notification iphone pair`,
+#   Settings): for three minutes the computer is listed in the iPhone's
+#   Settings → Bluetooth, and a notification shows the code to compare. Only
+#   then is there a Bluetooth agent, and with no agent BlueZ lets no device
+#   pair and turns down an untrusted device's profiles: the iPhone, which is
+#   never trusted, cannot make the computer its headset.
+# - Shown: each notification added on the iPhone, with its app's name, its
+#   title and its message; taken down when the iPhone takes it down; one
+#   dismissed here is cleared on the iPhone too, one that ran out stays
+#   there. Not shown: those already there at a connection, calls, and the
+#   ones the iPhone delivers quietly, which go to the history alone.
+#
+# Its state for Settings and `nova notification iphone` is written to
+# $XDG_RUNTIME_DIR/nova/iphone-notifications.json at each change. It owns
+# org.nova.iPhoneNotifications on the session bus, where Pair opens the
+# pairing window and Answer is the pairing notification's buttons.
+#
+# NOVA_IPHONE_BUS=session puts BlueZ and logind on the session bus too, for
+# the tests' fake BlueZ; the NOVA_IPHONE_*_SECONDS variables shorten waits.
+import html
+import json
+import os
+import struct
+import sys
+import time
+import unicodedata
+from collections import deque, namedtuple
+
+import dbus
+import dbus.service
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+
+# ---------------------------------------------------------------- ANCS
+#
+# As Apple's specification has it: the service and its three
+# characteristics, the Notification Source's events, the Control Point's
+# commands and the Data Source's answers.
+
+ANCS_SERVICE = "7905f431-b5ce-4e99-a40f-4b1e122d00d0"
+NOTIFICATION_SOURCE = "9fbf120d-6301-42d9-8c58-25e699a21dbd"
+CONTROL_POINT = "69d1d8f3-45e1-49a8-9821-9bbdfdaad9d9"
+DATA_SOURCE = "22eac6e9-24d6-4bb5-be44-b36ace7c7bfb"
+
+# EventID
+ADDED, MODIFIED, REMOVED = 0, 1, 2
+# EventFlags
+SILENT, IMPORTANT, PRE_EXISTING, POSITIVE_ACTION, NEGATIVE_ACTION = 1, 2, 4, 8, 16
+# CategoryID
+(OTHER, INCOMING_CALL, MISSED_CALL, VOICEMAIL, SOCIAL, SCHEDULE, EMAIL, NEWS,
+ HEALTH_AND_FITNESS, BUSINESS_AND_FINANCE, LOCATION, ENTERTAINMENT) = range(12)
+# CommandID
+GET_NOTIFICATION_ATTRIBUTES, GET_APP_ATTRIBUTES, PERFORM_NOTIFICATION_ACTION = 0, 1, 2
+# NotificationAttributeID
+APP_IDENTIFIER, TITLE, SUBTITLE, MESSAGE, MESSAGE_SIZE, DATE = 0, 1, 2, 3, 4, 5
+# AppAttributeID
+DISPLAY_NAME = 0
+# ActionID
+POSITIVE, NEGATIVE = 0, 1
+
+# The most of each text asked for, in bytes: a toast shows two lines of title
+# and three of message, and every byte asked for crosses the radio.
+LIMITS = {TITLE: 128, SUBTITLE: 128, MESSAGE: 320}
+
+# A glyph for each category, as the iPhone's apps have no icon here.
+GLYPHS = {
+    MISSED_CALL: "\U000F03FA", VOICEMAIL: "\U000F057D", SOCIAL: "\U000F0369",
+    SCHEDULE: "\U000F00ED", EMAIL: "\U000F01EE", NEWS: "\U000F0395",
+    HEALTH_AND_FITNESS: "\U000F05F6", BUSINESS_AND_FINANCE: "\U000F0114",
+    LOCATION: "\U000F034E", ENTERTAINMENT: "\U000F0ECF",
+}
+PHONE_GLYPH = "\U000F011C"
+BLUETOOTH_GLYPH = "\U000F00AF"
+
+Event = namedtuple("Event", "kind flags category count uid")
+
+
+def parse_event(value):
+    """A Notification Source event, from its eight bytes, or None."""
+    data = bytes(value)
+    if len(data) != 8:
+        return None
+    event = Event(*struct.unpack("<BBBBI", data))
+    return event if event.kind <= REMOVED else None
+
+
+def notification_attributes_command(uid, attributes):
+    """Get Notification Attributes for <uid>: each attribute's ID, and the
+    texts' a length the answer may not pass."""
+    command = bytearray(struct.pack("<BI", GET_NOTIFICATION_ATTRIBUTES, uid))
+    for attribute in attributes:
+        command.append(attribute)
+        if attribute in LIMITS:
+            command += struct.pack("<H", LIMITS[attribute])
+    return bytes(command)
+
+
+def app_attributes_command(app):
+    """Get App Attributes for the app identifier <app> (bytes): its name."""
+    return bytes([GET_APP_ATTRIBUTES]) + bytes(app) + b"\0" + bytes([DISPLAY_NAME])
+
+
+def action_command(uid, action):
+    """Perform Notification Action: <action> on notification <uid>."""
+    return struct.pack("<BIB", PERFORM_NOTIFICATION_ACTION, uid, action)
+
+
+class Answer:
+    """A Data Source answer put back together from its fragments: an answer
+    has no length of its own, and is whole once every attribute asked for
+    is in. <start> is how it begins: the command's ID and the notification's
+    UID, or the app's identifier. Bytes before the start, left of an answer
+    that was given up on, are passed over."""
+
+    def __init__(self, start, wanted):
+        self.start = bytes(start)
+        self.wanted = frozenset(wanted)
+        self.buffer = b""
+
+    def feed(self, fragment):
+        """The attributes, {ID: bytes}, once all are in; None until then.
+        ValueError for an answer that cannot be the one asked for."""
+        self.buffer += bytes(fragment)
+        at = self.buffer.find(self.start)
+        if at < 0:
+            # What could be the start's first bytes is kept for the next one.
+            keep = len(self.start) - 1
+            self.buffer = self.buffer[-keep:] if keep else b""
+            return None
+        self.buffer = self.buffer[at:]
+        found = {}
+        position = len(self.start)
+        while len(found) < len(self.wanted):
+            if position + 3 > len(self.buffer):
+                return None
+            attribute, size = struct.unpack_from("<BH", self.buffer, position)
+            if attribute not in self.wanted or attribute in found:
+                raise ValueError(f"attribute {attribute} was not asked for")
+            if position + 3 + size > len(self.buffer):
+                return None
+            found[attribute] = self.buffer[position + 3:position + 3 + size]
+            position += 3 + size
+        return found
+
+
+def text(raw, limit=None):
+    """An attribute as text: UTF-8, its control characters spaces, its lines
+    without runs of space and none of them empty. Cut short by the iPhone at
+    <limit> bytes, half a character is dropped and it ends in an ellipsis."""
+    value = bytes(raw).decode("utf-8", "replace")
+    cut = limit is not None and len(raw) >= limit
+    if cut:
+        value = value.rstrip("�")
+    value = value.replace(" ", "\n").replace(" ", "\n")
+    value = "".join(" " if c != "\n" and unicodedata.category(c) == "Cc" else c for c in value)
+    value = "\n".join(line for line in (" ".join(part.split()) for part in value.split("\n")) if line)
+    return value + "…" if cut and value else value
+
+
+def app_fallback(app):
+    """An app's name when the iPhone does not give it: the last part of its
+    identifier (net.whatsapp.WhatsApp is WhatsApp)."""
+    name = text(app).rsplit(".", 1)[-1]
+    return name or "iPhone"
+
+
+def toast_text(app, title, subtitle, message):
+    """A notification's summary and body: the app and the title, as the
+    iPhone's lock screen has them in that order, and the subtitle and the
+    message below. The body is markup to the shell, so it is escaped."""
+    summary = f"{app} · {title}" if title and title != app else app or title
+    body = "\n".join(part for part in (subtitle, message) if part)
+    return summary, html.escape(body, quote=False)
+
+
+def parse_date(value):
+    """The Date attribute, yyyyMMdd'T'HHmmSS in the iPhone's local time, as
+    seconds since the epoch, or None."""
+    try:
+        return time.mktime(time.strptime(text(value), "%Y%m%dT%H%M%S"))
+    except (ValueError, OverflowError):
+        return None
+
+
+def arrived_while_away(date, dropped, now):
+    """Whether a notification of <date> came after the link dropped at
+    <dropped>, give or take a minute of the two clocks, and not from the
+    future."""
+    when = parse_date(date)
+    return when is not None and dropped - 60 <= when <= now + 300
+
+
+# --------------------------------------------------------------- tunables
+
+def seconds(name, default):
+    try:
+        return float(os.environ.get(f"NOVA_IPHONE_{name}_SECONDS", default))
+    except ValueError:
+        return float(default)
+
+
+# Apple's accessory guidelines: 20 ms for the first 30 s, then a longer
+# interval from their list; 1285 ms is the longest, and a whole number of
+# milliseconds, which is what BlueZ takes. The pairing window advertises as
+# the kernel does for a discoverable controller.
+INTERVALS = {"pairing": (100, 150), "fast": (20, 30), "slow": (1285, 1285)}
+FAST_SECONDS = seconds("FAST", 30)
+PAIR_SECONDS = seconds("PAIR", 180)
+# How long an answer on the Data Source may take.
+REPLY_SECONDS = seconds("REPLY", 5)
+# A connection back within this long counts as a blip (a reset of the card,
+# a sleep of a minute): notifications that came meanwhile are shown, a few.
+MISSED_SECONDS = seconds("MISSED", 300)
+MISSED_MOST = 5
+CALL_TIMEOUT = 10
+
+BLUEZ = "org.bluez"
+ADAPTER = "org.bluez.Adapter1"
+DEVICE = "org.bluez.Device1"
+LE_BEARER = "org.bluez.Bearer.LE1"
+GATT_SERVICE = "org.bluez.GattService1"
+GATT_CHARACTERISTIC = "org.bluez.GattCharacteristic1"
+ADVERTISING_MANAGER = "org.bluez.LEAdvertisingManager1"
+ADVERTISEMENT = "org.bluez.LEAdvertisement1"
+AGENT_MANAGER = "org.bluez.AgentManager1"
+AGENT = "org.bluez.Agent1"
+PROPERTIES = "org.freedesktop.DBus.Properties"
+OBJECT_MANAGER = "org.freedesktop.DBus.ObjectManager"
+LOGIN = "org.freedesktop.login1"
+NOTIFICATIONS = "org.freedesktop.Notifications"
+NOTIFICATIONS_PATH = "/org/freedesktop/Notifications"
+NAME = "org.nova.iPhoneNotifications"
+NAME_PATH = "/org/nova/iPhoneNotifications"
+ADVERTISEMENT_PATH = "/org/nova/iphone/advertisement0"
+AGENT_PATH = "/org/nova/iphone/agent"
+
+# NotificationClosed's reasons
+EXPIRED, DISMISSED, CLOSED = 1, 2, 3
+
+
+def log(message):
+    print(f"nova-iphone-notifications: {message}", file=sys.stderr, flush=True)
+
+
+def now_boot():
+    """A clock that counts through sleep, unlike GLib's."""
+    return time.clock_gettime(time.CLOCK_BOOTTIME)
+
+
+def plain(value):
+    """A D-Bus value as plain Python: bytes for a byte array."""
+    if isinstance(value, (bytes, bytearray)):
+        return bytes(value)
+    if isinstance(value, dbus.Boolean):
+        return bool(value)
+    if isinstance(value, dbus.Array):
+        if value.signature == "y" or (value and all(isinstance(v, dbus.Byte) for v in value)):
+            return bytes(bytearray(value))
+        return [plain(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): plain(v) for k, v in value.items()}
+    if isinstance(value, str):
+        return str(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
+    return value
+
+
+def le_enabled(path):
+    """Whether BlueZ runs Bluetooth LE: ControllerMode in main.conf's
+    [General] is not bredr (Settings → Bluetooth → Bluetooth Low Energy)."""
+    mode, general = "dual", False
+    try:
+        with open(path, encoding="utf-8", errors="replace") as conf:
+            for line in conf:
+                stripped = line.strip()
+                if stripped.startswith("["):
+                    general = stripped == "[General]"
+                elif general and not stripped.startswith("#") and "=" in stripped:
+                    key, value = stripped.split("=", 1)
+                    if key.strip() == "ControllerMode":
+                        mode = value.split("#", 1)[0].strip()
+    except OSError:
+        pass
+    return mode != "bredr"
+
+
+class Rejected(dbus.DBusException):
+    _dbus_error_name = "org.bluez.Error.Rejected"
+
+
+class Objects:
+    """BlueZ's objects as it last said they were: path → interface →
+    properties, plain."""
+
+    def __init__(self):
+        self.tree = {}
+
+    def load(self, managed):
+        self.tree = {str(path): {str(i): plain(p) for i, p in interfaces.items()}
+                     for path, interfaces in managed.items()}
+
+    def added(self, path, interfaces):
+        entry = self.tree.setdefault(str(path), {})
+        for interface, properties in interfaces.items():
+            entry[str(interface)] = plain(properties)
+
+    def removed(self, path, interfaces):
+        entry = self.tree.get(str(path), {})
+        for interface in interfaces:
+            entry.pop(str(interface), None)
+        if not entry:
+            self.tree.pop(str(path), None)
+
+    def changed(self, path, interface, changed, invalidated):
+        entry = self.tree.get(str(path))
+        if entry is None or str(interface) not in entry:
+            return False
+        properties = entry[str(interface)]
+        properties.update(plain(changed))
+        for name in invalidated:
+            properties.pop(str(name), None)
+        return True
+
+    def get(self, path, interface, name, default=None):
+        return self.tree.get(path, {}).get(interface, {}).get(name, default)
+
+    def having(self, interface):
+        return sorted(path for path, entry in self.tree.items() if interface in entry)
+
+
+# ------------------------------------------------------------ D-Bus objects
+
+class Advertisement(dbus.service.Object):
+    """What the computer advertises; its properties are set before each
+    registration, and BlueZ reads them then."""
+
+    def __init__(self, bus, service):
+        super().__init__(bus, ADVERTISEMENT_PATH)
+        self.service = service
+        self.properties = {}
+
+    def set(self, mode, name):
+        low, high = INTERVALS[mode]
+        properties = {
+            "Type": dbus.String("peripheral"),
+            # What gets a computer into an iPhone's Settings → Bluetooth.
+            "SolicitUUIDs": dbus.Array([ANCS_SERVICE], signature="s"),
+            "Discoverable": dbus.Boolean(mode == "pairing"),
+            "MinInterval": dbus.UInt32(low),
+            "MaxInterval": dbus.UInt32(high),
+        }
+        if mode == "pairing" and name:
+            properties["LocalName"] = dbus.String(name)
+        self.properties = properties
+
+    @dbus.service.method(PROPERTIES, in_signature="s", out_signature="a{sv}")
+    def GetAll(self, interface):
+        if interface != ADVERTISEMENT:
+            raise dbus.exceptions.DBusException("no such interface", name="org.freedesktop.DBus.Error.InvalidArgs")
+        return dbus.Dictionary(self.properties, signature="sv")
+
+    @dbus.service.method(PROPERTIES, in_signature="ss", out_signature="v")
+    def Get(self, interface, name):
+        return self.GetAll(interface)[name]
+
+    @dbus.service.method(ADVERTISEMENT, in_signature="", out_signature="")
+    def Release(self):
+        self.service.advertisement_released()
+
+
+class Agent(dbus.service.Object):
+    """The pairing agent, there only while the pairing window is open. It
+    answers nothing by itself: a code is compared and agreed to by the user,
+    and a profile is never let in."""
+
+    def __init__(self, bus, service):
+        super().__init__(bus, AGENT_PATH)
+        self.service = service
+
+    @dbus.service.method(AGENT, in_signature="ou", out_signature="", async_callbacks=("ok", "fail"))
+    def RequestConfirmation(self, device, passkey, ok, fail):
+        self.service.ask(str(device), int(passkey), ok, fail)
+
+    @dbus.service.method(AGENT, in_signature="o", out_signature="", async_callbacks=("ok", "fail"))
+    def RequestAuthorization(self, device, ok, fail):
+        self.service.ask(str(device), None, ok, fail)
+
+    # The iPhone's audio and calls stay on the iPhone.
+    @dbus.service.method(AGENT, in_signature="os", out_signature="")
+    def AuthorizeService(self, device, uuid):
+        log(f"turned down a profile ({uuid}) of {device}")
+        raise Rejected("iPhone notifications let no profile in")
+
+    @dbus.service.method(AGENT, in_signature="o", out_signature="s")
+    def RequestPinCode(self, device):
+        raise Rejected("no PIN codes")
+
+    @dbus.service.method(AGENT, in_signature="o", out_signature="u")
+    def RequestPasskey(self, device):
+        raise Rejected("no passkeys to type")
+
+    @dbus.service.method(AGENT, in_signature="ouq", out_signature="")
+    def DisplayPasskey(self, device, passkey, entered):
+        pass
+
+    @dbus.service.method(AGENT, in_signature="os", out_signature="")
+    def DisplayPinCode(self, device, code):
+        pass
+
+    @dbus.service.method(AGENT, in_signature="", out_signature="")
+    def Cancel(self):
+        self.service.withdraw_question("cancelled by BlueZ")
+
+    @dbus.service.method(AGENT, in_signature="", out_signature="")
+    def Release(self):
+        self.service.agent_released()
+
+
+class Control(dbus.service.Object):
+    """org.nova.iPhoneNotifications, for `nova notification iphone`."""
+
+    def __init__(self, bus, service):
+        super().__init__(bus, NAME_PATH)
+        self.service = service
+
+    @dbus.service.method(NAME, in_signature="b", out_signature="b")
+    def Pair(self, only_without_iphone):
+        """Opens the pairing window; with <only_without_iphone>, only when no
+        iPhone is paired already (switching it on). Whether it opened."""
+        return self.service.open_pairing(bool(only_without_iphone))
+
+    @dbus.service.method(NAME, in_signature="b", out_signature="")
+    def Answer(self, yes):
+        self.service.answer(bool(yes))
+
+
+# ------------------------------------------------------------------ an iPhone
+
+class Phone:
+    """One iPhone (a BlueZ device with ANCS): its link, its subscriptions,
+    the commands it is asked one at a time, and the notifications shown."""
+
+    def __init__(self, service, path):
+        self.service = service
+        self.path = path
+        self.characteristics = {}  # role → path
+        self.connected = False
+        self.queue = deque()
+        self.current = None  # (kind, key, Answer or None, timer)
+        self.pending = {}  # uid → what is known of a notification to show
+        self.shown = {}  # uid → (notification id, flags)
+        self.known = set()
+        self.before = None
+        self.dropped_at = 0.0
+        self.dropped_wall = 0.0
+        self.missed_left = MISSED_MOST
+        self.apps = {}  # identifier (bytes) → name
+        self.waiting = {}  # identifier → uids waiting for its name
+        self.subscribing = False
+        self.asked = set()  # the characteristics subscribed to on this link
+        self.link_number = 0  # counts the links, so an answer from an old one is told apart
+        self.turned_down = False  # its pairing failed on this link
+        self.refused = False
+        self.retry = None
+        self.tries = 0
+
+    # -- what BlueZ says
+
+    def prop(self, interface, name, default=None):
+        return self.service.objects.get(self.path, interface, name, default)
+
+    @property
+    def bonded(self):
+        return bool(self.prop(DEVICE, "Bonded", False) or self.prop(DEVICE, "Paired", False))
+
+    @property
+    def name(self):
+        return self.prop(DEVICE, "Alias") or self.prop(DEVICE, "Name") or "iPhone"
+
+    def le_connected(self):
+        # The LE link itself: a dual-mode iPhone may be connected over
+        # classic Bluetooth alone, which is no use here.
+        if LE_BEARER in self.service.objects.tree.get(self.path, {}):
+            return bool(self.prop(LE_BEARER, "Connected", False))
+        return bool(self.prop(DEVICE, "Connected", False))
+
+    def notifying(self, role):
+        path = self.characteristics.get(role)
+        return bool(path and self.service.objects.get(path, GATT_CHARACTERISTIC, "Notifying", False))
+
+    @property
+    def ready(self):
+        return self.connected and self.notifying("ds") and self.notifying("ns")
+
+    def link(self):
+        """The connection's parameters, as the iPhone chose them."""
+        if not self.connected or self.prop(LE_BEARER, "Interval") is None:
+            return None
+        return {"interval": self.prop(LE_BEARER, "Interval") / 1000,
+                "latency": self.prop(LE_BEARER, "Latency"),
+                "timeout": self.prop(LE_BEARER, "SupervisionTimeout")}
+
+    def state(self):
+        if not self.connected:
+            return "waiting"
+        if self.ready:
+            return "connected"
+        return "not-shared" if self.refused else "connecting"
+
+    def refresh(self):
+        """Brought in line with BlueZ's objects, after any change."""
+        found = {}
+        for path, entry in self.service.objects.tree.items():
+            if not path.startswith(self.path + "/"):
+                continue
+            uuid = str(entry.get(GATT_CHARACTERISTIC, {}).get("UUID", "")).lower()
+            role = {NOTIFICATION_SOURCE: "ns", CONTROL_POINT: "cp", DATA_SOURCE: "ds"}.get(uuid)
+            if role:
+                found[role] = path
+        self.characteristics = found
+        connected = self.le_connected()
+        if connected and not self.connected:
+            self.connected = True
+            self.connect()
+        elif not connected and self.connected:
+            self.connected = False
+            self.disconnect()
+        if self.connected and len(found) == 3 and not self.ready:
+            self.subscribe()
+        self.pump()
+
+    def connect(self):
+        link = self.link()
+        if link:
+            log(f"{self.name} connected: interval {link['interval']:g} ms, latency {link['latency']}, "
+                f"supervision timeout {link['timeout']} ms")
+        else:
+            log(f"{self.name} connected")
+        self.missed_left = MISSED_MOST
+        self.refused = False
+        self.tries = 0
+        self.asked.clear()
+        self.link_number += 1
+        self.turned_down = False
+        # Ids under which the shell showed notifications before: the iPhone
+        # may number them anew, so a dismissal now clears nothing there.
+        self.shown.clear()
+
+    def disconnect(self):
+        log(f"{self.name} went away")
+        self.before = set(self.known)
+        self.dropped_at = now_boot()
+        self.dropped_wall = time.time()
+        self.known.clear()
+        self.queue.clear()
+        self.pending.clear()
+        self.waiting.clear()
+        self.give_up_current()
+        self.subscribing = False
+        if self.retry:
+            GLib.source_remove(self.retry)
+            self.retry = None
+        self.service.lost_link()
+
+    def gone(self):
+        """Its device is no more (forgotten, or BlueZ ended)."""
+        self.connected = False
+        self.queue.clear()
+        self.pending.clear()
+        self.give_up_current()
+        if self.retry:
+            GLib.source_remove(self.retry)
+            self.retry = None
+
+    # -- subscribing
+
+    def subscribe(self):
+        """The Data Source first, then the Notification Source: the iPhone
+        lists what it has the moment the second is subscribed, and an answer
+        needs the first. Not for an iPhone that is not paired, outside the
+        pairing window: subscribing is what makes it ask to pair."""
+        if self.subscribing or self.retry or len(self.characteristics) < 3:
+            return
+        if not self.bonded and (self.turned_down or not self.service.pairing_open()):
+            return
+        role = next((r for r in ("ds", "ns") if self.characteristics[r] not in self.asked), None)
+        if role is None:
+            return
+        self.subscribing = True
+        path = self.characteristics[role]
+        number = self.link_number
+        self.service.call(path, GATT_CHARACTERISTIC, "StartNotify", "", [],
+                          lambda *_: self.subscribed(number, role, path, None),
+                          lambda error: self.subscribed(number, role, path, error), timeout=40)
+
+    def subscribed(self, number, role, path, error):
+        if number != self.link_number:
+            return
+        self.subscribing = False
+        if not self.connected:
+            return
+        name = error.get_dbus_name() if error is not None else ""
+        # BlueZ keeps a subscription across reconnections, and answers
+        # InProgress while it is putting it back.
+        if error is not None and not name.endswith(".InProgress"):
+            why = f"{name}: {error.get_dbus_message()}"
+            if not self.bonded:
+                # Turned down at the pairing: not asked again on this link,
+                # unless it pairs after all.
+                log(f"{self.name} did not pair ({why})")
+                self.turned_down = True
+                self.service.update()
+                return
+            self.tries += 1
+            self.refused = True
+            delay = min(60, 5 * 2 ** min(self.tries - 1, 4))
+            log(f"could not subscribe to {self.name}'s {role} ({why}); again in {delay:g} s")
+            self.retry = GLib.timeout_add(int(delay * 1000), self.try_again)
+            self.service.update()
+            return
+        self.refused = False
+        self.asked.add(path)
+        self.subscribe()
+        self.service.update()
+
+    def try_again(self):
+        self.retry = None
+        if self.connected and not self.ready:
+            self.subscribe()
+        return False
+
+    # -- the iPhone's events
+
+    def event(self, value):
+        event = parse_event(value)
+        if event is None:
+            log("a malformed event, passed over")
+            return
+        uid = event.uid
+        if event.kind == REMOVED:
+            self.known.discard(uid)
+            self.pending.pop(uid, None)
+            if uid in self.shown:
+                self.service.close(self.shown.pop(uid)[0])
+            return
+        self.known.add(uid)
+        # Calls stay on the iPhone.
+        if event.category == INCOMING_CALL:
+            return
+        if event.kind == MODIFIED:
+            # Only one still on screen is drawn again.
+            if uid in self.shown and uid not in self.pending:
+                self.fetch(event, replace=True)
+            return
+        if event.flags & PRE_EXISTING:
+            if self.missed(uid):
+                self.fetch(event, missed=True)
+            return
+        self.fetch(event)
+
+    def missed(self, uid):
+        """A notification the iPhone had when the link came back, which it
+        did not have when the link dropped a moment before: it came in the
+        gap. Not after a longer absence (a night asleep): those are old."""
+        if self.before is None or uid in self.before or self.missed_left <= 0:
+            return False
+        if now_boot() - self.dropped_at > MISSED_SECONDS:
+            return False
+        self.missed_left -= 1
+        return True
+
+    def fetch(self, event, replace=False, missed=False):
+        self.pending[event.uid] = {"flags": event.flags, "category": event.category,
+                                   "replace": replace, "missed": missed}
+        self.queue.append(("note", event.uid))
+        self.pump()
+
+    # -- the Control Point, one command at a time
+
+    def writable(self):
+        return self.connected and "cp" in self.characteristics and self.notifying("ds")
+
+    def pump(self):
+        while self.current is None and self.queue and self.writable():
+            kind, key = self.queue.popleft()
+            if kind == "note":
+                if key not in self.pending:
+                    continue
+                attributes = [APP_IDENTIFIER, TITLE, SUBTITLE, MESSAGE]
+                if self.pending[key]["missed"]:
+                    attributes.append(DATE)
+                command = notification_attributes_command(key, attributes)
+                answer = Answer(command[:5], attributes)
+            elif kind == "app":
+                command = app_attributes_command(key)
+                answer = Answer(command[:-1], [DISPLAY_NAME])
+            else:
+                command = action_command(key, NEGATIVE)
+                answer = None
+            timer = GLib.timeout_add(int((REPLY_SECONDS + CALL_TIMEOUT) * 1000), self.timed_out)
+            self.current = (kind, key, answer, timer)
+            self.service.call(self.characteristics["cp"], GATT_CHARACTERISTIC, "WriteValue", "aya{sv}",
+                              [dbus.ByteArray(command), dbus.Dictionary({"type": "request"}, signature="sv")],
+                              lambda *_, mine=self.current: self.written(mine, None),
+                              lambda error, mine=self.current: self.written(mine, error))
+
+    def written(self, mine, error):
+        if self.current is not mine:
+            return
+        kind, key, answer, timer = mine
+        if error is not None:
+            # 0xA2 is a notification the iPhone no longer has.
+            log(f"the iPhone refused a command ({error.get_dbus_message()})")
+            self.finish(None)
+            return
+        if answer is None:
+            self.finish(None)
+            return
+        # The answer has REPLY_SECONDS from now.
+        GLib.source_remove(timer)
+        self.current = (kind, key, answer, GLib.timeout_add(int(REPLY_SECONDS * 1000), self.timed_out))
+
+    def timed_out(self):
+        if self.current is not None:
+            log(f"no answer from {self.name} in time")
+            self.current = (self.current[0], self.current[1], self.current[2], None)
+            self.finish(None)
+        return False
+
+    def give_up_current(self):
+        if self.current is not None and self.current[3] is not None:
+            GLib.source_remove(self.current[3])
+        self.current = None
+
+    def data(self, value):
+        if self.current is None or self.current[2] is None:
+            return
+        try:
+            found = self.current[2].feed(value)
+        except ValueError as error:
+            log(f"an answer that does not fit: {error}")
+            self.finish(None)
+            return
+        if found is not None:
+            self.finish(found)
+
+    def finish(self, found):
+        kind, key, _, _ = self.current
+        self.give_up_current()
+        if kind == "note":
+            self.noted(key, found)
+        elif kind == "app":
+            self.named(key, found)
+        self.pump()
+
+    def noted(self, uid, found):
+        info = self.pending.get(uid)
+        if info is None:
+            return
+        if found is None:
+            self.pending.pop(uid, None)
+            return
+        if info["missed"] and not arrived_while_away(found.get(DATE, b""), self.dropped_wall, time.time()):
+            self.pending.pop(uid, None)
+            return
+        info.update({"app": bytes(found.get(APP_IDENTIFIER, b"")), "title": text(found.get(TITLE, b""), LIMITS[TITLE]),
+                     "subtitle": text(found.get(SUBTITLE, b""), LIMITS[SUBTITLE]),
+                     "message": text(found.get(MESSAGE, b""), LIMITS[MESSAGE])})
+        app = info["app"]
+        if app in self.apps or not app:
+            self.show(uid)
+        elif app in self.waiting:
+            self.waiting[app].append(uid)
+        else:
+            self.waiting[app] = [uid]
+            # Next, ahead of the notifications waiting.
+            self.queue.appendleft(("app", app))
+
+    def named(self, app, found):
+        name = text(found.get(DISPLAY_NAME, b"")) if found else ""
+        if len(self.apps) > 200:
+            self.apps.clear()
+        self.apps[app] = name or app_fallback(app)
+        for uid in self.waiting.pop(app, []):
+            self.show(uid)
+
+    def show(self, uid):
+        info = self.pending.pop(uid, None)
+        if info is None:
+            return
+        if info["replace"] and uid not in self.shown:
+            return
+        app = self.apps.get(info["app"]) or (app_fallback(info["app"]) if info["app"] else "iPhone")
+        summary, body = toast_text(app, info["title"], info["subtitle"], info["message"])
+        replaces = self.shown[uid][0] if info["replace"] else 0
+        flags = info["flags"]
+
+        def shown(note):
+            # Removed on the iPhone while the shell was showing it.
+            if self.connected and uid not in self.known:
+                self.service.close(note)
+                return
+            self.shown[uid] = (note, flags)
+            self.service.notes[note] = (self.path, uid)
+
+        # That it came, never what it says.
+        log(f"notification {uid} {'changed' if replaces else 'shown'}{' quietly' if flags & SILENT else ''}")
+        self.service.notify(app, summary, body, GLYPHS.get(info["category"], PHONE_GLYPH),
+                            quiet=bool(flags & SILENT), replaces=replaces, then=shown)
+
+    def closed(self, uid, reason):
+        """The shell's notification of <uid> went: dismissed here, it is
+        cleared on the iPhone too, as a watch does; run out, or silenced by
+        Do Not Disturb, it stays there."""
+        entry = self.shown.pop(uid, None)
+        if entry is None or reason != DISMISSED or uid not in self.known or not self.connected:
+            return
+        if entry[1] & NEGATIVE_ACTION:
+            log(f"notification {uid} dismissed here: cleared on the iPhone")
+            self.queue.appendleft(("clear", uid))
+            self.pump()
+
+
+# ----------------------------------------------------------------- the service
+
+class Service:
+    def __init__(self, system, session, runtime, conf):
+        self.system = system
+        self.session = session
+        self.state_path = os.path.join(runtime, "nova", "iphone-notifications.json")
+        self.conf = conf
+        self.objects = Objects()
+        self.bluez = ""
+        self.le = le_enabled(conf)
+        self.phones = {}
+        self.notes = {}  # the shell's notification id → (phone path, uid)
+        self.advertisement = Advertisement(system, self)
+        self.agent = Agent(system, self)
+        self.control = Control(session, self)
+        self.advertising = None  # the mode registered with BlueZ
+        self.advertised_at = 0.0
+        self.agent_registered = False
+        self.busy = False
+        self.again = False
+        self.blocked_until = 0.0
+        self.failures = 0
+        self.unblock = None
+        self.pairing_until = 0.0
+        self.pairing_timer = None
+        self.pairing_done = None
+        self.fast_until = now_boot() + FAST_SECONDS
+        self.fast_timer = None
+        self.question = None
+        self.published = None
+
+        system.add_signal_receiver(self.interfaces_added, "InterfacesAdded", OBJECT_MANAGER, BLUEZ)
+        system.add_signal_receiver(self.interfaces_removed, "InterfacesRemoved", OBJECT_MANAGER, BLUEZ)
+        system.add_signal_receiver(self.properties_changed, "PropertiesChanged", PROPERTIES, BLUEZ,
+                                   path_keyword="path", byte_arrays=True)
+        system.add_signal_receiver(self.sleeping, "PrepareForSleep", "org.freedesktop.login1.Manager", LOGIN)
+        session.add_signal_receiver(self.notification_closed, "NotificationClosed", NOTIFICATIONS, NOTIFICATIONS)
+        self.watches = [system.watch_name_owner(BLUEZ, self.bluez_owner),
+                        session.watch_name_owner(NOTIFICATIONS, self.notifications_owner)]
+        self.schedule_fast()
+
+    # -- calls, never waited for
+
+    def call(self, path, interface, method, signature, args, ok, fail, timeout=CALL_TIMEOUT, bus=None, name=BLUEZ):
+        (bus or self.system).call_async(name, path, interface, method, signature, args, ok, fail,
+                                        timeout=timeout, byte_arrays=True)
+
+    # -- BlueZ coming and going
+
+    def bluez_owner(self, owner):
+        self.bluez = str(owner)
+        # Bluetooth LE is switched by restarting BlueZ.
+        self.le = le_enabled(self.conf)
+        self.objects = Objects()
+        self.advertising = None
+        self.agent_registered = False
+        self.busy = False
+        for phone in self.phones.values():
+            phone.gone()
+        self.phones = {}
+        if not self.bluez:
+            log("BlueZ is not running")
+            self.update()
+            return
+        self.call("/", OBJECT_MANAGER, "GetManagedObjects", "", [], self.loaded,
+                  lambda error: log(f"could not read BlueZ's objects: {error.get_dbus_message()}"))
+
+    def loaded(self, managed):
+        self.objects.load(managed)
+        self.fresh_start()
+        self.update()
+
+    def fresh_start(self):
+        """BlueZ or a controller back: a start anew, with no waiting left of
+        failures before, and advertising fast."""
+        self.failures = 0
+        self.blocked_until = 0.0
+        if self.unblock:
+            GLib.source_remove(self.unblock)
+            self.unblock = None
+        self.schedule_fast()
+
+    def interfaces_added(self, path, interfaces):
+        self.objects.added(path, interfaces)
+        if ADAPTER in interfaces:
+            # A controller back, after a reset of its firmware.
+            self.fresh_start()
+        self.update()
+
+    def interfaces_removed(self, path, interfaces):
+        self.objects.removed(path, interfaces)
+        if str(path) in self.phones and DEVICE in interfaces:
+            self.phones.pop(str(path)).gone()
+        self.update()
+
+    def properties_changed(self, interface, changed, invalidated, path=None):
+        path = str(path)
+        if not self.objects.changed(path, interface, changed, invalidated):
+            return
+        if interface == GATT_CHARACTERISTIC and "Value" in changed:
+            for phone in self.phones.values():
+                role = next((r for r, p in phone.characteristics.items() if p == path), None)
+                if role == "ns":
+                    phone.event(changed["Value"])
+                elif role == "ds":
+                    phone.data(changed["Value"])
+            if set(changed) == {"Value"}:
+                return
+        if not self.relevant(path, interface, changed):
+            return
+        if interface == ADAPTER and changed.get("Powered") is True:
+            self.fresh_start()
+        self.update()
+
+    def sleeping(self, start):
+        # Awake again: the iPhone lost the link while the computer slept.
+        if not start:
+            log("awake: advertising fast again")
+            self.schedule_fast()
+            self.update()
+
+    # -- the adapter
+
+    def adapter(self):
+        """The first controller that can advertise."""
+        adapters = self.objects.having(ADVERTISING_MANAGER)
+        return adapters[0] if adapters else None
+
+    def blocker(self):
+        """Why nothing can be done now, or ""."""
+        if not self.bluez:
+            return "no-bluetooth"
+        adapter = self.adapter()
+        if adapter is None:
+            return "no-bluetooth"
+        if not self.objects.get(adapter, ADAPTER, "Powered", False):
+            return "bluetooth-off"
+        if not self.le:
+            return "no-le"
+        return ""
+
+    # -- the iPhones
+
+    def sync_phones(self):
+        """A Phone for each device with ANCS: listed among its services, or
+        with the service among its objects."""
+        with_service = set()
+        for path, entry in self.objects.tree.items():
+            if str(entry.get(GATT_SERVICE, {}).get("UUID", "")).lower() == ANCS_SERVICE:
+                with_service.add(path.rsplit("/", 1)[0])
+        for path in self.objects.having(DEVICE):
+            uuids = [str(u).lower() for u in self.objects.get(path, DEVICE, "UUIDs", [])]
+            if path not in self.phones and (ANCS_SERVICE in uuids or path in with_service):
+                self.phones[path] = Phone(self, path)
+        for phone in list(self.phones.values()):
+            phone.refresh()
+
+    def relevant(self, path, interface, changed):
+        """Whether a change matters here: a scan nearby changes devices'
+        signal strengths many times a second, which do not."""
+        if interface in (ADAPTER, LE_BEARER, GATT_CHARACTERISTIC, GATT_SERVICE):
+            return True
+        if any(path == p or path.startswith(p + "/") for p in self.phones):
+            return True
+        return interface == DEVICE and bool({"UUIDs", "Paired", "Bonded", "Connected", "ServicesResolved"} & set(changed))
+
+    def lost_link(self):
+        self.schedule_fast()
+
+    def schedule_fast(self):
+        self.fast_until = now_boot() + FAST_SECONDS
+        if self.fast_timer:
+            GLib.source_remove(self.fast_timer)
+        self.fast_timer = GLib.timeout_add(int(FAST_SECONDS * 1000) + 50, self.fast_over)
+
+    def fast_over(self):
+        self.fast_timer = None
+        self.update()
+        return False
+
+    # -- pairing
+
+    def pairing_open(self):
+        return time.time() < self.pairing_until
+
+    def open_pairing(self, only_without_iphone):
+        if only_without_iphone and any(p.bonded for p in self.phones.values()):
+            return False
+        log("pairing window open")
+        self.pairing_until = time.time() + PAIR_SECONDS
+        if self.pairing_timer:
+            GLib.source_remove(self.pairing_timer)
+        self.pairing_timer = GLib.timeout_add(int(PAIR_SECONDS * 1000) + 50, self.pairing_over)
+        self.update()
+        return True
+
+    def pairing_over(self):
+        self.pairing_timer = None
+        self.close_pairing()
+        return False
+
+    def paired_and_done(self):
+        self.pairing_done = None
+        self.close_pairing()
+        return False
+
+    def close_pairing(self):
+        if self.pairing_until:
+            log("pairing window closed")
+        self.pairing_until = 0.0
+        for timer in (self.pairing_timer, self.pairing_done):
+            if timer:
+                GLib.source_remove(timer)
+        self.pairing_timer = self.pairing_done = None
+        self.withdraw_question("the pairing window closed")
+        self.schedule_fast()
+        self.update()
+
+    def ask(self, device, passkey, ok, fail):
+        """BlueZ asks whether a device may pair: the user answers on a
+        notification, with the code to compare when there is one."""
+        if not self.pairing_open():
+            fail(Rejected("not pairing now"))
+            return
+        self.withdraw_question("another came")
+        name = self.objects.get(device, DEVICE, "Alias") or "an iPhone"
+        question = {"ok": ok, "fail": fail, "note": None, "grace": None}
+        self.question = question
+        body = f"Check that your iPhone shows {passkey:06d}." if passkey is not None else ""
+        buttons = [{"says": "Cancel", "argv": ["nova-notification-iphone", "answer", "no"]},
+                   {"says": "Pair", "argv": ["nova-notification-iphone", "answer", "yes"], "main": True}]
+
+        def shown(note):
+            if self.question is question:
+                question["note"] = note
+            else:
+                self.close(note)
+
+        self.notify("nova-action", f"Pair with “{name}”?", html.escape(body, quote=False), BLUETOOTH_GLYPH,
+                    urgency=2, buttons=buttons, actions=False, then=shown)
+
+    def answer(self, yes):
+        question, self.question = self.question, None
+        if question is None:
+            return
+        log("pairing agreed to" if yes else "pairing turned down")
+        if question["grace"]:
+            GLib.source_remove(question["grace"])
+        if question["note"]:
+            self.close(question["note"])
+        if yes:
+            question["ok"]()
+        else:
+            question["fail"](Rejected("turned down"))
+
+    def withdraw_question(self, why):
+        if self.question is None:
+            return
+        log(f"pairing question withdrawn: {why}")
+        question, self.question = self.question, None
+        if question["grace"]:
+            GLib.source_remove(question["grace"])
+        if question["note"]:
+            self.close(question["note"])
+        question["fail"](Rejected(why))
+
+    def question_closed(self):
+        # A button closes the notification as it runs its command, so the
+        # command's Answer comes a moment after: it is waited for.
+        question = self.question
+        if question is not None and question["grace"] is None:
+            question["note"] = None
+            question["grace"] = GLib.timeout_add(3000, self.question_lapsed, question)
+
+    def question_lapsed(self, question):
+        if self.question is question:
+            question["grace"] = None
+            self.withdraw_question("its notification was closed")
+        return False
+
+    def agent_released(self):
+        self.agent_registered = False
+        self.update()
+
+    # -- notifications
+
+    def notify(self, app, summary, body, glyph, quiet=False, replaces=0, urgency=1, buttons=None,
+               actions=True, then=None):
+        hints = {"urgency": dbus.Byte(urgency), "nova-glyph": dbus.String(glyph)}
+        if quiet:
+            hints["nova-quiet"] = dbus.Boolean(True)
+        if buttons:
+            hints["nova-buttons"] = dbus.String(json.dumps(buttons))
+        # A default action, so that a click is a dismissal: there is no
+        # window here to bring forward for an iPhone's app.
+        self.call(NOTIFICATIONS_PATH, NOTIFICATIONS, "Notify", "susssasa{sv}i",
+                  [app, dbus.UInt32(replaces), "", summary, body,
+                   dbus.Array(["default", "Show"] if actions else [], signature="s"),
+                   dbus.Dictionary(hints, signature="sv"), dbus.Int32(-1)],
+                  lambda note: then and then(int(note)),
+                  lambda error: log(f"could not show a notification: {error.get_dbus_message()}"),
+                  bus=self.session, name=NOTIFICATIONS)
+
+    def close(self, note):
+        self.notes.pop(note, None)
+        self.call(NOTIFICATIONS_PATH, NOTIFICATIONS, "CloseNotification", "u", [dbus.UInt32(note)],
+                  lambda *_: None, lambda *_: None, bus=self.session, name=NOTIFICATIONS)
+
+    def notification_closed(self, note, reason):
+        note, reason = int(note), int(reason)
+        if self.question is not None and self.question["note"] == note:
+            self.question_closed()
+            return
+        entry = self.notes.pop(note, None)
+        if entry and entry[0] in self.phones:
+            self.phones[entry[0]].closed(entry[1], reason)
+
+    def notifications_owner(self, owner):
+        # Another server counts its ids from 1 again: the old ones mean
+        # nothing now.
+        self.notes.clear()
+        for phone in self.phones.values():
+            phone.shown.clear()
+
+    # -- keeping BlueZ in line
+
+    def wanted(self):
+        """What the computer should advertise now, or None."""
+        if self.blocker():
+            return None
+        connected = any(p.connected for p in self.phones.values())
+        if self.pairing_open():
+            return None if connected else "pairing"
+        if any(p.bonded and not p.connected for p in self.phones.values()):
+            return "fast" if now_boot() < self.fast_until else "slow"
+        return None
+
+    def update(self):
+        self.sync_phones()
+        self.finish_pairing()
+        self.reconcile()
+        self.publish()
+
+    def finish_pairing(self):
+        # Paired and subscribed: the window closes a little later, so that
+        # BlueZ is not told to stop pairing while it is still storing keys.
+        if self.pairing_open() and not self.pairing_done and any(p.bonded and p.ready for p in self.phones.values()):
+            self.pairing_done = GLib.timeout_add(2000, self.paired_and_done)
+
+    def reconcile(self):
+        if self.busy:
+            self.again = True
+            return
+        want_agent = self.pairing_open() and not self.blocker()
+        if want_agent != self.agent_registered and self.bluez:
+            self.step_agent(want_agent)
+            return
+        want = self.wanted()
+        if want == self.advertising:
+            return
+        adapter = self.adapter()
+        if self.advertising is not None:
+            self.busy = True
+            self.call(adapter or "/org/bluez/hci0", ADVERTISING_MANAGER, "UnregisterAdvertisement", "o",
+                      [dbus.ObjectPath(ADVERTISEMENT_PATH)], lambda *_: self.done_unregistering(),
+                      lambda *_: self.done_unregistering())
+            return
+        if time.monotonic() < self.blocked_until or adapter is None:
+            return
+        self.advertisement.set(want, self.objects.get(adapter, ADAPTER, "Alias", ""))
+        self.busy = True
+        self.call(adapter, ADVERTISING_MANAGER, "RegisterAdvertisement", "oa{sv}",
+                  [dbus.ObjectPath(ADVERTISEMENT_PATH), dbus.Dictionary({}, signature="sv")],
+                  lambda *_: self.registered(want, None), lambda error: self.registered(want, error))
+
+    def settle(self):
+        self.busy = False
+        self.again = False
+        self.update()
+
+    def done_unregistering(self):
+        self.advertising = None
+        self.settle()
+
+    def registered(self, mode, error):
+        if error is None:
+            self.advertising = mode
+            self.advertised_at = time.monotonic()
+            self.failures = 0
+            low, high = INTERVALS[mode]
+            log(f"advertising ({mode}, every {low}-{high} ms)")
+        else:
+            self.back_off(f"could not advertise: {error.get_dbus_name()}: {error.get_dbus_message()}")
+        self.settle()
+
+    def back_off(self, why):
+        delay = min(300, 5 * 2 ** min(self.failures, 6))
+        self.failures += 1
+        log(f"{why}; again in {delay} s")
+        self.blocked_until = time.monotonic() + delay
+        if self.unblock:
+            GLib.source_remove(self.unblock)
+        self.unblock = GLib.timeout_add(delay * 1000, self.unblocked)
+
+    def unblocked(self):
+        self.unblock = None
+        self.reconcile()
+        return False
+
+    def advertisement_released(self):
+        # BlueZ let it go: the controller went, or it could not keep it.
+        log("BlueZ released the advertisement")
+        self.advertising = None
+        if time.monotonic() - self.advertised_at < 10:
+            self.back_off("released at once")
+        self.update()
+
+    def step_agent(self, register):
+        self.busy = True
+        manager = "/org/bluez"
+        path = dbus.ObjectPath(AGENT_PATH)
+        if not register:
+            def unregistered(*_):
+                self.agent_registered = False
+                log("pairing agent gone")
+                self.settle()
+            self.call(manager, AGENT_MANAGER, "UnregisterAgent", "o", [path], unregistered, unregistered)
+            return
+
+        def failed(error):
+            log(f"could not register the pairing agent: {error.get_dbus_message()}")
+            self.close_pairing()
+            self.settle()
+
+        def made_default(*_):
+            self.agent_registered = True
+            log("pairing agent ready")
+            self.settle()
+
+        def registered(*_):
+            self.call(manager, AGENT_MANAGER, "RequestDefaultAgent", "o", [path], made_default, failed)
+
+        self.call(manager, AGENT_MANAGER, "RegisterAgent", "os", [path, "DisplayYesNo"], registered, failed)
+
+    # -- what Settings reads
+
+    def state(self):
+        blocker = self.blocker()
+        if blocker:
+            return blocker
+        if self.pairing_open():
+            return "pairing"
+        states = [p.state() for p in self.phones.values() if p.bonded or p.connected]
+        for state in ("connected", "not-shared", "connecting", "waiting"):
+            if state in states:
+                return state
+        return "no-iphone"
+
+    def publish(self):
+        adapter = self.adapter()
+        link = next((p.link() for p in self.phones.values() if p.link()), None)
+        state = {
+            "state": self.state(),
+            "name": self.objects.get(adapter, ADAPTER, "Alias", "") if adapter else "",
+            "pairingUntil": int(self.pairing_until) if self.pairing_open() else 0,
+            "phones": [{"address": p.prop(DEVICE, "Address", ""), "name": p.name, "connected": p.connected,
+                        "state": p.state()}
+                       for p in self.phones.values() if p.bonded or p.connected],
+            "advertising": self.advertising or "",
+            "link": link,
+        }
+        text_ = json.dumps(state, ensure_ascii=False, sort_keys=True)
+        if text_ == self.published:
+            return
+        self.published = text_
+        temporary = f"{self.state_path}.{os.getpid()}"
+        try:
+            with open(temporary, "w", encoding="utf-8") as out:
+                out.write(text_ + "\n")
+            os.replace(temporary, self.state_path)
+        except OSError as error:
+            log(f"could not write {self.state_path}: {error}")
+
+    def stop(self):
+        """BlueZ drops what a program registered once it leaves the bus, so
+        this is only to be tidy: the question withdrawn, the state gone."""
+        self.withdraw_question("iPhone notifications are switched off")
+        for path, interface, method in ((ADVERTISEMENT_PATH, ADVERTISING_MANAGER, "UnregisterAdvertisement"),
+                                        (AGENT_PATH, AGENT_MANAGER, "UnregisterAgent")):
+            target = self.adapter() if interface == ADVERTISING_MANAGER else "/org/bluez"
+            if target and self.bluez:
+                try:
+                    self.system.call_blocking(BLUEZ, target, interface, method, "o", [dbus.ObjectPath(path)], timeout=2)
+                except dbus.DBusException:
+                    pass
+        try:
+            os.unlink(self.state_path)
+        except FileNotFoundError:
+            pass
+
+
+def on_signal(number, handler):
+    """GLib's Unix signal source: GLibUnix in newer PyGObject, GLib before."""
+    try:
+        from gi.repository import GLibUnix
+        GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, number, handler)
+    except (ImportError, AttributeError):
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, number, handler)
+
+
+def main():
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        log("XDG_RUNTIME_DIR is not set")
+        return 1
+    os.makedirs(os.path.join(runtime, "nova"), mode=0o700, exist_ok=True)
+    DBusGMainLoop(set_as_default=True)
+    session = dbus.SessionBus()
+    system = session if os.environ.get("NOVA_IPHONE_BUS") == "session" else dbus.SystemBus()
+    service = Service(system, session, runtime, os.environ.get("NOVA_BLUETOOTH_CONF", "/etc/bluetooth/main.conf"))
+    try:
+        name = dbus.service.BusName(NAME, session, do_not_queue=True)
+    except dbus.exceptions.NameExistsException:
+        log(f"{NAME} is another program's already")
+        return 1
+    loop = GLib.MainLoop()
+    for number in (2, 15):  # SIGINT, SIGTERM
+        on_signal(number, loop.quit)
+    log("started")
+    loop.run()
+    service.stop()
+    del name
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

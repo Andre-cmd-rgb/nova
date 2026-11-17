@@ -1,0 +1,28 @@
+[Unit]
+Description=Your iPhone's notifications on this computer
+Documentation=https://github.com/Andre-cmd-rgb/nova/blob/main/docs/iphone.md
+# The notifications go to the session's shell, so it lasts as long as the
+# session does.
+PartOf=graphical-session.target
+After=graphical-session.target
+ConditionPathIsDirectory=/sys/class/bluetooth
+
+[Service]
+# Ready once it owns its name, which `nova notification iphone on` then calls.
+Type=dbus
+BusName=org.nova.iPhoneNotifications
+ExecStart=/usr/lib/nova/nova-iphone-notifications
+Restart=on-failure
+RestartSec=5
+Slice=background.slice
+# It talks to BlueZ and to the shell over D-Bus, and writes one file in the
+# runtime folder; nothing else is its business.
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=graphical-session.target

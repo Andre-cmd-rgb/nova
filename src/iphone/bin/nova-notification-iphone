@@ -1,0 +1,107 @@
+#!/bin/bash
+
+# nova:summary=Your iPhone's notifications on this computer: on, off, pair, or how they are
+# nova:args=[on|off|pair] [--json]
+#
+# nova-iphone-notifications.service (docs/iphone.md) takes the notifications
+# of an iPhone paired with this computer and shows them. `on` enables it for
+# this user and, with no iPhone paired yet, opens the pairing window: three
+# minutes in which the computer is in the iPhone's Settings → Bluetooth.
+# `answer yes|no` is what the pairing notification's buttons run.
+
+set -euo pipefail
+
+UNIT=nova-iphone-notifications.service
+NAME=org.nova.iPhoneNotifications
+OBJECT=/org/nova/iPhoneNotifications
+STATE=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/iphone-notifications.json
+
+usage() {
+  cat <<'EOF'
+Usage: nova notification iphone [on|off|pair] [--json]
+
+  nova notification iphone          how they are
+  nova notification iphone on       show your iPhone's notifications here
+  nova notification iphone off      stop
+  nova notification iphone pair     pair an iPhone: three minutes to pick this
+                                    computer in its Settings → Bluetooth
+EOF
+}
+
+fail() {
+  echo "nova-notification-iphone: $1" >&2
+  exit 1
+}
+
+call() { # method signature args...
+  busctl --user --timeout=10 call "$NAME" "$OBJECT" "$NAME" "$@"
+}
+
+running() { systemctl --user is-active --quiet "$UNIT"; }
+
+# The service's own account of itself, or what can be said without it.
+state_json() {
+  if running && [[ -r $STATE ]] && jq -e 'type == "object"' "$STATE" >/dev/null 2>&1; then
+    jq -c . "$STATE"
+  elif running; then
+    echo '{"state":"starting"}'
+  else
+    echo '{"state":"off"}'
+  fi
+}
+
+# One line for a person.
+say() {
+  local json state phone name left
+  json=$(state_json)
+  state=$(jq -r '.state' <<<"$json")
+  phone=$(jq -r '[.phones[]?.name] | first // "your iPhone"' <<<"$json")
+  name=$(jq -r '.name // "" | if . == "" then "this computer" else . end' <<<"$json")
+  case $state in
+    off) echo "iPhone notifications are off. Turn them on with: nova notification iphone on" ;;
+    starting) echo "iPhone notifications are starting." ;;
+    no-bluetooth) echo "iPhone notifications are on, but there is no Bluetooth." ;;
+    bluetooth-off) echo "iPhone notifications are on, and wait for Bluetooth to be turned on." ;;
+    no-le) echo "iPhone notifications need Bluetooth Low Energy: nova bluetooth le on" ;;
+    pairing)
+      left=$(($(jq -r '.pairingUntil // 0' <<<"$json") - $(date +%s)))
+      ((left > 0)) || left=0
+      printf 'Pairing: on your iPhone, open Settings → Bluetooth and tap “%s”. %s s left.\n' "$name" "$left"
+      ;;
+    no-iphone) echo "No iPhone is paired. Pair one with: nova notification iphone pair" ;;
+    waiting) echo "$phone is not connected. It connects by itself when it is near, with Bluetooth on." ;;
+    connecting) echo "$phone is connecting." ;;
+    not-shared) printf '%s does not share its notifications: on it, Settings → Bluetooth → ⓘ beside “%s” → Share System Notifications.\n' "$phone" "$name" ;;
+    connected) echo "$phone is connected: its notifications show here." ;;
+    *) echo "iPhone notifications: $state" ;;
+  esac
+}
+
+json=false
+words=()
+for arg in "$@"; do
+  case $arg in
+    --json) json=true ;;
+    -h | --help) usage; exit 0 ;;
+    *) words+=("$arg") ;;
+  esac
+done
+
+case "${words[*]:-}" in
+  '') ;;
+  on)
+    systemctl --user enable --now "$UNIT" >/dev/null 2>&1 || fail "could not start $UNIT"
+    call Pair b true >/dev/null || fail "the service did not answer"
+    ;;
+  off) systemctl --user disable --now "$UNIT" >/dev/null 2>&1 || fail "could not stop $UNIT" ;;
+  pair)
+    running || fail "iPhone notifications are off. Turn them on with: nova notification iphone on"
+    call Pair b false >/dev/null || fail "the service did not answer"
+    ;;
+  'answer yes') call Answer b true >/dev/null ;;
+  'answer no') call Answer b false >/dev/null ;;
+  *) usage >&2; exit 2 ;;
+esac
+
+[[ ${words[0]:-} == answer ]] && exit 0
+if $json; then state_json; else say; fi
