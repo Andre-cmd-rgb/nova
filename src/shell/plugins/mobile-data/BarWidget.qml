@@ -115,7 +115,7 @@ Panel {
     if (lastError !== "") return lastError
     if (wwanState === "noservice") return "Mobile data needs ModemManager. In a terminal:  sudo systemctl enable --now ModemManager.service"
     if (wwanState === "locked") return info.unlock === "sim-puk" ? "It needs the PUK from your carrier." : "Settings → Mobile Data asks for it."
-    if (wwanState === "failed" && info.why === "noenable") return "Mobile data is off, so it stops trying. The switch tries again; Settings → Updates → Check for Problems says why."
+    if (wwanState === "failed" && info.why === "noenable") return "Mobile data is off, so it stops trying. The switch tries again; Settings → Updates → Check for problems says why."
     if (!managed) return "NetworkManager is not managing the modem."
     if (wwanState === "starting") return "The modem restarts itself after sleep — give it half a minute."
     return ""

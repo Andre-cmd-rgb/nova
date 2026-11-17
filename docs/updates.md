@@ -38,14 +38,14 @@ Settings → Updates lists firmware updates from the makers of your devices, thr
 
 A candidate is the next release, two weeks before everyone else gets it.
 
-- Turn on Settings → Updates → **Test Release Candidates**, or run `nova update --candidates on`. `off` stops.
+- Turn on Settings → Updates → **Test release candidates**, or run `nova update --candidates on`. `off` stops.
 - A computer on a candidate keeps following candidates until a final release.
 
 ## Going back to before an update
 
 Every change to the system's packages takes a snapshot first, an update included. The boot menu keeps the last three.
 
-1. **Restart into the boot menu**: `nova recovery`, Settings → Updates → Restart to Recovery, or the menu's System → Restart to Recovery. A key pressed in the first second of any start opens it too.
+1. **Restart into the boot menu**: `nova recovery`, Settings → Updates → Restart to recovery, or the menu's System → Restart to Recovery. A key pressed in the first second of any start opens it too.
 2. **Pick Snapshots**, then the system as it was before a change, newest first.
 3. **Try it out.** A snapshot starts as it was, but what is done in it lives in memory only, and is gone at the next restart.
 4. **To keep it**, take the notification's **Restore now**, or run `limine-snapper-restore`. The snapshot becomes the system, and the computer restarts.
@@ -64,13 +64,13 @@ It warns first: packages newer than that release's Arch snapshot are downgraded.
 
 ## When something goes wrong
 
-- **`nova doctor`** looks the system over and says how to fix what it finds. Settings → Updates → Check for Problems runs it too. `sudo nova doctor` also checks the boot menu's fallback entry, which only root can read.
-- **To report a bug**, attach the file **Save a Report** writes, under Check for Problems, or `nova doctor --bundle` (a folder or a file name after it puts it there). It is one `.tar.gz` in Downloads: what `nova doctor` finds, the journal of this start and the last (warnings and worse, and every line of Nova's, the shell's and the kernel's), crashes, snapshots, the versions of Nova, the kernel, the drivers, Hyprland and the shell, the boot menu's entries by name (under `sudo` only, as only root can read them), the model and its PCI and USB devices. It never holds Wi-Fi passwords or the firmware's serial numbers, and in what it holds MAC and IP addresses, serial numbers, UUIDs, phone numbers, Wi-Fi names, your name, your account's and the computer's, the name AirDrop shows, AirDrop's numbers for your iPhone and the path to your home are masked. Read it before you send it: a name in a log line of an app can still be there.
+- **`nova doctor`** looks the system over and says how to fix what it finds. Settings → Updates → Check for problems runs it too. `sudo nova doctor` also checks the boot menu's fallback entry, which only root can read.
+- **To report a bug**, attach the file Settings → Updates → Bug report → **Save** writes, or `nova doctor --bundle` (a folder or a file name after it puts it there). It is one `.tar.gz` in Downloads: what `nova doctor` finds, the journal of this start and the last (warnings and worse, and every line of Nova's, the shell's and the kernel's), crashes, snapshots, the versions of Nova, the kernel, the drivers, Hyprland and the shell, the boot menu's entries by name (under `sudo` only, as only root can read them), the model and its PCI and USB devices. It never holds Wi-Fi passwords or the firmware's serial numbers, and in what it holds MAC and IP addresses, serial numbers, UUIDs, phone numbers, Wi-Fi names, your name, your account's and the computer's, the name AirDrop shows, AirDrop's numbers for your iPhone and the path to your home are masked. Read it before you send it: a name in a log line of an app can still be there.
 - **`nova recovery`** restarts into the boot menu: the last snapshots ([above](#going-back-to-before-an-update)), the fallback image, for a start after a hardware change, and the LTS kernel, for when a new kernel misbehaves.
 - **The boot entries don't check out after an update**: the update says what is missing. `sudo limine-update` writes them again, and `nova update --check-boot` looks again before you restart.
 - **The disk is too full**: an update looks first, and stops before it changes anything, when `/` has less than 4 GiB free (for its downloads, and its new packages beside the old ones its snapshot keeps), or the boot partition has no room to write its boot images once more. Old snapshots keep deleted files on `/` and boot images on the boot partition: `snapper list`, then `sudo snapper delete <number>`. `sudo pacman -Sc` deletes old downloads. `nova doctor` says how full each is.
 - **The power went out in the middle of an update**: the next `nova update` takes away the lock pacman left behind (only one from before that start: one made since may be a pacman at work) and keeps what was there before the unfinished update to go back to.
-- **One of Nova's services fails**, such as the power manager: a notification says which, once, within a minute of logging in or ten minutes of its failing, and Check for Problems says more. One that fails at each try it makes by itself is said once, and again only if it fails after it has worked. A service you turned off has not failed, and is never said.
+- **One of Nova's services fails**, such as the power manager: a notification says which, once, within a minute of logging in or ten minutes of its failing, and Check for problems says more. One that fails at each try it makes by itself is said once, and again only if it fails after it has worked. A service you turned off has not failed, and is never said.
 - **A part of the desktop stops working**: the menu's Update → Restart starts the shell, audio, Wi-Fi or Bluetooth again (`nova restart shell`, `audio`, `wifi`, `bluetooth`).
 - **The install stops**: [installing Nova](install.md#when-the-install-stops) says what to do.
 - **A fault of this one computer**, such as a bad memory cell or a device that needs a quirk, is fixed with a [patch](patches.md), which a reinstall keeps.

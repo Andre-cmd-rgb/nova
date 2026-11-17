@@ -1061,8 +1061,7 @@ Item {
         width: p.inner
         Toggle {
           width: parent.width
-          label: "Test Release Candidates"
-          detail: "A release comes every other week, first as a candidate for testing. Get each candidate as it comes, two weeks before everyone else."
+          label: "Test release candidates"
           checked: root.updates.candidates === true
           onClicked: root.run(["nova-update", "--candidates", checked ? "off" : "on"])
         }
@@ -1073,10 +1072,8 @@ Item {
         title: "RECOVERY"
         DoctorView {}
         Line {
-          label: "Restart to Recovery"
-          detail: root.confirmRecovery
-            ? "Restarts now, into the boot menu."
-            : "The boot menu: start from a snapshot taken before an update, or with the fallback kernel."
+          label: "Restart to recovery"
+          detail: root.confirmRecovery ? "Restarts now, into the boot menu." : ""
           Button {
             text: root.confirmRecovery ? "Restart Now" : "Restart…"
             bordered: true
@@ -1106,10 +1103,14 @@ Item {
           font.pixelSize: Style.font.displayLarge * 1.6
           font.bold: true
         }
+        // The installed version as its release is named (1.0.0rc.5 is
+        // v1.0.0-rc.5), or the release the repository is on without one.
         Caption {
+          readonly property string version: String(root.about.version || root.about.release || "")
+            .replace(/^v/, "").replace(/(\d)([a-z])/, "$1-$2")
           width: parent.width
-          text: (root.about.version ? "Version " + root.about.version : "")
-            + (root.about.release ? "  ·  " + root.about.release : "")
+          visible: version !== ""
+          text: "Version " + version
         }
       }
 

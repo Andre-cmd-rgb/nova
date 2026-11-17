@@ -154,7 +154,7 @@ Column {
   }
 
   Line {
-    label: root.version ? "Nova " + root.version : "Nova"
+    label: root.version ? "Nova " + Model.versionText(root.version) : "Nova"
     detail: root.summary.detail
     Row {
       spacing: Style.space(8)
@@ -215,7 +215,7 @@ Column {
   Line {
     visible: root.offerApps && !root.running
     label: "Chrome and VS Code"
-    detail: "Not installed."
+    detail: "Not installed"
     Button {
       text: "Install"
       bordered: true
@@ -236,7 +236,7 @@ Column {
       spacing: Style.space(8)
       Line {
         label: Model.appName(held.modelData)
-        detail: "Its recipe changed since it was last built."
+        detail: "Build recipe changed"
         Row {
           spacing: Style.space(8)
           Button {

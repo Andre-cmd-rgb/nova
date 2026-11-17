@@ -1,5 +1,4 @@
 import QtQuick
-import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -12,19 +11,19 @@ Column {
   property var results: []
   property string failure: ""
   readonly property bool busy: doctor.running
-  // Where nova doctor --bundle put the report, in a few words, or why not.
+  // The folder nova doctor --bundle put the report in, or that it could not.
   property string saved: ""
   readonly property bool saving: bundle.running
 
   // nova doctor --bundle prints the report's path, then what is in it.
-  function readSaved(text, code, home) {
+  function readSaved(text, code) {
     var path = String(text || "").split("\n")[0].trim()
     if (code !== 0 || path === "") {
       saved = "Could not save the report."
       return
     }
-    if (home && path.indexOf(home + "/") === 0) path = "~" + path.slice(home.length)
-    saved = "Saved as " + path + ". It leaves out your name, addresses and serial numbers."
+    var folder = path.slice(0, path.lastIndexOf("/"))
+    saved = "Saved in " + (folder.slice(folder.lastIndexOf("/") + 1) || "/")
   }
 
   function save() {
@@ -36,7 +35,7 @@ Column {
     id: bundle
     command: ["nova-doctor", "--bundle"]
     stdout: StdioCollector { id: bundleOutput }
-    onExited: function (code) { root.readSaved(bundleOutput.text, code, Quickshell.env("HOME")) }
+    onExited: function (code) { root.readSaved(bundleOutput.text, code) }
   }
 
   function readResults(text, code) {
@@ -63,7 +62,7 @@ Column {
     onExited: function (code) { root.readResults(output.text, code) }
   }
   Line {
-    label: "Check for Problems"
+    label: "Check for problems"
     Button { text: root.busy ? "Checking…" : "Check"; bordered: true; enabled: !root.busy; onClicked: root.check() }
   }
   Repeater {
@@ -104,8 +103,8 @@ Column {
   Caption { width: parent.width; visible: text.length > 0; text: root.failure }
   // One file to attach to a bug report: this check, the journal and the rest.
   Line {
-    label: "Report for a Bug"
-    detail: root.saved !== "" ? root.saved : "One file with what a bug report needs, saved in Downloads."
-    Button { text: root.saving ? "Saving…" : "Save a Report"; bordered: true; enabled: !root.saving; onClicked: root.save() }
+    label: "Bug report"
+    detail: root.saved
+    Button { text: root.saving ? "Saving…" : "Save"; bordered: true; enabled: !root.saving; onClicked: root.save() }
   }
 }

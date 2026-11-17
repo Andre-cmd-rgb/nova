@@ -64,7 +64,7 @@ services() { "$REPO_ROOT/src/cli/bin/nova-doctor-services"; }
   failing system nova-powerd.service
   run services
   [ "$status" -eq 0 ]
-  grep -qx "nova-notification-send -u normal -g 󰀦 Nova's power manager stopped Settings → Updates → Check for Problems has more. --exec nova-shell shell summon nova.settings {\"page\":\"updates\"}" "$CALLS"
+  grep -qx "nova-notification-send -u normal -g 󰀦 Nova's power manager stopped Settings → Updates → Check for problems has more. --exec nova-shell shell summon nova.settings {\"page\":\"updates\"}" "$CALLS"
 }
 
 @test "the same failure is said once, at every run and every login of the boot" {

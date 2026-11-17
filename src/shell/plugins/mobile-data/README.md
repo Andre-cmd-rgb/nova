@@ -263,7 +263,7 @@ with the computer. `nova doctor` says so too.
 **"The modem could not be turned on".** ModemManager could not power it up, and
 mobile data was switched off so that nothing asks it again every two seconds.
 Almost always it is the modem's maker's lock: `nova doctor` (Settings →
-Updates → Check for Problems) says whether ModemManager has an unlock for it,
+Updates → Check for problems) says whether ModemManager has an unlock for it,
 and names the maker's unlock script if not, which goes in
 `/etc/ModemManager/fcc-unlock.d`. The switch tries again.
 

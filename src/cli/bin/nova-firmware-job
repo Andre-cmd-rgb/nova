@@ -41,7 +41,7 @@ case ${1:-} in
           active|activating|reloading) ;;
           # Read again as it is written: a job that ended just now left its
           # own result, which stays.
-          *) change_state 'if .running == true then .running = false | .error = "The firmware job stopped. Check again before retrying." else . end' ;;
+          *) change_state 'if .running == true then .running = false | .error = "The firmware update stopped. Check again." else . end' ;;
         esac
       fi
       cat "$state"
@@ -62,7 +62,7 @@ flock -n 9 || exit 1
 finish() {
   local result=$?
   if ((result != 0)); then
-    change_state '.running = false | .error = (if .error == "" then "The firmware job failed. Check again before retrying." else .error end)'
+    change_state '.running = false | .error = (if .error == "" then "The firmware update failed. Check again." else .error end)'
   fi
 }
 trap finish EXIT

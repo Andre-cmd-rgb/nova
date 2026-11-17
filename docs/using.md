@@ -181,8 +181,8 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Menu Bar | the bar's edge, see-through or not, and what is in it |
 | Lock Screen | your password, the screensaver's and the lock's wait, and fingerprints |
 | Default Apps | the web browser, the code editor and the terminal |
-| Updates | Nova's and the apps' updates, device firmware, release candidates, Check for Problems and Restart to Recovery ([updates](updates.md)) |
-| About | the version and release, the computer, processor, memory, storage, name and kernel |
+| Updates | Nova's and the apps' updates, device firmware, release candidates, Check for problems, a bug report and Restart to recovery ([updates](updates.md)) |
+| About | the version, the computer, processor, memory, storage, name and kernel |
 
 The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `notifications`, `sound`, `displays`, `keyboard`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
 

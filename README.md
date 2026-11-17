@@ -66,7 +66,7 @@ The [install guide](docs/install.md) has the rest: each question, encryption, th
 
 ## When something goes wrong
 
-- `nova doctor` looks the system over and says how to fix what it finds. `nova doctor --bundle`, or Settings' **Save a Report**, writes one file to attach to a bug report, with your account's name, the computer's, addresses and serial numbers masked.
+- `nova doctor` looks the system over and says how to fix what it finds. `nova doctor --bundle`, or Settings → Updates → Bug report → **Save**, writes one file to attach to a bug report, with your account's name, the computer's, addresses and serial numbers masked.
 - `nova recovery` restarts into the boot menu: the last snapshots, the fallback image and the LTS kernel.
 - An install that stops says at which step, and keeps its log in `/var/log/nova-install.log`.
 

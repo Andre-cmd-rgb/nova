@@ -87,7 +87,7 @@ say() { # "<scope> <unit>"...
   local -a names=()
   for entry; do names+=("$(name_of "${entry#* }")"); done
   title="$(in_words "${names[@]}") stopped"
-  nova-notification-send -u normal -g 󰀦 "${title^}" "Settings → Updates → Check for Problems has more." \
+  nova-notification-send -u normal -g 󰀦 "${title^}" "Settings → Updates → Check for problems has more." \
     --exec nova-shell shell summon nova.settings '{"page":"updates"}' >/dev/null 2>&1
 }
 

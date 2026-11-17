@@ -73,7 +73,7 @@ Section {
     id: launcher
     stderr: StdioCollector { id: launchError }
     onExited: function (code) {
-      if (code !== 0 && command[1] === "install") root.failure = launchError.text.trim() || "Could not start the firmware job."
+      if (code !== 0 && command[1] === "install") root.failure = launchError.text.trim() || "Could not start the firmware update."
       stateFile.reload()
     }
   }
