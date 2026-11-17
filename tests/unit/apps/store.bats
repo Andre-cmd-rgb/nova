@@ -166,6 +166,21 @@ status_of() { # id field
   [ "$(status_of org.gimp.GIMP error)" = "this computer's packages are older than its package lists (glibc): update Nova first, in Settings, Updates" ]
 }
 
+@test "install --status: stopped from outside, it says so rather than staying under way" {
+  # As systemd stops a service: every process of it told to end.
+  stub flatpak '[[ $1 != install ]] || { echo $$ >"$SCRATCH/flatpak-pid"; exec sleep 30; }'
+  nova-apps-job install pinta --status &
+  job=$!
+  for _ in $(seq 100); do
+    [[ -s $SCRATCH/flatpak-pid ]] && break
+    sleep 0.1
+  done
+  kill -TERM "$job" "$(cat "$SCRATCH/flatpak-pid")"
+  wait "$job" || true
+  [ "$(status_of com.github.PintaProject.Pinta state)" = failed ]
+  [ "$(status_of com.github.PintaProject.Pinta error)" = "it stopped before it was done (status 143)" ]
+}
+
 @test "install: Chrome is built by nova apps install, then installed as an update installs it" {
   stub nova-apps-install 'echo "nova-apps-install $*" >>"$CALLS"
     if [[ $1 == --build ]]; then echo "built google-chrome abc123 $2/google-chrome.pkg.tar.zst" >"$2/result"; fi'

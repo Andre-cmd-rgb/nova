@@ -105,6 +105,12 @@ on_exit() {
   status failed -1 "" "it stopped before it was done (status $code)"
 }
 trap on_exit EXIT
+# Stopped (its service stopped, the session ending): bash runs the EXIT trap
+# only for an exit, so a signal is made one, rather than "running" left in
+# status.json for good.
+trap 'exit 143' TERM
+trap 'exit 130' INT
+trap 'exit 129' HUP
 
 # Nothing to do: said, and done.
 finish_done() { # message
