@@ -61,6 +61,20 @@ values() { sed '1,/^susssasa{sv}i$/d' "$CALLS"; }
   [ "$hint" = '["nova-launch-browser","a b","two\nlines","--"]' ]
 }
 
+@test "--button puts the click's command on a button of its own, its words as given" {
+  send --button 'Reopen "now"' 'Head' --exec uwsm-app -- org.gnome.Nautilus.desktop
+  hint=$(values | sed -n '/^nova-buttons$/{n;n;p}')
+  [ "$hint" = '[{"says":"Reopen \"now\"","argv":["uwsm-app","--","org.gnome.Nautilus.desktop"],"main":true}]' ]
+  [ "$(values | sed -n '/^nova-exec-argv$/{n;n;p}')" = '["uwsm-app","--","org.gnome.Nautilus.desktop"]' ]
+}
+
+@test "a button with no command to run is refused" {
+  run send --button Reopen 'Head'
+  [ "$status" -eq 1 ]
+  [[ $output == *'--button needs --exec'* ]]
+  [ ! -s "$CALLS" ]
+}
+
 @test "a whole command line in one word, or none at all, is refused" {
   run send 'Head' --exec 'nova-menu toggle'
   [ "$status" -eq 1 ]

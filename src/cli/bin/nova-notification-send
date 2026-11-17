@@ -1,17 +1,19 @@
 #!/bin/bash
 
 # nova:summary=Send a Nova desktop notification
-# nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]
+# nova:args=[--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] [--button <words>] <headline> [description] [--exec <program> [args...]]
 
 # A notification's text can come from anywhere, a web page's title say, so none
 # of it is ever taken for more than text: the headline and the description are
 # the first two words that are no option, and what a click runs is only the
 # words after --exec, which the shell runs as they are, never through a shell.
+# --button puts that command on a button of its own as well, with those words
+# on it ("Reopen").
 
 set -euo pipefail
 
 usage() {
-  echo "Usage: nova-notification-send [--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] <headline> [description] [--exec <program> [args...]]" >&2
+  echo "Usage: nova-notification-send [--app-name <app-name>] [-g <glyph>] [-u <low|normal|critical>] [-i <icon>] [-t <ms>] [-r <id>] [-p] [--image <path-or-uri>] [--button <words>] <headline> [description] [--exec <program> [args...]]" >&2
 }
 
 fail() {
@@ -23,6 +25,7 @@ app_name=nova-action
 glyph=''
 icon=''
 image=''
+button=''
 urgency=low
 expire=-1
 replaces=0
@@ -38,6 +41,7 @@ setting_of() {
     --app-name) setting=app_name ;;
     -i | --icon) setting=icon ;;
     --image) setting=image ;;
+    --button) setting=button ;;
     -r | --replace-id) setting=replaces ;;
     -t | --expire-time) setting=expire ;;
     *) return 1 ;;
@@ -129,7 +133,12 @@ if $clicks; then
   fi
   # The words go to jq NUL-separated, so a newline or a lone "--" in one stays
   # inside it.
-  hints+=(nova-exec-argv s "$(printf '%s\0' "${click[@]}" | jq -Rsc 'split("\u0000")[:-1]')")
+  argv=$(printf '%s\0' "${click[@]}" | jq -Rsc 'split("\u0000")[:-1]')
+  hints+=(nova-exec-argv s "$argv")
+  # The button, the toast's main one, runs what a click does.
+  [[ -z $button ]] || hints+=(nova-buttons s "$(jq -nc --arg says "$button" --argjson argv "$argv" '[{says: $says, argv: $argv, main: true}]')")
+elif [[ -n $button ]]; then
+  fail "--button needs --exec and the command its press runs"
 fi
 
 # org.freedesktop.Notifications.Notify, susssasa{sv}i: the app's name, the id
