@@ -78,6 +78,8 @@ Super+K searches every key and runs the one you pick. The tables below are the o
 
 The number keys, minus and equals are the same keys in every keyboard layout.
 
+On a touchpad, three fingers sideways move to the workspace beside, which follows your fingers: left for the next one, right for the one before. The swipe goes through the workspaces of the display that have windows, as Super+Tab does, and stops at the first and the last.
+
 ### Screen capture and the clipboard
 
 | Key | Does |
@@ -299,7 +301,7 @@ These come installed:
 - **A layout without Latin letters**, such as Russian or Greek, comes second to US, so the letter keys work; Left Alt + Right Alt switches between them. That US counts among the four.
 - **The key repeat, the pointer's speed, the scrolling direction and tap to click** are on the same page, and `nova input` sets them too. What they set is kept over `~/.config/hypr/input.lua`, where the rest of Hyprland's input settings go.
 
-On a touchpad, content follows your fingers, and one, two and three fingers click left, right and middle anywhere on it.
+On a touchpad, content follows your fingers, and one, two and three fingers click left, right and middle anywhere on it. Three fingers sideways go from workspace to workspace.
 
 ## Languages
 

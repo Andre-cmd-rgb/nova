@@ -140,6 +140,18 @@ hypr() { # lua
   [ "$output" = "true" ]
 }
 
+# input.lua: three fingers sideways switch workspaces with Hyprland's own
+# swipe, which follows the fingers (a Lua function would run only once they
+# lift), and it stops at the last workspace rather than making one. Four
+# fingers do nothing, and the direction is Hyprland's, the Mac's.
+@test "three fingers sideways swipe between workspaces, and no new one is made past the last" {
+  run hypr 'require("default.hypr.lib") require("default.hypr.input")'
+  [ "$status" -eq 0 ]
+  [ "$(grep '^gesture ' <<<"$output")" = "gesture {action=workspace,direction=horizontal,fingers=3}" ]
+  [[ $output == *"gestures={workspace_swipe_create_new=false}"* ]]
+  [[ $output != *workspace_swipe_invert* ]]
+}
+
 # Escape for dictation and the region picker's keys live while their layer is
 # up: slurp opens one per display, and the keys go when the last one closes.
 # The closing layer is still listed, unmapped, as its event fires.

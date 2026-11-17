@@ -33,7 +33,19 @@ hl.config({
     key_press_enables_dpms = true,
     mouse_move_enables_dpms = true,
   },
+
+  -- The swipe below stops at the display's first and last workspace, as a Mac
+  -- does at its first and last space, rather than making a new one past the
+  -- last.
+  gestures = { workspace_swipe_create_new = false },
 })
+
+-- Three fingers sideways move to the workspace beside, which follows the
+-- fingers: they go left for the next one, as on a Mac, however the touchpad
+-- scrolls. The swipe goes through the workspaces of the display the pointer
+-- is on that have windows, in their numbers' order, as Super+Tab goes
+-- through them. Nothing is bound to four fingers.
+hl.gesture({ fingers = 3, direction = "horizontal", action = "workspace" })
 
 -- Terminals each take a touchpad scroll their own way: faster in these three,
 -- slower in Ghostty.

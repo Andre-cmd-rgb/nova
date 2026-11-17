@@ -19,3 +19,6 @@
 
 -- The touchpad scrolling as a mouse wheel does, not with the content:
 -- hl.config({ input = { touchpad = { natural_scroll = false } } })
+
+-- No swipe between workspaces with three fingers:
+-- hl.gesture({ fingers = 3, direction = "horizontal", action = "unset" })
