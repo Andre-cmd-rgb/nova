@@ -55,6 +55,14 @@ nova mobile-data setup            # the APN looked up for the SIM
 nova mobile-data setup iliad      # or name the APN yourself
 ```
 
+**No SIM, no power.** A modem with nothing in its slot, or an eSIM with no
+plan on it, is switched off and left out of the bar: its radio is blocked,
+which leaves it in low power with its slot still read. A SIM put in, with
+the computer off or while it runs, brings it back with mobile data on, and a
+SIM new to it has its APN looked up once it is on a network, as a phone does;
+the SIM set up before keeps its own. Settings → Mobile Data → Check for a
+SIM, or `nova mobile-data check`, looks at once.
+
 Then tell the counter when your plan renews:
 
 ```bash
@@ -147,8 +155,8 @@ nova mobile-data status             one human-readable line
 nova mobile-data on | off | toggle  radio and connection control
 nova mobile-data enable | disable   aliases for on and off
 nova mobile-data reset              power-cycle a modem that refuses to connect
-nova mobile-data check              switch on a modem kept off for want of a SIM,
-                                    and look for one again
+nova mobile-data check              look for a SIM now, for a modem kept off
+                                    for want of one
 nova mobile-data pin [--last-try]   unlock the SIM with the PIN on standard
                                     input, then turn mobile data on; the
                                     last try only with --last-try

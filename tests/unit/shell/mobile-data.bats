@@ -1,10 +1,11 @@
 #!/usr/bin/env bats
 
-# The mobile-data helper's SIM policy: a modem that has never had a SIM is
-# switched off and left out of the bar after the first start, and only
-# `mobile-data check` (Settings > Mobile Data) switches it on to look again.
-# rfkill, mmcli and nmcli are stand-ins; the rfkill one keeps the WWAN block in
-# a file, and the mmcli one answers with the dump in $SCRATCH/dump.
+# The mobile-data helper's SIM policy: a modem with no SIM is switched off and
+# left out of the bar whenever that is seen, and a SIM seen in its slot while it
+# is off (ModemManager still reads it) brings it back, with the APN looked up for
+# a SIM new in the slot. rfkill, mmcli and nmcli are stand-ins; the rfkill one
+# keeps the WWAN block in a file, and the mmcli one answers with the dump in
+# $SCRATCH/dump, and the SIM's in $SCRATCH/sim.
 
 load ../test_helper
 
@@ -56,35 +57,53 @@ empty_slot() {
     "modem.generic.sim                                : --"
 }
 
+# A SIM that says what it is: a made-up ICCID, <n> its last digit.
+sim_card() { # [n]
+  printf '%s\n' "sim.dbus-path                 : /org/freedesktop/ModemManager1/SIM/0" \
+    "sim.properties.imsi           : 00101000000000${1:-1}" \
+    "sim.properties.iccid          : 899900000000000000${1:-1}" >"$SCRATCH/sim"
+}
+
+# An eSIM with no plan on it: nothing to read but its EID.
+blank_esim() {
+  printf '%s\n' "sim.dbus-path                 : /org/freedesktop/ModemManager1/SIM/0" \
+    "sim.properties.active         : yes" \
+    "sim.properties.imsi           : --" \
+    "sim.properties.iccid          : --" \
+    "sim.properties.eid            : 89000000000000000000000000000000" >"$SCRATCH/sim"
+}
+
 with_sim() {
   modem "modem.generic.state                              : disabled" \
     "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  sim_card
 }
 
 info() { "$helper" info | sed -n "s/^$1=//p"; }
 
-@test "first start, an empty slot: the modem is switched off and out of the bar" {
+@test "an empty slot: the modem is switched off and out of the bar" {
   empty_slot
   [ "$(info state)" = parked ]
   [ "$(cat "$SCRATCH/wwan")" = blocked ]
   [ "$(cat "$state/parked")" = nosim ]
   [ "$(info parked)" = nosim ]
   run "$helper" status
-  [[ $output == *"no SIM was found"* ]]
+  [[ $output == *"no SIM. One put in brings it back"* ]]
 }
 
-@test "first start, a SIM: nothing is switched off, and it never will be for want of one" {
+@test "a SIM: nothing is switched off; taken out, the modem is, whatever it had before" {
   with_sim
   [ "$(info state)" = disabled ]
   [ -z "$(info parked)" ]
-  [ -e "$state/sim-seen" ]
+  # A mark of a SIM seen once, from before, no longer keeps a modem on.
+  echo x >"$state/sim-seen"
   empty_slot
-  [ "$(info state)" = nosim ]
-  [ "$(cat "$SCRATCH/wwan")" = unblocked ]
-  [ ! -e "$state/parked" ]
+  [ "$(info state)" = parked ]
+  [ "$(cat "$SCRATCH/wwan")" = blocked ]
+  [ ! -e "$state/sim-seen" ]
 }
 
-@test "first start, a modem still reading its slot: nothing is decided yet" {
+@test "a modem still reading its slot: nothing is decided yet" {
   modem "modem.generic.state                              : initializing" \
     "modem.generic.sim                                : --"
   [ "$(info state)" = starting ]
@@ -92,7 +111,34 @@ info() { "$helper" info | sed -n "s/^$1=//p"; }
   [ "$(cat "$SCRATCH/wwan")" = unblocked ]
   with_sim
   [ "$(info state)" = disabled ]
-  [ -e "$state/sim-seen" ]
+  [ ! -e "$state/parked" ]
+}
+
+@test "parked: a SIM seen in the slot brings the modem back, with mobile data on" {
+  empty_slot
+  [ "$(info state)" = parked ]
+  : >"$CALLS"
+  # Off, the modem is in low power and ModemManager still reads its slot.
+  with_sim
+  [ "$(info state)" = disabled ]
+  [ ! -e "$state/parked" ]
+  [ "$(cat "$SCRATCH/wwan")" = unblocked ]
+  grep -qx "nmcli radio wwan on" "$CALLS"
+}
+
+@test "parked: a slot that says nothing, or an eSIM with no plan, leaves it off, the radio never on" {
+  echo nosim >"$state/parked"
+  echo blocked >"$SCRATCH/wwan"
+  modem "modem.generic.state                              : disabled" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  [ "$(info state)" = parked ]
+  blank_esim
+  [ "$(info state)" = parked ]
+  # Where blocking the radio cut the modem's power, there is no modem to ask.
+  stub mmcli 'exit 1'
+  [ "$(info state)" = parked ]
+  [ "$(cat "$SCRATCH/wwan")" = blocked ]
+  ! grep -q "unblock\|radio wwan on" "$CALLS"
 }
 
 # ModemManager installed, and not running: mmcli finds nothing on the bus.
@@ -129,8 +175,10 @@ stopped_modemmanager() {
   [ "$(info state)" = disabled ]
   [ ! -e "$state/parked" ]
   [ "$(cat "$SCRATCH/wwan")" = unblocked ]
-  # A park for want of a SIM is no such thing: it stays.
+  # A park for want of a SIM is no such thing: with no SIM, it stays.
+  empty_slot
   echo nosim >"$state/parked"
+  echo blocked >"$SCRATCH/wwan"
   [ "$(info state)" = parked ]
 }
 
@@ -157,12 +205,12 @@ stopped_modemmanager() {
   with_sim
   run "$helper" check
   [ "$status" -eq 0 ]
-  [ ! -e "$state/parked" ] && [ -e "$state/sim-seen" ]
+  [ ! -e "$state/parked" ]
   [ "$(cat "$SCRATCH/wwan")" = unblocked ]
   [ "$(info state)" = disabled ]
 }
 
-@test "check: still no SIM, and the modem is off again" {
+@test "check: no SIM in a slot it can read off, and the radio never comes on" {
   echo nosim >"$state/parked"
   echo blocked >"$SCRATCH/wwan"
   empty_slot
@@ -171,7 +219,29 @@ stopped_modemmanager() {
   [[ $output == *"no SIM in the slot"* ]]
   [ "$(cat "$state/parked")" = nosim ]
   [ "$(cat "$SCRATCH/wwan")" = blocked ]
+  ! grep -qx "rfkill unblock" "$CALLS"
+}
+
+@test "check: a modem it cannot ask while off is switched on to look, and off again with no SIM" {
+  echo nosim >"$state/parked"
+  echo blocked >"$SCRATCH/wwan"
+  empty_slot
+  # ModemManager runs, and sees the modem only once its radio is unblocked.
+  stub mmcli '
+if [ "$(cat "$SCRATCH/wwan")" != unblocked ]; then
+  [ "$*" = -L ] && echo "No modems were found" && exit 0
+  exit 1
+fi
+case "$*" in
+  -L) echo "    /org/freedesktop/ModemManager1/Modem/0 [Foxconn] T99W175" ;;
+  "-m 0 -K") cat "$SCRATCH/dump" ;;
+  *) exit 1 ;;
+esac'
+  run "$helper" check
+  [ "$status" -ne 0 ]
+  [[ $output == *"no SIM in the slot"* ]]
   grep -qx "rfkill unblock" "$CALLS"
+  [ "$(cat "$SCRATCH/wwan")" = blocked ]
 }
 
 @test "the SMS archive stays private when it is trimmed" {
@@ -373,31 +443,53 @@ esac'
   [ "$(info state)" = failed ] && [ "$(info why)" = sim-error ]
 }
 
-@test "an eSIM with no plan on it is no SIM" {
+@test "an eSIM with no plan on it is no SIM, and the modem is switched off" {
   modem "modem.generic.state                              : failed" \
     "modem.generic.state-failed-reason               : esim-without-profiles" \
     "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
-  echo x >"$state/sim-seen"
-  [ "$(info state)" = nosim ]
-}
-
-@test "a modem on and searching with a built-in eSIM that has no plan: no SIM" {
-  modem "modem.generic.state                              : enabled" \
-    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
-  printf '%s\n' "sim.dbus-path                 : /org/freedesktop/ModemManager1/SIM/0" \
-    "sim.properties.active         : yes" \
-    "sim.properties.imsi           : --" \
-    "sim.properties.iccid          : --" \
-    "sim.properties.eid            : 89033023424310000000001374222805" >"$SCRATCH/sim"
-  # Never had a SIM: the first start switches it off, as for an empty slot.
   [ "$(info state)" = parked ]
   [ "$(cat "$state/parked")" = nosim ]
-  [ ! -e "$state/sim-seen" ]
-  # One that had a SIM once is only said to have none.
+  run "$helper" status
+  [[ $output == *"no SIM"* ]]
+}
+
+@test "a built-in eSIM with no plan, the modem on and searching or off: no SIM, and switched off" {
+  modem "modem.generic.state                              : enabled" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  blank_esim
+  [ "$(info state)" = parked ]
+  [ "$(cat "$state/parked")" = nosim ]
+  # Mobile data switched off, the modem in low power: the same.
   rm -f -- "$state/parked"
   echo unblocked >"$SCRATCH/wwan"
-  echo x >"$state/sim-seen"
-  [ "$(info state)" = nosim ]
+  modem "modem.generic.state                              : disabled" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  [ "$(info state)" = parked ]
+}
+
+@test "a SIM new in the slot has its APN looked up once it is on a network; the one set up keeps its own" {
+  stub nmcli '
+echo "nmcli $*" >>"$CALLS"
+case "$*" in
+  *"TYPE,NAME connection show"*) echo "gsm:very" ;;
+  *"NAME connection show"*) echo "very" ;;
+esac'
+  modem "modem.generic.state                              : registered" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  sim_card 1
+  # The SIM the profile was made for, before this was kept: taken as set up.
+  "$helper" info >/dev/null
+  [ -s "$state/sim" ]
+  ! grep -q "gsm.apn" "$CALLS"
+  "$helper" info >/dev/null
+  ! grep -q "gsm.apn" "$CALLS"
+  # Another SIM: its APN looked up, once.
+  sim_card 2
+  "$helper" info >/dev/null
+  [ "$(grep -c "gsm.apn" "$CALLS")" -eq 1 ]
+  "$helper" info >/dev/null
+  [ "$(grep -c "gsm.apn" "$CALLS")" -eq 1 ]
+  ! grep -q "899900000000000000" "$state/sim"
 }
 
 @test "a modem searching with a SIM on it, or one that will not say: still searching" {

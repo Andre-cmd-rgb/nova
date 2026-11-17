@@ -1,5 +1,6 @@
 // platform: wayland
 // stub: home/mobile/bin/mobile-data mobile-data
+// stub: bin/gdbus gdbus
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -117,6 +118,8 @@ ShellRoot {
   }
 
   function fed() {
+    // Written for the widget to find by itself.
+    if (!then) return
     widget.refresh()
     settle(0)
   }
@@ -251,6 +254,16 @@ ShellRoot {
   function parked() {
     check("parked: the meta line says off, no SIM", widget.metaText, "Off — no SIM")
     check("parked: the widget leaves the bar", [widget.shown, widget.visible], [false, false])
+    // A SIM put in: ModemManager probes the modem afresh (the stub gdbus's
+    // line, as the widget parked), and the widget looks by itself, its
+    // polls stopped.
+    then = null
+    infoFile.setText(info("disconnected"))
+    later(4500, simHeard)
+  }
+
+  function simHeard() {
+    check("parked: a SIM going in is heard, and the widget looks by itself", widget.wwanState, "disconnected")
     finish()
   }
 }

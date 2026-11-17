@@ -46,8 +46,8 @@ Panel {
   property var info: ({})
   readonly property string wwanState: info.state || "absent"
   readonly property bool hwPresent: info.hw === "yes"
-  // Switched off for want of a SIM (mobile-data check, from Settings, looks
-  // again), so out of the bar altogether.
+  // Switched off for want of a SIM, so out of the bar altogether, until a SIM
+  // is seen in the slot (or mobile-data check, from Settings, finds one).
   readonly property bool parked: wwanState === "parked"
   readonly property bool shown: hwPresent && !parked
   readonly property bool managed: info.managed !== "no"
@@ -362,6 +362,23 @@ Panel {
     running: mobile.quiet
     stdout: SplitParser {
       onRead: function (line) { mobile.heardRadio(line) }
+    }
+  }
+
+  // Parked, the modem is in low power and ModemManager still reads its slot;
+  // a SIM put in while the computer runs has it probe the modem afresh, which
+  // is heard here, and `info` looks at the slot a few seconds later, once the
+  // probe has settled, and half a minute later. A SIM there brings the modem
+  // back. ModemManager says nothing more of a modem in low power, so this
+  // costs nothing while the slot stays empty.
+  Process {
+    command: ["gdbus", "monitor", "--system", "--dest", "org.freedesktop.ModemManager1"]
+    running: mobile.parked
+    stdout: SplitParser {
+      onRead: {
+        plugSoon.restart()
+        if (!plugLater.running) plugLater.start()
+      }
     }
   }
 

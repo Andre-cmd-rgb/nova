@@ -7,10 +7,10 @@ import qs.Ui
 
 // Mobile Data's page in Settings: the modem's state and its switch, the SIM's
 // PIN while it is locked, the APN when the network did not take the one
-// looked up, and the one way back for a modem kept off since it found no SIM
-// at its first start (`nova mobile-data check`), which switches the modem on
-// and waits up to a minute and a half for it; with a SIM, mobile data stays
-// on for good.
+// looked up, and a look for a SIM for a modem kept off for want of one
+// (`nova mobile-data check`): it reads the slot where the modem is, in low
+// power, and switches the modem on only where it cannot, waiting up to a
+// minute and a half for it. With a SIM, mobile data is back on.
 Column {
   id: root
   spacing: Style.space(22)
@@ -181,13 +181,13 @@ Column {
     }
   }
 
-  // Kept off, and out of the menu bar, to save power, since its first start
-  // found no SIM.
+  // Kept off, and out of the menu bar, to save power, while there is no SIM.
+  // A SIM put in brings it back by itself; the button looks now.
   Section {
     visible: root.parked
     Line {
       label: "Mobile Data"
-      detail: "No SIM. Insert one, then check."
+      detail: "No SIM"
       Button {
         text: root.busy ? "Checking…" : "Check for a SIM"
         bordered: true
