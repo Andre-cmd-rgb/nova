@@ -920,7 +920,6 @@ Item {
         Toggle {
           width: parent.width
           label: "Screen Time"
-          detail: "Counts how long each app is in front of you, per hour and per day. It stays on this computer, and records nothing while it is off."
           checked: root.info.screenTime === true
           onClicked: root.run(["nova-screentime", checked ? "off" : "on"])
         }
@@ -932,11 +931,6 @@ Item {
         shell: root.shell
         range: root.range
         onRangePicked: function (range) { root.range = range }
-      }
-
-      Caption {
-        width: p.inner
-        text: "To delete what it recorded: nova screentime forget"
       }
     }
   }

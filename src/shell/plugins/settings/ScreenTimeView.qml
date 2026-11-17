@@ -94,10 +94,10 @@ Item {
   readonly property string subtitle: {
     if (weekly) {
       var span = Math.max(1, Number(info.rangeDays || 7))
-      return "last " + span + " days · " + formatDuration(totalSeconds / span) + " a day"
+      return "Last " + span + " days  ·  " + formatDuration(totalSeconds / span) + " a day"
     }
-    if (goalMinutes > 0) return "today · " + formatDuration(goalMinutes * 60) + " limit"
-    return "today"
+    if (goalMinutes > 0) return "Today  ·  " + formatDuration(goalMinutes * 60) + " limit"
+    return "Today"
   }
 
   Column {
@@ -196,7 +196,7 @@ Item {
         anchors.top: parent.top
         visible: chartArea.hoveredIndex >= 0 && chartArea.hoveredIndex < chartArea.columns
         text: visible
-          ? chartArea.columnLabel(chartArea.hoveredIndex) + " · "
+          ? chartArea.columnLabel(chartArea.hoveredIndex) + "  ·  "
             + root.formatDuration(chartArea.chart.values[chartArea.hoveredIndex])
           : ""
         color: Commons.Color.foreground
@@ -382,9 +382,7 @@ Item {
         visible: root.apps.length === 0
         width: parent.width
         wrapMode: Text.WordWrap
-        text: root.weekly
-          ? "Nothing recorded in the last week yet."
-          : "Nothing recorded today yet — time starts counting as soon as a window has focus."
+        text: root.weekly ? "Nothing recorded in the last 7 days" : "Nothing recorded today"
         color: Commons.Color.foreground
         opacity: 0.5
         font.family: Style.font.family
@@ -393,7 +391,7 @@ Item {
 
       Text {
         visible: root.apps.length > root.shownApps
-        text: "+" + (root.apps.length - root.shownApps) + " more · screentime top 20"
+        text: "+" + (root.apps.length - root.shownApps) + " more"
         color: Commons.Color.foreground
         opacity: 0.45
         font.family: Style.font.family
