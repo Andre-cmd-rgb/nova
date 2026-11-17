@@ -156,7 +156,15 @@ ShellRoot {
   function stopped() {
     check(line().visible && line().label === "Not running" && line().detail === "Switch it off and on to start it again"
       && page.addresses.length === 0, "stopped: it says so, and hands no iPhones to the list")
-    // Back (systemd started it again): what it writes is read.
+    // systemd starting it again (activating, until it owns its name): it
+    // is starting, not stopped.
+    unitIs("activating")
+    when(() => page.status === "starting", starting, "a service starting is noticed")
+  }
+
+  function starting() {
+    check(line().label === "Starting…" && page.addresses.length === 0, "activating: Starting…")
+    // Started: what it writes is read.
     unitIs("active")
     write({ state: "waiting", name: "Nova", phones: [{ address: "AA:BB:CC:DD:EE:01", name: "Test iPhone", connected: false, state: "waiting" }] },
       () => when(() => page.status === "waiting", back, "the service back is noticed"))

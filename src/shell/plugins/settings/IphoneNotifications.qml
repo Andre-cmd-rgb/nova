@@ -64,11 +64,15 @@ Section {
     onLoadFailed: root.live = ({})
   }
 
+  // Starting (activating: a Type=dbus service until it owns its name, or
+  // waiting to start again after an error) counts as running: the line
+  // says Starting… until the state file is there.
   Process {
     id: unit
-    command: ["systemctl", "--user", "is-active", "--quiet", "nova-iphone-notifications.service"]
-    onExited: function (code) {
-      root.answered = code === 0
+    command: ["systemctl", "--user", "is-active", "nova-iphone-notifications.service"]
+    stdout: StdioCollector { id: unitState; waitForEnd: true }
+    onExited: {
+      root.answered = ["active", "activating", "reloading"].indexOf(unitState.text.trim()) >= 0
       root.asked = true
     }
   }
