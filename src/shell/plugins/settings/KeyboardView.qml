@@ -10,7 +10,9 @@ import "KeyboardModel.js" as Model
 // key repeats; the pointer's speed and which way a mouse wheel scrolls; and
 // on a touchpad, its scrolling and whether a tap clicks. A change applies at
 // once, and is kept over ~/.config/hypr/input.lua. The touchpad's own switch
-// is the menu's and its key's.
+// is the menu's and its key's. The first layout is the one each session
+// starts with; one without Latin letters gets US ahead of it, so that Nova's
+// keys work.
 Column {
   id: root
   spacing: Style.space(22)
@@ -102,7 +104,7 @@ Column {
     Caption {
       width: parent.width
       visible: root.layouts.length === 0
-      text: "Hyprland did not say which layouts are in use."
+      text: "No layouts found"
     }
 
     Item {
@@ -122,7 +124,6 @@ Column {
     Line {
       visible: root.layouts.length > 1
       label: "Next layout"
-      detail: "Or click the layout in the menu bar."
       Dropdown {
         options: Model.switches(root.input.switch)
         value: root.input.switch || "none"
@@ -130,12 +131,6 @@ Column {
           if (value !== "other" && value !== root.input.switch) root.command(["nova-input", "switch", value])
         }
       }
-    }
-
-    Caption {
-      width: parent.width
-      visible: root.layouts.length > 1
-      text: "The first is the one each session starts with. One without Latin letters, such as Russian, gets US ahead of it, so that Nova's keys work."
     }
   }
 
@@ -162,7 +157,7 @@ Column {
 
     Line {
       label: "Repeat rate"
-      detail: rate.knobAt + " a second"
+      detail: rate.knobAt + " per second"
       LevelSlider {
         id: rate
         width: Style.space(220)
@@ -199,7 +194,6 @@ Column {
     Toggle {
       width: parent.width
       label: "Natural scrolling with a mouse"
-      detail: "The page moves with the wheel, as it moves with fingers on a touchpad."
       checked: root.scrolling.mouse === true
       onClicked: root.command(["nova-input", "natural-scroll", "mouse", checked ? "off" : "on"])
     }
@@ -212,7 +206,6 @@ Column {
     Toggle {
       width: parent.width
       label: "Natural scrolling"
-      detail: "Content follows your fingers."
       checked: root.scrolling.touchpad !== false
       onClicked: root.command(["nova-input", "natural-scroll", "touchpad", checked ? "off" : "on"])
     }
@@ -220,14 +213,8 @@ Column {
     Toggle {
       width: parent.width
       label: "Tap to click"
-      detail: "A tap is a click: one finger left, two right, three middle."
       checked: root.input.tapToClick !== false
       onClicked: root.command(["nova-input", "tap-to-click", checked ? "off" : "on"])
-    }
-
-    Caption {
-      width: parent.width
-      text: "To turn the touchpad off: the menu's Toggle → Touchpad, or the touchpad key."
     }
   }
 
@@ -321,7 +308,7 @@ Column {
       Caption {
         anchors.centerIn: parent
         visible: sheet.found.length === 0
-        text: root.known.length === 0 ? "xkb's list of layouts could not be read." : "No layout by that name."
+        text: root.known.length === 0 ? "Could not load layouts." : "No layouts found"
       }
     }
 

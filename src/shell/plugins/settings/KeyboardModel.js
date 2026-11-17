@@ -76,7 +76,7 @@ function room(list, nonLatin) {
 }
 
 // The keys that go to the next layout, as nova input names them. One set by
-// hand in input.lua that is none of them is shown as such.
+// hand in input.lua that is none of them is shown as Custom.
 function switches(current) {
   const offered = [
     { value: "alts", label: "Left Alt + Right Alt" },
@@ -84,7 +84,7 @@ function switches(current) {
     { value: "ctrl-shift", label: "Ctrl+Shift" },
     { value: "none", label: "None" }
   ]
-  return current === "other" ? offered.concat([{ value: "other", label: "Set in input.lua" }]) : offered
+  return current === "other" ? offered.concat([{ value: "other", label: "Custom" }]) : offered
 }
 
 // The pointer's speed, -1 to 1, in words.

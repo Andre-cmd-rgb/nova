@@ -53,7 +53,7 @@ ShellRoot {
       "room for four in all, the US counted")
 
     check(same(Model.switches("alts").map(s => s.value), ["alts", "alt-shift", "ctrl-shift", "none"]), "the keys Settings offers")
-    check(Model.switches("other").slice(-1)[0].label === "Set in input.lua", "and one of the user's own, as such")
+    check(Model.switches("other").slice(-1)[0].label === "Custom", "and one of the user's own, as Custom")
 
     check(Model.speedText(0) === "Normal" && Model.speedText(0.04) === "Normal" && Model.speedText(-0.3) === "Slower" && Model.speedText(1) === "Faster", "the pointer's speed in words")
 
