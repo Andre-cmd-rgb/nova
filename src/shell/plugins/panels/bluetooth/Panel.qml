@@ -56,12 +56,12 @@ Panel {
   // nova-bluetooth-power sets the radio's rfkill block, which
   // systemd-rfkill keeps across a reboot; BlueZ's Powered, which
   // adapter.enabled would write, comes back on at every boot. Powered
-  // follows the block, and the switch and the icon read it. On or off is
-  // asked for by name: the switch moves once BlueZ catches up, and a second
-  // click before then would undo the first.
+  // follows the block, and the icon reads it. The switch moves at once, to
+  // what was asked, and Settings' with it (BluetoothPower); a second click
+  // before BlueZ catches up asks for the other again.
   function toggleBluetooth() {
     if (!reachable) return
-    Quickshell.execDetached(["nova-bluetooth-power", live ? "off" : "on"])
+    BluetoothPower.toggle()
   }
 
   // ---- devices ------------------------------------------------------------
@@ -334,8 +334,9 @@ Panel {
 
   // Under the title: whether the radio is on, and how many devices are
   // connected (they are listed just below).
-  readonly property string heroLine: !reachable ? "No adapter" : !live ? "Turned Off"
-    : connectedList.length > 0 ? connectedList.length + " connected" : "On"
+  readonly property string heroLine: !reachable ? "No adapter"
+    : BluetoothPower.turning === "on" ? "Turning On…" : BluetoothPower.turning === "off" ? "Turning Off…"
+    : !live ? "Turned Off" : connectedList.length > 0 ? connectedList.length + " connected" : "On"
 
   // ---- the bar ------------------------------------------------------------
 
@@ -392,7 +393,7 @@ Panel {
           end: ToggleSwitch {
             id: radioSwitch
             visible: bluetooth.reachable
-            checked: bluetooth.live
+            checked: BluetoothPower.on
             hasCursor: cursor.shown && cursor.place.section === "header"
             foreground: bluetooth.ink
             onHovered: function(on) { if (on) cursor.point("header", cursor.place.index, false) }
@@ -400,7 +401,7 @@ Panel {
 
             PanelToolTip {
               visible: radioSwitch.containsMouse
-              text: bluetooth.live ? "Turn Bluetooth off" : "Turn Bluetooth on"
+              text: BluetoothPower.on ? "Turn Bluetooth off" : "Turn Bluetooth on"
               fontFamily: bluetooth.typeface
             }
           }

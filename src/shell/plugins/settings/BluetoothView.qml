@@ -157,9 +157,10 @@ Column {
     Toggle {
       width: parent.width
       label: "Bluetooth"
-      detail: root.available ? "" : "Not available"
-      checked: root.powered
-      onClicked: if (root.available) Quickshell.execDetached(["nova-bluetooth-power", root.powered ? "off" : "on"])
+      detail: !root.available ? "Not available" : BluetoothPower.turning === "on" ? "Turning on…"
+        : BluetoothPower.turning === "off" ? "Turning off…" : ""
+      checked: BluetoothPower.on
+      onClicked: if (root.available) BluetoothPower.toggle()
     }
     Toggle {
       width: parent.width

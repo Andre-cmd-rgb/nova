@@ -1,6 +1,7 @@
 module qs.Commons
 
 # Nova imports these without a version, so they are listed without one.
+singleton BluetoothPower BluetoothPower.qml
 singleton Border Border.qml
 singleton Charge Charge.qml
 singleton Color Color.qml

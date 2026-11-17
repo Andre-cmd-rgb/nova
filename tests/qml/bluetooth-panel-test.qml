@@ -148,6 +148,7 @@ ShellRoot {
     blocked.open()
     check("the radio's switch set: the header's note says it is off", headerOf(blocked)?.note, "Turned Off")
     surfaceOf(blocked).keys.struck("b")
+    check("b with the radio off: the note says it is turning on, at once", headerOf(blocked)?.note, "Turning On…")
     later(500, fourth)
   }
 
