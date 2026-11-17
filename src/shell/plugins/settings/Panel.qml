@@ -883,10 +883,6 @@ Item {
           value: active.length > 0 ? active[0].name : ""
           onChanged: function (value) { root.run(["nova-power-profile", "set", value]) }
         }
-        Caption {
-          width: parent.width
-          text: "Every unplug starts in Saver, for the longest battery life. A mode chosen here lasts until you plug in; plugged in, it is always full power."
-        }
       }
 
       PowerReadout {
@@ -901,11 +897,6 @@ Item {
           options: [{ value: "auto", label: "On When Plugged In" }, { value: "off", label: "Always Off" }]
           value: root.performance.gpu || ""
           onChanged: function (value) { root.run(["nova-power-gpu", "mode", value]) }
-        }
-        Caption {
-          width: parent.width
-          visible: root.performance.gpu === "off"
-          text: "For a game, turn it on from the menu: Toggle, Discrete GPU."
         }
       }
 
