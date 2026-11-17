@@ -73,12 +73,15 @@ checks_passed() { ((probe_failures == 0)); }
 
 # nova update, up to three times: a download that stalls (the archive, the
 # bucket) fails it, and a failed update puts the pins back as they were. The
-# log is the last try's, with that try's one snapshot.
+# log is the last try's, with that try's one snapshot. Chrome and VS Code are
+# left out: they are built from the AUR, outside the release, by the user and
+# never by root, which this is; and the nova update of rc.6 and rc.7, which
+# could not build them as root, ended with problems.
 update_tries() { # log nova-update-argument...
   local log=$1 try
   shift
   for try in 1 2 3; do
-    nova update "$@" 2>&1 | tee "$log" && return 0
+    NOVA_UPDATE_APPS=true nova update "$@" 2>&1 | tee "$log" && return 0
     echo "probe:   nova update failed (try $try of 3)"
     ((try == 3)) || sleep 30
   done

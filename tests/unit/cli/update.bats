@@ -120,6 +120,24 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [[ $output == *"Chrome or VS Code could not be updated; nova apps update tries again"* ]]
 }
 
+@test "run as root, the apps behind are named and left for nova apps update, which is no problem" {
+  export NOVA_UPDATE_EUID=0
+  stub nova-apps-install '[[ $1 == --check ]] && echo "apps google-chrome visual-studio-code-bin"'
+  run update
+  [ "$status" -eq 0 ]
+  grep -q '^nova-update-apply --tag v1.0.0-beta.2' "$CALLS"
+  fails grep -q -- '--update' <(grep '^nova-apps-install' "$CALLS")
+  [[ $output == *"Chrome and VS Code can be updated with nova apps update, run as yourself."* ]]
+  # None behind, or the AUR out of reach: nothing said.
+  stub nova-apps-install 'echo current'
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output != *"nova apps update"* ]]
+  stub nova-apps-install 'exit 1'
+  run update
+  [ "$status" -eq 0 ]
+}
+
 @test "an app held for a recipe that changed waits, and is no problem" {
   stub nova-apps-install '[[ $2 != --result ]] || echo "held visual-studio-code-bin" >>"$3"; exit 1'
   run update

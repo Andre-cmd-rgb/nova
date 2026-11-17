@@ -322,6 +322,15 @@ update_apps() {
     [[ $behind != "apps "* ]] || echo "Apps to update: ${behind#apps }"
     return 0
   fi
+  # makepkg builds as the one who runs it, never as root. Run as root (sudo
+  # nova update, the upgrade test), the apps behind are named, and wait for
+  # nova apps update run as yourself: that is no problem of the release.
+  if (( ${NOVA_UPDATE_EUID:-$EUID} == 0 )); then
+    behind=$("$APPS" --check 2>/dev/null) || return 0
+    # shellcheck disable=SC2086 # the apps, a word each
+    [[ $behind != "apps "* ]] || echo "$(app_list ${behind#apps }) can be updated with nova apps update, run as yourself."
+    return 0
+  fi
   local -a flags=(--update --result "$tmp/apps") missed=()
   (( ! assume_yes )) || flags+=(--noconfirm)
   local status=0 kind app
