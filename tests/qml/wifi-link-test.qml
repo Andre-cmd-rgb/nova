@@ -27,7 +27,7 @@ ShellRoot {
     check(same([Model.bandLabel("2.4"), Model.bandLabel("")], ["2.4 GHz",""]), "a band's label")
     check(same(Model.bandChoices({ band: "5", selected: "auto", available: ["2.4", "5"] }).map(c => c.value), ["auto","2.4","5"]), "the band's choices")
     check(same(Model.bandChoices({ band: "5", selected: "6", available: ["2.4", "5"] }).map(c => c.label), ["Automatic","2.4 GHz","5 GHz","6 GHz"]), "with a pinned band no longer answering")
-    check(same([Model.bandNote({ band: "5", selected: "auto", available: [] }), Model.bandNote({ band: "", selected: "auto", available: [] }), Model.bandNote({ band: "5", selected: "5", available: [] })], ["On 5 GHz now. Wi-Fi picks the band; choosing one reconnects.","Wi-Fi picks the band.","Kept on 5 GHz for this network. Choosing a band reconnects."]), "the band's note")
+    check(same([Model.bandNote({ band: "5", selected: "auto", available: [] }), Model.bandNote({ band: "", selected: "auto", available: [] }), Model.bandNote({ band: "5", selected: "5", available: [] })], ["Now on 5 GHz","","Now on 5 GHz"]), "the band's note: the band in use, pinned or not, or nothing")
 
     console.log("DONE")
     Qt.quit()

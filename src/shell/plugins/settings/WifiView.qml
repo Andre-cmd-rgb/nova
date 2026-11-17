@@ -136,7 +136,7 @@ Column {
   function join(row) {
     if (row.enterprise && !row.known) {
       failedSsid = row.ssid
-      failure = "Join it from the Wi-Fi menu in the bar, which asks for the identity too."
+      failure = "Join this one from the bar's Wi-Fi menu."
     } else if (row.secured && !row.known) {
       askingSsid = row.ssid
     } else {
@@ -179,8 +179,8 @@ Column {
       var secured = !!row && row.secured
       if (secured && (reason === ConnectionFailReason.NoSecrets || reason === ConnectionFailReason.WifiAuthTimeout)) {
         root.askingSsid = root.busySsid
-        root.finish(reason === ConnectionFailReason.NoSecrets ? "It needs the password." : "Wrong password?")
-      } else if (reason === ConnectionFailReason.WifiNetworkLost) root.finish("The network went out of reach.")
+        root.finish(reason === ConnectionFailReason.NoSecrets ? "Enter the password." : "Wrong password?")
+      } else if (reason === ConnectionFailReason.WifiNetworkLost) root.finish("Out of range.")
       else root.finish("Could not join.")
     }
   }
@@ -189,9 +189,6 @@ Column {
     Toggle {
       width: parent.width
       label: "Wi-Fi"
-      detail: !root.radioOn ? "Off."
-        : root.current ? "Connected to " + root.current.ssid + "."
-        : "On, and not connected."
       checked: root.radioOn
       onClicked: Networking.wifiEnabled = !Networking.wifiEnabled
     }
@@ -218,6 +215,7 @@ Column {
       }
       Button {
         text: "Cancel"
+        bordered: true
         onClicked: root.askingSsid = ""
       }
     }
@@ -256,7 +254,7 @@ Column {
     Caption {
       width: parent.width
       visible: root.others.length === 0
-      text: root.rows.length === 0 ? "Looking for networks…" : "No other networks in reach."
+      text: root.rows.length === 0 ? "Searching…" : "No networks found"
     }
   }
 
@@ -274,13 +272,12 @@ Column {
       detail: {
         if (entry.busy) {
           if (root.busyKind === "connect") return "Joining…"
-          if (root.busyKind === "disconnect") return "Leaving…"
+          if (root.busyKind === "disconnect") return "Disconnecting…"
           return "Forgetting…"
         }
         if (root.failedSsid === entry.modelData.ssid && root.failure.length > 0) return root.failure
         var parts = [root.signalIcon(entry.modelData.signal) + " " + entry.modelData.signal + "%"]
         parts.push(entry.modelData.enterprise ? "Enterprise" : entry.modelData.secured ? "Secured" : "Open")
-        if (entry.modelData.known && !entry.modelData.connected) parts.push("saved")
         return parts.join("  ·  ")
       }
 

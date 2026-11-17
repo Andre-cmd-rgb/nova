@@ -18,25 +18,32 @@ Section {
     change.command = ["nova-dns", "Custom"].concat(servers)
     change.running = true
   }
+  // The addresses and Apply on one row, as Wi-Fi's password and Join.
   Line {
-    label: "DNS Servers"
-    Button {
-      text: change.running ? "Applying…" : "Apply"
-      bordered: true
-      enabled: !change.running && root.servers.length > 0
-      onClicked: root.apply()
+    label: "DNS servers"
+    Row {
+      spacing: Style.space(8)
+      // Narrower in a narrow window, so the label keeps its room.
+      TextField {
+        id: addresses
+        anchors.verticalCenter: parent.verticalCenter
+        width: Math.max(Style.space(160), Math.min(Style.space(300), root.width - Style.space(200)))
+        placeholderText: "1.1.1.1 2606:4700:4700::1111"
+        enabled: !change.running
+        onAccepted: root.apply()
+      }
+      Button {
+        anchors.verticalCenter: parent.verticalCenter
+        text: change.running ? "Applying…" : "Apply"
+        bordered: true
+        enabled: !change.running && root.servers.length > 0
+        onClicked: root.apply()
+      }
     }
-  }
-  TextField {
-    id: addresses
-    width: parent.width
-    placeholderText: "1.1.1.1 2606:4700:4700::1111"
-    enabled: !change.running
-    onAccepted: root.apply()
   }
   Caption {
     width: parent.width
-    text: root.result || (addresses.text.length > 0 && root.servers.length === 0 ? "Enter one to four IPv4 or IPv6 addresses." : "")
+    text: root.result || (addresses.text.length > 0 && root.servers.length === 0 ? "Enter up to four IP addresses." : "")
     visible: text.length > 0
   }
   Process {

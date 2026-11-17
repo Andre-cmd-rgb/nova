@@ -129,7 +129,7 @@ Column {
     visible: root.linked
 
     Line {
-      label: "IP Address"
+      label: "IP address"
       detail: root.link.ip || ""
       Button {
         text: "Copy"
@@ -165,6 +165,7 @@ Column {
     Caption {
       width: parent.width
       text: root.bandAsked !== "" ? "Reconnecting…" : Net.bandNote(root.bands)
+      visible: text.length > 0
     }
   }
 
@@ -180,8 +181,7 @@ Column {
 
     Caption {
       width: parent.width
-      text: root.providerAsked !== "" ? "Changing DNS…"
-        : (root.provider === "DHCP" && !root.customOpen) ? "The network's own DNS servers." : ""
+      text: root.providerAsked !== "" ? "Changing DNS…" : ""
       visible: text.length > 0
     }
 

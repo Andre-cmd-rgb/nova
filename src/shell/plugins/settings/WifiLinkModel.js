@@ -64,9 +64,9 @@ function bandChoices(bands) {
   }))
 }
 
-// The line under them: the band the radio is on, and whether it stays there.
+// The line under them: the band the radio is on now, or nothing where it
+// cannot say.
 function bandNote(bands) {
   var now = bandLabel(bands.band)
-  if (bands.selected !== "auto") return "Kept on " + bandLabel(bands.selected) + " for this network. Choosing a band reconnects."
-  return now === "" ? "Wi-Fi picks the band." : "On " + now + " now. Wi-Fi picks the band; choosing one reconnects."
+  return now === "" ? "" : "Now on " + now
 }
