@@ -253,6 +253,12 @@ Item {
     }
   }
 
+  // The window closed with the page open: Settings is unloaded then, and
+  // the timer above with it, so the scan is stopped on the way out.
+  Component.onDestruction: {
+    if (owesDiscoveryStop && bluetoothAdapter && bluetoothAdapter.discovering) bluetoothAdapter.discovering = false
+  }
+
   // Settled the moment BlueZ reports the scan down, however it ended.
   Connections {
     target: root.bluetoothAdapter
