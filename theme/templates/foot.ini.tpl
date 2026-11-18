@@ -6,11 +6,14 @@
 background={{ background_strip }}
 foreground={{ foreground_strip }}
 # The background a little see-through, over a blur of what is behind it.
-# Only cells in the default background are: text, and cells a program
-# colours, stay solid. The blur is foot's to ask for (blur=yes, the
+# Only cells in the background's colour are: text, and cells a program
+# colours, stay solid. That includes cells a program paints black, color0
+# being the background (alpha-mode=matching): cmatrix's were solid, in a
+# see-through frame. The blur is foot's to ask for (blur=yes, the
 # ext-background-effect protocol): Hyprland's rules alone blur nothing behind
 # foot, which then showed the background behind it sharp.
 alpha=0.85
+alpha-mode=matching
 blur=yes
 
 regular0={{ color0_strip }}
