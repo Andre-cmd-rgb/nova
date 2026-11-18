@@ -19,18 +19,18 @@ QtObject {
   // the shell sees it), with the interface scaled by <scale>. Up to a
   // 1600-wide screen, as a 1366x768 laptop or a 1920x1080 one at UI size 1.25,
   // it is 1: the size the window was made for. From there it grows to a
-  // quarter more, reached at 3200 wide, so a 1920x1080 screen gets 5%, a
-  // 2400x1500 laptop 12%, a 2560x1440 monitor 15%. A screen is measured by
-  // the smaller of its width and its 16:9 height, so a 3440x1440 ultrawide
-  // counts as the 2560x1440 it is tall enough for. A window's own room on the
-  // screen still caps it.
+  // quarter more, reached at 2400 wide, so a 1920x1080 screen gets 10%, and
+  // a 2400x1500 laptop (a 16" 4K one at 1.6) or a 2560x1440 monitor the
+  // quarter. A screen is measured by the smaller of its width and its 16:9
+  // height, so a 3440x1440 ultrawide counts as the 2560x1440 it is tall
+  // enough for. A window's own room on the screen still caps it.
   function windowGrowth(width, height, scale) {
     const s = Number(scale) > 0 ? Number(scale) : 1
     const w = Number(width) / s
     const h = Number(height) * 16 / 9 / s
     if (!isFinite(w) || !isFinite(h)) return 1
     const reach = Math.min(w, h)
-    return 1 + 0.25 * Math.max(0, Math.min(1, (reach - 1600) / 1600))
+    return 1 + 0.25 * Math.max(0, Math.min(1, (reach - 1600) / 800))
   }
 
   // A list's cursor moved by <step> over <length> rows: an arrow (a step of
