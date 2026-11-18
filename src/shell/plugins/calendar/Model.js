@@ -127,10 +127,6 @@ function parseDate(text) {
   return m ? dateStart(+m[3], +m[2] - 1, +m[1]) : NaN
 }
 
-function formatClock(minutes) {
-  return pad2(Math.floor(minutes / 60) % 24) + ":" + pad2(minutes % 60)
-}
-
 // ---- reading
 
 function calendarOf(root) {

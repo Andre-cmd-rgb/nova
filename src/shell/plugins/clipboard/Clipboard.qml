@@ -42,11 +42,6 @@ Item {
     opened = false
   }
 
-  function toggle() {
-    if (opened) close()
-    else open("{}")
-  }
-
   // ---------------------------------------------------------------- the rows
 
   // The rows for the history and the search, the cursor kept within them;

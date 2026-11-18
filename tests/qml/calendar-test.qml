@@ -119,7 +119,6 @@ ShellRoot {
     check(Model.parseClock("9") === 540 && Model.parseClock("930") === 570 && Model.parseClock("09.30") === 570 && Model.parseClock("21:30") === 1290, "times typed in")
     check(Model.parseClock("9:30 pm") === 1290 && Model.parseClock("12am") === 0 && isNaN(Model.parseClock("25:00")) && isNaN(Model.parseClock("13pm")), "with am and pm, and not past the day")
     check(Model.parseDate("2026-10-29") === local(2026, 10, 29) && Model.parseDate("29/10/2026") === local(2026, 10, 29) && isNaN(Model.parseDate("31/02/2026")), "days typed in, the day first")
-    check(Model.formatClock(570) === "09:30", "a time written")
 
     // ---- editing
     var now = local(2026, 10, 28, 12)

@@ -45,11 +45,6 @@ Item {
     if (shell && typeof shell.hide === "function") shell.hide((manifest && manifest.id) || "nova.emojis")
   }
 
-  function toggle() {
-    if (opened) dismiss()
-    else open("{}")
-  }
-
   // ---------------------------------------------------------------- search
 
   function search(text) {
