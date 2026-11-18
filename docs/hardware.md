@@ -76,7 +76,7 @@ A discrete NVIDIA card sleeps while nothing uses it, where its driver can do tha
 - **GTX 16 and RTX 20 series:** only when the driver is asked to, which NVIDIA leaves off for them and so does Nova. `nova doctor` gives the one line that turns it on, and how to take it back.
 - **A card that drives a display** stays awake, on any laptop.
 
-Settings offers no switch for the card, and `nova doctor` says when it is awake with nothing on it.
+Off the P1, Settings offers no switch for the card, and `nova doctor` says when it is awake with nothing on it.
 
 The power governor, which sets the CPU's limits and the fans to the load, starts only on the P1 so far. It starts on another model once its tiers are measured there and match the P1's results on the watt meter.
 
