@@ -14,7 +14,7 @@ nova theme set nord      # use one
 nova theme current       # the one in use
 ```
 
-Nova comes with `adaptive`, `catppuccin`, `catppuccin-latte`, `everforest`, `flexoki-light`, `gruvbox`, `kanagawa`, `miasma`, `nord`, `rose-pine`, `tokyo-night` and `white`. A new account starts in `white`.
+Nova comes with `adaptive`, `catppuccin`, `catppuccin-latte`, `everforest`, `flexoki-light`, `gruvbox`, `kanagawa`, `miasma`, `nord`, `rose-pine`, `tokyo-night` and `white`. The installer sets `white`.
 
 A theme reaches every part of the desktop at once:
 
