@@ -130,14 +130,12 @@ installed=$(nova-apps-installed)
 # Where it is installed: "flatpak <installation> <app>", "pacman <package>",
 # or nothing.
 where_installed() {
-  local line
-  line=$(jq -r --argjson have "$installed" '
-    .sources[] as $s
-    | if $s.kind == "flathub" then
-        ($have.flatpak[] | select(.app == $s.app) | "flatpak \(.installation) \(.app)")
-      elif $have.pacman[$s.package // ""] then "pacman \($s.package)"
-      else empty end' <<<"$app" | head -n 1)
-  printf '%s\n' "$line"
+  jq -r --argjson have "$installed" '
+    first(.sources[] as $s
+      | if $s.kind == "flathub" then
+          ($have.flatpak[] | select(.app == $s.app) | "flatpak \(.installation) \(.app)")
+        elif $have.pacman[$s.package // ""] then "pacman \($s.package)"
+        else empty end)' <<<"$app"
 }
 
 # The source to install from: the one asked for, else the first.
