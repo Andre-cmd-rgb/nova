@@ -13,10 +13,12 @@ import "plugins/capture"
 // The screen picker (plugins/capture/Capture.qml) as its callers have it: a
 // pick asked for and answered on the caller's FIFO, by a click on a window,
 // a region drawn, the keys, or a pick given up; the still kept until it is
-// thawed; a request that replaces another, which is told it was given up;
-// and PRINT's own pick, done before its command asks, handed to it when it
-// does. The pointer and the keys are its functions, called as its mouse area
-// and its window call them.
+// thawed, and a request while it is held kept until then; a request that
+// replaces another, which is told it was given up; a caller that thaws
+// while picking, which gives it up; and PRINT's own pick, done before its
+// command asks, or while it asks, handed to it, by its token, and to no
+// other. The pointer and the keys are its functions, called as its mouse
+// area and its window call them.
 ShellRoot {
   id: test
 
@@ -202,33 +204,81 @@ ShellRoot {
     }))
   }
 
-  function printFirst() {
-    // PRINT: the screen frozen before its command asks.
+  // PRINT: the screen frozen before its command asks, with its token.
+  function printKey(token) {
+    capture.printToken = token
     capture.freeze("smart")
+  }
+
+  function printFirst() {
+    printKey("print-1")
     when(() => capture.layKnown, () => {
       capture.pressed(150, 150)
       capture.released(150, 150)
       when(() => capture.settled, () => {
         same(capture.settledWith, "100,100 400x300", "picked before it was asked: kept")
-        caller("f", fifo => {
-          capture.request("smart", fifo)
+        caller("f", fifo => caller("other", other => {
+          capture.request("smart", other, "-")
+          same([capture.phase, capture.answer], ["holding", ""], "another request while PRINT's still is held: it waits")
+          capture.request("smart", fifo, "print-1")
           when(() => answered(fifo) !== null, () => {
-            same(answered(fifo), "100,100 400x300\n", "and handed to the command when it asks")
+            same(answered(fifo), "100,100 400x300\n", "PRINT's pick handed to its command when it asks")
             same(capture.phase, "holding", "the still held for it")
             capture.thaw(fifo)
-            capture.freeze("smart")
-            capture.cancel()
-            caller("g", late => {
-              capture.request("smart", late)
-              same(capture.opened, false, "given up before its command asked: not frozen again for it")
-              when(() => answered(late) !== null, () => {
-                same(answered(late), "\n", "and the command is told so")
-                finish()
-              }, "the command is told")
-            })
+            same([capture.phase, capture.answer === other], ["picking", true], "let go, the request that waited is picked")
+            capture.thaw(other)
+            same([capture.opened, answered(other)], [false, null], "a caller that thaws while picking gives it up")
+            printGivenUp()
           }, "the kept pick is answered")
-        })
+        }))
       }, "the pick is kept")
+    }, "what is offered is read")
+  }
+
+  function printGivenUp() {
+    printKey("print-2")
+    capture.cancel()
+    caller("g", late => {
+      capture.request("smart", late, "print-2")
+      same(capture.opened, false, "given up before its command asked: not frozen again for it")
+      when(() => answered(late) !== null, () => {
+        same(answered(late), "\n", "and the command is told so")
+        printGivenUpThenAnother()
+      }, "the command is told")
+    })
+  }
+
+  function printGivenUpThenAnother() {
+    printKey("print-4")
+    capture.cancel()
+    caller("stranger", stranger => caller("g2", late => {
+      capture.request("smart", stranger, "-")
+      same([capture.phase, capture.answer === stranger], ["picking", true], "a request without PRINT's token is not given its pick: it picks")
+      capture.request("smart", late, "print-4")
+      same([capture.phase, capture.answer === stranger], ["picking", true], "its command asking after: the other's pick left alone")
+      when(() => answered(late) !== null, () => {
+        same([answered(late), answered(stranger)], ["\n", null], "and the command told it was given up, and no other")
+        capture.cancel()
+        printWhileAsking()
+      }, "the command is told")
+    }))
+  }
+
+  function printWhileAsking() {
+    printKey("print-3")
+    when(() => capture.layKnown, () => {
+      caller("h", fifo => {
+        capture.pressed(600, 600)
+        capture.released(700, 650)
+        same([capture.phase, capture.settled], ["holding", false], "a region drawn: on its way")
+        capture.request("smart", fifo, "print-3")
+        when(() => answered(fifo) !== null, () => {
+          same(answered(fifo), "600,600 100x50\n", "PRINT's command asking as it is on its way is given it")
+          capture.thaw(fifo)
+          same(capture.opened, false, "thawed")
+          finish()
+        }, "the region on its way is answered")
+      })
     }, "what is offered is read")
   }
 

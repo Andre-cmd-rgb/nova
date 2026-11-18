@@ -171,19 +171,26 @@ record of how long a charge lasts.
 
 ### Screen picker
 
-`nova-capture-region` asks with `nova-shell nova.capture pick <mode> <fifo>`
-(smart, region or windows), and reads the answer from the FIFO it made: the
-region as slurp writes one, "X,Y WxH", or a blank line for a pick given up.
-Every screen's still is a `ScreencopyView` taken as the pick starts, and
-nothing is drawn on it until it has come, so that no dimming is in it. The
-still stays, bare, after the answer, for grim to take the region from,
-until `thaw <fifo>`, or ten seconds; `waiting <fifo>` says whether the
-request is still being answered, which the caller asks every ten seconds. The
-windows and screens offered are `nova-capture-region --layout`'s. PRINT is
-the plugin's global shortcut: it freezes the screen at once and starts
-`nova-capture-screenshot`, whose request, when it comes, joins the pick
-under way, or is given what it came to. Without the shell, the command
-falls back to hyprpicker and slurp.
+`nova-capture-region` asks with `nova-shell nova.capture pick <mode> <fifo>
+<token>` (smart, region or windows; the token is `NOVA_CAPTURE_PICK`, or
+`-`), and reads the answer from the FIFO it made: the region as slurp writes
+one, "X,Y WxH", or a blank line for a pick given up. Every screen's still is
+a `ScreencopyView` taken as the pick starts, and nothing is drawn on it until
+it has come, so that no dimming is in it. The still stays, bare, after the
+answer, for grim to take the region from, until `thaw <fifo>`, or ten
+seconds; a `thaw` while it is picked gives the pick up. `waiting <fifo>`
+says whether the request is still being answered, which the caller asks
+every ten seconds, and gives up on a "no", or on three without an answer. A
+request while another's still is held waits for it to go; one while a pick
+is under way replaces that pick's request, which is told it was given up.
+The windows and screens offered are `nova-capture-region --layout`'s.
+
+PRINT is the plugin's global shortcut, while the shell's backgrounds are on
+screen (`data/hypr/keys/desktop.lua`): it freezes the screen at once and
+starts `nova-capture-screenshot` with a token of its own, whose request, when
+it comes, joins the pick under way, or is given what it came to; no request
+without that token is. Without the shell, PRINT starts the command, which
+picks with hyprpicker and slurp, as it does when the shell does not answer.
 
 ### Image picker
 

@@ -289,17 +289,19 @@ freezer=""
 trap '$keep_freeze || thaw "$freezer"' EXIT
 
 # The shell's picker, asked to pick; it answers on a FIFO made here, a line:
-# the region, or nothing for a pick given up. Asked every ten seconds whether
-# it still has the request, a shell that has gone, or that has let the
-# request go, is a pick given up. 1 where the shell cannot pick.
+# the region, or nothing for a pick given up. PRINT's screenshot asks with
+# the token the shell gave it (NOVA_CAPTURE_PICK), for the pick PRINT began.
+# Asked every ten seconds whether it still has the request, a shell that has
+# let the request go, or that has not answered three times running, is a
+# pick given up. 1 where the shell cannot pick.
 patience=${NOVA_CAPTURE_PATIENCE:-10}
 in_shell() { # mode
-  local fifo fd status
+  local fifo fd status asked misses=0
   mkdir -p "${taken%/*}"
   fifo=$(mktemp -u "${taken%/*}/capture-XXXXXX")
   mkfifo -m 600 "$fifo" || return 1
   exec {fd}<>"$fifo"
-  if [[ $(nova-shell nova.capture pick "$1" "$fifo" 2>/dev/null) != ok ]]; then
+  if [[ $(nova-shell nova.capture pick "$1" "$fifo" "${NOVA_CAPTURE_PICK:--}" 2>/dev/null) != ok ]]; then
     exec {fd}>&-
     rm -f -- "$fifo"
     return 1
@@ -308,8 +310,12 @@ in_shell() { # mode
   while :; do
     IFS= read -r -t "$patience" -u "$fd" picked && break
     status=$?
-    if ((status <= 128)) || [[ $(nova-shell nova.capture waiting "$fifo" 2>/dev/null) != yes ]]; then
-      picked=""
+    picked=""
+    ((status > 128)) || break
+    asked=$(nova-shell nova.capture waiting "$fifo" 2>/dev/null || true)
+    if [[ $asked == yes ]]; then
+      misses=0
+    elif [[ $asked == no ]] || ((++misses >= 3)); then
       break
     fi
   done

@@ -37,9 +37,9 @@ esac'
 shell_picks() { # answer
   printf '%s\n' "$1" >"$SCRATCH/answer"
   stub nova-shell 'echo "shell $*" >>"$CALLS"
-case "${*: -3:2}" in
-  "pick "*) (sleep 0.2; cat "$SCRATCH/answer" >"${*: -1}") & echo ok ;;
-  "waiting "*) echo yes ;;
+case "$1 $2" in
+  "nova.capture pick") (sleep 0.2; cat "$SCRATCH/answer" >"$4") & echo ok ;;
+  "nova.capture waiting") echo yes ;;
 esac'
   stub hyprpicker 'echo hyprpicker >>"$CALLS"; exec sleep 5'
   stub slurp 'echo slurp >>"$CALLS"; cat >/dev/null'
@@ -94,13 +94,33 @@ click() { # x y
   [ -z "$output" ]
   # Asked whether it still has the request, the shell says no: given up.
   stub nova-shell 'echo "shell $*" >>"$CALLS"
-case "${*: -3:2}" in
-  "pick "*) echo ok ;;
-  "waiting "*) echo no ;;
+case "$1 $2" in
+  "nova.capture pick") echo ok ;;
+  "nova.capture waiting") echo no ;;
 esac'
+  : >"$CALLS"
   NOVA_CAPTURE_PATIENCE=0.2 run region smart
   [ "$status" -eq 1 ]
-  grep -q "^shell nova.capture waiting $XDG_RUNTIME_DIR/nova/capture-" "$CALLS"
+  [ "$(grep -c "^shell nova.capture waiting $XDG_RUNTIME_DIR/nova/capture-" "$CALLS")" -eq 1 ]
+  # A shell that does not answer is asked three times, then given up on.
+  stub nova-shell 'echo "shell $*" >>"$CALLS"
+case "$1 $2" in
+  "nova.capture pick") echo ok ;;
+  *) exit 1 ;;
+esac'
+  : >"$CALLS"
+  NOVA_CAPTURE_PATIENCE=0.2 run region smart
+  [ "$status" -eq 1 ]
+  [ "$(grep -c "^shell nova.capture waiting " "$CALLS")" -eq 3 ]
+}
+
+@test "PRINT's screenshot asks with the token the shell gave it, any other with none" {
+  shell_picks '10,20 300x200'
+  NOVA_CAPTURE_PICK=print-1 run region smart
+  grep -q "^shell nova.capture pick smart $XDG_RUNTIME_DIR/nova/capture-[^ ]* print-1$" "$CALLS"
+  : >"$CALLS"
+  run region smart
+  grep -q "^shell nova.capture pick smart $XDG_RUNTIME_DIR/nova/capture-[^ ]* -$" "$CALLS"
 }
 
 @test "--layout is what is offered: the focused monitor, the monitors, the windows" {

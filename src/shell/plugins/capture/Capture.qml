@@ -23,12 +23,15 @@ import "Pick.js" as Pick
 // right click gives the pick up, as PRINT does a pick it started.
 //
 // nova-capture-region asks with `nova-shell nova.capture pick <mode>
-// <answer>`, <answer> a FIFO it reads the region from, "X,Y WxH", or a blank
-// line for a pick given up. The still stays on screen after, its dimming
-// gone, while the caller takes the region from it with grim, until it says
-// `thaw <answer>` (or ten seconds have gone). PRINT freezes the screen
-// itself, before the screenshot it starts has asked: a region picked or a
-// pick given up by then is the answer that command is given when it asks.
+// <answer> <token>`, <answer> a FIFO it reads the region from, "X,Y WxH", or
+// a blank line for a pick given up. The still stays on screen after, its
+// dimming gone, while the caller takes the region from it with grim, until
+// it says `thaw <answer>` (or ten seconds have gone); a caller that thaws
+// while it is picked gives it up. A request that comes while another's
+// still is held waits for it to go. PRINT freezes the screen itself, before
+// the screenshot it starts has asked, and gives that command a token
+// (NOVA_CAPTURE_PICK): a region picked or a pick given up by then is the
+// answer the request with that token is given, and no other.
 Item {
   id: capture
 
@@ -43,9 +46,13 @@ Item {
   // The request answered: its FIFO; "" while none has come.
   property string answer: ""
   // What PRINT's own pick came to before its command asked: a region, or ""
-  // for one given up.
+  // for one given up; and the token its command asks with.
   property bool settled: false
   property string settledWith: ""
+  property string printToken: ""
+  property int printed: 0
+  // A request that came while another's still was held: { mode, path, token }.
+  property var queued: null
 
   property var lay: Pick.layout("")
   property bool layKnown: false
@@ -68,8 +75,8 @@ Item {
   IpcHandler {
     target: "nova.capture"
 
-    function pick(mode: string, answer: string): string {
-      capture.request(mode, answer)
+    function pick(mode: string, answer: string, token: string): string {
+      capture.request(mode, answer, token)
       return "ok"
     }
 
@@ -84,7 +91,7 @@ Item {
   }
 
   function thaw(path) {
-    if (phase === "holding" && path === answer) end()
+    if (opened && path === answer) end()
   }
 
   // Whether the request is still being answered: its caller gives up on one
@@ -107,21 +114,36 @@ Item {
       return
     }
     if (phase !== "") return
+    settled = false
+    settledFor.stop()
+    settledWith = ""
     freeze("smart")
-    Quickshell.execDetached(["nova-capture-screenshot"])
+    printed += 1
+    printToken = "print-" + printed + "-" + Date.now()
+    Quickshell.execDetached(["env", "NOVA_CAPTURE_PICK=" + printToken, "nova-capture-screenshot"])
   }
 
-  function request(asked, path) {
-    if (settled) {
+  function request(asked, path, token) {
+    var own = !!token && token === printToken
+    if (settled && own) {
       settled = false
       settledFor.stop()
-      answer = path
       reply(path, settledWith)
-      if (phase === "holding") holdFor.restart()
+      // A region's still is held for it; a pick given up leaves alone
+      // another's that has come since.
+      if (settledWith !== "" && phase === "holding") {
+        answer = path
+        holdFor.restart()
+      }
       return
     }
-    if (phase === "holding") end()
-    else if (answer !== "" && answer !== path) reply(answer, "")
+    if (phase === "holding") {
+      // PRINT's region on its way to the command that has just asked.
+      if (answer === "" && own) answer = path
+      else queued = { mode: asked, path: path, token: token }
+      return
+    }
+    if (answer !== "" && answer !== path) reply(answer, "")
     if (phase === "") freeze(asked)
     else mode = asked
     answer = path
@@ -130,8 +152,6 @@ Item {
   function freeze(asked) {
     mode = asked === "region" || asked === "windows" ? asked : "smart"
     answer = ""
-    settled = false
-    settledWith = ""
     lay = Pick.layout("")
     layKnown = false
     highlight = null
@@ -171,6 +191,28 @@ Item {
     pendingClick = null
     giving.stop()
     holdFor.stop()
+    if (queued) {
+      var next = queued
+      queued = null
+      request(next.mode, next.path, next.token)
+    }
+  }
+
+  // Every screen, as one region: what a drag past an edge is cut to.
+  function desk() {
+    var all = null
+    for (var i = 0; i < Quickshell.screens.length; i++) {
+      var s = Quickshell.screens[i]
+      if (!all) {
+        all = { x: s.x, y: s.y, right: s.x + s.width, bottom: s.y + s.height }
+      } else {
+        all.x = Math.min(all.x, s.x)
+        all.y = Math.min(all.y, s.y)
+        all.right = Math.max(all.right, s.x + s.width)
+        all.bottom = Math.max(all.bottom, s.y + s.height)
+      }
+    }
+    return all ? { x: all.x, y: all.y, w: all.right - all.x, h: all.bottom - all.y } : null
   }
 
   // PRINT's pick, done before its command asked: kept for it a while.
@@ -261,6 +303,8 @@ Item {
   function released(x, y) {
     if (!drag) return
     var r = mode === "windows" ? null : Pick.drawn(drag.x, drag.y, x, y)
+    var all = desk()
+    if (r && all) r = Pick.clip(r, all)
     drag = null
     if (r && !Pick.isClick(r)) {
       take(r)
@@ -292,7 +336,12 @@ Item {
       if (!way) return
       if (layKnown) {
         var current = lay.windows.some(function (w) { return Pick.same(w, highlight) }) ? highlight : null
-        highlight = Pick.step(lay.windows, current, px, py, way) || highlight
+        // From the pointer; from the middle of the screen in focus where the
+        // pointer is not seen yet.
+        var f = lay.focused
+        var ox = isFinite(px) ? px : f ? f.x + Math.floor(f.w / 2) : 0
+        var oy = isFinite(py) ? py : f ? f.y + Math.floor(f.h / 2) : 0
+        highlight = Pick.step(lay.windows, current, ox, oy, way) || highlight
         selection = null
       }
     }

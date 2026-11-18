@@ -135,6 +135,32 @@ hypr() { # lua
   [ "$output" = "$plain"$'\n'"$plain"$'\n'"$terminal"$'\n'"$terminal"$'\nnova-shell shell toggle nova.clipboard' ]
 }
 
+# PRINT goes to the shell's screen picker, which freezes the screen as the key
+# goes down; without the shell's backgrounds on screen (it is restarting, or
+# stopped), to the command, which picks with slurp.
+@test "PRINT is the shell's while it is there, and the command's without it" {
+  run hypr '
+    local keys, layers = {}, {}
+    hl.bind = function(combo, action) keys[combo] = action end
+    hl.dsp.global = function(name) return "global " .. name end
+    hl.get_layers = function(filter)
+      local found = {}
+      for _, layer in ipairs(layers) do
+        if layer.namespace == filter.namespace then found[#found + 1] = layer end
+      end
+      return found
+    end
+    require("default.hypr.lib")
+    require("default.hypr.keys.desktop")
+    keys["PRINT"]()
+    layers = { { namespace = "nova-background", mapped = false } }
+    keys["PRINT"]()
+    layers = { { namespace = "nova-bar", mapped = true }, { namespace = "nova-background", mapped = true } }
+    keys["PRINT"]()'
+  [ "$status" -eq 0 ]
+  [ "$(grep -e '^dispatch' <<<"$output")" = $'dispatch nova-capture-screenshot\ndispatch nova-capture-screenshot\ndispatch global nova:screenshot' ]
+}
+
 @test "o is nova, for configs written before it was named" {
   run hypr 'require("default.hypr.lib") print(o == nova)'
   [ "$output" = "true" ]

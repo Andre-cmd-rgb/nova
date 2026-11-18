@@ -35,8 +35,15 @@ nova.bind("switch:on:Lid Switch", nil, "nova-caffeine close", { locked = true })
 nova.bind("switch:off:Lid Switch", nil, "nova-caffeine open", { locked = true })
 
 -- PRINT is the shell's (its screen picker): the screen freezes as the key
--- goes down, and no process starts before it.
-nova.bind("PRINT", "Screenshot", hl.dsp.global("nova:screenshot"))
+-- goes down, and no process starts before it. Without the shell (none of its
+-- backgrounds on screen: it is restarting, or it was stopped), the command
+-- picks with slurp.
+nova.bind("PRINT", "Screenshot", function()
+  for _, layer in ipairs(hl.get_layers({ namespace = "nova-background" })) do
+    if layer.mapped then return hl.dispatch(hl.dsp.global("nova:screenshot")) end
+  end
+  hl.dispatch(hl.dsp.exec_cmd("nova-capture-screenshot"))
+end)
 nova.bind("ALT + PRINT", "Screenrecording", "nova-capture-screenrecording --stop-recording || nova-menu toggle capture.screenrecord")
 nova.bind("SUPER + PRINT", "Color picker", "pkill hyprpicker || hyprpicker -a")
 nova.bind("SUPER + CTRL + PRINT", "Extract text (OCR) from screenshot", "nova-capture-text")
