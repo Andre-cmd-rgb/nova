@@ -60,6 +60,11 @@
     --popover-fg-color: {{ foreground }};
     --popover-shade-color: rgba({{ darker_background_rgb }}, 0.4);
 
+    --active-toggle-bg-color: {{ mix background foreground 12% }};
+    --active-toggle-fg-color: {{ foreground }};
+    --overview-bg-color: {{ dark_background }};
+    --overview-fg-color: {{ foreground }};
+
     --shade-color: rgba({{ darker_background_rgb }}, 0.4);
     --scrollbar-outline-color: {{ background }};
   }
