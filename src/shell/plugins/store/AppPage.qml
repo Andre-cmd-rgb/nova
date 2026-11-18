@@ -260,6 +260,13 @@ Column {
     boundsBehavior: Flickable.StopAtBounds
     model: (page.app && page.app.shots) || []
 
+    // A swipe across moves the pictures as the page's moves the page; one up
+    // or down over them moves the page.
+    TouchpadScroll {
+      flickable: shots
+      across: true
+    }
+
     delegate: Item {
       id: shot
       required property var modelData
