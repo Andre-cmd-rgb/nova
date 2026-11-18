@@ -123,8 +123,9 @@ remove_app() {
     nova | nova-*) die "$target is part of Nova" ;;
   esac
   # An app: it has a launcher entry. Not a library or a tool, which other
-  # things use.
-  pacman -Qlq -- "$target" 2>/dev/null | grep -qE '^/usr/share/applications/[^/]+\.desktop$' ||
+  # things use. (Not grep -q: it would stop reading at the first one, and
+  # pacman, shot by SIGPIPE, would fail the pipeline.)
+  pacman -Qlq -- "$target" 2>/dev/null | grep -E '^/usr/share/applications/[^/]+\.desktop$' >/dev/null ||
     die "$target is not an app"
   # Nova needs it.
   owner=$(LC_ALL=C pacman -Qi nova 2>/dev/null | awk '/^Depends On/ { on = 1; sub(/^[^:]*:/, ""); print; next } on && /^ / { print; next } { on = 0 }' |

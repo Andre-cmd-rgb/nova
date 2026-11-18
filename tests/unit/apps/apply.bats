@@ -25,8 +25,9 @@ echo "pacman $*" >>"$CALLS"
 case $1 in
   -Si) [[ $3 == gimp ]] ;;
   -Qu) cat "$SCRATCH/behind" 2>/dev/null; exit 0 ;;
-  -Q) [[ $3 == firefox || $3 == nova-keyring || $3 == foot || $3 == libfoo ]] ;;
-  -Qlq) [[ $3 == libfoo ]] || echo "/usr/share/applications/$3.desktop" ;;
+  -Q) [[ $3 == firefox || $3 == bigapp || $3 == nova-keyring || $3 == foot || $3 == libfoo ]] ;;
+  -Qlq) [[ $3 == bigapp ]] && { echo /usr/share/applications/bigapp.desktop; exec seq 1 300000; }
+    [[ $3 == libfoo ]] || echo "/usr/share/applications/$3.desktop" ;;
   -Qi) printf 'Name            : nova\nDepends On      : nova-keyring  hyprland  foot>=1.0\n                  quickshell\nOptional Deps   : None\n' ;;
   *) exit 0 ;;
 esac
@@ -88,6 +89,12 @@ teardown() { teardown_scratch; }
   run "$APPLY" remove firefox
   [ "$status" -eq 0 ]
   grep -qx 'pacman -Rns --noconfirm -- firefox' "$CALLS"
+}
+
+@test "remove: an app with more files than grep reads before it is satisfied is still one" {
+  run "$APPLY" remove bigapp
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -Rns --noconfirm -- bigapp' "$CALLS"
 }
 
 @test "remove: never Nova, what Nova needs, a library, or one not installed" {
