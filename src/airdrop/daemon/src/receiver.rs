@@ -161,7 +161,10 @@ pub(crate) fn offer(asked: &Value) -> Offer {
                 .and_then(Value::text)
                 .unwrap_or(""),
         ),
-        bytes: files.iter().map(|(_, bytes)| bytes).sum(),
+        // Sizes are a stranger's, and theirs to make add up past what a number holds.
+        bytes: files
+            .iter()
+            .fold(0u64, |all, (_, bytes)| all.saturating_add(*bytes)),
         files,
         links: asked
             .get("Items")
@@ -524,6 +527,10 @@ mod tests {
             (offered.bytes, offered.links.as_slice()),
             (1_044_468, &["https://example.org/".to_owned()][..])
         );
+        // Sizes that add up past what a number holds are as large as it holds, not small again.
+        let huge = Value::Dict(vec![("FileSize".into(), Value::Int(i64::MAX))]);
+        let asked = Value::Dict(vec![("Files".into(), Value::List(vec![huge; 3]))]);
+        assert_eq!(offer(&asked).bytes, u64::MAX);
         // Something that is no question at all.
         assert_eq!(
             offer(&Value::Int(1)),
