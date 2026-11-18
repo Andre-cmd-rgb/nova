@@ -2,7 +2,7 @@
 
 Nova receives what an iPhone sends with AirDrop: photos, videos, files, links. And it sends files to an iPhone. It is real AirDrop, spoken over Apple's own radio link, so the iPhone needs nothing installed and no network in common with the computer.
 
-- **Sending takes an iPhone set to Everyone for 10 Minutes** ([why](#sending)). Sending is new: it was tried against Nova's own receiver, not yet with an iPhone.
+- **Sending takes an iPhone set to Everyone for 10 Minutes** ([why](#sending)). Sending is new: it was tried against Nova's own receiver, and its one send to an iPhone stopped partway ([the radio](#how-it-is-built)).
 - **While AirDrop is on, the Wi-Fi is off the network** ([why](#why-the-wi-fi-goes)). It ends by itself and the Wi-Fi reconnects.
 - **It needs a Wi-Fi card that can do two things** ([which](#which-cards)). It was built and measured on the Intel AX210, with an iPhone 15 Pro.
 
@@ -174,6 +174,6 @@ This is the part that must not fail, and `nova-airdrop-radio` is written round i
 
 - **Sending to an iPhone set to Contacts Only.** It takes an Apple identity.
 - **Sending links, text or a folder**, and AirDrop in Files' Open With for documents.
-- **Sending, measured.** It has been tried against Nova's own receiver only.
+- **Sending, measured.** It has been tried against Nova's own receiver; no send to an iPhone has finished.
 - **The 5 GHz channels.** An iPhone spends most of its slots on channel 44; Intel cards may not send there. Channel 6 is where every card may.
 - **A picture of your own in the iPhone's list.** The iPhone draws the picture from the kind of computer the receiver says it is; a photo is shown only for a contact with an Apple identity.
