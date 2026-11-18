@@ -1,24 +1,20 @@
 import QtQuick
-import Quickshell
 import qs.Commons
 import qs.Ui
 import "MenuModel.js" as MenuModel
 
 // Nova's menu: the apps, settings and commands of menu.jsonc on a card over
 // the screen, walked with the keys or the pointer and searched by typing,
-// the home's files found too, and a sum or a conversion typed answered; and
-// nova-menu-select's chooser, a list to pick from. The shell keeps it
-// loaded: `nova-shell shell summon nova.menu` hands open() its payload, hide
-// calls close(), nova menu's refresh and ping call refresh() and ping(), and
-// toggle reads opened.
+// and a sum or a conversion typed answered; and nova-menu-select's chooser,
+// a list to pick from. The shell keeps it loaded: `nova-shell shell summon
+// nova.menu` hands open() its payload, hide calls close(), nova menu's
+// refresh and ping call refresh() and ping(), and toggle reads opened.
 Item {
   id: plugin
 
   // Set by the shell once the plugin has loaded.
   property var shell: null
   readonly property var apps: shell ? shell.appLibrary : null
-  // Where the found files' folders are shown from, as ~.
-  readonly property string home: Quickshell.env("HOME")
 
   // -------------------------------------------------------------- the calls
 
@@ -102,9 +98,9 @@ Item {
   }
 
   // The menu <id>, or the root for one that is not there, as it is now: its
-  // when: and checked: asked again, its provider run, and icons placed since
-  // the shell started (on a first install) found. A chooser still waiting
-  // is answered as cancelled.
+  // when: and checked: asked again, its provider run, no answer of the last
+  // opening, and icons placed since the shell started (on a first install)
+  // found. A chooser still waiting is answered as cancelled.
   function showMenu(id) {
     request.release()
     asking = null
@@ -116,7 +112,7 @@ Item {
     gate.rowsMoved()
     window.unpin()
     source.askGuards()
-    source.forgetFiles()
+    source.calculate("")
     opened = true
     relist()
     source.refill(here)
@@ -152,7 +148,7 @@ Item {
   // Lists the chooser's options, what a search finds, or the menu shown;
   // nothing until a menu file is read. A sum's answer goes first. Rows that
   // cannot be worked out leave the list empty rather than showing the last.
-  // With <stay>, for rows that came by themselves (files found, answers), the
+  // With <stay>, for rows that came by themselves (a provider's, answers), the
   // cursor stays on its row where that is still listed: Return then does
   // what was lit. An answer that comes takes the cursor from the top row,
   // though: Return after a sum is meant for its answer.
@@ -167,7 +163,6 @@ Item {
         next = typed.trim() ? MenuModel.searchRows(source.catalog, here, typed, source.answers)
           : MenuModel.menuRows(source.catalog, here, source.answers, typed !== "")
         if (calculates()) next = MenuModel.answerRows(source.answerFor(typed)).concat(next)
-        if (searchesFiles()) next = next.concat(MenuModel.fileRows(source.filesFound, typed, home, next.length > 0))
       }
     } finally {
       rows = next
@@ -218,7 +213,7 @@ Item {
 
   // What is typed is now <text>: the search, or the chooser's filter. A
   // search runs the providers of every menu it reaches, and one from the
-  // root looks among the home's files too, and works out a sum.
+  // root works out a sum.
   function filter(text) {
     window.pin()
     typed = text
@@ -226,13 +221,8 @@ Item {
     cursor = 0
     gate.rowsMoved()
     if (!choosing && typed.trim()) source.fillUnder(here)
-    if (searchesFiles()) source.findFiles(typed.trim())
     source.calculate(calculates() ? typed : "")
     relist()
-  }
-
-  function searchesFiles() {
-    return !choosing && MenuModel.findsFiles(here, typed)
   }
 
   function calculates() {
@@ -270,8 +260,8 @@ Item {
 
   // Does what the row at <index> is for: picks the chooser's option, its
   // line too when it has one; enters a menu; launches an app; runs a
-  // command, which for a file opens it and for an answer copies it, once
-  // the answer is the sum's typed.
+  // command, which for an answer copies it, once the answer is the sum's
+  // typed.
   function take(index, byPointer) {
     const row = rows[index]
     if (asking || !row) return
@@ -287,15 +277,6 @@ Item {
       if (row.kind !== "app") run(row.command)
       else if (apps) apps.launch(row.appId, row.label)
     }
-  }
-
-  // Opens the folder of the file at <index>, rather than the file.
-  function takeFolder(index) {
-    const command = MenuModel.folderCommand(rows[index])
-    if (asking || !command) return
-    opened = false
-    typed = ""
-    run(command)
   }
 
   function run(command) {
@@ -346,9 +327,8 @@ Item {
 
   // Escape clears what is typed, or closes; Backspace and Left go back when
   // nothing is; Up, Down, Page Up and Page Down move; Return, Enter and
-  // Right do what the row is for, and Ctrl with Return or Enter opens a
-  // file's folder; Delete asks to uninstall an app; text is typed. While the
-  // uninstall question is up, it has the keys.
+  // Right do what the row is for; Delete asks to uninstall an app; text is
+  // typed. While the uninstall question is up, it has the keys.
   function press(event) {
     const key = event.key
     const enter = key === Qt.Key_Return || key === Qt.Key_Enter
@@ -358,7 +338,6 @@ Item {
     else if (Util.editsFilter(event, typed)) filter(Util.editedFilter(event, typed))
     else if ((key === Qt.Key_Backspace || key === Qt.Key_Left) && !typed) back()
     else if (steps.has(key)) move(steps.get(key))
-    else if (enter && (event.modifiers & Qt.ControlModifier)) takeFolder(cursor)
     else if (enter || key === Qt.Key_Right) take(cursor)
     else if (isText(event)) filter(typed + event.text)
     else return false

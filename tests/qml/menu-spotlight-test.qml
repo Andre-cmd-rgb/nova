@@ -8,7 +8,7 @@ import "plugins/menu"
 import "plugins/menu/Calculator.js" as Calculator
 import "plugins/menu/MenuModel.js" as MenuModel
 
-// What the menu's search answers besides apps, menus and files: a sum or a
+// What the menu's search answers besides apps and menus: a sum or a
 // conversion, put the way qalc reads it, its answer read back, and the menu
 // with a stand-in qalc: one run for a sum typed fast, none for a word, the
 // answer first with the cursor on it, the one before kept while the next is

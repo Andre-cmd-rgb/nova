@@ -160,7 +160,6 @@ A search of the whole menu finds more than its entries:
 
 - **Settings' pages**, by their names and by plain words for what is on them, such as volume, trackpad or dark mode. Return opens the page.
 - **A sum or a conversion**, such as `2*(3+4)`, `15% of 80`, `5 km in miles` or `72 f in c`. The answer comes first, and Return copies it. Currencies are left out: their rates would need the network.
-- **Files and folders** in your home whose names match, once a word of the search has three letters, below the rest. Return opens one with its app, and Ctrl+Return opens the folder it is in. Those you opened lately come first when their name, or a word of it, starts with the search. Hidden folders, caches, `.git`, `node_modules` and drives mounted inside your home stay out, and so does anything more than five folders down, unless you opened it lately. The search reads a list of your files, made again behind a search once it is five minutes old, so a new file shows from then; nothing lists them on a clock or as the menu opens.
 
 `nova menu toggle <entry>` opens it at an entry, such as `nova menu toggle capture`. Entries in `~/.config/nova/menu.jsonc` override Nova's, key by key.
 

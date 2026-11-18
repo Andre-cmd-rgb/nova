@@ -8,8 +8,8 @@ import "MenuModel.js" as MenuModel
 // Where the menu's items come from: Nova's menu.jsonc with the user's laid
 // over it, each read again when it changes; the apps of the shell's
 // library and the rows of the two bash providers, added to a menu as it is
-// first shown or searched; the answers of every when: and checked:; the
-// home's files a search finds; and qalc's answer to a sum typed.
+// first shown or searched; the answers of every when: and checked:; and
+// qalc's answer to a sum typed.
 Item {
   id: source
 
@@ -225,71 +225,6 @@ Item {
       }
       // The run that waited, a turn later, once this one has settled.
       if (source.askAgain) Qt.callLater(source.askGuards)
-    }
-  }
-
-  // ---------------------------------------------------------------- files
-
-  // files.sh, beside this file, wherever the plugin is. Decoded, because
-  // resolvedUrl percent-encodes.
-  readonly property string filesScript: decodeURIComponent(String(Qt.resolvedUrl("files.sh")).replace(/^file:\/\//, ""))
-  // What the last search of the files printed (MenuModel.fileRows reads it).
-  property string filesFound: ""
-
-  // A menu opened anew shows none of the last opening's files, nor its
-  // answer.
-  function forgetFiles() {
-    filesFound = ""
-    asked.stop()
-    finder.next = ""
-    calculate("")
-  }
-
-  // The files for <query>, once the keys have rested 80 ms: a word typed
-  // fast is one search, not one a letter. One asked for while a search runs
-  // waits for it, and only the latest waits. files.sh lists the home again
-  // behind a search when its list is five minutes old, and never otherwise.
-  function findFiles(query) {
-    asked.query = query
-    asked.restart()
-  }
-
-  Timer {
-    id: asked
-    property string query: ""
-    interval: 80
-    onTriggered: source.find(query)
-  }
-
-  function find(query) {
-    if (finder.running) {
-      finder.next = query
-      return
-    }
-    finder.next = ""
-    finder.printed = ""
-    finder.command = [filesScript, "find", query]
-    finder.running = true
-  }
-
-  function findWaiting() {
-    if (finder.next && !finder.running) find(finder.next)
-  }
-
-  Process {
-    id: finder
-    property string printed: ""
-    property string next: ""
-    stdout: SplitParser {
-      onRead: line => finder.printed += line + "\n"
-    }
-    onExited: function(code, status) {
-      if (code === 0 && status === 0) {
-        source.filesFound = finder.printed
-        source.updated()
-      }
-      // The search that waited, a turn later, once this one has settled.
-      if (finder.next) Qt.callLater(source.findWaiting)
     }
   }
 

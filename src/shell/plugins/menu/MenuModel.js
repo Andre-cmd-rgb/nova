@@ -2,9 +2,9 @@
 
 // What the menu knows, apart from how it is drawn: menu.jsonc read into a
 // catalog of items, the rows the apps and the providers add to it, routes,
-// the rows a menu, a search and the chooser list, the files a search finds,
-// a sum's answer, the list's height, and the one bash script that answers
-// every when: and checked:.
+// the rows a menu, a search and the chooser list, a sum's answer, the
+// list's height, and the one bash script that answers every when: and
+// checked:.
 //
 // A catalog is { items, kids }: items a Map from id to item, in the order
 // the items came (the default file's, the user's new ones, then the rows
@@ -284,69 +284,6 @@ function hiddenBetween(catalog, menus, menuId, answers) {
   return false
 }
 
-// --------------------------------------------------------------------- files
-
-// Whether a search of <query> in the menu <menuId> looks among the home's
-// files: from the root alone, and once a word of it has three letters, as
-// shorter ones find thousands of names ("a b" all but every one) and none of
-// them the one meant.
-function findsFiles(menuId, query) {
-  return menuId === "root" && String(query).split(/\s+/).some(word => word.length >= 3)
-}
-
-// A file's glyph by its kind, which its extension tells: a picture, a video,
-// music, a PDF, a spreadsheet, slides, a document, an archive or code; or a
-// folder, or a file.
-const FILE_GLYPHS = [
-  [/^(png|jpe?g|gif|webp|avif|heic|bmp|tiff?|svg)$/, "\u{F021F}"],
-  [/^(mp4|mkv|webm|mov|avi|m4v)$/, "\u{F022B}"],
-  [/^(mp3|flac|ogg|opus|wav|m4a|aac)$/, "\u{F0223}"],
-  [/^pdf$/, "\u{F0226}"],
-  [/^(xlsx?|ods|csv)$/, "\u{F021B}"],
-  [/^(pptx?|odp)$/, "\u{F0227}"],
-  [/^(docx?|odt|rtf|txt|md|epub)$/, "\u{F0219}"],
-  [/^(zip|tar|gz|tgz|xz|zst|bz2|7z|rar|iso)$/, "\u{F05C4}"],
-  [/^(sh|py|js|ts|rs|c|h|cpp|go|java|qml|json|jsonc|toml|ya?ml|lua|html|css)$/, "\u{F022E}"]
-]
-
-function fileGlyph(name, folder) {
-  if (folder) return "\u{F024B}"
-  const dot = name.lastIndexOf(".")
-  const extension = dot > 0 ? name.slice(dot + 1).toLowerCase() : ""
-  const kind = FILE_GLYPHS.find(([pattern]) => pattern.test(extension))
-  return kind ? kind[1] : "\u{F0214}"
-}
-
-// The files files.sh found, as rows after a search's others: each by its
-// name, with the folder it is in under it (~ for the home), and opened by
-// its own app. Lines of an earlier search show while the next is asked, the
-// ones whose names hold every word of <query> still; under a divider when
-// rows come before them.
-function fileRows(printed, query, home, after) {
-  const terms = String(query).trim().toLowerCase().split(/\s+/).filter(Boolean)
-  return String(printed || "").split("\n").filter(line => /^[df]\t\//.test(line)).map(line => {
-    const path = line.slice(2)
-    const name = path.slice(path.lastIndexOf("/") + 1)
-    const folder = path.slice(0, path.lastIndexOf("/")) || "/"
-    const shown = folder === home ? "~" : folder.startsWith(home + "/") ? "~" + folder.slice(home.length) : folder
-    return {
-      key: "file:" + path, kind: "file", glyph: fileGlyph(name, line[0] === "d"), appIcon: "", appId: "", label: name,
-      line: shown, command: opener(path), section: after ? "files" : ""
-    }
-  }).filter(row => terms.every(term => row.label.toLowerCase().includes(term)))
-}
-
-// What opens a found file's folder: the folder it is in, a folder's too.
-function folderCommand(row) {
-  const path = row && row.kind === "file" ? row.key.slice("file:".length) : ""
-  return path ? opener(path.slice(0, path.lastIndexOf("/")) || "/") : ""
-}
-
-// A path opened by the app it goes with, as the session opens apps.
-function opener(path) {
-  return "uwsm-app -- xdg-open " + quoted(path)
-}
-
 // ------------------------------------------------------------------- answers
 
 // The answer to a sum (Calculator.answer), as the row that goes before a
@@ -409,8 +346,7 @@ function choiceRows(options, query) {
 // what says there is more below. One cut above its first row's peek takes
 // the room, never less than a row, which is also the height of no rows. A
 // row is size.tall with a line under it and size.row without, size.gap
-// apart, and size.divider more above the first of a search's deeper rows,
-// and of its files.
+// apart, and size.divider more above the first of a search's deeper rows.
 function listHeight(rows, room, size) {
   if (!rows.length) return size.row
   const ends = []
