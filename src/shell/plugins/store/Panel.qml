@@ -196,7 +196,10 @@ Item {
   property real growth: 1
 
   function measureRoom() {
-    var name = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
+    // Without Hyprland (a test, a smoke run) there is no screen in focus to
+    // measure, and the window keeps its usual size.
+    var hyprland = !!Quickshell.env("HYPRLAND_INSTANCE_SIGNATURE")
+    var name = hyprland && Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
     var screens = Quickshell.screens
     for (var i = 0; i < screens.length; i++) {
       if (screens[i].name === name) {
