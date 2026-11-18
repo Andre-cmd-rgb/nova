@@ -77,6 +77,10 @@ pub fn squeeze(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// How deep a component's elements nest: a real one is under five, and the
+/// reader recurses once for each.
+const MAX_DEPTH: usize = 64;
+
 /// Whether an element, by its name and attributes, is to be left out.
 pub type Skip = dyn Fn(&str, &[(String, String)]) -> bool;
 
@@ -285,7 +289,7 @@ impl<'a> Reader<'a> {
                         children: Vec::new(),
                     };
                     if !empty {
-                        self.fill(&mut node, skip)?;
+                        self.fill(&mut node, skip, 1)?;
                     }
                     return Ok(Some(node));
                 }
@@ -294,7 +298,10 @@ impl<'a> Reader<'a> {
         Ok(None)
     }
 
-    fn fill(&mut self, node: &mut Node, skip: &Skip) -> Result<(), Error> {
+    fn fill(&mut self, node: &mut Node, skip: &Skip, depth: usize) -> Result<(), Error> {
+        if depth > MAX_DEPTH {
+            return Err(self.err("elements nested too deep"));
+        }
         loop {
             match self.tag()? {
                 None => return Err(self.err("an element that does not end")),
@@ -318,7 +325,7 @@ impl<'a> Reader<'a> {
                         children: Vec::new(),
                     };
                     if !empty {
-                        self.fill(&mut child, skip)?;
+                        self.fill(&mut child, skip, depth + 1)?;
                     }
                     node.children.push(Child::Element(child));
                 }
@@ -448,6 +455,18 @@ mod tests {
         assert_eq!(
             r.next_element("a", &none).unwrap_err().what,
             "an element that does not end"
+        );
+    }
+
+    #[test]
+    fn stops_at_a_document_nested_too_deep() {
+        let deep = format!("<a>{}{}</a>", "<b>".repeat(100_000), "</b>".repeat(100_000));
+        assert_eq!(
+            Reader::new(&deep)
+                .next_element("a", &none)
+                .unwrap_err()
+                .what,
+            "elements nested too deep"
         );
     }
 

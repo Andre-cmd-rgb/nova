@@ -185,7 +185,12 @@ pub fn component(node: &Node) -> Option<Component> {
                     .unwrap_or(1)
                     .max(1);
                 let size = width * scale;
-                if size > c.icon_size && !text.is_empty() {
+                // A file's name in the icon cache: never a path out of it.
+                if size > c.icon_size
+                    && !text.is_empty()
+                    && !text.contains('/')
+                    && !text.starts_with('.')
+                {
                     c.icon_size = size;
                     c.icon_file = text;
                 }
@@ -340,5 +345,17 @@ mod tests {
             ("acme.desktop", "plan9port", "plan9port_acme.jxl")
         );
         assert!(!a.verified);
+    }
+
+    #[test]
+    fn keeps_an_icon_only_as_a_file_in_the_cache() {
+        let doc = r#"<components><component type="desktop">
+  <id>a.desktop</id><name>A</name>
+  <icon type="cached" width="128" height="128">../../../x.png</icon>
+  <icon type="cached" width="64" height="64">/etc/y.png</icon>
+  <icon type="cached" width="48" height="48">a.png</icon>
+</component></components>"#;
+        let apps = parse(doc).unwrap();
+        assert_eq!(apps[0].icon_file, "a.png");
     }
 }

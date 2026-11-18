@@ -331,7 +331,9 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
     };
 
     for c in &inputs.flathub {
-        if c.bundle.is_empty() || find(&by_id, c).is_some() {
+        // An app's ref, which flatpak and the install script are handed as
+        // it is: nothing that reads as an option, nor a runtime.
+        if !c.bundle.starts_with("app/") || find(&by_id, c).is_some() {
             continue;
         }
         let info = inputs.refs.get(&c.bundle).cloned().unwrap_or_default();
@@ -854,6 +856,21 @@ mod tests {
     }
 
     #[test]
+    fn only_a_flathub_app_ref_is_offered() {
+        let mut i = inputs();
+        for (id, bundle) in [
+            ("org.bad.Ext", "runtime/org.bad.Ext/x86_64/1"),
+            ("org.bad.Opt", "--user"),
+        ] {
+            let mut c = comp(id, id);
+            c.bundle = bundle.into();
+            i.flathub.push(c);
+        }
+        let apps = build(&i);
+        assert!(!apps.iter().any(|a| a.meta.id.starts_with("org.bad.")));
+    }
+
+    #[test]
     fn the_same_app_under_another_id_by_its_name_and_package() {
         let mut i = inputs();
         let flathub = |id: &str, name: &str| {
@@ -1004,7 +1021,9 @@ mod tests {
         assert_eq!(parse_size("344.1\u{a0}kB"), 344_100);
         assert_eq!(parse_size("512 bytes"), 512);
         assert_eq!(parse_size(""), 0);
-        let refs = parse_refs("app/a/x86_64/stable\t1.0\u{a0}MB\t2.0\u{a0}MB\torg.gnome.Platform/x86_64/51\nnoise\n");
+        let refs = parse_refs(
+            "app/a/x86_64/stable\t1.0\u{a0}MB\t2.0\u{a0}MB\torg.gnome.Platform/x86_64/51\nnoise\n",
+        );
         assert_eq!(refs["app/a/x86_64/stable"].installed, 2_000_000);
         assert_eq!(
             refs["app/a/x86_64/stable"].runtime,
