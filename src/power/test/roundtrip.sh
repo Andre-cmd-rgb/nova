@@ -117,9 +117,9 @@ chk "pl2 left alone when unrecorded" "$(cat "$RAPL_PL2")"  "135000000"
 RAPL_MMIO_PL1=$T/mmio-pl1
 echo 109000000 >"$RAPL_PL1"; echo 30000000 >"$RAPL_MMIO_PL1"
 chk "pl1 in force: the lower copy"   "$(pl1_in_force)" "30000000"
-chk "  and said to be the firmware's" "$(pl1_now)" "30 W over 55s, the firmware's copy"
+chk "  and said to be the firmware's" "$(pl1_now)" "30 W over 56s, the firmware's copy"
 echo 109000000 >"$RAPL_MMIO_PL1"
-chk "pl1 in force: copies agree"      "$(pl1_now)" "109 W over 55s"
+chk "pl1 in force: copies agree"      "$(pl1_now)" "109 W over 56s"
 echo 120000000 >"$RAPL_MMIO_PL1"
 chk "pl1 in force: the MSR when lower" "$(pl1_in_force)" "109000000"
 rm -f "$RAPL_MMIO_PL1"
@@ -444,10 +444,14 @@ rm -f "$T/retry"
 
 # Settings' readout, from the same files.
 RAPL_PL1=$T/pl1 RAPL_PL2=$T/pl2 PSTATE_MAX=$T/max PSTATE_NO_TURBO=$T/no-turbo
-FAN_PROC=$T/fan BAT_POWER=$T/power-now BOOST_STATE=$T/boost
+FAN_PROC=$T/fan SUPPLIES=$T/supplies BOOST_STATE=$T/boost
 echo 18000000 >"$RAPL_PL1"; echo 28000000 >"$RAPL_PL2"; echo 70 >"$PSTATE_MAX"; echo 0 >"$PSTATE_NO_TURBO"
 printf 'status:\t\tenabled\nspeed:\t\t2581\nlevel:\t\t2\n' >"$FAN_PROC"
-echo 9870000 >"$BAT_POWER"
+mkdir -p "$SUPPLIES/AC" "$SUPPLIES/hidpp_battery_0" "$SUPPLIES/BAT1"
+echo Mains >"$SUPPLIES/AC/type"
+echo Battery >"$SUPPLIES/hidpp_battery_0/type"; echo Device >"$SUPPLIES/hidpp_battery_0/scope"
+echo 1000000 >"$SUPPLIES/hidpp_battery_0/power_now"
+echo Battery >"$SUPPLIES/BAT1/type"; echo 9870000 >"$SUPPLIES/BAT1/power_now"
 : >"$DAEMON_OWNS_CPU"; echo 'battery/mid 71 64 held 11.3' >"$DAEMON_STATE"; : >"$BOOST_STATE"
 on_ac() { return 1; }
 chk "readout on battery"           "$(status_json)" \
@@ -459,6 +463,14 @@ chk "readout, a figure missing"    "$(status_json)" \
 rm -f "$DAEMON_OWNS_CPU"
 chk "readout without the governor" "$(status_json | jq -c .governor)" "null"
 unset -f on_ac
+
+# A battery that gives its current and voltage, not its power, and counts a
+# discharge as negative.
+rm "$SUPPLIES/BAT1/power_now"
+echo -820000 >"$SUPPLIES/BAT1/current_now"; echo 12000000 >"$SUPPLIES/BAT1/voltage_now"
+chk "draw from current and voltage" "$(battery_uw)" "9840000"
+rm -r "$SUPPLIES/BAT1"
+chk "no battery of the computer's"  "$(battery_uw || echo none)" "none"
 
 # A killed governor's cleanup puts back everything it saved, the integrated
 # GPU's figures too, and says when it could not.

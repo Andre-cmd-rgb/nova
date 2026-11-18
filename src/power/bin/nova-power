@@ -978,7 +978,28 @@ governor_now() {
 }
 
 FAN_PROC=/proc/acpi/ibm/fan
-BAT_POWER=/sys/class/power_supply/BAT0/power_now
+SUPPLIES=/sys/class/power_supply
+
+# The battery's draw, in microwatts: power_now, or current_now times
+# voltage_now where a battery gives those instead, of the first of the
+# computer's own batteries (a mouse's is scope Device). Some count a
+# discharge as negative.
+battery_uw() {
+  local b uw ua uv
+  for b in "$SUPPLIES"/*; do
+    [[ $(cat "$b/type" 2>/dev/null) == Battery && $(cat "$b/scope" 2>/dev/null) != Device ]] || continue
+    uw=$(cat "$b/power_now" 2>/dev/null)
+    if [[ ! $uw =~ ^-?[0-9]+$ ]]; then
+      ua=$(cat "$b/current_now" 2>/dev/null)
+      uv=$(cat "$b/voltage_now" 2>/dev/null)
+      [[ $ua =~ ^-?[0-9]+$ && $uv =~ ^[0-9]+$ ]] || continue
+      uw=$((ua * uv / 1000000))
+    fi
+    echo "${uw#-}"
+    return 0
+  done
+  return 1
+}
 
 # Settings' readout: what the governor and the registers say right now, as one
 # JSON object. Files only, no GPU holder scan, so it is cheap enough to read
@@ -987,7 +1008,7 @@ BAT_POWER=/sys/class/power_supply/BAT0/power_now
 status_json() {
   local mode='' busy='' temp='' fan='' watts='' running=false source=battery battery=''
   daemon_owns_cpu && read -r mode busy temp fan watts 2>/dev/null <"$DAEMON_STATE" && running=true
-  if on_ac; then source=ac; else battery=$(cat "$BAT_POWER" 2>/dev/null); fi
+  if on_ac; then source=ac; else battery=$(battery_uw); fi
   jq -cn --arg source "$source" --argjson running "$running" --arg mode "$mode" \
     --arg busy "$busy" --arg temp "$temp" --arg fans "$fan" --arg watts "$watts" \
     --arg pl1 "$(pl1_in_force)" --arg pl2 "$(cat "$RAPL_PL2" 2>/dev/null)" \
@@ -1548,8 +1569,10 @@ status)
       row '' 'off by hand — back on at the next plug-in'
   fi
 
-  on_ac || row draw \
-    "$(awk '{printf "%.2f W", $1/1000000}' /sys/class/power_supply/BAT0/power_now 2>/dev/null || echo unknown)"
+  if ! on_ac; then
+    uw=$(battery_uw) && row draw "$(awk -v u="$uw" 'BEGIN { printf "%.2f W", u / 1000000 }')" ||
+      row draw unknown
+  fi
 
   if [[ -n $verbose ]]; then
     echo
