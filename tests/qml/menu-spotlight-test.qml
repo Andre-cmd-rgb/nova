@@ -5,7 +5,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "plugins/menu"
-import "plugins/menu/Calculator.js" as Calculator
+import "plugins/calculator/Calculator.js" as Calculator
 import "plugins/menu/MenuModel.js" as MenuModel
 
 // What the menu's search answers besides apps and menus: a sum or a

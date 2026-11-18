@@ -2,7 +2,8 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
-import "Calculator.js" as Calculator
+import "../calculator" as Calc
+import "../calculator/Calculator.js" as Calculator
 import "MenuModel.js" as MenuModel
 
 // Where the menu's items come from: Nova's menu.jsonc with the user's laid
@@ -249,7 +250,7 @@ Item {
     if (next === sum) return
     sum = next
     pondered.stop()
-    calculator.next = ""
+    calculator.drop()
     if (!sum) {
       worked = {}
       shown = null
@@ -271,23 +272,7 @@ Item {
   Timer {
     id: pondered
     interval: 50
-    onTriggered: source.ask(source.sum)
-  }
-
-  function ask(sum) {
-    if (calculator.running) {
-      calculator.next = sum
-      return
-    }
-    calculator.next = ""
-    calculator.sum = sum
-    calculator.printed = ""
-    calculator.command = Calculator.command(sum)
-    calculator.running = true
-  }
-
-  function askWaiting() {
-    if (calculator.next && !calculator.running) ask(calculator.next)
+    onTriggered: calculator.ask(source.sum)
   }
 
   // An answer that comes once the search is no longer a sum is dropped.
@@ -300,26 +285,8 @@ Item {
     updated()
   }
 
-  // qalc in English with a dot for decimals, whatever the locale, as the
-  // sums are typed so; and with its settings and history in the runtime
-  // folder, gone at logout, rather than in the home.
-  Process {
+  Calc.Qalc {
     id: calculator
-    property string sum: ""
-    property string printed: ""
-    property string next: ""
-    environment: ({ LC_ALL: "C.UTF-8", QALCULATE_USER_DIR: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/calculator" })
-    stdout: SplitParser {
-      onRead: line => calculator.printed += line + "\n"
-    }
-    onExited: function(code, status) {
-      source.settle(calculator.sum, code === 0 && status === 0 ? Calculator.answer(calculator.printed, calculator.sum) : null)
-    }
-    // One that never started (no qalc) answers nothing, a turn later, once
-    // an exit has had its say; then the sum that waited.
-    onRunningChanged: if (!running) Qt.callLater(function() {
-      source.settle(calculator.sum, null)
-      source.askWaiting()
-    })
+    onAnswered: (sum, found) => source.settle(sum, found)
   }
 }
