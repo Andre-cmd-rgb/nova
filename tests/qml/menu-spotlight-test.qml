@@ -141,6 +141,22 @@ ShellRoot {
     check(catalog.items.get("settings.wifi").command === "nova-settings wifi" && MenuModel.menuRows(catalog, "root", MenuModel.noAnswers(), false).every(row => !row.key.startsWith("settings.")),
       "a page opens Settings at it, and the menu itself lists none of them")
 
+    // What closes every app asks first: an Enter on a search opens the
+    // question, and only the row under it does it.
+    const closesAll = ["nova-system-logout", "nova-system-reboot", "nova-recovery", "nova-system-shutdown"]
+    const doing = Array.from(catalog.items.values()).filter(item => closesAll.includes(item.command))
+    const found = ["restart", "reboot", "recovery", "shut down", "log out", "power"].filter(query =>
+      MenuModel.searchRows(catalog, "root", query, MenuModel.noAnswers()).some(row => closesAll.includes(catalog.items.get(row.key).command)))
+    check(doing.length === 4 && found.length === 0,
+      "a restart, a shutdown and a log out are never a search's row (" + found.join(", ") + ")")
+    const asks = id => {
+      const rows = MenuModel.menuRows(catalog, id, MenuModel.noAnswers(), false)
+      return catalog.items.get(id).kind === "menu" && rows.length === 1 && rows[0].key === id + ".now"
+    }
+    check(["system.reboot", "system.recovery", "system.shutdown", "system.logout"].every(asks)
+      && first("restart to recovery") === "system.recovery|System" && first("shut down") === "system.shutdown|System",
+      "each is a question in System, with the one row that does it")
+
     menu.open("{}")
     menu.filter("2*(3+4)")
     check(menu.calculating && menu.rows.length === 0, "a sum's answer is a moment coming, meanwhile without a word of no matches")

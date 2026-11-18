@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 
-# nova-system-shutdown and nova-system-reboot: what holds a shutdown up is
+# nova-system-shutdown, nova-system-reboot and nova-recovery: what holds a shutdown up is
 # said before any window closes, and each step hands on the restart. logind,
 # systemd and the notifications are stubs.
 
@@ -12,7 +12,9 @@ setup() {
   mkdir -p "$SCRATCH/bin"
   # What logind holds, from a file: none to start with.
   echo '{"type":"a(ssssuu)","data":[[]]}' >"$SCRATCH/inhibitors"
-  stub busctl 'cat "$SCRATCH/inhibitors"'
+  # And whether the boot loader can be told to open its menu: it can.
+  echo 's "yes"' >"$SCRATCH/menu"
+  stub busctl 'if [[ $* == *CanRebootToBootLoaderMenu* ]]; then cat "$SCRATCH/menu"; else cat "$SCRATCH/inhibitors"; fi'
   stub systemd-run
   stub nova-notification-send
   stub nova-hyprland-window-close-all
@@ -26,7 +28,17 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
   chmod +x "$SCRATCH/bin/$1"
 }
 
-bin() { "$REPO_ROOT/src/cli/bin/$1" "${@:2}"; }
+# nova-recovery is the boot's, and finds nova-system-shutdown on the PATH:
+# this one's, not one installed.
+bin() {
+  case $1 in
+    nova-recovery)
+      ln -sf "$REPO_ROOT/src/cli/bin/nova-system-shutdown" "$SCRATCH/bin/"
+      "$REPO_ROOT/data/boot/bin/$1" "${@:2}"
+      ;;
+    *) "$REPO_ROOT/src/cli/bin/$1" "${@:2}" ;;
+  esac
+}
 
 @test "nothing holding it up, the rest runs in the user's systemd" {
   run bin nova-system-shutdown
@@ -39,6 +51,20 @@ bin() { "$REPO_ROOT/src/cli/bin/$1" "${@:2}"; }
   run bin nova-system-reboot
   [ "$status" -eq 0 ]
   grep -q "^systemd-run .*/nova-system-shutdown --restart --inhibit$" "$CALLS"
+}
+
+@test "a restart to recovery hands --recovery on, where the boot loader can open its menu" {
+  run bin nova-recovery
+  [ "$status" -eq 0 ]
+  grep -q "^systemd-run .*/nova-system-shutdown --recovery --inhibit$" "$CALLS"
+}
+
+@test "a boot loader that cannot open its menu is said before any window closes" {
+  echo 's "na"' >"$SCRATCH/menu"
+  run bin nova-recovery
+  [ "$status" -eq 1 ]
+  grep -qx "nova-notification-send -u critical -g 󰁯 The boot menu cannot be opened from here Restart, then press any key in the first second to open it." "$CALLS"
+  fails grep -q "systemd-run\|window-close-all" "$CALLS"
 }
 
 @test "an update holding shutdowns up is said before any window closes" {
@@ -65,4 +91,6 @@ bin() { "$REPO_ROOT/src/cli/bin/$1" "${@:2}"; }
   grep -qx "systemctl reboot --no-wall" "$CALLS"
   run bin nova-system-shutdown --inhibited
   grep -qx "systemctl poweroff --no-wall" "$CALLS"
+  run bin nova-system-shutdown --recovery --inhibited
+  grep -qx "systemctl reboot --no-wall --boot-loader-menu=10" "$CALLS"
 }

@@ -13,11 +13,12 @@
 // one, which the menu puts in place of the old.
 //
 // An item is { id, parent, kind, icon, label, line, title, command,
-// provider, aliases, when, checked, order, haystack, words }; an app's has
-// its appId and appIcon too, and a provider's row the menu it fills
-// (filling). kind is "menu", "action" or "app"; line is the app's generic
-// name, "" for the rest; order is the item's place among the items when it
-// came.
+// provider, aliases, when, checked, unsearched, order, haystack, words }; an
+// app's has its appId and appIcon too, and a provider's row the menu it
+// fills (filling). kind is "menu", "action" or "app"; line is the app's
+// generic name, "" for the rest; unsearched is true for an entry a search
+// does not find (search: false); order is the item's place among the items
+// when it came.
 
 // ---------------------------------------------------------------- menu.jsonc
 
@@ -84,7 +85,8 @@ function fileItem(id, fields) {
     provider: text(fields.provider),
     aliases: Array.isArray(fields.aliases) ? fields.aliases.filter(Boolean) : [],
     when: text(fields.when),
-    checked: text(fields.checked)
+    checked: text(fields.checked),
+    unsearched: fields.search === false
   })
 }
 
@@ -253,14 +255,15 @@ function rank(item, wanted, terms, depth) {
 // items best first, then those deeper down best first, under a divider when
 // there are both, each with the path of the menu it is in. A menu whose
 // when: said no keeps what is under it from the search too, down to the
-// menu searched.
+// menu searched; an entry of search: false (Restart Now, under Restart…'s
+// question) is never found, but only reached through its menu.
 function searchRows(catalog, menuId, query, answers) {
   const wanted = String(query).trim().toLowerCase()
   const terms = wanted.split(/\s+/).filter(Boolean)
   const near = [], deeper = []
   for (const item of catalog.items.values()) {
     const menus = above(catalog, item)
-    if (item.id === "root" || menuId !== "root" && !menus.includes(menuId)) continue
+    if (item.id === "root" || item.unsearched || menuId !== "root" && !menus.includes(menuId)) continue
     if (!terms.every(term => item.haystack.includes(term) || item.words.includes(term))) continue
     if (!shows(catalog, item, answers) || hiddenBetween(catalog, menus, menuId, answers)) continue
     const depth = menus.filter(id => id !== "root").length

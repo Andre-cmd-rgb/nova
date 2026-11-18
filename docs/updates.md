@@ -55,7 +55,7 @@ A candidate is the next release, two weeks before everyone else gets it.
 
 Every change to the system's packages takes a snapshot first, an update included. The boot menu keeps the last three.
 
-1. **Restart into the boot menu**: `nova recovery`, Settings → Updates → Restart to recovery, or the menu's System → Restart to Recovery. A key pressed in the first second of any start opens it too.
+1. **Restart into the boot menu**: `nova recovery`, Settings → Updates → Restart to recovery, or Restart to Recovery… in the menu's System. Like a restart, it waits for an update that is installing, and closes the apps first. A key pressed in the first second of any start opens it too.
 2. **Pick Snapshots**, then the system as it was before a change, newest first.
 3. **Try it out.** A snapshot starts as it was, but what is done in it lives in memory only, and is gone at the next restart.
 4. **To keep it**, take the notification's **Restore now**, or run `limine-snapper-restore`. The snapshot becomes the system, and the computer restarts.

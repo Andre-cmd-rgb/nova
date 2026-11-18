@@ -11,6 +11,8 @@
   //   title     header shown while the submenu is open (defaults to label)
   //   when      shell condition; the row is hidden when it fails
   //   checked   shell condition; the row gets a ✓ when it succeeds
+  //   search    false: a search does not find it, only its menu does (the
+  //             answer under a question, such as Restart Now under Restart…)
 
   // Root
   "apps": {"icon":"󰀻","label":"Apps","aliases":["app","applications"],"provider":"apps"},
@@ -70,10 +72,16 @@
   "system.lock": {"icon":"","label":"Lock","action":"nova-system-lock"},
   "system.suspend": {"icon":"󰒲","label":"Suspend","action":"systemctl sleep"},
   "system.hibernate": {"icon":"󰤁","label":"Hibernate","when":"nova-hibernation-available","action":"systemctl hibernate"},
-  "system.logout": {"icon":"󰍃","label":"Log Out","action":"nova-system-logout"},
-  "system.reboot": {"icon":"󰜉","label":"Restart","action":"nova-system-reboot"},
-  "system.recovery": {"icon":"󰁯","label":"Restart to Recovery","action":"nova-recovery"},
-  "system.shutdown": {"icon":"󰐥","label":"Shut Down","action":"nova-system-shutdown"},
+  // Each that closes every app asks first: an Enter on a search for it opens
+  // the question, and only the row under it does it.
+  "system.logout": {"icon":"󰍃","label":"Log Out…","title":"Log out?"},
+  "system.logout.now": {"icon":"󰍃","label":"Log Out Now","search":false,"action":"nova-system-logout"},
+  "system.reboot": {"icon":"󰜉","label":"Restart…","title":"Restart the computer?"},
+  "system.reboot.now": {"icon":"󰜉","label":"Restart Now","search":false,"action":"nova-system-reboot"},
+  "system.recovery": {"icon":"󰁯","label":"Restart to Recovery…","title":"Restart into the boot menu?"},
+  "system.recovery.now": {"icon":"󰁯","label":"Restart Now","search":false,"action":"nova-recovery"},
+  "system.shutdown": {"icon":"󰐥","label":"Shut Down…","title":"Shut down the computer?"},
+  "system.shutdown.now": {"icon":"󰐥","label":"Shut Down Now","search":false,"action":"nova-system-shutdown"},
 
   // Settings' pages, which a search finds under Settings (where Return on
   // Settings itself opens it at its first page), each where this computer

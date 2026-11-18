@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Shut down, or restart, after closing application windows
-# nova:args=[--restart] [--inhibit|--inhibited]
+# nova:args=[--restart|--recovery] [--inhibit|--inhibited]
 
 # Three steps, each this script run again:
 #
@@ -14,18 +14,34 @@
 #                                     and says so when shutting down fails
 #   nova-system-shutdown --inhibited  closes the windows and powers off
 #
-# With --restart first (nova-system-reboot), each restarts instead.
+# With --restart first (nova-system-reboot), each restarts instead; with
+# --recovery (nova-recovery), each restarts into the boot loader's menu.
 
 set -euo pipefail
 
 self=$(readlink -f "${BASH_SOURCE[0]}")
 action=poweroff osd=shutdown doing="Shutting down" verb="shut down" again="Shut down again."
-restart=()
-if [[ ${1:-} == --restart ]]; then
-  action=reboot osd=reboot doing="Restarting" verb="restart" again="Restart again."
-  restart=(--restart)
-  shift
-fi
+how=() menu=()
+case ${1:-} in
+  --restart)
+    action=reboot osd=reboot doing="Restarting" verb="restart" again="Restart again."
+    how=(--restart)
+    shift
+    ;;
+  --recovery)
+    # Limine honours the one-shot menu timeout that systemd writes (see its
+    # `timeout` option); 10 s is long enough to reach the keyboard.
+    action=reboot osd=reboot doing="Restarting to recovery" verb="restart" again="Restart to recovery again."
+    how=(--recovery) menu=(--boot-loader-menu=10)
+    shift
+    ;;
+esac
+
+# Whether the boot loader can be told to open its menu at the next start.
+menu_possible() {
+  [[ $(busctl call org.freedesktop.login1 /org/freedesktop/login1 \
+    org.freedesktop.login1.Manager CanRebootToBootLoaderMenu 2>/dev/null) == 's "yes"' ]]
+}
 
 # The programs that asked logind to block a shutdown (nova update, while it
 # installs), each as "who: why". A restart is a shutdown to logind.
@@ -43,14 +59,20 @@ case ${1:-} in
       nova-notification-send -u critical -g 󰐥 "The computer will not $verb yet" "$held"
       exit 1
     fi
+    # Said before a window closes, as what holds it up is.
+    if ((${#menu[@]})) && ! menu_possible; then
+      nova-notification-send -u critical -g 󰁯 "The boot menu cannot be opened from here" \
+        "Restart, then press any key in the first second to open it."
+      exit 1
+    fi
     systemd-run --user --collect --quiet --property=Type=exec --property=RuntimeMaxSec=30s \
-      "$self" "${restart[@]}" --inhibit
+      "$self" "${how[@]}" --inhibit
     ;;
   --inhibit)
     # A lid closed now would still suspend the machine: logind's lid switch
     # heeds only an inhibitor that names it.
     systemd-inhibit --what=sleep:idle:handle-lid-switch --mode=block \
-      --who=Nova --why="$doing" "$self" "${restart[@]}" --inhibited || {
+      --who=Nova --why="$doing" "$self" "${how[@]}" --inhibited || {
       status=$?
       nova-notification-send -u critical -g 󰐥 "The computer did not $verb" \
         "Something held it up. $again"
@@ -65,10 +87,10 @@ case ${1:-} in
       nova-hyprland-window-close-all || true
     } &
     sleep 2
-    systemctl "$action" --no-wall
+    systemctl "$action" --no-wall "${menu[@]}"
     ;;
   *)
-    echo "Usage: nova-system-shutdown [--restart]" >&2
+    echo "Usage: nova-system-shutdown [--restart|--recovery]" >&2
     exit 2
     ;;
 esac

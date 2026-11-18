@@ -153,7 +153,7 @@ Super+Space opens it. Type to search, or go down the list:
 | Power Mode | the battery's power modes, where the computer has them |
 | Settings | Settings |
 | Update | Nova and Firmware (Settings → Updates), Restart (the shell, audio, Wi-Fi or Bluetooth), Timezone, Password |
-| System | Lock, Suspend, Hibernate (where the computer can), Log Out, Restart, Restart to Recovery, Shut Down |
+| System | Lock, Suspend, Hibernate (where the computer can), Log Out…, Restart…, Restart to Recovery…, Shut Down…: each of the last four asks first |
 
 A search of the whole menu finds more than its entries:
 
