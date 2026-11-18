@@ -146,12 +146,16 @@ Item {
   // Taken as it opens, so focusing another screen does not resize it.
   property size room: Qt.size(Style.space(820), Style.space(600))
 
+  // How much bigger than its usual size it opens: more on a bigger screen.
+  property real growth: 1
+
   function measureRoom() {
     var name = Hyprland.focusedMonitor ? Hyprland.focusedMonitor.name : ""
     var screens = Quickshell.screens
     for (var i = 0; i < screens.length; i++) {
       if (screens[i].name === name) {
         room = Qt.size(screens[i].width - Style.space(48), screens[i].height - Style.space(80))
+        growth = Util.windowGrowth(screens[i].width, screens[i].height, Style.spaceScale)
         return
       }
     }
@@ -269,9 +273,10 @@ Item {
   FloatingWindow {
     id: window
     title: "Settings"
+    visible: false
     color: Commons.Color.background
-    implicitWidth: Math.min(Style.space(820), root.room.width)
-    implicitHeight: Math.min(Style.space(600), root.room.height)
+    implicitWidth: Math.min(Style.space(820 * root.growth), root.room.width)
+    implicitHeight: Math.min(Style.space(600 * root.growth), root.room.height)
     minimumSize: Qt.size(Math.min(Style.space(680), root.room.width), Math.min(Style.space(480), root.room.height))
 
     onVisibleChanged: {

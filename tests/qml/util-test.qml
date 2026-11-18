@@ -38,6 +38,14 @@ ShellRoot {
     check(!Util.onAnotherWorkspace(windows, "Clock", 2) && !Util.onAnotherWorkspace(windows, "Settings", null)
       && !Util.onAnotherWorkspace(undefined, "Settings", 2) && !Util.onAnotherWorkspace(windows, "Weather", 2),
       "a workspace not known, none focused, no windows or no such window: it is here")
+    // A window opens bigger on a bigger screen, a little, and never past a quarter.
+    check(Util.windowGrowth(1366, 768, 1) === 1 && Util.windowGrowth(1920, 1080, 1.25) === 1,
+      "a small screen, or a big one at a big UI size, gets the usual size")
+    var laptop = Util.windowGrowth(2400, 1500, 1), monitor = Util.windowGrowth(2560, 1440, 1)
+    check(laptop > 1.1 && laptop < 1.15 && monitor > laptop && monitor < 1.2, "a laptop's 2400x1500 grows by about an eighth, 2560x1440 a bit more")
+    check(Util.windowGrowth(1920, 1080, 1) > 1 && Util.windowGrowth(1920, 1080, 1) < 1.06, "1920x1080 is close to the usual size")
+    check(Math.abs(Util.windowGrowth(3440, 1440, 1) - monitor) < 1e-9, "an ultrawide counts by its height")
+    check(Util.windowGrowth(7680, 4320, 1) === 1.25 && Util.windowGrowth(NaN, 1080, 1) === 1, "capped at a quarter; nonsense is the usual size")
     console.log("DONE")
     Qt.quit()
   }

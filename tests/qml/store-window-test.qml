@@ -1,3 +1,4 @@
+// warns: $HYPRLAND_INSTANCE_SIGNATURE is unset. Cannot connect to hyprland.
 // stub: bin/nova-apps-catalog apps
 // stub: bin/nova-apps-installed apps
 // stub: bin/nova-apps-refresh apps
