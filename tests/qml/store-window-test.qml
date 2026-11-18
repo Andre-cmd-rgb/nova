@@ -10,7 +10,7 @@ import Quickshell
 import Quickshell.Io
 import "plugins/store" as Store
 
-// The App Store's window with its helpers stubbed (stubs/apps): the front
+// The App Center's window with its helpers stubbed (stubs/apps): the front
 // page, a search, an app's page and its choice of source, an install from
 // Flathub followed from its status to Open, Open and Remove, the Installed
 // page, and an appstream:// link.
@@ -45,6 +45,11 @@ ShellRoot {
   function button(text) {
     var list = all(function (i) { return i.text === text && i.clicked !== undefined && i.iconText !== undefined && shown(i) })
     return list.length > 0 ? list[0] : null
+  }
+
+  // Whether the window shows a line with exactly these words.
+  function note(text) {
+    return all(function (i) { return i.text === text && i.clicked === undefined && shown(i) }).length > 0
   }
 
   function shown(item) {
@@ -104,10 +109,12 @@ ShellRoot {
     steps = [
       function () { return store.catalog !== null && store.installed !== null },
       function () {
-        check(window().visible && window().title === "App Store", "the window opens")
+        check(window().visible && window().title === "App Center", "the window opens")
         check(store.page === "discover", "on its front page")
         var names = tiles().map(function (t) { return t.app.name })
-        check(names.join(",") === "GIMP,Inkscape,Steam,Google Chrome,Firefox", "the front page: the chosen few of each kind, in order")
+        check(names.join(",") === "Google Chrome,Steam,GIMP,Inkscape,Steam,Google Chrome,Firefox", "the front page: Popular first, then the chosen few of each kind, in order")
+        var heads = all(function (i) { return i.text === "Popular" && shown(i) })
+        check(heads.length === 1 && button("See All") !== null && all(function (i) { return i.text === "See All" && i.clicked !== undefined && shown(i) }).length === 3, "Popular has no See All; each of the three kinds shown has")
         var firefox = tiles().filter(function (t) { return t.app.id === "org.mozilla.firefox" })[0]
         check(firefox.st.action === "open", "one installed is offered to open")
       },
@@ -152,6 +159,7 @@ ShellRoot {
       },
       function () {
         check(button("Remove Now") !== null && button("Cancel") !== null, "Remove asks again")
+        check(note("Its data goes with it."), "a Flathub app: its data goes with it")
         button("Remove Now").clicked()
       },
       function () { return called("nova-apps-run remove org.gimp.GIMP") },
@@ -166,6 +174,10 @@ ShellRoot {
       function () {
         var rows = all(function (i) { return i.confirming !== undefined && i.app !== undefined && i.st !== undefined && shown(i) })
         check(rows.map(function (r) { return r.app.name }).join(",") === "Firefox,Foot,GIMP", "Installed: by name")
+        var firefoxRow = rows.filter(function (r) { return r.app.id === "org.mozilla.firefox" })[0]
+        firefoxRow.confirming = true
+        check(note("Your files and settings for it stay."), "an Arch app: its files and settings stay")
+        firefoxRow.confirming = false
         var foot = rows.filter(function (r) { return r.app.id === "foot" })[0]
         check(foot.st.kept === "Part of Nova" && !foot.st.removable, "part of Nova: no Remove")
         button("Open").clicked()

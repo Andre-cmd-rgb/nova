@@ -1,50 +1,74 @@
-# The App Store's front page: a few good apps for each category, in the order
-# they are shown. "category id": the category's key (create, work, play,
-# develop, internet, media, learn, utilities) and the app's AppStream ID. An
-# app missing from the catalog is left out; a category's page shows these
-# first, then the rest of it.
+# The App Center's front page: the best-known, well-made apps, in the order
+# they are shown. "key id": the key and the app's AppStream ID. The key is
+# `popular`, the row above the categories (about twelve apps of every kind),
+# or a category's (create, work, play, develop, internet, media, learn,
+# utilities), whose few come after it on Discover and first on its page. An
+# app is in one category, and may also be in Popular. An app missing from
+# the catalog is left out.
+
+popular com.google.Chrome
+popular org.mozilla.firefox
+popular com.visualstudio.code
+popular com.spotify.Client
+popular com.discordapp.Discord
+popular com.valvesoftware.Steam
+popular md.obsidian.Obsidian
+popular org.videolan.VLC
+popular com.obsproject.Studio
+popular org.gimp.GIMP
+popular org.libreoffice.LibreOffice
+popular org.telegram.desktop
 
 create org.gimp.GIMP
+create org.blender.Blender
 create org.inkscape.Inkscape
 create org.kde.krita
+create org.kde.kdenlive
 create org.darktable.Darktable
-create org.blender.Blender
-create com.github.PintaProject.Pinta
 
 work org.libreoffice.LibreOffice
 work md.obsidian.Obsidian
 work org.onlyoffice.desktopeditors
+work net.cozic.joplin_desktop
 work org.zotero.Zotero
-work com.github.johnfactotum.Foliate
 work org.gnome.Papers
 
 play com.valvesoftware.Steam
 play com.heroicgameslauncher.hgl
 play net.lutris.Lutris
 play org.prismlauncher.PrismLauncher
+play org.libretro.RetroArch
 play net.supertuxkart.SuperTuxKart
 play com.play0ad.zeroad
+play org.luanti.luanti
+play com.github.Anuken.Mindustry
+play org.openttd.OpenTTD
+play org.xonotic.Xonotic
+play org.wesnoth.Wesnoth
 
 develop com.visualstudio.code
 develop dev.zed.Zed
-develop io.podman_desktop.PodmanDesktop
+develop com.jetbrains.IntelliJ-IDEA-Community
+develop com.getpostman.Postman
+develop io.github.shiftey.Desktop
 develop io.dbeaver.DBeaverCommunity
-develop com.usebruno.Bruno
-develop org.gnome.meld
 
 internet com.google.Chrome
 internet org.mozilla.firefox
-internet org.mozilla.Thunderbird
-internet org.signal.Signal
+internet com.brave.Browser
 internet com.discordapp.Discord
-internet org.localsend.localsend_app
+internet org.telegram.desktop
+internet org.signal.Signal
+internet org.mozilla.Thunderbird
+internet us.zoom.Zoom
+internet com.slack.Slack
 
 media org.videolan.VLC
-media com.obsproject.Studio
-media org.kde.kdenlive
-media org.audacityteam.Audacity
 media com.spotify.Client
+media com.obsproject.Studio
+media org.audacityteam.Audacity
 media fr.handbrake.ghb
+media io.mpv.Mpv
 
 learn net.ankiweb.Anki
 learn org.stellarium.Stellarium
@@ -53,9 +77,9 @@ learn org.kde.kstars
 learn org.gnome.Maps
 learn org.kde.marble
 
-utilities io.missioncenter.MissionCenter
 utilities com.bitwarden.desktop
 utilities org.keepassxc.KeePassXC
+utilities org.qbittorrent.qBittorrent
+utilities io.missioncenter.MissionCenter
 utilities com.github.tchx84.Flatseal
-utilities io.gitlab.adhami3310.Impression
-utilities org.gnome.baobab
+utilities org.localsend.localsend_app

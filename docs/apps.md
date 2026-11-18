@@ -1,12 +1,14 @@
-# The App Store
+# The App Center
 
-One window to find apps, install them, open them and remove them: the menu's **App Store**, the launcher's, or `nova apps store`. Everything it does, `nova apps` does in a terminal.
+One window to find apps, install them, open them and remove them: the menu's **App Center**, the launcher's, or `nova apps store`. Everything it does, `nova apps` does in a terminal.
+
+It is not called the App Store: that is Apple's name.
 
 ## Using it
 
-- **Discover**, the front page, has six apps of each kind, chosen by hand (`/usr/share/nova/apps/featured`), and **See All** for the rest of that kind. The sidebar has the kinds: Create, Work, Play, Develop, Internet, Music & Video, Learn and Utilities.
+- **Discover**, the front page, starts with **Popular**, about twelve of the best-known apps of every kind (a browser, VS Code, Steam, Spotify), then has the best of each kind, chosen by hand (`/usr/share/nova/apps/featured`), and **See All** for the rest of that kind. The sidebar has the kinds: Create, Work, Play, Develop, Internet, Music & Video, Learn and Utilities.
 - **Search** is at the top of the sidebar; Ctrl+F goes there, and Return opens the first app found. It looks at the names, the keywords, the summaries and the IDs, and puts an app of the front page that matches before one that only has the word for a name.
-- **An app's page** has its icon, name and summary, its pictures, what it says of itself, its version, size, developer and license, and its website. **Get** installs it; once it is in, **Open** starts it and **Remove…** asks once more, then removes it.
+- **An app's page** has its icon, name and summary, its pictures, what it says of itself, its version, size, developer and license, and its website. **Get** installs it; once it is in, **Open** starts it and **Remove…** asks once more, then removes it. A Flathub app's data goes with it; for any other app the page says that your files and settings for it stay.
 - **From**, on the page of an app that comes from more than one place, picks the one to install from. Its facts say where it comes from, or came from.
 - **Installed** lists what is installed, by name, with where each came from. An app that is part of Nova, or that came with another app, has no Remove.
 - An install goes on with the window closed. The page, the tile and the Installed row show how far it is; one that fails says why, in a sentence ("could not download it; check the connection and try again").
@@ -18,7 +20,7 @@ One window to find apps, install them, open them and remove them: the menu's **A
 | `nova apps search <words>` | what the search finds, with where each comes from |
 | `nova apps info <app>` | an app's facts, and where it is installed from |
 | `nova apps install <app> [--from nova\|arch\|flathub]` | installs it, from the first place it comes from or the one named |
-| `nova apps remove <app>` | removes it, from wherever it is |
+| `nova apps remove <app>` | removes it, from wherever it is; a Flathub app's data (`~/.var/app/<id>`) goes with it |
 | `nova apps list` | the installed apps |
 | `nova apps store [<app> \| --search <words>]` | opens the window, on an app's page or a search |
 | `nova apps update` | brings Chrome, VS Code and Flathub's apps up to date |
@@ -47,7 +49,7 @@ Chrome and VS Code come from Nova alone. Flathub has both, packaged by others (V
 
 ## Updates
 
-Nova has one updater. The App Store installs and removes; it updates nothing.
+Nova has one updater. The App Center installs and removes; it updates nothing.
 
 - **Settings → Updates** and **`nova update`** bring the system, Chrome and VS Code, and Flathub's apps up to date, in that order. `nova apps update` does the apps alone.
 - An app from Arch is part of the system: it moves with the release, as every package does.
@@ -98,5 +100,5 @@ Measured on the ThinkPad P1 Gen 4i: the catalog takes 3.1 s the first time (most
 - Updates per app, and an app's release notes.
 - Ratings and reviews (Flathub has none to give; ODRS is GNOME's).
 - A larger picture on a click, and pictures for most apps of Arch's catalog, which points at the makers' sites.
-- Removing an app's data, which Flathub's keep in `~/.var/app` and Arch's in your home: removing the app leaves them, as a Mac does.
+- Removing the data of an app from Arch or Nova's own. They keep their files in your home, at places only each app knows, so removing the app leaves them, as a Mac app outside the sandbox does. A Flathub app's data is its sandbox folder, `~/.var/app/<id>`, and goes with it.
 - Apps from the AUR, other than Chrome and VS Code.

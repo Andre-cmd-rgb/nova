@@ -1,5 +1,5 @@
 #!/bin/sh
-# The App Store's helpers, as the store's window test needs them, by the
+# The App Center's helpers, as the store's window test needs them, by the
 # name each is called by:
 #   nova-apps-catalog    a catalog of seven apps, made in $HOME, its path
 #   nova-apps-installed  $HOME/installed.json, or Firefox from Arch and foot,
@@ -27,13 +27,13 @@ case $name in
    "rank":40},
   {"id":"com.google.Chrome","name":"Google Chrome","summary":"The browser built by Google","developer":"Google","category":"internet","desktop":"google-chrome.desktop","iconName":"google-chrome",
    "sources":[{"kind":"nova","package":"google-chrome","maker":"Google"}],
-   "featured":"internet","position":0,"rank":1060},
+   "featured":"internet","position":0,"popular":1,"rank":1060},
   {"id":"org.mozilla.firefox","name":"Firefox","summary":"Fast, private and safe web browser","category":"internet","desktop":"firefox.desktop",
    "sources":[{"kind":"arch","package":"firefox","repo":"extra","version":"145.0-1","desktop":"firefox.desktop"},{"kind":"flathub","app":"org.mozilla.firefox","ref":"app/org.mozilla.firefox/x86_64/stable","version":"145.0","download":90000000,"installed":250000000,"verified":true}],
    "featured":"internet","position":1,"rank":1065},
   {"id":"com.valvesoftware.Steam","name":"Steam","summary":"Launcher for the Steam software distribution service","category":"play",
    "sources":[{"kind":"flathub","app":"com.valvesoftware.Steam","ref":"app/com.valvesoftware.Steam/x86_64/stable","download":10000000,"installed":20000000}],
-   "featured":"play","position":0,"rank":1000},
+   "featured":"play","position":0,"popular":2,"rank":1000},
   {"id":"foot","name":"Foot","summary":"Fast, lightweight and minimalistic Wayland terminal emulator","category":"utilities","desktop":"foot.desktop",
    "sources":[{"kind":"arch","package":"foot","repo":"extra","version":"1.24.0-1","desktop":"foot.desktop"}],
    "rank":25}

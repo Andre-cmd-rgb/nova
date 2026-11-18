@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
 
-# The App Store's helpers against a catalog of six apps (fixtures) and
+# The App Center's helpers against a catalog of six apps (fixtures) and
 # stubbed flatpak, pkexec, systemd-run and pacman: searching, an app's
 # facts, installing and removing from each place it comes from, in a
-# terminal and as the App Store follows it, and what each says when it
+# terminal and as the App Center follows it, and what each says when it
 # cannot.
 
 load ../test_helper
@@ -204,7 +204,7 @@ status_of() { # id field
   have '[{"app":"org.gimp.GIMP","installation":"user","version":"3.0.4"}]' '{}'
   run nova-apps-remove gimp
   [ "$status" -eq 0 ]
-  [ "$(sed -n 1p "$CALLS")" = "flatpak uninstall --user -y --noninteractive org.gimp.GIMP" ]
+  [ "$(sed -n 1p "$CALLS")" = "flatpak uninstall --user -y --noninteractive --delete-data org.gimp.GIMP" ]
   [ "$(sed -n 2p "$CALLS")" = "flatpak uninstall --user -y --noninteractive --unused" ]
   have '[]' '{"gimp":"3.0.4-1"}'
   : >"$CALLS"
@@ -219,16 +219,16 @@ status_of() { # id field
   [ ! -s "$CALLS" ]
 }
 
-# --- nova apps install, the App Store's way ---------------------------------------
+# --- nova apps install, the App Center's way ---------------------------------------
 
-@test "nova apps install <app> is the App Store's install" {
+@test "nova apps install <app> is the App Center's install" {
   stub nova-apps-job 'echo "nova-apps-job $*" >>"$CALLS"'
   run "$REPO_ROOT/src/cli/bin/nova-apps-install" org.gimp.GIMP --from flathub
   [ "$status" -eq 0 ]
   [ "$(cat "$CALLS")" = "nova-apps-job install org.gimp.GIMP --from flathub" ]
 }
 
-# --- the App Store's own -------------------------------------------------------------
+# --- the App Center's own -------------------------------------------------------------
 
 @test "run: a user service per app, which the window can close on" {
   stub systemctl 'exit 3'
@@ -290,4 +290,19 @@ status_of() { # id field
   [ "$(sed -n 1p "$CALLS")" = 'nova-shell shell summon nova.store {"app":"org.gimp.GIMP"}' ]
   [ "$(sed -n 2p "$CALLS")" = 'nova-shell shell summon nova.store {"search":"image editor"}' ]
   [ "$(sed -n 3p "$CALLS")" = 'nova-shell shell summon nova.store {}' ]
+}
+
+# --- the front page's file -----------------------------------------------------------
+
+@test "featured: Popular and the kinds; an app is in one kind, and Popular once" {
+  file=$BATS_TEST_DIRNAME/../../../src/apps/data/featured
+  run awk '!/^#/ && NF { print $1 }' "$file"
+  [ "$status" -eq 0 ]
+  keys=$(sort -u <<<"$output" | tr '\n' ' ')
+  [ "$keys" = "create develop internet learn media play popular utilities work " ]
+  [ "$(awk '$1 == "popular"' "$file" | wc -l)" -ge 10 ]
+  run awk '!/^#/ && NF && $1 != "popular" { print $2 }' "$file"
+  [ -z "$(sort <<<"$output" | uniq -d)" ]
+  run awk '$1 == "popular" { print $2 }' "$file"
+  [ -z "$(sort <<<"$output" | uniq -d)" ]
 }

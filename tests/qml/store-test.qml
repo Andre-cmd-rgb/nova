@@ -2,7 +2,7 @@ import QtQuick
 import Quickshell
 import "plugins/store/StoreModel.js" as Model
 
-// The App Store in words and lists, apart from its window: the front page,
+// The App Center in words and lists, apart from its window: the front page,
 // a category, the search, what is installed and from where, what an app's
 // page says and offers, and the jobs it follows.
 ShellRoot {
@@ -24,11 +24,11 @@ ShellRoot {
       format: 1,
       runtimes: { "org.gnome.Platform/x86_64/48": { download: 300000000, installed: 900000000 } },
       apps: [
-        { id: "org.gimp.GIMP", name: "GIMP", summary: "Create images and edit photographs", category: "create", keywords: "photoshop paint", desktop: "org.gimp.GIMP.desktop", developer: "The GIMP team", license: "GPL-3.0+ AND LGPL-3.0+", sources: [arch, flathub], featured: "create", position: 1, rank: 1085 },
+        { id: "org.gimp.GIMP", name: "GIMP", summary: "Create images and edit photographs", category: "create", keywords: "photoshop paint", desktop: "org.gimp.GIMP.desktop", developer: "The GIMP team", license: "GPL-3.0+ AND LGPL-3.0+", sources: [arch, flathub], featured: "create", position: 1, popular: 1, rank: 1085 },
         { id: "org.inkscape.Inkscape", name: "Inkscape", summary: "Vector graphics editor", category: "create", sources: [{ kind: "flathub", app: "org.inkscape.Inkscape" }], featured: "create", position: 0, rank: 1020 },
         { id: "org.kde.krita", name: "Krita", summary: "Digital painting", category: "create", keywords: "paint", sources: [{ kind: "flathub", app: "org.kde.krita" }], rank: 40 },
         { id: "paint", name: "Paint", summary: "A program", category: "create", sources: [{ kind: "arch", package: "paint" }], rank: 25 },
-        { id: "com.google.Chrome", name: "Google Chrome", category: "internet", desktop: "google-chrome.desktop", sources: [{ kind: "nova", package: "google-chrome", maker: "Google" }], featured: "internet", position: 0, rank: 1060 },
+        { id: "com.google.Chrome", name: "Google Chrome", category: "internet", desktop: "google-chrome.desktop", sources: [{ kind: "nova", package: "google-chrome", maker: "Google" }], featured: "internet", position: 0, popular: 2, rank: 1060 },
         { id: "foot", name: "Foot", category: "utilities", sources: [{ kind: "arch", package: "foot" }], rank: 25 },
         { id: "libfoo", name: "Foo Viewer", category: "utilities", sources: [{ kind: "arch", package: "libfoo", desktop: "foo-viewer" }], rank: 25 }
       ]
@@ -42,6 +42,9 @@ ShellRoot {
     check(Model.pages[0].id === "discover" && Model.pages[Model.pages.length - 1].id === "installed", "the front page first, Installed last")
     check(Model.categories().length === 8 && Model.categories()[0].id === "create", "eight kinds on the front page")
     check(names(Model.featured(apps, "create")) === "Inkscape,GIMP", "a kind's chosen few, in their order")
+    check(names(Model.featured(apps, "popular")) === "GIMP,Google Chrome", "Popular: the best-known of every kind, in their order, apart from their kinds")
+    check(Model.shelves()[0].id === "popular" && Model.shelves().length === 9 && Model.pages.every(function (p) { return p.id !== "popular" }), "the front page's rows: Popular, then the eight kinds; Popular is no page")
+    check(names(Model.inCategory(apps, "internet")) === "Google Chrome", "Popular does not change a kind's page")
     check(names(Model.inCategory(apps, "create")) === "Inkscape,GIMP,Krita,Paint", "a kind's page: the chosen few, then the rest in the store's order")
     check(names(Model.search(apps, "paint")) === "GIMP,Paint,Krita", "a search: a known app with the word for a keyword before an unknown one named it")
     check(names(Model.search(apps, "image edit")) === "GIMP" && Model.search(apps, "image vector").length === 0, "every word must match")
@@ -57,6 +60,9 @@ ShellRoot {
     check(JSON.stringify(Model.installedFrom(gimp, fromFlathub)) === '{"kind":"flathub","scope":"user","version":"3.0.4","app":"org.gimp.GIMP"}', "installed from Flathub")
     check(names(Model.installedApps(apps, fromArch)) === "Foo Viewer,Foot,GIMP", "the installed apps, by name")
     check(Model.kept(catalog.byId.foot, fromArch) === "Part of Nova" && Model.kept(catalog.byId.libfoo, fromArch) === "Installed with another app" && Model.kept(gimp, fromArch) === "", "why one has no Remove")
+    check(Model.removeNote(gimp, fromFlathub) === "Its data goes with it.", "removing a Flathub app: its data goes with it")
+    check(Model.removeNote(gimp, fromArch) === "Your files and settings for it stay." && Model.removeNote(catalog.byId["com.google.Chrome"], { flatpak: [], pacman: { "google-chrome": "1" }, explicit: [], nova: [] }) === "Your files and settings for it stay.", "an app of Arch's or Nova's: its files and settings stay")
+    check(Model.removeNote(gimp, none) === "" && Model.status(gimp, fromFlathub, {}, false).removeNote === "Its data goes with it.", "the page's status carries it")
     check(Model.installedText(gimp, fromArch) === "Arch Linux · 3.0.4-1" && Model.installedText(catalog.byId.foot, fromArch) === "Part of Nova", "the Installed page's line")
 
     // ---- an app's page ----
@@ -85,7 +91,7 @@ ShellRoot {
     var unknown = { "org.gimp.GIMP": { action: "install", state: "running", progress: -1, text: "Waiting for authentication", time: now } }
     var failed = { "org.gimp.GIMP": { action: "install", state: "failed", progress: -1, error: "could not download it; check the connection and try again", time: now } }
     var removeFailed = { "org.gimp.GIMP": { action: "remove", state: "failed", error: "another app needs it: gegl.", time: now } }
-    check(JSON.stringify(Model.status(gimp, none, {}, false)) === '{"action":"get","progress":-1,"text":"","error":"","removable":false,"kept":""}', "not installed: Get")
+    check(JSON.stringify(Model.status(gimp, none, {}, false)) === '{"action":"get","progress":-1,"text":"","error":"","removable":false,"kept":"","removeNote":""}', "not installed: Get")
     check(Model.status(gimp, fromArch, {}, false).action === "open" && Model.status(gimp, fromArch, {}, false).removable, "installed: Open and Remove")
     check(Model.status(catalog.byId.foot, fromArch, {}, false).removable === false, "part of Nova: no Remove")
     check(Model.status(gimp, none, {}, true).action === "busy" && Model.status(gimp, none, {}, true).text === "Starting…", "asked for: starting")

@@ -8,7 +8,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "StoreModel.js" as Model
 
-// The App Store: one window to find apps, install them, open them and
+// The App Center: one window to find apps, install them, open them and
 // remove them, from Nova's own builds (Chrome, VS Code), Arch Linux's
 // repositories and Flathub, as one list. It owns nothing of its own:
 //
@@ -387,7 +387,7 @@ Item {
 
   FloatingWindow {
     id: window
-    title: "App Store"
+    title: "App Center"
     color: Commons.Color.background
     implicitWidth: Math.min(Style.space(960), root.room.width)
     implicitHeight: Math.min(Style.space(640), root.room.height)
@@ -594,8 +594,8 @@ Item {
     }
   }
 
-  // The front page: a few apps of each kind, chosen by hand, and the way to
-  // all of them.
+  // The front page: the best-known apps, then a few of each kind, chosen by
+  // hand, and the way to all of them.
   Component {
     id: discoverView
     ScrollView {
@@ -639,7 +639,7 @@ Item {
           }
 
           Repeater {
-            model: Model.categories()
+            model: Model.shelves()
 
             delegate: Column {
               id: shelf
@@ -661,6 +661,7 @@ Item {
                 }
                 Button {
                   id: all
+                  visible: shelf.modelData.id !== "popular"
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   text: "See All"
@@ -896,6 +897,11 @@ Item {
         text: "Remove…"
         bordered: true
         onClicked: row.confirming = true
+      }
+      Caption {
+        anchors.verticalCenter: parent.verticalCenter
+        visible: row.confirming && row.st.action === "open"
+        text: row.st.removeNote
       }
       Button {
         visible: row.confirming && row.st.action === "open"

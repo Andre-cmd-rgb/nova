@@ -1,8 +1,8 @@
-// The App Store's logic, apart from its window: its pages, the search, what
+// The App Center's logic, apart from its window: its pages, the search, what
 // an app's page says and offers, from three things the helpers give it:
 //
 //   catalog    nova-apps-catalog's file: { runtimes, apps: [{ id, name,
-//              summary, category, icon, sources: [{ kind, ... }], featured,
+//              summary, category, icon, sources: [{ kind, ... }], featured, popular,
 //              position, rank, ... }] }, the apps in the store's own order
 //   installed  nova-apps-installed: { flatpak: [{ app, installation,
 //              version }], runtimes, pacman: { name: version }, explicit,
@@ -38,6 +38,12 @@ function categories() {
   return pages.filter(function (p) { return p.id !== "discover" && p.id !== "installed" })
 }
 
+// The rows of the front page, in order: Popular, which is no page of its
+// own, and then each category.
+function shelves() {
+  return [{ id: "popular", label: "Popular" }].concat(categories())
+}
+
 // The catalog's text as an object with an index by ID, or null when it is
 // not one.
 function read(text) {
@@ -57,8 +63,13 @@ function read(text) {
 
 // ---- lists ------------------------------------------------------------------
 
-// A category's apps from the front page, in their order.
+// A row's apps from the front page, in their order: a category's, or
+// "popular", the best-known of every kind, which an app can be in as well as
+// in its category.
 function featured(apps, category) {
+  if (category === "popular")
+    return (apps || []).filter(function (a) { return a.popular > 0 })
+      .sort(function (a, b) { return a.popular - b.popular })
   return (apps || []).filter(function (a) { return a.featured === category })
     .sort(function (a, b) { return (a.position || 0) - (b.position || 0) })
 }
@@ -153,6 +164,15 @@ function installedText(app, installed) {
   var why = kept(app, installed)
   if (why) return why
   return sourceName(from.kind) + (from.version ? " · " + from.version : "")
+}
+
+// What Remove says of the app's data: a Flathub app's sandbox folder goes
+// with it; an app of Arch's or Nova's keeps its files in the home folder,
+// where Nova cannot tell which are its, so they stay.
+function removeNote(app, installed) {
+  var from = installedFrom(app, installed)
+  if (!from) return ""
+  return from.kind === "flathub" ? "Its data goes with it." : "Your files and settings for it stay."
 }
 
 // Why an installed app has no Remove: part of Nova, or installed with
@@ -279,13 +299,14 @@ function jobOf(app, jobs) {
 
 // What the page's button and the line under it say, and how far a job is:
 // { action: "get" | "open" | "busy", progress (0..1, or -1 while not
-// known), text, error, removable, kept }. <waiting> is a job asked for that
+// known), text, error, removable, kept, removeNote }. <waiting> is a job asked for that
 // has not said anything yet (asked()).
 function status(app, installed, jobs, waiting) {
   var job = jobOf(app, jobs)
   var from = installedFrom(app, installed)
-  var out = { action: from ? "open" : "get", progress: -1, text: "", error: "", removable: false, kept: "" }
+  var out = { action: from ? "open" : "get", progress: -1, text: "", error: "", removable: false, kept: "", removeNote: "" }
   if (from) {
+    out.removeNote = removeNote(app, installed)
     out.kept = kept(app, installed)
     out.removable = out.kept === ""
   }

@@ -1,4 +1,4 @@
-//! The App Store's catalog: every app from Arch's repositories, Flathub and
+//! The App Center's catalog: every app from Arch's repositories, Flathub and
 //! Nova's own builds, each app once with where it can come from, the source
 //! it is offered from first.
 //!
@@ -70,6 +70,9 @@ pub struct App {
     /// Its place on the front page: the category it is shown in there, and
     /// its position, from 1.
     pub featured: Option<(String, usize)>,
+    /// Its place in the Popular row above the categories, from 1; an app
+    /// can be there and in a category's.
+    pub popular: Option<usize>,
     pub rank: u64,
 }
 
@@ -358,6 +361,7 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
             meta: c.clone(),
             sources: vec![source],
             featured: None,
+            popular: None,
             rank: 0,
         });
         index(&mut by_id, c, at);
@@ -415,6 +419,7 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
                     meta: c.clone(),
                     sources: vec![source],
                     featured: None,
+                    popular: None,
                     rank: 0,
                 });
                 index(&mut by_id, c, at);
@@ -460,6 +465,7 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
                     category: r.category,
                     sources: vec![source],
                     featured: None,
+                    popular: None,
                     rank: 0,
                 });
                 by_id.insert(r.id.to_ascii_lowercase(), at);
@@ -468,8 +474,16 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
     }
 
     let mut position: HashMap<&str, usize> = HashMap::new();
+    let mut popular = 0;
     for (cat, id) in &inputs.featured {
         if let Some(at) = id_keys(id).iter().find_map(|k| by_id.get(k).copied()) {
+            if cat == POPULAR {
+                if apps[at].popular.is_none() {
+                    popular += 1;
+                    apps[at].popular = Some(popular);
+                }
+                continue;
+            }
             if apps[at].featured.is_some() {
                 continue;
             }
@@ -625,6 +639,9 @@ pub fn write_app(out: &mut String, app: &App) {
     if let Some((cat, n)) = &app.featured {
         o.str("featured", cat).num("position", *n as u64);
     }
+    if let Some(n) = app.popular {
+        o.num("popular", n as u64);
+    }
     o.num("rank", app.rank);
     o.end();
 }
@@ -730,7 +747,12 @@ pub fn parse_packages(text: &str) -> HashMap<String, (String, String)> {
     packages
 }
 
-/// The front page's list: "category id" lines; # starts a comment.
+/// The key of the front page's row above the categories, which is not a
+/// category: the best-known apps of every kind.
+pub const POPULAR: &str = "popular";
+
+/// The front page's list: "category id" lines, the category being a
+/// category's key or `popular`; # starts a comment.
 pub fn parse_featured(text: &str) -> Vec<(String, String)> {
     text.lines()
         .map(|l| l.split('#').next().unwrap_or("").trim())
@@ -831,6 +853,8 @@ mod tests {
                 ("create".into(), "org.gimp.GIMP".into()),
                 ("create".into(), "nowhere".into()),
                 ("play".into(), "org.example.Tiny".into()),
+                ("popular".into(), "com.google.Chrome".into()),
+                ("popular".into(), "org.gimp.GIMP".into()),
             ],
         }
     }
@@ -890,6 +914,13 @@ mod tests {
         );
         assert_eq!(gimp.category, "create");
         assert_eq!(gimp.featured, Some(("create".into(), 1)));
+        assert_eq!(gimp.popular, Some(2), "in a category and in Popular");
+        let chrome = apps
+            .iter()
+            .find(|a| a.meta.id == "com.google.Chrome")
+            .unwrap();
+        assert_eq!((chrome.popular, chrome.featured.clone()), (Some(1), None));
+        assert_eq!(chrome.category, "internet", "Popular does not move an app");
         match &gimp.sources[1] {
             Source::Flathub {
                 download,
@@ -969,7 +1000,7 @@ mod tests {
         let apps = build(&i);
         let text = write(&apps, &i, 7);
         assert!(text.starts_with(r#"{"format":1,"built":7,"flathub":true,"arch":true,"runtimes":{"org.gnome.Platform/x86_64/51":{"download":432800000,"installed":1100000000}},"apps":["#));
-        assert!(text.contains(r#""sources":[{"kind":"arch","package":"gimp","repo":"extra","version":"3.2.6-1","desktop":"gimp.desktop"},{"kind":"flathub","app":"org.gimp.GIMP","ref":"app/org.gimp.GIMP/x86_64/stable","version":"3.2.8","download":102500000,"installed":268600000,"runtime":"org.gnome.Platform/x86_64/51","verified":true}],"featured":"create","position":1"#));
+        assert!(text.contains(r#""sources":[{"kind":"arch","package":"gimp","repo":"extra","version":"3.2.6-1","desktop":"gimp.desktop"},{"kind":"flathub","app":"org.gimp.GIMP","ref":"app/org.gimp.GIMP/x86_64/stable","version":"3.2.8","download":102500000,"installed":268600000,"runtime":"org.gnome.Platform/x86_64/51","verified":true}],"featured":"create","position":1,"popular":2"#));
     }
 
     #[test]
