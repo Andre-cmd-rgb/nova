@@ -53,13 +53,18 @@ pub fn remove_if_present(path: &Path) -> io::Result<()> {
 }
 
 /// Copies the files of `src` into `dst`, recursively, replacing files that
-/// exist. Symlinks are followed.
+/// exist. Symlinks are followed, and one that leads nowhere is left out.
 pub fn copy_tree(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).context(dst.display())?;
     for entry in fs::read_dir(src).context(src.display())? {
         let from = entry.context(src.display())?.path();
         let to = dst.join(from.file_name().unwrap_or_default());
-        let meta = fs::metadata(&from).context(from.display())?;
+        let meta = match fs::metadata(&from) {
+            Ok(meta) => meta,
+            // A link to a file that is gone has nothing to copy.
+            Err(e) if e.kind() == ErrorKind::NotFound => continue,
+            Err(e) => return Err(e).context(from.display()),
+        };
         if meta.is_dir() {
             copy_tree(&from, &to)?;
         } else if meta.is_file() {

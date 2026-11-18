@@ -238,6 +238,20 @@ fn refresh_renders_the_theme_again_only_when_a_template_changed() {
 }
 
 #[test]
+fn a_link_to_a_file_that_is_gone_in_the_users_theme_does_not_stop_the_switch() {
+    let s = Sandbox::new();
+    let own = s
+        .root
+        .join("home/.config/nova/themes/tokyo-night/backgrounds");
+    fs::create_dir_all(&own).unwrap();
+    std::os::unix::fs::symlink("/nonexistent/photo.png", own.join("gone.png")).unwrap();
+    s.ok(&["set", "tokyo-night"]);
+    let theme = s.state().join("current/theme");
+    assert!(theme.join("colors.toml").is_file());
+    assert!(fs::symlink_metadata(theme.join("backgrounds/gone.png")).is_err());
+}
+
+#[test]
 fn rejects_bad_and_unknown_names() {
     let s = Sandbox::new();
     assert_eq!(s.run(&["set", "../x"]).status.code(), Some(2));
