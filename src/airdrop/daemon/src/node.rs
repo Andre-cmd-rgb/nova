@@ -113,6 +113,39 @@ pub struct Counts {
     pub service_said: u64,
     pub browsed: u64,
     pub dropped: u64,
+    /// The rates of the data frames peers sent this node, and how many came
+    /// aggregated: what says how fast a peer can send.
+    pub rates: Vec<(wire::Rate, u64)>,
+    pub aggregated: u64,
+}
+
+impl Counts {
+    fn heard_at(&mut self, radio: &wire::Radio) {
+        match self.rates.iter_mut().find(|(rate, _)| *rate == radio.rate) {
+            Some((_, count)) => *count += 1,
+            None => self.rates.push((radio.rate, 1)),
+        }
+        self.aggregated += u64::from(radio.aggregated);
+    }
+
+    /// "; heard at HT MCS 7 (310), 24 Mbit/s (12), 290 aggregated", the most
+    /// used rate first; "" when no data frame came.
+    pub fn rates_heard(&self) -> String {
+        if self.rates.is_empty() {
+            return String::new();
+        }
+        let mut rates = self.rates.clone();
+        rates.sort_by_key(|&(_, count)| std::cmp::Reverse(count));
+        let list: Vec<String> = rates
+            .iter()
+            .map(|(rate, count)| format!("{rate} ({count})"))
+            .collect();
+        format!(
+            "; heard at {}, {} aggregated",
+            list.join(", "),
+            self.aggregated
+        )
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -350,7 +383,7 @@ impl Node {
 
     /// A packet from the monitor interface.
     pub fn heard(&mut self, now: u64, packet: &[u8]) {
-        let Some((_radio, bytes)) = wire::heard(packet) else {
+        let Some((radio, bytes)) = wire::heard(packet) else {
             return;
         };
         let Some(frame) = wire::frame(bytes) else {
@@ -411,6 +444,7 @@ impl Node {
                     .max(election.counter.saturating_add(100));
             }
         } else {
+            self.counts.heard_at(&radio);
             let peer = self.peers.get_mut(&frame.from).unwrap();
             let stream = usize::from(frame.stream());
             if frame.retry && peer.numbers[stream] == Some(frame.number) {
@@ -666,6 +700,25 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rates_heard_are_said_most_used_first() {
+        let mut counts = Counts::default();
+        assert_eq!(counts.rates_heard(), "");
+        let at = |rate, aggregated| wire::Radio {
+            signal: None,
+            rate,
+            aggregated,
+        };
+        counts.heard_at(&at(wire::Rate::Legacy(48), false));
+        for _ in 0..3 {
+            counts.heard_at(&at(wire::Rate::Ht(7), true));
+        }
+        assert_eq!(
+            counts.rates_heard(),
+            "; heard at HT MCS 7 (3), 24 Mbit/s (1), 3 aggregated"
+        );
+    }
     use crate::wire::Packet;
 
     const US: Mac = [0x02, 0x11, 0x22, 0x33, 0x44, 0x55];

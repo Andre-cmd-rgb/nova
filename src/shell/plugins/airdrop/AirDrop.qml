@@ -4,7 +4,8 @@ import Quickshell.Io
 import "AirDropModel.js" as Model
 
 // AirDrop, in the background, said in notifications as on a Mac: an
-// iPhone's offer, with Decline and Accept; a transfer that takes a moment,
+// iPhone's offer, with the picture it sends of what it offers, Decline and
+// Accept; a transfer that takes a moment,
 // with its bar; what came in, with its picture, which a click opens; and a
 // failure, in a sentence. Nothing else: while AirDrop is on, the Wi-Fi is
 // off the network, and the bar's Wi-Fi icon is AirDrop's meanwhile (the
@@ -132,9 +133,14 @@ Item {
       slow.stop()
       slow.shown = false
     }
+    if (next.state !== "asked") {
+      offerId = ""
+      offerPicture = ""
+      offerWait.stop()
+    }
     switch (next.state) {
     case "asked":
-      live = Model.offer(next, command)
+      offered(next)
       break
     case "receiving":
       if (!slow.shown && !slow.running) slow.start()
@@ -161,6 +167,53 @@ Item {
       // Waiting, or an offer declined (by the user, or by the daemon for
       // want of an answer): nothing to show.
       live = null
+    }
+  }
+
+  // The offer's picture, made from the sender's own (Model.peek) for the
+  // question `offerId`: "" until it is made, and if it cannot be. The offer
+  // waits a moment for it, and is shown without it should it take longer; it
+  // gets the picture in its place when it comes.
+  property string offerId: ""
+  property string offerPicture: ""
+
+  function offered(state) {
+    var id = Model.text(state.id)
+    if (id !== offerId && !peeker.running) {
+      offerId = id
+      offerPicture = ""
+      if (Model.text(state.icon) !== "" && runtime !== "") {
+        peeker.id = id
+        peeker.copy = pictures + "/offer-" + Date.now() + ".jpg"
+        peeker.command = Model.peek(Model.text(state.icon), pictures, peeker.copy)
+        peeker.running = true
+        offerWait.restart()
+        return
+      }
+    }
+    if (!offerWait.running) live = Model.offer(state, command, id === offerId ? offerPicture : "")
+  }
+
+  // The offer as it is to be shown now, if it is still open.
+  function showOffer() {
+    if (said.state === "asked" && Model.text(said.id) === offerId) live = Model.offer(said, command, offerPicture)
+  }
+
+  Timer {
+    id: offerWait
+    interval: 1000
+    onTriggered: airdrop.showOffer()
+  }
+
+  Process {
+    id: peeker
+    property string id: ""
+    property string copy: ""
+    onExited: function (exitCode) {
+      if (peeker.id !== airdrop.offerId) return
+      airdrop.offerPicture = exitCode === 0 ? peeker.copy : ""
+      offerWait.stop()
+      airdrop.showOffer()
     }
   }
 

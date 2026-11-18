@@ -6,8 +6,9 @@ import qs.Ui
 // AirDrop's page in Settings: its doorbell. Switched on, Bluetooth listens
 // for the user's iPhone, and AirDrop goes on when that iPhone's share sheet
 // shows AirDrop and off when the sheet closes (the AirDrop plugin does
-// that). The iPhone is learned once, here. The menu's AirDrop row stays
-// the way to switch AirDrop on by hand.
+// that). The iPhone is learned once, here, and shown by the name it sends
+// with the first transfer taken from it. The menu's AirDrop row stays the
+// way to switch AirDrop on by hand.
 Column {
   id: root
   spacing: Style.space(22)
@@ -68,7 +69,7 @@ Column {
         : !root.listening ? "Starting…"
         : root.learningLeft > 0 ? "Learning your iPhone"
         : root.phones === 0 ? "No iPhone"
-        : root.phones === 1 ? "Your iPhone" : root.phones + " iPhones"
+        : root.phones === 1 ? (String(root.live.name || "") || "Your iPhone") : root.phones + " iPhones"
       detail: root.live.state === "deaf" ? String(root.live.why || "")
         : !root.listening ? ""
         : root.learningLeft > 0 ? "On your iPhone nearby: Share, then AirDrop. " + root.clock(root.learningLeft) + " left"

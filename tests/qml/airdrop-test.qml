@@ -2,6 +2,7 @@
 // stub: bin/nova-airdrop nova-airdrop
 // stub: bin/busctl busctl
 // stub: bin/vipsthumbnail vipsthumbnail
+// stub: bin/bwrap bwrap
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -12,8 +13,10 @@ import "plugins/airdrop/AirDropModel.js" as Model
 // the notifications it sends for it, and what it asks of the command in
 // return; and a send's window, picks and notifications, from the lines of
 // `nova airdrop send --json`. nova-airdrop is a stub: its watch says what the test wrote for it,
-// and its other calls are noted, as are busctl's (the notifications) and
-// vipsthumbnail's (a photo's smaller copy). No radio, no daemon, no bus.
+// and its other calls are noted, as are busctl's (the notifications),
+// vipsthumbnail's (a photo's smaller copy, and an offer's picture) and
+// bwrap's (the sandbox the offer's picture is made in). No radio, no daemon,
+// no bus.
 ShellRoot {
   id: test
 
@@ -29,6 +32,8 @@ ShellRoot {
 
   readonly property string home: Quickshell.env("HOME")
   readonly property string pictures: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/airdrop-pictures"
+  // The daemon's copy of the picture the sender sent with its offer.
+  readonly property string icon: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/airdrop-offer-7-1"
 
   function check(name, got, want) {
     const same = JSON.stringify(got) === JSON.stringify(want)
@@ -41,7 +46,7 @@ ShellRoot {
   }
 
   readonly property string asked: JSON.stringify({ state: "asked", id: "7-1", sender: "Zoë's iPhone",
-    files: [{ name: "IMG_0001.HEIC", bytes: 1044468 }], bytes: 1044468, links: [] })
+    files: [{ name: "IMG_0001.HEIC", bytes: 1044468 }], bytes: 1044468, links: [], icon: icon })
   readonly property string offerSummary: "“Zoë's iPhone” wants to send you a photo"
   readonly property string buttons: JSON.stringify([{ says: "Decline", argv: ["nova-airdrop", "decline", "7-1"] },
     { says: "Accept", argv: ["nova-airdrop", "accept", "7-1"], main: true }])
@@ -262,8 +267,15 @@ ShellRoot {
   }
 
   function fourth() {
-    check("an offer is a notification of its own, with Decline and Accept, that stays", notes(), [{ replaces: 0, summary: offerSummary,
-      body: "IMG_0001.HEIC, 1.0 MB", hints: { urgency: "2", "nova-glyph": "\u{F0003}", "nova-buttons": buttons } }])
+    const peeks = called().filter(line => line.startsWith("bwrap "))
+    const copy = peeks.length === 1 ? peeks[0].replace(/^.* -o (.*)\[Q=85\]$/, "$1") : ""
+    check("the sender's picture is read in a sandbox: no network, no capabilities, the system read-only, that file and the pictures folder alone",
+      [peeks.length, peeks.length === 1 && peeks[0].startsWith("bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL --clearenv --setenv PATH /usr/bin --ro-bind /usr /usr "),
+        peeks.length === 1 && peeks[0].includes(" --tmpfs /tmp --ro-bind " + icon + " " + icon + " --bind " + pictures + " " + pictures + " timeout 5 vipsthumbnail " + icon + " --size 256x256 -o "),
+        copy.startsWith(pictures + "/offer-") && copy.endsWith(".jpg")], [1, true, true, true])
+    check("with the loaders vips trusts less, which a picture in JPEG 2000 takes", called().filter(line => line.includes("vipsthumbnail VIPS_BLOCK_UNTRUSTED= " + icon)).length, 1)
+    check("an offer is a notification of its own, with that picture, Decline and Accept, that stays", notes(), [{ replaces: 0, summary: offerSummary,
+      body: "IMG_0001.HEIC, 1.0 MB", hints: { urgency: "2", "nova-glyph": "\u{F0003}", "image-path": copy, "nova-buttons": buttons } }])
     check("its id is kept, to replace it", airdrop.liveId, 1)
     // Accepted from the notification, which goes: the transfer starts.
     airdrop.told(receiving(261117))
@@ -288,7 +300,7 @@ ShellRoot {
   }
 
   function seventh() {
-    const made = called().filter(line => line.startsWith("vipsthumbnail"))
+    const made = called().filter(line => line.startsWith("vipsthumbnail") && !line.includes(icon))
     const copy = made.length === 1 ? made[0].replace(/^.* -o (.*)\[Q=85\]$/, "$1") : ""
     check("a smaller copy of the photo is made, with untrusted loaders blocked, under a name of its own in the runtime folder",
       [made.length, made.length === 1 && made[0].startsWith("vipsthumbnail VIPS_BLOCK_UNTRUSTED=1 /home/zoe/Downloads/IMG_0001.HEIC --size 256x256 -o "),
@@ -337,6 +349,7 @@ ShellRoot {
     const id = notes().filter(note => note.replaces === 0).length
     airdrop.told('{"state":"declined","sender":"Zoë\'s iPhone"}')
     later(400, function () {
+      check("an offer whose picture cannot be made is shown without it", [offered.summary, offered.hints["image-path"]], [offerSummary, undefined])
       check("an offer declined, or left unanswered until the daemon said no, is taken away", [offered.summary, lastNote()], [offerSummary, { close: id }])
       airdrop.told('{"state":"off"}')
       refuses.setText("The Wi-Fi is switched off. Switch it on and try again.\n")

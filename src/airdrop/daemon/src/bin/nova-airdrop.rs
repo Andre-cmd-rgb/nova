@@ -107,15 +107,7 @@ fn ask(what: &str) -> Option<String> {
 }
 
 fn ask_at(socket: &Path, what: &str) -> Option<String> {
-    let mut stream = UnixStream::connect(socket).ok()?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-    writeln!(stream, "{what}").ok()?;
-    let mut answer = String::new();
-    BufReader::new(stream.take(1 << 20))
-        .read_line(&mut answer)
-        .ok()?;
-    Some(answer.trim_end().to_owned())
+    meet::ask(socket, what, Duration::from_secs(5))
 }
 
 fn waited(until: impl Fn() -> bool, at_most: Duration) -> bool {

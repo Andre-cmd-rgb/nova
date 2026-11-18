@@ -99,10 +99,11 @@ function readable(path) {
   return /\.(png|jpe?g|gif)$/i.test(text(path))
 }
 
-// The offer: who wants to send what, and its two answers, the commands that
-// give them. It stays until answered: the daemon says no for itself before
-// the iPhone stops waiting.
-function offer(state, command) {
+// The offer: who wants to send what, its picture (made from the sender's
+// own, "" for none), and its two answers, the commands that give them. It
+// stays until answered: the daemon says no for itself before the iPhone stops
+// waiting.
+function offer(state, command, picture) {
   var files = list(state.files), links = list(state.links)
   var detail = files.length === 1 ? text(files[0] && files[0].name) + ", " + size(state.bytes)
     : files.length > 1 ? size(state.bytes)
@@ -112,11 +113,27 @@ function offer(state, command) {
     summary: sender(state) + " wants to send you " + what(state),
     body: escaped(detail),
     urgency: CRITICAL,
+    picture: text(picture),
     buttons: [
       { says: "Decline", argv: [command, "decline", id] },
       { says: "Accept", argv: [command, "accept", id], main: true }
     ]
   }
+}
+
+// The command that makes the offer's picture, `copy` in `folder`, from the
+// sender's own (`icon`, the daemon's copy of it: JPEG 2000 from an iPhone).
+// That is a stranger's file, and a kind vips trusts less, so it is read in a
+// sandbox: no network, nothing of the user's but that file and the folder,
+// the system read-only, for five seconds at most.
+function peek(icon, folder, copy) {
+  return ["sh", "-c",
+    'mkdir -p -m 700 -- "$1" && find "$1" -maxdepth 1 -name "*.jpg" -mmin +10 -delete;'
+    + ' exec bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL --clearenv --setenv PATH /usr/bin'
+    + ' --ro-bind /usr /usr --symlink usr/lib /lib64 --symlink usr/lib /lib --symlink usr/bin /bin'
+    + ' --proc /proc --dev /dev --tmpfs /tmp --ro-bind "$2" "$2" --bind "$1" "$1"'
+    + ' timeout 5 vipsthumbnail "$2" --size 256x256 -o "$3[Q=85]" 2>/dev/null',
+    "sh", text(folder), text(icon), text(copy)]
 }
 
 // A transfer under way: from whom, what, and how far along, in steps of 5 %,

@@ -36,6 +36,21 @@ pub fn bell() -> PathBuf {
     runtime().join("nova/airdrop-bell.sock")
 }
 
+/// Says one line on a socket here and has the line answered: None if nobody answers on it in
+/// `within`.
+pub fn ask(socket: &std::path::Path, what: &str, within: std::time::Duration) -> Option<String> {
+    use std::io::{BufRead, Read, Write};
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).ok()?;
+    let _ = stream.set_read_timeout(Some(within));
+    let _ = stream.set_write_timeout(Some(within));
+    writeln!(stream, "{what}").ok()?;
+    let mut answer = String::new();
+    io::BufReader::new(stream.take(1 << 20))
+        .read_line(&mut answer)
+        .ok()?;
+    Some(answer.trim_end().to_owned())
+}
+
 // ------------------------------------------------- what both say
 
 /// The daemon's answer to `hold` and `stay` once it has decided to end: whoever asked waits for it

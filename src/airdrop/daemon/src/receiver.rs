@@ -40,6 +40,9 @@ pub struct Offer {
     pub files: Vec<(String, u64)>,
     pub bytes: u64,
     pub links: Vec<String>,
+    /// The sender's small picture of what it sends, as it sent it, if it is of a kind a picture to
+    /// show is made from (offer_icon).
+    pub icon: Option<Arc<[u8]>>,
 }
 
 /// What happened, for whoever shows it. `question` is the number of the question it is about.
@@ -99,6 +102,8 @@ const MOST_TO_ONE: usize = 4;
 /// A question at its largest: the files' names and sizes, and a picture of the first. One photo's
 /// is an eighth of a megabyte.
 const QUESTION_LIMIT: usize = 8 << 20;
+/// The sender's picture of what it sends at its largest: an iPhone's is a few dozen kilobytes.
+const ICON_LIMIT: usize = 1 << 20;
 /// How long a question has to arrive, and a handshake each of its steps.
 const QUESTION_WITHIN: Duration = Duration::from_secs(60);
 const HANDSHAKE_STEP: Duration = Duration::from_secs(10);
@@ -135,6 +140,26 @@ pub(crate) fn shown(text: &str) -> String {
         .collect::<String>()
         .trim()
         .to_owned()
+}
+
+/// The sender's picture of what it offers (the first file, small), if it is of a kind the shell
+/// makes a picture of: JPEG 2000, as an iPhone sends it (and this computer), boxed or bare, or JPEG
+/// or PNG. It is a stranger's to make up, and is only looked at in a sandbox (the shell's AirDrop).
+fn offer_icon(asked: &Value) -> Option<Arc<[u8]>> {
+    const KINDS: [&[u8]; 4] = [
+        b"\0\0\0\x0cjP  \r\n\x87\n",
+        b"\xff\x4f\xff\x51",
+        b"\xff\xd8\xff",
+        b"\x89PNG\r\n\x1a\n",
+    ];
+    match asked.get("FileIcon") {
+        Some(Value::Data(bytes))
+            if bytes.len() <= ICON_LIMIT && KINDS.iter().any(|kind| bytes.starts_with(kind)) =>
+        {
+            Some(Arc::from(bytes.as_slice()))
+        }
+        _ => None,
+    }
 }
 
 pub(crate) fn offer(asked: &Value) -> Offer {
@@ -175,6 +200,7 @@ pub(crate) fn offer(asked: &Value) -> Offer {
             .take(100)
             .map(shown)
             .collect(),
+        icon: offer_icon(asked),
     }
 }
 
@@ -538,8 +564,30 @@ mod tests {
                 sender: String::new(),
                 files: Vec::new(),
                 bytes: 0,
-                links: Vec::new()
+                links: Vec::new(),
+                icon: None,
             }
         );
+    }
+
+    #[test]
+    fn the_senders_picture_is_kept_if_it_is_of_a_kind_a_picture_is_made_of() {
+        let with = |icon: Vec<u8>| Value::Dict(vec![("FileIcon".into(), Value::Data(icon))]);
+        let jp2 = [&b"\0\0\0\x0cjP  \r\n\x87\n"[..], &[7; 100]].concat();
+        assert_eq!(offer(&with(jp2.clone())).icon.as_deref(), Some(&jp2[..]));
+        for kind in [
+            &b"\xff\x4f\xff\x51"[..],
+            b"\xff\xd8\xff\xe0",
+            b"\x89PNG\r\n\x1a\n",
+        ] {
+            assert!(offer(&with(kind.to_vec())).icon.is_some());
+        }
+        // Any other kind, which only a loader trusted less might take; too large; not data.
+        assert_eq!(offer(&with(b"GIF89a".to_vec())).icon, None);
+        assert_eq!(offer(&with(Vec::new())).icon, None);
+        let huge = [&b"\xff\xd8\xff"[..], &vec![0; ICON_LIMIT]].concat();
+        assert_eq!(offer(&with(huge)).icon, None);
+        let text = Value::Dict(vec![("FileIcon".into(), Value::Text("\u{ff}".into()))]);
+        assert_eq!(offer(&text).icon, None);
     }
 }

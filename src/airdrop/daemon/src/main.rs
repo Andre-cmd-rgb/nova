@@ -66,7 +66,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use control::Control;
 use node::{Event, Node, Settings};
@@ -144,7 +144,12 @@ fn options() -> Result<Options, String> {
         }
         .join("nova/airdrop"),
         country: defaults::country(&std::env::var("NOVA_AIRDROP_COUNTRY").unwrap_or_default()),
-        channel: 6,
+        // The channel nova-airdrop-radio put the card on, else 6.
+        channel: std::env::var("NOVA_AIRDROP_CHANNEL")
+            .ok()
+            .and_then(|channel| channel.trim().parse().ok())
+            .filter(|channel| (1..=196).contains(channel))
+            .unwrap_or(6),
         control: meet::socket(),
         accept_all: false,
         once: false,
@@ -461,7 +466,19 @@ fn run() -> Result<(), String> {
         folder: o.folder.clone(),
         decide: {
             let control = control.clone();
-            Box::new(move |question, offer| control.ask(question, offer, accept_all))
+            Box::new(move |question, offer| {
+                let yes = control.ask(question, offer, accept_all);
+                if yes && !offer.sender.is_empty() {
+                    // The doorbell keeps the name for the user's iPhone, if that is the one showing
+                    // AirDrop: an iPhone's announcement does not carry its name. On a thread of its
+                    // own, as the sender waits for its yes meanwhile.
+                    let line = format!("name {}", offer.sender);
+                    let _ = std::thread::Builder::new()
+                        .name("airdrop-bell".into())
+                        .spawn(move || meet::ask(&meet::bell(), &line, Duration::from_secs(2)));
+                }
+                yes
+            })
         },
         tell: {
             let (quiet_since, control) = (quiet_since.clone(), control.clone());
@@ -628,7 +645,7 @@ fn run() -> Result<(), String> {
             noted = 0;
             let c = std::mem::take(&mut node.counts);
             if c.to_kernel + c.to_air > 20 {
-                log(format!("link: {} packets in, {} frames out ({} held for a slot, {} on the chance, {} again), {} repeats heard, {} the driver refused", c.to_kernel, c.to_air, c.held, c.sent_on_the_chance, c.repeated, c.duplicates, dropped));
+                log(format!("link: {} packets in, {} frames out ({} held for a slot, {} on the chance, {} again), {} repeats heard, {} the driver refused{}", c.to_kernel, c.to_air, c.held, c.sent_on_the_chance, c.repeated, c.duplicates, dropped, c.rates_heard()));
             }
         }
         sys::wait(

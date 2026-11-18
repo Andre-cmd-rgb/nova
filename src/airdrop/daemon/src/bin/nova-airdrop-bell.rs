@@ -16,19 +16,27 @@
 //! (the iPhone shuffles their order and changes the rest each time). Nothing
 //! of any other phone is kept, or logged.
 //!
+//! The iPhone's name is not in its announcement. The AirDrop daemon tells it
+//! (`name`) when the user takes a transfer, with the name the sender gave, and
+//! it is kept for the iPhone of the user's that is showing AirDrop then, if
+//! one alone is: Settings shows the iPhone by it.
+//!
 //! Whoever connects to the socket says one line:
 //!
 //!   watch    how it is, as a line of JSON, now and at each change
 //!   status   the same in plain words, once
 //!   learn    listen for a minute for an iPhone to know
 //!   forget   know no iPhone any more
+//!   name <name>  the name of the iPhone of the user's showing AirDrop now
 //!   rest     stop listening until `wake` (the shell, while the screen is locked)
 //!   wake     listen again
 //!
 //! and all but `watch` are answered with a line. The JSON has `state`
 //! (`listening`, or `deaf` and `why`, a sentence for the user), `phones` (how
-//! many it knows), `near` (one of them is announcing now) and `learning`
-//! (when the minute ends, in Unix seconds; 0 while it is not learning).
+//! many it knows), `name` (the name of the one it knows, if it knows one and
+//! has its name; "" otherwise), `near` (one of them is announcing now) and
+//! `learning` (when the minute ends, in Unix seconds; 0 while it is not
+//! learning).
 //!
 //! The kernel lets a socket on its Bluetooth management talk to the
 //! controller if the process had CAP_NET_ADMIN when it bound the socket. The
@@ -146,16 +154,23 @@ fn announcement(eir: &[u8]) -> Option<[u16; 4]> {
     None
 }
 
-/// An iPhone this knows: its fields, sorted, none twice, no zeros.
+/// An iPhone this knows: its fields, sorted, none twice, no zeros; and its name, once a transfer
+/// from it has told it.
 #[derive(Clone, Debug, PartialEq)]
-struct Phone(Vec<u16>);
+struct Phone {
+    fields: Vec<u16>,
+    name: String,
+}
 
 impl Phone {
     fn of(fields: &[u16]) -> Option<Phone> {
         let mut fields: Vec<u16> = fields.iter().copied().filter(|f| *f != 0).collect();
         fields.sort_unstable();
         fields.dedup();
-        (!fields.is_empty()).then_some(Phone(fields))
+        (!fields.is_empty()).then_some(Phone {
+            fields,
+            name: String::new(),
+        })
     }
 
     /// Whether an announcement is this iPhone's: two fields in common, or all it has if fewer.
@@ -164,21 +179,25 @@ impl Phone {
         let Some(heard) = Phone::of(fields) else {
             return false;
         };
-        let common = heard.0.iter().filter(|f| self.0.contains(f)).count();
-        common > 0 && common >= self.0.len().min(heard.0.len()).min(2)
+        let common = heard
+            .fields
+            .iter()
+            .filter(|f| self.fields.contains(f))
+            .count();
+        common > 0 && common >= self.fields.len().min(heard.fields.len()).min(2)
     }
 
     /// The patterns the controller listens for, any one of which is a match. The first field is
     /// always one of the phone's four, so with four that is all it takes; with fewer, a zero can
     /// be first, and each is looked for in every place.
     fn patterns(&self) -> Vec<[u8; 34]> {
-        let places: &[u8] = if self.0.len() == 4 {
+        let places: &[u8] = if self.fields.len() == 4 {
             &[13]
         } else {
             &[13, 15, 17, 19]
         };
         let mut patterns = Vec::new();
-        for field in &self.0 {
+        for field in &self.fields {
             for place in places {
                 patterns.push(pattern(*place, &field.to_be_bytes()));
             }
@@ -186,13 +205,30 @@ impl Phone {
         patterns
     }
 
+    /// Its line in the file: the fields, and after a tab its name, if it has one.
     fn line(&self) -> String {
-        self.0
+        let fields = self
+            .fields
             .iter()
             .map(|field| format!("{field:04x}"))
             .collect::<Vec<_>>()
-            .join(" ")
+            .join(" ");
+        if self.name.is_empty() {
+            fields
+        } else {
+            format!("{fields}\t{}", self.name)
+        }
     }
+}
+
+/// A name made fit to keep and show: one line, no control characters, not endless.
+fn cleaned(name: &str) -> String {
+    name.chars()
+        .filter(|c| !c.is_control())
+        .take(80)
+        .collect::<String>()
+        .trim()
+        .to_owned()
 }
 
 /// A pattern as the kernel takes it: in manufacturer data (0xff), from `offset` (after its type).
@@ -214,12 +250,14 @@ fn read_phones(path: &Path) -> Vec<Phone> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let mut phones: Vec<Phone> = Vec::new();
     for line in text.lines() {
-        let fields: Option<Vec<u16>> = line
+        let (fields, name) = line.split_once('\t').unwrap_or((line, ""));
+        let fields: Option<Vec<u16>> = fields
             .split_whitespace()
             .map(|word| u16::from_str_radix(word, 16).ok())
             .collect();
-        if let Some(phone) = fields.as_deref().and_then(Phone::of) {
-            if !phones.contains(&phone) {
+        if let Some(mut phone) = fields.as_deref().and_then(Phone::of) {
+            if !phones.iter().any(|known| known.fields == phone.fields) {
+                phone.name = cleaned(name);
                 phones.push(phone);
             }
         }
@@ -285,8 +323,9 @@ struct Bell {
     /// The one for any iPhone, while learning.
     any: Option<u16>,
     learning: Option<(Instant, u64)>,
-    /// The addresses a known iPhone is announcing from, and when each was last heard.
-    near: HashMap<[u8; 6], Instant>,
+    /// The addresses a known iPhone is announcing from: when each was last heard, and which of
+    /// `phones` it is.
+    near: HashMap<[u8; 6], (Instant, usize)>,
     /// When the controller last went off or away.
     reset: Option<Instant>,
     /// Told to rest (the screen is locked): no monitors in place, so the radio does not scan.
@@ -561,10 +600,42 @@ impl Bell {
 
     fn forget(&mut self) {
         self.phones.clear();
+        self.near.clear();
         if let Err(error) = write_phones(&self.phones_path, &self.phones) {
             log(&format!("{}: {error}", self.phones_path.display()));
         }
         self.setup();
+    }
+
+    /// The name a transfer the user took came with (the daemon says it): kept for the iPhone of
+    /// the user's that is showing AirDrop, if one alone is. Another phone sent it otherwise, or it
+    /// cannot be told which of the user's did.
+    fn name(&mut self, name: &str) -> Result<(), &'static str> {
+        let name = cleaned(name);
+        let mut near: Vec<usize> = self.near.values().map(|(_, phone)| *phone).collect();
+        near.sort_unstable();
+        near.dedup();
+        let (&[at], false) = (&near[..], name.is_empty()) else {
+            return Err("no iPhone of yours alone is showing AirDrop");
+        };
+        let Some(phone) = self.phones.get_mut(at) else {
+            return Err("no iPhone of yours alone is showing AirDrop");
+        };
+        if phone.name != name {
+            phone.name = name;
+            if let Err(error) = write_phones(&self.phones_path, &self.phones) {
+                log(&format!("{}: {error}", self.phones_path.display()));
+            }
+        }
+        Ok(())
+    }
+
+    /// The name of the one iPhone this knows, if it knows one and has its name.
+    fn known_name(&self) -> &str {
+        match &self.phones[..] {
+            [phone] => &phone.name,
+            _ => "",
+        }
     }
 
     /// What one event of the kernel's means here.
@@ -636,8 +707,8 @@ impl Bell {
         let Some(fields) = announcement(eir) else {
             return;
         };
-        if self.phones.iter().any(|phone| phone.is(&fields)) {
-            self.near.insert(address, Instant::now());
+        if let Some(phone) = self.phones.iter().position(|phone| phone.is(&fields)) {
+            self.near.insert(address, (Instant::now(), phone));
         } else if self.learning.is_some() && loudness > LEARN_LOUDER_THAN {
             if let Some(phone) = Phone::of(&fields) {
                 self.phones.push(phone);
@@ -647,7 +718,8 @@ impl Bell {
                 }
                 self.learning = None;
                 self.setup();
-                self.near.insert(address, Instant::now());
+                self.near
+                    .insert(address, (Instant::now(), self.phones.len() - 1));
             }
         }
     }
@@ -660,7 +732,7 @@ impl Bell {
         {
             self.stop_learning();
         }
-        self.near.retain(|_, heard| heard.elapsed() < STALE);
+        self.near.retain(|_, (heard, _)| heard.elapsed() < STALE);
         if !self.unremoved.is_empty()
             && self
                 .tried_removing
@@ -684,8 +756,9 @@ impl Bell {
             None => ("listening", String::new()),
         };
         format!(
-            r#"{{"state":"{state}",{why}"phones":{},"near":{},"learning":{learning}}}"#,
+            r#"{{"state":"{state}",{why}"phones":{},"name":{},"near":{},"learning":{learning}}}"#,
             self.phones.len(),
+            meet::quoted(self.known_name()),
             !self.near.is_empty()
         )
     }
@@ -702,6 +775,9 @@ impl Bell {
         }
         match (self.phones.len(), self.near.is_empty()) {
             (0, _) => "AirDrop's doorbell knows no iPhone yet: nova airdrop bell learn.".into(),
+            (1, false) if !self.known_name().is_empty() => {
+                format!("“{}” is showing AirDrop.", self.known_name())
+            }
             (_, false) => "Your iPhone is showing AirDrop.".into(),
             (1, true) => "AirDrop's doorbell is listening for your iPhone.".into(),
             (n, true) => format!("AirDrop's doorbell is listening for {n} iPhones."),
@@ -772,7 +848,8 @@ fn answer(bell: &mut Bell, client: &mut Client) -> bool {
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => break,
             Err(_) => return false,
         }
-        if client.said.len() > 256 {
+        // A name is the longest thing said: 80 characters, of up to four bytes each.
+        if client.said.len() > 512 {
             return false;
         }
     }
@@ -788,6 +865,10 @@ fn answer(bell: &mut Bell, client: &mut Client) -> bool {
         return true;
     }
     let reply = match line.as_str() {
+        _ if line.starts_with("name ") => match bell.name(&line["name ".len()..]) {
+            Ok(()) => "ok".into(),
+            Err(why) => why.into(),
+        },
         "watch" => {
             client.watching = true;
             bell.json()
@@ -809,7 +890,7 @@ fn answer(bell: &mut Bell, client: &mut Client) -> bool {
             bell.rest(false);
             "ok".into()
         }
-        _ => "not understood: watch, status, learn, forget, rest or wake".into(),
+        _ => "not understood: watch, status, learn, forget, name, rest or wake".into(),
     };
     writeln!(client.stream, "{reply}").is_ok() && client.watching
 }
@@ -1055,19 +1136,26 @@ mod tests {
     fn phones_are_kept_in_a_file_of_the_users_alone() {
         let folder = std::env::temp_dir().join(format!("nova-bell-{}", std::process::id()));
         let path = folder.join("state/phones");
-        let phones = vec![
+        let mut phones = vec![
             Phone::of(&[0x1111, 0x2222, 0x3333, 0x4444]).unwrap(),
             Phone::of(&[0xaaaa, 0, 0, 0]).unwrap(),
         ];
+        phones[0].name = "Zoë’s iPhone".into();
         write_phones(&path, &phones).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "1111 2222 3333 4444\tZoë’s iPhone\naaaa\n"
+        );
         assert_eq!(read_phones(&path), phones);
         let mode = std::fs::metadata(&path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+        // A file from before names: the same phones, unnamed.
         std::fs::write(
             &path,
-            "1111 2222 3333 4444\nnot a phone\n4444 3333 2222 1111\n\n",
+            "1111 2222 3333 4444\nnot a phone\n4444 3333 2222 1111\tA\u{7}B\n\n",
         )
         .unwrap();
+        phones[0].name.clear();
         assert_eq!(read_phones(&path), phones[..1]);
         assert_eq!(read_phones(&folder.join("none")), vec![]);
         std::fs::remove_dir_all(&folder).unwrap();
@@ -1138,18 +1226,50 @@ mod tests {
         bell.heard(&event(EV_DEVICE_FOUND, &body));
         assert_eq!(bell.near.keys().next(), Some(&[9, 0, 0, 0, 0, 0]));
         // Unheard for long enough, it is gone whatever the kernel said.
-        bell.near.insert([9, 0, 0, 0, 0, 0], Instant::now() - STALE);
+        bell.near
+            .insert([9, 0, 0, 0, 0, 0], (Instant::now() - STALE, 0));
         bell.tick();
         assert!(bell.near.is_empty());
         assert_eq!(
             bell.json(),
-            r#"{"state":"listening","phones":1,"near":false,"learning":0}"#
+            r#"{"state":"listening","phones":1,"name":"","near":false,"learning":0}"#
         );
         bell.why = Some("Bluetooth is off.".into());
         assert_eq!(
             bell.json(),
-            r#"{"state":"deaf","why":"Bluetooth is off.","phones":1,"near":false,"learning":0}"#
+            r#"{"state":"deaf","why":"Bluetooth is off.","phones":1,"name":"","near":false,"learning":0}"#
         );
+    }
+
+    #[test]
+    fn the_name_a_transfer_came_with_is_kept_for_the_iphone_showing_airdrop() {
+        let folder = std::env::temp_dir().join(format!("nova-bell-name-{}", std::process::id()));
+        let mut bell = bell();
+        bell.phones_path = folder.join("phones");
+        // None of the user's is showing AirDrop: somebody else's iPhone sent it.
+        assert!(bell.name("Bob’s iPhone").is_err());
+        assert_eq!(bell.known_name(), "");
+        bell.heard(&found(7, [0x3333, 0x1111, 0x4444, 0x2222]));
+        assert_eq!(bell.name("  Zoë’s\niPhone "), Ok(()));
+        assert_eq!(bell.known_name(), "Zoë’siPhone");
+        assert!(bell.json().contains(r#""name":"Zoë’siPhone""#));
+        assert_eq!(bell.words(), "“Zoë’siPhone” is showing AirDrop.");
+        assert_eq!(read_phones(&bell.phones_path), bell.phones);
+        // Renamed on the iPhone, the next transfer brings the new name; nothing is no name.
+        assert_eq!(bell.name("Zoë’s iPhone"), Ok(()));
+        assert!(bell.name(" ").is_err());
+        assert_eq!(bell.known_name(), "Zoë’s iPhone");
+        // Two of the user's showing AirDrop at once: which one sent it cannot be told.
+        bell.phones
+            .push(Phone::of(&[0x5555, 0x6666, 0x7777, 0x8888]).unwrap());
+        bell.heard(&found(8, [0x5555, 0x6666, 0x7777, 0x8888]));
+        assert!(bell.name("Bob’s iPhone").is_err());
+        assert_eq!(bell.phones[1].name, "");
+        // Knowing two, it gives no one name; forgotten, none is near.
+        assert_eq!(bell.known_name(), "");
+        bell.forget();
+        assert!(bell.near.is_empty());
+        let _ = std::fs::remove_dir_all(&folder);
     }
 
     #[test]
@@ -1164,7 +1284,8 @@ mod tests {
         bell.heard(&event(EV_MONITOR_LOST, &[1, 0, 7, 0, 0, 0, 0, 0, 1]));
         assert!(bell.json().contains(r#""near":true"#));
         // Unheard for long enough, it is gone all the same.
-        bell.near.insert([7, 0, 0, 0, 0, 0], Instant::now() - STALE);
+        bell.near
+            .insert([7, 0, 0, 0, 0, 0], (Instant::now() - STALE, 0));
         bell.tick();
         assert!(bell.json().contains(r#""near":false"#));
         // Long after the reset, "gone" is gone at once again.

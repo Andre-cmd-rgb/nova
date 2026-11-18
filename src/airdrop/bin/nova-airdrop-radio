@@ -8,8 +8,8 @@
 # nova-airdrop@.service runs `up` before the daemon and `down` after it,
 # however it ended. docs/airdrop.md has the why of each step.
 #
-# up: the card joins AWDL's own ad-hoc cell (channel 6, AWDL's BSSID, an
-# address made up for this run as its MAC), which makes its hardware
+# up: the card joins AWDL's own ad-hoc cell (channel 149 or 6, AWDL's BSSID,
+# an address made up for this run as its MAC), which makes its hardware
 # acknowledge the frames an iPhone sends to that address; beside it, a monitor
 # interface under the same address hears and sends the frames. The Wi-Fi is off
 # the network for as long as that lasts: one radio, one channel.
@@ -36,7 +36,14 @@ run=${NOVA_AIRDROP_RUN:-/run/nova-airdrop}
 note=$run/wifi   # the Wi-Fi interface, whether it was connected, and as what: while there is something to undo
 sys=${NOVA_AIRDROP_SYS:-/sys}
 bssid=00:25:00:ff:94:73
-freq=2437 # channel 6: the one of AWDL's three that every card may send on
+# Of AWDL's three channels, 149 where the card may send there, else 6, where
+# every card may (44 is closed to most cards until they hear a network on it).
+# An iPhone's own timetable has 149 in six of its sixteen slots while it only
+# looks, where it has 6 in one; at 5 GHz it can send wider frames; and the
+# Bluetooth that shares the card's 2.4 GHz radio is left alone. How much
+# faster a transfer is there is not measured yet. NOVA_AIRDROP_CHANNEL=6 or
+# 149 asks for one.
+channel='' freq=''
 cell=nova-cell
 mon=nova-mon
 # How long the cell may take to start (mac80211 starts it a moment after it is asked), and the Wi-Fi
@@ -75,10 +82,22 @@ check() {
   modes=$(awk '/Supported interface modes:/ { on = 1; next } on && !/^\t\t \*/ { exit } on' <<<"$can")
   [[ $modes == *"* IBSS"* && $modes == *"* monitor"* ]] ||
     refuse "This computer's Wi-Fi card cannot do what AirDrop needs (an ad-hoc cell and a monitor interface)."
-  local six
-  six=$(grep -E "\* $freq(\.0)? MHz \[6\]" <<<"$can" | head -n 1) || true
-  [[ -n $six && $six != *disabled* && $six != *"no IR"* ]] ||
-    refuse "This computer's Wi-Fi card may not send on channel 6 here, which AirDrop needs."
+  local six five
+  six=$(grep -E '\* 2437(\.0)? MHz \[6\]' <<<"$can" | head -n 1) || true
+  five=$(grep -E '\* 5745(\.0)? MHz \[149\]' <<<"$can" | head -n 1) || true
+  case ${NOVA_AIRDROP_CHANNEL:-} in
+    6) ! may_send "$six" || channel=6 ;;
+    149) ! may_send "$five" || channel=149 ;;
+    *) if may_send "$five"; then channel=149; elif may_send "$six"; then channel=6; fi ;;
+  esac
+  [[ -n $channel ]] ||
+    refuse "This computer's Wi-Fi card may not send on channel ${NOVA_AIRDROP_CHANNEL:-6 or 149} here, which AirDrop needs."
+  if ((channel == 149)); then freq=5745; else freq=2437; fi
+}
+
+# Whether the card may start sending on a channel, by its line in iw phy.
+may_send() {
+  [[ -n $1 && $1 != *disabled* && $1 != *"no IR"* && $1 != *radar* ]]
 }
 
 connected() { [[ $(nmcli -g GENERAL.STATE device show "$1" 2>/dev/null) == 100* ]]; }
@@ -116,7 +135,7 @@ up() {
   fi
   # The way back first.
   printf '%s\n%s\n%s\n' "$wifi" "$was" "$profile" >"$note"
-  printf 'NOVA_AIRDROP_COUNTRY=%s\n' "$(country)" >"$run/env"
+  printf 'NOVA_AIRDROP_COUNTRY=%s\nNOVA_AIRDROP_CHANNEL=%s\n' "$(country)" "$channel" >"$run/env"
 
   nmcli device set "$wifi" managed no >/dev/null 2>&1 || true
   ip link set "$wifi" down
@@ -137,22 +156,30 @@ up() {
   ip link set dev "$cell" address "$address"
   ip link set "$cell" up
   # A beacon every ten seconds: an iPhone does not list a node whose cell beacons ten times a second.
-  iw dev "$cell" ibss join nova "$freq" HT20 fixed-freq "$bssid" beacon-interval 10000 ||
-    refuse "The Wi-Fi card would not start AirDrop's cell on channel 6."
+  # At 5 GHz as wide as an iPhone goes there, 80 MHz, or as wide as the card lets an ad-hoc cell be.
+  local widths=(HT20) width joined=0
+  ((channel != 149)) || widths=(80MHz HT40+ HT20)
+  for width in "${widths[@]}"; do
+    if iw dev "$cell" ibss join nova "$freq" "$width" fixed-freq "$bssid" beacon-interval 10000; then
+      joined=1
+      break
+    fi
+  done
+  ((joined)) || refuse "The Wi-Fi card would not start AirDrop's cell on channel $channel."
   local started=0
   for _ in $(seq "$cell_tries"); do
-    if [[ $(iw dev "$cell" info 2>/dev/null) == *"channel 6 "* ]]; then
+    if [[ $(iw dev "$cell" info 2>/dev/null) == *"channel $channel "* ]]; then
       started=1
       break
     fi
     sleep 0.2
   done
-  ((started)) || refuse "The Wi-Fi card did not start AirDrop's cell on channel 6."
+  ((started)) || refuse "The Wi-Fi card did not start AirDrop's cell on channel $channel."
 
   iw phy "$phy" interface add "$mon" type monitor || refuse "The Wi-Fi card gave no monitor interface."
   ip link set dev "$mon" address "$address"
   ip link set "$mon" up
-  echo "the cell is up on channel 6 and the card acknowledges for $address; $wifi is off the network"
+  echo "the cell is up on channel $channel ($width) and the card acknowledges for $address; $wifi is off the network"
 }
 
 down() {

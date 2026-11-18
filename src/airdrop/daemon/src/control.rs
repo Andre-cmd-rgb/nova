@@ -37,7 +37,10 @@
 //!
 //!   waiting    `name` (what senders see), `seen` (a sender has this computer
 //!              in its list), `ends` (when it gives up, in Unix seconds; 0 if never)
-//!   asked      `id`, `sender`, `files` (each a `name` and `bytes`), `bytes`, `links`
+//!   asked      `id`, `sender`, `files` (each a `name` and `bytes`), `bytes`, `links`,
+//!              `icon` (the sender's small picture of what it sends, in a file beside
+//!              the socket while it is asked, as the sender sent it: JPEG 2000 from
+//!              an iPhone, a stranger's to make up; "" for none)
 //!   receiving  `sender`, `files`, `received`, `bytes`
 //!   received   `sender`, `paths`, `bytes`, `seconds`
 //!   links      `sender`, `links`
@@ -50,7 +53,7 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -74,6 +77,7 @@ pub enum Stage {
     Asked {
         id: String,
         offer: Offer,
+        icon: Option<PathBuf>,
     },
     Receiving {
         offer: Offer,
@@ -138,13 +142,19 @@ impl Stage {
                 r#"{{"state":"waiting","name":{},"seen":{seen},"ends":{ends}}}"#,
                 quoted(name)
             ),
-            Stage::Asked { id, offer } => format!(
-                r#"{{"state":"asked","id":{},"sender":{},"files":{},"bytes":{},"links":{}}}"#,
+            Stage::Asked { id, offer, icon } => format!(
+                r#"{{"state":"asked","id":{},"sender":{},"files":{},"bytes":{},"links":{},"icon":{}}}"#,
                 quoted(id),
                 quoted(&offer.sender),
                 files(offer),
                 offer.bytes,
-                list(offer.links.iter().map(|link| quoted(link)))
+                list(offer.links.iter().map(|link| quoted(link))),
+                quoted(
+                    &icon
+                        .as_deref()
+                        .map(Path::to_string_lossy)
+                        .unwrap_or_default()
+                )
             ),
             Stage::Receiving { offer, bytes } => format!(
                 r#"{{"state":"receiving","sender":{},"files":{},"received":{bytes},"bytes":{}}}"#,
@@ -573,6 +583,7 @@ impl Control {
             return false;
         }
         let id = format!("{:x}-{question}", std::process::id());
+        let icon = if unasked { None } else { self.icon(&id, offer) };
         inner.answer = None;
         inner.owner = Some(question);
         self.set(
@@ -580,6 +591,7 @@ impl Control {
             Stage::Asked {
                 id: id.clone(),
                 offer: offer.clone(),
+                icon: icon.clone(),
             },
         );
         let asked = Instant::now();
@@ -603,6 +615,9 @@ impl Control {
                 .unwrap()
                 .0;
         };
+        if let Some(icon) = &icon {
+            let _ = std::fs::remove_file(icon);
+        }
         if yes && !offer.files.is_empty() {
             self.set(
                 &mut inner,
@@ -613,6 +628,29 @@ impl Control {
             );
         }
         yes
+    }
+
+    /// The sender's picture of what it offers, put beside the socket while it is asked, for whoever
+    /// shows the offer: the user's alone, as the folder is. None without a picture or a socket.
+    fn icon(&self, id: &str, offer: &Offer) -> Option<PathBuf> {
+        let icon = offer.icon.as_deref()?;
+        let path = self
+            .path
+            .get()?
+            .parent()?
+            .join(format!("airdrop-offer-{id}"));
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)
+            .and_then(|mut file| file.write_all(icon));
+        if written.is_err() {
+            let _ = std::fs::remove_file(&path);
+            return None;
+        }
+        Some(path)
     }
 
     /// What the receiver says happened, as far as it is about the question the stage is about:
@@ -742,6 +780,7 @@ mod tests {
             files: vec![("IMG_0001.HEIC".into(), 1_044_468)],
             bytes: 1_044_468,
             links: Vec::new(),
+            icon: None,
         }
     }
 
@@ -763,10 +802,11 @@ mod tests {
         let stage = Stage::Asked {
             id: "1-1".into(),
             offer: offer(),
+            icon: None,
         };
         assert_eq!(
             stage.json("Nova", 0),
-            r#"{"state":"asked","id":"1-1","sender":"Zoë's \"phone\"","files":[{"name":"IMG_0001.HEIC","bytes":1044468}],"bytes":1044468,"links":[]}"#
+            r#"{"state":"asked","id":"1-1","sender":"Zoë's \"phone\"","files":[{"name":"IMG_0001.HEIC","bytes":1044468}],"bytes":1044468,"links":[],"icon":""}"#
         );
         assert_eq!(
             Stage::Waiting { seen: true }.json("Nova", 7),
@@ -980,14 +1020,27 @@ mod tests {
         assert!(!control.happened(&Happened::Listed));
         assert!(line(&mut watcher).contains(r#""seen":true"#));
 
+        // With the sender's picture, which is beside the socket while it is asked.
+        let pictured = Offer {
+            icon: Some(Arc::from(&b"\xff\xd8\xffpicture"[..])),
+            ..offer()
+        };
         let asking = {
             let control = control.clone();
-            std::thread::spawn(move || control.ask(1, &offer(), false))
+            std::thread::spawn(move || control.ask(1, &pictured, false))
         };
         let asked = line(&mut watcher);
         assert!(asked.starts_with(r#"{"state":"asked","id":""#), "{asked}");
         let id = asked.split('"').nth(7).unwrap().to_owned();
         assert!(id.ends_with("-1"));
+        let icon = path.with_file_name(format!("airdrop-offer-{id}"));
+        assert!(
+            asked.ends_with(&format!(r#""icon":"{}"}}"#, icon.display())),
+            "{asked}"
+        );
+        assert_eq!(std::fs::read(&icon).unwrap(), b"\xff\xd8\xffpicture");
+        let mode = std::fs::metadata(&icon).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
         assert!(control.busy());
         // A second sender meanwhile is told no, and an answer to another question is not this one's.
         assert!(!control.ask(2, &offer(), false));
@@ -996,6 +1049,7 @@ mod tests {
         assert_eq!(say(&path, &format!("accept {id}")), "ok");
         assert!(asking.join().unwrap());
         assert!(line(&mut watcher).starts_with(r#"{"state":"receiving""#));
+        assert!(!icon.exists());
 
         // What becomes of the second sender's connection, and of a stranger's that was never told
         // yes, is not this transfer's business.
@@ -1080,6 +1134,7 @@ mod tests {
             files: Vec::new(),
             bytes: 0,
             links: vec!["https://example.org/".into()],
+            icon: None,
         };
         assert!(control.ask(5, &links, true));
         assert!(line(&mut watcher).starts_with(r#"{"state":"asked""#));

@@ -63,6 +63,22 @@ pub enum Rate {
     },
 }
 
+impl std::fmt::Display for Rate {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            Rate::Unknown => write!(f, "rate unknown"),
+            Rate::Legacy(half) => write!(
+                f,
+                "{}{} Mbit/s",
+                half / 2,
+                if half % 2 == 1 { ".5" } else { "" }
+            ),
+            Rate::Ht(mcs) => write!(f, "HT MCS {mcs}"),
+            Rate::Vht { mcs, streams } => write!(f, "VHT MCS {mcs} x{streams}"),
+        }
+    }
+}
+
 /// (size, alignment) of radiotap's fields 0 to 21, in the order they come.
 const RADIOTAP_FIELDS: [(usize, usize); 22] = [
     (8, 8),
@@ -449,6 +465,15 @@ const AS_HEARD: [(u8, &[u8]); 6] = [
     ),
 ];
 
+/// 81 is 2.4 GHz at 20 MHz, 128 what an iPhone gives its 5 GHz channels (80 MHz).
+fn operating_class(channel: u8) -> u8 {
+    match channel {
+        0 => 0,
+        1..=14 => 0x51,
+        _ => 0x80,
+    }
+}
+
 fn as_heard(out: &mut Vec<u8>, kind: u8) {
     if let Some((_, value)) = AS_HEARD.iter().find(|(k, _)| *k == kind) {
         tlv(out, kind, value);
@@ -484,11 +509,20 @@ impl Speaker {
         sync.extend_from_slice(&[self.manner.presence, 0]);
         sync.extend_from_slice(&window.to_le_bytes());
         sync.extend_from_slice(&[0, 0]); // distance from an access point's beacon
-        sync.extend_from_slice(&[15, 1, 0, 3, 0xff, 0xff]);
-        for channel in self.channels {
-            // A byte that says how wide and where the channel is, as an iPhone
-            // writes it for 20 MHz at 2.4 GHz.
-            sync.extend_from_slice(&[if channel == 0 { 0 } else { 0x2b }, channel]);
+        if self.channels.iter().all(|&channel| channel <= 14) {
+            sync.extend_from_slice(&[15, 1, 0, 3, 0xff, 0xff]);
+            for channel in self.channels {
+                // A byte that says how wide and where the channel is, as an iPhone
+                // writes it for 20 MHz at 2.4 GHz.
+                sync.extend_from_slice(&[if channel == 0 { 0 } else { 0x2b }, channel]);
+            }
+        } else {
+            // At 5 GHz as the sequence below has them, (channel, operating
+            // class), the encoding OWL writes here and iPhones read.
+            sync.extend_from_slice(&[15, 3, 0, 3, 0xff, 0xff]);
+            for channel in self.channels {
+                sync.extend_from_slice(&[channel, operating_class(channel)]);
+            }
         }
         sync.extend_from_slice(&[0, 0]);
 
@@ -517,12 +551,7 @@ impl Speaker {
         // 20 MHz, 128 what an iPhone gives its 5 GHz channels.
         let mut sequence = vec![15, 3, 0, 3, 0xff, 0xff];
         for channel in self.channels {
-            let class = match channel {
-                0 => 0,
-                1..=14 => 0x51,
-                _ => 0x80,
-            };
-            sequence.extend_from_slice(&[channel, class]);
+            sequence.extend_from_slice(&[channel, operating_class(channel)]);
         }
         sequence.extend_from_slice(&[0, 0, 0]);
 
@@ -715,6 +744,39 @@ mod tests {
         let said = frame(sent_frame(&sent)).unwrap().announcement().unwrap();
         assert_eq!(said.channels(), Some(plan));
         assert_eq!(said.position(), Some(8 * 64 + 5));
+    }
+
+    #[test]
+    fn on_channel_149_both_timetables_say_it_as_a_5_ghz_channel() {
+        let five = Speaker {
+            channels: [149; 16],
+            ..speaker()
+        };
+        let sent = five.announce(PSF, (3 * 64 + 1) * TU, 1);
+        let said = frame(sent_frame(&sent)).unwrap().announcement().unwrap();
+        assert_eq!(said.channels(), Some([149; 16]));
+        // The synchronization's own list: (channel, operating class), not 2.4 GHz's flags.
+        let sync = said.tlv(4).unwrap();
+        assert_eq!(&sync[33..39], &[15, 3, 0, 3, 0xff, 0xff]);
+        assert!(sync[39..71].chunks(2).all(|entry| entry == [149, 0x80]));
+        assert_eq!((sync[0], sync[3]), (149, 149));
+    }
+
+    #[test]
+    fn rates_read_as_people_say_them() {
+        let said: Vec<String> = [
+            Rate::Legacy(48),
+            Rate::Legacy(11),
+            Rate::Ht(7),
+            Rate::Vht { mcs: 9, streams: 2 },
+        ]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+        assert_eq!(
+            said,
+            ["24 Mbit/s", "5.5 Mbit/s", "HT MCS 7", "VHT MCS 9 x2"]
+        );
     }
 
     #[test]

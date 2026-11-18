@@ -30,11 +30,18 @@ case "$*" in
     for mode in ${MODES:-IBSS managed AP monitor}; do printf '\t\t * %s\n' "$mode"; done
     printf '\tBand 1:\n\t\tFrequencies:\n'
     [[ -n ${NO_SIX:-} ]] || printf '\t\t\t* 2437.0 MHz [6] %s\n' "${SIX:-(22.0 dBm)}"
+    [[ -z ${FIVE:-} ]] || printf '\tBand 2:\n\t\tFrequencies:\n\t\t\t* 5745.0 MHz [149] %s\n' "$FIVE"
     printf '\tSupported commands:\n\t\t * monitor\n'
     ;;
   "reg get") printf 'global\ncountry DE: DFS-ETSI\n\nphy#0 (self-managed)\ncountry IT: DFS-UNSET\n' ;;
   "phy phy0 interface add nova-cell type ibss") [[ -z ${NO_SECOND:-} ]] ;;
-  "dev nova-cell info" | "dev wlan0 info") [[ -n ${NO_CELL:-} ]] || printf '\ttype IBSS\n\tchannel 6 (2437 MHz), width: 20 MHz\n' ;;
+  "dev nova-cell info" | "dev wlan0 info")
+    joined=$(grep -o 'ibss join nova [0-9]*' "$CALLS" | tail -1)
+    channel="6 (2437 MHz)"
+    [[ $joined != *5745 ]] || channel="149 (5745 MHz)"
+    [[ -n ${NO_CELL:-} ]] || printf '\ttype IBSS\n\tchannel %s, width: 20 MHz\n' "$channel"
+    ;;
+  "dev nova-cell ibss join nova 5745 "*) [[ " ${NO_WIDTH:-} " != *" ${7} "* ]] ;;
 esac
 STUB
   # The address a card is given is the address it shows.
@@ -118,7 +125,7 @@ line() { grep -n -m1 -- "$1" "$CALLS" | cut -d: -f1; }
   [ "$(sed -n 2p "$NOVA_AIRDROP_RUN/wifi")" = connected ]
   [ "$(sed -n 3p "$NOVA_AIRDROP_RUN/wifi")" = 1111-2222 ]
   # The card's own country over the system's.
-  [ "$(<"$NOVA_AIRDROP_RUN/env")" = "NOVA_AIRDROP_COUNTRY=IT" ]
+  [ "$(<"$NOVA_AIRDROP_RUN/env")" = $'NOVA_AIRDROP_COUNTRY=IT\nNOVA_AIRDROP_CHANNEL=6' ]
   [ -e "$NOVA_AIRDROP_RUN/busy" ]
 
   grep -qx 'iw dev nova-cell ibss join nova 2437 HT20 fixed-freq 00:25:00:ff:94:73 beacon-interval 10000' "$CALLS"
@@ -130,6 +137,40 @@ line() { grep -n -m1 -- "$1" "$CALLS" | cut -d: -f1; }
   # The station is down before the cell is made, and the cell joined before the monitor is.
   [ "$(line '^ip link set wlan0 down')" -lt "$(line 'interface add nova-cell')" ]
   [ "$(line 'ibss join')" -lt "$(line 'interface add nova-mon type monitor')" ]
+}
+
+@test "where the card may send on channel 149, the cell is there, as wide as the card lets it be" {
+  FIVE="(22.0 dBm)" run radio up
+  [ "$status" -eq 0 ]
+  grep -qx 'iw dev nova-cell ibss join nova 5745 80MHz fixed-freq 00:25:00:ff:94:73 beacon-interval 10000' "$CALLS"
+  grep -q '^NOVA_AIRDROP_CHANNEL=149$' "$NOVA_AIRDROP_RUN/env"
+  [[ $output == *"up on channel 149 (80MHz)"* ]]
+
+  : >"$CALLS"
+  radio down >/dev/null
+  NO_WIDTH="80MHz" FIVE="(22.0 dBm)" run radio up
+  [ "$status" -eq 0 ]
+  grep -q 'ibss join nova 5745 HT40+ ' "$CALLS"
+  [[ $output == *"up on channel 149 (HT40+)"* ]]
+}
+
+@test "channel 149 closed to the card, or asked against, is channel 6" {
+  FIVE="(22.0 dBm) (no IR)" run radio up
+  [ "$status" -eq 0 ]
+  grep -q 'ibss join nova 2437 HT20 ' "$CALLS"
+  grep -q '^NOVA_AIRDROP_CHANNEL=6$' "$NOVA_AIRDROP_RUN/env"
+  radio down >/dev/null
+
+  : >"$CALLS"
+  NOVA_AIRDROP_CHANNEL=6 FIVE="(22.0 dBm)" run radio up
+  [ "$status" -eq 0 ]
+  grep -q 'ibss join nova 2437 HT20 ' "$CALLS"
+  radio down >/dev/null
+
+  # Asked for 149 where the card may not: said, not taken for 6.
+  NOVA_AIRDROP_CHANNEL=149 run radio check
+  [ "$status" -eq 1 ]
+  [[ $output == *"may not send on channel 149"* ]]
 }
 
 @test "down gives the card its own address back, not the one the interface showed, and says when the Wi-Fi is back" {
