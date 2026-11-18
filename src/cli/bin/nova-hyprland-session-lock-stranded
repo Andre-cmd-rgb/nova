@@ -14,16 +14,33 @@ set -euo pipefail
 # it gives up.
 #
 # Exits 0 stranded, 1 unlocked, 2 when it cannot be told. The caller passes its
-# own pid: a shell that crashed starts again in the same process.
+# own pid: a shell that crashed starts again in the same process. NOVA_PROC
+# stands in for /proc in the tests.
 if [[ -z ${1:-} ]]; then
   echo "Usage: nova-hyprland-session-lock-stranded <own-pid>" >&2
   exit 2
 fi
 own=$1
+proc=${NOVA_PROC:-/proc}
 
 # Unlocked, and cannot tell, are the answer as they are.
 nova-hyprland-session-locked || exit
 
+# A Quickshell that only speaks to a shell holds no lock: nova-shell's `qs
+# ipc`, a moment at every key and every poll (nova-restart-shell asks ten
+# times a second while the new shell starts), and the tools' kill, list and
+# log. Counted as lockers, they kept a stranded lock from being taken back
+# while they ran. One whose command line cannot be read is counted.
+shell_client() { # pid
+  local arg
+  local -a argv=()
+  { mapfile -d '' -t argv <"$proc/$1/cmdline"; } 2>/dev/null || return 1
+  for arg in "${argv[@]:1}"; do
+    case $arg in ipc | msg | kill | list | log) return 0 ;; esac
+  done
+  return 1
+}
+
 while read -r pid; do
-  [[ $pid == "$own" ]] || exit 2
+  [[ $pid == "$own" ]] || shell_client "$pid" || exit 2
 done < <(pgrep -u "$UID" -x 'quickshell|qs|hyprlock')
