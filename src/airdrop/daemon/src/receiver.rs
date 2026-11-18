@@ -114,6 +114,18 @@ fn failed(question: Option<u64>) -> impl Fn(std::io::Error) -> Failure {
     move |error| Failure(question, error.to_string())
 }
 
+/// Counts a connection from `from` in, if there is room for it: false for one over the most, in
+/// all or from that address. One turned away leaves nothing behind: addresses cost a stranger
+/// nothing to make up.
+fn admitted(open: &mut HashMap<Ipv6Addr, usize>, from: Ipv6Addr) -> bool {
+    let all: usize = open.values().sum();
+    if all >= MOST_CONNECTIONS || open.get(&from).is_some_and(|theirs| *theirs >= MOST_TO_ONE) {
+        return false;
+    }
+    *open.entry(from).or_insert(0) += 1;
+    true
+}
+
 /// A name a stranger gave, made fit to show: one line, nothing that is not shown as itself
 /// (unpack::hidden), not endless.
 pub(crate) fn shown(text: &str) -> String {
@@ -204,14 +216,8 @@ impl Receiver {
                 }
                 _ => continue,
             };
-            {
-                let mut open = open.lock().unwrap();
-                let all: usize = open.values().sum();
-                let theirs = open.entry(from).or_insert(0);
-                if all >= MOST_CONNECTIONS || *theirs >= MOST_TO_ONE {
-                    continue;
-                }
-                *theirs += 1;
+            if !admitted(&mut open.lock().unwrap(), from) {
+                continue;
             }
             let let_go = move |open: &Mutex<HashMap<Ipv6Addr, usize>>| {
                 let mut open = open.lock().unwrap();
@@ -459,6 +465,25 @@ impl Receiver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connections_over_the_most_are_turned_away_and_leave_nothing_behind() {
+        let mut open = HashMap::new();
+        let address = |n: u16| Ipv6Addr::new(0xfe80, 0, 0, 0, 0, 0, 0, n);
+        for _ in 0..MOST_TO_ONE {
+            assert!(admitted(&mut open, address(1)));
+        }
+        assert!(!admitted(&mut open, address(1)));
+        for n in 2..=(MOST_CONNECTIONS - MOST_TO_ONE) as u16 + 1 {
+            assert!(admitted(&mut open, address(n)));
+        }
+        // Full: a stranger at a new address each time is not counted in.
+        for n in 1000..1100 {
+            assert!(!admitted(&mut open, address(n)));
+        }
+        assert_eq!(open.len(), 1 + MOST_CONNECTIONS - MOST_TO_ONE);
+        assert_eq!(open.values().sum::<usize>(), MOST_CONNECTIONS);
+    }
 
     #[test]
     fn an_offer_is_read_from_what_a_sender_asks() {
