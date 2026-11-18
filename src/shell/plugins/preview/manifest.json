@@ -1,0 +1,12 @@
+{
+  "id": "nova.preview",
+  "name": "Quick Look",
+  "description": "The preview Files opens with Space: one file in a floating window, with nothing else on it.",
+  "kinds": [
+    "panel"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "panel": "Preview.qml"
+  }
+}

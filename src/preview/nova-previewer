@@ -1,0 +1,278 @@
+#!/usr/bin/python3
+# Quick Look's front on D-Bus (docs/using.md): Files asks for a preview of
+# the selected file with Space, and this answers where GNOME Sushi used to.
+# The window is the shell's (plugins/preview); this only speaks the bus.
+# Quickshell cannot own a name, so this does, describes each file the way
+# the window needs it, and hands it to the shell through nova-shell. D-Bus
+# starts it on the first Space, and it quits half a minute after the preview
+# closes. Python, as nova-idle-inhibitors: Nova's Rust uses no crates, so it
+# has no D-Bus of its own. Tests live in tests/unit/preview.
+#
+# What Files (Nautilus 51) calls, kept as Sushi's own so that nothing in
+# Files changes: the name org.gnome.NautilusPreviewer, the path
+# /org/gnome/NautilusPreviewer, the interface org.gnome.NautilusPreviewer2:
+#   ShowFile(uri, windowHandle, closeIfAlreadyShown, activationToken)
+#       the file asked for is shown, in the window already open if there is
+#       one; the same file again closes it, when closeIfAlreadyShown says so
+#   Close()
+#   Visible, ParentHandle   properties, with PropertiesChanged
+#   SelectionEvent(u)       a GTK direction (up 2, down 3, left 4, right 5):
+#       Files moves its selection that way and calls ShowFile on the new one
+# Sushi's NavigateTo, Rename and Trash signals are not sent: no key of the
+# window asks for them. The window reports back through org.nova.Previewer
+# on the same object: Select(u), which becomes SelectionEvent, and
+# Closed(seq), that the window it showed as <seq> is gone. A Closed for an
+# older file than the one now asked for is a window that was replaced, and
+# changes nothing.
+#
+# For each file the shell is handed one line of JSON (nova-shell shell
+# summon nova.preview): uri, path ("" when it has none on this computer),
+# name, mime, kind (folder, image, pdf, video, audio, text or other), type (the
+# kind in words), size (bytes, -1 for a folder), sizeText, items (a folder's,
+# else -1), icon (theme icon names, best first) and seq.
+#
+# NOVA_PREVIEW_SHELL names the command that takes the place of nova-shell,
+# NOVA_PREVIEW_IDLE_SECONDS the time before it quits; the tests set them.
+import json
+import os
+import sys
+
+import gi
+
+gi.require_version("Gio", "2.0")
+from gi.repository import Gio, GLib
+
+NAME = "org.gnome.NautilusPreviewer"
+PATH = "/org/gnome/NautilusPreviewer"
+PLUGIN = "nova.preview"
+
+INTROSPECTION = """
+<node>
+  <interface name="org.gnome.NautilusPreviewer2">
+    <method name="ShowFile">
+      <arg type="s" name="uri" direction="in"/>
+      <arg type="s" name="windowHandle" direction="in"/>
+      <arg type="b" name="closeIfAlreadyShown" direction="in"/>
+      <arg type="s" name="activationToken" direction="in"/>
+    </method>
+    <method name="Close"/>
+    <signal name="SelectionEvent"><arg type="u" name="direction"/></signal>
+    <signal name="NavigateTo"><arg type="s" name="uri"/></signal>
+    <signal name="Rename"><arg type="s" name="uri"/></signal>
+    <signal name="Trash"><arg type="s" name="uri"/></signal>
+    <property type="s" name="ParentHandle" access="read"/>
+    <property type="b" name="Visible" access="read"/>
+  </interface>
+  <interface name="org.nova.Previewer">
+    <method name="Select"><arg type="u" name="direction" direction="in"/></method>
+    <method name="Closed"><arg type="u" name="seq" direction="in"/></method>
+  </interface>
+</node>
+"""
+
+# Text is anything that is plain text underneath: source code, configuration,
+# logs.
+TEXT_TYPES = ("text/plain", "application/json", "application/xml")
+
+
+def kind_of(content_type, file_type):
+    if file_type == Gio.FileType.DIRECTORY:
+        return "folder"
+    if content_type == "application/pdf":
+        return "pdf"
+    for prefix in ("image", "video", "audio"):
+        if content_type.startswith(prefix + "/"):
+            return prefix
+    if any(Gio.content_type_is_a(content_type, t) for t in TEXT_TYPES):
+        return "text"
+    return "other"
+
+
+def count_items(file):
+    """How many items a folder has, hidden ones left out as Files does."""
+    total = 0
+    try:
+        children = file.enumerate_children("standard::is-hidden", 0, None)
+        for info in children:
+            if not info.get_is_hidden():
+                total += 1
+    except GLib.Error:
+        return -1
+    return total
+
+
+def describe(uri):
+    """What the window needs to show <uri>, as a dict."""
+    file = Gio.File.new_for_uri(uri)
+    path = file.get_path() or ""
+    out = {"uri": uri, "path": path, "name": file.get_basename() or uri,
+           "kind": "other", "mime": "", "type": "", "size": -1, "sizeText": "",
+           "items": -1, "icon": ["text-x-generic"]}
+    try:
+        info = file.query_info(
+            "standard::display-name,standard::content-type,standard::size,"
+            "standard::type,standard::icon", 0, None)
+    except GLib.Error:
+        # Gone, or not reachable: the name and a plain page are still shown.
+        return out
+    content_type = info.get_content_type() or "application/octet-stream"
+    kind = kind_of(content_type, info.get_file_type())
+    out["name"] = info.get_display_name() or out["name"]
+    out["kind"] = kind
+    out["mime"] = content_type
+    out["type"] = Gio.content_type_get_description(content_type)
+    icon = info.get_icon()
+    if isinstance(icon, Gio.ThemedIcon):
+        out["icon"] = icon.get_names()
+    if kind == "folder":
+        out["items"] = count_items(file)
+    else:
+        out["size"] = info.get_size()
+        out["sizeText"] = GLib.format_size(info.get_size())
+    return out
+
+
+def shell_command():
+    given = os.environ.get("NOVA_PREVIEW_SHELL")
+    if given:
+        return [given]
+    # D-Bus starts this with the environment it has, which may not have
+    # Nova's bin on its PATH: nova-shell is next to this, in lib/nova/bin.
+    near = os.path.join(os.path.dirname(os.path.realpath(__file__)), "bin", "nova-shell")
+    return [near] if os.path.exists(near) else ["nova-shell"]
+
+
+class Previewer:
+    def __init__(self, loop):
+        self.loop = loop
+        self.connection = None
+        self.visible = False
+        self.handle = ""
+        self.uri = ""
+        self.seq = 0
+        self.idle = None
+        self.idle_seconds = int(os.environ.get("NOVA_PREVIEW_IDLE_SECONDS", "30"))
+
+    # ---- the bus ---------------------------------------------------------
+
+    def on_bus(self, connection, name):
+        self.connection = connection
+        info = Gio.DBusNodeInfo.new_for_xml(INTROSPECTION)
+        for interface in info.interfaces:
+            connection.register_object(
+                PATH, interface, self.on_call, self.on_get, None)
+        self.wait()
+
+    def on_get(self, connection, sender, path, interface, prop):
+        if prop == "Visible":
+            return GLib.Variant("b", self.visible)
+        if prop == "ParentHandle":
+            return GLib.Variant("s", self.handle)
+        return None
+
+    def on_call(self, connection, sender, path, interface, method, params, invocation):
+        args = params.unpack()
+        if method == "ShowFile":
+            self.show_file(args[0], args[1], args[2])
+        elif method == "Close":
+            self.close()
+        elif method == "Select":
+            self.emit("SelectionEvent", GLib.Variant("(u)", (args[0],)))
+        elif method == "Closed":
+            if args[0] == self.seq:
+                self.set_visible(False)
+        invocation.return_value(None)
+
+    def emit(self, signal, params):
+        self.connection.emit_signal(
+            None, PATH, "org.gnome.NautilusPreviewer2", signal, params)
+
+    def changed(self, prop, value):
+        self.connection.emit_signal(
+            None, PATH, "org.freedesktop.DBus.Properties", "PropertiesChanged",
+            GLib.Variant("(sa{sv}as)", (
+                "org.gnome.NautilusPreviewer2", {prop: value}, [])))
+
+    def set_visible(self, visible):
+        if visible == self.visible:
+            return
+        self.visible = visible
+        self.changed("Visible", GLib.Variant("b", visible))
+        if visible:
+            self.stop_waiting()
+        else:
+            self.wait()
+
+    # ---- quitting when idle ----------------------------------------------
+
+    def wait(self):
+        self.stop_waiting()
+        self.idle = GLib.timeout_add_seconds(self.idle_seconds, self.quit_if_idle)
+
+    def stop_waiting(self):
+        if self.idle:
+            GLib.source_remove(self.idle)
+            self.idle = None
+
+    def quit_if_idle(self):
+        self.idle = None
+        if not self.visible:
+            self.loop.quit()
+        return False
+
+    # ---- the window ------------------------------------------------------
+
+    def show_file(self, uri, handle, close_if_shown):
+        if self.visible and uri == self.uri:
+            if close_if_shown:
+                self.close()
+            return
+        self.uri = uri
+        self.seq += 1
+        if handle != self.handle:
+            self.handle = handle
+            self.changed("ParentHandle", GLib.Variant("s", handle))
+        payload = describe(uri)
+        payload["seq"] = self.seq
+        self.set_visible(True)
+        self.ask("summon", PLUGIN, json.dumps(payload, ensure_ascii=False))
+
+    def close(self):
+        self.ask("hide", PLUGIN)
+        self.set_visible(False)
+
+    def ask(self, method, *args):
+        """One nova-shell call, answered in the background; a shell that is
+        not there takes the preview away again."""
+        try:
+            call = Gio.Subprocess.new(
+                shell_command() + ["shell", method, *args],
+                Gio.SubprocessFlags.STDOUT_SILENCE)
+        except GLib.Error as error:
+            print("nova-previewer:", error.message, file=sys.stderr)
+            self.set_visible(False)
+            return
+        seq = self.seq
+
+        def done(proc, result):
+            try:
+                proc.wait_check_finish(result)
+            except GLib.Error as error:
+                print("nova-previewer: the shell did not take it:", error.message, file=sys.stderr)
+                if method == "summon" and seq == self.seq:
+                    self.set_visible(False)
+
+        call.wait_check_async(None, done)
+
+
+def main():
+    loop = GLib.MainLoop()
+    previewer = Previewer(loop)
+    Gio.bus_own_name(
+        Gio.BusType.SESSION, NAME, Gio.BusNameOwnerFlags.NONE,
+        previewer.on_bus, None, lambda connection, name: loop.quit())
+    loop.run()
+
+
+if __name__ == "__main__":
+    main()

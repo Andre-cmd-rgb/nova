@@ -140,6 +140,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Emojis | `nova.emojis` | overlay `emojis/Emojis.qml` | the emoji picker |
 | Image picker | `nova.image-picker` | overlay `image-picker/ImagePicker.qml` | images to choose from, for `nova theme` (below) |
 | Lock Screen | `nova.lock` | service `lock/Service.qml` | the lock screen (below) |
+| Quick Look | `nova.preview` | panel `preview/Preview.qml` | the preview Files opens with Space: one file in a floating window, with its name and nothing else; `src/preview/nova-previewer` answers Files on D-Bus, as GNOME Sushi did, and summons it |
 | Nova menu | `nova.menu` | menu `menu/Menu.qml`, widget `menu/BarWidget.qml` | the menu and its button (below) |
 | [Mobile Data](mobile-data/README.md) | `nova.mobile-data` | widget `mobile-data/BarWidget.qml` | the mobile broadband signal, and its panel |
 | Notifications | `nova.notifications` | service `notifications/Service.qml` | the notification server and its toasts, and do not disturb's hours; its page is `settings/NotificationsView.qml` |

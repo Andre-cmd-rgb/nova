@@ -90,7 +90,8 @@ depends=(
   gvfs-gphoto2
   gvfs-afc       # iPhones
   gvfs-smb       # Windows shares
-  sushi          # Quick Look: Space on a file in Files
+  poppler        # pdftoppm: Quick Look's first page of a PDF (Space on a file in Files)
+  ffmpeg         # Quick Look's frame of a video and cover of a song; trimming screen recordings
   loupe          # photos
   mpv            # video and music
   btop           # the Activity window (Super+Ctrl+T), in the theme's colors
@@ -169,9 +170,12 @@ optdepends=(
   'linux-firmware: firmware for Wi-Fi, GPUs and other hardware'
   'fprintd: fingerprint unlock'
   'gpu-screen-recorder: screen recording'
-  'ffmpeg: trimming screen recordings'
   'tesseract-data-eng: copy text from a screen region'
 )
+# Quick Look answers Files on GNOME Sushi's D-Bus name, from the same service
+# file: the two cannot be installed together.
+conflicts=(sushi)
+provides=(sushi)
 options=(!debug)
 # Configuration under /etc: pacman keeps local edits across upgrades.
 backup=(

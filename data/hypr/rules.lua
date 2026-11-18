@@ -44,11 +44,13 @@ hl.layer_rule({
   no_anim = true,
   animation = "none",
 })
--- Settings, the Calendar, the welcome and the App Center, the shell's windows,
--- float in the middle of the screen at the size they ask for, opaque: they
--- draw in the theme's own background, and text behind would show through.
+-- Settings, the Calendar, the welcome, the App Center and Quick Look (the
+-- preview Files opens with Space, which sizes its window to what it shows),
+-- the shell's windows, float in the middle of the screen at the size they
+-- ask for, opaque: they draw in the theme's own background, and text behind
+-- would show through.
 nova.window(
-  { class = "^org\\.quickshell$", title = "^(Settings|Calendar|Welcome to Nova|App Center)$" },
+  { class = "^org\\.quickshell$", title = "^(Settings|Calendar|Welcome to Nova|App Center|Quick Look)$" },
   { float = true, center = true, tag = "-default-opacity" }
 )
 
@@ -91,10 +93,6 @@ nova.window(
   "(org.nova.btop|org.nova.terminal|org.nova.bash|org.codeberg.dnkl.foot|org.gnome.Evince|TUI.float|imv|mpv|org.gnome.Loupe)",
   { tag = "+floating-window" }
 )
--- Quick Look (sushi, which Files opens with Space): floating in the middle of
--- the screen at the size it asks for, which it makes the size of what it
--- shows, as on a Mac.
-nova.window("org.gnome.NautilusPreviewer", { float = true, center = true })
 -- Every window of the GTK portal is a dialog: a file picker, a screen to
 -- share, a permission to give.
 nova.window("xdg-desktop-portal-gtk", { tag = "+floating-window" })
@@ -105,7 +103,7 @@ nova.window({
 
 -- Video, images and recording are never see-through.
 nova.window(
-  "^(zoom|vlc|mpv|org.kde.kdenlive|com.obsproject.Studio|com.github.PintaProject.Pinta|imv|org.gnome.Loupe|org.gnome.NautilusPreviewer)$",
+  "^(zoom|vlc|mpv|org.kde.kdenlive|com.obsproject.Studio|com.github.PintaProject.Pinta|imv|org.gnome.Loupe)$",
   { tag = "-default-opacity", opacity = "1 1" }
 )
 

@@ -1,0 +1,54 @@
+#!/bin/bash
+# thumb <kind> <file>: a picture of a file that Qt cannot show as it is, for
+# Quick Look: a PDF's first page (pdftoppm), a video's frame, a song's cover
+# (ffmpeg), or an image Qt does not read (libvips). The path of a PNG in
+# $XDG_RUNTIME_DIR/nova/preview is the whole of what it prints. It exits 1,
+# and prints nothing, for a file that has no picture to show. A picture made
+# once is reused while the file is the same; those older than an hour go.
+
+set -euo pipefail
+
+kind=${1:?usage: thumb <kind> <file>}
+file=${2:?usage: thumb <kind> <file>}
+[[ -f $file ]] || exit 1
+
+dir=${XDG_RUNTIME_DIR:-/tmp}/nova/preview
+mkdir -p "$dir"
+find "$dir" -type f -mmin +60 -delete 2>/dev/null || true
+
+# One name per file as it is now: its path, size and time of change.
+key=$(stat -c '%n %s %Y' -- "$file" | sha1sum)
+out=$dir/${key%% *}-$kind.png
+if [[ -s $out ]]; then
+  echo "$out"
+  exit 0
+fi
+
+# Made under another name and moved in, so that a picture half written is
+# never one that is read.
+part=$out.$$.part.png
+trap 'rm -f "$part" "${part%.png}.png"' EXIT
+
+case $kind in
+  pdf)
+    # pdftoppm adds the .png itself.
+    timeout 10 pdftoppm -png -singlefile -f 1 -l 1 -scale-to 1600 -- "$file" "${part%.png}" 2>/dev/null
+    ;;
+  video)
+    # A second in, past a black first frame; a clip shorter than that gives
+    # its first.
+    timeout 10 ffmpeg -v error -y -ss 1 -i "$file" -frames:v 1 -vf "scale='min(1600,iw)':-2" "$part" 2>/dev/null || true
+    [[ -s $part ]] || timeout 10 ffmpeg -v error -y -i "$file" -frames:v 1 -vf "scale='min(1600,iw)':-2" "$part" 2>/dev/null
+    ;;
+  audio)
+    timeout 10 ffmpeg -v error -y -i "$file" -an -frames:v 1 -vf "scale='min(1200,iw)':-2" "$part" 2>/dev/null
+    ;;
+  image)
+    timeout 10 vipsthumbnail "$file" --size 2400x2400 -o "$part" 2>/dev/null
+    ;;
+  *) exit 1 ;;
+esac
+
+[[ -s $part ]] || exit 1
+mv -f "$part" "$out"
+echo "$out"

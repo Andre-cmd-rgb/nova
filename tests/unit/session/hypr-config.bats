@@ -178,13 +178,14 @@ hypr() { # lua
   [[ $output != *workspace_swipe_invert* ]]
 }
 
-# rules.lua: Quick Look (sushi) sizes its window to what it shows, so no rule
-# gives it a size, the floating-window tag's 875x600 included.
+# rules.lua: Quick Look (the shell's window, titled so) sizes itself to what
+# it shows, so no rule gives it a size, the floating-window tag's 875x600
+# included.
 @test "Quick Look floats in the middle of the screen at the size it asks for" {
   run hypr 'require("default.hypr.lib") require("default.hypr.rules")'
   [ "$status" -eq 0 ]
-  [[ $output == *"window_rule {center=true,float=true,match={class=org.gnome.NautilusPreviewer}}"* ]]
-  [ -z "$(grep NautilusPreviewer <<<"$output" | grep -e 'size=' -e 'floating-window')" ]
+  [[ $output == *"Quick Look"*"center=true,float=true"* ]]
+  [ -z "$(grep 'Quick Look' <<<"$output" | grep -e 'size=' -e 'floating-window')" ]
 }
 
 # Escape for dictation and the region picker's keys live while their layer is
