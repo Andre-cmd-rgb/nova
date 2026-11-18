@@ -1,10 +1,12 @@
 #!/usr/bin/env bats
 
-# nova-capture-region: what a pick gives in each mode, a bare click taking
-# what slurp was highlighting under it, the keys that end a pick or move its
-# highlight while slurp is up, and a monitor named for a region that is one.
-# Hyprland, slurp, hyprpicker, pgrep and pkill are stubs: one 1000x800
-# monitor with a 200x200 window at 50,50, unless a test lays out its own.
+# nova-capture-region: the shell's picker asked first, and its answer, its
+# freeze kept or thawed; without it, what a pick gives in each mode, a bare
+# click taking what slurp was highlighting under it, the keys that end a pick
+# or move its highlight while slurp is up; and a monitor named for a region
+# that is one. Hyprland, the shell, slurp, hyprpicker, pgrep and pkill are
+# stubs: one 1000x800 monitor with a 200x200 window at 50,50, unless a test
+# lays out its own, and no shell, unless a test starts one.
 
 load ../test_helper
 
@@ -26,7 +28,21 @@ esac'
   stub hyprpicker 'touch "$SCRATCH/frozen"; exec sleep 5'
   stub pgrep 'exit 0'
   stub pkill 'echo "pkill $*" >>"$CALLS"'
+  stub nova-shell 'exit 1'
   export PATH="$SCRATCH/bin:$PATH"
+}
+
+# A shell whose picker answers a pick with what is in $SCRATCH/answer, a
+# moment later, and notes what it is asked.
+shell_picks() { # answer
+  printf '%s\n' "$1" >"$SCRATCH/answer"
+  stub nova-shell 'echo "shell $*" >>"$CALLS"
+case "${*: -3:2}" in
+  "pick "*) (sleep 0.2; cat "$SCRATCH/answer" >"${*: -1}") & echo ok ;;
+  "waiting "*) echo yes ;;
+esac'
+  stub hyprpicker 'echo hyprpicker >>"$CALLS"; exec sleep 5'
+  stub slurp 'echo slurp >>"$CALLS"; cat >/dev/null'
 }
 
 teardown() { teardown_scratch; }
@@ -41,6 +57,56 @@ region() { "$REPO_ROOT/src/cli/bin/nova-capture-region" "$@"; }
 click() { # x y
   stub slurp "cat >/dev/null; echo '$1,$2 1x1'"
   run region smart
+}
+
+@test "the shell's picker picks: its answer, nothing of slurp's, and the still thawed after" {
+  shell_picks '10,20 300x200'
+  for mode in smart region windows; do
+    : >"$CALLS"
+    run region "$mode"
+    [ "$status" -eq 0 ]
+    [ "$output" = '10,20 300x200' ]
+    grep -q "^shell nova.capture pick $mode $XDG_RUNTIME_DIR/nova/capture-" "$CALLS"
+    grep -q "^shell -q nova.capture thaw $XDG_RUNTIME_DIR/nova/capture-" "$CALLS"
+    fails grep -qx -e hyprpicker -e slurp "$CALLS"
+  done
+  # The FIFO goes with the freeze.
+  [ -z "$(ls "$XDG_RUNTIME_DIR/nova" | grep '^capture-')" ]
+}
+
+@test "the shell's freeze kept for the caller, before the region, until --thaw" {
+  shell_picks '10,20 300x200'
+  run region region --keep-freeze
+  [ "$status" -eq 0 ]
+  [[ ${lines[0]} == "shell:$XDG_RUNTIME_DIR/nova/capture-"* ]]
+  [ "${lines[1]}" = '10,20 300x200' ]
+  fails grep -q thaw "$CALLS"
+  [ -p "${lines[0]#shell:}" ]
+  region --thaw "${lines[0]}"
+  grep -qx "shell -q nova.capture thaw ${lines[0]#shell:}" "$CALLS"
+  [ ! -e "${lines[0]#shell:}" ]
+}
+
+@test "a pick given up in the shell gives nothing and fails, and so does a shell that let it go" {
+  shell_picks ''
+  run region smart
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+  # Asked whether it still has the request, the shell says no: given up.
+  stub nova-shell 'echo "shell $*" >>"$CALLS"
+case "${*: -3:2}" in
+  "pick "*) echo ok ;;
+  "waiting "*) echo no ;;
+esac'
+  NOVA_CAPTURE_PATIENCE=0.2 run region smart
+  [ "$status" -eq 1 ]
+  grep -q "^shell nova.capture waiting $XDG_RUNTIME_DIR/nova/capture-" "$CALLS"
+}
+
+@test "--layout is what is offered: the focused monitor, the monitors, the windows" {
+  run region --layout
+  [ "$status" -eq 0 ]
+  [ "$output" = $'focused 0,0 1000x800\nmonitor 0,0 1000x800\nwindow 50,50 200x200' ]
 }
 
 @test "a click inside a window takes the window, not its monitor" {

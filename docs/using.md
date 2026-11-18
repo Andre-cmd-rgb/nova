@@ -91,7 +91,7 @@ On a touchpad, three fingers sideways move to the workspace beside, which follow
 | Super+C, Super+V, Super+X | copy, paste and cut in any window, a terminal too |
 | Super+Ctrl+V | what was copied before, to paste again |
 
-While you pick a region, Return takes the highlighted window, Ctrl+Return the whole screen, and Tab and the arrows move between windows.
+Print freezes the screen at once, dimmed, with the window under the pointer lit: click to take that window, or the screen beside every window, or drag to draw a region, its size by the pointer. Return takes what is lit, Ctrl+Return the whole screen, Tab and the arrows move between windows, and Escape, a right click or Print again give it up.
 
 ### The desktop
 

@@ -34,14 +34,18 @@ nova.bind("SUPER + CTRL + ALT + Delete", "Toggle laptop display mirroring", "nov
 nova.bind("switch:on:Lid Switch", nil, "nova-caffeine close", { locked = true })
 nova.bind("switch:off:Lid Switch", nil, "nova-caffeine open", { locked = true })
 
-nova.bind("PRINT", "Screenshot", "nova-capture-screenshot")
+-- PRINT is the shell's (its screen picker): the screen freezes as the key
+-- goes down, and no process starts before it.
+nova.bind("PRINT", "Screenshot", hl.dsp.global("nova:screenshot"))
 nova.bind("ALT + PRINT", "Screenrecording", "nova-capture-screenrecording --stop-recording || nova-menu toggle capture.screenrecord")
 nova.bind("SUPER + PRINT", "Color picker", "pkill hyprpicker || hyprpicker -a")
 nova.bind("SUPER + CTRL + PRINT", "Extract text (OCR) from screenshot", "nova-capture-text")
 
--- While the region picker (slurp, one layer per display) is up, the keyboard
--- picks too: RETURN takes the highlighted window, CTRL + RETURN the whole
--- screen, and TAB and the arrows move between windows (nova-capture-region).
+-- While slurp's region picker (one layer per display, where the shell's is
+-- not there to pick) is up, the keyboard picks too: RETURN takes the
+-- highlighted window, CTRL + RETURN the whole screen, and TAB and the arrows
+-- move between windows (nova-capture-region). The shell's takes its keys
+-- itself.
 nova.bind_while_layer("selection", function()
   local function pick(keys, description, mode)
     return nova.bind(keys, description, "nova-capture-region " .. mode)

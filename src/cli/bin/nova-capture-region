@@ -1,27 +1,33 @@
 #!/bin/bash
 
 # nova:summary=Pick a screen region over frozen screen content
-# nova:args=[region|windows|smart|fullscreen] [--keep-freeze] [--match-monitor] | --take-fullscreen | --take-window | --select-window <next|prev|left|right|up|down>
+# nova:args=[region|windows|smart|fullscreen] [--keep-freeze] [--match-monitor] | --thaw <freeze> | --layout | --take-fullscreen | --take-window | --select-window <next|prev|left|right|up|down>
 # nova:hidden=true
 
-# The picker that screenshots and screen recordings share, so that both pick
-# alike. It prints the region picked as slurp does, "X,Y WxH", and exits 1
-# when the pick is given up.
+# The picker that screenshots, screen recordings and text from the screen
+# share, so that all pick alike. It prints the region picked as slurp does,
+# "X,Y WxH", and exits 1 when the pick is given up.
 #
 #   region          drawn freely
-#   windows         a monitor or a window, as slurp offers them
+#   windows         a monitor or a window, offered
 #   smart           drawn freely, the monitor and windows offered; a click (an
 #                   area under 20 square pixels) takes the one under it
 #   fullscreen      the focused monitor, without asking
 #
-#   --keep-freeze   the screen stays frozen (hyprpicker), its PID printed on a
-#                   line before the region (empty when nothing froze it); the
-#                   caller ends it
+#   --keep-freeze   the screen stays frozen, what holds it printed on a line
+#                   before the region (empty when nothing froze it); the
+#                   caller ends it with --thaw
 #   --match-monitor "monitor:NAME" instead, for a region that is a monitor
+#   --thaw <freeze> ends a freeze kept for a caller
+#   --layout        what is offered, a region a line after its kind: the
+#                   shell's picker reads it
 #
-# While slurp is up, its keys (data/hypr/keys/desktop.lua) run this again:
-# --take-window and --take-fullscreen end the pick with the highlighted window
-# or the screen, --select-window moves the highlight to another window.
+# The shell's picker picks, where the shell runs (plugins/capture): a still
+# of every screen at once, for it is always loaded. Without it, hyprpicker
+# freezes the screen and slurp picks. While slurp is up, its keys
+# (data/hypr/keys/desktop.lua) run this again: --take-window and
+# --take-fullscreen end the pick with the highlighted window or the screen,
+# --select-window moves the highlight to another window.
 
 set -euo pipefail
 
@@ -210,9 +216,30 @@ select_window() { # next|prev|left|right|up|down
   hyprctl dispatch "hl.dsp.cursor.move({ x = $sx, y = $sy })" >/dev/null
 }
 
+# A freeze kept for a caller ended: the shell's, by the FIFO its pick was
+# answered on, or hyprpicker, by its PID.
+thaw() { # freeze
+  case $1 in
+    "") ;;
+    shell:*)
+      nova-shell -q nova.capture thaw "${1#shell:}"
+      rm -f -- "${1#shell:}"
+      ;;
+    *) kill "$1" 2>/dev/null || true ;;
+  esac
+}
+
 # The keys act only while a pick is up: a mark left with none would end the
 # next pick before it began.
 case ${1:-} in
+  --thaw)
+    thaw "${2:-}"
+    exit 0
+    ;;
+  --layout)
+    layout
+    exit
+    ;;
   --take-window | --take-fullscreen)
     pgrep -x slurp >/dev/null || exit 0
     mkdir -p "${taken%/*}"
@@ -255,15 +282,47 @@ pick() {
   esac
 }
 
-# hyprpicker shows a still of the screen over it, so that what is picked holds
-# still. It is started first, and what slurp is offered is found while it
-# comes up. It goes when this does, unless the caller keeps it.
+# What holds the still on screen, so that what is picked holds still: the
+# shell's picker ("shell:" and its FIFO), or hyprpicker (its PID). It goes
+# when this does, unless the caller keeps it.
 freezer=""
+trap '$keep_freeze || thaw "$freezer"' EXIT
+
+# The shell's picker, asked to pick; it answers on a FIFO made here, a line:
+# the region, or nothing for a pick given up. Asked every ten seconds whether
+# it still has the request, a shell that has gone, or that has let the
+# request go, is a pick given up. 1 where the shell cannot pick.
+patience=${NOVA_CAPTURE_PATIENCE:-10}
+in_shell() { # mode
+  local fifo fd status
+  mkdir -p "${taken%/*}"
+  fifo=$(mktemp -u "${taken%/*}/capture-XXXXXX")
+  mkfifo -m 600 "$fifo" || return 1
+  exec {fd}<>"$fifo"
+  if [[ $(nova-shell nova.capture pick "$1" "$fifo" 2>/dev/null) != ok ]]; then
+    exec {fd}>&-
+    rm -f -- "$fifo"
+    return 1
+  fi
+  freezer=shell:$fifo
+  while :; do
+    IFS= read -r -t "$patience" -u "$fd" picked && break
+    status=$?
+    if ((status <= 128)) || [[ $(nova-shell nova.capture waiting "$fifo" 2>/dev/null) != yes ]]; then
+      picked=""
+      break
+    fi
+  done
+  exec {fd}>&-
+  return 0
+}
+
+# hyprpicker shows a still of the screen over it. It is started first, and
+# what slurp is offered is found while it comes up.
 freeze() {
   hyprpicker -r -z >/dev/null 2>&1 &
   freezer=$!
 }
-trap '$keep_freeze || [[ -z $freezer ]] || kill "$freezer" 2>/dev/null || true' EXIT
 
 # slurp comes up once the still is on screen, hyprpicker's layer mapped, some
 # 20 ms after it starts: slurp mapped first would be under it. Not past half
@@ -278,30 +337,37 @@ frozen() {
   done
 }
 
+picked=""
 case $mode in
   fullscreen) picked=$(focused_geo) ;;
   region)
-    freeze
-    frozen
-    picked=$(pick)
+    if ! in_shell region; then
+      freeze
+      frozen
+      picked=$(pick)
+    fi
     ;;
   windows)
-    freeze
-    offered=$(layout | only monitor window)
-    frozen
-    picked=$(pick -r <<<"$offered")
+    if ! in_shell windows; then
+      freeze
+      offered=$(layout | only monitor window)
+      frozen
+      picked=$(pick -r <<<"$offered")
+    fi
     ;;
   *)
-    # smart, as is anything else. A click takes the region slurp highlighted
-    # under it, the window or, beside every window, the monitor: no captures
-    # of a pixel or two.
-    freeze
-    offered=$(layout | only monitor window)
-    frozen
-    picked=$(pick <<<"$offered")
-    if [[ $picked =~ ^(-?[0-9]+),(-?[0-9]+)\ ([0-9]+)x([0-9]+)$ ]] && ((BASH_REMATCH[3] * BASH_REMATCH[4] < 20)); then
-      mapfile -t regions <<<"$offered"
-      if under "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${regions[@]}"; then picked=$found; fi
+    # smart, as is anything else. A click takes the region highlighted under
+    # it, the window or, beside every window, the monitor: no captures of a
+    # pixel or two.
+    if ! in_shell smart; then
+      freeze
+      offered=$(layout | only monitor window)
+      frozen
+      picked=$(pick <<<"$offered")
+      if [[ $picked =~ ^(-?[0-9]+),(-?[0-9]+)\ ([0-9]+)x([0-9]+)$ ]] && ((BASH_REMATCH[3] * BASH_REMATCH[4] < 20)); then
+        mapfile -t regions <<<"$offered"
+        if under "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${regions[@]}"; then picked=$found; fi
+      fi
     fi
     ;;
 esac

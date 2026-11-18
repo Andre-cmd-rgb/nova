@@ -24,8 +24,9 @@ done
 mode=${words[0]:-smart} action=${words[1]:-slurp}
 [[ $action == slurp || $action == copy || $action == save ]] || usage
 
-# PRINT pressed again while the picker is up puts it away. pidof asks, in a
-# fifth of the time pkill takes, as every screenshot asks before it starts.
+# PRINT pressed again while slurp's picker is up puts it away (the shell's
+# own puts itself away). pidof asks, in a fifth of the time pkill takes, as
+# every screenshot asks before it starts.
 if pidof -q slurp; then
   pkill -x slurp || true
   exit 0
@@ -39,17 +40,23 @@ cursor_setting() { # 0|1
 }
 was=$(hyprctl getoption cursor:no_hardware_cursors -j | jq '.int')
 
-# The picker leaves the screen frozen, its PID on a line before the region,
-# so that grim takes the still and not the screen moving as the freeze ends.
-# A pick given up gives no region.
+# The picker leaves the screen frozen, what holds it on a line before the
+# region, so that grim takes the still and not the screen moving as the
+# freeze ends; it ends as soon as grim has it. A pick given up gives no
+# region.
 freezer="" region=""
-trap 'if [[ -n $freezer ]]; then kill "$freezer" 2>/dev/null || true; fi; cursor_setting "$was"' EXIT
+thaw() {
+  [[ -z $freezer ]] || nova-capture-region --thaw "$freezer"
+  freezer=""
+}
+trap 'thaw; cursor_setting "$was"' EXIT
 cursor_setting 0
 { read -r freezer && read -r region; } < <(nova-capture-region "$mode" --keep-freeze) || true
 [[ -n $region ]] || exit 0
 
 if [[ $action == copy ]]; then
   grim -g "$region" - | wl-copy --type image/png
+  thaw
   exit
 fi
 
@@ -65,6 +72,7 @@ if [[ ! -d $dir ]]; then
 fi
 file=$dir/screenshot-$(date +%Y-%m-%d_%H-%M-%S).png
 grim -g "$region" "$file" || exit 1
+thaw
 echo "$file"
 [[ $action == slurp ]] || exit 0
 

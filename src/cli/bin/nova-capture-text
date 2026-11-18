@@ -4,22 +4,24 @@
 
 set -euo pipefail
 
-# The screen is frozen (hyprpicker) until grim has taken the region, so that
-# it takes the still, not the screen moving as the freeze ends.
-freezer=""
-unfreeze() {
-  if [[ -n $freezer ]]; then kill "$freezer" 2>/dev/null || true; fi
+# A region drawn on the still of the screen, as a screenshot's is
+# (nova-capture-region); the still stays until grim has the region, so that
+# it takes the still, not the screen moving as the freeze ends, and goes
+# before the text is read.
+freezer="" picked="" shot=""
+thaw() {
+  [[ -z $freezer ]] || nova-capture-region --thaw "$freezer"
+  freezer=""
 }
-trap unfreeze EXIT
-hyprpicker -r -z >/dev/null 2>&1 &
-freezer=$!
-sleep .1
-
-# slurp fails when the pick is given up, and then there is nothing to do.
-picked=$(slurp 2>/dev/null || true)
+trap 'thaw; [[ -z $shot ]] || rm -f -- "$shot"' EXIT
+{ read -r freezer && read -r picked; } < <(nova-capture-region region --keep-freeze) || true
+# A pick given up: nothing to do.
 [[ -n $picked ]] || exit 0
 
-text=$(grim -g "$picked" - | tesseract stdin stdout --oem 1 --psm 6 -l "${NOVA_OCR_LANGS:-eng}" --dpi 300 -c preserve_interword_spaces=1 2>/dev/null) || exit 1
+shot=$(mktemp --suffix=.png)
+grim -g "$picked" "$shot"
+thaw
+text=$(tesseract "$shot" stdout --oem 1 --psm 6 -l "${NOVA_OCR_LANGS:-eng}" --dpi 300 -c preserve_interword_spaces=1 2>/dev/null) || exit 1
 [[ -n $text ]] || exit 1
 
 printf '%s' "$text" | wl-copy

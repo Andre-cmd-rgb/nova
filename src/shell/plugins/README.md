@@ -134,6 +134,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | AirDrop | `nova.airdrop` | service `airdrop/AirDrop.qml`, panel `airdrop/AirDropToggle.qml` | AirDrop in notifications: an iPhone's offer to accept or decline, a transfer's bar, what came in; sending, from a window that lists the iPhones nearby (`nova airdrop send --window`); the doorbell's switching; the menu's toggle (`nova airdrop`) |
 | [Battery Life](batterylife/README.md) | `nova.batterylife` | service `batterylife/Service.qml`, widget `batterylife/BarWidget.qml` | how long the battery lasts; its page is `settings/BatteryLifeView.qml` |
 | [Calendar](calendar/README.md) | `nova.calendar` | service `calendar/Service.qml`, panel `calendar/Panel.qml` | the calendar's events and tasks, behind its window and the clock's card (`nova calendar`) |
+| Screen picker | `nova.capture` | overlay `capture/Capture.qml` | the still of the screen that screenshots, screen recordings and text from the screen are picked on (`nova-capture-region`), kept loaded, with PRINT a key of its own |
 | Clipboard | `nova.clipboard` | overlay `clipboard/Clipboard.qml` | the clipboard's history |
 | Dictation | `nova.dictation` | panel `dictation/Dictation.qml` | speech to text; its speech side is `dictation/bin/dictation` (`nova dictation`) |
 | Emojis | `nova.emojis` | overlay `emojis/Emojis.qml` | the emoji picker |
@@ -167,6 +168,22 @@ and the power mode, Power the bar's button and panel, and Battery Life the
 record of how long a charge lasts.
 
 ## Notes on some plugins
+
+### Screen picker
+
+`nova-capture-region` asks with `nova-shell nova.capture pick <mode> <fifo>`
+(smart, region or windows), and reads the answer from the FIFO it made: the
+region as slurp writes one, "X,Y WxH", or a blank line for a pick given up.
+Every screen's still is a `ScreencopyView` taken as the pick starts, and
+nothing is drawn on it until it has come, so that no dimming is in it. The
+still stays, bare, after the answer, for grim to take the region from,
+until `thaw <fifo>`, or ten seconds; `waiting <fifo>` says whether the
+request is still being answered, which the caller asks every ten seconds. The
+windows and screens offered are `nova-capture-region --layout`'s. PRINT is
+the plugin's global shortcut: it freezes the screen at once and starts
+`nova-capture-screenshot`, whose request, when it comes, joins the pick
+under way, or is given what it came to. Without the shell, the command
+falls back to hyprpicker and slurp.
 
 ### Image picker
 

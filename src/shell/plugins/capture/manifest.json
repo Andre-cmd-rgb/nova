@@ -1,0 +1,12 @@
+{
+  "id": "nova.capture",
+  "name": "Screen picker",
+  "description": "The still of the screen that screenshots, screen recordings and text from the screen are picked on: a region drawn, or a window or a screen taken.",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Capture.qml"
+  }
+}
