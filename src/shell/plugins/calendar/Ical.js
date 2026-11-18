@@ -199,18 +199,172 @@ function localTime(year, month, date, hours, minutes, seconds, ms) {
   return t.getTime() + Math.max(0, wanted - read)
 }
 
-// A DATE or DATE-TIME property as { time, allDay }: a date is its day's first
-// moment, a time ending in Z is UTC, and any other time is taken as local,
-// with or without a TZID (the calendar writes the system's own zone, which it
-// cannot convert from another). null when unreadable.
-function parseTime(p) {
+// A DATE or DATE-TIME property as { time, allDay, zone }: a date is its day's
+// first moment here, a time ending in Z is UTC, and a time with a TZID the
+// file's VTIMEZONEs define (<zones>, zonesOf) is read on that zone's clock,
+// which is returned with it. Any other time is this computer's: floating, or
+// in a zone the file does not define (the calendar writes the system's own
+// zone, with no VTIMEZONE, and reads it back so). null when unreadable.
+function parseTime(p, zones) {
   if (!p) return null
   var m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z?))?$/.exec(String(p.value).trim())
   if (!m) return null
   var y = +m[1], mo = +m[2] - 1, d = +m[3]
-  if (m[4] === undefined || p.params.VALUE === "DATE") return { time: localTime(y, mo, d), allDay: true }
-  var time = m[7] === "Z" ? Date.UTC(y, mo, d, +m[4], +m[5], +m[6]) : localTime(y, mo, d, +m[4], +m[5], +m[6])
-  return { time: time, allDay: false }
+  if (m[4] === undefined || p.params.VALUE === "DATE") return { time: localTime(y, mo, d), allDay: true, zone: null }
+  if (m[7] === "Z") return { time: Date.UTC(y, mo, d, +m[4], +m[5], +m[6]), allDay: false, zone: UTC }
+  var zone = zones && p.params.TZID ? zones[p.params.TZID] || null : null
+  if (zone) return { time: zone.wallToUtc(Date.UTC(y, mo, d, +m[4], +m[5], +m[6])), allDay: false, zone: zone }
+  return { time: localTime(y, mo, d, +m[4], +m[5], +m[6]), allDay: false, zone: null }
+}
+
+// ---- time zones, as a file's VTIMEZONEs define them
+//
+// A zone is { offsetAt(utc), wallToUtc(wall) }, a wall time being the
+// milliseconds Date.UTC gives for the numbers on the zone's clock.
+
+var UTC = { offsetAt: function () { return 0 }, wallToUtc: function (wall) { return wall } }
+
+// +hhmm or -hhmmss in milliseconds, or null.
+function parseOffset(value) {
+  var m = /^([+-])(\d{2})(\d{2})(\d{2})?$/.exec(String(value || "").trim())
+  return m ? (m[1] === "-" ? -1 : 1) * ((+m[2] * 60 + +m[3]) * 60 + +(m[4] || 0)) * 1000 : null
+}
+
+// A date-time's numbers as Date.UTC reads them, whatever clock it is on, or
+// null.
+function wallOf(value) {
+  var m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2}))?Z?$/.exec(String(value || "").trim())
+  return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0), +(m[6] || 0)) : null
+}
+
+function ruleParts(value) {
+  var out = {}
+  String(value || "").split(";").forEach(function (part) {
+    var eq = part.indexOf("=")
+    if (eq > 0) out[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1).toUpperCase()
+  })
+  return out
+}
+
+// The day of <month> a yearly rule of a VTIMEZONE names: BYDAY with its
+// ordinal (-1SU, the last Sunday; 2SU, the second), a weekday among the days
+// BYMONTHDAY lists (SU among 8 to 14, the second Sunday, as older programs
+// write it), or BYMONTHDAY alone; else <date>, the day the part starts on.
+function ruleDate(rule, year, month, date) {
+  var length = new Date(Date.UTC(year, month + 1, 0)).getUTCDate()
+  var days = (rule.BYMONTHDAY || "").split(",").map(function (d) {
+    var n = parseInt(d, 10)
+    return n > 0 ? n : length + n + 1
+  }).filter(function (n) { return n >= 1 && n <= length })
+  var byday = /^([+-]?\d)?(SU|MO|TU|WE|TH|FR|SA)$/.exec(rule.BYDAY || "")
+  if (byday) {
+    var dow = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"].indexOf(byday[2])
+    var matches = []
+    for (var d = 1; d <= length; d++)
+      if (new Date(Date.UTC(year, month, d)).getUTCDay() === dow && (byday[1] || !days.length || days.indexOf(d) >= 0)) matches.push(d)
+    var n = byday[1] ? parseInt(byday[1], 10) : 1
+    return n > 0 ? matches[n - 1] : matches[matches.length + n]
+  }
+  return days.length ? days[0] : date
+}
+
+// A VTIMEZONE as a zone, or null where it has no part that reads. Its
+// changes are its STANDARD and DAYLIGHT parts, each a first change (DTSTART,
+// on the clock before it) and, where it goes on, a yearly rule or RDATEs.
+function zoneOf(vtimezone) {
+  var observances = []
+  vtimezone.components.forEach(function (c) {
+    if (c.name !== "STANDARD" && c.name !== "DAYLIGHT") return
+    var from = parseOffset((prop(c, "TZOFFSETFROM") || {}).value)
+    var to = parseOffset((prop(c, "TZOFFSETTO") || {}).value)
+    var wall = wallOf((prop(c, "DTSTART") || {}).value)
+    if (from === null || to === null || wall === null) return
+    var rdates = []
+    props(c, "RDATE").forEach(function (p) {
+      String(p.value).split(",").forEach(function (v) {
+        var w = wallOf(v)
+        if (w !== null) rdates.push(w)
+      })
+    })
+    var rule = prop(c, "RRULE") ? ruleParts(prop(c, "RRULE").value) : null
+    if (rule && rule.FREQ !== "YEARLY") rule = null
+    var until = rule && rule.UNTIL ? wallOf(rule.UNTIL) : null
+    observances.push({ from: from, to: to, wall: wall, rdates: rdates, rule: rule, until: until })
+  })
+  if (observances.length === 0) return null
+
+  // The changes up to the end of a year, from the start of the one before:
+  // { at (UTC), offset (after) }, in order.
+  var cache = {}
+  function changes(year) {
+    if (cache[year]) return cache[year]
+    var out = []
+    var lo = Date.UTC(year - 1, 0, 1) - 86400000, hi = Date.UTC(year + 1, 0, 1) + 86400000
+    observances.forEach(function (o) {
+      function add(wall) {
+        var at = wall - o.from
+        if (at >= lo && at < hi) out.push({ at: at, offset: o.to })
+      }
+      add(o.wall)
+      o.rdates.forEach(add)
+      if (!o.rule) return
+      var base = new Date(o.wall)
+      for (var y = Math.max(year - 1, base.getUTCFullYear()); y <= year; y++) {
+        var month = o.rule.BYMONTH ? parseInt(o.rule.BYMONTH, 10) - 1 : base.getUTCMonth()
+        var date = ruleDate(o.rule, y, month, base.getUTCDate())
+        if (!date) continue
+        var wall = Date.UTC(y, month, date, base.getUTCHours(), base.getUTCMinutes(), base.getUTCSeconds())
+        if (wall <= o.wall || (o.until !== null && wall - o.from > o.until)) continue
+        add(wall)
+      }
+    })
+    out.sort(function (a, b) { return a.at - b.at })
+    cache[year] = out
+    return out
+  }
+
+  // The changes on fixed days, its parts' first ones and their RDATEs: with
+  // no rule for the year asked, the latest of them before it holds. Before
+  // the first change of all, a zone is at the offset that change leaves.
+  var fixed = []
+  observances.forEach(function (o) {
+    [o.wall].concat(o.rdates).forEach(function (wall) { fixed.push({ at: wall - o.from, offset: o.to, from: o.from }) })
+  })
+  fixed.sort(function (a, b) { return a.at - b.at })
+
+  function offsetAt(utc) {
+    var list = changes(new Date(utc).getUTCFullYear())
+    var found = null
+    for (var i = 0; i < list.length && list[i].at <= utc; i++) found = list[i]
+    if (found) return found.offset
+    for (var j = 0; j < fixed.length && fixed[j].at <= utc; j++) found = fixed[j]
+    return found ? found.offset : fixed[0].from
+  }
+
+  // A time on the zone's clock that is there twice (the clocks went back)
+  // is the first; one the clocks skip is read by the offset before the skip,
+  // as RFC 5545 has it.
+  function wallToUtc(wall) {
+    var day = 86400000
+    var offsets = [offsetAt(wall - day), offsetAt(wall + day)]
+    var found = []
+    offsets.forEach(function (o) { if (offsetAt(wall - o) === o) found.push(wall - o) })
+    return found.length ? Math.min.apply(null, found) : wall - offsets[0]
+  }
+
+  return { offsetAt: offsetAt, wallToUtc: wallToUtc }
+}
+
+// The zones a calendar's VTIMEZONEs define, by their TZID.
+function zonesOf(calendar) {
+  var out = {}
+  calendar.components.forEach(function (c) {
+    if (c.name !== "VTIMEZONE") return
+    var id = text(c, "TZID")
+    var zone = id ? zoneOf(c) : null
+    if (zone) out[id] = zone
+  })
+  return out
 }
 
 function formatDate(time) {

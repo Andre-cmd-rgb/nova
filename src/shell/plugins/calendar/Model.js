@@ -6,10 +6,13 @@
 //
 // An item is one VEVENT or VTODO: { kind: "event" | "task", uid, title,
 // notes, location, allDay, start, end, due, dueTime, done, rrule, exdates,
-// recurrenceId, reminder }. Times are milliseconds; an all-day event's end is
-// the midnight after its last day. An occurrence is one time an item falls
-// on: { item, uid, start, end, instance, recurring }, where instance is the
-// start the series gave it, which an occurrence moved on its own keeps.
+// rdates, recurrenceId, reminder, cancelled, zone, calendar, readOnly }.
+// Times are milliseconds; an all-day event's end is the midnight after its
+// last day; zone is the clock a timed event repeats on (Ical.parseTime), and
+// calendar the id of the calendar it is in. An occurrence is one time an
+// item falls on: { item, uid, start, end, instance, recurring }, where
+// instance is the start the series gave it, which an occurrence moved on its
+// own keeps.
 
 var MINUTE = 60000
 var HOUR = 3600000
@@ -147,6 +150,13 @@ function parse(text) {
   return root
 }
 
+// The zones the file's VTIMEZONEs define, read once: an edit made here adds
+// none and takes none away.
+function zonesOf(root) {
+  if (!root.zones) root.zones = Ical.zonesOf(calendarOf(root))
+  return root.zones
+}
+
 // FREQ, INTERVAL, COUNT, UNTIL, BYDAY, BYMONTHDAY and WKST, as far as this
 // calendar repeats them. Anything more (BYSETPOS, BYMONTH, an hourly rule)
 // is kept in the file but not followed: such a series shows its first time.
@@ -194,12 +204,14 @@ function parseRrule(value) {
   return rule
 }
 
-function timesOf(propsList) {
+// The times a list of EXDATEs or RDATEs gives; a period (start/end) by its
+// start.
+function timesOf(propsList, zones) {
   var out = []
   for (var i = 0; i < propsList.length; i++) {
     var values = String(propsList[i].value).split(",")
     for (var j = 0; j < values.length; j++) {
-      var t = Ical.parseTime({ value: values[j], params: propsList[i].params })
+      var t = Ical.parseTime({ value: values[j].split("/")[0], params: propsList[i].params }, zones)
       if (t) out.push(t.time)
     }
   }
@@ -207,11 +219,13 @@ function timesOf(propsList) {
 }
 
 // The first reminder relative to the start: what the window sets, and what
-// most programs write. One at the end, or at a fixed time, is not shown.
+// most programs write. One at the end, or at a fixed time, is not shown, nor
+// the one that does nothing (ACTION:NONE), which Apple's calendars write in
+// place of none.
 function reminderOf(c) {
   for (var i = 0; i < c.components.length; i++) {
     var a = c.components[i]
-    if (a.name !== "VALARM") continue
+    if (a.name !== "VALARM" || Ical.text(a, "ACTION").toUpperCase() === "NONE") continue
     var trigger = Ical.prop(a, "TRIGGER")
     if (!trigger || trigger.params.RELATED === "END" || trigger.params.VALUE === "DATE-TIME") continue
     var offset = Ical.parseDuration(trigger.value)
@@ -220,10 +234,10 @@ function reminderOf(c) {
   return null
 }
 
-function itemOf(c) {
-  var start = Ical.parseTime(Ical.prop(c, "DTSTART"))
+function itemOf(c, zones) {
+  var start = Ical.parseTime(Ical.prop(c, "DTSTART"), zones)
   var uid = Ical.text(c, "UID")
-  var recurrence = Ical.parseTime(Ical.prop(c, "RECURRENCE-ID"))
+  var recurrence = Ical.parseTime(Ical.prop(c, "RECURRENCE-ID"), zones)
   var item = {
     kind: c.name === "VTODO" ? "task" : "event",
     uid: uid,
@@ -238,11 +252,16 @@ function itemOf(c) {
     done: false,
     rrule: null,
     exdates: [],
+    rdates: [],
     recurrenceId: recurrence ? recurrence.time : null,
-    reminder: reminderOf(c)
+    reminder: reminderOf(c),
+    cancelled: Ical.text(c, "STATUS").toUpperCase() === "CANCELLED",
+    zone: null,
+    calendar: "local",
+    readOnly: false
   }
   if (c.name === "VTODO") {
-    var due = Ical.parseTime(Ical.prop(c, "DUE")) || start
+    var due = Ical.parseTime(Ical.prop(c, "DUE"), zones) || start
     if (due) {
       item.due = due.time
       item.dueTime = !due.allDay
@@ -256,7 +275,8 @@ function itemOf(c) {
   if (!start) return null
   item.allDay = start.allDay
   item.start = start.time
-  var end = Ical.parseTime(Ical.prop(c, "DTEND"))
+  item.zone = start.zone
+  var end = Ical.parseTime(Ical.prop(c, "DTEND"), zones)
   var duration = Ical.prop(c, "DURATION")
   if (end) item.end = end.time
   else if (duration && Ical.parseDuration(duration.value) !== null) item.end = start.time + Ical.parseDuration(duration.value)
@@ -265,50 +285,81 @@ function itemOf(c) {
   if (item.end < item.start) item.end = item.start
   var rrule = Ical.prop(c, "RRULE")
   if (rrule && item.recurrenceId === null) item.rrule = parseRrule(rrule.value)
-  item.exdates = timesOf(Ical.props(c, "EXDATE"))
+  item.exdates = timesOf(Ical.props(c, "EXDATE"), zones)
+  if (item.recurrenceId === null) item.rdates = timesOf(Ical.props(c, "RDATE"), zones)
   return item
 }
 
-function items(root) {
+// The items of a calendar's file; <calendar>, { id, readOnly, tasks }, says
+// which calendar they are in, whether they may be changed, and whether it
+// takes tasks (a subscription's feed, say, does not).
+function items(root, calendar) {
   var cal = calendarOf(root)
+  var zones = zonesOf(root)
   var out = []
   for (var i = 0; i < cal.components.length; i++) {
     var c = cal.components[i]
     if (c.name !== "VEVENT" && c.name !== "VTODO") continue
-    var item = itemOf(c)
-    if (item && item.uid) out.push(item)
+    if (c.name === "VTODO" && calendar && calendar.tasks === false) continue
+    var item = itemOf(c, zones)
+    if (!item || !item.uid) continue
+    if (calendar) {
+      item.calendar = calendar.id
+      item.readOnly = !!calendar.readOnly
+    }
+    out.push(item)
   }
   return out
 }
 
 // ---- repeating
 
+// A series' days are counted on the plain calendar (Date.UTC, which no clock
+// change touches), and its times set on the clock of its zone: the one its
+// start's TZID names, UTC, or, floating, in the system's zone or in one the
+// file does not define, this computer's.
+function wallParts(item, time) {
+  if (item.zone) {
+    var w = new Date(time + item.zone.offsetAt(time))
+    return { y: w.getUTCFullYear(), m: w.getUTCMonth(), d: w.getUTCDate(), minutes: w.getUTCHours() * 60 + w.getUTCMinutes(), seconds: w.getUTCSeconds() }
+  }
+  var t = new Date(time)
+  return { y: t.getFullYear(), m: t.getMonth(), d: t.getDate(), minutes: t.getHours() * 60 + t.getMinutes(), seconds: t.getSeconds() }
+}
+
+function wallTime(item, y, m, d, minutes, seconds) {
+  if (item.zone) return item.zone.wallToUtc(Date.UTC(y, m, d, 0, minutes, seconds))
+  return Ical.localTime(y, m, d, 0, minutes, seconds)
+}
+
+function weekday(y, m, d) {
+  return new Date(Date.UTC(y, m, d)).getUTCDay()
+}
+
 // The days a period of the rule offers, in order, at the series' time of day.
-// A day is looked at by its noon, which is on it whatever the clocks do.
 function periodStarts(item, rule, k) {
-  var first = new Date(item.start)
-  var minutes = first.getHours() * 60 + first.getMinutes()
-  var seconds = first.getSeconds()
+  var first = wallParts(item, item.start)
   function at(y, m, d) {
-    return Ical.localTime(y, m, d, 0, minutes, seconds)
+    return wallTime(item, y, m, d, first.minutes, first.seconds)
   }
   var out = []
   if (rule.freq === "DAILY") {
-    var day = new Date(first.getFullYear(), first.getMonth(), first.getDate() + k * rule.interval, 12)
+    var day = new Date(Date.UTC(first.y, first.m, first.d + k * rule.interval))
     var weekdays = rule.byday.map(function (b) { return b.day })
-    if (!weekdays.length || weekdays.indexOf(day.getDay()) >= 0) out.push(at(day.getFullYear(), day.getMonth(), day.getDate()))
+    if (!weekdays.length || weekdays.indexOf(day.getUTCDay()) >= 0) out.push(at(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()))
   } else if (rule.freq === "WEEKLY") {
-    var weekStart = new Date(weekOf(item.start, rule.wkst))
-    var days = rule.byday.length ? rule.byday.map(function (b) { return b.day }) : [first.getDay()]
+    var weekStart = first.d - ((weekday(first.y, first.m, first.d) - rule.wkst + 7) % 7)
+    var days = rule.byday.length ? rule.byday.map(function (b) { return b.day }) : [weekday(first.y, first.m, first.d)]
     var offsets = days.map(function (d) { return (d - rule.wkst + 7) % 7 }).sort(function (a, b) { return a - b })
     for (var i = 0; i < offsets.length; i++) {
       if (i > 0 && offsets[i] === offsets[i - 1]) continue
-      out.push(at(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + k * 7 * rule.interval + offsets[i]))
+      var date = new Date(Date.UTC(first.y, first.m, weekStart + k * 7 * rule.interval + offsets[i]))
+      out.push(at(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
     }
   } else if (rule.freq === "MONTHLY") {
-    var month = new Date(first.getFullYear(), first.getMonth() + k * rule.interval, 1, 12)
-    var y = month.getFullYear(), m = month.getMonth()
-    var length = new Date(y, m + 1, 0, 12).getDate()
+    var month = new Date(Date.UTC(first.y, first.m + k * rule.interval, 1))
+    var y = month.getUTCFullYear(), m = month.getUTCMonth()
+    var length = new Date(Date.UTC(y, m + 1, 0)).getUTCDate()
     var dates = []
     if (rule.bymonthday.length) {
       rule.bymonthday.forEach(function (d) {
@@ -318,33 +369,40 @@ function periodStarts(item, rule, k) {
     } else if (rule.byday.length) {
       rule.byday.forEach(function (b) {
         var matches = []
-        for (var d = 1; d <= length; d++) if (new Date(y, m, d, 12).getDay() === b.day) matches.push(d)
+        for (var d = 1; d <= length; d++) if (weekday(y, m, d) === b.day) matches.push(d)
         if (b.n === 0) dates = dates.concat(matches)
         else {
           var pick = b.n > 0 ? matches[b.n - 1] : matches[matches.length + b.n]
           if (pick) dates.push(pick)
         }
       })
-    } else if (first.getDate() <= length) {
-      dates.push(first.getDate())
+    } else if (first.d <= length) {
+      dates.push(first.d)
     }
     dates.sort(function (a, b) { return a - b })
     for (var j = 0; j < dates.length; j++) if (j === 0 || dates[j] !== dates[j - 1]) out.push(at(y, m, dates[j]))
   } else if (rule.freq === "YEARLY") {
-    var year = first.getFullYear() + k * rule.interval
-    var candidate = new Date(year, first.getMonth(), first.getDate(), 12)
-    if (candidate.getMonth() === first.getMonth()) out.push(at(year, first.getMonth(), first.getDate()))
+    var year = first.y + k * rule.interval
+    if (new Date(Date.UTC(year, first.m, first.d)).getUTCMonth() === first.m) out.push(at(year, first.m, first.d))
   }
   return out
 }
 
 // The starts of a series that are on screen between <from> and <to>: those
 // that begin before <to> and end after <from>. The first is the series' own
-// start; COUNT counts the times the rule makes, EXDATE takes some away.
+// start; COUNT counts the times the rule makes, RDATE adds some and EXDATE
+// takes some away.
 function expand(item, from, to) {
   var length = item.end - item.start
   var visible = function (s) { return s < to && Math.max(s + length, s + 1) > from }
   var excluded = function (s) { return item.exdates.indexOf(s) >= 0 }
+  var made = ruleStarts(item, from, to, visible, excluded)
+  var added = item.rdates.filter(function (s) { return visible(s) && !excluded(s) && made.indexOf(s) < 0 })
+  return added.length ? made.concat(added).sort(function (a, b) { return a - b }) : made
+}
+
+function ruleStarts(item, from, to, visible, excluded) {
+  var length = item.end - item.start
   var rule = item.rrule
   if (!rule || !rule.supported) return visible(item.start) && !excluded(item.start) ? [item.start] : []
   var out = []
@@ -385,10 +443,11 @@ function byStart(a, b) {
 function occurrences(list, from, to) {
   var moved = {}
   list.forEach(function (item) {
-    if (item.kind === "event" && item.recurrenceId !== null) moved[item.uid + "@" + item.recurrenceId] = true
+    if (item.kind === "event" && item.recurrenceId !== null) moved[item.calendar + "\n" + item.uid + "@" + item.recurrenceId] = true
   })
   var out = []
   list.forEach(function (item) {
+    if (item.cancelled) return
     if (item.kind === "task") {
       if (item.due === null) return
       var day = dayStart(item.due)
@@ -402,8 +461,8 @@ function occurrences(list, from, to) {
     }
     var starts = expand(item, from, to)
     for (var i = 0; i < starts.length; i++) {
-      if (moved[item.uid + "@" + starts[i]]) continue
-      out.push({ item: item, uid: item.uid, start: starts[i], end: starts[i] + (item.end - item.start), instance: starts[i], recurring: item.rrule !== null })
+      if (moved[item.calendar + "\n" + item.uid + "@" + starts[i]]) continue
+      out.push({ item: item, uid: item.uid, start: starts[i], end: starts[i] + (item.end - item.start), instance: starts[i], recurring: item.rrule !== null || item.rdates.length > 0 })
     }
   })
   return out.sort(byStart)
@@ -631,8 +690,9 @@ function masterOf(root, uid) {
 }
 
 function overrideOf(root, uid, instance) {
+  var zones = zonesOf(root)
   var list = componentsOf(root, uid).filter(function (c) {
-    var r = Ical.parseTime(Ical.prop(c, "RECURRENCE-ID"))
+    var r = Ical.parseTime(Ical.prop(c, "RECURRENCE-ID"), zones)
     return r && r.time === instance
   })
   return list.length ? list[0] : null
@@ -661,14 +721,15 @@ function setReminder(c, offset) {
   c.components.push(alarm)
 }
 
-// Writes only what changes: a start or an end as it was keeps its zone, the
-// one another program wrote it in, which this calendar cannot convert from.
-function setTimes(c, start, end, allDay, zone) {
+// Writes only what changes: a start or an end as it was keeps the zone
+// another program wrote it in, unless <rezone> asks for this computer's;
+// one changed is written in the system's.
+function setTimes(c, start, end, allDay, zone, zones, rezone) {
   end = allDay ? Math.max(end, addDays(dayStart(start), 1)) : Math.max(end, start)
-  var was = Ical.parseTime(Ical.prop(c, "DTSTART"))
-  var sameStart = was !== null && was.time === start && was.allDay === allDay
+  var was = Ical.parseTime(Ical.prop(c, "DTSTART"), zones)
+  var sameStart = was !== null && was.time === start && was.allDay === allDay && !rezone
   if (!sameStart) Ical.setTime(c, "DTSTART", start, allDay, zone)
-  var wasEnd = Ical.parseTime(Ical.prop(c, "DTEND"))
+  var wasEnd = Ical.parseTime(Ical.prop(c, "DTEND"), zones)
   var duration = Ical.prop(c, "DURATION")
   var length = duration ? Ical.parseDuration(duration.value) : null
   var sameEnd = sameStart && (wasEnd ? wasEnd.time === end && wasEnd.allDay === allDay : length !== null && was.time + length === end)
@@ -704,9 +765,15 @@ function shiftWall(time, days, minutes) {
   return atMinutes(addDays(dayStart(time), days), minutesInDay(time) + minutes)
 }
 
-// A time the series was given (an EXDATE, a RECURRENCE-ID) moved with it.
-function shiftTimes(c, name, days, minutes, allDay, zone) {
-  var shifted = timesOf(Ical.props(c, name)).map(function (t) { return shiftWall(t, days, minutes) })
+// A time the series was given (an EXDATE, a RECURRENCE-ID) moved with it:
+// <days> on, at the series' new time of day, <wall> minutes after midnight
+// on this computer's clock, or by <minutes> where it has none (made all-day).
+function moveInstance(time, days, minutes, wall) {
+  return wall === null ? shiftWall(time, days, minutes) : atMinutes(addDays(dayStart(time), days), wall)
+}
+
+function shiftTimes(c, name, days, minutes, allDay, zone, zones, wall) {
+  var shifted = timesOf(Ical.props(c, name), zones).map(function (t) { return moveInstance(t, days, minutes, wall) })
   Ical.removeProp(c, name)
   shifted.forEach(function (t) {
     c.props.push({ name: name, params: allDay ? { VALUE: "DATE" } : (zone ? { TZID: zone } : {}),
@@ -741,11 +808,12 @@ function updateEvent(root, uid, instance, fields, scope, now, zone) {
 }
 
 function editEvent(root, uid, instance, fields, scope, now, zone) {
+  var zones = zonesOf(root)
   var master = masterOf(root, uid)
   var own = overrideOf(root, uid, instance)
   if (!master && !own) return false
-  var item = itemOf(master || own)
-  var series = master && item.rrule !== null
+  var item = itemOf(master || own, zones)
+  var series = master && (item.rrule !== null || item.rdates.length > 0)
   if (series && scope === "this") {
     if (!own) {
       own = JSON.parse(JSON.stringify(master))
@@ -753,18 +821,22 @@ function editEvent(root, uid, instance, fields, scope, now, zone) {
         return ["RRULE", "EXDATE", "RDATE", "DTSTART", "DTEND", "DURATION"].indexOf(p.name) < 0
       })
       Ical.setTime(own, "RECURRENCE-ID", instance, item.allDay, zone)
-      setTimes(own, instance, instance + (item.end - item.start), item.allDay, zone)
+      setTimes(own, instance, instance + (item.end - item.start), item.allDay, zone, zones)
       calendarOf(root).components.push(own)
     }
-    return applyFields(own, fields, now, zone, false)
+    return applyFields(own, fields, now, zone, false, zones)
   }
-  if (!series) return applyFields(master || own, fields, now, zone, !!master)
+  if (!series) return applyFields(master || own, fields, now, zone, !!master, zones)
 
   var allDay = fields.allDay !== undefined ? !!fields.allDay : item.allDay
   var flipped = allDay !== item.allDay
   var timed = fields.start !== undefined || fields.end !== undefined
   var days = 0
   var minutes = 0
+  // The time of day every time of the series is at once moved, on this
+  // computer's clock: a series in another zone (New York's, UTC) is then
+  // at that time here, the time moved where it was dropped.
+  var wall = null
   var length = item.end - item.start
   var masterFields = {}
   for (var key in fields) masterFields[key] = fields[key]
@@ -772,12 +844,15 @@ function editEvent(root, uid, instance, fields, scope, now, zone) {
     var start = fields.start !== undefined ? fields.start : instance
     days = daysBetween(instance, start)
     minutes = minutesInDay(start) - minutesInDay(instance)
+    if (!allDay) wall = minutesInDay(start)
     length = (fields.end !== undefined ? fields.end : start + length) - start
-    masterFields.start = shiftWall(item.start, days, minutes)
+    masterFields.start = moveInstance(item.start, days, minutes, wall)
     masterFields.end = masterFields.start + length
+    // Its times are this computer's from now on, its start one of them.
+    masterFields.rezone = item.zone !== null && wall !== null
   }
-  var moves = days !== 0 || minutes !== 0
-  if (moves || flipped) shiftTimes(master, "EXDATE", days, minutes, allDay, zone)
+  var moves = days !== 0 || minutes !== 0 || (wall !== null && wall !== minutesInDay(item.start))
+  if (moves || flipped) shiftTimes(master, "EXDATE", days, minutes, allDay, zone, zones, wall)
   if (days !== 0) shiftRuleDays(master, days)
   componentsOf(root, uid).forEach(function (c) {
     if (c === master || !Ical.prop(c, "RECURRENCE-ID")) return
@@ -787,16 +862,16 @@ function editEvent(root, uid, instance, fields, scope, now, zone) {
       removeComponent(root, c)
       return
     }
-    var moved = itemOf(c)
+    var moved = itemOf(c, zones)
     if (moves || (c === own && timed)) {
       var from = shiftWall(moved.start, days, minutes)
-      if (moves) shiftTimes(c, "RECURRENCE-ID", days, minutes, allDay, zone)
-      setTimes(c, from, from + (c === own && timed ? length : moved.end - moved.start), moved.allDay, zone)
+      if (moves) shiftTimes(c, "RECURRENCE-ID", days, minutes, allDay, zone, zones, wall)
+      setTimes(c, from, from + (c === own && timed ? length : moved.end - moved.start), moved.allDay, zone, zones)
     }
     applyWords(c, fields)
     touch(c, now)
   })
-  return applyFields(master, masterFields, now, zone, true)
+  return applyFields(master, masterFields, now, zone, true, zones)
 }
 
 // The fields a change to occurrence <o> makes, for every time of its series:
@@ -821,17 +896,17 @@ function applyWords(c, fields) {
   if (fields.reminder !== undefined) setReminder(c, fields.reminder)
 }
 
-function applyFields(c, fields, now, zone, isMaster) {
-  var item = itemOf(c)
+function applyFields(c, fields, now, zone, isMaster, zones) {
+  var item = itemOf(c, zones)
   applyWords(c, fields)
   if (fields.start !== undefined || fields.end !== undefined || fields.allDay !== undefined) {
     var allDay = fields.allDay !== undefined ? !!fields.allDay : item.allDay
     var start = fields.start !== undefined ? fields.start : item.start
     var end = fields.end !== undefined ? fields.end : start + (item.end - item.start)
-    setTimes(c, start, end, allDay, zone)
+    setTimes(c, start, end, allDay, zone, zones, fields.rezone)
   }
   if (isMaster && fields.repeat !== undefined && fields.repeat !== "custom") {
-    var startNow = itemOf(c).start
+    var startNow = itemOf(c, zones).start
     var rule = repeatRule(fields.repeat, startNow)
     if (rule) Ical.setProp(c, "RRULE", rule)
     else Ical.removeProp(c, "RRULE")
@@ -849,7 +924,7 @@ function removeComponent(root, c) {
 function dropOrphans(root, uid) {
   var master = masterOf(root, uid)
   // A time of a series whose event is not in this file is all there is of it.
-  if (!master || Ical.prop(master, "RRULE")) return
+  if (!master || Ical.prop(master, "RRULE") || Ical.prop(master, "RDATE")) return
   componentsOf(root, uid).forEach(function (c) {
     if (Ical.prop(c, "RECURRENCE-ID")) removeComponent(root, c)
   })
@@ -860,9 +935,9 @@ function dropOrphans(root, uid) {
 function deleteEvent(root, uid, instance, scope, now, zone) {
   var master = masterOf(root, uid)
   var own = overrideOf(root, uid, instance)
-  if (scope === "this" && master && Ical.prop(master, "RRULE")) {
+  if (scope === "this" && master && (Ical.prop(master, "RRULE") || Ical.prop(master, "RDATE"))) {
     if (own) removeComponent(root, own)
-    var item = itemOf(master)
+    var item = itemOf(master, zonesOf(root))
     master.props.push({ name: "EXDATE", params: item.allDay ? { VALUE: "DATE" } : (zone ? { TZID: zone } : {}),
       value: item.allDay ? Ical.formatDate(instance) : Ical.formatLocal(instance) })
     touch(master, now)
@@ -923,7 +998,7 @@ function updateTask(root, uid, fields, now, zone) {
 function moveTask(root, uid, day, now, zone) {
   var c = masterOf(root, uid)
   if (!c) return false
-  var item = itemOf(c)
+  var item = itemOf(c, zonesOf(root))
   if (day === null) return updateTask(root, uid, { due: null }, now, zone)
   var due = item.dueTime ? atMinutes(day, minutesInDay(item.due)) : dayStart(day)
   return updateTask(root, uid, { due: due, dueTime: item.dueTime }, now, zone)
