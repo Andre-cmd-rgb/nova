@@ -1182,11 +1182,12 @@ cmd_open() {
 }
 
 # On the bar: in the layout of ~/.config/nova/shell.json, which `nova bar`
-# keeps, or of the default one before there is a file.
+# keeps, or of the default one before there is a file, and not switched off
+# (an entry marked "off" keeps its place, and is not shown).
 in_bar_layout() {
   local config=${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json
   [[ -s $config ]] || config=${NOVA_PATH:-/usr/share/nova}/default/shell.json
-  jq -e --arg id "$PLUGIN_ID" 'any(.bar.layout[]?[]?; .id? == $id)' "$config" >/dev/null 2>&1
+  jq -e --arg id "$PLUGIN_ID" 'any(.bar.layout[]?[]?; .id? == $id and .off? != true)' "$config" >/dev/null 2>&1
 }
 
 cmd_indicator() {

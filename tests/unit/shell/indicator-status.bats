@@ -43,6 +43,18 @@ status_of() { # plugin
   [ "$output" = "The plugin is not in the bar layout." ]
 }
 
+@test "a plugin switched off keeps its place in the layout, and is said not to be on the bar" {
+  jq -n '{bar: {layout: {left: [], center: [], right: [{id: "nova.tray"}, {id: "nova.screentime", off: true}, {id: "nova.batterylife", off: true}]}}}' \
+    >"$XDG_CONFIG_HOME/nova/shell.json"
+  status_of batterylife
+  [ "$output" = "The plugin is not in the bar layout." ]
+  status_of screentime
+  [ "$output" = "The plugin is not in the bar layout." ]
+  # Nor is Screen Time on, which is its entry in the bar.
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" enabled
+  [ "$status" -ne 0 ]
+}
+
 @test "Battery Life without a shell.json: the default layout" {
   layout "$NOVA_PATH/default/shell.json" nova.batterylife
   status_of batterylife

@@ -30,7 +30,8 @@ Usage: nova bar <command> [arguments]
 Where:
   left, center or right             A section, written first (put and move)
   --section <left|center|right>     A section
-  --index <n>                       A place in the section, from 0
+  --index <n>                       A place in the section, from 0, counting
+                                    widgets switched off, which keep theirs
   --before <id>, --after <id>       Beside a widget; put goes to the widget's own
                                     place when the bar does not carry that one
   --from-section <section>          Which of a widget's places, when it is on the

@@ -813,11 +813,12 @@ cmd_open() {
 }
 
 # Screen Time records only while shell.json names it (its manifest says
-# "enabledByDefault": false), so turning it on and off is its bar entry.
+# "enabledByDefault": false), so turning it on and off is its bar entry. An
+# entry switched off keeps its place in the bar, marked "off": that is off.
 is_enabled() {
   local config=${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json
   [[ -r $config ]] &&
-    jq -e --arg id "$PLUGIN_ID" '[.. | objects | select(.id? == $id)] | length > 0' "$config" >/dev/null 2>&1
+    jq -e --arg id "$PLUGIN_ID" '[.. | objects | select(.id? == $id and .off? != true)] | length > 0' "$config" >/dev/null 2>&1
 }
 
 cmd_switch() {

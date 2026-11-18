@@ -9,8 +9,8 @@ import "tray/TrayList.js" as TrayList
 // The system tray: the icon of every app that asks to be seen, in a row, in
 // the order of their ids. A click starts the app, a middle click does its
 // second action, a right click opens its menu (TrayMenu), which ends with
-// Hide from Menu Bar. The widget's `hidden` setting lists the ids hidden;
-// Settings → Menu Bar brings them back.
+// Hide from Menu Bar. The widget's `hidden` setting lists the ids hidden,
+// and `names` what each is called; Settings → Menu Bar brings them back.
 BarWidget {
   id: tray
   widgetId: "nova.tray"
@@ -23,12 +23,13 @@ BarWidget {
   readonly property var hidden: TrayList.list(settings.hidden)
   readonly property var icons: TrayList.shown(SystemTray.items.values.filter(item => item.status !== Status.Passive), hidden)
 
-  // Writes the ids hidden into the widget's entry in shell.json, which
-  // hands them back through <settings>.
+  // Writes the ids hidden, and the app's name, into the widget's entry in
+  // shell.json, which hands them back through <settings>.
   function hide(item) {
     var name = widgetId || "nova.tray"
+    var id = String(item && item.id || "")
     if (typeof bar?.shell?.updateEntryInline === "function")
-      bar.shell.updateEntryInline(name, Object.assign({}, settings, { id: name, hidden: TrayList.hide(hidden, String(item.id || "")) }))
+      bar.shell.updateEntryInline(name, Object.assign({}, settings, { id: name, hidden: TrayList.hide(hidden, id), names: TrayList.named(settings.names, id, item) }))
   }
 
   // The icon whose menu is open, and the menu's card; the card is the tray's

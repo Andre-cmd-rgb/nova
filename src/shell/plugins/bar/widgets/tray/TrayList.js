@@ -1,7 +1,9 @@
 .pragma library
 
 // Which tray icons the bar shows: all of them, in the order of their ids, but
-// those the owner hid, whose ids the widget's `hidden` setting keeps.
+// those the owner hid, whose ids the widget's `hidden` setting keeps; and
+// what each hidden one is called (`names`, by id), for Settings to list it
+// by, as the app is not there to say once it is hidden and gone.
 
 // A setting as a list of ids, or none.
 function list(value) {
@@ -26,4 +28,13 @@ function shown(items, hidden) {
 function hide(hidden, id) {
   const away = list(hidden)
   return !id || away.indexOf(id) !== -1 ? away : away.concat([id])
+}
+
+// <names> (by id) with <id> called what the icon calls its app, its title or
+// else its tooltip's: one line, not endless. The same when it says nothing.
+function named(names, id, item) {
+  const out = Object.assign({}, names && typeof names === "object" && !Array.isArray(names) ? names : {})
+  const title = String(item && (item.title || item.tooltipTitle) || "").replace(/\s+/g, " ").trim().slice(0, 60)
+  if (id && title) out[id] = title
+  return out
 }

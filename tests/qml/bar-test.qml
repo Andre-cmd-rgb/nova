@@ -142,6 +142,10 @@ ShellRoot {
     check(Tray.shown(icons, undefined).length === 4 && Tray.shown(null, []).length === 0 && icons.length === 4, "no list, no items; the items given are not reordered")
     check(same(Tray.hide(["a"], "b"), ["a", "b"]) && same(Tray.hide(["a"], "a"), ["a"]) && same(Tray.hide(undefined, "a"), ["a"]) && same(Tray.hide(["a"], ""), ["a"]), "hiding one adds its id once")
     check(same(Tray.list("x"), []), "a setting that is no list is none")
+    check(same(Tray.named({ a: "A" }, "telegram", { title: " Telegram\n Desktop ", tooltipTitle: "T" }), { a: "A", telegram: "Telegram Desktop" })
+      && same(Tray.named(null, "x", { title: "", tooltipTitle: "Tip" }), { x: "Tip" })
+      && same(Tray.named(["no"], "x", {}), {}) && same(Tray.named({}, "", { title: "A" }), {}),
+      "a hidden icon keeps its app's name, its title or else its tooltip's, in one line")
 
     check(Model.hex(1, 0, 0.5) === "#ff0080" && Model.hex(2, -1, 0.02) === "#ff0005", "channels as #rrggbb, held to 0 and 1")
 

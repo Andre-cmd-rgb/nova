@@ -296,7 +296,9 @@ state() {
             widgets: $widgets,
             shown: [($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[] | select(.off? != true) | .id? // empty],
             hiddenTray: [($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[]
-              | select(.id? == "nova.tray") | (.hidden // [])[] | strings]},
+              | select(.id? == "nova.tray") | (.hidden // [])[] | strings],
+            hiddenTrayNames: ([($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[]
+              | select(.id? == "nova.tray") | .names | objects | with_entries(select(.value | type == "string"))] | add // {})},
       lock: {seconds: (if ($config.idle.lock | type) == "number" then $config.idle.lock else 300 end),
              screensaver: (if ($config.idle.screensaver | type) == "number" then $config.idle.screensaver else 180 end),
              fingerprint: $fingerprint},

@@ -134,12 +134,14 @@ anything, your file is authoritative and defaults are **not** merged back in.
 
 1. **`version: 1` is required.** The shell falls back to the defaults rather
    than load an unknown version.
-2. **A widget is on the bar while its entry is in `bar.layout`.** Settings
-   are inline on the entry; there are no per-plugin settings files.
+2. **A widget is on the bar while its entry is in `bar.layout` and not
+   marked `"off": true`.** Switched off, a widget keeps its entry, marked
+   so, and comes back to the same place when it is switched on again.
+   Settings are inline on the entry; there are no per-plugin settings files.
 3. **Everything else is on unless switched off,** which is recorded in
    `disabledPlugins[]`. A plugin whose manifest says `"enabledByDefault":
    false` (Screen Time) is the other way round: on only while `shell.json`
-   names it, in the bar or in `plugins[]`. One that says `"alwaysOn": true`
+   names it, in the bar or in `plugins[]`, and not marked off. One that says `"alwaysOn": true`
    (the bar, the lock) cannot be switched off.
 4. **`idle.screensaver`** and **`idle.lock`** are the seconds unused before
    the screensaver starts and before the screen locks; 0 is never.

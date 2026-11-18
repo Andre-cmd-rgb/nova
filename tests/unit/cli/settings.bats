@@ -204,11 +204,13 @@ state() { nova-settings state | jq -c "$1"; }
 
 @test "state: a widget switched off is not shown, and the tray icons hidden are listed" {
   mkdir -p "$HOME/.config/nova"
-  echo '{"version":1,"bar":{"layout":{"left":[{"id":"nova.menu"},{"id":"nova.media","off":true}],"right":[{"id":"nova.tray","hidden":["Telegram","nm-applet"]},{"id":"nova.weather","off":false}]}}}' >"$HOME/.config/nova/shell.json"
+  echo '{"version":1,"bar":{"layout":{"left":[{"id":"nova.menu"},{"id":"nova.media","off":true}],"right":[{"id":"nova.tray","hidden":["Telegram","nm-applet"],"names":{"Telegram":"Telegram Desktop","x":7}},{"id":"nova.weather","off":false}]}}}' >"$HOME/.config/nova/shell.json"
   [ "$(state .bar.shown)" = '["nova.menu","nova.tray","nova.weather"]' ]
   [ "$(state .bar.hiddenTray)" = '["Telegram","nm-applet"]' ]
+  [ "$(state .bar.hiddenTrayNames)" = '{"Telegram":"Telegram Desktop"}' ]
   echo '{"version":1,"bar":{"layout":{"right":["nova.tray"]}}}' >"$HOME/.config/nova/shell.json"
   [ "$(state .bar.hiddenTray)" = '[]' ]
+  [ "$(state .bar.hiddenTrayNames)" = '{}' ]
 }
 
 @test "state: default apps list only what is installed, and screen time and fingerprint follow their commands" {

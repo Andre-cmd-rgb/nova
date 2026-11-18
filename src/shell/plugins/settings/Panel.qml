@@ -675,7 +675,7 @@ Item {
           model: root.bar.hiddenTray || []
           delegate: Line {
             required property string modelData
-            label: modelData
+            label: (root.bar.hiddenTrayNames || {})[modelData] || modelData
             Button {
               text: "Show"
               bordered: true
