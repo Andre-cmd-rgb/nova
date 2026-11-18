@@ -36,10 +36,12 @@ case "$*" in
   "reg get") printf 'global\ncountry DE: DFS-ETSI\n\nphy#0 (self-managed)\ncountry IT: DFS-UNSET\n' ;;
   "phy phy0 interface add nova-cell type ibss") [[ -z ${NO_SECOND:-} ]] ;;
   "dev nova-cell info" | "dev wlan0 info")
-    joined=$(grep -o 'ibss join nova [0-9]*' "$CALLS" | tail -1)
-    channel="6 (2437 MHz)"
-    [[ $joined != *5745 ]] || channel="149 (5745 MHz)"
-    [[ -n ${NO_CELL:-} ]] || printf '\ttype IBSS\n\tchannel %s, width: 20 MHz\n' "$channel"
+    joined=$(grep -o 'ibss join nova [0-9]* [^ ]*' "$CALLS" | tail -1)
+    channel="6 (2437 MHz)" width="20 MHz"
+    [[ $joined != *" 5745 "* ]] || channel="149 (5745 MHz)"
+    # NARROW: a card that takes 80 MHz and makes the cell narrower all the same.
+    [[ $joined != *80MHz || -n ${NARROW:-} ]] || width="80 MHz"
+    [[ -n ${NO_CELL:-} ]] || printf '\ttype IBSS\n\tchannel %s, width: %s\n' "$channel" "$width"
     ;;
   "dev nova-cell ibss join nova 5745 "*) [[ " ${NO_WIDTH:-} " != *" ${7} "* ]] ;;
 esac
@@ -139,19 +141,34 @@ line() { grep -n -m1 -- "$1" "$CALLS" | cut -d: -f1; }
   [ "$(line 'ibss join')" -lt "$(line 'interface add nova-mon type monitor')" ]
 }
 
-@test "where the card may send on channel 149, the cell is there, as wide as the card lets it be" {
+@test "where the card may send on channel 149, the cell is there, 80 MHz wide as an iPhone's" {
   FIVE="(22.0 dBm)" run radio up
   [ "$status" -eq 0 ]
   grep -qx 'iw dev nova-cell ibss join nova 5745 80MHz fixed-freq 00:25:00:ff:94:73 beacon-interval 10000' "$CALLS"
   grep -q '^NOVA_AIRDROP_CHANNEL=149$' "$NOVA_AIRDROP_RUN/env"
-  [[ $output == *"up on channel 149 (80MHz)"* ]]
+  [[ $output == *"up on channel 149 (80 MHz)"* ]]
+}
+
+@test "a card that will not make the cell 80 MHz wide is on channel 6, unless 149 was asked for" {
+  for card in NO_WIDTH=80MHz NARROW=1; do
+    : >"$CALLS"
+    env "$card" FIVE="(22.0 dBm)" "$REPO_ROOT/src/airdrop/bin/nova-airdrop-radio" up >"$SCRATCH/out" 2>&1
+    grep -q 'ibss join nova 5745 80MHz ' "$CALLS"
+    # A cell up but narrower is not waited on.
+    [ "$(grep -c 'dev nova-cell info' "$CALLS")" -le 2 ]
+    [ "$(line 'nova-cell ibss leave')" -lt "$(line 'ibss join nova 2437 HT20 ')" ]
+    grep -q '^NOVA_AIRDROP_CHANNEL=6$' "$NOVA_AIRDROP_RUN/env"
+    grep -q 'up on channel 6 (20 MHz)' "$SCRATCH/out"
+    radio down >/dev/null
+  done
 
   : >"$CALLS"
-  radio down >/dev/null
-  NO_WIDTH="80MHz" FIVE="(22.0 dBm)" run radio up
-  [ "$status" -eq 0 ]
-  grep -q 'ibss join nova 5745 HT40+ ' "$CALLS"
-  [[ $output == *"up on channel 149 (HT40+)"* ]]
+  NOVA_AIRDROP_CHANNEL=149 NARROW=1 FIVE="(22.0 dBm)" run radio up
+  [ "$status" -eq 1 ]
+  [[ $output == *"80 MHz wide on channel 149"* ]]
+  ! grep -q 'ibss join nova 2437' "$CALLS"
+  # Refused, it is undone as any refusal is: the Wi-Fi is the network's again.
+  grep -q 'managed yes' "$CALLS"
 }
 
 @test "channel 149 closed to the card, or asked against, is channel 6" {

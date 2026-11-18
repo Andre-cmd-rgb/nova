@@ -125,14 +125,17 @@ function offer(state, command, picture) {
 // sender's own (`icon`, the daemon's copy of it: JPEG 2000 from an iPhone).
 // That is a stranger's file, and a kind vips trusts less, so it is read in a
 // sandbox: no network, nothing of the user's but that file and the folder,
-// the system read-only, for five seconds at most.
+// the system read-only; with 512 MB at most, which a picture that claims a
+// huge size runs out of at once rather than taking the computer's memory, on
+// one thread; for five seconds, and killed a second after if it will not stop.
 function peek(icon, folder, copy) {
   return ["sh", "-c",
-    'mkdir -p -m 700 -- "$1" && find "$1" -maxdepth 1 -name "*.jpg" -mmin +10 -delete;'
+    'mkdir -p -m 700 -- "$1" && find "$1" -maxdepth 1 -name "*.jpg" -mmin +10 -delete; ulimit -v 524288;'
     + ' exec bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL --clearenv --setenv PATH /usr/bin'
+    + ' --setenv VIPS_CONCURRENCY 1 --setenv MALLOC_ARENA_MAX 2'
     + ' --ro-bind /usr /usr --symlink usr/lib /lib64 --symlink usr/lib /lib --symlink usr/bin /bin'
     + ' --proc /proc --dev /dev --tmpfs /tmp --ro-bind "$2" "$2" --bind "$1" "$1"'
-    + ' timeout 5 vipsthumbnail "$2" --size 256x256 -o "$3[Q=85]" 2>/dev/null',
+    + ' timeout -k 1 5 vipsthumbnail "$2" --size 256x256 -o "$3[Q=85]" 2>/dev/null',
     "sh", text(folder), text(icon), text(copy)]
 }
 

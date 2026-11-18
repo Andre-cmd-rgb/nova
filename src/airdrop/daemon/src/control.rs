@@ -341,6 +341,18 @@ impl Control {
         let listener = UnixListener::bind(path).map_err(said)?;
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(said)?;
         let _ = self.path.set(path.to_owned());
+        // A daemon that died with an offer open left its picture: no daemon is asking now.
+        if let Some(Ok(left)) = path.parent().map(std::fs::read_dir) {
+            for entry in left.flatten() {
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("airdrop-offer-")
+                {
+                    let _ = std::fs::remove_file(entry.path());
+                }
+            }
+        }
         let serving = self.clone();
         std::thread::Builder::new()
             .name("airdrop-control".into())
@@ -1007,8 +1019,11 @@ mod tests {
     #[test]
     fn a_watcher_is_told_each_change_and_a_question_waits_for_its_answer() {
         let path = socket("asks");
+        let left = path.with_file_name("airdrop-offer-dead-1");
+        std::fs::write(&left, b"a picture a daemon that died left").unwrap();
         let control = Control::new("Nova");
         control.listen(&path).unwrap();
+        assert!(!left.exists());
         assert!(Control::new("Nova").listen(&path).is_err());
         assert!(say(&path, "status").starts_with("AirDrop is on: iPhones nearby"));
         assert_eq!(say(&path, "accept"), "nothing is being asked");

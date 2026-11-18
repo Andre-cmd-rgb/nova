@@ -43,7 +43,7 @@ bssid=00:25:00:ff:94:73
 # Bluetooth that shares the card's 2.4 GHz radio is left alone. How much
 # faster a transfer is there is not measured yet. NOVA_AIRDROP_CHANNEL=6 or
 # 149 asks for one.
-channel='' freq=''
+channel=''
 cell=nova-cell
 mon=nova-mon
 # How long the cell may take to start (mac80211 starts it a moment after it is asked), and the Wi-Fi
@@ -92,7 +92,6 @@ check() {
   esac
   [[ -n $channel ]] ||
     refuse "This computer's Wi-Fi card may not send on channel ${NOVA_AIRDROP_CHANNEL:-6 or 149} here, which AirDrop needs."
-  if ((channel == 149)); then freq=5745; else freq=2437; fi
 }
 
 # Whether the card may start sending on a channel, by its line in iw phy.
@@ -135,7 +134,7 @@ up() {
   fi
   # The way back first.
   printf '%s\n%s\n%s\n' "$wifi" "$was" "$profile" >"$note"
-  printf 'NOVA_AIRDROP_COUNTRY=%s\nNOVA_AIRDROP_CHANNEL=%s\n' "$(country)" "$channel" >"$run/env"
+  environment
 
   nmcli device set "$wifi" managed no >/dev/null 2>&1 || true
   ip link set "$wifi" down
@@ -155,31 +154,54 @@ up() {
   fi
   ip link set dev "$cell" address "$address"
   ip link set "$cell" up
-  # A beacon every ten seconds: an iPhone does not list a node whose cell beacons ten times a second.
-  # At 5 GHz as wide as an iPhone goes there, 80 MHz, or as wide as the card lets an ad-hoc cell be.
-  local widths=(HT20) width joined=0
-  ((channel != 149)) || widths=(80MHz HT40+ HT20)
-  for width in "${widths[@]}"; do
-    if iw dev "$cell" ibss join nova "$freq" "$width" fixed-freq "$bssid" beacon-interval 10000; then
-      joined=1
-      break
-    fi
-  done
-  ((joined)) || refuse "The Wi-Fi card would not start AirDrop's cell on channel $channel."
-  local started=0
-  for _ in $(seq "$cell_tries"); do
-    if [[ $(iw dev "$cell" info 2>/dev/null) == *"channel $channel "* ]]; then
-      started=1
-      break
-    fi
-    sleep 0.2
-  done
-  ((started)) || refuse "The Wi-Fi card did not start AirDrop's cell on channel $channel."
+  # At 5 GHz the cell is as wide as an iPhone's there, 80 MHz, as the daemon announces it: an
+  # iPhone sends that wide, which a narrower cell would not hear. A card that will not make an
+  # ad-hoc cell so wide is on channel 6, unless 149 was asked for.
+  if ((channel == 149)) && ! join 5745 80MHz "width: 80 MHz"; then
+    [[ ${NOVA_AIRDROP_CHANNEL:-} != 149 ]] ||
+      refuse "The Wi-Fi card would not start AirDrop's cell 80 MHz wide on channel 149."
+    echo "the card would not make AirDrop's cell 80 MHz wide on channel 149: channel 6"
+    iw dev "$cell" ibss leave 2>/dev/null || true
+    channel=6
+    environment
+  fi
+  if ((channel == 6)); then
+    iw dev "$cell" ibss join nova 2437 HT20 fixed-freq "$bssid" beacon-interval 10000 ||
+      refuse "The Wi-Fi card would not start AirDrop's cell on channel 6."
+    started 6 "" || refuse "The Wi-Fi card did not start AirDrop's cell on channel 6."
+  fi
 
   iw phy "$phy" interface add "$mon" type monitor || refuse "The Wi-Fi card gave no monitor interface."
   ip link set dev "$mon" address "$address"
   ip link set "$mon" up
-  echo "the cell is up on channel $channel ($width) and the card acknowledges for $address; $wifi is off the network"
+  echo "the cell is up on channel $channel ($( ((channel == 149)) && echo 80 || echo 20) MHz) and the card acknowledges for $address; $wifi is off the network"
+}
+
+# What the daemon is told: the country whose radio rules the card is under, and the channel.
+environment() {
+  printf 'NOVA_AIRDROP_COUNTRY=%s\nNOVA_AIRDROP_CHANNEL=%s\n' "$(country)" "$channel" >"$run/env"
+}
+
+# The cell joined on <freq> MHz, <width> wide, and started: true once iw says it is up as asked.
+# A beacon every ten seconds: an iPhone does not list a node whose cell beacons ten times a second.
+join() { # freq width words
+  iw dev "$cell" ibss join nova "$1" "$2" fixed-freq "$bssid" beacon-interval 10000 2>/dev/null &&
+    started "$((($1 == 5745) ? 149 : 6))" "$3"
+}
+
+# Whether the cell is up on <channel>, within the tries it has, with <words> in what iw says of
+# it. Once it is up, it is as wide as it will be: no more waiting.
+started() { # channel words
+  local info
+  for _ in $(seq "$cell_tries"); do
+    info=$(iw dev "$cell" info 2>/dev/null) || info=''
+    if [[ $info == *"channel $1 "* ]]; then
+      [[ $info == *"$2"* ]]
+      return
+    fi
+    sleep 0.2
+  done
+  return 1
 }
 
 down() {

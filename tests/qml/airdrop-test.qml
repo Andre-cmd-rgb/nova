@@ -269,9 +269,9 @@ ShellRoot {
   function fourth() {
     const peeks = called().filter(line => line.startsWith("bwrap "))
     const copy = peeks.length === 1 ? peeks[0].replace(/^.* -o (.*)\[Q=85\]$/, "$1") : ""
-    check("the sender's picture is read in a sandbox: no network, no capabilities, the system read-only, that file and the pictures folder alone",
-      [peeks.length, peeks.length === 1 && peeks[0].startsWith("bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL --clearenv --setenv PATH /usr/bin --ro-bind /usr /usr "),
-        peeks.length === 1 && peeks[0].includes(" --tmpfs /tmp --ro-bind " + icon + " " + icon + " --bind " + pictures + " " + pictures + " timeout 5 vipsthumbnail " + icon + " --size 256x256 -o "),
+    check("the sender's picture is read in a sandbox: no network, no capabilities, the system read-only, that file and the pictures folder alone, one thread, a time limit",
+      [peeks.length, peeks.length === 1 && peeks[0].startsWith("bwrap --unshare-all --die-with-parent --new-session --cap-drop ALL --clearenv --setenv PATH /usr/bin --setenv VIPS_CONCURRENCY 1 --setenv MALLOC_ARENA_MAX 2 --ro-bind /usr /usr "),
+        peeks.length === 1 && peeks[0].includes(" --tmpfs /tmp --ro-bind " + icon + " " + icon + " --bind " + pictures + " " + pictures + " timeout -k 1 5 vipsthumbnail " + icon + " --size 256x256 -o "),
         copy.startsWith(pictures + "/offer-") && copy.endsWith(".jpg")], [1, true, true, true])
     check("with the loaders vips trusts less, which a picture in JPEG 2000 takes", called().filter(line => line.includes("vipsthumbnail VIPS_BLOCK_UNTRUSTED= " + icon)).length, 1)
     check("an offer is a notification of its own, with that picture, Decline and Accept, that stays", notes(), [{ replaces: 0, summary: offerSummary,

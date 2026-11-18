@@ -468,7 +468,7 @@ fn run() -> Result<(), String> {
             let control = control.clone();
             Box::new(move |question, offer| {
                 let yes = control.ask(question, offer, accept_all);
-                if yes && !offer.sender.is_empty() {
+                if yes && !accept_all && !offer.sender.is_empty() {
                     // The doorbell keeps the name for the user's iPhone, if that is the one showing
                     // AirDrop: an iPhone's announcement does not carry its name. On a thread of its
                     // own, as the sender waits for its yes meanwhile.
