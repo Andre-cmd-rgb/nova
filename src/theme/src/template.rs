@@ -2,7 +2,8 @@
 //!
 //! ```text
 //! {{ key }}  {{ key_strip }}  {{ key_rgb }}     palette value, without #, as r,g,b
-//! {{ mix a b 30% }}  (also mix_strip, mix_rgb)  a blended 30% toward b
+//! {{ mix a b 30% }}  (also mix_strip, mix_rgb)  a blended 30% toward b;
+//!                                               a and b are keys or #rrggbb
 //! {{ hypr_gradient key fallback }}              Hyprland Lua color or gradient
 //! {{ gradient_start key fallback }}             first color of a gradient, #rrggbb
 //! {{ shell_gradient key fallback }}             gradient as "c1 c2 45deg"
@@ -41,7 +42,8 @@ fn expand(inner: &str, p: &Palette) -> Option<String> {
     match words[..] {
         [key] => lookup(key, p),
         [function @ ("mix" | "mix_strip" | "mix_rgb"), a, b, amount] => {
-            let color = p.rgb(a)?.mix(p.rgb(b)?, parse_amount(amount)?);
+            let operand = |word: &str| p.rgb(word).or_else(|| Rgb::parse(word));
+            let color = operand(a)?.mix(operand(b)?, parse_amount(amount)?);
             Some(match function {
                 "mix" => color.to_string(),
                 "mix_strip" => color.to_string()[1..].to_owned(),
@@ -263,6 +265,7 @@ mod tests {
             render("{{ mix_rgb foreground background 43% }}", &p),
             "110,110,110"
         );
+        assert_eq!(render("{{ mix foreground #ffffff 50% }}", &p), "#808080");
     }
 
     #[test]

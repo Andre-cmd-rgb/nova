@@ -57,6 +57,35 @@ icon_theme() { grep -oP '^gsettings set org.gnome.desktop.interface icon-theme \
   [ "$(icon_theme)" = Adwaita ]
 }
 
+@test "Adwaita's folders are made in the theme's accent, as the icon theme Nova" {
+  write_file "$XDG_DATA_DIRS/icons/Adwaita/scalable/places/folder.svg" '<path fill="#62A0EA"/><path fill="#438de6"/><path fill="#9a9996"/>'
+  write_file "$XDG_DATA_DIRS/icons/Adwaita/scalable/places/user-home.svg" '<path fill="#62a0ea"/>'
+  write_file "$XDG_DATA_DIRS/icons/Adwaita/scalable/devices/computer.svg" '<path fill="#62a0ea"/>'
+  write_file "$XDG_STATE_HOME/nova/current/theme/adwaita-folders.sed" 's/#62a0ea/#ff0000/gI
+s/#438de6/#00ff00/gI'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ "$(icon_theme)" = Nova ]
+  [ "$(cat "$XDG_DATA_HOME/icons/Nova/scalable/places/folder.svg")" = '<path fill="#ff0000"/><path fill="#00ff00"/><path fill="#9a9996"/>' ]
+  [ "$(cat "$XDG_DATA_HOME/icons/Nova/scalable/places/user-home.svg")" = '<path fill="#ff0000"/>' ]
+  [ ! -e "$XDG_DATA_HOME/icons/Nova/scalable/devices" ]
+  grep -qx 'Inherits=Adwaita' "$XDG_DATA_HOME/icons/Nova/index.theme"
+  # Again, on the next theme change.
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ ! -e "$XDG_DATA_HOME/icons/.Nova.tmp" ]
+}
+
+@test "a theme's own icon set is not replaced by Nova" {
+  echo Yaru-sage >"$XDG_STATE_HOME/nova/current/theme/icons.theme"
+  write_file "$XDG_DATA_DIRS/icons/Yaru-sage/index.theme" '[Icon Theme]'
+  write_file "$XDG_DATA_DIRS/icons/Adwaita/scalable/places/folder.svg" '<path fill="#62a0ea"/>'
+  write_file "$XDG_STATE_HOME/nova/current/theme/adwaita-folders.sed" 's/#62a0ea/#ff0000/gI'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$(icon_theme)" = Yaru-sage ]
+  [ ! -e "$XDG_DATA_HOME/icons/Nova" ]
+}
+
 @test "no window gets title-bar buttons" {
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
   grep -qx "gsettings set org.gnome.desktop.wm.preferences button-layout :" "$CALLS"

@@ -63,6 +63,51 @@ gtk_css() { # rendered file, GTK's folder
   link_config nova.css "$2/gtk.css"
 }
 
+# Adwaita's folders are blue whatever the theme. Nova, an icon theme of the
+# user's own, inherits Adwaita and has its folders (and the places beside
+# them) in the theme's accent: the SVGs copied through adwaita-folders.sed,
+# which the theme renders. Made again on each theme change.
+accent_icons() {
+  local dir adwaita='' out svg
+  local -a dirs
+  [[ -f $theme/adwaita-folders.sed ]] || return 1
+  IFS=: read -ra dirs <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+  for dir in "${dirs[@]}"; do
+    [[ -d $dir/icons/Adwaita/scalable/places ]] && { adwaita=$dir/icons/Adwaita; break; }
+  done
+  [[ -n $adwaita ]] || return 1
+  out=${XDG_DATA_HOME:-$HOME/.local/share}/icons
+  rm -rf -- "$out/.Nova.tmp"
+  mkdir -p "$out/.Nova.tmp/scalable/places" "$out/.Nova.tmp/scalable/mimetypes"
+  for svg in "$adwaita"/scalable/places/*.svg "$adwaita"/scalable/mimetypes/inode-directory.svg; do
+    [[ -f $svg ]] || continue
+    sed -f "$theme/adwaita-folders.sed" "$svg" >"$out/.Nova.tmp/${svg#"$adwaita"/}"
+  done
+  cat >"$out/.Nova.tmp/index.theme" <<'THEME'
+[Icon Theme]
+Name=Nova
+Comment=Adwaita, with its folders in the theme's accent
+Inherits=Adwaita
+Directories=scalable/mimetypes,scalable/places
+
+[scalable/mimetypes]
+Context=MimeTypes
+Size=128
+MinSize=8
+MaxSize=512
+Type=Scalable
+
+[scalable/places]
+Context=Places
+Size=128
+MinSize=8
+MaxSize=512
+Type=Scalable
+THEME
+  rm -rf -- "$out/Nova"
+  mv -- "$out/.Nova.tmp" "$out/Nova"
+}
+
 # GTK reads the palette as an app starts. libadwaita, and GTK 4 without it,
 # follow color-scheme at once: gtk4.css holds its colors to the theme's own
 # light or dark. GTK 3 apps draw with adw-gtk3, libadwaita's look made for
@@ -82,6 +127,7 @@ apply_gtk() {
   local icons=Adwaita gtk_theme=adw-gtk3
   [[ ! -f $theme/icons.theme ]] || icons=$(<"$theme/icons.theme")
   data_installed icons "$icons" index.theme || icons=Adwaita
+  if [[ $icons == Adwaita ]] && accent_icons; then icons=Nova; fi
   data_installed themes "$gtk_theme" gtk-3.0/gtk.css || gtk_theme=Adwaita
   if [[ $mode == light ]]; then
     gsettings set org.gnome.desktop.interface color-scheme prefer-light
