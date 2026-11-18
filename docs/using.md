@@ -149,7 +149,7 @@ Super+Space opens it. Type to search, or go down the list:
 | Apps | the installed apps (Super+Alt+Space opens it here) |
 | Capture | Screenshot; Screen Recording, without audio, with the desktop's or with the desktop's and the microphone's; Text, by OCR, once `tesseract-data-eng` is installed; Color; Emoji |
 | Toggle | Caffeine, Do Not Disturb, Night Light, AirDrop (where the Wi-Fi card can), Screen Time, Menu Bar, Window Gaps; Laptop Display and Touchpad where there is one; Discrete GPU on a ThinkPad P1 Gen 4i |
-| Style | Theme, Background, Font, and the Menu Bar's edge (top or bottom) and transparency |
+| Style | Theme, Background, Font, and the Menu Bar's transparency |
 | Power Mode | the battery's power modes, where the computer has them |
 | Settings | Settings |
 | App Center | [the App Center](apps.md) |
@@ -166,12 +166,13 @@ A search of the whole menu finds more than its entries:
 
 ## The bar
 
-By default the bar holds, from left to right: the menu's star and the workspaces; the indicators, the clock, the keyboard layout, the weather and the update badge; the tray, Bluetooth, mobile data, the network, sound and power.
+The bar is always along the top of the screen. By default it holds, from left to right: the menu's star and the workspaces; the indicators, the clock, the keyboard layout, the weather and the update badge; the tray icons, Bluetooth, mobile data, the network, sound and power. The keyboard layout, mobile data and the update badge show only where they apply.
 
 - **Click** a widget for its panel. Click the star for the menu, right-click it for a terminal.
-- **Drag** the bar by an empty part to another edge of the screen. Drag a widget to move it.
+- **Drag** a widget to move it.
 - **Double-click** an empty part for a [see-through bar](themes.md#a-see-through-bar), and again for a solid one.
-- **Settings → Menu Bar** adds widgets and takes them off: Display for the brightness and the laptop's screen, Battery Life, Screen Time, Microphone, Media, Active window and more.
+- **Tray icons** are all shown, in the order of their names. Right-click one, then **Hide from Menu Bar**, to take it off the bar; **Settings → Menu Bar → Hidden icons** brings it back.
+- **Settings → Menu Bar** switches Weather, Media, Microphone and Active window on or off. A widget switched off and on again is back where it was.
 
 The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget and what each click does.
 
@@ -193,7 +194,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Performance | the power mode on battery, what the power manager is doing, the discrete GPU's mode, and the undervolt |
 | Screen Time | on or off, and where your time went, per app; `nova screentime forget <app>` deletes one app's |
 | Appearance | the theme, the adaptive theme's mode, the background, the font and the text size ([themes](themes.md)) |
-| Menu Bar | the bar's edge, see-through or not, and what is in it |
+| Menu Bar | see-through or not, the widgets that can be switched off, and the tray icons you hid |
 | Lock Screen | your password, the screensaver's and the lock's wait, and fingerprints |
 | Default Apps | the web browser, the code editor and the terminal |
 | Updates | Nova's and the apps' updates, device firmware, release candidates, Check for problems, a bug report and Restart to recovery ([updates](updates.md)) |

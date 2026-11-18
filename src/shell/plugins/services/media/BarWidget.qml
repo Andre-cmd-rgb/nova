@@ -64,7 +64,7 @@ BarWidget {
       }
     }
 
-    // 180 px of title and artist, none on a side bar. Longer, they run past,
+    // 180 px of title and artist. Longer, they run past,
     // in from the right, while they play on a bar that shows with the card
     // closed: a frame each refresh, so only then. Stopped, they are back at
     // the start.
@@ -74,7 +74,7 @@ BarWidget {
       width: Math.min(180, tape.implicitWidth)
       height: playMark.height
       clip: true
-      visible: !widget.vertical && widget.title !== ""
+      visible: widget.title !== ""
 
       BarText {
         id: tape
@@ -84,7 +84,7 @@ BarWidget {
         font.pixelSize: Style.font.body
 
         NumberAnimation on x {
-          running: tape.implicitWidth > ticker.width && !widget.cardOpen && !widget.vertical
+          running: tape.implicitWidth > ticker.width && !widget.cardOpen
             && !widget.bar.tucked && widget.playing
           onRunningChanged: if (!running) tape.x = 0
           loops: Animation.Infinite

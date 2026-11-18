@@ -7,8 +7,8 @@ import qs.Commons as Commons
 // the wheel, and the bar's tooltip, <tip>, while the pointer is on it.
 //
 // It is as thick as the bar. Along the bar it is its text and <margin> at
-// each end, or <uprightMargin> on a bar up a side; a caller that draws its
-// own content says so with <hasContent> and sets the size itself. A button
+// each end; a caller that draws its own content says so with <hasContent>
+// and sets the size itself. A button
 // with nothing to show is gone, unless it <holdsPlace>; a <veiled> one is
 // unseen but keeps its place.
 //
@@ -29,9 +29,7 @@ Item {
   property bool veiled: false
   property bool pressable: true
   property real margin: 8.5
-  property real uprightMargin: 6
 
-  readonly property bool vertical: bar ? bar.vertical : false
   readonly property int thickness: bar ? bar.thickness : Style.bar.sizeHorizontal
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
   // The bar shows the tooltip of a button that is pointed at, shown and
@@ -68,8 +66,8 @@ Item {
 
   visible: hasContent || holdsPlace
   opacity: hasContent && !veiled ? 1 : 0
-  implicitWidth: vertical ? thickness : Math.max(12, words.implicitWidth + 2 * Style.spaceReal(margin))
-  implicitHeight: vertical ? Math.max(12, words.implicitHeight + 2 * Style.spaceReal(uprightMargin)) : thickness
+  implicitWidth: Math.max(12, words.implicitWidth + 2 * Style.spaceReal(margin))
+  implicitHeight: thickness
 
   onBarChanged: _list(bar)
   Component.onCompleted: _list(bar)

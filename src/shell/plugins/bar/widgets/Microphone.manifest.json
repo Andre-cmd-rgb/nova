@@ -9,6 +9,7 @@
     "barWidget": "Microphone.qml"
   },
   "barWidget": {
-    "defaultSection": "right"
+    "defaultSection": "right",
+    "switchable": true
   }
 }

@@ -23,7 +23,6 @@ QtObject {
     version: 1,
     idle: { lock: 300 },
     bar: {
-      position: "top",
       transparent: false,
       centerAnchor: "nova.clock",
       layout: {
@@ -79,6 +78,8 @@ QtObject {
     if (blocked) return
     var saved = withBar(JSON.parse(JSON.stringify(config)))
     saved.version = 1
+    // The bar is always at the top: an edge an older config names is dropped.
+    delete saved.bar.position
     current = saved
     userFile.setText(JSON.stringify(saved, null, 2) + "\n")
   }

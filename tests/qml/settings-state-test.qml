@@ -82,7 +82,7 @@ ShellRoot {
 
   Settings.SettingsState { id: state }
 
-  readonly property string first: JSON.stringify({ bar: { transparent: false, position: "top" }, lock: { seconds: 300 } })
+  readonly property string first: JSON.stringify({ bar: { transparent: false, centerAnchor: "nova.clock" }, lock: { seconds: 300 } })
 
   // Nothing running, nothing waiting, nothing laid over.
   function settled() {
@@ -100,7 +100,7 @@ ShellRoot {
     const lock = state.read.lock
     state.run(["sh", "-c", "sleep 0.3"], { "bar.transparent": true })
     same(state.info.bar.transparent, true, "a change is shown at once, before its command has run")
-    same(state.info.bar.position, "top", "what it does not set is as read")
+    same(state.info.bar.centerAnchor, "nova.clock", "what it does not set is as read")
     check(state.info.lock === lock, "the rest of the state is the very object read")
     same(state.read.bar.transparent, false, "what was read stays as read")
     when(settled, readBack, "the change runs and the state is read again")
@@ -118,7 +118,7 @@ ShellRoot {
   function failed() {
     same(state.info.lock.seconds, 300, "a change that failed goes back to the state as it was")
     same(state.failure, "the lock could not be set", "and its failure is said")
-    const set = JSON.stringify({ bar: { transparent: true, position: "top" }, lock: { seconds: 300 } })
+    const set = JSON.stringify({ bar: { transparent: true, centerAnchor: "nova.clock" }, lock: { seconds: 300 } })
     state.run(["sh", "-c", "printf '%s' '" + set + "' >\"$HOME/settings-state.json\""], { "bar.transparent": true })
     when(settled, kept, "the setting change runs and the state is read again")
   }
@@ -126,7 +126,7 @@ ShellRoot {
   function kept() {
     same(state.info.bar.transparent, true, "a change that took is shown as read")
     // A read begun while a change's command still runs comes back without it.
-    state.run(["sh", "-c", "sleep 0.8"], { "bar.position": "left" })
+    state.run(["sh", "-c", "sleep 0.8"], { "bar.centerAnchor": "nova.weather" })
     later(100, () => {
       state.load()
       when(() => !state.stateProc.running && state.actionProc.running, readMidway, "a read during the change comes back")
@@ -134,23 +134,23 @@ ShellRoot {
   }
 
   function readMidway() {
-    same(state.read.bar.position, "top", "the read during the change has it as it was")
-    same(state.info.bar.position, "left", "and the change is still shown over it")
+    same(state.read.bar.centerAnchor, "nova.clock", "the read during the change has it as it was")
+    same(state.info.bar.centerAnchor, "nova.weather", "and the change is still shown over it")
     when(settled, () => {
-      same(state.info.bar.position, "top", "once its command is done and read again, what is set is shown")
+      same(state.info.bar.centerAnchor, "nova.clock", "once its command is done and read again, what is set is shown")
       cannotStart()
     }, "the change runs and the state is read again")
   }
 
   function cannotStart() {
     state.run(["nova-no-such-command"], { "bar.transparent": false })
-    state.run(["sh", "-c", "printf '%s' '" + JSON.stringify({ bar: { transparent: true, position: "bottom" }, lock: { seconds: 300 } })
-      + "' >\"$HOME/settings-state.json\""], { "bar.position": "bottom" })
+    state.run(["sh", "-c", "printf '%s' '" + JSON.stringify({ bar: { transparent: true, centerAnchor: "nova.media" }, lock: { seconds: 300 } })
+      + "' >\"$HOME/settings-state.json\""], { "bar.centerAnchor": "nova.media" })
     same(state.info.bar.transparent, false, "a change whose command cannot start is shown at once too")
     when(settled, () => {
       same(state.info.bar.transparent, true, "a command that cannot start: the state as it was")
       same(state.failure, "Could not run nova-no-such-command.", "and that it could not run is said")
-      same(state.info.bar.position, "bottom", "the change after it runs all the same")
+      same(state.info.bar.centerAnchor, "nova.media", "the change after it runs all the same")
       failedRead()
     }, "a command that cannot start does not hold up the ones after it")
   }

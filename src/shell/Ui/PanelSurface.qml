@@ -41,32 +41,21 @@ PanelWindow {
 
   // Where things are, on this screen.
   readonly property var _barWindow: widget ? widget.QsWindow.window : null
-  readonly property string _edge: bar ? bar.position : "top"
-  readonly property bool _lying: _edge === "top" || _edge === "bottom"
   readonly property size _screen: screen ? Qt.size(screen.width, screen.height) : Qt.size(0, 0)
-  // The bar's window, against its edge of the screen.
-  readonly property rect _barRect: {
-    const w = _barWindow ? _barWindow.width : _screen.width
-    const h = _barWindow ? _barWindow.height : 0
-    return Qt.rect(_edge === "right" ? _screen.width - w : 0, _edge === "bottom" ? _screen.height - h : 0, w, h)
-  }
-  // How deep a click from the screen's edge still lands on the bar: the
+  // The bar's window, along the top of the screen.
+  readonly property rect _barRect: Qt.rect(0, 0, _barWindow ? _barWindow.width : _screen.width, _barWindow ? _barWindow.height : 0)
+  // How deep a click from the top of the screen still lands on the bar: the
   // bar's own depth, or its window's if deeper, and the gap past it.
-  readonly property real _barDepth: bar ? Math.max(bar.thickness, _lying ? _barRect.height : _barRect.width) + Style.gapsOut : 0
+  readonly property real _barDepth: bar ? Math.max(bar.thickness, _barRect.height) + Style.gapsOut : 0
   // The widget's place in the bar's window; the watcher sees it move.
   readonly property point _widgetAt: {
     widgetMoves.transform
     return widget && _barWindow ? widget.mapToItem(_barWindow.contentItem, 0, 0) : Qt.point(0, 0)
   }
 
-  readonly property real _cardWidth: {
-    const near = _lying ? Style.gapsOut : _barRect.width + Style.gapsOut
-    return Popups.cardWidth(wantWidth, Popups.room(_screen.width, near, Style.gapsOut))
-  }
-  readonly property real _cardHeight: {
-    const near = _lying ? _barRect.height + Style.gapsOut : Style.gapsOut
-    return Popups.cardHeight(wantHeight, card.verticalInset, Popups.room(_screen.height, near, Style.gapsOut), tallest)
-  }
+  readonly property real _cardWidth: Popups.cardWidth(wantWidth, Popups.room(_screen.width, Style.gapsOut, Style.gapsOut))
+  readonly property real _cardHeight: Popups.cardHeight(wantHeight, card.verticalInset,
+    Popups.room(_screen.height, _barRect.height + Style.gapsOut, Style.gapsOut), tallest)
 
   // The card's corner. Away from the bar it starts a gap past the bar's
   // window, whatever the widget's own place across the bar (its row's
@@ -76,14 +65,8 @@ PanelWindow {
     const gap = Style.gapsOut
     if (!widget || !bar) return Qt.point(gap, gap)
     const w = _cardWidth, h = _cardHeight
-    let x, y
-    if (_lying) {
-      x = (centred ? _screen.width / 2 : _widgetAt.x + widget.width / 2) - w / 2
-      y = _edge === "bottom" ? _barRect.y - h - gap : _barRect.bottom + gap
-    } else {
-      x = _edge === "right" ? _barRect.x - w - gap : _barRect.right + gap
-      y = (centred ? _screen.height / 2 : _widgetAt.y + widget.height / 2) - h / 2
-    }
+    const x = (centred ? _screen.width / 2 : _widgetAt.x + widget.width / 2) - w / 2
+    const y = _barRect.bottom + gap
     return Qt.point(Math.round(Popups.within(x, w, _screen.width, gap)), Math.round(Popups.within(y, h, _screen.height, gap)))
   }
 
@@ -100,8 +83,7 @@ PanelWindow {
   }
 
   function _onBar(x, y) {
-    const fromEdge = _edge === "bottom" ? _screen.height - y : _edge === "right" ? _screen.width - x : _edge === "left" ? x : y
-    return fromEdge <= _barDepth
+    return y <= _barDepth
   }
 
   // Hands a click at <x>, <y> to the bar button under it on this panel's

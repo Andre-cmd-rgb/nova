@@ -6,10 +6,10 @@ import qs.Commons as Commons
 import qs.Ui
 import "BarModel.js" as BarModel
 
-// One screen's bar: its window along the edge, the shade under a see-through
-// one, the tooltip that pops out of it, and two overlays over the whole
-// screen, drawn while something is dragged on it: the picture of a widget
-// and the place it would land, and the edge the bar would go to.
+// One screen's bar: its window along the top of the screen, the shade under
+// a see-through one, the tooltip that pops out of it, and an overlay over the
+// whole screen, drawn while a widget is dragged on it: the picture of the
+// widget and the place it would land.
 Scope {
   id: screenBar
 
@@ -18,26 +18,23 @@ Scope {
 
   readonly property var screen: modelData
 
-  // A layer window along the bar's edge, as deep as <depth>, drawn over
-  // whatever the screen shows there.
-  component EdgeWindow: PanelWindow {
-    readonly property string edge: screenBar.bar.position
+  // A layer window along the top of the screen, as deep as <depth>, drawn
+  // over whatever the screen shows there.
+  component TopWindow: PanelWindow {
     property int depth: screenBar.bar.thickness
 
     screen: screenBar.screen
     surfaceFormat.opaque: false
-    implicitWidth: screenBar.bar.vertical ? depth : 0
-    implicitHeight: screenBar.bar.vertical ? 0 : depth
-    anchors.top: edge !== "bottom"
-    anchors.bottom: edge !== "top"
-    anchors.left: edge !== "right"
-    anchors.right: edge !== "left"
+    implicitHeight: depth
+    anchors.top: true
+    anchors.left: true
+    anchors.right: true
   }
 
-  EdgeWindow {
+  TopWindow {
     id: strip
 
-    // A tucked bar is moved past its edge rather than unmapped (Bar.qml).
+    // A tucked bar is moved past the top rather than unmapped (Bar.qml).
     readonly property int offset: screenBar.bar.tucked ? -depth : 0
 
     visible: !remap.remapping
@@ -45,19 +42,16 @@ Scope {
     exclusionMode: screenBar.bar.tucked ? ExclusionMode.Ignore : ExclusionMode.Auto
     WlrLayershell.namespace: "nova-bar"
     WlrLayershell.layer: WlrLayer.Top
-    margins.top: edge === "top" ? offset : 0
-    margins.bottom: edge === "bottom" ? offset : 0
-    margins.left: edge === "left" ? offset : 0
-    margins.right: edge === "right" ? offset : 0
+    margins.top: offset
 
     Remap {
       id: remap
       window: strip
     }
 
-    // The sections, made anew when the bar turns on its side. The pointer
-    // is watched here rather than on them: an ancestor of a widget stays
-    // hovered while the pointer is on the widget, a sibling would not.
+    // The pointer is watched here rather than on the sections: an ancestor
+    // of a widget stays hovered while the pointer is on the widget, a
+    // sibling would not.
     Item {
       anchors.fill: parent
 
@@ -85,20 +79,13 @@ Scope {
         function onVisibleChanged() { hover.count(hover.hovered && strip.visible) }
       }
 
-      Repeater {
-        model: [screenBar.bar.vertical]
-
-        Sections {
-          required property bool modelData
-
-          bar: screenBar.bar
-          standing: modelData
-        }
+      Sections {
+        bar: screenBar.bar
       }
     }
 
-    // The tooltip, for a widget on this screen's bar: 6 px off it, on its
-    // side away from the edge, slid along to stay on the screen.
+    // The tooltip, for a widget on this screen's bar: 6 px below it, slid
+    // along to stay on the screen.
     PopupWindow {
       id: bubbleWindow
 
@@ -123,7 +110,7 @@ Scope {
         onAnchoring: {
           const widget = bubbleWindow.widget
           if (!widget) return
-          const corner = BarModel.tipCorner(strip.edge, widget.width, widget.height, bubbleWindow.implicitWidth, bubbleWindow.implicitHeight, 6)
+          const corner = BarModel.tipCorner(widget.width, widget.height, bubbleWindow.implicitWidth, 6)
           const at = strip.contentItem.mapFromItem(widget, corner.x, corner.y)
           bubbleAnchor.rect.x = Math.round(at.x)
           bubbleAnchor.rect.y = Math.round(at.y)
@@ -158,16 +145,14 @@ Scope {
   }
 
   // The shade behind a see-through bar's text, where the background there
-  // needs one (SeeThrough): strongest at the screen's edge and gone twice
+  // needs one (SeeThrough): strongest at the top of the screen and gone twice
   // the bar's depth in. It is a window of its own, under the windows and
   // over the background, as the bar's is only as deep as the bar: drawn
   // there it would end in a line. So the bar has no surface and no edge, and
   // its text still reads on a pale sky.
-  EdgeWindow {
+  TopWindow {
     id: shade
 
-    // The gradient runs from the screen's edge inwards.
-    readonly property bool fromFarSide: edge === "bottom" || edge === "right"
     readonly property color colour: screenBar.bar.shadeColour
     readonly property real strength: screenBar.bar.shadeStrength
 
@@ -190,10 +175,10 @@ Scope {
     Rectangle {
       anchors.fill: parent
       gradient: Gradient {
-        orientation: screenBar.bar.vertical ? Gradient.Horizontal : Gradient.Vertical
-        GradientStop { position: shade.fromFarSide ? 1 : 0; color: shade.at(1) }
+        orientation: Gradient.Vertical
+        GradientStop { position: 0; color: shade.at(1) }
         GradientStop { position: 0.5; color: shade.at(0.55) }
-        GradientStop { position: shade.fromFarSide ? 0 : 1; color: shade.at(0) }
+        GradientStop { position: 1; color: shade.at(0) }
       }
     }
   }
@@ -260,41 +245,6 @@ Scope {
       height: line ? line.height : 0
       color: Commons.Color.accent
       radius: dragLayer.drag.lineWidth / 2
-    }
-  }
-
-  // The bar being dragged: a slab on the edge it would go to. One slab for
-  // each edge, faded in and out, as one slab moved from edge to edge is
-  // drawn halfway there and flickers.
-  Overlay {
-    id: edgeLayer
-
-    readonly property BarDrag drag: screenBar.bar.barDrag
-
-    visible: drag.active && BarModel.sameScreen(drag.screen, screenBar.screen)
-    WlrLayershell.namespace: "nova-bar-edge-drag"
-
-    Repeater {
-      model: BarModel.EDGES
-
-      BarFrame {
-        required property string modelData
-        readonly property bool side: BarModel.onSide(modelData)
-        readonly property int depth: side ? Style.bar.sizeVertical : Style.bar.sizeHorizontal
-        readonly property bool target: edgeLayer.drag.edge === modelData
-
-        bar: screenBar.bar
-        x: modelData === "right" ? parent.width - depth : 0
-        y: modelData === "bottom" ? parent.height - depth : 0
-        width: side ? depth : parent.width
-        height: side ? parent.height : depth
-        opacity: !target ? 0 : screenBar.bar.transparent ? 0.45 : 0.7
-        visible: opacity > 0
-
-        Behavior on opacity {
-          NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-        }
-      }
     }
   }
 }

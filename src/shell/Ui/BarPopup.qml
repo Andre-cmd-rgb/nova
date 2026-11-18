@@ -6,8 +6,8 @@ import qs.Commons as Commons
 import "Popups.js" as Popups
 
 // A card that pops out of a bar widget, <widget>, as a popup of the bar's
-// own window: on the widget's far side from the screen's edge, a gap off it
-// and centred on it, kept that gap from the bar's ends. Being a popup it
+// own window: below the widget, a gap off it and centred on it, kept that
+// gap from the bar's ends. Being a popup it
 // hears the keyboard only once the pointer has been in it; a panel opened
 // from the keyboard uses PanelSurface instead.
 //
@@ -34,8 +34,6 @@ PopupWindow {
   readonly property QtObject bar: host ? host.bar : null
   readonly property var _barWindow: widget ? widget.QsWindow.window : null
   readonly property var _screen: _barWindow ? _barWindow.screen : null
-  readonly property string _edge: bar ? bar.position : "top"
-  readonly property bool _lying: _edge === "top" || _edge === "bottom"
 
   function close() {
     Popups.dismiss(popup)
@@ -44,10 +42,10 @@ PopupWindow {
   // Mapped through the fade out.
   visible: open || card.opacity > 0
   color: "transparent"
-  // The room along each side: the screen, less the bar where it lies across
-  // that side, less a gap at each end.
-  implicitWidth: Popups.cardWidth(wantWidth, Popups.room(_screen ? _screen.width : 0, (_lying ? 0 : _barWindow?.width ?? 0) + Style.gapsOut, Style.gapsOut))
-  implicitHeight: Popups.cardHeight(wantHeight, card.verticalInset, Popups.room(_screen ? _screen.height : 0, (_lying ? _barWindow?.height ?? 0 : 0) + Style.gapsOut, Style.gapsOut), tallest)
+  // The room along each side: the screen, less the bar across its top, less
+  // a gap at each end.
+  implicitWidth: Popups.cardWidth(wantWidth, Popups.room(_screen ? _screen.width : 0, Style.gapsOut, Style.gapsOut))
+  implicitHeight: Popups.cardHeight(wantHeight, card.verticalInset, Popups.room(_screen ? _screen.height : 0, (_barWindow?.height ?? 0) + Style.gapsOut, Style.gapsOut), tallest)
 
   // The bar has one card or panel open at a time.
   onOpenChanged: bar?.claimPopup(host || popup, open)
@@ -76,13 +74,11 @@ PopupWindow {
       const w = popup.widget, win = popup._barWindow
       if (!w || !win || !popup.bar) return
       const gap = Style.gapsOut, cw = popup.implicitWidth, ch = popup.implicitHeight
-      // Centred on the widget along the bar, a gap past it away from the
-      // edge; then kept a gap inside the bar window's length.
-      const along = popup._lying ? w.width / 2 - cw / 2 : w.height / 2 - ch / 2
-      const away = { top: w.height + gap, bottom: -ch - gap, left: w.width + gap, right: -cw - gap }[popup._edge]
-      const corner = win.contentItem.mapFromItem(w, popup._lying ? along : away, popup._lying ? away : along)
-      place.rect.x = Math.round(popup._lying ? Popups.within(corner.x, cw, win.width, gap) : corner.x)
-      place.rect.y = Math.round(popup._lying ? corner.y : Popups.within(corner.y, ch, win.height, gap))
+      // Centred on the widget, a gap below it; then kept a gap inside the
+      // bar window's length.
+      const corner = win.contentItem.mapFromItem(w, w.width / 2 - cw / 2, w.height + gap)
+      place.rect.x = Math.round(Popups.within(corner.x, cw, win.width, gap))
+      place.rect.y = Math.round(corner.y)
     }
   }
 

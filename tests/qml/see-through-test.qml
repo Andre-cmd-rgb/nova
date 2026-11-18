@@ -66,7 +66,7 @@ ShellRoot {
   Component.onCompleted: pick.setText('#!/bin/sh\necho "$*" >"$HOME/asked"\nread -r answer <"$HOME/wall"\nsleep 0.6\necho "$answer"\n')
 
   // Switched on: the picker starts 120 ms on. The wallpaper changes 250 ms
-  // later, and the edge with it, while the picker still runs.
+  // later, and the bar's depth with it, while the picker still runs.
   function begin() {
     ran = true
     seeThrough.want(true)
@@ -78,7 +78,7 @@ ShellRoot {
     interval: 370
     onTriggered: {
       wall.setText("#222222 #dddddd 0.40\n")
-      seeThrough.edge = "bottom"
+      seeThrough.thickness = 30
       settled.start()
     }
   }
@@ -92,7 +92,7 @@ ShellRoot {
       check("  with its shade", String(seeThrough.shade), "#dddddd")
       check("  at its strength", seeThrough.strength, 0.4)
       asked.reload()
-      check("  asked with the edge, the bar's depth, the screen and the theme's two colours", asked.text().trim(), "bottom 26 1920x1200 #ffffff #000000")
+      check("  asked with the top, the bar's depth, the screen and the theme's two colours", asked.text().trim(), "top 30 1920x1200 #ffffff #000000")
       seeThrough.answered("not an answer")
       check("an answer that is not one changes nothing", String(seeThrough.colour), "#222222")
       seeThrough.want(false)

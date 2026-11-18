@@ -46,16 +46,16 @@ Item {
   }
 
   // How long the mark of an open panel is along the bar: what the widget
-  // asks for with <markLength> (its label in a wider slot, a stack on a
-  // side bar), or a little over half the slot.
+  // asks for with <markLength> (its label in a wider slot), or a little over
+  // half the slot.
   readonly property real markLength: {
     const asked = widget ? Number(widget.markLength) : 0
-    return asked > 0 ? Math.round(asked) : Math.max(Style.space(10), Math.round((bar.vertical ? height : width) * 0.55))
+    return asked > 0 ? Math.round(asked) : Math.max(Style.space(10), Math.round(width * 0.55))
   }
 
   readonly property bool shows: !!widget && widget.visible
 
-  implicitWidth: !shows ? 0 : bar.vertical ? bar.thickness : widget.implicitWidth
+  implicitWidth: shows ? widget.implicitWidth : 0
   implicitHeight: shows ? widget.implicitHeight : 0
   width: implicitWidth
   height: implicitHeight
@@ -136,22 +136,20 @@ Item {
     onLoaded: slot.handOver()
   }
 
-  // The mark of an open panel: a short line on the widget's inner edge,
-  // pointing at the panel (under it on a top bar, over it on a bottom one,
-  // beside it on a side), rounded down as glyphs are drawn.
+  // The mark of an open panel: a short line on the widget's lower edge,
+  // pointing at the panel under it, rounded down as glyphs are drawn.
   Rectangle {
     readonly property int across: Style.space(2)
     readonly property int fromEdge: Style.space(2)
-    readonly property string edge: slot.bar.position
 
     visible: opacity > 0
     opacity: slot.shown && !slot.lifted ? 0.9 : 0
     color: Commons.Color.accent
     radius: across / 2
-    width: slot.bar.vertical ? across : slot.markLength
-    height: slot.bar.vertical ? slot.markLength : across
-    x: edge === "left" ? parent.width - width - fromEdge : edge === "right" ? fromEdge : Math.floor((parent.width - width) / 2)
-    y: edge === "top" ? parent.height - height - fromEdge : edge === "bottom" ? fromEdge : Math.floor((parent.height - height) / 2)
+    width: slot.markLength
+    height: across
+    x: Math.floor((parent.width - width) / 2)
+    y: parent.height - height - fromEdge
     z: 50
 
     Behavior on opacity {

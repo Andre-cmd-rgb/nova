@@ -109,8 +109,8 @@ BarWidget {
     id: rows
 
     Item {
-      implicitWidth: host.vertical ? Math.max(unlit.implicitWidth, host.thickness) : unlit.implicitWidth
-      implicitHeight: host.vertical ? unlit.implicitHeight : Math.max(unlit.implicitHeight, host.thickness)
+      implicitWidth: unlit.implicitWidth
+      implicitHeight: Math.max(unlit.implicitHeight, host.thickness)
       width: implicitWidth
       height: implicitHeight
 
@@ -120,8 +120,7 @@ BarWidget {
 
       Line {
         id: unlit
-        anchors.verticalCenter: host.vertical ? undefined : parent.verticalCenter
-        anchors.horizontalCenter: host.vertical ? parent.horizontalCenter : undefined
+        anchors.verticalCenter: parent.verticalCenter
         opacity: host.showsDark ? 1 : 0
         enabled: host.showsDark
 
@@ -154,11 +153,8 @@ BarWidget {
     }
   }
 
-  // Indicators in a row along the bar, or a column on a side bar.
-  component Line: Grid {
-    rows: host.vertical ? -1 : 1
-    columns: host.vertical ? 1 : -1
-  }
+  // Indicators in a row along the bar.
+  component Line: Row {}
 
   // One indicator, made from its file. Every one listed has a copy in the
   // off row, which hides itself while it is on, and one that is on has a

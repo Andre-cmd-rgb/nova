@@ -21,9 +21,7 @@ ShellRoot {
   property string waitingFor: ""
 
   property QtObject fakeBar: QtObject {
-    readonly property bool vertical: false
     readonly property int thickness: 30
-    readonly property string position: "top"
     readonly property string fontFamily: "monospace"
     readonly property color foreground: "white"
     readonly property color background: "black"

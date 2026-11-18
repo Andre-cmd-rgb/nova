@@ -150,8 +150,7 @@ QtObject {
   // ---------------------------------------------------------------- bar
   //
   // The bar's sizes as at a 12 px base, which grow with the type unless
-  // [bar] scale-with-font is off. [bar] size-horizontal and size-vertical set
-  // its thickness on a top or bottom bar and on a side bar.
+  // [bar] scale-with-font is off. [bar] size-horizontal sets its thickness.
 
   readonly property bool barFollowsType: flag(toml["bar.scale-with-font"], true)
 
@@ -161,7 +160,6 @@ QtObject {
 
   readonly property QtObject bar: QtObject {
     readonly property int sizeHorizontal: style.barSize(style.pixels("bar.size-horizontal", 26))
-    readonly property int sizeVertical: style.barSize(style.pixels("bar.size-vertical", 28))
     readonly property int iconSlot: style.barSize(27)
     readonly property int iconCanvas: style.barSize(16)
     readonly property int iconFont: style.barSize(13)

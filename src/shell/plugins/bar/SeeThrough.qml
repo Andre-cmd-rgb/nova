@@ -9,7 +9,7 @@ import "BarModel.js" as BarModel
 // it: the other colour, as strong as that part of the background needs, and
 // not at all over one the ink reads on as it is (src/theme/src/bar.rs).
 // Until it answers, the bar keeps the theme's solid look; it is asked again
-// when the edge, the screen, the theme or the background changes. Its answer
+// when the bar's depth, the screen, the theme or the background changes. Its answer
 // is drawn at once, as is the way back to the theme's colour: <fades> is off
 // until the change has been drawn.
 Item {
@@ -17,7 +17,6 @@ Item {
 
   // What the bar asks with.
   property bool wanted: false
-  property string edge: "top"
   property int thickness: 0
   // The size of the screen the background is measured on, in the units of
   // <thickness>.
@@ -85,7 +84,6 @@ Item {
   }
 
   onWantedChanged: ask()
-  onEdgeChanged: ask()
   onThicknessChanged: ask()
   onScreenWidthChanged: ask()
   onScreenHeightChanged: ask()
@@ -102,7 +100,7 @@ Item {
         seeThrough.stale = true
         return
       }
-      picker.command = seeThrough.pickCommand.concat([seeThrough.edge, String(seeThrough.thickness),
+      picker.command = seeThrough.pickCommand.concat(["top", String(seeThrough.thickness),
         seeThrough.screenWidth + "x" + seeThrough.screenHeight,
         BarModel.hex(seeThrough.text.r, seeThrough.text.g, seeThrough.text.b),
         BarModel.hex(seeThrough.backdrop.r, seeThrough.backdrop.g, seeThrough.backdrop.b)])

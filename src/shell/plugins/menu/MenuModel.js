@@ -428,13 +428,13 @@ function listHeight(rows, room, size) {
 // ------------------------------------------------------- when: and checked:
 
 // Commands a checked: reads a value out of, which rows side by side ask
-// alike: Style › Menu Bar's rows compare `nova-bar position`. The script
+// alike: the rows that ask `nova-bar transparent`. The script
 // runs each once, first, and a guard's `$(command)` reads what it printed
 // instead: both drop the trailing newlines and split alike unquoted. Only
-// that form is swapped; `command -v nova-bar` or `X=1 nova-bar position`
+// that form is swapped; `command -v nova-bar` or `X=1 nova-bar transparent`
 // still run the command. Each is read before the guards, as each guard runs
 // in a subshell, and what one kept would be gone by the next.
-const SHARED_READS = ["nova-bar position", "nova-bar transparent"]
+const SHARED_READS = ["nova-bar transparent"]
 
 function quoted(text) {
   return "'" + String(text).replace(/'/g, "'\\''") + "'"

@@ -28,19 +28,6 @@ var FORMATS = [
   "yyyy-MM-dd HH:mm"
 ]
 
-// On a side bar each part of the label is a line of its own, and there is
-// room for a few: AM/PM, a fourth line, only on the plain time.
-var VERTICAL_FORMATS = [
-  "HH\n—\nmm",
-  "h\n—\nmm\nAP",
-  "dd\nMMM\n'W'ww\n''yy",
-  "HH\nmm"
-]
-
-function formats(vertical) {
-  return vertical ? VERTICAL_FORMATS : FORMATS
-}
-
 // The walk: the presets, then the configured alternate and format when they
 // are others, each once. Its order does not depend on the format in use, or
 // a step written back to shell.json would turn the walk into a swing

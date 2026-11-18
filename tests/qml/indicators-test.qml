@@ -20,7 +20,6 @@ ShellRoot {
   }
 
   property QtObject fakeBar: QtObject {
-    readonly property bool vertical: false
     readonly property int thickness: 30
     readonly property string fontFamily: "monospace"
     readonly property color textColour: "white"

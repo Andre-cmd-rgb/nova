@@ -39,10 +39,10 @@ Panel {
   readonly property string glyph: Model.icon(flow, level)
 
   readonly property bool percentShown: setting("showPercentage") === true
-  readonly property bool numbered: percentShown && !vertical
+  readonly property bool numbered: percentShown
   // The percentage widens the button past an icon's slot, so the open-panel
   // mark takes the width painted rather than a share of the slot.
-  readonly property real markLength: numbered && !vertical ? button.inkWidth : 0
+  readonly property real markLength: numbered ? button.inkWidth : 0
 
   function togglePercentage() {
     const entry = Object.assign({}, settings, { showPercentage: !percentShown })

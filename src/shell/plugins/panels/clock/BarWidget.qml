@@ -21,21 +21,17 @@ Ui.Panel {
   readonly property date now: tick.date
   property date stamp: tick.date
 
-  // The settings holding the format and its alternate: a side bar stacks
-  // the label in lines, and has a pair of its own.
-  readonly property var formatKeys: vertical ? ["verticalFormat", "verticalFormatAlt"] : ["format", "formatAlt"]
-  readonly property string pattern: setting(formatKeys[0], vertical ? "HH\n—\nmm" : "dddd HH:mm")
-  readonly property string alternate: setting(formatKeys[1], vertical ? "dd\nMMM\n'W'ww\n''yy" : "d MMMM 'W'ww yyyy")
-  readonly property var ring: Model.formatRing(pattern, alternate, Model.formats(vertical))
+  // The settings holding the format and its alternate.
+  readonly property string pattern: setting("format", "dddd HH:mm")
+  readonly property string alternate: setting("formatAlt", "d MMMM 'W'ww yyyy")
+  readonly property var ring: Model.formatRing(pattern, alternate, Model.FORMATS)
   readonly property string label: Qt.formatDateTime(stamp, Model.withWeek(pattern, stamp.getFullYear(), stamp.getMonth(), stamp.getDate()))
-  readonly property var lines: label.split("\n")
 
   // The day weeks start on: the setting's, else the locale's.
   readonly property int weekStart: Model.weekStart(setting("weekStartDay", null), Qt.locale().firstDayOfWeek)
 
-  // The mark under the open panel: as wide as the label, or on a side bar
-  // as tall as one of its lines, as an icon's would be.
-  readonly property real markLength: vertical ? Math.max(Style.space(10), Math.round(Style.bar.iconSlot * 0.55)) : button.textWidth
+  // The mark under the open panel: as wide as the label.
+  readonly property real markLength: button.textWidth
   // Its card covers the bar's centre, which keeps the peek shut.
   readonly property bool hidesPeek: true
 
@@ -63,7 +59,7 @@ Ui.Panel {
   // The format after this one, kept, so the label shown is the one kept.
   function cycleFormat() {
     const next = Model.nextFormat(ring, pattern)
-    if (next !== "" && next !== pattern) save({ [formatKeys[0]]: next })
+    if (next !== "" && next !== pattern) save({ format: next })
   }
 
   // Monday and Sunday, either way; from any other day, Monday.
@@ -111,27 +107,13 @@ Ui.Panel {
     id: button
     anchors.fill: parent
     bar: clock.bar
-    text: clock.vertical ? "" : clock.label
-    hasContent: clock.vertical ? clock.lines.length > 0 : text !== ""
-    implicitHeight: clock.vertical ? clock.lines.length * Style.bar.iconSlot : button.thickness
+    text: clock.label
     margin: 8.75
-    uprightMargin: 8.75
 
     onClicked: function (which) {
       if (which === Qt.RightButton) clock.cycleFormat()
       else if (which === Qt.MiddleButton) clock.bar?.run("nova-menu-timezone")
       else clock.toggle()
-    }
-
-    // On a side bar the label is a stack of its lines, in the button's
-    // face and ink.
-    Stack {
-      visible: clock.vertical
-      anchors.fill: parent
-      lines: clock.lines
-      face: button.fontFamily
-      size: button.fontSize
-      ink: button.foreground
     }
   }
 
@@ -151,32 +133,6 @@ Ui.Panel {
       id: view
       anchors.fill: parent
       Component.onCompleted: setSource(Qt.resolvedUrl("Panel.qml"), { clock: clock })
-    }
-  }
-
-  // <lines> one under another, each a glyph's height; a line of more than
-  // three characters a size smaller, to fit across the bar.
-  component Stack: Column {
-    id: stack
-
-    property var lines: []
-    property string face
-    property real size
-    property color ink
-
-    Repeater {
-      model: stack.lines
-
-      CentredGlyph {
-        required property string modelData
-
-        width: stack.width
-        height: Style.bar.iconSlot
-        text: modelData
-        fontFamily: stack.face
-        fontSize: modelData.length > 3 ? stack.size * 0.9 : stack.size
-        color: stack.ink
-      }
     }
   }
 }

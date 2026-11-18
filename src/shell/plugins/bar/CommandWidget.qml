@@ -43,7 +43,6 @@ BarButton {
   urgent: printed.active
   holdsPlace: option("keepSpace", false) === true
   margin: Number(option("horizontalMargin", 7.5))
-  uprightMargin: Number(option("verticalPadding", 6))
   fontSize: Number(option("fontSize", 12))
 
   onClicked: function(which) {

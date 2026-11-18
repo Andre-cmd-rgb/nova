@@ -34,8 +34,7 @@ BarWidget {
     if (!openProc.running) openProc.running = true
   }
 
-  // Nothing to say before the first reply, and a vertical bar has no room for
-  // the label — the glyph alone still opens the window.
+  // Nothing to say before the first reply.
   visible: indicator && total !== ""
   implicitWidth: visible ? button.implicitWidth : 0
   implicitHeight: visible ? button.implicitHeight : 0
@@ -66,7 +65,7 @@ BarWidget {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: root.showTotal && !root.vertical ? "󰥔 " + root.total : "󰥔"
+    text: root.showTotal ? "󰥔 " + root.total : "󰥔"
     tip: "Screen time today: " + root.total
     fontSize: Style.font.bodySmall
     onClicked: function (b) {

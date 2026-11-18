@@ -1,11 +1,9 @@
 .pragma library
 
 // The bar's rules, kept apart from its windows: what a layout entry says,
-// where the tray sits in a section, which copy of a widget a key reaches,
-// where a dragged widget lands, which edge a dragged bar goes to, and where
-// a tooltip goes.
+// which copy of a widget a key reaches, where a dragged widget lands, and
+// where a tooltip goes.
 
-var EDGES = ["top", "bottom", "left", "right"]
 var SECTIONS = ["left", "center", "right"]
 
 // A number held between min and max; min for one that is not a number.
@@ -18,16 +16,6 @@ function clamp(value, min, max) {
 // null, not a list.
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
-}
-
-// The edge shell.json names, top for anything else.
-function edge(value) {
-  const name = String(value || "").trim()
-  return EDGES.indexOf(name) === -1 ? "top" : name
-}
-
-function onSide(edgeName) {
-  return edgeName === "left" || edgeName === "right"
 }
 
 // A layout entry is a bare id or an object carrying one.
@@ -68,19 +56,6 @@ function section(layout, name) {
 function barOf(config) {
   if (!isObject(config.bar)) config.bar = {}
   return config.bar
-}
-
-// The tray's drawer opens away from the screen's edge, so the tray goes to
-// the inner end of its section: first on the right, last on the left and in
-// the centre. A section listing it twice keeps the last.
-function trayInward(entries, section) {
-  const all = Array.isArray(entries) ? entries : []
-  const isTray = entry => entryId(entry) === "nova.tray"
-  const trays = all.filter(isTray)
-  if (trays.length === 0) return all.slice()
-  const rest = all.filter(entry => !isTray(entry))
-  const tray = trays[trays.length - 1]
-  return section === "right" ? [tray].concat(rest) : rest.concat([tray])
 }
 
 // The widget the centre is centred on, the rest hanging off its sides. One
@@ -205,14 +180,14 @@ function travelled(from, to) {
 // is closest along the bar, so the empty bar around a centred group takes a
 // drop too. Candidates are { slot, x, y, width, height } in the window;
 // returns { slot, after }, or null.
-function dropPlace(candidates, point, vertical) {
-  const along = Number(point && (vertical ? point.y : point.x))
+function dropPlace(candidates, point) {
+  const along = Number(point && point.x)
   if (!isFinite(along)) return null
   let nearest = null
   for (const place of Array.isArray(candidates) ? candidates : []) {
     if (!place || !place.slot) continue
-    const start = Number(vertical ? place.y : place.x)
-    const length = Number(vertical ? place.height : place.width)
+    const start = Number(place.x)
+    const length = Number(place.width)
     if (!isFinite(start) || !isFinite(length) || length <= 0) continue
     const toStart = Math.abs(along - start)
     const toEnd = Math.abs(along - (start + length))
@@ -222,45 +197,16 @@ function dropPlace(candidates, point, vertical) {
   return nearest && { slot: nearest.slot, after: nearest.after }
 }
 
-// The edge a bar dragged to `point` goes to: the screen is cut along its
-// diagonals, measured in fractions of its size so a wide screen does not
-// favour its sides, and the quarter holding the pointer names the edge.
-function nearestEdge(point, width, height) {
-  const x = width > 0 ? clamp(point.x / width, 0, 1) : 0.5
-  const y = height > 0 ? clamp(point.y / height, 0, 1) : 0.5
-  const distances = { top: y, bottom: 1 - y, left: x, right: 1 - x }
-  let nearest = "top"
-  EDGES.forEach(function(name) {
-    if (distances[name] < distances[nearest]) nearest = name
-  })
-  return nearest
-}
-
-// A point in a bar window, on its screen: a bottom or right bar's window
-// starts that far from the screen's top or left.
-function onScreen(point, edgeName, screenWidth, screenHeight, windowWidth, windowHeight) {
-  const at = { x: point ? point.x : 0, y: point ? point.y : 0 }
-  if (edgeName === "bottom") at.y += Math.max(0, screenHeight - windowHeight)
-  else if (edgeName === "right") at.x += Math.max(0, screenWidth - windowWidth)
-  return at
-}
-
 // The line drawn where a dragged widget would land: across the bar, at the
 // start or the end of the widget at `point` with `width` and `height`.
-function dropMarker(point, width, height, after, vertical, thickness) {
-  if (vertical) return { x: point.x, y: point.y + (after ? height : 0) - thickness / 2, width: width, height: thickness }
+function dropMarker(point, width, height, after, thickness) {
   return { x: point.x + (after ? width : 0) - thickness / 2, y: point.y, width: thickness, height: height }
 }
 
-// Where a tooltip <width> by <height> goes beside a widget <widgetWidth> by
-// <widgetHeight> on a bar on <edgeName>, in the widget's coordinates: <gap>
-// off the widget on its side away from the edge, centred on it along the
-// bar.
-function tipCorner(edgeName, widgetWidth, widgetHeight, width, height, gap) {
-  if (edgeName === "left") return { x: widgetWidth + gap, y: widgetHeight / 2 - height / 2 }
-  if (edgeName === "right") return { x: -width - gap, y: widgetHeight / 2 - height / 2 }
-  const x = widgetWidth / 2 - width / 2
-  return edgeName === "bottom" ? { x: x, y: -height - gap } : { x: x, y: widgetHeight + gap }
+// Where a tooltip <width> wide goes below a widget <widgetWidth> by
+// <widgetHeight>, in the widget's coordinates: <gap> under it, centred on it.
+function tipCorner(widgetWidth, widgetHeight, width, gap) {
+  return { x: widgetWidth / 2 - width / 2, y: widgetHeight + gap }
 }
 
 // "#rrggbb" for channels from 0 to 1.

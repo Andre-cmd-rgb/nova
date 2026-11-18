@@ -2,21 +2,21 @@
 
 Nova's bar is a plugin of [`nova-shell`](../../README.md) (`id: nova.bar`,
 kind `bar`). The shell starts it with the session and keeps it to the end:
-one bar along the same edge of every screen, each with the same widgets.
+one bar along the top of every screen, each with the same widgets.
 
 ## Its files
 
 | File | What it is |
 |---|---|
 | `Bar.qml` | The bar as a whole: its part of `shell.json`, its look, the slots of every widget on every screen, the panels and the one popup open, the tooltip, the peek, and all that a widget reads on `bar` |
-| `ScreenBar.qml` | One screen's bar: the window on its edge, the tooltip that comes out of it, and the overlays drawn while a widget or the bar is dragged |
-| `BarFrame.qml` | The frame those overlays draw, and the slot a dragged widget leaves |
-| `Sections.qml` | The left, centre and right sections in that window, and the bar's own gestures on its empty part |
+| `ScreenBar.qml` | One screen's bar: the window along the top, the tooltip that comes out of it, and the overlay drawn while a widget is dragged |
+| `BarFrame.qml` | The frame that overlay draws, and the slot a dragged widget leaves |
+| `Sections.qml` | The left, centre and right sections in that window, and the double click on its empty part |
 | `WidgetSlot.qml` | One widget's place: it loads the widget, hands it the bar and its settings, marks it while its panel is open, and drags it |
 | `CommandWidget.qml` | A user's widget that shows what a command prints |
 | `SeeThrough.qml` | The ink of a see-through bar and the shade behind it, which `nova-theme bar` picks |
 | `Tip.qml` | The bar's one tooltip |
-| `WidgetDrag.qml`, `BarDrag.qml` | A widget being dragged to another place; the bar being dragged to another edge |
+| `WidgetDrag.qml` | A widget being dragged to another place |
 | `BarModel.js` | The rules the windows follow, apart so the tests reach them: entries, the tray's place, the centre's anchor, which copy a key reaches, where a drag lands, where a tooltip goes |
 | `BarIpc.qml` | The `nova-shell` targets of the widgets (`nova-shell nova.audio toggle`, `nova-shell nova.indicators refresh`) |
 
@@ -38,26 +38,33 @@ without a `bar` key gets Nova's bar.
 
 On the bar itself:
 
-- drag the bar by an empty part, or press there for a moment, and let go
-  nearer another edge: the bar goes there;
 - double click an empty part for a transparent bar, and again for a solid
   one;
 - drag a widget, and let go beside another: it moves there, in another
   section too.
 
-From a terminal, `nova bar position`, `nova bar transparent`, `nova bar move`
-and `nova bar set` do the same; `nova bar put` and `nova bar remove`, or
-Settings, add widgets and take them off. `nova bar position` writes only the
-user's file. `nova-toggle-bar` hides the bar and shows it again.
+From a terminal, `nova bar transparent`, `nova bar move` and `nova bar set`
+do the same; `nova bar put` and `nova bar remove`, or Settings, switch widgets
+on and off. A widget switched off keeps its entry in the layout, marked
+`"off": true`, which the bar leaves out; switched on again it is where it
+was, also after a restart. `nova-toggle-bar` hides the bar and shows it again.
 
-A bar on the bottom edge, transparent, with the weather and the indicators
+The bar is always at the top. A `position` in an older `shell.json` is
+ignored, and dropped at the next write.
+
+Settings → Menu Bar has a switch only for the widgets whose manifest says
+`"barWidget": { "switchable": true }`: weather, media, microphone and the
+active window. The others are always on the bar, and those that make sense
+only on some computers (keyboard layout, mobile data, the update badge) show
+only where they apply.
+
+A transparent bar with the weather and the indicators
 either side of the clock:
 
 ```json
 {
   "version": 1,
   "bar": {
-    "position": "bottom",
     "transparent": true,
     "centerAnchor": "nova.clock",
     "layout": {
@@ -79,10 +86,6 @@ moves only those beyond it. An anchor the centre does not have (an id from
 before a rename) is the clock, while the centre has the clock. An empty
 `centerAnchor` centres the whole centre as one run.
 
-The tray's drawer opens away from the screen's edge, so the tray always goes
-to its section's inner end: first on the right, last on the left and in the
-centre, wherever the layout puts it (in the example, before the network).
-
 ## The widgets
 
 | Widget | Shows | Pointer |
@@ -93,7 +96,7 @@ centre, wherever the layout puts it (in the example, before the network).
 | `nova.media` | What plays (MPRIS), its title scrolling; a card with the cover | click = play/pause · middle = next · wheel = previous/next · right = card |
 | `nova.indicators` | Switches: recording, night light, do not disturb, Caffeine | click = switch it |
 | `nova.system-update` | A badge while a Nova or app update waits | click = updates, in Settings |
-| `nova.tray` | The system tray, the unpinned icons in a drawer | pointer on the chevron = drawer · right on the chevron = pin and hide · icon: click = app, middle = its second action, right = its menu |
+| `nova.tray` | The system tray: the icon of every app that shows one, in the order of their ids, but those hidden (the `hidden` setting, a list of ids) | click = app · middle = its second action · right = its menu, ending with Hide from Menu Bar; Settings → Menu Bar brings a hidden icon back |
 | `nova.weather` | Weather; a card with the forecast | click = card · right = full notification |
 | `nova.microphone` | The microphone, lit while recorded | click = mute · middle = audio panel · wheel = its volume |
 | `nova.keyboard-layout` | The keyboard layout, while there are two or more | click = next layout |
@@ -122,12 +125,10 @@ screen; in a panel, Tab and Shift+Tab go to the next one of its section and
 the one before. One card or panel is open at a time: opening another closes
 it.
 
-## On a side
+## Size
 
-Every widget works on all four edges. Cards and panels open on the screen's
-side of the bar. A side bar is 28 px wide, a top or bottom one 26 px high
-(the theme can change both), and the widgets that show text keep to their
-icon there (the media widget drops its title, the active window goes).
+The bar is 26 px high (the theme can change it), and cards and panels open
+below it.
 
 ## Your own widgets
 
@@ -152,9 +153,8 @@ the bar's urgent colour.
 
 `text` and `tooltip` in the entry stand in while the command prints none of
 its own. `onClick`, `onMiddleClick` and `onRightClick` are run on those clicks.
-`fontSize` (12), `horizontalMargin` (7.5), `verticalPadding` (6) and
-`keepSpace` set its look. With no `type`, an entry with `exec` is a command
-and one with `source` a QML file.
+`fontSize` (12), `horizontalMargin` (7.5) and `keepSpace` set its look. With no
+`type`, an entry with `exec` is a command and one with `source` a QML file.
 
 A QML file is `~/.config/nova/bar/modules/<id>.qml`, or the file its
 `source` names (`~/` and `$HOME/` are the home folder):
@@ -200,8 +200,7 @@ The bar sets each widget's `bar`, `widgetId` and `settings`. On `bar`:
   `textColour`, the text colour as drawn, which follows the wallpaper while
   the bar is transparent, and `textFades`, whether a change of it may fade;
 - `fontFamily`: the monospace font;
-- `position` (`"top"`, `"bottom"`, `"left"` or `"right"`), `vertical`,
-  `thickness` (26, or 28 on a side) and `tucked` (moved off the screen by
+- `thickness` (26) and `tucked` (moved off the screen by
   `nova-toggle-bar`);
 - `run(command)`: runs a command with bash and does not wait for it (quote
   what goes into it with `Util.shellQuote` from `qs.Commons`);

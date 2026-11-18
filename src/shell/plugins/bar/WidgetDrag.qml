@@ -57,8 +57,7 @@ QtObject {
 
   // The pointer at <scenePoint> in the window of <taken>.
   function follow(taken, scenePoint) {
-    const onScreen = bar.screenPoint(scenePoint, window)
-    pointer = Qt.point(onScreen.x, onScreen.y)
+    pointer = Qt.point(scenePoint.x, scenePoint.y)
     const place = placeAt(scenePoint, taken)
     target = place ? place.slot : null
     after = place ? place.after : false
@@ -88,13 +87,13 @@ QtObject {
       }
       return { slot: other, x: corner.x, y: corner.y, width: other.width, height: other.height }
     })
-    return BarModel.dropPlace(places, scenePoint, bar.vertical)
+    return BarModel.dropPlace(places, scenePoint)
   }
 
   function lineAt(other, after) {
     try {
-      const corner = bar.screenPoint(other.mapToItem(null, 0, 0), window)
-      return BarModel.dropMarker(corner, other.width, other.height, after, bar.vertical, lineWidth)
+      const corner = other.mapToItem(null, 0, 0)
+      return BarModel.dropMarker(corner, other.width, other.height, after, lineWidth)
     } catch (e) {
       return null
     }

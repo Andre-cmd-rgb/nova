@@ -23,8 +23,7 @@ ShellRoot {
   Component.onCompleted: Qt.callLater(run)
 
   function run() {
-    check(same(Model.formats(false), ["dddd HH:mm","dddd h:mm AP","HH:mm","h:mm AP","ddd d MMM HH:mm","ddd d MMM h:mm AP","d MMMM 'W'ww yyyy","yyyy-MM-dd HH:mm"]), "the formats a right click walks")
-    check(same(Model.formats(true), ["HH\n—\nmm","h\n—\nmm\nAP","dd\nMMM\n'W'ww\n''yy","HH\nmm"]), "and on a side bar")
+    check(same(Model.FORMATS, ["dddd HH:mm","dddd h:mm AP","HH:mm","h:mm AP","ddd d MMM HH:mm","ddd d MMM h:mm AP","d MMMM 'W'ww yyyy","yyyy-MM-dd HH:mm"]), "the formats a right click walks")
     check(same(Model.formatRing("HH:mm:ss", "d MMM", ["HH:mm", "h:mm AP"]), ["HH:mm","h:mm AP","d MMM","HH:mm:ss"]), "the walk: presets, then the alternate and the format")
     check(same(Model.formatRing("HH:mm", null, ["HH:mm", "", "h:mm AP", "HH:mm"]), ["HH:mm","h:mm AP"]), "each once, and nothing empty")
     check(same(Model.formatRing(undefined, "", []), ["HH:mm"]), "with nothing, HH:mm")

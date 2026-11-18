@@ -11,7 +11,7 @@ ShellRoot {
   id: test
 
   readonly property string home: Quickshell.env("HOME")
-  readonly property var novaBar: ({ position: "left", layout: { left: [{ id: "nova.menu" }], center: [], right: [] } })
+  readonly property var novaBar: ({ transparent: false, layout: { left: [{ id: "nova.menu" }], center: [], right: [] } })
   property var json: null
 
   Component {
@@ -59,10 +59,14 @@ ShellRoot {
   function begin() {
     check("the user's config is the one in effect", json.current.idle.lock, 600)
     check("  with Nova's bar, as it has none", same(json.current.bar, novaBar), true)
-    check("a change saves", json.edit(config => { config.bar.position = "bottom" }), true)
-    check("  the change made", json.current.bar.position, "bottom")
+    check("a change saves", json.edit(config => { config.bar.transparent = true }), true)
+    check("  the change made", json.current.bar.transparent, true)
     check("  and Nova's widgets kept", same(json.current.bar.layout, novaBar.layout), true)
-    check("Nova's bar itself untouched", json.defaults.bar.position, "left")
+    check("Nova's bar itself untouched", json.defaults.bar.transparent, false)
+    // The bar is always at the top: an edge an older config names is dropped
+    // when the config is saved.
+    check("an old config's edge is not kept", json.edit(config => { config.bar.position = "bottom" }), true)
+    check("  it is gone from what is in effect", json.current.bar.position, undefined)
     console.log("DONE")
     Qt.quit()
   }

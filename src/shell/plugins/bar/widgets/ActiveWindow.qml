@@ -6,9 +6,8 @@ import qs.Commons as Commons
 import qs.Ui
 
 // The focused window by its title, or by its app id when it has none, cut
-// short past the entry's maxWidth (280 px when it names none). A side bar
-// has no room for it. A click brings the window forward; a middle or right
-// click closes it.
+// short past the entry's maxWidth (280 px when it names none). A click
+// brings the window forward; a middle or right click closes it.
 BarWidget {
   id: widget
   widgetId: "nova.active-window"
@@ -18,7 +17,7 @@ BarWidget {
   // The bar shows the tooltip only while this holds.
   readonly property bool pointedAt: visible && pointer.containsMouse
 
-  visible: !vertical && title !== ""
+  visible: title !== ""
   implicitHeight: thickness
   implicitWidth: visible ? Math.min(Number(setting("maxWidth", 280)), line.implicitWidth) + Style.spacing.controlPaddingX * 2 : 0
 

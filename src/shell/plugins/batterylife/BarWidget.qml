@@ -172,7 +172,7 @@ Panel {
   // The bar draws its open-panel mark at 55% of the slot unless the module
   // says otherwise, which on a padded glyph-plus-text slot lands under the
   // text alone. This one tracks what is actually painted.
-  readonly property real markLength: button.vertical ? 0 : Math.ceil(content.implicitWidth)
+  readonly property real markLength: Math.ceil(content.implicitWidth)
 
   // `nova battery indicator off` hides the entry and nothing else: the
   // service keeps sampling, a kind of its own in the same manifest.
@@ -438,8 +438,8 @@ Panel {
     bar: battery.bar
     // Keyed off the glyph, as the button has no text of its own.
     hasContent: battery.icon !== ""
-    implicitWidth: button.vertical ? button.thickness : Math.ceil(content.implicitWidth) + Style.space(9) * 2
-    implicitHeight: button.vertical ? Style.bar.iconSlot : button.thickness
+    implicitWidth: Math.ceil(content.implicitWidth) + Style.space(9) * 2
+    implicitHeight: button.thickness
     tip: battery.present
       ? Math.round(battery.percent) + "%  ·  " + battery.metaText
         + (battery.estimate !== "" ? "  ·  " + battery.estimate
@@ -470,7 +470,7 @@ Panel {
 
       Text {
         anchors.verticalCenter: parent.verticalCenter
-        visible: battery.barText !== "" && !button.vertical
+        visible: battery.barText !== ""
         text: battery.barText
         color: battery.low ? battery.urgent : battery.textColour
         font.family: battery.fontFamily

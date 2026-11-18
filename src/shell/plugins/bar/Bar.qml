@@ -6,21 +6,20 @@ import qs.Commons
 import qs.Commons as Commons
 import "BarModel.js" as BarModel
 
-// Nova's bar: one on every screen, along the edge its part of shell.json
-// names, with the widgets of its layout in three sections. The shell hands
-// it that part (config) and the widgets the plugins made; what is changed on
-// the bar itself (a widget dragged to another place, the bar dragged to
-// another edge or made see-through) is saved through the shell, which
-// hands the bar its new config.
+// Nova's bar: one on every screen, along its top, with the widgets of its
+// layout in three sections. The shell hands it that part (config) and the
+// widgets the plugins made; what is changed on the bar itself (a widget
+// dragged to another place, the bar made see-through) is saved through the
+// shell, which hands the bar its new config.
 //
 // The widgets are handed this item as `bar`, and what they use of it is
 // listed in README.md. It is made of:
 //   ScreenBar   one screen's bar window, its tooltip and its overlays
-//   Sections    the three sections in that window, and the bar's gestures
+//   Sections    the three sections in that window, and the bar's double click
 //   WidgetSlot  one widget's place: it loads the widget and drags it
 //   SeeThrough  the text colour of a see-through bar, and its shade
 //   Tip         the one tooltip
-//   WidgetDrag  a widget being dragged; BarDrag, the bar
+//   WidgetDrag  a widget being dragged
 //   BarIpc      the IPC targets of the widgets
 Item {
   id: root
@@ -34,9 +33,7 @@ Item {
 
   // ----------------------------------------------------------- the look
 
-  property string position: "top"
-  readonly property bool vertical: BarModel.onSide(position)
-  readonly property int thickness: vertical ? Style.bar.sizeVertical : Style.bar.sizeHorizontal
+  readonly property int thickness: Style.bar.sizeHorizontal
   // "monospace" until fontconfig resolves it as it draws, so that a new
   // system font (nova-font-set) reaches the bar without a reload.
   property string fontFamily: Style.font.family
@@ -76,7 +73,6 @@ Item {
   readonly property var firstScreen: Quickshell.screens.length > 0 ? Quickshell.screens[0] : null
 
   readonly property SeeThrough seeThrough: SeeThrough {
-    edge: root.position
     thickness: root.thickness
     screenWidth: root.firstScreen ? root.firstScreen.width : 0
     screenHeight: root.firstScreen ? root.firstScreen.height : 0
@@ -105,11 +101,9 @@ Item {
 
   function settle() {
     const part = Util.isPlainObject(config) ? config : {}
-    position = BarModel.edge(part.position)
     seeThrough.want(part.transparent === true)
 
     const next = Util.normalizeLayout(part.layout)
-    for (const name of BarModel.SECTIONS) next[name] = BarModel.trayInward(next[name], name)
     anchor = BarModel.centerAnchor(part.centerAnchor, next.center)
 
     // A Repeater cannot tell two lists of entries apart, so a new layout
@@ -145,11 +139,6 @@ Item {
     shell.mutateShellConfig(config => {
       BarModel.barOf(config)[key] = value
     })
-  }
-
-  function putOnEdge(edge) {
-    const to = BarModel.edge(edge)
-    keep("position", to, () => position = to)
   }
 
   function toggleSeeThrough() {
@@ -256,12 +245,6 @@ Item {
   // The output Hyprland has focused, where a panel opened by a key goes;
   // "" until it names one, which leaves the choice to BarModel.reached.
   readonly property string focusedOutput: Hyprland.focusedMonitor?.name ?? ""
-
-  // <point> in <window>, on its screen.
-  function screenPoint(point, window) {
-    if (!window || !window.screen) return { x: point ? point.x : 0, y: point ? point.y : 0 }
-    return BarModel.onScreen(point, position, window.screen.width, window.screen.height, window.width, window.height)
-  }
 
   // The slots of the live copies of widget <id>, one on each screen's bar.
   function slotsOf(id) {
@@ -395,13 +378,9 @@ Item {
     onTriggered: if (!root.centreUnderPointer && root.barsUnderPointer === 0) root.peekHeld = false
   }
 
-  // -------------------------------------------------------------- drags
+  // --------------------------------------------------------------- drag
 
   readonly property WidgetDrag widgetDrag: WidgetDrag {
-    bar: root
-  }
-
-  readonly property BarDrag barDrag: BarDrag {
     bar: root
   }
 

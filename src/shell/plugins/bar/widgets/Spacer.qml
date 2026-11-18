@@ -9,6 +9,6 @@ BarWidget {
 
   widgetId: "nova.spacer"
   visible: length > 0
-  implicitWidth: vertical ? thickness : length
-  implicitHeight: vertical ? length : thickness
+  implicitWidth: length
+  implicitHeight: thickness
 }

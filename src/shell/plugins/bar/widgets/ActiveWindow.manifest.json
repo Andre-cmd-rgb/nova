@@ -9,6 +9,7 @@
     "barWidget": "ActiveWindow.qml"
   },
   "barWidget": {
-    "defaultSection": "left"
+    "defaultSection": "left",
+    "switchable": true
   }
 }

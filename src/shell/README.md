@@ -119,7 +119,6 @@ anything, your file is authoritative and defaults are **not** merged back in.
   "version": 1,
   "idle": { "screensaver": 180, "lock": 300 },
   "bar": {
-    "position": "top",
     "transparent": false,
     "centerAnchor": "nova.clock",
     "layout": {

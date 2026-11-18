@@ -5,7 +5,7 @@ import Quickshell.Wayland
 import qs.Commons
 
 // One screen's toasts, newest at the top, in its top right corner below the
-// bar or beside it. The window covers the screen and keeps its size, so the
+// bar. The window covers the screen and keeps its size, so the
 // compositor never stretches an old frame as toasts come and go; it takes no
 // keys, and the pointer only over the toasts.
 PanelWindow {
@@ -14,11 +14,10 @@ PanelWindow {
   required property var service
 
   readonly property var shell: service.shell
-  readonly property string barSide: shell && shell.barConfig ? String(shell.barConfig.position || "top") : "top"
-  // The bar's room on its edge, and the gap: its size as shown, or as set
+  // The bar's room at the top, and the gap: its size as shown, or as set
   // while it is hidden or not there.
   readonly property int barRoom: (shell && shell.bar && !shell.bar.tucked ? Math.max(0, shell.bar.thickness)
-    : barSide === "left" || barSide === "right" ? Style.bar.sizeVertical : Style.bar.sizeHorizontal) + Style.gapsOut
+    : Style.bar.sizeHorizontal) + Style.gapsOut
 
   visible: service.toasts.count > 0
   WlrLayershell.namespace: "nova-notifications"
@@ -33,8 +32,8 @@ PanelWindow {
     id: stack
     anchors.right: parent.right
     anchors.top: parent.top
-    anchors.topMargin: window.barSide === "top" ? window.barRoom : Style.gapsOut
-    anchors.rightMargin: window.barSide === "right" ? window.barRoom : Style.gapsOut
+    anchors.topMargin: window.barRoom
+    anchors.rightMargin: Style.gapsOut
     spacing: Style.space(8)
 
     Repeater {

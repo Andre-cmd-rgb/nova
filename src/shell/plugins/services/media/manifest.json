@@ -12,6 +12,8 @@
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
-    "description": "MPRIS now-playing with playback controls"
+    "description": "MPRIS now-playing with playback controls",
+    "defaultSection": "left",
+    "switchable": true
   }
 }
