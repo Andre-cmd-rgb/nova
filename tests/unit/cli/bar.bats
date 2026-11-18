@@ -1,7 +1,6 @@
 #!/usr/bin/env bats
 
-# nova bar: the bar's edge and see-through look, written to shell.json and
-# read back as the menu reads them, and the widgets placed by asking the
+# nova bar: the bar's see-through look, written to shell.json and read back as the menu reads them, and the widgets placed by asking the
 # shell, a stub that writes down each call and answers $ANSWER.
 
 load ../test_helper
@@ -27,15 +26,14 @@ teardown() { teardown_scratch; }
 
 settings() { jq -cS "$1" "$HOME/.config/nova/shell.json"; }
 
-@test "the edge: top by default, set, read back, and nothing else taken" {
-  [ "$(nova-bar position)" = top ]
-  nova-bar position bottom
-  [ "$(nova-bar position)" = bottom ]
-  [ "$(settings .version)" = 1 ]
-  grep -qx -- '-q shell reloadConfig' "$CALLS"
-  run nova-bar position middle
+@test "the bar is always at the top: no verb moves it, and a change drops an edge an older file names" {
+  run nova-bar position bottom
   [ "$status" -eq 1 ]
-  [ "$(nova-bar position)" = bottom ]
+  echo '{"version":1,"bar":{"position":"left","transparent":false}}' >"$HOME/.config/nova/shell.json"
+  nova-bar transparent true
+  [ "$(settings '.bar | has("position")')" = false ]
+  [ "$(settings '[.version, .bar.transparent]')" = '[1,true]' ]
+  grep -qx -- '-q shell reloadConfig' "$CALLS"
 }
 
 @test "see-through: off by default, toggled, set, and the result said" {
@@ -49,28 +47,26 @@ settings() { jq -cS "$1" "$HOME/.config/nova/shell.json"; }
 }
 
 @test "the menu reads what the shell draws from, though the user's settings are not usable" {
-  for broken in '[]' 'not json' '{"bar":{"position":"left","transparent":true}}' '{"version":1,"bar":7}'; do
+  for broken in '[]' 'not json' '{"bar":{"transparent":true}}' '{"version":1,"bar":7}'; do
     echo "$broken" >"$HOME/.config/nova/shell.json"
-    [ "$(nova-bar position)" = top ]
     [ "$(nova-bar transparent)" = off ]
   done
-  echo '{"version":1,"bar":{"position":"left","transparent":true}}' >"$HOME/.config/nova/shell.json"
-  [ "$(nova-bar position)" = left ]
+  echo '{"version":1,"bar":{"transparent":true}}' >"$HOME/.config/nova/shell.json"
   [ "$(nova-bar transparent)" = on ]
 }
 
 @test "settings that cannot be read are never written over, and an empty file is" {
-  for broken in 'not json' '{"version":1,"idle":{"lock":600},}' '{"bar":{"position":"left"}}'; do
+  for broken in 'not json' '{"version":1,"idle":{"lock":600},}' '{"bar":{"transparent":true}}'; do
     echo "$broken" >"$HOME/.config/nova/shell.json"
-    run nova-bar position bottom
+    run nova-bar transparent true
     [ "$status" -eq 1 ]
     [[ $output == *"is not a config Nova can read"* ]]
     [ "$(<"$HOME/.config/nova/shell.json")" = "$broken" ]
   done
   [ ! -e "$CALLS" ]
   printf '\n' >"$HOME/.config/nova/shell.json"
-  nova-bar position bottom
-  [ "$(nova-bar position)" = bottom ]
+  nova-bar transparent true
+  [ "$(nova-bar transparent)" = on ]
 }
 
 @test "with no NOVA_PATH, Nova's settings are read from /usr/share/nova" {
@@ -81,13 +77,13 @@ settings() { jq -cS "$1" "$HOME/.config/nova/shell.json"; }
 
 @test "settings without a bar have Nova's, and a change keeps its widgets" {
   echo '{"version":1,"idle":{"lock":600}}' >"$HOME/.config/nova/shell.json"
-  nova-bar position bottom
-  [ "$(settings '[.bar.position, .idle.lock]')" = '["bottom",600]' ]
+  nova-bar transparent true
+  [ "$(settings '[.bar.transparent, .idle.lock]')" = '[true,600]' ]
   [ "$(settings .bar.layout)" = "$(jq -cS .bar.layout "$NOVA_PATH/default/shell.json")" ]
 }
 
 @test "defaults puts back the bar Nova ships, and the rest of the settings stay" {
-  echo '{"version":1,"idle":{"lock":60},"bar":{"position":"left"}}' >"$HOME/.config/nova/shell.json"
+  echo '{"version":1,"idle":{"lock":60},"bar":{"transparent":true}}' >"$HOME/.config/nova/shell.json"
   nova-bar defaults
   [ "$(settings .bar)" = "$(jq -cS .bar "$NOVA_PATH/default/shell.json")" ]
   [ "$(settings .idle.lock)" = 60 ]

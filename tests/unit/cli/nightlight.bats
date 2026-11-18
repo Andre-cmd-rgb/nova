@@ -40,7 +40,7 @@ settings() { jq -c "$1" "$HOME/.config/nova/shell.json"; }
   nova-nightlight-schedule off
   nova-nightlight-schedule hours
   [ "$(nova-nightlight-schedule)" = "From 21:30 to 06:05, every day." ]
-  [ "$(settings .bar.position)" = '"top"' ]
+  [ "$(settings .bar.transparent)" = 'false' ]
 }
 
 @test "schedule: hours that are no times, or the same time twice, are refused and nothing is written" {

@@ -63,7 +63,8 @@ hours_of() { # key (<from> <to> | from <time> | to <time>)
 }
 
 # An object at version 1, with a bar, its layout's three sections, and the
-# plugins, each made what it should be where it is anything else.
+# plugins, each made what it should be where it is anything else. The bar is
+# always at the top: an edge an older file names is dropped.
 # shellcheck disable=SC2034 # for the commands that source this
 NORMALIZE='
   def object: if type == "object" then . else {} end;
@@ -71,6 +72,7 @@ NORMALIZE='
   object
   | .version = 1
   | .bar = (.bar | object)
+  | del(.bar.position)
   | .bar.layout = (.bar.layout | object)
   | .bar.layout.left = (.bar.layout.left | array)
   | .bar.layout.center = (.bar.layout.center | array)

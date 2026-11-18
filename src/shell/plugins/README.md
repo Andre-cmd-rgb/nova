@@ -35,6 +35,7 @@ file when it starts.
 | `enabledByDefault: false` | off until `shell.json` names it, in the bar or in `plugins` |
 | `alwaysOn: true` | no off: the bar, the lock and the volume keys |
 | `barWidget.defaultSection` | where the widget goes when switched on, if Nova's default layout does not have it; else the center |
+| `barWidget.switchable: true` | Settings → Menu Bar has a switch for the widget; any other widget is always on the bar |
 
 Settings lists a widget by
 `barWidget.displayName` (else `name`) and `barWidget.description` (else
@@ -129,7 +130,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Microphone | `nova.microphone` | widget `bar/widgets/Microphone.qml` | the default microphone, muted or in use |
 | Spacer | `nova.spacer` | widget `bar/widgets/Spacer.qml` | room along the bar, of its entry's `size` |
 | Nova update | `nova.system-update` | widget `bar/widgets/SystemUpdate.qml` | a badge while an update waits |
-| System tray | `nova.tray` | widget `bar/widgets/Tray.qml` | the tray, pinned icons out and the rest in a drawer |
+| System tray | `nova.tray` | widget `bar/widgets/Tray.qml` | the tray, an icon for each app, any of which can be hidden |
 | Workspaces | `nova.workspaces` | widget `bar/widgets/Workspaces.qml` | Hyprland's workspaces |
 | AirDrop | `nova.airdrop` | service `airdrop/AirDrop.qml`, panel `airdrop/AirDropToggle.qml` | AirDrop in notifications: an iPhone's offer to accept or decline, a transfer's bar, what came in; sending, from a window that lists the iPhones nearby (`nova airdrop send --window`); the doorbell's switching; the menu's toggle (`nova airdrop`) |
 | [Battery Life](batterylife/README.md) | `nova.batterylife` | service `batterylife/Service.qml`, widget `batterylife/BarWidget.qml` | how long the battery lasts; its page is `settings/BatteryLifeView.qml` |

@@ -5,7 +5,6 @@
     "lock": 300
   },
   "bar": {
-    "position": "top",
     "transparent": false,
     "centerAnchor": "nova.clock",
     "layout": {
@@ -18,8 +17,7 @@
         {
           "id": "nova.clock",
           "format": "dddd HH:mm",
-          "formatAlt": "d MMMM 'W'ww yyyy",
-          "verticalFormat": "HH\n—\nmm"
+          "formatAlt": "d MMMM 'W'ww yyyy"
         },
         { "id": "nova.keyboard-layout" },
         { "id": "nova.weather" },

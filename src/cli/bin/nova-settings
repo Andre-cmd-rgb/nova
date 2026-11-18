@@ -102,13 +102,13 @@ radios_json() {
   cat "$RFKILL"/rfkill*/type 2>/dev/null | sort -u | lines_json
 }
 
-# Every bar widget Nova has, but the spacer (a layout tool) and Screen Time
-# (switched on its own page, since the widget is the switch for recording).
+# The bar widgets that may be switched off, by their manifests'
+# barWidget.switchable: the others are always on the bar.
 widgets_json() {
   find "$NOVA_PATH/shell/plugins" \( -name manifest.json -o -name '*.manifest.json' \) -print0 2>/dev/null |
-    xargs -0 -r jq -c 'select((.kinds // []) | index("bar-widget"))
+    xargs -0 -r jq -c 'select(((.kinds // []) | index("bar-widget")) != null and .barWidget.switchable == true)
       | {id, name: (.barWidget.displayName // .name)}' 2>/dev/null |
-    jq -sc 'map(select(.id != "nova.spacer" and .id != "nova.screentime")) | sort_by(.name | ascii_downcase)'
+    jq -sc 'sort_by(.name | ascii_downcase)'
 }
 
 # AirDrop: whether this computer's Wi-Fi card can do it, and whether its
@@ -292,9 +292,11 @@ state() {
       nightlight: ($config.nightlight | objects // {}),
       doNotDisturb: ($config.doNotDisturb | objects // {}),
       screenTime: $screenTime,
-      bar: {position: ($config.bar.position // "top"), transparent: ($config.bar.transparent == true),
+      bar: {transparent: ($config.bar.transparent == true),
             widgets: $widgets,
-            shown: [($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[] | .id? // empty]},
+            shown: [($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[] | select(.off? != true) | .id? // empty],
+            hiddenTray: [($config.bar.layout // {}) | (.left // [], .center // [], .right // [])[]
+              | select(.id? == "nova.tray") | (.hidden // [])[] | strings]},
       lock: {seconds: (if ($config.idle.lock | type) == "number" then $config.idle.lock else 300 end),
              screensaver: (if ($config.idle.screensaver | type) == "number" then $config.idle.screensaver else 180 end),
              fingerprint: $fingerprint},

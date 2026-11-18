@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # nova:summary=Configure the bar and its widget layout
-# nova:args=defaults | position [top|bottom|left|right] | transparent [true|false|toggle] | put <id> [placement] | remove <id> | move <id> [placement] | set <id> <key> <value> [--json] [placement]
+# nova:args=defaults | transparent [true|false|toggle] | put <id> [placement] | remove <id> | move <id> [placement] | set <id> <key> <value> [--json] [placement]
 
-# The bar's edge and look are settings, changed in shell.json. Its widgets are
+# The bar's look is a setting, changed in shell.json. Its widgets are
 # the shell's to place, as it holds the layout in memory: they are put, moved
 # and set by asking it, not by changing the file behind it.
 
@@ -16,7 +16,6 @@ usage() {
 Usage: nova bar <command> [arguments]
 
   defaults                          The bar as Nova ships it, again
-  position [top|bottom|left|right]  The edge the bar is on, or the one to put it on
   transparent [true|false|toggle]   Whether the bar is see-through (on or off),
                                     or make it so
   put <id> [where]                  Put a widget on the bar; one on it already
@@ -38,7 +37,6 @@ Where:
   --from-index <n>                  bar more than once (move and set)
 
 For example:
-  nova bar position bottom
   nova bar put nova.keyboard-layout --after nova.clock
   nova bar remove nova.weather
   nova bar move nova.media left
@@ -105,19 +103,6 @@ defaults() {
   # between.
   commit "$NORMALIZE | .bar = \$defaults[0].bar" --slurpfile defaults "$DEFAULTS_FILE"
   echo "The bar is as Nova ships it."
-}
-
-# Without an edge, the one it is on: the menu reads it to tick its row.
-position() {
-  (($# <= 1)) || fail "position takes one edge"
-  local edge=${1:-}
-  if [[ -z $edge ]]; then
-    in_effect | jq -r '(.bar | objects | .position) // "top"'
-    return 0
-  fi
-  [[ $edge =~ ^(top|bottom|left|right)$ ]] || fail "the bar's edge is top, bottom, left or right, not '$edge'"
-  commit "$NORMALIZE | .bar.position = \$edge" --arg edge "$edge"
-  echo "The bar is on the $edge edge."
 }
 
 # Without a value, on or off: the menu reads it to tick its row.
@@ -236,7 +221,7 @@ set_option() {
 command=${1:-}
 if (($#)); then shift; fi
 case $command in
-  defaults | position | transparent | put | remove | move) "$command" "$@" ;;
+  defaults | transparent | put | remove | move) "$command" "$@" ;;
   set) set_option "$@" ;;
   -h | --help | help | '') usage ;;
   *) fail "'$command' is no command; nova bar --help lists them" ;;

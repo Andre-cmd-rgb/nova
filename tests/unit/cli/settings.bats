@@ -48,7 +48,7 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(jq -c .screenTime <<<"$output")" = false ]
   [ "$(jq -c .lock <<<"$output")" = '{"seconds":300,"screensaver":180,"fingerprint":false}' ]
   [ "$(jq -c '[.apps.browsers, .apps.editors, .apps.terminals]' <<<"$output")" = '[[],[],[]]' ]
-  [ "$(jq -r .bar.position <<<"$output")" = top ]
+  [ "$(jq -r .bar.transparent <<<"$output")" = false ]
   [ "$(jq -c '.bar.shown | index("nova.power") != null' <<<"$output")" = true ]
   [ "$(jq -c .updates <<<"$output")" = '{"candidates":false,"firmware":false}' ]
   [ "$(jq -c .displays <<<"$output")" = '{"displays":[],"pending":null}' ]
@@ -163,10 +163,10 @@ state() { nova-settings state | jq -c "$1"; }
 
 @test "state: the user's shell.json, and Nova's default when theirs is broken" {
   mkdir -p "$HOME/.config/nova"
-  echo '{"version":1,"idle":{"lock":600},"bar":{"position":"bottom","layout":{"left":[{"id":"nova.menu"}]}}}' >"$HOME/.config/nova/shell.json"
-  [ "$(state '[.lock.seconds, .bar.position, .bar.shown]')" = '[600,"bottom",["nova.menu"]]' ]
+  echo '{"version":1,"idle":{"lock":600},"bar":{"transparent":true,"layout":{"left":[{"id":"nova.menu"}]}}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state '[.lock.seconds, .bar.transparent, .bar.shown]')" = '[600,true,["nova.menu"]]' ]
   echo '{broken' >"$HOME/.config/nova/shell.json"
-  [ "$(state '[.lock.seconds, .bar.position]')" = '[300,"top"]' ]
+  [ "$(state '[.lock.seconds, .bar.transparent]')" = '[300,false]' ]
 }
 
 @test "state: the night light's schedule and warmth as shell.json has them, or nothing set" {
@@ -187,19 +187,28 @@ state() { nova-settings state | jq -c "$1"; }
 
 @test "state and idle: the settings the shell has, Nova's where the user's lack a version, Nova's bar where they lack one" {
   mkdir -p "$HOME/.config/nova"
-  echo '{"idle":{"lock":60},"bar":{"position":"bottom"}}' >"$HOME/.config/nova/shell.json"
-  [ "$(state '[.lock.seconds, .bar.position]')" = '[300,"top"]' ]
+  echo '{"idle":{"lock":60},"bar":{"transparent":true}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state '[.lock.seconds, .bar.transparent]')" = '[300,false]' ]
   [ "$(nova-idle-lock)" = "5 min" ]
   echo '{"version":1,"idle":{"lock":600}}' >"$HOME/.config/nova/shell.json"
-  [ "$(state '[.lock.seconds, .bar.position, .bar.shown[0]]')" = '[600,"top","nova.menu"]' ]
+  [ "$(state '[.lock.seconds, .bar.transparent, .bar.shown[0]]')" = '[600,false,"nova.menu"]' ]
 }
 
-@test "state: bar widgets from their manifests, without the spacer and Screen Time" {
+@test "state: the bar widgets that may be switched off, from their manifests; the rest are always on" {
   mkdir -p "$NOVA_PATH/shell/plugins/bar/widgets" "$NOVA_PATH/shell/plugins/screentime" "$NOVA_PATH/shell/plugins/settings"
-  cp "$REPO_ROOT"/src/shell/plugins/bar/widgets/{Tray,Spacer}.manifest.json "$NOVA_PATH/shell/plugins/bar/widgets/"
+  cp "$REPO_ROOT"/src/shell/plugins/bar/widgets/{Tray,Spacer,Microphone,ActiveWindow}.manifest.json "$NOVA_PATH/shell/plugins/bar/widgets/"
   cp "$REPO_ROOT/src/shell/plugins/screentime/manifest.json" "$NOVA_PATH/shell/plugins/screentime/"
   cp "$REPO_ROOT/src/shell/plugins/settings/manifest.json" "$NOVA_PATH/shell/plugins/settings/"
-  [ "$(state '[.bar.widgets[].id]')" = '["nova.tray"]' ]
+  [ "$(state '[.bar.widgets[].id]')" = '["nova.active-window","nova.microphone"]' ]
+}
+
+@test "state: a widget switched off is not shown, and the tray icons hidden are listed" {
+  mkdir -p "$HOME/.config/nova"
+  echo '{"version":1,"bar":{"layout":{"left":[{"id":"nova.menu"},{"id":"nova.media","off":true}],"right":[{"id":"nova.tray","hidden":["Telegram","nm-applet"]},{"id":"nova.weather","off":false}]}}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state .bar.shown)" = '["nova.menu","nova.tray","nova.weather"]' ]
+  [ "$(state .bar.hiddenTray)" = '["Telegram","nm-applet"]' ]
+  echo '{"version":1,"bar":{"layout":{"right":["nova.tray"]}}}' >"$HOME/.config/nova/shell.json"
+  [ "$(state .bar.hiddenTray)" = '[]' ]
 }
 
 @test "state: default apps list only what is installed, and screen time and fingerprint follow their commands" {
@@ -278,7 +287,7 @@ state() { nova-settings state | jq -c "$1"; }
   echo "ThinkPad P1 Gen 4i" >"$NOVA_DMI_PATH/product_version"
   echo LENOVO >"$NOVA_DMI_PATH/sys_vendor"
   [ "$(state .about.model)" = '"ThinkPad P1 Gen 4i"' ]
-  [ "$(state .bar.position)" = '"top"' ]
+  [ "$(state .bar.transparent)" = false ]
 }
 
 @test "state: the radios, once each, switched off or not" {

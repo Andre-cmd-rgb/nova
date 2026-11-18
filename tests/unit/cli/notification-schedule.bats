@@ -29,7 +29,7 @@ settings() { jq -c "$1" "$HOME/.config/nova/shell.json"; }
   [ "$(settings .doNotDisturb)" = '{"from":"23:30","schedule":"hours","to":"06:45"}' ]
   [ "$(nova-notification-schedule off)" = "Off: Do Not Disturb comes on only by hand." ]
   [ "$(nova-notification-schedule hours)" = "From 23:30 to 06:45, every day." ]
-  [ "$(settings .bar.position)" = '"top"' ]
+  [ "$(settings .bar.transparent)" = 'false' ]
 }
 
 @test "one end at a time, the other as kept, as Settings sends two picks in a row" {

@@ -639,14 +639,6 @@ Item {
 
       Section {
         width: p.inner
-        Line {
-          label: "Position"
-          ButtonGroup {
-            options: ["top", "bottom", "left", "right"].map(function (v) { return { value: v, label: root.nameOf(v) } })
-            value: root.bar.position || "top"
-            onChanged: function (value) { root.run(["nova", "bar", "position", value], { "bar.position": value }) }
-          }
-        }
         Toggle {
           width: parent.width
           label: "Transparent"
@@ -658,6 +650,7 @@ Item {
       Section {
         width: p.inner
         title: "IN THE BAR"
+        visible: (root.bar.widgets || []).length > 0
         Repeater {
           model: root.bar.widgets || []
           delegate: Toggle {
@@ -669,6 +662,27 @@ Item {
               const shown = (root.bar.shown || []).filter(id => id !== modelData.id)
               root.run(["nova", "bar", checked ? "remove" : "put", modelData.id],
                 { "bar.shown": checked ? shown : shown.concat([modelData.id]) })
+            }
+          }
+        }
+      }
+
+      Section {
+        width: p.inner
+        title: "HIDDEN ICONS"
+        visible: (root.bar.hiddenTray || []).length > 0
+        Repeater {
+          model: root.bar.hiddenTray || []
+          delegate: Line {
+            required property string modelData
+            label: modelData
+            Button {
+              text: "Show"
+              bordered: true
+              onClicked: {
+                const rest = (root.bar.hiddenTray || []).filter(id => id !== modelData)
+                root.run(["nova", "bar", "set", "nova.tray", "hidden", JSON.stringify(rest), "--json"], { "bar.hiddenTray": rest })
+              }
             }
           }
         }
