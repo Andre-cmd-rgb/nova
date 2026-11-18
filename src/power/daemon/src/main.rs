@@ -222,13 +222,14 @@ fn main() {
             ec.forget();
             mains.forget();
             // The counters did not advance while asleep, so the first sample
-            // after a resume describes the moment before it. Throw it away.
+            // after a resume describes the moment before it. Throw it away,
+            // and apply the limits now as if idle, not a poll later: until
+            // then the firmware's own (109 W, every clock) would hold.
             let _ = sampler.busy_pct();
             meter.forget();
-            continue;
         }
 
-        let busy = sampler.busy_pct();
+        let busy = if slept { 0.0 } else { sampler.busy_pct() };
         let temp = package.read();
         let watts = meter.watts(now);
 

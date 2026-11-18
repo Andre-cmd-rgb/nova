@@ -65,17 +65,33 @@ impl Governor {
             self.below_since = None;
             return Mode::Ac;
         }
-        // A boost is the user saying "I know what this is, leave it alone".
-        // When it ends, the ladder starts again at the mode's floor, as after
-        // an unplug: kept, its turbo was clamped into balanced's and
+        // A boost is the user saying "I know what this is, leave it alone":
+        // the top tier, unless the package is too hot for it (below). When it
+        // ends, the ladder starts again at the mode's floor, as after an
+        // unplug: kept, its turbo was clamped into balanced's and
         // performance's range and stayed for as long as the load sat between
         // busy_fall and busy_climb.
-        if boost {
+        let tier = if boost {
             self.above_since = None;
             self.below_since = None;
             self.saving = None;
-            return Mode::Battery(self.cfg.tiers.len() - 1);
-        }
+            let top = self.cfg.tiers.len() - 1;
+            // Stepped down for heat, it stays where the heat left it while
+            // the package is still warm; cooled, or with no reading, it is
+            // back at the top.
+            let warm = temp.is_some_and(|t| t >= self.cfg.temp_throttle - 5.0);
+            match self.mode {
+                Mode::Battery(t) if self.throttled && warm => t.min(top),
+                _ => top,
+            }
+        } else {
+            self.climb(saving, busy, now)
+        };
+        Mode::Battery(self.cooled(tier, temp))
+    }
+
+    // The ladder: the tier load has earned in <saving>'s range.
+    fn climb(&mut self, saving: Saving, busy: f64, now: Instant) -> usize {
         let (floor, top) = saving.range(self.cfg.tiers.len() - 1);
         let mut tier = match self.mode {
             Mode::Battery(t) if self.saving == Some(saving) => t.clamp(floor, top),
@@ -128,10 +144,13 @@ impl Governor {
             self.above_since = None;
             self.below_since = None;
         }
+        tier
+    }
 
-        // Temperature outranks load, and the mode's floor. A tier that cannot
-        // be cooled is not a tier that was earned, whatever the CPU is busy
-        // doing.
+    // Temperature outranks load, the mode's floor and a boost. A tier that
+    // cannot be cooled is not a tier that was earned, whatever the CPU is
+    // busy doing.
+    fn cooled(&mut self, mut tier: usize, temp: Option<f64>) -> usize {
         if let Some(t) = temp {
             if t >= self.cfg.temp_throttle && tier > 0 {
                 if !self.throttled {
@@ -144,7 +163,7 @@ impl Governor {
                 self.throttled = false;
             }
         }
-        Mode::Battery(tier)
+        tier
     }
 
     pub(crate) fn apply(&mut self, w: &mut Writer, mode: Mode, fw: Firmware, igpu: Option<&IGpu>) {
@@ -266,6 +285,33 @@ mod tests {
             gov.mode = mode;
         }
         mode
+    }
+
+    // The docs' rule, "a boost outranks the mode, and temperature outranks
+    // both": a boost on a package past 85 C steps down a tier a second, and
+    // is back at the top once it has cooled below 80 C.
+    #[test]
+    fn heat_steps_a_boost_down_and_lets_it_back_up_once_cool() {
+        let mut gov = Governor::new(Config::default());
+        let now = Instant::now();
+        let mut step = |temp: f64, i: u64| {
+            let mode = gov.step(
+                false,
+                Saving::Saver,
+                true,
+                100.0,
+                Some(temp),
+                now + Duration::from_secs(i),
+            );
+            gov.mode = mode;
+            mode
+        };
+        assert_eq!(step(70.0, 0), Mode::Battery(3));
+        assert_eq!(step(88.0, 1), Mode::Battery(2));
+        assert_eq!(step(88.0, 2), Mode::Battery(1));
+        // Cooling, not yet cool: it stays where the heat left it.
+        assert_eq!(step(83.0, 3), Mode::Battery(1));
+        assert_eq!(step(78.0, 4), Mode::Battery(3));
     }
 
     #[test]

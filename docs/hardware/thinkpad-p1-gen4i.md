@@ -531,9 +531,10 @@ PL2 is refused: dropping the knob that matters under load because the other one
 was mistyped is the wrong failure.
 
 *The frequency ceiling.* Under HWP with EPP already at `power`, `intel_pstate`
-still walks to the top of the range to scroll a page — `max_perf_pct` was 100,
-the range tops out at 4.8 GHz, and `turbo_pct` is 57, so anything below ~43
-removes turbo outright. `CPU_MAX_PCT_ON_BAT` is a ceiling, not a target;
+still walks to the top of the range to scroll a page — `max_perf_pct` was 100.
+It is a percent of the top turbo clock, 4.8 GHz, and the base clock is 2.5, so
+anything below 52 removes turbo outright. With turbo off, the clock the hardware
+guarantees caps it as well, and that drops with PL1: 2.1 GHz at 12 W. `CPU_MAX_PCT_ON_BAT` is a ceiling, not a target;
 nothing gets slower until something asks for more than the ceiling.
 
 *And therefore `boost`.* A ceiling is only tolerable with an escape hatch,

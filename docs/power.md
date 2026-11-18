@@ -209,7 +209,7 @@ The remaining knobs are **opt-in**, in `/etc/nova/power.conf`:
 ```sh
 PL1_ON_BAT=30                # sustained CPU power limit on battery, in watts
 PL2_ON_BAT=45                # burst limit; must be at least PL1_ON_BAT
-CPU_MAX_PCT_ON_BAT=60        # frequency ceiling, percent of the P-state range
+CPU_MAX_PCT_ON_BAT=60        # frequency ceiling, percent of the top turbo clock
 ASPM_ON_BAT=powersave        # or powersupersave, which adds the L1 substates
 NMI_WATCHDOG_ON_BAT=off      # disable the lockup detector on battery
 ```

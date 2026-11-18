@@ -1068,9 +1068,9 @@ power_limit() {
 # The frequency ceiling, and the answer to "why is it hot when I am only
 # reading a web page". intel_pstate under HWP will still walk to the top of the
 # range for a scroll, and the last third of the frequency range costs
-# disproportionately more power than it returns in speed — this part goes to
-# 4.8 GHz, and 57% of its P-state range is turbo (`turbo_pct`), so a ceiling
-# below ~43 takes turbo off the table entirely.
+# disproportionately more power than it returns in speed. The ceiling is a
+# percent of the top turbo clock: this part goes to 4.8 GHz with a base clock
+# of 2.5, so a ceiling below 52 takes turbo off the table entirely.
 #
 #   CPU_MAX_PCT_ON_BAT=60
 #
@@ -1227,7 +1227,8 @@ pl1_now() {
   uw=$(pl1_in_force) || { printf 'unavailable'; return 0; }
   window=$(cat "$RAPL_WINDOW" 2>/dev/null)
   printf '%s W' "$((uw / 1000000))"
-  [[ -n $window ]] && printf ' over %ss' "$((window / 1000000))"
+  # The register keeps the window in steps of its own, 9.99 s for 10.
+  [[ $window =~ ^[0-9]+$ ]] && printf ' over %ss' "$(((window + 500000) / 1000000))"
   [[ $uw == "$(cat "$RAPL_PL1" 2>/dev/null)" ]] || printf ", the firmware's copy"
   return 0
 }
@@ -1239,17 +1240,39 @@ pl2_now() {
   return 0
 }
 
-# Percent of the P-state range, which is not percent of the clock: the bottom
-# of the range is 800 MHz here, not zero. Printed as both so the number means
-# something.
+# The fastest clock a core may run, in kHz: the top turbo clock, which
+# max_perf_pct is a percent of. With turbo off, cpufreq's top is the clock
+# the hardware guarantees, which drops with the power limit (2.1 GHz at 12 W
+# on the P1, 2.5 at its full limit), so the turbo top is counted from the
+# bottom instead: intel_pstate's P-states, 100 MHz apart, from the lowest.
+turbo_khz() {
+  local cpu=/sys/devices/system/cpu/cpu0/cpufreq low steps top=
+  if [[ $(cat "$PSTATE_NO_TURBO" 2>/dev/null) != 1 ]]; then
+    top=$(cat "$cpu/cpuinfo_max_freq" 2>/dev/null)
+  else
+    low=$(cat "$cpu/cpuinfo_min_freq" 2>/dev/null)
+    steps=$(cat "$PSTATE/num_pstates" 2>/dev/null)
+    [[ $low =~ ^[0-9]+$ && $steps =~ ^[1-9][0-9]*$ ]] && top=$((low + (steps - 1) * 100000))
+  fi
+  [[ $top =~ ^[0-9]+$ ]] && echo "$top"
+}
+
+# intel_pstate's ceiling is a percent of the top turbo clock, so 45% on the
+# P1 is 2.2 GHz of 4.8; with turbo off, the guaranteed clock caps it too. The
+# clock printed is the lower of the two, the one a core can actually reach.
 cpu_ceiling_now() {
-  local pct khz
+  local pct top cap
   pct=$(cat "$PSTATE_MAX" 2>/dev/null) || { printf 'unavailable'; return 0; }
-  khz=$(cat /sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq 2>/dev/null)
   printf '%s%%' "$pct"
   [[ $(cat "$PSTATE_NO_TURBO" 2>/dev/null) == 1 ]] && printf ' no turbo'
-  [[ $khz =~ ^[0-9]+$ ]] &&
-    awk -v p="$pct" -v k="$khz" 'BEGIN { printf " (~%.1f GHz)", p * k / 100000000 }'
+  top=$(turbo_khz)
+  cap=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq 2>/dev/null)
+  [[ $pct =~ ^[0-9]+$ && $top =~ ^[0-9]+$ ]] &&
+    awk -v p="$pct" -v t="$top" -v c="$cap" 'BEGIN {
+      k = p * t / 100
+      if (c ~ /^[0-9]+$/ && c + 0 < k) k = c
+      printf " (%.1f GHz)", k / 1000000
+    }'
   [[ -e $BOOST_STATE ]] && printf ' — lifted by boost'
   return 0
 }
