@@ -374,8 +374,9 @@ Item {
       } catch (e) {
         // Written whole, then moved into place: a bad read is someone else's.
       }
-      // One that ended changed what is installed.
-      if (Model.endedSince(root.allJobs, root.installedAt) && !installedProc.running) root.readInstalled()
+      // One that ended changed what is installed; with the window shut,
+      // opening it reads that again, so nothing runs for it now.
+      if (window.visible && Model.endedSince(root.allJobs, root.installedAt) && !installedProc.running) root.readInstalled()
     }
     onFileChanged: reload()
   }
