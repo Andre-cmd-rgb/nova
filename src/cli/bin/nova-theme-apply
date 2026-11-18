@@ -141,6 +141,14 @@ apply_gtk() {
   [[ -z ${DISPLAY:-} ]] || nova-hyprland-x11-scale || true
 }
 
+# The file chooser and the other dialogs of the system are drawn by
+# xdg-desktop-portal-gtk, in GTK 3, and it stays running between them with the
+# theme it started with. Started again, by D-Bus, the next time one is wanted.
+apply_portal() {
+  [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
+  systemctl --user try-restart xdg-desktop-portal-gtk.service 2>/dev/null || true
+}
+
 # Flatpak apps are shown ~/.config/gtk-3.0 and gtk-4.0, read-only, for the
 # palette in them, by an override of the user's for every app; set once. A
 # choice of the user's about either folder (`flatpak override --user
@@ -303,7 +311,7 @@ apply_greeter() {
   fi
 }
 
-apps=(hyprland gtk flatpak foot btop vscode claude t3code greeter)
+apps=(hyprland gtk portal flatpak foot btop vscode claude t3code greeter)
 if (( $# > 0 )); then
   for app in "$@"; do
     [[ " ${apps[*]} " == *" $app "* ]] || { echo "nova-theme-apply: unknown app '$app' (${apps[*]})" >&2; exit 2; }

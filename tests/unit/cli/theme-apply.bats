@@ -86,6 +86,13 @@ s/#438de6/#00ff00/gI'
   [ ! -e "$XDG_DATA_HOME/icons/Nova" ]
 }
 
+@test "the GTK portal, which keeps the theme it started with, is started again" {
+  stub systemctl
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
+  [ "$status" -eq 0 ]
+  grep -qx 'systemctl --user try-restart xdg-desktop-portal-gtk.service' "$CALLS"
+}
+
 @test "no window gets title-bar buttons" {
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
   grep -qx "gsettings set org.gnome.desktop.wm.preferences button-layout :" "$CALLS"
