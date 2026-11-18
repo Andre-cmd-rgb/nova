@@ -344,7 +344,8 @@ fn run() -> Result<(), String> {
         _ => unreachable!(),
     };
     // That was all the capabilities were for: none for openssl, or for anything a phone could reach.
-    sys::give_up_capabilities().map_err(|e| e.to_string())?;
+    // A user namespace it makes later is its own, with what it takes to set up a network in it.
+    mgmt::give_up_capabilities().map_err(|e| format!("giving up its capabilities: {e}"))?;
     // The certificate while the files of the system are still as they were named, and systemd's ear.
     let (certificate, key) = identity(&o.identity)?;
     let tls = tls::Server::new(&certificate, &key)?;
