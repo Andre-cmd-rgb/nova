@@ -183,6 +183,42 @@ recording() { # <seconds>: that much of a recording, of noise
   grep -q "^nice -n 0 parakeet-cli " "$CALLS"
 }
 
+@test "a look runs on every core, as the end does" {
+  put_model
+  recording 2
+  cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 >/dev/null
+  cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last >/dev/null
+  [ "$(grep -o -- '-t [0-9]*' "$CALLS" | sort -u | wc -l)" -eq 1 ]
+  grep -q -- "-t $(threads) " "$CALLS"
+}
+
+@test "on battery the end runs with performance held, a look and the end plugged in do not" {
+  put_model
+  export NOVA_POWER_SUPPLIES="$SCRATCH/supplies"
+  mkdir -p "$SCRATCH/supplies/AC" "$SCRATCH/supplies/BAT0"
+  echo Mains >"$SCRATCH/supplies/AC/type"
+  echo Battery >"$SCRATCH/supplies/BAT0/type"
+  echo 0 >"$SCRATCH/supplies/AC/online"
+  stub powerprofilesctl 'while [[ $1 != -- ]]; do shift; done; shift; exec "$@"'
+  recording 2
+  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0
+  [ "$status" -eq 0 ]
+  run grep -q '^powerprofilesctl' "$CALLS"
+  [ "$status" -ne 0 ]
+  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last
+  [ "$status" -eq 0 ]
+  # Its words, through the hold, as without it.
+  [ "$output" = "$(printf 'end 2.00\npiece 1.00 sentence And so, fellow.\nrest Ask U.S. not')" ]
+  grep -qx 'powerprofilesctl launch --profile performance --reason Dictation --appid nova-dictation -- setpriv --pdeathsig TERM -- nice -n 0 parakeet-cli .*' "$CALLS"
+  rm -f "$CALLS"
+  echo 1 >"$SCRATCH/supplies/AC/online"
+  recording 2
+  run cmd_transcribe "$XDG_RUNTIME_DIR/1.pcm" 0 --last
+  [ "$status" -eq 0 ]
+  run grep -q '^powerprofilesctl' "$CALLS"
+  [ "$status" -ne 0 ]
+}
+
 @test "transcribe of less than a third of a second asks the engine nothing" {
   put_model
   recording 1.2

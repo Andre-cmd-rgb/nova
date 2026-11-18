@@ -50,6 +50,21 @@ metered() {
   [[ $value == "u 1" || $value == "u 3" ]]
 }
 
+# Whether the end is to run with power-profiles-daemon holding performance:
+# on battery, where every unplug starts in power saver, the CPU's clock is
+# kept low, and a P1 Gen 4i hears half a minute of speech in 4.3 s, against
+# 3.1 s held (0.3 s of it the hold's own start), as plugged in; five seconds
+# in 1.0 s, against 0.9. The hold ends with the engine, and power saver is
+# back. Plugged in there is nothing to hold.
+held_fast() {
+  local supply
+  for supply in "${NOVA_POWER_SUPPLIES:-/sys/class/power_supply}"/*; do
+    [[ $(cat "$supply/type" 2>/dev/null) == Mains && $(cat "$supply/online" 2>/dev/null) == 1 ]] && return 1
+  done
+  have powerprofilesctl &&
+    busctl --system --quiet introspect org.freedesktop.UPower.PowerProfiles /org/freedesktop/UPower/PowerProfiles >/dev/null 2>&1
+}
+
 # One thread per core, up to 8: on a P1 Gen 4i's 8 cores Parakeet is no
 # faster on 16 threads than on 6.
 threads() {
@@ -161,10 +176,11 @@ pieces() { # <from> <end>
 }
 
 # Prints what was said in <file> from <from> seconds on, to as far as it is
-# written, as pieces() does. With --last it is the dictation's end: the
-# engine runs on every core, and the recording is deleted whatever happens.
-# Otherwise it is a look while the shell still listens, on half the cores and
-# at a lower priority, so that it does not get in the way.
+# written, as pieces() does. With --last it is the dictation's end, which
+# someone is waiting on, and the recording is deleted whatever happens.
+# Otherwise it is a look while the shell still listens, at a lower priority,
+# so that it does not get in the way; on every core all the same, as a look
+# that falls behind leaves more for the end.
 cmd_transcribe() {
   local file='' from=0 last=false arg wav log size start length threads niceness
   for arg; do
@@ -198,13 +214,17 @@ cmd_transcribe() {
   wav_header "$length" >"$wav"
   tail -c +$((start + 1)) -- "$file" | head -c "$length" >>"$wav"
   threads=$(threads) niceness=0
-  $last || threads=$(((threads + 1) / 2)) niceness=10
+  $last || niceness=10
   # pdeathsig: a dictation cancelled from the shell stops the engine with
   # this script, rather than leaving it to finish for nobody. -ng keeps it on
   # the CPU even where a ggml GPU backend is installed: a laptop's integrated
   # one is slower (a P1 Gen 4i's takes 1.6 s where its CPU takes 0.4). -ps
   # has it print each word with its time, which says where a sentence ends.
-  if ! setpriv --pdeathsig TERM -- nice -n "$niceness" "$ENGINE" -m "$MODEL" -f "$wav" -t "$threads" -ng -ps >/dev/null 2>"$log"; then
+  local -a engine=(setpriv --pdeathsig TERM -- nice -n "$niceness" "$ENGINE" -m "$MODEL" -f "$wav" -t "$threads" -ng -ps)
+  if $last && held_fast; then
+    engine=(setpriv --pdeathsig TERM -- powerprofilesctl launch --profile performance --reason Dictation --appid nova-dictation -- "${engine[@]}")
+  fi
+  if ! "${engine[@]}" >/dev/null 2>"$log"; then
     die "the speech engine failed: $(tail -n 1 -- "$log")"
   fi
   pieces "$from" "$(awk -v b="$size" 'BEGIN { printf "%.2f", b / 32000 }')" <"$log"
