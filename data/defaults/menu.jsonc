@@ -52,8 +52,7 @@
   "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"nova-theme pick"},
   "style.background": {"icon":"","label":"Background","aliases":["background","wallpaper"],"action":"nova-theme bg pick"},
   "style.font": {"icon":"","label":"Font","provider":"fonts"},
-  "style.bar": {"icon":"󰍜","label":"Menu Bar"},
-  "style.bar.transparent": {"icon":"󰂵","label":"Transparent","checked":"[[ \"$(nova-bar transparent)\" == on ]]","action":"nova-bar transparent toggle"},
+  "style.bar": {"icon":"󰂵","label":"Transparent Menu Bar","checked":"[[ \"$(nova-bar transparent)\" == on ]]","action":"nova-bar transparent toggle"},
 
   // Update
   "update.nova": {"icon":"󰚰","label":"Nova","action":"nova-settings updates"},

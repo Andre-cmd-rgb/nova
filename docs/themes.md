@@ -84,7 +84,7 @@ Each theme remembers its own pick. A photo picked from the shared folder also be
 
 ## A see-through bar
 
-Settings → Menu Bar → **Transparent** lets the background show through the bar. The menu's Style → Menu Bar → Transparent, a double click on an empty part of the bar, and `nova bar transparent true|false|toggle` do the same.
+Settings → Menu Bar → **Transparent** lets the background show through the bar. The menu's Style → Transparent Menu Bar, a double click on an empty part of the bar, and `nova bar transparent true|false|toggle` do the same.
 
 The bar stays readable on any photo:
 

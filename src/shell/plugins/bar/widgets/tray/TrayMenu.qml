@@ -217,8 +217,10 @@ BarPopup {
 
         Lit { on: hider.containsMouse }
 
+        // In line with the app's words above it; on its own, at the row's
+        // margin, as there is no tick to leave room for.
         Words {
-          anchors.leftMargin: card.wordsStart
+          anchors.leftMargin: list.implicitHeight > 0 ? card.wordsStart : card.rowEnd
           anchors.right: parent.right
           anchors.rightMargin: card.rowEnd
           text: "Hide from Menu Bar"
