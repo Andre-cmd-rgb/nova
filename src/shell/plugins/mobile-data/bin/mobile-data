@@ -1395,6 +1395,9 @@ sms_notify() {
   body=${body//&/\&amp;}
   body=${body//</\&lt;}
   body=${body//>/\&gt;}
+  # The description is the one word after the headline that is no option; a
+  # message that is only "-r" or "--exec" would be taken for one and lost.
+  [[ $body != -* ]] || body=" $body"
   if have nova-notification-send; then
     nova-notification-send --app-name "Mobile Data" -u normal \
       -g "$(printf '\U000F0361')" "$headline" "$body" >/dev/null 2>&1

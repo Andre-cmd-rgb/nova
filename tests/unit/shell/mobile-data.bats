@@ -279,6 +279,17 @@ esac'
   [ "${lines[2]}" = "Your bill is ready" ]
 }
 
+@test "a message that is only an option's name still reaches the toast as text" {
+  sed '/^usage() {/,$d' "$helper" >"$SCRATCH/mobile-data.sh"
+  # shellcheck source=/dev/null
+  source "$SCRATCH/mobile-data.sh"
+  stub nova-notification-send 'printf "<%s>\n" "$@" >"$SCRATCH/sent"'
+  sms_notify "Bank" "-r"
+  [ "$(tail -n 1 "$SCRATCH/sent")" = "< -r>" ]
+  sms_notify "Bank" "5 < 6"
+  [ "$(tail -n 1 "$SCRATCH/sent")" = "<5 &lt; 6>" ]
+}
+
 @test "a connected modem: what the bar shows, read in one pass of its dump" {
   modem "modem.generic.ports.value[1]                    : cdc-wdm0 (mbim)" \
     "modem.generic.ports.value[2]                    : wwan0 (net)" \
