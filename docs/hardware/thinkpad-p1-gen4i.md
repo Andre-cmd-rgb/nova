@@ -8,7 +8,7 @@ a login screen.
 
 ## At a glance
 
-- **What this is:** the lab notebook of Nova's power work on the ThinkPad P1 Gen 4i (i7-11850H, RTX A2000, a 3840x2400 panel): how Nova wires it, 55 numbered facts, and what was measured.
+- **What this is:** the lab notebook of Nova's power work on the ThinkPad P1 Gen 4i (i7-11850H, RTX A2000, a 3840x2400 panel): how Nova wires it, 57 numbered facts, and what was measured.
 - **The facts are cited by number** from code comments and commit messages ("fact 54"), so their numbers never change.
 - **The discrete GPU off the bus** reclaims about 6.2 W on battery: 3.0 h on a 60.4 Wh charge, where it was about 2.3 h.
 - **Sleep** costs 1.26 W in S3, so Nova suspends, then hibernates after 2 h on battery.
@@ -23,8 +23,8 @@ a login screen.
 - [Hard-won facts](#hard-won-facts), by topic:
   - the compositor and the discrete GPU: 1-3, 6-10, 12, 15, 29, 37, 44-46, 48, 49, 53, 55
   - power profiles and the battery's mode: 4, 5, 52
-  - the CPU's limits, the governor and the fans: 13, 16, 34-36, 50, 51
-  - the boot: 19-21, 24
+  - the CPU's limits, the governor and the fans: 13, 16, 34-36, 50, 51, 56
+  - the boot: 19-21, 24, 57
   - sleep and wake: 22, 23, 25-28, 30, 38
   - the display, video and the browser: 31, 33, 39, 40, 43
   - idle power and Wi-Fi: 17, 18, 32, 54
