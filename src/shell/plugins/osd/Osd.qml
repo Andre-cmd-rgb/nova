@@ -16,12 +16,17 @@ import "OsdModel.js" as Face
 // A notice in words is the size of the dictation's pill, the other card at
 // the bottom of the screen, and drawn as its messages are: the pill's
 // padding and row, the icon at title size and the words at body size. A
-// level keeps a larger card, its icon at display size.
+// level keeps a larger card, its icon at display size. The two share one
+// place, their bottom edges level (Commons/Bottom.qml): while a card is up
+// the pill waits out of sight, and is back when the card has gone.
 Item {
   id: osd
 
   // Up; the shell reads it to tell whether the plugin is open.
   property bool opened: false
+  // Drawn while it holds the bottom of the screen, where the dictation's pill
+  // shows too; the card takes it from the pill for its moment.
+  readonly property bool seen: opened && Bottom.holder === "osd"
   property var face: Face.parse({})
   readonly property bool notice: !face.level
   // The card's two faces of type, the icon's and the words', a notice's and
@@ -76,12 +81,14 @@ Item {
     }
     face = next
     opened = true
+    Bottom.claim("osd", 1)
     away.stop()
     if (face.duration > 0) away.start()
   }
 
   function close() {
     opened = false
+    Bottom.release("osd")
   }
 
   Timer {
@@ -139,9 +146,9 @@ Item {
   // The window is the room for a card: a screen-sized one was a whole
   // screen to redraw at each step of a held key, and for Hyprland to fade.
   PanelWindow {
-    visible: osd.opened
+    visible: osd.seen
     anchors.bottom: true
-    margins.bottom: Style.space(67)
+    margins.bottom: Bottom.foot
     implicitWidth: Math.ceil(osd.roomWidth)
     implicitHeight: Math.ceil(osd.roomHeight)
     color: "transparent"
@@ -162,7 +169,7 @@ Item {
       radius: Style.cornerRadius
       color: Util.alpha(Commons.Color.background, 0.97)
       frame: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
-      opacity: osd.opened ? 1 : 0
+      opacity: osd.seen ? 1 : 0
 
       // The pieces side by side, each where Face.layout puts it.
       Item {

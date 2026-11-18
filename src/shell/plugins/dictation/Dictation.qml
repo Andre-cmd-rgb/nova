@@ -64,10 +64,18 @@ Item {
   readonly property int barGap: Math.max(2, Style.space(3))
   readonly property int rowHeight: Style.spacing.pillRowHeight
   readonly property bool shown: phase !== "idle"
+  // Drawn only while it holds the bottom of the screen: a message or the
+  // volume's card takes the place for its moment, and the pill is back
+  // after it. Listening, working and pasting go on meanwhile.
+  readonly property bool seen: shown && Bottom.holder === "dictation"
   readonly property var source: Pipewire.defaultAudioSource
   readonly property var lockService: shell ? shell.serviceFor("nova.lock") : null
 
   onPhaseChanged: if (phase !== "idle") look = phase
+  onShownChanged: {
+    if (shown) Bottom.claim("dictation", 0)
+    else Bottom.release("dictation")
+  }
 
   function press() {
     switch (Model.onPress(phase)) {
@@ -396,7 +404,7 @@ Item {
 
   PanelWindow {
     id: panel
-    visible: root.shown || card.opacity > 0
+    visible: root.seen || card.opacity > 0
     anchors.bottom: true
     // Room for the widest pill and its pop; the pill sizes itself inside.
     implicitWidth: Style.space(640)
@@ -417,14 +425,14 @@ Item {
       height: card.edge.top + card.pad * 2 + root.rowHeight + card.edge.bottom
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
-      anchors.bottomMargin: Style.space(28)
+      anchors.bottomMargin: Bottom.foot
       color: Util.alpha(Commons.Color.background, 0.97)
       frame: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
       radius: Style.cornerRadius
-      opacity: root.shown ? 1 : 0
-      scale: root.shown ? 1 : 0.88
+      opacity: root.seen ? 1 : 0
+      scale: root.seen ? 1 : 0.88
       transform: Translate {
-        y: root.shown ? 0 : Style.space(10)
+        y: root.seen ? 0 : Style.space(10)
         Behavior on y { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
       }
 
