@@ -515,7 +515,6 @@ impl Sender {
         cancelled: &(dyn Fn() -> bool + Sync),
         socket: &TcpStream,
     ) -> Result<(), String> {
-        let socket = socket.try_clone().map_err(words)?;
         // At the least rate on average, beside the slack, as well as never stalling; once the last
         // of it has gone, the receiver's answer has its own limit.
         let at_least = Duration::from_secs_f64(pack.bytes as f64 / self.limits.rate.max(1) as f64);
@@ -523,7 +522,7 @@ impl Sender {
             Instant::now().checked_add(self.limits.slack + at_least),
             Some(self.limits.stall),
         );
-        watched(&socket, deadline, stall, cancelled, |watch| {
+        watched(socket, deadline, stall, cancelled, |watch| {
             watch.moved();
             connection
                 .post_in_pieces("/Upload", host, "application/x-cpio")
