@@ -217,10 +217,12 @@ Panel {
   function formatBytes(bytes) {
     var n = Number(bytes)
     if (!isFinite(n) || n < 0) n = 0
-    if (n < 1024) return Math.round(n) + " B"
-    if (n < 1048576) return (n / 1024).toFixed(1) + " KB"
-    if (n < 1073741824) return (n / 1048576).toFixed(1) + " MB"
-    return (n / 1073741824).toFixed(2) + " GB"
+    // Decimal, as a plan's allowance is counted and as AirDrop and the
+    // Finder say sizes.
+    if (n < 1000) return Math.round(n) + " B"
+    if (n < 1e6) return (n / 1e3).toFixed(1) + " KB"
+    if (n < 1e9) return (n / 1e6).toFixed(1) + " MB"
+    return (n / 1e9).toFixed(2) + " GB"
   }
 
   function formatRate(bytesPerSec) {

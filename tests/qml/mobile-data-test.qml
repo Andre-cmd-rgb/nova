@@ -182,6 +182,8 @@ ShellRoot {
     check("connected: shown in the bar", widget.visible, true)
     check("connected: the meta line names the operator and the technology", widget.metaText, "Smoke · 5G")
     check("connected: no hint", widget.hintText, "")
+    check("sizes count in thousands, as a plan does", [widget.formatBytes(999), widget.formatBytes(1500), widget.formatBytes(2500000), widget.formatBytes(1e9), widget.formatRate(12000)],
+      ["999 B", "1.5 KB", "2.5 MB", "1.00 GB", "12.0 KB/s"])
     widget.open()
     check("connected: the panel opens", surface().open, true)
     check("connected: the switch is on", toggleSwitch()?.checked, true)
