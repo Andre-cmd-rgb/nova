@@ -88,9 +88,19 @@ s/#438de6/#00ff00/gI'
 
 @test "the GTK portal, which keeps the theme it started with, is started again" {
   stub systemctl
-  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
+  stub hyprctl "echo '[{\"class\": \"foot\"}]'"
+  HYPRLAND_INSTANCE_SIGNATURE=test run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
   [ "$status" -eq 0 ]
   grep -qx 'systemctl --user try-restart xdg-desktop-portal-gtk.service' "$CALLS"
+}
+
+@test "the GTK portal is left running while one of its windows is open" {
+  stub systemctl
+  stub hyprctl "echo '[{\"class\": \"xdg-desktop-portal-gtk\"}]'"
+  HYPRLAND_INSTANCE_SIGNATURE=test run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
+  [ "$status" -eq 0 ]
+  grep -q '^hyprctl -j clients' "$CALLS"
+  ! grep -q '^systemctl' "$CALLS"
 }
 
 @test "no window gets title-bar buttons" {

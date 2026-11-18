@@ -143,9 +143,15 @@ apply_gtk() {
 
 # The file chooser and the other dialogs of the system are drawn by
 # xdg-desktop-portal-gtk, in GTK 3, and it stays running between them with the
-# theme it started with. Started again, by D-Bus, the next time one is wanted.
+# theme it started with. Started again, by D-Bus, the next time one is wanted;
+# not while one of its windows is open, which that would close: that one keeps
+# the old theme until the next change.
 apply_portal() {
   [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
+  if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] &&
+    hyprctl -j clients 2>/dev/null | jq -e 'any(.[]; .class == "xdg-desktop-portal-gtk")' >/dev/null 2>&1; then
+    return 0
+  fi
   systemctl --user try-restart xdg-desktop-portal-gtk.service 2>/dev/null || true
 }
 
