@@ -30,7 +30,7 @@ Chrome and VS Code update with Nova. Neither may be redistributed, so each is bu
 
 ### Flathub's apps
 
-Apps from Flathub, installed with the [App Store](apps.md) or with `flatpak`, update with Nova too, after Chrome and VS Code: in your own installation and the system's, with `flatpak update`, which asks for no password.
+Apps from Flathub, installed with the [App Center](apps.md) or with `flatpak`, update with Nova too, after Chrome and VS Code: in your own installation and the system's, with `flatpak update`, which asks for no password.
 
 - When they cannot be updated, Nova is updated all the same, and the update says so as it says it for Chrome.
 - `nova apps update` updates them, and Chrome and VS Code, alone.

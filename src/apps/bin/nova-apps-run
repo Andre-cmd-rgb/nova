@@ -1,10 +1,10 @@
 #!/bin/bash
 # nova:hidden=true
-# nova:summary=Start installing or removing an app for the App Store, out of sight
+# nova:summary=Start installing or removing an app for the App Center, out of sight
 # nova:args=install|remove <app-id> [--from nova|arch|flathub]
 #
 # As a user service of its own (nova-apps-<id>), so that it goes on with the
-# App Store's window closed. How far it is, is in
+# App Center's window closed. How far it is, is in
 # $XDG_RUNTIME_DIR/nova/apps/status.json (nova-apps-job --status). One per
 # app: while one runs for it, this does nothing.
 

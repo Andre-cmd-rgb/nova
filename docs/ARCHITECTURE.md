@@ -14,7 +14,7 @@ This document is the contract every component follows. Read it before adding cod
 | `src/power/` | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd`, `nova-undervolt`, system units, udev rules, sleep hooks | Nova's power governor: the policy (bash) and the governor (Rust), tuned for and so far started only on the ThinkPad P1 Gen 4i; and the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
 | `src/patch/` | `/usr/lib/nova/bin/nova-patch`, `/usr/lib/nova/nova-patch-apply`, a polkit action, `nova-patch-ram.service` | Patches: fixes for one computer's faults (bad memory, a device's quirk), kept across reinstalls by export and add; see [patches.md](patches.md) |
 | `src/airdrop/` | `/usr/lib/nova/bin/nova-airdrop`, `/usr/lib/nova/nova-airdropd`, `nova-airdrop-radio`, `nova-airdrop-apply`, a polkit action, `nova-airdrop@.service` | AirDrop, receiving from iPhones nearby: the receiver and its command (Rust), and the helper that lends it the Wi-Fi card and takes it back ([airdrop.md](airdrop.md)) |
-| `src/apps/` | `/usr/lib/nova/bin/nova-apps-*`, `/usr/lib/nova/nova-apps-apply`, a polkit action, `/usr/share/nova/apps/`, the App Store's desktop entry and icon | The App Store's catalog (Rust) and its helpers, which `nova apps` runs too; the window is the shell's (`plugins/store`); see [apps.md](apps.md) |
+| `src/apps/` | `/usr/lib/nova/bin/nova-apps-*`, `/usr/lib/nova/nova-apps-apply`, a polkit action, `/usr/share/nova/apps/`, the App Center's desktop entry and icon | The App Center's catalog (Rust) and its helpers, which `nova apps` runs too; the window is the shell's (`plugins/store`); see [apps.md](apps.md) |
 | `src/iphone/` | `/usr/lib/nova/nova-iphone-notifications`, `/usr/lib/nova/bin/nova-notification-iphone`, `nova-iphone-notifications.service` (user) | iPhone notifications: an iPhone's notifications shown as Nova's, through Apple's Notification Center Service over Bluetooth LE (Python, with D-Bus and GLib), and its command ([iphone.md](iphone.md)) |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `src/screensaver/` | `/usr/lib/nova/bin/nova-screensaver-effect` | The screensaver's text effects (Rust): a text played in a terminal, one effect after another |
@@ -68,14 +68,14 @@ How files reach a system:
 | | `~/.local/state/nova-<plugin>/` | a plugin's history |
 | User data | `~/.local/share/nova/calendar/calendar.ics` | the calendar |
 | | `~/.local/share/nova-dictation/` | the speech model, downloaded at dictation's first use |
-| | `~/.local/share/flatpak/` | Flathub's apps, as the App Store installs them: flatpak's own |
+| | `~/.local/share/flatpak/` | Flathub's apps, as the App Center installs them: flatpak's own |
 | User cache | `~/.cache/nova/adaptive/` | the adaptive theme's palettes, by the photo's path, size and time |
-| | `~/.cache/nova/apps/` | the App Store's catalog, the icons of Arch's catalog as PNGs, and the apps' pictures |
+| | `~/.cache/nova/apps/` | the App Center's catalog, the icons of Arch's catalog as PNGs, and the apps' pictures |
 | System config | `/etc/nova/power.conf` | on a P1 Gen 4i, optional tunables |
 | | `/etc` drop-ins from the hardware profile | listed in `/var/lib/nova/hardware-files` |
 | | `/etc/nova/patches/` | this computer's patches; their `/etc` files are listed in `/var/lib/nova/patch-files` |
 | System state | `/var/lib/nova/` | `greeter/`, the theme mirror, owned by the user the installer created; `hardware-files`; `patch-files`; `patches`: whether each patch is on |
-| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `nightlight-turn`: the last turn the night light's schedule made, so that a restarted shell does not make it again; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves; `airdrop.sock`, where `nova airdrop` and the shell reach the AirDrop receiver while it runs; `apps/`, the App Store's installs: `status.json`, how far each is, and each one's log; `iphone-notifications.json`: how the iPhone is, as iPhone notifications' service last said, for Settings and `nova notification iphone` |
+| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `nightlight-turn`: the last turn the night light's schedule made, so that a restarted shell does not make it again; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves; `airdrop.sock`, where `nova airdrop` and the shell reach the AirDrop receiver while it runs; `apps/`, the App Center's installs: `status.json`, how far each is, and each one's log; `iphone-notifications.json`: how the iPhone is, as iPhone notifications' service last said, for Settings and `nova notification iphone` |
 | | `/run/nova-airdrop/` | while AirDrop is on, what there is to put back of the Wi-Fi; afterwards, how putting it back went |
 
 ### Identifiers

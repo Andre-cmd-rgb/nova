@@ -4,7 +4,7 @@
 # nova:args=<package>
 #
 # "<download> <installed>": the package and whatever it needs that is not
-# installed yet, as pacman would install them now. The App Store's page
+# installed yet, as pacman would install them now. The App Center's page
 # shows it as the app's size. Reads the package lists, and changes nothing.
 
 set -euo pipefail

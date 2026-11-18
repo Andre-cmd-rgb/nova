@@ -1,8 +1,8 @@
 #!/bin/bash
-# nova:summary=Look for apps to install, as the App Store does
+# nova:summary=Look for apps to install, as the App Center does
 # nova:args=<words>...
 #
-# The best matches first, as the App Store lists them: by how well the name,
+# The best matches first, as the App Center lists them: by how well the name,
 # a keyword, the summary or the ID matches every word, and then by the
 # store's own order. Each with where it comes from, the first being the one
 # nova apps install takes, and whether it is installed.
@@ -14,7 +14,7 @@ HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/nova-apps-common"
 
 (($#)) || { echo "Usage: nova apps search <words>..." >&2; exit 2; }
-catalog=$(apps_catalog) || { echo "nova apps: the App Store's catalog could not be made" >&2; exit 1; }
+catalog=$(apps_catalog) || { echo "nova apps: the App Center's catalog could not be made" >&2; exit 1; }
 installed=$(nova-apps-installed)
 
 found=$(jq -r --arg q "$*" --argjson have "$installed" "$APPS_SCORE"'

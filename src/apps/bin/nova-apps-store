@@ -1,5 +1,5 @@
 #!/bin/bash
-# nova:summary=Open the App Store, on an app's page or a search
+# nova:summary=Open the App Center, on an app's page or a search
 # nova:args=[<app> | --search <words>...]
 #
 #   nova apps store                 its front page

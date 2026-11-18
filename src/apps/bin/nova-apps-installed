@@ -1,12 +1,12 @@
 #!/bin/bash
 # nova:hidden=true
-# nova:summary=Print what is installed, as JSON, for the App Store
+# nova:summary=Print what is installed, as JSON, for the App Center
 #
 # One object: "flatpak", each Flathub app installed and in which
 # installation, the user's or the system's; "runtimes", the runtimes there;
 # "pacman", each package and its version; "explicit", the ones installed by
 # name; and "nova", the ones the nova package needs, which are part of Nova
-# and are not removed. The App Store matches its catalog against it; nothing
+# and are not removed. The App Center matches its catalog against it; nothing
 # here reaches the network.
 
 set -euo pipefail

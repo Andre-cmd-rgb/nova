@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova:hidden=true
-# nova:summary=Download an app's screenshots into the cache, for the App Store's page
+# nova:summary=Download an app's screenshots into the cache, for the App Center's page
 # nova:args=<url>...
 #
 # Prints "<url><TAB><file>" for each picture there is now, in the order

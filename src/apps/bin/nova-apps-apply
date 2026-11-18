@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova-apps-apply: the root half of installing and removing an app from
-# Arch's repositories, for the App Store and `nova apps` (through pkexec, as
+# Arch's repositories, for the App Center and `nova apps` (through pkexec, as
 # org.nova.apps).
 #
 #   install <package>   install an app Arch's catalog lists
@@ -56,7 +56,7 @@ case $action in
   built) ;;
   *) usage ;;
 esac
-((EUID == 0)) || [[ -n $ROOT ]] || die "this runs as root; use nova apps or the App Store"
+((EUID == 0)) || [[ -n $ROOT ]] || die "this runs as root; use nova apps or the App Center"
 
 mkdir -p "$ROOT/run"
 exec {lock}>"$ROOT/run/nova-update.lock"

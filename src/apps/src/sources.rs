@@ -2,7 +2,7 @@
 //! of the packages and refs in them.
 //!
 //! Flathub's catalog is the one flatpak keeps for each installation that
-//! has Flathub: the user's (where the App Store installs) and the system's,
+//! has Flathub: the user's (where the App Center installs) and the system's,
 //! the newer of the two. Arch's is archlinux-appstream-data's, in
 //! /usr/share/swcatalog. pacman -Sl says what the release's repositories
 //! have now, and flatpak remote-ls the size of each ref, from what flatpak

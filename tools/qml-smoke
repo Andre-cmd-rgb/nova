@@ -81,7 +81,7 @@ cat >"$work/stub/nova-input" <<'EOF'
 [ "$1" = --json ] || exit 0
 echo '{"layouts":["us","de:nodeadkeys"],"switch":"alts","repeat":{"delay":250,"rate":40},"speed":0,"naturalScroll":{"mouse":false,"touchpad":true},"tapToClick":true,"touchpad":true}'
 EOF
-# The App Store with the catalog its window test has, rather than this
+# The App Center with the catalog its window test has, rather than this
 # computer's apps, and Flathub not asked for its own.
 for helper in catalog installed refresh run shots size; do
   install -m 755 "$repo/tests/qml/stubs/apps" "$work/stub/nova-apps-$helper"

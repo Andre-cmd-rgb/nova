@@ -19,7 +19,7 @@
   "style": {"icon":"","label":"Style"},
   "power": {"icon":"󰌪","label":"Power Mode","aliases":["power-mode"],"when":"nova-power-profile list","provider":"power-profiles"},
   "settings": {"icon":"","label":"Settings","action":"nova-settings"},
-  "store": {"icon":"󰏓","label":"App Store","aliases":["app-store"],"action":"nova apps store"},
+  "store": {"icon":"󰏓","label":"App Center","aliases":["app-store"],"action":"nova apps store"},
   "update": {"icon":"","label":"Update"},
   "system": {"icon":"","label":"System","aliases":["power-menu"]},
 

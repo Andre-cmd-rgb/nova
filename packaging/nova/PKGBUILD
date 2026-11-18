@@ -98,7 +98,7 @@ depends=(
   cava           # the sound playing, as bars, in a terminal
   cmatrix        # falling code, in a terminal
 
-  # The App Store (docs/apps.md)
+  # The App Center (docs/apps.md)
   flatpak        # Flathub's apps, in each user's own installation
   archlinux-appstream-data # what Arch's repositories hold: names, icons, pictures
 
@@ -108,7 +108,7 @@ depends=(
   wl-clipboard
   satty          # marking up screenshots
   wtype          # paste into the focused window
-  libvips        # vipsthumbnail, for the background and theme pickers and the App Store's icons
+  libvips        # vipsthumbnail, for the background and theme pickers and the App Center's icons
 
   # Boot chain and snapshots
   btrfs-progs

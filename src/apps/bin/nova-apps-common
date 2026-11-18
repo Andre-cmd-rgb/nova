@@ -1,10 +1,10 @@
 # shellcheck shell=bash
 # nova:hidden=true
-# nova:summary=What the App Store's commands share (sourced, not run)
+# nova:summary=What the App Center's commands share (sourced, not run)
 #
 # The catalog (nova-apps-catalog), finding an app in it by a word, the
 # names of the places an app comes from, and how each is searched: the
-# order here is the App Store's own (StoreModel.js), so that `nova apps
+# order here is the App Center's own (StoreModel.js), so that `nova apps
 # search` and the window list alike.
 
 # The catalog's file, made first if what it is made from changed.
@@ -64,7 +64,7 @@ apps_source_name() { # kind
 # match at the start of the name counts most. A match is then ordered by
 # that and a quarter of the app's rank, so that an app of the front page
 # that matches at all comes before one that only has the word for a name.
-# The App Store's StoreModel.js orders the same.
+# The App Center's StoreModel.js orders the same.
 # shellcheck disable=SC2016,SC2034 # jq's $ variables; used by what sources this
 APPS_SCORE='
   def word_score($w):

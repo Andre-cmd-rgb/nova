@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=App Store
+Name=App Center
 GenericName=Apps
 Comment=Find apps, install them and remove them
-Keywords=install;remove;software;flathub;flatpak;package;
+Keywords=install;remove;software;store;apps;flathub;flatpak;package;
 Icon=nova-app-store
 Exec=nova apps store %u
 TryExec=nova

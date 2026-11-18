@@ -1,4 +1,4 @@
-//! nova-apps-catalog: the App Store's catalog, made from Flathub's, Arch's
+//! nova-apps-catalog: the App Center's catalog, made from Flathub's, Arch's
 //! and Nova's own, and kept in the cache until one of them changes.
 
 mod appstream;
@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const USAGE: &str = "\
 Usage: nova-apps-catalog [--force]
 
-Makes the App Store's catalog, if what it is made from changed since it was
+Makes the App Center's catalog, if what it is made from changed since it was
 last made (--force: in any case), and prints the file it is in:
 $XDG_CACHE_HOME/nova/apps/catalog.json.
 ";

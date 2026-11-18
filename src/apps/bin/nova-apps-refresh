@@ -1,9 +1,9 @@
 #!/bin/bash
 # nova:hidden=true
-# nova:summary=Fetch Flathub's catalog again once it is a day old (the App Store, as it opens)
+# nova:summary=Fetch Flathub's catalog again once it is a day old (the App Center, as it opens)
 # nova:args=[--force]
 #
-# Into the user's own Flatpak installation, which the App Store installs
+# Into the user's own Flatpak installation, which the App Center installs
 # into: Flathub is added to it first, from the file Nova ships with
 # Flathub's key in it, so that nothing about Flathub is taken from the
 # network unchecked. Prints "updated" once it fetched one, and nothing when

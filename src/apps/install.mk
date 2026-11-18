@@ -1,4 +1,4 @@
-# The App Store (docs/apps.md): the window is the shell's (plugins/store),
+# The App Center (docs/apps.md): the window is the shell's (plugins/store),
 # and these are what it stands on, which `nova apps` runs too.
 # nova-apps-catalog makes the list of apps from the AppStream catalogs on
 # this computer (Arch's from archlinux-appstream-data, Flathub's from

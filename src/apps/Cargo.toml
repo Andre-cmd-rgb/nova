@@ -2,7 +2,7 @@
 name = "nova-apps"
 version = "1.0.0"
 edition = "2021"
-description = "Nova's App Store catalog: Flathub's, Arch's and Nova's own apps, each once"
+description = "Nova's App Center catalog: Flathub's, Arch's and Nova's own apps, each once"
 license = "MIT"
 rust-version = "1.89"
 

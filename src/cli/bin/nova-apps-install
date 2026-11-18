@@ -1,9 +1,9 @@
 #!/bin/bash
-# nova:summary=Install an app, as the App Store does; alone, Google Chrome and VS Code
+# nova:summary=Install an app, as the App Center does; alone, Google Chrome and VS Code
 # nova:args=<app> [--from nova|arch|flathub] | [--update | --check] [--noconfirm] [--build <folder>] | --review <app>
 #
 # With an app (its ID, package or name, as nova apps search shows them), it
-# installs that app, as the App Store would: nova-apps-job.
+# installs that app, as the App Center would: nova-apps-job.
 #
 # Neither may be redistributed, so Nova builds them here from their AUR
 # recipes, which download the vendors' own releases from Google and Microsoft.
@@ -59,7 +59,7 @@ usage() {
 
 known_app() { [[ " ${apps[*]} " == *" $1 "* ]]; }
 
-# An app named: the App Store's install.
+# An app named: the App Center's install.
 if [[ -n ${1:-} && $1 != -* ]]; then
   exec nova-apps-job install "$@"
 fi

@@ -1,4 +1,4 @@
-//! What the App Store shows of an app, read from an AppStream component:
+//! What the App Center shows of an app, read from an AppStream component:
 //! Flathub's catalog and Arch's (archlinux-appstream-data) are both in that
 //! form. Only desktop apps are kept, in English, the language Nova's own
 //! words are in.
