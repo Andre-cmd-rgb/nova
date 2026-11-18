@@ -508,12 +508,16 @@ Item {
   // ---- the watches ----------------------------------------------------------
 
   // The watch runs for as long as the shell does. Should it end, it is
-  // started again, after longer each time: a command that is not there is
-  // not asked for every few seconds for good.
+  // started again, after longer each time it ends at once: a command that is
+  // not there is not asked for every few seconds for good, and a watch that
+  // ran well for a while and then ended (the daemon restarted) is started
+  // again in seconds.
   Process {
     id: watcher
+    property double since: 0
     command: [airdrop.command, "watch"]
     running: true
+    onRunningChanged: if (running) since = Date.now()
     stdout: SplitParser {
       onRead: function (line) { airdrop.told(line) }
     }
@@ -521,6 +525,7 @@ Item {
     // now; the watch says how things are when it is back.
     onExited: {
       airdrop.live = null
+      again.interval = Model.waitAfter(again.interval, Date.now() - since)
       again.start()
     }
   }
@@ -538,8 +543,10 @@ Item {
   // so once and waits.
   Process {
     id: bellWatcher
+    property double since: 0
     command: [airdrop.command, "bell", "watch"]
     running: true
+    onRunningChanged: if (running) since = Date.now()
     stdout: SplitParser {
       onRead: function (line) {
         var next = Model.parse(line)
@@ -551,6 +558,7 @@ Item {
     }
     onExited: {
       airdrop.bell = { state: "off" }
+      bellAgain.interval = Model.waitAfter(bellAgain.interval, Date.now() - since)
       bellAgain.start()
     }
   }

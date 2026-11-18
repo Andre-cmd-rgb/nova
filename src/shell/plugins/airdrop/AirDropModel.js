@@ -55,6 +55,13 @@ function size(bytes) {
   return (n / 1e9).toFixed(2) + " GB"
 }
 
+// The wait before a watch that ended is started again: the one it had, which
+// grows each time it ends at once, or five seconds if it had run for a
+// minute, as then it was well and the daemon only restarted.
+function waitAfter(wait, ranFor) {
+  return ranFor >= 60000 ? 5000 : wait
+}
+
 // The sender by its name for itself, in quotes as a Mac has it.
 function sender(state) {
   var name = text(state.sender)
