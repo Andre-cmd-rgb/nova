@@ -144,8 +144,8 @@ ShellRoot {
   function first() {
     check("a line that is no state is nothing", [Model.parse("not json"), Model.parse("[1]"), Model.parse('{"state":7}'), Model.parse("null")],
       [null, null, null, null])
-    check("sizes as people say them", [Model.size(512), Model.size(20480), Model.size(1044468), Model.size(3200000000), Model.size("x")],
-      ["512 bytes", "20 kB", "1.0 MB", "3.20 GB", "0 bytes"])
+    check("sizes as people say them", [Model.size(512), Model.size(1), Model.size(20480), Model.size(1044468), Model.size(3200000000), Model.size("x")],
+      ["512 bytes", "1 byte", "20 kB", "1.0 MB", "3.20 GB", "0 bytes"])
     check("a watch that ended at once waits as long as it did; one that ran for a minute, five seconds",
       [Model.waitAfter(80000, 2000), Model.waitAfter(300000, 59000), Model.waitAfter(300000, 60000), Model.waitAfter(20000, 3600000)],
       [80000, 300000, 5000, 5000])

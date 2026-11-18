@@ -83,6 +83,7 @@ ShellRoot {
     check(JSON.stringify(Model.launchWords(catalog.byId["com.google.Chrome"], { kind: "nova", package: "google-chrome" })) === '["uwsm-app","--","google-chrome.desktop"]', "Nova's by its own")
     check(JSON.stringify(Model.launchWords(catalog.byId.libfoo, Model.installedFrom(catalog.byId.libfoo, fromArch))) === '["uwsm-app","--","foo-viewer.desktop"]' && Model.launchWords(catalog.byId.foot, Model.installedFrom(catalog.byId.foot, fromArch)).length === 0, "one without an entry is not opened")
     check(Model.find(catalog, "appstream://org.gimp.GIMP") === gimp && Model.find(catalog, "org.gimp.GIMP.desktop") === gimp && Model.find(catalog, "google-chrome") === catalog.byId["com.google.Chrome"] && Model.find(catalog, "krita") === catalog.byId["org.kde.krita"] && Model.find(catalog, "nothing") === null, "an app by its ID, its entry or its name")
+    check(Model.find(catalog, "constructor") === null && Model.find(catalog, "toString") === null && Model.find(catalog, "__proto__") === null, "a word that is an object's own member names no app")
 
     // ---- jobs ----
     var now = 1000

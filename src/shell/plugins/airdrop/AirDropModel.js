@@ -49,7 +49,7 @@ function escaped(value) {
 // A size as people say it.
 function size(bytes) {
   var n = count(bytes)
-  if (n < 1000) return Math.round(n) + " bytes"
+  if (n < 1000) return Math.round(n) + (Math.round(n) === 1 ? " byte" : " bytes")
   if (n < 1e6) return Math.round(n / 1e3) + " kB"
   if (n < 1e9) return (n / 1e6).toFixed(1) + " MB"
   return (n / 1e9).toFixed(2) + " GB"

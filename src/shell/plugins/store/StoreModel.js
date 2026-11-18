@@ -54,7 +54,7 @@ function read(text) {
     return null
   }
   if (!catalog || !Array.isArray(catalog.apps)) return null
-  var byId = {}
+  var byId = Object.create(null)
   for (var i = 0; i < catalog.apps.length; i++) byId[catalog.apps[i].id] = catalog.apps[i]
   catalog.byId = byId
   catalog.runtimes = catalog.runtimes || {}
