@@ -49,9 +49,11 @@ fn layer_needed(strip: &[Rgb], ink: Rgb, shade: Rgb) -> Option<f64> {
     let ink = apca_luminance(ink);
     let may_fail = (strip.len() as f64 * MAY_FALL_SHORT) as usize;
     (0..=50).map(|step| f64::from(step) / 50.0).find(|&alpha| {
+        // A layer that fails is known to once one more than may fail has.
         let short = strip
             .iter()
             .filter(|&&pixel| apca_of(ink, apca_luminance(pixel.mix(shade, alpha))) < CONTRAST)
+            .take(may_fail + 1)
             .count();
         short <= may_fail
     })
