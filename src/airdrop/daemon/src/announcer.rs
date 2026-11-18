@@ -28,7 +28,6 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::time::{Duration, Instant};
 
 use crate::mgmt;
-use crate::sys;
 use crate::wake::Wake;
 
 extern "C" {
@@ -209,7 +208,7 @@ fn announcer(pair: OwnedFd) -> ! {
             unsafe { _exit(0) }
         }
     };
-    if let Err(error) = sys::give_up_capabilities() {
+    if let Err(error) = mgmt::give_up_capabilities() {
         say(fd, format!("no Bluetooth: {error}").as_bytes());
         // SAFETY: as above.
         unsafe { _exit(1) }

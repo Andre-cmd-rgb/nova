@@ -29,7 +29,22 @@ pub struct SockaddrHci {
     channel: u16,
 }
 
+#[repr(C)]
+struct CapHeader {
+    version: u32,
+    pid: c_int,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CapData {
+    effective: u32,
+    permitted: u32,
+    inheritable: u32,
+}
+
 extern "C" {
+    fn capset(header: *mut CapHeader, data: *const CapData) -> c_int;
     fn socket(domain: c_int, kind: c_int, protocol: c_int) -> c_int;
     fn bind(fd: c_int, address: *const c_void, length: u32) -> c_int;
     fn recv(fd: c_int, buffer: *mut c_void, length: usize, flags: c_int) -> isize;
@@ -37,6 +52,7 @@ extern "C" {
     fn poll(fds: *mut PollFd, count: c_ulong, timeout: c_int) -> c_int;
 }
 
+const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 const AF_BLUETOOTH: c_int = 31;
 const SOCK_RAW: c_int = 3;
 const SOCK_NONBLOCK: c_int = 0o4000;
@@ -58,6 +74,25 @@ pub const POWERED: u32 = 1;
 /// Its "low energy" one: Bluetooth Low Energy, which AirDrop's announcement and the doorbell's
 /// listening both are, off where the user switched it off (Settings → Bluetooth).
 pub const LE: u32 = 1 << 9;
+
+/// Gives up every capability, for good, and the ambient ones with them. The management socket
+/// keeps what it was let do.
+pub fn give_up_capabilities() -> io::Result<()> {
+    let mut header = CapHeader {
+        version: CAPABILITY_VERSION_3,
+        pid: 0,
+    };
+    let none = [CapData {
+        effective: 0,
+        permitted: 0,
+        inheritable: 0,
+    }; 2];
+    // SAFETY: the header and the two data the third version takes live across the call.
+    if unsafe { capset(&mut header, none.as_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
 
 /// The kernel's Bluetooth management, for every controller at once.
 pub struct Mgmt {

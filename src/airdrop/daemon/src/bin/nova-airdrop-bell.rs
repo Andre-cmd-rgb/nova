@@ -66,26 +66,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use mgmt::{status_words, wait, Mgmt, HCI_DEV_NONE, LE, POWERED, READ_INDEX_LIST, READ_INFO};
 
-#[repr(C)]
-struct CapHeader {
-    version: u32,
-    pid: c_int,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CapData {
-    effective: u32,
-    permitted: u32,
-    inheritable: u32,
-}
-
 extern "C" {
-    fn capset(header: *mut CapHeader, data: *const CapData) -> c_int;
     fn signal(signal: c_int, handler: usize) -> usize;
 }
-
-const CAPABILITY_VERSION_3: u32 = 0x2008_0522;
 
 // The kernel's management commands and events this uses (include/net/bluetooth/mgmt.h).
 const READ_MONITOR_FEATURES: u16 = 0x0051;
@@ -267,24 +250,6 @@ fn write_phones(path: &Path, phones: &[Phone]) -> io::Result<()> {
 }
 
 // ------------------------------------------------------------------ the kernel
-
-/// Gives up every capability, for good. The management socket keeps what it was let do.
-fn give_up_capabilities() -> io::Result<()> {
-    let mut header = CapHeader {
-        version: CAPABILITY_VERSION_3,
-        pid: 0,
-    };
-    let none = [CapData {
-        effective: 0,
-        permitted: 0,
-        inheritable: 0,
-    }; 2];
-    // SAFETY: the header and the two data the third version takes live across the call.
-    if unsafe { capset(&mut header, none.as_ptr()) } != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
 
 static STOPPING: AtomicBool = AtomicBool::new(false);
 
@@ -715,7 +680,7 @@ impl Bell {
     fn json(&self) -> String {
         let learning = self.learning.map_or(0, |(_, unix)| unix);
         let (state, why) = match &self.why {
-            Some(why) => ("deaf", format!(r#""why":{},"#, quoted(why))),
+            Some(why) => ("deaf", format!(r#""why":{},"#, meet::quoted(why))),
             None => ("listening", String::new()),
         };
         format!(
@@ -786,20 +751,6 @@ fn in_place(answer: &[u8]) -> Vec<u16> {
         .take(count)
         .map(|pair| u16::from_le_bytes(*pair))
         .collect()
-}
-
-fn quoted(text: &str) -> String {
-    let mut out = String::from("\"");
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
 }
 
 // ---------------------------------------------------------------- the socket
@@ -889,7 +840,7 @@ fn run() -> Result<(), String> {
     let mgmt = Mgmt::open().map_err(|error| {
         format!("Bluetooth's management socket: {error} (it takes CAP_NET_ADMIN to open)")
     })?;
-    give_up_capabilities().map_err(|error| format!("giving up capabilities: {error}"))?;
+    mgmt::give_up_capabilities().map_err(|error| format!("giving up capabilities: {error}"))?;
     // SAFETY: the handler only stores to an atomic.
     unsafe {
         signal(15, on_signal as *const () as usize);
