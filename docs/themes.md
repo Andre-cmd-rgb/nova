@@ -94,7 +94,7 @@ The bar stays readable on any photo:
 
 ## A see-through terminal
 
-The terminal's background is a fifth see-through, over a blur of what is behind it, and its text stays solid. Hyprland blurs behind terminals and nothing else. For a solid terminal, add this to `~/.config/foot/foot.ini`:
+The terminal's background is a little see-through (85% solid), over a blur of what is behind it, and its text stays solid. Hyprland blurs behind terminals and nothing else. For a solid terminal, add this to `~/.config/foot/foot.ini`:
 
 ```ini
 [colors-dark]

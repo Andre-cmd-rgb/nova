@@ -16,11 +16,11 @@ hl.config({
 
   -- Round corners, which the shell's bar, menus and panels take for theirs
   -- (src/shell/Commons/Style.qml). No shadows, which cost GPU work for every
-  -- window in every frame. Blur behind the terminal alone (rules.lua), whose
-  -- background is a fifth see-through (theme/templates/foot.ini.tpl): a
-  -- tiled one has only the desktop's background behind it, whose blur
-  -- Hyprland makes once and keeps until the background changes
-  -- (new_optimizations, on by default).
+  -- window in every frame. Blur behind the terminal alone (rules.lua), which
+  -- asks for it and whose background is a little see-through
+  -- (theme/templates/foot.ini.tpl): a tiled one has only the desktop's
+  -- background behind it, whose blur Hyprland makes once and keeps until the
+  -- background changes (new_optimizations, on by default).
   decoration = {
     rounding = 8,
     shadow = { enabled = false },

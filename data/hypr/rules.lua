@@ -137,7 +137,9 @@ nova.window({ tag = "default-opacity" }, { opacity = "0.985 0.96" })
 
 -- Blur behind terminals, the screensaver aside, and behind nothing else:
 -- every window is a little see-through, and blur behind each would cost GPU
--- work for all of them, for a difference too faint to see.
+-- work for all of them, for a difference too faint to see. A terminal asks
+-- for its blur too (blur=yes in the theme's foot.ini), without which
+-- Hyprland draws none behind it.
 nova.window(".*", { no_blur = true })
 nova.window({ tag = "terminal" }, { no_blur = false })
 nova.window("org.nova.screensaver", { no_blur = true })
