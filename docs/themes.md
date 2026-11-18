@@ -30,14 +30,14 @@ Nothing before the lock screen is themed: the boot menu keeps its own colors.
 
 ### Apps
 
-- **GTK 4 and libadwaita apps** (Files, Image Viewer and most new apps) take the theme's colors as they start.
+- **GTK 4 and libadwaita apps** (Files, Image Viewer and most new apps) take the theme's colors as they start. Adwaita's folder icons are blue; Nova copies them in the theme's accent, as an icon theme of yours called Nova, unless the theme names an icon set of its own.
 - **GTK 3 apps** look like libadwaita's, in the theme's colors: Nova draws them with `adw-gtk3`.
 - **Qt apps** take the colors through GTK 3, in Qt's own style.
 - **Flatpak apps** get the same. A GTK 3 one draws with Flathub's `org.gtk.Gtk3theme.adw-gtk3` or `adw-gtk3-dark`, whichever the theme in use calls for, which Flatpak fetches with the next update (`nova update`) or install; until then, it is plain Adwaita.
 - **X11 apps** (XWayland) get the theme, icons, cursor and font too.
 - **Apps that draw themselves**, such as Flutter apps (LocalSend), Electron apps, slicers and Java apps, follow light or dark at most, in their own colors.
 
-**When the theme changes**, foot, the shell, Chrome and VS Code change at once. An open GTK 4 or libadwaita app follows a change between light and dark at once, in libadwaita's own colors, and has the new theme's colors when it is opened again. An open GTK 3 or Qt app keeps the theme it started with until it is opened again.
+**When the theme changes**, foot, the shell, Chrome and VS Code change at once. An open GTK 4 or libadwaita app follows a change between light and dark at once, in libadwaita's own colors, and has the new theme's colors when it is opened again. An open GTK 3 or Qt app keeps the theme it started with until it is opened again; the system's file chooser is started again with the theme, so its next window has the new one.
 
 `~/.config/gtk-3.0/gtk.css` and `gtk-4.0/gtk.css` are links to `nova.css` beside them, rewritten on each theme change. To add CSS of your own, replace a link with a file of yours that starts with `@import url("nova.css");`.
 
