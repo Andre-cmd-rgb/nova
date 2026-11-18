@@ -8,6 +8,15 @@
 
 load ../test_helper
 
+# Each scenario has a bus, a scratch and a service of its own, and spends its
+# seconds waiting on the service's timers, not working: one after another they
+# took 94 s, the longest file of `make test` by far, which runs a file's tests
+# in a row (the Makefile says why). These go side by side, as many as
+# --jobs allows.
+setup_file() {
+  unset BATS_NO_PARALLELIZE_WITHIN_FILE
+}
+
 setup() {
   setup_scratch
   python3 -c 'import dbus, gi' 2>/dev/null || skip "needs python-dbus and python-gobject"
