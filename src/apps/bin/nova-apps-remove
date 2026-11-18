@@ -1,12 +1,14 @@
 #!/bin/bash
-# nova:summary=Remove an app installed from the App Store, or with nova apps install
+# nova:summary=Remove an app installed from the App Center, or with nova apps install
 # nova:args=<app>
 #
-# From wherever it is installed. A Flathub app's settings and files stay in
-# ~/.var/app, as a Mac keeps an app's, so that installing it again finds
-# them; the runtimes no app uses any more go with it. One from Arch's
-# repositories asks for a password or a finger, and takes with it what
-# only it needed. Nova's own parts are not removed.
+# From wherever it is installed. A Flathub app's data, its sandbox folder
+# ~/.var/app/<id>, goes with it, and so do the runtimes no app uses any
+# more. An app from Arch's repositories or Nova's own keeps its files and
+# settings in the home folder, at places only the app knows, so they stay,
+# as a Mac app outside the sandbox keeps them. One from Arch's repositories
+# asks for a password or a finger, and takes with it what only it needed.
+# Nova's own parts are not removed.
 
 set -euo pipefail
 

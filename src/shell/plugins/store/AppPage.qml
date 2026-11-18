@@ -172,6 +172,11 @@ Column {
           bordered: true
           onClicked: page.confirming = true
         }
+        Caption {
+          anchors.verticalCenter: parent.verticalCenter
+          visible: page.st.action === "open" && page.confirming
+          text: page.st.removeNote
+        }
         Button {
           visible: page.st.action === "open" && page.confirming
           text: "Remove Now"

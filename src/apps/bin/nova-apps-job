@@ -1,6 +1,6 @@
 #!/bin/bash
 # nova:hidden=true
-# nova:summary=Install or remove an App Store app (nova apps install and remove, and the App Store)
+# nova:summary=Install or remove an App Center app (nova apps install and remove, and the App Center)
 # nova:args=install|remove <app> [--from nova|arch|flathub] [--status]
 #
 # <app> is a word the catalog knows an app by: its ID, its package, or its
@@ -9,16 +9,16 @@
 # --from names; and removed from wherever it is.
 #
 #   Flathub    into the user's own installation: no password, and nothing of
-#              it in the system's snapshots. Removing keeps the app's data
-#              (~/.var/app), as a Mac keeps an app's, and takes the runtimes
-#              no app uses any more.
+#              it in the system's snapshots. Removing takes the app's data
+#              (~/.var/app/<id>) with it, and the runtimes no app uses any
+#              more.
 #   Arch       through pkexec nova-apps-apply: one password or finger, a
 #              snapshot before and after, and never a partial upgrade.
 #   Nova       Chrome and VS Code, built here from their makers' releases by
 #              nova apps install, then installed as an update installs them.
 #
 # In a terminal it shows what flatpak and pacman print. With --status, as the
-# App Store runs it (nova-apps-run), it keeps how far it is in
+# App Center runs it (nova-apps-run), it keeps how far it is in
 # $XDG_RUNTIME_DIR/nova/apps/status.json, under the app's ID: {action,
 # source, state, progress, text, error, log}, the state "waiting" while
 # another goes first, then "running", and "done", "failed" or "cancelled";
@@ -56,10 +56,10 @@ while (($#)); do
   shift
 done
 
-# --- what the App Store reads -------------------------------------------------
+# --- what the App Center reads -------------------------------------------------
 
 # Under the word it was asked for until the catalog names the app: the
-# App Store asks by ID, and reads it there.
+# App Center asks by ID, and reads it there.
 id=$word st_state='' st_progress=-1 st_text='' st_source='' LOG='' build=''
 
 # This app's entry in status.json, the rest left as it is. Every job writes
@@ -94,7 +94,7 @@ finish_cancelled() {
   exit 2
 }
 
-# However it ends before it is through, the App Store hears of it.
+# However it ends before it is through, the App Center hears of it.
 on_exit() {
   local code=$?
   [[ -z $build ]] || rm -rf -- "$build"
@@ -121,7 +121,7 @@ finish_done() { # message
 
 # --- the app ---------------------------------------------------------------------
 
-catalog=$(apps_catalog) || finish_failed "the App Store's catalog could not be made"
+catalog=$(apps_catalog) || finish_failed "the App Center's catalog could not be made"
 app=$(apps_one "$catalog" "$word") || finish_failed "no app is called $word"
 id=$(jq -r .id <<<"$app")
 name=$(jq -r .name <<<"$app")
@@ -151,7 +151,7 @@ source_json() {
 
 # --- running it ----------------------------------------------------------------
 
-# A terminal sees the tools as they are. For the App Store their output goes
+# A terminal sees the tools as they are. For the App Center their output goes
 # to the log, and how far they are is read from it.
 run() { # parser command...
   local parser=$1
@@ -292,7 +292,7 @@ remove_it() { # where
   case $how in
     flatpak)
       status running 0 "Removing"
-      run flatpak_progress flatpak uninstall "--$scope" -y --noninteractive "$target" </dev/null || code=$?
+      run flatpak_progress flatpak uninstall "--$scope" -y --noninteractive --delete-data "$target" </dev/null || code=$?
       ((code == 0)) || finish_failed "$(plain "Flathub could not remove it")"
       # The runtimes no app needs any more, which are most of the room.
       flatpak uninstall "--$scope" -y --noninteractive --unused >/dev/null 2>&1 || true
