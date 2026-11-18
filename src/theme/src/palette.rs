@@ -226,11 +226,10 @@ fn parse(text: &str) -> (BTreeMap<String, String>, Vec<String>) {
         if key.starts_with('#') {
             continue;
         }
-        let value = match value.find(['"', '\'']) {
-            Some(open) => {
-                let rest = &value[open + 1..];
-                rest[..rest.find(['"', '\'']).unwrap_or(rest.len())].to_owned()
-            }
+        // Quoted only when the value begins with a quote: a quote in the
+        // comment after a bare value belongs to the comment.
+        let value = match value.trim_start().strip_prefix(['"', '\'']) {
+            Some(rest) => rest[..rest.find(['"', '\'']).unwrap_or(rest.len())].to_owned(),
             None => match value.split_whitespace().next() {
                 // TOML wants it quoted, but a bare #rrggbb is a color, not a
                 // comment.
@@ -270,6 +269,15 @@ mod tests {
         assert_eq!(c["background"], "#1a1b26");
         assert_eq!(c["accent"], "#7aa2f7");
         assert_eq!(c["mode"], "light");
+        assert!(skipped.is_empty());
+    }
+
+    #[test]
+    fn a_quote_in_the_comment_after_a_bare_value_is_not_the_value() {
+        let (c, skipped) =
+            parse("mode = light # it's dark here\nbackground = #1a1b26 # \"night\"\n");
+        assert_eq!(c["mode"], "light");
+        assert_eq!(c["background"], "#1a1b26");
         assert!(skipped.is_empty());
     }
 
