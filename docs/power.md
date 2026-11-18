@@ -11,7 +11,7 @@ It is part of the `nova` package. Its tiers and limits are measured on the Think
 
 ## The problem it solves
 
-**On a laptop whose panel hangs off the integrated GPU, the discrete card renders nothing on the desktop and still bills several watts for being bound.** An RTX A2000 idles at about **6 W**: a large share of the total draw, and of the runtime, on a 74 Wh battery.
+**On a laptop whose panel hangs off the integrated GPU, the discrete card renders nothing on the desktop and still bills several watts for being bound.** An RTX A2000 idles at about **6 W**: a large share of the total draw, and of the runtime, on the 74.5 Wh battery it was measured with.
 
 Runtime power management cannot fix that on its own. NVIDIA's RTD3 is happy to park the card, but only while nothing holds it open, and on a stock install these do:
 
@@ -108,8 +108,14 @@ $ nova power status -v
   address        0000:01:00.0
   functions      none on the bus
   driver load    blocked
+  governor       battery/light, 4% busy, 52 C, fans 0, 9.8 W
   runtime pm     8 devices set to auto
-  pcie aspm      default
+  usb pm         3 devices set to auto
+  wifi ps        wlp9s0 on
+  pcie aspm      the firmware's
+  cpu pl1        12 W over 10s
+  cpu pl2        18 W burst
+  cpu ceiling    45% no turbo (2.2 GHz)
 ```
 
 ### One program on the discrete GPU
@@ -145,7 +151,7 @@ Steam: put `nova power run %command%` in a game's launch options.
 
 **Nova sleeps to RAM, then hibernates: S3 alone would empty the battery in a long weekend.** S3 on this machine costs **1.26 W**, measured over a 63 minute suspend, so a full 74.5 Wh battery is gone in about **59 hours**.
 
-What a MacBook does is two things, not one: sleep to RAM, and then after a few hours write RAM to disk and cut power entirely. systemd calls that `suspend-then-hibernate`, and it is how Nova sleeps. The installer makes the swapfile and the `resume=` arguments, and the lid, the suspend key and the menu's Suspend all ask for it (`data/systemd/sleep.conf.d`, overridable in `/etc/systemd/sleep.conf.d/`).
+What a MacBook does is two things, not one: sleep to RAM, and then after a few hours write RAM to disk and cut power entirely. systemd calls that `suspend-then-hibernate`, and it is how Nova sleeps. The installer makes the swapfile and the `resume=` arguments, and the lid, the suspend key and the menu's Suspend all ask for it (`data/systemd/logind.conf.d` and `sleep.conf.d`, overridable in `/etc/systemd/logind.conf.d/` and `/etc/systemd/sleep.conf.d/`).
 
 | | |
 |---|---|
@@ -204,7 +210,7 @@ Two other devices resume badly and are worth knowing about, though neither gates
 
 ### The opt-in knobs
 
-The remaining knobs are **opt-in**, in `/etc/nova/power.conf`:
+The remaining knobs are **opt-in**, in `/etc/nova/power.conf`. `PL1_ON_BAT`, `PL2_ON_BAT` and `CPU_MAX_PCT_ON_BAT` do nothing while `nova-powerd` runs, which is the default: its tiers set those registers.
 
 ```sh
 PL1_ON_BAT=30                # sustained CPU power limit on battery, in watts
@@ -226,7 +232,7 @@ PL1 is an *average over a time window*, and the firmware sets that window to 56 
 
 **`CPU_MAX_PCT_ON_BAT` is the answer to "why is it hot when I am only reading a web page".** Under HWP, `intel_pstate` will still walk to the top of the range to scroll, and the last third of the frequency range costs disproportionately more power than it returns in speed.
 
-- This part reaches 4.8 GHz, and 57% of its P-state range is turbo, so a ceiling below about 43 takes turbo off the table entirely.
+- This part reaches 4.8 GHz on a 2.5 GHz base clock, so a ceiling below about 52 takes turbo off the table entirely.
 - It is a ceiling, not a target: nothing is slower until something actually asks for more than the ceiling.
 
 **`ASPM_ON_BAT` is off by default**, because forcing L0s/L1 on every link can upset a device that is merely ASPM-tolerant, and the symptom is a hang. On the P1 Gen 4i it does nothing at all: the firmware keeps ASPM to itself (the kernel logs "FADT indicates ASPM is unsupported"), and `nova power status` shows the policy as the firmware's.
@@ -358,7 +364,7 @@ The LTR table is the useful part: an IP block advertising a short latency tolera
 2. But ignoring the LTR changes nothing: the package still never reaches PC10.
 3. What blocks it is the USB controller never sleeping, because two devices on it were pinned awake and polled every millisecond: the Bluetooth controller (autosuspend off in the hardware profile, for mouse lag) and a mouse receiver (the kernel's default for HID).
 4. Let both autosuspend and the controller sleeps: PC10 goes from 0% to about 70%, and the idle desktop drops from 10.7 W to 8.5 W.
-5. On battery `nova-power` now does that for every USB device the kernel left awake, with a 10 s delay for input devices and none at all for audio, and puts them back on AC.
+5. On battery `nova-power` now does that for every USB device the kernel left awake, with a 10 s delay for input devices, and leaves audio devices alone. It puts them back on AC.
 
 Panel Self Refresh was already enabled (PSR1; the panel does not support PSR2 or Panel Replay, so there is nothing further to switch on). Hardware video decode was already working.
 
@@ -372,7 +378,7 @@ The table names a suspect; `ltr_ignore` and the package C-state counters say whe
 
 ## Browsing and video
 
-Two of the levers are not the governor's at all, because they belong to the compositor. Both are in Nova's `default/hypr/hardware/thinkpad-p1-gen4i.lua`.
+Two of the levers are not the governor's at all, because they belong to the compositor. The first is in Nova's `default/hypr/hardware/thinkpad-p1-gen4i.lua`.
 
 ### Direct scanout
 
@@ -384,13 +390,12 @@ Two of the levers are not the governor's at all, because they belong to the comp
 
 ### 48 Hz
 
-**The panel can run at 48 Hz, by stretching vertical blanking; it is a key binding to try, not a default.**
+**The panel can run at 48 Hz, by stretching vertical blanking; Nova does not ship it.**
 
 - The panel advertises one mode, `3840x2400@60`, but its EDID also says `Display supports continuous frequencies` with ranges `48-60 Hz V, 148-148 kHz H`.
 - The horizontal rate is pinned, so the way down is to keep the 592.56 MHz pixel clock and stretch vertical blanking (3086 total lines instead of 2469), rather than slowing the clock, which would drop the horizontal rate to 118 kHz and out of spec.
 - That is 20% off every per-frame cost while anything animates, and it puts 24 fps video in a clean 2:2 cadence.
-- It also makes scrolling visibly less smooth, which is why it is a key binding to try rather than a default.
-- A mode change is the one class of change here that can cost a login, so nothing writes it to disk.
+- It also makes scrolling visibly less smooth, and a mode change is the one class of change here that can cost a login, so Nova sets nothing.
 
 ### What was already right
 
@@ -488,7 +493,7 @@ Find the depth with a stress test that checks its own arithmetic, and stay a ste
 | discrete GPU bound and idle | ~26 W |
 | discrete GPU off the bus | ~20 W |
 
-- The card is worth about 6 W of that, which on a 74 Wh battery is roughly the difference between 2.3 and 3.0 hours.
+- The card is worth about 6 W of that, which on that 74.5 Wh battery is roughly the difference between 2.3 and 3.0 hours.
 - The tunables are worth a fraction of a watt between them.
 
 They are also not where the remaining watts are. On that machine the panel and the browser dominate, and a connected 5G modem costs more than every kernel knob here put together. `powertop` will tell you which of those applies to yours; Nova deliberately does not guess.
