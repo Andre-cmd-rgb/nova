@@ -27,6 +27,7 @@ QtObject {
 
   function start(args) {
     alive = true
+    aliveAsked = false
     Util.execArgv(["nova-update-run"].concat(args))
   }
 

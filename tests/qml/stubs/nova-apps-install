@@ -1,0 +1,8 @@
+#!/bin/sh
+# nova-apps-install --review <pkg> as the Updates page's test needs it: a
+# moment's reading, then a commit made from the app's name, so that a test
+# can tell whose review it has.
+[ "$1" = --review ] || exit 0
+sleep 0.4
+hex=$(printf '%s' "$2" | od -An -tx1 | tr -d ' \n' | cut -c1-8)
+printf 'commit %s%032d\ndiff for %s\n' "$hex" 0 "$2"

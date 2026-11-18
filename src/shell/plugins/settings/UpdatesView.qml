@@ -73,7 +73,8 @@ Column {
   function review(pkg) {
     reviewing = pkg
     reviewText = ""
-    if (pkg === "") return
+    // A read still going is for the app before: its end starts this one's.
+    if (pkg === "" || reviewProc.running) return
     reviewProc.pkg = pkg
     reviewProc.running = true
   }
@@ -110,7 +111,12 @@ Column {
     command: ["nova-apps-install", "--review", pkg]
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.reviewText = String(text || "")
+      onStreamFinished: if (reviewProc.pkg === root.reviewing) root.reviewText = String(text || "")
+    }
+    onExited: {
+      if (root.reviewing === "" || root.reviewing === pkg) return
+      pkg = root.reviewing
+      running = true
     }
   }
 
