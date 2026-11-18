@@ -28,8 +28,11 @@ install: $(INSTALL_TARGETS)
 
 lint: lint-shell lint-lua lint-qml lint-workflows check-names
 
+# A few files a shellcheck, as many at once as there are CPUs: one after
+# another, the ~250 files took 21 s here and 18 to 33 s on CI. xargs fails
+# (123) when any of them does.
 lint-shell:
-	shellcheck -x -S warning $(SHELL_SOURCES)
+	printf '%s\n' $(SHELL_SOURCES) | xargs -P "$$(nproc)" -n 8 shellcheck -x -S warning
 
 # The Hyprland configs: a syntax error there leaves the session, or the greeter,
 # without its config.
