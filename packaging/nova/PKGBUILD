@@ -50,8 +50,9 @@ depends=(
 
   # Secrets and privilege
   gnome-keyring
-  libsecret
+  libsecret      # secret-tool: the Calendar's passwords and tokens, in the login keyring
   polkit
+  python         # nova-calendar-sync, the Calendar's sync: its standard library's HTTP, TLS and XML
   python-dbus    # nova-keyring-migrate, nova-idle-inhibitors, nova-iphone-notifications
   python-gobject # nova-idle-inhibitors' and nova-iphone-notifications' main loop
 

@@ -1,0 +1,1846 @@
+#!/usr/bin/python3
+# nova:summary=Sync the Calendar's accounts and subscriptions now
+# nova:args=[add | subscribe | remove <id> | set <id> <key>=<value>...]
+#
+# The Calendar's two-way sync (src/shell/plugins/calendar/README.md): iCloud,
+# Google and any CalDAV server, and read-only subscriptions to an iCal link.
+# Python's standard library speaks HTTP, TLS and XML; Nova's Rust uses no
+# crates, so it has none of them. Tests live in tests/unit/calendar.
+#
+#   nova-calendar-sync [sync] [<id>]     every account and subscription, or one
+#   nova-calendar-sync add               an account, from JSON on stdin:
+#       {"type": "icloud" | "caldav", "url", "user", "password"}, or
+#       {"type": "google"}, which signs in in the browser; prints the account
+#       and the calendars it found, as JSON
+#   nova-calendar-sync subscribe         {"url"} on stdin; prints the calendar
+#   nova-calendar-sync remove <id>       an account or a subscription
+#   nova-calendar-sync set <id> shown=true|false color=<name> name=<text>
+#   nova-calendar-sync google            exits 0 when Google sign-in is set up
+#
+# Where things are:
+#   ~/.config/nova/calendars.json        the accounts and calendars: names,
+#       colours, shown or not; written here only, under a lock, and read by
+#       the shell. No secret is in it.
+#   ~/.local/share/nova/calendar/<id>.ics   a calendar's events and tasks,
+#       one iCalendar file as calendar.ics is, read and written by the shell
+#   ~/.local/state/nova/calendar-sync/   what the server last had of each
+#       item (its ETag and its text), the sync tokens, and status.json, how
+#       each account's last sync went
+#   the login keyring (secret-tool)      passwords, Google's tokens, and the
+#       addresses of subscriptions, which can be secrets themselves
+#
+# A sync compares three versions of each item: the server's, the file's, and
+# the one both had at the last sync. What changed on one side only goes to the
+# other; an edit made offline is only a difference from the last sync, so it
+# waits in the file until the server can be reached. The server's changes are
+# found with WebDAV sync-collection (RFC 6578) where it has a sync token, else
+# by its ctag and each item's ETag; every write says which ETag it replaces
+# (If-Match), or that it replaces nothing (If-None-Match), so a change made
+# meanwhile on the phone is never written over: it is merged instead.
+#
+# Changed on both sides, an item is merged property by property (a new title
+# here, a new time there); where both changed the same property differently,
+# the server's version stays the item and this computer's is kept beside it
+# as a copy, sent to the server too: nothing is lost, and the phone shows the
+# same as the computer. Deleted on one side and changed on the other, the
+# change wins.
+#
+# The shell writes a calendar's file whole, and may write it while a sync
+# runs: the file is replaced by swapping it with the new one
+# (renameat2 RENAME_EXCHANGE), and what was swapped out is checked to be what
+# the sync read; if the shell wrote meanwhile, the sync merges that too.
+
+import base64
+import ctypes
+import errno
+import fcntl
+import hashlib
+import http.client
+import json
+import os
+import re
+import secrets
+import socket
+import ssl
+import subprocess
+import sys
+import time
+import urllib.parse
+import uuid
+import xml.etree.ElementTree as ET
+import zoneinfo
+from datetime import datetime, timedelta, timezone
+
+
+def _dir(variable, fallback):
+    value = os.environ.get(variable, "")
+    return value if value.startswith("/") else os.path.join(os.path.expanduser("~"), fallback)
+
+
+CONFIG_PATH = os.path.join(_dir("XDG_CONFIG_HOME", ".config"), "nova", "calendars.json")
+DATA_DIR = os.path.join(_dir("XDG_DATA_HOME", ".local/share"), "nova", "calendar")
+STATE_DIR = os.path.join(_dir("XDG_STATE_HOME", ".local/state"), "nova", "calendar-sync")
+NOVA_PATH = os.environ.get("NOVA_PATH") or "/usr/share/nova"
+
+# The theme's colours a calendar can have, by the names colors.toml gives
+# them; the shell paints each in the theme's own.
+PALETTE = ["accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta"]
+HUES = {"red": 0, "orange": 30, "yellow": 55, "green": 120, "cyan": 180, "blue": 220, "magenta": 290}
+NEW_COLORS = ["blue", "green", "red", "orange", "magenta", "cyan", "yellow"]
+
+ICLOUD_URL = os.environ.get("NOVA_CALENDAR_ICLOUD") or "https://caldav.icloud.com/"
+GOOGLE_AUTH = os.environ.get("NOVA_CALENDAR_GOOGLE_AUTH") or "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN = os.environ.get("NOVA_CALENDAR_GOOGLE_TOKEN") or "https://oauth2.googleapis.com/token"
+GOOGLE_CALDAV = os.environ.get("NOVA_CALENDAR_GOOGLE_CALDAV") or "https://apidata.googleusercontent.com/caldav/v2/"
+GOOGLE_SCOPE = "openid email https://www.googleapis.com/auth/calendar"
+SIGN_IN_SECONDS = int(os.environ.get("NOVA_CALENDAR_SIGN_IN_SECONDS") or 300)
+TIMEOUT = float(os.environ.get("NOVA_CALENDAR_TIMEOUT") or 30)
+MAX_BYTES = 64 * 1024 * 1024
+SECRET_SERVICE = "nova-calendar"
+
+DAV = "DAV:"
+CALDAV = "urn:ietf:params:xml:ns:caldav"
+CS = "http://calendarserver.org/ns/"
+APPLE = "http://apple.com/ns/ical/"
+NS = 'xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:a="http://apple.com/ns/ical/"'
+
+
+class SyncError(Exception):
+    """What went wrong, in words for the Calendar to show. kind: offline (no
+    network, or the server cannot be reached), signin (the password or the
+    token was refused), or error."""
+
+    def __init__(self, kind, words):
+        super().__init__(words)
+        self.kind = kind
+        self.words = words
+
+
+class Precondition(Exception):
+    """A write refused because the item changed on the server meanwhile."""
+
+
+# ---- iCalendar, as Ical.js keeps it: components and their lines, unfolded,
+#      each kept as it was read
+
+class Component:
+    __slots__ = ("name", "lines", "children")
+
+    def __init__(self, name, lines=None, children=None):
+        self.name = name
+        self.lines = lines if lines is not None else []
+        self.children = children if children is not None else []
+
+
+def unfold(text):
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return re.sub(r"\n[ \t]", "", text)
+
+
+def split_line(line):
+    """NAME;PARAM=value:value as (name, params, value), or None."""
+    quoted = False
+    colon = -1
+    for i, c in enumerate(line):
+        if c == '"':
+            quoted = not quoted
+        elif c == ":" and not quoted:
+            colon = i
+            break
+    if colon < 0:
+        return None
+    parts, part, quoted = [], "", False
+    for c in line[:colon]:
+        if c == '"':
+            quoted = not quoted
+        if c == ";" and not quoted:
+            parts.append(part)
+            part = ""
+        else:
+            part += c
+    parts.append(part)
+    params = {}
+    for p in parts[1:]:
+        key, eq, value = p.partition("=")
+        if not eq:
+            continue
+        if len(value) >= 2 and value[0] == '"' and value[-1] == '"':
+            value = value[1:-1]
+        params[key.upper()] = value
+    return parts[0].upper(), params, line[colon + 1:]
+
+
+def prop_name(line):
+    return re.split(r"[;:]", line, maxsplit=1)[0].upper()
+
+
+def parse(text):
+    root = Component("")
+    stack = [root]
+    for line in unfold(text or "").split("\n"):
+        if not line:
+            continue
+        p = split_line(line)
+        if p is None:
+            continue
+        if p[0] == "BEGIN":
+            c = Component(p[2].strip().upper())
+            stack[-1].children.append(c)
+            stack.append(c)
+        elif p[0] == "END":
+            if len(stack) > 1:
+                stack.pop()
+        else:
+            stack[-1].lines.append(line)
+    return root
+
+
+def fold(line):
+    out, current, size = [], "", 0
+    for ch in line:
+        n = len(ch.encode("utf-8", "surrogatepass"))
+        if size + n > (74 if out else 75):
+            out.append(current)
+            current, size = "", 0
+        current += ch
+        size += n
+    out.append(current)
+    return "\r\n ".join(out)
+
+
+def serialize_into(c, out):
+    out.append("BEGIN:" + c.name)
+    out.extend(fold(line) for line in c.lines)
+    for child in c.children:
+        serialize_into(child, out)
+    out.append("END:" + c.name)
+
+
+def serialize(components):
+    out = []
+    for c in components:
+        serialize_into(c, out)
+    return "\r\n".join(out) + "\r\n" if out else ""
+
+
+def get(c, name):
+    for line in c.lines:
+        if prop_name(line) == name:
+            return split_line(line)
+    return None
+
+
+def value(c, name):
+    p = get(c, name)
+    return p[2] if p else ""
+
+
+def set_line(c, name, text):
+    """Replaces the first line of the name, or adds one; the rest go."""
+    at = None
+    kept = []
+    for line in c.lines:
+        if prop_name(line) == name:
+            if at is None:
+                at = len(kept)
+            continue
+        kept.append(line)
+    kept.insert(len(kept) if at is None else at, name + ":" + text)
+    c.lines = kept
+
+
+def unescape(text):
+    return re.sub(r"\\([\\;,nN])", lambda m: "\n" if m.group(1) in "nN" else m.group(1), text or "")
+
+
+def calendar_of(root):
+    for c in root.children:
+        if c.name == "VCALENDAR":
+            return c
+    c = Component("VCALENDAR", ["VERSION:2.0", "PRODID:-//Nova//Calendar//EN"])
+    root.children.append(c)
+    return c
+
+
+ITEMS = ("VEVENT", "VTODO", "VJOURNAL")
+
+
+def groups(cal):
+    """The items of a calendar by their UID, each a list of components: an
+    event and the times of it moved on their own."""
+    out = {}
+    for c in cal.children:
+        if c.name in ITEMS:
+            uid = unescape(value(c, "UID")).strip()
+            if uid:
+                out.setdefault(uid, []).append(c)
+    return out
+
+
+def timezones(cal):
+    return {unescape(value(c, "TZID")): c for c in cal.children if c.name == "VTIMEZONE" and value(c, "TZID")}
+
+
+def zone(tzid):
+    if not tzid:
+        return None
+    names = [tzid]
+    parts = tzid.strip("/").split("/")
+    if len(parts) > 2:
+        names.append("/".join(parts[-2:]))
+    for name in names:
+        if re.fullmatch(r"[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)*", name):
+            try:
+                return zoneinfo.ZoneInfo(name)
+            except (zoneinfo.ZoneInfoNotFoundError, ValueError, OSError):
+                pass
+    return None
+
+
+def instant(text, params):
+    """A DATE-TIME as UTC where its zone is known, to match a RECURRENCE-ID
+    whatever zone each side wrote it in; else as written."""
+    v = text.strip()
+    m = re.fullmatch(r"(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})(Z)?)?", v)
+    if not m or m.group(4) is None or params.get("VALUE") == "DATE":
+        return v
+    try:
+        dt = datetime(*(int(m.group(i)) for i in range(1, 7)))
+    except ValueError:
+        return v
+    if m.group(7):
+        return v
+    tz = zone(params.get("TZID"))
+    if tz is None:
+        return v
+    return dt.replace(tzinfo=tz).astimezone(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def recurrence_key(c):
+    p = get(c, "RECURRENCE-ID")
+    return c.name + "|" + (instant(p[2], p[1]) if p else "")
+
+
+# What a change stamps, which two versions differing only in are the same.
+STAMPS = {"DTSTAMP", "LAST-MODIFIED", "SEQUENCE"}
+
+
+def canon(c, stamps=False):
+    lines = [line for line in c.lines if stamps or prop_name(line) not in STAMPS]
+    return "\n".join(["BEGIN:" + c.name] + lines + [canon(x, stamps) for x in c.children] + ["END:" + c.name])
+
+
+def group_canon(group):
+    return "\n".join(sorted(canon(c) for c in group)) if group else None
+
+
+def same_group(a, b):
+    return group_canon(a) == group_canon(b)
+
+
+def parse_group(text):
+    return [c for c in parse(text).children if c.name in ITEMS] if text else None
+
+
+def zone_ids(components):
+    out = set()
+
+    def walk(c):
+        for line in c.lines:
+            p = split_line(line)
+            if p and p[1].get("TZID"):
+                out.add(p[1]["TZID"])
+        for child in c.children:
+            walk(child)
+
+    for c in components:
+        walk(c)
+    return out
+
+
+# ---- time zones a file names with no VTIMEZONE for them, from the system's
+#      zone database, so that the shell and the server read them right
+
+def posix_offset(text):
+    m = re.fullmatch(r"([+-])?(\d{1,3})(?::(\d{2}))?(?::(\d{2}))?", text)
+    if not m:
+        return None
+    seconds = int(m.group(2)) * 3600 + int(m.group(3) or 0) * 60 + int(m.group(4) or 0)
+    return -seconds if m.group(1) == "-" else seconds
+
+
+def utc_offset(seconds):
+    sign = "-" if seconds < 0 else "+"
+    seconds = abs(seconds)
+    text = "%s%02d%02d" % (sign, seconds // 3600, seconds // 60 % 60)
+    return text + ("%02d" % (seconds % 60) if seconds % 60 else "")
+
+
+def posix_rule(text):
+    """Mm.w.d[/time] as (month, week, weekday, seconds), or None."""
+    m = re.fullmatch(r"M(\d{1,2})\.(\d)\.(\d)(?:/(.+))?", text)
+    if not m:
+        return None
+    at = posix_offset(m.group(4)) if m.group(4) else 7200
+    if at is None:
+        return None
+    return int(m.group(1)), int(m.group(2)), int(m.group(3)), at
+
+
+def rule_day(year, month, week, weekday):
+    days = [d for d in range(1, 32) if _valid(year, month, d) and (datetime(year, month, d).weekday() + 1) % 7 == weekday]
+    return days[-1] if week == 5 else days[week - 1]
+
+
+def _valid(year, month, day):
+    try:
+        datetime(year, month, day)
+        return True
+    except ValueError:
+        return False
+
+
+def tzif_footer(tzid):
+    if not re.fullmatch(r"[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)*", tzid or ""):
+        return None
+    for base in zoneinfo.TZPATH:
+        path = os.path.join(base, tzid)
+        try:
+            with open(path, "rb") as f:
+                data = f.read(1 << 20)
+        except OSError:
+            continue
+        if not data.startswith(b"TZif") or data[4:5] < b"2":
+            return None
+        return data.rstrip(b"\n").rsplit(b"\n", 1)[-1].decode("ascii", "replace")
+    return None
+
+
+def vtimezone(tzid):
+    """A VTIMEZONE for a zone of the database: its present rule, as other
+    calendar programs write them; or, for a rule a yearly RRULE cannot say,
+    each change from 1970 to 2050."""
+    footer = tzif_footer(tzid)
+    if footer is None:
+        return None
+    m = re.fullmatch(r"(<[^>]+>|[A-Za-z]{3,})([^A-Za-z<,]+)(?:(<[^>]+>|[A-Za-z]{3,})([^A-Za-z<,]+)?(?:,([^,]+),([^,]+))?)?", footer)
+    c = Component("VTIMEZONE", ["TZID:" + tzid])
+
+    def part(kind, start, frm, to, name, extra):
+        lines = ["TZOFFSETFROM:" + utc_offset(frm), "TZOFFSETTO:" + utc_offset(to), "TZNAME:" + name.strip("<>"), "DTSTART:" + start]
+        c.children.append(Component(kind, lines + extra))
+
+    if m and not m.group(3):
+        std = -posix_offset(m.group(2))
+        part("STANDARD", "19700101T000000", std, std, m.group(1), [])
+        return c
+    if m and m.group(5):
+        std = -posix_offset(m.group(2))
+        dst = -posix_offset(m.group(4)) if m.group(4) else std + 3600
+        begin, end = posix_rule(m.group(5)), posix_rule(m.group(6))
+        if begin and end and all(0 <= r[3] < 86400 for r in (begin, end)):
+            for kind, rule, frm, to, name in (("DAYLIGHT", begin, std, dst, m.group(3)), ("STANDARD", end, dst, std, m.group(1))):
+                month, week, weekday, at = rule
+                day = rule_day(1970, month, week, weekday)
+                byday = ("-1" if week == 5 else str(week)) + ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][weekday]
+                start = "1970%02d%02dT%02d%02d%02d" % (month, day, at // 3600, at // 60 % 60, at % 60)
+                part(kind, start, frm, to, name, ["RRULE:FREQ=YEARLY;BYMONTH=%d;BYDAY=%s" % (month, byday)])
+            return c
+    return scanned_vtimezone(tzid)
+
+
+def scanned_vtimezone(tzid):
+    tz = zone(tzid)
+    if tz is None:
+        return None
+    c = Component("VTIMEZONE", ["TZID:" + tzid])
+    observances = {}
+    at = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    end = datetime(2050, 1, 1, tzinfo=timezone.utc)
+    before = at.astimezone(tz).utcoffset()
+    first = (before, before, at.astimezone(tz).dst() != timedelta(0))
+    observances[first] = ["19700101T000000"]
+    step = timedelta(hours=6)
+    while at < end:
+        nxt = at + step
+        off = nxt.astimezone(tz).utcoffset()
+        if off != before:
+            lo, hi = at, nxt
+            while hi - lo > timedelta(minutes=1):
+                mid = lo + (hi - lo) / 2
+                if mid.astimezone(tz).utcoffset() == before:
+                    lo = mid
+                else:
+                    hi = mid
+            hi = hi.replace(second=0, microsecond=0)
+            wall = (hi + before).strftime("%Y%m%dT%H%M%S")
+            key = (before, off, hi.astimezone(tz).dst() != timedelta(0))
+            observances.setdefault(key, []).append(wall)
+            before = off
+        at = nxt
+    for (frm, to, daylight), walls in observances.items():
+        lines = ["TZOFFSETFROM:" + utc_offset(int(frm.total_seconds())), "TZOFFSETTO:" + utc_offset(int(to.total_seconds())), "DTSTART:" + walls[0]]
+        lines += ["RDATE:" + w for w in walls[1:]]
+        c.children.append(Component("DAYLIGHT" if daylight else "STANDARD", lines))
+    return c
+
+
+# ---- files
+
+def ensure_dirs():
+    for d in (DATA_DIR, STATE_DIR, os.path.dirname(CONFIG_PATH)):
+        os.makedirs(d, mode=0o700, exist_ok=True)
+
+
+def read_file(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace", newline="") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def write_private(path, text):
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+        f.flush()
+        os.fsync(f.fileno())
+    return tmp
+
+
+_libc = None
+
+
+def renameat2(src, dst, flags):
+    global _libc
+    if _libc is None:
+        _libc = ctypes.CDLL(None, use_errno=True)
+    if not hasattr(_libc, "renameat2"):
+        raise OSError(errno.ENOSYS, "renameat2")
+    if _libc.renameat2(-100, os.fsencode(src), -100, os.fsencode(dst), flags) != 0:
+        e = ctypes.get_errno()
+        raise OSError(e, os.strerror(e))
+
+
+def swap_in(path, text, expected):
+    """Puts <text> at <path>, if what is there is still <expected> (None: no
+    file). Returns None when it was, else what the shell wrote meanwhile,
+    which is left in place for the caller to merge."""
+    tmp = write_private(path, text)
+    try:
+        if expected is None:
+            try:
+                renameat2(tmp, path, 1)  # RENAME_NOREPLACE
+                return None
+            except OSError as e:
+                if e.errno == errno.EEXIST:
+                    return read_file(path) or ""
+                if e.errno not in (errno.ENOSYS, errno.EINVAL):
+                    raise
+            if os.path.exists(path):
+                return read_file(path) or ""
+            os.rename(tmp, path)
+            return None
+        try:
+            renameat2(tmp, path, 2)  # RENAME_EXCHANGE
+        except OSError as e:
+            if e.errno not in (errno.ENOSYS, errno.EINVAL):
+                raise
+            current = read_file(path)
+            if current != expected:
+                return current
+            os.rename(tmp, path)
+            return None
+        old = read_file(tmp)
+        if old == expected:
+            return None
+        # The shell wrote between the read and the swap: its file goes back
+        # in place, to be merged.
+        renameat2(tmp, path, 2)
+        return old
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
+
+
+class Lock:
+    def __init__(self, name):
+        self.path = os.path.join(STATE_DIR, name)
+
+    def __enter__(self):
+        ensure_dirs()
+        self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+        fcntl.flock(self.fd, fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        os.close(self.fd)
+
+
+def default_config():
+    return {"version": 1, "accounts": [], "calendars": [
+        {"id": "local", "kind": "local", "name": "Calendar", "color": "accent", "shown": True, "file": "calendar.ics",
+         "events": True, "tasks": True, "readOnly": False}]}
+
+
+def load_config():
+    text = read_file(CONFIG_PATH)
+    if text is None:
+        return default_config()
+    try:
+        config = json.loads(text)
+    except ValueError:
+        raise SyncError("error", "%s is not a calendar list; fix it, or move it away" % CONFIG_PATH)
+    if not isinstance(config, dict) or not isinstance(config.get("calendars"), list) or not isinstance(config.get("accounts"), list):
+        raise SyncError("error", "%s is not a calendar list; fix it, or move it away" % CONFIG_PATH)
+    if not any(c.get("id") == "local" for c in config["calendars"]):
+        config["calendars"].insert(0, default_config()["calendars"][0])
+    return config
+
+
+def save_config(config):
+    ensure_dirs()
+    os.replace(write_private(CONFIG_PATH, json.dumps(config, indent=2) + "\n"), CONFIG_PATH)
+
+
+class ConfigEdit:
+    """The calendar list, read and written under its lock."""
+
+    def __enter__(self):
+        self.lock = Lock("config.lock").__enter__()
+        self.config = load_config()
+        return self.config
+
+    def __exit__(self, kind, *rest):
+        try:
+            if kind is None:
+                save_config(self.config)
+        finally:
+            self.lock.__exit__()
+
+
+def state_path(calendar_id):
+    return os.path.join(STATE_DIR, calendar_id + ".json")
+
+
+def load_state(calendar_id):
+    try:
+        state = json.loads(read_file(state_path(calendar_id)) or "{}")
+    except ValueError:
+        state = {}
+    state.setdefault("items", {})
+    return state
+
+
+def save_state(calendar_id, state):
+    ensure_dirs()
+    os.replace(write_private(state_path(calendar_id), json.dumps(state)), state_path(calendar_id))
+
+
+def save_status(key, status):
+    with Lock("status.lock"):
+        path = os.path.join(STATE_DIR, "status.json")
+        try:
+            everything = json.loads(read_file(path) or "{}")
+        except ValueError:
+            everything = {}
+        if status is None:
+            everything.pop(key, None)
+        else:
+            everything[key] = status
+        os.replace(write_private(path, json.dumps(everything, indent=2) + "\n"), path)
+
+
+def new_id():
+    return secrets.token_hex(4)
+
+
+# ---- secrets: the login keyring, through secret-tool, a secret on its stdin
+#      and never on a command line
+
+def secret_store(key, label, secret):
+    try:
+        done = subprocess.run(["secret-tool", "store", "--label", label, "service", SECRET_SERVICE, "id", key],
+                              input=secret.encode(), capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        done = None
+    if done is None or done.returncode != 0:
+        raise SyncError("error", "The password could not be kept in the keyring.")
+
+
+def secret_lookup(key):
+    try:
+        done = subprocess.run(["secret-tool", "lookup", "service", SECRET_SERVICE, "id", key], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        done = None
+    if done is None or done.returncode != 0 or not done.stdout:
+        raise SyncError("signin", "The password is not in the keyring.")
+    return done.stdout.decode()
+
+
+def secret_clear(key):
+    try:
+        subprocess.run(["secret-tool", "clear", "service", SECRET_SERVICE, "id", key], capture_output=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+# ---- HTTP
+
+def loopback(host):
+    return host in ("localhost", "127.0.0.1", "::1") or (host or "").startswith("127.")
+
+
+class Response:
+    def __init__(self, status, headers, body, url):
+        self.status, self.headers, self.body, self.url = status, headers, body, url
+
+    def header(self, name):
+        return self.headers.get(name.lower())
+
+
+class Http:
+    """Requests to a server, its connections kept open, its redirects
+    followed for any method. A password goes only over TLS, or to this
+    computer."""
+
+    def __init__(self, auth=None):
+        self.auth = auth
+        self.conns = {}
+        self.context = ssl.create_default_context()
+
+    def connection(self, u):
+        key = (u.scheme, u.hostname, u.port)
+        conn = self.conns.get(key)
+        if conn is None:
+            if u.scheme == "https":
+                conn = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=TIMEOUT, context=self.context)
+            else:
+                conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=TIMEOUT)
+            self.conns[key] = conn
+        return conn
+
+    def close(self):
+        for conn in self.conns.values():
+            conn.close()
+        self.conns = {}
+
+    def request(self, method, url, body=None, headers=None, retried=False):
+        refreshed = False
+        for _ in range(8):
+            u = urllib.parse.urlsplit(url)
+            if u.scheme not in ("http", "https") or not u.hostname:
+                raise SyncError("error", "That is not a web address.")
+            h = {"User-Agent": "Nova-Calendar/1"}
+            h.update(headers or {})
+            if self.auth and (u.scheme == "https" or loopback(u.hostname)):
+                value = self.auth.header()
+                if value:
+                    h["Authorization"] = value
+            data = body.encode("utf-8") if isinstance(body, str) else body
+            if data is not None:
+                h["Content-Length"] = str(len(data))
+            path = (u.path or "/") + ("?" + u.query if u.query else "")
+            conn = self.connection(u)
+            try:
+                conn.request(method, path, data, h)
+                resp = conn.getresponse()
+                content = resp.read(MAX_BYTES + 1)
+            except (OSError, http.client.HTTPException) as e:
+                conn.close()
+                self.conns.pop((u.scheme, u.hostname, u.port), None)
+                if not retried and isinstance(e, (http.client.RemoteDisconnected, BrokenPipeError, ConnectionResetError)):
+                    retried = True
+                    continue
+                if isinstance(e, ssl.SSLCertVerificationError):
+                    raise SyncError("error", "The server's certificate is not trusted.")
+                raise SyncError("offline", "The server could not be reached.")
+            if len(content) > MAX_BYTES:
+                raise SyncError("error", "The server sent too much.")
+            headers_in = {k.lower(): v for k, v in resp.getheaders()}
+            if resp.status in (301, 302, 303, 307, 308) and headers_in.get("location"):
+                url = urllib.parse.urljoin(url, headers_in["location"])
+                if resp.status == 303:
+                    method, body = "GET", None
+                continue
+            if resp.status == 401 and self.auth and not refreshed and self.auth.refresh():
+                refreshed = True
+                continue
+            return Response(resp.status, headers_in, content, url)
+        raise SyncError("error", "The server sent the request round in circles.")
+
+
+class BasicAuth:
+    def __init__(self, user, password):
+        self.value = "Basic " + base64.b64encode(("%s:%s" % (user, password)).encode()).decode()
+
+    def header(self):
+        return self.value
+
+    def refresh(self):
+        return False
+
+
+# ---- WebDAV
+
+def qname(ns, local):
+    return "{%s}%s" % (ns, local)
+
+
+def propfind_body(props):
+    return '<?xml version="1.0" encoding="utf-8"?><d:propfind %s><d:prop>%s</d:prop></d:propfind>' % (NS, "".join(props))
+
+
+def check(resp, what):
+    if resp.status in (401, 403) and what != "write":
+        raise SyncError("signin", "The user name or the password was not accepted.")
+    if resp.status == 404:
+        raise SyncError("error", "The server has no calendar at that address.")
+    if resp.status >= 500:
+        raise SyncError("error", "The server failed to answer (%d)." % resp.status)
+    if resp.status >= 300:
+        raise SyncError("error", "The server refused the request (%d)." % resp.status)
+
+
+def multistatus(resp):
+    """[(href, status, {prop: element})] of a 207, the href absolute."""
+    try:
+        root = ET.fromstring(resp.body)
+    except ET.ParseError:
+        raise SyncError("error", "The server's answer could not be read.")
+    out = []
+    for r in root.iter(qname(DAV, "response")):
+        href = r.findtext(qname(DAV, "href"))
+        if not href:
+            continue
+        href = urllib.parse.urljoin(resp.url, href.strip())
+        status = r.findtext(qname(DAV, "status")) or ""
+        props = {}
+        for ps in r.findall(qname(DAV, "propstat")):
+            if " 200" not in (ps.findtext(qname(DAV, "status")) or ""):
+                continue
+            prop = ps.find(qname(DAV, "prop"))
+            if prop is not None:
+                for p in prop:
+                    props[p.tag] = p
+        out.append((href, status, props))
+    return out, root
+
+
+def propfind(http, url, props, depth):
+    resp = http.request("PROPFIND", url, propfind_body(props), {"Depth": str(depth), "Content-Type": "application/xml; charset=utf-8"})
+    if resp.status != 207:
+        check(resp, "read")
+        raise SyncError("error", "The server is not a CalDAV server.")
+    return multistatus(resp)[0]
+
+
+def href_key(href):
+    return urllib.parse.unquote(urllib.parse.urlsplit(href).path)
+
+
+def child_href(props, tag, base):
+    e = props.get(tag)
+    if e is None:
+        return None
+    h = e.findtext(qname(DAV, "href"))
+    return urllib.parse.urljoin(base, h.strip()) if h else None
+
+
+def text_of(props, tag):
+    e = props.get(tag)
+    return (e.text or "").strip() if e is not None and e.text else ""
+
+
+def calendar_props():
+    return ["<d:resourcetype/>", "<d:displayname/>", "<a:calendar-color/>", "<a:calendar-order/>",
+            "<c:supported-calendar-component-set/>", "<d:current-user-privilege-set/>", "<cs:getctag/>", "<d:sync-token/>"]
+
+
+def calendar_info(href, props):
+    rt = props.get(qname(DAV, "resourcetype"))
+    if rt is None or rt.find(qname(CALDAV, "calendar")) is None:
+        return None
+    comps = props.get(qname(CALDAV, "supported-calendar-component-set"))
+    names = [c.get("name", "").upper() for c in comps.findall(qname(CALDAV, "comp"))] if comps is not None else ["VEVENT", "VTODO"]
+    if "VEVENT" not in names and "VTODO" not in names:
+        return None
+    privileges = props.get(qname(DAV, "current-user-privilege-set"))
+    writable = True
+    if privileges is not None:
+        granted = {p.tag for priv in privileges.findall(qname(DAV, "privilege")) for p in priv}
+        writable = bool(granted & {qname(DAV, "write"), qname(DAV, "write-content"), qname(DAV, "all"), qname(DAV, "bind")})
+    path = href_key(href).rstrip("/")
+    name = text_of(props, qname(DAV, "displayname")) or urllib.parse.unquote(path.rsplit("/", 1)[-1]) or "Calendar"
+    try:
+        order = float(text_of(props, qname(APPLE, "calendar-order")) or 0)
+    except ValueError:
+        order = 0
+    return {"href": href if href.endswith("/") else href + "/", "name": name[:80], "serverColor": text_of(props, qname(APPLE, "calendar-color")),
+            "events": "VEVENT" in names, "tasks": "VTODO" in names, "readOnly": not writable, "order": order}
+
+
+def discover(http, url):
+    """The calendars of the account at <url>: its principal (RFC 5397), its
+    calendar home (RFC 4791), and the calendars in it. A server's address
+    alone is looked up at /.well-known/caldav (RFC 6764) first."""
+    u = urllib.parse.urlsplit(url)
+    origin = "%s://%s" % (u.scheme, u.netloc)
+    starts = [origin + "/.well-known/caldav", origin + "/"] if u.path in ("", "/") else [url]
+    principal = None
+    home = None
+    refused = None
+    for start in starts:
+        try:
+            found = propfind(http, start, ["<d:current-user-principal/>", "<c:calendar-home-set/>", "<d:resourcetype/>"], 0)
+        except SyncError as e:
+            if e.kind in ("signin", "offline"):
+                raise
+            refused = e
+            continue
+        for href, _, props in found:
+            principal = child_href(props, qname(DAV, "current-user-principal"), href) or principal
+            home = child_href(props, qname(CALDAV, "calendar-home-set"), href) or home
+            rt = props.get(qname(DAV, "resourcetype"))
+            if not principal and not home and rt is not None and rt.find(qname(CALDAV, "calendar")) is not None:
+                # An address of one calendar: its folder is the home.
+                home = urllib.parse.urljoin(href, "..")
+        if principal or home:
+            break
+    if principal and not home:
+        for href, _, props in propfind(http, principal, ["<c:calendar-home-set/>"], 0):
+            home = child_href(props, qname(CALDAV, "calendar-home-set"), href) or home
+    if not home:
+        raise refused or SyncError("error", "No calendars were found at that address.")
+    return {"principal": principal, "home": home, "calendars": list_calendars(http, home)}
+
+
+def list_calendars(http, home):
+    out = []
+    for href, _, props in propfind(http, home, calendar_props(), 1):
+        info = calendar_info(href, props)
+        if info:
+            out.append(info)
+    out.sort(key=lambda c: c["order"])
+    return out
+
+
+def nearest_color(text, used):
+    m = re.fullmatch(r"#?([0-9a-fA-F]{6})(?:[0-9a-fA-F]{2})?", (text or "").strip())
+    if m:
+        r, g, b = (int(m.group(1)[i:i + 2], 16) / 255 for i in (0, 2, 4))
+        hi, lo = max(r, g, b), min(r, g, b)
+        if hi - lo > 0.12:
+            if hi == r:
+                hue = 60 * (((g - b) / (hi - lo)) % 6)
+            elif hi == g:
+                hue = 60 * ((b - r) / (hi - lo) + 2)
+            else:
+                hue = 60 * ((r - g) / (hi - lo) + 4)
+            return min(HUES, key=lambda n: min(abs(HUES[n] - hue), 360 - abs(HUES[n] - hue)))
+    for name in NEW_COLORS:
+        if name not in used:
+            return name
+    return NEW_COLORS[len(used) % len(NEW_COLORS)]
+
+
+# ---- Google: OAuth 2.0 for an installed app (RFC 8252), the browser coming
+#      back to this computer, with PKCE (RFC 7636)
+
+def google_client():
+    for path in (os.path.join(_dir("XDG_CONFIG_HOME", ".config"), "nova", "calendar-google.json"), os.path.join(NOVA_PATH, "calendar", "google.json")):
+        try:
+            client = json.loads(read_file(path) or "null")
+        except ValueError:
+            continue
+        if isinstance(client, dict) and client.get("client_id"):
+            return client
+    return None
+
+
+def form_post(url, fields):
+    resp = Http().request("POST", url, urllib.parse.urlencode(fields), {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+    try:
+        answer = json.loads(resp.body or b"{}")
+    except ValueError:
+        answer = {}
+    return resp.status, answer
+
+
+class GoogleAuth:
+    """A bearer token, refreshed when it runs out or is refused; the tokens
+    are kept in the keyring."""
+
+    def __init__(self, key, tokens, client):
+        self.key, self.tokens, self.client = key, tokens, client
+
+    def header(self):
+        if not self.tokens.get("access_token") or self.tokens.get("expires", 0) < time.time() + 60:
+            if not self.refresh():
+                raise SyncError("signin", "Google asks to sign in again.")
+        return "Bearer " + self.tokens["access_token"]
+
+    def refresh(self):
+        fields = {"grant_type": "refresh_token", "refresh_token": self.tokens.get("refresh_token", ""), "client_id": self.client["client_id"]}
+        if self.client.get("client_secret"):
+            fields["client_secret"] = self.client["client_secret"]
+        status, answer = form_post(GOOGLE_TOKEN, fields)
+        if status != 200 or not answer.get("access_token"):
+            if answer.get("error") in ("invalid_grant", "unauthorized_client", "invalid_client"):
+                raise SyncError("signin", "Google asks to sign in again.")
+            raise SyncError("error", "Google did not give a new token.")
+        self.tokens["access_token"] = answer["access_token"]
+        self.tokens["expires"] = time.time() + int(answer.get("expires_in", 3600))
+        if self.key:
+            secret_store(self.key, "Calendar: Google", json.dumps(self.tokens))
+        return True
+
+
+def b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def google_sign_in(client):
+    verifier = b64url(secrets.token_bytes(48))
+    state = b64url(secrets.token_bytes(24))
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+    redirect = "http://127.0.0.1:%d" % server.getsockname()[1]
+    url = GOOGLE_AUTH + "?" + urllib.parse.urlencode({
+        "client_id": client["client_id"], "redirect_uri": redirect, "response_type": "code", "scope": GOOGLE_SCOPE,
+        "code_challenge": b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256",
+        "state": state, "access_type": "offline", "prompt": "consent"})
+    try:
+        subprocess.Popen([os.environ.get("NOVA_CALENDAR_BROWSER") or "xdg-open", url], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        raise SyncError("error", "The browser could not be opened.")
+    deadline = time.time() + SIGN_IN_SECONDS
+    code = None
+    while code is None:
+        server.settimeout(max(0.1, deadline - time.time()))
+        try:
+            conn, _ = server.accept()
+        except socket.timeout:
+            raise SyncError("error", "Google sign-in took too long.")
+        with conn:
+            conn.settimeout(10)
+            try:
+                request = conn.recv(8192).decode("latin-1")
+            except OSError:
+                continue
+            target = request.split(" ", 2)[1] if request.count(" ") >= 2 else "/"
+            query = urllib.parse.parse_qs(urllib.parse.urlsplit(target).query)
+            if query.get("state", [""])[0] != state:
+                conn.sendall(b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                continue
+            failed = "error" in query or not query.get("code")
+            words = "Google sign-in was canceled. You can close this tab." if failed else "Signed in. You can close this tab and go back to the Calendar."
+            page = ("<!doctype html><meta charset=utf-8><title>Calendar</title>"
+                    "<body style='font:16px sans-serif;margin:4em;text-align:center'>%s</body>" % words).encode()
+            conn.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(page) + page)
+            if failed:
+                raise SyncError("signin", "Google sign-in was canceled.")
+            code = query["code"][0]
+    server.close()
+    fields = {"grant_type": "authorization_code", "code": code, "client_id": client["client_id"], "code_verifier": verifier, "redirect_uri": redirect}
+    if client.get("client_secret"):
+        fields["client_secret"] = client["client_secret"]
+    status, answer = form_post(GOOGLE_TOKEN, fields)
+    if status != 200 or not answer.get("refresh_token"):
+        raise SyncError("signin", "Google did not let the Calendar in.")
+    email = ""
+    try:
+        payload = answer.get("id_token", "").split(".")[1]
+        email = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).get("email", "")
+    except (IndexError, ValueError):
+        pass
+    tokens = {"refresh_token": answer["refresh_token"], "access_token": answer.get("access_token", ""),
+              "expires": time.time() + int(answer.get("expires_in", 3600))}
+    return tokens, email
+
+
+# ---- syncing one calendar
+
+def build_resource(group, pool):
+    comps = []
+    for tzid in sorted(zone_ids(group)):
+        tz = pool.get(tzid) or vtimezone(tzid)
+        if tz is not None:
+            pool[tzid] = tz
+            comps.append(tz)
+    cal = Component("VCALENDAR", ["VERSION:2.0", "PRODID:-//Nova//Calendar//EN"], comps + group)
+    return serialize([cal])
+
+
+def merge_component(b, l, r):
+    """The three versions of one component (an event, or one time of it):
+    (merged, conflict)."""
+
+    def eq(x, y):
+        return (x is None and y is None) or (x is not None and y is not None and canon(x) == canon(y))
+
+    if eq(l, r) or eq(l, b):
+        return r, False
+    if eq(r, b):
+        return l, False
+    if b is None or l is None or r is None:
+        return None, True
+
+    def parts(c):
+        d = {}
+        for line in c.lines:
+            d.setdefault(prop_name(line), []).append(line)
+        for child in c.children:
+            d.setdefault("BEGIN:" + child.name, []).append(child)
+        return d
+
+    def key(entries):
+        return [e if isinstance(e, str) else canon(e) for e in entries]
+
+    pb, pl, pr = parts(b), parts(l), parts(r)
+    out = Component(r.name)
+    for name in list(pr) + [n for n in pl if n not in pr]:
+        if name in STAMPS:
+            continue
+        vb, vl, vr = pb.get(name, []), pl.get(name, []), pr.get(name, [])
+        if key(vl) == key(vr) or key(vl) == key(vb):
+            chosen = vr
+        elif key(vr) == key(vb):
+            chosen = vl
+        else:
+            return None, True
+        for e in chosen:
+            (out.lines if isinstance(e, str) else out.children).append(e)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    out.lines.insert(0, "DTSTAMP:" + stamp)
+    out.lines.append("LAST-MODIFIED:" + stamp)
+    seqs = [int(v) for v in (value(l, "SEQUENCE"), value(r, "SEQUENCE")) if v.strip().isdigit()]
+    if seqs:
+        out.lines.append("SEQUENCE:%d" % max(seqs))
+    return out, False
+
+
+def merge_group(base, local, remote):
+    """An item changed here and on the server, merged: a list of components,
+    or None where the two changed the same thing differently."""
+    B = {recurrence_key(c): c for c in base or []}
+    L = {recurrence_key(c): c for c in local or []}
+    R = {recurrence_key(c): c for c in remote or []}
+    out = []
+    for k in list(R) + [k for k in L if k not in R]:
+        merged, conflict = merge_component(B.get(k), L.get(k), R.get(k))
+        if conflict:
+            return None
+        if merged is not None:
+            out.append(merged)
+    return out
+
+
+def copy_of(group):
+    """This computer's version of an item kept beside the server's: the
+    same, under a UID of its own."""
+    uid = "%s@nova" % uuid.uuid4()
+    out = []
+    for c in group:
+        copy = parse(serialize([c])).children[0]
+        set_line(copy, "UID", uid)
+        out.append(copy)
+    return uid, out
+
+
+def resource_name(uid):
+    if re.fullmatch(r"[A-Za-z0-9._@\-]{1,120}", uid):
+        return urllib.parse.quote(uid, safe="@") + ".ics"
+    return hashlib.sha1(uid.encode()).hexdigest() + ".ics"
+
+
+class CalendarSync:
+    def __init__(self, http, cal):
+        self.http, self.cal = http, cal
+        self.path = os.path.join(DATA_DIR, cal["file"])
+        self.state = load_state(cal["id"])
+        self.items = self.state["items"]
+        self.pool = {}
+        self.pending = 0
+        self.error = None
+
+    # -- what the server changed: {key: href} changed, {keys} deleted
+    def remote_changes(self):
+        href = self.cal["href"]
+        token = self.state.get("token")
+        if token:
+            try:
+                return self.sync_collection(href, token)
+            except Precondition:
+                self.state.pop("token", None)
+        found = propfind(self.http, href, ["<d:sync-token/>", "<cs:getctag/>"], 0)
+        props = found[0][2] if found else {}
+        new_token = text_of(props, qname(DAV, "sync-token"))
+        ctag = text_of(props, qname(CS, "getctag"))
+        if not new_token and ctag and ctag == self.state.get("ctag") and self.items:
+            return {}, set()
+        listing = {}
+        for h, _, p in propfind(self.http, href, ["<d:getetag/>", "<d:resourcetype/>"], 1):
+            rt = p.get(qname(DAV, "resourcetype"))
+            if href_key(h).rstrip("/") == href_key(href).rstrip("/") or (rt is not None and len(rt)):
+                continue
+            listing[href_key(h)] = (h, text_of(p, qname(DAV, "getetag")))
+        changed = {k: h for k, (h, etag) in listing.items() if k not in self.items or not etag or self.items[k].get("etag") != etag}
+        deleted = {k for k in self.items if k not in listing}
+        self.state["token"] = new_token or None
+        self.state["ctag"] = ctag or None
+        return changed, deleted
+
+    def sync_collection(self, href, token):
+        changed, deleted = {}, set()
+        for _ in range(50):
+            body = ('<?xml version="1.0" encoding="utf-8"?><d:sync-collection %s><d:sync-token>%s</d:sync-token>'
+                    '<d:sync-level>1</d:sync-level><d:prop><d:getetag/></d:prop></d:sync-collection>') % (NS, _xml_text(token))
+            resp = self.http.request("REPORT", href, body, {"Depth": "1", "Content-Type": "application/xml; charset=utf-8"})
+            if resp.status in (403, 409) or (resp.status == 400 and b"sync-token" in resp.body):
+                raise Precondition()
+            if resp.status != 207:
+                check(resp, "read")
+                raise Precondition()
+            responses, root = multistatus(resp)
+            more = False
+            for h, status, props in responses:
+                k = href_key(h)
+                if k.rstrip("/") == href_key(href).rstrip("/"):
+                    more = more or " 507" in status
+                    continue
+                if " 404" in status or (not props and " 200" not in status):
+                    deleted.add(k)
+                    changed.pop(k, None)
+                else:
+                    etag = text_of(props, qname(DAV, "getetag"))
+                    deleted.discard(k)
+                    if k not in self.items or not etag or self.items[k].get("etag") != etag:
+                        changed[k] = h
+            token = root.findtext(qname(DAV, "sync-token")) or token
+            if not more:
+                break
+        self.state["token"] = token
+        deleted &= set(self.items)
+        return changed, deleted
+
+    def fetch(self, hrefs):
+        """{key: (href, etag, text)}, by calendar-multiget (RFC 4791)."""
+        out = {}
+        hrefs = list(hrefs)
+        for i in range(0, len(hrefs), 100):
+            body = ('<?xml version="1.0" encoding="utf-8"?><c:calendar-multiget %s><d:prop><d:getetag/><c:calendar-data/></d:prop>%s'
+                    '</c:calendar-multiget>') % (NS, "".join("<d:href>%s</d:href>" % _xml_text(urllib.parse.urlsplit(h).path) for h in hrefs[i:i + 100]))
+            resp = self.http.request("REPORT", self.cal["href"], body, {"Depth": "1", "Content-Type": "application/xml; charset=utf-8"})
+            if resp.status != 207:
+                check(resp, "read")
+            for h, status, props in multistatus(resp)[0]:
+                data = props.get(qname(CALDAV, "calendar-data"))
+                if data is not None and data.text:
+                    out[href_key(h)] = (h, text_of(props, qname(DAV, "getetag")), data.text)
+        return out
+
+    def get(self, href):
+        resp = self.http.request("GET", href, None, {"Accept": "text/calendar"})
+        if resp.status == 404:
+            return None
+        if resp.status != 200:
+            check(resp, "read")
+        return resp.header("etag"), resp.body.decode("utf-8", "replace")
+
+    def remote_group(self, text):
+        cal = calendar_of(parse(text))
+        self.pool.update({k: v for k, v in timezones(cal).items() if k not in self.pool})
+        found = groups(cal)
+        if not found:
+            return None, None
+        uid = next(iter(found))
+        return uid, found[uid]
+
+    def put(self, href, group, etag):
+        headers = {"Content-Type": "text/calendar; charset=utf-8"}
+        if etag:
+            headers["If-Match"] = etag
+        else:
+            headers["If-None-Match"] = "*"
+        resp = self.http.request("PUT", href, build_resource(group, self.pool), headers)
+        if resp.status == 412:
+            raise Precondition()
+        if resp.status not in (200, 201, 204):
+            if resp.status in (401, 403):
+                raise SyncError("error", "The server refused a change to %s." % self.cal["name"])
+            check(resp, "write")
+        new = resp.header("etag")
+        if new and not new.startswith("W/"):
+            return new, None
+        # No ETag: the server changed what it was sent; what it keeps is
+        # read back.
+        got = self.get(href)
+        return (got[0], got[1]) if got else (None, None)
+
+    def delete(self, href, etag):
+        headers = {"If-Match": etag} if etag else {}
+        resp = self.http.request("DELETE", href, None, headers)
+        if resp.status == 412:
+            raise Precondition()
+        if resp.status not in (200, 204, 404):
+            check(resp, "write")
+
+    def run(self):
+        changed, deleted = self.remote_changes()
+        fetched = self.fetch(changed.values()) if changed else {}
+        for k in changed:
+            if k not in fetched:
+                deleted.add(k)
+        text = read_file(self.path)
+        for _ in range(6):
+            merged = self.merge(text, fetched, deleted)
+            fetched, deleted = {}, set()
+            if merged == text:
+                break
+            text = swap_in(self.path, merged, text)
+            if text is None:
+                break
+        save_state(self.cal["id"], self.state)
+        if self.error:
+            raise self.error
+
+    def merge(self, text, fetched, deleted):
+        root = parse(text or "")
+        cal = calendar_of(root)
+        local = groups(cal)
+        self.pool.update({k: v for k, v in timezones(cal).items() if k not in self.pool})
+        result = dict(local)
+        by_uid = {e["uid"]: k for k, e in self.items.items()}
+        writable = not self.cal.get("readOnly")
+
+        # The server's changes, merged into the file's.
+        for k, (href, etag, data) in fetched.items():
+            uid, remote = self.remote_group(data)
+            if remote is None:
+                continue
+            entry = self.items.get(k)
+            if entry is None and uid in by_uid and by_uid[uid] != k:
+                # The same item at another address: the old one is gone.
+                self.items.pop(by_uid[uid], None)
+            base = parse_group(entry["base"]) if entry else None
+            mine = local.get(uid)
+            if mine is None and entry is not None and same_group(remote, base):
+                entry["etag"] = etag  # deleted here, and unchanged there but for its ETag
+                continue
+            if mine is None or same_group(mine, base) or same_group(mine, remote) or (entry and same_group(mine, parse_group(entry.get("prev")))):
+                result[uid] = remote
+            elif not writable:
+                result[uid] = remote
+            else:
+                both = merge_group(base, mine, remote)
+                if both is None:
+                    result[uid] = remote
+                    copy_uid, copy = copy_of(mine)
+                    result[copy_uid] = copy
+                else:
+                    result[uid] = both
+            self.items[k] = {"href": href, "uid": uid, "etag": etag, "base": serialize(remote),
+                             "prev": entry["base"] if entry else None}
+            by_uid[uid] = k
+        for k in deleted:
+            entry = self.items.pop(k, None)
+            if entry is None:
+                continue
+            by_uid.pop(entry["uid"], None)
+            mine = result.get(entry["uid"])
+            base = parse_group(entry["base"])
+            if mine is None or same_group(mine, base) or not writable or same_group(mine, parse_group(entry.get("prev"))):
+                result.pop(entry["uid"], None)
+            # Else changed here: it stays, and is sent again as a new item.
+
+        # This computer's changes, sent.
+        self.pending = 0
+        for uid in list(result):
+            k = by_uid.get(uid)
+            entry = self.items.get(k) if k else None
+            group = result[uid]
+            if entry is not None:
+                base = parse_group(entry["base"])
+                if same_group(group, base):
+                    if same_group(local.get(uid), base):
+                        entry["prev"] = None  # the file has had the server's change
+                    continue
+                if same_group(group, parse_group(entry.get("prev"))):
+                    # The file was written from before the server's change.
+                    result[uid] = base
+                    continue
+                if not writable:
+                    result[uid] = base
+                    continue
+            elif not writable:
+                result.pop(uid)
+                continue
+            self.send(uid, group, entry, result, by_uid)
+        for k, entry in list(self.items.items()):
+            if entry["uid"] in result:
+                continue
+            if not writable:
+                result[entry["uid"]] = parse_group(entry["base"])
+                continue
+            try:
+                self.delete(entry["href"], entry.get("etag"))
+                self.items.pop(k)
+            except Precondition:
+                # Changed there meanwhile: the change wins.
+                got = self.get(entry["href"])
+                if got is None:
+                    self.items.pop(k)
+                    continue
+                uid, remote = self.remote_group(got[1])
+                result[entry["uid"]] = remote
+                entry.update({"etag": got[0], "base": serialize(remote), "prev": None})
+            except SyncError as e:
+                self.pending += 1
+                if e.kind != "offline":
+                    self.error = e
+        return self.write(cal, result, local)
+
+    def count_pending(self):
+        """The changes made here that the server has not had."""
+        local = groups(calendar_of(parse(read_file(self.path) or "")))
+        by_uid = {e["uid"]: e for e in self.items.values()}
+        changed = [u for u, g in local.items() if u not in by_uid or not same_group(g, parse_group(by_uid[u].get("base")))]
+        return len(changed) + len([u for u in by_uid if u not in local])
+
+    def register(self, href, uid, by_uid):
+        entry = {"href": href, "uid": uid}
+        self.items[href_key(href)] = entry
+        by_uid[uid] = href_key(href)
+        return entry
+
+    def send(self, uid, group, entry, result, by_uid):
+        """An item new or changed here, sent; a refusal because it changed
+        on the server meanwhile is merged and tried again."""
+        name = resource_name(uid)
+        for _ in range(4):
+            try:
+                if entry is None:
+                    href = urllib.parse.urljoin(self.cal["href"], name)
+                    etag, kept = self.put(href, group, None)
+                    entry = self.register(href, uid, by_uid)
+                else:
+                    etag, kept = self.put(entry["href"], group, entry.get("etag"))
+                if kept is not None:
+                    _, group = self.remote_group(kept)
+                    result[uid] = group
+                entry.update({"etag": etag, "base": serialize(group), "prev": None})
+                return
+            except Precondition:
+                href = entry["href"] if entry else urllib.parse.urljoin(self.cal["href"], name)
+                got = self.get(href)
+                if got is None:
+                    # Deleted there meanwhile: the change made here wins,
+                    # as a new item.
+                    if entry is not None:
+                        self.items.pop(href_key(entry["href"]), None)
+                        entry = None
+                    continue
+                remote_uid, remote = self.remote_group(got[1])
+                if entry is None and remote_uid != uid:
+                    # Another item has the address: this one takes another.
+                    name = "%s.ics" % uuid.uuid4()
+                    continue
+                if entry is None:
+                    entry = self.register(href, uid, by_uid)
+                both = merge_group(parse_group(entry.get("base")), group, remote)
+                entry.update({"etag": got[0], "base": serialize(remote), "prev": None})
+                if both is None:
+                    result[uid] = remote
+                    copy_uid, copy = copy_of(group)
+                    result[copy_uid] = copy
+                    self.send(copy_uid, copy, None, result, by_uid)
+                    return
+                group = result[uid] = both
+                if same_group(both, remote):
+                    return
+            except SyncError as e:
+                # Not sent: it stays as it is here, and is tried again at the
+                # next sync.
+                self.pending += 1
+                if e.kind != "offline":
+                    self.error = e
+                return
+
+    def write(self, cal, result, local):
+        """The file as the merge left it: its own lines, the zones its items
+        name, and its items, in the order they were."""
+        items = []
+        order = list(local) + [u for u in result if u not in local]
+        for uid in order:
+            items.extend(result.get(uid) or [])
+        needed = zone_ids(items)
+        zones = []
+        for tzid in sorted(needed):
+            tz = self.pool.get(tzid) or vtimezone(tzid)
+            if tz is not None:
+                self.pool[tzid] = tz
+                zones.append(tz)
+        head = [line for line in cal.lines if prop_name(line) in ("VERSION", "PRODID", "CALSCALE")] or ["VERSION:2.0", "PRODID:-//Nova//Calendar//EN"]
+        others = [c for c in cal.children if c.name not in ITEMS and c.name != "VTIMEZONE"]
+        return serialize([Component("VCALENDAR", head, zones + others + items)])
+
+
+def _xml_text(text):
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# ---- accounts
+
+def account_auth(account):
+    secret = secret_lookup(account["id"])
+    if account["type"] == "google":
+        client = google_client()
+        if client is None:
+            raise SyncError("signin", "Google sign-in is not set up on this computer.")
+        try:
+            tokens = json.loads(secret)
+        except ValueError:
+            raise SyncError("signin", "Google asks to sign in again.")
+        return GoogleAuth(account["id"], tokens, client)
+    return BasicAuth(account.get("user", ""), secret)
+
+
+def add_calendars(config, account, found):
+    used = [c.get("color") for c in config["calendars"]]
+    out = []
+    for info in found:
+        color = nearest_color(info.pop("serverColor", ""), used)
+        used.append(color)
+        cid = new_id()
+        entry = dict(info, id=cid, account=account["id"], kind="caldav", color=color, shown=True, file=cid + ".ics", serverName=info["name"])
+        config["calendars"].append(entry)
+        out.append(entry)
+    return out
+
+
+def refresh_calendars(http, account):
+    """New calendars made on the phone or the web come in, those deleted
+    there go, and a name changed there follows unless it was changed here."""
+    found = list_calendars(http, account["home"])
+    with ConfigEdit() as config:
+        mine = [c for c in config["calendars"] if c.get("account") == account["id"]]
+        by_href = {href_key(c["href"]): c for c in mine}
+        seen = set()
+        new = []
+        for info in found:
+            k = href_key(info["href"])
+            seen.add(k)
+            c = by_href.get(k)
+            if c is None:
+                new.append(info)
+                continue
+            if c.get("name") == c.get("serverName"):
+                c["name"] = info["name"]
+            c.update({"serverName": info["name"], "readOnly": info["readOnly"], "events": info["events"], "tasks": info["tasks"], "href": info["href"]})
+        add_calendars(config, account, new)
+        gone = [c for c in mine if href_key(c["href"]) not in seen]
+        config["calendars"] = [c for c in config["calendars"] if c not in gone]
+        calendars = [dict(c) for c in config["calendars"] if c.get("account") == account["id"]]
+    for c in gone:
+        forget_calendar(c)
+    return calendars
+
+
+def forget_calendar(c):
+    """A calendar's file and state, once it is gone from the list."""
+    if not re.fullmatch(r"[0-9a-f]{8}", c.get("id", "")):
+        return
+    for path in (os.path.join(DATA_DIR, c["id"] + ".ics"), state_path(c["id"])):
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+
+
+def sync_account(account):
+    """The changes left to send, once the account's calendars are synced."""
+    http = Http(account_auth(account))
+    calendars = [c for c in load_config()["calendars"] if c.get("account") == account["id"]]
+    pending = 0
+    try:
+        calendars = refresh_calendars(http, account)
+        for cal in calendars:
+            job = CalendarSync(http, cal)
+            job.run()
+            pending += job.pending
+        return pending
+    except SyncError as e:
+        if e.kind == "offline":
+            e.pending = sum(CalendarSync(None, c).count_pending() for c in calendars)
+        raise
+    finally:
+        http.close()
+
+
+def sync_subscription(cal):
+    url = secret_lookup(cal["id"]).strip()
+    state = load_state(cal["id"])
+    headers = {"Accept": "text/calendar"}
+    path = os.path.join(DATA_DIR, cal["file"])
+    if os.path.exists(path):
+        if state.get("etag"):
+            headers["If-None-Match"] = state["etag"]
+        if state.get("modified"):
+            headers["If-Modified-Since"] = state["modified"]
+    http = Http(url_auth(url))
+    try:
+        resp = http.request("GET", plain_url(url), None, headers)
+    finally:
+        http.close()
+    if resp.status == 304:
+        return
+    if resp.status != 200:
+        check(resp, "read")
+    text = resp.body.decode("utf-8", "replace")
+    if not re.match(r"\A(?:\ufeff)?\s*BEGIN:VCALENDAR", text, re.I):
+        raise SyncError("error", "The address does not give a calendar.")
+    root = parse(text)
+    cal_c = calendar_of(root)
+    named = timezones(cal_c)
+    items = [c for c in cal_c.children if c.name in ITEMS]
+    extra = [vtimezone(t) for t in sorted(zone_ids(items)) if t not in named]
+    cal_c.children = [c for c in cal_c.children if c.name not in ITEMS] + [z for z in extra if z is not None] + items
+    new = serialize([cal_c])
+    if new != read_file(path):
+        ensure_dirs()
+        os.replace(write_private(path, new), path)
+    state.update({"etag": resp.header("etag"), "modified": resp.header("last-modified")})
+    save_state(cal["id"], state)
+    name = unescape(value(cal_c, "X-WR-CALNAME")).strip()
+    if name:
+        with ConfigEdit() as config:
+            for c in config["calendars"]:
+                if c["id"] == cal["id"] and c.get("name") == c.get("serverName"):
+                    c["name"] = c["serverName"] = name[:80]
+
+
+def plain_url(url):
+    u = urllib.parse.urlsplit(url)
+    netloc = u.hostname + (":%d" % u.port if u.port else "")
+    return urllib.parse.urlunsplit((u.scheme, netloc, u.path, u.query, ""))
+
+
+def url_auth(url):
+    u = urllib.parse.urlsplit(url)
+    if u.username:
+        return BasicAuth(urllib.parse.unquote(u.username), urllib.parse.unquote(u.password or ""))
+    return None
+
+
+def normalize_url(text, webcal=False):
+    url = (text or "").strip()
+    if not url:
+        raise SyncError("error", "An address is needed.")
+    if not re.match(r"^[A-Za-z][A-Za-z0-9+.-]*://", url):
+        url = "https://" + url
+    u = urllib.parse.urlsplit(url)
+    scheme = u.scheme.lower()
+    if webcal and scheme in ("webcal", "webcals"):
+        scheme = "https"
+    if scheme not in ("http", "https") or not u.hostname or re.search(r"[\s\"\\]", url):
+        raise SyncError("error", "That is not a web address.")
+    return urllib.parse.urlunsplit((scheme,) + tuple(u)[1:])
+
+
+# ---- commands
+
+def read_request():
+    try:
+        request = json.loads(sys.stdin.read() or "{}")
+    except ValueError:
+        request = None
+    if not isinstance(request, dict):
+        raise SyncError("error", "The request could not be read.")
+    return request
+
+
+def cmd_add():
+    request = read_request()
+    kind = request.get("type")
+    if kind == "google":
+        client = google_client()
+        if client is None:
+            raise SyncError("error", "Google sign-in is not set up on this computer.")
+        tokens, email = google_sign_in(client)
+        auth = GoogleAuth(None, tokens, client)
+        url, user, secret = GOOGLE_CALDAV, email, None
+        name = email or "Google"
+    elif kind in ("icloud", "caldav"):
+        user = (request.get("user") or "").strip()
+        password = request.get("password") or ""
+        if not user or not password:
+            raise SyncError("error", "A user name and a password are needed.")
+        url = ICLOUD_URL if kind == "icloud" else normalize_url(request.get("url"))
+        u = urllib.parse.urlsplit(url)
+        if u.scheme != "https" and not loopback(u.hostname):
+            raise SyncError("error", "The address must start with https://, so that the password is not sent in the clear.")
+        auth = BasicAuth(user, password)
+        secret = password
+        name = "iCloud" if kind == "icloud" else u.hostname
+    else:
+        raise SyncError("error", "The account's type is not one the Calendar knows.")
+    http = Http(auth)
+    try:
+        try:
+            found = discover(http, url)
+        except SyncError as e:
+            if e.kind == "signin" and kind == "icloud":
+                raise SyncError("signin", "The Apple ID or the app-specific password was not accepted.")
+            if kind != "google" or e.kind != "error" or not user:
+                raise
+            # Google's own address for the account: its principal, by the
+            # address of its main calendar.
+            found = discover(http, GOOGLE_CALDAV + urllib.parse.quote(user) + "/user")
+    finally:
+        http.close()
+    if not found["calendars"]:
+        raise SyncError("error", "The account has no calendars.")
+    account = {"id": new_id(), "type": kind, "name": name, "user": user, "url": url, "principal": found["principal"], "home": found["home"]}
+    with ConfigEdit() as config:
+        for a in config["accounts"]:
+            if a["type"] == kind and a.get("user") == user and (a.get("principal") or a.get("home")) == (account["principal"] or account["home"]):
+                raise SyncError("error", "This account is in the Calendar already.")
+        if kind == "google":
+            secret = json.dumps(auth.tokens)
+        secret_store(account["id"], "Calendar: %s (%s)" % (name, user) if user and user != name else "Calendar: %s" % name, secret)
+        config["accounts"].append(account)
+        calendars = add_calendars(config, account, found["calendars"])
+    print(json.dumps({"account": account, "calendars": calendars}))
+
+
+def cmd_subscribe():
+    request = read_request()
+    url = normalize_url(request.get("url"), webcal=True)
+    host = urllib.parse.urlsplit(url).hostname
+    http = Http(url_auth(url))
+    try:
+        resp = http.request("GET", plain_url(url), None, {"Accept": "text/calendar"})
+    finally:
+        http.close()
+    if resp.status != 200:
+        check(resp, "read")
+    text = resp.body.decode("utf-8", "replace")
+    if not re.match(r"\A(?:\ufeff)?\s*BEGIN:VCALENDAR", text, re.I):
+        raise SyncError("error", "The address does not give a calendar.")
+    name = unescape(value(calendar_of(parse(text)), "X-WR-CALNAME")).strip()[:80] or host
+    cid = new_id()
+    with ConfigEdit() as config:
+        used = [c.get("color") for c in config["calendars"]]
+        secret_store(cid, "Calendar: subscription to %s" % host, url)
+        entry = {"id": cid, "kind": "subscription", "name": name, "serverName": name, "host": host, "color": nearest_color("", used),
+                 "shown": True, "readOnly": True, "events": True, "tasks": False, "file": cid + ".ics"}
+        config["calendars"].append(entry)
+    try:
+        sync_subscription(entry)
+    except SyncError:
+        pass
+    print(json.dumps({"calendar": entry}))
+
+
+def cmd_remove(target):
+    with ConfigEdit() as config:
+        account = next((a for a in config["accounts"] if a["id"] == target), None)
+        if account:
+            gone = [c for c in config["calendars"] if c.get("account") == target]
+            config["accounts"].remove(account)
+        else:
+            gone = [c for c in config["calendars"] if c["id"] == target and c.get("kind") == "subscription"]
+            if not gone:
+                raise SyncError("error", "There is no account or subscription '%s'." % target)
+        config["calendars"] = [c for c in config["calendars"] if c not in gone]
+    secret_clear(target)
+    for c in gone:
+        forget_calendar(c)
+    save_status(target, None)
+
+
+def cmd_set(target, pairs):
+    with ConfigEdit() as config:
+        cal = next((c for c in config["calendars"] if c["id"] == target), None)
+        if cal is None:
+            raise SyncError("error", "There is no calendar '%s'." % target)
+        for pair in pairs:
+            key, eq, val = pair.partition("=")
+            if key == "shown" and val in ("true", "false"):
+                cal["shown"] = val == "true"
+            elif key == "color" and val in PALETTE:
+                cal["color"] = val
+            elif key == "name" and val.strip():
+                cal["name"] = val.strip()[:80]
+            else:
+                raise SyncError("error", "'%s' is not a setting of a calendar." % pair)
+
+
+def cmd_sync(only):
+    ensure_dirs()
+    with Lock("sync.lock"):
+        config = load_config()
+        jobs = [(a["id"], lambda a=a: sync_account(a)) for a in config["accounts"]]
+        jobs += [(c["id"], lambda c=c: sync_subscription(c)) for c in config["calendars"] if c.get("kind") == "subscription"]
+        failed = False
+        for key, job in jobs:
+            if only and key != only:
+                continue
+            status = {"state": "ok", "at": int(time.time())}
+            try:
+                status["pending"] = job() or 0
+            except SyncError as e:
+                status.update({"state": e.kind, "message": e.words, "pending": getattr(e, "pending", 0)})
+                failed = failed or e.kind != "offline"
+            save_status(key, status)
+        # The files and states of calendars no longer in the list, read
+        # again now: one added meanwhile is in it.
+        with Lock("config.lock"):
+            known = {c["id"] for c in load_config()["calendars"]}
+            for folder, ext in ((DATA_DIR, ".ics"), (STATE_DIR, ".json")):
+                for name in os.listdir(folder):
+                    stem = name[:-len(ext)]
+                    if name.endswith(ext) and re.fullmatch(r"[0-9a-f]{8}", stem) and stem not in known:
+                        os.unlink(os.path.join(folder, name))
+        return 1 if failed else 0
+
+
+def main(argv):
+    command = argv[1] if len(argv) > 1 else "sync"
+    try:
+        if command in ("-h", "--help"):
+            print("Usage: nova calendar sync [<id>] | add | subscribe | remove <id> | set <id> <key>=<value>...")
+            return 0
+        if command == "sync":
+            return cmd_sync(argv[2] if len(argv) > 2 else None)
+        ensure_dirs()
+        if command == "add":
+            cmd_add()
+        elif command == "subscribe":
+            cmd_subscribe()
+        elif command == "remove" and len(argv) == 3:
+            cmd_remove(argv[2])
+        elif command == "set" and len(argv) >= 4:
+            cmd_set(argv[2], argv[3:])
+        elif command == "google":
+            return 0 if google_client() else 1
+        else:
+            print("nova-calendar-sync: unknown command '%s'" % command, file=sys.stderr)
+            return 2
+        return 0
+    except SyncError as e:
+        print(e.words, file=sys.stderr)
+        return {"signin": 3, "offline": 4}.get(e.kind, 1)
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
