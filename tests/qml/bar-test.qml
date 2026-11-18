@@ -1,11 +1,12 @@
 import QtQuick
 import Quickshell
 import "plugins/bar/BarModel.js" as Model
+import "plugins/bar/widgets/tray/TrayList.js" as Tray
 
 // The bar's rules, apart from its windows: what a layout entry says, the
-// tray's place, the centre's anchor, a change of settings alone, a widget
-// moved in shell.json, the copy a key reaches, where a drag lands, the edge
-// a dragged bar goes to, and where a tooltip goes.
+// centre's anchor, a change of settings alone, a widget moved in shell.json,
+// the copy a key reaches, where a drag lands, where a tooltip goes, and which
+// tray icons show.
 ShellRoot {
   function check(ok, what) {
     console.log((ok ? "ok   " : "FAIL ") + what)
@@ -65,14 +66,6 @@ ShellRoot {
     check(same(Model.before(center, "nova.menu"), []) && same(Model.after(center, "nova.menu"), []), "and nothing either side of one it lacks")
     check(same(Model.before(center, "nova.indicators"), []) && same(Model.after(center, "nova.weather"), []), "nothing before the first or after the last")
 
-    // The tray at its section's inner end.
-    const tray = { id: "nova.tray", pins: ["a"] }
-    check(same(Model.trayInward(["nova.audio", tray, "nova.power"], "right"), [tray, "nova.audio", "nova.power"]), "the tray first on the right")
-    check(same(Model.trayInward([tray, "nova.menu"], "left"), ["nova.menu", tray]), "last on the left")
-    check(same(Model.trayInward([tray, "nova.clock"], "center"), ["nova.clock", tray]), "last in the centre")
-    check(same(Model.trayInward(["nova.tray", "nova.menu", tray], "left"), ["nova.menu", tray]), "listed twice, the last kept")
-    check(same(Model.trayInward(null, "left"), []), "no section, no widgets")
-
     // A user's own widgets.
     check(Model.customType({ id: "x", type: "qml", exec: "date" }) === "qml", "a type named is the type")
     check(Model.customType({ id: "x", exec: "date" }) === "command" && Model.customType({ id: "x", exec: "date", source: "f.qml" }) === "command", "with something to run, a command")
@@ -118,22 +111,12 @@ ShellRoot {
 
     // Where a dragged widget lands.
     const places = [{ slot: "a", x: 0, y: 0, width: 40, height: 26 }, { slot: "b", x: 50, y: 0, width: 40, height: 26 }, { slot: "z", x: 99, y: 0, width: 0, height: 26 }]
-    check(same(Model.dropPlace(places, { x: 3, y: 9 }, false), { slot: "a", after: false }), "before the widget whose start is nearest")
-    check(same(Model.dropPlace(places, { x: 44, y: 9 }, false), { slot: "a", after: true }), "after the one whose end is")
-    check(same(Model.dropPlace(places, { x: 200, y: 9 }, false), { slot: "b", after: true }), "past the last, after it; one at no size passed over")
-    check(same(Model.dropPlace([{ slot: "a", x: 0, y: 100, width: 28, height: 30 }], { x: 5, y: 125 }, true), { slot: "a", after: true }), "down a side bar")
-    check(Model.dropPlace([], { x: 1, y: 1 }, false) === null && Model.dropPlace(places, {}, false) === null, "nowhere, no place")
-    check(same(Model.dropMarker({ x: 10, y: 0 }, 40, 26, true, false, 2), { x: 49, y: 0, width: 2, height: 26 }), "the line at a widget's end")
-    check(same(Model.dropMarker({ x: 0, y: 10 }, 28, 30, false, true, 2), { x: 0, y: 9, width: 28, height: 2 }), "and at its top on a side bar")
+    check(same(Model.dropPlace(places, { x: 3, y: 9 }), { slot: "a", after: false }), "before the widget whose start is nearest")
+    check(same(Model.dropPlace(places, { x: 44, y: 9 }), { slot: "a", after: true }), "after the one whose end is")
+    check(same(Model.dropPlace(places, { x: 200, y: 9 }), { slot: "b", after: true }), "past the last, after it; one at no size passed over")
+    check(Model.dropPlace([], { x: 1, y: 1 }) === null && Model.dropPlace(places, {}) === null, "nowhere, no place")
+    check(same(Model.dropMarker({ x: 10, y: 0 }, 40, 26, true, 2), { x: 49, y: 0, width: 2, height: 26 }), "the line at a widget's end")
 
-    // The edge a dragged bar goes to, and points on a screen.
-    check(Model.nearestEdge({ x: 960, y: 10 }, 1920, 1080) === "top" && Model.nearestEdge({ x: 960, y: 1070 }, 1920, 1080) === "bottom", "near the top or the bottom")
-    check(Model.nearestEdge({ x: 100, y: 540 }, 1920, 1080) === "left" && Model.nearestEdge({ x: 1800, y: 540 }, 1920, 1080) === "right", "near a side, in shares of the screen")
-    check(Model.nearestEdge({ x: 5000, y: 540 }, 1920, 1080) === "right" && Model.nearestEdge({ x: 1, y: 1 }, 0, 0) === "top", "held to the screen; none, the top")
-    check(same(Model.onScreen({ x: 5, y: 6 }, "bottom", 1920, 1080, 1920, 26), { x: 5, y: 1060 }), "a bottom bar's point on its screen")
-    check(same(Model.onScreen({ x: 5, y: 6 }, "right", 1920, 1080, 28, 1080), { x: 1897, y: 6 }) && same(Model.onScreen(null, "top", 1, 1, 1, 1), { x: 0, y: 0 }), "a right bar's, and none")
-    check(Model.edge("left") === "left" && Model.edge(" right ") === "right" && Model.edge("middle") === "top" && Model.edge(undefined) === "top", "an edge, top for anything else")
-    check(Model.onSide("left") && Model.onSide("right") && !Model.onSide("top") && !Model.onSide("bottom"), "the sides are left and right")
     check(Model.travelled({ x: 1, y: 1 }, { x: 4, y: -1 }) === 5, "how far a pointer went, along and across")
 
     // The bar's lists of slots and buttons.
@@ -149,8 +132,16 @@ ShellRoot {
     check(same(Model.section({ left: ["a"] }, "left"), ["a"]) && same(Model.section({ left: "a" }, "left"), []) && same(Model.section(null, "left"), []), "a section, empty for none")
 
     // Where a tooltip goes.
-    check(same(Model.tipCorner("top", 40, 26, 60, 20, 6), { x: -10, y: 32 }) && same(Model.tipCorner("bottom", 40, 26, 60, 20, 6), { x: -10, y: -26 }), "under a top bar's widget, over a bottom one's")
-    check(same(Model.tipCorner("left", 28, 30, 60, 20, 6), { x: 34, y: 5 }) && same(Model.tipCorner("right", 28, 30, 60, 20, 6), { x: -66, y: 5 }), "beside a side bar's")
+    check(same(Model.tipCorner(40, 26, 60, 6), { x: -10, y: 32 }), "under a widget, centred on it")
+
+    // The tray's icons: all of them but those hidden, by id, whichever app
+    // registered first.
+    const icons = [{ id: "telegram", title: "Telegram" }, { id: "blueman", title: "Bluetooth" }, { id: "nm-applet", title: "" }, { id: "blueman", title: "A" }]
+    check(same(Tray.shown(icons, []).map(item => item.title), ["A", "Bluetooth", "", "Telegram"]), "every icon, by id and then title")
+    check(same(Tray.shown(icons, ["blueman"]).map(item => item.id), ["nm-applet", "telegram"]), "those hidden left out")
+    check(Tray.shown(icons, undefined).length === 4 && Tray.shown(null, []).length === 0 && icons.length === 4, "no list, no items; the items given are not reordered")
+    check(same(Tray.hide(["a"], "b"), ["a", "b"]) && same(Tray.hide(["a"], "a"), ["a"]) && same(Tray.hide(undefined, "a"), ["a"]) && same(Tray.hide(["a"], ""), ["a"]), "hiding one adds its id once")
+    check(same(Tray.list("x"), []), "a setting that is no list is none")
 
     check(Model.hex(1, 0, 0.5) === "#ff0080" && Model.hex(2, -1, 0.02) === "#ff0005", "channels as #rrggbb, held to 0 and 1")
 

@@ -4,12 +4,13 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "tray"
-import "tray/Shelves.js" as Shelves
+import "tray/TrayList.js" as TrayList
 
-// The system tray. An icon pinned stays on the bar; the rest wait in a
-// drawer behind a chevron, which slides open while the pointer is on it. The
-// chevron's right click lists every icon, to pin or hide; an icon's opens
-// its menu (TrayMenu).
+// The system tray: the icon of every app that asks to be seen, in a row, in
+// the order of their ids. A click starts the app, a middle click does its
+// second action, a right click opens its menu (TrayMenu), which ends with
+// Hide from Menu Bar. The widget's `hidden` setting lists the ids hidden;
+// Settings → Menu Bar brings them back.
 BarWidget {
   id: tray
   widgetId: "nova.tray"
@@ -17,180 +18,66 @@ BarWidget {
   readonly property color ink: bar ? bar.foreground : Commons.Color.foreground
   readonly property string face: bar ? bar.fontFamily : Style.font.family
 
-  // The widget's settings: the ids pinned, and those hidden.
-  readonly property var pinned: Shelves.list(settings.pinned)
-  readonly property var hidden: Shelves.list(settings.hidden)
+  // The ids hidden, and the icons that ask to be seen (a passive one does
+  // not) and are not.
+  readonly property var hidden: TrayList.list(settings.hidden)
+  readonly property var icons: TrayList.shown(SystemTray.items.values.filter(item => item.status !== Status.Passive), hidden)
 
-  // The icons that ask to be seen (a passive one does not), and those of
-  // them on the bar and in the drawer.
-  readonly property var icons: SystemTray.items.values.filter(item => item.status !== Status.Passive)
-  readonly property var onBar: icons.filter(item => shelfOf(item) === "pinned")
-  readonly property var inDrawer: icons.filter(item => shelfOf(item) === "drawer")
-
-  function shelfOf(item) {
-    return Shelves.shelf(String(item.id || ""), pinned, hidden)
-  }
-
-  // Writes the two lists back to the widget's entry in shell.json, which
+  // Writes the ids hidden into the widget's entry in shell.json, which
   // hands them back through <settings>.
-  function keep(lists) {
+  function hide(item) {
     var name = widgetId || "nova.tray"
     if (typeof bar?.shell?.updateEntryInline === "function")
-      bar.shell.updateEntryInline(name, { id: name, pinned: lists.pinned, hidden: lists.hidden })
+      bar.shell.updateEntryInline(name, Object.assign({}, settings, { id: name, hidden: TrayList.hide(hidden, String(item.id || "")) }))
   }
 
-  // ----- the cards -----
-
-  // The card open: "pins", the list of icons, "menu", an icon's menu, or
-  // none. One at a time, as on the rest of the bar: both are the tray's,
-  // so the bar would not close one for the other.
-  property string card: ""
-  // The icon whose menu is open.
+  // The icon whose menu is open, and the menu's card; the card is the tray's
+  // own, so the bar does not close it for another.
   property Item menuTile: null
+  property bool menuOpen: false
 
-  // The bar's way to close the tray's card, and the cards' own.
+  // The bar's way to close the tray's card, and the card's own.
   function close() {
-    card = ""
+    menuOpen = false
   }
 
-  // The card that was open goes first, giving the bar back the tray's place,
-  // which the new one then takes.
-  function show(which) {
-    if (card !== which) card = ""
-    card = which
-  }
-
+  // A menu open for another icon goes first, giving the bar back the tray's
+  // place, which the new one then takes.
   function openMenu(tile) {
-    // An icon with no menu has none to open: Quickshell shows only a menu
-    // an app hands over.
-    if (!tile.modelData.menu) return
+    menuOpen = false
     menu.load(tile.modelData)
     menuTile = tile
-    show("menu")
-  }
-
-  TrayPins {
-    widget: tray
-    host: tray
-    open: tray.card === "pins"
-    icons: tray.icons
-    pinned: tray.pinned
-    hidden: tray.hidden
-    ink: tray.ink
-    face: tray.face
-    onFlip: (onto, id) => tray.keep(Shelves.flipped({ pinned: tray.pinned, hidden: tray.hidden }, onto, id))
+    menuOpen = true
   }
 
   TrayMenu {
     id: menu
     widget: tray.menuTile || tray
     host: tray
-    open: tray.card === "menu"
+    open: tray.menuOpen
     ink: tray.ink
     face: tray.face
     onChosen: tray.close()
+    onHideRequested: {
+      tray.hide(menu.item)
+      tray.close()
+    }
   }
 
   // ----- the bar -----
 
-  // Lengths along the bar. An icon takes a slot; the drawer, its icons'
-  // slots and the chevron's, the chevron alone once every icon is pinned,
-  // and nothing while the tray has no icon at all.
   readonly property int slot: Style.bar.iconSlot
-  readonly property int drawerRoom: inDrawer.length * slot
-  readonly property int drawerLength: icons.length > 0 ? (vertical ? chevron.implicitHeight : chevron.implicitWidth) + drawerRoom : 0
-  readonly property int frontLength: vertical ? front.implicitHeight : front.implicitWidth
 
-  // How far the drawer is open, 0 to 1, over 600 ms; how much of its room
-  // stays shut, which is where the chevron sits.
-  property bool reaching: false
-  property real opening: reaching ? 1 : 0
-  readonly property real shut: drawerRoom - drawerRoom * opening
+  visible: icons.length > 0
+  implicitWidth: row.implicitWidth
+  implicitHeight: thickness
 
-  Behavior on opening {
-    NumberAnimation { duration: 600; easing.type: Easing.OutCubic }
-  }
-
-  visible: onBar.length > 0 || inDrawer.length > 0
-  implicitWidth: vertical ? thickness : drawerLength + frontLength
-  implicitHeight: vertical ? drawerLength + frontLength : thickness
-
-  // The chevron, then the drawer it slides back over as it opens.
-  Item {
-    id: drawer
-    visible: tray.icons.length > 0
-    width: tray.vertical ? tray.thickness : tray.drawerLength
-    height: tray.vertical ? tray.drawerLength : tray.thickness
-
-    // The room a shut drawer keeps is not the tray's: the pointer there
-    // does not open it. Only the chevron and what it has uncovered count.
-    containmentMask: QtObject {
-      function contains(point: point): bool {
-        var across = tray.vertical ? point.x : point.y
-        var along = tray.vertical ? point.y : point.x
-        return across >= 0 && across <= tray.thickness && along >= tray.shut && along <= tray.drawerLength
-      }
-    }
-
-    HoverHandler {
-      onHoveredChanged: tray.reaching = hovered
-    }
-
-    BarIcon {
-      id: chevron
-      bar: tray.bar
-      width: implicitWidth
-      height: implicitHeight
-      x: tray.vertical ? 0 : tray.shut
-      y: tray.vertical ? tray.shut : 0
-      glyph: "\uf053"
-      turn: tray.vertical ? 90 : 0
-      onClicked: button => {
-        if (button === Qt.RightButton) tray.show(tray.card === "pins" ? "" : "pins")
-      }
-    }
-
-    // The drawer's icons, cut to its room and moved with the chevron.
-    Item {
-      x: tray.vertical ? 0 : chevron.width
-      y: tray.vertical ? chevron.height : 0
-      width: tray.vertical ? tray.thickness : tray.drawerRoom
-      height: tray.vertical ? tray.drawerRoom : tray.thickness
-      clip: true
-
-      Shelf {
-        icons: tray.inDrawer
-        lead: tray.shut
-        layer.enabled: true
-      }
-    }
-  }
-
-  Shelf {
-    id: front
-    icons: tray.onBar
-    lead: tray.drawerLength
-  }
-
-  // Icons in a line along the bar, <lead> from the start of the item it
-  // is in and centred across it.
-  component Shelf: Grid {
-    id: shelf
-
-    property var icons: []
-    property real lead: 0
-
-    rows: tray.vertical ? -1 : 1
-    columns: tray.vertical ? 1 : -1
-    anchors.left: tray.vertical ? undefined : parent.left
-    anchors.leftMargin: lead
-    anchors.verticalCenter: tray.vertical ? undefined : parent.verticalCenter
-    anchors.top: tray.vertical ? parent.top : undefined
-    anchors.topMargin: lead
-    anchors.horizontalCenter: tray.vertical ? parent.horizontalCenter : undefined
+  Row {
+    id: row
+    anchors.verticalCenter: parent.verticalCenter
 
     Repeater {
-      model: shelf.icons
+      model: tray.icons
 
       Tile {}
     }

@@ -1,7 +1,7 @@
 {
   "id": "nova.tray",
   "name": "System tray",
-  "description": "Apps' tray icons, with those not pinned in a drawer",
+  "description": "Apps' tray icons, in a row; any can be hidden",
   "kinds": [
     "bar-widget"
   ],

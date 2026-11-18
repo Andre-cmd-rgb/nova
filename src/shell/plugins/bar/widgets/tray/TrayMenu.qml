@@ -10,7 +10,8 @@ import qs.Ui
 // mode, and Nova's is not, so an app whose menu is all submenus could not be
 // used. A submenu takes the place of the rows it opens from, under a heading
 // with its name that leads back out. The first level leaves out an entry
-// that only repeats the app's name, and a separator at its top.
+// that only repeats the app's name, and a separator at its top, and ends with
+// the row that hides the icon from the bar.
 BarPopup {
   id: card
 
@@ -26,6 +27,7 @@ BarPopup {
   property var trail: []
   readonly property var here: trail.length > 0 ? trail[trail.length - 1] : null
   readonly property real headingHeight: heading.visible ? heading.implicitHeight : 0
+  readonly property real footerHeight: footer.visible ? footer.implicitHeight : 0
 
   // A new level is drawn at once, so its row under the pointer would take a
   // second click meant for the row before it: clicks wait 250 ms after each
@@ -47,6 +49,7 @@ BarPopup {
   readonly property real faint: 0.45
 
   signal chosen()
+  signal hideRequested()
 
   // The menu of <source>, from its first level. The levels go first: the
   // old item's entries go with it, and the listers hold some of them.
@@ -97,7 +100,7 @@ BarPopup {
   padding: Style.space(8)
   edgeColor: Qt.rgba(ink.r, ink.g, ink.b, faint)
   wantWidth: Style.space(232)
-  wantHeight: headingHeight + list.implicitHeight
+  wantHeight: headingHeight + list.implicitHeight + footerHeight
   tallest: Style.space(420)
 
   // The card fades out over 140 ms, still visible: it goes back to the first
@@ -170,7 +173,7 @@ BarPopup {
     Flickable {
       id: rows
       width: frame.width
-      height: frame.height - card.headingHeight
+      height: frame.height - card.headingHeight - card.footerHeight
       contentWidth: width
       contentHeight: list.implicitHeight
       clip: true
@@ -188,6 +191,46 @@ BarPopup {
           model: card.here ? card.here.lister.children : firstLevel.children
 
           Entry {}
+        }
+      }
+    }
+
+    // On the first level, under the app's entries: the row that hides the
+    // icon from the bar, set apart by a line when the app has entries of
+    // its own.
+    Column {
+      id: footer
+      width: frame.width
+      visible: card.here === null
+
+      Item {
+        width: footer.width
+        implicitHeight: list.implicitHeight > 0 ? card.lineHeight : 0
+        visible: list.implicitHeight > 0
+
+        Line {}
+      }
+
+      Item {
+        width: footer.width
+        implicitHeight: card.rowHeight
+
+        Lit { on: hider.containsMouse }
+
+        Words {
+          anchors.leftMargin: card.wordsStart
+          anchors.right: parent.right
+          anchors.rightMargin: card.rowEnd
+          text: "Hide from Menu Bar"
+          elide: Text.ElideRight
+        }
+
+        MouseArea {
+          id: hider
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: if (!card.steadying) card.hideRequested()
         }
       }
     }
