@@ -13,7 +13,7 @@ This document is the contract every component follows. Read it before adding cod
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
 | `src/power/` | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd`, `nova-undervolt`, system units, udev rules, sleep hooks | Nova's power governor: the policy (bash) and the governor (Rust), tuned for and so far started only on the ThinkPad P1 Gen 4i; and the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
 | `src/patch/` | `/usr/lib/nova/bin/nova-patch`, `/usr/lib/nova/nova-patch-apply`, a polkit action, `nova-patch-ram.service` | Patches: fixes for one computer's faults (bad memory, a device's quirk), kept across reinstalls by export and add; see [patches.md](patches.md) |
-| `src/airdrop/` | `/usr/lib/nova/bin/nova-airdrop`, `/usr/lib/nova/nova-airdropd`, `nova-airdrop-radio`, `nova-airdrop-apply`, a polkit action, `nova-airdrop@.service` | AirDrop, receiving from iPhones nearby: the receiver and its command (Rust), and the helper that lends it the Wi-Fi card and takes it back ([airdrop.md](airdrop.md)) |
+| `src/airdrop/` | `/usr/lib/nova/bin/nova-airdrop`, `/usr/lib/nova/nova-airdropd`, `nova-airdrop-bell`, `nova-airdrop-radio`, `nova-airdrop-apply`, a polkit action, `nova-airdrop@.service`, `nova-airdrop-bell@.service`, `nova-airdrop-bell-wake@.service` | AirDrop, receiving from and sending to iPhones nearby: the receiver and sender, its command and its doorbell (Rust), and the helper that lends it the Wi-Fi card and takes it back ([airdrop.md](airdrop.md)) |
 | `src/apps/` | `/usr/lib/nova/bin/nova-apps-*`, `/usr/lib/nova/nova-apps-apply`, a polkit action, `/usr/share/nova/apps/`, the App Center's desktop entry and icon | The App Center's catalog (Rust) and its helpers, which `nova apps` runs too; the window is the shell's (`plugins/store`); see [apps.md](apps.md) |
 | `src/iphone/` | `/usr/lib/nova/nova-iphone-notifications`, `/usr/lib/nova/bin/nova-notification-iphone`, `nova-iphone-notifications.service` (user) | iPhone notifications: an iPhone's notifications shown as Nova's, through Apple's Notification Center Service over Bluetooth LE (Python, with D-Bus and GLib), and its command ([iphone.md](iphone.md)) |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
@@ -106,7 +106,7 @@ How files reach a system:
    - Anything else, or nothing, is treated as autologin, so the session fails closed.
 4. **Hyprland starts in the `nova-boot` submap**, which has no binds.
 5. **The shell locks** before it draws anything else.
-6. **`nova-session-guard`** (a user unit every user has enabled) waits up to 15 s for `nova-shell lock state` to say `secure`.
+6. **`nova-session-guard`** (a user unit every user has enabled) waits for `nova-shell lock state` to say `secure`: about 18 s while no shell runs, up to three minutes while one is starting and does not answer yet.
    - If it doesn't, the guard terminates the session, and greetd shows the greeter: `src/shell/greeter.qml` on a minimal Hyprland, or `agreety` on the console if that never shows.
    - Nothing ever shows an unlocked desktop that nobody authenticated.
 7. **The first unlock after boot needs the password.**
