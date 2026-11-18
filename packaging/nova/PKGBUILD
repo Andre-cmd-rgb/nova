@@ -173,9 +173,13 @@ optdepends=(
   'tesseract-data-eng: copy text from a screen region'
 )
 # Quick Look answers Files on GNOME Sushi's D-Bus name, from the same service
-# file: the two cannot be installed together.
+# file: the two cannot be installed together. Sushi was one of Nova's
+# dependencies, so every system that updates has it: replaces makes pacman
+# offer to swap it out in the same update, which --noconfirm (Settings'
+# updates) accepts, where a conflict alone is refused and stops the update.
 conflicts=(sushi)
 provides=(sushi)
+replaces=(sushi)
 options=(!debug)
 # Configuration under /etc: pacman keeps local edits across upgrades.
 backup=(
