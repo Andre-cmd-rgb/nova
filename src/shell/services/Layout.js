@@ -25,8 +25,16 @@ function entryId(entry) {
   return String(entry || "")
 }
 
+// Whether a layout entry is switched off: it keeps its place in the layout,
+// so that switching the widget on again puts it back there, and the bar
+// leaves it out.
+function isHidden(entry) {
+  return isObject(entry) && entry.off === true
+}
+
 // Where widget <id> is in the bar, looking only in section <only> when one
-// is named: { section, index }, or null.
+// is named: { section, index }, or null. A widget switched off is found too,
+// at the place it keeps.
 function find(config, id, only) {
   var layout = isObject(config) && isObject(config.bar) ? config.bar.layout : null
   if (!isObject(layout)) return null
@@ -51,6 +59,32 @@ function locate(config, id) {
   var wanted = String(id)
   var at = config.plugins.findIndex(function(named) { return !!named && String(named.id || "") === wanted })
   return at >= 0 ? { list: config.plugins, index: at } : null
+}
+
+// Whether shell.json names plugin <id> and has not switched it off, for a
+// plugin that is on only while named.
+function named(config, id) {
+  var spot = locate(config, id)
+  return spot !== null && !isHidden(spot.list[spot.index])
+}
+
+// Whether widget <id> is in the bar and not switched off.
+function shown(config, id) {
+  var spot = find(config, id, "")
+  return spot !== null && !isHidden(config.bar.layout[spot.section][spot.index])
+}
+
+// Switches widget <id>'s entry off, or on again, where it stands. False when
+// the bar has no entry for it.
+function setHidden(config, id, hidden) {
+  var spot = find(config, id, "")
+  if (!spot) return false
+  var list = config.bar.layout[spot.section]
+  var entry = isObject(list[spot.index]) ? list[spot.index] : { id: entryId(list[spot.index]) }
+  if (hidden) entry.off = true
+  else delete entry.off
+  list[spot.index] = entry
+  return true
 }
 
 // Fills in what the verbs count on: a bar whose layout has its three
@@ -180,13 +214,14 @@ function writeSettings(config, id, settings) {
   for (var key in settings) {
     if (key !== "id") entry[key] = settings[key]
   }
-  var written = JSON.stringify(entry)
   var named = false
   var changed = false
   function rewrite(list, matches) {
     for (var i = 0; i < list.length; i++) {
       if (!matches(list[i])) continue
       named = true
+      // A widget switched off stays so.
+      var written = JSON.stringify(isHidden(list[i]) ? Object.assign({}, entry, { off: true }) : entry)
       if (JSON.stringify(list[i]) === written) continue
       list[i] = JSON.parse(written)
       changed = true

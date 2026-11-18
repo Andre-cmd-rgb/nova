@@ -54,8 +54,11 @@ ShellRoot {
     console.log((ok ? "ok   " : "FAIL ") + what)
   }
 
+  // The widgets of a section that are on the bar: those switched off keep
+  // their entry, and are not counted.
   function ids(section) {
-    return config.bar.layout[section].map(function(entry) { return entry.id }).join(" ")
+    return config.bar.layout[section].filter(function(entry) { return entry.off !== true })
+      .map(function(entry) { return entry.id }).join(" ")
   }
 
   function run() {
@@ -118,6 +121,29 @@ ShellRoot {
       "one the default layout lacks goes to its manifest's section: " + ids("right"))
     check(registry.setOn("nova.bluetooth", false) === "" && registry.put("nova.bluetooth", { section: "left" }) === ""
       && ids("left") === "nova.menu nova.workspaces nova.bluetooth", "a section asked for wins over the default place: " + ids("left"))
+
+    // A layout the owner arranged differently from Nova's default: switched
+    // off and on, a widget is back exactly where it was, among the same
+    // neighbours, in the section it was in.
+    config = { version: 1, bar: { layout: {
+      left: [{ id: "nova.menu" }, { id: "nova.media" }, { id: "nova.workspaces" }],
+      center: [{ id: "nova.clock" }, { id: "nova.weather" }, { id: "nova.system-update" }],
+      right: [{ id: "nova.tray" }, { id: "nova.screentime" }, { id: "nova.network" }, { id: "nova.bluetooth" },
+        { id: "nova.audio" }, { id: "nova.power" }]
+    } }, plugins: [] }
+    var arranged = JSON.stringify(config.bar.layout)
+    for (var id of ["nova.media", "nova.weather", "nova.screentime", "nova.bluetooth", "nova.power", "nova.tray"]) {
+      check(registry.setOn(id, false) === "" && !registry.inBar(id), id + " switched off leaves the bar")
+      check(registry.setOn(id, true) === "" && registry.inBar(id)
+        && JSON.stringify(config.bar.layout) === arranged, id + " switched on is where it was: " + JSON.stringify(config.bar.layout))
+    }
+    check(registry.setOn("nova.bluetooth", false) === "" && registry.put("nova.bluetooth", {}) === ""
+      && JSON.stringify(config.bar.layout) === arranged, "put brings a widget back to its place too")
+    check(registry.setOn("nova.screentime", false) === "" && !registry.isOn("nova.screentime"),
+      "Screen Time switched off is off, though its entry stays")
+    check(registry.setOn("nova.network", false) === "" && registry.move("nova.network", { section: "left" }) === ""
+      && registry.setOn("nova.network", true) === "" && ids("left") === "nova.menu nova.media nova.workspaces nova.network",
+      "moved while off, it comes back where it was moved to: " + ids("left"))
 
     var before = JSON.stringify(config)
     check(registry.setOn("nova.bar", false) !== "" && registry.isOn("nova.bar") && JSON.stringify(config) === before,

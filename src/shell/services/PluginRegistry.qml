@@ -65,14 +65,14 @@ QtObject {
     if (fixed(manifest)) return true
     var config = settings.current
     if (Layout.isOff(config, id)) return false
-    return manifest.enabledByDefault !== false || Layout.locate(config, id) !== null
+    return manifest.enabledByDefault !== false || Layout.named(config, id)
   }
 
   // Whether the widget is in the bar: not the same as on, as a widget off
   // the bar still loads, to be put back, and a plugin that is a widget and
   // more (the menu) works on without its button.
   function inBar(id) {
-    return Layout.find(settings.current, id, "") !== null
+    return Layout.shown(settings.current, id)
   }
 
   // The section a widget's manifest asks for, else the center.
@@ -159,6 +159,8 @@ QtObject {
     var widget = has(manifest, "bar-widget")
     var named = Layout.locate(config, key) !== null
     Layout.unmarkOff(config, key)
+    // A widget switched off kept its place in the bar.
+    if (widget && named) Layout.setHidden(config, key, false)
     if (widget && !named) {
       var spot = (Layout.namesPlace(placement) ? null : Layout.homePlace(config, settings.defaults, key))
         || Layout.place(config, placement || {}, askedSection(manifest))
@@ -173,6 +175,9 @@ QtObject {
   // <manifest> is null for an id no plugin has, which is taken off the bar
   // and out of plugins all the same.
   function switchOff(config, key, manifest) {
+    // A widget in the bar keeps its entry, marked off, so that it comes back
+    // to the same place.
+    if (has(manifest, "bar-widget") && Layout.setHidden(config, key, true)) return
     var spot = Layout.locate(config, key)
     if (spot) spot.list.splice(spot.index, 1)
     // A widget is off once it is out of the bar; anything else built in is

@@ -46,6 +46,9 @@ ShellRoot {
     check(Math.abs(Util.windowGrowth(1920, 1080, 1) - 1.1) < 1e-9, "1920x1080 by a tenth")
     check(Math.abs(Util.windowGrowth(3440, 1080, 1) - 1.1) < 1e-9, "an ultrawide counts by its height")
     check(Util.windowGrowth(7680, 4320, 1) === 1.25 && Util.windowGrowth(NaN, 1080, 1) === 1, "capped at a quarter; nonsense is the usual size")
+    const laid = Util.normalizeLayout({ left: ["a", { id: "b", off: true }, { id: "c", format: "x" }], right: [{ id: "d", off: false }, { off: true }, 3] })
+    check(JSON.stringify(laid) === JSON.stringify({ left: [{ id: "a" }, { id: "c", format: "x" }], center: [], right: [{ id: "d", off: false }] }),
+      "a layout as the bar reads it: a widget switched off is left out, the rest kept")
     console.log("DONE")
     Qt.quit()
   }

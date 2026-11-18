@@ -215,7 +215,8 @@ QtObject {
   // The bar's layout from shell.json as its readers want it: its three
   // sections, each a list of { id, ...settings } copied out of the config,
   // so that changing one leaves the config alone. A bare id becomes { id };
-  // an entry without an id is left out.
+  // an entry without an id, or switched off (`"off": true`, which keeps its
+  // place for when it is switched on), is left out.
   function normalizeLayout(layout) {
     const sections = { left: [], center: [], right: [] }
     for (const name in sections) {
@@ -224,7 +225,7 @@ QtObject {
         const entry = given[i]
         if (typeof entry === "string") {
           sections[name].push({ id: entry })
-        } else if (isPlainObject(entry) && entry.id) {
+        } else if (isPlainObject(entry) && entry.id && entry.off !== true) {
           const copy = JSON.parse(JSON.stringify(entry))
           copy.id = String(copy.id)
           sections[name].push(copy)
