@@ -119,8 +119,14 @@ Item {
     }
   }
 
+  // Nothing to show is no picker: its scrim would hold the keyboard with no
+  // image to take the keys, and the one asking would wait for good.
   function useRows(rows) {
     var parsed = Model.parse(rows)
+    if (parsed.length === 0) {
+      cancel()
+      return
+    }
     parsedRows = rows
     chosen = Model.indexOf(parsed, startOn)
     images = parsed
