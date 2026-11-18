@@ -293,7 +293,7 @@ pub fn gather() -> Result<Inputs, String> {
                 &flag,
                 "--cached",
                 "flathub",
-                "--columns=ref,version,download-size,installed-size,runtime",
+                "--columns=ref,download-size,installed-size,runtime",
             ],
         ));
     }

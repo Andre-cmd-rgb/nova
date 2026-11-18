@@ -212,11 +212,10 @@ pub const RECIPES: &[Recipe] = &[
     },
 ];
 
-/// What a Flathub ref comes to: its version, download and size installed,
-/// and the runtime it needs.
+/// What a Flathub ref comes to: its download and size installed, and the
+/// runtime it needs.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct RefInfo {
-    pub version: String,
     pub download: u64,
     pub installed: u64,
     pub runtime: String,
@@ -340,11 +339,7 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
         let source = Source::Flathub {
             app: app_id,
             reference: c.bundle.clone(),
-            version: if info.version.is_empty() {
-                c.version.clone()
-            } else {
-                info.version
-            },
+            version: c.version.clone(),
             download: info.download,
             installed: info.installed,
             runtime: if info.runtime.is_empty() {
@@ -709,22 +704,21 @@ pub fn parse_size(text: &str) -> u64 {
     (n * scale).round() as u64
 }
 
-/// `flatpak remote-ls --columns=ref,version,download-size,installed-size,runtime`,
+/// `flatpak remote-ls --columns=ref,download-size,installed-size,runtime`,
 /// a ref to a line.
 pub fn parse_refs(text: &str) -> HashMap<String, RefInfo> {
     let mut refs = HashMap::new();
     for line in text.lines() {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 4 || !(f[0].starts_with("app/") || f[0].starts_with("runtime/")) {
+        if f.len() < 3 || !(f[0].starts_with("app/") || f[0].starts_with("runtime/")) {
             continue;
         }
         refs.insert(
             f[0].to_string(),
             RefInfo {
-                version: f[1].trim().to_string(),
-                download: parse_size(f[2]),
-                installed: parse_size(f[3]),
-                runtime: f.get(4).map(|r| r.trim().to_string()).unwrap_or_default(),
+                download: parse_size(f[1]),
+                installed: parse_size(f[2]),
+                runtime: f.get(3).map(|r| r.trim().to_string()).unwrap_or_default(),
             },
         );
     }
@@ -785,6 +779,7 @@ mod tests {
             caption: String::new(),
         }];
         gimp.verified = true;
+        gimp.version = "3.2.8".into();
         let mut chrome = comp("com.google.Chrome", "Google Chrome");
         chrome.bundle = "app/com.google.Chrome/x86_64/stable".into();
         chrome.description = vec!["Fast".into()];
@@ -808,7 +803,6 @@ mod tests {
         refs.insert(
             "app/org.gimp.GIMP/x86_64/stable".to_string(),
             RefInfo {
-                version: "3.2.8".into(),
                 download: 102_500_000,
                 installed: 268_600_000,
                 runtime: "org.gnome.Platform/x86_64/51".into(),
@@ -1010,7 +1004,7 @@ mod tests {
         assert_eq!(parse_size("344.1\u{a0}kB"), 344_100);
         assert_eq!(parse_size("512 bytes"), 512);
         assert_eq!(parse_size(""), 0);
-        let refs = parse_refs("app/a/x86_64/stable\t1.0\t1.0\u{a0}MB\t2.0\u{a0}MB\torg.gnome.Platform/x86_64/51\nnoise\n");
+        let refs = parse_refs("app/a/x86_64/stable\t1.0\u{a0}MB\t2.0\u{a0}MB\torg.gnome.Platform/x86_64/51\nnoise\n");
         assert_eq!(refs["app/a/x86_64/stable"].installed, 2_000_000);
         assert_eq!(
             refs["app/a/x86_64/stable"].runtime,
