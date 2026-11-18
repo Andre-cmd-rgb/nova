@@ -1,37 +1,42 @@
 # Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
 # Arch's packaging: Caleb Maclennan, ThatOneCalculator, Brenno Lemos, Gabriel Fox
 #
-# hyprland: Arch's Hyprland with one patch, xwayland-scale.patch, which adds
-# the option xwayland:scale. X11 windows are then drawn at one scale on every
-# display, 1:1 on a display of that scale and shrunk to the size of one of a
-# lower scale, as GNOME and KDE draw them. Without it, a display shows X11
-# windows at its own resolution (force_zero_scaling, env.lua), so an app drawn
-# for a 2x panel is twice its size on a 1x monitor beside it.
-# nova-hyprland-x11-scale sets the option. The patch is offered to Hyprland
-# (UPSTREAM.md); once Hyprland has the option, this package goes and Arch's
-# comes back.
+# hyprland: Arch's Hyprland with two patches.
+# - xwayland-scale.patch adds the option xwayland:scale. X11 windows are then
+#   drawn at one scale on every display, 1:1 on a display of that scale and
+#   shrunk to the size of one of a lower scale, as GNOME and KDE draw them.
+#   Without it, a display shows X11 windows at its own resolution
+#   (force_zero_scaling, env.lua), so an app drawn for a 2x panel is twice its
+#   size on a 1x monitor beside it. nova-hyprland-x11-scale sets the option.
+# - release-bind.patch makes a release bind fire when its modifier is let go
+#   before its key: without it, a dictation held on Super+D and ended by
+#   letting go of Super first keeps recording until the next press
+#   (data/hypr/keys/dictation.lua).
+# Both are offered to Hyprland (UPSTREAM.md); once a Hyprland release has
+# them, this package goes and Arch's comes back.
 # Upstream: https://github.com/hyprwm/Hyprland, BSD-3-Clause.
 #
 # Arch's PKGBUILD at its packaging commit 77a60031 (0.57.2-1,
 # https://gitlab.archlinux.org/archlinux/packaging/packages/hyprland), with
-# three changes: the patch, applied in prepare(); hyprland alone, without
+# three changes: the patches, applied in prepare(); hyprland alone, without
 # hyprpm (Arch's hyprpm depends on any hyprland, so it works with this one);
 # and no debug package.
 #
-# pkgrel is Arch's, then Nova's revision of the patch: 1.1 is Arch's 0.57.2-1
-# with the first. pacman takes a package from the first repository that has
-# it, and [nova] comes first in pacman.conf, so this is the one installed;
-# being newer than Arch's build of the same pkgrel, it replaces Arch's on a
-# system that had it, as an ordinary update. The release workflow writes
-# Arch's pkgrel from the snapshot (Arch raises it when a library Hyprland links
-# changes its soname), and builds this only while pkgver is the snapshot's: a
-# newer Hyprland in Arch is released as Arch's, unpatched, until the patch is
-# moved onto it (docs/packaging.md has how).
+# pkgrel is Arch's, then Nova's revision of the patches: 1.1 was Arch's
+# 0.57.2-1 with xwayland-scale.patch, 1.2 adds release-bind.patch. pacman
+# takes a package from the first repository that has it, and [nova] comes
+# first in pacman.conf, so this is the one installed; being newer than Arch's
+# build of the same pkgrel, it replaces Arch's on a system that had it, as an
+# ordinary update. The release workflow writes Arch's pkgrel from the snapshot
+# (Arch raises it when a library Hyprland links changes its soname), and
+# builds this only while pkgver is the snapshot's: a newer Hyprland in Arch is
+# released as Arch's, unpatched, until the patches are moved onto it
+# (docs/packaging.md has how).
 
 pkgname=hyprland
 pkgver=0.57.2
-pkgrel=1.1
-pkgdesc="a highly customizable dynamic tiling Wayland compositor (Nova's build, with xwayland:scale)"
+pkgrel=1.2
+pkgdesc="a highly customizable dynamic tiling Wayland compositor (Nova's build, with xwayland:scale and a release-bind fix)"
 arch=(x86_64)
 url='https://github.com/hyprwm/Hyprland'
 license=(BSD-3-Clause)
@@ -95,9 +100,11 @@ provides=(wayland-compositor)
 options=(!debug)
 _archive="Hyprland-$pkgver"
 source=("$_archive.tar.gz::$url/releases/download/v$pkgver/source-v$pkgver.tar.gz"
-        xwayland-scale.patch)
+        xwayland-scale.patch
+        release-bind.patch)
 sha256sums=('34dbec0738ab88c8228caf89385662688ab1601ea58fbe5c60a6b6ab383db46d'
-            '43cad455964609aece7a5066cf4a66ecbfba8ab06a66ec314f525fb2c4ff218d')
+            '43cad455964609aece7a5066cf4a66ecbfba8ab06a66ec314f525fb2c4ff218d'
+            '0c8a64a127c9684420bcabd780d2e251df6836290a51516f67cbe64253539e63')
 
 prepare() {
   ln -sf hyprland-source "$_archive"
@@ -105,6 +112,7 @@ prepare() {
   sed -i -e '/^release:/{n;s/-D/-DCMAKE_SKIP_RPATH=ON -D/}' Makefile
   sed -i -e '/find_package.glaze/s/7...<8 //' {.,hyprpm,start}/CMakeLists.txt
   patch -Np1 -i "$srcdir/xwayland-scale.patch"
+  patch -Np1 -i "$srcdir/release-bind.patch"
 }
 
 build() {

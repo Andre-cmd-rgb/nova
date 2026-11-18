@@ -1,6 +1,6 @@
-# xwayland:scale, offered to Hyprland
+# Nova's Hyprland patches, offered to Hyprland
 
-`xwayland-scale.patch` as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself. Nothing here has been posted.
+Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)). Nothing here has been posted.
 
 ## Before posting
 
@@ -84,3 +84,27 @@ In the `xwayland` section of the variables page, after `force_zero_scaling`:
 And in the XWayland page's HiDPI part:
 
 > With monitors of different scales, set `xwayland:scale` to the largest scale, rounded up, and your X11 apps' scale to the same: they are sharp on the monitors of that scale and the same size as Wayland apps on the others, shrunk there.
+
+# Release binds whose modifier is let go first
+
+`release-bind.patch`, a pull request of its own. The AI policy and the rebase on main above apply to it too.
+
+## Title
+
+keybinds: fire a release bind when its modifier is let go before its key
+
+## Description
+
+A release bind such as `SUPER + D` (`{ release = true }`) does not fire when SUPER is let go before D, however long D was held. Letting go of the modifier first is an ordinary way to end a hold, so a hold-to-talk or hold-to-show bind sometimes never ends.
+
+After any input is let go, `shadowBinds()` shadows every single-key release bind that a still-held input would match. The D still held matches `SUPER + D`'s own release bind, so when D is let go, the bind is shadowed.
+
+That shadowing is meant for an input held around another bind: ALT_L held, `ALT + P` pressed and let go, and ALT_L's own release bind must not fire (`modifierReleaseBindShadowing`). There the input held was pressed before the one let go. An input pressed after it is the other case: the input let go was its modifier. With this change, inputs pressed after the one let go no longer shadow release binds. The pressed list is in the order of the presses, so they are the inputs at the released input's place in it and after.
+
+### Tests
+
+- hyprtester: `releaseBindAfterItsModifierIsReleased` binds `SUPER + K` on release, then lets go of K first and of SUPER first. Each fires once. On v0.57.2 the second does not fire.
+- `modifierReleaseBindShadowing`, `modifierReleaseBindAfterScroll` and `mouseReleaseBindShadowing` still pass, and so does the rest of `keybinds.cpp`. Only `keybinds` itself failed here, because it spawns kitty and kitty is not installed.
+- All 859 tests of `hyprland_gtests` pass.
+- By hand, in a nested Hyprland with `SUPER + D` bound on press and on release, five ways of pressing it all gave one press and one release: held with D let go first, held with SUPER let go first, tapped either way, and both let go within 5 ms. v0.57.2 lost the release in three of the five, each time SUPER was let go first.
+

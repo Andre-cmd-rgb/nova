@@ -1,0 +1,146 @@
+keybinds: a release bind fires when its modifier is let go before its key
+
+A release bind such as SUPER + D never fires when SUPER is let go before D,
+however long D was held. After any input is let go, shadowBinds() shadows
+every single-key release bind that a still-held input would match, and the D
+still held matches SUPER + D's own release bind: D's release then finds it
+shadowed. Letting go of the modifier first is an ordinary way to end a hold.
+
+The shadowing is there for the input held around another bind: ALT_L held,
+ALT + P pressed and let go, ALT_L's own release bind must not fire
+(modifierReleaseBindShadowing). That input was pressed before the one let go.
+An input pressed after it is the opposite case, the one let go having been
+its modifier, so after a release such inputs no longer shadow release binds.
+The pressed list is in the order of the presses, so they are those at the
+released input's place in it and after.
+
+Test: releaseBindAfterItsModifierIsReleased in hyprtester (SUPER + K, K let
+go first, then SUPER let go first); modifierReleaseBindShadowing,
+modifierReleaseBindAfterScroll and mouseReleaseBindShadowing still pass, as do
+the 859 tests of hyprland_gtests.
+
+For Nova: packaging/hyprland/PKGBUILD applies this to Hyprland 0.57.2's
+release tarball (patch -Np1), after xwayland-scale.patch; Nova's dictation
+key (data/hypr/keys/dictation.lua) is such a bind. Made against the tag
+v0.57.2.
+
+--- a/hyprtester/src/tests/main/keybinds.cpp
++++ b/hyprtester/src/tests/main/keybinds.cpp
+@@ -943,6 +943,37 @@
+     OK(getFromSocket("/reload"));
+ }
+ 
++TEST_CASE(releaseBindAfterItsModifierIsReleased) {
++    constexpr uint32_t SUPER_L = KEY_LEFTMETA + 8;
++    constexpr uint32_t K       = KEY_K + 8;
++
++    const auto         count = [] { return getFromSocket("/repl return tostring(_G.hyprtester_super_k_release)"); };
++
++    OK(getFromSocket("/eval do "
++                     "_G.hyprtester_super_k_release = 0; "
++                     "hl.bind('SUPER + K', function() _G.hyprtester_super_k_release = _G.hyprtester_super_k_release + 1 end, { release = true }) "
++                     "end"));
++
++    // K let go before SUPER.
++    OK(getFromSocket(pluginKeybindCmd(true, MOD_META, SUPER_L)));
++    OK(getFromSocket(pluginKeybindCmd(true, MOD_META, K)));
++    OK(getFromSocket(pluginKeybindCmd(false, MOD_META, K)));
++    OK(getFromSocket(pluginKeybindCmd(false, 0, SUPER_L)));
++    EXPECT(count(), "1");
++
++    // SUPER let go before K: the K still held must not shadow its own release bind.
++    OK(getFromSocket(pluginKeybindCmd(true, MOD_META, SUPER_L)));
++    OK(getFromSocket(pluginKeybindCmd(true, MOD_META, K)));
++    OK(getFromSocket(pluginKeybindCmd(false, 0, SUPER_L)));
++    OK(getFromSocket(pluginKeybindCmd(false, 0, K)));
++    EXPECT(count(), "2");
++
++    OK(getFromSocket("/eval do "
++                     "hl.unbind('SUPER + K'); "
++                     "_G.hyprtester_super_k_release = nil "
++                     "end"));
++}
++
+ TEST_CASE(mouseReleaseBindShadowing) {
+     constexpr uint32_t F24 = KEY_F24 + 8;
+ 
+--- a/src/keybinds/Manager.cpp
++++ b/src/keybinds/Manager.cpp
+@@ -169,6 +169,14 @@
+     m_registry.clear();
+ }
+ 
++// Where an input is in the pressed list, which is in the order of the presses.
++static std::optional<size_t> pressedIndex(const CInputState& state, const SResolvedKey& key, const SP<IHID>& device) {
++    const auto* input = state.find(key, device);
++    if (!input)
++        return std::nullopt;
++    return sc<size_t>(input - state.pressed().data());
++}
++
+ static std::optional<Input::eKeyboardModifiers> modifierFromXkb(xkb_keysym_t sym) {
+     switch (sym) {
+         case XKB_KEY_Super_L:
+@@ -304,8 +312,9 @@
+             .submap           = pressedInput->submapAtPress,
+         },
+         keyboard, pressedInput);
++    const auto RELEASED_AT = pressedIndex(m_inputState, KEY, keyboard);
+     m_inputState.release(KEY, keyboard);
+-    shadowBinds();
++    shadowBinds(std::nullopt, nullptr, RELEASED_AT);
+     return FORWARDED && !DRAG_WAS_ACTIVE;
+ }
+ 
+@@ -414,8 +423,9 @@
+             .submap           = pressedInput->submapAtPress,
+         },
+         nullptr, pressedInput);
++    const auto RELEASED_AT = pressedIndex(m_inputState, KEY, pointer);
+     m_inputState.release(KEY, pointer);
+-    shadowBinds();
++    shadowBinds(std::nullopt, nullptr, RELEASED_AT);
+     return FORWARDED && !DRAG_WAS_ACTIVE;
+ }
+ 
+@@ -777,7 +787,7 @@
+     m_repeatTimer->updateTimeout(std::chrono::milliseconds(ACTIVE_KEYBOARD->m_repeatDelay));
+ }
+ 
+-void CKeybindManager::shadowBinds(const std::optional<SResolvedKey>& excluded, const SP<IHID>& excludedDevice) {
++void CKeybindManager::shadowBinds(const std::optional<SResolvedKey>& excluded, const SP<IHID>& excludedDevice, std::optional<size_t> releasedAt) {
+     m_shadowed.clear();
+     if (!g_pInputManager)
+         return;
+@@ -795,10 +805,18 @@
+         // Their overlap suppression is tracked on the armed input instead of through m_shadowed.
+         const bool MATCH_RELEASE = bind->hasFlag(BIND_FLAG_RELEASE) && bind->chordSize() <= 1;
+ 
+-        for (const auto& input : m_inputState.pressed()) {
++        const auto PRESSED = m_inputState.pressed();
++        for (size_t i = 0; i < PRESSED.size(); ++i) {
++            const auto& input = PRESSED[i];
+             if (input.key.event)
+                 continue;
+ 
++            // Inputs from releasedAt on were pressed after the input just let go, which was held around them
++            // as their modifier. They shadow no release bind: with SUPER let go before D, the D still held
++            // would otherwise shadow the release bind of SUPER + D itself, which then never fires.
++            if (MATCH_RELEASE && releasedAt && i >= *releasedAt)
++                continue;
++
+             const auto device = input.device.lock();
+             if (!device)
+                 continue;
+--- a/src/keybinds/Manager.hpp
++++ b/src/keybinds/Manager.hpp
+@@ -34,7 +34,8 @@
+ 
+         void               updateXKBTranslationState();
+         PBind              findConflictingBind(xkb_keysym_t keysym, Input::ModifierMask modifiers) const;
+-        void               shadowBinds(const std::optional<SResolvedKey>& excluded = std::nullopt, const SP<IHID>& excludedDevice = nullptr);
++        void               shadowBinds(const std::optional<SResolvedKey>& excluded = std::nullopt, const SP<IHID>& excludedDevice = nullptr,
++                                       std::optional<size_t> releasedAt = std::nullopt);
+ 
+         CRegistry&         registry();
+         const CRegistry&   registry() const;
