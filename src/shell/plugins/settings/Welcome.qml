@@ -32,6 +32,9 @@ Item {
   readonly property string pluginId: "nova.welcome"
 
   property bool closingFromHost: false
+  // The window is closed only to come back on this workspace: no one has
+  // finished with the welcome.
+  property bool moving: false
   property string page: "welcome"
   // The pages gone through, for Back.
   property var history: []
@@ -83,7 +86,11 @@ Item {
     forwardWanted = false
     // Open already, on another workspace: it comes to this one, as Settings
     // does.
-    if (window.visible && elsewhere()) close()
+    if (window.visible && elsewhere()) {
+      moving = true
+      close()
+      moving = false
+    }
     if (!window.visible) measureRoom()
     window.visible = true
     settingsState.load()
@@ -177,13 +184,14 @@ Item {
   FloatingWindow {
     id: window
     title: "Welcome to Nova"
+    visible: false
     color: Commons.Color.background
     implicitWidth: Math.min(Style.space(600), root.room.width)
     implicitHeight: Math.min(Style.space(620), root.room.height)
     minimumSize: Qt.size(Math.min(Style.space(560), root.room.width), Math.min(Style.space(460), root.room.height))
 
     onVisibleChanged: {
-      if (visible) return
+      if (visible || root.moving) return
       Quickshell.execDetached(["nova-welcome", "done"])
       if (!root.closingFromHost && root.shell && typeof root.shell.hide === "function")
         root.shell.hide(root.pluginId)
