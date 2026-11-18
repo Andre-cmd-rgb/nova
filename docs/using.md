@@ -7,13 +7,13 @@ This page covers the keys, the menu, the bar, Settings page by page, and the par
 - The computer starts into the lock screen. The first unlock after each start takes your password; after that, a fingerprint unlocks too, if you enrolled one.
 - After your first unlock, the welcome sets what the installer could not, a page each, and only the pages that matter on your computer:
   - **Wi-Fi**, when the computer has a card and no connection, and on a laptop still on the cable it was installed on, for when it is not;
-  - **Appearance**: the theme (a new account starts in white), and the background once there is more than one;
+  - **Appearance**: the theme (the install sets white), and the background once there is more than one;
   - **Night Light**: on by hand, from sunset to sunrise, or at set hours;
   - **Apps**: Chrome and VS Code, when the install could not build them (an install without internet) and the computer is online now;
   - **Keyboard Shortcuts**: the few keys that lead to everything else.
 
   Continue passes a page by, and Return is Continue. Closing it, on any page, is the end of it; until then it comes back at each start. `nova welcome` opens it again.
-- `nova help` lists every command, and `nova help <group>` one group's, such as `nova help theme`.
+- `nova help` lists every command, and `nova help <group>` one group's, such as `nova help power`.
 
 ## Keys
 
@@ -148,11 +148,12 @@ Super+Space opens it. Type to search, or go down the list:
 |---|---|
 | Apps | the installed apps (Super+Alt+Space opens it here) |
 | Capture | Screenshot; Screen Recording, without audio, with the desktop's or with the desktop's and the microphone's; Text, by OCR, once `tesseract-data-eng` is installed; Color; Emoji |
-| Toggle | Caffeine, Do Not Disturb, Night Light, Screen Time, Menu Bar, Window Gaps; Laptop Display and Touchpad where there is one; Discrete GPU on a ThinkPad P1 Gen 4i |
-| Style | Theme, Background, Font, and the Menu Bar's place and transparency |
+| Toggle | Caffeine, Do Not Disturb, Night Light, AirDrop (where the Wi-Fi card can), Screen Time, Menu Bar, Window Gaps; Laptop Display and Touchpad where there is one; Discrete GPU on a ThinkPad P1 Gen 4i |
+| Style | Theme, Background, Font, and the Menu Bar's edge (top or bottom) and transparency |
 | Power Mode | the battery's power modes, where the computer has them |
 | Settings | Settings |
-| Update | Nova and Firmware (Settings → Updates), Restart (the shell, audio, Wi-Fi or Bluetooth), Timezone, Password |
+| App Center | [the App Center](apps.md) |
+| Update | Nova, and Firmware where `fwupd` is installed (both open Settings → Updates), Restart (the shell, audio, Wi-Fi or Bluetooth), Timezone, Password |
 | System | Lock, Suspend, Hibernate (where the computer can), Log Out…, Restart…, Restart to Recovery…, Shut Down…: each of the last four asks first |
 
 A search of the whole menu finds more than its entries:
@@ -176,12 +177,13 @@ The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget and 
 
 ## Settings
 
-Settings opens from the menu, or with `nova settings <page>`. Asked for from another workspace than the one it is open on, it comes to yours, and so does the Calendar. A page shows only when the computer has what it needs: Wi-Fi, Bluetooth and Mobile Data need the radio, Battery a battery, and Performance power modes, a switchable discrete GPU or an Intel CPU.
+Settings opens from the menu, or with `nova settings <page>`. Asked for from another workspace than the one it is open on, it comes to yours, and so does the Calendar. A page shows only when the computer has what it needs: Wi-Fi, Bluetooth and Mobile Data need the radio, AirDrop a Wi-Fi card that can do it, Battery a battery, and Performance power modes, a switchable discrete GPU or an Intel CPU.
 
 | Page | What is on it |
 |---|---|
 | Wi-Fi | the radio on or off; the network in use, the known ones and the others |
 | Bluetooth | the radio on or off; Bluetooth Low Energy, off for headphones that stutter; [iPhone notifications](#iphone-notifications); your devices and those nearby |
+| AirDrop | [Let my iPhone turn on AirDrop](#airdrop), and what the computer has learned of your iPhone |
 | Mobile Data | mobile data on or off, set up with the SIM's APN the first time; the SIM's PIN when it asks for one; the network, signal, address and data used this month |
 | Notifications | [Do Not Disturb](#do-not-disturb), and the hours it holds by itself every day |
 | Sound | the output and its volume; the input and its volume |
@@ -189,7 +191,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Keyboard & Mouse | the keyboard's layouts, in order, and the keys that go to the next; the key repeat; the pointer's speed; natural scrolling with a mouse and on the touchpad, and tap to click |
 | Battery | its measured life and history, its health, the charge limit, the lid and the power button, and when it hibernates |
 | Performance | the power mode on battery, what the power manager is doing, the discrete GPU's mode, and the undervolt |
-| Screen Time | on or off, and where your time went, per app; `nova screentime forget` deletes it |
+| Screen Time | on or off, and where your time went, per app; `nova screentime forget <app>` deletes one app's |
 | Appearance | the theme, the adaptive theme's mode, the background, the font and the text size ([themes](themes.md)) |
 | Menu Bar | the bar's edge, see-through or not, and what is in it |
 | Lock Screen | your password, the screensaver's and the lock's wait, and fingerprints |
@@ -210,7 +212,7 @@ Events and tasks, in a week or a month. Open it from the clock's card, from a re
 - **Events** move by dragging. An event's bottom edge, dragged, says when it ends; a drag over the empty hours makes a new one.
 - **Tasks** go onto a day, onto a time (then they are reminded of), or off their day into the list beside.
 - **Reminders** come as notifications. The clock in the bar dots the days with anything on them and lists what today has.
-- **Keys:** the arrows step a week or a month, T is today, W and M the week and the month, N a new event, Esc closes.
+- **Keys:** the left and right arrows step a week or a month, T is today, W and M the week and the month, N a new event, Esc closes.
 
 It is one iCalendar file on your computer, `~/.local/share/nova/calendar/calendar.ics`, synced with nothing. The calendar's [own notes](../src/shell/plugins/calendar/README.md) have the rest.
 
@@ -293,13 +295,12 @@ These come installed:
 
 | App | For |
 |---|---|
-| Chrome | the web |
+| Chrome | the web, and PDFs |
 | VS Code | code |
 | Nautilus (Files) | files, phones, cameras and network shares |
 | foot | the terminal |
 | btop | Activity: what is running |
 | Loupe, mpv | photos; video and music |
-| Papers | PDFs and other documents |
 | fastfetch | a summary of the system |
 | cava | the sound playing, as bars |
 | cmatrix | falling code |
