@@ -202,7 +202,7 @@ BorderSurface {
         textFormat: Text.StyledText
         visible: !toast.oneLine
         text: Notes.bodyMarkup(toast.body, toast.app, toast.appIcon)
-        color: Util.faded(toast.ink, 1.15)
+        color: Commons.Color.quieter(toast.ink, Commons.Color.notifications.background, 0.87)
         maximumLineCount: 3
       }
 

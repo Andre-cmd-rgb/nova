@@ -3,6 +3,7 @@ import QtQuick.Controls
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -472,7 +473,7 @@ Panel {
       id: readout
       anchors { right: parent.right; rightMargin: Style.space(6); verticalCenter: parent.verticalCenter }
       textFormat: Text.PlainText
-      color: Util.faded(display.ink, 1.4)
+      color: Commons.Color.quieter(display.ink, Commons.Color.popups.background, 0.71)
       font { family: display.bar.fontFamily; pixelSize: Style.font.caption; bold: true }
     }
   }

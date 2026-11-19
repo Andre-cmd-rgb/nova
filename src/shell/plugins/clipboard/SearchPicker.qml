@@ -151,8 +151,7 @@ PanelWindow {
             horizontalAlignment: Text.AlignHCenter
             textFormat: Text.PlainText
             text: picker.emptyGlyph
-            color: Commons.Color.menu.selectedText
-            opacity: 0.8
+            color: Commons.Color.quieter(Commons.Color.menu.selectedText, Commons.Color.menu.selectedBackground, 0.8)
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.displayLarge
           }
@@ -162,8 +161,7 @@ PanelWindow {
             horizontalAlignment: Text.AlignHCenter
             textFormat: Text.PlainText
             text: picker.emptyText
-            color: Commons.Color.menu.text
-            opacity: 0.7
+            color: Commons.Color.quieter(Commons.Color.menu.text, Commons.Color.menu.background, 0.7)
             font.family: Style.font.menuFamily
             font.pixelSize: Style.font.title
           }

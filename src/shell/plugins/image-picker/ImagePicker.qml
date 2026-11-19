@@ -414,8 +414,7 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         textFormat: Text.PlainText
         text: selector.query
-        color: selector.ink
-        opacity: 0.85
+        color: Commons.Color.quieter(selector.ink, Commons.Color.imagePicker.background, 0.85)
         style: Text.Outline
         styleColor: Util.alpha(selector.dimColor, 0.7)
         font.pixelSize: Style.font.title

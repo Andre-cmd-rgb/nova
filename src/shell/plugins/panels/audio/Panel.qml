@@ -4,6 +4,7 @@ import Quickshell
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -564,7 +565,7 @@ Panel {
       anchors { right: parent.right; rightMargin: Style.space(6); verticalCenter: parent.verticalCenter }
       textFormat: Text.PlainText
       text: Math.round(heading.level * 100) + "%"
-      color: Util.faded(sound.ink, 1.4)
+      color: Commons.Color.quieter(sound.ink, Commons.Color.popups.background, 0.71)
       font { family: sound.typeface; pixelSize: Style.font.caption; bold: true }
       opacity: heading.muted ? 0.5 : 1.0
     }
@@ -700,7 +701,7 @@ Panel {
           horizontalAlignment: Text.AlignRight
           textFormat: Text.PlainText
           text: Math.round(stream.volume * 100) + "%"
-          color: Util.faded(sound.ink, 1.5)
+          color: Commons.Color.quieter(sound.ink, Commons.Color.popups.background, 0.67)
           font { family: sound.typeface; pixelSize: Style.font.caption; bold: true }
           opacity: stream.muted ? 0.5 : 1.0
         }

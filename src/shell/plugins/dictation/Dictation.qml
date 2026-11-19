@@ -426,7 +426,7 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
       anchors.bottomMargin: Bottom.foot
-      color: Util.alpha(Commons.Color.background, 0.97)
+      color: Util.alpha(Commons.Color.popups.background, 0.97)
       frame: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
       radius: Style.cornerRadius
       opacity: root.seen ? 1 : 0

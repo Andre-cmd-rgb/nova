@@ -34,7 +34,7 @@ Pressable {
     anchors.centerIn: parent
     text: action.iconText
     textFormat: Text.PlainText
-    color: action.enabled ? action.foreground : Util.faded(action.foreground, 2.0)
+    color: action.enabled ? action.foreground : Commons.Color.quieter(action.foreground, Commons.Color.popups.background, 0.5)
     font.family: action.fontFamily
     font.pixelSize: Style.font.icon
   }

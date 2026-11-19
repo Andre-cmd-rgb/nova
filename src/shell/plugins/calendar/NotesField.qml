@@ -16,7 +16,7 @@ Controls.TextArea {
   color: Commons.Color.foreground
   selectionColor: Style.selectionFill
   selectedTextColor: Commons.Color.foreground
-  placeholderTextColor: Util.faded(Commons.Color.foreground, 1.6)
+  placeholderTextColor: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.62)
   wrapMode: TextEdit.Wrap
 
   leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)

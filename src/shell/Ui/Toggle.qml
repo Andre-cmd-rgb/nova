@@ -58,7 +58,7 @@ ControlFace {
       text: row.detail
       textFormat: Text.PlainText
       wrapMode: Text.WordWrap
-      color: Util.faded(Commons.Color.foreground, 1.5)
+      color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.67)
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
     }

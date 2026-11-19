@@ -316,7 +316,7 @@ PanelKeys {
           horizontalAlignment: Text.AlignHCenter
           textFormat: Text.PlainText
           text: Qt.formatDate(new Date(sheet.shownAt.year, sheet.shownAt.month, 1, 12), "MMMM yyyy").toUpperCase()
-          color: Util.faded(sheet.ink, 1.4)
+          color: Commons.Color.quieter(sheet.ink, Commons.Color.popups.background, 0.71)
           font.family: sheet.family
           font.pixelSize: Style.font.body
           font.letterSpacing: 1
@@ -345,7 +345,7 @@ PanelKeys {
   // A label in small capitals, dimmer than what it names.
   component Caption: Text {
     textFormat: Text.PlainText
-    color: Util.faded(sheet.ink, 1.5)
+    color: Commons.Color.quieter(sheet.ink, Commons.Color.popups.background, 0.67)
     font.family: sheet.family
     font.pixelSize: Style.font.bodySmall
     font.letterSpacing: 1
@@ -494,6 +494,7 @@ PanelKeys {
     }
 
     TextField {
+      paper: Commons.Color.popups.background
       id: input
       anchors.verticalCenter: parent.verticalCenter
       tint: sheet.ink

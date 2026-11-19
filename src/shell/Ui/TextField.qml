@@ -16,6 +16,8 @@ TextField {
   id: field
 
   property color tint: Commons.Color.foreground
+  // What the field sits on, which its placeholder must read on.
+  property color paper: Commons.Color.background
   property real padX: Style.spacing.controlPaddingX
   property real padY: Style.spacing.inputPaddingY
 
@@ -29,7 +31,7 @@ TextField {
   color: tint
   selectedTextColor: tint
   selectionColor: Style.selectionFillFor(tint, Commons.Color.accent)
-  placeholderTextColor: Util.faded(tint, 1.6)
+  placeholderTextColor: Commons.Color.quieter(tint, paper, 0.62)
 
   background: ControlFace {
     id: face

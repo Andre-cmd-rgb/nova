@@ -247,8 +247,7 @@ PanelWindow {
           : "Looking for iPhones nearby…"
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
-        color: Commons.Color.menu.text
-        opacity: 0.7
+        color: Commons.Color.quieter(Commons.Color.menu.text, Commons.Color.menu.background, 0.7)
         font.family: Style.font.menuFamily
         font.pixelSize: Style.font.body
       }
@@ -260,8 +259,7 @@ PanelWindow {
         text: Model.EVERYONE + " It shows here then, unlocked and nearby."
         textFormat: Text.PlainText
         wrapMode: Text.WordWrap
-        color: Commons.Color.menu.text
-        opacity: 0.7
+        color: Commons.Color.quieter(Commons.Color.menu.text, Commons.Color.menu.background, 0.7)
         font.family: Style.font.menuFamily
         font.pixelSize: Style.font.body
       }

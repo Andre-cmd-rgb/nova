@@ -156,8 +156,7 @@ Item {
           width: Math.max(1, titleBlock.parent.width - rangePicker.width - Style.space(16))
           wrapMode: Text.WordWrap
           text: root.subtitle
-          color: Commons.Color.foreground
-          opacity: 0.5
+          color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.5)
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
         }
@@ -236,8 +235,7 @@ Item {
           var value = chartArea.chart.values[chartArea.hoveredIndex]
           return value > 0 ? label + "  ·  " + root.formatWatts(value) : label
         }
-        color: Commons.Color.foreground
-        opacity: 0.7
+        color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.7)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
       }
@@ -247,8 +245,7 @@ Item {
         anchors.top: parent.top
         visible: chartArea.columns > 0
         text: root.formatWatts(chartArea.chart.peak)
-        color: Commons.Color.foreground
-        opacity: 0.35
+        color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.35)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
       }
@@ -340,8 +337,7 @@ Item {
               return index % 6 === 0 ? String(row.hour) : ""
             }
             elide: Text.ElideRight
-            color: Commons.Color.foreground
-            opacity: 0.45
+            color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.45)
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
           }
@@ -355,8 +351,7 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         wrapMode: Text.WordWrap
         text: root.weekly ? "Not on battery in the last 7 days" : "Not on battery today"
-        color: Commons.Color.foreground
-        opacity: 0.5
+        color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.5)
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
       }
@@ -398,8 +393,7 @@ Item {
             text: runRow.session
               ? Math.round(runRow.session.startPct) + "% → " + Math.round(runRow.session.endPct) + "%"
               : ""
-            color: Commons.Color.foreground
-            opacity: 0.5
+            color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.5)
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
           }
@@ -417,8 +411,7 @@ Item {
             width: parent.width * 0.24
             horizontalAlignment: Text.AlignRight
             text: runRow.session ? root.formatWatts(runRow.session.watts) : ""
-            color: Commons.Color.foreground
-            opacity: 0.5
+            color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.5)
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
           }
@@ -430,8 +423,7 @@ Item {
         width: parent.width
         wrapMode: Text.WordWrap
         text: "No runs on battery yet"
-        color: Commons.Color.foreground
-        opacity: 0.5
+        color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.5)
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
       }

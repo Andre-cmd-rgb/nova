@@ -53,7 +53,7 @@ Column {
       anchors.verticalCenter: parent.verticalCenter
       textFormat: Text.PlainText
       text: agenda.panel.chosen === agenda.panel.dayKey ? "TODAY" : Qt.formatDate(Model.noonOf(agenda.panel.chosen), "ddd d MMMM").toUpperCase()
-      color: Util.faded(agenda.ink, 1.4)
+      color: Commons.Color.quieter(agenda.ink, Commons.Color.popups.background, 0.71)
       font.family: agenda.panel.family
       font.pixelSize: Style.font.bodySmall
       font.letterSpacing: 1
@@ -78,7 +78,7 @@ Column {
     verticalAlignment: Text.AlignVCenter
     textFormat: Text.PlainText
     text: "Nothing on this day"
-    color: Util.faded(agenda.ink, 1.9)
+    color: Commons.Color.quieter(agenda.ink, Commons.Color.popups.background, 0.53)
     font.family: agenda.panel.family
     font.pixelSize: Style.font.body
   }
@@ -96,7 +96,7 @@ Column {
     verticalAlignment: Text.AlignVCenter
     textFormat: Text.PlainText
     text: "+" + (agenda.entries.length - agenda.rows + 1) + " more"
-    color: Util.faded(agenda.ink, 1.6)
+    color: Commons.Color.quieter(agenda.ink, Commons.Color.popups.background, 0.62)
     font.family: agenda.panel.family
     font.pixelSize: Style.font.bodySmall
 
@@ -115,7 +115,7 @@ Column {
     readonly property var item: modelData.item
     readonly property bool task: item.kind === "task"
     readonly property bool done: task && item.done
-    readonly property color faded: Util.faded(agenda.ink, 1.9)
+    readonly property color faded: Commons.Color.quieter(agenda.ink, Commons.Color.popups.background, 0.53)
 
     width: agenda.width
     height: Style.space(26)
@@ -150,7 +150,7 @@ Column {
           anchors.verticalCenter: parent.verticalCenter
           textFormat: Text.PlainText
           text: agenda.lead(entry.modelData)
-          color: Util.faded(agenda.ink, 1.5)
+          color: Commons.Color.quieter(agenda.ink, Commons.Color.popups.background, 0.67)
           font.family: agenda.panel.family
           font.pixelSize: Style.font.bodySmall
         }

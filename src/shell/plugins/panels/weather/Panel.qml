@@ -25,8 +25,8 @@ PanelKeys {
   readonly property color ink: Commons.Color.popups.text
   readonly property string family: weather.bar ? weather.bar.fontFamily : Style.font.family
   // The two dimmer inks: for names, and for what is said beside them.
-  readonly property color soft: Util.faded(ink, 1.4)
-  readonly property color faint: Util.faded(ink, 1.5)
+  readonly property color soft: Commons.Color.quieter(ink, Commons.Color.popups.background, 0.71)
+  readonly property color faint: Commons.Color.quieter(ink, Commons.Color.popups.background, 0.67)
   readonly property int inset: Style.space(16)
 
   readonly property bool imperial: Model.imperial(weather.setting("unit", ""), Qt.locale().name, forecast.country)
@@ -241,6 +241,7 @@ PanelKeys {
             spacing: Style.space(6)
 
             TextField {
+              paper: Commons.Color.popups.background
               id: field
               width: Style.space(190)
               enabled: !sheet.forecast.waiting

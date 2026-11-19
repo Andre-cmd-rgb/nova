@@ -5,6 +5,7 @@ import Quickshell.Io
 import Quickshell.Bluetooth
 import Quickshell.Services.Pipewire
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -23,7 +24,7 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  readonly property color faint: Util.faded(ink, 1.5)
+  readonly property color faint: Commons.Color.quieter(ink, Commons.Color.popups.background, 0.67)
   readonly property string typeface: bar.fontFamily
 
   // ---- the radio ----------------------------------------------------------

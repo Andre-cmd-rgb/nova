@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // A row of the menu's list: its glyph or app icon, its label with the line
@@ -19,6 +20,7 @@ BorderSurface {
 
   readonly property bool lit: index === menu.cursor
   readonly property color inkNow: lit ? look.cursorInk : look.ink
+  readonly property color paperNow: lit ? look.cursorPaper : look.paper
   // The glyph, the icon and the › stand on the middle of the label's line.
   readonly property real labelMiddle: lines.y + name.y + name.height / 2
 
@@ -85,8 +87,7 @@ BorderSurface {
       visible: row.line !== ""
       textFormat: Text.PlainText
       text: row.line
-      color: row.look.ink
-      opacity: 0.52
+      color: Commons.Color.quieter(row.look.ink, row.paperNow, 0.52)
       font.family: row.look.font
       font.pixelSize: Style.font.bodySmall
       elide: Text.ElideRight
@@ -102,8 +103,7 @@ BorderSurface {
     width: row.look.chevronWidth
     textFormat: Text.PlainText
     text: "›"
-    color: row.inkNow
-    opacity: 0.36
+    color: Commons.Color.quieter(row.inkNow, row.paperNow, 0.36)
     font.family: row.look.font
     font.pixelSize: Style.font.heading
   }

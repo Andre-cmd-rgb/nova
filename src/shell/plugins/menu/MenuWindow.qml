@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "MenuModel.js" as MenuModel
 
@@ -214,8 +215,7 @@ PanelWindow {
             width: parent.width
             textFormat: Text.PlainText
             text: "󰈉"
-            color: window.look.cursorInk
-            opacity: 0.8
+            color: Commons.Color.quieter(window.look.cursorInk, window.look.cursorPaper, 0.8)
             font.family: window.look.font
             font.pixelSize: Style.font.displayLarge
             horizontalAlignment: Text.AlignHCenter
@@ -225,8 +225,7 @@ PanelWindow {
             width: parent.width
             textFormat: Text.PlainText
             text: window.menu.typed ? "No matches for “" + window.menu.typed + "”" : "Nothing here yet"
-            color: window.look.ink
-            opacity: 0.7
+            color: Commons.Color.quieter(window.look.ink, window.look.paper, 0.7)
             font.family: window.look.font
             font.pixelSize: Style.font.title
             horizontalAlignment: Text.AlignHCenter

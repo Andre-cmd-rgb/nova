@@ -60,6 +60,21 @@ QtObject {
     return Qt.rgba(base.r, base.g, base.b, clampAlpha(opacity))
   }
 
+  // <colour>'s relative luminance, 0 for black to 1 for white, as WCAG
+  // reckons it from sRGB.
+  function luminance(colour) {
+    const c = typeof colour === "string" ? Qt.color(colour) : colour
+    const lin = v => v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+  }
+
+  // How far apart two opaque colours read, from 1 (the same) to 21 (black on
+  // white): WCAG's contrast ratio.
+  function contrast(a, b) {
+    const la = luminance(a), lb = luminance(b)
+    return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+  }
+
   // <colour> quieter by <factor>, for text and marks that should recede: it
   // lets through 1/<factor> of what is behind it, so it goes toward the card
   // on a light theme as on a dark one. Qt.darker, which dims light text,

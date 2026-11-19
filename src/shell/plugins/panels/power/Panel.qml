@@ -328,7 +328,7 @@ Panel {
   component Saying: Text {
     textFormat: Text.PlainText
     text: Model.line(power.flow).toUpperCase()
-    color: Util.faded(power.ink, 1.4)
+    color: Commons.Color.quieter(power.ink, Commons.Color.popups.background, 0.71)
     font { family: power.bar.fontFamily; pixelSize: Style.font.caption; bold: true; letterSpacing: 1.2 }
     elide: Text.ElideRight
   }
@@ -346,8 +346,7 @@ Panel {
       id: name
       textFormat: Text.PlainText
       text: parent.pair[0]
-      color: power.ink
-      opacity: 0.6
+      color: Commons.Color.quieter(power.ink, Commons.Color.popups.background, 0.6)
       font { family: power.bar.fontFamily; pixelSize: Style.font.bodySmall }
     }
 

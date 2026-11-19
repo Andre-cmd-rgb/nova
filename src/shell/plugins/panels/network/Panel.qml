@@ -29,8 +29,8 @@ Ui.Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  readonly property color dim: Util.faded(ink, 1.4)
-  readonly property color faint: Util.faded(ink, 1.5)
+  readonly property color dim: Commons.Color.quieter(ink, Commons.Color.popups.background, 0.71)
+  readonly property color faint: Commons.Color.quieter(ink, Commons.Color.popups.background, 0.67)
   readonly property color urgent: bar.urgent
   readonly property string typeface: bar.fontFamily
   // The cursor's fill on a row, and the fill of the network in use.

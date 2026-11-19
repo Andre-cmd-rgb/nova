@@ -167,7 +167,7 @@ Item {
       width: inset.left + osd.spots.width + inset.right
       height: inset.top + (osd.notice ? Style.spacing.pillRowHeight : Style.font.displayLarge) + inset.bottom
       radius: Style.cornerRadius
-      color: Util.alpha(Commons.Color.background, 0.97)
+      color: Util.alpha(Commons.Color.popups.background, 0.97)
       frame: Border.surfaceSpec("popups", "border", Commons.Color.popups.border, Math.max(1, Style.space(2)))
       opacity: osd.seen ? 1 : 0
 

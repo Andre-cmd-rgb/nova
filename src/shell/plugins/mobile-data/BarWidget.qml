@@ -66,7 +66,7 @@ Panel {
   readonly property bool busy: actionProc.running
   readonly property string icon: info.icon || "󰢿"
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color dim: Util.faded(ink, 1.4)
+  readonly property color dim: Commons.Color.quieter(ink, Commons.Color.popups.background, 0.71)
   readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Commons.Color.urgent
 
   // Why the last toggle failed, straight from the CLI. Cleared when one
@@ -548,8 +548,7 @@ Panel {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       text: stat.label
-      color: mobile.ink
-      opacity: 0.6
+      color: Commons.Color.quieter(mobile.ink, Commons.Color.popups.background, 0.6)
       font.family: mobile.fontFamily
       font.pixelSize: Style.font.bodySmall
     }

@@ -160,7 +160,7 @@ Panel {
   }
 
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color dim: Util.faded(ink, 1.4)
+  readonly property color dim: Commons.Color.quieter(ink, Commons.Color.popups.background, 0.71)
   readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Commons.Color.urgent
 
   readonly property int warnPercent: {
@@ -613,8 +613,7 @@ Panel {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       text: stat.label
-      color: battery.ink
-      opacity: 0.6
+      color: Commons.Color.quieter(battery.ink, Commons.Color.popups.background, 0.6)
       font.family: battery.fontFamily
       font.pixelSize: Style.font.bodySmall
     }

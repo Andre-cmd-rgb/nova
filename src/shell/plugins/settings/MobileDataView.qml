@@ -295,8 +295,7 @@ Column {
         label: modelData.label
         Text {
           text: modelData.value
-          color: Commons.Color.foreground
-          opacity: 0.75
+          color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.75)
           font.family: Style.font.family
           font.pixelSize: Style.font.body
           textFormat: Text.PlainText

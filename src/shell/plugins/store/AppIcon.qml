@@ -44,8 +44,7 @@ Item {
     Text {
       anchors.centerIn: parent
       text: icon.app ? String(icon.app.name || "").charAt(0).toUpperCase() : ""
-      color: Commons.Color.foreground
-      opacity: 0.7
+      color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.7)
       font.family: Style.font.family
       font.pixelSize: Math.round(icon.size * 0.42)
       font.bold: true

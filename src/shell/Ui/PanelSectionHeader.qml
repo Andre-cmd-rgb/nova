@@ -15,7 +15,7 @@ Text {
     pixelSize: Style.font.caption
     bold: true
   }
-  color: Util.faded(foreground, 1.4)
+  color: Commons.Color.quieter(foreground, Commons.Color.popups.background, 0.71)
   textFormat: Text.PlainText
 
   // A glyph can rise above the line Text keeps room for, the Nerd Font's by

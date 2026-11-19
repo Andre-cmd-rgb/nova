@@ -211,14 +211,14 @@ BarWidget {
     font.family: widget.bar.fontFamily
   }
 
-  // A line of the card in the bar's foreground, `dim` times darker, cut
-  // short at its width; none while empty.
+  // A line of the card in its ink, quieter at a `dim` above 1, cut short at
+  // its width; none while empty.
   component CardLine: BarText {
     property real dim: 1
     width: parent.width
     visible: text !== ""
     elide: Text.ElideRight
-    color: dim === 1 ? widget.ink : Util.faded(widget.ink, dim)
+    color: dim === 1 ? widget.ink : Commons.Color.quieter(widget.ink, Commons.Color.popups.background, 1 / dim)
   }
 
   // The cover of the track shown, or a note where it has none.

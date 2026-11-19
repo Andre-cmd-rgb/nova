@@ -34,8 +34,7 @@ Item {
     anchors.verticalCenter: parent.verticalCenter
     text: header.glyph
     textFormat: Text.PlainText
-    color: header.glyphColor
-    opacity: header.dimmed ? 0.5 : 1
+    color: header.dimmed ? Commons.Color.quieter(header.glyphColor, Commons.Color.popups.background, 0.5) : header.glyphColor
     font.family: header.family
     font.pixelSize: Style.font.display
   }
@@ -74,7 +73,7 @@ Item {
       text: header.note.toUpperCase()
       textFormat: Text.PlainText
       elide: Text.ElideRight
-      color: Util.faded(header.ink, 1.4)
+      color: Commons.Color.quieter(header.ink, Commons.Color.popups.background, 0.71)
       font.family: header.family
       font.pixelSize: Style.font.caption
       font.bold: true

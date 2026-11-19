@@ -107,7 +107,7 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       x: field.width - width - field.edge.right - Style.spacing.controlGap
       text: "\u{F0140}"
-      color: Util.faded(dropdown.foreground, 1.2)
+      color: Commons.Color.quieter(dropdown.foreground, dropdown.background, 0.83)
       font.family: dropdown.fontFamily
       font.pixelSize: Style.font.body
     }

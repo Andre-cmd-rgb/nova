@@ -37,7 +37,8 @@ BarPopup {
   // The menu's measures: a row's height and a separator's; the column of
   // the tick, where an icon starts and how big it is, where the words start
   // with an icon and without; the margin at each end of a row. What the app
-  // turns off, the separators and the card's edge are drawn faint.
+  // turns off and the separators are drawn faint; the card's edge is every
+  // bar card's.
   readonly property int rowHeight: Style.space(30)
   readonly property int lineHeight: Style.space(11)
   readonly property int tickWidth: Style.space(22)
@@ -98,7 +99,6 @@ BarPopup {
   }
 
   padding: Style.space(8)
-  edgeColor: Qt.rgba(ink.r, ink.g, ink.b, faint)
   wantWidth: Style.space(232)
   wantHeight: headingHeight + list.implicitHeight + footerHeight
   tallest: Style.space(420)

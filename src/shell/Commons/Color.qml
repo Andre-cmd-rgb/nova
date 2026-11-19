@@ -130,6 +130,22 @@ QtObject {
     return Util.alpha(value ? flatColor(value, fallback) : fallback, opacity)
   }
 
+  // Text in <ink> on <behind>, quieter: <alpha> of the way from <behind> to
+  // <ink>, as the design asks, but never less legible than 4:1 for text at
+  // 0.6 or more, nor 3:1 for fainter text (or <ink>'s own, when lower). A
+  // fade loses contrast faster on a light theme than on a dark one: on
+  // Rosé Pine a line at 0.5 fell to 2:1. There it fades less.
+  function quieter(ink, behind, alpha) {
+    const a = Util.clampAlpha(alpha)
+    const floor = Math.min(a >= 0.6 ? 4 : 3, Util.contrast(ink, behind))
+    let shade = ink
+    for (let x = a; x < 1; x += 0.02) {
+      shade = Qt.tint(behind, Qt.rgba(ink.r, ink.g, ink.b, x))
+      if (Util.contrast(shade, behind) >= floor) return shade
+    }
+    return Qt.rgba(ink.r, ink.g, ink.b, 1)
+  }
+
   // A text colour, as shell.toml writes it, or <fallback>.
   function ink(section, key, fallback) {
     return shellValues[section + "." + key] || fallback

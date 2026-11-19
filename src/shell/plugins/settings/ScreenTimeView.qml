@@ -124,8 +124,7 @@ Item {
 
         Text {
           text: root.subtitle
-          color: Commons.Color.foreground
-          opacity: 0.5
+          color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.5)
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
         }
@@ -199,8 +198,7 @@ Item {
           ? chartArea.columnLabel(chartArea.hoveredIndex) + "  ·  "
             + root.formatDuration(chartArea.chart.values[chartArea.hoveredIndex])
           : ""
-        color: Commons.Color.foreground
-        opacity: 0.7
+        color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.7)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
       }
@@ -287,8 +285,7 @@ Item {
             text: root.weekly
               ? (root.days[index] ? String(root.days[index].label).slice(0, 1) : "")
               : (index % 6 === 0 ? String(index) : "")
-            color: Commons.Color.foreground
-            opacity: 0.45
+            color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.45)
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
           }
@@ -344,8 +341,7 @@ Item {
             anchors.right: parent.right
             anchors.top: parent.top
             text: appRow.app ? root.formatDuration(appRow.app.seconds) : ""
-            color: Commons.Color.foreground
-            opacity: 0.7
+            color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.7)
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
           }
@@ -383,8 +379,7 @@ Item {
         width: parent.width
         wrapMode: Text.WordWrap
         text: root.weekly ? "Nothing recorded in the last 7 days" : "Nothing recorded today"
-        color: Commons.Color.foreground
-        opacity: 0.5
+        color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.5)
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
       }
@@ -392,8 +387,7 @@ Item {
       Text {
         visible: root.apps.length > root.shownApps
         text: "+" + (root.apps.length - root.shownApps) + " more"
-        color: Commons.Color.foreground
-        opacity: 0.45
+        color: Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.45)
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
       }
