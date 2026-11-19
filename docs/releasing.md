@@ -19,7 +19,7 @@ Everything else is in the `nova-packages` bucket on Cloudflare R2, in a folder n
 | In the bucket | What reads it |
 |---|---|
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
-| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `whisper-cpp`, `hyprland` |
+| `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `cmatrix`, `whisper-cpp`, `hyprland` |
 | `nova-<version>-x86_64.iso`, its `.sha256`, and the `.sha256`'s `.sig` | people, and `nova-usb`: the installer, with every package an install can need, and the checksum it checks the ISO with |
 | `nova-usb.sig` | people: the release notes link it |
 | `release.toml` and its `.sig` | a copy |

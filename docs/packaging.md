@@ -15,6 +15,7 @@ Every package Nova publishes has its PKGBUILD under `packaging/`.
 | `nvidia-open-nova` | Arch's `nvidia-open` packaging | NVIDIA's open modules prebuilt for `linux-nova`, so no DKMS on the laptop |
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
 | `whisper-cpp` | `packaging/whisper-cpp`, its release tag | dictation's speech engine, with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on |
+| `cmatrix` | Arch's `cmatrix` packaging, from upstream's current commit | 2.0, the last release, fills a resized window with solid blocks; upstream fixed that in 2020 and has made no release since |
 | `hyprland` | Arch's `hyprland` packaging, plus two patches | `xwayland:scale`: X11 apps the same size on every display, which Hyprland does not have yet; and release binds that fire when the modifier is let go first, which dictation's Super+D needs |
 
 The kernels a system boots:
@@ -68,6 +69,16 @@ A changed `packaging/linux-nova` means the next release rebuilds the kernel inst
 - Their gradle builds download dependencies, so they need network access at build time.
 
 To update: take the new AUR PKGBUILD, compare it with ours, pin the commit behind the new tag, and update the checksums.
+
+## cmatrix
+
+**Arch's recipe, built from upstream's current commit** (`5c082c6`, 2023-12-09, 56 commits after 2.0), with nothing of Nova's in it.
+
+- **Why Nova's own:** 2.0 never sets a cell's head-of-stream flag. After a resize, the grid is allocated again, and cells the old memory leaves marked as heads draw `addch(-1)`: a character with every attribute on, reverse video among them. A resized window fills with solid blocks, in any terminal, see-through or not.
+- Upstream fixed that in December 2020 (`7ab2d95` and `6d62080`, issue #98), and has since made the terminal's own background show through (`use_default_colors`). It has made no release since 2019, so Arch's package still has the bug.
+- **Its files are Arch's:** upstream's build drops console fonts into `/usr/share/consolefonts` when the builder has that folder; the recipe puts them where Arch's package does instead.
+
+To retire: once Arch ships a cmatrix with those commits, delete `packaging/cmatrix` and its line in `release.yml`.
 
 ## whisper-cpp
 

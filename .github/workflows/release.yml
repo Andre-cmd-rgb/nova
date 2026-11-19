@@ -146,7 +146,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: out/before
-          key: before-nova-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('packaging/nova-keyring/**', 'packaging/limine-entry-tool/**', 'packaging/limine-snapper-sync/**', 'tools/build-package', 'tools/ci-setup') }}
+          key: before-nova-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('packaging/nova-keyring/**', 'packaging/limine-entry-tool/**', 'packaging/limine-snapper-sync/**', 'packaging/cmatrix/**', 'tools/build-package', 'tools/ci-setup') }}
       - name: Build the packages
         env:
           BUILT: ${{ steps.built.outputs.cache-hit }}
@@ -162,6 +162,7 @@ jobs:
             tools/build-package packaging/nova-keyring out/before
             tools/build-package packaging/limine-entry-tool out/before
             tools/build-package packaging/limine-snapper-sync out/before
+            tools/build-package packaging/cmatrix out/before
           fi
           retry pacman -U --noconfirm out/before/*.pkg.tar.zst
           NOVA_SOURCE="git+file://$GITHUB_WORKSPACE#tag=$TAG" tools/build-package packaging/nova out/pkgs

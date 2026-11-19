@@ -1,0 +1,58 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# Arch's cmatrix (maintainer: Kyle Keen), built from upstream's current code
+# instead of its last release. 2.0, from 2019, is the last there is, and it
+# never sets a cell's head-of-stream flag: after a resize the grid is
+# allocated again, cells left marked as heads by the memory before draw
+# addch(-1), a character with every attribute on, reverse video among them,
+# and the window fills with solid blocks. Upstream fixed it in December 2020
+# (7ab2d95, "Fixes #98: Properly initialise head to false", and 6d62080,
+# "Don't try to print non-printable chars"), and has since added
+# use_default_colors, so the terminal's own background shows through. Nothing
+# of Nova's is changed in it. Once Arch ships a cmatrix with those, this goes.
+# Upstream: https://github.com/abishekvashok/cmatrix, GPL-3.0-or-later.
+#
+# Changes from Arch's package:
+#   - the source is upstream's commit 5c082c6 (2023-12-09), 56 commits after 2.0
+#   - the SPDX license identifier instead of the legacy "GPL3"
+#   - no cmatrix-tty source, which Arch does not install either
+#   - upstream's build puts console fonts in /usr/share/consolefonts when the
+#     builder has that folder; they go where Arch's package puts them instead
+
+pkgname=cmatrix
+pkgver=2.0.r56.g5c082c6
+pkgrel=1
+pkgdesc="A curses-based scrolling 'Matrix'-like screen"
+arch=('x86_64')
+url="https://github.com/abishekvashok/cmatrix"
+license=('GPL-3.0-or-later')
+# No -debug package: the [nova] repository carries what an install uses.
+options=(!debug)
+depends=('ncurses')
+# The source already ships its fonts built: nothing more is needed for cmake.
+makedepends=('cmake' 'git')
+optdepends=('kbd: cmatrix-tty custom font'
+            'xterm: cmatrix-tty custom font')
+_commit=5c082c64a1296859a11bee60c8c086655953a416
+source=("$pkgname::git+$url.git#commit=$_commit")
+sha256sums=('SKIP')
+
+build() {
+  cmake -B build -S "$pkgname" \
+    -D CMAKE_INSTALL_PREFIX=/usr \
+    -D CMAKE_POLICY_VERSION_MINIMUM=3.5
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  rm -rf "$pkgdir/usr/share/consolefonts"
+
+  cd "$pkgname"
+  install -Dm644 mtx.pcf "$pkgdir/usr/share/fonts/misc/mtx.pcf"
+  install -Dm644 matrix.fnt "$pkgdir/usr/share/kbd/consolefonts/matrix.fnt"
+  install -Dm644 matrix.psf.gz "$pkgdir/usr/share/kbd/consolefonts/matrix.psf.gz"
+  for i in AUTHORS NEWS COPYING README ChangeLog INSTALL; do
+    install -Dm644 "$i" "$pkgdir/usr/share/doc/$pkgname/$i"
+  done
+}
