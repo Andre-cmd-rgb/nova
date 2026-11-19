@@ -96,6 +96,15 @@ depends=(
   ffmpeg         # Quick Look's frame of a video and cover of a song; trimming screen recordings
   loupe          # photos
   mpv            # video and music
+  # Sound and video for every app that plays them through GStreamer (GTK 4's
+  # video, WebKit, camera, recorder and music apps), which without these plays
+  # nothing: the common formats, decoded on the GPU where it can (VA-API), and
+  # PipeWire's cameras and screens.
+  gst-plugins-base
+  gst-plugins-good
+  gst-libav
+  gst-plugin-va
+  gst-plugin-pipewire
   btop           # the Activity window (Super+Ctrl+T), in the theme's colors
   fastfetch      # a summary of the system, in a terminal
   cava           # the sound playing, as bars, in a terminal
