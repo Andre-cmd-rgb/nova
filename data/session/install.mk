@@ -1,4 +1,5 @@
-# Login and session: greetd, the greeter, PAM, the lock guard and the keyring.
+# Login and session: greetd, the greeter, PAM, the lock guard, the keyring and
+# the desktop portals.
 # greetd owns /etc/greetd/config.toml, so Nova ships it as a template that
 # nova-install renders with the account it creates.
 
@@ -12,6 +13,7 @@ SHELL_SOURCES   += $(SESSION_SRC)/bin/nova-session-guard $(SESSION_SRC)/bin/nova
 install-session:
 	install -Dm755 -t $(DESTDIR)$(NOVA_BIN) $(SESSION_SRC)/bin/*
 	install -Dm644 -t $(DESTDIR)$(SYSCONFDIR)/pam.d $(SESSION_SRC)/pam.d/*
+	install -Dm644 -t $(DESTDIR)$(SYSCONFDIR)/xdg-desktop-portal $(SESSION_SRC)/portals/hyprland-portals.conf
 	install -Dm644 -t $(DESTDIR)$(PREFIX)/share/libalpm/hooks $(SESSION_SRC)/hooks/*.hook
 	# sudo's own modes: the directory 750, a drop-in 440, or sudo ignores it.
 	install -d -m750 $(DESTDIR)$(SYSCONFDIR)/sudoers.d

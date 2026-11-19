@@ -57,6 +57,11 @@ probe() {
   config=$(as_user HYPRLAND_INSTANCE_SIGNATURE="$signature" hyprctl configerrors -j)
   errors=$(jq -r '.[] | select(. != "")' <<<"$config" 2>/dev/null | paste -sd';' -)
   check "Hyprland's config has no errors${errors:+ ($errors)}" jq -e 'map(select(. != "")) == []' <<<"$config"
+  # A Flatpak app keeps a password or a sign-in through the Secret portal,
+  # which the session offers only as Nova's portals config routes it.
+  check "the desktop portals offer Flatpak apps a place for secrets" \
+    as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" gdbus call --session --dest org.freedesktop.portal.Desktop \
+    --object-path /org/freedesktop/portal/desktop --method org.freedesktop.DBus.Properties.Get org.freedesktop.portal.Secret version
 
   # What nova update will ask pacman for, with /etc/pacman.conf's options. The
   # release's own [nova] repository is not published yet, so only the pinned Arch

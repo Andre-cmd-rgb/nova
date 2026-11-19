@@ -196,6 +196,7 @@ backup=(
   etc/pam.d/nova-sudo
   etc/pam.d/polkit-1
   etc/sudoers.d/20-nova-pam
+  etc/xdg-desktop-portal/hyprland-portals.conf
 )
 _repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." 2>/dev/null && pwd)
 source=("nova::${NOVA_SOURCE:-git+file://$_repo}")

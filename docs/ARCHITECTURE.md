@@ -20,7 +20,7 @@ This document is the contract every component follows. Read it before adding cod
 | `src/screensaver/` | `/usr/lib/nova/bin/nova-screensaver-effect` | The screensaver's text effects (Rust): a text played in a terminal, one effect after another |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
-| `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/etc/sudoers.d/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring |
+| `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/etc/sudoers.d/`, `/etc/xdg-desktop-portal/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring, the desktop portals (gnome-keyring's for a Flatpak app's secrets) |
 | `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards |
 | `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
 | `data/audio/` | `/usr/share/nova/default/audio/` | Speaker tunings, matched to the machine by `nova-audio-tuning` |
