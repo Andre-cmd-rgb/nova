@@ -28,4 +28,4 @@ The pages below are split between using Nova and working on it.
 | [Packaging](packaging.md) | the packages Nova builds, and keeping each one up to date |
 | [Releasing](releasing.md) | versions, the signing key, the package bucket, the two-week cycle, the hardware checklist |
 
-The pictures in `images/` are taken of the shell by `tools/screenshots`, over `images/dusk.svg`, which `tools/draw-dusk` draws.
+The pictures in `images/` are taken of the shell by `tools/screenshots`, over a photo given to it with `--background`. Quick Look's picture, and the background when none is given, is `images/dusk.svg`, which `tools/draw-dusk` draws.

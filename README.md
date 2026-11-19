@@ -1,20 +1,28 @@
 # Nova
 
-<img src="docs/images/desktop.jpg" alt="The Nova desktop in the adaptive theme: a terminal and Settings, open at Appearance with its twelve themes, over a drawing of a lake at dusk, with a see-through bar along the top" width="100%">
+<img src="docs/images/desktop.jpg" alt="The Nova desktop in the adaptive theme: a terminal and Settings, open at Appearance with its twelve themes, over a photo of an abbey on a hill at dusk, with a see-through bar along the top" width="100%">
 
-Nova is an Arch Linux desktop for x86-64 laptops and desktop PCs. It is Hyprland, a shell of its own, one `nova` command and a power manager, installed together from a USB stick.
+**A light Arch Linux desktop, with what a PC needs to run properly.** Hyprland, a shell of its own, one `nova` command and a power manager, set up as one piece and installed together from a USB stick. What it does not carry, the App Center installs when you want it.
 
-## What you get
+[The site](https://andre-cmd-rgb.github.io/nova/) · [Install](docs/install.md) · [Using Nova](docs/using.md) · [Releases](https://github.com/Andre-cmd-rgb/nova/releases)
 
-- **The firmware logo, then the lock screen**, with no console text in between.
-- **One theme everywhere**: the bar, the terminal, GTK and Qt apps, VS Code and Chrome change together. The adaptive theme takes its colors from your background.
-- **One menu for everything** on Super+Space: apps, screenshots, toggles, themes, Settings, updates.
-- **Settings** for Wi-Fi, Bluetooth, sound, displays, the battery, performance, the look, the bar, the lock screen and updates.
-- **A calendar** of events and tasks, kept in one file on your computer.
-- **Dictation**: hold Super+D and speak. It runs on your computer, and the speech model, 669 MB, is downloaded once, at the first use.
-- **AirDrop**: an iPhone sends photos and files to the computer, with nothing to install on it. The Wi-Fi is off the network for the seconds that takes.
-- **A release every two weeks**, tested before you get it, with a snapshot before each update to go back to.
+## What it is like
+
+- **It starts quietly.** The firmware's logo, then the lock screen, with no console text in between.
+- **It looks like one thing.** One theme reaches the bar, the terminal, GTK and Qt apps, VS Code and Chrome at once. The adaptive theme takes its colors from your photo, and changes when the photo does.
+- **One key for most things.** Super+Space opens the menu: apps, screenshots, toggles, themes, Settings and updates. A sum or a conversion typed into it is answered in the first row.
+- **A Calculator of its own**, basic or scientific, with the history of your sums, in the theme's colors.
+- **Space in Files** shows a file in a Quick Look window: a photo, the first page of a PDF, a frame of a video, the start of a text.
+- **A calendar** of events and tasks, on your computer, kept in step both ways with iCloud, Google or any CalDAV calendar.
+- **Your iPhone, with nothing installed on it.** It sends photos and files to the computer with AirDrop, and opening its share sheet is enough to switch AirDrop on. Its notifications can show on the computer too.
+- **Dictation.** Hold Super+D and speak: the words appear where you type. It runs on your computer; nothing you say leaves it.
+- **Updates you can undo.** A release every two weeks, tested before you get it, with a snapshot before each update to go back to.
 - **An installer stick** that can carry your files over, install without internet, or hold a whole Nova to start any PC from.
+
+<p>
+<img src="docs/images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, Update and System" width="49%">
+<img src="docs/images/calendar.jpg" alt="The calendar at a week in November, with events on five of its days, and the tasks beside it: one overdue and two for no day in particular" width="49%">
+</p>
 
 ## What it runs on
 
@@ -48,12 +56,7 @@ The [install guide](docs/install.md) has the rest: each question, encryption, th
 | Print | a screenshot |
 | Super+K | every key, searchable |
 
-[Using Nova](docs/using.md) has every key, the menu, Settings page by page, and the rest of the desktop.
-
-<p>
-<img src="docs/images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, Update and System" width="49%">
-<img src="docs/images/calendar.jpg" alt="The calendar showing a week in November 2026, with events on Friday, Saturday and Sunday and an empty task list beside it" width="49%">
-</p>
+[Using Nova](docs/using.md) has every key, the menu, the bar, Settings page by page, and the rest of the desktop.
 
 ## Updates and going back
 
@@ -83,7 +86,7 @@ make DESTDIR=/tmp/nova-root install    # the nova package's files, into a scratc
 
 Packages and ISOs are built only by CI. Start with [the architecture](docs/ARCHITECTURE.md), the contract every component follows; [the documentation's index](docs/README.md) lists the rest.
 
-The pictures are of the shell itself, taken by `tools/screenshots` over a background drawn for them (`docs/images/dusk.svg`, by `tools/draw-dusk`). They are taken off-screen on a Hyprland of their own, with Nova's look and window rules, so the windows are drawn as Nova draws them; they float, to leave the background in view, where Nova tiles them.
+The pictures are of the shell itself, taken by `tools/screenshots` off-screen on a Hyprland of their own, with Nova's look and window rules, so the windows are drawn as Nova draws them; they float, to leave the background in view, where Nova tiles them. The site (`site/`) is published from main by `.github/workflows/pages.yml`, with the same pictures.
 
 ## License
 

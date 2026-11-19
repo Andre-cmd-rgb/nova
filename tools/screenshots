@@ -1,20 +1,22 @@
 #!/bin/bash
 # screenshots: the pictures in the README and docs/, taken of the shell itself.
 #
-#   tools/screenshots --root <dir> [--out <dir>]
+#   tools/screenshots --root <dir> [--out <dir>] [--background <image>]
 #
 # --root is a `make install DESTDIR=<dir>` tree; the pictures go to docs/images
-# unless --out names another folder. The shell runs on a Hyprland of its own,
-# given Nova's look and window rules (data/hypr), so a picture shows the
+# unless --out names another folder. --background is the picture behind the
+# windows, docs/images/dusk.svg unless it names another: a photo, a JPEG or a
+# PNG, of which only the pixels go into the pictures (Quick Look's picture is
+# the dusk all the same). The shell runs on a Hyprland of its own, given
+# Nova's look and window rules (data/hypr), so a picture shows the
 # windows as Nova draws them: round corners, the theme's border, the terminal
 # a little see-through. Hyprland draws to a screen or to a window, and has no
 # way to draw to neither; here it is a window of a headless labwc (sway offers
 # it too old an xdg-shell), in a home, a runtime dir and a D-Bus session of
 # their own. They are given no system bus either, so nothing of the computer
 # this runs on (its networks, its battery, its name) is in a picture; what is
-# in them is made here: a calendar, a terminal's lines, and
-# docs/images/dusk.svg, the background drawn for them, which the adaptive
-# theme takes its colours from.
+# in them is made here: a calendar, a terminal's lines, and the background,
+# which the adaptive theme takes its colours from.
 #
 # One thing is not as Nova has it: the windows float where the pictures want
 # them, to leave the background in view, where Nova tiles them.
@@ -24,16 +26,18 @@ set -euo pipefail
 usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
 
 here=$(cd "$(dirname "$0")/.." && pwd)
-root='' out=$here/docs/images
+root='' out=$here/docs/images background=$here/docs/images/dusk.svg
 while (($# > 0)); do
   case $1 in
     --root) root=${2:?}; shift 2 ;;
     --out) out=${2:?}; shift 2 ;;
+    --background) background=${2:?}; shift 2 ;;
     -h | --help) usage; exit 0 ;;
     *) usage >&2; exit 2 ;;
   esac
 done
 [[ -n $root && -f $root/usr/share/nova/shell/shell.qml ]] || { usage >&2; exit 2; }
+[[ -f $background ]] || { echo "screenshots: no background $background" >&2; exit 2; }
 for tool in labwc wlr-randr start-hyprland hyprctl qs dbus-run-session grim jq foot rsvg-convert vips; do
   command -v "$tool" >/dev/null || { echo "screenshots: needs $tool" >&2; exit 1; }
 done
@@ -58,7 +62,17 @@ for stub in systemctl dbus-update-activation-environment loginctl powerprofilesc
   chmod +x "$work/bin/$stub"
 done
 
-rsvg-convert -w 3840 -o "$work/home/dusk.png" "$here/docs/images/dusk.svg"
+# The background as a PNG of the screen's width twice over, its name kept for
+# the terminal's lines. A photo's metadata (where and when it was taken)
+# stays out: vips writes the pixels alone.
+backdrop=${background##*/}
+backdrop=${backdrop%.*}
+case $background in
+  *.svg) rsvg-convert -w 3840 -o "$work/home/$backdrop.png" "$background" ;;
+  *) vips thumbnail "$background" "$work/home/$backdrop.png[strip]" 3840 ;;
+esac
+# Drawn for Quick Look's picture: a photo, as Space on one in Files shows it.
+rsvg-convert -w 1600 -o "$work/home/dusk.png" "$here/docs/images/dusk.svg"
 
 # The bar see-through, which Settings → Menu Bar turns on (a new install's is
 # solid), and without the widgets that would show this computer's own (the
@@ -78,6 +92,11 @@ event() { # days from today, start HH:MM, end HH:MM, summary
   printf 'BEGIN:VEVENT\r\nUID:%s-%s@nova\r\nDTSTAMP:%sT000000Z\r\nDTSTART:%sT%s00\r\nDTEND:%sT%s00\r\nSUMMARY:%s\r\nEND:VEVENT\r\n' \
     "$day" "${2/:/}" "$day" "$day" "${2/:/}" "$day" "${3/:/}" "$4"
 }
+task() { # days from today, or none for no day; summary
+  printf 'BEGIN:VTODO\r\nUID:task-%s@nova\r\nDTSTAMP:%sT000000Z\r\n' "${2// /-}" "$(date +%Y%m%d)"
+  [[ $1 == none ]] || printf 'DUE;VALUE=DATE:%s\r\n' "$(date -d "today $1 days" +%Y%m%d)"
+  printf 'SUMMARY:%s\r\nSTATUS:NEEDS-ACTION\r\nEND:VTODO\r\n' "$2"
+}
 {
   printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Nova//Calendar//EN\r\n'
   event -1 09:30 10:15 'Stand-up'
@@ -89,6 +108,10 @@ event() { # days from today, start HH:MM, end HH:MM, summary
   event 2 11:00 12:00 'Dentist'
   event 2 15:00 17:30 'Hardware profile: Framework 13'
   event 3 18:30 20:00 'Climbing'
+  task -2 'Answer the hardware survey'
+  task 0 'Send the release notes'
+  task none 'Order a second USB stick'
+  task none 'Renew the passport'
   printf 'END:VCALENDAR\r\n'
 } >"$work/home/.local/share/nova/calendar/calendar.ics"
 
@@ -104,8 +127,8 @@ prompt 'ls'
 printf '%s  %s  %s  %s  %s  %s\n' "$(c '1;34' data)" "$(c '1;34' docs)" "$(c '1;34' src)" "$(c 36 'theme@')" "$(c '1;32' 'nova*')" "$(c 35 dusk.svg)"
 prompt 'git diff'
 printf '%s\n%s\n%s\n' "$(c 36 '@@ -12,3 +12,4 @@')" "$(c 31 '-    let accent = fixed();')" "$(c 32 '+    let accent = reading.accent;')"
-prompt 'nova theme palette dusk.svg | head -4'
-nova-theme palette "$HOME/dusk.png" | sed -n '3,6p'
+prompt "nova theme palette $BACKDROP.png | head -4"
+nova-theme palette "$HOME/$BACKDROP.png" | sed -n '3,6p'
 prompt ''
 exec sleep 3600
 EOF
@@ -148,7 +171,7 @@ session() {
     { echo "screenshots: Hyprland has no event socket; is TMPDIR too long a path for one?" >&2; return 1; }
 
   nova-theme set adaptive >/dev/null 2>&1 || true
-  nova-theme bg set "$HOME/dusk.png" >/dev/null 2>&1 || true
+  nova-theme bg set "$HOME/$BACKDROP.png" >/dev/null 2>&1 || true
 
   QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 qs -n --no-color -p "$SHELL_DIR" >"$WORK/shell.log" 2>&1 &
   shell=$!
@@ -192,6 +215,21 @@ session() {
   ipc shell summon nova.calendar '{"page":"week","date":""}' >/dev/null
   shot calendar 3
   ipc shell hide nova.calendar >/dev/null || true
+
+  # The Calculator, with a sum worked out, as `nova calculator <sum>` opens it.
+  ipc shell summon nova.calculator '{"expression":"1234*5678"}' >/dev/null
+  shot calculator 2.5
+  ipc shell hide nova.calculator >/dev/null || true
+
+  # Quick Look, as Space on a photo in Files opens it: what nova-previewer
+  # hands the shell for one.
+  local size
+  size=$(stat -c %s "$HOME/dusk.png")
+  ipc shell summon nova.preview "$(jq -nc --arg path "$HOME/dusk.png" --argjson size "$size" \
+    '{uri: ("file://" + $path), path: $path, name: "dusk.png", mime: "image/png", kind: "image",
+      type: "PNG image", size: $size, sizeText: "", items: -1, icon: ["image-png", "image-x-generic"], seq: 1}')" >/dev/null
+  shot quicklook 2.5
+  ipc shell hide nova.preview >/dev/null || true
 }
 
 # labwc gives Hyprland the whole of its screen, with no frame of its own. It
@@ -211,7 +249,7 @@ EOF
 # Hyprland with Nova's look, behaviour and window rules and the theme's
 # borders, without Nova's keys, session and autostart. Every window floats
 # where the pictures want it: the terminal top left, the shell's own windows
-# over its corner, and the dusk to their right.
+# over its corner, and the background to their right.
 cat >"$work/home/.config/hypr/hyprland.lua" <<'EOF'
 dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
 require("default.hypr.lib")
@@ -231,8 +269,9 @@ hl.config({
 
 local shell_window = "^org\\.quickshell$"
 nova.window("foot", { float = true, size = { 720, 440 }, move = { 44, 76 } })
-nova.window({ class = shell_window, title = "^Settings$" }, { size = { 860, 620 }, move = { 330, 330 } })
+nova.window({ class = shell_window, title = "^Settings$" }, { size = { 860, 620 }, move = { 180, 420 } })
 nova.window({ class = shell_window, title = "^Calendar$" }, { size = { 1240, 900 }, move = { 560, 150 } })
+nova.window({ class = shell_window, title = "^Calculator$" }, { move = { 1560, 170 } })
 EOF
 
 # labwc draws with the GPU where there is one it may use, and Hyprland with
@@ -247,7 +286,7 @@ env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${TZ:-Euro
   PATH="$work/bin:$root/usr/lib/nova/bin:$root/usr/bin:$PATH" \
   NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN=password \
   DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/system-bus \
-  "${renderer[@]}" WORK="$work" SHELL_DIR="$root/usr/share/nova/shell" \
+  "${renderer[@]}" WORK="$work" BACKDROP="$backdrop" SHELL_DIR="$root/usr/share/nova/shell" \
   timeout 240 dbus-run-session -- bash -c "$(declare -f session); session"
 
 # Photographs of a screen are large as PNGs; as JPEGs at this quality they
@@ -258,6 +297,8 @@ save() { # shot, name
 save desktop desktop
 save menu menu
 save calendar calendar
+save calculator calculator
+save quicklook quicklook
 # Four themes in one picture: the corner of each with the windows in it.
 corners=()
 for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
@@ -266,4 +307,9 @@ for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
 done
 vips arrayjoin "${corners[*]}" "$work/shots/themes.png" --across 2 --shim 16 --background "255 255 255"
 vips resize "$work/shots/themes.png" "$out/themes.jpg[Q=88,strip,optimize_coding]" 0.78125
+# And each corner on its own, for the site's theme picker (site/).
+for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox; do
+  vips resize "$work/shots/$name-corner.png" "$out/corner-${name#theme-}.jpg[Q=86,strip,optimize_coding]" 0.78125
+done
+mv "$out/corner-desktop.jpg" "$out/corner-adaptive.jpg"
 ls -l "$out"

@@ -1,0 +1,61 @@
+# Nova's site (site/) on GitHub Pages: the page, with the pictures it shows
+# taken from the docs' own (docs/images, made by tools/screenshots), published
+# at each push to main that changes either.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/**'
+      - 'docs/images/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One publication at a time, and one under way is let finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+      - name: The page and its pictures
+        run: |
+          mkdir -p _site/images
+          cp site/index.html site/style.css site/site.js site/favicon.svg _site/
+          # Each picture the page names, and the theme picker's corner of each
+          # theme it offers: one missing fails here rather than on the site.
+          missing=0
+          for name in $(grep -oh 'images/[a-z-]*\.jpg' site/index.html | sort -u) \
+            $(grep -o 'data-theme="[a-z-]*"' site/index.html | sed 's/.*="\(.*\)"/images\/corner-\1.jpg/' | sort -u); do
+            if [[ -f docs/$name ]]; then
+              cp "docs/$name" "_site/$name"
+            else
+              echo "::error::site/ shows $name, which docs/ does not have: tools/screenshots makes it"
+              missing=1
+            fi
+          done
+          exit "$missing"
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
