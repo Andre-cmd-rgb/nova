@@ -207,13 +207,13 @@ The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `aird
 
 ## Calendar
 
-<img src="images/calendar.jpg" alt="The calendar showing a week in November 2026, with events on Friday, Saturday and Sunday and an empty task list beside it" width="720">
+<img src="images/calendar.jpg" alt="The calendar at a week in November, with events on five of its days, and the tasks beside it: one overdue and two for no day in particular" width="720">
 
 Events and tasks, in a day, a week or a month. Open it from the clock's card, from a reminder, or with `nova calendar [day|week|month] [day]`, where the day is `2026-10-29`, `tomorrow` or `next friday`.
 
 - **Events** move by dragging. An event's bottom edge, dragged, says when it ends; a drag over the empty hours makes a new one.
 - **Tasks** go onto a day, onto a time (then they are reminded of), or off their day into the list beside.
-- **Calendars:** the one on your computer, and those of your accounts, added with **Add Account** at the bottom of the list on the left: iCloud (with an app-specific password), Google, any CalDAV server, or a subscription to an iCal link. They sync both ways, every few minutes and soon after an edit; an edit made offline is sent later. A click in the list shows or hides a calendar.
+- **Calendars:** the one on your computer, and those of your accounts, added with **Add Account** at the bottom of the list on the left: iCloud (with an app-specific password), any CalDAV server, a subscription to an iCal link, or Google where its sign-in is set up. An account's calendars sync both ways, every few minutes and soon after an edit, and an edit made offline is sent later; a subscription is only read. A click in the list shows or hides a calendar.
 - **Reminders** come as notifications. The clock in the bar dots the days with anything on them and lists what today has.
 - **Keys:** the left and right arrows step a day, a week or a month, T is today, D, W and M the day, the week and the month, N a new event, / the search, Esc closes.
 

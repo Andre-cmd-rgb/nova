@@ -13,7 +13,7 @@
 - **One key for most things.** Super+Space opens the menu: apps, screenshots, toggles, themes, Settings and updates. A sum or a conversion typed into it is answered in the first row.
 - **A Calculator of its own**, basic or scientific, with the history of your sums, in the theme's colors.
 - **Space in Files** shows a file in a Quick Look window: a photo, the first page of a PDF, a frame of a video, the start of a text.
-- **A calendar** of events and tasks, on your computer, kept in step both ways with iCloud, Google or any CalDAV calendar.
+- **A calendar** of events and tasks, on your computer, kept in step both ways with iCloud or any CalDAV calendar.
 - **Your iPhone, with nothing installed on it.** It sends photos and files to the computer with AirDrop, and opening its share sheet is enough to switch AirDrop on. Its notifications can show on the computer too.
 - **Dictation.** Hold Super+D and speak: the words appear where you type. It runs on your computer; nothing you say leaves it.
 - **Updates you can undo.** A release every two weeks, tested before you get it, with a snapshot before each update to go back to.
