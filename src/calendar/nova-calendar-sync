@@ -8,11 +8,12 @@
 # crates, so it has none of them. Tests live in tests/unit/calendar.
 #
 #   nova-calendar-sync [sync] [<id>]     every account and subscription, or one
-#   nova-calendar-sync add               an account, from JSON on stdin:
-#       {"type": "icloud" | "caldav", "url", "user", "password"}, or
+#   nova-calendar-sync add               an account, from a line of JSON on
+#       stdin: {"type": "icloud" | "caldav", "url", "user", "password"}, or
 #       {"type": "google"}, which signs in in the browser; prints the account
 #       and the calendars it found, as JSON
-#   nova-calendar-sync subscribe         {"url"} on stdin; prints the calendar
+#   nova-calendar-sync subscribe         {"url"}, a line on stdin; prints the
+#       calendar
 #   nova-calendar-sync remove <id>       an account or a subscription
 #   nova-calendar-sync set <id> shown=true|false color=<name> name=<text>
 #   nova-calendar-sync google            exits 0 when Google sign-in is set up
@@ -86,7 +87,9 @@ NOVA_PATH = os.environ.get("NOVA_PATH") or "/usr/share/nova"
 # them; the shell paints each in the theme's own.
 PALETTE = ["accent", "red", "orange", "yellow", "green", "cyan", "blue", "magenta"]
 HUES = {"red": 0, "orange": 30, "yellow": 55, "green": 120, "cyan": 180, "blue": 220, "magenta": 290}
-NEW_COLORS = ["blue", "green", "red", "orange", "magenta", "cyan", "yellow"]
+# A calendar with no colour of its own takes the first not yet taken; blue
+# last, being the accent of many themes, which the one on this computer has.
+NEW_COLORS = ["red", "green", "orange", "magenta", "cyan", "yellow", "blue"]
 
 ICLOUD_URL = os.environ.get("NOVA_CALENDAR_ICLOUD") or "https://caldav.icloud.com/"
 GOOGLE_AUTH = os.environ.get("NOVA_CALENDAR_GOOGLE_AUTH") or "https://accounts.google.com/o/oauth2/v2/auth"
@@ -1658,7 +1661,7 @@ def normalize_url(text, webcal=False):
 
 def read_request():
     try:
-        request = json.loads(sys.stdin.read() or "{}")
+        request = json.loads(sys.stdin.readline() or "{}")
     except ValueError:
         request = None
     if not isinstance(request, dict):
