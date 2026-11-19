@@ -206,6 +206,11 @@ ShellRoot {
         editor.opened = false
       },
       function () {
+        check(!editor.activeFocus, "the editor closed, the keys are the window's again, not the hidden editor's")
+        var search = find(function (i) { return i.placeholderText === "Search" })
+        search.forceActiveFocus()
+        cal.focusKeys()
+        check(!search.activeFocus && !editor.activeFocus, "and so they are once the search is left")
         cal.store.setCalendar("cccc3333", "name", "Calendar")
         cal.newEvent(local(2026, 10, 30, 9), local(2026, 10, 30, 10), false)
         check(editor.choices.map(function (o) { return o.label }).join(",") === "Calendar · On This Computer,Work,Calendar · Work Server",

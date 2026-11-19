@@ -165,8 +165,10 @@ Item {
     else window.visible = false
   }
 
+  // The keys to the window's own handler: given to the scope, they would go
+  // back to the field or the sheet that had them last, closed or not.
   function focusKeys() {
-    keys.forceActiveFocus()
+    keyTarget.forceActiveFocus()
   }
 
   function closeSheets() {
@@ -479,6 +481,11 @@ Item {
       id: keys
       anchors.fill: parent
       focus: true
+
+      Item {
+        id: keyTarget
+        focus: true
+      }
 
       Keys.onPressed: function (event) {
         var text = event.text.toLowerCase()
