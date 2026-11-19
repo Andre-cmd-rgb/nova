@@ -1715,7 +1715,7 @@ cmd_apn() {
 }
 
 # The PIN to the SIM <path> over the system bus, read from the standard
-# input: python's D-Bus, which Nova has for its keyring and idle helpers,
+# input: python's D-Bus, which Nova depends on for this (packaging/nova),
 # rather than mmcli, which takes it as an argument any process could read
 # while it runs. An error is its D-Bus name and message, as mmcli says it.
 send_pin() { # sim path

@@ -53,8 +53,7 @@ depends=(
   libsecret      # secret-tool: the Calendar's passwords and tokens, in the login keyring
   polkit
   python         # nova-calendar-sync, the Calendar's sync: its standard library's HTTP, TLS and XML
-  python-dbus    # nova-keyring-migrate, nova-iphone-notifications
-  python-gobject # nova-iphone-notifications' and nova-previewer's main loop
+  python-dbus    # mobile-data's SIM PIN, sent where no process's arguments show it
 
   # Network, Bluetooth, power, backlight, removable disks, firmware
   networkmanager
@@ -147,7 +146,7 @@ depends=(
   dosfstools     # mkfs.fat for nova usb, fsck.fat for the boot partition
   fontconfig     # fc-list, fc-match
   git            # nova apps install
-  glib2          # gsettings
+  glib2          # gsettings; and GIO, which Quick Look's front (nova-previewer) reads a file with
   gum            # the screens of nova usb
   iproute2
   jq
