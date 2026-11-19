@@ -16,6 +16,8 @@ readonly bin=${NOVA_BIN:-/usr/lib/nova/bin}
 declare -A compiled=(
   [nova-airdrop]="Send to and receive from iPhones nearby with AirDrop"
   [nova-apps-catalog]=""
+  [nova-keyring-migrate]="Move a passwordless keyring into the login keyring"
+  [nova-password-change]="Change the login password from Settings"
   [nova-theme]="Switch themes and backgrounds, and read theme colors"
   [nova-undervolt]=""
 )

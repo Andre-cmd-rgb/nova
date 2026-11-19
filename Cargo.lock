@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "nova-account"
+version = "1.0.0"
+dependencies = [
+ "nova-sd",
+]
+
+[[package]]
 name = "nova-airdropd"
 version = "1.0.0"
 

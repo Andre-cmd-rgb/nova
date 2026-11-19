@@ -1,13 +1,21 @@
 #!/usr/bin/env bats
 
-# data/session/bin/nova-keyring-migrate against a real gnome-keyring, on a D-Bus
-# session of its own and a scratch home: a keyring stored
-# without a password, moves into the password-encrypted login keyring.
+# nova-keyring-migrate against a real gnome-keyring, on a D-Bus session of
+# its own and a scratch home: a keyring stored without a password moves into
+# the password-encrypted login keyring.
 
 load ../test_helper
 
+setup_file() {
+  if command -v cargo >/dev/null; then
+    (cd "$REPO_ROOT" && cargo build --quiet --package nova-account)
+  fi
+}
+
 setup() {
   setup_scratch
+  MIGRATE=${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/nova-keyring-migrate
+  [[ -x $MIGRATE ]] || skip "needs cargo, to build nova-keyring-migrate"
   export HOME=$SCRATCH/home
   export XDG_DATA_HOME=$HOME/.local/share XDG_STATE_HOME=$HOME/.local/state XDG_RUNTIME_DIR=$SCRATCH/run
   mkdir -p "$XDG_DATA_HOME/keyrings" "$XDG_STATE_HOME/nova"
@@ -59,7 +67,7 @@ first_unlock() {
     gnome-keyring-daemon --start --components=secrets >/dev/null 2>&1
     if [[ -n ${BEFORE:-} ]]; then python3 -I "$BEFORE" || exit; fi
     "$1" || exit
-    python3 -I "$2"' _ "$REPO_ROOT/data/session/bin/nova-keyring-migrate" "$SCRATCH/lookup.py"
+    python3 -I "$2"' _ "$MIGRATE" "$SCRATCH/lookup.py"
 }
 
 @test "the passwordless keyring, locked until asked, moves into the login keyring and is gone" {
@@ -108,4 +116,41 @@ EOF
   [[ $output == *"chrome: /org/freedesktop/secrets/collection/login/"*" newer-key"* ]]
   [[ $output != *"chrome-key"* ]]
   [ ! -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
+}
+
+# The login keyring the default, without the secret: nothing newer to keep,
+# so the moved one is all there is of it.
+@test "a secret the login keyring lacks moves, though login is the default" {
+  passwordless_keyring
+  echo login >"$XDG_DATA_HOME/keyrings/default"
+  : >"$XDG_STATE_HOME/nova/keyring-migrate-pending"
+  run first_unlock
+  [ "$status" -eq 0 ]
+  [[ $output == *"moved 1 secrets from 'Default_keyring' into login"* ]]
+  [[ $output != *"kept login's own"* ]]
+  [[ $output == *"chrome: /org/freedesktop/secrets/collection/login/"*" chrome-key"* ]]
+  [ ! -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
+}
+
+# gnome-keyring names a keyring's object after its file, every byte but
+# letters and digits escaped.
+@test "a keyring named with a space and an accent is found and moved" {
+  passwordless_keyring
+  mv "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" "$XDG_DATA_HOME/keyrings/clé 1.keyring"
+  echo 'clé 1' >"$XDG_DATA_HOME/keyrings/default"
+  echo 'clé 1' >"$XDG_STATE_HOME/nova/keyring-migrate-pending"
+  run first_unlock
+  [ "$status" -eq 0 ]
+  [[ $output == *"moved 1 secrets from 'clé 1' into login"* ]]
+  [ ! -e "$XDG_DATA_HOME/keyrings/clé 1.keyring" ]
+}
+
+@test "a marker naming a keyring that is not there is let go, and nothing moves" {
+  passwordless_keyring
+  echo Other_keyring >"$XDG_STATE_HOME/nova/keyring-migrate-pending"
+  run first_unlock
+  [ "$status" -eq 0 ]
+  [[ $output == *"no keyring 'Other_keyring', nothing to move"* ]]
+  [ ! -e "$XDG_STATE_HOME/nova/keyring-migrate-pending" ]
+  [ -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
 }

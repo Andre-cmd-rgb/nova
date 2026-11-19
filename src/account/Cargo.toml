@@ -1,0 +1,20 @@
+[package]
+name = "nova-account"
+version = "1.0.0"
+edition = "2021"
+description = "The account's password and its keyring: Settings' password change, and a passwordless keyring moved into the login keyring"
+license = "MIT"
+
+# No crates, as everywhere in Nova: the terminal passwd talks to is the C
+# library's, and the Secret Service is reached through nova-sd.
+
+[[bin]]
+name = "nova-password-change"
+path = "src/password.rs"
+
+[[bin]]
+name = "nova-keyring-migrate"
+path = "src/keyring.rs"
+
+[dependencies]
+nova-sd = { path = "../sd" }

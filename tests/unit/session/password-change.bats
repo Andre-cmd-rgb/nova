@@ -1,10 +1,22 @@
 #!/usr/bin/env bats
 
+# nova-password-change, Settings' Change Password, against a fake passwd that
+# asks as PAM does: on its terminal, flushing what was typed ahead, each
+# prompt in pieces. Its prompt matching and its diagnostics are in its Rust
+# tests too (cargo test).
+
 load ../test_helper
+
+setup_file() {
+  if command -v cargo >/dev/null; then
+    (cd "$REPO_ROOT" && cargo build --quiet --package nova-account)
+  fi
+}
 
 setup() {
   setup_scratch
-  helper=$REPO_ROOT/data/session/bin/nova-password-change
+  helper=${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/nova-password-change
+  [[ -x $helper ]] || skip "needs cargo, to build nova-password-change"
   mkdir "$SCRATCH/bin"
   export PATH="$SCRATCH/bin:$PATH" ARGV_LOG="$SCRATCH/arguments" NOVA_PASSWD="$SCRATCH/bin/passwd"
   cat >"$SCRATCH/bin/passwd" <<'PY'
@@ -14,12 +26,16 @@ import sys
 import termios
 import time
 
+with open(os.environ["ARGV_LOG"] + ".pid", "w") as pid:
+    pid.write(str(os.getpid()))
 with open(os.environ["ARGV_LOG"], "wb") as log:
     log.write(repr(sys.argv).encode())
     with open(f"/proc/{os.getppid()}/cmdline", "rb") as command:
         log.write(command.read())
 assert os.environ["LC_ALL"] == "C"
 assert len(sys.argv) == 1
+if os.environ.get("PASSWD_HANG"):
+    time.sleep(60)
 tty = open("/dev/tty", "w")
 tty_input = open("/dev/tty")
 
@@ -38,7 +54,8 @@ def ask(prompt):
     tty.flush()
     return answer
 
-current = ask("Current password: ")
+# An account without a password yet: passwd asks for the new one first.
+current = "old secret" if os.environ.get("PASSWD_NO_CURRENT") else ask("Current password: ")
 if current != "old secret":
     print("passwd: Authentication token manipulation error", flush=True)
     sys.exit(1)
@@ -105,4 +122,36 @@ change_password() { printf '%s\0' "$1" "$2" "$3" | "$helper"; }
   [ "$status" -eq 1 ]
   [ "$(jq -r .error <<<"$output")" = 'Enter all three passwords.' ]
   [ ! -e "$ARGV_LOG" ]
+}
+
+@test "a password with a control character in it does not start passwd" {
+  run change_password $'old\tsecret' 'new secret' 'new secret'
+  [ "$status" -eq 1 ]
+  [ "$(jq -r .error <<<"$output")" = 'That password contains unsupported characters or is too long.' ]
+  [ ! -e "$ARGV_LOG" ]
+}
+
+@test "an account without a password yet starts at the new one" {
+  PASSWD_NO_CURRENT=1 run change_password 'old secret' 'new secret' 'new secret'
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .ok <<<"$output")" = true ]
+}
+
+# Settings cancelling: passwd and its PAM session end with the helper, and
+# nothing is said.
+@test "cancelled, it ends passwd with it and says nothing" {
+  printf '%s\0' 'old secret' 'new secret' 'new secret' >"$SCRATCH/input"
+  PASSWD_HANG=1 "$helper" <"$SCRATCH/input" >"$SCRATCH/said" &
+  local helper_pid=$! passwd_pid status=0
+  for _ in $(seq 100); do
+    [[ -s $ARGV_LOG.pid ]] && break
+    sleep 0.05
+  done
+  passwd_pid=$(cat "$ARGV_LOG.pid")
+  running "$passwd_pid"
+  kill -TERM "$helper_pid"
+  wait "$helper_pid" || status=$?
+  [ "$status" -eq 1 ]
+  [ ! -s "$SCRATCH/said" ]
+  fails running "$passwd_pid"
 }
