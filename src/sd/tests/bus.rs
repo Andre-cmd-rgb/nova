@@ -2,7 +2,9 @@
 //! properties, signals, names and their owners, an exported object, and a
 //! file descriptor handed over.
 
+use std::cell::RefCell;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
@@ -394,4 +396,99 @@ fn a_call_with_no_answer_wanted_and_a_bus_that_goes() {
         assert!(Instant::now() < deadline);
     };
     assert!(error.is_disconnect(), "{error}");
+}
+
+#[test]
+fn a_call_answered_later_while_its_caller_goes_on() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    // One connection keeps the calls to Later and answers them when told;
+    // the other calls without waiting, and goes on dispatching meanwhile.
+    let server = Bus::connect(&private.address).unwrap();
+    let kept: Rc<RefCell<Vec<nova_sd::Deferred>>> = Rc::default();
+    let keep = kept.clone();
+    let _object = server
+        .export(
+            PATH,
+            vec![Interface::new(IFACE).method("Later", "s", "s")],
+            move |call: &Message, _: Vec<Value>| -> nova_sd::Result<Vec<Value>> {
+                keep.borrow_mut().push(call.defer()?);
+                // Not sent: the call is answered through what was kept.
+                Ok(vec![Value::str("not this")])
+            },
+        )
+        .unwrap();
+    let name = server.unique_name().unwrap();
+    let client = Bus::connect(&private.address).unwrap();
+    let answers: Rc<RefCell<Vec<nova_sd::Result<Vec<Value>>>>> = Rc::default();
+    for word in ["yes", "no"] {
+        let got = answers.clone();
+        client
+            .call_async(
+                &name,
+                PATH,
+                IFACE,
+                "Later",
+                &[Value::str(word)],
+                None,
+                move |answer| got.borrow_mut().push(answer),
+            )
+            .unwrap();
+    }
+    pump(&client, || {
+        server.dispatch().unwrap();
+        kept.borrow().len() == 2
+    });
+    assert!(
+        answers.borrow().is_empty(),
+        "nothing answered before the reply"
+    );
+    let mut calls = std::mem::take(&mut *kept.borrow_mut()).into_iter();
+    calls
+        .next()
+        .unwrap()
+        .reply(Ok(vec![Value::str("later")]))
+        .unwrap();
+    calls
+        .next()
+        .unwrap()
+        .reply(Err(Error::bus(
+            "org.nova.Test.Error.Refused",
+            "turned down",
+        )))
+        .unwrap();
+    server.flush().unwrap();
+    pump(&client, || answers.borrow().len() == 2);
+    let answers = answers.borrow();
+    assert_eq!(answers[0].as_ref().unwrap(), &vec![Value::str("later")]);
+    assert_eq!(
+        answers[1].as_ref().unwrap_err().name(),
+        Some("org.nova.Test.Error.Refused")
+    );
+}
+
+#[test]
+fn a_call_not_waited_for_says_how_it_failed() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    let bus = Bus::connect(&private.address).unwrap();
+    let failed: Rc<RefCell<Option<Error>>> = Rc::default();
+    let got = failed.clone();
+    bus.call_async(
+        "org.nova.Nobody",
+        PATH,
+        IFACE,
+        "Echo",
+        &[],
+        Some(Duration::from_secs(2)),
+        move |answer| *got.borrow_mut() = answer.err(),
+    )
+    .unwrap();
+    pump(&bus, || failed.borrow().is_some());
+    assert_eq!(
+        failed.borrow().as_ref().and_then(Error::name),
+        Some("org.freedesktop.DBus.Error.ServiceUnknown")
+    );
 }

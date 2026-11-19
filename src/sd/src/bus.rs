@@ -201,6 +201,57 @@ impl Bus {
         Message::borrowed(reply.0).args()
     }
 
+    /// Calls as `call_timeout` does, without waiting: <then> is run with the
+    /// answer inside a later `dispatch`, or with the error the call ended
+    /// with (a timeout, the connection gone). For a peer that calls back
+    /// before it answers, as BlueZ does: a call waited for would not answer
+    /// its call back meanwhile.
+    #[allow(clippy::too_many_arguments)]
+    pub fn call_async<F: FnOnce(Result<Vec<Value>>) + 'static>(
+        &self,
+        destination: &str,
+        path: &str,
+        interface: &str,
+        member: &str,
+        args: &[Value],
+        timeout: Option<Duration>,
+        then: F,
+    ) -> Result<()> {
+        let call = self.new_call(destination, path, interface, member)?;
+        call.append_all(args)?;
+        let usec = timeout.map_or(0, |t| (t.as_micros() as u64).max(1));
+        let callback: AnswerCallback = Some(Box::new(then));
+        let userdata = Box::into_raw(Box::new(callback)) as *mut c_void;
+        let mut slot = ptr::null_mut();
+        // SAFETY: a live bus, a call of ours, and userdata the trampoline knows the type of.
+        let r = unsafe {
+            ffi::sd_bus_call_async(
+                self.raw,
+                &mut slot,
+                call.0,
+                answer_trampoline,
+                userdata,
+                usec,
+            )
+        };
+        if r < 0 {
+            // SAFETY: the box made above, which sd-bus did not take.
+            drop(unsafe { Box::from_raw(userdata as *mut AnswerCallback) });
+            return Err(Error::Os {
+                errno: -r,
+                doing: "calling a method",
+            });
+        }
+        // SAFETY: the slot just made: the box goes with it, and the bus keeps
+        // it (floating) until the answer has been handled, so ours is let go.
+        unsafe {
+            ffi::sd_bus_slot_set_destroy_callback(slot, destroy::<AnswerCallback>);
+            ffi::sd_bus_slot_set_floating(slot, 1);
+            ffi::sd_bus_slot_unref(slot);
+        }
+        Ok(())
+    }
+
     /// Sends a method call and does not wait for, or want, an answer.
     pub fn call_no_reply(
         &self,
@@ -613,19 +664,89 @@ unsafe extern "C" fn match_trampoline(
     0
 }
 
+type AnswerCallback = Option<Box<dyn FnOnce(Result<Vec<Value>>)>>;
+
+unsafe extern "C" fn answer_trampoline(
+    m: *mut sd_bus_message,
+    userdata: *mut c_void,
+    _: *mut sd_bus_error,
+) -> c_int {
+    // SAFETY: the userdata is the callback call_async put there, alive while its slot is.
+    let Some(callback) = (unsafe { &mut *(userdata as *mut AnswerCallback) }).take() else {
+        return 0;
+    };
+    // SAFETY: a live message; an error's strings are the message's.
+    let error = unsafe { ffi::sd_bus_message_get_error(m) };
+    let answer = if error.is_null() {
+        Message::borrowed(m).args()
+    } else {
+        let text = |p: *const c_char| {
+            if p.is_null() {
+                String::new()
+            } else {
+                // SAFETY: NUL-terminated, and the message's while it lives.
+                unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned()
+            }
+        };
+        // SAFETY: a non-null error of the message's.
+        let error = unsafe { &*error };
+        Err(Error::Bus {
+            name: text(error.name),
+            message: text(error.message),
+        })
+    };
+    callback(answer);
+    0
+}
+
 /// A message sd-bus handed over: valid while the callback that got it runs,
 /// or while the call's answer it is lives.
 pub struct Message<'a> {
     raw: *mut sd_bus_message,
+    deferred: std::cell::Cell<bool>,
     _life: PhantomData<&'a sd_bus_message>,
+}
+
+/// A method call kept to be answered later, once, with `reply`.
+pub struct Deferred(OwnedMessage);
+
+impl Deferred {
+    /// Answers the call kept: with its values, or with an error.
+    pub fn reply(self, answer: Result<Vec<Value>>) -> Result<()> {
+        match send_answer(self.0 .0, &answer) {
+            r if r < 0 => Err(Error::Os {
+                errno: -r,
+                doing: "answering a call",
+            }),
+            _ => Ok(()),
+        }
+    }
 }
 
 impl<'a> Message<'a> {
     fn borrowed(raw: *mut sd_bus_message) -> Message<'a> {
         Message {
             raw,
+            deferred: std::cell::Cell::new(false),
             _life: PhantomData,
         }
+    }
+
+    /// Keeps a method call that an exported object's handler is given, to
+    /// answer it later (a question the user is asked first): what the
+    /// handler returns then is not sent.
+    pub fn defer(&self) -> Result<Deferred> {
+        if !self.is_method_call() {
+            return Err(Error::Os {
+                errno: 22,
+                doing: "keeping a call to answer later",
+            });
+        }
+        self.deferred.set(true);
+        // SAFETY: a live message, of which this takes a reference of its own.
+        Ok(Deferred(OwnedMessage(unsafe {
+            ffi::sd_bus_message_ref(self.raw)
+        })))
     }
 
     fn text(&self, p: *const c_char) -> Option<&'a str> {
@@ -1226,12 +1347,20 @@ unsafe extern "C" fn object_trampoline(
     let Some(answer) = state.answer(&call) else {
         return 0;
     };
+    if call.deferred.get() {
+        return 1;
+    }
+    send_answer(m, &answer)
+}
+
+/// Answers the method call <m> with <answer>; what sd-bus's callbacks return.
+fn send_answer(m: *mut sd_bus_message, answer: &Result<Vec<Value>>) -> c_int {
     // SAFETY: a live message.
     if unsafe { ffi::sd_bus_message_get_expect_reply(m) } <= 0 {
         return 1;
     }
     let mut reply = ptr::null_mut();
-    let made = match &answer {
+    let made = match answer {
         // SAFETY: a method call, and a valid out-pointer.
         Ok(_) => unsafe { ffi::sd_bus_message_new_method_return(m, &mut reply) },
         Err(error) => {
@@ -1258,12 +1387,12 @@ unsafe extern "C" fn object_trampoline(
         return made;
     }
     let reply = OwnedMessage(reply);
-    if let Ok(values) = &answer {
+    if let Ok(values) = answer {
         if let Err(Error::Os { errno, .. }) = reply.append_all(values) {
             return -errno;
         }
     }
-    let bus = call.bus();
+    let bus = Message::borrowed(m).bus();
     match bus.send(&reply) {
         Ok(()) => 1,
         Err(Error::Os { errno, .. }) => -errno,

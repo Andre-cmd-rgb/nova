@@ -26,7 +26,7 @@ pub mod testing;
 mod value;
 
 pub use bus::{
-    rule, Bus, Handler, Interface, Message, Slot, ERROR_FAILED, ERROR_INVALID_ARGS,
+    rule, Bus, Deferred, Handler, Interface, Message, Slot, ERROR_FAILED, ERROR_INVALID_ARGS,
     ERROR_NAME_HAS_NO_OWNER, ERROR_PROPERTY_READ_ONLY, ERROR_UNKNOWN_INTERFACE,
     ERROR_UNKNOWN_PROPERTY, NAME_ALLOW_REPLACEMENT, NAME_QUEUE, NAME_REPLACE_EXISTING,
 };

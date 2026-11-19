@@ -76,6 +76,14 @@ extern "C" {
         reply: *mut *mut sd_bus_message,
     ) -> c_int;
     pub fn sd_bus_send(bus: *mut sd_bus, m: *mut sd_bus_message, cookie: *mut u64) -> c_int;
+    pub fn sd_bus_call_async(
+        bus: *mut sd_bus,
+        slot: *mut *mut sd_bus_slot,
+        m: *mut sd_bus_message,
+        callback: sd_bus_message_handler_t,
+        userdata: *mut c_void,
+        usec: u64,
+    ) -> c_int;
     pub fn sd_bus_add_match(
         bus: *mut sd_bus,
         slot: *mut *mut sd_bus_slot,
@@ -94,6 +102,7 @@ extern "C" {
     pub fn sd_bus_release_name(bus: *mut sd_bus, name: *const c_char) -> c_int;
 
     pub fn sd_bus_slot_unref(slot: *mut sd_bus_slot) -> *mut sd_bus_slot;
+    pub fn sd_bus_slot_set_floating(slot: *mut sd_bus_slot, b: c_int) -> c_int;
     pub fn sd_bus_slot_set_destroy_callback(
         slot: *mut sd_bus_slot,
         callback: sd_bus_destroy_t,
@@ -126,6 +135,8 @@ extern "C" {
         ...
     ) -> c_int;
     pub fn sd_bus_message_unref(m: *mut sd_bus_message) -> *mut sd_bus_message;
+    pub fn sd_bus_message_ref(m: *mut sd_bus_message) -> *mut sd_bus_message;
+    pub fn sd_bus_message_get_error(m: *mut sd_bus_message) -> *const sd_bus_error;
     pub fn sd_bus_message_get_bus(m: *mut sd_bus_message) -> *mut sd_bus;
     pub fn sd_bus_message_get_type(m: *mut sd_bus_message, type_: *mut u8) -> c_int;
     pub fn sd_bus_message_get_expect_reply(m: *mut sd_bus_message) -> c_int;
