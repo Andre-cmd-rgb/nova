@@ -33,6 +33,20 @@ QtObject {
   readonly property var roles: ({ foreground: "foreground", text: "foreground", accent: "accent", urgent: "urgent",
     muted: "muted", background: "background" })
 
+  // The theme's hues by name, for what is told apart by colour (a calendar):
+  // red, orange, yellow, green, cyan, blue and magenta, the terminal's
+  // colours where the theme names no other. A theme without orange has it
+  // between its red and its yellow; these until colors.toml is read, and
+  // for what it leaves out.
+  readonly property var defaultHues: ({ red: "#c46a6a", orange: "#c98d5e", yellow: "#c9b26a", green: "#86a86e",
+    cyan: "#6aaaa8", blue: "#6f93c4", magenta: "#a681bd" })
+  property var hues: defaultHues
+
+  // A hue by its name, or the accent ("accent", or one the theme has not).
+  function hue(name) {
+    return hues[name] || accent
+  }
+
   // "section.key" -> the value's text, the user's shell.toml over the
   // theme's. It is replaced, never changed in place, so that all that is
   // read from it is worked out again.
@@ -54,6 +68,14 @@ QtObject {
     }
     if (named.red) urgent = named.red
     muted = named.muted || named.color8 || foreground
+    const found = {}
+    for (const [hueName, terminal] of [["red", "color1"], ["green", "color2"], ["yellow", "color3"], ["blue", "color4"], ["magenta", "color5"], ["cyan", "color6"]]) {
+      const value = named[hueName] || named[terminal]
+      if (value) found[hueName] = value
+    }
+    found.orange = named.orange || (found.red && found.yellow ? Qt.tint(found.red, Qt.alpha(found.yellow, 0.5)) : undefined)
+    if (!found.orange) delete found.orange
+    hues = Object.assign({}, defaultHues, found)
   }
 
   function loadShell(raw) {
