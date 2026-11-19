@@ -293,4 +293,5 @@ recording() { # <seconds>: that much of a recording, of noise
   grep -qF "setup     download the speech model ($size)" "$script"
   grep -qF "modelSize: \"$size\"" "$REPO_ROOT/src/shell/plugins/dictation/Dictation.qml"
   grep -qF "the speech model, $size," "$REPO_ROOT/README.md"
+  grep -qF "the speech model, $size," "$REPO_ROOT/site/index.html"
 }

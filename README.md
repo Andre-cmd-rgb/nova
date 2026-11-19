@@ -15,7 +15,7 @@
 - **Space in Files** shows a file in a Quick Look window: a photo, the first page of a PDF, a frame of a video, the start of a text.
 - **A calendar** of events and tasks, on your computer, kept in step both ways with iCloud or any CalDAV calendar.
 - **Your iPhone, with nothing installed on it.** It sends photos and files to the computer with AirDrop, and opening its share sheet is enough to switch AirDrop on. Its notifications can show on the computer too.
-- **Dictation.** Hold Super+D and speak: the words appear where you type. It runs on your computer; nothing you say leaves it.
+- **Dictation.** Hold Super+D and speak: the words appear where you type. It runs on your computer, so nothing you say leaves it; the speech model, 669 MB, is downloaded once, at the first use.
 - **Updates you can undo.** A release every two weeks, tested before you get it, with a snapshot before each update to go back to.
 - **An installer stick** that can carry your files over, install without internet, or hold a whole Nova to start any PC from.
 
