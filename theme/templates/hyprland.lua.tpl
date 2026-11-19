@@ -9,3 +9,17 @@ hl.config({
   general = { col = { active_border = focused, inactive_border = unfocused } },
   group = { col = { border_active = focused, border_inactive = unfocused } },
 })
+
+-- A group's tab bar sits over the wallpaper, where white text on a light
+-- shade read only on a dark one. Its tabs are the theme's background, nearly
+-- solid as the shell's cards are, under the theme's text: quieter for the
+-- windows not in view.
+hl.config({
+  group = {
+    groupbar = {
+      text_color = "rgb({{ foreground_strip }})",
+      text_color_inactive = "rgb({{ mix_strip foreground background 40% }})",
+      col = { active = "rgba({{ background_strip }}f2)", inactive = "rgba({{ background_strip }}cc)" },
+    },
+  },
+})

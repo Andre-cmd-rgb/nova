@@ -27,8 +27,8 @@ hl.config({
     blur = { enabled = true, size = 8, passes = 3 },
   },
 
-  -- The tab bar of a group: a tab a gradient, its title in white, bold for
-  -- the window in view.
+  -- The tab bar of a group: a tab a gradient, its title bold for the window
+  -- in view. Its colours are the theme's (theme/templates/hyprland.lua.tpl).
   group = {
     col = { border_active = border, border_inactive = inactive_border },
     groupbar = {
@@ -36,7 +36,6 @@ hl.config({
       font_size = 12,
       font_family = "monospace",
       font_weight_active = "ultraheavy",
-      text_color_inactive = "rgba(ffffff90)",
       indicator_height = 1,
       indicator_gap = 5,
       gaps_in = 5,
@@ -44,7 +43,6 @@ hl.config({
       gradients = true,
       gradient_rounding = 0,
       gradient_round_only_edges = false,
-      col = { active = "rgba(00000040)", inactive = "rgba(00000020)" },
     },
   },
 })
