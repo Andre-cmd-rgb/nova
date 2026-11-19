@@ -88,6 +88,24 @@ probe() {
   check "the session at rest fits its memory budget ($((session_kb / 1024)) of $budget MB)" \
     test "$((session_kb / 1024))" -le "$budget"
 
+  # Nova's programs that stay running are Rust or the shell: a Python one
+  # costs 15 to 20 MB for each, where the Rust that replaced them takes 1.
+  # Only helpers that end, the calendar's sync, are Python still. Read from
+  # /proc: the probe is root, and the user's processes are the account's.
+  nova_on_python() {
+    local cmdline argv arg found=""
+    for cmdline in /proc/[0-9]*/cmdline; do
+      [[ $(stat -c %u "$cmdline" 2>/dev/null) == "$uid" ]] || continue
+      mapfile -d '' -t argv <"$cmdline" 2>/dev/null || continue
+      [[ ${argv[0]:-} == *python* ]] || continue
+      for arg in "${argv[@]:1}"; do
+        [[ $arg == /usr/lib/nova/* || $arg == /usr/share/nova/* || $arg == /usr/bin/nova* ]] && found+=" ${arg##*/}"
+      done
+    done
+    [[ -z $found ]] || { echo "on Python:$found"; return 1; }
+  }
+  check "no program of Nova's runs on Python in the session" nova_on_python
+
   # A config error is a red banner across the top of the desktop. A clean config
   # reports one empty string.
   signature=$(find "/run/user/$uid/hypr" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -n 1)
