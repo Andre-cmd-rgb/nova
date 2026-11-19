@@ -110,3 +110,24 @@ fn matched_entries_from_the_end_on_as_they_are_written() {
     assert!(journal.realtime_usec().unwrap() > 1_700_000_000_000_000);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn chosen_files_and_no_others() {
+    if !Path::new(REMOTE).exists() {
+        eprintln!("skipped: no systemd-journal-remote to write a journal with");
+        return;
+    }
+    let dir = scratch("journal-files");
+    write(&dir, 0, &[&[("MESSAGE", "kept"), ("N", "1")]]);
+    std::fs::rename(dir.join("test.journal"), dir.join("chosen.journal")).unwrap();
+    write(&dir, 1, &[&[("MESSAGE", "another file's"), ("N", "2")]]);
+    let mut journal = Journal::open_files(&[&dir.join("chosen.journal")]).unwrap();
+    journal.seek_head().unwrap();
+    let mut seen = Vec::new();
+    while journal.next_entry().unwrap() {
+        seen.push(journal.field("N").unwrap().unwrap());
+    }
+    assert_eq!(seen, vec!["1"]);
+    assert!(Journal::open_files(&[&dir.join("missing.journal")]).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
+}

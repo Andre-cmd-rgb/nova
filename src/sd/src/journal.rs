@@ -49,6 +49,29 @@ impl Journal {
         Ok(Journal { raw })
     }
 
+    /// These journal files, and no others: a file journald starts in their
+    /// place (a rotation) is not followed into; `process` says
+    /// `Invalidated` as one goes, for the caller to open the new one.
+    pub fn open_files(files: &[&Path]) -> Result<Journal> {
+        let paths = files
+            .iter()
+            .map(|f| CString::new(f.as_os_str().as_encoded_bytes()))
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| Error::Os {
+                errno: 22,
+                doing: "a journal file",
+            })?;
+        let mut pointers: Vec<*const std::ffi::c_char> = paths.iter().map(|p| p.as_ptr()).collect();
+        pointers.push(ptr::null());
+        let mut raw = ptr::null_mut();
+        // SAFETY: a valid out-pointer and a NULL-terminated array of NUL-terminated paths.
+        check(
+            unsafe { ffi::sd_journal_open_files(&mut raw, pointers.as_ptr(), 0) },
+            "opening the journal",
+        )?;
+        Ok(Journal { raw })
+    }
+
     /// The journal files in <directory>: for tests.
     pub fn open_directory(directory: &Path) -> Result<Journal> {
         let path =

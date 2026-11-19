@@ -168,6 +168,11 @@ extern "C" {
     pub fn sd_bus_error_free(e: *mut sd_bus_error);
 
     pub fn sd_journal_open(ret: *mut *mut sd_journal, flags: c_int) -> c_int;
+    pub fn sd_journal_open_files(
+        ret: *mut *mut sd_journal,
+        paths: *const *const c_char,
+        flags: c_int,
+    ) -> c_int;
     pub fn sd_journal_open_directory(
         ret: *mut *mut sd_journal,
         path: *const c_char,
