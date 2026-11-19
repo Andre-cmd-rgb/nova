@@ -46,6 +46,13 @@
 # same as the computer. Deleted on one side and changed on the other, the
 # change wins.
 #
+# What looks broken deletes nothing. A file gone, emptied, or with most of
+# its items gone at once (FEW) sends nothing, and gets the server's items
+# back. A calendar the server stops listing goes, unless its file has changes
+# not yet sent: then it stays, marked gone, until the server lists it again or
+# the account is removed. An item the server leaves out of an answer is not
+# taken as deleted; only a 404 says so.
+#
 # The shell writes a calendar's file whole, and may write it while a sync
 # runs: the file is replaced by swapping it with the new one
 # (renameat2 RENAME_EXCHANGE), and what was swapped out is checked to be what
@@ -98,6 +105,9 @@ GOOGLE_CALDAV = os.environ.get("NOVA_CALENDAR_GOOGLE_CALDAV") or "https://apidat
 GOOGLE_SCOPE = "openid email https://www.googleapis.com/auth/calendar"
 SIGN_IN_SECONDS = int(os.environ.get("NOVA_CALENDAR_SIGN_IN_SECONDS") or 300)
 TIMEOUT = float(os.environ.get("NOVA_CALENDAR_TIMEOUT") or 30)
+# The longest an account's or a subscription's sync goes on: a server that
+# answers a byte at a time does not hold the sync, and its lock, for hours.
+SYNC_SECONDS = float(os.environ.get("NOVA_CALENDAR_SYNC_SECONDS") or 600)
 MAX_BYTES = 64 * 1024 * 1024
 SECRET_SERVICE = "nova-calendar"
 
@@ -549,6 +559,8 @@ def swap_in(path, text, expected):
         try:
             renameat2(tmp, path, 2)  # RENAME_EXCHANGE
         except OSError as e:
+            if e.errno == errno.ENOENT:
+                return None  # deleted meanwhile: it stays so
             if e.errno not in (errno.ENOSYS, errno.EINVAL):
                 raise
             current = read_file(path)
@@ -698,6 +710,34 @@ def loopback(host):
     return host in ("localhost", "127.0.0.1", "::1") or (host or "").startswith("127.")
 
 
+def origin(url):
+    u = urllib.parse.urlsplit(url)
+    try:
+        return u.scheme, u.hostname, u.port or (443 if u.scheme == "https" else 80)
+    except ValueError:
+        raise SyncError("error", "That is not a web address.")
+
+
+def host_of(url):
+    scheme, host, port = origin(url)
+    return host if port == (443 if scheme == "https" else 80) else "%s:%d" % (host, port)
+
+
+# iCloud's CalDAV address, and the partitions of it accounts are on: the
+# calendar home it names is at pNN-caldav.icloud.com.
+ICLOUD_HOSTS = re.compile(r"(?:p[0-9]+-)?caldav\.icloud\.com")
+
+
+def same_server(a, b):
+    """Whether what goes to the server at <a> may go to <b>: the same scheme,
+    host and port; the same host over TLS where <a> is plain HTTP; or two of
+    iCloud's CalDAV hosts, over TLS."""
+    a, b = origin(a), origin(b)
+    if a == b or (a[1] == b[1] and a[0] == "http" and a[2] == 80 and b[0] == "https" and b[2] == 443):
+        return True
+    return a[0] == b[0] == "https" and a[2] == b[2] == 443 and all(ICLOUD_HOSTS.fullmatch(o[1] or "") for o in (a, b))
+
+
 class Response:
     def __init__(self, status, headers, body, url):
         self.status, self.headers, self.body, self.url = status, headers, body, url
@@ -707,12 +747,15 @@ class Response:
 
 
 class Http:
-    """Requests to a server, its connections kept open, its redirects
-    followed for any method. A password goes only over TLS, or to this
-    computer."""
+    """Requests to the server at <origin>, its connections kept open, its
+    redirects followed for any method, for SYNC_SECONDS at most. The
+    password goes only to that server (same_server), and only over TLS or to
+    this computer: an address on another server is refused, and so is a
+    redirect to one but for a GET, which is followed without the password."""
 
-    def __init__(self, auth=None):
-        self.auth = auth
+    def __init__(self, auth, origin):
+        self.auth, self.origin = auth, origin
+        self.deadline = time.monotonic() + SYNC_SECONDS
         self.conns = {}
         self.context = ssl.create_default_context()
 
@@ -732,15 +775,33 @@ class Http:
             conn.close()
         self.conns = {}
 
+    def read(self, resp):
+        """An answer's body, read as it comes, so that one sent slowly is
+        stopped at the time limit."""
+        parts, size = [], 0
+        while True:
+            part = resp.read1(1 << 16)
+            if not part:
+                return b"".join(parts)
+            parts.append(part)
+            size += len(part)
+            if size > MAX_BYTES:
+                raise SyncError("error", "The server sent too much.")
+            if time.monotonic() > self.deadline:
+                raise SyncError("error", "The server took too long to answer.")
+
     def request(self, method, url, body=None, headers=None, retried=False):
+        if not same_server(self.origin, url):
+            raise SyncError("error", "The server sent the Calendar to another server, %s." % host_of(url))
         refreshed = False
         for _ in range(8):
             u = urllib.parse.urlsplit(url)
             if u.scheme not in ("http", "https") or not u.hostname:
                 raise SyncError("error", "That is not a web address.")
+            own = same_server(self.origin, url)
             h = {"User-Agent": "Nova-Calendar/1"}
             h.update(headers or {})
-            if self.auth and (u.scheme == "https" or loopback(u.hostname)):
+            if self.auth and own and (u.scheme == "https" or loopback(u.hostname)):
                 value = self.auth.header()
                 if value:
                     h["Authorization"] = value
@@ -750,9 +811,15 @@ class Http:
             path = (u.path or "/") + ("?" + u.query if u.query else "")
             conn = self.connection(u)
             try:
+                if time.monotonic() > self.deadline:
+                    raise SyncError("error", "The server took too long to answer.")
                 conn.request(method, path, data, h)
                 resp = conn.getresponse()
-                content = resp.read(MAX_BYTES + 1)
+                content = self.read(resp)
+            except SyncError:
+                conn.close()
+                self.conns.pop((u.scheme, u.hostname, u.port), None)
+                raise
             except (OSError, http.client.HTTPException) as e:
                 conn.close()
                 self.conns.pop((u.scheme, u.hostname, u.port), None)
@@ -762,14 +829,16 @@ class Http:
                 if isinstance(e, ssl.SSLCertVerificationError):
                     raise SyncError("error", "The server's certificate is not trusted.")
                 raise SyncError("offline", "The server could not be reached.")
-            if len(content) > MAX_BYTES:
-                raise SyncError("error", "The server sent too much.")
             headers_in = {k.lower(): v for k, v in resp.getheaders()}
             if resp.status in (301, 302, 303, 307, 308) and headers_in.get("location"):
                 url = urllib.parse.urljoin(url, headers_in["location"])
                 if resp.status == 303:
                     method, body = "GET", None
+                if body is not None and not same_server(self.origin, url):
+                    raise SyncError("error", "The server sent the Calendar to another server, %s." % host_of(url))
                 continue
+            if resp.status == 401 and self.auth and not own:
+                raise SyncError("error", "The server sent the Calendar to another server, %s." % host_of(url))
             if resp.status == 401 and self.auth and not refreshed and self.auth.refresh():
                 refreshed = True
                 continue
@@ -810,7 +879,8 @@ def check(resp, what):
 
 
 def multistatus(resp):
-    """[(href, status, {prop: element})] of a 207, the href absolute."""
+    """[(href, status, {prop: element})] of a 207, the href absolute; one on
+    another server is left out."""
     try:
         root = ET.fromstring(resp.body)
     except ET.ParseError:
@@ -821,6 +891,8 @@ def multistatus(resp):
         if not href:
             continue
         href = urllib.parse.urljoin(resp.url, href.strip())
+        if not same_server(resp.url, href):
+            continue
         status = r.findtext(qname(DAV, "status")) or ""
         props = {}
         for ps in r.findall(qname(DAV, "propstat")):
@@ -966,7 +1038,7 @@ def google_client():
 
 
 def form_post(url, fields):
-    resp = Http().request("POST", url, urllib.parse.urlencode(fields), {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
+    resp = Http(None, url).request("POST", url, urllib.parse.urlencode(fields), {"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"})
     try:
         answer = json.loads(resp.body or b"{}")
     except ValueError:
@@ -1157,6 +1229,11 @@ def copy_of(group):
     return uid, out
 
 
+# A calendar of more items than this losing more than half of them in one
+# sync is taken to be a broken file, not deletions.
+FEW = 5
+
+
 def resource_name(uid):
     if re.fullmatch(r"[A-Za-z0-9._@\-]{1,120}", uid):
         return urllib.parse.quote(uid, safe="@") + ".ics"
@@ -1234,8 +1311,9 @@ class CalendarSync:
         return changed, deleted
 
     def fetch(self, hrefs):
-        """{key: (href, etag, text)}, by calendar-multiget (RFC 4791)."""
-        out = {}
+        """{key: (href, etag, text)}, by calendar-multiget (RFC 4791), and
+        the keys the server says are gone (404)."""
+        out, gone = {}, set()
         hrefs = list(hrefs)
         for i in range(0, len(hrefs), 100):
             body = ('<?xml version="1.0" encoding="utf-8"?><c:calendar-multiget %s><d:prop><d:getetag/><c:calendar-data/></d:prop>%s'
@@ -1247,7 +1325,9 @@ class CalendarSync:
                 data = props.get(qname(CALDAV, "calendar-data"))
                 if data is not None and data.text:
                     out[href_key(h)] = (h, text_of(props, qname(DAV, "getetag")), data.text)
-        return out
+                elif " 404" in status:
+                    gone.add(href_key(h))
+        return out, gone
 
     def get(self, href):
         resp = self.http.request("GET", href, None, {"Accept": "text/calendar"})
@@ -1296,27 +1376,37 @@ class CalendarSync:
             check(resp, "write")
 
     def run(self):
+        before = self.state.get("token"), self.state.get("ctag")
         changed, deleted = self.remote_changes()
-        fetched = self.fetch(changed.values()) if changed else {}
-        for k in changed:
-            if k not in fetched:
-                deleted.add(k)
-        text = read_file(self.path)
-        for _ in range(6):
-            merged = self.merge(text, fetched, deleted)
-            fetched, deleted = {}, set()
-            if merged == text:
-                break
-            text = swap_in(self.path, merged, text)
-            if text is None:
-                break
+        fetched, gone = self.fetch(changed.values()) if changed else ({}, set())
+        deleted |= gone
+        if any(k not in fetched and k not in gone for k in changed):
+            # An item the server left out of its answer stays as it is
+            # here, and is asked for again at the next sync.
+            self.state["token"], self.state["ctag"] = before
+        try:
+            text = read_file(self.path)
+            for _ in range(6):
+                merged = self.merge(text, fetched, deleted)
+                fetched, deleted = {}, set()
+                if merged == text:
+                    break
+                text = swap_in(self.path, merged, text)
+                if text is None:
+                    break
+        except OSError:
+            raise SyncError("error", "The file of %s could not be read or written." % self.cal["name"])
         save_state(self.cal["id"], self.state)
         if self.error:
             raise self.error
 
     def merge(self, text, fetched, deleted):
         root = parse(text or "")
+        damaged = not any(c.name == "VCALENDAR" for c in root.children)
         cal = calendar_of(root)
+        for c in cal.children:
+            if c.name in ITEMS and not unescape(value(c, "UID")).strip():
+                set_line(c, "UID", "%s@nova" % uuid.uuid4())  # sent as a new item
         local = groups(cal)
         self.pool.update({k: v for k, v in timezones(cal).items() if k not in self.pool})
         result = dict(local)
@@ -1362,6 +1452,18 @@ class CalendarSync:
             if mine is None or same_group(mine, base) or not writable or same_group(mine, parse_group(entry.get("prev"))):
                 result.pop(entry["uid"], None)
             # Else changed here: it stays, and is sent again as a new item.
+
+        # A file gone, emptied, or with most of its items gone at once is
+        # more likely broken than edited: nothing is sent, and what it lost
+        # comes back as the server has it.
+        lost = [e for e in self.items.values() if e["uid"] not in result]
+        if writable and lost and (damaged or (len(self.items) > FEW and 2 * len(lost) > len(self.items))):
+            for e in lost:
+                result[e["uid"]] = parse_group(e["base"])
+            known = {e["uid"]: e for e in self.items.values()}
+            self.pending = len([u for u, g in result.items() if u not in known or not same_group(g, parse_group(known[u]["base"]))])
+            self.error = SyncError("error", "Most of %s was missing on this computer. It was not deleted on the server, and is back." % self.cal["name"])
+            return self.write(cal, result, local)
 
         # This computer's changes, sent.
         self.pending = 0
@@ -1530,8 +1632,13 @@ def add_calendars(config, account, found):
 
 def refresh_calendars(http, account):
     """New calendars made on the phone or the web come in, those deleted
-    there go, and a name changed there follows unless it was changed here."""
+    there go, and a name changed there follows unless it was changed here.
+    One gone from the server with changes made here not sent stays, marked
+    gone, and syncs again if it comes back."""
     found = list_calendars(http, account["home"])
+    if not found:
+        # Never so: a server's answer gone wrong.
+        raise SyncError("error", "The server listed none of the account's calendars.")
     with ConfigEdit() as config:
         mine = [c for c in config["calendars"] if c.get("account") == account["id"]]
         by_href = {href_key(c["href"]): c for c in mine}
@@ -1546,9 +1653,21 @@ def refresh_calendars(http, account):
                 continue
             if c.get("name") == c.get("serverName"):
                 c["name"] = info["name"]
+            c.pop("gone", None)
             c.update({"serverName": info["name"], "readOnly": info["readOnly"], "events": info["events"], "tasks": info["tasks"], "href": info["href"]})
         add_calendars(config, account, new)
-        gone = [c for c in mine if href_key(c["href"]) not in seen]
+        gone = []
+        for c in mine:
+            if href_key(c["href"]) in seen:
+                continue
+            try:
+                kept = CalendarSync(None, c).count_pending() > 0
+            except OSError:
+                kept = True
+            if kept:
+                c["gone"] = True
+            else:
+                gone.append(c)
         config["calendars"] = [c for c in config["calendars"] if c not in gone]
         calendars = [dict(c) for c in config["calendars"] if c.get("account") == account["id"]]
     for c in gone:
@@ -1568,16 +1687,30 @@ def forget_calendar(c):
 
 
 def sync_account(account):
-    """The changes left to send, once the account's calendars are synced."""
-    http = Http(account_auth(account))
+    """The changes left to send, once the account's calendars are synced;
+    one calendar failing does not stop the others."""
+    http = Http(account_auth(account), account["url"])
     calendars = [c for c in load_config()["calendars"] if c.get("account") == account["id"]]
     pending = 0
+    failed = None
     try:
         calendars = refresh_calendars(http, account)
         for cal in calendars:
             job = CalendarSync(http, cal)
-            job.run()
+            if cal.get("gone"):
+                pending += job.count_pending()
+                failed = failed or SyncError("error", "%s is gone from the server. The changes made to it here are kept on this computer." % cal["name"])
+                continue
+            try:
+                job.run()
+            except SyncError as e:
+                if e.kind != "error":
+                    raise
+                failed = failed or e
             pending += job.pending
+        if failed:
+            failed.pending = pending
+            raise failed
         return pending
     except SyncError as e:
         if e.kind == "offline":
@@ -1597,7 +1730,7 @@ def sync_subscription(cal):
             headers["If-None-Match"] = state["etag"]
         if state.get("modified"):
             headers["If-Modified-Since"] = state["modified"]
-    http = Http(url_auth(url))
+    http = Http(url_auth(url), url)
     try:
         resp = http.request("GET", plain_url(url), None, headers)
     finally:
@@ -1694,7 +1827,7 @@ def cmd_add():
         name = "iCloud" if kind == "icloud" else u.hostname
     else:
         raise SyncError("error", "The account's type is not one the Calendar knows.")
-    http = Http(auth)
+    http = Http(auth, url)
     try:
         try:
             found = discover(http, url)
@@ -1727,7 +1860,7 @@ def cmd_subscribe():
     request = read_request()
     url = normalize_url(request.get("url"), webcal=True)
     host = urllib.parse.urlsplit(url).hostname
-    http = Http(url_auth(url))
+    http = Http(url_auth(url), url)
     try:
         resp = http.request("GET", plain_url(url), None, {"Accept": "text/calendar"})
     finally:
@@ -1753,20 +1886,22 @@ def cmd_subscribe():
 
 
 def cmd_remove(target):
-    with ConfigEdit() as config:
-        account = next((a for a in config["accounts"] if a["id"] == target), None)
-        if account:
-            gone = [c for c in config["calendars"] if c.get("account") == target]
-            config["accounts"].remove(account)
-        else:
-            gone = [c for c in config["calendars"] if c["id"] == target and c.get("kind") == "subscription"]
-            if not gone:
-                raise SyncError("error", "There is no account or subscription '%s'." % target)
-        config["calendars"] = [c for c in config["calendars"] if c not in gone]
-    secret_clear(target)
-    for c in gone:
-        forget_calendar(c)
-    save_status(target, None)
+    # After a sync running now, which would write the calendars back.
+    with Lock("sync.lock"):
+        with ConfigEdit() as config:
+            account = next((a for a in config["accounts"] if a["id"] == target), None)
+            if account:
+                gone = [c for c in config["calendars"] if c.get("account") == target]
+                config["accounts"].remove(account)
+            else:
+                gone = [c for c in config["calendars"] if c["id"] == target and c.get("kind") == "subscription"]
+                if not gone:
+                    raise SyncError("error", "There is no account or subscription '%s'." % target)
+            config["calendars"] = [c for c in config["calendars"] if c not in gone]
+        secret_clear(target)
+        for c in gone:
+            forget_calendar(c)
+        save_status(target, None)
 
 
 def cmd_set(target, pairs):
@@ -1804,9 +1939,15 @@ def cmd_sync(only):
                 failed = failed or e.kind != "offline"
             save_status(key, status)
         # The files and states of calendars no longer in the list, read
-        # again now: one added meanwhile is in it.
+        # again now: one added meanwhile is in it. Without a list, or with
+        # one that cannot be read, nothing goes.
         with Lock("config.lock"):
-            known = {c["id"] for c in load_config()["calendars"]}
+            try:
+                known = {c.get("id") for c in load_config()["calendars"]} if os.path.exists(CONFIG_PATH) else None
+            except SyncError:
+                known = None
+            if known is None:
+                return 1 if failed else 0
             for folder, ext in ((DATA_DIR, ".ics"), (STATE_DIR, ".json")):
                 for name in os.listdir(folder):
                     stem = name[:-len(ext)]

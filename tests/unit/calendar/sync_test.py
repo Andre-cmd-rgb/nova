@@ -255,8 +255,11 @@ class Computer:
         with open(path, "w", newline="") as f:
             f.write(ncs.serialize(root.children))
 
-    def add(self, server, name=None):
-        done = self.run("add", request={"type": "caldav", "url": server.url, "user": server.user, "password": server.password})
+    def add_quietly(self, server):
+        return self.run("add", request={"type": "caldav", "url": server.url, "user": server.user, "password": server.password})
+
+    def add(self, server):
+        done = self.add_quietly(server)
         check(done.returncode == 0, "the account is added (%s)" % done.stderr.strip())
         return json.loads(done.stdout or "{}")
 
@@ -317,8 +320,6 @@ ROME = ("BEGIN:VTIMEZONE\r\nTZID:Europe/Rome\r\nBEGIN:DAYLIGHT\r\nTZOFFSETFROM:+
 
 def scenario_discovery(pc):
     server = server_for(pc.dir)
-    if not server.radicale:
-        server.fake.home_host = "localhost"  # the home on another host, as iCloud has it
     server.make_calendar("home", "Home", ("VEVENT", "VTODO"), "#FF2968FF")
     server.make_calendar("work", "Work", ("VEVENT",), "#1BADF8FF")
     bad = pc.run("add", request={"type": "caldav", "url": server.url, "user": server.user, "password": "wrong"})
@@ -336,7 +337,6 @@ def scenario_discovery(pc):
     check(home["shown"] and work["shown"], "found calendars are shown")
     if not server.radicale:
         check(("PROPFIND", "/.well-known/caldav") in server.fake.log, "a server's address is looked up at /.well-known/caldav first")
-        check(home["href"].startswith("http://localhost:"), "the calendar home on another host is followed")
     text = open(os.path.join(pc.home, ".config/nova/calendars.json")).read()
     check(server.password not in text, "the password is not in the calendar list")
     check(any(server.password == v for v in pc.secrets().values()), "it is in the keyring")
@@ -616,8 +616,15 @@ def scenario_google(pc):
 
 
 def scenario_icloud(pc):
+    same = ncs.same_server
+    check(same("https://caldav.icloud.com/", "https://p42-caldav.icloud.com:443/123/calendars/"), "iCloud's password goes on to the partition its calendar home is on")
+    check(same("https://p42-caldav.icloud.com/", "https://p07-caldav.icloud.com/123/") and same("https://caldav.icloud.com:443/", "https://caldav.icloud.com/x"),
+          "and between its partitions")
+    check(not any(same("https://caldav.icloud.com/", other) for other in (
+        "https://www.icloud.com/", "https://p42-caldav.icloud.com.example.org/", "https://evil-caldav.icloud.com/", "https://px-caldav.icloud.com/",
+        "http://p42-caldav.icloud.com/", "https://p42-caldav.icloud.com:8443/", "https://caldav.icloud.com.example.org/")),
+          "but to no other host, port or scheme")
     server = Fake(user="me@icloud.com", password="abcd-efgh-ijkl-mnop")
-    server.fake.home_host = "localhost"
     server.make_calendar("home", "Home")
     pc.env["NOVA_CALENDAR_ICLOUD"] = server.url
     bad = pc.run("add", request={"type": "icloud", "user": "me@icloud.com", "password": "wrong"})
@@ -648,6 +655,237 @@ def scenario_subscription(pc):
     bad = pc.run("subscribe", request={"url": "ftp://example.org/x.ics"})
     check(bad.returncode == 1, "an address that is not a web one is refused")
     check(pc.run("remove", cal["id"]).returncode == 0 and not os.path.exists(os.path.join(pc.home, ".local/share/nova/calendar", cal["file"])), "unsubscribing removes its file")
+    server.stop()
+
+
+def scenario_foreign(pc):
+    server = Fake()
+    server.make_calendar("home", "Home")
+    Phone(server).put("home", "a.ics", vcal(vevent("a", "A", ":20261110T100000Z", ":20261110T110000Z")))
+    # Another server, which takes the same password: one sent to it would
+    # be let in, and is in its log.
+    other = fake_caldav.FakeCalDAV(user=server.user, password=server.password)
+    other.add_calendar("home", "Home")
+    other.start()
+    elsewhere = "127.0.0.1:%d" % other.port
+    same = ncs.same_server
+    check(same("https://dav.example.org/", "https://dav.example.org:443/a/") and same("http://dav.example.org/", "https://dav.example.org/a/"),
+          "the same server: its scheme, host and port, or the same host over TLS")
+    check(not any(same("https://dav.example.org/", o) for o in ("https://example.org/", "http://dav.example.org/", "https://dav.example.org:8443/")),
+          "another host, port, or plain HTTP is another server")
+
+    server.fake.home_url = other.url + "alice/cals/"
+    done = pc.add_quietly(server)
+    check(done.returncode == 1 and ("another server, %s." % elsewhere) in done.stderr, "a calendar home on another server is refused (%s)" % done.stderr.strip())
+    check(not other.log, "and nothing is sent there")
+    server.fake.home_url = None
+
+    server.fake.elsewhere = [other.url + "alice/cals/home/"]
+    pc.add(server)
+    check(sorted(c["name"] for c in pc.config()["calendars"]) == ["Calendar", "Home"], "a calendar listed on another server is left out")
+    pc.sync()
+    check("a" in pc.items("Home") and not other.log, "and the sync sends nothing there")
+
+    server.fake.moved["/alice/cals/home/"] = other.url + "alice/cals/home/"
+    pc.sync()
+    status = pc.status()[pc.config()["accounts"][0]["id"]]
+    check(status["state"] == "error" and "another server" in status.get("message", ""), "a request moved to another server is refused, in words: %s" % status)
+    check(not other.log, "and not sent there, with its password or without")
+
+    other.feed = ('"f1"', vcal(vevent("h1", "Holiday", ";VALUE=DATE:20261208", ";VALUE=DATE:20261209")).replace("PRODID:-//Phone//EN", "PRODID:-//Phone//EN\r\nX-WR-CALNAME:Moved"))
+    server.fake.moved["/feed.ics"] = other.url + "feed.ics"
+    done = pc.run("subscribe", request={"url": "http://bob:FEED-PW-7@127.0.0.1:%d/feed.ics" % server.fake.port})
+    check(done.returncode == 0 and any(c["name"] == "Moved" for c in pc.config()["calendars"]), "a feed moved to another server is read there (%s)" % done.stderr.strip())
+    sent = [a for (m, p), a in zip(server.fake.log, server.fake.auths) if p == "/feed.ics"]
+    check(sent and (sent[-1] or "").startswith("Basic "), "its own server has the feed's password")
+    check(other.log and not any(other.auths), "the other one does not")
+    other.feed_private = True
+    done = pc.run("subscribe", request={"url": "http://bob:FEED-PW-7@127.0.0.1:%d/feed.ics" % server.fake.port})
+    check(done.returncode == 1 and "another server" in done.stderr and not any(other.auths), "one there that asks for the password does not get it")
+    other.stop()
+    server.stop()
+
+
+def scenario_guard(pc):
+    server = server_for(pc.dir)
+    server.make_calendar("home", "Home")
+    server.make_calendar("small", "Small")
+    phone = Phone(server)
+    for i in range(8):
+        phone.put("home", "e%d.ics" % i, vcal(vevent("e%d" % i, "Event %d" % i, ":202611%02dT100000Z" % (i + 10), ":202611%02dT110000Z" % (i + 10))))
+    for i in range(2):
+        phone.put("small", "s%d.ics" % i, vcal(vevent("s%d" % i, "Small %d" % i, ":202611%02dT100000Z" % (i + 10), ":202611%02dT110000Z" % (i + 10))))
+    pc.add(server)
+    pc.sync()
+    account = pc.config()["accounts"][0]["id"]
+    path = pc.path("Home")
+    check(len(pc.items("Home")) == 8, "the calendar comes in")
+
+    def write(text):
+        with open(path, "w") as f:
+            f.write(text)
+
+    phone.put("home", "p.ics", vcal(vevent("p", "From the phone", ":20261120T100000Z", ":20261120T110000Z")))
+    for what, damage in (("gone", lambda: os.unlink(path)), ("empty", lambda: write("")), ("that is not a calendar", lambda: write("not a calendar\n"))):
+        damage()
+        pc.sync()
+        status = pc.status()[account]
+        check(len(phone.all("home")) == 9, "a file %s deletes nothing on the server" % what)
+        check(status["state"] == "error" and "Most of Home" in status.get("message", ""), "and says so: %s" % status.get("message"))
+        check(len(pc.items("Home")) == 9 and "p" in pc.items("Home"), "the file has the server's items again, and its change")
+
+    pc.edit("Home", lambda cal: ([drop(cal, "e%d" % i) for i in range(5)], set_prop(cal, "e6", "SUMMARY", "Changed here")))
+    if not server.radicale:
+        server.fake.log.clear()
+    pc.sync()
+    on_phone = phone.all("home")
+    check(len(on_phone) == 9 and "Changed here" not in on_phone["e6"], "most of a calendar deleted at once: nothing deleted, nothing sent")
+    if not server.radicale:
+        check(not any(m in ("PUT", "DELETE") for m, _ in server.fake.log), "no PUT, no DELETE")
+    items = pc.items("Home")
+    check(len(items) == 9 and summary(items["e6"]) == "Changed here", "the file has them back, and keeps the change made here")
+    pc.sync()
+    check("Changed here" in phone.all("home")["e6"] and pc.status()[account]["state"] == "ok", "which is sent at the next sync")
+
+    pc.edit("Home", lambda cal: drop(cal, "e0"))
+    pc.sync()
+    check("e0" not in phone.all("home") and pc.status()[account]["state"] == "ok", "one deleted here is deleted there")
+    pc.edit("Small", lambda cal: (drop(cal, "s0"), drop(cal, "s1")))
+    pc.sync()
+    check(phone.all("small") == {}, "a calendar of a few items emptied here is emptied there")
+
+    pc.edit("Home", lambda cal: new_component(cal, "BEGIN:VEVENT\r\nDTSTAMP:20261101T000000Z\r\nDTSTART:20261125T100000Z\r\nDTEND:20261125T110000Z\r\n"
+                                                    "SUMMARY:No UID\r\nEND:VEVENT\r\n"))
+    pc.sync()
+    uids = [u for u, g in pc.items("Home").items() if summary(g) == "No UID"]
+    check(len(uids) == 1 and uids[0] in phone.all("home"), "an item with no UID is given one, and sent")
+    server.stop()
+
+
+def scenario_listing(pc):
+    server = Fake()
+    phone = Phone(server)
+    for name in ("home", "work", "old"):
+        server.make_calendar(name, name.title())
+        phone.put(name, "a.ics", vcal(vevent(name + "-a", name.title(), ":20261110T100000Z", ":20261110T110000Z")))
+    pc.add(server)
+    pc.sync()
+    account = pc.config()["accounts"][0]["id"]
+    folder = os.path.join(pc.home, ".local/share/nova/calendar")
+    files = sorted(os.listdir(folder))
+    check(len(files) == 3, "the three calendars' files: %s" % files)
+
+    server.fake.unlisted = {"home", "work", "old"}
+    pc.sync()
+    status = pc.status()[account]
+    check(status["state"] == "error" and "none of the account's calendars" in status.get("message", ""), "a listing with no calendars is a failure: %s" % status)
+    check(len(pc.config()["calendars"]) == 4 and sorted(os.listdir(folder)) == files, "and nothing is forgotten")
+
+    pc.edit("Work", lambda cal: set_prop(cal, "work-a", "SUMMARY", "Changed here"))
+    server.fake.unlisted = {"work", "old"}
+    pc.sync()
+    names = {c["name"]: c for c in pc.config()["calendars"]}
+    check("Old" not in names and "Home" in names, "a calendar the server no longer lists goes")
+    check(names.get("Work", {}).get("gone") and summary(pc.items("Work")["work-a"]) == "Changed here", "one with a change not sent stays, marked gone, with its change")
+    status = pc.status()[account]
+    check(status["state"] == "error" and "Work is gone from the server" in status.get("message", ""), "and the status says so: %s" % status.get("message"))
+
+    server.fake.unlisted = set()
+    pc.sync()
+    names = {c["name"]: c for c in pc.config()["calendars"]}
+    check("Changed here" in phone.all("work")["work-a"] and not names["Work"].get("gone"), "listed again, it syncs, and the change is sent")
+    check("Old" in names and pc.status()[account]["state"] == "ok", "and all is well")
+
+    config = os.path.join(pc.home, ".config/nova/calendars.json")
+    files = sorted(os.listdir(folder))
+    os.rename(config, config + ".away")
+    pc.sync()
+    check(sorted(os.listdir(folder)) == files, "with no calendar list, no calendar's file is deleted")
+    with open(config, "w") as f:
+        f.write("{ not json")
+    pc.sync()
+    check(sorted(os.listdir(folder)) == files, "nor with one that cannot be read")
+    os.replace(config + ".away", config)
+    server.stop()
+
+
+def scenario_multiget(pc):
+    server = Fake()
+    server.make_calendar("home", "Home")
+    phone = Phone(server)
+    phone.put("home", "a.ics", vcal(vevent("a", "A", ":20261110T100000Z", ":20261110T110000Z")))
+    phone.put("home", "b.ics", vcal(vevent("b", "B", ":20261111T100000Z", ":20261111T110000Z")))
+    pc.add(server)
+    pc.sync()
+    for way, tokens, tag in (("sync-collection", True, "One"), ("ctag and ETags", False, "Two")):
+        server.fake.sync_tokens = tokens
+        texts = phone.all("home")
+        phone.put("home", "a.ics", texts["a"].replace("SUMMARY:", "SUMMARY:%s " % tag))
+        phone.put("home", "b.ics", texts["b"].replace("SUMMARY:", "SUMMARY:%s " % tag))
+        server.fake.withheld = {"a.ics"}
+        pc.sync()
+        items = pc.items("Home")
+        check("a" in items and not summary(items["a"]).startswith(tag) and summary(items["b"]).startswith(tag),
+              "%s: an item the server leaves out of its answer stays as it was" % way)
+        server.fake.withheld = set()
+        pc.sync()
+        check(summary(pc.items("Home")["a"]).startswith(tag), "%s: and is asked for again at the next sync" % way)
+    server.fake.sync_tokens = True
+    phone.put("home", "a.ics", phone.all("home")["a"].replace("SUMMARY:", "SUMMARY:Last "))
+    server.fake.vanished = {"a.ics"}
+    pc.sync()
+    check("a" not in pc.items("Home") and "b" in pc.items("Home"), "one the server answers 404 for is deleted")
+    server.stop()
+
+
+def scenario_remove(pc):
+    server = Fake()
+    server.make_calendar("home", "Home")
+    Phone(server).put("home", "a.ics", vcal(vevent("a", "A", ":20261110T100000Z", ":20261110T110000Z")))
+    pc.add(server)
+    pc.sync()
+    account = pc.config()["accounts"][0]["id"]
+    server.fake.delay = {"/alice/cals/": 2}
+    server.fake.log.clear()
+    syncing = subprocess.Popen([sys.executable, "-B", "-I", SYNC, "sync"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=pc.env)
+    for _ in range(100):
+        if ("PROPFIND", "/alice/cals/") in server.fake.log:
+            break
+        time.sleep(0.05)
+    removed = pc.run("remove", account)
+    syncing.wait(timeout=60)
+    config = pc.config()
+    check(removed.returncode == 0 and config["accounts"] == [] and [c["id"] for c in config["calendars"]] == ["local"],
+          "an account removed while it syncs does not come back: %s" % [c["name"] for c in config["calendars"]])
+    check(not [f for f in os.listdir(os.path.join(pc.home, ".local/share/nova/calendar")) if f != "calendar.ics"], "nor its files")
+    check(account not in pc.status(), "nor its status")
+
+    folder = tempfile.mkdtemp(dir=pc.dir)
+    path = os.path.join(folder, "x.ics")
+    try:
+        got = ncs.swap_in(path, "new", "old")
+    except OSError as e:
+        got = e
+    check(got is None and os.listdir(folder) == [], "a file deleted while it is merged stays deleted, and the sync goes on (%r)" % got)
+    server.stop()
+
+
+def scenario_slow(pc):
+    server = Fake()
+    feed = vcal(*(vevent("h%d" % i, "Holiday %d" % i, ";VALUE=DATE:202612%02d" % (i + 1), ";VALUE=DATE:202612%02d" % (i + 2)) for i in range(5)))
+    server.fake.feed = ('"f1"', feed)
+    done = pc.run("subscribe", request={"url": server.url + "feed.ics"})
+    check(done.returncode == 0, "a feed is subscribed to")
+    cal = next(c for c in pc.config()["calendars"] if c.get("kind") == "subscription")
+    server.fake.feed = ('"f2"', feed.replace("Holiday", "Day"))
+    server.fake.trickle = 0.02
+    pc.env["NOVA_CALENDAR_SYNC_SECONDS"] = "1"
+    start = time.monotonic()
+    pc.sync()
+    took = time.monotonic() - start
+    status = pc.status()[cal["id"]]
+    check(took < 8 and status["state"] == "error" and "too long" in status.get("message", ""),
+          "a server sending a byte at a time is stopped at the time limit (%.1fs, %s)" % (took, status.get("message")))
     server.stop()
 
 

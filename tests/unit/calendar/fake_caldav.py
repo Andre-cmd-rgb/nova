@@ -8,9 +8,15 @@
 #   server.start(); server.url; server.stop(); server.start() (the same port)
 #
 # Options a test turns: sync_tokens (WebDAV sync-collection, else only ctag
-# and ETags), etag_on_put, home_host (the calendar home on another host name,
-# as iCloud puts it on a partition of its own), read_only on a calendar.
-# Every request is in server.log as (method, path).
+# and ETags), etag_on_put, home_url (the calendar home at an address of its
+# own, as iCloud puts it on a partition), read_only on a calendar, moved
+# ({path: address} redirected), unlisted (calendars the home's listing leaves
+# out), elsewhere (addresses of calendars on another server it lists),
+# withheld and vanished (items a calendar-multiget leaves out, or answers
+# 404), delay ({path: seconds} before answering), feed_private (the feed
+# asks for the password), trickle (seconds between the feed's bytes).
+# Every request is in server.log as (method, path), and its Authorization
+# header in server.auths.
 
 import base64
 import hashlib
@@ -18,6 +24,7 @@ import http.server
 import json
 import re
 import threading
+import time
 import urllib.parse
 import xml.etree.ElementTree as ET
 
@@ -48,8 +55,17 @@ class FakeCalDAV:
         self.calendars = {}
         self.sync_tokens = True
         self.etag_on_put = True
-        self.home_host = None
+        self.home_url = None
+        self.moved = {}
+        self.unlisted = set()
+        self.elsewhere = []
+        self.withheld = set()
+        self.vanished = set()
+        self.delay = {}
+        self.feed_private = False
+        self.trickle = 0
         self.log = []
+        self.auths = []
         self.lock = threading.Lock()
         self.httpd = None
         self.port = 0
@@ -125,14 +141,20 @@ class FakeCalDAV:
         body = h.rfile.read(length) if length else b""
         path = urllib.parse.urlsplit(h.path).path
         self.log.append((h.command, path))
+        self.auths.append(h.headers.get("Authorization"))
+        time.sleep(self.delay.get(path, 0))
+        if path in self.moved:
+            return self.reply(h, 307, b"", {"Location": self.moved[path]})
         if path == "/token" and h.command == "POST":
             return self.token(h, body)
         if path == "/auth" and self.oauth:
             return self.sign_in(h)
-        if path == "/feed.ics":
+        if path == "/feed.ics" and not self.feed_private:
             return self.serve_feed(h)
         if not self.authorized(h):
             return self.reply(h, 401, b"", {"WWW-Authenticate": 'Basic realm="fake"'})
+        if path == "/feed.ics":
+            return self.serve_feed(h)
         if path == "/.well-known/caldav":
             return self.reply(h, 301, b"", {"Location": "/"})
         with self.lock:
@@ -182,9 +204,7 @@ class FakeCalDAV:
         return {p.tag for p in prop} if prop is not None else set()
 
     def principal(self, h, path):
-        home = "/alice/cals/"
-        if self.home_host:
-            home = "http://%s:%d/alice/cals/" % (self.home_host, self.port)
+        home = self.home_url or "/alice/cals/"
         props = ["<d:current-user-principal><d:href>/alice/</d:href></d:current-user-principal>"]
         if path == "/alice/":
             props.append("<c:calendar-home-set><d:href>%s</d:href></c:calendar-home-set>" % home)
@@ -196,7 +216,10 @@ class FakeCalDAV:
         out = [self.response("/alice/cals/", ["<d:resourcetype><d:collection/></d:resourcetype>"])]
         out.append(self.response("/alice/cals/inbox/", ["<d:resourcetype><d:collection/><c:schedule-inbox/></d:resourcetype>"]))
         for c in self.calendars.values():
-            out.append(self.response("/alice/cals/%s/" % c.name, self.calendar_props(c)))
+            if c.name not in self.unlisted:
+                out.append(self.response("/alice/cals/%s/" % c.name, self.calendar_props(c)))
+        for href in self.elsewhere:
+            out.append(self.response(href, ["<d:resourcetype><d:collection/><c:calendar/></d:resourcetype>", "<d:displayname>Elsewhere</d:displayname>"]))
         self.multistatus(h, out)
 
     def calendar_props(self, c):
@@ -241,7 +264,9 @@ class FakeCalDAV:
             out = []
             for href in root.findall(q(DAV, "href")):
                 name = urllib.parse.unquote(href.text.rsplit("/", 1)[-1])
-                if name in c.items:
+                if name in self.withheld:
+                    continue
+                if name in c.items and name not in self.vanished:
                     etag, text = c.items[name]
                     out.append(self.response(href.text, ["<d:getetag>%s</d:getetag>" % esc(etag), "<c:calendar-data>%s</c:calendar-data>" % esc(text)]))
                 else:
@@ -279,7 +304,18 @@ class FakeCalDAV:
         etag, text = self.feed
         if h.headers.get("If-None-Match") == etag:
             return self.reply(h, 304, b"")
-        self.reply(h, 200, text.encode(), {"ETag": etag, "Content-Type": "text/calendar"})
+        if not self.trickle:
+            return self.reply(h, 200, text.encode(), {"ETag": etag, "Content-Type": "text/calendar"})
+        h.send_response(200)
+        h.send_header("Content-Length", str(len(text.encode())))
+        h.end_headers()
+        try:
+            for byte in text.encode():
+                h.wfile.write(bytes([byte]))
+                h.wfile.flush()
+                time.sleep(self.trickle)
+        except OSError:
+            h.close_connection = True
 
     # Google's sign-in page, signed in at once: back to the app with a code.
     def sign_in(self, h):

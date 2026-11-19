@@ -109,6 +109,12 @@ device shows the same. Deleted on one side and changed on the other, the
 change wins. How it finds the server's changes and writes without overwriting
 any is in the program's own header (`src/calendar/nova-calendar-sync`).
 
+A file that is gone, empty, or has lost most of its events at once is taken
+to be broken: nothing is deleted on the server, and the file gets them back.
+A calendar the server stops listing stays while it has changes not yet sent,
+and the list says so. A password goes only to its account's server (for
+iCloud, also to the partition of it the calendars are on).
+
 ### Google sign-in, for whoever builds Nova
 
 Google lets a program use CalDAV only with an OAuth client of its own, which
