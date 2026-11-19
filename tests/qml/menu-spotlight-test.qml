@@ -253,7 +253,31 @@ ShellRoot {
       menu.filter("settings")
       menu.press({ key: Qt.Key_Return, modifiers: Qt.ControlModifier, text: "\r" })
       check(summoned.length === 1 && menu.opened, "with no answer under the cursor, Ctrl+Return does nothing")
-      finish()
+      angles()
     }, "12*3 is answered again")
+  }
+
+  // Angles are in the Calculator's unit, as its window keeps it, so that a
+  // sum opened there with Ctrl+Return is the same: degrees, as the
+  // Calculator starts, and radians once it is turned to them.
+  function angles() {
+    menu.filter("sin(30)")
+    when(() => menu.rows.length === 1 && menu.rows[0].label === "0.5", () => {
+      // The Calculator turned to radians, a file it had not written before.
+      menu.filter("")
+      kept.running = true
+    }, "sin(30) is in degrees, as the Calculator starts")
+  }
+
+  Process {
+    id: kept
+    command: ["sh", "-c", 'mkdir -p "${1%/*}" && printf "%s\\n" "$2" >"$1"', "sh",
+      (Quickshell.env("XDG_STATE_HOME") || test.home + "/.local/state") + "/nova/calculator.json",
+      JSON.stringify({ mode: "scientific", angle: "rad" })]
+    onExited: {
+      menu.filter("sin(30)")
+      test.when(() => menu.rows.length === 1 && menu.rows[0].label === "−0.9880316241", test.finish,
+        "the Calculator turned to radians, a sum in the menu is worked out in them")
+    }
   }
 }

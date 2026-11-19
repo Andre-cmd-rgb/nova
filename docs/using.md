@@ -160,7 +160,7 @@ Super+Space opens it. Type to search, or go down the list:
 A search of the whole menu finds more than its entries:
 
 - **Settings' pages**, by their names and by plain words for what is on them, such as volume, trackpad or dark mode. Return opens the page.
-- **A sum or a conversion**, such as `2*(3+4)`, `15% of 80`, `5 km in miles` or `72 f in c`. The answer comes first: Return copies it, Ctrl+Return opens the sum in the Calculator. Currencies are left out: their rates would need the network.
+- **A sum or a conversion**, such as `2*(3+4)`, `15% of 80`, `5 km in miles` or `72 f in c`. The answer comes first: Return copies it, Ctrl+Return opens the sum in the Calculator. Angles are in the Calculator's unit, degrees unless it was turned to radians. Currencies are left out: their rates would need the network.
 
 `nova menu toggle <entry>` opens it at an entry, such as `nova menu toggle capture`. Entries in `~/.config/nova/menu.jsonc` override Nova's, key by key.
 

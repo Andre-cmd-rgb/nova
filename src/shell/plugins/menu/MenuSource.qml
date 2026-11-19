@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import "../calculator" as Calc
 import "../calculator/Calculator.js" as Calculator
 import "MenuModel.js" as MenuModel
@@ -248,6 +249,9 @@ Item {
   function calculate(query) {
     const next = Calculator.expression(query)
     if (next === sum) return
+    // A search that becomes a sum reads the Calculator's unit again: the file
+    // is not watched until it is there.
+    if (!sum && next) angleFile.reload()
     sum = next
     pondered.stop()
     calculator.drop()
@@ -285,8 +289,36 @@ Item {
     updated()
   }
 
+  // Angles in the Calculator's unit, which its window keeps (Deg, unless it
+  // was turned to Rad): sin(30) is the same here and there, as Ctrl+Return
+  // opens it there. Answers in the other unit go when it is turned. The file
+  // is read again when it changes, and as a search becomes a sum.
+  property string angle: "deg"
+  onAngleChanged: {
+    worked = {}
+    if (sum) {
+      calculator.drop()
+      pondered.restart()
+    }
+  }
+
+  FileView {
+    id: angleFile
+    path: Commons.Color.stateHome + "/nova/calculator.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      let kept = null
+      try { kept = JSON.parse(text()) } catch (e) {}
+      source.angle = kept && kept.angle === "rad" ? "rad" : "deg"
+    }
+    onLoadFailed: source.angle = "deg"
+  }
+
   Calc.Qalc {
     id: calculator
+    settings: ["angle " + source.angle]
     onAnswered: (sum, found) => source.settle(sum, found)
   }
 }
