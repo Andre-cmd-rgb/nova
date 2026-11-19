@@ -200,8 +200,10 @@ display=:$display
 # card has no boot ROM, so the firmware goes straight to the disks.
 cp "$ovmf/OVMF_VARS.4m.fd" "$work/vars.fd"
 truncate -s 80G "$work/disk.img"
+# Dies unless the machine powers itself off in time, and says which went wrong:
+# the deadline, or QEMU itself (its software GPU has crashed under load).
 machine() { # minutes serial-log [qemu options...]
-  local minutes=$1 log=$2
+  local minutes=$1 log=$2 status=0
   shift 2
   timeout "${minutes}m" env -u WAYLAND_DISPLAY DISPLAY="$display" GDK_BACKEND=x11 NO_AT_BRIDGE=1 LIBGL_ALWAYS_SOFTWARE=1 \
     qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp 4 -m 4096 \
@@ -209,14 +211,16 @@ machine() { # minutes serial-log [qemu options...]
     -drive if=pflash,format=raw,unit=1,file="$work/vars.fd" \
     -drive file="$work/disk.img",format=raw,if=none,id=disk,cache=unsafe -device "$disk_device" \
     -netdev user,id=net -device virtio-net-pci,netdev=net,romfile= \
-    -device virtio-vga-gl -display gtk,gl=on -serial file:"$log" -no-reboot "$@"
+    -device virtio-vga-gl -display gtk,gl=on -serial file:"$log" -no-reboot "$@" || status=$?
+  ((status != 0)) || return 0
+  ((status != 124)) || die "the machine did not power off by itself within $minutes minutes; the log is ${log##*/}"
+  die "QEMU stopped (status $status) before the machine powered off; the log is ${log##*/}"
 }
 
 step "Installing from the stick"
 started=$SECONDS
 machine 45 "$work/install.log" -device qemu-xhci \
-  -drive file="$work/stick.img",format=raw,if=none,id=stick,cache=unsafe -device usb-storage,drive=stick,bootindex=0 ||
-  die "the install machine did not power off by itself within 45 minutes; the log is install.log"
+  -drive file="$work/stick.img",format=raw,if=none,id=stick,cache=unsafe -device usb-storage,drive=stick,bootindex=0
 grep -aq 'nova-install-start: installed' "$work/install.log" ||
   { tr -d '\r' <"$work/install.log" | tail -n 60; die "the install failed"; }
 echo "installed in $(((SECONDS - started) / 60)) min"
@@ -237,13 +241,13 @@ if ((upgrade)); then
   for stage in previous upgraded downgraded restored; do
     case $stage in previous|upgraded) minutes=30 ;; *) minutes=15 ;; esac
     step "Upgrade test: $stage"
-    machine "$minutes" "$work/$stage.log" || die "$stage did not power off within $minutes minutes"
+    machine "$minutes" "$work/$stage.log"
     report_boot "$work/$stage.log" " $stage"
   done
   echo 'ok   installed the previous release, upgraded, downgraded, and booted its pre-update snapshot as the root'
 else
   step "The first boot"
-  machine 20 "$work/boot.log" || die "the installed system did not power off by itself within 20 minutes; the log is boot.log"
+  machine 20 "$work/boot.log"
   report_boot "$work/boot.log" ''
   echo
   echo "ok   installed from the stick$( ((encrypt)) && echo " onto an encrypted disk")$( ((nvme)) && echo " on NVMe"), booted locked, and nova doctor is content"
