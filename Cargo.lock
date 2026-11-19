@@ -19,6 +19,10 @@ name = "nova-screensaver"
 version = "1.0.0"
 
 [[package]]
+name = "nova-sd"
+version = "1.0.0"
+
+[[package]]
 name = "nova-theme"
 version = "1.0.0"
 

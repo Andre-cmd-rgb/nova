@@ -1,0 +1,16 @@
+[package]
+name = "nova-sd"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's way to D-Bus and the journal: libsystemd's sd-bus and sd-journal, for Nova's Rust"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova. D-Bus and the journal come from the
+# libsystemd every Arch system has, linked rather than looked up at start:
+# its soname has been libsystemd.so.0 since 2014 and its symbols are
+# versioned, so a newer systemd keeps every one used here.
+
+[lib]
+name = "nova_sd"
+path = "src/lib.rs"

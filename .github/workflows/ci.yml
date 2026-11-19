@@ -35,8 +35,9 @@ jobs:
     steps:
       - name: Tools
         run: |
+          # dbus: the dbus-daemon that D-Bus tests run a private bus with.
           pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats parallel jq lua rust qt6-declarative \
-            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring python-dbus python-gobject libpulse tzdata
+            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring python-dbus python-gobject libpulse tzdata dbus
           useradd -m builder
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
