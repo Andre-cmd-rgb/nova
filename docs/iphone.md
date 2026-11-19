@@ -105,9 +105,10 @@ A notification here has a default action, so that a click is a dismissal: there 
 
 ## What it costs
 
-- **Memory:** a Python process with D-Bus and GLib: about 10 MB, 2 MB of them its own (as measured on Nova's other such service, nova-idle-inhibitors).
-- **The radio:** the table above. Nothing runs on a clock: it waits for BlueZ, the shell and logind to say something changed.
-- **Built in Python**, as nova-idle-inhibitors: python-dbus and python-gobject are already Nova's, and Nova's Rust uses no crates, which would have meant writing D-Bus anew.
+- **Memory:** under 1 MB (PSS 0.85 MB with no iPhone, 0.94 MB connected after twenty notifications, against a fake BlueZ). The Python program it was until 1.0 took 19 MB.
+- **The processor:** nothing at all while nothing happens: no wakeup in a minute, waiting or connected. Nothing runs on a clock: it waits for BlueZ, the shell and logind to say something changed.
+- **The radio:** the table above.
+- **Built in Rust** (`src/iphone/daemon`), with D-Bus from the system's libsystemd through Nova's `nova-sd`. The service itself (`service.rs`) speaks no D-Bus: the glue (`main.rs`) hands it each message and makes each call it asks for, never waiting for an answer, as BlueZ calls back before it answers some.
 
 ## Trying it the first time
 
@@ -152,9 +153,9 @@ Should the iPhone never come back by itself, `sudo btmon` while it should shows 
 
 ## Tests
 
-`tests/unit/iphone/`:
+`tests/unit/iphone/`, and the crate's own (`cargo test`):
 
-- **ANCS byte for byte** (`ancs_test.py`): the events, the three commands and the answers, from fixtures built from Apple's specification, none from a phone; answers in pieces of every size, with the end of an answer given up on in front, and one too long; texts cut in the middle of a character and past their limits, and cleaned of bidirectional and other format characters.
+- **ANCS byte for byte** (`ancs.rs`'s tests): the events, the three commands and the answers, from fixtures built from Apple's specification, none from a phone; answers in pieces of every size, with the end of an answer given up on in front, and one too long; texts cut in the middle of a character and past their limits, and cleaned of bidirectional and other format characters.
 - **The service** (`fake_bluez.py`, through `daemon.bats`): the real service on a D-Bus of its own, against a fake BlueZ with a fake iPhone behind it and a fake notification server. The fake BlueZ answers a pairing as BlueZ does: refused with no agent registered, asked of an agent with a code (RequestConfirmation) or without (RequestAuthorization). Pairing (the advertisement, the agent, the code in a notification, the answer coming after the notification closed, a code turned down and not asked again), pairings asked by others (no agent outside the window, an agent BlueZ will not make the default unregistered, Just Works turned down, a question from another program than BlueZ, a second device while one is asked about, a device's name with bidirectional characters), new, quiet, removed, dismissed and expired notifications, calls, a refused command, a link back after a blip, a toast from before a drop whose number the iPhone gave to another, an iPhone that keeps to no limit and a flood, BlueZ restarting, the controller resetting, Bluetooth off, Bluetooth LE off, a late answer of the BlueZ before a restart, BlueZ restarting while a pairing is asked about, a toast dismissed while its change was on its way, old notifications that look new after a link back, the service's name taken.
 - **The command** (`cli.bats`); Settings' switch and line, also with the service stopped (`tests/qml/iphone-settings-test.qml`); a click on an iPhone's toast in the history (`tests/qml/notifications-click-test.qml`).
-- **The unit's fence**, checked by hand on a transient unit with the same settings (not part of `make test`): the session and system buses through their sockets, its runtime folder written and nothing else, no network sockets, and the service itself against the fake BlueZ inside it.
+- **The unit's fence**, checked by hand on a transient unit with the same settings (not part of `make test`): the session and system buses through their sockets, its runtime folder written and nothing else, no network sockets, and the service itself against the fake BlueZ inside it. That was the Python service's; the Rust one has not been run inside the fence yet.

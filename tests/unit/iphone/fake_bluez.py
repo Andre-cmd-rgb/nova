@@ -4,7 +4,7 @@ that drive nova-iphone-notifications through them. The fake starts the
 daemon itself, once its names are on the bus, and prints a line for each
 thing the daemon does to it, "ok"/"FAIL" for each check, then DONE.
 
-    dbus-run-session -- python3 -B -I fake_bluez.py <scenario> <daemon> <scratch>
+    dbus-run-session -- python3 -B -I fake_bluez.py <scenario> <daemon> <scratch> <unit>
 
 The iPhone speaks ANCS as Apple's specification has it: the daemon's
 commands are checked byte for byte, and the answers go out in 20-byte
@@ -23,7 +23,7 @@ import dbus.service
 from dbus.mainloop.glib import DBusGMainLoop
 from gi.repository import GLib
 
-SCENARIO, DAEMON, SCRATCH = sys.argv[1:4]
+SCENARIO, DAEMON, SCRATCH, UNIT = sys.argv[1:5]
 
 PROPERTIES = "org.freedesktop.DBus.Properties"
 OBJECT_MANAGER = "org.freedesktop.DBus.ObjectManager"
@@ -753,10 +753,10 @@ def late(f):
 
 def taken(f):
     yield until(lambda: f.state().get("state") == "no-iphone", "the service runs")
-    second = subprocess.run([sys.executable, "-B", "-I", DAEMON], env=f.env, capture_output=True, text=True, timeout=30)
+    second = subprocess.run([DAEMON], env=f.env, capture_output=True, text=True, timeout=30)
     say(second.stderr.strip())
     check(second.returncode == 3, f"a second one, its name taken, ends with 3 ({second.returncode})")
-    with open(DAEMON + ".service", encoding="utf-8") as unit:
+    with open(UNIT, encoding="utf-8") as unit:
         check("\nRestartPreventExitStatus=3\n" in unit.read(), "which its unit does not start again")
     check(f.state().get("state") == "no-iphone", "and the running one's state is left alone")
 
@@ -855,7 +855,7 @@ def main():
                XDG_RUNTIME_DIR=os.path.join(SCRATCH, "run"))
     env.update(ENVIRONMENTS.get(SCENARIO, {}))
     fake.env = env
-    daemon = subprocess.Popen([sys.executable, "-B", "-I", DAEMON], env=env, stdout=sys.stdout, stderr=sys.stdout)
+    daemon = subprocess.Popen([DAEMON], env=env, stdout=sys.stdout, stderr=sys.stdout)
     loop = GLib.MainLoop()
     steps = SCENARIOS[SCENARIO](fake)
     waiting = {"test": None, "what": "", "until": 0.0}

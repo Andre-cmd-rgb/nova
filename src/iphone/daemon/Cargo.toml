@@ -1,0 +1,16 @@
+[package]
+name = "nova-iphone-notifications"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's iPhone notifications: an iPhone's notifications through Apple's Notification Center Service over Bluetooth LE, shown as Nova's"
+license = "MIT"
+
+# No crates, as everywhere in Nova: D-Bus is the system's libsystemd, through
+# nova-sd.
+
+[[bin]]
+name = "nova-iphone-notifications"
+path = "src/main.rs"
+
+[dependencies]
+nova-sd = { path = "../../sd" }
