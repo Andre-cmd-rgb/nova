@@ -64,13 +64,7 @@ Snapshots hold the system, not `/home`: going back never touches your files, and
 
 ### Going back a whole release
 
-`nova update` never moves to an older release unasked. To go back to one:
-
-```sh
-nova update --version <tag> --allow-downgrade
-```
-
-It warns first: packages newer than that release's Arch snapshot are downgraded.
+`nova update` never moves to an older release unasked, and Nova keeps the packages of the newest releases alone: going back is to the snapshot from before the update ([above](#going-back-to-before-an-update)), which is on your own disk. `nova update --version <tag> --allow-downgrade` moves to an older release only while its packages are still kept, as a release is until the next one is out, and says so otherwise.
 
 ## When something goes wrong
 

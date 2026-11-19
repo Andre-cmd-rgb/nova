@@ -4,23 +4,23 @@
 #
 #   tools/arch-packages --release <release.toml> [--list] <dir>
 #
-# The install tests (tests/install/run) put every package an install can need
-# on their stick, as nova usb does, and nova usb takes what pacman's cache
-# holds from there. Each test fetched the same 700 packages from the Arch
-# Linux Archive, which is one server: four and a half of a test's nine
-# minutes. release.yml runs this once instead, beside the package builds, and
-# gives the tests what it fetched for their pacman's cache.
+# The ISO carries every package an install can need (tools/offline-repo), which
+# takes what pacman's cache holds from there, and so does the upgrade test.
+# Fetching the same 700 packages from the Arch Linux Archive, which is one
+# server, took minutes each time. release.yml runs this once instead, beside
+# the package builds, and gives the ISO's build and the upgrade test what it
+# fetched for their pacman's cache.
 #
 # Nova's own packages are not built yet when this runs, so what they bring in
-# is read from their PKGBUILDs. A package this misses does no harm: the test
-# fetches it, as it did every one before. --list prints what would be fetched,
+# is read from their PKGBUILDs. A package this misses does no harm: it is
+# downloaded where it is needed, as every one was before. --list prints what would be fetched,
 # as "url<TAB>bytes", and fetches nothing.
 set -euo pipefail
 
 root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
-# package_urls and download_packages: nova usb's own.
-# shellcheck source=installer/nova-usb
-source "$root/installer/nova-usb"
+# package_urls and download_packages: the ISO's own (tools/offline-repo).
+# shellcheck source=tools/offline-repo
+source "$root/tools/offline-repo"
 
 die() { printf 'arch-packages: %s\n' "$*" >&2; exit 1; }
 

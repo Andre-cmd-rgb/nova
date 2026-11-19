@@ -6,12 +6,12 @@ This page covers what a release contains, versions, the signing key and the pack
 
 ## What a release contains
 
-A release lives in two places. The GitHub release holds what people download, and `release.toml`, which `nova update` and `nova-usb` look for there:
+A release lives in two places. The GitHub release holds its notes, `nova-usb`, and `release.toml`, which `nova update` and `nova-usb` look for there:
 
 | On the GitHub release | What reads it |
 |---|---|
-| `nova-<version>-x86_64.iso` and its `.sha256` | people, or `nova-usb`: the installer stick |
 | `nova-usb` | people: makes the installer stick, with the ISO and whatever is carried |
+| the ISO's `.sha256` | people who write the ISO to a stick themselves |
 | `release.toml` and its `.sig` | `nova update` and the installer: the version, the Arch Linux Archive date the release was built and tested against, and the address of its `[nova]` repository |
 
 Everything else is in the `nova-packages` bucket on Cloudflare R2, in a folder named after the tag, served at `https://nova-packages.piserver.stream/<tag>`:
@@ -20,14 +20,15 @@ Everything else is in the `nova-packages` bucket on Cloudflare R2, in a folder n
 |---|---|
 | `nova.db`, `nova.files` and their `.sig` | pacman: the signed `[nova]` repository |
 | `*.pkg.tar.zst` and their `.sig` | pacman: `nova`, `nova-keyring`, `linux-nova`, `linux-nova-headers`, `nvidia-open-nova`, `limine-entry-tool`, `limine-snapper-sync`, `whisper-cpp`, `hyprland` |
-| `packages.txt`, the ISO's `.sha256`, and their `.sig` | `nova-usb`: the packages an install can need, to put on the stick for an offline install, and the checksum it checks the ISO with |
+| `nova-<version>-x86_64.iso`, its `.sha256`, and the `.sha256`'s `.sig` | people, and `nova-usb`: the installer, with every package an install can need, and the checksum it checks the ISO with |
 | `nova-usb.sig` | people: the release notes link it |
 | `release.toml` and its `.sig` | a copy |
 
 - **Every system stays on its release.** `release.toml` points pacman at the release's folder, and every system stays on its release's packages and Arch snapshot until `nova update` moves it to the next one.
+- **The bucket keeps the newest releases alone.** Once a release is published, the folders of the releases before it go, ISOs and all, but for the newest final release's ([below](#removing-old-releases)). A system on an older release has its packages installed already, and `nova update` needs only the newest folder to move it on.
 - **The bucket can move.** Since each release names its own folder, the bucket can move to another address at any release: `tools/release-pin --packages`.
 - **Packages first, then the release.** The publish job puts the files in the bucket first and reads each back from the public address (`tools/packages-upload`), so a release never appears on GitHub before its packages can be downloaded.
-- **The ISO installs over the network.** GitHub limits a release asset to 2 GiB, so the ISO installs over the network rather than carrying every package (`nova usb` adds an offline copy to the stick).
+- **The ISO carries every package.** `tools/build-iso` puts every package any install can need on it, as the `[nova-offline]` repository in `nova/repo` (`tools/offline-repo`), so every stick installs without internet, a stick of an older release too. That makes it about 3 GB, more than GitHub takes a release file (2 GiB): it is in the bucket, beside the packages it carries.
 - **File names:** `tools/repo-build` stops on a package file name a URL or the stick's FAT would change (an epoch's `:`, a development build's `+`).
 
 ## Versions
@@ -48,7 +49,7 @@ After a final release:
 **Everything a system installs or reads is signed with one key.**
 
 - The `[nova]` repository and every package in it are signed, and pacman refuses anything else (`SigLevel = Required` in `installer/pacman.conf`).
-- The files read without pacman are signed with the same key: `nova update` refuses a `release.toml` without a good `.sig`, and `nova-usb` checks `release.toml`, `packages.txt` and the ISO's `.sha256` before it downloads the ISO.
+- The files read without pacman are signed with the same key: `nova update` refuses a `release.toml` without a good `.sig`, and `nova-usb` checks `release.toml` and the ISO's `.sha256` before it downloads the ISO.
 - The public key ships in the `nova-keyring` package, and `tools/inline-ui` writes it into the `nova-usb` on the release page, which runs on systems without it.
 - The private key lives only in the `NOVA_REPO_KEY` repository secret and in an offline backup.
 
@@ -104,7 +105,7 @@ The packages are public and signed, so the bucket only has to serve them; it hol
    gh variable set R2_ACCOUNT_ID --body <account id>
    ```
 
-A release adds about 280 MiB to the bucket (the ISO stays on GitHub), so R2's free 10 GB lasts more than a year of releases. Past that, storage costs $0.015 per GB a month, and downloads are free.
+A release takes about 3.3 GB of the bucket, 3 GB of it the ISO, and the bucket keeps the newest release and the newest final one ([below](#removing-old-releases)): 7 GB at most, within R2's free 10 GB. Past that, storage costs $0.015 per GB a month, and downloads are free.
 
 ## A release twice a month
 
@@ -116,11 +117,11 @@ On the 1st and the 15th, `candidate.yml` runs CI on `main`, tags the commit it t
 
 1. pins yesterday's Arch Linux Archive snapshot (`tools/release-pin --verify`);
 2. builds `linux-nova` against it, or reuses the build cached by the hash of `packaging/linux-nova` (an uncached build takes a few hours; `kernel-cache.yml` reads the cache every third day, since GitHub drops one nothing has read for a week);
-3. builds the other packages on the same snapshot, in four jobs side by side (`nova` with the three it depends on, `whisper-cpp`, `hyprland` while the snapshot's Hyprland is the version Nova's patch is for, and `nvidia-open-nova` at the snapshot's driver version), and meanwhile fetches Arch's packages for the install tests, once for all of them (`tools/arch-packages`);
+3. builds the other packages on the same snapshot, in four jobs side by side (`nova` with the three it depends on, `whisper-cpp`, `hyprland` while the snapshot's Hyprland is the version Nova's patch is for, and `nvidia-open-nova` at the snapshot's driver version), and meanwhile fetches Arch's packages for the ISO and the upgrade test, once for both (`tools/arch-packages`);
 4. signs them into the repository (`tools/repo-build`);
-5. builds the ISO (`tools/build-iso`), and signs `release.toml`, the ISO's `.sha256`, `packages.txt` and `nova-usb` with the repository key;
+5. builds the ISO (`tools/build-iso`), with every package an install can need on it, and signs `release.toml`, the ISO's `.sha256` and `nova-usb` with the repository key;
 6. installs from it in a KVM virtual machine with no questions asked, boots the result and checks it from inside (`tests/install/run`), three times: onto a plain disk and an encrypted one on virtio, and onto a plain one on NVMe; the serial logs are kept as the run's `install-logs`. Beside it, `upgrade-test` installs the release before this one and moves it forward and back ([below](#the-upgrade-test));
-7. publishes it all as a pre-release, which only testers are offered: systems with Settings → Updates → Test release candidates on (`nova update --candidates on`), and those already on a candidate.
+7. publishes it all as a pre-release, which only testers are offered: systems with Settings → Updates → Test release candidates on (`nova update --candidates on`), and those already on a candidate; then removes the releases before it from the bucket.
 
 The release's notes say what changed (`tools/release-notes`): the commits since the release before it whose subjects are a `feat`, a `fix` or a `perf`, each under its part of Nova, and a link to every commit. A candidate is compared with the tag before it, a final release with the final one before it. So a commit's subject is written for the person reading the notes: what Nova now does, not what the code was changed to.
 
@@ -178,22 +179,27 @@ Pushing a tag by hand (`git tag -s v1.0.1 -m 'Nova 1.0.1' && git push origin v1.
 
 A release that turns out broken is never deleted, and its files stay in the bucket, because systems may already be on it. Instead:
 
-1. **Stop offering it:** `gh release edit <tag> --draft=true`. Drafts are in no list `nova update` reads, so no other system moves to it; for a final release, `/releases/latest` falls back to the one before. Note it in the tag's release notes before, so the reason stays with it.
+1. **Stop offering it:** `gh release edit <tag> --draft=true`. Drafts are in no list `nova update` reads, so no other system moves to it; for a final release, `/releases/latest` falls back to the one before. Note it in the tag's release notes before, so the reason stays with it. The candidate before has no folder in the bucket any more ([below](#removing-old-releases)), so `nova-usb`, falling back to it, finds no ISO until the fix is out, unless it is the newest final release: one more reason to cut the fix at once.
 2. **Move the systems on it:** `nova update` never goes back to an older Arch snapshot unasked, so systems already on it stay there until a newer release. Cut the fix as the next candidate, from `main`, at once rather than at the next 1st or 15th; for a final release, a fixed version tagged by hand (above), its draft published once tested.
-3. **Until then**, on each system: boot the snapshot from before the update and restore it ([going back](updates.md#going-back-to-before-an-update)), or `nova update --version <the release before> --allow-downgrade`.
+3. **Until then**, on each system: boot the snapshot from before the update and restore it ([going back](updates.md#going-back-to-before-an-update)).
 
 ### Removing old releases
 
-A release's packages can go once no system is on it: every system reads its own release's folder of the bucket until `nova update` moves it on, so a folder removed under a system leaves its pacman without the `[nova]` repository.
+The bucket keeps the newest releases alone, to keep what it costs to the least: once a release is published, `release.yml` removes the folder of every release before it, ISO and all (`tools/packages-prune --older-than <tag> --delete`), but for the newest final release's, which systems that take no candidates are on until the next final one (`--keep`). Folders of releases newer than it, which a build beside it may be filling, stay.
+
+- **A system on an older release** reads nothing new from its folder: its packages are installed, and `nova update` moves it on with the newest folder alone. Until then, `pacman -Sy` finds no `[nova]` database.
+- **A stick of an older release** still installs: its ISO carries every package. The new system's first `nova update` moves it to the newest.
+- **Going back a whole release** is to a snapshot: the root snapshot `nova update` takes before it changes anything is on the computer's own disk. `nova update --version <tag> --allow-downgrade` to a release whose folder is gone says so and changes nothing.
+- **The upgrade test** installs the release before the one being built, which is the newest published, and so still there. A release run again once a newer one is out finds it gone, and passes that test with a notice.
+
+By hand, for a folder no release removed:
 
 1. **The packages:** Actions → prune → Run, with the releases to keep (`gh workflow run prune.yml -f keep='v1.0.0 v1.0.1-rc.1'`). It lists what would go, by folder and size, and removes nothing; with *delete* ticked (`-f delete=true`) it removes it, and reads the bucket again to see that only the kept releases' own files are left (`tools/packages-prune`). It runs there because the bucket's token lives only in the repository's secrets.
 2. **The release on GitHub:** `gh release delete <tag> --yes`, and its tag with `git push origin :refs/tags/<tag>`.
 
 - **Keep the newest release's tag.** The next candidate's number comes from the tags there are (`tools/release-next`); with none at all it is `v1.0.0-rc.1`.
-- **Going back needs the older release.** `nova update --version <tag> --allow-downgrade` reads that release's folder, and the upgrade test installs the release before the one being built: with it removed, the first is refused and the second passes with a notice.
-- **A snapshot does not.** The root snapshot `nova update` takes before it changes anything is on the computer's own disk.
 
-On 2026-11-15 every release up to v1.0.2 was removed this way, with the Raspberry Pi's packages (`alarm/` and each release's `aarch64/`): Nova had been written anew since, part by part, and the numbering began again at v1.0.0-rc.1. A system still on v1.0.2 moves to it with `nova update --version v1.0.0-rc.1 --allow-downgrade`, once, since 1.0.0 counts as older than 1.0.2.
+On 2026-11-15 every release up to v1.0.2 was removed this way, with the Raspberry Pi's packages (`alarm/` and each release's `aarch64/`): Nova had been written anew since, part by part, and the numbering began again at v1.0.0-rc.1. A system still on v1.0.2 moves to it with `nova update --version v1.0.0-rc.1 --allow-downgrade`, once, since 1.0.0 counts as older than 1.0.2. On 2026-11-19 the folders of v1.0.0-rc.1 to rc.10 went too (2.7 GB), and the releases after v1.0.0-rc.11 remove those before them themselves.
 
 ### The upgrade test
 

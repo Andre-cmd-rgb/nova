@@ -1,0 +1,152 @@
+#!/bin/bash
+# offline-repo: every package an install on any computer can need, each with
+# its signature, as the [nova-offline] repository the installer reads from the
+# stick it started from (nova/repo). tools/build-iso puts it on the ISO, so
+# every stick installs without a network.
+#
+#   tools/offline-repo --release <release.toml> --packages <packages.txt> [--nova <dir>] <dir>
+#
+# The list (nova-install --list-packages) is resolved with all of its
+# dependencies against the release's Arch snapshot and its [nova] repository:
+# the one release.toml names, or --nova, a copy of it on this computer (a
+# release being built, whose packages are in no bucket yet). pacman resolves
+# them against an empty database of its own, so nothing installed here counts.
+# A package pacman's cache holds whole, with its signature, is copied from
+# there; the rest are downloaded. Signatures are checked when the installer
+# installs them, against the stick's keyring, which trusts Nova's key.
+#
+# Sourced, it only defines its functions, which tools/arch-packages and
+# tests/install/run use too.
+set -euo pipefail
+
+# The pacman.conf the packages are resolved and fetched with: the release's
+# own Arch snapshot, and its [nova] repository or the copy given.
+offline_conf() { # release.toml [nova-dir]
+  local arch_date nova_repo repo
+  arch_date=$(sed -n 's/^arch_date = "\(.*\)"$/\1/p' "$1")
+  nova_repo=$(sed -n 's/^nova_repo = "\(.*\)"$/\1/p' "$1")
+  [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || { printf '%s has no valid arch_date\n' "$1" >&2 && return 1; }
+  if [[ -n ${2:-} ]]; then
+    nova_repo=file://$(realpath -- "$2")
+  else
+    [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || { printf '%s has no valid nova_repo\n' "$1" >&2 && return 1; }
+  fi
+  printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n\n[nova]\nServer = %s\n' "$nova_repo"
+  for repo in core extra multilib; do
+    # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
+    printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$repo" "$arch_date"
+  done
+}
+
+package_urls() { # pacman.conf dbpath package... -> url<TAB>bytes of each, dependencies included
+  local conf=$1 db=$2
+  shift 2
+  pacman --config "$conf" --dbpath "$db" --cachedir "$db/cache" --logfile /dev/null \
+    --noconfirm -Sp --print-format '%l	%s' "$@" 2>/dev/null
+}
+
+# The list holds alternatives that conflict (two NVIDIA modules), which pacman
+# refuses in one transaction; then each is resolved on its own.
+resolve_packages() { # pacman.conf dbpath package... -> url<TAB>bytes, each once
+  local conf=$1 db=$2 name
+  shift 2
+  {
+    if ! package_urls "$conf" "$db" "$@"; then
+      for name; do package_urls "$conf" "$db" "$name" || return 1; done
+    fi
+  } | sort -u
+}
+
+# The packages, each with its signature. A stick's FAT cannot name a file with
+# a colon (an epoch: ffmpeg-2:7.1-1), so those are saved with an underscore;
+# pacman fetches by the name in the database, which repo-add takes from the
+# file.
+download_packages() { # urls dir
+  local urls=$1 dir=$2 url name original bytes config cache cached caches=()
+  mapfile -t caches < <(pacman-conf CacheDir 2>/dev/null || echo /var/cache/pacman/pkg)
+  config=$(mktemp)
+  while IFS=$'\t' read -r url bytes; do
+    [[ -n $url ]] || continue
+    name=${url##*/}
+    name=$(printf '%b' "${name//%/\\x}")
+    original=$name
+    name=${name//:/_}
+    # Decoded, %2F is a slash: as root, a name like that could write anywhere.
+    [[ -n $name && $name != [.-]* && $name != */* && $name != *\"* && $name != *\\* && ! $name =~ [[:cntrl:]] ]] || {
+      printf "refusing the package file name '%s'\n" "$name" >&2
+      rm -f -- "$config"
+      return 1
+    }
+    cached=0
+    for cache in "${caches[@]}"; do
+      if [[ -f $cache/$original && -s $cache/$original.sig && $bytes =~ ^[0-9]+$ ]] &&
+        [[ $(stat -c %s -- "$cache/$original") == "$bytes" ]]; then
+        cp -- "$cache/$original" "$dir/$name" && cp -- "$cache/$original.sig" "$dir/$name.sig" || {
+          rm -f -- "$config"
+          return 1
+        }
+        cached=1
+        break
+      fi
+    done
+    ((cached == 0)) || continue
+    printf 'url = "%s"\noutput = "%s/%s"\nurl = "%s.sig"\noutput = "%s/%s.sig"\n' "$url" "$dir" "$name" "$url" "$dir" "$name"
+  done <"$urls" >"$config"
+  if [[ -s $config ]] && ! curl --parallel --parallel-max 6 --fail --location --retry 3 --show-error --config "$config"; then
+    rm -f -- "$config"
+    return 1
+  fi
+  rm -f -- "$config"
+}
+
+# repo-add writes a symlink FAT cannot hold, so the database is made aside and
+# copied under both names pacman looks for.
+make_offline_repo() { # dir
+  local dir=$1 tmp
+  tmp=$(mktemp -d)
+  repo-add -q "$tmp/nova-offline.db.tar.gz" "$dir"/*.pkg.tar.zst >/dev/null || { rm -rf -- "$tmp"; return 1; }
+  cp -- "$tmp/nova-offline.db.tar.gz" "$dir/nova-offline.db"
+  cp -- "$tmp/nova-offline.db.tar.gz" "$dir/nova-offline.db.tar.gz"
+  rm -rf -- "$tmp"
+}
+
+offline_repo_main() {
+  local release='' packages='' nova='' out work names=() as_root=()
+  while (($#)); do
+    case $1 in
+      --release) release=${2:?--release needs a file}; shift 2 ;;
+      --packages) packages=${2:?--packages needs a file}; shift 2 ;;
+      --nova) nova=${2:?--nova needs a folder}; shift 2 ;;
+      -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+      -*) die "unknown option: $1" ;;
+      *) break ;;
+    esac
+  done
+  [[ $# -eq 1 && -r $release && -r $packages ]] ||
+    die "usage: tools/offline-repo --release <release.toml> --packages <packages.txt> [--nova <dir>] <dir>"
+  out=$1
+  [[ -z $nova || -r $nova/nova.db ]] || die "$nova holds no [nova] repository (no nova.db)"
+  work=$(mktemp -d)
+  # shellcheck disable=SC2064 # the folder of this run, now
+  trap "rm -rf -- '$work'" EXIT
+  offline_conf "$release" "$nova" >"$work/pacman.conf" || die "$release is not a release's"
+  mkdir -p "$work/db/cache"
+  # pacman syncs only as root; anyone else's database here is as good.
+  ((EUID == 0)) || as_root=(fakeroot --)
+  "${as_root[@]}" pacman --config "$work/pacman.conf" --dbpath "$work/db" --logfile /dev/null -Sy >/dev/null ||
+    die "the release's Arch snapshot or [nova] repository did not answer"
+  mapfile -t names < <(grep -v -e '^#' -e '^[[:space:]]*$' "$packages")
+  ((${#names[@]})) || die "$packages names no package"
+  resolve_packages "$work/pacman.conf" "$work/db" "${names[@]}" >"$work/urls" ||
+    die "the package list does not resolve against the release's packages and its snapshot"
+  mkdir -p -- "$out"
+  download_packages "$work/urls" "$out" || die "a package did not download"
+  make_offline_repo "$out" || die "could not index the packages"
+  printf 'offline-repo: %d packages, %s MiB, in %s\n' "$(wc -l <"$work/urls")" \
+    "$(awk -F'\t' '{ s += $2 } END { printf "%.0f", s / 1048576 }' "$work/urls")" "$out" >&2
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  die() { printf 'offline-repo: %s\n' "$*" >&2; exit 1; }
+  offline_repo_main "$@"
+fi

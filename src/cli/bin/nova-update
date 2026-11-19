@@ -154,6 +154,12 @@ signed_by_nova() { # file
   return "$status"
 }
 
+# The HTTP status of a release's [nova] database: 404 once its folder is gone,
+# nothing when the bucket cannot be reached (pacman then says why).
+repo_status() { # nova_repo
+  curl -sS -I -o /dev/null -w '%{http_code}' --max-time 20 "$1/nova.db" 2>/dev/null || true
+}
+
 # Find the release to move to and leave its JSON in $1. $2 is the requested tag (or
 # empty), $3 is "yes" when pre-releases are acceptable.
 fetch_release() {
@@ -458,8 +464,13 @@ update_release() {
     echo "Nova is up to date ($tag)."
     return 0
   fi
-  if [[ $newer -lt 0 || ( -n $cur_date && $arch_date < $cur_date ) ]] && (( ! downgrade )); then
-    die "$tag is older than what is installed (nova $cur_pkgver, Arch snapshot ${cur_date:-unknown}); pass --allow-downgrade to go back"
+  if [[ $newer -lt 0 || ( -n $cur_date && $arch_date < $cur_date ) ]]; then
+    (( downgrade )) ||
+      die "$tag is older than what is installed (nova $cur_pkgver, Arch snapshot ${cur_date:-unknown}); pass --allow-downgrade to go back"
+    # Nova's package bucket keeps the newest releases alone: an older one's
+    # folder goes once a newer one is out, and with it the way to move to it.
+    [[ $(repo_status "$nova_repo") != 404 ]] ||
+      die "$tag's packages are no longer kept: Nova keeps the newest releases' alone. To go back, start a snapshot from before the update (nova recovery)."
   fi
   if (( ! unfinished )) && [[ $newer -eq 0 && ( -z $cur_date || $arch_date == "$cur_date" ) && ${cur_tag:-$tag} == "$tag" ]]; then
     echo "Nova is already on $tag."

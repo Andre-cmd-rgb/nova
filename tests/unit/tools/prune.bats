@@ -104,3 +104,33 @@ left() { (cd "$BUCKET" && find . -type f -printf '%P\n' | sort | paste -sd' '); 
   [ "$status" -ne 0 ]
   [[ $output == *"not removed: v1.0.1/nova.db"* ]]
 }
+
+@test "--older-than removes the releases before it, and keeps it and every newer one" {
+  put v1.0.2-rc.4/nova.db v1.0.10/nova.db v1.0.3-beta.2/nova.db v1.0.3-rc.1/nova.db
+  run prune --older-than v1.0.2
+  [ "$status" -eq 0 ]
+  [[ $output == *"Kept: v1.0.2 and every newer release."* ]]
+  run prune --older-than v1.0.2 --delete
+  [ "$status" -eq 0 ]
+  local key
+  for key in v1.0.2/nova.db v1.0.2/release.toml v1.0.10/nova.db v1.0.3-beta.2/nova.db v1.0.3-rc.1/nova.db; do
+    [ -e "$BUCKET/$key" ]
+  done
+  # Before it: an older release, its own candidate, and what is no release's.
+  for key in v1.0.1/nova.db v1.0.2-rc.4/nova.db v1.0.2/aarch64/nova.db alarm/aarch64/glibc-2.42-1-aarch64.pkg.tar.xz stray.txt; do
+    [ ! -e "$BUCKET/$key" ]
+  done
+}
+
+@test "--older-than a candidate keeps the candidates after it, and not a beta before it" {
+  put v1.0.3-beta.2/nova.db v1.0.3-rc.1/nova.db v1.0.3-rc.2/nova.db v1.0.3/nova.db
+  run prune --older-than v1.0.3-rc.2 --delete
+  [ "$status" -eq 0 ]
+  [ -e "$BUCKET/v1.0.3-rc.2/nova.db" ]
+  [ -e "$BUCKET/v1.0.3/nova.db" ]
+  [ ! -e "$BUCKET/v1.0.3-rc.1/nova.db" ]
+  [ ! -e "$BUCKET/v1.0.3-beta.2/nova.db" ]
+  [ ! -e "$BUCKET/v1.0.2/nova.db" ]
+  run prune --older-than 'v1.0.3/..' --delete
+  [ "$status" -ne 0 ]
+}

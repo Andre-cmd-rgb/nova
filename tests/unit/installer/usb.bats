@@ -217,136 +217,10 @@ EOF
   [ "$(item_bytes files "$PLAN")" -gt 0 ]
 }
 
-@test "packages on the stick: names FAT can hold, each with its signature" {
-  printf 'https://archive.archlinux.org/repos/2026/10/01/extra/os/x86_64/ffmpeg-2:7.1-1-x86_64.pkg.tar.zst\t100\n' >"$PLAN/offline.urls"
-  printf 'https://nova-packages.piserver.stream/v1.0.0/nova-1.0.0-1-any.pkg.tar.zst\t50\n' >>"$PLAN/offline.urls"
-  printf 'https://example.org/repo/libc%%2B%%2B-1-1-x86_64.pkg.tar.zst\t10\n' >>"$PLAN/offline.urls"
-  curl() { cp -- "${@: -1}" "$SCRATCH/curl.config"; }
-  download_packages "$PLAN/offline.urls" /stick/repo
-  grep -qx 'output = "/stick/repo/ffmpeg-2_7.1-1-x86_64.pkg.tar.zst"' "$SCRATCH/curl.config"
-  grep -qx 'output = "/stick/repo/ffmpeg-2_7.1-1-x86_64.pkg.tar.zst.sig"' "$SCRATCH/curl.config"
-  grep -qx 'url = "https://archive.archlinux.org/repos/2026/10/01/extra/os/x86_64/ffmpeg-2:7.1-1-x86_64.pkg.tar.zst.sig"' "$SCRATCH/curl.config"
-  grep -qx 'output = "/stick/repo/nova-1.0.0-1-any.pkg.tar.zst"' "$SCRATCH/curl.config"
-  grep -qx 'output = "/stick/repo/libc++-1-1-x86_64.pkg.tar.zst"' "$SCRATCH/curl.config"
-}
-
-@test "packages on the stick: a name that decodes to a path is refused" {
-  printf 'https://example.org/repo/..%%2F..%%2Fetc%%2Fcron.d%%2Fx.pkg.tar.zst\t10\n' >"$PLAN/offline.urls"
-  curl() { touch "$SCRATCH/curl.ran"; }
-  run download_packages "$PLAN/offline.urls" /stick/repo
-  [ "$status" -ne 0 ]
-  [[ $output == *refusing* ]]
-  [ ! -e "$SCRATCH/curl.ran" ]
-}
-
-# A disk with room, a package server, and an indexer. No block devices used.
-staging_setup() {
-  mkdir -p "$NOVA_USB_STAGE_ROOT" "$SCRATCH/stick" "$SCRATCH/pkg"
-  printf 'https://example.org/a-1-1-any.pkg.tar.zst\t4\n' >"$PLAN/offline.urls"
-  findmnt() { echo ext4; }
-  df() { printf 'Filesystem 1B-blocks Used Available Use%% Mounted\n/disk 999999999 0 999999999 0%% /\n'; }
-  pacman-conf() { echo "$SCRATCH/pkg"; }
-  curl() {
-    cp -- "${@: -1}" "$SCRATCH/curl.config"
-    local line path
-    while IFS= read -r line; do
-      [[ $line == 'output = '* ]] || continue
-      path=${line#output = \"}
-      path=${path%\"}
-      printf data >"$path"
-    done <"${@: -1}"
-  }
-  make_offline_repo() { printf db >"$1/nova-offline.db"; }
-}
-
-@test "packages stage on local disk, then copy one file at a time" {
-  staging_setup
-  stage_packages "$PLAN/offline.urls"
-  [[ $PACKAGE_STAGE == "$NOVA_USB_STAGE_ROOT"/nova-usb-packages.* ]]
-  [ -f "$PACKAGE_STAGE/a-1-1-any.pkg.tar.zst.sig" ]
-  [ ! -e "$SCRATCH/stick/a-1-1-any.pkg.tar.zst" ]
-  cp() { printf '%s\n' "$*" >>"$SCRATCH/copies"; command cp "$@"; }
-  copy_packages "$PACKAGE_STAGE" "$SCRATCH/stick"
-  [ "$(wc -l <"$SCRATCH/copies")" -eq 3 ]
-  diff -r "$PACKAGE_STAGE" "$SCRATCH/stick"
-  local staged=$PACKAGE_STAGE
-  writer_cleanup
-  [ ! -e "$staged" ]
-}
-
-@test "packages fall back to the stick when local disk space is short" {
-  staging_setup
-  df() { printf 'Filesystem 1B-blocks Used Available Use%% Mounted\n/disk 100 0 100 0%% /\n'; }
-  stage_packages "$PLAN/offline.urls" 2>"$SCRATCH/notice"
-  [ -z "$PACKAGE_STAGE" ]
-  [ "$(wc -l <"$SCRATCH/notice")" -eq 1 ]
-  grep -q 'straight to the stick' "$SCRATCH/notice"
-  [ ! -e "$SCRATCH/curl.config" ]
-  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
-  [ -f "$SCRATCH/stick/a-1-1-any.pkg.tar.zst.sig" ]
-}
-
-@test "packages never stage on tmpfs even when it has room" {
-  staging_setup
-  findmnt() { echo tmpfs; }
-  stage_packages "$PLAN/offline.urls"
-  [ -z "$PACKAGE_STAGE" ]
-  [ ! -e "$SCRATCH/curl.config" ]
-}
-
-@test "the package space check includes a margin above the plan's bytes" {
-  staging_setup
-  printf 'https://example.org/a.pkg.tar.zst\t200000000\n' >"$PLAN/offline.urls"
-  df() { printf 'Filesystem 1B-blocks Used Available Use%% Mounted\n/disk 210000000 0 210000000 0%% /\n'; }
-  stage_packages "$PLAN/offline.urls"
-  [ -z "$PACKAGE_STAGE" ]
-}
-
-@test "the EXIT trap removes staged packages after success or a failed download" {
-  staging_setup
-  export -f findmnt df pacman-conf curl make_offline_repo
-  run bash -c 'source "$REPO_ROOT/installer/nova-usb"; make_offline_repo() { :; }; trap writer_cleanup EXIT; stage_packages "$1/offline.urls"' _ "$PLAN"
-  [ "$status" -eq 0 ]
-  [ -z "$(ls -A "$NOVA_USB_STAGE_ROOT")" ]
-  curl() { touch "$SCRATCH/partial"; return 22; }
-  export -f curl
-  run bash -c 'source "$REPO_ROOT/installer/nova-usb"; trap writer_cleanup EXIT; stage_packages "$1/offline.urls"' _ "$PLAN"
-  [ "$status" -ne 0 ]
-  [[ $output == *"nothing was written"* ]]
-  [ -e "$SCRATCH/partial" ]
-  [ -z "$(ls -A "$NOVA_USB_STAGE_ROOT")" ]
-}
-
-@test "packages reuse a cache entry only with the same name, size and a signature" {
-  staging_setup
-  printf data >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst"
-  printf signed >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst.sig"
-  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
-  [ ! -e "$SCRATCH/curl.config" ]
-  [ "$(cat "$SCRATCH/stick/a-1-1-any.pkg.tar.zst.sig")" = signed ]
-  printf wrong-size >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst"
-  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
-  [ -e "$SCRATCH/curl.config" ]
-  rm "$SCRATCH/curl.config" "$SCRATCH/pkg/a-1-1-any.pkg.tar.zst.sig"
-  printf data >"$SCRATCH/pkg/a-1-1-any.pkg.tar.zst"
-  download_packages "$PLAN/offline.urls" "$SCRATCH/stick"
-  [ -e "$SCRATCH/curl.config" ]
-}
-
 @test "still_there: a listed name that leaves the home is dropped" {
   mkdir -p "$NOVA_USB_HOME/Documents" "$SCRATCH/secret"
   printf '%s\0' Documents ../secret "$SCRATCH/secret" Documents/../../secret >"$PLAN/files.list"
   [ "$(still_there "$NOVA_USB_HOME" "$PLAN/files.list" | tr '\0' ' ')" = "Documents " ]
-}
-
-@test "packages on the stick: fetched from the release's own snapshot and repository" {
-  printf 'version = "1.0.0"\narch_date = "2026/10/01"\nnova_repo = "https://nova-packages.piserver.stream/v1.0.0"\n' >"$SCRATCH/release.toml"
-  run offline_pacman_conf "$SCRATCH/release.toml"
-  [[ $output == *'Server = https://archive.archlinux.org/repos/2026/10/01/$repo/os/$arch'* ]]
-  [[ $output == *'Server = https://nova-packages.piserver.stream/v1.0.0'* ]]
-  printf 'arch_date = "yesterday"\n' >"$SCRATCH/bad.toml"
-  run offline_pacman_conf "$SCRATCH/bad.toml"
-  [ "$status" -ne 0 ]
 }
 
 @test "while writing, the stick and its partitions are hidden from the desktop's automounter" {
@@ -375,9 +249,20 @@ staging_setup() {
   [ "$status" -eq 0 ] && [ -z "$output" ]
 }
 
-@test "the installer partition: the ISO, the packages, and room to spare" {
-  [ "$(installer_mib $((1200 * MiB)) 0)" = 1388 ]
-  [ "$(installer_mib $((1200 * MiB)) $((2000 * MiB)))" = 3488 ]
+@test "the installer partition: the ISO, and room to spare" {
+  [ "$(installer_mib $((1200 * MiB)))" = 1388 ]
+  [ "$(installer_mib $((3000 * MiB)))" = 3278 ]
+}
+
+@test "iso_has_packages: an ISO carries its packages when its repository's database is on it" {
+  mkdir -p "$SCRATCH/iso/nova/repo"
+  echo db >"$SCRATCH/iso/nova/repo/nova-offline.db"
+  bsdtar -cf "$SCRATCH/with.iso" --format iso9660 -C "$SCRATCH/iso" .
+  iso_has_packages "$SCRATCH/with.iso"
+  rm "$SCRATCH/iso/nova/repo/nova-offline.db"
+  bsdtar -cf "$SCRATCH/without.iso" --format iso9660 -C "$SCRATCH/iso" .
+  fails iso_has_packages "$SCRATCH/without.iso"
+  fails iso_has_packages "$SCRATCH/missing.iso"
 }
 
 @test "machine_hash: nova usb and the installer agree on a computer" {
@@ -394,9 +279,9 @@ staging_setup() {
 
 # ------------------------------------------------------------ the wizard
 
-# A wizard ready to run: one 32 GB stick, an ISO, no packages on the stick.
+# A wizard ready to run: one 32 GB stick, and an ISO.
 wizard_setup() {
-  ISO=$SCRATCH/nova.iso RELEASE_DIR=$SCRATCH NO_OFFLINE="not in this test" DRY=1
+  ISO=$SCRATCH/nova.iso DRY=1
   head -c 1000 /dev/zero >"$ISO"
   mkdir -p "$NOVA_USB_HOME/.ssh"
   echo key >"$NOVA_USB_HOME/.ssh/id_ed25519"
@@ -409,7 +294,7 @@ wizard_setup() {
   # one (CI has no cryptsetup), a stand-in at the end of PATH answers for it.
   local tool
   mkdir -p "$SCRATCH/writer-bin"
-  for tool in sudo sfdisk wipefs mkfs.fat tar zstd diff cryptsetup mkfs.btrfs repo-add chroot mount umount; do
+  for tool in sudo sfdisk wipefs mkfs.fat tar zstd diff cryptsetup mkfs.btrfs chroot mount umount; do
     printf '#!/bin/sh\nexit 0\n' >"$SCRATCH/writer-bin/$tool"
     chmod +x "$SCRATCH/writer-bin/$tool"
   done
@@ -432,7 +317,7 @@ wizard_setup() {
   [ "$(plan_value "$PLAN" device)" = /dev/sdx ]
   [ "$(plan_value "$PLAN" items)" = "ssh files" ]
   [ "$(plan_value "$PLAN" keymap)" = es ]
-  [ "$(plan_value "$PLAN" offline)" = 0 ]
+  [ -z "$(plan_value "$PLAN" offline)" ]
   # The stick's list shows what is on each; the summary what is erased and
   # brought, the files by name.
   grep -q -- 'sdx  32.0 GB  Cruzer  ·  sdx1  28G  exfat  "old"' "$GUM_LOG"
@@ -548,7 +433,6 @@ wizard_setup() {
 
 @test "wizard: Portable brings what is ticked straight into its home, and leaves the rest to the installer" {
   wizard_setup
-  NO_OFFLINE=''
   stick_candidates() { printf '/dev/sdx\t%s\tExtreme\tS1\n' "$((64 * GB))"; }
   mkdir -p "$NOVA_USB_HOME/Documents"
   echo hi >"$NOVA_USB_HOME/Documents/a.txt"
@@ -692,21 +576,22 @@ wizard_setup() {
 
 # GitHub with one release, v1.0.0, and its package repository at
 # https://packages.example.org/v1.0.0, both serving $SCRATCH/served: the
-# release page has release.toml and the ISO with its .sha256, the repository
-# the rest. `serve_release page` puts it all on the page, as releases before
-# 1.0.0-beta.6 did. Each file but the ISO is signed by the test's key, which
-# stands in for Nova's.
-serve_release() { # [page]
+# release page has release.toml and the ISO's .sha256, the repository the rest,
+# the ISO among it. `serve_release iso-on-page` has the ISO on the page, as
+# releases up to 1.0.0-rc.11 did; `serve_release page` everything, as releases
+# before 1.0.0-beta.6 did. Each file but the ISO is signed by the test's key,
+# which stands in for Nova's.
+serve_release() { # [iso-on-page | page]
   test_key
   export NOVA_USB_KEY=$TEST_KEY
   local served=$SCRATCH/served name assets=''
-  local page=(release.toml release.toml.sig nova-1.0.0-x86_64.iso nova-1.0.0-x86_64.iso.sha256)
+  local page=(release.toml release.toml.sig nova-1.0.0-x86_64.iso.sha256)
   mkdir -p "$served"
   printf 'version = "1.0.0"\nnova_repo = "https://packages.example.org/v1.0.0"\n' >"$served/release.toml"
-  echo nova >"$served/packages.txt"
   echo 'an ISO' >"$served/nova-1.0.0-x86_64.iso"
   (cd "$served" && sha256sum -- nova-1.0.0-x86_64.iso >nova-1.0.0-x86_64.iso.sha256)
-  for name in release.toml packages.txt nova-1.0.0-x86_64.iso.sha256; do test_sign "$served/$name"; done
+  for name in release.toml nova-1.0.0-x86_64.iso.sha256; do test_sign "$served/$name"; done
+  [[ ${1:-} != iso-on-page ]] || page+=(nova-1.0.0-x86_64.iso)
   [[ ${1:-} != page ]] || page=("$served"/*)
   for name in "${page[@]}"; do
     name=${name##*/}
@@ -716,6 +601,11 @@ serve_release() { # [page]
   curl() {
     local url=${*: -1} out='' prev='' arg
     for arg; do [[ $prev != -o ]] || out=$arg; prev=$arg; done
+    if [[ $1 == -fsSIL ]]; then
+      [[ $url == https://packages.example.org/v1.0.0/* && -e $SCRATCH/served/${url##*/} ]] || return 22
+      printf 'HTTP/2 200\r\ncontent-length: %s\r\n\r\n' "$(stat -c %s -- "$SCRATCH/served/${url##*/}")"
+      return 0
+    fi
     case $url in
       *'?per_page='*) cat "$SCRATCH/releases.json" ;;
       https://dl.example.org/* | https://packages.example.org/v1.0.0/*)
@@ -727,18 +617,25 @@ serve_release() { # [page]
   }
 }
 
-@test "fetch_release: the release's files are Nova's, and the ISO matches its checksum" {
+@test "fetch_release: the release's files are Nova's, and the ISO, from beside the packages, matches its checksum" {
   serve_release
   run fetch_release
   [ "$status" -eq 0 ]
   [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
   [ "$(cat "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso")" = 'an ISO' ]
-  [ -s "$NOVA_USB_CACHE/v1.0.0/packages.txt" ]
-  # The page for release.toml and the ISO, the package repository for the rest.
+  [[ $output == *"Downloading the installer (7 B)"* ]]
+  # The page for release.toml, the package repository for the rest.
   [ "$(paste -sd' ' "$SCRATCH/downloaded")" = "https://dl.example.org/release.toml https://dl.example.org/release.toml.sig \
-https://packages.example.org/v1.0.0/packages.txt https://packages.example.org/v1.0.0/packages.txt.sig \
 https://packages.example.org/v1.0.0/nova-1.0.0-x86_64.iso.sha256 https://packages.example.org/v1.0.0/nova-1.0.0-x86_64.iso.sha256.sig \
-https://dl.example.org/nova-1.0.0-x86_64.iso" ]
+https://packages.example.org/v1.0.0/nova-1.0.0-x86_64.iso" ]
+}
+
+@test "fetch_release: a release with its ISO on its page, up to 1.0.0-rc.11, still works" {
+  serve_release iso-on-page
+  run fetch_release
+  [ "$status" -eq 0 ]
+  [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
+  [ "$(tail -n 1 "$SCRATCH/downloaded")" = https://dl.example.org/nova-1.0.0-x86_64.iso ]
 }
 
 @test "fetch_release_files: a selected release gets the same signature and ISO checks" {
@@ -759,17 +656,7 @@ https://dl.example.org/nova-1.0.0-x86_64.iso" ]
   run fetch_release
   [ "$status" -eq 0 ]
   [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
-  [ -s "$NOVA_USB_CACHE/v1.0.0/packages.txt" ]
   fails grep -q packages.example.org "$SCRATCH/downloaded"
-}
-
-@test "fetch_release: without the package list, the stick is made without offline packages" {
-  serve_release
-  rm "$SCRATCH/served/packages.txt"
-  run fetch_release
-  [ "$status" -eq 0 ]
-  [ ! -e "$NOVA_USB_CACHE/v1.0.0/packages.txt" ]
-  [ "${lines[-1]}" = "$NOVA_USB_CACHE/v1.0.0/nova-1.0.0-x86_64.iso" ]
 }
 
 @test "fetch_release: a file changed after it was signed stops it before the ISO" {

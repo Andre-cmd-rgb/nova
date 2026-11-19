@@ -409,6 +409,25 @@ pinned() { # date
   fails grep -q nova-update-apply "$CALLS"
 }
 
+@test "going back to a release whose packages are gone says so, and changes nothing" {
+  pinned 2026/10/27
+  stub curl 'printf 404'
+  run "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release.toml" --yes --allow-downgrade
+  [ "$status" -ne 0 ]
+  [[ $output == *"v1.0.0-beta.2's packages are no longer kept"* ]]
+  [[ $output == *"nova recovery"* ]]
+  fails grep -q nova-update-apply "$CALLS"
+  grep -q '^curl .*https://example.org/repo/nova.db' "$CALLS"
+  # Still there, or a bucket that cannot be asked: pacman has the last word.
+  for answer in 200 ''; do
+    stub curl "printf '$answer'"
+    run "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release.toml" --yes --allow-downgrade
+    [ "$status" -eq 0 ]
+    grep -q -- '^nova-update-apply .*--allow-downgrade' "$CALLS"
+    : >"$CALLS"
+  done
+}
+
 @test "a system pinned to no snapshot yet moves to the release's" {
   run update
   [ "$status" -eq 0 ]

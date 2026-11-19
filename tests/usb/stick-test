@@ -37,10 +37,14 @@ passphrase='correct horse battery'
 
 # A stand-in for the ISO: the files archiso boots from, where it keeps them.
 iso=$work/isofs
-mkdir -p "$iso/EFI/BOOT" "$iso/loader/entries" "$iso/nova/x86_64" "$iso/boot" "$work/mnt"
+mkdir -p "$iso/EFI/BOOT" "$iso/loader/entries" "$iso/nova/x86_64" "$iso/nova/repo" "$iso/boot" "$work/mnt"
 echo efi >"$iso/EFI/BOOT/BOOTx64.EFI"
 echo 'default 01-nova.conf' >"$iso/loader/loader.conf"
 head -c 5M /dev/urandom >"$iso/nova/x86_64/airootfs.sfs"
+# The packages it carries, as tools/offline-repo names them for a FAT stick.
+head -c 2M /dev/urandom >"$iso/nova/repo/ffmpeg-2_7.1-1-x86_64.pkg.tar.zst"
+echo signature >"$iso/nova/repo/ffmpeg-2_7.1-1-x86_64.pkg.tar.zst.sig"
+echo database >"$iso/nova/repo/nova-offline.db"
 : >"$iso/boot/2026-10-20-00-00-00-00.uuid"
 xorriso -as mkisofs -quiet -r -V NOVA_TEST -o "$work/nova.iso" "$iso"
 
@@ -67,7 +71,7 @@ size=$(blockdev --getsize64 "$loop")
 items="ssh files"
 write_plan() { # size
   printf '%s\n' "device=$loop" "size=$1" "serial=-" "iso=$work/nova.iso" "user=root" "home=$home" \
-    "items=$items" "offline=0" "installer_mib=64" "keymap=es" >"$plan/plan.env"
+    "items=$items" "installer_mib=64" "keymap=es" >"$plan/plan.env"
 }
 write() {
   printf '%s' "$passphrase" |
@@ -96,9 +100,10 @@ ok "the layout: a FAT EFI partition, then LUKS"
 
 mount -o ro "$p1" "$work/mnt"
 diff -r --exclude=keymap "$iso" "$work/mnt" || fail "the installer partition differs from the ISO"
+[[ -s $work/mnt/nova/repo/nova-offline.db ]] || fail "the stick has no packages to install from"
 [[ $(cat "$work/mnt/nova/keymap") == es ]] || fail "the stick does not offer this computer's keyboard layout"
 umount "$work/mnt"
-ok "the installer partition holds the ISO's files, and this computer's keyboard layout"
+ok "the installer partition holds the ISO's files, its packages among them, and this computer's keyboard layout"
 
 if printf 'wrong passphrase' | cryptsetup open --test-passphrase --key-file - "$p2" 2>/dev/null; then
   fail "a wrong passphrase opened the data"

@@ -6,7 +6,7 @@ The pages below are split between using Nova and working on it.
 
 | Page | For |
 |---|---|
-| [Installing Nova](install.md) | the USB stick, the installer's questions, encryption, the offline stick, carrying files over, a portable Nova |
+| [Installing Nova](install.md) | the USB stick, the installer's questions, encryption, installing without internet, carrying files over, a portable Nova |
 | [Using Nova](using.md) | the keys, the menu, the bar, Settings page by page, the calendar, dictation, AirDrop, Caffeine, apps, the keyboard |
 | [Themes and backgrounds](themes.md) | themes, the adaptive theme, backgrounds, the see-through bar, the font, a theme of your own |
 | [The App Center](apps.md) | finding, installing and removing apps; where they come from, and which goes first; why Nova has a window of its own |

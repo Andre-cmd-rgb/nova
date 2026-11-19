@@ -3,12 +3,16 @@
 # reads any more.
 #
 #   tools/packages-prune --keep <tag>... [--delete]
+#   tools/packages-prune --older-than <tag> [--delete]
 #
 # A release's packages are the files of its own folder (v1.0.0/nova.db,
 # v1.0.0/nova-1.0.0-1-x86_64.pkg.tar.zst and so on), and a system stays on
 # its release's folder until nova update moves it on: so a release goes from
 # the bucket only once no system is on it. Every --keep names a release whose
-# folder stays. Everything else is listed, by folder, with its size: other
+# folder stays; --older-than keeps that release and every newer one, which
+# release.yml does once a release is published (with --keep for the newest
+# final one), so that the bucket holds the newest releases alone, ISOs and
+# all, and never loses a folder a build beside it is filling. Everything else is listed, by folder, with its size: other
 # releases' folders, and whatever lies deeper than a release's own files or
 # outside any release (the Raspberry Pi's packages, from when Nova had them).
 # With --delete it is then removed, and the bucket read again to see that
@@ -22,17 +26,19 @@ set -euo pipefail
 
 die() { printf 'packages-prune: %s\n' "$*" >&2; exit 1; }
 
-keep=() delete=0
+keep=() older='' delete=0
 while (($#)); do
   case $1 in
     --keep) keep+=("${2:?--keep needs a tag}"); shift 2 ;;
+    --older-than) older=${2:?--older-than needs a tag}; shift 2 ;;
     --delete) delete=1; shift ;;
     -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
-((${#keep[@]})) || die "name at least one release to keep (--keep <tag>): a bucket with none left serves no system"
-for tag in "${keep[@]}"; do
+((${#keep[@]})) || [[ -n $older ]] ||
+  die "name at least one release to keep (--keep <tag>, or --older-than <tag>): a bucket with none left serves no system"
+for tag in "${keep[@]}" ${older:+"$older"}; do
   [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$ ]] || die "$tag is not a release tag"
 done
 [[ -n ${R2_ENDPOINT:-} && -n ${R2_BUCKET:-} ]] || die "R2_ENDPOINT and R2_BUCKET must be set"
@@ -51,20 +57,34 @@ objects() {
 }
 
 # What goes: every object that is not a file of a kept release's own folder.
+# order() is a release's place among releases, as a string that sorts like it:
+# 1.0.10 after 1.0.9, a candidate before its release, a beta before a candidate.
 going() { # objects on stdin
-  awk -F'\t' -v kept="${keep[*]}" '
-    BEGIN { n = split(kept, tags, " "); for (i = 1; i <= n; i++) stays[tags[i]] = 1 }
+  awk -F'\t' -v kept="${keep[*]}" -v older="$older" '
+    function order(tag,   part, stage) {
+      if (tag !~ /^v[0-9]+\.[0-9]+\.[0-9]+(-(beta|rc)\.[0-9]+)?$/) return ""
+      split(substr(tag, 2), part, /[.-]/)
+      stage = part[4] == "" ? 2 : part[4] == "rc" ? 1 : 0
+      return sprintf("%09d%09d%09d%d%09d", part[1], part[2], part[3], stage, part[5])
+    }
+    BEGIN {
+      n = split(kept, tags, " "); for (i = 1; i <= n; i++) stays[tags[i]] = 1
+      floor = older == "" ? "" : order(older)
+    }
     {
       slash = index($1, "/")
       folder = slash ? substr($1, 1, slash - 1) : ""
       rest = slash ? substr($1, slash + 1) : $1
-      if (!(folder in stays) || index(rest, "/") || rest == "") print
+      kept_folder = folder in stays || (floor != "" && order(folder) != "" && order(folder) >= floor)
+      if (!kept_folder || index(rest, "/") || rest == "") print
     }'
 }
 
 objects >"$work/all" || die "could not list the bucket"
 going <"$work/all" >"$work/going"
-printf 'In the bucket: %d objects. Kept: %s.\n' "$(wc -l <"$work/all")" "${keep[*]}"
+kept=${keep[*]}
+[[ -z $older ]] || kept="${kept:+$kept, }$older and every newer release"
+printf 'In the bucket: %d objects. Kept: %s.\n' "$(wc -l <"$work/all")" "$kept"
 if [[ ! -s $work/going ]]; then
   echo "Nothing to remove."
   exit 0

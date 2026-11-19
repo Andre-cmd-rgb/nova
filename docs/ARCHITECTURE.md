@@ -325,15 +325,15 @@ Built only in CI ([packaging.md](packaging.md) has how each is kept up to date):
 
 A release (`v1.0.0-beta.1`, …) is a GitHub release with:
 
-- the installer ISO (`installer/iso`, built by `tools/build-iso`), which installs over the network, and its `.sha256`;
 - `nova-usb`, for making the stick (below);
+- the ISO's `.sha256`;
 - `release.toml`, which pins the Arch Linux Archive date the release was tested against and says where its packages are.
 
-The rest is in the release's folder of the `nova-packages` bucket on Cloudflare R2 (`https://nova-packages.piserver.stream/<tag>`):
+The rest is in the release's folder of the `nova-packages` bucket on Cloudflare R2 (`https://nova-packages.piserver.stream/<tag>`), which keeps the newest release, and the newest final one:
 
 - the signed `[nova]` repository;
-- `packages.txt`, for the stick;
-- a `.sig` by the repository key for each file read without pacman (`release.toml`, the ISO's `.sha256`, `packages.txt`, `nova-usb`), which `nova update` and `nova-usb` check against the key alone.
+- the installer ISO (`installer/iso`, built by `tools/build-iso`), about 3 GB, with every package any install can need on it (`nova/repo`, the `[nova-offline]` repository, from `tools/offline-repo`), so that it installs without a network;
+- a `.sig` by the repository key for each file read without pacman (`release.toml`, the ISO's `.sha256`, `nova-usb`), which `nova update` and `nova-usb` check against the key alone.
 
 [releasing.md](releasing.md) has the two-week cycle and the signing key.
 
@@ -343,7 +343,7 @@ The rest is in the release's folder of the `nova-packages` bucket on Cloudflare 
 
 | Partition | Holds |
 |---|---|
-| 1, `NOVA` | a FAT EFI partition holding the ISO's files, which archiso boots from as they are (it finds itself by a `/boot/<uuid>.uuid` file, not by the disk). With packages on the stick, `nova/repo/` holds every package any install can need (`packages.txt`, from `nova-install --list-packages`) and their signatures, as the `[nova-offline]` repository |
+| 1, `NOVA` | a FAT EFI partition holding the ISO's files, which archiso boots from as they are (it finds itself by a `/boot/<uuid>.uuid` file, not by the disk). Among them, `nova/repo/` holds every package any install can need (`nova-install --list-packages`, with their dependencies) and their signatures, as the `[nova-offline]` repository |
 | 2, `NOVA-DATA` | only when something is carried (the SSH keys, and the files and folders picked from the home): LUKS2, btrfs, and `carry/` with one `tar.zst` per item, `SHA256SUMS` and `manifest.json`. `nova-install --unlock` opens it before the questions; the install puts each item back into the new home once the account exists |
 
 - **One question per screen:** `nova usb` and the stick's installer ask with gum, under the wordmark, in a column down the middle. `installer/ui.bash` holds the prompts both use, in the terminal's sixteen colours named by what they mean, and the glyphs stay within the console fonts' code page 437 set.

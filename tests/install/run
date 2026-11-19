@@ -2,8 +2,7 @@
 # Installs a release from its ISO in a QEMU virtual machine, as a stick made by
 # nova usb would, then boots what was installed and checks it.
 #
-#   tests/install/run --iso <file> --repo <dir> --release <release.toml>
-#                     --packages <packages.txt> [--logs <dir>] [--encrypt] [--nvme]
+#   tests/install/run --iso <file> [--logs <dir>] [--encrypt] [--nvme]
 #
 #   tests/install/run --upgrade --repo <dir> --release <release.toml> [--logs <dir>] [--nvme]
 #
@@ -20,9 +19,10 @@
 # rather than virtio's /dev/vda.
 #
 # The stick is a disk image laid out the way nova usb lays one out: a FAT
-# partition with the ISO's files and every package an install can need, the
-# [nova] ones from --repo (the release is not published yet) and Arch's from
-# the snapshot release.toml pins. An answers file on it (nova-install
+# partition with the ISO's files, every package an install can need among
+# them (nova/repo). A release from before the ISO carried them (1.0.0-rc.11
+# and older, which the upgrade test can start from) gets them put beside, from
+# its own package list, as nova usb did then. An answers file on it (nova-install
 # --answers) installs onto a blank 80 GB disk with no questions; the probe its
 # after= script leaves behind reports on the first boot (tests/install/probe).
 # Both runs log to the serial port; --logs keeps the logs.
@@ -39,20 +39,19 @@ set -euo pipefail
 
 here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 root=$(cd -- "$here/../.." && pwd)
-# package_urls, download_packages and make_offline_repo: nova usb's own.
+# fetch_release_files, signed_by_nova and release_value: nova usb's own.
 # shellcheck source=installer/nova-usb
 source "$root/installer/nova-usb"
 
 die() { printf 'install-test: %s\n' "$*" >&2; exit 1; }
 step() { printf '\n== %s\n' "$*"; }
 
-iso='' repo='' release='' packages='' logs='' encrypt=0 upgrade=0 nvme=0
+iso='' repo='' release='' logs='' encrypt=0 upgrade=0 nvme=0
 while (($#)); do
   case $1 in
     --iso) iso=${2:?}; shift 2 ;;
     --repo) repo=${2:?}; shift 2 ;;
     --release) release=${2:?}; shift 2 ;;
-    --packages) packages=${2:?}; shift 2 ;;
     --logs) logs=${2:?}; shift 2 ;;
     --encrypt) encrypt=1; shift ;;
     --nvme) nvme=1; shift ;;
@@ -61,8 +60,10 @@ while (($#)); do
     *) die "unknown argument: $1 (try --help)" ;;
   esac
 done
-[[ -r $repo/nova.db && -r $release ]] || die "needs --repo <dir> and --release <release.toml>"
-repo=$(realpath -- "$repo")
+if ((upgrade)); then
+  [[ -r $repo/nova.db && -r $release ]] || die "--upgrade needs --repo <dir> and --release <release.toml>"
+  repo=$(realpath -- "$repo")
+fi
 # The disk the install goes onto, as the installer names it and as QEMU
 # attaches it. QEMU's NVMe controller needs a serial number.
 if ((nvme)); then
@@ -99,6 +100,15 @@ if ((upgrade)); then
     exit 0
   fi
   ((rc == 0)) || die "could not select the previous release"
+  # The bucket keeps the newest releases alone: run again once it is no longer
+  # the newest, a release finds the one before it gone.
+  previous_toml=$(asset_url "$previous" release.toml)
+  if [[ -n $previous_toml ]] && curl -fsSL --retry 3 -o "$work/previous-release.toml" "$previous_toml" &&
+    [[ $(curl -sS -I -o /dev/null -w '%{http_code}' --max-time 30 \
+      "$(release_value "$work/previous-release.toml" nova_repo)/nova.db" || true) == 404 ]]; then
+    echo "::notice::$(jq -r .tag_name <<<"$previous") is no longer in the package bucket, which keeps the newest releases alone; skipping the upgrade test."
+    exit 0
+  fi
   CACHE=$work/download
   iso=$(fetch_release_files "$previous")
   previous_dir=${iso%/*}
@@ -107,17 +117,16 @@ if ((upgrade)); then
   start_upgrade_repo "$work" "$repo" || die "the HTTPS repository did not start"
   sed "s@^nova_repo = .*@nova_repo = \"$upgrade_repo\"@" "$release" >"$work/candidate.toml"
   release=$previous_dir/release.toml
-  packages=$previous_dir/packages.txt
 fi
-[[ -r $iso && -r $packages ]] || die "needs --iso <file> and --packages <packages.txt> (or --upgrade)"
-for tool in qemu-system-x86_64 Xvfb mcopy mkfs.fat sfdisk bsdtar repo-add pacman curl; do
+[[ -r $iso ]] || die "needs --iso <file> (or --upgrade)"
+for tool in qemu-system-x86_64 Xvfb mcopy mkfs.fat sfdisk bsdtar curl; do
   command -v "$tool" >/dev/null || die "needs $tool"
 done
 [[ -r /dev/kvm && -w /dev/kvm ]] || die "needs /dev/kvm"
 ovmf=/usr/share/edk2/x64
 [[ -r $ovmf/OVMF_CODE.4m.fd ]] || die "needs edk2-ovmf"
 stick=$work/stick
-mkdir -p "$stick" "$work/db/cache"
+mkdir -p "$stick"
 
 step "The stick: the ISO's files"
 bsdtar -xf "$iso" -C "$stick"
@@ -126,29 +135,19 @@ entry=$stick/loader/entries/01-nova.conf
 [[ -f $entry ]] || die "the ISO keeps no boot entries among its files, so a stick copied from it cannot boot"
 sed -i '/^options/ s/$/ console=ttyS0,115200/' "$entry"
 
-step "The stick: every package an install can need"
-if ((upgrade)); then
-  # The predecessor's repository, not the unpublished artifact: the disk must
-  # start as an installed older release, including its own installer.
-  offline_pacman_conf "$release" >"$work/pacman.conf"
-else
-  arch_date=$(sed -n 's/^arch_date = "\(.*\)"$/\1/p' "$release")
-  {
-    printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n\n[nova]\nServer = file://%s\n' "$repo"
-    for name in core extra multilib; do
-      # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
-      printf '\n[%s]\nServer = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$name" "$arch_date"
-    done
-  } >"$work/pacman.conf"
+if [[ ! -r $stick/nova/repo/nova-offline.db ]]; then
+  ((upgrade)) || die "the ISO carries no packages (nova/repo/nova-offline.db)"
+  # The release before is from when the ISO did not carry its packages: they
+  # go beside its files, from its own signed list, as nova usb put them then.
+  step "The stick: every package an install can need"
+  previous_repo=$(release_value "$release" nova_repo)
+  curl -fsSL --retry 3 -o "$work/packages.txt" "$previous_repo/packages.txt" &&
+    curl -fsSL --retry 3 -o "$work/packages.txt.sig" "$previous_repo/packages.txt.sig" ||
+    die "could not download the previous release's package list"
+  signed_by_nova "$work/packages.txt" || die "the previous release's package list is not signed by Nova's key"
+  "$root/tools/offline-repo" --release "$release" --packages "$work/packages.txt" "$stick/nova/repo" ||
+    die "could not put the previous release's packages on the stick"
 fi
-pacman --config "$work/pacman.conf" --dbpath "$work/db" --logfile /dev/null -Sy >/dev/null
-mapfile -t names < <(grep -v -e '^#' -e '^[[:space:]]*$' "$packages")
-package_urls "$work/pacman.conf" "$work/db" "${names[@]}" >"$work/urls" ||
-  die "the package list does not resolve against the release's packages and its snapshot"
-mkdir -p "$stick/nova/repo"
-download_packages "$work/urls" "$stick/nova/repo" || die "a package did not download"
-make_offline_repo "$stick/nova/repo" || die "could not index the packages"
-echo "$(wc -l <"$work/urls") packages"
 
 step "The stick: answers, so nobody has to be there"
 cat >"$stick/nova/answers" <<ANSWERS

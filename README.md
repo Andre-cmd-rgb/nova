@@ -17,7 +17,7 @@
 - **Your iPhone, with nothing installed on it.** It sends photos and files to the computer with AirDrop, and opening its share sheet is enough to switch AirDrop on. Its notifications can show on the computer too.
 - **Dictation.** Hold Super+D and speak: the words appear where you type. It runs on your computer, so nothing you say leaves it; the speech model, 669 MB, is downloaded once, at the first use.
 - **Updates you can undo.** A release every two weeks, tested before you get it, with a snapshot before each update to go back to.
-- **An installer stick** that can carry your files over, install without internet, or hold a whole Nova to start any PC from.
+- **An installer stick** that installs without internet, and can carry your files over, or hold a whole Nova to start any PC from.
 
 <p>
 <img src="docs/images/menu.jpg" alt="The Nova menu open in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, Update and System" width="49%">
@@ -32,13 +32,13 @@
 
 ## Install
 
-1. **Download** from the newest [release](https://github.com/Andre-cmd-rgb/nova/releases): `nova-usb` on an Arch-based system, or the ISO on any other.
-2. **Make the stick.** With `nova-usb`, run `sudo pacman -S gum`, then `bash nova-usb`: it fetches the ISO, checks it against Nova's signing key and writes the stick. Otherwise, write the ISO as it is with `dd` or any USB writer.
+1. **Download** from the newest [release](https://github.com/Andre-cmd-rgb/nova/releases): `nova-usb` on an Arch-based system, or the ISO its notes link on any other. The ISO, about 3 GB, carries every package, so the stick installs without internet.
+2. **Make the stick**, of 4 GB or more. With `nova-usb`, run `sudo pacman -S gum`, then `bash nova-usb`: it fetches the ISO, checks it against Nova's signing key and writes the stick. Otherwise, write the ISO as it is with `dd` or any USB writer.
 3. **Turn Secure Boot off** in the computer's firmware settings; the installer stops and says how when it is still on. If Windows stays on the computer and uses BitLocker or Device Encryption, it asks for its recovery key at its next start: have the key at hand first.
 4. **Start the computer from the stick** (F12 at power-on on most computers, F9, F11 or Esc on some) and answer the questions. Nothing touches the disk until you type `erase`.
 5. **Take the stick out and restart.** The computer starts into the lock screen.
 
-The [install guide](docs/install.md) has the rest: each question, encryption, the offline stick, carrying files over, and a portable Nova on a USB drive.
+The [install guide](docs/install.md) has the rest: each question, encryption, installing without internet, carrying files over, and a portable Nova on a USB drive.
 
 ## Keys worth knowing
 

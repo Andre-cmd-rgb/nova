@@ -1,22 +1,22 @@
 # Installing Nova
 
-This page covers making the USB stick, the questions the installer asks, what it sets up, and the three things a stick can do beyond a plain install: carry your files over, install without internet, and hold a portable Nova that starts any PC.
+This page covers making the USB stick, the questions the installer asks, what it sets up, installing without internet, and the two things a stick can do beyond a plain install: carry your files over, and hold a portable Nova that starts any PC.
 
 ## Before you start
 
 - **A 64-bit PC (x86-64) that starts with UEFI.** A computer that starts the stick in legacy BIOS mode is refused: turn on UEFI boot in its firmware settings.
 - **A disk of 64 GiB or more.** Nova takes the whole disk.
 - **Secure Boot off**, in the firmware settings. The installer stops before its first question when it is on, and says how to turn it off. If Windows stays on the computer (on another disk) and uses BitLocker or Device Encryption, it asks for its recovery key at its next start once Secure Boot is off: have the key at hand first.
-- **A USB stick of 2 GiB or more**, or 32 GB or more for a [portable Nova](#a-portable-nova).
-- **The internet**, unless the stick carries every package ([below](#installing-without-internet)). Ethernet connects by itself; the installer asks for Wi-Fi when there is no cable.
+- **A USB stick of 4 GB or more**, or 32 GB or more for a [portable Nova](#a-portable-nova).
+- **No internet needed**: the ISO carries every package ([below](#installing-without-internet)).
 
-The newest [release](https://github.com/Andre-cmd-rgb/nova/releases) has the ISO (`nova-<version>-x86_64.iso`), its `.sha256`, and `nova-usb`. With `nova-usb` you need only it: it fetches the ISO itself.
+The newest [release](https://github.com/Andre-cmd-rgb/nova/releases) has `nova-usb`, the ISO's `.sha256`, and a link to the ISO (`nova-<version>-x86_64.iso`, about 3 GB), which is kept beside Nova's packages because GitHub takes no file that big. With `nova-usb` you need only it: it fetches the ISO itself.
 
 ## Making the stick
 
 ### With nova-usb, on an Arch-based system
 
-`nova-usb` writes a stick of its own rather than the bare ISO. It can put every package on it, carry your SSH keys and files, or install Nova itself onto the stick.
+`nova-usb` writes a stick of its own rather than the bare ISO. It can carry your SSH keys and files on it, or install Nova itself onto the stick.
 
 1. Install `gum`, which `nova-usb` asks its questions with: `sudo pacman -S gum`. On Nova it is already there, and the command is `nova usb`.
 2. Plug the stick in.
@@ -36,15 +36,14 @@ It downloads the newest release's ISO and checks it against the release's checks
    - **Custom**: the installer and things of yours ([carrying your files over](#carrying-your-files-over)).
    - **Portable**: Nova itself, to start any PC from the stick ([a portable Nova](#a-portable-nova)).
 3. **What to bring** (Custom and Portable): your SSH keys and the files and folders at the top of your home, each with its size, or something further in, typed by hand.
-4. **Every package on the stick too?** (Clean and Custom): yes installs without internet ([below](#installing-without-internet)).
-5. **A passphrase** (Custom), 8 characters or more, when you bring something: what you bring is encrypted on the stick.
-6. **A summary** of what is erased and what is written, and whether it fits. Type the stick's name to go ahead.
+4. **A passphrase** (Custom), 8 characters or more, when you bring something: what you bring is encrypted on the stick.
+5. **A summary** of what is erased and what is written, and whether it fits. Type the stick's name to go ahead.
 
 It asks for sudo once, to write. Everything written is read back from the stick and checked before it is done.
 
 ### With any USB writer
 
-On any other system, write the ISO as it is with `dd` or any USB writer. That stick installs over the network.
+On any other system, write the ISO as it is with `dd` or any USB writer, after checking it against its `.sha256` (`sha256sum -c nova-<version>-x86_64.iso.sha256`). That stick installs without internet too.
 
 ## Starting from the stick
 
@@ -61,7 +60,7 @@ The installer asks everything first, one question a screen, and touches no disk 
 
 1. **Keyboard layout.** A stick made by `nova-usb` offers the layout of the computer it was made on.
 2. **The passphrase of what the stick carries**, when it carries something. Enter installs without it.
-3. **Wi-Fi**, when there is no cable: pick a network and type its password, name a hidden one, or go on without a network (only a stick with every package installs without one).
+3. **Wi-Fi**, when there is no cable: pick a network and type its password, name a hidden one, or go on without a network. Nova installs from the stick either way; with a network, Chrome and VS Code come with it, and the new system joins the same Wi-Fi.
 4. **Where Nova goes**, only when a USB disk of 32 GB or more is plugged in beside the stick: this computer's disk, or that USB disk ([portable](#a-portable-nova)).
 5. **The disk.** Everything on it is erased. Each disk is listed with its size and model, and what it holds now: each partition's label, file system and size, the largest first.
 6. **Encryption**: no, or yes with a passphrase at every start ([below](#encryption)).
@@ -111,11 +110,9 @@ A stick made by an older `nova-usb` may carry more (a browser, Wi-Fi networks, a
 
 ## Installing without internet
 
-Answer yes to **Every package on the stick too?** in `nova-usb`. The stick then holds every package any install can need, and installs on any computer with no network.
+Every stick installs without internet: the ISO carries every package any install on any computer can need (`nova/repo` on it), and the installer reads them from the stick, which is also faster than downloading them.
 
-- Making it needs `pacman` and `fakeroot` on the system that makes it.
-- The packages download to that computer before the stick is erased, or straight to the stick when there is no room.
-- Chrome, VS Code, Claude Code and Codex need the network: an offline install says so. The welcome after your first unlock joins a Wi-Fi network and then installs Chrome and VS Code; `nova apps install; mise install` adds all four.
+- Chrome, VS Code, Claude Code and Codex need the network: an install without one says so. The welcome after your first unlock joins a Wi-Fi network and then installs Chrome and VS Code; `nova apps install; mise install` adds all four.
 
 ## A portable Nova
 
@@ -127,7 +124,7 @@ Nova can live on a USB stick or drive of 32 GB or more, and start any 64-bit PC 
 2. Pick what to bring, as for Custom: your SSH keys and files. They go straight into the new home.
 3. Read the summary and type the stick's name. `nova-usb` warns when the stick is on a USB 2 link.
 4. The release's own installer asks for your name and password, the stick's name, and whether to encrypt it. Encrypt it: anyone who finds a lost stick can read an unencrypted one.
-5. Type `erase`. The packages download as it goes, so it needs the internet.
+5. Type `erase`. The packages come from the ISO, so it needs no internet.
 
 ### Making one without a Linux computer
 
@@ -162,5 +159,5 @@ It runs as fast as the stick does.
 
 - **It says at which step.** The part that stopped is marked on the install's screen, with the error under it, the log's last lines, and where the whole log is: `/var/log/nova-install.log`, kept in memory until the installer restarts.
 - **To try again from the start** without a restart, run `nova-install-start`. It keeps the stopped try's log as `nova-install.log.1`.
-- **No network, and no packages on the stick:** connect by hand with `iwctl`, then run `nova-install-start` again.
+- **No network, on a stick from before 1.0.0-rc.12**, whose ISO carried no packages: connect by hand with `iwctl`, then run `nova-install-start` again.
 - **A disk in use** by the live system (mounted, swap or LVM) is refused; pick another.

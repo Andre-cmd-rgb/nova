@@ -1,11 +1,13 @@
 # A release: pins an Arch Linux Archive snapshot (yesterday's, unless given),
 # builds every Nova package against it, side by side, signs them into the
-# [nova] repository, builds the installer ISO, installs from it in a virtual
-# machine and boots the result, and only then publishes it: the package repository to the
-# nova-packages bucket on Cloudflare R2, then the GitHub release, which carries
-# only the ISO, nova-usb and release.toml. A draft when a tag is pushed by
-# hand, published when candidate.yml or promote.yml calls it. A tag with a "-"
-# is a pre-release. See docs/releasing.md.
+# [nova] repository, builds the installer ISO, which carries every package an
+# install can need, installs from it in a virtual machine and boots the
+# result, and only then publishes it: the package repository and the ISO to
+# the nova-packages bucket on Cloudflare R2, then the GitHub release, which
+# carries nova-usb, the ISO's checksum and release.toml. Once a release is
+# published, the folders of the releases before it go from the bucket, but for
+# the newest final release's. A draft when a tag is pushed by hand, published when candidate.yml or
+# promote.yml calls it. A tag with a "-" is a pre-release. See docs/releasing.md.
 #
 # Needs the repository secrets NOVA_REPO_KEY (the ASCII-armored private key
 # whose public half is in packaging/nova-keyring) and R2_ACCESS_KEY_ID and
@@ -270,9 +272,9 @@ jobs:
           name: packages-nvidia
           path: out/pkgs/*.pkg.tar.zst
 
-  # Arch's own packages for the install tests, fetched once and beside the
-  # builds above: each test puts every package an install can need on its
-  # stick, and spent half its time fetching the same 700 from the archive.
+  # Arch's own packages for the ISO, which carries every package an install
+  # can need, and for the upgrade test: fetched once and beside the builds
+  # above, rather than the same 700 from the archive, one server, each time.
   arch-packages:
     needs: pin
     runs-on: ubuntu-latest
@@ -289,14 +291,14 @@ jobs:
           name: release-toml
       - id: key
         env:
-          KEY: arch-packages-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('installer/packages', 'installer/nova-install', 'installer/install-*.bash', 'installer/nova-usb', 'data/hardware/*/packages', 'packaging/*/PKGBUILD', 'tools/arch-packages') }}
+          KEY: arch-packages-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('installer/packages', 'installer/nova-install', 'installer/install-*.bash', 'tools/offline-repo', 'data/hardware/*/packages', 'packaging/*/PKGBUILD', 'tools/arch-packages') }}
         run: echo "key=$KEY" >>"$GITHUB_OUTPUT"
       - id: fetched
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: out/arch
           key: ${{ steps.key.outputs.key }}
-          lookup-only: true # the tests read it, not this job
+          lookup-only: true # the ISO and the upgrade test read it, not this job
       - name: Fetch them from the snapshot
         if: steps.fetched.outputs.cache-hit != 'true'
         run: |
@@ -340,11 +342,13 @@ jobs:
           path: out/repo/
 
   iso:
-    needs: [pin, repo]
+    needs: [pin, repo, arch-packages]
     runs-on: ubuntu-latest
     container:
       image: archlinux:base-devel
       options: --privileged # mkarchiso mounts /proc and /dev inside the image it builds
+      volumes:
+        - /mnt:/mnt # the runner's scratch disk: the live system and every package, side by side
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -357,8 +361,15 @@ jobs:
         with:
           name: repo
           path: out/repo
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/arch
+          key: ${{ needs.arch-packages.outputs.key }}
       - name: Build the installer ISO
         run: |
+          # Arch's packages, into pacman's cache: the ISO's are taken from there
+          # first (tools/offline-repo), and from the archive for the rest.
+          if [[ -d out/arch ]]; then mkdir -p /var/cache/pacman/pkg && cp -a out/arch/. /var/cache/pacman/pkg/ && rm -rf out/arch; fi
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" archiso
           # The build host trusts the Nova key the same way an installed system does.
           # Installed from a copy without its .sig: pacman would check that against
@@ -366,23 +377,23 @@ jobs:
           keyring=$(mktemp -d)
           cp out/repo/nova-keyring-*.pkg.tar.zst "$keyring/"
           pacman -U --noconfirm "$keyring"/nova-keyring-*.pkg.tar.zst
-          tools/build-iso --release release.toml --repo out/repo --out out/iso
+          tools/build-iso --release release.toml --repo out/repo --out out/iso --work /mnt/nova-iso
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iso
           path: out/iso/
+          compression-level: 0 # squashfs and packages, compressed already
       # The small files of it, for the sign job, which then need not fetch the ISO.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: iso-files
           path: |
             out/iso/*.sha256
-            out/iso/packages.txt
             out/iso/nova-usb
 
   # Signatures for the files read without pacman: release.toml (nova update
-  # checks it), the ISO's .sha256 and packages.txt (nova-usb checks them), and
-  # nova-usb, for people.
+  # checks it), the ISO's .sha256 (nova-usb checks it), and nova-usb, for
+  # people.
   sign:
     needs: iso
     runs-on: ubuntu-latest
@@ -426,13 +437,14 @@ jobs:
           name: signatures
           path: out/signatures/
 
-  # The ISO as someone would use it: a stick made from it, an install with no
-  # questions in a KVM virtual machine, and the first boot checked from inside.
+  # The ISO as someone would use it: a stick made from it, which installs from
+  # the packages the ISO carries, an install with no questions in a KVM virtual
+  # machine, and the first boot checked from inside.
   # The installer's two disks, each installed and booted: plain, Nova's
   # default, and encrypted. Both on virtio, and plain once more on NVMe, the
   # disk most laptops have, whose partitions are named nvme0n1p1 and p2.
   install-test:
-    needs: [pin, repo, iso, arch-packages]
+    needs: [pin, iso]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -454,30 +466,15 @@ jobs:
           ref: ${{ env.TAG }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: release-toml
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: repo
-          path: out/repo
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
           name: iso
           path: out/iso
-      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: out/arch
-          key: ${{ needs.arch-packages.outputs.key }}
       - name: Install it in QEMU, then boot it
         run: |
-          # Arch's packages, into pacman's cache: the stick is filled from there
-          # first, as nova usb fills one, and from the archive with the rest.
-          if [[ -d out/arch ]]; then mkdir -p /var/cache/pacman/pkg && cp -a out/arch/. /var/cache/pacman/pkg/ && rm -rf out/arch; fi
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-ui-gtk qemu-ui-opengl \
             qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl qemu-hw-display-virtio-vga \
             qemu-hw-display-virtio-vga-gl virglrenderer mesa xorg-server-xvfb edk2-ovmf mtools dosfstools libarchive
-          TMPDIR=/mnt tests/install/run --iso out/iso/nova-*.iso --repo out/repo --release release.toml \
-            --packages out/iso/packages.txt --logs /tmp/install-logs ${{ matrix.disk == 'encrypted' && '--encrypt' || '' }} \
-            ${{ matrix.bus == 'nvme' && '--nvme' || '' }}
+          TMPDIR=/mnt tests/install/run --iso out/iso/nova-*.iso --logs /tmp/install-logs \
+            ${{ matrix.disk == 'encrypted' && '--encrypt' || '' }} ${{ matrix.bus == 'nvme' && '--nvme' || '' }}
       - name: Keep the serial logs
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -583,7 +580,7 @@ jobs:
           [[ $published == false ]] || echo "::notice::$TAG is published; its files stay as they are"
           echo "published=$published" >>"$GITHUB_OUTPUT"
       # First, so the release is not offered before its packages are there.
-      - name: Put the package repository in the bucket
+      - name: Put the package repository and the ISO in the bucket
         if: steps.published.outputs.published == 'false'
         env:
           R2_ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
@@ -594,9 +591,11 @@ jobs:
         run: |
           [[ -n $ACCOUNT ]] || { echo "::error::the R2_ACCOUNT_ID variable is not set"; exit 1; }
           release=out/release-toml/release.toml
-          # Everything but the ISO and nova-usb, which only people download.
+          # Everything but nova-usb, which people download from the release
+          # page. The ISO too: it carries every package, which makes it bigger
+          # than GitHub takes a file.
           tools/packages-upload --release "$release" \
-            "$release" out/repo/* out/iso/packages.txt out/iso/*.sha256 out/signatures/*
+            "$release" out/repo/* out/iso/*.iso out/iso/*.sha256 out/signatures/*
       - name: Make the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -613,8 +612,8 @@ jobs:
           [[ $prerelease == true || $PUBLISH != true ]] || latest=(--latest)
           flags+=(--prerelease="$prerelease" "${latest[@]}")
           # What a person downloads, and release.toml, which nova update finds
-          # here and which says where the packages are.
-          assets=(out/iso/"$iso" out/iso/"$iso.sha256" out/iso/nova-usb
+          # here and which says where the packages and the ISO are.
+          assets=(out/iso/"$iso.sha256" out/iso/nova-usb
             out/release-toml/release.toml out/signatures/release.toml.sig)
           base=https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG
           packages=$(sed -n 's/^nova_repo = "\(.*\)"$/\1/p' out/release-toml/release.toml)
@@ -626,7 +625,7 @@ jobs:
           tools/release-notes "$TAG" "https://github.com/$GITHUB_REPOSITORY" >>notes.md
           cat >>notes.md <<EOF
 
-          **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($base/$iso), and can carry your SSH keys and the files you pick over and add the packages for an offline install. Writing the ISO to a stick yourself works too.
+          **To install**, make a stick with [nova-usb]($base/nova-usb): \`bash nova-usb\` on any Arch-based system (it needs \`gum\`). It writes [the ISO]($packages/$iso), which carries every package, so the stick installs without internet, and can carry your SSH keys and the files you pick over. Writing the ISO to a stick of 4 GB or more yourself works too: check it against [its checksum]($base/$iso.sha256) first.
 
           nova-usb checks the ISO against its checksum, and the checksum against Nova's signing key, which it carries. [nova-usb.sig]($packages/nova-usb.sig) is nova-usb's own signature, by the key in [nova-keyring](https://github.com/$GITHUB_REPOSITORY/tree/$TAG/packaging/nova-keyring).
 
@@ -644,3 +643,22 @@ jobs:
               --notes-file notes.md \
               "${assets[@]}"
           fi
+      # Last, once the release is out: the bucket keeps it, ISO and all, and
+      # the newest final release, which systems that take no candidates are on
+      # until the next final one. A system on an older release reads nothing
+      # new from its folder, and nova update moves it on; releases newer than
+      # this one, which a build beside it may be filling, stay.
+      - name: Remove the releases before it from the bucket
+        if: inputs.publish
+        env:
+          R2_ENDPOINT: https://${{ vars.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          R2_BUCKET: nova-packages
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(--older-than "$TAG")
+          # GitHub's latest release is the newest final one; with none yet, none.
+          stable=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName 2>/dev/null || true)
+          [[ -z $stable ]] || args+=(--keep "$stable")
+          tools/packages-prune "${args[@]}" --delete

@@ -12,9 +12,12 @@
 # Assembles a copy of installer/iso with nova-install, its stages
 # (install-*.bash) and the look of its screens (ui.bash, the wordmark), the
 # release's files and the hardware profiles' package lists, then runs
-# mkarchiso on it, so it needs root and the archiso package. Writes
-# nova-<version>-x86_64.iso and its .sha256, nova-usb and the offline package
-# list (packages.txt) to --out.
+# mkarchiso on it, so it needs root and the archiso package. The ISO carries
+# every package an install on any computer can need, in nova/repo
+# (tools/offline-repo), so a stick made from it installs without a network:
+# those are taken from pacman's cache where it has them, and downloaded from
+# the snapshot otherwise. Writes nova-<version>-x86_64.iso and its .sha256,
+# nova-usb and the list of those packages (packages.txt) to --out.
 set -euo pipefail
 
 die() { printf 'build-iso: %s\n' "$*" >&2; exit 1; }
@@ -96,13 +99,18 @@ EOF
   done
 } >"$profile/pacman.conf"
 
-NOVA_ISO_VERSION=$version mkarchiso -v -r -w "$work/build" -o "$out" "$profile"
+# Every package an install can need, in the folder mkarchiso makes the ISO's
+# file system from: nova/repo, where nova-install looks on the stick it
+# started from. mkarchiso adds to that folder and never empties it.
+NOVA_INSTALLER_SHARE=$share "$root/installer/nova-install" --list-packages >"$out/packages.txt"
+"$root/tools/offline-repo" --release "$release" --packages "$out/packages.txt" --nova "$repo" "$work/build/iso/nova/repo"
+
+NOVA_ISO_VERSION=$version mkarchiso -v -w "$work/build" -o "$out" "$profile"
 iso=nova-$version-x86_64.iso
 [[ -f $out/$iso ]] || die "mkarchiso did not write $out/$iso"
+bsdtar -tf "$out/$iso" nova/repo/nova-offline.db >/dev/null 2>&1 || die "$iso came out without its packages"
 (cd -- "$out" && sha256sum -- "$iso" >"$iso.sha256")
-# nova usb, which makes the stick from any system, in one file, and the
-# packages it puts on one for installing without a network.
-NOVA_INSTALLER_SHARE=$share "$root/installer/nova-install" --list-packages >"$out/packages.txt"
+# nova usb, which makes the stick from any system, in one file.
 "$root/tools/inline-ui" >"$out/nova-usb"
 chmod 755 "$out/nova-usb"
 rm -rf -- "$work"
