@@ -42,6 +42,7 @@ name_of() { # unit
     nova-sessiond.service) echo "Nova's session helper" ;;
     nova-speaker-tuning.service | nova-speaker-tuning-auto.service) echo "the speaker tuning" ;;
     nova-keyring-migrate.service) echo "moving your secrets into the login keyring" ;;
+    nova-iphone-notifications.service) echo "your iPhone's notifications" ;;
     nova-session-guard.service) echo "the session's guard" ;;
     nova-recover-internal-monitor.service) echo "turning the laptop's display back on" ;;
     limine-snapper-sync.service) echo "the boot menu's snapshots" ;;
