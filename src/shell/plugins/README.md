@@ -134,6 +134,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Workspaces | `nova.workspaces` | widget `bar/widgets/Workspaces.qml` | Hyprland's workspaces |
 | AirDrop | `nova.airdrop` | service `airdrop/AirDrop.qml`, panel `airdrop/AirDropToggle.qml` | AirDrop in notifications: an iPhone's offer to accept or decline, a transfer's bar, what came in; sending, from a window that lists the iPhones nearby (`nova airdrop send --window`); the doorbell's switching; the menu's toggle (`nova airdrop`) |
 | [Battery Life](batterylife/README.md) | `nova.batterylife` | service `batterylife/Service.qml`, widget `batterylife/BarWidget.qml` | how long the battery lasts; its page is `settings/BatteryLifeView.qml` |
+| Calculator | `nova.calculator` | panel `calculator/Panel.qml` | the Calculator's window (`nova calculator`), its keys' sums made in `calculator/Keypad.js`; `calculator/Calculator.js` and `calculator/Qalc.qml` put a sum to `qalc` and read its answer, for it and the menu alike |
 | [Calendar](calendar/README.md) | `nova.calendar` | service `calendar/Service.qml`, panel `calendar/Panel.qml` | the calendar's events and tasks, behind its window and the clock's card (`nova calendar`) |
 | Screen picker | `nova.capture` | overlay `capture/Capture.qml` | the still of the screen that screenshots, screen recordings and text from the screen are picked on (`nova-capture-region`), kept loaded, with PRINT a key of its own |
 | Clipboard | `nova.clipboard` | overlay `clipboard/Clipboard.qml` | the clipboard's history |
@@ -255,7 +256,7 @@ nothing to start.
 
 Settings' pages are the `settings.*` entries of `menu.jsonc`, under an
 action, so a search finds them and the list does not show them. A search
-from the root that reads as a sum or a conversion (`menu/Calculator.js`
+from the root that reads as a sum or a conversion (`calculator/Calculator.js`
 says which, and turns "in" into qalc's "to") goes to `qalc` once the keys
 have rested 50 ms, one run at a time, and without currencies, whose rates
 would need the network; qalc keeps its settings in

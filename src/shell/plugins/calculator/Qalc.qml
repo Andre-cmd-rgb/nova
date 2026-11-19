@@ -5,9 +5,11 @@ import "Calculator.js" as Calculator
 
 // qalc, one sum at a time, for the menu and the Calculator window: ask()
 // runs it at once, or, while a sum is being worked out, keeps the one asked
-// for to run after it, the latest only. answered() gives each sum run its
-// answer (Calculator.answer), null for none, once. qalc starts afresh for
-// each sum, in some 30 ms: a sum a key, typed fast, lags no more than a run.
+// for to run after it, the latest only (none, for the sum running).
+// answered() gives each sum run its answer (Calculator.answer), null for
+// none, once, with the run's number (round), which counts the runs started.
+// qalc starts afresh for each sum, in some 30 ms: a sum a key, typed fast,
+// lags no more than a run.
 //
 // qalc in English with a dot for decimals, whatever the locale, as sums are
 // typed so; and with its settings and history in the runtime folder, gone at
@@ -18,11 +20,13 @@ Item {
   // More of qalc's settings, as -set takes them ("angle deg").
   property var settings: []
 
-  signal answered(string sum, var answer)
+  readonly property int round: run.round
+
+  signal answered(string sum, var answer, int round)
 
   function ask(sum) {
     if (run.running) {
-      run.next = sum
+      run.next = sum === run.sum ? "" : sum
       return
     }
     run.next = ""
@@ -43,7 +47,7 @@ Item {
   function tell(round, found) {
     if (round !== run.round || run.said) return
     run.said = true
-    answered(run.sum, found)
+    answered(run.sum, found, round)
   }
 
   function askWaiting() {

@@ -7,3 +7,5 @@ nova.bind("SUPER + ALT + SHIFT + F", "File manager (cwd)", { nova = "nautilus-cw
 nova.bind("SUPER + SHIFT + B", "Browser", { nova = "browser" })
 nova.bind("SUPER + SHIFT + ALT + B", "Browser (private)", { nova = "browser --private" })
 nova.bind("SUPER + SHIFT + N", "Editor", { nova = "editor" })
+-- The Calculator key some keyboards have.
+nova.bind("XF86Calculator", "Calculator", "nova-calculator")

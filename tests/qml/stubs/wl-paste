@@ -1,0 +1,8 @@
+#!/bin/sh
+# wl-paste, for the Calculator's Ctrl+V: what the test wrote into
+# $HOME/clipboard, as copied text; the options it is given are noted in
+# $HOME/stub-calls, as the record stub notes a call.
+printf 'wl-paste' >>"$HOME/stub-calls"
+for word in "$@"; do printf ' %s' "$word" >>"$HOME/stub-calls"; done
+printf '\n' >>"$HOME/stub-calls"
+cat "$HOME/clipboard"

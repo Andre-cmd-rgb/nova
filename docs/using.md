@@ -35,6 +35,7 @@ Super+K searches every key and runs the one you pick. The tables below are the o
 | Super+Shift+F | Files |
 | Super+Alt+Shift+F | Files, in the focused terminal's directory |
 | Super+Shift+N | the editor |
+| Calculator key | the Calculator |
 | Super+Ctrl+T | Activity (btop) |
 
 ### Windows
@@ -312,6 +313,7 @@ These come installed:
 - The **App Center**, in the menu and the launcher, finds and installs more, from Arch Linux's repositories and from Flathub, and removes them: [The App Center](apps.md).
 - Printing goes through CUPS: Print Settings is in the apps.
 - **Quick Look**: in Files, Space shows the selected file, a picture, a video's first frame, a PDF's first page or text, in a window the size of what it shows, with its name and nothing else. The arrow keys move on to the next file, Return opens it in its app, Space or Esc closes it.
+- **Calculator**: in the menu and the launcher, on a keyboard's Calculator key, or `nova calculator [sum]`. Type or click: Return works the sum out, Esc clears, Ctrl+C copies the answer, Ctrl+V pastes. Scientific adds the functions, in degrees or radians, and conversions are written as in the menu. The history, the last 100 sums, puts one back with a click.
 - When a crash takes an app away, a notification says so ("Bambu Studio quit unexpectedly"), with Reopen. A crash that leaves its windows open, such as a browser tab's, is the app's own to show; `coredumpctl` lists them all.
 
 ## Keyboard

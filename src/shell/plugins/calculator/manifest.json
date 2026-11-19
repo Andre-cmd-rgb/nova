@@ -1,0 +1,11 @@
+{
+  "id": "nova.calculator",
+  "name": "Calculator",
+  "description": "Sums, conversions and the scientific functions, worked out by qalc as they are typed, with a history of what was worked out.",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "Panel.qml"
+  }
+}

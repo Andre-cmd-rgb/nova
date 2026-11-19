@@ -2,7 +2,8 @@
 # $NOVA_PATH/shell. Plugin helper scripts keep their executable bit, and the
 # ones people run are linked into the nova CLI: nova battery, nova screentime,
 # nova mobile-data, nova dictation. The plugins' manifests are also collected into
-# plugins/index.json, the one file the shell reads to find its plugins.
+# plugins/index.json, the one file the shell reads to find its plugins. The
+# Calculator's desktop entry and icon put it among the apps.
 
 INSTALL_TARGETS += install-shell
 QML_DIRS        += src/shell
@@ -27,3 +28,5 @@ install-shell:
 	for link in $(SHELL_CLI); do \
 	  ln -sfn "../../../share/nova/shell/plugins/$${link#*:}" "$(DESTDIR)$(NOVA_BIN)/nova-$${link%%:*}"; \
 	done
+	install -Dm644 src/shell/plugins/calculator/nova-calculator.desktop $(DESTDIR)$(PREFIX)/share/applications/nova-calculator.desktop
+	install -Dm644 src/shell/plugins/calculator/nova-calculator.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/nova-calculator.svg

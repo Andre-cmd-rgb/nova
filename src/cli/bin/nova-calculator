@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# nova:summary=Open the Calculator
+# nova:args=[expression]
+#
+# The calculator is a shell window (shell/plugins/calculator) that works sums
+# and conversions out with qalc, as the menu's search does. An expression,
+# such as 2*(3+4) or 5 km in miles, is put in its display, worked out.
+
+set -euo pipefail
+
+case ${1:-} in
+  -h | --help) echo "Usage: nova calculator [expression]"; exit 0 ;;
+esac
+
+nova-shell shell summon nova.calculator "$(jq -nc --arg expression "$*" '{expression: $expression}')" >/dev/null ||
+  { echo "nova-calculator: could not open the Calculator; is the shell running?" >&2; exit 1; }

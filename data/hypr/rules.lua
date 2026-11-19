@@ -44,13 +44,13 @@ hl.layer_rule({
   no_anim = true,
   animation = "none",
 })
--- Settings, the Calendar, the welcome, the App Center and Quick Look (the
--- preview Files opens with Space, which sizes its window to what it shows),
--- the shell's windows, float in the middle of the screen at the size they
--- ask for, opaque: they draw in the theme's own background, and text behind
--- would show through.
+-- Settings, the Calendar, the Calculator, the welcome, the App Center and
+-- Quick Look (the preview Files opens with Space, which sizes its window to
+-- what it shows), the shell's windows, float in the middle of the screen at
+-- the size they ask for, opaque: they draw in the theme's own background,
+-- and text behind would show through.
 nova.window(
-  { class = "^org\\.quickshell$", title = "^(Settings|Calendar|Welcome to Nova|App Center|Quick Look)$" },
+  { class = "^org\\.quickshell$", title = "^(Settings|Calendar|Calculator|Welcome to Nova|App Center|Quick Look)$" },
   { float = true, center = true, tag = "-default-opacity" }
 )
 

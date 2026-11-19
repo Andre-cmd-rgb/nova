@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Calculator
+Comment=Work out sums and conversions
+Keywords=calc;calculate;math;sum;convert;units;scientific;
+Icon=nova-calculator
+Exec=nova calculator
+TryExec=nova
+Terminal=false
+StartupNotify=false
+Categories=Utility;Calculator;
