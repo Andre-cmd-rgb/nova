@@ -37,6 +37,12 @@ setup() {
     word 10 162 180 true "▁not"
   } >"$SCRATCH/words"
   stub busctl 'echo "u 4"'
+  # Plugged in, whatever the computer the tests run on: on battery the end is
+  # held at performance by powerprofilesctl, which a test of its own stubs.
+  mkdir -p "$SCRATCH/plugged/AC"
+  echo Mains >"$SCRATCH/plugged/AC/type"
+  echo 1 >"$SCRATCH/plugged/AC/online"
+  export NOVA_POWER_SUPPLIES="$SCRATCH/plugged"
   stub nova-shell
   stub hyprctl
   stub wl-copy 'cat >"$SCRATCH/clipboard"'
