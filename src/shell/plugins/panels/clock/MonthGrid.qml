@@ -43,7 +43,7 @@ Row {
       Heading {
         anchors.centerIn: parent
         text: "W"
-        color: startPointer.containsMouse ? Style.hoverStateColor(grid.ink, Commons.Color.accent) : Qt.darker(grid.ink, 1.9)
+        color: startPointer.containsMouse ? Style.hoverStateColor(grid.ink, Commons.Color.accent) : Util.faded(grid.ink, 1.9)
       }
 
       MouseArea {
@@ -72,7 +72,7 @@ Row {
         verticalAlignment: Text.AlignVCenter
         textFormat: Text.PlainText
         text: modelData.week
-        color: Qt.darker(grid.ink, 1.9)
+        color: Util.faded(grid.ink, 1.9)
         font.family: grid.panel.family
         font.pixelSize: Style.font.caption
       }
@@ -110,7 +110,7 @@ Row {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         text: String(grid.english.dayName(modelData, Locale.ShortFormat)).toUpperCase()
-        color: Qt.darker(grid.ink, 1.5)
+        color: Util.faded(grid.ink, 1.5)
       }
     }
 
@@ -152,7 +152,7 @@ Row {
           anchors.centerIn: parent
           textFormat: Text.PlainText
           text: cell.modelData.day
-          color: !cell.modelData.inMonth ? Qt.darker(grid.ink, 2.2) : cell.modelData.weekend ? Qt.darker(grid.ink, 1.45) : grid.ink
+          color: !cell.modelData.inMonth ? Util.faded(grid.ink, 2.2) : cell.modelData.weekend ? Util.faded(grid.ink, 1.45) : grid.ink
           font.family: grid.panel.family
           font.pixelSize: Style.font.body
           font.bold: cell.modelData.today

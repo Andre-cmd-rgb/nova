@@ -15,7 +15,7 @@ Text {
     pixelSize: Style.font.caption
     bold: true
   }
-  color: Qt.darker(foreground, 1.4)
+  color: Util.faded(foreground, 1.4)
   textFormat: Text.PlainText
 
   // A glyph can rise above the line Text keeps room for, the Nerd Font's by

@@ -29,7 +29,7 @@ TextField {
   color: tint
   selectedTextColor: tint
   selectionColor: Style.selectionFillFor(tint, Commons.Color.accent)
-  placeholderTextColor: Qt.darker(tint, 1.6)
+  placeholderTextColor: Util.faded(tint, 1.6)
 
   background: ControlFace {
     id: face

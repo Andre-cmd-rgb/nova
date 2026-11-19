@@ -22,11 +22,11 @@ PanelKeys {
   required property var weather
   readonly property Forecast forecast: weather.forecast
 
-  readonly property color ink: weather.bar ? weather.bar.foreground : Commons.Color.foreground
+  readonly property color ink: Commons.Color.popups.text
   readonly property string family: weather.bar ? weather.bar.fontFamily : Style.font.family
   // The two dimmer inks: for names, and for what is said beside them.
-  readonly property color soft: Qt.darker(ink, 1.4)
-  readonly property color faint: Qt.darker(ink, 1.5)
+  readonly property color soft: Util.faded(ink, 1.4)
+  readonly property color faint: Util.faded(ink, 1.5)
   readonly property int inset: Style.space(16)
 
   readonly property bool imperial: Model.imperial(weather.setting("unit", ""), Qt.locale().name, forecast.country)

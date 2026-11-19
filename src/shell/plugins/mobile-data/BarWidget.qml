@@ -66,7 +66,7 @@ Panel {
   readonly property bool busy: actionProc.running
   readonly property string icon: info.icon || "󰢿"
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color dim: Qt.darker(textColour, 1.4)
+  readonly property color dim: Util.faded(ink, 1.4)
   readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Commons.Color.urgent
 
   // Why the last toggle failed, straight from the CLI. Cleared when one
@@ -461,13 +461,13 @@ Panel {
           dimmed: !mobile.connected
           title: "Mobile Data"
           note: mobile.metaText
-          ink: mobile.textColour
+          ink: mobile.ink
           family: mobile.fontFamily
 
           end: ToggleSwitch {
             checked: mobile.switchChecked
             busy: mobile.busy || mobile.pending
-            foreground: mobile.textColour
+            foreground: mobile.ink
             onToggled: mobile.toggleData()
           }
         }
@@ -500,7 +500,7 @@ Panel {
         }
 
         PanelSeparator {
-          foreground: mobile.textColour
+          foreground: mobile.ink
         }
 
         Column {
@@ -539,7 +539,7 @@ Panel {
 
     property string label: ""
     property string value: ""
-    property color valueColor: mobile.textColour
+    property color valueColor: mobile.ink
 
     implicitHeight: Math.max(statLabel.implicitHeight, statValue.implicitHeight)
 
@@ -548,7 +548,7 @@ Panel {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       text: stat.label
-      color: mobile.textColour
+      color: mobile.ink
       opacity: 0.6
       font.family: mobile.fontFamily
       font.pixelSize: Style.font.bodySmall

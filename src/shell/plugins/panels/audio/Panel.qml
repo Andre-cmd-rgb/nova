@@ -20,7 +20,6 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  readonly property color ink: bar.foreground
   readonly property string typeface: bar.fontFamily
 
   // ---- PipeWire -----------------------------------------------------------
@@ -565,7 +564,7 @@ Panel {
       anchors { right: parent.right; rightMargin: Style.space(6); verticalCenter: parent.verticalCenter }
       textFormat: Text.PlainText
       text: Math.round(heading.level * 100) + "%"
-      color: Qt.darker(sound.ink, 1.4)
+      color: Util.faded(sound.ink, 1.4)
       font { family: sound.typeface; pixelSize: Style.font.caption; bold: true }
       opacity: heading.muted ? 0.5 : 1.0
     }
@@ -701,7 +700,7 @@ Panel {
           horizontalAlignment: Text.AlignRight
           textFormat: Text.PlainText
           text: Math.round(stream.volume * 100) + "%"
-          color: Qt.darker(sound.ink, 1.5)
+          color: Util.faded(sound.ink, 1.5)
           font { family: sound.typeface; pixelSize: Style.font.caption; bold: true }
           opacity: stream.muted ? 0.5 : 1.0
         }

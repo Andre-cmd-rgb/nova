@@ -310,13 +310,13 @@ Panel {
             title: "Display"
             // The slider under it says the brightness; with none, a line.
             note: display.lit ? "" : "Fixed brightness"
-            ink: display.bar.foreground
+            ink: display.ink
             family: display.bar.fontFamily
           }
 
           PanelSeparator {
             visible: display.lit
-            foreground: display.bar.foreground
+            foreground: display.ink
           }
 
           Section {
@@ -339,7 +339,7 @@ Panel {
             }
           }
 
-          PanelSeparator { foreground: display.bar.foreground }
+          PanelSeparator { foreground: display.ink }
 
           Section {
             spacing: Style.space(6)
@@ -357,7 +357,7 @@ Panel {
             }
           }
 
-          PanelSeparator { foreground: display.bar.foreground }
+          PanelSeparator { foreground: display.ink }
 
           // The scale is the focused display's, named when there are more.
           Section {
@@ -381,7 +381,7 @@ Panel {
                   width: (pills.width - pills.spacing * (display.scales.length - 1)) / display.scales.length
                   text: display.scaleLabel(modelData)
                   fontSize: Style.font.caption
-                  foreground: display.bar.foreground
+                  foreground: display.ink
                   fontFamily: display.bar.fontFamily
                   padX: Style.spacing.sm
                   bordered: true
@@ -396,7 +396,7 @@ Panel {
 
           PanelSeparator {
             visible: display.outputs.length > 1
-            foreground: display.bar.foreground
+            foreground: display.ink
           }
 
           Column {
@@ -406,7 +406,7 @@ Panel {
 
             PanelSectionHeader {
               text: "DISPLAYS"
-              foreground: display.bar.foreground
+              foreground: display.ink
               fontFamily: display.bar.fontFamily
             }
 
@@ -464,7 +464,7 @@ Panel {
     PanelSectionHeader {
       id: name
       anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-      foreground: display.bar.foreground
+      foreground: display.ink
       fontFamily: display.bar.fontFamily
     }
 
@@ -472,7 +472,7 @@ Panel {
       id: readout
       anchors { right: parent.right; rightMargin: Style.space(6); verticalCenter: parent.verticalCenter }
       textFormat: Text.PlainText
-      color: Qt.darker(display.bar.foreground, 1.4)
+      color: Util.faded(display.ink, 1.4)
       font { family: display.bar.fontFamily; pixelSize: Style.font.caption; bold: true }
     }
   }
@@ -506,7 +506,7 @@ Panel {
     height: knob.implicitHeight + Style.spacing.controlGap
     hasCursor: display.lights(section, -1)
     onHasCursorChanged: if (hasCursor) display.reveal(sliderRow)
-    foreground: display.bar.foreground
+    foreground: display.ink
 
     LevelSlider {
       id: knob
@@ -535,7 +535,7 @@ Panel {
     hasCursor: display.lights("monitors", index)
     onHasCursorChanged: if (hasCursor) display.reveal(outputRow)
     current: modelData && modelData.focused
-    foreground: display.bar.foreground
+    foreground: display.ink
     opacity: switchable ? 1.0 : 0.45
 
     Row {
@@ -549,7 +549,7 @@ Panel {
         width: Style.space(22)
         horizontalAlignment: Text.AlignHCenter
         text: Model.screensIcon(1)
-        color: display.bar.foreground
+        color: display.ink
         font { family: display.bar.fontFamily; pixelSize: Style.font.title }
       }
 
@@ -558,7 +558,7 @@ Panel {
         width: parent.width - mark.width - tick.width - Style.space(16)
         textFormat: Text.PlainText
         text: outputRow.modelData.name + (outputRow.modelData.focused ? " · focused" : "")
-        color: display.bar.foreground
+        color: display.ink
         font { family: display.bar.fontFamily; pixelSize: Style.font.body }
         elide: Text.ElideRight
       }
@@ -570,7 +570,7 @@ Panel {
         horizontalAlignment: Text.AlignRight
         textFormat: Text.PlainText
         text: outputRow.modelData.enabled ? "󰄬" : ""
-        color: display.bar.foreground
+        color: display.ink
         font { family: display.bar.fontFamily; pixelSize: Style.font.subtitle }
       }
     }

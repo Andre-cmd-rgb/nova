@@ -23,8 +23,7 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  readonly property color ink: bar.foreground
-  readonly property color faint: Qt.darker(ink, 1.5)
+  readonly property color faint: Util.faded(ink, 1.5)
   readonly property string typeface: bar.fontFamily
 
   // ---- the radio ----------------------------------------------------------

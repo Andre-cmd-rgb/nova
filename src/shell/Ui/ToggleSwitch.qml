@@ -74,7 +74,7 @@ Item {
       radius: toggle._round ? toggle._knob / 2 : 0
       y: (track.height - height) / 2
       x: toggle.checked ? track.width - toggle._knob - toggle._inset : toggle._inset
-      color: toggle.checked ? Style.selectedStateColor(toggle.foreground, Commons.Color.accent) : Qt.darker(toggle.foreground, 1.25)
+      color: toggle.checked ? Style.selectedStateColor(toggle.foreground, Commons.Color.accent) : Util.faded(toggle.foreground, 1.25)
 
       Behavior on x {
         NumberAnimation { duration: 120; easing.type: Easing.OutCubic }

@@ -60,6 +60,18 @@ QtObject {
     return Qt.rgba(base.r, base.g, base.b, clampAlpha(opacity))
   }
 
+  // <colour> quieter by <factor>, for text and marks that should recede: it
+  // lets through 1/<factor> of what is behind it, so it goes toward the card
+  // on a light theme as on a dark one. Qt.darker, which dims light text,
+  // makes dark text darker still: on a light theme the quiet lines came out
+  // the loudest.
+  function faded(colour, factor) {
+    let base = Qt.rgba(0, 0, 0, 1)
+    if (typeof colour === "string" && colour) base = Qt.color(colour)
+    else if (colour) base = colour
+    return Qt.rgba(base.r, base.g, base.b, base.a / Math.max(1, Number(factor) || 1))
+  }
+
   // ------------------------------------------------------------ set hours
   //
   // A switch that a schedule turns on and off at set hours every day: the

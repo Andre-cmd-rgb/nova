@@ -197,7 +197,7 @@ Panel {
             Text {
               width: parent.width
               text: "Battery"
-              color: power.bar.foreground
+              color: power.ink
               font { family: power.bar.fontFamily; pixelSize: Style.font.title; bold: true }
               elide: Text.ElideRight
             }
@@ -219,13 +219,13 @@ Panel {
           width: parent.width
           height: Style.space(8)
           radius: height / 2
-          color: Util.alpha(power.bar.foreground, 0.12)
+          color: Util.alpha(power.ink, 0.12)
 
           Rectangle {
             anchors { top: parent.top; bottom: parent.bottom }
             width: Math.max(track.height, track.width * power.level)
             radius: height / 2
-            color: power.bar ? power.bar.foreground : Commons.Color.foreground
+            color: power.ink
 
             Behavior on width { NumberAnimation { duration: 320; easing.type: Easing.OutCubic } }
             Behavior on color { ColorAnimation { duration: 220 } }
@@ -258,7 +258,7 @@ Panel {
         // The power modes, when power-profiles-daemon offers any.
         PanelSeparator {
           visible: power.modes.length > 0
-          foreground: power.bar.foreground
+          foreground: power.ink
         }
 
         Column {
@@ -268,7 +268,7 @@ Panel {
 
           PanelSectionHeader {
             text: "POWER PROFILE"
-            foreground: power.bar.foreground
+            foreground: power.ink
             fontFamily: power.bar.fontFamily
           }
 
@@ -289,7 +289,7 @@ Panel {
                 iconSize: Style.font.title
                 text: modelData.charAt(0).toUpperCase() + modelData.slice(1)
                 fontSize: Style.font.bodySmall
-                foreground: power.bar.foreground
+                foreground: power.ink
                 fontFamily: power.bar.fontFamily
                 padY: Style.spacing.controlPaddingY + Style.space(2)
                 bordered: true
@@ -314,12 +314,12 @@ Panel {
     stdout: StdioCollector { waitForEnd: true; onStreamFinished: reader.answered(text) }
   }
 
-  // The hero's large text, the icon and the percentage, in the bar's colour,
-  // which it follows in a fade.
+  // The hero's large text, the icon and the percentage, in the card's
+  // colour, which it follows in a fade.
   component Big: Text {
     anchors.verticalCenter: parent.verticalCenter
     textFormat: Text.PlainText
-    color: power.bar.foreground
+    color: power.ink
     font.family: power.bar.fontFamily
     Behavior on color { ColorAnimation { duration: 200 } }
   }
@@ -328,7 +328,7 @@ Panel {
   component Saying: Text {
     textFormat: Text.PlainText
     text: Model.line(power.flow).toUpperCase()
-    color: Qt.darker(power.bar.foreground, 1.4)
+    color: Util.faded(power.ink, 1.4)
     font { family: power.bar.fontFamily; pixelSize: Style.font.caption; bold: true; letterSpacing: 1.2 }
     elide: Text.ElideRight
   }
@@ -346,7 +346,7 @@ Panel {
       id: name
       textFormat: Text.PlainText
       text: parent.pair[0]
-      color: power.bar.foreground
+      color: power.ink
       opacity: 0.6
       font { family: power.bar.fontFamily; pixelSize: Style.font.bodySmall }
     }
@@ -356,7 +356,7 @@ Panel {
       x: parent.width - name.implicitWidth - implicitWidth > 2 * parent.gap ? parent.width - implicitWidth : name.implicitWidth + parent.gap
       textFormat: Text.PlainText
       text: parent.pair[1]
-      color: power.bar.foreground
+      color: power.ink
       font { family: power.bar.fontFamily; pixelSize: Style.font.bodySmall }
     }
   }

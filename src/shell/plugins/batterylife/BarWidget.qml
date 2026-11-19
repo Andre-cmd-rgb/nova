@@ -160,7 +160,7 @@ Panel {
   }
 
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-  readonly property color dim: Qt.darker(textColour, 1.4)
+  readonly property color dim: Util.faded(ink, 1.4)
   readonly property color urgent: bar && bar.urgent !== undefined ? bar.urgent : Commons.Color.urgent
 
   readonly property int warnPercent: {
@@ -515,10 +515,10 @@ Panel {
         // panel someone opened to glance at the battery.
         PanelHeader {
           glyph: battery.icon
-          glyphColor: battery.low ? battery.urgent : battery.textColour
+          glyphColor: battery.low ? battery.urgent : battery.ink
           title: battery.present ? Math.round(battery.percent) + "%" : "No battery"
           note: battery.metaText
-          ink: battery.textColour
+          ink: battery.ink
           family: battery.fontFamily
 
           // Top right, level with the charge: the way out of a small panel
@@ -526,7 +526,7 @@ Panel {
           end: PanelActionButton {
             iconText: "󰋚"
             tooltipText: "Battery history  (H)"
-            foreground: battery.textColour
+            foreground: battery.ink
             fontFamily: battery.fontFamily
             onClicked: {
               battery.openHistory()
@@ -544,7 +544,7 @@ Panel {
             width: parent.width
             label: battery.discharging ? "Time left" : "Until full"
             value: battery.estimate
-            valueColor: battery.low ? battery.urgent : battery.textColour
+            valueColor: battery.low ? battery.urgent : battery.ink
           }
 
           // Not the pooled average: at this rate, right now. It moves when
@@ -559,7 +559,7 @@ Panel {
 
         PanelSeparator {
           visible: battery.profiles.length > 0
-          foreground: battery.textColour
+          foreground: battery.ink
         }
 
         Row {
@@ -582,7 +582,7 @@ Panel {
               iconSize: Style.font.body
               text: battery.profileLabel(modelData)
               fontSize: Style.font.caption
-              foreground: battery.textColour
+              foreground: battery.ink
               fontFamily: battery.fontFamily
               padX: Style.spacing.controlPaddingX
               padY: Style.spacing.controlPaddingY + Style.space(2)
@@ -603,7 +603,7 @@ Panel {
 
     property string label: ""
     property string value: ""
-    property color valueColor: battery.textColour
+    property color valueColor: battery.ink
 
     visible: value !== ""
     implicitHeight: visible ? Math.max(statLabel.implicitHeight, statValue.implicitHeight) : 0
@@ -613,7 +613,7 @@ Panel {
       anchors.left: parent.left
       anchors.verticalCenter: parent.verticalCenter
       text: stat.label
-      color: battery.textColour
+      color: battery.ink
       opacity: 0.6
       font.family: battery.fontFamily
       font.pixelSize: Style.font.bodySmall

@@ -15,7 +15,9 @@ BarWidget {
   id: tray
   widgetId: "nova.tray"
 
-  readonly property color ink: bar ? bar.foreground : Commons.Color.foreground
+  // The icons' tint on the bar, and the menu's text on its card.
+  readonly property color ink: bar ? bar.textColour : Commons.Color.foreground
+  readonly property color menuInk: Commons.Color.popups.text
   readonly property string face: bar ? bar.fontFamily : Style.font.family
 
   // The ids hidden, and the icons that ask to be seen (a passive one does
@@ -56,7 +58,7 @@ BarWidget {
     widget: tray.menuTile || tray
     host: tray
     open: tray.menuOpen
-    ink: tray.ink
+    ink: tray.menuInk
     face: tray.face
     onChosen: tray.close()
     onHideRequested: {

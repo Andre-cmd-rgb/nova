@@ -16,7 +16,7 @@ Controls.TextArea {
   color: Commons.Color.foreground
   selectionColor: Style.selectionFill
   selectedTextColor: Commons.Color.foreground
-  placeholderTextColor: Qt.darker(Commons.Color.foreground, 1.6)
+  placeholderTextColor: Util.faded(Commons.Color.foreground, 1.6)
   wrapMode: TextEdit.Wrap
 
   leftPadding: Style.spacing.controlPaddingX + Border.left(_borderSpec)

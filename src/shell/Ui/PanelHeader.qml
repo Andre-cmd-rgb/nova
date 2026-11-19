@@ -74,7 +74,7 @@ Item {
       text: header.note.toUpperCase()
       textFormat: Text.PlainText
       elide: Text.ElideRight
-      color: Qt.darker(header.ink, 1.4)
+      color: Util.faded(header.ink, 1.4)
       font.family: header.family
       font.pixelSize: Style.font.caption
       font.bold: true

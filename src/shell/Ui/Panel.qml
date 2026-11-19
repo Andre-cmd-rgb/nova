@@ -13,7 +13,11 @@ BarWidget {
   // its card goes at once rather than fading.
   property bool handingOver: false
 
+  // The bar's text as drawn: over a see-through bar it is picked for the
+  // wallpaper behind, so it is for the bar alone.
   readonly property color textColour: bar ? bar.textColour : Commons.Color.foreground
+  // The text on the panel's card, whose face is the popups' background.
+  readonly property color ink: Commons.Color.popups.text
 
   function open() { opened = true }
   function close() { opened = false }

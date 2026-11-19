@@ -26,7 +26,7 @@ PanelKeys {
   // The bar widget holding the panel: its bar, settings and opening.
   required property var clock
 
-  readonly property color ink: clock.bar ? clock.bar.foreground : Commons.Color.foreground
+  readonly property color ink: Commons.Color.popups.text
   readonly property string family: clock.bar ? clock.bar.fontFamily : Style.font.family
 
   implicitHeight: column.implicitHeight
@@ -316,7 +316,7 @@ PanelKeys {
           horizontalAlignment: Text.AlignHCenter
           textFormat: Text.PlainText
           text: Qt.formatDate(new Date(sheet.shownAt.year, sheet.shownAt.month, 1, 12), "MMMM yyyy").toUpperCase()
-          color: Qt.darker(sheet.ink, 1.4)
+          color: Util.faded(sheet.ink, 1.4)
           font.family: sheet.family
           font.pixelSize: Style.font.body
           font.letterSpacing: 1
@@ -345,7 +345,7 @@ PanelKeys {
   // A label in small capitals, dimmer than what it names.
   component Caption: Text {
     textFormat: Text.PlainText
-    color: Qt.darker(sheet.ink, 1.5)
+    color: Util.faded(sheet.ink, 1.5)
     font.family: sheet.family
     font.pixelSize: Style.font.bodySmall
     font.letterSpacing: 1

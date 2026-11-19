@@ -26,6 +26,8 @@ BarWidget {
   readonly property bool pointedAt: visible && pointer.containsMouse
 
   property bool cardOpen: false
+  // The text on the card, whose face is the popups' background.
+  readonly property color ink: Commons.Color.popups.text
 
   function close() {
     cardOpen = false
@@ -55,7 +57,7 @@ BarWidget {
       id: playMark
       anchors.verticalCenter: parent.verticalCenter
       text: widget.mark(widget.playing)
-      color: widget.playing ? widget.bar.textColour : Qt.darker(widget.bar.textColour, 1.5)
+      color: widget.playing ? widget.bar.textColour : Util.faded(widget.bar.textColour, 1.5)
       font.pixelSize: Style.font.body
 
       Behavior on color {
@@ -172,7 +174,7 @@ BarWidget {
             required property string modelData
             readonly property bool middle: modelData === "playPause"
 
-            foreground: widget.bar.foreground
+            foreground: widget.ink
             iconText: middle ? widget.mark(widget.playing) : modelData === "next" ? "\u{F04AD}" : "\u{F04AE}"
             iconSize: middle ? Style.font.iconLarge : Style.font.icon
             padX: middle ? Style.spacing.panelGap : Style.spacing.controlPaddingX
@@ -187,7 +189,7 @@ BarWidget {
       // and played.
       PanelSeparator {
         visible: widget.listed.length > 1
-        foreground: widget.bar.foreground
+        foreground: widget.ink
       }
 
       Column {
@@ -216,7 +218,7 @@ BarWidget {
     width: parent.width
     visible: text !== ""
     elide: Text.ElideRight
-    color: dim === 1 ? widget.bar.foreground : Qt.darker(widget.bar.foreground, dim)
+    color: dim === 1 ? widget.ink : Util.faded(widget.ink, dim)
   }
 
   // The cover of the track shown, or a note where it has none.
@@ -228,8 +230,8 @@ BarWidget {
     width: Style.space(64)
     height: width
     radius: Style.spacing.labelGap
-    color: Style.normalFillFor(widget.bar.foreground, Commons.Color.accent)
-    frame: Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent)
+    color: Style.normalFillFor(widget.ink, Commons.Color.accent)
+    frame: Border.controlSpec("normal", widget.ink, Commons.Color.accent)
 
     Image {
       anchors.fill: parent
@@ -246,7 +248,7 @@ BarWidget {
       anchors.centerIn: parent
       visible: cover.art === ""
       text: "\u{F075A}"
-      color: widget.bar.foreground
+      color: widget.ink
       font.pixelSize: Style.font.displayLarge
     }
   }
@@ -262,8 +264,8 @@ BarWidget {
     width: parent ? parent.width : 0
     height: line.implicitHeight + Style.space(10)
     radius: Style.spacing.labelGap
-    color: selected ? Style.selectedFillFor(widget.bar.foreground, Commons.Color.accent) : "transparent"
-    frame: selected ? Border.controlSpec("normal", widget.bar.foreground, Commons.Color.accent) : Border.none()
+    color: selected ? Style.selectedFillFor(widget.ink, Commons.Color.accent) : "transparent"
+    frame: selected ? Border.controlSpec("normal", widget.ink, Commons.Color.accent) : Border.none()
 
     Row {
       id: line
@@ -279,7 +281,7 @@ BarWidget {
         width: Style.space(18)
         horizontalAlignment: Text.AlignHCenter
         text: widget.mark(choice.modelData.isPlaying)
-        color: widget.bar.foreground
+        color: widget.ink
         font.pixelSize: Style.font.body
       }
 

@@ -38,8 +38,9 @@ Item {
   // Where the hand put the knob; null while the knob follows <value>.
   property var _placed: null
 
-  readonly property color _ink: bar ? bar.foreground : Commons.Color.foreground
-  readonly property color _paper: bar ? bar.background : Commons.Color.background
+  // On a bar's panel, the card's colours; in a window, the window's.
+  readonly property color _ink: bar ? Commons.Color.popups.text : Commons.Color.foreground
+  readonly property color _paper: bar ? Commons.Color.popups.background : Commons.Color.background
   readonly property real _lineWidth: Math.max(4, Math.round(Style.spacing.controlHeight * 0.11))
   readonly property real _knobWidth: Math.max(14, Math.round(Style.spacing.controlHeight * 0.38))
   // How far along the line the knob is, 0 at <from> and 1 at <to>.
@@ -89,7 +90,7 @@ Item {
     height: level._lineWidth
     y: (parent.height - height) / 2
     radius: height / 2
-    color: level.bar ? Style.selectedFillFor(level.bar.foreground, Commons.Color.accent) : "#333"
+    color: Style.selectedFillFor(level._ink, Commons.Color.accent)
 
     Rectangle {
       width: line.width * level._share
@@ -126,7 +127,7 @@ Item {
       x: Math.min(line.width - width, Math.max(0, line.width * level._share - width / 2))
       radius: level._knobWidth / 2
       color: level._ink
-      frame: Border.flat(level.bar ? level.bar.background : "#101315", Math.max(1, Style.space(2)))
+      frame: Border.flat(level._paper, Math.max(1, Style.space(2)))
       scale: hand.containsMouse || level.held ? 1.15 : 1
 
       Behavior on x {
