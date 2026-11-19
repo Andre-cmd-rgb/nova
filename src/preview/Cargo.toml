@@ -1,0 +1,16 @@
+[package]
+name = "nova-previewer"
+version = "1.0.0"
+edition = "2021"
+description = "Quick Look's front on D-Bus: Files asks it for a preview with Space, and it hands the file to the shell's window"
+license = "MIT"
+
+# No crates, as everywhere in Nova: D-Bus is the system's libsystemd, through
+# nova-sd, and what a file is comes from the system's GIO, as Files has it.
+
+[[bin]]
+name = "nova-previewer"
+path = "src/main.rs"
+
+[dependencies]
+nova-sd = { path = "../sd" }
