@@ -62,11 +62,11 @@ How files reach a system:
 
 | Kind | Path | Holds |
 |---|---|---|
-| User config | `~/.config/nova/` | `shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/` |
+| User config | `~/.config/nova/` | `shell.json`, `menu.jsonc`, `themes/`, `templates/`, `backgrounds/`, `hooks/`; `calendars.json`: the calendar's accounts and calendars, with no secret in it |
 | | `~/.config/nova-<plugin>/` | a plugin's own settings (`nova-batterylife`, `nova-screentime`, `nova-mobile-data`) |
-| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `input.json`: the keyboard's layouts and the pointer as Settings keeps them; `notifications.json`: Do Not Disturb, and its schedule's last turn; `calendar.json`: how far the calendar's reminders have been looked at; `calculator.json`: the Calculator's history, and Basic or Scientific, the angle's unit and the history pane as last left; `adaptive`: the adaptive theme's Auto, Dark or Light; `airdrop/`: the certificate the AirDrop receiver shows to senders, made at its first use; `welcome-pending`: a new account's, from Nova's skel, until it closes the welcome |
+| User state | `~/.local/state/nova/` | `current/`, `rendered/`, `backgrounds/`, `aur/`; `monitors.json`: the displays as Settings keeps them; `input.json`: the keyboard's layouts and the pointer as Settings keeps them; `notifications.json`: Do Not Disturb, and its schedule's last turn; `calendar.json`: how far the calendar's reminders have been looked at; `calendar-sync/`: what each calendar's server last had, and how each account's last sync went; `calculator.json`: the Calculator's history, and Basic or Scientific, the angle's unit and the history pane as last left; `adaptive`: the adaptive theme's Auto, Dark or Light; `airdrop/`: the certificate the AirDrop receiver shows to senders, made at its first use; `welcome-pending`: a new account's, from Nova's skel, until it closes the welcome |
 | | `~/.local/state/nova-<plugin>/` | a plugin's history |
-| User data | `~/.local/share/nova/calendar/calendar.ics` | the calendar |
+| User data | `~/.local/share/nova/calendar/` | the calendars: `calendar.ics`, the one on this computer, and one file for each account's calendar and each subscription |
 | | `~/.local/share/nova-dictation/` | the speech model, downloaded at dictation's first use |
 | | `~/.local/share/flatpak/` | Flathub's apps, as the App Center installs them: flatpak's own |
 | User cache | `~/.cache/nova/adaptive/` | the adaptive theme's palettes, by the photo's path, size and time |

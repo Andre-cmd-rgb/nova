@@ -209,14 +209,15 @@ The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `aird
 
 <img src="images/calendar.jpg" alt="The calendar showing a week in November 2026, with events on Friday, Saturday and Sunday and an empty task list beside it" width="720">
 
-Events and tasks, in a week or a month. Open it from the clock's card, from a reminder, or with `nova calendar [week|month] [day]`, where the day is `2026-10-29`, `tomorrow` or `next friday`.
+Events and tasks, in a day, a week or a month. Open it from the clock's card, from a reminder, or with `nova calendar [day|week|month] [day]`, where the day is `2026-10-29`, `tomorrow` or `next friday`.
 
 - **Events** move by dragging. An event's bottom edge, dragged, says when it ends; a drag over the empty hours makes a new one.
 - **Tasks** go onto a day, onto a time (then they are reminded of), or off their day into the list beside.
+- **Calendars:** the one on your computer, and those of your accounts, added with **Add Account** at the bottom of the list on the left: iCloud (with an app-specific password), Google, any CalDAV server, or a subscription to an iCal link. They sync both ways, every few minutes and soon after an edit; an edit made offline is sent later. A click in the list shows or hides a calendar.
 - **Reminders** come as notifications. The clock in the bar dots the days with anything on them and lists what today has.
-- **Keys:** the left and right arrows step a week or a month, T is today, W and M the week and the month, N a new event, Esc closes.
+- **Keys:** the left and right arrows step a day, a week or a month, T is today, D, W and M the day, the week and the month, N a new event, / the search, Esc closes.
 
-It is one iCalendar file on your computer, `~/.local/share/nova/calendar/calendar.ics`, synced with nothing. The calendar's [own notes](../src/shell/plugins/calendar/README.md) have the rest.
+The calendar on your computer is one iCalendar file, `~/.local/share/nova/calendar/calendar.ics`; each account's calendar has one beside it. The calendar's [own notes](../src/shell/plugins/calendar/README.md) have the rest, and what Google sign-in needs.
 
 ## Dictation
 
