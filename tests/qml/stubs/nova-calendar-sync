@@ -1,0 +1,23 @@
+#!/bin/sh
+# nova-calendar-sync, as the calendar's tests need it. Each call is noted in
+# $HOME/stub-calls, a line a call, as `record` notes one. add and subscribe
+# note the line of JSON they are given in $HOME/stub-request, then answer
+# with $HOME/added.json, making $HOME/added-config.json the calendar list;
+# with no answer there, they fail as a wrong password does. google says
+# there is no Google client.
+printf 'nova-calendar-sync' >>"$HOME/stub-calls"
+for word in "$@"; do printf ' %s' "$word" >>"$HOME/stub-calls"; done
+printf '\n' >>"$HOME/stub-calls"
+case $1 in
+  add | subscribe)
+    IFS= read -r line
+    printf '%s\n' "$line" >"$HOME/stub-request"
+    if [ ! -f "$HOME/added.json" ]; then
+      echo "The user name or the password is wrong." >&2
+      exit 3
+    fi
+    [ ! -f "$HOME/added-config.json" ] || cp "$HOME/added-config.json" "$HOME/.config/nova/calendars.json"
+    cat "$HOME/added.json"
+    ;;
+  google) exit 1 ;;
+esac

@@ -6,14 +6,16 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Calendar: a week or a month of the events and tasks in Nova's calendar
-// (Service.qml, Store.qml), with the tasks that have no day beside it.
-// Everything moves by dragging: an event to another time or day, a task to
-// a day, a time, or off its day into the list. An event's bottom edge says
-// when it ends, and a drag over the empty hours makes one.
+// Calendar: a day, a week or a month of the events and tasks of Nova's
+// calendars (Service.qml, Calendars.qml), the calendars on the left, shown or
+// hidden, and the tasks that have no day on the right. Everything moves by
+// dragging: an event to another time or day, a task to a day, a time, or off
+// its day into the list. An event's bottom edge says when it ends, and a drag
+// over the empty hours makes one. What a read-only calendar has (a
+// subscription's) opens, but does not move.
 //
 // Summoned by the shell, from the menu, the bar's clock, a reminder or the
-// CLI; `date` is the day to show, `page` "week" or "month":
+// CLI; `date` is the day to show, `page` "day", "week" or "month":
 //   nova-shell shell summon nova.calendar '{"date":"2026-10-29","page":"month"}'
 Item {
   id: root
@@ -26,8 +28,14 @@ Item {
   readonly property string pluginId: "nova.calendar"
 
   property bool closingFromHost: false
-  readonly property var pages: [{ id: "week" }, { id: "month" }]
+  readonly property var pages: [{ id: "week" }, { id: "day" }, { id: "month" }]
   property string page: "week"
+  // The calendars on the left, from the first time there is more than one;
+  // then as the button left it.
+  property bool sidebarAsked: false
+  property bool sidebarWanted: false
+  readonly property bool sidebar: sidebarAsked ? sidebarWanted : (store !== null && store.list.length > 1)
+  property string query: ""
   // A day in the week or the month on screen.
   property real anchor: Model.dayStart(Date.now())
 
@@ -44,6 +52,7 @@ Item {
   readonly property int weekStart: Model.weekStartFrom(clockSetting("weekStartDay"), Qt.locale().firstDayOfWeek)
 
   readonly property var days: {
+    if (page === "day") return [Model.dayStart(anchor)]
     var first = Model.weekOf(anchor, weekStart)
     var out = []
     for (var i = 0; i < 7; i++) out.push(Model.addDays(first, i))
@@ -52,11 +61,12 @@ Item {
   readonly property int month: new Date(anchor).getMonth()
   readonly property var monthDays: Model.monthWeeks(new Date(anchor).getFullYear(), month, weekStart)
   readonly property real rangeFrom: page === "month" ? monthDays[0][0] : days[0]
-  readonly property real rangeTo: Model.addDays(page === "month" ? monthDays[5][6] : days[6], 1)
+  readonly property real rangeTo: Model.addDays(page === "month" ? monthDays[5][6] : days[days.length - 1], 1)
   readonly property var occs: window.visible && store ? Model.occurrences(store.items, rangeFrom, rangeTo) : []
 
   readonly property string title: {
     if (page === "month") return Qt.formatDate(new Date(anchor), "MMMM yyyy")
+    if (page === "day") return weekdayName(anchor, true) + " " + Qt.formatDate(new Date(anchor), "d MMMM yyyy")
     var a = new Date(days[0])
     var b = new Date(days[6])
     if (a.getMonth() === b.getMonth()) return Qt.formatDate(a, "MMMM yyyy")
@@ -87,7 +97,7 @@ Item {
   Loader {
     id: ownStore
     active: root.standalone
-    source: "Store.qml"
+    source: "Calendars.qml"
   }
 
   // Set by the shell as the window is made; a window it never set one for
@@ -105,12 +115,15 @@ Item {
       // An unparseable payload asks for nothing.
     }
     if (!service && shell && typeof shell.serviceFor === "function") service = shell.serviceFor(pluginId)
-    if (store) store.readZone()
+    if (store) {
+      store.readZone()
+      store.sync()
+    }
     page = pages.some(function (p) { return p.id === payload.page }) ? payload.page : pages[0].id
     var day = Model.parseDayKey(payload.date)
     anchor = isNaN(day) ? today : day
-    editor.opened = false
-    scope.opened = false
+    closeSheets()
+    query = ""
     // Open already, on another workspace: it comes to this one. A window is
     // shown on the workspace it is opened on, so it is closed and opened anew.
     if (window.visible && elsewhere()) close()
@@ -156,6 +169,13 @@ Item {
     keys.forceActiveFocus()
   }
 
+  function closeSheets() {
+    editor.opened = false
+    scope.opened = false
+    accountSheet.opened = false
+    calendarSheet.opened = false
+  }
+
   // ---- reading ------------------------------------------------------------
 
   function clockSetting(name) {
@@ -190,8 +210,54 @@ Item {
       var d = new Date(anchor)
       anchor = Model.dayStart(new Date(d.getFullYear(), d.getMonth() + delta, 1, 12).getTime())
     } else {
-      anchor = Model.addDays(anchor, 7 * delta)
+      anchor = Model.addDays(anchor, (page === "day" ? 1 : 7) * delta)
     }
+  }
+
+  // ---- calendars ----------------------------------------------------------
+
+  function colorOf(item) {
+    return store ? store.colorOf(item.calendar) : Commons.Color.accent
+  }
+
+  // The calendar a new item of <kind> goes in (Editor.qml).
+  function calendarFor(kind) {
+    return editor.calendarFor(kind)
+  }
+
+  function calendarName(id) {
+    var c = store ? store.entry(id) : null
+    return c ? c.name : ""
+  }
+
+  function toggleSidebar() {
+    sidebarWanted = !sidebar
+    sidebarAsked = true
+  }
+
+  function addAccount() {
+    accountSheet.add()
+  }
+
+  function manageAccount(account) {
+    accountSheet.manage(account)
+  }
+
+  function editCalendar(entry) {
+    calendarSheet.edit(entry)
+  }
+
+  // ---- searching ----------------------------------------------------------
+
+  // A result: its day, in the day or the week, and the item open.
+  function showResult(o) {
+    query = ""
+    if (o.start > 0) {
+      anchor = Model.dayStart(o.start)
+      if (page === "month") page = "week"
+    }
+    focusKeys()
+    openItem(o)
   }
 
   function showDay(day, pageWanted) {
@@ -202,7 +268,7 @@ Item {
   // ---- dragging -----------------------------------------------------------
 
   function beginDrag(occ, source, grab, day, before) {
-    if (dragging || !store || !store.loaded) return
+    if (dragging || !store || !store.loaded || occ.item.readOnly) return
     dragOcc = occ
     dragSource = source
     dragGrab = grab
@@ -259,13 +325,13 @@ Item {
     var item = o.item
     if (item.kind === "task") {
       if (where.kind === "undated") {
-        if (item.due !== null) store.moveTask(item.uid, null)
+        if (item.due !== null) store.moveTask(item.uid, null, item.calendar)
       } else if (where.kind === "time") {
-        store.updateTask(item.uid, { due: Model.atMinutes(where.day, where.minutes), dueTime: true })
+        store.updateTask(item.uid, { due: Model.atMinutes(where.day, where.minutes), dueTime: true }, item.calendar)
       } else if (where.kind === "allday") {
-        store.updateTask(item.uid, { due: where.day, dueTime: false })
+        store.updateTask(item.uid, { due: where.day, dueTime: false }, item.calendar)
       } else if (item.due === null || Model.dayStart(item.due) !== where.day) {
-        store.moveTask(item.uid, where.day)
+        store.moveTask(item.uid, where.day, item.calendar)
       }
       return
     }
@@ -306,13 +372,15 @@ Item {
   }
 
   function toggleTask(item) {
-    if (store) store.updateTask(item.uid, { done: !item.done })
+    if (store && !item.readOnly) store.updateTask(item.uid, { done: !item.done }, item.calendar)
   }
 
   function resizeEvent(o, end) {
     changeEvent(o, { end: end })
   }
 
+  // A new item in the calendar the editor chose; one changed, then moved into
+  // the calendar chosen for it, every time of it.
   function saveItem(o, kind, fields) {
     if (!store) return
     if (o === null) {
@@ -320,43 +388,57 @@ Item {
       else store.addTask(fields)
       return
     }
-    if (Object.keys(fields).length === 0) return
-    if (kind === "task") store.updateTask(o.uid, fields)
-    else changeEvent(o, fields)
+    var to = fields.calendar
+    delete fields.calendar
+    var from = o.item.calendar
+    var move = function () { if (to !== undefined && to !== from) root.store.moveItem(o.uid, from, to) }
+    if (Object.keys(fields).length === 0) {
+      move()
+      return
+    }
+    if (kind === "task") {
+      store.updateTask(o.uid, fields, from)
+      move()
+    } else {
+      changeEvent(o, fields, move)
+    }
   }
 
   function deleteItem(o) {
     if (!store) return
-    if (o.item.kind === "task") store.deleteTask(o.uid)
-    else if (o.recurring) askScope(true, function (which) { root.store.deleteEvent(o.uid, o.instance, which) })
-    else store.deleteEvent(o.uid, o.instance, "all")
+    var from = o.item.calendar
+    if (o.item.kind === "task") store.deleteTask(o.uid, from)
+    else if (o.recurring) askScope(true, function (which) { root.store.deleteEvent(o.uid, o.instance, which, from) })
+    else store.deleteEvent(o.uid, o.instance, "all", from)
   }
 
   // One time of a repeating event, or all of them: asked, unless the change
-  // is to how it repeats, which is the series'.
-  function changeEvent(o, fields) {
+  // is to how it repeats, which is the series'. <then>, once it is made.
+  function changeEvent(o, fields, then) {
     if (!o.recurring || fields.repeat !== undefined) {
-      applyChange(o, fields, "all")
+      applyChange(o, fields, "all", then)
       return
     }
-    // A rule another program set (the 15th of each month, until June) is not
-    // one this calendar moves, so a new time is for this time of it only.
+    // A rule another program set (the 15th of each month, until June), or
+    // times listed one by one, are not ones this calendar moves, so a new
+    // time is for this time of it only.
     var series = seriesOf(o)
     var moved = (fields.start !== undefined && fields.start !== o.start) || (fields.allDay !== undefined && fields.allDay !== o.item.allDay)
-    var fixed = moved && series !== null && Model.repeatPreset(series.rrule, series.start) === "custom"
-    askScope(false, function (which) { root.applyChange(o, fields, which) }, fixed)
+    var fixed = moved && series !== null && (series.rdates.length > 0 || Model.repeatPreset(series.rrule, series.start) === "custom")
+    askScope(false, function (which) { root.applyChange(o, fields, which, then) }, fixed)
   }
 
   // The event an occurrence is a time of, with its rule.
   function seriesOf(o) {
     var list = store ? store.items : []
     for (var i = 0; i < list.length; i++)
-      if (list[i].uid === o.uid && list[i].recurrenceId === null && list[i].rrule !== null) return list[i]
+      if (list[i].uid === o.uid && list[i].calendar === o.item.calendar && list[i].recurrenceId === null && (list[i].rrule !== null || list[i].rdates.length > 0)) return list[i]
     return null
   }
 
-  function applyChange(o, fields, which) {
-    store.updateEvent(o.uid, o.instance, which === "all" ? Model.forAll(o, fields) : fields, which)
+  function applyChange(o, fields, which, then) {
+    store.updateEvent(o.uid, o.instance, which === "all" ? Model.forAll(o, fields) : fields, which, o.item.calendar)
+    if (then) then()
   }
 
   property var scopeAction: null
@@ -382,15 +464,14 @@ Item {
     id: window
     title: "Calendar"
     color: Commons.Color.background
-    implicitWidth: Math.min(Style.space(1080), root.room.width)
+    implicitWidth: Math.min(Style.space(root.sidebar ? 1240 : 1080), root.room.width)
     implicitHeight: Math.min(Style.space(720), root.room.height)
     minimumSize: Qt.size(Math.min(Style.space(760), root.room.width), Math.min(Style.space(520), root.room.height))
 
     onVisibleChanged: {
       if (visible) return
       root.cancelDrag()
-      editor.opened = false
-      scope.opened = false
+      root.closeSheets()
       if (!root.closingFromHost && root.shell && typeof root.shell.hide === "function") root.shell.hide(root.pluginId)
     }
 
@@ -403,7 +484,10 @@ Item {
         var text = event.text.toLowerCase()
         if (event.key === Qt.Key_Escape) {
           if (root.dragging) root.cancelDrag()
+          else if (root.query !== "") root.query = ""
           else root.requestClose()
+        } else if ((event.key === Qt.Key_F && (event.modifiers & Qt.ControlModifier)) || (text === "/" && !(event.modifiers & (Qt.ControlModifier | Qt.AltModifier)))) {
+          search.forceActiveFocus()
         } else if (event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) {
           return
         } else if (event.key === Qt.Key_Left || event.key === Qt.Key_PageUp || text === "h") {
@@ -414,6 +498,8 @@ Item {
           root.anchor = root.today
         } else if (text === "w") {
           root.page = "week"
+        } else if (text === "d") {
+          root.page = "day"
         } else if (text === "m") {
           root.page = "month"
         } else if (text === "n") {
@@ -437,6 +523,12 @@ Item {
           spacing: Style.space(6)
 
           Button {
+            iconText: "󰃱"
+            lit: root.sidebar
+            tooltipText: "Calendars"
+            onClicked: root.toggleSidebar()
+          }
+          Button {
             text: "Today"
             bordered: true
             tooltipText: "T"
@@ -444,12 +536,12 @@ Item {
           }
           Button {
             iconText: "󰅁"
-            tooltipText: root.page === "month" ? "Previous month" : "Previous week"
+            tooltipText: "Previous " + root.page
             onClicked: root.step(-1)
           }
           Button {
             iconText: "󰅂"
-            tooltipText: root.page === "month" ? "Next month" : "Next week"
+            tooltipText: "Next " + root.page
             onClicked: root.step(1)
           }
           Text {
@@ -470,9 +562,26 @@ Item {
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.space(10)
 
+          TextField {
+            id: search
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(190)
+            placeholderText: "Search"
+            text: root.query
+            onTextEdited: root.query = text
+            onAccepted: {
+              var found = results.found
+              if (found.length) root.showResult(found[0])
+            }
+            Keys.onEscapePressed: function (event) {
+              root.query = ""
+              root.focusKeys()
+              event.accepted = true
+            }
+          }
           ButtonGroup {
             anchors.verticalCenter: parent.verticalCenter
-            options: [{ value: "week", label: "Week" }, { value: "month", label: "Month" }]
+            options: [{ value: "day", label: "Day" }, { value: "week", label: "Week" }, { value: "month", label: "Month" }]
             value: root.page
             tabStop: false
             onChanged: function (value) { root.page = value }
@@ -496,15 +605,34 @@ Item {
         color: Qt.alpha(Commons.Color.foreground, 0.08)
       }
 
-      // ---- the week or the month, and the tasks -------------------------
+      // ---- the calendars, the day, week or month, and the tasks ---------
+      CalendarList {
+        id: sidebarList
+        visible: root.sidebar
+        anchors.top: headerRule.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: parent.left
+        width: root.sidebar ? Style.space(210) : 0
+        calendar: root
+      }
+
+      Rectangle {
+        visible: root.sidebar
+        anchors.top: headerRule.bottom
+        anchors.bottom: parent.bottom
+        anchors.left: sidebarList.right
+        width: 1
+        color: Qt.alpha(Commons.Color.foreground, 0.08)
+      }
+
       Loader {
         id: viewLoader
         anchors.top: headerRule.bottom
-        anchors.left: parent.left
+        anchors.left: sidebarList.right
         anchors.right: tasks.left
         anchors.bottom: parent.bottom
         anchors.rightMargin: 1
-        anchors.leftMargin: root.page === "month" ? Style.space(8) : 0
+        anchors.leftMargin: root.sidebar ? 1 : (root.page === "month" ? Style.space(8) : 0)
         active: window.visible
         sourceComponent: root.page === "month" ? monthView : weekView
       }
@@ -536,6 +664,18 @@ Item {
         calendar: root
       }
 
+      SearchResults {
+        id: results
+        visible: root.query.trim() !== ""
+        anchors.top: headerRule.bottom
+        anchors.left: viewLoader.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        z: 10
+        calendar: root
+        query: root.query
+      }
+
       // What is being dragged, under the pointer.
       Rectangle {
         id: proxy
@@ -546,9 +686,9 @@ Item {
         height: root.dragSize.height
         z: 30
         radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-        color: Qt.alpha(Commons.Color.accent, 0.4)
+        color: Qt.alpha(root.dragOcc ? root.colorOf(root.dragOcc.item) : Commons.Color.accent, 0.4)
         border.width: 1
-        border.color: Commons.Color.accent
+        border.color: root.dragOcc ? root.colorOf(root.dragOcc.item) : Commons.Color.accent
         Drag.keys: ["nova-calendar"]
         Drag.hotSpot: root.dragGrab
 
@@ -570,6 +710,18 @@ Item {
         id: editor
         calendar: root
         onOpenedChanged: if (!opened && !scope.opened) Qt.callLater(root.focusKeys)
+      }
+
+      AccountSheet {
+        id: accountSheet
+        calendar: root
+        onOpenedChanged: if (!opened) Qt.callLater(root.focusKeys)
+      }
+
+      CalendarSheet {
+        id: calendarSheet
+        calendar: root
+        onOpenedChanged: if (!opened) Qt.callLater(root.focusKeys)
       }
 
       // This time of a repeating event, or every time?

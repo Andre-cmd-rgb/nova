@@ -4,7 +4,7 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// A week: the days across, their all-day events and tasks along the top, and
+// A week, or a day: the days across, their all-day events and tasks along the top, and
 // the hours down, the timed events in them as boxes. A box is dragged to
 // another time or day, and made longer or shorter by its bottom edge; a drag
 // over the empty hours makes a new event as long, and a double click one of
@@ -18,7 +18,7 @@ Item {
   readonly property var occs: calendar.occs
   readonly property int hourHeight: Style.space(44)
   readonly property int gutter: Style.space(58)
-  readonly property real columnWidth: Math.max(0, (width - gutter) / 7)
+  readonly property real columnWidth: Math.max(0, (width - gutter) / Math.max(1, days.length))
   readonly property int chipHeight: Style.space(22)
   readonly property int chipGap: Style.space(2)
 
@@ -351,7 +351,7 @@ Item {
             radius: Style.cornerRadius > 0 ? Style.space(4) : 0
             color: "transparent"
             border.width: Style.space(2)
-            border.color: Commons.Color.accent
+            border.color: view.calendar.dragOcc ? view.calendar.colorOf(view.calendar.dragOcc.item) : Commons.Color.accent
             Text {
               x: Style.space(6)
               y: Style.space(3)

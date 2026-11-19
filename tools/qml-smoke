@@ -38,7 +38,7 @@ background=$(sed -n -E 's/^background *= *"(#[0-9a-fA-F]{6})".*/\1/p' "$palette/
 windows=(
   "settings:wifi bluetooth mobile-data airdrop notifications sound displays keyboard battery performance screentime appearance bar lock apps updates about"
   "settings/Welcome:welcome wifi look nightlight apps keys"
-  "calendar:week month"
+  "calendar:week day month"
   "store:discover create installed"
 )
 
@@ -86,6 +86,8 @@ EOF
 for helper in catalog installed refresh run shots size; do
   install -m 755 "$repo/tests/qml/stubs/apps" "$work/stub/nova-apps-$helper"
 done
+# The calendar's sync, as with no network: no server is asked.
+install -m 755 "$repo/tests/qml/stubs/nova-calendar-sync" "$work/stub/nova-calendar-sync"
 chmod +x "$work/stub/hyprctl" "$work/stub/nova-mobile-data" "$work/stub/nova-airdrop" "$work/stub/systemctl" "$work/stub/nova-input"
 # Screen Time on, with a day recorded, so its page draws the chart and the
 # apps rather than only its switch.
@@ -112,6 +114,27 @@ day() { date -d "$1 day" +%Y%m%d; }
   printf 'BEGIN:VTODO\r\nUID:passport@smoke\r\nSUMMARY:Renew the passport\r\nDUE;VALUE=DATE:%s\r\nEND:VTODO\r\n' "$(day -3)"
   printf 'END:VCALENDAR\r\n'
 } >"$work/home/.local/share/nova/calendar/calendar.ics"
+# Beside it, an account's calendar and a subscription, each in its colour,
+# and a hidden one: the calendar list on the left.
+cat >"$work/home/.config/nova/calendars.json" <<'EOF'
+{"version": 1,
+ "accounts": [{"id": "a1", "type": "caldav", "name": "Work", "user": "sam", "url": "http://127.0.0.1:5232/"}],
+ "calendars": [
+  {"id": "local", "kind": "local", "name": "Calendar", "color": "accent", "shown": true, "file": "calendar.ics"},
+  {"id": "c0ffee01", "account": "a1", "kind": "caldav", "name": "Team", "color": "green", "shown": true, "events": true, "tasks": true, "file": "c0ffee01.ics"},
+  {"id": "c0ffee02", "account": "a1", "kind": "caldav", "name": "On call", "color": "orange", "shown": false, "file": "c0ffee02.ics"},
+  {"id": "c0ffee03", "kind": "subscription", "name": "Holidays", "color": "red", "shown": true, "readOnly": true, "tasks": false, "host": "example.org", "file": "c0ffee03.ics"}]}
+EOF
+{
+  printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Nova//Smoke//EN\r\n'
+  ev review "DTSTART:$(day 1)T100000"$'\r\n'"DTEND:$(day 1)T113000"$'\r\n'"SUMMARY:Design review"
+  printf 'END:VCALENDAR\r\n'
+} >"$work/home/.local/share/nova/calendar/c0ffee01.ics"
+{
+  printf 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Nova//Smoke//EN\r\n'
+  ev holiday "DTSTART;VALUE=DATE:$(day 2)"$'\r\n'"DTEND;VALUE=DATE:$(day 3)"$'\r\n'"SUMMARY:Holiday"
+  printf 'END:VCALENDAR\r\n'
+} >"$work/home/.local/share/nova/calendar/c0ffee03.ics"
 ln -s "$root/usr/share/nova/shell/Commons" "$work/shell/Commons"
 ln -s "$root/usr/share/nova/shell/Ui" "$work/shell/Ui"
 

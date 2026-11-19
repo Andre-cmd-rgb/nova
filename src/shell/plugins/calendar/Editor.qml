@@ -4,9 +4,10 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// An event or a task, new or as it is. Days are typed as 2026-10-29 or
-// 29/10/2026, times as 9:30, 930 or 9:30 pm; a new start takes the end with
-// it, so the event stays as long. Only what was changed is saved.
+// An event or a task, new or as it is, and the calendar it is in. Days are
+// typed as 2026-10-29 or 29/10/2026, times as 9:30, 930 or 9:30 pm; a new
+// start takes the end with it, so the event stays as long. Only what was
+// changed is saved. What a read-only calendar has is shown, not edited.
 Sheet {
   id: editor
 
@@ -19,6 +20,9 @@ Sheet {
   property string repeat: "none"
   property string reminder: "none"
   property bool done: false
+  property string calendarId: "local"
+  // The calendar a new item went in last, for the next one.
+  property string lastCalendar: "local"
   property string error: ""
   // What it opened with, to save only what changed.
   property var original: ({})
@@ -27,6 +31,20 @@ Sheet {
 
   readonly property bool isNew: occ === null
   readonly property bool isEvent: kind === "event"
+  readonly property bool readOnly: occ !== null && occ.item.readOnly
+  readonly property var store: calendar.store
+  // The calendars it can go in; one with no other shows none. Two of a name
+  // (iCloud's Calendar and this computer's) say where each is.
+  readonly property var choices: {
+    var list = store ? store.choices(kind) : []
+    var accounts = store ? store.accounts : []
+    var count = {}
+    list.forEach(function (c) { count[c.name] = (count[c.name] || 0) + 1 })
+    return list.map(function (c) {
+      var where = c.kind === "local" ? "On This Computer" : (accounts.filter(function (a) { return a.id === c.account })[0] || {}).name
+      return { value: c.id, label: count[c.name] > 1 && where ? c.name + " · " + where : c.name }
+    })
+  }
 
   cardWidth: Style.space(460)
   onCanceled: opened = false
@@ -39,10 +57,21 @@ Sheet {
     return editor.calendar.clock(time)
   }
 
+  // Where a new item of <kind> goes: the calendar the last one went in, or
+  // the one on this computer, or the first that takes it, shown first.
+  function calendarFor(kindWanted) {
+    var list = store ? store.choices(kindWanted) : []
+    var shown = list.filter(function (c) { return c.shown })
+    var pick = function (from, id) { return from.some(function (c) { return c.id === id }) ? id : "" }
+    return pick(shown, lastCalendar) || pick(shown, "local") || (shown[0] || {}).id ||
+      pick(list, "local") || (list[0] || {}).id || "local"
+  }
+
   // A new item, from <start> to <end>.
   function create(kindWanted, start, end, wholeDay) {
     occ = null
     kind = kindWanted
+    calendarId = calendarFor(kind)
     original = {}
     fill({ title: "", notes: "", location: "", allDay: wholeDay, start: start, end: end, repeat: "none",
       reminder: wholeDay ? null : Model.DEFAULT_REMINDER, due: start, dueTime: !wholeDay, done: false })
@@ -52,6 +81,7 @@ Sheet {
     occ = o
     kind = o.item.kind
     var item = o.item
+    calendarId = item.calendar
     original = {
       title: item.title, notes: item.notes, location: item.location, allDay: item.allDay, start: o.start, end: o.end,
       repeat: item.kind === "event" ? Model.repeatPreset(item.rrule, item.start) : "none", reminder: item.reminder,
@@ -82,6 +112,10 @@ Sheet {
     }
     opened = true
     Qt.callLater(function () {
+      if (editor.readOnly) {
+        closeButton.forceActiveFocus()
+        return
+      }
       titleField.forceActiveFocus()
       titleField.selectAll()
     })
@@ -159,9 +193,13 @@ Sheet {
       v.done = done
       delete v.location
     }
-    if (isNew) return v
+    if (isNew) {
+      v.calendar = calendarId
+      return v
+    }
     var changed = {}
     var o = original
+    if (calendarId !== occ.item.calendar) changed.calendar = calendarId
     if (v.title !== o.title) changed.title = v.title
     if (v.notes !== o.notes) changed.notes = v.notes
     if (isEvent) {
@@ -184,18 +222,23 @@ Sheet {
   }
 
   function save() {
+    if (readOnly) {
+      opened = false
+      return
+    }
     var v = values()
     if (v === null) return
     opened = false
+    if (isNew) lastCalendar = calendarId
     editor.calendar.saveItem(occ, kind, v)
   }
 
   Keys.onReturnPressed: function (event) {
-    if (notes.activeFocus) { event.accepted = false; return }
+    if (notes.activeFocus && !readOnly) { event.accepted = false; return }
     save()
   }
   Keys.onEnterPressed: function (event) {
-    if (notes.activeFocus) { event.accepted = false; return }
+    if (notes.activeFocus && !readOnly) { event.accepted = false; return }
     save()
   }
 
@@ -242,6 +285,7 @@ Sheet {
         if (value === editor.kind) return
         var start = editor.isEvent ? editor.startValue() : Model.parseDate(dueDate.text)
         editor.kind = value
+        if (!editor.choices.some(function (c) { return c.value === editor.calendarId })) editor.calendarId = editor.calendarFor(value)
         if (value === "task") {
           dueDate.text = isNaN(start) ? "" : editor.dateText(start)
           dueClock.text = isNaN(start) || editor.allDay ? "" : editor.clockText(start)
@@ -266,18 +310,52 @@ Sheet {
     id: titleField
     width: parent.width
     placeholderText: editor.isEvent ? "Title" : "What to do"
+    readOnly: editor.readOnly
+  }
+
+  Row {
+    visible: editor.readOnly || editor.choices.length > 1
+    spacing: Style.space(8)
+    height: Style.spacing.controlHeight
+    FieldLabel { text: "Calendar" }
+    Rectangle {
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(10)
+      height: width
+      radius: width / 2
+      color: editor.store ? editor.store.colorOf(editor.calendarId) : Commons.Color.accent
+    }
+    Dropdown {
+      visible: !editor.readOnly
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(240)
+      options: editor.choices
+      value: editor.calendarId
+      onChanged: function (value) { editor.calendarId = value }
+    }
+    Text {
+      visible: editor.readOnly
+      anchors.verticalCenter: parent.verticalCenter
+      text: editor.calendar.calendarName(editor.calendarId)
+      color: Commons.Color.foreground
+      font.family: Style.font.family
+      font.pixelSize: Style.font.body
+      textFormat: Text.PlainText
+    }
   }
 
   // ---- an event
 
+  // Read-only, what it has: From and To say a day, and what is empty is left out.
   Row {
-    visible: editor.isEvent
+    visible: editor.isEvent && !editor.readOnly
     spacing: Style.space(10)
     height: allDaySwitch.height
     FieldLabel { text: "All day" }
     ToggleSwitch {
       id: allDaySwitch
       anchors.verticalCenter: parent.verticalCenter
+      enabled: !editor.readOnly
       checked: editor.allDay
       onToggled: editor.setAllDay(!editor.allDay)
     }
@@ -291,6 +369,7 @@ Sheet {
       id: startDate
       width: Style.space(120)
       placeholderText: "YYYY-MM-DD"
+      readOnly: editor.readOnly
       onEditingFinished: editor.keepLength()
     }
     TextField {
@@ -298,6 +377,7 @@ Sheet {
       visible: !editor.allDay
       width: Style.space(90)
       placeholderText: "9:00"
+      readOnly: editor.readOnly
       onEditingFinished: editor.keepLength()
     }
     Weekday { date: startDate.text }
@@ -311,22 +391,25 @@ Sheet {
       id: endDate
       width: Style.space(120)
       placeholderText: "YYYY-MM-DD"
+      readOnly: editor.readOnly
     }
     TextField {
       id: endClock
       visible: !editor.allDay
       width: Style.space(90)
       placeholderText: "10:00"
+      readOnly: editor.readOnly
     }
     Weekday { date: endDate.text }
   }
 
   Row {
-    visible: editor.isEvent
+    visible: editor.isEvent && !(editor.readOnly && editor.repeat === "none")
     spacing: Style.space(8)
     FieldLabel { text: "Repeats" }
     Dropdown {
       width: Style.space(220)
+      enabled: !editor.readOnly
       options: editor.repeat === "custom" ? Model.REPEATS.concat([{ value: "custom", label: "As Set Elsewhere" }]) : Model.REPEATS
       value: editor.repeat
       onChanged: function (value) { editor.repeat = value }
@@ -334,11 +417,12 @@ Sheet {
   }
 
   Row {
-    visible: editor.isEvent
+    visible: editor.isEvent && !editor.readOnly
     spacing: Style.space(8)
     FieldLabel { text: "Reminder" }
     Dropdown {
       width: Style.space(220)
+      enabled: !editor.readOnly
       options: Model.reminderOptions(editor.allDay, Model.reminderOffset(editor.reminder))
       value: editor.reminder
       onChanged: function (value) { editor.reminder = value }
@@ -346,13 +430,14 @@ Sheet {
   }
 
   Row {
-    visible: editor.isEvent
+    visible: editor.isEvent && !(editor.readOnly && place.text === "")
     spacing: Style.space(8)
     FieldLabel { text: "Where" }
     TextField {
       id: place
       width: Style.space(260)
       placeholderText: "Location"
+      readOnly: editor.readOnly
     }
   }
 
@@ -366,11 +451,13 @@ Sheet {
       id: dueDate
       width: Style.space(120)
       placeholderText: "None"
+      readOnly: editor.readOnly
     }
     TextField {
       id: dueClock
       width: Style.space(90)
       placeholderText: "Any time"
+      readOnly: editor.readOnly
     }
     Weekday { date: dueDate.text }
   }
@@ -383,6 +470,7 @@ Sheet {
     ToggleSwitch {
       id: doneSwitch
       anchors.verticalCenter: parent.verticalCenter
+      enabled: !editor.readOnly
       checked: editor.done
       onToggled: editor.done = !editor.done
     }
@@ -390,9 +478,11 @@ Sheet {
 
   NotesField {
     id: notes
+    visible: !(editor.readOnly && text === "")
     width: parent.width
     height: Math.max(Style.space(64), Math.min(Style.space(140), implicitHeight))
     placeholderText: "Notes"
+    readOnly: editor.readOnly
   }
 
   Text {
@@ -410,7 +500,7 @@ Sheet {
     height: saveButton.implicitHeight
 
     Button {
-      visible: !editor.isNew
+      visible: !editor.isNew && !editor.readOnly
       anchors.left: parent.left
       text: "Delete"
       foreground: Commons.Color.urgent
@@ -424,16 +514,26 @@ Sheet {
       anchors.right: parent.right
       spacing: Style.space(8)
       Button {
+        visible: !editor.readOnly
         text: "Cancel"
         bordered: true
         onClicked: editor.opened = false
       }
       Button {
         id: saveButton
+        visible: !editor.readOnly
         text: "Save"
         bordered: true
         selected: true
         onClicked: editor.save()
+      }
+      Button {
+        id: closeButton
+        visible: editor.readOnly
+        text: "Close"
+        bordered: true
+        selected: true
+        onClicked: editor.opened = false
       }
     }
   }

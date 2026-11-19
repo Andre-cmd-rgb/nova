@@ -4,7 +4,8 @@ import qs.Commons as Commons
 
 // One line of an item: an all-day event, a task with its box to tick, or a
 // timed event in a month's day. Clicked, it opens; dragged, it is carried by
-// the window's drag (Panel.qml) to a day, a time or the tasks with no day.
+// the window's drag (Panel.qml) to a day, a time or the tasks with no day,
+// unless its calendar is read-only. Its calendar's colour.
 Item {
   id: chip
 
@@ -19,7 +20,8 @@ Item {
   readonly property var item: occ.item
   readonly property bool isTask: item.kind === "task"
   readonly property bool dragged: calendar.dragging && calendar.dragOcc !== null && calendar.dragOcc.uid === occ.uid &&
-    calendar.dragOcc.instance === occ.instance
+    calendar.dragOcc.instance === occ.instance && calendar.dragOcc.item.calendar === item.calendar
+  readonly property color tint: calendar.colorOf(item)
 
   width: parent ? parent.width : 0
   height: Style.space(22)
@@ -29,7 +31,7 @@ Item {
     anchors.fill: parent
     radius: Style.cornerRadius > 0 ? Style.space(4) : 0
     color: chip.isTask ? (hover.hovered ? Style.hoverFill : "transparent")
-      : Qt.alpha(Commons.Color.accent, hover.hovered ? 0.32 : 0.2)
+      : Qt.alpha(chip.tint, hover.hovered ? 0.32 : 0.2)
   }
 
   Row {
@@ -45,7 +47,7 @@ Item {
       width: Style.space(16)
       anchors.verticalCenter: parent.verticalCenter
       text: chip.item.done ? "󰄵" : "󰄱"
-      color: chip.item.done ? Commons.Color.muted : Commons.Color.accent
+      color: chip.item.done ? Commons.Color.muted : chip.tint
       font.family: Style.font.family
       font.pixelSize: Style.font.icon
       TapHandler { onTapped: chip.calendar.toggleTask(chip.item) }

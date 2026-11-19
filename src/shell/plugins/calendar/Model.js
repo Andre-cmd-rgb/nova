@@ -290,9 +290,10 @@ function itemOf(c, zones) {
   return item
 }
 
-// The items of a calendar's file; <calendar>, { id, readOnly, tasks }, says
-// which calendar they are in, whether they may be changed, and whether it
-// takes tasks (a subscription's feed, say, does not).
+// The items of a calendar's file; <calendar>, { id, readOnly, tasks,
+// reminders }, says which calendar they are in, whether they may be changed,
+// whether it takes tasks (a subscription's feed, say, does not), and whether
+// its reminders are said.
 function items(root, calendar) {
   var cal = calendarOf(root)
   var zones = zonesOf(root)
@@ -306,6 +307,7 @@ function items(root, calendar) {
     if (calendar) {
       item.calendar = calendar.id
       item.readOnly = !!calendar.readOnly
+      if (calendar.reminders === false) item.reminder = null
     }
     out.push(item)
   }
@@ -559,6 +561,39 @@ function overdueTasks(list, today) {
 function undatedTasks(list) {
   return list.filter(function (i) { return i.kind === "task" && i.due === null })
     .sort(function (a, b) { return (a.done - b.done) || String(a.title).localeCompare(String(b.title)) })
+}
+
+// ---- searching
+
+// The items whose title, place or notes have every word of <query>, each at
+// its next time from <now>'s day, or its last before it, within two years:
+// the coming ones first, by when, then those gone by, the latest first, then
+// tasks with no day. A series is found once, by its first time that matches.
+function search(list, query, now) {
+  var words = String(query || "").toLowerCase().split(/\s+/).filter(function (w) { return w !== "" })
+  if (!words.length) return []
+  function matches(item) {
+    var text = (item.title + "\n" + item.location + "\n" + item.notes).toLowerCase()
+    return words.every(function (w) { return text.indexOf(w) >= 0 })
+  }
+  var keys = {}
+  list.forEach(function (i) { if (!i.cancelled && matches(i)) keys[i.calendar + "\n" + i.uid] = true })
+  var group = list.filter(function (i) { return keys[i.calendar + "\n" + i.uid] })
+  var today = dayStart(now)
+  var seen = {}
+  var out = []
+  function take(o) {
+    var key = o.item.calendar + "\n" + o.uid
+    if (seen[key] || !matches(o.item)) return
+    seen[key] = true
+    out.push(o)
+  }
+  occurrences(group, today, addDays(today, 730)).forEach(take)
+  occurrences(group, addDays(today, -730), today).reverse().forEach(take)
+  group.forEach(function (i) {
+    if (i.kind === "task" && i.due === null && matches(i)) out.push({ item: i, uid: i.uid, start: 0, end: 0, instance: 0, recurring: false })
+  })
+  return out.slice(0, 200)
 }
 
 // ---- reminders
@@ -1007,6 +1042,43 @@ function moveTask(root, uid, day, now, zone) {
 function deleteTask(root, uid) {
   componentsOf(root, uid).forEach(function (c) { removeComponent(root, c) })
   return true
+}
+
+// ---- from one calendar to another
+
+// An item taken out of its calendar, every time of it, as a file's text with
+// the zones it names; "" when there is none of that uid.
+function take(root, uid) {
+  var list = componentsOf(root, uid)
+  if (!list.length) return ""
+  var named = {}
+  function walk(c) {
+    c.props.forEach(function (p) { if (p.params.TZID) named[p.params.TZID] = true })
+    c.components.forEach(walk)
+  }
+  list.forEach(walk)
+  var zones = calendarOf(root).components.filter(function (c) { return c.name === "VTIMEZONE" && named[Ical.text(c, "TZID")] })
+  list.forEach(function (c) { removeComponent(root, c) })
+  return Ical.serialize({ components: [{ name: "VCALENDAR", props: [], components: zones.concat(list) }] })
+}
+
+// What take() gave, put into this calendar, with the zones it lacks.
+function put(root, text) {
+  var from = calendarOf(Ical.parse(text))
+  var cal = calendarOf(root)
+  var have = {}
+  cal.components.forEach(function (c) { if (c.name === "VTIMEZONE") have[Ical.text(c, "TZID")] = true })
+  var added = false
+  from.components.forEach(function (c) {
+    if (c.name === "VTIMEZONE" && !have[Ical.text(c, "TZID")]) {
+      cal.components.unshift(c)
+      root.zones = null
+    } else if (c.name === "VEVENT" || c.name === "VTODO") {
+      cal.components.push(c)
+      added = true
+    }
+  })
+  return added
 }
 
 function serialize(root) {

@@ -26,7 +26,7 @@ DropArea {
   function addTyped() {
     var title = field.text.trim()
     if (title === "") return
-    calendar.store.addTask({ title: title, due: null })
+    calendar.store.addTask({ title: title, due: null, calendar: calendar.calendarFor("task") })
     field.text = ""
   }
 

@@ -6,7 +6,7 @@ import "Model.js" as Model
 // A timed event in the week's hours, beside the ones it overlaps. Clicked,
 // it opens; dragged, it goes to another time or day; its bottom edge, where
 // it ends on this day, makes it longer or shorter, a quarter of an hour at
-// a time.
+// a time. Its calendar's colour; one of a read-only calendar only opens.
 Rectangle {
   id: box
 
@@ -19,7 +19,8 @@ Rectangle {
 
   readonly property var occ: modelData.occ
   readonly property bool dragged: calendar.dragging && calendar.dragOcc !== null && calendar.dragOcc.uid === occ.uid &&
-    calendar.dragOcc.instance === occ.instance
+    calendar.dragOcc.instance === occ.instance && calendar.dragOcc.item.calendar === occ.item.calendar
+  readonly property color tint: calendar.colorOf(occ.item)
   // Its end, in minutes, while the bottom edge is dragged.
   property int stretch: -1
   readonly property int bottomMinutes: stretch >= 0 ? stretch : modelData.bottom
@@ -31,14 +32,14 @@ Rectangle {
   height: Math.max(Style.space(14), (bottomMinutes - modelData.top) * hourHeight / 60 - Style.space(1))
   z: stretch >= 0 ? 5 : 1
   radius: Style.cornerRadius > 0 ? Style.space(4) : 0
-  color: Qt.alpha(Commons.Color.accent, hover.hovered || stretch >= 0 ? 0.34 : 0.24)
+  color: Qt.alpha(tint, hover.hovered || stretch >= 0 ? 0.34 : 0.24)
   opacity: dragged ? 0.4 : 1
   clip: true
 
   Rectangle {
     width: Style.space(3)
     height: parent.height
-    color: Commons.Color.accent
+    color: box.tint
   }
 
   Column {
@@ -115,7 +116,7 @@ Rectangle {
   // The bottom edge, which says when it ends.
   MouseArea {
     id: edge
-    visible: box.endsToday
+    visible: box.endsToday && !box.occ.item.readOnly
     anchors.bottom: parent.bottom
     width: parent.width
     height: Style.space(6)

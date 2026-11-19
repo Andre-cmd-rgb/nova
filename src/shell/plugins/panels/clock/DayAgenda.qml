@@ -106,7 +106,8 @@ Column {
   }
 
   // One thing the day holds: its time, or a task's box with any time past
-  // it, then its title and place.
+  // it, then its title and place; with more calendars than one, a mark in
+  // its calendar's colour.
   component Entry: Rectangle {
     id: entry
 
@@ -166,9 +167,18 @@ Column {
             anchors.fill: parent
             anchors.margins: -Style.space(4)
             cursorShape: Qt.PointingHandCursor
-            onClicked: agenda.panel.calendar.toggleTask(entry.modelData.uid)
+            onClicked: agenda.panel.calendar.toggleTask(entry.modelData.uid, entry.item.calendar)
           }
         }
+      }
+
+      Rectangle {
+        visible: agenda.panel.calendar.store.list.length > 1
+        anchors.verticalCenter: parent.verticalCenter
+        width: Style.space(3)
+        height: Style.space(14)
+        radius: width / 2
+        color: agenda.panel.calendar.colorOf(entry.item.calendar)
       }
 
       Text {

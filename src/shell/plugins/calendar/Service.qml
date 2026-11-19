@@ -4,8 +4,9 @@ import Quickshell.Io
 import qs.Commons as Commons
 import "Model.js" as Model
 
-// The calendar behind its window and the bar's clock: its file (Store.qml),
-// and the reminders, said as notifications whether the window is open or not.
+// The calendar behind its window and the bar's clock: its calendars
+// (Calendars.qml), and the reminders, said as notifications whether the window
+// is open or not.
 //
 // The clock is looked at every minute at most, not slept on: a timer stops
 // with the computer, so after a suspend the wall clock is what says how far
@@ -27,7 +28,7 @@ Item {
   property real saidKept: 0
   property bool stateRead: false
 
-  Store {
+  Calendars {
     id: storeItem
     onItemsChanged: root.schedule()
   }
@@ -75,9 +76,13 @@ Item {
     return Model.addDays(Model.parseDayKey(key), after || 0)
   }
 
-  function toggleTask(uid) {
-    var task = storeItem.items.filter(function (i) { return i.uid === uid })[0]
-    if (task) storeItem.updateTask(uid, { done: !task.done })
+  function toggleTask(uid, calendarId) {
+    var task = storeItem.items.filter(function (i) { return i.uid === uid && (!calendarId || i.calendar === calendarId) })[0]
+    if (task) storeItem.updateTask(uid, { done: !task.done }, task.calendar)
+  }
+
+  function colorOf(calendarId) {
+    return storeItem.colorOf(calendarId)
   }
 
   function show(day) {

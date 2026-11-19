@@ -1,7 +1,7 @@
 {
   "id": "nova.calendar",
   "name": "Calendar",
-  "description": "Events and tasks on this computer, in a week or a month, moved by dragging; their reminders as notifications, and the day's in the bar's clock.",
+  "description": "Events and tasks on this computer and in iCloud, Google or CalDAV accounts, synced both ways, in a day, a week or a month, moved by dragging; their reminders as notifications, and the day's in the bar's clock.",
   "kinds": [
     "service",
     "panel"
