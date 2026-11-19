@@ -47,7 +47,7 @@ Item {
       width: Style.space(16)
       anchors.verticalCenter: parent.verticalCenter
       text: chip.item.done ? "󰄵" : "󰄱"
-      color: chip.item.done ? Commons.Color.muted : chip.tint
+      color: chip.item.done ? Commons.Color.mutedText : chip.tint
       font.family: Style.font.family
       font.pixelSize: Style.font.icon
       TapHandler { onTapped: chip.calendar.toggleTask(chip.item) }
@@ -56,7 +56,7 @@ Item {
       visible: chip.lead !== ""
       anchors.verticalCenter: parent.verticalCenter
       text: chip.lead
-      color: Commons.Color.muted
+      color: Commons.Color.mutedText
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       textFormat: Text.PlainText
@@ -65,7 +65,7 @@ Item {
       anchors.verticalCenter: parent.verticalCenter
       width: Math.max(0, parent.width - x)
       text: chip.item.title || (chip.isTask ? "Task" : "Event")
-      color: chip.item.done ? Commons.Color.muted : Commons.Color.foreground
+      color: chip.item.done ? Commons.Color.mutedText : Commons.Color.foreground
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       font.strikeout: chip.item.done

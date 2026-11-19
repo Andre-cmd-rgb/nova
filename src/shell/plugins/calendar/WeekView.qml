@@ -89,7 +89,7 @@ Item {
           Text {
             anchors.horizontalCenter: parent.horizontalCenter
             text: view.calendar.weekdayName(dayHead.modelData)
-            color: dayHead.isToday ? Commons.Color.accent : Commons.Color.muted
+            color: dayHead.isToday ? Commons.Color.accent : Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
             font.letterSpacing: 1
@@ -123,7 +123,7 @@ Item {
       y: Style.space(4)
       horizontalAlignment: Text.AlignRight
       text: "all-day"
-      color: Commons.Color.muted
+      color: Commons.Color.mutedText
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
     }
@@ -183,7 +183,7 @@ Item {
               leftPadding: Style.space(4)
               verticalAlignment: Text.AlignVCenter
               text: "+" + (cell.list.length - 2) + " more"
-              color: Commons.Color.muted
+              color: Commons.Color.mutedText
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               TapHandler { onTapped: view.expanded = true }
@@ -200,7 +200,7 @@ Item {
       x: view.gutter + Style.space(7)
       height: Style.space(18)
       text: "Show less"
-      color: Commons.Color.muted
+      color: Commons.Color.mutedText
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       TapHandler { onTapped: view.expanded = false }
@@ -247,7 +247,7 @@ Item {
             y: -height / 2
             horizontalAlignment: Text.AlignRight
             text: view.calendar.hourLabel(index)
-            color: Commons.Color.muted
+            color: Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
           }

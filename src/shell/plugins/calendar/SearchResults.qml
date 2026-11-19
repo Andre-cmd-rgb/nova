@@ -42,7 +42,7 @@ Item {
     anchors.horizontalCenter: parent.horizontalCenter
     y: Style.space(40)
     text: "No results"
-    color: Commons.Color.muted
+    color: Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.body
   }
@@ -89,7 +89,7 @@ Item {
         width: Style.space(140)
         anchors.verticalCenter: parent.verticalCenter
         text: results.when(row.modelData)
-        color: row.past ? Commons.Color.muted : Commons.Color.foreground
+        color: row.past ? Commons.Color.mutedText : Commons.Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         textFormat: Text.PlainText
@@ -100,7 +100,7 @@ Item {
         width: Style.space(80)
         anchors.verticalCenter: parent.verticalCenter
         text: results.time(row.modelData)
-        color: Commons.Color.muted
+        color: Commons.Color.mutedText
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         textFormat: Text.PlainText
@@ -112,7 +112,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         text: (row.modelData.item.title || (row.modelData.item.kind === "task" ? "Task" : "Event")) +
           (row.modelData.item.location ? "  ·  " + row.modelData.item.location : "")
-        color: row.past ? Commons.Color.muted : Commons.Color.foreground
+        color: row.past ? Commons.Color.mutedText : Commons.Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         font.strikeout: row.modelData.item.kind === "task" && row.modelData.item.done

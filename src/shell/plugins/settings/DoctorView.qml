@@ -76,8 +76,9 @@ Column {
         width: Style.space(40)
         text: result.modelData.level
         color: result.modelData.level === "FAIL" ? Commons.Color.urgent
-          : (result.modelData.level === "--" ? Commons.Color.muted : Commons.Color.foreground)
-        opacity: result.modelData.level === "warn" ? 0.7 : 1
+          : result.modelData.level === "--" ? Commons.Color.mutedText
+          : result.modelData.level === "warn" ? Commons.Color.quieter(Commons.Color.foreground, Commons.Color.background, 0.7)
+          : Commons.Color.foreground
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         textFormat: Text.PlainText

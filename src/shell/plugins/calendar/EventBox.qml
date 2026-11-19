@@ -66,7 +66,7 @@ Rectangle {
       width: parent.width
       text: box.calendar.clock(box.occ.start) + "–" + box.calendar.clock(box.stretch >= 0 ? Model.atMinutes(box.day, box.stretch) : box.occ.end) +
         (box.occ.recurring ? "  󰑖" : "")
-      color: Commons.Color.muted
+      color: Commons.Color.mutedText
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       elide: Text.ElideRight
@@ -75,7 +75,7 @@ Rectangle {
       visible: box.occ.item.location !== "" && box.height > Style.space(62)
       width: parent.width
       text: box.occ.item.location
-      color: Commons.Color.muted
+      color: Commons.Color.mutedText
       font.family: Style.font.family
       font.pixelSize: Style.font.caption
       elide: Text.ElideRight

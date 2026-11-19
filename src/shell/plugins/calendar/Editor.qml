@@ -245,7 +245,7 @@ Sheet {
   component FieldLabel: Text {
     width: Style.space(80)
     anchors.verticalCenter: parent ? parent.verticalCenter : undefined
-    color: Commons.Color.muted
+    color: Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.bodySmall
   }
@@ -255,7 +255,7 @@ Sheet {
     readonly property real day: Model.parseDate(date)
     anchors.verticalCenter: parent ? parent.verticalCenter : undefined
     text: isNaN(day) ? "" : editor.calendar.weekdayName(day, true)
-    color: Commons.Color.muted
+    color: Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.caption
   }

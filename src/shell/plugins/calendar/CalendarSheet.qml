@@ -51,7 +51,7 @@ Sheet {
       width: Style.space(70)
       anchors.verticalCenter: parent.verticalCenter
       text: "Name"
-      color: Commons.Color.muted
+      color: Commons.Color.mutedText
       font.family: Style.font.family
       font.pixelSize: Style.font.bodySmall
     }
@@ -68,7 +68,7 @@ Sheet {
       width: Style.space(70)
       anchors.verticalCenter: parent.verticalCenter
       text: "Colour"
-      color: Commons.Color.muted
+      color: Commons.Color.mutedText
       font.family: Style.font.family
       font.pixelSize: Style.font.bodySmall
     }
@@ -109,7 +109,7 @@ Sheet {
     visible: words !== "" || (sheet.current !== null && sheet.current.kind === "subscription")
     width: parent.width
     text: words !== "" ? words : (sheet.current && sheet.current.host ? sheet.current.host : "")
-    color: words !== "" ? Commons.Color.urgent : Commons.Color.muted
+    color: words !== "" ? Commons.Color.urgent : Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.bodySmall
     wrapMode: Text.Wrap

@@ -35,7 +35,7 @@ Item {
         horizontalAlignment: Text.AlignHCenter
         verticalAlignment: Text.AlignVCenter
         text: view.calendar.weekdayName(modelData)
-        color: Commons.Color.muted
+        color: Commons.Color.mutedText
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
         font.letterSpacing: 1
@@ -101,7 +101,7 @@ Item {
             id: dayNumber
             anchors.centerIn: parent
             text: new Date(cell.day).getDate() === 1 ? Qt.formatDate(new Date(cell.day), "d MMM") : new Date(cell.day).getDate()
-            color: cell.isToday ? Commons.Color.background : (cell.inMonth ? Commons.Color.foreground : Commons.Color.muted)
+            color: cell.isToday ? Commons.Color.background : (cell.inMonth ? Commons.Color.foreground : Commons.Color.mutedText)
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
             font.bold: cell.isToday
@@ -133,7 +133,7 @@ Item {
             leftPadding: Style.space(4)
             verticalAlignment: Text.AlignVCenter
             text: "+" + (cell.list.length - cell.shown) + " more"
-            color: Commons.Color.muted
+            color: Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
             TapHandler { onTapped: view.calendar.showDay(cell.day, "week") }

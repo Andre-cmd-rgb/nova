@@ -130,6 +130,17 @@ QtObject {
     return Util.alpha(value ? flatColor(value, fallback) : fallback, opacity)
   }
 
+  // The palette's muted colour, for text: muted as it is where it reads at
+  // 4:1 on the background, else moved toward the text colour until it does
+  // (Nord's muted is 2.4:1). Borders and marks keep plain muted.
+  readonly property color mutedText: {
+    for (let x = 0; x < 1; x += 0.05) {
+      const shade = Qt.tint(muted, Qt.rgba(foreground.r, foreground.g, foreground.b, x))
+      if (Util.contrast(shade, background) >= 4) return shade
+    }
+    return foreground
+  }
+
   // Text in <ink> on <behind>, quieter: <alpha> of the way from <behind> to
   // <ink>, as the design asks, but never less legible than 4:1 for text at
   // 0.6 or more, nor 3:1 for fainter text (or <ink>'s own, when lower). A

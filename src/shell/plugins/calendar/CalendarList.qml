@@ -70,7 +70,7 @@ Item {
               anchors.bottom: parent.bottom
               anchors.bottomMargin: Style.space(4)
               text: String(group.modelData.heading).toUpperCase()
-              color: Commons.Color.muted
+              color: Commons.Color.mutedText
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
               font.letterSpacing: 1
@@ -86,7 +86,7 @@ Item {
                 visible: group.modelData.account !== null && side.store !== null && side.store.syncing
                 anchors.verticalCenter: parent.verticalCenter
                 text: "󰑓"
-                color: Commons.Color.muted
+                color: Commons.Color.mutedText
                 font.family: Style.font.family
                 font.pixelSize: Style.font.caption
               }
@@ -107,7 +107,7 @@ Item {
             leftPadding: Style.space(4)
             bottomPadding: Style.space(4)
             text: group.words
-            color: group.synced && group.synced.state !== "offline" && group.synced.state !== "ok" ? Commons.Color.urgent : Commons.Color.muted
+            color: group.synced && group.synced.state !== "offline" && group.synced.state !== "ok" ? Commons.Color.urgent : Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
@@ -162,7 +162,7 @@ Item {
                 anchors.right: rowButton.left
                 anchors.verticalCenter: parent.verticalCenter
                 text: row.modelData.name
-                color: row.modelData.shown ? Commons.Color.foreground : Commons.Color.muted
+                color: row.modelData.shown ? Commons.Color.foreground : Commons.Color.mutedText
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideRight

@@ -398,7 +398,7 @@ Item {
                 width: parent.width
                 horizontalAlignment: Text.AlignRight
                 text: entry.modelData.expression
-                color: Commons.Color.muted
+                color: Commons.Color.mutedText
                 font.family: Style.font.family
                 font.pixelSize: Style.font.bodySmall
                 elide: Text.ElideLeft
@@ -435,7 +435,7 @@ Item {
           anchors.centerIn: past
           visible: root.history.length === 0
           text: "No History"
-          color: Commons.Color.muted
+          color: Commons.Color.mutedText
           font.family: Style.font.family
           font.pixelSize: Style.font.body
           textFormat: Text.PlainText
@@ -519,7 +519,7 @@ Item {
             anchors.topMargin: Style.space(8)
             visible: Keypad.angled(root.calc.done ? root.calc.previous : root.calc.typed)
             text: root.angle === "deg" ? "Deg" : "Rad"
-            color: Commons.Color.muted
+            color: Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Style.font.caption
             textFormat: Text.PlainText
@@ -533,7 +533,7 @@ Item {
             anchors.bottom: big.top
             horizontalAlignment: Text.AlignRight
             text: root.calc.done && root.calc.previous ? root.calc.previous + " =" : ""
-            color: Commons.Color.muted
+            color: Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Style.font.subtitle
             elide: Text.ElideLeft
@@ -565,7 +565,7 @@ Item {
               anchors.right: parent.right
               anchors.verticalCenter: parent.verticalCenter
               text: big.shown.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-                + (big.closing ? "<font color=\"" + Commons.Color.muted + "\">" + big.closing + "</font>" : "")
+                + (big.closing ? "<font color=\"" + Commons.Color.mutedText + "\">" + big.closing + "</font>" : "")
               color: Commons.Color.foreground
               font.family: Style.font.family
               font.pixelSize: big.fitted
@@ -583,7 +583,7 @@ Item {
             horizontalAlignment: Text.AlignRight
             verticalAlignment: Text.AlignVCenter
             text: root.failed ? "Error" : root.previewShown ? root.preview.label : ""
-            color: root.failed ? Commons.Color.urgent : Commons.Color.muted
+            color: root.failed ? Commons.Color.urgent : Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Math.round(Style.font.heading * 1.25)
             elide: Text.ElideLeft

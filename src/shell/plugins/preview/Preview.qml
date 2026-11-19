@@ -227,7 +227,7 @@ Item {
         verticalAlignment: Text.AlignVCenter
         horizontalAlignment: Text.AlignHCenter
         text: root.info ? root.info.name : ""
-        color: Commons.Color.muted
+        color: Commons.Color.mutedText
         font.family: Style.font.family
         font.pixelSize: Style.font.bodySmall
         elide: Text.ElideMiddle
@@ -318,7 +318,7 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: root.info ? Model.facts(root.info) : ""
-            color: Commons.Color.muted
+            color: Commons.Color.mutedText
             font.family: Style.font.family
             font.pixelSize: Style.font.body
             textFormat: Text.PlainText

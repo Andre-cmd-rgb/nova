@@ -96,7 +96,7 @@ Sheet {
   component FieldLabel: Text {
     width: Style.space(100)
     anchors.verticalCenter: parent ? parent.verticalCenter : undefined
-    color: Commons.Color.muted
+    color: Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.bodySmall
   }
@@ -218,7 +218,7 @@ Sheet {
     visible: sheet.mode === "account" && sheet.account !== null
     width: parent.width
     text: sheet.account ? [sheet.account.user, sheet.account.type === "caldav" ? sheet.account.url : ""].filter(function (s) { return s && s !== sheet.account.name }).join(" · ") : ""
-    color: Commons.Color.muted
+    color: Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.bodySmall
     elide: Text.ElideMiddle
@@ -303,7 +303,7 @@ Sheet {
     visible: sheet.error !== "" || (sheet.busy && sheet.type !== "google")
     width: parent.width
     text: sheet.error !== "" ? sheet.error : (sheet.type === "subscription" ? "Subscribing…" : "Signing in…")
-    color: sheet.error !== "" ? Commons.Color.urgent : Commons.Color.muted
+    color: sheet.error !== "" ? Commons.Color.urgent : Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.bodySmall
     wrapMode: Text.Wrap

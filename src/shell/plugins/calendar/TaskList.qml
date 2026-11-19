@@ -39,7 +39,7 @@ DropArea {
     width: parent.width
     topPadding: Style.space(10)
     bottomPadding: Style.space(4)
-    color: Commons.Color.muted
+    color: Commons.Color.mutedText
     font.family: Style.font.family
     font.pixelSize: Style.font.caption
     font.letterSpacing: 1
@@ -124,7 +124,7 @@ DropArea {
         width: parent.width
         topPadding: Style.space(2)
         text: "Tasks for no day in particular, or dragged here off one."
-        color: Commons.Color.muted
+        color: Commons.Color.mutedText
         font.family: Style.font.family
         font.pixelSize: Style.font.caption
         wrapMode: Text.Wrap
