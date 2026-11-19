@@ -287,7 +287,8 @@ function hiddenBetween(catalog, menus, menuId, answers) {
 // ------------------------------------------------------------------- answers
 
 // The answer to a sum (Calculator.answer), as the row that goes before a
-// search's others, or none: the answer by a calculator, and Return copies it.
+// search's others, or none: the answer by a calculator, and Return copies it
+// (Ctrl+Return opens the sum in the Calculator: Menu.qml).
 function answerRows(answer) {
   if (!answer || !answer.label) return []
   return [{

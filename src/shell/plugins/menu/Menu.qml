@@ -279,6 +279,17 @@ Item {
     }
   }
 
+  // Opens the sum whose answer is the row at <index> in the Calculator, as
+  // it was typed, to go on with it there.
+  function calculate(index) {
+    const row = rows[index]
+    if (asking || !row || row.kind !== "answer") return
+    const sum = typed
+    opened = false
+    typed = ""
+    if (shell) shell.summon("nova.calculator", JSON.stringify({ expression: sum }))
+  }
+
   function run(command) {
     if (command) Util.execDetached(command)
   }
@@ -327,7 +338,8 @@ Item {
 
   // Escape clears what is typed, or closes; Backspace and Left go back when
   // nothing is; Up, Down, Page Up and Page Down move; Return, Enter and
-  // Right do what the row is for; Delete asks to uninstall an app; text is
+  // Right do what the row is for, and Ctrl with Return or Enter opens a
+  // sum's answer in the Calculator; Delete asks to uninstall an app; text is
   // typed. While the uninstall question is up, it has the keys.
   function press(event) {
     const key = event.key
@@ -338,6 +350,7 @@ Item {
     else if (Util.editsFilter(event, typed)) filter(Util.editedFilter(event, typed))
     else if ((key === Qt.Key_Backspace || key === Qt.Key_Left) && !typed) back()
     else if (steps.has(key)) move(steps.get(key))
+    else if (enter && (event.modifiers & Qt.ControlModifier)) calculate(cursor)
     else if (enter || key === Qt.Key_Right) take(cursor)
     else if (isText(event)) filter(typed + event.text)
     else return false

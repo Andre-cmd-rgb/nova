@@ -260,6 +260,6 @@ from the root that reads as a sum or a conversion (`calculator/Calculator.js`
 says which, and turns "in" into qalc's "to") goes to `qalc` once the keys
 have rested 50 ms, one run at a time, and without currencies, whose rates
 would need the network; qalc keeps its settings in
-`$XDG_RUNTIME_DIR/nova/calculator`. Its answer is the first row, and Return
-copies it with `wl-copy`. While the next sum is worked out, the last answer
+`$XDG_RUNTIME_DIR/nova/calculator`. Its answer is the first row: Return
+copies it with `wl-copy`, Ctrl+Return opens the sum in the Calculator. While the next sum is worked out, the last answer
 stays, and Return waits for the new one.

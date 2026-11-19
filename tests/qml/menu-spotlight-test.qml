@@ -13,8 +13,9 @@ import "plugins/menu/MenuModel.js" as MenuModel
 // with a stand-in qalc: one run for a sum typed fast, none for a word, the
 // answer first with the cursor on it, the one before kept while the next is
 // worked out, and Return copying it with a plain minus, the new one once it
-// comes. And Settings' pages, which Nova's menu.jsonc offers to a search
-// under the words their pages are called by.
+// comes, Ctrl+Return opening it in the Calculator. And Settings' pages,
+// which Nova's menu.jsonc offers to a search under the words their pages
+// are called by.
 ShellRoot {
   id: test
 
@@ -230,9 +231,29 @@ ShellRoot {
         check(menu.opened && lines(callsFile).length === 2, "Return meanwhile copies nothing yet")
         when(() => lines(callsFile).length === 3, () => {
           check(lines(callsFile)[2] === "wl-copy -- 14" && !menu.opened, "and copies the new answer once it comes")
-          finish()
+          calculator()
         }, "Return copies the answer that came")
       }, "a conversion is answered again")
     }, "a sum is answered again")
+  }
+
+  // Ctrl+Return on the answer opens the sum in the Calculator, as it was
+  // typed, and closes the menu; with no answer under the cursor it does
+  // nothing.
+  function calculator() {
+    const summoned = []
+    menu.shell = { appLibrary: null, summon: (id, payload) => summoned.push(id + " " + payload) }
+    menu.open("{}")
+    menu.filter("12*3")
+    when(() => menu.rows.length === 1 && !menu.calculating, () => {
+      menu.press({ key: Qt.Key_Return, modifiers: Qt.ControlModifier, text: "\r" })
+      check(summoned.length === 1 && summoned[0] === 'nova.calculator {"expression":"12*3"}' && !menu.opened && lines(callsFile).length === 3,
+        "Ctrl+Return on the answer opens the sum in the Calculator, copies nothing, and closes the menu (" + summoned.join("; ") + ")")
+      menu.open("{}")
+      menu.filter("settings")
+      menu.press({ key: Qt.Key_Return, modifiers: Qt.ControlModifier, text: "\r" })
+      check(summoned.length === 1 && menu.opened, "with no answer under the cursor, Ctrl+Return does nothing")
+      finish()
+    }, "12*3 is answered again")
   }
 }
