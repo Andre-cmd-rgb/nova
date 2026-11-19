@@ -23,7 +23,7 @@ done_file=${XDG_STATE_HOME:-$HOME/.local/state}/nova/chrome-energy-saver
 
 [[ -e $done_file ]] && exit 0
 [[ -f $local_state ]] || exit 0
-pgrep -u "$UID" -x chrome >/dev/null 2>&1 && exit 0
+nova-session-pgrep -x chrome >/dev/null 2>&1 && exit 0
 
 tmp=$(mktemp "$local_state.nova.XXXXXX")
 trap 'rm -f "$tmp"' EXIT

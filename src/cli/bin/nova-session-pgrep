@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# nova:summary=pgrep for this session: the user's processes started with this home and runtime folder
+# nova:args=[--signal SIG] pgrep-options... pattern
+# nova:hidden=true
+#
+# Nova reaches running apps by name: the theme recolours the terminals and
+# signals btop, the shell ends the clipboard watchers a shell before it left,
+# a key stops the recording. A name is not a session, though: a second session
+# of the same user (the shell's tests, the screenshots tool, a nested Hyprland
+# with a home and a runtime folder of its own) found the first one's apps by
+# it, and a test recoloured the user's terminals. So Nova goes through this:
+# the processes pgrep finds for this user, kept when their environment has
+# this HOME and this XDG_RUNTIME_DIR. (pgrep's own --env matches only one
+# variable.)
+#
+# Prints their process IDs, as pgrep does; with --signal, sends them the
+# signal instead, as pkill does. Exits 1 when there are none, as both do.
+set -uo pipefail
+
+signal=''
+if [[ ${1:-} == --signal ]]; then
+  signal=${2:?--signal needs a signal}
+  shift 2
+fi
+(($# > 0)) || { echo "usage: nova-session-pgrep [--signal SIG] pgrep-options... pattern" >&2; exit 2; }
+
+home=$HOME runtime=${XDG_RUNTIME_DIR:-}
+found=()
+while read -r pid; do
+  ((pid != $$)) || continue
+  theirs_home='' theirs_runtime='' seen=0
+  while IFS= read -r -d '' variable; do
+    seen=1
+    case $variable in
+      HOME=*) theirs_home=${variable#HOME=} ;;
+      XDG_RUNTIME_DIR=*) theirs_runtime=${variable#XDG_RUNTIME_DIR=} ;;
+    esac
+  done 2>/dev/null <"/proc/$pid/environ"
+  ((seen)) || continue
+  [[ $theirs_home == "$home" && $theirs_runtime == "$runtime" ]] && found+=("$pid")
+done < <(pgrep -u "$UID" "$@")
+
+((${#found[@]} > 0)) || exit 1
+if [[ -n $signal ]]; then
+  kill -s "$signal" "${found[@]}" 2>/dev/null
+  exit 0
+fi
+printf '%s\n' "${found[@]}"

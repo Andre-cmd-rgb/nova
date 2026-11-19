@@ -241,14 +241,14 @@ case ${1:-} in
     exit
     ;;
   --take-window | --take-fullscreen)
-    pgrep -x slurp >/dev/null || exit 0
+    nova-session-pgrep -x slurp >/dev/null || exit 0
     mkdir -p "${taken%/*}"
     echo "${1#--take-}" >"$taken"
-    pkill -x slurp
+    nova-session-pgrep --signal TERM -x slurp
     exit 0
     ;;
   --select-window)
-    pgrep -x slurp >/dev/null || exit 0
+    nova-session-pgrep -x slurp >/dev/null || exit 0
     select_window "${2:-}"
     exit 0
     ;;

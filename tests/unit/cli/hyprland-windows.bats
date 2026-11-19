@@ -119,10 +119,10 @@ window() { # width [side]
 @test "session lock: stranded only while no other locker runs" {
   echo '[{"name": "eDP-1", "solitaryBlockedBy": ["LOCK"]}]' >"$HYPR/monitors.json"
   export NOVA_PROC=$SCRATCH/proc
-  stub pgrep 'echo 100'
+  stub nova-session-pgrep 'echo 100'
   run nova-hyprland-session-lock-stranded 100
   [ "$status" -eq 0 ]
-  stub pgrep 'printf "100\n200\n"'
+  stub nova-session-pgrep 'printf "100\n200\n"'
   run nova-hyprland-session-lock-stranded 100
   [ "$status" -eq 2 ]
   echo '[{"name": "eDP-1", "solitaryBlockedBy": ["WINDOWED"]}]' >"$HYPR/monitors.json"
@@ -137,14 +137,14 @@ window() { # width [side]
   printf 'qs\0ipc\0-n\0-p\0/usr/share/nova/shell\0call\0--\0lock\0state\0' >"$NOVA_PROC/300/cmdline"
   printf 'quickshell\0kill\0-p\0/usr/share/nova/shell\0--any-display\0' >"$NOVA_PROC/400/cmdline"
   printf 'quickshell\0-n\0-p\0/usr/share/nova/shell\0' >"$NOVA_PROC/200/cmdline"
-  stub pgrep 'printf "100\n300\n400\n"'
+  stub nova-session-pgrep 'printf "100\n300\n400\n"'
   run nova-hyprland-session-lock-stranded 100
   [ "$status" -eq 0 ]
   # Another shell, and one gone before its command line could be read.
-  stub pgrep 'printf "100\n300\n200\n"'
+  stub nova-session-pgrep 'printf "100\n300\n200\n"'
   run nova-hyprland-session-lock-stranded 100
   [ "$status" -eq 2 ]
-  stub pgrep 'printf "100\n500\n"'
+  stub nova-session-pgrep 'printf "100\n500\n"'
   run nova-hyprland-session-lock-stranded 100
   [ "$status" -eq 2 ]
 }

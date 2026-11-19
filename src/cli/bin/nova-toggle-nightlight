@@ -51,12 +51,12 @@ flock -w 5 "$held" || true
 
 # Off with no hyprsunset is off already: none is started for it, as the
 # schedule's sunrise would otherwise have done at every login by day.
-if [[ $target == "$day" ]] && ! pgrep -u "$UID" -x hyprsunset >/dev/null; then
+if [[ $target == "$day" ]] && ! nova-session-pgrep -x hyprsunset >/dev/null; then
   nova-shell -q nightlight refresh
   exit 0
 fi
 
-if ! pgrep -u "$UID" -x hyprsunset >/dev/null; then
+if ! nova-session-pgrep -x hyprsunset >/dev/null; then
   setsid uwsm-app -- hyprsunset >/dev/null 2>&1 {held}>&- &
 fi
 

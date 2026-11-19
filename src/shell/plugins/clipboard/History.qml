@@ -69,7 +69,7 @@ Item {
 
   Process {
     id: reap
-    command: ["pkill", "-f", "wl-paste .*--watch .*/shell/plugins/clipboard/capture\\.sh"]
+    command: ["nova-session-pgrep", "--signal", "TERM", "-f", "wl-paste .*--watch .*/shell/plugins/clipboard/capture\\.sh"]
     onExited: {
       startup.running = true
       textWatch.running = true

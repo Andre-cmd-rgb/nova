@@ -3,7 +3,7 @@
 load ../test_helper
 
 # Hyprland, foot, the theme and the effect are stubs that log their calls; so
-# are pgrep and pkill, which must never reach a real process here.
+# is nova-session-pgrep, which must never reach a real process here.
 setup() {
   setup_scratch
   export HOME="$SCRATCH/home" XDG_CONFIG_HOME="$SCRATCH/home/.config"
@@ -15,13 +15,14 @@ setup() {
     activewindow) echo "{\"class\":\"${ACTIVE:-org.nova.screensaver}\"}" ;;
   esac'
   stub socat 'printf "openwindow>>a1,1,org.nova.screensaver,foot\nopenwindow>>a2,2,org.nova.screensaver,foot\n"'
-  stub pgrep 'exit 1'
+  # Nothing of the screensaver's running, and a signal for it sent.
+  stub nova-session-pgrep '[[ $1 == --signal ]]'
   stub nova-shell 'echo false'
   stub nova-theme 'case $2 in
     accent) echo "#cba6ff" ;;
     hyprland_active_border) echo "#cba6ff #12bff4 45deg" ;;
   esac'
-  for name in pkill nova-screensaver-effect; do stub "$name"; done
+  stub nova-screensaver-effect
   export PATH="$SCRATCH/bin:$PATH"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/data/screensaver/nova-screensaver"
@@ -74,21 +75,21 @@ exec sleep 5'
   main auto
   fails grep -q exec_cmd "$CALLS"
   stub nova-shell 'echo false'
-  stub pgrep 'exit 0'
+  stub nova-session-pgrep 'exit 0'
   main auto
   fails grep -q exec_cmd "$CALLS"
 }
 
 @test "shown by hand, it starts over" {
-  stub pgrep 'exit 0'
+  stub nova-session-pgrep 'exit 0'
   main
-  grep -qx 'pkill -f \[o\]rg.nova.screensaver' "$CALLS"
+  grep -qx 'nova-session-pgrep --signal TERM -f \[o\]rg.nova.screensaver' "$CALLS"
   grep -q exec_cmd "$CALLS"
 }
 
 @test "stop closes every window and brings the cursor back" {
   main stop
-  grep -qx 'pkill -f \[o\]rg.nova.screensaver' "$CALLS"
+  grep -qx 'nova-session-pgrep --signal TERM -f \[o\]rg.nova.screensaver' "$CALLS"
   grep -q 'invisible = false' "$CALLS"
   run main sideways
   [ "$status" -eq 2 ]
@@ -101,7 +102,7 @@ exec sleep 5'
   grep -qx "nova-screensaver-effect --colors #cba6ff,#12bff4 $NOVA_WORDMARK" "$CALLS"
   grep -q 'invisible = true' "$CALLS"
   grep -q 'invisible = false' "$CALLS"
-  grep -qx 'pkill -f \[o\]rg.nova.screensaver' "$CALLS"
+  grep -qx 'nova-session-pgrep --signal TERM -f \[o\]rg.nova.screensaver' "$CALLS"
 }
 
 @test "the terminal: your own text, and losing focus ends it too" {
@@ -111,7 +112,7 @@ exec sleep 5'
   ACTIVE=org.nova.terminal run "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(input)
   [ "$status" -eq 0 ]
   grep -qx "nova-screensaver-effect --colors #cba6ff,#12bff4 $XDG_CONFIG_HOME/nova/screensaver.txt" "$CALLS"
-  grep -qx 'pkill -f \[o\]rg.nova.screensaver' "$CALLS"
+  grep -qx 'nova-session-pgrep --signal TERM -f \[o\]rg.nova.screensaver' "$CALLS"
 }
 
 @test "the terminal: a theme with one color, or none to ask, leaves the rest to the effect" {
@@ -133,6 +134,6 @@ exec sleep 5'
   stub nova-screensaver-effect 'exit 1'
   run timeout 5 "$REPO_ROOT/data/screensaver/nova-screensaver-run" < <(sleep 4)
   [ "$status" -eq 0 ]
-  grep -qx 'pkill -f \[o\]rg.nova.screensaver' "$CALLS"
+  grep -qx 'nova-session-pgrep --signal TERM -f \[o\]rg.nova.screensaver' "$CALLS"
   grep -q 'invisible = false' "$CALLS"
 }

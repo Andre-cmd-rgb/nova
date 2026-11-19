@@ -4,7 +4,7 @@
 # (the region or monitor picked, its size, the sound), and the stop that
 # finishes the file and says so. Every program it runs is a stub: the
 # recorder writes its file and runs until it is sent SIGINT, as the real one
-# does, and pgrep and pkill see and signal it alone.
+# does, and nova-session-pgrep sees and signals it alone.
 
 load ../test_helper
 
@@ -37,8 +37,9 @@ while True:
     time.sleep(0.05)
 STUB
   chmod +x "$SCRATCH/bin/gpu-screen-recorder"
-  stub pgrep '[[ $* == "-f ^gpu-screen-recorder" && -s $SCRATCH/gsr.pid ]] && kill -0 "$(cat "$SCRATCH/gsr.pid")" 2>/dev/null'
-  stub pkill 'echo "pkill $*" >>"$CALLS"; [[ -s $SCRATCH/gsr.pid ]] || exit 1; kill "${1/#-SIG/-}" "$(cat "$SCRATCH/gsr.pid")"'
+  # Finds the recorder, as nova-session-pgrep does, and with --signal sends it
+  # the signal, saying so.
+  stub nova-session-pgrep 'if [[ $1 == --signal ]]; then echo "signal $*" >>"$CALLS"; [[ -s $SCRATCH/gsr.pid ]] || exit 1; kill -s "$2" "$(cat "$SCRATCH/gsr.pid")"; else [[ $* == "-f ^gpu-screen-recorder" && -s $SCRATCH/gsr.pid ]] && kill -0 "$(cat "$SCRATCH/gsr.pid")" 2>/dev/null; fi'
   stub nova-capture-region 'echo "region $*" >>"$CALLS"; [[ -s $SCRATCH/picked ]] || exit 1; cat "$SCRATCH/picked"'
   stub nova-hyprland-monitor-focused 'echo DP-1'
   stub hyprctl 'cat "$SCRATCH/monitors"'
@@ -138,7 +139,7 @@ stop_it() {
   run record --stop-recording
   [ "$status" -eq 0 ]
   [ "$output" = "$file" ]
-  grep -qx 'pkill -SIGINT -f ^gpu-screen-recorder' "$CALLS"
+  grep -qx 'signal --signal INT -f ^gpu-screen-recorder' "$CALLS"
   grep -qx "ffmpeg -y -ss 0.1 -i $file -c:v copy ${file%.mp4}-processed.mp4 -loglevel quiet" "$CALLS"
   [ "$(cat "$file")" = DONE ]
   [ ! -e "${file%.mp4}-processed.mp4" ]
@@ -160,17 +161,17 @@ stop_it() {
   record
   record --with-desktop-audio >/dev/null
   [ "$(grep -c '^gsr' "$CALLS")" -eq 1 ]
-  grep -q '^pkill -SIGINT' "$CALLS"
+  grep -q '^signal --signal INT' "$CALLS"
   run record --stop-recording
   [ "$status" -eq 1 ]
 }
 
 @test "a recorder that will not stop is killed, and that is said" {
   record
-  stub pkill 'echo "pkill $*" >>"$CALLS"; [[ $1 == -9 ]] && kill -9 "$(cat "$SCRATCH/gsr.pid")"; true'
+  stub nova-session-pgrep 'if [[ $1 == --signal ]]; then echo "signal $*" >>"$CALLS"; [[ $2 == KILL ]] && kill -9 "$(cat "$SCRATCH/gsr.pid")"; true; else [[ -s $SCRATCH/gsr.pid ]] && kill -0 "$(cat "$SCRATCH/gsr.pid")" 2>/dev/null; fi'
   stub sleep 'true'
   run record --stop-recording
-  grep -qx 'pkill -9 -f ^gpu-screen-recorder' "$CALLS"
+  grep -qx 'signal --signal KILL -f ^gpu-screen-recorder' "$CALLS"
   grep -q '^notify -u critical -t 5000 .*did not stop in time' "$CALLS"
   fails grep -q '^ffmpeg' "$CALLS"
 }

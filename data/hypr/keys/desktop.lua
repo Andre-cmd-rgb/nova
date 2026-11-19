@@ -45,7 +45,7 @@ nova.bind("PRINT", "Screenshot", function()
   hl.dispatch(hl.dsp.exec_cmd("nova-capture-screenshot"))
 end)
 nova.bind("ALT + PRINT", "Screenrecording", "nova-capture-screenrecording --stop-recording || nova-menu toggle capture.screenrecord")
-nova.bind("SUPER + PRINT", "Color picker", "pkill hyprpicker || hyprpicker -a")
+nova.bind("SUPER + PRINT", "Color picker", "nova-session-pgrep --signal TERM -x hyprpicker || hyprpicker -a")
 nova.bind("SUPER + CTRL + PRINT", "Extract text (OCR) from screenshot", "nova-capture-text")
 
 -- While slurp's region picker (one layer per display, where the shell's is

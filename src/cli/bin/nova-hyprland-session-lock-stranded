@@ -43,4 +43,4 @@ shell_client() { # pid
 
 while read -r pid; do
   [[ $pid == "$own" ]] || shell_client "$pid" || exit 2
-done < <(pgrep -u "$UID" -x 'quickshell|qs|hyprlock')
+done < <(nova-session-pgrep -x 'quickshell|qs|hyprlock')

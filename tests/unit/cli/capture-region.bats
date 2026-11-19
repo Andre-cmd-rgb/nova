@@ -4,7 +4,7 @@
 # freeze kept or thawed; without it, what a pick gives in each mode, a bare
 # click taking what slurp was highlighting under it, the keys that end a pick
 # or move its highlight while slurp is up; and a monitor named for a region
-# that is one. Hyprland, the shell, slurp, hyprpicker, pgrep and pkill are
+# that is one. Hyprland, the shell, slurp, hyprpicker and nova-session-pgrep are
 # stubs: one 1000x800 monitor with a 200x200 window at 50,50, unless a test
 # lays out its own, and no shell, unless a test starts one.
 
@@ -26,8 +26,7 @@ setup() {
 esac'
   # The still is on screen as hyprpicker starts.
   stub hyprpicker 'touch "$SCRATCH/frozen"; exec sleep 5'
-  stub pgrep 'exit 0'
-  stub pkill 'echo "pkill $*" >>"$CALLS"'
+  stub nova-session-pgrep '[[ $1 != --signal ]] || echo "signal $*" >>"$CALLS"'
   stub nova-shell 'exit 1'
   export PATH="$SCRATCH/bin:$PATH"
 }
@@ -208,7 +207,7 @@ esac'
   stub slurp 'cat >/dev/null; "$REPO_ROOT/src/cli/bin/nova-capture-region" "$TAKE"; exit 1'
   TAKE=--take-window run region smart
   [ "$output" = '50,50 200x200' ]
-  [ "$(cat "$CALLS")" = 'pkill -x slurp' ]
+  [ "$(cat "$CALLS")" = 'signal --signal TERM -x slurp' ]
   TAKE=--take-fullscreen run region smart
   [ "$output" = '0,0 1000x800' ]
   # Given up after either, the next pick takes nothing from it.
@@ -218,7 +217,7 @@ esac'
 }
 
 @test "the keys do nothing while no pick is up" {
-  stub pgrep 'exit 1'
+  stub nova-session-pgrep 'exit 1'
   run region --take-window
   [ "$status" -eq 0 ]
   run region --select-window next

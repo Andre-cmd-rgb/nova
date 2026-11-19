@@ -196,7 +196,7 @@ turn_on() {
   # EasyEffects moves every stream that follows the default output into its
   # own sink, the tuning's too. Its sink there, it running, or its unit up
   # each say it is in the way.
-  if has_sink easyeffects_sink || pgrep -u "$UID" -x easyeffects >/dev/null 2>&1 ||
+  if has_sink easyeffects_sink || nova-session-pgrep -x easyeffects >/dev/null 2>&1 ||
     systemctl --user is-active --quiet easyeffects.service 2>/dev/null; then
     echo "EasyEffects is running, and it takes everything played to the default output" >&2
     echo "into its own sink, past the tuning. Stop it, then turn the tuning on:" >&2

@@ -21,14 +21,14 @@ PATTERN='[o]rg.nova.screensaver'
 FOOT_CONFIG=${NOVA_SCREENSAVER_FOOT:-/usr/share/nova/screensaver/foot.ini}
 SOCKET=${XDG_RUNTIME_DIR:-}/hypr/${HYPRLAND_INSTANCE_SIGNATURE:-}/.socket2.sock
 
-running() { pgrep -f "$PATTERN" >/dev/null; }
+running() { nova-session-pgrep -f "$PATTERN" >/dev/null; }
 
 locked() { [[ $(nova-shell lock isLocked 2>/dev/null) == true ]]; }
 
 focus() { hyprctl dispatch "hl.dsp.focus({ monitor = \"$1\" })" >/dev/null 2>&1 || true; }
 
 stop() {
-  pkill -f "$PATTERN" || true
+  nova-session-pgrep --signal TERM -f "$PATTERN" || true
   hyprctl eval 'hl.config({ cursor = { invisible = false } })' >/dev/null 2>&1 || true
 }
 

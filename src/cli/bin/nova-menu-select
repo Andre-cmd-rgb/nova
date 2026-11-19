@@ -79,7 +79,7 @@ nova-shell shell summon nova.menu "$payload" >/dev/null
 # Nothing will close the menu if the shell that opened it goes away (it
 # crashed, or was restarted), so that is looked for every two seconds. With no
 # shell to be seen at the start, there is no telling, and it waits.
-shells=$(pgrep -u "$UID" -x 'qs|quickshell' || true)
+shells=$(nova-session-pgrep -x 'qs|quickshell' || true)
 shell_gone() {
   local pid
   [[ -n $shells ]] || return 1

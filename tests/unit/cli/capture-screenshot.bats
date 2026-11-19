@@ -3,7 +3,7 @@
 # nova-capture-screenshot: where a screenshot goes for each action, the
 # notification that opens it to edit, hardware cursors while it is taken, and
 # the freeze ended after. nova-capture-region, grim, wl-copy, hyprctl, pidof,
-# pkill and the notification are stubs that log; the picker's freeze is a sleep.
+# nova-session-pgrep and the notification are stubs that log; the picker's freeze is a sleep.
 
 load ../test_helper
 
@@ -21,7 +21,7 @@ sleep 30 >/dev/null 2>&1 & echo $! >"$SCRATCH/freezer"; echo $!; cat "$SCRATCH/r
   stub wl-copy 'echo "wl-copy $* $(cat)" >>"$CALLS"'
   stub hyprctl 'case $1 in getoption) echo "{\"int\": 1}" ;; *) echo "hyprctl $*" >>"$CALLS" ;; esac'
   stub pidof '[[ $* == "-q slurp" && -e $SCRATCH/slurp-up ]]'
-  stub pkill '[[ -e $SCRATCH/slurp-up ]] && echo "pkill $*" >>"$CALLS"'
+  stub nova-session-pgrep '[[ -e $SCRATCH/slurp-up ]] && echo "signal $*" >>"$CALLS"'
   stub nova-notification-send 'echo "notify $*" >>"$CALLS"'
   export PATH="$SCRATCH/bin:$PATH"
 }
@@ -102,6 +102,6 @@ hyprctl eval hl.config({ cursor = { no_hardware_cursors = 1 } })' ]
   touch "$SCRATCH/slurp-up"
   run shot
   [ "$status" -eq 0 ]
-  grep -q '^pkill .*slurp' "$CALLS"
+  grep -qx 'signal --signal TERM -x slurp' "$CALLS"
   fails grep -q '^region' "$CALLS"
 }

@@ -13,7 +13,7 @@ setup() {
   stub fc-list "echo 'Noto Sans Mono,Noto Sans Mono Regular'; seq 100000 | sed 's/^/Family /'"
   local name
   for name in nova-restart-shell nova-hook nova-notification-send; do stub "$name" 'exit 0'; done
-  stub pgrep 'exit 1'
+  stub nova-session-pgrep 'exit 1'
   export PATH="$SCRATCH/bin:$PATH"
   config=$HOME/.config/fontconfig/conf.d/50-nova-monospace.conf
 }

@@ -26,7 +26,7 @@ case $1 in
     fi ;;
 esac'
   for name in nova-osd nova-shell nova-toggle setsid sleep; do stub "$name"; done
-  stub pgrep 'echo 4242'
+  stub nova-session-pgrep 'echo 4242'
   : >"$CALLS"
   export PATH="$SCRATCH/bin:$REPO_ROOT/src/cli/bin:/usr/bin"
 }
@@ -92,7 +92,7 @@ stub() { # name [body]: logs "name args" to $CALLS, then runs body
 }
 
 @test "night light: off with no hyprsunset starts none, and the shell looks again" {
-  stub pgrep 'exit 1'
+  stub nova-session-pgrep 'exit 1'
   stub setsid
   nova-toggle-nightlight off
   ! grep -qE '^(setsid|hyprctl)' "$CALLS"

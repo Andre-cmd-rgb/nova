@@ -299,3 +299,16 @@ argv() { grep -vE '^[[:space:]]*//' "$1" | sed -E 's/,([[:space:]]*\})/\1/' | jq
 @test "the starting argv.json uses the login keyring, as each session start enforces" {
   [ "$(argv "$REPO_ROOT/data/skel/.vscode/argv.json" '."password-store"')" = gnome-libsecret ]
 }
+
+# A test's session, or any in a home of its own, has a theme that is nobody's
+# login screen: the greeter's mirror (and Chrome's colour, made from it)
+# belongs to the computer, and only the account's own home writes it.
+@test "a session in a home of its own leaves the login screen alone" {
+  export NOVA_GREETER_DIR=$SCRATCH/greeter
+  mkdir -p "$NOVA_GREETER_DIR"
+  echo 'background = "#000000"' >"$NOVA_GREETER_DIR/colors.toml"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" greeter
+  [ "$status" -eq 0 ]
+  [ "$(cat "$NOVA_GREETER_DIR/colors.toml")" = 'background = "#000000"' ]
+  [ "$(ls -A "$NOVA_GREETER_DIR")" = colors.toml ]
+}

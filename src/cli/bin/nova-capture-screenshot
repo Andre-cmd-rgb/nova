@@ -27,8 +27,7 @@ mode=${words[0]:-smart} action=${words[1]:-slurp}
 # PRINT pressed again while slurp's picker is up puts it away (the shell's
 # own puts itself away). pidof asks, in a fifth of the time pkill takes, as
 # every screenshot asks before it starts.
-if pidof -q slurp; then
-  pkill -x slurp || true
+if pidof -q slurp && nova-session-pgrep --signal TERM -x slurp; then
   exit 0
 fi
 

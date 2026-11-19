@@ -27,13 +27,13 @@
 
   // Capture
   "capture.screenshot": {"icon":"","label":"Screenshot","action":"nova-capture-screenshot"},
-  "capture.screenrecord.stop": {"icon":"","label":"Stop Recording","when":"pgrep -f '^gpu-screen-recorder'","action":"nova-capture-screenrecording --stop-recording"},
+  "capture.screenrecord.stop": {"icon":"","label":"Stop Recording","when":"nova-session-pgrep -f '^gpu-screen-recorder'","action":"nova-capture-screenrecording --stop-recording"},
   "capture.screenrecord": {"icon":"","label":"Screen Recording"},
   "capture.screenrecord.no-audio": {"icon":"","label":"Without audio","action":"nova-capture-screenrecording"},
   "capture.screenrecord.desktop-audio": {"icon":"","label":"With desktop audio","action":"nova-capture-screenrecording --with-desktop-audio"},
   "capture.screenrecord.microphone": {"icon":"","label":"With desktop and microphone audio","action":"nova-capture-screenrecording --with-desktop-audio --with-microphone-audio"},
   "capture.text": {"icon":"󰴑","label":"Text","when":"command -v tesseract","action":"nova-capture-text"},
-  "capture.color": {"icon":"󰃉","label":"Color","action":"pkill hyprpicker || hyprpicker -a"},
+  "capture.color": {"icon":"󰃉","label":"Color","action":"nova-session-pgrep --signal TERM -x hyprpicker || hyprpicker -a"},
   "capture.emoji": {"icon":"","label":"Emoji","aliases":["emoji","emojis"],"action":"nova-shell shell toggle nova.emojis"},
 
   // Toggle

@@ -71,7 +71,7 @@ set_foot_size() { # pt
   local -a replacing=()
   [[ -f $foot_config ]] || return 0
   sed -i -E "s/^(font=[^:]*):size=[0-9.]+/\1:size=$1/" "$foot_config"
-  pgrep -u "$UID" -x foot >/dev/null || return 0
+  nova-session-pgrep -x foot >/dev/null || return 0
   if [[ -f $said ]]; then read -r id <"$said" || true; fi
   if [[ $id =~ ^[0-9]+$ ]]; then replacing=(-r "$id"); fi
   new=$(nova-notification-send "New terminal windows use the new text size" "${replacing[@]}" -p 2>/dev/null || true)

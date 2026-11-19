@@ -47,7 +47,7 @@ mv "$config.tmp" "$config"
 # Qt caches font matches for the life of the process.
 nova-restart-shell >/dev/null 2>&1 || true
 
-if pgrep -u "$UID" -x foot >/dev/null; then
+if nova-session-pgrep -x foot >/dev/null; then
   nova-notification-send "New terminal windows use $font"
 fi
 nova-hook font-set "$font" >/dev/null 2>&1 || true

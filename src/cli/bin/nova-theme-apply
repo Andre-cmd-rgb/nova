@@ -15,13 +15,16 @@ set -euo pipefail
 state=${XDG_STATE_HOME:-$HOME/.local/state}/nova
 config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 theme=$state/current/theme
-greeter=/var/lib/nova/greeter
+greeter=${NOVA_GREETER_DIR:-/var/lib/nova/greeter}
 
 [[ -f $theme/colors.toml ]] || { echo "nova-theme-apply: no current theme" >&2; exit 1; }
 mode=$(nova-theme color mode)
 
+# An app of this session: started with this home and runtime folder. Another
+# session of the user's (a test's, with a home of its own) has its own apps
+# and its own theme, and is not reached from here, nor this one from it.
 running() {
-  pgrep -u "$UID" -x "$1" >/dev/null
+  nova-session-pgrep -x "$1" >/dev/null
 }
 
 # Points a config file at the rendered theme, unless the user put a real file
@@ -182,7 +185,7 @@ apply_foot() {
   for i in {0..15}; do
     osc+=$(printf '\e]4;%d;%s\a' "$i" "${c[color$i]}")
   done
-  for pid in $(pgrep -u "$UID" -x foot); do
+  for pid in $(nova-session-pgrep -x foot || true); do
     for child in $(pgrep -P "$pid" || true); do
       tty=$(readlink "/proc/$child/fd/1" 2>/dev/null || true)
       if [[ $tty == /dev/pts/* && -w $tty ]]; then printf '%s' "$osc" >"$tty"; fi
@@ -193,7 +196,7 @@ apply_foot() {
 apply_btop() {
   link_config "$theme/btop.theme" "$config_home/btop/themes/nova.theme"
   running btop || return 0
-  pkill -u "$UID" -USR2 -x btop || true
+  nova-session-pgrep --signal USR2 -x btop || true
 }
 
 # VS Code cannot place Hyprland, so it finds no keyring and offers to keep its
@@ -311,9 +314,12 @@ apply_t3code() {
 
 # The greeter runs before any user is logged in, so it reads a world-readable
 # mirror. nova-browser-theme.path (root) turns the mirrored chromium.theme into
-# Chrome's color policy; Chrome reloads policy files on its own.
+# Chrome's color policy; Chrome reloads policy files on its own. Both belong to
+# the computer, so only the account's own home writes them: a session in a
+# home of its own (a test's) has a theme that is nobody's login screen.
 apply_greeter() {
   [[ -d $greeter && -w $greeter ]] || return 0
+  [[ $HOME == "$(getent passwd "$UID" | cut -d: -f6)" ]] || return 0
   local file background
   for file in colors.toml shell.toml chromium.theme; do
     [[ -f $theme/$file ]] || continue

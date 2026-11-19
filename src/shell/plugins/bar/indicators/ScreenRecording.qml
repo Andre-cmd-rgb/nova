@@ -4,12 +4,12 @@ import qs.Ui
 
 // Lit while gpu-screen-recorder runs (nova-capture-screenrecording starts
 // it). A click stops the recording, or with none, opens the menu's choices
-// for one. pgrep looks as the bar comes up, and again whenever the
+// for one. It looks as the bar comes up, and again whenever the
 // recorder asks the indicators to (nova-shell nova.indicators refresh).
 BarIndicator {
   id: indicator
 
-  // What pgrep found when it last looked.
+  // What the search found when it last looked.
   property bool recorderFound: false
   // Asked while it looked: it looks once more after, as the recorder may
   // have started or stopped after it did.
@@ -17,8 +17,8 @@ BarIndicator {
 
   function look() {
     if (!bar) return
-    if (pgrep.running) askedAgain = true
-    else pgrep.running = true
+    if (search.running) askedAgain = true
+    else search.running = true
   }
 
   lit: recorderFound
@@ -31,8 +31,8 @@ BarIndicator {
   Component.onCompleted: look()
 
   Process {
-    id: pgrep
-    command: ["pgrep", "--quiet", "-f", "^gpu-screen-recorder"]
+    id: search
+    command: ["nova-session-pgrep", "-f", "^gpu-screen-recorder"]
     onExited: function(exitCode) {
       indicator.recorderFound = exitCode === 0
       if (!indicator.askedAgain) return

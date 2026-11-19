@@ -2,7 +2,7 @@
 
 # nova-display-text-size: the one text size, written to the shell's
 # shell.toml (its [font] base-size, the rest of the file left as it was),
-# GTK's text-scaling-factor and foot's font size. gsettings, pgrep and the
+# GTK's text-scaling-factor and foot's font size. gsettings, nova-session-pgrep and the
 # notification are stubs; GTK's settings are $SCRATCH/gsettings.
 
 load ../test_helper
@@ -20,7 +20,7 @@ case $1 in
   get) value=$(sed -n "s/^$3 //p" "$SCRATCH/gsettings"); [[ -n $value ]] && echo "$value" || echo 1.0 ;;
 esac
 STUB
-  printf '#!/bin/bash\n[[ -e %s/foot-up ]]\n' "$SCRATCH" >"$SCRATCH/bin/pgrep"
+  printf '#!/bin/bash\n[[ -e %s/foot-up ]]\n' "$SCRATCH" >"$SCRATCH/bin/nova-session-pgrep"
   printf '#!/bin/bash\necho "notify $*" >>"%s"\necho 42\n' "$CALLS" >"$SCRATCH/bin/nova-notification-send"
   chmod +x "$SCRATCH/bin"/*
   export PATH="$SCRATCH/bin:$PATH"

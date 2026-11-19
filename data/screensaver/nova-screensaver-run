@@ -37,7 +37,7 @@ finish() {
   trap - INT TERM HUP QUIT
   cursor false
   [[ -z $effect ]] || kill "$effect" 2>/dev/null
-  pkill -f '[o]rg.nova.screensaver'
+  nova-session-pgrep --signal TERM -f '[o]rg.nova.screensaver'
   exit 0
 }
 

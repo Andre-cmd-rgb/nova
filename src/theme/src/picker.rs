@@ -95,17 +95,45 @@ pub fn pick(
     Ok((!choice.is_empty()).then(|| PathBuf::from(choice)))
 }
 
-/// Whether a Quickshell process is alive for this user.
+/// Whether a Quickshell process is alive in this session: this user's,
+/// started with this home and runtime folder, as nova-session-pgrep has it.
+/// Another session's shell (a test's) is not the one that opened the picker.
 fn shell_running() -> bool {
     let Ok(entries) = fs::read_dir("/proc") else {
         return true;
     };
     let uid = fs::metadata("/proc/self").map(|m| m.uid()).ok();
+    let session = session_of(&std::env::vars_os().collect::<Vec<_>>());
     entries.filter_map(|e| e.ok()).any(|e| {
         let ours = e.metadata().is_ok_and(|m| Some(m.uid()) == uid);
         ours && fs::read_to_string(e.path().join("comm"))
             .is_ok_and(|c| matches!(c.trim_end(), "qs" | "quickshell"))
+            && fs::read(e.path().join("environ")).is_ok_and(|env| session_in(&env) == session)
     })
+}
+
+/// HOME and XDG_RUNTIME_DIR, the two that tell one session from another.
+type Session = (Option<std::ffi::OsString>, Option<std::ffi::OsString>);
+
+fn session_of(vars: &[(std::ffi::OsString, std::ffi::OsString)]) -> Session {
+    let get = |name: &str| vars.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+    (get("HOME"), get("XDG_RUNTIME_DIR"))
+}
+
+/// The session in a process's environ: NUL-separated NAME=value entries.
+fn session_in(environ: &[u8]) -> Session {
+    use std::os::unix::ffi::OsStrExt;
+    let vars: Vec<_> = environ
+        .split(|&b| b == 0)
+        .filter_map(|entry| {
+            let at = entry.iter().position(|&b| b == b'=')?;
+            Some((
+                std::ffi::OsStr::from_bytes(&entry[..at]).to_owned(),
+                std::ffi::OsStr::from_bytes(&entry[at + 1..]).to_owned(),
+            ))
+        })
+        .collect();
+    session_of(&vars)
 }
 
 /// A thumbnail for each image, generated in parallel where missing. An image
@@ -190,5 +218,25 @@ fn prune(dir: &Path, in_use: &[PathBuf]) {
         if old && !in_use.contains(&path) {
             let _ = fs::remove_file(&path);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_session_from_an_environ() {
+        let env = b"PATH=/usr/bin\0HOME=/home/a\0XDG_RUNTIME_DIR=/run/user/1000\0EMPTY=\0";
+        let (home, runtime) = session_in(env);
+        assert_eq!(home.as_deref(), Some(std::ffi::OsStr::new("/home/a")));
+        assert_eq!(runtime.as_deref(), Some(std::ffi::OsStr::new("/run/user/1000")));
+    }
+
+    #[test]
+    fn a_test_home_is_another_session() {
+        let ours = session_in(b"HOME=/home/a\0XDG_RUNTIME_DIR=/run/user/1000\0");
+        let test = session_in(b"HOME=/tmp/x/home\0XDG_RUNTIME_DIR=/run/user/1000\0");
+        assert_ne!(ours, test);
     }
 }

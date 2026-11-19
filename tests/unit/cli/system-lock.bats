@@ -13,7 +13,7 @@ setup() {
   stub nova-shell
   stub nova-screensaver
   stub hyprctl
-  stub pgrep 'exit 1'
+  stub nova-session-pgrep 'exit 1'
   stub 1password
   export PATH="$SCRATCH/bin:$PATH"
 }
@@ -30,7 +30,7 @@ lock() { "$REPO_ROOT/src/cli/bin/nova-system-lock"; }
 @test "the lock, then the screensaver off and the first layout; no 1Password running, none locked" {
   run lock
   [ "$status" -eq 0 ]
-  [ "$(cat "$CALLS")" = "$(printf '%s\n' 'nova-shell lock lock' 'nova-screensaver stop' 'hyprctl switchxkblayout all 0' "pgrep -u $UID -x 1password")" ]
+  [ "$(cat "$CALLS")" = "$(printf '%s\n' 'nova-shell lock lock' 'nova-screensaver stop' 'hyprctl switchxkblayout all 0' "nova-session-pgrep -x 1password")" ]
 }
 
 @test "a shell that will not lock fails it, and nothing else is done" {
@@ -41,7 +41,7 @@ lock() { "$REPO_ROOT/src/cli/bin/nova-system-lock"; }
 }
 
 @test "1Password running is locked too, in the background, and a lock of it under way is not doubled" {
-  stub pgrep 'exit 0'
+  stub nova-session-pgrep 'exit 0'
   run lock
   [ "$status" -eq 0 ]
   for _ in {1..20}; do grep -q '^1password' "$CALLS" && break; sleep 0.1; done

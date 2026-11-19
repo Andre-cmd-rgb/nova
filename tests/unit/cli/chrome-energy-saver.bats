@@ -10,8 +10,8 @@ setup() {
   export XDG_STATE_HOME="$SCRATCH/state" NOVA_CHROME_LOCAL_STATE="$SCRATCH/Local State"
   mkdir -p "$SCRATCH/bin"
   # Chrome is running when $SCRATCH/running exists.
-  printf '#!/bin/bash\n[[ -e %q ]]\n' "$SCRATCH/running" >"$SCRATCH/bin/pgrep"
-  chmod +x "$SCRATCH/bin/pgrep"
+  printf '#!/bin/bash\n[[ -e %q ]]\n' "$SCRATCH/running" >"$SCRATCH/bin/nova-session-pgrep"
+  chmod +x "$SCRATCH/bin/nova-session-pgrep"
   export PATH="$SCRATCH/bin:$PATH"
   echo '{"browser":{"enabled_labs_experiments":[]},"performance_tuning":{"battery_saver_mode":{"state":0},"high_efficiency_mode":{"state":0}}}' \
     >"$NOVA_CHROME_LOCAL_STATE"
