@@ -227,6 +227,34 @@ printf '[Context]\nfilesystems=xdg-config/gtk-3.0:ro;xdg-config/gtk-4.0:ro;\n' >
   [ "$(jq -r '."workbench.colorTheme"' "$XDG_CONFIG_HOME/Code/User/settings.json")" = Nova ]
 }
 
+@test "T3 Code gets Nova's theme as a file of its own, named in its settings, which it keeps" {
+  mkdir -p "$HOME/.t3/userdata"
+  write_file "$XDG_STATE_HOME/nova/current/theme/t3code.json" '{"name": "Nova", "appearance": "light", "canvas": "#faf4ed", "accent": "#d7827e"}'
+  write_file "$HOME/.t3/userdata/settings.json" '{"favorites": [], "idleCompaction": "onReturn"}'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$status" -eq 0 ]
+  [ ! -L "$HOME/.t3/userdata/themes/nova.json" ]
+  [ "$(jq -r .canvas "$HOME/.t3/userdata/themes/nova.json")" = '#faf4ed' ]
+  run jq -c . "$HOME/.t3/userdata/settings.json"
+  [ "$output" = '{"favorites":[],"idleCompaction":"onReturn","defaultTheme":"nova"}' ]
+  # Named already, the settings are not written again.
+  touch -d '2026-01-01' "$HOME/.t3/userdata/settings.json"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$(stat -c %Y "$HOME/.t3/userdata/settings.json")" = "$(date -d 2026-01-01 +%s)" ]
+}
+
+@test "T3 Code with no settings yet gets them, and settings that do not parse are left alone" {
+  mkdir -p "$HOME/.t3/userdata"
+  write_file "$XDG_STATE_HOME/nova/current/theme/t3code.json" '{"name": "Nova"}'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$(jq -r .defaultTheme "$HOME/.t3/userdata/settings.json")" = nova ]
+  write_file "$HOME/.t3/userdata/settings.json" '{"broken"'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$status" -eq 0 ]
+  [[ $output == *"T3 Code's settings.json does not parse"* ]]
+  [ "$(cat "$HOME/.t3/userdata/settings.json")" = '{"broken"' ]
+}
+
 @test "the starting VS Code settings agree with what each theme change enforces" {
   run jq -r '[."workbench.colorTheme", ."window.titleBarStyle", ."window.customTitleBarVisibility"] | join(" ")' \
     "$REPO_ROOT/data/skel/.config/Code/User/settings.json"

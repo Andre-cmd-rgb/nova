@@ -291,12 +291,22 @@ apply_claude() {
   mv "$dir/themes/nova.json.tmp" "$dir/themes/nova.json"
 }
 
+# T3 Code reads every theme in its themes folder, and since 0.1.2 shows the one
+# its settings name as defaultTheme, which open windows switch to at once;
+# with none named, each window keeps the theme it had. The file is a copy:
+# T3 Code skips a theme that is a symlink.
 apply_t3code() {
   local dir=${T3CODE_HOME:-$HOME/.t3}/userdata
   [[ -d $dir ]] || return 0
   mkdir -p "$dir/themes"
   cp "$theme/t3code.json" "$dir/themes/nova.json.tmp"
   mv "$dir/themes/nova.json.tmp" "$dir/themes/nova.json"
+  if [[ ! -e $dir/settings.json ]]; then
+    printf '{\n  "defaultTheme": "nova"\n}\n' >"$dir/settings.json"
+  elif [[ $(jq -r '.defaultTheme // empty' "$dir/settings.json" 2>/dev/null) != nova ]]; then
+    jq_in_place "$dir/settings.json" '.defaultTheme = "nova"' ||
+      echo "nova-theme-apply: T3 Code's settings.json does not parse, so its theme is not set" >&2
+  fi
 }
 
 # The greeter runs before any user is logged in, so it reads a world-readable
