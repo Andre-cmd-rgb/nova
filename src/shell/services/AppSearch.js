@@ -37,10 +37,14 @@ function sortedEntries(values, isHidden) {
 // keeps one for, rather than activated outside the scope. An ID that uwsm
 // will not take (one with a space in it, from a file name) goes through
 // gtk-launch, which takes any; it wants the .desktop suffix, or an ID such
-// as org.telegram.desktop is not found.
-function launchWords(appId) {
+// as org.telegram.desktop is not found. An entry that asks for the discrete
+// GPU (<discrete>: PrefersNonDefaultGPU, a game's or Steam's) starts through
+// nova power prefer: on the card while it is on the bus, which is when
+// plugged in, else on the integrated GPU.
+function launchWords(appId, discrete) {
   var id = String(appId || "")
   if (!id) return []
-  if (/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(id)) return ["uwsm-app", "--", id + ".desktop"]
-  return ["uwsm-app", "--", "gtk-launch", id + ".desktop"]
+  var prefer = discrete === true ? ["nova-power", "prefer"] : []
+  if (/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(id)) return prefer.concat(["uwsm-app", "--", id + ".desktop"])
+  return prefer.concat(["uwsm-app", "--", "gtk-launch", id + ".desktop"])
 }

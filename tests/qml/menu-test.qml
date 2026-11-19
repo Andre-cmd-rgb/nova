@@ -79,6 +79,9 @@ ShellRoot {
       && AppSearch.launchWords("wine-Programs-Foo $(x)").join("|") === "uwsm-app|--|gtk-launch|wine-Programs-Foo $(x).desktop",
       "an ID uwsm will not take goes through gtk-launch, as one word")
     check(AppSearch.launchWords("").length === 0 && AppSearch.launchWords(undefined).length === 0, "no ID, nothing to run")
+    check(AppSearch.launchWords("com.mojang.Minecraft", true).join(" ") === "nova-power prefer uwsm-app -- com.mojang.Minecraft.desktop"
+      && AppSearch.launchWords("Steam Link", true).join("|") === "nova-power|prefer|uwsm-app|--|gtk-launch|Steam Link.desktop",
+      "an entry that asks for the discrete GPU starts through nova power prefer")
 
     const fonts = MenuModel.providerItems("style.font", "Fira Code\nJetBrains Mono\n  Fira Code  \n\nFira-Code\n", "F", value => "set " + value)
     check(fonts.map(row => row.id + "=" + row.icon + "=" + row.command).join(" ")

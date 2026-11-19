@@ -69,6 +69,8 @@ usage: nova power [command] [args]
   doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
+  prefer <cmd> [args] the same while the card is on the bus (plugged in);
+                      else as it is, on the integrated GPU
 
   boost [min|off]     lift the battery CPU caps for a while (default 30 min)
   daemon-stopped      restore what nova-powerd owned (systemd runs this)
@@ -87,7 +89,7 @@ usage: nova power [command] [args]
   -h, --help          this message
 ```
 
-- **Privileges:** `status`, `switch`, `run` and a bare `gpu-mode` need none; everything else requires root.
+- **Privileges:** `status`, `switch`, `run`, `prefer` and a bare `gpu-mode` need none; everything else requires root.
 - **`status` is side-effect free.** In particular it does not call `nvidia-smi`, which would wake the card out of P8 just to answer.
 - **`status` answers in three lines; `-v` adds the diagnostics.** Rows that have nothing to say are left out: `held by` appears only when something is actually holding the card, and `left on bus` only if a PCI function of it somehow survived being removed.
 - **The policy is applied** on plug and unplug, at boot and after resume. A card it could not move (held by a program, or not back on a rescan) is tried again two minutes later, and again until it goes; so is the GPU once more after each plug, boot and resume, for a plug event lost in the run before. Nothing runs on a clock when the card is where it should be.
@@ -118,11 +120,19 @@ $ nova power status -v
   cpu ceiling    45% no turbo (2.2 GHz)
 ```
 
+### Games start on the discrete GPU when plugged in
+
+**An app whose desktop entry asks for the discrete GPU starts on it while the card is on the bus**: plugged in, with the policy's default. Steam's entry and Flathub's Minecraft ask this way (`PrefersNonDefaultGPU=true`, or KDE's older `X-KDE-RunOnDiscreteGpu=true`). On battery the card is off the bus, and the same app starts on the integrated GPU.
+
+- **The menu, its search and the App Center** start such an app with `nova power prefer`: the card while it is on the bus, else the app as it is.
+- **What it starts runs on the card too:** a Steam game, the game Minecraft's launcher starts, a Flatpak's sandbox (it needs Flathub's NVIDIA driver of the same version, which Flatpak installs with the app).
+- **Unplugged while it runs,** the card stays in use until the app closes: Nova does not pull the GPU out from under it, and takes the card off the bus once it is closed ([below](#switching-the-card-by-hand)).
+
 ### One program on the discrete GPU
 
 **Use `nova power run`, not `prime-run`.** The session hides NVIDIA's EGL vendor and Vulkan ICD so nothing reaches for the card by accident, and `prime-run` does not know to put those back. `nova power run` restores them for that one process and adds the usual offload hints.
 
-Steam: put `nova power run %command%` in a game's launch options.
+A game started outside Steam: `nova power run <game>`. Inside Steam, nothing is needed once Steam itself starts on the card.
 
 ### Switching the card by hand
 

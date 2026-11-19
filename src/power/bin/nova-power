@@ -72,6 +72,8 @@ usage: nova power [command] [args]
   doctor              what is keeping this machine awake (root)
   switch              turn the discrete GPU on or off, interactively
   run <cmd> [args]    run one program on the discrete GPU
+  prefer <cmd> [args] the same while the card is on the bus (plugged in);
+                      else as it is, on the integrated GPU
 
   boost [min|off]     lift the battery CPU caps for a while (default 30 min)
   daemon-stopped      restore what nova-powerd owned (systemd runs this)
@@ -89,7 +91,7 @@ usage: nova power [command] [args]
 
   -h, --help          this message
 
-status, switch, run and a bare gpu-mode need no privileges; every other
+status, switch, run, prefer and a bare gpu-mode need no privileges; every other
 command requires root.
 The policy is applied on plug and unplug, at boot, after resume, and by a
 retry timer two minutes after each of those and after a card that would not
@@ -259,6 +261,18 @@ udev_reload() { udevadm control --reload 2>/dev/null || true; }
 # another run installed correctly: with the card off the bus, the block is the
 # only thing standing between nvidia-modprobe and a machine check.
 unblock_if_gpu_present() { gpu_present && unblock_nvidia_autoload; return 0; }
+
+# Runs <program> on the discrete GPU. The session hides the NVIDIA EGL vendor
+# and Vulkan ICD so nothing reaches for the card by accident; this puts them
+# back for this process only (and what it starts), and adds the usual offload
+# hints, which a Flatpak passes into its sandbox as well.
+on_discrete() { # program [args...]
+  exec env -u __EGL_VENDOR_LIBRARY_FILENAMES -u VK_LOADER_DRIVERS_DISABLE \
+    __NV_PRIME_RENDER_OFFLOAD=1 \
+    __GLX_VENDOR_LIBRARY_NAME=nvidia \
+    __VK_LAYER_NV_optimus=NVIDIA_only \
+    "$@"
+}
 
 # Every node the driver leaves behind — nvidia0, nvidiactl, nvidia-modeset,
 # the uvm pair, and nvidia-caps, which is a directory, hence -r.
@@ -1340,7 +1354,7 @@ exclusive() {
 }
 
 case $cmd in
-status | switch | run | -h | --help) ;;
+status | switch | run | prefer | -h | --help) ;;
 doctor)
   # Read-only, but debugfs is root-only.
   [[ $EUID -eq 0 ]] || die 'doctor needs root — try: sudo nova power doctor'
@@ -1669,17 +1683,21 @@ doctor)
   echo
   ;;
 run)
-  # Run one program on the discrete GPU. The session hides the NVIDIA EGL
-  # vendor and Vulkan ICD so nothing reaches for the card by accident; this
-  # puts them back for this process only, and adds the usual offload hints.
+  # Run one program on the discrete GPU.
   shift
   (($# > 0)) || die 'run needs a program: nova power run <program> [args...]'
   gpu_present || die "the discrete GPU is off the bus. Plug in, or: sudo nova power gpu-on"
-  exec env -u __EGL_VENDOR_LIBRARY_FILENAMES -u VK_LOADER_DRIVERS_DISABLE \
-    __NV_PRIME_RENDER_OFFLOAD=1 \
-    __GLX_VENDOR_LIBRARY_NAME=nvidia \
-    __VK_LAYER_NV_optimus=NVIDIA_only \
-    "$@"
+  on_discrete "$@"
+  ;;
+prefer)
+  # What the menu starts an app with when its desktop entry asks for the
+  # discrete GPU (PrefersNonDefaultGPU, as Steam's and Minecraft's do): on
+  # the card while it is on the bus, which the policy has it plugged in;
+  # else as it is, on the integrated GPU, rather than not at all.
+  shift
+  (($# > 0)) || die 'prefer needs a program: nova power prefer <program> [args...]'
+  gpu_present || exec "$@"
+  on_discrete "$@"
   ;;
 switch)
   # What `nova power gpu` runs, in a floating terminal from the menu. Whoever opened

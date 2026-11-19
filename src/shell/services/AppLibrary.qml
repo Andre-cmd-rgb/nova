@@ -22,6 +22,8 @@ Item {
   // The two lists of IDs to leave out, each as { id: true }.
   property var hiddenByNova: ({})
   property var hiddenHere: ({})
+  // The IDs whose entries ask for the discrete GPU, as { id: true }.
+  property var prefersDiscrete: ({})
 
   // Icon name to file, for the app and device icons on disk. Qt reads the
   // icon theme once, when the shell starts, and never sees an icon installed
@@ -75,7 +77,7 @@ Item {
   // launch, and the session's environment is the shell's already, as it is
   // for the apps Hyprland's keys start.
   function launch(appId, label) {
-    var words = AppSearch.launchWords(appId)
+    var words = AppSearch.launchWords(appId, prefersDiscrete[String(appId || "").replace(/\.desktop$/, "")] === true)
     if (words.length === 0) return
     launchWatch.begin(label)
     Quickshell.execDetached(words)
@@ -140,6 +142,15 @@ Item {
     }
   }
 
+  // The entries that ask for the discrete GPU (PrefersNonDefaultGPU).
+  Search {
+    id: discreteSearch
+    command: ["bash", library.novaPath + "/shell/services/hidden-entries.sh", "--discrete-gpu"]
+    onSearched: function(lines) {
+      library.prefersDiscrete = library.idSet(lines.join("\n"))
+    }
+  }
+
   // Every app and device icon file, SVGs before PNGs: under ~/.icons,
   // ~/.local/share/icons and each XDG data dir's icons, then in
   // /usr/share/pixmaps. A name keeps the first file found for it. Device
@@ -181,6 +192,7 @@ Item {
     target: DesktopEntries.applications
     function onValuesChanged() {
       hiddenSearch.request()
+      discreteSearch.request()
       iconSearchSoon.restart()
       library.appsChanged()
     }
@@ -203,6 +215,7 @@ Item {
 
   Component.onCompleted: {
     hiddenSearch.running = true
+    discreteSearch.running = true
     iconSearch.running = true
   }
 

@@ -108,9 +108,16 @@ Item {
     run(argv)
   }
 
+  // An app whose entry asks for the discrete GPU starts on it while it is on
+  // the bus, as from the menu (AppSearch.launchWords). The last word is its
+  // entry, or its Flathub ID, which is its entry's.
   function launch(app) {
     var words = Model.launchWords(app, Model.installedFrom(app, installed))
-    if (words.length > 0) Quickshell.execDetached(words)
+    if (words.length === 0) return
+    var entry = String(words[words.length - 1]).replace(/\.desktop$/, "")
+    var library = shell ? shell.appLibrary : null
+    if (library && library.prefersDiscrete[entry] === true) words = ["nova-power", "prefer"].concat(words)
+    Quickshell.execDetached(words)
   }
 
   function choose(id) {
