@@ -1,0 +1,17 @@
+[package]
+name = "nova-sessiond"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's session daemon: what the session watches for as long as it runs, in one small process"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova: D-Bus and the journal come from
+# libsystemd, through nova-sd.
+
+[dependencies]
+nova-sd = { path = "../../sd" }
+
+[[bin]]
+name = "nova-sessiond"
+path = "src/main.rs"

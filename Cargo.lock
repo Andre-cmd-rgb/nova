@@ -23,6 +23,13 @@ name = "nova-sd"
 version = "1.0.0"
 
 [[package]]
+name = "nova-sessiond"
+version = "1.0.0"
+dependencies = [
+ "nova-sd",
+]
+
+[[package]]
 name = "nova-theme"
 version = "1.0.0"
 
