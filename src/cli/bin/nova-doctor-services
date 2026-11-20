@@ -96,6 +96,31 @@ say() { # "<scope> <unit>"...
     --exec nova-shell shell summon nova.settings '{"page":"updates"}' >/dev/null 2>&1
 }
 
+# limine-snapper-sync's errors. Its unit does no work on Nova: the snapshots
+# reach the boot menu through snapper's plugin
+# (/usr/lib/snapper/plugins/10-limine-snapper-sync), run at each snapshot,
+# which says what went wrong in the journal (logger -p err) and fails no unit.
+# Those lines, after the cursor the last run left, the newest one said; the
+# cursor moves only once the notification is out, so one that could not be
+# sent is said at the next run.
+SNAPSHOT_CURSOR=${XDG_STATE_HOME:-$HOME/.local/state}/nova/snapshots-cursor
+snapshot_errors() {
+  local errors cursor=$SNAPSHOT_CURSOR.part
+  rm -f -- "$cursor"
+  [[ ! -f $SNAPSHOT_CURSOR ]] || cp -- "$SNAPSHOT_CURSOR" "$cursor"
+  errors=$(journalctl -b -q --no-pager -o cat -p err SYSLOG_IDENTIFIER=limine-snapper-sync \
+    --cursor-file="$cursor" 2>/dev/null) || true
+  if [[ -n $errors ]]; then
+    nova-notification-send -u normal -g 󰀦 "The boot menu's snapshots could not be updated" \
+      "$(tail -n 1 <<<"$errors" | cut -c1-200)" \
+      --exec nova-shell shell summon nova.settings '{"page":"updates"}' >/dev/null 2>&1 || {
+      rm -f -- "$cursor"
+      return 0
+    }
+  fi
+  if [[ -f $cursor ]]; then mv -f -- "$cursor" "$SNAPSHOT_CURSOR"; fi
+}
+
 main() {
   local boot scope unit entry
   local -a told=() now=() kept=() new=()
@@ -110,6 +135,7 @@ main() {
   if [[ $(head -n 1 -- "$TOLD" 2>/dev/null) == "boot $boot" ]]; then
     mapfile -t told < <(tail -n +2 -- "$TOLD")
   fi
+  snapshot_errors
   mapfile -t now < <(failed)
   for entry in "${now[@]}"; do failing[$entry]=1; done
   # A unit said before stays said while it fails; one that has recovered is

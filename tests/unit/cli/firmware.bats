@@ -48,7 +48,10 @@ STUB
 #!/bin/bash
 printf '%s\n' "$@" >"$XDG_RUNTIME_DIR/service-args"
 STUB
-  printf '#!/bin/bash\necho inactive\n' >"$SCRATCH/bin/systemctl"
+  # fwupd.service's state is FWUPD_STATE; every other unit's, inactive.
+  printf '#!/bin/bash\nif [[ " $* " == *" fwupd.service "* ]]; then echo "${FWUPD_STATE:-inactive}"; else echo inactive; fi\n' >"$SCRATCH/bin/systemctl"
+  # An administrator, as Nova's first account is: id -nG says wheel.
+  printf '#!/bin/bash\nif [[ $1 == -nG ]]; then echo "${GROUPS_OF:-andre wheel}"; else exec /usr/bin/id "$@"; fi\n' >"$SCRATCH/bin/id"
   chmod +x "$SCRATCH/bin/"*
 }
 teardown() { teardown_scratch; }
@@ -81,6 +84,13 @@ teardown() { teardown_scratch; }
   : >"$FW_LOG"
   CHECK_STATUS=1 run "$job" run check
   [ "$(tail -1 "$FW_LOG")" = quit ]
+}
+
+@test "fwupd that ran before the job, or a user who would be asked a password, is left alone" {
+  FWUPD_STATE=active "$job" run check
+  fails grep -qx quit "$FW_LOG"
+  GROUPS_OF=guest "$job" run check
+  fails grep -qx quit "$FW_LOG"
 }
 
 @test "firmware installation records progress, success and reboot" {

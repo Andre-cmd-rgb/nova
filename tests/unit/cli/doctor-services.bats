@@ -27,6 +27,14 @@ setup() {
         esac ;;
     esac'
   stub nova-notification-send
+  # The journal's err lines of limine-snapper-sync after the cursor file it is
+  # given: $SCRATCH/snapshot-errors, a line each, and the cursor written as
+  # journalctl writes it, at the end of what it showed.
+  stub journalctl 'for arg; do [[ $arg == --cursor-file=* ]] && cursor=${arg#*=}; done
+    [[ -s $SCRATCH/snapshot-errors ]] || exit 0
+    seen=$(cat "$cursor" 2>/dev/null || echo 0)
+    tail -n +$((seen + 1)) "$SCRATCH/snapshot-errors"
+    wc -l <"$SCRATCH/snapshot-errors" >"$cursor"'
   export PATH="$SCRATCH/bin:$PATH"
 }
 
@@ -142,6 +150,29 @@ services() { "$REPO_ROOT/src/cli/bin/nova-doctor-services"; }
   services
   [ "$(told)" = 1 ]
   grep -q "The boot menu's snapshots stopped" "$CALLS"
+}
+
+@test "a snapshot the boot menu could not take is said once, the newest error in words" {
+  printf '%s\n' "metadata file not found: /.snapshots/7/info.xml" "the ESP is full" >"$SCRATCH/snapshot-errors"
+  services
+  [ "$(told)" = 1 ]
+  grep -q "The boot menu's snapshots could not be updated the ESP is full" "$CALLS"
+  services
+  [ "$(told)" = 1 ]
+  echo "the ESP is full again" >>"$SCRATCH/snapshot-errors"
+  services
+  [ "$(told)" = 2 ]
+}
+
+@test "a snapshot error whose notification could not be sent is said at the next run" {
+  echo "the ESP is full" >"$SCRATCH/snapshot-errors"
+  stub nova-notification-send 'exit 1'
+  services
+  stub nova-notification-send
+  services
+  [ "$(grep -c "^nova-notification-send.*snapshots could not" "$CALLS")" = 2 ]
+  services
+  [ "$(grep -c "^nova-notification-send.*snapshots could not" "$CALLS")" = 2 ]
 }
 
 @test "a notification that could not be sent is said at the next run" {
