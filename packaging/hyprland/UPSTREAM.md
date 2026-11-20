@@ -1,6 +1,6 @@
 # Nova's Hyprland patches, offered to Hyprland
 
-Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)) and `xwayland-emulated-modes.patch` ([below](#x11-games-fullscreen-at-the-resolution-they-set)). Nothing here has been posted.
+Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)), `xwayland-emulated-modes.patch` ([below](#x11-games-fullscreen-at-the-resolution-they-set)) and `xwayland-relative-motion.patch` ([below](#a-pointer-motion-no-mouse-made-comes-with-a-zero-relative-motion)). Nothing here has been posted.
 
 ## Before posting
 
@@ -134,3 +134,35 @@ The XWM now reads the property, at map and as it changes, and a window that Hypr
 
 - **The mouse is slower in the game**, as on GNOME and KDE: XWayland scales the pointer's motion by the mode, 1280/4800 here.
 - **Direct scanout** does not happen for the scaled window; compositing a 1280x720 buffer costs less than the 4800x3000 one it replaces.
+
+# A pointer motion no mouse made comes with a zero relative motion
+
+`xwayland-relative-motion.patch`, a pull request of its own. The AI policy and the rebase on main above apply to it too.
+
+## Title
+
+xwayland: send a zero relative motion with a pointer motion no mouse made
+
+## Description
+
+XWayland posts a `wl_pointer.motion` whose frame has no `zwp_relative_pointer_v1` motion on an absolute pointer device of its own (`xwayland-pointer`, Abs X and Abs Y), and every other motion on its relative device (`xwayland-relative-pointer`). The X server switches the core pointer's valuators to those of the device that sent last. Hyprland sends motions without a relative one when no mouse moved: a window mapped, tiled or fullscreened under the pointer, a warp, a constraint's cursor hint, an absolute device.
+
+SDL before 3.4.16 reads the core pointer's axes once, at the first raw motion it sees (3.4.16 follows `XI_DeviceChanged`). A game whose window is placed under a still pointer reads the absolute device's axes, and from then on takes each relative raw motion for a position: the first motion of the mouse jumps by the pointer's position, each later one moves by the difference between two motions, and a turned view twitches and comes back. Minecraft 26.3 ships SDL 3.4.14 (LWJGL 3.4.3), and its camera would not turn.
+
+Hyprland now sends XWayland a zero relative motion with a pointer motion that had none in its frame, so XWayland posts every motion on its relative device. The position is the same, the raw motion is zero, and the core pointer's axes stay relative. A mouse's motions are sent as before, and Wayland clients get nothing new. Hyprland already pairs a constraint's warp with a zero relative motion.
+
+### Tests
+
+In a nested Hyprland, an SDL3 game on X11 with SDL 3.4.14, windowed, taking the mouse as Minecraft does (warp to the middle, relative mode) after its window was placed under the pointer, then 300 pixels of mouse motion:
+
+| | without | patched |
+|---|---|---|
+| relative motion the game got | -2390 in one event, then nothing | 300 |
+| raw motions from XWayland's absolute device | 1 of 61 | 0 of 61 |
+
+SDL 3.4.20 gets 300 both ways. Exclusive fullscreen and the menu's cursor are unchanged. All 857 tests of `hyprland_gtests` pass.
+
+### Costs and limits
+
+- **No raw motion for an absolute device's motion** reaches X11 clients: it comes as a zero relative motion. Under a pointer lock Hyprland sends no absolute motion anyway.
+- **Mutter and KWin** were not tried; they send motions without a relative one in the same cases, so the same games are likely to break there.

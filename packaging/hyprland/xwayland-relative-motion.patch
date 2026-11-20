@@ -1,0 +1,111 @@
+xwayland: a pointer motion no mouse made comes with a zero relative motion
+
+XWayland posts a wl_pointer.motion whose frame has no zwp_relative_pointer_v1
+motion on an absolute pointer device of its own (xwayland-pointer, Abs X and
+Abs Y), and every other motion on its relative pointer device
+(xwayland-relative-pointer, Rel X and Rel Y). The X server switches the core
+pointer's valuators to those of the device that sent last, so each such
+motion turns the core pointer's axes absolute until the mouse moves again.
+Hyprland sends motions without a relative one when no mouse moved: a window
+mapped, tiled or fullscreened under the pointer, a warp, a constraint's
+cursor hint, and an absolute device's motion.
+
+SDL before 3.4.16 reads the core pointer's axes once, at the first raw motion
+it sees, and keeps them for the life of the game (3.4.16 follows
+XI_DeviceChanged). A game whose window is placed under a still pointer reads
+the absolute device's axes, and from then on takes each relative raw motion
+for a position: the first motion of the mouse jumps by the pointer's
+position, each later one moves by the difference between two motions, and a
+turned view twitches and comes back. Minecraft 26.3 ships SDL 3.4.14 (LWJGL
+3.4.3); its camera would not turn.
+
+Hyprland now sends XWayland a zero relative motion with a pointer motion that
+had none in its frame, so XWayland posts every motion on its relative device.
+The position is the same, the raw motion is zero, and the core pointer's axes
+stay relative. A mouse's motions are sent as before, and Wayland clients get
+nothing new.
+
+For Nova: packaging/hyprland/PKGBUILD applies this to Hyprland 0.57.2's
+release tarball after the other three patches (patch -Np1); it touches none
+of their files. packaging/hyprland/UPSTREAM.md is the pull request it is
+offered as.
+
+--- a/src/managers/SeatManager.cpp
++++ b/src/managers/SeatManager.cpp
+@@ -7,6 +7,8 @@
+ #include "../protocols/core/Compositor.hpp"
+ #include "../protocols/LayerShell.hpp"
+ #include "../protocols/InputCapture.hpp"
++#include "../protocols/RelativePointer.hpp"
++#include "../xwayland/XWayland.hpp"
+ #include "../Compositor.hpp"
+ #include "../desktop/state/FocusState.hpp"
+ #include "../devices/IKeyboard.hpp"
+@@ -421,6 +423,18 @@
+     if (!m_state.pointerFocusResource || g_pInputManager->pointerConstraints().blocksAbsoluteMotion())
+         return;
+ 
++#ifndef NO_XWAYLAND
++    // XWayland posts a motion that comes without a relative one as an absolute
++    // pointer device's, and the X server switches its core pointer to that
++    // device's absolute axes. A game that read the core pointer's axes then
++    // takes each mouse motion for a position (SDL before 3.4.16 reads them
++    // once), and its relative mouse barely moves. So a motion no mouse made, a
++    // window placed under the pointer or a warp, comes with a zero relative
++    // motion, which keeps XWayland on its relative pointer device.
++    if (g_pXWayland && g_pXWayland->m_server && m_state.pointerFocusResource->client() == g_pXWayland->m_server->m_xwaylandClient && PROTO::relativePointer)
++        PROTO::relativePointer->sendRelativeMotionIfNone(sc<uint64_t>(timeMs) * 1000);
++#endif
++
+     for (auto const& s : m_seatResources) {
+         if (s->resource->client() != m_state.pointerFocusResource->client())
+             continue;
+@@ -464,6 +478,9 @@
+     if (!pResource)
+         return;
+ 
++    if (PROTO::relativePointer)
++        PROTO::relativePointer->onPointerFrame();
++
+     for (auto const& s : m_seatResources) {
+         if (s->resource->client() != pResource->client())
+             continue;
+--- a/src/protocols/RelativePointer.cpp
++++ b/src/protocols/RelativePointer.cpp
+@@ -78,5 +78,15 @@
+             continue;
+ 
+         rp->sendRelativeMotion(TIMEHI, TIMELO, DX, DY, DXUNACCEL, DYUNACCEL);
++        m_motionInFrame = true;
+     }
+ }
++
++void CRelativePointerProtocol::sendRelativeMotionIfNone(uint64_t time) {
++    if (!m_motionInFrame)
++        sendRelativeMotion(time, {}, {});
++}
++
++void CRelativePointerProtocol::onPointerFrame() {
++    m_motionInFrame = false;
++}
+--- a/src/protocols/RelativePointer.hpp
++++ b/src/protocols/RelativePointer.hpp
+@@ -28,6 +28,10 @@
+     virtual void bindManager(wl_client* client, void* data, uint32_t ver, uint32_t id);
+ 
+     void         sendRelativeMotion(uint64_t time, const Vector2D& delta, const Vector2D& deltaUnaccel);
++    // A zero relative motion for the pointer's client, unless it had one since
++    // the last pointer frame (see CSeatManager::sendPointerMotion).
++    void         sendRelativeMotionIfNone(uint64_t time);
++    void         onPointerFrame();
+ 
+   private:
+     void onManagerResourceDestroy(wl_resource* res);
+@@ -37,6 +41,7 @@
+     //
+     std::vector<UP<CZwpRelativePointerManagerV1>> m_managers;
+     std::vector<UP<CRelativePointer>>             m_relativePointers;
++    bool                                          m_motionInFrame = false;
+ 
+     friend class CRelativePointer;
+ };
