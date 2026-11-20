@@ -1,7 +1,7 @@
 # Nova's Rust components. One lock file and one target/ for all of them.
 [workspace]
 resolver = "2"
-members = ["src/theme", "src/power/daemon", "src/power/undervolt", "src/screensaver", "src/airdrop/daemon", "src/apps", "src/sd", "src/session/daemon", "src/session/launch", "src/iphone/daemon", "src/preview", "src/account", "src/shell/alloc"]
+members = ["src/theme", "src/calendar", "src/power/daemon", "src/power/undervolt", "src/screensaver", "src/airdrop/daemon", "src/apps", "src/sd", "src/session/daemon", "src/session/launch", "src/iphone/daemon", "src/preview", "src/account", "src/shell/alloc"]
 
 [profile.release]
 opt-level = "s"

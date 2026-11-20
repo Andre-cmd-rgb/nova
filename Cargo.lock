@@ -18,6 +18,10 @@ name = "nova-apps"
 version = "1.0.0"
 
 [[package]]
+name = "nova-calendar"
+version = "1.0.0"
+
+[[package]]
 name = "nova-iphone-notifications"
 version = "1.0.0"
 dependencies = [

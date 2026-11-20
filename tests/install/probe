@@ -96,10 +96,9 @@ probe() {
   check "the session at rest fits its memory budget ($((session_kb / 1024)) of $budget MB)" \
     test "$((session_kb / 1024))" -le "$budget"
 
-  # Nova's programs that stay running are Rust or the shell: a Python one
-  # costs 15 to 20 MB for each, where the Rust that replaced them takes 1.
-  # Only helpers that end, the calendar's sync, are Python still. Read from
-  # /proc: the probe is root, and the user's processes are the account's.
+  # Nova's programs are Rust or the shell: a Python one costs 15 to 20 MB
+  # for each, where the Rust that replaced them takes 1. Read from /proc:
+  # the probe is root, and the user's processes are the account's.
   nova_on_python() {
     local cmdline argv arg found=""
     for cmdline in /proc/[0-9]*/cmdline; do

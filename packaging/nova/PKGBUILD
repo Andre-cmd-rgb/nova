@@ -53,7 +53,6 @@ depends=(
   libgcrypt      # nova-sessiond: the password gnome-keyring asks for, sent back in gcr's secret exchange
   libsecret      # secret-tool: the Calendar's passwords and tokens, in the login keyring
   polkit
-  python         # nova-calendar-sync, the Calendar's sync: its standard library's HTTP, TLS and XML
 
   # Network, Bluetooth, power, backlight, removable disks, firmware
   networkmanager
@@ -140,7 +139,7 @@ depends=(
   bash
   coreutils
   base-devel     # nova apps install builds Chrome and VS Code from their AUR recipes
-  curl
+  curl           # and libcurl: HTTP and TLS for the Calendar's sync (nova-calendar-sync)
   dosfstools     # mkfs.fat for nova usb, fsck.fat for the boot partition
   fontconfig     # fc-list, fc-match
   git            # nova apps install

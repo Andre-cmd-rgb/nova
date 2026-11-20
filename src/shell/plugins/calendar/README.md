@@ -107,7 +107,7 @@ different ways, the server's version stays the item, and this computer's is
 kept beside it as a copy, sent to the server too: nothing is lost, and every
 device shows the same. Deleted on one side and changed on the other, the
 change wins. How it finds the server's changes and writes without overwriting
-any is in the program's own header (`src/calendar/nova-calendar-sync`).
+any is at the head of the program (`src/calendar/src/lib.rs`).
 
 A file that is gone, empty, or has lost most of its events at once is taken
 to be broken: nothing is deleted on the server, and the file gets them back.
@@ -200,6 +200,6 @@ reminders and the edits; `calendar-zones-test.qml` times in other zones, with
 files as Google and iCloud write them; `calendar-window-test.qml` drags
 things about in the window; `calendar-accounts-test.qml` the calendars side
 by side, read-only ones, moving between them, search, the day, and adding and
-removing an account. `tests/unit/calendar/sync.bats` runs the sync against a
+removing an account. `cargo test -p nova-calendar` runs the sync (`src/calendar/tests/`) against a
 CalDAV server of its own on 127.0.0.1 (and against Radicale, with
 `NOVA_TEST_RADICALE=1` and `radicale` on the PATH).

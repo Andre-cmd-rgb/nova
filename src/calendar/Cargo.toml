@@ -1,0 +1,17 @@
+[package]
+name = "nova-calendar"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's Calendar sync: iCloud, Google and CalDAV calendars, and iCal subscriptions, in step with the shell's files"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova: HTTP and TLS are libcurl's, the rest
+# (XML, JSON, iCalendar, time zones, SHA) is small enough to be the crate's.
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "nova-calendar-sync"
+path = "src/main.rs"
