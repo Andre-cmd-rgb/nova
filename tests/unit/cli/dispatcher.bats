@@ -75,3 +75,17 @@ nova() { "$REPO_ROOT/src/cli/nova" "$@"; }
   [ "$status" -eq 2 ]
   [[ $output == *"unknown command 'frobnicate'"* ]]
 }
+
+@test "nova launch lists the launch helpers, a typo is unknown, a helper runs; the launcher itself is never run" {
+  helper nova-launch-browser '# nova:summary=Open the browser'
+  helper nova-launch ''
+  run nova launch
+  [ "$status" -eq 0 ]
+  [[ $output == *"launch browser"*"Open the browser"* ]]
+  [[ $output != "nova-launch "* ]]
+  run nova launch brwoser
+  [ "$status" -eq 2 ]
+  [[ $output == *"unknown command 'launch brwoser'"* ]]
+  run nova launch browser https://example.org
+  [ "${lines[0]}" = "nova-launch-browser https://example.org" ]
+}

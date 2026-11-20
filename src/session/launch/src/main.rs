@@ -44,6 +44,12 @@ extern "C" {
 /// Says what went wrong, and ends: on stderr, and in a notification when
 /// stderr is not a terminal (a launch from a key or the menu has none).
 fn fail(message: &str) -> ! {
+    report(message);
+    process::exit(1);
+}
+
+/// As `fail`, for a process that goes on or ends in its own way.
+fn report(message: &str) {
     eprintln!("nova-launch: {message}");
     if !std::io::stderr().is_terminal() {
         let _ = Command::new("notify-send")
@@ -59,7 +65,6 @@ fn fail(message: &str) -> ! {
             .arg(message)
             .status();
     }
-    process::exit(1);
 }
 
 /// What to start: each command (more than one when an entry takes a single
@@ -88,7 +93,7 @@ fn id_is_valid(id: &str) -> bool {
 }
 
 /// The plan for the entry named by <word>, with <files> for its codes.
-fn entry_plan(word: &str, files: &[String]) -> Result<Plan, String> {
+fn entry_plan(word: &str, files: &[OsString]) -> Result<Plan, String> {
     let (id_or_path, action) = entry_word(word).expect("an entry word");
     if let Some(action) = action {
         if !action
@@ -125,9 +130,20 @@ fn entry_plan(word: &str, files: &[String]) -> Result<Plan, String> {
         }
     };
     let entry = Entry::read(&path)?;
-    entry.check_runnable()?;
+    // Where the app runs: its Path, and what is relative in the entry is
+    // relative to that.
+    let workdir = entry.working_directory();
+    if let Some(dir) = &workdir {
+        if !dir.is_dir() {
+            return Err(format!(
+                "The desktop entry {id} wants to run in {}, which is not a folder",
+                dir.display()
+            ));
+        }
+    }
+    entry.check_runnable(workdir.as_deref())?;
     let exec = entry.exec(action)?;
-    if desktop::which(&exec[0]).is_none() {
+    if desktop::which_in(&exec[0], workdir.as_deref()).is_none() {
         return Err(format!(
             "The desktop entry {id} starts {}, which is not installed",
             exec[0]
@@ -142,23 +158,11 @@ fn entry_plan(word: &str, files: &[String]) -> Result<Plan, String> {
         path: &source,
         icon: icon.as_deref(),
     };
-    let mut commands = desktop::commands(&exec, files, &fields)
-        .map_err(|e| format!("{e}: {id}"))?
-        .into_iter()
-        .map(|c| c.into_iter().map(OsString::from).collect::<Vec<_>>())
-        .collect::<Vec<_>>();
+    let mut commands =
+        desktop::commands(&exec, files, &fields).map_err(|e| format!("{e}: {id}"))?;
     if entry.terminal() {
         for command in &mut commands {
             command.insert(0, "xdg-terminal-exec".into());
-        }
-    }
-    let workdir = entry.working_directory();
-    if let Some(dir) = &workdir {
-        if !dir.is_dir() {
-            return Err(format!(
-                "The desktop entry {id} wants to run in {}, which is not a folder",
-                dir.display()
-            ));
         }
     }
     Ok(Plan {
@@ -232,7 +236,7 @@ fn detached(plan: &Plan, command: &[OsString]) {
         if child == 0 {
             if fork() == 0 {
                 let error = run(plan, command);
-                eprintln!("nova-launch: could not start {}: {error}", plan.app);
+                report(&format!("could not start {}: {error}", plan.app));
             }
             _exit(0);
         }
@@ -247,14 +251,16 @@ fn main() {
         println!("{USAGE}");
         return;
     }
-    if args.first().is_some_and(|a| a == "--") {
+    // After -- the first word is the program, whatever it starts with.
+    let explicit = args.first().is_some_and(|a| a == "--");
+    if explicit {
         args.remove(0);
     }
     let Some(first) = args.first() else {
         eprintln!("{USAGE}");
         process::exit(2);
     };
-    if first.as_bytes().first() == Some(&b'-') {
+    if !explicit && first.as_bytes().first() == Some(&b'-') {
         eprintln!(
             "nova-launch: {} is not a command; put -- before it\n{USAGE}",
             first.to_string_lossy()
@@ -263,13 +269,7 @@ fn main() {
     }
 
     let plan = match first.to_str().filter(|w| entry_word(w).is_some()) {
-        Some(word) => {
-            let files: Vec<String> = args[1..]
-                .iter()
-                .map(|a| a.to_string_lossy().into_owned())
-                .collect();
-            entry_plan(word, &files).unwrap_or_else(|why| fail(&why))
-        }
+        Some(word) => entry_plan(word, &args[1..]).unwrap_or_else(|why| fail(&why)),
         None => {
             if desktop::which(&first.to_string_lossy()).is_none() {
                 fail(&format!("Command not found: {}", first.to_string_lossy()));
@@ -278,7 +278,7 @@ fn main() {
         }
     };
     for command in &plan.commands {
-        if desktop::which(&command[0].to_string_lossy()).is_none() {
+        if desktop::which_in(&command[0].to_string_lossy(), plan.workdir.as_deref()).is_none() {
             fail(&format!(
                 "Command not found: {}",
                 command[0].to_string_lossy()

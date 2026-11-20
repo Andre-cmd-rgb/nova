@@ -31,6 +31,10 @@ enum Answer {
     Failed,
     /// An error for the call.
     Refuse,
+    /// The call is never answered.
+    Silent,
+    /// The answer first, and the job's end a moment after, as systemd sends them.
+    LateJob,
 }
 
 struct Systemd {
@@ -53,6 +57,9 @@ fn systemd(address: &str, answer: Answer) -> Systemd {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready, started) = mpsc::channel();
     let (address, kept, stopping) = (address.to_owned(), calls.clone(), stop.clone());
+    let waiting = stop.clone();
+    let pending: Arc<Mutex<Vec<(u32, String, Value)>>> = Arc::default();
+    let owed = pending.clone();
     let thread = thread::spawn(move || {
         let bus = Bus::connect(&address).unwrap();
         let interface = Interface::new(MANAGER)
@@ -65,6 +72,12 @@ fn systemd(address: &str, answer: Answer) -> Systemd {
                 vec![interface],
                 move |call: &Message, args: Vec<Value>| {
                     kept.lock().unwrap().push(args.clone());
+                    if answer == Answer::Silent {
+                        while !waiting.load(Ordering::Relaxed) {
+                            thread::sleep(Duration::from_millis(20));
+                        }
+                        return Ok(vec![Value::path("/")]);
+                    }
                     if answer == Answer::Refuse {
                         return Err(Error::bus(
                             "org.freedesktop.systemd1.UnitExists",
@@ -73,6 +86,12 @@ fn systemd(address: &str, answer: Answer) -> Systemd {
                     }
                     jobs += 1;
                     let job = format!("/org/freedesktop/systemd1/job/{jobs}");
+                    if answer == Answer::LateJob {
+                        owed.lock()
+                            .unwrap()
+                            .push((jobs, job.clone(), args[0].clone()));
+                        return Ok(vec![Value::path(job)]);
+                    }
                     let result = if answer == Answer::Done {
                         "done"
                     } else {
@@ -103,6 +122,24 @@ fn systemd(address: &str, answer: Answer) -> Systemd {
             )
             .unwrap();
             bus.dispatch().unwrap();
+            let due: Vec<_> = pending.lock().unwrap().drain(..).collect();
+            for (number, job, unit) in due {
+                // The reply has gone out by now; the job ends after it.
+                thread::sleep(Duration::from_millis(100));
+                bus.emit_signal(
+                    "/org/freedesktop/systemd1",
+                    MANAGER,
+                    "JobRemoved",
+                    &[
+                        Value::Uint32(number),
+                        Value::path(job),
+                        unit,
+                        Value::str("done"),
+                    ],
+                )
+                .unwrap();
+                bus.flush().unwrap();
+            }
         }
     });
     started.recv_timeout(Duration::from_secs(5)).unwrap();
@@ -507,4 +544,127 @@ fn timing_of_a_hundred_launches() {
         times.iter().sum::<Duration>() / 100,
         times[99]
     );
+}
+
+#[test]
+fn a_user_manager_that_never_answers_holds_the_launch_up_for_about_three_seconds() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    let fake = systemd(&private.address, Answer::Silent);
+    let world = World::new();
+    world.app("hello");
+    let begun = std::time::Instant::now();
+    let run = world.launch(&private.address, &["--", "hello"]);
+    let took = begun.elapsed();
+    assert!(run.status.success());
+    world.out("hello");
+    assert!(
+        took >= Duration::from_secs(2) && took < Duration::from_secs(5),
+        "{took:?}"
+    );
+    let said = text(&run.stderr);
+    assert!(said.contains("without a scope"), "{said}");
+    assert_eq!(fake.calls.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn the_reply_before_the_job_s_end_is_waited_through() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    let _fake = systemd(&private.address, Answer::LateJob);
+    let world = World::new();
+    world.app("hello");
+    let begun = std::time::Instant::now();
+    let run = world.launch(&private.address, &["--", "hello"]);
+    assert!(run.status.success());
+    assert_eq!(text(&run.stderr), "");
+    // The app started after the job ended (100 ms after the reply), not before.
+    assert!(begun.elapsed() >= Duration::from_millis(100));
+    world.out("hello");
+}
+
+#[test]
+fn a_word_after_two_dashes_is_the_program_even_with_a_dash_in_front() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    let _fake = systemd(&private.address, Answer::Done);
+    let world = World::new();
+    world.app("-weird");
+    let run = world.launch(&private.address, &["--", "-weird", "x"]);
+    assert!(run.status.success(), "{}", text(&run.stderr));
+    assert_eq!(&world.out("-weird")[2..], ["arg:x"]);
+    let run = world.launch(&private.address, &["-weird"]);
+    assert_eq!(run.status.code(), Some(2));
+}
+
+#[test]
+fn every_instance_that_cannot_start_is_told_of() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    let _fake = systemd(&private.address, Answer::Done);
+    let world = World::new();
+    // It is there and runs, but its interpreter is not: exec fails.
+    world.script("broken", "");
+    fs::write(world.dir.join("bin/broken"), "#!/nonexistent/interpreter\n").unwrap();
+    let told = world.dir.join("told");
+    world.script("notify-send", &format!("echo \"$@\" >> {}", told.display()));
+    world.entry(
+        "broken.desktop",
+        "[Desktop Entry]\nName=B\nExec=broken %f\n",
+    );
+    let run = world.launch(&private.address, &["broken.desktop", "/a", "/b"]);
+    assert_eq!(run.status.code(), Some(1));
+    for _ in 0..100 {
+        if fs::read_to_string(&told).is_ok_and(|t| t.lines().count() >= 2) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+    let told = fs::read_to_string(&told).unwrap();
+    assert_eq!(
+        told.lines()
+            .filter(|l| l.contains("could not start broken"))
+            .count(),
+        2,
+        "{told}"
+    );
+}
+
+#[test]
+fn a_relative_program_and_file_work_with_a_path_in_the_entry() {
+    let Some(private) = PrivateBus::start() else {
+        return;
+    };
+    let _fake = systemd(&private.address, Answer::Done);
+    let world = World::new();
+    let work = world.dir.join("work");
+    fs::create_dir(&work).unwrap();
+    let out = world.dir.join("rel.out");
+    let script = work.join("run.sh");
+    fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\npwd >> {o}\nfor a in \"$@\"; do echo \"arg:$a\" >> {o}; done\n",
+            o = out.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    world.entry(
+        "rel.desktop",
+        &format!(
+            "[Desktop Entry]\nName=R\nExec=./run.sh %f\nTryExec=./run.sh\nPath={}\n",
+            work.display()
+        ),
+    );
+    let run = world.launch(&private.address, &["rel.desktop", "data.txt"]);
+    assert!(run.status.success(), "{}", text(&run.stderr));
+    let lines = world.out("rel");
+    assert_eq!(lines[0], work.display().to_string());
+    // The file is the one beside where the launcher ran, not beside the entry's Path.
+    assert_eq!(lines[1], format!("arg:{}/data.txt", world.dir.display()));
 }

@@ -109,6 +109,8 @@ done
 
 for ((n = ${#words[@]}; n > 0; n--)); do
   name=nova-$(IFS=-; echo "${words[*]:0:n}")
+  # nova-launch starts any program, so a typo after "launch" must not reach it.
+  [[ $name != nova-launch ]] || continue
   if [[ -x $bin/$name && -f $bin/$name ]]; then
     exec "$bin/$name" "${@:n+1}"
   fi

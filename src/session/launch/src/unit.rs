@@ -11,10 +11,10 @@ const SYSTEMD: &str = "org.freedesktop.systemd1";
 const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
 
-/// How long to wait for systemd, for the call and then for its job. An app
-/// is started without a scope rather than not at all, so this is the most
-/// a launch can be held up by a systemd that does not answer.
-const PATIENCE: Duration = Duration::from_secs(10);
+/// How long to wait for systemd in all: the call and then its job. A launch
+/// comes from a key press, so one held up by a user manager that does not
+/// answer starts the app without a scope after this, rather than not at all.
+const PATIENCE: Duration = Duration::from_secs(3);
 
 /// The slice of every app a person starts.
 const SLICE: &str = "app-graphical.slice";
@@ -125,11 +125,12 @@ fn property(name: &str, value: Value) -> Value {
 /// goes on once systemd has finished starting it. The error says why it did
 /// not work.
 pub fn enter(scope: &Scope) -> Result<(), String> {
+    let deadline = Instant::now() + PATIENCE;
     let bus = Bus::user().map_err(|e| format!("could not reach the session bus: {e}"))?;
-    enter_on(&bus, scope)
+    enter_on(&bus, scope, deadline)
 }
 
-fn enter_on(bus: &Bus, scope: &Scope) -> Result<(), String> {
+fn enter_on(bus: &Bus, scope: &Scope, deadline: Instant) -> Result<(), String> {
     // Before the call, so that a job that ends at once is not missed.
     let removed: Rc<RefCell<Vec<(String, String)>>> = Rc::default();
     let seen = removed.clone();
@@ -175,14 +176,17 @@ fn enter_on(bus: &Bus, scope: &Scope) -> Result<(), String> {
                 Value::Array("(sv)".into(), properties),
                 Value::Array("(sa(sv))".into(), vec![]),
             ],
-            Some(PATIENCE),
+            Some(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(1)),
+            ),
         )
         .map_err(|e| format!("systemd would not start {}: {e}", scope.name))?;
     let Some(Value::Path(job)) = reply.first() else {
         return Err(format!("systemd gave no job for {}", scope.name));
     };
 
-    let deadline = Instant::now() + PATIENCE;
     loop {
         bus.dispatch()
             .map_err(|e| format!("lost the session bus: {e}"))?;

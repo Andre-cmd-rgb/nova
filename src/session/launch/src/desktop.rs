@@ -2,7 +2,9 @@
 //! line into the command to run, as the Desktop Entry Specification says.
 
 use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 /// The folders entries are looked for in, first the user's: $XDG_DATA_HOME
@@ -212,7 +214,7 @@ impl Entry {
 
     /// An error for an entry that must not run: hidden, or one whose TryExec
     /// program is not there.
-    pub fn check_runnable(&self) -> Result<(), String> {
+    pub fn check_runnable(&self, workdir: Option<&Path>) -> Result<(), String> {
         let file = self.path.display();
         if self.is_true("Hidden") {
             return Err(format!("The desktop entry {file} is hidden"));
@@ -221,7 +223,7 @@ impl Entry {
             .raw("Desktop Entry", "TryExec")
             .filter(|t| !t.is_empty())
         {
-            if which(program).is_none() {
+            if which_in(program, workdir).is_none() {
                 return Err(format!(
                     "The desktop entry {file} is not for this computer: {program} is not installed"
                 ));
@@ -268,7 +270,9 @@ impl Entry {
 }
 
 /// A value with its escapes undone: \s is a space, \n, \t and \r what they
-/// say, \\ a backslash, and any other character after a backslash itself.
+/// say, \\ a backslash. Any other backslash stays, with its character: in an
+/// Exec line the quoting rule is applied after this one, and reads \" \` \$
+/// itself.
 fn unescape(value: &str) -> String {
     if !value.contains('\\') {
         return value.to_owned();
@@ -285,8 +289,12 @@ fn unescape(value: &str) -> String {
             Some('n') => out.push('\n'),
             Some('t') => out.push('\t'),
             Some('r') => out.push('\r'),
-            Some(other) => out.push(other),
-            None => {}
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
         }
     }
     out
@@ -331,13 +339,22 @@ pub fn tokenize(line: &str) -> Vec<String> {
 /// The program <name> is: itself if it has a "/" and can run, else the first
 /// executable file of that name in $PATH.
 pub fn which(name: &str) -> Option<PathBuf> {
+    which_in(name, None)
+}
+
+/// As `which`, with a name that has a "/" but is not absolute taken from
+/// <base> when there is one: an entry with a Path runs its program there.
+pub fn which_in(name: &str, base: Option<&Path>) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
     let runs = |p: &Path| {
         p.metadata()
             .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
     };
     if name.contains('/') {
-        let path = PathBuf::from(name);
+        let mut path = PathBuf::from(name);
+        if let (false, Some(base)) = (path.is_absolute(), base) {
+            path = base.join(path);
+        }
         return runs(&path).then_some(path);
     }
     env::split_paths(&env::var_os("PATH")?)
@@ -345,37 +362,60 @@ pub fn which(name: &str) -> Option<PathBuf> {
         .find(|p| runs(p))
 }
 
-/// <argument> as a URL: as it is when it has a scheme, else a file: URL of
-/// the path it names.
-fn to_url(argument: &str) -> String {
-    let has_scheme = argument.split_once(':').is_some_and(|(scheme, _)| {
-        scheme
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic())
-            && scheme
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "+-.".contains(c))
-    });
-    if has_scheme {
+/// <argument> has a URL scheme (https:, file:, mailto:).
+fn has_scheme(argument: &[u8]) -> bool {
+    let Some(colon) = argument.iter().position(|&b| b == b':') else {
+        return false;
+    };
+    let scheme = &argument[..colon];
+    scheme.first().is_some_and(u8::is_ascii_alphabetic)
+        && scheme
+            .iter()
+            .all(|b| b.is_ascii_alphanumeric() || b"+-.".contains(b))
+}
+
+/// <argument> as an absolute path, from the folder the launcher was run in:
+/// the app may run in another (an entry's Path), and a name given relative
+/// to this one must still be the same file there. A URL is left alone.
+fn absolute(argument: &OsStr) -> OsString {
+    let path = Path::new(argument);
+    if path.is_absolute() || has_scheme(argument.as_bytes()) {
         return argument.to_owned();
     }
-    let path = if argument.starts_with('/') {
-        argument.to_owned()
-    } else {
-        env::current_dir()
-            .map(|d| d.join(argument).to_string_lossy().into_owned())
-            .unwrap_or_else(|_| argument.to_owned())
-    };
+    match env::current_dir() {
+        Ok(dir) => dir.join(path).into_os_string(),
+        Err(_) => argument.to_owned(),
+    }
+}
+
+/// <argument> as a URL: as it is when it has a scheme, else a file: URL of
+/// the path it names.
+fn to_url(argument: &OsStr) -> OsString {
+    if has_scheme(argument.as_bytes()) {
+        return argument.to_owned();
+    }
+    let path = absolute(argument);
     let mut url = String::from("file://");
-    for byte in path.bytes() {
+    for &byte in path.as_bytes() {
         if byte.is_ascii_alphanumeric() || b"/_.-~".contains(&byte) {
             url.push(byte as char);
         } else {
             url.push_str(&format!("%{byte:02X}"));
         }
     }
-    url
+    url.into()
+}
+
+/// <word> with <code> in it (%f) replaced by <value>.
+fn fill(word: &str, code: &str, value: &OsStr) -> OsString {
+    let mut out = Vec::new();
+    for (at, piece) in word.split(code).enumerate() {
+        if at > 0 {
+            out.extend_from_slice(value.as_bytes());
+        }
+        out.extend_from_slice(piece.as_bytes());
+    }
+    OsString::from_vec(out)
 }
 
 /// What an entry knows that its codes ask for.
@@ -387,14 +427,15 @@ pub struct Fields<'a> {
 
 /// The commands an Exec line comes to with <files> given: one, or one for
 /// each of the files when the line takes a single one (%f, %u). The codes
-/// are %f %F (files), %u %U (URLs, a file's path made into one), %i (--icon
-/// and the icon's name), %c (the name), %k (the entry's file) and %% ; the
-/// deprecated %d %D %n %N %v %m are dropped with their word.
+/// are %f %F (files, as absolute paths), %u %U (URLs, a file's path made into
+/// one), %i (--icon and the icon's name), %c (the name), %k (the entry's
+/// file) and %% ; the deprecated %d %D %n %N %v %m are dropped with their
+/// word. File names are kept as the bytes they are.
 pub fn commands(
     exec: &[String],
-    files: &[String],
+    files: &[OsString],
     fields: &Fields,
-) -> Result<Vec<Vec<String>>, String> {
+) -> Result<Vec<Vec<OsString>>, String> {
     // Which word takes the files.
     let mut taker: Option<(usize, char)> = None;
     for (at, word) in exec.iter().enumerate().skip(1) {
@@ -403,20 +444,16 @@ pub fn commands(
             if ch != '%' {
                 continue;
             }
-            match chars.next() {
-                Some(code @ ('f' | 'F' | 'u' | 'U')) => {
-                    if taker.is_some() {
-                        return Err("The desktop entry's Exec asks for files twice".into());
-                    }
-                    if matches!(code, 'F' | 'U') && word.len() != 2 {
-                        return Err(format!(
-                            "The desktop entry's Exec has %{code} inside a word: {word}"
-                        ));
-                    }
-                    taker = Some((at, code));
+            if let Some(code @ ('f' | 'F' | 'u' | 'U')) = chars.next() {
+                if taker.is_some() {
+                    return Err("The desktop entry's Exec asks for files twice".into());
                 }
-                Some('%') | None => {}
-                Some(_) => {}
+                if matches!(code, 'F' | 'U') && word.len() != 2 {
+                    return Err(format!(
+                        "The desktop entry's Exec has %{code} inside a word: {word}"
+                    ));
+                }
+                taker = Some((at, code));
             }
         }
     }
@@ -424,22 +461,22 @@ pub fn commands(
         return Err("This desktop entry does not take files or addresses".into());
     }
 
-    let one = |file: Option<&str>| -> Vec<String> {
-        let mut out = vec![exec[0].clone()];
+    let one = |file: Option<&OsString>| -> Vec<OsString> {
+        let mut out = vec![OsString::from(&exec[0])];
         for (at, word) in exec.iter().enumerate().skip(1) {
             if let Some((taking, code)) = taker {
                 if at == taking {
                     match code {
-                        'F' => out.extend(files.iter().cloned()),
+                        'F' => out.extend(files.iter().map(|f| absolute(f))),
                         'U' => out.extend(files.iter().map(|f| to_url(f))),
                         _ => {
                             if let Some(file) = file {
                                 let value = if code == 'u' {
                                     to_url(file)
                                 } else {
-                                    file.to_owned()
+                                    absolute(file)
                                 };
-                                out.push(word.replace(&format!("%{code}"), &value));
+                                out.push(fill(word, &format!("%{code}"), &value));
                             }
                         }
                     }
@@ -454,7 +491,7 @@ pub fn commands(
                 continue;
             }
             if let Some(word) = other_codes(word, fields) {
-                out.push(word);
+                out.push(word.into());
             }
         }
         out
@@ -462,7 +499,7 @@ pub fn commands(
 
     Ok(match taker {
         Some((_, 'f' | 'u')) if files.len() > 1 => files.iter().map(|f| one(Some(f))).collect(),
-        _ => vec![one(files.first().map(String::as_str))],
+        _ => vec![one(files.first())],
     })
 }
 
@@ -498,6 +535,24 @@ mod tests {
         items.iter().map(|s| s.to_string()).collect()
     }
 
+    /// `super::commands` with words as text, for the checks below.
+    fn commands(
+        exec: &[String],
+        files: &[String],
+        fields: &Fields,
+    ) -> Result<Vec<Vec<String>>, String> {
+        let files: Vec<OsString> = files.iter().map(OsString::from).collect();
+        super::commands(exec, &files, fields).map(|all| {
+            all.into_iter()
+                .map(|c| {
+                    c.into_iter()
+                        .map(|w| w.to_string_lossy().into_owned())
+                        .collect()
+                })
+                .collect()
+        })
+    }
+
     fn fields() -> Fields<'static> {
         Fields {
             name: "My App",
@@ -527,6 +582,93 @@ mod tests {
     #[test]
     fn values_lose_their_escapes() {
         assert_eq!(unescape(r"a\sb\\c\nd"), "a b\\c\nd");
+    }
+
+    #[test]
+    fn escapes_in_an_exec_line_reach_the_quoting_rule_as_the_specification_says() {
+        // As written in the file: the string rule first (\\ is one backslash),
+        // then the quoting rule (a backslash in quotes keeps the next character).
+        let entry =
+            Entry::parse("[Desktop Entry]\nExec=sh -c \"echo \\\\\"hi there\\\\\" \\\\$HOME\" x\n");
+        assert_eq!(
+            entry.exec(None).unwrap(),
+            words(&["sh", "-c", "echo \"hi there\" $HOME", "x"])
+        );
+        // Four backslashes are one in the word.
+        let entry = Entry::parse("[Desktop Entry]\nExec=echo \"a\\\\\\\\b\"\n");
+        assert_eq!(entry.exec(None).unwrap(), words(&["echo", "a\\b"]));
+        // \s is a space in the line before the words are split.
+        let entry = Entry::parse("[Desktop Entry]\nExec=echo a\\sb\n");
+        assert_eq!(entry.exec(None).unwrap(), words(&["echo", "a", "b"]));
+    }
+
+    #[test]
+    fn a_relative_program_is_looked_for_in_the_entry_s_folder() {
+        let dir = std::env::temp_dir().join(format!("nova-launch-rel-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("run.sh");
+        fs::write(&script, "#!/bin/sh\n").unwrap();
+        fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        assert_eq!(which_in("./run.sh", Some(&dir)), Some(dir.join("./run.sh")));
+        assert_eq!(which_in("./run.sh", None), None);
+        assert_eq!(which_in("./gone.sh", Some(&dir)), None);
+        let mut entry = Entry::parse("[Desktop Entry]\nExec=./run.sh\nTryExec=./run.sh\n");
+        entry.path = PathBuf::from("/x/app.desktop");
+        assert!(entry.check_runnable(None).is_err());
+        assert!(entry.check_runnable(Some(&dir)).is_ok());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn relative_files_are_made_absolute_from_where_the_launcher_ran() {
+        let here = env::current_dir().unwrap();
+        let first = here.join("notes/a b.txt").to_string_lossy().into_owned();
+        assert_eq!(
+            commands(
+                &words(&["v", "--f=%f"]),
+                &words(&["notes/a b.txt"]),
+                &fields()
+            )
+            .unwrap(),
+            vec![vec!["v".to_owned(), format!("--f={first}")]]
+        );
+        assert_eq!(
+            commands(&words(&["v", "%F"]), &words(&["x"]), &fields()).unwrap(),
+            vec![vec![
+                "v".to_owned(),
+                here.join("x").to_string_lossy().into_owned()
+            ]]
+        );
+        let url = commands(&words(&["v", "%u"]), &words(&["x y"]), &fields()).unwrap();
+        assert!(url[0][1].starts_with("file:///") && url[0][1].ends_with("/x%20y"));
+        // A URL stays as it is.
+        assert_eq!(
+            commands(
+                &words(&["v", "%f"]),
+                &words(&["https://e.org/a"]),
+                &fields()
+            )
+            .unwrap(),
+            vec![words(&["v", "https://e.org/a"])]
+        );
+    }
+
+    #[test]
+    fn a_file_name_that_is_not_text_reaches_the_app_as_it_is() {
+        let name = OsString::from_vec(b"/tmp/caf\xe9 \xff.txt".to_vec());
+        let all =
+            super::commands(&words(&["v", "%f"]), std::slice::from_ref(&name), &fields()).unwrap();
+        assert_eq!(all, vec![vec![OsString::from("v"), name.clone()]]);
+        let all = super::commands(
+            &words(&["v", "--x=%f"]),
+            std::slice::from_ref(&name),
+            &fields(),
+        )
+        .unwrap();
+        assert_eq!(all[0][1].as_bytes(), b"--x=/tmp/caf\xe9 \xff.txt");
+        let all = super::commands(&words(&["v", "%U"]), &[name], &fields()).unwrap();
+        assert_eq!(all[0][1], OsString::from("file:///tmp/caf%E9%20%FF.txt"));
     }
 
     #[test]
