@@ -1,0 +1,447 @@
+#!/bin/bash
+# nova:hidden=true
+# nova:summary=What Settings' Printers page and the session's printing notices ask CUPS
+# nova:args=list | detail <printer> | discover | drivers [make-and-model] | add <name> <uri> <driver> | remove <printer> | pause <printer> | resume <printer> | default <printer> | test-page <printer> | cancel <printer> <job> | option <printer> <media|sides|color> <value|default> | authenticate <printer> <job> | watch [user] | subscribe | admin
+#
+# CUPS's own tools, one command each, and JSON on standard output for the
+# page to read (watch, for nova-sessiond, prints tab-separated lines: it
+# has no JSON to read). Nothing here is parsed by a shell or as JSON that a
+# printer or a device put there: names and device strings reach CUPS as one
+# argument each, jq takes them with --arg, and ipptool's test files hold
+# $ENV[...] where a value of theirs belongs, so a printer's name, a user's
+# password or a document's name is never part of a test file's text.
+#
+# The server is the local socket, which is what lets CUPS know who asks (the
+# peer's credentials): adding and removing a printer, pausing it and looking
+# for devices are for the members of CUPS's SystemGroup, which is
+# "sys root wheel" on Arch (cups-files.conf, which only root reads: the page
+# has no way to ask CUPS beforehand, so the group's names are this file's
+# when it is readable, and Arch's otherwise). Sudo and polkit are not used.
+#
+# NOVA_PRINTERS_SERVER (an ipptool URI), NOVA_PRINTERS_CUPS_FILES and
+# NOVA_PRINTERS_TESTPAGE stand in for the socket, cups-files.conf and the
+# test page in the tests.
+
+set -euo pipefail
+
+server=${NOVA_PRINTERS_SERVER:-ipp://%2Frun%2Fcups%2Fcups.sock/}
+cups_files=${NOVA_PRINTERS_CUPS_FILES:-/etc/cups/cups-files.conf}
+test_page=${NOVA_PRINTERS_TESTPAGE:-/usr/share/cups/data/testprint}
+
+die() {
+  echo "nova-printers: $*" >&2
+  exit 1
+}
+
+usage() {
+  echo "Usage: nova-printers list | detail <printer> | discover | drivers [make-and-model] | add <name> <uri> <driver> | remove <printer> | pause <printer> | resume <printer> | default <printer> | test-page <printer> | cancel <printer> <job> | option <printer> <media|sides|color> <value|default> | authenticate <printer> <job> | watch [user] | subscribe | admin" >&2
+  exit 2
+}
+
+# A printer's name as CUPS has it: no space, slash or number sign, and
+# nothing that an option could be mistaken for.
+valid_name() { [[ $1 =~ ^[^-/#[:space:][:cntrl:]][^/#[:space:][:cntrl:]]*$ ]]; }
+valid_job() { [[ $1 =~ ^[0-9]{1,9}$ ]]; }
+# A word for CUPS that stands for no option and has no spaces in it.
+valid_word() { [[ $1 =~ ^[^-[:space:][:cntrl:]][^[:space:][:cntrl:]]*$ ]]; }
+
+name_of() { # argument
+  valid_name "${1:-}" || die "not a printer's name: ${1:-}"
+}
+
+# ---- CUPS's rights --------------------------------------------------------
+
+# The groups whose members CUPS lets administer (SystemGroup), one a line.
+system_groups() {
+  local line found=""
+  if [[ -r $cups_files ]]; then
+    while IFS= read -r line || [[ -n $line ]]; do
+      if [[ $line =~ ^[[:space:]]*SystemGroup[[:space:]]+(.*)$ ]]; then
+        found+=" ${BASH_REMATCH[1]}"
+      fi
+    done <"$cups_files"
+  fi
+  [[ -n $found ]] || found="sys root wheel"
+  # shellcheck disable=SC2086 # a list of words, a group each
+  printf '%s\n' $found
+}
+
+is_admin() {
+  local group mine
+  ((EUID != 0)) || return 0
+  mine=$(id -nG)
+  while IFS= read -r group; do
+    [[ " $mine " != *" $group "* ]] || return 0
+  done < <(system_groups)
+  return 1
+}
+
+admin_json() {
+  local allowed=false
+  ! is_admin || allowed=true
+  system_groups | jq -R -n --argjson allowed "$allowed" '{ allowed: $allowed, groups: [inputs] }'
+}
+
+need_admin() { # what
+  is_admin || die "$1 needs an administrator: this user is not in CUPS's admin group ($(system_groups | paste -sd' '))."
+}
+
+# ---- IPP ---------------------------------------------------------------------
+
+# An XML property list, as ipptool -X writes it (an element a line), as JSON.
+plist_json() {
+  awk '
+    function unesc(s) {
+      gsub(/&lt;/, "<", s); gsub(/&gt;/, ">", s); gsub(/&quot;/, "\"", s)
+      gsub(/&apos;/, "\047", s); gsub(/&amp;/, "\\&", s)
+      return s
+    }
+    function jstr(s) {
+      gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/\t/, "\\t", s)
+      gsub(/\r/, "\\r", s); gsub(/\n/, "\\n", s); gsub(/[\001-\037]/, " ", s)
+      return "\"" s "\""
+    }
+    function value(v) {
+      if (kind[depth] == "a" && count[depth]++) printf ","
+      printf "%s", v
+    }
+    function between(s, head, tail) {
+      sub("^" head, "", s); sub(tail "$", "", s)
+      return s
+    }
+    {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      if (pending != "") {
+        pending = pending "\n" $0
+        if (pending !~ /<\/string>$/) next
+        line = pending; pending = ""
+      } else if (line ~ /^<string>/ && line !~ /<\/string>$/) {
+        pending = line; next
+      }
+      if (line ~ /^<key>/) {
+        if (count[depth]++) printf ","
+        printf "%s:", jstr(unesc(between(line, "<key>", "</key>")))
+      } else if (line ~ /^<string>/) value(jstr(unesc(between(line, "<string>", "</string>"))))
+      else if (line ~ /^<(integer|real)>/) value(between(line, "<(integer|real)>", "</(integer|real)>") + 0)
+      else if (line ~ /^<true *\/>/) value("true")
+      else if (line ~ /^<false *\/>/) value("false")
+      else if (line ~ /^<string *\/>/) value("\"\"")
+      else if (line ~ /^<(array|dict) *\/>/) value(line ~ /^<array/ ? "[]" : "{}")
+      else if (line == "<array>" || line == "<dict>") {
+        value(line == "<array>" ? "[" : "{")
+        depth++; kind[depth] = (line == "<array>" ? "a" : "d"); count[depth] = 0
+      } else if (line == "</array>" || line == "</dict>") {
+        printf "%s", (line == "</array>" ? "]" : "}")
+        depth--
+      }
+    }
+    END { printf "\n" }
+  '
+}
+
+# One IPP operation, its attributes the lines on standard input (a test
+# file's ATTR lines, with $ENV[...] for what a person or a device named).
+# It answers { status, groups: [{ attribute: value-or-values }, ...] }, the
+# groups after the operation's own; a CUPS that cannot be reached answers
+# nothing, and a failure.
+ipp() { # operation
+  local dir out
+  dir=$(mktemp -d "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/nova-printers.XXXXXX")
+  {
+    printf '{\n  OPERATION %s\n  GROUP operation-attributes-tag\n' "$1"
+    printf '  ATTR charset attributes-charset utf-8\n  ATTR language attributes-natural-language en\n'
+    cat
+    printf '}\n'
+  } >"$dir/request.test"
+  # A request CUPS answers with an error is not a failure of ipptool's:
+  # the status says it.
+  out=$(ipptool -X "$server" "$dir/request.test" 2>/dev/null || true)
+  rm -rf "$dir"
+  [[ $out == *"<plist"* ]] || return 1
+  printf '%s\n' "$out" | plist_json | jq -c '
+    (.Tests[0] // {}) as $t
+    | { status: ($t.StatusCode // ""), groups: (($t.ResponseAttributes // [])[1:]) }'
+}
+
+# The printers CUPS has, with the jobs of the ones that have any, as
+# { printers: [...] }; <user>, when given, keeps only that user's jobs.
+printers_json() { # [user]
+  local all names name jobs='{}' answer
+  all=$(ipp CUPS-Get-Printers <<'EOF'
+  ATTR keyword requested-attributes printer-name,printer-info,printer-location,printer-make-and-model,printer-state,printer-state-reasons,printer-state-message,printer-is-accepting-jobs,device-uri,queued-job-count
+EOF
+  ) || die "CUPS cannot be reached."
+  names=$(jq -r '.groups[] | select(has("printer-name") and ((.["queued-job-count"] // 0) > 0)) | .["printer-name"]' <<<"$all")
+  while IFS= read -r name; do
+    [[ -n $name ]] || continue
+    answer=$(jobs_json "$name") || continue
+    jobs=$(jq -c --arg name "$name" --argjson list "$answer" '. + { ($name): $list }' <<<"$jobs")
+  done <<<"$names"
+  jq -c --argjson jobs "$jobs" --arg user "${1:-}" '
+    def arr: if type == "array" then . else [.] end;
+    {
+      printers: [
+        .groups[] | select(has("printer-name"))
+        | . as $p
+        | {
+            name: $p["printer-name"],
+            info: ($p["printer-info"] // ""),
+            location: ($p["printer-location"] // ""),
+            model: ($p["printer-make-and-model"] // ""),
+            uri: ($p["device-uri"] // ""),
+            state: ($p["printer-state"] // 3),
+            reasons: (($p["printer-state-reasons"] // []) | arr | map(select(. != "none"))),
+            message: ($p["printer-state-message"] // ""),
+            accepting: ($p["printer-is-accepting-jobs"] // true),
+            jobs: (($jobs[$p["printer-name"]] // []) | map(select($user == "" or .user == $user)))
+          }
+      ]
+    }' <<<"$all"
+}
+
+# The jobs not done on <printer>, as an array.
+jobs_json() { # printer
+  local answer
+  answer=$(NOVA_PRINTER=$1 ipp Get-Jobs <<'EOF'
+  ATTR uri printer-uri ipp://localhost/printers/$ENV[NOVA_PRINTER]
+  ATTR keyword which-jobs not-completed
+  ATTR keyword requested-attributes job-id,job-name,job-state,job-state-reasons,job-originating-user-name
+EOF
+  ) || return 1
+  jq -c '
+    def arr: if type == "array" then . else [.] end;
+    [ .groups[] | select(has("job-id"))
+      | { id: .["job-id"], name: (.["job-name"] // ""), state: (.["job-state"] // 3),
+          reasons: ((.["job-state-reasons"] // []) | arr | map(select(. != "none"))),
+          user: (.["job-originating-user-name"] // "") } ]' <<<"$answer"
+}
+
+# The user's own default printer, which lpstat reads from ~/.cups/lpoptions
+# before CUPS's.
+default_printer() {
+  lpstat -d 2>/dev/null | sed -n 's/^system default destination: //p' || true
+}
+
+# ---- subcommands ----------------------------------------------------------------
+
+cmd_list() {
+  local printers
+  printers=$(printers_json)
+  jq -c --arg default "$(default_printer)" --argjson admin "$(admin_json)" \
+    '. + { default: $default, admin: $admin }' <<<"$printers"
+}
+
+# The levels of the inks, the paper sizes, the sides and the colour modes a
+# printer takes, what the user has set (lpoptions) and what the printer has
+# set itself, and the jobs.
+cmd_detail() {
+  local name=$1 answer jobs mine
+  name_of "$name"
+  answer=$(NOVA_PRINTER=$name ipp Get-Printer-Attributes <<'EOF'
+  ATTR uri printer-uri ipp://localhost/printers/$ENV[NOVA_PRINTER]
+  ATTR keyword requested-attributes printer-name,marker-names,marker-levels,marker-colors,marker-types,marker-low-levels,media-supported,media-default,sides-supported,sides-default,print-color-mode-supported,print-color-mode-default
+EOF
+  ) || die "CUPS cannot be reached."
+  jobs=$(jobs_json "$name") || jobs='[]'
+  mine=$(lpoptions -p "$name" 2>/dev/null || true)
+  jq -c --argjson jobs "$jobs" --arg mine "$mine" '
+    def arr: if type == "array" then . else [.] end;
+    def mine($key): ($mine | capture("(^|[ ])" + $key + "=(?<v>[^ ]+)") | .v) // "";
+    (.groups[0] // {}) as $p
+    | (($p["marker-names"] // []) | arr) as $names
+    | (($p["marker-levels"] // []) | arr) as $levels
+    | (($p["marker-colors"] // []) | arr) as $colors
+    | (($p["marker-types"] // []) | arr) as $types
+    | {
+        name: $name,
+        markers: [ range(0; $names | length) as $i
+          | { name: $names[$i], level: ($levels[$i] // -1), type: ($types[$i] // ""),
+              color: (($colors[$i] // "") | if test("^#[0-9A-Fa-f]{6}") then .[0:7] else "" end) }
+          | select(.type | test("waste|staples|fuser|opc|transfer|maintenance|cleaner|developer|oil|solid-wax") | not) ],
+        media: { supported: (($p["media-supported"] // []) | arr), default: ($p["media-default"] // ""), mine: mine("media") },
+        sides: { supported: (($p["sides-supported"] // []) | arr), default: ($p["sides-default"] // ""), mine: mine("sides") },
+        color: { supported: (($p["print-color-mode-supported"] // []) | arr), default: ($p["print-color-mode-default"] // ""), mine: mine("print-color-mode") },
+        jobs: $jobs
+      }' --arg name "$name" <<<"$answer"
+}
+
+cmd_discover() {
+  need_admin "Looking for printers"
+  # lpinfo -l -v: a block for each device, "Device: uri = ..." and then
+  # "class = ...", "info = ...", "make-and-model = ...", "device-id = ...".
+  lpinfo --timeout 15 -l -v 2>/dev/null | jq -R -n -c '
+    reduce (inputs | capture("^\\s*(?<device>Device: )?(?<key>[a-z-]+) = (?<value>.*)$")?) as $line ([];
+      if $line.device != null then . + [{ ($line.key): $line.value }]
+      elif length > 0 then .[-1][$line.key] = $line.value
+      else . end)
+    | { devices: [ .[]
+        | select((.uri // "") | test("^[a-z][a-z0-9+.-]*://[^/?]"))
+        | { uri: .uri, class: (.class // ""), info: (.info // ""),
+            model: (.["make-and-model"] // ""), deviceId: (.["device-id"] // ""),
+            driverless: (.uri | test("^(ipps?://|dnssd://.*\\._ipps?\\._tcp)")) } ] }'
+}
+
+cmd_drivers() {
+  need_admin "Choosing a driver"
+  local args=(-m)
+  [[ -z ${1:-} ]] || args=(--make-and-model "$1" -m)
+  lpinfo "${args[@]}" 2>/dev/null | jq -R -n -c '
+    { drivers: [ inputs | capture("^(?<id>[^ ]+) (?<name>.*)$")? ] }'
+}
+
+cmd_add() {
+  local name=$1 uri=$2 driver=$3
+  need_admin "Adding a printer"
+  name_of "$name"
+  [[ $uri =~ ^[a-z][a-z0-9+.-]*://[^[:space:][:cntrl:]]+$ ]] || die "not a device: $uri"
+  valid_word "$driver" || die "not a driver: $driver"
+  # Not shared with the network: a printer someone adds for themselves is
+  # theirs to share.
+  lpadmin -p "$name" -E -v "$uri" -m "$driver" -o printer-is-shared=false
+}
+
+cmd_remove() {
+  need_admin "Removing a printer"
+  name_of "$1"
+  lpadmin -x "$1"
+}
+
+cmd_pause() {
+  need_admin "Pausing a printer"
+  name_of "$1"
+  cupsdisable -r "Paused" "$1"
+}
+
+cmd_resume() {
+  need_admin "Resuming a printer"
+  name_of "$1"
+  cupsenable "$1"
+  cupsaccept "$1"
+}
+
+# The user's own default: lpoptions keeps it in ~/.cups/lpoptions.
+cmd_default() {
+  name_of "$1"
+  lpoptions -d "$1"
+}
+
+cmd_test_page() {
+  name_of "$1"
+  lp -d "$1" -t "Test Page" "$test_page"
+}
+
+cmd_cancel() {
+  name_of "$1"
+  valid_job "$2" || die "not a job: $2"
+  cancel "$1-$2"
+}
+
+# <value> "default" takes the user's own setting away.
+cmd_option() {
+  local name=$1 key=$2 value=$3
+  name_of "$name"
+  case $key in
+    media | sides) ;;
+    color) key=print-color-mode ;;
+    *) usage ;;
+  esac
+  if [[ $value == default ]]; then
+    lpoptions -p "$name" -r "$key"
+  else
+    [[ $value =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || die "not a setting: $value"
+    lpoptions -p "$name" -o "$key=$value"
+  fi
+}
+
+# What a held job asks for is sent to CUPS as the printer's own words:
+# CUPS-Authenticate-Job with the user name and the password as auth-info.
+# They are two lines on standard input, never arguments, which anyone can
+# read in the process list, and reach ipptool in its environment alone.
+cmd_authenticate() {
+  local name=$1 job=$2 user password answer status
+  name_of "$name"
+  valid_job "$job" || die "not a job: $job"
+  IFS= read -r user || true
+  IFS= read -r password || true
+  [[ -n $user && -n $password && $user != *[[:cntrl:]]* && $password != *[[:cntrl:]]* ]] || die "a user name and a password, one on each line, are needed."
+  answer=$(NOVA_PRINTER=$name NOVA_JOB=$job NOVA_USER=$user NOVA_AUTH_USER=$user NOVA_AUTH_PASSWORD=$password \
+    ipp CUPS-Authenticate-Job <<'EOF'
+  ATTR uri printer-uri ipp://localhost/printers/$ENV[NOVA_PRINTER]
+  ATTR integer job-id $ENV[NOVA_JOB]
+  ATTR name requesting-user-name $ENV[NOVA_USER]
+  ATTR text auth-info "$ENV[NOVA_AUTH_USER]","$ENV[NOVA_AUTH_PASSWORD]"
+EOF
+  ) || die "CUPS cannot be reached."
+  status=$(jq -r '.status' <<<"$answer")
+  [[ $status == successful-ok* ]] || die "the printer did not accept it ($status)."
+}
+
+# For nova-sessiond: a line for each printer this user has jobs on, and a
+# line for each of those jobs.
+#   printer <name> <state> <reasons, comma-separated> <accepting>
+#   job <printer> <id> <state> <reasons> <name>
+cmd_watch() {
+  local user=${1:-${USER:-}}
+  printers_json "$user" | jq -r '
+    def clean: gsub("[\t\n\r]"; " ");
+    .printers[] | select(.jobs | length > 0)
+    | ([ "printer", (.name | clean), (.state | tostring), (.reasons | join(",") | clean), (.accepting | tostring) ] | join("\t")),
+      (.name as $p | .jobs[] | [ "job", ($p | clean), (.id | tostring), (.state | tostring), (.reasons | join(",") | clean), (.name | clean) ] | join("\t"))'
+}
+
+# CUPS says what happens (a job queued, a printer out of paper) to anyone
+# who has asked for it, over D-Bus (cups-notifier's dbus), and the one who
+# asked was system-config-printer's applet, which is gone: a subscription
+# of this user's, for a day at a time, renewed each time this runs. Nothing
+# is done while CUPS is not running, which a look would start.
+cmd_subscribe() {
+  local answer id
+  systemctl is-active --quiet cups.service 2>/dev/null || return 0
+  answer=$(ipp Get-Subscriptions <<'EOF'
+  ATTR uri printer-uri ipp://localhost/
+  ATTR boolean my-subscriptions true
+  ATTR keyword requested-attributes notify-subscription-id,notify-recipient-uri
+EOF
+  ) || return 0
+  id=$(jq -r '[ .groups[] | select((.["notify-recipient-uri"] // "") | startswith("dbus:")) | .["notify-subscription-id"] ] | first // empty' <<<"$answer")
+  if [[ -n $id ]]; then
+    NOVA_SUBSCRIPTION=$id ipp Renew-Subscription >/dev/null <<'EOF'
+  ATTR uri printer-uri ipp://localhost/
+  ATTR integer notify-subscription-id $ENV[NOVA_SUBSCRIPTION]
+  GROUP subscription-attributes-tag
+  ATTR integer notify-lease-duration 86400
+EOF
+  else
+    ipp Create-Printer-Subscriptions >/dev/null <<'EOF'
+  ATTR uri printer-uri ipp://localhost/
+  GROUP subscription-attributes-tag
+  ATTR uri notify-recipient-uri dbus://
+  ATTR keyword notify-events job-created,job-completed,job-state-changed,job-stopped,printer-state-changed,printer-stopped,printer-added,printer-deleted,printer-modified
+  ATTR integer notify-lease-duration 86400
+EOF
+  fi
+}
+
+(($# > 0)) || usage
+command=$1
+shift
+case $command in
+  list) (($# == 0)) || usage; cmd_list ;;
+  detail) (($# == 1)) || usage; cmd_detail "$1" ;;
+  discover) (($# == 0)) || usage; cmd_discover ;;
+  drivers) (($# <= 1)) || usage; cmd_drivers "${1:-}" ;;
+  add) (($# == 3)) || usage; cmd_add "$1" "$2" "$3" ;;
+  remove) (($# == 1)) || usage; cmd_remove "$1" ;;
+  pause) (($# == 1)) || usage; cmd_pause "$1" ;;
+  resume) (($# == 1)) || usage; cmd_resume "$1" ;;
+  default) (($# == 1)) || usage; cmd_default "$1" ;;
+  test-page) (($# == 1)) || usage; cmd_test_page "$1" ;;
+  cancel) (($# == 2)) || usage; cmd_cancel "$1" "$2" ;;
+  option) (($# == 3)) || usage; cmd_option "$1" "$2" "$3" ;;
+  authenticate) (($# == 2)) || usage; cmd_authenticate "$1" "$2" ;;
+  watch) (($# <= 1)) || usage; cmd_watch "${1:-}" ;;
+  subscribe) (($# == 0)) || usage; cmd_subscribe ;;
+  admin) (($# == 0)) || usage; admin_json ;;
+  *) usage ;;
+esac
