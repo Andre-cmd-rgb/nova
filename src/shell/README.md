@@ -72,7 +72,8 @@ used twice fails the build. The shell reads that one file at startup.
 | `service`    | a headless singleton                               | `service`    |
 
 Services and plugins that set `keepLoaded: true` are loaded at startup;
-the windows that do are listed, with why, in
+the windows that do, the windows the services and the bar make, and the
+Timers that run all the time are listed, with why, in
 [`tests/unit/shell/idle-work.bats`](../../tests/unit/shell/idle-work.bats).
 Other panels, overlays and menus load when they are summoned, and stay
 loaded until the shell hides them (`hide`, or `toggle` while open); a
