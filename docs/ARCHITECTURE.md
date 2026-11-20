@@ -54,6 +54,7 @@ How files reach a system:
   ```
 
   Helpers marked `# nova:hidden=true` are internal, and stay out of the help. A compiled helper cannot carry the comments, so `src/cli/nova` holds its summary, or hides it.
+- **What runs at rest earns its place.** Nova keeps every feature and holds little memory for them: a window is built when it opens and freed when it closes; a watcher waits on an event (a D-Bus signal, a socket, the journal's descriptor), never a clock; the session's watchers are one Rust process (`nova-sessiond`), not one interpreter each; a package's autostart runs only if Nova chose it (`data/systemd/install.mk`); a daemon woken for a moment is let go after (fwupd, by `nova-firmware-job`). The install test checks the autostarts and holds the session at rest to a memory budget (`tests/install/probe`).
 - **Running apps are reached through `nova-session-pgrep`.** It finds, or with `--signal` signals, only the user's processes started with this `HOME` and `XDG_RUNTIME_DIR`. Use it for every lookup by name, never a bare `pgrep` or `pkill`. A second session of the same user is a different session: the tests, `tools/screenshots`, and a nested Hyprland each have a home and runtime folder of their own. A bare lookup by name once let a test recolour the user's terminals and end their clipboard's watchers. `tests/unit/cli/session-pgrep.bats` fails on a new bare lookup.
 - **What belongs to the computer is written only from the account's own home.** That covers the greeter's mirror in `/var/lib/nova/greeter`, and Chrome's colour policy made from it.
 

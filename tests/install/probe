@@ -51,6 +51,34 @@ probe() {
     awk '{ print $1 }' | paste -sd' ')
   check "no failed services in the session${failed:+ (failed: $failed)}" test -z "$failed"
 
+  # What starts at login is Nova's choice, not each package's
+  # (data/systemd/install.mk): a package autostart Nova has not chosen is one
+  # more program held all day. A fresh install has no autostart of its user's.
+  autostarts=$(as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user list-units \
+    --plain --no-legend --state=active,activating 'app-*@autostart.service' | awk '{ print $1 }' | paste -sd' ')
+  check "only what Nova chose starts at login${autostarts:+ (also: $autostarts)}" test -z "$autostarts"
+
+  # Nova's memory at rest, as the session's processes hold it (each shared page
+  # split among those that share it), against a budget, so that it stays light
+  # without anyone watching for it. The budget is the session on the P1 after
+  # the lean work of 2026-11-19 (about 360 MB at 3840x2400) with room for this
+  # machine's software rendering; lower it to what the release runs report,
+  # with a little room, once they have.
+  budget=600
+  session_kb=0
+  for pid in $(pgrep -u "$user"); do
+    kb=$(awk '/^Pss:/ { print $2 }' "/proc/$pid/smaps_rollup" 2>/dev/null) || continue
+    session_kb=$((session_kb + ${kb:-0}))
+  done
+  used_kb=$(awk '/^MemTotal:/ { t = $2 } /^MemAvailable:/ { a = $2 } END { print t - a }' /proc/meminfo)
+  echo "probe:      memory at rest: the session $((session_kb / 1024)) MB; the computer $((used_kb / 1024)) MB in use"
+  pgrep -u "$user" | while read -r pid; do
+    kb=$(awk '/^Pss:/ { print $2 }' "/proc/$pid/smaps_rollup" 2>/dev/null) || continue
+    printf '%s %s\n' "$((${kb:-0} / 1024))" "$(cat "/proc/$pid/comm" 2>/dev/null)"
+  done | sort -rn | head -n 8 | sed 's/ / MB /;s/^/probe:        /'
+  check "the session at rest fits its memory budget ($((session_kb / 1024)) of $budget MB)" \
+    test "$((session_kb / 1024))" -le "$budget"
+
   # A config error is a red banner across the top of the desktop. A clean config
   # reports one empty string.
   signature=$(find "/run/user/$uid/hypr" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | head -n 1)
