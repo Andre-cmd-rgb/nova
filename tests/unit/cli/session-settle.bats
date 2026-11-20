@@ -165,11 +165,34 @@ EOF
   [[ $output == *"nova-sessiond.service did not start; it will at the next login"* ]]
 }
 
-@test "the units a restart costs nothing are restarted if they run, last, in a session or not" {
+# The iPhone service running, started <seconds-ago> seconds ago, from a
+# program installed just now.
+iphone_running_since() { # seconds-ago
+  local unit=nova-iphone-notifications.service
+  touch "$SCRATCH/nova-iphone-notifications"
+  prop "$unit" ActiveState active
+  prop "$unit" ExecMainStartTimestamp "@$(($(date +%s) - $1))"
+  prop "$unit" ExecStart "{ path=$SCRATCH/nova-iphone-notifications ; argv[]=$SCRATCH/nova-iphone-notifications ; ignore_errors=no ; start_time=[n/a] ; pid=0 }"
+}
+
+@test "a unit a restart costs nothing is restarted, last, when the release replaced its program, in a session or not" {
   rm "$SCRATCH/graphical"
   echo 'nova-sleep-lock.service not-found active running nova-sleep-lock.service' >"$SCRATCH/units"
+  iphone_running_since 3600
   run settle
   [ "$status" -eq 0 ]
   [ "$(tail -n 1 "$CALLS")" = 'systemctl --user try-restart --no-block -- nova-iphone-notifications.service' ]
   [ "$(grep -c try-restart "$CALLS")" = 1 ]
+  [[ $output == *"Restarting nova-iphone-notifications.service on the new release."* ]]
+}
+
+@test "one started after its program was installed, or not running, is not restarted: a second run changes nothing" {
+  iphone_running_since -60
+  run settle
+  [ "$status" -eq 0 ]
+  fails grep -q try-restart "$CALLS"
+  iphone_running_since 3600
+  prop nova-iphone-notifications.service ActiveState inactive
+  run settle
+  fails grep -q try-restart "$CALLS"
 }

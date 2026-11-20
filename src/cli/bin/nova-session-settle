@@ -39,7 +39,8 @@ RETIRED_HELPERS=(
   nova-hyprland-monitor-watch # nova-sessiond's display watch now
 )
 
-# Restarted if they run (try-restart), as a restart loses nothing.
+# Restarted where they run a program the release replaced, as a restart
+# loses nothing.
 RESTARTED=(
   nova-iphone-notifications.service # the link to the iPhone is BlueZ's, and is found again
 )
@@ -116,7 +117,27 @@ if systemctl --user --quiet is-active graphical-session.target 2>/dev/null; then
   done
 fi
 
+# Whether a running unit's program was installed after the unit started.
+# The change time, which installing sets; not the modification time, which
+# pacman takes from the package as it was built. So a second run, or one
+# after the unit's own restart, restarts nothing.
+replaced() { # unit
+  local started program
+  [[ $(property "$1" ActiveState) == active ]] || return 1
+  started=$(systemctl --user show --property=ExecMainStartTimestamp --timestamp=unix --value -- "$1" 2>/dev/null)
+  started=${started#@}
+  [[ $started =~ ^[0-9]+$ ]] || return 1
+  # "{ path=/usr/lib/nova/… ; argv[]=… ; … }"
+  program=$(property "$1" ExecStart)
+  program=${program#*path=}
+  program=${program%% *}
+  [[ $program == /* && -e $program ]] || return 1
+  (($(stat -c %Z -- "$program") > started))
+}
+
 for unit in "${RESTARTED[@]}"; do
+  replaced "$unit" || continue
+  echo "Restarting $unit on the new release."
   systemctl --user try-restart --no-block -- "$unit" >/dev/null 2>&1
 done
 exit 0
