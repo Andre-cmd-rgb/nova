@@ -1,0 +1,12 @@
+{
+  "id": "nova.file-picker",
+  "name": "File picker",
+  "description": "The window apps get when they ask for a file to open, a name to save under or a folder to choose.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "FilePicker.qml"
+  }
+}

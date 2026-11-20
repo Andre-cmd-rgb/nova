@@ -44,6 +44,7 @@ windows=(
   plugins/bar/ScreenBar.qml            # the bar, on screen all the time
   plugins/bar/widgets/Tray.qml         # a bar panel (the tray's menus)
   plugins/batterylife/BarWidget.qml    # a bar panel: made with the bar, hidden, so that a click opens it at once
+  plugins/file-picker/FilePicker.qml   # the file picker, made only while an app asks for a file, and gone after
   plugins/lock/Service.qml             # the lock, whose surfaces come only when locked, and its preview, whose picture loads only while shown
   plugins/mobile-data/BarWidget.qml    # a bar panel
   plugins/notifications/Service.qml    # a toast window for each screen, shown only while a toast is
