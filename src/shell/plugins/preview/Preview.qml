@@ -178,6 +178,21 @@ Item {
     }
   }
 
+  // Quick Look stays loaded, so that Space shows a file at once, and with it
+  // the last file shown: its picture decoded whole, some 100 MB for a
+  // camera's photo, kept for a window that is shut. Shut for two minutes, as
+  // the image picker lets its slices go, it lets the file go too; the next
+  // one opened is read as a new file is.
+  Timer {
+    interval: 120000
+    running: !window.visible && root.info !== null
+    onTriggered: {
+      root.info = null
+      root.thumb = ""
+      root.head = ""
+    }
+  }
+
   // ---- window ---------------------------------------------------------------
 
   FloatingWindow {
@@ -252,6 +267,8 @@ Item {
           asynchronous: true
           cache: false
           smooth: true
+          // An animation moves on only while it is seen.
+          playing: window.visible
           // Qt cannot read this image: libvips makes one it can.
           onStatusChanged: {
             if (status === Image.Error && root.kind === "image" && !root.converted && root.info.path !== "") {
