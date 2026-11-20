@@ -112,7 +112,7 @@ shell() { "$REPO_ROOT/src/cli/bin/nova-shell" "$@"; }
   export XDG_RUNTIME_DIR=$SCRATCH/run
   mkdir -p "$XDG_RUNTIME_DIR"
   for name in wayland-0 wayland-1 wayland-2; do
-    python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$XDG_RUNTIME_DIR/$name"
+    bind_socket "$XDG_RUNTIME_DIR/$name"
   done
   touch -d '2024-01-01' "$XDG_RUNTIME_DIR/wayland-0" "$XDG_RUNTIME_DIR/wayland-2"
   : >"$XDG_RUNTIME_DIR/wayland-1.lock"

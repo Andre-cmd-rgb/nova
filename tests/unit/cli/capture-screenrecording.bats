@@ -15,26 +15,24 @@ setup() {
   export NOVA_SCREENRECORD_DIR=$SCRATCH/videos
   echo '10,20 300x200' >"$SCRATCH/picked"
   echo '[{"focused":true,"width":2560,"height":1440}]' >"$SCRATCH/monitors"
-  # In Python: started in the background by a script, a bash stub would have
-  # SIGINT ignored, past any trap, where a program can take it back.
+  # Started in the background by a script, a bash program has SIGINT ignored,
+  # past any trap, so the stub takes it back: it runs itself again through
+  # env, which puts SIGINT's default back, as the real recorder has it.
   cat >"$SCRATCH/bin/gpu-screen-recorder" <<'STUB'
-#!/usr/bin/python3 -I
-import os, signal, sys, time
-scratch = os.environ["SCRATCH"]
-with open(os.environ["CALLS"], "a") as calls:
-    calls.write("gsr " + " ".join(sys.argv[1:]) + "\n")
-with open(scratch + "/gsr.pid", "w") as pid:
-    pid.write(str(os.getpid()))
-if os.path.exists(scratch + "/gsr-fails"):
-    sys.exit(1)
-with open(sys.argv[sys.argv.index("-o") + 1], "w") as video:
-    video.write("VIDEO\n")
-def stop(*_):
-    os.remove(scratch + "/gsr.pid")
-    sys.exit(0)
-signal.signal(signal.SIGINT, stop)
-while True:
-    time.sleep(0.05)
+#!/bin/bash
+if [[ -z ${GSR_REEXEC:-} ]]; then
+  GSR_REEXEC=1 exec env --default-signal=INT "$0" "$@"
+fi
+echo "gsr $*" >>"$CALLS"
+echo $$ >"$SCRATCH/gsr.pid"
+[[ ! -e $SCRATCH/gsr-fails ]] || exit 1
+args=("$@")
+for i in "${!args[@]}"; do
+  [[ ${args[i]} == -o ]] && echo VIDEO >"${args[i + 1]}"
+done
+stop() { rm -f "$SCRATCH/gsr.pid"; exit 0; }
+trap stop INT
+while true; do sleep 0.05; done
 STUB
   chmod +x "$SCRATCH/bin/gpu-screen-recorder"
   # Finds the recorder, as nova-session-pgrep does, and with --signal sends it

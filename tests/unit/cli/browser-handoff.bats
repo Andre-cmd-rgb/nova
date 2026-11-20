@@ -14,7 +14,7 @@ setup() {
   setup_scratch
   export XDG_CONFIG_HOME=$SCRATCH/config
   mkdir -p "$SCRATCH/bin" "$XDG_CONFIG_HOME/google-chrome"
-  python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$XDG_CONFIG_HOME/google-chrome/SingletonSocket"
+  bind_socket "$XDG_CONFIG_HOME/google-chrome/SingletonSocket"
   printf '#!/bin/bash\necho "$*" >"%s/socat-args"\ncat >"%s/sent"\necho -n "${REPLY_WITH-ACK}"\n' "$SCRATCH" "$SCRATCH" >"$SCRATCH/bin/socat"
   chmod +x "$SCRATCH/bin/socat"
   export PATH="$SCRATCH/bin:$PATH"

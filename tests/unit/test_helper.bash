@@ -112,3 +112,19 @@ uncolour() { sed -i $'s/\e\\[[0-9;]*m//g' "$@"; }
 
 # The replies stub_gum has not given yet.
 gum_replies_left() { wc -l <"$GUM_REPLIES"; }
+
+# A path that is a Unix socket nothing listens on, as a program's leftover one
+# is: socat binds it and is stopped, with the file left in place
+# (unlink-close=0). It goes with the scratch folder.
+bind_socket() { # path
+  local pid i
+  socat -u /dev/null "UNIX-LISTEN:$1,unlink-close=0" >/dev/null 2>&1 3>&- &
+  pid=$!
+  for i in {1..100}; do
+    [[ -S $1 ]] && break
+    sleep 0.02
+  done
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  [[ -S $1 ]]
+}
