@@ -25,6 +25,7 @@ mod common;
 mod crash;
 mod displays;
 mod exchange;
+mod filechooser;
 mod hypr;
 mod idle;
 mod json;
@@ -45,7 +46,7 @@ use common::{Backoff, Context};
 
 type Duty = fn(&Context) -> Result<(), String>;
 
-const DUTIES: [(&str, Duty); 8] = [
+const DUTIES: [(&str, Duty); 9] = [
     (idle::DUTY, idle::run),
     (sleep::DUTY, sleep::run),
     (crash::DUTY, crash::run),
@@ -54,6 +55,7 @@ const DUTIES: [(&str, Duty); 8] = [
     (bluetooth::DUTY, bluetooth::run),
     (printing::DUTY, printing::run),
     (keyring::DUTY, keyring::run),
+    (filechooser::DUTY, filechooser::run),
 ];
 
 /// Runs a duty again after each failure: 2 s after the first in a row, up to

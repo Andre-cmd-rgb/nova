@@ -14,6 +14,8 @@ install-session:
 	install -Dm755 -t $(DESTDIR)$(NOVA_BIN) $(SESSION_SRC)/bin/*
 	install -Dm644 -t $(DESTDIR)$(SYSCONFDIR)/pam.d $(SESSION_SRC)/pam.d/*
 	install -Dm644 -t $(DESTDIR)$(SYSCONFDIR)/xdg-desktop-portal $(SESSION_SRC)/portals/hyprland-portals.conf
+	install -Dm644 -t $(DESTDIR)$(PREFIX)/share/xdg-desktop-portal/portals $(SESSION_SRC)/portals/nova.portal
+	install -Dm644 -t $(DESTDIR)$(PREFIX)/share/dbus-1/services $(SESSION_SRC)/dbus/*.service
 	install -Dm644 -t $(DESTDIR)$(PREFIX)/share/libalpm/hooks $(SESSION_SRC)/hooks/*.hook
 	# sudo's own modes: the directory 750, a drop-in 440, or sudo ignores it.
 	install -d -m750 $(DESTDIR)$(SYSCONFDIR)/sudoers.d

@@ -44,15 +44,12 @@ hl.layer_rule({
   no_anim = true,
   animation = "none",
 })
--- Settings, the Calendar, the Calculator, the welcome, the App Center and
--- Quick Look (the preview Files opens with Space, which sizes its window to
--- what it shows), the shell's windows, float in the middle of the screen at
--- the size they ask for, opaque: they draw in the theme's own background,
--- and text behind would show through.
-nova.window(
-  { class = "^org\\.quickshell$", title = "^(Settings|Calendar|Calculator|Welcome to Nova|App Center|Quick Look)$" },
-  { float = true, center = true, tag = "-default-opacity" }
-)
+-- The shell's windows (Settings, the Calendar, the Calculator, the welcome,
+-- the App Center, Quick Look, which sizes its window to what it shows, and
+-- the file picker apps get, titled as the app asks) float in the middle of
+-- the screen at the size they ask for, opaque: they draw in the theme's own
+-- background, and text behind would show through.
+nova.window({ class = "^org\\.quickshell$" }, { float = true, center = true, tag = "-default-opacity" })
 
 -- Picture-in-picture: a small opaque window at the top right, on every
 -- workspace. Google Meet's is titled after the meeting, and goes bottom right.

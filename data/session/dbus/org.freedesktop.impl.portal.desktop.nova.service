@@ -1,0 +1,6 @@
+# xdg-desktop-portal finds Nova's portal by its name: nova-sessiond holds it
+# from the session's start, and starts if a call for it comes first.
+[D-BUS Service]
+Name=org.freedesktop.impl.portal.desktop.nova
+Exec=/bin/false
+SystemdService=nova-sessiond.service

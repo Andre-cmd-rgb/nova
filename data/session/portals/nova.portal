@@ -1,0 +1,6 @@
+# Nova's own desktop portal, nova-sessiond: the file picker apps get when they
+# ask for a file to open or a place to save (the shell's window). Chosen by
+# Nova's hyprland-portals.conf; no UseIn, which the portal no longer reads.
+[portal]
+DBusName=org.freedesktop.impl.portal.desktop.nova
+Interfaces=org.freedesktop.impl.portal.FileChooser;

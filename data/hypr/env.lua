@@ -10,6 +10,10 @@ hl.env("HYPRCURSOR_SIZE", "24")
 hl.env("GDK_BACKEND", "wayland,x11,*")
 hl.env("QT_QPA_PLATFORM", "wayland;xcb")
 hl.env("QT_QPA_PLATFORMTHEME", "gtk3")
+-- GTK 3 apps that ask for their system's file picker (GtkFileChooserNative)
+-- get Nova's, through the portal, as GTK 4, Chrome, Electron and Firefox do
+-- already.
+hl.env("GTK_USE_PORTAL", "1")
 hl.env("MOZ_ENABLE_WAYLAND", "1")
 hl.env("ELECTRON_OZONE_PLATFORM_HINT", "wayland")
 hl.env("OZONE_PLATFORM", "wayland")
