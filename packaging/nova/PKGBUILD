@@ -54,7 +54,6 @@ depends=(
   libsecret      # secret-tool: the Calendar's passwords and tokens, in the login keyring
   polkit
   python         # nova-calendar-sync, the Calendar's sync: its standard library's HTTP, TLS and XML
-  python-dbus    # mobile-data's SIM PIN, sent where no process's arguments show it
 
   # Network, Bluetooth, power, backlight, removable disks, firmware
   networkmanager

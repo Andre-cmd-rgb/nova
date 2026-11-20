@@ -594,8 +594,9 @@ esac'
 }
 
 # A locked SIM with <tries> left (3), which takes 1234 for its PIN and
-# counts down otherwise. The PIN goes to it over the bus, from python's
-# standard input: the stand-in notes its arguments and what came in.
+# counts down otherwise. The PIN goes to it over the bus, from
+# nova-sim-pin's standard input: the stand-in notes its arguments and what
+# came in.
 sim_pin() {
   echo "${1:-3}" >"$SCRATCH/tries"
   modem "modem.generic.state                              : locked" \
@@ -604,10 +605,10 @@ sim_pin() {
     "modem.generic.unlock-retries.value[1]            : sim-pin (${1:-3})" \
     "modem.generic.unlock-retries.value[2]            : sim-puk (10)" \
     "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
-  stub python3 '
+  stub nova-sim-pin '
 IFS= read -r pin
-echo "python3 args: $1 ${*:3}" >>"$CALLS"
-echo "send-pin ${*: -1} stdin=$pin" >>"$CALLS"
+echo "nova-sim-pin args: $*" >>"$CALLS"
+echo "send-pin $1 stdin=$pin" >>"$CALLS"
 [[ $pin == 1234 ]] && exit 0
 tries=$(( $(cat "$SCRATCH/tries") - 1 )); echo "$tries" >"$SCRATCH/tries"
 sed -i "s/sim-pin ([0-9]*)/sim-pin ($tries)/" "$SCRATCH/dump"

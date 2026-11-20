@@ -1715,19 +1715,11 @@ cmd_apn() {
 }
 
 # The PIN to the SIM <path> over the system bus, read from the standard
-# input: python's D-Bus, which Nova depends on for this (packaging/nova),
-# rather than mmcli, which takes it as an argument any process could read
-# while it runs. An error is its D-Bus name and message, as mmcli says it.
+# input: nova-sim-pin (nova-sessiond under that name), rather than mmcli,
+# which takes it as an argument any process could read while it runs. An
+# error is its D-Bus name and message, as mmcli says it.
 send_pin() { # sim path
-  python3 -I -c '
-import sys, dbus
-pin = sys.stdin.readline().strip()
-sim = dbus.SystemBus().get_object("org.freedesktop.ModemManager1", sys.argv[1])
-try:
-    sim.SendPin(pin, dbus_interface="org.freedesktop.ModemManager1.Sim", timeout=30)
-except dbus.exceptions.DBusException as error:
-    sys.exit("%s: %s" % (error.get_dbus_name(), error.get_dbus_message()))
-' "$1"
+  nova-sim-pin "$1"
 }
 
 # The SIM's PIN, from the standard input, never in any process's arguments.

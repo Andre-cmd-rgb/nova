@@ -14,12 +14,17 @@ readonly bin=${NOVA_BIN:-/usr/lib/nova/bin}
 # one out of the help. nova-undervolt is nova power undervolt's own half,
 # nova-apps-catalog the App Center's list of apps; nova-keyring-migrate and
 # nova-password-change are the session's and Settings' own, and the second
-# reads passwords on a stdin a terminal would echo.
+# reads passwords on a stdin a terminal would echo; nova-pinentry,
+# nova-share-picker and nova-sim-pin are nova-sessiond under the names
+# gpg-agent, the screen-sharing portal and mobile-data run it by.
 declare -A compiled=(
   [nova-airdrop]="Send to and receive from iPhones nearby with AirDrop"
   [nova-apps-catalog]=""
   [nova-keyring-migrate]=""
   [nova-password-change]=""
+  [nova-pinentry]=""
+  [nova-share-picker]=""
+  [nova-sim-pin]=""
   [nova-theme]="Switch themes and backgrounds, and read theme colors"
   [nova-undervolt]=""
 )

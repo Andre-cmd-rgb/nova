@@ -34,6 +34,7 @@ mod pinentry;
 mod printing;
 mod prompt;
 mod share;
+mod simpin;
 mod sleep;
 #[cfg(test)]
 mod testing;
@@ -112,9 +113,9 @@ fn provide_share_picker() {
 }
 
 fn main() {
-    // The same program answers for gpg-agent and for the screen-sharing
-    // portal under other names: one copy of the card's code, and no program
-    // more to keep in memory.
+    // The same program answers for gpg-agent, for the screen-sharing portal
+    // and for mobile-data's SIM PIN under other names: one copy of the
+    // card's and the bus's code, and no program more to keep in memory.
     let called = std::env::args_os()
         .next()
         .map(std::path::PathBuf::from)
@@ -122,6 +123,7 @@ fn main() {
     match called.as_deref() {
         Some("nova-pinentry") => std::process::exit(pinentry::main()),
         Some("nova-share-picker") => std::process::exit(share::main()),
+        Some("nova-sim-pin") => std::process::exit(simpin::main()),
         _ => {}
     }
     let ctx = match Context::from_env() {
