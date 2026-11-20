@@ -43,6 +43,8 @@ pub enum Glyph {
     Bluetooth,
     Printer,
     Key,
+    Keyring,
+    Share,
 }
 
 impl Glyph {
@@ -52,6 +54,8 @@ impl Glyph {
             Glyph::Bluetooth => "bluetooth",
             Glyph::Printer => "printer",
             Glyph::Key => "key",
+            Glyph::Keyring => "keyring",
+            Glyph::Share => "share",
         }
     }
 }

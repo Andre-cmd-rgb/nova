@@ -50,6 +50,7 @@ depends=(
 
   # Secrets and privilege
   gnome-keyring
+  libgcrypt      # nova-sessiond: the password gnome-keyring asks for, sent back in gcr's secret exchange
   libsecret      # secret-tool: the Calendar's passwords and tokens, in the login keyring
   polkit
   python         # nova-calendar-sync, the Calendar's sync: its standard library's HTTP, TLS and XML

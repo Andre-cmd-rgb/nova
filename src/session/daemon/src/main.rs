@@ -24,12 +24,15 @@ mod bluetooth;
 mod common;
 mod crash;
 mod displays;
+mod exchange;
 mod hypr;
 mod idle;
 mod json;
+mod keyring;
 mod pinentry;
 mod printing;
 mod prompt;
+mod share;
 mod sleep;
 #[cfg(test)]
 mod testing;
@@ -42,7 +45,7 @@ use common::{Backoff, Context};
 
 type Duty = fn(&Context) -> Result<(), String>;
 
-const DUTIES: [(&str, Duty); 7] = [
+const DUTIES: [(&str, Duty); 8] = [
     (idle::DUTY, idle::run),
     (sleep::DUTY, sleep::run),
     (crash::DUTY, crash::run),
@@ -50,6 +53,7 @@ const DUTIES: [(&str, Duty); 7] = [
     (automount::DUTY, automount::run),
     (bluetooth::DUTY, bluetooth::run),
     (printing::DUTY, printing::run),
+    (keyring::DUTY, keyring::run),
 ];
 
 /// Runs a duty again after each failure: 2 s after the first in a row, up to
@@ -84,15 +88,39 @@ const SIG_BLOCK: c_int = 0;
 const SIGINT: c_int = 2;
 const SIGTERM: c_int = 15;
 
+/// xdg-desktop-portal-hyprland asks Nova's card what to share once
+/// ~/.config/hypr/xdph.conf says so: an account made before Nova did has none
+/// yet. xdph reads it when it starts.
+fn provide_share_picker() {
+    let config = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|c| !c.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")));
+    if let Some(config) = config {
+        match share::provide_config(&config) {
+            Ok(true) => say!("share", "wrote {}/hypr/xdph.conf", config.display()),
+            Ok(false) => {}
+            Err(e) => say!(
+                "share",
+                "could not write {}/hypr/xdph.conf: {e}",
+                config.display()
+            ),
+        }
+    }
+}
+
 fn main() {
-    // The same program answers for gpg-agent under another name: one copy
-    // of the card's code, and no program more to keep in memory.
+    // The same program answers for gpg-agent and for the screen-sharing
+    // portal under other names: one copy of the card's code, and no program
+    // more to keep in memory.
     let called = std::env::args_os()
         .next()
         .map(std::path::PathBuf::from)
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
-    if called.as_deref() == Some("nova-pinentry") {
-        std::process::exit(pinentry::main());
+    match called.as_deref() {
+        Some("nova-pinentry") => std::process::exit(pinentry::main()),
+        Some("nova-share-picker") => std::process::exit(share::main()),
+        _ => {}
     }
     let ctx = match Context::from_env() {
         Ok(ctx) => ctx,
@@ -101,6 +129,7 @@ fn main() {
             std::process::exit(1);
         }
     };
+    provide_share_picker();
     let mut stopping = SigSet([0; 16]);
     // SAFETY: a sigset_t-sized buffer, filled and used by the C library only.
     unsafe {

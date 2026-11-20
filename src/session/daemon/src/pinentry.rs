@@ -355,7 +355,10 @@ impl<W: Write> Pinentry<'_, W> {
             }
             "GETPIN" => {
                 self.getpin()?;
+                // As pinentry does: gpg-agent says the error and the repeat
+                // again for each try.
                 self.words.error.clear();
+                self.words.repeat = None;
                 return Ok(true);
             }
             "CONFIRM" => {

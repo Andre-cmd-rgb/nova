@@ -7,7 +7,9 @@
 # is part of the session, not something to turn on.
 #
 # The same program is nova-pinentry, gpg-agent's questions on Nova's card,
-# which Arch's /usr/bin/pinentry runs through /etc/pinentry/preexec.
+# which Arch's /usr/bin/pinentry runs through /etc/pinentry/preexec, and
+# nova-share-picker, what an app may show of the screen, which
+# xdg-desktop-portal-hyprland runs (~/.config/hypr/xdph.conf).
 
 SESSIOND_SRC := src/session
 
@@ -21,4 +23,5 @@ install-sessiond:
 	ln -sf ../nova-sessiond.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-sessiond.service
 	install -d $(DESTDIR)$(NOVA_BIN)
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-pinentry
+	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-share-picker
 	install -Dm644 $(SESSIOND_SRC)/pinentry/preexec $(DESTDIR)$(SYSCONFDIR)/pinentry/preexec
