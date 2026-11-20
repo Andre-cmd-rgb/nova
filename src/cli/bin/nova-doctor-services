@@ -37,9 +37,9 @@ name_of() { # unit
     nova-browser-theme.service) echo "Chrome's theme color" ;;
     nova-patch-ram.service) echo "the memory patch" ;;
     nova-airdrop-bell@*) echo "AirDrop's listening for your iPhone" ;;
-    nova-sleep-lock.service) echo "the lock before sleep" ;;
-    nova-idle-inhibitors.service) echo "keeping the screen awake for apps" ;;
-    nova-automount.service) echo "mounting drives as they are plugged in" ;;
+    # The lock before sleep, the apps keeping the screen awake, the notice of
+    # a crash, the displays' passes and the drives mounted.
+    nova-sessiond.service) echo "Nova's session helper" ;;
     nova-speaker-tuning.service | nova-speaker-tuning-auto.service) echo "the speaker tuning" ;;
     nova-keyring-migrate.service) echo "moving your secrets into the login keyring" ;;
     nova-session-guard.service) echo "the session's guard" ;;

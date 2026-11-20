@@ -5,3 +5,4 @@
 # drop_retired). One you installed by name stays.
 ttfx    # played the screensaver's effects; Nova plays its own (src/screensaver)
 ggml    # came with Arch's whisper.cpp; Nova's whisper-cpp carries its own copy
+udiskie # mounted removable drives; nova-sessiond does, through udisks2 (src/session)

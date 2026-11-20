@@ -8,9 +8,9 @@ set -euo pipefail
 # Docked, with the lid shut and another display on, the laptop's panel is
 # turned off; undocked, it comes back, at the scale it is meant to have, or,
 # the lid still shut, is left to what a lid shutting does (panel_on). The
-# lid, the monitor watcher and a wake from sleep all run this, and nearly
-# always nothing has moved, so it asks Hyprland once and does no more than
-# that answer calls for.
+# lid, nova-sessiond's display watch and a wake from sleep all run this,
+# and nearly always nothing has moved, so it asks Hyprland once and does no
+# more than that answer calls for.
 
 toggles=${XDG_STATE_HOME:-$HOME/.local/state}/nova/toggles/hypr
 clamshell_flag=$toggles/internal-monitor-clamshell.lua

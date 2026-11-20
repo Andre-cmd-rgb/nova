@@ -8,25 +8,40 @@
 # locked. Mounting a drive has the kernel read whatever file system is on it,
 # so a drive plugged into a locked computer waits for an unlock.
 #
-# udiskie (nova-automount.service) is frozen rather than stopped, because when
-# it starts it mounts every drive there is, those unmounted on purpose too;
-# thawed, it deals with the drives that came while it was frozen. Where it
-# cannot be frozen it is stopped: under the lock, nothing mounts either way.
+# nova-sessiond mounts them while $XDG_RUNTIME_DIR/nova/automount holds this
+# session's Hyprland instance: on writes it, off removes it. A file an earlier
+# session left (one that crashed under the lock) names another instance, and
+# counts for nothing. The first on of a session mounts every drive there is;
+# after that, only those plugged in since, so a drive unmounted on purpose
+# stays so.
 
 set -euo pipefail
 
-unit=nova-automount.service
+usage() {
+  echo "Usage: nova-automount on|off" >&2
+  exit 2
+}
 
-case ${1:-} in
+(($# == 1)) || usage
+dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/nova
+switch=$dir/automount
+
+case $1 in
   on)
-    systemctl --user start "$unit"
-    systemctl --user thaw "$unit" 2>/dev/null || true
+    session=${HYPRLAND_INSTANCE_SIGNATURE:-}
+    if [[ -z $session || $session == */* ]]; then
+      echo "nova-automount: not running inside a Hyprland session" >&2
+      exit 1
+    fi
+    (umask 077 && mkdir -p "$dir")
+    # Whole or not at all: the daemon reads it as soon as it is there.
+    tmp=$(mktemp "$dir/.automount.XXXXXX")
+    trap 'rm -f -- "$tmp"' EXIT
+    printf '%s\n' "$session" >"$tmp"
+    mv -f "$tmp" "$switch"
     ;;
   off)
-    systemctl --user freeze "$unit" 2>/dev/null || systemctl --user stop "$unit"
+    rm -f "$switch"
     ;;
-  *)
-    echo "Usage: nova-automount on|off" >&2
-    exit 2
-    ;;
+  *) usage ;;
 esac

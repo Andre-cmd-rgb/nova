@@ -57,7 +57,7 @@ chmod 700 "$work/run"
 # is: Hyprland lists the graphics cards with it as it starts, which wakes one
 # that sleeps.
 for stub in systemctl dbus-update-activation-environment loginctl powerprofilesctl pkexec sudo \
-  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil udiskie uwsm uwsm-app lspci curl; do
+  systemd-inhibit nmcli bluetoothctl rfkill brightnessctl ddcutil uwsm uwsm-app lspci curl; do
   printf '#!/bin/sh\nexit 0\n' >"$work/bin/$stub"
   chmod +x "$work/bin/$stub"
 done

@@ -50,6 +50,15 @@ probe() {
   failed=$(as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user --failed --plain --no-legend |
     awk '{ print $1 }' | paste -sd' ')
   check "no failed services in the session${failed:+ (failed: $failed)}" test -z "$failed"
+  # nova-sessiond: the lock before sleep holds logind's sleep back as a delay
+  # inhibitor, and apps that keep the screen awake find the name they ask.
+  check "nova-sessiond runs in the session" \
+    as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user is-active nova-sessiond.service
+  check "a sleep waits for the session's lock" \
+    bash -c 'systemd-inhibit --list --no-pager --no-legend | awk -v uid="$1" '\''$1 == "Nova" && $2 == uid && /sleep/ && / delay *$/ { found = 1 } END { exit !found }'\''' _ "$uid"
+  check "apps can keep the screen awake (org.freedesktop.ScreenSaver)" \
+    as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" gdbus call --session --dest org.freedesktop.ScreenSaver \
+    --object-path /org/freedesktop/ScreenSaver --method org.freedesktop.ScreenSaver.GetActive
 
   # What starts at login is Nova's choice, not each package's
   # (data/systemd/install.mk): a package autostart Nova has not chosen is one

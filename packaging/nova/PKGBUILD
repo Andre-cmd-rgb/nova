@@ -53,8 +53,8 @@ depends=(
   libsecret      # secret-tool: the Calendar's passwords and tokens, in the login keyring
   polkit
   python         # nova-calendar-sync, the Calendar's sync: its standard library's HTTP, TLS and XML
-  python-dbus    # nova-keyring-migrate, nova-idle-inhibitors, nova-iphone-notifications
-  python-gobject # nova-idle-inhibitors' and nova-iphone-notifications' main loop
+  python-dbus    # nova-keyring-migrate, nova-iphone-notifications
+  python-gobject # nova-iphone-notifications' and nova-previewer's main loop
 
   # Network, Bluetooth, power, backlight, removable disks, firmware
   networkmanager
@@ -71,7 +71,8 @@ depends=(
   openssl        # AirDrop's TLS, and the certificate it makes itself
   zlib           # AirDrop: what an iPhone sends is packed with it
   bubblewrap     # AirDrop: the picture an iPhone sends with its offer is read in a sandbox
-  udiskie
+  udisks2        # removable drives, which nova-sessiond mounts while the session is unlocked
+  zenity         # and the passphrase it asks for an encrypted one
   ddcutil        # brightness of external monitors
   fwupd          # firmware updates from the makers (nova update firmware)
 

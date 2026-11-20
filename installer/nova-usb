@@ -825,10 +825,11 @@ CARRY_STAGE=''
 PORTABLE_MAPPER=nova-usb-root
 INSTALL_LOG_KEPT=${NOVA_USB_INSTALL_LOG:-/var/log/nova-usb-portable.log}
 
-# A desktop automounter (udiskie, on Nova) would mount the new partitions, and
-# ask for the encrypted one's passphrase, while they are being written. udisks
-# leaves alone whatever udev marks UDISKS_IGNORE; the rule lasts as long as the
-# write, and the stick shows up again when it is next plugged in.
+# A desktop automounter (nova-sessiond, on Nova) would mount the new
+# partitions, and ask for the encrypted one's passphrase, while they are being
+# written. udisks and the automounters leave alone whatever udev marks
+# UDISKS_IGNORE; the rule lasts as long as the write, and the stick shows up
+# again when it is next plugged in.
 hide_from_desktop() { # device
   local name=${1##*/} part
   part=$(partition_path "$name" "")

@@ -1,54 +1,63 @@
 #!/usr/bin/env bats
 
-# nova-automount, which the lock screen runs: udiskie frozen under the lock,
-# started and thawed once somebody unlocks.
+# nova-automount, which the lock screen runs: the switch nova-sessiond mounts
+# drives by, which names the session it was turned on in. The daemon's side
+# is tested with it in src/session/daemon (automount.rs).
 
 load ../test_helper
 
 setup() {
   setup_scratch
-  export CALLS="$SCRATCH/calls"
-  mkdir -p "$SCRATCH/bin"
-  export PATH="$SCRATCH/bin:$PATH"
+  export HYPRLAND_INSTANCE_SIGNATURE=this-session
 }
 
 teardown() { teardown_scratch; }
 
-systemctl_stub() { # body, run after the call is logged
-  printf '#!/bin/bash\necho "systemctl $*" >>"$CALLS"\n%s\n' "${1:-exit 0}" >"$SCRATCH/bin/systemctl"
-  chmod +x "$SCRATCH/bin/systemctl"
-}
-
 helper="$REPO_ROOT/src/cli/bin/nova-automount"
+switch() { echo "$XDG_RUNTIME_DIR/nova/automount"; }
 
-@test "on starts it, and thaws it if the lock froze it" {
-  systemctl_stub
+@test "on writes this session's instance into the switch, whole and private" {
   run "$helper" on
   [ "$status" -eq 0 ]
-  [ "$(cat "$CALLS")" = "$(printf 'systemctl --user start nova-automount.service\nsystemctl --user thaw nova-automount.service')" ]
+  [ "$(cat "$(switch)")" = this-session ]
+  [ "$(stat -c %a "$XDG_RUNTIME_DIR/nova")" = 700 ]
+  # Written aside and moved in: nothing half-written is left.
+  [ "$(ls -A "$XDG_RUNTIME_DIR/nova")" = automount ]
 }
 
-@test "on: a unit that was not frozen is no failure" {
-  systemctl_stub 'case "$*" in *thaw*) exit 1 ;; esac'
+@test "on takes over a switch an earlier session left" {
+  mkdir -p "$XDG_RUNTIME_DIR/nova"
+  echo an-earlier-session >"$(switch)"
   run "$helper" on
   [ "$status" -eq 0 ]
+  [ "$(cat "$(switch)")" = this-session ]
 }
 
-@test "off freezes it, so what was plugged in waits for the unlock" {
-  systemctl_stub
+@test "off removes the switch, and is no failure when it is not there" {
+  "$helper" on
   run "$helper" off
   [ "$status" -eq 0 ]
-  [ "$(cat "$CALLS")" = "systemctl --user freeze nova-automount.service" ]
+  [ ! -e "$(switch)" ]
+  run "$helper" off
+  [ "$status" -eq 0 ]
 }
 
-@test "off stops it where it cannot be frozen" {
-  systemctl_stub 'case "$*" in *freeze*) exit 1 ;; esac'
-  run "$helper" off
-  [ "$status" -eq 0 ]
-  grep -qx 'systemctl --user stop nova-automount.service' "$CALLS"
+@test "outside a Hyprland session on turns nothing on" {
+  unset HYPRLAND_INSTANCE_SIGNATURE
+  run "$helper" on
+  [ "$status" -eq 1 ]
+  [ "$output" = "nova-automount: not running inside a Hyprland session" ]
+  [ ! -e "$(switch)" ]
+  HYPRLAND_INSTANCE_SIGNATURE=../elsewhere run "$helper" on
+  [ "$status" -eq 1 ]
+  [ ! -e "$(switch)" ]
 }
 
 @test "anything else is a usage error" {
   run "$helper" maybe
+  [ "$status" -eq 2 ]
+  run "$helper"
+  [ "$status" -eq 2 ]
+  run "$helper" on off
   [ "$status" -eq 2 ]
 }

@@ -3,7 +3,7 @@
 # nova:summary=Lock before suspend and wait for the session lock to become secure
 # nova:hidden=true
 #
-#   nova-system-sleep-lock [budget-ms]   before suspend (nova-system-sleep-monitor)
+#   nova-system-sleep-lock [budget-ms]   before suspend (nova-sessiond)
 #   nova-system-sleep-lock --resumed     after it, when the lock was not up in time
 #
 # A lock slow to come up gets the screens turned off while it is waited for,

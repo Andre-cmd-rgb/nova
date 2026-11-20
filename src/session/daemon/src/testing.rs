@@ -117,7 +117,7 @@ pub fn context(dir: &Path) -> Context {
     let ctx = Context {
         runtime: dir.join("run/nova"),
         hypr: None,
-        session: String::new(),
+        session: "test-session".into(),
         bin: Some(dir.join("bin")),
         proc: PathBuf::from("/proc"),
     };

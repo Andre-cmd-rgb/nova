@@ -2,11 +2,10 @@
 
 # The laptop's panel beside other displays: nova-hyprland-monitor-clamshell
 # turns it off with the lid shut on a dock and brings it back at its scale,
-# nova-hyprland-monitor-internal and -mirror turn it off or mirror it by hand,
-# and nova-hyprland-monitor-watch runs a clamshell pass when displays come and
-# go, and tells X11 apps the scale after it. Hyprland is a stub that answers
-# `monitors` from $LIVE and logs every call; the lid and the DRM connectors
-# are directories.
+# and nova-hyprland-monitor-internal and -mirror turn it off or mirror it by
+# hand. (The passes as displays come and go are nova-sessiond's, tested in
+# src/session/daemon.) Hyprland is a stub that answers `monitors` from $LIVE
+# and logs every call; the lid and the DRM connectors are directories.
 
 load ../test_helper
 
@@ -254,120 +253,4 @@ hyprctl dispatch hl.dsp.dpms({ action = "enable" })' ]
     [ "$output" = "Usage: $script {on|off|toggle|recover}" ]
   done
   [ ! -s "$CALLS" ]
-}
-
-@test "watch: a display event runs a clamshell pass at once, whatever the locale's decimal separator" {
-  # German writes 1,5: built here when the system has no such locale.
-  if ! locale -a 2>/dev/null | grep -qix 'de_DE.utf-\?8'; then
-    mkdir -p "$SCRATCH/locale"
-    localedef -i de_DE -f UTF-8 "$SCRATCH/locale/de_DE.UTF-8" 2>/dev/null || skip "no German locale to try"
-    export LOCPATH="$SCRATCH/locale"
-  fi
-  [[ $(LC_ALL=de_DE.UTF-8 bash -c 'echo "$EPOCHREALTIME"') == *,* ]] || skip "no comma in this bash's EPOCHREALTIME"
-  export HYPRLAND_INSTANCE_SIGNATURE=test
-  stub socat
-  stub nova-hyprland-monitor-clamshell
-  stub nova-hyprland-x11-scale
-  stub nova-hyprland-monitor-modeless 'exit 1'
-  # The passes after a pause never come: the pause fails.
-  stub sleep 'exit 1'
-  LC_ALL=de_DE.UTF-8 run nova-hyprland-monitor-watch
-  [ "$status" -eq 0 ]
-  [ "$(grep -c '^nova-hyprland-monitor-clamshell' "$CALLS")" -eq 1 ]
-}
-
-# The watcher with Hyprland's events from a stubbed socat (one a line of
-# $SCRATCH/events), no dock, and nova-hyprland-monitor-modeless exiting with
-# the next of $SCRATCH/modes each time (1, every display has a mode, once
-# they are used up). sleep only logs its pause.
-watch() {
-  export HYPRLAND_INSTANCE_SIGNATURE=test
-  [[ -e $SCRATCH/events ]] || : >"$SCRATCH/events"
-  stub socat 'cat "$SCRATCH/events"'
-  stub nova-hyprland-monitor-clamshell
-  stub nova-hyprland-x11-scale
-  stub nova-hw-laptop 'exit 1'
-  stub nova-hyprland-monitor-modeless 'answer=$(head -n 1 "$SCRATCH/modes" 2>/dev/null) || true
-    sed -i 1d "$SCRATCH/modes" 2>/dev/null || true
-    exit "${answer:-1}"'
-  [[ -e $SCRATCH/bin/sleep ]] || stub sleep
-  run nova-hyprland-monitor-watch
-}
-
-@test "watch: a burst of display events is one pass at once, and each is a look for displays with no mode" {
-  printf '%s\n' 'monitoradded>>DP-2' 'monitoraddedv2>>2,DP-2,Dell' 'workspace>>3' 'configreloaded>>' >"$SCRATCH/events"
-  stub sleep 'exit 1'
-  watch
-  [ "$status" -eq 0 ]
-  # The start counts as the first event of the burst.
-  [ "$(grep -c '^nova-hyprland-monitor-clamshell' "$CALLS")" -eq 1 ]
-  [ "$(grep -c '^nova-hyprland-monitor-modeless' "$CALLS")" -eq 4 ]
-  # X11 apps are told the scale after the pass, and again after the reload.
-  [ "$(grep -e '^nova-hyprland-monitor-clamshell' -e '^nova-hyprland-x11-scale' "$CALLS" | cut -d' ' -f1 | paste -sd,)" = \
-    "nova-hyprland-monitor-clamshell,nova-hyprland-x11-scale,nova-hyprland-x11-scale" ]
-}
-
-@test "watch: the passes after a burst come 1, 3 and 7 seconds later" {
-  watch
-  [ "$(grep -c '^nova-hyprland-monitor-clamshell' "$CALLS")" -eq 4 ]
-  [ "$(grep -c '^nova-hyprland-x11-scale' "$CALLS")" -eq 4 ]
-  [ "$(grep '^sleep' "$CALLS" | paste -sd,)" = "sleep 1,sleep 3,sleep 7" ]
-}
-
-@test "watch: a display with no mode has Hyprland reloaded, less often each time, until it has one" {
-  printf '%s\n' 0 0 0 0 0 0 1 >"$SCRATCH/modes"
-  watch
-  [ "$(grep -c '^hyprctl reload' "$CALLS")" -eq 6 ]
-  # 3, 6, 12, 24, 48 and then at most a minute, among the burst's own.
-  [ "$(grep '^sleep' "$CALLS" | cut -d' ' -f2 | sort -n | paste -sd,)" = "1,3,3,6,7,12,24,48,60" ]
-}
-
-@test "watch: no reload while an update holds reloads back, nor while Hyprland does not answer" {
-  stub nova-hyprland-reload-guard '[[ $1 == paused ]]'
-  printf '%s\n' 0 0 2 1 >"$SCRATCH/modes"
-  watch
-  fails grep -q '^hyprctl reload' "$CALLS"
-  [ "$(grep '^sleep' "$CALLS" | cut -d' ' -f2 | sort -n | paste -sd,)" = "1,3,3,3,3,7" ]
-}
-
-@test "watch: a Hyprland that stays silent is given up on after 21 asks" {
-  printf '2\n%.0s' {1..40} >"$SCRATCH/modes"
-  watch
-  [ "$(grep -c '^nova-hyprland-monitor-modeless' "$CALLS")" -eq 21 ]
-  fails grep -q '^hyprctl reload' "$CALLS"
-}
-
-@test "watch: docked, the lid moving as logind says is a pass, and the lid's watch ends with the watcher" {
-  export HYPRLAND_INSTANCE_SIGNATURE=test
-  stub nova-hw-laptop
-  stub nova-hyprland-monitor-external-active
-  stub nova-hyprland-monitor-clamshell
-  stub nova-hyprland-x11-scale
-  stub nova-hyprland-monitor-modeless 'exit 1'
-  stub sleep 'exit 1'
-  # logind on the system bus: a change that is not the lid, the lid shut, and
-  # then nothing, for as long as it is listened to.
-  cat >"$SCRATCH/login1" <<'END'
-/org/freedesktop/login1: org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Manager', {'IdleHint': <true>}, @as [])
-/org/freedesktop/login1: org.freedesktop.DBus.Properties.PropertiesChanged ('org.freedesktop.login1.Manager', {'LidClosed': <true>}, @as [])
-END
-  stub gdbus 'cat "$SCRATCH/login1"; echo $$ >"$SCRATCH/gdbus.pid"; exec /usr/bin/sleep 30'
-  # Hyprland's events end once the lid's pass is in, and the watcher with them.
-  stub socat 'for _ in {1..50}; do (($(grep -c ^nova-hyprland-monitor-clamshell "$CALLS") >= 2)) && exit 0; /usr/bin/sleep 0.1; done'
-  run nova-hyprland-monitor-watch
-  [ "$status" -eq 0 ]
-  grep -qx "gdbus monitor --system --dest org.freedesktop.login1 --object-path /org/freedesktop/login1" "$CALLS"
-  # The start's pass and the lid's, and none for the change that was not it.
-  [ "$(grep -c '^nova-hyprland-monitor-clamshell' "$CALLS")" -eq 2 ]
-  # Nothing is left listening.
-  local pid
-  pid=$(cat "$SCRATCH/gdbus.pid")
-  for _ in {1..20}; do running "$pid" || break; /usr/bin/sleep 0.1; done
-  fails running "$pid"
-}
-
-@test "watch: outside a Hyprland session it says so" {
-  run nova-hyprland-monitor-watch
-  [ "$status" -eq 1 ]
-  [ "$output" = "nova-hyprland-monitor-watch: not running inside a Hyprland session" ]
 }

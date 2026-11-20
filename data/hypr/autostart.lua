@@ -2,7 +2,7 @@
 
 -- X11 programs draw at the displays' resolution and scale themselves
 -- (env.lua). Most read the scale from the X server, which
--- nova-hyprland-x11-scale tells (the monitor watch runs it); Java reads only
+-- nova-hyprland-x11-scale tells (nova-sessiond runs it); Java reads only
 -- its environment, J2D_UISCALE, a whole number. It is the X11 scale of the
 -- displays the session came up with, which Settings → Displays and
 -- monitors.lua decide, chosen as nova-hyprland-x11-scale chooses it: with
@@ -61,8 +61,5 @@ hl.on("hyprland.start", function()
   -- Chrome's Energy Saver on whenever unplugged, set once per profile while
   -- Chrome cannot be open yet; after that it is Chrome's own setting.
   hl.exec_cmd("nova-chrome-energy-saver")
-  hl.exec_cmd(nova.launch("nova-hyprland-monitor-watch"))
-  -- An app a crash takes away is named, with Reopen, as on a Mac.
-  hl.exec_cmd(nova.launch("nova-crash-watch"))
   hl.exec_cmd("sleep 2 && nova-hook post-boot")
 end)

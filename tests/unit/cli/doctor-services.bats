@@ -123,10 +123,10 @@ services() { "$REPO_ROOT/src/cli/bin/nova-doctor-services"; }
 
 @test "two at once, the system's and yours, are one notification" {
   failing system nova-powerd.service
-  failing user nova-sleep-lock.service
+  failing user nova-sessiond.service
   services
   [ "$(told)" = 1 ]
-  grep -q "Nova's power manager and the lock before sleep stopped" "$CALLS"
+  grep -q "Nova's power manager and Nova's session helper stopped" "$CALLS"
 }
 
 @test "only Nova's own units, and not those that say how they went themselves" {

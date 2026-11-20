@@ -634,6 +634,12 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
 }
 
 pub fn run(ctx: &Context) -> Result<(), String> {
+    // The switch names the session it is for; with no Hyprland instance to
+    // name, no switch can be this session's, and nothing would ever mount.
+    if ctx.session.is_empty() {
+        say!(DUTY, "not in a Hyprland session: no drives mounted");
+        return Ok(());
+    }
     let bus = Bus::system().map_err(|e| e.to_string())?;
     serve(&bus, ctx)
 }
@@ -1007,14 +1013,18 @@ mod tests {
         });
     }
 
-    /// As `nova-automount on` and `off` do.
+    /// As the lock screen does: `nova-automount on` or `off` itself, so that
+    /// what it writes and what the duty reads cannot drift apart.
     fn switch(ctx: &Context, on: bool) {
-        let file = ctx.runtime.join("automount");
-        if on {
-            write_atomically(&file, &format!("{}\n", ctx.session)).unwrap();
-        } else {
-            crate::common::remove(&file).unwrap();
-        }
+        let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cli/bin/nova-automount");
+        let status = std::process::Command::new(helper)
+            .arg(if on { "on" } else { "off" })
+            .env("XDG_RUNTIME_DIR", ctx.runtime.parent().unwrap())
+            .env("HYPRLAND_INSTANCE_SIGNATURE", &ctx.session)
+            .stdin(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "nova-automount failed");
     }
 
     fn settle() {
@@ -1114,7 +1124,7 @@ if ((n == 0)); then echo wrong; else echo right; fi",
         let dir = scratch("automount");
         let ctx = context(&dir);
         switch(&ctx, true);
-        write_atomically(&ctx.runtime.join("automount-swept"), "\n").unwrap();
+        write_atomically(&ctx.runtime.join("automount-swept"), "test-session\n").unwrap();
         let (_udisks, mounted, _) = udisks(&private.address, usb_stick());
         let _duty = duty(&private.address, &ctx, serve);
         settle();
