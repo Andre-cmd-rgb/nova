@@ -24,6 +24,13 @@ The kernels a system boots:
 - Arch's own `linux` in its place on an older CPU, with `nvidia-open`.
 - `linux-lts`, always, as the fallback entry, with `nvidia-open-lts` when there is an NVIDIA card.
 
+## What `nova` depends on
+
+- Each of `nova`'s dependencies in `packaging/nova/PKGBUILD` says, in a comment, what of Nova's needs it, unless its name says so.
+- A package Nova stops needing goes into `src/cli/retired`, with what took its place: `nova update` removes it where Nova alone wanted it (installed as a dependency, needed by nothing else), never one installed by name. udiskie went that way when `nova-sessiond` took over mounting drives.
+- Nova's Rust uses libsystemd (D-Bus, the journal) through `nova-sd`, linked as `libsystemd.so.0`: `systemd` is a dependency already.
+- `check()` runs `cargo test` and `make test`. `nova-sessiond`'s tests start a private `dbus-daemon` and write journal files with `systemd-journal-remote`; both come with `dbus` and `systemd`, which every Arch build root has.
+
 ## Building one locally
 
 To check a PKGBUILD change, build in a container or a spare machine, never on a machine whose state matters:

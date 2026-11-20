@@ -17,6 +17,7 @@ When a release is out, a notification says so, once, and the update badge in the
 - **Settings → Updates**, or a click on the badge, moves the system to the newest release. It shows how far it is, and asks for one password or fingerprint.
 - **`nova update`** does the same in a terminal. `nova update --dry-run` shows what would change and changes nothing.
 - Every update takes a snapshot before and after, so you can [go back](#going-back-to-before-an-update).
+- Once it is in, the shell restarts on the new release (after the unlock, if the screen locked meanwhile), and the session's services follow: what the release took away stops, and what it brought starts. A service still there runs its old version until you next log in.
 - Packages you hold back with `IgnorePkg` stay held back.
 - While it installs, the computer does not shut down or restart, and **closing the lid does not stop it**: the screen locks and goes dark as usual, but the computer stays awake until the update is over, and then sleeps if the lid is still shut. A dock unplugged with the lid already shut is the same as the lid shutting then. Suspend from the menu still sleeps, and so does a battery about to run out; the update goes on after the wake. The hold ends with the update, however it ends.
 

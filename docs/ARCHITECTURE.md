@@ -18,6 +18,8 @@ This document is the contract every component follows. Read it before adding cod
 | `src/iphone/` | `/usr/lib/nova/nova-iphone-notifications`, `/usr/lib/nova/bin/nova-notification-iphone`, `nova-iphone-notifications.service` (user) | iPhone notifications: an iPhone's notifications shown as Nova's, through Apple's Notification Center Service over Bluetooth LE (Python, with D-Bus and GLib), and its command ([iphone.md](iphone.md)) |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `src/screensaver/` | `/usr/lib/nova/bin/nova-screensaver-effect` | The screensaver's text effects (Rust): a text played in a terminal, one effect after another |
+| `src/session/` | `/usr/lib/nova/nova-sessiond`, `nova-sessiond.service` (user) | What the session watches for as long as it runs, in one small process (Rust): the apps keeping the screen awake (`org.freedesktop.ScreenSaver`), the lock before sleep, "… quit unexpectedly" with Reopen for an app a crash took away, the clamshell passes and the X11 scale as displays come and go, and removable drives mounted while somebody has unlocked |
+| `src/sd/` | – (in the programs that use it) | `nova-sd`, the crate through which Nova's Rust reaches D-Bus and the journal: libsystemd's sd-bus and sd-journal, by FFI |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
 | `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/etc/sudoers.d/`, `/etc/xdg-desktop-portal/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring, the desktop portals (gnome-keyring's for a Flatpak app's secrets) |
@@ -79,7 +81,7 @@ How files reach a system:
 | | `/etc` drop-ins from the hardware profile | listed in `/var/lib/nova/hardware-files` |
 | | `/etc/nova/patches/` | this computer's patches; their `/etc` files are listed in `/var/lib/nova/patch-files` |
 | System state | `/var/lib/nova/` | `greeter/`, the theme mirror, owned by the user the installer created; `hardware-files`; `patch-files`; `patches`: whether each patch is on |
-| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `nightlight-turn`: the last turn the night light's schedule made, so that a restarted shell does not make it again; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-idle-inhibitors` serves; `airdrop.sock`, where `nova airdrop` and the shell reach the AirDrop receiver while it runs; `apps/`, the App Center's installs: `status.json`, how far each is, and each one's log; `iphone-notifications.json`: how the iPhone is, as iPhone notifications' service last said, for Settings and `nova notification iphone` |
+| Runtime | `$XDG_RUNTIME_DIR/nova/` | `unlocked-once`, locks, sockets; `dictation/`'s recordings until they are read; a display change not kept yet; `caffeine`, Caffeine's switch; `nightlight-turn`: the last turn the night light's schedule made, so that a restarted shell does not make it again; `power-profile`: the power mode chosen since the unplug; `idle-inhibitors`: the apps keeping the screen awake through `org.freedesktop.ScreenSaver`, which `nova-sessiond` serves; `automount`: the session's Hyprland instance while removable drives may be mounted, which `nova-automount` writes for the lock screen; `automount-swept`: the session whose drives were all mounted at its first unlock; `airdrop.sock`, where `nova airdrop` and the shell reach the AirDrop receiver while it runs; `apps/`, the App Center's installs: `status.json`, how far each is, and each one's log; `iphone-notifications.json`: how the iPhone is, as iPhone notifications' service last said, for Settings and `nova notification iphone` |
 | | `/run/nova-airdrop/` | while AirDrop is on, what there is to put back of the Wi-Fi; afterwards, how putting it back went |
 
 ### Identifiers
@@ -91,7 +93,7 @@ How files reach a system:
 | PAM services | `nova-lock-password`, `nova-lock-fingerprint`, `nova-greeter`, `nova-sudo` |
 | User units | `nova-*.service` |
 | polkit actions | `org.nova.*` |
-| Session bus names | `org.nova.*` (`org.nova.iPhoneNotifications`) |
+| Session bus names | `org.nova.*` (`org.nova.iPhoneNotifications`); `org.freedesktop.ScreenSaver`, which `nova-sessiond` holds for the session |
 
 ### Naming
 
@@ -123,9 +125,10 @@ How files reach a system:
 8. **Removable drives mount only in an unlocked session.**
    - Mounting one has the kernel read its file system, so a drive plugged into a locked computer waits.
    - The lock service runs `nova-automount on` after the first unlock and `off` whenever it locks.
-   - udiskie (`nova-automount.service`) is started, then frozen and thawed, not restarted, since a fresh udiskie mounts every drive there is.
+   - That writes or removes `automount` in the runtime directory, holding the session's Hyprland instance, so that one a crashed session left counts for nothing. `nova-sessiond` mounts through udisks while it is there: every drive at the session's first unlock, after that those plugged in since, so a drive unmounted on purpose stays so.
+   - Only the drives udisks says a desktop may mount on its own (USB, memory cards, removable media), never one it counts as the system's or is told to leave alone (`UDISKS_IGNORE`, as `nova usb` marks the stick it writes). An encrypted one is asked for its passphrase.
 9. **The machine sleeps locked.**
-   - `nova-system-sleep-monitor` holds a logind delay inhibitor while the machine is awake.
+   - `nova-sessiond` holds a logind delay inhibitor while the machine is awake, as a descriptor no helper inherits.
    - At PrepareForSleep, `nova-system-sleep-lock` asks for the lock and waits for `secure`, up to 36 s of logind's 45 s window (`InhibitDelayMaxSec`). Then the inhibitor goes, to be taken again on the wake.
    - A healthy lock takes well under a second. A slow one gets the screens turned off after 2 s, and again each second, as a key press turns them on.
    - If logind suspends before it is secure (a delay inhibitor is a timer), the screens stay off after the wake and the lock is asked for again (`--resumed`, from `sleep-unsecured` in the runtime directory) until it is up.
@@ -436,15 +439,16 @@ Three traps that load without an error and draw nothing:
 
 - One Cargo workspace at the root.
 - `cargo fmt`, `cargo clippy -D warnings`.
-- No unsafe beyond FFI that std lacks (the governor's signal handlers).
-- std only, unless a dependency clearly pays for itself.
-- Tools a user waits on (the theme engine, the power manager) are Rust; glue that mostly runs other programs stays bash.
+- No unsafe beyond FFI that std lacks (the governor's signal handlers, libsystemd).
+- std only, unless a dependency clearly pays for itself. D-Bus and the journal go through `nova-sd` (`src/sd`), libsystemd's own, which every system has.
+- Tools a user waits on (the theme engine, the power manager) are Rust, and so is what runs as long as the session does (`nova-sessiond`): a watcher in bash keeps a shell and what it waits on (socat, journalctl, jq) in memory for hours, where one in Rust is a thread asleep in `poll()`. Glue that mostly runs other programs, and then ends, stays bash.
 
 ### Tests
 
 | Test | What it does |
 |---|---|
 | `tests/unit/` | bats tests for the helpers; `make test` runs them |
+| `cargo test --workspace` | the Rust programs' tests; `nova-sessiond`'s against stand-ins: a private D-Bus (`dbus-daemon`) with a logind and a udisks of the test's own, a Hyprland socket, and journal files written by `systemd-journal-remote` |
 | `tests/qml/run` | runs the shell's logic tests (the plugin registry against the real plugin index) offscreen under Quickshell, from an installed tree |
 | `tools/qml-smoke` | opens the shell's windows offscreen from the same tree, and fails on any runtime QML warning, which qmllint cannot see |
 | `tools/shell-smoke` | starts the whole shell under a headless sway, summons its windows over IPC and checks that it locks at startup; in CI only |
