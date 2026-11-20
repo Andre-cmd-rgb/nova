@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Open Settings
-# nova:args=[wifi|bluetooth|mobile-data|airdrop|notifications|sound|displays|keyboard|battery|performance|screentime|appearance|bar|lock|apps|updates|about] | state
+# nova:args=[wifi|bluetooth|mobile-data|airdrop|notifications|sound|displays|keyboard|printers|battery|performance|screentime|appearance|bar|lock|apps|updates|about] | state
 #
 # Settings is a shell window (shell/plugins/settings). `state` is the one call
 # it makes to fill itself: everything it shows, as JSON, read through the same
@@ -19,7 +19,7 @@ USB=${NOVA_USB_PATH:-/sys/bus/usb/devices}
 # shell reads, which is not under XDG_CONFIG_HOME.
 source nova-shell-config
 
-PAGES="wifi bluetooth mobile-data airdrop notifications sound displays keyboard battery performance screentime appearance bar lock apps updates about"
+PAGES="wifi bluetooth mobile-data airdrop notifications sound displays keyboard printers battery performance screentime appearance bar lock apps updates about"
 
 # Lines on stdin as a JSON array of strings.
 lines_json() { jq -R . | jq -sc .; }

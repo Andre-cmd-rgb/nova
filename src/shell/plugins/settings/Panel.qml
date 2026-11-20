@@ -16,12 +16,14 @@ import "Asked.js" as Asked
 // menus too; here they have a page each, and Screen Time and Battery Life live
 // on theirs rather than in windows of their own. Displays is nova monitor's
 // and nova nightlight's, Keyboard & Mouse nova input's, Notifications nova
-// notification schedule's.
+// notification schedule's, Printers nova-printers' (CUPS's own tools).
 //
 // Summoned by the shell, from the menu or the CLI; `range` is Screen Time's
-// and Battery Life's, "today" or "week", and `apps` "install" has Updates
-// offer Chrome and VS Code:
+// and Battery Life's, "today" or "week", `apps` "install" has Updates
+// offer Chrome and VS Code, and Printers opens at the `printer` named, and
+// points at its `job`, as a printing notice's button asks:
 //   nova-shell shell summon nova.settings '{"page":"battery","range":"week"}'
+//   nova-shell shell summon nova.settings '{"page":"printers","printer":"Office"}'
 Item {
   id: root
 
@@ -37,6 +39,9 @@ Item {
   property bool confirmRecovery: false
   // Updates offers Chrome and VS Code (opened so by nova-launch-browser).
   property bool offerApps: false
+  // The printer Printers opens at, and the job a notice is about.
+  property string printer: ""
+  property string job: ""
 
   // What the window shows, and the changes it runs.
   SettingsState { id: settingsState }
@@ -68,6 +73,7 @@ Item {
     { id: "sound", label: "Sound", icon: "󰕾" },
     { id: "displays", label: "Displays", icon: "󰍹" },
     { id: "keyboard", label: "Keyboard & Mouse", icon: "󰌌" },
+    { id: "printers", label: "Printers", icon: "󰐪" },
     { id: "battery", label: "Battery", icon: "󰁹" },
     { id: "performance", label: "Performance", icon: "󰓅" },
     { id: "screentime", label: "Screen Time", icon: "󰥔" },
@@ -126,6 +132,9 @@ Item {
     page = allPages.some(function (p) { return p.id === payload.page }) ? payload.page : pages[0].id
     range = payload.range === "week" ? "week" : "today"
     offerApps = payload.apps === "install"
+    printer = ""
+    printer = typeof payload.printer === "string" ? payload.printer : ""
+    job = typeof payload.job === "string" ? payload.job : ""
     confirmRecovery = false
     // Open already, on another workspace: it comes to this one. A window is
     // shown on the workspace it is opened on, so it is closed and opened anew.
@@ -427,6 +436,7 @@ Item {
             case "sound": return soundPage
             case "displays": return displaysPage
             case "keyboard": return keyboardPage
+            case "printers": return printersPage
             case "bar": return barPage
             case "battery": return batteryPage
             case "performance": return performancePage
@@ -585,6 +595,20 @@ Item {
         input: root.info.input || ({})
         overlayParent: keys
         onCommand: function (argv, changes) { root.run(argv, Asked.under("input", changes)) }
+      }
+    }
+  }
+
+  Component {
+    id: printersPage
+    Page {
+      id: p
+      title: "Printers"
+      PrintersView {
+        width: p.inner
+        overlayParent: keys
+        focusPrinter: root.printer
+        focusJob: root.job
       }
     }
   }

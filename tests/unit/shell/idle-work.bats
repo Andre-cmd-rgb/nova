@@ -72,6 +72,7 @@ always=(
   plugins/screentime/Service.qml         # and its settings, read every ten minutes
   plugins/settings/BluetoothView.qml     # a Settings page, made only while it is shown
   plugins/settings/PowerReadout.qml      # a Settings page's
+  plugins/settings/PrintersView.qml      # a Settings page's: CUPS asked every few seconds while it is shown
   plugins/settings/WifiLinkView.qml      # a Settings page's
   plugins/settings/WifiView.qml          # a Settings page's
 )

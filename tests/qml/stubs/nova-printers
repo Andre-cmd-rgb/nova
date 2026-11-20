@@ -1,0 +1,61 @@
+#!/bin/sh
+# nova-printers as Settings' Printers page needs it: `list` answers with what
+# the test wrote to $HOME/pr-list (three printers when it wrote none), `detail`
+# with a printer's inks, choices and jobs, `discover` and `drivers` with what
+# there is to add, and every other command is noted in $HOME/pr-ran, a line
+# each, and succeeds, unless $HOME/pr-fail holds words to say with its failure.
+case $1 in
+  list)
+    if [ -f "$HOME/pr-list" ]; then
+      cat "$HOME/pr-list"
+    else
+      cat <<'JSON'
+{"printers":[
+ {"name":"Office","info":"Office laser","location":"Hall","model":"Acme Laser 9","uri":"ipp://acme.local/ipp/print","state":4,"reasons":["toner-low-warning"],"message":"","accepting":true,
+  "jobs":[{"id":11,"name":"report.pdf","state":5,"reasons":["job-printing"],"user":"ann"},{"id":12,"name":"Budget.pdf","state":4,"reasons":["cups-held-for-authentication"],"user":"ann"}]},
+ {"name":"Hall","info":"Hall","location":"","model":"Acme Inkjet Z","uri":"usb://Acme/Z","state":3,"reasons":[],"message":"","accepting":true,"jobs":[]},
+ {"name":"Old","info":"Old","location":"","model":"","uri":"socket://10.0.0.9","state":5,"reasons":["paused"],"message":"","accepting":true,"jobs":[]}
+ ],"default":"Hall","admin":{"allowed":true,"groups":["sys","root","wheel"]}}
+JSON
+    fi
+    ;;
+  detail)
+    case $2 in
+      Office)
+        cat <<'JSON'
+{"name":"Office","markers":[{"name":"Black toner","level":80,"type":"toner","color":"#000000"},{"name":"Cyan toner","level":5,"type":"toner","color":"#00FFFF"},{"name":"Magenta toner","level":-1,"type":"toner","color":"#FF00FF"}],
+ "media":{"supported":["iso_a4_210x297mm","na_letter_8.5x11in","auto"],"default":"iso_a4_210x297mm","mine":"na_letter_8.5x11in"},
+ "sides":{"supported":["one-sided","two-sided-long-edge","two-sided-short-edge"],"default":"one-sided","mine":""},
+ "color":{"supported":["color","monochrome"],"default":"color","mine":"monochrome"},
+ "jobs":[{"id":11,"name":"report.pdf","state":5,"reasons":["job-printing"],"user":"ann"},{"id":12,"name":"Budget.pdf","state":4,"reasons":["cups-held-for-authentication"],"user":"ann"}]}
+JSON
+        ;;
+      *)
+        printf '{"name":"%s","markers":[],"media":{"supported":["iso_a4_210x297mm"],"default":"iso_a4_210x297mm","mine":""},"sides":{"supported":["one-sided"],"default":"one-sided","mine":""},"color":{"supported":["monochrome"],"default":"monochrome","mine":""},"jobs":[]}\n' "$2"
+        ;;
+    esac
+    ;;
+  discover)
+    cat <<'JSON'
+{"devices":[
+ {"uri":"dnssd://Acme%20Laser._ipp._tcp.local/?uuid=1","class":"network","info":"Acme Laser 9","model":"Acme Laser 9","deviceId":"","driverless":true},
+ {"uri":"ipp://acme.local/ipp/print","class":"network","info":"Office laser","model":"Acme Laser 9","deviceId":"","driverless":true},
+ {"uri":"usb://Acme/Inkjet%20Z?serial=1","class":"direct","info":"Acme Inkjet Z","model":"Acme Inkjet Z","deviceId":"MFG:Acme;MDL:Inkjet Z;","driverless":false}
+]}
+JSON
+    ;;
+  drivers)
+    if [ -n "$2" ]; then
+      echo '{"drivers":[{"id":"drv:///acme.drv/inkjet-z.ppd","name":"Acme Inkjet Z, acme 1.0"},{"id":"drv:///sample.drv/generic.ppd","name":"Generic PostScript Printer"}]}'
+    else
+      echo '{"drivers":[{"id":"drv:///acme.drv/inkjet-z.ppd","name":"Acme Inkjet Z, acme 1.0"},{"id":"drv:///sample.drv/generic.ppd","name":"Generic PostScript Printer"},{"id":"everywhere","name":"IPP Everywhere"}]}'
+    fi
+    ;;
+  *)
+    echo "$*" >>"$HOME/pr-ran"
+    if [ -s "$HOME/pr-fail" ]; then
+      cat "$HOME/pr-fail" >&2
+      exit 1
+    fi
+    ;;
+esac
