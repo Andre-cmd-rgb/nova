@@ -16,8 +16,9 @@
 # waiting, starts the applet's job viewer only while jobs are queued, and
 # tells of a new printer itself (src/session/daemon/src/printing.rs).
 # limine-snapper-notify follows every error in the system log, all day,
-# to tell of its own few; Nova's look for failed services says when
-# limine-snapper-sync fails (nova-doctor-services). The install test fails when
+# to tell of its own few; nova-doctor-services, run every ten minutes, says
+# the errors snapper's plugin writes to the journal when a snapshot cannot
+# reach the boot menu, and a failed limine-snapper-sync. The install test fails when
 # a package autostart Nova has not chosen runs (tests/install/probe).
 AUTOSTART_OFF := print-applet limine-snapper-notify
 
