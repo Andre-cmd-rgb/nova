@@ -31,9 +31,16 @@ trap on_signal HUP INT TERM
 # $NOVA_PATH/shell would reload it from a half-written tree, and that failed
 # reload leaves a second engine behind, which turns the next restart's IPC
 # kill into a crash. Nova restarts the shell itself instead.
+#
+# Quickshell allocates with jemalloc, which gives threads arenas of their own,
+# four per CPU: 64 on a 16-thread laptop, more than the shell's forty threads
+# (Qt's, Mesa's), so each kept the pages of its own. Two arenas for all of
+# them hold the same shell in 90 MB less at idle (230 MB to 138 MB, the P1's
+# 3840x2400 panel in a nested session), and its windows open as fast. A
+# MALLOC_CONF of the caller's comes after, and wins.
 run_shell() {
   local status
-  QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
+  MALLOC_CONF="narenas:2${MALLOC_CONF:+,$MALLOC_CONF}" QS_DISABLE_FILE_WATCHER=1 QS_NO_RELOAD_POPUP=1 \
     systemd-cat -t nova-shell -- quickshell -n -p "$NOVA_PATH/shell" &
   shell=$!
   # A wait cut short by a signal returns as a shell killed by one does: the
