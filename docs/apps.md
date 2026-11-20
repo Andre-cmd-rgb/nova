@@ -85,7 +85,7 @@ So the window is the shell's, as Settings is, and stands on small commands that 
 
 | Part | Does |
 |---|---|
-| `nova-apps-catalog` (Rust, `src/apps/`) | reads Flathub's catalog (from whichever installation fetched it last), Arch's (`/usr/share/swcatalog`), the repositories' package lists and the front page, and writes one file the window and the commands read: `~/.cache/nova/apps/catalog.json`, made again only when one of those changed. Arch's icons are JPEG XL; the ones the catalog needs are made PNGs once, with `vipsthumbnail`. |
+| `nova-apps-catalog` (Rust, `src/apps/`) | reads Flathub's catalog (from whichever installation fetched it last), Arch's (`/usr/share/swcatalog`), the repositories' package lists and the front page, and writes what the window and the commands read into `~/.cache/nova/apps/`, made again only when one of those changed: `catalog.json`, every app whole, which the commands read; `list.json` (`nova-apps-catalog --list` prints its path), each app with only what lists and search use, which the window reads; and `pages/`, a file for each app with all of it, which the window reads when an app's page opens, so that it does not hold every app's description and pictures (parsing the 6.9 MB catalog took 59 MB of memory, the 1.9 MB list 20). Arch's icons are JPEG XL; the ones the catalog needs are made PNGs once, with `vipsthumbnail`. |
 | `nova-apps-installed` | what is installed: Flathub's apps and runtimes, every package, Nova's own |
 | `nova-apps-refresh` | fetches Flathub's catalog again once it is a day old, as the window opens; adds Flathub first, from the file Nova ships with Flathub's key |
 | `nova-apps-run`, `nova-apps-job` | an install or a removal as a user service of its own (`nova-apps-<id>`), one at a time; how far it is, in `$XDG_RUNTIME_DIR/nova/apps/status.json`, its output in a log beside it |
@@ -93,7 +93,7 @@ So the window is the shell's, as Settings is, and stands on small commands that 
 | `nova-apps-shots`, `nova-apps-size` | an app's pictures, downloaded into `~/.cache/nova/apps/shots`, and what an Arch package would add: the shell itself reads files and never the network |
 | `src/shell/plugins/store/` | the window |
 
-Measured on the ThinkPad P1 Gen 4i: the catalog takes 3.1 s the first time (most of it the icons), 1.5 s when Flathub's catalog changed, and 1 ms when nothing did; its file is 6.9 MB, which the window reads in 66 ms. What is installed is read in 92 ms.
+Measured on the ThinkPad P1 Gen 4i: the catalog takes 3.1 s the first time (most of it the icons), 1.5 s when Flathub's catalog changed, and 1 ms when nothing did; its catalog is 6.9 MB and its list 1.9 MB. What is installed is read in 92 ms.
 
 ## Not yet
 

@@ -1,9 +1,13 @@
 // The App Center's logic, apart from its window: its pages, the search, what
 // an app's page says and offers, from three things the helpers give it:
 //
-//   catalog    nova-apps-catalog's file: { runtimes, apps: [{ id, name,
-//              summary, category, icon, sources: [{ kind, ... }], featured, popular,
-//              position, rank, ... }] }, the apps in the store's own order
+//   catalog    nova-apps-catalog --list's file: { pages, apps: [{ id, name,
+//              summary, keywords, category, icon, desktop, page, sources:
+//              [{ kind, package | app, desktop }], featured, popular,
+//              position, rank }] }, the apps in the store's own order; the
+//              rest of an app (description, pictures, versions, facts) is in
+//              its page file, <pages>/<page>: the whole entry, and the
+//              runtimes it needs: { name: { download, installed } }
 //   installed  nova-apps-installed: { flatpak: [{ app, installation,
 //              version }], runtimes, pacman: { name: version }, explicit,
 //              nova }
@@ -57,8 +61,21 @@ function read(text) {
   var byId = Object.create(null)
   for (var i = 0; i < catalog.apps.length; i++) byId[catalog.apps[i].id] = catalog.apps[i]
   catalog.byId = byId
-  catalog.runtimes = catalog.runtimes || {}
   return catalog
+}
+
+// An app's page file's text as its entry, or null when it is not the one for
+// <app>.
+function readPage(text, app) {
+  var page
+  try {
+    page = JSON.parse(String(text || ""))
+  } catch (e) {
+    return null
+  }
+  if (!page || typeof page !== "object" || !app || page.id !== app.id) return null
+  if (!Array.isArray(page.sources)) return null
+  return page
 }
 
 // ---- lists ------------------------------------------------------------------
@@ -227,8 +244,8 @@ function flathubSize(source, runtimes, installed) {
   var runtime = String(source.runtime || "")
   var have = ((installed && installed.runtimes) || []).map(function (r) { return String(r).replace(/^runtime\//, "") })
   if (runtime && have.indexOf(runtime) < 0 && runtimes && runtimes[runtime]) {
-    size.download += runtimes[source.runtime].download || 0
-    size.installed += runtimes[source.runtime].installed || 0
+    size.download += runtimes[runtime].download || 0
+    size.installed += runtimes[runtime].installed || 0
   }
   return size.installed > 0 ? size : null
 }

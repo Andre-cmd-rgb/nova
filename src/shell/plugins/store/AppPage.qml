@@ -12,11 +12,18 @@ import "StoreModel.js" as Model
 // itself, and its facts. The pictures and an Arch package's size come from
 // helpers (nova-apps-shots, nova-apps-size): the shell reads files and never
 // the network.
+//
+// The app it is given is the list's, which has what the header and Get need.
+// The rest (pictures, description, facts, the sources' versions) is in the
+// app's page file, read here, so that the window does not hold it for every
+// app. Until it is read, or when it cannot be, the page goes on with the list's.
 Column {
   id: page
 
   property var app: null
   property var store: null
+  // The app's page file, as read, or null.
+  property var full: null
 
   // The source picked on the page, "" for the store's first.
   property string picked: ""
@@ -24,35 +31,61 @@ Column {
   property var shotFiles: ({})
   property var archSize: null
 
+  // The whole entry once its page is read, else the list's. Both have the
+  // same sources in the same order, so what Get installs does not change.
+  readonly property var entry: full || app
   readonly property var st: store && app ? store.statusOf(app) : ({ action: "get", progress: -1, text: "", error: "", kept: "" })
   readonly property var from: store && app ? Model.installedFrom(app, store.installed) : null
-  readonly property var source: Model.offered(app, from ? from.kind : picked)
-  readonly property var choices: Model.choices(app)
+  readonly property var source: Model.offered(entry, from ? from.kind : picked)
+  readonly property var choices: Model.choices(entry)
   readonly property var size: {
     if (!source) return null
     if (source.kind === "flathub")
-      return Model.flathubSize(source, store && store.catalog ? store.catalog.runtimes : ({}), store ? store.installed : null)
+      return Model.flathubSize(source, full ? full.runtimes : null, store ? store.installed : null)
     return source.kind === "arch" ? archSize : null
   }
-  readonly property var facts: app ? Model.facts(app, from, source, size) : []
+  readonly property var facts: entry ? Model.facts(entry, from, source, size) : []
   readonly property real inner: width - leftPadding - rightPadding
 
   padding: Style.space(28)
   topPadding: Style.space(16)
   spacing: Style.space(22)
 
-  Component.onCompleted: fetch()
+  Component.onCompleted: fetchSize()
+  onAppChanged: {
+    // The list is read again when it is made anew, and gives the same app as another object.
+    if (full && (!app || app.id !== full.id)) full = null
+  }
 
-  function fetch() {
-    var urls = ((app && app.shots) || []).map(function (s) { return s.url })
+  // The pictures are fetched once the page says which they are.
+  function fetchShots() {
+    var urls = ((full && full.shots) || []).map(function (s) { return s.url })
     if (urls.length > 0) {
       shotsProc.command = ["nova-apps-shots"].concat(urls)
       shotsProc.running = true
     }
+  }
+
+  function fetchSize() {
     var arch = Model.offered(app, "arch")
     if (arch && arch.kind === "arch") {
       sizeProc.command = ["nova-apps-size", arch.package]
       sizeProc.running = true
+    }
+  }
+
+  FileView {
+    id: pageFile
+    path: page.app && page.app.page && page.store && page.store.catalog && page.store.catalog.pages
+      ? page.store.catalog.pages + "/" + page.app.page : ""
+    printErrors: false
+    onLoaded: {
+      // A page that cannot be read is no page: the list's entry stays.
+      var read = Model.readPage(text(), page.app)
+      if (read) {
+        page.full = read
+        page.fetchShots()
+      }
     }
   }
 
@@ -140,7 +173,7 @@ Column {
       Caption {
         width: parent.width
         visible: text.length > 0
-        text: page.app ? page.app.developer || "" : ""
+        text: page.entry ? page.entry.developer || "" : ""
       }
 
       Item {
@@ -258,7 +291,7 @@ Column {
     spacing: Style.space(12)
     clip: true
     boundsBehavior: Flickable.StopAtBounds
-    model: (page.app && page.app.shots) || []
+    model: (page.entry && page.entry.shots) || []
 
     // A swipe across moves the pictures as the page's moves the page; one up
     // or down over them moves the page.
@@ -297,12 +330,12 @@ Column {
 
   // ---- what it says of itself --------------------------------------------------
   Column {
-    visible: page.app && (page.app.description || []).length > 0
+    visible: page.entry && (page.entry.description || []).length > 0
     width: page.inner
     spacing: Style.space(10)
 
     Repeater {
-      model: (page.app && page.app.description) || []
+      model: (page.entry && page.entry.description) || []
       delegate: Text {
         required property var modelData
         width: page.inner
@@ -347,11 +380,11 @@ Column {
     }
 
     Button {
-      visible: !!(page.app && page.app.homepage)
+      visible: !!(page.entry && page.entry.homepage)
       iconText: "󰖟"
       text: "Website"
       bordered: true
-      onClicked: Util.execArgv(["nova-launch-browser", page.app.homepage])
+      onClicked: Util.execArgv(["nova-launch-browser", page.entry.homepage])
     }
   }
 }

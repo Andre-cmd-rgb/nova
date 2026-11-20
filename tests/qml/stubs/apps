@@ -1,7 +1,9 @@
 #!/bin/sh
 # The App Center's helpers, as the store's window test needs them, by the
 # name each is called by:
-#   nova-apps-catalog    a catalog of seven apps, made in $HOME, its path
+#   nova-apps-catalog    a list of seven apps in brief, made in $HOME with the
+#                        page of one of them (GIMP's, whose Krita's is not
+#                        there), the list's path
 #   nova-apps-installed  $HOME/installed.json, or Firefox from Arch and foot,
 #                        part of Nova
 #   nova-apps-run        noted in $HOME/stub-calls, as `record` notes a
@@ -12,34 +14,42 @@
 name=$(basename "$0")
 case $name in
   nova-apps-catalog)
-    cat >"$HOME/catalog.json" <<'EOF'
-{"format":1,"built":1,"flathub":true,"arch":true,
- "runtimes":{"org.gnome.Platform/x86_64/48":{"download":300000000,"installed":900000000}},
+    # What `--list` prints: the apps in brief, and the folder of the pages.
+    # Krita's page is not there, as when one cannot be read.
+    mkdir -p "$HOME/pages"
+    cat >"$HOME/pages/org.gimp.GIMP.json" <<'EOF'
+{"id":"org.gimp.GIMP","name":"GIMP","summary":"Create images and edit photographs","developer":"The GIMP team","category":"create","keywords":"photoshop paint","license":"GPL-3.0+ AND LGPL-3.0+","homepage":"https://www.gimp.org/","description":["GIMP edits pictures.","• Layers"],"shots":[{"url":"https://dl.flathub.org/media/gimp.png"}],
+ "sources":[{"kind":"arch","package":"gimp","repo":"extra","version":"3.0.4-1"},{"kind":"flathub","app":"org.gimp.GIMP","ref":"app/org.gimp.GIMP/x86_64/stable","version":"3.0.4","download":100000000,"installed":300000000,"runtime":"org.gnome.Platform/x86_64/48","verified":true}],
+ "featured":"create","position":0,"rank":1085,
+ "runtimes":{"org.gnome.Platform/x86_64/48":{"download":300000000,"installed":900000000}}}
+EOF
+    cat >"$HOME/list.json" <<EOF
+{"format":1,"built":1,"flathub":true,"arch":true,"pages":"$HOME/pages",
  "apps":[
-  {"id":"org.gimp.GIMP","name":"GIMP","summary":"Create images and edit photographs","developer":"The GIMP team","category":"create","keywords":"photoshop paint","license":"GPL-3.0+ AND LGPL-3.0+","homepage":"https://www.gimp.org/","description":["GIMP edits pictures.","• Layers"],"shots":[{"url":"https://dl.flathub.org/media/gimp.png"}],
-   "sources":[{"kind":"arch","package":"gimp","repo":"extra","version":"3.0.4-1"},{"kind":"flathub","app":"org.gimp.GIMP","ref":"app/org.gimp.GIMP/x86_64/stable","version":"3.0.4","download":100000000,"installed":300000000,"runtime":"org.gnome.Platform/x86_64/48","verified":true}],
+  {"id":"org.gimp.GIMP","name":"GIMP","summary":"Create images and edit photographs","category":"create","keywords":"photoshop paint","page":"org.gimp.GIMP.json",
+   "sources":[{"kind":"arch","package":"gimp"},{"kind":"flathub","app":"org.gimp.GIMP"}],
    "featured":"create","position":0,"rank":1085},
-  {"id":"org.inkscape.Inkscape","name":"Inkscape","summary":"Vector graphics editor","category":"create",
-   "sources":[{"kind":"flathub","app":"org.inkscape.Inkscape","ref":"app/org.inkscape.Inkscape/x86_64/stable","version":"1.4","download":80000000,"installed":200000000,"verified":true}],
+  {"id":"org.inkscape.Inkscape","name":"Inkscape","summary":"Vector graphics editor","category":"create","page":"org.inkscape.Inkscape.json",
+   "sources":[{"kind":"flathub","app":"org.inkscape.Inkscape"}],
    "featured":"create","position":1,"rank":1020},
-  {"id":"org.kde.krita","name":"Krita","summary":"Digital painting","category":"create","keywords":"paint",
-   "sources":[{"kind":"flathub","app":"org.kde.krita","ref":"app/org.kde.krita/x86_64/stable","version":"5.2","download":200000000,"installed":500000000}],
+  {"id":"org.kde.krita","name":"Krita","summary":"Digital painting","category":"create","keywords":"paint","page":"org.kde.krita.json",
+   "sources":[{"kind":"flathub","app":"org.kde.krita"}],
    "rank":40},
-  {"id":"com.google.Chrome","name":"Google Chrome","summary":"The browser built by Google","developer":"Google","category":"internet","desktop":"google-chrome.desktop","iconName":"google-chrome",
-   "sources":[{"kind":"nova","package":"google-chrome","maker":"Google"}],
+  {"id":"com.google.Chrome","name":"Google Chrome","summary":"The browser built by Google","category":"internet","desktop":"google-chrome.desktop","iconName":"google-chrome","page":"com.google.Chrome.json",
+   "sources":[{"kind":"nova","package":"google-chrome"}],
    "featured":"internet","position":0,"popular":1,"rank":1060},
-  {"id":"org.mozilla.firefox","name":"Firefox","summary":"Fast, private and safe web browser","category":"internet","desktop":"firefox.desktop",
-   "sources":[{"kind":"arch","package":"firefox","repo":"extra","version":"145.0-1","desktop":"firefox.desktop"},{"kind":"flathub","app":"org.mozilla.firefox","ref":"app/org.mozilla.firefox/x86_64/stable","version":"145.0","download":90000000,"installed":250000000,"verified":true}],
+  {"id":"org.mozilla.firefox","name":"Firefox","summary":"Fast, private and safe web browser","category":"internet","desktop":"firefox.desktop","page":"org.mozilla.firefox.json",
+   "sources":[{"kind":"arch","package":"firefox","desktop":"firefox.desktop"},{"kind":"flathub","app":"org.mozilla.firefox"}],
    "featured":"internet","position":1,"rank":1065},
-  {"id":"com.valvesoftware.Steam","name":"Steam","summary":"Launcher for the Steam software distribution service","category":"play",
-   "sources":[{"kind":"flathub","app":"com.valvesoftware.Steam","ref":"app/com.valvesoftware.Steam/x86_64/stable","download":10000000,"installed":20000000}],
+  {"id":"com.valvesoftware.Steam","name":"Steam","summary":"Launcher for the Steam software distribution service","category":"play","page":"com.valvesoftware.Steam.json",
+   "sources":[{"kind":"flathub","app":"com.valvesoftware.Steam"}],
    "featured":"play","position":0,"popular":2,"rank":1000},
-  {"id":"foot","name":"Foot","summary":"Fast, lightweight and minimalistic Wayland terminal emulator","category":"utilities","desktop":"foot.desktop",
-   "sources":[{"kind":"arch","package":"foot","repo":"extra","version":"1.24.0-1","desktop":"foot.desktop"}],
+  {"id":"foot","name":"Foot","summary":"Fast, lightweight and minimalistic Wayland terminal emulator","category":"utilities","desktop":"foot.desktop","page":"foot.json",
+   "sources":[{"kind":"arch","package":"foot","desktop":"foot.desktop"}],
    "rank":25}
  ]}
 EOF
-    echo "$HOME/catalog.json"
+    echo "$HOME/list.json"
     ;;
   nova-apps-installed)
     if [ -f "$HOME/installed.json" ]; then

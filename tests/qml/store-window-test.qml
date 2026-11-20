@@ -135,12 +135,18 @@ ShellRoot {
         check(p.app.id === "org.gimp.GIMP" && store.backLabel === "Search", "an app's page, with the way back to the search")
         check(p.choices.length === 2 && p.source.kind === "arch", "two places it comes from, Arch's first")
         check(button("Get") !== null && button("Open") === null, "Get, and no Open")
+        check(p.app.description === undefined && p.app.sources[1].version === undefined, "the list's entry has no description and the sources no versions")
         var group = all(function (i) { return i.options !== undefined && i.value === "arch" && shown(i) })
         check(group.length === 1, "the choice of where from")
         group[0].changed("flathub")
       },
+      function () { return page().full !== null },
       function () {
         var p = page()
+        check(p.entry.description[0] === "GIMP edits pictures." && note("GIMP edits pictures.") && note("• Layers"), "the description is the page file's")
+        check(p.facts.some(function (f) { return f.label === "Developer" && f.value === "The GIMP team" }) && p.facts.some(function (f) { return f.label === "License" && f.value === "GPL-3.0+ and LGPL-3.0+" }), "the developer and licence are the page file's")
+        check(p.choices.length === 2 && p.source.kind === "flathub" && p.source.version === "3.0.4" && p.source.verified, "the source picked, now with its version from the page")
+        check(button("Website") !== null, "the website is the page file's")
         check(p.source.kind === "flathub" && p.facts.some(function (f) { return f.label === "Size" && f.value === "1.2 GB" }), "from Flathub, with its runtime in its size")
         button("Get").clicked()
       },
@@ -190,6 +196,23 @@ ShellRoot {
       function () { return page() !== null },
       function () {
         check(page().app.id === "org.mozilla.firefox", "an appstream:// link opens its app's page")
+        store.back()
+      },
+      function () {
+        store.show(store.catalog.byId["org.kde.krita"])
+      },
+      function () { return page() !== null && page().app.id === "org.kde.krita" },
+      function () {
+        // Its page file is not there: the page is the list's, with Get.
+        var p = page()
+        check(p.full === null && p.entry === p.app && p.choices.length === 0, "a page file that is missing leaves the list's entry")
+        check(button("Get") !== null && p.facts.some(function (f) { return f.label === "From" }), "and Get, and the facts the list has")
+        button("Get").clicked()
+      },
+      function () { return called("nova-apps-run install org.kde.krita --from flathub") },
+      function () {
+        check(true, "Get installs from the list's source")
+        store.back()
         store.open(JSON.stringify({ app: "nothing-called-this" }))
       },
       function () {

@@ -78,7 +78,7 @@ How files reach a system:
 | | `~/.local/share/nova-dictation/` | the speech model, downloaded at dictation's first use |
 | | `~/.local/share/flatpak/` | Flathub's apps, as the App Center installs them: flatpak's own |
 | User cache | `~/.cache/nova/adaptive/` | the adaptive theme's palettes, by the photo's path, size and time |
-| | `~/.cache/nova/apps/` | the App Center's catalog, the icons of Arch's catalog as PNGs, and the apps' pictures |
+| | `~/.cache/nova/apps/` | the App Center's catalog, its list and the apps' pages, the icons of Arch's catalog as PNGs, and the apps' pictures |
 | System config | `/etc/nova/power.conf` | on a P1 Gen 4i, optional tunables |
 | | `/etc` drop-ins from the hardware profile | listed in `/var/lib/nova/hardware-files` |
 | | `/etc/nova/patches/` | this computer's patches; their `/etc` files are listed in `/var/lib/nova/patch-files` |

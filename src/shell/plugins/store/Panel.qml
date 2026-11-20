@@ -13,7 +13,9 @@ import "StoreModel.js" as Model
 // repositories and Flathub, as one list. It owns nothing of its own:
 //
 //   nova-apps-catalog    the apps, from the AppStream catalogs on this
-//                        computer, as one file it reads (~/.cache/nova/apps)
+//                        computer, as a list in brief it reads, and a page
+//                        file for each, which an app's page reads
+//                        (~/.cache/nova/apps)
 //   nova-apps-installed  which of them are installed, and from where
 //   nova-apps-refresh    Flathub's catalog fetched again once a day
 //   nova-apps-run        an install or a removal, as a user service of its
@@ -278,7 +280,7 @@ Item {
 
   Process {
     id: catalogProc
-    command: ["nova-apps-catalog"]
+    command: ["nova-apps-catalog", "--list"]
     stdout: StdioCollector {
       waitForEnd: true
       onStreamFinished: {

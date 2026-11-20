@@ -37,6 +37,9 @@ ShellRoot {
     var apps = catalog.apps
     check(Model.read("{") === null && Model.read('{"apps":3}') === null, "a file that is not a catalog")
     check(catalog.byId["org.kde.krita"].name === "Krita", "read with an index by ID")
+    var pageText = JSON.stringify({ id: "org.gimp.GIMP", name: "GIMP", sources: [arch, flathub], description: ["x"] })
+    check(Model.readPage(pageText, catalog.byId["org.gimp.GIMP"]).description[0] === "x", "an app's page file read")
+    check(Model.readPage(pageText, catalog.byId["org.kde.krita"]) === null && Model.readPage("{", catalog.byId["org.gimp.GIMP"]) === null && Model.readPage("{}", catalog.byId["org.gimp.GIMP"]) === null && Model.readPage("", null) === null, "one that is not the app's, or not a page, is not read")
 
     // ---- lists ----
     check(Model.pages[0].id === "discover" && Model.pages[Model.pages.length - 1].id === "installed", "the front page first, Installed last")
