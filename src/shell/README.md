@@ -66,10 +66,14 @@ used twice fails the build. The shell reads that one file at startup.
 | `menu`       | a summoned menu surface                            | `menu`       |
 | `service`    | a headless singleton                               | `service`    |
 
-Services and plugins that set `keepLoaded: true` are loaded at startup.
+Services and plugins that set `keepLoaded: true` are loaded at startup;
+the windows that do are listed, with why, in
+[`tests/unit/shell/idle-work.bats`](../../tests/unit/shell/idle-work.bats).
 Other panels, overlays and menus load when they are summoned, and stay
-loaded until the shell hides them (`hide`, or `toggle` while open); one
-that closes its own window stays loaded.
+loaded until the shell hides them (`hide`, or `toggle` while open); a
+second later the shell collects what they held. One that closes its own
+window stays loaded unless it tells the shell, as Nova's do with
+`shell.hide`.
 
 Entry points may declare `shell`, `manifest` and, for a panel paired with a
 service, `service`; the shell sets each one it finds. Bar widgets get the bar as `bar`, and reach the

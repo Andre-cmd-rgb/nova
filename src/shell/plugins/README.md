@@ -31,7 +31,7 @@ file when it starts.
 | `id` | names the plugin in `shell.json`, in the IPC and to other plugins |
 | `name` | what `listPlugins` shows, and the error for a plugin that has no off |
 | `kinds`, `entryPoints` | which parts it has, and the QML file of each (below) |
-| `keepLoaded` | a panel, overlay or menu loaded at startup, and never unloaded |
+| `keepLoaded` | a panel, overlay or menu loaded at startup, and never unloaded; each is listed, with why, in `tests/unit/shell/idle-work.bats` |
 | `enabledByDefault: false` | off until `shell.json` names it, in the bar or in `plugins` |
 | `alwaysOn: true` | no off: the bar, the lock and the volume keys |
 | `barWidget.defaultSection` | where the widget goes when switched on, if Nova's default layout does not have it; else the center |
