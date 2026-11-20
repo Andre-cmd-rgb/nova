@@ -25,6 +25,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nova-launch"
+version = "1.0.0"
+dependencies = [
+ "nova-sd",
+]
+
+[[package]]
 name = "nova-powerd"
 version = "1.0.0"
 

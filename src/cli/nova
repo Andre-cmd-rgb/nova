@@ -16,11 +16,14 @@ readonly bin=${NOVA_BIN:-/usr/lib/nova/bin}
 # nova-password-change are the session's and Settings' own, and the second
 # reads passwords on a stdin a terminal would echo; nova-pinentry,
 # nova-share-picker and nova-sim-pin are nova-sessiond under the names
-# gpg-agent, the screen-sharing portal and mobile-data run it by.
+# gpg-agent, the screen-sharing portal and mobile-data run it by; nova-launch
+# starts every app, from keys, the menu and the helpers, and takes a command,
+# not a verb.
 declare -A compiled=(
   [nova-airdrop]="Send to and receive from iPhones nearby with AirDrop"
   [nova-apps-catalog]=""
   [nova-keyring-migrate]=""
+  [nova-launch]=""
   [nova-password-change]=""
   [nova-pinentry]=""
   [nova-share-picker]=""

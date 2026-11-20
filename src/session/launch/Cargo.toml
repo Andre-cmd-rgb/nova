@@ -1,0 +1,17 @@
+[package]
+name = "nova-launch"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's app launcher: a command or a desktop entry, started as a systemd scope of its own"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova. It runs on every launch, so it links
+# only libsystemd, through nova-sd, and nothing of nova-sessiond.
+
+[dependencies]
+nova-sd = { path = "../../sd" }
+
+[[bin]]
+name = "nova-launch"
+path = "src/main.rs"

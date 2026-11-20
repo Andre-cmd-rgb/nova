@@ -12,6 +12,10 @@
 # xdg-desktop-portal-hyprland runs (~/.config/hypr/xdph.conf), and
 # nova-sim-pin, the SIM's PIN to ModemManager for mobile-data, from the
 # standard input rather than an argument.
+#
+# nova-launch (src/session/launch) is not part of it: it starts every app
+# Nova starts, as a systemd scope of its own, and is a program of its own so
+# that a launch loads libsystemd and nothing else.
 
 SESSIOND_SRC := src/session
 
@@ -27,4 +31,5 @@ install-sessiond:
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-pinentry
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-share-picker
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-sim-pin
+	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/nova-launch $(DESTDIR)$(NOVA_BIN)/nova-launch
 	install -Dm644 $(SESSIOND_SRC)/pinentry/preexec $(DESTDIR)$(SYSCONFDIR)/pinentry/preexec
