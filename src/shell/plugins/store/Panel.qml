@@ -162,7 +162,6 @@ Item {
     backLabel = Model.pageLabel(page)
     failure = ""
     openedAt = Math.floor(Date.now() / 1000)
-    forget.stop()
     if (window.visible && elsewhere()) close()
     if (!window.visible) measureRoom()
     window.visible = true
@@ -272,17 +271,6 @@ Item {
       for (var id in root.pending)
         if (now - root.pending[id] < 30) next[id] = root.pending[id]
       root.pending = next
-    }
-  }
-
-  // The catalog is some megabytes once read: let go of a while after the
-  // window closes, and read again as it opens.
-  Timer {
-    id: forget
-    interval: 300000
-    onTriggered: {
-      root.catalog = null
-      catalogFile.path = ""
     }
   }
 
@@ -409,11 +397,10 @@ Item {
     implicitHeight: Math.min(Style.space(640 * root.growth), root.room.height)
     minimumSize: Qt.size(Math.min(Style.space(680), root.room.width), Math.min(Style.space(480), root.room.height))
 
+    // Closed, the App Center is unloaded, its catalog with it, and read again
+    // as it opens.
     onVisibleChanged: {
-      if (!visible) {
-        forget.restart()
-        if (!root.closingFromHost && root.shell && typeof root.shell.hide === "function") root.shell.hide(root.pluginId)
-      }
+      if (!visible && !root.closingFromHost && root.shell && typeof root.shell.hide === "function") root.shell.hide(root.pluginId)
     }
 
     FocusScope {
