@@ -59,16 +59,23 @@ Section {
       }
     }
   }
+  // The job's state, watched once its folder is there: Quickshell sees a file
+  // appear in a folder that is, as the first job's does, not in one made
+  // after it looked. The job writes it whole and moves it into place.
+  property bool watching: false
+  Process {
+    command: ["mkdir", "-p", root.statePath.replace(/\/[^\/]*$/, "")]
+    running: root.monitor
+    onExited: root.watching = true
+  }
   FileView {
     id: stateFile
-    path: root.monitor ? root.statePath : ""
+    path: root.monitor && root.watching ? root.statePath : ""
     watchChanges: true
     printErrors: false
     onFileChanged: reload()
     onLoaded: root.readState(text())
   }
-  // Also covers the first job, before there was a file for FileView to watch.
-  Timer { interval: 1000; repeat: true; running: root.monitor; onTriggered: stateFile.reload() }
   Process {
     id: launcher
     stderr: StdioCollector { id: launchError }

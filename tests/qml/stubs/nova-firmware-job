@@ -1,0 +1,12 @@
+#!/bin/sh
+# nova-firmware-job, as Settings' firmware tests need it: status answers that
+# no job ran yet this boot; a check or an install is noted in
+# $HOME/stub-calls, a line a call, as `record` notes one, and does nothing.
+case $1 in
+  status) echo '{}' ;;
+  *)
+    line=nova-firmware-job
+    for word in "$@"; do line="$line $word"; done
+    printf '%s\n' "$line" >>"$HOME/stub-calls"
+    ;;
+esac
