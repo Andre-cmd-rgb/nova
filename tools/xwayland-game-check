@@ -1,0 +1,281 @@
+#!/bin/bash
+# xwayland-game-check: an X11 game's mouse and fullscreen modes, checked in a
+# nested Hyprland at the ThinkPad P1's panel and Nova's X11 scale.
+#
+#   tools/xwayland-game-check [--hyprland <binary>] [--sdl <dir>] [--keep <dir>]
+#
+# --hyprland is the Hyprland to check, the one on PATH unless it names
+# another (a new build of packaging/hyprland). --sdl is a folder with a game's
+# own libSDL3.so.0 to run the game with, Minecraft's say, rather than the
+# system's. --keep keeps the logs and pictures in a folder.
+#
+# A 3840x2400 screen at scale 1.6, with xwayland:scale 2 as Nova sets it on
+# the P1, so the X screen is 4800x3000. On it a mouse and a keyboard, made as
+# a real mouse and keyboard are (Hyprland gives no window the keyboard without
+# one, and holds no pointer lock for a window without the keyboard), and an
+# SDL3 game on X11 that takes the mouse as Minecraft 26 does
+# (tools/xwayland-game-check.c). Each check:
+#
+#   windowed      the game's grab (relative mode) gets every motion of the
+#                 mouse, and its menu's cursor moves as the mouse does, never
+#                 put back; and every raw motion XWayland gives is a motion,
+#                 none from its absolute device, whose positions a game with
+#                 SDL before 3.4.16 would take every later motion for
+#   exclusive     at 1280x720, its own resolution, the window is 1280x720 and
+#                 XWayland scales it to the whole screen (a picture of it), and
+#                 the mouse works in the game and in the menu at that scale
+#   native        at the screen's own mode, the window is the whole X screen
+#   change        1440x1080 changed to 1280x720 while fullscreen, the window
+#                 follows
+#
+# Like tools/screenshots, Hyprland is a window of a headless labwc, in a home,
+# runtime folder and D-Bus session of its own (one that starts no services);
+# labwc and wlr-randr must be on PATH. It needs cc, pkg-config, and SDL3's,
+# libwayland's, xkbcommon's, Xlib's and XInput's headers to build the game.
+
+set -euo pipefail
+
+usage() { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; }
+
+here=$(cd "$(dirname "$0")" && pwd)
+hyprland=Hyprland sdl='' keep=''
+while (($# > 0)); do
+  case $1 in
+    --hyprland) hyprland=${2:?}; shift 2 ;;
+    --sdl) sdl=$(cd "${2:?}" && pwd); shift 2 ;;
+    --keep) keep=${2:?}; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+done
+hyprland=$(command -v "$hyprland") || { echo "xwayland-game-check: no Hyprland $hyprland" >&2; exit 1; }
+for tool in labwc wlr-randr hyprctl Xwayland dbus-run-session grim jq cc pkg-config; do
+  command -v "$tool" >/dev/null || { echo "xwayland-game-check: needs $tool" >&2; exit 1; }
+done
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/home/.config/hypr" "$work/home/.config/labwc" "$work/run" "$work/bin" "$work/out"
+chmod 700 "$work/run"
+
+# shellcheck disable=SC2046 # pkg-config's flags are words
+cc -O2 -Wall -o "$work/bin/xwayland-game-check" "$here/xwayland-game-check.c" \
+  $(pkg-config --cflags --libs sdl3 wayland-client xkbcommon x11 xi)
+
+# What the session must not reach: the computer's own session and system.
+# lspci is among them: Hyprland lists the graphics cards with it as it
+# starts, which wakes one that sleeps.
+for stub in lspci systemctl dbus-update-activation-environment loginctl; do
+  printf '#!/bin/sh\nexit 0\n' >"$work/bin/$stub"
+  chmod +x "$work/bin/$stub"
+done
+
+# A session bus that starts nothing: SDL asks it for the desktop portal, and
+# the portal's document store would mount itself in the runtime folder.
+cat >"$work/bus.conf" <<'EOF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+
+cat >"$work/home/.config/labwc/rc.xml" <<'EOF'
+<?xml version="1.0"?>
+<labwc_config>
+  <windowRules>
+    <windowRule identifier="*" serverDecoration="no">
+      <action name="ToggleFullscreen" />
+    </windowRule>
+  </windowRules>
+</labwc_config>
+EOF
+
+cat >"$work/home/.config/hypr/hyprland.lua" <<'EOF'
+hl.monitor({ output = "WAYLAND-1", mode = "preferred", position = "0x0", scale = 1.6 })
+hl.config({
+  animations = { enabled = false },
+  xwayland = { enabled = true, force_zero_scaling = true, scale = 2 },
+  ecosystem = { no_update_news = true, no_donation_nag = true },
+  misc = { disable_hyprland_logo = true, disable_splash_rendering = true },
+  cursor = { no_hardware_cursors = true },
+})
+hl.on("hyprland.start", function() hl.exec_cmd("env > " .. os.getenv("WORK") .. "/hypr-env") end)
+EOF
+
+session() {
+  set -euo pipefail
+  labwc='' hyprland_pid='' input='' game=''
+  trap 'kill $game $input $hyprland_pid 2>/dev/null; sleep 0.5; kill $labwc 2>/dev/null; wait 2>/dev/null' EXIT
+  WLR_BACKENDS=headless WLR_LIBINPUT_NO_DEVICES=1 labwc >"$WORK/out/labwc.log" 2>&1 &
+  labwc=$!
+  local outer='' inner='' lock='' i
+  for ((i = 0; i < 100; i++)); do
+    outer=$(find "$XDG_RUNTIME_DIR" -maxdepth 1 -type s -name 'wayland-*' -printf '%f\n' | head -1)
+    [[ -z $outer ]] || break
+    sleep 0.1
+  done
+  [[ -n $outer ]] || { echo "labwc did not start" >&2; return 1; }
+  WAYLAND_DISPLAY=$outer wlr-randr --output HEADLESS-1 --custom-mode 3840x2400
+
+  WAYLAND_DISPLAY=$outer "$HYPRLAND" --config "$HOME/.config/hypr/hyprland.lua" >"$WORK/out/hyprland.log" 2>&1 &
+  for ((i = 0; i < 150; i++)); do
+    lock=$(find "$XDG_RUNTIME_DIR/hypr" -mindepth 2 -maxdepth 2 -name hyprland.lock 2>/dev/null | head -1 || true)
+    [[ -z $lock ]] || { read -r hyprland_pid && read -r inner; } <"$lock" || true
+    [[ -z $inner ]] || break
+    sleep 0.1
+  done
+  [[ -n $inner ]] || { echo "Hyprland did not start" >&2; tail -20 "$WORK/out/hyprland.log" >&2; return 1; }
+  HYPRLAND_INSTANCE_SIGNATURE=$(basename "$(dirname "$lock")")
+  export HYPRLAND_INSTANCE_SIGNATURE WAYLAND_DISPLAY=$inner
+  for ((i = 0; i < 100; i++)); do
+    [[ ! -s $WORK/hypr-env ]] || break
+    sleep 0.1
+  done
+  local display xauth
+  display=$(sed -n 's/^DISPLAY=//p' "$WORK/hypr-env")
+  xauth=$(sed -n 's/^XAUTHORITY=//p' "$WORK/hypr-env")
+  [[ $display == :* ]] || { echo "Hyprland started no XWayland" >&2; return 1; }
+
+  # The mouse and keyboard: commands on fd 7, answers on fd 8.
+  mkfifo "$WORK/input.in" "$WORK/input.out" "$WORK/game.in" "$WORK/game.out"
+  xwayland-game-check input 2400 1500 <"$WORK/input.in" >"$WORK/input.out" 2>>"$WORK/out/input.log" &
+  input=$!
+  exec 7>"$WORK/input.in" 8<"$WORK/input.out"
+  local reply
+  read -r -t 5 reply <&8 || { echo "no mouse or keyboard" >&2; return 1; }
+  mouse() { echo "$*" >&7; read -r -t 5 reply <&8; }
+  ask() { echo "$*" >&5; read -r -t 10 reply <&6 || reply=''; }
+
+  failed=0
+  check() { # what, ok?
+    if eval "$2"; then echo "ok    $1"; else echo "FAIL  $1"; failed=1; fi
+  }
+  colour() { # x y as fractions of the screen: red, green, blue or r,g,b
+    local r g b w h
+    read -r r g b w h < <(xwayland-game-check pixel "$WORK/out/$shot.ppm" 0 0)
+    read -r r g b w h < <(xwayland-game-check pixel "$WORK/out/$shot.ppm" \
+      "$(awk -v f="$1" -v n="$w" 'BEGIN { printf "%d", f * (n - 1) }')" \
+      "$(awk -v f="$2" -v n="$h" 'BEGIN { printf "%d", f * (n - 1) }')")
+    case "$r $g $b" in
+      '255 0 0') echo red ;; '0 255 0') echo green ;; '0 0 255') echo blue ;; *) echo "$r,$g,$b" ;;
+    esac
+  }
+  start() { # name, game arguments
+    shot=$1
+    shift
+    env -u WAYLAND_DISPLAY DISPLAY="$display" ${xauth:+XAUTHORITY="$xauth"} LD_LIBRARY_PATH="${SDL_DIR:+$SDL_DIR:}${LD_LIBRARY_PATH:-}" \
+      xwayland-game-check game "$@" <"$WORK/game.in" >"$WORK/game.out" 2>>"$WORK/out/$shot.log" &
+    game=$!
+    exec 5>"$WORK/game.in" 6<"$WORK/game.out"
+    for ((i = 0; i < 100; i++)); do
+      [[ $(hyprctl clients -j | jq '[.[] | select(.title == "xwayland-game-check")] | length') == 1 ]] && break
+      sleep 0.1
+    done
+    sleep 1
+    mouse move 1200 750
+    hyprctl clients -j | jq -c '.[] | {title, at, size, fullscreen}' >>"$WORK/out/$shot.log"
+  }
+  stop() {
+    exec 5>&- 6<&-
+    wait "$game" 2>/dev/null || true
+    game=''
+    for ((i = 0; i < 50; i++)); do
+      [[ $(hyprctl clients -j | jq 'length') == 0 ]] && break
+      sleep 0.1
+    done
+  }
+  # As the game is played and its menu opened: 30 motions of the mouse to the
+  # right, of 10 logical pixels in the game, then of 5 in the menu.
+  play() {
+    ask grab
+    sleep 0.3
+    for ((i = 0; i < 30; i++)); do mouse rel 10 0; sleep 0.02; done
+    sleep 0.3
+    ask release
+    game_xrel=${reply#game }
+    sleep 0.3
+    for ((i = 0; i < 30; i++)); do mouse rel 5 0; sleep 0.02; done
+    sleep 0.3
+    ask raw
+    read -r _ raw_absolute raw_all <<<"$reply"
+    ask quit
+    read -r _ menu_first menu_last menu_back <<<"$reply"
+    echo "game $game_xrel, menu $menu_first to $menu_last, put back $menu_back, raw $raw_absolute of $raw_all absolute" >>"$WORK/out/$shot.log"
+  }
+  near() { awk -v a="$1" -v b="$2" -v d="$3" 'BEGIN { exit !(a - b <= d && b - a <= d) }'; }
+
+  # Windowed: the game's 300 logical pixels of motion are 300 to it (Hyprland
+  # gives X11 windows relative motion unscaled), the menu's 150 are 300 X11
+  # pixels at scale 2.
+  start windowed window
+  play
+  stop
+  check "windowed: the grab gets all the motion ($game_xrel of 300)" 'near "$game_xrel" 300 1'
+  check "windowed: the menu's cursor follows the mouse ($menu_first to $menu_last, 300 to the right)" \
+    'near "$(awk -v a="$menu_last" -v b="$menu_first" "BEGIN { print a - b }")" 300 2 && [[ $menu_back == 0 ]]'
+  check "windowed: every raw motion is a motion, none a position ($raw_absolute of $raw_all from an absolute device)" \
+    '[[ $raw_absolute == 0 && $raw_all -gt 0 ]]'
+
+  # Exclusive at 1280x720: XWayland scales the window, and the mouse's
+  # motion with it, by 1280/4800: the game's 300 and the menu's 300 X11
+  # pixels are 80.
+  start exclusive fullscreen 1280 720
+  ask size
+  size=${reply#size }
+  grim -t ppm "$WORK/out/exclusive.ppm"
+  play
+  stop
+  check "exclusive 1280x720: the window is 1280x720 (it is $size)" '[[ $size == "1280 720" ]]'
+  check "exclusive 1280x720: it fills the screen (left $(colour 0.02 0.5), right $(colour 0.98 0.5), top $(colour 0.25 0.05))" \
+    '[[ $(colour 0.02 0.5) == red && $(colour 0.98 0.5) == green && $(colour 0.25 0.05) == blue && $(colour 0.02 0.97) == red ]]'
+  check "exclusive 1280x720: the grab gets the motion ($game_xrel of 80)" 'near "$game_xrel" 80 2'
+  check "exclusive 1280x720: the menu's cursor follows the mouse ($menu_first to $menu_last, 80 to the right)" \
+    'near "$(awk -v a="$menu_last" -v b="$menu_first" "BEGIN { print a - b }")" 80 2 && [[ $menu_back == 0 ]]'
+  check "exclusive 1280x720: every raw motion is a motion, none a position ($raw_absolute of $raw_all from an absolute device)" \
+    '[[ $raw_absolute == 0 && $raw_all -gt 0 ]]'
+
+  start native fullscreen 4800 3000
+  ask size
+  size=${reply#size }
+  ask quit
+  stop
+  check "exclusive at the screen's own mode: the window is 4800x3000 (it is $size)" '[[ $size == "4800 3000" ]]'
+
+  start change fullscreen 1440 1080
+  ask size
+  before=${reply#size }
+  ask switch 1280 720
+  sleep 0.5
+  ask size
+  size=${reply#size }
+  ask quit
+  stop
+  check "1440x1080 changed to 1280x720 while fullscreen: the window follows ($before, then $size)" \
+    '[[ $before == "1440 1080" && $size == "1280 720" ]]'
+
+  return "$failed"
+}
+
+renderer=()
+for name in WLR_RENDERER WLR_RENDER_DRM_DEVICE LD_LIBRARY_PATH __EGL_VENDOR_LIBRARY_FILENAMES __GLX_VENDOR_LIBRARY_NAME; do
+  [[ -z ${!name:-} ]] || renderer+=("$name=${!name}")
+done
+status=0
+env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 \
+  GIO_USE_VFS=local GSETTINGS_BACKEND=memory NO_AT_BRIDGE=1 \
+  PATH="$work/bin:$PATH" DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/system-bus \
+  "${renderer[@]}" WORK="$work" HYPRLAND="$hyprland" SDL_DIR="$sdl" \
+  timeout 180 dbus-run-session --config-file="$work/bus.conf" -- bash -c "$(declare -f session); session" || status=$?
+if [[ -n $keep ]]; then
+  mkdir -p "$keep"
+  cp -r "$work/out/." "$keep/"
+fi
+exit "$status"
