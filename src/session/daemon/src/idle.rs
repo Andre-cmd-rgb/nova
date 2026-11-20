@@ -14,13 +14,13 @@
 //! line, and the shell's idle service, which watches it, counts no one away.
 //! Lock locks the screen, as the interface has it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::rc::{Rc, Weak};
 
 use nova_sd::poll::{poll, sooner};
-use nova_sd::{Bus, Interface, Message, Slot, Value};
+use nova_sd::{Bus, Interface, Message, Slot, Value, NAME_QUEUE};
 
 use crate::common::{remove, write_atomically, Context};
 use crate::say;
@@ -253,12 +253,60 @@ pub fn serve(bus: &Bus, ctx: &Context) -> Result<(), String> {
                 .map_err(|e| e.to_string())?,
         );
     }
-    match bus.request_name(NAME, 0) {
-        Ok(true) => {}
-        Ok(false) | Err(_) => return Err(format!("{NAME} is another program's already")),
-    }
-    say!(DUTY, "serving {NAME}");
+    // The name, waited for in the bus's queue while another program has it,
+    // and served the moment the bus hands it over (NameAcquired). Lost to
+    // another (NameLost), the apps' holds go with it, as their calls go to
+    // the new owner now, and the queue is joined again.
+    let owned = Rc::new(Cell::new(false));
+    let lost = Rc::new(Cell::new(false));
+    let told = |member: &str| {
+        nova_sd::rule(&[
+            ("type", "signal"),
+            ("sender", "org.freedesktop.DBus"),
+            ("interface", "org.freedesktop.DBus"),
+            ("member", member),
+            ("arg0", NAME),
+        ])
+        .map_err(|e| e.to_string())
+    };
+    let owned_now = owned.clone();
+    let _acquired = bus
+        .add_match(&told("NameAcquired")?, move |_| owned_now.set(true))
+        .map_err(|e| e.to_string())?;
+    let (owned_now, lost_now) = (owned.clone(), lost.clone());
+    let _lost = bus
+        .add_match(&told("NameLost")?, move |_| {
+            owned_now.set(false);
+            lost_now.set(true);
+        })
+        .map_err(|e| e.to_string())?;
+    let queue = || match bus.request_name(NAME, NAME_QUEUE) {
+        Ok(true) => {
+            owned.set(true);
+            Ok(())
+        }
+        Ok(false) => {
+            say!(DUTY, "{NAME} is another program's: waiting for it");
+            Ok(())
+        }
+        Err(e) => Err(format!("could not ask for {NAME}: {e}")),
+    };
+    queue()?;
+    let mut serving = false;
     let ended = loop {
+        if lost.take() {
+            held.borrow_mut().clear();
+            say!(DUTY, "another program took {NAME}");
+            if let Err(e) = queue() {
+                break e;
+            }
+        }
+        if owned.get() != serving {
+            serving = owned.get();
+            if serving {
+                say!(DUTY, "serving {NAME}");
+            }
+        }
         let mut fds = [bus.poll_fd()];
         if let Err(e) = poll(&mut fds, sooner(bus.timeout(), None)) {
             break format!("could not wait: {e}");
@@ -448,8 +496,29 @@ mod tests {
         wait_until("no zombie", || zombies() == 0);
     }
 
+    /// Who has the name, then who waits for it, as the bus says.
+    fn queued(bus: &Bus) -> Vec<String> {
+        bus.call(
+            "org.freedesktop.DBus",
+            "/org/freedesktop/DBus",
+            "org.freedesktop.DBus",
+            "ListQueuedOwners",
+            &[Value::str(NAME)],
+        )
+        .ok()
+        .and_then(|answer| {
+            answer[0].as_list().map(|names| {
+                names
+                    .iter()
+                    .filter_map(|n| n.as_str().map(String::from))
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+    }
+
     #[test]
-    fn a_name_another_program_has_is_not_taken() {
+    fn a_name_another_program_has_is_waited_for_and_served_the_moment_it_lets_go() {
         let Some(private) = PrivateBus::start() else {
             return;
         };
@@ -457,12 +526,30 @@ mod tests {
         let ctx = context(&dir);
         let other = Bus::connect(&private.address).unwrap();
         assert!(other.request_name(NAME, 0).unwrap());
+        let foreign = other.unique_name().unwrap();
         let service = duty(&private.address, &ctx, serve);
-        let ended = service.join().unwrap();
-        assert_eq!(
-            ended.unwrap_err(),
-            format!("{NAME} is another program's already")
-        );
+        let app = Bus::connect(&private.address).unwrap();
+        // In the queue behind the other, not trying again on a clock.
+        wait_until("the duty in the queue", || queued(&app).len() == 2);
+        assert_eq!(queued(&app)[0], foreign);
+        assert!(!service.is_finished());
+        // The other goes: the name is the duty's at once, and served.
+        drop(other);
+        wait_until("the name", || {
+            app.name_owner(NAME)
+                .unwrap()
+                .is_some_and(|owner| owner != foreign)
+        });
+        app.call(
+            NAME,
+            SAVER,
+            NAME,
+            "Inhibit",
+            &[Value::str("Films"), Value::str("Playing")],
+        )
+        .unwrap();
+        assert_eq!(listed(&ctx), "Films\tPlaying\n");
+        assert!(!service.is_finished());
     }
 
     #[test]
