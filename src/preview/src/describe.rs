@@ -86,6 +86,22 @@ fn owned(text: *mut c_char) -> Option<String> {
     Some(value)
 }
 
+/// A string GLib gave and wants freed, as Rust's if it is UTF-8 as it
+/// stands; freed either way.
+fn owned_exact(text: *mut c_char) -> Option<String> {
+    if text.is_null() {
+        return None;
+    }
+    // SAFETY: a NUL-terminated string GLib allocated, read once and freed here.
+    let value = unsafe { CStr::from_ptr(text) }
+        .to_str()
+        .ok()
+        .map(str::to_owned);
+    // SAFETY: GLib's allocation, freed with GLib's free.
+    unsafe { g_free(text.cast()) };
+    value
+}
+
 /// A string GLib keeps, as Rust's.
 fn borrowed(text: *const c_char) -> Option<String> {
     if text.is_null() {
@@ -204,7 +220,10 @@ pub fn describe(uri: &str) -> Description {
     // SAFETY: a NUL-terminated URI; GIO returns a new GFile, never null.
     let file = Object(unsafe { g_file_new_for_uri(c_uri.as_ptr()) });
     // SAFETY: the GFile this holds; each returns a string to free, or null.
-    let path = owned(unsafe { g_file_get_path(file.0) }).unwrap_or_default();
+    // A path that is not UTF-8 would reach the shell with replacement
+    // characters and name no file; without one the window shows its plain
+    // page, and Open still has the URI.
+    let path = owned_exact(unsafe { g_file_get_path(file.0) }).unwrap_or_default();
     let basename = owned(unsafe { g_file_get_basename(file.0) }).filter(|n| !n.is_empty());
     let mut out = Description {
         uri: uri.to_string(),
@@ -372,6 +391,19 @@ mod tests {
             .icon
             .iter()
             .any(|n| n == "text-plain" || n == "text-x-generic"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_path_that_is_not_utf8_is_left_out_and_the_uri_kept() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = scratch("bytes");
+        let file = dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
+        std::fs::write(&file, "x").unwrap();
+        let uri = format!("file://{}/caf%E9.txt", dir.display());
+        let info = describe(&uri);
+        assert_eq!(info.path, "");
+        assert_eq!(info.uri, uri);
         let _ = std::fs::remove_dir_all(dir);
     }
 

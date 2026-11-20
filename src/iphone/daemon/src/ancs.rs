@@ -375,7 +375,9 @@ extern "C" {
 pub fn parse_date(raw: &[u8]) -> Option<f64> {
     let value = text(raw, None);
     let bytes = value.as_bytes();
-    if bytes.len() != 15 || bytes[8] != b'T' {
+    // ASCII first: the parts below are cut by byte, and a character of two
+    // bytes across a cut would panic, which a device must never be able to do.
+    if !value.is_ascii() || bytes.len() != 15 || bytes[8] != b'T' {
         return None;
     }
     let number = |range: std::ops::Range<usize>| -> Option<i32> {
@@ -719,6 +721,8 @@ mod tests {
 
     #[test]
     fn the_date() {
+        // Fifteen bytes with the T in place, but an é across the year's end.
+        assert_eq!(parse_date("202é112T120000".as_bytes()), None);
         let a = parse_date(b"20261117T143005").unwrap();
         let b = parse_date(b"20261117T143000").unwrap();
         assert_eq!(a - b, 5.0);

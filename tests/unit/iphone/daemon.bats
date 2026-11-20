@@ -105,6 +105,8 @@ scenario() { # name
 
 @test "it never logs what a notification says" {
   # The texts go to the shell alone.
-  run grep -nE 'log\(.*(summary|body|title|subtitle|info\.|found)' "$REPO_ROOT"/src/iphone/daemon/src/*.rs
+  # A whole log statement, up to its semicolon, as rustfmt may spread one
+  # over several lines.
+  run grep -lPz 'log\([^;]*(summary|body|title|subtitle|info\.|found)' "$REPO_ROOT"/src/iphone/daemon/src/*.rs
   [ "$status" -eq 1 ]
 }

@@ -32,6 +32,9 @@ EOF
   chmod +x "$SCRATCH/bin/nova-shell"
   export NOVA_PREVIEW_SHELL=$SCRATCH/bin/nova-shell
   export NOVA_PREVIEW_IDLE_SECONDS=2
+  # GIO would start GVfs on the test's bus, and its FUSE helper reaches for
+  # the real runtime folder: local files are all these tests read.
+  export GIO_USE_VFS=local
   # The service file that has D-Bus start the front, as Nova's does.
   local services=$SCRATCH/dbus/dbus-1/services
   mkdir -p "$services"
