@@ -87,7 +87,10 @@ BarWidget {
         anchors.verticalCenter: parent.verticalCenter
         text: root.glyph
         color: button.ink
-        font.family: button.fontFamily
+        // Named, not found by falling back from the bar's font: Memory's
+        // stick (U+EFC5) is in the private range fonts such as URW Gothic
+        // also fill, with a glyph of their own, and they come first.
+        font.family: "JetBrainsMono Nerd Font"
         font.pixelSize: Style.bar.iconFont
         renderType: Text.NativeRendering
       }

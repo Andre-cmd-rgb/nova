@@ -4,7 +4,7 @@ import QtQuick
 ReadoutWidget {
   widgetId: "nova.memory"
   part: "memory"
-  glyph: "\u{F035B}"
+  glyph: "\u{EFC5}"
   percent: service ? service.memory : -1
   tip: service && service.memoryWords !== "" ? "Memory: " + service.memoryWords : "Memory"
 }

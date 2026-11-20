@@ -4,7 +4,7 @@ import QtQuick
 ReadoutWidget {
   widgetId: "nova.cpu"
   part: "cpu"
-  glyph: "\u{F0EE0}"
+  glyph: "\u{F035B}"
   percent: service ? service.cpu : -1
   tip: percent >= 0 ? "CPU: " + percent + "% in use" : "CPU"
 }
