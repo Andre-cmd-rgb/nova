@@ -3,9 +3,11 @@
 # apps that keep the screen awake (org.freedesktop.ScreenSaver), the lock
 # before sleep, "… quit unexpectedly" for an app a crash took away, the
 # clamshell passes as displays come and go, removable drives mounted while
-# somebody has unlocked, and printing: the job viewer while jobs are queued
-# and the notice of a printer plugged in. Enabled for every user: each is
-# part of the session, not something to turn on.
+# somebody has unlocked, and printing's notices. Enabled for every user: each
+# is part of the session, not something to turn on.
+#
+# The same program is nova-pinentry, gpg-agent's questions on Nova's card,
+# which Arch's /usr/bin/pinentry runs through /etc/pinentry/preexec.
 
 SESSIOND_SRC := src/session
 
@@ -17,3 +19,6 @@ install-sessiond:
 	install -Dm644 $(SESSIOND_SRC)/systemd/nova-sessiond.service $(DESTDIR)$(SYSTEMD_USER)/nova-sessiond.service
 	install -d $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants
 	ln -sf ../nova-sessiond.service $(DESTDIR)$(SYSTEMD_USER)/graphical-session.target.wants/nova-sessiond.service
+	install -d $(DESTDIR)$(NOVA_BIN)
+	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-pinentry
+	install -Dm644 $(SESSIOND_SRC)/pinentry/preexec $(DESTDIR)$(SYSCONFDIR)/pinentry/preexec

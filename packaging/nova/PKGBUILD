@@ -202,6 +202,7 @@ backup=(
   etc/pam.d/nova-lock-password
   etc/pam.d/nova-sudo
   etc/pam.d/polkit-1
+  etc/pinentry/preexec
   etc/sudoers.d/20-nova-pam
   etc/xdg-desktop-portal/hyprland-portals.conf
 )

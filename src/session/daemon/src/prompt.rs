@@ -8,7 +8,10 @@
 //! One connection is one dialog, a line of JSON each way at a time:
 //!
 //!   duty   {"type":"ask","glyph":…,"title":…,"text":…,"code":…,
-//!           "fields":[{"id":…,"label":…,"secret":…,"value":…}],"accept":…}
+//!           "fields":[{"id":…,"label":…,"secret":…,"value":…}],"accept":…,
+//!           "cancel":…,"alone":…,"choices":[{"id":…,"label":…,"detail":…,
+//!           "glyph":…,"section":…}],"chosen":…,
+//!           "toggles":[{"id":…,"label":…,"value":…}]}
 //!   shell  {"type":"answer","values":{"<id>":"…"}}, or {"type":"cancel"}
 //!   duty   {"type":"done"}               the card goes
 //!          {"type":"wrong","text":…}     it shakes, its secret fields
@@ -39,6 +42,7 @@ pub enum Glyph {
     Drive,
     Bluetooth,
     Printer,
+    Key,
 }
 
 impl Glyph {
@@ -47,6 +51,7 @@ impl Glyph {
             Glyph::Drive => "drive",
             Glyph::Bluetooth => "bluetooth",
             Glyph::Printer => "printer",
+            Glyph::Key => "key",
         }
     }
 }
@@ -81,9 +86,31 @@ impl Field {
     }
 }
 
+/// One of a list to choose from: its answer is "choice", <id>. A choice
+/// heads a section when its <section> is not the one before's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Choice {
+    pub id: String,
+    pub label: String,
+    pub detail: String,
+    /// The card's name for its glyph: "monitor", "window", "region".
+    pub glyph: String,
+    pub section: String,
+}
+
+/// A switch: its answer is "true" or "false" under <id>.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Toggle {
+    pub id: String,
+    pub label: String,
+    pub value: bool,
+}
+
 /// A question: <title> on the tab above the card; on the card <code> large
-/// (a pairing's digits) and <text> under it, and the fields. With no field,
-/// the card answers with Cancel or <accept>.
+/// (a pairing's digits) and <text> under it, the fields, a list to choose
+/// one of (<chosen> at first, else the first) and the switches. With no
+/// field, the card answers with Cancel (in <cancel>'s words, when given) or
+/// <accept>; <alone>, with <accept> only (a message).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ask {
     pub glyph: Glyph,
@@ -92,6 +119,11 @@ pub struct Ask {
     pub code: String,
     pub fields: Vec<Field>,
     pub accept: String,
+    pub cancel: String,
+    pub alone: bool,
+    pub choices: Vec<Choice>,
+    pub chosen: String,
+    pub toggles: Vec<Toggle>,
 }
 
 impl Ask {
@@ -103,6 +135,11 @@ impl Ask {
             code: String::new(),
             fields: Vec::new(),
             accept: String::new(),
+            cancel: String::new(),
+            alone: false,
+            choices: Vec::new(),
+            chosen: String::new(),
+            toggles: Vec::new(),
         }
     }
 
@@ -120,14 +157,45 @@ impl Ask {
                 )
             })
             .collect();
+        let choices: Vec<String> = self
+            .choices
+            .iter()
+            .map(|c| {
+                format!(
+                    r#"{{"id":{},"label":{},"detail":{},"glyph":{},"section":{}}}"#,
+                    quote(&c.id),
+                    quote(&c.label),
+                    quote(&c.detail),
+                    quote(&c.glyph),
+                    quote(&c.section)
+                )
+            })
+            .collect();
+        let toggles: Vec<String> = self
+            .toggles
+            .iter()
+            .map(|t| {
+                format!(
+                    r#"{{"id":{},"label":{},"value":{}}}"#,
+                    quote(&t.id),
+                    quote(&t.label),
+                    t.value
+                )
+            })
+            .collect();
         format!(
-            r#"{{"type":"ask","glyph":{},"title":{},"text":{},"code":{},"fields":[{}],"accept":{}}}"#,
+            r#"{{"type":"ask","glyph":{},"title":{},"text":{},"code":{},"fields":[{}],"accept":{},"cancel":{},"alone":{},"choices":[{}],"chosen":{},"toggles":[{}]}}"#,
             quote(self.glyph.name()),
             quote(&self.title),
             quote(&self.text),
             quote(&self.code),
             fields.join(","),
-            quote(&self.accept)
+            quote(&self.accept),
+            quote(&self.cancel),
+            self.alone,
+            choices.join(","),
+            quote(&self.chosen),
+            toggles.join(",")
         )
     }
 }
@@ -197,6 +265,12 @@ impl Dialog {
                 _ => continue,
             }
         }
+    }
+
+    /// Another question on the same card, from the start: a prompt whose
+    /// asker changed it (gpg asking again with new words).
+    pub fn ask(&mut self, ask: &Ask) -> io::Result<()> {
+        self.send(&ask.line())
     }
 
     /// The answer did not do: the card shakes, says <text>, and is answered

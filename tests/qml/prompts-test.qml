@@ -205,6 +205,52 @@ ShellRoot {
       function () { return test.heardA.length === 4 },
       function () {
         check(test.heardA[3] === '{"type":"cancel"}', "which cancels")
+        check(m(JSON.stringify({ type: "ask", choices: [{ id: "a" }, { id: "a" }, { id: "b" }], chosen: "z", toggles: [{ id: "choice" }, { id: "t", value: true }] })).chosen === "a",
+          "a list keeps each id once, and chooses the first when what is chosen is not in it")
+        check(m(JSON.stringify({ type: "ask", toggles: [{ id: "choice" }, { id: "t", value: true }] })).toggles.map(function (t) { return t.id + t.value }).join() === "ttrue",
+          "a switch may not take the choice's name")
+        check(m('{"type":"ask","alone":true}').alone === false && m('{"type":"ask"}').cancel === "Cancel", "a message needs its one answer; Cancel is Cancel unless the duty says")
+        dutyA.connected = true
+      },
+      function () { return dutyA.connected },
+      function () {
+        say(dutyA, { type: "ask", glyph: "share", title: "Share your screen", text: "", code: "", fields: [], accept: "Share", cancel: "Not Now",
+          choices: [{ id: "screen:eDP-1", label: "Built-in display", detail: "2560 × 1600", glyph: "monitor", section: "Screens" },
+                    { id: "screen:DP-1", label: "Dell U2723QE", detail: "3840 × 2160", glyph: "monitor", section: "Screens" },
+                    { id: "window:93", label: "Notes", detail: "foot", glyph: "window", section: "Windows" }],
+          chosen: "screen:DP-1", toggles: [{ id: "remember", label: "Allow it again without asking", value: false }] })
+      },
+      function () { return surface().visible && shownText("Dell U2723QE  ·  3840 × 2160") },
+      function () {
+        check(shownText("Screens") && shownText("Windows") && shownText("Notes  ·  foot"), "a list in sections, each named once")
+        check(shownText("Not Now") && shownText("Share") && shownText("Allow it again without asking"), "Cancel in the duty's words, its answer, and the switch")
+        check(prompts.chosenId === "screen:DP-1", "what the duty chose is chosen")
+        prompts.chooseNext(1)
+        prompts.chooseNext(1)
+        check(prompts.chosenId === "window:93", "the arrows go down the list, and stop at its end")
+        prompts.chooseNext(-1)
+        prompts.flip(0)
+        prompts.choose(1)
+      },
+      function () { return test.heardA.length === 5 },
+      function () {
+        check(test.heardA[4] === '{"type":"answer","values":{"choice":"screen:DP-1","remember":"true"}}', "the answer is the choice and the switch")
+        say(dutyA, { type: "done" })
+      },
+      function () { return !dutyA.connected },
+      function () { dutyA.connected = true },
+      function () { return dutyA.connected },
+      function () {
+        say(dutyA, { type: "ask", glyph: "key", title: "Passphrase", text: "The key was imported.", code: "", fields: [], accept: "OK", alone: true })
+      },
+      function () { return surface().visible && shownText("The key was imported.") },
+      function () {
+        check(shownText("OK") && !shownText("Cancel"), "a message has its one answer")
+        prompts.cancel()
+      },
+      function () { return test.heardA.length === 6 },
+      function () {
+        check(test.heardA[5] === '{"type":"answer","values":{}}', "and Escape gives it")
       }
     ]
     next.start()

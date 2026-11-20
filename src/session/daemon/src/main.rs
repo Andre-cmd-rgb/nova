@@ -27,6 +27,7 @@ mod displays;
 mod hypr;
 mod idle;
 mod json;
+mod pinentry;
 mod printing;
 mod prompt;
 mod sleep;
@@ -84,6 +85,15 @@ const SIGINT: c_int = 2;
 const SIGTERM: c_int = 15;
 
 fn main() {
+    // The same program answers for gpg-agent under another name: one copy
+    // of the card's code, and no program more to keep in memory.
+    let called = std::env::args_os()
+        .next()
+        .map(std::path::PathBuf::from)
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()));
+    if called.as_deref() == Some("nova-pinentry") {
+        std::process::exit(pinentry::main());
+    }
     let ctx = match Context::from_env() {
         Ok(ctx) => ctx,
         Err(e) => {

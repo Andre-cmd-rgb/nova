@@ -1,0 +1,9 @@
+# shellcheck shell=bash
+# Sourced by Arch's /usr/bin/pinentry, pinentry's own wrapper, before it
+# chooses a pinentry for gpg-agent: Nova's asks on the shell's card (the
+# drive passphrase's) while a Nova shell listens for questions. It hands
+# back, NOVA_PINENTRY=off, when no shell answers, and the wrapper chooses
+# as it always does.
+if [[ ${NOVA_PINENTRY:-} != off && -S ${XDG_RUNTIME_DIR:-/run/user/$EUID}/nova/prompts.sock && -x /usr/lib/nova/bin/nova-pinentry ]]; then
+  exec /usr/lib/nova/bin/nova-pinentry "$@"
+fi

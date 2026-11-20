@@ -17,10 +17,14 @@ import "PromptsModel.js" as Model
 // One card at a time: a second dialog waits for the first to end. The card
 // has the question's title on a tab above it, and on it the fields to type
 // in, or a code to compare and the answers Cancel and the duty's own, or
-// Cancel alone while the duty waits (a code typed on the other device).
-// Return answers, Escape cancels, Tab goes to the next field. Answered, it says
-// "Checking..." until the duty says it is done, or that the answer was
-// wrong: then it shakes, in the error colours, its secret fields emptied.
+// Cancel alone while the duty waits (a code typed on the other device), or
+// the duty's answer alone (a message). It may have a list to choose one of,
+// in sections (a screen or a window to share), and a switch or two under it
+// (unlock this keyring at login). Return answers, Escape cancels, Tab goes to
+// the next field; the arrows up and down choose in the list, and Space turns
+// the switch. Answered, it says "Checking..." until the duty says it is done,
+// or that the answer was wrong: then it shakes, in the error colours, its
+// secret fields emptied.
 //
 // What is typed is only ever the fields' text. It goes to the duty on Return
 // and the secret fields are emptied then, and whenever a question starts or
@@ -51,11 +55,20 @@ Item {
   property string wrongText: ""
   // The answer to a yes or no under the pointer or the arrows: 0 Cancel, 1 the duty's.
   property int choice: 1
+  // What is chosen in the list, by id, and how each switch is.
+  property string chosenId: ""
+  property var toggleStates: []
   property bool leaving: false
   property int shake: 0
 
   readonly property bool shown: ask !== null && (current !== null || leaving)
   readonly property var fields: ask ? ask.fields : []
+  readonly property var choices: ask ? ask.choices : []
+  readonly property var toggles: ask ? ask.toggles : []
+  readonly property int chosenIndex: {
+    for (var i = 0; i < choices.length; i++) if (choices[i].id === chosenId) return i
+    return -1
+  }
   readonly property color tint: wrong ? colors.textError : colors.accent
   readonly property color ink: wrong ? colors.textError : colors.text
   readonly property bool hasText: ask !== null && ask.text !== ""
@@ -63,7 +76,7 @@ Item {
   // A yes or no has the duty's answer as well as Cancel; a wait, Cancel alone.
   readonly property bool hasAccept: ask !== null && ask.accept !== ""
 
-  readonly property int cardWidth: Math.min(Style.space(hasCode || fields.length === 0 ? 380 : 340),
+  readonly property int cardWidth: Math.min(Style.space(choices.length > 0 ? 440 : hasCode || fields.length === 0 ? 380 : 340),
     Math.max(Style.space(260), surface.width - Style.gapsOut * 2))
 
   // The next dialog's question at once; with none, the card lingers a
@@ -113,6 +126,8 @@ Item {
     wrongFor.stop()
     ask = current.ask
     choice = hasAccept ? 1 : 0
+    chosenId = ask.chosen
+    toggleStates = ask.toggles.map(function (t) { return t.value })
     Qt.callLater(takeKeys)
   }
 
@@ -153,7 +168,7 @@ Item {
       takeKeys()
       return
     }
-    current.write(Model.answerLine(fields, typed))
+    current.write(Model.answerLine(fields, typed, choices.length > 0 ? chosenId : "", toggles, toggleStates))
     current.flush()
     checking = true
     for (var i = 0; i < fieldLines.count; i++) {
@@ -165,6 +180,11 @@ Item {
 
   function cancel() {
     if (!current) return
+    // A message has one answer, which Escape gives too.
+    if (ask && ask.alone) {
+      answer()
+      return
+    }
     var dialog = current
     dialog.write(Model.cancelLine())
     dialog.flush()
@@ -174,7 +194,22 @@ Item {
 
   function choose(which) {
     if (which === 1 && hasAccept) answer()
-    else if (which === 0) cancel()
+    else if (which === 0 && !(ask && ask.alone)) cancel()
+  }
+
+  // The next or the one before in the list, kept in view.
+  function chooseNext(step) {
+    if (choices.length === 0 || checking) return
+    var at = Math.max(0, Math.min(choices.length - 1, chosenIndex + step))
+    chosenId = choices[at].id
+    choiceList.positionViewAtIndex(at, ListView.Contain)
+  }
+
+  function flip(which) {
+    if (which < 0 || which >= toggles.length || checking) return
+    var next = toggleStates.slice()
+    next[which] = !next[which]
+    toggleStates = next
   }
 
   function refused(text) {
@@ -322,7 +357,16 @@ Item {
           case Qt.Key_Tab:
           case Qt.Key_Backtab:
             if (root.fields.length > 0) return
-            if (root.hasAccept) root.choice = 1 - root.choice
+            if (root.hasAccept && !root.ask.alone) root.choice = 1 - root.choice
+            break
+          case Qt.Key_Up:
+          case Qt.Key_Down:
+            if (root.choices.length === 0) return
+            root.chooseNext(event.key === Qt.Key_Down ? 1 : -1)
+            break
+          case Qt.Key_Space:
+            if (root.toggles.length === 0) return
+            root.flip(0)
             break
           default:
             return
@@ -473,6 +517,132 @@ Item {
             }
           }
 
+          // One of a list, in sections: a heading over the first of each.
+          ListView {
+            id: choiceList
+            width: parent.width
+            visible: root.choices.length > 0
+            height: visible ? Math.min(contentHeight, Style.space(330)) : 0
+            clip: true
+            interactive: contentHeight > height
+            boundsBehavior: Flickable.StopAtBounds
+            model: root.choices
+
+            delegate: Column {
+              id: entry
+              required property var modelData
+              required property int index
+              readonly property bool chosen: root.chosenId === modelData.id
+              width: choiceList.width
+
+              Text {
+                width: parent.width
+                visible: entry.modelData.section !== "" && (entry.index === 0 || root.choices[entry.index - 1].section !== entry.modelData.section)
+                height: visible ? Style.space(26) : 0
+                verticalAlignment: Text.AlignBottom
+                bottomPadding: Style.space(4)
+                textFormat: Text.PlainText
+                text: entry.modelData.section
+                color: root.colors.text
+                opacity: 0.55
+                font.family: root.family
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              Rectangle {
+                width: parent.width
+                height: Style.space(38)
+                radius: Style.cornerRadius
+                color: entry.chosen ? Util.alpha(root.colors.accent, 0.2) : pointer.containsMouse ? Util.alpha(root.colors.text, 0.06) : "transparent"
+                border.width: entry.chosen ? Style.normalBorderWidth : 0
+                border.color: root.colors.accent
+
+                Text {
+                  id: mark
+                  x: Style.space(10)
+                  width: Style.space(22)
+                  anchors.verticalCenter: parent.verticalCenter
+                  horizontalAlignment: Text.AlignHCenter
+                  textFormat: Text.PlainText
+                  text: entry.modelData.glyph ? Model.glyph(entry.modelData.glyph) : ""
+                  color: entry.chosen ? root.colors.accent : root.colors.text
+                  font.family: root.family
+                  font.pixelSize: Style.font.body
+                }
+
+                Text {
+                  anchors.left: mark.right
+                  anchors.leftMargin: Style.space(10)
+                  anchors.right: parent.right
+                  anchors.rightMargin: Style.space(10)
+                  anchors.verticalCenter: parent.verticalCenter
+                  textFormat: Text.PlainText
+                  text: entry.modelData.label + (entry.modelData.detail ? "  ·  " + entry.modelData.detail : "")
+                  color: entry.chosen ? root.colors.accent : root.colors.text
+                  elide: Text.ElideRight
+                  font.family: root.family
+                  font.pixelSize: Style.font.bodySmall
+                }
+
+                MouseArea {
+                  id: pointer
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: if (!root.checking) root.chosenId = entry.modelData.id
+                  onDoubleClicked: {
+                    if (root.checking) return
+                    root.chosenId = entry.modelData.id
+                    root.answer()
+                  }
+                }
+              }
+            }
+          }
+
+          // A switch or two, with what each is for.
+          Repeater {
+            model: root.toggles
+
+            Item {
+              id: switchLine
+              required property var modelData
+              required property int index
+              width: parent.width
+              height: Style.space(36)
+
+              ToggleSwitch {
+                id: knob
+                anchors.left: parent.left
+                anchors.verticalCenter: parent.verticalCenter
+                checked: root.toggleStates[switchLine.index] === true
+                foreground: root.colors.text
+                onToggled: root.flip(switchLine.index)
+              }
+
+              Text {
+                anchors.left: knob.right
+                anchors.leftMargin: Style.space(10)
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                textFormat: Text.PlainText
+                text: switchLine.modelData.label
+                wrapMode: Text.WordWrap
+                color: root.colors.text
+                font.family: root.family
+                font.pixelSize: Style.font.bodySmall
+              }
+
+              MouseArea {
+                anchors.fill: parent
+                anchors.leftMargin: knob.width
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.flip(switchLine.index)
+              }
+            }
+          }
+
           // A yes or no: Cancel, and the duty's answer, chosen at first.
           Row {
             anchors.right: parent.right
@@ -480,7 +650,7 @@ Item {
             topPadding: Style.space(6)
             spacing: Style.space(10)
 
-            Answer { which: 0; label: "Cancel" }
+            Answer { which: 0; label: root.ask ? root.ask.cancel : "Cancel"; visible: !(root.ask && root.ask.alone) }
             Answer {
               which: 1
               visible: root.hasAccept
