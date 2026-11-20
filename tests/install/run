@@ -8,7 +8,7 @@
 #
 # --upgrade installs the newest published release older than --release, from
 # its signed ISO and its own packages. Four boots check it, update to --release,
-# downgrade, and restore the pre-update root snapshot. It needs python and
+# downgrade, and restore the pre-update root snapshot. It needs socat and
 # openssl too, for the guest's HTTPS repository (upgrade-lib).
 #
 # --encrypt installs onto an encrypted disk (encrypt=yes), opened at the first

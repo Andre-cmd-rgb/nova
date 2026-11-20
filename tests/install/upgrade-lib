@@ -75,40 +75,23 @@ start_upgrade_repo() { # work repo
   printf 'subjectAltName=IP:10.0.2.2\nextendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n' >"$work/server.ext"
   openssl x509 -req -days 2 -in "$work/server.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" \
     -CAcreateserial -extfile "$work/server.ext" -out "$work/server.crt" >>"$work/tls.log" 2>&1 || return 1
-  python3 - "$repo" "$work" >"$work/repo.log" 2>&1 <<'PY' &
-import functools
-import http.server
-import pathlib
-import ssl
-import sys
-
-
-class Handler(http.server.SimpleHTTPRequestHandler):
-    # The handshake in the connection's own thread, and bounded: done in
-    # accept(), one client that stalls would hold up every other.
-    timeout = 60
-
-    def setup(self):
-        self.request.settimeout(self.timeout)
-        self.request.do_handshake()
-        super().setup()
-
-
-repo, work = sys.argv[1], pathlib.Path(sys.argv[2])
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(Handler, directory=repo))
-context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-context.load_cert_chain(work / "server.crt", work / "server.key")
-server.socket = context.wrap_socket(server.socket, server_side=True, do_handshake_on_connect=False)
-(work / "repo.port").write_text(str(server.server_port))
-server.serve_forever()
-PY
-  repo_pid=$!
-  for ((i = 0; i < 100; i++)); do
-    [[ -s $work/repo.port ]] && break
-    kill -0 "$repo_pid" 2>/dev/null || return 1
-    sleep 0.1
+  # socat takes each connection in a process of its own (fork), which does
+  # the TLS handshake and answers in repo-responder: one client that stalls
+  # holds up none of the others, and parallel downloads go side by side. A
+  # port is picked at random, and another if socat finds it taken.
+  local dir port try
+  dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+  for ((try = 0; try < 20; try++)); do
+    port=$((20000 + RANDOM % 20000))
+    socat -T 60 "OPENSSL-LISTEN:$port,bind=127.0.0.1,reuseaddr,fork,cert=$work/server.crt,key=$work/server.key,verify=0" \
+      "EXEC:$dir/repo-responder $repo" >"$work/repo.log" 2>&1 &
+    repo_pid=$!
+    sleep 0.3
+    kill -0 "$repo_pid" 2>/dev/null && break
+    repo_pid=''
   done
-  [[ -s $work/repo.port ]] || return 1
+  [[ -n $repo_pid ]] || return 1
+  echo "$port" >"$work/repo.port"
   upgrade_repo=https://10.0.2.2:$(cat "$work/repo.port")
   curl -fsS --noproxy '*' --max-time 10 --cacert "$work/ca.crt" \
     --connect-to "10.0.2.2:$(cat "$work/repo.port"):127.0.0.1:$(cat "$work/repo.port")" \

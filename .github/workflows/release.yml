@@ -523,7 +523,7 @@ jobs:
           tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}" qemu-base qemu-ui-gtk qemu-ui-opengl \
             qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl qemu-hw-display-virtio-vga \
             qemu-hw-display-virtio-vga-gl virglrenderer mesa xorg-server-xvfb edk2-ovmf mtools dosfstools libarchive \
-            python openssl jq
+            socat openssl jq
           # 45 minutes to install, 30 each to update and downgrade, 15 each
           # for the restore and its boot. The outer limit bounds downloads too.
           TMPDIR=/mnt timeout 150m tests/install/run --upgrade --repo out/repo --release release.toml \
