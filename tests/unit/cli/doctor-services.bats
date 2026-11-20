@@ -137,6 +137,13 @@ services() { "$REPO_ROOT/src/cli/bin/nova-doctor-services"; }
   [ "$(told)" = 0 ]
 }
 
+@test "the boot menu's snapshots failing is said, as Nova's own are" {
+  failing system limine-snapper-sync.service
+  services
+  [ "$(told)" = 1 ]
+  grep -q "The boot menu's snapshots stopped" "$CALLS"
+}
+
 @test "a notification that could not be sent is said at the next run" {
   failing system nova-battery-limit.service
   stub nova-notification-send 'exit 1'

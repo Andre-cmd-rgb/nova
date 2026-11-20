@@ -12,7 +12,9 @@
 # after is new, and is said again.
 #
 # What it looks at: Nova's own units, the system's and this user's, in the
-# failed state. A unit stopped, disabled or masked is not failed, so a service
+# failed state, and limine-snapper-sync, which puts Nova's snapshots in the boot
+# menu (its own notifier, which followed the whole system log all day for it,
+# is not started on Nova: data/systemd/install.mk). A unit stopped, disabled or masked is not failed, so a service
 # turned off on purpose is never said. Nor are the units a command starts for a
 # moment (transient ones: an update, Caffeine's hold on the lid), nor AirDrop's
 # receiver, which the person who just turned AirDrop on hears about from
@@ -42,6 +44,7 @@ name_of() { # unit
     nova-keyring-migrate.service) echo "moving your secrets into the login keyring" ;;
     nova-session-guard.service) echo "the session's guard" ;;
     nova-recover-internal-monitor.service) echo "turning the laptop's display back on" ;;
+    limine-snapper-sync.service) echo "the boot menu's snapshots" ;;
     *) echo "Nova's service ${1%.*}" ;;
   esac
 }
@@ -52,10 +55,11 @@ failed() {
   local scope unit
   for scope in --system --user; do
     while read -r unit _; do
-      [[ $unit == nova-* && $unit != nova-airdrop@* && $unit != nova-doctor-services.* ]] || continue
+      [[ ($unit == nova-* || $unit == limine-snapper-sync.service) && $unit != nova-airdrop@* &&
+        $unit != nova-doctor-services.* ]] || continue
       [[ $(systemctl "$scope" show --property=Transient --value -- "$unit" 2>/dev/null) != yes ]] || continue
       printf '%s %s\n' "$scope" "$unit"
-    done < <(systemctl "$scope" list-units --state=failed --plain --no-legend --no-pager 'nova-*' 2>/dev/null || true)
+    done < <(systemctl "$scope" list-units --state=failed --plain --no-legend --no-pager 'nova-*' limine-snapper-sync.service 2>/dev/null || true)
   done
 }
 

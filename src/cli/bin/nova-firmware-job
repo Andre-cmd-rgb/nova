@@ -64,6 +64,12 @@ finish() {
   if ((result != 0)); then
     change_state '.running = false | .error = (if .error == "" then "The firmware update failed. Check again." else .error end)'
   fi
+  # fwupd stays loaded for two hours after a request (its IdleTimeout), 55 MB
+  # for one check. This job is what woke it, so it lets it go: fwupd refuses
+  # while an update is being written, and D-Bus starts it again at the next
+  # request. Nova's polkit rule lets the session's user ask without a password
+  # (data/firmware/50-nova-fwupd-quit.rules).
+  fwupdmgr quit </dev/null >/dev/null 2>&1 || true
 }
 trap finish EXIT
 trap 'exit 1' TERM INT HUP

@@ -69,6 +69,20 @@ teardown() { teardown_scratch; }
   jq -e '.running | not' "$XDG_RUNTIME_DIR/nova/firmware.json"
 }
 
+@test "fwupd is let go when a check or an install is over, never during one" {
+  "$job" run check
+  [ "$(tail -1 "$FW_LOG")" = quit ]
+  [ "$(grep -c '^quit$' "$FW_LOG")" = 1 ]
+  : >"$FW_LOG"
+  run "$job" run install abc123
+  [ "$status" -eq 0 ]
+  [ "$(tail -1 "$FW_LOG")" = quit ]
+  [ "$(grep -c '^quit$' "$FW_LOG")" = 1 ]
+  : >"$FW_LOG"
+  CHECK_STATUS=1 run "$job" run check
+  [ "$(tail -1 "$FW_LOG")" = quit ]
+}
+
 @test "firmware installation records progress, success and reboot" {
   "$job" run check
   run "$job" run install abc123

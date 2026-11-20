@@ -22,7 +22,8 @@ This document is the contract every component follows. Read it before adding cod
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
 | `data/session/` | `/usr/lib/systemd/user/`, `/etc/pam.d/`, `/etc/sudoers.d/`, `/etc/xdg-desktop-portal/`, `/usr/share/uwsm/env.d/`, `/usr/share/nova/{session,greeter}/` | greetd (a config template the installer renders), the greeter, PAM, uwsm env, session guard, keyring, the desktop portals (gnome-keyring's for a Flatpak app's secrets) |
 | `data/boot/` | `/etc/mkinitcpio.conf.d/`, `/etc/limine-entry-tool.d/`, `/usr/share/snapper/config-templates/`, pacman hooks | Boot chain drop-ins and the boot-entry guards |
-| `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy |
+| `data/systemd/` | `/usr/lib/systemd/user/`, `/usr/lib/systemd/{logind,sleep}.conf.d/` | Session user units; logind and sleep policy; the package autostarts Nova turns off (masked) |
+| `data/firmware/` | `/usr/share/polkit-1/rules.d/` | the rule that lets nova-firmware-job tell fwupd to quit after a check |
 | `data/audio/` | `/usr/share/nova/default/audio/` | Speaker tunings, matched to the machine by `nova-audio-tuning` |
 | `data/battery/` | `/usr/lib/nova/bin/`, `/usr/lib/nova/`, a udev rule, a system unit, a polkit action, a UPower drop-in | The charge limit, and what UPower does at the battery's end |
 | `data/browser/` | `/usr/lib/nova/`, Chrome's and Chromium's managed policies, a system path unit | Chrome's toolbar in the theme's color |

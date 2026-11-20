@@ -1,0 +1,13 @@
+// fwupd stays loaded for two hours after any request. nova-firmware-job, which
+// is what wakes it on Nova (Settings → Updates), asks it to quit when its check
+// or install is over. fwupd's own policy wants an administrator's password for
+// that, as for anything that stops a service; quitting fwupd is harmless, since
+// it refuses while an update is being written and D-Bus starts it again at the
+// next request. So the person at the computer may, as fwupd's own rule lets
+// them update internal firmware: active, local, an administrator (wheel).
+polkit.addRule(function (action, subject) {
+  if (action.id == "org.freedesktop.fwupd.quit" &&
+      subject.active && subject.local && subject.isInGroup("wheel")) {
+    return polkit.Result.YES;
+  }
+});
