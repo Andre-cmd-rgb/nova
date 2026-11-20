@@ -8,10 +8,11 @@ import Quickshell.Io
 import "plugins/preview" as Preview
 
 // Quick Look's window: a text read as its first part, a folder with its
-// count, another file shown in place with a size of its own, the calls it
-// makes to nova-previewer for a selection and for being closed, and Return,
-// which opens the file and closes the window. gdbus and gio are recorded,
-// not run.
+// count, another file shown in place with a size of its own, a large
+// picture decoded at the room's size and a small one at its own, the calls
+// it makes to nova-previewer for a selection and for being closed, and
+// Return, which opens the file and closes the window. gdbus and gio are
+// recorded, not run.
 ShellRoot {
   id: test
 
@@ -66,7 +67,10 @@ ShellRoot {
 
   Process {
     id: make
-    command: ["sh", "-c", "printf 'first\\tline\\nsecond\\n' >\"$HOME/notes.txt\""]
+    // Two bitmaps Qt reads (PBM): 4000 by 3000 and 300 by 200, all white.
+    command: ["sh", "-c", "printf 'first\\tline\\nsecond\\n' >\"$HOME/notes.txt\" && "
+      + "{ printf 'P4\\n4000 3000\\n'; head -c 1500000 /dev/zero; } >\"$HOME/large.pbm\" && "
+      + "{ printf 'P4\\n300 200\\n'; head -c 7600 /dev/zero; } >\"$HOME/small.pbm\""]
   }
 
   property var steps: []
@@ -116,6 +120,28 @@ ShellRoot {
         check(note("stuff") && note("4 items"), "a folder: its name, and how many items")
         check(preview.head === "", "the text of the file before is gone")
         check(window().implicitWidth < textSize.width, "and the window is the size of the folder's page, not the text's")
+        var home = Quickshell.env("HOME")
+        preview.open(request({ uri: "file://" + home + "/large.pbm", path: home + "/large.pbm", name: "large.pbm", mime: "image/x-portable-bitmap", kind: "image", seq: 3 }))
+      },
+      function () { return preview.pictured },
+      function () {
+        var cap = preview.picture.sourceSize
+        var w = preview.picture.implicitWidth
+        var h = preview.picture.implicitHeight
+        check(w <= cap.width && h <= cap.height && (w === cap.width || h === cap.height),
+          "a large picture is decoded as large as the room in the screen's pixels, no larger (" + w + "x" + h + ")")
+        check(Math.abs(w / h - 4 / 3) < 0.01, "and keeps its proportions")
+        check(Math.abs(preview.picture.width / preview.picture.height - 4 / 3) < 0.01, "and is drawn at them")
+        var home = Quickshell.env("HOME")
+        preview.open(request({ uri: "file://" + home + "/small.pbm", path: home + "/small.pbm", name: "small.pbm", mime: "image/x-portable-bitmap", kind: "image", seq: 4 }))
+      },
+      function () { return preview.pictured && preview.info.name === "small.pbm" },
+      function () {
+        check(preview.picture.implicitWidth === 300 && preview.picture.implicitHeight === 200, "a small picture is decoded at its own size, never more")
+        preview.open(request({ uri: "file:///stuff", path: "/stuff", name: "stuff", kind: "folder", type: "Folder", items: 4, seq: 2 }))
+      },
+      function () { return !preview.pictured },
+      function () {
         preview.select(5)
       },
       function () { return called("gdbus call --session --dest org.gnome.NautilusPreviewer --object-path /org/gnome/NautilusPreviewer --method org.nova.Previewer.Select 5") },

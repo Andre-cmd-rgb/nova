@@ -46,14 +46,21 @@ Item {
     if (info.kind === "image" && !converted && info.path !== "") return "file://" + info.path
     return thumb !== "" ? "file://" + thumb : ""
   }
+  // A GIF or a WebP may move, and is shown as an animation; every other
+  // picture is decoded no larger than the window can be on this screen.
+  readonly property bool moving: kind === "image" && !converted && info !== null
+    && (info.mime === "image/gif" || info.mime === "image/webp")
+  readonly property Item picture: moving ? movingPicture : stillPicture
   readonly property bool pictured: (kind === "image" || kind === "pdf" || kind === "video" || kind === "audio")
     && picture.status === Image.Ready
   readonly property bool texted: kind === "text" && head !== ""
   readonly property string iconSource: info ? Model.iconFor(info.icon, function (name) { return Quickshell.iconPath(name, true) }) : ""
 
   // The room on the focused screen, as the App Center takes it: what Hyprland
-  // gives a window to fill, less a margin.
+  // gives a window to fill, less a margin; and its scale, by which the room
+  // is that many of the screen's pixels.
   property size room: Qt.size(Style.space(1100), Style.space(700))
+  property real roomScale: 2
 
   readonly property real headerHeight: Style.space(34)
   readonly property size stage: Model.stage(kind, pictured ? Qt.size(picture.implicitWidth, picture.implicitHeight) : Qt.size(0, 0),
@@ -117,6 +124,7 @@ Item {
     for (var i = 0; i < screens.length; i++) {
       if (screens[i].name === name) {
         room = Qt.size(Math.round(screens[i].width * 0.86), Math.round(screens[i].height * 0.86))
+        roomScale = Hyprland.focusedMonitor.scale > 0 ? Hyprland.focusedMonitor.scale : 1
         return
       }
     }
@@ -144,6 +152,14 @@ Item {
     thumbProc.command = [Quickshell.shellPath("plugins/preview/bin/thumb"), thumbWanted.kind, thumbWanted.path]
     thumbWanted = null
     thumbProc.running = true
+  }
+
+  // A picture Qt could not read as the file is: libvips makes one it can.
+  function unreadable(status) {
+    if (status === Image.Error && kind === "image" && !converted && info && info.path !== "") {
+      converted = true
+      makeThumb("image")
+    }
   }
 
   function readHead() {
@@ -179,8 +195,8 @@ Item {
   }
 
   // Quick Look stays loaded, so that Space shows a file at once, and with it
-  // the last file shown: its picture decoded whole, some 100 MB for a
-  // camera's photo, kept for a window that is shut. Shut for two minutes, as
+  // the last file shown: its picture, up to a screen's worth (an animation
+  // decoded whole), kept for a window that is shut. Shut for two minutes, as
   // the image picker lets its slices go, it lets the file go too; the next
   // one opened is read as a new file is.
   Timer {
@@ -257,25 +273,46 @@ Item {
         anchors.bottom: parent.bottom
         clip: true
 
-        // A picture: an image, a page, a frame, a cover.
+        // A picture: an image, a page, a frame, a cover. Decoded at most as
+        // large as the room, in the screen's pixels: a camera's photo is a
+        // screen's worth, some 25 MB, not the 100 MB of its own size, and as
+        // sharp, as the window is never larger than the room. Smaller than
+        // that, it is decoded at its own size, never more, and the window
+        // takes its size from it. Drawn at its own proportions, fitted to the
+        // window, so that it is never stretched while the window takes a new
+        // file's size. Turned as the camera says it was held.
+        Image {
+          id: stillPicture
+          readonly property real fit: implicitWidth > 0 && implicitHeight > 0
+            ? Math.min(parent.width / implicitWidth, parent.height / implicitHeight) : 1
+          anchors.centerIn: parent
+          width: implicitWidth * fit
+          height: implicitHeight * fit
+          visible: !root.moving && (root.kind === "image" || root.kind === "pdf" || root.kind === "video" || root.kind === "audio")
+          source: root.moving ? "" : root.pictureSource
+          sourceSize: Qt.size(Math.round(root.room.width * root.roomScale), Math.round((root.room.height - root.headerHeight) * root.roomScale))
+          autoTransform: true
+          asynchronous: true
+          cache: false
+          smooth: true
+          // Qt cannot read this image: libvips makes one it can.
+          onStatusChanged: root.unreadable(status)
+        }
+
+        // A GIF or a WebP, whole, as an animation is: Qt decodes its frames
+        // at the size asked, the picture's proportions or not.
         AnimatedImage {
-          id: picture
+          id: movingPicture
           anchors.fill: parent
-          visible: root.kind === "image" || root.kind === "pdf" || root.kind === "video" || root.kind === "audio"
-          source: root.pictureSource
+          visible: root.moving
+          source: root.moving ? root.pictureSource : ""
           fillMode: Image.PreserveAspectFit
           asynchronous: true
           cache: false
           smooth: true
           // An animation moves on only while it is seen.
           playing: window.visible
-          // Qt cannot read this image: libvips makes one it can.
-          onStatusChanged: {
-            if (status === Image.Error && root.kind === "image" && !root.converted && root.info.path !== "") {
-              root.converted = true
-              root.makeThumb("image")
-            }
-          }
+          onStatusChanged: root.unreadable(status)
         }
 
         // A text's first part.
