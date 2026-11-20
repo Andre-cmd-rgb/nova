@@ -1,7 +1,7 @@
 # Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
 # Arch's packaging: Caleb Maclennan, ThatOneCalculator, Brenno Lemos, Gabriel Fox
 #
-# hyprland: Arch's Hyprland with two patches.
+# hyprland: Arch's Hyprland with three patches.
 # - xwayland-scale.patch adds the option xwayland:scale. X11 windows are then
 #   drawn at one scale on every display, 1:1 on a display of that scale and
 #   shrunk to the size of one of a lower scale, as GNOME and KDE draw them.
@@ -12,8 +12,13 @@
 #   before its key: without it, a dictation held on Super+D and ended by
 #   letting go of Super first keeps recording until the next press
 #   (data/hypr/keys/dictation.lua).
-# Both are offered to Hyprland (UPSTREAM.md); once a Hyprland release has
-# them, this package goes and Arch's comes back.
+# - xwayland-emulated-modes.patch fullscreens an X11 game at the resolution it
+#   set through RandR (an exclusive fullscreen mode), which XWayland then
+#   scales to the display: without it, the game draws every pixel of the
+#   display whatever resolution it is set to (Minecraft at 1280x720 drew
+#   4800x3000 on the ThinkPad P1's panel).
+# All three are offered to Hyprland (UPSTREAM.md); once a Hyprland release
+# has them, this package goes and Arch's comes back.
 # Upstream: https://github.com/hyprwm/Hyprland, BSD-3-Clause.
 #
 # Arch's PKGBUILD at its packaging commit 77a60031 (0.57.2-1,
@@ -23,7 +28,8 @@
 # and no debug package.
 #
 # pkgrel is Arch's, then Nova's revision of the patches: 1.1 was Arch's
-# 0.57.2-1 with xwayland-scale.patch, 1.2 adds release-bind.patch. pacman
+# 0.57.2-1 with xwayland-scale.patch, 1.2 adds release-bind.patch, 1.3
+# xwayland-emulated-modes.patch. pacman
 # takes a package from the first repository that has it, and [nova] comes
 # first in pacman.conf, so this is the one installed; being newer than Arch's
 # build of the same pkgrel, it replaces Arch's on a system that had it, as an
@@ -35,8 +41,8 @@
 
 pkgname=hyprland
 pkgver=0.57.2
-pkgrel=1.2
-pkgdesc="a highly customizable dynamic tiling Wayland compositor (Nova's build, with xwayland:scale and a release-bind fix)"
+pkgrel=1.3
+pkgdesc="a highly customizable dynamic tiling Wayland compositor (Nova's build, with xwayland:scale, games' own resolutions and a release-bind fix)"
 arch=(x86_64)
 url='https://github.com/hyprwm/Hyprland'
 license=(BSD-3-Clause)
@@ -101,10 +107,12 @@ options=(!debug)
 _archive="Hyprland-$pkgver"
 source=("$_archive.tar.gz::$url/releases/download/v$pkgver/source-v$pkgver.tar.gz"
         xwayland-scale.patch
-        release-bind.patch)
+        release-bind.patch
+        xwayland-emulated-modes.patch)
 sha256sums=('34dbec0738ab88c8228caf89385662688ab1601ea58fbe5c60a6b6ab383db46d'
             '43cad455964609aece7a5066cf4a66ecbfba8ab06a66ec314f525fb2c4ff218d'
-            '0c8a64a127c9684420bcabd780d2e251df6836290a51516f67cbe64253539e63')
+            '0c8a64a127c9684420bcabd780d2e251df6836290a51516f67cbe64253539e63'
+            '119c0a1e14befe760bcfe50db595c891220e0faad184c80b0dc37feae1ecc238')
 
 prepare() {
   ln -sf hyprland-source "$_archive"
@@ -113,6 +121,7 @@ prepare() {
   sed -i -e '/find_package.glaze/s/7...<8 //' {.,hyprpm,start}/CMakeLists.txt
   patch -Np1 -i "$srcdir/xwayland-scale.patch"
   patch -Np1 -i "$srcdir/release-bind.patch"
+  patch -Np1 -i "$srcdir/xwayland-emulated-modes.patch"
 }
 
 build() {
@@ -121,9 +130,11 @@ build() {
 }
 
 check() {
-  # It starts, with every library found, and has the option.
+  # It starts, with every library found, has the option, and reads the modes
+  # games set through RandR.
   "$_archive/build/Hyprland" --version >/dev/null
   grep -qa 'xwayland:scale' "$_archive/build/Hyprland"
+  grep -qa '_XWAYLAND_RANDR_EMU_MONITOR_RECTS' "$_archive/build/Hyprland"
 }
 
 package() {

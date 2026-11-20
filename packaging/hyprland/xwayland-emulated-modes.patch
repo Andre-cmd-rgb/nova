@@ -1,0 +1,229 @@
+xwayland: fullscreen a game at the resolution it set through RandR
+
+An X11 game that changes the resolution through RandR (an exclusive
+fullscreen mode, as SDL's SDL_SetWindowFullscreenMode and Wine set one) gets
+no new mode under XWayland. XWayland tells that client alone that the monitor
+has the mode, and when the client's window is at the monitor's origin and of
+that size, it scales the window up to the whole monitor with wp_viewport,
+input included. It names the modes it emulates in the client's windows'
+_XWAYLAND_RANDR_EMU_MONITOR_RECTS property (x, y, width, height per monitor,
+in X11 coordinates), so that the window manager fullscreens them at that
+size, as Mutter and KWin do.
+
+Hyprland's XWM did not read the property, and fullscreened such a window at
+the monitor's own size: the game drew every pixel of the monitor whatever
+resolution it was set to, and XWayland never scaled it. Minecraft set to
+1280x720 on a 3840x2400 panel at xwayland:scale 2 drew 4800x3000, 15.6 times
+the pixels it asked for.
+
+The XWM now reads the property, at map and as it changes, and a window that
+Hyprland gives the whole of a monitor, as fullscreen does, is configured at
+the size its client set for that monitor. A change of the mode while
+fullscreen is followed at once. A window whose client set no mode, or one
+that does not cover the monitor, is configured as before.
+
+For Nova: packaging/hyprland/PKGBUILD applies this to Hyprland 0.57.2's
+release tarball after xwayland-scale.patch and release-bind.patch (patch
+-Np1); it asks xwaylandSize(), which xwayland-scale.patch adds, for the
+monitor's size in X11 coordinates. packaging/hyprland/UPSTREAM.md is the pull
+request it is offered as.
+
+--- a/src/desktop/view/window/X11Backend.cpp
++++ b/src/desktop/view/window/X11Backend.cpp
+@@ -2,6 +2,7 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <cmath>
+ #include <limits>
+ #include <span>
+ 
+@@ -214,6 +215,11 @@
+     });
+     m_listeners.activate    = surface->m_events.activate.listen([this] { m_events.activationRequest.emit(); });
+     m_listeners.pong        = surface->m_events.pong.listen([this] { m_events.pong.emit(); });
++    // a game changing its resolution while fullscreen is given the new size at once
++    m_listeners.emulatedModes = surface->m_events.emulatedModesChanged.listen([this] {
++        if (const auto WINDOW = m_window.lock(); WINDOW && WINDOW->mapped())
++            WINDOW->sendWindowSize(true);
++    });
+ }
+ 
+ void CX11Backend::attach(PHLWINDOWREF window) {
+@@ -315,6 +321,24 @@
+     return {g_pXWaylandManager->waylandToXWaylandCoords(box.pos(), MONITOR), (box.size().clamp({1, 1}) * SCALE).round()};
+ }
+ 
++// A game that sets its own resolution through RandR (an exclusive fullscreen mode) is told by XWayland that the
++// monitor has that mode, and expects its window to be given that size when fullscreen: XWayland then scales a
++// window of that size at the monitor's origin up to the whole monitor (wp_viewport), and names the mode in
++// _XWAYLAND_RANDR_EMU_MONITOR_RECTS for the window manager, as Mutter and KWin read it. Given the monitor's own
++// size instead, the game draws every pixel of the monitor, and its resolution setting does nothing but cost.
++std::optional<Vector2D> CX11Backend::emulatedModeSize(const std::vector<CBox>& modes, const CBox& clientBox, const CBox& monitorBox) {
++    // only a box that is the whole of the monitor, as fullscreen gives
++    if (clientBox.pos() != monitorBox.pos() || std::abs(clientBox.w - monitorBox.w) > 1 || std::abs(clientBox.h - monitorBox.h) > 1)
++        return std::nullopt;
++
++    for (const auto& mode : modes) {
++        if (mode.pos() == monitorBox.pos() && mode.w > 0 && mode.h > 0)
++            return mode.size();
++    }
++
++    return std::nullopt;
++}
++
+ Vector2D CX11Backend::surfaceLocalToBuffer(const Vector2D& local) const {
+     return local * surfaceScale();
+ }
+@@ -328,7 +352,13 @@
+     if (!SURFACE)
+         return;
+ 
+-    const auto CLIENT_BOX = logicalToClient(logicalBox, preferredMonitor_);
++    const auto MONITOR    = preferredMonitor(preferredMonitor_);
++    auto       CLIENT_BOX = logicalToClient(logicalBox, MONITOR);
++    if (MONITOR && !SURFACE->m_emulatedModes.empty()) {
++        if (const auto MODE = emulatedModeSize(SURFACE->m_emulatedModes, CLIENT_BOX, {MONITOR->m_xwaylandPosition, g_pXWaylandManager->xwaylandSize(MONITOR)}))
++            CLIENT_BOX = {CLIENT_BOX.pos(), *MODE};
++    }
++
+     if (!force && m_pendingReportedSize == CLIENT_BOX.size() && m_reportedPosition == CLIENT_BOX.pos())
+         return;
+ 
+--- a/src/desktop/view/window/X11Backend.hpp
++++ b/src/desktop/view/window/X11Backend.hpp
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+ #include <optional>
++#include <vector>
+ 
+ #include "WindowBackend.hpp"
+ #include "../types/ClientMappable.hpp"
+@@ -45,6 +46,10 @@
+         void                   close() override;
+         void                   ping() override;
+ 
++        // The size a client that set its own resolution through RandR asked for, where clientBox is the whole of the
++        // monitor (fullscreen): modes are its _XWAYLAND_RANDR_EMU_MONITOR_RECTS, all in X11 coordinates
++        static std::optional<Vector2D> emulatedModeSize(const std::vector<CBox>& modes, const CBox& clientBox, const CBox& monitorBox);
++
+       private:
+         void                    attach(PHLWINDOWREF window) override;
+         PHLMONITOR              preferredMonitor(PHLMONITOR monitor) const;
+@@ -82,6 +87,7 @@
+             CHyprSignalListener setGeometry;
+             CHyprSignalListener activate;
+             CHyprSignalListener pong;
++            CHyprSignalListener emulatedModes;
+         } m_listeners;
+     };
+ }
+--- a/src/xwayland/XSurface.hpp
++++ b/src/xwayland/XSurface.hpp
+@@ -60,6 +60,8 @@
+         CSignalT<>     pong;
+ 
+         CSignalT<>     activate;
++
++        CSignalT<>     emulatedModesChanged;
+     } m_events;
+ 
+     struct {
+@@ -96,6 +98,9 @@
+     std::vector<uint32_t>             m_protocols;
+     std::string                       m_role      = "";
+     bool                              m_transient = false;
++    // _XWAYLAND_RANDR_EMU_MONITOR_RECTS: where the client set its own resolution through RandR,
++    // each monitor's position and that resolution, in X11 coordinates
++    std::vector<CBox>                 m_emulatedModes;
+ 
+     bool                              wantsFocus();
+     void                              configure(const CBox& box);
+--- a/src/xwayland/XWM.cpp
++++ b/src/xwayland/XWM.cpp
+@@ -337,6 +337,21 @@
+             XSURF->m_sizeHints->max_width = XSURF->m_sizeHints->max_height = -1;
+     };
+ 
++    auto handleEmulatedModes = [&]() {
++        std::vector<CBox> modes;
++        if (reply->type == XCB_ATOM_CARDINAL && reply->format == 32) {
++            const auto* values = rc<const uint32_t*>(value);
++            for (uint32_t i = 0; i + 3 < reply->value_len; i += 4)
++                modes.emplace_back(values[i], values[i + 1], values[i + 2], values[i + 3]);
++        }
++
++        if (modes == XSURF->m_emulatedModes)
++            return;
++
++        XSURF->m_emulatedModes = std::move(modes);
++        XSURF->m_events.emulatedModesChanged.emit();
++    };
++
+     auto handleWMProtocols = [&]() {
+         if (reply->type != XCB_ATOM_ATOM)
+             return;
+@@ -362,6 +377,8 @@
+         handleSizeHints();
+     else if (atom == HYPRATOMS["WM_PROTOCOLS"])
+         handleWMProtocols();
++    else if (atom == HYPRATOMS["_XWAYLAND_RANDR_EMU_MONITOR_RECTS"])
++        handleEmulatedModes();
+     else {
+         LOG(Log::TRACE, "[xwm] Unhandled prop {} -> {}", atom, propName);
+         return;
+@@ -1190,10 +1207,10 @@
+ }
+ 
+ void CXWM::readWindowData(SP<CXWaylandSurface> surf) {
+-    const std::array<xcb_atom_t, 9> interestingProps = {
++    const std::array<xcb_atom_t, 10> interestingProps = {
+         XCB_ATOM_WM_CLASS,          XCB_ATOM_WM_NAME,          XCB_ATOM_WM_TRANSIENT_FOR,        HYPRATOMS["WM_HINTS"],
+         HYPRATOMS["_NET_WM_STATE"], HYPRATOMS["_NET_WM_NAME"], HYPRATOMS["_NET_WM_WINDOW_TYPE"], HYPRATOMS["WM_NORMAL_HINTS"],
+-        HYPRATOMS["WM_PROTOCOLS"],
++        HYPRATOMS["WM_PROTOCOLS"],  HYPRATOMS["_XWAYLAND_RANDR_EMU_MONITOR_RECTS"],
+     };
+ 
+     for (size_t i = 0; i < interestingProps.size(); i++) {
+--- a/src/xwayland/XWayland.hpp
++++ b/src/xwayland/XWayland.hpp
+@@ -122,6 +122,7 @@
+     HYPRATOM("WM_S0"),
+     HYPRATOM("WL_SURFACE_ID"),
+     HYPRATOM("WL_SURFACE_SERIAL"),
++    HYPRATOM("_XWAYLAND_RANDR_EMU_MONITOR_RECTS"),
+     HYPRATOM("TARGETS"),
+     HYPRATOM("TIMESTAMP"),
+     HYPRATOM("DELETE"),
+--- /dev/null
++++ b/tests/desktop/view/X11EmulatedMode.cpp
+@@ -0,0 +1,28 @@
++#include <desktop/view/window/X11Backend.hpp>
++
++#include <gtest/gtest.h>
++
++using namespace Desktop::View;
++
++// A 3840x2400 monitor at X11 scale 2 is 4800x3000 in X11 coordinates; a second one, 1920x1080, is beside it.
++static const CBox FIRST  = {0, 0, 4800, 3000};
++static const CBox SECOND = {4800, 0, 1920, 1080};
++
++TEST(X11EmulatedMode, fullscreenGetsTheModeTheClientSet) {
++    EXPECT_EQ(CX11Backend::emulatedModeSize({{0, 0, 1280, 720}}, FIRST, FIRST), Vector2D(1280, 720));
++    // the client's mode on the monitor the window is fullscreen on, not another's
++    EXPECT_EQ(CX11Backend::emulatedModeSize({{0, 0, 1280, 720}, {4800, 0, 800, 600}}, SECOND, SECOND), Vector2D(800, 600));
++    // logicalToClient rounds: a pixel off is still the whole monitor
++    EXPECT_EQ(CX11Backend::emulatedModeSize({{0, 0, 1440, 1080}}, {0, 0, 4799, 3001}, FIRST), Vector2D(1440, 1080));
++}
++
++TEST(X11EmulatedMode, otherBoxesKeepTheirSize) {
++    // windowed, or tiled with the bar and gaps
++    EXPECT_EQ(CX11Backend::emulatedModeSize({{0, 0, 1280, 720}}, {0, 0, 1708, 960}, FIRST), std::nullopt);
++    EXPECT_EQ(CX11Backend::emulatedModeSize({{0, 0, 1280, 720}}, {42, 84, 4716, 2874}, FIRST), std::nullopt);
++    // fullscreen on a monitor the client set no mode for
++    EXPECT_EQ(CX11Backend::emulatedModeSize({{0, 0, 1280, 720}}, SECOND, SECOND), std::nullopt);
++    // no mode set, or an empty one
++    EXPECT_EQ(CX11Backend::emulatedModeSize({}, FIRST, FIRST), std::nullopt);
++    EXPECT_EQ(CX11Backend::emulatedModeSize({{0, 0, 0, 0}}, FIRST, FIRST), std::nullopt);
++}

@@ -1,6 +1,6 @@
 # Nova's Hyprland patches, offered to Hyprland
 
-Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)). Nothing here has been posted.
+Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)) and `xwayland-emulated-modes.patch` ([below](#x11-games-fullscreen-at-the-resolution-they-set)). Nothing here has been posted.
 
 ## Before posting
 
@@ -69,7 +69,7 @@ By hand, in a nested Hyprland (a 2560x1600 output at 2x, and beside it a second 
 ### Costs and limits
 
 - **Fullscreen on a lower-scale monitor** renders more pixels than the monitor has and shrinks them: 5120x2880 for a 3840x2160 1.5x monitor at scale 2, 3840x2160 for a 1080p 1x one. Direct scanout does not happen there, the buffer not being the mode's size. That is the price of one X11 scale, and the reason the option is off by default.
-- **XWayland's emulated modes** (an X11 game setting its own resolution through RandR) were not tested.
+- **XWayland's emulated modes** (an X11 game setting its own resolution through RandR) are `xwayland-emulated-modes.patch`'s, below.
 - **The X11 cursor size** is left as it is.
 - **An app open through a change** of the scale is reconfigured to its logical size at the new scale; whether it redraws at the new app scale is the toolkit's matter (GTK follows XSETTINGS at once, Qt does not).
 
@@ -108,3 +108,29 @@ That shadowing is meant for an input held around another bind: ALT_L held, `ALT 
 - All 859 tests of `hyprland_gtests` pass.
 - By hand, in a nested Hyprland with `SUPER + D` bound on press and on release, five ways of pressing it all gave one press and one release: held with D let go first, held with SUPER let go first, tapped either way, and both let go within 5 ms. v0.57.2 lost the release in three of the five, each time SUPER was let go first.
 
+# X11 games fullscreen at the resolution they set
+
+`xwayland-emulated-modes.patch`, a pull request of its own. The AI policy and the rebase on main above apply to it too. It asks `xwaylandSize()`, which `xwayland:scale` adds; without that pull request, the size of a monitor in X11 coordinates is `force_zero_scaling ? m_transformedSize : m_size`.
+
+## Title
+
+xwayland: fullscreen a game at the resolution it set through RandR
+
+## Description
+
+An X11 game that sets its own resolution through RandR (exclusive fullscreen: SDL's `SDL_SetWindowFullscreenMode`, Wine) gets no real mode under XWayland. XWayland tells that client alone that the monitor has the mode, and when the client's window is at the monitor's origin and of that size, scales it up to the whole monitor with `wp_viewport`, input included. It names the modes it emulates in the client's windows' `_XWAYLAND_RANDR_EMU_MONITOR_RECTS` (x, y, width, height per monitor, in X11 coordinates), for the window manager to size a fullscreen window by. Mutter and KWin read it.
+
+Hyprland did not, and fullscreened such a window at the monitor's own size: the game drew every pixel of the monitor whatever resolution it was set to, and XWayland never scaled it. Minecraft set to 1280x720 on a 3840x2400 panel (scale 1.6, `force_zero_scaling`, X11 at 2x) drew 4800x3000, 15.6 times the pixels it asked for.
+
+The XWM now reads the property, at map and as it changes, and a window that Hyprland gives the whole of a monitor, as fullscreen does, is configured at the size its client set for that monitor. A change of mode while fullscreen is followed at once. A window whose client set no mode, or that does not cover the monitor, is configured as before.
+
+### Tests
+
+- Unit: `X11EmulatedMode.fullscreenGetsTheModeTheClientSet` and `otherBoxesKeepTheirSize`. All 857 tests of `hyprland_gtests` pass.
+- In a nested Hyprland (a 3840x2400 output at 1.6, X11 at 2x with `xwayland:scale`), an SDL3 game on X11 set to exclusive 1280x720: without the patch its window is configured 4800x3000; with it 1280x720, and a picture of the output shows XWayland scaling it to the whole output. 1440x1080 changed to 1280x720 while fullscreen is followed; the output's own mode still gives 4800x3000. A windowed game is unchanged.
+- The game's frames in 13 s, drawing a flat picture with vsync off on an Intel GPU, at 1280x720: 3247 to 4005 without the patch, 55799 to 60178 with it.
+
+### Costs and limits
+
+- **The mouse is slower in the game**, as on GNOME and KDE: XWayland scales the pointer's motion by the mode, 1280/4800 here.
+- **Direct scanout** does not happen for the scaled window; compositing a 1280x720 buffer costs less than the 4800x3000 one it replaces.

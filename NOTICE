@@ -63,5 +63,5 @@ each with its licence and notice in its package: whisper.cpp
 (https://github.com/ggml-org/whisper.cpp, MIT, with the copy of ggml, MIT, that the
 release carries), unmodified, by packaging/whisper-cpp; and Hyprland
 (https://github.com/hyprwm/Hyprland, BSD-3-Clause), with Nova's patches
-packaging/hyprland/xwayland-scale.patch and release-bind.patch, by
-packaging/hyprland.
+packaging/hyprland/xwayland-scale.patch, release-bind.patch and
+xwayland-emulated-modes.patch, by packaging/hyprland.
