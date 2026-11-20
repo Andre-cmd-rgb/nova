@@ -202,6 +202,13 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '[.bar.widgets[].id]')" = '["nova.active-window","nova.microphone"]' ]
 }
 
+@test "state: the CPU, Graphics and Memory readouts are listed, by plain names, for Settings' Menu Bar" {
+  mkdir -p "$NOVA_PATH/shell/plugins/readouts"
+  cp "$REPO_ROOT"/src/shell/plugins/readouts/{Cpu,Graphics,Memory}.manifest.json "$REPO_ROOT/src/shell/plugins/readouts/manifest.json" "$NOVA_PATH/shell/plugins/readouts/"
+  [ "$(state '[.bar.widgets[].name]')" = '["CPU","Graphics","Memory"]' ]
+  [ "$(state '[.bar.shown[] | select(. == "nova.cpu")] | length')" = 0 ]
+}
+
 @test "state: a widget switched off is not shown, and the tray icons hidden are listed" {
   mkdir -p "$HOME/.config/nova"
   echo '{"version":1,"bar":{"layout":{"left":[{"id":"nova.menu"},{"id":"nova.media","off":true}],"right":[{"id":"nova.tray","hidden":["Telegram","nm-applet"],"names":{"Telegram":"Telegram Desktop","x":7}},{"id":"nova.weather","off":false}]}}}' >"$HOME/.config/nova/shell.json"

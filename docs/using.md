@@ -172,7 +172,7 @@ The bar is always along the top of the screen. By default it holds, from left to
 - **Drag** a widget to move it.
 - **Double-click** an empty part for a [see-through bar](themes.md#a-see-through-bar), and again for a solid one.
 - **Tray icons** are all shown, in the order of their names. Right-click one, then **Hide from Menu Bar**, to take it off the bar; **Settings → Menu Bar → Hidden icons** brings it back.
-- **Settings → Menu Bar** switches Weather, Media, Microphone and Active window on or off. A widget switched off and on again is back where it was.
+- **Settings → Menu Bar** switches Weather, Media, Microphone, Active window, CPU, Graphics and Memory on or off (the last three, which show how busy the processor and graphics card are and how much memory is in use, start off; a click opens the system monitor). A widget switched off and on again is back where it was.
 - **The rest stays on the bar.** In a terminal, `nova bar remove <id>` takes any widget off and `nova bar put <id>` puts it back in its own place; `nova bar defaults` gives back Nova's whole layout.
 
 The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget and what each click does.

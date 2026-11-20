@@ -1,0 +1,47 @@
+#!/bin/bash
+# drm-cards: one tab-separated line for each graphics card, for the bar's
+# Graphics readout (Readouts.js, parseCards, names the fields).
+#
+#   drm-cards [<drm dir>]     /sys/class/drm unless given
+#
+# A second card that is asleep to save power wakes at nearly anything that
+# reads from it, and then stays awake and costs battery. So of every card
+# this reads only the name of its driver (a link, which does not touch the
+# card) and its runtime_status; the rest only for a card that is awake and
+# whose driver Nova knows.
+
+set -u
+
+dir=${1:-/sys/class/drm}
+
+for card in "$dir"/card[0-9]*; do
+  name=${card##*/}
+  # card1-eDP-1 is a connector of card1, not a card.
+  [[ -d $card && $name != *-* ]] || continue
+  driver=''
+  [[ -L $card/device/driver ]] && driver=$(basename "$(readlink "$card/device/driver")")
+  runtime=''
+  [[ -r $card/device/power/runtime_status ]] && read -r runtime <"$card/device/power/runtime_status"
+  boot=0 connected=0 kind='' file=''
+  if [[ $runtime != suspended ]]; then
+    case $driver in
+      i915)
+        if [[ -r $card/gt/gt0/rc6_residency_ms ]]; then
+          kind=idle file=$card/gt/gt0/rc6_residency_ms
+        elif [[ -r $card/power/rc6_residency_ms ]]; then
+          kind=idle file=$card/power/rc6_residency_ms
+        fi ;;
+      xe)
+        [[ -r $card/device/tile0/gt0/gtidle/idle_residency_ms ]] && kind=idle file=$card/device/tile0/gt0/gtidle/idle_residency_ms ;;
+      amdgpu)
+        [[ -r $card/device/gpu_busy_percent ]] && kind=busy file=$card/device/gpu_busy_percent ;;
+    esac
+    if [[ -n $file ]]; then
+      [[ -r $card/device/boot_vga ]] && [[ $(<"$card/device/boot_vga") == 1 ]] && boot=1
+      for status in "$dir/$name"-*/status; do
+        [[ -r $status ]] && [[ $(<"$status") == connected ]] && connected=1
+      done
+    fi
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "$driver" "$runtime" "$boot" "$connected" "$kind" "$file"
+done

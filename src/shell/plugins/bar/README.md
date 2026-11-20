@@ -53,8 +53,8 @@ The bar is always at the top. A `position` in an older `shell.json` is
 ignored, and dropped at the next write.
 
 Settings → Menu Bar has a switch only for the widgets whose manifest says
-`"barWidget": { "switchable": true }`: weather, media, microphone and the
-active window. The others are always on the bar, and those that make sense
+`"barWidget": { "switchable": true }`: weather, media, microphone, the
+active window, and the CPU, Graphics and Memory readouts (off until switched on). The others are always on the bar, and those that make sense
 only on some computers (keyboard layout, mobile data, the update badge) show
 only where they apply.
 
@@ -110,6 +110,12 @@ before a rename) is the clock, while the centre has the clock. An empty
 | `nova.batterylife` | The battery and the time it has left, measured | click = its history, in Settings |
 | `nova.screentime` | Today's screen time (off until turned on) | click = the breakdown, in Settings |
 | `nova.mobile-data` | The mobile signal, while a modem has a SIM | click = its panel |
+| `nova.cpu` | How busy the processor is, a glyph and a percentage (off until turned on) | click = the system monitor (btop) |
+| `nova.graphics` | How busy the graphics card that draws the desktop is; the tooltip says whether any other card is on (off until turned on) | click = the system monitor |
+| `nova.memory` | The share of memory in use; the tooltip says it in GB (off until turned on) | click = the system monitor |
+
+The three readouts are the widgets of the [Readouts plugin](../readouts/README.md),
+which reads for all of them at once and only while one is on a bar.
 
 `nova.indicators` shows the indicators in `indicators/`: all of them, in their
 order, when its `items` is missing or empty, else those it names, from `Dnd`,

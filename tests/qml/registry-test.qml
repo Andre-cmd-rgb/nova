@@ -82,6 +82,12 @@ ShellRoot {
     check(registry.setOn("nova.screentime", false) === "" && !registry.isOn("nova.screentime")
       && ids("right") === "nova.tray nova.network nova.audio", "disabling Screen Time takes it off the bar and off")
 
+    check(!registry.isOn("nova.cpu") && !registry.isOn("nova.graphics") && !registry.isOn("nova.memory")
+      && registry.isOn("nova.readouts"), "the CPU, Graphics and Memory readouts are off until switched on; the service they read is on")
+    check(registry.setOn("nova.memory", true) === "" && ids("right") === "nova.tray nova.memory nova.network nova.audio"
+      && registry.isOn("nova.memory") && !registry.isOn("nova.cpu"), "switching on Memory puts it in the bar and nothing else: " + ids("right"))
+    check(registry.setOn("nova.memory", false) === "" && !registry.inBar("nova.memory"), "and switching it off takes it out")
+
     check(registry.setOn("nova.idle", false) === "" && !registry.isOn("nova.idle")
       && JSON.stringify(config.disabledPlugins) === '["nova.idle"]', "switching off a built-in is recorded")
     check(registry.setOn("nova.idle", true) === "" && registry.isOn("nova.idle") && config.disabledPlugins === undefined,

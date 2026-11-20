@@ -157,6 +157,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Polkit Agent | `nova.polkit` | service `polkit/PolkitAgent.qml` | the password card when an app needs root (below) |
 | Prompts | `nova.prompts` | service `prompts/Prompts.qml` | the card nova-sessiond asks on: an encrypted drive's passphrase, a Bluetooth pairing's code, a network's password (below) |
 | [Screen Time](screentime/README.md) | `nova.screentime` | service `screentime/Service.qml`, widget `screentime/BarWidget.qml` | time spent per app; its page is `settings/ScreenTimeView.qml` |
+| [Readouts](readouts/README.md) | `nova.readouts` | service `readouts/Service.qml`, widgets `readouts/Cpu.qml`, `Graphics.qml`, `Memory.qml` | how busy the processor and graphics card are and how much memory is in use, on the bar (off until switched on) |
 | Battery | `nova.battery` | service `services/battery/Service.qml` | the low-battery warning and the power mode |
 | Idle | `nova.idle` | service `services/idle/Service.qml` | the screensaver and the lock after `idle` in `shell.json`, and Caffeine |
 | Volume and brightness keys | `nova.keys` | service `services/keys/Service.qml` | the volume, brightness and keyboard backlight keys |

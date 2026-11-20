@@ -1,0 +1,16 @@
+{
+  "id": "nova.memory",
+  "name": "Memory",
+  "description": "How much of the memory is in use; a click opens the system monitor",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Memory.qml"
+  },
+  "enabledByDefault": false,
+  "barWidget": {
+    "defaultSection": "right",
+    "switchable": true
+  }
+}

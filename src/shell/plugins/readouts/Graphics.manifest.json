@@ -1,0 +1,16 @@
+{
+  "id": "nova.graphics",
+  "name": "Graphics",
+  "description": "How busy the graphics card is; a click opens the system monitor",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Graphics.qml"
+  },
+  "enabledByDefault": false,
+  "barWidget": {
+    "defaultSection": "right",
+    "switchable": true
+  }
+}

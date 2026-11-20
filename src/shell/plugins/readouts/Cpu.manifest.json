@@ -1,0 +1,16 @@
+{
+  "id": "nova.cpu",
+  "name": "CPU",
+  "description": "How busy the processor is; a click opens the system monitor",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Cpu.qml"
+  },
+  "enabledByDefault": false,
+  "barWidget": {
+    "defaultSection": "right",
+    "switchable": true
+  }
+}

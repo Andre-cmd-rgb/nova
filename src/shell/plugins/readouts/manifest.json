@@ -1,0 +1,11 @@
+{
+  "id": "nova.readouts",
+  "name": "System readouts",
+  "description": "Reads how busy the processor and graphics card are and how much memory is in use, for the bar's CPU, Graphics and Memory widgets; idle while none is on the bar.",
+  "kinds": [
+    "service"
+  ],
+  "entryPoints": {
+    "service": "Service.qml"
+  }
+}
