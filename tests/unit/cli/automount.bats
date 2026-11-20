@@ -9,6 +9,17 @@ load ../test_helper
 setup() {
   setup_scratch
   export HYPRLAND_INSTANCE_SIGNATURE=this-session
+  # Never the real user manager: it runs the user's own automounter. The
+  # stub says whether the older one (udiskie's unit) runs: OLDER=1.
+  mkdir -p "$SCRATCH/bin"
+  cat >"$SCRATCH/bin/systemctl" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$*" >>"$SCRATCH/systemctl.log"
+[[ " $* " == *" is-active "* ]] && exit $((${OLDER:-0} == 1 ? 0 : 3))
+exit 0
+STUB
+  chmod +x "$SCRATCH/bin/systemctl"
+  export PATH="$SCRATCH/bin:$PATH"
 }
 
 teardown() { teardown_scratch; }
@@ -60,4 +71,21 @@ switch() { echo "$XDG_RUNTIME_DIR/nova/automount"; }
   [ "$status" -eq 2 ]
   run "$helper" on off
   [ "$status" -eq 2 ]
+}
+
+@test "an older automounter still running from before the update is held under the lock and let go after" {
+  OLDER=1 run "$helper" off
+  [ "$status" -eq 0 ]
+  grep -qx -- '--user freeze nova-automount.service' "$SCRATCH/systemctl.log"
+  : >"$SCRATCH/systemctl.log"
+  OLDER=1 run "$helper" on
+  [ "$status" -eq 0 ]
+  grep -qx -- '--user thaw nova-automount.service' "$SCRATCH/systemctl.log"
+}
+
+@test "with no older automounter, the switch alone is touched" {
+  run "$helper" off
+  run "$helper" on
+  [ "$status" -eq 0 ]
+  ! grep -qE 'freeze|thaw|stop' "$SCRATCH/systemctl.log"
 }

@@ -22,6 +22,23 @@ usage() {
   exit 2
 }
 
+# The release before nova-sessiond mounted through udiskie, as
+# nova-automount.service, which this froze under the lock. From the moment an
+# update puts this script in until nova-session-settle stops that udiskie
+# (when the shell restarts, which from Settings is after Flathub's apps), the
+# old one still runs: it is held and let go as before, or a drive plugged in
+# under a lock in that while would be mounted. Only for the move from that
+# release; nothing is done where the unit is not running.
+hold_older() { # on|off
+  systemctl --user --quiet is-active nova-automount.service 2>/dev/null || return 0
+  if [[ $1 == off ]]; then
+    systemctl --user freeze nova-automount.service 2>/dev/null ||
+      systemctl --user stop nova-automount.service 2>/dev/null || true
+  else
+    systemctl --user thaw nova-automount.service 2>/dev/null || true
+  fi
+}
+
 (($# == 1)) || usage
 dir=${XDG_RUNTIME_DIR:?XDG_RUNTIME_DIR is not set}/nova
 switch=$dir/automount
@@ -39,9 +56,11 @@ case $1 in
     trap 'rm -f -- "$tmp"' EXIT
     printf '%s\n' "$session" >"$tmp"
     mv -f "$tmp" "$switch"
+    hold_older on
     ;;
   off)
     rm -f "$switch"
+    hold_older off
     ;;
   *) usage ;;
 esac

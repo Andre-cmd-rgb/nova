@@ -1017,8 +1017,17 @@ mod tests {
     /// what it writes and what the duty reads cannot drift apart.
     fn switch(ctx: &Context, on: bool) {
         let helper = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../cli/bin/nova-automount");
+        // The script asks the user manager whether an older automounter runs,
+        // and would freeze the real one: a systemctl that says none does.
+        let bin = ctx.runtime.parent().unwrap().join("stub-bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        let stub = bin.join("systemctl");
+        std::fs::write(&stub, "#!/bin/sh\nexit 3\n").unwrap();
+        std::fs::set_permissions(&stub, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
         let status = std::process::Command::new(helper)
             .arg(if on { "on" } else { "off" })
+            .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("XDG_RUNTIME_DIR", ctx.runtime.parent().unwrap())
             .env("HYPRLAND_INSTANCE_SIGNATURE", &ctx.session)
             .stdin(Stdio::null())

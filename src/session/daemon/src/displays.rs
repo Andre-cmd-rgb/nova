@@ -209,11 +209,15 @@ impl Modeless {
 }
 
 fn reload_while_modeless(ctx: &Context, setup: &Setup) {
-    // One loop across watchers too, as the old one held this file.
-    let _lock = ctx
+    // One loop at a time, as the old watcher held this file: a display duty
+    // started again while its old loop still runs leaves that loop the work.
+    let Some(_lock) = ctx
         .runtime_dir()
         .ok()
-        .and_then(|dir| FileLock::try_take(&dir.join("monitor-modeless.lock")));
+        .and_then(|dir| FileLock::try_take(&dir.join("monitor-modeless.lock")))
+    else {
+        return;
+    };
     let mut pause = setup.first_reload;
     let mut silent = 0;
     loop {
