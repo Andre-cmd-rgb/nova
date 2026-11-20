@@ -312,7 +312,7 @@ These come installed:
 - Settings → Default Apps picks another browser, editor or terminal, among those installed.
 - Chrome and VS Code are built on your computer from their AUR recipes; `nova apps install` installs them again if they are missing.
 - The **App Center**, in the menu and the launcher, finds and installs more, from Arch Linux's repositories and from Flathub, and removes them: [The App Center](apps.md).
-- Printing goes through CUPS: Print Settings is in the apps.
+- Printing goes through CUPS: Print Settings is in the apps. A USB printer plugged in is set up by itself when CUPS has a driver for it, and a notification says so, with a test page to print, or says the driver is missing, with Find Driver. While a document prints, a printer out of paper, or one that asks for a password, says so too.
 - **Quick Look**: in Files, Space shows the selected file, a picture, a video's first frame, a PDF's first page or text, in a window the size of what it shows, with its name and nothing else. The arrow keys move on to the next file, Return opens it in its app, Space or Esc closes it.
 - **Calculator**: in the menu and the launcher, on a keyboard's Calculator key, or `nova calculator [sum]`. Type or click: Return works the sum out, Esc clears, Ctrl+C copies the answer, Ctrl+V pastes. Scientific adds the functions, in degrees or radians, and conversions are written as in the menu. The history, the last 100 sums, puts one back with a click.
 - When a crash takes an app away, a notification says so ("Bambu Studio quit unexpectedly"), with Reopen. A crash that leaves its windows open, such as a browser tab's, is the app's own to show; `coredumpctl` lists them all.

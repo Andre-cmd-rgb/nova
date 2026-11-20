@@ -20,7 +20,7 @@ This document is the contract every component follows. Read it before adding cod
 | `src/account/` | `/usr/lib/nova/bin/nova-password-change`, `/usr/lib/nova/bin/nova-keyring-migrate` | The account's password and keyring (Rust): Settings' Change Password, which answers passwd's prompts on a terminal of its own so that pwquality and the login keyring take part, and the move of a passwordless keyring into the login keyring that `nova doctor` offers (`nova-keyring-migrate.service`, in `data/session/`, runs it at the next unlock) |
 | `src/theme/` | `/usr/lib/nova/bin/nova-theme` | Theme engine (Rust): palettes, templates, theme and background switching, pickers |
 | `src/screensaver/` | `/usr/lib/nova/bin/nova-screensaver-effect` | The screensaver's text effects (Rust): a text played in a terminal, one effect after another |
-| `src/session/` | `/usr/lib/nova/nova-sessiond`, `nova-sessiond.service` (user) | What the session watches for as long as it runs, in one small process (Rust): the apps keeping the screen awake (`org.freedesktop.ScreenSaver`), the lock before sleep, "… quit unexpectedly" with Reopen for an app a crash took away, the clamshell passes and the X11 scale as displays come and go, and removable drives mounted while somebody has unlocked |
+| `src/session/` | `/usr/lib/nova/nova-sessiond`, `nova-sessiond.service` (user) | What the session watches for as long as it runs, in one small process (Rust): the apps keeping the screen awake (`org.freedesktop.ScreenSaver`), the lock before sleep, "… quit unexpectedly" with Reopen for an app a crash took away, the clamshell passes and the X11 scale as displays come and go, removable drives mounted while somebody has unlocked, and printing: system-config-printer's job viewer while jobs are queued, and the notice of a printer plugged in |
 | `src/sd/` | – (in the programs that use it) | `nova-sd`, the crate through which Nova's Rust reaches D-Bus and the journal: libsystemd's sd-bus and sd-journal, by FFI |
 | `theme/` | `/usr/share/nova/{themes,templates,wordmark}/` | Palettes, the per-app templates, the wordmark background template |
 | `data/hypr/` | `/usr/share/nova/default/hypr/` | Hyprland defaults (Lua), loaded by the user's `~/.config/hypr/hyprland.lua` |
@@ -96,6 +96,7 @@ How files reach a system:
 | User units | `nova-*.service` |
 | polkit actions | `org.nova.*` |
 | Session bus names | `org.nova.*` (`org.nova.iPhoneNotifications`); `org.freedesktop.ScreenSaver`, which `nova-sessiond` holds for the session |
+| System bus names | `com.redhat.NewPrinterNotification`, which `nova-sessiond` holds for udev-add-printer's notices (one owner for the whole system; another session's waits) |
 
 ### Naming
 
