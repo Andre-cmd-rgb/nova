@@ -230,7 +230,10 @@ mod tests {
         let env = b"PATH=/usr/bin\0HOME=/home/a\0XDG_RUNTIME_DIR=/run/user/1000\0EMPTY=\0";
         let (home, runtime) = session_in(env);
         assert_eq!(home.as_deref(), Some(std::ffi::OsStr::new("/home/a")));
-        assert_eq!(runtime.as_deref(), Some(std::ffi::OsStr::new("/run/user/1000")));
+        assert_eq!(
+            runtime.as_deref(),
+            Some(std::ffi::OsStr::new("/run/user/1000"))
+        );
     }
 
     #[test]
