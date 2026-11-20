@@ -25,6 +25,23 @@ previous_release() { # tag; the complete release list on stdin
   jq -ce --arg tag "$best" 'first(.[] | select(.tag_name == $tag and .draft == false))' <<<"$list"
 }
 
+# A release's own probe, tests/install/probe as its tag has it. The boots of
+# the release before (installed, downgraded to, restored) are checked with
+# it: the candidate's probe checks what the candidate brings, which the
+# release before has not (rc.13's nova-sessiond, its Printers), and would
+# fail every upgrade test that a release adds a check in.
+release_probe() { # tag destination
+  local tag=$1 dest=$2
+  local -a auth=()
+  [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-z]+\.[0-9]+)?$ ]] || return 1
+  [[ -z ${GITHUB_TOKEN:-} ]] || auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "${auth[@]}" \
+    -H 'Accept: application/vnd.github.raw' -o "$dest" \
+    "https://api.github.com/repos/Andre-cmd-rgb/nova/contents/tests/install/probe?ref=$tag" || return 1
+  # A probe, and one the stick's heredoc can carry whole.
+  grep -q '^probe() {' "$dest" && ! grep -qx PROBE "$dest"
+}
+
 published_releases() { # destination; fail rather than mistake an API error for no predecessor
   local dest=$1 page list count
   local -a auth=()
@@ -110,6 +127,9 @@ upgrade_after() { # work; print the extra after= script, before the first snapsh
   printf "install -Dm644 /dev/stdin /etc/ca-certificates/trust-source/anchors/nova-upgrade-test.crt <<'CA'\n"
   cat "$work/ca.crt"
   printf 'CA\nupdate-ca-trust\n'
+  printf "install -Dm755 /dev/stdin /usr/local/lib/nova-test-probe-previous <<'PROBE'\n"
+  cat "$work/previous-probe"
+  printf 'PROBE\n'
   printf "install -Dm755 /dev/stdin /usr/local/lib/nova-upgrade-probe <<'UPGRADE'\n"
   cat "$dir/upgrade-probe"
   printf 'UPGRADE\n'

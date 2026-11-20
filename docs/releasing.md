@@ -215,4 +215,6 @@ How the guest reaches a release not yet published:
 - This release's `[nova]` repository is not published yet, so the guest reads it from the runner, at QEMU's address for the host, over HTTPS with a certificate from a CA made for the run and trusted by that guest alone, and through the `--release-file` option `nova update` already has.
 - pacman checks every signature as it always does, and nothing in `nova update` or its root helper changes for the test.
 
+Each start is checked with its own release's probe: the one where this release runs with this release's `tests/install/probe`, the ones where the older release runs with the probe of that release's tag. This release's probe checks what this release brings, which the older one has not: rc.13's upgrade test failed on rc.12, which had no nova-sessiond and no Printers, before its probe was the tag's.
+
 Choosing the snapshot's entry in the boot menu, its overlay and the notification's **Restore now** are not in it: those are on the hardware checklist. The serial logs are kept as the run's `upgrade-logs`.

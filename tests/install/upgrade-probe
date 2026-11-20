@@ -113,15 +113,23 @@ restore_snapshot() {
 }
 
 main() {
-  # shellcheck source=tests/install/probe
-  source /usr/local/lib/nova-test-probe
+  local state=/home/nova-upgrade-test stage
+  stage=$(cat "$state/stage")
+  # Each release is probed with its own probe: the candidate's checks what it
+  # brings, which the release before (installed, downgraded to, restored) has
+  # not; that one's probe is its tag's (tests/install/run).
+  if [[ $stage == upgraded ]]; then
+    # shellcheck source=tests/install/probe
+    source /usr/local/lib/nova-test-probe
+  else
+    # shellcheck source=tests/install/probe
+    source /usr/local/lib/nova-test-probe-previous
+  fi
   set -euo pipefail
   set -o errtrace
   exec >/dev/ttyS0 2>&1
   # A service has no HOME unless it names a user, and nova update reads it.
   export PATH=/usr/lib/nova/bin:$PATH HOME=/root
-  state=/home/nova-upgrade-test
-  stage=$(cat "$state/stage")
   trap 'echo "probe: FAIL $stage stopped at line $LINENO"; systemctl poweroff' ERR
 
   probe || true

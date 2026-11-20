@@ -69,6 +69,53 @@ releases() { # tag...; all published, candidates included
   [ "$(previous_release v1.0.0 <"$SCRATCH/releases.json" | jq -r .tag_name)" = v1.0.0-beta.8 ]
 }
 
+@test "the release before is probed with its own probe, as its tag has it" {
+  curl() {
+    printf '%s\n' "$*" >"$SCRATCH/asked"
+    local out=''
+    while (($#)); do [[ $1 != -o ]] || out=$2; shift; done
+    printf '#!/bin/bash\nprobe() {\n  probe_failures=0\n}\n' >"$out"
+  }
+  release_probe v1.0.0-rc.12 "$SCRATCH/probe"
+  grep -q '^probe() {' "$SCRATCH/probe"
+  grep -qF 'contents/tests/install/probe?ref=v1.0.0-rc.12' "$SCRATCH/asked"
+  grep -qF 'application/vnd.github.raw' "$SCRATCH/asked"
+  # Only a tag's name reaches the address.
+  run release_probe 'v1.0.0-rc.12&ref=main' "$SCRATCH/probe"
+  [ "$status" -ne 0 ]
+  run release_probe main "$SCRATCH/probe"
+  [ "$status" -ne 0 ]
+}
+
+@test "a previous probe that failed to come, is no probe, or would end the stick's heredoc is refused" {
+  curl() { return 22; }
+  run release_probe v1.0.0-rc.12 "$SCRATCH/probe"
+  [ "$status" -ne 0 ]
+  curl() { local out; while (($#)); do [[ $1 != -o ]] || out=$2; shift; done; echo '{"message":"Not Found"}' >"$out"; }
+  run release_probe v1.0.0-rc.12 "$SCRATCH/probe"
+  [ "$status" -ne 0 ]
+  curl() { local out; while (($#)); do [[ $1 != -o ]] || out=$2; shift; done; printf 'probe() {\n:\n}\nPROBE\n' >"$out"; }
+  run release_probe v1.0.0-rc.12 "$SCRATCH/probe"
+  [ "$status" -ne 0 ]
+}
+
+@test "the upgrade's boots source the probe of the release they run" {
+  mkdir -p "$SCRATCH/work"
+  printf 'version = "1"\n' >"$SCRATCH/work/previous.toml"
+  cp "$SCRATCH/work/previous.toml" "$SCRATCH/work/candidate.toml"
+  echo ca >"$SCRATCH/work/ca.crt"
+  printf 'probe() {\n  echo old\n}\n' >"$SCRATCH/work/previous-probe"
+  upgrade_after "$SCRATCH/work" >"$SCRATCH/after"
+  grep -qx "install -Dm755 /dev/stdin /usr/local/lib/nova-test-probe-previous <<'PROBE'" "$SCRATCH/after"
+  grep -qx '  echo old' "$SCRATCH/after"
+  # The upgraded boot takes the candidate's, every other the one before's.
+  local main
+  main=$(sed -n '/^main() {/,/^}/p' "$REPO_ROOT/tests/install/upgrade-probe")
+  grep -qE 'if \[\[ \$stage == upgraded \]\]; then' <<<"$main"
+  [ "$(grep -c 'source /usr/local/lib/nova-test-probe' <<<"$main")" -eq 2 ]
+  grep -q 'source /usr/local/lib/nova-test-probe-previous' <<<"$main"
+}
+
 @test "published releases refuses failed requests, non-list answers and truncated pagination" {
   curl() { return 22; }
   run published_releases "$SCRATCH/releases.json"
@@ -139,6 +186,7 @@ releases() { # tag...; all published, candidates included
   printf 'version = "1.0.0-beta.8"\nnova_repo = "https://published.example/v1.0.0-beta.8"\n' >"$SCRATCH/previous.toml"
   printf 'version = "1.0.0"\narch_date = "2026/10/27"\nnova_repo = "https://10.0.2.2:12345"\n' >"$SCRATCH/candidate.toml"
   echo 'a certificate' >"$SCRATCH/ca.crt"
+  cp "$here/probe" "$SCRATCH/previous-probe"
   upgrade_after "$SCRATCH" >"$SCRATCH/after"
   bash -n "$SCRATCH/after"
   grep -Fx 'nova_repo = "https://published.example/v1.0.0-beta.8"' "$SCRATCH/after"

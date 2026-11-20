@@ -114,6 +114,8 @@ if ((upgrade)); then
   previous_dir=${iso%/*}
   [[ v$(release_value "$previous_dir/release.toml" version) == "$(jq -r .tag_name <<<"$previous")" ]] || die "previous manifest and release disagree"
   cp "$previous_dir/release.toml" "$work/previous.toml"
+  release_probe "$(jq -r .tag_name <<<"$previous")" "$work/previous-probe" ||
+    die "could not read the previous release's probe (tests/install/probe at its tag)"
   start_upgrade_repo "$work" "$repo" || die "the HTTPS repository did not start"
   sed "s@^nova_repo = .*@nova_repo = \"$upgrade_repo\"@" "$release" >"$work/candidate.toml"
   release=$previous_dir/release.toml
