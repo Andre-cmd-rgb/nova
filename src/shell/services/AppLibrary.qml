@@ -72,7 +72,7 @@ Item {
     if (!iconSearch.running) iconSearch.running = true
   }
 
-  // Straight to uwsm-app, which finds the entry (AppSearch.launchWords): a
+  // Straight to nova-launch, which finds the entry (AppSearch.launchWords): a
   // login shell and gtk-launch in between cost 12 ms and 30 ms of each
   // launch, and the session's environment is the shell's already, as it is
   // for the apps Hyprland's keys start.

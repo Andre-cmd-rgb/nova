@@ -15,7 +15,7 @@ setup() {
   mkdir -p "$HOME" "$SCRATCH/bin"
   stub hyprctl '[[ $1 != clients ]] || cat "$CLIENTS"'
   stub setsid
-  stub uwsm-app
+  stub nova-launch
   echo '[{"address": "0xa", "class": "org.nova.btop", "title": "btop"}]' >"$CLIENTS"
   : >"$CALLS"
   export PATH="$SCRATCH/bin:$REPO_ROOT/src/cli/bin:/usr/bin"
@@ -31,8 +31,8 @@ stub() { # name [body]: logs "name 'arg'..." to $CALLS, then runs body
 @test "tui: the app id is org.nova. and the command's own name, unless given" {
   nova-launch-tui /usr/bin/htop -d 5
   nova-launch-tui --app-id=x.y nvim -- "a b"
-  [ "$(cat "$CALLS")" = 'setsid uwsm-app -- xdg-terminal-exec --app-id=org.nova.htop -e /usr/bin/htop -d 5
-setsid uwsm-app -- xdg-terminal-exec --app-id=x.y -e nvim -- a\ b' ]
+  [ "$(cat "$CALLS")" = 'setsid nova-launch -- xdg-terminal-exec --app-id=org.nova.htop -e /usr/bin/htop -d 5
+setsid nova-launch -- xdg-terminal-exec --app-id=x.y -e nvim -- a\ b' ]
 }
 
 @test "tui: no command is the usage" {
@@ -72,7 +72,7 @@ setsid nova-launch-tui --app-id=org.nova.top htop a\ b' ]
   nova-launch-editor notes.txt
   [ "$(cat "$CALLS")" = 'nova-launch-tui nvim -- notes.txt
 nvim -- notes.txt
-setsid uwsm-app -- code -- notes.txt' ]
+setsid nova-launch -- code -- notes.txt' ]
 }
 
 @test "editor: one that is not installed is nano" {

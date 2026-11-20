@@ -24,7 +24,7 @@ command -v -- "$editor" >/dev/null 2>&1 || editor=nano
 # The terminal editors among nova-default-editor's, and nano.
 case ${editor##*/} in
   helix | vim | nvim | nano) ;;
-  *) exec setsid uwsm-app -- "$editor" -- "$@" ;;
+  *) exec setsid nova-launch -- "$editor" -- "$@" ;;
 esac
 if $inline; then exec "$editor" -- "$@"; fi
 exec nova-launch-tui "$editor" -- "$@"

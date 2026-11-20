@@ -32,7 +32,7 @@ set -uo pipefail
 
 WANTS=${NOVA_SESSION_WANTS:-/usr/lib/systemd/user/graphical-session.target.wants}
 
-# Started as apps (uwsm-app) from Hyprland's autostart by an earlier
+# Started as apps (uwsm-app then) from Hyprland's autostart by an earlier
 # release, each a scope of its own with nothing in it but the helper and
 # the programs it ran (none of them an app). By name, never by pattern: a
 # scope a retired launcher started holds the app it launched.
@@ -101,7 +101,8 @@ while read -r -u 3 unit load active _; do
   stop_unit "$unit"
 done 3< <(systemctl --user list-units --all --plain --no-legend --full 'app-*@autostart.service' 2>/dev/null)
 
-# uwsm names an app's scope app-<desktop>-<program, escaped>-<random>.scope.
+# nova-launch (uwsm-app before it) names an app's scope
+# app-<desktop>-<program, escaped>-<random>.scope.
 while read -r -u 3 unit _ active _; do
   [[ $unit == app-*.scope && $active == active ]] || continue
   name=${unit#app-*-}

@@ -15,6 +15,6 @@ editor=${2:-${NOVA_SCREENSHOT_EDITOR:-satty}}
 [[ -r $image ]] || { echo "Usage: nova-image-edit <image> [editor]" >&2; exit 2; }
 
 if [[ $editor == satty ]]; then
-  exec setsid uwsm-app -- satty --filename "$image" --output-filename "$image" --copy-command wl-copy
+  exec setsid nova-launch -- satty --filename "$image" --output-filename "$image" --copy-command wl-copy
 fi
-exec setsid uwsm-app -- "$editor" "$image"
+exec setsid nova-launch -- "$editor" "$image"

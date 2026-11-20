@@ -4,7 +4,7 @@
 // stub: bin/nova-apps-run apps
 // stub: bin/nova-apps-shots apps
 // stub: bin/nova-apps-size apps
-// stub: bin/uwsm-app record
+// stub: bin/nova-launch record
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -158,7 +158,7 @@ ShellRoot {
         check(button("Open") !== null && button("Remove…") !== null, "installed: Open and Remove")
         button("Open").clicked()
       },
-      function () { return called("uwsm-app -- flatpak run org.gimp.GIMP") },
+      function () { return called("nova-launch -- flatpak run org.gimp.GIMP") },
       function () {
         check(true, "Open starts it as Flathub's")
         button("Remove…").clicked()
@@ -188,7 +188,7 @@ ShellRoot {
         check(foot.st.kept === "Part of Nova" && !foot.st.removable, "part of Nova: no Remove")
         button("Open").clicked()
       },
-      function () { return called("uwsm-app -- firefox.desktop") },
+      function () { return called("nova-launch -- firefox.desktop") },
       function () {
         check(true, "Firefox from Arch opens by the entry Arch's package has")
         store.open(JSON.stringify({ app: "appstream://org.mozilla.firefox" }))

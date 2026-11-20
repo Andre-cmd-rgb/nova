@@ -57,7 +57,7 @@ if [[ $target == "$day" ]] && ! nova-session-pgrep -x hyprsunset >/dev/null; the
 fi
 
 if ! nova-session-pgrep -x hyprsunset >/dev/null; then
-  setsid uwsm-app -- hyprsunset >/dev/null 2>&1 {held}>&- &
+  setsid nova-launch -- hyprsunset >/dev/null 2>&1 {held}>&- &
 fi
 
 # Toggled: night from day, and from a hyprsunset that cannot say yet; day

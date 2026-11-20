@@ -72,15 +72,15 @@ ShellRoot {
     check(order(files) === "org.c.Editor,org.a.Files,org.b.Files" && order(files.slice().reverse()) === order(files),
       "two apps of one name are listed in one order, whatever order they come in")
 
-    check(AppSearch.launchWords("org.gnome.Nautilus").join(" ") === "uwsm-app -- org.gnome.Nautilus.desktop"
-      && AppSearch.launchWords("org.telegram.desktop").join(" ") === "uwsm-app -- org.telegram.desktop.desktop",
-      "an app is launched by its entry, through uwsm-app alone")
-    check(AppSearch.launchWords("Steam Link").join("|") === "uwsm-app|--|gtk-launch|Steam Link.desktop"
-      && AppSearch.launchWords("wine-Programs-Foo $(x)").join("|") === "uwsm-app|--|gtk-launch|wine-Programs-Foo $(x).desktop",
+    check(AppSearch.launchWords("org.gnome.Nautilus").join(" ") === "nova-launch -- org.gnome.Nautilus.desktop"
+      && AppSearch.launchWords("org.telegram.desktop").join(" ") === "nova-launch -- org.telegram.desktop.desktop",
+      "an app is launched by its entry, through nova-launch alone")
+    check(AppSearch.launchWords("Steam Link").join("|") === "nova-launch|--|gtk-launch|Steam Link.desktop"
+      && AppSearch.launchWords("wine-Programs-Foo $(x)").join("|") === "nova-launch|--|gtk-launch|wine-Programs-Foo $(x).desktop",
       "an ID uwsm will not take goes through gtk-launch, as one word")
     check(AppSearch.launchWords("").length === 0 && AppSearch.launchWords(undefined).length === 0, "no ID, nothing to run")
-    check(AppSearch.launchWords("com.mojang.Minecraft", true).join(" ") === "nova-power prefer uwsm-app -- com.mojang.Minecraft.desktop"
-      && AppSearch.launchWords("Steam Link", true).join("|") === "nova-power|prefer|uwsm-app|--|gtk-launch|Steam Link.desktop",
+    check(AppSearch.launchWords("com.mojang.Minecraft", true).join(" ") === "nova-power prefer nova-launch -- com.mojang.Minecraft.desktop"
+      && AppSearch.launchWords("Steam Link", true).join("|") === "nova-power|prefer|nova-launch|--|gtk-launch|Steam Link.desktop",
       "an entry that asks for the discrete GPU starts through nova power prefer")
 
     const fonts = MenuModel.providerItems("style.font", "Fira Code\nJetBrains Mono\n  Fira Code  \n\nFira-Code\n", "F", value => "set " + value)

@@ -352,7 +352,7 @@ function status(app, installed, jobs, waiting) {
 // (firefox.desktop); Nova's by its own.
 function launchWords(app, from) {
   if (!app || !from) return []
-  if (from.kind === "flathub") return ["uwsm-app", "--", "flatpak", "run", from.app]
+  if (from.kind === "flathub") return ["nova-launch", "--", "flatpak", "run", from.app]
   var desktop = String(app.desktop || "")
   if (from.kind === "arch") {
     var own = (app.sources || []).filter(function (s) { return s.kind === "arch" && s.package === from.package })[0]
@@ -360,7 +360,7 @@ function launchWords(app, from) {
   }
   if (!desktop) return []
   if (!/\.desktop$/.test(desktop)) desktop += ".desktop"
-  return ["uwsm-app", "--", desktop]
+  return ["nova-launch", "--", desktop]
 }
 
 // The page's facts, in order: [{ label, value }], the empty ones left out:

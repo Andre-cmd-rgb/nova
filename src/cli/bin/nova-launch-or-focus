@@ -11,7 +11,7 @@ if (($# == 0)); then
 fi
 
 pattern=$1
-command=${2:-"uwsm-app -- $pattern"}
+command=${2:-"nova-launch -- $pattern"}
 
 # The pattern is a regular expression for a whole word of the window's class
 # or title, any case; the first window in Hyprland's list that has one wins.

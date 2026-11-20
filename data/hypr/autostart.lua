@@ -43,7 +43,7 @@ hl.on("hyprland.start", function()
   -- First, so all that follows has it; a failure here must not cost the shell.
   pcall(x11_scale)
 
-  -- Programs that systemd and D-Bus start (every app, through uwsm-app) get
+  -- Programs that systemd and D-Bus start (every app, through nova-launch) get
   -- the session's environment: its PATH, with Nova's commands, and the rest
   -- of env.lua.
   hl.exec_cmd("systemctl --user import-environment $(env | cut -d'=' -f 1)")

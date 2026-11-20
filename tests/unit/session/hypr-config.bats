@@ -108,8 +108,8 @@ hypr() { # lua
     nova.bind("E", nil, { tui = "btop", focus = true })'
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "bind A nova-launch-browser {}" ]
-  [ "${lines[1]}" = "bind B uwsm-app -- app {}" ]
-  [ "${lines[2]}" = "bind C nova-launch-or-focus '^it\$' 'uwsm-app -- it'\\''s' {}" ]
+  [ "${lines[1]}" = "bind B nova-launch -- app {}" ]
+  [ "${lines[2]}" = "bind C nova-launch-or-focus '^it\$' 'nova-launch -- it'\\''s' {}" ]
   [ "${lines[3]}" = "bind D nova-launch-tui 'btop' {}" ]
   [ "${lines[4]}" = "bind E nova-launch-or-focus-tui 'btop' {}" ]
 }

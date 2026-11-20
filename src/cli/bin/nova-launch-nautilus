@@ -2,4 +2,4 @@
 
 # nova:summary=Open a Files window
 
-exec setsid uwsm-app -- nautilus --new-window
+exec setsid nova-launch -- nautilus --new-window

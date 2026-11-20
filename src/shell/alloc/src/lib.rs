@@ -12,7 +12,7 @@
 //! word. nova-launch-shell preloads this library into Quickshell, whose
 //! `malloc_conf` this one becomes, and as it loads it takes itself out of
 //! LD_PRELOAD. In MALLOC_CONF the setting would reach every app the shell
-//! starts, as they inherit its environment (uwsm-app's scope, the menu, a
+//! starts, as they inherit its environment (nova-launch's scope, the menu, a
 //! notification's action), and hold to two arenas any of them built on
 //! jemalloc, however many threads it runs.
 

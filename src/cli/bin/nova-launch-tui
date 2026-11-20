@@ -22,4 +22,4 @@ else
   app_id=org.nova.${1##*/}
 fi
 
-exec setsid uwsm-app -- xdg-terminal-exec --app-id="$app_id" -e "$@"
+exec setsid nova-launch -- xdg-terminal-exec --app-id="$app_id" -e "$@"

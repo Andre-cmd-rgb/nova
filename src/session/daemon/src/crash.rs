@@ -267,10 +267,10 @@ pub fn launch_words(id: &str) -> Vec<String> {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
     if plain {
-        vec!["uwsm-app".into(), "--".into(), format!("{id}.desktop")]
+        vec!["nova-launch".into(), "--".into(), format!("{id}.desktop")]
     } else {
         vec![
-            "uwsm-app".into(),
+            "nova-launch".into(),
             "--".into(),
             "gtk-launch".into(),
             format!("{id}.desktop"),
@@ -623,7 +623,7 @@ mod tests {
         watch(&mut fake, vec![closed("abc"), core("4242")]);
         assert_eq!(
             fake.said,
-            vec!["-u normal -g \u{f0026} -i org.example.Sketch --button Reopen Sketch quit unexpectedly --exec uwsm-app -- org.example.Sketch.desktop"]
+            vec!["-u normal -g \u{f0026} -i org.example.Sketch --button Reopen Sketch quit unexpectedly --exec nova-launch -- org.example.Sketch.desktop"]
         );
     }
 
@@ -783,13 +783,13 @@ mod tests {
             ],
         );
         assert!(fake.said[0].ends_with(
-            "-g \u{f0026} --button Reopen Bambu Studio quit unexpectedly --exec uwsm-app -- com.bambulab.BambuStudio.desktop"
+            "-g \u{f0026} --button Reopen Bambu Studio quit unexpectedly --exec nova-launch -- com.bambulab.BambuStudio.desktop"
         ));
-        assert!(fake.said[1]
-            .ends_with("Google Chrome quit unexpectedly --exec uwsm-app -- google-chrome.desktop"));
-        assert!(
-            fake.said[2].ends_with("My Kitty quit unexpectedly --exec uwsm-app -- Kitty.desktop")
-        );
+        assert!(fake.said[1].ends_with(
+            "Google Chrome quit unexpectedly --exec nova-launch -- google-chrome.desktop"
+        ));
+        assert!(fake.said[2]
+            .ends_with("My Kitty quit unexpectedly --exec nova-launch -- Kitty.desktop"));
         assert_eq!(
             fake.said[3],
             "-u normal -g \u{f0026} hidden quit unexpectedly"
@@ -808,7 +808,7 @@ mod tests {
         fake.windows(&[("abc", 4242, "odd")]);
         watch(&mut fake, vec![closed("abc"), core("4242")]);
         assert!(fake.said[0]
-            .ends_with("Odd quit unexpectedly --exec uwsm-app -- gtk-launch Odd App.desktop"));
+            .ends_with("Odd quit unexpectedly --exec nova-launch -- gtk-launch Odd App.desktop"));
     }
 
     #[test]
@@ -913,7 +913,7 @@ mod tests {
         });
         assert_eq!(
             crate::testing::calls(&dir),
-            vec!["nova-notification-send -u normal -g \u{f0026} --button Reopen Sketch quit unexpectedly --exec uwsm-app -- sketch.desktop"]
+            vec!["nova-notification-send -u normal -g \u{f0026} --button Reopen Sketch quit unexpectedly --exec nova-launch -- sketch.desktop"]
         );
         drop(hyprland);
         assert_eq!(

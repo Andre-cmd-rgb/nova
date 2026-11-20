@@ -81,7 +81,7 @@ done
 nova-cmd-browser-handoff "${browser[@]}" "${words[@]}" ||
   systemd-run --user --quiet --collect --unit="nova-browser-$(date +%s%N)" \
     --property=StandardOutput=null --property=StandardError=null \
-    uwsm-app -- "${browser[@]}" "${words[@]}"
+    nova-launch -- "${browser[@]}" "${words[@]}"
 
 # Something opened is looked at: the browser's window comes to the front,
 # found by its class, which is its command's name without -stable.

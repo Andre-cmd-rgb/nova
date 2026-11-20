@@ -58,21 +58,21 @@ launch() { "$REPO_ROOT/src/cli/bin/nova-launch-browser" "$@"; }
   browser google-chrome.desktop google-chrome-stable
   stub nova-cmd-browser-handoff 'exit 1'
   launch https://example.org
-  [[ $(cat "$CALLS") == "systemd-run --user "*"uwsm-app -- $SCRATCH/bin/google-chrome-stable https://example.org" ]]
+  [[ $(cat "$CALLS") == "systemd-run --user "*"nova-launch -- $SCRATCH/bin/google-chrome-stable https://example.org" ]]
 }
 
 @test "the entry's own arguments stay, its field codes go, and the page comes last" {
   browser firefox.desktop firefox '-P Work --new-window %u'
   stub nova-cmd-browser-handoff 'exit 1'
   launch https://example.org
-  [[ $(cat "$CALLS") == *"uwsm-app -- $SCRATCH/bin/firefox -P Work --new-window https://example.org" ]]
+  [[ $(cat "$CALLS") == *"nova-launch -- $SCRATCH/bin/firefox -P Work --new-window https://example.org" ]]
 }
 
 @test "a Flatpak browser: the whole command, and the private flag of what it runs" {
   browser org.mozilla.firefox.desktop flatpak 'run --branch=stable --command=firefox org.mozilla.firefox @@u %u @@'
   stub nova-cmd-browser-handoff 'exit 1'
   launch --private https://example.org
-  [[ $(cat "$CALLS") == *"uwsm-app -- $SCRATCH/bin/flatpak run --branch=stable --command=firefox org.mozilla.firefox @@u @@ --private-window https://example.org" ]]
+  [[ $(cat "$CALLS") == *"nova-launch -- $SCRATCH/bin/flatpak run --branch=stable --command=firefox org.mozilla.firefox @@u @@ --private-window https://example.org" ]]
 }
 
 @test "quoted and escaped words in the Exec line are read as the specification says" {

@@ -2,4 +2,4 @@
 
 # nova:summary=Open Files in the focused terminal's directory
 
-exec setsid uwsm-app -- nautilus --new-window "$(nova-cmd-terminal-cwd)"
+exec setsid nova-launch -- nautilus --new-window "$(nova-cmd-terminal-cwd)"

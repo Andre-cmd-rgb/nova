@@ -30,11 +30,11 @@ function sortedEntries(values, isHidden) {
 }
 
 // What runs an app from the menu, as words for Quickshell.execDetached: no
-// shell in between. uwsm-app runs it in a scope of its own under
+// shell in between. nova-launch runs it in a scope of its own under
 // app-graphical.slice, and finds the entry itself, which honours Terminal,
-// Path, TryExec and the Exec's field codes, in about a millisecond in its
+// Path, TryExec and the Exec's field codes, in a couple of milliseconds, with no
 // daemon. A DBusActivatable entry is run by its Exec there, as the spec
-// keeps one for, rather than activated outside the scope. An ID that uwsm
+// keeps one for, rather than activated outside the scope. An ID that nova-launch
 // will not take (one with a space in it, from a file name) goes through
 // gtk-launch, which takes any; it wants the .desktop suffix, or an ID such
 // as org.telegram.desktop is not found. An entry that asks for the discrete
@@ -45,6 +45,6 @@ function launchWords(appId, discrete) {
   var id = String(appId || "")
   if (!id) return []
   var prefer = discrete === true ? ["nova-power", "prefer"] : []
-  if (/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(id)) return prefer.concat(["uwsm-app", "--", id + ".desktop"])
-  return prefer.concat(["uwsm-app", "--", "gtk-launch", id + ".desktop"])
+  if (/^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(id)) return prefer.concat(["nova-launch", "--", id + ".desktop"])
+  return prefer.concat(["nova-launch", "--", "gtk-launch", id + ".desktop"])
 }

@@ -30,7 +30,7 @@ function nova.quote(value)
 end
 
 function nova.launch(command)
-  return "uwsm-app -- " .. command
+  return "nova-launch -- " .. command
 end
 
 -- What a key runs, from one of the shorthands nova.bind takes.
