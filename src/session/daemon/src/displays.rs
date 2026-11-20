@@ -762,11 +762,16 @@ mod tests {
         let dir = scratch("displays");
         let ctx = stubs(
             &dir,
-            &[("nova-hyprland-monitor-modeless", "sleep 0.1; exit 1")],
+            &[("nova-hyprland-monitor-modeless", "sleep 0.5; exit 1")],
         );
         let setup = quick(Arc::new(Mutex::new(Vec::new())));
         let modeless = Modeless::new();
         modeless.ask(&ctx, &setup);
+        // The others once the first loop is under way: asked before it
+        // starts, they are all its, and one loop is right.
+        crate::testing::wait_until("the first loop", || {
+            count(&dir, "nova-hyprland-monitor-modeless") >= 1
+        });
         modeless.ask(&ctx, &setup);
         modeless.ask(&ctx, &setup);
         settled(|| count(&dir, "nova-hyprland-monitor-modeless") >= 2);
@@ -827,9 +832,18 @@ mod tests {
         logind.send(changed("IdleHint"));
         thread::sleep(Duration::from_millis(100));
         assert_eq!(count(&dir, "nova-hyprland-monitor-clamshell"), 1);
-        logind.send(changed("LidClosed"));
+        // Said again until it is heard: the watch is on the bus before its
+        // match is, and a word said in between reaches nobody.
+        let mut said: Option<std::time::Instant> = None;
         crate::testing::wait_until("the lid's pass", || {
-            count(&dir, "nova-hyprland-monitor-clamshell") == 2
+            if count(&dir, "nova-hyprland-monitor-clamshell") >= 2 {
+                return true;
+            }
+            if said.is_none_or(|at| at.elapsed() > Duration::from_millis(500)) {
+                logind.send(changed("LidClosed"));
+                said = Some(std::time::Instant::now());
+            }
+            false
         });
         drop(hyprland);
         assert!(watcher.join().unwrap().is_err());

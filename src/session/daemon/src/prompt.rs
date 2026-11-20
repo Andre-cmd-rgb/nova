@@ -572,6 +572,10 @@ mod tests {
         let (dir, listener) = listener();
         let shell = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
+            // The question read first, as the shell does: a card gone before
+            // it was asked is another test's, and the ask would meet EPIPE.
+            let mut line = String::new();
+            BufReader::new(&stream).read_line(&mut line).unwrap();
             let long = vec![b'x'; LONGEST as usize + 10];
             let _ = stream.write_all(&long);
         });

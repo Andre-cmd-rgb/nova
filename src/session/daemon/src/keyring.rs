@@ -893,14 +893,6 @@ mod tests {
             mine.send(None).unwrap(),
         )
         .unwrap();
-        // Asked again before the answer: refused, as gcr does.
-        let again = perform(
-            Value::options(Vec::<(&str, Value)>::new()),
-            mine.send(None).unwrap(),
-        )
-        .unwrap_err();
-        assert_eq!(again.name(), Some(FAILED));
-
         let Heard::Ready(reply, props, theirs) = keyring.hear() else {
             panic!("no answer")
         };
@@ -1046,6 +1038,42 @@ mod tests {
         assert_eq!(reply, "no");
         assert!(props.iter().all(|(k, _)| k != "password-strength"));
         assert!(!theirs.contains("secret="));
+    }
+
+    #[test]
+    fn a_question_asked_again_before_the_answer_is_refused() {
+        let dir = scratch("keyring-again");
+        let Some((bus, ctx, _duty)) = start(&dir) else {
+            return;
+        };
+        // A card that never answers, so the second question is always
+        // before the answer.
+        let card = Card::listen(&ctx.runtime, &[None]);
+        let keyring = Keyring::new(&bus.address, "/p");
+        let mut mine = Exchange::new();
+        keyring
+            .call("BeginPrompting", &[Value::path("/p")])
+            .unwrap();
+        let Heard::Ready(_, _, theirs) = keyring.hear() else {
+            panic!("not ready")
+        };
+        assert!(mine.receive(&theirs));
+        let perform = |exchange: String| {
+            keyring.call(
+                "PerformPrompt",
+                &[
+                    Value::path("/p"),
+                    Value::str("password"),
+                    Value::options(vec![("title", Value::str("Unlock Login Keyring"))]),
+                    Value::str(exchange),
+                ],
+            )
+        };
+        perform(mine.send(None).unwrap()).unwrap();
+        crate::testing::wait_until("the card", || !card.lines().is_empty());
+        let again = perform(mine.send(None).unwrap()).unwrap_err();
+        assert_eq!(again.name(), Some(FAILED), "refused, as gcr does");
+        assert_eq!(card.lines().len(), 1, "and not asked on the card");
     }
 
     #[test]

@@ -77,7 +77,9 @@ impl Context {
     /// could not start or a signal ended it.
     pub fn run(&self, argv: &[&str]) -> Option<i32> {
         let (program, args) = argv.split_first()?;
-        match self.command(program).args(args).status() {
+        let mut command = self.command(program);
+        command.args(args);
+        match retry_busy(|| command.status()) {
             Ok(status) => status.code(),
             Err(e) => {
                 say!("nova-sessiond", "could not run {program}: {e}");
@@ -94,7 +96,7 @@ impl Context {
         if quiet {
             command.stdout(Stdio::null()).stderr(Stdio::null());
         }
-        match command.spawn() {
+        match retry_busy(|| command.spawn()) {
             Ok(child) => {
                 let pid = child.id();
                 reap(child);
@@ -104,6 +106,24 @@ impl Context {
                 say!("nova-sessiond", "could not run {program}: {e}");
                 None
             }
+        }
+    }
+}
+
+/// Starts a program, and again for up to half a second while the kernel
+/// says it is busy (ETXTBSY): open for writing somewhere, as a helper is
+/// while pacman writes it in an update, or a test's stub while a child that
+/// another thread forked has not yet closed it.
+pub fn retry_busy<T>(mut start: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    const ETXTBSY: i32 = 26;
+    let mut tries = 0;
+    loop {
+        match start() {
+            Err(e) if e.raw_os_error() == Some(ETXTBSY) && tries < 50 => {
+                tries += 1;
+                thread::sleep(Duration::from_millis(10));
+            }
+            other => return other,
         }
     }
 }
@@ -284,5 +304,32 @@ impl FileLock {
             .ok()?;
         // LOCK_EX | LOCK_NB. SAFETY: an open descriptor.
         (unsafe { flock(file.as_raw_fd(), 2 | 4) } == 0).then_some(FileLock { _file: file })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_busy_program_is_started_again_and_another_error_is_not() {
+        let mut tries = 0;
+        let started = retry_busy(|| {
+            tries += 1;
+            if tries < 3 {
+                Err(io::Error::from_raw_os_error(26))
+            } else {
+                Ok(tries)
+            }
+        });
+        assert_eq!(started.unwrap(), 3);
+
+        let mut tries = 0;
+        let missing = retry_busy(|| -> io::Result<()> {
+            tries += 1;
+            Err(io::Error::from(io::ErrorKind::NotFound))
+        });
+        assert!(missing.is_err());
+        assert_eq!(tries, 1);
     }
 }

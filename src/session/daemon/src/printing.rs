@@ -51,7 +51,7 @@ use std::time::{Duration, Instant};
 use nova_sd::poll::{poll, sooner, PollFd, POLLIN};
 use nova_sd::{Bus, Message};
 
-use crate::common::{Context, FolderWatch, IN_CLOSE_WRITE, IN_CREATE, IN_MOVED_TO};
+use crate::common::{retry_busy, Context, FolderWatch, IN_CLOSE_WRITE, IN_CREATE, IN_MOVED_TO};
 use crate::idle::one_line;
 use crate::json::quote;
 use crate::prompt::{Ask, Dialog, Ender, Field, Glyph};
@@ -365,12 +365,12 @@ type Cards = Arc<Mutex<HashMap<String, Option<Ender>>>>;
 /// standard input, never as an argument, which anyone may read. Whether CUPS
 /// took them: the printer has not seen them yet.
 fn authenticate(ctx: &Context, sign_in: &SignIn, user: &str, password: &str) -> bool {
-    let started = ctx
-        .command("nova-printers")
+    let mut command = ctx.command("nova-printers");
+    command
         .args(["authenticate", &sign_in.printer, &sign_in.job])
         .stdin(Stdio::piped())
-        .stdout(Stdio::null())
-        .spawn();
+        .stdout(Stdio::null());
+    let started = retry_busy(|| command.spawn());
     let mut child = match started {
         Ok(child) => child,
         Err(e) => {
@@ -568,7 +568,9 @@ fn notifier(ctx: &Context) -> Result<Sender<Notice>, String> {
         .spawn(move || {
             for notice in told {
                 let argv = notice_argv(&notice);
-                if let Err(e) = ctx.command(&argv[0]).args(&argv[1..]).output() {
+                let mut command = ctx.command(&argv[0]);
+                command.args(&argv[1..]);
+                if let Err(e) = retry_busy(|| command.output()) {
                     say!(DUTY, "could not run nova-notification-send: {e}");
                 }
             }
@@ -585,7 +587,7 @@ fn watched(ctx: &Context, user: Option<&str>) -> Watched {
     if let Some(user) = user {
         command.arg(user);
     }
-    match command.output() {
+    match retry_busy(|| command.output()) {
         Ok(out) if out.status.success() => parse_watch(&String::from_utf8_lossy(&out.stdout)),
         Ok(_) => Watched::default(),
         Err(e) => {
@@ -603,7 +605,9 @@ fn subscribe(ctx: &Context) {
         .name("printing-subscribe".into())
         .stack_size(128 * 1024)
         .spawn(move || {
-            if let Err(e) = ctx.command("nova-printers").arg("subscribe").status() {
+            let mut command = ctx.command("nova-printers");
+            command.arg("subscribe");
+            if let Err(e) = retry_busy(|| command.status()) {
                 say!(DUTY, "could not run nova-printers: {e}");
             }
         });

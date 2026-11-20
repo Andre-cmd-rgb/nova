@@ -16,7 +16,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::common::{write_atomically, Context};
+use crate::common::{retry_busy, write_atomically, Context};
 use crate::hypr;
 use crate::json::{self, Json};
 use crate::prompt::{Ask, Choice, Dialog, Glyph, Toggle};
@@ -301,10 +301,9 @@ fn choose(
 }
 
 fn slurp() -> Option<String> {
-    let out = Command::new("slurp")
-        .args(["-f", "%o %X %Y %W %H"])
-        .output()
-        .ok()?;
+    let mut command = Command::new("slurp");
+    command.args(["-f", "%o %X %Y %W %H"]);
+    let out = retry_busy(|| command.output()).ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
