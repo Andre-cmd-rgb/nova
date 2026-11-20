@@ -646,6 +646,32 @@ field() { jq -c ".$1" "$SCRATCH/run/status.json"; }
   [ "$(field failed)" = '["flathub"]' ]
 }
 
+@test "Settings: the session's services move right after the root step, before the apps and Flathub, and once" {
+  export XDG_CACHE_HOME=$SCRATCH/cache
+  build_chrome
+  stub pacman 'case $2 in google-chrome) echo "google-chrome 141.0-1" ;; *) echo "nova $(cat "$PKGVER")-1" ;; esac'
+  echo app/org.gimp.GIMP/x86_64/stable >"$SCRATCH/flatpak-user"
+  run settings_update
+  [ "$(field state)" = '"done"' ]
+  [ "$(grep -oE '^(pkexec|nova-session-settle|nova-apps-install --record|flatpak update|nova-restart-shell)' "$CALLS" | paste -sd' ')" = \
+    "pkexec nova-session-settle nova-apps-install --record flatpak update nova-restart-shell" ]
+}
+
+@test "Settings: a release that went in moves the session's services even when the rest failed" {
+  stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"; exit 3'
+  stub nova-notification-send
+  run settings_update
+  [ "$(field state)" = '"failed"' ]
+  [ "$(grep -c '^nova-session-settle' "$CALLS")" = 1 ]
+}
+
+@test "Settings: nothing installed, the session's services are left alone" {
+  stub pkexec 'exit 126'
+  run settings_update
+  [ "$(field state)" = '"cancelled"' ]
+  fails grep -q nova-session-settle "$CALLS"
+}
+
 @test "Settings: Nova installed with no restart to wait for says nothing" {
   stub nova-notification-send
   run settings_update

@@ -527,6 +527,19 @@ update_release() {
   return "$status"
 }
 
+# The session's services onto the new release, once nova changed: what the
+# release took away stops, and what it brought starts (nova-session-settle).
+# As soon as the root step is done, and once: an old helper left running
+# beside its successor, or with nothing to hold it under the lock, should not
+# outlast the swap by the minutes the apps and Flathub's take.
+settled=0
+settle_session() { # the nova pkgver before the update
+  (( ! settled )) || return 0
+  [[ $(installed_pkgver) != "$1" ]] || return 0
+  settled=1
+  nova-session-settle || warn "the session's services follow the new release at the next login"
+}
+
 # The running shell holds the old release's QML and would load the rest from
 # the new files as it needs them, half one release and half the other: move it
 # onto the new release, if one is running and nova changed.
@@ -535,12 +548,11 @@ update_release() {
 # the lock screen is not restarted under the user: the restart waits for the
 # unlock, in a unit of its own, which outlives this and the Settings window.
 #
-# The session's services move first, shell or not: what the release took
-# away stops and what it brought starts (nova-session-settle), so that the
-# new shell finds them.
+# The session's services move first, shell or not (settle_session), so that
+# the new shell finds them.
 restart_shell() { # the nova pkgver before the update
   [[ $(installed_pkgver) != "$1" ]] || return 0
-  nova-session-settle || warn "the session's services follow the new release at the next login"
+  settle_session "$1"
   nova-shell shell ping >/dev/null 2>&1 || return 0
   echo "Restarting the shell on the new release."
   local status=0
@@ -734,6 +746,8 @@ settings_update() {
     3) st_state=failed st_error="installed, but the boot entries did not check out; do not restart yet" ;;
     *) st_state=failed st_error=${last_error:-the update failed} ;;
   esac
+  # Whatever came of the rest: a release that went in moves the session.
+  settle_session "$cur_pkgver"
 
   local entry app commit file
   for entry in "${built[@]}"; do
