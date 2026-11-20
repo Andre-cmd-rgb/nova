@@ -55,11 +55,14 @@ PanelWindow {
   }
 
   // An image as the screen draws it: over all of it, cropped to fill it,
-  // and decoded at its size, off the main thread. A large photo then costs
-  // a screen's worth of memory, and an SVG is drawn sharp.
+  // and decoded off the main thread at the screen's own pixels, one image
+  // pixel to each of the screen's at a fractional scale too (the window's
+  // ratio, which is the scale; Qt's Screen rounds it up). Sharp, and a large
+  // photo costs a screen's worth of memory, no more: decoded larger, it
+  // would only be scaled down again to draw.
   component ScreenImage: Image {
     anchors.fill: parent
-    sourceSize: Qt.size(width, height)
+    sourceSize: Qt.size(Math.round(width * desktop.devicePixelRatio), Math.round(height * desktop.devicePixelRatio))
     fillMode: Image.PreserveAspectCrop
     asynchronous: true
   }
