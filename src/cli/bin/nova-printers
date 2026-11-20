@@ -1,7 +1,7 @@
 #!/bin/bash
 # nova:hidden=true
 # nova:summary=What Settings' Printers page and the session's printing notices ask CUPS
-# nova:args=list | detail <printer> | discover | drivers [make-and-model] | add <name> <uri> <driver> | remove <printer> | pause <printer> | resume <printer> | default <printer> | test-page <printer> | cancel <printer> <job> | option <printer> <media|sides|color> <value|default> | authenticate <printer> <job> | watch [user] | subscribe | admin
+# nova:args=list | detail <printer> | discover | drivers [make-and-model] | add <name> <uri> <driver> | remove <printer> | pause <printer> | resume <printer> | default <printer> | test-page <printer> | cancel <printer> <job> | option <printer> <media|sides|color> <value|default> | authenticate <printer> <job> | sign-in <printer> <job> | watch [user] | subscribe | admin
 #
 # CUPS's own tools, one command each, and JSON on standard output for the
 # page to read (watch, for nova-sessiond, prints tab-separated lines: it
@@ -25,6 +25,8 @@
 set -euo pipefail
 
 server=${NOVA_PRINTERS_SERVER:-ipp://%2Frun%2Fcups%2Fcups.sock/}
+NOVA_REQUESTER=$(id -un)
+export NOVA_REQUESTER
 cups_files=${NOVA_PRINTERS_CUPS_FILES:-/etc/cups/cups-files.conf}
 test_page=${NOVA_PRINTERS_TESTPAGE:-/usr/share/cups/data/testprint}
 
@@ -34,7 +36,7 @@ die() {
 }
 
 usage() {
-  echo "Usage: nova-printers list | detail <printer> | discover | drivers [make-and-model] | add <name> <uri> <driver> | remove <printer> | pause <printer> | resume <printer> | default <printer> | test-page <printer> | cancel <printer> <job> | option <printer> <media|sides|color> <value|default> | authenticate <printer> <job> | watch [user] | subscribe | admin" >&2
+  echo "Usage: nova-printers list | detail <printer> | discover | drivers [make-and-model] | add <name> <uri> <driver> | remove <printer> | pause <printer> | resume <printer> | default <printer> | test-page <printer> | cancel <printer> <job> | option <printer> <media|sides|color> <value|default> | authenticate <printer> <job> | sign-in <printer> <job> | watch [user] | subscribe | admin" >&2
   exit 2
 }
 
@@ -145,12 +147,17 @@ plist_json() {
 # It answers { status, groups: [{ attribute: value-or-values }, ...] }, the
 # groups after the operation's own; a CUPS that cannot be reached answers
 # nothing, and a failure.
+#
+# Every request says whose it is (requesting-user-name, this user's login):
+# CUPS shows a job's name and owner to its owner alone, and a request that
+# says no name is nobody's, whose jobs are all strangers'.
 ipp() { # operation
   local dir out
   dir=$(mktemp -d "${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/nova-printers.XXXXXX")
   {
     printf '{\n  OPERATION %s\n  GROUP operation-attributes-tag\n' "$1"
     printf '  ATTR charset attributes-charset utf-8\n  ATTR language attributes-natural-language en\n'
+    printf '  ATTR name requesting-user-name $ENV[NOVA_REQUESTER]\n'
     cat
     printf '}\n'
   } >"$dir/request.test"
@@ -200,20 +207,25 @@ EOF
     }' <<<"$all"
 }
 
-# The jobs not done on <printer>, as an array.
+# The jobs not done on <printer>, as an array. A job held for a user name
+# and password says so (cups-held-for-authentication) until CUPS restarts,
+# and after it only by what it is held until, auth-info-required; it says
+# so here either way.
 jobs_json() { # printer
   local answer
   answer=$(NOVA_PRINTER=$1 ipp Get-Jobs <<'EOF'
   ATTR uri printer-uri ipp://localhost/printers/$ENV[NOVA_PRINTER]
   ATTR keyword which-jobs not-completed
-  ATTR keyword requested-attributes job-id,job-name,job-state,job-state-reasons,job-originating-user-name
+  ATTR keyword requested-attributes job-id,job-name,job-state,job-state-reasons,job-originating-user-name,job-hold-until
 EOF
   ) || return 1
   jq -c '
     def arr: if type == "array" then . else [.] end;
     [ .groups[] | select(has("job-id"))
+      | (.["job-hold-until"] == "auth-info-required") as $auth
       | { id: .["job-id"], name: (.["job-name"] // ""), state: (.["job-state"] // 3),
-          reasons: ((.["job-state-reasons"] // []) | arr | map(select(. != "none"))),
+          reasons: ((.["job-state-reasons"] // []) | arr | map(select(. != "none"))
+            | if $auth then map(select(. != "job-hold-until-specified")) | (. - ["cups-held-for-authentication"]) + ["cups-held-for-authentication"] else . end),
           user: (.["job-originating-user-name"] // "") } ]' <<<"$answer"
 }
 
@@ -221,6 +233,15 @@ EOF
 # before CUPS's.
 default_printer() {
   lpstat -d 2>/dev/null | sed -n 's/^system default destination: //p' || true
+}
+
+# What the user has set for <printer> themselves, as lpoptions keeps it in
+# ~/.cups/lpoptions ("Dest <name> key=value ..."): lpoptions -p says the
+# printer's own defaults as well, which are not the user's choice.
+own_options() { # printer
+  local file=${HOME:-}/.cups/lpoptions
+  [[ -r $file ]] || return 0
+  awk -v name="$1" '($1 == "Dest" || $1 == "Default") && $2 == name { $1 = ""; $2 = ""; print; exit }' "$file"
 }
 
 # ---- subcommands ----------------------------------------------------------------
@@ -244,7 +265,7 @@ cmd_detail() {
 EOF
   ) || die "CUPS cannot be reached."
   jobs=$(jobs_json "$name") || jobs='[]'
-  mine=$(lpoptions -p "$name" 2>/dev/null || true)
+  mine=$(own_options "$name")
   jq -c --argjson jobs "$jobs" --arg mine "$mine" '
     def arr: if type == "array" then . else [.] end;
     def mine($key): ($mine | capture("(^|[ ])" + $key + "=(?<v>[^ ]+)") | .v) // "";
@@ -323,7 +344,7 @@ cmd_resume() {
 # The user's own default: lpoptions keeps it in ~/.cups/lpoptions.
 cmd_default() {
   name_of "$1"
-  lpoptions -d "$1"
+  lpoptions -d "$1" >/dev/null
 }
 
 cmd_test_page() {
@@ -365,16 +386,27 @@ cmd_authenticate() {
   IFS= read -r user || true
   IFS= read -r password || true
   [[ -n $user && -n $password && $user != *[[:cntrl:]]* && $password != *[[:cntrl:]]* ]] || die "a user name and a password, one on each line, are needed."
-  answer=$(NOVA_PRINTER=$name NOVA_JOB=$job NOVA_USER=$user NOVA_AUTH_USER=$user NOVA_AUTH_PASSWORD=$password \
+  answer=$(NOVA_PRINTER=$name NOVA_JOB=$job NOVA_AUTH_USER=$user NOVA_AUTH_PASSWORD=$password \
     ipp CUPS-Authenticate-Job <<'EOF'
   ATTR uri printer-uri ipp://localhost/printers/$ENV[NOVA_PRINTER]
   ATTR integer job-id $ENV[NOVA_JOB]
-  ATTR name requesting-user-name $ENV[NOVA_USER]
   ATTR text auth-info "$ENV[NOVA_AUTH_USER]","$ENV[NOVA_AUTH_PASSWORD]"
 EOF
   ) || die "CUPS cannot be reached."
   status=$(jq -r '.status' <<<"$answer")
   [[ $status == successful-ok* ]] || die "the printer did not accept it ($status)."
+}
+
+# A held job's user name and password asked for again, on Nova's card: the
+# switch nova-sessiond's printing duty watches, in the user's runtime folder.
+cmd_sign_in() {
+  local name=$1 job=$2 dir
+  name_of "$name"
+  valid_job "$job" || die "not a job: $job"
+  dir=${XDG_RUNTIME_DIR:?no runtime folder}/nova
+  (umask 077 && mkdir -p "$dir")
+  printf '%s\n%s\n' "$name" "$job" >"$dir/.printer-sign-in.$$"
+  mv -f "$dir/.printer-sign-in.$$" "$dir/printer-sign-in"
 }
 
 # For nova-sessiond: a line for each printer this user has jobs on, and a
@@ -440,6 +472,7 @@ case $command in
   cancel) (($# == 2)) || usage; cmd_cancel "$1" "$2" ;;
   option) (($# == 3)) || usage; cmd_option "$1" "$2" "$3" ;;
   authenticate) (($# == 2)) || usage; cmd_authenticate "$1" "$2" ;;
+  sign-in) (($# == 2)) || usage; cmd_sign_in "$1" "$2" ;;
   watch) (($# <= 1)) || usage; cmd_watch "${1:-}" ;;
   subscribe) (($# == 0)) || usage; cmd_subscribe ;;
   admin) (($# == 0)) || usage; admin_json ;;

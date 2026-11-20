@@ -1,6 +1,6 @@
 //! Nova's own dialogs, for what a duty needs from the person at the
 //! computer: an encrypted drive's passphrase, a Bluetooth pairing's code, a
-//! network's password. The shell asks, on a card like the one it asks the
+//! printer's user name and password. The shell asks, on a card like the one it asks the
 //! administrator's password on (its prompts plugin), and listens for the
 //! duties on $XDG_RUNTIME_DIR/nova/prompts.sock, in the user's own private
 //! runtime folder.
@@ -38,6 +38,7 @@ const LONGEST: u64 = 64 * 1024;
 pub enum Glyph {
     Drive,
     Bluetooth,
+    Printer,
 }
 
 impl Glyph {
@@ -45,6 +46,7 @@ impl Glyph {
         match self {
             Glyph::Drive => "drive",
             Glyph::Bluetooth => "bluetooth",
+            Glyph::Printer => "printer",
         }
     }
 }
@@ -239,6 +241,7 @@ pub mod fake {
     pub struct Card {
         pub heard: Arc<Mutex<Vec<(usize, String)>>>,
         answers: Arc<Mutex<VecDeque<Option<String>>>>,
+        ended: Arc<Mutex<Vec<usize>>>,
     }
 
     impl Card {
@@ -254,6 +257,7 @@ pub mod fake {
                 answers: Arc::new(Mutex::new(
                     answers.iter().map(|a| a.map(str::to_owned)).collect(),
                 )),
+                ended: Arc::default(),
             };
             let shared = card.clone();
             thread::spawn(move || {
@@ -269,7 +273,7 @@ pub mod fake {
         fn serve(&self, n: usize, stream: std::os::unix::net::UnixStream) {
             let mut out = stream.try_clone().unwrap();
             for line in BufReader::new(stream).lines() {
-                let Ok(line) = line else { return };
+                let Ok(line) = line else { break };
                 self.heard.lock().unwrap().push((n, line.clone()));
                 if line.starts_with(r#"{"type":"ask""#) || line.starts_with(r#"{"type":"wrong""#) {
                     let next = self.answers.lock().unwrap().pop_front().flatten();
@@ -284,11 +288,17 @@ pub mod fake {
                     }
                 }
             }
+            self.ended.lock().unwrap().push(n);
         }
 
         /// The lines heard, by dialog.
         pub fn lines(&self) -> Vec<(usize, String)> {
             self.heard.lock().unwrap().clone()
+        }
+
+        /// The dialogs the duty has closed, by number.
+        pub fn ended(&self) -> Vec<usize> {
+            self.ended.lock().unwrap().clone()
         }
     }
 }

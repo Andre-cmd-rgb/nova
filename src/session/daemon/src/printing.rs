@@ -6,21 +6,30 @@
 //! Nova's own Settings has a Printers page now, and what is left of the
 //! applet is this:
 //!
-//! - It waits for CUPS's signals (com.redhat.PrinterSpooler, on the system
-//!   bus). CUPS sends them to whoever has asked for them, and nobody does
-//!   now that the applet is gone, so `nova-printers subscribe` asks, for a
-//!   day at a time (every six hours here, and whenever systemd says it
-//!   started cups.service): it does nothing while CUPS is not running, so
-//!   that nothing here starts CUPS, no look at login.
-//! - Once a job of this user's is queued, it asks `nova-printers watch` every
-//!   few seconds how the printers holding their jobs are. It stops when no job
-//!   of theirs is left.
+//! - It waits for CUPS's signals (org.cups.cupsd.Notifier, on the system
+//!   bus: JobCreated, JobState, PrinterStateChanged, ...). CUPS's dbus
+//!   notifier sends them for whoever has subscribed, and nobody has now that
+//!   the applet is gone, so `nova-printers subscribe` does, for a day at a
+//!   time (every six hours here, and whenever systemd says it started
+//!   cups.service): it does nothing while CUPS is not running, so that
+//!   nothing here starts CUPS, no look at login. The signals say no job's
+//!   owner, and anyone may send them: a job created is a look, no more.
+//! - Once a job is created, and as CUPS starts (a job may have started it
+//!   before there was a subscription), it asks `nova-printers watch` every
+//!   few seconds how the printers holding this user's jobs are. It stops when
+//!   no job of theirs is left.
 //! - What the user must do something about is said in a notification, once for
 //!   as long as it lasts, with a button that opens Settings' Printers page at
 //!   that printer: no paper, a paper jam, a cover open, no toner or ink, a
-//!   printer that cannot be reached or has stopped, and a held job that asks
-//!   for a user name and password. A printer low on paper or ink, or paused
-//!   by the user, is on the page and not said.
+//!   printer that cannot be reached or has stopped. A printer low on paper or
+//!   ink, or paused by the user, is on the page and not said.
+//! - A job held for a user name and password (a printer at work, a shared
+//!   one) is asked about on the shell's card, the drive passphrase's, with the
+//!   user's own name to begin with. CUPS takes any answer and lets the job
+//!   go; the printer refusing it holds the job again, which the card says,
+//!   and asks again. Cancelled, it is not asked again for that job until
+//!   Printers' Sign In (`nova-printers sign-in`, a switch in the runtime
+//!   folder); with no shell to ask on, a notice says it.
 //!
 //! The applet also owned com.redhat.NewPrinterNotification, which its udev
 //! rules called as a printer was plugged in. Nothing calls it without them:
@@ -28,22 +37,35 @@
 //! printer on the network, and an older one is added on the Printers page.
 
 use std::cell::RefCell;
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
+use std::io::Write;
+use std::path::Path;
+use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use nova_sd::poll::{poll, sooner};
+use nova_sd::poll::{poll, sooner, PollFd, POLLIN};
 use nova_sd::{Bus, Message};
 
-use crate::common::Context;
+use crate::common::{Context, FolderWatch, IN_CLOSE_WRITE, IN_CREATE, IN_MOVED_TO};
 use crate::idle::one_line;
+use crate::json::quote;
+use crate::prompt::{Ask, Dialog, Ender, Field, Glyph};
 use crate::say;
 
 pub const DUTY: &str = "printing";
-const SPOOLER_PATH: &str = "/com/redhat/PrinterSpooler";
-const SPOOLER: &str = "com.redhat.PrinterSpooler";
+const NOTIFIER_PATH: &str = "/org/cups/cupsd/Notifier";
+const NOTIFIER: &str = "org.cups.cupsd.Notifier";
+/// The switch `nova-printers sign-in` writes, in the runtime folder: the
+/// printer and the held job to ask about again, a line each.
+const SWITCH: &str = "printer-sign-in";
+/// The answers a card takes before it goes: the job stays held, for
+/// Printers' Sign In.
+const TRIES: u32 = 3;
 const SYSTEMD: &str = "org.freedesktop.systemd1";
 const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
 const MANAGER: &str = "org.freedesktop.systemd1.Manager";
@@ -57,6 +79,10 @@ pub struct Setup {
     pub watch: Duration,
     /// How often the subscription to CUPS's signals is renewed.
     pub renew: Duration,
+    /// After a held job is answered, how often it is looked at, and for how
+    /// long at most, to know whether the printer took the answer.
+    pub check: Duration,
+    pub patience: Duration,
     /// Whose jobs count: the user's name, as CUPS has it.
     pub user: Option<String>,
 }
@@ -67,6 +93,8 @@ impl Default for Setup {
             settle: Duration::from_secs(2),
             watch: Duration::from_secs(5),
             renew: Duration::from_secs(6 * 3600),
+            check: Duration::from_secs(1),
+            patience: Duration::from_secs(30),
             user: std::env::var("USER").ok().filter(|u| !u.is_empty()),
         }
     }
@@ -153,30 +181,25 @@ fn has(reasons: &[String], words: &[&str]) -> bool {
     reasons.iter().any(|r| words.contains(&keyword(r)))
 }
 
-/// A string as JSON has it, quotes round it.
-fn json_string(text: &str) -> String {
-    let mut out = String::from("\"");
-    for c in text.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
+/// Whether <job> is held for a user name and password.
+fn asks_for_password(job: &Job) -> bool {
+    has(
+        &job.reasons,
+        &["cups-held-for-authentication", "auth-info-required"],
+    ) || job.reasons.iter().any(|r| r.contains("authentication"))
+}
+
+/// Which held job a sign-in is for, as its problem's key.
+fn sign_in_key(printer: &str, job: &str) -> String {
+    format!("{printer}/auth/{job}")
 }
 
 /// The button of every notice: Settings' Printers page, at <printer>, and at
 /// <job> when it is about one.
 fn open_printers(printer: &str, job: Option<&str>) -> (String, Vec<String>) {
-    let mut payload = format!(
-        "{{\"page\":\"printers\",\"printer\":{}",
-        json_string(printer)
-    );
+    let mut payload = format!("{{\"page\":\"printers\",\"printer\":{}", quote(printer));
     if let Some(job) = job {
-        payload.push_str(&format!(",\"job\":{}", json_string(job)));
+        payload.push_str(&format!(",\"job\":{}", quote(job)));
     }
     payload.push('}');
     (
@@ -202,11 +225,22 @@ fn notice(headline: &str, text: String, button: (String, Vec<String>)) -> Notice
 }
 
 /// A problem the user has to do something about, and the notification for
-/// it. <key> says which problem of which printer (or job) it is.
+/// it. <key> says which problem of which printer (or job) it is. A held
+/// job's user name and password are asked for on the card: the notice is
+/// for when there is no card to ask on.
 #[derive(Debug, PartialEq)]
 pub struct Problem {
     pub key: String,
     pub notice: Notice,
+    pub sign_in: Option<SignIn>,
+}
+
+/// A held job that asks for a user name and password.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SignIn {
+    pub printer: String,
+    pub job: String,
+    pub document: String,
 }
 
 /// What is wrong with the printers and the jobs: one problem a kind, for each
@@ -222,6 +256,7 @@ pub fn problems(watched: &Watched) -> Vec<Problem> {
             found.push(Problem {
                 key: format!("{}/{kind}", printer.name),
                 notice: notice(headline, text, button.clone()),
+                sign_in: None,
             });
         };
         let mut known = false;
@@ -275,36 +310,228 @@ pub fn problems(watched: &Watched) -> Vec<Problem> {
             );
         }
     }
-    for job in &watched.jobs {
-        if has(
-            &job.reasons,
-            &["cups-held-for-authentication", "auth-info-required"],
-        ) || job.reasons.iter().any(|r| r.contains("authentication"))
-        {
-            let (printer, document) = (one_line(&job.printer, 80), one_line(&job.name, 80));
-            found.push(Problem {
-                key: format!("{}/auth/{}", job.printer, job.id),
-                notice: notice(
-                    "Printer asks for a password",
-                    format!("“{printer}” asks for a user name and password to print “{document}”."),
-                    open_printers(&job.printer, Some(&job.id)),
-                ),
-            });
-        }
+    for job in watched.jobs.iter().filter(|job| asks_for_password(job)) {
+        let (printer, document) = (one_line(&job.printer, 80), one_line(&job.name, 80));
+        found.push(Problem {
+            key: sign_in_key(&job.printer, &job.id),
+            notice: notice(
+                "Printer asks for a password",
+                format!("“{printer}” asks for a user name and password to print “{document}”."),
+                open_printers(&job.printer, Some(&job.id)),
+            ),
+            sign_in: Some(SignIn {
+                printer: job.printer.clone(),
+                job: job.id.clone(),
+                document: job.name.clone(),
+            }),
+        });
     }
     found
 }
 
-/// The notices of <found> that were not said already, and <told> after it:
+/// The problems of <found> that were not said already, and <told> after it:
 /// what is said stays said for as long as the problem lasts, and a problem
 /// that went and came back is said again.
-pub fn news(told: &mut HashSet<String>, found: Vec<Problem>) -> Vec<Notice> {
+pub fn news(told: &mut HashSet<String>, found: Vec<Problem>) -> Vec<Problem> {
     told.retain(|key| found.iter().any(|p| &p.key == key));
     found
         .into_iter()
         .filter(|p| told.insert(p.key.clone()))
-        .map(|p| p.notice)
         .collect()
+}
+
+/// The card for <sign_in>, with <user> as the name to begin with: a printer
+/// at work often wants the same name as the computer.
+pub fn sign_in_ask(sign_in: &SignIn, user: &str) -> Ask {
+    let printer = one_line(&sign_in.printer, 80);
+    let document = one_line(&sign_in.document, 80);
+    let mut ask = Ask::new(Glyph::Printer, &format!("Sign in to “{printer}”"));
+    ask.text = if document.is_empty() {
+        "The printer asks for a user name and password.".into()
+    } else {
+        format!("To print “{document}”, the printer asks for a user name and password.")
+    };
+    ask.fields.push(Field::plain("user", "User name", user));
+    ask.fields.push(Field::secret("password", "Password"));
+    ask.accept = "Print".into();
+    ask
+}
+
+/// The cards up, by their problem's key, with the hold on each once it is
+/// open; a key taken away calls the card off.
+type Cards = Arc<Mutex<HashMap<String, Option<Ender>>>>;
+
+/// Hands <user> and <password> to CUPS for the held job, on nova-printers'
+/// standard input, never as an argument, which anyone may read. Whether CUPS
+/// took them: the printer has not seen them yet.
+fn authenticate(ctx: &Context, sign_in: &SignIn, user: &str, password: &str) -> bool {
+    let started = ctx
+        .command("nova-printers")
+        .args(["authenticate", &sign_in.printer, &sign_in.job])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn();
+    let mut child = match started {
+        Ok(child) => child,
+        Err(e) => {
+            say!(DUTY, "could not run nova-printers: {e}");
+            return false;
+        }
+    };
+    if let Some(mut stdin) = child.stdin.take() {
+        let mut lines = format!("{user}\n{password}\n").into_bytes();
+        let _ = stdin.write_all(&lines);
+        lines.fill(0);
+    }
+    child.wait().is_ok_and(|status| status.success())
+}
+
+/// Whether the printer took the answer to <sign_in>: CUPS lets the job go at
+/// once, and holds it again for a user name and password when the printer
+/// refuses them. A job gone (printed, or cancelled), or not held again
+/// within the patience, was taken.
+fn taken(ctx: &Context, setup: &Setup, sign_in: &SignIn) -> bool {
+    let until = Instant::now() + setup.patience;
+    loop {
+        thread::sleep(setup.check);
+        let now = watched(ctx, setup.user.as_deref());
+        match now
+            .jobs
+            .iter()
+            .find(|job| job.printer == sign_in.printer && job.id == sign_in.job)
+        {
+            None => return true,
+            Some(job) if asks_for_password(job) => return false,
+            Some(_) if Instant::now() >= until => return true,
+            Some(_) => {}
+        }
+    }
+}
+
+/// Asks for <sign_in>'s user name and password on the card until the
+/// printer takes them, the card is cancelled or called off, or TRIES
+/// answers did not do. With no card to ask on, <notice> says it.
+fn sign_in(
+    ctx: &Context,
+    setup: &Setup,
+    sign_in: &SignIn,
+    notice: Notice,
+    tell: &Sender<Notice>,
+    cards: &Cards,
+) {
+    let user = setup.user.clone().unwrap_or_default();
+    let mut dialog = match Dialog::open(ctx, &sign_in_ask(sign_in, &user)) {
+        Ok(dialog) => dialog,
+        Err(e) => {
+            say!(
+                DUTY,
+                "no card to ask for a printer's password on ({e}): a notice says it"
+            );
+            let _ = tell.send(notice);
+            return;
+        }
+    };
+    {
+        let Ok(mut open) = cards.lock() else { return };
+        match open.get_mut(&sign_in_key(&sign_in.printer, &sign_in.job)) {
+            Some(slot) => *slot = dialog.ender().ok(),
+            // Called off while it opened: the job went.
+            None => return,
+        }
+    }
+    for tries in 1..=TRIES {
+        let Some(mut values) = dialog.answer() else {
+            return;
+        };
+        let name = values.remove("user").unwrap_or_default();
+        let mut password = values.remove("password").unwrap_or_default();
+        let asked = authenticate(ctx, sign_in, name.trim(), &password);
+        // SAFETY: zeroes are valid UTF-8.
+        unsafe { password.as_bytes_mut().fill(0) };
+        let words = if !asked {
+            "The printer could not be asked. Try again."
+        } else if taken(ctx, setup, sign_in) {
+            dialog.done();
+            return;
+        } else {
+            "That user name and password did not work."
+        };
+        let _ = dialog.wrong(words);
+        if tries == TRIES {
+            dialog.done();
+            return;
+        }
+    }
+}
+
+/// The card for <problem>'s held job, on a thread of its own, unless one is
+/// up for it already.
+fn start_sign_in(
+    ctx: &Context,
+    setup: &Setup,
+    problem: Problem,
+    tell: &Sender<Notice>,
+    cards: &Cards,
+) {
+    let Some(job) = problem.sign_in else {
+        return;
+    };
+    {
+        let Ok(mut open) = cards.lock() else { return };
+        if open.contains_key(&problem.key) {
+            return;
+        }
+        open.insert(problem.key.clone(), None);
+    }
+    let (ctx, setup, tell, cards) = (ctx.clone(), setup.clone(), tell.clone(), cards.clone());
+    let (key, notice) = (problem.key, problem.notice);
+    let started = thread::Builder::new()
+        .name("printing-sign-in".into())
+        .stack_size(256 * 1024)
+        .spawn({
+            let (key, notice, cards, tell) =
+                (key.clone(), notice.clone(), cards.clone(), tell.clone());
+            move || {
+                sign_in(&ctx, &setup, &job, notice, &tell, &cards);
+                if let Ok(mut open) = cards.lock() {
+                    open.remove(&key);
+                }
+            }
+        });
+    if let Err(e) = started {
+        say!(DUTY, "could not ask for a printer's password: {e}");
+        if let Ok(mut open) = cards.lock() {
+            open.remove(&key);
+        }
+        let _ = tell.send(notice);
+    }
+}
+
+/// Calls off the cards of jobs that are gone: printed, or cancelled.
+fn call_off(cards: &Cards, watched: &Watched) {
+    let Ok(mut open) = cards.lock() else { return };
+    open.retain(|key, ender| {
+        let here = watched
+            .jobs
+            .iter()
+            .any(|job| sign_in_key(&job.printer, &job.id) == *key);
+        if let (false, Some(ender)) = (here, ender) {
+            ender.end();
+        }
+        here
+    });
+}
+
+/// The held job the switch names, as its problem's key. The switch is taken
+/// away: it says it once.
+fn switched(runtime: &Path) -> Option<String> {
+    let path = runtime.join(SWITCH);
+    let text = fs::read_to_string(&path).ok()?;
+    let _ = fs::remove_file(&path);
+    let mut lines = text.lines();
+    let (printer, job) = (lines.next()?, lines.next()?);
+    (!printer.is_empty() && !job.is_empty() && job.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| sign_in_key(printer, job))
 }
 
 /// nova-notification-send's words for <notice>.
@@ -386,8 +613,8 @@ fn subscribe(ctx: &Context) {
 }
 
 enum Event {
-    /// A job of the user's was queued, or another's.
-    Queued(Option<String>),
+    /// A job was created: the user's, or another's.
+    Queued,
     /// CUPS said something else about a printer or a job.
     Changed,
     /// systemd started cups.service.
@@ -396,24 +623,26 @@ enum Event {
 
 pub fn serve(system: &Bus, ctx: &Context, setup: Setup) -> Result<(), String> {
     let tell = notifier(ctx)?;
+    let runtime = ctx
+        .runtime_dir()
+        .map_err(|e| format!("no runtime folder: {e}"))?
+        .to_owned();
+    let switch = FolderWatch::new(&runtime, IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE)
+        .map_err(|e| format!("cannot watch {}: {e}", runtime.display()))?;
+    let cards: Cards = Arc::default();
     let events: Rc<RefCell<VecDeque<Event>>> = Rc::default();
 
     let queue = events.clone();
     let rule = nova_sd::rule(&[
         ("type", "signal"),
-        ("path", SPOOLER_PATH),
-        ("interface", SPOOLER),
+        ("path", NOTIFIER_PATH),
+        ("interface", NOTIFIER),
     ])
     .map_err(|e| e.to_string())?;
-    let _spooler = system
+    let _notifier = system
         .add_match(&rule, move |m: &Message| {
-            // JobQueuedLocal and JobStartedLocal: the printer, the job and its user.
-            let user = match m.args().as_deref() {
-                Ok([_, _, user, ..]) => user.as_str().map(String::from),
-                _ => None,
-            };
             queue.borrow_mut().push_back(match m.member() {
-                Some("JobQueuedLocal") => Event::Queued(user),
+                Some("JobCreated") => Event::Queued,
                 _ => Event::Changed,
             });
         })
@@ -467,21 +696,16 @@ pub fn serve(system: &Bus, ctx: &Context, setup: Setup) -> Result<(), String> {
         let happened: Vec<Event> = events.borrow_mut().drain(..).collect();
         for event in happened {
             match event {
-                Event::Queued(user) => {
-                    let mine = match (&user, &setup.user) {
-                        (Some(theirs), Some(me)) => theirs == me,
-                        _ => true,
-                    };
-                    if mine {
-                        look_at = Some(look_at.map_or(soon, |at| at.min(soon)));
-                    }
-                }
+                Event::Queued => look_at = Some(look_at.map_or(soon, |at| at.min(soon))),
                 Event::Changed => {
                     if let Some(at) = look_at {
                         look_at = Some(at.min(soon));
                     }
                 }
-                Event::CupsStarted => renew_at = now,
+                Event::CupsStarted => {
+                    renew_at = now;
+                    look_at = Some(look_at.map_or(soon, |at| at.min(soon)));
+                }
             }
         }
         if renew_at <= now {
@@ -490,13 +714,18 @@ pub fn serve(system: &Bus, ctx: &Context, setup: Setup) -> Result<(), String> {
         }
         if look_at.is_some_and(|at| at <= now) {
             let watched = watched(ctx, setup.user.as_deref());
+            call_off(&cards, &watched);
             if watched.jobs.is_empty() {
                 // Nothing is left to wait for: what was said is over.
                 told.clear();
                 look_at = None;
             } else {
-                for notice in news(&mut told, problems(&watched)) {
-                    let _ = tell.send(notice);
+                for problem in news(&mut told, problems(&watched)) {
+                    if problem.sign_in.is_some() {
+                        start_sign_in(ctx, &setup, problem, &tell, &cards);
+                    } else {
+                        let _ = tell.send(problem.notice);
+                    }
                 }
                 look_at = Some(now + setup.watch);
             }
@@ -506,9 +735,16 @@ pub fn serve(system: &Bus, ctx: &Context, setup: Setup) -> Result<(), String> {
             .flatten()
             .min()
             .map(|at| at.saturating_duration_since(Instant::now()));
-        let mut fds = [system.poll_fd()];
+        let mut fds = [system.poll_fd(), PollFd::new(switch.fd(), POLLIN)];
         poll(&mut fds, sooner(system.timeout(), until))
             .map_err(|e| format!("could not wait: {e}"))?;
+        // Printers' Sign In: the job is asked about again, at once.
+        if fds[1].ready() && switch.names().iter().any(|n| n == SWITCH) {
+            if let Some(key) = switched(&runtime) {
+                told.remove(&key);
+                look_at = Some(Instant::now());
+            }
+        }
         system
             .dispatch()
             .map_err(|e| format!("the system bus went: {e}"))?;
@@ -523,6 +759,7 @@ pub fn run(ctx: &Context) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompt::fake::Card;
     use crate::testing::{calls, context, stub, wait_until};
     use nova_sd::testing::{scratch, PrivateBus};
     use nova_sd::Value;
@@ -697,6 +934,14 @@ mod tests {
         let found = problems(&watched);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].key, "Office/auth/12");
+        assert_eq!(
+            found[0].sign_in,
+            Some(SignIn {
+                printer: "Office".into(),
+                job: "12".into(),
+                document: "Budget 2027.pdf".into()
+            })
+        );
         assert_eq!(found[0].notice.headline, "Printer asks for a password");
         assert_eq!(
             found[0].notice.text,
@@ -717,7 +962,7 @@ mod tests {
         let payload = &found[0].notice.button.as_ref().unwrap().1[4];
         assert_eq!(
             payload,
-            "{\"page\":\"printers\",\"printer\":\"Of\\\"fice\\\\\\u000a--exec\"}"
+            "{\"page\":\"printers\",\"printer\":\"Of\\\"fice\\\\\\n--exec\"}"
         );
         // The words are the text's, never options of nova-notification-send.
         let argv = notice_argv(&found[0].notice);
@@ -745,7 +990,7 @@ mod tests {
         )]));
         let fresh = news(&mut told, both);
         assert_eq!(fresh.len(), 1);
-        assert_eq!(fresh[0].headline, "Paper jam");
+        assert_eq!(fresh[0].notice.headline, "Paper jam");
         // Paper added: nothing wrong, and so nothing said; then out again.
         assert!(news(&mut told, vec![]).is_empty());
         assert_eq!(news(&mut told, out_of_paper()).len(), 1);
@@ -784,6 +1029,8 @@ mod tests {
             settle: Duration::from_millis(30),
             watch: Duration::from_millis(60),
             renew: Duration::from_secs(3600),
+            check: Duration::from_millis(20),
+            patience: Duration::from_secs(2),
             user: Some("andre".into()),
         }
     }
@@ -797,13 +1044,25 @@ mod tests {
         })
     }
 
-    /// CUPS saying <member>, about a job of <user>'s when there is one.
-    fn spooler(cups: &Bus, member: &str, user: Option<&str>) {
-        let mut args = vec![Value::str("Office")];
-        if let Some(user) = user {
-            args.extend([Value::Uint32(7), Value::str(user)]);
-        }
-        cups.emit_signal(SPOOLER_PATH, SPOOLER, member, &args)
+    /// CUPS's dbus notifier saying <member> about a job on Office, as it
+    /// does (its text, the printer's uri, name, state, reasons and whether it
+    /// takes jobs, then the job's id, state, reasons, name and impressions):
+    /// no owner.
+    fn cups_says(cups: &Bus, member: &str) {
+        let args = [
+            Value::str("Job created."),
+            Value::str("ipp://localhost/printers/Office"),
+            Value::str("Office"),
+            Value::Uint32(3),
+            Value::str("none"),
+            Value::Bool(true),
+            Value::Uint32(7),
+            Value::Uint32(3),
+            Value::str("job-incoming"),
+            Value::str("report.pdf"),
+            Value::Uint32(0),
+        ];
+        cups.emit_signal(NOTIFIER_PATH, NOTIFIER, member, &args)
             .unwrap();
         cups.flush().unwrap();
     }
@@ -853,17 +1112,23 @@ mod tests {
         thread::sleep(Duration::from_millis(150));
         assert_eq!(watch_calls(&dir), 0);
 
-        // Another user's job is theirs.
-        spooler(&cups, "JobQueuedLocal", Some("guest"));
+        // A job created, but not the user's: one look, which finds none of
+        // theirs, and then no more.
+        cups_says(&cups, "JobCreated");
+        wait_until("the look", || watch_calls(&dir) == 1);
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(watch_calls(&dir), 1);
+        // What else CUPS says is no look while no job is watched.
+        cups_says(&cups, "JobState");
         thread::sleep(Duration::from_millis(150));
-        assert_eq!(watch_calls(&dir), 0);
+        assert_eq!(watch_calls(&dir), 1);
 
         // The user's, and the printer is out of paper: said once, however long.
         watch_says(
             &dir,
             "printer\tOffice\t3\tmedia-empty-error\ttrue\njob\tOffice\t7\t3\t\treport.pdf\n",
         );
-        spooler(&cups, "JobQueuedLocal", Some("andre"));
+        cups_says(&cups, "JobCreated");
         wait_until("the notice", || notices(&dir).len() == 1);
         assert_eq!(
             notices(&dir)[0],
@@ -890,7 +1155,7 @@ mod tests {
 
         // Printed: no job left, and no more looks.
         watch_says(&dir, "");
-        spooler(&cups, "QueueChanged", None);
+        cups_says(&cups, "JobCompleted");
         wait_until("the last look", || {
             let n = watch_calls(&dir);
             thread::sleep(Duration::from_millis(250));
@@ -906,7 +1171,7 @@ mod tests {
             &dir,
             "printer\tOffice\t3\tmedia-jam-error\ttrue\njob\tOffice\t8\t3\t\tother.pdf\n",
         );
-        spooler(&cups, "JobQueuedLocal", Some("andre"));
+        cups_says(&cups, "JobCreated");
         wait_until("the jam again", || notices(&dir).len() == 3);
         assert!(!duty.is_finished());
     }
@@ -945,7 +1210,207 @@ mod tests {
         ended("cups.service", "failed");
         thread::sleep(Duration::from_millis(150));
         assert_eq!(calls(&dir).len(), 1);
+        // Started: the subscription, and a look, for the job that may have
+        // started CUPS before there was one.
         ended("cups.service", "done");
-        wait_until("the second", || calls(&dir).len() == 2);
+        let subscribes = || {
+            calls(&dir)
+                .iter()
+                .filter(|c| *c == "nova-printers subscribe")
+                .count()
+        };
+        wait_until("the second", || subscribes() == 2 && watch_calls(&dir) == 1);
+    }
+
+    #[test]
+    fn the_sign_in_card_asks_in_plain_words_with_the_users_name() {
+        let job = SignIn {
+            printer: "Office\n2".into(),
+            job: "9".into(),
+            document: "Budget.pdf".into(),
+        };
+        let ask = sign_in_ask(&job, "andre");
+        assert_eq!(ask.glyph, Glyph::Printer);
+        assert_eq!(ask.title, "Sign in to “Office 2”");
+        assert_eq!(
+            ask.text,
+            "To print “Budget.pdf”, the printer asks for a user name and password."
+        );
+        assert_eq!(
+            ask.fields,
+            [
+                Field::plain("user", "User name", "andre"),
+                Field::secret("password", "Password")
+            ]
+        );
+        let unnamed = SignIn {
+            document: String::new(),
+            ..job
+        };
+        assert_eq!(
+            sign_in_ask(&unnamed, "").text,
+            "The printer asks for a user name and password."
+        );
+    }
+
+    const HELD: &str =
+        "printer\tOffice\t3\t\ttrue\njob\tOffice\t9\t4\tcups-held-for-authentication\tBudget.pdf\n";
+
+    /// nova-printers as a sign-in needs it: watch says what the test wrote;
+    /// authenticate writes down the two lines it was given, and the password
+    /// "right" lets the job go (printed: no job left).
+    fn signing_stub(dir: &Path) {
+        let d = dir.display();
+        stub(
+            dir,
+            "nova-printers",
+            &format!(
+                "case $1 in\n\
+                 watch) cat '{d}/watch' 2>/dev/null ;;\n\
+                 authenticate) IFS= read -r user; IFS= read -r password\n\
+                 printf '%s\\n%s\\n' \"$user\" \"$password\" >>'{d}/auth'\n\
+                 [[ $password != right ]] || : >'{d}/watch' ;;\n\
+                 esac\n\
+                 exit 0"
+            ),
+        );
+        stub(dir, "nova-notification-send", "");
+    }
+
+    fn handed(dir: &Path) -> String {
+        std::fs::read_to_string(dir.join("auth")).unwrap_or_default()
+    }
+
+    #[test]
+    fn a_held_job_is_asked_about_on_the_card_until_the_printer_takes_it() {
+        let Some(system) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("printing");
+        let ctx = context(&dir);
+        signing_stub(&dir);
+        let card = Card::listen(
+            &ctx.runtime,
+            &[
+                Some(r#"{"user":" office ","password":"wrong"}"#),
+                Some(r#"{"user":"office","password":"right"}"#),
+            ],
+        );
+        let _duty = printing(&system.address, &ctx, quick());
+        let cups = Bus::connect(&system.address).unwrap();
+        wait_until("the subscription", || {
+            calls(&dir).contains(&"nova-printers subscribe".to_string())
+        });
+        watch_says(&dir, HELD);
+        cups_says(&cups, "JobCreated");
+
+        // The wrong password: the printer holds the job again, and the card
+        // says so and asks again; the right one, and the job goes.
+        wait_until("the right password", || {
+            handed(&dir) == "office\nwrong\noffice\nright\n"
+        });
+        wait_until("the card's end", || card.ended() == [0]);
+        let lines = card.lines();
+        assert!(lines.iter().all(|(n, _)| *n == 0), "one card: {lines:?}");
+        assert!(lines[0]
+            .1
+            .contains(r#""glyph":"printer","title":"Sign in to “Office”""#));
+        assert!(lines[0]
+            .1
+            .contains(r#"{"id":"user","label":"User name","secret":false,"value":"andre"}"#));
+        assert_eq!(
+            lines[1].1,
+            r#"{"type":"wrong","text":"That user name and password did not work."}"#
+        );
+        // The password went to nova-printers on its input, never as a word.
+        assert!(calls(&dir)
+            .iter()
+            .all(|c| !c.contains("wrong") && !c.contains("right")));
+        assert!(notices(&dir).is_empty());
+    }
+
+    #[test]
+    fn a_card_cancelled_is_not_asked_again_until_printers_sign_in() {
+        let Some(system) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("printing");
+        let ctx = context(&dir);
+        signing_stub(&dir);
+        let card = Card::listen(
+            &ctx.runtime,
+            &[
+                Some("cancel"),
+                Some(r#"{"user":"office","password":"right"}"#),
+            ],
+        );
+        let _duty = printing(&system.address, &ctx, quick());
+        let cups = Bus::connect(&system.address).unwrap();
+        wait_until("the subscription", || {
+            calls(&dir).contains(&"nova-printers subscribe".to_string())
+        });
+        watch_says(&dir, HELD);
+        cups_says(&cups, "JobCreated");
+        wait_until("the cancel", || card.ended() == [0]);
+        let looks = watch_calls(&dir);
+        wait_until("a few looks", || watch_calls(&dir) >= looks + 4);
+        assert_eq!(card.lines().len(), 1, "asked once");
+        assert!(notices(&dir).is_empty());
+        assert_eq!(handed(&dir), "");
+
+        // Sign In on Printers: the switch, written as nova-printers writes it.
+        let switch = ctx.runtime.join(SWITCH);
+        std::fs::write(ctx.runtime.join(".switch"), "Office\n9\n").unwrap();
+        std::fs::rename(ctx.runtime.join(".switch"), &switch).unwrap();
+        wait_until("the answer", || handed(&dir) == "office\nright\n");
+        assert!(!switch.exists(), "a switch says it once");
+        assert_eq!(card.lines()[1].0, 1, "on a card of its own");
+    }
+
+    #[test]
+    fn with_no_card_to_ask_on_a_notice_says_it() {
+        let Some(system) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("printing");
+        let ctx = context(&dir);
+        signing_stub(&dir);
+        let _duty = printing(&system.address, &ctx, quick());
+        let cups = Bus::connect(&system.address).unwrap();
+        wait_until("the subscription", || {
+            calls(&dir).contains(&"nova-printers subscribe".to_string())
+        });
+        watch_says(&dir, HELD);
+        cups_says(&cups, "JobCreated");
+        wait_until("the notice", || notices(&dir).len() == 1);
+        assert!(notices(&dir)[0].contains("Printer asks for a password"));
+        let looks = watch_calls(&dir);
+        wait_until("a few looks", || watch_calls(&dir) >= looks + 4);
+        assert_eq!(notices(&dir).len(), 1);
+    }
+
+    #[test]
+    fn a_card_whose_job_went_is_called_off() {
+        let Some(system) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("printing");
+        let ctx = context(&dir);
+        signing_stub(&dir);
+        // Nobody answers it.
+        let card = Card::listen(&ctx.runtime, &[None]);
+        let _duty = printing(&system.address, &ctx, quick());
+        let cups = Bus::connect(&system.address).unwrap();
+        wait_until("the subscription", || {
+            calls(&dir).contains(&"nova-printers subscribe".to_string())
+        });
+        watch_says(&dir, HELD);
+        cups_says(&cups, "JobCreated");
+        wait_until("the card", || card.lines().len() == 1);
+        // The job cancelled on Printers: no job left, and the card goes.
+        watch_says(&dir, "");
+        cups_says(&cups, "JobCompleted");
+        wait_until("the card's end", || card.ended() == [0]);
+        assert_eq!(handed(&dir), "");
     }
 }

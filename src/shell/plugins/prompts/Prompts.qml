@@ -9,8 +9,8 @@ import "PromptsModel.js" as Model
 
 // Nova's own dialogs: what nova-sessiond needs from the person at the
 // computer, asked on a card over the dimmed screen, the polkit card's twin:
-// an encrypted drive's passphrase, a Bluetooth pairing's code, a network's
-// password. A duty connects to $XDG_RUNTIME_DIR/nova/prompts.sock, in the
+// an encrypted drive's passphrase, a Bluetooth pairing's code, a printer's
+// user name and password. A duty connects to $XDG_RUNTIME_DIR/nova/prompts.sock, in the
 // user's private runtime folder, and one connection is one dialog
 // (PromptsModel.js has the lines each way; prompt.rs the duty's side).
 //

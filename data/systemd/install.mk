@@ -9,16 +9,17 @@
 # What starts at login is Nova's choice, not each package's: uwsm starts every
 # entry in /etc/xdg/autostart (systemd-xdg-autostart-generator makes each an
 # app-<name>@autostart.service), so the ones Nova does not want are masked here,
-# over the generator's units, which rank below /usr/lib. (The printer applet,
-# system-config-printer, was masked here: it held 40 MB all day to wait for
-# printing. Nova has Settings' Printers page and nova-sessiond's printing duty
-# instead, and no such package, so its mask is gone.)
+# over the generator's units, which rank below /usr/lib. The printer applet
+# (system-config-printer) held 40 MB all day to wait for printing: Nova has
+# Settings' Printers page and nova-sessiond's printing duty instead, and no
+# longer installs it, but a computer that had it keeps it until nova update
+# takes it out (src/cli/retired), or for good when pacman updates it alone.
 # limine-snapper-notify follows every error in the system log, all day,
 # to tell of its own few; nova-doctor-services, run every ten minutes, says
 # the errors snapper's plugin writes to the journal when a snapshot cannot
 # reach the boot menu, and a failed limine-snapper-sync. The install test fails when
 # a package autostart Nova has not chosen runs (tests/install/probe).
-AUTOSTART_OFF := limine-snapper-notify
+AUTOSTART_OFF := print-applet limine-snapper-notify
 
 INSTALL_TARGETS += install-systemd
 

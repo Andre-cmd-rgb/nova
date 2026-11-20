@@ -14,12 +14,14 @@ setup() {
   export CALLS="$SCRATCH/calls"
   export NOVA_PRINTERS_CUPS_FILES="$SCRATCH/cups-files.conf"
   export NOVA_PRINTERS_SERVER=ipp://test/
-  mkdir -p "$SCRATCH/bin" "$SCRATCH/plist"
+  # lpoptions keeps the user's own choices in ~/.cups/lpoptions.
+  export HOME="$SCRATCH/home"
+  mkdir -p "$SCRATCH/bin" "$SCRATCH/plist" "$HOME"
   local tool
   for tool in lpadmin cupsenable cupsdisable cupsaccept lp cancel lpoptions lpinfo; do
     stub "$tool" ''
   done
-  quiet id 'echo "andre wheel"'
+  groups_are 'andre wheel'
   quiet lpstat 'echo "system default destination: Office"'
   cat >"$SCRATCH/bin/ipptool" <<'EOF'
 #!/bin/bash
@@ -27,7 +29,7 @@ request=${*: -1}
 operation=$(sed -n 's/^ *OPERATION //p' "$request")
 { printf 'ipptool'; printf ' [%s]' "$@"; echo " $operation"; } >>"$CALLS"
 cp "$request" "$SCRATCH/request-$operation.test"
-env | grep -E '^NOVA_(PRINTER|JOB|USER|AUTH_USER|AUTH_PASSWORD|SUBSCRIPTION)=' | sort >"$SCRATCH/env-$operation" || true
+env | grep -E '^NOVA_(PRINTER|JOB|REQUESTER|AUTH_USER|AUTH_PASSWORD|SUBSCRIPTION)=' | sort >"$SCRATCH/env-$operation" || true
 if [[ -f $SCRATCH/plist/$operation ]]; then
   cat "$SCRATCH/plist/$operation"
 else
@@ -56,6 +58,11 @@ EOF
 quiet() { # name body
   printf '#!/bin/bash\n%s\n' "$2" >"$SCRATCH/bin/$1"
   chmod +x "$SCRATCH/bin/$1"
+}
+
+# id: the login, andre, and <groups> as his.
+groups_are() { # groups
+  quiet id "if [[ \$1 == -un ]]; then echo andre; else echo '$1'; fi"
 }
 
 calls() { cat "$CALLS" 2>/dev/null || true; }
@@ -146,18 +153,18 @@ two_printers() {
 @test "admin: the groups cups-files.conf names, or Arch's when it cannot be read" {
   run "$helper" admin
   [ "$(jq -c . <<<"$output")" = '{"allowed":true,"groups":["sys","root","wheel"]}' ]
-  quiet id 'echo "andre audio"'
+  groups_are 'andre audio'
   run "$helper" admin
   [ "$(jq -r '.allowed' <<<"$output")" = false ]
   printf 'SystemGroup printadmin\nSystemGroup lp\n' >"$NOVA_PRINTERS_CUPS_FILES"
-  quiet id 'echo "andre lp"'
+  groups_are 'andre lp'
   run "$helper" admin
   [ "$(jq -c . <<<"$output")" = '{"allowed":true,"groups":["printadmin","lp"]}' ]
 }
 
 @test "without the rights, adding, removing, pausing and looking for printers say so and run nothing" {
   [ "$EUID" -ne 0 ] || skip "root may"
-  quiet id 'echo "andre audio"'
+  groups_are 'andre audio'
   local words
   for words in "add Office ipp://x/ everywhere" "remove Office" "pause Office" "resume Office" "discover" "drivers"; do
     # shellcheck disable=SC2086
@@ -226,7 +233,10 @@ lpoptions [-p] [Office] [-o] [print-color-mode=monochrome]" ]
      <key>sides-default</key><string>one-sided</string>
      <key>print-color-mode-supported</key><array><string>color</string><string>monochrome</string></array>
      <key>print-color-mode-default</key><string>color</string></dict>'
-  quiet lpoptions 'echo "copies=1 media=na_letter_8.5x11in print-color-mode=monochrome"'
+  # lpoptions -p says the printer's own defaults too: the user's are their file's.
+  quiet lpoptions 'echo "copies=1 media=iso_a4_210x297mm print-color-mode=color sides=one-sided"'
+  mkdir -p "$HOME/.cups"
+  printf 'Dest Hall sides=two-sided-long-edge\nDefault Office media=na_letter_8.5x11in print-color-mode=monochrome\n' >"$HOME/.cups/lpoptions"
   run "$helper" detail Office
   [ "$status" -eq 0 ]
   [ "$(jq -c '.markers' <<<"$output")" = '[{"name":"Black, toner","level":80,"type":"toner","color":"#000000"},{"name":"Cyan","level":5,"type":"toner","color":"#00FFFF"}]' ]
@@ -235,7 +245,7 @@ lpoptions [-p] [Office] [-o] [print-color-mode=monochrome]" ]
   [ "$(jq -r '.jobs | length' <<<"$output")" -eq 2 ]
   # The printer's name is in the request as a variable, not as text.
   grep -q 'ipp://localhost/printers/\$ENV\[NOVA_PRINTER\]' "$SCRATCH/request-Get-Printer-Attributes.test"
-  [ "$(cat "$SCRATCH/env-Get-Printer-Attributes")" = "NOVA_PRINTER=Office" ]
+  [ "$(cat "$SCRATCH/env-Get-Printer-Attributes")" = $'NOVA_PRINTER=Office\nNOVA_REQUESTER=andre' ]
 }
 
 @test "discover: a device for each address, driverless where IPP does it, the generic backends left out" {
@@ -281,6 +291,57 @@ OUT'
   : >"$CALLS"
   "$helper" drivers >/dev/null
   [ "$(calls)" = 'lpinfo [-m]' ]
+}
+
+@test "every request says whose it is: CUPS shows a job's name and owner to its owner alone" {
+  two_printers
+  run "$helper" list
+  [ "$status" -eq 0 ]
+  local operation
+  for operation in CUPS-Get-Printers Get-Jobs; do
+    grep -qxF '  ATTR name requesting-user-name $ENV[NOVA_REQUESTER]' "$SCRATCH/request-$operation.test"
+    grep -qxF 'NOVA_REQUESTER=andre' "$SCRATCH/env-$operation"
+  done
+  run "$helper" authenticate Office 12 <<<$'printer-user\nsecret'
+  [ "$(grep -c requesting-user-name "$SCRATCH/request-CUPS-Authenticate-Job.test")" -eq 1 ]
+  grep -qxF 'NOVA_REQUESTER=andre' "$SCRATCH/env-CUPS-Authenticate-Job"
+}
+
+@test "a job held for a password says so after CUPS restarts, when only what it is held until says it" {
+  two_printers
+  plist Get-Jobs successful-ok \
+    '<dict><key>job-id</key><integer>12</integer><key>job-name</key><string>a.pdf</string><key>job-state</key><integer>4</integer>
+     <key>job-state-reasons</key><string>job-hold-until-specified</string><key>job-hold-until</key><string>auth-info-required</string>
+     <key>job-originating-user-name</key><string>andre</string></dict>' \
+    '<dict><key>job-id</key><integer>13</integer><key>job-name</key><string>b.pdf</string><key>job-state</key><integer>4</integer>
+     <key>job-state-reasons</key><string>job-hold-until-specified</string><key>job-hold-until</key><string>indefinite</string>
+     <key>job-originating-user-name</key><string>andre</string></dict>' \
+    '<dict><key>job-id</key><integer>14</integer><key>job-name</key><string>c.pdf</string><key>job-state</key><integer>4</integer>
+     <key>job-state-reasons</key><string>cups-held-for-authentication</string><key>job-hold-until</key><string>auth-info-required</string>
+     <key>job-originating-user-name</key><string>andre</string></dict>'
+  run "$helper" list
+  [ "$(jq -c '.printers[0].jobs | map(.reasons)' <<<"$output")" = '[["cups-held-for-authentication"],["job-hold-until-specified"],["cups-held-for-authentication"]]' ]
+  grep -q 'job-hold-until' "$SCRATCH/request-Get-Jobs.test"
+}
+
+@test "sign-in: the switch nova-sessiond watches, in the user's runtime folder, written whole" {
+  run "$helper" sign-in Office 12
+  [ "$status" -eq 0 ]
+  [ "$(cat "$XDG_RUNTIME_DIR/nova/printer-sign-in")" = $'Office\n12' ]
+  [ "$(stat -c %a "$XDG_RUNTIME_DIR/nova")" = 700 ]
+  [ -z "$(find "$XDG_RUNTIME_DIR/nova" -name '.printer-sign-in.*')" ]
+  run "$helper" sign-in Office x
+  [ "$status" -eq 1 ]
+  run "$helper" sign-in -Office 12
+  [ "$status" -eq 1 ]
+  [ -z "$(calls)" ]
+}
+
+@test "default says nothing: lpoptions' list of every option is not the page's to read" {
+  stub lpoptions 'echo "copies=1 device-uri=file:///dev/null printer-info=Office"'
+  run --separate-stderr "$helper" default Office
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
 }
 
 @test "authenticate: the user name and password come from stdin and reach ipptool's environment alone" {

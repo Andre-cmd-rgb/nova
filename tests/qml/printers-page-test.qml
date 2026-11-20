@@ -27,7 +27,7 @@ ShellRoot {
 
   FileView { id: listFile; path: test.home + "/pr-list"; printErrors: false; onSaved: test.saved() }
   FileView { id: failFile; path: test.home + "/pr-fail"; printErrors: false; onSaved: test.saved() }
-  FileView { id: ranFile; path: test.home + "/pr-ran"; blockLoading: true; printErrors: false }
+  FileView { id: ranFile; path: test.home + "/pr-ran"; blockLoading: true; printErrors: false; onSaved: test.saved() }
 
   property var then: null
   function write(file, text, next) {
@@ -134,6 +134,20 @@ ShellRoot {
       same(page.shown.markers.map(m => Model.levelText(m)), ["80%", "5%", ""], "at their levels, none for one unknown")
       same(page.shown.jobs.map(j => j.name), ["report.pdf", "Budget.pdf"], "its documents")
       same(all(page, item => item.text === "Cancel" && typeof item.clicked === "function" && item.visible).length, 2, "each with Cancel")
+      const signIns = () => all(page, item => item.text === "Sign In…" && typeof item.clicked === "function" && item.visible)
+      page.user = "someone"
+      same(signIns().length, 0, "another's job held for a password has no Sign In: CUPS takes it from its owner alone")
+      page.user = "ann"
+      same(signIns().length, 1, "the user's own has, and the one printing has none")
+      signIns()[0].clicked()
+    },
+    until(() => ran().length === 1, "Sign In runs"),
+    () => {
+      same(ran(), ["sign-in Office 12"], "Sign In has the job asked about again, on Nova's card")
+      write(ranFile, "", () => {})
+    },
+    until(() => ran().length === 0, "the commands noted are cleared"),
+    () => {
       check(button(page, "Make Default") !== null, "it can be made the default")
       button(page, "Cancel").clicked()
       button(page, "Print Test Page").clicked()

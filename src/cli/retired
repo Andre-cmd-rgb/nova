@@ -6,3 +6,6 @@
 ttfx    # played the screensaver's effects; Nova plays its own (src/screensaver)
 ggml    # came with Arch's whisper.cpp; Nova's whisper-cpp carries its own copy
 udiskie # mounted removable drives; nova-sessiond does, through udisks2 (src/session)
+system-config-printer # waited all day for printing; Settings' Printers page and nova-sessiond do (src/session, nova-printers)
+bluez-tools # bt-agent answered pairings; nova-sessiond's Bluetooth agent asks on Nova's card (src/session)
+zenity      # bt-agent's questions; Nova's card asks them

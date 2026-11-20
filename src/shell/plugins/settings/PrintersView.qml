@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
@@ -42,6 +43,8 @@ Column {
   property string selectedName: ""
   property var detail: ({})
   property string failure: ""
+  // Whose jobs this user may sign in for: their own.
+  property string user: Quickshell.env("USER") || ""
   // The printer to select once it is in the list (the one just added).
   property string wantName: ""
   // What the user chose in the options, shown until CUPS has it.
@@ -434,10 +437,22 @@ Column {
         required property var modelData
         label: modelData.name || "Document"
         detail: Model.jobText(modelData) + (modelData.user ? "  ·  " + modelData.user : "")
-        Button {
-          text: "Cancel"
-          bordered: true
-          onClicked: root.run(["nova-printers", "cancel", root.selected.name, String(job.modelData.id)])
+        Row {
+          spacing: Style.space(8)
+          // A held job's user name and password, asked for again on Nova's
+          // card (nova-sessiond's printing duty): CUPS takes them from the
+          // job's owner alone.
+          Button {
+            text: "Sign In…"
+            bordered: true
+            visible: Model.asksForPassword(job.modelData) && (!job.modelData.user || job.modelData.user === root.user)
+            onClicked: root.run(["nova-printers", "sign-in", root.selected.name, String(job.modelData.id)])
+          }
+          Button {
+            text: "Cancel"
+            bordered: true
+            onClicked: root.run(["nova-printers", "cancel", root.selected.name, String(job.modelData.id)])
+          }
         }
       }
     }
