@@ -138,8 +138,12 @@ for test in "${tests[@]}"; do
   log=$(env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin qs log --no-color -p "$work/shell/$name.qml" 2>&1)
   # The locale and window-mask lines are the offscreen platform's, not ours,
   # and the lines about a bus, a PipeWire daemon or a NetworkManager are
-  # Quickshell's, saying there is none.
-  problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -vE 'Detected locale|window masks|Could not connect to DBus|Failed to (connect|create) pipewire context|Could not find an available backend' || true)
+  # Quickshell's, saying there is none. So is "got operation finished from
+  # dropped operation": a FileView's read or write that a newer one replaced
+  # ended after it, and its result was thrown away, as it should be. Whether
+  # it is said at all is a matter of timing (a path that changes twice in a
+  # moment): a slow machine says it, and a test passed everywhere else fails.
+  problems=$(grep -E '^ *(WARN|ERROR|CRIT|FATAL)|FAIL ' <<<"$log" | grep -vE 'Detected locale|window masks|Could not connect to DBus|Failed to (connect|create) pipewire context|Could not find an available backend|got operation finished from dropped operation' || true)
   while IFS= read -r words; do
     [[ -z $words || -z $problems ]] || problems=$(grep -vF -e "$words" <<<"$problems" || true)
   done < <(sed -n 's#^// warns: ##p' "$test")
