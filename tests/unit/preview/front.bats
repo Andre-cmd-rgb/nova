@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 
-# nova-previewer, Quick Look's front on D-Bus, as Files calls it (client.py)
+# nova-previewer, Quick Look's front on D-Bus, as Files calls it (client)
 # on a session bus of its own, with a fake nova-shell in place of the shell.
 # The window itself is the shell's and is tested in tests/qml; what a file is
 # described as, the previewer's Rust tests (cargo test) try against GIO.
@@ -17,7 +17,6 @@ setup_file() {
 
 setup() {
   setup_scratch
-  python3 -c 'import gi' 2>/dev/null || skip "Files' stand-in needs python-gobject"
   command -v dbus-run-session >/dev/null || skip "needs dbus-run-session"
   PREVIEWER=${CARGO_TARGET_DIR:-$REPO_ROOT/target}/debug/nova-previewer
   [[ -x $PREVIEWER ]] || skip "needs cargo, to build nova-previewer"
@@ -45,11 +44,12 @@ EOF
 teardown() { teardown_scratch; }
 
 @test "Files' calls: shown, replaced in place, closed, navigated; quits when idle" {
-  XDG_DATA_DIRS=$SCRATCH/dbus run dbus-run-session -- python3 -B -I "$BATS_TEST_DIRNAME/client.py" "$SCRATCH/files"
+  XDG_DATA_DIRS=$SCRATCH/dbus run dbus-run-session -- "$BATS_TEST_DIRNAME/client" "$SCRATCH/files"
   echo "$output"
   [ "$status" -eq 0 ]
   [[ $output == *DONE* ]]
   [[ $output != *FAIL* ]]
+  [ "$(grep -c "^ok " <<<"$output")" -eq 17 ]
 }
 
 @test "a shell that is not there takes the preview away again" {

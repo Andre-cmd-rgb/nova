@@ -1,0 +1,133 @@
+#!/bin/bash
+# Files, as nova-previewer sees it: calls what Nautilus 51 calls and says
+# "ok" or "FAIL" for each thing it checks. Run by front.bats on a bus of its
+# own, with a fake nova-shell that logs its arguments to $SHELL_LOG, one call
+# to a line, a tab after each; with SHELL_FAILS in the environment it exits
+# 1, as a shell that is not running does. It ends with FAIL lines and a
+# status of 1 if any check failed, and says DONE when it got to the end.
+#
+#   client <scratch dir>
+set -u
+
+scratch=$1
+log=$SHELL_LOG
+signals=$scratch/signals
+name=org.gnome.NautilusPreviewer
+path=/org/gnome/NautilusPreviewer
+previewer=org.gnome.NautilusPreviewer2
+ours=org.nova.Previewer
+failed=0
+
+check() { # what, then the command that must succeed
+  local what=$1
+  shift
+  if "$@"; then echo "ok   $what"; else echo "FAIL $what"; failed=1; fi
+}
+
+call() { busctl --user call "$name" "$path" "$@" >/dev/null; }
+
+# A property of the front, as JSON's data.
+property() { # name
+  busctl --user --json=short get-property "$name" "$path" "$previewer" "$1" | jq -c .data
+}
+
+visible_is() { [[ $(property Visible) == "$1" ]]; }
+
+# Every call the shell was made, one a line, and the last one's JSON.
+shell_count() { if [[ -e $log ]]; then wc -l <"$log"; else echo 0; fi; }
+shell_call() { # line number (negative from the end) -> its fields, one a line
+  local line
+  if (($1 < 0)); then line=$(tail -n "${1#-}" "$log" | head -n 1); else line=$(sed -n "${1}p" "$log"); fi
+  tr '\t' '\n' <<<"$line"
+}
+last_info() { shell_call -1 | sed -n 4p; }
+
+pump() { sleep "${1:-0.4}"; }
+
+show() { # file [close-if-shown]
+  call "$previewer" ShowFile ssbs "file://$1" x11:1 "${2:-false}" token
+  pump
+}
+
+text=$scratch/notes.txt
+folder=$scratch/stuff
+mkdir -p "$folder"
+touch "$folder/a" "$folder/b" "$folder/.hidden"
+printf 'one\ntwo\n' >"$text"
+
+# Everything the front sends on the bus, as Files would hear it.
+gdbus monitor --session --dest "$name" >"$signals" 2>&1 3>&- &
+monitor=$!
+pump 0.5
+
+# The first Space: activated by the call, the shell is handed the file.
+check "nothing is shown before the first ShowFile" visible_is false
+show "$text"
+check "Visible is true once a file is shown" visible_is true
+check "the shell is asked to summon the preview, once" eval \
+  '[ "$(shell_count)" -eq 1 ] && [ "$(shell_call 1 | head -n 3 | paste -sd,)" = "shell,summon,nova.preview" ]'
+info=$(last_info)
+check "the file is described: path, name, kind, type, size" \
+  jq -e --arg p "$text" '.path == $p and .name == "notes.txt" and .kind == "text" and .mime == "text/plain"
+    and .uri == "file://" + $p and .size == 8 and .seq == 1' <<<"$info"
+check "Visible's change is announced" grep -q "PropertiesChanged.*'Visible': <true>" "$signals"
+check "ParentHandle is the window handle given" [ "$(property ParentHandle)" = '"x11:1"' ]
+
+# Another file replaces it in place: no hide, a new request.
+show "$folder"
+info=$(last_info)
+check "a second file is summoned in place, a folder with its visible items counted" \
+  jq -e '.kind == "folder" and .items == 2 and .seq == 2' <<<"$info"
+check "the second call is a summon too" eval '[ "$(shell_count)" -eq 2 ] && [ "$(shell_call 2 | sed -n 2p)" = summon ]'
+
+# Files moves its selection when the window sends a direction.
+call "$ours" Select u 5
+pump
+check "Select becomes SelectionEvent with the direction" grep -q 'SelectionEvent (uint32 5,)' "$signals"
+check "and no other direction came" [ "$(grep -c SelectionEvent "$signals")" -eq 1 ]
+
+# A window that was replaced and reports it closed is not the one shown.
+call "$ours" Closed u 1
+check "a Closed for an older file changes nothing" visible_is true
+
+# The same file again, with close-if-shown: the window is closed.
+show "$folder" true
+check "the same file again with close-if-shown hides it" eval \
+  '[ "$(shell_call -1 | head -n 3 | paste -sd,)" = "shell,hide,nova.preview" ] && visible_is false'
+
+# The same file again without it, once it is shown: nothing more is asked.
+show "$text"
+before=$(shell_count)
+show "$text"
+check "the file already shown is not summoned again" eval '[ "$(shell_count)" -eq "$before" ] && visible_is true'
+
+# The window closed by a key: Closed with the file's own number.
+call "$ours" Closed u "$(last_info | jq .seq)"
+check "Closed for the file shown ends the preview" visible_is false
+
+# Close() from Files.
+show "$text"
+call "$previewer" Close
+pump
+check "Close hides the window" eval '[ "$(shell_call -1 | sed -n 2p)" = hide ] && visible_is false'
+
+# A file that is not there still gets a page with its name.
+show "$scratch/gone.bin"
+info=$(last_info)
+check "a file that is gone is described by its name" jq -e '.name == "gone.bin" and .kind == "other"' <<<"$info"
+call "$ours" Closed u "$(jq .seq <<<"$info")"
+
+# It quits when idle: its name leaves the bus a moment after the preview is
+# closed.
+owned() {
+  [[ $(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$name") == "b true" ]]
+}
+for _ in $(seq 40); do
+  owned || break
+  sleep 0.2
+done
+gone() { ! owned; }
+check "it quits when the preview has been closed for a while" gone
+kill "$monitor" 2>/dev/null || true
+echo DONE
+exit "$failed"
