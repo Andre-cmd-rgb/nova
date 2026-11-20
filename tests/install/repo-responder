@@ -1,0 +1,90 @@
+#!/bin/bash
+# One connection of the upgrade test's package repository (upgrade-lib): socat
+# runs this per client, with the TLS already open on stdin and stdout, and it
+# answers the requests on it from the files under the folder it is given, as
+# a static web server does: GET and HEAD, whole files or a byte range (pacman
+# resumes a download that broke with one), and the connection kept open for
+# the next request. Anything outside the folder, or not a plain file, is a 404.
+set -u
+
+root=$(cd -- "$1" && pwd -P)
+
+reply() { # status text length [extra header lines...]
+  local status=$1 text=$2 length=$3
+  shift 3
+  printf 'HTTP/1.1 %s %s\r\nContent-Length: %s\r\nContent-Type: application/octet-stream\r\nAccept-Ranges: bytes\r\n' \
+    "$status" "$text" "$length"
+  [[ -z ${close:-} ]] || printf 'Connection: close\r\n'
+  local header
+  for header; do printf '%s\r\n' "$header"; done
+  printf '\r\n'
+}
+
+# A request target as a path, its query and %-escapes undone.
+decode() { # target
+  local path=${1%%[?#]*}
+  printf '%b' "${path//%/\\x}"
+}
+
+while IFS= read -r -t 60 line; do
+  line=${line%$'\r'}
+  [[ -n $line ]] || continue
+  read -r method target version <<<"$line"
+  range=
+  close=
+  [[ $version == HTTP/1.1 ]] || close=1
+  while IFS= read -r -t 60 header; do
+    header=${header%$'\r'}
+    [[ -n $header ]] || break
+    case ${header,,} in
+      range:*) range=${header#*:}; range=${range// /} ;;
+      connection:*close*) close=1 ;;
+    esac
+  done
+
+  if [[ $method != GET && $method != HEAD ]]; then
+    reply 405 'Method Not Allowed' 0 'Allow: GET, HEAD'
+    break
+  fi
+  path=$(decode "$target")
+  file=$(realpath -e -- "$root$path" 2>/dev/null) || file=
+  if [[ -z $file || $file != "$root"/* || ! -f $file || ! -r $file ]]; then
+    reply 404 'Not Found' 0
+    [[ -z $close ]] || break
+    continue
+  fi
+  size=$(stat -c %s -- "$file")
+  start=0
+  end=$((size - 1))
+  status=200
+  text=OK
+  extra=()
+  if [[ $range =~ ^bytes=([0-9]*)-([0-9]*)$ && ${range#bytes=} != - ]]; then
+    first=${BASH_REMATCH[1]}
+    last=${BASH_REMATCH[2]}
+    if [[ -z $first ]]; then # the last N bytes
+      start=$((size > last ? size - last : 0))
+    else
+      start=$first
+      [[ -z $last ]] || end=$((last < end ? last : end))
+    fi
+    if ((start >= size || start > end)); then
+      reply 416 'Range Not Satisfiable' 0 "Content-Range: bytes */$size"
+      [[ -z $close ]] || break
+      continue
+    fi
+    status=206
+    text='Partial Content'
+    extra=("Content-Range: bytes $start-$end/$size")
+  fi
+  length=$((end - start + 1))
+  reply "$status" "$text" "$length" "${extra[@]}"
+  if [[ $method == GET ]]; then
+    if ((length == size)); then
+      cat -- "$file"
+    else
+      tail -c +$((start + 1)) -- "$file" | head -c "$length"
+    fi
+  fi
+  [[ -z $close ]] || break
+done

@@ -20,16 +20,17 @@ setup() {
   export XDG_DATA_HOME=$HOME/.local/share XDG_STATE_HOME=$HOME/.local/state XDG_RUNTIME_DIR=$SCRATCH/run
   mkdir -p "$XDG_DATA_HOME/keyrings" "$XDG_STATE_HOME/nova"
   mkdir -m 700 "$XDG_RUNTIME_DIR"
-  cat >"$SCRATCH/lookup.py" <<'EOF'
-import dbus
-bus = dbus.SessionBus()
-service = dbus.Interface(bus.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets"), "org.freedesktop.Secret.Service")
-_, session = service.OpenSession("plain", dbus.String("", variant_level=1))
-unlocked, _ = service.SearchItems({"application": "chrome"})
-print("default:", service.ReadAlias("default"))
-for path in unlocked:
-    print("chrome:", path, bytes(service.GetSecrets([path], session)[path][2]).decode())
+  # What an app finds: the default keyring's alias, and each Chrome item with
+  # the folder it is in and its secret.
+  cat >"$SCRATCH/lookup" <<'EOF'
+#!/bin/bash
+secrets=org.freedesktop.secrets
+service=org.freedesktop.Secret.Service
+echo "default: $(busctl --user --json=short call $secrets /org/freedesktop/secrets $service ReadAlias s default | jq -r .data[0])"
+busctl --user --json=short call $secrets /org/freedesktop/secrets $service SearchItems a{ss} 1 application chrome | jq -r '.data[0][] | "item: " + .'
+secret-tool search --all application chrome | sed -n 's/^secret = /secret: /p'
 EOF
+  chmod +x "$SCRATCH/lookup"
 }
 
 teardown() { teardown_scratch; }
@@ -65,9 +66,9 @@ first_unlock() {
   dbus-run-session -- bash -c '
     printf "a login password" | gnome-keyring-daemon --login >/dev/null 2>&1
     gnome-keyring-daemon --start --components=secrets >/dev/null 2>&1
-    if [[ -n ${BEFORE:-} ]]; then python3 -I "$BEFORE" || exit; fi
+    if [[ -n ${BEFORE:-} ]]; then "$BEFORE" || exit; fi
     "$1" || exit
-    python3 -I "$2"' _ "$MIGRATE" "$SCRATCH/lookup.py"
+    "$2"' _ "$MIGRATE" "$SCRATCH/lookup"
 }
 
 @test "the passwordless keyring, locked until asked, moves into the login keyring and is gone" {
@@ -77,7 +78,7 @@ first_unlock() {
   [ "$status" -eq 0 ]
   [[ $output == *"moved 1 secrets from 'Default_keyring' into login"* ]]
   [[ $output == *"default: /org/freedesktop/secrets/collection/login"* ]]
-  [[ $output == *"chrome: /org/freedesktop/secrets/collection/login/"*" chrome-key"* ]]
+  [[ $output == *"item: /org/freedesktop/secrets/collection/login/"*"secret: chrome-key"* ]]
   [ ! -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
   [ ! -e "$XDG_STATE_HOME/nova/keyring-migrate-pending" ]
 }
@@ -95,25 +96,17 @@ first_unlock() {
 @test "a secret the login keyring has, newer than the moved one's, is kept" {
   passwordless_keyring
   echo login >"$XDG_DATA_HOME/keyrings/default"
-  cat >"$SCRATCH/newer.py" <<'EOF'
-import dbus
-bus = dbus.SessionBus()
-service = dbus.Interface(bus.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets"), "org.freedesktop.Secret.Service")
-_, session = service.OpenSession("plain", dbus.String("", variant_level=1))
-login = dbus.Interface(bus.get_object("org.freedesktop.secrets", "/org/freedesktop/secrets/collection/login"), "org.freedesktop.Secret.Collection")
-properties = {
-    "org.freedesktop.Secret.Item.Label": "Chrome Safe Storage",
-    "org.freedesktop.Secret.Item.Attributes": dbus.Dictionary({"application": "chrome"}, signature="ss"),
-}
-secret = dbus.Struct((session, dbus.ByteArray(b""), dbus.ByteArray(b"newer-key"), "text/plain"), signature="oayays")
-login.CreateItem(properties, secret, False)
+  cat >"$SCRATCH/newer" <<'EOF'
+#!/bin/bash
+printf newer-key | secret-tool store --label='Chrome Safe Storage' application chrome
 EOF
+  chmod +x "$SCRATCH/newer"
   : >"$XDG_STATE_HOME/nova/keyring-migrate-pending"
-  BEFORE=$SCRATCH/newer.py run first_unlock
+  BEFORE=$SCRATCH/newer run first_unlock
   [ "$status" -eq 0 ]
   [[ $output == *"moved 0 secrets"* ]]
   [[ $output == *"kept login's own 1"* ]]
-  [[ $output == *"chrome: /org/freedesktop/secrets/collection/login/"*" newer-key"* ]]
+  [[ $output == *"item: /org/freedesktop/secrets/collection/login/"*"secret: newer-key"* ]]
   [[ $output != *"chrome-key"* ]]
   [ ! -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
 }
@@ -128,7 +121,7 @@ EOF
   [ "$status" -eq 0 ]
   [[ $output == *"moved 1 secrets from 'Default_keyring' into login"* ]]
   [[ $output != *"kept login's own"* ]]
-  [[ $output == *"chrome: /org/freedesktop/secrets/collection/login/"*" chrome-key"* ]]
+  [[ $output == *"item: /org/freedesktop/secrets/collection/login/"*"secret: chrome-key"* ]]
   [ ! -e "$XDG_DATA_HOME/keyrings/Default_keyring.keyring" ]
 }
 
