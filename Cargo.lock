@@ -51,6 +51,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nova-shell-alloc"
+version = "1.0.0"
+
+[[package]]
 name = "nova-theme"
 version = "1.0.0"
 

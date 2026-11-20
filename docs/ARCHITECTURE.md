@@ -8,7 +8,7 @@ This document is the contract every component follows. Read it before adding cod
 
 | Source | Installs to | What it is |
 |---|---|---|
-| `src/shell/` | `/usr/share/nova/shell/` | The Quickshell shell: bar, lock, menu, notifications, OSD, panels, Settings |
+| `src/shell/` | `/usr/share/nova/shell/`, `/usr/lib/nova/libnova_shell_alloc.so` | The Quickshell shell: bar, lock, menu, notifications, OSD, panels, Settings; and its allocator settings (Rust), a library preloaded into Quickshell alone |
 | `src/cli/nova` | `/usr/bin/nova` | Dispatcher: `nova <group> <verb> [args]` |
 | `src/cli/bin/` | `/usr/lib/nova/bin/nova-<group>-<verb>` | Helper commands (bash), one per file |
 | `src/power/` | `/usr/lib/nova/bin/nova-power`, `/usr/lib/nova/nova-powerd`, `nova-undervolt`, system units, udev rules, sleep hooks | Nova's power governor: the policy (bash) and the governor (Rust), tuned for and so far started only on the ThinkPad P1 Gen 4i; and the CPU undervolt (Rust), for any Intel laptop whose firmware allows one |
@@ -442,7 +442,7 @@ Three traps that load without an error and draw nothing:
 
 - One Cargo workspace at the root.
 - `cargo fmt`, `cargo clippy -D warnings`.
-- No unsafe beyond FFI that std lacks (the governor's signal handlers, libsystemd).
+- No unsafe beyond FFI that std lacks (the governor's signal handlers, libsystemd, jemalloc's `malloc_conf`).
 - std only, unless a dependency clearly pays for itself. D-Bus and the journal go through `nova-sd` (`src/sd`), libsystemd's own, which every system has.
 - Tools a user waits on (the theme engine, the power manager) are Rust, and so is what runs as long as the session does (`nova-sessiond`): a watcher in bash keeps a shell and what it waits on (socat, journalctl, jq) in memory for hours, where one in Rust is a thread asleep in `poll()`. Glue that mostly runs other programs, and then ends, stays bash.
 

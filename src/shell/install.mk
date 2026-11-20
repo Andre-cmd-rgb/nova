@@ -3,7 +3,9 @@
 # ones people run are linked into the nova CLI: nova battery, nova screentime,
 # nova mobile-data, nova dictation. The plugins' manifests are also collected into
 # plugins/index.json, the one file the shell reads to find its plugins. The
-# Calculator's desktop entry and icon put it among the apps.
+# Calculator's desktop entry and icon put it among the apps. The allocator's
+# settings (alloc/, Rust, built by the root cargo workspace) are a library
+# nova-launch-shell preloads into Quickshell.
 
 INSTALL_TARGETS += install-shell
 QML_DIRS        += src/shell
@@ -30,3 +32,4 @@ install-shell:
 	done
 	install -Dm644 src/shell/plugins/calculator/nova-calculator.desktop $(DESTDIR)$(PREFIX)/share/applications/nova-calculator.desktop
 	install -Dm644 src/shell/plugins/calculator/nova-calculator.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/nova-calculator.svg
+	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/libnova_shell_alloc.so $(DESTDIR)$(NOVA_LIB)/libnova_shell_alloc.so

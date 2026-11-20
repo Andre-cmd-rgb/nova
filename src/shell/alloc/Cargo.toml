@@ -1,0 +1,14 @@
+[package]
+name = "nova-shell-alloc"
+version = "1.0.0"
+edition = "2021"
+description = "The shell's allocator settings, for Quickshell alone: preloaded into it by nova-launch-shell, and out of the environment its apps inherit"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova: a string for jemalloc and std's env.
+
+[lib]
+name = "nova_shell_alloc"
+path = "src/lib.rs"
+crate-type = ["cdylib"]
