@@ -59,10 +59,14 @@ probe() {
   check "apps can keep the screen awake (org.freedesktop.ScreenSaver)" \
     as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" gdbus call --session --dest org.freedesktop.ScreenSaver \
     --object-path /org/freedesktop/ScreenSaver --method org.freedesktop.ScreenSaver.GetActive
-  # A printer plugged in is told of by nova-sessiond, not by the applet it replaced.
-  check "nova-sessiond tells of a printer plugged in (com.redhat.NewPrinterNotification)" \
-    bash -c 'pid=$(busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
-      GetConnectionUnixProcessID s com.redhat.NewPrinterNotification) && [[ $(cat "/proc/${pid#u }/comm") == nova-sessiond ]]'
+  # Printing is Nova's own: Settings' Printers page asks CUPS through nova-printers (which this
+  # check leaves to the page: asking CUPS would start it), and nothing of the applet it replaced
+  # owns the name its udev rules called, or is installed.
+  check "nova-printers says who may administer CUPS's printers" \
+    bash -c '/usr/lib/nova/bin/nova-printers admin | jq -e ".groups | length > 0"'
+  check "no printer applet is installed (system-config-printer)" \
+    bash -c '! pacman -Q system-config-printer'
+  check "ipp-usb is installed, for a USB printer to be driverless" pacman -Q ipp-usb
 
   # What starts at login is Nova's choice, not each package's
   # (data/systemd/install.mk): a package autostart Nova has not chosen is one

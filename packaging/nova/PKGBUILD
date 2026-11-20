@@ -80,7 +80,7 @@ depends=(
   avahi
   nss-mdns
   sane-airscan
-  system-config-printer # Print Settings, in the launcher
+  ipp-usb        # a modern USB printer as a driverless one on the network (Settings → Printers adds the older ones)
 
   # Apps the session launches
   foot

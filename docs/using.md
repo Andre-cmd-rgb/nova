@@ -191,6 +191,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Sound | the output and its volume; the input and its volume |
 | Displays | each display's resolution, refresh rate, scale, rotation and place; a change goes back by itself after 15 seconds unless you keep it; the [night light](#night-light)'s schedule and warmth |
 | Keyboard & Mouse | the keyboard's layouts, in order, and the keys that go to the next; the key repeat; the pointer's speed; natural scrolling with a mouse and on the touchpad, and tap to click |
+| Printers | your printers and what each is doing, its ink or toner levels, its queue (each job can be cancelled), a test page, pausing, the default, and the paper, two-sided and colour choices it offers; Add Printer finds the ones on the network and plugged in, and picks a driver for them; adding and removing printers is for the administrators (the `wheel` group) |
 | Battery | its measured life and history, its health, the charge limit, the lid and the power button, and when it hibernates |
 | Performance | the power mode on battery, what the power manager is doing, the discrete GPU's mode, and the undervolt |
 | Screen Time | on or off, and where your time went, per app; `nova screentime forget <app>` deletes one app's |
@@ -201,7 +202,7 @@ Settings opens from the menu, or with `nova settings <page>`. Asked for from ano
 | Updates | Nova's and the apps' updates, device firmware, release candidates, Check for problems, a bug report and Restart to recovery ([updates](updates.md)) |
 | About | the version, the computer, processor, memory, storage, name and kernel |
 
-The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `notifications`, `sound`, `displays`, `keyboard`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
+The page names for `nova settings` are `wifi`, `bluetooth`, `mobile-data`, `airdrop`, `notifications`, `sound`, `displays`, `keyboard`, `printers`, `battery`, `performance`, `screentime`, `appearance`, `bar`, `lock`, `apps`, `updates` and `about`.
 
 [Battery Life](../src/shell/plugins/batterylife/README.md), [Screen Time](../src/shell/plugins/screentime/README.md) and [Mobile Data](../src/shell/plugins/mobile-data/README.md) have notes of their own.
 
@@ -312,7 +313,7 @@ These come installed:
 - Settings → Default Apps picks another browser, editor or terminal, among those installed.
 - Chrome and VS Code are built on your computer from their AUR recipes; `nova apps install` installs them again if they are missing.
 - The **App Center**, in the menu and the launcher, finds and installs more, from Arch Linux's repositories and from Flathub, and removes them: [The App Center](apps.md).
-- Printing goes through CUPS: Print Settings is in the apps. A USB printer plugged in is set up by itself when CUPS has a driver for it, and a notification says so, with a test page to print, or says the driver is missing, with Find Driver. While a document prints, a printer out of paper, or one that asks for a password, says so too.
+- Printing goes through CUPS, and Settings → Printers is where printers are added, looked at and removed. A modern USB printer needs no setting up: `ipp-usb` makes it a printer on the network, which CUPS sees by itself. An older one, or one on the network that needs a driver, is added there with Add Printer. While a document prints, a printer out of paper, jammed, with a cover open or out of ink, one that cannot be reached, and one that asks for a user name and password, says so in a notification with Open Printers.
 - **Quick Look**: in Files, Space shows the selected file, a picture, a video's first frame, a PDF's first page or text, in a window the size of what it shows, with its name and nothing else. The arrow keys move on to the next file, Return opens it in its app, Space or Esc closes it.
 - **Calculator**: in the menu and the launcher, on a keyboard's Calculator key, or `nova calculator [sum]`. Type or click: Return works the sum out, Esc clears, Ctrl+C copies the answer, Ctrl+V pastes. Scientific adds the functions, in degrees or radians, and conversions are written as in the menu. The history, the last 100 sums, puts one back with a click.
 - When a crash takes an app away, a notification says so ("Bambu Studio quit unexpectedly"), with Reopen. A crash that leaves its windows open, such as a browser tab's, is the app's own to show; `coredumpctl` lists them all.

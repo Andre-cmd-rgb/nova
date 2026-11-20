@@ -1,37 +1,41 @@
-//! Printing: the job viewer while this user's jobs are queued, and the
-//! notices of a printer plugged in.
+//! Printing: what a printer asks of the user while their documents wait for it.
 //!
-//! What system-config-printer's applet did, all day in 40 MB of Python:
+//! This was system-config-printer's applet, all day in 40 MB of Python: it
+//! waited for CUPS to say a job was queued and then showed a job viewer, whose
+//! notices were a printer out of paper or jammed and a held job's password.
+//! Nova's own Settings has a Printers page now, and what is left of the
+//! applet is this:
 //!
-//! - It waited for CUPS's signals (com.redhat.PrinterSpooler, on the system
-//!   bus) and, once a job of the user's was queued, had its job viewer
-//!   started: the notices of a printer out of paper or jammed, of a document
-//!   sent to a printer on the network, and the password a held job asks for.
-//!   The viewer stays system-config-printer's own, started through its
-//!   D-Bus service (org.fedoraproject.Config.Printing, JobApplet); but it
-//!   never ends by itself (only its tray icon's Quit, and Nova has no tray,
-//!   ended it), so it is asked to quit once a minute has gone by with no job
-//!   of the user's left, and the Python runs only while there is printing.
-//!   Whether jobs are left is lpstat's to say, asked only after CUPS has
-//!   said something, so that nothing here starts CUPS: no look at login.
-//! - It owned com.redhat.NewPrinterNotification, which udev-add-printer
-//!   calls as it sets up a printer plugged in: "Printer added", or a driver
-//!   missing. Those are Nova's notifications now, in the same words, with a
-//!   button for what the applet's notice offered first: a test page, or the
-//!   driver's choice in Print Settings (nova-printer-setup).
+//! - It waits for CUPS's signals (com.redhat.PrinterSpooler, on the system
+//!   bus). CUPS sends them to whoever has asked for them, and nobody does
+//!   now that the applet is gone, so `nova-printers subscribe` asks, for a
+//!   day at a time (every six hours here, and whenever systemd says it
+//!   started cups.service): it does nothing while CUPS is not running, so
+//!   that nothing here starts CUPS, no look at login.
+//! - Once a job of this user's is queued, it asks `nova-printers watch` every
+//!   few seconds how the printers holding their jobs are. It stops when no job
+//!   of theirs is left.
+//! - What the user must do something about is said in a notification, once for
+//!   as long as it lasts, with a button that opens Settings' Printers page at
+//!   that printer: no paper, a paper jam, a cover open, no toner or ink, a
+//!   printer that cannot be reached or has stopped, and a held job that asks
+//!   for a user name and password. A printer low on paper or ink, or paused
+//!   by the user, is on the page and not said.
 //!
-//! The applet's third service, com.redhat.PrinterDriversInstaller, only
-//! passed driver installs to PackageKit, which Nova does not have.
+//! The applet also owned com.redhat.NewPrinterNotification, which its udev
+//! rules called as a printer was plugged in. Nothing calls it without them:
+//! a modern USB printer is driverless through ipp-usb and CUPS sees it like a
+//! printer on the network, and an older one is added on the Printers page.
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::rc::Rc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use nova_sd::poll::{poll, sooner};
-use nova_sd::{Bus, Interface, Message, Value, NAME_QUEUE};
+use nova_sd::{Bus, Message};
 
 use crate::common::Context;
 use crate::idle::one_line;
@@ -40,23 +44,19 @@ use crate::say;
 pub const DUTY: &str = "printing";
 const SPOOLER_PATH: &str = "/com/redhat/PrinterSpooler";
 const SPOOLER: &str = "com.redhat.PrinterSpooler";
-pub const NOTIFIER: &str = "com.redhat.NewPrinterNotification";
-const NOTIFIER_PATH: &str = "/com/redhat/NewPrinterNotification";
-pub const CONFIG: &str = "org.fedoraproject.Config.Printing";
-pub const CONFIG_PATH: &str = "/org/fedoraproject/Config/Printing";
-pub const JOB_VIEWER: &str = "org.fedoraproject.Config.Printing.JobViewer";
+const SYSTEMD: &str = "org.freedesktop.systemd1";
+const SYSTEMD_PATH: &str = "/org/freedesktop/systemd1";
+const MANAGER: &str = "org.freedesktop.systemd1.Manager";
 const GLYPH: &str = "\u{f042a}";
-/// The page CUPS prints as its test page.
-const TEST_PAGE: &str = "/usr/share/cups/data/testprint";
 
 #[derive(Clone)]
 pub struct Setup {
-    /// After a signal of CUPS's, how long it is let settle before lpstat is asked.
+    /// After a signal of CUPS's, how long it is let settle before the printers are asked.
     pub settle: Duration,
-    /// How long no job of the user's is left before the viewer is asked to quit.
-    pub grace: Duration,
-    /// How often lpstat is asked while jobs are left, should a signal be missed.
-    pub recheck: Duration,
+    /// How often the printers are asked while jobs are left.
+    pub watch: Duration,
+    /// How often the subscription to CUPS's signals is renewed.
+    pub renew: Duration,
     /// Whose jobs count: the user's name, as CUPS has it.
     pub user: Option<String>,
 }
@@ -65,8 +65,8 @@ impl Default for Setup {
     fn default() -> Setup {
         Setup {
             settle: Duration::from_secs(2),
-            grace: Duration::from_secs(60),
-            recheck: Duration::from_secs(300),
+            watch: Duration::from_secs(5),
+            renew: Duration::from_secs(6 * 3600),
             user: std::env::var("USER").ok().filter(|u| !u.is_empty()),
         }
     }
@@ -83,100 +83,232 @@ pub struct Notice {
     pub expire_ms: Option<u32>,
 }
 
-/// While udev-add-printer works out a driver, which can take a while.
-pub fn ready_notice() -> Notice {
-    Notice {
-        headline: "Setting up a new printer".into(),
-        text: "Please wait.".into(),
-        urgency: "low",
-        button: None,
-        // The applet's waited 20 minutes for the outcome; one that never
-        // comes should not stay as long.
-        expire_ms: Some(300_000),
-    }
+/// A printer, as `nova-printers watch` says it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Printer {
+    pub name: String,
+    /// IPP's printer-state: 3 idle, 4 printing, 5 stopped.
+    pub state: i32,
+    pub reasons: Vec<String>,
 }
 
-/// What a printer plugged in came to, from NewPrinter's arguments: <name>
-/// is the queue made for it, or the device's URI when no driver fit, and
-/// <status> how well the driver fits (0 exactly, 1 another model's, 2 a
-/// generic one, 3 none). What the device says of itself is its own text:
-/// one plain line of it.
-pub fn new_printer_notice(
-    status: i32,
-    name: &str,
-    mfg: &str,
-    mdl: &str,
-    des: &str,
-    cmd: &str,
-) -> Notice {
-    let (name, mfg, mdl, des) = (
-        one_line(name, 200),
-        one_line(mfg, 80),
-        one_line(mdl, 80),
-        one_line(des, 120),
-    );
-    let device_id = format!("MFG:{mfg};MDL:{mdl};DES:{des};CMD:{};", one_line(cmd, 200));
-    if name.contains('/') {
-        let text = if !mfg.is_empty() && !mdl.is_empty() {
-            format!("No printer driver for {mfg} {mdl}.")
-        } else if !des.is_empty() {
-            format!("No printer driver for {des}.")
-        } else {
-            "No driver for this printer.".into()
-        };
-        return Notice {
-            headline: "Missing printer driver".into(),
-            text,
-            urgency: "critical",
-            button: Some((
-                "Find Driver".into(),
-                vec![
-                    "nova-printer-setup".into(),
-                    "device".into(),
-                    name,
-                    device_id,
-                ],
-            )),
-            expire_ms: None,
-        };
-    }
-    if status == 0 {
-        return Notice {
-            headline: "Printer added".into(),
-            text: format!("“{name}” is ready for printing."),
-            urgency: "normal",
-            button: Some((
-                "Print Test Page".into(),
-                vec!["lp".into(), "-d".into(), name, TEST_PAGE.into()],
-            )),
-            expire_ms: None,
-        };
-    }
-    Notice {
-        headline: if status < 2 {
-            "Printer added"
-        } else {
-            "Missing printer driver"
+/// A job of the user's, as `nova-printers watch` says it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Job {
+    pub printer: String,
+    pub id: String,
+    pub reasons: Vec<String>,
+    pub name: String,
+}
+
+#[derive(Debug, Default, PartialEq)]
+pub struct Watched {
+    pub printers: Vec<Printer>,
+    pub jobs: Vec<Job>,
+}
+
+/// What `nova-printers watch` printed: a tab-separated line for each printer
+/// the user has jobs on (`printer name state reasons accepting`) and for each
+/// of their jobs (`job printer id state reasons name`). Anything else is
+/// passed over.
+pub fn parse_watch(text: &str) -> Watched {
+    let mut watched = Watched::default();
+    let reasons = |field: &str| -> Vec<String> {
+        field
+            .split(',')
+            .filter(|r| !r.is_empty())
+            .map(String::from)
+            .collect()
+    };
+    for line in text.lines() {
+        let fields: Vec<&str> = line.split('\t').collect();
+        match fields.as_slice() {
+            ["printer", name, state, why, ..] => watched.printers.push(Printer {
+                name: (*name).into(),
+                state: state.parse().unwrap_or(3),
+                reasons: reasons(why),
+            }),
+            ["job", printer, id, _state, why, name] => watched.jobs.push(Job {
+                printer: (*printer).into(),
+                id: (*id).into(),
+                reasons: reasons(why),
+                name: (*name).into(),
+            }),
+            _ => {}
         }
-        .into(),
-        text: format!("“{name}” was added, with a driver that may not be the right one."),
-        urgency: "critical",
-        button: Some((
-            "Find Driver".into(),
-            vec![
-                "nova-printer-setup".into(),
-                "driver".into(),
-                name,
-                device_id,
-            ],
-        )),
+    }
+    watched
+}
+
+/// IPP's printer-state-reasons keywords end in -error, -warning or -report to
+/// say how bad: the keyword is what counts here.
+fn keyword(reason: &str) -> &str {
+    ["-error", "-warning", "-report"]
+        .iter()
+        .find_map(|suffix| reason.strip_suffix(suffix))
+        .unwrap_or(reason)
+}
+
+fn has(reasons: &[String], words: &[&str]) -> bool {
+    reasons.iter().any(|r| words.contains(&keyword(r)))
+}
+
+/// A string as JSON has it, quotes round it.
+fn json_string(text: &str) -> String {
+    let mut out = String::from("\"");
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// The button of every notice: Settings' Printers page, at <printer>, and at
+/// <job> when it is about one.
+fn open_printers(printer: &str, job: Option<&str>) -> (String, Vec<String>) {
+    let mut payload = format!(
+        "{{\"page\":\"printers\",\"printer\":{}",
+        json_string(printer)
+    );
+    if let Some(job) = job {
+        payload.push_str(&format!(",\"job\":{}", json_string(job)));
+    }
+    payload.push('}');
+    (
+        "Open Printers".into(),
+        vec![
+            "nova-shell".into(),
+            "shell".into(),
+            "summon".into(),
+            "nova.settings".into(),
+            payload,
+        ],
+    )
+}
+
+fn notice(headline: &str, text: String, button: (String, Vec<String>)) -> Notice {
+    Notice {
+        headline: headline.into(),
+        text,
+        urgency: "normal",
+        button: Some(button),
         expire_ms: None,
     }
 }
 
-/// nova-notification-send's words for <notice>, replacing notification
-/// <replaces>, or printing the new one's id.
-pub fn notice_argv(notice: &Notice, replaces: Option<&str>, print_id: bool) -> Vec<String> {
+/// A problem the user has to do something about, and the notification for
+/// it. <key> says which problem of which printer (or job) it is.
+#[derive(Debug, PartialEq)]
+pub struct Problem {
+    pub key: String,
+    pub notice: Notice,
+}
+
+/// What is wrong with the printers and the jobs: one problem a kind, for each
+/// printer, in plain words. A name or a document's name comes from a device or
+/// an app: one plain line of it.
+pub fn problems(watched: &Watched) -> Vec<Problem> {
+    let mut found = Vec::new();
+    for printer in &watched.printers {
+        let name = one_line(&printer.name, 80);
+        let button = open_printers(&printer.name, None);
+        let r = &printer.reasons;
+        let mut say = |kind: &str, headline: &str, text: String| {
+            found.push(Problem {
+                key: format!("{}/{kind}", printer.name),
+                notice: notice(headline, text, button.clone()),
+            });
+        };
+        let mut known = false;
+        if has(r, &["media-empty", "media-needed"]) {
+            known = true;
+            say(
+                "paper",
+                "Printer out of paper",
+                format!("“{name}” is out of paper. Add paper and printing carries on."),
+            );
+        }
+        if has(r, &["media-jam"]) {
+            known = true;
+            say(
+                "jam",
+                "Paper jam",
+                format!("“{name}” has a paper jam. Clear it and printing carries on."),
+            );
+        }
+        if has(r, &["cover-open", "door-open", "interlock-open"]) {
+            known = true;
+            say(
+                "cover",
+                "Printer cover open",
+                format!("“{name}” has a cover open. Close it and printing carries on."),
+            );
+        }
+        if has(r, &["toner-empty", "marker-supply-empty"]) {
+            known = true;
+            say(
+                "supply",
+                "Printer out of ink or toner",
+                format!("“{name}” is out of ink or toner. Replace it and printing carries on."),
+            );
+        }
+        if has(r, &["offline"]) {
+            known = true;
+            say(
+                "offline",
+                "Printer can’t be reached",
+                format!("“{name}” can’t be reached. Check that it is on and connected."),
+            );
+        }
+        // Stopped, and none of the above says why: not by the user, who
+        // paused it.
+        if printer.state == 5 && !known && !has(r, &["paused", "moving-to-paused"]) {
+            say(
+                "stopped",
+                "Printer stopped",
+                format!("“{name}” has stopped. Check the printer."),
+            );
+        }
+    }
+    for job in &watched.jobs {
+        if has(
+            &job.reasons,
+            &["cups-held-for-authentication", "auth-info-required"],
+        ) || job.reasons.iter().any(|r| r.contains("authentication"))
+        {
+            let (printer, document) = (one_line(&job.printer, 80), one_line(&job.name, 80));
+            found.push(Problem {
+                key: format!("{}/auth/{}", job.printer, job.id),
+                notice: notice(
+                    "Printer asks for a password",
+                    format!("“{printer}” asks for a user name and password to print “{document}”."),
+                    open_printers(&job.printer, Some(&job.id)),
+                ),
+            });
+        }
+    }
+    found
+}
+
+/// The notices of <found> that were not said already, and <told> after it:
+/// what is said stays said for as long as the problem lasts, and a problem
+/// that went and came back is said again.
+pub fn news(told: &mut HashSet<String>, found: Vec<Problem>) -> Vec<Notice> {
+    told.retain(|key| found.iter().any(|p| &p.key == key));
+    found
+        .into_iter()
+        .filter(|p| told.insert(p.key.clone()))
+        .map(|p| p.notice)
+        .collect()
+}
+
+/// nova-notification-send's words for <notice>.
+pub fn notice_argv(notice: &Notice) -> Vec<String> {
     let mut argv: Vec<String> = vec![
         "nova-notification-send".into(),
         "-u".into(),
@@ -184,12 +316,6 @@ pub fn notice_argv(notice: &Notice, replaces: Option<&str>, print_id: bool) -> V
         "-g".into(),
         GLYPH.into(),
     ];
-    if let Some(id) = replaces {
-        argv.extend(["-r".into(), id.into()]);
-    }
-    if print_id {
-        argv.push("-p".into());
-    }
     if let Some(ms) = notice.expire_ms {
         argv.extend(["-t".into(), ms.to_string()]);
     }
@@ -204,42 +330,19 @@ pub fn notice_argv(notice: &Notice, replaces: Option<&str>, print_id: bool) -> V
     argv
 }
 
-enum Say {
-    /// The setting-up notice, whose id the outcome replaces.
-    Ready,
-    Outcome(Notice),
-}
-
-/// Sends the notices one after another on a thread of its own, so that an
-/// answer to udev-add-printer never waits for one, and the outcome always
-/// comes after, and in place of, the setting-up notice.
-fn notifier(ctx: &Context) -> Result<Sender<Say>, String> {
-    let (tell, told) = mpsc::channel::<Say>();
+/// Sends the notices one after another on a thread of its own, so that
+/// asking the printers never waits for one.
+fn notifier(ctx: &Context) -> Result<Sender<Notice>, String> {
+    let (tell, told) = mpsc::channel::<Notice>();
     let ctx = ctx.clone();
     thread::Builder::new()
         .name("printing-say".into())
         .stack_size(128 * 1024)
         .spawn(move || {
-            let mut shown: Option<String> = None;
-            for say in told {
-                let (notice, replaces, print_id) = match say {
-                    Say::Ready => (ready_notice(), shown.clone(), true),
-                    Say::Outcome(notice) => (notice, shown.take(), false),
-                };
-                let argv = notice_argv(&notice, replaces.as_deref(), print_id);
-                let mut command = ctx.command(&argv[0]);
-                command.args(&argv[1..]);
-                match command.output() {
-                    Ok(out) if print_id => {
-                        let id = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-                        shown = id
-                            .chars()
-                            .all(|c| c.is_ascii_digit())
-                            .then_some(id)
-                            .filter(|id| !id.is_empty());
-                    }
-                    Ok(_) => {}
-                    Err(e) => say!(DUTY, "could not run nova-notification-send: {e}"),
+            for notice in told {
+                let argv = notice_argv(&notice);
+                if let Err(e) = ctx.command(&argv[0]).args(&argv[1..]).output() {
+                    say!(DUTY, "could not run nova-notification-send: {e}");
                 }
             }
         })
@@ -247,150 +350,55 @@ fn notifier(ctx: &Context) -> Result<Sender<Say>, String> {
     Ok(tell)
 }
 
-fn notifier_interface() -> Interface {
-    Interface::new(NOTIFIER)
-        .method("GetReady", "", "")
-        .method("NewPrinter", "isssss", "")
-}
-
-/// Whether the user has jobs CUPS has not finished, as lpstat lists them.
-fn jobs_left(ctx: &Context, user: Option<&str>) -> bool {
-    let mut command = ctx.command("lpstat");
-    match user {
-        Some(user) => command.args(["-u", user]),
-        None => command.arg("-o"),
-    };
+/// How the printers holding the user's jobs are. Nothing when CUPS cannot be
+/// asked, which is no job left to watch.
+fn watched(ctx: &Context, user: Option<&str>) -> Watched {
+    let mut command = ctx.command("nova-printers");
+    command.arg("watch");
+    if let Some(user) = user {
+        command.arg(user);
+    }
     match command.output() {
-        Ok(out) => out.status.success() && !out.stdout.iter().all(u8::is_ascii_whitespace),
+        Ok(out) if out.status.success() => parse_watch(&String::from_utf8_lossy(&out.stdout)),
+        Ok(_) => Watched::default(),
         Err(e) => {
-            say!(DUTY, "could not run lpstat: {e}");
-            false
+            say!(DUTY, "could not run nova-printers: {e}");
+            Watched::default()
         }
     }
 }
 
-/// The job viewer, and when to look again whether it is still wanted.
-struct Viewer {
-    /// Its object, once JobApplet has answered.
-    path: Rc<RefCell<Option<String>>>,
-    running: bool,
-    look_at: Option<Instant>,
-    /// Since when no job of the user's has been left.
-    idle_since: Option<Instant>,
-}
-
-impl Viewer {
-    fn start(&mut self, session: &Bus, now: Instant, setup: &Setup) {
-        let path = self.path.clone();
-        // Answered with the viewer there is, when one runs.
-        let asked = session.call_async(
-            CONFIG,
-            CONFIG_PATH,
-            CONFIG,
-            "JobApplet",
-            &[],
-            Some(Duration::from_secs(60)),
-            move |answer| match answer {
-                Ok(values) => {
-                    *path.borrow_mut() = values.first().and_then(|v| v.as_str()).map(String::from)
-                }
-                Err(e) => say!(DUTY, "could not start the job viewer: {e}"),
-            },
-        );
-        if let Err(e) = asked {
-            say!(DUTY, "could not start the job viewer: {e}");
-            return;
-        }
-        if !self.running {
-            say!(DUTY, "a job is queued: the job viewer runs");
-        }
-        self.running = true;
-        self.idle_since = None;
-        self.look_at = Some(now + setup.recheck);
-    }
-
-    fn signalled(&mut self, now: Instant, setup: &Setup) {
-        if self.running {
-            let soon = now + setup.settle;
-            self.look_at = Some(self.look_at.map_or(soon, |at| at.min(soon)));
-        }
-    }
-
-    fn look(&mut self, ctx: &Context, session: &Bus, now: Instant, setup: &Setup) {
-        if jobs_left(ctx, setup.user.as_deref()) {
-            self.idle_since = None;
-            self.look_at = Some(now + setup.recheck);
-            return;
-        }
-        let since = *self.idle_since.get_or_insert(now);
-        if now.duration_since(since) < setup.grace {
-            self.look_at = Some(since + setup.grace);
-            return;
-        }
-        self.quit(session);
-    }
-
-    fn quit(&mut self, session: &Bus) {
-        self.running = false;
-        self.look_at = None;
-        self.idle_since = None;
-        let Some(path) = self.path.borrow_mut().take() else {
-            return;
-        };
-        say!(DUTY, "no job is left: the job viewer quits");
-        let asked = session.call_async(CONFIG, &path, JOB_VIEWER, "Quit", &[], None, |answer| {
-            if let Err(e) = answer {
-                say!(DUTY, "the job viewer did not quit: {e}");
+/// The subscription to CUPS's signals, made or renewed on a thread of its own:
+/// it asks CUPS, which can take a moment.
+fn subscribe(ctx: &Context) {
+    let ctx = ctx.clone();
+    let started = thread::Builder::new()
+        .name("printing-subscribe".into())
+        .stack_size(128 * 1024)
+        .spawn(move || {
+            if let Err(e) = ctx.command("nova-printers").arg("subscribe").status() {
+                say!(DUTY, "could not run nova-printers: {e}");
             }
         });
-        if let Err(e) = asked {
-            say!(DUTY, "the job viewer did not quit: {e}");
-        }
+    if let Err(e) = started {
+        say!(DUTY, "could not subscribe to CUPS's signals: {e}");
     }
 }
 
-/// A signal of CUPS's: what it says, and whose job it is about, if a job's.
-struct Spooled {
-    member: String,
-    user: Option<String>,
+enum Event {
+    /// A job of the user's was queued, or another's.
+    Queued(Option<String>),
+    /// CUPS said something else about a printer or a job.
+    Changed,
+    /// systemd started cups.service.
+    CupsStarted,
 }
 
-pub fn serve(system: &Bus, session: &Bus, ctx: &Context, setup: Setup) -> Result<(), String> {
+pub fn serve(system: &Bus, ctx: &Context, setup: Setup) -> Result<(), String> {
     let tell = notifier(ctx)?;
-    let handler = move |call: &Message, args: Vec<Value>| -> nova_sd::Result<Vec<Value>> {
-        match (call.member().unwrap_or_default(), args.as_slice()) {
-            ("GetReady", _) => {
-                let _ = tell.send(Say::Ready);
-            }
-            ("NewPrinter", [status, name, mfg, mdl, des, cmd]) => {
-                let text = |v: &Value| v.as_str().unwrap_or_default().to_owned();
-                let notice = new_printer_notice(
-                    status.as_i64().unwrap_or(3) as i32,
-                    &text(name),
-                    &text(mfg),
-                    &text(mdl),
-                    &text(des),
-                    &text(cmd),
-                );
-                let _ = tell.send(Say::Outcome(notice));
-            }
-            _ => {}
-        }
-        Ok(vec![])
-    };
-    let _object = system
-        .export(NOTIFIER_PATH, vec![notifier_interface()], handler)
-        .map_err(|e| e.to_string())?;
-    // Waited for while the applet of an earlier session, or another user's,
-    // still has it: the system bus has one for everybody.
-    match system.request_name(NOTIFIER, NAME_QUEUE) {
-        Ok(true) => {}
-        Ok(false) => say!(DUTY, "{NOTIFIER} is another program's: waiting for it"),
-        Err(e) => return Err(format!("could not ask for {NOTIFIER}: {e}")),
-    }
+    let events: Rc<RefCell<VecDeque<Event>>> = Rc::default();
 
-    let spooled: Rc<RefCell<VecDeque<Spooled>>> = Rc::default();
-    let queue = spooled.clone();
+    let queue = events.clone();
     let rule = nova_sd::rule(&[
         ("type", "signal"),
         ("path", SPOOLER_PATH),
@@ -404,84 +412,262 @@ pub fn serve(system: &Bus, session: &Bus, ctx: &Context, setup: Setup) -> Result
                 Ok([_, _, user, ..]) => user.as_str().map(String::from),
                 _ => None,
             };
-            queue.borrow_mut().push_back(Spooled {
-                member: m.member().unwrap_or_default().to_owned(),
-                user,
+            queue.borrow_mut().push_back(match m.member() {
+                Some("JobQueuedLocal") => Event::Queued(user),
+                _ => Event::Changed,
             });
         })
         .map_err(|e| e.to_string())?;
 
-    let mut viewer = Viewer {
-        path: Rc::default(),
-        running: false,
-        look_at: None,
-        idle_since: None,
-    };
+    // CUPS started: from then on there is someone to ask. systemd sends its
+    // jobs' ends to the ones that subscribed.
+    let queue = events.clone();
+    let rule = nova_sd::rule(&[
+        ("type", "signal"),
+        ("sender", SYSTEMD),
+        ("interface", MANAGER),
+        ("member", "JobRemoved"),
+    ])
+    .map_err(|e| e.to_string())?;
+    let _started = system
+        .add_match(&rule, move |m: &Message| {
+            // Its job, started as the unit's: JobRemoved's id, job, unit and result.
+            if matches!(
+                m.args().as_deref(),
+                Ok([_, _, unit, result])
+                    if unit.as_str() == Some("cups.service") && result.as_str() == Some("done")
+            ) {
+                queue.borrow_mut().push_back(Event::CupsStarted);
+            }
+        })
+        .map_err(|e| e.to_string())?;
+    let asked = system.call_async(
+        SYSTEMD,
+        SYSTEMD_PATH,
+        MANAGER,
+        "Subscribe",
+        &[],
+        Some(Duration::from_secs(10)),
+        |answer| {
+            if let Err(e) = answer {
+                say!(DUTY, "could not subscribe to systemd's jobs: {e}");
+            }
+        },
+    );
+    if let Err(e) = asked {
+        say!(DUTY, "could not subscribe to systemd's jobs: {e}");
+    }
+
+    let mut told: HashSet<String> = HashSet::new();
+    let mut look_at: Option<Instant> = None;
+    let mut renew_at = Instant::now();
     loop {
         let now = Instant::now();
-        let events: Vec<Spooled> = spooled.borrow_mut().drain(..).collect();
-        for event in events {
-            let mine = match (&event.user, &setup.user) {
-                (Some(theirs), Some(me)) => theirs == me,
-                _ => true,
-            };
-            if event.member == "JobQueuedLocal" && mine {
-                viewer.start(session, now, &setup);
-            } else {
-                viewer.signalled(now, &setup);
+        let soon = now + setup.settle;
+        let happened: Vec<Event> = events.borrow_mut().drain(..).collect();
+        for event in happened {
+            match event {
+                Event::Queued(user) => {
+                    let mine = match (&user, &setup.user) {
+                        (Some(theirs), Some(me)) => theirs == me,
+                        _ => true,
+                    };
+                    if mine {
+                        look_at = Some(look_at.map_or(soon, |at| at.min(soon)));
+                    }
+                }
+                Event::Changed => {
+                    if let Some(at) = look_at {
+                        look_at = Some(at.min(soon));
+                    }
+                }
+                Event::CupsStarted => renew_at = now,
             }
         }
-        if viewer.look_at.is_some_and(|at| at <= now) {
-            viewer.look(ctx, session, now, &setup);
+        if renew_at <= now {
+            subscribe(ctx);
+            renew_at = now + setup.renew;
         }
-        let until_look = viewer
-            .look_at
+        if look_at.is_some_and(|at| at <= now) {
+            let watched = watched(ctx, setup.user.as_deref());
+            if watched.jobs.is_empty() {
+                // Nothing is left to wait for: what was said is over.
+                told.clear();
+                look_at = None;
+            } else {
+                for notice in news(&mut told, problems(&watched)) {
+                    let _ = tell.send(notice);
+                }
+                look_at = Some(now + setup.watch);
+            }
+        }
+        let until = [Some(renew_at), look_at]
+            .into_iter()
+            .flatten()
+            .min()
             .map(|at| at.saturating_duration_since(Instant::now()));
-        let mut fds = [system.poll_fd(), session.poll_fd()];
-        poll(
-            &mut fds,
-            sooner(sooner(system.timeout(), session.timeout()), until_look),
-        )
-        .map_err(|e| format!("could not wait: {e}"))?;
+        let mut fds = [system.poll_fd()];
+        poll(&mut fds, sooner(system.timeout(), until))
+            .map_err(|e| format!("could not wait: {e}"))?;
         system
             .dispatch()
             .map_err(|e| format!("the system bus went: {e}"))?;
-        session
-            .dispatch()
-            .map_err(|e| format!("the session bus went: {e}"))?;
     }
 }
 
 pub fn run(ctx: &Context) -> Result<(), String> {
     let system = Bus::system().map_err(|e| e.to_string())?;
-    let session = Bus::user().map_err(|e| e.to_string())?;
-    serve(&system, &session, ctx, Setup::default())
+    serve(&system, ctx, Setup::default())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{calls, context, stub, wait_until, Service};
+    use crate::testing::{calls, context, stub, wait_until};
     use nova_sd::testing::{scratch, PrivateBus};
+    use nova_sd::Value;
     use std::path::Path;
-    use std::sync::{Arc, Mutex};
     use std::thread::JoinHandle;
 
+    fn printer(name: &str, state: i32, reasons: &[&str]) -> Printer {
+        Printer {
+            name: name.into(),
+            state,
+            reasons: reasons.iter().map(|r| r.to_string()).collect(),
+        }
+    }
+
+    fn watching(printers: Vec<Printer>) -> Watched {
+        Watched {
+            printers,
+            jobs: vec![],
+        }
+    }
+
+    fn said(watched: &Watched) -> Vec<(String, String)> {
+        problems(watched)
+            .into_iter()
+            .map(|p| (p.key, p.notice.headline))
+            .collect()
+    }
+
     #[test]
-    fn a_printer_set_up_is_ready_for_printing_with_a_test_page_to_print() {
+    fn what_watch_says_is_read_a_line_at_a_time() {
+        let text = "printer\tOffice\t4\tmedia-empty-error,toner-low-warning\ttrue\n\
+                    job\tOffice\t11\t5\tjob-printing\treport.pdf\n\
+                    job\tOffice\t12\t4\tcups-held-for-authentication\ta b.pdf\n\
+                    something else\n";
         assert_eq!(
-            new_printer_notice(0, "LaserJet-1020", "HP", "LaserJet 1020", "", ""),
+            parse_watch(text),
+            Watched {
+                printers: vec![printer(
+                    "Office",
+                    4,
+                    &["media-empty-error", "toner-low-warning"]
+                )],
+                jobs: vec![
+                    Job {
+                        printer: "Office".into(),
+                        id: "11".into(),
+                        reasons: vec!["job-printing".into()],
+                        name: "report.pdf".into()
+                    },
+                    Job {
+                        printer: "Office".into(),
+                        id: "12".into(),
+                        reasons: vec!["cups-held-for-authentication".into()],
+                        name: "a b.pdf".into()
+                    }
+                ],
+            }
+        );
+        assert_eq!(parse_watch(""), Watched::default());
+    }
+
+    #[test]
+    fn a_printer_is_said_to_need_what_it_lacks_and_not_what_it_is_low_on() {
+        let each = [
+            ("media-empty-error", "Printer out of paper"),
+            ("media-needed-warning", "Printer out of paper"),
+            ("media-jam-error", "Paper jam"),
+            ("cover-open-error", "Printer cover open"),
+            ("door-open-report", "Printer cover open"),
+            ("toner-empty-error", "Printer out of ink or toner"),
+            ("marker-supply-empty-error", "Printer out of ink or toner"),
+            ("offline-report", "Printer can’t be reached"),
+        ];
+        for (reason, headline) in each {
+            let found = said(&watching(vec![printer("Office", 3, &[reason])]));
+            assert_eq!(found.len(), 1, "{reason}");
+            assert_eq!(found[0].1, headline, "{reason}");
+        }
+        // Low, not out; the user's own pause; nothing wrong.
+        for reasons in [
+            &["media-low-warning"][..],
+            &["toner-low-warning", "marker-supply-low-warning"],
+            &["paused"],
+            &["moving-to-paused"],
+            &[],
+        ] {
+            assert!(
+                said(&watching(vec![printer("Office", 3, reasons)])).is_empty(),
+                "{reasons:?}"
+            );
+        }
+        assert!(said(&watching(vec![printer("Office", 5, &["paused"])])).is_empty());
+    }
+
+    #[test]
+    fn a_printer_stopped_for_no_reason_of_the_users_is_said_to_have_stopped() {
+        let found = said(&watching(vec![printer("Office", 5, &[])]));
+        assert_eq!(
+            found,
+            [("Office/stopped".to_string(), "Printer stopped".to_string())]
+        );
+        // Out of paper is what it says, not also that it stopped.
+        let found = said(&watching(vec![printer(
+            "Office",
+            5,
+            &["media-empty-error"],
+        )]));
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].1, "Printer out of paper");
+    }
+
+    #[test]
+    fn two_problems_of_one_printer_are_two_notices() {
+        let found = said(&watching(vec![printer(
+            "Office",
+            3,
+            &["media-jam-error", "cover-open-error"],
+        )]));
+        assert_eq!(
+            found.iter().map(|f| f.0.as_str()).collect::<Vec<_>>(),
+            ["Office/jam", "Office/cover"]
+        );
+    }
+
+    #[test]
+    fn a_notice_is_in_plain_words_with_a_button_to_the_printer() {
+        let found = problems(&watching(vec![printer(
+            "Office",
+            3,
+            &["media-empty-error"],
+        )]));
+        assert_eq!(
+            found[0].notice,
             Notice {
-                headline: "Printer added".into(),
-                text: "“LaserJet-1020” is ready for printing.".into(),
+                headline: "Printer out of paper".into(),
+                text: "“Office” is out of paper. Add paper and printing carries on.".into(),
                 urgency: "normal",
                 button: Some((
-                    "Print Test Page".into(),
+                    "Open Printers".into(),
                     vec![
-                        "lp".into(),
-                        "-d".into(),
-                        "LaserJet-1020".into(),
-                        TEST_PAGE.into()
+                        "nova-shell".into(),
+                        "shell".into(),
+                        "summon".into(),
+                        "nova.settings".into(),
+                        r#"{"page":"printers","printer":"Office"}"#.into()
                     ]
                 )),
                 expire_ms: None,
@@ -490,157 +676,125 @@ mod tests {
     }
 
     #[test]
-    fn a_printer_with_no_driver_is_named_as_well_as_it_names_itself() {
-        let uri = "usb://Acme/Inkjet%20Z?serial=1";
-        let notice = new_printer_notice(3, uri, "Acme", "Inkjet Z", "", "PCL");
-        assert_eq!(notice.headline, "Missing printer driver");
-        assert_eq!(notice.text, "No printer driver for Acme Inkjet Z.");
-        assert_eq!(notice.urgency, "critical");
+    fn a_held_job_that_asks_for_a_password_is_said_with_its_document() {
+        let watched = Watched {
+            printers: vec![printer("Office", 3, &[])],
+            jobs: vec![
+                Job {
+                    printer: "Office".into(),
+                    id: "12".into(),
+                    reasons: vec!["cups-held-for-authentication".into()],
+                    name: "Budget 2027.pdf".into(),
+                },
+                Job {
+                    printer: "Office".into(),
+                    id: "13".into(),
+                    reasons: vec!["job-printing".into()],
+                    name: "other.pdf".into(),
+                },
+            ],
+        };
+        let found = problems(&watched);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].key, "Office/auth/12");
+        assert_eq!(found[0].notice.headline, "Printer asks for a password");
         assert_eq!(
-            notice.button.unwrap().1,
-            vec![
-                "nova-printer-setup",
-                "device",
-                uri,
-                "MFG:Acme;MDL:Inkjet Z;DES:;CMD:PCL;"
-            ]
+            found[0].notice.text,
+            "“Office” asks for a user name and password to print “Budget 2027.pdf”."
         );
         assert_eq!(
-            new_printer_notice(3, uri, "", "", "Acme Inkjet", "").text,
-            "No printer driver for Acme Inkjet."
-        );
-        assert_eq!(
-            new_printer_notice(3, uri, "Acme", "", "", "").text,
-            "No driver for this printer."
-        );
-    }
-
-    #[test]
-    fn a_driver_that_may_not_fit_offers_another() {
-        let notice = new_printer_notice(1, "Office", "HP", "LaserJet 1022", "", "");
-        assert_eq!(notice.headline, "Printer added");
-        assert_eq!(
-            notice.text,
-            "“Office” was added, with a driver that may not be the right one."
-        );
-        assert_eq!(
-            notice.button.unwrap().1[..3],
-            ["nova-printer-setup", "driver", "Office"]
-        );
-        assert_eq!(
-            new_printer_notice(2, "Office", "", "", "", "").headline,
-            "Missing printer driver"
+            found[0].notice.button.as_ref().unwrap().1[4],
+            r#"{"page":"printers","printer":"Office","job":"12"}"#
         );
     }
 
     #[test]
-    fn what_a_device_says_of_itself_is_one_plain_line_of_text() {
-        let notice = new_printer_notice(3, "usb://x", "Acme\n--exec", "Z\u{7}\tjet", "", "");
-        assert_eq!(notice.text, "No printer driver for Acme --exec Z jet.");
-        let argv = notice_argv(&notice, None, false);
-        // The device's words are the text's, never options.
+    fn what_a_device_or_an_app_names_is_one_plain_line_and_one_json_string() {
+        let name = "Of\"fice\\\n--exec";
+        let found = problems(&watching(vec![printer(name, 3, &["media-jam-error"])]));
+        let text = "“Of\"fice\\ --exec” has a paper jam. Clear it and printing carries on.";
+        assert_eq!(found[0].notice.text, text);
+        let payload = &found[0].notice.button.as_ref().unwrap().1[4];
+        assert_eq!(
+            payload,
+            "{\"page\":\"printers\",\"printer\":\"Of\\\"fice\\\\\\u000a--exec\"}"
+        );
+        // The words are the text's, never options of nova-notification-send.
+        let argv = notice_argv(&found[0].notice);
         let exec = argv.iter().rposition(|w| w == "--exec").unwrap();
-        assert_eq!(argv[exec - 1], "No printer driver for Acme --exec Z jet.");
-        assert_eq!(argv[exec - 2], "Missing printer driver");
+        assert_eq!(argv[exec - 1], text);
+    }
+
+    #[test]
+    fn a_problem_is_said_once_while_it_lasts_and_again_when_it_comes_back() {
+        let mut told = HashSet::new();
+        let out_of_paper = || {
+            problems(&watching(vec![printer(
+                "Office",
+                3,
+                &["media-empty-error"],
+            )]))
+        };
+        assert_eq!(news(&mut told, out_of_paper()).len(), 1);
+        assert!(news(&mut told, out_of_paper()).is_empty());
+        // A jam as well: only the jam is new.
+        let both = problems(&watching(vec![printer(
+            "Office",
+            3,
+            &["media-empty-error", "media-jam-error"],
+        )]));
+        let fresh = news(&mut told, both);
+        assert_eq!(fresh.len(), 1);
+        assert_eq!(fresh[0].headline, "Paper jam");
+        // Paper added: nothing wrong, and so nothing said; then out again.
+        assert!(news(&mut told, vec![]).is_empty());
+        assert_eq!(news(&mut told, out_of_paper()).len(), 1);
+        // Another printer's is another problem.
+        let hall = problems(&watching(vec![printer("Hall", 3, &["media-empty-error"])]));
+        assert_eq!(news(&mut told, hall).len(), 1);
     }
 
     #[test]
     fn the_notices_words_for_nova_notification_send() {
+        let found = problems(&watching(vec![printer("Office", 3, &["cover-open-error"])]));
         assert_eq!(
-            notice_argv(&ready_notice(), None, true),
+            notice_argv(&found[0].notice),
             vec![
-                "nova-notification-send",
-                "-u",
-                "low",
-                "-g",
-                GLYPH,
-                "-p",
-                "-t",
-                "300000",
-                "Setting up a new printer",
-                "Please wait.",
-            ]
-        );
-        let added = new_printer_notice(0, "Office", "", "", "", "");
-        assert_eq!(
-            notice_argv(&added, Some("42"), false),
-            vec![
-                "nova-notification-send",
-                "-u",
-                "normal",
-                "-g",
-                GLYPH,
-                "-r",
-                "42",
-                "--button",
-                "Print Test Page",
-                "Printer added",
-                "“Office” is ready for printing.",
-                "--exec",
-                "lp",
-                "-d",
-                "Office",
-                TEST_PAGE,
+                "nova-notification-send".to_string(),
+                "-u".into(),
+                "normal".into(),
+                "-g".into(),
+                GLYPH.into(),
+                "--button".into(),
+                "Open Printers".into(),
+                "Printer cover open".into(),
+                "“Office” has a cover open. Close it and printing carries on.".into(),
+                "--exec".into(),
+                "nova-shell".into(),
+                "shell".into(),
+                "summon".into(),
+                "nova.settings".into(),
+                r#"{"page":"printers","printer":"Office"}"#.into(),
             ]
         );
     }
 
     fn quick() -> Setup {
         Setup {
-            settle: Duration::from_millis(50),
-            grace: Duration::from_millis(300),
-            recheck: Duration::from_secs(60),
+            settle: Duration::from_millis(30),
+            watch: Duration::from_millis(60),
+            renew: Duration::from_secs(3600),
             user: Some("andre".into()),
         }
     }
 
-    /// The duty on its own connections to a system-like and a session-like bus.
-    fn printing(
-        system: &str,
-        session: &str,
-        ctx: &Context,
-        setup: Setup,
-    ) -> JoinHandle<Result<(), String>> {
-        let (system, session, ctx) = (system.to_owned(), session.to_owned(), ctx.clone());
+    /// The duty on its own connection to a system-like bus.
+    fn printing(system: &str, ctx: &Context, setup: Setup) -> JoinHandle<Result<(), String>> {
+        let (system, ctx) = (system.to_owned(), ctx.clone());
         thread::spawn(move || {
             let system = Bus::connect(&system).map_err(|e| e.to_string())?;
-            let session = Bus::connect(&session).map_err(|e| e.to_string())?;
-            serve(&system, &session, &ctx, setup)
+            serve(&system, &ctx, setup)
         })
-    }
-
-    /// system-config-printer's service, as far as the duty uses it, with
-    /// what it was asked, in order.
-    fn config_printing(session: &str) -> (Service, Arc<Mutex<Vec<String>>>) {
-        let asked: Arc<Mutex<Vec<String>>> = Arc::default();
-        let log = asked.clone();
-        let service = Service::start(session, move |bus| {
-            let applet = log.clone();
-            let main = bus
-                .export(
-                    CONFIG_PATH,
-                    vec![Interface::new(CONFIG).method("JobApplet", "", "s")],
-                    move |_: &Message, _: Vec<Value>| -> nova_sd::Result<Vec<Value>> {
-                        applet.lock().unwrap().push("JobApplet".into());
-                        Ok(vec![Value::str(format!("{CONFIG_PATH}/JobApplet/1"))])
-                    },
-                )
-                .unwrap();
-            let quit = log.clone();
-            let viewer = bus
-                .export(
-                    &format!("{CONFIG_PATH}/JobApplet/1"),
-                    vec![Interface::new(JOB_VIEWER).method("Quit", "", "")],
-                    move |_: &Message, _: Vec<Value>| -> nova_sd::Result<Vec<Value>> {
-                        quit.lock().unwrap().push("Quit".into());
-                        Ok(vec![])
-                    },
-                )
-                .unwrap();
-            assert!(bus.request_name(CONFIG, 0).unwrap());
-            Box::new((main, viewer))
-        });
-        (service, asked)
     }
 
     /// CUPS saying <member>, about a job of <user>'s when there is one.
@@ -654,144 +808,144 @@ mod tests {
         cups.flush().unwrap();
     }
 
-    fn jobs(dir: &Path, listed: &str) {
-        std::fs::write(dir.join("jobs"), listed).unwrap();
+    /// What `nova-printers watch` says from now on.
+    fn watch_says(dir: &Path, text: &str) {
+        std::fs::write(dir.join("watch"), text).unwrap();
+    }
+
+    fn watch_calls(dir: &Path) -> usize {
+        calls(dir)
+            .iter()
+            .filter(|c| c.starts_with("nova-printers watch"))
+            .count()
+    }
+
+    fn notices(dir: &Path) -> Vec<String> {
+        calls(dir)
+            .into_iter()
+            .filter(|c| c.starts_with("nova-notification-send"))
+            .collect()
     }
 
     #[test]
-    fn the_job_viewer_runs_while_a_job_of_the_users_is_left_and_quits_a_while_after_the_last() {
-        let (Some(system), Some(session)) = (PrivateBus::start(), PrivateBus::start()) else {
+    fn jobs_are_watched_while_they_are_queued_and_a_problem_is_said_once() {
+        let Some(system) = PrivateBus::start() else {
             return;
         };
         let dir = scratch("printing");
         let ctx = context(&dir);
         stub(
             &dir,
-            "lpstat",
-            &format!("cat '{}/jobs' 2>/dev/null; exit 0", dir.display()),
+            "nova-printers",
+            &format!(
+                "[[ $1 != watch ]] || cat '{}/watch' 2>/dev/null; exit 0",
+                dir.display()
+            ),
         );
-        let (_service, asked) = config_printing(&session.address);
-        let duty = printing(&system.address, &session.address, &ctx, quick());
+        stub(&dir, "nova-notification-send", "");
+        let duty = printing(&system.address, &ctx, quick());
         let cups = Bus::connect(&system.address).unwrap();
-        wait_until("the duty on the bus", || {
-            cups.name_owner(NOTIFIER).unwrap().is_some()
+
+        // At login CUPS is asked for its subscription, and nothing else.
+        wait_until("the subscription", || {
+            calls(&dir) == ["nova-printers subscribe"]
         });
-        // Nothing at login, not even a look at CUPS, which would start it.
-        thread::sleep(Duration::from_millis(100));
-        assert!(asked.lock().unwrap().is_empty());
-        assert!(calls(&dir).is_empty());
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(watch_calls(&dir), 0);
 
         // Another user's job is theirs.
         spooler(&cups, "JobQueuedLocal", Some("guest"));
-        thread::sleep(Duration::from_millis(100));
-        assert!(asked.lock().unwrap().is_empty());
-        assert!(calls(&dir).is_empty());
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(watch_calls(&dir), 0);
 
-        // The user's: the viewer, from system-config-printer's service.
-        jobs(&dir, "Office-7 andre 1024 Thu 20 Nov 2026\n");
+        // The user's, and the printer is out of paper: said once, however long.
+        watch_says(
+            &dir,
+            "printer\tOffice\t3\tmedia-empty-error\ttrue\njob\tOffice\t7\t3\t\treport.pdf\n",
+        );
         spooler(&cups, "JobQueuedLocal", Some("andre"));
-        wait_until("the viewer", || *asked.lock().unwrap() == ["JobApplet"]);
-        // CUPS at work, the job still there: it stays.
-        spooler(&cups, "JobStartedLocal", Some("andre"));
-        wait_until("a look", || calls(&dir) == ["lpstat -u andre"]);
-        thread::sleep(Duration::from_millis(400));
-        assert_eq!(*asked.lock().unwrap(), ["JobApplet"]);
+        wait_until("the notice", || notices(&dir).len() == 1);
+        assert_eq!(
+            notices(&dir)[0],
+            format!(
+                "nova-notification-send -u normal -g {GLYPH} --button Open Printers Printer out of paper “Office” is out of paper. Add paper and printing carries on. --exec nova-shell shell summon nova.settings {{\"page\":\"printers\",\"printer\":\"Office\"}}"
+            )
+        );
+        wait_until("a few looks", || watch_calls(&dir) >= 4);
+        assert_eq!(notices(&dir).len(), 1);
+        assert!(calls(&dir).contains(&"nova-printers watch andre".to_string()));
 
-        // Printed: a while after, and only then, it is asked to quit.
-        jobs(&dir, "");
+        // Paper added, and then a jam: a new problem, said.
+        watch_says(
+            &dir,
+            "printer\tOffice\t3\t\ttrue\njob\tOffice\t7\t3\t\treport.pdf\n",
+        );
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(notices(&dir).len(), 1);
+        watch_says(
+            &dir,
+            "printer\tOffice\t3\tmedia-jam-error\ttrue\njob\tOffice\t7\t3\t\treport.pdf\n",
+        );
+        wait_until("the jam", || notices(&dir).len() == 2);
+
+        // Printed: no job left, and no more looks.
+        watch_says(&dir, "");
         spooler(&cups, "QueueChanged", None);
-        wait_until("the look after", || calls(&dir).len() == 2);
-        assert_eq!(*asked.lock().unwrap(), ["JobApplet"]);
-        wait_until("the viewer to quit", || {
-            *asked.lock().unwrap() == ["JobApplet", "Quit"]
+        wait_until("the last look", || {
+            let n = watch_calls(&dir);
+            thread::sleep(Duration::from_millis(250));
+            n == watch_calls(&dir)
         });
+        let after = watch_calls(&dir);
+        thread::sleep(Duration::from_millis(300));
+        assert_eq!(watch_calls(&dir), after);
+        assert_eq!(notices(&dir).len(), 2);
 
-        // The next job starts it again.
-        jobs(&dir, "Office-8 andre 1024 Thu 20 Nov 2026\n");
+        // The next job watches again, and what was said before is said again.
+        watch_says(
+            &dir,
+            "printer\tOffice\t3\tmedia-jam-error\ttrue\njob\tOffice\t8\t3\t\tother.pdf\n",
+        );
         spooler(&cups, "JobQueuedLocal", Some("andre"));
-        wait_until("the viewer again", || asked.lock().unwrap().len() == 3);
+        wait_until("the jam again", || notices(&dir).len() == 3);
         assert!(!duty.is_finished());
     }
 
     #[test]
-    fn a_printer_plugged_in_is_told_of_once_its_driver_is_found_in_place_of_the_wait() {
-        let (Some(system), Some(session)) = (PrivateBus::start(), PrivateBus::start()) else {
+    fn the_subscription_is_renewed_as_systemd_says_cups_started() {
+        let (Some(system), Some(_)) = (PrivateBus::start(), Some(())) else {
             return;
         };
         let dir = scratch("printing");
         let ctx = context(&dir);
-        stub(
-            &dir,
-            "nova-notification-send",
-            "[[ \" $* \" != *\" -p \"* ]] || echo 42",
-        );
-        // The applet of an earlier session still has the name: the duty waits for it.
-        let applet = Bus::connect(&system.address).unwrap();
-        assert!(applet.request_name(NOTIFIER, 0).unwrap());
-        let foreign = applet.unique_name().unwrap();
-        let duty = printing(&system.address, &session.address, &ctx, quick());
-        let udev = Bus::connect(&system.address).unwrap();
-        thread::sleep(Duration::from_millis(100));
-        assert!(!duty.is_finished());
-        drop(applet);
-        wait_until("the name", || {
-            udev.name_owner(NOTIFIER)
-                .unwrap()
-                .is_some_and(|owner| owner != foreign)
-        });
+        stub(&dir, "nova-printers", "");
+        let _duty = printing(&system.address, &ctx, quick());
+        wait_until("the first", || calls(&dir) == ["nova-printers subscribe"]);
 
-        // As udev-add-printer does.
-        udev.call(NOTIFIER, NOTIFIER_PATH, NOTIFIER, "GetReady", &[])
-            .unwrap();
-        udev.call(
-            NOTIFIER,
-            NOTIFIER_PATH,
-            NOTIFIER,
-            "NewPrinter",
-            &[
-                Value::Int32(0),
-                Value::str("LaserJet-1020"),
-                Value::str("HP"),
-                Value::str("LaserJet 1020"),
-                Value::str(""),
-                Value::str("ZJS"),
-            ],
-        )
-        .unwrap();
-        wait_until("both notices", || calls(&dir).len() == 2);
-        assert_eq!(
-            calls(&dir),
-            vec![
-                format!("nova-notification-send -u low -g {GLYPH} -p -t 300000 Setting up a new printer Please wait."),
-                format!(
-                    "nova-notification-send -u normal -g {GLYPH} -r 42 --button Print Test Page Printer added “LaserJet-1020” is ready for printing. --exec lp -d LaserJet-1020 {TEST_PAGE}"
-                ),
-            ]
-        );
-
-        // No driver, and no wait before it: a notice of its own.
-        udev.call(
-            NOTIFIER,
-            NOTIFIER_PATH,
-            NOTIFIER,
-            "NewPrinter",
-            &[
-                Value::Int32(3),
-                Value::str("usb://Acme/Z"),
-                Value::str("Acme"),
-                Value::str("Z"),
-                Value::str(""),
-                Value::str(""),
-            ],
-        )
-        .unwrap();
-        wait_until("the third notice", || calls(&dir).len() == 3);
-        assert_eq!(
-            calls(&dir)[2],
-            format!(
-                "nova-notification-send -u critical -g {GLYPH} --button Find Driver Missing printer driver No printer driver for Acme Z. --exec nova-printer-setup device usb://Acme/Z MFG:Acme;MDL:Z;DES:;CMD:;"
-            )
-        );
-        assert!(!duty.is_finished());
+        // As systemd would: its name, and a job of cups.service done.
+        let manager = Bus::connect(&system.address).unwrap();
+        assert!(manager.request_name(SYSTEMD, 0).unwrap());
+        let ended = |unit: &str, result: &str| {
+            manager
+                .emit_signal(
+                    SYSTEMD_PATH,
+                    MANAGER,
+                    "JobRemoved",
+                    &[
+                        Value::Uint32(1),
+                        Value::str("/org/freedesktop/systemd1/job/1"),
+                        Value::str(unit),
+                        Value::str(result),
+                    ],
+                )
+                .unwrap();
+            manager.flush().unwrap();
+        };
+        ended("cups.socket", "done");
+        ended("cups.service", "failed");
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(calls(&dir).len(), 1);
+        ended("cups.service", "done");
+        wait_until("the second", || calls(&dir).len() == 2);
     }
 }

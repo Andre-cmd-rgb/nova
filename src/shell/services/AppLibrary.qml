@@ -154,7 +154,7 @@ Item {
   // Every app and device icon file, SVGs before PNGs: under ~/.icons,
   // ~/.local/share/icons and each XDG data dir's icons, then in
   // /usr/share/pixmaps. A name keeps the first file found for it. Device
-  // icons count, as some entries name one (Print Settings: "printer").
+  // icons count, as some entries name one ("printer").
   Search {
     id: iconSearch
     command: ["bash", "-c", [

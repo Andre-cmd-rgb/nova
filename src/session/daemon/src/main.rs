@@ -13,7 +13,7 @@
 //   display-watch    the clamshell passes and the X11 scale as displays come and go
 //   automount        removable drives mounted, while somebody has unlocked
 //   bluetooth-pairing  the questions of a pairing the user picked, on the shell's card
-//   printing         the job viewer while jobs are queued, and the notices of a printer plugged in
+//   printing         a printer out of paper or jammed, and a held job's password on the card, while jobs are queued
 //
 // A duty that fails says why and starts again after a pause, longer each time
 // in a row; the others go on meanwhile. One with nothing to do here (no
