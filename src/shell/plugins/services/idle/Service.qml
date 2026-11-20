@@ -26,7 +26,7 @@ Item {
   property bool caffeine: false
   property bool switchRead: false
   // The apps keeping the screen awake through org.freedesktop.ScreenSaver
-  // (nova-idle-inhibitors writes this file while any does, one
+  // (nova-sessiond writes this file while any does, one
   // "app<TAB>reason" a line), as "app: reason".
   readonly property string inhibitorsFile: runtimeDir + "/idle-inhibitors"
   property var inhibitors: []
