@@ -935,7 +935,7 @@ mod tests {
             .unwrap();
         assert!(matches!(keyring.hear(), Heard::Done));
 
-        let lines = card.lines();
+        let lines = card.lines_when_done();
         assert!(
             lines.iter().all(|(n, _)| *n == 0),
             "one card for it all: {lines:?}"

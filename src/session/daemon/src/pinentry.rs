@@ -512,7 +512,7 @@ mod tests {
                 "OK closing connection"
             ]
         );
-        let lines = card.lines();
+        let lines = card.lines_when_done();
         assert!(lines.iter().all(|(n, _)| *n == 0), "one card: {lines:?}");
         assert!(lines[0].1.contains(r#""glyph":"key""#));
         assert!(lines[0].1.contains(r#""text":"Please enter the passphrase to unlock the OpenPGP secret key:\n\"Ann <a@b>\"""#));

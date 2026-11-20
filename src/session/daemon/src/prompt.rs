@@ -374,6 +374,18 @@ pub mod fake {
             self.heard.lock().unwrap().clone()
         }
 
+        /// The lines heard, once the last is the duty's "done". The asker
+        /// has its answer before the card is told, so a test that reads the
+        /// lines as soon as the asker is answered would miss it.
+        pub fn lines_when_done(&self) -> Vec<(usize, String)> {
+            crate::testing::wait_until("the card told it is done", || {
+                self.lines()
+                    .last()
+                    .is_some_and(|(_, l)| l == r#"{"type":"done"}"#)
+            });
+            self.lines()
+        }
+
         /// The dialogs the duty has closed, by number.
         pub fn ended(&self) -> Vec<usize> {
             self.ended.lock().unwrap().clone()
