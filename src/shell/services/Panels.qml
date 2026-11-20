@@ -82,8 +82,6 @@ QtObject {
     // take the payload.
     if (!kindOf(manifest)) return refuse("summon: nothing to open for " + id)
     called = Object.assign({}, called, { [id]: true })
-    // A collection due waits for this one to have opened.
-    if (collector.running) collector.restart()
     var queue = waiting[id] || (waiting[id] = [])
     queue.push(payload || "")
     // One kept loaded has its item already.
@@ -108,7 +106,8 @@ QtObject {
     var rest = Object.assign({}, called)
     delete rest[id]
     called = rest
-    if (!keptLoaded(id)) collector.restart()
+    if (!keptLoaded(id)) owed = true
+    closed()
   }
 
   function keptLoaded(id) {
@@ -119,12 +118,41 @@ QtObject {
   // its JavaScript held (the App Center's catalog, the calendar's events)
   // waits for the engine's next collection, which comes only when it wants
   // memory again. Settings, the App Center, the calendar and the calculator
-  // opened and closed left the shell 80 MB larger. A collection a moment
-  // after the window has gone, once for several closed together, gives
-  // that back while nothing is on screen to stutter.
+  // opened and closed left the shell 80 MB larger. A collection gives that
+  // back, and stops everything on screen while it runs (up to 30 ms), so it
+  // waits for a moment with no window open: a second after the last of
+  // them closes, once for several closed together. One opened in that
+  // second puts it off to its own close.
+  property bool owed: false
+
+  // A window closed: the collection owed, a second after, if it was the
+  // last one open.
+  function closed() {
+    if (owed && !anyOpen()) collector.restart()
+  }
+
+  // Whether a window is open that a collection would stop: a panel,
+  // overlay or menu of the shell's, or one of the bar's.
+  function anyOpen() {
+    var bar = shell.bar
+    if (bar && bar.popup) return true
+    return panelList.some(function(entry) { return isOpen(entry.id) })
+  }
+
   property Timer collector: Timer {
     interval: 1000
-    onTriggered: gc()
+    onTriggered: {
+      if (panels.anyOpen()) return
+      panels.owed = false
+      gc()
+    }
+  }
+
+  // The bar's panels and cards close without the shell's hide.
+  property Connections barPopup: Connections {
+    target: panels.shell.bar
+    ignoreUnknownSignals: true
+    function onPopupChanged() { panels.closed() }
   }
 
   // Whether the panel is open: as its item says, when it has loaded and
@@ -244,6 +272,14 @@ QtObject {
           Qt.callLater(function() { panels.hide(id) })
         }
         Component.onDestruction: delete panels.loaders[panel.plugin]
+      }
+
+      // One kept loaded mostly closes its own window, without the shell's
+      // hide: its opened says when.
+      property Connections closing: Connections {
+        target: panel.loader.item
+        ignoreUnknownSignals: true
+        function onOpenedChanged() { panels.closed() }
       }
     }
   }

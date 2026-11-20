@@ -76,9 +76,10 @@ the windows that do are listed, with why, in
 [`tests/unit/shell/idle-work.bats`](../../tests/unit/shell/idle-work.bats).
 Other panels, overlays and menus load when they are summoned, and stay
 loaded until the shell hides them (`hide`, or `toggle` while open); a
-second later the shell collects what they held. One that closes its own
-window stays loaded unless it tells the shell, as Nova's do with
-`shell.hide`.
+second after the last window closes, the shell collects what they held
+(a collection stops what is on screen, so it waits for none to be open).
+One that closes its own window stays loaded unless it tells the shell, as
+Nova's do with `shell.hide`.
 
 Entry points may declare `shell`, `manifest` and, for a panel paired with a
 service, `service`; the shell sets each one it finds. Bar widgets get the bar as `bar`, and reach the
