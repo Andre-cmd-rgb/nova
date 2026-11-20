@@ -1,0 +1,110 @@
+#!/bin/bash
+
+# nova:summary=Move the running session's services onto the release just installed
+# nova:hidden=true
+#
+# Run by nova update once a release is in. pacman's hook reloads the user
+# managers, which then know the new release's units; but what the release
+# took away goes on running, and what it brought starts only at the next
+# login. In between, an old helper and the one that replaced it would both
+# run (each crash said twice), or the old one alone, which nothing would
+# tell to stop again (an automounter mounting drives under the lock). So,
+# in this order:
+#
+# - Nova's units whose files are gone are stopped. One frozen (an
+#   automounter under the lock) is killed as it is: a stop thaws it first,
+#   and thawed it would mount what was plugged in meanwhile.
+# - The helpers an earlier release started from Hyprland's autostart, and
+#   this one does not, are stopped where they still run.
+# - Nova's units that start with every session, and have not started in
+#   this one, are started: those the release brought. One that ran and
+#   ended, or was stopped, is left as it is.
+#
+# Units still there, running the old release's program, wait for the next
+# login: a restart would drop what one holds (the apps keeping the screen
+# awake, say), for nothing the user would see.
+
+set -uo pipefail
+
+WANTS=${NOVA_SESSION_WANTS:-/usr/lib/systemd/user/graphical-session.target.wants}
+
+# Started as apps (uwsm-app) from Hyprland's autostart by an earlier
+# release, each a scope of its own with nothing in it but the helper and
+# the programs it ran (none of them an app). By name, never by pattern: a
+# scope a retired launcher started holds the app it launched.
+RETIRED_HELPERS=(
+  nova-crash-watch            # nova-sessiond's crash watch now
+  nova-hyprland-monitor-watch # nova-sessiond's display watch now
+)
+
+property() { # unit name
+  systemctl --user show --property="$2" --value -- "$1" 2>/dev/null
+}
+
+# Stopped, and its failure (a kill is one) forgotten: it is gone on purpose,
+# not something for the notice of failed services to tell of.
+stop_unit() { # unit
+  if [[ $(property "$1" FreezerState) == frozen ]]; then
+    systemctl --user kill --signal=SIGKILL -- "$1" >/dev/null 2>&1
+  fi
+  systemctl --user stop -- "$1" >/dev/null 2>&1
+  systemctl --user reset-failed -- "$1" >/dev/null 2>&1
+  return 0
+}
+
+# What a unit that is gone did for this session that its successor has to
+# know. Before nova-sessiond, udiskie (nova-automount.service) mounted the
+# drives: nova-sessiond, started now, would take the session for a new one
+# and mount every drive there is, those unmounted on purpose too. This
+# session's drives were looked at already, as udiskie started.
+carry_over() { # unit
+  local session dir
+  [[ $1 == nova-automount.service ]] || return 0
+  session=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^HYPRLAND_INSTANCE_SIGNATURE=//p')
+  [[ -n $session && $session != */* && -n ${XDG_RUNTIME_DIR:-} ]] || return 0
+  dir=$XDG_RUNTIME_DIR/nova
+  (umask 077 && mkdir -p "$dir") || return 0
+  printf '%s\n' "$session" >"$dir/automount-swept"
+}
+
+systemctl --user daemon-reload >/dev/null 2>&1
+
+# Read on a descriptor of its own, so that nothing run in the loop takes the list.
+while read -r -u 3 unit load active _; do
+  [[ $unit == nova-* && $load == not-found ]] || continue
+  case $active in
+    inactive) ;;
+    failed) systemctl --user reset-failed -- "$unit" >/dev/null 2>&1 ;;
+    *)
+      echo "Stopping $unit: this release has none."
+      carry_over "$unit"
+      stop_unit "$unit"
+      ;;
+  esac
+done 3< <(systemctl --user list-units --all --plain --no-legend --full 'nova-*' 2>/dev/null)
+
+# uwsm names an app's scope app-<desktop>-<program, escaped>-<random>.scope.
+while read -r -u 3 unit _ active _; do
+  [[ $unit == app-*.scope && $active == active ]] || continue
+  name=${unit#app-*-}
+  name=$(systemd-escape --unescape -- "${name%-*.scope}" 2>/dev/null) || continue
+  for helper in "${RETIRED_HELPERS[@]}"; do
+    [[ $name == "$helper" ]] || continue
+    echo "Stopping $helper: this release has none."
+    stop_unit "$unit"
+  done
+done 3< <(systemctl --user list-units --type=scope --plain --no-legend --full 'app-*' 2>/dev/null)
+
+systemctl --user --quiet is-active graphical-session.target 2>/dev/null || exit 0
+for link in "$WANTS"/nova-*; do
+  [[ -e $link ]] || continue
+  unit=${link##*/}
+  [[ $(property "$unit" LoadState) == loaded ]] || continue
+  # Never started, nor its conditions checked, in this user manager's life.
+  [[ $(property "$unit" InactiveExitTimestampMonotonic) == 0 ]] || continue
+  [[ $(property "$unit" ConditionTimestampMonotonic) == 0 ]] || continue
+  echo "Starting $unit, which this release brings."
+  systemctl --user start --no-block -- "$unit" >/dev/null 2>&1 ||
+    echo "nova-session-settle: $unit did not start; it will at the next login" >&2
+done
+exit 0

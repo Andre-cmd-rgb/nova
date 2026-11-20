@@ -20,6 +20,9 @@ setup() {
   stub nova-update-apply 'echo 1.0.0beta.2 >"$PKGVER"'
   stub nova-shell
   stub nova-restart-shell
+  # Never the session's own services: the real one would stop and start
+  # this computer's.
+  stub nova-session-settle
   stub nova-apps-install 'echo current'
   # What it would say goes to $CALLS, never to this computer's notifications.
   stub nova-notification-send
@@ -52,18 +55,34 @@ update() { "$REPO_ROOT/src/cli/bin/nova-update" --release-file "$SCRATCH/release
   [[ $output == *"Restarting the shell"* ]]
 }
 
-@test "no shell running, none started" {
+@test "the session's services move onto the new release, before the shell restarts" {
+  run update
+  [ "$status" -eq 0 ]
+  [ "$(grep -oE '^(nova-session-settle|nova-restart-shell)' "$CALLS" | paste -sd' ')" = "nova-session-settle nova-restart-shell" ]
+}
+
+@test "no shell running, none started; the session's services move all the same" {
   stub nova-shell 'exit 1'
   run update
   [ "$status" -eq 0 ]
   ! grep -q nova-restart-shell "$CALLS"
+  grep -qx 'nova-session-settle ' "$CALLS"
 }
 
-@test "nova unchanged, the shell is left alone" {
+@test "nova unchanged, the shell and the session's services are left alone" {
   stub nova-update-apply
   run update
   [ "$status" -eq 0 ]
   ! grep -q nova-restart-shell "$CALLS"
+  ! grep -q nova-session-settle "$CALLS"
+}
+
+@test "services that could not move are a warning, not a failed update" {
+  stub nova-session-settle 'exit 1'
+  run update
+  [ "$status" -eq 0 ]
+  [[ $output == *"the session's services follow the new release at the next login"* ]]
+  grep -qx 'nova-restart-shell ' "$CALLS"
 }
 
 @test "a failed update restarts nothing" {
