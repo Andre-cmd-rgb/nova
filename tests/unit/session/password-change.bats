@@ -19,60 +19,51 @@ setup() {
   [[ -x $helper ]] || skip "needs cargo, to build nova-password-change"
   mkdir "$SCRATCH/bin"
   export PATH="$SCRATCH/bin:$PATH" ARGV_LOG="$SCRATCH/arguments" NOVA_PASSWD="$SCRATCH/bin/passwd"
-  cat >"$SCRATCH/bin/passwd" <<'PY'
-#!/usr/bin/python3 -I
-import os
-import sys
-import termios
-import time
+  cat >"$SCRATCH/bin/passwd" <<'STUB'
+#!/bin/bash
+echo $$ >"$ARGV_LOG.pid"
+{ echo "argv: $*"; tr '\0' ' ' <"/proc/$PPID/cmdline"; } >"$ARGV_LOG"
+[[ $LC_ALL == C && $# -eq 0 ]] || exit 99
+[[ -z ${PASSWD_HANG:-} ]] || exec sleep 60
+exec 3>/dev/tty 4</dev/tty
 
-with open(os.environ["ARGV_LOG"] + ".pid", "w") as pid:
-    pid.write(str(os.getpid()))
-with open(os.environ["ARGV_LOG"], "wb") as log:
-    log.write(repr(sys.argv).encode())
-    with open(f"/proc/{os.getppid()}/cmdline", "rb") as command:
-        log.write(command.read())
-assert os.environ["LC_ALL"] == "C"
-assert len(sys.argv) == 1
-if os.environ.get("PASSWD_HANG"):
-    time.sleep(60)
-tty = open("/dev/tty", "w")
-tty_input = open("/dev/tty")
-
-def ask(prompt):
-    attrs = termios.tcgetattr(tty)
-    attrs[3] &= ~termios.ECHO
-    termios.tcsetattr(tty, termios.TCSAFLUSH, attrs)
-    # Prompts need not arrive as a whole read, or end with a newline.
-    tty.write(prompt[:4])
-    tty.flush()
-    time.sleep(0.02)
-    tty.write(prompt[4:])
-    tty.flush()
-    answer = tty_input.readline().rstrip("\n")
-    tty.write("\n")
-    tty.flush()
-    return answer
+# Asks as PAM does: echo off, what was typed ahead thrown away, the prompt in
+# two writes and without a newline at its end.
+ask() { # prompt
+  local answer
+  stty -echo <&4
+  while read -t 0 <&4; do read -r -t 0.01 _ <&4 || true; done
+  printf '%s' "${1:0:4}" >&3
+  sleep 0.02
+  printf '%s' "${1:4}" >&3
+  IFS= read -r answer <&4
+  printf '\n' >&3
+  printf '%s' "$answer"
+}
 
 # An account without a password yet: passwd asks for the new one first.
-current = "old secret" if os.environ.get("PASSWD_NO_CURRENT") else ask("Current password: ")
-if current != "old secret":
-    print("passwd: Authentication token manipulation error", flush=True)
-    sys.exit(1)
-new = ask("New password: ")
-if new == "weak secret":
-    print("BAD PASSWORD: The password is shorter than 12 characters", flush=True)
-    ask("New password: ")
-    sys.exit(1)
-again = ask("Retype new password: ")
-if again != new:
-    print("Sorry, passwords do not match.", flush=True)
-    sys.exit(1)
-if new == "echo secret":
-    print("passwd: rejected " + new, flush=True)
-    sys.exit(1)
-print("passwd: password updated successfully", flush=True)
-PY
+if [[ -n ${PASSWD_NO_CURRENT:-} ]]; then current='old secret'; else current=$(ask "Current password: "); fi
+if [[ $current != 'old secret' ]]; then
+  echo "passwd: Authentication token manipulation error"
+  exit 1
+fi
+new=$(ask "New password: ")
+if [[ $new == 'weak secret' ]]; then
+  echo "BAD PASSWORD: The password is shorter than 12 characters"
+  ask "New password: " >/dev/null
+  exit 1
+fi
+again=$(ask "Retype new password: ")
+if [[ $again != "$new" ]]; then
+  echo "Sorry, passwords do not match."
+  exit 1
+fi
+if [[ $new == 'echo secret' ]]; then
+  echo "passwd: rejected $new"
+  exit 1
+fi
+echo "passwd: password updated successfully"
+STUB
   chmod +x "$SCRATCH/bin/passwd"
 }
 
