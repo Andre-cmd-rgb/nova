@@ -178,15 +178,18 @@ hypr() { # lua
   [[ $output != *workspace_swipe_invert* ]]
 }
 
-# rules.lua: Quick Look and the Calculator (the shell's windows, titled so)
-# size themselves, to what Quick Look shows and to the Calculator's keys, so
-# no rule gives them a size, the floating-window tag's 875x600 included.
-@test "Quick Look and the Calculator float in the middle of the screen at the size they ask for" {
+# rules.lua: the shell's windows float in the middle, by their class alone:
+# Quick Look and the Calculator size themselves (to what Quick Look shows, to
+# the Calculator's keys), and the file picker is titled as the app asks, so
+# the rule names no title and gives no size, the floating-window tag's
+# 875x600 included.
+@test "the shell's windows float in the middle of the screen at the size they ask for" {
   run hypr 'require("default.hypr.lib") require("default.hypr.rules")'
   [ "$status" -eq 0 ]
-  [[ $output == *"Quick Look"*"center=true,float=true"* ]]
-  [[ $output == *"|Calculator|"*"center=true,float=true"* ]]
-  [ -z "$(grep -e 'Quick Look' -e 'Calculator' <<<"$output" | grep -e 'size=' -e 'floating-window')" ]
+  rule=$(grep -F 'org\.quickshell' <<<"$output")
+  [ "$(wc -l <<<"$rule")" -eq 1 ]
+  [[ $rule == *'center=true,float=true,match={class=^org\.quickshell$}'* ]]
+  [[ $rule != *title=* && $rule != *size=* && $rule != *floating-window* ]]
 }
 
 # Escape for dictation and the region picker's keys live while their layer is
