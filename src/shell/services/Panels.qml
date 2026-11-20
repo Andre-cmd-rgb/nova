@@ -82,6 +82,8 @@ QtObject {
     // take the payload.
     if (!kindOf(manifest)) return refuse("summon: nothing to open for " + id)
     called = Object.assign({}, called, { [id]: true })
+    // A collection due waits for this one to have opened.
+    if (collector.running) collector.restart()
     var queue = waiting[id] || (waiting[id] = [])
     queue.push(payload || "")
     // One kept loaded has its item already.
@@ -106,6 +108,23 @@ QtObject {
     var rest = Object.assign({}, called)
     delete rest[id]
     called = rest
+    if (!keptLoaded(id)) collector.restart()
+  }
+
+  function keptLoaded(id) {
+    return panelList.some(function(entry) { return entry.id === id && entry.keepLoaded })
+  }
+
+  // A window unloaded is freed only as far as Qt deletes its objects: what
+  // its JavaScript held (the App Center's catalog, the calendar's events)
+  // waits for the engine's next collection, which comes only when it wants
+  // memory again. Settings, the App Center, the calendar and the calculator
+  // opened and closed left the shell 80 MB larger. A collection a moment
+  // after the window has gone, once for several closed together, gives
+  // that back while nothing is on screen to stutter.
+  property Timer collector: Timer {
+    interval: 1000
+    onTriggered: gc()
   }
 
   // Whether the panel is open: as its item says, when it has loaded and

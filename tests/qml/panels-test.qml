@@ -71,9 +71,18 @@ ShellRoot {
       whenLoaded(() => {
         check("toggled after, it opens again", item().shown, true)
         check("  and is open", panels.isOpen("nova.fake"), true)
+        panels.collector.stop()
         panels.toggle("nova.fake", "")
         check("toggled again, it is closed", panels.isOpen("nova.fake"), false)
+        check("  and what it held is collected a moment later", panels.collector.running, true)
         check("an unknown method answers unknown", panels.call("nova.fake", "nothing", ""), "unknown")
+        // One kept loaded stays: there is nothing to collect.
+        panels.collector.stop()
+        test.manifest = Object.assign({}, test.manifest, { keepLoaded: true })
+        panels.sync()
+        panels.summon("nova.fake", "{}")
+        panels.hide("nova.fake")
+        check("a panel kept loaded and hidden asks for no collection", panels.collector.running, false)
         console.log("DONE")
         Qt.quit()
       })
