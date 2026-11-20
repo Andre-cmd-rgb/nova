@@ -55,6 +55,7 @@ windows=(
   plugins/panels/power/Panel.qml       # a bar panel
   plugins/panels/weather/BarWidget.qml # a bar panel
   plugins/polkit/PolkitAgent.qml       # the password card, made hidden: an app asking for rights opens it at once
+  plugins/prompts/Prompts.qml          # the card nova-sessiond asks on, made hidden: a drive's passphrase opens it at once
   plugins/services/media/BarWidget.qml # a bar panel
 )
 

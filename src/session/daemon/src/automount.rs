@@ -18,15 +18,15 @@
 //! Which drives: those udisks gives a desktop to mount on its own (HintAuto,
 //! and not HintSystem: USB, FireWire, memory cards, removable media), and not
 //! one marked to be left alone (HintIgnore, as nova-usb marks the stick it
-//! is writing). An encrypted one is asked for its passphrase, and what it
-//! opens to is mounted. Nothing is said: Files shows the drive.
+//! is writing). An encrypted one is asked for its passphrase, on the shell's
+//! card (prompt.rs), which stays up while the drive is opened and shakes at
+//! a wrong one; what it opens to is mounted. Nothing is said: Files shows
+//! the drive.
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
-use std::io::Read;
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -36,9 +36,10 @@ use nova_sd::poll::{poll, sooner, PollFd, POLLIN};
 use nova_sd::{Bus, Value};
 
 use crate::common::{
-    signal, write_atomically, Context, FolderWatch, Waker, IN_CLOSE_WRITE, IN_CREATE, IN_DELETE,
-    IN_MOVED_FROM, IN_MOVED_TO, SIGTERM,
+    write_atomically, Context, FolderWatch, Waker, IN_CLOSE_WRITE, IN_CREATE, IN_DELETE,
+    IN_MOVED_FROM, IN_MOVED_TO,
 };
+use crate::prompt::{Ask, Dialog, Ender, Field, Glyph};
 use crate::say;
 
 pub const DUTY: &str = "automount";
@@ -231,11 +232,11 @@ fn mount(bus: &Bus, objects: &Objects, path: &str) {
     }
 }
 
-/// A passphrase being asked for: the asking program, and whether it was
-/// called off (the lock came, the drive went).
+/// A passphrase being asked for: the hold on its card, to end it from the
+/// duty, and whether it was called off (the lock came, the drive went).
 #[derive(Default)]
 struct Prompt {
-    pid: Option<u32>,
+    ender: Option<Ender>,
     called_off: bool,
 }
 
@@ -250,24 +251,27 @@ fn call_off(prompts: &Prompts, path: &str) -> bool {
     };
     if let Ok(mut prompt) = prompt.lock() {
         prompt.called_off = true;
-        if let Some(pid) = prompt.pid {
-            signal(pid, SIGTERM);
+        if let Some(ender) = &prompt.ender {
+            ender.end();
         }
     }
     true
 }
 
 /// A passphrase typed, for the duty to open the drive with on its own
-/// connection; none when the question was cancelled.
+/// connection, and the card it was typed on, still up, to say how that
+/// went; no passphrase when the question was cancelled.
 struct Answer {
     path: String,
     label: String,
     attempt: u32,
     passphrase: Option<String>,
+    dialog: Option<Dialog>,
 }
 
 /// Asks for an encrypted drive's passphrase, on a thread of its own, so that
 /// the duty goes on meanwhile; the answer comes back to it through <answers>.
+/// Asked again after a wrong one, it is on the same card (<dialog>).
 fn ask_for_passphrase(
     ctx: &Context,
     prompts: &Prompts,
@@ -275,6 +279,7 @@ fn ask_for_passphrase(
     path: &str,
     label: String,
     attempt: u32,
+    dialog: Option<Dialog>,
 ) {
     let prompt = Arc::new(Mutex::new(Prompt::default()));
     {
@@ -288,12 +293,7 @@ fn ask_for_passphrase(
     let started = thread::Builder::new()
         .name("automount-ask".into())
         .spawn(move || {
-            let text = if attempt == 1 {
-                format!("“{label}” is encrypted. Type its passphrase to open it.")
-            } else {
-                format!("That passphrase did not open “{label}”. Type it again.")
-            };
-            let passphrase = ask(&ctx, &prompt, &text);
+            let (passphrase, dialog) = ask(&ctx, &prompt, &label, dialog);
             // Called off meanwhile (the lock came, the drive went): nothing to tell.
             if prompt.lock().is_ok_and(|p| p.called_off) {
                 return;
@@ -303,6 +303,7 @@ fn ask_for_passphrase(
                 label,
                 attempt,
                 passphrase,
+                dialog,
             });
         });
     if let Err(e) = started {
@@ -325,44 +326,59 @@ impl Answers {
     }
 }
 
-/// The passphrase, from a dialog; none when it was cancelled or called off.
-fn ask(ctx: &Context, prompt: &Arc<Mutex<Prompt>>, text: &str) -> Option<String> {
-    if prompt.lock().ok()?.called_off {
-        return None;
+/// The passphrase, from the shell's card, and the card, still up; none
+/// when it was cancelled or called off. A card already up (<dialog>) is
+/// told the last passphrase was wrong, and asks again.
+fn ask(
+    ctx: &Context,
+    prompt: &Arc<Mutex<Prompt>>,
+    label: &str,
+    dialog: Option<Dialog>,
+) -> (Option<String>, Option<Dialog>) {
+    if prompt.lock().map_or(true, |p| p.called_off) {
+        return (None, None);
     }
-    let mut child = ctx
-        .command("zenity")
-        .args(["--entry", "--hide-text", "--title=Encrypted drive", &format!("--text={text}")])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .inspect_err(|e| say!(DUTY, "no dialog to ask for the passphrase with ({e}); Files asks for it as the drive is opened"))
-        .ok()?;
+    let opened = match dialog {
+        Some(mut dialog) => dialog
+            .wrong(&format!("That passphrase did not open “{label}”."))
+            .map(|()| dialog),
+        None => {
+            let mut question = Ask::new(Glyph::Drive, &format!("“{label}” is encrypted"));
+            question
+                .fields
+                .push(Field::secret("passphrase", "Enter passphrase"));
+            question.accept = "Unlock".into();
+            Dialog::open(ctx, &question)
+        }
+    };
+    let mut dialog = match opened {
+        Ok(dialog) => dialog,
+        Err(e) => {
+            say!(DUTY, "no card to ask for the passphrase on ({e}); Files asks for it as the drive is opened");
+            return (None, None);
+        }
+    };
     {
-        let mut prompt = prompt.lock().ok()?;
+        let Ok(mut prompt) = prompt.lock() else {
+            return (None, None);
+        };
         if prompt.called_off {
-            let _ = child.kill();
+            return (None, None);
         }
-        prompt.pid = Some(child.id());
+        prompt.ender = dialog.ender().ok();
     }
-    let mut answer = String::new();
-    let read = child
-        .stdout
-        .take()
-        .map(|mut out| out.read_to_string(&mut answer));
-    let status = child.wait().ok()?;
+    let answer = dialog.answer();
     if let Ok(mut prompt) = prompt.lock() {
-        prompt.pid = None;
+        prompt.ender = None;
         if prompt.called_off {
-            return None;
+            return (None, None);
         }
     }
-    if !status.success() || !matches!(read, Some(Ok(_))) {
-        return None;
+    // Typed as it is: a passphrase may begin or end in a space.
+    match answer.and_then(|mut values| values.remove("passphrase")) {
+        Some(passphrase) if !passphrase.is_empty() => (Some(passphrase), Some(dialog)),
+        _ => (None, None),
     }
-    // Only the line's end is the dialog's: a passphrase may end in a space.
-    let passphrase = answer.strip_suffix('\n').unwrap_or(&answer).to_owned();
-    (!passphrase.is_empty()).then_some(passphrase)
 }
 
 /// What a change on the bus was.
@@ -410,6 +426,7 @@ impl Automount<'_> {
                 path,
                 label(objects, path),
                 1,
+                None,
             ),
             Action::Nothing => {}
         }
@@ -469,14 +486,15 @@ impl Automount<'_> {
         }
     }
 
-    /// Opens an encrypted drive with the passphrase typed; what it opens to
-    /// comes as a new block, which is mounted as any other. A wrong
-    /// passphrase is asked again, twice.
+    /// Opens an encrypted drive with the passphrase typed, while its card
+    /// says it is checking; what it opens to comes as a new block, which is
+    /// mounted as any other. A wrong passphrase is asked again, twice, on
+    /// the same card.
     fn answered(&mut self, answer: Answer) {
         if let Ok(mut all) = self.prompts.lock() {
             all.remove(&answer.path);
         }
-        let Some(passphrase) = answer.passphrase else {
+        let (Some(passphrase), Some(mut dialog)) = (answer.passphrase, answer.dialog) else {
             return;
         };
         if !self.on {
@@ -494,11 +512,13 @@ impl Automount<'_> {
             Some(Duration::from_secs(120)),
         );
         let label = answer.label;
+        let wrong = |e: &nova_sd::Error| e.name().is_some_and(|n| n.ends_with(".Error.Failed"));
         match unlocked {
-            Ok(_) => say!(DUTY, "opened {label}"),
-            Err(e)
-                if e.name().is_some_and(|n| n.ends_with(".Error.Failed")) && answer.attempt < 3 =>
-            {
+            Ok(_) => {
+                say!(DUTY, "opened {label}");
+                dialog.done();
+            }
+            Err(e) if wrong(&e) && answer.attempt < 3 => {
                 say!(DUTY, "the passphrase did not open {label}");
                 ask_for_passphrase(
                     self.ctx,
@@ -507,9 +527,19 @@ impl Automount<'_> {
                     &answer.path,
                     label,
                     answer.attempt + 1,
+                    Some(dialog),
                 );
             }
-            Err(e) => say!(DUTY, "could not open {label}: {e}"),
+            // The third wrong one: the card shakes once more, and goes.
+            Err(e) if wrong(&e) => {
+                say!(DUTY, "the passphrase did not open {label}, a third time");
+                let _ = dialog.wrong(&format!("That passphrase did not open “{label}”."));
+                dialog.done();
+            }
+            Err(e) => {
+                say!(DUTY, "could not open {label}: {e}");
+                dialog.done();
+            }
         }
     }
 
@@ -647,7 +677,8 @@ pub fn run(ctx: &Context) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{calls, context, duty, stub, wait_until, Service};
+    use crate::prompt::fake::Card;
+    use crate::testing::{context, duty, wait_until, Service};
     use nova_sd::testing::{scratch, PrivateBus};
     use nova_sd::{Interface, Message, Slot};
     use std::any::Any;
@@ -1030,7 +1061,7 @@ mod tests {
             .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
             .env("XDG_RUNTIME_DIR", ctx.runtime.parent().unwrap())
             .env("HYPRLAND_INSTANCE_SIGNATURE", &ctx.session)
-            .stdin(Stdio::null())
+            .stdin(std::process::Stdio::null())
             .status()
             .unwrap();
         assert!(status.success(), "nova-automount failed");
@@ -1038,18 +1069,6 @@ mod tests {
 
     fn settle() {
         thread::sleep(Duration::from_millis(150));
-    }
-
-    fn zenity(dir: &Path) {
-        stub(
-            dir,
-            "zenity",
-            &format!(
-                "n=$(cat '{0}/asked' 2>/dev/null || echo 0); echo $((n + 1)) >'{0}/asked'
-if ((n == 0)); then echo wrong; else echo right; fi",
-                dir.display()
-            ),
-        );
     }
 
     #[test]
@@ -1060,7 +1079,13 @@ if ((n == 0)); then echo wrong; else echo right; fi",
         };
         let dir = scratch("automount");
         let ctx = context(&dir);
-        zenity(&dir);
+        let card = Card::listen(
+            &ctx.runtime,
+            &[
+                Some(r#"{"passphrase":"wrong"}"#),
+                Some(r#"{"passphrase":"right"}"#),
+            ],
+        );
         let (udisks, mounted, tried) = udisks(&private.address, usb_stick());
         let _duty = duty(&private.address, &ctx, serve);
         settle();
@@ -1095,7 +1120,8 @@ if ((n == 0)); then echo wrong; else echo right; fi",
         });
 
         // Unlocked: one marked to be left alone is, and an encrypted one is
-        // asked for, again after a wrong passphrase, and opened and mounted.
+        // asked for on the shell's card, again on the same card after a
+        // wrong passphrase, and opened and mounted, and the card goes.
         plug_in(&udisks, "sdd", block("sdd", "auto ignored", None, None));
         plug_in(
             &udisks,
@@ -1112,17 +1138,95 @@ if ((n == 0)); then echo wrong; else echo right; fi",
             *mounted.lock().unwrap() == ["sdb1", "sdc1", "dm_2d0"]
         });
         assert_eq!(*tried.lock().unwrap(), ["wrong", "right"]);
-        let asked: Vec<String> = calls(&dir)
-            .into_iter()
-            .filter(|c| c.starts_with("zenity"))
-            .collect();
-        assert_eq!(asked.len(), 2);
-        assert!(asked[0].contains("“Backup” is encrypted"), "{}", asked[0]);
+        wait_until("the card told it is done", || card.lines().len() == 3);
+        let heard = card.lines();
+        assert!(heard.iter().all(|(n, _)| *n == 0), "one card: {heard:?}");
         assert!(
-            asked[1].contains("That passphrase did not open “Backup”"),
+            heard[0]
+                .1
+                .starts_with(r#"{"type":"ask","glyph":"drive","title":"“Backup” is encrypted""#),
             "{}",
-            asked[1]
+            heard[0].1
         );
+        assert!(
+            heard[0].1.contains(
+                r#""fields":[{"id":"passphrase","label":"Enter passphrase","secret":true"#
+            ),
+            "{}",
+            heard[0].1
+        );
+        assert_eq!(
+            heard[1].1,
+            r#"{"type":"wrong","text":"That passphrase did not open “Backup”."}"#
+        );
+        assert_eq!(heard[2].1, r#"{"type":"done"}"#);
+    }
+
+    #[test]
+    fn three_wrong_passphrases_shake_the_card_and_it_goes_and_a_cancel_asks_nothing_more() {
+        let Some(private) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("automount");
+        let ctx = context(&dir);
+        let card = Card::listen(
+            &ctx.runtime,
+            &[
+                Some(r#"{"passphrase":"a"}"#),
+                Some(r#"{"passphrase":"b"}"#),
+                Some(r#"{"passphrase":"c"}"#),
+            ],
+        );
+        let mut objects = Objects::new();
+        objects.insert(format!("{DEV}sde"), block("sde", "auto", None, None));
+        objects.insert(
+            format!("{DEV}sde1"),
+            encrypted(block("sde1", "auto", Some("sde"), None), None),
+        );
+        let (_udisks, mounted, tried) = udisks(&private.address, objects);
+        switch(&ctx, true);
+        let _duty = duty(&private.address, &ctx, serve);
+        wait_until("three tries", || tried.lock().unwrap().len() == 3);
+        wait_until("the card's end", || card.lines().len() == 5);
+        let heard: Vec<String> = card.lines().into_iter().map(|(_, l)| l).collect();
+        assert!(
+            heard[1].starts_with(r#"{"type":"wrong""#)
+                && heard[2].starts_with(r#"{"type":"wrong""#)
+        );
+        assert!(
+            heard[3].starts_with(r#"{"type":"wrong""#),
+            "the third shakes too: {heard:?}"
+        );
+        assert_eq!(heard[4], r#"{"type":"done"}"#);
+        settle();
+        assert_eq!(tried.lock().unwrap().len(), 3);
+        assert!(mounted.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn with_no_card_to_ask_on_the_drive_waits_for_files() {
+        let Some(private) = PrivateBus::start() else {
+            return;
+        };
+        let dir = scratch("automount");
+        let ctx = context(&dir);
+        let mut objects = Objects::new();
+        objects.insert(format!("{DEV}sde"), block("sde", "auto", None, None));
+        objects.insert(
+            format!("{DEV}sde1"),
+            encrypted(block("sde1", "auto", Some("sde"), None), None),
+        );
+        objects.insert(format!("{DEV}sdb"), block("sdb", "auto", None, None));
+        objects.insert(
+            format!("{DEV}sdb1"),
+            with_filesystem(block("sdb1", "auto", Some("sdb"), None), false),
+        );
+        let (_udisks, mounted, tried) = udisks(&private.address, objects);
+        switch(&ctx, true);
+        let _duty = duty(&private.address, &ctx, serve);
+        // The duty goes on: the other drive mounts.
+        wait_until("the other drive", || *mounted.lock().unwrap() == ["sdb1"]);
+        assert!(tried.lock().unwrap().is_empty());
     }
 
     #[test]
@@ -1166,7 +1270,8 @@ if ((n == 0)); then echo wrong; else echo right; fi",
         };
         let dir = scratch("automount");
         let ctx = context(&dir);
-        stub(&dir, "zenity", "exec sleep 5");
+        // The card is left unanswered.
+        let card = Card::listen(&ctx.runtime, &[None, None]);
         let mut objects = Objects::new();
         objects.insert(format!("{DEV}sde"), block("sde", "auto", None, None));
         objects.insert(
@@ -1176,11 +1281,13 @@ if ((n == 0)); then echo wrong; else echo right; fi",
         let (_udisks, _, tried) = udisks(&private.address, objects);
         switch(&ctx, true);
         let _duty = duty(&private.address, &ctx, serve);
-        wait_until("the question", || calls(&dir).len() == 1);
+        wait_until("the question", || card.lines().len() == 1);
         switch(&ctx, false);
         settle();
         switch(&ctx, true);
-        wait_until("the question again", || calls(&dir).len() == 2);
+        wait_until("the question again", || card.lines().len() == 2);
+        // On a card of its own: the first was ended as the lock came.
+        assert_eq!(card.lines()[1].0, 1);
         assert!(tried.lock().unwrap().is_empty());
     }
 }

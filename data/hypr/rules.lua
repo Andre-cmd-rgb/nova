@@ -34,9 +34,6 @@ nova.window({ title = ".*is sharing.*" }, { workspace = "special silent" })
 
 nova.window("(Share|localsend)", { float = true, center = true })
 nova.window("localsend", { size = { 1100, 700 } })
--- The passphrase nova-sessiond asks for an encrypted drive (zenity), a
--- dialog with no window of its own to sit on.
-nova.window("^(zenity|org\\.gnome\\.Zenity)$", { float = true, center = true })
 
 -- The shell's bar, menus and pickers appear at once, without the fade layers
 -- get. Panels fade themselves, and skip it when one hands over to another.

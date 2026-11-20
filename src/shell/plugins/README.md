@@ -155,6 +155,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Power | `nova.power` | widget `panels/power/Panel.qml` | the battery's charge, and its panel |
 | Weather | `nova.weather` | widget `panels/weather/BarWidget.qml` | the weather, and the forecast's card |
 | Polkit Agent | `nova.polkit` | service `polkit/PolkitAgent.qml` | the password card when an app needs root (below) |
+| Prompts | `nova.prompts` | service `prompts/Prompts.qml` | the card nova-sessiond asks on: an encrypted drive's passphrase, a Bluetooth pairing's code, a network's password (below) |
 | [Screen Time](screentime/README.md) | `nova.screentime` | service `screentime/Service.qml`, widget `screentime/BarWidget.qml` | time spent per app; its page is `settings/ScreenTimeView.qml` |
 | Battery | `nova.battery` | service `services/battery/Service.qml` | the low-battery warning and the power mode |
 | Idle | `nova.idle` | service `services/idle/Service.qml` | the screensaver and the lock after `idle` in `shell.json`, and Caffeine |
@@ -224,6 +225,19 @@ before anything shows, which is why the lock has no off.
 When an app needs root, a card over the dimmed screen asks for the password,
 or for a finger while PAM waits on the reader, through Quickshell's polkit
 agent (`Quickshell.Services.Polkit`).
+
+### Prompts
+
+What nova-sessiond needs typed or confirmed is asked on the polkit card's
+twin, in the same colours (the theme's `[polkit]`): an encrypted drive's
+passphrase, a Bluetooth pairing's code, a network's password. The shell
+listens on `$XDG_RUNTIME_DIR/nova/prompts.sock`, in the user's private
+runtime folder; a duty connects, and one connection is one dialog, a line of
+JSON each way at a time (`prompts/PromptsModel.js`, and the duty's side in
+`src/session/daemon/src/prompt.rs`). Answered, the card says "Checking..."
+until the duty says done, or wrong, when it shakes and is answered again.
+What is typed goes through the socket only, never a program's arguments or a
+file. A second dialog waits for the first to end.
 
 ### Welcome
 

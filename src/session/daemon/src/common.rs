@@ -163,7 +163,6 @@ impl Backoff {
 extern "C" {
     fn inotify_init1(flags: c_int) -> c_int;
     fn inotify_add_watch(fd: c_int, path: *const c_char, mask: u32) -> c_int;
-    fn kill(pid: c_int, signal: c_int) -> c_int;
     fn pipe2(fds: *mut c_int, flags: c_int) -> c_int;
     fn flock(fd: c_int, operation: c_int) -> c_int;
 }
@@ -267,16 +266,6 @@ impl Waker {
         while matches!(io::Read::read(&mut &self.read, &mut buffer), Ok(n) if n > 0) {}
     }
 }
-
-/// Sends <signal> to a process this daemon started.
-pub fn signal(pid: u32, signal: c_int) {
-    if let Ok(pid) = c_int::try_from(pid) {
-        // SAFETY: no pointers.
-        unsafe { kill(pid, signal) };
-    }
-}
-
-pub const SIGTERM: c_int = 15;
 
 /// A lock on a file, shared with Nova's helpers that take the same one
 /// (`flock`), held until it is dropped.

@@ -1,0 +1,12 @@
+{
+  "id": "nova.prompts",
+  "name": "Prompts",
+  "description": "Asks for what Nova needs from you: an encrypted drive's passphrase, a Bluetooth pairing's code, a network's password.",
+  "kinds": [
+    "service"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Prompts.qml"
+  }
+}

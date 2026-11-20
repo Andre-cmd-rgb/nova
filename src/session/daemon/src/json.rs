@@ -1,4 +1,5 @@
-//! Just enough JSON to read what Hyprland answers (`j/clients`).
+//! Just enough JSON to read what Hyprland answers (`j/clients`) and what the
+//! shell's dialogs say (prompt.rs), and to write a string for them.
 
 use std::collections::BTreeMap;
 
@@ -40,6 +41,35 @@ impl Json {
             _ => None,
         }
     }
+
+    pub fn as_object(&self) -> Option<&BTreeMap<String, Json>> {
+        match self {
+            Json::Object(fields) => Some(fields),
+            _ => None,
+        }
+    }
+}
+
+/// <text> as a JSON string, quoted: the quote, the backslash and every
+/// control character escaped, the rest as it is.
+pub fn quote(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c == '\u{2028}' || c == '\u{2029}' => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// The document in <text>; none for one that is not JSON.
@@ -210,6 +240,23 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_string_written_reads_back_the_same() {
+        for text in [
+            "",
+            "plain",
+            "say \"hi\"\\",
+            "line\nnext\ttab\r",
+            "\u{1}\u{1f}",
+            "“Samsung T7” é 🙂",
+            "\u{2028}",
+        ] {
+            let quoted = quote(text);
+            assert!(!quoted[1..quoted.len() - 1].contains(['\n', '\r']));
+            assert_eq!(parse(&quoted), Some(Json::Str(text.to_owned())), "{quoted}");
+        }
+    }
 
     #[test]
     fn hyprlands_clients_are_read() {
