@@ -443,7 +443,7 @@ impl Bus {
         parts.extend(path.map(|s| ("path", s)));
         parts.extend(interface.map(|s| ("interface", s)));
         parts.extend(member.map(|s| ("member", s)));
-        self.add_match(&rule(&parts), callback)
+        self.add_match(&rule(&parts)?, callback)
     }
 
     /// Who owns <name> now: its unique name, or none.
@@ -478,7 +478,7 @@ impl Bus {
                 ("interface", "org.freedesktop.DBus"),
                 ("member", "NameOwnerChanged"),
                 ("arg0", name),
-            ]),
+            ])?,
             move |message| {
                 if let Ok(args) = message.args() {
                     let owner = args
@@ -622,15 +622,23 @@ impl Bus {
     }
 }
 
-/// A match rule from its keys and values, each value quoted as the D-Bus
-/// specification has it (a quote inside one ends the quoting, is escaped, and
-/// starts it again).
-pub fn rule(parts: &[(&str, &str)]) -> String {
-    parts
+/// A match rule from its keys and values, each value in single quotes. A
+/// value holding a quote or a backslash is refused (EINVAL): the D-Bus
+/// specification escapes them, but sd-bus's own parser refuses the escaped
+/// quote and never matches the backslash, so such a rule would fail, or worse,
+/// be added and never run. Names, paths and interfaces cannot hold either.
+pub fn rule(parts: &[(&str, &str)]) -> Result<String> {
+    if parts.iter().any(|(_, value)| value.contains(['\'', '\\'])) {
+        return Err(Error::Os {
+            errno: 22,
+            doing: "making a match rule of a value with a quote or a backslash",
+        });
+    }
+    Ok(parts
         .iter()
-        .map(|(key, value)| format!("{key}='{}'", value.replace('\'', "'\\''")))
+        .map(|(key, value)| format!("{key}='{value}'"))
         .collect::<Vec<_>>()
-        .join(",")
+        .join(","))
 }
 
 /// A match or an object on the bus, there for as long as this is kept.

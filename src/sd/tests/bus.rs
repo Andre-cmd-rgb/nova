@@ -309,11 +309,15 @@ fn a_signal_reaches_its_match_and_only_while_the_slot_is_kept() {
 }
 
 #[test]
-fn a_rule_quotes_its_values() {
+fn a_rule_quotes_its_values_and_refuses_what_sd_bus_cannot_match() {
     assert_eq!(
-        nova_sd::rule(&[("type", "signal"), ("arg0", "it's")]),
-        r"type='signal',arg0='it'\''s'"
+        nova_sd::rule(&[("type", "signal"), ("arg0", "org.nova.Name")]).unwrap(),
+        "type='signal',arg0='org.nova.Name'"
     );
+    for value in ["it's", r"back\slash"] {
+        let refused = nova_sd::rule(&[("arg0", value)]).unwrap_err();
+        assert_eq!(refused.errno(), Some(22), "{value}");
+    }
 }
 
 #[test]
@@ -395,6 +399,11 @@ fn a_call_with_no_answer_wanted_and_a_bus_that_goes() {
         }
         assert!(Instant::now() < deadline);
     };
+    assert!(error.is_disconnect(), "{error}");
+    // A call on the dead connection says so too, through an error name.
+    let error = bus
+        .call(NAME, PATH, IFACE, "Shout", &[Value::str("x")])
+        .unwrap_err();
     assert!(error.is_disconnect(), "{error}");
 }
 

@@ -43,8 +43,19 @@ impl Error {
     /// Whether the connection is gone, so that only a new one will do.
     pub fn is_disconnect(&self) -> bool {
         // EPIPE, ECONNRESET, ENOTCONN, ESHUTDOWN: what sd-bus returns once
-        // the other end has closed.
+        // the other end has closed. A call says the same through an error
+        // name, since sd_bus_call sets one for nearly every failure.
         matches!(self.errno(), Some(32 | 104 | 107 | 108))
+            || matches!(
+                self.name(),
+                Some(
+                    "org.freedesktop.DBus.Error.Disconnected"
+                        | "System.Error.EPIPE"
+                        | "System.Error.ECONNRESET"
+                        | "System.Error.ENOTCONN"
+                        | "System.Error.ESHUTDOWN"
+                )
+            )
     }
 
     /// From an sd_bus_error that was set, which it frees.
