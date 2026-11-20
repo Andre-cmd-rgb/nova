@@ -1,0 +1,40 @@
+#!/bin/bash
+
+# nova:summary=Open Print Settings at a printer's driver
+# nova:args=device <uri> <device-id> | driver <queue> <device-id>
+# nova:hidden=true
+#
+# The "Find Driver" button of nova-sessiond's notices of a printer plugged
+# in: for a printer no driver was found for (device, by its URI), Print
+# Settings' new printer at that device; for one added with a driver that may
+# not fit (driver, by its queue), the choice of another. Both are
+# system-config-printer's own dialogs, through its D-Bus service, as its
+# applet opened them. busctl, not gdbus: it takes each value as one typed
+# argument, so what a device says of itself is never parsed.
+
+set -euo pipefail
+
+usage() {
+  echo "Usage: nova-printer-setup device <uri> <device-id> | driver <queue> <device-id>" >&2
+  exit 2
+}
+
+(($# == 3)) || usage
+case $1 in
+  device) method=NewPrinterFromDevice ;;
+  driver) method=ChangePPD ;;
+  *) usage ;;
+esac
+
+service=org.fedoraproject.Config.Printing
+root=/org/fedoraproject/Config/Printing
+# s "/org/fedoraproject/Config/Printing/NewPrinterDialog/1"
+answer=$(busctl --user -- call "$service" "$root" "$service" NewPrinterDialog)
+dialog=${answer#s \"}
+dialog=${dialog%\"}
+if [[ ! $dialog =~ ^$root/NewPrinterDialog/[0-9]+$ ]]; then
+  echo "nova-printer-setup: Print Settings did not open its dialog" >&2
+  exit 1
+fi
+# 0: no window to sit on.
+busctl --user --timeout=120 -- call "$service" "$dialog" "$service.NewPrinterDialog" "$method" uss 0 "$2" "$3"

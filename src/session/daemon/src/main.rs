@@ -12,6 +12,7 @@
 //   crash-watch      "… quit unexpectedly", with Reopen, for an app a crash took away
 //   display-watch    the clamshell passes and the X11 scale as displays come and go
 //   automount        removable drives mounted, while somebody has unlocked
+//   printing         the job viewer while jobs are queued, and the notices of a printer plugged in
 //
 // A duty that fails says why and starts again after a pause, longer each time
 // in a row; the others go on meanwhile. One with nothing to do here (no
@@ -24,6 +25,7 @@ mod displays;
 mod hypr;
 mod idle;
 mod json;
+mod printing;
 mod sleep;
 #[cfg(test)]
 mod testing;
@@ -36,12 +38,13 @@ use common::{Backoff, Context};
 
 type Duty = fn(&Context) -> Result<(), String>;
 
-const DUTIES: [(&str, Duty); 5] = [
+const DUTIES: [(&str, Duty); 6] = [
     (idle::DUTY, idle::run),
     (sleep::DUTY, sleep::run),
     (crash::DUTY, crash::run),
     (displays::DUTY, displays::run),
     (automount::DUTY, automount::run),
+    (printing::DUTY, printing::run),
 ];
 
 /// Runs a duty again after each failure: 2 s after the first in a row, up to

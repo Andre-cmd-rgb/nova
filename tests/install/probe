@@ -59,6 +59,10 @@ probe() {
   check "apps can keep the screen awake (org.freedesktop.ScreenSaver)" \
     as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" gdbus call --session --dest org.freedesktop.ScreenSaver \
     --object-path /org/freedesktop/ScreenSaver --method org.freedesktop.ScreenSaver.GetActive
+  # A printer plugged in is told of by nova-sessiond, not by the applet it replaced.
+  check "nova-sessiond tells of a printer plugged in (com.redhat.NewPrinterNotification)" \
+    bash -c 'pid=$(busctl --system call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus \
+      GetConnectionUnixProcessID s com.redhat.NewPrinterNotification) && [[ $(cat "/proc/${pid#u }/comm") == nova-sessiond ]]'
 
   # What starts at login is Nova's choice, not each package's
   # (data/systemd/install.mk): a package autostart Nova has not chosen is one

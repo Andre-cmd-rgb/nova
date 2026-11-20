@@ -2,9 +2,10 @@
 # small process (src/session/daemon, built by the root cargo workspace): the
 # apps that keep the screen awake (org.freedesktop.ScreenSaver), the lock
 # before sleep, "… quit unexpectedly" for an app a crash took away, the
-# clamshell passes as displays come and go, and removable drives mounted
-# while somebody has unlocked. Enabled for every user: each is part of the
-# session, not something to turn on.
+# clamshell passes as displays come and go, removable drives mounted while
+# somebody has unlocked, and printing: the job viewer while jobs are queued
+# and the notice of a printer plugged in. Enabled for every user: each is
+# part of the session, not something to turn on.
 
 SESSIOND_SRC := src/session
 
