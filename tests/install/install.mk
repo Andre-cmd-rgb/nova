@@ -2,4 +2,5 @@
 # the installed system's first boot. Run by release.yml, never by make test.
 
 SHELL_SOURCES += tests/install/run tests/install/after tests/install/probe \
-  tests/install/upgrade-lib tests/install/upgrade-probe
+  tests/install/upgrade-lib tests/install/upgrade-probe \
+  tests/install/repo-responder
