@@ -4,9 +4,10 @@
 # reports a line per check ("ok   ..." or "FAIL ..."), then "DONE". A FAIL, a
 # QML warning or error, or a test that never reaches DONE fails the run.
 #
-#   tests/qml/run --root <dir>
+#   tests/qml/run --root <dir> [<name>...]
 #
 # --root is a `make install DESTDIR=<dir>` tree, the one tools/qml-smoke uses.
+# Names (preview, for preview-test.qml) run those tests alone.
 #
 # A test asks for what it needs on lines of its own:
 #   // zone: America/Santiago        another time zone than Europe/Rome
@@ -40,12 +41,19 @@ set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 root=''
+tests=()
 while (($# > 0)); do
   case $1 in
     --root) root=${2:?}; shift 2 ;;
-    *) sed -n '2,/^$/s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+    -*) sed -n '2,/^$/s/^# \{0,1\}//p' "$0" >&2; exit 2 ;;
+    *)
+      [[ -f $here/$1-test.qml ]] || { echo "qml tests: no test named $1" >&2; exit 2; }
+      tests+=("$here/$1-test.qml")
+      shift
+      ;;
   esac
 done
+((${#tests[@]} > 0)) || tests=("$here"/*-test.qml)
 [[ -n $root && -f $root/usr/share/nova/shell/plugins/index.json ]] || { echo "qml tests: --root needs an installed shell tree" >&2; exit 2; }
 command -v qs >/dev/null || { echo "qml tests: needs quickshell (qs)" >&2; exit 1; }
 root=$(cd "$root" && pwd)
@@ -86,7 +94,7 @@ start_compositor() {
 }
 
 failed=0
-for test in "$here"/*-test.qml; do
+for test in "${tests[@]}"; do
   name=$(basename "$test" .qml)
   platform=$(sed -n 's#^// platform: ##p' "$test" | head -n 1)
   display=()
