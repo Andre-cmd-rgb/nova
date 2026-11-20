@@ -602,9 +602,144 @@ fn write_source(out: &mut String, s: &Source) {
     o.end();
 }
 
-pub fn write_app(out: &mut String, app: &App) {
+/// A source as the list has it: only what tells where an app is installed
+/// from and how it is opened, none of the versions and sizes the app's page
+/// has.
+fn write_brief_source(out: &mut String, s: &Source) {
+    let mut o = Object::new(out);
+    o.str("kind", s.kind());
+    match s {
+        Source::Nova { package, .. } => {
+            o.str("package", package);
+        }
+        Source::Arch {
+            package, desktop, ..
+        } => {
+            o.str("package", package).some("desktop", desktop);
+        }
+        Source::Flathub { app, .. } => {
+            o.str("app", app);
+        }
+    }
+    o.end();
+}
+
+/// An app as the list has it: what the lists, the search, the status and
+/// Open need, and the name of its page file. The window holds all of them
+/// while it is open, so the description, the pictures and the rest stay in
+/// the page.
+pub fn write_brief(out: &mut String, app: &App, page: &str) {
     let m = &app.meta;
     let mut o = Object::new(out);
+    o.str("id", &m.id)
+        .str("name", &m.name)
+        .some("summary", &m.summary);
+    o.str("category", app.category);
+    o.some("icon", &app.icon)
+        .some("iconName", &m.icon_name)
+        .some("desktop", &m.desktop);
+    if !m.keywords.is_empty() {
+        o.str("keywords", &m.keywords.join(" "));
+    }
+    o.raw("sources", |out| {
+        out.push('[');
+        for (i, s) in app.sources.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            write_brief_source(out, s);
+        }
+        out.push(']');
+    });
+    if let Some((cat, n)) = &app.featured {
+        o.str("featured", cat).num("position", *n as u64);
+    }
+    if let Some(n) = app.popular {
+        o.num("popular", n as u64);
+    }
+    o.num("rank", app.rank).str("page", page);
+    o.end();
+}
+
+/// The name of an app's page file: its ID with every byte outside
+/// [A-Za-z0-9.-] written as _ and two hex digits (the underscore too, so
+/// that two IDs never share a name), and a leading dot the same, so that no
+/// ID gives "." or ".." or a hidden file.
+pub fn page_name(id: &str) -> String {
+    let mut name = String::with_capacity(id.len() + 5);
+    for (i, b) in id.bytes().enumerate() {
+        if b.is_ascii_alphanumeric() || b == b'-' || (b == b'.' && i > 0) {
+            name.push(b as char);
+        } else {
+            name.push_str(&format!("_{b:02X}"));
+        }
+    }
+    name.push_str(".json");
+    name
+}
+
+/// An app's page: its whole entry, and the runtimes its Flathub source needs,
+/// so that the page can tell what an install comes to without the catalog's
+/// table of every runtime.
+pub fn write_page(app: &App, inputs: &Inputs) -> String {
+    let mut out = String::with_capacity(2048);
+    let mut o = Object::new(&mut out);
+    write_fields(&mut o, app);
+    o.raw("runtimes", |out| {
+        let mut r = Object::new(out);
+        for s in &app.sources {
+            if let Source::Flathub { runtime, .. } = s {
+                if let Some(info) = inputs.refs.get(&format!("runtime/{runtime}")) {
+                    r.raw(runtime, |out| write_runtime(out, info));
+                }
+            }
+        }
+        r.end();
+    });
+    o.end();
+    out.push('\n');
+    out
+}
+
+fn write_runtime(out: &mut String, info: &RefInfo) {
+    Object::new(out)
+        .num("download", info.download)
+        .num("installed", info.installed)
+        .end();
+}
+
+/// The list the window reads: what the catalog says of itself, the folder of
+/// the pages, and each app in brief with the name of its page.
+pub fn write_list(apps: &[App], inputs: &Inputs, built: u64, pages: &str) -> String {
+    let mut out = String::with_capacity(apps.len() * 500);
+    let mut o = Object::new(&mut out);
+    o.num("format", 1).num("built", built);
+    o.bool("flathub", !inputs.flathub.is_empty())
+        .bool("arch", !inputs.arch.is_empty());
+    o.str("pages", pages);
+    o.raw("apps", |out| {
+        out.push('[');
+        for (i, app) in apps.iter().enumerate() {
+            if i > 0 {
+                out.push_str(",\n");
+            }
+            write_brief(out, app, &page_name(&app.meta.id));
+        }
+        out.push(']');
+    });
+    o.end();
+    out.push('\n');
+    out
+}
+
+pub fn write_app(out: &mut String, app: &App) {
+    let mut o = Object::new(out);
+    write_fields(&mut o, app);
+    o.end();
+}
+
+fn write_fields(o: &mut Object, app: &App) {
+    let m = &app.meta;
     o.str("id", &m.id)
         .str("name", &m.name)
         .some("summary", &m.summary)
@@ -640,7 +775,6 @@ pub fn write_app(out: &mut String, app: &App) {
         o.num("popular", n as u64);
     }
     o.num("rank", app.rank);
-    o.end();
 }
 
 /// The whole catalog: when it was made, which catalogs it was made from,
@@ -661,12 +795,7 @@ pub fn write(apps: &[App], inputs: &Inputs, built: u64) -> String {
         let mut r = Object::new(out);
         for (reference, info) in runtimes {
             let name = reference.trim_start_matches("runtime/");
-            r.raw(name, |out| {
-                Object::new(out)
-                    .num("download", info.download)
-                    .num("installed", info.installed)
-                    .end();
-            });
+            r.raw(name, |out| write_runtime(out, info));
         }
         r.end();
     });
@@ -1012,6 +1141,80 @@ mod tests {
         let text = write(&apps, &i, 7);
         assert!(text.starts_with(r#"{"format":1,"built":7,"flathub":true,"arch":true,"runtimes":{"org.gnome.Platform/x86_64/51":{"download":432800000,"installed":1100000000}},"apps":["#));
         assert!(text.contains(r#""sources":[{"kind":"arch","package":"gimp","repo":"extra","version":"3.2.6-1","desktop":"gimp.desktop"},{"kind":"flathub","app":"org.gimp.GIMP","ref":"app/org.gimp.GIMP/x86_64/stable","version":"3.2.8","download":102500000,"installed":268600000,"runtime":"org.gnome.Platform/x86_64/51","verified":true}],"featured":"create","position":1,"popular":2"#));
+    }
+
+    #[test]
+    fn the_list_has_what_lists_need_and_the_name_of_the_page() {
+        let i = inputs();
+        let apps = build(&i);
+        let text = write_list(&apps, &i, 7, "/cache/pages");
+        assert!(text.starts_with(
+            r#"{"format":1,"built":7,"flathub":true,"arch":true,"pages":"/cache/pages","apps":["#
+        ));
+        assert!(text.contains(r#""sources":[{"kind":"arch","package":"gimp","desktop":"gimp.desktop"},{"kind":"flathub","app":"org.gimp.GIMP"}],"featured":"create","position":1,"popular":2,"rank":"#));
+        assert!(text.contains(r#""page":"org.gimp.GIMP.json""#));
+        for left_out in [
+            "description",
+            "shots",
+            "license",
+            "version",
+            "runtimes",
+            "download",
+            "verified",
+            "developer",
+        ] {
+            assert!(!text.contains(left_out), "{left_out} is in the list");
+        }
+        // Chrome has a description; the list does not.
+        assert!(!text.contains("Fast"));
+        assert!(text.len() < write(&apps, &i, 7).len());
+    }
+
+    #[test]
+    fn a_page_has_the_whole_entry_and_the_runtime_its_source_needs() {
+        let mut i = inputs();
+        i.refs.insert(
+            "runtime/org.other.Platform/x86_64/1".to_string(),
+            RefInfo {
+                download: 1,
+                installed: 2,
+                ..Default::default()
+            },
+        );
+        let apps = build(&i);
+        let gimp = apps.iter().find(|a| a.meta.id == "org.gimp.GIMP").unwrap();
+        let text = write_page(gimp, &i);
+        let mut whole = String::new();
+        write_app(&mut whole, gimp);
+        assert!(text.starts_with(&whole[..whole.len() - 1]));
+        assert!(text.contains(r#""shots":[{"url":"https://x/a.png"}]"#));
+        assert!(text.contains(r#""version":"3.2.8","download":102500000"#));
+        assert!(text.ends_with(
+            "\"runtimes\":{\"org.gnome.Platform/x86_64/51\":{\"download\":432800000,\"installed\":1100000000}}}\n"
+        ));
+        // An app that is not from Flathub has no runtime.
+        let acme = apps.iter().find(|a| a.meta.id == "acme").unwrap();
+        assert!(write_page(acme, &i).ends_with("\"runtimes\":{}}\n"));
+    }
+
+    #[test]
+    fn a_page_file_name_is_safe_for_any_id() {
+        assert_eq!(page_name("org.gimp.GIMP"), "org.gimp.GIMP.json");
+        assert_eq!(page_name("a-b"), "a-b.json");
+        assert_eq!(page_name("a/b c"), "a_2Fb_20c.json");
+        assert_eq!(page_name("../etc"), "_2E._2Fetc.json");
+        assert_eq!(page_name("."), "_2E.json");
+        assert_eq!(page_name("é"), "_C3_A9.json");
+        // The underscore is escaped too, so that these two differ.
+        assert_ne!(page_name("a_41"), page_name("aA"));
+        assert_eq!(page_name("a_41"), "a_5F41.json");
+        for id in ["a/../b", "\0x", "x\n", "..", "a\\b", "", ".hidden"] {
+            let n = page_name(id);
+            assert!(n
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)));
+            assert!(!n.starts_with('.') || id.is_empty());
+        }
     }
 
     #[test]
