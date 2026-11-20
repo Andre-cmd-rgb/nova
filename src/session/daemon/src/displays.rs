@@ -574,8 +574,17 @@ mod tests {
         }
     }
 
-    /// Runs the watch against a Hyprland that sends <events>, then waits <wait> and ends.
-    fn run_watch(dir: &Path, ctx: &Context, setup: Setup, events: &[&str], wait: Duration) {
+    /// Runs the watch against a Hyprland that sends <events>, until <done>
+    /// holds (five seconds at most: on a busy machine the stubs are slow to
+    /// start, so no test counts on how long they take), and a moment more,
+    /// for anything that should not have come to come; then ends.
+    fn run_watch(
+        dir: &Path,
+        ctx: &Context,
+        setup: Setup,
+        events: &[&str],
+        done: impl Fn() -> bool,
+    ) {
         let hypr = dir.join("hypr");
         fs::create_dir_all(&hypr).unwrap();
         let listener = UnixListener::bind(hypr.join(".socket2.sock")).unwrap();
@@ -586,10 +595,19 @@ mod tests {
         for event in events {
             hyprland.write_all(format!("{event}\n").as_bytes()).unwrap();
         }
-        thread::sleep(wait);
+        settled(done);
         drop(hyprland);
         let ended = watcher.join().unwrap();
         assert_eq!(ended.unwrap_err(), "Hyprland's events ended");
+    }
+
+    /// Waits until <done> holds, five seconds at most, then 150 ms more.
+    fn settled(done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !done() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread::sleep(Duration::from_millis(150));
     }
 
     #[test]
@@ -602,24 +620,42 @@ mod tests {
                 ("nova-hyprland-monitor-modeless", "exit 1"),
             ],
         );
-        let pauses = Arc::new(Mutex::new(Vec::new()));
-        run_watch(
-            &dir,
-            &ctx,
-            quick(pauses),
-            &[
-                "monitoradded>>DP-2",
-                "monitoraddedv2>>2,DP-2,Dell",
-                "workspace>>3",
-            ],
-            Duration::from_millis(60),
+        // A burst as long as the test, and the passes after it later still:
+        // how quickly the events are taken in does not matter.
+        let mut setup = quick(Arc::new(Mutex::new(Vec::new())));
+        setup.burst = Duration::from_secs(10);
+        setup.follow_ups = [Duration::from_secs(60); 3];
+        let hypr = dir.join("hypr");
+        fs::create_dir_all(&hypr).unwrap();
+        let listener = UnixListener::bind(hypr.join(".socket2.sock")).unwrap();
+        let (ctx2, hypr2) = (ctx.clone(), hypr.clone());
+        let watcher = thread::spawn(move || watch(&ctx2, &hypr2, setup));
+        let (mut hyprland, _) = listener.accept().unwrap();
+        // The start counts as the first event of the burst: one pass, X11
+        // apps told the scale after it, and a look for displays with no mode.
+        crate::testing::wait_until("the start's look", || {
+            count(&dir, "nova-hyprland-monitor-modeless") == 1
+                && count(&dir, "nova-hyprland-x11-scale") == 1
+        });
+        for event in [
+            "monitoradded>>DP-2",
+            "monitoraddedv2>>2,DP-2,Dell",
+            "workspace>>3",
+        ] {
+            hyprland.write_all(format!("{event}\n").as_bytes()).unwrap();
+        }
+        // A display event in the burst is no pass of its own, but a look for
+        // displays with no mode after it (those asked for while one looks
+        // are looked at once more after it).
+        settled(|| count(&dir, "nova-hyprland-monitor-modeless") >= 2);
+        drop(hyprland);
+        assert_eq!(
+            watcher.join().unwrap().unwrap_err(),
+            "Hyprland's events ended"
         );
-        // The start counts as the first event of the burst: one pass, and
-        // X11 apps told the scale after it.
+        assert!(count(&dir, "nova-hyprland-monitor-modeless") >= 2);
         assert_eq!(count(&dir, "nova-hyprland-monitor-clamshell"), 1);
         assert_eq!(count(&dir, "nova-hyprland-x11-scale"), 1);
-        // Each display event is a look for displays with no mode.
-        assert!(count(&dir, "nova-hyprland-monitor-modeless") >= 2);
     }
 
     #[test]
@@ -633,13 +669,10 @@ mod tests {
             ],
         );
         let pauses = Arc::new(Mutex::new(Vec::new()));
-        run_watch(
-            &dir,
-            &ctx,
-            quick(pauses),
-            &["configreloaded>>"],
-            Duration::from_millis(600),
-        );
+        run_watch(&dir, &ctx, quick(pauses), &["configreloaded>>"], || {
+            count(&dir, "nova-hyprland-monitor-clamshell") >= 4
+                && count(&dir, "nova-hyprland-x11-scale") >= 5
+        });
         // The start's pass and the three after it, each with the scale after
         // it, and the reload's scale.
         assert_eq!(count(&dir, "nova-hyprland-monitor-clamshell"), 4);
@@ -663,13 +696,9 @@ mod tests {
             ],
         );
         let pauses = Arc::new(Mutex::new(Vec::new()));
-        run_watch(
-            &dir,
-            &ctx,
-            quick(pauses.clone()),
-            &[],
-            Duration::from_millis(400),
-        );
+        run_watch(&dir, &ctx, quick(pauses.clone()), &[], || {
+            count(&dir, "hyprctl") >= 6 && pauses.lock().unwrap().len() >= 6
+        });
         assert_eq!(count(&dir, "hyprctl"), 6);
         let ms: Vec<u128> = pauses
             .lock()
@@ -698,13 +727,9 @@ mod tests {
             ],
         );
         let pauses = Arc::new(Mutex::new(Vec::new()));
-        run_watch(
-            &dir,
-            &ctx,
-            quick(pauses.clone()),
-            &[],
-            Duration::from_millis(300),
-        );
+        run_watch(&dir, &ctx, quick(pauses.clone()), &[], || {
+            pauses.lock().unwrap().len() >= 3
+        });
         assert_eq!(count(&dir, "hyprctl"), 0);
         assert_eq!(pauses.lock().unwrap().len(), 3);
         assert!(pauses
@@ -725,7 +750,9 @@ mod tests {
             ],
         );
         let pauses = Arc::new(Mutex::new(Vec::new()));
-        run_watch(&dir, &ctx, quick(pauses), &[], Duration::from_millis(400));
+        run_watch(&dir, &ctx, quick(pauses), &[], || {
+            count(&dir, "nova-hyprland-monitor-modeless") >= 21
+        });
         assert_eq!(count(&dir, "nova-hyprland-monitor-modeless"), 21);
         assert_eq!(count(&dir, "hyprctl"), 0);
     }
@@ -742,7 +769,8 @@ mod tests {
         modeless.ask(&ctx, &setup);
         modeless.ask(&ctx, &setup);
         modeless.ask(&ctx, &setup);
-        thread::sleep(Duration::from_millis(500));
+        settled(|| count(&dir, "nova-hyprland-monitor-modeless") >= 2);
+        thread::sleep(Duration::from_millis(300));
         // The first loop, and one more for the asks it was busy through.
         assert_eq!(count(&dir, "nova-hyprland-monitor-modeless"), 2);
     }
@@ -792,7 +820,10 @@ mod tests {
                 .unwrap()
             }
         };
-        // A change that is not the lid, then the lid shut.
+        // The start's pass, then a change that is not the lid, then the lid shut.
+        crate::testing::wait_until("the start's pass", || {
+            count(&dir, "nova-hyprland-monitor-clamshell") == 1
+        });
         logind.send(changed("IdleHint"));
         thread::sleep(Duration::from_millis(100));
         assert_eq!(count(&dir, "nova-hyprland-monitor-clamshell"), 1);
