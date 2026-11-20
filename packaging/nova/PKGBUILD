@@ -61,7 +61,6 @@ depends=(
   mobile-broadband-provider-info # the APN for a SIM, looked up the first time
   bluez
   bluez-utils
-  bluez-tools    # bt-agent
   upower
   power-profiles-daemon
   brightnessctl

@@ -1,10 +1,10 @@
 # systemd: the session's user units, Nova's logind and sleep policy, and the
 # memory setup (zram, the reclaim sysctls, systemd-oomd). The monitor
 # recovery, the speaker tuning's login check and the look for failed services
-# are on for everyone (the lock before sleep is nova-sessiond's, src/session);
-# bt-agent runs only while nova-bluetooth-device pairs, and the tuning itself is
-# enabled per machine by nova-audio-tuning, which that check runs. Vendor config
-# goes in /usr/lib so /etc stays the administrator's.
+# are on for everyone (the lock before sleep and Bluetooth pairing's questions
+# are nova-sessiond's, src/session); the tuning itself is enabled per machine
+# by nova-audio-tuning, which that check runs. Vendor config goes in /usr/lib
+# so /etc stays the administrator's.
 #
 # What starts at login is Nova's choice, not each package's: uwsm starts every
 # entry in /etc/xdg/autostart (systemd-xdg-autostart-generator makes each an

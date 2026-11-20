@@ -2,14 +2,17 @@
 
 # nova-bluetooth-device, from the Bluetooth panel: a pairing or a connection
 # that fails says so in a notification, since nobody reads its stderr.
-# bluetoothctl, systemctl and the notification are stubs that log.
+# bluetoothctl and the notification are stubs that log; the switch that has
+# nova-sessiond's agent ask the pairing's questions is in a scratch runtime
+# folder.
 
 load ../test_helper
 
 setup() {
   setup_scratch
   export CALLS="$SCRATCH/calls" STATE="$SCRATCH/state" NOVA_BLUETOOTH_POLL=0
-  mkdir -p "$SCRATCH/bin"
+  export XDG_RUNTIME_DIR="$SCRATCH/run" HYPRLAND_INSTANCE_SIGNATURE=test-session
+  mkdir -p "$SCRATCH/bin" "$XDG_RUNTIME_DIR"
   : >"$STATE"
   # Powered and pairable; pair answers with $PAIR, connect with $CONNECT, and
   # info reports the link once a connect succeeded.
@@ -18,12 +21,16 @@ setup() {
 echo "bluetoothctl $*" >>"$CALLS"
 case $1 in
   show) printf 'Powered: yes\nPairable: yes\n' ;;
-  pair) echo "${PAIR_OUT:-}"; exit "${PAIR:-0}" ;;
+  pair)
+    # What the agent is told while bluetoothctl pairs.
+    cat "$XDG_RUNTIME_DIR/nova/bluetooth-pairing" >"$SCRATCH/switch" 2>/dev/null || true
+    echo "${PAIR_OUT:-}"
+    exit "${PAIR:-0}"
+    ;;
   connect) [[ ${CONNECT:-0} != 0 ]] || echo connected >"$STATE"; exit "${CONNECT:-0}" ;;
   info) printf '\tAlias: HD 450SE\n\tConnected: %s\n' "$(grep -q connected "$STATE" && echo yes || echo no)" ;;
 esac
 STUB
-  printf '#!/bin/bash\necho "systemctl $*" >>"$CALLS"\n' >"$SCRATCH/bin/systemctl"
   printf '#!/bin/bash\necho "notify $*" >>"$CALLS"\n' >"$SCRATCH/bin/nova-notification-send"
   chmod +x "$SCRATCH"/bin/*
   export PATH="$SCRATCH/bin:$PATH"
@@ -38,17 +45,30 @@ device() { "$REPO_ROOT/src/cli/bin/nova-bluetooth-device" "$@" 00:1B:66:AA:BB:CC
   [ "$status" -eq 0 ]
   grep -qx 'bluetoothctl connect 00:1B:66:AA:BB:CC' "$CALLS"
   fails grep -q '^notify' "$CALLS"
-  grep -qx 'systemctl --user stop bt-agent.service' "$CALLS"
+  # The agent was told this session and this device while it paired, and
+  # is told no more once it is done.
+  [ "$(cat "$SCRATCH/switch")" = "$(printf 'test-session\n00:1B:66:AA:BB:CC')" ]
+  [ ! -e "$XDG_RUNTIME_DIR/nova/bluetooth-pairing" ]
 }
 
 @test "a refused pairing is named, and nothing is connected after it" {
   PAIR=1 PAIR_OUT='Failed to pair: org.bluez.Error.AuthenticationFailed' run device pair
   [ "$status" -eq 1 ]
   grep -q '^notify .*Could not pair with HD 450SE' "$CALLS"
-  grep -q 'PIN' "$CALLS"
+  grep -q 'pairing mode' "$CALLS"
   fails grep -q 'bluetoothctl connect' "$CALLS"
-  # The agent that says yes to any device stops with the attempt.
-  grep -qx 'systemctl --user stop bt-agent.service' "$CALLS"
+  # The agent stops asking with the attempt.
+  [ ! -e "$XDG_RUNTIME_DIR/nova/bluetooth-pairing" ]
+}
+
+@test "a pairing turned down on the card says nothing more" {
+  for why in AuthenticationRejected AuthenticationCanceled; do
+    : >"$CALLS"
+    PAIR=1 PAIR_OUT="Failed to pair: org.bluez.Error.$why" run device pair
+    [ "$status" -eq 1 ]
+    fails grep -q '^notify' "$CALLS"
+    fails grep -q 'bluetoothctl connect' "$CALLS"
+  done
 }
 
 @test "a device paired already is connected, not reported" {

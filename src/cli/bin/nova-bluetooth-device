@@ -72,18 +72,23 @@ connect() { # what to say when it does not come up
 case $action in
   pair)
     powered
-    # The agent that agrees to the pairing runs only while this does: BlueZ
-    # keeps the adapter pairable while any agent is there, and it would agree
-    # to any device that asked, not only the one picked here.
-    trap 'systemctl --user stop bt-agent.service >/dev/null 2>&1 || true' EXIT
-    systemctl --user start bt-agent.service >/dev/null 2>&1 || true
+    # Nova's agent, in nova-sessiond, asks what the pairing needs on the
+    # shell's card: a code to compare, a code to type on a keyboard, a PIN.
+    # It is there only while this switch names the device, and answers for
+    # that device alone: BlueZ keeps the adapter pairable while any agent is
+    # registered. bluetoothctl, given its command, registers none of its own.
+    switch=${XDG_RUNTIME_DIR:?}/nova/bluetooth-pairing
+    (umask 077 && mkdir -p "${switch%/*}")
+    trap 'rm -f "$switch" "$switch.$$"' EXIT
+    printf '%s\n%s\n' "${HYPRLAND_INSTANCE_SIGNATURE:-}" "$device" >"$switch.$$"
+    mv -f "$switch.$$" "$switch"
     again 0.2 adapter_says "Pairable: yes" || true
-    # The agent answers with no screen or keyboard, so a device that asks for
-    # a PIN or a code to be typed is turned down. One paired already is
-    # connected.
-    said=$(timeout 20s bluetoothctl pair "$device" 2>&1) || [[ $said == *AlreadyExists* ]] ||
-      failed "Could not pair with $(name)" \
-        "Put it in pairing mode and try again. One that asks for a PIN or a code cannot pair yet."
+    # Time to compare a code, or type one. Turned down on the card, nothing
+    # more is said; one paired already is connected.
+    if ! said=$(timeout 60s bluetoothctl pair "$device" 2>&1) && [[ $said != *AlreadyExists* ]]; then
+      [[ $said != *AuthenticationCanceled* && $said != *AuthenticationRejected* ]] || exit 1
+      failed "Could not pair with $(name)" "Put it in pairing mode and try again."
+    fi
     bt 5 trust "$device" >/dev/null
     connect "It is paired: try again once it is on and near."
     ;;
