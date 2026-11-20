@@ -44,6 +44,8 @@ settle() { "$REPO_ROOT/src/cli/bin/nova-session-settle"; }
 prop() { mkdir -p "$SCRATCH/props/$1" && echo "$3" >"$SCRATCH/props/$1/$2"; }
 # A unit file, and its link in graphical-session.target.wants.
 wanted() { touch "$SCRATCH/$1" && ln -s "../$1" "$NOVA_SESSION_WANTS/$1"; }
+# What it changed, past the reload it starts with and the restarts it ends with.
+changes() { grep -v -e daemon-reload -e try-restart "$CALLS"; }
 
 @test "Nova's units whose files are gone are stopped and their failure forgotten; the rest are left" {
   cat >"$SCRATCH/units" <<'EOF'
@@ -55,8 +57,8 @@ pulseaudio.service not-found active running pulseaudio.service
 EOF
   run settle
   [ "$status" -eq 0 ]
-  [ "$(cat "$CALLS")" = "$(printf '%s\n' \
-    'systemctl --user daemon-reload' \
+  [ "$(head -n 1 "$CALLS")" = 'systemctl --user daemon-reload' ]
+  [ "$(changes)" = "$(printf '%s\n' \
     'systemctl --user stop -- nova-idle-inhibitors.service' \
     'systemctl --user reset-failed -- nova-idle-inhibitors.service' \
     'systemctl --user reset-failed -- nova-went-wrong.service')" ]
@@ -68,7 +70,7 @@ EOF
   prop nova-automount.service FreezerState frozen
   run settle
   [ "$status" -eq 0 ]
-  [ "$(grep -v daemon-reload "$CALLS")" = "$(printf '%s\n' \
+  [ "$(changes)" = "$(printf '%s\n' \
     'systemctl --user kill --signal=SIGKILL -- nova-automount.service' \
     'systemctl --user stop -- nova-automount.service' \
     'systemctl --user reset-failed -- nova-automount.service')" ]
@@ -127,7 +129,7 @@ EOF
   prop other.service ConditionTimestampMonotonic 0
   run settle
   [ "$status" -eq 0 ]
-  [ "$(grep -v daemon-reload "$CALLS")" = 'systemctl --user start --no-block -- nova-sessiond.service' ]
+  [ "$(changes)" = 'systemctl --user start --no-block -- nova-sessiond.service' ]
   [[ $output == *"Starting nova-sessiond.service, which this release brings."* ]]
 }
 
@@ -150,7 +152,7 @@ EOF
   run settle
   [ "$status" -eq 0 ]
   grep -qx 'systemctl --user stop -- nova-sleep-lock.service' "$CALLS"
-  fails grep -q start "$CALLS"
+  fails grep -q ' start ' "$CALLS"
 }
 
 @test "a unit that will not start is said, and is no failure" {
@@ -161,4 +163,13 @@ EOF
   run settle
   [ "$status" -eq 0 ]
   [[ $output == *"nova-sessiond.service did not start; it will at the next login"* ]]
+}
+
+@test "the units a restart costs nothing are restarted if they run, last, in a session or not" {
+  rm "$SCRATCH/graphical"
+  echo 'nova-sleep-lock.service not-found active running nova-sleep-lock.service' >"$SCRATCH/units"
+  run settle
+  [ "$status" -eq 0 ]
+  [ "$(tail -n 1 "$CALLS")" = 'systemctl --user try-restart --no-block -- nova-iphone-notifications.service' ]
+  [ "$(grep -c try-restart "$CALLS")" = 1 ]
 }

@@ -19,10 +19,12 @@
 # - Nova's units that start with every session, and have not started in
 #   this one, are started: those the release brought. One that ran and
 #   ended, or was stopped, is left as it is.
+# - The few units a restart costs nothing are restarted where they run, so
+#   that their new program takes over at once.
 #
-# Units still there, running the old release's program, wait for the next
-# login: a restart would drop what one holds (the apps keeping the screen
-# awake, say), for nothing the user would see.
+# Other units still there, running the old release's program, wait for the
+# next login: a restart would drop what one holds (nova-sessiond's apps
+# keeping the screen awake, say), for nothing the user would see.
 
 set -uo pipefail
 
@@ -35,6 +37,11 @@ WANTS=${NOVA_SESSION_WANTS:-/usr/lib/systemd/user/graphical-session.target.wants
 RETIRED_HELPERS=(
   nova-crash-watch            # nova-sessiond's crash watch now
   nova-hyprland-monitor-watch # nova-sessiond's display watch now
+)
+
+# Restarted if they run (try-restart), as a restart loses nothing.
+RESTARTED=(
+  nova-iphone-notifications.service # the link to the iPhone is BlueZ's, and is found again
 )
 
 property() { # unit name
@@ -95,16 +102,21 @@ while read -r -u 3 unit _ active _; do
   done
 done 3< <(systemctl --user list-units --type=scope --plain --no-legend --full 'app-*' 2>/dev/null)
 
-systemctl --user --quiet is-active graphical-session.target 2>/dev/null || exit 0
-for link in "$WANTS"/nova-*; do
-  [[ -e $link ]] || continue
-  unit=${link##*/}
-  [[ $(property "$unit" LoadState) == loaded ]] || continue
-  # Never started, nor its conditions checked, in this user manager's life.
-  [[ $(property "$unit" InactiveExitTimestampMonotonic) == 0 ]] || continue
-  [[ $(property "$unit" ConditionTimestampMonotonic) == 0 ]] || continue
-  echo "Starting $unit, which this release brings."
-  systemctl --user start --no-block -- "$unit" >/dev/null 2>&1 ||
-    echo "nova-session-settle: $unit did not start; it will at the next login" >&2
+if systemctl --user --quiet is-active graphical-session.target 2>/dev/null; then
+  for link in "$WANTS"/nova-*; do
+    [[ -e $link ]] || continue
+    unit=${link##*/}
+    [[ $(property "$unit" LoadState) == loaded ]] || continue
+    # Never started, nor its conditions checked, in this user manager's life.
+    [[ $(property "$unit" InactiveExitTimestampMonotonic) == 0 ]] || continue
+    [[ $(property "$unit" ConditionTimestampMonotonic) == 0 ]] || continue
+    echo "Starting $unit, which this release brings."
+    systemctl --user start --no-block -- "$unit" >/dev/null 2>&1 ||
+      echo "nova-session-settle: $unit did not start; it will at the next login" >&2
+  done
+fi
+
+for unit in "${RESTARTED[@]}"; do
+  systemctl --user try-restart --no-block -- "$unit" >/dev/null 2>&1
 done
 exit 0
