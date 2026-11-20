@@ -959,8 +959,10 @@ FloatingWindow {
             required property var modelData
             required property int index
             readonly property bool active: win.sortField === modelData.key
-            x: index === 0 ? Style.space(8) : index === 1 ? columns.width - win.sizeWidth - win.dateWidth - Style.space(8) : columns.width - win.dateWidth - Style.space(8)
-            width: index === 0 ? columns.width - win.sizeWidth - win.dateWidth - Style.space(24) : index === 1 ? win.sizeWidth : win.dateWidth
+            // Over the row's own columns: the date's at the right edge, the
+            // size's before it, the name's from the icon.
+            x: index === 0 ? win.iconBox + Style.space(18) : index === 1 ? columns.width - win.dateWidth - win.sizeWidth - Style.space(16) : columns.width - win.dateWidth - Style.space(8)
+            width: index === 0 ? columns.width - win.dateWidth - win.sizeWidth - Style.space(34) - win.iconBox : index === 1 ? win.sizeWidth : win.dateWidth
             height: columns.height
 
             Text {
