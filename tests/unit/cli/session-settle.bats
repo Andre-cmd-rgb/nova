@@ -65,6 +65,20 @@ EOF
   [[ $output == *"Stopping nova-idle-inhibitors.service: this release has none."* ]]
 }
 
+@test "an autostart entry masked while it runs is stopped; one still wanted, or masked and not running, is left" {
+  cat >"$SCRATCH/units" <<'EOF'
+app-print\x2dapplet@autostart.service masked active running Print Queue Applet
+app-limine\x2dsnapper\x2dnotify@autostart.service masked inactive dead Limine-snapper-notify
+app-gnome\x2dkeyring\x2dsecrets@autostart.service loaded active running Secret Storage Service
+EOF
+  run settle
+  [ "$status" -eq 0 ]
+  [ "$(changes)" = "$(printf '%s\n' \
+    'systemctl --user stop -- app-print\x2dapplet@autostart.service' \
+    'systemctl --user reset-failed -- app-print\x2dapplet@autostart.service')" ]
+  [[ $output == *'Stopping app-print\x2dapplet@autostart.service: it is turned off.'* ]]
+}
+
 @test "a frozen one is killed as it is, before a stop would thaw it" {
   echo 'nova-automount.service not-found active running nova-automount.service' >"$SCRATCH/units"
   prop nova-automount.service FreezerState frozen

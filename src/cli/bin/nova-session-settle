@@ -15,7 +15,9 @@
 #   automounter under the lock) is killed as it is: a stop thaws it first,
 #   and thawed it would mount what was plugged in meanwhile.
 # - The helpers an earlier release started from Hyprland's autostart, and
-#   this one does not, are stopped where they still run.
+#   this one does not, are stopped where they still run; and so are a
+#   package's autostart entries this release masks (the printer applet,
+#   whose work nova-sessiond does).
 # - Nova's units that start with every session, and have not started in
 #   this one, are started: those the release brought. One that ran and
 #   ended, or was stopped, is left as it is.
@@ -90,6 +92,14 @@ while read -r -u 3 unit load active _; do
       ;;
   esac
 done 3< <(systemctl --user list-units --all --plain --no-legend --full 'nova-*' 2>/dev/null)
+
+# An autostart entry masked (data/systemd/install.mk's AUTOSTART_OFF) after
+# it started: masked by this release, or by the user, and off either way.
+while read -r -u 3 unit load active _; do
+  [[ $unit == app-*@autostart.service && $load == masked && $active == active ]] || continue
+  echo "Stopping $unit: it is turned off."
+  stop_unit "$unit"
+done 3< <(systemctl --user list-units --all --plain --no-legend --full 'app-*@autostart.service' 2>/dev/null)
 
 # uwsm names an app's scope app-<desktop>-<program, escaped>-<random>.scope.
 while read -r -u 3 unit _ active _; do
