@@ -487,7 +487,9 @@ cmd_record() {
   # A new day's first write is the natural moment to drop old history.
   [[ -e $(day_file "$today") ]] || prune_history
 
-  exec {lock}>"$STATE_DIR/.lock" 2>/dev/null || return 0
+  # Braced: exec with a redirection of its own would keep it for the whole
+  # script, every later error going to /dev/null.
+  { exec {lock}>"$STATE_DIR/.lock"; } 2>/dev/null || return 0
   flock -w 5 "$lock" 2>/dev/null || {
     exec {lock}>&-
     return 0
@@ -789,7 +791,7 @@ cmd_forget() {
   local app=${1:-} file lock
   [[ -n $app ]] || die "usage: screentime forget <app-id>"
   [[ -d $DAYS_DIR ]] || return 0
-  exec {lock}>"$STATE_DIR/.lock" 2>/dev/null
+  { exec {lock}>"$STATE_DIR/.lock"; } 2>/dev/null
   flock -w 5 "$lock" 2>/dev/null
   for file in "$DAYS_DIR"/*.tsv; do
     [[ -e $file ]] || continue
