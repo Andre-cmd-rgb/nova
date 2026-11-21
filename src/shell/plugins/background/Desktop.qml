@@ -38,7 +38,8 @@ PanelWindow {
   }
 
   screen: modelData
-  visible: !remap.remapping
+  // Not before the boot's lock is up (Commons/BootLock.qml).
+  visible: !BootLock.pending && !remap.remapping
   anchors { top: true; bottom: true; left: true; right: true }
   color: "transparent"
   // Always on: a background layer parked with updates off was seen to lose

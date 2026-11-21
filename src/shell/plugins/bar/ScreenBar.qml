@@ -37,7 +37,8 @@ Scope {
     // A tucked bar is moved past the top rather than unmapped (Bar.qml).
     readonly property int offset: screenBar.bar.tucked ? -depth : 0
 
-    visible: !remap.remapping
+    // Not before the boot's lock is up (Commons/BootLock.qml).
+    visible: !BootLock.pending && !remap.remapping
     color: screenBar.bar.transparent ? "transparent" : screenBar.bar.background
     exclusionMode: screenBar.bar.tucked ? ExclusionMode.Ignore : ExclusionMode.Auto
     WlrLayershell.namespace: "nova-bar"
@@ -162,7 +163,7 @@ Scope {
     }
 
     depth: screenBar.bar.thickness * 2
-    visible: strength > 0 && !screenBar.bar.tucked && !remap.remapping
+    visible: strength > 0 && !screenBar.bar.tucked && !BootLock.pending && !remap.remapping
     color: "transparent"
     exclusionMode: ExclusionMode.Ignore
     WlrLayershell.namespace: "nova-bar-shade"
