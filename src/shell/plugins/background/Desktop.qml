@@ -112,12 +112,15 @@ PanelWindow {
   }
 
   // The band: its middle leans by `slant` of the height, its half width
-  // grows with the progress, and at the end it is past both edges.
+  // grows with the progress, and at the end it is past both edges. Its
+  // layer, a screen's worth of texture, is there only while the new image
+  // above is seen through it: a layer once drawn keeps its texture for as
+  // long as it is enabled, and the desktop lasts the session.
   Item {
     id: band
     anchors.fill: parent
     visible: false
-    layer.enabled: true
+    layer.enabled: desktop.plugin.incoming !== "" && desktop.plugin.progress < 1
 
     readonly property real slant: -0.18
     readonly property real topMiddle: width / 2 - slant * height / 2
