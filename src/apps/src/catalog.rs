@@ -29,8 +29,9 @@ pub enum Source {
         repo: String,
         version: String,
         desktop: String,
-        /// What its recipe installs with it (src/apps/data/recipes), which
-        /// the app's page names and counts in its size.
+        /// What its recipe installs with it (src/apps/data/recipes) that the
+        /// release's repositories have, which the app's page names and counts
+        /// in its size: what nova-apps-apply installs with it.
         with: Vec<String>,
     },
     /// A Flathub app: its ref, and what its download and the runtime it
@@ -453,11 +454,19 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
             repo: repo_now.clone(),
             version: version.clone(),
             desktop,
+            // What will really go in with it: nova-apps-apply leaves out an
+            // extra the release's repositories lack (pacman -Si), and so the
+            // page names and nova-apps-size counts only the others.
             with: inputs
                 .recipes
                 .with
                 .get(&c.package)
-                .cloned()
+                .map(|with| {
+                    with.iter()
+                        .filter(|p| inputs.packages.contains_key(*p))
+                        .cloned()
+                        .collect()
+                })
                 .unwrap_or_default(),
         };
         let icon = inputs
@@ -1095,7 +1104,13 @@ mod tests {
     #[test]
     fn a_recipe_puts_flathub_first_and_names_what_arch_installs_with_it() {
         let mut i = inputs();
-        i.recipes = parse_recipes("gimp prefer flathub\ngimp with gimp-help\n");
+        // gimp-gone is not in the release's repositories: nova-apps-apply
+        // leaves it out, so the page neither names nor sizes it.
+        i.recipes = parse_recipes("gimp prefer flathub\ngimp with gimp-help gimp-gone\n");
+        i.packages.insert(
+            "gimp-help".to_string(),
+            ("extra".to_string(), "3.0-1".to_string()),
+        );
         let apps = build(&i);
         let gimp = apps.iter().find(|a| a.meta.id == "org.gimp.GIMP").unwrap();
         assert_eq!(gimp.sources[0].kind(), "flathub");

@@ -307,6 +307,23 @@ status_of() { # id field
   [ "$(grep -c -- -Sp "$CALLS")" -eq 1 ]
 }
 
+@test "size: an extra the release's repositories lack is left out, as nova-apps-apply leaves it out" {
+  # pacman -Sp fails whole on one name it does not know.
+  stub pacman 'echo "pacman $*" >>"$CALLS"
+    case $1 in
+    -Sp) shift 4
+      [[ " $* " != *" gone-plugin "* ]] || exit 1
+      printf "%s\n" "$@" ;;
+    -Si) [[ $# -gt 3 || $3 != gone-plugin ]] || exit 1
+      for p in "${@:3}"; do printf "Name : %s\nDownload Size : 1.00 MiB\nInstalled Size : 2.00 MiB\n" "$p"; done ;;
+    esac'
+  stub hw 'cat >/dev/null'
+  NOVA_HW_PACKAGES=$SCRATCH/bin/hw run nova-apps-size vlc vlc-plugins-all gone-plugin
+  [ "$status" -eq 0 ]
+  [ "$output" = "2097152 4194304" ]
+  grep -qx 'pacman -Sp --print-format %n -- vlc vlc-plugins-all' "$CALLS"
+}
+
 @test "store: the window on an app's page, an appstream:// link's, or a search" {
   stub nova-shell 'echo "nova-shell $*" >>"$CALLS"'
   nova-apps-store appstream://org.gimp.GIMP

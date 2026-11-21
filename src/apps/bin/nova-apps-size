@@ -4,8 +4,9 @@
 # nova:args=<package> [<package it is installed with>...]
 #
 # "<download> <installed>": the package, the ones its recipe installs with it
-# (the catalog's "with", src/apps/data/recipes), this computer's graphics
-# drivers when they need one (nova-hw-packages --needed-by), and whatever
+# (the catalog's "with", src/apps/data/recipes, less any the release's
+# repositories lack, as nova-apps-apply leaves those out), this computer's
+# graphics drivers when they need one (nova-hw-packages --needed-by), and whatever
 # those need that is not installed yet, as pacman would install them now:
 # what nova-apps-apply installs. The App Center's page shows it as the app's
 # size. Reads the package lists, and changes nothing.
@@ -21,6 +22,16 @@ HW_PACKAGES=${NOVA_HW_PACKAGES:-$HERE/nova-hw-packages}
 for package; do
   [[ $package =~ ^[a-z0-9@_+][a-z0-9@._+-]*$ ]] || { echo "Usage: nova-apps-size <package> [<package>...]" >&2; exit 2; }
 done
+
+# An extra the release's repositories lack is left out, as nova-apps-apply
+# leaves it out: given one name it does not know, pacman -Sp sizes nothing.
+package=$1
+shift
+extras=()
+for name; do
+  if LC_ALL=C pacman -Si -- "$name" >/dev/null 2>&1; then extras+=("$name"); fi
+done
+set -- "$package" "${extras[@]}"
 
 brought=$(LC_ALL=C pacman -Sp --print-format '%n' -- "$@" 2>/dev/null) || brought=''
 # Given the drivers, pacman takes those where it would have picked NVIDIA's.
