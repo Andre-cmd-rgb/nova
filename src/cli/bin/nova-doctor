@@ -68,7 +68,12 @@ report() { # ok|warn|FAIL|-- what [how...]
 
 check_root_filesystem() {
   local fstype options uuid file name value counted=0 errors='' total=0
-  read -r fstype options uuid < <(findmnt -rno FSTYPE,OPTIONS,UUID /)
+  # Each read a check depends on says when it fails: a check runs with errexit
+  # off (checked), and would go on to judge an empty value.
+  if ! read -r fstype options uuid < <(findmnt -rno FSTYPE,OPTIONS,UUID / 2>/dev/null) || [[ -z $fstype ]]; then
+    report warn "could not read how / is mounted" "findmnt / says why."
+    return 0
+  fi
   if [[ ,$options, == *,ro,* ]]; then
     report FAIL "/ is read-only: the filesystem stopped writing after an error" \
       "journalctl -k -b says why. Back up what you can, then check it from the installer stick."
@@ -101,7 +106,11 @@ check_root_filesystem() {
 
 check_disk_space() {
   local used mounted
-  used=$(df -P / | awk 'NR == 2 { sub("%", "", $5); print $5 + 0 }')
+  used=$(df -P / 2>/dev/null | awk 'NR == 2 { sub("%", "", $5); print $5 + 0 }') || true
+  if [[ -z $used ]]; then
+    report warn "could not read how full / is" "df / says why."
+    return 0
+  fi
   if ((used >= 95)); then
     report FAIL "/ is ${used}% full" "Old snapshots keep deleted files: snapper list, then sudo snapper delete <number>."
   elif ((used >= 90)); then
@@ -149,7 +158,11 @@ check_package() {
 
 check_kernel() {
   local running
-  running=$(uname -r)
+  running=$(uname -r) || true
+  if [[ -z $running ]]; then
+    report warn "could not read which kernel is running" "uname -r says why."
+    return 0
+  fi
   if [[ -d $MODULES_DIR/$running ]]; then
     report ok "the running kernel is the installed one ($running)"
   else
@@ -274,7 +287,7 @@ check_undervolt() {
   # A unit separator, not a tab: bash runs empty tab fields together.
   IFS=$'\x1f' read -r state offset reason < <(jq -r '[.state,
     (if .core == null then "" elif .core == .cache then "\(.core) mV" else "\(.core) mV on the core and \(.cache) mV on the cache" end),
-    (.reason // "")] | join("\u001f")' <<<"$undervolt")
+    (.reason // "")] | join("\u001f")' <<<"$undervolt" 2>/dev/null) || true
   case $state in
     applied) report ok "the CPU is undervolted by $offset" ;;
     held)
@@ -474,8 +487,9 @@ check_modem_unlock() {
     [[ -r $dev/class && $(<"$dev/class") == 0x0d40* ]] || continue
     id=$(<"$dev/vendor"):$(<"$dev/device")
     id=${id//0x/}
+    # journalctl -g exits 1 when nothing matches, as on most boots.
     last=$(journalctl -b -u ModemManager.service -q --no-pager -o cat \
-      -g "couldn't enable interface: 'Invalid transition'|state changed \(enabling -> enabled\)" 2>/dev/null | tail -n 1)
+      -g "couldn't enable interface: 'Invalid transition'|state changed \(enabling -> enabled\)" 2>/dev/null | tail -n 1) || true
     [[ $last == *"Invalid transition"* ]] || continue
     # The maker's script goes where ModemManager looks first, and pacman
     # keeps nothing: /usr/lib's names are Nova's package's.
@@ -618,7 +632,7 @@ report_home() {
 # The downloads folder as user-dirs.dirs names it, else Downloads, else the home.
 downloads() { # home
   local dir
-  dir=$(sed -n -E 's/^XDG_DOWNLOAD_DIR="?([^"]*)"?$/\1/p' "${XDG_CONFIG_HOME:-$1/.config}/user-dirs.dirs" 2>/dev/null | tail -n 1)
+  dir=$(sed -n -E 's/^XDG_DOWNLOAD_DIR="?([^"]*)"?$/\1/p' "${XDG_CONFIG_HOME:-$1/.config}/user-dirs.dirs" 2>/dev/null | tail -n 1) || true
   case $dir in
     '$HOME/'?*) dir=$1/${dir#\$HOME/} ;;
     /*) ;;
@@ -823,34 +837,41 @@ if $bundle; then
   exit
 fi
 
-check_root_filesystem
-check_disk_space
-check_package
-check_kernel
-check_lock
-check_snapshots
-check_clock
-check_services
+# Each check run as a condition: a command in one that fails (journalctl -g
+# or grep finding nothing, under pipefail) then cannot end the script before
+# the report is printed, which Settings could not read. The other checks run.
+# Inside a check errexit is off, so a read the check judges says itself when
+# it fails, rather than leaving an empty value to be called ok.
+checked() { "$@" || true; }
+
+checked check_root_filesystem
+checked check_disk_space
+checked check_package
+checked check_kernel
+checked check_lock
+checked check_snapshots
+checked check_clock
+checked check_services
 if ((EUID == 0)); then
-  check_boot_fallback
+  checked check_boot_fallback
   report -- "your session's checks: run nova doctor without sudo"
 else
-  check_session
+  checked check_session
   if [[ -r $ESP/limine.conf ]]; then
-    check_boot_fallback
+    checked check_boot_fallback
   else
     report -- "the boot menu's fallback entry: sudo nova doctor checks it"
   fi
 fi
-check_undervolt
-check_hardware
-check_secure_boot
-check_graphics
-check_devices
-check_modem_unlock
-check_camera
-check_firmware
-check_sleep
-check_patches
+checked check_undervolt
+checked check_hardware
+checked check_secure_boot
+checked check_graphics
+checked check_devices
+checked check_modem_unlock
+checked check_camera
+checked check_firmware
+checked check_sleep
+checked check_patches
 if $json; then printf '%s\n' "${reports[@]}" | jq -s .; fi
 exit "$failed"

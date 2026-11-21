@@ -40,7 +40,9 @@ setup() {
   # A desktop that can hibernate, with no kernel log to read.
   stub nova-hw-laptop 'exit 1'
   stub nova-hibernation-available 'exit 0'
-  stub journalctl 'exit 0'
+  # As journalctl is: -g finding nothing exits 1, which under pipefail ended
+  # the report once.
+  stub journalctl 'for a; do [[ $a == -g || $a == --grep* ]] && exit 1; done; exit 0'
   export PATH="$SCRATCH/bin:$PATH"
 }
 
@@ -426,6 +428,34 @@ working_laptop() {
   [[ $output != *"no Wi-Fi"* && $output != *"no sound card"* ]]
 }
 
+@test "parts: a cellular modem with nothing in ModemManager's journal still gets the whole report, as JSON" {
+  pci 0000:08:00.0 0x0d4000 0x105b 0xe0ab mhi-pci-generic
+  run doctor --json
+  [ "$status" -eq 0 ]
+  # Every check after the modem's ran too: the patches' is the last.
+  jq -e 'type == "array" and length > 5' <<<"$output"
+}
+
+@test "a check whose command fails on its own does not cost the report the others" {
+  # The undervolt's status, not JSON: jq fails, and read finds nothing.
+  stub nova-power-undervolt 'echo not-json'
+  run doctor --json
+  [ "$status" -eq 0 ]
+  jq -e 'type == "array" and length > 5' <<<"$output"
+}
+
+@test "a read that fails is said, never judged as an empty value" {
+  stub findmnt 'exit 1'
+  stub df 'exit 1'
+  stub uname 'exit 1'
+  run doctor --json
+  [ "$status" -eq 0 ]
+  jq -e 'length > 5' <<<"$output"
+  jq -e 'map(select(.level == "warn") | .what) | index("could not read how / is mounted") and
+    index("could not read how full / is") and index("could not read which kernel is running")' <<<"$output"
+  [[ $output != *"is writable"* && $output != *"% full"* && $output != *"running kernel is"* ]]
+}
+
 @test "parts: a cellular modem with ModemManager not running warns" {
   pci 0000:08:00.0 0x0d4000 0x105b 0xe0ab mhi-pci-generic
   run doctor
@@ -439,7 +469,7 @@ working_laptop() {
 # stub greps it the way journalctl -g would.
 mm_journal() { # line...
   printf '%s\n' "$@" >"$SCRATCH/mm-journal"
-  stub journalctl 'for a; do [[ $prev == -g ]] && grep -E -- "$a" "$SCRATCH/mm-journal"; prev=$a; done; exit 0'
+  stub journalctl 'status=0; for a; do if [[ $prev == -g ]]; then grep -E -- "$a" "$SCRATCH/mm-journal" || status=1; fi; prev=$a; done; exit $status'
 }
 
 @test "parts: a modem locked by its maker, with no unlock or one that failed, is said, Lenovo's with its tool" {
