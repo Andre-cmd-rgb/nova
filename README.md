@@ -11,7 +11,7 @@
 - **One key for most things.** Super+Space opens the menu: apps, Settings, toggles, themes, updates, and the answer to a sum or a conversion typed into it.
 - **One theme, everywhere.** Twelve themes reach the bar, the terminal, GTK and Qt apps, Supernova, Chrome and VS Code at once. The adaptive one takes its colors from your background.
 - **Apps of its own**: a calendar that syncs with iCloud or any CalDAV server, a Calculator, Quick Look on Space in Files, and Supernova, Nova's browser.
-- **Dictation on your computer.** Hold Super+D and speak; nothing you say leaves the computer. The speech model, 669 MB, is downloaded once, at the first use.
+- **Dictation on your computer.** Hold Super+D and speak; nothing you say leaves the computer, and the speech model, 669 MB, is downloaded once, at the first use.
 - **Updates you can undo.** A tested release every two weeks, with a snapshot before each update to go back to.
 - **An installer stick** that needs no internet, can carry your files over, or hold a whole Nova to start any PC from.
 - **Your iPhone**: photos and files with AirDrop, nothing to install on it (sending to the iPhone is a preview), and its notifications on the computer (a preview).
