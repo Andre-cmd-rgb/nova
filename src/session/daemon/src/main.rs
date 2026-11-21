@@ -40,6 +40,7 @@ mod simpin;
 mod sleep;
 #[cfg(test)]
 mod testing;
+mod trayquit;
 
 use std::ffi::c_int;
 use std::thread;
@@ -116,9 +117,10 @@ fn provide_share_picker() {
 }
 
 fn main() {
-    // The same program answers for gpg-agent, for the screen-sharing portal
-    // and for mobile-data's SIM PIN under other names: one copy of the
-    // card's and the bus's code, and no program more to keep in memory.
+    // The same program answers for gpg-agent, for the screen-sharing portal,
+    // for mobile-data's SIM PIN and for a tray icon's Quit under other names:
+    // one copy of the card's and the bus's code, and no program more to keep
+    // in memory.
     let called = std::env::args_os()
         .next()
         .map(std::path::PathBuf::from)
@@ -127,6 +129,7 @@ fn main() {
         Some("nova-pinentry") => std::process::exit(pinentry::main()),
         Some("nova-share-picker") => std::process::exit(share::main()),
         Some("nova-sim-pin") => std::process::exit(simpin::main()),
+        Some("nova-tray-quit") => std::process::exit(trayquit::main()),
         _ => {}
     }
     let ctx = match Context::from_env() {

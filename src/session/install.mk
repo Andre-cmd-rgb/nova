@@ -11,7 +11,8 @@
 # nova-share-picker, what an app may show of the screen, which
 # xdg-desktop-portal-hyprland runs (~/.config/hypr/xdph.conf), and
 # nova-sim-pin, the SIM's PIN to ModemManager for mobile-data, from the
-# standard input rather than an argument.
+# standard input rather than an argument, and nova-tray-quit, which ends the
+# app behind a tray icon for its menu's Quit.
 #
 # nova-launch (src/session/launch) is not part of it: it starts every app
 # Nova starts, as a systemd scope of its own, and is a program of its own so
@@ -37,6 +38,7 @@ install-sessiond:
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-pinentry
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-share-picker
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-sim-pin
+	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-tray-quit
 	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/nova-launch $(DESTDIR)$(NOVA_BIN)/nova-launch
 	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/nova-xwayland $(DESTDIR)$(NOVA_BIN)/Xwayland
 	install -Dm644 $(SESSIOND_SRC)/pinentry/preexec $(DESTDIR)$(SYSCONFDIR)/pinentry/preexec
