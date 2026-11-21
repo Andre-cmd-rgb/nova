@@ -157,6 +157,18 @@ esac'
   done
 }
 
+@test "region gives slurp nothing to read, whatever the caller's stdin is" {
+  stub slurp 'cat >/dev/null; echo "10,10 300x300"'
+  # A caller's stdin that stays open and says nothing, as a program's pipe is.
+  mkfifo "$SCRATCH/in"
+  sleep 6 >"$SCRATCH/in" 3>&- &
+  local writer=$!
+  run timeout 3 "$REPO_ROOT/src/cli/bin/nova-capture-region" region <"$SCRATCH/in"
+  kill "$writer" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  [ "$output" = '10,10 300x300' ]
+}
+
 @test "a hyprpicker that cannot start holds nothing up" {
   stub hyprpicker 'exit 1'
   stub slurp 'cat >/dev/null; echo "10,10 300x300"'

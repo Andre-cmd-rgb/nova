@@ -350,7 +350,10 @@ case $mode in
     if ! in_shell region; then
       freeze
       frozen
-      picked=$(pick)
+      # No regions to offer. slurp reads its stdin for them whenever that is
+      # no terminal, to its end: left the caller's, one that stays open and
+      # silent (a pipe from a program that started this) holds the pick up.
+      picked=$(pick </dev/null)
     fi
     ;;
   windows)
