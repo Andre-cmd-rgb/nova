@@ -86,7 +86,7 @@ ShellRoot {
       function withdraw(button) {}
     }
     property QtObject shell: QtObject {
-      function serviceFor(id) { return id === "nova.media" ? test.mediaService : null }
+      function serviceFor(id) { return id === "nova.media" ? test.mediaService : id === "nova.weather" ? test.forecast : null }
       function summon(id, argument) {}
       function updateEntryInline(id, entry) {}
     }
@@ -97,6 +97,10 @@ ShellRoot {
     function nextPanel(owner, step) { return false }
     function run(command) {}
   }
+
+  // The weather's service, with curl and the location helper stubs that
+  // answer nothing.
+  property Weather.Forecast forecast: Weather.Forecast {}
 
   // Two players, one playing, as the media service would list them.
   property QtObject mediaService: QtObject {
