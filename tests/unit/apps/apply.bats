@@ -214,7 +214,8 @@ STUB
 # The recipe file in the scratch root, as /usr/share/nova/apps/recipes, and a
 # pacman that knows the packages in $REPO, has those in $INSTALLED
 # (name:e asked for by name, name:d a dependency) and says who needs a
-# package from $SCRATCH/required/<name>; systemctl, getent and gpasswd log.
+# package from $SCRATCH/required/<name>, and who may use it from
+# $SCRATCH/optional/<name>; systemctl, getent and gpasswd log.
 recipe_machine() { # recipe text
   mkdir -p "$NOVA_ROOT/usr/share/nova/apps" "$SCRATCH/required"
   printf '%s\n' "$1" >"$NOVA_ROOT/usr/share/nova/apps/recipes"
@@ -234,7 +235,8 @@ case $1 in
   -Qqo) [[ $3 == /usr/lib/systemd/system/libvirtd.socket ]] && echo libvirt ;;
   -Qi)
     if [[ $3 == nova ]]; then printf 'Depends On      : hyprland\n'; exit 0; fi
-    printf 'Name            : %s\nRequired By     : %s\nOptional For    : None\n' "$3" "$(cat "$SCRATCH/required/$3" 2>/dev/null || echo None)" ;;
+    printf 'Name            : %s\nRequired By     : %s\nOptional For    : %s\n' "$3" \
+      "$(cat "$SCRATCH/required/$3" 2>/dev/null || echo None)" "$(cat "$SCRATCH/optional/$3" 2>/dev/null || echo None)" ;;
   *) exit 0 ;;
 esac
 STUB
@@ -345,6 +347,45 @@ STUB
   INSTALLED="retroarch:e libretro-core-info:d retroarch-assets-ozone:d" run "$APPLY" remove retroarch
   [ "$status" -eq 0 ]
   grep -qx 'pacman -Rns --noconfirm -- retroarch libretro-core-info retroarch-assets-ozone' "$CALLS"
+}
+
+@test "remove: an extra two apps' recipes share stays while the other app does, whichever goes first" {
+  # Pacman lists an optional dependency in neither app's Required By: each
+  # recipe's with is all that says the other still uses the dictionary.
+  REPO="firefox thunderbird" recipe_machine $'firefox with hunspell-en_us\nthunderbird with hunspell-en_us'
+  mkdir -p "$SCRATCH/optional"
+  local app other
+  for app in firefox thunderbird; do
+    other=thunderbird
+    [[ $app == firefox ]] || other=firefox
+    : >"$CALLS"
+    INSTALLED="$app:e $other:e hunspell-en_us:d" run "$APPLY" remove "$app"
+    [ "$status" -eq 0 ]
+    grep -qx "pacman -Rns --noconfirm -- $app" "$CALLS"
+    # The last of the two takes it with it.
+    : >"$CALLS"
+    INSTALLED="$app:e hunspell-en_us:d" run "$APPLY" remove "$app"
+    [ "$status" -eq 0 ]
+    grep -qx "pacman -Rns --noconfirm -- $app hunspell-en_us" "$CALLS"
+  done
+}
+
+@test "remove: an extra another installed package may use stays; one only what goes may use goes" {
+  REPO="firefox" recipe_machine 'firefox with hunspell-en_us'
+  mkdir -p "$SCRATCH/optional"
+  # LibreOffice, installed by hand, has no recipe: its optional dependency
+  # on a dictionary is pacman's Optional For.
+  echo 'firefox  libreoffice-fresh' >"$SCRATCH/optional/hunspell-en_us"
+  INSTALLED="firefox:e libreoffice-fresh:e hunspell-en_us:d" run "$APPLY" remove firefox
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -Rns --noconfirm -- firefox' "$CALLS"
+  # One that goes with the app itself (pacman -Rsp) keeps nothing.
+  echo 'firefox  firefox-spell-helper' >"$SCRATCH/optional/hunspell-en_us"
+  printf '%s\n' firefox firefox-spell-helper >"$SCRATCH/going"
+  : >"$CALLS"
+  INSTALLED="firefox:e firefox-spell-helper:d hunspell-en_us:d" run "$APPLY" remove firefox
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -Rns --noconfirm -- firefox hunspell-en_us' "$CALLS"
 }
 
 @test "remove: the socket the recipe turned on goes off when its package goes, not when it stays" {

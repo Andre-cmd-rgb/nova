@@ -259,20 +259,52 @@ run_after() { # "action operand"...
   done
 }
 
+# The extras the recipes of the other apps installed name: one of those is
+# still that app's, though pacman lists an optional dependency in no Required
+# By (Firefox and Thunderbird both install hunspell-en_us).
+extras_of_others() {
+  local line
+  local -a words
+  [[ -f $RECIPES ]] || return 0
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%%#*}
+    read -r -a words <<<"$line"
+    ((${#words[@]} > 2)) && [[ ${words[1]} == with && ${words[0]} != "$target" && ${words[0]} =~ $PACKAGE_NAME ]] || continue
+    pacman -Q -- "${words[0]}" >/dev/null 2>&1 || continue
+    printf '%s\n' "${words[@]:2}"
+  done <"$RECIPES"
+}
+
+# A field of pacman -Qi that lists packages, its words on one line.
+qi_field() { # package field
+  LC_ALL=C pacman -Qi -- "$1" 2>/dev/null |
+    awk -v field="$2" 'index($0, field) == 1 { on = 1; sub(/^[^:]*:/, ""); printf "%s ", $0; next } on && /^ / { printf "%s ", $0; next } { on = 0 } END { print "" }'
+}
+
 # Of the extras the recipe brought, those that can go with the app: installed
-# as dependencies (one installed by name was asked for), and needed by nothing
-# that stays. Dropping one can leave another needed by it, so until none drops.
+# as dependencies (one installed by name was asked for), named by the recipe
+# of no other app installed, and needed or optionally used by nothing that
+# stays (what pacman -Rs takes with the app does not). Dropping one can leave
+# another needed by it, so until none drops.
 extras_to_remove() { # extra...
-  local -a keep=("$@") next=() by=()
+  local -a keep=("$@") next=() by=() going=() others=()
   local changed=1 name who
+  mapfile -t others < <(extras_of_others)
+  mapfile -t going < <(pacman -Rsp --print-format %n -- "$target" 2>/dev/null || true)
   while ((changed)); do
     changed=0 next=()
     for name in "${keep[@]}"; do
-      if [[ $(pacman -Qqd -- "$name" 2>/dev/null) != "$name" ]]; then changed=1; continue; fi
-      read -r -a by < <(LC_ALL=C pacman -Qi -- "$name" 2>/dev/null |
-        awk '/^Required By/ { on = 1; sub(/^[^:]*:/, ""); printf "%s ", $0; next } on && /^ / { printf "%s ", $0; next } { on = 0 } END { print "" }')
+      if [[ $(pacman -Qqd -- "$name" 2>/dev/null) != "$name" || " ${others[*]} " == *" $name "* ]]; then
+        changed=1
+        continue
+      fi
+      read -r -a by <<<"$(qi_field "$name" 'Required By')"
       for who in "${by[@]}"; do
         [[ $who == None || $who == "$target" || " ${keep[*]} " == *" $who "* ]] || { changed=1; continue 2; }
+      done
+      read -r -a by <<<"$(qi_field "$name" 'Optional For')"
+      for who in "${by[@]}"; do
+        [[ $who == None || $who == "$target" || " ${keep[*]} ${going[*]} " == *" $who "* ]] || { changed=1; continue 2; }
       done
       next+=("$name")
     done
