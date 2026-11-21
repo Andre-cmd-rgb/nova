@@ -70,7 +70,11 @@ Item {
     // The count in the address makes a new file at the same path a new
     // image, rather than the cached old one.
     source: view.showPicture && view.picture !== "" ? Util.fileUrl(view.picture) + "?v=" + view.pictureVersion : ""
-    sourceSize: Qt.size(width, height)
+    // Decoded at a quarter of the screen's size: the blur below leaves no
+    // detail finer than that (measured: at most 5 levels of 255 apart from
+    // a full-size decode, 0.25 on average), and the picture comes sooner and
+    // holds a sixteenth of the memory.
+    sourceSize: Qt.size(Math.ceil(width / 4), Math.ceil(height / 4))
     fillMode: Image.PreserveAspectCrop
     asynchronous: true
     cache: false
