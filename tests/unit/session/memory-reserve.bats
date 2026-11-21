@@ -94,6 +94,11 @@ factor_for() {
   grep -qx 'ExecStart=/usr/lib/nova/nova-memory-pressure' "$unit"
   grep -qx 'After=systemd-sysctl.service' "$unit"
   grep -qx 'ConditionPathExists=/run/sysctl.d/90-nova-memory-reserve.conf' "$unit"
+  # Ended while the full reserve is in force, it is started again, and finds
+  # the mark of its own raise in a directory kept until the next boot.
+  grep -qx 'Restart=on-failure' "$unit"
+  grep -qx 'RuntimeDirectory=nova-memory-pressure' "$unit"
+  grep -qx 'RuntimeDirectoryPreserve=yes' "$unit"
   # It must be able to write the sysctl: nothing here makes /proc/sys read-only.
   fails grep -qE '^(ProtectKernelTunables|ProtectProc|ReadOnlyPaths)=' "$unit"
   if command -v systemd-analyze >/dev/null; then

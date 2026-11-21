@@ -10,8 +10,13 @@ ConditionPathExists=/proc/pressure/memory
 [Service]
 Type=exec
 ExecStart=/usr/lib/nova/nova-memory-pressure
+# Ended while the full reserve was in force, it leaves that in force, and
+# takes the setting up again when it is started: the mark in its runtime
+# directory, kept until the next boot, says the raise was its own.
 Restart=on-failure
 RestartSec=30
+RuntimeDirectory=nova-memory-pressure
+RuntimeDirectoryPreserve=yes
 
 # It reads two files and writes one sysctl and one trigger.
 ProtectSystem=strict

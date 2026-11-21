@@ -16,14 +16,33 @@
 //! of it (Documentation/accounting/psi.rst). It then writes the full 1.25%,
 //! and puts the boot's value back once five minutes have passed without such
 //! a second. Asleep on that one descriptor otherwise: no timer, no polling.
-//! In the same test, started lean with this running, the minute that takes
-//! in the raising itself came to 4.4 ms and 2812 stalls; after it the
-//! setting is the full one.
+//! The three in one sitting, turn and turn about (medians of three): the
+//! full gap 2.5 ms and 2381 stalls, the fixed 100 MiB 5.0 ms and 3232, and
+//! 100 MiB with this running 3.6 ms and 2565, the seconds before the raise
+//! included. In seven such runs the factor read 125 between 0.05 and 0.42 s
+//! after the first program stalled in direct reclaim.
 //!
 //! It leaves the setting alone, and ends, where there is nothing to do: on a
 //! computer whose boot value is the full one already (8 GB and less), and
 //! where the value in force is not the one nova-memory-reserve wrote, which
-//! means an administrator set their own.
+//! means an administrator set their own in /etc/sysctl.d.
+//!
+//! What can go wrong, and what then holds:
+//!
+//! - It is not running (masked, failed, a kernel without pressure
+//!   information): the reserve stays the lean one under pressure too, the
+//!   fixed 100 MiB above, which is still ahead of the kernel's own default
+//!   (9.2 ms and 4641 stalls beside the first sitting's 7.2 and 3073).
+//! - It ends while the full reserve is in force: the full reserve stays,
+//!   the safe side. systemd starts it again (Restart=on-failure), and it
+//!   takes the setting up where it was: the mark it left in its runtime
+//!   directory says the 125 in force is its own, not an administrator's.
+//! - Something puts the boot's value back while memory is short (pacman's
+//!   hook runs systemd-sysctl when a package brings a sysctl file): the
+//!   value in force is read at every wake, and raised again with the next
+//!   second of pressure.
+//! - A value above the full one, set by hand while it runs, is never
+//!   lowered: it raises only what is under 125, and takes back only its own.
 //!
 //! NOVA_PROC and NOVA_RUN point it at a fixture for the tests.
 
@@ -71,26 +90,46 @@ enum Wake {
     Quiet,
 }
 
-/// The factor to write, if any, and the state after a wake.
-fn step(reserve: Reserve, wake: Wake, now: Instant, lean: u32) -> (Reserve, Option<u32>) {
+/// The factor to write, if any, and the state after a wake, given the factor
+/// in force (None if it could not be read). Pressure raises whatever is under
+/// the full reserve, also a value something put back meanwhile; the quiet
+/// five minutes take back only the full reserve this program set.
+fn step(reserve: Reserve, wake: Wake, now: Instant, lean: u32, in_force: Option<u32>) -> (Reserve, Option<u32>) {
     match (reserve, wake) {
-        (Reserve::Lean, Wake::Pressure) => (Reserve::Full { until: now + HOLD }, Some(FULL)),
-        (Reserve::Full { .. }, Wake::Pressure) => (Reserve::Full { until: now + HOLD }, None),
-        (Reserve::Full { until }, Wake::Quiet) if now >= until => (Reserve::Lean, Some(lean)),
+        (_, Wake::Pressure) => (Reserve::Full { until: now + HOLD }, in_force.is_none_or(|factor| factor < FULL).then_some(FULL)),
+        (Reserve::Full { until }, Wake::Quiet) if now >= until => (Reserve::Lean, (in_force == Some(FULL)).then_some(lean)),
         (state, Wake::Quiet) => (state, None),
     }
 }
 
-/// The boot's factor if it is Nova's to manage: the one nova-memory-reserve
-/// wrote, in force, and under the full one. None otherwise.
-fn lean_factor(in_force: &str, written: &str) -> Option<u32> {
+/// What a start finds in force, where the setting is Nova's to manage.
+#[derive(Debug, PartialEq)]
+enum Found {
+    /// The boot's lean value, the one nova-memory-reserve wrote.
+    Lean(u32),
+    /// The full one, set by an earlier run of this program since the boot
+    /// (it ended while memory was short); the lean value it will go back to.
+    Raised(u32),
+}
+
+/// None where there is nothing to manage: the boot's value is the full one
+/// (8 GB and less), or the value in force is neither the boot's nor this
+/// program's own raise, which makes it an administrator's.
+fn found(in_force: &str, written: &str, managed_before: bool) -> Option<Found> {
     let in_force = in_force.trim().parse::<u32>().ok()?;
-    let written = written
+    let lean = written
         .lines()
         .filter(|line| !line.trim_start().starts_with('#'))
         .find_map(|line| line.split_once('=').filter(|(key, _)| key.trim() == "vm.watermark_scale_factor"))
-        .and_then(|(_, value)| value.trim().parse::<u32>().ok())?;
-    (in_force == written && in_force < FULL).then_some(in_force)
+        .and_then(|(_, value)| value.trim().parse::<u32>().ok())
+        .filter(|lean| *lean < FULL)?;
+    if in_force == lean {
+        Some(Found::Lean(lean))
+    } else if in_force == FULL && managed_before {
+        Some(Found::Raised(lean))
+    } else {
+        None
+    }
 }
 
 fn say(message: &str) {
@@ -107,9 +146,17 @@ fn main() {
     let setting = proc_root.join("sys/vm/watermark_scale_factor");
     let in_force = fs::read_to_string(&setting).unwrap_or_default();
     let written = fs::read_to_string(run_root.join("sysctl.d/90-nova-memory-reserve.conf")).unwrap_or_default();
-    let Some(lean) = lean_factor(&in_force, &written) else {
+    // Left by the first run since the boot that found the setting its own
+    // (the unit's RuntimeDirectory, kept until the next boot).
+    let mark = run_root.join("nova-memory-pressure/managed");
+    let (lean, mut reserve) = match found(&in_force, &written, mark.exists()) {
+        Some(Found::Lean(lean)) => (lean, Reserve::Lean),
+        Some(Found::Raised(lean)) => {
+            say(&format!("taken up again with the full reserve in force: {lean} after five minutes without pressure"));
+            (lean, Reserve::Full { until: Instant::now() + HOLD })
+        }
         // The full reserve already, or somebody's own setting: nothing to do.
-        return;
+        None => return,
     };
 
     let pressure: File = match OpenOptions::new().read(true).write(true).open(proc_root.join("pressure/memory")) {
@@ -124,7 +171,14 @@ fn main() {
         return;
     }
 
-    let mut reserve = Reserve::Lean;
+    // Without the mark a later start finds a raise it cannot tell from an
+    // administrator's 125, and leaves it: the full reserve until the next boot.
+    if let Some(dir) = mark.parent() {
+        let _ = fs::create_dir_all(dir);
+    }
+    if let Err(error) = fs::write(&mark, b"") {
+        say(&format!("no mark at {} ({error})", mark.display()));
+    }
     loop {
         let timeout = match reserve {
             Reserve::Lean => -1,
@@ -144,7 +198,8 @@ fn main() {
             process::exit(1);
         }
         let wake = if ready > 0 && fd.revents & POLLPRI != 0 { Wake::Pressure } else { Wake::Quiet };
-        let (next, write) = step(reserve, wake, Instant::now(), lean);
+        let in_force = fs::read_to_string(&setting).ok().and_then(|text| text.trim().parse::<u32>().ok());
+        let (next, write) = step(reserve, wake, Instant::now(), lean, in_force);
         if let Some(factor) = write {
             match set(&setting, factor) {
                 Ok(()) if factor == FULL => say(&format!("memory is short: the full reserve ({FULL})")),
@@ -160,39 +215,69 @@ fn main() {
 mod tests {
     use super::*;
 
+    const WRITTEN: &str = "# Written at boot by /usr/lib/nova/nova-memory-reserve for 31792 MiB of memory:\n# background reclaim starts 98 MiB before a program would stall.\nvm.watermark_scale_factor = 31\n";
+
     #[test]
     fn the_boot_value_is_managed_only_when_it_is_novas_and_lean() {
-        let written = "# Written at boot by /usr/lib/nova/nova-memory-reserve for 31792 MiB of memory:\n# background reclaim starts 98 MiB before a program would stall.\nvm.watermark_scale_factor = 31\n";
-        assert_eq!(lean_factor("31\n", written), Some(31));
+        assert_eq!(found("31\n", WRITTEN, false), Some(Found::Lean(31)));
         // An administrator's own value in /etc/sysctl.d won over the file.
-        assert_eq!(lean_factor("200\n", written), None);
-        assert_eq!(lean_factor("10\n", written), None);
+        assert_eq!(found("200\n", WRITTEN, false), None);
+        assert_eq!(found("10\n", WRITTEN, false), None);
+        // Also when it is 125: nothing says this program raised it.
+        assert_eq!(found("125\n", WRITTEN, false), None);
         // 8 GB and less: the boot value is the full one.
-        assert_eq!(lean_factor("125\n", "vm.watermark_scale_factor = 125\n"), None);
+        assert_eq!(found("125\n", "vm.watermark_scale_factor = 125\n", false), None);
+        assert_eq!(found("125\n", "vm.watermark_scale_factor = 125\n", true), None);
         // No file (the helper did not run), or not a number.
-        assert_eq!(lean_factor("31\n", ""), None);
-        assert_eq!(lean_factor("", written), None);
-        assert_eq!(lean_factor("31\n", "vm.swappiness = 31\n"), None);
+        assert_eq!(found("31\n", "", false), None);
+        assert_eq!(found("", WRITTEN, false), None);
+        assert_eq!(found("31\n", "vm.swappiness = 31\n", false), None);
+    }
+
+    #[test]
+    fn a_start_after_its_own_raise_takes_the_setting_up_again() {
+        // It ended while memory was short, and left its mark: the 125 is its own.
+        assert_eq!(found("125\n", WRITTEN, true), Some(Found::Raised(31)));
+        // Started again at rest: as the first time.
+        assert_eq!(found("31\n", WRITTEN, true), Some(Found::Lean(31)));
+        // A value set by hand since is nobody's raise.
+        assert_eq!(found("200\n", WRITTEN, true), None);
     }
 
     #[test]
     fn pressure_brings_the_full_reserve_and_five_quiet_minutes_take_it_back() {
         let start = Instant::now();
         // At rest nothing is written, however long.
-        assert_eq!(step(Reserve::Lean, Wake::Quiet, start, 31), (Reserve::Lean, None));
+        assert_eq!(step(Reserve::Lean, Wake::Quiet, start, 31, Some(31)), (Reserve::Lean, None));
         // The first second of pressure: the full reserve, once.
-        let (full, write) = step(Reserve::Lean, Wake::Pressure, start, 31);
+        let (full, write) = step(Reserve::Lean, Wake::Pressure, start, 31, Some(31));
         assert_eq!((full, write), (Reserve::Full { until: start + HOLD }, Some(FULL)));
         // More pressure moves the five minutes on, and writes nothing.
         let later = start + Duration::from_secs(200);
-        let (full, write) = step(full, Wake::Pressure, later, 31);
+        let (full, write) = step(full, Wake::Pressure, later, 31, Some(FULL));
         assert_eq!((full, write), (Reserve::Full { until: later + HOLD }, None));
         // A wake before the five minutes are up changes nothing.
         let early = later + Duration::from_secs(299);
-        assert_eq!(step(full, Wake::Quiet, early, 31), (full, None));
+        assert_eq!(step(full, Wake::Quiet, early, 31, Some(FULL)), (full, None));
         // When they are, the boot's value is back.
         let done = later + HOLD;
-        assert_eq!(step(full, Wake::Quiet, done, 31), (Reserve::Lean, Some(31)));
+        assert_eq!(step(full, Wake::Quiet, done, 31, Some(FULL)), (Reserve::Lean, Some(31)));
+    }
+
+    #[test]
+    fn the_value_in_force_decides_what_is_written() {
+        let start = Instant::now();
+        let full = Reserve::Full { until: start + HOLD };
+        // The boot's value put back while memory is short (systemd-sysctl run
+        // again by a package's hook): raised with the next second of pressure.
+        assert_eq!(step(full, Wake::Pressure, start, 31, Some(31)), (full, Some(FULL)));
+        // Unreadable: written, to be on the safe side.
+        assert_eq!(step(Reserve::Lean, Wake::Pressure, start, 31, None), (full, Some(FULL)));
+        // A larger reserve set by hand is not made smaller, now or afterwards.
+        assert_eq!(step(Reserve::Lean, Wake::Pressure, start, 31, Some(200)), (full, None));
+        assert_eq!(step(full, Wake::Quiet, start + HOLD, 31, Some(200)), (Reserve::Lean, None));
+        // Nor is the boot's value written over one already there.
+        assert_eq!(step(full, Wake::Quiet, start + HOLD, 31, Some(31)), (Reserve::Lean, None));
     }
 
     #[test]
