@@ -3,7 +3,11 @@
 # Arch's repositories, for the App Center and `nova apps` (through pkexec, as
 # org.nova.apps).
 #
-#   install <package>   install an app Arch's catalog lists
+#   install <package>   install an app Arch's catalog lists, with this computer's
+#                       graphics drivers when it needs a Vulkan driver
+#                       (nova-hw-packages): pacman left to pick one takes
+#                       NVIDIA's on every computer. They go in as dependencies,
+#                       so they leave with the app.
 #   remove <package>    remove an installed app, and what it alone needed
 #   built <file>        install Chrome or VS Code, built by nova apps install
 #                       (nova-update-apply checks and installs it)
@@ -31,12 +35,23 @@
 
 set -euo pipefail
 
-ROOT=${NOVA_ROOT:-} # a test seam; pkexec strips the environment
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# The test seams (a scratch root, the helpers beside it) are honoured only for
+# a caller that is not root, whose pacman is a test's: as root nothing from
+# the environment is read, though pkexec empties it anyway.
+if ((EUID == 0)); then
+  ROOT=''
+  HW_PACKAGES=$HERE/bin/nova-hw-packages
+  UPDATE_APPLY=$HERE/bin/nova-update-apply
+else
+  ROOT=${NOVA_ROOT:-}
+  HW_PACKAGES=${NOVA_HW_PACKAGES:-$HERE/bin/nova-hw-packages}
+  UPDATE_APPLY=${NOVA_UPDATE_APPLY:-$HERE/bin/nova-update-apply}
+fi
 MIRRORLIST=$ROOT/etc/pacman.d/nova-mirrorlist
 REPOFILE=$ROOT/etc/pacman.d/nova-repo
 SYNC_DIR=$ROOT/var/lib/pacman/sync
 SWCATALOG=$ROOT/usr/share/swcatalog
-HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 say() { printf '==> %s\n' "$*"; }
 die() {
@@ -65,7 +80,7 @@ flock -n "$lock" || die "Nova is installing an update or another app; try again 
 if [[ $action == built ]]; then
   # Under the lock nova-update-apply takes too: it is let go first.
   exec {lock}>&-
-  exec "${NOVA_UPDATE_APPLY:-$HERE/bin/nova-update-apply}" --packages-only --package "$target"
+  exec "$UPDATE_APPLY" --packages-only --package "$target"
 fi
 
 # An update that stopped before its end leaves the pins of the release it was
@@ -102,6 +117,41 @@ read_missing_lists() {
   done
 }
 
+# This computer's graphics drivers, as nova-hw-packages finds them: as root
+# with nothing of the caller's environment.
+hw_packages() { # option...
+  local portable=()
+  [[ ! -e $ROOT/etc/nova/portable ]] || portable=(--portable)
+  if ((EUID == 0)); then
+    env -i PATH=/usr/bin "$HW_PACKAGES" "${portable[@]}" "$@"
+  else
+    "$HW_PACKAGES" "${portable[@]}" "$@"
+  fi
+}
+
+# The graphics drivers to install beside the packages: when what they would
+# bring in (pacman -Sp) has anything 32-bit, or a graphics driver pacman
+# picked for them, this computer's own, 64-bit and, for the 32-bit, 32-bit
+# too. Left to pick a provider of vulkan-driver or lib32-vulkan-driver
+# (Steam needs both), pacman takes NVIDIA's on every computer; given one in
+# the same transaction, it takes that one.
+graphics_for() { # package...
+  local brought need64=0 need32=0
+  brought=$(pacman -Sp --print-format %n -- "$@" 2>/dev/null) || return 0
+  if grep -q '^lib32-' <<<"$brought"; then need32=1 need64=1; fi
+  if grep -qxE '(lib32-)?(mesa|nvidia-utils|vulkan-[a-z]+)' <<<"$brought"; then need64=1; fi
+  ((need64)) || return 0
+  { hw_packages --graphics && { ((!need32)) || hw_packages --lib32; }; } | grep -xE '[a-z0-9@_+][a-z0-9@._+-]*' || true
+}
+
+# Of the packages, those not installed yet.
+not_installed() { # package...
+  local name
+  for name; do
+    pacman -Q -- "$name" >/dev/null 2>&1 || printf '%s\n' "$name"
+  done
+}
+
 install_app() {
   local behind
   if unfinished; then
@@ -112,8 +162,14 @@ install_app() {
   pacman -Si -- "$target" >/dev/null 2>&1 || die "$target is not in the release's repositories"
   behind=$(LC_ALL=C pacman -Qu 2>/dev/null | grep -v '\[ignored\]$' | awk '{ print $1 }' | paste -sd' ' || true)
   [[ -z $behind ]] || die "this computer's packages are older than its package lists ($behind): update Nova first, in Settings, Updates" 3
+  local -a drivers=() added=()
+  mapfile -t drivers < <(graphics_for "$target")
+  mapfile -t added < <(not_installed "${drivers[@]}")
   say "Installing $target"
-  stdbuf -oL pacman -S --needed --noconfirm -- "$target"
+  ((${#added[@]} == 0)) || say "With this computer's graphics drivers: ${added[*]}"
+  stdbuf -oL pacman -S --needed --noconfirm -- "$target" "${drivers[@]}"
+  # Dependencies, as pacman would have made them: they go with the app.
+  ((${#added[@]} == 0)) || pacman -D --asdeps -- "${added[@]}" >/dev/null
 }
 
 remove_app() {

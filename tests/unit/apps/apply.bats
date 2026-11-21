@@ -139,3 +139,73 @@ teardown() { teardown_scratch; }
   run "$APPLY" upgrade gimp
   [ "$status" -eq 2 ]
 }
+
+# An app whose install needs a Vulkan driver, on a bus of the test's own:
+# pacman -Sp says what the app would bring in ($SCRATCH/brought), -Q what is
+# installed ($INSTALLED), and the real nova-hw-packages reads the bus.
+graphics_machine() { # class:vendor:device...
+  local i=0 dev class vendor device
+  mkdir -p "$SCRATCH/pci"
+  for dev; do
+    IFS=: read -r class vendor device <<<"$dev"
+    mkdir -p "$SCRATCH/pci/0000:0$i:00.0"
+    echo "$class" >"$SCRATCH/pci/0000:0$i:00.0/class"
+    echo "$vendor" >"$SCRATCH/pci/0000:0$i:00.0/vendor"
+    echo "$device" >"$SCRATCH/pci/0000:0$i:00.0/device"
+    i=$((i + 1))
+  done
+  printf 'vendor_id\t: GenuineIntel\n' >"$SCRATCH/cpuinfo"
+  export NOVA_PCI_DEVICES_PATH=$SCRATCH/pci NOVA_CPUINFO=$SCRATCH/cpuinfo
+  export NOVA_HW_PACKAGES=$REPO_ROOT/data/hardware/bin/nova-hw-packages
+  printf '<components><component><pkgname>steam</pkgname></component></components>\n' |
+    gzip >"$NOVA_ROOT/usr/share/swcatalog/xml/multilib.xml.gz"
+  cat >"$SCRATCH/bin/pacman" <<'STUB'
+#!/bin/bash
+echo "pacman $*" >>"$CALLS"
+case $1 in
+  -Si) exit 0 ;;
+  -Sp) cat "$SCRATCH/brought" ;;
+  -Qu) exit 0 ;;
+  -Q) [[ " $INSTALLED " == *" $3 "* ]] ;;
+  *) exit 0 ;;
+esac
+STUB
+}
+
+@test "install: Steam on an Intel laptop goes in with Intel's 32-bit drivers, which go with it" {
+  graphics_machine 0x030000:0x8086:0x9a49
+  printf '%s\n' steam lib32-glibc lib32-nvidia-utils nvidia-utils >"$SCRATCH/brought"
+  INSTALLED="mesa vulkan-intel" run "$APPLY" install steam
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm -- steam mesa vulkan-intel lib32-mesa lib32-vulkan-intel' "$CALLS"
+  grep -qx 'pacman -D --asdeps -- lib32-mesa lib32-vulkan-intel' "$CALLS"
+  [[ $output == *"With this computer's graphics drivers: lib32-mesa lib32-vulkan-intel"* ]]
+}
+
+@test "install: on the P1, Intel's and NVIDIA's, for the client on one and a game on the other" {
+  graphics_machine 0x030000:0x8086:0x9a60 0x030200:0x10de:0x25b8
+  printf '%s\n' steam lib32-glibc lib32-nvidia-utils >"$SCRATCH/brought"
+  INSTALLED="mesa vulkan-intel nvidia-utils lib32-mesa" run "$APPLY" install steam
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm -- steam mesa vulkan-intel nvidia-utils lib32-mesa lib32-vulkan-intel lib32-nvidia-utils' "$CALLS"
+  grep -qx 'pacman -D --asdeps -- lib32-vulkan-intel lib32-nvidia-utils' "$CALLS"
+}
+
+@test "install: an app that needs no graphics driver gets none, and nothing is marked" {
+  graphics_machine 0x030000:0x1002:0x73df
+  printf '%s\n' gimp babl gegl >"$SCRATCH/brought"
+  run "$APPLY" install gimp
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm -- gimp' "$CALLS"
+  fails grep -q -- '-D' "$CALLS"
+}
+
+@test "install: as root nothing of the environment is read, not the root, not the helpers" {
+  grep -q 'if ((EUID == 0)); then' "$APPLY"
+  # The root branch names no NOVA_ variable.
+  run sed -n '/^if ((EUID == 0)); then$/,/^else$/p' "$APPLY"
+  [[ $output != *NOVA_* ]]
+  [[ $output == *"ROOT=''"* ]]
+  # And the hardware helper runs with an empty environment.
+  grep -q 'env -i PATH=/usr/bin "$HW_PACKAGES"' "$APPLY"
+}
