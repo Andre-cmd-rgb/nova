@@ -21,8 +21,9 @@ if [[ ${1:-} == --date ]]; then
   # shellcheck disable=SC2016 # $repo and $arch are pacman's to expand
   printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$date" >/etc/pacman.d/mirrorlist
 fi
-# multilib, as every Nova system has it (installer/pacman.conf): nova depends
-# on steam-devices, which is there.
+# multilib, as every Nova system has it (installer/pacman.conf): Steam and
+# its game controllers' rules (steam-devices), which the installer puts in,
+# are there.
 grep -qx '\[multilib\]' /etc/pacman.conf || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>/etc/pacman.conf
 
 pacman-key --init >/dev/null

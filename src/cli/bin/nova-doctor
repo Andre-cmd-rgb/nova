@@ -511,7 +511,7 @@ check_modem_unlock() {
 }
 
 # An Intel MIPI camera: an IPU6 or IPU7, by the device ids the kernel's
-# intel-ipu6 and intel-ipu7 drivers take (nova-install has the same list).
+# intel-ipu6 and intel-ipu7 drivers take (nova-hw-packages has the same list).
 # Apps reach it through PipeWire's libcamera plugin.
 IPU_IDS=" 0x9a19 0x4e19 0x465d 0x462e 0xa75d 0x7d19 0x645d 0xb05d "
 check_camera() {

@@ -15,11 +15,22 @@ What users see is in [docs/apps.md](../../docs/apps.md).
 | `nova-apps-installed` | what is installed: Flathub's apps and runtimes, every package, Nova's own |
 | `nova-apps-refresh` | fetches Flathub's catalog again once it is a day old, as the window opens; adds Flathub first, from the file Nova ships with Flathub's key |
 | `nova-apps-run`, `nova-apps-job` | an install or a removal as a user service of its own (`nova-apps-<id>`), one at a time; how far it is, in `$XDG_RUNTIME_DIR/nova/apps/status.json`, its output in a log beside it |
-| `nova-apps-apply` | the root half, for Arch, through pkexec |
-| `nova-apps-shots`, `nova-apps-size` | an app's pictures, downloaded into `~/.cache/nova/apps/shots`, and what an Arch package would add: the shell itself reads files and never the network |
+| `nova-apps-apply` | the root half, for Arch, through pkexec: the app, its recipe's extras, and this computer's graphics drivers where it needs a Vulkan driver (`nova-hw-packages --needed-by`, in `data/hardware/bin/`: left to pick, pacman takes NVIDIA's on every computer) |
+| `nova-apps-shots`, `nova-apps-size` | an app's pictures, downloaded into `~/.cache/nova/apps/shots`, and what an Arch package would add, with the extras and drivers `nova-apps-apply` would install: the shell itself reads files and never the network |
 | `src/shell/plugins/store/` | the window |
 
 Measured on the ThinkPad P1 Gen 4i: the catalog takes 3.1 s the first time (most of it the icons), 1.5 s when Flathub's catalog changed, and 1 ms when nothing did; its catalog is 6.9 MB and its list 1.9 MB. What is installed is read in 92 ms.
+
+## Recipes
+
+`data/recipes`, installed root-owned at `/usr/share/nova/apps/recipes`, says per Arch package what Arch's own dependencies leave out; its header has the grammar:
+
+- `prefer flathub` (or `arch`): where the App Center offers the app from first. Discord wants its newest release, which Flathub has the day it is out.
+- `with`: packages installed with it, marked as dependencies. One the release's repositories lack is left out, alike by the catalog (the page's "Also installs"), `nova-apps-size` and `nova-apps-apply`. Removing the app takes an extra with it only when no other installed app's recipe names it and nothing that stays needs or may use it (pacman lists an optional dependency in no Required By).
+- `skip`: an optional dependency left out on purpose, with why after `#`.
+- `after enable-socket <unit>`: the one step done as root once the app is in, for a socket a package installed ships. No step puts an account in a group.
+
+`nova-apps-apply` reads the file only from there, a plain file only root can write, and takes from it nothing but package names and that step; anything else stops the install before anything changes. `tests/unit/apps/apply.bats` checks the shipped file against it, and `tools/apps-recipes-check` says when an optional dependency of a front-page app has neither a `with` nor a `skip`: a release stops on that, checked against the snapshot it pins, and CI warns of it against today's Arch.
 
 ## Never a partial upgrade
 

@@ -5,11 +5,13 @@
 //! An app in more than one is matched by its AppStream ID, or an ID it was
 //! known by. The order of the sources is the one place that decides which
 //! is offered: Nova's build (Chrome and VS Code, from their makers'
-//! releases), then Arch's package, then Flathub. Arch's comes before
-//! Flathub's because it is the one Nova's theme reaches, is in the Arch
-//! snapshot the release was tested against, and costs least: GIMP is 43 MB
-//! from Arch, and 103 MB from Flathub with a 433 MB runtime besides
-//! (docs/apps.md has the measurements). The app's page offers the other.
+//! releases), then Arch's package, then Flathub, but for an Arch package a
+//! recipe says to offer from Flathub first (`prefer flathub`, Discord's:
+//! src/apps/data/recipes). Arch's comes before Flathub's because it is the
+//! one Nova's theme reaches, is in the Arch snapshot the release was tested
+//! against, and costs least: GIMP is 43 MB from Arch, and 103 MB from Flathub
+//! with a 433 MB runtime besides (docs/apps.md has the measurements). The
+//! app's page offers the other.
 
 use std::collections::{HashMap, HashSet};
 

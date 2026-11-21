@@ -7,7 +7,7 @@ import Quickshell.Io
 import "plugins/settings" as Settings
 import "plugins/settings/WelcomeModel.js" as Model
 
-// The welcome: which pages come, and when; Chrome and VS Code in its words;
+// The welcome: which pages come, and when; VS Code and the browsers in its words;
 // the wordmark read from its text; and the window gone through with
 // Continue and Back, which takes the account's marker away as it closes.
 // There is no bus here, so no network: the Wi-Fi page is there for a card.

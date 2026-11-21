@@ -5,7 +5,8 @@
 #
 # <app> is a word the catalog knows an app by: its ID, its package, or its
 # name. An app is installed from the first place the catalog offers it from
-# (Nova's own build, then Arch's repositories, then Flathub), or from the one
+# (Nova's own build, then Arch's repositories, then Flathub, but Flathub first
+# where a recipe says prefer flathub, as Discord's does), or from the one
 # --from names; and removed from wherever it is.
 #
 #   Flathub    into the user's own installation: no password, and nothing of
