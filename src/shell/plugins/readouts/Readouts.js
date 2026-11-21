@@ -32,7 +32,12 @@ function cpuPercent(before, now) {
 
 // /proc/meminfo's MemTotal and MemAvailable, in kB; null when either is
 // missing. MemAvailable, not MemFree: the cache the kernel gives back when
-// a program asks is not memory in use.
+// a program asks is not memory in use. Total less available is the number
+// free, fastfetch and btop show (a click on the readout opens btop, which
+// must not say another), and the one that says how near full the memory
+// is. It counts what the kernel keeps aside as well as what is held:
+// nova-doctor-memory says how much of it is which, and nova-memory-reserve
+// keeps the kernel's part to what it needs.
 function parseMemory(text) {
   var total = -1, available = -1
   var lines = String(text || "").split("\n")

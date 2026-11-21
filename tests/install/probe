@@ -117,6 +117,33 @@ probe() {
   done | sort -rn | head -n 8 | sed 's/ / MB /;s/^/probe:        /'
   check "the session at rest fits its memory budget ($((session_kb / 1024)) of $budget MB)" \
     test "$((session_kb / 1024))" -le "$budget"
+  # What the computer's figure is made of (nova-doctor-memory): programs,
+  # the kernel, and what the kernel keeps aside, which was 2 GiB of the 3.8
+  # shown at rest on a 32 GB computer while the reserve was a share of memory.
+  /usr/lib/nova/bin/nova-doctor-memory --programs | sed 's/^/probe:      memory: /'
+  # The reserve as nova-memory-reserve sizes it at boot, having reached the
+  # kernel through systemd-sysctl: 1.25% of memory up to 8 GB, 100 MiB above.
+  factor=$(/usr/lib/nova/nova-memory-reserve --print)
+  check "the kernel's memory reserve is sized for this computer (vm.watermark_scale_factor $factor)" \
+    test "$(cat /proc/sys/vm/watermark_scale_factor)" = "$factor"
+  # The kernel's side of the figure: the reserve, the cache counted as needed
+  # and the per-CPU free lists, against the most the setting allows. The gap
+  # between the watermarks is at most 100 MiB a zone-set, the marks sit on
+  # min_free_kbytes (67 MiB with huge pages on), and what lower zones keep
+  # from higher ones is 132 MiB at 32 GB: under 0.9 GiB whatever the size.
+  read -r _ _ margins_kb pcp_kb < <(/usr/lib/nova/bin/nova-doctor-memory --total)
+  check "the kernel keeps aside no more than its setting allows ($(((margins_kb + pcp_kb) / 1024)) of 900 MB)" \
+    test "$(((margins_kb + pcp_kb) / 1024))" -le 900
+  # No X server until an X11 app asks for one: Nova's starter waits in its
+  # place (nova-xwayland, installed as Xwayland among Nova's commands), and
+  # xsettingsd comes with the server.
+  x_servers() { # the user's processes named Xwayland, by the program each is
+    local pid
+    for pid in $(pgrep -u "$user" -x Xwayland); do readlink "/proc/$pid/exe"; done | sort | paste -sd' '
+  }
+  check "no X server runs at rest, Nova's starter waits for the first X11 app" \
+    test "$(x_servers)" = /usr/lib/nova/bin/Xwayland
+  check "nor does xsettingsd, which comes with the X server" bash -c "! pgrep -u '$user' -x xsettingsd"
   # The graphics memory, which PSS does not count: on the P1 the compositor's
   # and the shell's buffers are more than their PSS. Said, not judged: this
   # machine renders in software, and its drivers count none of it.
@@ -168,6 +195,17 @@ probe() {
     pacman --config "$dir/pacman.conf" --logfile /dev/null -Sy
   }
   check "the pinned Arch snapshot answers, for nova update" pinned_mirror
+  # The first X11 app starts the X server, and finds its settings there: the
+  # resources (Xft.dpi, which Qt and SDL read once as they start) at its very
+  # first look, and xsettingsd running. Last of the checks: from here an X
+  # server runs, and the memory at rest is no longer that.
+  # Hyprland names the display in the environment it gives the starter.
+  session_display=$(tr '\0' '\n' <"/proc/$(pgrep -u "$user" -x Xwayland | head -n 1)/environ" 2>/dev/null | sed -n 's/^DISPLAY=//p')
+  first_look=$(as_user DISPLAY="$session_display" timeout 30 xrdb -query)
+  check "the first X11 app finds the scale in the X resources (${first_look//$'\t'/ })" grep -q '^Xft\.dpi:' <<<"$first_look"
+  check "it started the X server" test "$(x_servers)" = /usr/bin/Xwayland
+  check "and xsettingsd with it, with nothing failed" \
+    as_user DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus" systemctl --user is-active nova-xsettings.service
   doctor=$(nova doctor 2>&1)
   status=$?
   sed 's/^/probe:   /' <<<"$doctor"

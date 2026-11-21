@@ -604,6 +604,27 @@ bundle_world() {
   echo Hyprland >"$NOVA_PROC/964/comm"
   ln -s /dev/dri/renderD128 "$NOVA_PROC/964/fd/43"
   printf 'drm-driver:\ti915\ndrm-client-id:\t7\ndrm-pdev:\t0000:00:02.0\ndrm-total-system0:\t841984 KiB\ndrm-shared-system0:\t479744 KiB\n' >"$NOVA_PROC/964/fdinfo/43"
+  # What the memory in use is made of, from the kernel's two files.
+  ln -s "$REPO_ROOT/src/cli/bin/nova-doctor-memory" "$SCRATCH/bin/"
+  write_file "$NOVA_PROC/meminfo" 'MemTotal:       16000000 kB
+MemFree:        12000000 kB
+MemAvailable:   13000000 kB
+Cached:          2000000 kB
+Active(file):    1000000 kB
+Inactive(file):   800000 kB
+AnonPages:       1500000 kB
+Shmem:            200000 kB
+KReclaimable:     200000 kB
+SUnreclaim:       100000 kB'
+  write_file "$NOVA_PROC/zoneinfo" 'Node 0, zone   Normal
+        min      16000
+        low      41000
+        high     66000
+        managed  4000000
+        protection: (0, 0, 0, 0, 0)
+  pagesets
+    cpu: 0
+              count:    2560'
   stub pacman 'case $1 in
     -Qq) printf "%s\n" nova linux-nova hyprland quickshell firefox ;;
     -Q) shift; if (($#)); then for p; do echo "$p 1.0-1"; done; else echo "nova 1.0.0beta.1-1"; fi ;;
@@ -622,15 +643,18 @@ unpacked() { # the report, unpacked into $SCRATCH/report; prints its folder
   run doctor --bundle
   [ "$status" -eq 0 ]
   [[ ${lines[0]} =~ ^"$HOME/Fetched/nova-report-"[0-9-]+\.tar\.gz$ ]]
-  [[ ${lines[1]} == "Inside: this check, the journal of this start and the last"*", crashes, snapshots, package versions, no boot menu (sudo adds it), the model, its PCI and USB devices, and the graphics memory each program holds. Masked: "* ]]
+  [[ ${lines[1]} == "Inside: this check, the journal of this start and the last"*", crashes, snapshots, package versions, no boot menu (sudo adds it), the model, its PCI and USB devices, what the memory in use is made of, and the graphics memory each program holds. Masked: "* ]]
   [ "${#lines[@]}" -eq 2 ]
   [ "$(stat -c %a "${lines[0]}")" = 600 ]
   # Run by you, not under sudo: written as a .part beside it, then renamed.
   [ "$(ls -A "$HOME/Fetched")" = "${lines[0]##*/}" ]
   local dir
   dir=$(unpacked "${lines[0]}")
-  [ "$(cd "$dir" && ls | paste -sd' ')" = "boot-entries.txt crashes.txt doctor.txt gpu-memory.txt journal-last-start-nova.txt journal-last-start-warnings.txt journal-this-start-nova.txt journal-this-start-warnings.txt model.txt packages.txt pci.txt snapshots.txt usb.txt" ]
+  [ "$(cd "$dir" && ls | paste -sd' ')" = "boot-entries.txt crashes.txt doctor.txt gpu-memory.txt journal-last-start-nova.txt journal-last-start-warnings.txt journal-this-start-nova.txt journal-this-start-warnings.txt memory.txt model.txt packages.txt pci.txt snapshots.txt usb.txt" ]
   grep -qx '     822.2      468.5        0.0        0.0  Hyprland (964)' "$dir/gpu-memory.txt"
+  grep -q '^Memory in use: 2.86 of 15.26 GiB' "$dir/memory.txt"
+  grep -q '^    257.8  the kernel reserve' "$dir/memory.txt"
+  grep -q '^     10.0  free pages on the per-CPU lists' "$dir/memory.txt"
   grep -q '^ok    / is writable btrfs' "$dir/doctor.txt"
   [ "$(cat "$dir/packages.txt")" = "nova 1.0-1
 linux-nova 1.0-1

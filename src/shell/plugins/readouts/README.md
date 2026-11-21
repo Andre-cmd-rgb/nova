@@ -23,7 +23,12 @@ is locked or dark. A number is set only when its whole percentage changes.
 
 - CPU: the first line of `/proc/stat`; busy is all but idle and iowait.
 - Memory: `/proc/meminfo`, `MemTotal` less `MemAvailable`; the tooltip says
-  "7.4 of 31 GB in use".
+  "7.4 of 31 GB in use". That is `free`'s "used", fastfetch's, and btop's,
+  which a click opens: one number everywhere, and the one that reaches the
+  total when the memory is full. Part of it is no program's: the kernel's
+  reserve and the cache it counts as needed (about 0.6 GiB at rest on a
+  32 GB computer, 2 GiB before `nova-memory-reserve`). `nova-doctor-memory`
+  prints what the figure is made of.
 - Graphics: the card with a connected screen. An Intel card (`i915`, with the
   older `power/rc6_residency_ms` too, or `xe`) is busy for the time it did not
   spend asleep (RC6 residency), over the time that passed; an AMD card's
