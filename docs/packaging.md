@@ -96,7 +96,9 @@ To retire: once Arch ships a cmatrix with those commits, delete `packaging/cmatr
 - **Why Nova's own:** Arch's `extra/whisper-cpp` links Arch's own `ggml`, which is updated apart from it. ggml 0.29 (2026-11-08) stops whisper.cpp 1.9.5 as it loads the model, rebuilt or not, so the `[nova]` build is the one installed, `[nova]` being first in `pacman.conf`.
 - **Every CPU generation:** Nova also runs on CPUs older than x86-64-v3, so ggml's CPU backend is built for every generation (`GGML_CPU_ALL_VARIANTS`) and the best the CPU has is loaded as it starts. Those are shared libraries, kept in `/usr/lib/whisper-cpp` and found there by `RUNPATH`, apart from Arch's ggml.
 
-To update: bump `pkgver` to a newer tag, then the checksum (`makepkg -g`). Arch's version no longer matters.
+- **One release at a time:** `nova-dictationd` declares libparakeet's functions and structs as that release's `include/parakeet.h` does, and passes two of them by value. The soname is the major version only (`.so.1` for every 1.x) while `parakeet_full_params` changes between minor releases, so the daemon asks `parakeet_version()` as it opens the library and treats any release but `VERSION` in `src/dictation/src/engine.rs` as no engine (Settings and `nova dictation status` say so, the journal says which). A test ties `VERSION` to this `pkgver`.
+
+To update: bump `pkgver` to a newer tag, then the checksum (`makepkg -g`); check every declaration in `src/dictation/src/engine.rs` against the new `include/parakeet.h`, and only then move its `VERSION` to the same tag (the test fails until both agree). Arch's version no longer matters.
 
 ## supernova
 

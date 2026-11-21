@@ -4,8 +4,12 @@
 //! The library is opened when a dictation first needs it, not linked: the
 //! nova package builds and tests where whisper-cpp is not installed, and a
 //! computer without it is told so. Its functions are declared here as
-//! whisper.cpp 1.9.5's include/parakeet.h declares them; the package pins
-//! that version, and a newer one with another layout would be a new soname.
+//! whisper.cpp 1.9.5's include/parakeet.h declares them (VERSION), and two
+//! of them take or give a struct by value. The soname says nothing of that
+//! layout: it is the major version only (libparakeet.so.1 for every 1.x),
+//! and parakeet_full_params changes between minor releases. So the library
+//! is asked its version as it is opened, and one of another release is no
+//! engine, said so, rather than handed a struct it reads otherwise.
 //!
 //! ggml, under it, is built with one CPU backend for each generation of x86
 //! CPU (libggml-cpu-*.so beside the library), and the best one this CPU can
@@ -22,6 +26,26 @@ use std::sync::OnceLock;
 
 /// Where Nova's whisper-cpp puts the library.
 pub const LIBRARY: &str = "/usr/lib/whisper-cpp/libparakeet.so.1";
+
+/// The whisper.cpp release whose include/parakeet.h this file follows,
+/// field for field: packaging/whisper-cpp/PKGBUILD's pkgver (a test ties
+/// the two). Moving the package to another release means checking every
+/// declaration below against its header, then this.
+pub const VERSION: &str = "1.9.5";
+
+/// Whether parakeet_version()'s <version> is VERSION. whisper.cpp's build
+/// adds "-dev" unless WHISPER_BUILD_IS_DEV is off, which Nova's package
+/// leaves on, as upstream's release does: its 1.9.5 says "1.9.5-dev".
+pub fn known(version: &str) -> bool {
+    version.strip_suffix("-dev").unwrap_or(version) == VERSION
+}
+
+/// Whether the library at <path> is a speech engine this can use: there,
+/// and of the release it was written for (why not, if not). Nothing of it
+/// runs but its version.
+pub fn check(path: &str) -> Result<(), String> {
+    Library::open(path).map(drop)
+}
 
 /// The engine's samples: 16 kHz, mono.
 pub const RATE: usize = 16_000;
@@ -153,6 +177,23 @@ impl Library {
                 // SAFETY: the symbol is the C function of that name, and the field it goes to has the signature parakeet.h (or ggml-backend.h) gives it.
                 unsafe { std::mem::transmute::<*mut c_void, _>(found) }
             }};
+        }
+        // First of all, as no struct has been passed yet: its release.
+        let version: unsafe extern "C" fn() -> *const c_char = symbol!("parakeet_version");
+        // SAFETY: it takes nothing, and gives a static NUL-terminated string.
+        let version = unsafe { version() };
+        let version = if version.is_null() {
+            String::new()
+        } else {
+            // SAFETY: as above.
+            unsafe { CStr::from_ptr(version) }
+                .to_string_lossy()
+                .into_owned()
+        };
+        if !known(&version) {
+            return Err(format!(
+                "the speech engine ({path}) is whisper.cpp {version:?}, and dictation is made for {VERSION}: it is not used"
+            ));
         }
         Ok(Library {
             backend_load_all: symbol!("ggml_backend_load_all"),
@@ -318,5 +359,42 @@ impl Drop for Engine {
     fn drop(&mut self) {
         // SAFETY: the context is ours, freed once.
         unsafe { (self.lib.free)(self.ctx) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_release_this_was_written_for_is_known() {
+        assert!(known(VERSION));
+        assert!(known(&format!("{VERSION}-dev")));
+        for other in [
+            "1.9.6",
+            "1.10.0",
+            "1.9.5.1",
+            "1.9",
+            "",
+            "1.9.5-rc1",
+            "v1.9.5",
+        ] {
+            assert!(!known(other), "{other}");
+        }
+    }
+
+    // The package and the layouts here move together, or the test fails.
+    #[test]
+    fn the_release_is_the_one_nova_packages() {
+        let pkgbuild = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../packaging/whisper-cpp/PKGBUILD"
+        );
+        let text = std::fs::read_to_string(pkgbuild).unwrap();
+        let pkgver = text
+            .lines()
+            .find_map(|l| l.strip_prefix("pkgver="))
+            .expect("a pkgver");
+        assert_eq!(pkgver.trim(), VERSION, "{pkgbuild}");
     }
 }

@@ -5,8 +5,9 @@
 # and the text pasted through Hyprland. Every outside command is a stub that
 # logs its call to $CALLS; the model is a small file of the test's own, with
 # its size and SHA-256 put in place of Parakeet's, and the speech engine a
-# file of the test's own. Recording and hearing are nova-dictationd's, and
-# tested there (src/dictation).
+# file of the test's own, which a stub nova-dictationd --engine finds usable.
+# Recording and hearing are nova-dictationd's, and tested there
+# (src/dictation; its engine check in tests/engine.rs).
 
 load ../test_helper
 
@@ -20,6 +21,8 @@ setup() {
   printf 'a model of the test'"'"'s own\n' >"$SERVED"
   stub busctl 'echo "u 4"'
   stub nova-shell
+  stub nova-dictationd
+  export NOVA_DICTATIOND="$SCRATCH/bin/nova-dictationd"
   stub hyprctl
   stub wl-copy 'cat >"$SCRATCH/clipboard"'
   # The server: what was asked for after the part already there (-C -).
@@ -62,6 +65,20 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   put_model
   run cmd_check
   [ "$output" = no-engine ]
+  run cmd_status
+  [[ $output == *"Not available here: dictation needs whisper-cpp"* ]]
+}
+
+@test "check: no-engine other where the speech engine is one nova-dictationd cannot use" {
+  put_model
+  run cmd_check
+  [ "$output" = ready ]
+  grep -qx "nova-dictationd --engine" "$CALLS"
+  stub nova-dictationd 'echo "the speech engine is whisper.cpp \"1.10.0\", and dictation is made for 1.9.5: it is not used" >&2; exit 1'
+  run cmd_check
+  [ "$output" = "no-engine other" ]
+  run cmd_status
+  [[ $output == *'Not available here: the speech engine is whisper.cpp "1.10.0", and dictation is made for 1.9.5: it is not used.'* ]]
 }
 
 @test "setup downloads the model, checks it, moves it into place, and tells the shell" {

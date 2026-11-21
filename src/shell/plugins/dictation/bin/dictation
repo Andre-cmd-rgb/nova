@@ -27,8 +27,11 @@ MODEL_SHA256=4d64e9e96c2792186d072fde0034df0ad670cf680a2f53069052ead827fd600e
 
 DATA_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/nova-dictation
 MODEL=$DATA_DIR/$MODEL_NAME
-# The speech engine, as nova-dictationd opens it.
+# The speech engine, as nova-dictationd opens it, and nova-dictationd, which
+# knows whether it is one it can use (of the whisper.cpp release it was made
+# for: src/dictation/src/engine.rs).
 ENGINE=${NOVA_DICTATION_LIBRARY:-/usr/lib/whisper-cpp/libparakeet.so.1}
+DAEMON=${NOVA_DICTATIOND:-/usr/lib/nova/nova-dictationd}
 # The last dictation's words, which nova-dictationd keeps.
 LAST=${XDG_RUNTIME_DIR:-/run/user/$UID}/nova/dictation/last
 
@@ -47,11 +50,14 @@ metered() {
 
 # --------------------------------------------------------------- the shell's
 
-# One word for the shell: ready, no-engine (whisper-cpp is not installed), or
-# no-model, with "metered" when downloading it would spend a data plan.
+# One word for the shell: ready, no-engine (whisper-cpp is not installed),
+# with "other" when it is but is not one dictation can use (another release),
+# or no-model, with "metered" when downloading it would spend a data plan.
 cmd_check() {
   if [[ ! -e $ENGINE ]]; then
     echo no-engine
+  elif ! "$DAEMON" --engine 2>/dev/null; then
+    echo "no-engine other"
   elif [[ -f $MODEL ]]; then
     echo ready
   elif metered; then
@@ -178,11 +184,14 @@ cmd_last() {
 }
 
 cmd_status() {
+  local why
   echo "Hold Super+D and speak, and the words are pasted where the cursor is when"
   echo "you let go. A tap keeps listening until the next; Esc cancels."
   echo
   if [[ ! -e $ENGINE ]]; then
     echo "Not available here: dictation needs whisper-cpp, which this computer does not have."
+  elif ! why=$("$DAEMON" --engine 2>&1); then
+    echo "Not available here: ${why:-the speech engine could not be opened}."
   elif [[ -f $MODEL ]]; then
     echo "Ready. The speech model ($MODEL_SIZE) is in $DATA_DIR."
   else

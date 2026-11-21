@@ -14,7 +14,9 @@ Column {
   spacing: Style.space(22)
 
   readonly property string modelSize: "669 MB"
-  // `nova dictation check`: ready, no-engine, no-model or "no-model metered".
+  // `nova dictation check`: ready, no-engine, "no-engine other" (installed,
+  // but of a release dictation was not made for), no-model or "no-model
+  // metered".
   property string readiness: ""
   property int progress: 0
   property bool verifying: false
@@ -26,7 +28,7 @@ Column {
   property real memory: 0
   property string last: ""
 
-  readonly property bool engine: readiness !== "" && readiness !== "no-engine"
+  readonly property bool engine: readiness !== "" && readiness.indexOf("no-engine") !== 0
   readonly property bool ready: readiness === "ready"
   readonly property bool downloading: setup.running
 
@@ -115,7 +117,8 @@ Column {
     Line {
       label: "Speech model"
       detail: root.readiness === "" ? ""
-        : !root.engine ? "This computer has no speech engine (whisper-cpp)"
+        : !root.engine ? (root.readiness === "no-engine" ? "This computer has no speech engine (whisper-cpp)"
+          : "The speech engine here (whisper-cpp) is not the version dictation was made for")
         : root.downloading ? (root.verifying ? "Checking the download" : "Downloading, " + root.progress + "%")
         : root.ready ? "Parakeet, " + root.modelSize + ", on this computer"
         : root.failure !== "" ? root.failure

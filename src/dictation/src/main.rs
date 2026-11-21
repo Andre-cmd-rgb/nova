@@ -14,6 +14,9 @@
 //                                       recording on stdout at its own pace
 //                                       (or <speed> times it), then silence,
 //                                       until it is stopped
+//   nova-dictationd --engine            whether the speech engine is one this
+//                                       can use (`nova dictation check`):
+//                                       nothing and 0 if it is, why not and 1
 //
 // For tests: NOVA_DICTATION_RECORDER (what records, in pw-record's place),
 // NOVA_DICTATION_LIBRARY (the speech engine), NOVA_DICTATION_IDLE (seconds
@@ -28,7 +31,7 @@ use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
 use nova_dictation::dictation::{Dictation, Next};
-use nova_dictation::engine::{Ear, Engine, LIBRARY, RATE};
+use nova_dictation::engine::{self, Ear, Engine, LIBRARY, RATE};
 use nova_dictation::server::{Config, Server};
 use nova_dictation::system::{self, Pressure, System};
 use nova_dictation::tidy;
@@ -136,8 +139,14 @@ fn serve(socket: Option<&str>) {
         .and_then(|s| s.parse::<f64>().ok())
         .map_or(IDLE, Duration::from_secs_f64);
     let cores = system::cores();
+    // One of another release than this was written for is none: a start is
+    // answered no-engine, and the journal says why.
+    let engine = Path::new(&library).exists()
+        && engine::check(&library)
+            .inspect_err(|e| eprintln!("nova-dictationd: {e}"))
+            .is_ok();
     let config = Config {
-        engine: Path::new(&library).exists(),
+        engine,
         model: model.clone(),
         recorder,
         runtime: runtime.join("dictation"),
@@ -209,6 +218,15 @@ fn hear(path: &str) {
     println!("{}", tidy::clean(&words, &vocab).trim_end());
 }
 
+/// Whether the speech engine is one this can use; why not, if not.
+fn engine_check() {
+    let library = std::env::var("NOVA_DICTATION_LIBRARY").unwrap_or_else(|_| LIBRARY.to_owned());
+    if let Err(e) = engine::check(&library) {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
+}
+
 /// Plays <path> on stdout at its own pace (<speed> times it), 20 ms at a
 /// time, then silence, as pw-record would from a microphone, until it is
 /// stopped.
@@ -245,13 +263,14 @@ fn main() {
         [] => serve(None),
         ["--socket", path] => serve(Some(path)),
         ["--hear", path] => hear(path),
+        ["--engine"] => engine_check(),
         ["--play", path] => play(path, 1.0),
         ["--play", path, speed] => match speed.parse::<f64>() {
             Ok(speed) if speed > 0.0 => play(path, speed),
             _ => fail(format!("{speed}: not a speed")),
         },
         _ => {
-            eprintln!("usage: nova-dictationd [--socket <path> | --hear <recording.pcm> | --play <recording.pcm> [<speed>]]");
+            eprintln!("usage: nova-dictationd [--socket <path> | --hear <recording.pcm> | --play <recording.pcm> [<speed>] | --engine]");
             std::process::exit(2);
         }
     }

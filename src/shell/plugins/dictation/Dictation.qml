@@ -36,8 +36,8 @@ Item {
   property bool handsFree: false
   property real pressedAt: 0
   property int elapsed: 0
-  // What `dictation check` last answered: ready, no-engine, no-model, or
-  // "no-model metered".
+  // What `dictation check` last answered: ready, no-engine, "no-engine
+  // other", no-model, or "no-model metered".
   property string readiness: ""
   property bool startWhenChecked: false
   property bool startHandsFree: false
@@ -232,7 +232,7 @@ Item {
     if (!startWhenChecked) return
     startWhenChecked = false
     if (answer === "ready") start(startHandsFree)
-    else if (answer === "no-engine") say("󰀦", "Dictation is not available on this computer yet", "")
+    else if (answer.indexOf("no-engine") === 0) say("󰀦", "Dictation is not available on this computer yet", "")
     else if (answer.indexOf("no-model") === 0)
       offer(answer.indexOf("metered") > 0
         ? "Dictation needs a " + modelSize + " speech model, and this connection is metered"
