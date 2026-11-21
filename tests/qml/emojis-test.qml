@@ -16,6 +16,15 @@ ShellRoot {
     blockLoading: true
   }
 
+  // As the picker reads it: not at all until its first opening, then at
+  // once.
+  FileView {
+    id: firstOpening
+    path: Quickshell.env("TEST_PLUGINS") + "/emojis/emojis.json"
+    preload: false
+    blockLoading: true
+  }
+
   // A turn later: Quickshell takes Qt.quit() only once the shell is up.
   Component.onCompleted: Qt.callLater(run)
 
@@ -44,6 +53,9 @@ ShellRoot {
       "a word that begins with what is typed comes first, then one with it inside, each in the list's order")
     check(EmojiSearch.search(ranked, "cat", 3).join("") === "😺🙀🏷️" && EmojiSearch.search(ranked, "at", 9).join("") === "🥴😺🙀🏷️🐱",
       "the limit counts after the order; inside words only, the list's order")
+
+    check(!firstOpening.loaded, "the picker's list is not read before it is asked for")
+    check(EmojiSearch.parse(firstOpening.text()).length > 1800, "and asked for, it is read at once")
 
     var emojis = EmojiSearch.parse(installed.text())
     check(emojis.length > 1800 && emojis.every(function (item) { return item.k.length > 0 }),

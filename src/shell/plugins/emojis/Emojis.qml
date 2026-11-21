@@ -30,6 +30,9 @@ Item {
 
   // The shell's summon and hide.
   function open(payloadJson) {
+    // Read at the first opening, at once (blockLoading), rather than at
+    // login: a few milliseconds then, and nothing held until it is wanted.
+    if (all.length === 0) all = EmojiSearch.parse(list.text())
     opened = true
     search("")
     Qt.callLater(picker.takeKeys)
@@ -53,7 +56,7 @@ Item {
     find()
   }
 
-  // The search run again, on the same query or on emojis just loaded.
+  // The search run again, on the same query.
   function find() {
     found = EmojiSearch.search(all, query, 1000)
     cursor = Math.max(0, Math.min(cursor, found.length - 1))
@@ -111,11 +114,10 @@ Item {
   }
 
   FileView {
+    id: list
     path: Quickshell.env("NOVA_PATH") + "/shell/plugins/emojis/emojis.json"
-    onLoaded: {
-      emojis.all = EmojiSearch.parse(text())
-      if (emojis.opened) emojis.find()
-    }
+    preload: false
+    blockLoading: true
   }
 
   // ---------------------------------------------------------------- the card
