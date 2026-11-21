@@ -122,6 +122,11 @@ while IFS= read -r -d '' line; do
     PATH) value=$(once "$value" absolute) ;;
     XDG_DATA_DIRS | XDG_CONFIG_DIRS) value=$(once "$value") ;;
   esac
+  # A PATH of relative folders alone is none at all once they are gone.
+  if [[ $name == PATH && -z $value ]]; then
+    say "PATH is left out: it has no absolute folder"
+    continue
+  fi
   [[ -n ${was[$name]+x} && ${was[$name]} == "$value" ]] && continue
   if ! utf8 "$value"; then
     say "$name is left out: its value is not UTF-8"

@@ -62,6 +62,17 @@ EOF
   [ -z "$(tr ':' '\n' <<<"$path" | grep -v '^/')" ]
 }
 
+@test "a PATH of relative folders alone is left out, not made empty" {
+  # One that has an env in it, so that the shell can still say its variables.
+  mkdir -p "$HOME/relbin"
+  ln -s "$(command -v env)" "$HOME/relbin/env"
+  echo 'cd "$HOME"; export PATH=relbin' >"$HOME/.bash_profile"
+  run --separate-stderr profile
+  [ "$status" -eq 0 ]
+  fails grep -q '^command export PATH=' <<<"$output"
+  [[ $stderr == *"PATH is left out"* ]]
+}
+
 @test "Nova's ~/.bash_profile does not read ~/.profile again for the session, and does for a console" {
   cp "$REPO_ROOT/data/skel/.bash_profile" "$HOME/.bash_profile"
   echo 'export NOVA_TEST_LIST="${NOVA_TEST_LIST:-}:once"' >"$HOME/.profile"

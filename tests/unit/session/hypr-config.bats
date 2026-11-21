@@ -351,7 +351,7 @@ session_start() { # display...
 # which have to show at login whatever the desktop portal does. With
 # GTK_USE_PORTAL, GTK 3 (Qt's GTK theme starts it in both) waits on the portal
 # with no time limit; nova-launch gives it to apps alone. Only comments may
-# name it here.
+# name it in data/, and Nova's uwsm env file's unset.
 @test "GTK_USE_PORTAL is set nowhere in data/: apps alone get it, from nova-launch" {
   # All of data/: the session's environment also comes from uwsm's env.d,
   # some of it a model's (data/hardware/uwsm). Unset is what it may be.

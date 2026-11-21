@@ -402,7 +402,10 @@ esac'
   NOVA_MOBILE_NOW=1000 info state >/dev/null
   [ "$(NOVA_MOBILE_NOW=1030 info state)" = starting ]
   [ "$(cat "$SCRATCH/wwan")" = unblocked ]
-  [ "$(NOVA_MOBILE_NOW=1060 info state)" = failed ]
+  out=$(NOVA_MOBILE_NOW=1060 "$helper" info)
+  grep -qx state=failed <<<"$out"
+  # Off at the radio, said in the same look.
+  grep -qx radio=blocked <<<"$out"
   [ "$(cat "$SCRATCH/wwan")" = blocked ]
   grep -qx "nmcli radio wwan off" "$CALLS"
   [ "$(cat "$state/stopped")" = noenable ]

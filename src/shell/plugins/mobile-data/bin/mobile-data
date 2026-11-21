@@ -412,6 +412,9 @@ stop_trying() { # why
     have rfkill && rf block wwan >/dev/null 2>&1
   fi
   STATE=failed WHY=$1
+  # Said in this look already, so that the widget stops asking now, not a
+  # look later.
+  radio_blocked && RADIO=blocked
   return 0
 }
 
