@@ -1,0 +1,147 @@
+#!/bin/bash
+# apps-recipes-check: is every optional dependency of the App Center's front
+# page decided? src/apps/data/recipes says, for an app from Arch's
+# repositories, which packages go in with it (with) and which are left out on
+# purpose (skip). Each optional dependency of an Arch app on the front page
+# needs one or the other, unless what the app and its extras bring in has it
+# already. Arch adds an optional dependency now and then; this says so before
+# an install leaves it out unawares.
+#
+#   tools/apps-recipes-check [--flathub <dir>] [--dbpath <dir>] [--swcatalog <dir>]
+#                            [--catalog <nova-apps-catalog>] [--recipes <file>] [--featured <file>]
+#
+#   --flathub    a flatpak installation with Flathub's catalog in it: the
+#                front page lists apps by Flathub's IDs, and an Arch app under
+#                another ID (discord.desktop, Flathub's com.discordapp.Discord)
+#                is found as the App Center finds it, by both catalogs. Without
+#                it, only the apps Arch's catalog names alike are checked, and
+#                those with a recipe.
+#   --dbpath     pacman's database folder, whose sync/ has core, extra and
+#                multilib (/var/lib/pacman)
+#   --swcatalog  Arch's AppStream catalogs, archlinux-appstream-data's
+#                (/usr/share/swcatalog)
+#   --catalog    the nova-apps-catalog to read them with (cargo's release build)
+#   --recipes, --featured
+#                the files to check (src/apps/data/recipes and featured)
+#
+# It also says when a package a recipe names is not in the repositories, when
+# an app and its extras do not resolve together, and when a skip names
+# something that is no longer an optional dependency. The recipes' grammar is
+# nova-apps-apply's, which tests/unit/apps/apply.bats checks the file against.
+# Reads only: pacman runs on a database folder of its own.
+set -euo pipefail
+
+root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+die() { printf 'apps-recipes-check: %s\n' "$*" >&2; exit 2; }
+
+flathub='' dbpath=/var/lib/pacman swcatalog=/usr/share/swcatalog
+recipes=$root/src/apps/data/recipes featured=$root/src/apps/data/featured
+catalog=${CARGO_TARGET_DIR:-$root/target}/release/nova-apps-catalog
+while (($#)); do
+  case $1 in
+    --flathub) flathub=${2:?--flathub needs a folder}; shift 2 ;;
+    --dbpath) dbpath=${2:?--dbpath needs a folder}; shift 2 ;;
+    --swcatalog) swcatalog=${2:?--swcatalog needs a folder}; shift 2 ;;
+    --catalog) catalog=${2:?--catalog needs a program}; shift 2 ;;
+    --recipes) recipes=${2:?--recipes needs a file}; shift 2 ;;
+    --featured) featured=${2:?--featured needs a file}; shift 2 ;;
+    -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
+    *) die "unknown argument: $1 (try --help)" ;;
+  esac
+done
+[[ -r $recipes && -r $featured ]] || die "no $recipes or $featured"
+[[ -x $catalog ]] || die "no $catalog: cargo build --release first, or give --catalog"
+for repo in core extra multilib; do
+  [[ -r $dbpath/sync/$repo.db ]] || die "no $dbpath/sync/$repo.db: pacman -Sy with $repo enabled first"
+done
+[[ -d $swcatalog/xml ]] || die "no $swcatalog/xml: install archlinux-appstream-data first"
+[[ -z $flathub || -d $flathub ]] || die "no $flathub"
+
+work=$(mktemp -d)
+trap 'rm -rf -- "$work"' EXIT
+
+# The catalog as the App Center makes it, from these files and nothing of
+# this computer's user's.
+mkdir -p "$work/share/apps" "$work/home" "$work/none"
+cp -- "$featured" "$work/share/apps/featured"
+cp -- "$recipes" "$work/share/apps/recipes"
+env -i PATH=/usr/bin:/bin HOME="$work/home" NOVA_PATH="$work/share" NOVA_APPS_CACHE="$work/cache" \
+  NOVA_APPS_SWCATALOG="$swcatalog" NOVA_APPS_SYNC="$dbpath/sync" \
+  FLATPAK_USER_DIR="${flathub:-$work/none}" FLATPAK_SYSTEM_DIR="$work/none" \
+  "$catalog" --force >/dev/null || die "nova-apps-catalog failed"
+mapfile -t front < <(jq -r '.apps[] | select(.featured != null or .popular != null)
+  | .sources[] | select(.kind == "arch") | .package' "$work/cache/catalog.json" | sort -u)
+((${#front[@]})) || die "no app on the front page comes from Arch: is the catalog whole?"
+
+# pacman on the sync databases given, with an empty local one: what an app
+# brings in is all it needs, not what this computer lacks.
+mkdir -p "$work/db/local" "$work/db/sync"
+for repo in core extra multilib; do ln -s -- "$(cd -- "$dbpath/sync" && pwd)/$repo.db" "$work/db/sync/$repo.db"; done
+printf '[options]\nArchitecture = x86_64\nSigLevel = Never\n' >"$work/pacman.conf"
+for repo in core extra multilib; do printf '\n[%s]\nServer = file:///nonexistent\n' "$repo" >>"$work/pacman.conf"; done
+pac() { LC_ALL=C pacman --config "$work/pacman.conf" --dbpath "$work/db" --logfile /dev/null "$@"; }
+
+# A package's optional dependencies, by name.
+optional() { # package
+  pac -Si -- "$1" | awk '
+    on && /^[^ ]/ { exit }
+    /^Optional Deps/ { on = 1; sub(/^[^:]*: /, "") }
+    on { sub(/^ +/, ""); if ($0 == "None") next; sub(/:.*/, ""); sub(/[<>=].*/, ""); print }'
+}
+
+# What packages give: their names, and what they provide (hunspell-en_us is a
+# hunspell-dictionary).
+gives() { # package...
+  (($#)) || return 0
+  pac -Si -- "$@" | awk '
+    /^Name / { sub(/^[^:]*: /, ""); print; next }
+    on && /^[^ ]/ { on = 0 }
+    /^Provides / { on = 1; sub(/^[^:]*: /, "") }
+    on { n = split($0, w, " "); for (i = 1; i <= n; i++) if (w[i] != "None") { sub(/[<>=].*/, "", w[i]); print w[i] } }'
+}
+
+# A recipe's words for a package and a directive, one per line.
+words() { # package directive
+  sed 's/#.*//' "$recipes" | awk -v p="$1" -v d="$2" '$1 == p && $2 == d { for (i = 3; i <= NF; i++) print $i }'
+}
+
+mapfile -t named < <(sed 's/#.*//' "$recipes" | awk 'NF { print $1 }' | sort -u)
+mapfile -t all < <(printf '%s\n' "${front[@]}" "${named[@]}" | sort -u)
+problems=0
+problem() { echo "  $*"; problems=$((problems + 1)); }
+
+for package in "${all[@]}"; do
+  if ! pac -Si -- "$package" >/dev/null 2>&1; then
+    problem "$package: a recipe names it, and it is not in the repositories"
+    continue
+  fi
+  mapfile -t with < <(words "$package" with)
+  mapfile -t skip < <(words "$package" skip)
+  mapfile -t opt < <(optional "$package")
+  for name in "${with[@]}"; do
+    pac -Si -- "$name" >/dev/null 2>&1 || problem "$package: with $name, which is not in the repositories"
+  done
+  if brought=$(pac -Sp --print-format %n -- "$package" "${with[@]}" 2>&1); then
+    mapfile -t names <<<"$brought"
+    brought=$(gives "${names[@]}")
+  else
+    problem "$package: does not resolve with its extras: ${brought//$'\n'/ }"
+    brought=''
+  fi
+  for name in "${skip[@]}"; do
+    printf '%s\n' "${opt[@]}" | grep -qxF -- "$name" ||
+      problem "$package: skip $name, which is not one of its optional dependencies"
+  done
+  printf '%s\n' "${front[@]}" | grep -qxF -- "$package" || continue
+  for name in "${opt[@]}"; do
+    printf '%s\n' "${with[@]}" "${skip[@]}" | grep -qxF -- "$name" && continue
+    grep -qxF -- "$name" <<<"$brought" && continue
+    problem "$package: nothing decides its optional dependency $name (a with or a skip)"
+  done
+done
+
+if ((problems)); then
+  echo "apps-recipes-check: $problems to fix in src/apps/data/recipes (above)" >&2
+  exit 1
+fi
+echo "apps-recipes-check: ${#front[@]} apps from Arch on the front page, every optional dependency decided"

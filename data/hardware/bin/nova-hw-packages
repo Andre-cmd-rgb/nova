@@ -2,7 +2,7 @@
 
 # nova:summary=Print the packages this computer's hardware needs
 # nova:hidden=true
-# nova:args=[--graphics | --lib32 | --every] [--kernel <name>] [--portable]
+# nova:args=[--graphics | --lib32 | --needed-by | --every] [--kernel <name>] [--portable]
 #
 # The one place that says which packages a computer's hardware needs, from
 # its CPU and the display controllers and camera in sysfs (never lspci, which
@@ -15,6 +15,9 @@
 #                controllers
 #   --lib32      only their 32-bit OpenGL and Vulkan drivers, which Steam,
 #                Wine and 32-bit games need
+#   --needed-by  the ones an install needs, from the packages it brings (pacman
+#                -Sp --print-format %n) on stdin: none, the 64-bit ones for a
+#                graphics driver among them, both for anything 32-bit
 #   --every      every package the first mode prints on any computer, for the
 #                installer stick's offline packages
 #   --kernel K   the kernel NVIDIA's modules are built for (linux-nova by
@@ -49,14 +52,14 @@ else
 fi
 
 usage() {
-  echo "usage: nova-hw-packages [--graphics | --lib32 | --every] [--kernel <name>] [--portable]" >&2
+  echo "usage: nova-hw-packages [--graphics | --lib32 | --needed-by | --every] [--kernel <name>] [--portable]" >&2
   exit 2
 }
 
 mode=all kernel=linux-nova portable=0
 while (($#)); do
   case $1 in
-    --graphics | --lib32 | --every)
+    --graphics | --lib32 | --needed-by | --every)
       [[ $mode == all ]] || usage
       mode=${1#--}
       ;;
@@ -157,6 +160,20 @@ graphics() { # prefix
   fi
 }
 
+# The drivers an install needs, from the packages it brings: a graphics
+# driver among them (an app that needs "a Vulkan driver" brings the one
+# pacman picked) wants this computer's 64-bit ones, anything 32-bit both.
+needed_by() {
+  local brought
+  brought=$(cat)
+  if grep -q '^lib32-' <<<"$brought"; then
+    graphics ''
+    graphics lib32-
+  elif grep -qxE '(mesa|nvidia-utils|vulkan-[a-z]+)' <<<"$brought"; then
+    graphics ''
+  fi
+}
+
 # Everything, as the installer installs it.
 all() {
   local kind
@@ -206,4 +223,5 @@ case $mode in
   all) all ;;
   graphics) graphics '' ;;
   lib32) graphics lib32- ;;
+  needed-by) needed_by ;;
 esac | awk '!seen[$0]++'

@@ -1,0 +1,116 @@
+# What an app from Arch's repositories needs beyond its own dependencies, for
+# the App Center (docs/apps.md). Installed root-owned at
+# /usr/share/nova/apps/recipes, the one place nova-apps-apply reads them from.
+#
+#   <package> prefer flathub|arch      where the App Center offers it from first
+#   <package> with <package>...        installed with it, as dependencies, and
+#                                      taken out with it when nothing else needs them
+#   <package> skip <package>...        an optional dependency left out on purpose
+#   <package> after <action> <operand> done as root once it is in:
+#                                        enable-socket <unit>, a .socket the
+#                                          packages installed ship
+#                                        add-group <group>, the account that
+#                                          installs it into libvirt (the only one)
+#
+# Every optional dependency of an app on the App Center's front page that comes
+# from Arch has a with or a skip here, or is brought in by a with:
+# tools/apps-recipes-check says which do not. A skip says why after #.
+
+# --- media ---------------------------------------------------------------
+# Arch splits VLC into plugins; without them it plays little (no FFmpeg
+# decoders, no subtitles). Arch's own "all plugins", as VLC is everywhere else.
+vlc with vlc-plugins-all
+vlc skip vlc-gui-ncurses vlc-gui-skins2 # other interfaces than its own
+vlc skip vlc-plugin-vpl                  # Intel's oneVPL, for encoding on Intel GPUs
+
+obs-studio skip libva-intel-driver intel-media-driver libva-mesa-driver # the installer gives each GPU its video driver
+obs-studio skip xdg-desktop-portal-impl # Nova's portals capture the screen
+obs-studio skip sndio                   # PipeWire is the sound server
+obs-studio skip v4l2loopback-dkms       # the virtual camera: an out-of-tree module, built for each kernel
+
+mpv skip yt-dlp # mpv is Nova's player for files; web videos are the browser's
+audacity skip audacity-docs # the manual is online
+audacity skip ffmpeg        # Nova has it
+handbrake skip gst-plugins-good gst-libav gvfs # Nova has them
+handbrake skip intel-media-sdk # QuickSync of Intel GPUs before 2020
+handbrake skip libdvdcss       # encrypted DVDs
+
+# --- games ---------------------------------------------------------------
+steam skip polkit xdg-desktop-portal-impl ntsync-autoload # Nova has them
+steam skip NTSYNC-MODULE   # every kernel Nova installs has it
+steam skip xorg-fonts-misc # bitmap fonts for X11 locales
+
+# Lutris downloads the Wine and Proton it runs a game with: umu-launcher runs
+# Proton outside Steam, lib32-gnutls logs in to Ubisoft, EA and GOG, and
+# innoextract unpacks GOG's installers. A Wine of the system's (and its DX12,
+# vkd3d) is for games run without Lutris.
+lutris with umu-launcher lib32-gnutls innoextract
+lutris skip wine winetricks vkd3d lib32-vkd3d # Lutris downloads its own Wine and DXVK/VKD3D
+lutris skip gamemode lib32-gamemode           # nova-powerd owns the power limits
+lutris skip vulkan-icd-loader lib32-vulkan-icd-loader lib32-mesa-libgl # the graphics drivers nova-apps-apply adds
+lutris skip gvfs                              # Nova has it
+lutris skip fluidsynth libappindicator python-pefile python-protobuf vulkan-tools xorg-xgamma # MIDI music, a tray icon, executables' icons, Battle.net, Vulkan tools, X11 gamma
+
+# Arch's RetroArch hides the core updater and reads cores and their
+# descriptions from /usr/lib/libretro and /usr/share/libretro/info: without
+# them it plays nothing. The menu's assets, and the cores of the common
+# consoles that need no BIOS: Game Boy, NES, SNES, Mega Drive, Nintendo 64.
+retroarch with retroarch-assets-ozone libretro-core-info
+retroarch with libretro-mgba libretro-nestopia libretro-snes9x libretro-genesis-plus-gx libretro-mupen64plus-next
+retroarch skip retroarch-assets-glui retroarch-assets-xmb # the other menus' assets
+retroarch skip libretro-overlays libretro-shaders         # extras, from the menu's online updater
+retroarch skip gamemode                                   # nova-powerd owns the power limits
+retroarch skip libdecor python                            # client-side borders, which Hyprland does not need; a shader converter
+
+openttd with openttd-opengfx openttd-opensfx # OpenTTD starts with no graphics or sounds of its own
+prismlauncher skip java-runtime # it downloads the Java each Minecraft needs
+prismlauncher skip glfw openal  # Minecraft brings its own
+prismlauncher skip visualvm orca flite xorg-xrandr # profiling, a screen reader and narration, old versions under X11
+
+# --- create --------------------------------------------------------------
+gimp skip gvfs bash-completion alsa-lib # Nova has them
+gimp skip gimp-help                     # the manual is online
+gimp skip cfitsio ghostscript gjs gutenprint # FITS, PostScript, JavaScript plug-ins, printer drivers
+inkscape skip gvfs                       # Nova has it
+inkscape skip fig2dev pstoedit texlive-pstricks # xfig files and LaTeX formulas
+krita with libmypaint # its MyPaint brush engine
+krita skip libheif    # Nova has it
+krita skip kimageformats krita-plugin-gmic kseexpr libjxl poppler-qt6 python-pyqt6 # PSD, G'MIC, SeExpr, JPEG XL, PDF, Python plug-ins
+kdenlive with qt6-imageformats # WebP and TIFF pictures in a project
+kdenlive skip kimageformats bigsh0t dvgrab noise-suppression-for-voice opencv recordmydesktop # more formats, VR360, FireWire, noise suppression, motion tracking, screen capture
+kdenlive skip plasma-desktop # KDE's desktop
+kdenlive skip python-openai-whisper python-srt_equalizer python-vosk # speech to text, models of gigabytes
+blender skip cuda hip-runtime-amd intel-compute-runtime intel-level-zero-raytracing-support # GPU compute stacks of gigabytes
+blender skip libdecor # client-side borders, which Hyprland does not need
+darktable skip dcraw ghostscript gnuplot imagemagick perl-image-exiftool # its optional scripts
+darktable skip onnxruntime opencl-driver portmidi # AI masks, OpenCL, MIDI controllers
+
+# --- work, learn, internet -----------------------------------------------
+firefox with hunspell-en_us # spell checking, in the language Nova sets up
+firefox skip libnotify networkmanager xdg-desktop-portal # Nova has them
+firefox skip firefox-i18n onnxruntime speech-dispatcher # other languages, local AI features, text to speech
+thunderbird with hunspell-en_us
+thunderbird skip libnotify # Nova has it
+thunderbird skip libotr    # OTR chat
+telegram-desktop skip xdg-desktop-portal # Nova has it
+telegram-desktop skip geoclue crow-translate webkit2gtk-4.1 webkitgtk-6.0 # location, translation, its embedded browser
+discord prefer flathub # Discord wants its newest release; Flathub has it the day it is out
+discord skip libpulse xdg-utils # Nova has them
+discord skip libappindicator-gtk3 # a tray icon
+zed skip org.freedesktop.secrets # Nova's keyring provides it
+keepassxc skip wl-clipboard # Nova has it
+keepassxc skip xclip        # X11's clipboard
+qbittorrent skip python     # the search tab's plug-ins
+anki skip mpv               # Nova has it
+anki skip lame mplayer texlive-most # recording, another player, LaTeX
+stellarium skip calcmysky man-db # another sky model, manual pages
+kstars skip xplanet
+marble skip kcmutils kirigami-addons libplasma plasma5support # KDE Plasma's applets
+
+# --- not on the front page -----------------------------------------------
+# virt-manager manages QEMU's virtual machines through libvirt: QEMU itself,
+# dnsmasq for the default network, libvirt's daemon started when asked, and
+# the account in libvirt's group so it may ask without a password.
+virt-manager with qemu-desktop dnsmasq
+virt-manager after enable-socket libvirtd.socket
+virt-manager after add-group libvirt

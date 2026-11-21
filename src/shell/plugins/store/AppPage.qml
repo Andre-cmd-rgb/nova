@@ -9,9 +9,9 @@ import "StoreModel.js" as Model
 // An app's page: its icon, name and summary; Get, or Open and Remove, and
 // how far an install is; where it comes from, and the choice of another
 // place where it comes from more than one; its pictures, what it says of
-// itself, and its facts. The pictures and an Arch package's size come from
-// helpers (nova-apps-shots, nova-apps-size): the shell reads files and never
-// the network.
+// itself, and its facts. The pictures and an Arch package's size (with what
+// its recipe installs with it) come from helpers (nova-apps-shots,
+// nova-apps-size): the shell reads files and never the network.
 //
 // The app it is given is the list's, which has what the header and Get need.
 // The rest (pictures, description, facts, the sources' versions) is in the
@@ -69,7 +69,7 @@ Column {
   function fetchSize() {
     var arch = Model.offered(app, "arch")
     if (arch && arch.kind === "arch") {
-      sizeProc.command = ["nova-apps-size", arch.package]
+      sizeProc.command = ["nova-apps-size", arch.package].concat(Array.isArray(arch.with) ? arch.with : [])
       sizeProc.running = true
     }
   }

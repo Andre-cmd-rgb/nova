@@ -122,6 +122,10 @@ fn featured_file() -> PathBuf {
     nova_path().join("apps/featured")
 }
 
+fn recipes_file() -> PathBuf {
+    nova_path().join("apps/recipes")
+}
+
 /// What the catalog is made from, each with what changes when it does: when
 /// this differs from the one kept with the catalog, it is made again.
 pub fn stamp() -> String {
@@ -163,6 +167,7 @@ pub fn stamp() -> String {
         }
     }
     file(&featured_file());
+    file(&recipes_file());
     lines.join("\n") + "\n"
 }
 
@@ -279,6 +284,7 @@ pub fn gather() -> Result<Inputs, String> {
         packages: HashMap::new(),
         arch_icons: HashMap::new(),
         featured: Vec::new(),
+        recipes: catalog::Recipes::default(),
     };
     if let Some(i) = flathub() {
         let dir = i.appstream();
@@ -320,5 +326,7 @@ pub fn gather() -> Result<Inputs, String> {
     inputs.arch_icons = arch_icons(&wanted, &cache_dir());
     inputs.featured =
         catalog::parse_featured(&fs::read_to_string(featured_file()).unwrap_or_default());
+    inputs.recipes =
+        catalog::parse_recipes(&fs::read_to_string(recipes_file()).unwrap_or_default());
     Ok(inputs)
 }

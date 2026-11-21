@@ -280,6 +280,31 @@ status_of() { # id field
   [ "$output" = "21495808 106954752" ]
   run nova-apps-size -- '--rf'
   [ "$status" -eq 2 ]
+  run nova-apps-size gimp '-dd'
+  [ "$status" -eq 2 ]
+}
+
+@test "size: with what its recipe installs with it, and this computer's graphics drivers where pacman would pick NVIDIA's" {
+  # pacman picks NVIDIA's 32-bit driver unless given one.
+  stub pacman 'echo "pacman $*" >>"$CALLS"
+    case $1 in
+    -Sp) shift 4
+      printf "%s\n" "$@"
+      [[ " $* " == *" lib32-vulkan-intel "* ]] || echo lib32-nvidia-utils ;;
+    -Si) for p in "${@:3}"; do printf "Name : %s\nDownload Size : 1.00 MiB\nInstalled Size : 2.00 MiB\n" "$p"; done ;;
+    esac'
+  stub hw '[[ $1 == --needed-by ]] || exit 2; grep -q "^lib32-" && printf "%s\n" mesa vulkan-intel lib32-mesa lib32-vulkan-intel'
+  NOVA_HW_PACKAGES=$SCRATCH/bin/hw run nova-apps-size steam umu-launcher
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -Sp --print-format %n -- steam umu-launcher mesa vulkan-intel lib32-mesa lib32-vulkan-intel' "$CALLS"
+  # Six packages of a MiB each, none of them NVIDIA's.
+  [ "$output" = "6291456 12582912" ]
+  fails grep -q -- '-Si.*nvidia' "$CALLS"
+  # An app that needs no driver is sized as it is.
+  stub hw 'cat >/dev/null'
+  : >"$CALLS"
+  NOVA_HW_PACKAGES=$SCRATCH/bin/hw run nova-apps-size gimp
+  [ "$(grep -c -- -Sp "$CALLS")" -eq 1 ]
 }
 
 @test "store: the window on an app's page, an appstream:// link's, or a search" {

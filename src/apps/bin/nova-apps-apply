@@ -9,6 +9,14 @@
 #                       NVIDIA's on every computer. They go in as dependencies,
 #                       so they leave with the app.
 #   remove <package>    remove an installed app, and what it alone needed
+#
+# An app's recipe (src/apps/data/recipes, read only from
+# /usr/share/nova/apps/recipes, a file only root can write) adds packages to
+# its install, marked as dependencies and taken out with it when nothing else
+# needs them, and steps done as root once it is in, from a fixed list:
+# enable-socket <unit> for a socket a package installed ships, add-group
+# libvirt for the account that authenticated. A recipe that breaks those
+# rules stops the install with nothing changed.
 #   built <file>        install Chrome or VS Code, built by nova apps install
 #                       (nova-update-apply checks and installs it)
 #
@@ -52,6 +60,7 @@ MIRRORLIST=$ROOT/etc/pacman.d/nova-mirrorlist
 REPOFILE=$ROOT/etc/pacman.d/nova-repo
 SYNC_DIR=$ROOT/var/lib/pacman/sync
 SWCATALOG=$ROOT/usr/share/swcatalog
+RECIPES=$ROOT/usr/share/nova/apps/recipes
 
 say() { printf '==> %s\n' "$*"; }
 die() {
@@ -129,19 +138,16 @@ hw_packages() { # option...
   fi
 }
 
-# The graphics drivers to install beside the packages: when what they would
-# bring in (pacman -Sp) has anything 32-bit, or a graphics driver pacman
-# picked for them, this computer's own, 64-bit and, for the 32-bit, 32-bit
-# too. Left to pick a provider of vulkan-driver or lib32-vulkan-driver
-# (Steam needs both), pacman takes NVIDIA's on every computer; given one in
-# the same transaction, it takes that one.
+# The graphics drivers to install beside the packages: this computer's own,
+# for what they would bring in (pacman -Sp; nova-hw-packages --needed-by
+# says which, as for the App Center's size in nova-apps-size). Left to pick
+# a provider of vulkan-driver or lib32-vulkan-driver (Steam needs both),
+# pacman takes NVIDIA's on every computer; given one in the same
+# transaction, it takes that one.
 graphics_for() { # package...
-  local brought need64=0 need32=0
+  local brought
   brought=$(pacman -Sp --print-format %n -- "$@" 2>/dev/null) || return 0
-  if grep -q '^lib32-' <<<"$brought"; then need32=1 need64=1; fi
-  if grep -qxE '(lib32-)?(mesa|nvidia-utils|vulkan-[a-z]+)' <<<"$brought"; then need64=1; fi
-  ((need64)) || return 0
-  { hw_packages --graphics && { ((!need32)) || hw_packages --lib32; }; } | grep -xE '[a-z0-9@_+][a-z0-9@._+-]*' || true
+  hw_packages --needed-by <<<"$brought" | grep -xE '[a-z0-9@_+][a-z0-9@._+-]*' || true
 }
 
 # Of the packages, those not installed yet.
@@ -150,6 +156,129 @@ not_installed() { # package...
   for name; do
     pacman -Q -- "$name" >/dev/null 2>&1 || printf '%s\n' "$name"
   done
+}
+
+# --- the app's recipe ---------------------------------------------------------
+#
+# What an app needs beyond its own dependencies (src/apps/data/recipes):
+# packages installed with it, and what is done as root once it is in. Read
+# from the one root-owned file, never from an argument or the environment;
+# each line split with read -a, so nothing in it is expanded, each word
+# checked before it is used, and packages passed to pacman after --.
+
+PACKAGE_NAME='^[a-z0-9@_+][a-z0-9@._+-]*$'
+SOCKET_UNIT='^[a-z0-9][a-z0-9_-]*\.socket$'
+# The groups an app may put its user in: one that gives what the app needs
+# and no more. Never wheel, root's, or a group that reads the disks.
+RECIPE_GROUPS=(libvirt)
+
+# A recipe that is not as it should be stops the install: it is Nova's, and
+# a broken one is a bug, not something to guess around.
+broken_recipe() { die "the recipe for $target is broken ($1); nothing was changed"; }
+
+# The target's recipe, checked, into RECIPE_WITH (packages) and RECIPE_AFTER
+# ("action operand"). Run in this shell, so a broken one stops it. The file
+# has to be a plain file that only root can write; with none, no recipe.
+RECIPE_WITH=() RECIPE_AFTER=()
+read_recipe() {
+  local line word action operand
+  local -a words
+  [[ -e $RECIPES || -L $RECIPES ]] || return 0
+  [[ -f $RECIPES && ! -L $RECIPES ]] || broken_recipe "$RECIPES is not a plain file"
+  if ((EUID == 0)); then
+    [[ $(stat -c '%u %a' -- "$RECIPES") =~ ^0\ [0-7]?[0-7][0145][0145]$ ]] || broken_recipe "$RECIPES is not root's alone"
+  fi
+  while IFS= read -r line || [[ -n $line ]]; do
+    line=${line%%#*}
+    read -r -a words <<<"$line"
+    ((${#words[@]} >= 2)) && [[ ${words[0]} == "$target" ]] || continue
+    case ${words[1]} in
+      with | skip)
+        ((${#words[@]} > 2)) || broken_recipe "a ${words[1]} that names nothing"
+        for word in "${words[@]:2}"; do
+          [[ $word =~ $PACKAGE_NAME || (${words[1]} == skip && $word =~ ^[A-Za-z0-9@._+-]+$) ]] ||
+            broken_recipe "'$word' is not a package's name"
+          [[ ${words[1]} == skip ]] || RECIPE_WITH+=("$word")
+        done
+        ;;
+      prefer)
+        ((${#words[@]} == 3)) && [[ ${words[2]} == flathub || ${words[2]} == arch ]] ||
+          broken_recipe "prefer takes flathub or arch"
+        ;;
+      after)
+        ((${#words[@]} == 4)) || broken_recipe "after takes an action and one operand"
+        action=${words[2]} operand=${words[3]}
+        case $action in
+          enable-socket) [[ $operand =~ $SOCKET_UNIT ]] || broken_recipe "'$operand' is not a socket unit" ;;
+          add-group) [[ " ${RECIPE_GROUPS[*]} " == *" $operand "* ]] || broken_recipe "'$operand' is not a group an app may add" ;;
+          *) broken_recipe "'$action' is no action an app may take" ;;
+        esac
+        RECIPE_AFTER+=("$action $operand")
+        ;;
+      *) broken_recipe "'${words[1]}' is no directive" ;;
+    esac
+  done <"$RECIPES"
+}
+
+# A socket unit that a package installed ships, and that package.
+socket_owner() { # unit
+  local path=/usr/lib/systemd/system/$1
+  [[ -f $ROOT$path ]] || return 1
+  pacman -Qqo -- "$path" 2>/dev/null
+}
+
+# What the recipe does once the app is in. A step that fails is said, and
+# the app stays installed: it is in, and the step can be done by hand.
+run_after() { # "action operand"...
+  local step action operand user
+  for step; do
+    read -r action operand <<<"$step"
+    case $action in
+      enable-socket)
+        if ! socket_owner "$operand" >/dev/null; then
+          echo "nova-apps-apply: $operand is not a socket of an installed package; it is left off" >&2
+          continue
+        fi
+        say "Turning on $operand"
+        systemctl enable --now -- "$operand" ||
+          echo "nova-apps-apply: could not turn on $operand; try: sudo systemctl enable --now $operand" >&2
+        ;;
+      add-group)
+        # The account pkexec authenticated, which only pkexec sets.
+        user=''
+        if [[ ${PKEXEC_UID:-} =~ ^[0-9]+$ ]]; then user=$(getent passwd "$PKEXEC_UID" | cut -d: -f1); fi
+        if [[ ! $user =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+          echo "nova-apps-apply: no account to add to $operand; add yours with: sudo gpasswd -a \$USER $operand" >&2
+          continue
+        fi
+        getent group "$operand" >/dev/null || { echo "nova-apps-apply: there is no group $operand" >&2; continue; }
+        say "Adding $user to the $operand group, from the next login"
+        gpasswd -a "$user" "$operand" >/dev/null || echo "nova-apps-apply: could not add $user to $operand" >&2
+        ;;
+    esac
+  done
+}
+
+# Of the extras the recipe brought, those that can go with the app: installed
+# as dependencies (one installed by name was asked for), and needed by nothing
+# that stays. Dropping one can leave another needed by it, so until none drops.
+extras_to_remove() { # extra...
+  local -a keep=("$@") next=() by=()
+  local changed=1 name who
+  while ((changed)); do
+    changed=0 next=()
+    for name in "${keep[@]}"; do
+      if [[ $(pacman -Qqd -- "$name" 2>/dev/null) != "$name" ]]; then changed=1; continue; fi
+      read -r -a by < <(LC_ALL=C pacman -Qi -- "$name" 2>/dev/null |
+        awk '/^Required By/ { on = 1; sub(/^[^:]*:/, ""); printf "%s ", $0; next } on && /^ / { printf "%s ", $0; next } { on = 0 } END { print "" }')
+      for who in "${by[@]}"; do
+        [[ $who == None || $who == "$target" || " ${keep[*]} " == *" $who "* ]] || { changed=1; continue 2; }
+      done
+      next+=("$name")
+    done
+    keep=("${next[@]}")
+  done
+  ((${#keep[@]} == 0)) || printf '%s\n' "${keep[@]}"
 }
 
 install_app() {
@@ -162,14 +291,23 @@ install_app() {
   pacman -Si -- "$target" >/dev/null 2>&1 || die "$target is not in the release's repositories"
   behind=$(LC_ALL=C pacman -Qu 2>/dev/null | grep -v '\[ignored\]$' | awk '{ print $1 }' | paste -sd' ' || true)
   [[ -z $behind ]] || die "this computer's packages are older than its package lists ($behind): update Nova first, in Settings, Updates" 3
-  local -a drivers=() added=()
-  mapfile -t drivers < <(graphics_for "$target")
-  mapfile -t added < <(not_installed "${drivers[@]}")
+  read_recipe
+  local name
+  local -a extras=() gone=() drivers=() new_extras=() new_drivers=()
+  for name in "${RECIPE_WITH[@]}"; do
+    if pacman -Si -- "$name" >/dev/null 2>&1; then extras+=("$name"); else gone+=("$name"); fi
+  done
+  ((${#gone[@]} == 0)) || echo "nova-apps-apply: not in the release's repositories, so left out: ${gone[*]}" >&2
+  mapfile -t drivers < <(graphics_for "$target" "${extras[@]}")
+  mapfile -t new_extras < <(not_installed "${extras[@]}")
+  mapfile -t new_drivers < <(not_installed "${drivers[@]}")
   say "Installing $target"
-  ((${#added[@]} == 0)) || say "With this computer's graphics drivers: ${added[*]}"
-  stdbuf -oL pacman -S --needed --noconfirm -- "$target" "${drivers[@]}"
+  ((${#new_extras[@]} == 0)) || say "With it: ${new_extras[*]}"
+  ((${#new_drivers[@]} == 0)) || say "With this computer's graphics drivers: ${new_drivers[*]}"
+  stdbuf -oL pacman -S --needed --noconfirm -- "$target" "${extras[@]}" "${drivers[@]}"
   # Dependencies, as pacman would have made them: they go with the app.
-  ((${#added[@]} == 0)) || pacman -D --asdeps -- "${added[@]}" >/dev/null
+  ((${#new_extras[@]} + ${#new_drivers[@]} == 0)) || pacman -D --asdeps -- "${new_extras[@]}" "${new_drivers[@]}" >/dev/null
+  ((${#RECIPE_AFTER[@]} == 0)) || run_after "${RECIPE_AFTER[@]}"
 }
 
 remove_app() {
@@ -187,10 +325,27 @@ remove_app() {
   owner=$(LC_ALL=C pacman -Qi nova 2>/dev/null | awk '/^Depends On/ { on = 1; sub(/^[^:]*:/, ""); print; next } on && /^ / { print; next } { on = 0 }' |
     tr -s ' ' '\n' | sed -E 's/[<>=].*//' | grep -cx -- "$target" || true)
   ((owner == 0)) || die "$target is part of Nova"
+  read_recipe
+  local -a extras=() going=()
+  local step action unit owner
+  if ((${#RECIPE_WITH[@]})); then mapfile -t extras < <(extras_to_remove "${RECIPE_WITH[@]}"); fi
+  # A socket the recipe turned on, whose package goes now: off first, so
+  # that no link to a unit that is gone is left behind.
+  if ((${#RECIPE_AFTER[@]})); then
+    mapfile -t going < <(pacman -Rsp --print-format %n -- "$target" "${extras[@]}" 2>/dev/null || true)
+    for step in "${RECIPE_AFTER[@]}"; do
+      read -r action unit <<<"$step"
+      [[ $action == enable-socket ]] || continue
+      owner=$(socket_owner "$unit") || continue
+      [[ -n $owner && " ${going[*]} " == *" $owner "* ]] || continue
+      systemctl disable --now -- "$unit" || true
+    done
+  fi
   say "Removing $target"
+  ((${#extras[@]} == 0)) || say "With what it brought: ${extras[*]}"
   # pacman refuses a removal that would break anything installed, and says
   # what; what nothing else needs goes with it.
-  stdbuf -oL pacman -Rns --noconfirm -- "$target"
+  stdbuf -oL pacman -Rns --noconfirm -- "$target" "${extras[@]}"
 }
 
 case $action in

@@ -11,7 +11,7 @@
 //! from Arch, and 103 MB from Flathub with a 433 MB runtime besides
 //! (docs/apps.md has the measurements). The app's page offers the other.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::appstream::{Component, Shot};
 use crate::json::Object;
@@ -29,6 +29,9 @@ pub enum Source {
         repo: String,
         version: String,
         desktop: String,
+        /// What its recipe installs with it (src/apps/data/recipes), which
+        /// the app's page names and counts in its size.
+        with: Vec<String>,
     },
     /// A Flathub app: its ref, and what its download and the runtime it
     /// needs come to.
@@ -52,11 +55,14 @@ impl Source {
         }
     }
 
-    fn order(&self) -> u8 {
+    /// Its place among an app's sources: Nova's build, then Arch's, then
+    /// Flathub's, or Flathub's before Arch's for an app whose recipe prefers
+    /// it.
+    fn order(&self, flathub_first: bool) -> u8 {
         match self {
             Source::Nova { .. } => 0,
-            Source::Arch { .. } => 1,
-            Source::Flathub { .. } => 2,
+            Source::Arch { .. } => 1 + u8::from(flathub_first),
+            Source::Flathub { .. } => 2 - u8::from(flathub_first),
         }
     }
 }
@@ -236,6 +242,64 @@ pub struct Inputs {
     pub arch_icons: HashMap<(String, String), String>,
     /// "category id" lines: the front page.
     pub featured: Vec<(String, String)>,
+    /// What the recipes say of Arch's packages.
+    pub recipes: Recipes,
+}
+
+/// What the recipes (src/apps/data/recipes) say that the catalog shows: the
+/// Arch packages offered from Flathub first, and what each installs with it.
+/// nova-apps-apply reads the same file, as root, for what it installs.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Recipes {
+    pub prefer_flathub: HashSet<String>,
+    pub with: HashMap<String, Vec<String>>,
+}
+
+/// A package's name as the recipes may give one: what pacman takes, never an
+/// option.
+fn package_name(word: &str) -> bool {
+    let mut chars = word.chars();
+    chars
+        .next()
+        .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "@_+".contains(c))
+        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "@._+-".contains(c))
+}
+
+/// The recipes: "<package> <directive> <operand>..." lines, # starting a
+/// comment. Only prefer and with are the catalog's; a line it cannot read is
+/// passed over, as nova-apps-apply refuses one.
+pub fn parse_recipes(text: &str) -> Recipes {
+    let mut recipes = Recipes::default();
+    for line in text.lines() {
+        let words: Vec<&str> = line
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .split_whitespace()
+            .collect();
+        match words.as_slice() {
+            [package, "prefer", "flathub"] if package_name(package) => {
+                recipes.prefer_flathub.insert(package.to_string());
+            }
+            [package, "prefer", "arch"] if package_name(package) => {
+                recipes.prefer_flathub.remove(*package);
+            }
+            [package, "with", extras @ ..]
+                if package_name(package)
+                    && !extras.is_empty()
+                    && extras.iter().all(|w| package_name(w)) =>
+            {
+                let list = recipes.with.entry(package.to_string()).or_default();
+                for extra in extras {
+                    if !list.iter().any(|e| e == extra) {
+                        list.push(extra.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    recipes
 }
 
 fn file_exists(path: &str) -> bool {
@@ -389,6 +453,12 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
             repo: repo_now.clone(),
             version: version.clone(),
             desktop,
+            with: inputs
+                .recipes
+                .with
+                .get(&c.package)
+                .cloned()
+                .unwrap_or_default(),
         };
         let icon = inputs
             .arch_icons
@@ -499,7 +569,10 @@ pub fn build(inputs: &Inputs) -> Vec<App> {
     }
 
     for app in &mut apps {
-        app.sources.sort_by_key(Source::order);
+        let flathub_first = app.sources.iter().any(
+            |s| matches!(s, Source::Arch { package, .. } if inputs.recipes.prefer_flathub.contains(package)),
+        );
+        app.sources.sort_by_key(|s| s.order(flathub_first));
         app.rank = rank(app);
     }
     apps.sort_by(|a, b| {
@@ -575,11 +648,15 @@ fn write_source(out: &mut String, s: &Source) {
             repo,
             version,
             desktop,
+            with,
         } => {
             o.str("package", package)
                 .str("repo", repo)
                 .some("version", version)
                 .some("desktop", desktop);
+            if !with.is_empty() {
+                o.strs("with", with);
+            }
         }
         Source::Flathub {
             app,
@@ -613,9 +690,15 @@ fn write_brief_source(out: &mut String, s: &Source) {
             o.str("package", package);
         }
         Source::Arch {
-            package, desktop, ..
+            package,
+            desktop,
+            with,
+            ..
         } => {
             o.str("package", package).some("desktop", desktop);
+            if !with.is_empty() {
+                o.strs("with", with);
+            }
         }
         Source::Flathub { app, .. } => {
             o.str("app", app);
@@ -981,7 +1064,87 @@ mod tests {
                 ("popular".into(), "com.google.Chrome".into()),
                 ("popular".into(), "org.gimp.GIMP".into()),
             ],
+            recipes: Recipes::default(),
         }
+    }
+
+    #[test]
+    fn recipes_say_what_comes_with_an_app_and_where_it_is_offered_from() {
+        let r = parse_recipes(
+            "# a comment\n\
+             vlc with vlc-plugins-all   # why\n\
+             vlc with vlc-plugins-all extra-one\n\
+             vlc skip vlc-gui-ncurses\n\
+             discord prefer flathub\n\
+             zed prefer flathub\n\
+             zed prefer arch\n\
+             bad with --overwrite=*\n\
+             Bad with x\n\
+             lonely with\n\
+             virt-manager after enable-socket libvirtd.socket\n",
+        );
+        assert_eq!(r.with["vlc"], vec!["vlc-plugins-all", "extra-one"]);
+        assert!(!r.with.contains_key("bad"));
+        assert!(!r.with.contains_key("Bad"));
+        assert!(!r.with.contains_key("lonely"));
+        assert!(r.prefer_flathub.contains("discord"));
+        assert!(!r.prefer_flathub.contains("zed"));
+        assert_eq!(r.with.len(), 1);
+    }
+
+    #[test]
+    fn a_recipe_puts_flathub_first_and_names_what_arch_installs_with_it() {
+        let mut i = inputs();
+        i.recipes = parse_recipes("gimp prefer flathub\ngimp with gimp-help\n");
+        let apps = build(&i);
+        let gimp = apps.iter().find(|a| a.meta.id == "org.gimp.GIMP").unwrap();
+        assert_eq!(gimp.sources[0].kind(), "flathub");
+        assert_eq!(gimp.sources[1].kind(), "arch");
+        assert!(
+            matches!(&gimp.sources[1], Source::Arch { with, .. } if with == &vec!["gimp-help".to_string()])
+        );
+        let mut brief = String::new();
+        write_brief(&mut brief, gimp, "p.json");
+        assert!(
+            brief.contains(
+                r#""kind":"arch","package":"gimp","desktop":"gimp.desktop","with":["gimp-help"]"#
+            ),
+            "{brief}"
+        );
+        // Without the recipe, Arch's first, and no with.
+        let apps = build(&inputs());
+        let gimp = apps.iter().find(|a| a.meta.id == "org.gimp.GIMP").unwrap();
+        assert_eq!(gimp.sources[0].kind(), "arch");
+        let mut brief = String::new();
+        write_brief(&mut brief, gimp, "p.json");
+        assert!(!brief.contains("with"));
+    }
+
+    #[test]
+    fn the_shipped_recipes_read_as_they_are_written() {
+        let text = include_str!("../data/recipes");
+        let r = parse_recipes(text);
+        // Every with line the catalog reads; a line it passed over would be
+        // one nova-apps-apply refuses too.
+        let with_lines = text
+            .lines()
+            .filter(|l| l.split('#').next().unwrap_or("").split_whitespace().nth(1) == Some("with"))
+            .count();
+        assert!(with_lines > 0);
+        let read: usize = text
+            .lines()
+            .filter_map(|l| {
+                let w: Vec<&str> = l
+                    .split('#')
+                    .next()
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .collect();
+                (w.get(1) == Some(&"with")).then(|| w.len() - 2)
+            })
+            .sum();
+        assert_eq!(r.with.values().map(Vec::len).sum::<usize>(), read);
+        assert!(r.prefer_flathub.contains("discord"));
     }
 
     #[test]

@@ -1,18 +1,38 @@
 #!/bin/bash
 # nova:hidden=true
 # nova:summary=Print what installing a package from Arch's repositories would add, in bytes
-# nova:args=<package>
+# nova:args=<package> [<package it is installed with>...]
 #
-# "<download> <installed>": the package and whatever it needs that is not
-# installed yet, as pacman would install them now. The App Center's page
-# shows it as the app's size. Reads the package lists, and changes nothing.
+# "<download> <installed>": the package, the ones its recipe installs with it
+# (the catalog's "with", src/apps/data/recipes), this computer's graphics
+# drivers when they need one (nova-hw-packages --needed-by), and whatever
+# those need that is not installed yet, as pacman would install them now:
+# what nova-apps-apply installs. The App Center's page shows it as the app's
+# size. Reads the package lists, and changes nothing.
+#
+# NOVA_HW_PACKAGES is for tests.
 
 set -euo pipefail
 
-package=${1:-}
-[[ $package =~ ^[a-z0-9@_+][a-z0-9@._+-]*$ ]] || { echo "Usage: nova-apps-size <package>" >&2; exit 2; }
+HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+HW_PACKAGES=${NOVA_HW_PACKAGES:-$HERE/nova-hw-packages}
 
-mapfile -t names < <(LC_ALL=C pacman -Sp --print-format '%n' -- "$package" 2>/dev/null)
+(($#)) || { echo "Usage: nova-apps-size <package> [<package>...]" >&2; exit 2; }
+for package; do
+  [[ $package =~ ^[a-z0-9@_+][a-z0-9@._+-]*$ ]] || { echo "Usage: nova-apps-size <package> [<package>...]" >&2; exit 2; }
+done
+
+brought=$(LC_ALL=C pacman -Sp --print-format '%n' -- "$@" 2>/dev/null) || brought=''
+# Given the drivers, pacman takes those where it would have picked NVIDIA's.
+if [[ -n $brought && -x $HW_PACKAGES ]]; then
+  portable=()
+  [[ ! -e /etc/nova/portable ]] || portable=(--portable)
+  mapfile -t drivers < <("$HW_PACKAGES" "${portable[@]}" --needed-by <<<"$brought" | grep -xE '[a-z0-9@_+][a-z0-9@._+-]*' || true)
+  if ((${#drivers[@]})); then
+    brought=$(LC_ALL=C pacman -Sp --print-format '%n' -- "$@" "${drivers[@]}" 2>/dev/null) || brought=''
+  fi
+fi
+mapfile -t names < <(grep . <<<"$brought" || true)
 ((${#names[@]})) || { echo "0 0"; exit 0; }
 LC_ALL=C pacman -Si -- "${names[@]}" 2>/dev/null | awk '
   function bytes(n, unit) {

@@ -365,12 +365,15 @@ function launchWords(app, from) {
 
 // The page's facts, in order: [{ label, value }], the empty ones left out:
 // where it is installed from, or comes from; the version installed, or the
-// one the source offered has.
+// one the source offered has; before an install from Arch, the packages its
+// recipe installs with it (their size is in the app's, nova-apps-size).
 function facts(app, from, source, size) {
+  var extras = !from && source && source.kind === "arch" && Array.isArray(source.with) ? source.with : []
   var list = [
     { label: "From", value: sourceText(source) },
     { label: "Version", value: from ? from.version : (source ? source.version || "" : "") },
     { label: "Size", value: size ? sizeText(size.installed) : "" },
+    { label: "Also installs", value: extras.join(", ") },
     { label: "Developer", value: app.developer || "" },
     { label: "License", value: licenseText(app.license) }
   ]

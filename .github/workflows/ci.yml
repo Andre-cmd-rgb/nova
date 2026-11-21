@@ -1,8 +1,9 @@
 # Every push and pull request: lint, the name check, the site's build (its
 # links), the Rust checks, the unit tests, a `make install` into a scratch
-# root, the shell's windows opened offscreen from it and the whole shell
-# started under a headless sway, and the signing key's expiry, all in a
-# current Arch container, and nova usb's writer on a loop device.
+# root, the App Center's recipes against Arch's repositories, the shell's
+# windows opened offscreen from it and the whole shell started under a
+# headless sway, and the signing key's expiry, all in a current Arch
+# container, and nova usb's writer on a loop device.
 # candidate.yml runs it too, before cutting a release.
 name: ci
 
@@ -39,8 +40,12 @@ jobs:
           # dbus-test-tool and dbus-send, shell-smoke's portal that never answers.
           # gtk3: Qt's GTK theme loads only with it; shell-smoke fails without it.
           # cmark-gfm: the docs' pages of the site (tools/build-site).
+          # multilib, archlinux-appstream-data and flatpak: what the App Center's
+          # recipes are checked against (tools/apps-recipes-check).
+          printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>/etc/pacman.conf
           pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats parallel jq lua rust qt6-declarative \
-            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring glib2 libsecret socat libpulse tzdata dbus gtk3 cmark-gfm
+            quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring glib2 libsecret socat libpulse tzdata dbus gtk3 cmark-gfm \
+            archlinux-appstream-data flatpak
           useradd -m builder
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -89,6 +94,21 @@ jobs:
           sudo -u builder -H cargo build --locked --release
           sudo -u builder -H make install DESTDIR=/tmp/nova-root
           test -x /tmp/nova-root/usr/bin/nova
+
+      # Every optional dependency of an Arch app on the App Center's front page
+      # has a with or a skip in src/apps/data/recipes, against today's Arch.
+      # The front page names apps by Flathub's IDs, so Flathub's catalog too,
+      # in a flatpak folder of the check's own; Flathub stalls now and then.
+      - name: The App Center's recipes
+        run: |
+          flathub() { sudo -u builder -H env FLATPAK_USER_DIR=/tmp/flathub flatpak --user "$@"; }
+          flathub remote-add --if-not-exists flathub src/apps/data/flathub.flatpakrepo
+          for attempt in 1 2 3; do
+            flathub update --appstream --noninteractive flathub && break
+            ((attempt < 3)) || exit 1
+            sleep 30
+          done
+          sudo -u builder -H tools/apps-recipes-check --flathub /tmp/flathub
 
       # What qmllint cannot see, run against the installed tree and failing
       # on any QML warning: the shell's logic (offscreen, and the bar's panels

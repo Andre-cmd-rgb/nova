@@ -148,6 +148,8 @@ p1() {
   intel_only
   run "$packages" --graphics --lib32
   [ "$status" -eq 2 ]
+  run "$packages" --needed-by --every
+  [ "$status" -eq 2 ]
   run "$packages" --kernel '--lib32'
   [ "$status" -eq 2 ]
   run "$packages" --kernel '../x'
@@ -222,4 +224,20 @@ p1() {
   printf '../../etc\n' >"$SCRATCH/nvidia-pci"
   NOVA_POWER_NVIDIA_CACHE=$SCRATCH/nvidia-pci run "$packages" --graphics
   [ "$output" = "$(lines mesa vulkan-intel)" ]
+}
+
+@test "--needed-by: an install's drivers from what it brings, none for an app that needs none" {
+  intel_only
+  run "$packages" --needed-by <<<"$(lines steam lib32-glibc lib32-nvidia-utils nvidia-utils)"
+  [ "$output" = "$(lines mesa vulkan-intel lib32-mesa lib32-vulkan-intel)" ]
+  run "$packages" --needed-by <<<"$(lines blender vulkan-icd-loader nvidia-utils)"
+  [ "$output" = "$(lines mesa vulkan-intel)" ]
+  run "$packages" --needed-by <<<"$(lines gimp babl gegl vulkan-icd-loader)"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  run "$packages" --needed-by </dev/null
+  [ -z "$output" ]
+  p1
+  run "$packages" --needed-by <<<"$(lines steam lib32-glibc)"
+  [ "$output" = "$(lines mesa vulkan-intel nvidia-utils lib32-mesa lib32-vulkan-intel lib32-nvidia-utils)" ]
 }

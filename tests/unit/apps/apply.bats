@@ -209,3 +209,164 @@ STUB
   # And the hardware helper runs with an empty environment.
   grep -q 'env -i PATH=/usr/bin "$HW_PACKAGES"' "$APPLY"
 }
+
+# --- recipes -----------------------------------------------------------------
+# The recipe file in the scratch root, as /usr/share/nova/apps/recipes, and a
+# pacman that knows the packages in $REPO, has those in $INSTALLED
+# (name:e asked for by name, name:d a dependency) and says who needs a
+# package from $SCRATCH/required/<name>; systemctl, getent and gpasswd log.
+recipe_machine() { # recipe text
+  mkdir -p "$NOVA_ROOT/usr/share/nova/apps" "$SCRATCH/required"
+  printf '%s\n' "$1" >"$NOVA_ROOT/usr/share/nova/apps/recipes"
+  printf '<components>%s</components>\n' "$(for p in $REPO; do printf '<component><pkgname>%s</pkgname></component>' "$p"; done)" |
+    gzip >"$NOVA_ROOT/usr/share/swcatalog/xml/extra.xml.gz"
+  cat >"$SCRATCH/bin/pacman" <<'STUB'
+#!/bin/bash
+echo "pacman $*" >>"$CALLS"
+have() { local p; for p in $INSTALLED; do [[ ${p%:*} == "$1" && ( -z ${2:-} || ${p#*:} == "$2" ) ]] && return 0; done; return 1; }
+case $1 in
+  -Si) [[ " $REPO " == *" $3 "* ]] ;;
+  -Sp | -Qu) exit 0 ;;
+  -Rsp) cat "$SCRATCH/going" 2>/dev/null; exit 0 ;;
+  -Q) have "$3" ;;
+  -Qqd) have "$3" d && echo "$3"; exit 0 ;;
+  -Qlq) echo "/usr/share/applications/$3.desktop" ;;
+  -Qqo) [[ $3 == /usr/lib/systemd/system/libvirtd.socket ]] && echo libvirt ;;
+  -Qi)
+    if [[ $3 == nova ]]; then printf 'Depends On      : hyprland\n'; exit 0; fi
+    printf 'Name            : %s\nRequired By     : %s\nOptional For    : None\n' "$3" "$(cat "$SCRATCH/required/$3" 2>/dev/null || echo None)" ;;
+  *) exit 0 ;;
+esac
+STUB
+  for tool in systemctl gpasswd; do
+    printf '#!/bin/bash\necho "%s $*" >>"$CALLS"\n' "$tool" >"$SCRATCH/bin/$tool"
+  done
+  printf '#!/bin/bash\n[[ $1 == passwd && $2 == 1000 ]] && echo "alice:x:1000:1000::/home/alice:/bin/bash" && exit 0\n[[ $1 == group && $2 == libvirt ]] && echo "libvirt:x:970:" && exit 0\nexit 2\n' >"$SCRATCH/bin/getent"
+  chmod +x "$SCRATCH"/bin/*
+}
+
+@test "recipe: what it names goes in with the app, as dependencies, and what the release lacks is left out" {
+  REPO="vlc vlc-plugins-all" recipe_machine $'# media\nvlc with vlc-plugins-all gone-plugin # why\nvlc skip vlc-gui-ncurses\nvlc prefer arch\nother with not-mine'
+  REPO="vlc vlc-plugins-all" INSTALLED="" run "$APPLY" install vlc
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm -- vlc vlc-plugins-all' "$CALLS"
+  grep -qx 'pacman -D --asdeps -- vlc-plugins-all' "$CALLS"
+  [[ $output == *"With it: vlc-plugins-all"* ]]
+  [[ $output == *"not in the release's repositories, so left out: gone-plugin"* ]]
+  fails grep -q 'not-mine' "$CALLS"
+}
+
+@test "recipe: an extra already installed is not marked, whoever installed it" {
+  REPO="vlc vlc-plugins-all" recipe_machine 'vlc with vlc-plugins-all'
+  REPO="vlc vlc-plugins-all" INSTALLED="vlc-plugins-all:e" run "$APPLY" install vlc
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --noconfirm -- vlc vlc-plugins-all' "$CALLS"
+  fails grep -q -- '-D' "$CALLS"
+}
+
+@test "recipe: its steps once the app is in: a packaged socket turned on, the account that authenticated put in libvirt" {
+  REPO="virt-manager qemu-desktop" recipe_machine $'virt-manager with qemu-desktop\nvirt-manager after enable-socket libvirtd.socket\nvirt-manager after add-group libvirt'
+  mkdir -p "$NOVA_ROOT/usr/lib/systemd/system" && touch "$NOVA_ROOT/usr/lib/systemd/system/libvirtd.socket"
+  REPO="virt-manager qemu-desktop" PKEXEC_UID=1000 run "$APPLY" install virt-manager
+  [ "$status" -eq 0 ]
+  grep -qx 'systemctl enable --now -- libvirtd.socket' "$CALLS"
+  grep -qx 'gpasswd -a alice libvirt' "$CALLS"
+  # The install before the steps.
+  [ "$(grep -n 'pacman -S ' "$CALLS" | cut -d: -f1)" -lt "$(grep -n systemctl "$CALLS" | cut -d: -f1)" ]
+}
+
+@test "recipe: a socket no package ships stays off, and without pkexec's account nobody is added" {
+  REPO="virt-manager" recipe_machine $'virt-manager after enable-socket evil.socket\nvirt-manager after add-group libvirt'
+  mkdir -p "$NOVA_ROOT/usr/lib/systemd/system" && touch "$NOVA_ROOT/usr/lib/systemd/system/evil.socket"
+  REPO="virt-manager" run env -u PKEXEC_UID "$APPLY" install virt-manager
+  [ "$status" -eq 0 ]
+  [[ $output == *"evil.socket is not a socket of an installed package; it is left off"* ]]
+  [[ $output == *"no account to add to libvirt"* ]]
+  fails grep -q -e systemctl -e gpasswd "$CALLS"
+}
+
+@test "recipe: anything but names and the fixed steps stops the install with nothing changed" {
+  local bad
+  for bad in \
+    'vlc with --overwrite=*' \
+    'vlc with -dd' \
+    'vlc with ../../etc/passwd' \
+    'vlc with /tmp/evil.pkg.tar.zst' \
+    'vlc with *' \
+    'vlc with $(touch /tmp/nova-pwned)' \
+    'vlc with' \
+    'vlc after run-script /tmp/x' \
+    'vlc after enable-socket ../../evil.socket' \
+    'vlc after enable-socket sshd.service' \
+    'vlc after add-group wheel' \
+    'vlc after add-group libvirt extra' \
+    'vlc prefer somewhere' \
+    'vlc install-hook x'; do
+    : >"$CALLS"
+    REPO="vlc" recipe_machine "$bad"
+    REPO="vlc" run "$APPLY" install vlc
+    [ "$status" -eq 1 ] || { echo "accepted: $bad"; false; }
+    [[ $output == *"the recipe for vlc is broken"* ]]
+    fails grep -q -e 'pacman -S ' -e systemctl -e gpasswd "$CALLS"
+  done
+  [ ! -e /tmp/nova-pwned ]
+}
+
+@test "recipe: one the caller gives is never read, by argument or environment" {
+  REPO="vlc vlc-plugins-all" recipe_machine 'vlc with vlc-plugins-all'
+  printf 'vlc with evil-package\n' >"$SCRATCH/evil"
+  REPO="vlc vlc-plugins-all" RECIPES=$SCRATCH/evil NOVA_RECIPES=$SCRATCH/evil run "$APPLY" install vlc
+  [ "$status" -eq 0 ]
+  fails grep -q evil-package "$CALLS"
+  run "$APPLY" install vlc "$SCRATCH/evil"
+  [ "$status" -eq 2 ]
+  # A link in its place is no recipe file.
+  ln -sf "$SCRATCH/evil" "$NOVA_ROOT/usr/share/nova/apps/recipes"
+  : >"$CALLS"
+  REPO="vlc" run "$APPLY" install vlc
+  [ "$status" -eq 1 ]
+  [[ $output == *"is not a plain file"* ]]
+  fails grep -q 'pacman -S ' "$CALLS"
+}
+
+@test "remove: the extras it brought go with it, unless asked for by name or needed by what stays" {
+  REPO="lutris" recipe_machine 'lutris with umu-launcher lib32-gnutls innoextract'
+  echo wine >"$SCRATCH/required/lib32-gnutls"
+  INSTALLED="lutris:e umu-launcher:d lib32-gnutls:d innoextract:e" run "$APPLY" remove lutris
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -Rns --noconfirm -- lutris umu-launcher' "$CALLS"
+  [[ $output == *"With what it brought: umu-launcher"* ]]
+}
+
+@test "remove: an extra needed only by another extra that goes goes too; one the app needs is the app's" {
+  REPO="retroarch" recipe_machine 'retroarch with libretro-core-info retroarch-assets-ozone'
+  echo retroarch >"$SCRATCH/required/libretro-core-info"
+  echo 'libretro-core-info  retroarch' >"$SCRATCH/required/retroarch-assets-ozone"
+  INSTALLED="retroarch:e libretro-core-info:d retroarch-assets-ozone:d" run "$APPLY" remove retroarch
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -Rns --noconfirm -- retroarch libretro-core-info retroarch-assets-ozone' "$CALLS"
+}
+
+@test "remove: the socket the recipe turned on goes off when its package goes, not when it stays" {
+  REPO="virt-manager" recipe_machine $'virt-manager with qemu-desktop\nvirt-manager after enable-socket libvirtd.socket'
+  mkdir -p "$NOVA_ROOT/usr/lib/systemd/system" && touch "$NOVA_ROOT/usr/lib/systemd/system/libvirtd.socket"
+  printf '%s\n' virt-manager qemu-desktop libvirt >"$SCRATCH/going"
+  INSTALLED="virt-manager:e qemu-desktop:d libvirt:d" run "$APPLY" remove virt-manager
+  [ "$status" -eq 0 ]
+  grep -qx 'systemctl disable --now -- libvirtd.socket' "$CALLS"
+  [ "$(grep -n systemctl "$CALLS" | cut -d: -f1)" -lt "$(grep -n 'pacman -Rns' "$CALLS" | cut -d: -f1)" ]
+  printf '%s\n' virt-manager qemu-desktop >"$SCRATCH/going"
+  : >"$CALLS"
+  INSTALLED="virt-manager:e qemu-desktop:d libvirt:d" run "$APPLY" remove virt-manager
+  fails grep -q systemctl "$CALLS"
+}
+
+@test "the shipped recipes are all ones nova-apps-apply takes" {
+  local package
+  while read -r package; do
+    : >"$CALLS"
+    REPO="$package" recipe_machine "$(cat "$REPO_ROOT/src/apps/data/recipes")"
+    REPO="$package" run "$APPLY" install "$package"
+    [[ $output != *"is broken"* ]] || { echo "$package: $output"; false; }
+  done < <(sed 's/#.*//' "$REPO_ROOT/src/apps/data/recipes" | awk 'NF { print $1 }' | sort -u)
+}

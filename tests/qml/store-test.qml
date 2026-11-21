@@ -81,6 +81,9 @@ ShellRoot {
     var facts = Model.facts(gimp, null, flathub, Model.flathubSize(flathub, catalog.runtimes, none))
     check(JSON.stringify(facts) === '[{"label":"From","value":"Flathub, verified"},{"label":"Version","value":"3.0.4"},{"label":"Size","value":"1.2 GB"},{"label":"Developer","value":"The GIMP team"},{"label":"License","value":"GPL-3.0+ and LGPL-3.0+"}]', "the facts")
     check(Model.facts(catalog.byId.paint, null, null, null).length === 0, "and none where none is known")
+    var withExtras = { kind: "arch", package: "vlc", version: "3.0.21-1", with: ["vlc-plugins-all"] }
+    check(JSON.stringify(Model.facts(catalog.byId.paint, null, withExtras, { installed: 120000000 }).map(function (f) { return f.label + ": " + f.value })) === '["From: Arch Linux","Version: 3.0.21-1","Size: 120 MB","Also installs: vlc-plugins-all"]', "an Arch app's with what its recipe installs with it")
+    check(Model.facts(catalog.byId.paint, { kind: "arch", version: "3.0.21-1" }, withExtras, null).every(function (f) { return f.label !== "Also installs" }), "not once it is installed")
     check(JSON.stringify(Model.launchWords(gimp, Model.installedFrom(gimp, fromFlathub))) === '["nova-launch","--","flatpak","run","org.gimp.GIMP"]', "Flathub's opened by its ID")
     check(JSON.stringify(Model.launchWords(gimp, Model.installedFrom(gimp, fromArch))) === '["nova-launch","--","gimp.desktop"]', "Arch's by the entry its package installs, not Flathub's")
     check(JSON.stringify(Model.launchWords(catalog.byId["com.google.Chrome"], { kind: "nova", package: "google-chrome" })) === '["nova-launch","--","google-chrome.desktop"]', "Nova's by its own")
