@@ -21,7 +21,9 @@
 # MemFree does not count them. This prints each part, from /proc/meminfo and
 # /proc/zoneinfo, which anyone may read; the lines sum to the figure, the last
 # one ("not counted elsewhere") being what is left: drivers' own pages, and
-# the moment between the two files being read.
+# the moment between the two files being read. Swap kept compressed in memory
+# is zram's own count (/sys/block/zram*/mm_stat): no line of /proc/meminfo
+# has it, and on a computer that has swapped it is hundreds of MiB.
 #
 #   nova-doctor-memory             the account, in MiB
 #   nova-doctor-memory --total     "<in use> <held> <margins> <per-CPU free>" in kB:
@@ -33,7 +35,8 @@
 #                                  else what it has resident
 #
 # nova doctor --bundle and the install test (tests/install/probe) print it.
-# NOVA_PROC points it at a fixture (tests/unit/cli/doctor-memory.bats).
+# NOVA_PROC, and NOVA_SYS for zram, point it at a fixture
+# (tests/unit/cli/doctor-memory.bats).
 
 set -euo pipefail
 
@@ -54,11 +57,17 @@ tmpfs_kb=0
 if [[ -z ${NOVA_PROC:-} ]]; then
   tmpfs_kb=$(df -k -t tmpfs -t devtmpfs --output=used 2>/dev/null | awk 'NR > 1 { kb += $1 } END { print kb + 0 }') || tmpfs_kb=0
 fi
+# What zram holds for the swap it keeps: the third number of each device's
+# mm_stat (mem_used_total), in bytes.
+zram_kb=0
+if [[ -z ${NOVA_PROC:-} || -n ${NOVA_SYS:-} ]]; then
+  zram_kb=$(cat "${NOVA_SYS:-/sys}"/block/zram*/mm_stat 2>/dev/null | awk '{ bytes += $3 } END { printf "%d", bytes / 1024 }') || zram_kb=0
+fi
 # The graphics buffers as the drivers count them (each client once): the most
 # they hold, and the least (what no two clients share).
 read -r gpu_total gpu_shared _ < <("${BASH_SOURCE[0]%/*}/nova-doctor-gpu-memory" --total 2>/dev/null || echo '0 0 0') || true
 
-awk -v mode="$mode" -v tmpfs="$tmpfs_kb" -v gpu_total="${gpu_total:-0}" -v gpu_shared="${gpu_shared:-0}" '
+awk -v mode="$mode" -v tmpfs="$tmpfs_kb" -v zram="${zram_kb:-0}" -v gpu_total="${gpu_total:-0}" -v gpu_shared="${gpu_shared:-0}" '
   function min(a, b) { return a < b ? a : b }
   function line(kb, what) { if (mode != "total") printf "%9.1f  %s\n", kb / 1024, what }
   function note(text) { if (mode != "total") printf "%9s    %s\n", "", text }
@@ -99,7 +108,7 @@ awk -v mode="$mode" -v tmpfs="$tmpfs_kb" -v gpu_total="${gpu_total:-0}" -v gpu_s
     unmapped = m["Active(anon)"] + m["Inactive(anon)"] + m["Unevictable"] - m["AnonPages"] - m["Shmem"] - locked
     if (unmapped < 0) unmapped = 0
     kernel_small = m["KernelStack"] + m["PageTables"] + m["SecPageTables"] + m["Percpu"]
-    named = m["AnonPages"] + m["Shmem"] + locked + unmapped + m["SUnreclaim"] + kernel_small + m["VmallocUsed"] + pcp + margins
+    named = m["AnonPages"] + m["Shmem"] + locked + unmapped + m["SUnreclaim"] + kernel_small + m["VmallocUsed"] + zram + pcp + margins
     other = used - named
     if (mode == "total") { printf "%d %d %d %d\n", used, held, margins, pcp; exit }
 
@@ -115,6 +124,7 @@ awk -v mode="$mode" -v tmpfs="$tmpfs_kb" -v gpu_total="${gpu_total:-0}" -v gpu_s
     line(m["SUnreclaim"], "kernel: its own objects (slab that cannot be reclaimed)")
     line(m["VmallocUsed"], "kernel: modules, firmware and drivers (vmalloc)")
     line(kernel_small, "kernel: stacks, page tables, per-CPU data")
+    if (zram >= 1024) line(zram, "swap, kept compressed in memory (zram)")
     line(other, "kernel and drivers, not counted elsewhere")
     line(pcp, "free pages on the per-CPU lists, which MemFree leaves out")
     line(reserve, "the kernel reserve: kept free below the high watermarks, and for the lower zones")

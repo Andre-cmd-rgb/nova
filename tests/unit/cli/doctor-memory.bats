@@ -150,6 +150,28 @@ MEMINFO
   [ "$total" = "$(((4856400 + 131072 + 512) / 1024))" ]
 }
 
+@test "swap kept compressed in memory has a line of its own, taken from what had no counter" {
+  zones 55 103 7040 13078 111535 207185 50000
+  # 640 MiB more in use than at rest: 512 of them zram's, the rest with the
+  # 114.6 MiB this fixture has uncounted anyway (242.6 in all).
+  meminfo $((27699376 - 655360))
+  sed -i 's/^MemFree: .*/MemFree:        27344640 kB/' "$NOVA_PROC/meminfo"
+  mkdir -p "$SCRATCH/sys/block/zram0" "$SCRATCH/sys/block/zram1"
+  # orig_data_size compr_data_size mem_used_total ..., in bytes; two devices.
+  echo "2147483648 419430400 429496730 0 429496730 0 0 0 0" >"$SCRATCH/sys/block/zram0/mm_stat"
+  echo "536870912 104857600 107374182 0 107374182 0 0 0 0" >"$SCRATCH/sys/block/zram1/mm_stat"
+  NOVA_SYS=$SCRATCH/sys run "$SCRATCH/bin/nova-doctor-memory"
+  [ "$status" -eq 0 ]
+  [[ $output == *"    512.0  swap, kept compressed in memory (zram)"* ]]
+  [[ $output == *"    242.6  kernel and drivers, not counted elsewhere"* ]]
+  sum=$(awk '/^ *-+$/ { exit } $1 ~ /^-?[0-9.]+$/ && NF > 1 { s += $1 } END { printf "%.0f", s }' <<<"$output")
+  total=$(awk 'seen && $1 ~ /^[0-9.]+$/ { printf "%.0f", $1; exit } /^ *-+$/ { seen = 1 }' <<<"$output")
+  [ "$((sum - total))" -ge -1 ] && [ "$((sum - total))" -le 1 ]
+  # None, or under a MiB: no line.
+  run "$SCRATCH/bin/nova-doctor-memory"
+  [[ $output != *zram* ]]
+}
+
 @test "at 100 MiB the same desktop shows 0.9 GiB less in use" {
   # Factor 31: low 168 MiB, high 269 MiB in all; the reserve 3841 + (29890 + 4092) + 64857 pages.
   zones 19 31 2547 4092 40371 64857 10000
