@@ -1,8 +1,9 @@
 #!/usr/bin/env bats
 
-# The shell's allocator settings (src/shell/alloc), preloaded into Quickshell
-# as nova-launch-shell does: jemalloc takes them, and what the shell starts
-# has neither the library nor a setting of jemalloc's in its environment.
+# The shell's allocator and Qt buffer settings (src/shell/alloc), preloaded
+# into Quickshell as nova-launch-shell does: jemalloc takes them, Qt reads
+# QSG_NO_DEPTH_BUFFER and QSG_NO_STENCIL_BUFFER, and what the shell starts has
+# neither the library nor any of those settings in its environment.
 # Quickshell runs offscreen, with no display, bus or home of the session's.
 
 load ../test_helper
@@ -70,4 +71,36 @@ EOF
   echo "$output"
   [ "$status" -eq 0 ]
   [[ $output == *"SHELL true APP app=0 preload=unset conf=unset"* ]]
+}
+
+@test "the shell reads no depth or stencil buffer for Qt, and an app it starts reads neither" {
+  # Quickshell.env() reads through getenv(), as Qt does for these.
+  cat >"$SCRATCH/shell/shell.qml" <<'EOF'
+import QtQuick
+import Quickshell
+import Quickshell.Io
+
+ShellRoot {
+  Process {
+    running: true
+    command: ["sh", "-c", "echo \"depth=${QSG_NO_DEPTH_BUFFER-unset} stencil=${QSG_NO_STENCIL_BUFFER-unset}\""]
+    stdout: StdioCollector {
+      onStreamFinished: {
+        console.log("SHELL depth=" + Quickshell.env("QSG_NO_DEPTH_BUFFER") + " stencil=" + Quickshell.env("QSG_NO_STENCIL_BUFFER")
+          + " APP " + text.trim())
+        Qt.quit()
+      }
+    }
+  }
+}
+EOF
+  run preloaded "$QS" -n -p "$SCRATCH/shell/shell.qml"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ $output == *"SHELL depth=1 stencil=1 APP depth=unset stencil=unset"* ]]
+  # Set in the environment, even empty, the environment's value stands, and
+  # reaches the app as any variable does.
+  run preloaded QSG_NO_STENCIL_BUFFER= "$QS" -n -p "$SCRATCH/shell/shell.qml"
+  echo "$output"
+  [[ $output == *"SHELL depth=1 stencil= APP depth=unset stencil="* ]]
 }

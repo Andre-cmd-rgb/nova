@@ -32,8 +32,29 @@
 //! starts, as they inherit its environment (nova-launch's scope, the menu, a
 //! notification's action), and hold to two arenas any of them built on
 //! jemalloc, however many threads it runs.
+//!
+//! The library also has Qt draw the shell's windows without a depth or a
+//! stencil buffer. A Qt Quick window gets both by default, a 24-bit depth and
+//! an 8-bit stencil buffer the window's size (Mesa has no config with one
+//! and not the other), and the shell needs neither: Qt's 2D renderer uses
+//! depth only to skip covered pixels of opaque items, and stencil only to
+//! clip an item that is rotated, which no clipped item of the shell is
+//! (scissors clip the rest). The background's window, the size of the
+//! screen, held 58 MiB of them at 3840x2400: its graphics memory went from
+//! 238 MiB to 176 MiB, five runs each, every picture of the bar's panels, the
+//! menu, Settings and the lock the same but for the clock (same harness as
+//! above, Intel's iris driver).
+//!
+//! Qt reads QSG_NO_DEPTH_BUFFER and QSG_NO_STENCIL_BUFFER once, through
+//! getenv(), when the first window is made. In the environment they would
+//! reach every app the shell starts, and a Qt app that clips a rotated item
+//! or draws 3D into its window needs those buffers. So this library's
+//! getenv() answers "1" for those two names when the environment does not
+//! have them, and is libc's for everything else: they are the shell's alone.
+//! Either name in the environment, even empty, is the environment's:
+//! `QSG_NO_STENCIL_BUFFER=` gives the shell its buffers back.
 
-use std::ffi::{c_char, OsStr, OsString};
+use std::ffi::{c_char, CStr, OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::Path;
 
@@ -67,6 +88,66 @@ extern "C" fn leave_preload() {
         None => {}
         Some(rest) if rest.is_empty() => std::env::remove_var("LD_PRELOAD"),
         Some(rest) => std::env::set_var("LD_PRELOAD", rest),
+    }
+}
+
+/// What the shell's getenv() answers for a name the environment lacks.
+const SHELL_ONLY: [(&CStr, &CStr); 2] = [
+    (c"QSG_NO_DEPTH_BUFFER", c"1"),
+    (c"QSG_NO_STENCIL_BUFFER", c"1"),
+];
+
+extern "C" {
+    static environ: *const *const c_char;
+}
+
+/// The value of <name> in <env> ("NAME=value" entries), or None.
+fn lookup<'a>(env: impl IntoIterator<Item = &'a CStr>, name: &[u8]) -> Option<&'a CStr> {
+    env.into_iter().find_map(|entry| {
+        let bytes = entry.to_bytes();
+        (bytes.len() > name.len() && bytes.starts_with(name) && bytes[name.len()] == b'=')
+            // SAFETY: what is after the '=' is the rest of a C string.
+            .then(|| unsafe { CStr::from_ptr(entry.as_ptr().add(name.len() + 1)) })
+    })
+}
+
+/// The shell's own value of <name>, for when the environment has none.
+fn shell_only(name: &[u8]) -> Option<&'static CStr> {
+    SHELL_ONLY
+        .iter()
+        .find(|(key, _)| key.to_bytes() == name)
+        .map(|(_, value)| *value)
+}
+
+/// libc's getenv(), with the values above for the names in SHELL_ONLY. It
+/// reads `environ` itself, as libc's does, and allocates nothing: the first
+/// calls come before main(), jemalloc's among them.
+///
+/// # Safety
+///
+/// As libc's: <name> is a C string, and nothing changes the environment
+/// meanwhile. The string returned is not to be written to.
+#[no_mangle]
+pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
+    if name.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: the caller's C string; environ is libc's, a list of C strings
+    // ended by a null, or null itself.
+    let name = unsafe { CStr::from_ptr(name) }.to_bytes();
+    let mut entries = unsafe { environ };
+    let env = std::iter::from_fn(|| {
+        // SAFETY: as above; the walk stops at the null.
+        let entry = unsafe { entries.as_ref().map(|first| *first) }?;
+        if entry.is_null() {
+            return None;
+        }
+        entries = unsafe { entries.add(1) };
+        Some(unsafe { CStr::from_ptr(entry) })
+    });
+    match lookup(env, name).or_else(|| shell_only(name)) {
+        Some(value) => value.as_ptr() as *mut c_char,
+        None => std::ptr::null_mut(),
     }
 }
 
@@ -119,6 +200,50 @@ mod tests {
         assert_eq!(strip("/opt/a.so /opt/b.so"), None);
         assert_eq!(strip("/opt/libnova_shell_alloc.so.old"), None);
         assert_eq!(strip(""), None);
+    }
+
+    fn env(entries: &[&'static CStr]) -> Vec<&'static CStr> {
+        entries.to_vec()
+    }
+
+    fn value(found: Option<&CStr>) -> Option<&str> {
+        found.map(|v| v.to_str().unwrap())
+    }
+
+    #[test]
+    fn a_name_is_found_whole_and_not_by_its_start() {
+        let e = env(&[c"QSG_NO_DEPTH_BUFFER_X=7", c"PATH=/usr/bin", c"EMPTY="]);
+        assert_eq!(value(lookup(e.iter().copied(), b"PATH")), Some("/usr/bin"));
+        assert_eq!(value(lookup(e.iter().copied(), b"EMPTY")), Some(""));
+        assert_eq!(
+            value(lookup(e.iter().copied(), b"QSG_NO_DEPTH_BUFFER")),
+            None
+        );
+        assert_eq!(value(lookup(e.iter().copied(), b"PAT")), None);
+    }
+
+    #[test]
+    fn qt_is_told_no_depth_and_no_stencil_buffer_unless_the_environment_says() {
+        assert_eq!(value(shell_only(b"QSG_NO_DEPTH_BUFFER")), Some("1"));
+        assert_eq!(value(shell_only(b"QSG_NO_STENCIL_BUFFER")), Some("1"));
+        assert_eq!(value(shell_only(b"QSG_INFO")), None);
+        // Through the getenv() itself: the test's environment has neither
+        // name unless someone set it, and has PATH.
+        let read = |name: &CStr| {
+            // SAFETY: a C string; the tests change no environment.
+            let found = unsafe { getenv(name.as_ptr()) };
+            (!found.is_null()).then(|| {
+                unsafe { CStr::from_ptr(found) }
+                    .to_str()
+                    .unwrap()
+                    .to_owned()
+            })
+        };
+        if std::env::var_os("QSG_NO_STENCIL_BUFFER").is_none() {
+            assert_eq!(read(c"QSG_NO_STENCIL_BUFFER").as_deref(), Some("1"));
+        }
+        assert_eq!(read(c"PATH"), std::env::var("PATH").ok());
+        assert_eq!(read(c"NOVA_SURELY_UNSET_NAME"), None);
     }
 
     #[test]

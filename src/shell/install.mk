@@ -4,8 +4,8 @@
 # nova mobile-data, nova dictation. The plugins' manifests are also collected into
 # plugins/index.json, the one file the shell reads to find its plugins. The
 # Calculator's desktop entry and icon put it among the apps. The allocator's
-# settings (alloc/, Rust, built by the root cargo workspace) are a library
-# nova-launch-shell preloads into Quickshell.
+# and Qt's buffer settings (alloc/, Rust, built by the root cargo workspace)
+# are a library nova-launch-shell preloads into Quickshell.
 
 INSTALL_TARGETS += install-shell
 QML_DIRS        += src/shell
