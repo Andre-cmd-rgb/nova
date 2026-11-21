@@ -152,6 +152,14 @@ impl Dictation {
     }
 
     /// The samples of <window>, as the engine takes them (its kept parts).
+    ///
+    /// As recorded: no high-pass filter, gain control or noise suppression
+    /// before Parakeet, as none earned its place. On three public-domain
+    /// recordings, clean and with rumble 6 dB over the speech, a microphone
+    /// 36 dB down, or pink noise 10 to 0 dB under the speech, an 80 Hz
+    /// high-pass and an AGC (set to -20 dBFS, or dynamic) changed no word for
+    /// the better that another noise seed did not take back, and RNNoise left
+    /// more words wrong in the noise it is for (at 0 dB, 20 of 95 against 5).
     pub fn samples(&self, window: Window) -> Vec<f32> {
         let at = |s: f64| ((s * RATE as f64).round() as usize).min(self.audio.len());
         self.kept(window)
