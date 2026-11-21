@@ -79,3 +79,7 @@ version = "1.0.0"
 [[package]]
 name = "nova-undervolt"
 version = "1.0.0"
+
+[[package]]
+name = "nova-xwayland"
+version = "1.0.0"

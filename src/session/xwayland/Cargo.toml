@@ -1,0 +1,14 @@
+[package]
+name = "nova-xwayland"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's Xwayland starter: the X server comes with the first X11 app, its settings in place before the app is let in"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova, and no library of the system's but libc:
+# it waits in every session, and is replaced by Xwayland itself when one starts.
+
+[[bin]]
+name = "nova-xwayland"
+path = "src/main.rs"

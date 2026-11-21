@@ -16,6 +16,11 @@
 # nova-launch (src/session/launch) is not part of it: it starts every app
 # Nova starts, as a systemd scope of its own, and is a program of its own so
 # that a launch loads libsystemd and nothing else.
+#
+# Nor is nova-xwayland (src/session/xwayland), installed as Xwayland among
+# Nova's commands, which come first on the session's PATH: Hyprland runs it
+# for Xwayland, and it waits for the first X11 app, then becomes Xwayland
+# with the settings loaded before that app is let in.
 
 SESSIOND_SRC := src/session
 
@@ -33,4 +38,5 @@ install-sessiond:
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-share-picker
 	ln -sf ../nova-sessiond $(DESTDIR)$(NOVA_BIN)/nova-sim-pin
 	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/nova-launch $(DESTDIR)$(NOVA_BIN)/nova-launch
+	install -Dm755 $(or $(CARGO_TARGET_DIR),target)/release/nova-xwayland $(DESTDIR)$(NOVA_BIN)/Xwayland
 	install -Dm644 $(SESSIOND_SRC)/pinentry/preexec $(DESTDIR)$(SYSCONFDIR)/pinentry/preexec

@@ -53,6 +53,21 @@ dir=$XDG_RUNTIME_DIR/nova
 config=$dir/xsettingsd.conf
 mkdir -p "$dir"
 
+# The X server starts with the first X11 app (Nova's Xwayland starter,
+# src/session/xwayland), which runs this before that app is let in. While
+# the starter waits (xwayland-N.wait) the settings are written down and
+# nobody is told: a connection would start the server. Once it runs, X is
+# reached through the socket it opens for its settings before the apps' own
+# (xwayland-N.init), and xsettingsd goes the same way (xsettingsd.env).
+asleep=false
+x=${DISPLAY#:}
+x=${x%%.*}
+if [[ -S $dir/xwayland-$x.init ]]; then
+  export DISPLAY=$dir/xwayland-$x.init
+elif [[ -e $dir/xwayland-$x.wait ]]; then
+  asleep=true
+fi
+
 scale=''
 if [[ -z ${GDK_SCALE:-} ]]; then
   # Arch's Hyprland answers "no such option", and not as JSON.
@@ -129,12 +144,14 @@ if [[ -n $scale && $settings != *Gdk/UnscaledDPI* ]]; then
   settings+=$'\n'"Gdk/UnscaledDPI $((96 * 1024))"
 fi
 [[ -n $settings ]] || exit 0
-if [[ ! -f $config || $(<"$config") != "$settings" ]] || ! systemctl --user -q is-active nova-xsettings.service; then
+if [[ ! -f $config || $(<"$config") != "$settings" ]] || { [[ $asleep == false ]] && ! systemctl --user -q is-active nova-xsettings.service; }; then
   printf '%s\n' "$settings" >"$config.new"
   mv -f "$config.new" "$config"
-  # Started with the first settings, and told each change after.
-  systemctl --user --no-block reload-or-restart nova-xsettings.service
+  printf 'DISPLAY=%s\n' "$DISPLAY" >"$dir/xsettingsd.env"
+  # Started with the X server, and told each change after.
+  [[ $asleep == true ]] || systemctl --user --no-block reload-or-restart nova-xsettings.service
 fi
+[[ $asleep == false ]] || exit 0
 # Every pass, as an XWayland started again begins with none; merged, so
 # whatever else is in the resources stays.
 [[ -z $scale ]] || printf 'Xft.dpi:\t%d\n' $((96 * scale)) | xrdb -nocpp -merge

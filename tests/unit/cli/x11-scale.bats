@@ -263,10 +263,63 @@ Gdk/UnscaledDPI 98304' ]
   fails grep -q -e '^systemctl' -e '^xrdb' -e '^hyprctl eval' "$CALLS"
 }
 
-@test "the service runs xsettingsd on the settings written, ends with the session, and comes back after XWayland" {
+@test "the service runs xsettingsd on the settings written, through the X server's settings socket, and ends with the session or the X server" {
   unit=$REPO_ROOT/data/systemd/user/nova-xsettings.service
   grep -qx 'ExecStart=/usr/bin/xsettingsd -c %t/nova/xsettingsd.conf' "$unit"
   grep -qx 'ExecReload=/usr/bin/kill -HUP $MAINPID' "$unit"
   grep -qx 'PartOf=graphical-session.target' "$unit"
-  grep -qx 'Restart=on-failure' "$unit"
+  grep -qx 'EnvironmentFile=-%t/nova/xsettingsd.env' "$unit"
+  # An X server that went ends it with status 1, which is no failure, and
+  # nothing tries again on a timer (a sleeping X server would be asked every
+  # two seconds): the Xwayland starter starts it with the next X server.
+  grep -qx 'SuccessExitStatus=1' "$unit"
+  fails grep -q '^Restart' "$unit"
+}
+
+# The Xwayland starter's marks for display :7 (src/session/xwayland).
+@test "while the X server sleeps the settings are written down, Hyprland is told the scale, and nothing wakes the server" {
+  displays eDP-1:1.6
+  touch "$SCRATCH/shrinks"
+  mkdir -p "$XDG_RUNTIME_DIR/nova"
+  : >"$XDG_RUNTIME_DIR/nova/xwayland-7.wait"
+  run nova-hyprland-x11-scale
+  [ "$status" -eq 0 ]
+  [ "$(cat "$config")" = "$(printf 'Gdk/WindowScalingFactor 2\nGdk/UnscaledDPI 98304')" ]
+  hyprland_told 2
+  fails grep -q -e '^systemctl' -e '^xrdb' "$CALLS"
+  # A second pass, nothing new: still nobody is told.
+  run nova-hyprland-x11-scale
+  [ "$status" -eq 0 ]
+  fails grep -q -e '^systemctl' -e '^xrdb' "$CALLS"
+}
+
+@test "once it runs, xsettingsd and the resources go through the socket it opens for its settings" {
+  command -v socat >/dev/null || skip "no socat"
+  displays eDP-1:2
+  mkdir -p "$XDG_RUNTIME_DIR/nova"
+  # Written while it slept.
+  : >"$XDG_RUNTIME_DIR/nova/xwayland-7.wait"
+  nova-hyprland-x11-scale
+  rm "$XDG_RUNTIME_DIR/nova/xwayland-7.wait"
+  socket=$XDG_RUNTIME_DIR/nova/xwayland-7.init
+  socat "UNIX-LISTEN:$socket" /dev/null &
+  listener=$!
+  for _ in {1..100}; do [[ -S $socket ]] && break; sleep 0.05; done
+  stub xrdb 'echo "xrdb DISPLAY=$DISPLAY" >>"$CALLS"; cat >>"$CALLS"'
+  run nova-hyprland-x11-scale
+  kill "$listener" 2>/dev/null || true
+  [ "$status" -eq 0 ]
+  # The same settings as before, and xsettingsd not yet running: started now.
+  grep -qx 'systemctl --user --no-block reload-or-restart nova-xsettings.service' "$CALLS"
+  [ "$(cat "$XDG_RUNTIME_DIR/nova/xsettingsd.env")" = "DISPLAY=$socket" ]
+  grep -qx "xrdb DISPLAY=$socket" "$CALLS"
+  [ "$(tail -n 1 "$CALLS")" = "$(printf 'Xft.dpi:\t192')" ]
+}
+
+@test "without the starter (a PATH of your own that leaves it out) X is the session's display, as before" {
+  displays eDP-1:2
+  stub xrdb 'echo "xrdb DISPLAY=$DISPLAY" >>"$CALLS"; cat >>"$CALLS"'
+  nova-hyprland-x11-scale
+  grep -qx 'xrdb DISPLAY=:7' "$CALLS"
+  [ "$(cat "$XDG_RUNTIME_DIR/nova/xsettingsd.env")" = "DISPLAY=:7" ]
 }
