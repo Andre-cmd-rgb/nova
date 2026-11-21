@@ -21,11 +21,12 @@ on_signal() {
 }
 trap on_signal HUP INT TERM
 
-# Quickshell's allocator settings (two jemalloc arenas, not four a CPU: 90 MB
-# less at idle) come in a library preloaded into it alone, which takes itself
-# out of LD_PRELOAD as it loads (src/shell/alloc): what the shell starts, from
-# an app to a notification's action, inherits its environment, so a
-# MALLOC_CONF there would have reached them all. systemd-cat runs without it.
+# Quickshell's allocator settings (two jemalloc arenas, not four a CPU, and no
+# huge pages: 74 MB less at idle) come in a library preloaded into it alone,
+# which takes itself out of LD_PRELOAD as it loads (src/shell/alloc): what the
+# shell starts, from an app to a notification's action, inherits its
+# environment, so a MALLOC_CONF there would have reached them all.
+# systemd-cat runs without it.
 # A shell from a tree without the library runs with jemalloc's own settings.
 ALLOC=${NOVA_SHELL_ALLOC:-/usr/lib/nova/libnova_shell_alloc.so}
 preload=()

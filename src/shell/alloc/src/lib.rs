@@ -1,11 +1,28 @@
 //! The shell's allocator settings, for Quickshell alone.
 //!
 //! Quickshell allocates with jemalloc, which gives threads arenas of their
-//! own, four per CPU: 64 on a 16-thread laptop, more than the shell's forty
-//! threads (Qt's, Mesa's), so each kept the pages of its own. Two arenas for
-//! all of them hold the same shell in 90 MB less at idle (230 MB to 138 MB,
-//! the P1's 3840x2400 panel in a nested session), and its windows open as
-//! fast.
+//! own, four per CPU: 64 on a 16-thread laptop, more than the shell's
+//! twenty-odd threads (Qt's, Mesa's), so each kept the pages of its own. Two
+//! arenas for all of them hold the same shell in a third less, and its
+//! windows open as fast.
+//!
+//! Nor are the arenas' pages made huge. With transparent huge pages on for
+//! everything, as Arch's kernel has them, the kernel backs a 2 MB stretch of
+//! an arena with one huge page as soon as it is touched, and the part of it
+//! jemalloc never fills is held all the same: 60 MB of the shell's memory
+//! was in huge pages, 8 MB once jemalloc asks for none.
+//!
+//! What each took, measured on 2026-11-21: the proportional set size of the
+//! shell at rest, 40 s after it started, on a nested Hyprland at the P1's
+//! 3840x2400 and scale 1.6, adaptive theme, the dusk background, no buses
+//! (so no devices); the same each run within 1 MB.
+//!
+//!     jemalloc's own settings (64 arenas)    218 MB
+//!     narenas:2                              150 MB
+//!     narenas:2,thp:never                    144 MB
+//!
+//! Returning freed pages sooner (dirty_decay_ms:1000,muzzy_decay_ms:0) took
+//! nothing off at rest, and is not set.
 //!
 //! The setting is the program's own `malloc_conf`, which jemalloc reads
 //! before /etc/malloc.conf and MALLOC_CONF, so either still has the last
@@ -31,7 +48,7 @@ unsafe impl Sync for Conf {}
 /// jemalloc's options for the program, in MALLOC_CONF's syntax.
 #[allow(non_upper_case_globals)]
 #[no_mangle]
-pub static malloc_conf: Conf = Conf(c"narenas:2".as_ptr());
+pub static malloc_conf: Conf = Conf(c"narenas:2,thp:never".as_ptr());
 
 /// The library's file name, as it is built and installed.
 const OWN: &str = "libnova_shell_alloc.so";
@@ -108,6 +125,6 @@ mod tests {
     fn the_setting_is_what_jemalloc_is_given() {
         // SAFETY: the pointer is the literal's, which lives for the program.
         let conf = unsafe { std::ffi::CStr::from_ptr(malloc_conf.0) };
-        assert_eq!(conf.to_str().unwrap(), "narenas:2");
+        assert_eq!(conf.to_str().unwrap(), "narenas:2,thp:never");
     }
 }

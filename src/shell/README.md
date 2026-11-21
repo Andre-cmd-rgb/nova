@@ -33,8 +33,9 @@ shell/
 
 Beside it, in `/usr/lib/nova`, the shell's allocator settings: `alloc/`, a
 Rust library that `nova-launch-shell` preloads into Quickshell. It gives
-Quickshell's jemalloc two arenas, not four a CPU, and takes itself out of
-`LD_PRELOAD` as it loads, so the apps the shell starts inherit neither.
+Quickshell's jemalloc two arenas, not four a CPU, and no huge pages, and
+takes itself out of `LD_PRELOAD` as it loads, so the apps the shell starts
+inherit neither.
 
 The plugins and what each one is are listed in [plugins/README.md](plugins/README.md).
 
