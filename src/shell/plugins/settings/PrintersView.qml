@@ -608,11 +608,21 @@ Column {
       askedDrivers = false
       step = "details"
       lookingForDriver = !chosen.driverless
-      if (!chosen.driverless) {
-        // The best fit for its make and model comes first.
-        modelDrivers.command = ["nova-printers", "drivers", chosen.model || chosen.info]
-        modelDrivers.running = true
-      }
+      // The best fit for its make and model comes first.
+      wantedModel = chosen.driverless ? "" : chosen.model || chosen.info
+      if (wantedModel !== "") lookUp()
+    }
+
+    // The make and model the drivers are looked up for, "" for none: the
+    // device chosen last. A look for another, still running, is let end and
+    // its answer dropped, and this one asked then.
+    property string wantedModel: ""
+
+    function lookUp() {
+      if (modelDrivers.running || wantedModel === "") return
+      modelDrivers.asked = wantedModel
+      modelDrivers.command = ["nova-printers", "drivers", wantedModel]
+      modelDrivers.running = true
     }
 
     function all() {
@@ -661,9 +671,13 @@ Column {
 
     Process {
       id: modelDrivers
+      // The make and model this run asks about.
+      property string asked: ""
+      readonly property bool current: asked === addSheet.wantedModel
       stdout: StdioCollector {
         waitForEnd: true
         onStreamFinished: {
+          if (!modelDrivers.current) return
           try {
             addSheet.recommendedDrivers = JSON.parse(String(text)).drivers || []
           } catch (e) {
@@ -675,12 +689,16 @@ Column {
       }
       stderr: StdioCollector { id: modelDriverErrors }
       onExited: function (code) {
-        if (code !== 0) root.failure = String(modelDriverErrors.text).trim().replace(/^nova-printers: /, "") || "Could not look for a driver."
+        if (code !== 0 && current) root.failure = String(modelDriverErrors.text).trim().replace(/^nova-printers: /, "") || "Could not look for a driver."
       }
       // Done, failed, or never started (no exit then): the line says what
-      // was found, and Choose… is there either way. One asked for while
-      // another ran starts once that one ends.
-      onRunningChanged: addSheet.lookingForDriver = running
+      // was found, and Choose… is there either way. A device chosen while
+      // another's look ran is looked up once that one ends.
+      onRunningChanged: {
+        if (running) return
+        if (!current && addSheet.wantedModel !== "") Qt.callLater(addSheet.lookUp)
+        else addSheet.lookingForDriver = false
+      }
     }
 
     Process {

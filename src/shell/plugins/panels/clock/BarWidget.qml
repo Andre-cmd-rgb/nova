@@ -17,9 +17,15 @@ Ui.Panel {
   widgetId: "nova.clock"
 
   // The clock's minute, which the panel follows past midnight, and the one
-  // on the label, which refresh() also sets.
-  readonly property date now: tick.date
+  // on the label, which refresh() also sets. Both move with the clock, and
+  // at a wake (moveTo).
+  property date now: tick.date
   property date stamp: tick.date
+
+  function moveTo(date) {
+    now = date
+    stamp = date
+  }
 
   // The settings holding the format and its alternate.
   readonly property string pattern: setting("format", "dddd HH:mm")
@@ -88,7 +94,7 @@ Ui.Panel {
   SystemClock {
     id: tick
     precision: SystemClock.Minutes
-    onDateChanged: clock.stamp = date
+    onDateChanged: clock.moveTo(date)
   }
 
   // SystemClock waits on the monotonic clock, which stands still while the
@@ -100,7 +106,7 @@ Ui.Panel {
   Connections {
     target: Wake
     function onWoke() {
-      clock.stamp = new Date()
+      clock.moveTo(new Date())
       nextMinute.interval = 60000 - Date.now() % 60000 + 50
       nextMinute.restart()
     }
@@ -108,7 +114,7 @@ Ui.Panel {
 
   Timer {
     id: nextMinute
-    onTriggered: clock.stamp = new Date()
+    onTriggered: clock.moveTo(new Date())
   }
 
   BarButton {

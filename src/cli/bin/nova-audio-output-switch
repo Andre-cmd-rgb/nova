@@ -10,7 +10,7 @@ set -euo pipefail
 # description, and the sink itself as JSON. Fields end in a NUL, which no
 # description holds. A list that failed partway is no list.
 fronted=$(nova-audio-tuning fronted-sink 2>/dev/null || true)
-mapfile -d '' -t outputs < <(timeout 2 pactl -f json list sinks | jq --raw-output0 --arg fronted "$fronted" '
+mapfile -d '' -t outputs < <(LC_ALL=C.UTF-8 timeout 2 pactl -f json list sinks | jq --raw-output0 --arg fronted "$fronted" '
   map(select((.ports | length == 0) or any(.ports[]?; .availability != "not available"))
     | select($fronted == "" or .name != $fronted))
   | .[] | .name, (.index | tostring), (.description // .properties."device.description" // .name), tojson')

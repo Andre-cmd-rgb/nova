@@ -63,19 +63,19 @@ PanelKeys {
     shown = todayMonth
   }
 
-  // On opening: today, its month, its day chosen, and the calendar looked
-  // up again, as serviceFor is a call a binding would not follow.
+  // On opening: today, its month, and its day chosen.
   function refresh() {
     day = new Date()
     backToToday()
     chosen = dayKey
-    const shell = clock.bar ? clock.bar.shell : null
-    if (shell) calendar = shell.serviceFor("nova.calendar")
   }
 
   // ---- Nova's calendar, when it is on
 
-  property var calendar: null
+  // The calendar's service, as the shell switches it on and off (serviceFor
+  // is followed by a binding).
+  readonly property var calendar: clock.bar && clock.bar.shell && typeof clock.bar.shell.serviceFor === "function"
+    ? clock.bar.shell.serviceFor("nova.calendar") : null
   property string chosen: dayKey
   // Read through `items`, so that they follow the calendar's changes.
   readonly property var busy: calendar && calendar.items ? calendar.busyDays(dayStart(days[0].key), dayStart(days[days.length - 1].key, 1)) : ({})

@@ -11,7 +11,7 @@
 # exits 1 if there was one.
 #
 #   locale    output a program translates (pactl's full listings and events,
-#             lpstat, lpinfo, pacman -Qi/-Si/-Qu) read without LC_ALL=C: under
+#             lpstat, lpinfo, pacman -Qi/-Qk/-Si/-Qu) read without LC_ALL=C: under
 #             another language its labels change and the parse finds nothing
 #   exec      `exec {fd}>file 2>/dev/null`: exec keeps every redirection on the
 #             line, so the script's stderr goes to /dev/null from there on;
@@ -96,6 +96,8 @@ awk '
     if (qml) {
       if (text ~ /"(pactl)"[[:space:]]*,[[:space:]]*"(list|subscribe|info|stat|get-(sink|source)-(volume|mute))"/ && text !~ /"(short)"/ && text !~ /LC_ALL=C/)
         report(start, "locale", "pactl read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
+      if (text ~ /"(lpstat|lpinfo)"/ && text !~ /LC_ALL=C/)
+        report(start, "locale", "CUPS read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
       # Properties of the root object, two spaces in. An Item has both; a
       # Quickshell window has data alone; a QtObject, Scope or Singleton
       # neither.
@@ -109,15 +111,17 @@ awk '
 
     # Output thrown away is not read.
     discarded = text ~ /(^|[^0-9])>[[:space:]]*\/dev\/null/
-    if (!discarded && text ~ /(^|[^A-Za-z0-9_-])pactl[[:space:]]+(list|subscribe|info|stat|get-(sink|source)-(volume|mute))/ && text !~ /[[:space:]]short([[:space:]]|$|\))/ && text !~ /LC_ALL=C/)
+    # pactl with its options first (-f json: the values are still its words).
+    if (!discarded && text ~ /(^|[^A-Za-z0-9_-])pactl([[:space:]]+(-f[[:space:]]*[a-z]+|--format=[a-z]+|-[sn][[:space:]]*[^-[:space:]][^[:space:]]*|--(server|client-name)=[^[:space:]]+))*[[:space:]]+(list|subscribe|info|stat|get-(sink|source)-(volume|mute))/ && text !~ /[[:space:]]short([[:space:]]|$|\))/ && text !~ /LC_ALL=C/)
       report(start, "locale", "pactl read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
     if (!discarded && text ~ /(^|[^A-Za-z0-9_-])(lpstat|lpinfo)[[:space:]]/ && text !~ /LC_ALL=C/)
       report(start, "locale", "CUPS read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
-    # pacman -Qi, -Si and -Qu print labels in the language of the user; -Syu,
-    # -Su and the rest are run for the user to watch, and -Qqu prints names.
+    # pacman -Qi, -Qk, -Si and -Qu print labels in the language of the user;
+    # -Syu, -Su and the rest are run for the user to watch, and -Qqu prints
+    # names.
     if (!discarded && text !~ /LC_ALL=C/ && match(text, /(^|[^A-Za-z0-9_-])pacman[[:space:]]+-[QS][A-Za-z]*/)) {
       flags = substr(text, RSTART, RLENGTH); sub(/^.*[[:space:]]-/, "", flags)
-      if ((flags ~ /^Q/ && (flags ~ /i/ || (flags ~ /u/ && flags !~ /q/))) || (flags ~ /^S/ && flags ~ /i/ && flags !~ /[uy]/))
+      if ((flags ~ /^Q/ && (flags ~ /[ik]/ || (flags ~ /u/ && flags !~ /q/))) || (flags ~ /^S/ && flags ~ /i/ && flags !~ /[uy]/))
         report(start, "locale", "pacman read in the user'"'"'s language: run it with LC_ALL=C")
     }
 
@@ -130,7 +134,8 @@ awk '
         report(start, "exec", "exec keeps 2>/dev/null for the rest of the script: { exec ...; } 2>/dev/null")
     }
 
-    if (text ~ /(^|[^A-Za-z0-9_-])journalctl[[:space:]]/ && text ~ /[[:space:]](-g|--grep(=|[[:space:]]))/ && text !~ /\|\|/ && text !~ /^[[:space:]]*(if|while|until|!)[[:space:]]/)
+    # The || has to come after it: one before it is for something else.
+    if (match(text, /(^|[^A-Za-z0-9_-])journalctl[[:space:]]/) && text ~ /[[:space:]](-g|--grep(=|[[:space:]]))/ && substr(text, RSTART) !~ /\|\|/ && text !~ /^[[:space:]]*(if|while|until|!)[[:space:]]/)
       report(start, "grep", "journalctl -g exits 1 when nothing matches: add || true, or test it")
 
     if (text ~ /\$\{[A-Za-z_][A-Za-z0-9_]*\/\/?[^}\/]*\/([^}\\]|\\.)*&/) {

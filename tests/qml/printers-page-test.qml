@@ -262,12 +262,15 @@ ShellRoot {
       page.addSheet.name = "bad name"
       page.addSheet.add()
       same(ran().length, 8, "a name with a space adds nothing")
+      // One with a driver, then at once one with none: the first look's
+      // answer is not the second's.
+      page.addSheet.choose(page.addSheet.fresh[2])
       page.addSheet.choose({ uri: "usb://Nobody/Knows", class: "direct", info: "Nothing Known", model: "Nothing Known", deviceId: "", driverless: false })
       same([page.addSheet.lookingForDriver, driverLine().detail], [true, "Looking for a driver…"], "a driver is looked for")
     },
     until(() => !page.addSheet.lookingForDriver, "the look for a driver ends"),
     () => {
-      same([page.addSheet.driver, driverLine().detail, page.failure], [null, "No driver found", ""], "none fits: it says so, not that it is still looking")
+      same([page.addSheet.driver, driverLine().detail, page.failure], [null, "No driver found", ""], "none fits: it says so, not that it is still looking, nor the driver of the one chosen before")
       page.addSheet.choose({ uri: "usb://Broken/One", class: "direct", info: "Broken", model: "Broken", deviceId: "", driverless: false })
     },
     until(() => !page.addSheet.lookingForDriver && page.failure !== "", "the failed look for a driver ends"),

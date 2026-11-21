@@ -455,7 +455,7 @@ Waiting without a clock:
 
 - One Cargo workspace at the root.
 - `cargo fmt`, `cargo clippy -D warnings`.
-- No unsafe beyond FFI that std lacks (the governor's signal handlers, libsystemd, jemalloc's `malloc_conf`).
+- No unsafe beyond FFI for what std lacks: Linux calls it does not wrap (signal handlers, inotify, timerfd, signalfd, sockets of kinds it has no type for, ioctl, terminal modes), libsystemd, and the C libraries a feature links (jemalloc's `malloc_conf`, zlib, curl for the calendar, gcrypt for the keyring exchange, GIO for Quick Look's descriptions).
 - std only, unless a dependency clearly pays for itself. D-Bus and the journal go through `nova-sd` (`src/sd`), libsystemd's own, which every system has.
 - Tools a user waits on (the theme engine, the power manager) are Rust, and so is what runs as long as the session does (`nova-sessiond`): a watcher in bash keeps a shell and what it waits on (socat, journalctl, jq) in memory for hours, where one in Rust is a thread asleep in `poll()`. Glue that mostly runs other programs, and then ends, stays bash.
 
@@ -466,7 +466,7 @@ Waiting without a clock:
 | `tests/unit/` | bats tests for the helpers; `make test` runs them |
 | `cargo test --workspace` | the Rust programs' tests; `nova-sessiond`'s against stand-ins: a private D-Bus (`dbus-daemon`) with a logind and a udisks of the test's own, a Hyprland socket, and journal files written by `systemd-journal-remote` |
 | `tests/qml/run` | runs the shell's logic tests (the plugin registry against the real plugin index) offscreen under Quickshell, from an installed tree |
-| `tools/lint-patterns` | in `make lint` and CI: kinds of bug found more than once, by their text: a translated listing (pactl, CUPS, `pacman -Qi/-Si/-Qu`) parsed without `LC_ALL=C`, `exec` keeping `2>/dev/null` for the whole script, `journalctl -g` under pipefail with nothing to catch its exit 1, a bare `&` in a bash replacement, a QML root shadowing `Item.state` or its children's `data`; sourced scripts too (by shellcheck's `# shellcheck shell=`), and none found is an error; `tests/unit/tools/lint-patterns.bats` shows each |
+| `tools/lint-patterns` | in `make lint` and CI: kinds of bug found more than once, by their text: a translated listing (pactl, CUPS, `pacman -Qi/-Qk/-Si/-Qu`) parsed without `LC_ALL=C`, `exec` keeping `2>/dev/null` for the whole script, `journalctl -g` under pipefail with nothing to catch its exit 1, a bare `&` in a bash replacement, a QML root shadowing `Item.state` or its children's `data`; sourced scripts too (by shellcheck's `# shellcheck shell=`), and none found is an error; `tests/unit/tools/lint-patterns.bats` shows each |
 | `tools/qml-smoke` | opens the shell's windows offscreen from the same tree, and fails on any runtime QML warning, which qmllint cannot see |
 | `tools/shell-smoke` | starts the whole shell under a headless sway, with what `data/hypr/env.lua` sets on the machine (Qt's GTK theme must load) and a desktop portal that never answers, summons its windows over IPC and checks that it locks at startup; in CI only |
 | `tools/build-site` | builds the site, and fails on a link between its pages, an #anchor, a picture or a file of the repository that is not there; in CI on every push, and before each publication |

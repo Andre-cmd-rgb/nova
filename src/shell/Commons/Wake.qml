@@ -25,11 +25,13 @@ QtObject {
   property string last: ""
   property bool read: false
 
+  // A read that failed, or found the file gone, keeps the last line: the
+  // same stamp read again after it is not news.
   function take(text) {
     const line = String(text || "").trim()
     const news = read && line !== "" && line !== last
     read = true
-    last = line
+    if (line !== "") last = line
     if (!news) return
     Date.timeZoneUpdated()
     woke()

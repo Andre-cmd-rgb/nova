@@ -228,3 +228,31 @@ EOF2
   [ "$status" -eq 2 ]
   [[ $output == *"found no files to check"* ]]
 }
+
+@test "locale: pactl with its options first, pacman -Qk, and CUPS in a QML array are found" {
+  file=$(sample options.sh <<'EOF2'
+#!/bin/bash
+sinks=$(timeout 2 pactl -f json list sinks | jq '.[]')
+checked=$(pacman -Qk nova 2>&1 || true)
+EOF2
+  )
+  qml=$(sample Cups.qml <<'EOF2'
+import Quickshell.Io
+Process { command: ["lpstat", "-v"] }
+EOF2
+  )
+  run "$LINT" "$file" "$qml"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': locale: ' <<<"$output")" -eq 3 ]
+}
+
+@test "grep: a || before journalctl does not count for it" {
+  file=$(sample before.sh <<'EOF2'
+#!/bin/bash
+[[ -n $x ]] || last=$(journalctl -b -o cat -g 'Invalid transition' | tail -n 1)
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [[ $output == "$file:2: grep"* ]]
+}
