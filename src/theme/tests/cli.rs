@@ -591,8 +591,12 @@ fn the_lock_backdrop_follows_the_background() {
         Some("greeter backdrop")
     );
     let bytes = fs::read(&backdrop).unwrap();
-    assert!(bytes.starts_with(b"P6\n64 36\n255\n"), "{:?}", &bytes[..16]);
-    let pixels = &bytes[13..];
+    // A PPM, its header marked with what it is made of.
+    let head = bytes.windows(5).position(|w| w == b"\n255\n").unwrap() + 5;
+    let header = String::from_utf8_lossy(&bytes[..head]);
+    assert!(header.starts_with("P6\n# nova-backdrop "), "{header}");
+    assert!(header.ends_with("\n64 36\n255\n"), "{header}");
+    let pixels = &bytes[head..];
     assert_eq!(pixels.len(), 64 * 36 * 3);
     // The middle of the bottom row is deep blue, a little lifted; the first
     // blue row, under the five of pink, is a blend of the two.
@@ -601,6 +605,12 @@ fn the_lock_backdrop_follows_the_background() {
     assert_eq!(at(32, 35), [lifted(0x20), lifted(0x30), lifted(0x60)]);
     let seam = at(32, 5);
     assert!(seam[0] > lifted(0x20) && seam[0] < lifted(0xd0), "{seam:?}");
+
+    // Another theme with the same photo leaves it as it is: it is made of
+    // that photo already.
+    let made = fs::metadata(&backdrop).unwrap().modified().unwrap();
+    s.ok(&["set", "gruvbox"]);
+    assert_eq!(fs::metadata(&backdrop).unwrap().modified().unwrap(), made);
 
     // The adaptive theme, set with the photo, makes it too.
     fs::remove_file(&backdrop).unwrap();
@@ -613,6 +623,14 @@ fn the_lock_backdrop_follows_the_background() {
     let made = fs::metadata(&backdrop).unwrap().modified().unwrap();
     s.ok(&["refresh"]);
     assert_eq!(fs::metadata(&backdrop).unwrap().modified().unwrap(), made);
+
+    // The photo changed in place is another picture: refresh makes it again.
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    fs::write(&dusk, ppm(DEEP_BLUE, DUSK_PINK)).unwrap();
+    s.ok(&["refresh"]);
+    let bytes = fs::read(&backdrop).unwrap();
+    let bottom = &bytes[bytes.len() - 3..];
+    assert_eq!(bottom, [lifted(0xd0), lifted(0x80), lifted(0xb0)]);
 
     // A picture that cannot be read takes the old backdrop away with it,
     // rather than leave the lock showing another picture.

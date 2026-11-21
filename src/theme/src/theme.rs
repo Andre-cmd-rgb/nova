@@ -493,9 +493,9 @@ pub fn refresh(paths: &Paths) -> Result<()> {
     let kept = fs::read_to_string(paths.theme().join(MADE_FROM)).unwrap_or_default();
     if sources(paths, &name).is_empty() || kept == made_from(paths, &name) {
         // The render is as it should be; the lock's backdrop is made if it
-        // is missing or older than the background (one set by a Nova from
-        // before backdrops, or by hand), a moment's work once.
-        let _ = backdrop::refresh(paths);
+        // is missing or of another picture (one set by a Nova from before
+        // backdrops, or by hand), a moment's work once.
+        let _ = backdrop::make(paths);
         return Ok(());
     }
     set(paths, &name)
