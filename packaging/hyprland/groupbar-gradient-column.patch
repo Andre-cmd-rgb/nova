@@ -1,0 +1,34 @@
+groupbar: draw the gradients from textures one pixel wide
+
+renderGradient() draws each of the four group bar gradients (active,
+inactive, locked active, locked inactive) into a texture the size of the
+focused monitor. The gradient is vertical, from (0, 0) to (0, height), and
+the same in every column, and the whole texture is stretched over each
+tab's box: one column of the same height draws the same pixels.
+
+A monitor-sized RGBA texture is 35 MiB at 3840x2400 (40 MiB as Mesa's iris
+rounds it up), so the four held 160 MiB, made at every config load with
+group:groupbar:gradients on, whether or not a group is open; each reload
+freed and made them again. One column of 2400 is 9.4 KiB.
+
+In a nested Hyprland at 3840x2400, with gradients on and no window, the
+render node's DRM fdinfo said 607.6 to 609.6 MiB before and 375.1 to 375.2
+after (three runs each); with two windows in a group, 850.0 and 697.8. A
+picture of the grouped windows is the same before and after, pixel for
+pixel.
+
+--- a/src/render/decorations/CHyprGroupBarDecoration.cpp
++++ b/src/render/decorations/CHyprGroupBarDecoration.cpp
+@@ -324,7 +324,11 @@
+     if (!Desktop::focusState()->monitor())
+         return nullptr;
+ 
+-    const Vector2D& bufferSize = Desktop::focusState()->monitor()->m_transformedSize;
++    // The gradient runs from the top down and is the same all across, and the
++    // texture is stretched over each tab: one column of the monitor's height
++    // draws the same tabs. A texture the monitor's size took 35 MiB a color at
++    // 3840x2400, four of them whether or not any group is open.
++    const Vector2D  bufferSize = {1.0, Desktop::focusState()->monitor()->m_transformedSize.y};
+ 
+     const auto      CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, bufferSize.x, bufferSize.y);
+     const auto      CAIRO        = cairo_create(CAIROSURFACE);

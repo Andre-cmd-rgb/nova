@@ -350,7 +350,7 @@ Built only in CI ([packaging.md](packaging.md) has how each is kept up to date):
 | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
 | `whisper-cpp` | dictation's speech engine (`libparakeet`, which `nova-dictationd` opens), with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on |
 | `supernova` | Nova's own browser, from a pinned Supernova commit; the default, which the installer installs unless Firefox is asked for |
-| `hyprland` | Arch's Hyprland with Nova's four patches (`packaging/hyprland/UPSTREAM.md` has them as offered upstream): `xwayland:scale`, X11 apps the same size on every display; an X11 game fullscreen at the resolution it set through RandR; a pointer motion no mouse made sent with a zero relative motion, which older SDL games read as a still mouse otherwise; and a release bind that fires when its modifier is let go first |
+| `hyprland` | Arch's Hyprland with Nova's five patches (`packaging/hyprland/UPSTREAM.md` has them as offered upstream): `xwayland:scale`, X11 apps the same size on every display; an X11 game fullscreen at the resolution it set through RandR; a pointer motion no mouse made sent with a zero relative motion, which older SDL games read as a still mouse otherwise; a release bind that fires when its modifier is let go first; and a window group's tab gradients drawn from textures one pixel wide, not four the monitor's size (160 MiB at 3840x2400) |
 | `cmatrix` | Arch's cmatrix built from upstream's current code: its last release fills the window with solid blocks after a resize |
 
 **Fallback kernel:** Arch's `linux-lts` + `nvidia-open-lts` stay installed as the fallback boot entry.

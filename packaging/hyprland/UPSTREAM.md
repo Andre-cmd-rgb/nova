@@ -1,6 +1,6 @@
 # Nova's Hyprland patches, offered to Hyprland
 
-Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)), `xwayland-emulated-modes.patch` ([below](#x11-games-fullscreen-at-the-resolution-they-set)) and `xwayland-relative-motion.patch` ([below](#a-pointer-motion-no-mouse-made-comes-with-a-zero-relative-motion)). Nothing here has been posted.
+Each patch here as a pull request to hyprwm/Hyprland, for Andre to read, change and post himself: `xwayland-scale.patch` first, then `release-bind.patch` ([below](#release-binds-whose-modifier-is-let-go-first)), `xwayland-emulated-modes.patch` ([below](#x11-games-fullscreen-at-the-resolution-they-set)) `xwayland-relative-motion.patch` ([below](#a-pointer-motion-no-mouse-made-comes-with-a-zero-relative-motion)) and `groupbar-gradient-column.patch` ([below](#group-bar-gradients-from-textures-one-pixel-wide)). Nothing here has been posted.
 
 ## Before posting
 
@@ -166,3 +166,31 @@ SDL 3.4.20 gets 300 both ways. Exclusive fullscreen and the menu's cursor are un
 
 - **No raw motion for an absolute device's motion** reaches X11 clients: it comes as a zero relative motion. Under a pointer lock Hyprland sends no absolute motion anyway.
 - **Mutter and KWin** were not tried; they send motions without a relative one in the same cases, so the same games are likely to break there.
+
+# Group bar gradients from textures one pixel wide
+
+`groupbar-gradient-column.patch`, a pull request of its own. The AI policy and the rebase on main above apply to it too.
+
+## Title
+
+groupbar: render the gradient textures one pixel wide
+
+## Description
+
+With `group:groupbar:gradients` on, `refreshGroupBarGradients()` renders four textures, one for each of `col.active`, `col.inactive`, `col.locked_active` and `col.locked_inactive`, at the size of the focused monitor. The gradient is linear from `(0, 0)` to `(0, height)`, so every column of a texture is the same, and the whole texture is stretched over each tab's box. A texture one pixel wide and as tall draws the same pixels.
+
+A monitor-sized RGBA texture is 35 MiB at 3840x2400, so the four take 140 MiB of graphics memory (160 MiB on Intel, where Mesa rounds each up to 40 MiB). They are made at every config load that touches the group bar's colours and kept, whether or not any window is grouped; a reload frees them and makes them again. One column of 2400 pixels is 9.4 KiB.
+
+The height is left as it was, so a tab samples the gradient exactly as before.
+
+### Tests
+
+In a nested Hyprland (a 3840x2400 output at scale 1.6, `gradients = true`, Mesa's iris on Intel Tiger Lake), the render node's `drm-total-system0` in the compositor's DRM fdinfo:
+
+| | v0.57.2 | patched |
+|---|---|---|
+| no windows, three runs | 607.6, 607.6, 609.6 MiB | 375.2, 375.2, 375.1 MiB |
+| two windows in a group | 850.0 MiB | 697.8 MiB |
+
+A screenshot of the two grouped windows is identical before and after, every pixel of the tabs included (the only pixels that differ are a clock's minute in a panel). Nothing changes with `gradients = false`.
+
