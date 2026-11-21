@@ -121,8 +121,10 @@ How files reach a system:
      - The profile gets 5 s; one that hangs or fails adds nothing. It runs without the session's VT, seat and session id, and with uwsm's `IN_UWSM_ENV_PRELOADER=true`, so a profile that starts a compositor on the first VT does not start one there.
      - It never sets the session's identity (`NOVA_LOGIN`, `XDG_SESSION_ID` and the like), the shell's own names (`UID`, `IFS`, `BASH_ENV`), or `GTK_USE_PORTAL`, which `10-nova` unsets after it.
      - Each line is a `command export`, so a name readonly in uwsm's sh is skipped, not the end of the session's start.
-4. **Hyprland starts in the `nova-boot` submap**, which has no binds.
+4. **Hyprland starts in the `nova-boot` submap**, which has no binds. Where nothing is drawn it shows black (`misc:background_color`, `data/hypr/behavior.lua`), as the boot and the greeter do.
 5. **The shell locks** before it draws anything else.
+   - The bar and the desktop wait for the boot's lock to be secure (`Commons/BootLock.qml`), so nothing of the desktop shows before it; a greeter login, which starts unlocked, shows them at once.
+   - The lock's surfaces are black, and its view draws nothing until its picture is ready: the backdrop `nova-theme` made (below), read in the first frame. The boot's lock fades it in from black, from the window's first frame. Without a backdrop the view blurs the background itself; a picture that never comes is waited for 1.5 s, then the theme's background stands in.
 6. **`nova-session-guard`** (a user unit every user has enabled) waits for `nova-shell lock state` to say `secure`: about 18 s while no shell runs, up to three minutes while one is starting and does not answer yet.
    - If it doesn't, the guard terminates the session, and greetd shows the greeter: `src/shell/greeter.qml` on a minimal Hyprland, or `agreety` on the console if that never shows.
    - Nothing ever shows an unlocked desktop that nobody authenticated.
@@ -160,7 +162,7 @@ Nova's themes live in `/usr/share/nova/themes/`. A theme of the same name in `~/
 
 ### `nova theme set <name>`
 
-`nova-theme` does this in under 5 ms of its own work:
+`nova-theme` does this in under 5 ms of its own work, and about a tenth of a second more when the background changes, for the lock's backdrop (step 4):
 
 1. **Render** into a fresh `~/.local/state/nova/rendered/<name>.<stamp>/`:
    - the theme's files, Nova's copy first and then the user's;
@@ -169,13 +171,14 @@ Nova's themes live in `/usr/share/nova/themes/`. A theme of the same name in `~/
 2. **Swap atomically:** `current/theme` is a symlink, replaced by one rename. Readers see the old theme or the new one, never a mix.
 3. **Pick the background:** the one last chosen for this theme, else the latest shared photo chosen, else the wordmark.
 4. **Tell the shell:** a `themeTransition` IPC fades to the new background and recolors the shell in one step.
+   - Meanwhile the lock's backdrop is made (`src/theme/src/backdrop.rs`): the background shrunk to 384 pixels and blurred as the lock showed it, in `current/backdrop.ppm`, about 250 KB. Its header names what it was made of (the picture's path, size and time), so a theme that keeps the photo skips it, and `nova-theme refresh` makes one that is missing. One that cannot be made is removed. `nova-theme backdrop` makes it again whatever is there.
 5. **Apply** (`nova-theme-apply`, in parallel):
    - `hyprctl reload`;
    - GTK: the palette as `nova.css` in `~/.config/gtk-3.0` and `gtk-4.0`, which `gtk.css` links to; color-scheme; the GTK 3 theme `adw-gtk3` or `adw-gtk3-dark`, which draws with the palette's colors (Qt follows GTK 3); and the same as XSETTINGS for X11 apps (`nova-hyprland-x11-scale`);
    - Flatpak: an override of the user's that shows every app those two folders, read-only, set once;
    - foot: new windows read `theme.ini`, open ones get OSC escapes;
    - btop, VS Code, Claude Code, T3 Code;
-   - the greeter mirror in `/var/lib/nova/greeter/`, from which a root path unit sets Chrome's color policy.
+   - the greeter mirror in `/var/lib/nova/greeter/` (the palette, the background and its backdrop, or no backdrop when there is none), from which a root path unit sets Chrome's color policy.
 
 ### What a theme can and cannot do
 
@@ -212,6 +215,7 @@ The shell draws the shade as a layer of its own (`nova-bar-shade`) under the win
 - A theme offers its own backgrounds, `~/.config/nova/backgrounds/<theme>/`, and the shared `~/.config/nova/backgrounds/`.
 - Each theme remembers its pick in `~/.local/state/nova/backgrounds/by-theme/`.
 - A pick from the shared folder also becomes the default for themes that have no pick of their own.
+- Each `bg set` makes the lock's backdrop of the new picture (above) and mirrors both for the greeter.
 
 ### The cursor
 
@@ -465,6 +469,8 @@ Three traps that load without an error and draw nothing:
 - inside `Type { }`, a name the type declares means the type's own property, so `Bar { shell: shell }` assigns the bar's empty `shell` to itself. Pass an outer object in under another name (see the bar's Loader in `shell.qml`);
 - Nerd Font icons in the private-use range (U+E000-U+F8FF) are often lost when a tool rewrites a file; `tests/unit/cli/menu.bats` catches an empty one in the menu.
 
+A window over the whole screen, and every lock surface, is `color: "black"` or `"transparent"`. The window's own colour is what shows in its first frames, before anything in it is ready: a white or themed one flashed between the boot's black and the lock. What is drawn in it waits until it is ready, as the lock's view does (`tests/qml/lock-view-test.qml` reads its frames back). `tools/lint-patterns` fails on such a window with any other colour, or none.
+
 A command's output is complete in its `StdioCollector` by the time `onExited` runs: Quickshell finishes both streams first (`src/io/process.cpp`). A command that cannot start is never heard to exit, only to stop running, so what waits on its end listens to `onRunningChanged` too.
 
 Waiting without a clock:
@@ -487,7 +493,7 @@ Waiting without a clock:
 | `tests/unit/` | bats tests for the helpers; `make test` runs them |
 | `cargo test --workspace` | the Rust programs' tests; `nova-sessiond`'s against stand-ins: a private D-Bus (`dbus-daemon`) with a logind and a udisks of the test's own, a Hyprland socket, and journal files written by `systemd-journal-remote`; `nova-dictationd`'s on a socket of its own, with a microphone that plays a recording and an engine that hears tones as words (and, given the model and a recording, `tests/speech.rs`: a pause to think on real speech) |
 | `tests/qml/run` | runs the shell's logic tests (the plugin registry against the real plugin index) offscreen under Quickshell, from an installed tree |
-| `tools/lint-patterns` | in `make lint` and CI: kinds of bug found more than once, by their text: a translated listing (pactl, CUPS, `pacman -Qi/-Qk/-Si/-Qu`) parsed without `LC_ALL=C`, `exec` keeping `2>/dev/null` for the whole script, `journalctl -g` under pipefail with nothing to catch its exit 1, a bare `&` in a bash replacement, a QML root shadowing `Item.state` or its children's `data`; sourced scripts too (by shellcheck's `# shellcheck shell=`), and none found is an error; `tests/unit/tools/lint-patterns.bats` shows each |
+| `tools/lint-patterns` | in `make lint` and CI: kinds of bug found more than once, by their text: a translated listing (pactl, CUPS, `pacman -Qi/-Qk/-Si/-Qu`) parsed without `LC_ALL=C`, `exec` keeping `2>/dev/null` for the whole script, `journalctl -g` under pipefail with nothing to catch its exit 1, a bare `&` in a bash replacement, a QML root shadowing `Item.state` or its children's `data`, a lock surface or a full-screen window that is neither black nor transparent; sourced scripts too (by shellcheck's `# shellcheck shell=`), and none found is an error; `tests/unit/tools/lint-patterns.bats` shows each |
 | `tools/qml-smoke` | opens the shell's windows offscreen from the same tree, and fails on any runtime QML warning, which qmllint cannot see |
 | `tools/shell-smoke` | starts the whole shell under a headless sway, with what `data/hypr/env.lua` sets on the machine (Qt's GTK theme must load) and a desktop portal that never answers, summons its windows over IPC and checks that it locks at startup; in CI only |
 | `tools/build-site` | builds the site, and fails on a link between its pages, an #anchor, a picture or a file of the repository that is not there, a picture without its size, anything fetched from another site, a theme left out or whose text does not read on it, or a function of the menu's code the site runs that is gone; in CI on every push, and before each publication |

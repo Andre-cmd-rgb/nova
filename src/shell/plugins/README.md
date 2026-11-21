@@ -237,7 +237,16 @@ Wayland's session lock (`WlSessionLock`) holds the session and puts the lock
 view on every screen. The password goes through the PAM service
 `nova-lock-password`; once the boot's first unlock is done, a finger can
 unlock too, through `nova-lock-fingerprint`. An autologin session locks
-before anything shows, which is why the lock has no off.
+before anything shows, which is why the lock has no off: the bar and the
+desktop wait for the boot's lock (`Commons/BootLock.qml`).
+
+The view (`lock/LockView.qml`, the greeter's too) draws nothing over its
+black surface until its picture is ready. That picture is the backdrop
+`nova-theme` makes whenever the background changes
+(`~/.local/state/nova/current/backdrop.ppm`, small and already blurred),
+read in the first frame; without one, the background, blurred on the
+graphics card. The boot's lock and the greeter fade it in from black.
+`tests/qml/lock-view-test.qml` reads its frames back.
 
 ### Polkit agent
 
