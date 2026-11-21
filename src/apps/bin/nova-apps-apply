@@ -311,11 +311,12 @@ install_app() {
     die "the last update did not finish: Settings, Updates finishes it, and then the app can be installed" 3
   fi
   an_app "$target" || die "$target is not an app in Arch's catalog"
+  # Before anything is changed, the package lists read included.
+  read_recipe
   read_missing_lists
   pacman -Si -- "$target" >/dev/null 2>&1 || die "$target is not in the release's repositories"
   behind=$(LC_ALL=C pacman -Qu 2>/dev/null | grep -v '\[ignored\]$' | awk '{ print $1 }' | paste -sd' ' || true)
   [[ -z $behind ]] || die "this computer's packages are older than its package lists ($behind): update Nova first, in Settings, Updates" 3
-  read_recipe
   local name
   local -a extras=() gone=() drivers=() new_extras=() new_drivers=()
   for name in "${RECIPE_WITH[@]}"; do

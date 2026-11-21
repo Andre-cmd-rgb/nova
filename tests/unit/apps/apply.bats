@@ -331,6 +331,15 @@ STUB
   [ ! -e /tmp/nova-pwned ]
 }
 
+@test "recipe: a broken one stops the install before the package lists are read, as on a new install" {
+  REPO="vlc" recipe_machine 'vlc with --overwrite=*'
+  rm "$NOVA_ROOT/var/lib/pacman/sync/extra.db"
+  REPO="vlc" run "$APPLY" install vlc
+  [ "$status" -eq 1 ]
+  [[ $output == *"the recipe for vlc is broken"* ]]
+  fails grep -q -- '-Sy' "$CALLS"
+}
+
 @test "recipe: one the caller gives is never read, by argument or environment" {
   REPO="vlc vlc-plugins-all" recipe_machine 'vlc with vlc-plugins-all'
   printf 'vlc with evil-package\n' >"$SCRATCH/evil"
