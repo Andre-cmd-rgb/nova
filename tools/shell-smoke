@@ -64,8 +64,11 @@ done
 # PATH and NOVA_PATH are this tree's (run_session).
 if ! env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" PATH=/usr/bin \
   NOVA_PATH="$root/usr/share/nova" NOVA_LIB="$root/usr/lib/nova" lua -e '
+    -- Anything else in hl, at any depth, called or indexed, does nothing.
+    local stub
+    stub = setmetatable({}, { __index = function() return stub end, __call = function() return stub end })
     hl = setmetatable({ env = function(name, value) print(name .. "=" .. value) end },
-      { __index = function() return function() end end })
+      { __index = function() return stub end })
     dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
     require("default.hypr.lib")
     require("default.hypr.env")' </dev/null | grep -vE '^(PATH|NOVA_PATH)=' >"$work/session.env"; then
@@ -89,9 +92,10 @@ esac
 session() { # desktop | lock
   set -euo pipefail
   local mode=$1
-  # Whatever is still running when this ends, early or not: dbus-run-session
-  # waits for it, and so does the capture of its output.
-  trap 'kill $(jobs -p) 2>/dev/null || true' EXIT
+  # Whatever is still running when this ends, early or not, ended and waited
+  # for: dbus-run-session would wait for it, and so would the capture of its
+  # output, and the next session must not find this one's sway still there.
+  trap 'kill $(jobs -p) 2>/dev/null || true; wait 2>/dev/null || true' EXIT
   WLR_BACKENDS=headless WLR_RENDERER=pixman WLR_LIBINPUT_NO_DEVICES=1 \
     sway -c "$WORK/sway.conf" >"$WORK/sway.log" 2>&1 &
   local sway=$! socket='' i

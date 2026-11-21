@@ -31,8 +31,9 @@ done
 
 echo "nova-session-guard: the lock did not engage; ending the session" >&2
 # What the session was still waiting for, for the journal: a lock that never
-# came is most often a start that waits on another.
-systemctl --user list-jobs --no-pager >&2 2>/dev/null || true
+# came is most often a start that waits on another. A user manager that does
+# not answer must not hold up the end.
+timeout 5 systemctl --user list-jobs --no-pager >&2 2>/dev/null || true
 if [[ -n ${XDG_SESSION_ID:-} ]]; then
   loginctl terminate-session "$XDG_SESSION_ID" && exit 1
 fi

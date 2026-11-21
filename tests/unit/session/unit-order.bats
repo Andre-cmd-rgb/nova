@@ -73,3 +73,17 @@ ordering_of() { # unit other
   ordering_of app-chat@autostart.service nova-session-guard.service
   [ "$ordering" = "After:" ]
 }
+
+@test "the whole session, started together, has no ordering cycle" {
+  # Each test above starts one unit; this one starts them all in one
+  # transaction, as a session does, so that a cycle through three of them
+  # shows (ordering_of fails on one).
+  printf '[Unit]\nDescription=the desktop portal\nPartOf=graphical-session.target\nAfter=graphical-session.target\n[Service]\nExecStart=/bin/true\n' \
+    >"$units/xdg-desktop-portal.service"
+  printf '[Unit]\nDescription=a session\nWants=graphical-session-pre.target graphical-session.target nova-session-guard.service xdg-desktop-portal.service app-chat@autostart.service\n' \
+    >"$units/the-session.target"
+  ordering_of the-session.target app-chat@autostart.service
+  [ "$ordering" = "After:" ]
+  ordering_of the-session.target xdg-desktop-portal.service
+  [ "$ordering" = "After:" ]
+}

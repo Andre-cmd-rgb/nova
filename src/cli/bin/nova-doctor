@@ -381,6 +381,8 @@ check_graphics() {
   local -a cards=() unbound=()
   for dev in "$SYS"/bus/pci/devices/*; do
     [[ -r $dev/class && $(<"$dev/class") == 0x03* ]] || continue
+    # A card taken off the bus between the reads is not judged on empty values.
+    [[ -r $dev/vendor && -r $dev/device ]] || continue
     vendor=$(<"$dev/vendor")
     driver=$(driver_of "$dev")
     cards+=("$(vendor_name "$vendor") (${driver:-no driver})")
