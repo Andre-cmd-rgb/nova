@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 
 # services/hidden-entries.sh: the desktop entries the menu leaves out, and
-# with --discrete-gpu the ones that ask to run on the discrete GPU.
+# the ones that ask to run on the discrete GPU, from one read of them.
 
 load ../test_helper
 
@@ -14,6 +14,11 @@ setup() {
 }
 
 teardown() { teardown_scratch; }
+
+# The IDs of one list (hidden or discrete), sorted, on a line.
+list() { # name output
+  sed -n "s/^$1 //p" <<<"$2" | sort | tr '\n' ' '
+}
 
 entry() { # dir id lines...
   local dir=$1 id=$2
@@ -31,7 +36,8 @@ entry() { # dir id lines...
   entry "$SCRATCH/system" not-here 'NotShowIn=Hyprland;'
   run bash "$SCAN" Hyprland
   [ "$status" -eq 0 ]
-  [ "$(sort <<<"$output" | tr '\n' ' ')" = "elsewhere gone nodisplay not-here " ]
+  [ "$(list hidden "$output")" = "elsewhere gone nodisplay not-here " ]
+  [ "$(list discrete "$output")" = "" ]
 }
 
 @test "the first directory to have an ID wins, and Flatpak's linked entries count" {
@@ -41,18 +47,17 @@ entry() { # dir id lines...
   ln -s "$SCRATCH/app/org.game.Game.desktop" "$SCRATCH/flatpak/applications/org.game.Game.desktop"
   ln -s "$SCRATCH/app/missing.desktop" "$SCRATCH/flatpak/applications/broken.desktop"
   run bash "$SCAN" Hyprland
-  [ "$output" = org.game.Game ]
-  run bash "$SCAN" --discrete-gpu Hyprland
-  [ "$output" = org.game.Game ]
+  [ "$output" = "hidden org.game.Game"$'\n'"discrete org.game.Game" ]
 }
 
-@test "--discrete-gpu: PrefersNonDefaultGPU or KDE's key, true, in the entry's own section" {
+@test "discrete: PrefersNonDefaultGPU or KDE's key, true, in the entry's own section" {
   entry "$SCRATCH/system" steam PrefersNonDefaultGPU=true
   entry "$SCRATCH/system" kde-game X-KDE-RunOnDiscreteGpu=true
   entry "$SCRATCH/system" plain
   entry "$SCRATCH/system" says-no PrefersNonDefaultGPU=false
   entry "$SCRATCH/system" in-action '[Desktop Action big]' PrefersNonDefaultGPU=true
-  run bash "$SCAN" --discrete-gpu Hyprland
+  run bash "$SCAN" Hyprland
   [ "$status" -eq 0 ]
-  [ "$(sort <<<"$output" | tr '\n' ' ')" = "kde-game steam " ]
+  [ "$(list discrete "$output")" = "kde-game steam " ]
+  [ "$(list hidden "$output")" = "" ]
 }

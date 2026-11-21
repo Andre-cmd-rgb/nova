@@ -98,9 +98,10 @@ Item {
   }
 
   // The menu <id>, or the root for one that is not there, as it is now: its
-  // when: and checked: asked again, its provider run, no answer of the last
-  // opening, and icons placed since the shell started (on a first install)
-  // found. A chooser still waiting is answered as cancelled.
+  // when: and checked: asked again, its provider run, and no answer of the
+  // last opening. The apps and their icons are the library's, found again
+  // when an app is installed or removed, not here. A chooser still waiting
+  // is answered as cancelled.
   function showMenu(id) {
     request.release()
     asking = null
@@ -116,7 +117,6 @@ Item {
     opened = true
     relist()
     source.refill(here)
-    if (apps) apps.refreshIcons()
     Qt.callLater(window.takeKeys)
   }
 

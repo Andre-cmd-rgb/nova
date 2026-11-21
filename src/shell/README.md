@@ -24,7 +24,7 @@ shell/
     BarWidgets.qml          the bar widgets' components
     AppLibrary.qml          the installed apps, sorted, launched and removed, for the menu
     AppSearch.js            which of them the menu lists, and in what order
-    hidden-entries.sh       the desktop entries hidden from this desktop
+    hidden-entries.sh       the desktop entries hidden from this desktop, and those for the discrete GPU
   Commons/  Ui/             shared singletons and controls
   plugins/
     index.json              every manifest below, collected when Nova is built

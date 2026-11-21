@@ -8,8 +8,9 @@ import "AppSearch.js" as AppSearch
 // The menu's apps: the desktop entries its Apps list shows, the icon drawn
 // for each, and launching or removing one. Two lists of desktop IDs keep an
 // entry out: Nova's launcher.hides, and the entries this desktop does not
-// list (hidden-entries.sh). shell.qml makes one; the menu reaches it as
-// shell.appLibrary.
+// list (hidden-entries.sh). The lists and the icons are found again when
+// the entries change (an install or a removal), never as the menu opens.
+// shell.qml makes one; the menu reaches it as shell.appLibrary.
 Item {
   id: library
 
@@ -17,7 +18,8 @@ Item {
   // went, or a list of IDs to leave out was read again.
   signal appsChanged()
 
-  readonly property string novaPath: Quickshell.env("NOVA_PATH")
+  // Where Nova is installed (a test sets its own).
+  property string novaPath: Quickshell.env("NOVA_PATH")
 
   // The two lists of IDs to leave out, each as { id: true }.
   property var hiddenByNova: ({})
@@ -29,7 +31,8 @@ Item {
   // icon theme once, when the shell starts, and never sees an icon installed
   // later; this, found again whenever the apps change, is how a new app's
   // icon still shows. Each time it is a new object, so that every binding on
-  // iconSource() reads it again.
+  // iconSource() reads it again. It is every icon theme's, whichever is set,
+  // so a change of theme changes nothing here.
   property var iconFiles: ({})
 
   function entryName(entry) {
@@ -64,13 +67,6 @@ Item {
   }
 
   readonly property string genericIcon: Quickshell.iconPath("application-x-executable", true)
-
-  // The menu asks for this each time it opens, for icons that came after
-  // the shell started (on a first install, for one). A search under way is
-  // left to finish.
-  function refreshIcons() {
-    if (!iconSearch.running) iconSearch.running = true
-  }
 
   // Straight to nova-launch, which finds the entry (AppSearch.launchWords): a
   // login shell and gtk-launch in between cost 12 ms and 30 ms of each
@@ -129,72 +125,107 @@ Item {
     }
   }
 
-  // The entries this desktop leaves out, for this session's desktop names.
+  // The entries this desktop leaves out, for this session's desktop names,
+  // and those that ask for the discrete GPU (PrefersNonDefaultGPU), from one
+  // read of the entries.
   Search {
-    id: hiddenSearch
+    id: entrySearch
     command: {
       var names = [Quickshell.env("XDG_CURRENT_DESKTOP"), Quickshell.env("XDG_SESSION_DESKTOP"), Quickshell.env("DESKTOP_SESSION")]
       return ["bash", library.novaPath + "/shell/services/hidden-entries.sh", names.filter(Boolean).join(":")]
     }
     onSearched: function(lines) {
-      library.hiddenHere = library.idSet(lines.join("\n"))
+      var lists = { hidden: [], discrete: [] }
+      for (var line of lines) {
+        var space = line.indexOf(" ")
+        var list = lists[line.substring(0, space)]
+        if (list) list.push(line.substring(space + 1))
+      }
+      library.hiddenHere = library.idSet(lists.hidden.join("\n"))
+      library.prefersDiscrete = library.idSet(lists.discrete.join("\n"))
       library.appsChanged()
     }
   }
 
-  // The entries that ask for the discrete GPU (PrefersNonDefaultGPU).
-  Search {
-    id: discreteSearch
-    command: ["bash", library.novaPath + "/shell/services/hidden-entries.sh", "--discrete-gpu"]
-    onSearched: function(lines) {
-      library.prefersDiscrete = library.idSet(lines.join("\n"))
-    }
-  }
-
   // Every app and device icon file, SVGs before PNGs: under ~/.icons,
-  // ~/.local/share/icons and each XDG data dir's icons, then in
-  // /usr/share/pixmaps. A name keeps the first file found for it. Device
-  // icons count, as some entries name one ("printer").
+  // ~/.local/share/icons and each XDG data dir's icons (each folder once),
+  // then in /usr/share/pixmaps, but not below it. A name keeps the first
+  // file found for it. Device icons count, as some entries name one
+  // ("printer"). One find for them all; the SVGs are taken first here.
   Search {
     id: iconSearch
     command: ["bash", "-c", [
-      'roots=("$HOME/.icons" "$HOME/.local/share/icons")',
+      'declare -A seen; icons=() roots=()',
       'IFS=: read -ra shares <<<"${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"',
-      'for share in "${shares[@]}"; do roots+=("$share/icons"); done',
-      'for type in svg png; do',
-      '  for root in "${roots[@]}"; do',
-      '    [[ -d $root ]] || continue',
-      '    find "$root" \\( -path "*/apps/*" -o -path "*/devices/*" \\) -name "*.$type" 2>/dev/null',
-      '  done',
-      '  find /usr/share/pixmaps -maxdepth 1 -name "*.$type" 2>/dev/null',
-      'done'
+      'for share in "${shares[@]}"; do icons+=("${share%/}/icons"); done',
+      'for root in "$HOME/.icons" "$HOME/.local/share/icons" "${icons[@]}" /usr/share/pixmaps; do',
+      '  [[ -d $root && -z ${seen[$root]:-} ]] || continue',
+      '  seen[$root]=1; roots+=("$root")',
+      'done',
+      '((${#roots[@]})) || exit 0',
+      'exec find "${roots[@]}" -path "/usr/share/pixmaps/*/*" -prune -o \\( -path "*/apps/*" -o -path "*/devices/*" -o -path "/usr/share/pixmaps/*" \\) \\( -name "*.svg" -o -name "*.png" \\) -print 2>/dev/null'
     ].join("\n")]
     onSearched: function(lines) {
       var files = ({})
-      for (var line of lines) {
-        var file = line.trim()
-        var base = file.substring(file.lastIndexOf("/") + 1)
-        var name = base.lastIndexOf(".") > 0 ? base.substring(0, base.lastIndexOf(".")) : base
-        if (name && !(name in files)) files[name] = file
+      for (var type of [".svg", ".png"]) {
+        for (var line of lines) {
+          var file = line.trim()
+          if (!file.endsWith(type)) continue
+          var base = file.substring(file.lastIndexOf("/") + 1)
+          var name = base.substring(0, base.length - type.length)
+          if (name && !(name in files)) files[name] = file
+        }
       }
       library.iconFiles = files
     }
   }
 
-  // An install changes many entries at once: one icon search for them all.
+  // An install changes many entries at once: one icon search for them all,
+  // and another a while after the last change, for the icons a package
+  // writes after its entry (applications comes before icons in a package),
+  // or a slow one between the two.
   Timer {
     id: iconSearchSoon
     interval: 750
     onTriggered: iconSearch.request()
   }
 
+  Timer {
+    id: iconSearchLater
+    interval: 10000
+    onTriggered: iconSearch.request()
+  }
+
+  // Each search waits for the entries: there is nothing to leave out or
+  // draw before there is one, and the entries' first reading, as the shell
+  // starts, would have each run a second time. The first icon search runs
+  // with the entries' first reading; each change after it is an install or
+  // a removal.
+  property bool searched: false
+
+  function search() {
+    entrySearch.request()
+    if (!searched) {
+      searched = true
+      iconSearch.request()
+    } else {
+      iconSearchSoon.restart()
+      iconSearchLater.restart()
+    }
+  }
+
+  // Quickshell says so once for each entry it adds, many in one turn as it
+  // reads them: the searches and the menu's list are made once for them all,
+  // the turn after.
+  function entriesChanged() {
+    search()
+    appsChanged()
+  }
+
   Connections {
     target: DesktopEntries.applications
     function onValuesChanged() {
-      hiddenSearch.request()
-      discreteSearch.request()
-      iconSearchSoon.restart()
-      library.appsChanged()
+      Qt.callLater(library.entriesChanged)
     }
   }
 
@@ -210,9 +241,7 @@ Item {
   }
 
   Component.onCompleted: {
-    hiddenSearch.running = true
-    discreteSearch.running = true
-    iconSearch.running = true
+    if ((DesktopEntries.applications.values || []).length > 0) search()
   }
 
   // ------------------------------------------------------- launch feedback
