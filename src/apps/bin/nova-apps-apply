@@ -148,9 +148,11 @@ hw_packages() { # option...
 # pacman takes NVIDIA's on every computer; given one in the same
 # transaction, it takes that one.
 graphics_for() { # package...
-  local brought
+  local brought drivers
   brought=$(pacman -Sp --print-format %n -- "$@" 2>/dev/null) || return 0
-  hw_packages --needed-by <<<"$brought" | grep -xE '[a-z0-9@_+][a-z0-9@._+-]*' || true
+  # A helper that fails says so: left to pacman, NVIDIA's would go in.
+  drivers=$(hw_packages --needed-by <<<"$brought") || return 1
+  grep -xE '[a-z0-9@_+][a-z0-9@._+-]*' <<<"$drivers" || true
 }
 
 # Of the packages, those not installed yet.
@@ -317,7 +319,10 @@ install_app() {
     if pacman -Si -- "$name" >/dev/null 2>&1; then extras+=("$name"); else gone+=("$name"); fi
   done
   ((${#gone[@]} == 0)) || echo "nova-apps-apply: not in the release's repositories, so left out: ${gone[*]}" >&2
-  mapfile -t drivers < <(graphics_for "$target" "${extras[@]}")
+  local list
+  list=$(graphics_for "$target" "${extras[@]}") ||
+    die "could not tell which graphics drivers this computer needs; nothing was installed"
+  mapfile -t drivers < <(grep . <<<"$list" || true)
   mapfile -t new_extras < <(not_installed "${extras[@]}")
   mapfile -t new_drivers < <(not_installed "${drivers[@]}")
   say "Installing $target"

@@ -32,6 +32,12 @@ case $1 in
   *) exit 0 ;;
 esac
 EOF
+  # The real nova-hw-packages, on a computer of the test's own with no
+  # display controller (graphics_machine gives it one).
+  mkdir -p "$SCRATCH/pci"
+  printf 'vendor_id\t: GenuineIntel\n' >"$SCRATCH/cpuinfo"
+  export NOVA_HW_PACKAGES=$REPO_ROOT/data/hardware/bin/nova-hw-packages
+  export NOVA_PCI_DEVICES_PATH=$SCRATCH/pci NOVA_CPUINFO=$SCRATCH/cpuinfo
   printf '#!/bin/bash\nprintf "%%s\\n" core extra\n' >"$SCRATCH/bin/pacman-conf"
   chmod +x "$SCRATCH/bin/pacman" "$SCRATCH/bin/pacman-conf"
   export PATH="$SCRATCH/bin:$PATH"
@@ -417,4 +423,15 @@ STUB
     REPO="$package" run "$APPLY" install "$package"
     [[ $output != *"is broken"* ]] || { echo "$package: $output"; false; }
   done < <(sed 's/#.*//' "$REPO_ROOT/src/apps/data/recipes" | awk 'NF { print $1 }' | sort -u)
+}
+
+@test "install: a hardware helper that fails stops the install: left to pacman, NVIDIA's would go in" {
+  graphics_machine 0x030000:0x8086:0x9a49
+  printf '%s\n' steam lib32-glibc lib32-nvidia-utils nvidia-utils >"$SCRATCH/brought"
+  printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/hw-broken"
+  chmod +x "$SCRATCH/hw-broken"
+  NOVA_HW_PACKAGES=$SCRATCH/hw-broken INSTALLED="mesa vulkan-intel" run "$APPLY" install steam
+  [ "$status" -eq 1 ]
+  [[ $output == *"could not tell which graphics drivers this computer needs; nothing was installed"* ]]
+  fails grep -q 'pacman -S ' "$CALLS"
 }
