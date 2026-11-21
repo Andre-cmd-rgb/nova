@@ -24,6 +24,7 @@ A theme reaches every part of the desktop at once:
 - foot, open windows included;
 - btop, VS Code, Claude Code and T3 Code;
 - Chrome: its toolbar, and light or dark;
+- Supernova, Nova's browser: its tabs, command bar and own pages, in the theme's colors;
 - the login screen after a logout.
 
 Nothing before the lock screen is themed: the boot menu keeps its own colors.
@@ -37,7 +38,7 @@ Nothing before the lock screen is themed: the boot menu keeps its own colors.
 - **X11 apps** (XWayland) get the theme, icons, cursor and font too.
 - **Apps that draw themselves**, such as Flutter apps (LocalSend), Electron apps, slicers and Java apps, follow light or dark at most, in their own colors.
 
-**When the theme changes**, foot, the shell, Chrome and VS Code change at once. An open GTK 4 or libadwaita app follows a change between light and dark at once, in libadwaita's own colors, and has the new theme's colors when it is opened again. An open GTK 3 or Qt app keeps the theme it started with until it is opened again; the system's file chooser is started again with the theme, so its next window has the new one.
+**When the theme changes**, foot, the shell, Chrome, Supernova and VS Code change at once. An open GTK 4 or libadwaita app follows a change between light and dark at once, in libadwaita's own colors, and has the new theme's colors when it is opened again. An open GTK 3 or Qt app keeps the theme it started with until it is opened again; the system's file chooser is started again with the theme, so its next window has the new one.
 
 `~/.config/gtk-3.0/gtk.css` and `gtk-4.0/gtk.css` are links to `nova.css` beside them, rewritten on each theme change. To add CSS of your own, replace a link with a file of yours that starts with `@import url("nova.css");`.
 
