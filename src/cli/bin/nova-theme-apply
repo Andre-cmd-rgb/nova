@@ -155,14 +155,15 @@ apply_gtk() {
 # xdg-desktop-portal-gtk, in GTK 3, and it stays running between them with the
 # theme it started with. Started again, by D-Bus, the next time one is wanted;
 # not while one of its windows is open, which that would close: that one keeps
-# the old theme until the next change.
+# the old theme until the next change. The restart is queued, after apply_gtk
+# (gtk_then_portal, below), and nothing waits for it.
 apply_portal() {
   [[ -n ${DBUS_SESSION_BUS_ADDRESS:-} ]] || return 0
   if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] &&
     hyprctl -j clients 2>/dev/null | jq -e 'any(.[]; .class == "xdg-desktop-portal-gtk")' >/dev/null 2>&1; then
     return 0
   fi
-  systemctl --user try-restart xdg-desktop-portal-gtk.service 2>/dev/null || true
+  systemctl --user --no-block try-restart xdg-desktop-portal-gtk.service 2>/dev/null || true
 }
 
 # Flatpak apps are shown ~/.config/gtk-3.0 and gtk-4.0, read-only, for the
@@ -377,9 +378,26 @@ if (( $# > 0 )); then
   apps=("$@")
 fi
 
+# The GTK portal also hands color-scheme on to apps (the settings portal,
+# which Chrome, T3 Code and libadwaita read), and a change made while it
+# starts again reaches none of them: none of 16 within its first 25 ms, in a
+# bus of its own. So it starts again after GTK has the new one, not beside it.
+gtk_then_portal() {
+  local status=0
+  apply_gtk & wait "$!" || status=1
+  apply_portal & wait "$!" || status=1
+  return "$status"
+}
+
 pids=()
 for app in "${apps[@]}"; do
-  "apply_$app" &
+  if [[ $app == portal && " ${apps[*]} " == *" gtk "* ]]; then
+    continue
+  elif [[ $app == gtk && " ${apps[*]} " == *" portal "* ]]; then
+    gtk_then_portal &
+  else
+    "apply_$app" &
+  fi
   pids+=("$!")
 done
 

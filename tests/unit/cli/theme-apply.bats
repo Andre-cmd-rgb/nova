@@ -114,7 +114,22 @@ s/#438de6/#00ff00/gI'
   stub hyprctl "echo '[{\"class\": \"foot\"}]'"
   HYPRLAND_INSTANCE_SIGNATURE=test run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal
   [ "$status" -eq 0 ]
-  grep -qx 'systemctl --user try-restart xdg-desktop-portal-gtk.service' "$CALLS"
+  grep -qx 'systemctl --user --no-block try-restart xdg-desktop-portal-gtk.service' "$CALLS"
+}
+
+@test "the GTK portal starts again only once GTK has the new light or dark, however long that takes" {
+  # The portal hands color-scheme on to apps (Chrome, T3 Code, libadwaita);
+  # a change made while it restarts reaches none of them.
+  stub systemctl
+  stub hyprctl "echo '[]'"
+  # apply_gtk changes it after its other work: here, a third of a second in.
+  printf '#!/bin/bash\nsleep 0.3\necho "gsettings $*" >>"$CALLS"\n' >"$SCRATCH/bin/gsettings"
+  HYPRLAND_INSTANCE_SIGNATURE=test run "$REPO_ROOT/src/cli/bin/nova-theme-apply" portal gtk
+  [ "$status" -eq 0 ]
+  scheme=$(grep -n 'color-scheme' "$CALLS" | cut -d: -f1)
+  restart=$(grep -n '^systemctl --user --no-block try-restart xdg-desktop-portal-gtk' "$CALLS" | cut -d: -f1)
+  [ -n "$scheme" ] && [ -n "$restart" ]
+  (( scheme < restart ))
 }
 
 @test "the GTK portal is left running while one of its windows is open" {
