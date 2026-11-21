@@ -106,6 +106,12 @@ ShellRoot {
     check("no battery: the percentage setting still toggles", panel.settings.showPercentage, true)
     calls.reload()
     check("no battery: neither the battery nor the modes were read", calls.text(), "")
+    // Not on battery, the modes are none, even from an answer asked for on
+    // battery that lands after the plug, and any shown go.
+    panel.modes = ["power-saver", "balanced"]
+    panel.liveMode = "balanced"
+    panel.takeModes("power-saver\t0\nbalanced\t1\n")
+    check("not on battery: no modes to choose", [panel.modes, panel.liveMode], [[], ""])
     finish()
   }
 }

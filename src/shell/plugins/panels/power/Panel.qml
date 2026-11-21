@@ -85,8 +85,16 @@ Panel {
     if (Object.keys(read).length > 0) facts = read
   }
 
-  // Until it is shown, the cursor waits on the mode in use.
+  // Until it is shown, the cursor waits on the mode in use. Plugged in
+  // there are none to choose (nova-power-profile list offers nothing then),
+  // and an answer asked for on battery that lands after the plug is put
+  // away with them; on battery, an empty answer keeps what is shown.
   function takeModes(text) {
+    if (!unplugged) {
+      modes = []
+      liveMode = ""
+      return
+    }
     const read = Model.modes(text)
     if (read.names.length === 0) return
     modes = read.names
@@ -114,7 +122,11 @@ Panel {
 
   // The battery service puts back the mode kept for the new power source;
   // it is read a moment after the plug comes or goes, once it has landed.
-  onUnpluggedChanged: if (opened) settle.restart()
+  // The plug takes the battery's modes away at once.
+  onUnpluggedChanged: {
+    if (!unplugged) takeModes("")
+    if (opened) settle.restart()
+  }
 
   Timer { id: settle; interval: 600; onTriggered: power.refresh() }
   Timer { interval: 5000; running: power.opened; repeat: true; onTriggered: power.refresh() }
