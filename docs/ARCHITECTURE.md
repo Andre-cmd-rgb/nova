@@ -328,6 +328,7 @@ Built only in CI ([packaging.md](packaging.md) has how each is kept up to date):
 | `nvidia-open-nova` | NVIDIA modules prebuilt for `linux-nova` |
 | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
 | `whisper-cpp` | dictation's speech engine, with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on |
+| `supernova` | Nova's own browser, from a pinned Supernova commit; installed by name, not by default |
 | `hyprland` | Arch's Hyprland with Nova's patch for `xwayland:scale`: X11 apps the same size on every display |
 
 **Fallback kernel:** Arch's `linux-lts` + `nvidia-open-lts` stay installed as the fallback boot entry.

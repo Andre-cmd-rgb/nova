@@ -15,6 +15,7 @@ Every package Nova publishes has its PKGBUILD under `packaging/`.
 | `nvidia-open-nova` | Arch's `nvidia-open` packaging | NVIDIA's open modules prebuilt for `linux-nova`, so no DKMS on the laptop |
 | `limine-entry-tool`, `limine-snapper-sync` | the AUR recipes, pinned | the boot-entry and snapshot-menu tools, which are AUR-only |
 | `whisper-cpp` | `packaging/whisper-cpp`, its release tag | dictation's speech engine, with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on |
+| `supernova` | `packaging/supernova`, a pinned commit of [Supernova](https://github.com/Andre-cmd-rgb/supernova) | Nova's own browser; in no Arch repository |
 | `cmatrix` | Arch's `cmatrix` packaging, from upstream's current commit | 2.0, the last release, fills a resized window with solid blocks; upstream fixed that in 2020 and has made no release since |
 | `hyprland` | Arch's `hyprland` packaging, plus four patches | `xwayland:scale`: X11 apps the same size on every display, which Hyprland does not have yet; X11 games fullscreen at the resolution they set, with a mouse that turns their view; and release binds that fire when the modifier is let go first, which dictation's Super+D needs |
 
@@ -95,6 +96,17 @@ To retire: once Arch ships a cmatrix with those commits, delete `packaging/cmatr
 - **Every CPU generation:** Nova also runs on CPUs older than x86-64-v3, so ggml's CPU backend is built for every generation (`GGML_CPU_ALL_VARIANTS`) and the best the CPU has is loaded as it starts. Those are shared libraries, kept in `/usr/lib/whisper-cpp` and found there by `RUNPATH`, apart from Arch's ggml.
 
 To update: bump `pkgver` to a newer tag, then the checksum (`makepkg -g`). Arch's version no longer matters.
+
+## supernova
+
+**Supernova's own PKGBUILD (`packaging/arch/PKGBUILD` in its repository), built from the Supernova commit `_commit` pins.**
+
+- **What it is:** Nova's browser, on the castlabs Electron for Content Security that Supernova's `electron.lock` pins (Chromium plus Google's licensed Widevine, so Netflix and Spotify play). `prepare()` stops the build if the PKGBUILD's castlabs version, URL or checksum differ from that `electron.lock`.
+- **Not installed by default:** it is not a dependency of `nova` and not the default browser; it is in `[nova]` to be installed by name.
+- **Two changes from Supernova's copy:** the source is the pinned commit of the published repository instead of a local checkout, and `check()`, which runs Supernova's unit tests and starts the browser headless (`tools/smoke.sh`), runs it without Chromium's sandbox where user namespaces are forbidden, as in CI's Docker containers. The job's container has a 1 GB `/dev/shm`, since Docker's 64 MB is too little for Chromium.
+- **No setuid helper:** `chrome-sandbox` is not shipped; Chromium's sandbox runs on user namespaces, which Arch's kernels allow.
+
+To update: set `_commit` to a newer commit of Supernova's `main`, carry over any change to its `packaging/arch/PKGBUILD`, and build.
 
 ## hyprland
 

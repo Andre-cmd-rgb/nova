@@ -198,6 +198,36 @@ jobs:
           name: packages-whisper-cpp
           path: out/pkgs/*.pkg.tar.zst
 
+  # Supernova, Nova's browser, from the Supernova commit its PKGBUILD pins.
+  # Its check() starts the browser headless, which needs more shared memory
+  # than Docker's 64 MB.
+  supernova:
+    needs: pin
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --shm-size=1g
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - id: built
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: out/pkgs
+          key: supernova-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('packaging/supernova/**', 'tools/build-package', 'tools/ci-setup') }}
+      - name: Build supernova
+        if: steps.built.outputs.cache-hit != 'true'
+        run: |
+          tools/ci-setup --date "${{ needs.pin.outputs.arch_date }}"
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          tools/build-package packaging/supernova out/pkgs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages-supernova
+          path: out/pkgs/*.pkg.tar.zst
+
   # Hyprland with Nova's patch, at Arch's pkgrel and Nova's revision of it
   # (packaging/hyprland). Built only while the snapshot's Hyprland is the
   # version the patch is for: a newer one is released as Arch's, without
@@ -307,7 +337,7 @@ jobs:
           tools/arch-packages --release release.toml out/arch
 
   repo:
-    needs: [kernel, nova, whisper-cpp, hyprland, nvidia]
+    needs: [kernel, nova, whisper-cpp, supernova, hyprland, nvidia]
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:

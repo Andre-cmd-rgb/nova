@@ -1,0 +1,180 @@
+# Maintainer: Andre-cmd-rgb <https://github.com/Andre-cmd-rgb/nova>
+#
+# supernova: Nova's own browser (github.com/Andre-cmd-rgb/supernova, MIT), on
+# the castlabs Electron for Content Security its electron.lock pins: Chromium
+# with Google's licensed Widevine, so Netflix and Spotify play.
+#
+# This is Supernova's packaging/arch/PKGBUILD at the commit pinned below, with
+# two changes: the source is that commit of the published repository instead
+# of a local checkout, and check() starts the browser without Chromium's
+# sandbox where user namespaces are forbidden (Nova builds in Docker, whose
+# seccomp policy forbids them; on a machine that allows them the sandbox stays on).
+#
+# Not the default browser and not a dependency of `nova`: it is in [nova] to
+# be installed by name (pacman -S supernova).
+#
+# To update: set _commit to a newer commit of Supernova's main, carry over any
+# change to its packaging/arch/PKGBUILD, and build. prepare() stops the build
+# if the castlabs pins below differ from that commit's electron.lock.
+
+pkgname=supernova
+pkgver=1.0.0beta1
+pkgrel=1
+pkgdesc='A light, fast browser that puts nothing between you and the page'
+arch=(x86_64)
+url='https://github.com/Andre-cmd-rgb/supernova'
+license=(MIT)
+depends=(
+  # What the castlabs binary and its libraries link (readelf -d, NEEDED)
+  alsa-lib
+  at-spi2-core
+  cairo
+  dbus
+  expat
+  glib2
+  glibc
+  gtk3
+  libcups
+  libgcc
+  libx11
+  libxcb
+  libxcomposite
+  libxdamage
+  libxext
+  libxfixes
+  libxkbcommon
+  libxrandr
+  mesa           # libgbm; and AMD's VA-API driver, which mesa carries now
+  nspr
+  nss
+  pango
+  systemd-libs   # libudev
+
+  # What it loads or runs while it runs
+  libva          # VA-API: video decoded on the GPU
+  libpulse       # sound, through pipewire-pulse
+  libsecret      # the saved passwords' key in the login keyring; secret-tool for Chrome's
+  sqlite         # sqlite3: reads Chrome's passwords, cookies and history for the import
+  xdg-utils      # xdg-settings (the default browser), xdg-open
+)
+makedepends=(
+  git            # the VCS source
+  util-linux     # unshare, to see whether the sandbox can run in check()
+  nodejs         # npm ci, the preload bundle, the unit tests
+  npm
+)
+optdepends=(
+  'intel-media-driver: hardware video decoding on Intel GPUs (Broadwell and newer)'
+  'xdg-desktop-portal: screen sharing and the file chooser'
+)
+# The castlabs build is used as castlabs made it: not stripped, no debug package.
+options=(!strip !debug)
+
+_electron_version=45.2.1+wvcus
+_electron_url=https://github.com/castlabs/electron-releases/releases/download/v45.2.1%2Bwvcus/electron-v45.2.1%2Bwvcus-linux-x64.zip
+_electron_sha256=18953cdab1cdc2499f9b0089f85d069559bf992145008a40aacd0d7714b97960
+# The name tools/fetch-electron.sh keeps it under, so either can reuse the other's download.
+_electron_zip=electron-$_electron_version-linux-x64.zip
+
+_commit=12af6c189cd8c232d9213c1ddb31b4624a6a9734
+source=("supernova::git+https://github.com/Andre-cmd-rgb/supernova.git#commit=$_commit"
+        "$_electron_zip::$_electron_url")
+noextract=("$_electron_zip")
+sha256sums=(SKIP
+            "$_electron_sha256")
+
+# package.json's version (semver) as a pkgver: 1.0.0 stays, 1.0.0-beta.1
+# becomes 1.0.0beta1, 1.0.0-rc.2 1.0.0rc2. Anything else stops the build
+# rather than guess an order pacman might sort wrongly.
+_pkgver_of() {
+  local v=$1
+  if [[ $v =~ ^([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+    printf '%s' "${BASH_REMATCH[1]}"
+  elif [[ $v =~ ^([0-9]+\.[0-9]+\.[0-9]+)-([a-z]+)\.?([0-9]*)$ ]]; then
+    printf '%s%s%s' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}"
+  else
+    printf 'package.json version %s has no pkgver spelling here: extend _pkgver_of\n' "$v" >&2
+    return 1
+  fi
+}
+
+pkgver() {
+  cd supernova
+  _pkgver_of "$(node -p 'require("./package.json").version')"
+}
+
+prepare() {
+  # The castlabs build fetched above must be the one this source pins.
+  local key pinned locked
+  for key in version url sha256; do
+    pinned=_electron_$key
+    locked=$(sed -n "s/^$key=//p" supernova/electron.lock)
+    if [[ $locked != "${!pinned}" ]]; then
+      error 'electron.lock pins %s=%s, this PKGBUILD %s: update _electron_%s' "$key" "$locked" "${!pinned}" "$key"
+      return 1
+    fi
+  done
+}
+
+build() {
+  cd supernova
+  # npm's cache in $srcdir, not the builder's ~/.npm. The repository's .npmrc
+  # (legacy-peer-deps) keeps the stock electron package out of node_modules.
+  export npm_config_cache="$srcdir/npm-cache"
+  npm ci --no-audit --no-fund
+  node tools/build.mjs
+
+  # The tree that becomes /usr/lib/supernova. resources/default_app.asar is
+  # Electron's placeholder app, which resources/app replaces.
+  local tree=$srcdir/tree app=$srcdir/tree/resources/app
+  rm -rf "$tree"
+  mkdir -p "$tree"
+  bsdtar -xf "$srcdir/$_electron_zip" -C "$tree"
+  mv "$tree/electron" "$tree/supernova"
+  rm -f "$tree/chrome-sandbox" "$tree/resources/default_app.asar"
+
+  mkdir "$app"
+  cp -a package.json package-lock.json .npmrc src dist assets node_modules LICENSE NOTICE "$app/"
+  # Only the production dependencies ship (esbuild only builds). Pruned in
+  # the copy, so that check() runs the tests with everything installed.
+  (cd "$app" && npm prune --omit=dev --no-audit --no-fund)
+  # npm's own bookkeeping, and the folders the pruned packages leave empty.
+  rm "$app/package-lock.json" "$app/.npmrc" "$app/node_modules/.package-lock.json"
+  find "$app/node_modules" -depth -type d -empty -delete
+  chmod -R u=rwX,go=rX "$tree"
+}
+
+check() {
+  cd supernova
+  # test/autofill.test.js runs the autofill preload in a real Electron, a
+  # pristine one where tools/fetch-electron.sh puts it.
+  rm -rf .electron
+  mkdir .electron
+  bsdtar -xf "$srcdir/$_electron_zip" -C .electron
+  tools/test.sh
+  if ! unshare --user --pid --net --fork true 2>/dev/null; then
+    export SUPERNOVA_SMOKE_NO_SANDBOX=1
+  fi
+  tools/smoke.sh "$srcdir/tree/supernova"
+}
+
+package() {
+  install -d "$pkgdir/usr/lib"
+  # Not the builder's uid: under fakeroot, files belong to root.
+  cp -a --no-preserve=ownership "$srcdir/tree" "$pkgdir/usr/lib/supernova"
+
+  cd supernova
+  install -Dm755 packaging/supernova -t "$pkgdir/usr/bin/"
+  install -Dm644 packaging/supernova.desktop -t "$pkgdir/usr/share/applications/"
+  local icon
+  for icon in assets/icons/hicolor/*/apps/supernova.{png,svg}; do
+    install -Dm644 "$icon" "$pkgdir/usr/share/icons/${icon#assets/icons/}"
+  done
+
+  install -Dm644 LICENSE NOTICE -t "$pkgdir/usr/share/licenses/$pkgname/"
+  # Electron's and Chromium's licences, where the castlabs build keeps them.
+  ln -s /usr/lib/supernova/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE.electron"
+  ln -s /usr/lib/supernova/LICENSES.chromium.html "$pkgdir/usr/share/licenses/$pkgname/"
+}
+
+# vim:set ts=2 sw=2 et:
