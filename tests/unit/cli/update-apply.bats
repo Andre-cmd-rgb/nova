@@ -8,6 +8,8 @@ load ../test_helper
 
 setup() {
   setup_scratch
+  # As root the script drops NOVA_ROOT and works on this computer itself.
+  ((EUID != 0)) || skip "run the tests as an ordinary account"
   export NOVA_ROOT=$SCRATCH/root
   kver=7.2.11-arch1-1-nova
   put "$NOVA_ROOT/usr/lib/modules/$kver/pkgbase" linux-nova
@@ -1130,4 +1132,28 @@ session_start_installed() {
   if [[ -r /var/lib/pacman/sync/multilib.db ]] && command -v pacman >/dev/null; then
     ! grep -qxF -f <(pacman -Slq multilib 2>/dev/null) <<<"$deps"
   fi
+}
+
+# As root nothing of the environment named NOVA_ is read, by it or by what it
+# runs (nova-hw-packages, nova-hw-detect, and pacman's hooks, which honour
+# NOVA_ROOT, NOVA_BOOT_ESP and others): pkexec empties the environment, but
+# sudo -E or a root shell would hand them on.
+@test "as root the test seams are dropped before anything reads one" {
+  local drop first
+  drop=$(grep -n "compgen -e -X '!NOVA_\*'" "$REPO_ROOT/src/cli/bin/nova-update-apply" | cut -d: -f1)
+  first=$(grep -nE '\$\{?NOVA_' "$REPO_ROOT/src/cli/bin/nova-update-apply" | head -1 | cut -d: -f1)
+  [ -n "$drop" ] && [ -n "$first" ]
+  [ "$drop" -lt "$first" ]
+}
+
+@test "as root no NOVA_ variable is left for the script or what it runs; as anyone else they are the tests'" {
+  unshare -r true 2>/dev/null || skip "no user namespaces here to run it as root"
+  local script=$REPO_ROOT/src/cli/bin/nova-update-apply
+  local probe='source "$1"; echo "root=$ROOT snapper=$SNAPPER_CONFIG"; compgen -e -X "!NOVA_*" || true'
+  run env NOVA_ROOT="$SCRATCH/root" NOVA_SNAPPER_CONFIG=evil NOVA_FREE_SPACE=/x NOVA_PROC_STAT=/y NOVA_PCI_DEVICES_PATH=/z \
+    unshare -r bash -c "$probe" _ "$script"
+  [ "$status" -eq 0 ]
+  [ "$output" = "root= snapper=root" ]
+  run env NOVA_ROOT="$SCRATCH/root" NOVA_SNAPPER_CONFIG=evil bash -c "$probe" _ "$script"
+  [[ $output == "root=$SCRATCH/root snapper=evil"* ]]
 }

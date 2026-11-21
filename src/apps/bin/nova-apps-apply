@@ -49,8 +49,11 @@ set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # The test seams (a scratch root, the helpers beside it) are honoured only for
 # a caller that is not root, whose pacman is a test's: as root nothing from
-# the environment is read, though pkexec empties it anyway.
+# the environment is read, though pkexec empties it anyway, and every NOVA_
+# variable is dropped, for what this runs too (nova-update-apply, pacman's
+# hooks).
 if ((EUID == 0)); then
+  for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done
   ROOT=''
   HW_PACKAGES=$HERE/bin/nova-hw-packages
   UPDATE_APPLY=$HERE/bin/nova-update-apply

@@ -68,7 +68,15 @@
 # polkit let through.
 set -euo pipefail
 
-ROOT=${NOVA_ROOT:-} # a test seam: prefix for every path; pkexec strips the environment
+# As root nothing of the environment named NOVA_ is read, here or by what this
+# runs: those are test seams (below, in nova-hw-packages, and in pacman's hooks,
+# nova-boot-check's NOVA_BOOT_ESP say), and the tests run it as an ordinary
+# account. pkexec empties the environment; sudo -E or a root shell would not.
+if ((EUID == 0)); then
+  for seam in $(compgen -e -X '!NOVA_*'); do unset "$seam"; done
+fi
+
+ROOT=${NOVA_ROOT:-} # a test seam: prefix for every path
 MIRRORLIST=$ROOT/etc/pacman.d/nova-mirrorlist
 REPOFILE=$ROOT/etc/pacman.d/nova-repo
 SYNC_DIR=$ROOT/var/lib/pacman/sync

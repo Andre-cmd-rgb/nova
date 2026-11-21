@@ -10,6 +10,8 @@ APPLY=$REPO_ROOT/src/apps/bin/nova-apps-apply
 
 setup() {
   setup_scratch
+  # As root the script drops NOVA_ROOT and works on this computer itself.
+  ((EUID != 0)) || skip "run the tests as an ordinary account"
   export CALLS="$SCRATCH/calls" NOVA_ROOT="$SCRATCH/root"
   mkdir -p "$SCRATCH/bin" "$NOVA_ROOT/usr/share/swcatalog/xml" "$NOVA_ROOT/var/lib/pacman/sync" "$NOVA_ROOT/etc/pacman.d"
   : >"$CALLS"
@@ -217,10 +219,12 @@ STUB
 
 @test "install: as root nothing of the environment is read, not the root, not the helpers" {
   grep -q 'if ((EUID == 0)); then' "$APPLY"
-  # The root branch names no NOVA_ variable.
+  # The root branch reads no NOVA_ variable, and drops every one first, so
+  # neither what it runs (nova-update-apply, pacman's hooks) reads one.
   run sed -n '/^if ((EUID == 0)); then$/,/^else$/p' "$APPLY"
-  [[ $output != *NOVA_* ]]
+  [[ $output != *'$NOVA_'* && $output != *'${NOVA_'* ]]
   [[ $output == *"ROOT=''"* ]]
+  [[ $(sed -n 2p <<<"$output") == *"compgen -e -X '!NOVA_*'"*'unset'* ]]
   # And the hardware helper runs with an empty environment.
   grep -q 'env -i PATH=/usr/bin "$HW_PACKAGES"' "$APPLY"
 }
