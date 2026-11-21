@@ -2,6 +2,13 @@
 -- the unprivileged `greeter` user. It does one thing: run the Quickshell greeter on
 -- every output and leave when the greeter is done. No bindings, no animations.
 
+-- Nova's cursor theme (theme/cursor), as the session has it: named, as
+-- Hyprcursor left to itself takes whichever theme it finds first.
+hl.env("XCURSOR_THEME", "Nova")
+hl.env("HYPRCURSOR_THEME", "Nova")
+hl.env("XCURSOR_SIZE", "24")
+hl.env("HYPRCURSOR_SIZE", "24")
+
 hl.monitor({
   output = "",
   mode = "preferred",

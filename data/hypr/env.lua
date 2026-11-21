@@ -5,6 +5,8 @@ local gpu = require("default.hypr.gpu")
 
 hl.env("XCURSOR_SIZE", "24")
 hl.env("HYPRCURSOR_SIZE", "24")
+-- Nova's cursor theme, or the one you chose (cursor.lua).
+require("default.hypr.cursor")
 
 -- Wayland for every toolkit that can draw on it, X11 through XWayland for the rest.
 hl.env("GDK_BACKEND", "wayland,x11,*")

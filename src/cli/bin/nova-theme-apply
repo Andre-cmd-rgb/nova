@@ -107,6 +107,13 @@ MinSize=8
 MaxSize=512
 Type=Scalable
 THEME
+  # Nova's cursor theme is named Nova too (/usr/share/icons/Nova): linked in
+  # here, its cursors are found in this folder, where Hyprland's XCursor
+  # loader, which takes the folders in name order, would otherwise take
+  # Adwaita's, which this inherits, before them.
+  for dir in "${dirs[@]}"; do
+    [[ -d $dir/icons/Nova/cursors ]] && { ln -s -- "$dir/icons/Nova/cursors" "$out/.Nova.tmp/cursors"; break; }
+  done
   rm -rf -- "$out/Nova"
   mv -- "$out/.Nova.tmp" "$out/Nova"
 }

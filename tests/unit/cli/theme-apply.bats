@@ -76,6 +76,29 @@ s/#438de6/#00ff00/gI'
   [ ! -e "$XDG_DATA_HOME/icons/.Nova.tmp" ]
 }
 
+@test "the icon theme Nova has Nova's cursors, found there before the Adwaita it inherits" {
+  write_file "$XDG_DATA_DIRS/icons/Adwaita/scalable/places/folder.svg" '<path fill="#62a0ea"/>'
+  write_file "$XDG_DATA_DIRS/icons/Nova/cursors/default" 'cursor'
+  write_file "$XDG_STATE_HOME/nova/current/theme/adwaita-folders.sed" 's/#62a0ea/#ff0000/gI'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ "$(readlink "$XDG_DATA_HOME/icons/Nova/cursors")" = "$XDG_DATA_DIRS/icons/Nova/cursors" ]
+  [ "$(cat "$XDG_DATA_HOME/icons/Nova/cursors/default")" = cursor ]
+  # Made again, without a link inside the link.
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ ! -e "$XDG_DATA_DIRS/icons/Nova/cursors/cursors" ]
+}
+
+@test "without Nova's cursors installed, the icon theme Nova links none" {
+  write_file "$XDG_DATA_DIRS/icons/Adwaita/scalable/places/folder.svg" '<path fill="#62a0ea"/>'
+  write_file "$XDG_STATE_HOME/nova/current/theme/adwaita-folders.sed" 's/#62a0ea/#ff0000/gI'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" gtk
+  [ "$status" -eq 0 ]
+  [ -f "$XDG_DATA_HOME/icons/Nova/index.theme" ]
+  [ ! -e "$XDG_DATA_HOME/icons/Nova/cursors" ] && [ ! -L "$XDG_DATA_HOME/icons/Nova/cursors" ]
+}
+
 @test "a theme's own icon set is not replaced by Nova" {
   echo Yaru-sage >"$XDG_STATE_HOME/nova/current/theme/icons.theme"
   write_file "$XDG_DATA_DIRS/icons/Yaru-sage/index.theme" '[Icon Theme]'
