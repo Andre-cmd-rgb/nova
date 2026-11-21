@@ -9,7 +9,9 @@
 # source); the files they are made of are followed as windows-reached.awk
 # follows them. The kinds of work:
 #   process  a Process that starts by itself (any running: of its own)
-#   watch    a FileView that watches its file (watchChanges: true)
+#   watch    a FileView that watches its file (watchChanges: true), or a
+#            WatchedFile (Commons), which always does; WatchedFile.qml itself
+#            is not followed, so the watch is the file's that makes one
 #   timer    a Timer that goes on by itself (repeat: true), but one that
 #            runs only while its copy's panel is open (running: opened, or
 #            opened && more), which one copy at a time is
@@ -109,7 +111,7 @@ FNR == 1 {
     sub(/^[^A-Za-z_]/, "", type)
     line = substr(line, RSTART + RLENGTH)
     if (top[file] == "") top[file] = type
-    else used[file, ++uses[file]] = type
+    else if (type !~ /(^|\.)WatchedFile$/) used[file, ++uses[file]] = type
   }
 }
 
@@ -117,10 +119,10 @@ FNR == 1 {
 # The blocks of work in it, read whole, their braces counted.
 {
   line = strip($0)
-  if (!inside && match(line, /(^|[^A-Za-z0-9_.])(Process|FileView|Timer)[ \t]*\{/)) {
+  if (!inside && match(line, /(^|[^A-Za-z0-9_.])([A-Za-z_][A-Za-z0-9_]*\.)?(Process|FileView|Timer|WatchedFile)[ \t]*\{/)) {
     kind = substr(line, RSTART, RLENGTH)
-    sub(/^[^A-Z]*/, "", kind)
     sub(/[ \t]*\{$/, "", kind)
+    sub(/^.*[^A-Za-z0-9_]/, "", kind)
     inside = 1
     depth = 0
     body = ""
@@ -135,6 +137,7 @@ FNR == 1 {
       what = ""
       if (kind == "Process" && body ~ /(^|[^A-Za-z0-9_.])running:/) what = "process"
       if (kind == "FileView" && body ~ /watchChanges:[ \t]*true/) what = "watch"
+      if (kind == "WatchedFile") what = "watch"
       if (kind == "Timer" && body ~ /repeat:[ \t]*true/ && !(body ~ /running:[ \t]*([A-Za-z_][A-Za-z0-9_]*\.)?opened[ \t]*(;|\n|\}|&&|$)/)) what = "timer"
       if (what != "") work[file, ++works[file]] = startLine " " what
     }

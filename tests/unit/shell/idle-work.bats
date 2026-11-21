@@ -108,12 +108,16 @@ perCopy=(
   mkdir -p "$SCRATCH/shell/parts"
   cd "$SCRATCH/shell"
   # Widget is made of Part, in a folder it imports. Counted: Part's process
-  # that starts by itself (3), its watch (4), its poll (5), and the poll of
-  # one that runs while the panel is shut (6). Not: a process started by a
-  # call (7), a FileView read once (8), a poll while the panel is open (9,
-  # 10), a one-shot Timer (11), and Unused's, which no widget is made of.
+  # that starts by itself (4), its watch (5), its poll (6), the poll of one
+  # that runs while the panel is shut (7), and its WatchedFile (13), as
+  # Part's. Not: a process started by a call (8), a FileView read once (9),
+  # a poll while the panel is open (10, 11), a one-shot Timer (12),
+  # WatchedFile.qml's own watch, and Unused's, which no widget is made of.
   printf 'import "parts"\nItem {\n  Part {}\n}\n' >Widget.qml
+  mkdir -p Commons
+  printf 'FileView {\n  watchChanges: true\n}\n' >Commons/WatchedFile.qml
   cat >parts/Part.qml <<'QML'
+import qs.Commons as Commons
 Item {
   id: part
   Process { command: ["a"]; running: true }
@@ -125,13 +129,14 @@ Item {
   Timer { interval: 5; repeat: true; running: part.opened }
   Timer { interval: 5; repeat: true; running: opened && part.live }
   Timer { interval: 5; running: true }
+  Commons.WatchedFile { path: "/etc/hostname" }
 }
 QML
   printf 'Item {\n  Process { running: true }\n}\n' >Unused.qml
   run bash -c "find . -name '*.qml' -print0 | LC_ALL=C sort -z | xargs -0 awk -v roots='Widget.qml' -f '$BATS_TEST_DIRNAME/widget-work.awk'"
   cd "$BATS_TEST_DIRNAME"
   teardown_scratch
-  [ "$output" = "parts/Part.qml 3 process"$'\n'"parts/Part.qml 4 watch"$'\n'"parts/Part.qml 5 timer"$'\n'"parts/Part.qml 6 timer" ]
+  [ "$output" = "parts/Part.qml 4 process"$'\n'"parts/Part.qml 5 watch"$'\n'"parts/Part.qml 6 timer"$'\n'"parts/Part.qml 7 timer"$'\n'"parts/Part.qml 13 watch" ]
 }
 
 @test "only the window plugins listed are kept loaded from login" {
