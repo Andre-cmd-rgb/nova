@@ -1,8 +1,9 @@
 # Nova's site on GitHub Pages: the landing page (site/), with the pictures it
 # shows taken from the docs' own (docs/images, made by tools/screenshots), and
 # a page for each user doc (docs/*.md), all built by tools/build-site, which
-# fails on a link or picture that leads nowhere. Published at each push to main
-# that changes any of them.
+# fails on a link or picture that leads nowhere, with the themes' colors from
+# theme/palettes and the menu's code its Super+Space runs. Published at each
+# push to main that changes any of them.
 name: pages
 
 on:
@@ -12,6 +13,10 @@ on:
       - 'site/**'
       - 'docs/**'
       - 'tools/build-site'
+      - 'theme/palettes/**'
+      - 'data/defaults/menu.jsonc'
+      - 'src/shell/plugins/menu/MenuModel.js'
+      - 'src/shell/plugins/calculator/Calculator.js'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 

@@ -4,6 +4,7 @@
 // alike, so that the two give the same answer to the same words: a sum put
 // the way qalc (libqalculate) reads it, the words qalc is run with, and the
 // answer it printed.
+// The site runs it too (tools/build-site), in the landing page's menu.
 //
 // The menu asks qalc only when a search holds a digit and something that
 // asks for a calculation: an operator, a function's brackets, or "in" or

@@ -13,10 +13,30 @@
 # autolinks, strikethrough, their own HTML), and their headings get GitHub's
 # ids, so a link to page.md#heading works on both. A link between two rendered
 # docs becomes one between their pages, a picture (images/...) is copied from
-# docs/images, and anything else in the repository (the maintainer docs, src/)
-# is linked on GitHub. The build fails, and leaves the folder as it was, when a
-# link to a page of the site or to its #anchor leads nowhere, when a picture is
-# missing, or when a link into the repository names a file it does not have.
+# docs/images and given its width and height, and anything else in the
+# repository (the maintainer docs, src/) is linked on GitHub. Each page gets
+# the list of its headings, the pages before and after it, and its part of the
+# search index (docs/search-index.json).
+#
+# What is made from the rest of the repository, so that it cannot drift:
+#   themes.css      every theme's colors, from theme/palettes/*/colors.toml as
+#                   Nova derives them (src/theme/src/palette.rs); the adaptive
+#                   theme's from docs/images/dusk{,.light}.colors.toml, the
+#                   background the pictures are taken over (tools/screenshots).
+#                   Text colors too faint on a theme's surfaces are blended
+#                   toward its text until they read (4.5:1, WCAG AA).
+#   menu-model.js   the menu's own code (src/shell/plugins/menu/MenuModel.js,
+#                   src/shell/plugins/calculator/Calculator.js) and its entries
+#                   (data/defaults/menu.jsonc), which the landing page's
+#                   Super+Space runs (site/playground.js).
+#   the theme picker on every page, and the landing page's pictures of themes.
+#
+# The build fails, and leaves the folder as it was, when a link to a page of
+# the site or to its #anchor leads nowhere (the search index's and the
+# stylesheets' url()s too), when a picture is missing or has no size, when a
+# link into the repository names a file it does not have, when a page would
+# load anything from another site, when a theme is left out or its text does
+# not read on it, or when the menu's code lacks a function the playground runs.
 
 set -euo pipefail
 # GitHub's heading ids keep the letters beyond ASCII, and so does this.
@@ -42,13 +62,27 @@ for tool in cmark-gfm gawk; do
   command -v "$tool" >/dev/null || { echo "build-site: needs $tool (Arch: pacman -S $tool)" >&2; exit 1; }
 done
 
-# The docs rendered, in the order of the docs' list beside each page; README.md,
-# their index, is docs/ and the others docs/<name>/. The maintainer docs stay on
-# GitHub; a doc in neither list fails the build, so a new one is not left out
-# unnoticed.
-pages=(README install using keys updates apps themes airdrop iphone hardware power patches)
+# The docs rendered, in groups, in the order of the docs' list beside each
+# page; README.md, their index, is docs/ and the others docs/<name>/. The
+# maintainer docs stay on GitHub; a doc in neither list fails the build, so a
+# new one is not left out unnoticed.
+groups=(
+  "Start|README install using keys"
+  "Everyday|updates apps themes airdrop iphone"
+  "Your computer|hardware power patches"
+)
+pages=()
+for group in "${groups[@]}"; do
+  read -ra names <<<"${group#*|}"
+  pages+=("${names[@]}")
+done
 github_only=(ARCHITECTURE packaging releasing)
 github=https://github.com/Andre-cmd-rgb/nova
+
+# What the landing page's Super+Space runs of the menu's code: each must be a
+# function there, or the playground would break unseen.
+menu_functions=(readMenuFile catalogOf appItems withApps providerItems withFilled menuRows searchRows answerRows listHeight resolve pathOf noAnswers)
+calculator_functions=(expression answer)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -64,14 +98,290 @@ for doc in "$here"/docs/*.md; do
     problem "docs/$name.md is in neither list at the top of tools/build-site: a page of the site, or a maintainer doc"
 done
 
+# ------------------------------------------------------------ the pictures
+
+# A picture's width and height, from its own header: a JPEG's frame, a PNG's
+# IHDR, an SVG's width and height or viewBox. Nothing for one it cannot read.
+picture_size() { # <file>
+  case $1 in
+    *.jpg | *.jpeg)
+      od -An -v -tu1 -N 131072 "$1" | gawk '
+        { for (i = 1; i <= NF; i++) b[n++] = $i }
+        END {
+          if (b[0] != 255 || b[1] != 216) exit 1
+          for (i = 2; i + 8 < n; i += 2 + b[i + 2] * 256 + b[i + 3]) {
+            if (b[i] != 255) exit 1
+            m = b[i + 1]
+            if (m >= 192 && m <= 207 && m != 196 && m != 200 && m != 204) {
+              print b[i + 7] * 256 + b[i + 8], b[i + 5] * 256 + b[i + 6]
+              exit 0
+            }
+          }
+          exit 1
+        }' ;;
+    *.png)
+      od -An -v -tu1 -j 16 -N 8 "$1" | gawk '{ print ($1 * 16777216 + $2 * 65536 + $3 * 256 + $4), ($5 * 16777216 + $6 * 65536 + $7 * 256 + $8) }' ;;
+    *.svg)
+      head -c 4096 "$1" | tr '\n' ' ' | gawk '{
+        if (match($0, /<svg[^>]*>/)) tag = substr($0, RSTART, RLENGTH); else exit 1
+        if (match(tag, / width="[0-9.]+"/) && match(tag, / height="[0-9.]+"/)) {
+          match(tag, / width="[0-9.]+"/); w = substr(tag, RSTART + 8, RLENGTH - 9)
+          match(tag, / height="[0-9.]+"/); h = substr(tag, RSTART + 9, RLENGTH - 10)
+          print int(w + 0.5), int(h + 0.5); exit 0
+        }
+        if (match(tag, /viewBox="[^"]*"/)) {
+          split(substr(tag, RSTART + 9, RLENGTH - 10), v, /[ ,]+/)
+          print int(v[3] + 0.5), int(v[4] + 0.5); exit 0
+        }
+        exit 1
+      }' ;;
+    *) return 1 ;;
+  esac
+}
+
+: >"$work/sizes"
+for picture in "$here"/docs/images/*; do
+  case $picture in *.jpg | *.jpeg | *.png | *.svg) ;; *) continue ;; esac
+  if size=$(picture_size "$picture") && [[ $size =~ ^[1-9][0-9]*\ [1-9][0-9]*$ ]]; then
+    echo "images/${picture##*/} $size" >>"$work/sizes"
+  else
+    problem "docs/images/${picture##*/}: its width and height cannot be read"
+  fi
+done
+
+# ---------------------------------------------------------------- themes
+
+# Every theme's colors as the site uses them, from its palette, derived the
+# way Nova derives what a palette leaves out (src/theme/src/palette.rs). Each
+# theme is a [data-theme] block of themes.css, and a line of $work/themes:
+# name, label, background, accent. A text color that does not read on every
+# surface of its theme (4.5:1; the focus ring 3:1) is blended toward the
+# theme's text until it does; one that cannot fails the build.
+read -r -d '' palettes <<'AWK' || true
+function hex(c) { return c ~ /^#[0-9a-fA-F]{6}$/ }
+function channel(c, i) { return strtonum("0x" substr(c, 2 + 2 * i, 2)) }
+function mix(a, b, t,   i, r) {
+  if (!hex(a) || !hex(b)) return a
+  r = "#"
+  for (i = 0; i < 3; i++) r = r sprintf("%02x", int(channel(a, i) * (1 - t) + channel(b, i) * t + 0.5))
+  return r
+}
+function luminance(c,   i, v, s) {
+  s = 0
+  for (i = 0; i < 3; i++) {
+    v = channel(c, i) / 255
+    v = v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ^ 2.4
+    s += (i == 0 ? 0.2126 : i == 1 ? 0.7152 : 0.0722) * v
+  }
+  return s
+}
+function contrast(a, b,   x, y) {
+  x = luminance(a); y = luminance(b)
+  return x > y ? (x + 0.05) / (y + 0.05) : (y + 0.05) / (x + 0.05)
+}
+# The lowest contrast of <c> on the surfaces <on> (the palette's keys).
+function worst(c, on,   i, n, s, r, k) {
+  r = 100
+  n = split(on, s, " ")
+  for (i = 1; i <= n; i++) { k = contrast(c, v[s[i]]); if (k < r) r = k }
+  return r
+}
+# <c>, or <c> blended toward <toward> by the least step that reads at
+# <ratio> on the surfaces <on>.
+function legible(c, ratio, on, toward,   t, m) {
+  for (t = 0; t <= 1.0001; t += 0.05) { m = mix(c, toward, t); if (worst(m, on) >= ratio) return m }
+  return toward
+}
+function check(what, c, ratio, on) {
+  if (worst(c, on) < ratio) {
+    printf "build-site: theme %s: %s reads at %.2f:1 on %s, below %.1f:1\n", theme, what, worst(c, on), on, ratio > "/dev/stderr"
+    bad = 1
+  }
+}
+function fallback(key, value) { if (!(key in v)) v[key] = value }
+function trim(s) { gsub(/^[ \t]+|[ \t\r]+$/, "", s); return s }
+FNR == 1 { delete v }
+{
+  eq = index($0, "=")
+  if (!eq) next
+  key = trim(substr($0, 1, eq - 1)); gsub(/^["']|["']$/, "", key)
+  if (key ~ /^#/ || key !~ /^[A-Za-z0-9_-]+$/) next
+  value = trim(substr($0, eq + 1))
+  if (value ~ /^["']/) { value = substr(value, 2); sub(/["'].*/, "", value) }
+  else if (split(value, word, /[ \t]+/) && hex(word[1])) value = word[1]
+  else if (word[1] ~ /^#./) next
+  else { sub(/#.*/, "", value); gsub(/[ \t]/, "", value) }
+  if (value != "") v[key] = value
+}
+ENDFILE {
+  fallback("background", "#000000"); fallback("foreground", "#ffffff")
+  fallback("light_foreground", v["foreground"])
+  fallback("dark_foreground", mix(v["foreground"], v["background"], 0.4))
+  fallback("muted", v["dark_foreground"])
+  fallback("accent", ("blue" in v) ? v["blue"] : v["foreground"])
+  fallback("selection", mix(v["background"], v["foreground"], 0.25))
+  fallback("dark_background", mix(v["background"], "#000000", 0.25))
+  fallback("lighter_background", mix(v["background"], v["foreground"], 0.15))
+  split("red yellow green cyan blue magenta", hue, " ")
+  for (i = 1; i <= 6; i++) fallback(hue[i], v["foreground"])
+  fallback("orange", v["yellow"])
+  fallback("selection_foreground", ("bright_foreground" in v) ? v["bright_foreground"] : v["foreground"])
+  if (v["mode"] != "light" && v["mode"] != "dark")
+    v["mode"] = channel(v["background"], 0) + channel(v["background"], 1) + channel(v["background"], 2) > 382 ? "light" : "dark"
+  split("background dark_background lighter_background selection selection_foreground foreground light_foreground muted accent red orange yellow green cyan blue magenta", used, " ")
+  for (i in used) if (!hex(v[used[i]])) {
+    printf "build-site: %s: %s is %s, where the site needs a #rrggbb color\n", FILENAME, used[i], v[used[i]] > "/dev/stderr"
+    bad = 1
+    v[used[i]] = "#808080"
+  }
+  # The page is the background, its panels the darker one; code and keys
+  # stand on the lighter one, a row picked on the selection, in the
+  # selection's own text (Miasma's is dark on moss).
+  page = "background dark_background"
+  fg = v["foreground"]
+  out["bg"] = v["background"]; out["bg-deep"] = v["dark_background"]
+  out["bg-raised"] = v["lighter_background"]; out["sel"] = v["selection"]
+  out["fg"] = fg
+  out["fg-soft"] = legible(v["light_foreground"], 4.5, page, fg)
+  out["muted"] = legible(v["muted"], 4.5, page, fg)
+  out["sel-fg"] = v["selection_foreground"]
+  # A selection its text does not read on (Miasma's, dark on moss) is blended
+  # toward whichever of the text and the background its text reads on best.
+  if (contrast(out["sel-fg"], out["sel"]) < 4.5) {
+    toward = contrast(out["sel-fg"], fg) > contrast(out["sel-fg"], v["background"]) ? fg : v["background"]
+    for (t = 0.05; t <= 1.0001 && contrast(out["sel-fg"], out["sel"]) < 4.5; t += 0.05) out["sel"] = mix(v["selection"], toward, t)
+  }
+  out["line"] = mix(v["background"], fg, 0.14)
+  out["edge"] = legible(mix(v["background"], fg, 0.4), 3, page, fg)
+  out["accent"] = v["accent"]
+  out["link"] = legible(v["accent"], 4.5, page, fg)
+  out["focus"] = legible(v["accent"], 3, page, fg)
+  # The terminal's colors, on the background, as the terminal shows them.
+  split("red orange yellow green cyan blue magenta", hue, " ")
+  for (i = 1; i <= 7; i++) out[hue[i]] = legible(v[hue[i]], 4.5, "background", fg)
+  check("the text", fg, 4.5, "background dark_background lighter_background")
+  if (contrast(out["sel-fg"], out["sel"]) < 4.5) {
+    printf "build-site: theme %s: a row picked reads at %.2f:1, below 4.5:1\n", theme, contrast(out["sel-fg"], out["sel"]) > "/dev/stderr"
+    bad = 1
+  }
+  check("the accent's text", out["link"], 4.5, page)
+  check("the focus ring", out["focus"], 3, page)
+  # The button's text on its accent: the background, which reads on the
+  # accent as the accent reads on it.
+  if (contrast(out["bg"], out["link"]) < 4.5) {
+    printf "build-site: theme %s: a button's text reads at %.2f:1 on its accent\n", theme, contrast(out["bg"], out["link"]) > "/dev/stderr"
+    bad = 1
+  }
+  block = sprintf("color-scheme:%s;", v["mode"])
+  n = split("bg bg-deep bg-raised sel sel-fg fg fg-soft muted line edge accent link focus red orange yellow green cyan blue magenta", order, " ")
+  for (i = 1; i <= n; i++) block = block sprintf("--%s:%s;", order[i], out[order[i]])
+  if (theme == "adaptive") print ":root,[data-theme=\"adaptive\"]{" block "}" > css
+  else if (theme == "adaptive-light") print "@media (prefers-color-scheme: light){:root,[data-theme=\"adaptive\"]{" block "}}" > css
+  else print "[data-theme=\"" theme "\"]{" block "}" > css
+  if (theme != "adaptive-light") {
+    n = split(theme, part, "-"); label = ""
+    for (i = 1; i <= n; i++) label = label (i > 1 ? " " : "") toupper(substr(part[i], 1, 1)) substr(part[i], 2)
+    printf "%s\t%s\t%s\t%s\n", theme, label, out["bg"], out["accent"] > list
+  }
+}
+END { exit bad }
+AWK
+
+theme_files=()
+# By name, as Settings lists them: catppuccin before catppuccin-latte.
+while IFS= read -r name; do
+  palette=$here/theme/palettes/$name/colors.toml
+  [[ -f $palette ]] || continue
+  case $name in
+    adaptive)
+      # The site's adaptive theme is drawn from the background the pictures
+      # show, dark (as dusk is) or light, as the visitor's system prefers.
+      for mode in "" .light; do
+        [[ -f $here/docs/images/dusk$mode.colors.toml ]] ||
+          problem "docs/images/dusk$mode.colors.toml is not there: tools/screenshots writes it"
+      done
+      theme_files+=("theme=adaptive" "$here/docs/images/dusk.colors.toml" "theme=adaptive-light" "$here/docs/images/dusk.light.colors.toml")
+      ;;
+    *[!a-z0-9-]* | '') problem "theme/palettes/$name: a theme's name is lowercase letters, digits and dashes" ;;
+    *) theme_files+=("theme=$name" "$palette") ;;
+  esac
+done < <(find "$here/theme/palettes" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort)
+{
+  echo "/* Every theme's colors, made by tools/build-site from theme/palettes/*/colors.toml"
+  echo "   and docs/images/dusk{,.light}.colors.toml: edit those, not this. */"
+} >"$site/themes.css"
+gawk -v css="$site/themes.css" -v list="$work/themes" "$palettes" "${theme_files[@]}" || failed=1
+themes=()
+while IFS=$'\t' read -r name _; do themes+=("$name"); done <"$work/themes"
+
+# The theme picker, on every page: a radio button a theme, its swatch in the
+# theme's own background and accent.
+while IFS=$'\t' read -r name label bg accent; do
+  printf '<button type="button" role="radio" aria-checked="false" data-theme="%s"><span class="swatch" style="--swatch-bg:%s;--swatch-accent:%s" aria-hidden="true"></span>%s</button>\n' \
+    "$name" "$bg" "$accent" "$label"
+done <"$work/themes" >"$work/picker.html"
+
+# The landing page's pictures of Nova in a theme: each theme
+# tools/screenshots took a corner of, in the picker's order.
+while IFS=$'\t' read -r name label _; do
+  [[ -f $here/docs/images/corner-$name.jpg ]] || continue
+  printf '<button type="button" class="shot" data-theme="%s"><img src="images/corner-%s.jpg" width="950" height="594" loading="lazy" alt="A terminal and Settings at Appearance in %s"><span>%s</span></button>\n' \
+    "$name" "$name" "$label" "$label"
+done <"$work/themes" >"$work/shots.html"
+
+# A page with each line that is only <!-- name --> replaced by the file given.
+fill() { # <file> <name=file>...
+  gawk -v pairs="${*:2}" '
+    BEGIN { n = split(pairs, p, " "); for (i = 1; i <= n; i++) { eq = index(p[i], "="); with[substr(p[i], 1, eq - 1)] = substr(p[i], eq + 1) } }
+    match($0, /^[ \t]*<!-- [a-z-]+ -->[ \t]*$/) {
+      name = $0; gsub(/^[ \t]*<!-- | -->[ \t]*$/, "", name)
+      if (name in with) { while ((getline line < with[name]) > 0) print line; close(with[name]); next }
+    }
+    { print }' "$1"
+}
+
+# --------------------------------------------------------- the menu's code
+
+# menu-model.js: the menu's code as the playground runs it, each file in a
+# scope of its own, its comments left out, and menu.jsonc as a string.
+model=$here/src/shell/plugins/menu/MenuModel.js
+calculator=$here/src/shell/plugins/calculator/Calculator.js
+menu_file=$here/data/defaults/menu.jsonc
+for f in "${menu_functions[@]}"; do
+  grep -q "^function $f(" "$model" || problem "src/shell/plugins/menu/MenuModel.js has no function $f, which the site's Super+Space runs (site/playground.js)"
+done
+for f in "${calculator_functions[@]}"; do
+  grep -q "^function $f(" "$calculator" || problem "src/shell/plugins/calculator/Calculator.js has no function $f, which the site's Super+Space runs (site/playground.js)"
+done
+[[ -f $menu_file ]] || problem "data/defaults/menu.jsonc is not there"
+uncommented() { grep -v -e '^[[:space:]]*//' -e '^\.pragma ' -e '^[[:space:]]*$' "$1"; }
+join() { local IFS=,; echo "$*"; }
+{
+  echo "// Nova's menu as the site's Super+Space runs it, made by tools/build-site from"
+  echo "// src/shell/plugins/menu/MenuModel.js, src/shell/plugins/calculator/Calculator.js"
+  echo "// and data/defaults/menu.jsonc: edit those, not this."
+  echo "const NovaMenu = (() => {"
+  uncommented "$model"
+  echo "return { $(join "${menu_functions[@]}") }"
+  echo "})()"
+  echo "const NovaCalculator = (() => {"
+  uncommented "$calculator"
+  echo "return { $(join "${calculator_functions[@]}") }"
+  echo "})()"
+  printf 'const NovaMenuFile = "'
+  gawk 'BEGIN { ORS = "" } { gsub(/\\/, "\\\\"); gsub(/"/, "\\\""); print (NR > 1 ? "\\n" : "") $0 }' "$menu_file"
+  echo '"'
+} >"$site/menu-model.js"
+
 # ------------------------------------------------------------- landing page
 
-cp -r "$here"/site/* "$site/"
-landing=$here/site/index.html
-# The landing page's pictures, and the theme picker's corner of each theme it
-# offers (site.js swaps them in), from the docs' own.
-for name in $(grep -oh 'images/[a-z0-9-]*\.[a-z]*' "$landing" | sort -u) \
-  $(grep -o 'data-theme="[a-z-]*"' "$landing" | sed 's/.*="\(.*\)"/images\/corner-\1.jpg/' | sort -u); do
+for f in "$here"/site/*; do
+  [[ ${f##*/} == index.html ]] || cp -r "$f" "$site/"
+done
+fill "$here/site/index.html" "themes=$work/picker.html" "theme-picker=$work/picker.html" "theme-shots=$work/shots.html" >"$site/index.html"
+landing=$site/index.html
+# The landing page's pictures, from the docs' own.
+for name in $(grep -oh 'images/[a-z0-9.-]*\.[a-z]*' "$landing" | sort -u); do
   if [[ -f $here/docs/$name ]]; then
     cp "$here/docs/$name" "$site/$name"
   else
@@ -79,9 +389,9 @@ for name in $(grep -oh 'images/[a-z0-9-]*\.[a-z]*' "$landing" | sort -u) \
   fi
 done
 
-# What a docs page takes from the landing page: the theme script in its head
-# (the theme picked there, before the page is drawn), the wordmark, the header
-# and the footer.
+# What a docs page takes from the landing page: the theme color and script in
+# its head (the theme picked there, before the page is drawn), the font it
+# fetches early, the wordmark, the header and the footer.
 part() { # <sed address range> <what>
   local text
   text=$(sed -n "$1p" "$landing")
@@ -90,20 +400,22 @@ part() { # <sed address range> <what>
 }
 theme_color=$(part '/<meta name="theme-color"/' 'theme-color meta')
 theme_script=$(part '/^<script>.*localStorage/' 'theme script in its <head>')
+preloads=$(part '/<link rel="preload"/' 'font preload')
 wordmark=$(part '/<svg width="0"/,/<\/svg>/' 'wordmark symbol')
 header=$(part '/<header class="top">/,/<\/header>/' '<header class="top">')
 footer=$(part '/<footer>/,/<\/footer>/' '<footer>')
 # The landing page's own links (#tour, docs/), from a page <root> below it.
 relocate() { # <root>
-  sed -E -e 's,(<a [^>]*href=")(#[^"]*|[^"#:]+)",\1'"$1"'\2",g' -e 's,(<a [^>]*href=")'"$1"'#",\1'"$1"'",g'
+  sed -E -e 's,(<(a|link) [^>]*href=")(#[^"]*|[^"#:]+)",\1'"$1"'\3",g' -e 's,(<a [^>]*href=")'"$1"'#",\1'"$1"'",g'
 }
 
 # ------------------------------------------------------------------- docs
 
 # A rendered doc, made the site's: headings with GitHub's ids, links between
-# docs made links between pages, pictures and the repository linked as above,
-# tables in a box that scrolls on a narrow screen. Its title (the # heading)
-# and first paragraph go to the files named.
+# docs made links between pages, pictures and the repository linked as above
+# and given their size, tables in a box that scrolls on a narrow screen. Its
+# title (the # heading), first paragraph, headings (for the list beside it)
+# and sections (for the search) go to the files named.
 read -r -d '' finish <<'AWK' || true
 function slug(html,   s) {
   s = html
@@ -120,6 +432,13 @@ function unique(s,   r) {
   while (r in used) r = s "-" (++count[s])
   used[r] = 1
   return r
+}
+function plain(html,   s) {
+  s = html
+  gsub(/<[^>]*>/, "", s)
+  gsub(/&quot;/, "\"", s); gsub(/&lt;/, "<", s); gsub(/&gt;/, ">", s); gsub(/&#39;/, "'", s); gsub(/&amp;/, "\\&", s)
+  gsub(/[\t ]+/, " ", s)
+  return s
 }
 function in_repo(p,   n, part, i, depth, stack, r) {
   n = split(p, part, "/")
@@ -162,12 +481,46 @@ function relink(line,   done, attr, eq) {
   }
   return done line
 }
-BEGIN { n = split(names, list, " "); for (i = 1; i <= n; i++) rendered[list[i]] = 1 }
+# A picture of docs/images given the size it has, or the height its width
+# asks for, so that the page does not move as it comes; and fetched only
+# when it nears the screen.
+function sized(line,   done, tag, src, w, h, ww) {
+  done = ""
+  while (match(line, /<img [^>]*>/)) {
+    tag = substr(line, RSTART, RLENGTH)
+    done = done substr(line, 1, RSTART - 1)
+    line = substr(line, RSTART + RLENGTH)
+    if (match(tag, / src="images\/[^"]*"/) && !index(tag, " height=")) {
+      src = substr(tag, RSTART + 6, RLENGTH - 7)
+      if (src in width) {
+        w = width[src]; h = height[src]
+        if (match(tag, / width="[0-9]+"/)) {
+          ww = substr(tag, RSTART + 8, RLENGTH - 9)
+          sub(/ width="[0-9]+"/, " width=\"" ww "\" height=\"" int(ww * h / w + 0.5) "\"", tag)
+        } else {
+          sub(/ width="[^"]*"/, "", tag)
+          sub(/^<img /, "<img width=\"" w "\" height=\"" h "\" ", tag)
+        }
+      }
+    }
+    if (!index(tag, " loading=")) sub(/^<img /, "<img loading=\"lazy\" ", tag)
+    done = done tag
+  }
+  return done line
+}
+function flush() {
+  if (section_title != "") printf "%s\t%s\t%s\n", section_id, section_title, substr(section_text, 1, 1200) > sections
+  section_text = ""
+}
+BEGIN {
+  n = split(names, list, " "); for (i = 1; i <= n; i++) rendered[list[i]] = 1
+  while ((getline row < sizes) > 0) { split(row, f, " "); width[f[1]] = f[2]; height[f[1]] = f[3] }
+}
 NR == 1 && !/^<h1>/ {
   printf "build-site: docs/%s.md does not start with its title, a # heading\n", self > "/dev/stderr"
   bad = 1
 }
-{ $0 = relink($0) }
+{ $0 = relink(sized($0)) }
 /^<h[1-6]>/ {
   level = substr($0, 3, 1)
   close_tag = "</h" level ">"
@@ -176,15 +529,21 @@ NR == 1 && !/^<h1>/ {
     bad = 1
   }
   text = substr($0, 5, length($0) - 9)
+  id = unique(slug(text))
   if (NR == 1) { t = text; gsub(/<[^>]*>/, "", t); print t > title }
-  $0 = "<h" level " id=\"" unique(slug(text)) "\">" text close_tag
+  if (level == 2 || level == 3) printf "%s\t%s\t%s\n", level, id, plain(text) > toc
+  if (level <= 3) { flush(); section_id = NR == 1 ? "" : id; section_title = plain(text) }
+  $0 = "<h" level " id=\"" id "\">" text close_tag
+  print
+  next
 }
+{ t = plain($0); if (t != "" && t != " ") section_text = section_text (section_text == "" ? "" : " ") t }
 /^<p>/ && !described { para = 1 }
 para { d = d (d == "" ? "" : " ") $0 }
 para && /<\/p>$/ { para = 0; described = 1; gsub(/<[^>]*>/, "", d); print d > description }
 { sub(/^<table>/, "<div class=\"table\"><table>"); sub(/^<\/table>$/, "</table></div>") }
 { print }
-END { exit bad }
+END { flush(); exit bad }
 AWK
 
 for name in "${pages[@]}"; do
@@ -192,10 +551,11 @@ for name in "${pages[@]}"; do
   r=$work/rendered/$name
   mkdir -p "$r"
   [[ -f $here/docs/$name.md ]] || { problem "docs/$name.md, in the list at the top of tools/build-site, is not there"; continue; }
-  : >"$r/pictures"; : >"$r/repo"; : >"$r/description"
+  : >"$r/pictures"; : >"$r/repo"; : >"$r/description"; : >"$r/toc"; : >"$r/sections"
   cmark-gfm --unsafe -e table -e autolink -e strikethrough -e tagfilter "$here/docs/$name.md" |
     gawk -v self="$name" -v names="${pages[*]}" -v root="$root" -v up="$up" -v github="$github" \
       -v pictures="$r/pictures" -v repo="$r/repo" -v title="$r/title" -v description="$r/description" \
+      -v toc="$r/toc" -v sections="$r/sections" -v sizes="$work/sizes" \
       "$finish" >"$r/body.html" || failed=1
   while IFS= read -r picture; do
     if [[ -f $here/docs/$picture ]]; then
@@ -214,20 +574,56 @@ for name in "${pages[@]}"; do
   [[ -s $work/rendered/$name/title ]] || { echo "build-site: the site was not built" >&2; exit 1; }
 done
 
-# The docs' list, from a page of them: the label is the doc's title up to a
-# colon ("Patches: fixes for one computer" is Patches).
+href_of() { # <page> <from page>: the link to a page from another
+  local href
+  if [[ $1 == README ]]; then href=./; else href=$1/; fi
+  [[ $2 == README ]] || href=../${href#./}
+  echo "$href"
+}
+label_of() { # <page>: the doc's title up to a colon ("Patches: fixes for one computer" is Patches)
+  local label
+  label=$(<"$work/rendered/$1/title")
+  echo "${label%%:*}"
+}
+
+# The docs' list, by group, from a page of them.
 sidebar() { # <current page>
-  local name href label
-  for name in "${pages[@]}"; do
-    if [[ $name == README ]]; then href=./; else href=$name/; fi
-    [[ $1 == README ]] || href=../${href#./}
-    label=$(<"$work/rendered/$name/title")
-    printf '<a href="%s"%s>%s</a>\n' "$href" "$([[ $name == "$1" ]] && echo ' aria-current="page"')" "${label%%:*}"
+  local group name
+  for group in "${groups[@]}"; do
+    printf '<p class="nav-group">%s</p>\n' "${group%%|*}"
+    for name in ${group#*|}; do
+      printf '<a href="%s"%s>%s</a>\n' "$(href_of "$name" "$1")" "$([[ $name == "$1" ]] && echo ' aria-current="page"')" "$(label_of "$name")"
+    done
   done
 }
 
+# The page's headings, as links, when it has more than one.
+headings() { # <page> <class>
+  local toc=$work/rendered/$1/toc
+  (($(wc -l <"$toc") > 1)) || return 0
+  printf '<nav class="%s" aria-label="On this page">\n' "$2"
+  [[ $2 == toc ]] && printf '<p class="nav-group">On this page</p>\n' || printf '<details><summary>On this page</summary>\n'
+  gawk -F '\t' '{ gsub(/&/, "\\&amp;", $3); gsub(/</, "\\&lt;", $3); printf "<a class=\"level-%s\" href=\"#%s\">%s</a>\n", $1, $2, $3 }' "$toc"
+  [[ $2 == toc ]] || printf '</details>\n'
+  printf '</nav>\n'
+}
+
+# The pages before and after it, in the list's order.
+pager() { # <index of the page>
+  local i=$1 name=${pages[$1]}
+  printf '<nav class="pager" aria-label="Pages">\n'
+  if ((i > 0)); then
+    printf '<a class="prev" href="%s" rel="prev"><span>Previous</span>%s</a>\n' "$(href_of "${pages[i - 1]}" "$name")" "$(label_of "${pages[i - 1]}")"
+  fi
+  if ((i + 1 < ${#pages[@]})); then
+    printf '<a class="next" href="%s" rel="next"><span>Next</span>%s</a>\n' "$(href_of "${pages[i + 1]}" "$name")" "$(label_of "${pages[i + 1]}")"
+  fi
+  printf '</nav>\n'
+}
+
 declare -A source=(["$site/index.html"]=site/index.html)
-for name in "${pages[@]}"; do
+for i in "${!pages[@]}"; do
+  name=${pages[$i]}
   if [[ $name == README ]]; then root=../ dir=$site/docs; else root=../../ dir=$site/docs/$name; fi
   r=$work/rendered/$name
   mkdir -p "$dir"
@@ -244,10 +640,13 @@ for name in "${pages[@]}"; do
 <meta name="description" content="$description">
 $theme_color
 $theme_script
+$(relocate "$root" <<<"$preloads")
 <link rel="icon" href="${root}favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="${root}themes.css">
 <link rel="stylesheet" href="${root}style.css">
 </head>
-<body>
+<body data-root="$root">
+<a class="skip" href="#main">Skip to the page</a>
 $wordmark
 
 $(relocate "$root" <<<"$header")
@@ -256,9 +655,13 @@ $(relocate "$root" <<<"$header")
 <nav class="docs-nav" aria-label="Documentation">
 $(sidebar "$name")
 </nav>
-<main class="doc">
+<main class="doc" id="main">
+$(headings "$name" toc-inline)
 $(<"$r/body.html")
+$(pager "$i")
+<p class="source"><a href="$github/blob/main/docs/$name.md">This page on GitHub</a></p>
 </main>
+$(headings "$name" toc)
 </div>
 
 $(relocate "$root" <<<"$footer")
@@ -268,29 +671,107 @@ $(relocate "$root" <<<"$footer")
 EOF
 done
 
+# The search index: a section of a page a row, its link from the site's
+# root, its page's title, its heading and its text.
+for name in "${pages[@]}"; do
+  if [[ $name == README ]]; then url=docs/; else url=docs/$name/; fi
+  gawk -F '\t' -v url="$url" -v page="$(label_of "$name")" 'BEGIN { OFS = "\t" } { print url ($1 == "" ? "" : "#" $1), page, $2, $3 }' "$work/rendered/$name/sections"
+done | gawk -F '\t' '
+  function json(s) {
+    gsub(/\\/, "\\\\", s); gsub(/"/, "\\\"", s); gsub(/[\001-\037]/, " ", s)
+    return "\"" s "\""
+  }
+  BEGIN { printf "[" }
+  { printf "%s\n{\"u\":%s,\"p\":%s,\"h\":%s,\"x\":%s}", (NR > 1 ? "," : ""), json($1), json($2), json($3), json($4) }
+  END { print "\n]" }' >"$site/docs/search-index.json"
+
 # ------------------------------------------------------------------ check
 
-# Every link and picture on every page of the site, followed as a browser would:
-# to a file the site has (a folder is its index.html), and to an id in it.
+# A link from a page of the site, followed as a browser would: to a file the
+# site has (a folder is its index.html), and to an id in it. Prints the
+# problem, if any.
+follow() { # <page> <url> <from>
+  local page=$1 url=$2 from=$3 path frag='' target
+  path=${url%%#*}
+  [[ $url == *#* ]] && frag=${url#*#}
+  if [[ -z $path ]]; then
+    target=$page
+  else
+    target=$(realpath -m "$(dirname "$page")/$path")
+    [[ -d $target ]] && target=$target/index.html
+  fi
+  if [[ $target != "$site"/* || ! -f $target ]]; then
+    problem "$from: $url is no page or picture of the site"
+  elif [[ -n $frag ]] && ! grep -qF " id=\"$frag\"" "$target"; then
+    problem "$from: $url: ${source[$target]:-${target#"$site"/}} has no heading or id $frag"
+  fi
+}
+
+# Every link and picture on every page of the site.
 while IFS= read -r page; do
   from=${source[$page]:-${page#"$site"/}}
   while IFS= read -r url; do
     [[ $url == *:* || $url == '#' ]] && continue # https:, mailto:
-    path=${url%%#*} frag=''
-    [[ $url == *#* ]] && frag=${url#*#}
-    if [[ -z $path ]]; then
-      target=$page
-    else
-      target=$(realpath -m "$(dirname "$page")/$path")
-      [[ -d $target ]] && target=$target/index.html
-    fi
-    if [[ $target != "$site"/* || ! -f $target ]]; then
-      problem "$from: $url is no page or picture of the site"
-    elif [[ -n $frag ]] && ! grep -qF " id=\"$frag\"" "$target"; then
-      problem "$from: $url: ${source[$target]:-${target#"$site"/}} has no heading or id $frag"
-    fi
+    follow "$page" "$url" "$from"
   done < <(grep -o ' \(href\|src\)="[^"]*"' "$page" | sed 's/^ [a-z]*="\(.*\)"$/\1/')
+  # Every picture with its size, so the page does not move as it comes.
+  while IFS= read -r tag; do
+    [[ $tag == *' width="'[0-9]* && $tag == *' height="'[0-9]* ]] || problem "$from: a picture without its width and height: $tag"
+  done < <(grep -o '<img [^>]*>' "$page")
+  # Nothing fetched from another site: no script, style, picture, font or
+  # frame of one.
+  while IFS= read -r tag; do
+    problem "$from: loads from another site: $tag"
+  done < <(grep -oE '<(script|img|link|iframe|source|video|audio|embed|object|track)[^>]*>' "$page" |
+    grep -E ' (src|href|srcset|poster|data)="([A-Za-z][A-Za-z0-9+.-]*:|//)' || true)
+  while IFS= read -r url; do
+    problem "$from: a style loads from another site: $url"
+  done < <(grep -oE 'url\([^)]*\)' "$page" | grep -vE '^url\((["'\'']?)data:' | grep -E '^url\((["'\'']?)([A-Za-z][A-Za-z0-9+.-]*:|//)' || true)
 done < <(find "$site" -name '*.html' | sort)
+
+# The stylesheets' url()s, to files of the site and nowhere else.
+while IFS= read -r css; do
+  from=${css#"$site"/}
+  grep -q '@import' "$css" && problem "$from: @import fetches another stylesheet; link it from the page"
+  while IFS= read -r url; do
+    case $url in
+      data:*) ;;
+      *:* | //*) problem "$from: url($url) loads from another site" ;;
+      *) [[ -f $(realpath -m "$(dirname "$css")/${url%%[?#]*}") ]] || problem "$from: url($url) is no file of the site" ;;
+    esac
+  done < <(grep -o 'url([^)]*)' "$css" | sed -E 's/^url\((["'\'']?)(.*)\1\)$/\2/')
+done < <(find "$site" -name '*.css' | sort)
+
+# Scripts that fetch nothing from another site: no fetch, import, worker or
+# socket of an address, and no picture or script given one.
+quote="[\"'\`]"
+while IFS= read -r js; do
+  while IFS= read -r line; do
+    problem "${js#"$site"/}: fetches from another site: $line"
+  done < <(grep -nE "(fetch|import|Worker|EventSource|WebSocket|sendBeacon|open)\(\s*$quote(https?:)?//|\.(src|href)\s*=\s*$quote(https?:)?//" "$js" || true)
+done < <(find "$site" -name '*.js' | sort)
+
+# A font of the site with its licence beside it.
+if compgen -G "$site/fonts/*.woff2" >/dev/null && [[ ! -f $site/fonts/OFL.txt ]]; then
+  problem "site/fonts has fonts without their licence (OFL.txt)"
+fi
+
+# Every link of the search index.
+while IFS= read -r url; do
+  follow "$site/index.html" "$url" "docs/search-index.json"
+done < <(grep -o '"u":"[^"]*"' "$site/docs/search-index.json" | sed 's/^"u":"\(.*\)"$/\1/')
+[[ $(grep -c '"u":' "$site/docs/search-index.json") -gt 0 ]] || problem "docs/search-index.json has no sections"
+
+# Every theme Nova has: a block of themes.css and a button of the picker on
+# every page.
+palette_count=$(find "$here/theme/palettes" -mindepth 2 -maxdepth 2 -name colors.toml | wc -l)
+((${#themes[@]} == palette_count)) || problem "themes.css has ${#themes[@]} themes of the $palette_count in theme/palettes"
+while IFS= read -r page; do
+  for name in "${themes[@]}"; do
+    grep -qF "data-theme=\"$name\"><span class=\"swatch\"" "$page" ||
+      problem "${source[$page]:-${page#"$site"/}}: the theme picker has no $name"
+  done
+done < <(find "$site" -name index.html | sort)
 
 if ((failed)); then
   echo "build-site: the site was not built" >&2
@@ -312,4 +793,4 @@ fi
 echo "made by tools/build-site: it replaces this folder" >"$site/.nova-site"
 mkdir -p "$(dirname "$out")"
 cp -r "$site" "$out"
-echo "build-site: $out: the landing page and ${#pages[@]} docs"
+echo "build-site: $out: the landing page, ${#pages[@]} docs and ${#themes[@]} themes"

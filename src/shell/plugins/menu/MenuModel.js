@@ -19,6 +19,10 @@
 // generic name, "" for the rest; unsearched is true for an entry a search
 // does not find (search: false); order is the item's place among the items
 // when it came.
+//
+// The site runs this file too, as it is (tools/build-site, site/playground.js):
+// it stays plain JavaScript, and a function the site calls that goes fails
+// the site's build.
 
 // ---------------------------------------------------------------- menu.jsonc
 
