@@ -46,7 +46,10 @@ fn expand(inner: &str, p: &Palette) -> Option<String> {
     match words[..] {
         [key] => lookup(key, p),
         ["legible", color, on, ratio] => {
-            let ratio = ratio.parse::<f64>().ok().filter(|r| (1.0..=21.0).contains(r))?;
+            let ratio = ratio
+                .parse::<f64>()
+                .ok()
+                .filter(|r| (1.0..=21.0).contains(r))?;
             Some(legible(operand(color)?, operand(on)?, ratio).to_string())
         }
         [function @ ("mix" | "mix_strip" | "mix_rgb"), a, b, amount] => {
@@ -279,14 +282,20 @@ mod tests {
     fn makes_a_color_legible_on_another() {
         let p = palette();
         // Black reads on white already; the grey accent does not at 7:1.
-        assert_eq!(render("{{ legible foreground background 4.5 }}", &p), "#000000");
+        assert_eq!(
+            render("{{ legible foreground background 4.5 }}", &p),
+            "#000000"
+        );
         let darker = render("{{ legible accent background 7 }}", &p);
         assert_ne!(darker, "#6e6e6e");
         assert!(crate::color::contrast(Rgb::parse(&darker).unwrap(), Rgb(255, 255, 255)) >= 7.0);
         assert_eq!(render("{{ legible accent #ffffff 4.5 }}", &p), "#6e6e6e");
         // A ratio no contrast has, or a color that is not one, is left as written.
         assert_eq!(
-            render("{{ legible accent background 22 }} {{ legible nope background 3 }}", &p),
+            render(
+                "{{ legible accent background 22 }} {{ legible nope background 3 }}",
+                &p
+            ),
             "{{ legible accent background 22 }} {{ legible nope background 3 }}"
         );
     }

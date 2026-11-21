@@ -250,7 +250,10 @@ mod tests {
     #[test]
     fn a_color_that_reads_is_kept() {
         assert_eq!(legible(rgb("#575279"), rgb("#faf4ed"), 4.5), rgb("#575279"));
-        assert_eq!(legible(rgb("#ffffff"), rgb("#000000"), 21.0), rgb("#ffffff"));
+        assert_eq!(
+            legible(rgb("#ffffff"), rgb("#000000"), 21.0),
+            rgb("#ffffff")
+        );
     }
 
     #[test]
@@ -264,7 +267,10 @@ mod tests {
         // On a dark ground it lightens instead.
         let on = rgb("#151926");
         let got = legible(rgb("#5d6275"), on, 4.5);
-        assert!(contrast(got, on) >= 4.5 && luminance(got) > luminance(rgb("#5d6275")), "{got}");
+        assert!(
+            contrast(got, on) >= 4.5 && luminance(got) > luminance(rgb("#5d6275")),
+            "{got}"
+        );
     }
 
     #[test]
@@ -279,7 +285,13 @@ mod tests {
 
     #[test]
     fn a_ratio_nothing_reaches_gives_the_better_of_white_and_black() {
-        assert_eq!(legible(rgb("#777777"), rgb("#777777"), 21.0), rgb("#000000"));
-        assert_eq!(legible(rgb("#777777"), rgb("#222222"), 21.0), rgb("#ffffff"));
+        assert_eq!(
+            legible(rgb("#777777"), rgb("#777777"), 21.0),
+            rgb("#000000")
+        );
+        assert_eq!(
+            legible(rgb("#777777"), rgb("#222222"), 21.0),
+            rgb("#ffffff")
+        );
     }
 }
