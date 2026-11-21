@@ -206,6 +206,7 @@ menu-capture nova.menu {"menu":"capture"}
 menu-system nova.menu {"menu":"system"}
 settings nova.settings {"page":"about"}
 settings-battery nova.settings {"page":"battery","range":"week"}
+settings-dictation nova.settings {"page":"dictation"}
 clipboard nova.clipboard {}
 emojis nova.emojis {}
 SUMMON

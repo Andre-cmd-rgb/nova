@@ -73,6 +73,7 @@ Item {
     { id: "sound", label: "Sound", icon: "󰕾" },
     { id: "displays", label: "Displays", icon: "󰍹" },
     { id: "keyboard", label: "Keyboard & Mouse", icon: "󰌌" },
+    { id: "dictation", label: "Dictation", icon: "󰍬" },
     { id: "printers", label: "Printers", icon: "󰐪" },
     { id: "battery", label: "Battery", icon: "󰁹" },
     { id: "performance", label: "Performance", icon: "󰓅" },
@@ -436,6 +437,7 @@ Item {
             case "sound": return soundPage
             case "displays": return displaysPage
             case "keyboard": return keyboardPage
+            case "dictation": return dictationPage
             case "printers": return printersPage
             case "bar": return barPage
             case "battery": return batteryPage
@@ -596,6 +598,15 @@ Item {
         overlayParent: keys
         onCommand: function (argv, changes) { root.run(argv, Asked.under("input", changes)) }
       }
+    }
+  }
+
+  Component {
+    id: dictationPage
+    Page {
+      id: p
+      title: "Dictation"
+      DictationView { width: p.inner }
     }
   }
 

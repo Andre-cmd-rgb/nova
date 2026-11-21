@@ -95,6 +95,7 @@
   "settings.sound": {"icon":"󰕾","label":"Sound","aliases":["audio","volume","speakers","headphones","microphone"],"action":"nova-settings sound"},
   "settings.displays": {"icon":"󰍹","label":"Displays","aliases":["monitor","screen","resolution","scale","night light"],"action":"nova-settings displays"},
   "settings.keyboard": {"icon":"󰌌","label":"Keyboard & Mouse","aliases":["touchpad","trackpad","layout","input","scrolling"],"action":"nova-settings keyboard"},
+  "settings.dictation": {"icon":"󰍬","label":"Dictation","aliases":["speech","voice typing","speech to text"],"action":"nova-settings dictation"},
   "settings.printers": {"icon":"󰐪","label":"Printers","aliases":["printer","print","scanner","cups","ink","toner"],"action":"nova-settings printers"},
   "settings.battery": {"icon":"󰁹","label":"Battery","aliases":["charge","lid","hibernate","power button"],"when":"grep -qsx Battery /sys/class/power_supply/BAT*/type","action":"nova-settings battery"},
   "settings.performance": {"icon":"󰓅","label":"Performance","aliases":["undervolt","gpu","cpu"],"when":"grep -qm1 GenuineIntel /proc/cpuinfo || nova-power-profile list","action":"nova-settings performance"},
