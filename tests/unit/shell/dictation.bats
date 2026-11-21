@@ -123,31 +123,64 @@ put_model() { mkdir -p "$DATA_DIR" && cp "$SERVED" "$MODEL"; }
   fails grep -q "^curl" "$CALLS"
 }
 
-@test "setup runs one download at a time so a second caller cannot corrupt the part" {
+# Until $SCRATCH/release is there (or two seconds), as a download under way.
+held_download() {
   stub curl 'out=""; while (($#)); do [[ $1 == -o ]] && out=$2; shift; done
     touch "$SCRATCH/downloading"
     for ((n = 0; n < 40; n++)); do [[ -e $SCRATCH/release ]] && break; sleep 0.05; done
+    '"${1:-}"'
     have=$(stat -c %s "$out" 2>/dev/null || echo 0)
     tail -c +$((have + 1)) "$SERVED" >>"$out"'
-  cmd_setup >"$SCRATCH/first.out" 2>&1 &
-  local first=$!
+}
+
+waits_for() { # file [pattern]: up to three seconds
   local i
   for ((i = 0; i < 60; i++)); do
-    [[ -e $SCRATCH/downloading ]] && break
+    if [[ -e $1 ]] && { [[ -z ${2:-} ]] || grep -q "$2" "$1"; }; then return 0; fi
     sleep 0.05
   done
-  [ -e "$SCRATCH/downloading" ]
-  run cmd_setup
+  return 1
+}
+
+@test "setup runs one download at a time: a second follows it, and the part is written once" {
+  held_download
+  cmd_setup >"$SCRATCH/first.out" 2>&1 &
+  local first=$!
+  waits_for "$SCRATCH/downloading"
+  # Download in Settings while Super+D downloads: the second follows.
+  cmd_setup --progress >"$SCRATCH/second.out" 2>&1 &
+  local second=$!
+  waits_for "$SCRATCH/second.out" '^progress '
+  # Deleting it meanwhile is refused.
+  run cmd_remove
+  [ "$status" -ne 0 ]
+  [[ $output == *"being downloaded"* ]]
   touch "$SCRATCH/release"
   wait "$first"
-  [ "$status" -ne 0 ]
-  [[ $output == *"already being downloaded"* ]]
+  wait "$second"
   [ "$(grep -c '^curl ' "$CALLS")" -eq 1 ]
   cmp "$SERVED" "$MODEL"
-  # Removing after setup still leaves no data directory behind (including its lock).
+  # Nothing is left beside the model, and removing it leaves no folder.
+  [ "$(ls -A "$DATA_DIR")" = "$(basename "$MODEL")" ]
   run cmd_remove
   [ "$status" -eq 0 ]
   [ ! -e "$DATA_DIR" ]
+}
+
+@test "a download that stops is carried on by the one that followed it" {
+  # The first curl ends half-way, as when the pill's Esc stops it.
+  held_download '[[ -e $SCRATCH/stopped ]] || { touch "$SCRATCH/stopped"; head -c 10 "$SERVED" >"$out"; exit 1; }'
+  cmd_setup >"$SCRATCH/first.out" 2>&1 &
+  local first=$!
+  waits_for "$SCRATCH/downloading"
+  cmd_setup --progress >"$SCRATCH/second.out" 2>&1 &
+  local second=$!
+  waits_for "$SCRATCH/second.out" '^progress '
+  touch "$SCRATCH/release"
+  fails wait "$first"
+  wait "$second"
+  [ "$(grep -c '^curl ' "$CALLS")" -eq 2 ]
+  cmp "$SERVED" "$MODEL"
 }
 
 @test "remove deletes the model and a part, and tells the shell" {
