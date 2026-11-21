@@ -25,6 +25,11 @@ nova.window(
 nova.window("([fF]irefox|zen|librewolf)", { tag = "+firefox-based-browser" })
 nova.window({ tag = "chromium-based-browser" }, { tag = "-default-opacity", tile = true, opacity = "1.0 0.985" })
 nova.window({ tag = "firefox-based-browser" }, { tag = "-default-opacity", opacity = "1.0 0.985" })
+-- Supernova, Nova's own browser, is opaque focused or not, and tiles: a
+-- see-through window is blended over what is behind it on every frame a
+-- video draws. At 1080p60 that is Hyprland at 22% of the GPU instead of 14%,
+-- and 1.4 W instead of 1.1 W (Supernova's bench/README.md).
+nova.window("supernova", { tag = "-default-opacity", tile = true, opacity = "1 1" })
 -- YouTube and Zoom installed as web apps are video, and fully opaque.
 local video_web_apps = "(^.+-youtube\\.com__.*$|^.+-app\\.zoom\\.us__wc_home.*$)"
 nova.window(video_web_apps, { tag = "-chromium-based-browser" })
