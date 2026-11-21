@@ -56,8 +56,8 @@ QtObject {
 
   // Whether the plugin's parts load. Plugins are on unless shell.json lists
   // them in disabledPlugins; one whose manifest says "enabledByDefault":
-  // false (Screen Time) is on only while shell.json names it, in the bar or
-  // in plugins, so that taking it off the bar switches it off. A fixed one
+  // false (Screen Time, or its bar widget) is on only while shell.json names
+  // it (and has not marked it off), in plugins or in the bar. A fixed one
   // is on whatever shell.json says, an id with no plugin off.
   function isOn(id) {
     var manifest = manifests[String(id)]
