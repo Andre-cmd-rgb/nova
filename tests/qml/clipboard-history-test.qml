@@ -121,6 +121,12 @@ ShellRoot {
         () => holder.item.entries.length === 1 && holder.item.entries[0].text === "elsewhere",
         function () {
           check(test.updates === 5, "a write from elsewhere is read, once")
+          back.running = true
+          return true
+        },
+        () => holder.item.entries.length === 4 && holder.item.entries.map(e => e.text).join(" ") === "three two one before",
+        function () {
+          check(test.updates === 6, "an outside write matching an earlier own write is read too")
           finish()
           return true
         }
@@ -145,6 +151,11 @@ ShellRoot {
   Process {
     id: elsewhere
     command: ["sh", "-c", 'printf \'[{"type":"text","text":"elsewhere"}]\\n\' >"$0.part" && mv "$0.part" "$0"', test.file]
+  }
+
+  Process {
+    id: back
+    command: ["sh", "-c", 'printf "%s" "$1" >"$0.part" && mv "$0.part" "$0"', test.file, disk.text]
   }
 
   Loader {

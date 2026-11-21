@@ -19,7 +19,8 @@ Item {
   // The file was read again, or a copy came in.
   signal updated()
 
-  // The text this history last wrote to its file. The file's change comes
+  // The text this history last wrote to its file, forgotten as soon as the
+  // next read matches it or reads something else. The file's change comes
   // back to the FileView, which reads it again: that text is not parsed a
   // second time (300 entries, and the picker's rows rebuilt, at every copy).
   // Compact, as nothing reads the file by eye: jq reads it for the paste
@@ -65,9 +66,14 @@ Item {
     printErrors: false
     onLoaded: {
       const text = file.text()
-      if (history.written === "" || text !== history.written) history.read(text)
+      const own = history.written !== "" && text === history.written
+      history.written = ""
+      if (!own) history.read(text)
     }
-    onLoadFailed: history.read("[]")
+    onLoadFailed: {
+      history.written = ""
+      history.read("[]")
+    }
     onFileChanged: reload()
   }
 
