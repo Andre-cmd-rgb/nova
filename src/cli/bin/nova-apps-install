@@ -264,6 +264,11 @@ approved() { # app dir
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/nova-apps.XXXXXX")
 trap 'rm -rf -- "$work"' EXIT
+# Each package is installed from here and thrown away: compressing it, which
+# pacman undoes at once, is time for nothing. Measured on Chrome's 460 MB on a
+# 16-thread laptop, makepkg.conf's zstd costs 0.4 s to pack and 0.3 s to
+# unpack; more on fewer cores.
+export PKGEXT=.pkg.tar
 
 # A line of <folder>/result, for Settings, or of --result's file.
 result() { [[ -z $listed ]] || echo "$*" >>"$listed"; }
@@ -285,7 +290,7 @@ for app in "${todo[@]}"; do
   if [[ -n $build ]]; then
     # The package alone, not a debug package beside it.
     if (cd "$dir" && PKGDEST=$build makepkg --nodeps --clean --noconfirm >&2) &&
-      file=$(cd "$dir" && PKGDEST=$build makepkg --packagelist | grep -E "/$app-[^/]+\.pkg\.tar\.[a-z0-9]+\$" | grep -v -- "/$app-debug-" | head -n 1) &&
+      file=$(cd "$dir" && PKGDEST=$build makepkg --packagelist | grep -E "/$app-[^/]+\.pkg\.tar(\.[a-z0-9]+)?\$" | grep -v -- "/$app-debug-" | head -n 1) &&
       [[ -f $file ]]; then
       result built "$app" "$(git -C "$dir" rev-parse HEAD)" "$file"
     else

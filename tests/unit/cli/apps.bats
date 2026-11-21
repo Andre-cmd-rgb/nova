@@ -102,6 +102,13 @@ built() { cat "$CALLS" 2>/dev/null | paste -sd' '; }
   [ "$(built)" = "built google-chrome built visual-studio-code-bin" ]
 }
 
+@test "a package built here is not compressed: it is installed and thrown away" {
+  stub makepkg 'echo "built ${PWD##*/} as $PKGEXT" >>"$CALLS"'
+  run apps --noconfirm --only visual-studio-code-bin
+  [ "$status" -eq 0 ]
+  [ "$(built)" = "built visual-studio-code-bin as .pkg.tar" ]
+}
+
 @test "up to date, nothing is built" {
   echo "google-chrome 142.0-1" >>"$INSTALLED"
   echo "visual-studio-code-bin 1.142.0-1" >>"$INSTALLED"
@@ -281,10 +288,10 @@ unreachable visual-studio-code-bin" ]
 build_stub() {
   stub makepkg 'name=${PWD##*/}; version=$(sed -n "s/^pkgver=//p" PKGBUILD)
     if [[ $* == *--packagelist* ]]; then
-      echo "$PKGDEST/$name-$version-1-x86_64.pkg.tar.zst"; echo "$PKGDEST/$name-debug-$version-1-x86_64.pkg.tar.zst"
+      echo "$PKGDEST/$name-$version-1-x86_64$PKGEXT"; echo "$PKGDEST/$name-debug-$version-1-x86_64$PKGEXT"
     else
       [[ $* == *--nodeps* && $* != *--install* ]] || exit 9
-      : >"$PKGDEST/$name-$version-1-x86_64.pkg.tar.zst"; echo "built $name" >>"$CALLS"
+      : >"$PKGDEST/$name-$version-1-x86_64$PKGEXT"; echo "built $name" >>"$CALLS"
     fi'
   mkdir -p "$SCRATCH/out"
 }
@@ -294,7 +301,7 @@ build_stub() {
   echo "google-chrome 141.0-1" >>"$INSTALLED"
   run apps --update --build "$SCRATCH/out"
   [ "$status" -eq 0 ]
-  [ "$(cat "$SCRATCH/out/result")" = "built google-chrome $(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD) $SCRATCH/out/google-chrome-142.0-1-x86_64.pkg.tar.zst" ]
+  [ "$(cat "$SCRATCH/out/result")" = "built google-chrome $(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD) $SCRATCH/out/google-chrome-142.0-1-x86_64.pkg.tar" ]
   fails grep -q sudo "$CALLS"
   [ ! -e "$NOVA_AUR_STATE/google-chrome" ]
   run apps --record google-chrome "$(git -C "$NOVA_AUR/google-chrome.git" rev-parse HEAD)"
