@@ -1,6 +1,6 @@
 // nova-iphone-notifications: the computer takes an iPhone's notifications as
 // a watch does, through Apple's Notification Center Service (ANCS), and
-// shows them as Nova's own (docs/iphone.md has the why of each choice).
+// shows them as Nova's own (src/iphone/README.md has the why of each choice).
 //
 // - The iPhone is the one that connects, over Bluetooth Low Energy: the
 //   computer advertises, and an iPhone it is bonded with comes back to it by

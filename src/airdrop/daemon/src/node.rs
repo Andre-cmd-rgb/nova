@@ -6,7 +6,7 @@
 //! channel it will be on in each slot. Two nodes can talk in the slots where
 //! they are on the same channel. An Apple device hops: its own network's
 //! channel, and the three AWDL meets on (6, 44, 149). This card cannot hop
-//! and be acknowledged (see docs/airdrop.md), so it stays on one channel and
+//! and be acknowledged (see src/airdrop/README.md), so it stays on one channel and
 //! says so, sixteen times, and the phone comes by.
 //!
 //! How often it comes by is the phone's decision, and is the speed of a

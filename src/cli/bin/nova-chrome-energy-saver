@@ -9,7 +9,7 @@
 # sees the battery itself (no --force-device-has-battery needed). It halves
 # animations and scrolling to 30 fps on battery: one spinner on an otherwise
 # still page costs 4.5 W on this 4K panel, 0.6 W of which this gives back
-# (docs/power.md). Video plays as before.
+# (src/power/README.md). Video plays as before.
 #
 # Once per profile, then it is Chrome's setting again: a choice made in
 # Chrome afterwards is never undone. Chrome rewrites Local State while it runs,

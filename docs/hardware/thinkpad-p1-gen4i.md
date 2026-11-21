@@ -937,7 +937,7 @@ clock. Idle on AC, at 47 °C and 1% busy, it spins them at about **2,500 rpm**.
 The platform profile was already `performance`, which is the EC's most
 generous mode. So nova-powerd now drives the fans on AC as on battery, with a
 curve of its own for each: still to 55 °C plugged in and full speed from
-88 °C, still to 70 °C on battery (docs/power.md has both).
+88 °C, still to 70 °C on battery (src/power/README.md has both).
 
 The temperature it reads is the hottest of the package and the EC's own
 sensors (`thinkpad` hwmon). `temp2` there is the **discrete GPU**: it reads the

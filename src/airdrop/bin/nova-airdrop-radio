@@ -6,7 +6,7 @@
 #   nova-airdrop-radio down    everything undone, whatever state it got to
 #
 # nova-airdrop@.service runs `up` before the daemon and `down` after it,
-# however it ended. docs/airdrop.md has the why of each step.
+# however it ended. src/airdrop/README.md has the why of each step.
 #
 # up: the card joins AWDL's own ad-hoc cell (channel 149 or 6, AWDL's BSSID,
 # an address made up for this run as its MAC), which makes its hardware
