@@ -52,7 +52,7 @@ The bar is along the top. From the left: the menu's star and the workspaces; in 
 - **Click** a widget for its panel; right-click the star for a terminal.
 - **Drag** a widget to move it. **Double-click** an empty part for a [see-through bar](themes.md#a-see-through-bar).
 - **Settings → Menu Bar** switches the optional widgets: the weather (on at first), media, microphone, the active window, CPU, graphics, memory and Screen Time.
-- **Tray icons**: right-click one, then **Hide from Menu Bar**; Settings → Menu Bar brings it back.
+- **Tray icons**: right-click one for its menu, which ends with **Quit**: it ends the app for good, background processes and all. To hide an icon, switch it off in Settings → Menu Bar.
 - `nova bar remove <id>`, `nova bar put <id>` and `nova bar defaults` change the rest. The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget.
 
 ## Settings
@@ -75,7 +75,7 @@ Open it from the menu, or with `nova settings <page>`. A page shows only where t
 | Performance | the power mode, the discrete GPU, the undervolt | `performance` |
 | Screen Time | where your time went, per app | `screentime` |
 | Appearance | theme, background, font, text size ([themes](themes.md)) | `appearance` |
-| Menu Bar | see-through, optional widgets, hidden tray icons | `bar` |
+| Menu Bar | see-through, optional widgets, which tray icons show | `bar` |
 | Lock Screen | password, waits before the screensaver and the lock, fingerprints | `lock` |
 | Default Apps | browser, code editor, terminal | `apps` |
 | Updates | updates, firmware, release candidates, Check for problems, a bug report | `updates` |
