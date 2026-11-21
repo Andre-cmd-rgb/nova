@@ -7,10 +7,12 @@ import Quickshell.Io
 // What the mobile data service asks while no panel is open, by the lines its
 // helper's stub writes for each `info` ($HOME/mobile-asked). Connected, the
 // background poll takes the stats (`info --verbose`, the byte counters and a
-// ping). Off, nothing is asked: the radio is listened for, and turned on
-// again it is heard and looked at. Otherwise (here a SIM that wants its PIN)
-// the poll is the plain one, with no ping to wake a radio for. The service is
-// a copy of the real one beside the stub, which it finds by its own path.
+// ping). Off at the radio (`radio=blocked`), nothing is asked: the radio is
+// listened for, and turned on again it is heard and looked at. Otherwise
+// (here a SIM that wants its PIN, then ModemManager's own disabled with the
+// radio on, as just after it comes on) the poll goes on, the plain one, with
+// no ping to wake a radio for. The service is a copy of the real one beside
+// the stub, which it finds by its own path.
 ShellRoot {
   id: test
 
@@ -60,11 +62,20 @@ ShellRoot {
     onSaved: infoFile.setText(test.info("connected", "iface=wwan0\noperator=Smoke\ntech=5G\nsignal=70\n"))
   }
 
+  // What to do once the helper's next answer is written, so that nothing
+  // the test does next can find the last one.
+  property var afterInfo: null
+
   FileView {
     id: infoFile
     path: test.home + "/mobile-info"
     printErrors: false
-    onSaved: if (!test.service) test.begin()
+    onSaved: {
+      if (!test.service) return test.begin()
+      const next = test.afterInfo
+      test.afterInfo = null
+      if (next) next()
+    }
   }
 
   FileView {
@@ -127,7 +138,7 @@ ShellRoot {
   function connected(sampled) {
     check(service.connected, "the service reads the modem connected")
     check(sampled, "connected, the background poll takes the stats: " + JSON.stringify(asked()))
-    infoFile.setText(info("disabled"))
+    infoFile.setText(info("disabled", "radio=blocked\n"))
     when(() => service.wwanState === "disabled", 8000, off)
   }
 
@@ -144,9 +155,12 @@ ShellRoot {
   function stillOff() {
     check(asked().length === askedOff, "off, nothing is polled (" + (asked().length - askedOff) + " looks)")
     // Turned on again: the SIM wants its PIN, which is no connection either.
+    // The radio's change comes once that answer is there.
+    afterInfo = () => {
+      nextFile.setText("idx 3 type 5 op 2 soft 0 hard 0\n")
+      when(() => service.wwanState === "locked", 8000, turnedOn)
+    }
     infoFile.setText(info("locked", "unlock=sim-pin\npin_tries=3\n"))
-    nextFile.setText("idx 3 type 5 op 2 soft 0 hard 0\n")
-    when(() => service.wwanState === "locked", 8000, turnedOn)
   }
 
   property int askedOn: 0
@@ -162,6 +176,22 @@ ShellRoot {
     const since = asked().slice(askedOn)
     check(twice, "on, the background poll runs (" + since.length + " looks)")
     check(since.every(line => line === "info"), "not connected, the poll is the plain one, with no ping: " + JSON.stringify(since))
+    // ModemManager's own disabled, the radio on: no rfkill change will come.
+    infoFile.setText(info("disabled"))
+    when(() => service.wwanState === "disabled", 8000, modemDisabled)
+  }
+
+  property int askedDisabled: 0
+
+  function modemDisabled(read) {
+    check(read, "the modem disabled with its radio on is read")
+    check(!service.off && !service.quiet, "the radio on, a disabled modem is not off: the service goes on looking")
+    askedDisabled = asked().length
+    when(() => asked().length >= askedDisabled + 2, 8000, stillLooking)
+  }
+
+  function stillLooking(twice) {
+    check(twice, "and it looks again (" + (asked().length - askedDisabled) + " looks)")
     service.release(holder)
     check(!service.wanted, "let go, the service rests")
     finish()

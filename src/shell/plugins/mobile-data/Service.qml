@@ -61,9 +61,12 @@ BarWidgetService {
   readonly property bool live: connected || pending
   // A computer without a modem is hidden from the bar.
   readonly property bool noModem: info.hw === "no" && wwanState === "absent"
-  // Mobile data off: its radio blocked, by the switch, or because the modem
-  // could not be turned on. The modem is in low power then, as when parked.
-  readonly property bool off: wwanState === "disabled" || wwanState === "failed"
+  // Mobile data off at the radio, as the helper reads rfkill: by the switch,
+  // or because the modem could not be turned on. Only an rfkill change
+  // brings it back. ModemManager's own disabled or failed with the radio on
+  // (the moment after the radio comes on, a SIM it could not read) is not
+  // this, and is polled.
+  readonly property bool off: info.radio === "blocked" && (wwanState === "disabled" || wwanState === "failed")
   // Parked, off or with no modem, nothing changes until a radio does, a SIM
   // goes in a parked modem or a modem comes, so the modem is not polled then:
   // the service listens for those instead.
@@ -245,10 +248,11 @@ BarWidgetService {
   // panel is open or shut — the notification is the point, not the panel.
   Timer {
     interval: Math.max(modem.pollInterval, 10) * 1000
-    // Not while the radio is blocked: messages arrive at the modem, so with
-    // mobile data off there is nothing to find and no reason to keep looking.
-    // Nor without ModemManager, which is what would read them.
-    running: modem.wanted && modem.smsNotifications && modem.shown && !modem.off && modem.wwanState !== "noservice"
+    // Not while the radio is blocked or the modem disabled: messages arrive
+    // at the modem, so with mobile data off there is nothing to find and no
+    // reason to keep looking. Nor without ModemManager, which is what would
+    // read them.
+    running: modem.wanted && modem.smsNotifications && modem.shown && !modem.off && modem.wwanState !== "disabled" && modem.wwanState !== "noservice"
     repeat: true
     // So a message that arrived while the shell was down is announced when it
     // comes back up, rather than a poll interval later.
@@ -291,9 +295,11 @@ BarWidgetService {
   // already runs they are taken from it, as a blocked one is what is known.
   readonly property bool listening: wanted && quiet
 
+  // A modem that goes, its switch with it (op 1), is looked at too: one
+  // taken out, or one coming back after a sleep.
   function heardRadio(change) {
     if (change.type !== Rfkill.wwan) return
-    if (noModem || !change.soft) refresh()
+    if (noModem || !change.soft || change.op === 1) refresh()
   }
 
   onListeningChanged: {

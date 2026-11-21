@@ -741,7 +741,7 @@ meter_update() {
 # ------------------------------------------------------------------- status
 
 read_state() {
-  STATE=absent HW=no MANAGED=unknown
+  STATE=absent HW=no MANAGED=unknown RADIO=on
   OPERATOR="" TECH="" SIGNAL=0 IFACE="" IPADDR=""
   MODEM_STATE="" WHY="" UNLOCK="" PIN_TRIES=""
 
@@ -767,7 +767,7 @@ read_state() {
   # is a fresh try.
   if [[ -e $STOPPED ]]; then
     if radio_blocked; then
-      STATE=failed HW=yes WHY=$(<"$STOPPED")
+      STATE=failed HW=yes WHY=$(<"$STOPPED") RADIO=blocked
       return 0
     fi
     rm -f -- "$STOPPED"
@@ -775,7 +775,7 @@ read_state() {
 
   if radio_blocked; then
     STATE=disabled
-    HW=yes
+    HW=yes RADIO=blocked
     # Off, and it could not come on: that is worth saying while it is off.
     mm_stopped && STATE=noservice
     return 0
@@ -903,6 +903,10 @@ cmd_info() {
 
   printf 'hw=%s\n' "$HW"
   printf 'state=%s\n' "$STATE"
+  # Off at the radio, the switch's off: only an rfkill change brings it back,
+  # so the widget listens for one and asks nothing meanwhile. ModemManager's
+  # own disabled, or failed, with the radio on, is not that.
+  [[ $RADIO != blocked ]] || printf 'radio=blocked\n'
   # Why it is off, while it is kept off: nosim.
   [[ $STATE != parked ]] || printf 'parked=%s\n' "$(parked_reason)"
   # Why it failed: noenable (it could not be turned on), or ModemManager's

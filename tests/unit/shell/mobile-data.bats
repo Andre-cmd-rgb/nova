@@ -199,6 +199,21 @@ stopped_modemmanager() {
   [ ! -e "$state/parked" ]
 }
 
+@test "off at the radio is said as such; ModemManager's own disabled or failed, the radio on, is not" {
+  with_sim
+  echo blocked >"$SCRATCH/wwan"
+  [ "$(info state)" = disabled ]
+  [ "$(info radio)" = blocked ]
+  echo unblocked >"$SCRATCH/wwan"
+  [ "$(info state)" = disabled ]
+  [ -z "$(info radio)" ]
+  modem "modem.generic.state                              : failed" \
+    "modem.generic.state-failed-reason               : sim-error" \
+    "modem.generic.sim                                : /org/freedesktop/ModemManager1/SIM/0"
+  [ "$(info state)" = failed ]
+  [ -z "$(info radio)" ]
+}
+
 @test "parked: kept off when something switches every radio back on, and on is refused" {
   empty_slot
   echo nosim >"$state/parked"

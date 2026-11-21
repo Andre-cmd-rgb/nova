@@ -112,8 +112,8 @@ Widget settings live on the bar entry in `~/.config/nova/shell.json`:
 
 - `interval` — seconds between background polls while the panel is closed
   (default `10`, minimum `2`). An open panel always refreshes every 1.5 s.
-  With mobile data off, or no SIM, nothing is polled: the widget waits for
-  the radio to be switched on (or, with no SIM, for one to go in).
+  With mobile data switched off, or no SIM, nothing is polled: the widget
+  waits for the radio to be switched on (or, with no SIM, for one to go in).
 - `backgroundStats` — keep throughput and latency sampling while the panel is
   closed (default `true`), so it opens on real numbers: only while mobile data
   is connected, which takes a SIM and mobile data on. See below for what it
@@ -178,7 +178,8 @@ nova mobile-data sms clear          empty the local archive
 ```
 
 `info` is the widget's data feed; `--verbose` adds byte counters and a
-latency sample and is only used while the panel is open.
+latency sample, and is used while the panel is open, and for the background
+poll while connected (`backgroundStats`).
 
 ## Text messages
 
@@ -249,10 +250,13 @@ link entirely. It is sent every 1.5 s while the panel is open, and once per
 poll (10 s by default) while it is closed, only ever while the modem is
 connected. The plugin makes no other network requests.
 
-With mobile data off, the widget does not poll at all. It listens for the
-radio instead, as it does for a SIM when there is none, so it looks again
-the moment the switch, `nova mobile-data on` or airplane mode turns it back
-on. Off costs no wakeups, and no SIM costs none either.
+With mobile data switched off at its radio, which is what the switch does,
+the widget does not poll at all. It listens for the radio instead, as it does
+for a SIM when there is none, and goes back to polling the moment the switch,
+`nova mobile-data on` or airplane mode turns the radio back on. Off costs no
+wakeups, and no SIM costs none either. `info` says `radio=blocked` then. A
+modem off for any other reason (ModemManager's own "disabled", a modem with
+no radio switch of its own) is polled as before.
 
 The figure shown is the median of the last five samples, not the mean. A mobile
 link throws the occasional very slow round trip — a retransmit at low signal, a
