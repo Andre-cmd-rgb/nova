@@ -250,32 +250,81 @@ printf '[Context]\nfilesystems=xdg-config/gtk-3.0:ro;xdg-config/gtk-4.0:ro;\n' >
   [ "$(jq -r '."workbench.colorTheme"' "$XDG_CONFIG_HOME/Code/User/settings.json")" = Nova ]
 }
 
-@test "T3 Code gets Nova's theme as a file of its own, named in its settings, which it keeps" {
+t3_theme() { # appearance: the rendered theme, with two of its roles
+  write_file "$XDG_STATE_HOME/nova/current/theme/t3code.json" \
+    "{\"name\": \"Nova\", \"appearance\": \"$1\", \"canvas\": \"#faf4ed\", \"accent\": \"#d7827e\", \"colors\": {\"canvas\": \"#faf4ed\", \"text\": \"#575279\"}}"
+}
+
+@test "T3 Code gets Nova's theme as a file of its own, its colors for light and for dark, named in its settings" {
   mkdir -p "$HOME/.t3/userdata"
-  write_file "$XDG_STATE_HOME/nova/current/theme/t3code.json" '{"name": "Nova", "appearance": "light", "canvas": "#faf4ed", "accent": "#d7827e"}'
+  t3_theme light
   write_file "$HOME/.t3/userdata/settings.json" '{"favorites": [], "idleCompaction": "onReturn"}'
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
   [ "$status" -eq 0 ]
-  [ ! -L "$HOME/.t3/userdata/themes/nova.json" ]
-  [ "$(jq -r .canvas "$HOME/.t3/userdata/themes/nova.json")" = '#faf4ed' ]
-  run jq -c . "$HOME/.t3/userdata/settings.json"
-  [ "$output" = '{"favorites":[],"idleCompaction":"onReturn","defaultTheme":"nova"}' ]
-  # Named already, the settings are not written again.
+  [ -z "$output" ]
+  theme=$HOME/.t3/userdata/themes/nova.json
+  [ ! -L "$theme" ]
+  [ "$(jq -r .canvas "$theme")" = '#faf4ed' ]
+  # The other appearance is the same palette, so T3 Code never shows its own.
+  [ "$(jq -c '.variants | keys' "$theme")" = '["dark"]' ]
+  [ "$(jq -c '.variants.dark == .colors' "$theme")" = true ]
+  t3_theme dark
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$(jq -c '[.appearance, (.variants | keys), .variants.light == .colors]' "$theme")" = '["dark",["light"],true]' ]
+  [ ! -e "$theme.tmp" ]
+  run jq -c 'del(.defaultAppearanceSetAt)' "$HOME/.t3/userdata/settings.json"
+  [ "$output" = '{"favorites":[],"idleCompaction":"onReturn","defaultTheme":"nova","defaultAppearance":"system"}' ]
+  [[ $(jq -r .defaultAppearanceSetAt "$HOME/.t3/userdata/settings.json") =~ ^20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9:]{8}\.[0-9]{3}Z$ ]]
+  # Set already, the settings are not written again.
   touch -d '2026-01-01' "$HOME/.t3/userdata/settings.json"
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
   [ "$(stat -c %Y "$HOME/.t3/userdata/settings.json")" = "$(date -d 2026-01-01 +%s)" ]
 }
 
+@test "a mode the user picked for T3 Code stays theirs, and its theme is Nova's again" {
+  mkdir -p "$HOME/.t3/userdata"
+  t3_theme light
+  write_file "$HOME/.t3/userdata/settings.json" '{"defaultTheme": "dracula", "defaultThemeSetAt": "2026-11-01T10:00:00.000Z", "defaultAppearance": "dark", "defaultAppearanceSetAt": "2026-11-01T10:00:00.000Z"}'
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$status" -eq 0 ]
+  run jq -c . "$HOME/.t3/userdata/settings.json"
+  [ "$output" = '{"defaultTheme":"nova","defaultThemeSetAt":"2026-11-01T10:00:00.000Z","defaultAppearance":"dark","defaultAppearanceSetAt":"2026-11-01T10:00:00.000Z"}' ]
+}
+
 @test "T3 Code with no settings yet gets them, and settings that do not parse are left alone" {
   mkdir -p "$HOME/.t3/userdata"
-  write_file "$XDG_STATE_HOME/nova/current/theme/t3code.json" '{"name": "Nova"}'
+  t3_theme dark
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
-  [ "$(jq -r .defaultTheme "$HOME/.t3/userdata/settings.json")" = nova ]
+  [ "$(jq -c '[.defaultTheme, .defaultAppearance]' "$HOME/.t3/userdata/settings.json")" = '["nova","system"]' ]
   write_file "$HOME/.t3/userdata/settings.json" '{"broken"'
   run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
   [ "$status" -eq 0 ]
   [[ $output == *"T3 Code's settings.json does not parse"* ]]
   [ "$(cat "$HOME/.t3/userdata/settings.json")" = '{"broken"' ]
+  # The theme file is there all the same.
+  [ "$(jq -r .appearance "$HOME/.t3/userdata/themes/nova.json")" = dark ]
+}
+
+@test "the theme change does not fail on T3 Code: not installed, or a folder it cannot write" {
+  t3_theme light
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$HOME/.t3" ]
+  mkdir -p "$HOME/.t3/userdata"
+  chmod a-w "$HOME/.t3/userdata"
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  chmod u+w "$HOME/.t3/userdata"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  # A rendered theme that is not JSON leaves the file T3 Code has.
+  mkdir -p "$HOME/.t3/userdata/themes"
+  write_file "$HOME/.t3/userdata/themes/nova.json" '{"name": "Nova", "appearance": "dark"}'
+  write_file "$XDG_STATE_HOME/nova/current/theme/t3code.json" '{"name": '
+  run "$REPO_ROOT/src/cli/bin/nova-theme-apply" t3code
+  [ "$status" -eq 0 ]
+  [ "$(jq -r .appearance "$HOME/.t3/userdata/themes/nova.json")" = dark ]
+  [ ! -e "$HOME/.t3/userdata/themes/nova.json.tmp" ]
 }
 
 @test "the starting VS Code settings agree with what each theme change enforces" {
