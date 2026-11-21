@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # nova:summary=Nova's power governor: what it is doing now, a boost, and what keeps the computer awake
-# nova:args=[status [-v | --json] | boost [min|off] | doctor]
+# nova:args=[status [-v | --json] | run <program> [args] | prefer <program> [args] | boost [min|off] | doctor]
 #
 # The policy half of Nova's power governor, run on each plug and unplug;
 # nova-powerd is the half that runs throughout.

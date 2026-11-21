@@ -210,7 +210,7 @@ Column {
     visible: root.engine
 
     Line {
-      label: "Words Parakeet writes another way"
+      label: "Words dictation writes another way"
       detail: "~/.config/nova/dictation/vocab.toml"
 
       Button {
