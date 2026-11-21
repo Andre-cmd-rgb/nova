@@ -10,8 +10,9 @@
 # the dusk all the same). The shell runs on a Hyprland of its own, given
 # Nova's look and window rules (data/hypr), so a picture shows the
 # windows as Nova draws them: round corners, the theme's border, the terminal
-# a little see-through. Besides the pictures, it writes <background>.colors.toml,
-# the palette the adaptive theme took from the background, which the site
+# a little see-through. Besides the pictures, it writes <background>.colors.toml
+# and <background>.light.colors.toml, the palettes the adaptive theme takes from
+# the background, dark (as it is over dusk) and light, which the site
 # (tools/build-site) draws its adaptive colours with.
 #
 # Hyprland draws to a screen or to a window, and has no way to draw to
@@ -207,9 +208,10 @@ session() {
   settings
   shot desktop 2.5
 
-  # The palette the adaptive theme took from the background, which the site
-  # draws its own adaptive colours with (tools/build-site).
+  # The palettes the adaptive theme takes from the background, dark and light,
+  # which the site draws its own adaptive colours with (tools/build-site).
   nova-theme palette "$HOME/$BACKDROP.png" >"$WORK/shots/palette.toml" 2>/dev/null || true
+  nova-theme palette "$HOME/$BACKDROP.png" light >"$WORK/shots/palette-light.toml" 2>/dev/null || true
 
   # The same in five more themes: four of them in one picture, and each
   # corner for the site. Settings is opened again for each: it reads the
@@ -352,12 +354,15 @@ for name in desktop theme-tokyo-night theme-catppuccin-latte theme-gruvbox theme
   vips resize "$work/shots/$name-corner.png" "$out/corner-${name#theme-}.jpg[Q=86,strip,optimize_coding]" 0.78125
 done
 mv "$out/corner-desktop.jpg" "$out/corner-adaptive.jpg"
-# The adaptive theme's palette over the background, which the site draws its
-# adaptive colours with (tools/build-site), so that the page and the pictures
-# agree. Its header named the scratch folder; it names the picture instead.
-if grep -q '^background = ' "$work/shots/palette.toml" 2>/dev/null; then
-  { printf '# The adaptive theme'\''s colors over %s, as `nova theme palette` gives them.\n' "${background##*/}"
+# The adaptive theme's palettes over the background, dark and light, which the
+# site draws its adaptive colours with (tools/build-site), so that the page and
+# the pictures agree. Their header named the scratch folder; it names the
+# picture instead.
+for mode in "" light; do
+  palette=$work/shots/palette${mode:+-$mode}.toml
+  grep -q '^background = ' "$palette" 2>/dev/null || continue
+  { printf '# The adaptive theme'\''s%s colors over %s, as `nova theme palette` gives them.\n' "${mode:+ $mode}" "${background##*/}"
     printf '# Written by tools/screenshots; tools/build-site draws the site'\''s adaptive theme with it.\n'
-    grep -v '^#' "$work/shots/palette.toml"; } >"$out/$backdrop.colors.toml"
-fi
+    grep -v '^#' "$palette"; } >"$out/$backdrop${mode:+.$mode}.colors.toml"
+done
 ls -l "$out"

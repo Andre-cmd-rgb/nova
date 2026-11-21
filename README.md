@@ -18,7 +18,7 @@
 
 <p>
 <img src="docs/images/menu.jpg" alt="The Nova menu in the middle of the screen: a search field, then Apps, Capture, Toggle, Style, Settings, App Center, Update and System" width="49%">
-<img src="docs/images/calendar.jpg" alt="The calendar at a week, with events on five of its days, and the tasks beside it" width="49%">
+<img src="docs/images/calendar.jpg" alt="The calendar at a week, with events on three of its days, and the tasks beside it" width="49%">
 </p>
 
 ## Install

@@ -87,7 +87,7 @@ A change of display settings goes back by itself after 15 seconds unless you kee
 
 ### Calendar
 
-<img src="images/calendar.jpg" alt="The calendar at a week, with events on five of its days, and the tasks beside it" width="720">
+<img src="images/calendar.jpg" alt="The calendar at a week, with events on three of its days, and the tasks beside it" width="720">
 
 Events and tasks by day, week or month: from the clock's card, or `nova calendar [day|week|month] [date]` (`2026-10-29`, `tomorrow`, `next friday`).
 
