@@ -7,10 +7,11 @@
 //! user's session, nor the system bus.
 
 use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
+use std::os::fd::OwnedFd;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use nova_dictation::engine::VERSION;
 
@@ -125,6 +126,13 @@ impl Drop for Running {
 
 // A dictation on an engine of another release is answered no-engine, as
 // where there is none, and the journal (stderr) says why.
+//
+// The socket is the test's, made before the daemon starts and handed to it
+// as nova-dictationd.socket hands it (fd 3, LISTEN_PID and LISTEN_FDS): the
+// start waits in it while the daemon starts, with no time to guess. Waiting
+// instead for a socket the daemon makes, this said only "no socket" after
+// ten seconds where the daemon had refused it: a path over 107 bytes, which
+// a long $TMPDIR gives, and the daemon's journal said so.
 #[test]
 fn a_dictation_on_an_engine_of_another_release_is_answered_no_engine() {
     let (dir, library) = engine();
@@ -133,32 +141,42 @@ fn a_dictation_on_an_engine_of_another_release_is_answered_no_engine() {
     std::fs::write(&model, "a model").unwrap();
     std::fs::create_dir_all(dir.join("supplies")).unwrap();
     let socket = dir.join("dictation.sock");
-    let log = std::fs::File::create(dir.join("journal")).unwrap();
-    let running = Running(
-        daemon(&dir, &library, "1.10.0")
-            .arg("--socket")
-            .arg(&socket)
-            .stderr(log)
-            .spawn()
-            .unwrap(),
-    );
-    let started = Instant::now();
-    let stream = loop {
-        if let Ok(stream) = UnixStream::connect(&socket) {
-            break stream;
-        }
-        assert!(started.elapsed() < Duration::from_secs(10), "no socket");
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let listener =
+        UnixListener::bind(&socket).unwrap_or_else(|e| panic!("{}: {e}", socket.display()));
+    let stream = UnixStream::connect(&socket).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
     (&stream).write_all(b"start\n").unwrap();
+    let log = std::fs::File::create(dir.join("journal")).unwrap();
+    let command = daemon(&dir, &library, "1.10.0");
+    // sh keeps its pid through exec, so LISTEN_PID is the daemon's.
+    let running = Running(
+        Command::new("/bin/sh")
+            .args([
+                "-c",
+                "exec 3<&0 </dev/null; LISTEN_PID=$$ LISTEN_FDS=1 exec \"$0\"",
+            ])
+            .arg(command.get_program())
+            .env_clear()
+            .envs(command.get_envs().filter_map(|(k, v)| Some((k, v?))))
+            .stdin(Stdio::from(OwnedFd::from(listener)))
+            .stderr(log)
+            .spawn()
+            .unwrap(),
+    );
     let mut line = String::new();
-    BufReader::new(&stream).read_line(&mut line).unwrap();
-    assert_eq!(line.trim_end(), r#"{"type":"error","error":"no-engine"}"#);
+    let read = BufReader::new(&stream).read_line(&mut line);
+    let journal = || std::fs::read_to_string(dir.join("journal")).unwrap_or_default();
+    assert!(read.is_ok(), "{read:?}; the daemon said: {}", journal());
+    assert_eq!(
+        line.trim_end(),
+        r#"{"type":"error","error":"no-engine"}"#,
+        "the daemon said: {}",
+        journal()
+    );
     drop(running);
-    let journal = std::fs::read_to_string(dir.join("journal")).unwrap();
+    let journal = journal();
     assert!(
         journal.contains(&format!(
             "is whisper.cpp \"1.10.0\", and dictation is made for {VERSION}"
