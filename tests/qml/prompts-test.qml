@@ -22,10 +22,13 @@ ShellRoot {
 
   readonly property string socket: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/prompts.sock"
 
+  // The card's window, made only while a card is shown.
   function surface() {
-    for (var i = 0; i < prompts.data.length; i++)
-      if (prompts.data[i] && prompts.data[i].contentItem !== undefined) return prompts.data[i]
-    return null
+    return prompts.surface
+  }
+
+  function cardShown() {
+    return surface() !== null && surface().visible
   }
 
   function inputs() {
@@ -35,7 +38,7 @@ ShellRoot {
       if (item.echoMode !== undefined && item.cursorVisible !== undefined) found.push(item)
       for (var i = 0; i < item.children.length; i++) walk(item.children[i])
     }
-    walk(surface().contentItem)
+    if (surface()) walk(surface().contentItem)
     return found
   }
 
@@ -46,7 +49,7 @@ ShellRoot {
       if (item.text === text) found = true
       for (var i = 0; i < item.children.length; i++) walk(item.children[i])
     }
-    walk(surface().contentItem)
+    if (surface()) walk(surface().contentItem)
     return found
   }
 
@@ -118,10 +121,10 @@ ShellRoot {
         return false
       },
       function () {
-        check(!surface().visible, "no card before a question")
+        check(!cardShown(), "no card before a question")
         say(dutyA, passphrase)
       },
-      function () { return surface().visible },
+      function () { return cardShown() },
       function () {
         check(shownText("“Backup” is encrypted") && shownText("Enter passphrase"), "the question's title on its tab, the field saying what it is for")
         var fields = inputs()
@@ -139,7 +142,7 @@ ShellRoot {
       },
       function () { return prompts.wrong },
       function () {
-        check(surface().visible && shownText("That passphrase did not open “Backup”.") && shownText("Wrong"), "a wrong answer: the card stays, and says so")
+        check(cardShown() && shownText("That passphrase did not open “Backup”.") && shownText("Wrong"), "a wrong answer: the card stays, and says so")
       },
       function () { return !prompts.wrong },
       function () {
@@ -151,7 +154,7 @@ ShellRoot {
         check(test.heardA[1] === '{"type":"answer","values":{"passphrase":"right"}}', "and is answered again on the same card")
         say(dutyA, { type: "done" })
       },
-      function () { return !surface().visible },
+      function () { return !cardShown() },
       function () { return !dutyA.connected },
       function () {
         check(true, "done: the card goes, and the dialog closes")
@@ -163,7 +166,7 @@ ShellRoot {
         say(dutyA, passphrase)
         say(dutyB, { type: "ask", glyph: "bluetooth", title: "Pair with “Pixel 8”", text: "Does “Pixel 8” show this code?", code: "123456", fields: [], accept: "Pair" })
       },
-      function () { return surface().visible && prompts.dialogs.length === 2 },
+      function () { return cardShown() && prompts.dialogs.length === 2 },
       function () {
         check(shownText("“Backup” is encrypted") && !shownText("123456"), "a second dialog waits for the first")
         prompts.cancel()
@@ -186,7 +189,7 @@ ShellRoot {
         // The duty ends the dialog itself, as when the device calls the pairing off.
         dutyB.connected = false
       },
-      function () { return !surface().visible },
+      function () { return !cardShown() },
       function () {
         check(prompts.dialogs.length === 0, "a dialog its duty closed ends, and the card goes")
         dutyA.connected = true
@@ -195,7 +198,7 @@ ShellRoot {
       function () {
         say(dutyA, { type: "ask", glyph: "bluetooth", title: "Pair with “MX Keys”", text: "Type this code on “MX Keys”, then Return.", code: "482913", fields: [] })
       },
-      function () { return surface().visible },
+      function () { return cardShown() },
       function () {
         check(shownText("482913") && shownText("Cancel") && !shownText("Done") && !shownText("OK"), "a code to type on the other device: Cancel alone")
         prompts.choose(1)
@@ -220,7 +223,7 @@ ShellRoot {
                     { id: "window:93", label: "Notes", detail: "foot", glyph: "window", section: "Windows" }],
           chosen: "screen:DP-1", toggles: [{ id: "remember", label: "Allow it again without asking", value: false }] })
       },
-      function () { return surface().visible && shownText("Dell U2723QE  ·  3840 × 2160") },
+      function () { return cardShown() && shownText("Dell U2723QE  ·  3840 × 2160") },
       function () {
         check(shownText("Screens") && shownText("Windows") && shownText("Notes  ·  foot"), "a list in sections, each named once")
         check(shownText("Not Now") && shownText("Share") && shownText("Allow it again without asking"), "Cancel in the duty's words, its answer, and the switch")
@@ -243,7 +246,7 @@ ShellRoot {
       function () {
         say(dutyA, { type: "ask", glyph: "key", title: "Passphrase", text: "The key was imported.", code: "", fields: [], accept: "OK", alone: true })
       },
-      function () { return surface().visible && shownText("The key was imported.") },
+      function () { return cardShown() && shownText("The key was imported.") },
       function () {
         check(shownText("OK") && !shownText("Cancel"), "a message has its one answer")
         prompts.cancel()

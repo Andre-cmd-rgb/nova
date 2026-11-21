@@ -76,8 +76,12 @@ Item {
   // A yes or no has the duty's answer as well as Cancel; a wait, Cancel alone.
   readonly property bool hasAccept: ask !== null && ask.accept !== ""
 
+  // The card's window, made while it is shown and gone after (null then):
+  // it is up the moment a question comes, and holds nothing in between.
+  readonly property var surface: cardLoader.item
+
   readonly property int cardWidth: Math.min(Style.space(choices.length > 0 ? 440 : hasCode || fields.length === 0 ? 380 : 340),
-    Math.max(Style.space(260), surface.width - Style.gapsOut * 2))
+    Math.max(Style.space(260), (surface ? surface.width : 0) - Style.gapsOut * 2))
 
   // The next dialog's question at once; with none, the card lingers a
   // moment on the last one, and goes.
@@ -133,29 +137,41 @@ Item {
 
   function texts() {
     var all = []
-    for (var i = 0; i < fieldLines.count; i++) {
-      var line = fieldLines.itemAt(i)
+    if (!surface) return all
+    for (var i = 0; i < surface.fieldLines.count; i++) {
+      var line = surface.fieldLines.itemAt(i)
       all.push(line ? line.input.text : "")
     }
     return all
   }
 
+  // The secret fields emptied, while there is a card.
+  function clearSecrets() {
+    if (!surface) return
+    for (var i = 0; i < surface.fieldLines.count; i++) {
+      var line = surface.fieldLines.itemAt(i)
+      if (line && fields[i].secret) line.input.text = ""
+    }
+  }
+
   // The keys go to the first field not typed in, else the last; with no
   // field, to the card.
   function takeKeys() {
-    if (!shown) return
-    for (var i = 0; i < fieldLines.count; i++) {
-      var line = fieldLines.itemAt(i)
-      if (line && (line.input.text === "" || i === fieldLines.count - 1)) {
+    if (!shown || !surface) return
+    var lines = surface.fieldLines
+    for (var i = 0; i < lines.count; i++) {
+      var line = lines.itemAt(i)
+      if (line && (line.input.text === "" || i === lines.count - 1)) {
         line.input.forceActiveFocus()
         return
       }
     }
-    keyCatcher.forceActiveFocus()
+    surface.keyCatcher.forceActiveFocus()
   }
 
   function next(from) {
-    var line = fieldLines.itemAt((from + 1) % Math.max(1, fieldLines.count))
+    if (!surface) return
+    var line = surface.fieldLines.itemAt((from + 1) % Math.max(1, surface.fieldLines.count))
     if (line) line.input.forceActiveFocus()
   }
 
@@ -171,11 +187,8 @@ Item {
     current.write(Model.answerLine(fields, typed, choices.length > 0 ? chosenId : "", toggles, toggleStates))
     current.flush()
     checking = true
-    for (var i = 0; i < fieldLines.count; i++) {
-      var line = fieldLines.itemAt(i)
-      if (line && fields[i].secret) line.input.text = ""
-    }
-    keyCatcher.forceActiveFocus()
+    clearSecrets()
+    if (surface) surface.keyCatcher.forceActiveFocus()
   }
 
   function cancel() {
@@ -202,7 +215,7 @@ Item {
     if (choices.length === 0 || checking) return
     var at = Math.max(0, Math.min(choices.length - 1, chosenIndex + step))
     chosenId = choices[at].id
-    choiceList.positionViewAtIndex(at, ListView.Contain)
+    if (surface) surface.choiceList.positionViewAtIndex(at, ListView.Contain)
   }
 
   function flip(which) {
@@ -216,10 +229,7 @@ Item {
     checking = false
     wrong = true
     wrongText = text
-    for (var i = 0; i < fieldLines.count; i++) {
-      var line = fieldLines.itemAt(i)
-      if (line && fields[i].secret) line.input.text = ""
-    }
+    clearSecrets()
     wrongFor.restart()
     shaking.restart()
     Qt.callLater(takeKeys)
@@ -296,395 +306,408 @@ Item {
 
   // ---------------------------------------------------------------- the card
 
-  PanelWindow {
-    id: surface
-    visible: root.shown
-    anchors { top: true; bottom: true; left: true; right: true }
-    color: "transparent"
-    WlrLayershell.namespace: "nova-prompts"
-    WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
-    exclusionMode: ExclusionMode.Ignore
+  LazyLoader {
+    id: cardLoader
+    active: root.shown
 
-    Rectangle {
-      anchors.fill: parent
-      color: root.colors.scrim
-    }
+    PanelWindow {
+      id: cardWindow
+      visible: true
+      anchors { top: true; bottom: true; left: true; right: true }
+      color: "transparent"
+      WlrLayershell.namespace: "nova-prompts"
+      WlrLayershell.layer: WlrLayer.Overlay
+      WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+      exclusionMode: ExclusionMode.Ignore
 
-    // A click anywhere gives the keys back to the card; it cancels nothing.
-    MouseArea {
-      anchors.fill: parent
-      onClicked: root.takeKeys()
-    }
+      // What the card's logic reaches of it.
+      property alias fieldLines: fieldLines
+      property alias keyCatcher: keyCatcher
+      property alias choiceList: choiceList
 
-    BorderSurface {
-      id: card
-      anchors.centerIn: parent
-      anchors.horizontalCenterOffset: root.shake
-      width: root.cardWidth
-      height: inset.top + content.implicitHeight + inset.bottom
-      radius: Style.cornerRadius
-      color: root.colors.background
-      frame: root.wrong
-        ? Border.surfaceSpec("polkit", "border-error", root.colors.borderError, Math.max(1, Style.space(2)), "border-alpha")
-        : Border.surfaceSpec("polkit", "border", root.colors.border, Math.max(1, Style.space(2)), "border-alpha")
-      padding: root.padding
+      // Made as a question comes: the keys go to it then.
+      Component.onCompleted: Qt.callLater(root.takeKeys)
 
+      Rectangle {
+        anchors.fill: parent
+        color: root.colors.scrim
+      }
+
+      // A click anywhere gives the keys back to the card; it cancels nothing.
       MouseArea {
         anchors.fill: parent
         onClicked: root.takeKeys()
       }
 
-      // The card's own keys, when no field has them: Escape cancels, Return
-      // answers, the arrows and Tab choose between a yes or no's answers.
-      Item {
-        id: keyCatcher
-        anchors.fill: parent
-        focus: true
-        Keys.priority: Keys.BeforeItem
-        Keys.onPressed: function (event) {
-          switch (event.key) {
-          case Qt.Key_Escape:
-            root.cancel()
-            break
-          case Qt.Key_Return:
-          case Qt.Key_Enter:
-            if (root.fields.length === 0) root.choose(root.choice)
-            else root.answer()
-            break
-          case Qt.Key_Left:
-          case Qt.Key_Right:
-          case Qt.Key_Tab:
-          case Qt.Key_Backtab:
-            if (root.fields.length > 0) return
-            if (root.hasAccept && !root.ask.alone) root.choice = 1 - root.choice
-            break
-          case Qt.Key_Up:
-          case Qt.Key_Down:
-            if (root.choices.length === 0) return
-            root.chooseNext(event.key === Qt.Key_Down ? 1 : -1)
-            break
-          case Qt.Key_Space:
-            if (root.toggles.length === 0) return
-            root.flip(0)
-            break
-          default:
-            return
+      BorderSurface {
+        id: card
+        anchors.centerIn: parent
+        anchors.horizontalCenterOffset: root.shake
+        width: root.cardWidth
+        height: inset.top + content.implicitHeight + inset.bottom
+        radius: Style.cornerRadius
+        color: root.colors.background
+        frame: root.wrong
+          ? Border.surfaceSpec("polkit", "border-error", root.colors.borderError, Math.max(1, Style.space(2)), "border-alpha")
+          : Border.surfaceSpec("polkit", "border", root.colors.border, Math.max(1, Style.space(2)), "border-alpha")
+        padding: root.padding
+
+        MouseArea {
+          anchors.fill: parent
+          onClicked: root.takeKeys()
+        }
+
+        // The card's own keys, when no field has them: Escape cancels, Return
+        // answers, the arrows and Tab choose between a yes or no's answers.
+        Item {
+          id: keyCatcher
+          anchors.fill: parent
+          focus: true
+          Keys.priority: Keys.BeforeItem
+          Keys.onPressed: function (event) {
+            switch (event.key) {
+            case Qt.Key_Escape:
+              root.cancel()
+              break
+            case Qt.Key_Return:
+            case Qt.Key_Enter:
+              if (root.fields.length === 0) root.choose(root.choice)
+              else root.answer()
+              break
+            case Qt.Key_Left:
+            case Qt.Key_Right:
+            case Qt.Key_Tab:
+            case Qt.Key_Backtab:
+              if (root.fields.length > 0) return
+              if (root.hasAccept && !root.ask.alone) root.choice = 1 - root.choice
+              break
+            case Qt.Key_Up:
+            case Qt.Key_Down:
+              if (root.choices.length === 0) return
+              root.chooseNext(event.key === Qt.Key_Down ? 1 : -1)
+              break
+            case Qt.Key_Space:
+              if (root.toggles.length === 0) return
+              root.flip(0)
+              break
+            default:
+              return
+            }
+            event.accepted = true
           }
-          event.accepted = true
-        }
-      }
-
-      Row {
-        id: content
-        x: card.inset.left
-        y: card.inset.top
-        width: card.width - card.inset.left - card.inset.right
-        spacing: Style.space(14)
-
-        // What it is about.
-        Text {
-          id: glyph
-          width: Style.space(26)
-          height: root.lineHeight
-          horizontalAlignment: Text.AlignHCenter
-          verticalAlignment: Text.AlignVCenter
-          textFormat: Text.PlainText
-          text: Model.glyph(root.ask ? root.ask.glyph : "")
-          color: root.tint
-          font.family: root.family
-          font.pixelSize: Style.font.iconLarge
         }
 
-        Column {
-          width: parent.width - glyph.width - parent.spacing
-          spacing: Style.space(6)
+        Row {
+          id: content
+          x: card.inset.left
+          y: card.inset.top
+          width: card.width - card.inset.left - card.inset.right
+          spacing: Style.space(14)
 
-          // A code to compare, or to type on the other device, large.
+          // What it is about.
           Text {
-            width: parent.width
-            visible: root.hasCode
-            height: visible ? root.lineHeight : 0
+            id: glyph
+            width: Style.space(26)
+            height: root.lineHeight
+            horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             textFormat: Text.PlainText
-            text: root.ask ? root.ask.code : ""
-            color: root.ink
+            text: Model.glyph(root.ask ? root.ask.glyph : "")
+            color: root.tint
             font.family: root.family
-            font.pixelSize: Math.round(Style.font.iconLarge * 1.3)
-            font.letterSpacing: Style.space(3)
-            font.bold: true
+            font.pixelSize: Style.font.iconLarge
           }
 
-          // What it asks, in a line or two; alone, as high as the glyph's
-          // line at the least, and level with it.
-          Item {
-            width: parent.width
-            visible: root.hasText
-            height: visible ? (root.hasCode ? words.implicitHeight : Math.max(root.lineHeight, words.implicitHeight)) : 0
+          Column {
+            width: parent.width - glyph.width - parent.spacing
+            spacing: Style.space(6)
 
+            // A code to compare, or to type on the other device, large.
             Text {
-              id: words
               width: parent.width
-              anchors.verticalCenter: parent.verticalCenter
+              visible: root.hasCode
+              height: visible ? root.lineHeight : 0
+              verticalAlignment: Text.AlignVCenter
               textFormat: Text.PlainText
-              text: root.ask ? root.ask.text : ""
-              wrapMode: Text.WordWrap
-              color: root.colors.text
-              opacity: 0.72
+              text: root.ask ? root.ask.code : ""
+              color: root.ink
               font.family: root.family
-              font.pixelSize: Style.font.bodySmall
+              font.pixelSize: Math.round(Style.font.iconLarge * 1.3)
+              font.letterSpacing: Style.space(3)
+              font.bold: true
             }
-          }
 
-          Repeater {
-            id: fieldLines
-            model: root.fields
-
-            // A line to type in: dots for a secret, unless shown; what it is
-            // for while it is empty, or how the answer went.
+            // What it asks, in a line or two; alone, as high as the glyph's
+            // line at the least, and level with it.
             Item {
-              id: line
-              required property var modelData
-              required property int index
-              readonly property alias input: field
               width: parent.width
-              height: root.lineHeight
-
-              Component.onCompleted: field.text = modelData.secret ? "" : modelData.value
-
-              TextInput {
-                id: field
-                anchors.fill: parent
-                verticalAlignment: TextInput.AlignVCenter
-                clip: true
-                enabled: root.shown
-                readOnly: root.checking || root.wrong
-                echoMode: line.modelData.secret ? TextInput.Password : TextInput.Normal
-                passwordCharacter: "•"
-                cursorVisible: activeFocus && !root.checking && !root.wrong
-                color: root.ink
-                selectionColor: Util.alpha(root.colors.accent, 0.45)
-                selectedTextColor: root.colors.text
-                font.family: root.family
-                font.pixelSize: Style.font.iconLarge
-                onAccepted: {
-                  if (line.index < root.fields.length - 1 && text !== "") root.next(line.index)
-                  else root.answer()
-                }
-                Keys.onPressed: function (event) {
-                  if (event.key === Qt.Key_Escape) {
-                    root.cancel()
-                  } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
-                    root.next(event.key === Qt.Key_Tab ? line.index : line.index + root.fields.length - 2)
-                  } else {
-                    return
-                  }
-                  event.accepted = true
-                }
-              }
+              visible: root.hasText
+              height: visible ? (root.hasCode ? words.implicitHeight : Math.max(root.lineHeight, words.implicitHeight)) : 0
 
               Text {
-                anchors.left: parent.left
-                anchors.right: parent.right
+                id: words
+                width: parent.width
                 anchors.verticalCenter: parent.verticalCenter
-                visible: field.text.length === 0
                 textFormat: Text.PlainText
-                text: root.wrong && line.modelData.secret ? "Wrong"
-                  : root.checking && line.index === root.fields.length - 1 ? "Checking..."
-                  : line.modelData.label
-                color: root.ink
-                opacity: root.wrong && line.modelData.secret ? 1 : 0.36
+                text: root.ask ? root.ask.text : ""
+                wrapMode: Text.WordWrap
+                color: root.colors.text
+                opacity: 0.72
                 font.family: root.family
-                font.pixelSize: Style.font.iconLarge
-                elide: Text.ElideRight
-              }
-
-              // The empty field's cursor, which the words above would cover.
-              Rectangle {
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                width: Math.max(1, Style.space(2))
-                height: Style.space(24)
-                visible: field.activeFocus && field.text.length === 0 && !root.checking && !root.wrong
-                color: root.ink
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                acceptedButtons: Qt.LeftButton
-                onClicked: field.forceActiveFocus()
+                font.pixelSize: Style.font.bodySmall
               }
             }
-          }
 
-          // One of a list, in sections: a heading over the first of each.
-          ListView {
-            id: choiceList
-            width: parent.width
-            visible: root.choices.length > 0
-            height: visible ? Math.min(contentHeight, Style.space(330)) : 0
-            clip: true
-            interactive: contentHeight > height
-            boundsBehavior: Flickable.StopAtBounds
-            model: root.choices
+            Repeater {
+              id: fieldLines
+              model: root.fields
 
-            delegate: Column {
-              id: entry
-              required property var modelData
-              required property int index
-              readonly property bool chosen: root.chosenId === modelData.id
-              width: choiceList.width
-
-              Text {
+              // A line to type in: dots for a secret, unless shown; what it is
+              // for while it is empty, or how the answer went.
+              Item {
+                id: line
+                required property var modelData
+                required property int index
+                readonly property alias input: field
                 width: parent.width
-                visible: entry.modelData.section !== "" && (entry.index === 0 || root.choices[entry.index - 1].section !== entry.modelData.section)
-                height: visible ? Style.space(26) : 0
-                verticalAlignment: Text.AlignBottom
-                bottomPadding: Style.space(4)
-                textFormat: Text.PlainText
-                text: entry.modelData.section
-                color: root.colors.text
-                opacity: 0.55
-                font.family: root.family
-                font.pixelSize: Style.font.caption
-                font.bold: true
-              }
+                height: root.lineHeight
 
-              Rectangle {
-                width: parent.width
-                height: Style.space(38)
-                radius: Style.cornerRadius
-                color: entry.chosen ? Util.alpha(root.colors.accent, 0.2) : pointer.containsMouse ? Util.alpha(root.colors.text, 0.06) : "transparent"
-                border.width: entry.chosen ? Style.normalBorderWidth : 0
-                border.color: root.colors.accent
+                Component.onCompleted: field.text = modelData.secret ? "" : modelData.value
 
-                Text {
-                  id: mark
-                  x: Style.space(10)
-                  width: Style.space(22)
-                  anchors.verticalCenter: parent.verticalCenter
-                  horizontalAlignment: Text.AlignHCenter
-                  textFormat: Text.PlainText
-                  text: entry.modelData.glyph ? Model.glyph(entry.modelData.glyph) : ""
-                  color: entry.chosen ? root.colors.accent : root.colors.text
+                TextInput {
+                  id: field
+                  anchors.fill: parent
+                  verticalAlignment: TextInput.AlignVCenter
+                  clip: true
+                  enabled: root.shown
+                  readOnly: root.checking || root.wrong
+                  echoMode: line.modelData.secret ? TextInput.Password : TextInput.Normal
+                  passwordCharacter: "•"
+                  cursorVisible: activeFocus && !root.checking && !root.wrong
+                  color: root.ink
+                  selectionColor: Util.alpha(root.colors.accent, 0.45)
+                  selectedTextColor: root.colors.text
                   font.family: root.family
-                  font.pixelSize: Style.font.body
+                  font.pixelSize: Style.font.iconLarge
+                  onAccepted: {
+                    if (line.index < root.fields.length - 1 && text !== "") root.next(line.index)
+                    else root.answer()
+                  }
+                  Keys.onPressed: function (event) {
+                    if (event.key === Qt.Key_Escape) {
+                      root.cancel()
+                    } else if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                      root.next(event.key === Qt.Key_Tab ? line.index : line.index + root.fields.length - 2)
+                    } else {
+                      return
+                    }
+                    event.accepted = true
+                  }
                 }
 
                 Text {
-                  anchors.left: mark.right
+                  anchors.left: parent.left
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: field.text.length === 0
+                  textFormat: Text.PlainText
+                  text: root.wrong && line.modelData.secret ? "Wrong"
+                    : root.checking && line.index === root.fields.length - 1 ? "Checking..."
+                    : line.modelData.label
+                  color: root.ink
+                  opacity: root.wrong && line.modelData.secret ? 1 : 0.36
+                  font.family: root.family
+                  font.pixelSize: Style.font.iconLarge
+                  elide: Text.ElideRight
+                }
+
+                // The empty field's cursor, which the words above would cover.
+                Rectangle {
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  width: Math.max(1, Style.space(2))
+                  height: Style.space(24)
+                  visible: field.activeFocus && field.text.length === 0 && !root.checking && !root.wrong
+                  color: root.ink
+                }
+
+                MouseArea {
+                  anchors.fill: parent
+                  acceptedButtons: Qt.LeftButton
+                  onClicked: field.forceActiveFocus()
+                }
+              }
+            }
+
+            // One of a list, in sections: a heading over the first of each.
+            ListView {
+              id: choiceList
+              width: parent.width
+              visible: root.choices.length > 0
+              height: visible ? Math.min(contentHeight, Style.space(330)) : 0
+              clip: true
+              interactive: contentHeight > height
+              boundsBehavior: Flickable.StopAtBounds
+              model: root.choices
+
+              delegate: Column {
+                id: entry
+                required property var modelData
+                required property int index
+                readonly property bool chosen: root.chosenId === modelData.id
+                width: choiceList.width
+
+                Text {
+                  width: parent.width
+                  visible: entry.modelData.section !== "" && (entry.index === 0 || root.choices[entry.index - 1].section !== entry.modelData.section)
+                  height: visible ? Style.space(26) : 0
+                  verticalAlignment: Text.AlignBottom
+                  bottomPadding: Style.space(4)
+                  textFormat: Text.PlainText
+                  text: entry.modelData.section
+                  color: root.colors.text
+                  opacity: 0.55
+                  font.family: root.family
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+
+                Rectangle {
+                  width: parent.width
+                  height: Style.space(38)
+                  radius: Style.cornerRadius
+                  color: entry.chosen ? Util.alpha(root.colors.accent, 0.2) : pointer.containsMouse ? Util.alpha(root.colors.text, 0.06) : "transparent"
+                  border.width: entry.chosen ? Style.normalBorderWidth : 0
+                  border.color: root.colors.accent
+
+                  Text {
+                    id: mark
+                    x: Style.space(10)
+                    width: Style.space(22)
+                    anchors.verticalCenter: parent.verticalCenter
+                    horizontalAlignment: Text.AlignHCenter
+                    textFormat: Text.PlainText
+                    text: entry.modelData.glyph ? Model.glyph(entry.modelData.glyph) : ""
+                    color: entry.chosen ? root.colors.accent : root.colors.text
+                    font.family: root.family
+                    font.pixelSize: Style.font.body
+                  }
+
+                  Text {
+                    anchors.left: mark.right
+                    anchors.leftMargin: Style.space(10)
+                    anchors.right: parent.right
+                    anchors.rightMargin: Style.space(10)
+                    anchors.verticalCenter: parent.verticalCenter
+                    textFormat: Text.PlainText
+                    text: entry.modelData.label + (entry.modelData.detail ? "  ·  " + entry.modelData.detail : "")
+                    color: entry.chosen ? root.colors.accent : root.colors.text
+                    elide: Text.ElideRight
+                    font.family: root.family
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  MouseArea {
+                    id: pointer
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: if (!root.checking) root.chosenId = entry.modelData.id
+                    onDoubleClicked: {
+                      if (root.checking) return
+                      root.chosenId = entry.modelData.id
+                      root.answer()
+                    }
+                  }
+                }
+              }
+            }
+
+            // A switch or two, with what each is for.
+            Repeater {
+              model: root.toggles
+
+              Item {
+                id: switchLine
+                required property var modelData
+                required property int index
+                width: parent.width
+                height: Style.space(36)
+
+                ToggleSwitch {
+                  id: knob
+                  anchors.left: parent.left
+                  anchors.verticalCenter: parent.verticalCenter
+                  checked: root.toggleStates[switchLine.index] === true
+                  foreground: root.colors.text
+                  onToggled: root.flip(switchLine.index)
+                }
+
+                Text {
+                  anchors.left: knob.right
                   anchors.leftMargin: Style.space(10)
                   anchors.right: parent.right
-                  anchors.rightMargin: Style.space(10)
                   anchors.verticalCenter: parent.verticalCenter
                   textFormat: Text.PlainText
-                  text: entry.modelData.label + (entry.modelData.detail ? "  ·  " + entry.modelData.detail : "")
-                  color: entry.chosen ? root.colors.accent : root.colors.text
-                  elide: Text.ElideRight
+                  text: switchLine.modelData.label
+                  wrapMode: Text.WordWrap
+                  color: root.colors.text
                   font.family: root.family
                   font.pixelSize: Style.font.bodySmall
                 }
 
                 MouseArea {
-                  id: pointer
                   anchors.fill: parent
-                  hoverEnabled: true
+                  anchors.leftMargin: knob.width
                   cursorShape: Qt.PointingHandCursor
-                  onClicked: if (!root.checking) root.chosenId = entry.modelData.id
-                  onDoubleClicked: {
-                    if (root.checking) return
-                    root.chosenId = entry.modelData.id
-                    root.answer()
-                  }
+                  onClicked: root.flip(switchLine.index)
                 }
               }
             }
-          }
 
-          // A switch or two, with what each is for.
-          Repeater {
-            model: root.toggles
+            // A yes or no: Cancel, and the duty's answer, chosen at first.
+            Row {
+              anchors.right: parent.right
+              visible: root.fields.length === 0
+              topPadding: Style.space(6)
+              spacing: Style.space(10)
 
-            Item {
-              id: switchLine
-              required property var modelData
-              required property int index
-              width: parent.width
-              height: Style.space(36)
-
-              ToggleSwitch {
-                id: knob
-                anchors.left: parent.left
-                anchors.verticalCenter: parent.verticalCenter
-                checked: root.toggleStates[switchLine.index] === true
-                foreground: root.colors.text
-                onToggled: root.flip(switchLine.index)
+              Answer { which: 0; label: root.ask ? root.ask.cancel : "Cancel"; visible: !(root.ask && root.ask.alone) }
+              Answer {
+                which: 1
+                visible: root.hasAccept
+                label: root.checking ? "Checking..." : root.ask ? root.ask.accept : ""
               }
-
-              Text {
-                anchors.left: knob.right
-                anchors.leftMargin: Style.space(10)
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                textFormat: Text.PlainText
-                text: switchLine.modelData.label
-                wrapMode: Text.WordWrap
-                color: root.colors.text
-                font.family: root.family
-                font.pixelSize: Style.font.bodySmall
-              }
-
-              MouseArea {
-                anchors.fill: parent
-                anchors.leftMargin: knob.width
-                cursorShape: Qt.PointingHandCursor
-                onClicked: root.flip(switchLine.index)
-              }
-            }
-          }
-
-          // A yes or no: Cancel, and the duty's answer, chosen at first.
-          Row {
-            anchors.right: parent.right
-            visible: root.fields.length === 0
-            topPadding: Style.space(6)
-            spacing: Style.space(10)
-
-            Answer { which: 0; label: root.ask ? root.ask.cancel : "Cancel"; visible: !(root.ask && root.ask.alone) }
-            Answer {
-              which: 1
-              visible: root.hasAccept
-              label: root.checking ? "Checking..." : root.ask ? root.ask.accept : ""
             }
           }
         }
       }
-    }
 
-    // What the question is about, on a tab above the card; what was wrong,
-    // while the card says so.
-    Rectangle {
-      anchors.horizontalCenter: card.horizontalCenter
-      anchors.bottom: card.top
-      anchors.bottomMargin: Style.space(10)
-      width: Math.min(label.implicitWidth + Style.space(24), surface.width - Style.gapsOut * 2)
-      height: Style.space(28)
-      radius: Style.cornerRadius
-      color: root.colors.background
+      // What the question is about, on a tab above the card; what was wrong,
+      // while the card says so.
+      Rectangle {
+        anchors.horizontalCenter: card.horizontalCenter
+        anchors.bottom: card.top
+        anchors.bottomMargin: Style.space(10)
+        width: Math.min(label.implicitWidth + Style.space(24), cardWindow.width - Style.gapsOut * 2)
+        height: Style.space(28)
+        radius: Style.cornerRadius
+        color: root.colors.background
 
-      Text {
-        id: label
-        anchors.fill: parent
-        anchors.leftMargin: Style.space(12)
-        anchors.rightMargin: Style.space(12)
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-        textFormat: Text.PlainText
-        text: root.wrong && root.wrongText !== "" ? root.wrongText : root.ask ? root.ask.title : ""
-        color: root.wrong ? root.colors.textError : root.colors.text
-        font.family: root.family
-        font.pixelSize: Style.font.bodySmall
-        elide: Text.ElideMiddle
+        Text {
+          id: label
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(12)
+          anchors.rightMargin: Style.space(12)
+          horizontalAlignment: Text.AlignHCenter
+          verticalAlignment: Text.AlignVCenter
+          textFormat: Text.PlainText
+          text: root.wrong && root.wrongText !== "" ? root.wrongText : root.ask ? root.ask.title : ""
+          color: root.wrong ? root.colors.textError : root.colors.text
+          font.family: root.family
+          font.pixelSize: Style.font.bodySmall
+          elide: Text.ElideMiddle
+        }
       }
     }
   }
