@@ -6,7 +6,9 @@ and a billing-period data counter. Text messages the SIM receives arrive as
 desktop notifications.
 
 Everything runs as your normal user through NetworkManager — no root, no polkit
-rule, no systemd unit, no daemon of its own.
+rule, no systemd unit, no daemon of its own. The asking is the plugin's
+service's, in the shell (`Service.qml`), once for every screen's bar, and
+each screen's widget (`BarWidget.qml`) shows what it found.
 
 ```
 ┌─────────────────────────────┐
@@ -188,7 +190,7 @@ desktop notifications:
 ╰──────────────────────────────╯
 ```
 
-The widget runs `nova mobile-data sms poll` on its own slow cadence — the poll
+The shell runs `nova mobile-data sms poll` on its own slow cadence — the poll
 interval, never faster than ten seconds — and that command is the whole
 lifecycle of a message: read what the modem is holding, write it to an archive
 under `~/.local/state/nova-mobile-data/inbox`, notify, and only then delete
@@ -214,7 +216,7 @@ nothing is delivered while mobile data is off — `off` blocks the radio. They
 are not lost: the network holds them and delivers when the radio comes back,
 within whatever validity period your operator uses.
 
-Nothing is read while `nova-shell` is not running either, because the widget
+Nothing is read while `nova-shell` is not running either, because the shell
 is what runs the poll — the plugin still has no daemon. Messages simply sit on
 the modem until it starts, and are announced then; a batch of more than three
 gets one line rather than three toasts. To pick them up without the shell,

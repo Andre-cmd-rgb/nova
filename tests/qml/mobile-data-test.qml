@@ -5,17 +5,22 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 
-// The mobile data bar widget, the real BarWidget.qml, fed states by a stub of
-// the helper it runs (`mobile-data info`). The widget finds the helper beside
-// its own file, so the test makes a copy of the widget in the scratch home,
-// next to the stub, and loads that. The stub answers with the text the test
-// writes to $HOME/mobile-info and notes a `toggle` in $HOME/mobile-ran.
+// The mobile data bar widget, the real BarWidget.qml, and its plugin's
+// service, the real Service.qml, fed states by a stub of the helper the
+// service runs (`mobile-data info`). The service finds the helper beside its
+// own file, so the test makes a copy of both in the scratch home, next to
+// the stub, and loads those. The stub answers with the text the test writes
+// to $HOME/mobile-info and notes a `toggle` in $HOME/mobile-ran. A second
+// copy of the widget, as on a second screen, shows the same service, and
+// with both gone the service rests.
 ShellRoot {
   id: test
 
   readonly property string home: Quickshell.env("HOME")
   readonly property string copy: home + "/mobile/BarWidget.qml"
+  readonly property string serviceCopy: home + "/mobile/Service.qml"
   property var widget: null
+  property var service: null
   property Item stage: Item {}
 
   property QtObject fakeBar: QtObject {
@@ -34,7 +39,7 @@ ShellRoot {
       function withdraw(button) {}
     }
     property QtObject shell: QtObject {
-      function serviceFor(id) { return null }
+      function serviceFor(id) { return id === "nova.mobile-data" ? test.service : null }
     }
     function listButton(button, on) {}
     function claimPopup(key, open) { popup = open ? key : null }
@@ -50,8 +55,21 @@ ShellRoot {
   }
 
   FileView {
+    id: installedService
+    path: Quickshell.env("TEST_PLUGINS") + "/mobile-data/Service.qml"
+    blockLoading: true
+  }
+
+  FileView {
     id: copyFile
     path: test.copy
+    printErrors: false
+    onSaved: serviceCopyFile.setText(installedService.text())
+  }
+
+  FileView {
+    id: serviceCopyFile
+    path: test.serviceCopy
     printErrors: false
     onSaved: test.begin()
   }
@@ -167,6 +185,12 @@ ShellRoot {
 
   function begin() {
     if (widget) return
+    const madeService = Qt.createComponent("file://" + serviceCopy)
+    if (madeService.status !== Component.Ready) {
+      check("the service loads", madeService.errorString(), "")
+      return finish()
+    }
+    service = madeService.createObject(stage)
     const made = Qt.createComponent("file://" + copy)
     if (made.status !== Component.Ready) {
       check("the widget loads", made.errorString(), "")
@@ -219,7 +243,7 @@ ShellRoot {
 
   function noservice() {
     check("noservice: the meta line says ModemManager is not running", widget.metaText, "ModemManager is not running")
-    widget.lastError = ""
+    service.lastError = ""
     check("noservice: the hint names the command to run", widget.hintText.indexOf("sudo systemctl enable --now ModemManager.service") >= 0, true)
     feed(info("starting"), "starting", starting)
   }
@@ -264,6 +288,15 @@ ShellRoot {
 
   function simHeard() {
     check("parked: a SIM going in is heard, and the widget looks by itself", widget.wwanState, "disconnected")
+    const second = Qt.createComponent("file://" + copy).createObject(stage, { bar: fakeBar })
+    check("a second copy holds the same service, and shows its state", [service.holders.length, second.wwanState], [2, "disconnected"])
+    second.destroy()
+    widget.destroy()
+    later(200, gone)
+  }
+
+  function gone() {
+    check("with the copies gone, the service rests", [service.holders.length, service.wanted], [0, false])
     finish()
   }
 }

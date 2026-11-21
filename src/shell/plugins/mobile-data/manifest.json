@@ -3,9 +3,11 @@
   "name": "Mobile Data",
   "description": "Compact NetworkManager-based mobile broadband indicator: signal glyph in the bar, small stats panel.",
   "kinds": [
+    "service",
     "bar-widget"
   ],
   "entryPoints": {
+    "service": "Service.qml",
     "barWidget": "BarWidget.qml"
   },
   "barWidget": {
