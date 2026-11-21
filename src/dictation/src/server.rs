@@ -212,9 +212,12 @@ impl Recorder {
     /// What poll() said is there: samples, or none once it has ended.
     fn read(&mut self) -> Option<Vec<i16>> {
         let mut buf = [0u8; 16384];
-        let n = match self.out.read(&mut buf) {
-            Ok(0) | Err(_) => return None,
-            Ok(n) => n,
+        let n = loop {
+            match self.out.read(&mut buf) {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Ok(0) | Err(_) => return None,
+                Ok(n) => break n,
+            }
         };
         let mut bytes = Vec::with_capacity(n + 1);
         bytes.extend(self.odd.take());
@@ -243,6 +246,8 @@ impl Recorder {
     }
 }
 
+// Ended, it is reaped; else killed, which it cannot ignore, and reaped:
+// never a wait on one that might not end.
 impl Drop for Recorder {
     fn drop(&mut self) {
         if !matches!(self.child.try_wait(), Ok(Some(_))) {
@@ -264,12 +269,18 @@ impl Conn {
     /// The lines poll() said are there.
     fn lines(&mut self) -> Vec<String> {
         let mut buf = [0u8; 1024];
-        match self.stream.read(&mut buf) {
-            Ok(0) | Err(_) => {
-                self.gone = true;
-                return Vec::new();
+        loop {
+            match self.stream.read(&mut buf) {
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Ok(0) | Err(_) => {
+                    self.gone = true;
+                    return Vec::new();
+                }
+                Ok(n) => {
+                    self.input.extend_from_slice(&buf[..n]);
+                    break;
+                }
             }
-            Ok(n) => self.input.extend_from_slice(&buf[..n]),
         }
         let mut lines = Vec::new();
         while let Some(end) = self.input.iter().position(|&b| b == b'\n') {
@@ -711,9 +722,9 @@ impl Server {
                 }
             }
             None => {
-                if let Some(mut recorder) = s.recorder.take() {
-                    let _ = recorder.child.wait();
-                }
+                // Every sample is in. One that closed its output but has not
+                // ended (hung in its teardown) is not waited on.
+                drop(s.recorder.take());
                 self.recording_ended();
             }
         }

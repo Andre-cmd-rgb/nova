@@ -473,6 +473,45 @@ fn a_connection_that_ends_while_its_lines_are_handled_leaves_no_dictation_behind
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+// pw-record that closes its output when stopped but does not end (hung in
+// its teardown) does not hold up the words, nor the daemon: it is ended.
+#[test]
+fn a_recorder_that_closes_its_output_and_hangs_is_ended() {
+    let dir = nova_sd::testing::scratch("dictation-recorder");
+    let recording = dir.join("hello.pcm");
+    let bytes: Vec<u8> = hello_world().iter().flat_map(|s| s.to_le_bytes()).collect();
+    std::fs::write(&recording, bytes).unwrap();
+    let pid = dir.join("recorder.pid");
+    let script = "echo $$ >\"$0\"; trap 'exec 1>&-; exec sleep 30' TERM; cat \"$1\"; while :; do sleep 0.05; done";
+    let daemon = Daemon::start(Setup {
+        recorder: Some(vec![
+            "sh".into(),
+            "-c".into(),
+            script.into(),
+            pid.display().to_string(),
+            recording.display().to_string(),
+        ]),
+        ..Setup::default()
+    });
+    let started = Instant::now();
+    assert_eq!(
+        daemon.connect().dictate().as_deref(),
+        Some(r#"{"type":"text","text":"Hello world. "}"#)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "{:?}",
+        started.elapsed()
+    );
+    let pid: u32 = std::fs::read_to_string(&pid)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(daemon.recorder_ended_within(pid, Duration::from_secs(3)));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // The shell may go (restarted, say) once the key is let go: the words are
 // not lost, but kept for `nova dictation last`.
 #[test]
