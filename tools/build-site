@@ -35,7 +35,9 @@ while (($# > 0)); do
 done
 # A trailing / would have a link to a folder read as the folder.
 while [[ $out == */ && $out != / ]]; do out=${out%/}; done
-[[ -n $out && $out != / ]] || { echo "build-site: --out names no folder to build in" >&2; exit 2; }
+case $out in
+  / | . | .. | */. | */..) echo "build-site: --out $out is no folder to replace: name one of its own" >&2; exit 2 ;;
+esac
 for tool in cmark-gfm gawk; do
   command -v "$tool" >/dev/null || { echo "build-site: needs $tool (Arch: pacman -S $tool)" >&2; exit 1; }
 done
@@ -301,7 +303,7 @@ fi
 # else, a link, or a file, is left as it is.
 if [[ -e $out || -L $out ]]; then
   [[ -d $out && ! -L $out ]] || { echo "build-site: $out is not a folder" >&2; exit 1; }
-  if [[ ! -f $out/.nova-site && -n $(find "$out" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+  if [[ ! -f $out/.nova-site || -L $out/.nova-site ]] && [[ -n $(find "$out" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
     echo "build-site: $out holds files no build made; remove them or name another --out" >&2
     exit 1
   fi

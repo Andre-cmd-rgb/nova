@@ -256,3 +256,53 @@ EOF2
   [ "$status" -eq 1 ]
   [[ $output == "$file:2: grep"* ]]
 }
+
+@test "locale: each command of a joined statement is checked on its own" {
+  file=$(sample commands.sh <<'EOF2'
+#!/bin/bash
+command -v pacman >/dev/null &&
+  info=$(pacman -Qi foo)
+pacman -Syu && pacman -Qi foo | grep -q x
+LC_ALL=C pacman -Qu >"$t" ||
+  pactl list sinks | grep -c Sink
+EOF2
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': locale: ' <<<"$output")" -eq 3 ]
+  [[ $output == *"commands.sh:2: locale"* && $output == *"commands.sh:4: locale"* && $output == *"commands.sh:5: locale"* ]]
+}
+
+@test "a heredoc is text, and a statement still open at the end of a file is checked" {
+  file=$(sample text.sh <<'SAMPLE'
+#!/bin/bash
+cat <<EOF
+pactl list sinks
+EOF
+cat <<-'END' |
+	lpstat -d
+	END
+  wc -l
+pactl list sinks |
+SAMPLE
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$output" = "$file:9: locale: pactl read in the user's language: run it with LC_ALL=C.UTF-8" ]
+}
+
+@test "QML: a bracket in a string opens no array, and pactl's options before its command count" {
+  file=$(sample Strings.qml <<'SAMPLE'
+import Quickshell.Io
+Item {
+  Process { command: ["sh", "-c", "tr -d ["] }
+  Process { command: ["lpstat", "-v"] }
+  Process { command: ["pactl", "-f", "json", "list", "sinks"] }
+}
+SAMPLE
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': locale: ' <<<"$output")" -eq 2 ]
+  [[ $output == *"Strings.qml:4: locale"* && $output == *"Strings.qml:5: locale"* ]]
+}

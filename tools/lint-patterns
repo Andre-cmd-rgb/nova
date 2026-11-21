@@ -3,12 +3,14 @@
 # text that makes them, in Nova's own scripts, QML and JavaScript.
 #
 #   tools/lint-patterns [file...]
+#   tools/lint-patterns --list
 #
 # With no files, every tracked file under src/, data/, installer/ and tools/
 # that is a shell script (by its first line: a sh or bash #!, or shellcheck's
 # `# shellcheck shell=` for one that is sourced), QML or JavaScript; finding
-# none is an error, not a pass. Prints each finding as file:line: what, and
-# exits 1 if there was one.
+# none is an error, not a pass. --list prints those files and checks none
+# (tests/unit/tools/shell-sources.bats takes the shell scripts from it).
+# Prints each finding as file:line: what, and exits 1 if there was one.
 #
 #   locale    output a program translates (pactl's full listings and events,
 #             lpstat, lpinfo, pacman -Qi/-Qk/-Si/-Qu) read without LC_ALL=C: under
@@ -28,22 +30,39 @@
 #             Scope or Singleton) (docs/ARCHITECTURE.md, QML)
 #
 # A statement is checked whole, at its first line: a shell line continued by
-# a backslash or ended by a pipe, || or &&, and a QML command array over
-# several lines.
+# a backslash or ended by a pipe, || or && (50 lines at most), and a QML
+# command array over several lines. Each command of a shell statement is
+# checked for locale on its own: one run with LC_ALL=C, or its output thrown
+# away, says nothing of the next. A heredoc's lines are text, not commands.
 
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-files=("$@")
-if ((${#files[@]} == 0)); then
+# The files checked when none are named, a line each.
+default_files() {
+  local file
   while IFS= read -r -d '' file; do
     case $file in
-      *.qml | *.js) files+=("$file") ;;
+      *.qml | *.js) printf '%s\n' "$file" ;;
       *.md | *.json | *.jsonc | *.conf | *.lua | *.rs | *.toml | *.css | *.html | *.svg | *.png | *.jpg | *.txt) ;;
-      *) [[ -f $file ]] && head -n 1 -- "$file" | grep -qE '^(#!.*\b(ba)?sh\b|# shellcheck shell=(ba)?sh\b)' && files+=("$file") ;;
+      *)
+        if [[ -f $file ]] && head -n 1 -- "$file" | grep -qE '^(#!.*\b(ba)?sh\b|# shellcheck shell=(ba)?sh\b)'; then
+          printf '%s\n' "$file"
+        fi
+        ;;
     esac
   done < <(git ls-files -z src data installer tools)
+}
+
+if [[ ${1:-} == --list ]]; then
+  default_files
+  exit 0
+fi
+
+files=("$@")
+if ((${#files[@]} == 0)); then
+  mapfile -t files < <(default_files)
   if ((${#files[@]} == 0)); then
     echo "lint-patterns: found no files to check (is this a git checkout?)" >&2
     exit 2
@@ -51,78 +70,61 @@ if ((${#files[@]} == 0)); then
 fi
 
 awk '
-  FNR == 1 {
-    joined = ""; start = 0; root = ""; depth = 0
-    qml = FILENAME ~ /\.(qml|js)$/
-  }
-  # The type of the root object: the first object at the left margin.
-  qml && root == "" && /^[A-Z][A-Za-z0-9_.]*[[:space:]]*\{/ { root = $1; sub(/\{.*/, "", root) }
-  function report(line, kind, what) {
-    printf "%s:%d: %s: %s\n", FILENAME, line, kind, what
+  function report(file, line, kind, what) {
+    printf "%s:%d: %s: %s\n", file, line, kind, what
     found = 1
   }
-  # How many more [ than ] in <s>.
+
+  # How many more [ than ] in <s>, those in strings left out.
   function brackets(s,   open, shut) {
-    open = gsub(/\[/, "[", s); shut = gsub(/\]/, "]", s)
+    gsub(/"([^"\\]|\\.)*"/, "", s)
+    gsub(/\047([^\047\\]|\\.)*\047/, "", s)
+    open = gsub(/\[/, "", s)
+    shut = gsub(/\]/, "", s)
     return open - shut
   }
-  # A comment line, in either language.
-  qml && /^[[:space:]]*\/\// { next }
-  !qml && /^[[:space:]]*#/ { next }
-  {
-    text = $0
-    if (!qml) {
-      # Continued with a backslash, or ended by a pipe, || or &&: the rest is
-      # on the next line.
-      if (joined == "") start = FNR
-      if (text ~ /\\$/) { joined = joined substr(text, 1, length(text) - 1) " "; next }
-      if (text ~ /(\||&&)[[:space:]]*$/) { joined = joined text " "; next }
-      text = joined text
-      joined = ""
-    } else {
-      # A command array, until its brackets close.
-      if (joined == "") {
-        start = FNR
-        if (text ~ /command:[[:space:]]*\[/ && brackets(text) > 0) { joined = text " "; depth = brackets(text); next }
-      } else {
-        depth += brackets(text)
-        joined = joined text " "
-        if (depth > 0) next
-        text = joined
-        joined = ""
-      }
-    }
 
-    if (qml) {
-      if (text ~ /"(pactl)"[[:space:]]*,[[:space:]]*"(list|subscribe|info|stat|get-(sink|source)-(volume|mute))"/ && text !~ /"(short)"/ && text !~ /LC_ALL=C/)
-        report(start, "locale", "pactl read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
-      if (text ~ /"(lpstat|lpinfo)"/ && text !~ /LC_ALL=C/)
-        report(start, "locale", "CUPS read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
-      # Properties of the root object, two spaces in. An Item has both; a
-      # Quickshell window has data alone; a QtObject, Scope or Singleton
-      # neither.
-      if (root !~ /^(QtObject|Scope|Singleton)$/ && text ~ /^  ((readonly|required|default)[[:space:]]+)*property[[:space:]]+[A-Za-z_.<>]+[[:space:]]+(state|data)([[:space:]]*:|[[:space:]]*$)/) {
-        name = text; sub(/[[:space:]]*:.*$/, "", name); sub(/^.*[[:space:]]/, "", name)
-        if (name == "data" || root !~ /(PanelWindow|FloatingWindow|PopupWindow)$/)
-          report(start, "shadow", "a property named " name " on the root hides the root'"'"'s own: name it for what it holds")
-      }
-      next
-    }
+  # Whether pacman with these letters (its operation and options, without
+  # the -) prints labels in the language of the user: -Qi, -Qk, -Si and -Qu
+  # do; -Syu, -Su and the rest are run for the user to watch, and -Qqu prints
+  # names alone.
+  function translated(flags) {
+    return (flags ~ /^Q/ && (flags ~ /[ik]/ || (flags ~ /u/ && flags !~ /q/))) || (flags ~ /^S/ && flags ~ /i/ && flags !~ /[uy]/)
+  }
 
-    # Output thrown away is not read.
-    discarded = text ~ /(^|[^0-9])>[[:space:]]*\/dev\/null/
-    # pactl with its options first (-f json: the values are still its words).
-    if (!discarded && text ~ /(^|[^A-Za-z0-9_-])pactl([[:space:]]+(-f[[:space:]]*[a-z]+|--format=[a-z]+|-[sn][[:space:]]*[^-[:space:]][^[:space:]]*|--(server|client-name)=[^[:space:]]+))*[[:space:]]+(list|subscribe|info|stat|get-(sink|source)-(volume|mute))/ && text !~ /[[:space:]]short([[:space:]]|$|\))/ && text !~ /LC_ALL=C/)
-      report(start, "locale", "pactl read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
-    if (!discarded && text ~ /(^|[^A-Za-z0-9_-])(lpstat|lpinfo)[[:space:]]/ && text !~ /LC_ALL=C/)
-      report(start, "locale", "CUPS read in the user'"'"'s language: run it with LC_ALL=C.UTF-8")
-    # pacman -Qi, -Qk, -Si and -Qu print labels in the language of the user;
-    # -Syu, -Su and the rest are run for the user to watch, and -Qqu prints
-    # names.
-    if (!discarded && text !~ /LC_ALL=C/ && match(text, /(^|[^A-Za-z0-9_-])pacman[[:space:]]+-[QS][A-Za-z]*/)) {
-      flags = substr(text, RSTART, RLENGTH); sub(/^.*[[:space:]]-/, "", flags)
-      if ((flags ~ /^Q/ && (flags ~ /[ik]/ || (flags ~ /u/ && flags !~ /q/))) || (flags ~ /^S/ && flags ~ /i/ && flags !~ /[uy]/))
-        report(start, "locale", "pacman read in the user'"'"'s language: run it with LC_ALL=C")
+  function checkQml(file, line, text,   flags) {
+    if (text ~ /LC_ALL=C/) return
+    # pactl, with its options first ("-f", "json": the values are still its words).
+    if (text ~ /"pactl"[^\]]*"(list|subscribe|info|stat|get-(sink|source)-(volume|mute))"/ && text !~ /"short"/)
+      report(file, line, "locale", "pactl read in the user\047s language: run it with LC_ALL=C.UTF-8")
+    if (text ~ /\[[^\]]*"(lpstat|lpinfo)"/)
+      report(file, line, "locale", "CUPS read in the user\047s language: run it with LC_ALL=C.UTF-8")
+    if (match(text, /"pacman"[[:space:]]*,[[:space:]]*"-[QS][A-Za-z]*"/)) {
+      flags = substr(text, RSTART, RLENGTH)
+      sub(/^.*"-/, "", flags)
+      sub(/"$/, "", flags)
+      if (translated(flags)) report(file, line, "locale", "pacman read in the user\047s language: run it with LC_ALL=C")
+    }
+  }
+
+  function checkShell(file, line, text,   n, i, seg, segs, rest, flags, plain, opened, piece) {
+    # Each command of the statement on its own.
+    n = split(text, segs, /\|\||&&|;/)
+    for (i = 1; i <= n; i++) {
+      seg = segs[i]
+      # Run in English, or its output thrown away: not read.
+      if (seg ~ /LC_ALL=C/ || seg ~ /(^|[^0-9])>[[:space:]]*\/dev\/null/) continue
+      if (seg ~ /(^|[^A-Za-z0-9_-])pactl([[:space:]]+(-f[[:space:]]*[a-z]+|--format=[a-z]+|-[sn][[:space:]]*[^-[:space:]][^[:space:]]*|--(server|client-name)=[^[:space:]]+))*[[:space:]]+(list|subscribe|info|stat|get-(sink|source)-(volume|mute))/ && seg !~ /[[:space:]]short([[:space:]]|$|\))/)
+        report(file, line, "locale", "pactl read in the user\047s language: run it with LC_ALL=C.UTF-8")
+      if (seg ~ /(^|[^A-Za-z0-9_-])(lpstat|lpinfo)[[:space:]]/)
+        report(file, line, "locale", "CUPS read in the user\047s language: run it with LC_ALL=C.UTF-8")
+      rest = seg
+      while (match(rest, /(^|[^A-Za-z0-9_-])pacman[[:space:]]+-[QS][A-Za-z]*/)) {
+        flags = substr(rest, RSTART, RLENGTH)
+        sub(/^.*[[:space:]]-/, "", flags)
+        if (translated(flags)) { report(file, line, "locale", "pacman read in the user\047s language: run it with LC_ALL=C"); break }
+        rest = substr(rest, RSTART + RLENGTH)
+      }
     }
 
     plain = text
@@ -131,12 +133,12 @@ awk '
       opened = plain
       gsub(/2>[[:space:]]*\/dev\/null/, "", opened)
       if (opened ~ /^[[:space:]]*exec[[:space:]]+(\{[A-Za-z_][A-Za-z0-9_]*\}|[0-9]+)?[<>]/)
-        report(start, "exec", "exec keeps 2>/dev/null for the rest of the script: { exec ...; } 2>/dev/null")
+        report(file, line, "exec", "exec keeps 2>/dev/null for the rest of the script: { exec ...; } 2>/dev/null")
     }
 
     # The || has to come after it: one before it is for something else.
     if (match(text, /(^|[^A-Za-z0-9_-])journalctl[[:space:]]/) && text ~ /[[:space:]](-g|--grep(=|[[:space:]]))/ && substr(text, RSTART) !~ /\|\|/ && text !~ /^[[:space:]]*(if|while|until|!)[[:space:]]/)
-      report(start, "grep", "journalctl -g exits 1 when nothing matches: add || true, or test it")
+      report(file, line, "grep", "journalctl -g exits 1 when nothing matches: add || true, or test it")
 
     if (text ~ /\$\{[A-Za-z_][A-Za-z0-9_]*\/\/?[^}\/]*\/([^}\\]|\\.)*&/) {
       rest = text
@@ -146,11 +148,92 @@ awk '
         gsub(/\\./, "", piece)
         # Quoted, & is the character.
         gsub(/"[^"]*"/, "", piece)
-        gsub("\047[^\047]*\047", "", piece)
-        if (piece ~ /&/) { report(start, "patsub", "a bare & in a replacement is the text matched (bash 5.2): write \\&"); break }
+        gsub(/\047[^\047]*\047/, "", piece)
+        if (piece ~ /&/) { report(file, line, "patsub", "a bare & in a replacement is the text matched (bash 5.2): write \\&"); break }
         rest = substr(rest, RSTART + RLENGTH)
       }
     }
   }
-  END { exit found }
+
+  # The statement joined so far, checked as it is: at the end of a file, or
+  # one joined for too long.
+  function flush() {
+    if (joined == "") return
+    if (qml) checkQml(file, start, joined)
+    else checkShell(file, start, joined)
+    joined = ""
+    lines = 0
+  }
+
+  FNR == 1 {
+    flush()
+    file = FILENAME
+    start = 0; root = ""; depth = 0; lines = 0; heredoc = ""; stripped = 0
+    qml = FILENAME ~ /\.(qml|js)$/
+  }
+
+  # A heredoc: text up to its word, not commands.
+  !qml && heredoc != "" {
+    word = $0
+    if (stripped) sub(/^\t+/, "", word)
+    if (word == heredoc) heredoc = ""
+    next
+  }
+
+  # The type of the root object: the first object at the left margin.
+  qml && root == "" && /^[A-Z][A-Za-z0-9_.]*[[:space:]]*\{/ { root = $1; sub(/\{.*/, "", root) }
+
+  # A comment line, in either language.
+  qml && /^[[:space:]]*\/\// { next }
+  !qml && /^[[:space:]]*#/ { next }
+
+  qml {
+    # Properties of the root object, two spaces in. An Item has both; a
+    # Quickshell window has data alone; a QtObject, Scope or Singleton
+    # neither.
+    if (root !~ /^(QtObject|Scope|Singleton)$/ && $0 ~ /^  ((readonly|required|default)[[:space:]]+)*property[[:space:]]+[A-Za-z_.<>]+[[:space:]]+(state|data)([[:space:]]*:|[[:space:]]*$)/) {
+      name = $0; sub(/[[:space:]]*:.*$/, "", name); sub(/^.*[[:space:]]/, "", name)
+      if (name == "data" || root !~ /(PanelWindow|FloatingWindow|PopupWindow)$/)
+        report(FILENAME, FNR, "shadow", "a property named " name " on the root hides the root\047s own: name it for what it holds")
+    }
+    # A command array, until its brackets close.
+    if (joined == "") {
+      if ($0 ~ /command[[:space:]]*[:=][[:space:]]*\[/ && brackets($0) > 0) {
+        start = FNR; joined = $0 " "; depth = brackets($0); lines = 1
+        next
+      }
+      checkQml(FILENAME, FNR, $0)
+      next
+    }
+    depth += brackets($0)
+    joined = joined $0 " "
+    if (depth > 0 && ++lines < 50) next
+    flush()
+    next
+  }
+
+  {
+    if (joined == "") start = FNR
+    # The line as code, a comment at its end left out.
+    body = $0
+    sub(/[[:space:]]#[^"\047]*$/, "", body)
+    # A heredoc begins here: this line is the last of the statement, and the
+    # lines after it are text.
+    if (match(body, /(^|[^<])<<-?[[:space:]]*["\047\\]?[A-Za-z_][A-Za-z0-9_]*/)) {
+      heredoc = substr(body, RSTART, RLENGTH)
+      stripped = heredoc ~ /<<-/
+      sub(/^[^<]*<<-?[[:space:]]*["\047\\]?/, "", heredoc)
+      joined = joined body
+      flush()
+      next
+    }
+    # Continued with a backslash, or ended by a pipe, || or &&: the rest is
+    # on the next line.
+    if (body ~ /\\$/ && ++lines < 50) { joined = joined substr(body, 1, length(body) - 1) " "; next }
+    if (body ~ /(\||&&)[[:space:]]*$/ && ++lines < 50) { joined = joined body " "; next }
+    joined = joined body
+    flush()
+  }
+
+  END { flush(); exit found }
 ' "${files[@]}"
