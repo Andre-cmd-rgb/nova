@@ -379,6 +379,7 @@ Item {
   MenuSource {
     id: source
     apps: plugin.apps
+    shell: plugin.shell
   }
 
   ChooserRequest {

@@ -12,11 +12,19 @@ import "MenuModel.js" as MenuModel
 // library and the rows of the two bash providers, added to a menu as it is
 // first shown or searched; the answers of every when: and checked:; and
 // qalc's answer to a sum typed.
+//
+// The providers and the guards run in bash, not a login shell: the shell's
+// environment is the session's already, read from the user's profile as the
+// session started, and a login shell would read it again at every opening
+// (and run what it starts, debuginfod's finds among them).
 Item {
   id: source
 
   // The shell's AppLibrary, once the shell has set it.
   required property var apps
+  // The shell, once it has set it: its services answer the guards about
+  // its own state.
+  property var shell: null
 
   // The catalog (MenuModel.js): none, and not ready, until a file is read.
   property var catalog: MenuModel.catalogFrom([])
@@ -133,7 +141,7 @@ Item {
     lister.generation = generation
     lister.printed = ""
     // The value set now on the first line, then the values.
-    lister.command = ["bash", "-lc", "now=$(" + kind.now + " 2>/dev/null); printf '%s\\n' \"${now//$'\\n'/ }\"; " + kind.list + " 2>/dev/null"]
+    lister.command = ["bash", "-c", "now=$(" + kind.now + " 2>/dev/null); printf '%s\\n' \"${now//$'\\n'/ }\"; " + kind.list + " 2>/dev/null"]
     lister.running = true
   }
 
@@ -183,11 +191,37 @@ Item {
 
   // ------------------------------------------------- when: and checked:
 
-  // Asked each time the catalog is made and the menu opens, which shows the
-  // last answers until the new ones come. A run's command cannot change
-  // while it runs, and its output is the only answer for its rows: one
-  // asked for meanwhile waits for it to end.
+  // Asked each time the catalog is made and the menu opens. The guards
+  // about the shell's own state, and the when: of an entry marked once that
+  // has been asked already, are answered at once (MenuModel.knownAnswers);
+  // the rest run as one bash script, and the menu shows their last answers
+  // until the new ones come. A run's command cannot change while it runs,
+  // and its output is the only answer for its rows: one asked for meanwhile
+  // waits for it to end.
   property bool askAgain: false
+  // The answers given at once to the run under way, laid over what it says.
+  property var known: MenuModel.noAnswers()
+  // The when: of each entry marked once, by the guard, as its first run
+  // answered it: what the computer is does not change while the shell runs.
+  property var kept: new Map()
+
+  // The shell's own state, as the guards SHELL_ANSWERS lists ask it; null
+  // for what it does not know just now (a service switched off, or not read
+  // yet), which bash is asked instead.
+  function shellFacts() {
+    const service = id => shell && typeof shell.serviceFor === "function" ? shell.serviceFor(id) : null
+    const notifications = service("nova.notifications")
+    const idle = service("nova.idle")
+    const airdrop = service("nova.airdrop")
+    const bar = shell && shell.barConfig
+    return {
+      doNotDisturb: notifications ? notifications.doNotDisturb === true : null,
+      caffeine: idle && idle.switchRead === true ? idle.caffeine === true : null,
+      screenTime: shell ? service("nova.screentime") !== null : null,
+      transparentBar: shell ? !!bar && bar.transparent === true : null,
+      airdrop: airdrop && airdrop.said ? airdrop.said.state !== "off" : null
+    }
+  }
 
   function askGuards() {
     if (guards.running) {
@@ -195,19 +229,28 @@ Item {
       return
     }
     askAgain = false
-    const script = MenuModel.guardScript(catalog)
+    known = MenuModel.knownAnswers(catalog, shellFacts(), kept)
+    const script = MenuModel.guardScript(catalog, known)
     if (!script) {
-      answers = MenuModel.noAnswers()
+      answers = MenuModel.withKnown(MenuModel.noAnswers(), known)
+      updated()
       return
     }
+    // The answers given at once are shown at once; the rest, the last ones,
+    // until the run's.
+    answers = MenuModel.withKnown(answers, known)
+    updated()
     guards.printed = ""
-    guards.command = ["bash", "-lc", script]
+    guards.asked = catalog
+    guards.command = ["bash", "-c", script]
     guards.running = true
   }
 
   Process {
     id: guards
     property string printed: ""
+    // The catalog the run asks about, whose entries marked once it keeps.
+    property var asked: null
     stdout: SplitParser {
       onRead: line => guards.printed += line + "\n"
     }
@@ -216,7 +259,9 @@ Item {
     // leaves the exit code at 0, and the status tells.
     onExited: function(code, status) {
       if (code === 0 && status === 0) {
-        source.answers = MenuModel.readAnswers(guards.printed)
+        const heard = MenuModel.readAnswers(guards.printed)
+        source.kept = MenuModel.keptOnce(guards.asked, heard, source.kept)
+        source.answers = MenuModel.withKnown(heard, source.known)
         source.updated()
       }
       // The run that waited, a turn later, once this one has settled.

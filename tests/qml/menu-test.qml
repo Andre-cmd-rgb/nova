@@ -10,14 +10,22 @@ import "services/AppSearch.js" as AppSearch
 // number, an id may be a name JavaScript objects have, a menu its when:
 // hides keeps what is under it out of search, a when: bash cannot read or
 // that exits answers only for its own row, two apps of one name keep one
-// order, a provider's values each get a row, and a chooser still waiting
-// when another takes its place is answered as cancelled.
+// order, a provider's values each get a row, a guard about the shell's own
+// state or one marked once and asked already is answered without bash, and
+// a chooser still waiting when another takes its place is answered as
+// cancelled.
 ShellRoot {
   id: test
 
   property string dir: Quickshell.env("HOME")
 
   ChooserRequest { id: request }
+
+  FileView {
+    id: shippedMenu
+    path: Quickshell.env("TEST_PLUGINS") + "/../../default/menu.jsonc"
+    blockLoading: true
+  }
 
   function check(ok, what) {
     console.log((ok ? "ok   " : "FAIL ") + what)
@@ -91,7 +99,36 @@ ShellRoot {
     const guarded = MenuModel.catalogOf(MenuModel.readMenuFile(
       '{ "leaving": { "label": "Leaving", "when": "exit 1", "action": "d" }, "staying": { "label": "Staying", "when": "left=1; exit 0", "action": "e" }, '
       + '"here": { "label": "Here", "when": "[[ -z ${left-} ]]", "action": "f" }, "on": { "label": "On", "when": "true", "action": "a" }, "broken": { "label": "Broken", "when": "((( ", "action": "b" }, "it\'s": { "label": "Quoted", "checked": "true", "action": "c" } }'), new Map())
-    guards.command = ["bash", "-c", MenuModel.guardScript(guarded)]
+    guards.command = ["bash", "-c", MenuModel.guardScript(guarded, MenuModel.noAnswers())]
+
+    // Nova's menu: the guards about the shell's own state are its to answer,
+    // each one of them, and a fact it does not know is bash's.
+    const nova = MenuModel.catalogOf(MenuModel.readMenuFile(shippedMenu.text()), new Map())
+    const facts = { doNotDisturb: true, caffeine: false, screenTime: true, transparentBar: false, airdrop: true }
+    const known = MenuModel.knownAnswers(nova, facts, new Map())
+    const own = { "toggle.notifications": true, "toggle.caffeine": false, "toggle.screentime": true, "style.bar": false, "toggle.airdrop": true }
+    check(Object.keys(own).every(id => known.checked.get(id) === own[id]) && known.checked.size === Object.keys(own).length,
+      "the shell answers its own state in Nova's menu, every one of them (" + JSON.stringify(Array.from(known.checked)) + ")")
+    const script = MenuModel.guardScript(nova, known)
+    check(!/nova-shell|nova-bar|nova-caffeine|nova-screentime|nova-airdrop active/.test(script) && script.includes("echo w1 'toggle.airdrop'"),
+      "the script asks bash none of what the shell answers, and still the rest of those rows")
+    const unknown = MenuModel.knownAnswers(nova, { doNotDisturb: null }, new Map())
+    check(!unknown.checked.has("toggle.notifications") && MenuModel.guardScript(nova, unknown).includes("nova-shell notifications dndState"),
+      "a fact the shell does not know is asked of bash")
+
+    // Once: the first run asks it, the next ones keep its answer.
+    check(nova.items.get("toggle.laptop-display").once && !nova.items.get("toggle.touchpad").once, "Nova marks once what the computer is, not what is plugged in")
+    const firstRun = MenuModel.knownAnswers(nova, facts, new Map())
+    check(!firstRun.when.has("toggle.laptop-display") && MenuModel.guardScript(nova, firstRun).includes("nova-hw-laptop"), "a when: marked once is asked the first time")
+    const heard = MenuModel.readAnswers("w1 toggle.laptop-display\nw0 toggle.touchpad\n")
+    const kept = MenuModel.keptOnce(nova, heard, new Map())
+    const later = MenuModel.knownAnswers(nova, facts, kept)
+    check(later.when.get("toggle.laptop-display") === true && !later.when.has("toggle.touchpad")
+      && !MenuModel.guardScript(nova, later).includes("nova-hw-laptop") && MenuModel.guardScript(nova, later).includes("nova-hw-touchpad"),
+      "its answer is kept, and the next runs ask only what can change")
+    const both = MenuModel.withKnown(heard, later)
+    check(both.when.get("toggle.touchpad") === false && both.when.get("toggle.laptop-display") === true && both.checked.get("toggle.notifications") === true,
+      "the answers given at once are laid over bash's")
 
     // first: a menu takes its place. second: a chooser, third, which is
     // answered.

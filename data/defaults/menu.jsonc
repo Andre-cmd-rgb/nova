@@ -10,6 +10,8 @@
   //   aliases   extra names for `nova-menu toggle <name>`, also matched by search
   //   title     header shown while the submenu is open (defaults to label)
   //   when      shell condition; the row is hidden when it fails
+  //   once      true: `when` is asked once a session, for what the computer is
+  //             and cannot change while it runs (whether it is a laptop)
   //   checked   shell condition; the row gets a ✓ when it succeeds
   //   search    false: a search does not find it, only its menu does (the
   //             answer under a question, such as Restart Now under Restart…)
@@ -44,9 +46,9 @@
   "toggle.screentime": {"icon":"󰥔","label":"Screen Time","checked":"nova-screentime enabled","action":"nova-screentime toggle"},
   "toggle.bar": {"icon":"󰍜","label":"Menu Bar","action":"nova-toggle-bar"},
   "toggle.window-gaps": {"icon":"","label":"Window Gaps","action":"nova-hyprland-window-gaps-toggle"},
-  "toggle.laptop-display": {"icon":"󰛧","label":"Laptop Display","when":"nova-hw-laptop","action":"nova-hyprland-monitor-internal toggle"},
+  "toggle.laptop-display": {"icon":"󰛧","label":"Laptop Display","when":"nova-hw-laptop","once":true,"action":"nova-hyprland-monitor-internal toggle"},
   "toggle.touchpad": {"icon":"󰟸","label":"Touchpad","when":"nova-hw-touchpad","action":"nova-toggle-touchpad"},
-  "toggle.discrete-gpu": {"icon":"󰢮","label":"Discrete GPU","when":"[[ $(nova-hw-detect) == thinkpad-p1-gen4i ]]","action":"nova-power-gpu toggle"},
+  "toggle.discrete-gpu": {"icon":"󰢮","label":"Discrete GPU","when":"[[ $(nova-hw-detect) == thinkpad-p1-gen4i ]]","once":true,"action":"nova-power-gpu toggle"},
 
   // Style
   "style.theme": {"icon":"󰸌","label":"Theme","aliases":["theme","themes"],"action":"nova-theme pick"},

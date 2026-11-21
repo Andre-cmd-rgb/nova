@@ -265,8 +265,14 @@ ended with it open sees it again. `nova welcome` opens it at any time.
 The menu's rows come from `menu.jsonc`: Nova's in `$NOVA_PATH/default`, and
 the user's in `~/.config/nova`, laid over Nova's a field at a time; both are
 read again when they change. Every `when:` and `checked:` is a bash
-expression, and all of them run as one script whenever the menu changes and
-each time it opens. A row's `action:` runs in bash as a login shell. The menu
+expression, and they run as one script in bash (not a login shell: the
+shell's environment is the session's already) whenever the menu changes and
+each time it opens. Those about the shell's own state, written as Nova's
+`menu.jsonc` writes them (do not disturb, Caffeine, Screen Time, the
+see-through bar, AirDrop), the shell answers itself, at once
+(`MenuModel.js`'s `SHELL_ANSWERS`); a `when:` of an entry marked `"once":
+true` (whether the computer is a laptop) is asked at the first opening and
+kept. A row's `action:` runs in bash as a login shell. The menu
 is kept loaded, so opening it is an IPC call to the running shell with
 nothing to start.
 

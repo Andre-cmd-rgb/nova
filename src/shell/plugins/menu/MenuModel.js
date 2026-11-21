@@ -13,7 +13,7 @@
 // one, which the menu puts in place of the old.
 //
 // An item is { id, parent, kind, icon, label, line, title, command,
-// provider, aliases, when, checked, unsearched, order, haystack, words }; an
+// provider, aliases, when, checked, once, unsearched, order, haystack, words }; an
 // app's has its appId and appIcon too, and a provider's row the menu it
 // fills (filling). kind is "menu", "action" or "app"; line is the app's
 // generic name, "" for the rest; unsearched is true for an entry a search
@@ -86,6 +86,7 @@ function fileItem(id, fields) {
     aliases: Array.isArray(fields.aliases) ? fields.aliases.filter(Boolean) : [],
     when: text(fields.when),
     checked: text(fields.checked),
+    once: fields.once === true,
     unsearched: fields.search === false
   })
 }
@@ -364,42 +365,76 @@ function listHeight(rows, room, size) {
 
 // ------------------------------------------------------- when: and checked:
 
-// Commands a checked: reads a value out of, which rows side by side ask
-// alike: the rows that ask `nova-bar transparent`. The script
-// runs each once, first, and a guard's `$(command)` reads what it printed
-// instead: both drop the trailing newlines and split alike unquoted. Only
-// that form is swapped; `command -v nova-bar` or `X=1 nova-bar transparent`
-// still run the command. Each is read before the guards, as each guard runs
-// in a subshell, and what one kept would be gone by the next.
-const SHARED_READS = ["nova-bar transparent"]
+// The guards about the shell's own state, which the shell answers itself,
+// at once, rather than run a command that asks it over IPC or reads again
+// what it has read: the guard as menu.jsonc writes it, and the fact that
+// answers it (MenuSource's shellFacts). A guard written any other way runs
+// in bash, as one about a fact the shell does not know just now does.
+const SHELL_ANSWERS = new Map([
+  ['[[ "$(nova-shell notifications dndState)" == on ]]', "doNotDisturb"],
+  ["nova-caffeine armed", "caffeine"],
+  ["nova-screentime enabled", "screenTime"],
+  ['[[ "$(nova-bar transparent)" == on ]]', "transparentBar"],
+  ["nova-airdrop active", "airdrop"]
+])
+
+// The answers known without bash: the guards about the shell's own state,
+// from <facts> ({ doNotDisturb: true, ... }, a fact not known null), and the
+// when: of an entry marked once (`"once": true`, what the computer is, which
+// cannot change while it runs), which <kept> holds from the first run that
+// asked it, a Map from the guard to its answer.
+function knownAnswers(catalog, facts, kept) {
+  const known = noAnswers()
+  for (const item of catalog.items.values()) {
+    for (const [into, test] of [[known.when, item.when], [known.checked, item.checked]]) {
+      if (!test) continue
+      const fact = facts ? facts[SHELL_ANSWERS.get(test.trim())] : undefined
+      if (typeof fact === "boolean") into.set(item.id, fact)
+      else if (into === known.when && item.once && kept && kept.has(test)) into.set(item.id, kept.get(test))
+    }
+  }
+  return known
+}
+
+// <kept> with the answers of this run to the when: of each entry marked once
+// that it asked: a new Map, kept for the session.
+function keptOnce(catalog, answers, kept) {
+  const next = new Map(kept || [])
+  for (const item of catalog.items.values()) {
+    if (item.once && item.when && answers.when.has(item.id) && !next.has(item.when)) next.set(item.when, answers.when.get(item.id))
+  }
+  return next
+}
+
+// <answers> with <known> laid over them.
+function withKnown(answers, known) {
+  const both = { when: new Map(answers.when), checked: new Map(answers.checked) }
+  for (const [id, yes] of known.when) both.when.set(id, yes)
+  for (const [id, yes] of known.checked) both.checked.set(id, yes)
+  return both
+}
 
 function quoted(text) {
   return "'" + String(text).replace(/'/g, "'\\''") + "'"
 }
 
-// One bash script for every when: (w) and checked: (c) of the catalog, ""
-// when there is none. Each guard runs by eval in a subshell of its own, so
-// that one bash cannot read is a no for its own row alone, and one that
-// exits, sets a variable or changes directory does so for itself. Each
-// prints a line, "w1 <id>" or "w0 <id>": the id last, as it may hold
-// anything. The menu opens on the last answers, so the time this takes is
-// how long a row can be wrong.
-function guardScript(catalog) {
-  const shared = n => "${__nova_shared_" + n + "}"
+// One bash script for every when: (w) and checked: (c) of the catalog that
+// <known> (knownAnswers) does not answer, "" when there is none. Each guard
+// runs by eval in a subshell of its own, so that one bash cannot read is a
+// no for its own row alone, and one that exits, sets a variable or changes
+// directory does so for itself. Each prints a line, "w1 <id>" or "w0 <id>":
+// the id last, as it may hold anything. The menu opens on the last answers,
+// so the time this takes is how long a row can be wrong.
+function guardScript(catalog, known) {
   let guards = ""
   for (const item of catalog.items.values()) {
-    for (const [tag, test] of [["w", item.when], ["c", item.checked]]) {
-      if (!test) continue
-      const read = SHARED_READS.reduce((line, command, n) => line.split("$(" + command + ")").join(shared(n)), test)
+    for (const [tag, test, done] of [["w", item.when, known ? known.when : null], ["c", item.checked, known ? known.checked : null]]) {
+      if (!test || (done && done.has(item.id))) continue
       const id = quoted(item.id)
-      guards += "if ( eval " + quoted(read) + " ) >/dev/null 2>&1; then echo " + tag + "1 " + id + "; else echo " + tag + "0 " + id + "; fi\n"
+      guards += "if ( eval " + quoted(test) + " ) >/dev/null 2>&1; then echo " + tag + "1 " + id + "; else echo " + tag + "0 " + id + "; fi\n"
     }
   }
-  if (!guards) return ""
-  // `|| :` keeps a command that fails from ending the script in a login
-  // shell that sets errexit.
-  const reads = SHARED_READS.map((command, n) => guards.includes(shared(n)) ? "__nova_shared_" + n + "=$(" + command + " 2>/dev/null) || :\n" : "")
-  return reads.join("") + guards
+  return guards
 }
 
 // The guard script's answers: { when, checked }, each a Map from an id to
