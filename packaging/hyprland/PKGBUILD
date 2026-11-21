@@ -28,8 +28,11 @@
 #   every config load on, group or no group, for the same pixels
 #   (data/hypr/look.lua turns the gradients on).
 # - stencil-without-depth.patch gives each monitor's stencil texture no depth
-#   buffer beside it, on GLES 3.2: Hyprland draws through the stencil alone,
-#   with depth testing off, and the depth part was 48 MiB at 3840x2400.
+#   buffer beside it on Mesa's iris (Intel), the one driver it was measured
+#   on: Hyprland draws through the stencil alone, with depth testing off, and
+#   the depth part was 48 MiB at 3840x2400. Every other driver keeps the
+#   stock texture, and a framebuffer iris does not complete with it falls
+#   back to the stock one, with a warning, where Hyprland would abort.
 # All six are offered to Hyprland (UPSTREAM.md); once a Hyprland release
 # has them, this package goes and Arch's comes back.
 # Upstream: https://github.com/hyprwm/Hyprland, BSD-3-Clause.
@@ -56,7 +59,7 @@
 pkgname=hyprland
 pkgver=0.57.2
 pkgrel=1.4
-pkgdesc="a highly customizable dynamic tiling Wayland compositor (Nova's build, with xwayland:scale, games' own resolutions and mouse, a release-bind fix, and 200 MiB less graphics memory at 4K: one-pixel-wide group tab gradients, no unused depth buffer)"
+pkgdesc="a highly customizable dynamic tiling Wayland compositor (Nova's build, with xwayland:scale, games' own resolutions and mouse, a release-bind fix, and 200 MiB less graphics memory at 4K: one-pixel-wide group tab gradients, no unused depth buffer on Intel)"
 arch=(x86_64)
 url='https://github.com/hyprwm/Hyprland'
 license=(BSD-3-Clause)
@@ -132,7 +135,7 @@ sha256sums=('34dbec0738ab88c8228caf89385662688ab1601ea58fbe5c60a6b6ab383db46d'
             '119c0a1e14befe760bcfe50db595c891220e0faad184c80b0dc37feae1ecc238'
             '0c1e22af56492b3a8d373d55d36a6d184905841baed4855ca3ec282de162e540'
             '3b4f33d60ab15c0e50da6f39edf519b477e2a1756f660f5d3849177216024ec6'
-            '223ad12af8eb8514f0980ca5342e8068b14ace5748db8e3f6d8162ad1dfecb50')
+            'b67e744a44370a46699b623d6cb06d24c12b4957462f6cd235162c39d9a7ae0d')
 
 prepare() {
   ln -sf hyprland-source "$_archive"
@@ -154,12 +157,13 @@ build() {
 
 check() {
   # It starts, with every library found, has the option, reads the modes
-  # games set through RandR, and pairs motions for XWayland (a symbol it
-  # exports for plugins).
+  # games set through RandR, pairs motions for XWayland (a symbol it exports
+  # for plugins), and falls back from a stencil-only texture.
   "$_archive/build/Hyprland" --version >/dev/null
   grep -qa 'xwayland:scale' "$_archive/build/Hyprland"
   grep -qa '_XWAYLAND_RANDR_EMU_MONITOR_RECTS' "$_archive/build/Hyprland"
   grep -qa 'sendRelativeMotionIfNone' "$_archive/build/Hyprland"
+  grep -qa 'a stencil-only texture made it incomplete' "$_archive/build/Hyprland"
 }
 
 package() {

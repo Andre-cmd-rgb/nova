@@ -1,39 +1,101 @@
-gl: give framebuffers a stencil-only texture, without a depth buffer
+gl: a stencil-only texture for framebuffers on Mesa's iris, else as before
 
 Each monitor has one stencil texture, attached to its blur framebuffer and
 to its work buffers, which blur's discard pass (ignore_alpha) draws through.
-It was made GL_DEPTH24_STENCIL8, but nothing reads or writes depth: depth
-testing is turned off as the texture is attached. GLES 3.2 has stencil-only
-textures (GL_STENCIL_INDEX8), so on a 3.2 context the texture is that,
-attached at GL_STENCIL_ATTACHMENT; the GLES 3.0 fallback keeps
-GL_DEPTH24_STENCIL8, which 3.0 needs for a stencil texture.
+It is made GL_DEPTH24_STENCIL8, but nothing reads or writes depth: depth
+testing is turned off as the texture is attached. Mesa's iris keeps depth
+and stencil apart, so the depth part alone was 48 MiB a monitor at
+3840x2400; the 10 MiB stencil stays.
 
-Mesa's iris keeps depth and stencil apart, so the depth part alone was
-48 MiB a monitor at 3840x2400; the 10 MiB stencil stays.
+GLES 3.2 has stencil-only textures (GL_STENCIL_INDEX8), but a driver may
+still refuse one as a framebuffer attachment (GL_FRAMEBUFFER_UNSUPPORTED is
+allowed), Hyprland asserts that the framebuffer is complete, and only iris
+was measured with one. So the stencil-only texture is used only where the
+EGL display's driver (EGL_MESA_query_driver) is iris, on a GLES 3.2
+context, with nearest filters (it has no mipmaps); if a framebuffer with
+one is not complete, it is detached, the stock depth and stencil texture
+attached instead, and every framebuffer after it gets the stock one too,
+with a warning in the log. On every other driver nothing changes.
 
 In a nested Hyprland at 3840x2400 at rest (Intel, iris), the render node's
-DRM fdinfo said 375.1 to 375.3 MiB before and 321.0 to 321.2 after, in runs
-that alternated between the two builds (two of each four also held a 40 MiB
-buffer of Mesa's, 415 before and 361 after). With a layer rule of blur and
-ignore_alpha on every layer, so that the stencil is drawn through, pictures
-of the desktop, the bar's panels, menus and overlays are the same before
-and after but for the clock's minute.
+DRM fdinfo, and pictures with a layer rule of blur and ignore_alpha on
+every layer, so that the stencil is drawn through: see Nova's
+packaging/hyprland/UPSTREAM.md.
 
 --- a/src/render/gl/GLFramebuffer.cpp
 +++ b/src/render/gl/GLFramebuffer.cpp
-@@ -55,8 +55,16 @@
+@@ -6,10 +6,46 @@
+ #include <hyprgraphics/egl/Egl.hpp>
+ #include <algorithm>
+ #include <limits>
++#include <string_view>
+ 
+ using namespace Hyprgraphics::Egl;
+ using namespace Render::GL;
+ 
++// The monitor's stencil texture is drawn through with depth testing off, so
++// the depth half of GL_DEPTH24_STENCIL8 is never used: 48 MiB a 3840x2400
++// monitor on Mesa's iris, which keeps depth and stencil apart. A stencil-only
++// texture (GL_STENCIL_INDEX8, core in GLES 3.2) saves it, but only iris was
++// measured with one, and a driver may refuse it as a texture attachment
++// (GL_FRAMEBUFFER_UNSUPPORTED is allowed), so it is used only on iris, on a
++// GLES 3.2 context, and given up for good the first time a framebuffer with
++// one is not complete. Everywhere else the stencil is as before.
++namespace {
++    enum class eStencilOnly : uint8_t {
++        UNDECIDED,
++        YES,
++        NO,
++    };
++    eStencilOnly g_stencilOnly = eStencilOnly::UNDECIDED;
++
++    bool stencilOnly() {
++        if (g_stencilOnly != eStencilOnly::UNDECIDED)
++            return g_stencilOnly == eStencilOnly::YES;
++
++        const char* driver = nullptr;
++        if (g_pHyprOpenGL->m_eglContextVersion == CHyprOpenGLImpl::EGL_CONTEXT_GLES_3_2) {
++            const char* extensions = eglQueryString(g_pHyprOpenGL->m_eglDisplay, EGL_EXTENSIONS);
++            if (extensions && std::string_view{extensions}.contains("EGL_MESA_query_driver")) {
++                const auto getDriverName = rc<const char* (*)(EGLDisplay)>(eglGetProcAddress("eglGetDisplayDriverName"));
++                driver                   = getDriverName ? getDriverName(g_pHyprOpenGL->m_eglDisplay) : nullptr;
++            }
++        }
++
++        g_stencilOnly = driver && std::string_view{driver} == "iris" ? eStencilOnly::YES : eStencilOnly::NO;
++        LOG(Log::DEBUG, "Framebuffer stencil: {} (EGL driver {})", g_stencilOnly == eStencilOnly::YES ? "stencil-only" : "depth and stencil", driver ? driver : "unknown");
++        return g_stencilOnly == eStencilOnly::YES;
++    }
++}
++
+ CGLFramebuffer::CGLFramebuffer() : IFramebuffer(), m_tempBuf(true) {}
+ CGLFramebuffer::CGLFramebuffer(const std::string& name) : IFramebuffer(name), m_tempBuf(true) {}
+ 
+@@ -55,8 +91,28 @@
  
      if (m_stencilTex && m_stencilTex->ok()) {
          m_stencilTex->bind();
 -        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
 -        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_stencilTex->m_texID, 0);
-+        // Only the stencil is ever used (blur's discard pass), with depth testing
-+        // off. GLES 3.2 has stencil-only textures; a depth buffer beside the
-+        // stencil took 48 MiB a 3840x2400 monitor for nothing.
-+        if (g_pHyprOpenGL->m_eglContextVersion == CHyprOpenGLImpl::EGL_CONTEXT_GLES_3_2) {
++        bool depthAndStencil = true;
++        if (stencilOnly()) {
++            // Never sampled, and with no mipmaps for the default filter.
++            m_stencilTex->setTexParameter(GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++            m_stencilTex->setTexParameter(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 +            glTexImage2D(GL_TEXTURE_2D, 0, GL_STENCIL_INDEX8, w, h, 0, GL_STENCIL_INDEX, GL_UNSIGNED_BYTE, nullptr);
 +            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_stencilTex->m_texID, 0);
-+        } else {
++            const auto status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++            depthAndStencil   = status != GL_FRAMEBUFFER_COMPLETE;
++            if (depthAndStencil) {
++                const auto error = glGetError();
++                while (glGetError() != GL_NO_ERROR) {}
++                LOG(Log::WARN, "Framebuffer \"{}\": a stencil-only texture made it incomplete (FB status: {}, GL Error: 0x{:x}), depth and stencil from now on", m_name, status,
++                    sc<int>(error));
++                g_stencilOnly = eStencilOnly::NO;
++                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
++            }
++        }
++        if (depthAndStencil) {
 +            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
 +            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, m_stencilTex->m_texID, 0);
 +        }

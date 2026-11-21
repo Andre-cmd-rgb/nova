@@ -200,22 +200,31 @@ A screenshot of the two grouped windows is identical before and after, every pix
 
 ## Title
 
-gl: use a stencil-only texture for the monitor stencil on GLES 3.2
+gl: a stencil-only texture for the monitor stencil on Mesa's iris
 
 ## Description
 
-Each monitor has one stencil texture (`CMonitorResources::m_stencilTex`), attached to its blur framebuffer and its work buffers; `renderTextureWithBlur()` draws through it when a surface's `discardMode` needs it (`ignore_alpha` on a layer, blurred popups, input methods). `CGLFramebuffer::internalAlloc()` makes it `GL_DEPTH24_STENCIL8` and attaches it at `GL_DEPTH_STENCIL_ATTACHMENT`, then turns depth testing off: the depth half is never read or written.
+Each monitor has one stencil texture (`CMonitorResources::m_stencilTex`), attached to its blur framebuffer and its work buffers; `renderTextureWithBlur()` draws through it when a surface's `discardMode` needs it (`ignore_alpha` on a layer, blurred popups, input methods). `CGLFramebuffer::internalAlloc()` makes it `GL_DEPTH24_STENCIL8` and attaches it at `GL_DEPTH_STENCIL_ATTACHMENT`, then turns depth testing off: the depth half is never read or written. Mesa's iris stores depth and stencil apart, so the unused depth part was 48 MiB a monitor at 3840x2400 on Intel.
 
-GLES 3.2 has stencil-only textures, so on a 3.2 context the texture is now `GL_STENCIL_INDEX8`, attached at `GL_STENCIL_ATTACHMENT`. The GLES 3.0 fallback keeps `GL_DEPTH24_STENCIL8`, as 3.0 has no stencil-only textures. The detach and the `glInvalidateFramebuffer` calls name `GL_DEPTH_STENCIL_ATTACHMENT`, which covers a stencil-only attachment too.
+GLES 3.2 has stencil-only textures (`GL_STENCIL_INDEX8`), but a driver may still refuse one as a framebuffer attachment (`GL_FRAMEBUFFER_UNSUPPORTED` is allowed for any combination), and `internalAlloc()` asserts that the framebuffer is complete: a driver that refused it would abort Hyprland at its first framebuffer. So the stencil-only texture is used only where it was measured:
 
-Mesa's iris stores depth and stencil apart, so the unused depth part was 48 MiB a monitor at 3840x2400 on Intel.
+- on a GLES 3.2 context whose EGL display's driver (`EGL_MESA_query_driver`, `eglGetDisplayDriverName`) is `iris`, decided once, at the first framebuffer with a stencil;
+- with `GL_NEAREST` filters, as it has no mipmaps for the default minification filter;
+- and if a framebuffer with it is not complete, it is detached, the stock `GL_DEPTH24_STENCIL8` texture attached in its place, the GL error cleared and a warning logged, and every framebuffer after it gets the stock texture too, instead of the assertion.
+
+Every other driver (and iris without `EGL_MESA_query_driver`) takes the stock path, unchanged. The detach and the `glInvalidateFramebuffer` calls name `GL_DEPTH_STENCIL_ATTACHMENT`, which covers a stencil-only attachment too.
 
 ### Tests
 
-In a nested Hyprland (a 3840x2400 output at scale 1.6, Mesa's iris on Intel Tiger Lake), the render node's `drm-total-system0` in the compositor's DRM fdinfo, at rest, in runs alternating between the two builds:
+In a nested Hyprland (a 3840x2400 output at scale 1.6, Mesa 26.3's iris on Intel Tiger Lake, GLES 3.2), the render node's `drm-total-system0` in the compositor's DRM fdinfo:
 
 | | v0.57.2 (with the group bar patch) | patched |
 |---|---|---|
-| four runs each | 375.3, 415.3, 415.1, 375.1 MiB | 361.2, 321.1, 361.2, 321.1 MiB |
+| at rest | 375.2, 375.2 MiB | 321.1, 321.2, 321.0, 321.2, 361.1 MiB |
+| `layerrule = blur` and `ignore_alpha` on every layer | 455.3 MiB | 401.4 MiB |
 
-(The 40 MiB in half the runs of each is a buffer of Mesa's, there or not by timing.) With `layerrule = blur` and `ignore_alpha 0.2` on every layer, so that blur draws through the stencil, screenshots of a desktop with a panel, menus and full-screen overlays open are the same before and after; the only pixels that differ are a clock's minute and its blur, by one level of 255 at most.
+(The 40 MiB in one run is a buffer of Mesa's, there or not by timing.) The log says `Framebuffer stencil: stencil-only (EGL driver iris)`. With blur and `ignore_alpha` on every layer, so that blur draws through the stencil, fifteen screenshots of each (a desktop with a panel, menus, full-screen overlays, the lock screen's preview) are the same before and after: the only pixels more than one level of 255 apart are a clock's minute.
+
+The fallback, forced in a test build that made the stencil-only texture 0x0: the log says `Framebuffer "Monitor WAYLAND-1 blur FB": a stencil-only texture made it incomplete (FB status: 36054, GL Error: 0x0), depth and stencil from now on`, Hyprland goes on instead of aborting, it uses 455.4 MiB with blur on every layer (as v0.57.2), and its screenshots are within one level of 255 of v0.57.2's.
+
+On zink over Intel's Vulkan driver (`MESA_LOADER_DRIVER_OVERRIDE=zink`), the log says `Framebuffer stencil: depth and stencil (EGL driver zink)`, and the desktop draws as before. Other drivers were not run; they take the stock path.
