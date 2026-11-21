@@ -126,7 +126,7 @@ ShellRoot {
       "battery": "battery", "volume": "sound", "trackpad": "keyboard", "dark mode": "appearance", "keyboard": "keyboard" }
     const wrong = Object.keys(pages).filter(query => first(query) !== "settings." + pages[query] + "|Settings")
     check(wrong.length === 0, "a search for a page's name or another word for it offers that Settings page first (" + wrong.map(query => query + " → " + first(query)).join("; ") + ")")
-    check(first("bluetooth", { "settings.bluetooth": false }) === "update.restart.bluetooth|Update › Restart",
+    check(first("bluetooth", { "settings.bluetooth": false }) === "update.restart.bluetooth|Update › Restart a Service",
       "a page this computer has not got is not offered")
     // Limine's snapshot restore has "subvolume" among its keywords.
     const restore = { id: "limine-snapper-restore", keywords: ["snapshot", "restore", "btrfs", "subvolume"], icon: "" }
@@ -157,6 +157,20 @@ ShellRoot {
     check(["system.reboot", "system.recovery", "system.shutdown", "system.logout"].every(asks)
       && first("restart to recovery") === "system.recovery|System" && first("shut down") === "system.shutdown|System",
       "each is a question in System, with the one row that does it")
+    // An entry that asks first says so with an ellipsis, and is still what
+    // its words name: each is first for them, the way it is written too.
+    const asking = Array.from(catalog.items.values()).filter(item => !item.unsearched && /(\u2026|\.\.\.)$/.test(item.label))
+    const behind = asking.filter(item => {
+      const words = item.label.replace(/\s*(\u2026|\.\.\.)$/, "")
+      return first(words).split("|")[0] !== item.id || first(item.label).split("|")[0] !== item.id || first(words + "...").split("|")[0] !== item.id
+    })
+    check(asking.length >= 4 && behind.length === 0,
+      "an entry whose label ends in an ellipsis is first for its words (" + asking.length + " of them; behind: " + behind.map(item => item.label + " → " + first(item.label.replace(/\s*(\u2026|\.\.\.)$/, ""))).join("; ") + ")")
+    const restarts = MenuModel.searchRows(catalog, "root", "restart", MenuModel.noAnswers()).map(row => row.key)
+    check(restarts[0] === "system.reboot" && restarts.includes("update.restart") && !restarts.some(key => key.startsWith("update.restart.")),
+      "restart is the computer's first, then the services' menu, and none of the services alone (" + restarts.join(", ") + ")")
+    check(first("restart shell") === "update.restart.shell|Update › Restart a Service" && first("restart wi-fi") === "update.restart.wifi|Update › Restart a Service",
+      "a service is found by its menu's word and its own (" + first("restart shell") + ")")
 
     menu.open("{}")
     menu.filter("2*(3+4)")

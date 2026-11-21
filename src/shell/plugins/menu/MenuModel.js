@@ -206,7 +206,7 @@ function shows(catalog, item, answers) {
   return (catalog.kids.get(item.id) || []).some(kid => shows(catalog, kid, answers))
 }
 
-// "Update › Restart › Shell": the labels from below the root down to the
+// "Update › Restart a Service › Shell": the labels from below the root down to the
 // item, or "" for none.
 function pathOf(catalog, item) {
   if (!item || item.id === "root") return ""
@@ -226,16 +226,24 @@ function searchable(item) {
   return item
 }
 
+// A label or a search without the ellipsis it ends in: "Restart…" says
+// it asks first, and is still what "restart" names.
+function bare(text) {
+  return String(text).replace(/\s*(?:\u2026|\.\.\.)$/, "")
+}
+
 // How good a find is, lower first. Its tier: the label is the search,
 // starts with it or holds it; the haystack has it at the start of a word,
-// or inside one; the line has each of its words. A menu goes a little ahead
-// within its tier and an app further, as the apps come after every entry of
-// menu.jsonc, which a tie goes by. Then the shallower, then the earlier.
-// "volume" is Sound's word, and only inside a word of Limine's restore
-// ("subvolume"), which no app's lead may bring ahead of it.
-function rank(item, wanted, terms, depth) {
-  const label = item.label.toLowerCase()
+// or inside one; the line has each of its words; last, a find that has
+// some of the search's words only in a menu above it. A menu goes a little
+// ahead within its tier and an app further, as the apps come after every
+// entry of menu.jsonc, which a tie goes by. Then the shallower, then the
+// earlier. "volume" is Sound's word, and only inside a word of Limine's
+// restore ("subvolume"), which no app's lead may bring ahead of it.
+function rank(item, wanted, terms, depth, throughMenus) {
+  const label = bare(item.label).toLowerCase()
   const tiers = [
+    [throughMenus, 90],
     [label === wanted && item.parent !== "root", 0],
     [label === wanted, 2],
     // An app whose name has the search as a word ("zen" in Zen Browser) is
@@ -259,21 +267,35 @@ function rank(item, wanted, terms, depth) {
 // menu searched; an entry of search: false (Restart Now, under Restart…'s
 // question) is never found, but only reached through its menu.
 function searchRows(catalog, menuId, query, answers) {
-  const wanted = String(query).trim().toLowerCase()
+  const wanted = bare(String(query).trim().toLowerCase())
   const terms = wanted.split(/\s+/).filter(Boolean)
   const near = [], deeper = []
   for (const item of catalog.items.values()) {
     const menus = above(catalog, item)
     if (item.id === "root" || item.unsearched || menuId !== "root" && !menus.includes(menuId)) continue
-    if (!terms.every(term => item.haystack.includes(term) || item.words.includes(term))) continue
+    const how = matched(catalog, item, menus, terms)
+    if (!how) continue
     if (!shows(catalog, item, answers) || hiddenBetween(catalog, menus, menuId, answers)) continue
     const depth = menus.filter(id => id !== "root").length
-    ;(item.parent === menuId ? near : deeper).push({ item: item, rank: rank(item, wanted, terms, depth), path: pathOf(catalog, item) })
+    ;(item.parent === menuId ? near : deeper).push({ item: item, rank: rank(item, wanted, terms, depth, how === "menus"), path: pathOf(catalog, item) })
   }
   const best = (a, b) => a.rank - b.rank || a.path.localeCompare(b.path)
   const section = near.length && deeper.length ? "deeper" : ""
   const row = (find, under) => listRow(find.item, answers, pathOf(catalog, catalog.items.get(find.item.parent)), under)
   return near.sort(best).map(find => row(find, "")).concat(deeper.sort(best).map(find => row(find, section)))
+}
+
+// How the item has the search's terms: "own" when it has every one itself,
+// "menus" when it has some and the menus above it (the root aside) the
+// rest, as Shell under Restart a Service has "restart shell"; "" for
+// neither. A term only the menus have is not enough: "restart" alone does
+// not list every row under Restart a Service.
+function matched(catalog, item, menus, terms) {
+  const own = term => item.haystack.includes(term) || item.words.includes(term)
+  if (terms.every(own)) return "own"
+  if (!terms.some(own)) return ""
+  const outer = menus.filter(id => id !== "root").map(id => catalog.items.get(id)).filter(Boolean)
+  return terms.every(term => own(term) || outer.some(menu => menu.haystack.includes(term))) ? "menus" : ""
 }
 
 function hiddenBetween(catalog, menus, menuId, answers) {

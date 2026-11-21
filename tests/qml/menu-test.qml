@@ -8,12 +8,13 @@ import "services/AppSearch.js" as AppSearch
 // The menu: a user file's entry changes only what it names, a comma inside a
 // string is the string's, comments may stand after entries, a label may be a
 // number, an id may be a name JavaScript objects have, a menu its when:
-// hides keeps what is under it out of search, a when: bash cannot read or
-// that exits answers only for its own row, two apps of one name keep one
-// order, a provider's values each get a row, a guard about the shell's own
-// state or one marked once and asked already is answered without bash, and
-// a chooser still waiting when another takes its place is answered as
-// cancelled.
+// hides keeps what is under it out of search, a label ending in an
+// ellipsis is an exact match, a menu's word with an entry's finds the entry,
+// a when: bash cannot read or that exits answers only for its own row, two
+// apps of one name keep one order, a provider's values each get a row, a
+// guard about the shell's own state or one marked once and asked already is
+// answered without bash, and a chooser still waiting when another takes its
+// place is answered as cancelled.
 ShellRoot {
   id: test
 
@@ -74,6 +75,18 @@ ShellRoot {
       "search finds nothing under a menu its when: hides, and the rest as before")
     check(seek("root", "hammer", { tools: true }) === "tools.hammer" && seek("root", "saw", { tools: true }) === "tools.kit.saw" && seek("tools", "saw", { tools: false }) === "tools.kit.saw",
       "search finds what is under a menu its when: shows, and within the menu itself")
+
+    // An ellipsis says an entry asks first; it is still an exact match for
+    // its words. A find with a word only in a menu above it comes last, and
+    // a word only the menu has finds none of what is under it.
+    const asks = MenuModel.catalogOf(MenuModel.readMenuFile(
+      '{ "room": { "label": "Room" }, "room.closet": { "label": "Closet", "action": "a" }, "doors": { "label": "Doors" }, "doors.close": { "label": "Close...", "action": "b" }, '
+      + '"doors.lock": { "label": "Lock", "action": "c" }, "lock": { "label": "Lock Screen", "action": "d" } }'), new Map())
+    const asked = query => MenuModel.searchRows(asks, "root", query, MenuModel.noAnswers()).map(row => row.key).join(",")
+    check(asked("close") === "doors.close,room.closet" && asked("Close...") === asked("close") && asked("close…") === asked("close"),
+      "a label ending in an ellipsis is an exact match for its words (" + asked("close") + ")")
+    check(asked("doors lock") === "doors.lock" && asked("lock") === "lock,doors.lock" && asked("doors") === "doors",
+      "a menu's word and an entry's find the entry, and the menu's alone only the menu (" + asked("doors lock") + "; " + asked("doors") + ")")
 
     const files = [{ id: "org.b.Files", name: "Files" }, { id: "org.a.Files", name: "Files" }, { id: "org.c.Editor", name: "Editor" }]
     const order = entries => AppSearch.sortedEntries(entries, null).map(row => row.entry.id).join(",")
