@@ -12,11 +12,13 @@ import "Model.js" as Model
 // again a day on when there is none. It runs on the monotonic clock, which
 // stands still while the computer sleeps and does not follow a clock set or
 // a new time zone: those are heard of (Wake), and the reminders due since
-// are said and the timer aimed again then. How far it has looked is kept in
-// ~/.local/state/nova/calendar.json, written when a reminder's time comes,
-// said or not, and not otherwise; after a shutdown, the reminders due since
-// then are said if their event has not ended yet, or their task is still to
-// do today.
+// are said and the timer aimed again then. A reminder already past when its
+// event or task comes in (a sync, an event added for earlier today) is not
+// said: the phone that made it has said it, or it was never to come. How far
+// it has looked is kept in ~/.local/state/nova/calendar.json, written when a
+// restart would otherwise go over a reminder's time again, and not otherwise;
+// after a shutdown, the reminders due since then are said if their event has
+// not ended yet, or their task is still to do today.
 Item {
   id: root
 
@@ -27,15 +29,47 @@ Item {
   property real said: 0
   // What the file has: said is kept up to date as the clock is looked at,
   // the file only when that changes what a restart would go over, which is
-  // when a reminder's time came since (none came between the two, or it
-  // would have been written then); and when there is none yet, or the
-  // clock went back past it.
+  // when a reminder's time lies between the two (keep()); and when there is
+  // none yet, or the clock went back past it.
   property real saidKept: 0
   property bool stateRead: false
+  // Whether the reminders have been looked at once since the calendar and
+  // the file were read: what a restart missed is said then.
+  property bool looked: false
+  // Until when the reminders as last looked at had none due: the next one's
+  // time, or how far that look reached. Past it, one may be due that the
+  // timer or a wake has not come to yet.
+  property real quietUntil: 0
 
   Calendars {
     id: storeItem
-    onItemsChanged: root.schedule()
+    onItemsChanged: root.changed()
+  }
+
+  // The events or tasks changed. A reminder of those before that has come
+  // due is said, from the list as it is now; otherwise none has, and a
+  // reminder the change brings that is already past is not said: said moves
+  // to now, over it.
+  function changed() {
+    var now = Date.now()
+    if (!looked || now >= quietUntil) {
+      remind()
+      return
+    }
+    said = now
+    keep(now)
+    schedule()
+  }
+
+  // The file moved on to <now> when a restart would go over a reminder again
+  // from what it has, or it has nothing yet, or the clock went back past it.
+  function keep(now) {
+    // Two days on, written whatever: a look over a longer time costs more
+    // than the write.
+    if (saidKept > 0 && saidKept <= now && now - saidKept < 2 * Model.DAY
+      && Model.alarms(storeItem.items, saidKept, now).length === 0) return
+    saidKept = now
+    stateFile.setText(JSON.stringify({ said: now }) + "\n")
   }
 
   function remind() {
@@ -43,14 +77,11 @@ Item {
     var now = Date.now()
     // Never said one: from now, not from the beginning of time.
     var from = said > 0 && said < now ? said : now
-    var passed = Model.alarms(storeItem.items, from, now)
-    var due = passed.filter(function (a) { return Model.stillDue(a, now) })
+    var due = Model.alarms(storeItem.items, from, now).filter(function (a) { return Model.stillDue(a, now) })
     due.forEach(function (a) { root.notify(a, now) })
     said = now
-    if (passed.length > 0 || saidKept <= 0 || saidKept > now) {
-      saidKept = now
-      stateFile.setText(JSON.stringify({ said: now }) + "\n")
-    }
+    looked = true
+    keep(now)
     schedule()
   }
 
@@ -61,6 +92,7 @@ Item {
     var now = Date.now()
     var next = Model.alarms(storeItem.items, now, now + 2 * Model.DAY)
     nextAlarm = next.length ? next[0].time : 0
+    quietUntil = next.length ? next[0].time : now + 2 * Model.DAY
     tick.interval = Commons.Util.intervalTo(next.length ? next[0].time : now + Model.DAY, now)
     tick.restart()
   }

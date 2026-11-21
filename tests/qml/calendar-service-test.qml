@@ -8,7 +8,9 @@ import "plugins/calendar" as Calendar
 // how far it has looked is kept as it starts, with no file yet; a reminder
 // added is waited for, said on time (nova-notification-send is a stub that
 // notes it), and kept as said; then, with nothing due, the timer waits a
-// day, and a look at the clock writes nothing.
+// day, and a look at the clock writes nothing. An event that comes in with
+// its reminder already past is not said when the next one is, and is kept as
+// looked over, so that a restart does not say it either.
 ShellRoot {
   id: test
 
@@ -114,7 +116,30 @@ ShellRoot {
     onTriggered: {
       test.kept()
       test.check("a look at the clock with no reminder come since writes nothing", String(stateFile.text()), test.keptBefore)
-      test.finish()
+      test.addPast()
     }
+  }
+
+  // A meeting made on a phone, synced after its reminder went (since the
+  // file was last written: a whole second, as the calendar keeps times), and
+  // one to come a moment later.
+  property real past: 0
+  function addPast() {
+    when(() => Math.floor(Date.now() / 1000) * 1000 > service.saidKept, () => {
+      const now = Date.now()
+      past = Math.floor(now / 1000) * 1000
+      alarm = Math.ceil((now + 3000) / 1000) * 1000
+      service.store.addEvent({ title: "Synced", start: past + 600000, end: past + 3600000, allDay: false, reminder: -600000, repeat: "none" })
+      service.store.addEvent({ title: "Review", start: alarm + 60000, end: alarm + 3600000, allDay: false, reminder: -60000, repeat: "none" })
+      when(() => service.nextAlarm === alarm, () => {
+        check("a reminder already past when it comes in is kept as looked over", kept() >= past, true)
+        when(() => said().length > 1, () => {
+          const lines = said()
+          check("the next reminder is said, and the one already past is not",
+            lines.length === 2 && lines[1].indexOf("Review") >= 0 && !lines.some(line => line.indexOf("Synced") >= 0), true)
+          test.finish()
+        }, "the next reminder is said")
+      }, "the next reminder is waited for")
+    }, "a second goes by")
   }
 }

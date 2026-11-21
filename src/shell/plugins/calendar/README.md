@@ -149,11 +149,13 @@ The service sleeps until the next reminder, two days ahead at most, and
 looks again a day on when there is none. A suspend, a clock set or a new
 time zone, which such a timer does not follow, are heard of from
 `nova-sessiond` (`$XDG_RUNTIME_DIR/nova/clock`, the shell's `Wake`), and
-the reminders due since are said then. How far it has looked is kept in
-`~/.local/state/nova/calendar.json`, written when a reminder's time comes and
-not otherwise: after a shutdown or a suspend, the reminders due since then
-are said if their event has not ended yet, or their task is still to do
-today, and the rest are let go.
+the reminders due since are said then. A reminder already past when its
+event or task comes in (a sync brings a meeting made on the phone, or an
+event is added for earlier today) is not said. How far it has looked is kept
+in `~/.local/state/nova/calendar.json`, written when a restart would
+otherwise go over a reminder again and not otherwise: after a shutdown or a
+suspend, the reminders due since then are said if their event has not ended
+yet, or their task is still to do today, and the rest are let go.
 
 ## The files
 
