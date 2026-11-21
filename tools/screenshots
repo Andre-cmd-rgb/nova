@@ -8,9 +8,10 @@
 # windows, docs/images/dusk.svg unless it names another: a photo, a JPEG or a
 # PNG, of which only the pixels go into the pictures (Quick Look's picture is
 # the dusk all the same). The shell runs on a Hyprland of its own, given
-# Nova's look and window rules (data/hypr), so a picture shows the
+# Nova's look, cursor and window rules (data/hypr), so a picture shows the
 # windows as Nova draws them: round corners, the theme's border, the terminal
-# a little see-through. Besides the pictures, it writes <background>.colors.toml
+# a little see-through, and in the desktop's and the themes' Nova's pointer.
+# Besides the pictures, it writes <background>.colors.toml
 # and <background>.light.colors.toml, the palettes the adaptive theme takes from
 # the background, dark (as it is over dusk) and light, which the site
 # (tools/build-site) draws its adaptive colours with.
@@ -56,6 +57,10 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/home/.config/nova" "$work/home/.config/foot" "$work/home/.config/hypr" \
   "$work/home/.config/labwc" "$work/home/.local/share/nova/calendar" "$work/run" "$work/bin" "$work/shots"
 chmod 700 "$work/run"
+# Nova's cursor theme where the cursor libraries look for one, in the home:
+# Hyprland draws the pointer with it, as data/hypr/cursor.lua has it.
+mkdir -p "$work/home/.local/share/icons"
+ln -s "$root/usr/share/icons/Nova" "$work/home/.local/share/icons/Nova"
 
 # What the shell and its helpers must not reach from in here: the session and
 # the system this runs on. hyprctl is not among them: it looks for Hyprland in
@@ -193,7 +198,14 @@ session() {
     sleep 0.1
   done
   [[ $answer == ok ]] || { echo "screenshots: the shell did not answer" >&2; return 1; }
-  shot() { sleep "${2:-1.5}"; grim "$WORK/shots/$1.png"; }
+  # A picture of the screen, with the pointer in it while it is pointed.
+  local pointed=()
+  shot() { sleep "${2:-1.5}"; grim "${pointed[@]}" "$WORK/shots/$1.png"; }
+  # The pointer to x, y of the screen, and into the pictures from then on.
+  pointer() {
+    hyprctl dispatch "hl.dsp.cursor.move({ x = $1, y = $2 })" >/dev/null 2>&1 || true
+    pointed=(-c)
+  }
   # A theme, and the borders it gives Hyprland's windows.
   theme() { nova-theme set "$1" >/dev/null 2>&1 || true; sleep 1.2; }
   settings() {
@@ -202,10 +214,12 @@ session() {
     ipc shell summon nova.settings '{"page":"appearance"}' >/dev/null
   }
 
-  # The desktop: a terminal and Settings, in the adaptive theme.
+  # The desktop: a terminal and Settings, in the adaptive theme, and Nova's
+  # pointer between two of the theme tiles, pointing at the next.
   foot demo >/dev/null 2>&1 &
   sleep 1
   settings
+  pointer 659 601
   shot desktop 2.5
 
   # The palettes the adaptive theme takes from the background, dark and light,
@@ -224,6 +238,8 @@ session() {
   done
   theme adaptive
   ipc shell hide nova.settings >/dev/null || true
+  # The windows from here on are pictured without it.
+  pointed=()
 
   ipc shell summon nova.menu '{"menu":"root"}' >/dev/null
   shot menu
@@ -288,6 +304,10 @@ EOF
 cat >"$work/home/.config/hypr/hyprland.lua" <<'EOF'
 dofile(os.getenv("NOVA_PATH") .. "/default/hypr/bootstrap.lua")
 require("default.hypr.lib")
+-- Nova's cursor at Nova's size, as env.lua sets them.
+hl.env("XCURSOR_SIZE", "24")
+hl.env("HYPRCURSOR_SIZE", "24")
+require("default.hypr.cursor")
 require("default.hypr.look")
 require("default.hypr.behavior")
 require("default.hypr.rules")
@@ -312,6 +332,8 @@ EOF
 # labwc draws with the GPU where there is one it may use, and Hyprland with
 # the one labwc names it; those of the caller's settings go in. GIO is kept to
 # files and to memory: Hyprland's would otherwise start gvfs and dconf here.
+# The shell and the terminal start with Nova's cursor theme named, as they
+# would from Nova's Hyprland, which here does not start them.
 renderer=()
 for name in WLR_RENDERER WLR_RENDER_DRM_DEVICE LD_LIBRARY_PATH __EGL_VENDOR_LIBRARY_FILENAMES; do
   [[ -z ${!name:-} ]] || renderer+=("$name=${!name}")
@@ -320,6 +342,7 @@ env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${TZ:-Euro
   GIO_USE_VFS=local GSETTINGS_BACKEND=memory \
   PATH="$work/bin:$root/usr/lib/nova/bin:$root/usr/bin:$PATH" \
   NOVA_PATH="$root/usr/share/nova" NOVA_BIN="$root/usr/lib/nova/bin" NOVA_LOGIN=password \
+  XCURSOR_THEME=Nova XCURSOR_SIZE=24 \
   DBUS_SYSTEM_BUS_ADDRESS=unix:path=/nonexistent/system-bus \
   "${renderer[@]}" WORK="$work" BACKDROP="$backdrop" SHELL_DIR="$root/usr/share/nova/shell" \
   timeout 240 dbus-run-session -- bash -c "$(declare -f session); session"
