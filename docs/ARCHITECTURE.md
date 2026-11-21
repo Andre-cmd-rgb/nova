@@ -184,6 +184,7 @@ Nova's themes live in `/usr/share/nova/themes/`. A theme of the same name in `~/
    - Flatpak: an override of the user's that shows every app those two folders, read-only, set once;
    - foot: new windows read `theme.ini`, open ones get OSC escapes;
    - btop, VS Code, Claude Code, T3 Code;
+     - T3 Code: a copy of the palette in `~/.t3/userdata/themes/nova.json`, for its light appearance and its dark alike (any role a variant lacks would be T3 Code's stock color, so all 61 are filled), named its `defaultTheme`. It is told once to follow the system's light or dark (`defaultAppearance: system`), which it reads from the settings portal live, as GTK sets it here.
    - the greeter mirror in `/var/lib/nova/greeter/` (the palette, the background and its backdrop, or no backdrop when there is none), from which a root path unit sets Chrome's color policy.
 
 ### What a theme can and cannot do
