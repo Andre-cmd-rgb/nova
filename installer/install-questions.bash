@@ -108,9 +108,11 @@ answers_from_file() {
 
 INTERNET=''
 
-# Whether the internet answers, asked once.
-internet() {
-  if [[ -z $INTERNET ]]; then
+# Whether the internet answers: asked once, and with "again" asked again
+# after a no, as at the browser's step, so that a network that came up during
+# the questions (a cable plugged in, an address that came late) brings them.
+internet() { # [again]
+  if [[ -z $INTERNET || ($INTERNET == no && ${1:-} == again) ]]; then
     INTERNET=no
     curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/ && INTERNET=yes
   fi
@@ -379,34 +381,51 @@ step_summary() {
 # The steps in order, Esc stepping back one. The layout is asked only when
 # nova-install-start has not asked it already, and the disk only when nova usb
 # has not picked it (--portable <disk>).
+# The browser's step is there only online, which is asked again when it comes
+# up (internet again): with no question it is passed over, going back as well
+# as forward, and the steps above the questions follow.
 questions_on_screen() { # fingerprint(yes|no): whether to offer enrolling one
-  local steps=() i=0 name trail=" ${NOVA_TRAIL_BEFORE:-} "
+  local steps=() i=0 back=0
   KEYMAP=${NOVA_KEYMAP:-}
   steps=()
   valid_keymap "$KEYMAP" || steps+=(keymap)
   [[ -n $PORTABLE_DISK ]] || steps+=(disk)
   steps+=(encryption you)
   [[ $1 != yes ]] || steps+=(fingerprint)
-  steps+=(computer)
-  ! internet || steps+=(browser)
-  steps+=(summary)
-  for name in "${steps[@]}" install; do
+  steps+=(computer browser summary)
+  questions_trail "${steps[@]}"
+  while ((i < ${#steps[@]})); do
+    [[ -z $ENROLLED_FOR || $ENROLLED_FOR == "$ACCOUNT" ]] || FINGERPRINT='' ENROLLED_FOR=''
+    if [[ ${steps[i]} == browser ]]; then
+      internet again || true
+      questions_trail "${steps[@]}"
+      if ! internet; then
+        if ((back)); then i=$((i - 1)); else i=$((i + 1)); fi
+        continue
+      fi
+    fi
+    if "step_${steps[i]}"; then
+      i=$((i + 1)) back=0
+    elif ((i > 0)); then
+      i=$((i - 1)) back=1
+    else
+      die "nothing was changed."
+    fi
+  done
+}
+
+# The steps above each question (ui.bash's UI_TRAIL): nova-install-start's,
+# these, and the install; the browser's only online.
+questions_trail() { # step...
+  local name trail=" ${NOVA_TRAIL_BEFORE:-} "
+  for name in "$@" install; do
+    [[ $name != browser ]] || internet || continue
     name=$(trail_step "$name")
     name=${name:-Install}
     [[ $trail == *" $name "* ]] || trail+="$name "
   done
   # shellcheck disable=SC2034 # ui.bash's header reads it
   read -r UI_TRAIL <<<"$trail"
-  while ((i < ${#steps[@]})); do
-    [[ -z $ENROLLED_FOR || $ENROLLED_FOR == "$ACCOUNT" ]] || FINGERPRINT='' ENROLLED_FOR=''
-    if "step_${steps[i]}"; then
-      i=$((i + 1))
-    elif ((i > 0)); then
-      i=$((i - 1))
-    else
-      die "nothing was changed."
-    fi
-  done
 }
 
 # ------------------------------------------------------------------ fingerprint

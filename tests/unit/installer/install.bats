@@ -701,8 +701,10 @@ questions_setup() {
   timezones() { printf '%s\n' UTC Europe/Rome; }
   main_kernel() { echo linux-nova; }
   machine_hash() { :; }
-  # No internet unless a test says so: nothing here reaches it.
+  # No internet unless a test says so: nothing here reaches it, and asked
+  # again, the internet is there once $SCRATCH/online is.
   INTERNET=no
+  curl() { [[ -e $SCRATCH/online ]]; }
 }
 
 @test "answers: each question answered from the file, its default where it says nothing" {
@@ -1319,6 +1321,33 @@ sda $((477 * GiB)) false false sata Samsung"
   BROWSER=supernova run install_apps ada
   [[ $output == *"the welcome offers VS Code"* ]]
   [ ! -s "$SCRATCH/ran" ]
+}
+
+@test "screens: a network that comes up during the questions brings the browser question, and its step above them" {
+  questions_setup
+  NOVA_KEYMAP=es NOVA_TRAIL_BEFORE="Keyboard Network"
+  # Offline when the installer started; a cable plugged in since.
+  touch "$SCRATCH/online"
+  stub_gum 0 no "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome firefox erase
+  questions_on_screen no 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "$BROWSER" = firefox ]
+  grep -q 'Browser      Firefox' "$SCRATCH/screens"
+  # Too wide for the test's columns with the browser in, the steps are
+  # counted: the browser's is the sixth of eight.
+  grep -q 'Step 6 of 8  ·  Browser' "$SCRATCH/screens"
+}
+
+@test "screens: offline, Esc on the summary goes back past the browser, which has no question" {
+  questions_setup
+  NOVA_KEYMAP=es
+  stub_gum 0 no "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome '!1' "" Europe/Rome erase
+  questions_on_screen no 2>"$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  fails grep -q 'Your web browser?' "$GUM_LOG"
+  # The computer's questions twice: the time zone is its filter.
+  [ "$(grep -c '^filter' "$GUM_LOG")" -eq 2 ]
 }
 
 @test "screens: online, the browser is asked after the computer, Supernova first, and the summary says it" {
