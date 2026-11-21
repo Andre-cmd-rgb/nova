@@ -96,3 +96,32 @@ packages() { "$REPO_ROOT/tools/arch-packages" --release "$SCRATCH/release.toml" 
   [[ $output == *"the snapshot of 2026/11/11 did not answer"* ]]
   [ ! -e "$SCRATCH/out" ]
 }
+
+# The release caches what this fetches under a key of the files it reads, so
+# a change to one the key leaves out would ship a stale ISO's packages.
+@test "the release's cache key covers every file of the repository it reads" {
+  local key glob file covered
+  local -a globs=() files=()
+  key=$(grep -o "KEY: arch-packages-.*" "$REPO_ROOT/.github/workflows/release.yml")
+  mapfile -t globs < <(grep -o "'[^']*'" <<<"$key" | tr -d "'")
+  ((${#globs[@]}))
+  # Its own files, the ones it names under the checkout ("$root/…"), and
+  # those nova-install --list-packages sources.
+  cd "$REPO_ROOT"
+  for file in $(grep -oE '"\$root"?/[A-Za-z0-9_./*-]+' tools/arch-packages | sed 's/^"\$root"\{0,1\}\///'); do
+    # shellcheck disable=SC2206 # a glob, expanded on purpose
+    files+=($file)
+  done
+  files+=(tools/arch-packages)
+  for file in $(sed -n 's|^ *source "${BASH_SOURCE\[0\]%/\*}/\(.*\)"$|installer/\1|p' installer/nova-install); do files+=("$file"); done
+  ((${#files[@]} > 8))
+  for file in "${files[@]}"; do
+    [[ -f $file ]] || { echo "no $file"; false; }
+    covered=0
+    for glob in "${globs[@]}"; do
+      # shellcheck disable=SC2053 # the key's glob, matched as one
+      [[ $file == $glob ]] && covered=1
+    done
+    ((covered)) || { echo "not in the cache key: $file"; false; }
+  done
+}

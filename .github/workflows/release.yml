@@ -322,7 +322,7 @@ jobs:
           name: release-toml
       - id: key
         env:
-          KEY: arch-packages-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('installer/packages', 'installer/nova-install', 'installer/install-*.bash', 'tools/offline-repo', 'data/hardware/*/packages', 'packaging/*/PKGBUILD', 'tools/arch-packages') }}
+          KEY: arch-packages-${{ needs.pin.outputs.snapshot }}-${{ hashFiles('installer/packages', 'installer/nova-install', 'installer/*.bash', 'tools/offline-repo', 'data/hardware/*/packages', 'data/hardware/bin/nova-hw-packages', 'packaging/*/PKGBUILD', 'tools/arch-packages') }}
         run: echo "key=$KEY" >>"$GITHUB_OUTPUT"
       - id: fetched
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
