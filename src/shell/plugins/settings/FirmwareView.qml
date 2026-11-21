@@ -12,25 +12,27 @@ Section {
   id: root
   title: "FIRMWARE"
   property bool monitor: true
-  property var state: ({})
+  // The job's state, nova-firmware-job's firmware.json; not `state`, which
+  // is Item's own.
+  property var job: ({})
   property string failure: ""
   property bool confirmRestart: false
-  readonly property var devices: state.devices || []
-  readonly property bool busy: launcher.running || state.running === true
+  readonly property var devices: job.devices || []
+  readonly property bool busy: launcher.running || job.running === true
   // An install's: a check that fails says nothing, as Nova's own says when
   // the network is down. The end of fwupdmgr's output, which says what went
   // wrong; Details is not worth a page of it.
   readonly property string error: failure !== "" ? failure
-    : state.action !== "install" ? ""
-    : String(state.error || "").trim().split("\n").slice(-3).join("\n").slice(-300)
-  readonly property bool restart: state.reboot === true && !busy
+    : job.action !== "install" ? ""
+    : String(job.error || "").trim().split("\n").slice(-3).join("\n").slice(-300)
+  readonly property bool restart: job.reboot === true && !busy
   readonly property bool shown: devices.length > 0 || error !== "" || restart
   readonly property string statePath: Quickshell.env("XDG_RUNTIME_DIR") + "/nova/firmware.json"
 
   function readState(text) {
     try {
       var value = JSON.parse(text)
-      if (value && typeof value === "object" && !Array.isArray(value)) state = value
+      if (value && typeof value === "object" && !Array.isArray(value)) job = value
     } catch (e) { /* An absent file has no job yet. */ }
   }
 
@@ -55,7 +57,7 @@ Section {
       onStreamFinished: {
         root.readState(text)
         // Its state is in the runtime folder: none yet this boot.
-        if (root.state.checked !== true && !root.busy) root.check()
+        if (root.job.checked !== true && !root.busy) root.check()
       }
     }
   }

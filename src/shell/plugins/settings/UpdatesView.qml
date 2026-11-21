@@ -36,9 +36,10 @@ Column {
   UpdateRun { id: run }
   readonly property var status: run.status
   readonly property bool alive: run.alive
-  readonly property string state: run.state
+  // Not `state`, which is Item's own.
+  readonly property string runState: run.state
   readonly property bool running: run.running
-  readonly property bool ended: state === "failed" || state === "stopped" || state === "problems"
+  readonly property bool ended: runState === "failed" || runState === "stopped" || runState === "problems"
   readonly property var summary: Model.summary(status, check, alive)
   readonly property real fraction: run.fraction
   readonly property string available: running ? "" : Model.availableVersion(check)
@@ -47,12 +48,12 @@ Column {
 
   Component.onCompleted: checkProc.running = true
 
-  onStateChanged: {
-    if (lastState === "running" && (state === "done" || state === "problems" || state === "failed")) {
+  onRunStateChanged: {
+    if (lastState === "running" && (runState === "done" || runState === "problems" || runState === "failed")) {
       if (!checkProc.running) checkProc.running = true
       root.finished()
     }
-    lastState = state
+    lastState = runState
   }
 
   function start(args) {

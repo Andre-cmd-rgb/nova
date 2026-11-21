@@ -13,7 +13,7 @@ ShellRoot {
     firmware.readState("null")
     check(firmware.busy && firmware.devices.length === 1, "an unreadable state keeps the last complete result")
     firmware.readState('{"running":false,"reboot":true,"devices":[],"error":""}')
-    check(!firmware.busy && firmware.state.reboot, "completed firmware retains its restart requirement")
+    check(!firmware.busy && firmware.job.reboot, "completed firmware retains its restart requirement")
     check(firmware.shown && firmware.restart, "a restart it waits for is shown")
     firmware.readState('{"running":false,"checked":true,"action":"check","devices":[],"error":""}')
     check(!firmware.shown, "nothing to install, nothing shown")
