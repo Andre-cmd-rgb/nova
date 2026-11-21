@@ -11,7 +11,8 @@ import "plugins/settings" as Settings
 // failed is the state as it was, its failure said; a change still shown
 // when a read that began before its command was done comes back; a command
 // that cannot start, said, and the changes after it run all the same; and
-// a read that fails, which keeps a change that took and not one that failed.
+// a read that fails, which keeps a change that took and not one that failed,
+// and says so unless a change's failure is said.
 ShellRoot {
   id: test
 
@@ -169,10 +170,12 @@ ShellRoot {
       state.run(["sh", "-c", "true"], { "lock.seconds": 120 })
       when(() => idle() && state.done === state.numbered, () => {
         same(state.info.lock.seconds, 120, "a change that took, read back broken: still shown")
+        same(state.failure, "Could not read the settings.", "and the read that failed is said")
         stateFile.setText(first)
         state.load()
         when(settled, () => {
           same(state.info.lock.seconds, 300, "read again: what is set is shown")
+          same(state.failure, "", "and the failed read is no longer said")
           finish()
         }, "the state is read again")
       }, "the change that takes runs")

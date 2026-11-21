@@ -13,9 +13,10 @@ import "Asked.js" as Asked
 // state, "bar.transparent": true) is laid over what was read, so that a
 // switch moves as it is clicked, not a command and a read later. It stays
 // laid over until a read begun after its command was done comes back, which
-// has it as it is; a read that fails keeps what is on screen. A change
-// whose command failed, or could not start, goes at once, with its failure
-// said, and the read after has it as it is.
+// has it as it is; a read that fails keeps what is on screen, and says it
+// could not read the settings, unless a change's failure is being said. A
+// change whose command failed, or could not start, goes at once, with its
+// failure said, and the read after has it as it is.
 QtObject {
   id: settings
 
@@ -43,7 +44,33 @@ QtObject {
 
   function startRead() {
     readFrom = done
+    stateProc.heard = false
     stateProc.running = true
+  }
+
+  readonly property string readFailure: "Could not read the settings."
+
+  // The read is done: <text> is what it printed, null for one that never
+  // started.
+  function readEnded(text) {
+    var parsed = null
+    try {
+      parsed = JSON.parse(String(text))
+    } catch (e) {
+      // A truncated or empty read keeps what is on screen.
+    }
+    if (parsed && typeof parsed === "object") {
+      asked = asked.filter(function (change) { return change.number > readFrom })
+      read = parsed
+      loaded = true
+      if (failure === readFailure) failure = ""
+    } else if (failure === "") {
+      failure = readFailure
+    }
+    if (reloadWanted) {
+      reloadWanted = false
+      startRead()
+    }
   }
 
   // Runs <argv>; <changes>, if given, are what it sets, shown at once.
@@ -87,27 +114,21 @@ QtObject {
   }
 
   property Process stateProc: Process {
+    // Whether this read was heard to exit: one that cannot start only
+    // stops running.
+    property bool heard: false
     command: ["nova-settings", "state"]
     stdout: StdioCollector {
+      id: stateOutput
       waitForEnd: true
-      onStreamFinished: {
-        try {
-          var parsed = JSON.parse(String(text))
-          if (parsed && typeof parsed === "object") {
-            settings.asked = settings.asked.filter(function (change) { return change.number > settings.readFrom })
-            settings.read = parsed
-            settings.loaded = true
-          }
-        } catch (e) {
-          // A truncated read keeps what is on screen.
-        }
-      }
     }
     onExited: {
-      if (settings.reloadWanted) {
-        settings.reloadWanted = false
-        settings.startRead()
-      }
+      heard = true
+      settings.readEnded(stateOutput.text)
+    }
+    onRunningChanged: if (!running && !heard) {
+      heard = true
+      settings.readEnded(null)
     }
   }
 
