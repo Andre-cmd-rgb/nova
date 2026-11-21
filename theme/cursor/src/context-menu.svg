@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- hotspot 4 2.7 -->
+<g class="layer">
+<!-- part dart -->
+</g>
+<g class="layer">
+<!-- part badge -->
+<circle class="glyph-fill" transform="translate(@BADGE_X@ @BADGE_Y@)" cx="-2.1" cy="0" r="0.85"/>
+<circle class="glyph-fill" transform="translate(@BADGE_X@ @BADGE_Y@)" cx="0" cy="0" r="0.85"/>
+<circle class="glyph-fill" transform="translate(@BADGE_X@ @BADGE_Y@)" cx="2.1" cy="0" r="0.85"/>
+</g>
+</svg>

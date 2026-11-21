@@ -1,0 +1,74 @@
+# Every name Nova's cursors answer to: a design (theme/cursor/src/<design>.svg)
+# and then the names that ask for it. A name missing here falls through to
+# another theme's cursor, or to the X server's own, so the list is all of
+# them: the CSS names, which Wayland's cursor-shape protocol and GTK 4 ask
+# for (with cursor-shape's dnd-ask and all-resize); the X11 cursor font's,
+# which X11 apps, Java and SDL ask for; GTK 3's and Chromium's fallbacks (the
+# dnd-* names, h_double_arrow); Qt's names and the hashes Qt and Mozilla ask
+# for. Each is a link to its design in cursors/, and an override of it in
+# Hyprcursor's. theme/cursor/build --check checks both have every one.
+
+# The pointer, and the pointer with a badge.
+default arrow left_ptr top_left_arrow dnd-move
+right_ptr draft_large draft_small
+center_ptr up_arrow
+context-menu dnd-ask
+help question_arrow whats_this left_ptr_help 5c6cd98b3f3ebcb1f9c7f1c204630408 d9ce0ab605698f320427677b458ad60b
+copy dnd-copy 1081e37283d90000800003c07f3ef6bf 6407b0e94181790501fd1e167b474872 b66166c04f8c3109214a4fbd64a50fc8 08ffe1cb5fe6fc01f906f1c063814ccf
+alias link dnd-link 3085a0e285430894940527032f8b26df 640fb0e74195791501fd1ed57b41487f a2a266d0498c3104214a47bd64ab0fc8
+no-drop dnd-none dnd_no_drop dnd-no-drop
+progress left_ptr_watch half-busy 3ecb610c1bf2410f44200f48c40d3599 08e8e1c95fe2fc01f976f1e063a24ccd 00000000000000020006000e7e9ffc3f
+
+# Busy, and not allowed (SDL's "no" is the cursor font's pirate).
+wait watch clock
+not-allowed crossed_circle forbidden circle pirate 03b6e0fcb3499374a867c041f52298f0
+
+# Hands.
+pointer hand2 hand pointing_hand e29285e634086352946a0e7090d73106 9d800788f1b08800ae810202380a0822
+grab openhand hand1
+grabbing closedhand dragging fcf21c00b30f7e3f83fe0dfd12e71cff
+
+# Text, precision, cells.
+text xterm ibeam
+vertical-text
+crosshair cross tcross cross_reverse diamond_cross
+cell plus
+dotbox dot_box_mask draped_box icon target
+X_cursor x-cursor
+
+# Moving and resizing.
+move fleur all-scroll all-resize size_all 4498f0e0c1937ffe01fd06f973665830 9081237383d90e509aa00f00170e968f
+ns-resize sb_v_double_arrow v_double_arrow double_arrow size_ver size-ver 00008160000006810000408080010102
+ew-resize sb_h_double_arrow h_double_arrow size_hor size-hor 028006030e0e7ebffc7f7070c0600140
+nesw-resize fd_double_arrow size_bdiag fcf1c3c7cd4491d801f1e1c78f100000 50585d75b494802d0151028115016902
+nwse-resize bd_double_arrow size_fdiag sizing c7088f0f3e6c8088236ef8e1e3e70000 38c5dff7c7b8962045400281044508d2
+col-resize split_h 14fef782d02440884392942c11205230
+row-resize split_v 2870a09082c103050810ffdffffe0204
+n-resize top_side
+s-resize bottom_side
+e-resize right_side
+w-resize left_side
+ne-resize top_right_corner
+nw-resize top_left_corner
+se-resize bottom_right_corner
+sw-resize bottom_left_corner
+
+# Single arrows (scroll bars), and the cursor font's tees and angles.
+sb_up_arrow up-arrow based_arrow_up
+sb_down_arrow down-arrow based_arrow_down
+sb_left_arrow left-arrow
+sb_right_arrow right-arrow
+top_tee
+bottom_tee
+left_tee
+right_tee
+ul_angle
+ur_angle
+ll_angle
+lr_angle
+
+# Zoom and tools.
+zoom-in zoom_in
+zoom-out zoom_out
+pencil draft
+color-picker

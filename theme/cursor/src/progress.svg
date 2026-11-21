@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- hotspot 4 2.7 -->
+<!-- frames 24 40 -->
+<g class="layer">
+<!-- part dart -->
+</g>
+<g class="layer">
+<circle class="line" cx="@BADGE_X@" cy="@BADGE_Y@" r="@BADGE_RING@"/>
+<path class="accent-line" transform="translate(@BADGE_X@ @BADGE_Y@) rotate(@ANGLE@)" d="@BADGE_ARC@"/>
+</g>
+</svg>

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- hotspot 10 1.75 -->
+<!-- A hand pointing up, each part a layer, so their white edges part them: the finger, three folded beside it, and the palm with its thumb over their roots. -->
+<g class="layer">
+<rect class="fill" x="8.6" y="2.75" width="2.8" height="11.5" rx="1.4"/>
+</g>
+<g class="layer">
+<rect class="fill" x="16.4" y="10.5" width="2.5" height="5" rx="1.25"/>
+</g>
+<g class="layer">
+<rect class="fill" x="14" y="9.5" width="2.7" height="6" rx="1.35"/>
+</g>
+<g class="layer">
+<rect class="fill" x="11.6" y="8.75" width="2.8" height="6.5" rx="1.4"/>
+</g>
+<g class="layer">
+<rect class="fill" x="8.6" y="13.25" width="10.3" height="7" rx="3"/>
+<rect class="fill" x="-1.35" y="0" width="2.7" height="5.25" rx="1.35" transform="translate(10 17.5) rotate(118)"/>
+</g>
+</svg>

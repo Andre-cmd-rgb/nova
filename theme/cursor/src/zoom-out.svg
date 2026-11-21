@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- hotspot 10 10 -->
+<g class="layer">
+<rect class="fill" x="-1.6" y="0" width="3.2" height="6.25" rx="1.6" transform="translate(14.25 14.25) rotate(-45)"/>
+<circle class="paper" cx="10" cy="10" r="5.5"/>
+<circle class="line" cx="10" cy="10" r="5.5"/>
+<path class="ink-glyph" d="M7.4 10H12.6"/>
+</g>
+</svg>

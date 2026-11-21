@@ -1,0 +1,41 @@
+# What every cursor of Nova's is drawn with, read by theme/cursor/build. The
+# sources in theme/cursor/src are drawn on a grid of 24 units, a unit being a
+# pixel at the size of 24; these are in the same units. Change one here and
+# every cursor follows.
+
+# The body: a deep charcoal, on everything from a white page to a black
+# terminal, with a white edge round it and a soft shadow under it.
+INK='#141820'
+EDGE_COLOR='#ffffff'
+# The white edge, outside every shape.
+EDGE=1.25
+# The corners of every filled shape, rounded by this much (the lines' ends and
+# joins are round too).
+RADIUS=0.5
+# Arrows, the I-beam, the crosshair, rings: one weight.
+LINE=2
+# The marks inside a badge or a lens.
+GLYPH=1.5
+# The shadow: blurred, a little below, faint.
+SHADOW_BLUR=0.85
+SHADOW_Y=0.85
+SHADOW_OPACITY=0.36
+
+# The colour of the spinner and of the badges (copy, link, help, menu), with
+# white marks on it. A clear blue, legible on the charcoal of the spinner's
+# track (4.4:1) and under white marks (4.1:1).
+ACCENT='#3478f6'
+
+# The badges' circle: its radius (it grows by RADIUS, as every filled shape
+# does), and where its centre is.
+BADGE_R=3.75
+BADGE_X=17.25
+BADGE_Y=17.25
+
+# XCursor's sizes, each drawn from the SVG at that size: 24 is a display at 1x;
+# 48 at 2x, and what 1.6x asks for from apps that load cursors themselves
+# (24 times the scale rounded up) and from X11 apps under Nova's XWayland,
+# drawn at 2 (nova-hyprland-x11-scale); 72 and 96 at 3x and 4x. The sizes in
+# between serve apps that ask for 24 times a fractional scale: XCursor gives
+# the nearest. Hyprland draws its own from the SVGs, at any size.
+XCURSOR_SIZES='24 32 40 48 64 72 96'

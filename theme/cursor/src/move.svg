@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- hotspot 12 12 -->
+<g class="layer">
+<path class="line" d="M12 7.5V16.5M7.5 12H16.5"/>
+<!-- part head translate(12 4) rotate(-90) -->
+<!-- part head translate(20 12) -->
+<!-- part head translate(12 20) rotate(90) -->
+<!-- part head translate(4 12) rotate(180) -->
+</g>
+</svg>

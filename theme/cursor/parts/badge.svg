@@ -1,0 +1,2 @@
+<!-- A badge's circle, bottom right of the pointer. -->
+<circle class="accent" cx="@BADGE_X@" cy="@BADGE_Y@" r="@BADGE_R@"/>

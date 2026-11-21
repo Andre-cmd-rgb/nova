@@ -1,0 +1,4 @@
+<!-- The pointer: a dart with no tail, its tip at 4.4,3.4, its sides 15
+     long at 9 and 53 degrees from upright, its base drawn in towards the tip.
+     Every cursor with the pointer in it has this one. -->
+<path class="fill" d="M4.51 4.09Q4.4 3.4 4.96 3.82L15.26 11.58Q16.38 12.43 15.04 12.03Q8.42 10.09 7.03 16.84Q6.75 18.22 6.53 16.83Z"/>

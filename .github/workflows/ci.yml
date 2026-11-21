@@ -42,10 +42,12 @@ jobs:
           # cmark-gfm: the docs' pages of the site (tools/build-site).
           # multilib, archlinux-appstream-data and flatpak: what the App Center's
           # recipes are checked against (tools/apps-recipes-check).
+          # librsvg, xorg-xcursorgen, hyprcursor: the cursor theme, made as it is
+          # installed (theme/cursor/build), and its test.
           printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>/etc/pacman.conf
           pacman -Syu --noconfirm --needed git sudo shellcheck actionlint bats parallel jq lua rust qt6-declarative \
             quickshell ttf-jetbrains-mono-nerd noto-fonts sway grim mesa gnome-keyring glib2 libsecret socat libpulse tzdata dbus gtk3 cmark-gfm \
-            archlinux-appstream-data flatpak
+            archlinux-appstream-data flatpak librsvg xorg-xcursorgen hyprcursor
           useradd -m builder
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

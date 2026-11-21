@@ -1,0 +1,391 @@
+#!/bin/bash
+# Nova's cursor theme, made from the SVGs in theme/cursor/src.
+#
+#   theme/cursor/build <theme dir>          the whole theme, then --check on it
+#   theme/cursor/build --svg <dir>          only the drawn SVGs, one a cursor
+#                                           (and a frame), as both themes take them
+#   theme/cursor/build --check <theme dir>  what a theme must be, checked
+#
+# One theme, Nova, in two forms in one folder (/usr/share/icons/Nova):
+# Hyprcursor's (manifest.hl, hyprcursors/), the SVGs themselves, which
+# Hyprland draws at whatever size a display's scale asks for; and XCursor's
+# (cursors/, index.theme), the same SVGs drawn at XCURSOR_SIZES (style), for
+# the apps that draw their own cursor and for X11 apps.
+#
+# A source draws one cursor on a grid of 24 units, in layers, each element
+# named by its class for what it is (a filled shape, a line, an accent, a mark
+# on a badge); this script gives each its look from theme/cursor/style. A
+# layer is drawn as a shadow, then a white edge round all its shapes, then the
+# shapes, then the marks on them; a layer drawn over another (a badge on the
+# pointer) has its own edge, which parts the two. Comments in a source:
+#   <!-- hotspot X Y [free] -->  the point that clicks, in units; free when it
+#                                need not be on the drawing (a ring's centre)
+#   <!-- frames N DELAY -->      an animation: N frames DELAY ms apart, each
+#                                with @ANGLE@ as 360/N times its number
+#   <!-- part NAME [TRANSFORM] --> theme/cursor/parts/NAME.svg's elements, here,
+#                                moved by TRANSFORM (an SVG transform)
+# Every name a cursor answers to, each toolkit's own, is in theme/cursor/names.
+#
+# Needs rsvg-convert (librsvg), xcursorgen (xorg-xcursorgen) and
+# hyprcursor-util (hyprcursor); --check needs only bsdtar and od. The same
+# sources make the same bytes: the Hyprcursor files are zips, whose entries
+# are dated by a fixed time here.
+set -euo pipefail
+
+here=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=theme/cursor/style
+source "$here/style"
+
+die() { printf 'cursor build: %s\n' "$*" >&2; exit 1; }
+
+# The style's numbers as the SVGs take them: the white edge of a filled shape
+# is a stroke outside its rounded corners, a line's is a wider line under it.
+tokens() {
+  # A badge's ring (no-drop, progress) is as wide as a filled badge, whose
+  # circle grows by the corner radius as every filled shape does.
+  awk -v edge="$EDGE" -v radius="$RADIUS" -v line="$LINE" -v badge="$BADGE_R" 'BEGIN {
+    printf "s|@FILL_HALO@|%g|g\n", 2 * (edge + radius)
+    printf "s|@LINE_HALO@|%g|g\n", line + 2 * edge
+    printf "s|@RADIUS2@|%g|g\n", 2 * radius
+    ring = badge + radius - line / 2
+    printf "s|@BADGE_RING@|%g|g\n", ring
+    # The progress badge'"'"'s arc on that ring: 110 degrees, from -145 to -35.
+    pi = atan2(0, -1); a = -145 * pi / 180; b = -35 * pi / 180
+    printf "s|@BADGE_ARC@|M%.2f %.2fA%g %g 0 0 1 %.2f %.2f|g\n", ring * cos(a), ring * sin(a), ring, ring, ring * cos(b), ring * sin(b)
+  }'
+  local name
+  for name in INK EDGE_COLOR ACCENT LINE GLYPH SHADOW_BLUR SHADOW_Y SHADOW_OPACITY BADGE_R BADGE_X BADGE_Y; do
+    printf 's|@%s@|%s|g\n' "$name" "${!name}"
+  done
+}
+
+# A source's comment: <!-- key values -->, the values.
+meta() { # source key
+  sed -n "s|^[[:space:]]*<!--[[:space:]]*$2[[:space:]]\{1,\}\(.*[^[:space:]]\)[[:space:]]*-->.*|\1|p" "$1" | head -n 1
+}
+
+# The SVG a source draws, its layers made into passes; @ANGLE@ is the frame's.
+draw() { # source angle
+  {
+    cat <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+<defs><filter id="shadow" x="-50%" y="-50%" width="200%" height="200%" color-interpolation-filters="sRGB"><feGaussianBlur in="SourceAlpha" stdDeviation="@SHADOW_BLUR@"/><feOffset dy="@SHADOW_Y@" result="blur"/><feFlood flood-color="#000000" flood-opacity="@SHADOW_OPACITY@"/><feComposite in2="blur" operator="in"/></filter></defs>
+SVG
+    awk -v parts="$here/parts" '
+      function look(class, pass) {
+        if (pass == "halo") {
+          if (class ~ /^(fill|accent|paper)$/)
+            return " fill=\"@EDGE_COLOR@\" stroke=\"@EDGE_COLOR@\" stroke-width=\"@FILL_HALO@\" stroke-linejoin=\"round\""
+          if (class ~ /^(line|accent-line)$/)
+            return " fill=\"none\" stroke=\"@EDGE_COLOR@\" stroke-width=\"@LINE_HALO@\" stroke-linecap=\"round\" stroke-linejoin=\"round\""
+        } else if (pass == "body") {
+          if (class == "fill") return " fill=\"@INK@\" stroke=\"@INK@\" stroke-width=\"@RADIUS2@\" stroke-linejoin=\"round\""
+          if (class == "accent") return " fill=\"@ACCENT@\" stroke=\"@ACCENT@\" stroke-width=\"@RADIUS2@\" stroke-linejoin=\"round\""
+          if (class == "paper") return " fill=\"@EDGE_COLOR@\" stroke=\"@EDGE_COLOR@\" stroke-width=\"@RADIUS2@\" stroke-linejoin=\"round\""
+          if (class == "line") return " fill=\"none\" stroke=\"@INK@\" stroke-width=\"@LINE@\" stroke-linecap=\"round\" stroke-linejoin=\"round\""
+          if (class == "accent-line") return " fill=\"none\" stroke=\"@ACCENT@\" stroke-width=\"@LINE@\" stroke-linecap=\"round\" stroke-linejoin=\"round\""
+        } else {
+          if (class == "glyph") return " fill=\"none\" stroke=\"@EDGE_COLOR@\" stroke-width=\"@GLYPH@\" stroke-linecap=\"round\" stroke-linejoin=\"round\""
+          if (class == "glyph-fill") return " fill=\"@EDGE_COLOR@\""
+          if (class == "ink-glyph") return " fill=\"none\" stroke=\"@INK@\" stroke-width=\"@GLYPH@\" stroke-linecap=\"round\" stroke-linejoin=\"round\""
+          if (class == "ink-glyph-fill") return " fill=\"@INK@\""
+        }
+        return ""
+      }
+      function pass(name,   i, out, class, a) {
+        out = ""
+        for (i = 1; i <= n; i++) {
+          class = classes[i]
+          a = look(class, name)
+          if (a == "") continue
+          line = elements[i]
+          sub(/ class="[a-z-]+"/, a, line)
+          out = out line "\n"
+        }
+        return out
+      }
+      function add(text,   class) {
+        if (text !~ /^[ \t]*<(path|circle|rect|line|polyline|polygon|ellipse)[ \t]/) return
+        if (!match(text, / class="[a-z-]+"/)) { printf "an element without a class: %s\n", text > "/dev/stderr"; failed = 1; return }
+        class = substr(text, RSTART + 8, RLENGTH - 9)
+        if (class !~ /^(fill|accent|paper|line|accent-line|glyph|glyph-fill|ink-glyph|ink-glyph-fill)$/) {
+          printf "an unknown class: %s\n", class > "/dev/stderr"; failed = 1; return
+        }
+        sub(/^[ \t]+/, "", text)
+        n++; elements[n] = text; classes[n] = class
+      }
+      function emit(   halo, body, top, open) {
+        open = transform == "" ? "<g>" : "<g transform=\"" transform "\">"
+        halo = pass("halo"); body = pass("body"); top = pass("top")
+        if (halo != "") printf "<g filter=\"url(#shadow)\">%s\n%s</g></g>\n%s\n%s</g>\n", open, halo, open, halo
+        if (body != "") printf "%s\n%s</g>\n", open, body
+        if (top != "") printf "%s\n%s</g>\n", open, top
+      }
+      /<g class="layer"/ {
+        layer = 1; n = 0; transform = ""
+        if (match($0, /transform="[^"]*"/)) transform = substr($0, RSTART + 11, RLENGTH - 12)
+        next
+      }
+      # A part, moved by the transform after its name, if any.
+      layer && /<!--[ \t]*part[ \t]/ {
+        name = $0; sub(/.*<!--[ \t]*part[ \t]+/, "", name); sub(/[ \t]*-->.*/, "", name)
+        moved = ""
+        if (match(name, /[ \t]/)) { moved = substr(name, RSTART + 1); name = substr(name, 1, RSTART - 1); sub(/^[ \t]+/, "", moved) }
+        file = parts "/" name ".svg"
+        if ((getline text < file) <= 0) { printf "no part %s\n", file > "/dev/stderr"; failed = 1; next }
+        do {
+          if (moved != "" && text ~ /^[ \t]*<[a-z]/) {
+            if (text ~ / transform="/) sub(/ transform="/, " transform=\"" moved " ", text)
+            else sub(/^[ \t]*<[a-z]+/, "& transform=\"" moved "\"", text)
+          }
+          add(text)
+        } while ((getline text < file) > 0)
+        close(file)
+        next
+      }
+      layer && /<\/g>/ { emit(); layer = 0; next }
+      layer { add($0) }
+      END { exit failed }
+    ' "$1"
+    printf '</svg>\n'
+  } | sed -e "s|@ANGLE@|$2|g" -f <(tokens)
+}
+
+# Every design: theme/cursor/src/<name>.svg.
+designs() {
+  local file
+  for file in "$here"/src/*.svg; do
+    file=${file##*/}
+    printf '%s\n' "${file%.svg}"
+  done
+}
+
+# The frames' angles, one a line: one frame, at 0, when it is not animated.
+angles() { # source
+  local frames
+  frames=$(meta "$1" frames)
+  [[ -n $frames ]] || { echo 0; return; }
+  awk -v n="${frames%% *}" 'BEGIN { for (i = 0; i < n; i++) printf "%g\n", i * 360 / n }'
+}
+
+# A design's SVGs: <out>/<name>.svg, or <name>-01.svg and on for its frames.
+svgs() { # name out
+  local source=$here/src/$1.svg angle i=0
+  local -a all
+  mapfile -t all < <(angles "$source")
+  for angle in "${all[@]}"; do
+    i=$((i + 1))
+    if ((${#all[@]} == 1)); then
+      draw "$source" "$angle" >"$2/$1.svg"
+    else
+      draw "$source" "$angle" >"$2/$1-$(printf '%02d' "$i").svg"
+    fi
+  done
+}
+
+# A hotspot in pixels at a size: the nearest pixel corner to the point, as
+# Hyprcursor rounds it too.
+pixel() { # units size
+  awk -v u="$1" -v s="$2" 'BEGIN { printf "%d", u * s / 24 + 0.5 }'
+}
+
+# One design's XCursor file, from its SVGs in <work>/svg, drawn at each size.
+xcursor() { # name work
+  local name=$1 work=$2 svg size x y delay hotspot frames
+  local png=$work/png/$name config=$work/png/$name.config
+  hotspot=$(meta "$here/src/$name.svg" hotspot)
+  frames=$(meta "$here/src/$name.svg" frames)
+  delay=${frames#* }
+  [[ -n $frames ]] || delay=''
+  read -r x y _ <<<"$hotspot"
+  mkdir -p "$png"
+  : >"$config"
+  for size in $XCURSOR_SIZES; do
+    for svg in "$work/svg/$name.svg" "$work/svg/$name"-[0-9][0-9].svg; do
+      [[ -f $svg ]] || continue
+      svg=${svg##*/}
+      rsvg-convert --width "$size" --height "$size" --output "$png/${svg%.svg}-$size.png" "$work/svg/$svg"
+      printf '%s %s %s %s %s\n' "$size" "$(pixel "$x" "$size")" "$(pixel "$y" "$size")" "$png/${svg%.svg}-$size.png" "$delay" >>"$config"
+    done
+  done
+  xcursorgen "$config" "$work/cursors/$name"
+}
+
+# One design's Hyprcursor folder: its SVGs, and what it answers to and clicks
+# with, as hyprcursor-util packs them.
+hyprcursor() { # name work
+  local name=$1 work=$2 x y delay frames svg alias
+  local dir=$work/hyprcursor/hyprcursors/$name
+  read -r x y _ <<<"$(meta "$here/src/$name.svg" hotspot)"
+  frames=$(meta "$here/src/$name.svg" frames)
+  delay=${frames#* }
+  mkdir -p "$dir"
+  {
+    printf 'resize_algorithm = bilinear\n'
+    awk -v x="$x" -v y="$y" 'BEGIN { printf "hotspot_x = %.6f\nhotspot_y = %.6f\n", x / 24, y / 24 }'
+    for alias in $(aliases "$name"); do printf 'define_override = %s\n' "$alias"; done
+    for svg in "$work/svg/$name.svg" "$work/svg/$name"-[0-9][0-9].svg; do
+      [[ -f $svg ]] || continue
+      cp -- "$svg" "$dir/"
+      if [[ -n $frames ]]; then
+        printf 'define_size = 0, %s, %s\n' "${svg##*/}" "$delay"
+      else
+        printf 'define_size = 0, %s\n' "${svg##*/}"
+      fi
+    done
+  } >"$dir/meta.hl"
+}
+
+# The names a design answers to besides its own (theme/cursor/names).
+aliases() { # name
+  awk -v name="$1" '!/^#/ && $1 == name { for (i = 2; i <= NF; i++) print $i }' "$here/names"
+}
+
+# Every name the theme must answer to: the designs and their aliases.
+required() {
+  awk '!/^#/ && NF { for (i = 1; i <= NF; i++) print $i }' "$here/names"
+}
+
+work='' # build's scratch folder, removed as the script exits
+build() { # theme dir
+  local out=$1 name alias jobs tool
+  for tool in rsvg-convert xcursorgen hyprcursor-util; do
+    command -v "$tool" >/dev/null || die "$tool is not installed"
+  done
+  work=$(mktemp -d)
+  trap 'rm -rf -- "$work"' EXIT
+  mkdir -p "$work/svg" "$work/png" "$work/cursors" "$work/hyprcursor/hyprcursors"
+
+  while read -r name; do
+    [[ -n $(meta "$here/src/$name.svg" hotspot) ]] || die "src/$name.svg has no hotspot"
+    svgs "$name" "$work/svg"
+  done < <(designs)
+
+  # Drawn side by side: a few hundred PNGs.
+  jobs=$(nproc 2>/dev/null || echo 2)
+  designs | xargs -P "$jobs" -I '{}' "$0" --xcursor '{}' "$work"
+
+  while read -r name; do
+    hyprcursor "$name" "$work"
+  done < <(designs)
+  printf 'name = Nova\ndescription = Nova'"'"'s cursors\nversion = 1.0\ncursors_directory = hyprcursors\n' \
+    >"$work/hyprcursor/manifest.hl"
+  # Every file dated alike, so the zips are the same each time.
+  find "$work/hyprcursor" -exec touch -h -d '1980-01-02 00:00:00 UTC' {} +
+  TZ=UTC hyprcursor-util --create "$work/hyprcursor" --output "$work" >/dev/null
+
+  rm -rf -- "$out/cursors" "$out/hyprcursors"
+  mkdir -p "$out/cursors" "$out/hyprcursors"
+  cp -- "$work/theme_Nova/manifest.hl" "$out/manifest.hl"
+  cp -- "$work/theme_Nova/hyprcursors/"*.hlc "$out/hyprcursors/"
+  cp -- "$work/cursors/"* "$out/cursors/"
+  while read -r name; do
+    for alias in $(aliases "$name"); do
+      ln -sfn -- "$name" "$out/cursors/$alias"
+    done
+  done < <(designs)
+  printf '[Icon Theme]\nName=Nova\nComment=Nova'"'"'s cursors\n' >"$out/index.theme"
+  # Readable by all whatever the umask; links keep their own.
+  chmod -R u=rwX,go=rX -- "$out"
+  check "$out"
+}
+
+# An XCursor file's images: "size width height xhot yhot delay alpha-at-hotspot"
+# a line, read from its table of contents and its image headers.
+images() { # file
+  local file=$1 count i entry type size pos
+  count=$(od -An -t u4 -j 12 -N 4 -- "$file" | tr -d ' ')
+  for ((i = 0; i < count; i++)); do
+    read -r type size pos < <(od -An -w12 -t u4 -j $((16 + i * 12)) -N 12 -- "$file")
+    ((type == 4294770690)) || continue # an image, not a comment
+    read -r _ _ _ _ w h x y delay < <(od -An -w36 -t u4 -j "$pos" -N 36 -- "$file")
+    entry="$size $w $h $x $y $delay"
+    if ((x < w && y < h)); then
+      entry+=" $(od -An -t u1 -j $((pos + 36 + (y * w + x) * 4 + 3)) -N 1 -- "$file" | tr -d ' ')"
+    else
+      entry+=" -1"
+    fi
+    printf '%s\n' "$entry"
+  done
+}
+
+check() { # theme dir
+  local dir=$1 failed=0 name file target hlc problems
+  fail() { printf 'cursor check: %s\n' "$*" >&2; failed=1; }
+  grep -qsx 'Name=Nova' "$dir/index.theme" || fail "no index.theme naming Nova"
+  # A theme that inherits one is merged with it, and Hyprland's XCursor
+  # loader takes a name from whichever folder sorts first: Adwaita's before
+  # Nova's. The theme has every name itself.
+  ! grep -q '^Inherits' "$dir/index.theme" 2>/dev/null || fail "index.theme inherits another theme"
+  grep -qx 'cursors_directory = hyprcursors' "$dir/manifest.hl" 2>/dev/null || fail "no manifest.hl for hyprcursors/"
+
+  # XCursor: every name, as a file or a link to one beside it.
+  while read -r name; do
+    [[ -e $dir/cursors/$name ]] || fail "XCursor has no $name"
+  done < <(required)
+  for file in "$dir"/cursors/*; do
+    if [[ -L $file ]]; then
+      target=$(readlink -- "$file")
+      [[ $target != */* && -f $dir/cursors/$target && ! -L $dir/cursors/$target ]] ||
+        fail "${file##*/} links to $target, not to a cursor beside it"
+    fi
+  done
+
+  # Every drawn file: each size, its hotspot on the drawing, and an animation
+  # with as many frames at each size, each with a delay.
+  for file in "$dir"/cursors/*; do
+    [[ -L $file ]] && continue
+    name=${file##*/}
+    problems=$(images "$file" | awk -v sizes="$XCURSOR_SIZES" -v free="$(meta "$here/src/$name.svg" hotspot | grep -c free || true)" '
+      { n[$1]++; if ($2 != $1 || $3 != $1) print "a " $2 "x" $3 " image at size " $1
+        if ($7 < 0) print "its hotspot " $4 "," $5 " is outside its " $1 "px image"
+        else if (!free && $7 < 96) print "its hotspot " $4 "," $5 " is off the drawing at " $1 "px (alpha " $7 ")"
+        if (n[$1] > 1 && $6 <= 0) print "a frame without a delay at " $1 "px" }
+      END { split(sizes, want, " ")
+        for (i in want) { if (!(want[i] in n)) print "no image at " want[i] "px"; else if (n[want[i]] != n[want[1]]) print n[want[i]] " frames at " want[i] "px, " n[want[1]] " at " want[1] "px" } }')
+    [[ -z $problems ]] || while read -r line; do fail "$name: $line"; done <<<"$problems"
+  done
+
+  # Hyprcursor: every name a shape's own or one it stands in for, each
+  # shape's hotspot inside it and its pictures in its file.
+  declare -A answers=()
+  for hlc in "$dir"/hyprcursors/*.hlc; do
+    [[ -f $hlc ]] || { fail "no Hyprcursor shapes"; break; }
+    name=${hlc##*/}
+    name=${name%.hlc}
+    answers[$name]=1
+    local meta_text listing
+    meta_text=$(bsdtar -xOf "$hlc" meta.hl 2>/dev/null) || { fail "$name.hlc has no meta.hl"; continue; }
+    listing=$(bsdtar -tf "$hlc")
+    while read -r alias; do answers[$alias]=1; done < <(sed -n 's/^define_override = //p' <<<"$meta_text")
+    awk '/^hotspot_[xy] = / { v = $3 + 0; if (v < 0 || v > 1) exit 1 }' <<<"$meta_text" || fail "$name.hlc: a hotspot outside it"
+    while read -r picture; do
+      grep -qxF -- "$picture" <<<"$listing" || fail "$name.hlc: no $picture in it"
+    done < <(sed -n 's/^define_size = [0-9]*, \([^,]*\).*/\1/p' <<<"$meta_text")
+    if (($(grep -c '^define_size' <<<"$meta_text") > 1)) && grep '^define_size' <<<"$meta_text" | grep -qvE ', [1-9][0-9]*$'; then
+      fail "$name.hlc: a frame without a delay"
+    fi
+  done
+  while read -r name; do
+    [[ -n ${answers[$name]:-} ]] || fail "Hyprcursor has no $name"
+  done < <(required)
+  return "$failed"
+}
+
+case ${1:-} in
+  --svg)
+    [[ -n ${2:-} ]] || die "usage: theme/cursor/build --svg <dir>"
+    mkdir -p "$2"
+    while read -r name; do svgs "$name" "$2"; done < <(designs)
+    ;;
+  --check)
+    [[ -d ${2:-} ]] || die "usage: theme/cursor/build --check <theme dir>"
+    check "$2"
+    ;;
+  --xcursor) # one design, for build's xargs
+    xcursor "$2" "$3"
+    ;;
+  -h | --help) sed -n '2,/^set /p' "$0" | sed '$d; s/^# \{0,1\}//' ;;
+  -* | '') die "usage: theme/cursor/build [--svg | --check] <dir>" ;;
+  *) build "$1" ;;
+esac

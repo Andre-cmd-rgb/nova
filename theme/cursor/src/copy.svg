@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+<!-- hotspot 4 2.7 -->
+<g class="layer">
+<!-- part dart -->
+</g>
+<g class="layer">
+<!-- part badge -->
+<path class="glyph" transform="translate(@BADGE_X@ @BADGE_Y@)" d="M-2.2 0H2.2M0 -2.2V2.2"/>
+</g>
+</svg>

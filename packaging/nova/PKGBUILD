@@ -167,6 +167,9 @@ depends=(
 makedepends=(
   git            # pkgver() and the VCS source
   jq             # tools/plugin-index
+  librsvg        # rsvg-convert: the cursors drawn at XCursor's sizes (theme/cursor/build)
+  xorg-xcursorgen # and packed as XCursor files
+  hyprcursor     # hyprcursor-util: and packed as Hyprcursor's
   rust
 )
 checkdepends=(

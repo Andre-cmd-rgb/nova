@@ -1,0 +1,3 @@
+<!-- An arrow's head: a small dart, its tip at 0,0 pointing right, its back
+     drawn in like the pointer's base. A shaft meets it from the left. -->
+<path class="fill" d="M0 0L-4.6 -3.4Q-3.4 0 -4.6 3.4Z"/>
