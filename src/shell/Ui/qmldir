@@ -26,6 +26,7 @@ PanelToolTip PanelToolTip.qml
 PluggedOutputs PluggedOutputs.qml
 PointerMoveGate PointerMoveGate.qml
 Remap Remap.qml
+ServiceHold ServiceHold.qml
 TextField TextField.qml
 Toggle Toggle.qml
 ToggleSwitch ToggleSwitch.qml

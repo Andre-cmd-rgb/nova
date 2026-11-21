@@ -85,7 +85,8 @@ Each screen's bar has a copy of every widget, so a widget does no work of
 its own: no `Process`, polling `Timer`, watched file or other watcher. The
 work is its plugin's service's, once for all the copies. The widget names
 the service in `sharedId`, reads it as `shared`, and holds it while the copy
-lives. A service built on `Ui/BarWidgetService.qml` works while a copy holds
+lives (`Ui/ServiceHold.qml`, which a part of a widget, such as an indicator,
+uses by itself). A service built on `Ui/BarWidgetService.qml` works while a copy holds
 it (`wanted`) and rests while none does. It reads its settings from the
 first copy's entry with `setting(name, fallback)`, and `panelOpen` tells
 whether a copy's panel is open. A watch shared with the rest of the shell,
@@ -135,7 +136,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Background | `nova.background` | service `background/Background.qml` | the desktop's background on every screen |
 | [Bar](bar/README.md) | `nova.bar` | bar `bar/Bar.qml` | the bar along one edge of every screen |
 | Active window | `nova.active-window` | widget `bar/widgets/ActiveWindow.qml` | the focused window's title |
-| Indicators | `nova.indicators` | widget `bar/widgets/Indicators.qml` | switches: recording, night light, do not disturb, Caffeine |
+| Indicators | `nova.indicators` | service `bar/widgets/RecorderSearch.qml`, widget `bar/widgets/Indicators.qml` | switches: recording, night light, do not disturb, Caffeine; the recorder looked for once for every screen |
 | Keyboard layout | `nova.keyboard-layout` | service `bar/widgets/KeyboardLayoutSeat.qml`, widget `bar/widgets/KeyboardLayout.qml` | the layout's short code, with more than one layout, read once for every screen |
 | Microphone | `nova.microphone` | widget `bar/widgets/Microphone.qml` | the default microphone, muted or in use |
 | Spacer | `nova.spacer` | widget `bar/widgets/Spacer.qml` | room along the bar, of its entry's `size` |

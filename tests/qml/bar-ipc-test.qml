@@ -112,7 +112,7 @@ ShellRoot {
     }
     addCall("nova.weather", "edit", "edit", false)
     addCall("nova.clock", "refresh", "refresh", true)
-    addCall("nova.indicators", "refresh", "refresh", true)
+    addCall("nova.indicators", "refresh", "refresh", false)
     addCall("nova.system-update", "refresh", "refresh", false)
     addCall("nova.system-update", "clear", "clear", false)
     addCall("nova.monitor", "state", "state", true, [], "DP-2")
@@ -147,7 +147,7 @@ ShellRoot {
       for (var i = 0; i < removed.length; i++) removed[i].destroy()
     }, after: function() { check(fakeBar.slots.length === targets.length, "unplugged slots leave the registry") } })
     addCall("nova.audio", "toggle", "toggle", false)
-    addCall("nova.indicators", "refresh", "refresh", true)
+    addCall("nova.indicators", "refresh", "refresh", false)
     steps.push({ command: ["show"], before: function() {
       slotComponent.createObject(fakeBar, { widgetId: "nova.audio", screenName: "DP-2" })
       expectedScreen = "DP-2"

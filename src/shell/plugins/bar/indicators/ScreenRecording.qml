@@ -1,58 +1,33 @@
 import QtQuick
-import Quickshell.Io
 import qs.Ui
 
 // Lit while gpu-screen-recorder runs (nova-capture-screenrecording starts
 // it). A click stops the recording, or with none, opens the menu's choices
-// for one. It looks as the bar comes up, and again whenever the
-// recorder asks the indicators to (nova-shell nova.indicators refresh).
+// for one. The looking is the indicators' service's (RecorderSearch.qml),
+// once for every copy: as the bar comes up, again whenever the recorder asks
+// the indicators to (nova-shell nova.indicators refresh), and every few
+// seconds while one runs.
 BarIndicator {
   id: indicator
 
-  // What the search found when it last looked.
-  property bool recorderFound: false
-  // Asked while it looked: it looks once more after, as the recorder may
-  // have started or stopped after it did.
-  property bool askedAgain: false
+  readonly property var search: bar && bar.shell && typeof bar.shell.serviceFor === "function"
+    ? bar.shell.serviceFor("nova.indicators") : null
 
-  function look() {
-    if (!bar) return
-    if (search.running) askedAgain = true
-    else search.running = true
+  ServiceHold {
+    service: indicator.search
+    holder: indicator
   }
 
-  lit: recorderFound
+  lit: !!search && search.found
   glyph: "\u{F0EC2}"
   tipLit: "Stop recording"
   tipDark: "Screen Recording"
 
-  onClicked: if (bar) bar.run(recorderFound ? "nova-capture-screenrecording --stop-recording" : "nova-menu toggle capture.screenrecord")
-  onBarChanged: look()
-  Component.onCompleted: look()
-
-  Process {
-    id: search
-    command: ["nova-session-pgrep", "-f", "^gpu-screen-recorder"]
-    onExited: function(exitCode) {
-      indicator.recorderFound = exitCode === 0
-      if (!indicator.askedAgain) return
-      indicator.askedAgain = false
-      running = true
-    }
-  }
-
-  // A recorder that ends by itself (killed, out of memory, the disk full)
-  // asks nothing: while one is lit, the indicator looks every few seconds.
-  Timer {
-    interval: 4000
-    repeat: true
-    running: indicator.recorderFound
-    onTriggered: indicator.look()
-  }
+  onClicked: if (bar) bar.run(lit ? "nova-capture-screenrecording --stop-recording" : "nova-menu toggle capture.screenrecord")
 
   Connections {
     target: indicator.host
     ignoreUnknownSignals: true
-    function onRefreshRequested() { indicator.look() }
+    function onRefreshRequested() { indicator.search?.look() }
   }
 }

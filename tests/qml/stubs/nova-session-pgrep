@@ -1,0 +1,8 @@
+#!/bin/sh
+# nova-session-pgrep as the screen recording indicator's test needs it: each
+# call is a line in $HOME/stub-calls, and it finds a recorder while
+# $HOME/recording is there.
+line=nova-session-pgrep
+for word in "$@"; do line="$line $word"; done
+printf '%s\n' "$line" >>"$HOME/stub-calls"
+[ -e "$HOME/recording" ]

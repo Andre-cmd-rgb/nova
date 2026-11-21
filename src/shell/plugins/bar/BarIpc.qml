@@ -105,12 +105,12 @@ Item {
     function edit(): void { ipc.one(target, "edit") }
   }
 
+  // Their asking is their services', which every copy shows.
   Target {
     target: "nova.indicators"
-    function refresh(): void { ipc.each(target, "refresh") }
+    function refresh(): void { ipc.one(target, "refresh") }
   }
 
-  // Its asking is its service's, which every copy shows.
   Target {
     target: "nova.system-update"
     function refresh(): void { ipc.one(target, "refresh") }

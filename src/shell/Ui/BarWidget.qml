@@ -33,17 +33,9 @@ Item {
   property string sharedId: ""
   readonly property var shared: sharedId !== "" && bar && bar.shell && typeof bar.shell.serviceFor === "function"
     ? bar.shell.serviceFor(sharedId) : null
-  // The service this copy holds now.
-  property var sharedHeld: null
 
-  function holdShared() {
-    if (sharedHeld === shared) return
-    if (sharedHeld) sharedHeld.release(widget)
-    sharedHeld = shared
-    if (sharedHeld) sharedHeld.hold(widget)
+  property ServiceHold sharedHold: ServiceHold {
+    service: widget.shared
+    holder: widget
   }
-
-  onSharedChanged: holdShared()
-  Component.onCompleted: holdShared()
-  Component.onDestruction: if (sharedHeld) sharedHeld.release(widget)
 }
