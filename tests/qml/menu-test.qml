@@ -85,6 +85,8 @@ ShellRoot {
     const asked = query => MenuModel.searchRows(asks, "root", query, MenuModel.noAnswers()).map(row => row.key).join(",")
     check(asked("close") === "doors.close,room.closet" && asked("Close...") === asked("close") && asked("close…") === asked("close"),
       "a label ending in an ellipsis is an exact match for its words (" + asked("close") + ")")
+    check(asked("...") === "" && asked("…") === "" && asked("   ...  ") === "",
+      "a query of only an ellipsis finds nothing (" + asked("...") + "; " + asked("…") + ")")
     check(asked("doors lock") === "doors.lock" && asked("lock") === "lock,doors.lock" && asked("doors") === "doors",
       "a menu's word and an entry's find the entry, and the menu's alone only the menu (" + asked("doors lock") + "; " + asked("doors") + ")")
 

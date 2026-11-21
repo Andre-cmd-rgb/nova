@@ -273,6 +273,7 @@ function rank(item, wanted, terms, depth, throughMenus) {
 function searchRows(catalog, menuId, query, answers) {
   const wanted = bare(String(query).trim().toLowerCase())
   const terms = wanted.split(/\s+/).filter(Boolean)
+  if (!terms.length) return []
   const near = [], deeper = []
   for (const item of catalog.items.values()) {
     const menus = above(catalog, item)
