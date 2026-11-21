@@ -319,11 +319,34 @@ login_command() {
   warn "could not set greetd's login command in $config; it is as it was"
 }
 
+# Game controllers' and VR headsets' udev rules (steam-devices), which Steam
+# and every game read, on every computer where the 32-bit repository they
+# come from (multilib) is on. Not a dependency of nova: with that repository
+# off, every update would fail at pacman -Su. The installer installs them,
+# and this where they are missing.
+controllers_missing() {
+  pacman-conf --repo-list 2> /dev/null | grep -qx multilib || return 0
+  pacman -T steam-devices > /dev/null 2>&1 || echo steam-devices
+}
+
+install_controllers() { # 1 for --noconfirm, then a command prefix for pacman
+  local noconfirm=$1
+  local -a missing=() confirm=()
+  shift
+  (( ! noconfirm )) || confirm=(--noconfirm)
+  mapfile -t missing < <(controllers_missing)
+  (( ${#missing[@]} )) || return 0
+  say "Installing game controllers' rules: ${missing[*]}"
+  "$@" pacman -S --needed "${confirm[@]}" "${missing[@]}" ||
+    warn "could not install ${missing[*]}; try again with: sudo pacman -S ${missing[*]}"
+}
+
 # Step 5, the repairs: what this computer's hardware and the release's
 # packages call for, which needs no new release once the release is in.
 repair_steps() { # 1 for --noconfirm, then a command prefix for pacman
   install_hardware_packages "$@"
   keep_graphics_drivers "$@"
+  install_controllers "$@"
 }
 
 # What repair_steps would do, a line a step, as it says them.
@@ -331,9 +354,12 @@ repairs_said() {
   local -a missing=()
   mapfile -t missing < <(hardware_missing)
   (( ! ${#missing[@]} )) || echo "Installing for this computer: ${missing[*]}"
-  graphics_plan || return 0
-  (( ! ${#graphics_missing[@]} )) || echo "Installing this computer's graphics drivers: ${graphics_missing[*]}"
-  (( ! ${#graphics_stray[@]} )) || echo "Removing NVIDIA drivers this computer cannot use: ${graphics_stray[*]}"
+  if graphics_plan; then
+    (( ! ${#graphics_missing[@]} )) || echo "Installing this computer's graphics drivers: ${graphics_missing[*]}"
+    (( ! ${#graphics_stray[@]} )) || echo "Removing NVIDIA drivers this computer cannot use: ${graphics_stray[*]}"
+  fi
+  mapfile -t missing < <(controllers_missing)
+  (( ! ${#missing[@]} )) || echo "Installing game controllers' rules: ${missing[*]}"
 }
 
 # What an earlier Nova depended on and this one does not (the retired list):

@@ -694,7 +694,7 @@ track() {
       '==> Taking the pre-update snapshot') progress 1 "Taking a snapshot" ;;
       '==> Pointing pacman at '* | '==> Updating the keyrings') progress 3 "Preparing" ;;
       '==> pacman -S'*) phase=pacman; progress 5 "Downloading" ;;
-      '==> Installing for this computer: '* | "==> Installing this computer's graphics drivers: "* | '==> Removing NVIDIA drivers '*)
+      '==> Installing for this computer: '* | "==> Installing this computer's graphics drivers: "* | '==> Removing NVIDIA drivers '* | "==> Installing game controllers' rules: "*)
         phase=''; progress 92 "Installing drivers" ;;
       '==> Installing '*) phase=''; progress $(( ${#release_flags[@]} ? 93 : 50 )) "Installing apps" ;;
       '==> Taking the post-update snapshot') progress 95 "Taking a snapshot" ;;

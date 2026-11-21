@@ -107,9 +107,9 @@ depends=(
   cava           # the sound playing, as bars, in a terminal
   cmatrix        # falling code, in a terminal
 
-  # Games: game controllers and VR headsets for the user at the seat, as Steam
-  # and every game reads them; AppImages, as many games and launchers come
-  steam-devices
+  # Games: AppImages, as many games and launchers come. Game controllers'
+  # rules (steam-devices) are multilib's, which an update may find off: the
+  # installer installs them, and nova update where multilib is on.
   fuse2
 
   # The App Center (docs/apps.md)

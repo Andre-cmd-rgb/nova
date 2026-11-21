@@ -193,6 +193,9 @@ Server = https://example.org/repo" ]
 prepare_update() {
   mkdir -p "$SCRATCH/lib" "$SCRATCH/bin" "$NOVA_ROOT/etc/pacman.d"
   cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$SCRATCH/lib/"
+  # Arch's repositories without multilib, unless a test says otherwise: never
+  # this computer's pacman.conf.
+  printf '#!/bin/bash\nprintf "%%s\\n" core extra\n' >"$SCRATCH/bin/pacman-conf"
   printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/lib/nova-hw-detect"
   printf '#!/bin/bash\necho "${0##*/} $*" >>"$SCRATCH/calls"\n' >"$SCRATCH/bin/pacman"
   cp "$SCRATCH/bin/pacman" "$SCRATCH/bin/limine-update"
@@ -848,6 +851,8 @@ STUB
   chmod +x "$SCRATCH/bin/pacman"
   printf '#!/bin/bash\nexit 1\n' >"$SCRATCH/lib/nova-hw-detect"
   chmod +x "$SCRATCH/lib/nova-hw-detect"
+  printf '#!/bin/bash\nprintf "%%s\\n" core extra ${MULTILIB:+multilib}\n' >"$SCRATCH/bin/pacman-conf"
+  chmod +x "$SCRATCH/bin/pacman-conf"
 }
 
 graphics_update() { # pci-device...
@@ -1092,4 +1097,37 @@ session_start_installed() {
   fails grep -q -- '-Rns' "$SCRATCH/calls"
   [[ $output == *"could not install lib32-vulkan-intel"* ]]
   [[ $output == *"NVIDIA's stay until they do"* ]]
+}
+
+@test "game controllers' rules: installed where multilib is on and they are missing, never asked for with it off" {
+  INSTALLED="$BASE" graphics_setup "$INTEL"
+  lists_read
+  printf '#!/bin/bash\nprintf "%%s\\n" core extra ${MULTILIB:+multilib}\n' >"$SCRATCH/bin/pacman-conf"
+  : >"$SYNC_DIR/extra.db"
+  : >"$SYNC_DIR/multilib.db"
+  MULTILIB=1 INSTALLED="$BASE" run repair_cli --repairs
+  [ "$output" = "Installing game controllers' rules: steam-devices" ]
+  MULTILIB=1 INSTALLED="$BASE" run repair_cli --repair --noconfirm
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SCRATCH/calls")" = "pacman -S --needed --noconfirm steam-devices" ]
+  # Off, or there already: nothing.
+  rm "$SCRATCH/calls"
+  INSTALLED="$BASE" run repair_cli --repair --noconfirm
+  [ "$status" -eq 0 ]
+  MULTILIB=1 INSTALLED="$BASE steam-devices:e" run repair_cli --repair --noconfirm
+  [ "$status" -eq 0 ]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "nova depends on nothing from multilib, which an update may find switched off" {
+  local deps name
+  deps=$(sed -n '/^depends=(/,/^)/p' "$REPO_ROOT/packaging/nova/PKGBUILD" | sed 's/#.*//; s/depends=(//; s/)//' | tr -s ' \t' '\n' | grep .)
+  [[ $deps == *hyprland* ]]
+  while IFS= read -r name; do
+    [[ $name != lib32-* && $name != steam* ]] || { echo "multilib's: $name"; false; }
+  done <<<"$deps"
+  # And where this computer has multilib's list, none of them is in it.
+  if [[ -r /var/lib/pacman/sync/multilib.db ]] && command -v pacman >/dev/null; then
+    ! grep -qxF -f <(pacman -Slq multilib 2>/dev/null) <<<"$deps"
+  fi
 }

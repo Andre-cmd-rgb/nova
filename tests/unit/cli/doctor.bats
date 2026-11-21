@@ -760,6 +760,8 @@ games_pacman() {
   [[ $output == *"NVIDIA's driver is installed without NVIDIA's kernel module to run it: nvidia-utils lib32-nvidia-utils"* ]]
   [[ $output == *"The user Flatpak installation lacks org.freedesktop.Platform.GL.nvidia-620-73-04"* ]]
   [[ $output == *"ntsync is not loaded"* ]]
+  # With multilib off, nova update cannot install them until it is on.
+  [[ $output == *"They come from the 32-bit repository: with it on (above), nova update installs them."* ]]
   [[ $output == *"steam-devices) are not installed"* ]]
   [[ $output != *"games and apps: 32-bit repository"* ]]
 }

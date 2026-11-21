@@ -74,7 +74,12 @@ probe() {
   check "ipp-usb is installed, for a USB printer to be driverless" pacman -Q ipp-usb
   # Games: ntsync for Wine and Proton, loaded at boot, open to the user.
   check "the user can open /dev/ntsync" runuser -u "$user" -- test -r /dev/ntsync -a -w /dev/ntsync
-  check "steam-devices gives the user game controllers" pacman -Q steam-devices
+  # nova does not depend on them (multilib may be off): the installer installs
+  # them, and on an upgraded computer nova update, from the first one after
+  # the release that dropped the dependency.
+  if fresh_install; then
+    check "steam-devices gives the user game controllers" pacman -Q steam-devices
+  fi
   # The browser the answers file left to its default, from the stick or the
   # internet. nova does not depend on it, and an update never changes the
   # browser someone uses.

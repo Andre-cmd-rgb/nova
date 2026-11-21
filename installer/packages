@@ -12,3 +12,7 @@ bash-completion
 unzip
 # Screen recording, from the Capture menu.
 gpu-screen-recorder
+# Game controllers' and VR headsets' rules for the user at the seat, as Steam and
+# every game reads them: from multilib, so not a dependency of nova (nova update
+# installs them where they are missing and multilib is on).
+steam-devices
