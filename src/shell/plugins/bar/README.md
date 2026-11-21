@@ -55,7 +55,7 @@ ignored, and dropped at the next write.
 
 Settings → Menu Bar has a switch only for the widgets whose manifest says
 `"barWidget": { "switchable": true }`: weather, media, microphone, the
-active window, the CPU, Graphics and Memory readouts and Screen Time's total (those four off until switched on; Screen Time's shows only while it records). The others are always on the bar, and those that make sense
+active window, the CPU, Graphics and Memory readouts and Screen Time's total (all but the weather off until switched on, as Nova's `shell.json` names only the weather; Screen Time's shows only while it records). The others are always on the bar, and those that make sense
 only on some computers (keyboard layout, mobile data, the update badge) show
 only where they apply.
 
