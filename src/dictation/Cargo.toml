@@ -1,0 +1,25 @@
+[package]
+name = "nova-dictation"
+version = "1.0.0"
+edition = "2021"
+description = "Nova's dictation: speech to text on this computer's CPU, by NVIDIA's Parakeet, while it is said"
+license = "MIT"
+rust-version = "1.89"
+
+# No crates, as everywhere in Nova. The speech engine is libparakeet, from
+# Nova's whisper-cpp, opened when a dictation needs it rather than linked:
+# the package then builds and tests where whisper-cpp is not installed (CI),
+# and a computer without it says so instead of failing to start. D-Bus (the
+# sleep that unloads the model, the power profile held for the end) comes
+# from libsystemd, through nova-sd.
+
+[dependencies]
+nova-sd = { path = "../sd" }
+
+[lib]
+name = "nova_dictation"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nova-dictationd"
+path = "src/main.rs"
