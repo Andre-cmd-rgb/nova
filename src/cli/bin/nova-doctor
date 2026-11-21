@@ -6,8 +6,8 @@
 # it checks the system and the boot menu's fallback entry, which lives on the
 # EFI partition only root can read. Either way it looks this computer's parts
 # over, on any model: Secure Boot, the graphics cards' drivers, Wi-Fi, sound,
-# the camera, missing firmware, and sleep. Exits 1 when something is wrong;
-# warnings alone exit 0.
+# the camera, missing firmware, sleep, and what games and apps need of the
+# system. Exits 1 when something is wrong; warnings alone exit 0.
 #
 # --bundle writes one .tar.gz to attach to a bug report, with this check and
 # what a bug needs besides (the journal, crashes, snapshots, versions, the
@@ -43,6 +43,7 @@ RAM_TEST=${NOVA_RAM_TEST:-/etc/limine-entry-tool.d/85-nova-patch-ram-test.conf}
 SYS=${NOVA_SYS:-/sys}
 PROC=${NOVA_PROC:-/proc}
 PORTABLE_MARKER=${NOVA_PORTABLE_MARKER:-/etc/nova/portable}
+NTSYNC=${NOVA_NTSYNC:-/dev/ntsync}
 KEYRINGS=${XDG_DATA_HOME:-$HOME/.local/share}/keyrings
 STATE=${XDG_STATE_HOME:-$HOME/.local/state}/nova
 
@@ -606,6 +607,62 @@ check_patches() {
   [[ ! -e $RAM_TEST ]] || report -- "the memory test runs at the next start (nova patch ram test)"
 }
 
+# ------------------------------------------------------------------ games & apps
+#
+# What games and apps need of the system beside themselves: Arch's 32-bit
+# repository, this computer's own 32-bit graphics drivers once anything 32-bit
+# is installed (Steam, Wine) and no NVIDIA driver on a computer without the
+# card (nova-hw-packages), Flatpak's runtime for the NVIDIA driver installed
+# (nova-flatpak-gl), ntsync for Wine and Proton, and Steam's rules for game
+# controllers. nova update repairs the packages and the runtime.
+check_games() {
+  local problems=0 lib32=0 missing stray flatpak line
+  if ! pacman-conf --repo-list 2>/dev/null | grep -qx multilib; then
+    report warn "Arch's 32-bit repository (multilib) is off: Steam and 32-bit games cannot be installed" \
+      "Add [multilib] with Include = /etc/pacman.d/nova-mirrorlist to /etc/pacman.conf, as Nova installs it."
+    problems=1
+  fi
+  if pacman -Qq 2>/dev/null | grep -q '^lib32-'; then lib32=1; fi
+  if ((lib32)); then
+    missing=$(nova-hw-packages --lib32 2>/dev/null | xargs -r pacman -T 2>/dev/null | paste -sd' ' || true)
+    if [[ -n $missing ]]; then
+      report warn "32-bit games lack this computer's graphics drivers: $missing" "nova update installs them."
+      problems=1
+    fi
+  fi
+  # NVIDIA's userspace with no NVIDIA module package, on a computer whose
+  # hardware wants none: what pacman picks for "a Vulkan driver" left alone.
+  if ! nova-hw-packages --graphics 2>/dev/null | grep -qx nvidia-utils &&
+    ! pacman -Qq 2>/dev/null | grep -qE '^nvidia(-open)?(-nova|-lts|-dkms)?$'; then
+    stray=$(pacman -Qqd nvidia-utils lib32-nvidia-utils 2>/dev/null | paste -sd' ' || true)
+    if [[ -n $stray ]]; then
+      report warn "NVIDIA's driver is installed on a computer without an NVIDIA card: $stray" \
+        "It keeps the open driver for NVIDIA cards (nouveau) from loading and puts NVIDIA first for every app. nova update takes it out."
+      problems=1
+    fi
+  fi
+  flatpak=$(nova-flatpak-gl check 2>/dev/null || true)
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    report warn "${line^}: Flatpak apps cannot use the NVIDIA card" \
+      "nova update fetches it, or now: /usr/lib/nova/bin/nova-flatpak-gl sync"
+    problems=1
+  done <<<"$flatpak"
+  if [[ ! -e $NTSYNC ]]; then
+    report warn "ntsync is not loaded: Windows games under Wine and Proton run slower" \
+      "It loads at the next start; now: sudo modprobe ntsync"
+    problems=1
+  elif [[ ! -r $NTSYNC || ! -w $NTSYNC ]]; then
+    report warn "/dev/ntsync is not open to you: Wine and Proton cannot use it" "ls -l /dev/ntsync says who may."
+    problems=1
+  fi
+  if ! pacman -Q steam-devices >/dev/null 2>&1; then
+    report warn "game controllers' rules (steam-devices) are not installed: a controller may not work in games" "nova update installs them."
+    problems=1
+  fi
+  ((problems)) || report ok "games and apps: 32-bit repository, graphics drivers, ntsync and controllers in place"
+}
+
 # ---------------------------------------------------------------------- --bundle
 #
 # A report for a bug: what a bug needs, and nothing that says whose computer it
@@ -877,5 +934,6 @@ checked check_camera
 checked check_firmware
 checked check_sleep
 checked check_patches
+checked check_games
 if $json; then printf '%s\n' "${reports[@]}" | jq -s .; fi
 exit "$failed"

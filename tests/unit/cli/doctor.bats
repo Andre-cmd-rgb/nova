@@ -43,6 +43,12 @@ setup() {
   # As journalctl is: -g finding nothing exits 1, which under pipefail ended
   # the report once.
   stub journalctl 'for a; do [[ $a == -g || $a == --grep* ]] && exit 1; done; exit 0'
+  # Games: multilib on, nothing 32-bit, no NVIDIA, ntsync open, controllers' rules.
+  stub pacman-conf 'echo core; echo extra; echo multilib'
+  stub nova-hw-packages 'case $1 in --graphics) printf "%s\n" mesa vulkan-intel ;; --lib32) printf "%s\n" lib32-mesa lib32-vulkan-intel ;; esac'
+  stub nova-flatpak-gl 'exit 0'
+  export NOVA_NTSYNC=$SCRATCH/ntsync
+  touch "$NOVA_NTSYNC"
   export PATH="$SCRATCH/bin:$PATH"
 }
 
@@ -717,4 +723,51 @@ kernel: Linux version 7.2.11-arch1-1-nova, 0000:00:14.0 [8086:a0f0], +12.5 ms, f
   dir=$(unpacked "${lines[0]}")
   [ "$(cat "$dir/boot-entries.txt")" = "/+Nova
 //linux-nova" ]
+}
+
+# Games & apps: a pacman whose installed packages are $PKGS, of which $DEPS
+# came as dependencies, and that says which of its arguments are in
+# $NOT_INSTALLED.
+games_pacman() {
+  stub pacman 'case $1 in
+    -Qq) printf "%s\n" $PKGS ;;
+    -Qqd) shift; for p in "$@"; do [[ " $DEPS " == *" $p "* ]] && echo "$p"; done; exit 0 ;;
+    -Q) [[ -z ${2:-} ]] && exit 0; [[ $2 == nova ]] && { echo "nova 1.0.0beta.1-1"; exit 0; }; [[ " $PKGS " == *" $2 "* ]] ;;
+    -Qk) echo "nova: 1200 total files, 0 missing files" ;;
+    -T) shift; for p in "$@"; do [[ " ${NOT_INSTALLED:-} " != *" $p "* ]] || echo "$p"; done ;;
+  esac'
+}
+
+@test "games: with everything in place, one line says so" {
+  games_pacman
+  PKGS="nova steam-devices" DEPS='' run doctor
+  [ "$status" -eq 0 ]
+  [[ $output == *"ok    games and apps: 32-bit repository, graphics drivers, ntsync and controllers in place"* ]]
+}
+
+@test "games: Steam on an Intel laptop that pacman gave NVIDIA's driver, and nothing else in place" {
+  games_pacman
+  stub pacman-conf 'echo core; echo extra'
+  stub nova-flatpak-gl 'echo "the user Flatpak installation lacks org.freedesktop.Platform.GL.nvidia-620-73-04 for NVIDIA'"'"'s driver"; exit 1'
+  rm "$NOVA_NTSYNC"
+  PKGS="nova steam lib32-glibc nvidia-utils lib32-nvidia-utils" DEPS="nvidia-utils lib32-nvidia-utils" \
+    NOT_INSTALLED="lib32-mesa lib32-vulkan-intel" run doctor
+  # Warnings: the run passes.
+  [ "$status" -eq 0 ]
+  [[ $output == *"Arch's 32-bit repository (multilib) is off"* ]]
+  [[ $output == *"32-bit games lack this computer's graphics drivers: lib32-mesa lib32-vulkan-intel"* ]]
+  [[ $output == *"NVIDIA's driver is installed on a computer without an NVIDIA card: nvidia-utils lib32-nvidia-utils"* ]]
+  [[ $output == *"The user Flatpak installation lacks org.freedesktop.Platform.GL.nvidia-620-73-04"* ]]
+  [[ $output == *"ntsync is not loaded"* ]]
+  [[ $output == *"steam-devices) are not installed"* ]]
+  [[ $output != *"games and apps: 32-bit repository"* ]]
+}
+
+@test "games: NVIDIA's driver beside its modules, or wanted by the hardware, is no stray" {
+  games_pacman
+  PKGS="nova steam-devices nvidia-utils nvidia-open-nova" DEPS="nvidia-utils" run doctor
+  [[ $output != *"without an NVIDIA card"* ]]
+  stub nova-hw-packages 'case $1 in --graphics) printf "%s\n" mesa vulkan-intel nvidia-utils ;; esac'
+  PKGS="nova steam-devices nvidia-utils" DEPS="nvidia-utils" run doctor
+  [[ $output != *"without an NVIDIA card"* ]]
 }
