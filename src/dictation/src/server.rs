@@ -461,6 +461,13 @@ impl Server {
                 self.recording_ended();
             }
         }
+        // However a connection ended (closed, refused, its answer not
+        // written, a status or cancel said), it is decided here, after its
+        // lines: the dictation it owned ends with it.
+        let gone: Vec<u64> = self.conns.iter().filter(|c| c.gone).map(|c| c.id).collect();
+        for id in gone {
+            self.left(id);
+        }
         self.conns.retain(|c| !c.gone);
         Ok(())
     }
@@ -503,9 +510,11 @@ impl Server {
         let Some(conn) = self.conn(id) else {
             return;
         };
-        let lines = conn.lines();
-        let gone = conn.gone;
-        for line in lines {
+        for line in conn.lines() {
+            // Nothing more is heard from a connection that has ended.
+            if self.conn(id).is_none_or(|c| c.gone) {
+                break;
+            }
             match line.as_str() {
                 "start" => self.start(id),
                 "finish" => self.finish(id),
@@ -524,9 +533,6 @@ impl Server {
                 }
                 _ => {}
             }
-        }
-        if gone {
-            self.left(id);
         }
     }
 

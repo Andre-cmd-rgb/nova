@@ -94,6 +94,9 @@ struct Setup {
     recorder: Option<Vec<String>>,
     idle: Duration,
     vocab: Option<&'static str>,
+    /// What a client wrote before the daemon served, and then went: as
+    /// systemd's socket holds it while the daemon is still starting.
+    early: Option<&'static str>,
 }
 
 impl Default for Setup {
@@ -105,6 +108,7 @@ impl Default for Setup {
             recorder: None,
             idle: Duration::from_secs(30),
             vocab: None,
+            early: None,
         }
     }
 }
@@ -134,14 +138,24 @@ impl Daemon {
         std::fs::create_dir_all(dir.join("supplies")).unwrap();
         let socket = dir.join("dictation.sock");
         let listener = UnixListener::bind(&socket).unwrap();
+        // The player says who it is (exec keeps the shell's pid), so that a
+        // test can see whether the microphone is still open.
         let recorder = setup.recorder.unwrap_or_else(|| {
             vec![
+                "sh".into(),
+                "-c".into(),
+                "echo $$ >\"$0\"; exec \"$@\"".into(),
+                dir.join("recorder.pid").display().to_string(),
                 env!("CARGO_BIN_EXE_nova-dictationd").into(),
                 "--play".into(),
                 recording.display().to_string(),
                 "20".into(),
             ]
         });
+        if let Some(early) = setup.early {
+            let mut client = UnixStream::connect(&socket).unwrap();
+            client.write_all(early.as_bytes()).unwrap();
+        }
         let (runtime, supplies) = (dir.join("run/nova/dictation"), dir.join("supplies"));
         let (engine, idle) = (setup.engine, setup.idle);
         // The system bus is not Send: the server is made on its own thread.
@@ -191,6 +205,37 @@ impl Daemon {
 
     fn last(&self) -> PathBuf {
         self.dir.join("run/nova/dictation/last")
+    }
+
+    /// The pid of the last recorder started, if one was (it says so at once).
+    fn recorder(&self) -> Option<u32> {
+        let started = Instant::now();
+        while started.elapsed() < Duration::from_secs(1) {
+            let read = std::fs::read_to_string(self.dir.join("recorder.pid"));
+            if let Some(pid) = read.ok().and_then(|s| s.trim().parse().ok()) {
+                return Some(pid);
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        None
+    }
+
+    /// Whether the recorder <pid> has ended within <limit>, and is reaped.
+    fn recorder_ended_within(&self, pid: u32, limit: Duration) -> bool {
+        let started = Instant::now();
+        while started.elapsed() < limit {
+            if !Path::new(&format!("/proc/{pid}")).exists() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    fn status(&self) -> String {
+        let mut status = self.connect();
+        status.say("status");
+        status.hear().unwrap()
     }
 
     /// Waits for the daemon to end by itself, up to <limit>; how long it took.
@@ -383,6 +428,49 @@ fn a_cancel_or_a_closed_connection_forgets_it() {
     status.say("status");
     let line = status.hear().unwrap();
     assert!(line.contains(r#""busy":false"#), "{line}");
+}
+
+// However a connection ends while its lines are handled (the client gone
+// before "listening" could be said: the shell restarted right after Super+D;
+// a line after one that ends it, in the same write), the dictation it owned
+// ends with it: the microphone closes, and the next is not refused as busy.
+#[test]
+fn a_connection_that_ends_while_its_lines_are_handled_leaves_no_dictation_behind() {
+    let mut wrong = vec![];
+    for (early, write) in [
+        (Some("start\n"), None),
+        (None, Some("status\nstart\n")),
+        (None, Some("cancel\nstart\n")),
+        (None, Some("start\nstart\n")),
+    ] {
+        let daemon = Daemon::start(Setup {
+            early,
+            ..Setup::default()
+        });
+        let case = early.or(write).unwrap();
+        if let Some(write) = write {
+            // Until the daemon closes it.
+            let mut shell = daemon.connect();
+            shell.stream.write_all(write.as_bytes()).unwrap();
+            while shell.hear().is_some() {}
+        }
+        if let Some(pid) = daemon.recorder() {
+            if !daemon.recorder_ended_within(pid, Duration::from_secs(3)) {
+                wrong.push(format!("{case:?}: the microphone is still open"));
+            }
+        }
+        let status = daemon.status();
+        if !status.contains(r#""busy":false"#) {
+            wrong.push(format!("{case:?}: {status}"));
+        }
+        let mut next = daemon.connect();
+        next.say("start");
+        let answer = next.hear();
+        if answer.as_deref() != Some(r#"{"type":"listening"}"#) {
+            wrong.push(format!("{case:?}: a new dictation is answered {answer:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
 // The shell may go (restarted, say) once the key is let go: the words are
