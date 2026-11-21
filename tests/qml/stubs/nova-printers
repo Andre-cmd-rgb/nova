@@ -2,8 +2,10 @@
 # nova-printers as Settings' Printers page needs it: `list` answers with what
 # the test wrote to $HOME/pr-list (three printers when it wrote none), `detail`
 # with a printer's inks, choices and jobs, `discover` and `drivers` with what
-# there is to add, and every other command is noted in $HOME/pr-ran, a line
-# each, and succeeds, unless $HOME/pr-fail holds words to say with its failure.
+# there is to add (no driver for "Nothing Known"; a failure for "Broken", and
+# for every driver once $HOME/pr-drivers-fail is there), and every other
+# command is noted in $HOME/pr-ran, a line each, and succeeds, unless
+# $HOME/pr-fail holds words to say with its failure.
 case $1 in
   list)
     if [ -f "$HOME/pr-list" ]; then
@@ -45,7 +47,12 @@ JSON
 JSON
     ;;
   drivers)
-    if [ -n "$2" ]; then
+    if [ "$2" = Broken ] || { [ -z "$2" ] && [ -s "$HOME/pr-drivers-fail" ]; }; then
+      echo "nova-printers: CUPS is not running." >&2
+      exit 1
+    elif [ "$2" = "Nothing Known" ]; then
+      echo '{"drivers":[]}'
+    elif [ -n "$2" ]; then
       echo '{"drivers":[{"id":"drv:///acme.drv/inkjet-z.ppd","name":"Acme Inkjet Z, acme 1.0"},{"id":"drv:///sample.drv/generic.ppd","name":"Generic PostScript Printer"}]}'
     else
       echo '{"drivers":[{"id":"drv:///acme.drv/inkjet-z.ppd","name":"Acme Inkjet Z, acme 1.0"},{"id":"drv:///sample.drv/generic.ppd","name":"Generic PostScript Printer"},{"id":"everywhere","name":"IPP Everywhere"}]}'

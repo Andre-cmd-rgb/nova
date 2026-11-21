@@ -579,6 +579,8 @@ Column {
     property bool searched: false
     property var device: null
     property var recommendedDrivers: []
+    // While CUPS is asked for the drivers that fit the device chosen.
+    property bool lookingForDriver: false
     property bool askedDrivers: false
     property var allDrivers: []
     property var driver: null
@@ -605,6 +607,7 @@ Column {
       driver = chosen.driverless ? Model.recommended(chosen, []) : null
       askedDrivers = false
       step = "details"
+      lookingForDriver = !chosen.driverless
       if (!chosen.driverless) {
         // The best fit for its make and model comes first.
         modelDrivers.command = ["nova-printers", "drivers", chosen.model || chosen.info]
@@ -670,6 +673,14 @@ Column {
           if (best && !addSheet.driver) addSheet.driver = best
         }
       }
+      stderr: StdioCollector { id: modelDriverErrors }
+      onExited: function (code) {
+        if (code !== 0) root.failure = String(modelDriverErrors.text).trim().replace(/^nova-printers: /, "") || "Could not look for a driver."
+      }
+      // Done, failed, or never started (no exit then): the line says what
+      // was found, and Choose… is there either way. One asked for while
+      // another ran starts once that one ends.
+      onRunningChanged: addSheet.lookingForDriver = running
     }
 
     Process {
@@ -684,6 +695,10 @@ Column {
             addSheet.allDrivers = []
           }
         }
+      }
+      stderr: StdioCollector { id: everyDriverErrors }
+      onExited: function (code) {
+        if (code !== 0) root.failure = String(everyDriverErrors.text).trim().replace(/^nova-printers: /, "") || "Could not list the drivers."
       }
     }
 
@@ -779,7 +794,7 @@ Column {
       }
       Line {
         label: "Driver"
-        detail: addSheet.driver ? addSheet.driver.name : "Looking for a driver…"
+        detail: addSheet.driver ? addSheet.driver.name : addSheet.lookingForDriver ? "Looking for a driver…" : "No driver found"
         Button {
           text: "Choose…"
           bordered: true

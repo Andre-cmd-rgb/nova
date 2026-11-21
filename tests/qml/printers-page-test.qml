@@ -27,6 +27,7 @@ ShellRoot {
 
   FileView { id: listFile; path: test.home + "/pr-list"; printErrors: false; onSaved: test.saved() }
   FileView { id: failFile; path: test.home + "/pr-fail"; printErrors: false; onSaved: test.saved() }
+  FileView { id: driversFailFile; path: test.home + "/pr-drivers-fail"; printErrors: false; onSaved: test.saved() }
   FileView { id: ranFile; path: test.home + "/pr-ran"; blockLoading: true; printErrors: false; onSaved: test.saved() }
 
   property var then: null
@@ -261,6 +262,32 @@ ShellRoot {
       page.addSheet.name = "bad name"
       page.addSheet.add()
       same(ran().length, 8, "a name with a space adds nothing")
+      page.addSheet.choose({ uri: "usb://Nobody/Knows", class: "direct", info: "Nothing Known", model: "Nothing Known", deviceId: "", driverless: false })
+      same([page.addSheet.lookingForDriver, driverLine().detail], [true, "Looking for a driver…"], "a driver is looked for")
+    },
+    until(() => !page.addSheet.lookingForDriver, "the look for a driver ends"),
+    () => {
+      same([page.addSheet.driver, driverLine().detail, page.failure], [null, "No driver found", ""], "none fits: it says so, not that it is still looking")
+      page.addSheet.choose({ uri: "usb://Broken/One", class: "direct", info: "Broken", model: "Broken", deviceId: "", driverless: false })
+    },
+    until(() => !page.addSheet.lookingForDriver && page.failure !== "", "the failed look for a driver ends"),
+    () => {
+      same([driverLine().detail, page.failure], ["No driver found", "CUPS is not running."], "a look that fails says why")
+      page.failure = ""
+    },
+    () => write(driversFailFile, "CUPS is not running.\n", () => {
+      page.addSheet.askedDrivers = false
+      page.addSheet.allDrivers = []
+      page.addSheet.all()
+    }),
+    until(() => page.failure !== "", "the failed list of drivers ends"),
+    () => {
+      same([page.addSheet.allDrivers, page.failure], [[], "CUPS is not running."], "a list of drivers that fails says why")
     }
   ])
+
+  // The Add sheet's Driver line.
+  function driverLine() {
+    return find(page.addSheet, item => item.label === "Driver" && item.detail !== undefined)
+  }
 }
