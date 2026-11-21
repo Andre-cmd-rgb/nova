@@ -32,7 +32,7 @@ On the ThinkPad P1 Gen 4i Nova goes further, as sleeping still costs that card s
 - **On battery the card is taken off the PCI bus**, and comes back when plugged in. A game started plugged in keeps the card until it closes.
 - **Settings → Performance → Discrete GPU**: On When Plugged In (the default) or Always Off. The menu's Toggle → Discrete GPU switches it by hand until the next plug-in.
 - A card in use by a program is never pulled away: `nova power gpu` names what holds it.
-- Apps, Flatpak's too, run on the integrated graphics: only `nova power run`, and an entry that asks for the card, reach it.
+- Other apps, Flatpak's too, stay on the integrated graphics.
 
 ## The governor
 

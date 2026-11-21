@@ -40,7 +40,7 @@ It asks which stick (each listed with what it holds now), then what goes on it:
    - your name, username and password;
    - a fingerprint, where there is a reader;
    - the computer's name and time zone;
-   - your web browser, when the internet answers: Supernova (Nova's own), Firefox or Chrome. Chrome is built from Google's release at the end, with Supernova beside it in case that fails. Offline the browser is Supernova, and the summary says why.
+   - your browser, when online: Supernova (Nova's own), Firefox or Chrome, which is built at the end with Supernova beside it in case that fails. Offline it is Supernova.
 3. Read the summary and type `erase`. Nothing touches the disk before that.
 4. When it is done, take the stick out and restart. The computer starts into the lock screen.
 

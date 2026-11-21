@@ -51,7 +51,7 @@ The bar is along the top. From the left: the menu's star and the workspaces; in 
 
 - **Click** a widget for its panel; right-click the star for a terminal.
 - **Drag** a widget to move it. **Double-click** an empty part for a [see-through bar](themes.md#a-see-through-bar).
-- **Settings → Menu Bar** switches the optional widgets: the weather, which starts on, and media, microphone, the active window, CPU, graphics, memory and Screen Time's total, which start off. Screen Time's shows only while Screen Time records.
+- **Settings → Menu Bar** switches the optional widgets: the weather (on at first), media, microphone, the active window, CPU, graphics, memory and Screen Time.
 - **Tray icons**: right-click one, then **Hide from Menu Bar**; Settings → Menu Bar brings it back.
 - `nova bar remove <id>`, `nova bar put <id>` and `nova bar defaults` change the rest. The bar's [own notes](../src/shell/plugins/bar/README.md) list every widget.
 
@@ -99,13 +99,13 @@ Your calendar is a file, `~/.local/share/nova/calendar/calendar.ics`. More in th
 
 ### Dictation
 
-Hold Super+D and speak; the words are pasted where the cursor is when you let go, at once if you paused first. A tap instead listens until the next press; either way, up to ten minutes. Esc while it listens forgets what you said; Esc after you let go pastes nothing.
+Hold Super+D and speak; the words are pasted where the cursor is when you let go. A tap instead listens until the next press, up to ten minutes. Esc cancels until the words are pasted.
 
 - It runs on your computer's CPU, with NVIDIA's Parakeet model, in 25 European languages. Nothing you say leaves it.
-- The speech model, 669 MB, is downloaded once: the first Super+D offers it, the next downloads it. It is in memory while you dictate and for two minutes after (700 to 800 MB), then gone.
-- Fillers ("uh", "um") are left out, a stumbled word is written once, and "scratch that" or "never mind that", said on its own, takes back the words since the last comma or full stop. A pause to think adds no full stop.
-- The words stay on the clipboard, which does not get back what it held before; the clipboard's history skips them. `nova dictation last` prints them again until you log out.
-- Words it writes another way go in your spellings, `nova dictation vocab`: a line each, like `"hyper land" = "Hyprland"`, from the next dictation on. Settings → Dictation has the model, the last dictation and the spellings.
+- The speech model, 669 MB, is downloaded once: the first Super+D offers it, the next downloads it. It stays in memory (700 to 800 MB) for two minutes after you dictate.
+- Fillers ("uh", "um") are left out, a stumbled word is written once, and "scratch that" takes back the words since the last comma or full stop.
+- The words stay on the clipboard in place of what it held, but out of its history; `nova dictation last` prints them again.
+- Words it writes another way go in your spellings (`nova dictation vocab`), a line each: `"hyper land" = "Hyprland"`.
 
 ### Calculator and Quick Look
 
@@ -150,7 +150,7 @@ Settings → Printers. A modern USB or network printer needs no setting up; an o
 | btop | Activity: what is running (Super+Ctrl+T) |
 | Claude Code, Codex | coding agents in the terminal, through `mise` |
 
-- The installer asks which browser you want, when it is online: Supernova, Firefox or Chrome. Settings → Default Apps changes the default browser, editor and terminal.
+- The installer asks which browser you want, when online: Supernova, Firefox or Chrome. Settings → Default Apps changes it, and the editor and terminal.
 - The [App Center](apps.md) installs the rest.
 - A crashed app is said in a notification, with Reopen.
 - A variable your login profile sets (`~/.bash_profile`, `~/.profile`) holds for the whole desktop from the next login.

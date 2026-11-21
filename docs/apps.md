@@ -7,8 +7,7 @@ One window to find apps, install them, open them and remove them: **App Center**
 - **Discover** starts with the best-known apps (a browser, VS Code, Steam, Spotify), then a hand-picked few of each kind. The sidebar has the kinds and **Installed**.
 - **Search** is at the top of the sidebar (Ctrl+F); Return opens the first app found.
 - **An app's page** has its pictures, description, size and licence. **Get** installs it; **Open** starts it; **Remove…** asks once more. Where an app comes from more than one place, **From** picks which.
-- **Also installs**, on an Arch app's page before you get it, lists what comes with the app so that it works, counted in its size: VLC's plugins, RetroArch's menus and cores, Lutris's helpers for Proton and GOG (Lutris downloads its own Wine), virt-manager's QEMU. They go with the app when nothing else needs them.
-- An app that needs a Vulkan driver installs with this computer's own graphics drivers, never another card's.
+- **Also installs**, on an Arch app's page, lists what comes with the app so that it works, counted in its size: VLC's plugins, Lutris's helpers (it downloads its own Wine), virt-manager's QEMU. They go with the app when nothing else needs them.
 - An install carries on with the window closed; one that fails says why in a sentence.
 - A web page's `appstream://` link (Flathub's **Install** button) opens the app's page.
 
@@ -37,10 +36,10 @@ Supernova, Nova's browser, comes with Nova and updates with it; it is not in the
 
 ## Games
 
-- **Steam** installs from Arch with the 32-bit Vulkan driver for your graphics card, and nothing for a card you don't have.
-- **Windows games** (Proton, Wine) get the kernel's `ntsync`, loaded at every start; controllers work through `steam-devices`, and AppImages run.
-- **With an NVIDIA card beside the integrated graphics**, a game whose desktop entry asks for the discrete GPU (Steam's does) starts on it when opened from the menu or the App Center ([power](power.md#the-discrete-gpu)). Not yet from a `steam://` link or at login, and Steam has no choice per game.
-- **Flatpak games** get the NVIDIA runtime that matches the driver, checked at each update, App Center install and login.
+- **Steam**, and any app that needs Vulkan, installs from Arch with the Vulkan driver for your graphics card (32-bit too for Steam), and nothing for a card you don't have.
+- **Windows games** (Proton, Wine) get the kernel's `ntsync`; controllers work through `steam-devices`, and AppImages run.
+- **With an NVIDIA card beside the integrated graphics**, a game whose desktop entry asks for the discrete GPU (Steam's does) starts on it when opened from the menu or the App Center ([power](power.md#the-discrete-gpu)); not yet from a `steam://` link, nor per game.
+- **Flatpak games** get the NVIDIA runtime that matches the driver, kept in step at every update and login.
 - Games are never see-through, and keep the screen on while fullscreen.
 - `nova doctor` checks all of this under **Games & Apps**, and says the command that fixes what it finds.
 
