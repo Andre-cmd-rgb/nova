@@ -12,6 +12,11 @@ hl.config({
   misc = {
     disable_hyprland_logo = true,
     disable_splash_rendering = true,
+    -- What shows where nothing is drawn: before the shell's first frame at
+    -- boot, and behind the desktop while its picture loads. Black, as the
+    -- boot before it and the greeter's (greeter-hyprland.lua), not
+    -- Hyprland's dark grey, which reads as a frame of its own.
+    background_color = "rgb(000000)",
     disable_scale_notification = true,
     -- A window that asks for focus (a link opened in the browser) gets it.
     focus_on_activate = true,
