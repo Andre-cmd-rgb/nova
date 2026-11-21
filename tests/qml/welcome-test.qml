@@ -79,18 +79,18 @@ ShellRoot {
   Component.onCompleted: Qt.callLater(run)
 
   function run() {
-    const both = ["google-chrome", "visual-studio-code-bin"]
+    const code = ["visual-studio-code-bin"]
     // An install over the network, on a laptop with Wi-Fi: nothing to fetch.
     same(walk({ loaded: true, wifi: true, online: true, nightlight: true, missing: [] }),
       ["welcome", "look", "nightlight", "keys"], "online, with the apps: the look, the night light and the keys")
     // From a stick with every package, and no network yet.
-    same(walk({ loaded: true, wifi: true, online: false, nightlight: true, missing: both }),
+    same(walk({ loaded: true, wifi: true, online: false, nightlight: true, missing: code }),
       ["welcome", "wifi", "look", "nightlight", "keys"], "offline: the Wi-Fi first, and no apps to fetch without it")
     // Joined on the Wi-Fi page: the apps come after all.
-    same(Model.next("nightlight", { wifi: true, online: true, nightlight: true, missing: both }), "apps", "a network joined on the way brings the apps")
-    same(walk({ loaded: true, wifi: true, portal: true, nightlight: true, missing: both }),
+    same(Model.next("nightlight", { wifi: true, online: true, nightlight: true, missing: code }), "apps", "a network joined on the way brings the apps")
+    same(walk({ loaded: true, wifi: true, portal: true, nightlight: true, missing: code }),
       ["welcome", "look", "nightlight", "keys"], "a network that wants a sign-in is no Wi-Fi page, and no internet yet")
-    same(walk({ loaded: true, wifi: false, online: false, nightlight: false, missing: both }),
+    same(walk({ loaded: true, wifi: false, online: false, nightlight: false, missing: code }),
       ["welcome", "look", "keys"], "a desktop offline with no Wi-Fi card, the night light switched off: nothing to join")
     same(walk({ loaded: true, wifi: true, laptop: true, online: true, onWifi: false, missing: [] }),
       ["welcome", "wifi", "look", "keys"], "a laptop installed on a cable, still on it: a Wi-Fi network for when it is out")
@@ -101,18 +101,17 @@ ShellRoot {
     same(walk({ online: false, installing: true, missing: [] }), ["welcome", "look", "apps", "keys"], "an install of the apps going on keeps their page")
     same(Model.next("keys", {}), "", "nothing after the keys")
 
-    same(Model.missing({ browsers: ["chrome"], editors: ["code", "nvim"] }), [], "Chrome and VS Code there: none missing")
-    same(Model.missing({ browsers: ["firefox"], editors: ["code"] }), ["google-chrome"], "Chrome missing alone")
-    same(Model.missing({ browsers: [], editors: [] }), both, "both missing")
+    same(Model.missing({ browsers: ["supernova"], editors: ["code", "nvim"] }), [], "VS Code there: none missing")
+    same(Model.missing({ browsers: [], editors: ["nvim"] }), code, "VS Code missing, and no browser offered: the installer asked for one")
     same(Model.missing(undefined), [], "nothing known before the state is read")
 
-    same(Model.apps("", {}, both), { detail: "Not installed", action: "install" }, "not installed: Install")
-    same(Model.apps("running", { text: "Building Chrome" }, both), { detail: "Building Chrome…", action: "" }, "while it installs, what it does")
+    same(Model.apps("", {}, code), { detail: "Not installed", action: "install" }, "not installed: Install")
+    same(Model.apps("running", { text: "Building VS Code" }, code), { detail: "Building VS Code…", action: "" }, "while it installs, what it does")
     same(Model.apps("done", {}, []), { detail: "Installed", action: "" }, "in")
-    same(Model.apps("failed", { error: "not authorized to install updates" }, both),
+    same(Model.apps("failed", { error: "not authorized to install updates" }, code),
       { detail: "Could not install: not authorized to install updates.", action: "retry" }, "refused: why, and Try Again")
-    same(Model.apps("problems", { failed: ["google-chrome"] }, ["google-chrome"]), { detail: "Could not install.", action: "retry" }, "an app that did not build: Try Again")
-    same(Model.apps("cancelled", {}, both), { detail: "Not installed", action: "install" }, "the password not given: Install again")
+    same(Model.apps("problems", { failed: ["visual-studio-code-bin"] }, code), { detail: "Could not install.", action: "retry" }, "an app that did not build: Try Again")
+    same(Model.apps("cancelled", {}, code), { detail: "Not installed", action: "install" }, "the password not given: Install again")
 
     // Two lines of half blocks: a spark right of where the bottom row ends.
     const art = Model.wordmark("   █\n██ ▀\n▀▀\n")

@@ -17,7 +17,7 @@
 //   portal      a network that wants a sign-in first, which a notification
 //               offers
 //   nightlight  the night light's service is on
-//   missing     the packages of Chrome and VS Code that are not installed
+//   missing     VS Code's package, while it is not installed
 //   installing  nova update is installing them now
 
 var order = ["welcome", "wifi", "look", "nightlight", "apps", "keys"]
@@ -51,18 +51,16 @@ function next(from, facts) {
   return ""
 }
 
-// Chrome and VS Code as Settings' state has them installed (apps.browsers
-// and apps.editors, by short name), as the packages nova apps install
-// builds: those not there. Nothing before the state is read.
+// VS Code, which an install online builds, as Settings' state has it
+// installed (apps.editors, by short name), as the package nova apps install
+// builds: [] when it is there. The browser is the one the installer asked
+// for, and is in. Nothing before the state is read.
 function missing(apps) {
-  if (!apps || !apps.browsers || !apps.editors) return []
-  var out = []
-  if (Array.prototype.indexOf.call(apps.browsers, "chrome") < 0) out.push("google-chrome")
-  if (Array.prototype.indexOf.call(apps.editors, "code") < 0) out.push("visual-studio-code-bin")
-  return out
+  if (!apps || !apps.editors) return []
+  return Array.prototype.indexOf.call(apps.editors, "code") < 0 ? ["visual-studio-code-bin"] : []
 }
 
-// What the apps page says under Chrome and VS Code, and its button
+// What the apps page says under VS Code, and its button
 // ("install", "retry" or ""): from the run of nova update that installs them
 // (UpdateRun's state and status; "" for a run the page did not start, whose
 // end is not this page's to tell) and what is still missing.

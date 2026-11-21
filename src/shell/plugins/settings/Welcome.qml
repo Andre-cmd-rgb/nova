@@ -16,9 +16,9 @@ import "Asked.js" as Asked
 // first), and closing it, on any page, is the account done with it (nova
 // welcome done). A page comes only where it matters (WelcomeModel.js): the
 // Wi-Fi where there is no network to be on, the theme, the night light,
-// Chrome and VS Code where the install could not build them, and the keys.
-// Continue passes any of them by. The pages are Settings' own parts, and
-// what they change Settings' commands, run as Settings runs them
+// VS Code where the install could not build it (it had no internet), and
+// the keys. Continue passes any of them by. The pages are Settings' own
+// parts, and what they change Settings' commands, run as Settings runs them
 // (SettingsState).
 //
 //   nova-shell shell summon nova.welcome '{"page":"look"}'
@@ -405,7 +405,7 @@ Item {
 
       // What the page offered as it opened, named as it was once they are in.
       property var offered: []
-      Component.onCompleted: offered = root.facts.missing.length > 0 ? root.facts.missing : ["google-chrome", "visual-studio-code-bin"]
+      Component.onCompleted: offered = ["visual-studio-code-bin"]
       readonly property var line: Model.apps(root.installStarted || appsRun.running ? appsRun.state : "", appsRun.status, root.facts.missing)
 
       Section {
@@ -420,7 +420,7 @@ Item {
             tabStop: true
             onClicked: {
               root.installStarted = true
-              appsRun.start(["--apps-only", "--apps-install"])
+              appsRun.start(["--apps-only", "--apps-install", "--only", "visual-studio-code-bin"])
             }
           }
         }
