@@ -106,15 +106,26 @@ Ui.Panel {
   Connections {
     target: Wake
     function onWoke() {
-      clock.moveTo(new Date())
-      nextMinute.interval = 60000 - Date.now() % 60000 + 50
-      nextMinute.restart()
+      const now = Date.now()
+      clock.moveTo(new Date(now))
+      nextMinute.at = now - now % 60000 + 60000
+      nextMinute.aim()
     }
   }
 
+  // A Timer may come a little early (a coarse one, by up to 5 %): one that
+  // comes before the minute it waits for is aimed again.
   Timer {
     id: nextMinute
-    onTriggered: clock.moveTo(new Date())
+    property real at: 0
+    function aim() {
+      interval = Math.max(1, at - Date.now() + 50)
+      restart()
+    }
+    onTriggered: {
+      if (Date.now() < at) aim()
+      else clock.moveTo(new Date())
+    }
   }
 
   BarButton {

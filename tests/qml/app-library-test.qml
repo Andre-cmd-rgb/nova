@@ -88,7 +88,7 @@ ShellRoot {
   }
 
   function start() {
-    library = made.createObject(stage, { novaPath: Quickshell.env("TEST_PLUGINS") + "/../.." })
+    library = made.createObject(stage, { novaPath: Quickshell.env("TEST_PLUGINS") + "/../..", systemIcons: home + "/.local/share/icons" })
     library.iconFilesChanged.connect(() => iconSearches++)
     when(() => library.hiddenHere["nova-hidden"] === true && library.prefersDiscrete["nova-game"] === true
       && library.iconFiles["nova-shown"] !== undefined, 10, "the library reads the entries and the icons", read)
@@ -113,7 +113,7 @@ ShellRoot {
   }
 
   // An icon theme installed on its own: a folder beside the others, and no
-  // entry changes.
+  // entry changes (the folder watched is this test's own, for /usr/share/icons).
   function themeAlone() {
     shell('mkdir -p "$2/../../../NovaTheme/apps" && printf "<svg/>" >"$2/../../../NovaTheme/apps/nova-themed.svg"', () => {
       when(() => library.iconFiles["nova-themed"] !== undefined, 10,

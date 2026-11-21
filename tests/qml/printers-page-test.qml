@@ -277,6 +277,8 @@ ShellRoot {
     () => {
       same([driverLine().detail, page.failure], ["No driver found", "CUPS is not running."], "a look that fails says why")
       page.failure = ""
+      page.addSheet.choose({ uri: "usb://Unnamed/1", class: "direct", info: "", model: "", deviceId: "", driverless: false })
+      same([page.addSheet.lookingForDriver, driverLine().detail], [false, "No driver found"], "one that names no model: nothing to look up, and it does not say it is looking")
     },
     () => write(driversFailFile, "CUPS is not running.\n", () => {
       page.addSheet.askedDrivers = false

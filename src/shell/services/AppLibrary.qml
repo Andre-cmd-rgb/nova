@@ -9,7 +9,8 @@ import "AppSearch.js" as AppSearch
 // for each, and launching or removing one. Two lists of desktop IDs keep an
 // entry out: Nova's launcher.hides, and the entries this desktop does not
 // list (hidden-entries.sh). The lists and the icons are found again when
-// the entries change (an install or a removal), never as the menu opens.
+// the entries change (an install or a removal), and the icons when an icon
+// theme is installed or removed, never as the menu opens.
 // shell.qml makes one; the menu reaches it as shell.appLibrary.
 Item {
   id: library
@@ -29,8 +30,8 @@ Item {
 
   // Icon name to file, for the app and device icons on disk. Qt reads the
   // icon theme once, when the shell starts, and never sees an icon installed
-  // later; this, found again whenever the apps change, is how a new app's
-  // icon still shows. Each time it is a new object, so that every binding on
+  // later; this, found again whenever the apps or the icon themes change, is
+  // how a new app's icon still shows. Each time it is a new object, so that every binding on
   // iconSource() reads it again. It is every icon theme's, whichever is set,
   // so a change of theme changes nothing here.
   property var iconFiles: ({})
@@ -196,23 +197,26 @@ Item {
     onTriggered: iconSearch.request()
   }
 
-  // An icon theme installed or removed on its own, with no entry changing,
-  // is a folder come or gone beside the others: the icons are found again
-  // then. A watch on a folder sees its own entries, not those deeper in.
-  FileView {
-    path: Quickshell.env("HOME") + "/.local/share/icons"
-    preload: false
-    watchChanges: true
-    printErrors: false
-    onFileChanged: if (library.searched) iconSearchSoon.restart()
-  }
+  // An icon theme a package installs or removes, with no entry changing, is
+  // a folder come or gone in /usr/share/icons: the icons are found again
+  // then, and once more when a big theme has had time to unpack. The watch
+  // sees that folder's own entries, not those deeper in, and those of
+  // /usr/share beside it, which change only as packages do. ~/.local/share
+  // changes all the time (each file a GTK app opens), so a theme put in
+  // ~/.local/share/icons by hand is found at the next install or start.
+  // (A test sets its own folder.)
+  property string systemIcons: "/usr/share/icons"
 
   FileView {
-    path: "/usr/share/icons"
+    path: library.systemIcons
     preload: false
     watchChanges: true
     printErrors: false
-    onFileChanged: if (library.searched) iconSearchSoon.restart()
+    onFileChanged: {
+      if (!library.searched) return
+      iconSearchSoon.restart()
+      iconSearchLater.restart()
+    }
   }
 
   // Each search waits for the entries: there is nothing to leave out or

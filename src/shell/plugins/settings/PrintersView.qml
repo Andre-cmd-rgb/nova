@@ -607,11 +607,22 @@ Column {
       driver = chosen.driverless ? Model.recommended(chosen, []) : null
       askedDrivers = false
       step = "details"
-      lookingForDriver = !chosen.driverless
-      // The best fit for its make and model comes first.
-      wantedModel = chosen.driverless ? "" : chosen.model || chosen.info
-      if (wantedModel !== "") lookUp()
+      // The best fit for its make and model comes first; one that says
+      // neither has none to look up, and Choose… lists every driver.
+      wantedModel = chosen.driverless ? "" : String(chosen.model || chosen.info || "")
+      lookingForDriver = wantedModel !== ""
+      lookUp()
     }
+
+    // No device chosen any more (the sheet shut or opened again, or Back to
+    // the list): a look still running is let end, and its answer dropped.
+    function forgetDevice() {
+      wantedModel = ""
+      lookingForDriver = false
+    }
+
+    onOpenedChanged: forgetDevice()
+    onStepChanged: if (step === "devices") forgetDevice()
 
     // The make and model the drivers are looked up for, "" for none: the
     // device chosen last. A look for another, still running, is let end and

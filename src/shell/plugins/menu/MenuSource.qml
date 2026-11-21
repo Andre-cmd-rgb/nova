@@ -218,11 +218,13 @@ Item {
     const idle = service("nova.idle")
     const airdrop = service("nova.airdrop")
     const bar = shell && shell.barConfig
+    // The config in effect has its defaults' bar before shell.json is read.
+    const configRead = !!shell && !!shell.shellJson && shell.shellJson.ready === true
     return {
       doNotDisturb: notifications ? notifications.doNotDisturb === true : null,
       caffeine: idle && idle.switchRead === true ? idle.caffeine === true : null,
       screenTime: shell ? service("nova.screentime") !== null : null,
-      transparentBar: bar ? bar.transparent === true : null,
+      transparentBar: configRead ? !!bar && bar.transparent === true : null,
       airdrop: airdrop && airdrop.heard ? airdrop.said.state !== "off" : null
     }
   }

@@ -165,6 +165,9 @@ BarWidgetService {
       switched.stop()
       plugged.stop()
       seat.owed = false
+      // A reading still running (hung, maybe) ends: held again, the next
+      // starts afresh, with its watchdog.
+      seat.running = false
       return
     }
     if (Object.keys(codes).length === 0 && !xkb.running) xkb.running = true
