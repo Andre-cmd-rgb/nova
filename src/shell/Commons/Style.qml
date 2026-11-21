@@ -98,13 +98,22 @@ QtObject {
 
   // `nova toggle window-gaps` writes and removes this file, which Hyprland
   // reads.
+  // Its first reading, as the shell starts, asks nothing: Hyprland is asked
+  // at start already.
+  property bool noGapsRead: false
+
+  function noGapsSeen() {
+    if (noGapsRead) scheduleRefresh()
+    noGapsRead = true
+  }
+
   property FileView noGapsToggle: FileView {
     path: Commons.Color.stateHome + "/nova/toggles/hypr/window-no-gaps.lua"
     watchChanges: true
     printErrors: false
     onFileChanged: style.scheduleRefresh()
-    onLoaded: style.scheduleRefresh()
-    onLoadFailed: style.scheduleRefresh()
+    onLoaded: style.noGapsSeen()
+    onLoadFailed: style.noGapsSeen()
   }
 
   Component.onCompleted: refresh()
