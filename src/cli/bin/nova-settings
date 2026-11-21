@@ -148,7 +148,7 @@ defaults_json() {
     --arg browser "$(quiet nova-default-browser)" \
     --arg editor "$(quiet nova-default-editor)" \
     --arg terminal "$(quiet nova-default-terminal)" \
-    --argjson browsers "$(installed chrome:google-chrome-stable chromium:chromium firefox:firefox brave:brave edge:microsoft-edge-stable zen:zen-browser | lines_json)" \
+    --argjson browsers "$(installed supernova:supernova chrome:google-chrome-stable chromium:chromium firefox:firefox brave:brave edge:microsoft-edge-stable zen:zen-browser | lines_json)" \
     --argjson editors "$(installed code:code cursor:cursor zed:zeditor sublime_text:sublime_text helix:helix nvim:nvim vim:vim emacs:emacs | lines_json)" \
     --argjson terminals "$(installed foot:foot alacritty:alacritty ghostty:ghostty kitty:kitty | lines_json)" \
     '{browser: $browser, editor: $editor, terminal: $terminal,

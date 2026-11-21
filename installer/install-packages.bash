@@ -15,8 +15,32 @@ offline_repo_ready() {
   [[ -r $OFFLINE_REPO/nova-offline.db ]]
 }
 
+# Whether a package asked for at the questions is one the stick does not
+# carry (Firefox): then the release's Arch snapshot, which the stick was made
+# from, comes after the stick's repository, online. Set from stick_lacks.
+ONLINE_TOO=0
+
+# Whether pacman finds any of the packages, or what they need, missing from
+# the stick's repository alone. Read from its database, as the account it
+# runs as: nothing is installed.
+stick_lacks() { # package...
+  (($#)) || return 1
+  local dir status=1
+  dir=$(mktemp -d /tmp/nova-stick.XXXXXX)
+  mkdir "$dir/sync"
+  cp -- "$OFFLINE_REPO/nova-offline.db" "$dir/sync/nova-offline.db"
+  printf '[options]\nArchitecture = auto\nSigLevel = Never\n\n[nova-offline]\nServer = file://%s\n' "$OFFLINE_REPO" >"$dir/pacman.conf"
+  logged pacman --config "$dir/pacman.conf" --dbpath "$dir" --logfile /dev/null -Sp --print-format %n -- "$@" ||
+    status=0
+  rm -rf -- "$dir"
+  return "$status"
+}
+
 # The pacman.conf pacstrap uses. Offline, one repository on the stick holds
 # every package; online, the same repositories the installed system will use.
+# With ONLINE_TOO, the stick's first, so that only what it lacks is
+# downloaded, then the Arch snapshot: not the release's [nova], which may not
+# be published while its stick is tested, and whose packages the stick has.
 # A directory of hooks, when given, comes after pacman's own: a hook there of
 # the same name as a package's replaces it, and one linked to /dev/null masks
 # it.
@@ -34,6 +58,8 @@ EOF
     printf '\n[nova-offline]\nServer = file://%s\n' "$OFFLINE_REPO"
   else
     printf '\n[nova]\nSigLevel = Required\nServer = %s\n' "$nova_repo"
+  fi
+  if ! offline_repo_ready || ((ONLINE_TOO)); then
     local repo
     for repo in core extra multilib; do
       # shellcheck disable=SC2016 # $arch is pacman's to expand
@@ -48,11 +74,13 @@ EOF
 # has, stops the install with the disk as it was. The packages themselves are
 # fetched after, onto the new disk (there is nowhere else with room for
 # them), so a network that goes then leaves the install to be run again.
-# Nothing is installed from this, so signatures are left to pacstrap.
+# Nothing is installed from this, so signatures are left to pacstrap. From the
+# stick alone, nothing needs asking; with ONLINE_TOO, the stick and the
+# snapshot are asked together.
 packages_available() { # kernel profile arch_date nova_repo [package...]
   local kernel=$1 profile=$2 arch_date=$3 nova_repo=$4 dir status=0
   local -a packages
-  offline_repo_ready && return 0
+  offline_repo_ready && ((!ONLINE_TOO)) && return 0
   dir=$(mktemp -d /tmp/nova-preflight.XXXXXX)
   mkdir "$dir/db"
   pacstrap_conf "$arch_date" "$nova_repo" | sed 's/^SigLevel = .*/SigLevel = Never/' >"$dir/pacman.conf"
@@ -84,7 +112,10 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
   pacstrap_conf "$arch_date" "$nova_repo" "$hooks" >"$conf"
   say "Installing packages (this is the long part)"
   mapfile -t packages < <(package_set "$kernel" "$profile" "${@:5}")
-  info "${#packages[@]} packages, from $(offline_repo_ready && echo "the stick" || echo "the internet")"
+  local from="the internet"
+  ! offline_repo_ready || from="the stick"
+  ((!ONLINE_TOO)) || from="the stick and the internet"
+  info "${#packages[@]} packages, from $from"
   # pacstrap's lines go through pacstrap_feed: to the log, and as parts and
   # counts to the progress view, or without one to the terminal. The kernels'
   # boot check is skipped: Limine is not installed yet, and install_bootloader
@@ -120,7 +151,7 @@ install_packages() { # kernel profile arch_date nova_repo [package...]
 pacstrap_feed() {
   local line part='Packages: keyring and lists' started next n=0 total=0 fetching=Downloading
   started=$(now_us)
-  offline_repo_ready && fetching="Reading from the stick"
+  offline_repo_ready && ((!ONLINE_TOO)) && fetching="Reading from the stick"
   while IFS= read -r line; do
     printf '%s\n' "$line" >>"$LOG"
     ((PROGRESS)) || printf '%s\n' "$line" >&2

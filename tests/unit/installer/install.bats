@@ -337,6 +337,37 @@ secure_boot() { # 0|1
   [[ $output != *nova-offline* ]]
 }
 
+@test "pacstrap_conf: what the stick lacks from the snapshot after it, not from the release repository" {
+  mkdir -p "$NOVA_OFFLINE_REPO"
+  : >"$NOVA_OFFLINE_REPO/nova-offline.db"
+  ONLINE_TOO=1
+  run pacstrap_conf 2026/10/19 https://example.org/repo
+  [[ $output == *"[nova-offline]"*"[core]"$'\n''Server = https://archive.archlinux.org/repos/2026/10/19/$repo/os/$arch'*"[extra]"*"[multilib]"* ]]
+  [[ $output != *"[nova]"* && $output != *example.org* ]]
+}
+
+@test "stick_lacks: what pacman cannot find in the stick's repository alone" {
+  command -v pacman >/dev/null && command -v bsdtar >/dev/null || skip "no pacman or bsdtar"
+  LOG=$SCRATCH/log
+  mkdir -p "$NOVA_OFFLINE_REPO" "$SCRATCH/db"
+  local name
+  for name in supernova fprintd; do
+    mkdir "$SCRATCH/db/$name-1-1"
+    printf '%%NAME%%\n%s\n\n%%VERSION%%\n1-1\n\n%%ARCH%%\nany\n\n%%FILENAME%%\n%s-1-1-any.pkg.tar\n\n' \
+      "$name" "$name" >"$SCRATCH/db/$name-1-1/desc"
+  done
+  (cd "$SCRATCH/db" && bsdtar -czf "$NOVA_OFFLINE_REPO/nova-offline.db.tar.gz" -- *)
+  ln -s nova-offline.db.tar.gz "$NOVA_OFFLINE_REPO/nova-offline.db"
+  local before
+  before=$(find /tmp -maxdepth 1 -name 'nova-stick.*' 2>/dev/null | sort)
+  ! stick_lacks supernova fprintd
+  stick_lacks firefox
+  stick_lacks supernova firefox
+  ! stick_lacks
+  # Its pacman's files go with it.
+  [ "$(find /tmp -maxdepth 1 -name 'nova-stick.*' 2>/dev/null | sort)" = "$before" ]
+}
+
 @test "pacstrap_conf: a directory of hooks after pacman's own, in its options" {
   run pacstrap_conf 2026/10/19 https://example.org/repo /tmp/hooks
   [[ $output == *$'ParallelDownloads = 5\nHookDir = /etc/pacman.d/hooks/\nHookDir = /tmp/hooks/\n\n[nova]'* ]]
@@ -404,6 +435,22 @@ secure_boot() { # 0|1
   run packages_available linux "" 2026/10/19 https://example.org/repo
   [ "$status" -eq 0 ]
   [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "packages_available: the stick and the snapshot are asked together for what the stick lacks" {
+  mkdir -p "$NOVA_OFFLINE_REPO"
+  : >"$NOVA_OFFLINE_REPO/nova-offline.db"
+  LOG=$SCRATCH/log
+  ONLINE_TOO=1
+  pacman() { # --config conf --dbpath db --logfile /dev/null operation...
+    echo "pacman ${*:7}" >>"$SCRATCH/calls"
+    grep -c -e '^\[nova-offline\]$' -e '^\[extra\]$' "$2" >>"$SCRATCH/calls"
+  }
+  run packages_available linux "" 2026/10/19 https://example.org/repo firefox
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 1p "$SCRATCH/calls")" = "pacman -Sy" ]
+  [ "$(sed -n 2p "$SCRATCH/calls")" = 2 ]
+  [[ $(sed -n 3p "$SCRATCH/calls") == "pacman -Sp --print-format %n base "*" firefox" ]]
 }
 
 @test "install_cmdline: root and resume on the same partition, in limine-snapper-sync's form" {
@@ -630,6 +677,8 @@ questions_setup() {
   timezones() { printf '%s\n' UTC Europe/Rome; }
   main_kernel() { echo linux-nova; }
   machine_hash() { :; }
+  # No internet unless a test says so: nothing here reaches it.
+  INTERNET=no
 }
 
 @test "answers: each question answered from the file, its default where it says nothing" {
@@ -1141,4 +1190,110 @@ sda $((477 * GiB)) false false sata Samsung"
   echo A6 >"$DMI/product_version"
   echo "Laptop 13 (AMD Ryzen 7040Series)" >"$DMI/product_name"
   [ "$(computer_model unknown)" = "Laptop 13 (AMD Ryzen 7040Series)" ]
+}
+
+# --- the browser ---------------------------------------------------------------
+
+@test "browser: Supernova unless the answers name Firefox or Chrome, and nothing else" {
+  questions_setup
+  answers disk=/dev/vda user=ada password=s3cret-pass
+  answers_from_file
+  [ "$BROWSER" = supernova ]
+  answers disk=/dev/vda user=ada password=s3cret-pass browser=firefox
+  answers_from_file
+  [ "$BROWSER" = firefox ]
+  answers disk=/dev/vda user=ada password=s3cret-pass browser=opera
+  run answers_from_file
+  [ "$status" -ne 0 ]
+  [[ $output == *"browser=supernova, browser=firefox or browser=chrome"* ]]
+}
+
+@test "browser: without the internet, or without the apps step that builds Chrome, it is Supernova, and said" {
+  questions_setup
+  BROWSER=firefox INTERNET=no
+  settle_browser 2>"$SCRATCH/said"
+  [ "$BROWSER" = supernova ]
+  grep -q "No internet: Supernova is the browser" "$SCRATCH/said"
+  answers apps=no
+  BROWSER=chrome INTERNET=yes
+  settle_browser 2>/dev/null
+  [ "$BROWSER" = supernova ]
+  answers apps=yes
+  BROWSER=chrome INTERNET=yes
+  settle_browser
+  [ "$BROWSER" = chrome ]
+}
+
+@test "browser: what the packages step installs, and what the summary says" {
+  questions_setup
+  BROWSER=supernova INTERNET=yes
+  [ "$(browser_packages)" = supernova ]
+  [ "$(summary_browser)" = "Browser      Supernova" ]
+  INTERNET=no
+  [[ $(summary_browser) == *"Firefox and Chrome need the internet"* ]]
+  BROWSER=firefox
+  [ "$(browser_packages)" = firefox ]
+  [ "$(summary_browser)" = "Browser      Firefox" ]
+  # Chrome is built at the end, with Supernova in the packages in case it cannot be.
+  BROWSER=chrome
+  [ "$(browser_packages)" = supernova ]
+  [[ $(summary_browser) == *"Google Chrome, built from Google's release at the end"*"Supernova beside it"* ]]
+}
+
+@test "browser: the account's mimeapps.list names the one asked for, PDFs too, and no other line changes" {
+  export NOVA_TARGET=$SCRATCH/mnt
+  TARGET=$NOVA_TARGET
+  mkdir -p "$TARGET/home/ada/.config"
+  cp "$REPO_ROOT/data/skel/.config/mimeapps.list" "$TARGET/home/ada/.config/"
+  grep -qx 'x-scheme-handler/https=supernova.desktop' "$TARGET/home/ada/.config/mimeapps.list"
+  set_browser ada firefox.desktop
+  [ "$(cat "$TARGET/home/ada/.config/mimeapps.list")" = "$(printf '%s\n' '[Default Applications]' \
+    x-scheme-handler/http=firefox.desktop x-scheme-handler/https=firefox.desktop text/html=firefox.desktop \
+    application/pdf=firefox.desktop inode/directory=org.gnome.Nautilus.desktop \
+    'text/plain=com.microsoft.VSCode.desktop;code.desktop;')" ]
+  set_browser ada google-chrome.desktop
+  [ "$(grep -c 'google-chrome.desktop' "$TARGET/home/ada/.config/mimeapps.list")" -eq 4 ]
+}
+
+@test "apps: VS Code online, Chrome only when asked for and the default once it is in, Supernova when it is not" {
+  export NOVA_TARGET=$SCRATCH/mnt
+  TARGET=$NOVA_TARGET
+  mkdir -p "$TARGET/etc/sudoers.d" "$TARGET/home/ada/.config"
+  cp "$REPO_ROOT/data/skel/.config/mimeapps.list" "$TARGET/home/ada/.config/"
+  curl() { return 0; }
+  mount() { return 0; }
+  install() { :; }
+  rm() { :; }
+  umount() { return 0; }
+  as_user() { shift; echo "$*" >>"$SCRATCH/ran"; [[ " $* " != *" google-chrome "* || -z ${CHROME_FAILS:-} ]]; }
+  BROWSER=supernova install_apps ada 2>/dev/null
+  [ "$(grep -c nova-apps-install "$SCRATCH/ran")" -eq 1 ]
+  grep -qx 'nova-apps-install --noconfirm --only visual-studio-code-bin' "$SCRATCH/ran"
+  : >"$SCRATCH/ran"
+  BROWSER=chrome install_apps ada 2>/dev/null
+  [ "$(grep nova-apps-install "$SCRATCH/ran" | head -1)" = 'nova-apps-install --noconfirm --only google-chrome' ]
+  grep -qx 'x-scheme-handler/https=google-chrome.desktop' "$TARGET/home/ada/.config/mimeapps.list"
+  cp "$REPO_ROOT/data/skel/.config/mimeapps.list" "$TARGET/home/ada/.config/"
+  CHROME_FAILS=1 BROWSER=chrome run install_apps ada
+  [[ $output == *"Chrome did not install, so Supernova is the browser"* ]]
+  grep -qx 'x-scheme-handler/https=supernova.desktop' "$TARGET/home/ada/.config/mimeapps.list"
+  # Offline: nothing built, and what comes later said.
+  curl() { return 7; }
+  : >"$SCRATCH/ran"
+  BROWSER=supernova run install_apps ada
+  [[ $output == *"the welcome offers VS Code"* ]]
+  [ ! -s "$SCRATCH/ran" ]
+}
+
+@test "screens: online, the browser is asked after the computer, Supernova first, and the summary says it" {
+  questions_setup
+  NOVA_KEYMAP=es INTERNET=yes
+  stub_gum 0 no "Ada Lovelace" "" s3cret-pass s3cret-pass "" Europe/Rome firefox erase
+  questions_on_screen no 2>"$SCRATCH/screens"
+  uncolour "$SCRATCH/screens"
+  [ "$(gum_replies_left)" = 0 ]
+  [ "$BROWSER" = firefox ]
+  grep -q '^choose .*Your web browser?' "$GUM_LOG"
+  [[ $(grep '^choose .*Your web browser?' "$GUM_LOG") == *"Supernova: Nova's own"*Firefox*"Google Chrome"* ]]
+  grep -q 'Browser      Firefox' "$SCRATCH/screens"
 }

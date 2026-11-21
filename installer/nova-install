@@ -11,8 +11,9 @@
 #
 # Packages come from the offline repository on the stick when there is one, and
 # otherwise from the pinned Arch snapshot and [nova] repository named in the
-# release file. Either way the installed system ends up pointed at the release
-# it was installed from, which is what `nova update` moves forward.
+# release file; a browser the stick lacks (Firefox) comes from the snapshot,
+# after the stick. Either way the installed system ends up pointed at the
+# release it was installed from, which is what `nova update` moves forward.
 #
 #   nova-install                  the interactive install
 #   nova-install --answers FILE   the same install with no questions, answered
@@ -21,7 +22,9 @@
 #                                 more), hostname, timezone,
 #                                 passphrase (for things carried), erase=yes to
 #                                 go ahead, and optionally encrypt=yes with
-#                                 disk_passphrase (8 characters or more), apps=no and
+#                                 disk_passphrase (8 characters or more), apps=no,
+#                                 browser=supernova|firefox|chrome (Supernova,
+#                                 the default, without the internet) and
 #                                 after=<script>, run in the new system at the
 #                                 end. tests/install/run uses it.
 #   nova-install --portable [disk]
@@ -267,7 +270,7 @@ main() {
   [[ $tag =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "the release file has no valid version"
   [[ $arch_date =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]] || die "the release file has no valid arch_date"
   [[ $nova_repo =~ ^https://[A-Za-z0-9._~:/%+-]+$ ]] || die "the release file has no valid nova_repo"
-  if ! offline_repo_ready && ! curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/; then
+  if ! offline_repo_ready && ! internet; then
     die "this stick has no offline packages and there is no internet connection. Connect with: iwctl"
   fi
 
@@ -297,6 +300,7 @@ main() {
 
   if [[ -n $ANSWERS ]]; then
     answers_from_file
+    settle_browser
     say "Nova ${tag#v}"
     if ((PORTABLE)); then
       info "Portable, onto a USB disk"
@@ -318,6 +322,8 @@ main() {
     progress_rows
     progress_start
   fi
+  mapfile -t -O "${#extra[@]}" extra < <(browser_packages)
+  ! offline_repo_ready || ! stick_lacks "${extra[@]}" || ONLINE_TOO=1
   loadkeys "$KEYMAP" >/dev/null 2>&1 || true
 
   local disk swap=0
@@ -328,7 +334,7 @@ main() {
   grep -qxF -- "$DISK_LINE" <<<"$(candidate_disks)" ||
     die "$disk is no longer the disk that was picked (unplugged or swapped?); nothing was changed."
   ! disk_in_use "$disk" || die "$disk is in use by the live system now; nothing was changed."
-  if ! offline_repo_ready; then
+  if ! offline_repo_ready || ((ONLINE_TOO)); then
     info "Checking that every package is there to download"
     step "Checking the packages" packages_available "$kernel" "$profile" "$arch_date" "$nova_repo" "${extra[@]}" ||
       die "the Arch snapshot of $arch_date or Nova's repository did not have every package; nothing was changed. Try again later; the log is in $LOG"

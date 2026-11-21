@@ -338,7 +338,7 @@ Built only in CI ([packaging.md](packaging.md) has how each is kept up to date):
 | `nvidia-open-nova` | NVIDIA modules prebuilt for `linux-nova` |
 | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
 | `whisper-cpp` | dictation's speech engine, with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on |
-| `supernova` | Nova's own browser, from a pinned Supernova commit; installed by name, not by default |
+| `supernova` | Nova's own browser, from a pinned Supernova commit; the default, which the installer installs unless Firefox is asked for |
 | `hyprland` | Arch's Hyprland with Nova's four patches (`packaging/hyprland/UPSTREAM.md` has them as offered upstream): `xwayland:scale`, X11 apps the same size on every display; an X11 game fullscreen at the resolution it set through RandR; a pointer motion no mouse made sent with a zero relative motion, which older SDL games read as a still mouse otherwise; and a release bind that fires when its modifier is let go first |
 | `cmatrix` | Arch's cmatrix built from upstream's current code: its last release fills the window with solid blocks after a resize |
 
@@ -355,7 +355,7 @@ A release (`v1.0.0-beta.1`, …) is a GitHub release with:
 The rest is in the release's folder of the `nova-packages` bucket on Cloudflare R2 (`https://nova-packages.piserver.stream/<tag>`), which keeps the newest release, and the newest final one:
 
 - the signed `[nova]` repository;
-- the installer ISO (`installer/iso`, built by `tools/build-iso`), about 3 GB, with every package any install can need on it (`nova/repo`, the `[nova-offline]` repository, from `tools/offline-repo`), so that it installs without a network;
+- the installer ISO (`installer/iso`, built by `tools/build-iso`), about 3 GB, with every package any install can need on it (`nova/repo`, the `[nova-offline]` repository, from `tools/offline-repo`), so that it installs without a network (Firefox, which a person can ask for online, is not on it: the installer reads it from the release's Arch snapshot after the stick, `ONLINE_TOO` in `installer/install-packages.bash`);
 - a `.sig` by the repository key for each file read without pacman (`release.toml`, the ISO's `.sha256`, `nova-usb`), which `nova update` and `nova-usb` check against the key alone.
 
 [releasing.md](releasing.md) has the two-week cycle and the signing key.
@@ -419,6 +419,9 @@ Pre-releases (the candidates) reach only systems that opted in (`nova update --c
 ### Not redistributed: Chrome and VS Code
 
 Chrome and VS Code are built on the machine from their AUR recipes, which download from the vendors (`nova apps install`).
+
+- An install online builds VS Code, and Chrome when it is the browser asked for (`install_apps` in `installer/setup.bash`); offline it builds neither, and the welcome's Apps page offers VS Code at the first login online. Neither is on the stick.
+- The package is built uncompressed (`PKGEXT=.pkg.tar`): it is installed and thrown away, and compressing Chrome's 460 MB took longer than packing it.
 
 - They are outside the release, so `nova update` ends by rebuilding whichever is behind the AUR (`nova apps update`). The bar's update badge shows when one is, with a notification once.
 - One that will not build or go in leaves Nova updated: the update finishes with problems (status 4, state `problems` for Settings), naming the app.

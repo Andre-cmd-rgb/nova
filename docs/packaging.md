@@ -102,7 +102,7 @@ To update: bump `pkgver` to a newer tag, then the checksum (`makepkg -g`). Arch'
 **Supernova's own PKGBUILD (`packaging/arch/PKGBUILD` in its repository), built from the Supernova commit `_commit` pins.**
 
 - **What it is:** Nova's browser, on the castlabs Electron for Content Security that Supernova's `electron.lock` pins (Chromium plus Google's licensed Widevine, so Netflix and Spotify play). `prepare()` stops the build if the PKGBUILD's castlabs version, URL or checksum differ from that `electron.lock`.
-- **Not installed by default:** it is not a dependency of `nova` and not the default browser; it is in `[nova]` to be installed by name.
+- **The default browser, not a dependency:** `nova` does not depend on it; the installer installs it unless Firefox is asked for (Chrome, built online from its AUR recipe, comes beside it), from the stick's offline repository too (`every_package` in `installer/install-machine.bash`), and the skel's `mimeapps.list` names it. It is not in the App Center's catalog.
 - **Two changes from Supernova's copy:** the source is the pinned commit of the published repository instead of a local checkout, and `check()`, which runs Supernova's unit tests and starts the browser headless (`tools/smoke.sh`), runs it without Chromium's sandbox where user namespaces are forbidden, as in CI's Docker containers. The job's container has a 1 GB `/dev/shm`, since Docker's 64 MB is too little for Chromium.
 - **No setuid helper:** `chrome-sandbox` is not shipped; Chromium's sandbox runs on user namespaces, which Arch's kernels allow.
 

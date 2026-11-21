@@ -115,11 +115,12 @@ profile_packages() {
 
 # Every package an install on any computer could ask for, for the offline
 # repository nova usb puts on a stick: one stick installs any machine.
+# Supernova is the browser an install without the internet gets.
 every_package() {
   local list
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
-    printf '%s\n' linux-nova linux linux-lts
+    printf '%s\n' linux-nova linux linux-lts supernova
     "$SHARE/hardware/nova-hw-packages" --every
     for list in "$SHARE"/hardware/*/packages; do
       [[ -r $list ]] || continue

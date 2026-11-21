@@ -105,7 +105,7 @@ Item {
 
   readonly property var names: ({
     "power-saver": "Power Saver", "balanced": "Balanced", "performance": "Performance",
-    "chrome": "Chrome", "chromium": "Chromium", "firefox": "Firefox", "brave": "Brave",
+    "supernova": "Supernova", "chrome": "Chrome", "chromium": "Chromium", "firefox": "Firefox", "brave": "Brave",
     "edge": "Edge", "zen": "Zen",
     "code": "VS Code", "cursor": "Cursor", "zed": "Zed", "zeditor": "Zed",
     "sublime_text": "Sublime Text", "helix": "Helix", "nvim": "Neovim", "vim": "Vim", "emacs": "Emacs",

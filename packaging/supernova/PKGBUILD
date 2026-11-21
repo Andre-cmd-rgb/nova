@@ -10,8 +10,9 @@
 # sandbox where user namespaces are forbidden (Nova builds in Docker, whose
 # seccomp policy forbids them; on a machine that allows them the sandbox stays on).
 #
-# Not the default browser and not a dependency of `nova`: it is in [nova] to
-# be installed by name (pacman -S supernova).
+# The default browser, but not a dependency of `nova`: the installer installs
+# it (from the stick's offline repository too) unless Firefox is asked for,
+# and Settings, Default Apps, chooses among it and the others.
 #
 # To update: set _commit to a newer commit of Supernova's main, carry over any
 # change to its packaging/arch/PKGBUILD, and build. prepare() stops the build

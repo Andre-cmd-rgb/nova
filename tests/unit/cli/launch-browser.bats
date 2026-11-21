@@ -45,7 +45,9 @@ launch() { "$REPO_ROOT/src/cli/bin/nova-launch-browser" "$@"; }
   launch --private
   browser microsoft-edge.desktop microsoft-edge-stable
   launch --private
-  [ "$(cut -d' ' -f3- "$CALLS")" = "$(printf '%s\n' '--incognito https://example.org' --private-window --inprivate)" ]
+  browser supernova.desktop supernova
+  launch --private
+  [ "$(cut -d' ' -f3- "$CALLS")" = "$(printf '%s\n' '--incognito https://example.org' --private-window --inprivate --private)" ]
 }
 
 @test "the browser is handed the page, and never run to read its --help" {

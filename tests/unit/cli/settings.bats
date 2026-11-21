@@ -236,6 +236,13 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '[.apps.browsers, .apps.terminals, .apps.browser, .screenTime, .lock.fingerprint]')" = '[["chrome"],["foot"],"chrome",true,true]' ]
 }
 
+@test "state: Supernova, Nova's own browser, is one to choose" {
+  stub supernova
+  stub google-chrome-stable
+  stub nova-default-browser 'echo supernova'
+  [ "$(state '[.apps.browsers, .apps.browser]')" = '[["supernova","chrome"],"supernova"]' ]
+}
+
 @test "state: no fingerprint setup without a reader, or without fprintd" {
   stub fprintd-enroll
   stub busctl 'echo "ao 0"'

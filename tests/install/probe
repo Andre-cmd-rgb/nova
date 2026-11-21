@@ -70,6 +70,9 @@ probe() {
   # Games: ntsync for Wine and Proton, loaded at boot, open to the user.
   check "the user can open /dev/ntsync" runuser -u "$user" -- test -r /dev/ntsync -a -w /dev/ntsync
   check "steam-devices gives the user game controllers" pacman -Q steam-devices
+  # The browser the answers file left to its default, from the stick or the internet.
+  check "Supernova is installed and the default browser" \
+    bash -c "pacman -Q supernova && grep -qx x-scheme-handler/https=supernova.desktop /home/$user/.config/mimeapps.list"
   check "no NVIDIA userspace on a machine without an NVIDIA card" \
     bash -c 'grep -qsx 0x10de /sys/bus/pci/devices/*/vendor || ! pacman -Q nvidia-utils'
 

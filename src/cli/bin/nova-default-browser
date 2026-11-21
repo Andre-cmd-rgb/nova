@@ -1,13 +1,14 @@
 #!/bin/bash
 
 # nova:summary=Set the default browser for Nova and XDG handlers
-# nova:args=[chromium|chrome|brave|brave-origin|edge|firefox|zen]
+# nova:args=[supernova|chromium|chrome|brave|brave-origin|edge|firefox|zen]
 
 set -euo pipefail
 
 # The browsers to choose from: the name given here, the desktop entry, the
 # icon and the name the notification shows.
 browsers=(
+  "supernova supernova.desktop 󰖟 Supernova"
   "chromium chromium.desktop  Chromium"
   "chrome google-chrome.desktop 󰊯 Chrome"
   "brave brave-browser.desktop 󰖟 Brave"
@@ -37,7 +38,7 @@ for browser in "${browsers[@]}"; do
   [[ $short != "$1" ]] || break
 done
 if [[ $short != "$1" ]]; then
-  echo "Usage: nova-default-browser <chromium|chrome|brave|brave-origin|edge|firefox|zen>" >&2
+  echo "Usage: nova-default-browser <supernova|chromium|chrome|brave|brave-origin|edge|firefox|zen>" >&2
   exit 1
 fi
 

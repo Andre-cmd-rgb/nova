@@ -16,7 +16,8 @@ config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 
 # The browsers nova-default-browser offers of Chromium's family, by their own
 # binaries (a wrapper in a binary's place may pick another profile, or add
-# flags of its own): each one's profile directory and flags file.
+# flags of its own): each one's profile directory and flags file. Supernova,
+# on Electron, has no such socket: it is launched.
 declare -A browsers=(
   [/usr/bin/chromium]="chromium chromium-flags.conf"
   [/usr/bin/google-chrome-stable]="google-chrome chrome-flags.conf"

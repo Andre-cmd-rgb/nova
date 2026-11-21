@@ -264,20 +264,33 @@ create_user() {
   # Settings sets one: not worth stopping a setup for.
   as_user "$user" nova-theme set white ||
     warn "The theme did not apply; choose one in Settings, Appearance."
+  [[ $BROWSER != firefox ]] || set_browser "$user" firefox.desktop
 }
 
-# Chrome, VS Code (built from their AUR recipes, since neither may be
-# redistributed) and the mise tools, Claude Code and Codex. Online only, and
-# never fatal: the system is complete without them, and the same two commands
-# finish the job later.
+# The account's default browser, in the mimeapps.list it has from Nova's
+# skel, which names Supernova: for the web and web pages, and for PDFs, which
+# Firefox and Chrome open and Supernova does not.
+set_browser() { # user desktop-entry
+  local list=$TARGET/home/$1/.config/mimeapps.list
+  [[ -f $list ]] || return 0
+  sed -i -E "s#^(x-scheme-handler/https?|text/html|application/pdf)=.*#\1=$2#" "$list"
+  grep -q '^application/pdf=' "$list" || sed -i "/^text\/html=/a application/pdf=$2" "$list"
+}
+
+# Chrome when it is the browser asked for, VS Code (built from their AUR
+# recipes, since neither may be redistributed) and the mise tools, Claude Code
+# and Codex. Online only, and never fatal: the system is complete without
+# them (Supernova is there beside Chrome), the welcome offers VS Code at the
+# first login online, and mise install finishes the rest.
 install_apps() {
-  local user=$1 rule=$TARGET/etc/sudoers.d/90-nova-install-apps
+  local user=$1 rule=$TARGET/etc/sudoers.d/90-nova-install-apps names=VS\ Code
+  [[ $BROWSER != chrome ]] || names="Chrome, VS Code"
   if ! curl -fsI --max-time 10 -o /dev/null https://aur.archlinux.org/; then
-    warn "No internet: Chrome, VS Code, Claude Code and Codex are not installed."
-    warn "Once connected, run: nova apps install; mise install"
+    warn "No internet: $names, Claude Code and Codex are not installed."
+    warn "Once connected, the welcome offers VS Code, and mise install sets up the rest."
     return 0
   fi
-  say "Installing Chrome, VS Code, Claude Code and Codex"
+  say "Installing $names, Claude Code and Codex"
   # makepkg installs through sudo, and the account has no password prompt to
   # answer here, so pacman alone is allowed for the length of this step. The
   # rule is a file of the live system's, in memory, mounted over an empty one
@@ -287,11 +300,18 @@ install_apps() {
   install -m 440 /dev/null "$rule"
   CLEANUP+=("$rule")
   if mount --bind "$held" "$rule"; then
-    as_user "$user" nova-apps-install --noconfirm ||
-      warn "Chrome or VS Code did not install; run nova apps install after the first login."
+    if [[ $BROWSER == chrome ]]; then
+      if as_user "$user" nova-apps-install --noconfirm --only google-chrome; then
+        set_browser "$user" google-chrome.desktop
+      else
+        warn "Chrome did not install, so Supernova is the browser; the App Center installs Chrome."
+      fi
+    fi
+    as_user "$user" nova-apps-install --noconfirm --only visual-studio-code-bin ||
+      warn "VS Code did not install; the App Center installs it."
     umount -- "$rule" || true
   else
-    warn "Chrome and VS Code are not installed; run nova apps install after the first login."
+    warn "$names did not install; the App Center installs them."
   fi
   rm -f -- "$rule" "$held"
   as_user "$user" mise install --yes ||

@@ -16,7 +16,7 @@ answer() { # key
 
 # The answers, asked on screen or read from the answers file.
 KEYMAP='' DISK_LINE='' FULLNAME='' ACCOUNT='' PASSWORD='' COMPUTER='' TIMEZONE='' FINGERPRINT=''
-ENCRYPT=no DISK_PASSPHRASE=''
+ENCRYPT=no DISK_PASSPHRASE='' BROWSER=supernova
 # Who FINGERPRINT was enrolled for: going back and changing the username
 # leaves the print behind.
 ENROLLED_FOR=''
@@ -93,6 +93,81 @@ answers_from_file() {
     ((${#DISK_PASSPHRASE} >= MIN_PASSWORD)) ||
       die "the answers file: encrypt=yes needs a disk_passphrase of at least $MIN_PASSWORD characters."
   fi
+  BROWSER=$(answer_or browser supernova)
+  [[ $BROWSER =~ ^(supernova|firefox|chrome)$ ]] || die "the answers file: browser=supernova, browser=firefox or browser=chrome."
+}
+
+# ------------------------------------------------------------------ the browser
+#
+# The web browser, which is the default one: Supernova, Nova's own, which the
+# stick carries; Firefox, from Arch's repositories; or Google Chrome, which may
+# not be passed on, so it is built from Google's release once the system is in
+# (install_apps), with Supernova beside it in case it cannot be. Firefox and
+# Chrome come over the internet: without it there is no question, and the
+# summary says why it is Supernova.
+
+INTERNET=''
+
+# Whether the internet answers, asked once.
+internet() {
+  if [[ -z $INTERNET ]]; then
+    INTERNET=no
+    curl -fsI --max-time 10 -o /dev/null https://archive.archlinux.org/ && INTERNET=yes
+  fi
+  [[ $INTERNET == yes ]]
+}
+
+# The browser this install can give: Supernova without the internet, and
+# without the apps step (answers apps=no) that would build Chrome.
+settle_browser() {
+  [[ $BROWSER != supernova ]] || return 0
+  if ! internet; then
+    info "No internet: Supernova is the browser. Firefox and Chrome are in the App Center once there is."
+    BROWSER=supernova
+  elif [[ $BROWSER == chrome && $(answer_or apps yes) == no ]]; then
+    info "apps=no: Chrome is built in that step, so Supernova is the browser."
+    BROWSER=supernova
+  fi
+  return 0
+}
+
+# What the packages step installs for it.
+browser_packages() {
+  case $BROWSER in
+    firefox) echo firefox ;;
+    *) echo supernova ;;
+  esac
+}
+
+step_browser() {
+  local supernova="Supernova: Nova's own, light and fast" firefox="Firefox" chrome="Google Chrome" current
+  screen Browser
+  case $BROWSER in
+    firefox) current=$firefox ;;
+    chrome) current=$chrome ;;
+    *) current=$supernova ;;
+  esac
+  ui_ask ui_choose "Your web browser?" "$current" \
+    "$supernova"$'\t'supernova "$firefox"$'\t'firefox "$chrome"$'\t'chrome || return 1
+  BROWSER=$REPLY
+}
+
+summary_browser() {
+  case $BROWSER in
+    firefox) echo "Browser      Firefox" ;;
+    chrome)
+      echo "Browser      Google Chrome, built from Google's release at the end, and"
+      echo "             Supernova beside it"
+      ;;
+    *)
+      if internet; then
+        echo "Browser      Supernova"
+      else
+        echo "Browser      Supernova: Firefox and Chrome need the internet, and are in"
+        echo "             the App Center once there is"
+      fi
+      ;;
+  esac
 }
 
 # ------------------------------------------------------------- the screens
@@ -123,6 +198,7 @@ trail_step() { # step_ name
     disk | encryption) echo Disk ;;
     you | fingerprint) echo You ;;
     computer) echo Computer ;;
+    browser) echo Browser ;;
     summary) echo Review ;;
   esac
 }
@@ -264,6 +340,7 @@ summary_lines() {
   echo "Account      $ACCOUNT ($FULLNAME) on $COMPUTER"
   echo "Time zone    $TIMEZONE, keyboard $KEYMAP"
   [[ -z $FINGERPRINT ]] || echo "Fingerprint  $FINGERPRINT"
+  summary_browser
   if carry_ready && [[ -n $(restorable_labels) ]]; then
     echo "Your things  $(restorable_labels | paste -sd, - | sed 's/,/, /g') from $(carry_value .source.host)"
   fi
@@ -310,7 +387,9 @@ questions_on_screen() { # fingerprint(yes|no): whether to offer enrolling one
   [[ -n $PORTABLE_DISK ]] || steps+=(disk)
   steps+=(encryption you)
   [[ $1 != yes ]] || steps+=(fingerprint)
-  steps+=(computer summary)
+  steps+=(computer)
+  ! internet || steps+=(browser)
+  steps+=(summary)
   for name in "${steps[@]}" install; do
     name=$(trail_step "$name")
     name=${name:-Install}
