@@ -81,14 +81,16 @@ clients | awk -v total_only="$total_only" -v held="$(kernel_held)" '
     seen[device SUBSEP id] = 1
     who = comm " (" pid ")"
     if (!(who in total)) order[++n] = who
-    total[who] += t; shared[who] += s; resident[who] += r; purgeable[who] += u
+    total[who] += (has_t ? t : m); shared[who] += s; resident[who] += r; purgeable[who] += u
   }
-  $1 == "file" { settle(); pid = $2; comm = $3; id = ""; device = ""; t = s = r = u = 0; next }
+  $1 == "file" { settle(); pid = $2; comm = $3; id = ""; device = ""; has_t = 0; t = m = s = r = u = 0; next }
   $1 == "drm-client-id:" { id = $2; next }
   $1 == "drm-pdev:" { device = $2; next }
   $1 == "drm-driver:" { if ($2 == "i915") intel = 1; next }
-  # The legacy drm-memory-<region> is the total before drm-total- came.
-  $1 ~ /^drm-(total|memory)-/ { t += kib($2, $3); next }
+  $1 ~ /^drm-total-/ { has_t = 1; t += kib($2, $3); next }
+  # The legacy drm-memory-<region> is the total before drm-total- came;
+  # amdgpu prints both in one fdinfo, so it counts only where drm-total- is absent.
+  $1 ~ /^drm-memory-/ { m += kib($2, $3); next }
   $1 ~ /^drm-shared-/ { s += kib($2, $3); next }
   $1 ~ /^drm-resident-/ { r += kib($2, $3); next }
   $1 ~ /^drm-purgeable-/ { u += kib($2, $3); next }

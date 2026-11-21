@@ -74,6 +74,24 @@ client() { # pid fd id total shared [pdev]
   [ "$output" = "3072 0 0 0" ]
 }
 
+@test "a descriptor with both drm-total- and legacy drm-memory- counts only drm-total-, per descriptor" {
+  process 301 amd
+  descriptor 301 4 /dev/dri/renderD129 $'drm-driver:\tamdgpu' $'drm-client-id:\t4' $'drm-pdev:\t0000:03:00.0' \
+    $'drm-memory-vram:\t2 MiB' $'drm-memory-gtt:\t1024 KiB' $'drm-memory-cpu:\t512 KiB' \
+    $'drm-total-vram:\t2 MiB' $'drm-total-gtt:\t1024 KiB' $'drm-total-cpu:\t512 KiB' \
+    $'drm-shared-vram:\t1 MiB' $'drm-resident-vram:\t2 MiB' $'drm-resident-gtt:\t512 KiB'
+  # Another descriptor in the same run with only legacy drm-memory- still counts.
+  process 302 legacy
+  descriptor 302 4 /dev/dri/renderD128 $'drm-driver:\tamdgpu' $'drm-client-id:\t5' $'drm-pdev:\t0000:04:00.0' \
+    $'drm-memory-vram:\t1 MiB'
+  run "$TOOL" --total
+  [ "$output" = "4608 1024 2560 0" ]
+  run "$TOOL"
+  [ "$status" -eq 0 ]
+  [[ $output == *"       3.5        1.0        2.5        0.0  amd (301)"* ]]
+  [[ $output == *"       1.0        0.0        0.0        0.0  legacy (302)"* ]]
+}
+
 @test "descriptors on anything but /dev/dri, and DRM files that count nothing, are passed over" {
   process 400 editor
   descriptor 400 3 /home/x/file $'drm-client-id:\t1' $'drm-total-system0:\t5 MiB'
