@@ -62,13 +62,16 @@ plugins=$root/usr/share/nova/shell/plugins
 work=$(mktemp -d)
 compositor=''
 trap '[[ -z $compositor ]] || kill "$compositor" 2>/dev/null; rm -rf "$work"' EXIT
-mkdir -p "$work/home" "$work/run" "$work/shell" "$work/bin"
+mkdir -p "$work/home" "$work/run" "$work/shell" "$work/bin" "$work/default"
 chmod 700 "$work/run"
 # No Hyprland here, on a desktop or in CI: what asks it (Style's rounding and
 # gaps) gets the answer it gets without a session, whether or not hyprctl is
-# installed.
-printf '#!/bin/sh\nexit 1\n' >"$work/bin/hyprctl"
-chmod +x "$work/bin/hyprctl"
+# installed. Such stand-ins for every test live in a folder of their own, on
+# PATH after the tests' stubs: a test's stub of the same name comes first,
+# and taking it away after the test leaves the stand-in, not nothing (a
+# machine with Hyprland would not notice; CI, without it, would).
+printf '#!/bin/sh\nexit 1\n' >"$work/default/hyprctl"
+chmod +x "$work/default/hyprctl"
 for d in Commons Ui services plugins; do ln -s "$root/usr/share/nova/shell/$d" "$work/shell/$d"; done
 
 # Starts sway on its headless backend, the way tools/shell-smoke does, and
@@ -118,7 +121,7 @@ for test in "${tests[@]}"; do
   mkdir -p "$work/home"
   stubs=()
   while read -r dest source; do
-    [[ $dest != /* && $dest != *..* && -f $here/stubs/$source ]] || { echo "FAIL $name (bad stub: $dest $source)"; failed=1; continue 2; }
+    [[ $dest != /* && $dest != *..* && $dest != default/* && -f $here/stubs/$source ]] || { echo "FAIL $name (bad stub: $dest $source)"; failed=1; continue 2; }
     mkdir -p "$(dirname "$work/$dest")"
     install -m 755 "$here/stubs/$source" "$work/$dest"
     stubs+=("$work/$dest")
@@ -130,7 +133,7 @@ for test in "${tests[@]}"; do
   # across a change to or from it; a test names another on a line of its
   # own, as "// zone: America/Santiago".
   zone=$(sed -n 's#^// zone: ##p' "$test" | head -n 1)
-  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${zone:-Europe/Rome}" PATH="$work/bin:/usr/bin" "${display[@]}" \
+  env -i HOME="$work/home" XDG_RUNTIME_DIR="$work/run" LANG=C.UTF-8 TZ="${zone:-Europe/Rome}" PATH="$work/bin:$work/default:/usr/bin" "${display[@]}" \
     DBUS_SYSTEM_BUS_ADDRESS="unix:path=$work/no-bus" DBUS_SESSION_BUS_ADDRESS="unix:path=$work/no-bus" \
     TEST_PLUGINS="$plugins" TEST_PLUGIN_COUNT="$(jq length "$plugins/index.json")" \
     timeout 60 qs --no-color -p "$work/shell/$name.qml" >/dev/null 2>&1 || status=$?
