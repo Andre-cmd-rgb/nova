@@ -98,7 +98,9 @@ const SHELL_ONLY: [(&CStr, &CStr); 2] = [
 ];
 
 extern "C" {
-    static environ: *const *const c_char;
+    // glibc's setenv()/unsetenv() (including leave_preload) can reassign
+    // `environ`, so it must be `static mut` and read through a raw pointer.
+    static mut environ: *const *const c_char;
 }
 
 /// The value of <name> in <env> ("NAME=value" entries), or None.
@@ -133,9 +135,10 @@ pub unsafe extern "C" fn getenv(name: *const c_char) -> *mut c_char {
         return std::ptr::null_mut();
     }
     // SAFETY: the caller's C string; environ is libc's, a list of C strings
-    // ended by a null, or null itself.
+    // ended by a null, or null itself. Read through a raw pointer rather
+    // than taking a reference to a static mut.
     let name = unsafe { CStr::from_ptr(name) }.to_bytes();
-    let mut entries = unsafe { environ };
+    let mut entries = unsafe { std::ptr::addr_of!(environ).read() };
     let env = std::iter::from_fn(|| {
         // SAFETY: as above; the walk stops at the null.
         let entry = unsafe { entries.as_ref().map(|first| *first) }?;
@@ -251,5 +254,13 @@ mod tests {
         // SAFETY: the pointer is the literal's, which lives for the program.
         let conf = unsafe { std::ffi::CStr::from_ptr(malloc_conf.0) };
         assert_eq!(conf.to_str().unwrap(), "narenas:2,thp:never");
+    }
+
+    #[test]
+    fn environ_is_mutable_as_libc_changes_it() {
+        // Fails to compile if `environ` is declared immutable (UB when glibc's
+        // setenv/unsetenv, including leave_preload, updates it).
+        let slot: *mut *const *const c_char = std::ptr::addr_of_mut!(environ);
+        assert!(!slot.is_null());
     }
 }
