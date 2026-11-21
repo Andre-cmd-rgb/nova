@@ -1,7 +1,7 @@
 #!/bin/bash
 # nova:hidden=true
 # nova:summary=Apply a Nova release as root (run by nova update through pkexec)
-# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url> [--package <file>]... | --packages-only --package <file>... | --repair [--package <file>]... | --repairs | --check-boot
+# nova:args=--tag <tag> --version <v> --arch-date <YYYY/MM/DD> --nova-repo <url> [--package <file>]... | --packages-only --package <file>... | --repair [--package <file>]... | --repairs | --check-boot | --login-command
 # nova:after-pacman=1
 #
 # The privileged half of `nova update`. One pkexec call runs all of it, so there is a
@@ -41,6 +41,8 @@
 # around later pacman runs do not push the way back out (NUMBER_LIMIT_IMPORTANT).
 # --check-boot runs step 7 alone, and the boot fallback's check, to look again
 # after a repair.
+# --login-command sets greetd's boot autologin to the line the installed Nova
+# has (login_command), as the nova package's post_upgrade asks.
 #
 # --repair runs step 5 alone, for nova update on a system already on the newest
 # release: the repairs nova doctor points at need no new release. --repairs,
@@ -288,6 +290,33 @@ keep_graphics_drivers() { # 1 for --noconfirm, then a command prefix for pacman
   say "Removing NVIDIA drivers this computer cannot use: ${graphics_stray[*]}"
   "$@" pacman -Rns --noconfirm "${graphics_stray[@]}" ||
     warn "could not remove ${graphics_stray[*]}; pacman said why above"
+}
+
+# greetd's boot autologin, the line the installer wrote. Until 1.0.0-rc.15 it
+# started uwsm itself, which left uwsm's errors on the console; since, it
+# runs nova-session-start (data/session/bin/nova-session-start says why). It
+# is set to the line the installed Nova has, either way: after a move back to
+# a release without nova-session-start, a line naming it would leave every
+# boot at the password greeter, and pacman runs only the scriptlets of the
+# package coming in, which an older one does not have. The update runs it
+# after pacman, and the nova package's post_upgrade (--login-command). A line
+# changed by hand is left alone. Written beside the file and renamed over
+# it, with its owner and mode, so that greetd never reads half of one: a
+# full disk or a power cut leaves the old file whole.
+LOGIN_UWSM='command = "env NOVA_LOGIN=autologin UWSM_SILENT_START=1 uwsm start -e -D Hyprland hyprland.desktop"'
+LOGIN_NOVA='command = "env NOVA_LOGIN=autologin /usr/lib/nova/bin/nova-session-start"'
+login_command() {
+  local config=$ROOT/etc/greetd/config.toml old=$LOGIN_NOVA new=$LOGIN_UWSM tmp
+  if [[ -x $ROOT/usr/lib/nova/bin/nova-session-start ]]; then old=$LOGIN_UWSM new=$LOGIN_NOVA; fi
+  [[ -f $config && ! -L $config ]] && grep -qxF -- "$old" "$config" || return 0
+  tmp=$(mktemp "$config.XXXXXX") || { warn "could not set greetd's login command in $config"; return 0; }
+  if awk -v old="$old" -v new="$new" '$0 == old { print new; next } { print }' "$config" > "$tmp" &&
+    chown --reference="$config" -- "$tmp" && chmod --reference="$config" -- "$tmp" &&
+    sync -- "$tmp" && mv -f -- "$tmp" "$config"; then
+    return 0
+  fi
+  rm -f -- "$tmp"
+  warn "could not set greetd's login command in $config; it is as it was"
 }
 
 # Step 5, the repairs: what this computer's hardware and the release's
@@ -607,7 +636,7 @@ check_space() { # esp, or nothing
 
 main() {
   local tag='' version='' arch_date='' nova_repo='' from='' snapshot=1 downgrade=0 noconfirm=0 only_boot=0 only_packages=0
-  local repair=0 repairs=0 after_pacman=0 lock_fd='' pre_arg=''
+  local repair=0 repairs=0 after_pacman=0 lock_fd='' pre_arg='' only_login=0
   packages=() staged=''
   while (( $# )); do
     case $1 in
@@ -615,6 +644,7 @@ main() {
       --packages-only)   only_packages=1; shift ;;
       --repair)          repair=1; shift ;;
       --repairs)         repairs=1; shift ;;
+      --login-command)   only_login=1; shift ;;
       --after-pacman)    after_pacman=1; shift ;;
       --lock-fd)         lock_fd=${2:?}; shift 2 ;;
       --pre)             pre_arg=${2:?}; shift 2 ;;
@@ -637,6 +667,12 @@ main() {
     return 0
   fi
   (( EUID == 0 )) || [[ -n $ROOT ]] || die "this helper must run as root; use 'nova update'"
+  # The nova package's post_upgrade, inside pacman's transaction, which an
+  # update may be running: no lock.
+  if (( only_login )); then
+    login_command
+    return 0
+  fi
   if (( only_boot )); then
     take_lock
     check_boot
@@ -760,6 +796,7 @@ after_pacman() {
   local -a env_skip=()
   (( ! snapshot )) || env_skip=(env SNAP_PAC_SKIP=y)
 
+  login_command
   repair_steps "$noconfirm" "${env_skip[@]}"
   # An app that will not go in is said, and the rest goes on.
   local apps=0

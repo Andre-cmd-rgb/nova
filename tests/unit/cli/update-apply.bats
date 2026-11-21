@@ -241,7 +241,7 @@ new_copy() { # [older]
   cat >"$SCRATCH/bin/pacman" <<'STUB'
 #!/bin/bash
 echo "${0##*/} $*" >>"$SCRATCH/calls"
-if [[ $1 == -Su ]]; then cp "$SCRATCH/next" "$SCRATCH/lib/.next" && mv -f "$SCRATCH/lib/.next" "$SCRATCH/lib/nova-update-apply"; fi
+if [[ $1 == -Su* ]]; then cp "$SCRATCH/next" "$SCRATCH/lib/.next" && mv -f "$SCRATCH/lib/.next" "$SCRATCH/lib/nova-update-apply"; fi
 exit 0
 STUB
 }
@@ -269,6 +269,9 @@ STUB
   new_copy older
   run run_update --allow-downgrade
   [ "$status" -eq 0 ]
+  # The older copy is in place, and ran nothing.
+  fails grep -q '^# nova:after-pacman=1$' "$SCRATCH/lib/nova-update-apply"
+  grep -q 'after pacman: the new copy' "$SCRATCH/lib/nova-update-apply"
   fails grep -q 'after pacman: the new copy' "$SCRATCH/calls"
   [[ $output == *"Boot entries look right"* ]]
   [[ $output == *"Nova is now on v1.1.0."* ]]
@@ -949,4 +952,121 @@ pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils" ]
   [ "$status" -eq 1 ]
   [[ $output == *"the last update did not finish: nova update finishes it"* ]]
   [ ! -s "$SCRATCH/calls" ]
+}
+
+# greetd's config as the installer writes it, its boot autologin on <line>.
+greetd_config() { # line
+  put "$NOVA_ROOT/etc/greetd/config.toml" "[terminal]
+vt = 1
+
+[initial_session]
+$1
+user = \"alice\"
+
+[default_session]
+command = \"/usr/lib/nova/bin/nova-greeter-session\"
+"
+  chmod 640 "$NOVA_ROOT/etc/greetd/config.toml"
+}
+
+session_start_installed() {
+  put "$NOVA_ROOT/usr/lib/nova/bin/nova-session-start" '#!/bin/bash'
+  chmod +x "$NOVA_ROOT/usr/lib/nova/bin/nova-session-start"
+}
+
+@test "greetd's boot autologin follows the installed Nova, both ways, written beside and renamed" {
+  local uwsm nova inode
+  uwsm=$(sed -n 's/^LOGIN_UWSM=.\(.*\).$/\1/p' "$REPO_ROOT/src/cli/bin/nova-update-apply")
+  nova=$(sed -n 's/^LOGIN_NOVA=.\(.*\).$/\1/p' "$REPO_ROOT/src/cli/bin/nova-update-apply")
+  [[ $uwsm == 'command = "env NOVA_LOGIN=autologin UWSM_SILENT_START=1 uwsm start'* ]]
+  # The template the installer renders has the new line.
+  grep -qxF "$nova" "$REPO_ROOT/data/session/greetd/config.toml"
+  # Forward, with nova-session-start installed: the old line goes.
+  session_start_installed
+  greetd_config "$uwsm"
+  inode=$(stat -c %i "$NOVA_ROOT/etc/greetd/config.toml")
+  run login_command
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 5p "$NOVA_ROOT/etc/greetd/config.toml")" = "$nova" ]
+  [ "$(grep -c . "$NOVA_ROOT/etc/greetd/config.toml")" -eq 7 ]
+  [ "$(stat -c '%a %u' "$NOVA_ROOT/etc/greetd/config.toml")" = "640 $(id -u)" ]
+  [ "$(stat -c %i "$NOVA_ROOT/etc/greetd/config.toml")" != "$inode" ]
+  [ -z "$(find "$NOVA_ROOT/etc/greetd" -name 'config.toml.*')" ]
+  # Again: nothing to do.
+  run login_command
+  [ "$(sed -n 5p "$NOVA_ROOT/etc/greetd/config.toml")" = "$nova" ]
+  # Back, after a move to a release without it.
+  rm "$NOVA_ROOT/usr/lib/nova/bin/nova-session-start"
+  run login_command
+  [ "$status" -eq 0 ]
+  [ "$(sed -n 5p "$NOVA_ROOT/etc/greetd/config.toml")" = "$uwsm" ]
+  [ "$(stat -c %a "$NOVA_ROOT/etc/greetd/config.toml")" = 640 ]
+}
+
+@test "a boot autologin changed by hand is left alone, either way" {
+  local hand='command = "env NOVA_LOGIN=autologin uwsm start -D Hyprland hyprland.desktop"'
+  greetd_config "$hand"
+  run login_command
+  [ "$(sed -n 5p "$NOVA_ROOT/etc/greetd/config.toml")" = "$hand" ]
+  session_start_installed
+  run login_command
+  [ "$(sed -n 5p "$NOVA_ROOT/etc/greetd/config.toml")" = "$hand" ]
+  # No config at all: nothing.
+  rm "$NOVA_ROOT/etc/greetd/config.toml"
+  run login_command
+  [ "$status" -eq 0 ]
+  [ ! -e "$NOVA_ROOT/etc/greetd/config.toml" ]
+}
+
+@test "a rewrite that cannot be written whole leaves greetd's config as it was" {
+  local uwsm before
+  uwsm=$(sed -n 's/^LOGIN_UWSM=.\(.*\).$/\1/p' "$REPO_ROOT/src/cli/bin/nova-update-apply")
+  session_start_installed
+  greetd_config "$uwsm"
+  before=$(cat "$NOVA_ROOT/etc/greetd/config.toml")
+  # A disk that fills halfway through.
+  mkdir -p "$SCRATCH/bin"
+  printf '#!/bin/bash\nprintf "[terminal]\\nvt"\nexit 1\n' >"$SCRATCH/bin/awk"
+  chmod +x "$SCRATCH/bin/awk"
+  PATH="$SCRATCH/bin:$PATH" run login_command
+  [ "$status" -eq 0 ]
+  [[ $output == *"could not set greetd's login command"*"it is as it was"* ]]
+  [ "$(cat "$NOVA_ROOT/etc/greetd/config.toml")" = "$before" ]
+  [ -z "$(find "$NOVA_ROOT/etc/greetd" -name 'config.toml.*')" ]
+}
+
+@test "the nova package's post_upgrade runs the one rewrite, which takes no lock" {
+  grep -qx '  /usr/lib/nova/bin/nova-update-apply --login-command || true' "$REPO_ROOT/packaging/nova/nova.install"
+  sh -n "$REPO_ROOT/packaging/nova/nova.install"
+  prepare_update
+  local uwsm
+  uwsm=$(sed -n 's/^LOGIN_UWSM=.\(.*\).$/\1/p' "$REPO_ROOT/src/cli/bin/nova-update-apply")
+  session_start_installed
+  greetd_config "$uwsm"
+  # Inside an update's pacman transaction, whose lock is held.
+  mkdir -p "$NOVA_ROOT/run"
+  exec {held}>"$NOVA_ROOT/run/nova-update.lock"
+  flock "$held"
+  run "$SCRATCH/lib/nova-update-apply" --login-command
+  exec {held}>&-
+  [ "$status" -eq 0 ]
+  grep -q 'nova-session-start"$' "$NOVA_ROOT/etc/greetd/config.toml"
+}
+
+@test "a move back to a release without nova-session-start puts its boot autologin back" {
+  prepare_update
+  new_copy older
+  local nova uwsm
+  nova=$(sed -n 's/^LOGIN_NOVA=.\(.*\).$/\1/p' "$REPO_ROOT/src/cli/bin/nova-update-apply")
+  uwsm=$(sed -n 's/^LOGIN_UWSM=.\(.*\).$/\1/p' "$REPO_ROOT/src/cli/bin/nova-update-apply")
+  session_start_installed
+  greetd_config "$nova"
+  # pacman -Suu takes nova-session-start away, as the older nova has none.
+  sed -i 's|^exit 0$|[[ $1 != -Suu ]] \|\| rm -f "$NOVA_ROOT/usr/lib/nova/bin/nova-session-start"\nexit 0|' "$SCRATCH/bin/pacman"
+  run run_update --allow-downgrade
+  [ "$status" -eq 0 ]
+  [ ! -e "$NOVA_ROOT/usr/lib/nova/bin/nova-session-start" ]
+  fails grep -q '^# nova:after-pacman=1$' "$SCRATCH/lib/nova-update-apply"
+  fails grep -q 'after pacman: the new copy' "$SCRATCH/calls"
+  [ "$(sed -n 5p "$NOVA_ROOT/etc/greetd/config.toml")" = "$uwsm" ]
 }
