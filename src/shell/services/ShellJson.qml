@@ -11,9 +11,9 @@ import "Layout.js" as Layout
 // which is the bar drawn, and so the one the verbs change. It is worked out
 // once both files have been read (or found missing or unreadable), and again
 // each time one is read anew. The CLI works it out the same way
-// (nova-shell-config's in_effect). What an older file says the way it no
-// longer is said (Screen Time's entry in the bar) is read as it is meant
-// now (Layout.upgraded), and written so at the next save.
+// (nova-shell-config's in_effect), including what an older file says the way
+// it no longer is said (Screen Time's entry in the bar: Layout.upgraded),
+// written so at the next save by either side.
 QtObject {
   id: shellJson
 

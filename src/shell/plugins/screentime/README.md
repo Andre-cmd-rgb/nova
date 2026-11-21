@@ -52,10 +52,10 @@ place in the bar, and comes back there; the service keeps counting. Switched
 on while Screen Time is off, it shows nothing until Screen Time is on.
 
 A `shell.json` from before 1.0.0-rc.15 named the plugin in the bar for both.
-The shell reads such an entry as the widget's place, switched off, with
-Screen Time still recording (`Layout.upgraded`), and writes it so at its next
-change of the file: after the update the total is gone from the bar until
-switched on again, where it was.
+The shell and the CLI (`Layout.upgraded`, `nova-shell-config`) both read such
+an entry as the widget's place, switched off, with Screen Time still recording,
+and write it so at the next change of the file: after the update the total is
+gone from the bar until switched on again, where it was.
 
 ## Using it
 

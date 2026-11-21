@@ -29,13 +29,68 @@ fail() {
   exit 1
 }
 
-# As the shell works them out (services/ShellJson.qml): the user's where
-# they are an object at version 1, else Nova's; and where they have no bar,
-# Nova's bar, the one the shell draws for them.
+# Plugins whose bar widget became a plugin of its own: the same map as
+# services/Layout.js's SPLIT, kept in step by tests/unit/cli/bar.bats.
+SHELL_CONFIG_SPLIT='{"nova.screentime":"nova.screentime-today"}'
+
+# The same migration as services/Layout.js's upgraded(): a bar entry of a
+# split plugin becomes its widget's entry (switched off where it stands,
+# keeping its settings minus the old indicator flag), and if any old entry
+# was on the plugin is named in plugins.
+# shellcheck disable=SC2016 # jq's own variables
+SHELL_CONFIG_UPGRADE='
+  def entry_id:
+    if type == "object" then (.id | tostring)
+    elif . == null or . == false then ""
+    else tostring end;
+  def has_bar($id):
+    any((.bar | objects | .layout | objects | (.left, .center, .right) | arrays | .[]); entry_id == $id);
+  def upgrade_split($plugin; $widget):
+    if has_bar($plugin) then
+      .bar = (.bar | if type == "object" then . else {} end)
+      | .bar.layout = (.bar.layout | if type == "object" then . else {} end)
+      | .bar.layout.left = (.bar.layout.left | if type == "array" then . else [] end)
+      | .bar.layout.center = (.bar.layout.center | if type == "array" then . else [] end)
+      | .bar.layout.right = (.bar.layout.right | if type == "array" then . else [] end)
+      | .plugins = (.plugins | if type == "array" then . else [] end)
+      | (has_bar($widget)) as $had_widget
+      | reduce ("left", "center", "right") as $s (
+          { config: ., seen: $had_widget, on: false };
+          reduce (.config.bar.layout[$s][]) as $e (
+            { list: [], seen: .seen, on: .on };
+            if ($e | entry_id) == $plugin then
+              ($e | if type == "object" then . else { id: $plugin } end) as $obj
+              | .on = (.on or ($obj.off != true))
+              | if .seen then .
+                else .seen = true | .list += [($obj + { id: $widget, off: true } | del(.indicator))]
+                end
+            else
+              .list += [$e]
+            end
+          ) as $row
+          | .config.bar.layout[$s] = $row.list
+          | .seen = $row.seen
+          | .on = $row.on
+        )
+      | .on as $on
+      | .config
+      | if $on and (any(.plugins[]; type == "object" and ((.id // "") | tostring) == $plugin) | not) then
+          .plugins += [{ id: $plugin }]
+        else .
+        end
+    else .
+    end;
+  reduce ($split | to_entries[]) as $pair (.; upgrade_split($pair.key; $pair.value))'
+
+# As the shell works them out (services/ShellJson.qml, Layout.upgraded):
+# the user's where they are an object at version 1, else Nova's; older split
+# bar entries migrated to plugins; and where they have no bar, Nova's bar,
+# the one the shell draws for them.
 in_effect() {
   local file=$shell_config
   if ! jq -e 'type == "object" and .version == 1' "$file" >/dev/null 2>&1; then file=$DEFAULTS_FILE; fi
-  jq -c --slurpfile nova "$DEFAULTS_FILE" 'if (.bar | type) == "object" then . else .bar = $nova[0].bar end' "$file"
+  jq -c --slurpfile nova "$DEFAULTS_FILE" --argjson split "$SHELL_CONFIG_SPLIT" \
+    "$SHELL_CONFIG_UPGRADE"' | if (.bar | type) == "object" then . else .bar = $nova[0].bar end' "$file"
 }
 
 # A time of day as HH:MM; a failure for anything else.

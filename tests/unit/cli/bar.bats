@@ -89,6 +89,49 @@ settings() { jq -cS "$1" "$HOME/.config/nova/shell.json"; }
   [ "$(settings .idle.lock)" = 60 ]
 }
 
+@test "defaults and edits keep Screen Time recording on an un-migrated shell.json, matching Layout.js" {
+  # Before 1.0.0-rc.15 Screen Time was named in bar.layout for both recording
+  # and its widget; defaults replaces .bar, so the migration must move it to
+  # plugins first.
+  cat >"$HOME/.config/nova/shell.json" <<'JSON'
+{"version":1,"bar":{"layout":{"left":[],"center":[],"right":[{"id":"nova.tray"},{"id":"nova.screentime","showTotal":false,"indicator":true},{"id":"nova.network"}]}},"plugins":[]}
+JSON
+  nova-bar transparent true
+  [ "$(settings .bar.layout.right)" = '[{"id":"nova.tray"},{"id":"nova.screentime-today","off":true,"showTotal":false},{"id":"nova.network"}]' ]
+  [ "$(settings .plugins)" = '[{"id":"nova.screentime"}]' ]
+
+  # Resetting the bar on an un-migrated file still keeps Screen Time recording.
+  cat >"$HOME/.config/nova/shell.json" <<'JSON'
+{"version":1,"bar":{"layout":{"left":[],"center":[],"right":[{"id":"nova.tray"},{"id":"nova.screentime","indicator":true}]}},"plugins":[]}
+JSON
+  nova-bar defaults
+  [ "$(settings .bar)" = "$(jq -cS .bar "$NOVA_PATH/default/shell.json")" ]
+  [ "$(settings .plugins)" = '[{"id":"nova.screentime"}]' ]
+
+  # One switched off stays off.
+  echo '{"version":1,"bar":{"layout":{"right":[{"id":"nova.screentime","off":true}]}}}' >"$HOME/.config/nova/shell.json"
+  nova-bar defaults
+  [ "$(settings .plugins)" = '[]' ]
+
+  # One beside the widget already keeps the widget once and Screen Time once.
+  echo '{"version":1,"bar":{"layout":{"right":[{"id":"nova.screentime"},{"id":"nova.screentime-today"}]}},"plugins":[{"id":"nova.screentime"}]}' >"$HOME/.config/nova/shell.json"
+  nova-bar transparent true
+  [ "$(settings '[.bar.layout.right, .plugins]')" = '[[{"id":"nova.screentime-today"}],[{"id":"nova.screentime"}]]' ]
+
+  # A bare-string entry is on too.
+  echo '{"version":1,"bar":{"layout":{"right":["nova.screentime"]}}}' >"$HOME/.config/nova/shell.json"
+  nova-bar defaults
+  [ "$(settings .plugins)" = '[{"id":"nova.screentime"}]' ]
+
+  # The shell's Layout.js and the CLI's nova-shell-config carry the exact same
+  # split-plugin map.
+  local js_split cli_split
+  js_split=$(sed -n 's/^var SPLIT = //p' "$REPO_ROOT/src/shell/services/Layout.js" | jq -cS .)
+  cli_split=$(sed -n "s/^SHELL_CONFIG_SPLIT='\(.*\)'/\1/p" "$REPO_ROOT/src/cli/bin/nova-shell-config" | jq -cS .)
+  [ -n "$js_split" ]
+  [ "$js_split" = "$cli_split" ]
+}
+
 @test "put, move and set ask the shell, with only the placement given" {
   nova-bar put nova.weather left --index 2
   nova-bar put nova.weather --after nova.clock

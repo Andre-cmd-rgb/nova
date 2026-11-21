@@ -259,7 +259,8 @@ function unmarkOff(config, id) {
 
 // The widgets that were once a part of another plugin, by that plugin's id.
 // Until 1.0.0-rc.15 Screen Time's widget was its plugin's own, and its entry
-// in the bar both showed the widget and kept the plugin recording.
+// in the bar both showed the widget and kept the plugin recording. Kept in
+// step with nova-shell-config's SHELL_CONFIG_SPLIT (tests/unit/cli/bar.bats).
 var SPLIT = { "nova.screentime": "nova.screentime-today" }
 
 // <config> as this shell reads it: a bar entry of a plugin whose widget is
