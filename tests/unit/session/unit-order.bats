@@ -10,7 +10,7 @@ load ../test_helper
 setup() {
   setup_scratch
   if [[ ! -x /usr/lib/systemd/systemd ]]; then
-    [[ -z ${NOVA_REQUIRE_SYSTEMD_TEST:-} ]] || return 1
+    [[ -z ${NOVA_STRICT_TESTS:-} ]] || return 1
     skip "needs systemd"
   fi
   units=$SCRATCH/units
@@ -36,9 +36,9 @@ ordering_of() { # unit other
   if ! transaction=$(env -i HOME="$SCRATCH" XDG_RUNTIME_DIR="$SCRATCH/run" SYSTEMD_UNIT_PATH="$units" \
     timeout 30 /usr/lib/systemd/systemd --test --user --unit="$1" --no-pager 2>"$SCRATCH/systemd.log") ||
     [[ $transaction != *"Unit $1:"* ]]; then
-    # CI asks for the check (NOVA_REQUIRE_SYSTEMD_TEST): there a skip would
+    # CI asks for the check (NOVA_STRICT_TESTS): there a skip would
     # pass it unseen.
-    if [[ -n ${NOVA_REQUIRE_SYSTEMD_TEST:-} ]]; then
+    if [[ -n ${NOVA_STRICT_TESTS:-} ]]; then
       cat "$SCRATCH/systemd.log"
       return 1
     fi

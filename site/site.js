@@ -34,7 +34,7 @@ function pick(theme) {
   next.src = picture(theme)
 }
 
-const kept = root.dataset.theme in names ? root.dataset.theme : "adaptive"
+const kept = Object.hasOwn(names, root.dataset.theme) ? root.dataset.theme : "adaptive"
 show(kept)
 if (shot) {
   if (kept !== "adaptive") {

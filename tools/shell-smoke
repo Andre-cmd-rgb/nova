@@ -210,6 +210,13 @@ clipboard nova.clipboard {}
 emojis nova.emojis {}
 SUMMON
 
+  # The lock as it looks, made only while it is shown (Settings' Preview).
+  answer=$(ipc lock preview || true)
+  sleep 1.5
+  shot lock-preview
+  ipc lock hidePreview >/dev/null || true
+  if [[ $answer == ok ]]; then echo "ok   lock preview"; else echo "FAIL lock preview: $answer"; fi
+
   kill "$shell" "$portal" 2>/dev/null || true
   kill "$sway" 2>/dev/null || true
   wait 2>/dev/null || true

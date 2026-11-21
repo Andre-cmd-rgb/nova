@@ -196,6 +196,25 @@ Item {
     onTriggered: iconSearch.request()
   }
 
+  // An icon theme installed or removed on its own, with no entry changing,
+  // is a folder come or gone beside the others: the icons are found again
+  // then. A watch on a folder sees its own entries, not those deeper in.
+  FileView {
+    path: Quickshell.env("HOME") + "/.local/share/icons"
+    preload: false
+    watchChanges: true
+    printErrors: false
+    onFileChanged: if (library.searched) iconSearchSoon.restart()
+  }
+
+  FileView {
+    path: "/usr/share/icons"
+    preload: false
+    watchChanges: true
+    printErrors: false
+    onFileChanged: if (library.searched) iconSearchSoon.restart()
+  }
+
   // Each search waits for the entries: there is nothing to leave out or
   // draw before there is one, and the entries' first reading, as the shell
   // starts, would have each run a second time. The first icon search runs

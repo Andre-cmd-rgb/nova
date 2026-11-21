@@ -107,6 +107,18 @@ ShellRoot {
         "an icon written two seconds after its entry is found, with nothing asked of the library", () => {
           check(String(library.iconSource("nova-late")).endsWith("/nova-late.svg"), "an icon written after its entry is drawn")
           check(iconSearches - before <= 3, "an install is a few icon searches, not one a change (" + (iconSearches - before) + ")")
+          themeAlone()
+        })
+    })
+  }
+
+  // An icon theme installed on its own: a folder beside the others, and no
+  // entry changes.
+  function themeAlone() {
+    shell('mkdir -p "$2/../../../NovaTheme/apps" && printf "<svg/>" >"$2/../../../NovaTheme/apps/nova-themed.svg"', () => {
+      when(() => library.iconFiles["nova-themed"] !== undefined, 10,
+        "an icon theme installed alone is found, with no entry changed", () => {
+          check(true, "an icon theme installed alone is found, with no entry changed")
           finish()
         })
     })

@@ -139,7 +139,29 @@ ShellRoot {
     ask()
     later(300, () => {
       check("the next request makes it again, its field empty", [agent.surface !== null, agent.surface?.field.text], [true, ""])
-      finish()
+      wrongThenCancel()
+    })
+  }
+
+  // A wrong password, then half another and Escape (cancel(), which the
+  // field's Escape calls), then a new request while the card fades.
+  function wrongThenCancel() {
+    agent.surface.field.text = "bad"
+    agent.answer()
+    flow.authenticationFailed()
+    agent.surface.field.text = "half"
+    let cancelled = false
+    flow.authenticationRequestCancelled.connect(() => { cancelled = true })
+    agent.cancel()
+    check("Escape cancels the request, and empties the field at once", [cancelled, agent.surface?.field.text], [true, ""])
+    polkit.isActive = false
+    later(100, () => {
+      ask()
+      later(100, () => {
+        check("a request while the last card fades: a card, its field empty, and not on the last one's wrong password",
+          [agent.surface !== null, agent.surface?.field.text, agent.wrong], [true, "", false])
+        finish()
+      })
     })
   }
 

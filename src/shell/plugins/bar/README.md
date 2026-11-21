@@ -222,7 +222,13 @@ The bar sets each widget's `bar`, `widgetId` and `settings`. On `bar`:
   while that card is open they do not;
 - `copiesOf(id)`: every copy of a widget, one on each screen's bar;
 - `listButton(button, on)`: the buttons a click on the bar reaches
-  (`BarButton` lists itself).
+  (`BarButton` lists itself);
+- `shell`: the shell, for `shell.serviceFor(id)` (a binding follows it), as
+  `BarWidget`'s `sharedId` uses it to hold a service every screen's copy
+  shares;
+- `commands`: the user commands' runs (`CommandRuns`), one for each
+  command and interval whatever the number of screens, which
+  `CommandWidget` reads.
 
 A widget with a panel can ask for its mark, the line on the bar under the
 open panel, to be `markLength` long, rather than a little over half its

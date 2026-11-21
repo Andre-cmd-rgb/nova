@@ -13,10 +13,12 @@ import "MenuModel.js" as MenuModel
 // first shown or searched; the answers of every when: and checked:; and
 // qalc's answer to a sum typed.
 //
-// The providers and the guards run in bash, not a login shell: the shell's
-// environment is the session's already, read from the user's profile as the
-// session started, and a login shell would read it again at every opening
-// (and run what it starts, debuginfod's finds among them).
+// The providers and the guards run in plain bash, with the shell's environment,
+// which is the session's: uwsm read /etc/profile and ~/.profile as the session
+// started. A login shell would read them again at every opening (and run what
+// they start, debuginfod's finds among them). What only bash's own login file
+// (~/.bash_profile) sets is not there, unlike for an action, which runs in a
+// login shell (Util.execDetached).
 Item {
   id: source
 
@@ -206,8 +208,10 @@ Item {
   property var kept: new Map()
 
   // The shell's own state, as the guards SHELL_ANSWERS lists ask it; null
-  // for what it does not know just now (a service switched off, or not read
-  // yet), which bash is asked instead.
+  // for what it does not know just now (its service switched off, its state
+  // or the config not read yet, AirDrop's watch not heard yet), which bash
+  // is asked instead. Screen Time's answer is whether its service runs, as
+  // the plugin switched on is what `nova-screentime enabled` asks.
   function shellFacts() {
     const service = id => shell && typeof shell.serviceFor === "function" ? shell.serviceFor(id) : null
     const notifications = service("nova.notifications")
@@ -218,8 +222,8 @@ Item {
       doNotDisturb: notifications ? notifications.doNotDisturb === true : null,
       caffeine: idle && idle.switchRead === true ? idle.caffeine === true : null,
       screenTime: shell ? service("nova.screentime") !== null : null,
-      transparentBar: shell ? !!bar && bar.transparent === true : null,
-      airdrop: airdrop && airdrop.said ? airdrop.said.state !== "off" : null
+      transparentBar: bar ? bar.transparent === true : null,
+      airdrop: airdrop && airdrop.heard ? airdrop.said.state !== "off" : null
     }
   }
 

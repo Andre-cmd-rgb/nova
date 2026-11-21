@@ -38,8 +38,9 @@ Item {
   // Set by the shell.
   property var shell: null
 
-  // What the daemon last said.
+  // What the daemon last said; heard once the watch has said anything.
   property var said: ({ state: "off" })
+  property bool heard: false
   // `nova airdrop on` is at work, or done and the watch not yet saying so.
   property bool starting: false
   // Stop was asked for, and the off that ends it has not come yet.
@@ -128,6 +129,7 @@ Item {
     var next = Model.parse(line)
     if (!next) return
     said = next
+    heard = true
     if (next.state !== "off") starting = false
     if (next.state !== "receiving") {
       slow.stop()

@@ -6,7 +6,12 @@
 load ../test_helper
 
 setup() {
-  command -v cmark-gfm >/dev/null || skip "needs cmark-gfm (CI has it)"
+  if ! command -v cmark-gfm >/dev/null; then
+    # CI asks for every test (NOVA_STRICT_TESTS): there a skip would pass
+    # the site's checks unseen.
+    [[ -z ${NOVA_STRICT_TESTS:-} ]] || { echo "cmark-gfm is missing" >&2; return 1; }
+    skip "needs cmark-gfm (CI has it)"
+  fi
   setup_scratch
   mkdir -p "$SCRATCH/repo/tools"
   cp -r "$REPO_ROOT/site" "$REPO_ROOT/docs" "$REPO_ROOT/src" "$SCRATCH/repo/"

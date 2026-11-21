@@ -77,11 +77,12 @@ jobs:
           sudo -u builder -H cargo clippy --locked --all-targets -- -D warnings
           sudo -u builder -H cargo test --locked
 
-      # NOVA_REQUIRE_SYSTEMD_TEST: the session's unit order is checked with
-      # systemd itself (tests/unit/session/unit-order.bats), which here fails
-      # rather than skips when it cannot run.
+      # NOVA_STRICT_TESTS: a test whose tool is missing fails here rather than
+      # skips: the session's unit order, checked with systemd itself
+      # (tests/unit/session/unit-order.bats), and the site's build, with
+      # cmark-gfm (tests/unit/tools/build-site.bats).
       - name: Unit tests
-        run: sudo -u builder -H env NOVA_REQUIRE_SYSTEMD_TEST=1 make test
+        run: sudo -u builder -H env NOVA_STRICT_TESTS=1 make test
 
       - name: Install into a scratch root
         run: |

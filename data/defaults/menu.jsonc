@@ -9,7 +9,9 @@
   // Optional fields:
   //   aliases   extra names for `nova-menu toggle <name>`, also matched by search
   //   title     header shown while the submenu is open (defaults to label)
-  //   when      shell condition; the row is hidden when it fails
+  //   when      shell condition; the row is hidden when it fails (plain bash,
+  //             with the session's environment: what only ~/.bash_profile sets
+  //             is not there, as it is for an action)
   //   once      true: `when` is asked once a session, for what the computer is
   //             and cannot change while it runs (whether it is a laptop)
   //   checked   shell condition; the row gets a ✓ when it succeeds
