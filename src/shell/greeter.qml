@@ -92,14 +92,18 @@ ShellRoot {
       screen: modelData
       anchors { left: true; right: true; top: true; bottom: true }
       exclusionMode: ExclusionMode.Ignore
-      color: Commons.Color.background
+      // Black under the view, as Hyprland's own screen before it: the view
+      // draws nothing until its picture is ready, then fades it in.
+      color: "black"
       WlrLayershell.namespace: "nova-greeter"
       WlrLayershell.layer: WlrLayer.Overlay
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
 
       LockView {
         anchors.fill: parent
+        backdrop: greeter.themeDir + "/backdrop.ppm"
         picture: greeter.themeDir + "/background"
+        fadeIn: true
         takesInput: greeter.user !== ""
         typed: greeter.typed
         checking: greeter.checking

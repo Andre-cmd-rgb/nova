@@ -32,6 +32,18 @@ Item {
   readonly property bool authenticating: password.checking || fingerprint.reading
   property bool previewing: false
 
+  // What the lock shows: the backdrop nova-theme makes of the desktop's
+  // background, or, where there is none, the background itself, through its
+  // link. Each lock's views read them anew.
+  readonly property string backdropFile: Commons.Color.stateHome + "/nova/current/backdrop.ppm"
+  readonly property string pictureFile: Commons.Color.stateHome + "/nova/current/background"
+
+  // Whether the boot's lock is up, or never was to come: the shell's windows
+  // may show from then on (Commons/BootLock.qml).
+  property bool securedOnce: false
+  readonly property bool bootLockDone: !autologin || boot.unlockedOnce || securedOnce
+  onBootLockDoneChanged: if (bootLockDone) Commons.BootLock.pending = false
+
   // What last happened, and when: in the log, and in `nova-shell lock status`.
   property var last: ({ event: "init", at: "" })
 
@@ -61,7 +73,8 @@ Item {
   // The boot's own lock (`atBoot`) does not wait where one screen is up and
   // no other is coming: the wait is for a lid or a dock moving the screens
   // about as the lock starts, which nothing has done yet at boot, and until
-  // the lock is up it is the desktop that shows.
+  // the lock is up the boot goes on looking black (the bar and the desktop
+  // wait for it: Commons/BootLock.qml).
   function lockSession(atBoot) {
     if (!password.pamReady) {
       note("lock-denied: missing-pam")
@@ -73,10 +86,7 @@ Item {
     note("lock-requested")
     if (atBoot === true && (Quickshell.screens || []).length === 1 && screensUp() === 1) askCompositor()
     else waitForScreens()
-    Qt.callLater(function() {
-      backdrop.run()
-      fingerprint.recheck()
-    })
+    Qt.callLater(fingerprint.recheck)
     return true
   }
 
@@ -235,6 +245,7 @@ Item {
         return
       }
       service.stopWaiting()
+      service.securedOnce = true
       fingerprint.scan()
       // Whichever lock comes first in a boot (the autologin one, a stranded
       // lock taken back, one over IPC) ends the boot submap.
@@ -249,14 +260,18 @@ Item {
       else service.noticeEnd()
     }
 
+    // Black under the view, as the boot before it was: the view draws
+    // nothing until its picture is ready (LockView.qml).
     WlSessionLockSurface {
-      color: Commons.Color.background
+      color: "black"
 
       LockView {
         anchors.fill: parent
-        picture: backdrop.file
-        pictureVersion: backdrop.version
+        backdrop: service.backdropFile
+        picture: service.pictureFile
         showPicture: service.locked
+        // The boot's lock comes in from the black of the boot.
+        fadeIn: !boot.unlockedOnce
         fingerReady: fingerprint.enrolled && boot.unlockedOnce
         takesInput: service.wanted
         checking: password.checking
@@ -287,8 +302,8 @@ Item {
 
       LockView {
         anchors.fill: parent
-        picture: backdrop.file
-        pictureVersion: backdrop.version
+        backdrop: service.backdropFile
+        picture: service.pictureFile
         showPicture: service.previewing
         fingerReady: fingerprint.enrolled
         takesInput: false
@@ -505,24 +520,6 @@ Item {
     }
   }
 
-  // The lock shows the desktop's background, read through its link; a new
-  // file at the same path counts as new.
-  Command {
-    id: backdrop
-    property string file: ""
-    property int version: 0
-    command: ["readlink", "-f", Commons.Color.stateHome + "/nova/current/background"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        const target = String(text || "").trim()
-        if (target === backdrop.file) return
-        backdrop.file = target
-        backdrop.version += 1
-      }
-    }
-  }
-
   Command {
     id: enrolment
     command: ["bash", "-c", "[[ -f /etc/pam.d/nova-lock-fingerprint ]] && command -v fprintd-list >/dev/null && fprintd-list \"$USER\" 2>/dev/null | grep -qE '^ *- #[0-9]+: '"]
@@ -688,7 +685,7 @@ Item {
   }
 
   Component.onCompleted: {
-    backdrop.run()
+    if (bootLockDone) Commons.BootLock.pending = false
     fingerprint.recheck()
     boot.askStranded()
     automount.apply()
@@ -732,7 +729,6 @@ Item {
     }
 
     function preview(): string {
-      backdrop.run()
       fingerprint.recheck()
       service.previewing = true
       return "ok"
