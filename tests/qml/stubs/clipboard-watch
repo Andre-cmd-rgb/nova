@@ -1,0 +1,7 @@
+#!/bin/sh
+# wl-paste for the clipboard history's test: a clipboard with nothing on it,
+# and a watch that waits, as one does between copies.
+case " $* " in
+  *" --watch "*) exec sleep 120 ;;
+esac
+exit 1

@@ -19,8 +19,16 @@ Item {
   // The file was read again, or a copy came in.
   signal updated()
 
+  // The text this history last wrote to its file. The file's change comes
+  // back to the FileView, which reads it again: that text is not parsed a
+  // second time (300 entries, and the picker's rows rebuilt, at every copy).
+  // Compact, as nothing reads the file by eye: jq reads it for the paste
+  // helpers.
+  property string written: ""
+
   function save() {
-    file.setText(JSON.stringify(entries.slice(0, limit), null, 2) + "\n")
+    written = JSON.stringify(entries.slice(0, limit)) + "\n"
+    file.setText(written)
     pruneSoon.restart()
   }
 
@@ -55,7 +63,10 @@ Item {
     watchChanges: true
     atomicWrites: true
     printErrors: false
-    onLoaded: history.read(text())
+    onLoaded: {
+      const text = file.text()
+      if (history.written === "" || text !== history.written) history.read(text)
+    }
     onLoadFailed: history.read("[]")
     onFileChanged: reload()
   }
