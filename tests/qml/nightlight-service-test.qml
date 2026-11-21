@@ -123,6 +123,13 @@ ShellRoot {
       second = service.createObject(stage, { shell: fakeShell })
     } else {
       check("a shell started again makes no turn made already", made().length, 9)
+      // Tromsø at midwinter: no sunrise in the days ahead.
+      second.place = { latitude: 69.65, longitude: 18.96 }
+      fakeShell.shellConfig = { nightlight: { schedule: "sunset" } }
+      const polarNoon = new Date(2026, 11, 21, 12).getTime()
+      check("by the sun with no turn in the days ahead (a polar night), it looks again a day on", second.lookAgainAfter(polarNoon), polarNoon + 86400000)
+      fakeShell.shellConfig = { nightlight: { schedule: "off" } }
+      check("and with no schedule, never", second.lookAgainAfter(polarNoon), null)
       console.log("DONE")
       Qt.quit()
       return

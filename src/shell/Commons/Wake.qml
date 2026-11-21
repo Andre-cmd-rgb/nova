@@ -7,9 +7,10 @@ import Quickshell.Io
 // on the monotonic clock, which stands still while the machine sleeps and
 // does not follow a clock that is set or a new time zone, so what waits on
 // one comes back as it went. nova-sessiond writes $XDG_RUNTIME_DIR/nova/clock
-// at each, one line with its reason, "woke", "set" or "zone", and the wall
-// clock's seconds (src/session/daemon/src/clock.rs); this watches the file,
-// with no clock of its own, and says woke() for the whole shell. What waits
+// at each, one line with its reason, "woke", "set" or "zone", the wall
+// clock's seconds and a count, so that each is new text
+// (src/session/daemon/src/clock.rs); this watches the file, with no clock
+// of its own, and says woke() for the whole shell. What waits
 // for a time of day aims a Timer at it and aims it again then. The
 // JavaScript engine, which keeps the time zone's offset until it is told,
 // is told first each time: a new zone is one of them.

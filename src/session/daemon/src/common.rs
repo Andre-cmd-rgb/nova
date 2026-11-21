@@ -8,6 +8,7 @@ use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::Duration;
 
@@ -142,9 +143,13 @@ pub fn reap(mut child: Child) {
 }
 
 /// Writes <text> to <path> through a file beside it, so that a reader sees
-/// the old contents or the new, never half of them.
+/// the old contents or the new, never half of them. Each write has a file of
+/// its own, so that two duties writing the same path at once (the clock's
+/// stamp, at a wake) do not write into each other's.
 pub fn write_atomically(path: &Path, text: &str) -> io::Result<()> {
-    let temporary = path.with_extension(format!("{}.new", std::process::id()));
+    static WRITES: AtomicU64 = AtomicU64::new(0);
+    let n = WRITES.fetch_add(1, Ordering::Relaxed);
+    let temporary = path.with_extension(format!("{}.{n}.new", std::process::id()));
     fs::write(&temporary, text)?;
     fs::rename(&temporary, path).inspect_err(|_| {
         let _ = fs::remove_file(&temporary);

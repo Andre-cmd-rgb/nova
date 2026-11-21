@@ -4,8 +4,9 @@
 //! the computer sleeps and does not follow a clock that is set or a new time
 //! zone: what waits on one comes back as it went. Rather than look at the
 //! wall clock every few seconds, the shell watches $XDG_RUNTIME_DIR/nova/clock
-//! (Wake.qml), which this writes whole, one line, the reason and the wall
-//! clock's seconds, each time one of these happens:
+//! (Wake.qml), which this writes whole, one line, the reason, the wall
+//! clock's seconds and a count of the stamps written, so that each is new
+//! text even within a second, each time one of these happens:
 //!
 //!   woke   the computer woke from a sleep: logind's PrepareForSleep(false),
 //!          heard by the sleep-lock duty (sleep.rs)
@@ -22,6 +23,7 @@ use std::fs;
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use nova_sd::poll::{poll, PollFd, POLLIN};
@@ -40,15 +42,19 @@ pub const STAMP: &str = "clock";
 /// timedated (timedatectl set-timezone) and by hand alike.
 const ZONE: &str = "localtime";
 
-/// Writes the stamp: <why> and the wall clock's seconds.
+/// Writes the stamp: <why>, the wall clock's seconds, and how many stamps
+/// came before it since the daemon started. Two in one second (a zone file
+/// removed, then made) are then two lines, and the shell hears both.
 pub fn moved(ctx: &Context, why: &str) {
+    static STAMPS: AtomicU64 = AtomicU64::new(0);
+    let count = STAMPS.fetch_add(1, Ordering::Relaxed);
     let seconds = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let written = ctx
         .runtime_dir()
-        .and_then(|dir| write_atomically(&dir.join(STAMP), &format!("{why} {seconds}\n")));
+        .and_then(|dir| write_atomically(&dir.join(STAMP), &format!("{why} {seconds} {count}\n")));
     if let Err(e) = written {
         say!(
             DUTY,
@@ -205,13 +211,16 @@ mod tests {
     }
 
     #[test]
-    fn the_stamp_is_the_reason_and_the_wall_clock_in_seconds_written_whole() {
+    fn the_stamp_is_the_reason_the_wall_clock_in_seconds_and_a_count_written_whole() {
         let dir = scratch("clock");
         let ctx = context(&dir);
         fs::remove_dir_all(&ctx.runtime).unwrap();
         moved(&ctx, "woke");
         let line = stamp(&ctx);
-        let (why, seconds) = line.trim_end().split_once(' ').unwrap();
+        let fields: Vec<&str> = line.trim_end().split(' ').collect();
+        let [why, seconds, _count] = fields[..] else {
+            panic!("{line}")
+        };
         assert_eq!(why, "woke");
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -219,6 +228,9 @@ mod tests {
             .as_secs();
         assert!(now.abs_diff(seconds.parse::<u64>().unwrap()) < 5, "{line}");
         assert!(line.ends_with('\n'));
+        // Another in the same second is another line.
+        moved(&ctx, "woke");
+        assert_ne!(stamp(&ctx), line);
         // The folder made, and nothing left beside the stamp.
         let names: Vec<String> = fs::read_dir(&ctx.runtime)
             .unwrap()

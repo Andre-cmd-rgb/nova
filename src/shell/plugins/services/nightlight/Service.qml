@@ -162,13 +162,23 @@ Item {
     return null
   }
 
+  // When the timer looks again after <now> (ms), null for never: at the next
+  // turn; or, by the sun with none in the days looked at (a polar day or
+  // night), a day on, as the first sunrise after it comes in time.
+  function lookAgainAfter(now) {
+    var next = turnAfter(now)
+    if (next !== null) return next
+    return schedule === "sunset" && place ? now + 86400000 : null
+  }
+
   function aim() {
     var now = Date.now()
     var next = turnAfter(now)
     nextTurn = next === null ? 0 : next
-    if (next === null) turnTimer.stop()
+    var look = lookAgainAfter(now)
+    if (look === null) turnTimer.stop()
     else {
-      turnTimer.interval = Util.intervalTo(next, now)
+      turnTimer.interval = Util.intervalTo(look, now)
       turnTimer.restart()
     }
   }

@@ -95,10 +95,20 @@ Ui.Panel {
   // machine sleeps: after a wake the bar kept the minute it went to sleep
   // with for up to a minute more. The shell hears of a wake, a clock set and
   // a new time zone (Wake), and puts its minute back then, in the zone's
-  // hours.
+  // hours, and again at the next minute: SystemClock's own timer is still
+  // the one aimed before the sleep, and may come up to a minute late.
   Connections {
     target: Wake
-    function onWoke() { clock.stamp = new Date() }
+    function onWoke() {
+      clock.stamp = new Date()
+      nextMinute.interval = 60000 - Date.now() % 60000 + 50
+      nextMinute.restart()
+    }
+  }
+
+  Timer {
+    id: nextMinute
+    onTriggered: clock.stamp = new Date()
   }
 
   BarButton {
