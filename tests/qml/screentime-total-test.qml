@@ -7,7 +7,7 @@ import "plugins/screentime" as ScreenTime
 // bar, as on two screens, and the plugin's service, the real Service.qml,
 // with its real helper in the scratch home: the service asks today's total
 // for both copies, which show the same, and rests from it with the copies
-// gone.
+// gone. Without the service (Screen Time off) a copy shows nothing.
 ShellRoot {
   id: test
 
@@ -27,7 +27,8 @@ ShellRoot {
       function withdraw(button) {}
     }
     property QtObject shell: QtObject {
-      function serviceFor(id) { return id === "nova.screentime" ? test.service : null }
+      property bool recording: true
+      function serviceFor(id) { return id === "nova.screentime" && recording ? test.service : null }
     }
     function listButton(button, on) {}
     function run(command) {}
@@ -52,6 +53,11 @@ ShellRoot {
 
   function begin() {
     check("unheld, no total asked", [service.wanted, service.total], [false, ""])
+    fakeBar.shell.recording = false
+    const alone = widget.createObject(stage, { bar: fakeBar })
+    check("with Screen Time off, the widget shows nothing and holds nothing", [alone.visible, alone.implicitWidth, service.holders.length], [false, 0, 0])
+    alone.destroy()
+    fakeBar.shell.recording = true
     copies = [widget.createObject(stage, { bar: fakeBar }), widget.createObject(stage, { bar: fakeBar })]
     waiter.start()
   }

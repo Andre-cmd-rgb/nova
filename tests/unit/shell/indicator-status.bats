@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 
 # `nova battery indicator` and `nova screentime indicator` with no state: said
-# from the bar layout in shell.json, the plugin there or not.
+# from the bar layout in shell.json, the plugin there or not. Screen Time's is
+# its widget (nova.screentime-today), apart from Screen Time itself.
 
 load ../test_helper
 
@@ -28,11 +29,14 @@ status_of() { # plugin
 }
 
 @test "a plugin on the bar is said to be there" {
-  layout "$XDG_CONFIG_HOME/nova/shell.json" nova.tray nova.screentime nova.batterylife
+  layout "$XDG_CONFIG_HOME/nova/shell.json" nova.tray nova.screentime-today nova.batterylife
   status_of batterylife
   [ "$output" = "The plugin is in the bar layout." ]
   status_of screentime
-  [ "$output" = "The plugin is in the bar layout." ]
+  [ "$output" = "Screen Time is on the bar." ]
+  # The widget on the bar is not Screen Time on.
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" enabled
+  [ "$status" -ne 0 ]
 }
 
 @test "a plugin off the bar is said not to be" {
@@ -40,19 +44,48 @@ status_of() { # plugin
   status_of batterylife
   [ "$output" = "The plugin is not in the bar layout." ]
   status_of screentime
-  [ "$output" = "The plugin is not in the bar layout." ]
+  [ "$output" = "Screen Time is not on the bar." ]
+}
+
+@test "Screen Time records without its widget on the bar" {
+  jq -n '{bar: {layout: {left: [], center: [], right: [{id: "nova.tray"}]}}, plugins: [{id: "nova.screentime"}]}' \
+    >"$XDG_CONFIG_HOME/nova/shell.json"
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" enabled
+  [ "$status" -eq 0 ]
+  status_of screentime
+  [ "$output" = "Screen Time is not on the bar." ]
+}
+
+@test "an older file's Screen Time entry in the bar: it records, and its widget is not on the bar" {
+  layout "$XDG_CONFIG_HOME/nova/shell.json" nova.tray nova.screentime
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" enabled
+  [ "$status" -eq 0 ]
+  status_of screentime
+  [ "$output" = "Screen Time is not on the bar." ]
 }
 
 @test "a plugin switched off keeps its place in the layout, and is said not to be on the bar" {
-  jq -n '{bar: {layout: {left: [], center: [], right: [{id: "nova.tray"}, {id: "nova.screentime", off: true}, {id: "nova.batterylife", off: true}]}}}' \
+  jq -n '{bar: {layout: {left: [], center: [], right: [{id: "nova.tray"}, {id: "nova.screentime-today", off: true}, {id: "nova.screentime", off: true}, {id: "nova.batterylife", off: true}]}}}' \
     >"$XDG_CONFIG_HOME/nova/shell.json"
   status_of batterylife
   [ "$output" = "The plugin is not in the bar layout." ]
   status_of screentime
-  [ "$output" = "The plugin is not in the bar layout." ]
-  # Nor is Screen Time on, which is its entry in the bar.
+  [ "$output" = "Screen Time is not on the bar." ]
+  # Nor is Screen Time on: an older file's entry switched off is off.
   run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" enabled
   [ "$status" -ne 0 ]
+}
+
+@test "the widget on and off goes through the bar's verbs, for the widget alone" {
+  printf '#!/bin/bash\necho "$*" >>"%s/calls"\n' "$SCRATCH" >"$SCRATCH/bin/nova"
+  layout "$XDG_CONFIG_HOME/nova/shell.json" nova.tray
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" indicator on
+  [ "$status" -eq 0 ]
+  [ "$output" = "Screen Time is on the bar, and shows once it is on: nova screentime on" ]
+  jq -n '{bar: {layout: {right: [{id: "nova.screentime-today"}]}}, plugins: [{id: "nova.screentime"}]}' >"$XDG_CONFIG_HOME/nova/shell.json"
+  run "$REPO_ROOT/src/shell/plugins/screentime/bin/screentime" indicator off
+  [ "$output" = "Screen Time is off the bar. It still records." ]
+  [ "$(cat "$SCRATCH/calls")" = $'bar put nova.screentime-today\nbar remove nova.screentime-today' ]
 }
 
 @test "Battery Life without a shell.json: the default layout" {

@@ -202,6 +202,12 @@ state() { nova-settings state | jq -c "$1"; }
   [ "$(state '[.bar.widgets[].id]')" = '["nova.active-window","nova.microphone"]' ]
 }
 
+@test "state: Screen Time's widget is listed by its plain name, with the plugin it shows with" {
+  mkdir -p "$NOVA_PATH/shell/plugins/screentime"
+  cp "$REPO_ROOT"/src/shell/plugins/screentime/{manifest,Today.manifest}.json "$NOVA_PATH/shell/plugins/screentime/"
+  [ "$(state '.bar.widgets')" = '[{"id":"nova.screentime-today","name":"Screen Time","shownWith":"nova.screentime","shownWithName":"Screen Time"}]' ]
+}
+
 @test "state: the CPU, Graphics and Memory readouts are listed, by plain names, for Settings' Menu Bar" {
   mkdir -p "$NOVA_PATH/shell/plugins/readouts"
   cp "$REPO_ROOT"/src/shell/plugins/readouts/{Cpu,Graphics,Memory}.manifest.json "$REPO_ROOT/src/shell/plugins/readouts/manifest.json" "$NOVA_PATH/shell/plugins/readouts/"

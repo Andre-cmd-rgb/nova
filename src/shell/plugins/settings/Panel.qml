@@ -681,6 +681,10 @@ Item {
             required property var modelData
             width: parent.width
             label: modelData.name
+            // One that shows only while another plugin is on says so while
+            // that one is off (Screen Time's, while it does not record).
+            detail: modelData.shownWith && root.shell && !root.shell.serviceFor(modelData.shownWith)
+              ? "Shows while " + modelData.shownWithName + " is on" : ""
             checked: (root.bar.shown || []).indexOf(modelData.id) >= 0
             onClicked: {
               const shown = (root.bar.shown || []).filter(id => id !== modelData.id)

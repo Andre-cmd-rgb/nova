@@ -2,11 +2,13 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import "services"
+import "services/Layout.js" as Layout
 
 // shell.json as the shell works it out (ShellJson): a user's config with no
 // bar has Nova's, the bar drawn, so that a change starts from that bar and
 // does not empty it. Nova's shell.json here has a bar of its own, unlike the
-// built-in fallback's.
+// built-in fallback's. A file from before Screen Time's widget was a plugin
+// of its own is read as it is meant now, and saved so.
 ShellRoot {
   id: test
 
@@ -35,7 +37,7 @@ ShellRoot {
     path: test.home + "/.config/nova/shell.json"
     preload: false
     printErrors: false
-    onSaved: test.json = maker.createObject(test)
+    onSaved: if (!test.json) test.json = maker.createObject(test)
   }
 
   // A tick after ready: a save from inside ShellJson's own load would drop
@@ -67,7 +69,69 @@ ShellRoot {
     // when the config is saved.
     check("an old config's edge is not kept", json.edit(config => { config.bar.position = "bottom" }), true)
     check("  it is gone from what is in effect", json.current.bar.position, undefined)
-    console.log("DONE")
-    Qt.quit()
+    upgrades()
+  }
+
+  readonly property var olderLayout: ({ left: [], center: [], right: [{ id: "nova.tray" }, { id: "nova.screentime", showTotal: false, indicator: true }, { id: "nova.network" }] })
+
+  // Before 1.0.0-rc.15 Screen Time's entry in the bar was its widget and its
+  // switch at once.
+  function upgrades() {
+    const older = { version: 1, bar: { layout: olderLayout }, plugins: [] }
+    const read = Layout.upgraded(older)
+    check("an older Screen Time entry is its widget's place, switched off, with its settings",
+      JSON.stringify(read.bar.layout.right), '[{"id":"nova.tray"},{"id":"nova.screentime-today","showTotal":false,"off":true},{"id":"nova.network"}]')
+    check("  and Screen Time records on", JSON.stringify(read.plugins), '[{"id":"nova.screentime"}]')
+    check("  the file read left as it was", older.bar.layout.right[1].id, "nova.screentime")
+    const stopped = Layout.upgraded({ version: 1, bar: { layout: { right: [{ id: "nova.screentime", off: true }] } } })
+    check("one switched off: the widget's place, off, and Screen Time off",
+      JSON.stringify([stopped.bar.layout.right, stopped.plugins]), '[[{"id":"nova.screentime-today","off":true}],[]]')
+    const both = Layout.upgraded({ version: 1, bar: { layout: { right: [{ id: "nova.screentime" }, { id: "nova.screentime-today" }] } }, plugins: [{ id: "nova.screentime" }] })
+    check("one beside the widget already: the widget stays, once, and Screen Time is named once",
+      JSON.stringify([both.bar.layout.right, both.plugins]), '[[{"id":"nova.screentime-today"}],[{"id":"nova.screentime"}]]')
+    const now = { version: 1, bar: { layout: { right: [{ id: "nova.tray" }] } }, plugins: [] }
+    check("a config of today is not copied", Layout.upgraded(now) === now, true)
+    user.setText(JSON.stringify(older) + "\n")
+    waiter.start()
+  }
+
+  // What is on disk, read as it is now.
+  FileView {
+    id: onDisk
+    path: test.home + "/.config/nova/shell.json"
+    blockAllReads: true
+    printErrors: false
+  }
+
+  Timer {
+    id: waiter
+    property int left: 100
+    interval: 50
+    repeat: true
+    onTriggered: {
+      if (!(test.json.current.plugins || []).length && --left > 0) return
+      stop()
+      test.check("the shell reads an older file as it is meant now",
+        JSON.stringify([test.json.current.bar.layout.right[1], test.json.current.plugins]), '[{"id":"nova.screentime-today","showTotal":false,"off":true},[{"id":"nova.screentime"}]]')
+      test.json.edit(config => { config.bar.transparent = true })
+      written.start()
+    }
+  }
+
+  Timer {
+    id: written
+    property int left: 100
+    interval: 50
+    repeat: true
+    onTriggered: {
+      onDisk.reload()
+      if (!onDisk.text().includes("screentime-today") && --left > 0) return
+      stop()
+      let saved = {}
+      try { saved = JSON.parse(onDisk.text()) } catch (notYet) { }
+      test.check("  and saves it so at the next change", JSON.stringify([saved.bar?.layout?.right?.[1]?.id, saved.plugins]), '["nova.screentime-today",[{"id":"nova.screentime"}]]')
+      console.log("DONE")
+      Qt.quit()
+    }
   }
 }

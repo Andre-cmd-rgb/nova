@@ -35,7 +35,10 @@ check='
         and (["left", "center", "right"] | index($m.barWidget.defaultSection)) == null
      then "barWidget.defaultSection is not left, center or right" else empty end),
     (if (.barWidget | type) == "object" and .barWidget.switchable != null and (.barWidget.switchable | type) != "boolean"
-     then "barWidget.switchable is not true or false" else empty end)'
+     then "barWidget.switchable is not true or false" else empty end),
+    (if (.barWidget | type) == "object" and .barWidget.shownWith != null
+        and ((.barWidget.shownWith | type) != "string" or .barWidget.shownWith == "")
+     then "barWidget.shownWith is not a plugin id" else empty end)'
 
 failed=0
 entries=()
@@ -62,4 +65,9 @@ done < <(find . -mindepth 2 -maxdepth 3 -type f \( -name manifest.json -o -name 
 ((${#entries[@]} > 0)) || { echo "plugin-index: no manifests under $dir" >&2; exit 1; }
 printf '%s\n' "${entries[@]}" | jq -s '
   (group_by(.manifest.id) | map(select(length > 1) | .[0].manifest.id)) as $twice
-  | if $twice != [] then error("plugin ids used twice: \($twice | join(", "))") else . end'
+  | if $twice != [] then error("plugin ids used twice: \($twice | join(", "))") else . end
+  # A widget shown with another plugin reads that plugin'"'"'s service.
+  | (map(select(.manifest.kinds | index("service")) | .manifest.id)) as $services
+  | (map(.manifest | (.barWidget.shownWith? // null) as $with | select($with and ($services | index($with) | not))
+      | "\(.id) is shown with \(.barWidget.shownWith), which is no plugin with a service")) as $lost
+  | if $lost != [] then error($lost | join("; ")) else . end'

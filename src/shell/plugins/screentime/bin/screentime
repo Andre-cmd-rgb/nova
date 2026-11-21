@@ -3,7 +3,9 @@
 #
 # screentime — the history behind Nova's Screen Time (nova.screentime), run as
 # `nova screentime <command>`. Off until turned on: nothing is recorded while
-# the plugin is not in ~/.config/nova/shell.json.
+# ~/.config/nova/shell.json does not name the plugin. Its bar widget
+# (nova.screentime-today) is a plugin of its own, off until switched on, and
+# shows only while Screen Time records.
 #
 # The shell-side service watches which window has focus and how long you have
 # been idle, and hands this script the seconds it has counted. Everything else
@@ -16,6 +18,7 @@
 set -uo pipefail
 
 PLUGIN_ID="nova.screentime"
+WIDGET_ID="nova.screentime-today"
 
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/nova-screentime"
 CONFIG="$CONFIG_DIR/config"
@@ -814,15 +817,21 @@ cmd_open() {
     die "could not open Settings"
 }
 
-# Screen Time records only while shell.json names it (its manifest says
-# "enabledByDefault": false), so turning it on and off is its bar entry. An
-# entry switched off keeps its place in the bar, marked "off": that is off.
-is_enabled() {
+# Whether shell.json names <id> and has not switched it off. Screen Time
+# records only while it names the plugin (its manifest says
+# "enabledByDefault": false), in plugins, or in the bar as a file from before
+# 1.0.0-rc.15 has it; its widget shows only while the bar names the widget.
+# An entry switched off keeps its place, marked "off": that is off.
+named() { # id
   local config=${XDG_CONFIG_HOME:-$HOME/.config}/nova/shell.json
   [[ -r $config ]] &&
-    jq -e --arg id "$PLUGIN_ID" '[.. | objects | select(.id? == $id and .off? != true)] | length > 0' "$config" >/dev/null 2>&1
+    jq -e --arg id "$1" '[.. | objects | select(.id? == $id and .off? != true)] | length > 0' "$config" >/dev/null 2>&1
 }
 
+is_enabled() { named "$PLUGIN_ID"; }
+
+# The bar's verbs switch any plugin on and off, not only a widget: put names
+# Screen Time in plugins, remove takes it out. Neither touches the widget.
 cmd_switch() {
   have nova || die "the nova CLI is required"
   case $1 in
@@ -839,20 +848,30 @@ cmd_switch() {
   esac
 }
 
+# The widget, as Settings → Menu Bar switches it: back where it was, or off
+# the bar keeping its place. Recording goes on either way.
 cmd_indicator() {
   local state=${1:-status}
-  have nova || die "the nova CLI is required"
   case $state in
-  on | off)
-    nova bar set "$PLUGIN_ID" indicator "$([[ $state == on ]] && echo true || echo false)" --json >/dev/null ||
-      die "could not update the bar entry — is the plugin enabled?"
-    echo "Bar indicator $state."
+  on)
+    have nova || die "the nova CLI is required"
+    nova bar put "$WIDGET_ID" >/dev/null || die "could not put Screen Time on the bar"
+    if is_enabled; then
+      echo "Screen Time is on the bar."
+    else
+      echo "Screen Time is on the bar, and shows once it is on: nova screentime on"
+    fi
+    ;;
+  off)
+    have nova || die "the nova CLI is required"
+    nova bar remove "$WIDGET_ID" >/dev/null || die "could not take Screen Time off the bar"
+    echo "Screen Time is off the bar.$(is_enabled && echo ' It still records.')"
     ;;
   status)
-    if is_enabled; then
-      echo "The plugin is in the bar layout."
+    if named "$WIDGET_ID"; then
+      echo "Screen Time is on the bar."
     else
-      echo "The plugin is not in the bar layout."
+      echo "Screen Time is not on the bar."
     fi
     ;;
   *) die "usage: screentime indicator on|off" ;;
@@ -891,7 +910,9 @@ Usage:
 
   nova screentime on | off | toggle     start or stop recording (off at first)
   nova screentime enabled               succeeds while it is on
-  nova screentime indicator on|off      show or hide the bar indicator
+  nova screentime indicator [on|off]    put today's total on the bar or take it
+                                        off (off at first; it shows only while
+                                        Screen Time is on), or say which
   nova screentime record <app>=<secs>[@<day>T<hour>]
                                         used by the shell service
   nova screentime version

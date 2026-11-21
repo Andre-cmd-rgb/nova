@@ -103,12 +103,17 @@ radios_json() {
 }
 
 # The bar widgets that may be switched off, by their manifests'
-# barWidget.switchable: the others are always on the bar.
+# barWidget.switchable: the others are always on the bar. One that shows only
+# while another plugin is on (barWidget.shownWith: Screen Time's) names it,
+# by id and by name.
 widgets_json() {
   find "$NOVA_PATH/shell/plugins" \( -name manifest.json -o -name '*.manifest.json' \) -print0 2>/dev/null |
-    xargs -0 -r jq -c 'select(((.kinds // []) | index("bar-widget")) != null and .barWidget.switchable == true)
-      | {id, name: (.barWidget.displayName // .name)}' 2>/dev/null |
-    jq -sc 'sort_by(.name | ascii_downcase)'
+    xargs -0 -r jq -c '{id, name, kinds, barWidget}' 2>/dev/null |
+    jq -sc '(map({key: (.id // ""), value: .name}) | from_entries) as $names
+      | map(select(((.kinds // []) | index("bar-widget")) != null and .barWidget.switchable == true)
+        | {id, name: (.barWidget.displayName // .name)}
+          + ((.barWidget.shownWith | strings | {shownWith: ., shownWithName: ($names[.] // .)}) // {}))
+      | sort_by(.name | ascii_downcase)'
 }
 
 # AirDrop: whether this computer's Wi-Fi card can do it, and whether its

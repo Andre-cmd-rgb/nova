@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import "Layout.js" as Layout
 
 // shell.json, the two of it: Nova's, in $NOVA_PATH/default, and the user's,
 // in ~/.config/nova. The config in effect is the user's when it is an object
@@ -10,7 +11,9 @@ import qs.Commons
 // which is the bar drawn, and so the one the verbs change. It is worked out
 // once both files have been read (or found missing or unreadable), and again
 // each time one is read anew. The CLI works it out the same way
-// (nova-shell-config's in_effect).
+// (nova-shell-config's in_effect). What an older file says the way it no
+// longer is said (Screen Time's entry in the bar) is read as it is meant
+// now (Layout.upgraded), and written so at the next save.
 QtObject {
   id: shellJson
 
@@ -114,7 +117,7 @@ QtObject {
 
   function settle() {
     if (!defaultsSeen || !userSeen) return
-    current = withBar(chosen())
+    current = withBar(Layout.upgraded(chosen()))
     ready = true
   }
 

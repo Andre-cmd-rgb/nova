@@ -17,12 +17,11 @@ file when it starts.
 
 ```json
 {
-  "id": "nova.screentime",
-  "name": "Screen Time",
+  "id": "nova.weather",
+  "name": "Weather",
   "kinds": ["service", "bar-widget"],
-  "entryPoints": { "service": "Service.qml", "barWidget": "BarWidget.qml" },
-  "enabledByDefault": false,
-  "barWidget": { "defaultSection": "right" }
+  "entryPoints": { "service": "Forecast.qml", "barWidget": "BarWidget.qml" },
+  "barWidget": { "switchable": true }
 }
 ```
 
@@ -36,6 +35,7 @@ file when it starts.
 | `alwaysOn: true` | no off: the bar, the lock and the volume keys |
 | `barWidget.defaultSection` | where the widget goes when switched on, if Nova's default layout does not have it; else the center |
 | `barWidget.switchable: true` | Settings → Menu Bar has a switch for the widget; any other widget is always on the bar |
+| `barWidget.shownWith` | the id of the plugin whose service the widget shows, and only while that plugin is on (Screen Time's widget, `nova.screentime-today`, with `nova.screentime`); Settings → Menu Bar says so under the widget's switch while that plugin is off, and the build refuses an id that is no plugin with a service |
 
 Settings lists a widget by
 `barWidget.displayName` (else `name`) and `barWidget.description` (else
@@ -53,8 +53,11 @@ only where the widget is put otherwise than the plugin.
 
 The three window kinds differ only in the window the plugin makes; the shell
 loads them alike, from the entry point of the first of `panel`, `overlay` and
-`menu` the plugin has. A plugin can have several kinds: Screen Time is a
-service and a bar widget, the calendar a service and a panel.
+`menu` the plugin has. A plugin can have several kinds: the weather is a
+service and a bar widget, the calendar a service and a panel. Where
+the widget must go on and off apart from the service, it is a plugin of its
+own in the same directory: Screen Time records (`nova.screentime`, a service)
+without its widget on the bar (`nova.screentime-today`).
 
 On and off: a plugin is on unless `shell.json` lists it in
 `disabledPlugins`; one with `enabledByDefault: false` is on only while
@@ -171,7 +174,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Weather | `nova.weather` | service `panels/weather/Forecast.qml`, widget `panels/weather/BarWidget.qml` | the weather, asked once for every screen, and the forecast's card |
 | Polkit Agent | `nova.polkit` | service `polkit/PolkitAgent.qml` | the password card when an app needs root (below) |
 | Prompts | `nova.prompts` | service `prompts/Prompts.qml` | the card nova-sessiond asks on: an encrypted drive's passphrase, a Bluetooth pairing's code, a network's password (below) |
-| [Screen Time](screentime/README.md) | `nova.screentime` | service `screentime/Service.qml`, widget `screentime/BarWidget.qml` | time spent per app; its page is `settings/ScreenTimeView.qml` |
+| [Screen Time](screentime/README.md) | `nova.screentime`, `nova.screentime-today` | service `screentime/Service.qml`; widget `screentime/BarWidget.qml`, a plugin of its own (`Today.manifest.json`) | time spent per app, and today's total on the bar while it records (off until switched on); its page is `settings/ScreenTimeView.qml` |
 | [Readouts](readouts/README.md) | `nova.readouts` | service `readouts/Service.qml`, widgets `readouts/Cpu.qml`, `Graphics.qml`, `Memory.qml` | how busy the processor and graphics card are and how much memory is in use, on the bar (off until switched on) |
 | Battery | `nova.battery` | service `services/battery/Service.qml` | the low-battery warning and the power mode |
 | Idle | `nova.idle` | service `services/idle/Service.qml` | the screensaver and the lock after `idle` in `shell.json`, and Caffeine |

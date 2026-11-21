@@ -73,14 +73,24 @@ ShellRoot {
 
     check(registry.isOn("nova.bar") && registry.isOn("nova.idle") && registry.isOn("nova.weather"),
       "built-ins are on without being named")
-    check(!registry.isOn("nova.screentime"), "Screen Time is off until it is named")
+    check(!registry.isOn("nova.screentime") && !registry.isOn("nova.screentime-today"), "Screen Time and its widget are off until named")
     check(registry.inBar("nova.clock") && !registry.inBar("nova.weather"), "inBar is the bar layout")
 
-    check(registry.setOn("nova.screentime", true) === "" && ids("right") === "nova.tray nova.screentime nova.network nova.audio",
+    // Recording and the widget are two plugins: either goes on and off
+    // without the other.
+    check(registry.setOn("nova.screentime", true) === "" && registry.isOn("nova.screentime") && !registry.isOn("nova.screentime-today")
+      && ids("right") === "nova.tray nova.network nova.audio" && JSON.stringify(config.plugins) === '[{"id":"nova.screentime"}]',
+      "Screen Time switched on records, and puts nothing on the bar: " + ids("right"))
+    check(registry.setOn("nova.screentime-today", true) === "" && ids("right") === "nova.tray nova.screentime-today nova.network nova.audio",
       "enabling a widget puts it in its section, after the anchor: " + ids("right"))
-    check(registry.isOn("nova.screentime") && registry.inBar("nova.screentime"), "an enabled widget is on and in the bar")
-    check(registry.setOn("nova.screentime", false) === "" && !registry.isOn("nova.screentime")
-      && ids("right") === "nova.tray nova.network nova.audio", "disabling Screen Time takes it off the bar and off")
+    check(registry.isOn("nova.screentime-today") && registry.inBar("nova.screentime-today"), "an enabled widget is on and in the bar")
+    check(registry.setOn("nova.screentime-today", false) === "" && !registry.inBar("nova.screentime-today") && registry.isOn("nova.screentime")
+      && ids("right") === "nova.tray nova.network nova.audio", "Screen Time's widget off the bar, it records on")
+    check(registry.setOn("nova.screentime", false) === "" && !registry.isOn("nova.screentime") && config.plugins.length === 0
+      && registry.setOn("nova.screentime-today", true) === "" && registry.isOn("nova.screentime-today") && !registry.isOn("nova.screentime")
+      && ids("right") === "nova.tray nova.screentime-today nova.network nova.audio",
+      "Screen Time switched off stops, and its widget goes on the bar without it, where it was: " + ids("right"))
+    check(registry.setOn("nova.screentime-today", false) === "" && !registry.isOn("nova.screentime-today"), "and off again")
 
     check(!registry.isOn("nova.cpu") && !registry.isOn("nova.graphics") && !registry.isOn("nova.memory")
       && registry.isOn("nova.readouts"), "the CPU, Graphics and Memory readouts are off until switched on; the service they read is on")
@@ -134,19 +144,19 @@ ShellRoot {
     config = { version: 1, bar: { layout: {
       left: [{ id: "nova.menu" }, { id: "nova.media" }, { id: "nova.workspaces" }],
       center: [{ id: "nova.clock" }, { id: "nova.weather" }, { id: "nova.system-update" }],
-      right: [{ id: "nova.tray" }, { id: "nova.screentime" }, { id: "nova.network" }, { id: "nova.bluetooth" },
+      right: [{ id: "nova.tray" }, { id: "nova.screentime-today" }, { id: "nova.network" }, { id: "nova.bluetooth" },
         { id: "nova.audio" }, { id: "nova.power" }]
     } }, plugins: [] }
     var arranged = JSON.stringify(config.bar.layout)
-    for (var id of ["nova.media", "nova.weather", "nova.screentime", "nova.bluetooth", "nova.power", "nova.tray"]) {
+    for (var id of ["nova.media", "nova.weather", "nova.screentime-today", "nova.bluetooth", "nova.power", "nova.tray"]) {
       check(registry.setOn(id, false) === "" && !registry.inBar(id), id + " switched off leaves the bar")
       check(registry.setOn(id, true) === "" && registry.inBar(id)
         && JSON.stringify(config.bar.layout) === arranged, id + " switched on is where it was: " + JSON.stringify(config.bar.layout))
     }
     check(registry.setOn("nova.bluetooth", false) === "" && registry.put("nova.bluetooth", {}) === ""
       && JSON.stringify(config.bar.layout) === arranged, "put brings a widget back to its place too")
-    check(registry.setOn("nova.screentime", false) === "" && !registry.isOn("nova.screentime"),
-      "Screen Time switched off is off, though its entry stays")
+    check(registry.setOn("nova.screentime-today", false) === "" && !registry.isOn("nova.screentime-today"),
+      "a widget off by default switched off is off, though its entry stays")
     check(registry.setOn("nova.network", false) === "" && registry.move("nova.network", { section: "left" }) === ""
       && registry.setOn("nova.network", true) === "" && ids("left") === "nova.menu nova.media nova.workspaces nova.network",
       "moved while off, it comes back where it was moved to: " + ids("left"))

@@ -55,7 +55,7 @@ ignored, and dropped at the next write.
 
 Settings → Menu Bar has a switch only for the widgets whose manifest says
 `"barWidget": { "switchable": true }`: weather, media, microphone, the
-active window, and the CPU, Graphics and Memory readouts (off until switched on). The others are always on the bar, and those that make sense
+active window, the CPU, Graphics and Memory readouts and Screen Time's total (those four off until switched on; Screen Time's shows only while it records). The others are always on the bar, and those that make sense
 only on some computers (keyboard layout, mobile data, the update badge) show
 only where they apply.
 
@@ -109,7 +109,7 @@ before a rename) is the clock, while the centre has the clock. An empty
 | `nova.bluetooth` | Bluetooth; a panel with the devices, to connect, and their batteries | click = panel · right = radio on or off |
 | `nova.monitor` | Brightness and the laptop screen | click = panel |
 | `nova.batterylife` | The battery and the time it has left, measured | click = its history, in Settings |
-| `nova.screentime` | Today's screen time (off until turned on) | click = the breakdown, in Settings |
+| `nova.screentime-today` | Today's screen time, while Screen Time records (off until switched on) | click = the breakdown, in Settings |
 | `nova.mobile-data` | The mobile signal, while a modem has a SIM | click = its panel |
 | `nova.cpu` | How busy the processor is, a glyph and a percentage (off until turned on) | click = the system monitor (btop) |
 | `nova.graphics` | How busy the graphics card that draws the desktop is; the tooltip says whether any other card is on (off until turned on) | click = the system monitor |

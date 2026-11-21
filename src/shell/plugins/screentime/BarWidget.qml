@@ -3,28 +3,27 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// The optional half of the plugin: a glyph and today's total, and nothing
-// else. Everything worth reading is in the window this opens — a bar is the
-// wrong place for a chart.
+// Screen Time in the bar (nova.screentime-today): a glyph and today's total,
+// and nothing else. Everything worth reading is on its page in Settings,
+// which a click opens — a bar is the wrong place for a chart.
 //
-// Turning it off (`screentime indicator off`) only hides this. The service
-// keeps counting, because it is a separate kind in the same manifest. The
-// total is the service's, asked once a minute for every screen's copy.
+// It is a plugin of its own, off until switched on in Settings → Menu Bar,
+// and it shows only while Screen Time records: the total is the service's
+// (nova.screentime), which exists only while it is on. Recording does not
+// need this widget, and taking it off the bar records on. The service asks
+// the total once a minute for every screen's copy, and only while a copy
+// holds it.
 BarWidget {
   id: root
-  widgetId: "nova.screentime"
-  // Held only while it shows (its total is in the tooltip too).
-  sharedId: indicator ? "nova.screentime" : ""
+  sharedId: "nova.screentime"
 
   readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/screentime")).replace(/^file:\/\//, ""))
-  readonly property string pluginId: "nova.screentime"
 
   function settingEnabled(name, fallback) {
     var value = setting(name, fallback)
     return value !== false && value !== "false" && value !== 0 && value !== "0"
   }
 
-  readonly property bool indicator: settingEnabled("indicator", true)
   readonly property bool showTotal: settingEnabled("showTotal", true)
 
   readonly property string total: shared ? shared.total : ""
@@ -37,8 +36,8 @@ BarWidget {
     if (!openProc.running) openProc.running = true
   }
 
-  // Nothing to say before the first reply.
-  visible: indicator && total !== ""
+  // Nothing to say before the first reply, nor while Screen Time is off.
+  visible: total !== ""
   implicitWidth: visible ? button.implicitWidth : 0
   implicitHeight: visible ? button.implicitHeight : 0
 

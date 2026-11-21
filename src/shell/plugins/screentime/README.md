@@ -2,7 +2,7 @@
 
 Where your time on this machine goes. A page in Settings with an hour-by-hour
 breakdown of today, a day-by-day chart of the week, and the applications that
-account for it — plus an optional one-glyph indicator in the bar.
+account for it — plus, if you want it, today's total in the bar.
 
 ```
  Screen Time
@@ -31,26 +31,35 @@ never file names, never anything about what you were doing in an app.
 Screen Time is off until you turn it on, and records nothing before that:
 
 ```bash
-nova screentime on        # or Super+Space → Toggle → Screen Time
+nova screentime on        # or Settings → Screen Time, or Super+Space → Toggle → Screen Time
 ```
 
-It then appears in the bar and counts from that moment. `nova screentime
-off` stops it; what it recorded stays until you delete it (see below).
+It counts from that moment; nothing appears in the bar for it. `nova
+screentime off` stops it; what it recorded stays until you delete it (see
+below).
 
 ## The two parts
 
-| Part | What it does | Optional |
-|---|---|---|
-| service | counts seconds against the focused window, pauses when you are idle; asks today's total once a minute for the bar widget, once for every screen | no — this is the plugin |
-| bar widget | one glyph and today's total | yes — `nova screentime indicator off` |
+They are two plugins, each on and off by itself:
 
-What it counted is on its page in Settings. Turning the indicator off only
-hides the glyph; the service keeps counting. `nova screentime off` stops
-everything.
+| Part | Id | What it does | Switch |
+|---|---|---|---|
+| service | `nova.screentime` | counts seconds against the focused window, pauses when you are idle; asks today's total once a minute, once for every screen, while the widget is on a bar | `nova screentime on\|off`, Settings → Screen Time |
+| bar widget | `nova.screentime-today` | one glyph and today's total, only while the service records | `nova screentime indicator on\|off`, Settings → Menu Bar (off at first) |
+
+What it counted is on its page in Settings. The widget switched off keeps its
+place in the bar, and comes back there; the service keeps counting. Switched
+on while Screen Time is off, it shows nothing until Screen Time is on.
+
+A `shell.json` from before 1.0.0-rc.15 named the plugin in the bar for both.
+The shell reads such an entry as the widget's place, switched off, with
+Screen Time still recording (`Layout.upgraded`), and writes it so at its next
+change of the file: after the update the total is gone from the bar until
+switched on again, where it was.
 
 ## Using it
 
-Settings → Screen Time, which the bar indicator and `nova screentime open`
+Settings → Screen Time, which the bar widget and `nova screentime open`
 both open (`nova screentime open --week` lands on the weekly view; a summon
 of `nova.settings` with `{"page":"screentime","range":"week"}` does the same
 from a menu entry or a keybinding). Today and Week switch
@@ -113,7 +122,9 @@ nova screentime ignore <app-id>     never record an app again
 nova screentime unignore <app-id>   undo that
 nova screentime forget <app-id>     delete an app's history
 
-nova screentime indicator on|off      show or hide the bar indicator
+nova screentime on | off | toggle   start or stop recording (off at first)
+nova screentime enabled             succeeds while it records
+nova screentime indicator [on|off]  put today's total on the bar or take it off, or say which
 ```
 
 ## Settings

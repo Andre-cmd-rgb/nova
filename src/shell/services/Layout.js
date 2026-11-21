@@ -254,3 +254,42 @@ function unmarkOff(config, id) {
   if (rest.length > 0) config.disabledPlugins = rest
   else delete config.disabledPlugins
 }
+
+// ------------------------------------------------------------ older configs
+
+// The widgets that were once a part of another plugin, by that plugin's id.
+// Until 1.0.0-rc.15 Screen Time's widget was its plugin's own, and its entry
+// in the bar both showed the widget and kept the plugin recording.
+var SPLIT = { "nova.screentime": "nova.screentime-today" }
+
+// <config> as this shell reads it: a bar entry of a plugin whose widget is
+// now a plugin of its own becomes that widget's entry, switched off where it
+// stands (so that switching the widget on puts it back there), keeping its
+// settings; and the plugin, if the entry was on, is named in plugins, so it
+// is on as before. A new object when that changed anything, else <config>.
+function upgraded(config) {
+  var older = Object.keys(SPLIT).filter(function(plugin) { return find(config, plugin, "") !== null })
+  if (older.length === 0) return config
+  var copy = JSON.parse(JSON.stringify(config))
+  shape(copy)
+  older.forEach(function(plugin) {
+    var widget = SPLIT[plugin]
+    var on = false
+    for (var spot = find(copy, plugin, ""); spot; spot = find(copy, plugin, "")) {
+      var list = copy.bar.layout[spot.section]
+      var entry = isObject(list[spot.index]) ? list[spot.index] : { id: plugin }
+      on = on || !isHidden(entry)
+      if (find(copy, widget, "")) {
+        list.splice(spot.index, 1)
+        continue
+      }
+      var moved = Object.assign({}, entry, { id: widget, off: true })
+      // Its old switch, which only hid the widget.
+      delete moved.indicator
+      list[spot.index] = moved
+    }
+    if (on && !copy.plugins.some(function(named) { return isObject(named) && String(named.id || "") === plugin }))
+      copy.plugins.push({ id: plugin })
+  })
+  return copy
+}

@@ -20,8 +20,10 @@ Usage: nova bar <command> [arguments]
                                     or make it so
   put <id> [where]                  Put a widget on the bar; one on it already
                                     stays where it is
-  remove <id>                       Take a widget off the bar; one off by default
-                                    (Screen Time) stops as well
+  remove <id>                       Take a widget off the bar; it keeps its place
+                                    for the next put
+                                    (put and remove switch a plugin that has no
+                                    widget on and off too: nova.screentime)
   move <id> [where]                 Move a widget, in its section or to another
   set <id> <key> <value> [--json] [where]
                                     Set one of a widget's options, the value as

@@ -1,0 +1,18 @@
+{
+  "id": "nova.screentime-today",
+  "name": "Screen Time in the bar",
+  "description": "Today's screen time, while Screen Time records; a click opens the breakdown",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "enabledByDefault": false,
+  "barWidget": {
+    "displayName": "Screen Time",
+    "defaultSection": "right",
+    "switchable": true,
+    "shownWith": "nova.screentime"
+  }
+}
