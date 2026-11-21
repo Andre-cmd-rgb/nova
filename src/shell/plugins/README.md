@@ -140,6 +140,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | Clipboard | `nova.clipboard` | overlay `clipboard/Clipboard.qml` | the clipboard's history |
 | Dictation | `nova.dictation` | panel `dictation/Dictation.qml` | speech to text; its speech side is `dictation/bin/dictation` (`nova dictation`) |
 | Emojis | `nova.emojis` | overlay `emojis/Emojis.qml` | the emoji picker |
+| File picker | `nova.file-picker` | service `file-picker/FilePicker.qml` | the window apps get when they ask for a file to open, a name to save under or a folder to choose, through the desktop portal (`nova.portal`) |
 | Image picker | `nova.image-picker` | overlay `image-picker/ImagePicker.qml` | images to choose from, for `nova theme` (below) |
 | Lock Screen | `nova.lock` | service `lock/Service.qml` | the lock screen (below) |
 | Quick Look | `nova.preview` | panel `preview/Preview.qml` | the preview Files opens with Space: one file in a floating window, with its name and nothing else; `src/preview` (`nova-previewer`, Rust) answers Files on D-Bus, as GNOME Sushi did, and summons it |

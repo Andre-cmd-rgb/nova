@@ -165,7 +165,7 @@ What no virtual machine can check. A line that fails is a bug to fix before appr
 - **Boot:** firmware logo to the lock screen with no console text in between; `systemd-analyze` no slower than the last release; a key in the first second shows the boot menu with snapshots, and the one from before the update starts and offers **Restore now** (leave it: the next restart is back on the update).
 - **Unlock:** a wrong password is refused; the right one signs Chrome in with no keyring prompt; after that, the fingerprint unlocks, after suspend too.
 - **Sleep:** the lid suspends and the machine wakes to the lock screen; `systemctl hibernate` on AC resumes to the session.
-- **Power:** unplugged, the profile goes to the battery's mode (balanced unless one was chosen) and `nova power gpu status` says off; plugged in, it is performance and the card comes back. *Always Off* in Settings keeps the card off. `nova battery limit` reads back what was set. On battery at idle, `src/power/test/watts.sh 300` is no worse than last time.
+- **Power:** unplugged, the profile goes to the battery's mode (power-saver unless one was chosen) and `nova power gpu status` says off; plugged in, it is performance and the card comes back. *Always Off* in Settings keeps the card off. `nova battery limit` reads back what was set. On battery at idle, `src/power/test/watts.sh 300` is no worse than last time.
 - **Graphics:** native resolution and refresh rate; `chrome://gpu` shows hardware video decode; a game runs on the NVIDIA card with `nova power run`.
 - **Sound:** speakers (`nova audio tuning status`), the microphone, headphones, a Bluetooth headset; the volume and brightness keys show the OSD.
 - **Network:** Wi-Fi, Bluetooth pairing, mobile data where there is a SIM.

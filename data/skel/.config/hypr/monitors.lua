@@ -10,6 +10,7 @@ hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" 
 -- Rotated (transform: 1 = 90°, 3 = 270°):
 -- hl.monitor({ output = "DP-2", mode = "preferred", position = "auto", scale = 1, transform = 1 })
 
--- X11 programs take the built-in display's scale, whole (or the largest
--- display's, with none built in), and follow it when it changes. Another one:
+-- X11 programs take one scale on every display, the largest display's
+-- rounded up, shrunk to size on a display of a lower one, and follow it when
+-- it changes. Another one:
 -- hl.env("NOVA_X11_SCALE", "2")

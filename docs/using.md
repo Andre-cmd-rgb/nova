@@ -29,6 +29,7 @@ Super+K searches every key and runs the one you pick. The tables below are the o
 | Super+Ctrl+O | the Toggle menu |
 | Super+Escape | the System menu: lock, suspend, restart, shut down |
 | Super+Ctrl+E | emojis |
+| Super+K | every key, searchable |
 | Super+Return | a terminal, in the focused terminal's directory |
 | Super+Shift+Return, Super+Shift+B | the browser |
 | Super+Shift+Alt+B | a private browser window |
@@ -53,12 +54,15 @@ Super+K searches every key and runs the one you pick. The tables below are the o
 | Super+Alt+F | full width |
 | Super+O | pop the window out: floating, and pinned on every workspace |
 | Super+J | split the other way |
+| Super+P | the window at its own size, centred in its tile |
+| Super+Alt+Home, Super+Home | remember the window's width, give it back |
 | Super+L | this workspace's layout: dwindle or scrolling |
 | Super+minus, Super+equals | resize the window across; with Shift, up and down; with Alt a little, with Ctrl a lot |
 | Super+drag, Super+right-drag | move, resize |
-| Super+G | group windows; Super+Alt+arrows move one into a group, Super+Alt+Tab goes through it |
+| Super+G | group windows; Super+Alt+arrows move one into a group and Super+Alt+G out of it; Super+Alt+Tab and Super+Alt+Shift+Tab, Super+Ctrl+Left and Right, or Super+Alt and the wheel go through it |
 | Super+Backspace | the window see-through or not |
 | Super+Shift+Backspace | gaps between windows or none |
+| Super+Ctrl+Backspace | a window alone on its workspace square, or full size |
 
 ### Workspaces and displays
 
@@ -68,10 +72,11 @@ Super+K searches every key and runs the one you pick. The tables below are the o
 | Super+Shift+1 to 0 | move the window there |
 | Super+Shift+Alt+1 to 0 | move the window there, and stay here |
 | Super+Tab, Super+Shift+Tab | the next workspace, the one before |
+| Super and the wheel | the next workspace with windows, the one before |
 | Super+Ctrl+Tab | the workspace you were on |
 | Super+S | the scratchpad; Super+Alt+S moves the window there |
 | Super+Shift+Alt+arrows | move the workspace to the display that way |
-| Ctrl+Alt+Tab | the next display |
+| Ctrl+Alt+Tab, Ctrl+Alt+Shift+Tab | the next display, the one before |
 | Super+slash, Super+Alt+slash | scale the display up, down |
 | Super+Ctrl+Delete | the laptop's display on or off |
 | Super+Ctrl+Alt+Delete | mirror the laptop's display, or stop |
@@ -86,7 +91,7 @@ On a touchpad, three fingers sideways move to the workspace beside, which follow
 | Key | Does |
 |---|---|
 | Print | a screenshot |
-| Alt+Print | a screen recording; again to stop |
+| Alt+Print | a screen recording; again to stop (after `sudo pacman -S gpu-screen-recorder`) |
 | Super+Print | pick a color off the screen |
 | Super+Ctrl+Print | copy the text in a region, by OCR (after `sudo pacman -S tesseract-data-eng`) |
 | Super+C, Super+V, Super+X | copy, paste and cut in any window, a terminal too |
@@ -242,6 +247,7 @@ An iPhone can send photos, files and links to the computer with AirDrop, with no
 - A notification asks before anything is taken, as on a Mac, with the picture the iPhone sends of it: Accept or Decline. What arrives is in your downloads folder, and a notification with its picture opens it at a click.
 - While AirDrop is on, the bar's Wi-Fi icon is AirDrop's.
 - The Wi-Fi is off the network while AirDrop is on. It ends by itself, a moment after a transfer or after two minutes with none, and the Wi-Fi reconnects.
+- To send to an iPhone nearby: select photos, videos or music in Files, then right-click → Open With… → AirDrop, and pick the iPhone. Any other file: `nova airdrop send <file>...` in a terminal. The iPhone has to be set to Everyone for 10 Minutes, and Bluetooth on here: [AirDrop](airdrop.md#sending) says why.
 
 [AirDrop](airdrop.md) has the rest: why the Wi-Fi goes, which Wi-Fi cards can do it, and what it lets in.
 

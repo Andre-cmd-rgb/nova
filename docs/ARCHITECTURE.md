@@ -331,7 +331,8 @@ Built only in CI ([packaging.md](packaging.md) has how each is kept up to date):
 | `limine-snapper-sync`, `limine-entry-tool` | rebuilt from the AUR |
 | `whisper-cpp` | dictation's speech engine, with its own copy of ggml: Arch's links Arch's ggml, which breaks it as it moves on |
 | `supernova` | Nova's own browser, from a pinned Supernova commit; installed by name, not by default |
-| `hyprland` | Arch's Hyprland with Nova's patch for `xwayland:scale`: X11 apps the same size on every display |
+| `hyprland` | Arch's Hyprland with Nova's four patches (`packaging/hyprland/UPSTREAM.md` has them as offered upstream): `xwayland:scale`, X11 apps the same size on every display; an X11 game fullscreen at the resolution it set through RandR; a pointer motion no mouse made sent with a zero relative motion, which older SDL games read as a still mouse otherwise; and a release bind that fires when its modifier is let go first |
+| `cmatrix` | Arch's cmatrix built from upstream's current code: its last release fills the window with solid blocks after a resize |
 
 **Fallback kernel:** Arch's `linux-lts` + `nvidia-open-lts` stay installed as the fallback boot entry.
 
