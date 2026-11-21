@@ -1070,3 +1070,17 @@ session_start_installed() {
   fails grep -q 'after pacman: the new copy' "$SCRATCH/calls"
   [ "$(sed -n 5p "$NOVA_ROOT/etc/greetd/config.toml")" = "$uwsm" ]
 }
+
+@test "a driver that will not install leaves NVIDIA's in place: Steam keeps a Vulkan driver" {
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" graphics_setup "$INTEL"
+  # pacman -S fails (a package missing from the snapshot, a full disk).
+  sed -i 's|^echo "pacman \$\*" >>"\$CALLS"$|&\n[[ $1 != -S ]]|' "$SCRATCH/bin/pacman"
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" \
+    CALLS="$SCRATCH/calls" NOVA_PCI_DEVICES_PATH="$SCRATCH/pci" NOVA_CPUINFO="$SCRATCH/cpuinfo" PATH="$SCRATCH/bin:$PATH" \
+    run bash -c 'source "$1"; keep_graphics_drivers 1' "$SCRATCH/lib/test" "$SCRATCH/lib/nova-update-apply"
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --asdeps --noconfirm lib32-vulkan-intel' "$SCRATCH/calls"
+  fails grep -q -- '-Rns' "$SCRATCH/calls"
+  [[ $output == *"could not install lib32-vulkan-intel"* ]]
+  [[ $output == *"NVIDIA's stay until they do"* ]]
+}

@@ -283,8 +283,13 @@ keep_graphics_drivers() { # 1 for --noconfirm, then a command prefix for pacman
   graphics_plan || return 0
   if (( ${#graphics_missing[@]} )); then
     say "Installing this computer's graphics drivers: ${graphics_missing[*]}"
-    "$@" pacman -S --needed --asdeps "${confirm[@]}" "${graphics_missing[@]}" ||
+    # Without them in, NVIDIA's may be the only Vulkan driver there is: they
+    # stay.
+    if ! "$@" pacman -S --needed --asdeps "${confirm[@]}" "${graphics_missing[@]}"; then
       warn "could not install ${graphics_missing[*]}; try again with: sudo pacman -S --asdeps ${graphics_missing[*]}"
+      (( ! ${#graphics_stray[@]} )) || warn "NVIDIA's stay until they do: ${graphics_stray[*]}"
+      return 0
+    fi
   fi
   (( ${#graphics_stray[@]} )) || return 0
   say "Removing NVIDIA drivers this computer cannot use: ${graphics_stray[*]}"
