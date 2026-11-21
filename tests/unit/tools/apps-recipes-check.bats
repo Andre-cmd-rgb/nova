@@ -107,7 +107,9 @@ run_check() { # recipe text
 }
 
 @test "without its inputs it says which is missing, and it takes no other arguments" {
-  run "$check" --dbpath "$SCRATCH/none"
+  # The test's catalog program: the check reaches the databases whether or
+  # not cargo has built the real one.
+  run "$check" --catalog "$SCRATCH/catalog" --dbpath "$SCRATCH/none"
   [ "$status" -eq 2 ]
   [[ $output == *"core.db"* ]]
   run "$check" --bogus
