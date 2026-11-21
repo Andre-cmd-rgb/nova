@@ -65,7 +65,6 @@ windows=(
 always=(
   plugins/bar/widgets/SystemUpdate.qml   # asks for updates every six hours
   plugins/batterylife/Service.qml        # the battery's history: a sample a few minutes
-  plugins/batterylife/Service.qml        # and its settings, read every ten minutes
   plugins/panels/weather/Forecast.qml    # the forecast on the bar, every quarter of an hour
   plugins/screentime/BarWidget.qml       # today's screen time on the bar, a minute
   plugins/screentime/Service.qml         # the day's record, written every minute

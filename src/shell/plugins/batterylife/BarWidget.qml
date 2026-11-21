@@ -57,6 +57,20 @@ Panel {
 
   onBarChanged: battery.resolveSampler()
 
+  // The service reads the record after a sample only while something shows
+  // it: this holds it while the entry is on the bar.
+  property var heldSampler: null
+  readonly property var wantedSampler: indicator ? sampler : null
+  onWantedSamplerChanged: holdSampler(wantedSampler)
+  Component.onDestruction: holdSampler(null)
+
+  function holdSampler(next) {
+    if (next === heldSampler) return
+    if (heldSampler && typeof heldSampler.release === "function") heldSampler.release()
+    heldSampler = next
+    if (heldSampler && typeof heldSampler.hold === "function") heldSampler.hold()
+  }
+
   // Named `info`, not `data`, and `chargeState`, not `state`: both of those
   // are properties QQuickItem already has. `data` is its *default* property —
   // the one an item's children are assigned to — so shadowing it with a var
@@ -309,6 +323,8 @@ Panel {
 
   Component.onCompleted: {
     resolveSampler()
+    // A sampler there from the start is held as one found later is.
+    holdSampler(wantedSampler)
     loadProfiles()
   }
 

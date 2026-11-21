@@ -44,11 +44,21 @@ Item {
   implicitHeight: content.implicitHeight
 
   Component.onCompleted: refresh()
+  Component.onDestruction: holdService(null)
 
   function refresh() {
-    root.service = root.shell && typeof root.shell.serviceFor === "function" ? root.shell.serviceFor("nova.batterylife") : null
+    holdService(root.shell && typeof root.shell.serviceFor === "function" ? root.shell.serviceFor("nova.batterylife") : null)
     if (root.service && typeof root.service.sample === "function") root.service.sample()
     loadTimer.restart()
+  }
+
+  // The service reads the record after a sample only while something shows
+  // it: the page holds it while it is there.
+  function holdService(next) {
+    if (next === root.service) return
+    if (root.service && typeof root.service.release === "function") root.service.release()
+    root.service = next
+    if (root.service && typeof root.service.hold === "function") root.service.hold()
   }
 
   function load() {

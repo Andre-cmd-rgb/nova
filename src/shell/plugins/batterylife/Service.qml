@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import Quickshell.Services.UPower
 import qs.Commons
@@ -11,7 +12,12 @@ import qs.Commons
 // Deliberately thin: nothing is aggregated here. A shell restart costs one
 // sample, and every question about the data is answered by the CLI instead;
 // its last answer is kept for the bar on every screen and for Settings, which
-// would otherwise each ask it the same question.
+// would otherwise each ask it the same question. That answer walks the whole
+// history, so it is asked after a sample only while something shows it: the
+// bar's widget and the Settings page hold() the service while they are
+// there, and release() it as they go. The widget is not on the bar unless
+// put there, and the page is made only while it is shown, so most of the
+// time the samples are written and nothing reads them.
 Item {
   id: root
 
@@ -19,7 +25,8 @@ Item {
   property var shell: null
   property var manifest: null
 
-  readonly property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/batterylife")).replace(/^file:\/\//, ""))
+  // A test gives a stub in its place.
+  property string helper: decodeURIComponent(String(Qt.resolvedUrl("bin/batterylife")).replace(/^file:\/\//, ""))
 
   // Settings live in the CLI's config file — one place to change them, and no
   // second copy in shell.json that could disagree with it.
@@ -34,6 +41,18 @@ Item {
   // The CLI's `json`, as the bar and Settings show it.
   property var info: ({})
   property real readAt: 0
+
+  // How many of the widget and the page show the record now. The first to
+  // come reads it at once.
+  property int holds: 0
+
+  function hold() {
+    if (holds++ === 0) refresh(5000)
+  }
+
+  function release() {
+    if (holds > 0) holds--
+  }
 
   // A read walks the whole history, and a sample, a percent and a charge
   // state tend to move at once, with every screen's widget asking: they share
@@ -89,47 +108,55 @@ Item {
     sampleProc.running = true
   }
 
-  Component.onCompleted: {
-    loadSettings()
-    sample()
-  }
-
-  function loadSettings() {
-    if (!batteryProc.running) batteryProc.running = true
-    if (!acProc.running) acProc.running = true
-  }
+  Component.onCompleted: sample()
 
   Process {
     id: sampleProc
     command: [root.helper, "sample"]
     onExited: {
       root.sampled()
-      root.refresh()
+      if (root.holds > 0) root.refresh()
     }
   }
 
-  Process {
-    id: batteryProc
-    command: [root.helper, "config", "SAMPLE_INTERVAL"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var value = parseInt(String(text).trim(), 10)
-        if (isFinite(value) && value >= 10) root.batteryInterval = value
-      }
-    }
+  // ---- settings
+
+  // The CLI's config file, KEY=value a line, the last of a key counting, as
+  // bin/batterylife's get_cfg reads it; a whole number of seconds, ten at
+  // least, or the default. Read as it changes (nova battery set, or by
+  // hand), with no process and no clock; its folder is made first, for the
+  // file to be seen when it is made.
+  readonly property string configHome: Quickshell.env("XDG_CONFIG_HOME") || Quickshell.env("HOME") + "/.config"
+  readonly property string configFolder: configHome + "/nova-batterylife"
+  property bool configWatched: false
+
+  function setting(text, key, otherwise) {
+    var value = ""
+    var pattern = new RegExp("^\\s*" + key + "\\s*=\\s*(.*)$")
+    String(text || "").split("\n").forEach(function (line) {
+      var found = pattern.exec(line.replace(/\r/g, ""))
+      if (found) value = found[1]
+    })
+    var number = parseInt(value, 10)
+    return isFinite(number) && number >= 10 ? number : otherwise
+  }
+
+  function takeSettings(text) {
+    batteryInterval = setting(text, "SAMPLE_INTERVAL", 60)
+    acInterval = setting(text, "AC_INTERVAL", 300)
   }
 
   Process {
-    id: acProc
-    command: [root.helper, "config", "AC_INTERVAL"]
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: {
-        var value = parseInt(String(text).trim(), 10)
-        if (isFinite(value) && value >= 10) root.acInterval = value
-      }
-    }
+    running: true
+    command: ["mkdir", "-p", root.configFolder]
+    onExited: root.configWatched = true
+  }
+
+  WatchedFile {
+    id: configFile
+    path: root.configWatched ? root.configFolder + "/config" : ""
+    onLoaded: root.takeSettings(text())
+    onLoadFailed: root.takeSettings("")
   }
 
   // Plugging in or pulling the plug ends one run and starts another. Both
@@ -150,22 +177,9 @@ Item {
   // A resume is the one moment a sample is worth more than usual: the charge
   // reading either side of a suspend is the only evidence of what it cost,
   // and the timer above cannot have fired while the machine was down.
-  //
-  // Detected the same way the rest of this machine's power tooling does it —
-  // by the wall clock moving further than the interval that was slept — since
-  // nothing here is privileged enough to hear about it from logind. The
-  // shell's one look at the wall clock (Wake) sees it within ten seconds.
+  // nova-sessiond hears of the wake from logind and tells the shell (Wake).
   Connections {
     target: Wake
     function onWoke() { root.sample() }
-  }
-
-  // Settings are read from disk rather than watched; a ten-minute refresh is
-  // soon enough for a value someone changes by hand every few months.
-  Timer {
-    interval: 600000
-    running: true
-    repeat: true
-    onTriggered: root.loadSettings()
   }
 }

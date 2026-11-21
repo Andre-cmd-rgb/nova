@@ -148,6 +148,15 @@ Tue 01 Sep 02:01   99% → 57 %  1h 27m    20.3 W   3h 39m
 | `TYPICAL_DAYS` | 14 | days averaged into the full-charge projection |
 | `RESPONSE_SECONDS` | 300 | how fast the live estimate follows a change in load |
 
+They live in `~/.config/nova-batterylife/config`, `KEY=value` a line. The
+shell reads the file as it changes, with `nova battery set` or by hand, so a
+new interval holds from then; nothing looks at it on a clock.
+
+The shell's part samples on its own cadence whatever is shown, as the record
+must be kept. Reading the record back, which walks the whole history, it
+does after a sample only while the bar's widget or the Settings page shows
+it; the widget is not on the bar unless put there.
+
 `RESPONSE_SECONDS` is the half-life of the weighting behind the live
 estimate. Every interval counts for half as much as one `RESPONSE_SECONDS`
 newer, so at the default the last five minutes decide the number and the
