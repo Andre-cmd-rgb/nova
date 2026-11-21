@@ -64,5 +64,6 @@ each with its licence and notice in its package: whisper.cpp
 release carries), unmodified, by packaging/whisper-cpp; and Hyprland
 (https://github.com/hyprwm/Hyprland, BSD-3-Clause), with Nova's patches
 packaging/hyprland/xwayland-scale.patch, release-bind.patch,
-xwayland-emulated-modes.patch and xwayland-relative-motion.patch, by
+xwayland-emulated-modes.patch, xwayland-relative-motion.patch,
+groupbar-gradient-column.patch and stencil-without-depth.patch, by
 packaging/hyprland.
