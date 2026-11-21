@@ -28,6 +28,15 @@
 #             hides one of its own: Item.state, or the data the children go
 #             in, which an Item and a Quickshell window have (not a QtObject,
 #             Scope or Singleton) (docs/ARCHITECTURE.md, QML)
+#   fullscreen
+#             a window over the whole screen (a WlSessionLockSurface, or a
+#             PanelWindow anchored on all four edges) whose own color is not
+#             "black" or "transparent", or that names none (a Quickshell
+#             window is white by default): it shows before what is in it is
+#             drawn, and a theme's colour there flashed between the boot's
+#             black and the lock screen's picture (the white of a light
+#             theme); what waits for a picture draws it when it is ready
+#             (plugins/lock/LockView.qml)
 #
 # A statement is checked whole, at its first line: a shell line continued by
 # a backslash or ended by a pipe, || or && (50 lines at most), and a QML
@@ -165,11 +174,31 @@ awk '
     lines = 0
   }
 
+  # A window over the whole screen, when its block closes: its own color
+  # must be black or transparent.
+  function checkWindow(n,   value) {
+    if (winType[n] != "WlSessionLockSurface" && winAnchors[n] < 4) return
+    value = winColor[n]
+    if (value == "")
+      report(FILENAME, winLine[n], "fullscreen", "a window over the whole screen with no color is white until it is drawn: color: \"black\" or \"transparent\"")
+    else if (value !~ /^"(black|transparent)"$/)
+      report(FILENAME, winLine[n], "fullscreen", "a window over the whole screen shows its color before what is in it: color: \"black\" or \"transparent\", not " value)
+  }
+
+  # The anchors of a window line names, counted once each.
+  function countAnchors(n, text,   edge) {
+    for (edge in edges) if (text ~ ("(^|[^A-Za-z.])" edge "[[:space:]]*:[[:space:]]*true")) winEdges[n, edge] = 1
+    winAnchors[n] = winEdges[n, "top"] + winEdges[n, "bottom"] + winEdges[n, "left"] + winEdges[n, "right"]
+  }
+
+  BEGIN { edges["top"]; edges["bottom"]; edges["left"]; edges["right"] }
+
   FNR == 1 {
     flush()
     file = FILENAME
     start = 0; root = ""; depth = 0; lines = 0; heredoc = ""; stripped = 0
     qml = FILENAME ~ /\.(qml|js)$/
+    windows = 0; inAnchors = 0
   }
 
   # A heredoc: text up to its word, not commands.
@@ -186,6 +215,37 @@ awk '
   # A comment line, in either language.
   qml && /^[[:space:]]*\/\// { next }
   !qml && /^[[:space:]]*#/ { next }
+
+  # A window block opens (one a line, at its own indentation), its own
+  # properties two spaces further in, and it closes at its indentation.
+  qml {
+    match($0, /^ */)
+    indent = RLENGTH
+    if ($0 ~ /^[[:space:]]*(component[[:space:]]+[A-Za-z0-9_]+[[:space:]]*:[[:space:]]*)?(WlSessionLockSurface|PanelWindow)[[:space:]]*\{[[:space:]]*$/) {
+      windows++
+      match($0, /(WlSessionLockSurface|PanelWindow)[[:space:]]*\{/)
+      winType[windows] = substr($0, RSTART, RLENGTH); sub(/[[:space:]]*\{$/, "", winType[windows])
+      winIndent[windows] = indent; winLine[windows] = FNR; winColor[windows] = ""; winAnchors[windows] = 0
+      delete winEdges
+    } else if (windows > 0) {
+      if (inAnchors) {
+        countAnchors(windows, $0)
+        if ($0 ~ /\}/) inAnchors = 0
+      } else if (indent == winIndent[windows] + 2) {
+        if ($0 ~ /^[[:space:]]*anchors[[:space:]]*\{/) {
+          countAnchors(windows, $0)
+          if ($0 !~ /\}/) inAnchors = 1
+        } else if ($0 ~ /^[[:space:]]*anchors\.(top|bottom|left|right)[[:space:]]*:/) {
+          line = $0; sub(/anchors\./, "", line); countAnchors(windows, line)
+        } else if ($0 ~ /^[[:space:]]*color[[:space:]]*:/) {
+          winColor[windows] = $0; sub(/^[[:space:]]*color[[:space:]]*:[[:space:]]*/, "", winColor[windows]); sub(/[[:space:]]*$/, "", winColor[windows])
+        }
+      } else if (indent == winIndent[windows] && $0 ~ /^[[:space:]]*\}/) {
+        checkWindow(windows)
+        windows--
+      }
+    }
+  }
 
   qml {
     # Properties of the root object, two spaces in. An Item has both; a

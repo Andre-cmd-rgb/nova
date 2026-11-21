@@ -306,3 +306,84 @@ SAMPLE
   [ "$(grep -c ': locale: ' <<<"$output")" -eq 2 ]
   [[ $output == *"Strings.qml:4: locale"* && $output == *"Strings.qml:5: locale"* ]]
 }
+
+@test "fullscreen: a window over the whole screen in a theme's colour, or in none, is found" {
+  file=$(sample Lock.qml <<'EOF'
+import QtQuick
+import Quickshell
+import Quickshell.Wayland
+
+Item {
+  WlSessionLock {
+    WlSessionLockSurface {
+      color: Commons.Color.background
+      Item {
+        Rectangle { color: "red" }
+      }
+    }
+  }
+
+  PanelWindow {
+    anchors { top: true; bottom: true; left: true; right: true }
+    color: Commons.Color.background
+  }
+
+  component Cover: PanelWindow {
+    anchors {
+      top: true
+      bottom: true
+      left: true
+      right: true
+    }
+  }
+
+  PanelWindow {
+    anchors.top: true
+    anchors.bottom: true
+    anchors.left: true
+    anchors.right: true
+    color: "white"
+  }
+}
+EOF
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 1 ]
+  [ "$(grep -c ': fullscreen: ' <<<"$output")" -eq 4 ]
+  [[ $output == *"Lock.qml:7: fullscreen"* && $output == *"Lock.qml:15: fullscreen"* ]]
+  [[ $output == *"Lock.qml:20: fullscreen: a window over the whole screen with no color"* && $output == *"Lock.qml:29: fullscreen"* ]]
+}
+
+@test "fullscreen: black or transparent passes, and a window along one edge may take the theme's colour" {
+  file=$(sample Fine.qml <<'EOF'
+import QtQuick
+import Quickshell
+import Quickshell.Wayland
+
+Scope {
+  WlSessionLock {
+    WlSessionLockSurface {
+      color: "black"
+    }
+  }
+
+  PanelWindow {
+    anchors { top: true; right: true; bottom: true; left: true }
+    color: "transparent"
+    Rectangle {
+      anchors.fill: parent
+      color: Commons.Color.background
+    }
+  }
+
+  PanelWindow {
+    anchors { top: true; left: true; right: true }
+    color: Commons.Color.bar.background
+  }
+}
+EOF
+  )
+  run "$LINT" "$file"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
