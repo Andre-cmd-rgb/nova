@@ -37,7 +37,8 @@
 # by nova apps install --build), after step 5, so that an update from Settings
 # asks for authentication once. With --packages-only it installs those alone,
 # when only the apps are behind. It takes those two apps alone, from files of
-# the user who authenticated, and installs copies made as they were checked.
+# the account that ran pkexec (PKEXEC_UID; not always the one whose password
+# was typed), and installs copies made as they were checked.
 # One that will not go in leaves the release in, and the update goes on to its
 # end: it then ends with 4, finished with problems.
 #
@@ -285,7 +286,7 @@ package_name() { # path
 }
 
 # A package file as makepkg names one, name-version-release-arch.pkg.tar[.*],
-# of one of those apps, and the authenticating user's own.
+# of one of those apps, owned by the account that ran pkexec.
 valid_package() { # path
   [[ $1 == /* && -f $1 && ! -L $1 && ${1##*/} =~ ^[a-z0-9@._+-]+-[^/-]+-[^/-]+-(x86_64|any)\.pkg\.tar(\.[a-z0-9]+)?$ ]] || return 1
   [[ " ${BUILT_APPS[*]} " == *" $(package_name "$1") "* ]] || return 1

@@ -215,7 +215,7 @@ STUB
 # pacman that knows the packages in $REPO, has those in $INSTALLED
 # (name:e asked for by name, name:d a dependency) and says who needs a
 # package from $SCRATCH/required/<name>, and who may use it from
-# $SCRATCH/optional/<name>; systemctl, getent and gpasswd log.
+# $SCRATCH/optional/<name>; systemctl and gpasswd log (gpasswd never runs).
 recipe_machine() { # recipe text
   mkdir -p "$NOVA_ROOT/usr/share/nova/apps" "$SCRATCH/required"
   printf '%s\n' "$1" >"$NOVA_ROOT/usr/share/nova/apps/recipes"
@@ -243,7 +243,6 @@ STUB
   for tool in systemctl gpasswd; do
     printf '#!/bin/bash\necho "%s $*" >>"$CALLS"\n' "$tool" >"$SCRATCH/bin/$tool"
   done
-  printf '#!/bin/bash\n[[ $1 == passwd && $2 == 1000 ]] && echo "alice:x:1000:1000::/home/alice:/bin/bash" && exit 0\n[[ $1 == group && $2 == libvirt ]] && echo "libvirt:x:970:" && exit 0\nexit 2\n' >"$SCRATCH/bin/getent"
   chmod +x "$SCRATCH"/bin/*
 }
 
@@ -266,24 +265,23 @@ STUB
   fails grep -q -- '-D' "$CALLS"
 }
 
-@test "recipe: its steps once the app is in: a packaged socket turned on, the account that authenticated put in libvirt" {
-  REPO="virt-manager qemu-desktop" recipe_machine $'virt-manager with qemu-desktop\nvirt-manager after enable-socket libvirtd.socket\nvirt-manager after add-group libvirt'
+@test "recipe: its step once the app is in: a packaged socket turned on, and no account put in a group" {
+  REPO="virt-manager qemu-desktop" recipe_machine "$(grep '^virt-manager ' "$REPO_ROOT/src/apps/data/recipes")"
   mkdir -p "$NOVA_ROOT/usr/lib/systemd/system" && touch "$NOVA_ROOT/usr/lib/systemd/system/libvirtd.socket"
-  REPO="virt-manager qemu-desktop" PKEXEC_UID=1000 run "$APPLY" install virt-manager
+  REPO="virt-manager qemu-desktop dnsmasq" PKEXEC_UID=1000 run "$APPLY" install virt-manager
   [ "$status" -eq 0 ]
   grep -qx 'systemctl enable --now -- libvirtd.socket' "$CALLS"
-  grep -qx 'gpasswd -a alice libvirt' "$CALLS"
+  fails grep -q gpasswd "$CALLS"
   # The install before the steps.
   [ "$(grep -n 'pacman -S ' "$CALLS" | cut -d: -f1)" -lt "$(grep -n systemctl "$CALLS" | cut -d: -f1)" ]
 }
 
-@test "recipe: a socket no package ships stays off, and without pkexec's account nobody is added" {
-  REPO="virt-manager" recipe_machine $'virt-manager after enable-socket evil.socket\nvirt-manager after add-group libvirt'
+@test "recipe: a socket no package ships stays off" {
+  REPO="virt-manager" recipe_machine 'virt-manager after enable-socket evil.socket'
   mkdir -p "$NOVA_ROOT/usr/lib/systemd/system" && touch "$NOVA_ROOT/usr/lib/systemd/system/evil.socket"
   REPO="virt-manager" run env -u PKEXEC_UID "$APPLY" install virt-manager
   [ "$status" -eq 0 ]
   [[ $output == *"evil.socket is not a socket of an installed package; it is left off"* ]]
-  [[ $output == *"no account to add to libvirt"* ]]
   fails grep -q -e systemctl -e gpasswd "$CALLS"
 }
 
@@ -301,7 +299,7 @@ STUB
     'vlc after enable-socket ../../evil.socket' \
     'vlc after enable-socket sshd.service' \
     'vlc after add-group wheel' \
-    'vlc after add-group libvirt extra' \
+    'vlc after add-group libvirt' \
     'vlc prefer somewhere' \
     'vlc install-hook x'; do
     : >"$CALLS"

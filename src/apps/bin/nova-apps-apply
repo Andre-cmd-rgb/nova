@@ -13,10 +13,13 @@
 # An app's recipe (src/apps/data/recipes, read only from
 # /usr/share/nova/apps/recipes, a file only root can write) adds packages to
 # its install, marked as dependencies and taken out with it when nothing else
-# needs them, and steps done as root once it is in, from a fixed list:
-# enable-socket <unit> for a socket a package installed ships, add-group
-# libvirt for the account that authenticated. A recipe that breaks those
-# rules stops the install with nothing changed.
+# needs them, and steps done as root once it is in, from a fixed list of one:
+# enable-socket <unit>, for a socket a package installed ships. Never an
+# account put in a group: a group that lets an app ask without a password
+# (libvirt's, docker's) makes the account root without one, and pkexec's
+# PKEXEC_UID is the account that started it, not the one that typed the
+# password. A recipe that breaks those rules stops the install with nothing
+# changed.
 #   built <file>        install Chrome or VS Code, built by nova apps install
 #                       (nova-update-apply checks and installs it)
 #
@@ -168,9 +171,6 @@ not_installed() { # package...
 
 PACKAGE_NAME='^[a-z0-9@_+][a-z0-9@._+-]*$'
 SOCKET_UNIT='^[a-z0-9][a-z0-9_-]*\.socket$'
-# The groups an app may put its user in: one that gives what the app needs
-# and no more. Never wheel, root's, or a group that reads the disks.
-RECIPE_GROUPS=(libvirt)
 
 # A recipe that is not as it should be stops the install: it is Nova's, and
 # a broken one is a bug, not something to guess around.
@@ -210,7 +210,6 @@ read_recipe() {
         action=${words[2]} operand=${words[3]}
         case $action in
           enable-socket) [[ $operand =~ $SOCKET_UNIT ]] || broken_recipe "'$operand' is not a socket unit" ;;
-          add-group) [[ " ${RECIPE_GROUPS[*]} " == *" $operand "* ]] || broken_recipe "'$operand' is not a group an app may add" ;;
           *) broken_recipe "'$action' is no action an app may take" ;;
         esac
         RECIPE_AFTER+=("$action $operand")
@@ -230,7 +229,7 @@ socket_owner() { # unit
 # What the recipe does once the app is in. A step that fails is said, and
 # the app stays installed: it is in, and the step can be done by hand.
 run_after() { # "action operand"...
-  local step action operand user
+  local step action operand
   for step; do
     read -r action operand <<<"$step"
     case $action in
@@ -242,18 +241,6 @@ run_after() { # "action operand"...
         say "Turning on $operand"
         systemctl enable --now -- "$operand" ||
           echo "nova-apps-apply: could not turn on $operand; try: sudo systemctl enable --now $operand" >&2
-        ;;
-      add-group)
-        # The account pkexec authenticated, which only pkexec sets.
-        user=''
-        if [[ ${PKEXEC_UID:-} =~ ^[0-9]+$ ]]; then user=$(getent passwd "$PKEXEC_UID" | cut -d: -f1); fi
-        if [[ ! $user =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-          echo "nova-apps-apply: no account to add to $operand; add yours with: sudo gpasswd -a \$USER $operand" >&2
-          continue
-        fi
-        getent group "$operand" >/dev/null || { echo "nova-apps-apply: there is no group $operand" >&2; continue; }
-        say "Adding $user to the $operand group, from the next login"
-        gpasswd -a "$user" "$operand" >/dev/null || echo "nova-apps-apply: could not add $user to $operand" >&2
         ;;
     esac
   done

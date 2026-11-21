@@ -6,11 +6,9 @@
 #   <package> with <package>...        installed with it, as dependencies, and
 #                                      taken out with it when nothing else needs them
 #   <package> skip <package>...        an optional dependency left out on purpose
-#   <package> after <action> <operand> done as root once it is in:
-#                                        enable-socket <unit>, a .socket the
-#                                          packages installed ship
-#                                        add-group <group>, the account that
-#                                          installs it into libvirt (the only one)
+#   <package> after <action> <operand> done as root once it is in, of one
+#                                      action: enable-socket <unit>, a .socket
+#                                      the packages installed ship
 #
 # Every optional dependency of an app on the App Center's front page that comes
 # from Arch has a with or a skip here, or is brought in by a with:
@@ -110,8 +108,8 @@ marble skip kcmutils kirigami-addons libplasma plasma5support # KDE Plasma's app
 
 # --- not on the front page -----------------------------------------------
 # virt-manager manages QEMU's virtual machines through libvirt: QEMU itself,
-# dnsmasq for the default network, libvirt's daemon started when asked, and
-# the account in libvirt's group so it may ask without a password.
+# dnsmasq for the default network, and libvirt's daemon started when asked.
+# No account goes in libvirt's group, which manages the system's machines
+# without a password, and so its disks: virt-manager asks through polkit.
 virt-manager with qemu-desktop dnsmasq
 virt-manager after enable-socket libvirtd.socket
-virt-manager after add-group libvirt
