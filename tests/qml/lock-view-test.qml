@@ -1,6 +1,6 @@
 // platform: wayland
 // warns: Cannot set file position
-// warns: missing.ppm
+// warns: broken.ppm
 import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -11,7 +11,7 @@ import "plugins/lock"
 // window over the whole screen. What it draws is read back pixel by pixel
 // (the view grabbed, saved and sampled), at each step:
 //
-//   - its picture still loading, and no backdrop: nothing at all, the
+//   - its picture still loading, and no backdrop there: nothing at all, the
 //     window's black. A frame of flat colour, or the card without its
 //     picture, flashed between the boot's black and the lock: white, on a
 //     light theme. Qt reads images one at a time, on one thread: an image
@@ -21,8 +21,11 @@ import "plugins/lock"
 //   - the picture once it comes: the picture, with the card;
 //   - the backdrop nova-theme makes: ready before the first frame, the
 //     finished view in it;
-//   - a picture that cannot be read: the theme's colour and the card, at
-//     once;
+//   - a picture that is not there: the theme's colour and the card, at
+//     once, and not a word in the log (a home nova-theme has not set up
+//     yet: the warnings of the lock's images, the backdrop and the picture
+//     not there, failed the whole shell's smoke run);
+//   - one there that cannot be read: the same, once it has failed;
 //   - one that never comes: nothing for 1.5 s, then the same;
 //   - a fade (the boot's lock, the greeter): nothing until the window has
 //     shown a frame, black, then the picture coming in.
@@ -33,6 +36,7 @@ ShellRoot {
   readonly property string fifo: home + "/picture.ppm"
   readonly property string halves: home + "/halves.ppm"
   readonly property string backdrop: home + "/backdrop.ppm"
+  readonly property string broken: home + "/broken.ppm"
 
   function check(ok, what) { console.log((ok ? "ok   " : "FAIL ") + what) }
 
@@ -158,11 +162,12 @@ ShellRoot {
     () => sh.run(["mkfifo", fifo], next),
     () => sh.run(ppmCommand(halves), next),
     () => sh.run(ppmCommand(backdrop), next),
+    () => sh.run(["sh", "-c", "printf 'P6\\n64 40\\n255\\nxx' > \"$1\"", "sh", broken], next),
 
-    // A picture still loading, no backdrop: nothing drawn.
+    // A picture still loading, and no backdrop there: nothing drawn.
     () => {
       blocker.source = "file://" + fifo
-      show({ picture: halves })
+      show({ backdrop: home + "/no-backdrop.ppm", picture: halves })
       check(!view.revealed, "a picture loading: the view is not shown")
       wait(400)
     },
@@ -193,9 +198,22 @@ ShellRoot {
       next()
     }),
 
-    // A picture that cannot be read: the theme's colour and the card.
+    // A picture that is not there, nor a backdrop: the theme's colour and
+    // the card, at once; the log says nothing of them (the runner fails on a
+    // warning this test does not list).
     () => {
-      show({ picture: home + "/missing.ppm" })
+      show({ backdrop: home + "/no-backdrop.ppm", picture: home + "/missing.ppm" })
+      check(view.revealed && !view.backdropThere && !view.pictureThere, "a picture that is not there: the view is shown at once")
+      wait(400)
+    },
+    () => grab(seen => {
+      check(seen.drawn === seen.cells && Math.abs(seen.right - seen.left) < 4, "a picture that is not there: the theme's colour all over, and the card (" + seen.drawn + " cells, " + Math.round(seen.left) + ", " + Math.round(seen.right) + ")")
+      next()
+    }),
+
+    // One there that cannot be read: the same, once it has failed.
+    () => {
+      show({ picture: broken })
       until(() => view.revealed, 3000, "a picture that cannot be read: the view is shown")
     },
     () => wait(400),

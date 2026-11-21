@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Effects
+import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
@@ -21,6 +22,11 @@ import qs.Ui
 //   typed                    the holder's copy of the field
 //   checking, failure        a check under way; why the last one failed
 //   takesInput               whether the field takes keys
+//
+// Each file is looked for before it is read (`look()`): one that is not
+// there (a home nova-theme has not set up yet, a greeter's mirror from
+// before backdrops) is passed over without a word in the log, the backdrop
+// for the picture and the picture for the theme's background.
 //
 // Nothing is drawn until the picture is ready: the window under the view is
 // black, and a frame of flat colour or a card without its picture would
@@ -64,10 +70,15 @@ Item {
   // The backdrop is shown, or else the picture blurred here, or else, the
   // picture having failed or been waited for long enough, nothing but the
   // theme's background.
-  readonly property bool backdropShown: showPicture && premade.status === Image.Ready
+  readonly property bool backdropShown: backdropThere && premade.status === Image.Ready
   readonly property bool pictureShown: backdropShown || (photo.item !== null && photo.item.status === Image.Ready)
-  readonly property bool ready: !showPicture || pictureShown || waited
-    || (!backdropShown && (picture === "" || (photo.item !== null && photo.item.status === Image.Error)))
+  readonly property bool ready: looked && (!showPicture || pictureShown || waited
+    || (!backdropShown && (!pictureThere || (photo.item !== null && photo.item.status === Image.Error))))
+  // Which files are there to read, as last looked for; the picture is looked
+  // for only where the backdrop is not to be had.
+  property bool backdropThere: false
+  property bool pictureThere: false
+  property bool looked: false
   property bool waited: false
   // The window has shown a frame; a view that does not fade need not wait.
   property bool framed: !fadeIn
@@ -84,11 +95,38 @@ Item {
     if (ready && framed) revealed = true
   }
 
+  // Whether <path> is there and has something in it, read at once: the
+  // backdrop is a few hundred KB, and the picture is read only where there
+  // is no backdrop. Its bytes are let go again at once.
+  FileView {
+    id: probe
+    blockLoading: true
+    printErrors: false
+  }
+
+  function there(path) {
+    if (path === "") return false
+    probe.path = path
+    const bytes = probe.data()
+    probe.path = ""
+    return !!bytes && bytes.byteLength > 0
+  }
+
+  function look() {
+    backdropThere = showPicture && there(backdrop)
+    pictureThere = showPicture && (!backdropThere || premade.status === Image.Error) && there(picture)
+    looked = true
+  }
+
+  onShowPictureChanged: if (looked) look()
+  onBackdropChanged: if (looked) look()
+  onPictureChanged: if (looked) look()
   onReadyChanged: reveal()
   onFramedChanged: reveal()
   Component.onCompleted: {
     field.show(typed)
     if (takesInput) Qt.callLater(focusField)
+    look()
     reveal()
   }
 
@@ -147,21 +185,23 @@ Item {
     Image {
       id: premade
       anchors.fill: parent
-      source: view.showPicture && view.backdrop !== "" ? Util.fileUrl(view.backdrop) : ""
+      source: view.backdropThere ? Util.fileUrl(view.backdrop) : ""
       fillMode: Image.PreserveAspectCrop
       asynchronous: false
       cache: false
       smooth: true
+      // One there that cannot be read: the picture after all.
+      onStatusChanged: if (status === Image.Error) view.look()
     }
 
     // No backdrop (none made yet, or one that cannot be read): the picture,
     // blurred here, with a little of its contrast taken out. Not started
-    // while the backdrop is still to be read, as the view is made: the
-    // photo's decode would be thrown away.
+    // where the backdrop is to be had: the photo's decode would be thrown
+    // away.
     Loader {
       id: photo
       anchors.fill: parent
-      active: view.showPicture && view.picture !== "" && (view.backdrop === "" || premade.status === Image.Error)
+      active: view.pictureThere
       sourceComponent: Item {
         readonly property alias status: picture.status
 

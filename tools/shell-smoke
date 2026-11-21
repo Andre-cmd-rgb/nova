@@ -165,6 +165,9 @@ session() { # desktop | lock
       sleep 0.1
     done
     if [[ $answer == secure ]]; then echo "ok   locked at startup, and secure"; else echo "FAIL the lock is $answer, not secure"; fi
+    # The boot's lock comes in from black from its first frame (LockView):
+    # the picture is of it once it has.
+    sleep 0.5
     shot lock
     # Nothing here can type the password: the lock ends with the compositor.
     kill "$sway" 2>/dev/null || true
