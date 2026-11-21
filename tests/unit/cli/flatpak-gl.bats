@@ -10,6 +10,9 @@ GL="$REPO_ROOT/src/cli/bin/nova-flatpak-gl"
 setup() {
   setup_scratch
   export CALLS="$SCRATCH/calls" NOVA_NVIDIA_VERSION_FILE="$SCRATCH/nvidia-version" NOVA_FLATPAK="$SCRATCH/bin/flatpak"
+  # The login check remembers what Flathub lacked in the home's state folder.
+  export HOME="$SCRATCH/home"
+  MISSING="$HOME/.local/state/nova/flatpak-gl-missing"
   mkdir -p "$SCRATCH/bin"
   : >"$CALLS"
   # pacman: nvidia-utils at $NVIDIA_UTILS, if set.
@@ -28,6 +31,7 @@ if [[ $1 == list ]]; then
   exit 0
 fi
 echo "FLATPAK_GL_DRIVERS=$FLATPAK_GL_DRIVERS flatpak $*" >>"$CALLS"
+[[ ! -e $SCRATCH/flatpak-says ]] || cat "$SCRATCH/flatpak-says" >&2
 exit "$(cat "$SCRATCH/flatpak-status" 2>/dev/null || echo 0)"
 STUB
   chmod +x "$SCRATCH/bin/pacman" "$SCRATCH/bin/flatpak"
@@ -118,4 +122,57 @@ teardown() { teardown_scratch; }
   grep -q 'FLATPAK_GL_DRIVERS=$drivers "$FLATPAK" uninstall .* --unused' "$REPO_ROOT/src/cli/bin/nova-update"
   [ "$(grep -c '^  gl_drivers$\|^      gl_drivers$' "$REPO_ROOT/src/apps/bin/nova-apps-job")" -eq 2 ]
   grep -q 'graphical-session.target.wants/nova-flatpak-gl.service' "$REPO_ROOT/data/systemd/install.mk"
+}
+
+# What flatpak says when the remote has no such ref, and when it cannot reach it.
+lacks() { echo 1 >"$SCRATCH/flatpak-status"; echo "error: Nothing matches $1 in remote flathub" >"$SCRATCH/flatpak-says"; }
+offline() { echo 1 >"$SCRATCH/flatpak-status"; echo "error: Unable to load summary from remote flathub: Could not resolve hostname" >"$SCRATCH/flatpak-says"; }
+
+@test "sync --quiet: an extension Flathub lacks is asked for again a day later, then twice as long each time, a week at most" {
+  printf 'org.freedesktop.Platform.GL.default flathub\n' >"$SCRATCH/runtimes-user"
+  lacks org.freedesktop.Platform.GL.nvidia-620-73-04
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'flatpak install' "$CALLS")" -eq 1 ]
+  read -r scope ref misses next <"$MISSING"
+  [ "$scope $ref $misses" = "user org.freedesktop.Platform.GL.nvidia-620-73-04 1" ]
+  ((next > $(date +%s) + 86000 && next <= $(date +%s) + 86400))
+  # The next login, the same day: Flathub is not asked.
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  [ "$(grep -c 'flatpak install' "$CALLS")" -eq 1 ]
+  # A day on, it is, and still missing waits two days, then four, then seven.
+  local wait
+  for wait in 2 4 7 7; do
+    sed -i "s/ [0-9]*\$/ 1/" "$MISSING"
+    NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+    read -r scope ref misses next <"$MISSING"
+    ((next > $(date +%s) + wait * 86400 - 400 && next <= $(date +%s) + wait * 86400))
+  done
+  [ "$(grep -c 'flatpak install' "$CALLS")" -eq 5 ]
+}
+
+@test "sync --quiet: without a network nothing is remembered, and the next login tries again" {
+  printf 'org.freedesktop.Platform.GL.default flathub\n' >"$SCRATCH/runtimes-user"
+  offline
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  [ "$status" -eq 0 ]
+  [ ! -s "$MISSING" ]
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  [ "$(grep -c 'flatpak install' "$CALLS")" -eq 2 ]
+}
+
+@test "sync: a new driver's extension is asked for at once, and sync without --quiet always asks" {
+  printf 'org.freedesktop.Platform.GL.default flathub\n' >"$SCRATCH/runtimes-user"
+  lacks org.freedesktop.Platform.GL.nvidia-620-73-04
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync --quiet
+  # By hand (nova doctor's advice), whatever the login check remembers.
+  NVIDIA_UTILS=620.73.04-1 run "$GL" sync
+  [ "$status" -eq 1 ]
+  [ "$(grep -c 'flatpak install' "$CALLS")" -eq 2 ]
+  # The next driver: other refs, asked for at the next login.
+  rm "$SCRATCH/flatpak-status" "$SCRATCH/flatpak-says"
+  NVIDIA_UTILS=625.10.01-1 run "$GL" sync --quiet
+  [ "$(grep -c 'flatpak install.*nvidia-625-10-01' "$CALLS")" -eq 1 ]
+  # Once it is in, what was remembered of the old one goes.
+  [ ! -s "$MISSING" ]
 }

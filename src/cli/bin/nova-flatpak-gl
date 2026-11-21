@@ -24,12 +24,22 @@
 #                      extensions came from (a login check; quiet with
 #                      --quiet when there is nothing to do or no network)
 #
+# Flathub builds the extension for a new driver some days after it comes
+# out. Until then the login check (sync --quiet) asks for it again a day
+# after the remote said it has none, then twice as long after each such
+# answer, a week at most, rather than at every login; it remembers those
+# answers in ~/.local/state/nova/flatpak-gl-missing. A new driver is new
+# extensions, asked for at once, and without a network nothing is
+# remembered: the next login tries again. sync without --quiet always asks.
+#
 # NOVA_NVIDIA_VERSION_FILE and NOVA_FLATPAK are for tests.
 
 set -euo pipefail
 
 FLATPAK=${NOVA_FLATPAK:-flatpak}
 LOADED_FILE=${NOVA_NVIDIA_VERSION_FILE:-/sys/module/nvidia/version}
+# "<scope> <ref> <answers> <next try, in seconds since 1970>" a line.
+MISSING=${XDG_STATE_HOME:-${HOME:-}/.local/state}/nova/flatpak-gl-missing
 
 usage() {
   echo "usage: nova-flatpak-gl drivers | check | sync [--quiet] | run <command> [args...]" >&2
@@ -107,18 +117,64 @@ check() {
   return "$status"
 }
 
+# What the remote last said of a ref it lacked: "<answers> <next try>", or
+# nothing.
+remembered() { # scope ref
+  awk -v s="$1" -v r="$2" '$1 == s && $2 == r && $3 ~ /^[0-9]+$/ && $4 ~ /^[0-9]+$/ { print $3, $4; exit }' "$MISSING" 2>/dev/null || true
+}
+
 sync() { # [--quiet]
-  local name scope origin status=0 refs
+  local name scope origin status=0 ref out quiet=0 now due answers next wait
+  local -a refs keep=() held
+  [[ ${1:-} != --quiet ]] || quiet=1
   name=$(installed) || return 0
+  printf -v now '%(%s)T' -1
   for scope in $(gl_scopes); do
     mapfile -t refs < <(missing_in "$scope" "$name")
     ((${#refs[@]})) || continue
     origin=$(gl_origin "$scope")
     [[ -n $origin ]] || origin=flathub
-    [[ ${1:-} == --quiet ]] || echo "Installing ${refs[*]} into the $scope installation"
-    FLATPAK_GL_DRIVERS=$(drivers) "$FLATPAK" install "--$scope" -y --noninteractive "$origin" "${refs[@]}" </dev/null ||
-      status=1
+    if ((!quiet)); then
+      echo "Installing ${refs[*]} into the $scope installation"
+      FLATPAK_GL_DRIVERS=$(drivers) "$FLATPAK" install "--$scope" -y --noninteractive "$origin" "${refs[@]}" </dev/null ||
+        status=1
+      continue
+    fi
+    # At login: not while every one of them waits out the remote's answer.
+    due=0 held=()
+    for ref in "${refs[@]}"; do
+      read -r answers next <<<"$(remembered "$scope" "$ref")"
+      if ((${next:-0} <= now)); then due=1; else held+=("$scope $ref $answers $next"); fi
+    done
+    if ((!due)); then
+      keep+=("${held[@]}")
+      continue
+    fi
+    if out=$(FLATPAK_GL_DRIVERS=$(drivers) LC_ALL=C "$FLATPAK" install "--$scope" -y --noninteractive "$origin" "${refs[@]}" </dev/null 2>&1); then
+      continue
+    fi
+    status=1
+    # The remote has none (not a network that is not there): asked for again
+    # a day on, then twice as long after each such answer, a week at most.
+    [[ $out == *"Nothing matches"* ]] || continue
+    for ref in "${refs[@]}"; do
+      read -r answers next <<<"$(remembered "$scope" "$ref")"
+      answers=$((${answers:-0} + 1))
+      wait=7
+      ((answers > 3)) || wait=$((1 << (answers - 1)))
+      keep+=("$scope $ref $answers $((now + wait * 86400))")
+    done
   done
+  # What is still missing and was asked for; the rest (a driver since
+  # replaced, an extension now in) is forgotten.
+  if ((quiet)); then
+    if ((${#keep[@]})); then
+      mkdir -p -- "${MISSING%/*}"
+      printf '%s\n' "${keep[@]}" >"$MISSING.new" && mv -f -- "$MISSING.new" "$MISSING"
+    else
+      rm -f -- "$MISSING"
+    fi
+  fi
   return "$status"
 }
 

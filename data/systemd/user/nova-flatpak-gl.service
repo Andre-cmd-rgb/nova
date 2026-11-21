@@ -5,7 +5,8 @@ Description=Fetch Flatpak's graphics runtime for NVIDIA's installed driver, wher
 # they go; this catches what they did not see: a driver updated otherwise, or
 # the extension removed by a flatpak run by hand while the card was off the
 # bus. Only on a computer with NVIDIA's driver; it exits at once when nothing
-# is missing, and says nothing without a network.
+# is missing, says nothing without a network, and asks Flathub again for an
+# extension it has none of only a day later, then less often, a week at most.
 ConditionPathExists=/usr/share/vulkan/icd.d/nvidia_icd.json
 After=graphical-session.target
 
