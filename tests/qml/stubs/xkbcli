@@ -1,0 +1,17 @@
+#!/bin/sh
+# xkbcli list as the keyboard layout's test needs it: each call is a line in
+# $HOME/stub-calls, and the listing has two layouts.
+line=xkbcli
+for word in "$@"; do line="$line $word"; done
+printf '%s\n' "$line" >>"$HOME/stub-calls"
+cat <<'LIST'
+layouts:
+- layout: 'us'
+  variant: ''
+  brief: 'en'
+  description: English (US)
+- layout: 'de'
+  variant: ''
+  brief: 'de'
+  description: German
+LIST

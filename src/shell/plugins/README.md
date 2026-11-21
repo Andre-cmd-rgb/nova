@@ -136,7 +136,7 @@ Time and the bar have READMEs of their own, linked from their names.
 | [Bar](bar/README.md) | `nova.bar` | bar `bar/Bar.qml` | the bar along one edge of every screen |
 | Active window | `nova.active-window` | widget `bar/widgets/ActiveWindow.qml` | the focused window's title |
 | Indicators | `nova.indicators` | widget `bar/widgets/Indicators.qml` | switches: recording, night light, do not disturb, Caffeine |
-| Keyboard layout | `nova.keyboard-layout` | widget `bar/widgets/KeyboardLayout.qml` | the layout's short code, with more than one layout |
+| Keyboard layout | `nova.keyboard-layout` | service `bar/widgets/KeyboardLayoutSeat.qml`, widget `bar/widgets/KeyboardLayout.qml` | the layout's short code, with more than one layout, read once for every screen |
 | Microphone | `nova.microphone` | widget `bar/widgets/Microphone.qml` | the default microphone, muted or in use |
 | Spacer | `nova.spacer` | widget `bar/widgets/Spacer.qml` | room along the bar, of its entry's `size` |
 | Nova update | `nova.system-update` | service `bar/widgets/SystemUpdateCheck.qml`, widget `bar/widgets/SystemUpdate.qml` | a badge while an update waits, asked once for every screen |

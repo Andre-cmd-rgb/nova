@@ -3,9 +3,11 @@
   "name": "Keyboard layout",
   "description": "The keyboard's layout as a short code; a click goes to the next",
   "kinds": [
+    "service",
     "bar-widget"
   ],
   "entryPoints": {
+    "service": "KeyboardLayoutSeat.qml",
     "barWidget": "KeyboardLayout.qml"
   }
 }

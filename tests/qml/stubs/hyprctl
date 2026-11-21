@@ -1,0 +1,8 @@
+#!/bin/sh
+# hyprctl as the keyboard layout's test needs it: each call is a line in
+# $HOME/stub-calls, and `-j devices` answers what $HOME/devices.json holds.
+line=hyprctl
+for word in "$@"; do line="$line $word"; done
+printf '%s\n' "$line" >>"$HOME/stub-calls"
+[ "$*" = "-j devices" ] && cat "$HOME/devices.json" 2>/dev/null
+exit 0
