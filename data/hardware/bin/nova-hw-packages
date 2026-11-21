@@ -1,0 +1,209 @@
+#!/bin/bash
+
+# nova:summary=Print the packages this computer's hardware needs
+# nova:hidden=true
+# nova:args=[--graphics | --lib32 | --every] [--kernel <name>] [--portable]
+#
+# The one place that says which packages a computer's hardware needs, from
+# its CPU and the display controllers and camera in sysfs (never lspci, which
+# wakes a sleeping GPU). One per line, each once.
+#
+#   (no mode)    all of it, as the installer installs it: the CPU's microcode,
+#                each display controller's drivers (NVIDIA's kernel modules
+#                for --kernel), and the camera's
+#   --graphics   only the 64-bit OpenGL and Vulkan drivers of the display
+#                controllers
+#   --lib32      only their 32-bit OpenGL and Vulkan drivers, which Steam,
+#                Wine and 32-bit games need
+#   --every      every package the first mode prints on any computer, for the
+#                installer stick's offline packages
+#   --kernel K   the kernel NVIDIA's modules are built for (linux-nova by
+#                default); Arch's linux and linux-lts get Arch's nvidia-open
+#   --portable   for a portable Nova, which starts a different computer each
+#                time: both microcodes, every Mesa driver, and NVIDIA cards
+#                on nouveau, whose driver NVIDIA's own package blacklists
+#
+# Why a list of its own for the graphics drivers: an app that needs "a Vulkan
+# driver" (Steam needs vulkan-driver and lib32-vulkan-driver) leaves pacman
+# to pick one, and pacman picks NVIDIA's on every computer. nvidia-utils
+# blacklists nouveau, puts NVIDIA first for every EGL app, and changes how
+# the system suspends, wherever it is. So the installer installs these, the
+# App Center adds them to an app's own install (nova-apps-apply), and nova
+# update installs the 32-bit ones once anything 32-bit is (nova-update-apply).
+# A display controller Nova knows no driver for, as a virtual machine's, has
+# Mesa's software Vulkan (vulkan-swrast) in the two graphics modes. An NVIDIA
+# card nova power took off the bus (on battery) is still this computer's: its
+# address is kept in /run/nova-power.nvidia-pci for the rest of the boot.
+#
+# NOVA_CPUINFO and NOVA_PCI_DEVICES_PATH are for tests and the installer's; a
+# bus of theirs has no card off it unless NOVA_POWER_NVIDIA_CACHE says so.
+
+set -euo pipefail
+
+cpuinfo=${NOVA_CPUINFO:-/proc/cpuinfo}
+pci=${NOVA_PCI_DEVICES_PATH:-/sys/bus/pci/devices}
+if [[ -n ${NOVA_PCI_DEVICES_PATH:-} ]]; then
+  off_bus=${NOVA_POWER_NVIDIA_CACHE:-}
+else
+  off_bus=${NOVA_POWER_NVIDIA_CACHE:-/run/nova-power.nvidia-pci}
+fi
+
+usage() {
+  echo "usage: nova-hw-packages [--graphics | --lib32 | --every] [--kernel <name>] [--portable]" >&2
+  exit 2
+}
+
+mode=all kernel=linux-nova portable=0
+while (($#)); do
+  case $1 in
+    --graphics | --lib32 | --every)
+      [[ $mode == all ]] || usage
+      mode=${1#--}
+      ;;
+    --kernel)
+      [[ ${2:-} =~ ^[a-z0-9][a-z0-9._-]*$ ]] || usage
+      kernel=$2
+      shift
+      ;;
+    --portable) portable=1 ;;
+    -h | --help)
+      sed -n '6,/^$/s/^# \{0,1\}//p' "$0"
+      exit 0
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+
+# An Intel MIPI camera, an IPU6 or IPU7, by the device ids the kernel's
+# intel-ipu6 and intel-ipu7 drivers take (nova doctor has the same list).
+# Apps reach it through PipeWire's libcamera plugin, which WirePlumber leaves
+# a USB camera's to V4L2.
+IPU_IDS=" 0x9a19 0x4e19 0x465d 0x462e 0xa75d 0x7d19 0x645d 0xb05d "
+CAMERA_IPU=(libcamera libcamera-ipa pipewire-libcamera)
+
+# The open modules need GSP firmware, which starts with Turing; older NVIDIA
+# cards are nouveau's.
+TURING=0x1e00
+
+# The NVIDIA modules for a kernel: nvidia-open-nova only exists for
+# linux-nova. The LTS fallback kernel gets its own build, so it can drive the
+# card too.
+nvidia_modules() {
+  if [[ $kernel == linux-nova ]]; then echo nvidia-open-nova; else echo nvidia-open; fi
+  echo nvidia-open-lts
+}
+
+# What drives each display controller, by kind: intel, amd, nvidia (NVIDIA's
+# own driver) and nouveau. A portable Nova has every Mesa kind and no
+# nvidia. Anything else (a virtual machine's) is "other".
+kinds=()
+camera=0
+cpu=''
+scan() {
+  local dev vendor kind
+  cpu=$(awk -F': ' '/^vendor_id/ { print $2; exit }' "$cpuinfo" 2>/dev/null || true)
+  if ((portable)); then
+    kinds=(intel amd nouveau)
+    return 0
+  fi
+  for dev in "$pci"/*; do
+    [[ -r $dev/class ]] || continue
+    vendor=$(<"$dev/vendor")
+    if [[ $vendor == 0x8086 && $IPU_IDS == *" $(<"$dev/device") "* ]]; then
+      camera=1
+      continue
+    fi
+    [[ $(<"$dev/class") == 0x03* ]] || continue
+    case $vendor in
+      0x8086) kind=intel ;;
+      0x1002) kind=amd ;;
+      0x10de)
+        if (($(<"$dev/device") >= TURING)); then kind=nvidia; else kind=nouveau; fi
+        ;;
+      *) kind=other ;;
+    esac
+    [[ " ${kinds[*]} " == *" $kind "* ]] || kinds+=("$kind")
+  done
+  # A card nova power took off the bus: what it drives with NVIDIA's driver.
+  local address
+  if [[ -n $off_bus && -r $off_bus ]] && read -r address <"$off_bus" &&
+    [[ $address =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$ && ! -e $pci/$address ]]; then
+    [[ " ${kinds[*]} " == *" nvidia "* ]] || kinds+=(nvidia)
+  fi
+}
+
+has() { [[ " ${kinds[*]} " == *" $1 "* ]]; }
+
+# The OpenGL and Vulkan drivers, 64-bit (prefix '') or 32-bit (lib32-).
+# Mesa holds the OpenGL of every kind but NVIDIA's own.
+graphics() { # prefix
+  local p=$1 kind mesa=0 vulkan=0
+  for kind in "${kinds[@]}"; do
+    [[ $kind == nvidia ]] || mesa=1
+  done
+  ((mesa == 0)) || echo "${p}mesa"
+  for kind in "${kinds[@]}"; do
+    case $kind in
+      intel) echo "${p}vulkan-intel"; vulkan=1 ;;
+      amd) echo "${p}vulkan-radeon"; vulkan=1 ;;
+      nouveau) echo "${p}vulkan-nouveau"; vulkan=1 ;;
+      nvidia) echo "${p}nvidia-utils"; vulkan=1 ;;
+    esac
+  done
+  if ((vulkan == 0)); then
+    ((mesa == 1)) || echo "${p}mesa"
+    echo "${p}vulkan-swrast"
+  fi
+}
+
+# Everything, as the installer installs it.
+all() {
+  local kind
+  if ((portable)); then
+    echo intel-ucode
+    echo amd-ucode
+  else
+    case $cpu in
+      GenuineIntel) echo intel-ucode ;;
+      AuthenticAMD) echo amd-ucode ;;
+    esac
+  fi
+  for kind in "${kinds[@]}"; do
+    case $kind in
+      intel) printf '%s\n' intel-media-driver vulkan-intel ;;
+      amd) echo vulkan-radeon ;;
+      nouveau) echo vulkan-nouveau ;;
+      nvidia)
+        nvidia_modules
+        echo nvidia-utils
+        ;;
+    esac
+  done
+  # With an integrated GPU beside it, the desktop and the browser run on that
+  # one, and nova power run puts a game on the NVIDIA card. Whichever card
+  # drives the monitors decodes video, which the session decides as it starts
+  # (data/hypr/gpu.lua): a desktop with its iGPU on and its monitors on the
+  # NVIDIA card has VA-API pointed at NVIDIA's driver, so it is always there.
+  if has nvidia && { has intel || has amd; }; then echo nvidia-prime; fi
+  if has nvidia; then echo libva-nvidia-driver; fi
+  if ((camera)); then printf '%s\n' "${CAMERA_IPU[@]}"; fi
+}
+
+every() {
+  printf '%s\n' intel-ucode amd-ucode intel-media-driver vulkan-intel vulkan-radeon vulkan-nouveau
+  kernel=linux-nova nvidia_modules
+  kernel=linux nvidia_modules
+  printf '%s\n' nvidia-utils nvidia-prime libva-nvidia-driver "${CAMERA_IPU[@]}"
+}
+
+if [[ $mode == every ]]; then
+  every | awk '!seen[$0]++'
+  exit 0
+fi
+scan
+case $mode in
+  all) all ;;
+  graphics) graphics '' ;;
+  lib32) graphics lib32- ;;
+esac | awk '!seen[$0]++'

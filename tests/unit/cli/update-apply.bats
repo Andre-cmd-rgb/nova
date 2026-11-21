@@ -731,3 +731,103 @@ STUB
     ! grep -qE "^  $name( |\$)" "$REPO_ROOT/packaging/nova/PKGBUILD"
   done <"$REPO_ROOT/src/cli/retired"
 }
+
+# The graphics drivers after an update, with nova-hw-packages beside the script
+# reading a bus of the test's own, and pacman stubbed as a system with the
+# packages in $INSTALLED (name:e for one asked for by name, name:d for a
+# dependency): -T says which of those named are missing.
+graphics_update() { # pci-device...: class:vendor:device
+  mkdir -p "$SCRATCH/lib" "$SCRATCH/bin" "$SCRATCH/pci"
+  cp "$REPO_ROOT/src/cli/bin/nova-update-apply" "$REPO_ROOT/data/hardware/bin/nova-hw-packages" "$SCRATCH/lib/"
+  local i=0 dev
+  for dev; do
+    mkdir -p "$SCRATCH/pci/0000:0$i:00.0"
+    IFS=: read -r class vendor device <<<"$dev"
+    echo "$class" >"$SCRATCH/pci/0000:0$i:00.0/class"
+    echo "$vendor" >"$SCRATCH/pci/0000:0$i:00.0/vendor"
+    echo "$device" >"$SCRATCH/pci/0000:0$i:00.0/device"
+    i=$((i + 1))
+  done
+  printf 'vendor_id\t: GenuineIntel\n' >"$SCRATCH/cpuinfo"
+  local p
+  for p in $INSTALLED; do mkdir -p "$NOVA_ROOT/var/lib/pacman/local/${p%:*}-1-1"; done
+  cat >"$SCRATCH/bin/pacman" <<'STUB'
+#!/bin/bash
+have() { local p; for p in $INSTALLED; do [[ ${p%:*} == "$1" && ( -z ${2:-} || ${p#*:} == "$2" ) ]] && return 0; done; return 1; }
+case $1 in
+  -Qq)
+    if (($# == 1)); then for p in $INSTALLED; do echo "${p%:*}"; done; exit 0; fi
+    shift; [[ $1 == -- ]] && shift
+    found=1; for n; do have "$n" && echo "$n" && found=0; done; exit $found ;;
+  -Qqd) have "$3" d && echo "$3"; exit 0 ;;
+  -T) shift; missing=0; for n; do have "$n" || { echo "$n"; missing=127; }; done; exit $missing ;;
+esac
+echo "pacman $*" >>"$CALLS"
+STUB
+  chmod +x "$SCRATCH/bin/pacman"
+  CALLS="$SCRATCH/calls" NOVA_PCI_DEVICES_PATH="$SCRATCH/pci" NOVA_CPUINFO="$SCRATCH/cpuinfo" PATH="$SCRATCH/bin:$PATH" \
+    bash -c 'source "$1"; keep_graphics_drivers 1' "$SCRATCH/lib/test" "$SCRATCH/lib/nova-update-apply"
+}
+
+INTEL=0x030000:0x8086:0x9a49
+AMD=0x030000:0x1002:0x73df
+NVIDIA=0x030200:0x10de:0x25b8
+BASE="mesa:d vulkan-intel:e intel-media-driver:e"
+
+@test "Steam on an Intel laptop: 32-bit Intel drivers in, the NVIDIA ones pacman picked out" {
+  INSTALLED="$BASE steam:e lib32-glibc:d lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run graphics_update "$INTEL"
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --asdeps --noconfirm lib32-vulkan-intel' "$SCRATCH/calls"
+  grep -qx 'pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils' "$SCRATCH/calls"
+  # The install before the removal: Steam's Vulkan driver is never missing.
+  [ "$(grep -n -- '-S ' "$SCRATCH/calls" | cut -d: -f1)" -lt "$(grep -n -- '-Rns' "$SCRATCH/calls" | cut -d: -f1)" ]
+}
+
+@test "Steam on an AMD desktop: RADV's 32-bit driver" {
+  INSTALLED="mesa:d vulkan-radeon:e steam:e lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run graphics_update "$AMD"
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --asdeps --noconfirm lib32-vulkan-radeon' "$SCRATCH/calls"
+  grep -qx 'pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils' "$SCRATCH/calls"
+}
+
+@test "the P1 as it is: lib32-vulkan-intel added, NVIDIA's drivers kept for the card" {
+  INSTALLED="$BASE nvidia-open-nova:e nvidia-utils:e steam:e lib32-mesa:d lib32-nvidia-utils:d" run graphics_update "$INTEL" "$NVIDIA"
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --asdeps --noconfirm lib32-vulkan-intel' "$SCRATCH/calls"
+  fails grep -q -- '-R' "$SCRATCH/calls"
+}
+
+@test "the P1 on battery, its card off the bus: its modules keep NVIDIA's drivers in" {
+  INSTALLED="$BASE nvidia-open-nova:e nvidia-utils:e steam:e lib32-mesa:d lib32-vulkan-intel:d lib32-nvidia-utils:d" run graphics_update "$INTEL"
+  [ "$status" -eq 0 ]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "nothing 32-bit installed: nothing to do" {
+  INSTALLED="$BASE" run graphics_update "$INTEL"
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  [ ! -e "$SCRATCH/calls" ]
+}
+
+@test "NVIDIA's driver asked for by name stays, wherever it is" {
+  INSTALLED="$BASE steam:e lib32-mesa:d lib32-vulkan-intel:d nvidia-utils:e lib32-nvidia-utils:d" run graphics_update "$INTEL"
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -Rns --noconfirm lib32-nvidia-utils' "$SCRATCH/calls"
+  fails grep -q 'Rns.* nvidia-utils' "$SCRATCH/calls"
+}
+
+@test "a portable Nova: every Mesa driver, 32-bit too, and NVIDIA's out, since it blacklists nouveau" {
+  put "$NOVA_ROOT/etc/nova/portable" "# portable"
+  INSTALLED="mesa:d steam:e lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run graphics_update "$NVIDIA"
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --asdeps --noconfirm vulkan-intel vulkan-radeon vulkan-nouveau lib32-vulkan-intel lib32-vulkan-radeon lib32-vulkan-nouveau' "$SCRATCH/calls"
+  grep -qx 'pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils' "$SCRATCH/calls"
+}
+
+@test "a virtual machine with Steam: Mesa's software Vulkan in place of NVIDIA's" {
+  INSTALLED="mesa:d steam:e lib32-mesa:d lib32-nvidia-utils:d nvidia-utils:d" run graphics_update 0x030000:0x1af4:0x1050
+  [ "$status" -eq 0 ]
+  grep -qx 'pacman -S --needed --asdeps --noconfirm vulkan-swrast lib32-vulkan-swrast' "$SCRATCH/calls"
+  grep -qx 'pacman -Rns --noconfirm nvidia-utils lib32-nvidia-utils' "$SCRATCH/calls"
+}

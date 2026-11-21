@@ -16,6 +16,7 @@ setup() {
   cp "$REPO_ROOT/installer/packages" "$NOVA_INSTALLER_SHARE/packages"
   cp -r "$REPO_ROOT/data/hardware/thinkpad-p1-gen4i" "$NOVA_INSTALLER_SHARE/hardware/"
   cp "$REPO_ROOT/data/hardware/bin/nova-hw-model" "$NOVA_INSTALLER_SHARE/hardware/"
+  cp "$REPO_ROOT/data/hardware/bin/nova-hw-packages" "$NOVA_INSTALLER_SHARE/hardware/"
   # shellcheck source=/dev/null
   source "$REPO_ROOT/installer/nova-install"
 }
@@ -183,11 +184,13 @@ END
   every_package | grep -qx pipewire-libcamera
 }
 
-@test "hardware_packages: no open-module NVIDIA driver before Turing" {
+@test "hardware_packages: no open-module NVIDIA driver before Turing, but nouveau's Vulkan" {
   printf 'vendor_id\t: AuthenticAMD\n' >"$NOVA_CPUINFO"
   pci 0000:01:00.0 0x030000 0x10de 0x1c03
   run hardware_packages linux-nova
-  [ "$output" = amd-ucode ]
+  # Without a Vulkan driver of its own, the first app that needs one (Steam)
+  # would have pacman pick nvidia-utils, which blacklists nouveau.
+  [ "$output" = "$(printf '%s\n' amd-ucode vulkan-nouveau)" ]
 }
 
 @test "profile_packages: nvidia-open-nova becomes nvidia-open on Arch's kernel" {

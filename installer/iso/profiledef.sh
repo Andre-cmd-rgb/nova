@@ -26,4 +26,5 @@ file_permissions=(
   ["/usr/local/bin/nova-install-start"]="0:0:755"
   ["/usr/share/nova-installer/hardware/nova-hw-detect"]="0:0:755"
   ["/usr/share/nova-installer/hardware/nova-hw-model"]="0:0:755"
+  ["/usr/share/nova-installer/hardware/nova-hw-packages"]="0:0:755"
 )

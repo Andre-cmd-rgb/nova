@@ -93,20 +93,6 @@ PORTABLE_DISK=''
 MIN_PORTABLE_BYTES=$((28 * 1024 * 1024 * 1024))
 PORTABLE_MARKER=/etc/nova/portable
 
-# What each kind of display controller needs beyond mesa, which has the AMD
-# video driver built in. hardware_packages picks this machine's; every_package
-# lists them all. NVK, Vulkan on nouveau, is for a portable install, which
-# drives NVIDIA cards with nouveau (portable_packages says why).
-GPU_INTEL=(intel-media-driver vulkan-intel)
-GPU_AMD=(vulkan-radeon)
-GPU_NOUVEAU=(vulkan-nouveau)
-
-# An Intel MIPI camera, an IPU6 or IPU7, by the device ids the kernel's
-# intel-ipu6 and intel-ipu7 drivers take (nova doctor has the same list).
-# Apps reach it through PipeWire's libcamera plugin, which WirePlumber leaves
-# a USB camera's to V4L2.
-IPU_IDS=" 0x9a19 0x4e19 0x465d 0x462e 0xa75d 0x7d19 0x645d 0xb05d "
-CAMERA_IPU=(libcamera libcamera-ipa pipewire-libcamera)
 
 # The setup screens' look, and the questions and account every Nova setup
 # shares, then the install's own stages: beside this file in the repository,

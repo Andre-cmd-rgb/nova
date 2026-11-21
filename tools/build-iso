@@ -74,6 +74,7 @@ install -Dm644 "$root/data/boot/limine/limine.conf" "$share/limine.conf"
 install -Dm644 "$root/data/hardware/models" "$share/hardware/models"
 install -Dm755 "$root/data/hardware/bin/nova-hw-detect" "$share/hardware/nova-hw-detect"
 install -Dm755 "$root/data/hardware/bin/nova-hw-model" "$share/hardware/nova-hw-model"
+install -Dm755 "$root/data/hardware/bin/nova-hw-packages" "$share/hardware/nova-hw-packages"
 for list in "$root"/data/hardware/*/packages; do
   name=${list%/packages}
   install -Dm644 "$list" "$share/hardware/${name##*/}/packages"

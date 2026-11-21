@@ -20,7 +20,10 @@
 #      mirror and repository files back, and the databases that went with them.
 #      Going back to an older release takes with it the packages only the newer
 #      one had (left_behind, below).
-#   5. install anything the new release adds to this computer's hardware profile
+#   5. install anything the new release adds to this computer's hardware profile,
+#      and the graphics drivers its GPUs need, 32-bit too once anything 32-bit
+#      is installed, in place of NVIDIA's where it has no NVIDIA card for them
+#      (keep_graphics_drivers)
 #   6. snapper post-snapshot
 #   7. check that every installed kernel still has a boot entry whose files exist
 #      and hold that kernel
@@ -196,6 +199,59 @@ install_hardware_packages() { # 1 for --noconfirm, then a command prefix for pac
   say "Installing for this computer: ${missing[*]}"
   "$@" pacman -S --needed "${confirm[@]}" "${missing[@]}" ||
     warn "could not install ${missing[*]}; try again with: sudo pacman -S ${missing[*]}"
+}
+
+# The graphics drivers this computer's GPUs need, as nova-hw-packages finds
+# them: the 32-bit ones too once anything 32-bit is installed (Steam, Wine),
+# without which a 32-bit game finds no Vulkan driver for the GPU it runs on.
+# Then NVIDIA's drivers where an app brought them in only as "a Vulkan
+# driver", which pacman picks by itself: on a computer with no NVIDIA kernel
+# modules to run them (none installed, and no card for them), nvidia-utils only
+# blacklists nouveau, puts NVIDIA first for every EGL app and changes how the
+# system suspends. Only what pacman installed as a dependency goes, never one
+# asked for by name, and pacman refuses if anything installed needs one by
+# name. A repair, so a failure warns and the update goes on.
+NVIDIA_USERSPACE=(nvidia-utils lib32-nvidia-utils)
+NVIDIA_MODULES=(nvidia-open-nova nvidia-open nvidia-open-lts nvidia-open-dkms nvidia nvidia-lts nvidia-dkms)
+keep_graphics_drivers() { # 1 for --noconfirm, then a command prefix for pacman
+  local noconfirm=$1 name lib32=0 list
+  local -a confirm=() hw=() graphics=() wanted=() missing=() stray=()
+  shift
+  # pacman's own folder of what is installed, a folder a package: nothing
+  # 32-bit and no nvidia-utils is nothing to do, without asking pacman.
+  if compgen -G "$ROOT/var/lib/pacman/local/lib32-*" > /dev/null; then
+    lib32=1
+  elif ! compgen -G "$ROOT/var/lib/pacman/local/nvidia-utils-[0-9]*" > /dev/null; then
+    return 0
+  fi
+  (( ! noconfirm )) || confirm=(--noconfirm)
+  [[ ! -e $ROOT/etc/nova/portable ]] || hw=(--portable)
+  if ! list=$("${0%/*}/nova-hw-packages" "${hw[@]}" --graphics) ||
+    { (( lib32 )) && ! list+=$'\n'$("${0%/*}/nova-hw-packages" "${hw[@]}" --lib32); }; then
+    warn "could not tell which graphics drivers this computer needs"
+    return 0
+  fi
+  mapfile -t graphics < <(grep . <<< "$list")
+  if [[ -z $(pacman -Qq -- "${NVIDIA_MODULES[@]}" 2> /dev/null) ]]; then
+    for name in "${NVIDIA_USERSPACE[@]}"; do
+      [[ " ${graphics[*]} " != *" $name "* ]] || continue
+      [[ $(pacman -Qqd -- "$name" 2> /dev/null) == "$name" ]] && stray+=("$name")
+    done
+  fi
+  # The 64-bit ones are the installer's already, but for a computer it did not
+  # give one (a virtual machine's): removing NVIDIA's Vulkan driver needs
+  # another in its place first.
+  (( ! lib32 && ! ${#stray[@]} )) || wanted=("${graphics[@]}")
+  if (( ${#wanted[@]} )); then mapfile -t missing < <(pacman -T "${wanted[@]}" || true); fi
+  if (( ${#missing[@]} )); then
+    say "Installing this computer's graphics drivers: ${missing[*]}"
+    "$@" pacman -S --needed --asdeps "${confirm[@]}" "${missing[@]}" ||
+      warn "could not install ${missing[*]}; try again with: sudo pacman -S --asdeps ${missing[*]}"
+  fi
+  (( ${#stray[@]} )) || return 0
+  say "Removing NVIDIA drivers this computer cannot use: ${stray[*]}"
+  "$@" pacman -Rns --noconfirm "${stray[@]}" ||
+    warn "could not remove ${stray[*]}; pacman said why above"
 }
 
 # What an earlier Nova depended on and this one does not (the retired list):
@@ -608,6 +664,7 @@ main() {
   trap - INT
 
   install_hardware_packages "$noconfirm" "${env_skip[@]}"
+  keep_graphics_drivers "$noconfirm" "${env_skip[@]}"
   # An app that will not go in is said, and the rest goes on.
   local apps=0
   install_built_packages "${env_skip[@]}" || apps=4

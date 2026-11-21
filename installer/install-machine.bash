@@ -70,58 +70,20 @@ main_kernel() {
   if ((!PORTABLE)) && cpu_has_x86_64_v3; then echo linux-nova; else echo linux; fi
 }
 
-# A portable install starts a different computer each time, so it has what any
-# of them needs: both microcodes (the initramfs loads the one that fits) and
-# the Intel and AMD video drivers. NVIDIA cards run on nouveau, with NVK for
-# Vulkan: NVIDIA's own driver blacklists nouveau and drives nothing older than
-# Turing, so on the computers it does not fit it would leave no driver at all.
-portable_packages() {
-  printf '%s\n' intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" "${GPU_NOUVEAU[@]}"
-}
-
-# Packages this hardware needs, from the CPU, and the display controllers
-# and camera in sysfs (never lspci, which wakes a sleeping GPU). The
-# model's own profile adds to this; see profile_packages. A portable install's
-# are portable_packages.
+# Packages this hardware needs: the CPU's microcode, the display
+# controllers' drivers and the camera's, as nova-hw-packages finds them in
+# sysfs (the same helper nova update and the App Center ask about graphics
+# drivers). The model's own profile adds to this; see profile_packages. A
+# portable install starts a different computer each time, so it has what any
+# of them needs: both microcodes (the initramfs loads the one that fits), every
+# Mesa driver, and NVIDIA cards on nouveau, with NVK for Vulkan: NVIDIA's own
+# driver blacklists nouveau and drives nothing older than Turing, so on the
+# computers it does not fit it would leave no driver at all.
 hardware_packages() {
-  local kernel=$1 dev vendor device dgpu=0 igpu=0 camera=0
-  if ((PORTABLE)); then
-    portable_packages
-    return 0
-  fi
-  case $(cpu_vendor) in
-    GenuineIntel) echo intel-ucode ;;
-    AuthenticAMD) echo amd-ucode ;;
-  esac
-  for dev in "$PCI_DEVICES"/*; do
-    [[ -r $dev/class ]] || continue
-    vendor=$(<"$dev/vendor")
-    if [[ $vendor == 0x8086 && $IPU_IDS == *" $(<"$dev/device") "* ]]; then camera=1; continue; fi
-    [[ $(<"$dev/class") == 0x03* ]] || continue
-    case $vendor in
-      0x8086) printf '%s\n' "${GPU_INTEL[@]}"; igpu=1 ;;
-      0x1002) printf '%s\n' "${GPU_AMD[@]}"; igpu=1 ;;
-      0x10de)
-        device=$(<"$dev/device")
-        # The open modules need GSP firmware, which starts with Turing. The
-        # LTS fallback kernel gets its own build, so it can drive the card too.
-        if ((device >= 0x1e00)); then
-          if [[ $kernel == linux-nova ]]; then echo nvidia-open-nova; else echo nvidia-open; fi
-          echo nvidia-open-lts
-          echo nvidia-utils
-          dgpu=1
-        fi
-        ;;
-    esac
-  done
-  # With an integrated GPU beside it, the desktop and the browser run on that
-  # one, and prime-run puts a game on the NVIDIA card. Whichever card drives
-  # the monitors decodes video, which the session decides as it starts
-  # (data/hypr/gpu.lua): a desktop with its iGPU on and its monitors on the
-  # NVIDIA card has VA-API pointed at NVIDIA's driver, so it is always there.
-  if ((dgpu && igpu)); then echo nvidia-prime; fi
-  if ((dgpu)); then echo libva-nvidia-driver; fi
-  if ((camera)); then printf '%s\n' "${CAMERA_IPU[@]}"; fi
+  local kernel=$1 portable=()
+  ((!PORTABLE)) || portable=(--portable)
+  NOVA_CPUINFO=$CPUINFO NOVA_PCI_DEVICES_PATH=$PCI_DEVICES \
+    "$SHARE/hardware/nova-hw-packages" --kernel "$kernel" "${portable[@]}"
 }
 
 # This computer's model, as its maker names it; `fallback` when no DMI field
@@ -157,8 +119,8 @@ every_package() {
   local list
   {
     grep -v -e '^#' -e '^[[:space:]]*$' "$SHARE/packages"
-    printf '%s\n' linux-nova linux linux-lts intel-ucode amd-ucode "${GPU_INTEL[@]}" "${GPU_AMD[@]}" "${GPU_NOUVEAU[@]}" \
-      nvidia-open-nova nvidia-open nvidia-open-lts nvidia-utils nvidia-prime libva-nvidia-driver "${CAMERA_IPU[@]}"
+    printf '%s\n' linux-nova linux linux-lts
+    "$SHARE/hardware/nova-hw-packages" --every
     for list in "$SHARE"/hardware/*/packages; do
       [[ -r $list ]] || continue
       sed 's/#.*//; s/[[:space:]]//g; /^$/d' "$list"
